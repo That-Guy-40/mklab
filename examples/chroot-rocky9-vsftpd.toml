@@ -1,0 +1,13 @@
+# Rocky 9 chroot suitable for vsftpd jailing.
+# Build with: sudo lab-chroot.sh create --config chroot-rocky9-vsftpd.toml
+
+[[chroot]]
+name    = "rocky9-vsftpd"
+backend = "dnf"
+distro  = "rocky"
+suite   = "9"
+arch    = "x86_64"
+target  = "/srv/ftpjail"
+groups  = ["core"]
+include = ["vsftpd", "openssh-clients", "shadow-utils"]
+manager = "none"

@@ -1,0 +1,17 @@
+# Editor / OS
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Build artifacts / scratch
+*.log
+*.tmp
+.cache/
+
+# Local state (never commit chroots/VMs/manifests)
+/var-lab-create/
+/state/
+
+# Downloaded artifacts (fetched per INSTALL-KALI-KEYRING.md, not sources)
+phase1-chroot/kali-archive-keyring_*.deb

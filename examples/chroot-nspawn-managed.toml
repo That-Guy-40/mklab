@@ -1,0 +1,19 @@
+# Debian bookworm chroot, registered as a machinectl image and bootable
+# under systemd-nspawn -b.
+# Build with: sudo lab-chroot.sh create --config chroot-nspawn-managed.toml
+# Enter with: sudo lab-chroot.sh enter bookworm-nspawn
+# Boot   with: sudo systemd-nspawn -b -M bookworm-nspawn
+
+[[chroot]]
+name    = "bookworm-nspawn"
+backend = "debootstrap"
+distro  = "debian"
+suite   = "bookworm"
+arch    = "x86_64"
+target  = "/var/lib/lab-create/trees/bookworm-nspawn"
+include = ["systemd-sysv", "dbus"]
+manager = "nspawn"
+
+  [chroot.nspawn]
+  boot     = true
+  register = true

@@ -1,0 +1,14 @@
+# Native x86_64 Debian bookworm VM via QEMU/KVM.
+# Build: lab-vm.sh create --config vm-debian-amd64.toml
+# Boot:  lab-vm.sh start  deb-amd64
+# SSH:   lab-vm.sh ssh    deb-amd64
+
+[[vm]]
+name     = "deb-amd64"
+backend  = "disk-image"
+distro   = "debian"
+suite    = "bookworm"
+arch     = "x86_64"
+memory   = "2G"
+cpus     = 2
+ssh_port = 0   # auto-allocate

@@ -1,0 +1,12 @@
+# Alpine 3.19 microvm — fastest boot path on x86_64.
+# Build: lab-vm.sh create --config microvm-alpine.toml
+
+[[vm]]
+name     = "alp-microvm"
+backend  = "disk-image"
+distro   = "alpine"
+suite    = "3.19"
+arch     = "x86_64"
+memory   = "256M"
+cpus     = 1
+microvm  = true

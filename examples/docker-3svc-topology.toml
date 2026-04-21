@@ -1,0 +1,31 @@
+# Three-service demo topology: nginx + postgres + an idle alpine client,
+# all on a shared bridge network. Hits Phase 3 exit criteria.
+#
+# Bring up: lab-docker.sh up   --config docker-3svc-topology.toml
+# Inspect:  lab-docker.sh list --lab demo
+# Tear down: lab-docker.sh down --lab demo
+
+[lab]
+name = "demo"
+
+[network.frontend]
+driver = "bridge"
+
+[[service]]
+name     = "web"
+image    = "nginx:alpine"
+networks = ["frontend"]
+ports    = ["8088:80"]
+
+[[service]]
+name     = "db"
+image    = "postgres:16-alpine"
+networks = ["frontend"]
+environment = { POSTGRES_PASSWORD = "lab", POSTGRES_DB = "lab", POSTGRES_USER = "lab" }
+volumes  = ["lab-demo-pgdata:/var/lib/postgresql/data"]
+
+[[service]]
+name     = "client"
+image    = "alpine:latest"
+networks = ["frontend"]
+command  = "sleep infinity"

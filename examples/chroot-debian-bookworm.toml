@@ -1,0 +1,18 @@
+# Native x86_64 Debian bookworm chroot, schroot-managed.
+# Build with: sudo lab-chroot.sh create --config chroot-debian-bookworm.toml
+
+[[chroot]]
+name    = "bookworm-amd64"
+backend = "debootstrap"
+distro  = "debian"
+suite   = "bookworm"
+arch    = "x86_64"
+target  = "/var/chroots/bookworm-amd64"
+mirror  = "http://deb.debian.org/debian"
+variant = "minbase"
+include = ["build-essential", "vim-tiny", "ca-certificates"]
+manager = "schroot"
+
+  [chroot.schroot]
+  type   = "directory"
+  groups = ["sbuild", "sudo"]
