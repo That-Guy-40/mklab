@@ -330,33 +330,84 @@ backend_from_chroot() {
     [[ -d "$chroot_path" ]] || die "chroot not found: $chroot_path"
     require_cmd tar
 
-    # Warn on UID-0-owned paths — the single most common confused-deputy
-    # source when importing into rootless podman.
+    # Readability preflight: when a chroot was built by `sudo lab-chroot`,
+    # it contains root-mode-600 files (/etc/shadow, /root/*, etc.) that
+    # an unprivileged tar can't read.  The stream would complete with a
+    # half-imported image and a partial-up, which is a nasty surprise.
+    # Detect up front and point the user at the clean workaround:
+    # lab-chroot export-tarball + the from_tarball service field.
+    local unreadable; unreadable="$(
+        find "$chroot_path" -xdev \
+            -not -path "${chroot_path}/proc/*" \
+            -not -path "${chroot_path}/sys/*" \
+            -not -path "${chroot_path}/dev/*" \
+            -not -readable -print -quit 2>/dev/null
+    )"
+    if [[ -n "$unreadable" ]]; then
+        die "chroot '$chroot_path' contains files unreadable by this user
+  (first offender: $unreadable).  This usually means the chroot was built
+  via 'sudo lab-chroot create', leaving mode-600 root-owned files inside.
+
+  Rootless workaround (recommended):
+    sudo phase1-chroot/lab-chroot.sh export-tarball <name> --output /tmp/<name>.tar.gz
+  Then reference that file from your TOML via from_tarball instead of
+  from_chroot:
+    [[service]]
+    from_tarball = \"/tmp/<name>.tar.gz\"
+
+  Or, for a quick-and-dirty manual prep:
+    sudo tar -C $chroot_path -cpzf /tmp/chroot.tar.gz \\
+        --exclude='./proc/*' --exclude='./sys/*' --exclude='./dev/*' \\
+        --exclude='./run/*'  --exclude='./tmp/*' .
+    sudo chown \$(id -u):\$(id -g) /tmp/chroot.tar.gz"
+    fi
+
+    # UID-0-owned paths are legal (they'll map into rootless podman's
+    # namespace per the userns setting) — just a heads-up.
     if find "$chroot_path" -xdev \
             -not -path "${chroot_path}/proc/*" \
             -not -path "${chroot_path}/sys/*" \
             -not -path "${chroot_path}/dev/*" \
             -uid 0 -print -quit 2>/dev/null | grep -q .; then
         log_warn "chroot contains UID-0-owned paths; rootless import maps these
-  to your UID on the host.  userns=$userns selected; adjust with
+  into your namespace per userns=$userns.  Adjust with
   --userns=auto-map|host|<raw-uidmap> if something behaves oddly."
     fi
 
     log_info "tar | podman import → $image_tag  (from $chroot_path, userns=$userns)"
     local tar_owner_flags=(--numeric-owner)
     if [[ "$userns" == "auto-map" ]]; then
-        # Rewrite ownership to 0:0 so the resulting image looks like a
-        # normal "built from scratch" image (root-in-namespace).
         tar_owner_flags=(--owner=0 --group=0)
         log_debug "auto-map: forcing tarball ownership to 0:0"
     fi
 
-    tar -C "$chroot_path" \
-        --exclude='./proc/*' --exclude='./sys/*' --exclude='./dev/*' \
-        --exclude='./run/*'  --exclude='./tmp/*' \
-        --exclude='./.lab-chroot-mounts' \
-        "${tar_owner_flags[@]}" -c . \
-      | podman import - "$image_tag" >/dev/null
+    # Stream-on-failure cleanup: if the pipe errors mid-flight we do NOT
+    # want a half-imported image lingering.  Remove on any failure path.
+    if ! tar -C "$chroot_path" \
+            --exclude='./proc/*' --exclude='./sys/*' --exclude='./dev/*' \
+            --exclude='./run/*'  --exclude='./tmp/*' \
+            --exclude='./.lab-chroot-mounts' \
+            "${tar_owner_flags[@]}" -c . \
+          | podman import - "$image_tag" >/dev/null; then
+        podman image rm "$image_tag" >/dev/null 2>&1 || true
+        die "from-chroot import failed; partial image removed."
+    fi
+    log_info "imported: $image_tag"
+}
+
+# ─── Backend: from-tarball ─────────────────────────────────────────────────
+# Rootless-clean alternative to from_chroot: the user (or Phase 1's
+# export-tarball helper) has already produced a self-contained,
+# user-readable tarball — just import it directly.
+backend_from_tarball() {
+    # backend_from_tarball TARBALL_PATH IMAGE_TAG
+    local tarball="$1" image_tag="$2"
+    [[ -r "$tarball" ]] || die "tarball not readable: $tarball"
+    log_info "podman import → $image_tag  (from $tarball)"
+    if ! podman import "$tarball" "$image_tag" >/dev/null; then
+        podman image rm "$image_tag" >/dev/null 2>&1 || true
+        die "from-tarball import failed; partial image removed."
+    fi
     log_info "imported: $image_tag"
 }
 
@@ -508,11 +559,18 @@ start_service_plain() {
         return 0
     fi
 
-    # Resolve image source (image | from_chroot | build context).
+    # Resolve image source (image | from_tarball | from_chroot | build).
     if [[ -z "$simage" ]]; then
-        local chroot; chroot="$(spec_get "$svc" from_chroot)"
-        local ctx;    ctx="$(spec_get "$svc" build)"
-        if [[ -n "$chroot" ]]; then
+        local tarball; tarball="$(spec_get "$svc" from_tarball)"
+        local chroot;  chroot="$(spec_get "$svc" from_chroot)"
+        local ctx;     ctx="$(spec_get "$svc" build)"
+        if [[ -n "$tarball" && -n "$chroot" ]]; then
+            die "service '$sname': from_tarball and from_chroot are mutually exclusive — pick one"
+        fi
+        if [[ -n "$tarball" ]]; then
+            simage="$(image_name_for "$lab" "$sname")"
+            backend_from_tarball "$tarball" "$simage"
+        elif [[ -n "$chroot" ]]; then
             local un; un="$(spec_get "$svc" userns)"
             simage="$(image_name_for "$lab" "$sname")"
             backend_from_chroot "$chroot" "$simage" "${un:-keep-id}"
@@ -520,7 +578,7 @@ start_service_plain() {
             simage="$(image_name_for "$lab" "$sname")"
             backend_build "$ctx" "$simage" "${OPT_ARCH:-$(detect_host_arch)}"
         else
-            die "service '$sname': specify one of image | from_chroot | build"
+            die "service '$sname': specify one of image | from_tarball | from_chroot | build"
         fi
     fi
 
@@ -771,17 +829,21 @@ stop_lab_quadlet() {
 cmd_build() {
     local backend="${OPT_BACKEND:-build}"
     local tag="${OPT_TAG:-}"
-    [[ -n "$tag" ]] || die "usage: $LAB_PROG build --tag IMG [--backend build|from-chroot] [--context DIR | --chroot PATH] [--arch A]"
+    [[ -n "$tag" ]] || die "usage: $LAB_PROG build --tag IMG [--backend build|from-chroot|from-tarball] [--context DIR | --chroot PATH | --tarball FILE] [--arch A]"
     local arch="${OPT_ARCH:-$(detect_host_arch)}"
     is_known_arch "$arch" || die "unknown arch: $arch"
 
     case "$backend" in
-        build|buildx) backend="build" ;;
-        from-chroot)  ;;
+        build|buildx)   backend="build" ;;
+        from-chroot)    ;;
+        from-tarball)   ;;
         *) die "unknown build backend: $backend" ;;
     esac
     if [[ "$backend" == "from-chroot" ]]; then
         [[ -n "${OPT_CHROOT:-}" ]] || die "--backend from-chroot requires --chroot PATH"
+    fi
+    if [[ "$backend" == "from-tarball" ]]; then
+        [[ -n "${OPT_TARBALL:-}" ]] || die "--backend from-tarball requires --tarball FILE"
     fi
 
     require_rootless
@@ -795,6 +857,9 @@ cmd_build() {
         from-chroot)
             backend_from_chroot "$OPT_CHROOT" "$tag" "${OPT_USERNS:-keep-id}"
             ;;
+        from-tarball)
+            backend_from_tarball "$OPT_TARBALL" "$tag"
+            ;;
     esac
 }
 
@@ -803,9 +868,9 @@ cmd_run() {
     local image="${OPT_IMAGE:-}"
     local name="${OPT_NAME:-}"
     local manager="${OPT_MANAGER:-plain}"
-    [[ -n "$name" ]] || die "usage: $LAB_PROG run --name N [--image IMG | --chroot PATH | --context DIR] [--manager plain] [opts...]"
-    if [[ -z "$image" && -z "${OPT_CHROOT:-}" && -z "${OPT_CONTEXT:-}" ]]; then
-        die "need one of: --image IMG | --chroot PATH | --context DIR"
+    [[ -n "$name" ]] || die "usage: $LAB_PROG run --name N [--image IMG | --chroot PATH | --tarball FILE | --context DIR] [--manager plain] [opts...]"
+    if [[ -z "$image" && -z "${OPT_CHROOT:-}" && -z "${OPT_TARBALL:-}" && -z "${OPT_CONTEXT:-}" ]]; then
+        die "need one of: --image IMG | --chroot PATH | --tarball FILE | --context DIR"
     fi
     case "$manager" in
         plain) ;;
@@ -819,7 +884,10 @@ cmd_run() {
 
     # Optional implicit build/import paths.
     if [[ -z "$image" ]]; then
-        if [[ -n "${OPT_CHROOT:-}" ]]; then
+        if [[ -n "${OPT_TARBALL:-}" ]]; then
+            image="lab-from-tarball-${name}"
+            backend_from_tarball "$OPT_TARBALL" "$image"
+        elif [[ -n "${OPT_CHROOT:-}" ]]; then
             image="lab-from-chroot-${name}"
             backend_from_chroot "$OPT_CHROOT" "$image" "${OPT_USERNS:-keep-id}"
         elif [[ -n "${OPT_CONTEXT:-}" ]]; then
@@ -1324,9 +1392,10 @@ USAGE
 
 BUILD / RUN OPTIONS
   --tag       IMAGE_TAG
-  --backend   {build|from-chroot}
-  --context   PATH
-  --chroot    PATH
+  --backend   {build|from-chroot|from-tarball}
+  --context   PATH                       # for --backend build
+  --chroot    PATH                       # for --backend from-chroot (chroot must be readable!)
+  --tarball   PATH                       # for --backend from-tarball (rootless-clean path)
   --userns    MODE                       # keep-id (default) | auto-map | host | "<uidmap-string>"
   --arch      {x86_64|aarch64|armv7l|ppc64le|riscv64|s390x}
   --image     IMAGE_TAG
@@ -1365,7 +1434,7 @@ EXTRA_ARGS=()
 
 parse_args() {
     OPT_CONFIG=""
-    OPT_TAG="" OPT_BACKEND="" OPT_CONTEXT="" OPT_CHROOT="" OPT_USERNS=""
+    OPT_TAG="" OPT_BACKEND="" OPT_CONTEXT="" OPT_CHROOT="" OPT_TARBALL="" OPT_USERNS=""
     OPT_NAME="" OPT_IMAGE="" OPT_ARCH=""
     OPT_MANAGER=""
     OPT_NETWORK="" OPT_HOSTNAME=""
@@ -1390,6 +1459,7 @@ parse_args() {
             --backend)      OPT_BACKEND="$2"; shift 2 ;;
             --context)      OPT_CONTEXT="$2"; shift 2 ;;
             --chroot)       OPT_CHROOT="$2"; shift 2 ;;
+            --tarball)      OPT_TARBALL="$2"; shift 2 ;;
             --userns)       OPT_USERNS="$2"; shift 2 ;;
             --name)         OPT_NAME="$2"; shift 2 ;;
             --image)        OPT_IMAGE="$2"; shift 2 ;;

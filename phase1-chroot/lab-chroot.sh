@@ -1093,6 +1093,52 @@ cmd_list() {
     [[ $found -eq 0 ]] && log_info "(no script-managed chroots)"
 }
 
+# ─── Subcommand: export-tarball ─────────────────────────────────────────────
+# Emit a gzipped tarball of a chroot tree, rootless-friendly.  Intended as
+# the bridge to Phase 4 (`lab-podman ... from_tarball = "..."`) — chroots
+# built via `sudo lab-chroot create` contain root-mode-600 files that an
+# unprivileged tar can't read, so we run as root and chown the output so
+# the invoking user can consume it.  Works fine for non-root-owned
+# chroots too (e.g. host-copy backend).
+cmd_export_tarball() {
+    local arg="${POS_ARGS[0]:-}"
+    [[ -n "$arg" ]] || die "usage: $LAB_PROG export-tarball <name|path> [--output PATH]"
+
+    local name target manager
+    IFS=$'\t' read -r name target manager < <(resolve_target_and_manager "$arg")
+    [[ -d "$target" ]] || die "target is not a directory: $target"
+
+    local out="${OPT_OUTPUT:-/tmp/${name:-chroot}.tar.gz}"
+    # If the user didn't pass --output but the target is interesting,
+    # suggest the name we chose.
+    log_info "exporting $target → $out"
+
+    # Tar + gzip.  --numeric-owner keeps UIDs as-is (podman import will
+    # respect them).  No --owner rewrite here — that's a Phase 4 concern
+    # (userns=auto-map handles it on the import side).
+    require_cmd tar
+
+    # Give the output file writable by the invoking user, not just root.
+    local invoker_uid invoker_gid
+    invoker_uid="${SUDO_UID:-$(id -u)}"
+    invoker_gid="${SUDO_GID:-$(id -g)}"
+
+    tar -C "$target" \
+        --exclude='./proc/*' --exclude='./sys/*' --exclude='./dev/*' \
+        --exclude='./run/*'  --exclude='./tmp/*' \
+        --exclude='./.lab-chroot-mounts' \
+        --numeric-owner -czpf "$out" . \
+        || die "tar failed writing $out"
+
+    # Make the output consumable by the invoking (non-root) user.
+    chown "${invoker_uid}:${invoker_gid}" "$out" 2>/dev/null || true
+    chmod 0644 "$out" 2>/dev/null || true
+
+    local sz; sz="$(du -h "$out" 2>/dev/null | awk '{print $1}')"
+    log_info "wrote $out (${sz:-?})"
+    printf '%s\n' "$out"
+}
+
 # ─── Subcommand: verify ─────────────────────────────────────────────────────
 cmd_verify() {
     local arg="${POS_ARGS[0]:-}"
@@ -1147,8 +1193,9 @@ USAGE
   $LAB_PROG create   [--config FILE | --backend B --distro D --suite S --arch A --target PATH ...]
   $LAB_PROG enter    <name|path> [-- cmd args...]
   $LAB_PROG destroy  <name|path> [--force]
-  $LAB_PROG list
+  $LAB_PROG list     [--lab NAME]
   $LAB_PROG verify   <name|path>
+  $LAB_PROG export-tarball <name|path> [--output /tmp/x.tar.gz]
   $LAB_PROG version | help
 
 CREATE OPTIONS
@@ -1190,6 +1237,7 @@ parse_args() {
     OPT_INCLUDE="" OPT_GROUPS="" OPT_BINARIES="" OPT_EXTRAS=""
     OPT_MANAGER="none" OPT_FORCE=""
     OPT_LAB=""
+    OPT_OUTPUT=""
 
     [[ $# -eq 0 ]] && { usage; exit 0; }
 
@@ -1217,6 +1265,7 @@ parse_args() {
             --extras)        OPT_EXTRAS="$2"; shift 2 ;;
             --manager)       OPT_MANAGER="$2"; shift 2 ;;
             --lab)           OPT_LAB="$2"; shift 2 ;;
+            --output|-o)     OPT_OUTPUT="$2"; shift 2 ;;
             --force|-f)      OPT_FORCE=1; shift ;;
             -h|--help)       usage; exit 0 ;;
             -v|--version)    printf '%s %s\n' "$LAB_PROG" "$LAB_VERSION"; exit 0 ;;
@@ -1239,6 +1288,7 @@ main() {
         destroy) cmd_destroy ;;
         list)    cmd_list    ;;
         verify)  cmd_verify  ;;
+        export-tarball) cmd_export_tarball ;;
         help)    usage       ;;
         version) printf '%s %s\n' "$LAB_PROG" "$LAB_VERSION" ;;
         *)       usage; die "unknown subcommand: $SUBCMD" ;;
