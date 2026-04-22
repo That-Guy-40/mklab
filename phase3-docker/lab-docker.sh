@@ -687,6 +687,229 @@ cmd_destroy() {
     log_info "destroyed: $cname"
 }
 
+# ─── Subcommand: status ────────────────────────────────────────────────────
+# Three call shapes (mirrors lab-podman.sh status):
+#   status                        → daemon/host summary
+#   status <lab>                  → every container + network tagged lab=<lab>
+#   status <name>  |  <lab>/<svc> → single-container detail
+#
+# The <lab> vs <name> discriminator: if a container named `lab-<arg>` exists,
+# treat <arg> as a container name; otherwise look for labeled children and,
+# if any exist, treat <arg> as a lab name.
+cmd_status() {
+    local target="${POS_ARGS[0]:-${OPT_LAB:-}}"
+    require_docker
+
+    if [[ -z "$target" ]]; then
+        printf '── docker info (summary) ──\n'
+        # Trailing `|| true` is deliberate: if the consumer is a pager or
+        # `grep -q` that closes early, SIGPIPE propagates through
+        # `set -o pipefail` and makes `status` look like it failed.
+        { docker info --format '{{"host:          "}}{{.Name}}
+{{"server ver:   "}}{{.ServerVersion}}
+{{"arch:         "}}{{.Architecture}}
+{{"os:           "}}{{.OperatingSystem}}
+{{"driver:       "}}{{.Driver}}
+{{"storage root: "}}{{.DockerRootDir}}
+{{"containers:   "}}{{.Containers}} ({{.ContainersRunning}} running)' 2>/dev/null \
+            || docker info; } || true
+        return 0
+    fi
+
+    # Lab-scoped branch: does any container carry label=<target>?
+    local lab_hits
+    lab_hits="$(docker ps -aq \
+        --filter "label=${LAB_LABEL_LAB}=${target}" \
+        --filter "label=${LAB_LABEL_TOOL}" 2>/dev/null)"
+    local net_hits
+    net_hits="$(docker network ls -q \
+        --filter "label=${LAB_LABEL_LAB}=${target}" \
+        --filter "label=${LAB_LABEL_TOOL}" 2>/dev/null)"
+
+    # Container-scoped: does a container of this name (possibly `lab-<arg>`) exist?
+    local cname; cname="$(_resolve_container_name "$target")"
+    local container_hit=0
+    docker ps -a --format '{{.Names}}' | grep -qx "$cname" && container_hit=1
+
+    if [[ -n "$lab_hits" || -n "$net_hits" ]] && (( ! container_hit )); then
+        printf '── lab: %s ──\n' "$target"
+        printf '\n[containers]\n'
+        docker ps -a --filter "label=${LAB_LABEL_LAB}=${target}" --filter "label=${LAB_LABEL_TOOL}" \
+            --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}\t{{.Image}}' 2>/dev/null || true
+        printf '\n[networks]\n'
+        docker network ls --filter "label=${LAB_LABEL_LAB}=${target}" --filter "label=${LAB_LABEL_TOOL}" \
+            --format 'table {{.Name}}\t{{.Driver}}\t{{.Scope}}' 2>/dev/null || true
+        return 0
+    fi
+
+    if (( container_hit )); then
+        docker ps -a --filter "name=^${cname}$" \
+            --format 'Name:    {{.Names}}
+Image:   {{.Image}}
+Status:  {{.Status}}
+Ports:   {{.Ports}}
+Created: {{.CreatedAt}}
+Command: {{.Command}}
+Lab:     {{.Label "lab-create.lab"}}
+Service: {{.Label "lab-create.svc"}}'
+        return 0
+    fi
+
+    die "no lab or container matches '$target' (tried container name '$cname' and label $LAB_LABEL_LAB=$target)"
+}
+
+# ─── Subcommand: export ────────────────────────────────────────────────────
+# Emit a compose-format YAML that recreates the lab defined in --config.
+# Phase 3 deliberately keeps no on-disk spec copy (label-first design), so
+# unlike Phase 4's `export`, this one requires --config FILE — the TOML is
+# the source of truth. Output goes to stdout so the caller can redirect.
+#
+# Coverage (v0.1, matches the fields lab-docker up actually honors):
+#   services — image, ports, environment, volumes, networks, command
+#   networks — per-topology [network.X] blocks, driver preserved
+# Not emitted: healthcheck, restart, depends_on, secrets (not in the Phase 3
+# TOML schema yet).  `from_chroot` / `from_tarball` / `build` image sources
+# don't round-trip — compose's `build:` key needs a Dockerfile context path,
+# which Phase 3's TOML doesn't carry; those services are emitted with the
+# image tag that `up` would synthesize (`lab-<lab>-<svc>-img`), plus a
+# commented hint so the reader knows it won't build standalone.
+cmd_export() {
+    [[ -n "${OPT_CONFIG:-}" ]] || die "usage: $LAB_PROG export --config topology.toml [--format compose]"
+    local fmt="${OPT_FORMAT:-compose}"
+    [[ "$fmt" == "compose" ]] || die "unknown export format: $fmt (phase 3 supports: compose)"
+    require_cmd jq
+
+    local cfg; cfg="$(toml_to_json "$OPT_CONFIG")"
+    local lab; lab="$(jq -r '.lab.name // ""' <<<"$cfg")"
+    [[ -n "$lab" ]] || die "config missing [lab].name"
+
+    # If a POS_ARG was supplied, require it to match [lab].name.  Catches the
+    # "exported the wrong lab" class of mistake cheaply.
+    local requested="${POS_ARGS[0]:-}"
+    if [[ -n "$requested" && "$requested" != "$lab" ]]; then
+        die "--config declares [lab].name='$lab' but positional arg is '$requested'"
+    fi
+
+    # No top-level `version:` key — Compose v2 treats it as obsolete and warns.
+    printf '# generated by %s export from %s\n' "$LAB_PROG" "$OPT_CONFIG"
+    printf '# lab: %s\n' "$lab"
+    printf 'services:\n'
+
+    # Pass 1: collect every non-path volume source so we can declare them at
+    # the top level (compose rejects services referring to undeclared named
+    # volumes).  Anything whose source starts with `/`, `./`, or `../` is a
+    # bind mount; everything else is a named volume.
+    local -A named_volumes=()
+
+    local svc_count; svc_count="$(jq -r '.service // [] | length' <<<"$cfg")"
+    local i svc sname simage engine tarball chroot ctx
+    for ((i=0; i<svc_count; i++)); do
+        svc="$(jq -c --argjson i "$i" '.service[$i]' <<<"$cfg")"
+        sname="$(spec_get "$svc" name)"
+        [[ -n "$sname" ]] || die "service[$i] missing name"
+
+        engine="$(spec_get "$svc" engine)"
+        if [[ -n "$engine" && "$engine" != "docker" ]]; then
+            log_debug "export: skipping service '$sname' (engine=$engine, not docker)"
+            continue
+        fi
+
+        simage="$(spec_get "$svc" image)"
+        tarball="$(spec_get "$svc" from_tarball)"
+        chroot="$(spec_get "$svc" from_chroot)"
+        ctx="$(spec_get "$svc" build)"
+
+        printf '  %s:\n' "$sname"
+        printf '    container_name: lab-%s-%s\n' "$lab" "$sname"
+        if [[ -n "$simage" ]]; then
+            printf '    image: %s\n' "$simage"
+        elif [[ -n "$tarball" ]]; then
+            printf '    image: lab-%s-%s-img   # source: from_tarball=%s (not rebuildable via compose)\n' "$lab" "$sname" "$tarball"
+        elif [[ -n "$chroot" ]]; then
+            printf '    image: lab-%s-%s-img   # source: from_chroot=%s (not rebuildable via compose)\n' "$lab" "$sname" "$chroot"
+        elif [[ -n "$ctx" ]]; then
+            printf '    build: %s\n' "$ctx"
+        else
+            printf '    image: scratch   # WARNING: service had no image source in the TOML\n'
+        fi
+        printf '    hostname: %s\n' "$sname"
+
+        local p first
+        first=1
+        while IFS= read -r p; do
+            [[ -z "$p" ]] && continue
+            if (( first )); then printf '    ports:\n'; first=0; fi
+            printf '      - "%s"\n' "$p"
+        done < <(jq -r '.ports[]?' <<<"$svc")
+
+        first=1
+        local kk vv
+        while IFS=$'\t' read -r kk vv; do
+            [[ -z "$kk" ]] && continue
+            if (( first )); then printf '    environment:\n'; first=0; fi
+            printf '      %s: "%s"\n' "$kk" "$vv"
+        done < <(jq -r '.environment // {} | to_entries[]? | "\(.key)\t\(.value)"' <<<"$svc")
+
+        first=1
+        local vol vol_src
+        while IFS= read -r vol; do
+            [[ -z "$vol" ]] && continue
+            if (( first )); then printf '    volumes:\n'; first=0; fi
+            printf '      - "%s"\n' "$vol"
+            vol_src="${vol%%:*}"
+            case "$vol_src" in
+                /*|./*|../*) : ;;                           # bind mount
+                *)           named_volumes["$vol_src"]=1 ;;  # named volume
+            esac
+        done < <(jq -r '.volumes[]?' <<<"$svc")
+
+        first=1
+        local svc_net
+        while IFS= read -r svc_net; do
+            [[ -z "$svc_net" ]] && continue
+            if (( first )); then printf '    networks:\n'; first=0; fi
+            printf '      - %s\n' "$svc_net"
+        done < <(jq -r '.networks[]?' <<<"$svc")
+
+        local cmdline; cmdline="$(jq -r '.command // empty' <<<"$svc")"
+        if [[ -n "$cmdline" ]]; then
+            printf '    command: %s\n' "$cmdline"
+        else
+            local cmdcount; cmdcount="$(jq -r '.cmd // [] | length' <<<"$svc")"
+            if (( cmdcount > 0 )); then
+                printf '    command:\n'
+                local k part
+                for ((k=0; k<cmdcount; k++)); do
+                    part="$(jq -r --argjson k "$k" '.cmd[$k]' <<<"$svc")"
+                    printf '      - "%s"\n' "$part"
+                done
+            fi
+        fi
+    done
+
+    # Networks — mirror the [network.X] keys as top-level compose networks.
+    local nets net
+    nets="$(jq -r '.network // {} | keys[]?' <<<"$cfg")"
+    if [[ -z "$nets" ]]; then
+        printf 'networks:\n  default:\n    driver: bridge\n'
+    else
+        printf 'networks:\n'
+        for net in $nets; do
+            local d; d="$(jq -r --arg n "$net" '.network[$n].driver // "bridge"' <<<"$cfg")"
+            printf '  %s:\n    driver: %s\n' "$net" "$d"
+        done
+    fi
+
+    # Declare every named volume that appeared in any service's volumes list.
+    if (( ${#named_volumes[@]} > 0 )); then
+        printf 'volumes:\n'
+        local vn
+        for vn in "${!named_volumes[@]}"; do
+            printf '  %s:\n' "$vn"
+        done
+    fi
+}
+
 # ─── CLI parsing ───────────────────────────────────────────────────────────
 usage() {
     cat <<EOF
@@ -699,8 +922,10 @@ USAGE
   $LAB_PROG down     --lab NAME | --config topology.toml
   $LAB_PROG exec     <name|lab/service> [-- cmd args...]
   $LAB_PROG logs     <name|lab/service> [--follow]
+  $LAB_PROG status   [<name|lab>]
   $LAB_PROG list     [--lab NAME]
   $LAB_PROG destroy  <name|lab/service> [--force]
+  $LAB_PROG export   --config topology.toml [--format compose]   # emit compose YAML to stdout
   $LAB_PROG version | help
 
 BUILD / RUN OPTIONS
@@ -721,8 +946,9 @@ BUILD / RUN OPTIONS
   --rm                                (run: --rm)
   --tty                               (run: -it)
   --follow                            (logs: -f)
-  --lab       NAME                    (list/down: scope to one lab)
-  --config    FILE                    (up/down: topology TOML)
+  --lab       NAME                    (list/down/status: scope to one lab)
+  --config    FILE                    (up/down/export: topology TOML)
+  --format    FMT                     (export: compose — the only format, also the default)
   --force                             (destroy)
 
 ENVIRONMENT
@@ -732,9 +958,11 @@ EXAMPLES
   $LAB_PROG run --name nginx1 --image nginx:alpine --ports 8080:80 --detach
   $LAB_PROG build --tag mychroot:latest --backend from-chroot --chroot /var/jails/busybox
   $LAB_PROG build --tag myimg:arm64 --backend buildx --context ./app --arch aarch64
-  $LAB_PROG up   --config examples/docker-3svc-topology.toml
-  $LAB_PROG list --lab demo
-  $LAB_PROG down --lab demo
+  $LAB_PROG up     --config examples/docker-3svc-topology.toml
+  $LAB_PROG list   --lab demo
+  $LAB_PROG status demo
+  $LAB_PROG export --config examples/docker-3svc-topology.toml --format compose > demo-compose.yml
+  $LAB_PROG down   --lab demo
 EOF
 }
 
@@ -751,6 +979,7 @@ parse_args() {
     OPT_FOLLOW=""
     OPT_LAB=""
     OPT_FORCE=""
+    OPT_FORMAT=""
 
     [[ $# -eq 0 ]] && { usage; exit 0; }
     SUBCMD="$1"; shift
@@ -779,6 +1008,7 @@ parse_args() {
             --tty|-t)       OPT_TTY=1; shift ;;
             --follow|-f)    OPT_FOLLOW=1; shift ;;
             --lab)          OPT_LAB="$2"; shift 2 ;;
+            --format)       OPT_FORMAT="$2"; shift 2 ;;
             --force)        OPT_FORCE=1; shift ;;
             -h|--help)      usage; exit 0 ;;
             -v|--version)   printf '%s %s\n' "$LAB_PROG" "$LAB_VERSION"; exit 0 ;;
@@ -797,8 +1027,10 @@ main() {
         down)    cmd_down    ;;
         exec)    cmd_exec    ;;
         logs)    cmd_logs    ;;
+        status)  cmd_status  ;;
         list)    cmd_list    ;;
         destroy) cmd_destroy ;;
+        export)  cmd_export  ;;
         help)    usage       ;;
         version) printf '%s %s\n' "$LAB_PROG" "$LAB_VERSION" ;;
         *)       usage; die "unknown subcommand: $SUBCMD" ;;

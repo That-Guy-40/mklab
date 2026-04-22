@@ -203,6 +203,46 @@ ld down --lab beta
 rm /tmp/lab-a.toml /tmp/lab-b.toml
 ```
 
+## 7b. Inspect and export (`status` / `export --format compose`)
+
+`status` is the "show me what's there" counterpart to `list`. Three call
+shapes, same dispatch rules as `lab-podman status`:
+
+```bash
+ld status                          # bare — daemon/host summary (docker info)
+ld status alpha                    # lab-scoped — containers + networks tagged lab=alpha
+ld status alpha/echo1              # single-container detail
+ld status echo1                    # short-name form (resolves to lab-echo1)
+```
+
+`export` emits a [Compose v2][compose] YAML reconstruction of a lab
+directly from its TOML — handy for handing a topology off to a
+compose-only environment, or for feeding `docker compose config`
+validation in CI. Phase 3 is stateless (label-first), so unlike
+Phase 4's `export`, `--config FILE` is required:
+
+```bash
+ld export --config /tmp/lab-a.toml                    # → compose YAML on stdout
+ld export --config /tmp/lab-a.toml --format compose \  # same, explicit --format
+          > /tmp/alpha-compose.yml
+docker compose -f /tmp/alpha-compose.yml config       # validates round-trip
+docker compose -f /tmp/alpha-compose.yml up -d        # hands it off to vanilla compose
+```
+
+Cross-phase hygiene: any `[[service]] engine = "podman"` block is
+skipped — the exported YAML contains only the docker-engine services,
+matching what `ld up` would actually start. Named volumes referenced
+by services (anything whose source is not an absolute or relative path)
+are declared at the top level automatically so the generated YAML
+round-trips without manual fixup.
+
+What doesn't round-trip: `from_chroot` / `from_tarball` image sources
+emit the synthesized image tag plus a `# source:` comment, but compose
+can't rebuild those images itself — you'd need `lab-docker build` (or
+the chroot export step) first. This is called out in the generated YAML.
+
+[compose]: https://docs.docker.com/reference/compose-file/
+
 ## 8. Run the automated suite
 
 ```bash
@@ -217,6 +257,7 @@ Expect (on a docker-equipped host):
 - `test-from-chroot-import.sh` — pass; skips if Phase 1 isn't usable
 - `test-buildx-multiarch.sh` — pass; skips without `qemu-user-static` binfmt
 - `test-topology-up-down.sh` — pass (~10 s); brings up the 3-svc topology and tears it down
+- `test-status-export.sh` — pass (~5 s); covers `status` (no-arg / lab / container) and `export --format compose`, validates the emitted YAML via `docker compose config` when available
 
 ## 9. Troubleshooting
 
