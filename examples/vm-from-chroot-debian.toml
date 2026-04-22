@@ -1,0 +1,61 @@
+# Cross-phase: Phase-1 chroot → bootable Phase-2 VM.
+#
+# lab-vm.sh from-chroot backend packages a Phase-1 chroot tree into a
+# bootable x86_64 BIOS qcow2 (MBR + extlinux + single ext4 partition).
+# The chroot must already contain a kernel and an initrd — lab-vm.sh
+# does NOT install those for you.
+#
+# Full workflow:
+#
+#   # 1) Build the chroot:
+#   sudo phase1-chroot/lab-chroot.sh create \
+#       --backend debootstrap --distro debian --suite bookworm \
+#       --arch x86_64 --target /var/chroots/vm-seed --variant minbase \
+#       --name vm-seed
+#
+#   # 2) Install a kernel + basic system + SSH inside the chroot:
+#   sudo phase1-chroot/lab-chroot.sh enter vm-seed -- /bin/bash -c '
+#       apt-get update
+#       apt-get install -y --no-install-recommends \
+#           linux-image-amd64 systemd-sysv udev openssh-server ifupdown isc-dhcp-client
+#       echo "root:lab" | chpasswd
+#       echo "auto lo" > /etc/network/interfaces
+#       echo "iface lo inet loopback" >> /etc/network/interfaces
+#       echo "auto enp0s3" >> /etc/network/interfaces
+#       echo "iface enp0s3 inet dhcp" >> /etc/network/interfaces
+#       systemctl enable ssh
+#   '
+#
+#   # 3) Build the bootable VM (runs as root — needs losetup, mkfs, extlinux):
+#   sudo phase2-qemu-vm/lab-vm.sh create --config examples/vm-from-chroot-debian.toml
+#
+#   # 4) Start it:
+#   sudo phase2-qemu-vm/lab-vm.sh start vm-from-chroot-demo
+#
+#   # 5) Console in (root/lab):
+#   sudo phase2-qemu-vm/lab-vm.sh console vm-from-chroot-demo
+#
+# Host-side prereqs (besides the usual QEMU/KVM):
+#   - syslinux-common (provides /usr/lib/syslinux/mbr/mbr.bin)
+#   - extlinux (provides the `extlinux` CLI)
+#   - parted, rsync, qemu-img
+#     On Debian/Ubuntu/Kali:
+#       sudo apt-get install -y syslinux extlinux parted rsync
+#
+# This backend is x86_64 BIOS only in v0.1.  For other arches (or UEFI),
+# use the kernel+initrd workaround — see phase2-qemu-vm/MANUAL_TESTING.md
+# §"chroot-to-VM without the from-chroot backend".
+
+[lab]
+name        = "vm-from-chroot-demo"
+description = "Phase 1 Debian chroot → bootable Phase 2 VM (BIOS/MBR/ext4)"
+tags        = ["cross-phase", "from-chroot"]
+
+[[vm]]
+name      = "vm-from-chroot-demo"
+backend   = "from-chroot"
+chroot    = "/var/chroots/vm-seed"
+arch      = "x86_64"
+memory    = "1G"
+cpus      = 2
+disk_size = "4G"

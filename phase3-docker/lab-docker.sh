@@ -202,14 +202,65 @@ backend_from_chroot() {
     local chroot_path="$1" image_tag="$2"
     [[ -d "$chroot_path" ]] || die "chroot not found: $chroot_path"
     require_cmd tar
+
+    # Readability preflight: chroots built via `sudo lab-chroot create`
+    # contain root-mode-600 files (/etc/shadow, /root/*, etc.) that an
+    # unprivileged tar can't read.  The stream would complete with a
+    # half-imported image and set -o pipefail would then trip, leaving
+    # a garbage image ghost in `docker images`.  Detect and redirect the
+    # user to the clean alternative: lab-chroot export-tarball +
+    # from_tarball.
+    local unreadable; unreadable="$(
+        find "$chroot_path" -xdev \
+            -not -path "${chroot_path}/proc/*" \
+            -not -path "${chroot_path}/sys/*" \
+            -not -path "${chroot_path}/dev/*" \
+            -not -readable -print -quit 2>/dev/null
+    )"
+    if [[ -n "$unreadable" ]]; then
+        die "chroot '$chroot_path' contains files unreadable by this user
+  (first offender: $unreadable).  This usually means the chroot was built
+  via 'sudo lab-chroot create', leaving mode-600 root-owned files inside.
+
+  Rootless workaround (recommended):
+    sudo phase1-chroot/lab-chroot.sh export-tarball <name> --output /tmp/<name>.tar.gz
+  Then reference that file via --backend from-tarball / --tarball, or in
+  a topology TOML via the service's from_tarball field.
+
+  Or, for a quick-and-dirty manual prep:
+    sudo tar -C $chroot_path -cpzf /tmp/chroot.tar.gz \\
+        --exclude='./proc/*' --exclude='./sys/*' --exclude='./dev/*' \\
+        --exclude='./run/*'  --exclude='./tmp/*' .
+    sudo chown \$(id -u):\$(id -g) /tmp/chroot.tar.gz"
+    fi
+
     log_info "tar | docker import → $image_tag  (from $chroot_path)"
-    # Exclude pseudo-fs mountpoints and any lab-chroot bookkeeping.
-    tar -C "$chroot_path" \
-        --exclude='./proc/*' --exclude='./sys/*' --exclude='./dev/*' \
-        --exclude='./run/*'  --exclude='./tmp/*' \
-        --exclude='./.lab-chroot-mounts' \
-        --numeric-owner -c . \
-      | docker import - "$image_tag" >/dev/null
+    if ! tar -C "$chroot_path" \
+            --exclude='./proc/*' --exclude='./sys/*' --exclude='./dev/*' \
+            --exclude='./run/*'  --exclude='./tmp/*' \
+            --exclude='./.lab-chroot-mounts' \
+            --numeric-owner -c . \
+          | docker import - "$image_tag" >/dev/null; then
+        docker rmi "$image_tag" >/dev/null 2>&1 || true
+        die "from-chroot import failed; partial image removed."
+    fi
+    log_info "imported: $image_tag"
+}
+
+# ─── Backend: from-tarball import ──────────────────────────────────────────
+# Rootless-clean alternative to from-chroot: accept a self-contained,
+# user-readable tarball (e.g. produced by `lab-chroot export-tarball`)
+# and `docker import` it directly.  Bypasses the tar-from-a-directory
+# step so root-owned chroots can be imported without needing sudo.
+backend_from_tarball() {
+    # backend_from_tarball TARBALL_PATH IMAGE_TAG
+    local tarball="$1" image_tag="$2"
+    [[ -r "$tarball" ]] || die "tarball not readable: $tarball"
+    log_info "docker import $tarball → $image_tag"
+    if ! docker import "$tarball" "$image_tag" >/dev/null; then
+        docker rmi "$image_tag" >/dev/null 2>&1 || true
+        die "from-tarball import failed; partial image removed."
+    fi
     log_info "imported: $image_tag"
 }
 
@@ -244,15 +295,18 @@ spec_get() { jq -r --arg k "$2" '.[$k] // ""' <<<"$1"; }
 cmd_build() {
     local backend="${OPT_BACKEND:-build}"
     local tag="${OPT_TAG:-}"
-    [[ -n "$tag" ]] || die "usage: $LAB_PROG build --tag NAME [--backend buildx|from-chroot] ..."
+    [[ -n "$tag" ]] || die "usage: $LAB_PROG build --tag NAME [--backend buildx|from-chroot|from-tarball] ..."
     local arch="${OPT_ARCH:-$(detect_host_arch)}"
     is_known_arch "$arch" || die "unknown arch: $arch"
     case "$backend" in
-        buildx|build|from-chroot) ;;
+        buildx|build|from-chroot|from-tarball) ;;
         *) die "unknown build backend: $backend" ;;
     esac
     if [[ "$backend" == "from-chroot" ]]; then
         [[ -n "${OPT_CHROOT:-}" ]] || die "--backend from-chroot requires --chroot PATH"
+    fi
+    if [[ "$backend" == "from-tarball" ]]; then
+        [[ -n "${OPT_TARBALL:-}" ]] || die "--backend from-tarball requires --tarball FILE"
     fi
 
     require_docker
@@ -265,6 +319,9 @@ cmd_build() {
         from-chroot)
             backend_from_chroot "$OPT_CHROOT" "$tag"
             ;;
+        from-tarball)
+            backend_from_tarball "$OPT_TARBALL" "$tag"
+            ;;
     esac
 }
 
@@ -273,15 +330,18 @@ cmd_run() {
     local image="${OPT_IMAGE:-}"
     local name="${OPT_NAME:-}"
     [[ -n "$name" ]] || die "usage: $LAB_PROG run --name N --image IMG [opts...]"
-    if [[ -z "$image" && -z "${OPT_CHROOT:-}" && -z "${OPT_CONTEXT:-}" ]]; then
-        die "need one of: --image IMG | --chroot PATH | --context DIR"
+    if [[ -z "$image" && -z "${OPT_CHROOT:-}" && -z "${OPT_TARBALL:-}" && -z "${OPT_CONTEXT:-}" ]]; then
+        die "need one of: --image IMG | --chroot PATH | --tarball FILE | --context DIR"
     fi
 
     require_docker
 
     # Optional implicit build/import paths.
     if [[ -z "$image" ]]; then
-        if [[ -n "${OPT_CHROOT:-}" ]]; then
+        if [[ -n "${OPT_TARBALL:-}" ]]; then
+            image="lab-from-tarball-${name}"
+            backend_from_tarball "$OPT_TARBALL" "$image"
+        elif [[ -n "${OPT_CHROOT:-}" ]]; then
             image="lab-from-chroot-${name}"
             backend_from_chroot "$OPT_CHROOT" "$image"
         elif [[ -n "${OPT_CONTEXT:-}" ]]; then
@@ -411,18 +471,25 @@ cmd_up() {
             continue
         fi
 
-        # Image source: explicit image | from_chroot | build context
+        # Image source: explicit image | from_tarball | from_chroot | build
         if [[ -z "$simage" ]]; then
-            local chroot; chroot="$(spec_get "$svc" from_chroot)"
-            local ctx;    ctx="$(spec_get "$svc" build)"
-            if [[ -n "$chroot" ]]; then
+            local tarball; tarball="$(spec_get "$svc" from_tarball)"
+            local chroot;  chroot="$(spec_get "$svc" from_chroot)"
+            local ctx;     ctx="$(spec_get "$svc" build)"
+            if [[ -n "$tarball" && -n "$chroot" ]]; then
+                die "service '$sname': from_tarball and from_chroot are mutually exclusive — pick one"
+            fi
+            if [[ -n "$tarball" ]]; then
+                simage="lab-${lab_name}-${sname}-img"
+                backend_from_tarball "$tarball" "$simage"
+            elif [[ -n "$chroot" ]]; then
                 simage="lab-${lab_name}-${sname}-img"
                 backend_from_chroot "$chroot" "$simage"
             elif [[ -n "$ctx" ]]; then
                 simage="lab-${lab_name}-${sname}-img"
                 backend_buildx "$ctx" "$simage" "${OPT_ARCH:-$(detect_host_arch)}"
             else
-                die "service '$sname': specify one of image | from_chroot | build"
+                die "service '$sname': specify one of image | from_tarball | from_chroot | build"
             fi
         fi
 
@@ -638,9 +705,10 @@ USAGE
 
 BUILD / RUN OPTIONS
   --tag       IMAGE_TAG               (build target)
-  --backend   {buildx|from-chroot}    (default for build: buildx)
+  --backend   {buildx|from-chroot|from-tarball}    (default for build: buildx)
   --context   PATH                    (buildx: directory containing Dockerfile)
-  --chroot    PATH                    (from-chroot: a Phase-1 chroot tree)
+  --chroot    PATH                    (from-chroot: a Phase-1 chroot tree; must be user-readable)
+  --tarball   PATH                    (from-tarball: a .tar / .tar.gz produced by lab-chroot export-tarball)
   --arch      {x86_64|aarch64|armv7l|ppc64le|riscv64|s390x}   (default: host arch)
   --image     IMAGE_TAG               (run: pull/use this image)
   --name      CONTAINER_NAME          (run: short name; container becomes lab-<name>)
@@ -675,7 +743,7 @@ EXTRA_ARGS=()
 
 parse_args() {
     OPT_CONFIG=""
-    OPT_TAG="" OPT_BACKEND="" OPT_CONTEXT="" OPT_CHROOT=""
+    OPT_TAG="" OPT_BACKEND="" OPT_CONTEXT="" OPT_CHROOT="" OPT_TARBALL=""
     OPT_NAME="" OPT_IMAGE="" OPT_ARCH=""
     OPT_NETWORK="" OPT_HOSTNAME=""
     OPT_PORTS="" OPT_ENV="" OPT_VOLUMES=""
@@ -697,6 +765,7 @@ parse_args() {
             --backend)      OPT_BACKEND="$2"; shift 2 ;;
             --context)      OPT_CONTEXT="$2"; shift 2 ;;
             --chroot)       OPT_CHROOT="$2"; shift 2 ;;
+            --tarball)      OPT_TARBALL="$2"; shift 2 ;;
             --name)         OPT_NAME="$2"; shift 2 ;;
             --image)        OPT_IMAGE="$2"; shift 2 ;;
             --arch)         OPT_ARCH="$2"; shift 2 ;;

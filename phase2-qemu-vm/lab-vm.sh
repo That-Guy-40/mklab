@@ -1273,13 +1273,16 @@ spec_from_cli() {
         --arg ssh      "${OPT_SSH_ENABLE:-false}" \
         --arg persist  "${OPT_PERSIST:-}" \
         --arg init_flavour "${OPT_INIT_FLAVOUR:-busybox}" \
-        --arg lab      "${OPT_LAB:-}" \
+        --arg lab       "${OPT_LAB:-}" \
+        --arg chroot    "${OPT_CHROOT:-}" \
+        --arg disk_size "${OPT_DISK_SIZE:-}" \
         '{name:$name, backend:$backend, distro:$distro, suite:$suite, arch:$arch,
           memory:$memory, cpus:($cpus|tonumber), microvm:($microvm=="true"),
           image:$image, kernel:$kernel, initrd:$initrd, append:$append,
           ssh_port:($ssh_port|tonumber), pubkey:$pubkey,
           network:($network=="true"), ssh:($ssh=="true"), persist:$persist,
-          init_flavour:$init_flavour, lab:$lab}'
+          init_flavour:$init_flavour, lab:$lab,
+          chroot:$chroot, disk_size:$disk_size}'
 }
 
 specs_from_config() {
@@ -1310,12 +1313,183 @@ specs_from_config() {
             ssh:     (.ssh     // false),
             persist: (.persist // ""),
             init_flavour: (.init_flavour // "busybox"),
+            chroot:    (.chroot    // ""),
+            disk_size: (.disk_size // ""),
             lab:     ( if $cli_lab != "" then $cli_lab
                        else ($root.lab.name // "") end ) }
     '
 }
 
 spec_get() { jq -r --arg k "$2" '.[$k] // ""' <<<"$1"; }
+
+# ─── Backend: from-chroot (bootable qcow2 from a Phase-1 chroot) ───────────
+# Turn an arbitrary chroot tree into a bootable VM disk.  Approach:
+#   1. Allocate a raw image (qemu-img create -f raw)
+#   2. MBR partition table, single bootable ext4 primary partition
+#   3. losetup -P to expose the partition as a loop device
+#   4. mkfs.ext4 + mount + rsync the chroot into it
+#   5. Write /etc/fstab with the root UUID
+#   6. Install extlinux to /boot/extlinux/ + write extlinux.conf pointing
+#      at the kernel/initrd already present in the chroot
+#   7. dd the syslinux MBR code into sector 0
+#   8. umount + detach loop + qemu-img convert raw → qcow2
+#
+# Requires: root (loop+mkfs+extlinux), plus qemu-img, parted, rsync,
+# mkfs.ext4, losetup, extlinux, blkid, dd, syslinux MBR binary.
+# v0.1 is x86_64 BIOS only; UEFI/aarch64 is a follow-up.
+backend_vm_from_chroot() {
+    # backend_vm_from_chroot CHROOT_PATH OUT_QCOW2 [SIZE]
+    local chroot_path="$1" out_qcow2="$2" size="${3:-4G}"
+
+    [[ $EUID -eq 0 ]] \
+        || die "from-chroot backend requires root (loop mounts, mkfs, extlinux install).  Re-run under sudo."
+    require_cmd qemu-img parted mkfs.ext4 losetup extlinux rsync blkid dd
+
+    # Locate the kernel + initrd the chroot already has installed.  The
+    # user is expected to have done this in Phase 1 (e.g.,
+    # `sudo lab-chroot enter foo -- apt-get install -y linux-image-amd64`).
+    local kernel initrd
+    kernel="$(find "$chroot_path/boot" -maxdepth 1 -name 'vmlinuz-*' \
+        -not -name '*.old' -not -name '*.bak' 2>/dev/null | sort -V | tail -1)"
+    initrd="$(find "$chroot_path/boot" -maxdepth 1 \
+        \( -name 'initrd.img-*' -o -name 'initramfs-*' \) 2>/dev/null \
+        | sort -V | tail -1)"
+    [[ -n "$kernel" ]] \
+        || die "no /boot/vmlinuz-* in chroot.  Install a kernel package first:
+  sudo lab-chroot.sh enter <name> -- apt-get install -y linux-image-amd64   # Debian/Ubuntu/Kali
+  sudo lab-chroot.sh enter <name> -- dnf install -y kernel                  # Rocky"
+    [[ -n "$initrd" ]] \
+        || die "no /boot/initrd.img-* or initramfs-* in chroot; the kernel package should have installed one.
+  Try inside the chroot:  update-initramfs -u -k all  (Debian/Ubuntu/Kali)
+                      or:  dracut -f --regenerate-all  (Rocky/Fedora)"
+
+    # Locate the syslinux MBR blob (path differs across distros).
+    local mbr_bin=""
+    local p
+    for p in \
+        /usr/lib/syslinux/mbr/mbr.bin \
+        /usr/share/syslinux/mbr.bin \
+        /usr/lib/syslinux/mbr.bin \
+        /usr/lib/extlinux/mbr.bin; do
+        [[ -r "$p" ]] && { mbr_bin="$p"; break; }
+    done
+    [[ -n "$mbr_bin" ]] \
+        || die "syslinux MBR binary (mbr.bin) not found.  Install:
+  $(install_hint syslinux-common)  # Debian/Ubuntu/Kali
+  $(install_hint syslinux)         # Rocky/Fedora"
+
+    log_info "building bootable qcow2 from $chroot_path  (size=$size)"
+
+    local raw="${out_qcow2}.raw.partial"
+    qemu-img create -f raw "$raw" "$size" >/dev/null \
+        || die "qemu-img create failed"
+
+    # Cleanup-on-failure: the trap captures whatever's set below and
+    # releases it.  Using explicit paths in the trap string because
+    # function-scoped traps fire at *script* exit with locals already
+    # gone.
+    local loopdev="" mp=""
+    local _raw="$raw" _out="$out_qcow2"
+    # shellcheck disable=SC2064
+    trap "
+        [[ -n '${mp}' && -d '${mp}' ]] && umount '${mp}' 2>/dev/null
+        [[ -n '${mp}' && -d '${mp}' ]] && rmdir '${mp}' 2>/dev/null
+        [[ -n '${loopdev}' ]] && losetup -d '${loopdev}' 2>/dev/null
+        rm -f '${_raw}' '${_out}' 2>/dev/null
+    " RETURN
+
+    # Partition: MBR, one bootable ext4 primary from 1 MiB to end.
+    log_info "partitioning (MBR + ext4)"
+    parted -s "$raw" \
+        mklabel msdos \
+        mkpart primary ext4 1MiB 100% \
+        set 1 boot on >/dev/null
+
+    # losetup -P exposes partitions as ${loopdev}p1 etc.
+    loopdev="$(losetup -f --show -P "$raw")" \
+        || die "losetup failed"
+    local part="${loopdev}p1"
+    # Sometimes udev needs a blink to materialise partitions; retry briefly.
+    local i
+    for i in 1 2 3 4 5; do
+        [[ -b "$part" ]] && break
+        sleep 0.2
+    done
+    [[ -b "$part" ]] \
+        || die "loop partition $part never appeared; partx/udev issue"
+
+    log_info "mkfs.ext4 on $part"
+    mkfs.ext4 -q -L root "$part" \
+        || die "mkfs.ext4 failed"
+
+    local uuid; uuid="$(blkid -s UUID -o value "$part")"
+    [[ -n "$uuid" ]] || die "blkid couldn't read UUID of $part"
+    log_debug "root UUID: $uuid"
+
+    mp="$(mktemp -d)"
+    mount "$part" "$mp" \
+        || die "mount $part → $mp failed"
+
+    log_info "rsync chroot → root partition"
+    rsync -aAXH \
+        --exclude='/proc/*' --exclude='/sys/*' --exclude='/dev/*' \
+        --exclude='/run/*'  --exclude='/tmp/*' --exclude='/.lab-chroot-mounts' \
+        "$chroot_path/" "$mp/" \
+        || die "rsync failed"
+
+    # Recreate pseudo-fs mountpoints the kernel needs on first boot.
+    install -d -m 0555 "$mp/proc" "$mp/sys"
+    install -d -m 0755 "$mp/dev"  "$mp/run"
+    install -d -m 1777 "$mp/tmp"
+
+    # /etc/fstab — single ext4 root mounted by UUID.
+    cat > "$mp/etc/fstab" <<EOF
+# /etc/fstab — written by lab-vm.sh from-chroot backend
+UUID=$uuid / ext4 errors=remount-ro 0 1
+EOF
+
+    # extlinux bootloader in /boot/extlinux/.
+    log_info "installing extlinux"
+    install -d -m 0755 "$mp/boot/extlinux"
+    extlinux --install "$mp/boot/extlinux" >/dev/null \
+        || die "extlinux --install failed"
+
+    local kbase ibase
+    kbase="$(basename -- "$kernel")"
+    ibase="$(basename -- "$initrd")"
+
+    cat > "$mp/boot/extlinux/extlinux.conf" <<EOF
+# Generated by lab-vm.sh from-chroot backend
+DEFAULT linux
+TIMEOUT 10
+PROMPT 0
+
+LABEL linux
+    LINUX /boot/$kbase
+    INITRD /boot/$ibase
+    APPEND root=UUID=$uuid ro console=tty0 console=ttyS0,115200
+EOF
+
+    # Write the MBR bootstrap code.
+    dd if="$mbr_bin" of="$raw" bs=440 count=1 conv=notrunc status=none \
+        || die "dd MBR failed"
+
+    # Clean unmount + detach.
+    sync
+    umount "$mp" || die "umount $mp failed"
+    rmdir "$mp"; mp=""
+    losetup -d "$loopdev" || true
+    loopdev=""
+
+    # Raw → qcow2.
+    log_info "converting raw → qcow2: $out_qcow2"
+    qemu-img convert -f raw -O qcow2 "$raw" "$out_qcow2" \
+        || die "qemu-img convert failed"
+    rm -f "$raw"
+
+    trap - RETURN
+    log_info "bootable qcow2 ready: $out_qcow2"
+}
 
 # ─── Validation ─────────────────────────────────────────────────────────────
 validate_spec() {
@@ -1359,7 +1533,17 @@ validate_spec() {
             fi
             ;;
         from-chroot)
-            die "spec ($name) backend=from-chroot is not yet implemented in v0.1.  Workaround: build a chroot in Phase 1, install a kernel inside it, then use backend=kernel+initrd pointing at the extracted vmlinuz/initrd."
+            local chroot_path; chroot_path="$(spec_get "$spec" chroot)"
+            [[ -n "$chroot_path" ]] \
+                || die "spec ($name) backend=from-chroot requires a chroot field (path to the Phase-1 tree)"
+            [[ -d "$chroot_path" ]] \
+                || die "spec ($name) chroot not a directory: $chroot_path"
+            # v0.1 limitation: x86_64 BIOS only.  aarch64 would need a
+            # different bootloader story (GRUB/efibootmgr) — out of scope.
+            [[ "$arch" == "x86_64" ]] \
+                || die "spec ($name) backend=from-chroot is x86_64-only in v0.1 (got arch=$arch).
+  See PLAN.md Phase 2 and MANUAL_TESTING §X for the manual kernel+initrd
+  workaround that works on any arch."
             ;;
         *) die "spec ($name) unknown backend: $backend" ;;
     esac
@@ -1652,6 +1836,19 @@ create_one() {
                 log_info "generating cloud-init seed iso"
                 make_seed_iso "$name" "$seed" "$pubkey" "$distro"
             fi
+            ;;
+        from-chroot)
+            require_cmd qemu-img
+            local chroot_path; chroot_path="$(spec_get "$spec" chroot)"
+            local disk_size;   disk_size="$(spec_get "$spec" disk_size)"
+            [[ -z "$disk_size" ]] && disk_size="4G"
+            # Produce the bootable qcow2 directly at the VM's disk path.
+            # No overlay: the disk is self-contained; users who want
+            # snapshots can `qemu-img create -b` on top later.
+            backend_vm_from_chroot "$chroot_path" "$disk" "$disk_size"
+            # No cloud-init seed — the chroot's existing root password /
+            # SSH setup is whatever the user configured in Phase 1.
+            ssh_user="root"
             ;;
         kernel+initrd)
             # Alpine microvm auto-build: if both kernel and initrd are empty
@@ -1964,6 +2161,9 @@ USAGE
 CREATE OPTIONS
   --name      <vm-name>                  (required)
   --backend   {disk-image|kernel+initrd|from-chroot}   (default: disk-image)
+                                         from-chroot: turns a Phase-1 chroot tree (with a
+                                         kernel installed inside) into a bootable qcow2.
+                                         x86_64 BIOS only in v0.1.  Requires root.
   --distro    {debian|ubuntu|rocky|alpine|kali}        (disk-image)
   --suite     <release>                  e.g. bookworm | jammy | 9 | 3.19 | kali-rolling
   --arch      {x86_64|aarch64|armv7l|ppc64le|riscv64|s390x}  (default: host arch)
@@ -1974,6 +2174,8 @@ CREATE OPTIONS
   --kernel    /path/to/vmlinuz           (kernel+initrd backend)
   --initrd    /path/to/initrd            (kernel+initrd backend)
   --append    "<cmdline>"                (kernel+initrd backend)
+  --chroot    /path/to/phase1-tree       (from-chroot backend)
+  --disk-size SIZE                       (from-chroot backend; default 4G)
   --ssh-port  <port>                     (default: auto-allocate from 2222)
   --pubkey    /path/to/id_rsa.pub        (default: invoking user's ~/.ssh/*.pub)
   --config    /path/to/vm.toml
@@ -2000,6 +2202,7 @@ parse_args() {
     OPT_IMAGE="" OPT_KERNEL="" OPT_INITRD="" OPT_APPEND=""
     OPT_SSH_PORT="" OPT_PUBKEY="" OPT_FORCE="" OPT_KEEP_DISK=""
     OPT_LAB=""
+    OPT_CHROOT="" OPT_DISK_SIZE=""
 
     [[ $# -eq 0 ]] && { usage; exit 0; }
     SUBCMD="$1"; shift
@@ -2029,6 +2232,8 @@ parse_args() {
             --force|-f)     OPT_FORCE=1; shift ;;
             --keep-disk)    OPT_KEEP_DISK=1; shift ;;
             --lab)          OPT_LAB="$2"; shift 2 ;;
+            --chroot)       OPT_CHROOT="$2"; shift 2 ;;
+            --disk-size)    OPT_DISK_SIZE="$2"; shift 2 ;;
             -h|--help)      usage; exit 0 ;;
             -v|--version)   printf '%s %s\n' "$LAB_PROG" "$LAB_VERSION"; exit 0 ;;
             -*)             die "unknown option: $1 (try --help)" ;;

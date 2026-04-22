@@ -264,6 +264,130 @@ lv destroy probe --force --keep-disk
 ls ~/.local/state/lab-create/orphaned-disks/   # → probe-<epoch>.qcow2
 ```
 
+## 7b. Cross-phase: chroot → VM
+
+Phase 1 builds a chroot tree; Phase 2 can boot it as a VM. Two paths,
+pick based on what you care about.
+
+### 7b.1 Automated: `backend = "from-chroot"` (x86_64 BIOS, root required)
+
+Turns a chroot into a self-contained bootable qcow2 via MBR + extlinux
++ ext4. The chroot must already have a kernel + initrd installed — we
+don't do that for you.
+
+**Host prereqs:**
+
+```bash
+sudo apt-get install -y syslinux extlinux parted rsync   # Debian/Ubuntu/Kali
+# or:
+sudo dnf install -y syslinux extlinux parted rsync       # Rocky/Fedora
+```
+
+**Full walk-through** (Debian bookworm):
+
+```bash
+# 1) Build a chroot (network-bound, 1–3 min):
+sudo phase1-chroot/lab-chroot.sh create \
+    --backend debootstrap --distro debian --suite bookworm \
+    --arch x86_64 --target /var/chroots/vm-seed --variant minbase \
+    --name vm-seed
+
+# 2) Install a kernel + basic system + SSH inside the chroot:
+sudo phase1-chroot/lab-chroot.sh enter vm-seed -- /bin/bash -c '
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        linux-image-amd64 systemd-sysv udev openssh-server \
+        ifupdown isc-dhcp-client
+    echo "root:lab" | chpasswd
+    {
+        echo "auto lo"; echo "iface lo inet loopback"
+        echo "auto enp0s3"; echo "iface enp0s3 inet dhcp"
+    } > /etc/network/interfaces
+    systemctl enable ssh
+'
+
+# 3) Build the bootable VM:
+sudo phase2-qemu-vm/lab-vm.sh create --config examples/vm-from-chroot-debian.toml
+
+# 4) Start + console in (root/lab):
+sudo phase2-qemu-vm/lab-vm.sh start   vm-from-chroot-demo
+sudo phase2-qemu-vm/lab-vm.sh console vm-from-chroot-demo
+# Ctrl-] to detach.
+
+# 5) (Optional) SSH, once you've set up pubkey auth inside:
+ssh -p <port-from-list> root@127.0.0.1
+```
+
+**What the backend does**, in one sentence: `qemu-img create raw`
+→ `parted` MBR + bootable ext4 partition → `losetup -P` → `mkfs.ext4`
+→ `rsync` the chroot in → write `/etc/fstab` + extlinux config →
+`dd` the syslinux MBR → `qemu-img convert -O qcow2`.
+
+**Troubleshooting:**
+
+| Symptom | Fix |
+|---|---|
+| `no /boot/vmlinuz-* in chroot` | Step 2 wasn't run — install a kernel package inside the chroot |
+| `no /boot/initrd.img-* or initramfs-*` | `sudo lc enter vm-seed -- update-initramfs -u -k all` |
+| `syslinux MBR binary (mbr.bin) not found` | `sudo apt-get install syslinux-common` |
+| VM boots but no console output | `console=ttyS0,115200` is already in extlinux.conf; if you changed kernel cmdline, keep it |
+| VM kernel panic "unable to mount root" | Wrong root UUID — rebuild VM; the backend sets root=UUID=... from blkid |
+
+**Limitations in v0.1:**
+
+- x86_64 only (syslinux/extlinux is BIOS — UEFI+aarch64 is future work).
+- Single ext4 partition, no swap, no LVM.
+- No cloud-init: set passwords / SSH keys inside the chroot (step 2) before `lab-vm create`.
+- Overlay qcow2 snapshots aren't automatic; `qemu-img create -b ...` manually if you want them.
+
+### 7b.2 Manual workaround: kernel + initrd extraction (any arch)
+
+If you need aarch64, UEFI, or just want to stay kernel-direct, skip the
+`from-chroot` backend and use `backend = "kernel+initrd"` with vmlinuz
+and initrd extracted from the chroot.
+
+```bash
+# After step 2 above (kernel installed in chroot), extract:
+sudo cp /var/chroots/vm-seed/boot/vmlinuz-* /tmp/vmlinuz-vmseed
+sudo cp /var/chroots/vm-seed/boot/initrd.img-* /tmp/initrd-vmseed
+sudo chown $(id -u):$(id -g) /tmp/vmlinuz-vmseed /tmp/initrd-vmseed
+
+# Option 1: host the chroot as a 9p / virtfs root.  Advanced; not covered here.
+#
+# Option 2: export the chroot as a disk image yourself, then use kernel+initrd
+# pointing at the extracted kernel with the disk attached via --image.
+#
+#   # Produce a raw ext4 image as big as the chroot + 500 MB:
+#   sudo bash -c '
+#       SIZE=$(du -sb /var/chroots/vm-seed | awk "{print \$1}")
+#       SIZE=$((SIZE + 500*1024*1024))
+#       truncate -s "$SIZE" /tmp/vmseed.raw
+#       mkfs.ext4 -q /tmp/vmseed.raw
+#       MNT=$(mktemp -d)
+#       mount /tmp/vmseed.raw $MNT
+#       rsync -aAX --exclude=/proc/* --exclude=/sys/* --exclude=/dev/* \
+#           /var/chroots/vm-seed/ $MNT/
+#       umount $MNT; rmdir $MNT
+#       chown $(id -u):$(id -g) /tmp/vmseed.raw
+#   '
+#   qemu-img convert -O qcow2 /tmp/vmseed.raw /tmp/vmseed.qcow2
+#
+#   # Now boot via kernel+initrd with the qcow2 attached:
+#   phase2-qemu-vm/lab-vm.sh create \
+#       --name vmseed-kerneldirect --backend kernel+initrd \
+#       --arch x86_64 --memory 1G \
+#       --kernel /tmp/vmlinuz-vmseed \
+#       --initrd /tmp/initrd-vmseed \
+#       --image  /tmp/vmseed.qcow2 \
+#       --append "root=/dev/vda ro console=ttyS0,115200"
+#   phase2-qemu-vm/lab-vm.sh start vmseed-kerneldirect
+```
+
+This is more finicky than the `from-chroot` backend, but it works
+anywhere QEMU does (no bootloader dependency, no BIOS assumption) and
+is the intended path for aarch64 / foreign-arch chroot → VM exercises
+until the automated backend grows UEFI support.
+
 ## 8. State and image cache inspection
 
 ```bash
