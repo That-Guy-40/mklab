@@ -1,0 +1,30 @@
+# Quadlet-managed service — lab-podman writes a .container unit file to
+# ~/.config/containers/systemd/, reloads systemd-user, and `systemctl
+# --user start`s it.  Units survive reboots (with `loginctl enable-linger`)
+# and are auto-restarted by systemd on failure.
+#
+# Up:      lab-podman.sh up       --config examples/podman-quadlet-service.toml
+# Gen:     lab-podman.sh generate --config examples/podman-quadlet-service.toml
+#          (generate without starting — inspect the units first)
+# Status:  systemctl --user status lab-persistent-web.service
+# Logs:    lab-podman.sh logs persistent-web/web   # auto-routes to journalctl
+# Down:    lab-podman.sh down --lab persistent-web
+#
+# Requires podman >= 4.4 (quadlet support).  Check with:  podman version
+# Linger recommended:  loginctl enable-linger $(whoami)
+#
+# Exit-criterion #2 from PLAN.md Phase 4: "Generate + enable + run a
+# quadlet unit from TOML; verify it survives a logout."
+
+[lab]
+name        = "persistent-web"
+description = "Quadlet-managed nginx, survives reboot with linger"
+tags        = ["quadlet", "systemd"]
+
+[[service]]
+name    = "web"
+image   = "docker.io/library/nginx:alpine"
+manager = "quadlet"
+ports   = ["8081:80"]
+healthcheck = { cmd = "curl -f http://localhost/ || exit 1", interval = "30s" }
+autoupdate  = "registry"

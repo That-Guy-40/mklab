@@ -1,0 +1,22 @@
+# Single service in plain mode — simplest possible Phase 4 topology.
+# Brings up one rootless container and exposes a port.
+#
+# Up:   lab-podman.sh up   --config examples/podman-plain-single.toml
+# Ls:   lab-podman.sh list --lab hello-nginx
+# Down: lab-podman.sh down --lab hello-nginx
+#
+# Visit http://127.0.0.1:18080 once it's running.
+#
+# Note: image is fully qualified (docker.io/library/...) — rootless podman
+# will otherwise prompt interactively via short-name resolution.
+
+[lab]
+name        = "hello-nginx"
+description = "Smoke-test single-service lab"
+tags        = ["smoke", "demo"]
+
+[[service]]
+name    = "web"
+image   = "docker.io/library/nginx:alpine"
+manager = "plain"
+ports   = ["18080:80"]

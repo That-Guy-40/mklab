@@ -1,0 +1,39 @@
+# Three services sharing a pod — demonstrates the 'pod' manager.
+# All three containers share the pod's network + IPC + PID namespace,
+# so they see each other on localhost and ports are published at the
+# pod level (not per-service).
+#
+# Up:   lab-podman.sh up   --config examples/podman-pod-3svc.toml
+# Exec: lab-podman.sh exec tutorial-pod/web -- /bin/sh
+# Down: lab-podman.sh down --lab tutorial-pod
+#
+# Exit-criterion #1 from PLAN.md Phase 4: "Bring up a 3-service pod
+# rootless, tear down cleanly."
+
+[lab]
+name        = "tutorial-pod"
+description = "Three services sharing a pod namespace"
+tags        = ["tutorial", "pod"]
+
+[[pod]]
+name    = "frontend"
+publish = ["8080:80"]
+
+[[service]]
+name    = "web"
+image   = "docker.io/library/nginx:alpine"
+manager = "pod"
+pod     = "frontend"
+
+[[service]]
+name    = "cache"
+image   = "docker.io/library/redis:alpine"
+manager = "pod"
+pod     = "frontend"
+
+[[service]]
+name    = "ping"
+image   = "docker.io/library/alpine:latest"
+manager = "pod"
+pod     = "frontend"
+command = "sh -c 'while sleep 30; do wget -q -O- http://localhost/ >/dev/null && echo web-ok || echo web-bad; done'"

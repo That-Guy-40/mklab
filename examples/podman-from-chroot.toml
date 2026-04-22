@@ -1,0 +1,34 @@
+# Use a Phase 1 chroot as a rootless podman image.
+#
+# Prereq: build the chroot via Phase 1 first:
+#    sudo phase1-chroot/lab-chroot.sh create \
+#        --backend debootstrap --distro kali --suite kali-rolling \
+#        --arch x86_64 --target /var/chroots/kali-amd64 --variant minbase
+#
+# Then:
+#    lab-podman.sh up --config examples/podman-from-chroot.toml
+#    lab-podman.sh exec chroot-kali/payload-builder -- uname -a
+#    lab-podman.sh down --lab chroot-kali
+#
+# userns field controls how the chroot's UID ownership is mapped.
+# See PLAN.md Phase 4 "Rootless plumbing" for the four modes:
+#   keep-id  : UID N inside == UID N on host (most transparent)
+#   auto-map : force 0:0 ownership in tarball → root-in-namespace idiomatic
+#   host     : --userns=host (requires --allow-root)
+#   raw      : verbatim --uidmap/--gidmap string, comma-separated
+#
+# Exit-criterion #3 from PLAN.md Phase 4: "Cross-phase: lc create a Kali
+# chroot in Phase 1; lab-podman build --from-chroot <name> → runnable
+# rootless image."
+
+[lab]
+name        = "chroot-kali"
+description = "Phase-1 Kali chroot imported rootless"
+tags        = ["cross-phase", "kali"]
+
+[[service]]
+name        = "payload-builder"
+manager     = "plain"
+from_chroot = "/var/chroots/kali-amd64"
+userns      = "keep-id"
+command     = "sleep infinity"
