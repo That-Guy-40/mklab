@@ -428,6 +428,38 @@ disk.qcow2, seed.iso, qemu.pid, qemu.monitor, serial.sock}`.
 - `from-chroot` round-trip: build a Debian chroot in Phase 1, package it,
   boot it, ssh in.
 
+### Phase 2 TODO: Kali as a guest distro
+
+Phase 1 supports Kali via debootstrap; Phase 2 currently does not. Today
+`image_url()` in `phase2-qemu-vm/lab-vm.sh` has no `kali)` branch and
+would `die` with "no cloud image URL for distro kali".
+
+Scope of work:
+
+- Add a `kali)` arm to `image_url()` pointing at
+  `https://cdimage.kali.org/kali-YYYY.N/` (weekly) or the rolling
+  `kali-linux-YYYY.N-qemu-<arch>.qcow2` artifact. Note Kali ships these
+  inside `.7z` archives — the cache layer needs an un-7z step before
+  handing the qcow2 to QEMU. Alternative: use `kali-cloud-genericcloud`
+  images if/when Kali publishes them in a stable location.
+- Decide cloud-init story: Kali's prebuilt QEMU images are **not**
+  cloud-init-enabled by default. Either (a) require the user to run
+  `apt-get install cloud-init` inside the image once, then re-snapshot,
+  or (b) skip cloud-init entirely and inject ssh pubkeys/hostname via
+  first-boot `systemd-firstboot` + a per-VM overlay qcow2.
+- Keep the host-keyring requirement consistent with Phase 1: if the
+  build flow ever needs to fetch Kali packages (e.g., chroot→VM
+  `from-chroot` bridge), reuse the same `kali-archive-keyring.gpg`
+  probe as `lab-chroot.sh`.
+- Add examples: `examples/vm-kali-amd64.toml` (full VM) and, if a
+  minirootfs/netboot path exists for Kali, an optional microvm variant
+  alongside `examples/microvm-alpine.toml`.
+- Extend `phase1-chroot/MANUAL_TESTING.md`-style coverage to a new
+  `phase2-qemu-vm/MANUAL_TESTING.md` once it exists, with a Kali
+  section mirroring §5a/§5b from the chroot doc.
+
+Gate: no hard deadline; track as a post-Phase-2-exit enhancement.
+
 ---
 
 ## Phase 3 — Docker (`phase3-docker/lab-docker.sh`)

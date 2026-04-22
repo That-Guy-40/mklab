@@ -30,6 +30,12 @@ sudo apt-get install -y yq                 # mikefarah/yq (preferred)
 # or:  grab dasel from https://github.com/tomwright/dasel
 ```
 
+> **Kali path (optional):** if you plan to exercise §5a / §5b, you also
+> need `kali-archive-keyring` on the host. It isn't in Debian or Ubuntu
+> repos — follow `phase1-chroot/INSTALL-KALI-KEYRING.md` to fetch and
+> verify the `.deb` from `http.kali.org`. Without it, the Kali steps
+> will refuse cleanly (§11 exercises exactly that refusal).
+
 > `sudo` is assumed already present and is not installed by these steps — every
 > chroot operation needs root. If you're already root, drop the `sudo` prefix
 > from the rest of this walkthrough.
@@ -196,6 +202,119 @@ sudo chroot /var/chroots/bookworm-arm64 /usr/bin/file /bin/ls   # → ARM aarch6
 
 ```bash
 lc destroy bookworm-arm64 --force
+```
+
+## 5a. Native Kali rolling via debootstrap (x86_64)
+
+Kali is Debian-derived, so the debootstrap backend handles it with a
+distinct mirror (`http://http.kali.org/kali`) and a distinct archive
+keyring (`/usr/share/keyrings/kali-archive-keyring.gpg`). The keyring
+package is **not** in Debian/Ubuntu repos; install it per
+`phase1-chroot/INSTALL-KALI-KEYRING.md` before running this step, or
+jump to §11 to exercise the missing-keyring refusal.
+
+```bash
+ls /usr/share/keyrings/kali-archive-keyring.gpg   # must exist
+```
+
+Build:
+
+```bash
+lc create \
+    --backend debootstrap --distro kali --suite kali-rolling \
+    --arch x86_64 --target /var/chroots/kali-amd64 \
+    --variant minbase
+```
+
+**Expect:**
+- `[info]` line: "debootstrap (native): kali/kali-rolling arch=x86_64 ..."
+- Debootstrap downloads from `http.kali.org` (1–3 min)
+- Final "debootstrap complete: kali-amd64 → ..."
+
+**Identity check — confirm it really is Kali, not Debian:**
+
+```bash
+lc verify kali-amd64
+# → os: Kali GNU/Linux Rolling  (or similar)
+
+sudo grep -E '^(PRETTY_NAME|ID|ID_LIKE|VERSION)=' \
+    /var/chroots/kali-amd64/etc/os-release
+# → ID=kali
+# → ID_LIKE=debian         (Kali advertises its Debian ancestry)
+```
+
+**Sources list points at Kali (not Debian):**
+
+```bash
+sudo cat /var/chroots/kali-amd64/etc/apt/sources.list 2>/dev/null || \
+sudo grep -r '' /var/chroots/kali-amd64/etc/apt/sources.list.d/
+# → a line containing http://http.kali.org/kali ... kali-rolling main ...
+```
+
+**Keyring was copied into the chroot** (so in-chroot `apt-get update`
+can verify signatures without host help):
+
+```bash
+sudo chroot /var/chroots/kali-amd64 /usr/bin/dpkg -l kali-archive-keyring
+# → ii  kali-archive-keyring  202x.x  all  ...
+```
+
+**Enter and install a Kali-specific tool:**
+
+```bash
+lc enter kali-amd64
+# inside the chroot:
+apt-get update
+apt-get install -y nmap                  # any Kali/Debian package
+nmap --version | head -1
+exit
+```
+
+> The minbase variant is deliberately tiny — no pre-installed Kali
+> metapackage (`kali-linux-core` etc.) and no networking tools. You
+> pull in whatever you need with apt. This matches how the chroot is
+> meant to be used as a lab-isolated workbench.
+
+**Cleanup (leave for §8 if you want to reuse, otherwise destroy):**
+
+```bash
+lc destroy kali-amd64 --force
+```
+
+## 5b. Foreign-arch Kali (aarch64 from x86_64 host)
+
+Kali publishes for arm64, so the foreign-arch path works too. Same
+qemu-user-static prerequisite as §5.
+
+```bash
+ls /proc/sys/fs/binfmt_misc/qemu-aarch64   # must exist
+```
+
+Build:
+
+```bash
+lc create \
+    --backend debootstrap --distro kali --suite kali-rolling \
+    --arch aarch64 --target /var/chroots/kali-arm64 \
+    --variant minbase
+```
+
+**Expect:** same two-stage flow as §5 ("foreign first stage" then
+"foreign second stage"), 5–10 minutes total because stage 2 runs under
+qemu-user emulation.
+
+**Verify the arch is real (and that it's really Kali):**
+
+```bash
+sudo chroot /var/chroots/kali-arm64 /usr/bin/uname -m   # → aarch64
+sudo chroot /var/chroots/kali-arm64 /usr/bin/file /bin/ls   # → ARM aarch64
+sudo grep '^ID=' /var/chroots/kali-arm64/etc/os-release # → ID=kali
+```
+
+**Cleanup:**
+
+```bash
+lc destroy kali-arm64 --force
 ```
 
 ## 6. Rocky 9 via dnf (native arch)
@@ -394,13 +513,15 @@ sudo phase1-chroot/tests/run-all.sh
 Each test self-skips (exit 77) if its preconditions aren't met. Expect:
 
 - `test-host-copy.sh` — pass
+- `test-host-copy-static-binary.sh` — pass (fast path if `file` is on host)
 - `test-debootstrap-amd64.sh` — pass on x86_64 hosts with debootstrap
 - `test-debootstrap-arm64-foreign.sh` — pass with `qemu-user-static` + binfmt
 - `test-dnf-rocky9.sh` — pass with `dnf` on host
 - `test-schroot-integration.sh` — pass with `schroot`
 - `test-nspawn-integration.sh` — pass with `systemd-nspawn`
 - `test-cli-vs-config-parity.sh` — pass
-- `test-kali-keyring-missing.sh` — skips if keyring is installed; passes otherwise
+- `test-kali-bootstrap.sh` — pass if `kali-archive-keyring` is installed; skips otherwise (mechanises §5a)
+- `test-kali-keyring-missing.sh` — skips if keyring is installed; passes otherwise (mechanises §11 guardrail)
 - `test-rocky-armv7l-rejection.sh` — pass
 
 ## 14. Final cleanup
