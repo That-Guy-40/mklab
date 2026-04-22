@@ -943,12 +943,20 @@ riscv64   | riscv64| riscv64| riscv64     | riscv64
 s390x     | s390x  | s390x  | s390x       | s390x
 ```
 
-### Lab grouping (`[lab]` as a cross-phase concept)
+### Lab grouping (`[lab]` as a cross-phase concept) — **landed**
 
 A "lab" is a named, cross-phase grouping of resources. The motivating use
 case: a user grabs a recipe from a blog or tutorial that mixes a build
 chroot, a victim VM, and a couple of containers, and wants to spin the
 whole thing up, tear the whole thing down, and see it as one thing.
+
+**Status:** wired into Phases 1–4. Each tool accepts `--lab NAME` on its
+`create` / `up` to tag resources, and `--lab NAME` on `list` /
+`destroy` / `down` to filter. Each tool's `list` now shows a LAB
+column. Phase 3 and Phase 4's `up` skip services whose `engine` field
+names a different runtime, so a single unified TOML can be consumed by
+all four phase tools without the tools fighting over services. Unified
+example: `examples/lab-unified-demo.toml`.
 
 **Schema.** Every phase TOML may carry an optional top-level `[lab]`
 block:

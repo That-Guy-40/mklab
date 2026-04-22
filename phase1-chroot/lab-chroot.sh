@@ -243,9 +243,13 @@ manifest_path() {
 }
 
 write_manifest() {
-    # write_manifest NAME TARGET BACKEND DISTRO SUITE ARCH MANAGER
+    # write_manifest NAME TARGET BACKEND DISTRO SUITE ARCH MANAGER [LAB]
+    # LAB is the optional cross-phase grouping name (from TOML [lab].name
+    # or --lab on the CLI).  Stored in the manifest so `list --lab` and
+    # Phase 6's topology view can correlate across phases.
     state_init
     local name="$1" target="$2" backend="$3" distro="$4" suite="$5" arch="$6" manager="$7"
+    local lab="${8:-}"
     local mp; mp="$(manifest_path "$name")"
     local now; now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     cat > "$mp" <<EOF
@@ -257,6 +261,7 @@ distro     = "${distro}"
 suite      = "${suite}"
 arch       = "${arch}"
 manager    = "${manager}"
+lab        = "${lab}"
 created_at = "${now}"
 version    = "${LAB_VERSION}"
 EOF
@@ -310,12 +315,13 @@ spec_from_cli() {
         --arg mirror   "${OPT_MIRROR:-}" \
         --arg variant  "${OPT_VARIANT:-}" \
         --arg manager  "${OPT_MANAGER:-none}" \
+        --arg lab      "${OPT_LAB:-}" \
         --argjson include  "$include_json" \
         --argjson binaries "$binaries_json" \
         --argjson extras   "$extras_json" \
         --argjson groups   "$groups_json" \
         '{name:$name, backend:$backend, distro:$distro, suite:$suite, arch:$arch,
-          target:$target, mirror:$mirror, variant:$variant, manager:$manager,
+          target:$target, mirror:$mirror, variant:$variant, manager:$manager, lab:$lab,
           include:$include, binaries:$binaries, extras:$extras, groups:$groups}'
 }
 
@@ -326,10 +332,14 @@ specs_from_config() {
     local json
     json="$(toml_to_json "$file")"
     # Accept either a top-level [[chroot]] array or a single inline table.
-    printf '%s' "$json" | jq -c '
-        if .chroot? then
+    # Propagate top-level [lab].name into each spec so unified lab.toml
+    # files (that also carry [[vm]] / [[service]] for other phases) work
+    # out-of-the-box.  --lab on the CLI overrides if both are present.
+    printf '%s' "$json" | jq -c --arg cli_lab "${OPT_LAB:-}" '
+        . as $root
+        | if .chroot? then
             (.chroot | if type=="array" then .[] else . end)
-        else . end
+          else . end
         | { name:    (.name    // ""),
             backend: (.backend // ""),
             distro:  (.distro  // ""),
@@ -339,6 +349,8 @@ specs_from_config() {
             mirror:  (.mirror  // ""),
             variant: (.variant // ""),
             manager: (.manager // "none"),
+            lab:     ( if $cli_lab != "" then $cli_lab
+                       else ($root.lab.name // "") end ),
             include: (.include // []),
             binaries:(.binaries// []),
             extras:  (.extras  // []),
@@ -950,8 +962,11 @@ create_one() {
 
     write_manifest "$name" "$target" "$backend" \
         "$(spec_get "$spec" distro)" "$(spec_get "$spec" suite)" \
-        "$(spec_get "$spec" arch)" "$manager"
+        "$(spec_get "$spec" arch)" "$manager" \
+        "$(spec_get "$spec" lab)"
 
+    local _created_lab; _created_lab="$(spec_get "$spec" lab)"
+    [[ -n "$_created_lab" ]] && log_info "lab: $_created_lab"
     log_info "── done: $name ──"
 }
 
@@ -1041,13 +1056,25 @@ cmd_destroy() {
 cmd_list() {
     state_init
     local found=0
-    printf '%-20s  %-12s  %-10s  %-8s  %-8s  %s\n' \
-        NAME BACKEND DISTRO ARCH MANAGER TARGET
-    local mp name
+    # --lab NAME filters to chroots in that lab.  --lab '' (explicit empty)
+    # is taken as a literal "show ungrouped only" request; omitting the
+    # flag shows everything.
+    local filter="${OPT_LAB-__ALL__}"
+    if [[ -n "${OPT_LAB:-}" ]]; then
+        printf '── lab: %s ──\n' "$OPT_LAB"
+    fi
+    printf '%-20s  %-14s  %-12s  %-10s  %-8s  %-8s  %s\n' \
+        NAME LAB BACKEND DISTRO ARCH MANAGER TARGET
+    local mp name row_lab
     for mp in "$LAB_CHROOT_STATE_DIR"/*.toml; do
         name="${mp##*/}"; name="${name%.toml}"
-        printf '%-20s  %-12s  %-10s  %-8s  %-8s  %s\n' \
+        row_lab="$(read_manifest_field "$name" lab)"
+        if [[ "$filter" != "__ALL__" ]]; then
+            [[ "$row_lab" == "$filter" ]] || continue
+        fi
+        printf '%-20s  %-14s  %-12s  %-10s  %-8s  %-8s  %s\n' \
             "$name" \
+            "${row_lab:-(none)}" \
             "$(read_manifest_field "$name" backend)" \
             "$(read_manifest_field "$name" distro)" \
             "$(read_manifest_field "$name" arch)" \
@@ -1162,6 +1189,7 @@ parse_args() {
     OPT_NAME="" OPT_MIRROR="" OPT_VARIANT=""
     OPT_INCLUDE="" OPT_GROUPS="" OPT_BINARIES="" OPT_EXTRAS=""
     OPT_MANAGER="none" OPT_FORCE=""
+    OPT_LAB=""
 
     [[ $# -eq 0 ]] && { usage; exit 0; }
 
@@ -1188,6 +1216,7 @@ parse_args() {
             --binaries)      OPT_BINARIES="$2"; shift 2 ;;
             --extras)        OPT_EXTRAS="$2"; shift 2 ;;
             --manager)       OPT_MANAGER="$2"; shift 2 ;;
+            --lab)           OPT_LAB="$2"; shift 2 ;;
             --force|-f)      OPT_FORCE=1; shift ;;
             -h|--help)       usage; exit 0 ;;
             -v|--version)    printf '%s %s\n' "$LAB_PROG" "$LAB_VERSION"; exit 0 ;;

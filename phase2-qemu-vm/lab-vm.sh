@@ -281,6 +281,7 @@ write_vm_manifest() {
     cat > "$mp" <<EOF
 # lab-vm manifest — do not edit by hand
 name        = "${name}"
+lab         = "${MF_LAB:-}"
 backend     = "${MF_BACKEND}"
 distro      = "${MF_DISTRO}"
 suite       = "${MF_SUITE}"
@@ -1272,20 +1273,25 @@ spec_from_cli() {
         --arg ssh      "${OPT_SSH_ENABLE:-false}" \
         --arg persist  "${OPT_PERSIST:-}" \
         --arg init_flavour "${OPT_INIT_FLAVOUR:-busybox}" \
+        --arg lab      "${OPT_LAB:-}" \
         '{name:$name, backend:$backend, distro:$distro, suite:$suite, arch:$arch,
           memory:$memory, cpus:($cpus|tonumber), microvm:($microvm=="true"),
           image:$image, kernel:$kernel, initrd:$initrd, append:$append,
           ssh_port:($ssh_port|tonumber), pubkey:$pubkey,
           network:($network=="true"), ssh:($ssh=="true"), persist:$persist,
-          init_flavour:$init_flavour}'
+          init_flavour:$init_flavour, lab:$lab}'
 }
 
 specs_from_config() {
     local file="$1"
     require_cmd jq
     local json; json="$(toml_to_json "$file")"
-    printf '%s' "$json" | jq -c '
-        if .vm? then (.vm | if type=="array" then .[] else . end) else . end
+    # Propagate top-level [lab].name into every [[vm]] spec so a unified
+    # lab.toml (also carrying [[chroot]] / [[service]] for sibling phases)
+    # works unchanged.  --lab on the CLI overrides.
+    printf '%s' "$json" | jq -c --arg cli_lab "${OPT_LAB:-}" '
+        . as $root
+        | if .vm? then (.vm | if type=="array" then .[] else . end) else . end
         | { name:    (.name    // ""),
             backend: (.backend // "disk-image"),
             distro:  (.distro  // ""),
@@ -1303,7 +1309,9 @@ specs_from_config() {
             network: (.network // false),
             ssh:     (.ssh     // false),
             persist: (.persist // ""),
-            init_flavour: (.init_flavour // "busybox") }
+            init_flavour: (.init_flavour // "busybox"),
+            lab:     ( if $cli_lab != "" then $cli_lab
+                       else ($root.lab.name // "") end ) }
     '
 }
 
@@ -1693,12 +1701,14 @@ create_one() {
     firmware="$(firmware_for "$arch" "$microvm")"
 
     # Persist manifest before first boot so partial-failure is visible.
+    local lab_name; lab_name="$(spec_get "$spec" lab)"
     MF_BACKEND="$backend" MF_DISTRO="$distro" MF_SUITE="$suite" \
     MF_ARCH="$arch" MF_MEMORY="$memory" MF_CPUS="$cpus" MF_MICROVM="$microvm" \
     MF_ACCEL="$accel" MF_SSH_PORT="$ssh_port" MF_SEED="$seed" MF_DISK="$disk" \
     MF_KERNEL="$kernel" MF_INITRD="$initrd" MF_APPEND="$append" \
-    MF_SSH_USER="$ssh_user" \
+    MF_SSH_USER="$ssh_user" MF_LAB="$lab_name" \
     write_vm_manifest "$name"
+    [[ -n "$lab_name" ]] && log_info "lab: $lab_name"
 
     # Success — clear the cleanup-on-failure trap.
     trap - EXIT
@@ -1911,15 +1921,22 @@ cmd_destroy() {
 # ─── Subcommand: list ──────────────────────────────────────────────────────
 cmd_list() {
     state_init
-    printf '%-20s  %-13s  %-10s  %-8s  %-8s  %-7s  %s\n' \
-        NAME BACKEND DISTRO ARCH STATUS SSHPORT MEMORY
-    local n state port
+    local filter="${OPT_LAB-__ALL__}"
+    [[ -n "${OPT_LAB:-}" ]] && printf '── lab: %s ──\n' "$OPT_LAB"
+    printf '%-20s  %-14s  %-13s  %-10s  %-8s  %-8s  %-7s  %s\n' \
+        NAME LAB BACKEND DISTRO ARCH STATUS SSHPORT MEMORY
+    local n state port row_lab
     while IFS= read -r n; do
         [[ -z "$n" ]] && continue
+        row_lab="$(read_manifest_field "$n" lab 2>/dev/null || true)"
+        if [[ "$filter" != "__ALL__" ]]; then
+            [[ "$row_lab" == "$filter" ]] || continue
+        fi
         if vm_running "$n"; then state="running"; else state="stopped"; fi
         port="$(read_manifest_field "$n" ssh_port)"
-        printf '%-20s  %-13s  %-10s  %-8s  %-8s  %-7s  %s\n' \
+        printf '%-20s  %-14s  %-13s  %-10s  %-8s  %-8s  %-7s  %s\n' \
             "$n" \
+            "${row_lab:-(none)}" \
             "$(read_manifest_field "$n" backend)" \
             "$(read_manifest_field "$n" distro)" \
             "$(read_manifest_field "$n" arch)" \
@@ -1982,6 +1999,7 @@ parse_args() {
     OPT_MEMORY="" OPT_CPUS="" OPT_MICROVM="false"
     OPT_IMAGE="" OPT_KERNEL="" OPT_INITRD="" OPT_APPEND=""
     OPT_SSH_PORT="" OPT_PUBKEY="" OPT_FORCE="" OPT_KEEP_DISK=""
+    OPT_LAB=""
 
     [[ $# -eq 0 ]] && { usage; exit 0; }
     SUBCMD="$1"; shift
@@ -2010,6 +2028,7 @@ parse_args() {
                 OPT_PUBKEY="$(cat "$2")"; shift 2 ;;
             --force|-f)     OPT_FORCE=1; shift ;;
             --keep-disk)    OPT_KEEP_DISK=1; shift ;;
+            --lab)          OPT_LAB="$2"; shift 2 ;;
             -h|--help)      usage; exit 0 ;;
             -v|--version)   printf '%s %s\n' "$LAB_PROG" "$LAB_VERSION"; exit 0 ;;
             -*)             die "unknown option: $1 (try --help)" ;;

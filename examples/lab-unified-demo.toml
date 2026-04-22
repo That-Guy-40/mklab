@@ -1,0 +1,76 @@
+# Unified cross-phase lab — one TOML feeds all four phase tools.
+#
+# The top-level [lab] block is cross-phase grouping metadata.  Each phase
+# tool reads only the blocks it owns ([[chroot]], [[vm]], [[service]]
+# with matching engine) and silently ignores the rest.
+#
+# Workflow — run these in order, against the same file:
+#
+#   sudo phase1-chroot/lab-chroot.sh    create --config examples/lab-unified-demo.toml
+#   sudo phase2-qemu-vm/lab-vm.sh       create --config examples/lab-unified-demo.toml
+#        phase3-docker/lab-docker.sh    up     --config examples/lab-unified-demo.toml
+#        phase4-podman/lab-podman.sh    up     --config examples/lab-unified-demo.toml
+#
+# Then see everything tagged as lab="demo-ctf":
+#
+#   sudo phase1-chroot/lab-chroot.sh list --lab demo-ctf
+#   sudo phase2-qemu-vm/lab-vm.sh    list --lab demo-ctf
+#        phase3-docker/lab-docker.sh list --lab demo-ctf
+#        phase4-podman/lab-podman.sh list --lab demo-ctf
+#
+# Tear down likewise:
+#
+#        phase4-podman/lab-podman.sh  down    --lab demo-ctf
+#        phase3-docker/lab-docker.sh  down    --lab demo-ctf
+#   sudo phase2-qemu-vm/lab-vm.sh     destroy demo-ctf-victim --force
+#   sudo phase1-chroot/lab-chroot.sh  destroy demo-ctf-attacker-tools --force
+#
+# Phase 6's topology view will correlate these via lab-create.lab=demo-ctf
+# labels/manifest fields and paint them as a single pane of glass.
+
+[lab]
+name        = "demo-ctf"
+description = "Cross-phase CTF target: chroot attacker toolchain + victim VM + edge containers"
+tags        = ["ctf", "demo", "cross-phase"]
+
+# ─── Phase 1: Kali chroot for attacker tooling ─────────────────────────────
+[[chroot]]
+name    = "demo-ctf-attacker-tools"
+backend = "host-copy"
+target  = "/var/jails/demo-ctf-attacker"
+binaries = ["/bin/busybox"]
+extras   = ["/etc/resolv.conf", "/etc/nsswitch.conf"]
+manager  = "none"
+
+# ─── Phase 2: Alpine microvm as the victim ─────────────────────────────────
+[[vm]]
+name    = "demo-ctf-victim"
+backend = "kernel+initrd"
+distro  = "alpine"
+suite   = "3.19"
+arch    = "x86_64"
+memory  = "256M"
+cpus    = 1
+microvm = true
+network = true
+ssh     = true
+persist = "128M"
+
+# ─── Phase 3: Docker-backed edge proxy ─────────────────────────────────────
+[[service]]
+name    = "edge-proxy"
+engine  = "docker"
+image   = "nginx:alpine"
+ports   = ["18081:80"]
+
+# ─── Phase 4: Podman-backed scanner in a pod ───────────────────────────────
+[[pod]]
+name = "scanner"
+
+[[service]]
+name    = "scanner-alpine"
+engine  = "podman"
+manager = "pod"
+pod     = "scanner"
+image   = "docker.io/library/alpine:latest"
+command = "sleep 3600"

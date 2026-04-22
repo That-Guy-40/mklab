@@ -962,13 +962,24 @@ cmd_up() {
 
         # --- Plain services (no pod=) ---
         local svc_count; svc_count="$(jq -r '.service // [] | length' <<<"$cfg_json")"
-        local i svc svc_pod
+        local i svc svc_pod svc_engine svc_name skipped=0
         for ((i=0; i<svc_count; i++)); do
             svc="$(jq -c --argjson i "$i" '.service[$i]' <<<"$cfg_json")"
             svc_pod="$(spec_get "$svc" pod)"
             [[ -n "$svc_pod" ]] && continue   # handled in pod loop above
+
+            # Cross-phase routing: skip services claimed by Phase 3.
+            svc_engine="$(spec_get "$svc" engine)"
+            if [[ -n "$svc_engine" && "$svc_engine" != "podman" ]]; then
+                svc_name="$(spec_get "$svc" name)"
+                log_debug "skipping service '$svc_name' (engine=$svc_engine, not podman)"
+                skipped=$((skipped+1))
+                continue
+            fi
+
             start_service_plain "$lab_name" "$svc" >/dev/null
         done
+        (( skipped > 0 )) && log_info "skipped $skipped service(s) with engine != podman"
     fi
 
     trap - EXIT

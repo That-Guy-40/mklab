@@ -387,11 +387,21 @@ cmd_up() {
     local svc_count; svc_count="$(jq -r '.service // [] | length' <<<"$cfg_json")"
     [[ "$svc_count" -gt 0 ]] || die "config has no [[service]] entries"
 
-    local i
+    local i skipped=0
     for ((i=0; i<svc_count; i++)); do
         local svc; svc="$(jq -c --argjson i "$i" '.service[$i]' <<<"$cfg_json")"
         local sname simage; sname="$(spec_get "$svc" name)"; simage="$(spec_get "$svc" image)"
         [[ -n "$sname" ]] || die "service[$i] missing name"
+
+        # Cross-phase engine routing: a unified lab.toml may carry services
+        # intended for Phase 4 (podman).  If engine is set and !="docker",
+        # skip — lab-podman.sh will claim it when run against the same file.
+        local sengine; sengine="$(spec_get "$svc" engine)"
+        if [[ -n "$sengine" && "$sengine" != "docker" ]]; then
+            log_debug "skipping service '$sname' (engine=$sengine, not docker)"
+            skipped=$((skipped+1))
+            continue
+        fi
 
         local cname; cname="$(container_name_for "$lab_name" "$sname")"
 
@@ -489,7 +499,8 @@ cmd_up() {
     # Success — clear the partial-up hint trap.
     trap - EXIT
 
-    log_info "── lab '$lab_name' up (${svc_count} service(s)) ──"
+    local handled=$((svc_count - skipped))
+    log_info "── lab '$lab_name' up (${handled} docker service(s), ${skipped} skipped) ──"
     log_info "list:  $LAB_PROG list --lab $lab_name"
     log_info "down:  $LAB_PROG down --lab $lab_name"
 }
