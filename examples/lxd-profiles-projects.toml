@@ -1,0 +1,45 @@
+# [[project]] + [[profile]] demo.  Profiles bundle config + devices that
+# instances inherit; projects isolate namespaces (separate instance lists,
+# profiles, etc.).  Both are LXD-native, no Phase 3/4 analogue.
+#
+# Try it:
+#   phase5-lxd/lab-lxd.sh up     --config examples/lxd-profiles-projects.toml
+#   phase5-lxd/lab-lxd.sh list   --lab demo-pp
+#   # LXD-native queries (Phase 5 deliberately doesn't wrap these):
+#   incus project list                         # or: lxc project list
+#   incus profile show webnode --project demo-pp
+#   phase5-lxd/lab-lxd.sh down   --lab demo-pp
+#
+# Teardown leaves the project and profile in place on purpose (other labs
+# may share them).  Remove them by hand if you want a clean slate:
+#   incus profile delete webnode --project demo-pp
+#   incus project delete demo-pp
+
+[lab]
+name        = "demo-pp"
+description = "Lab-scoped project + profile to demonstrate LXD-native grouping"
+tags        = ["lxd", "project", "profile"]
+
+[[project]]
+name = "demo-pp"
+
+[[profile]]
+name    = "webnode"
+project = "demo-pp"
+config  = { "security.nesting" = "true", "limits.cpu" = "1" }
+# devices block: <device-name> = { <LXD device fields> }
+devices = { eth0 = { type = "nic", network = "lxdbr0", name = "eth0" } }
+
+[[instance]]
+name     = "web1"
+type     = "container"
+image    = "images:alpine/3.19"
+project  = "demo-pp"
+profiles = ["default", "webnode"]
+
+[[instance]]
+name     = "web2"
+type     = "container"
+image    = "images:alpine/3.19"
+project  = "demo-pp"
+profiles = ["default", "webnode"]

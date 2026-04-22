@@ -1,0 +1,47 @@
+# Cross-phase: Phase-1 chroot → Phase 5 LXD/Incus container image.
+#
+# from_chroot is container-only in v0.1.  If you want a VM built from the
+# same chroot, see the workaround note below.
+#
+# Workflow:
+#
+#   # 1) Build the Phase 1 chroot (root; 1-3 min for debootstrap):
+#   sudo phase1-chroot/lab-chroot.sh create \
+#       --backend debootstrap --distro kali --suite kali-rolling \
+#       --arch x86_64 --target /var/chroots/kali-amd64 --variant minbase \
+#       --name kali-amd64
+#
+#   # 2) Phase 1 chroots are root-owned, so the readable path is
+#   #    to export the tarball and use from_tarball here:
+#   sudo phase1-chroot/lab-chroot.sh export-tarball kali-amd64 \
+#                                                   --output /tmp/kali-amd64.tar.gz
+#
+#   # 3) Bring up the lab:
+#   phase5-lxd/lab-lxd.sh up  --config examples/lxd-from-chroot.toml
+#
+#   # 4) Exec into it:
+#   phase5-lxd/lab-lxd.sh exec lxd-kali/attacker -- cat /etc/os-release
+#
+#   # 5) Tear down:
+#   phase5-lxd/lab-lxd.sh down --lab lxd-kali
+#   rm -f /tmp/kali-amd64.tar.gz
+#
+# VM from a chroot (workaround):
+#   a) phase2-qemu-vm/lab-vm.sh create --backend from-chroot \
+#          --chroot /var/chroots/kali-amd64 --arch x86_64 --name kvmseed
+#      → produces a bootable qcow2 under $LAB_STATE_DIR/vms/kvmseed/
+#   b) Change the [[instance]] below to:
+#          type = "vm"
+#          from_qcow2 = "/home/$USER/.local/state/lab-create/vms/kvmseed/disk.qcow2"
+#      (remove the from_tarball line)
+#   c) phase5-lxd/lab-lxd.sh up --config examples/lxd-from-chroot.toml
+
+[lab]
+name        = "lxd-kali"
+description = "Kali rolling in an LXD/Incus container, imported from a Phase 1 chroot"
+tags        = ["lxd", "kali", "from-chroot", "cross-phase"]
+
+[[instance]]
+name         = "attacker"
+type         = "container"
+from_tarball = "/tmp/kali-amd64.tar.gz"

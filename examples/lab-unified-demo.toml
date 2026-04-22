@@ -1,15 +1,16 @@
-# Unified cross-phase lab — one TOML feeds all four phase tools.
+# Unified cross-phase lab — one TOML feeds all five phase tools.
 #
 # The top-level [lab] block is cross-phase grouping metadata.  Each phase
-# tool reads only the blocks it owns ([[chroot]], [[vm]], [[service]]
-# with matching engine) and silently ignores the rest.
+# tool reads only the blocks it owns ([[chroot]], [[vm]], [[service]] with
+# matching engine, [[instance]] with matching engine) and silently ignores
+# the rest.
 #
 # Workflow — run these in order, against the same file:
 #
 #   # 1) Build the chroot (needs sudo; 1-3 min for debootstrap):
 #   sudo phase1-chroot/lab-chroot.sh    create --config examples/lab-unified-demo.toml
 #
-#   # 2) Export the chroot as a user-readable tarball for Phase 4
+#   # 2) Export the chroot as a user-readable tarball for Phase 4 and 5
 #   #    (one-time; also runs under sudo so it can read root-mode files):
 #   sudo phase1-chroot/lab-chroot.sh    export-tarball demo-ctf-attacker-tools \
 #                                                      --output /tmp/demo-ctf-attacker.tar.gz
@@ -17,9 +18,10 @@
 #   # 3) Build the VM:
 #   sudo phase2-qemu-vm/lab-vm.sh       create --config examples/lab-unified-demo.toml
 #
-#   # 4) Bring up docker and podman services (both read the same TOML):
+#   # 4) Bring up docker, podman, and lxd services (all read the same TOML):
 #        phase3-docker/lab-docker.sh    up     --config examples/lab-unified-demo.toml
 #        phase4-podman/lab-podman.sh    up     --config examples/lab-unified-demo.toml
+#        phase5-lxd/lab-lxd.sh          up     --config examples/lab-unified-demo.toml
 #
 # Then see everything tagged as lab="demo-ctf":
 #
@@ -27,9 +29,11 @@
 #   sudo phase2-qemu-vm/lab-vm.sh    list --lab demo-ctf
 #        phase3-docker/lab-docker.sh list --lab demo-ctf
 #        phase4-podman/lab-podman.sh list --lab demo-ctf
+#        phase5-lxd/lab-lxd.sh        list --lab demo-ctf
 #
 # Tear down likewise (reverse order):
 #
+#        phase5-lxd/lab-lxd.sh        down    --lab demo-ctf
 #        phase4-podman/lab-podman.sh  down    --lab demo-ctf
 #        phase3-docker/lab-docker.sh  down    --lab demo-ctf
 #   sudo phase2-qemu-vm/lab-vm.sh     destroy demo-ctf-victim --force
@@ -38,15 +42,16 @@
 #
 # Prerequisites:
 #   - kali-archive-keyring on the host (see phase1-chroot/INSTALL-KALI-KEYRING.md)
-#   - debootstrap, qemu, podman, docker, yq (or tomlq), jq
+#   - debootstrap, qemu, podman, docker, incus (or lxc), yq (or tomlq), jq
 #   - rootless podman configured (subuid/subgid — see Phase 4 MANUAL_TESTING)
+#   - lxd/incus-admin group membership (see Phase 5 MANUAL_TESTING §0)
 #
 # Phase 6's topology view will correlate these via lab-create.lab=demo-ctf
 # labels/manifest fields and paint them as a single pane of glass.
 
 [lab]
 name        = "demo-ctf"
-description = "Cross-phase CTF target: Kali attacker chroot → imported as rootless podman image; Alpine victim microvm; docker edge proxy; podman scanner pod."
+description = "Cross-phase CTF target: Kali attacker chroot → imported as rootless podman OCI image AND as LXD system container; Alpine victim microvm; docker edge proxy; podman scanner pod."
 tags        = ["ctf", "demo", "cross-phase"]
 
 # ─── Phase 1: Kali rolling chroot (debootstrap) for attacker tooling ───────
@@ -115,3 +120,18 @@ manager      = "plain"
 from_tarball = "/tmp/demo-ctf-attacker.tar.gz"
 userns       = "keep-id"
 command      = "sleep 3600"
+
+# ─── Phase 5: LXD/Incus container (system container, not OCI) ──────────────
+# Same Phase-1 tarball, different container runtime.  LXD gives you
+# persistent "pet" system containers with their own init, multiple services,
+# and a live `lxc exec` shell — complement to Phase 4's ephemeral rootless
+# OCI containers.  Phase 5 uses [[instance]] (array-of-tables) instead of
+# [[service]]; the engine filter routes accordingly.
+#
+# Prereqs: `incus` or `lxc` on PATH; daemon running; user in
+# incus-admin/lxd group.  See phase5-lxd/MANUAL_TESTING.md §0.
+[[instance]]
+name         = "attacker-lxd"
+engine       = "lxd"
+type         = "container"
+from_tarball = "/tmp/demo-ctf-attacker.tar.gz"

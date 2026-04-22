@@ -1,0 +1,26 @@
+# Single-instance Alpine VM (hardware-virt via QEMU underneath LXD/Incus).
+#
+# Prereqs (beyond the usual lxd/incus setup):
+#   - /dev/kvm readable by you (or the lxd/incus group)
+#   - An LXD/Incus storage pool of type "zfs", "btrfs", "lvm", or "dir"
+#     with block support — VMs need block-backed storage, not "dir".
+#     If you're fresh out of `lxd init`, the default pool likely works;
+#     otherwise:  lxc storage create vmpool zfs  (or btrfs/lvm)
+#
+# Try it:
+#   phase5-lxd/lab-lxd.sh up  --config examples/lxd-vm-single.toml
+#   phase5-lxd/lab-lxd.sh list --lab hello-vm
+#   phase5-lxd/lab-lxd.sh exec hello-vm/alpine -- uname -a
+#   phase5-lxd/lab-lxd.sh down --lab hello-vm
+
+[lab]
+name        = "hello-vm"
+description = "One Alpine VM (type=vm) via LXD/Incus upstream image"
+tags        = ["lxd", "vm", "hello"]
+
+[[instance]]
+name  = "alpine"
+type  = "vm"
+image = "images:alpine/3.19"
+# memory / cpus go through LXD config keys:
+config = { "limits.memory" = "512MiB", "limits.cpu" = "1" }

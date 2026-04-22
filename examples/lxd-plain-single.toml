@@ -1,0 +1,18 @@
+# Single-instance Alpine container (container-mode).  Smallest useful
+# Phase 5 lab: one upstream image, one instance, no profiles/projects.
+#
+# Try it:
+#   phase5-lxd/lab-lxd.sh up   --config examples/lxd-plain-single.toml
+#   phase5-lxd/lab-lxd.sh list --lab hello-lxd
+#   phase5-lxd/lab-lxd.sh exec hello-lxd/shell -- cat /etc/os-release
+#   phase5-lxd/lab-lxd.sh down --lab hello-lxd
+
+[lab]
+name        = "hello-lxd"
+description = "One Alpine container via LXD/Incus upstream image"
+tags        = ["lxd", "container", "hello"]
+
+[[instance]]
+name  = "shell"
+type  = "container"
+image = "images:alpine/3.19"

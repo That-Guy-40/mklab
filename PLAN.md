@@ -712,16 +712,164 @@ etc.) — same discipline as Phases 1 and 3.
 
 ## Phase 5 — LXD / Incus (`phase5-lxd/lab-lxd.sh`)
 
-System containers and (optionally) VMs via LXD/Incus. Detects which is
-installed and prefers Incus if both are present. Supports:
+### Goals
+System containers **and** VMs via LXD/Incus, with the same `[lab]` grouping
+used by Phase 3/4, Phase 1 cross-phase import for containers, a Phase 2
+bridge for VMs (via `from_qcow2`), and a `--format lxc-yaml` handoff
+export. Works with either `lxc` (LXD) or `incus` on PATH; prefers Incus
+when both are installed.
 
-- Profile and project creation.
-- Image import from Phase 1 chroots (`lxc image import` from a tarball the
-  script builds out of the chroot tree, with a metadata.yaml).
-- Multi-arch via the upstream image server when available; fallback to
-  Phase-1-built tarballs.
-- VM mode (LXD/Incus VMs use QEMU under the hood) for arches the host can
-  emulate.
+### Engine dispatch
+At load time: probe `incus`, else `lxc`, else die with an install hint.
+Bind the chosen binary to `$LXC_CMD`. A single script drives both — they
+share the seven subcommands Phase 5 uses (`launch`, `exec`, `stop`,
+`delete`, `image import`, `list`, `config show`). TOML accepts
+`engine = "lxd"` or `engine = "incus"` as synonymous; cross-phase services
+with `engine` set to anything else are skipped (matches the
+Phase 3 `engine != "docker"` and Phase 4 `engine != "podman"` pattern).
+
+### Instance types
+- `type = "container"` (default) — system container via
+  `$LXC_CMD launch <img> <name>`
+- `type = "vm"` — hardware-virtualised via `$LXC_CMD launch --vm <img> <name>`
+
+Both live in the same `[[instance]]` array (no separate `[[vm]]` and
+`[[container]]` blocks). Matches LXD's own unified abstraction.
+
+### CLI
+- `build --alias TAG --backend {upstream|from-chroot|from-tarball|from-qcow2} [--image|--chroot|--tarball|--qcow2 SRC]`
+- `run --name N [--image I | --chroot PATH | --tarball PATH | --qcow2 PATH] [--type container|vm]`
+- `up --config topology.toml`
+- `down --lab NAME | --config topology.toml`
+- `exec <name|lab/service> [-- cmd args...]`
+- `logs <name|lab/service> [--follow]` — routes to `$LXC_CMD console --show-log`
+- `status [<name|lab>]` — three call shapes: no-arg → engine info; `<lab>` → scoped instances; `<name>|<lab>/<svc>` → single-instance detail
+- `list [--lab NAME]`
+- `destroy <name|lab/service> [--force]`
+- `export <lab> --format lxc-yaml` — dump `$LXC_CMD config show --expanded` per instance, concatenated with YAML `---` separators
+- `help | version`
+
+No `generate` subcommand — quadlet is podman-specific; LXD has no analogue.
+
+### Config file (TOML)
+```toml
+[lab]                              # cross-phase grouping
+name        = "demo-lxd"
+description = "…"
+tags        = ["lxd", "demo"]
+
+[[project]]                        # optional; created if missing
+name = "demo-project"
+
+[[profile]]                        # optional; created if missing
+name    = "lab-web"
+project = "demo-project"
+config  = { "security.nesting" = "true", "limits.cpu" = "2" }
+devices = { eth0 = { type = "nic", network = "lxdbr0", name = "eth0" } }
+
+[[instance]]                       # LXD analogue of Phase 3/4's [[service]]
+name     = "web"
+type     = "container"             # or "vm"
+image    = "images:alpine/3.19"    # upstream alias
+                                   # OR: from_chroot  = "/var/chroots/kali"    (container only, v0.1)
+                                   # OR: from_tarball = "/tmp/kali.tar.gz"     (container only, v0.1)
+                                   # OR: from_qcow2   = "/tmp/seed.qcow2"      (VM only; Phase 2 bridge)
+project  = "demo-project"
+profiles = ["default", "lab-web"]
+config   = { "limits.memory" = "512MiB" }
+devices  = { data = { type = "disk", path = "/data", source = "/srv/data" } }
+engine   = "lxd"                   # optional cross-phase filter (accepts "lxd" or "incus")
+```
+
+### Cross-phase bridges
+- **`from_chroot` (container)** — readability preflight identical to Phase
+  3/4; build a scratch `metadata.yaml` for LXD's unified tarball format
+  (`./metadata.yaml` + `./rootfs/` at top level, which is **not** what
+  Phase 1's tarball produces — Phase 5 rebundles with `tar -h` dereferencing
+  a `rootfs/` symlink into the chroot), pipe to
+  `$LXC_CMD image import --alias <tag>`. Clean up the partial alias on
+  failure.
+- **`from_tarball` (container)** — input is a tarball from Phase 1's
+  `export-tarball` (flat tree; no `rootfs/` prefix). Phase 5 extracts into
+  a staging dir, wraps with `metadata.yaml`, re-tars, imports. Rootless-
+  clean — the user-readable tarball is the whole point.
+- **`from_qcow2` (VM)** — wraps a prebuilt qcow2 as `./rootfs.img` (LXD VM
+  image convention) + `./metadata.yaml` with `type: virtual-machine`,
+  imports. The documented bridge for chroot → VM: run
+  `phase2-qemu-vm/lab-vm.sh create --backend from-chroot` to produce a
+  bootable qcow2, then `from_qcow2` that file.
+- **Labels** — every instance gets `user.lab-create.tool=lab-lxd`,
+  `user.lab-create.lab=<name>`, `user.lab-create.svc=<name>`. The `user.`
+  prefix is mandatory under LXD's config-key schema. `list`/`down`/
+  `status` filter by these.
+
+### Rootless policy
+Group-membership check (`lxd` for LXD, `incus-admin` for Incus); warn if
+the current user isn't in the right group. **No `--allow-root` gate** —
+LXD's security model differs from podman's; rootful `lxc` is the normal
+path on many distros.
+
+### Dependency probing
+- `incus` or `lxc` on PATH (die with install hint if neither)
+- `jq` and a TOML parser (same fallback chain as Phase 3/4)
+- `tar` (for rebundling)
+- Group membership probe (soft warning, not fatal)
+
+### State
+`$LAB_STATE_DIR/lxd/<lab-name>/spec.toml` — cached at `up` time so future
+work can introspect the declared topology. Instance state lives in the
+LXD/Incus daemon itself; image cache is LXD-native
+(`~/.cache/lxc/` or equivalent). Phase 5 doesn't duplicate.
+
+### Tests (under `phase5-lxd/tests/`)
+- `lib.sh` — skip/fail/pass/note/expect_error (verbatim from Phase 3)
+- `run-all.sh`
+- `test-validation.sh` — usage guardrails (all subcommands, pre-daemon)
+- `test-engine-dispatch.sh` — incus preferred over lxc; engine filter skips
+  docker/podman rows
+- `test-naming.sh` — instance name + `user.lab-create.*` labels
+- `test-container-lifecycle.sh` — up/list/exec/status/down on a minimal
+  Alpine container
+- `test-vm-lifecycle.sh` — same with `type = "vm"`; skips (exit 77) on hosts
+  without `/dev/kvm` or block-capable storage
+- `test-from-chroot-import.sh` — build a scratch rootfs, rebundle, import
+  (no Phase 1 dependency)
+- `test-profiles-projects.sh` — `[[profile]]` + `[[project]]` create and
+  idempotency; verifies teardown leaves them in place
+- `test-export-lxc-yaml.sh` — YAML shape + round-trip of `user.lab-create.lab`
+
+### Example TOMLs
+- `lxd-plain-single.toml` — one Alpine container
+- `lxd-vm-single.toml` — one Alpine VM (`type = "vm"`)
+- `lxd-mixed-topology.toml` — 2 containers + 1 VM in one lab
+- `lxd-from-chroot.toml` — Kali container imported from a Phase 1 chroot
+  (with a VM-via-Phase-2 workaround noted inline)
+- `lxd-profiles-projects.toml` — `[[project]]` + `[[profile]]` demo
+
+The unified `examples/lab-unified-demo.toml` grows an `[[instance]]` block
+with `engine = "lxd"` so the cross-phase demo exercises all three engines.
+
+### Exit criteria
+1. Bring up a lab mixing containers and VMs via `lab-lxd up`, exec into
+   each, tear down cleanly. Group-member and rootful paths both work.
+2. Cross-phase: Phase 1 chroot → `export-tarball` → `lab-lxd up` with
+   `from_tarball` produces a working container. `from_chroot` also works
+   when the chroot is user-readable.
+3. `lab-lxd export <lab> --format lxc-yaml` emits YAML that carries the
+   declared config (limits/devices/labels round-trip) and is feedable back
+   to `$LXC_CMD launch --yaml` for handoff.
+4. A unified TOML with `engine = "docker"`, `engine = "podman"`, and
+   `engine = "lxd"` services: `lab-lxd up` only claims the LXD rows;
+   Phase 3/4 ignore them. Already proven in the opposite direction.
+
+### Out of scope in v0.1 (documented workarounds)
+- **VM from-chroot in one step** — building an LXD VM image from a plain
+  chroot requires `lxd-agent` + cloud-init + specific rootfs layout; a
+  second backend. Workaround: Phase 2 `lab-vm create --backend from-chroot`
+  → bootable qcow2 → Phase 5 `from_qcow2`. Walked through in
+  `phase5-lxd/MANUAL_TESTING.md §5b`.
+- **`podman machine` / macOS / Windows** — Phase 5 is Linux-only, matching
+  Phase 2's KVM and Phase 4's podman-Linux assumptions.
 
 ## Phase 6 (optional) — Textual TUI (`phase6-tui/`)
 
