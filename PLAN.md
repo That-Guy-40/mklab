@@ -436,18 +436,27 @@ qcow2) published at `https://cdimage.kali.org/kali-<suite>/`.
 
 What shipped:
 
-- `image_url()` `kali)` arm → `kali-linux-<suite>-qemu-amd64.7z`
+- `image_url()` `kali)` arm → `kali-linux-<release>-qemu-amd64.7z`
   (x86_64 only — upstream doesn't publish prebuilt arm64 QEMU images).
+- `kali_resolve_suite()` maps the rolling aliases `kali-rolling` /
+  `rolling` / `current` onto the concrete release tag at
+  `https://cdimage.kali.org/current/` by parsing its `SHA256SUMS`
+  (stdlib format, `<hash>  <filename>` with two spaces). Pinned tags
+  like `"2026.1"` pass through unchanged. This matches Phase 1's
+  `suite = kali-rolling` idiom even though the two phases use the
+  string for different purposes (apt archive vs. cdimage alias).
 - `cache_image()` detects `.7z` URLs, extracts with `7z` / `7za` / `7zz`
-  (whichever is in PATH), promotes the inner `.qcow2`, caches it
-  alongside other cloud images.
+  (whichever is in PATH), promotes the inner `.qcow2`, and caches it
+  using the RESOLVED release tag — old VMs keep their original backing
+  image across a Kali release bump, new creates pick up the new one.
 - `create_one()` skips the cloud-init seed ISO when `distro=kali`, since
   the prebuilt image doesn't ship cloud-init. `ssh_user` is set to
   `kali`. Post-create logs walk the user through the one-time manual
   firstboot (console login as `kali/kali`, enable ssh, drop pubkey).
 - `examples/vm-kali-amd64.toml` — minimal spec matching Debian/Alpine
   examples, with a header comment documenting the manual firstboot.
-- CLI help: `--distro` now lists `kali`.
+- CLI help: `--distro` now lists `kali`, `--suite` examples include
+  `kali-rolling`.
 
 Known limitations / future work:
 
@@ -462,9 +471,10 @@ Known limitations / future work:
 - **microvm** variant is not meaningful here: Kali's kernel+initrd
   aren't published standalone in a convenient form (the installer ISO
   carries them, but extracting cleanly is a project of its own).
-- **Checksum verification** is not performed; we trust the TLS chain to
-  `cdimage.kali.org`, matching how Debian/Ubuntu/Rocky images are
-  fetched.
+- **Checksum verification** of the downloaded `.7z` is not performed,
+  even though we're already fetching `SHA256SUMS` to resolve the
+  rolling alias. Verifying the downloaded archive against the hash in
+  that same file would be a cheap hardening — worth adding next.
 
 ---
 

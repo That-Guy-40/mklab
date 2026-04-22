@@ -363,19 +363,59 @@ image_url() {
             ;;
         kali)
             # Kali publishes a prebuilt QEMU VM image as a 7z-compressed
-            # qcow2 under /kali-<suite>/, where <suite> is the release
-            # tag (e.g. "2026.1") — not "kali-rolling", which is the
-            # debootstrap/apt suite name used by Phase 1.  Only amd64 is
-            # published in this format; arm64 must go through the
-            # installer ISO (unsupported here).  These images are NOT
-            # cloud-init-enabled; create_one skips seed ISO generation
-            # when distro=kali.  Default in-image creds: kali/kali.
+            # qcow2 under /kali-<release>/ (e.g. /kali-2026.1/).  The
+            # <release> tag is numeric; "kali-rolling" is the Phase 1
+            # debootstrap/apt suite, NOT a valid cdimage path.  Callers
+            # should pass the already-resolved release here — see
+            # kali_resolve_suite() for the "kali-rolling" alias.  Only
+            # amd64 is published in this format; arm64 must go through
+            # the installer ISO (unsupported here).  These images are
+            # NOT cloud-init-enabled; create_one skips seed ISO
+            # generation when distro=kali.  Default in-image creds:
+            # kali/kali.
             [[ "$arch" == "x86_64" ]] \
                 || die "Kali publishes QEMU prebuilt images for x86_64 only (got arch=$arch)"
             printf 'https://cdimage.kali.org/kali-%s/kali-linux-%s-qemu-%s.7z' \
                 "$suite" "$suite" "$a_deb"
             ;;
         *) die "no cloud image URL for distro $distro" ;;
+    esac
+}
+
+# Kali publishes point releases (e.g. 2026.1) at /kali-<release>/, and
+# aliases the newest one as /current/.  "kali-rolling" in Phase 1 means
+# "the rolling apt archive"; for VM-image purposes we map it to "the
+# release that /current/ currently points at".  Resolved by parsing
+# /current/SHA256SUMS, which lists filenames of the form
+# kali-linux-<release>-qemu-amd64.7z.  Pinned release tags (like
+# "2026.1") pass through unchanged.
+kali_resolve_suite() {
+    local suite="$1" arch="$2"
+    local a_deb
+    case "$arch" in
+        x86_64)  a_deb=amd64 ;;
+        *) die "kali_resolve_suite: arch=$arch not supported for Kali QEMU prebuilt" ;;
+    esac
+    case "$suite" in
+        kali-rolling|rolling|current)
+            require_cmd curl
+            local sums
+            sums="$(curl --fail --location --silent https://cdimage.kali.org/current/SHA256SUMS)" \
+                || die "kali-rolling: failed to fetch https://cdimage.kali.org/current/SHA256SUMS"
+            local fname
+            fname="$(printf '%s\n' "$sums" \
+                | awk -v want="^kali-linux-.+-qemu-${a_deb}[.]7z$" '$2 ~ want { print $2; exit }')"
+            [[ -n "$fname" ]] \
+                || die "kali-rolling: no kali-linux-*-qemu-${a_deb}.7z line in SHA256SUMS"
+            local ver="${fname#kali-linux-}"
+            ver="${ver%-qemu-${a_deb}.7z}"
+            [[ -n "$ver" ]] || die "kali-rolling: failed to parse release tag from '$fname'"
+            printf '%s' "$ver"
+            ;;
+        *)
+            # Already a concrete release tag — pass through.
+            printf '%s' "$suite"
+            ;;
     esac
 }
 
@@ -393,8 +433,20 @@ cache_image() {
     # cache_image DISTRO SUITE ARCH  →  prints local cache path
     local distro="$1" suite="$2" arch="$3"
     install -d -m 0755 "$LAB_IMG_CACHE_DIR"
-    local url; url="$(image_url "$distro" "$suite" "$arch")"
-    local fname="${distro}-${suite}-${arch}.qcow2"
+    # Rolling-suite resolution (currently Kali only): "kali-rolling"
+    # becomes whatever release /current/ points at right now.  We key
+    # the on-disk cache off the RESOLVED release so old VMs keep their
+    # backing file when a new release ships, and fresh creates pick up
+    # the newer image.
+    local eff_suite="$suite"
+    if [[ "$distro" == "kali" ]]; then
+        eff_suite="$(kali_resolve_suite "$suite" "$arch")"
+        if [[ "$eff_suite" != "$suite" ]]; then
+            log_info "kali: suite=$suite resolved to release $eff_suite (via /current/SHA256SUMS)"
+        fi
+    fi
+    local url; url="$(image_url "$distro" "$eff_suite" "$arch")"
+    local fname="${distro}-${eff_suite}-${arch}.qcow2"
     local dest="${LAB_IMG_CACHE_DIR}/${fname}"
     if [[ -r "$dest" && -s "$dest" ]]; then
         log_debug "cache hit: $dest"
@@ -1896,7 +1948,7 @@ CREATE OPTIONS
   --name      <vm-name>                  (required)
   --backend   {disk-image|kernel+initrd|from-chroot}   (default: disk-image)
   --distro    {debian|ubuntu|rocky|alpine|kali}        (disk-image)
-  --suite     <release>                  e.g. bookworm | jammy | 9 | 3.19 | 2026.1
+  --suite     <release>                  e.g. bookworm | jammy | 9 | 3.19 | kali-rolling
   --arch      {x86_64|aarch64|armv7l|ppc64le|riscv64|s390x}  (default: host arch)
   --memory    <size>                     (default: 2G)
   --cpus      <n>                        (default: 2)

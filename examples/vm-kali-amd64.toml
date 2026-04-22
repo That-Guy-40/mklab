@@ -2,10 +2,17 @@
 # Build: lab-vm.sh create --config vm-kali-amd64.toml
 # Start: lab-vm.sh start  kali0
 #
-# Upstream ships the qcow2 inside a 7z archive at:
-#   https://cdimage.kali.org/kali-<suite>/kali-linux-<suite>-qemu-amd64.7z
-# lab-vm.sh fetches, extracts (needs `7z` on the host), and caches the
-# resulting qcow2 exactly like any other cloud image.
+# `suite = "kali-rolling"` tracks whatever release Kali currently
+# publishes at /current/ (resolved at create-time by parsing
+# https://cdimage.kali.org/current/SHA256SUMS).  The resolved release
+# tag (e.g. 2026.1) is used for the on-disk cache filename, so old
+# VMs keep their original backing image when a new Kali release ships.
+# To pin a specific release, set suite = "2026.1" (or similar) instead.
+#
+# Upstream artifact:
+#   https://cdimage.kali.org/kali-<release>/kali-linux-<release>-qemu-amd64.7z
+# lab-vm.sh fetches, extracts (needs `7z`, `7za`, or `7zz` on the host),
+# and caches the resulting qcow2 exactly like any other cloud image.
 #
 # NOTE: Kali's prebuilt QEMU images do NOT ship cloud-init, so first-boot
 # config is manual.  After `lab-vm.sh start kali0`:
@@ -15,19 +22,15 @@
 #   4. lab-vm.sh ssh kali0 -- uname -a
 # After that the VM behaves like any other disk-image VM.
 #
-# `suite` is the Kali release tag (e.g. "2026.1"), NOT the Phase 1
-# debootstrap suite name "kali-rolling".  Update the tag when a new
-# release drops; check https://cdimage.kali.org/ for the current one.
-#
 # Prereqs on the host:
-#   - p7zip-full  (provides `7z` for archive extraction)
+#   - p7zip-full  (Debian/Ubuntu/Kali) or p7zip-plugins (Rocky/Fedora)
 #   - qemu-system-x86_64 + OVMF  (standard disk-image backend deps)
 
 [[vm]]
 name     = "kali0"
 backend  = "disk-image"
 distro   = "kali"
-suite    = "2026.1"
+suite    = "kali-rolling"
 arch     = "x86_64"
 memory   = "4G"
 cpus     = 2
