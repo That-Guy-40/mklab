@@ -18,29 +18,40 @@
 #        phase3-docker/lab-docker.sh list --lab demo-ctf
 #        phase4-podman/lab-podman.sh list --lab demo-ctf
 #
-# Tear down likewise:
+# Tear down likewise (reverse order, so the podman from-chroot service
+# releases its overlay before the chroot tree goes away):
 #
 #        phase4-podman/lab-podman.sh  down    --lab demo-ctf
 #        phase3-docker/lab-docker.sh  down    --lab demo-ctf
 #   sudo phase2-qemu-vm/lab-vm.sh     destroy demo-ctf-victim --force
 #   sudo phase1-chroot/lab-chroot.sh  destroy demo-ctf-attacker-tools --force
 #
+# Prerequisites:
+#   - kali-archive-keyring on the host (see phase1-chroot/INSTALL-KALI-KEYRING.md)
+#   - debootstrap, qemu, podman, docker, yq (or tomlq), jq
+#   - rootless podman configured (subuid/subgid — see Phase 4 MANUAL_TESTING)
+#
 # Phase 6's topology view will correlate these via lab-create.lab=demo-ctf
 # labels/manifest fields and paint them as a single pane of glass.
 
 [lab]
 name        = "demo-ctf"
-description = "Cross-phase CTF target: chroot attacker toolchain + victim VM + edge containers"
+description = "Cross-phase CTF target: Kali attacker chroot → imported as rootless podman image; Alpine victim microvm; docker edge proxy; podman scanner pod."
 tags        = ["ctf", "demo", "cross-phase"]
 
-# ─── Phase 1: Kali chroot for attacker tooling ─────────────────────────────
+# ─── Phase 1: Kali rolling chroot (debootstrap) for attacker tooling ───────
+# Pulls ~150 MB of packages from http.kali.org on first create (1-3 min).
+# Requires /usr/share/keyrings/kali-archive-keyring.gpg on the host.
+# The resulting tree is reused by the Phase 4 service below via from_chroot.
 [[chroot]]
 name    = "demo-ctf-attacker-tools"
-backend = "host-copy"
-target  = "/var/jails/demo-ctf-attacker"
-binaries = ["/bin/busybox"]
-extras   = ["/etc/resolv.conf", "/etc/nsswitch.conf"]
-manager  = "none"
+backend = "debootstrap"
+distro  = "kali"
+suite   = "kali-rolling"
+arch    = "x86_64"
+target  = "/var/chroots/demo-ctf-attacker"
+variant = "minbase"
+manager = "none"
 
 # ─── Phase 2: Alpine microvm as the victim ─────────────────────────────────
 [[vm]]
@@ -74,3 +85,15 @@ manager = "pod"
 pod     = "scanner"
 image   = "docker.io/library/alpine:latest"
 command = "sleep 3600"
+
+# ─── Phase 4: rootless Kali container imported from the Phase 1 chroot ─────
+# This is the cross-phase bridge: the tree created by [[chroot]] above is
+# tarred + `podman import`ed on the fly, then run rootless with keep-id
+# userns so host-side file ownership stays sane.
+[[service]]
+name        = "attacker-kali"
+engine      = "podman"
+manager     = "plain"
+from_chroot = "/var/chroots/demo-ctf-attacker"
+userns      = "keep-id"
+command     = "sleep 3600"
