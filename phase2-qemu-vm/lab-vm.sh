@@ -361,6 +361,20 @@ image_url() {
             printf 'https://dl-cdn.alpinelinux.org/alpine/v%s/releases/cloud/nocloud_alpine-%s.0-%s-uefi-cloudinit-r0.qcow2' \
                 "$suite" "$suite" "$a_other"
             ;;
+        kali)
+            # Kali publishes a prebuilt QEMU VM image as a 7z-compressed
+            # qcow2 under /kali-<suite>/, where <suite> is the release
+            # tag (e.g. "2026.1") — not "kali-rolling", which is the
+            # debootstrap/apt suite name used by Phase 1.  Only amd64 is
+            # published in this format; arm64 must go through the
+            # installer ISO (unsupported here).  These images are NOT
+            # cloud-init-enabled; create_one skips seed ISO generation
+            # when distro=kali.  Default in-image creds: kali/kali.
+            [[ "$arch" == "x86_64" ]] \
+                || die "Kali publishes QEMU prebuilt images for x86_64 only (got arch=$arch)"
+            printf 'https://cdimage.kali.org/kali-%s/kali-linux-%s-qemu-%s.7z' \
+                "$suite" "$suite" "$a_deb"
+            ;;
         *) die "no cloud image URL for distro $distro" ;;
     esac
 }
@@ -392,6 +406,32 @@ cache_image() {
     local tmp="${dest}.partial"
     curl --fail --location --output "$tmp" "$url" \
         || { rm -f "$tmp"; die "download failed: $url"; }
+
+    # Some upstreams (Kali) ship the qcow2 inside a .7z archive.  Detect
+    # by URL suffix, extract to a temp dir, and promote the first .qcow2
+    # we find to $tmp.  Done before the qemu-img sniff so the rest of
+    # this function is agnostic.
+    if [[ "$url" == *.7z ]]; then
+        local sevenz
+        if   have 7z;  then sevenz=7z
+        elif have 7za; then sevenz=7za
+        elif have 7zz; then sevenz=7zz
+        else die "need a 7z extractor in PATH (install p7zip-full on Debian/Ubuntu/Kali, p7zip-plugins on Rocky/Fedora)"
+        fi
+        local xdir="${dest}.extract"
+        rm -rf "$xdir"; install -d -m 0755 "$xdir"
+        log_info "extracting 7z archive with $sevenz → $xdir"
+        "$sevenz" x -y -o"$xdir" "$tmp" >/dev/null \
+            || { rm -rf "$xdir"; rm -f "$tmp"; die "7z extract failed: $tmp"; }
+        local inner
+        inner="$(find "$xdir" -type f -name '*.qcow2' -print -quit)"
+        [[ -n "$inner" && -r "$inner" ]] \
+            || { rm -rf "$xdir"; rm -f "$tmp"; die "no .qcow2 found inside $(basename "$url")"; }
+        rm -f "$tmp"
+        mv "$inner" "$tmp"
+        rm -rf "$xdir"
+    fi
+
     # If the image isn't qcow2 (e.g., raw .img), convert.
     require_cmd qemu-img
     if ! qemu-img info "$tmp" 2>/dev/null | grep -q 'file format: qcow2'; then
@@ -1541,9 +1581,17 @@ create_one() {
             fi
             log_info "creating overlay qcow2: $disk (backed by $base)"
             qemu-img create -f qcow2 -F qcow2 -b "$base" "$disk" >/dev/null
-            seed="$(vm_seed "$name")"
-            log_info "generating cloud-init seed iso"
-            make_seed_iso "$name" "$seed" "$pubkey" "$distro"
+            # Kali's prebuilt QEMU images don't ship cloud-init, so a seed
+            # ISO would be silently ignored.  Skip it and signal that
+            # first-boot config is manual (console login as kali/kali).
+            if [[ "$distro" == "kali" ]]; then
+                log_info "distro=kali: skipping cloud-init seed (image has no cloud-init)"
+                ssh_user="kali"
+            else
+                seed="$(vm_seed "$name")"
+                log_info "generating cloud-init seed iso"
+                make_seed_iso "$name" "$seed" "$pubkey" "$distro"
+            fi
             ;;
         kernel+initrd)
             # Alpine microvm auto-build: if both kernel and initrd are empty
@@ -1604,7 +1652,15 @@ create_one() {
     trap - EXIT
 
     log_info "── VM '$name' provisioned (not started; run:  $LAB_PROG start $name) ──"
-    if [[ "$ssh_user" == "root" ]]; then
+    if [[ "$distro" == "kali" ]]; then
+        log_info "Kali prebuilt image has no cloud-init; first-boot config is manual."
+        log_info "  1) $LAB_PROG start $name"
+        log_info "  2) $LAB_PROG console $name   # login kali/kali"
+        log_info "  3) (inside) sudo systemctl enable --now ssh"
+        log_info "  4) (inside) mkdir -p ~/.ssh && echo '<your-pubkey>' >> ~/.ssh/authorized_keys"
+        log_info "  5) $LAB_PROG ssh $name -- uname -a   # works thereafter"
+        log_info "ssh port reserved: 127.0.0.1:$ssh_port → guest:22"
+    elif [[ "$ssh_user" == "root" ]]; then
         log_info "ssh access after boot:  ssh -p $ssh_port root@127.0.0.1   (pubkey auth via dropbear)"
     else
         log_info "ssh access after boot:  ssh -p $ssh_port $ssh_user@127.0.0.1   (default password 'lab')"
@@ -1839,8 +1895,8 @@ USAGE
 CREATE OPTIONS
   --name      <vm-name>                  (required)
   --backend   {disk-image|kernel+initrd|from-chroot}   (default: disk-image)
-  --distro    {debian|ubuntu|rocky|alpine}             (disk-image)
-  --suite     <release>                  e.g. bookworm | jammy | 9 | 3.19
+  --distro    {debian|ubuntu|rocky|alpine|kali}        (disk-image)
+  --suite     <release>                  e.g. bookworm | jammy | 9 | 3.19 | 2026.1
   --arch      {x86_64|aarch64|armv7l|ppc64le|riscv64|s390x}  (default: host arch)
   --memory    <size>                     (default: 2G)
   --cpus      <n>                        (default: 2)

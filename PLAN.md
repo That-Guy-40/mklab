@@ -428,37 +428,43 @@ disk.qcow2, seed.iso, qemu.pid, qemu.monitor, serial.sock}`.
 - `from-chroot` round-trip: build a Debian chroot in Phase 1, package it,
   boot it, ssh in.
 
-### Phase 2 TODO: Kali as a guest distro
+### Phase 2: Kali as a guest distro — landed
 
-Phase 1 supports Kali via debootstrap; Phase 2 currently does not. Today
-`image_url()` in `phase2-qemu-vm/lab-vm.sh` has no `kali)` branch and
-would `die` with "no cloud image URL for distro kali".
+Phase 1 supports Kali via debootstrap. Phase 2 now supports Kali as a
+`disk-image` VM guest via Kali's prebuilt QEMU image (`.7z`-archived
+qcow2) published at `https://cdimage.kali.org/kali-<suite>/`.
 
-Scope of work:
+What shipped:
 
-- Add a `kali)` arm to `image_url()` pointing at
-  `https://cdimage.kali.org/kali-YYYY.N/` (weekly) or the rolling
-  `kali-linux-YYYY.N-qemu-<arch>.qcow2` artifact. Note Kali ships these
-  inside `.7z` archives — the cache layer needs an un-7z step before
-  handing the qcow2 to QEMU. Alternative: use `kali-cloud-genericcloud`
-  images if/when Kali publishes them in a stable location.
-- Decide cloud-init story: Kali's prebuilt QEMU images are **not**
-  cloud-init-enabled by default. Either (a) require the user to run
-  `apt-get install cloud-init` inside the image once, then re-snapshot,
-  or (b) skip cloud-init entirely and inject ssh pubkeys/hostname via
-  first-boot `systemd-firstboot` + a per-VM overlay qcow2.
-- Keep the host-keyring requirement consistent with Phase 1: if the
-  build flow ever needs to fetch Kali packages (e.g., chroot→VM
-  `from-chroot` bridge), reuse the same `kali-archive-keyring.gpg`
-  probe as `lab-chroot.sh`.
-- Add examples: `examples/vm-kali-amd64.toml` (full VM) and, if a
-  minirootfs/netboot path exists for Kali, an optional microvm variant
-  alongside `examples/microvm-alpine.toml`.
-- Extend `phase1-chroot/MANUAL_TESTING.md`-style coverage to a new
-  `phase2-qemu-vm/MANUAL_TESTING.md` once it exists, with a Kali
-  section mirroring §5a/§5b from the chroot doc.
+- `image_url()` `kali)` arm → `kali-linux-<suite>-qemu-amd64.7z`
+  (x86_64 only — upstream doesn't publish prebuilt arm64 QEMU images).
+- `cache_image()` detects `.7z` URLs, extracts with `7z` / `7za` / `7zz`
+  (whichever is in PATH), promotes the inner `.qcow2`, caches it
+  alongside other cloud images.
+- `create_one()` skips the cloud-init seed ISO when `distro=kali`, since
+  the prebuilt image doesn't ship cloud-init. `ssh_user` is set to
+  `kali`. Post-create logs walk the user through the one-time manual
+  firstboot (console login as `kali/kali`, enable ssh, drop pubkey).
+- `examples/vm-kali-amd64.toml` — minimal spec matching Debian/Alpine
+  examples, with a header comment documenting the manual firstboot.
+- CLI help: `--distro` now lists `kali`.
 
-Gate: no hard deadline; track as a post-Phase-2-exit enhancement.
+Known limitations / future work:
+
+- **No automated SSH pubkey injection.** Without cloud-init, the first
+  login still has to be on the serial console. A future improvement
+  would use `virt-customize` (libguestfs) to mutate the overlay qcow2
+  pre-first-boot: enable sshd, drop the pubkey into
+  `/home/kali/.ssh/authorized_keys`. Opt-in if `virt-customize` is
+  present, so we don't add a hard dep.
+- **arm64** is not supported — Kali doesn't publish a prebuilt QEMU
+  image for arm64. If/when they do, extend `image_url()` accordingly.
+- **microvm** variant is not meaningful here: Kali's kernel+initrd
+  aren't published standalone in a convenient form (the installer ISO
+  carries them, but extracting cleanly is a project of its own).
+- **Checksum verification** is not performed; we trust the TLS chain to
+  `cdimage.kali.org`, matching how Debian/Ubuntu/Rocky images are
+  fetched.
 
 ---
 

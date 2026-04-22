@@ -1,0 +1,34 @@
+# Kali Linux on x86_64 — upstream prebuilt QEMU image (q35 + OVMF).
+# Build: lab-vm.sh create --config vm-kali-amd64.toml
+# Start: lab-vm.sh start  kali0
+#
+# Upstream ships the qcow2 inside a 7z archive at:
+#   https://cdimage.kali.org/kali-<suite>/kali-linux-<suite>-qemu-amd64.7z
+# lab-vm.sh fetches, extracts (needs `7z` on the host), and caches the
+# resulting qcow2 exactly like any other cloud image.
+#
+# NOTE: Kali's prebuilt QEMU images do NOT ship cloud-init, so first-boot
+# config is manual.  After `lab-vm.sh start kali0`:
+#   1. lab-vm.sh console kali0       # login kali/kali on the serial console
+#   2. sudo systemctl enable --now ssh
+#   3. mkdir -p ~/.ssh && paste your pubkey into ~/.ssh/authorized_keys
+#   4. lab-vm.sh ssh kali0 -- uname -a
+# After that the VM behaves like any other disk-image VM.
+#
+# `suite` is the Kali release tag (e.g. "2026.1"), NOT the Phase 1
+# debootstrap suite name "kali-rolling".  Update the tag when a new
+# release drops; check https://cdimage.kali.org/ for the current one.
+#
+# Prereqs on the host:
+#   - p7zip-full  (provides `7z` for archive extraction)
+#   - qemu-system-x86_64 + OVMF  (standard disk-image backend deps)
+
+[[vm]]
+name     = "kali0"
+backend  = "disk-image"
+distro   = "kali"
+suite    = "2026.1"
+arch     = "x86_64"
+memory   = "4G"
+cpus     = 2
+ssh_port = 0   # auto-allocate
