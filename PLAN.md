@@ -495,11 +495,189 @@ topologies described in YAML.
 
 ## Phase 4 — Podman (`phase4-podman/lab-podman.sh`)
 
-Same shape as Phase 3 but rootless-first. Uses `podman build --platform`,
-`podman play kube`, `podman pod`. Notable extras: `--from-chroot` via `podman
-import`; `--quadlet` output mode that emits systemd quadlet units instead of
-running containers directly, for users who want containers managed by
-systemd-user.
+### Goals
+
+Rootless-first OCI container orchestration on Linux. Same problem space as
+Phase 3 (Docker), different assumptions and different first-class features:
+pods (shared-namespace groups), quadlet (systemd-user unit generation),
+`--from-chroot` as a rootless-aware bridge to Phase 1, and export to
+Kubernetes/Compose YAML for handoff. Spiritually complements Phase 3 rather
+than replacing it — either can be rebased away without breaking the other.
+
+Linux-only. `podman machine` and macOS support are explicit non-goals for
+this phase (matches Phase 2's KVM assumption).
+
+### Runtime modes (managers)
+
+Three modes, analogous to Phase 1's manager column:
+
+- **`plain`** — ephemeral `podman run` per service, tracked via labels.
+- **`pod`** — N services share `podman pod` network/IPC/PID namespace.
+- **`quadlet`** — services become systemd-user units written to
+  `~/.config/containers/systemd/<name>.{container,pod,network,volume}`;
+  `generate` / `enable` / `start` lifecycle.
+
+`podman kube play` is **not** a runtime mode. Users who want it can run
+`lab-podman export <name> --format=kube` and feed the YAML to
+`podman kube play` themselves — we avoid the doubled-parser error surface.
+
+### Rootless policy
+
+Rootless by default. The script refuses to run as root unless invoked with
+`--allow-root` (explicit escape hatch for restricted hosts). Rootful docker
+users who want a unified rootless workflow should opt in; users on hosts
+without `/etc/subuid` / `/etc/subgid` provisioning will either fix that
+(Phase 4 tells them how) or stay on Phase 3.
+
+### CLI
+
+```
+lab-podman.sh build    <service> [--from-chroot <name>] [--platform <arch>]
+                build    --config FILE
+               run      <image> [--manager plain|pod|quadlet] [-- args...]
+               up       --config FILE
+               down     <lab-name>
+               exec     <service> [--pod <pod>] -- <cmd>
+               logs     <service> [--follow]     # routes to journalctl for quadlet mode
+               status   <service|lab>            # health, userns, ports, uptime
+               list
+               destroy  <service|lab|pod> [--force]
+               export   <lab-name> --format {kube|compose}
+               generate <lab-name>               # quadlet units only, no run
+               version | help
+```
+
+`exec`/`logs`/`status` hide the manager underneath — the user doesn't
+need to know whether their service is a plain container or a quadlet unit.
+
+### Config file (TOML)
+
+```toml
+[lab]
+name   = "web-stack"
+engine = "podman"           # required; discriminates from Phase 3
+
+[[pod]]
+name = "frontend"
+publish = ["8080:80"]
+
+[[service]]
+name    = "nginx"
+image   = "docker.io/library/nginx:alpine"   # fully qualified, no short-name prompts
+pod     = "frontend"                          # optional; omit for plain/quadlet
+manager = "pod"                               # plain | pod | quadlet
+volumes = ["./html:/usr/share/nginx/html:Z"]  # :Z auto-added if SELinux enforcing
+healthcheck = { cmd = "curl -f http://localhost/", interval = "30s" }
+autoupdate  = "registry"                      # io.containers.autoupdate=registry (quadlet)
+
+[[secret]]
+name   = "db-password"
+source = "file:///run/secrets/db.pw"          # backed by podman secret
+
+[[network]]
+name   = "lab-net"
+driver = "bridge"                             # rootless bridge via netavark
+```
+
+Labels attached to every artifact: `lab-create.tool=lab-podman`,
+`lab-create.lab=<name>`, `lab-create.svc=<name>` (or `.pod=<name>`).
+Scoped separately from Phase 3's `lab-create.tool=lab-docker` so
+`list`/`destroy` in each phase tool sees only its own artifacts.
+
+### Rootless plumbing
+
+Each of these is a preflight probe + helpful error, not a silent
+best-effort. First-time rootless podman users trip on all of them:
+
+- **subuid/subgid** — `/etc/subuid` and `/etc/subgid` must have an entry
+  for the invoking user. Missing → print the exact `usermod --add-subuids`
+  fix.
+- **`net.ipv4.ip_unprivileged_port_start`** — warn when a service maps a
+  host port <1024 without this sysctl lowered.
+- **`loginctl enable-linger`** — required for quadlet units to survive
+  logout. Probed before `up --manager=quadlet`; prompt if missing.
+- **SELinux `:Z`/`:z`** — auto-append `:Z` to volume mounts when
+  `getenforce` returns `Enforcing`. Private relabeling; use `:z` via
+  explicit TOML opt-in if a mount needs to be shared across containers.
+- **Rootless networking** — detect pasta vs. slirp4netns (`podman info`);
+  log which is in use; don't fail on either.
+- **`from-chroot` UID mapping** — Phase 1 builds chroots as UID 0;
+  rootless `podman import` maps those to the invoker's UID. Apply
+  `--userns=keep-id` on run; warn if the chroot has UID-0-owned paths
+  that will confuse `find -user`. (**Still-open:** auto-chown during
+  import is an alternative we might revisit.)
+- **Short-name resolution** — require fully qualified image references
+  in TOML (validation-fail on bare names) to avoid interactive
+  `registries.conf` prompts during non-interactive `up`.
+
+### Dependency probing
+
+- **`podman` ≥ 4.4** — hard gate for `quadlet` mode (quadlet shipped in
+  4.4, 2023). Older podman on Rocky 8 / Ubuntu 20.04 works for
+  `plain`/`pod` only; `up --manager=quadlet` errors with a version hint.
+- **`podman` ≥ 4.0** — minimum for any mode.
+- **`qemu-user-static` + `binfmt_misc`** — for `build --platform` on a
+  foreign arch, same probe as Phase 3.
+- **`systemctl --user`** — required for `quadlet`; error if running in a
+  session without a user DBus (containerized shells, some SSH configs).
+
+### State
+
+`$LAB_STATE_DIR/podman/<lab>/{spec.toml, labels, quadlet-links}`:
+
+- `spec.toml` — canonicalized copy of the input TOML. Lets `destroy`,
+  `status`, and `export` work without re-parsing the original file.
+- `labels` — newline-separated podman object IDs we own, for fast
+  lookup without a full `podman ps -a --filter label=...` sweep.
+- `quadlet-links/` — symlinks pointing at the real unit files under
+  `~/.config/containers/systemd/`, so `destroy` can disable + remove
+  without guessing which units came from which lab.
+
+### Tests
+
+`phase4-podman/tests/run-all.sh` + `lib.sh`, mirroring Phase 3. Planned
+test files:
+
+- `test-validation.sh` — TOML schema, `engine=podman` requirement,
+  bare-image-name rejection, manager values.
+- `test-naming.sh` — label scoping, name collision across labs.
+- `test-rootless-smoke.sh` — `plain` run as non-root, clean destroy.
+- `test-pod-lifecycle.sh` — 3-service pod up/down/exec/logs.
+- `test-quadlet-lifecycle.sh` — generate → reload → enable → start →
+  stop → destroy; verify unit symlink hygiene.
+- `test-from-chroot-import.sh` — Phase 1 chroot → rootless podman
+  image → run; verify UID mapping doesn't bite.
+- `test-buildx-multiarch.sh` — cross-arch build via qemu-user-static.
+- `test-export-kube-roundtrip.sh` — `export --format=kube` produces
+  YAML accepted by `podman kube play` without edits.
+- `test-allow-root.sh` — root invocation refused without `--allow-root`,
+  allowed with it.
+
+Every test self-skips (exit 77) when its preconditions aren't met
+(podman missing, subuid unconfigured, quadlet too old, SELinux absent,
+etc.) — same discipline as Phases 1 and 3.
+
+### Example TOMLs
+
+- `examples/podman-plain-single.toml` — one service, plain manager.
+- `examples/podman-pod-3svc.toml` — web+app+db pod, shared namespace.
+- `examples/podman-quadlet-service.toml` — systemd-user managed.
+- `examples/podman-from-chroot.toml` — consumes a Phase 1 chroot name.
+- `examples/podman-multiarch-build.toml` — cross-arch build matrix.
+
+### Exit criteria
+
+1. Bring up a 3-service pod rootless (pasta or slirp4netns), tear down
+   cleanly.
+2. Generate + enable + run a quadlet unit from a TOML spec; verify it
+   survives a logout (`loginctl enable-linger`).
+3. Cross-phase: `lc create` a Kali chroot in Phase 1; `lab-podman build
+   --from-chroot <name>` → runnable rootless image, UID mapping sane.
+4. `lab-podman export <name> --format=kube` produces YAML that
+   `podman kube play` accepts unmodified — handoff-grade roundtrip,
+   even though we don't run `kube play` ourselves.
+
+---
 
 ## Phase 5 — LXD / Incus (`phase5-lxd/lab-lxd.sh`)
 
