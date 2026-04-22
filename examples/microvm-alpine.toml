@@ -1,12 +1,28 @@
-# Alpine 3.19 microvm — fastest boot path on x86_64.
+# True microvm boot — Alpine minirootfs wrapped as an in-RAM initramfs.
+# Auto-built by lab-vm.sh from distro+suite; no pre-download needed.
+#
 # Build: lab-vm.sh create --config microvm-alpine.toml
+# Start: lab-vm.sh start  alp-mv
+#
+# Feature flags (all optional):
+#   network = true     → udhcpc on eth0 at boot (slirp DHCP at 10.0.2.2)
+#   ssh     = true     → dropbear in the initramfs, pubkey auth, `lv ssh` works
+#   persist = "512M"   → qcow2 disk mounted at /data, formatted ext4 on first boot
+#
+# When ssh=true, network is implied and `lv ssh alp-mv` logs in as root
+# using pubkey auth (default_pubkey picks up $HOME/.ssh/id_*.pub).
 
 [[vm]]
-name     = "alp-microvm"
-backend  = "disk-image"
+name     = "alp-mv"
+backend  = "kernel+initrd"
 distro   = "alpine"
 suite    = "3.19"
 arch     = "x86_64"
 memory   = "256M"
 cpus     = 1
 microvm  = true
+
+# Comment out any flag to opt out of that feature.
+network  = true
+ssh      = true
+persist  = "512M"

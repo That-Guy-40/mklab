@@ -183,7 +183,20 @@ firmware_for() {
     case "$arch" in
         x86_64)
             if [[ "$microvm" == "true" ]]; then
-                # microvm machine boots without UEFI; use direct kernel boot.
+                # microvm has no default firmware.  For direct -kernel boot
+                # (kernel+initrd backend) nothing is needed, but the
+                # disk-image backend requires a BIOS to read the MBR.
+                # qboot is a minimal BIOS authored for microvm exactly this
+                # use case.  Always emit it if found — harmless under
+                # -kernel (QEMU bypasses BIOS for linux-boot).
+                local cands=(
+                    /usr/share/qemu/qboot.rom
+                    /usr/share/qemu-kvm/qboot.rom
+                )
+                local p
+                for p in "${cands[@]}"; do
+                    [[ -r "$p" ]] && { printf '%s' "$p"; return 0; }
+                done
                 printf ''
                 return 0
             fi
@@ -277,11 +290,12 @@ cpus        = ${MF_CPUS}
 microvm     = ${MF_MICROVM}
 accel       = "${MF_ACCEL}"
 ssh_port    = ${MF_SSH_PORT}
-disk        = "$(vm_disk "$name")"
+disk        = "${MF_DISK:-}"
 seed        = "${MF_SEED:-}"
 kernel      = "${MF_KERNEL:-}"
 initrd      = "${MF_INITRD:-}"
 append      = "${MF_APPEND:-}"
+ssh_user    = "${MF_SSH_USER:-lab}"
 created_at  = "${now}"
 version     = "${LAB_VERSION}"
 EOF
@@ -394,6 +408,646 @@ cache_image() {
     printf '%s' "$dest"
 }
 
+# ═══════════════════════════════════════════════════════════════════════
+# Alpine microvm builder — follow-ups 1-4 rolled into lab-vm.sh itself.
+#
+# Given (suite, arch) + feature flags, produce a self-contained microvm
+# kernel + initramfs.  Handles:
+#   1. Auto-build  — fetch kernel + minirootfs + apk.static into cache
+#   2. Networking  — udhcpc eth0 at boot (network=true)
+#   3. SSH         — dropbear + authorized_keys (ssh=true)
+#   4. Persist     — /data mount from a virtio-blk disk (persist=SIZE)
+# ═══════════════════════════════════════════════════════════════════════
+
+# Known-good patch versions per Alpine suite.  Update when new patches ship.
+alpine_patch_for_suite() {
+    case "$1" in
+        3.19) printf '5' ;;
+        3.20) printf '3' ;;
+        *)    die "alpine microvm: no known patch version for suite $1 (update alpine_patch_for_suite)" ;;
+    esac
+}
+
+# Parse APKINDEX to find the current version of a package in a given
+# suite/repo.  APKINDEX is a newline-separated, blank-line-delimited
+# record set bundled inside APKINDEX.tar.gz.  Each record has:
+#
+#   P:<package-name>
+#   V:<version>
+#   ...other fields...
+#
+# Writing this ourselves (rather than shelling out to apk.static --search)
+# avoids the chicken-and-egg of needing apk.static to FIND apk.static.
+alpine_query_pkg_version() {
+    local suite="$1" arch="$2" pkg="$3"
+    require_cmd curl tar awk
+    local cache; cache="$(alpine_mv_cache_dir "$suite" "$arch")/APKINDEX"
+    local url; url="$(alpine_mirror_base "$suite" "$arch" main)/APKINDEX.tar.gz"
+    # Refresh the index if older than 1 day — versions drift slowly.
+    if [[ ! -s "$cache" ]] || [[ $(find "$cache" -mtime +1 2>/dev/null) ]]; then
+        local tmp; tmp="$(mktemp -d)"
+        install -d -m 0755 "$(dirname "$cache")"
+        curl --fail --silent --location --output "$tmp/APKINDEX.tar.gz" "$url" \
+            || { rm -rf "$tmp"; die "could not fetch $url"; }
+        tar -xzf "$tmp/APKINDEX.tar.gz" -C "$tmp" APKINDEX 2>/dev/null
+        mv "$tmp/APKINDEX" "$cache"
+        rm -rf "$tmp"
+    fi
+    awk -v pkg="$pkg" '
+        BEGIN { RS = ""; FS = "\n" }
+        {
+            name = ""; ver = ""
+            for (i = 1; i <= NF; i++) {
+                if (substr($i, 1, 2) == "P:") name = substr($i, 3)
+                if (substr($i, 1, 2) == "V:") ver  = substr($i, 3)
+            }
+            if (name == pkg) { print ver; exit }
+        }
+    ' "$cache"
+}
+
+alpine_mirror_base() {
+    # $1=suite, $2=arch, $3=repo (main|community)
+    printf 'https://dl-cdn.alpinelinux.org/alpine/v%s/%s/%s' "$1" "$3" "$2"
+}
+
+alpine_netboot_base() {
+    # $1=suite, $2=arch
+    printf 'https://dl-cdn.alpinelinux.org/alpine/v%s/releases/%s' "$1" "$2"
+}
+
+alpine_mv_cache_dir() {
+    # Shared cache dir for alpine microvm artifacts.  $1=suite, $2=arch
+    printf '%s/netboot/alpine-%s-%s' "$LAB_CACHE_DIR" "$1" "$2"
+}
+
+# Download a URL to cache if missing; print the local path.
+alpine_mv_fetch() {
+    local url="$1" dest="$2"
+    if [[ ! -s "$dest" ]]; then
+        require_cmd curl
+        install -d -m 0755 "$(dirname "$dest")"
+        log_info "downloading $url"
+        curl --fail --location --output "${dest}.partial" "$url" \
+            || { rm -f "${dest}.partial"; die "download failed: $url"; }
+        mv "${dest}.partial" "$dest"
+    fi
+    printf '%s' "$dest"
+}
+
+# Kernel for alpine microvm.
+cache_alpine_microvm_kernel() {
+    local suite="$1" arch="$2"
+    local dir; dir="$(alpine_mv_cache_dir "$suite" "$arch")"
+    alpine_mv_fetch "$(alpine_netboot_base "$suite" "$arch")/netboot/vmlinuz-virt" \
+                    "$dir/vmlinuz-virt"
+}
+
+# Minirootfs tarball (still compressed — extract at build time).
+cache_alpine_minirootfs_tar() {
+    local suite="$1" arch="$2" patch="$3"
+    local dir; dir="$(alpine_mv_cache_dir "$suite" "$arch")"
+    local f="alpine-minirootfs-${suite}.${patch}-${arch}.tar.gz"
+    alpine_mv_fetch "$(alpine_netboot_base "$suite" "$arch")/$f" "$dir/$f"
+}
+
+# modloop-virt (squashfs of kernel modules).  Extracted once into the
+# shared cache; returns the path to the .../modules/<kver> tree.
+# Why we need this:
+#   Alpine's vmlinuz-virt is built for VMs that mount modloop-virt at
+#   boot (the netboot installer does this automatically via the alpine
+#   init script).  Core virtio drivers — virtio_mmio, virtio_blk,
+#   virtio_net — ship as MODULES, not builtin.  Our initramfs runs its
+#   own init, never touches modloop, and therefore has no eth0/vda.
+#   So: download modloop, extract it, and cherry-pick the modules we
+#   need into the initramfs.
+cache_alpine_modloop_tree() {
+    local suite="$1" arch="$2"
+    local dir; dir="$(alpine_mv_cache_dir "$suite" "$arch")"
+    local extract="$dir/modloop-extracted"
+    if [[ -d "$extract/modules" ]]; then
+        printf '%s' "$extract"; return 0
+    fi
+    command -v unsquashfs >/dev/null 2>&1 \
+        || die "unsquashfs not found.  Install with: apt-get install squashfs-tools (Debian/Ubuntu) or dnf install squashfs-tools (Fedora/Rocky)"
+    local ml; ml="$dir/modloop-virt"
+    # alpine_mv_fetch echoes the dest path to stdout; redirect or it
+    # concatenates into our own final printf and breaks the caller's
+    # `$(cache_alpine_modloop_tree ...)` capture.
+    alpine_mv_fetch "$(alpine_netboot_base "$suite" "$arch")/netboot/modloop-virt" "$ml" >/dev/null
+    log_info "extracting modloop-virt → $extract"
+    rm -rf "$extract"
+    unsquashfs -q -f -d "$extract" "$ml" >/dev/null 2>&1 \
+        || die "unsquashfs failed on $ml"
+    printf '%s' "$extract"
+}
+
+# Install a curated subset of kernel modules into the staging initramfs:
+# virtio transport (pci + mmio) and the drivers for block + network.
+# These are enough to bring up eth0 and /dev/vda on microvm.  Uses the
+# pre-built modules.{dep,alias,builtin} from modloop so modprobe deps
+# resolve cleanly — we don't need depmod on the host.
+_alpine_mv_install_modules() {
+    local root="$1" modloop_root="$2"
+    local kmodules="$modloop_root/modules"
+    local kver; kver="$(ls "$kmodules" | head -1)"
+    [[ -n "$kver" ]] || die "no kernel version found in $kmodules"
+    log_info "installing kernel modules (kernel=$kver)"
+
+    local dst="$root/lib/modules/$kver"
+    mkdir -p "$dst"
+
+    # Preserve dep/alias indices so modprobe works.
+    cp "$kmodules/$kver/modules.dep"     "$dst/" 2>/dev/null || true
+    cp "$kmodules/$kver/modules.alias"   "$dst/" 2>/dev/null || true
+    cp "$kmodules/$kver/modules.builtin" "$dst/" 2>/dev/null || true
+    cp "$kmodules/$kver/modules.symbols" "$dst/" 2>/dev/null || true
+
+    # Core virtio transport + infrastructure (virtio, virtio_ring, and
+    # both PCI and MMIO transports).
+    mkdir -p "$dst/kernel/drivers/virtio"
+    cp -a "$kmodules/$kver/kernel/drivers/virtio/." "$dst/kernel/drivers/virtio/" 2>/dev/null
+
+    # Specific modules we need + their transitive deps.  Alpine -virt
+    # ships almost everything as modules, so each feature we enable
+    # trails a small dependency chain.  Grouped by purpose below; when
+    # adding more, always check modules.dep first:
+    #   grep ^kernel/.../foo\.ko modules.dep
+    local m
+    for m in \
+        kernel/drivers/block/virtio_blk.ko   \
+        kernel/drivers/net/virtio_net.ko     \
+        kernel/drivers/net/net_failover.ko   \
+        kernel/net/core/failover.ko          \
+        kernel/net/packet/af_packet.ko       \
+        kernel/drivers/char/virtio_console.ko \
+        kernel/fs/ext4/ext4.ko               \
+        kernel/fs/jbd2/jbd2.ko               \
+        kernel/fs/mbcache.ko                 \
+        kernel/lib/crc16.ko                  \
+        kernel/crypto/crc32c_generic.ko
+    do
+        if [[ -f "$kmodules/$kver/$m" ]]; then
+            install -d "$dst/$(dirname "$m")"
+            cp "$kmodules/$kver/$m" "$dst/$m"
+        fi
+    done
+}
+
+# apk-tools-static: extract apk.static from the .apk (which is a tar.gz).
+# Version is resolved dynamically from APKINDEX so we never rot on
+# Alpine mirrors dropping old package builds.
+cache_alpine_apk_static() {
+    local suite="$1" arch="$2"
+    local dir; dir="$(alpine_mv_cache_dir "$suite" "$arch")"
+    local out="$dir/apk.static"
+    if [[ -x "$out" ]]; then printf '%s' "$out"; return 0; fi
+
+    require_cmd curl tar
+    local ver; ver="$(alpine_query_pkg_version "$suite" "$arch" apk-tools-static)"
+    [[ -n "$ver" ]] || die "apk-tools-static not listed in Alpine $suite/main APKINDEX"
+    log_info "apk-tools-static: version $ver (from APKINDEX)"
+    local url="$(alpine_mirror_base "$suite" "$arch" main)/apk-tools-static-${ver}.apk"
+    local tmp; tmp="$(mktemp)"
+    curl --fail --silent --location --output "$tmp" "$url" \
+        || { rm -f "$tmp"; die "fetch failed: $url"; }
+    local extract_dir; extract_dir="$(mktemp -d)"
+    # .apk is a concatenation of signature + control + data gzipped streams.
+    # tar errors on the non-data sections but still extracts the data payload.
+    tar -xzf "$tmp" -C "$extract_dir" 2>/dev/null || true
+    [[ -x "$extract_dir/sbin/apk.static" ]] \
+        || { rm -rf "$extract_dir" "$tmp"; die "apk-tools-static $ver has no /sbin/apk.static payload"; }
+    install -m 0755 "$extract_dir/sbin/apk.static" "$out"
+    rm -rf "$extract_dir" "$tmp"
+    printf '%s' "$out"
+}
+
+# Install packages into a staging root using apk.static.  Uses
+# --allow-untrusted since we're not threading Alpine's signing keys
+# through; the apk downloads come from dl-cdn.alpinelinux.org over
+# HTTPS, which is our trust boundary here.
+alpine_apk_add() {
+    local suite="$1" arch="$2" root="$3"; shift 3
+    local apk_static; apk_static="$(cache_alpine_apk_static "$suite" "$arch")"
+    local repo; repo="$(alpine_mirror_base "$suite" "$arch" main)"
+    local repo_c; repo_c="$(alpine_mirror_base "$suite" "$arch" community)"
+    log_info "apk add into $root: $*"
+    # Notes on the flags used:
+    #   --initdb         initialize a fresh apk db inside $root (the
+    #                    minirootfs ships an *installed-packages* list but
+    #                    not an apk-tools cache; without --initdb, apk
+    #                    can't write lock/index files and fails obscurely).
+    #   --allow-untrusted  skip signature verification — we trust the
+    #                    dl-cdn HTTPS mirror as our trust boundary here.
+    #   --no-scripts     skip maintainer scripts; those try to chroot into
+    #                    $root, which needs CAP_SYS_CHROOT (not typical
+    #                    non-root).  Missing a post-install step is OK for
+    #                    our use case (we're about to cpio-pack anyway).
+    # We also swallow "errors updating directory permissions" and trigger
+    # chroot failures — they're expected when running as non-root, and the
+    # package *files* have still been placed correctly.
+    "$apk_static" \
+        --root "$root" \
+        --arch "$arch" \
+        --initdb --allow-untrusted --no-cache --no-scripts \
+        --repository "$repo" \
+        --repository "$repo_c" \
+        add "$@" 2>&1 \
+        | grep -vE 'errors updating directory permissions|chroot: Operation not permitted|busybox-.*\.trigger' \
+        >&2 \
+        || true
+    # Verify at least the requested packages' headline binaries landed.
+    local pkg
+    for pkg in "$@"; do
+        case "$pkg" in
+            dropbear)   [[ -x "$root/usr/sbin/dropbear" ]] || die "dropbear install failed (no /usr/sbin/dropbear)" ;;
+            e2fsprogs)  [[ -x "$root/sbin/mkfs.ext4"     ]] || die "e2fsprogs install failed (no /sbin/mkfs.ext4)" ;;
+            iproute2)   [[ -x "$root/sbin/ip"            ]] || die "iproute2 install failed (no /sbin/ip)" ;;
+        esac
+    done
+}
+
+# Emit a feature-gated busybox init configuration into the staging root.
+# Creates /sbin/init -> /bin/busybox and a matching /etc/inittab.
+_alpine_mv_emit_busybox_init() {
+    local root="$1" want_network="$2" want_ssh="$3" want_persist="$4"
+    mkdir -p "$root/sbin" "$root/etc"
+    ln -sf /bin/busybox "$root/sbin/init"
+
+    # Build inittab programmatically so feature flags compose cleanly.
+    local inittab="$root/etc/inittab"
+    {
+        cat <<'HEAD'
+# microvm inittab — generated by lab-vm.sh
+::sysinit:/bin/mount -t proc     none /proc
+::sysinit:/bin/mount -t sysfs    none /sys
+::sysinit:/bin/mount -t devtmpfs none /dev
+::sysinit:/bin/mount -t tmpfs    none /tmp
+::sysinit:/bin/mount -t tmpfs    none /run
+::sysinit:/bin/hostname alpine-microvm
+# Load drivers extracted from modloop-virt.  Order is irrelevant —
+# modprobe resolves deps via modules.dep.  af_packet is needed by
+# udhcpc (DHCP clients open AF_PACKET raw sockets for the initial
+# bootp broadcast before an IP is assigned).
+::sysinit:/sbin/modprobe virtio_mmio
+::sysinit:/sbin/modprobe virtio_pci
+::sysinit:/sbin/modprobe virtio_blk
+::sysinit:/sbin/modprobe virtio_net
+::sysinit:/sbin/modprobe af_packet
+::sysinit:/sbin/modprobe ext4
+HEAD
+        if [[ "$want_persist" == "1" ]]; then
+            cat <<'PERSIST'
+# Mount the persistence disk at /data.  virtio_blk loads synchronously
+# but the device probe is async — /dev/vda may not exist in devtmpfs
+# the instant modprobe returns.  Poll briefly (1s max) before giving up.
+# Format-on-first-boot: if the disk has no filesystem yet, lay down ext4.
+::sysinit:/bin/sh -c 'for i in 1 2 3 4 5; do [ -b /dev/vda ] && break; sleep 0.2; done; [ -b /dev/vda ] && { /bin/mkdir -p /data; blkid /dev/vda >/dev/null 2>&1 || /sbin/mkfs.ext4 -F -L labdata /dev/vda >/dev/null 2>&1; /bin/mount /dev/vda /data; }'
+PERSIST
+        fi
+        if [[ "$want_network" == "1" ]]; then
+            cat <<'NET'
+# Bring up eth0 and DHCP (user-mode slirp serves 10.0.2.0/24).
+::sysinit:/sbin/ip link set eth0 up
+::sysinit:/sbin/udhcpc -i eth0 -b -t 3 -n -q -s /usr/share/udhcpc/default.script
+NET
+        fi
+        if [[ "$want_ssh" == "1" ]]; then
+            cat <<'SSH'
+# Generate host keys on first boot; start dropbear.
+::sysinit:/bin/sh -c '[ -s /etc/dropbear/dropbear_ed25519_host_key ] || { /bin/mkdir -p /etc/dropbear; /usr/bin/dropbearkey -t ed25519 -f /etc/dropbear/dropbear_ed25519_host_key >/dev/null 2>&1; /usr/bin/dropbearkey -t rsa -s 2048 -f /etc/dropbear/dropbear_rsa_host_key >/dev/null 2>&1; }'
+::sysinit:/bin/sh -c '/usr/sbin/dropbear -R -B -F 2>/dev/null &'
+SSH
+        fi
+        cat <<'TAIL'
+
+# Interactive login shell on the serial console, respawned if exited.
+# `-l` sources /etc/profile → /etc/profile.d/*.sh → banner prints.
+ttyS0::respawn:/bin/sh -l
+
+# Handle poweroff/reboot cleanly.
+::shutdown:/bin/umount -a -r
+::ctrlaltdel:/sbin/reboot
+TAIL
+    } > "$inittab"
+
+    # Drop a banner for the serial console.
+    mkdir -p "$root/etc/profile.d"
+    cat > "$root/etc/profile.d/labvm-banner.sh" <<'BANNER'
+if [ -z "$LABVM_BANNER_SHOWN" ]; then
+    export LABVM_BANNER_SHOWN=1
+    printf '\n═══════════════════════════════════════════════\n'
+    printf ' alpine microvm (lab-vm.sh auto-build)\n'
+    printf '═══════════════════════════════════════════════\n'
+    printf ' kernel : %s\n' "$(uname -r)"
+    [ -d /data ] && printf ' persist: /data (size: %s)\n' "$(df -h /data 2>/dev/null | awk 'NR==2{print $2}')"
+    command -v dropbear >/dev/null 2>&1 && printf ' sshd   : dropbear on :22\n'
+    command -v udhcpc >/dev/null 2>&1 && printf ' net    : eth0 via udhcpc\n'
+    printf '\n'
+fi
+BANNER
+    mkdir -p "$root/etc/profile.d"
+}
+
+# Emit a hand-rolled C init (myinit.c) into the staging root, compiled
+# statically with -D flags matching the feature set.  Replaces /sbin/init.
+#
+# Design choice: PID 1 duties stay in C (mount, fork, setsid + TIOCSCTTY,
+# waitpid reap, reboot syscall), and the "messy" setup (udhcpc, mkfs,
+# dropbearkey) is delegated to fork+exec of /bin/sh — which keeps the C
+# source readable AND correctly sequences work that would otherwise require
+# reimplementing apk's post-install scripts in C.
+_alpine_mv_emit_custom_init() {
+    local root="$1" want_network="$2" want_ssh="$3" want_persist="$4"
+    command -v cc >/dev/null 2>&1 \
+        || die "init_flavour=custom needs 'cc' on the host (apt install build-essential, or dnf install gcc)"
+
+    # cc infers language from extension; .c is required or ld misreads
+    # the stdin-style temp as a linker script.
+    local src; src="$(mktemp --suffix=.c)"
+    cat > "$src" <<'MYINIT_C'
+/*
+ * myinit.c — a minimal hand-rolled PID 1 for an Alpine microvm.
+ * Compile-time flags (wire up features without touching this source):
+ *   -DLAB_NETWORK   run udhcpc on eth0 at boot
+ *   -DLAB_SSH       generate dropbear host keys + start dropbear
+ *   -DLAB_PERSIST   format & mount /dev/vda at /data (first-boot ext4)
+ */
+#define _GNU_SOURCE
+#include <errno.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/ioctl.h>
+#include <sys/mount.h>
+#include <sys/reboot.h>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+static volatile sig_atomic_t want_poweroff = 0;
+static volatile sig_atomic_t want_reboot   = 0;
+static void on_poweroff(int s) { (void)s; want_poweroff = 1; }
+static void on_rebootreq(int s){ (void)s; want_reboot   = 1; }
+
+static void try_mount(const char *s, const char *t, const char *ty) {
+    if (mount(s, t, ty, 0, NULL) < 0 && errno != EBUSY)
+        fprintf(stderr, "[myinit] mount %s (%s): %s\n", t, ty, strerror(errno));
+}
+
+/* fork/exec /bin/sh -c CMD, wait for completion.  Used for setup steps
+ * where a tiny shell pipeline is easier to read than equivalent C. */
+static void run_setup(const char *name, const char *script) {
+    dprintf(2, "[myinit] setup: %s\n", name);
+    pid_t pid = fork();
+    if (pid < 0) { perror("[myinit] fork setup"); return; }
+    if (pid == 0) {
+        execl("/bin/sh", "sh", "-c", script, (char *)NULL);
+        _exit(127);
+    }
+    int st; waitpid(pid, &st, 0);
+    if (WIFEXITED(st) && WEXITSTATUS(st) != 0)
+        dprintf(2, "[myinit] setup '%s' exited %d\n", name, WEXITSTATUS(st));
+}
+
+static pid_t spawn_shell(void) {
+    pid_t pid = fork();
+    if (pid < 0) { perror("[myinit] fork shell"); return -1; }
+    if (pid > 0) return pid;
+
+    if (setsid() < 0) perror("[myinit] setsid");
+    int tty = open("/dev/ttyS0", O_RDWR);
+    if (tty < 0) { perror("[myinit] open /dev/ttyS0"); _exit(1); }
+    if (ioctl(tty, TIOCSCTTY, 0) < 0) perror("[myinit] TIOCSCTTY");
+    dup2(tty, 0); dup2(tty, 1); dup2(tty, 2);
+    if (tty > 2) close(tty);
+
+    struct sigaction dfl = { .sa_handler = SIG_DFL };
+    sigaction(SIGINT,  &dfl, NULL);
+    sigaction(SIGQUIT, &dfl, NULL);
+    sigaction(SIGTSTP, &dfl, NULL);
+    sigaction(SIGTTIN, &dfl, NULL);
+    sigaction(SIGTTOU, &dfl, NULL);
+
+    execl("/bin/sh", "-sh", (char *)NULL);
+    perror("[myinit] exec /bin/sh");
+    _exit(127);
+}
+
+int main(void) {
+    /* 1. Pseudofs */
+    mkdir("/proc", 0555);  mkdir("/sys", 0555);
+    mkdir("/dev",  0755);  mkdir("/tmp", 01777);  mkdir("/run", 0755);
+    try_mount("none", "/proc", "proc");
+    try_mount("none", "/sys",  "sysfs");
+    try_mount("none", "/dev",  "devtmpfs");
+    try_mount("none", "/tmp",  "tmpfs");
+    try_mount("none", "/run",  "tmpfs");
+
+    /* 2. Load virtio drivers from /lib/modules (extracted from Alpine's
+     *    modloop-virt by the builder — without this, microvm has no
+     *    eth0 or /dev/vda because the Alpine -virt kernel ships these
+     *    drivers as modules).  Always runs — harmless if nothing needs
+     *    them.  Ordering: this FIRST so persist/network below have
+     *    block + net devices to work with.                              */
+    run_setup("modules",
+        "modprobe virtio_mmio; "
+        "modprobe virtio_pci; "
+        "modprobe virtio_blk; "
+        "modprobe virtio_net; "
+        "modprobe af_packet; "
+        "modprobe ext4");
+
+    /* 3. Feature setup — each block is a no-op unless its -D flag was
+     *    set at compile time.  Ordering: persist first (so /data exists
+     *    before anyone writes there), network next (so sshd can bind
+     *    its listener on a usable interface).                            */
+#ifdef LAB_PERSIST
+    /* Poll /dev/vda briefly — virtio_blk probe is async vs modprobe. */
+    run_setup("persist",
+        "for i in 1 2 3 4 5; do [ -b /dev/vda ] && break; sleep 0.2; done; "
+        "[ -b /dev/vda ] && mkdir -p /data && "
+        "{ blkid /dev/vda >/dev/null 2>&1 || mkfs.ext4 -F -L labdata /dev/vda >/dev/null 2>&1; } && "
+        "mount /dev/vda /data");
+#endif
+#ifdef LAB_NETWORK
+    run_setup("network",
+        "ip link set eth0 up && "
+        "udhcpc -i eth0 -b -t 3 -n -q -s /usr/share/udhcpc/default.script");
+#endif
+#ifdef LAB_SSH
+    run_setup("sshd",
+        "mkdir -p /etc/dropbear && "
+        "{ [ -s /etc/dropbear/dropbear_ed25519_host_key ] || dropbearkey -t ed25519 -f /etc/dropbear/dropbear_ed25519_host_key >/dev/null 2>&1; } && "
+        "{ [ -s /etc/dropbear/dropbear_rsa_host_key ]     || dropbearkey -t rsa -s 2048 -f /etc/dropbear/dropbear_rsa_host_key >/dev/null 2>&1; } && "
+        "dropbear -R -B 2>/dev/null");
+#endif
+
+    /* 3. Banner */
+    int b = open("/dev/ttyS0", O_WRONLY);
+    if (b >= 0) {
+        dprintf(b,
+            "\n"
+            "═══════════════════════════════════════════════\n"
+            " alpine microvm — hand-rolled PID 1 (myinit.c)\n"
+            "═══════════════════════════════════════════════\n"
+            " flavour: custom (static C binary)\n"
+#ifdef LAB_NETWORK
+            " net    : udhcpc eth0\n"
+#endif
+#ifdef LAB_SSH
+            " sshd   : dropbear :22\n"
+#endif
+#ifdef LAB_PERSIST
+            " persist: /data (ext4 on /dev/vda)\n"
+#endif
+            "\n poweroff: `poweroff -f`  (direct reboot syscall)\n"
+            " or      : `poweroff`     (SIGUSR2 to PID 1)\n\n");
+        close(b);
+    }
+
+    /* 4. Signal handlers + supervise loop */
+    struct sigaction sa = { 0 };
+    sa.sa_handler = on_poweroff;
+    sigaction(SIGUSR1, &sa, NULL);
+    sigaction(SIGUSR2, &sa, NULL);
+    sigaction(SIGTERM, &sa, NULL);
+    sa.sa_handler = on_rebootreq;
+    sigaction(SIGINT, &sa, NULL);
+
+    pid_t shell = spawn_shell();
+    for (;;) {
+        if (want_poweroff) { sync(); reboot(RB_POWER_OFF); _exit(0); }
+        if (want_reboot)   { sync(); reboot(RB_AUTOBOOT);  _exit(0); }
+        int st; pid_t who = waitpid(-1, &st, 0);
+        if (who < 0) {
+            if (errno == EINTR)  continue;
+            if (errno == ECHILD) { shell = spawn_shell(); continue; }
+            perror("[myinit] waitpid"); continue;
+        }
+        if (who == shell) shell = spawn_shell();
+    }
+}
+MYINIT_C
+
+    # Build the -D list matching the feature flags.
+    local defs=()
+    (( want_network )) && defs+=(-DLAB_NETWORK)
+    (( want_ssh     )) && defs+=(-DLAB_SSH)
+    (( want_persist )) && defs+=(-DLAB_PERSIST)
+
+    mkdir -p "$root/sbin"
+    log_info "compiling custom init (flags: ${defs[*]:-none})"
+    cc -static -Os -Wall -Wextra "${defs[@]}" -o "$root/sbin/init" "$src" \
+        || { rm -f "$src"; die "custom-init compile failed"; }
+    strip "$root/sbin/init" 2>/dev/null || true
+    rm -f "$src"
+
+    # Also drop a banner in /etc/profile.d — the respawn shell will be
+    # spawned by myinit with stdin/stdout on ttyS0; -sh starts a login
+    # shell which sources /etc/profile.
+    mkdir -p "$root/etc/profile.d"
+    cat > "$root/etc/profile.d/labvm-banner.sh" <<'BANNER'
+if [ -z "$LABVM_BANNER_SHOWN" ]; then
+    export LABVM_BANNER_SHOWN=1
+    printf '\n[login shell] kernel=%s  uptime=%ss\n' "$(uname -r)" "$(cut -d' ' -f1 /proc/uptime)"
+    [ -d /data ] && printf '[login shell] /data mounted: %s\n' "$(df -h /data 2>/dev/null | awk 'NR==2{print $2}')"
+    printf '\n'
+fi
+BANNER
+}
+
+# Master entry point: build (or fetch from cache) the initramfs matching
+# the requested flavour + feature set.  Prints the path to the initramfs.
+build_alpine_microvm_initramfs() {
+    local suite="$1" arch="$2"
+    local want_network="$3" want_ssh="$4" want_persist="$5"
+    local pubkey="$6" init_flavour="${7:-busybox}"
+
+    case "$init_flavour" in
+        busybox|custom) ;;
+        *) die "init_flavour must be 'busybox' or 'custom' (got: $init_flavour)" ;;
+    esac
+
+    local patch;  patch="$(alpine_patch_for_suite "$suite")"
+    local cache;  cache="$(alpine_mv_cache_dir "$suite" "$arch")"
+    install -d -m 0755 "$cache"
+
+    # Cache key: flavour + feature flags + (if ssh) pubkey fingerprint.
+    # Rotating any of these forces a rebuild; reusing the same set is a
+    # cache hit in microseconds.
+    local flags=""
+    (( want_network )) && flags+="n"
+    (( want_ssh     )) && flags+="s"
+    (( want_persist )) && flags+="p"
+    [[ -z "$flags" ]] && flags="base"
+    local keyhash=""
+    if (( want_ssh )) && [[ -n "$pubkey" ]]; then
+        keyhash="-$(printf '%s' "$pubkey" | sha256sum | cut -c1-8)"
+    fi
+    local out="$cache/initramfs-${init_flavour}-${flags}${keyhash}.gz"
+    if [[ -s "$out" ]]; then
+        log_debug "initramfs cache hit: $out"
+        printf '%s' "$out"
+        return 0
+    fi
+
+    # Fetch inputs.
+    local tar; tar="$(cache_alpine_minirootfs_tar "$suite" "$arch" "$patch")"
+
+    local work; work="$(mktemp -d)"
+    # shellcheck disable=SC2064
+    trap "rm -rf '$work'" RETURN
+
+    log_info "extracting minirootfs → $work"
+    tar -xzf "$tar" -C "$work"
+
+    # Install kernel modules (virtio drivers) — required for network +
+    # block devices on alpine -virt kernel regardless of feature flags,
+    # because the microvm's devices are virtio.
+    local modloop_root; modloop_root="$(cache_alpine_modloop_tree "$suite" "$arch")"
+    _alpine_mv_install_modules "$work" "$modloop_root"
+
+    # Add extra packages if any features need them.
+    local pkgs=()
+    (( want_ssh     )) && pkgs+=(dropbear)
+    (( want_persist )) && pkgs+=(e2fsprogs blkid)
+    (( want_network )) && pkgs+=(iproute2)
+    if (( ${#pkgs[@]} > 0 )); then
+        alpine_apk_add "$suite" "$arch" "$work" "${pkgs[@]}"
+    fi
+
+    # SSH: pubkey + clear root password.  The shadow clear MUST run even
+    # when the user has no pubkey (dropbear refuses accounts with locked
+    # password `*`), so it's deliberately outside the pubkey branch.
+    if (( want_ssh )); then
+        sed -i 's|^root:[^:]*:|root::|' "$work/etc/shadow" 2>/dev/null || true
+        if [[ -n "$pubkey" ]]; then
+            mkdir -p "$work/root/.ssh"
+            chmod 700 "$work/root/.ssh"
+            printf '%s\n' "$pubkey" > "$work/root/.ssh/authorized_keys"
+            chmod 600 "$work/root/.ssh/authorized_keys"
+        else
+            log_warn "ssh=true but no SSH public key found on host — falling back to blank-password auth (dropbear -B).  Consider: ssh-keygen -t ed25519"
+        fi
+    fi
+
+    # Install the init — pick emitter based on flavour.
+    case "$init_flavour" in
+        busybox) _alpine_mv_emit_busybox_init "$work" "$want_network" "$want_ssh" "$want_persist" ;;
+        custom)  _alpine_mv_emit_custom_init  "$work" "$want_network" "$want_ssh" "$want_persist" ;;
+    esac
+
+    log_info "packing cpio → $out"
+    (cd "$work" && find . -print0 \
+        | cpio --null -o -H newc --owner=0:0 --quiet \
+        | gzip -9) > "${out}.partial"
+    mv "${out}.partial" "$out"
+    printf '%s' "$out"
+}
+
 # ─── cloud-init NoCloud seed ─────────────────────────────────────────────────
 default_pubkey() {
     # Find a usable SSH public key. Prefer the invoking user's, not root's.
@@ -413,11 +1067,20 @@ default_pubkey() {
 }
 
 make_seed_iso() {
-    # make_seed_iso NAME OUT_PATH PUBKEY_OPTIONAL
+    # make_seed_iso NAME OUT_PATH PUBKEY_OPTIONAL DISTRO_OPTIONAL
     # Note: we use a subshell + EXIT trap rather than a function-level RETURN
     # trap, because RETURN traps in bash are global and fire for every later
     # function return — they cannot reference now-out-of-scope locals.
-    local name="$1" out="$2" pubkey="${3:-}"
+    local name="$1" out="$2" pubkey="${3:-}" distro="${4:-}"
+    # Alpine ships busybox's /bin/ash by default and no /bin/bash — setting
+    # shell=/bin/bash in the cloud-init user block would let the account
+    # authenticate but then fail at session start with "can't execute
+    # /bin/bash: No such file or directory".  Pick the right shell per distro.
+    local user_shell
+    case "$distro" in
+        alpine) user_shell="/bin/ash"  ;;
+        *)      user_shell="/bin/bash" ;;
+    esac
     if   have genisoimage; then :
     elif have xorrisofs;   then :
     elif have mkisofs;     then :
@@ -441,9 +1104,19 @@ EOF
         printf 'users:\n'
         printf '  - default\n'
         printf '  - name: lab\n'
-        printf '    sudo: ALL=(ALL) NOPASSWD:ALL\n'
-        printf '    groups: [sudo, wheel]\n'
-        printf '    shell: /bin/bash\n'
+        # Privilege escalation: Debian/Ubuntu/Rocky/etc. ship sudo; Alpine
+        # ships doas (sudo isn't installed by default).  Writing a sudo
+        # rule on Alpine is a silent no-op, so branch.
+        case "$distro" in
+            alpine)
+                printf '    groups: [wheel]\n'
+                ;;
+            *)
+                printf '    sudo: ALL=(ALL) NOPASSWD:ALL\n'
+                printf '    groups: [sudo, wheel]\n'
+                ;;
+        esac
+        printf '    shell: %s\n' "$user_shell"
         printf '    lock_passwd: false\n'
         printf "    plain_text_passwd: 'lab'\n"
         if [[ -n "$pubkey" ]]; then
@@ -458,6 +1131,17 @@ EOF
         printf "  list: |\n"
         printf "    root:lab\n"
         printf "  expire: false\n"
+        # On Alpine, drop in a doas rule granting lab passwordless root.
+        # Stock Alpine cloud images already have doas installed and read
+        # /etc/doas.d/*.conf at runtime; no package install needed.
+        if [[ "$distro" == "alpine" ]]; then
+            printf 'write_files:\n'
+            printf '  - path: /etc/doas.d/lab.conf\n'
+            printf "    permissions: '0400'\n"
+            printf '    owner: root:root\n'
+            printf '    content: |\n'
+            printf '      permit nopass lab\n'
+        fi
     } > "$tmp/user-data"
 
       if have genisoimage; then
@@ -492,10 +1176,16 @@ spec_from_cli() {
         --arg append   "${OPT_APPEND:-}" \
         --arg ssh_port "${OPT_SSH_PORT:-0}" \
         --arg pubkey   "${OPT_PUBKEY:-}" \
+        --arg network  "${OPT_NETWORK:-false}" \
+        --arg ssh      "${OPT_SSH_ENABLE:-false}" \
+        --arg persist  "${OPT_PERSIST:-}" \
+        --arg init_flavour "${OPT_INIT_FLAVOUR:-busybox}" \
         '{name:$name, backend:$backend, distro:$distro, suite:$suite, arch:$arch,
           memory:$memory, cpus:($cpus|tonumber), microvm:($microvm=="true"),
           image:$image, kernel:$kernel, initrd:$initrd, append:$append,
-          ssh_port:($ssh_port|tonumber), pubkey:$pubkey}'
+          ssh_port:($ssh_port|tonumber), pubkey:$pubkey,
+          network:($network=="true"), ssh:($ssh=="true"), persist:$persist,
+          init_flavour:$init_flavour}'
 }
 
 specs_from_config() {
@@ -517,7 +1207,11 @@ specs_from_config() {
             initrd:  (.initrd  // ""),
             append:  (.append  // ""),
             ssh_port:(.ssh_port // 0),
-            pubkey:  (.pubkey  // "") }
+            pubkey:  (.pubkey  // ""),
+            network: (.network // false),
+            ssh:     (.ssh     // false),
+            persist: (.persist // ""),
+            init_flavour: (.init_flavour // "busybox") }
     '
 }
 
@@ -547,11 +1241,22 @@ validate_spec() {
             fi
             ;;
         kernel+initrd)
-            local kernel initrd
+            local kernel initrd distro suite
             kernel="$(spec_get "$spec" kernel)"
             initrd="$(spec_get "$spec" initrd)"
-            [[ -r "$kernel" ]] || die "spec ($name) kernel not readable: $kernel"
-            [[ -r "$initrd" ]] || die "spec ($name) initrd not readable: $initrd"
+            distro="$(spec_get "$spec" distro)"
+            suite="$(spec_get "$spec" suite)"
+            # If both paths are empty and distro=alpine + suite is set, the
+            # kernel+initrd will be auto-built at create-time (follow-up 1:
+            # auto-build).  Only validate readability when paths ARE given.
+            if [[ -z "$kernel" && -z "$initrd" ]]; then
+                if [[ "$distro" != "alpine" || -z "$suite" ]]; then
+                    die "spec ($name) backend=kernel+initrd needs either (kernel+initrd paths) or (distro=alpine + suite) for auto-build"
+                fi
+            else
+                [[ -r "$kernel" ]] || die "spec ($name) kernel not readable: $kernel"
+                [[ -r "$initrd" ]] || die "spec ($name) initrd not readable: $initrd"
+            fi
             ;;
         from-chroot)
             die "spec ($name) backend=from-chroot is not yet implemented in v0.1.  Workaround: build a chroot in Phase 1, install a kernel inside it, then use backend=kernel+initrd pointing at the extracted vmlinuz/initrd."
@@ -564,17 +1269,48 @@ validate_spec() {
         if [[ "$sup" != "yes" ]]; then
             log_warn "microvm machine type not supported on $arch — falling back to standard 'virt'/'q35'"
         fi
+        # microvm on x86_64 has no UEFI and only a tiny BIOS (qboot).  Stock
+        # cloud images are GPT+ESP (UEFI-only) and won't boot off qboot.
+        # Require an explicit kernel/initrd pair (direct-boot) for microvm +
+        # disk-image — otherwise the VM "runs" but halts at an unbootable
+        # disk with no console output, which is deeply confusing.
+        if [[ "$backend" == "disk-image" ]]; then
+            local k; k="$(spec_get "$spec" kernel)"
+            [[ -n "$k" ]] || die "spec ($name) backend=disk-image + microvm=true without an explicit kernel is unsupported.
+  Stock cloud images are UEFI-only; microvm has no UEFI.  Either:
+    - set microvm=false (boots via OVMF on q35), or
+    - extract vmlinuz/initrd from the image and set kernel=/initrd= in the spec."
+        fi
     fi
 }
 
 # ─── Port allocation ───────────────────────────────────────────────────────
 pick_ssh_port() {
     # Find a free TCP port starting from 2222. Prints the chosen port.
-    local p
+    # "Free" = not listening right now AND not reserved by another VM's
+    # manifest.  The second check matters because VMs get a port at
+    # create-time but only bind it at start-time, so two freshly-created
+    # (both stopped) VMs must still get distinct ports.
+    local p taken_ports=()
+    local n
+    while IFS= read -r n; do
+        [[ -z "$n" ]] && continue
+        local mp; mp="$(read_manifest_field "$n" ssh_port 2>/dev/null)"
+        [[ -n "$mp" && "$mp" != "0" ]] && taken_ports+=("$mp")
+    done < <(list_vm_names)
+
     for p in $(seq 2222 2400); do
-        if ! ss -ltn 2>/dev/null | awk '{print $4}' | grep -q ":${p}\$"; then
-            printf '%s' "$p"; return 0
+        # Skip if listening on host.
+        if ss -ltn 2>/dev/null | awk '{print $4}' | grep -q ":${p}\$"; then
+            continue
         fi
+        # Skip if reserved by an existing VM manifest.
+        local t skip=0
+        for t in "${taken_ports[@]}"; do
+            [[ "$t" == "$p" ]] && { skip=1; break; }
+        done
+        (( skip )) && continue
+        printf '%s' "$p"; return 0
     done
     die "no free port in 2222–2400"
 }
@@ -621,6 +1357,10 @@ build_qemu_argv() {
 
     # Firmware (UEFI / loader)
     if [[ -n "$firmware" ]]; then
+        # microvm on x86_64 uses a single-file BIOS (qboot), not pflash.
+        if [[ "$arch" == "x86_64" && "$microvm" == "true" ]]; then
+            QEMU_ARGV+=(-bios "$firmware")
+        else
         case "$arch" in
             x86_64|aarch64)
                 # Two-file pflash setup: code (read-only) + vars (per-VM, RW).
@@ -658,6 +1398,7 @@ build_qemu_argv() {
                 QEMU_ARGV+=(-bios "$firmware")
                 ;;
         esac
+        fi
     fi
 
     # Direct kernel boot (kernel+initrd backend, OR microvm with cloud image
@@ -668,20 +1409,43 @@ build_qemu_argv() {
         [[ -n "$append" ]] && QEMU_ARGV+=(-append "$append")
     fi
 
+    # Pick the virtio transport suffix for the current machine.  `-drive
+    # if=virtio` is NOT transport-aware — it always emits virtio-blk-pci,
+    # which fails on microvm (mmio-only) and s390x (channel bus).  Use
+    # explicit -drive if=none + -device virtio-blk-<suffix> everywhere so
+    # disk/seed/net all agree with the machine's bus.
+    #   microvm   → mmio        → virtio-*-device
+    #   s390x     → channel bus → virtio-*-ccw
+    #   otherwise → PCI(e)      → virtio-*-pci
+    local virtio_suffix
+    if [[ "$microvm" == "true" && "$(arch_map "$arch" microvm-supported)" == "yes" ]]; then
+        virtio_suffix="device"
+    elif [[ "$arch" == "s390x" ]]; then
+        virtio_suffix="ccw"
+    else
+        virtio_suffix="pci"
+    fi
+
     # Disk
     if [[ -n "$disk" ]]; then
-        QEMU_ARGV+=(-drive "file=${disk},if=virtio,format=qcow2,cache=writeback,discard=unmap")
+        QEMU_ARGV+=(
+            -drive  "file=${disk},if=none,id=disk0,format=qcow2,cache=writeback,discard=unmap"
+            -device "virtio-blk-${virtio_suffix},drive=disk0"
+        )
     fi
 
     # cloud-init seed
     if [[ -n "$seed" ]]; then
-        QEMU_ARGV+=(-drive "file=${seed},if=virtio,format=raw,readonly=on")
+        QEMU_ARGV+=(
+            -drive  "file=${seed},if=none,id=seed0,format=raw,readonly=on"
+            -device "virtio-blk-${virtio_suffix},drive=seed0"
+        )
     fi
 
-    # Network: user-mode with hostfwd for ssh
+    # Network: user-mode with hostfwd for ssh.
     QEMU_ARGV+=(
         -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:${ssh_port}-:22"
-        -device "virtio-net-pci,netdev=net0"
+        -device "virtio-net-${virtio_suffix},netdev=net0"
     )
 
     # Serial console exposed as a unix socket so `lab-vm.sh console` can attach
@@ -740,6 +1504,7 @@ create_one() {
     log_info "── creating VM '$name' (backend=$backend, arch=$arch) ──"
 
     local distro suite memory cpus image kernel initrd append ssh_port pubkey
+    local network_enabled ssh_enabled persist_size ssh_user init_flavour
     distro="$(spec_get "$spec" distro)"
     suite="$(spec_get "$spec" suite)"
     memory="$(spec_get "$spec" memory)"
@@ -750,6 +1515,12 @@ create_one() {
     append="$(spec_get "$spec" append)"
     ssh_port="$(spec_get "$spec" ssh_port)"
     pubkey="$(spec_get "$spec" pubkey)"
+    network_enabled="$(spec_get "$spec" network)"
+    ssh_enabled="$(spec_get "$spec" ssh)"
+    persist_size="$(spec_get "$spec" persist)"
+    init_flavour="$(spec_get "$spec" init_flavour)"
+    [[ -z "$init_flavour" ]] && init_flavour="busybox"
+    ssh_user="lab"  # default for cloud-init VMs
 
     [[ "$ssh_port" == "0" || -z "$ssh_port" ]] && ssh_port="$(pick_ssh_port)"
     [[ -z "$pubkey" ]] && pubkey="$(default_pubkey || true)"
@@ -772,13 +1543,42 @@ create_one() {
             qemu-img create -f qcow2 -F qcow2 -b "$base" "$disk" >/dev/null
             seed="$(vm_seed "$name")"
             log_info "generating cloud-init seed iso"
-            make_seed_iso "$name" "$seed" "$pubkey"
+            make_seed_iso "$name" "$seed" "$pubkey" "$distro"
             ;;
         kernel+initrd)
-            # Optional disk: if user supplies --image, use it; else no disk.
+            # Alpine microvm auto-build: if both kernel and initrd are empty
+            # and distro=alpine, construct them from the minirootfs using the
+            # feature flags (network, ssh, persist) in the spec.  ssh/persist
+            # imply network.
+            if [[ -z "$kernel" && -z "$initrd" ]]; then
+                [[ "$distro" == "alpine" ]] \
+                    || die "kernel+initrd auto-build only supported for distro=alpine"
+                [[ -n "$suite" ]] || die "kernel+initrd auto-build needs suite (e.g. 3.19)"
+                local want_net=0 want_ssh=0 want_persist=0
+                [[ "$network_enabled" == "true" ]] && want_net=1
+                if [[ "$ssh_enabled" == "true" ]]; then
+                    want_ssh=1
+                    want_net=1
+                    ssh_user="root"  # microvm dropbear logs in as root
+                fi
+                [[ -n "$persist_size" ]] && { want_persist=1; want_net=1 || true; }
+                kernel="$(cache_alpine_microvm_kernel "$suite" "$arch")"
+                initrd="$(build_alpine_microvm_initramfs \
+                    "$suite" "$arch" "$want_net" "$want_ssh" "$want_persist" \
+                    "$pubkey" "$init_flavour")"
+                [[ -z "$append" ]] && append="console=ttyS0 rdinit=/sbin/init"
+            fi
+            # Disk selection:
+            #   - explicit --image: bake-in backing file (existing v0.1 behaviour)
+            #   - persist=SIZE: create a fresh qcow2 at that size for /data
+            #   - else: no disk
             if [[ -n "$image" ]]; then
                 require_cmd qemu-img
                 qemu-img create -f qcow2 -F qcow2 -b "$image" "$disk" >/dev/null
+            elif [[ -n "$persist_size" ]]; then
+                require_cmd qemu-img
+                log_info "creating persist disk: $disk ($persist_size)"
+                qemu-img create -f qcow2 "$disk" "$persist_size" >/dev/null
             else
                 disk=""
             fi
@@ -795,15 +1595,20 @@ create_one() {
     # Persist manifest before first boot so partial-failure is visible.
     MF_BACKEND="$backend" MF_DISTRO="$distro" MF_SUITE="$suite" \
     MF_ARCH="$arch" MF_MEMORY="$memory" MF_CPUS="$cpus" MF_MICROVM="$microvm" \
-    MF_ACCEL="$accel" MF_SSH_PORT="$ssh_port" MF_SEED="$seed" \
+    MF_ACCEL="$accel" MF_SSH_PORT="$ssh_port" MF_SEED="$seed" MF_DISK="$disk" \
     MF_KERNEL="$kernel" MF_INITRD="$initrd" MF_APPEND="$append" \
+    MF_SSH_USER="$ssh_user" \
     write_vm_manifest "$name"
 
     # Success — clear the cleanup-on-failure trap.
     trap - EXIT
 
     log_info "── VM '$name' provisioned (not started; run:  $LAB_PROG start $name) ──"
-    log_info "ssh access after boot:  ssh -p $ssh_port lab@127.0.0.1   (default password 'lab')"
+    if [[ "$ssh_user" == "root" ]]; then
+        log_info "ssh access after boot:  ssh -p $ssh_port root@127.0.0.1   (pubkey auth via dropbear)"
+    else
+        log_info "ssh access after boot:  ssh -p $ssh_port $ssh_user@127.0.0.1   (default password 'lab')"
+    fi
 }
 
 cmd_create() {
@@ -909,6 +1714,7 @@ cmd_stop() {
     kill -KILL "$pid" 2>/dev/null || true
     sleep 1
     [[ ! -d "/proc/$pid" ]] || die "could not stop $name"
+    log_info "$name stopped (SIGKILL)"
 }
 
 # ─── Subcommand: console ───────────────────────────────────────────────────
@@ -918,7 +1724,16 @@ cmd_console() {
     vm_exists "$name" || die "no VM named '$name'"
     vm_running "$name" || die "$name is not running"
     require_cmd socat
-    log_info "attaching to serial console (Ctrl-] to detach)"
+    # socat puts the terminal into raw mode — Ctrl-C does NOT interrupt,
+    # it gets forwarded to the guest as a literal 0x03 byte.  The only
+    # way out is the escape char (Ctrl-], i.e. 0x1d), which socat itself
+    # intercepts.  On any exit path (normal, SIGINT, SIGTERM), restore
+    # the terminal so a badly-wedged guest doesn't leave the shell in
+    # raw mode.
+    trap 'stty sane 2>/dev/null || true' EXIT INT TERM
+    printf >&2 '\n[info] attaching to serial console\n'
+    printf >&2 '[info] to detach, press:  Ctrl-]\n'
+    printf >&2 '[info] (Ctrl-C is forwarded to the guest, not to this shell)\n\n'
     socat -,raw,echo=0,escape=0x1d "UNIX-CONNECT:$(vm_serial "$name")"
 }
 
@@ -928,19 +1743,31 @@ cmd_ssh() {
     [[ -n "$name" ]] || die "usage: $LAB_PROG ssh <name> [-- cmd args...]"
     vm_exists "$name" || die "no VM named '$name'"
     vm_running "$name" || die "$name is not running (try '$LAB_PROG start $name')"
-    local port; port="$(read_manifest_field "$name" ssh_port)"
+    local port user
+    port="$(read_manifest_field "$name" ssh_port)"
+    user="$(read_manifest_field "$name" ssh_user)"
+    [[ -z "$user" ]] && user="lab"
     if (( ${#EXTRA_ARGS[@]} > 0 )); then
-        # ssh concatenates argv with spaces and re-parses on the remote side,
-        # which destroys the local shell's quoting (e.g. `grep -E '^(a|b)='`
-        # arrives unquoted and bash chokes on the parens).  Shell-quote each
-        # arg with printf %q so the remote shell sees the original words.
+        # Two conventions users expect after `--`:
+        #   (a)  lv ssh host -- cmd arg1 arg2       (argv-style, shell-quote each)
+        #   (b)  lv ssh host -- 'a | b && c; d'     (pipeline string, pass as-is)
+        # We pick by arity:
+        #   1 arg → treat as a shell snippet, pass raw so `;`, `|`, redirects
+        #            etc. remote-side-parse naturally.
+        #   2+    → argv-style; printf %q each so local shell's lost quoting
+        #            (e.g. `grep -E '^(a|b)='`) is reinstated before ssh
+        #            concatenates with spaces and the remote shell re-parses.
         local remote_cmd
-        remote_cmd="$(printf '%q ' "${EXTRA_ARGS[@]}")"
+        if (( ${#EXTRA_ARGS[@]} == 1 )); then
+            remote_cmd="${EXTRA_ARGS[0]}"
+        else
+            remote_cmd="$(printf '%q ' "${EXTRA_ARGS[@]}")"
+        fi
         ssh -p "$port" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            lab@127.0.0.1 "$remote_cmd"
+            "${user}@127.0.0.1" "$remote_cmd"
     else
         ssh -p "$port" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-            lab@127.0.0.1
+            "${user}@127.0.0.1"
     fi
 }
 

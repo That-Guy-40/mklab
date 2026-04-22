@@ -1,0 +1,27 @@
+# Alpine microvm with PID 1 = our hand-rolled C binary (myinit.c),
+# auto-built by lab-vm.sh.  Identical feature matrix to microvm-alpine.toml
+# (network / ssh / persist), different init.
+#
+# Build: lab-vm.sh create --config microvm-alpine-custom-init.toml
+# Start: lab-vm.sh start alp-ci
+#
+# The C source is embedded in lab-vm.sh's _alpine_mv_emit_custom_init
+# function — it gets written to /tmp and compiled on every (uncached)
+# rebuild with -D flags matching the features below.
+#
+# Prereq: `cc` on the host (build-essential on Debian/Ubuntu, gcc on Rocky).
+
+[[vm]]
+name         = "alp-ci"
+backend      = "kernel+initrd"
+distro       = "alpine"
+suite        = "3.19"
+arch         = "x86_64"
+memory       = "256M"
+cpus         = 1
+microvm      = true
+init_flavour = "custom"     # busybox | custom
+
+network      = true
+ssh          = true
+persist      = "256M"

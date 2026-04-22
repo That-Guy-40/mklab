@@ -1,0 +1,95 @@
+INIT PID1 stuff  --- custom C program example
+
+
+What you're running
+
+  ┌────────────────┬──────────────────────────────────┬───────────────────────────────────────────┐
+  │                │      busybox init (alp-mv)       │           custom init (alp-ci)            │
+  ├────────────────┼──────────────────────────────────┼───────────────────────────────────────────┤
+  │ PID 1          │ /bin/busybox called as init      │ /sbin/init — our static C binary          │
+  ├────────────────┼──────────────────────────────────┼───────────────────────────────────────────┤
+  │ Mount /proc,   │ via /etc/inittab sysinit: lines  │ direct mount(2) syscalls in C             │
+  │ /sys, /dev     │ calling /bin/mount               │                                           │
+  ├────────────────┼──────────────────────────────────┼───────────────────────────────────────────┤
+  │ Spawn sh on    │ respawn:/bin/sh in inittab       │ fork() → setsid() → open("/dev/ttyS0") →  │
+  │ ttyS0          │                                  │ ioctl(TIOCSCTTY) → execl()                │
+  ├────────────────┼──────────────────────────────────┼───────────────────────────────────────────┤
+  │ Reap zombies   │ busybox internal loop            │ waitpid(-1, &status, 0)                   │
+  ├────────────────┼──────────────────────────────────┼───────────────────────────────────────────┤
+  │ poweroff       │ signal + internal handler        │ reboot(RB_POWER_OFF)                      │
+  ├────────────────┼──────────────────────────────────┼───────────────────────────────────────────┤
+  │ LOC            │ inittab is ~10 lines, but        │ ~150 lines of C, one file                 │
+  │                │ busybox init is ~1200 LOC C      │                                           │
+  └────────────────┴──────────────────────────────────┴───────────────────────────────────────────┘
+
+  The whole PID-1 contract, annotated
+
+  Read myinit.c alongside this table and every line will map to an item here:
+
+  Kernel expectation: PID 1 must exist for the entire lifetime of userspace
+  Why: If PID 1 exits, kernel panics. That's the "Attempted to kill init" message you hit last round.
+  myinit.c line: The for (;;) loop in main never returns
+  ────────────────────────────────────────
+  Kernel expectation: PID 1 reaps all orphaned zombies
+  Why: Every child whose parent dies re-parents to PID 1. If we don't waitpid, ps fills with <defunct>
+    entries.
+  myinit.c line: waitpid(-1, &status, 0)
+  ────────────────────────────────────────
+  Kernel expectation: Someone has to mount /proc, /sys, /dev
+  Why: The kernel exposes them but doesn't mount them — userspace must. A C program with shells spawned
+
+    under it will find empty mount points otherwise.
+  myinit.c line: try_mount() block
+  ────────────────────────────────────────
+  Kernel expectation: Interactive processes need a controlling terminal for job control
+  Why: Without a ctty, Ctrl-C just disappears — the tty driver has no process group to signal.
+  myinit.c line: setsid() + open("/dev/ttyS0") + ioctl(TIOCSCTTY, 0)
+  ────────────────────────────────────────
+  Kernel expectation: Graceful shutdown means syncing and invoking reboot(2) with the right flag
+  Why: The kernel doesn't "exit"; it halts or reboots when PID 1 asks via this syscall.
+  myinit.c line: sync(); reboot(RB_POWER_OFF)
+
+  How to interrogate it from the inside
+
+  Once you're at the shell prompt, try:
+
+  cat /proc/1/comm         # should print "init" — this is our binary
+  cat /proc/1/cmdline | xxd | head -1   # argv of PID 1
+  ls -l /proc/1/exe        # symlink → /sbin/init = our 735 KB binary
+  cat /proc/1/status | head -20     # PID 1 state, uids, etc.
+  cat /proc/1/maps | head  # memory map — see the static binary layout
+
+  Then, to verify reap + respawn:
+
+  sleep 100 &              # spawn a zombie-ish child
+  echo $!                  # note its PID
+  kill -9 $!               # terminate it
+  ps                       # should NOT show <defunct> — PID 1 reaped it
+  exit                     # the shell exits, myinit respawns another
+                           # you should see a fresh prompt
+
+  And to verify shutdown:
+
+  poweroff                 # sends SIGUSR2 to PID 1; myinit catches it,
+                           # sync + reboot(RB_POWER_OFF), QEMU exits
+
+  If poweroff hangs
+
+  Alpine's busybox poweroff without -f relies on the init to handle the signal. If a signal number
+  mismatch crops up on this build of busybox, use:
+
+  poweroff -f              # direct reboot(2) syscall, bypasses PID 1
+
+  That always works and doesn't depend on signal conventions.
+
+  Follow-up experiments, if you're curious
+
+  1. strace comparison — on the host, strace -f -e trace=execve,mount,setsid,ioctl,waitpid,fork
+  /sbin/init on a Linux box shows the pattern most inits follow. You'll see our myinit does the same
+  things, just with cleaner names.
+  2. Size surgery — recompile with musl-gcc -static -Os instead of glibc. Drops the binary from 735 KB
+  → ~40 KB. Same behavior, no libc baggage.
+  3. Add a watchdog — open /dev/watchdog and write(fd, "x", 1) every N seconds. Now myinit is also a
+  hardware watchdog petter.
+  4. Fault-tolerance — deliberately abort() inside myinit after 10 seconds; watch the kernel panic.
+  That's the guarantee PID 1 makes to the kernel — we must stay alive.
