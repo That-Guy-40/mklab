@@ -553,22 +553,37 @@ need to know whether their service is a plain container or a quadlet unit.
 ### Config file (TOML)
 
 ```toml
-[lab]
-name   = "web-stack"
-engine = "podman"           # required; discriminates from Phase 3
+[lab]                         # cross-phase grouping metadata (optional)
+name        = "web-stack"
+description = "Three-tier demo"
+tags        = ["demo", "web"]
 
 [[pod]]
-name = "frontend"
+name    = "frontend"
 publish = ["8080:80"]
 
 [[service]]
 name    = "nginx"
-image   = "docker.io/library/nginx:alpine"   # fully qualified, no short-name prompts
+engine  = "podman"                            # per-service; defaults to the invoking tool's runtime.
+                                              # Lets a future unified lab.toml mix
+                                              # docker-backed and podman-backed services in one lab.
+image   = "docker.io/library/nginx:alpine"    # fully qualified, no short-name prompts
 pod     = "frontend"                          # optional; omit for plain/quadlet
 manager = "pod"                               # plain | pod | quadlet
 volumes = ["./html:/usr/share/nginx/html:Z"]  # :Z auto-added if SELinux enforcing
 healthcheck = { cmd = "curl -f http://localhost/", interval = "30s" }
 autoupdate  = "registry"                      # io.containers.autoupdate=registry (quadlet)
+
+[[service]]
+name        = "payload-builder"
+engine      = "podman"
+manager     = "plain"
+from_chroot = "kali-rolling"                  # Phase 1 chroot name → rootless image
+userns      = "keep-id"                       # keep-id | auto-map | host | "<uidmap-string>"
+                                              # keep-id (default): UID N inside == UID N on host; transparent.
+                                              # auto-map: chown everything to 0:0 inside (invoker on host).
+                                              # host: share userns (requires --allow-root).
+                                              # custom: raw --uidmap/--gidmap passthrough for power users.
 
 [[secret]]
 name   = "db-password"
@@ -580,9 +595,11 @@ driver = "bridge"                             # rootless bridge via netavark
 ```
 
 Labels attached to every artifact: `lab-create.tool=lab-podman`,
-`lab-create.lab=<name>`, `lab-create.svc=<name>` (or `.pod=<name>`).
-Scoped separately from Phase 3's `lab-create.tool=lab-docker` so
-`list`/`destroy` in each phase tool sees only its own artifacts.
+`lab-create.lab=<name>` (from the optional `[lab]` block),
+`lab-create.svc=<name>` (or `.pod=<name>`). Scoped separately from
+Phase 3's `lab-create.tool=lab-docker` so `list`/`destroy` in each
+phase tool sees only its own artifacts. Phase 6 cross-correlates on
+`lab-create.lab=<name>` to paint a single-pane-of-glass view.
 
 ### Rootless plumbing
 
@@ -602,10 +619,24 @@ best-effort. First-time rootless podman users trip on all of them:
 - **Rootless networking** — detect pasta vs. slirp4netns (`podman info`);
   log which is in use; don't fail on either.
 - **`from-chroot` UID mapping** — Phase 1 builds chroots as UID 0;
-  rootless `podman import` maps those to the invoker's UID. Apply
-  `--userns=keep-id` on run; warn if the chroot has UID-0-owned paths
-  that will confuse `find -user`. (**Still-open:** auto-chown during
-  import is an alternative we might revisit.)
+  rootless `podman import` maps those to the invoker's UID. The
+  `userns` TOML field on a `from_chroot` service picks the strategy:
+  - `keep-id` **(default)** — `--userns=keep-id`; UID N inside the
+    container maps to UID N on the host. Most transparent.
+  - `auto-map` — during import, rewrite ownership so everything is
+    `0:0` inside the container (which, rootless, maps to the invoker
+    on the host). Most "container-idiomatic", best for images that
+    expect to run as root-in-namespace.
+  - `host` — share the host's user namespace; requires `--allow-root`
+    and is essentially a chroot-with-containerization. Power-user
+    only.
+  - A raw string (e.g. `"0:1000:1,1:100000:65535"`) — passed
+    verbatim to `--uidmap` / `--gidmap` for custom layouts. Gives us
+    a pressure relief valve without expanding the DSL every time a
+    new rootless mapping pattern emerges.
+  Always warn at import time when the chroot contains UID-0-owned
+  paths, regardless of strategy chosen — it's the single most common
+  source of confused-deputy bugs.
 - **Short-name resolution** — require fully qualified image references
   in TOML (validation-fail on bare names) to avoid interactive
   `registries.conf` prompts during non-interactive `up`.
@@ -757,10 +788,16 @@ widgets/
   generated TOML, and on confirm dispatch the bash script in a Textual
   `Worker` so the UI stays responsive. Stream stdout/stderr into a log
   panel.
-- **Topology view** — read a top-level `lab.toml` and render a
-  dependency-ordered list (no fancy graph drawing in v1; arrows in text).
-  "Bring up" and "Tear down" actions iterate in topological order. Halt on
-  first failure with a clear pointer to which resource broke.
+- **Topology view** — read a unified `lab.toml` (may contain
+  `[[chroot]]` / `[[vm]]` / `[[service]]` blocks from any mix of
+  Phases 1–5, all sharing the same top-level `[lab]` grouping
+  metadata) and render a dependency-ordered list (no fancy graph
+  drawing in v1; arrows in text). "Bring up" and "Tear down" actions
+  iterate in topological order, dispatching each block to its owning
+  phase script. Cross-correlation is done via the
+  `lab-create.lab=<name>` label / manifest field that every phase tool
+  writes when a `[lab]` block is present. Halt on first failure with
+  a clear pointer to which resource broke.
 - **Confirm modal** — every destructive action (`destroy`, `tear down`,
   `stop --force`) routes through this. Shows exactly the command(s) about
   to run. No keyboard shortcut bypass.
@@ -905,6 +942,59 @@ ppc64le   | ppc64el| ppc64le| ppc64       | ppc64le
 riscv64   | riscv64| riscv64| riscv64     | riscv64
 s390x     | s390x  | s390x  | s390x       | s390x
 ```
+
+### Lab grouping (`[lab]` as a cross-phase concept)
+
+A "lab" is a named, cross-phase grouping of resources. The motivating use
+case: a user grabs a recipe from a blog or tutorial that mixes a build
+chroot, a victim VM, and a couple of containers, and wants to spin the
+whole thing up, tear the whole thing down, and see it as one thing.
+
+**Schema.** Every phase TOML may carry an optional top-level `[lab]`
+block:
+
+```toml
+[lab]
+name        = "ctf-box"
+description = "OWASP XSS challenge from blog post"
+tags        = ["ctf", "web", "tutorial"]
+```
+
+When present, the phase tool:
+
+- Records `lab = "<name>"` in its per-resource state/manifest (Phases
+  1/2) or attaches `lab-create.lab=<name>` as an OCI label (Phases
+  3/4).
+- Accepts `--lab <name>` on `list` / `destroy` to filter by grouping.
+
+Resources without a `[lab]` block are "ungrouped" and show up under a
+special `(none)` bucket.
+
+**Per-phase blocks keep their shape.** The cross-phase part is the
+metadata; the provisioning blocks stay phase-local:
+
+- Phase 1: `[[chroot]]`
+- Phase 2: `[[vm]]`
+- Phase 3: `[[service]]` (engine=docker implicit)
+- Phase 4: `[[service]]` with per-service `engine = "podman"`, and
+  `[[pod]]` for shared-namespace groups
+
+A future unified `lab.toml` MAY combine blocks from multiple phases in
+one file; each phase tool reads its own blocks and ignores the rest.
+That gives three equivalent workflows:
+
+1. **Per-phase TOMLs, shared lab name** — current status quo, works
+   today once `[lab]` is wired into each phase tool.
+2. **Unified TOML, invoke each tool with `--config lab.toml`** — each
+   tool picks its own blocks out. No new binary needed.
+3. **Phase 6 topology view** — reads unified TOML, dispatches to each
+   phase script in dependency order, shows them as one lab in the TUI.
+
+**Engine hint lives per-resource, not per-lab.** A lab can mix
+docker-backed and podman-backed services; `[[service]] engine =
+"podman"` decides which phase tool owns that block. Default: whichever
+tool was invoked (`lab-docker.sh` → `docker`, `lab-podman.sh` →
+`podman`).
 
 ### Security posture
 
