@@ -19,11 +19,11 @@ readonly LAB_PROG="${0##*/}"
 
 # ─── State / cache locations ────────────────────────────────────────────────
 if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
-    readonly LAB_STATE_DIR="/var/lib/lab-create"
-    readonly LAB_CACHE_DIR="/var/cache/lab-create"
+    readonly LAB_STATE_DIR="${LAB_STATE_DIR:-/var/lib/lab-create}"
+    readonly LAB_CACHE_DIR="${LAB_CACHE_DIR:-/var/cache/lab-create}"
 else
-    readonly LAB_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/lab-create"
-    readonly LAB_CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/lab-create"
+    readonly LAB_STATE_DIR="${LAB_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/lab-create}"
+    readonly LAB_CACHE_DIR="${LAB_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/lab-create}"
 fi
 readonly LAB_VM_STATE_DIR="${LAB_STATE_DIR}/vms"
 readonly LAB_IMG_CACHE_DIR="${LAB_CACHE_DIR}/images"

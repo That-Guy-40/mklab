@@ -7,14 +7,10 @@
 # the script's state dir to a tmpdir, fabricate the manifest + a few
 # satellite files, and assert against the resulting output.
 #
-# `LAB_STATE_DIR` is `readonly` inside the script: setting it from outside
-# is a no-op because the conditional block reassigns it unconditionally.
-# The actual knob (in non-root mode) is `XDG_STATE_HOME` — whose
-# `${...:-$HOME/.local/state}/lab-create` expansion we redirect to $WORK.
-#
-# No root, no real qemu, no network.  We use $$ (the test's own PID) in
-# qemu.pid so that vm_running's `[[ -d /proc/$pid ]]` check succeeds
-# without any actual qemu process.
+# Works under root or non-root: lab-vm.sh now honors $LAB_STATE_DIR
+# (matching Phases 4/5).  No real qemu, no network.  We use $$ (the
+# test's own PID) in qemu.pid so vm_running's `[[ -d /proc/$pid ]]`
+# check succeeds without any actual qemu process.
 
 set -euo pipefail
 # shellcheck disable=SC1091
@@ -22,23 +18,14 @@ source "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
 
 require_cmd jq
 
-# Refuse to run as root: setting XDG_STATE_HOME has no effect when
-# lab-vm.sh's root branch hardcodes /var/lib/lab-create.
-if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
-    skip "must run as non-root (script's state-dir override only honors XDG_STATE_HOME for non-root)"
-fi
-
 WORK="$(mktemp -d)"
 # shellcheck disable=SC2064
 trap "rm -rf '$WORK'" EXIT
 
-# --- pin the script's state dir into our tmpdir ---------------------------
-# Non-root branch: LAB_STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/lab-create"
-# So `XDG_STATE_HOME=$WORK` ⇒ LAB_STATE_DIR=$WORK/lab-create
-#                          ⇒ LAB_VM_STATE_DIR=$WORK/lab-create/vms
-export XDG_STATE_HOME="$WORK"
-STATE_DIR="$WORK/lab-create"
-VM_STATE_DIR="$STATE_DIR/vms"
+# Pin the script's state dir directly via LAB_STATE_DIR — matches the
+# pattern used by the Phase 4/5 test suites.
+export LAB_STATE_DIR="$WORK/lab-create"
+VM_STATE_DIR="$LAB_STATE_DIR/vms"
 VM_NAME="myvm"
 VM_DIR="$VM_STATE_DIR/$VM_NAME"
 mkdir -p "$VM_DIR"
