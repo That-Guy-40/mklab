@@ -24,18 +24,32 @@ require_cmd() {
 # prefer this over bare `lxc`/`incus` so they work on either engine.
 LXC_CMD=""
 LXC_GROUP=""
+# Same reachability-aware probe as lab-lxd.sh: pick the binary that
+# actually answers `info`, not just whichever is installed.  Without
+# this the test suite gets stuck on "incus daemon not reachable" on
+# hosts where incus is packaged but only the snap-based lxd is running.
 detect_lxd_engine() {
-    if command -v incus >/dev/null 2>&1; then
+    if command -v incus >/dev/null 2>&1 && incus info >/dev/null 2>&1; then
         LXC_CMD=incus; LXC_GROUP=incus-admin
-    elif command -v lxc >/dev/null 2>&1; then
+    elif command -v lxc >/dev/null 2>&1 && lxc info >/dev/null 2>&1; then
         LXC_CMD=lxc;   LXC_GROUP=lxd
     fi
 }
 
 require_lxd_or_incus() {
     detect_lxd_engine
-    [[ -n "$LXC_CMD" ]] || skip "neither incus nor lxc on PATH"
-    "$LXC_CMD" info >/dev/null 2>&1 || skip "$LXC_CMD daemon not reachable (try: sudo systemctl start ${LXC_CMD})"
+    [[ -n "$LXC_CMD" ]] || skip "no reachable LXD/Incus daemon (neither incus nor lxc 'info' succeeded)"
+
+    # The default profile must carry a root-disk device, otherwise every
+    # `launch` fails with "No root device could be found".  This is the
+    # post-install state — engine is running but `init` has never been run.
+    # Skip with a precise pointer instead of cascading lifecycle failures.
+    if ! "$LXC_CMD" profile show default 2>/dev/null | grep -qE '^[[:space:]]+root:'; then
+        case "$LXC_CMD" in
+            incus) skip "default Incus profile has no root device — run: sudo incus admin init --auto  (see phase5-lxd/MANUAL_TESTING.md §0a)" ;;
+            lxc)   skip "default LXD profile has no root device — run: sudo lxd init --auto  (see phase5-lxd/MANUAL_TESTING.md §0a)" ;;
+        esac
+    fi
 }
 
 # expect_error LABEL PATTERN -- ARGS...

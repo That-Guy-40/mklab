@@ -6,26 +6,30 @@ set -euo pipefail
 . "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
 
 note "probe result"
-if command -v incus >/dev/null 2>&1 && command -v lxc >/dev/null 2>&1; then
-    # Both installed — script must pick incus.  We can only observe this
-    # indirectly by running a subcommand that logs the engine name at
-    # debug level.
-    if ! LAB_LOG_LEVEL=debug "$LAB_LXD" help 2>&1 >/dev/null | grep -q 'engine: incus'; then
-        # help doesn't call probe_engine (fast path); try list instead.
-        # list will also emit debug after probe_engine, without needing a
-        # reachable daemon.  If list fails because daemon down, we still
-        # got the [debug] line.
-        out="$(LAB_LOG_LEVEL=debug "$LAB_LXD" list 2>&1 || true)"
-        grep -q 'engine: incus' <<<"$out" \
-            || fail "with both incus+lxc installed, engine should be incus; got: $out"
-    fi
-    note "both installed → incus picked OK"
-elif command -v incus >/dev/null 2>&1; then
-    note "only incus installed — dispatch trivially correct"
-elif command -v lxc >/dev/null 2>&1; then
-    note "only lxc installed — dispatch trivially correct"
+# Reachability-aware: the script picks the binary whose daemon answers.
+# Binary presence alone isn't the right predicate — incus is often
+# packaged without its daemon running on hosts where snap-based lxd is
+# the live engine.
+incus_ok=0; lxc_ok=0
+command -v incus >/dev/null 2>&1 && incus info >/dev/null 2>&1 && incus_ok=1
+command -v lxc   >/dev/null 2>&1 && lxc   info >/dev/null 2>&1 && lxc_ok=1
+
+if (( incus_ok && lxc_ok )); then
+    # Both reachable — script must pick incus.
+    out="$(LAB_LOG_LEVEL=debug "$LAB_LXD" list 2>&1 || true)"
+    grep -q 'engine: incus' <<<"$out" \
+        || fail "with both incus+lxc reachable, engine should be incus; got: $out"
+    note "both reachable → incus picked OK"
+elif (( incus_ok )); then
+    out="$(LAB_LOG_LEVEL=debug "$LAB_LXD" list 2>&1 || true)"
+    grep -q 'engine: incus' <<<"$out" || fail "incus reachable but not picked; got: $out"
+    note "only incus reachable — picked OK"
+elif (( lxc_ok )); then
+    out="$(LAB_LOG_LEVEL=debug "$LAB_LXD" list 2>&1 || true)"
+    grep -q 'engine: lxd' <<<"$out" || fail "lxc reachable but not picked; got: $out"
+    note "only lxc reachable — picked OK"
 else
-    skip "no engine installed"
+    skip "no reachable engine"
 fi
 
 # Engine filter: a service with engine = "docker" or "podman" must be
@@ -43,7 +47,7 @@ if command -v incus >/dev/null 2>&1 || command -v lxc >/dev/null 2>&1; then
 name = "${lab}"
 [[instance]]
 name = "mine"
-image = "images:alpine/3.19"
+image = "images:alpine/3.21"
 engine = "lxd"
 [[instance]]
 name = "notmine"

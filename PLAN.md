@@ -770,7 +770,7 @@ devices = { eth0 = { type = "nic", network = "lxdbr0", name = "eth0" } }
 [[instance]]                       # LXD analogue of Phase 3/4's [[service]]
 name     = "web"
 type     = "container"             # or "vm"
-image    = "images:alpine/3.19"    # upstream alias
+image    = "images:alpine/3.21"    # upstream alias
                                    # OR: from_chroot  = "/var/chroots/kali"    (container only, v0.1)
                                    # OR: from_tarball = "/tmp/kali.tar.gz"     (container only, v0.1)
                                    # OR: from_qcow2   = "/tmp/seed.qcow2"      (VM only; Phase 2 bridge)

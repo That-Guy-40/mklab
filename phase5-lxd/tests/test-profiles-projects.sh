@@ -29,7 +29,7 @@ config  = { "security.nesting" = "true" }
 
 [[instance]]
 name     = "m"
-image    = "images:alpine/3.19"
+image    = "images:alpine/3.21"
 project  = "${proj}"
 profiles = ["default", "${prof}"]
 EOF

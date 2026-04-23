@@ -21,8 +21,12 @@ name = "${lab}"
 [[instance]]
 name  = "v"
 type  = "vm"
-image = "images:alpine/3.19"
-config = { "limits.memory" = "512MiB", "limits.cpu" = "1" }
+image = "images:alpine/3.21"
+# secureboot=false: most community Alpine VM images aren't signed for
+# UEFI Secure Boot.  Without this, launch fails with:
+#   "The image used by this instance is incompatible with secureboot.
+#    Please set security.secureboot=false on the instance"
+config = { "limits.memory" = "512MiB", "limits.cpu" = "1", "security.secureboot" = "false" }
 EOF
 
 note "up (type=vm)"

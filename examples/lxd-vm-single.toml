@@ -21,6 +21,10 @@ tags        = ["lxd", "vm", "hello"]
 [[instance]]
 name  = "alpine"
 type  = "vm"
-image = "images:alpine/3.19"
-# memory / cpus go through LXD config keys:
-config = { "limits.memory" = "512MiB", "limits.cpu" = "1" }
+image = "images:alpine/3.21"
+# memory / cpus go through LXD config keys.
+# security.secureboot=false: most community Alpine VM images aren't
+# signed for UEFI Secure Boot.  Without this you get:
+#   "The image used by this instance is incompatible with secureboot.
+#    Please set security.secureboot=false on the instance"
+config = { "limits.memory" = "512MiB", "limits.cpu" = "1", "security.secureboot" = "false" }

@@ -20,11 +20,11 @@ name = "${lab}"
 
 [[instance]]
 name  = "one"
-image = "images:alpine/3.19"
+image = "images:alpine/3.21"
 
 [[instance]]
 name  = "two"
-image = "images:alpine/3.19"
+image = "images:alpine/3.21"
 EOF
 
 note "up"

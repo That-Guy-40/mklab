@@ -18,16 +18,64 @@ works.
 ```bash
 # Option A — Incus (preferred; actively maintained fork):
 sudo apt-get install -y incus jq          # Debian/Ubuntu/Kali
-sudo incus admin init                     # interactive first-run setup
 sudo usermod -aG incus-admin $USER
 newgrp incus-admin                        # or log out and back in
 
 # Option B — LXD (older, still fine):
 sudo snap install lxd
-sudo lxd init                             # interactive first-run setup
 sudo usermod -aG lxd $USER
 newgrp lxd
 ```
+
+### 0a. First-run bootstrap (REQUIRED — tests fail without this)
+
+Right after install, the daemon is running but has **no storage pool** and
+the `default` profile carries **no root-disk device**. Every `launch`
+fails with:
+
+```
+Failed instance creation: Failed initialising instance: Failed getting root disk: No root device could be found
+```
+
+Bootstrap once with the engine's non-interactive init:
+
+```bash
+# For Incus:
+sudo incus admin init --auto
+
+# For LXD:
+sudo lxd init --auto
+```
+
+Either creates a `dir`-backed `default` storage pool, an `lxdbr0` bridge
+network, and wires both into the `default` profile. The `dir` pool is
+fine for containers; **VM tests** (`type = "vm"`) need a block-capable
+pool (`zfs`/`btrfs`/`lvm`):
+
+```bash
+# Incus, ZFS via 20 GB loop file (good default for VMs):
+sudo incus admin init --auto --storage-backend zfs --storage-create-loop 20
+
+# LXD, same:
+sudo lxd init --auto --storage-backend zfs --storage-create-loop 20
+```
+
+Verify:
+
+```bash
+incus profile show default 2>/dev/null || lxc profile show default
+# → must contain a `root:` device under devices:
+#     devices:
+#       root:
+#         path: /
+#         pool: default
+#         type: disk
+```
+
+Without a `root:` line in the default profile, the automated test suite
+will skip the lifecycle tests with a pointer back to this section.
+
+### 0b. Smoke-test
 
 Confirm your engine is reachable:
 
@@ -59,7 +107,7 @@ ll up --config examples/lxd-plain-single.toml
 
 **Expect:**
 - `[info] ── bringing up lab 'hello-lxd' from … ──`
-- `[info] launching container 'shell' as lab-hello-lxd-shell (image=images:alpine/3.19)`
+- `[info] launching container 'shell' as lab-hello-lxd-shell (image=images:alpine/3.21)`
 - `[info] ── lab 'hello-lxd' up (1 incus instance(s), 0 skipped) ──`
 
 **Verify:**
@@ -268,6 +316,8 @@ test skips and you get `passed: 2, skipped: 6`.
 |---|---|---|
 | `incus info failed — daemon not reachable` | service not running | `sudo systemctl start incus` (or `snap.lxd.daemon` for LXD) |
 | `you are not in group 'incus-admin'` warning | unprivileged user not in the LXD/Incus control group | `sudo usermod -aG incus-admin $USER && newgrp incus-admin` |
+| `Failed getting root disk: No root device could be found` | post-install state — engine is running but never bootstrapped (no storage pool, default profile has no root device) | `sudo incus admin init --auto` (Incus) or `sudo lxd init --auto` (LXD); see §0a |
+| `image … is incompatible with secureboot. Please set security.secureboot=false` | community VM images (Alpine, etc.) aren't signed for UEFI Secure Boot | add `config = { "security.secureboot" = "false" }` to the `[[instance]]` block; see `examples/lxd-vm-single.toml` |
 | `VM up failed (likely dir-pool without block support)` | default storage pool is `dir`, which can't host VMs | `incus storage create vmpool zfs` (or btrfs/lvm); reference via `[[instance]] storage = "vmpool"` |
 | `image import failed` with a half-created alias | prior run died mid-import | Phase 5 now cleans these up on failure; if you hit one, `incus image delete <alias>` and retry |
 | `chroot 'X' contains files unreadable by this user` | you pointed `from_chroot` at a root-owned chroot | use `sudo phase1-chroot/lab-chroot.sh export-tarball <name>` and switch to `from_tarball` in your TOML |

@@ -5,7 +5,7 @@
 #             Both share the seven CLI verbs we care about (launch, exec, stop,
 #             delete, image import, list, config show), so a single $LXC_CMD
 #             binding drives both.
-# Backends  : upstream     — pull from an upstream image server (`images:alpine/3.19`)
+# Backends  : upstream     — pull from an upstream image server (`images:alpine/3.21`)
 #             from-chroot  — rebundle a Phase-1 chroot into LXD's unified
 #                            tarball format (./metadata.yaml + ./rootfs/) and
 #                            `image import` it. Container images only in v0.1.
@@ -124,33 +124,61 @@ LXC_ENGINE=""    # "incus" or "lxd"
 LXC_GROUP=""     # group name to check membership against
 
 probe_engine() {
+    # Prefer Incus when it's both installed AND reachable; otherwise fall
+    # back to LXD.  A bare `have incus` test isn't enough — many distros
+    # ship the package but leave the daemon down or restrict the socket
+    # to incus-admin.  Probe each candidate's `info` call to settle which
+    # binary actually works for THIS user, NOW.
+    local incus_status="" lxc_status=""
     if have incus; then
-        LXC_CMD="incus"
-        LXC_ENGINE="incus"
-        LXC_GROUP="incus-admin"
-    elif have lxc; then
-        LXC_CMD="lxc"
-        LXC_ENGINE="lxd"
-        LXC_GROUP="lxd"
-    else
+        if incus info >/dev/null 2>&1; then incus_status=ok
+        else incus_status=fail
+        fi
+    fi
+    if have lxc; then
+        if lxc info >/dev/null 2>&1; then lxc_status=ok
+        else lxc_status=fail
+        fi
+    fi
+
+    if [[ "$incus_status" == "ok" ]]; then
+        LXC_CMD="incus"; LXC_ENGINE="incus"; LXC_GROUP="incus-admin"
+        log_debug "engine: incus (reachable)"
+    elif [[ "$lxc_status" == "ok" ]]; then
+        LXC_CMD="lxc"; LXC_ENGINE="lxd"; LXC_GROUP="lxd"
+        if [[ "$incus_status" == "fail" ]]; then
+            log_info "incus binary present but daemon not reachable; using lxc (LXD) instead"
+        fi
+        log_debug "engine: lxd (reachable)"
+    elif [[ -z "$incus_status" && -z "$lxc_status" ]]; then
         die "neither 'incus' nor 'lxc' found on PATH.
         Install one of:
           $(install_hint incus)        # newer; preferred
           $(install_hint lxd-installer) # Ubuntu's wrapper for snap-based LXD"
+    else
+        # Both installed but neither reachable, OR exactly one installed
+        # and unreachable.  Surface the actual error from each candidate.
+        local msg="no reachable LXD/Incus daemon."
+        if [[ "$incus_status" == "fail" ]]; then
+            msg+="
+        incus is installed but failed; underlying error:
+          $(incus info 2>&1 | head -3 | sed 's/^/          /')
+        Fix:  sudo systemctl start incus    AND    sudo usermod -aG incus-admin \$USER"
+        fi
+        if [[ "$lxc_status" == "fail" ]]; then
+            msg+="
+        lxc is installed but failed; underlying error:
+          $(lxc info 2>&1 | head -3 | sed 's/^/          /')
+        Fix:  sudo systemctl start snap.lxd.daemon    AND    sudo usermod -aG lxd \$USER"
+        fi
+        die "$msg"
     fi
-    log_debug "engine: $LXC_ENGINE (binary: $LXC_CMD)"
 }
 
 require_lxd_or_incus() {
     [[ -n "$LXC_CMD" ]] || probe_engine
-    # Smoke-check daemon reachability.  `info` is cheap and prints to stderr
-    # on failure with the actual reason (socket missing, perms, etc.).
-    if ! "$LXC_CMD" info >/dev/null 2>&1; then
-        die "$LXC_CMD info failed — daemon not reachable.
-        For LXD:   sudo systemctl start snap.lxd.daemon  # or service lxd start
-        For Incus: sudo systemctl start incus
-        Then verify:  $LXC_CMD list"
-    fi
+    # probe_engine already verified `info` works for the chosen binary, so
+    # nothing else to validate here besides the group hint.
     check_group_membership
 }
 
@@ -407,7 +435,17 @@ ensure_project() {
         return 0
     fi
     log_info "creating project: $proj"
-    "$LXC_CMD" project create "$proj" >/dev/null
+    # Share the default project's profiles + storage volumes by default.
+    # Without features.profiles=false, a new project gets its own empty
+    # `default` profile and instances launched into it fail with "No root
+    # device could be found".  Sharing keeps the root-disk wiring done by
+    # `lxd init --auto` reachable from project-scoped instances.  Users
+    # who want isolated profiles can still create them explicitly via
+    # [[profile]] with project=<name>.
+    "$LXC_CMD" project create "$proj" \
+        -c features.profiles=false \
+        -c features.storage.volumes=false \
+        >/dev/null
     "$LXC_CMD" project set "$proj" "$LAB_LABEL_TOOL_KEY" "$LAB_LABEL_TOOL_VAL" >/dev/null
 }
 
@@ -465,7 +503,7 @@ cmd_build() {
     # usage error shouldn't surface as "daemon unreachable".
     case "$backend" in
         upstream|"")
-            [[ -n "${OPT_IMAGE:-}" ]] || die "build --backend upstream needs --image SRC (e.g. images:alpine/3.19)"
+            [[ -n "${OPT_IMAGE:-}" ]] || die "build --backend upstream needs --image SRC (e.g. images:alpine/3.21)"
             ;;
         from-chroot)
             [[ -n "${OPT_CHROOT:-}" ]] || die "from-chroot needs --chroot PATH"
@@ -535,13 +573,13 @@ cmd_run() {
     [[ -n "${OPT_STORAGE:-}" ]] && launch_args+=(--storage "$OPT_STORAGE")
     [[ -n "${OPT_NETWORK:-}" ]] && launch_args+=(--network "$OPT_NETWORK")
 
+    # Labels at launch time — see cmd_up for rationale.
+    launch_args+=(-c "${LAB_LABEL_TOOL_KEY}=${LAB_LABEL_TOOL_VAL}")
+    launch_args+=(-c "${LAB_LABEL_LAB_KEY}=${OPT_LAB:-adhoc}")
+    launch_args+=(-c "${LAB_LABEL_SVC_KEY}=${name}")
+
     log_info "launching $type '$iname' (image=$image)"
     "$LXC_CMD" launch "${launch_args[@]}" "$image" "$iname" >/dev/null
-
-    # Tag with lab-create labels.
-    "$LXC_CMD" config set "$iname" "$LAB_LABEL_TOOL_KEY" "$LAB_LABEL_TOOL_VAL" >/dev/null
-    "$LXC_CMD" config set "$iname" "$LAB_LABEL_LAB_KEY"  "${OPT_LAB:-adhoc}"   >/dev/null
-    "$LXC_CMD" config set "$iname" "$LAB_LABEL_SVC_KEY"  "$name"               >/dev/null
 
     log_info "started: $iname"
 }
@@ -659,33 +697,39 @@ cmd_up() {
             [[ -n "$p" ]] && launch_args+=(--profile "$p")
         done < <(jq -r '.profiles[]?' <<<"$inst")
 
-        log_info "launching ${type} '$sname' as $iname (image=$image)"
-        "$LXC_CMD" launch "${launch_args[@]}" "$image" "$iname" >/dev/null
-
-        # Tag.
-        "$LXC_CMD" config set "$iname" "$LAB_LABEL_TOOL_KEY" "$LAB_LABEL_TOOL_VAL" >/dev/null
-        "$LXC_CMD" config set "$iname" "$LAB_LABEL_LAB_KEY"  "$lab_name"           >/dev/null
-        "$LXC_CMD" config set "$iname" "$LAB_LABEL_SVC_KEY"  "$sname"              >/dev/null
-
-        # Apply per-instance config (limits.*, security.*, etc.).
+        # Pass labels and per-instance config keys at LAUNCH time, not via
+        # post-launch `config set`.  Two reasons:
+        #   1. VMs reject incompatible images (e.g. unsigned-for-secureboot)
+        #      during creation; setting `security.secureboot=false` after
+        #      the fact is too late.
+        #   2. Post-launch `config set` against an instance in a non-default
+        #      project needs `--project <p>`, which is fiddly to thread.
+        #      Launch absorbs `-c` keys correctly under any project scope.
+        launch_args+=(-c "${LAB_LABEL_TOOL_KEY}=${LAB_LABEL_TOOL_VAL}")
+        launch_args+=(-c "${LAB_LABEL_LAB_KEY}=${lab_name}")
+        launch_args+=(-c "${LAB_LABEL_SVC_KEY}=${sname}")
         local kk vv
         while IFS=$'\t' read -r kk vv; do
             [[ -z "$kk" ]] && continue
-            "$LXC_CMD" config set "$iname" "$kk" "$vv" >/dev/null
+            launch_args+=(-c "${kk}=${vv}")
         done < <(jq -r '.config // {} | to_entries[]? | "\(.key)\t\(.value)"' <<<"$inst")
 
-        # Apply devices.
+        # Devices via `-d name,key=val,key=val` at launch — same project-
+        # scoping benefit as -c.
         local dname dconf
         while IFS=$'\t' read -r dname dconf; do
             [[ -z "$dname" ]] && continue
-            local -a kvs=()
+            local dspec="$dname"
             local k v
             while IFS=$'\t' read -r k v; do
                 [[ -z "$k" ]] && continue
-                kvs+=("${k}=${v}")
+                dspec+=",${k}=${v}"
             done < <(jq -r 'to_entries[]? | "\(.key)\t\(.value)"' <<<"$dconf")
-            "$LXC_CMD" config device add "$iname" "$dname" "${kvs[@]}" >/dev/null
+            launch_args+=(-d "$dspec")
         done < <(jq -c '.devices // {} | to_entries[]? | "\(.key)\t\(.value)"' <<<"$inst")
+
+        log_info "launching ${type} '$sname' as $iname (image=$image)"
+        "$LXC_CMD" launch "${launch_args[@]}" "$image" "$iname" >/dev/null
 
         handled=$((handled+1))
     done
@@ -708,15 +752,19 @@ cmd_down() {
 
     log_info "── tearing down lab '$lab_name' ──"
 
-    # Find every instance carrying our lab + tool labels.
+    # Find every instance carrying our lab + tool labels (across all projects).
     local matching; matching="$(_instances_in_lab "$lab_name")"
     if [[ -n "$matching" ]]; then
-        local iname
-        while IFS= read -r iname; do
+        local proj iname
+        while IFS=$'\t' read -r proj iname; do
             [[ -z "$iname" ]] && continue
-            log_info "stop+delete $iname"
-            "$LXC_CMD" stop   "$iname" --force >/dev/null 2>&1 || true
-            "$LXC_CMD" delete "$iname" --force >/dev/null 2>&1 || true
+            local -a scope=()
+            [[ -n "$proj" && "$proj" != "default" ]] && scope=(--project "$proj")
+            local proj_tag=""
+            [[ -n "$proj" && "$proj" != "default" ]] && proj_tag=" (project=$proj)"
+            log_info "stop+delete $iname$proj_tag"
+            "$LXC_CMD" stop   "${scope[@]}" "$iname" --force >/dev/null 2>&1 || true
+            "$LXC_CMD" delete "${scope[@]}" "$iname" --force >/dev/null 2>&1 || true
         done <<<"$matching"
     fi
 
@@ -727,16 +775,19 @@ cmd_down() {
     log_info "── lab '$lab_name' torn down ──"
 }
 
-# Helper: emit one instance name per line for instances in $1's lab.
+# Helper: emit one instance per line for instances in $1's lab, formatted
+# as `<project>\t<name>` so callers can re-scope `--project`.  Uses
+# `--all-projects` so instances in user-defined projects (not just the
+# default project) are visible.
 _instances_in_lab() {
     local lab="$1"
-    "$LXC_CMD" list --format=json 2>/dev/null \
+    "$LXC_CMD" list --all-projects --format=json 2>/dev/null \
         | jq -r --arg lab "$lab" \
             --arg tk "$LAB_LABEL_TOOL_KEY" --arg tv "$LAB_LABEL_TOOL_VAL" \
             --arg lk "$LAB_LABEL_LAB_KEY" \
             '.[]
              | select(.config[$tk] == $tv and .config[$lk] == $lab)
-             | .name'
+             | "\(.project // "default")\t\(.name)"'
 }
 
 # ─── Subcommand: exec ──────────────────────────────────────────────────────
@@ -792,11 +843,13 @@ cmd_status() {
     if [[ -n "$lab_hits" ]] && (( ! instance_hit )); then
         printf '── lab: %s ──\n' "$target"
         printf '\n[instances]\n'
-        local row
-        while IFS= read -r row; do
-            [[ -z "$row" ]] && continue
-            "$LXC_CMD" list "$row" --format=table -c ns4tS 2>/dev/null \
-                | tail -n +2 | head -n -1 || true
+        local proj iname
+        while IFS=$'\t' read -r proj iname; do
+            [[ -z "$iname" ]] && continue
+            local -a scope=()
+            [[ -n "$proj" && "$proj" != "default" ]] && scope=(--project "$proj")
+            "$LXC_CMD" list "${scope[@]}" "$iname" --format=table -c ns4t 2>/dev/null \
+                || true
         done <<<"$lab_hits"
         printf '\n[note] profiles and projects are LXD-wide; not filtered by lab\n'
         return 0
@@ -813,35 +866,37 @@ cmd_status() {
 # ─── Subcommand: list ──────────────────────────────────────────────────────
 cmd_list() {
     require_lxd_or_incus
+    # Single code path for both --lab-scoped and all-labs views: grab all
+    # tagged instances as JSON, jq-filter, re-table.  Avoids the clustered-
+    # column gotcha (-c L only works on clustered LXD) and the row-arithmetic
+    # fragility of `lxc list X --format=table | sed -n '2p'` (the data row
+    # isn't always at a fixed line number).
     if [[ -n "${OPT_LAB:-}" ]]; then
         printf '── lab: %s ──\n' "$OPT_LAB"
-        local matching; matching="$(_instances_in_lab "$OPT_LAB")"
-        if [[ -z "$matching" ]]; then
-            printf '(no instances)\n'
-            return 0
-        fi
-        local headers_shown=0 row
-        while IFS= read -r row; do
-            [[ -z "$row" ]] && continue
-            if (( headers_shown == 0 )); then
-                "$LXC_CMD" list "$row" --format=table -c nstSpL 2>/dev/null | head -1
-                headers_shown=1
-            fi
-            "$LXC_CMD" list "$row" --format=table -c nstSpL 2>/dev/null | sed -n '2p'
-        done <<<"$matching"
-        return 0
+    else
+        printf '── all labs (lab-lxd-managed only) ──\n'
     fi
-    printf '── all labs (lab-lxd-managed only) ──\n'
-    # Use JSON output for filtering-by-label, then re-table.
-    "$LXC_CMD" list --format=json 2>/dev/null \
+    local out
+    out="$("$LXC_CMD" list --all-projects --format=json 2>/dev/null \
         | jq -r --arg tk "$LAB_LABEL_TOOL_KEY" --arg tv "$LAB_LABEL_TOOL_VAL" \
             --arg lk "$LAB_LABEL_LAB_KEY" --arg sk "$LAB_LABEL_SVC_KEY" \
-            '["LAB","SVC","NAME","TYPE","STATUS"],
-             (.[] | select(.config[$tk] == $tv) |
-                 [(.config[$lk] // "-"), (.config[$sk] // "-"),
-                  .name, .type, .status])
+            --arg lab "${OPT_LAB:-}" \
+            '["LAB","SVC","NAME","PROJECT","TYPE","STATUS"],
+             (.[]
+              | select(.config[$tk] == $tv)
+              | select($lab == "" or .config[$lk] == $lab)
+              | [(.config[$lk] // "-"), (.config[$sk] // "-"),
+                 .name, (.project // "default"), .type, .status])
              | @tsv' \
-        | column -t -s $'\t'
+        | column -t -s $'\t' )"
+    # Above always prints the header row.  If only the header came back,
+    # there were no matches.
+    local rows; rows="$(printf '%s\n' "$out" | tail -n +2 | grep -c .)"
+    if (( rows == 0 )); then
+        printf '(no matching instances)\n'
+        return 0
+    fi
+    printf '%s\n' "$out"
 }
 
 # ─── Subcommand: destroy ───────────────────────────────────────────────────
@@ -884,12 +939,18 @@ cmd_export() {
 
     printf '# generated by %s export from lab %s on %s\n' "$LAB_PROG" "$lab" "$(date -Iseconds)"
     printf '# feed back via: %s launch --yaml < this-file (per-document)\n' "$LXC_CMD"
-    local first=1 row
-    while IFS= read -r row; do
-        [[ -z "$row" ]] && continue
-        if (( first )); then first=0; else printf '---\n'; fi
-        printf '# instance: %s\n' "$row"
-        "$LXC_CMD" config show --expanded "$row"
+    local first=1 proj iname
+    while IFS=$'\t' read -r proj iname; do
+        [[ -z "$iname" ]] && continue
+        # bash's `printf` treats `--` as end-of-options, so the literal
+        # YAML separator goes through %s rather than as a format string.
+        if (( first )); then first=0; else printf '%s\n' '---'; fi
+        local proj_tag=""
+        [[ -n "$proj" && "$proj" != "default" ]] && proj_tag=" (project=$proj)"
+        printf '# instance: %s%s\n' "$iname" "$proj_tag"
+        local -a scope=()
+        [[ -n "$proj" && "$proj" != "default" ]] && scope=(--project "$proj")
+        "$LXC_CMD" config show --expanded "${scope[@]}" "$iname"
     done <<<"$matching"
 }
 
@@ -935,8 +996,8 @@ ENVIRONMENT
   LAB_STATE_DIR  override the default state-dir location
 
 EXAMPLES
-  $LAB_PROG run --name a --image images:alpine/3.19
-  $LAB_PROG run --name v --image images:alpine/3.19 --type vm
+  $LAB_PROG run --name a --image images:alpine/3.21
+  $LAB_PROG run --name v --image images:alpine/3.21 --type vm
   $LAB_PROG build --alias kali-rolling --backend from-chroot --chroot /var/chroots/kali
   $LAB_PROG up   --config examples/lxd-mixed-topology.toml
   $LAB_PROG list --lab demo-lxd
