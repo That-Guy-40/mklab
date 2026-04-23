@@ -1227,6 +1227,290 @@ cmd_list() {
         --format 'table {{.Label "lab-create.lab"}}\t{{.Name}}\t{{.Driver}}' || true
 }
 
+# ─── Subcommand: inspect ────────────────────────────────────────────────────
+# Single-resource detail report for a container OR a pod.  Folds the
+# nested `podman inspect` / `podman pod inspect` output into a stable
+# schema_version=1 surface, augmented with Phase 4's extras:
+#   - userns mode (from HostConfig.IDMappings)
+#   - pod membership (for containers in a pod)
+#   - quadlet registration (scans $LAB_POD_STATE_DIR/*/quadlet-links/
+#     for a symlink to this resource's .container / .pod unit)
+#
+# Two output modes:
+#   default   → human-readable [labels]/[container|pod]/[state]/[network]/
+#               [mounts]/[userns]/[quadlet] sections
+#   --json    → one JSON document on stdout, schema_version=1
+#
+# The top-level `kind` field discriminates: "container" | "pod".  Phase
+# 6's TUI branches on this so it doesn't need to guess.
+#
+# Name resolution mirrors Phase 3: literal name first, then
+# `_resolve_container_name` (lab-<lab>-<svc>), then `pod_name_for`
+# (lab-<lab>-pod-<name>).  Each form is tried against both container
+# AND pod inspect so `demo/ctf-pod` resolves to the pod even if a
+# container with that synthesized name doesn't exist.
+cmd_inspect() {
+    local target="${POS_ARGS[0]:-}"
+    [[ -n "$target" ]] || die "usage: $LAB_PROG inspect <name|lab/service> [--json]"
+    require_rootless
+    require_podman
+    require_cmd jq
+
+    # --- name resolution: try up to three forms × two kinds (container,
+    # pod), first hit wins.  Store the resolved (kind, engine_name) pair.
+    local kind="" engine_name=""
+    local -a candidates=("$target")
+    # Short-form rewrites (only add if they differ from the literal).
+    local rewrite_c rewrite_p
+    rewrite_c="$(_resolve_container_name "$target")"
+    [[ "$rewrite_c" != "$target" ]] && candidates+=("$rewrite_c")
+    if [[ "$target" == */* ]]; then
+        local _lab="${target%%/*}" _name="${target##*/}"
+        rewrite_p="$(pod_name_for "$_lab" "$_name")"
+        [[ "$rewrite_p" != "$target" && "$rewrite_p" != "$rewrite_c" ]] \
+            && candidates+=("$rewrite_p")
+    fi
+
+    local cand
+    for cand in "${candidates[@]}"; do
+        if podman container inspect "$cand" >/dev/null 2>&1; then
+            kind=container; engine_name="$cand"; break
+        fi
+        if podman pod inspect "$cand" >/dev/null 2>&1; then
+            kind=pod; engine_name="$cand"; break
+        fi
+    done
+    if [[ -z "$kind" ]]; then
+        die "no container or pod matches '$target' (tried: ${candidates[*]})"
+    fi
+
+    # --- quadlet detection: scan $LAB_POD_STATE_DIR/*/quadlet-links/
+    # for a symlink named "$engine_name.container" or "$engine_name.pod"
+    # pointing into $QUADLET_USER_DIR.
+    local quadlet_managed=false quadlet_symlink="" quadlet_unit=""
+    local ext; [[ "$kind" == "pod" ]] && ext=".pod" || ext=".container"
+    if [[ -d "$LAB_POD_STATE_DIR" ]]; then
+        local link
+        for link in "$LAB_POD_STATE_DIR"/*/quadlet-links/"${engine_name}${ext}"; do
+            [[ -L "$link" ]] || continue
+            quadlet_managed=true
+            quadlet_symlink="$link"
+            quadlet_unit="$(readlink -f "$link" 2>/dev/null || printf '%s' "$link")"
+            break
+        done
+    fi
+
+    # --- render via jq ---
+    local rendered
+    if [[ "$kind" == "container" ]]; then
+        rendered="$(podman container inspect "$engine_name" 2>/dev/null | jq -r --arg qm "$quadlet_managed" --arg qs "$quadlet_symlink" --arg qu "$quadlet_unit" '
+            .[0] as $c |
+            ($c.Config.Labels // {}) as $L |
+            {
+                schema_version: 1,
+                kind: "container",
+                name: ($c.Name | sub("^/"; "")),
+                labels: {
+                    lab:    $L["lab-create.lab"],
+                    svc:    $L["lab-create.svc"],
+                    pod:    $L["lab-create.pod"],
+                    tool:   $L["lab-create.tool"],
+                    _other: ($L | with_entries(select(.key | startswith("lab-create.") | not)))
+                },
+                container: {
+                    id:         $c.Id,
+                    image:      $c.ImageName,
+                    image_id:   $c.Image,
+                    command:    ($c.Config.Cmd // $c.Config.Entrypoint // []),
+                    created_at: $c.Created
+                },
+                state: {
+                    status:        $c.State.Status,
+                    running:       $c.State.Running,
+                    started_at:    $c.State.StartedAt,
+                    finished_at:   ($c.State.FinishedAt // null),
+                    exit_code:     (if $c.State.Running then null else ($c.State.ExitCode // 0) end),
+                    restart_count: ($c.RestartCount // 0),
+                    pid:           (if ($c.State.Pid // 0) > 0 then $c.State.Pid else null end),
+                    health:        (($c.State.Health.Status // "") | if . == "" then null else . end)
+                },
+                network: {
+                    ports: [
+                        ($c.NetworkSettings.Ports // {}) | to_entries[]
+                        | .key as $port_proto
+                        | ($port_proto | split("/")) as $pp
+                        | (.value // [])[]?
+                        | { container_port: ($pp[0] | tonumber),
+                            protocol:       $pp[1],
+                            host_ip:        ((.HostIp // "") | if . == "" then null else . end),
+                            host_port:      (.HostPort | tonumber) }
+                    ],
+                    networks: [($c.NetworkSettings.Networks // {}) | keys[]?],
+                    ip_addresses: (
+                        ($c.NetworkSettings.Networks // {})
+                        | with_entries(.value = (.value.IPAddress // null))
+                    )
+                },
+                mounts: [
+                    ($c.Mounts // [])[] |
+                    { source:      .Source,
+                      destination: .Destination,
+                      type:        .Type,
+                      readonly:    ((.RW // true) | not) }
+                ],
+                userns: (
+                    # podman exposes the userns mode in HostConfig.IDMappings
+                    # (UIDMap / GIDMap / UIDMapUser).  When keep-id or
+                    # auto-map is active there is an entry; when host-shared
+                    # (sharing the host user namespace), both are null.
+                    if ($c.HostConfig.IDMappings.UIDMapUser // "") != "" then
+                        $c.HostConfig.IDMappings.UIDMapUser
+                    elif ($c.HostConfig.IDMappings.UIDMap // []) | length > 0 then
+                        "auto"
+                    else
+                        "host"
+                    end
+                ),
+                pod: ($c.Pod // null | if . == "" then null else . end),
+                quadlet: {
+                    managed:    ($qm == "true"),
+                    unit_path:  (if $qu == "" then null else $qu end),
+                    symlink:    (if $qs == "" then null else $qs end)
+                }
+            }
+        ')"
+    else
+        # Pod schema: no per-container state; aggregate container list.
+        rendered="$(podman pod inspect "$engine_name" 2>/dev/null | jq -r --arg qm "$quadlet_managed" --arg qs "$quadlet_symlink" --arg qu "$quadlet_unit" '
+            . as $p |
+            ($p.Labels // {}) as $L |
+            {
+                schema_version: 1,
+                kind: "pod",
+                name: $p.Name,
+                labels: {
+                    lab:    $L["lab-create.lab"],
+                    pod:    $L["lab-create.pod"],
+                    tool:   $L["lab-create.tool"],
+                    _other: ($L | with_entries(select(.key | startswith("lab-create.") | not)))
+                },
+                pod: {
+                    id:                 $p.Id,
+                    status:             $p.State,
+                    created_at:         $p.Created,
+                    num_containers:     ($p.Containers // [] | length),
+                    infra_container_id: ($p.InfraContainerID // null),
+                    cgroup_path:        ($p.CgroupPath // null)
+                },
+                containers: [
+                    ($p.Containers // [])[] |
+                    { id: .Id, name: .Name, state: .State }
+                ],
+                network: {
+                    ports: [
+                        ($p.InfraConfig.PortBindings // {}) | to_entries[]
+                        | .key as $port_proto
+                        | ($port_proto | split("/")) as $pp
+                        | (.value // [])[]?
+                        | { container_port: ($pp[0] | tonumber),
+                            protocol:       $pp[1],
+                            host_ip:        ((.HostIp // "") | if . == "" then null else . end),
+                            host_port:      (.HostPort | tonumber) }
+                    ],
+                    networks: ($p.InfraConfig.Networks // [])
+                },
+                quadlet: {
+                    managed:    ($qm == "true"),
+                    unit_path:  (if $qu == "" then null else $qu end),
+                    symlink:    (if $qs == "" then null else $qs end)
+                }
+            }
+        ')"
+    fi
+
+    if [[ -n "${OPT_JSON:-}" ]]; then
+        printf '%s\n' "$rendered"
+        return 0
+    fi
+
+    # Human-readable rendering — derived from the JSON for consistency.
+    printf '[labels]\n'
+    printf '  lab            %s\n' "$(jq -r '.labels.lab  // "(none)"' <<<"$rendered")"
+    if [[ "$kind" == "container" ]]; then
+        printf '  svc            %s\n' "$(jq -r '.labels.svc  // "(none)"' <<<"$rendered")"
+    fi
+    printf '  pod            %s\n' "$(jq -r '.labels.pod  // "(none)"' <<<"$rendered")"
+    printf '  tool           %s\n' "$(jq -r '.labels.tool // "(none)"' <<<"$rendered")"
+
+    if [[ "$kind" == "container" ]]; then
+        printf '\n[container]\n'
+        printf '  name           %s\n' "$engine_name"
+        printf '  id             %s\n' "$(jq -r '.container.id[0:12]' <<<"$rendered")"
+        printf '  image          %s\n' "$(jq -r '.container.image' <<<"$rendered")"
+        printf '  created_at     %s\n' "$(jq -r '.container.created_at' <<<"$rendered")"
+        printf '  pod            %s\n' "$(jq -r '.pod // "—"' <<<"$rendered")"
+
+        printf '\n[state]\n'
+        printf '  status         %s\n' "$(jq -r '.state.status' <<<"$rendered")"
+        printf '  running        %s\n' "$(jq -r '.state.running' <<<"$rendered")"
+        printf '  started_at     %s\n' "$(jq -r '.state.started_at' <<<"$rendered")"
+        printf '  finished_at    %s\n' "$(jq -r '.state.finished_at // "—"' <<<"$rendered")"
+        printf '  exit_code      %s\n' "$(jq -r '.state.exit_code   // "—"' <<<"$rendered")"
+        printf '  restart_count  %s\n' "$(jq -r '.state.restart_count' <<<"$rendered")"
+        printf '  pid            %s\n' "$(jq -r '.state.pid    // "—"' <<<"$rendered")"
+        printf '  health         %s\n' "$(jq -r '.state.health // "—"' <<<"$rendered")"
+
+        printf '\n[userns]\n  %s\n' "$(jq -r '.userns' <<<"$rendered")"
+    else
+        printf '\n[pod]\n'
+        printf '  name           %s\n' "$engine_name"
+        printf '  id             %s\n' "$(jq -r '.pod.id[0:12]' <<<"$rendered")"
+        printf '  status         %s\n' "$(jq -r '.pod.status' <<<"$rendered")"
+        printf '  num_containers %s\n' "$(jq -r '.pod.num_containers' <<<"$rendered")"
+        printf '  created_at     %s\n' "$(jq -r '.pod.created_at' <<<"$rendered")"
+        printf '  infra_id       %s\n' "$(jq -r '.pod.infra_container_id[0:12] // "—"' <<<"$rendered")"
+
+        printf '\n[containers in pod]\n'
+        while IFS=$'\t' read -r cid cname cstate; do
+            [[ -z "$cid" ]] && continue
+            printf '  %s  %-30s  %s\n' "${cid:0:12}" "$cname" "$cstate"
+        done < <(jq -r '.containers[]? | "\(.id)\t\(.name)\t\(.state)"' <<<"$rendered")
+    fi
+
+    printf '\n[network]\n'
+    local nets; nets="$(jq -r '.network.networks | (if type == "array" then join(", ") else (. | keys | join(", ")) end)' <<<"$rendered")"
+    [[ -n "$nets" ]] && printf '  networks       %s\n' "$nets"
+    if [[ "$kind" == "container" ]]; then
+        while IFS=$'\t' read -r net ip; do
+            [[ -z "$net" ]] && continue
+            printf '  ip[%s]        %s\n' "$net" "${ip:-—}"
+        done < <(jq -r '.network.ip_addresses | to_entries[]? | "\(.key)\t\(.value // "—")"' <<<"$rendered")
+    fi
+    # jq emits "-" for empty host_ip so bash `read` doesn't collapse
+    # adjacent tabs (tab is IFS whitespace → consecutive tabs merge).
+    while IFS=$'\t' read -r cport proto hip hport; do
+        [[ -z "$cport" ]] && continue
+        [[ "$hip" == "-" ]] && hip="0.0.0.0"
+        printf '  port           %s/%s → %s:%s\n' "$cport" "$proto" "$hip" "$hport"
+    done < <(jq -r '.network.ports[]? | "\(.container_port)\t\(.protocol)\t\((.host_ip // "") | if . == "" or . == null then "-" else . end)\t\(.host_port)"' <<<"$rendered")
+
+    if [[ "$kind" == "container" ]] && jq -e '.mounts | length > 0' <<<"$rendered" >/dev/null; then
+        printf '\n[mounts]\n'
+        local src dst type ro tag
+        while IFS=$'\t' read -r src dst type ro; do
+            [[ -z "$src" ]] && continue
+            tag=""; [[ "$ro" == "true" ]] && tag=", ro"
+            printf '  %s → %s (%s%s)\n' "$src" "$dst" "$type" "$tag"
+        done < <(jq -r '.mounts[] | "\(.source)\t\(.destination)\t\(.type)\t\(.readonly)"' <<<"$rendered")
+    fi
+
+    if jq -e '.quadlet.managed' <<<"$rendered" >/dev/null; then
+        printf '\n[quadlet]\n'
+        printf '  unit_path      %s\n' "$(jq -r '.quadlet.unit_path' <<<"$rendered")"
+        printf '  symlink        %s\n' "$(jq -r '.quadlet.symlink' <<<"$rendered")"
+    fi
+}
+
 # ─── Subcommand: destroy ───────────────────────────────────────────────────
 cmd_destroy() {
     local target="${POS_ARGS[0]:-}"
@@ -1385,6 +1669,7 @@ USAGE
   $LAB_PROG logs     <name|lab/service> [--follow]      # routes to journalctl for quadlet mode
   $LAB_PROG status   [<name|lab>]
   $LAB_PROG list     [--lab NAME]
+  $LAB_PROG inspect  <name|lab/service> [--json]
   $LAB_PROG destroy  <name|lab/service> [--force]
   $LAB_PROG export   <lab>  --format {kube|compose}
   $LAB_PROG generate --config topology.toml              # quadlet units, don't run
@@ -1445,6 +1730,7 @@ parse_args() {
     OPT_FORCE=""
     OPT_FORMAT=""
     OPT_ALLOW_ROOT=""
+    OPT_JSON=""
 
     [[ $# -eq 0 ]] && { usage; exit 0; }
     SUBCMD="$1"; shift
@@ -1477,6 +1763,7 @@ parse_args() {
             --lab)          OPT_LAB="$2"; shift 2 ;;
             --force)        OPT_FORCE=1; shift ;;
             --format)       OPT_FORMAT="$2"; shift 2 ;;
+            --json)         OPT_JSON=1; shift ;;
             --allow-root)   OPT_ALLOW_ROOT=1; shift ;;
             -h|--help)      usage; exit 0 ;;
             -v|--version)   printf '%s %s\n' "$LAB_PROG" "$LAB_VERSION"; exit 0 ;;
@@ -1497,6 +1784,7 @@ main() {
         logs)     cmd_logs     ;;
         status)   cmd_status   ;;
         list)     cmd_list     ;;
+        inspect)  cmd_inspect  ;;
         destroy)  cmd_destroy  ;;
         export)   cmd_export   ;;
         generate) cmd_generate ;;

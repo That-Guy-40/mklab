@@ -2,10 +2,20 @@
 
 Podman labels mirror Phase 3's scheme but with `tool=lab-podman`.  Pods
 are first-class objects — enumerate both `podman ps` and `podman pod ps`.
+
+inspect() prefers `lab-podman.sh inspect --json` (Phase 4 ≥ 0.1.0) when
+present so the detail panel shows the schema_version=1 surface (folded
+labels, network ports, mounts, pod membership) instead of podman's raw
+nested JSON.  The phase script's resolver auto-detects container vs pod
+from the same `<name>` argument, so a single argv works for both kinds.
+Falls back to `podman inspect` / `podman pod inspect` (chosen by
+resource.type) if the script doesn't recognise `inspect` (older
+deployments) or returns non-JSON.
 """
 
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 from typing import ClassVar
@@ -116,6 +126,24 @@ class PodmanBackend(BackendRunner):
         return out
 
     def inspect(self, resource: Resource) -> str:
+        # Try Phase 4's `inspect --json` first — it folds podman's nested
+        # inspect output into a stable schema_version=1 surface (labels,
+        # network ports, mounts, pod membership) that's much more readable
+        # in the TUI's detail pane.  Pretty-print the JSON for nice
+        # indentation.  `resource.name` is the literal podman container
+        # name (e.g. `lab-pwn-attacker`) or pod name (e.g. `ctf-pod`); the
+        # phase script's resolver auto-detects which kind it is, so this
+        # single argv works for both regardless of `resource.type`.
+        cp = run_capture([str(self.script), "inspect", resource.name, "--json"])
+        if cp.returncode == 0 and cp.stdout.strip().startswith("{"):
+            try:
+                doc = json.loads(cp.stdout)
+                return json.dumps(doc, indent=2, sort_keys=False)
+            except json.JSONDecodeError:
+                pass  # fall through to bare `podman [pod] inspect`
+        # Fallback: bare `podman inspect` for containers, `podman pod
+        # inspect` for pods (chosen by resource.type since the bare CLI
+        # doesn't auto-detect like the phase script does).
         if resource.type == "pod":
             cp = run_capture(["podman", "pod", "inspect", resource.name])
         else:
