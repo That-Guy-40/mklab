@@ -1005,6 +1005,222 @@ cmd_destroy() {
     log_info "destroyed: $iname"
 }
 
+# ─── Subcommand: inspect ────────────────────────────────────────────────────
+# Single-instance detail report — folds `lxc/incus list <name> --all-projects
+# --format=json` (which carries the full state, expanded devices, snapshots,
+# and network interface details) into a stable schema_version=1 surface.
+#
+# Two output modes:
+#   default   → human-readable [labels]/[instance]/[image]/[state]/[network]/
+#               [devices]/[snapshots] sections
+#   --json    → one JSON document on stdout, schema_version=1
+#
+# v0.1 covers `kind: "instance"` only.  Profile and project inspect can
+# share the schema (with a discriminator) in a follow-up; the field is
+# already in place so future expansion doesn't break the
+# schema_version=1 contract.
+#
+# Name resolution mirrors Phase 3/4: try the literal name first (the
+# TUI passes `lab-<lab>-<svc>` directly), then `_resolve_instance_name`
+# (which produces the same).  Search across ALL projects via
+# `--all-projects` since instances may live outside `default`.
+cmd_inspect() {
+    local target="${POS_ARGS[0]:-}"
+    [[ -n "$target" ]] || die "usage: $LAB_PROG inspect <name|lab/service> [--json]"
+    require_lxd_or_incus
+    require_cmd jq
+
+    # --- name resolution: try the literal first, then the rewrite.
+    # Both queries use --all-projects so cross-project instances resolve
+    # without the user having to specify --project.
+    local iname=""
+    local raw=""
+    raw="$("$LXC_CMD" list "$target" --all-projects --format=json 2>/dev/null)"
+    if [[ -n "$raw" ]] && [[ "$(jq 'length' <<<"$raw")" -gt 0 ]]; then
+        iname="$target"
+    else
+        local rewrite; rewrite="$(_resolve_instance_name "$target")"
+        raw="$("$LXC_CMD" list "$rewrite" --all-projects --format=json 2>/dev/null)"
+        if [[ -n "$raw" ]] && [[ "$(jq 'length' <<<"$raw")" -gt 0 ]]; then
+            iname="$rewrite"
+        fi
+    fi
+    [[ -n "$iname" ]] || die "no instance matches '$target' (tried literal and lab-<...> rewrite across all projects)"
+
+    # --- jq schema transform.  The `lxc/incus list` shape is rich:
+    # .architecture, .config (with image.* + user.* + volatile.*),
+    # .devices (instance-only), .expanded_devices (merged from profiles),
+    # .profiles, .project, .state.{status,pid,processes,memory,network,...},
+    # .snapshots, .type, etc.  We project the useful subset.
+    local rendered
+    rendered="$(jq -r --arg engine "$LXC_ENGINE" '
+        .[0] as $i |
+        ($i.config // {}) as $C |
+        # Split user.* config into the lab-create.* triple + an `_other` bucket
+        # of any other user.* keys (e.g. user.network.host_name).  Strip the
+        # "user." prefix from _other for readability.
+        ($C | with_entries(select(.key | startswith("user."))) ) as $userkeys |
+        {
+            schema_version: 1,
+            kind: "instance",
+            name: $i.name,
+            engine: $engine,
+            labels: {
+                lab:    $C["user.lab-create.lab"],
+                svc:    $C["user.lab-create.svc"],
+                tool:   $C["user.lab-create.tool"],
+                _other: ($userkeys
+                         | with_entries(select(.key | startswith("user.lab-create.") | not))
+                         | with_entries(.key |= sub("^user\\."; "")))
+            },
+            instance: {
+                type:         $i.type,
+                architecture: $i.architecture,
+                project:      ($i.project // "default"),
+                ephemeral:    $i.ephemeral,
+                stateful:     $i.stateful,
+                profiles:     ($i.profiles // []),
+                created_at:   $i.created_at,
+                last_used_at: $i.last_used_at
+            },
+            image: (
+                # Image metadata lives in config under `image.*` keys.
+                # If none are present (e.g. a from_chroot import without
+                # those properties), the whole image block is null.
+                if ($C | with_entries(select(.key | startswith("image.")))) | length > 0 then
+                    {
+                        fingerprint: ($C["volatile.base_image"] // null),
+                        os:          ($C["image.os"]          // null),
+                        release:     ($C["image.release"]     // null),
+                        variant:     ($C["image.variant"]     // null),
+                        description: ($C["image.description"] // null)
+                    }
+                else null end
+            ),
+            state: (
+                if $i.state == null then null
+                else {
+                    status:      $i.state.status,
+                    running:     ($i.state.status == "Running"),
+                    pid:         (if ($i.state.pid // 0) > 0 then $i.state.pid else null end),
+                    processes:   (if ($i.state.processes // 0) > 0 then $i.state.processes else null end),
+                    started_at:  ($i.state.started_at // null),
+                    memory: {
+                        usage_bytes:           (($i.state.memory.usage // 0)),
+                        usage_peak_bytes:      (($i.state.memory.usage_peak // 0)),
+                        swap_usage_bytes:      (($i.state.memory.swap_usage // 0)),
+                        swap_usage_peak_bytes: (($i.state.memory.swap_usage_peak // 0)),
+                        total_bytes:           (($i.state.memory.total // 0))
+                    }
+                }
+                end
+            ),
+            network: {
+                interfaces: (
+                    if $i.state == null or $i.state.network == null then []
+                    else
+                        [ $i.state.network | to_entries[]
+                          | { name:        .key,
+                              type:        .value.type,
+                              mac_address: ((.value.hwaddr // "") | if . == "" then null else . end),
+                              addresses: [
+                                  (.value.addresses // [])[]
+                                  | { family:  .family,
+                                      address: .address,
+                                      netmask: .netmask,
+                                      scope:   .scope }
+                              ]
+                            }
+                        ]
+                    end
+                )
+            },
+            devices: ($i.expanded_devices // {}),
+            snapshots: [
+                ($i.snapshots // [])[] |
+                { name:          .name,
+                  created_at:    .created_at,
+                  stateful:      (.stateful // false),
+                  expires_at:    (.expires_at // null) }
+            ]
+        }
+    ' <<<"$raw")"
+
+    if [[ -n "${OPT_JSON:-}" ]]; then
+        printf '%s\n' "$rendered"
+        return 0
+    fi
+
+    # Human-readable rendering — derived from the JSON for consistency.
+    printf '[labels]\n'
+    printf '  lab            %s\n' "$(jq -r '.labels.lab  // "(none)"' <<<"$rendered")"
+    printf '  svc            %s\n' "$(jq -r '.labels.svc  // "(none)"' <<<"$rendered")"
+    printf '  tool           %s\n' "$(jq -r '.labels.tool // "(none)"' <<<"$rendered")"
+
+    printf '\n[instance]\n'
+    printf '  name           %s\n' "$iname"
+    printf '  type           %s\n' "$(jq -r '.instance.type'         <<<"$rendered")"
+    printf '  architecture   %s\n' "$(jq -r '.instance.architecture' <<<"$rendered")"
+    printf '  project        %s\n' "$(jq -r '.instance.project'      <<<"$rendered")"
+    printf '  ephemeral      %s\n' "$(jq -r '.instance.ephemeral'    <<<"$rendered")"
+    printf '  stateful       %s\n' "$(jq -r '.instance.stateful'     <<<"$rendered")"
+    printf '  profiles       %s\n' "$(jq -r '.instance.profiles | join(", ")' <<<"$rendered")"
+    printf '  created_at     %s\n' "$(jq -r '.instance.created_at'   <<<"$rendered")"
+
+    if jq -e '.image != null' <<<"$rendered" >/dev/null; then
+        printf '\n[image]\n'
+        printf '  os             %s\n' "$(jq -r '.image.os          // "—"' <<<"$rendered")"
+        printf '  release        %s\n' "$(jq -r '.image.release     // "—"' <<<"$rendered")"
+        printf '  variant        %s\n' "$(jq -r '.image.variant     // "—"' <<<"$rendered")"
+        printf '  fingerprint    %s\n' "$(jq -r '.image.fingerprint // "—"' <<<"$rendered")"
+    fi
+
+    if jq -e '.state != null' <<<"$rendered" >/dev/null; then
+        printf '\n[state]\n'
+        printf '  status         %s\n' "$(jq -r '.state.status'    <<<"$rendered")"
+        printf '  running        %s\n' "$(jq -r '.state.running'   <<<"$rendered")"
+        printf '  pid            %s\n' "$(jq -r '.state.pid       // "—"' <<<"$rendered")"
+        printf '  processes      %s\n' "$(jq -r '.state.processes // "—"' <<<"$rendered")"
+        printf '  memory.usage   %s bytes\n' "$(jq -r '.state.memory.usage_bytes' <<<"$rendered")"
+        printf '  memory.peak    %s bytes\n' "$(jq -r '.state.memory.usage_peak_bytes' <<<"$rendered")"
+    fi
+
+    if jq -e '.network.interfaces | length > 0' <<<"$rendered" >/dev/null; then
+        printf '\n[network]\n'
+        local n_name n_type n_mac
+        # Per-interface header, then one line per address.
+        while IFS=$'\t' read -r n_name n_type n_mac; do
+            [[ -z "$n_name" ]] && continue
+            [[ "$n_mac" == "-" ]] && n_mac="(none)"
+            printf '  %s (%s)  mac=%s\n' "$n_name" "$n_type" "$n_mac"
+        done < <(jq -r '.network.interfaces[] | "\(.name)\t\(.type)\t\((.mac_address // "") | if . == "" then "-" else . end)"' <<<"$rendered")
+        # Then a flat list of addresses, prefixed with their interface name.
+        local a_iface a_fam a_addr a_scope
+        while IFS=$'\t' read -r a_iface a_fam a_addr a_scope; do
+            [[ -z "$a_iface" ]] && continue
+            printf '    addr[%s/%s]  %s (%s)\n' "$a_iface" "$a_fam" "$a_addr" "$a_scope"
+        done < <(jq -r '.network.interfaces[] as $iface | $iface.addresses[]? | "\($iface.name)\t\(.family)\t\(.address)\t\(.scope)"' <<<"$rendered")
+    fi
+
+    if jq -e '.devices | length > 0' <<<"$rendered" >/dev/null; then
+        printf '\n[devices (expanded)]\n'
+        local d_name d_type
+        while IFS=$'\t' read -r d_name d_type; do
+            [[ -z "$d_name" ]] && continue
+            printf '  %-12s %s\n' "$d_name" "$d_type"
+        done < <(jq -r '.devices | to_entries[] | "\(.key)\t\(.value.type // "—")"' <<<"$rendered")
+    fi
+
+    if jq -e '.snapshots | length > 0' <<<"$rendered" >/dev/null; then
+        printf '\n[snapshots]\n'
+        local s_name s_when
+        while IFS=$'\t' read -r s_name s_when; do
+            [[ -z "$s_name" ]] && continue
+            printf '  %s  (%s)\n' "$s_name" "$s_when"
+        done < <(jq -r '.snapshots[] | "\(.name)\t\(.created_at)"' <<<"$rendered")
+    fi
+}
+
 # ─── Subcommand: export ────────────────────────────────────────────────────
 # Dump `$LXC_CMD config show --expanded` for every instance in <lab>,
 # concatenated with YAML document separators.  The output is feedable into
@@ -1052,6 +1268,7 @@ USAGE
   $LAB_PROG status   [<name|lab>]
   $LAB_PROG list     [--lab NAME]
   $LAB_PROG destroy  <name|lab/service> [--force]
+  $LAB_PROG inspect  <name|lab/service> [--json]
   $LAB_PROG export   <lab> --format lxc-yaml         # dump 'config show --expanded' per instance
   $LAB_PROG version | help
 
@@ -1098,6 +1315,7 @@ parse_args() {
     OPT_TAG="" OPT_ALIAS="" OPT_BACKEND="" OPT_IMAGE="" OPT_CHROOT="" OPT_TARBALL="" OPT_QCOW2=""
     OPT_NAME="" OPT_TYPE="" OPT_PROJECT="" OPT_STORAGE="" OPT_NETWORK=""
     OPT_LAB="" OPT_FOLLOW="" OPT_FORCE="" OPT_FORMAT=""
+    OPT_JSON=""
 
     [[ $# -eq 0 ]] && { usage; exit 0; }
     SUBCMD="$1"; shift
@@ -1123,6 +1341,7 @@ parse_args() {
             --follow|-f)    OPT_FOLLOW=1; shift ;;
             --force)        OPT_FORCE=1; shift ;;
             --format)       OPT_FORMAT="$2"; shift 2 ;;
+            --json)         OPT_JSON=1; shift ;;
             -h|--help)      usage; exit 0 ;;
             -v|--version)   printf '%s %s\n' "$LAB_PROG" "$LAB_VERSION"; exit 0 ;;
             -*)             die "unknown option: $1 (try --help)" ;;
@@ -1143,6 +1362,7 @@ main() {
         status)  cmd_status  ;;
         list)    cmd_list    ;;
         destroy) cmd_destroy ;;
+        inspect) cmd_inspect ;;
         export)  cmd_export  ;;
         help)    usage       ;;
         version) printf '%s %s\n' "$LAB_PROG" "$LAB_VERSION" ;;

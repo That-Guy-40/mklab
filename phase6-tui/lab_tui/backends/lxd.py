@@ -4,10 +4,18 @@ Engine probe mirrors `phase5-lxd/lab-lxd.sh` (lines 130–180): prefer
 `incus`; fall back to `lxc` (LXD).  A bare `which incus` isn't enough —
 many distros ship the package but the daemon is down or restricted to
 incus-admin, so we probe `… info` to confirm reachability.
+
+inspect() prefers `lab-lxd.sh inspect --json` (Phase 5 ≥ 0.1.0) when
+present so the detail panel shows the schema_version=1 surface (folded
+labels, network state, project, image lineage) instead of the raw
+`<engine> config show --expanded` YAML.  Falls back to that YAML if the
+script doesn't recognise `inspect` (e.g. older deployments) or returns
+non-JSON; the fallback preserves all existing project handling.
 """
 
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 from typing import ClassVar
@@ -118,6 +126,23 @@ class LXDBackend(BackendRunner):
         return argv
 
     def inspect(self, resource: Resource) -> str:
+        # Try Phase 5's `inspect --json` first — it folds the engine's
+        # config dump into a stable schema_version=1 surface (labels,
+        # network state, project, image lineage) that's much more
+        # readable in the TUI's detail pane.  Pretty-print the JSON for
+        # nice indentation.  `resource.name` is the literal engine-side
+        # instance name (e.g. `lab-demo-shell`); the phase script's
+        # resolver tries the literal form first via `lxc list <name>
+        # --all-projects`, so this argv works without project threading.
+        cp = run_capture([str(self.script), "inspect", resource.name, "--json"])
+        if cp.returncode == 0 and cp.stdout.strip().startswith("{"):
+            try:
+                doc = json.loads(cp.stdout)
+                return json.dumps(doc, indent=2, sort_keys=False)
+            except json.JSONDecodeError:
+                pass  # fall through to `<engine> config show --expanded`
+        # Fallback: raw `<engine> config show --expanded` YAML.  Preserve
+        # the project-flag handling for non-default projects.
         engine = self._probe_engine()
         if engine is None:
             return "# no reachable LXD/Incus daemon"
