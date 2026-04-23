@@ -1,0 +1,232 @@
+# Phase 2 — QEMU VMs, ready in seconds
+
+## What it gives you
+
+Full VMs *or* microvms, cloud-init seeded with your SSH key on first boot, across
+all six architectures the rest of the stack speaks (`x86_64`, `aarch64`, `armv7l`,
+`ppc64le`, `riscv64`, `s390x`). One bash script (`lab-vm.sh`), three backends —
+cached cloud images, direct kernel+initrd, or a Phase-1 chroot turned into a
+bootable qcow2 — and KVM transparently when guest arch matches host, TCG when it
+doesn't. Per-VM SSH port allocation, QMP-backed graceful shutdown, and a
+machine-readable `inspect --json` for everything that's running.
+
+## 60-second demo
+
+A clean Debian/Ubuntu host to a logged-in Alpine microvm:
+
+```bash
+sudo apt-get install -y jq yq curl socat genisoimage qemu-utils \
+    qemu-system-x86 ovmf
+sudo usermod -aG kvm "$USER" && newgrp kvm
+
+# Create, start, log in, destroy. Total wall time on KVM: well under a minute.
+sudo phase2-qemu-vm/lab-vm.sh create \
+    --name al1 --distro alpine --suite latest --arch x86_64 \
+    --memory 256M --microvm
+sudo phase2-qemu-vm/lab-vm.sh start  al1
+sudo phase2-qemu-vm/lab-vm.sh ssh    al1 -- uname -a
+sudo phase2-qemu-vm/lab-vm.sh destroy al1 --force
+```
+
+```text
+# sample output
+[info] starting al1 (accel=kvm arch=x86_64 mem=256M cpus=1 microvm=true)
+[info] al1 running (pid 24817)
+[info] ssh:     ssh -p 2222 lab@127.0.0.1
+[info] console: lab-vm.sh console al1
+Linux al1 6.6.41-0-virt #1-Alpine SMP PREEMPT_DYNAMIC Mon, 22 Jul 2024 ... x86_64 Linux
+```
+
+## Feature tour
+
+### Full VMs vs microvms (the kernel+initrd story)
+
+Three backends, picked with `--backend`:
+
+| Backend          | What it boots                                                        | When to reach for it |
+|------------------|----------------------------------------------------------------------|----------------------|
+| `disk-image`     | A cached upstream cloud image, overlaid as qcow2, seeded with cloud-init | The default — "give me a working Debian/Alpine/Rocky/Kali/Ubuntu in one command" |
+| `kernel+initrd`  | Direct kernel boot, no firmware, no bootloader                       | Microvm fast paths, kernel hacking, no-disk experiments |
+| `from-chroot`    | A Phase-1 chroot tree packaged as a bootable qcow2 (MBR + extlinux + ext4) | "I built it as a chroot, now boot it." x86_64 BIOS only in v0.1 |
+
+`--microvm` switches QEMU's machine type to `microvm` on x86_64 / aarch64 — no
+firmware blob, no SeaBIOS, no PCI bus discovery. On Alpine the boot is
+**measurably sub-second** after the rootfs is warm; the rest of the wait is just
+cloud-init setting up the user. On other arches the flag is silently ignored
+with a warning and you fall back to the standard PC machine.
+
+### Cloud-init out of the box
+
+Every `disk-image` VM gets a `seed.iso` generated automatically — a NoCloud
+datasource carrying:
+
+- your hostname (`--name`),
+- your SSH public key (auto-discovered from `~/.ssh/*.pub`, or override with `--pubkey`),
+- a `lab` user with passwordless sudo,
+- an auto-allocated SSH port that probes upward from `2222` until it finds a free one.
+
+That's why `lab-vm.sh ssh deb1` Just Works the first time — no manual
+`ssh-copy-id` round-trip. To pin the port, pass `--ssh-port 2245`.
+
+### Multi-architecture boot (foreign arches via qemu-system-X)
+
+The same `create` flow with `--arch aarch64` will:
+
+1. Pull the **aarch64** Debian cloud image (different URL, different filename).
+2. Use `qemu-system-aarch64` instead of `qemu-system-x86_64`.
+3. Pick `accel=tcg` (because your host is x86 and KVM only works when arch
+   matches), and load the AAVMF EFI firmware.
+4. Cloud-init the same `lab` user, on the same SSH port allocator.
+
+```bash
+sudo phase2-qemu-vm/lab-vm.sh create \
+    --name arm1 --distro debian --suite bookworm --arch aarch64 \
+    --memory 1G --cpus 1
+sudo phase2-qemu-vm/lab-vm.sh start arm1
+sudo phase2-qemu-vm/lab-vm.sh ssh   arm1 -- uname -m
+# → aarch64
+```
+
+TCG emulation is slow (5–10 minutes to first SSH for a Debian aarch64 boot on a
+laptop), but the only thing you change is one flag.
+
+### Alpine "latest" resolver
+
+You write `--suite latest`, the script reads
+`https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/x86_64/latest-releases.yaml`
+at run time and grabs the current stable release. No more bumping
+`3.19` → `3.20` → `3.21` in your configs every quarter:
+
+```bash
+sudo phase2-qemu-vm/lab-vm.sh create \
+    --name alp --distro alpine --suite latest --arch x86_64 --microvm
+# Pin if you must:
+sudo phase2-qemu-vm/lab-vm.sh create \
+    --name alp-pinned --distro alpine --suite 3.20 --arch x86_64 --microvm
+```
+
+### Bridging from a chroot — Phase 1 → bootable qcow2
+
+`backend = "from-chroot"` takes a Phase-1 chroot tree, MBR-partitions a raw
+disk, mkfs.ext4's it, rsyncs the chroot in, writes `/etc/fstab` from `blkid`,
+writes an extlinux config with `console=ttyS0,115200`, dd's the syslinux MBR,
+and converts to qcow2. The chroot must already have a kernel and initrd
+installed (Phase 2 won't `apt-get install linux-image-amd64` for you):
+
+```bash
+# Phase 1 builds the tree:
+sudo phase1-chroot/lab-chroot.sh create \
+    --backend debootstrap --distro debian --suite bookworm \
+    --arch x86_64 --target /var/chroots/vm-seed --variant minbase \
+    --name vm-seed
+
+# Install a kernel + ssh inside the chroot (one-time):
+sudo phase1-chroot/lab-chroot.sh enter vm-seed -- /bin/bash -c '
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        linux-image-amd64 systemd-sysv udev openssh-server \
+        ifupdown isc-dhcp-client
+    echo "root:lab" | chpasswd
+    systemctl enable ssh
+'
+
+# Phase 2 turns it into a bootable VM:
+sudo phase2-qemu-vm/lab-vm.sh create --config examples/vm-from-chroot-debian.toml
+sudo phase2-qemu-vm/lab-vm.sh start  vm-from-chroot-demo
+sudo phase2-qemu-vm/lab-vm.sh console vm-from-chroot-demo   # Ctrl-] to detach
+```
+
+x86_64 BIOS only in v0.1 — UEFI and aarch64 are future work. For other arches,
+extract the chroot's kernel + initrd and use `--backend kernel+initrd`.
+
+### `inspect --json` — live qemu state
+
+Added in commit `00b1fb1`. Schema-versioned, single JSON document, designed to
+be diffed and consumed by tooling (Phase 6's TUI lives off this):
+
+```bash
+sudo phase2-qemu-vm/lab-vm.sh inspect al1 --json | jq
+```
+
+```json
+// sample output (truncated)
+{
+  "schema_version": 1,
+  "name": "al1",
+  "manifest": {
+    "backend": "kernel+initrd", "distro": "alpine", "suite": "latest",
+    "arch": "x86_64", "memory": "256M", "cpus": 1,
+    "microvm": true, "accel": "kvm", "ssh_port": 2222
+  },
+  "process": { "running": true, "pid": 24817, "rss_bytes": 178311168, "threads": 4 },
+  "files": {
+    "disk":   { "path": ".../al1/disk.qcow2", "exists": true,
+                "size_bytes": 524288000, "virtual_size_bytes": 536870912000 },
+    "seed":   { "path": ".../al1/seed.iso",   "exists": true, "size_bytes": 374784 },
+    "kernel": { "path": ".../al1/vmlinuz",    "exists": true, "size_bytes": 11534336 },
+    "initrd": { "path": ".../al1/initramfs",  "exists": true, "size_bytes": 41943040 }
+  },
+  "sockets": {
+    "serial":  { "exists": true }, "monitor": { "exists": true }, "qmp": { "exists": true }
+  },
+  "network": { "ssh_port": 2222, "ssh_user": "lab" },
+  "foreign_arch": { "host_arch": "x86_64", "vm_arch": "x86_64",
+                    "kvm_available": true }
+}
+```
+
+`virtual_size_bytes` comes from `qemu-img info --output=json` so you can spot
+thin-provisioning waste at a glance. Without `--json` you get the same data in
+a flat human-readable layout — handy for `grep`-style triage.
+
+## Integrations
+
+### ← Phase 1 (turn a chroot into a VM)
+
+The `from-chroot` backend (above) is the headline cross-phase: any tree
+`phase1-chroot/lab-chroot.sh` builds — debootstrap, dnf bootstrap, an Alpine
+apk install — boots as a Phase 2 VM as long as it has a kernel and initrd
+installed. See [`examples/vm-from-chroot-debian.toml`](../examples/vm-from-chroot-debian.toml).
+
+### → Phase 5 (export qcow2 as an LXD VM image)
+
+LXD's own `from-chroot` builder is **container-only**, so the documented bridge
+for "I want a VM in LXD that came from a chroot" goes through Phase 2:
+
+```bash
+# Phase 2: build the qcow2 from a chroot.
+sudo phase2-qemu-vm/lab-vm.sh create --config examples/vm-from-chroot-debian.toml
+# (qcow2 lands at ~/.local/state/lab-create/vms/vm-from-chroot-demo/disk.qcow2)
+
+# Phase 5: import it as an LXD VM image, then launch.
+sudo phase5-lxd/lab-lxd.sh build \
+    --backend from-qcow2 \
+    --qcow2 ~/.local/state/lab-create/vms/vm-from-chroot-demo/disk.qcow2 \
+    --alias my-vm-image
+incus launch local:my-vm-image vmname --vm
+```
+
+### → Phase 6 (TUI surfaces all your VMs)
+
+Phase 6's chroot-detail panel calls `lab-vm.sh inspect --json` for live process
++ disk + socket state — that's why the JSON schema is versioned. Same source of
+truth, just a friendlier presentation.
+
+## Where next
+
+- Reference walk-through, every flag exercised: [`MANUAL_TESTING.md`](MANUAL_TESTING.md)
+- Why it's shaped this way: [`PLAN.md`](../PLAN.md) §Phase 2
+- Real configs to copy:
+  [`examples/vm-alpine-amd64.toml`](../examples/vm-alpine-amd64.toml),
+  [`examples/vm-debian-amd64.toml`](../examples/vm-debian-amd64.toml),
+  [`examples/vm-debian-aarch64.toml`](../examples/vm-debian-aarch64.toml),
+  [`examples/vm-kali-amd64.toml`](../examples/vm-kali-amd64.toml),
+  [`examples/microvm-alpine.toml`](../examples/microvm-alpine.toml),
+  [`examples/microvm-alpine-custom-init.toml`](../examples/microvm-alpine-custom-init.toml),
+  [`examples/vm-from-chroot-debian.toml`](../examples/vm-from-chroot-debian.toml)
+- Sibling SHOWCASEs:
+  [Phase 1 (chroots)](../phase1-chroot/SHOWCASE.md) ·
+  [Phase 3 (docker)](../phase3-docker/SHOWCASE.md) ·
+  [Phase 4 (podman)](../phase4-podman/SHOWCASE.md) ·
+  [Phase 5 (LXD/Incus)](../phase5-lxd/SHOWCASE.md) ·
+  [Phase 6 (TUI)](../phase6-tui/SHOWCASE.md)
