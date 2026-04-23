@@ -292,10 +292,16 @@ resolve_image() {
 
 # Query the images: remote for the highest non-edge X.Y alias of <distro>.
 # Returns just the version (e.g. "3.23"), empty string on error.
+#
+# Implementation note: `image list images:DISTRO/` (with trailing slash) was
+# the old query, but Incus's `images:` (linuxcontainers.org) returns 0 hits
+# for that form — it interprets the argument as a literal alias rather than
+# a prefix.  The portable filter is the bare positional `<substring>` form,
+# which both incus and lxc treat as a substring match across alias names.
 _resolve_distro_latest() {
     local distro="$1"
     [[ -n "$LXC_CMD" ]] || probe_engine
-    "$LXC_CMD" image list "images:${distro}/" --format=json 2>/dev/null \
+    "$LXC_CMD" image list "images:" "$distro" --format=json 2>/dev/null \
         | jq -r --arg d "$distro" '
             .[] | .aliases[]?.name
             | select(test("^" + $d + "/[0-9]+(\\.[0-9]+)?$"))
