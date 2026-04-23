@@ -4,6 +4,12 @@ Docker containers are tagged with `lab-create.tool=lab-docker`,
 `lab-create.lab=<name>`, `lab-create.svc=<svc>`.  Inventory is a single
 `docker ps -a --filter label=… --format=json` call — there is no
 filesystem state to read.
+
+inspect() prefers `lab-docker.sh inspect --json` (Phase 3 ≥ 0.1.0) when
+present so the detail panel shows the schema_version=1 surface (folded
+labels, network ports, mounts) instead of `docker inspect`'s raw nested
+JSON. Falls back to `docker inspect <name>` if the script doesn't
+recognise `inspect` (e.g. older deployments) or returns non-JSON.
 """
 
 from __future__ import annotations
@@ -90,6 +96,21 @@ class DockerBackend(BackendRunner):
         return out
 
     def inspect(self, resource: Resource) -> str:
+        # Try Phase 3's `inspect --json` first — it folds docker's nested
+        # inspect output into a stable schema_version=1 surface (labels,
+        # network ports, mounts) that's much more readable in the TUI's
+        # detail pane.  Pretty-print the JSON for nice indentation.
+        # `resource.name` is the literal docker container name (e.g.
+        # `lab-web-nginx`); the phase script's resolver tries the literal
+        # form first, so this argv works directly.
+        cp = run_capture([str(self.script), "inspect", resource.name, "--json"])
+        if cp.returncode == 0 and cp.stdout.strip().startswith("{"):
+            try:
+                doc = json.loads(cp.stdout)
+                return json.dumps(doc, indent=2, sort_keys=False)
+            except json.JSONDecodeError:
+                pass  # fall through to `docker inspect`
+        # Fallback: raw `docker inspect` output (a JSON array, unprettified).
         cp = run_capture(["docker", "inspect", resource.name])
         if cp.returncode == 0:
             return cp.stdout

@@ -767,6 +767,151 @@ Service: {{.Label "lab-create.svc"}}'
 # Coverage (v0.1, matches the fields lab-docker up actually honors):
 #   services — image, ports, environment, volumes, networks, command
 #   networks — per-topology [network.X] blocks, driver preserved
+# ─── Subcommand: inspect ────────────────────────────────────────────────────
+# Single-container detail report — folds `docker inspect`'s nested JSON
+# into a stable schema_version=1 surface that the Phase 6 TUI can rely on.
+#
+# Two output modes:
+#   default      → human-readable [labels] / [container] / [state] /
+#                  [network] / [mounts] sections
+#   --json       → one JSON document on stdout, schema_version=1
+#
+# Designed primarily as a machine-readable surface for Phase 6 (the TUI's
+# docker detail panel).  CLI users get the same data but rendered.
+#
+# Name resolution mirrors cmd_exec / cmd_logs but tries the literal name
+# first — so the TUI can pass `lab-demo-web` (already the on-engine name)
+# AND humans can pass the short `demo/web` form.
+cmd_inspect() {
+    local target="${POS_ARGS[0]:-}"
+    [[ -n "$target" ]] || die "usage: $LAB_PROG inspect <name|lab/svc> [--json]"
+    require_docker
+    require_cmd jq
+
+    # Try the literal name first; fall back to the lab-<...> rewrite.
+    # `_resolve_container_name` always synthesizes `lab-<arg>` for a
+    # single-token input, so passing `lab-demo-web` would otherwise become
+    # `lab-lab-demo-web`.  Trying literal first lets both forms work.
+    local cname=""
+    if docker inspect "$target" >/dev/null 2>&1; then
+        cname="$target"
+    else
+        cname="$(_resolve_container_name "$target")"
+        docker inspect "$cname" >/dev/null 2>&1 \
+            || die "no container matches '$target' (tried '$cname')"
+    fi
+
+    # `docker inspect` emits a JSON ARRAY with one entry; jq does the
+    # schema flattening.  Doing this in jq (rather than printf-with-fields
+    # like Phases 1/2) is much cleaner because docker's structure is
+    # already well-typed.
+    local rendered
+    rendered="$(docker inspect "$cname" 2>/dev/null | jq -r '
+        .[0] as $c |
+        ($c.Config.Labels // {}) as $L |
+        {
+            schema_version: 1,
+            name: ($c.Name | sub("^/"; "")),
+            labels: {
+                lab:    $L["lab-create.lab"],
+                svc:    $L["lab-create.svc"],
+                tool:   $L["lab-create.tool"],
+                _other: ($L | with_entries(select(.key | startswith("lab-create.") | not)))
+            },
+            container: {
+                id:         $c.Id,
+                image:      $c.Config.Image,
+                image_id:   $c.Image,
+                command:    ($c.Config.Cmd // []),
+                created_at: $c.Created
+            },
+            state: {
+                status:        $c.State.Status,
+                running:       $c.State.Running,
+                started_at:    $c.State.StartedAt,
+                finished_at:   ($c.State.FinishedAt // null),
+                exit_code:     (if $c.State.Running then null else ($c.State.ExitCode // 0) end),
+                restart_count: ($c.RestartCount // 0),
+                pid:           (if ($c.State.Pid // 0) > 0 then $c.State.Pid else null end),
+                health:        ($c.State.Health.Status // null)
+            },
+            network: {
+                ports: [
+                    ($c.NetworkSettings.Ports // {}) | to_entries[]
+                    | .key as $port_proto
+                    | ($port_proto | split("/")) as $pp
+                    | (.value // [])[]?
+                    | { container_port: ($pp[0] | tonumber),
+                        protocol:       $pp[1],
+                        host_ip:        .HostIp,
+                        host_port:      (.HostPort | tonumber) }
+                ],
+                networks: [($c.NetworkSettings.Networks // {}) | keys[]?],
+                ip_addresses: (
+                    ($c.NetworkSettings.Networks // {})
+                    | with_entries(.value = (.value.IPAddress // null))
+                )
+            },
+            mounts: [
+                ($c.Mounts // [])[] |
+                { source:      .Source,
+                  destination: .Destination,
+                  type:        .Type,
+                  readonly:    ((.RW // true) | not) }
+            ]
+        }
+    ')"
+
+    if [[ -n "${OPT_JSON:-}" ]]; then
+        printf '%s\n' "$rendered"
+        return 0
+    fi
+
+    # Human-readable rendering — derived from the JSON for consistency.
+    printf '[labels]\n'
+    printf '  lab            %s\n' "$(jq -r '.labels.lab  // "(none)"' <<<"$rendered")"
+    printf '  svc            %s\n' "$(jq -r '.labels.svc  // "(none)"' <<<"$rendered")"
+    printf '  tool           %s\n' "$(jq -r '.labels.tool // "(none)"' <<<"$rendered")"
+
+    printf '\n[container]\n'
+    printf '  name           %s\n' "$cname"
+    printf '  id             %s\n' "$(jq -r '.container.id[0:12]' <<<"$rendered")"
+    printf '  image          %s\n' "$(jq -r '.container.image' <<<"$rendered")"
+    printf '  created_at     %s\n' "$(jq -r '.container.created_at' <<<"$rendered")"
+
+    printf '\n[state]\n'
+    printf '  status         %s\n' "$(jq -r '.state.status' <<<"$rendered")"
+    printf '  running        %s\n' "$(jq -r '.state.running' <<<"$rendered")"
+    printf '  started_at     %s\n' "$(jq -r '.state.started_at' <<<"$rendered")"
+    printf '  finished_at    %s\n' "$(jq -r '.state.finished_at // "—"' <<<"$rendered")"
+    printf '  exit_code      %s\n' "$(jq -r '.state.exit_code   // "—"' <<<"$rendered")"
+    printf '  restart_count  %s\n' "$(jq -r '.state.restart_count' <<<"$rendered")"
+    printf '  pid            %s\n' "$(jq -r '.state.pid    // "—"' <<<"$rendered")"
+    printf '  health         %s\n' "$(jq -r '.state.health // "—"' <<<"$rendered")"
+
+    printf '\n[network]\n'
+    local nets; nets="$(jq -r '.network.networks | join(", ")' <<<"$rendered")"
+    [[ -n "$nets" ]] && printf '  networks       %s\n' "$nets"
+    while IFS=$'\t' read -r net ip; do
+        [[ -z "$net" ]] && continue
+        printf '  ip[%s]        %s\n' "$net" "${ip:-—}"
+    done < <(jq -r '.network.ip_addresses | to_entries[]? | "\(.key)\t\(.value // "—")"' <<<"$rendered")
+    while IFS=$'\t' read -r cport proto hip hport; do
+        [[ -z "$cport" ]] && continue
+        printf '  port           %s/%s → %s:%s\n' "$cport" "$proto" "${hip:-0.0.0.0}" "$hport"
+    done < <(jq -r '.network.ports[]? | "\(.container_port)\t\(.protocol)\t\(.host_ip // "")\t\(.host_port)"' <<<"$rendered")
+
+    if jq -e '.mounts | length > 0' <<<"$rendered" >/dev/null; then
+        printf '\n[mounts]\n'
+        local src dst type ro tag
+        while IFS=$'\t' read -r src dst type ro; do
+            [[ -z "$src" ]] && continue
+            tag=""; [[ "$ro" == "true" ]] && tag=", ro"
+            printf '  %s → %s (%s%s)\n' "$src" "$dst" "$type" "$tag"
+        done < <(jq -r '.mounts[] | "\(.source)\t\(.destination)\t\(.type)\t\(.readonly)"' <<<"$rendered")
+    fi
+}
+
 # Not emitted: healthcheck, restart, depends_on, secrets (not in the Phase 3
 # TOML schema yet).  `from_chroot` / `from_tarball` / `build` image sources
 # don't round-trip — compose's `build:` key needs a Dockerfile context path,
@@ -924,6 +1069,7 @@ USAGE
   $LAB_PROG logs     <name|lab/service> [--follow]
   $LAB_PROG status   [<name|lab>]
   $LAB_PROG list     [--lab NAME]
+  $LAB_PROG inspect  <name|lab/service> [--json]
   $LAB_PROG destroy  <name|lab/service> [--force]
   $LAB_PROG export   --config topology.toml [--format compose]   # emit compose YAML to stdout
   $LAB_PROG version | help
@@ -980,6 +1126,7 @@ parse_args() {
     OPT_LAB=""
     OPT_FORCE=""
     OPT_FORMAT=""
+    OPT_JSON=""
 
     [[ $# -eq 0 ]] && { usage; exit 0; }
     SUBCMD="$1"; shift
@@ -1009,6 +1156,7 @@ parse_args() {
             --follow|-f)    OPT_FOLLOW=1; shift ;;
             --lab)          OPT_LAB="$2"; shift 2 ;;
             --format)       OPT_FORMAT="$2"; shift 2 ;;
+            --json)         OPT_JSON=1; shift ;;
             --force)        OPT_FORCE=1; shift ;;
             -h|--help)      usage; exit 0 ;;
             -v|--version)   printf '%s %s\n' "$LAB_PROG" "$LAB_VERSION"; exit 0 ;;
@@ -1029,6 +1177,7 @@ main() {
         logs)    cmd_logs    ;;
         status)  cmd_status  ;;
         list)    cmd_list    ;;
+        inspect) cmd_inspect ;;
         destroy) cmd_destroy ;;
         export)  cmd_export  ;;
         help)    usage       ;;
