@@ -1,0 +1,27 @@
+[
+  {
+    "Id": "abcdef0123",
+    "Names": ["lab-pwn-attacker"],
+    "Image": "kali-rolling",
+    "State": "running",
+    "CreatedAt": "2026-04-22T12:00:00Z",
+    "Labels": {
+      "lab-create.tool": "lab-podman",
+      "lab-create.lab": "pwn",
+      "lab-create.svc": "attacker",
+      "lab-create.pod": "ctf-pod"
+    }
+  },
+  {
+    "Id": "0123abcdef",
+    "Names": ["lab-pwn-target"],
+    "Image": "alpine:3",
+    "State": "exited",
+    "CreatedAt": "2026-04-22T12:00:00Z",
+    "Labels": {
+      "lab-create.tool": "lab-podman",
+      "lab-create.lab": "pwn",
+      "lab-create.svc": "target"
+    }
+  }
+]

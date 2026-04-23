@@ -1,0 +1,20 @@
+# lab-vm manifest — do not edit by hand
+name        = "alpine-microvm"
+lab         = "vmlab"
+backend     = "kernel+initrd"
+distro      = "alpine"
+suite       = "latest"
+arch        = "x86_64"
+memory      = "256M"
+cpus        = 1
+microvm     = true
+accel       = "kvm"
+ssh_port    = 2222
+disk        = ""
+seed        = ""
+kernel      = "/var/lib/lab-create/cache/vmlinuz"
+initrd      = "/var/lib/lab-create/cache/initramfs.gz"
+append      = "console=ttyS0"
+ssh_user    = "lab"
+created_at  = "2026-04-22T12:00:00Z"
+version     = "0.1.0"

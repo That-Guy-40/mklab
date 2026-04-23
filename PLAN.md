@@ -877,103 +877,126 @@ A Python 3.11+ Textual app that surfaces every resource produced by Phases
 1–5 in one keyboard-driven UI. **No new provisioning logic** — every
 mutating action shells out to the corresponding `lab-*.sh` script via
 `subprocess`; every read pulls from the standardized state locations the
-bash phases write (`~/.local/state/lab-create/`, `/var/lib/machines/`,
-`schroot -l`, `qemu` monitor sockets, `docker`/`podman`/`lxc` CLIs). If
-Phase 6 is removed, nothing in Phases 1–5 breaks.
+bash phases write (`$LAB_STATE_DIR/{chroots,vms,podman,lxd}/`) or queries
+each engine's labelled state (`docker/podman/incus … --format=json`
+filtered on `lab-create.tool=lab-<phase>`). If Phase 6 is removed,
+nothing in Phases 1–5 breaks.
+
+**Status: v0.1 landed.** Read-only inventory and cross-phase topology
+orchestration — the highest-value slice of the original spec. Create
+wizards, console attach, and the Phase 6b web UI are **deferred to v0.2**
+so the read-only surface can be proven out first.
 
 ### Stack
 
 - **Textual** for the TUI (declarative widgets, CSS-like styling, mouse
   support, async event loop). Implicitly gets `Rich` for free.
-- **Python `tomllib`** (stdlib, 3.11+) for reading `lab.toml` topologies and
-  per-resource configs.
-- **`subprocess`** + a thin `BackendRunner` class per phase that knows the
-  script's CLI shape and parses its `--json` output where available.
-- **`watchfiles`** (small dep) for noticing when state files change without
-  hammering the filesystem on a poll loop.
+- **Python `tomllib`** (stdlib, 3.11+) for reading `lab.toml` topologies.
+- **`subprocess`** + a thin `BackendRunner` class per phase.
+- **`watchfiles`** (small dep) for noticing when state files change
+  without hammering the filesystem on a poll loop.
+- **`pydantic`** for the shared `Resource` model.
+- **`uv`** for dependency pinning and the venv.
 - No DB. State of truth is whatever the bash phases write; the TUI is a
   view layer.
 
 ### Layout (`phase6-tui/lab_tui/`)
 
 ```
-__main__.py        # python -m lab_tui  →  Textual App.run()
-app.py             # LabApp(App) — bindings, screens, theming
+__main__.py        # python -m lab_tui  →  LabApp().run()
+app.py             # LabApp(App) — bindings, screen registry
+state.py           # LAB_STATE_DIR resolver + watchfiles StateWatcher
+topology.py        # lab.toml parser + dep-ordered dispatch planner
+styles.tcss        # Textual stylesheet
 screens/
-  browser.py       # left: tree of resources by backend; right: detail
-  detail.py        # config view, log tail, action buttons
-  create_chroot.py # modal wizard → emits TOML → calls lab-chroot.sh create
-  create_vm.py
-  create_container.py  # docker | podman | lxd selectable
-  topology.py      # full-lab graph view from lab.toml
-  confirm.py       # destructive-action modal
+  browser.py       # main screen: tree (left) + detail panel (right)
+  logs.py          # log-tail viewport (subprocess + Log widget)
+  topology.py      # load lab.toml, show plan, run bring-up/tear-down
+  confirm.py       # destructive-action modal (shows literal argv)
 backends/
-  base.py          # BackendRunner ABC: list(), inspect(), create(), start(),
-                   #   stop(), destroy(), enter_command()
-  chroot.py        # wraps phase1-chroot/lab-chroot.sh
-  vm.py            # wraps phase2-qemu-vm/lab-vm.sh
-  docker.py        # wraps phase3-docker/lab-docker.sh
-  podman.py
-  lxd.py
-state.py           # readers for ~/.local/state/lab-create/, machinectl, etc.
-topology.py        # lab.toml parser + dependency resolver
+  base.py          # Resource (pydantic) + BackendRunner ABC
+  chroot.py        # reads $LAB_STATE_DIR/chroots/*.toml
+  vm.py            # reads $LAB_STATE_DIR/vms/*/manifest.toml + qemu.pid
+  docker.py        # docker ps --filter label=lab-create.tool=lab-docker
+  podman.py        # podman {ps,pod ps} --filter label=…
+  lxd.py           # incus list --all-projects (falls back to lxc)
 widgets/
-  resource_tree.py
-  log_tail.py
   status_pill.py   # running / stopped / built / missing / error
 ```
 
-### Screens
+### v0.1 screens (what actually ships)
 
-- **Resource browser** — left pane: tree grouped by backend
-  (Chroots → schroot/nspawn/bare; VMs → full/microvm; Containers →
-  docker/podman/lxd). Each row carries a status pill. Right pane: the
-  selected resource's TOML config, recent log tail (tailing the relevant
-  log file or `journalctl -u` for nspawn-managed units), and an action bar.
-- **Create wizards** — one modal per resource type. Walk the user through
-  the required fields (backend, distro, suite, arch, target, manager, …),
-  validate live (e.g., reject Rocky armv7l before submission), preview the
-  generated TOML, and on confirm dispatch the bash script in a Textual
-  `Worker` so the UI stays responsive. Stream stdout/stderr into a log
-  panel.
-- **Topology view** — read a unified `lab.toml` (may contain
-  `[[chroot]]` / `[[vm]]` / `[[service]]` blocks from any mix of
-  Phases 1–5, all sharing the same top-level `[lab]` grouping
-  metadata) and render a dependency-ordered list (no fancy graph
-  drawing in v1; arrows in text). "Bring up" and "Tear down" actions
-  iterate in topological order, dispatching each block to its owning
-  phase script. Cross-correlation is done via the
-  `lab-create.lab=<name>` label / manifest field that every phase tool
-  writes when a `[lab]` block is present. Halt on first failure with
-  a clear pointer to which resource broke.
-- **Confirm modal** — every destructive action (`destroy`, `tear down`,
-  `stop --force`) routes through this. Shows exactly the command(s) about
-  to run. No keyboard shortcut bypass.
-- **Console attach** — for VMs, the action bar's "console" button shells
-  out to `lab-vm.sh console <name>` in a foreground sub-shell (Textual
-  suspends, returns when the sub-shell exits).
+- **Resource browser** — left pane: tree grouped by `lab` → backend →
+  resource, each row carrying a Rich-rendered status pill (green
+  `running`, yellow `stopped`, cyan `built`, red `missing`, bold-red
+  `error`, dim `unknown`). Right pane: the selected resource's
+  `inspect()` output (engine-specific — `incus config show --expanded`
+  for LXD, `docker inspect` for docker, the manifest TOML for
+  chroot/vm). Unavailable backends render as a dim "unavailable"
+  group instead of crashing.
+- **Log tail** — selects the resource's `log_command` (docker/podman
+  `logs -f`, `incus console --show-log`, or a `tail -F` on
+  `qemu.log` for Phase 2 VMs), spawns it as a Textual worker, streams
+  stdout into a `Log` widget.
+- **Topology** — load a `lab.toml`, render the dispatch plan (`up`
+  order: chroot → vm → docker → podman → lxd; `down` order: reverse,
+  with chroot + vm entries skipped since those persist across lab
+  tear-down). Bring-up / tear-down run each phase's existing
+  `up --config` / `down --lab` in order, streaming stdout into the
+  output pane. Halt on first non-zero exit.
+- **Confirm modal** — every destructive action (`destroy` from the
+  browser, `tear down` from topology) routes through this. Shows the
+  literal argv, runs on approval, streams output into the modal's Log
+  widget before closing. No keyboard bypass.
 
 ### Live updates
 
-A single `StateWatcher` subscribes (via `watchfiles`) to the directories
-the bash phases write to, plus a low-frequency timer (default 5 s,
-configurable) that refreshes things that aren't file-backed (`docker ps`,
-`qemu-monitor`). All updates funnel through Textual's reactive system so
-screens redraw declaratively.
+A `watchfiles`-backed `StateWatcher` (in `state.py`) subscribes to the
+four filesystem-backed state dirs (`chroots/`, `vms/`, `podman/`,
+`lxd/`), plus a 5-second timer that yields "docker" on each tick
+because Docker has no filesystem surface to watch. Each yield names
+the backend whose surface changed; the browser re-runs only that
+backend's `list_resources()`.
 
-### Phase 6 exit criteria
+### Deferred to v0.2
 
-- Browser lists every resource the underlying bash phases know about, with
-  correct status, on a host that has at least one resource of each backend.
-- Each create wizard produces the same TOML the user would have written by
-  hand, and the bash script accepts it without modification.
-- Destroying a resource from the TUI leaves no orphan state (verified by
-  re-listing).
-- The TUI starts and is usable on a host where some backends are absent
-  (e.g., no Docker installed) — those branches show as "unavailable",
-  not as errors.
-- `textual serve lab_tui` works, giving Phase 6b a fallback path before
-  Phase 6b lands.
+- **Create wizards** — five modal TOML generators (one per phase). Each
+  exposes backend-specific fields and live validation; the current spec
+  skipped these so the read-only surface could ship first.
+- **Console attach** — suspend Textual, drop into `lab-vm.sh console
+  <name>`, resume on exit. Fiddly cross-platform; v0.1 users can run it
+  standalone in another terminal.
+- **Phase 6b web UI** — same `BackendRunner` surface lifted into FastAPI
+  handlers.
+- **`textual serve lab_tui`** integration — blocked on the same
+  `BackendRunner` abstraction being proven stable in v0.1.
+
+### v0.1 exit criteria (all met as of landing)
+
+- Browser lists every lab-create-tagged resource across all 5 phases
+  with correct status. Verified against live Incus 6.23 — `hello-lxd/
+  shell` shows `● running [instance]` after `lab-lxd up`.
+- Unavailable backends render as a dim "unavailable" entry, not as an
+  error (TUI stays usable when Docker isn't installed, etc.).
+- Destroy from the browser routes through the confirm modal showing
+  the literal argv (`… destroy hello-lxd/shell --force`); approval
+  runs it and refreshes the tree.
+- Topology dispatch: `uv run python -m lab_tui.topology up
+  examples/lab-unified-demo.toml` prints the correct per-phase argv
+  sequence (chroot → vm → docker → podman → lxd), each pointing at
+  the right phase script with `up --config …`.
+- Automated suite passes (`uv run pytest -v` → 33 passed, 0 failed),
+  including a Textual pilot smoke test that launches the app headless.
+
+### Reference: what each backend's `list_resources()` does
+
+| Backend | Strategy |
+|---|---|
+| `chroot` | Glob `$LAB_STATE_DIR/chroots/*.toml`; status=`built` iff `target` dir exists. |
+| `vm` | Glob `$LAB_STATE_DIR/vms/*/manifest.toml`; status=`running` iff `qemu.pid` names a live PID. |
+| `docker` | `docker ps -a --filter label=lab-create.tool=lab-docker --format={{json .}}` (newline-JSON). |
+| `podman` | `podman ps -a` + `podman pod ps` with `--filter label=lab-create.tool=lab-podman --format=json`. |
+| `lxd` | `incus list --all-projects --format=json` (falls back to `lxc`), filter by `config[user.lab-create.tool]==lab-lxd`. |
 
 ---
 

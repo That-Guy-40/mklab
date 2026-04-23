@@ -12,10 +12,10 @@ See [`PLAN.md`](PLAN.md) for the full design and rationale.
 | 1 | [`phase1-chroot/lab-chroot.sh`](phase1-chroot/) | **v0.1 landed** — debootstrap / dnf / host-copy backends, schroot / nspawn / bare managers, foreign-arch via qemu-user-static |
 | 2 | [`phase2-qemu-vm/lab-vm.sh`](phase2-qemu-vm/) | **v0.1 landed** — QEMU full VMs and microvms, cloud-init seeded, all 6 arches |
 | 3 | [`phase3-docker/lab-docker.sh`](phase3-docker/) | **v0.1 landed** — `run`/`up`/`down`/`exec`/`logs`/`list`/`destroy`, multi-arch buildx, `from-chroot` import, TOML topologies |
-| 4 | `phase4-podman/lab-podman.sh` | not yet started |
-| 5 | `phase5-lxd/lab-lxd.sh` | not yet started |
-| 6 | `phase6-tui/` (Textual) | not yet started |
-| 6b | `phase6b-web/` (FastAPI + HTMX) | not yet started |
+| 4 | [`phase4-podman/lab-podman.sh`](phase4-podman/) | **v0.1 landed** — pods, quadlet systemd-user export, `from-chroot` + `from-tarball` import, rootless-first |
+| 5 | [`phase5-lxd/lab-lxd.sh`](phase5-lxd/) | **v0.1 landed** — LXD/Incus containers + VMs, projects, profiles, `from_qcow2` bridge from Phase 2, `--format lxc-yaml` export |
+| 6 | [`phase6-tui/`](phase6-tui/) (Textual) | **v0.1 landed** — read-only inventory across all 5 phases + cross-phase topology bring-up / tear-down. Create wizards deferred to v0.2. |
+| 6b | `phase6b-web/` (FastAPI + HTMX) | deferred until Phase 6 v0.2 |
 
 Each phase is a self-contained script (or, for the Python phases, a
 self-contained package). Deleting later-phase directories does not break

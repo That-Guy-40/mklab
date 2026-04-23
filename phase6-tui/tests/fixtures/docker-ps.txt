@@ -1,0 +1,2 @@
+{"ID":"abc123","Names":"lab-web-nginx","Image":"nginx:1.27","State":"running","Status":"Up 2 minutes","Ports":"0.0.0.0:8080->80/tcp","CreatedAt":"2026-04-22 12:00:00","Labels":"lab-create.tool=lab-docker,lab-create.lab=web,lab-create.svc=nginx"}
+{"ID":"def456","Names":"lab-web-db","Image":"postgres:16","State":"exited","Status":"Exited (0)","Ports":"","CreatedAt":"2026-04-22 12:00:00","Labels":"lab-create.tool=lab-docker,lab-create.lab=web,lab-create.svc=db"}

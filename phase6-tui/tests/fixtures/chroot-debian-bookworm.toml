@@ -1,0 +1,11 @@
+# lab-chroot manifest — do not edit by hand
+name       = "debian-bookworm"
+target     = "/var/chroots/debian-bookworm"
+backend    = "debootstrap"
+distro     = "debian"
+suite      = "bookworm"
+arch       = "x86_64"
+manager    = "schroot"
+lab        = "demo"
+created_at = "2026-04-22T12:00:00Z"
+version    = "0.1.0"

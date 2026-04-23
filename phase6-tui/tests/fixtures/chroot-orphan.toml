@@ -1,0 +1,11 @@
+# lab-chroot manifest — do not edit by hand
+name       = "kali-amd64"
+target     = "/this/path/does/not/exist"
+backend    = "debootstrap"
+distro     = "kali"
+suite      = "kali-rolling"
+arch       = "x86_64"
+manager    = "none"
+lab        = ""
+created_at = "2026-04-22T12:00:00Z"
+version    = "0.1.0"

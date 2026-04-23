@@ -1,0 +1,31 @@
+[project]
+name = "lab-tui"
+version = "0.1.0"
+description = "Phase 6 of LAB_CREATE_V2 — Textual TUI surfacing the bash phase scripts"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "textual>=0.79",
+    "watchfiles>=0.21",
+    "pydantic>=2.5",
+]
+
+[project.scripts]
+lab-tui = "lab_tui.__main__:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["lab_tui"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

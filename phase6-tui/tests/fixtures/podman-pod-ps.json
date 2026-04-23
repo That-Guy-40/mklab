@@ -1,0 +1,14 @@
+[
+  {
+    "Id": "podid000",
+    "Name": "ctf-pod",
+    "Status": "Running",
+    "NumberOfContainers": 2,
+    "Created": "2026-04-22T12:00:00Z",
+    "Labels": {
+      "lab-create.tool": "lab-podman",
+      "lab-create.lab": "pwn",
+      "lab-create.pod": "ctf-pod"
+    }
+  }
+]

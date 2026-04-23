@@ -15,3 +15,10 @@
 
 # Downloaded artifacts (fetched per INSTALL-KALI-KEYRING.md, not sources)
 phase1-chroot/kali-archive-keyring_*.deb
+
+# Phase 6 — Python tooling artifacts
+phase6-tui/.venv/
+phase6-tui/.pytest_cache/
+phase6-tui/**/__pycache__/
+phase6-tui/**/*.pyc
+phase6-tui/*.egg-info/
