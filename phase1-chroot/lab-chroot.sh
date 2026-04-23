@@ -998,9 +998,13 @@ resolve_target_and_manager() {
                 return 0
             fi
         done
-        # No manifest — assume bare chroot, manager=none.
+        # No manifest — assume bare chroot, manager=none.  Synthesize a
+        # name from the target's basename so callers always have a
+        # non-empty leading field; if we left it empty, `IFS=$'\t' read`
+        # would silently strip the leading tab (tab is whitespace) and
+        # shift target into the name slot, breaking all callers.
         [[ -d "$arg" ]] || die "no such chroot path: $arg"
-        printf '\t%s\t%s\n' "$arg" "none"
+        printf '%s\t%s\t%s\n' "${arg##*/}" "$arg" "none"
     else
         local target manager
         target="$(read_manifest_field "$arg" target)" \
@@ -1184,6 +1188,234 @@ cmd_verify() {
     fi
 }
 
+# ─── Subcommand: inspect ────────────────────────────────────────────────────
+# Single-chroot detail report — pairs the static manifest with cheap live
+# probes (target dir size/owner, /etc/os-release, package count, manager
+# registration, foreign-arch interpreter availability).
+#
+# Two output modes:
+#   default      → human-readable [manifest] / [live] sections
+#   --json       → one JSON document on stdout, schema_version=1
+#
+# Designed primarily as a machine-readable surface for Phase 6 (the TUI's
+# chroot detail panel).  CLI users get the same data but rendered.
+#
+# IMPORTANT: never `source` the chroot's /etc/os-release — that file
+# could carry arbitrary shell.  Parse it with awk instead.
+cmd_inspect() {
+    local arg="${POS_ARGS[0]:-}"
+    [[ -n "$arg" ]] || die "usage: $LAB_PROG inspect <name|path> [--json]"
+    local name target manager
+    IFS=$'\t' read -r name target manager < <(resolve_target_and_manager "$arg")
+
+    # --- manifest fields.  Bare path-mode chroots with no manifest get
+    # a synthesized name from `resolve_target_and_manager` (basename),
+    # so read_manifest_field will return 1 on every call — wrap each in
+    # `|| true` so set -e doesn't propagate the missing-manifest signal
+    # out of the var=$() subshell.
+    local m_distro m_suite m_arch m_backend m_lab m_created m_version
+    m_distro="$(read_manifest_field "$name" distro     2>/dev/null || true)"
+    m_suite="$(read_manifest_field   "$name" suite      2>/dev/null || true)"
+    m_arch="$(read_manifest_field    "$name" arch       2>/dev/null || true)"
+    m_backend="$(read_manifest_field "$name" backend    2>/dev/null || true)"
+    m_lab="$(read_manifest_field     "$name" lab        2>/dev/null || true)"
+    m_created="$(read_manifest_field "$name" created_at 2>/dev/null || true)"
+    m_version="$(read_manifest_field "$name" version    2>/dev/null || true)"
+
+    # --- live: target dir
+    local t_exists=false t_size_bytes=0 t_owner=""
+    if [[ -d "$target" ]]; then
+        t_exists=true
+        # `du -sb` is GNU-specific; fall back to `du -sk` * 1024 elsewhere.
+        if t_size_bytes="$(du -sb "$target" 2>/dev/null | awk '{print $1; exit}')"; then
+            :
+        else
+            local sk; sk="$(du -sk "$target" 2>/dev/null | awk '{print $1; exit}')"
+            t_size_bytes=$(( ${sk:-0} * 1024 ))
+        fi
+        t_owner="$(stat -c '%U:%G' "$target" 2>/dev/null || printf '?:?')"
+    fi
+
+    # --- live: os-release (parse, don't source).  Fields we surface match
+    # what TUI detail panels actually want to render.
+    local osr_id="" osr_version_id="" osr_codename="" osr_pretty=""
+    if [[ -r "$target/etc/os-release" ]]; then
+        # awk extractor — handles `KEY=value` and `KEY="value"` forms.
+        local _osr
+        _osr="$(awk -F= '
+            /^[A-Z_]+=/ {
+                k=$1; sub(/^[^=]*=/,"",$0); v=$0;
+                gsub(/^"|"$/, "", v);
+                vals[k]=v;
+            }
+            END {
+                printf "%s\t%s\t%s\t%s\n",
+                    vals["ID"], vals["VERSION_ID"],
+                    vals["VERSION_CODENAME"], vals["PRETTY_NAME"];
+            }
+        ' "$target/etc/os-release" 2>/dev/null)"
+        IFS=$'\t' read -r osr_id osr_version_id osr_codename osr_pretty <<<"$_osr"
+    fi
+
+    # --- live: package count.  Cheap heuristic — count files in the
+    # respective package db.  Skip if the chroot doesn't have one.
+    local pkg_manager="" pkg_count="null"
+    if [[ -r "$target/var/lib/dpkg/status" ]]; then
+        pkg_manager="dpkg"
+        # One Package: header per installed package.
+        pkg_count="$(grep -c '^Package: ' "$target/var/lib/dpkg/status" 2>/dev/null || printf 0)"
+    elif [[ -d "$target/var/lib/rpm" ]]; then
+        pkg_manager="rpm"
+        # Counting *.rpm db files isn't meaningful; rpm -qa --root works
+        # but is slow.  Leave count=null for rpm to avoid the spawn cost.
+    fi
+
+    # --- live: manager registration
+    local mgr_kind="$manager" mgr_registered=false mgr_active=""
+    case "$manager" in
+        schroot)
+            if have schroot && schroot -l 2>/dev/null | grep -qx "chroot:${name}"; then
+                mgr_registered=true
+            fi
+            ;;
+        nspawn)
+            # machinectl shows nspawn-launched containers AND `list-images`
+            # shows registered images.  An nspawn-managed chroot is
+            # "registered" if machinectl knows about it.
+            if have machinectl && machinectl show-image "$name" >/dev/null 2>&1; then
+                mgr_registered=true
+                mgr_active="$(machinectl show "$name" --property=State 2>/dev/null \
+                    | awk -F= '/^State=/{print $2; exit}')"
+            fi
+            ;;
+        none|"")
+            mgr_kind="${mgr_kind:-none}"
+            mgr_registered=true   # bare chroot is its own registration
+            ;;
+    esac
+
+    # --- live: foreign-arch interpreter (when chroot arch != host arch)
+    local host_arch fa_chroot_arch fa_qemu_user fa_qemu_available="null"
+    host_arch="$(detect_host_arch)"
+    fa_chroot_arch="${m_arch:-unknown}"
+    if [[ -n "$m_arch" && "$m_arch" != "$host_arch" ]]; then
+        if fa_qemu_user="$(arch_map "$m_arch" qemu-user 2>/dev/null)" && [[ -n "$fa_qemu_user" ]]; then
+            if have "qemu-${fa_qemu_user}-static"; then
+                fa_qemu_available=true
+            else
+                fa_qemu_available=false
+            fi
+        fi
+    fi
+
+    # --- emit ------------------------------------------------------------
+    if [[ -n "${OPT_JSON:-}" ]]; then
+        require_cmd jq
+        jq -n \
+            --arg name        "$name" \
+            --arg target      "$target" \
+            --arg backend     "$m_backend" \
+            --arg distro      "$m_distro" \
+            --arg suite       "$m_suite" \
+            --arg arch        "$m_arch" \
+            --arg manager     "$mgr_kind" \
+            --arg lab         "$m_lab" \
+            --arg created_at  "$m_created" \
+            --arg version     "$m_version" \
+            --argjson t_exists  "$t_exists" \
+            --argjson t_size    "$t_size_bytes" \
+            --arg t_owner     "$t_owner" \
+            --arg osr_id      "$osr_id" \
+            --arg osr_version "$osr_version_id" \
+            --arg osr_codename "$osr_codename" \
+            --arg osr_pretty  "$osr_pretty" \
+            --arg pkg_manager "$pkg_manager" \
+            --argjson pkg_count "$pkg_count" \
+            --arg mgr_kind    "$mgr_kind" \
+            --argjson mgr_registered "$mgr_registered" \
+            --arg mgr_active  "$mgr_active" \
+            --arg host_arch   "$host_arch" \
+            --arg fa_chroot   "$fa_chroot_arch" \
+            --argjson fa_qemu_avail "$fa_qemu_available" \
+            '{
+                schema_version: 1,
+                name: $name,
+                manifest: {
+                    name: $name, target: $target, backend: $backend,
+                    distro: $distro, suite: $suite, arch: $arch,
+                    manager: $manager, lab: (if $lab == "" then null else $lab end),
+                    created_at: $created_at, version: $version
+                },
+                target: {
+                    path: $target, exists: $t_exists,
+                    size_bytes: $t_size, owner: (if $t_owner == "" then null else $t_owner end)
+                },
+                os_release: (
+                    if $osr_id == "" then null
+                    else { id: $osr_id, version_id: $osr_version,
+                           version_codename: $osr_codename,
+                           pretty_name: $osr_pretty }
+                    end
+                ),
+                packages: (
+                    if $pkg_manager == "" then null
+                    else { manager: $pkg_manager, count: $pkg_count }
+                    end
+                ),
+                manager_state: {
+                    kind: $mgr_kind,
+                    registered: $mgr_registered,
+                    active_state: (if $mgr_active == "" then null else $mgr_active end)
+                },
+                foreign_arch: (
+                    if $fa_chroot == $host_arch or $fa_chroot == "unknown" then null
+                    else { host_arch: $host_arch, chroot_arch: $fa_chroot,
+                           qemu_user_static_available: $fa_qemu_avail }
+                    end
+                )
+            }'
+        return 0
+    fi
+
+    # Human-readable rendering — same data, indented two-section layout.
+    printf '[manifest]\n'
+    printf '  name        %s\n' "${name:-(no manifest)}"
+    printf '  target      %s\n' "$target"
+    [[ -n "$m_backend" ]]  && printf '  backend     %s\n' "$m_backend"
+    [[ -n "$m_distro" ]]   && printf '  distro      %s\n' "$m_distro"
+    [[ -n "$m_suite" ]]    && printf '  suite       %s\n' "$m_suite"
+    [[ -n "$m_arch" ]]     && printf '  arch        %s\n' "$m_arch"
+    [[ -n "$mgr_kind" ]]   && printf '  manager     %s\n' "$mgr_kind"
+    [[ -n "$m_lab" ]]      && printf '  lab         %s\n' "$m_lab"
+    [[ -n "$m_created" ]]  && printf '  created_at  %s\n' "$m_created"
+    [[ -n "$m_version" ]]  && printf '  version     %s\n' "$m_version"
+
+    printf '\n[live]\n'
+    printf '  target.exists       %s\n' "$t_exists"
+    if [[ "$t_exists" == "true" ]]; then
+        printf '  target.size_bytes   %s\n' "$t_size_bytes"
+        printf '  target.owner        %s\n' "$t_owner"
+    fi
+    if [[ -n "$osr_pretty" ]]; then
+        printf '  os_release.pretty   %s\n' "$osr_pretty"
+        [[ -n "$osr_id" ]]         && printf '  os_release.id       %s\n' "$osr_id"
+        [[ -n "$osr_version_id" ]] && printf '  os_release.version  %s\n' "$osr_version_id"
+        [[ -n "$osr_codename" ]]   && printf '  os_release.codename %s\n' "$osr_codename"
+    fi
+    if [[ -n "$pkg_manager" ]]; then
+        printf '  packages.manager    %s\n' "$pkg_manager"
+        [[ "$pkg_count" != "null" ]] && printf '  packages.count      %s\n' "$pkg_count"
+    fi
+    printf '  manager.kind        %s\n' "$mgr_kind"
+    printf '  manager.registered  %s\n' "$mgr_registered"
+    [[ -n "$mgr_active" ]] && printf '  manager.active      %s\n' "$mgr_active"
+    if [[ -n "$m_arch" && "$m_arch" != "$host_arch" ]]; then
+        printf '  foreign_arch.host         %s\n' "$host_arch"
+        printf '  foreign_arch.chroot       %s\n' "$m_arch"
+        printf '  foreign_arch.qemu_static  %s\n' "$fa_qemu_available"
+    fi
+}
+
 # ─── CLI parsing ────────────────────────────────────────────────────────────
 usage() {
     cat <<EOF
@@ -1195,6 +1427,7 @@ USAGE
   $LAB_PROG destroy  <name|path> [--force]
   $LAB_PROG list     [--lab NAME]
   $LAB_PROG verify   <name|path>
+  $LAB_PROG inspect  <name|path> [--json]
   $LAB_PROG export-tarball <name|path> [--output /tmp/x.tar.gz]
   $LAB_PROG version | help
 
@@ -1238,6 +1471,7 @@ parse_args() {
     OPT_MANAGER="none" OPT_FORCE=""
     OPT_LAB=""
     OPT_OUTPUT=""
+    OPT_JSON=""
 
     [[ $# -eq 0 ]] && { usage; exit 0; }
 
@@ -1266,6 +1500,7 @@ parse_args() {
             --manager)       OPT_MANAGER="$2"; shift 2 ;;
             --lab)           OPT_LAB="$2"; shift 2 ;;
             --output|-o)     OPT_OUTPUT="$2"; shift 2 ;;
+            --json)          OPT_JSON=1; shift ;;
             --force|-f)      OPT_FORCE=1; shift ;;
             -h|--help)       usage; exit 0 ;;
             -v|--version)    printf '%s %s\n' "$LAB_PROG" "$LAB_VERSION"; exit 0 ;;
@@ -1288,6 +1523,7 @@ main() {
         destroy) cmd_destroy ;;
         list)    cmd_list    ;;
         verify)  cmd_verify  ;;
+        inspect) cmd_inspect ;;
         export-tarball) cmd_export_tarball ;;
         help)    usage       ;;
         version) printf '%s %s\n' "$LAB_PROG" "$LAB_VERSION" ;;
