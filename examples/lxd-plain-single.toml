@@ -15,4 +15,4 @@ tags        = ["lxd", "container", "hello"]
 [[instance]]
 name  = "shell"
 type  = "container"
-image = "images:alpine/3.21"
+image = "images:alpine/latest"

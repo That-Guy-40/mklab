@@ -155,8 +155,10 @@ lv destroy arm1
 ## 4. microvm with Alpine (fastest boot path)
 
 ```bash
-lv create --name alp1 --distro alpine --suite 3.19 --arch x86_64 \
+lv create --name alp1 --distro alpine --suite latest --arch x86_64 \
           --microvm --memory 256M --cpus 1
+# `--suite latest` queries dl-cdn.alpinelinux.org/alpine/latest-stable
+# at run time; pin with --suite 3.20 if you want a fixed version.
 lv start alp1
 ```
 

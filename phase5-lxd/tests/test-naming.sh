@@ -18,7 +18,7 @@ name = "${lab}"
 
 [[instance]]
 name = "alpha"
-image = "images:alpine/3.21"
+image = "images:alpine/latest"
 EOF
 
 note "up → instance should be named lab-${lab}-alpha"

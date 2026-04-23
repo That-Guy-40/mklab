@@ -21,7 +21,7 @@ tags        = ["lxd", "vm", "hello"]
 [[instance]]
 name  = "alpine"
 type  = "vm"
-image = "images:alpine/3.21"
+image = "images:alpine/latest"
 # memory / cpus go through LXD config keys.
 # security.secureboot=false: most community Alpine VM images aren't
 # signed for UEFI Secure Boot.  Without this you get:

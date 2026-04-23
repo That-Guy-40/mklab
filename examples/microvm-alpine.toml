@@ -16,7 +16,7 @@
 name     = "alp-mv"
 backend  = "kernel+initrd"
 distro   = "alpine"
-suite    = "3.19"
+suite    = "latest"     # → resolved via dl-cdn.alpinelinux.org/alpine/latest-stable; pin with "3.20"
 arch     = "x86_64"
 memory   = "256M"
 cpus     = 1

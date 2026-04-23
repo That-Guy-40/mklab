@@ -33,13 +33,13 @@ devices = { eth0 = { type = "nic", network = "lxdbr0", name = "eth0" } }
 [[instance]]
 name     = "web1"
 type     = "container"
-image    = "images:alpine/3.21"
+image    = "images:alpine/latest"
 project  = "demo-pp"
 profiles = ["default", "webnode"]
 
 [[instance]]
 name     = "web2"
 type     = "container"
-image    = "images:alpine/3.21"
+image    = "images:alpine/latest"
 project  = "demo-pp"
 profiles = ["default", "webnode"]

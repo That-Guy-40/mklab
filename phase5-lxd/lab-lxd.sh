@@ -5,7 +5,11 @@
 #             Both share the seven CLI verbs we care about (launch, exec, stop,
 #             delete, image import, list, config show), so a single $LXC_CMD
 #             binding drives both.
-# Backends  : upstream     — pull from an upstream image server (`images:alpine/3.21`)
+# Backends  : upstream     — pull from an upstream image server.  Versioned
+#                            aliases (`images:alpine/3.23`) work directly;
+#                            `images:alpine/latest` and bare `images:alpine`
+#                            are rewritten to the highest stable X.Y at run
+#                            time (LXD has no native "latest" alias).
 #             from-chroot  — rebundle a Phase-1 chroot into LXD's unified
 #                            tarball format (./metadata.yaml + ./rootfs/) and
 #                            `image import` it. Container images only in v0.1.
@@ -233,6 +237,72 @@ _resolve_instance_name() {
     else
         printf 'lab-%s' "$t"
     fi
+}
+
+# ─── Image-source resolution ────────────────────────────────────────────────
+# LXD's `images:` simplestreams remote does NOT publish a `latest` or
+# `current` alias for Alpine — `images:alpine`, `images:alpine/latest`, and
+# `images:alpine/current` all 404.  The closest thing is `images:alpine/edge`
+# (rolling dev branch) or version-numbered aliases like `images:alpine/3.23`.
+#
+# To give users a "give me the newest stable" knob without pinning, Phase 5
+# accepts the convention `images:alpine/latest` and rewrites it at run time
+# to whichever stable `alpine/X.Y` alias is currently the highest semver on
+# the simplestreams remote.  Same trick for `images:debian/latest`,
+# `images:ubuntu/latest`, etc. — distro-agnostic.
+#
+# `images:alpine` (no slash) is also rewritten to the same target.
+#
+# resolve_image SRC → echoes the resolved image string; returns SRC unchanged
+# if no resolution is needed.
+resolve_image() {
+    local src="$1"
+    local distro=""
+    case "$src" in
+        images:*/latest)
+            # images:alpine/latest → distro=alpine
+            distro="${src#images:}"
+            distro="${distro%/latest}"
+            ;;
+        images:*/*)
+            # images:alpine/3.21 (or alpine/edge, alpine/3.21/cloud, …) —
+            # already pinned to a specific alias, leave alone.
+            printf '%s\n' "$src"; return 0
+            ;;
+        images:*)
+            # bare `images:alpine` (no slash after the colon)
+            distro="${src#images:}"
+            ;;
+        *)
+            # Not an `images:` reference (e.g. local alias or a different
+            # remote like `ubuntu:` — those have their own conventions).
+            printf '%s\n' "$src"; return 0
+            ;;
+    esac
+    local resolved
+    resolved="$(_resolve_distro_latest "$distro")"
+    if [[ -z "$resolved" ]]; then
+        # Resolver couldn't pin a version; fall back to the original (the
+        # subsequent `lxc launch` will 404 with a clear LXD error).
+        printf '%s\n' "$src"; return 0
+    fi
+    log_info "resolved $src → images:${distro}/${resolved}"
+    printf 'images:%s/%s\n' "$distro" "$resolved"
+}
+
+# Query the images: remote for the highest non-edge X.Y alias of <distro>.
+# Returns just the version (e.g. "3.23"), empty string on error.
+_resolve_distro_latest() {
+    local distro="$1"
+    [[ -n "$LXC_CMD" ]] || probe_engine
+    "$LXC_CMD" image list "images:${distro}/" --format=json 2>/dev/null \
+        | jq -r --arg d "$distro" '
+            .[] | .aliases[]?.name
+            | select(test("^" + $d + "/[0-9]+(\\.[0-9]+)?$"))
+            | sub("^" + $d + "/"; "")
+        ' 2>/dev/null \
+        | sort -V \
+        | tail -1
 }
 
 # ─── Engine filter (cross-phase) ───────────────────────────────────────────
@@ -503,7 +573,7 @@ cmd_build() {
     # usage error shouldn't surface as "daemon unreachable".
     case "$backend" in
         upstream|"")
-            [[ -n "${OPT_IMAGE:-}" ]] || die "build --backend upstream needs --image SRC (e.g. images:alpine/3.21)"
+            [[ -n "${OPT_IMAGE:-}" ]] || die "build --backend upstream needs --image SRC (e.g. images:alpine/latest, images:alpine/3.23, images:debian/13)"
             ;;
         from-chroot)
             [[ -n "${OPT_CHROOT:-}" ]] || die "from-chroot needs --chroot PATH"
@@ -523,8 +593,9 @@ cmd_build() {
 
     case "$backend" in
         upstream|"")
-            log_info "copying upstream image $OPT_IMAGE → local alias $alias"
-            "$LXC_CMD" image copy "$OPT_IMAGE" local: --alias "$alias" >/dev/null
+            local resolved_src; resolved_src="$(resolve_image "$OPT_IMAGE")"
+            log_info "copying upstream image $resolved_src → local alias $alias"
+            "$LXC_CMD" image copy "$resolved_src" local: --alias "$alias" >/dev/null
             ;;
         from-chroot)  backend_from_chroot  "$OPT_CHROOT"  "$alias" ;;
         from-tarball) backend_from_tarball "$OPT_TARBALL" "$alias" ;;
@@ -565,6 +636,9 @@ cmd_run() {
             backend_from_qcow2 "$OPT_QCOW2" "$alias"
             image="$alias"
         fi
+    else
+        # Resolve `images:DISTRO/latest` and bare `images:DISTRO`.
+        image="$(resolve_image "$image")"
     fi
 
     local -a launch_args=()
@@ -679,6 +753,9 @@ cmd_up() {
                 backend_from_qcow2 "$from_qcow2" "$alias"
             fi
             image="$alias"
+        else
+            # Resolve `images:DISTRO/latest` and bare `images:DISTRO`.
+            image="$(resolve_image "$image")"
         fi
 
         # Build the launch command.
@@ -996,8 +1073,9 @@ ENVIRONMENT
   LAB_STATE_DIR  override the default state-dir location
 
 EXAMPLES
-  $LAB_PROG run --name a --image images:alpine/3.21
-  $LAB_PROG run --name v --image images:alpine/3.21 --type vm
+  $LAB_PROG run --name a --image images:alpine/latest        # newest stable X.Y, resolved at run time
+  $LAB_PROG run --name v --image images:alpine/latest --type vm
+  $LAB_PROG run --name p --image images:alpine/3.23          # pin a specific version
   $LAB_PROG build --alias kali-rolling --backend from-chroot --chroot /var/chroots/kali
   $LAB_PROG up   --config examples/lxd-mixed-topology.toml
   $LAB_PROG list --lab demo-lxd

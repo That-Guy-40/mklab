@@ -107,7 +107,8 @@ ll up --config examples/lxd-plain-single.toml
 
 **Expect:**
 - `[info] ── bringing up lab 'hello-lxd' from … ──`
-- `[info] launching container 'shell' as lab-hello-lxd-shell (image=images:alpine/3.21)`
+- `[info] resolved images:alpine/latest → images:alpine/3.23` (or whatever the newest stable is)
+- `[info] launching container 'shell' as lab-hello-lxd-shell (image=images:alpine/3.23)`
 - `[info] ── lab 'hello-lxd' up (1 incus instance(s), 0 skipped) ──`
 
 **Verify:**

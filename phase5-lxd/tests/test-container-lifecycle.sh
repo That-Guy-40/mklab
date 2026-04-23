@@ -18,7 +18,7 @@ name = "${lab}"
 [[instance]]
 name  = "a"
 type  = "container"
-image = "images:alpine/3.21"
+image = "images:alpine/latest"
 EOF
 
 note "up"

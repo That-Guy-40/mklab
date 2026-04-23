@@ -47,7 +47,7 @@ if command -v incus >/dev/null 2>&1 || command -v lxc >/dev/null 2>&1; then
 name = "${lab}"
 [[instance]]
 name = "mine"
-image = "images:alpine/3.21"
+image = "images:alpine/latest"
 engine = "lxd"
 [[instance]]
 name = "notmine"

@@ -16,18 +16,18 @@ tags        = ["lxd", "mixed", "container", "vm"]
 [[instance]]
 name  = "web"
 type  = "container"
-image = "images:alpine/3.21"
+image = "images:alpine/latest"
 config = { "limits.memory" = "256MiB" }
 
 [[instance]]
 name  = "cache"
 type  = "container"
-image = "images:alpine/3.21"
+image = "images:alpine/latest"
 config = { "limits.memory" = "128MiB" }
 
 [[instance]]
 name  = "worker-vm"
 type  = "vm"
-image = "images:alpine/3.21"
+image = "images:alpine/latest"
 # security.secureboot=false: see lxd-vm-single.toml for the rationale.
 config = { "limits.memory" = "512MiB", "limits.cpu" = "1", "security.secureboot" = "false" }

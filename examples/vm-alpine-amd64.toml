@@ -1,16 +1,20 @@
-# Alpine 3.19 on x86_64 — cloud image via q35 + OVMF.
+# Latest stable Alpine on x86_64 — cloud image via q35 + OVMF.
 # Build: lab-vm.sh create --config vm-alpine-amd64.toml
 # Start: lab-vm.sh start  alp0
 # SSH:   lab-vm.sh ssh    alp0
 #
 # Uses the upstream Alpine NoCloud qcow2 (GPT+ESP).  For a true microvm
 # boot (direct -kernel, no firmware) see microvm-alpine.toml.
+#
+# `suite = "latest"` resolves at run time to whichever X.Y is currently
+# served by https://dl-cdn.alpinelinux.org/alpine/latest-stable/ (e.g.
+# "3.23").  Pin to a specific minor to opt out: suite = "3.20".
 
 [[vm]]
 name     = "alp0"
 backend  = "disk-image"
 distro   = "alpine"
-suite    = "3.19"
+suite    = "latest"
 arch     = "x86_64"
 memory   = "256M"
 cpus     = 1

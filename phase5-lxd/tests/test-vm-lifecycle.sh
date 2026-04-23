@@ -21,7 +21,7 @@ name = "${lab}"
 [[instance]]
 name  = "v"
 type  = "vm"
-image = "images:alpine/3.21"
+image = "images:alpine/latest"
 # secureboot=false: most community Alpine VM images aren't signed for
 # UEFI Secure Boot.  Without this, launch fails with:
 #   "The image used by this instance is incompatible with secureboot.

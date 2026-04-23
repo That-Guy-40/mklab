@@ -446,6 +446,10 @@ cache_image() {
             log_info "kali: suite=$suite resolved to release $eff_suite (via /current/SHA256SUMS)"
         fi
     fi
+    if [[ "$distro" == "alpine" && "$suite" == "latest" ]]; then
+        eff_suite="$(alpine_resolve_latest_suite)"
+        log_info "alpine: suite=latest resolved to $eff_suite (via latest-releases.yaml)"
+    fi
     local url; url="$(image_url "$distro" "$eff_suite" "$arch")"
     local fname="${distro}-${eff_suite}-${arch}.qcow2"
     local dest="${LAB_IMG_CACHE_DIR}/${fname}"
@@ -512,13 +516,62 @@ cache_image() {
 #   4. Persist     — /data mount from a virtio-blk disk (persist=SIZE)
 # ═══════════════════════════════════════════════════════════════════════
 
-# Known-good patch versions per Alpine suite.  Update when new patches ship.
+# Resolve a suite (X.Y) to its current patch level.  Tries Alpine's CDN-
+# published `latest-releases.yaml` first (always current); falls back to a
+# static table for offline use and previous minors.  Update the static
+# table from time to time so offline boxes don't drift far behind.
 alpine_patch_for_suite() {
-    case "$1" in
+    local suite="$1"
+    if have curl; then
+        # latest-releases.yaml carries entries like
+        #   branch: v3.23
+        #   version: 3.23.4
+        # — fetch it once, scan for the matching branch, take the .Z that
+        # follows.  Network failure → fall through to the static table.
+        local yaml; yaml="$(curl -fsSL --max-time 5 \
+            'https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/x86_64/latest-releases.yaml' \
+            2>/dev/null)"
+        if [[ -n "$yaml" ]]; then
+            local patch
+            patch="$(awk -v want="v$suite" '
+                /^[[:space:]]+branch:[[:space:]]+/ {
+                    sub(/.*branch:[[:space:]]+/, ""); cur=$0
+                }
+                /^[[:space:]]+version:[[:space:]]+/ {
+                    if (cur == want) { sub(/.*version:[[:space:]]+/, ""); split($0, a, "."); print a[3]; exit }
+                }' <<<"$yaml")"
+            [[ -n "$patch" ]] && { printf '%s' "$patch"; return 0; }
+        fi
+    fi
+    case "$suite" in
         3.19) printf '5' ;;
         3.20) printf '3' ;;
-        *)    die "alpine microvm: no known patch version for suite $1 (update alpine_patch_for_suite)" ;;
+        3.21) printf '4' ;;
+        3.22) printf '2' ;;
+        3.23) printf '4' ;;
+        *)    die "alpine microvm: no known patch version for suite $suite (update alpine_patch_for_suite or check network)" ;;
     esac
+}
+
+# Resolve `suite = "latest"` to the current Alpine stable major.minor by
+# parsing Alpine's CDN-published `latest-releases.yaml`.  The YAML has
+# entries like `  branch: v3.23` — we strip the `v` and use the X.Y as
+# the suite.  Falls back to the most recent minor that
+# alpine_patch_for_suite() knows about, so a CDN hiccup doesn't brick the
+# build.
+alpine_resolve_latest_suite() {
+    require_cmd curl
+    local url='https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/x86_64/latest-releases.yaml'
+    local suite
+    suite="$(curl -fsSL "$url" 2>/dev/null \
+        | awk '/^[[:space:]]+branch:[[:space:]]+v[0-9]+\.[0-9]+/ {
+                sub(/.*v/, "", $0); print; exit
+            }')"
+    if [[ -z "$suite" ]]; then
+        log_warn "could not fetch Alpine latest-releases.yaml; falling back to suite=3.20"
+        suite="3.20"
+    fi
+    printf '%s' "$suite"
 }
 
 # Parse APKINDEX to find the current version of a package in a given
@@ -1858,7 +1911,11 @@ create_one() {
             if [[ -z "$kernel" && -z "$initrd" ]]; then
                 [[ "$distro" == "alpine" ]] \
                     || die "kernel+initrd auto-build only supported for distro=alpine"
-                [[ -n "$suite" ]] || die "kernel+initrd auto-build needs suite (e.g. 3.19)"
+                [[ -n "$suite" ]] || die "kernel+initrd auto-build needs suite (e.g. 3.19, or \"latest\")"
+                if [[ "$suite" == "latest" ]]; then
+                    suite="$(alpine_resolve_latest_suite)"
+                    log_info "alpine microvm: suite=latest resolved to $suite"
+                fi
                 local want_net=0 want_ssh=0 want_persist=0
                 [[ "$network_enabled" == "true" ]] && want_net=1
                 if [[ "$ssh_enabled" == "true" ]]; then
@@ -2165,7 +2222,8 @@ CREATE OPTIONS
                                          kernel installed inside) into a bootable qcow2.
                                          x86_64 BIOS only in v0.1.  Requires root.
   --distro    {debian|ubuntu|rocky|alpine|kali}        (disk-image)
-  --suite     <release>                  e.g. bookworm | jammy | 9 | 3.19 | kali-rolling
+  --suite     <release>                  e.g. bookworm | jammy | 9 | 3.23 | latest | kali-rolling
+                                         (alpine: "latest" → resolves via dl-cdn.alpinelinux.org)
   --arch      {x86_64|aarch64|armv7l|ppc64le|riscv64|s390x}  (default: host arch)
   --memory    <size>                     (default: 2G)
   --cpus      <n>                        (default: 2)
