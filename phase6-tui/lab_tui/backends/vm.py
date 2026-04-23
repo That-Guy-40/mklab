@@ -5,17 +5,29 @@ Per-VM state at `$LAB_STATE_DIR/vms/<name>/`:
   qemu.pid       — present when qemu is running (kill -0 to verify)
   qemu.log       — appended-on-each-boot log (tailable)
   serial.sock    — Unix socket for the serial console
+
+inspect() prefers `lab-vm.sh inspect --json` (Phase 2 ≥ 0.1.0) when
+present so the detail panel shows live state (qemu pid liveness, disk
+size, ssh reachability, kernel/initrd resolution) alongside the
+manifest. Falls back to the raw manifest TOML if the script doesn't
+recognise `inspect` (e.g. older deployments) or returns non-JSON.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import tomllib
 from pathlib import Path
 from typing import ClassVar
 
-from lab_tui.backends.base import BackendRunner, Resource, phase_script
+from lab_tui.backends.base import (
+    BackendRunner,
+    Resource,
+    phase_script,
+    run_capture,
+)
 from lab_tui.state import state_subdir
 
 
@@ -82,6 +94,18 @@ class VMBackend(BackendRunner):
         return out
 
     def inspect(self, resource: Resource) -> str:
+        # Try Phase 2's `inspect --json` first — it surfaces live state
+        # (qemu pid liveness, disk size, ssh reachability, resolved
+        # kernel/initrd paths) that the static manifest can't.  Pretty-
+        # print the JSON so it's readable in the TUI's detail pane.
+        cp = run_capture([str(self.script), "inspect", resource.name, "--json"])
+        if cp.returncode == 0 and cp.stdout.strip().startswith("{"):
+            try:
+                doc = json.loads(cp.stdout)
+                return json.dumps(doc, indent=2, sort_keys=False)
+            except json.JSONDecodeError:
+                pass  # fall through to manifest
+        # Fallback: raw manifest TOML.
         if resource.spec_path and resource.spec_path.is_file():
             return resource.spec_path.read_text()
         return f"# no manifest on disk for {resource.name}"

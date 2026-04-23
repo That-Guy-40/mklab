@@ -2173,6 +2173,321 @@ cmd_destroy() {
 }
 
 # ─── Subcommand: list ──────────────────────────────────────────────────────
+# ─── Subcommand: inspect ────────────────────────────────────────────────────
+# Single-VM detail report — pairs the static manifest with cheap live
+# probes (qemu pid + RSS, disk + seed + kernel/initrd file stats, monitor
+# socket presence, foreign-arch interpreter availability).
+#
+# Two output modes:
+#   default      → human-readable [manifest] / [live] sections
+#   --json       → one JSON document on stdout, schema_version=1
+#
+# Designed primarily as a machine-readable surface for Phase 6 (the TUI's
+# VM detail panel).  CLI users get the same data but rendered.
+cmd_inspect() {
+    local name="${POS_ARGS[0]:-}"
+    [[ -n "$name" ]] || die "usage: $LAB_PROG inspect <name> [--json]"
+    vm_exists "$name" || die "no VM named '$name' (try '$LAB_PROG list')"
+
+    # --- manifest fields (each may be empty; |\| true so set -e doesn't
+    # propagate read_manifest_field's rc out of the var=$() subshell —
+    # bash 4.4+ propagates errexit through command substitution).
+    local m_lab m_backend m_distro m_suite m_arch m_memory m_cpus
+    local m_microvm m_accel m_ssh_port m_disk m_seed m_kernel m_initrd
+    local m_append m_ssh_user m_created m_version
+    m_lab="$(read_manifest_field      "$name" lab        2>/dev/null || true)"
+    m_backend="$(read_manifest_field  "$name" backend    2>/dev/null || true)"
+    m_distro="$(read_manifest_field   "$name" distro     2>/dev/null || true)"
+    m_suite="$(read_manifest_field    "$name" suite      2>/dev/null || true)"
+    m_arch="$(read_manifest_field     "$name" arch       2>/dev/null || true)"
+    m_memory="$(read_manifest_field   "$name" memory     2>/dev/null || true)"
+    m_cpus="$(read_manifest_field     "$name" cpus       2>/dev/null || true)"
+    m_microvm="$(read_manifest_field  "$name" microvm    2>/dev/null || true)"
+    m_accel="$(read_manifest_field    "$name" accel      2>/dev/null || true)"
+    m_ssh_port="$(read_manifest_field "$name" ssh_port   2>/dev/null || true)"
+    m_disk="$(read_manifest_field     "$name" disk       2>/dev/null || true)"
+    m_seed="$(read_manifest_field     "$name" seed       2>/dev/null || true)"
+    m_kernel="$(read_manifest_field   "$name" kernel     2>/dev/null || true)"
+    m_initrd="$(read_manifest_field   "$name" initrd     2>/dev/null || true)"
+    m_append="$(read_manifest_field   "$name" append     2>/dev/null || true)"
+    m_ssh_user="$(read_manifest_field "$name" ssh_user   2>/dev/null || true)"
+    m_created="$(read_manifest_field  "$name" created_at 2>/dev/null || true)"
+    m_version="$(read_manifest_field  "$name" version    2>/dev/null || true)"
+
+    # Numeric fields: default to JSON-safe values when the manifest is
+    # silent (Phase 2 always writes them, but be defensive).
+    [[ -z "$m_cpus" ]]     && m_cpus=0
+    [[ -z "$m_ssh_port" ]] && m_ssh_port=0
+    [[ "$m_microvm" == "true" || "$m_microvm" == "false" ]] || m_microvm=false
+
+    # --- live: process state via vm_running + /proc/PID/{status,stat}
+    local p_running=false p_pid=0 p_rss=0 p_threads=0 p_starttime=0
+    if vm_running "$name"; then
+        p_running=true
+        p_pid="$(cat "$(vm_pidfile "$name")" 2>/dev/null || printf 0)"
+        if [[ -r "/proc/$p_pid/status" ]]; then
+            # VmRSS is in KB; convert to bytes for a stable unit.
+            local rss_kb
+            rss_kb="$(awk '/^VmRSS:/{print $2; exit}' "/proc/$p_pid/status" 2>/dev/null)"
+            p_rss=$(( ${rss_kb:-0} * 1024 ))
+            p_threads="$(awk '/^Threads:/{print $2; exit}' "/proc/$p_pid/status" 2>/dev/null || printf 0)"
+        fi
+        if [[ -r "/proc/$p_pid/stat" ]]; then
+            # Field 22: starttime in clock ticks since boot.  Consumers
+            # convert to wall time via /proc/uptime + sysconf(_SC_CLK_TCK).
+            p_starttime="$(awk '{print $22}' "/proc/$p_pid/stat" 2>/dev/null || printf 0)"
+        fi
+    fi
+
+    # --- live: file stats
+    # Helper: emit "<exists>\t<size_bytes>" for a path (size 0 if missing).
+    _file_stats() {
+        local path="$1"
+        if [[ -n "$path" && -e "$path" ]]; then
+            local sz
+            if sz="$(du -sb "$path" 2>/dev/null | awk '{print $1; exit}')"; then
+                :
+            else
+                local sk; sk="$(du -sk "$path" 2>/dev/null | awk '{print $1; exit}')"
+                sz=$(( ${sk:-0} * 1024 ))
+            fi
+            printf 'true\t%s\n' "${sz:-0}"
+        else
+            printf 'false\t0\n'
+        fi
+    }
+
+    local f_disk_path; f_disk_path="$(vm_disk "$name")"
+    local f_disk_exists f_disk_size
+    IFS=$'\t' read -r f_disk_exists f_disk_size <<<"$(_file_stats "$f_disk_path")"
+    # Virtual size is meaningful only if qemu-img is around AND the file
+    # is a qcow2; report null otherwise.
+    local f_disk_vsize="null"
+    if [[ "$f_disk_exists" == "true" ]] && have qemu-img; then
+        local vsz
+        vsz="$(qemu-img info --output=json "$f_disk_path" 2>/dev/null \
+             | jq -r '."virtual-size" // empty' 2>/dev/null)"
+        [[ -n "$vsz" ]] && f_disk_vsize="$vsz"
+    fi
+
+    local f_seed_path; f_seed_path="$(vm_seed "$name")"
+    local f_seed_exists f_seed_size
+    IFS=$'\t' read -r f_seed_exists f_seed_size <<<"$(_file_stats "$f_seed_path")"
+
+    local f_kernel_path="$m_kernel"
+    local f_kernel_exists f_kernel_size
+    IFS=$'\t' read -r f_kernel_exists f_kernel_size <<<"$(_file_stats "$f_kernel_path")"
+
+    local f_initrd_path="$m_initrd"
+    local f_initrd_exists f_initrd_size
+    IFS=$'\t' read -r f_initrd_exists f_initrd_size <<<"$(_file_stats "$f_initrd_path")"
+
+    local f_log_path; f_log_path="$(vm_log "$name")"
+    local f_log_exists f_log_size
+    IFS=$'\t' read -r f_log_exists f_log_size <<<"$(_file_stats "$f_log_path")"
+
+    # --- live: sockets — exists is enough; if QEMU is up they are too,
+    # if it's down stale ones may linger across an unclean stop.
+    local s_serial_path s_monitor_path s_qmp_path
+    s_serial_path="$(vm_serial "$name")"
+    s_monitor_path="$(vm_monitor "$name")"
+    s_qmp_path="$(vm_qmp "$name")"
+    local s_serial_exists=false s_monitor_exists=false s_qmp_exists=false
+    [[ -S "$s_serial_path"  ]] && s_serial_exists=true
+    [[ -S "$s_monitor_path" ]] && s_monitor_exists=true
+    [[ -S "$s_qmp_path"     ]] && s_qmp_exists=true
+
+    # --- live: foreign-arch interpreter (when VM arch != host arch)
+    local host_arch fa_qemu_bin fa_qemu_avail="null" fa_kvm_avail="null"
+    host_arch="$(detect_host_arch)"
+    if [[ -n "$m_arch" && "$m_arch" != "$host_arch" ]]; then
+        local qsys
+        if qsys="$(arch_map "$m_arch" qemu-system 2>/dev/null)" && [[ -n "$qsys" ]]; then
+            fa_qemu_bin="qemu-system-${qsys}"
+            if have "$fa_qemu_bin"; then fa_qemu_avail=true
+            else                          fa_qemu_avail=false
+            fi
+        fi
+        # Foreign-arch VMs cannot use KVM regardless of /dev/kvm.
+        fa_kvm_avail=false
+    elif [[ -n "$m_arch" ]]; then
+        # Same-arch VM: KVM available iff /dev/kvm is readable.
+        if [[ -r /dev/kvm ]]; then fa_kvm_avail=true
+        else                       fa_kvm_avail=false
+        fi
+    fi
+
+    # --- emit ------------------------------------------------------------
+    if [[ -n "${OPT_JSON:-}" ]]; then
+        require_cmd jq
+        jq -n \
+            --arg name        "$name" \
+            --arg lab         "$m_lab" \
+            --arg backend     "$m_backend" \
+            --arg distro      "$m_distro" \
+            --arg suite       "$m_suite" \
+            --arg arch        "$m_arch" \
+            --arg memory      "$m_memory" \
+            --argjson cpus    "$m_cpus" \
+            --argjson microvm "$m_microvm" \
+            --arg accel       "$m_accel" \
+            --argjson ssh_port "$m_ssh_port" \
+            --arg disk        "$m_disk" \
+            --arg seed        "$m_seed" \
+            --arg kernel      "$m_kernel" \
+            --arg initrd      "$m_initrd" \
+            --arg append      "$m_append" \
+            --arg ssh_user    "$m_ssh_user" \
+            --arg created_at  "$m_created" \
+            --arg version     "$m_version" \
+            --argjson p_running "$p_running" \
+            --argjson p_pid     "$p_pid" \
+            --argjson p_rss     "$p_rss" \
+            --argjson p_threads "$p_threads" \
+            --argjson p_starttime "$p_starttime" \
+            --arg     f_disk_path  "$f_disk_path" \
+            --argjson f_disk_exists "$f_disk_exists" \
+            --argjson f_disk_size   "$f_disk_size" \
+            --argjson f_disk_vsize  "$f_disk_vsize" \
+            --arg     f_seed_path  "$f_seed_path" \
+            --argjson f_seed_exists "$f_seed_exists" \
+            --argjson f_seed_size   "$f_seed_size" \
+            --arg     f_kernel_path "$f_kernel_path" \
+            --argjson f_kernel_exists "$f_kernel_exists" \
+            --argjson f_kernel_size   "$f_kernel_size" \
+            --arg     f_initrd_path "$f_initrd_path" \
+            --argjson f_initrd_exists "$f_initrd_exists" \
+            --argjson f_initrd_size   "$f_initrd_size" \
+            --arg     f_log_path  "$f_log_path" \
+            --argjson f_log_exists "$f_log_exists" \
+            --argjson f_log_size   "$f_log_size" \
+            --arg     s_serial_path  "$s_serial_path" \
+            --argjson s_serial_exists "$s_serial_exists" \
+            --arg     s_monitor_path "$s_monitor_path" \
+            --argjson s_monitor_exists "$s_monitor_exists" \
+            --arg     s_qmp_path     "$s_qmp_path" \
+            --argjson s_qmp_exists   "$s_qmp_exists" \
+            --arg     host_arch    "$host_arch" \
+            --arg     fa_qemu_bin  "${fa_qemu_bin:-}" \
+            --argjson fa_qemu_avail "$fa_qemu_avail" \
+            --argjson fa_kvm_avail  "$fa_kvm_avail" \
+            '{
+                schema_version: 1,
+                name: $name,
+                manifest: {
+                    name: $name,
+                    lab: (if $lab == "" then null else $lab end),
+                    backend: $backend, distro: $distro, suite: $suite,
+                    arch: $arch, memory: $memory, cpus: $cpus,
+                    microvm: $microvm, accel: $accel, ssh_port: $ssh_port,
+                    disk: (if $disk == "" then null else $disk end),
+                    seed: (if $seed == "" then null else $seed end),
+                    kernel: (if $kernel == "" then null else $kernel end),
+                    initrd: (if $initrd == "" then null else $initrd end),
+                    append: (if $append == "" then null else $append end),
+                    ssh_user: $ssh_user,
+                    created_at: $created_at, version: $version
+                },
+                process: {
+                    running: $p_running,
+                    pid: (if $p_running then $p_pid else null end),
+                    rss_bytes: (if $p_running then $p_rss else null end),
+                    threads: (if $p_running then $p_threads else null end),
+                    starttime_jiffies: (if $p_running then $p_starttime else null end)
+                },
+                files: {
+                    disk: { path: $f_disk_path, exists: $f_disk_exists,
+                            size_bytes: $f_disk_size,
+                            virtual_size_bytes: $f_disk_vsize },
+                    seed: { path: $f_seed_path, exists: $f_seed_exists,
+                            size_bytes: $f_seed_size },
+                    kernel: (if $f_kernel_path == "" then null
+                             else { path: $f_kernel_path,
+                                    exists: $f_kernel_exists,
+                                    size_bytes: $f_kernel_size }
+                             end),
+                    initrd: (if $f_initrd_path == "" then null
+                             else { path: $f_initrd_path,
+                                    exists: $f_initrd_exists,
+                                    size_bytes: $f_initrd_size }
+                             end),
+                    log: { path: $f_log_path, exists: $f_log_exists,
+                           size_bytes: $f_log_size }
+                },
+                sockets: {
+                    serial:  { path: $s_serial_path,  exists: $s_serial_exists  },
+                    monitor: { path: $s_monitor_path, exists: $s_monitor_exists },
+                    qmp:     { path: $s_qmp_path,     exists: $s_qmp_exists     }
+                },
+                network: {
+                    ssh_port: $ssh_port,
+                    ssh_user: $ssh_user
+                },
+                foreign_arch: (
+                    if $arch == "" or $arch == $host_arch then
+                        { host_arch: $host_arch, vm_arch: $arch,
+                          qemu_system_binary: null,
+                          qemu_available: null,
+                          kvm_available: $fa_kvm_avail }
+                    else
+                        { host_arch: $host_arch, vm_arch: $arch,
+                          qemu_system_binary: (if $fa_qemu_bin == "" then null else $fa_qemu_bin end),
+                          qemu_available: $fa_qemu_avail,
+                          kvm_available: $fa_kvm_avail }
+                    end
+                )
+            }'
+        return 0
+    fi
+
+    # Human-readable rendering — same data, indented two-section layout.
+    printf '[manifest]\n'
+    printf '  name        %s\n' "$name"
+    [[ -n "$m_lab" ]]      && printf '  lab         %s\n' "$m_lab"
+    [[ -n "$m_backend" ]]  && printf '  backend     %s\n' "$m_backend"
+    [[ -n "$m_distro" ]]   && printf '  distro      %s\n' "$m_distro"
+    [[ -n "$m_suite" ]]    && printf '  suite       %s\n' "$m_suite"
+    [[ -n "$m_arch" ]]     && printf '  arch        %s\n' "$m_arch"
+    [[ -n "$m_memory" ]]   && printf '  memory      %s\n' "$m_memory"
+    printf '  cpus        %s\n' "$m_cpus"
+    printf '  microvm     %s\n' "$m_microvm"
+    [[ -n "$m_accel" ]]    && printf '  accel       %s\n' "$m_accel"
+    printf '  ssh_port    %s\n' "$m_ssh_port"
+    [[ -n "$m_ssh_user" ]] && printf '  ssh_user    %s\n' "$m_ssh_user"
+    [[ -n "$m_created" ]]  && printf '  created_at  %s\n' "$m_created"
+
+    printf '\n[live]\n'
+    printf '  process.running     %s\n' "$p_running"
+    if [[ "$p_running" == "true" ]]; then
+        printf '  process.pid         %s\n' "$p_pid"
+        printf '  process.rss_bytes   %s\n' "$p_rss"
+        printf '  process.threads     %s\n' "$p_threads"
+    fi
+    printf '  files.disk          %s (exists=%s, size=%s%s)\n' \
+        "$f_disk_path" "$f_disk_exists" "$f_disk_size" \
+        "$([[ "$f_disk_vsize" != "null" ]] && printf ', virtual=%s' "$f_disk_vsize")"
+    printf '  files.seed          %s (exists=%s, size=%s)\n' \
+        "$f_seed_path" "$f_seed_exists" "$f_seed_size"
+    [[ -n "$m_kernel" ]] && printf '  files.kernel        %s (exists=%s, size=%s)\n' \
+        "$f_kernel_path" "$f_kernel_exists" "$f_kernel_size"
+    [[ -n "$m_initrd" ]] && printf '  files.initrd        %s (exists=%s, size=%s)\n' \
+        "$f_initrd_path" "$f_initrd_exists" "$f_initrd_size"
+    printf '  files.log           %s (exists=%s, size=%s)\n' \
+        "$f_log_path" "$f_log_exists" "$f_log_size"
+    printf '  sockets.serial      %s (exists=%s)\n' "$s_serial_path"  "$s_serial_exists"
+    printf '  sockets.monitor     %s (exists=%s)\n' "$s_monitor_path" "$s_monitor_exists"
+    printf '  sockets.qmp         %s (exists=%s)\n' "$s_qmp_path"     "$s_qmp_exists"
+    if [[ -n "$m_arch" && "$m_arch" != "$host_arch" ]]; then
+        printf '  foreign_arch.host        %s\n' "$host_arch"
+        printf '  foreign_arch.vm          %s\n' "$m_arch"
+        [[ -n "$fa_qemu_bin" ]] && printf '  foreign_arch.qemu_bin    %s (available=%s)\n' \
+            "$fa_qemu_bin" "$fa_qemu_avail"
+        printf '  foreign_arch.kvm         %s\n' "$fa_kvm_avail"
+    elif [[ -n "$m_arch" ]]; then
+        printf '  foreign_arch.kvm         %s (host arch matches)\n' "$fa_kvm_avail"
+    fi
+}
+
 cmd_list() {
     state_init
     local filter="${OPT_LAB-__ALL__}"
@@ -2213,6 +2528,7 @@ USAGE
   $LAB_PROG ssh      <name> [-- cmd args...]
   $LAB_PROG destroy  <name> [--force] [--keep-disk]
   $LAB_PROG list
+  $LAB_PROG inspect  <name> [--json]
   $LAB_PROG version | help
 
 CREATE OPTIONS
@@ -2261,6 +2577,7 @@ parse_args() {
     OPT_SSH_PORT="" OPT_PUBKEY="" OPT_FORCE="" OPT_KEEP_DISK=""
     OPT_LAB=""
     OPT_CHROOT="" OPT_DISK_SIZE=""
+    OPT_JSON=""
 
     [[ $# -eq 0 ]] && { usage; exit 0; }
     SUBCMD="$1"; shift
@@ -2292,6 +2609,7 @@ parse_args() {
             --lab)          OPT_LAB="$2"; shift 2 ;;
             --chroot)       OPT_CHROOT="$2"; shift 2 ;;
             --disk-size)    OPT_DISK_SIZE="$2"; shift 2 ;;
+            --json)         OPT_JSON=1; shift ;;
             -h|--help)      usage; exit 0 ;;
             -v|--version)   printf '%s %s\n' "$LAB_PROG" "$LAB_VERSION"; exit 0 ;;
             -*)             die "unknown option: $1 (try --help)" ;;
@@ -2310,6 +2628,7 @@ main() {
         ssh)     cmd_ssh     ;;
         destroy) cmd_destroy ;;
         list)    cmd_list    ;;
+        inspect) cmd_inspect ;;
         help)    usage       ;;
         version) printf '%s %s\n' "$LAB_PROG" "$LAB_VERSION" ;;
         *)       usage; die "unknown subcommand: $SUBCMD" ;;

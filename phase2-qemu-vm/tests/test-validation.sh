@@ -24,7 +24,7 @@ expect_error() {
 expect_error "unknown backend"        "unknown backend"     -- create --name x --backend bogus --arch x86_64
 expect_error "unknown arch"           "unknown arch"        -- create --name x --arch m68k --distro debian --suite bookworm
 expect_error "missing kernel/initrd"  "not readable"        -- create --name x --backend kernel+initrd --arch x86_64 --kernel /tmp/nope-vmlinuz --initrd /tmp/nope-initrd
-expect_error "from-chroot stub"       "not yet implemented" -- create --name x --backend from-chroot --arch x86_64
+expect_error "from-chroot needs chroot" "requires a chroot field" -- create --name x --backend from-chroot --arch x86_64
 expect_error "disk-image bare"        "needs either image"  -- create --name x --backend disk-image --arch x86_64
 
 pass "validation guardrails OK"
