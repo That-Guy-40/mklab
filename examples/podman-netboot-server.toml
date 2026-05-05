@@ -13,8 +13,8 @@
 #    lab-podman.sh up --config examples/podman-netboot-server.toml
 #
 # 4. Verify:
-#    curl -sI http://localhost:8080/kernel        # should return 200
-#    curl -s  http://localhost:8080/boot.ipxe     # should show iPXE script
+#    curl -sI http://localhost:8181/kernel        # should return 200
+#    curl -s  http://localhost:8181/boot.ipxe     # should show iPXE script
 #
 # MIME type note: iPXE clients check Content-Type before executing a fetched
 # script.  The ipxe-mime.conf bind-mount adds the application/x-ipxe type so
@@ -34,7 +34,7 @@ tags        = ["netboot", "http", "ipxe"]
 name    = "http"
 engine  = "podman"
 image   = "docker.io/library/nginx:alpine"
-ports   = ["8080:80"]
+ports   = ["8181:80"]
 volumes = [
     # Update /home/sqs to your $HOME if different (no shell expansion in TOML).
     # Set LAB_NETBOOT_DIR to override the default ~/netboot location.

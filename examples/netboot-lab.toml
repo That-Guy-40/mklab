@@ -20,7 +20,8 @@
 #        --kernel ~/netboot/kernel --output ~/netboot/initrd.gz
 #
 # 4. Build the iPXE disk image:
-#    netboot/build-ipxe.sh --server http://10.0.2.2:8080
+#    netboot/build-ipxe.sh --server http://10.0.2.2:8181
+#    (port must match the ports = [] field in [[service]] below)
 #
 # 5. Bring up the nginx server (Phase 4) and the iPXE VM (Phase 2):
 #    lab-podman.sh up     --config examples/netboot-lab.toml
@@ -55,11 +56,14 @@ manager     = "none"
 name    = "http"
 engine  = "podman"
 image   = "docker.io/library/nginx:alpine"
-ports   = ["8080:80"]
+ports   = ["8181:80"]
 volumes = [
     # Update /home/sqs to your $HOME if different (no shell expansion in TOML).
     # Set LAB_NETBOOT_DIR / LAB_NETBOOT_CONF env vars to use different paths.
     "/home/sqs/netboot:/usr/share/nginx/html:ro",
+    # Port 8181 is used here; 8080 is the default but may conflict with other services
+    # (e.g. SABnzbd).  If you change this port, re-run build-ipxe.sh with the
+    # matching --server URL (e.g. --server http://10.0.2.2:8181).
     "/home/sqs/.config/lab-netboot/ipxe-mime.conf:/etc/nginx/conf.d/ipxe-mime.conf:ro",
 ]
 

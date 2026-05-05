@@ -4,11 +4,14 @@
 #
 # How the chain works:
 #   QEMU boots ipxe.qcow2 → iPXE runs boot.ipxe → fetches kernel + initrd
-#   from http://10.0.2.2:8080/ → boots the netboot initrd.
+#   from http://10.0.2.2:8181/ → boots the netboot initrd.
 #
 #   10.0.2.2 is the QEMU slirp host address: the guest's view of the host
-#   loopback.  Traffic on port 8080 reaches the nginx container started by
+#   loopback.  Traffic on port 8181 reaches the nginx container started by
 #   lab-podman.sh (or lab-docker.sh).
+#   Port 8181 is used because 8080 is occupied by SABnzbd on this host.
+#   To use a different port: rebuild with --server http://10.0.2.2:<port> and
+#   update the ports = [] line in podman-netboot-server.toml to match.
 #
 # cloud_init = false: the iPXE image is not a cloud image and has no
 #   cloud-init datasource; setting this to false prevents lab-vm.sh from
@@ -24,7 +27,8 @@
 #        --kernel ~/netboot/kernel --output ~/netboot/initrd.gz
 #
 # 3. Build the iPXE disk image pointing at the local HTTP server:
-#    netboot/build-ipxe.sh --server http://10.0.2.2:8080
+#    netboot/build-ipxe.sh --server http://10.0.2.2:8181
+#    (port must match the ports = [] value in podman-netboot-server.toml)
 #
 # 4. Start the nginx container:
 #    lab-podman.sh up --config examples/podman-netboot-server.toml
