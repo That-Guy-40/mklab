@@ -66,27 +66,27 @@ See [`phase3-docker/README.md`](phase3-docker/README.md) and
 ### A netboot lab (build → serve → boot in RAM)
 
 ```bash
-# 1. One-time host setup:
-sudo netboot/setup-netboot-dir.sh
+# 1. One-time host setup (creates ~/netboot and MIME config):
+netboot/setup-netboot-dir.sh
 
-# 2. Build the initrd rootfs (debootstrap, ~3 min):
+# 2. Build the initrd rootfs (debootstrap, needs sudo, ~2 min):
 sudo phase1-chroot/lab-chroot.sh create --config examples/chroot-netboot-minimal.toml
 
-# 3. Package as kernel + initrd:
+# 3. Package as kernel + initrd (needs sudo):
 sudo phase1-chroot/lab-chroot.sh export-initrd netboot-minimal \
-    --kernel /srv/netboot/kernel --output /srv/netboot/initrd.gz
+    --kernel ~/netboot/kernel --output ~/netboot/initrd.gz
 
 # 4. Build iPXE (inside Docker, ~15 min first run):
-netboot/build-ipxe.sh --server http://10.0.2.2:8080 --output-dir /srv/netboot
+netboot/build-ipxe.sh --server http://10.0.2.2:8181
 
 # 5. Serve over HTTP (rootless):
 phase4-podman/lab-podman.sh up --config examples/podman-netboot-server.toml
 
-# 6. Boot in QEMU (full iPXE simulation):
-sudo phase2-qemu-vm/lab-vm.sh create --config examples/vm-netboot-ipxe.toml
-phase2-qemu-vm/lab-vm.sh start netboot-ipxe
+# 6. Boot in QEMU (no sudo needed — disk-image backend is rootless):
+phase2-qemu-vm/lab-vm.sh create --config examples/vm-netboot-ipxe.toml
+phase2-qemu-vm/lab-vm.sh start  netboot-ipxe
 
-# For real hardware: dd /srv/netboot/ipxe.usb → USB → boot
+# For real hardware: dd ~/netboot/ipxe.usb → USB → boot
 ```
 
 See [`examples/netboot-lab.toml`](examples/netboot-lab.toml) and

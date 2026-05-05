@@ -33,9 +33,9 @@
 # 4. Start the nginx container:
 #    lab-podman.sh up --config examples/podman-netboot-server.toml
 #
-# 5. Create and start the VM:
-#    sudo lab-vm.sh create --config examples/vm-netboot-ipxe.toml
-#    lab-vm.sh start netboot-ipxe
+# 5. Create and start the VM (no sudo needed — disk-image backend is rootless):
+#    phase2-qemu-vm/lab-vm.sh create --config examples/vm-netboot-ipxe.toml
+#    phase2-qemu-vm/lab-vm.sh start netboot-ipxe
 #
 # For real hardware: flash ipxe.usb to a USB stick, change --server to your
 # actual server URL, and boot the target machine from USB:

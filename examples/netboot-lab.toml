@@ -24,9 +24,9 @@
 #    (port must match the ports = [] field in [[service]] below)
 #
 # 5. Bring up the nginx server (Phase 4) and the iPXE VM (Phase 2):
-#    lab-podman.sh up     --config examples/netboot-lab.toml
-#    sudo lab-vm.sh create --config examples/netboot-lab.toml
-#    lab-vm.sh start netboot-ipxe
+#    phase4-podman/lab-podman.sh up --config examples/netboot-lab.toml
+#    phase2-qemu-vm/lab-vm.sh create --config examples/netboot-lab.toml
+#    phase2-qemu-vm/lab-vm.sh start  netboot-ipxe
 #
 # Tear down:
 #    lab-vm.sh stop    netboot-ipxe
