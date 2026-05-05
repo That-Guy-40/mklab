@@ -1337,7 +1337,7 @@ spec_from_cli() {
           network:($network=="true"), ssh:($ssh=="true"), persist:$persist,
           init_flavour:$init_flavour, lab:$lab,
           chroot:$chroot, disk_size:$disk_size,
-          cloud_init:($cloud_init != "false")}'
+          cloud_init:$cloud_init}'
 }
 
 specs_from_config() {
@@ -1370,7 +1370,7 @@ specs_from_config() {
             init_flavour: (.init_flavour // "busybox"),
             chroot:    (.chroot    // ""),
             disk_size: (.disk_size // ""),
-            cloud_init: (.cloud_init // true),
+            cloud_init: (if .cloud_init == false then "false" else "true" end),
             lab:     ( if $cli_lab != "" then $cli_lab
                        else ($root.lab.name // "") end ) }
     '
