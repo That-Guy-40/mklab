@@ -17,8 +17,8 @@
 #
 # 2. Export kernel + initrd:
 #    sudo lab-chroot.sh export-initrd netboot-full \
-#        --kernel  /srv/netboot/kernel \
-#        --output  /srv/netboot/initrd.gz
+#        --kernel  ~/netboot/kernel \
+#        --output  ~/netboot/initrd.gz
 #
 # 3. Serve + boot — same as the minimal variant:
 #    See examples/podman-netboot-server.toml

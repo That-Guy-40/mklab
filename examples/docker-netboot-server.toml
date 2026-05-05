@@ -25,6 +25,8 @@ engine  = "docker"
 image   = "nginx:alpine"
 ports   = ["8080:80"]
 volumes = [
-    "/srv/netboot:/usr/share/nginx/html:ro",
-    "/etc/lab-netboot/ipxe-mime.conf:/etc/nginx/conf.d/ipxe-mime.conf:ro",
+    # Update /home/sqs to your $HOME if different (no shell expansion in TOML).
+    # Set LAB_NETBOOT_DIR to override the default ~/netboot location.
+    "/home/sqs/netboot:/usr/share/nginx/html:ro",
+    "/home/sqs/.config/lab-netboot/ipxe-mime.conf:/etc/nginx/conf.d/ipxe-mime.conf:ro",
 ]

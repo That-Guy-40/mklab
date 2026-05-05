@@ -10,7 +10,7 @@
 #
 # Prerequisite: export-initrd must have run first:
 #    sudo lab-chroot.sh export-initrd netboot-minimal \
-#        --kernel /srv/netboot/kernel --output /srv/netboot/initrd.gz
+#        --kernel ~/netboot/kernel --output ~/netboot/initrd.gz
 #
 # Workflow:
 # 1. Create the VM record:
@@ -29,7 +29,8 @@ arch    = "x86_64"
 memory  = "512M"
 cpus    = 1
 microvm = true
-kernel  = "/srv/netboot/kernel"
-initrd  = "/srv/netboot/initrd.gz"
+# Update /home/sqs to your $HOME if different (no shell expansion in TOML).
+kernel  = "/home/sqs/netboot/kernel"
+initrd  = "/home/sqs/netboot/initrd.gz"
 append  = "console=ttyS0 root=/dev/ram0 rw"
 network = true

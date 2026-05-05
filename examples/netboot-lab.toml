@@ -10,18 +10,17 @@
 #
 # Full workflow (run in order):
 # 1. Set up the artifact directory (once):
-#    sudo netboot/setup-netboot-dir.sh
+#    netboot/setup-netboot-dir.sh
 #
 # 2. Build the chroot rootfs (Phase 1, needs root, ~1-2 min):
 #    sudo lab-chroot.sh create --config examples/netboot-lab.toml
 #
 # 3. Export kernel + initrd from the chroot (Phase 1, needs root):
 #    sudo lab-chroot.sh export-initrd netboot-minimal \
-#        --kernel /srv/netboot/kernel --output /srv/netboot/initrd.gz
+#        --kernel ~/netboot/kernel --output ~/netboot/initrd.gz
 #
 # 4. Build the iPXE disk image:
-#    netboot/build-ipxe.sh --server http://10.0.2.2:8080 \
-#                          --output-dir /srv/netboot
+#    netboot/build-ipxe.sh --server http://10.0.2.2:8080
 #
 # 5. Bring up the nginx server (Phase 4) and the iPXE VM (Phase 2):
 #    lab-podman.sh up     --config examples/netboot-lab.toml
@@ -58,15 +57,18 @@ engine  = "podman"
 image   = "docker.io/library/nginx:alpine"
 ports   = ["8080:80"]
 volumes = [
-    "/srv/netboot:/usr/share/nginx/html:ro",
-    "/etc/lab-netboot/ipxe-mime.conf:/etc/nginx/conf.d/ipxe-mime.conf:ro",
+    # Update /home/sqs to your $HOME if different (no shell expansion in TOML).
+    # Set LAB_NETBOOT_DIR / LAB_NETBOOT_CONF env vars to use different paths.
+    "/home/sqs/netboot:/usr/share/nginx/html:ro",
+    "/home/sqs/.config/lab-netboot/ipxe-mime.conf:/etc/nginx/conf.d/ipxe-mime.conf:ro",
 ]
 
 # ─── Phase 2: QEMU boots from the iPXE disk image ────────────────────────────
 [[vm]]
 name       = "netboot-ipxe"
 backend    = "disk-image"
-image      = "/srv/netboot/ipxe.qcow2"
+# Update /home/sqs to your $HOME if different (no shell expansion in TOML).
+image      = "/home/sqs/netboot/ipxe.qcow2"
 arch       = "x86_64"
 memory     = "512M"
 cpus       = 1

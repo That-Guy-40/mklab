@@ -100,7 +100,7 @@ server="http://10.0.2.2:8080"
 kernel_path="/kernel"
 initrd_path="/initrd.gz"
 append="console=ttyS0 root=/dev/ram0 rw"
-output_dir="/srv/netboot"
+output_dir="${LAB_NETBOOT_DIR:-$HOME/netboot}"
 arch="x86_64"
 ipxe_ref="master"
 

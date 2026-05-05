@@ -64,8 +64,8 @@ EOF
 }
 
 # ─── Defaults ───────────────────────────────────────────────────────────────
-NETBOOT_DIR="/srv/netboot"
-CONF_DIR="/etc/lab-netboot"
+NETBOOT_DIR="${LAB_NETBOOT_DIR:-$HOME/netboot}"
+CONF_DIR="${LAB_NETBOOT_CONF:-$HOME/.config/lab-netboot}"
 
 # ─── Arg parsing ────────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
@@ -77,12 +77,12 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# ─── Root check ─────────────────────────────────────────────────────────────
-if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
-    die "$LAB_PROG must be run as root  (try: sudo $LAB_PROG)"
-fi
-
 # ─── Create directories ─────────────────────────────────────────────────────
+# Defaults live under $HOME — no root needed. Override via --dir / --conf or
+# LAB_NETBOOT_DIR / LAB_NETBOOT_CONF env vars if you prefer a system path.
+# NOTE: snap Docker (Docker Root Dir = /var/snap/...) can only bind-mount
+# paths under /home, /tmp, /media, /mnt. Using /srv or /etc requires
+# non-snap Docker. The $HOME default avoids this issue entirely.
 log_info "creating artifact directory: $NETBOOT_DIR"
 mkdir -p "$NETBOOT_DIR"
 chmod 755 "$NETBOOT_DIR"
@@ -94,22 +94,13 @@ mkdir -p "$CONF_DIR"
 MIME_CONF="$CONF_DIR/ipxe-mime.conf"
 log_info "writing nginx MIME snippet: $MIME_CONF"
 cat > "$MIME_CONF" <<'EOF'
-# ipxe-mime.conf — include this in your nginx http{} or server{} block so
-# iPXE clients receive the correct Content-Type for chainboot scripts.
-#
-#   include /etc/lab-netboot/ipxe-mime.conf;
+# ipxe-mime.conf — volume-mounted into the nginx container by lab-podman.sh.
+# No host nginx changes needed; the lab scripts handle the bind-mount.
+# If you run a host nginx, add:  include <CONF_DIR>/ipxe-mime.conf;
 types {
     application/x-ipxe  ipxe;
 }
 EOF
-
-# ─── Hand artifact dir to the invoking user ──────────────────────────────────
-# When run via sudo, SUDO_UID/SUDO_GID identify the real caller so they can
-# write artifacts (kernel, initrd, ipxe images) without needing root again.
-TARGET_UID="${SUDO_UID:-$(id -u)}"
-TARGET_GID="${SUDO_GID:-$(id -g)}"
-chown "${TARGET_UID}:${TARGET_GID}" "$NETBOOT_DIR"
-log_info "artifact directory owner set to ${TARGET_UID}:${TARGET_GID}"
 
 # ─── Summary ────────────────────────────────────────────────────────────────
 log_info "setup complete"
@@ -117,5 +108,20 @@ log_info "  artifact dir : $NETBOOT_DIR"
 log_info "  mime conf    : $MIME_CONF"
 log_info ""
 log_info "next steps:"
-log_info "  1. Add to your nginx config:  include $MIME_CONF;"
-log_info "  2. Run:  netboot/build-ipxe.sh --output-dir $NETBOOT_DIR"
+log_info "  1. Build iPXE (inside Docker, ~15 min first run):"
+log_info "       netboot/build-ipxe.sh --server http://10.0.2.2:8080 \\"
+log_info "           --output-dir $NETBOOT_DIR"
+log_info "     (use your LAN IP instead of 10.0.2.2 for real hardware)"
+log_info "  2. Build the initrd rootfs (needs sudo):"
+log_info "       sudo phase1-chroot/lab-chroot.sh create \\"
+log_info "           --config examples/chroot-netboot-minimal.toml"
+log_info "  3. Package kernel + initrd (needs sudo):"
+log_info "       sudo phase1-chroot/lab-chroot.sh export-initrd netboot-minimal \\"
+log_info "           --kernel $NETBOOT_DIR/kernel \\"
+log_info "           --output $NETBOOT_DIR/initrd.gz"
+log_info "  4. Start the nginx container (rootless):"
+log_info "       phase4-podman/lab-podman.sh up \\"
+log_info "           --config examples/podman-netboot-server.toml"
+log_info "  Note: the nginx MIME config ($MIME_CONF)"
+log_info "        is volume-mounted into the container automatically — no host"
+log_info "        nginx changes needed."
