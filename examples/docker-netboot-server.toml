@@ -1,0 +1,30 @@
+# Rootful Docker variant of the netboot HTTP server.
+#
+# This is functionally identical to podman-netboot-server.toml but uses the
+# Docker engine (rootful).  Prefer the Podman variant for rootless operation;
+# use this only when Docker is the required runtime (e.g., Docker-only CI).
+#
+# See examples/podman-netboot-server.toml for the preferred rootless path,
+# full prerequisites, and verification steps.
+#
+# Start:
+#    lab-docker.sh up --config examples/docker-netboot-server.toml
+#
+# Verify:
+#    curl -sI http://localhost:8080/kernel
+#    curl -s  http://localhost:8080/boot.ipxe
+
+[lab]
+name        = "netboot-srv-docker"
+description = "Docker HTTP server for netboot artifacts (rootful variant; prefer podman-netboot-server.toml)"
+tags        = ["netboot", "http", "ipxe", "docker"]
+
+[[service]]
+name    = "http"
+engine  = "docker"
+image   = "nginx:alpine"
+ports   = ["8080:80"]
+volumes = [
+    "/srv/netboot:/usr/share/nginx/html:ro",
+    "/etc/lab-netboot/ipxe-mime.conf:/etc/nginx/conf.d/ipxe-mime.conf:ro",
+]

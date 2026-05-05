@@ -1,0 +1,49 @@
+# QEMU boots from an iPXE disk image, which then fetches kernel + initrd from
+# the nginx container over HTTP — simulating what real hardware does when
+# booting from an iPXE USB stick or network card ROM.
+#
+# How the chain works:
+#   QEMU boots ipxe.qcow2 → iPXE runs boot.ipxe → fetches kernel + initrd
+#   from http://10.0.2.2:8080/ → boots the netboot initrd.
+#
+#   10.0.2.2 is the QEMU slirp host address: the guest's view of the host
+#   loopback.  Traffic on port 8080 reaches the nginx container started by
+#   lab-podman.sh (or lab-docker.sh).
+#
+# cloud_init = false: the iPXE image is not a cloud image and has no
+#   cloud-init datasource; setting this to false prevents lab-vm.sh from
+#   injecting a cloud-init ISO that would confuse the boot sequence.
+#
+# Full dependency chain (run in order):
+# 1. Set up the artifact directory:
+#    sudo netboot/setup-netboot-dir.sh
+#
+# 2. Build the chroot and export the initrd:
+#    sudo lab-chroot.sh create       --config examples/chroot-netboot-minimal.toml
+#    sudo lab-chroot.sh export-initrd netboot-minimal \
+#        --kernel /srv/netboot/kernel --output /srv/netboot/initrd.gz
+#
+# 3. Build the iPXE disk image pointing at the local HTTP server:
+#    netboot/build-ipxe.sh --server http://10.0.2.2:8080 \
+#                          --output-dir /srv/netboot
+#
+# 4. Start the nginx container:
+#    lab-podman.sh up --config examples/podman-netboot-server.toml
+#
+# 5. Create and start the VM:
+#    sudo lab-vm.sh create --config examples/vm-netboot-ipxe.toml
+#    lab-vm.sh start netboot-ipxe
+#
+# For real hardware: flash ipxe.usb to a USB stick, change --server to your
+# actual server URL, and boot the target machine from USB:
+#    dd if=/srv/netboot/ipxe.usb of=/dev/sdX bs=4M status=progress
+
+[[vm]]
+name       = "netboot-ipxe"
+backend    = "disk-image"
+image      = "/srv/netboot/ipxe.qcow2"
+arch       = "x86_64"
+memory     = "512M"
+cpus       = 1
+network    = true
+cloud_init = false
