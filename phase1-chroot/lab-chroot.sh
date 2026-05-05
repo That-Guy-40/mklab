@@ -306,22 +306,24 @@ spec_from_cli() {
     [[ -n "${OPT_GROUPS:-}" ]]   && groups_json=$(printf '%s\n' "$OPT_GROUPS"   | tr ',' '\n' | jq -R . | jq -s .)
 
     jq -n \
-        --arg name     "${OPT_NAME:-}" \
-        --arg backend  "${OPT_BACKEND:-}" \
-        --arg distro   "${OPT_DISTRO:-}" \
-        --arg suite    "${OPT_SUITE:-}" \
-        --arg arch     "${OPT_ARCH:-}" \
-        --arg target   "${OPT_TARGET:-}" \
-        --arg mirror   "${OPT_MIRROR:-}" \
-        --arg variant  "${OPT_VARIANT:-}" \
-        --arg manager  "${OPT_MANAGER:-none}" \
-        --arg lab      "${OPT_LAB:-}" \
+        --arg name        "${OPT_NAME:-}" \
+        --arg backend     "${OPT_BACKEND:-}" \
+        --arg distro      "${OPT_DISTRO:-}" \
+        --arg suite       "${OPT_SUITE:-}" \
+        --arg arch        "${OPT_ARCH:-}" \
+        --arg target      "${OPT_TARGET:-}" \
+        --arg mirror      "${OPT_MIRROR:-}" \
+        --arg variant     "${OPT_VARIANT:-}" \
+        --arg manager     "${OPT_MANAGER:-none}" \
+        --arg lab         "${OPT_LAB:-}" \
+        --arg init_script "${OPT_INIT_SCRIPT:-}" \
         --argjson include  "$include_json" \
         --argjson binaries "$binaries_json" \
         --argjson extras   "$extras_json" \
         --argjson groups   "$groups_json" \
         '{name:$name, backend:$backend, distro:$distro, suite:$suite, arch:$arch,
           target:$target, mirror:$mirror, variant:$variant, manager:$manager, lab:$lab,
+          init_script:$init_script,
           include:$include, binaries:$binaries, extras:$extras, groups:$groups}'
 }
 
@@ -351,12 +353,13 @@ specs_from_config() {
             manager: (.manager // "none"),
             lab:     ( if $cli_lab != "" then $cli_lab
                        else ($root.lab.name // "") end ),
-            include: (.include // []),
-            binaries:(.binaries// []),
-            extras:  (.extras  // []),
-            groups:  (.groups  // []),
-            schroot: (.schroot // {}),
-            nspawn:  (.nspawn  // {}) }
+            include:     (.include     // []),
+            binaries:    (.binaries    // []),
+            extras:      (.extras      // []),
+            groups:      (.groups      // []),
+            init_script: (.init_script // ""),
+            schroot:     (.schroot     // {}),
+            nspawn:      (.nspawn      // {}) }
     '
 }
 
@@ -960,6 +963,8 @@ create_one() {
         nspawn)  manager_nspawn_register  "$spec"  ;;
     esac
 
+    apply_init_script "$spec" "$target"
+
     write_manifest "$name" "$target" "$backend" \
         "$(spec_get "$spec" distro)" "$(spec_get "$spec" suite)" \
         "$(spec_get "$spec" arch)" "$manager" \
@@ -1095,6 +1100,149 @@ cmd_list() {
         machinectl list-images --no-pager 2>/dev/null || true
     fi
     [[ $found -eq 0 ]] && log_info "(no script-managed chroots)"
+}
+
+# ─── init_script helpers ────────────────────────────────────────────────────
+_write_init_preset() {
+    local flavor="$1" target="$2"
+    case "$flavor" in
+        busybox)
+            cat > "$target/init" <<'BUSYBOX_INIT'
+#!/bin/busybox sh
+/bin/busybox --install -s
+mount -t proc     proc     /proc
+mount -t sysfs    sysfs    /sys
+mount -t devtmpfs devtmpfs /dev
+ip link set eth0 up
+udhcpc -i eth0 -t 5 -n || true
+exec /bin/sh
+BUSYBOX_INIT
+            chmod 0755 "$target/init"
+            log_info "init_script: wrote busybox /init"
+            ;;
+        systemd)
+            cat > "$target/init" <<'SYSTEMD_INIT'
+#!/bin/sh
+mount -t proc     proc     /proc
+mount -t sysfs    sysfs    /sys
+mount -t devtmpfs devtmpfs /dev
+exec /sbin/init
+SYSTEMD_INIT
+            chmod 0755 "$target/init"
+            log_info "init_script: wrote systemd /init"
+            ;;
+        *)
+            die "unknown init_script flavor: $flavor (use busybox|systemd|/path/to/file)"
+            ;;
+    esac
+}
+
+# apply_init_script SPEC TARGET
+# Write /init into TARGET based on init_script field or --init-flavor flag.
+# Values: "busybox" | "systemd" | "/host/path/to/custom.sh"
+# Writes /init and sets chmod 755. No-op if value is empty.
+apply_init_script() {
+    local spec="$1" target="$2"
+    local flavor; flavor="$(spec_get "$spec" init_script)"
+    [[ -z "$flavor" ]] && flavor="${OPT_INIT_FLAVOR:-}"
+    [[ -z "$flavor" ]] && return 0   # nothing requested at create time
+
+    if [[ "$flavor" == /* ]]; then
+        # host path — copy verbatim
+        [[ -r "$flavor" ]] || die "init_script: file not readable: $flavor"
+        install -m 0755 "$flavor" "$target/init"
+        log_info "init_script: installed custom /init from $flavor"
+    else
+        _write_init_preset "$flavor" "$target"
+    fi
+}
+
+# ─── Subcommand: export-initrd ──────────────────────────────────────────────
+# Package a chroot tree as a gzipped cpio archive (initrd) and extract its
+# kernel binary. Designed for HTTP-netboot pipelines: the resulting kernel +
+# initrd.gz can be served over HTTP and loaded by iPXE or QEMU -kernel/-initrd.
+#
+# If $target/init does not exist, a sensible default is auto-written based on
+# whether /bin/busybox is present in the chroot (busybox preset) or not
+# (systemd preset). Use --init-script or --init-flavor to override.
+cmd_export_initrd() {
+    local arg="${POS_ARGS[0]:-}"
+    [[ -n "$arg" ]] || die "usage: $LAB_PROG export-initrd <name|path> --kernel PATH --output PATH"
+
+    local name target manager
+    IFS=$'\t' read -r name target manager < <(resolve_target_and_manager "$arg")
+    [[ -d "$target" ]] || die "target is not a directory: $target"
+
+    local out="${OPT_OUTPUT:-/tmp/${name:-chroot}-initrd.gz}"
+    local kernel_out="${OPT_KERNEL_OUT:-/tmp/${name:-chroot}-vmlinuz}"
+
+    # Find the kernel binary in the chroot's /boot/
+    local kernel_src
+    kernel_src="$(find "$target/boot" -maxdepth 1 -name 'vmlinuz-*' \
+        -not -name '*.old' -not -name '*.bak' 2>/dev/null | sort -V | tail -1)"
+    [[ -n "$kernel_src" ]] || die "no /boot/vmlinuz-* found in $target — install a kernel first:
+  sudo lab-chroot.sh enter $name -- apt-get install -y linux-image-amd64   # Debian
+  sudo lab-chroot.sh enter $name -- dnf install -y kernel                  # Rocky/Fedora"
+
+    # Ensure /init exists, writing a default if needed
+    if [[ -f "$target/init" ]]; then
+        log_info "using existing $target/init"
+    elif [[ -n "${OPT_INIT_SCRIPT:-}" ]]; then
+        if [[ "$OPT_INIT_SCRIPT" == /* ]]; then
+            install -m 0755 "$OPT_INIT_SCRIPT" "$target/init"
+            log_info "init: installed from $OPT_INIT_SCRIPT"
+        else
+            _write_init_preset "$OPT_INIT_SCRIPT" "$target"
+        fi
+    elif [[ -n "${OPT_INIT_FLAVOR:-}" ]]; then
+        _write_init_preset "$OPT_INIT_FLAVOR" "$target"
+    else
+        # Auto-detect
+        if [[ -x "$target/bin/busybox" || -x "$target/usr/bin/busybox" ]]; then
+            log_warn "no /init in chroot; auto-writing busybox default"
+            _write_init_preset busybox "$target"
+        else
+            log_warn "no /init in chroot; auto-writing systemd default"
+            _write_init_preset systemd "$target"
+        fi
+    fi
+
+    local invoker_uid invoker_gid
+    invoker_uid="${SUDO_UID:-$(id -u)}"
+    invoker_gid="${SUDO_GID:-$(id -g)}"
+
+    # Copy kernel
+    log_info "copying kernel $kernel_src → $kernel_out"
+    install -m 0644 "$kernel_src" "$kernel_out"
+    chown "${invoker_uid}:${invoker_gid}" "$kernel_out" 2>/dev/null || true
+
+    # Build exclusion list for find (using -not -path predicates)
+    local -a find_excludes
+    find_excludes=(
+        -not -path './proc/*' -not -path './sys/*' -not -path './dev/*'
+        -not -path './run/*'  -not -path './tmp/*'
+        -not -path './.lab-chroot-mounts'
+    )
+    [[ -n "${OPT_STRIP_MODULES:-}" ]] && find_excludes+=(-not -path './lib/modules/*')
+
+    # Package as cpio.gz
+    log_info "packaging $target → $out (strip-modules=${OPT_STRIP_MODULES:-no})"
+    require_cmd cpio gzip find
+
+    ( cd "$target" && find . "${find_excludes[@]}" -print0 \
+        | cpio --null -H newc -o 2>/dev/null \
+        | gzip -9 -n > "$out" ) \
+        || die "cpio/gzip failed writing $out"
+
+    chown "${invoker_uid}:${invoker_gid}" "$out" 2>/dev/null || true
+    chmod 0644 "$out" 2>/dev/null || true
+
+    local ksz isz
+    ksz="$(du -h "$kernel_out" 2>/dev/null | awk '{print $1}')"
+    isz="$(du -h "$out"        2>/dev/null | awk '{print $1}')"
+    log_info "kernel:  $kernel_out (${ksz:-?})"
+    log_info "initrd:  $out (${isz:-?})"
+    log_info "boot it: lab-vm.sh create --backend kernel+initrd --kernel $kernel_out --initrd $out"
 }
 
 # ─── Subcommand: export-tarball ─────────────────────────────────────────────
@@ -1429,6 +1577,7 @@ USAGE
   $LAB_PROG verify   <name|path>
   $LAB_PROG inspect  <name|path> [--json]
   $LAB_PROG export-tarball <name|path> [--output /tmp/x.tar.gz]
+  $LAB_PROG export-initrd <name|path> --kernel PATH --output PATH [--init-script FLAVOR|PATH] [--strip-modules]
   $LAB_PROG version | help
 
 CREATE OPTIONS
@@ -1446,6 +1595,14 @@ CREATE OPTIONS
   --extras   /etc/foo,/etc/bar             (host-copy: extra files to copy in)
   --manager  {none|schroot|nspawn}         (default: none)
   --config   /path/to/chroot.toml          (declarative form; overrides flags)
+  --init-script FLAVOR|PATH  write /init at create time: 'busybox', 'systemd', or /host/path
+  --init-flavor FLAVOR       same as --init-script for use with export-initrd auto-detect
+
+EXPORT-INITRD OPTIONS
+  --kernel   PATH    destination for extracted vmlinuz (default: /tmp/<name>-vmlinuz)
+  --output   PATH    destination for initrd.gz (default: /tmp/<name>-initrd.gz)
+  --init-script FLAVOR|PATH  write /init: 'busybox', 'systemd', or /host/path
+  --strip-modules    exclude /lib/modules/ from the initrd (reduces size ~100-300 MB)
 
 ENVIRONMENT
   LAB_LOG_LEVEL  debug|info|warn|error  (default: info)
@@ -1472,6 +1629,8 @@ parse_args() {
     OPT_LAB=""
     OPT_OUTPUT=""
     OPT_JSON=""
+    OPT_INIT_SCRIPT="" OPT_INIT_FLAVOR="" OPT_STRIP_MODULES=""
+    OPT_KERNEL_OUT=""
 
     [[ $# -eq 0 ]] && { usage; exit 0; }
 
@@ -1502,6 +1661,10 @@ parse_args() {
             --output|-o)     OPT_OUTPUT="$2"; shift 2 ;;
             --json)          OPT_JSON=1; shift ;;
             --force|-f)      OPT_FORCE=1; shift ;;
+            --init-script)   OPT_INIT_SCRIPT="$2"; shift 2 ;;
+            --init-flavor)   OPT_INIT_FLAVOR="$2"; shift 2 ;;
+            --strip-modules) OPT_STRIP_MODULES=1; shift ;;
+            --kernel)        OPT_KERNEL_OUT="$2"; shift 2 ;;
             -h|--help)       usage; exit 0 ;;
             -v|--version)    printf '%s %s\n' "$LAB_PROG" "$LAB_VERSION"; exit 0 ;;
             -*)              die "unknown option: $1 (try --help)" ;;
@@ -1525,6 +1688,7 @@ main() {
         verify)  cmd_verify  ;;
         inspect) cmd_inspect ;;
         export-tarball) cmd_export_tarball ;;
+        export-initrd)  cmd_export_initrd ;;
         help)    usage       ;;
         version) printf '%s %s\n' "$LAB_PROG" "$LAB_VERSION" ;;
         *)       usage; die "unknown subcommand: $SUBCMD" ;;
