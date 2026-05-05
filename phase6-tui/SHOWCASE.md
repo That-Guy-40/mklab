@@ -244,6 +244,36 @@ six rows across five backends. The "single pane of glass" the
 phase-script architecture was designed to deliver — this is where it
 becomes visible.
 
+### The netboot lab in the TUI
+
+`examples/netboot-lab.toml` is the cross-phase TOML for the netboot
+pipeline. Load it in the topology screen and the TUI groups everything
+under one `🌐 netboot` label:
+
+```text
+🌐 netboot
+  chroot (1)
+    netboot-minimal  ● built    [chroot]
+  podman (1)
+    http             ● running  [container]
+  vm (1)
+    netboot-ipxe     ● running  [vm]
+```
+
+Pressing `u` on the topology screen runs the phases in dependency
+order:
+
+```
+→ phase chroot: up --config netboot-lab.toml
+→ phase podman: up --config netboot-lab.toml
+→ phase vm:     up --config netboot-lab.toml
+```
+
+The manual `export-initrd` + `build-ipxe.sh` steps (which require
+`sudo` and a one-time Docker build) still happen outside the TUI — the
+TUI orchestrates the phase scripts, not the setup helpers. Once the
+artifacts are in `/srv/netboot/`, the TUI handles the rest.
+
 ## What's deferred to v0.2
 
 v0.1 covers read-only inventory + topology orchestration. **Three

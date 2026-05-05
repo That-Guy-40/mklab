@@ -209,6 +209,26 @@ whether `lab-<arg>` exists as a container; if not, it tries the label
 query. So `status web1` and `status demo/web` and `status demo` all do
 the right thing.
 
+### Serving netboot artifacts over HTTP
+
+An nginx container can serve the kernel + initrd (and the iPXE
+chainboot script) produced by Phase 1's `export-initrd` verb. The
+`examples/docker-netboot-server.toml` config mounts `/srv/netboot/`
+read-only into nginx and also mounts `ipxe-mime.conf` to register the
+`application/x-ipxe` MIME type so browsers and iPXE clients see the
+correct content-type header:
+
+```bash
+lab-docker.sh up --config examples/docker-netboot-server.toml
+curl -sI http://localhost:8080/kernel
+curl -s  http://localhost:8080/boot.ipxe
+```
+
+Note: for the rootless variant (no `sudo` needed to run the server),
+see `podman-netboot-server.toml` and
+[Phase 4 (podman)](../phase4-podman/SHOWCASE.md) — Podman is the
+primary serving path.
+
 ## Integrations
 
 ### ← Phase 1 (turn a chroot into a docker image)

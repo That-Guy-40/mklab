@@ -179,6 +179,43 @@ sudo phase2-qemu-vm/lab-vm.sh inspect al1 --json | jq
 thin-provisioning waste at a glance. Without `--json` you get the same data in
 a flat human-readable layout — handy for `grep`-style triage.
 
+### Netboot simulation — boot any kernel+initrd, including HTTP-served ones
+
+The `kernel+initrd` backend isn't just for Alpine microvms — it's the
+mechanism that mirrors what real iPXE hardware does: download a kernel
+and initrd over HTTP, then hand them straight to QEMU. Two modes:
+
+**1. Direct** (`vm-netboot-direct.toml`) — QEMU `-kernel`/`-initrd` with
+explicit file paths. Fastest way to validate that a Phase 1
+`export-initrd` output actually boots. Pair with `cloud_init = false`
+for bare initrd images that don't include a cloud-init datasource:
+
+```bash
+# Direct (fastest validation):
+sudo lab-vm.sh create --config examples/vm-netboot-direct.toml
+lab-vm.sh start netboot-direct
+```
+
+**2. Full iPXE simulation** (`vm-netboot-ipxe.toml`) — boot from
+`ipxe.qcow2`. The VM starts, iPXE does DHCP (via QEMU slirp),
+then fetches `http://10.0.2.2:8080/boot.ipxe` — the Phase 4 nginx
+server running on the host. iPXE downloads the kernel + initrd and
+boots them in RAM, exactly as real thin-client hardware would:
+
+```bash
+# Full iPXE simulation (after nginx is up):
+sudo lab-vm.sh create --config examples/vm-netboot-ipxe.toml
+lab-vm.sh start netboot-ipxe
+```
+
+The QEMU slirp network gives the guest `10.0.2.2` as a gateway that
+reaches the host's localhost — so `http://10.0.2.2:8080/` in the
+iPXE script resolves to the Phase 4 Podman container's port 8080.
+
+The same `ipxe.usb` image `dd`'d to a USB stick runs an **identical
+boot sequence** on real hardware: iPXE DHCP + HTTP download + kernel
+runs in RAM. No disk write needed on the target machine.
+
 ## Integrations
 
 ### ← Phase 1 (turn a chroot into a VM)
