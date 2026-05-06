@@ -24,6 +24,7 @@
 
 [[chroot]]
 name        = "netboot-minimal"
+hostname    = "netboot-minimal"
 backend     = "debootstrap"
 distro      = "debian"
 suite       = "bookworm"

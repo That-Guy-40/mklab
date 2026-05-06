@@ -27,6 +27,7 @@
 
 [[chroot]]
 name        = "netboot-full"
+hostname    = "netboot-full"
 backend     = "debootstrap"
 distro      = "debian"
 suite       = "bookworm"

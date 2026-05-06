@@ -328,6 +328,7 @@ spec_from_cli() {
         --arg variant     "${OPT_VARIANT:-}" \
         --arg manager     "${OPT_MANAGER:-none}" \
         --arg lab         "${OPT_LAB:-}" \
+        --arg hostname    "${OPT_HOSTNAME:-}" \
         --arg init_script "${OPT_INIT_SCRIPT:-}" \
         --argjson include       "$include_json" \
         --argjson binaries      "$binaries_json" \
@@ -337,7 +338,7 @@ spec_from_cli() {
         --argjson users         "$users_json" \
         '{name:$name, backend:$backend, distro:$distro, suite:$suite, arch:$arch,
           target:$target, mirror:$mirror, variant:$variant, manager:$manager, lab:$lab,
-          init_script:$init_script,
+          hostname:$hostname, init_script:$init_script,
           include:$include, binaries:$binaries, extras:$extras, groups:$groups,
           post_commands:$post_commands, users:$users}'
 }
@@ -372,6 +373,7 @@ specs_from_config() {
             binaries:    (.binaries    // []),
             extras:      (.extras      // []),
             groups:      (.groups      // []),
+            hostname:      (.hostname      // ""),
             init_script:   (.init_script   // ""),
             post_commands: (.post_commands // []),
             users:         (.users         // []),
@@ -980,7 +982,8 @@ create_one() {
         nspawn)  manager_nspawn_register  "$spec"  ;;
     esac
 
-    apply_init_script "$spec" "$target"
+    apply_hostname      "$spec" "$target"
+    apply_init_script   "$spec" "$target"
     apply_users         "$spec" "$target"
     apply_post_commands "$spec" "$target"
 
@@ -1132,6 +1135,7 @@ _write_init_preset() {
 mount -t proc     proc     /proc
 mount -t sysfs    sysfs    /sys
 mount -t devtmpfs devtmpfs /dev
+export TERM=linux
 ip link set eth0 up
 udhcpc -i eth0 -t 5 -n || true
 exec /bin/sh
@@ -1148,6 +1152,12 @@ mount -t devtmpfs devtmpfs /dev
 exec /sbin/init
 SYSTEMD_INIT
             chmod 0755 "$target/init"
+            # agetty on a serial line does not auto-set TERM (unlike virtual
+            # consoles).  The default serial-getty unit passes $TERM as the
+            # terminal-type argument to agetty, so setting it here is enough.
+            mkdir -p "$target/etc/systemd/system/serial-getty@ttyS0.service.d"
+            printf '[Service]\nEnvironment=TERM=linux\n' \
+                > "$target/etc/systemd/system/serial-getty@ttyS0.service.d/term.conf"
             log_info "init_script: wrote systemd /init"
             ;;
         *)
@@ -1196,6 +1206,30 @@ apply_users() {
                                     | chroot "$target" chpasswd
         [[ -n "$ugroups" ]] && chroot "$target" usermod -aG "$ugroups" "$uname"
     done < <(jq -c '.users[]?' <<<"$spec")
+}
+
+# apply_hostname SPEC TARGET
+# Write /etc/hostname and /etc/hosts inside TARGET.
+# Uses the 'hostname' spec field; auto-generates <host-short>-<4rand> if empty.
+apply_hostname() {
+    local spec="$1" target="$2"
+    local hn
+    hn="$(spec_get "$spec" hostname)"
+    if [[ -z "$hn" ]]; then
+        local short rand
+        short="$(hostname -s 2>/dev/null | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9-' | cut -c1-12)"
+        rand="$(mktemp -u XXXX | tr '[:upper:]' '[:lower:]')"
+        hn="${short:-lab}-${rand}"
+    fi
+    printf '%s\n' "$hn" > "$target/etc/hostname"
+    {
+        printf '127.0.0.1\tlocalhost\n'
+        printf '127.0.1.1\t%s\n' "$hn"
+        printf '::1\t\tlocalhost ip6-localhost ip6-loopback\n'
+        printf 'ff02::1\t\tip6-allnodes\n'
+        printf 'ff02::2\t\tip6-allrouters\n'
+    } > "$target/etc/hosts"
+    log_info "hostname: $hn"
 }
 
 # apply_post_commands SPEC TARGET
@@ -1651,6 +1685,7 @@ CREATE OPTIONS
   --arch     {x86_64|aarch64|armv7l|ppc64le|riscv64|s390x}
   --target   /path/to/chroot
   --name     <short-name>                  (defaults to basename of target)
+  --hostname <name>                        (auto: <host-short>-<4rand> if omitted)
   --mirror   URL                           (backend default if omitted)
   --variant  minbase|buildd|fakechroot     (debootstrap only)
   --include  pkg,pkg,...
@@ -1691,7 +1726,7 @@ OPT_USERS=()
 parse_args() {
     OPT_CONFIG=""
     OPT_BACKEND="" OPT_DISTRO="" OPT_SUITE="" OPT_ARCH="" OPT_TARGET=""
-    OPT_NAME="" OPT_MIRROR="" OPT_VARIANT=""
+    OPT_NAME="" OPT_MIRROR="" OPT_VARIANT="" OPT_HOSTNAME=""
     OPT_INCLUDE="" OPT_GROUPS="" OPT_BINARIES="" OPT_EXTRAS=""
     OPT_MANAGER="none" OPT_FORCE=""
     OPT_LAB=""
@@ -1726,6 +1761,7 @@ parse_args() {
             --groups)        OPT_GROUPS="$2"; shift 2 ;;
             --binaries)      OPT_BINARIES="$2"; shift 2 ;;
             --extras)        OPT_EXTRAS="$2"; shift 2 ;;
+            --hostname)      OPT_HOSTNAME="$2"; shift 2 ;;
             --manager)       OPT_MANAGER="$2"; shift 2 ;;
             --lab)           OPT_LAB="$2"; shift 2 ;;
             --output|-o)     OPT_OUTPUT="$2"; shift 2 ;;
