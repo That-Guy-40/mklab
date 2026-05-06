@@ -31,8 +31,10 @@
 name    = "netboot-full"
 backend = "kernel+initrd"
 arch    = "x86_64"
-# 2 GB: full Debian initrd decompresses to ~1 GB; systemd + udev need headroom.
-memory  = "2G"
+# 4 GB: the locales-all package adds ~100 MB to the initrd; during boot the
+# kernel holds both the compressed initrd (~480 MB) and the extracted rootfs
+# (~1.5 GB) in RAM simultaneously.  2 GB is tight enough to OOM-panic.
+memory  = "4G"
 cpus    = 2
 # Update /home/sqs to your $HOME if different (no shell expansion in TOML).
 kernel  = "/home/sqs/netboot/kernel-full"
