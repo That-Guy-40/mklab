@@ -64,11 +64,19 @@ post_commands = [
     # scripts enable systemd units via deb-systemd-helper, which fails in the
     # systemd-less environment debootstrap uses for its second stage.
     "apt-get install -y --no-install-recommends cloud-init",
+    # ds-identify (run during apt install) finds no cloud environment and marks
+    # cloud-init disabled.  Remove the sentinel and pin to NoCloud so it reads
+    # the virtio seed ISO that lab-vm.sh attaches when cloud_init=true.
+    "rm -f /etc/cloud/cloud-init.disabled",
+    "echo 'datasource_list: [ NoCloud, None ]' > /etc/cloud/cloud.cfg.d/90-datasources.cfg",
     # locales-all ships every locale pre-compiled — no locale-gen or
     # update-locale needed.  Write /etc/default/locale directly to avoid
     # the Perl-based update-locale which fails mid-chroot-build.
     "apt-get install -y locales-all",
     "printf 'LANG=en_US.UTF-8\\nLC_ALL=en_US.UTF-8\\n' > /etc/default/locale",
+    # Set root password directly — debootstrap locks root and cloud-init
+    # may not run on first boot if the datasource isn't found in time.
+    "echo 'root:lab' | chpasswd",
     "echo 'PermitRootLogin yes'        >> /etc/ssh/sshd_config",
     "echo 'PasswordAuthentication yes' >> /etc/ssh/sshd_config",
 ]
