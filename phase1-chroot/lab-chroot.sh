@@ -305,6 +305,18 @@ spec_from_cli() {
     [[ -n "${OPT_EXTRAS:-}" ]]   && extras_json=$(printf '%s\n' "$OPT_EXTRAS"   | tr ',' '\n' | jq -R . | jq -s .)
     [[ -n "${OPT_GROUPS:-}" ]]   && groups_json=$(printf '%s\n' "$OPT_GROUPS"   | tr ',' '\n' | jq -R . | jq -s .)
 
+    local post_commands_json='[]' users_json='[]'
+    if [[ ${#OPT_POST_COMMANDS[@]} -gt 0 ]]; then
+        post_commands_json=$(printf '%s\n' "${OPT_POST_COMMANDS[@]}" | jq -R . | jq -s .)
+    fi
+    if [[ ${#OPT_USERS[@]} -gt 0 ]]; then
+        users_json=$(for u in "${OPT_USERS[@]}"; do
+            IFS=: read -r uname upass <<< "$u"
+            jq -n --arg n "$uname" --arg p "$upass" \
+                '{name:$n, password:$p, groups:"", shell:"/bin/bash"}'
+        done | jq -s .)
+    fi
+
     jq -n \
         --arg name        "${OPT_NAME:-}" \
         --arg backend     "${OPT_BACKEND:-}" \
@@ -317,14 +329,17 @@ spec_from_cli() {
         --arg manager     "${OPT_MANAGER:-none}" \
         --arg lab         "${OPT_LAB:-}" \
         --arg init_script "${OPT_INIT_SCRIPT:-}" \
-        --argjson include  "$include_json" \
-        --argjson binaries "$binaries_json" \
-        --argjson extras   "$extras_json" \
-        --argjson groups   "$groups_json" \
+        --argjson include       "$include_json" \
+        --argjson binaries      "$binaries_json" \
+        --argjson extras        "$extras_json" \
+        --argjson groups        "$groups_json" \
+        --argjson post_commands "$post_commands_json" \
+        --argjson users         "$users_json" \
         '{name:$name, backend:$backend, distro:$distro, suite:$suite, arch:$arch,
           target:$target, mirror:$mirror, variant:$variant, manager:$manager, lab:$lab,
           init_script:$init_script,
-          include:$include, binaries:$binaries, extras:$extras, groups:$groups}'
+          include:$include, binaries:$binaries, extras:$extras, groups:$groups,
+          post_commands:$post_commands, users:$users}'
 }
 
 specs_from_config() {
@@ -357,9 +372,11 @@ specs_from_config() {
             binaries:    (.binaries    // []),
             extras:      (.extras      // []),
             groups:      (.groups      // []),
-            init_script: (.init_script // ""),
-            schroot:     (.schroot     // {}),
-            nspawn:      (.nspawn      // {}) }
+            init_script:   (.init_script   // ""),
+            post_commands: (.post_commands // []),
+            users:         (.users         // []),
+            schroot:       (.schroot       // {}),
+            nspawn:        (.nspawn        // {}) }
     '
 }
 
@@ -964,6 +981,8 @@ create_one() {
     esac
 
     apply_init_script "$spec" "$target"
+    apply_users         "$spec" "$target"
+    apply_post_commands "$spec" "$target"
 
     write_manifest "$name" "$target" "$backend" \
         "$(spec_get "$spec" distro)" "$(spec_get "$spec" suite)" \
@@ -1155,6 +1174,41 @@ apply_init_script() {
     else
         _write_init_preset "$flavor" "$target"
     fi
+}
+
+# apply_users SPEC TARGET
+# Create OS users inside TARGET chroot from the spec's users[] array.
+# Each entry: {name, password, groups (comma-sep string), shell}.
+apply_users() {
+    local spec="$1" target="$2"
+    local user_json uname upass ugroups ushell
+    while IFS= read -r user_json; do
+        [[ -z "$user_json" ]] && continue
+        uname="$(jq -r  '.name'             <<<"$user_json")"
+        upass="$(jq -r  '.password  // ""'  <<<"$user_json")"
+        ugroups="$(jq -r '.groups   // ""'  <<<"$user_json")"
+        ushell="$(jq -r  '.shell // "/bin/bash"' <<<"$user_json")"
+        [[ -z "$uname" ]] && continue
+        log_info "users: creating '$uname'"
+        chroot "$target" useradd -m -s "$ushell" "$uname" 2>/dev/null \
+            || log_warn "users: useradd '$uname' returned non-zero (already exists?)"
+        [[ -n "$upass"   ]] && printf '%s:%s\n' "$uname" "$upass" \
+                                    | chroot "$target" chpasswd
+        [[ -n "$ugroups" ]] && chroot "$target" usermod -aG "$ugroups" "$uname"
+    done < <(jq -c '.users[]?' <<<"$spec")
+}
+
+# apply_post_commands SPEC TARGET
+# Run each string in post_commands[] as a bash -c command inside TARGET.
+apply_post_commands() {
+    local spec="$1" target="$2"
+    local i=0 cmd
+    while IFS= read -r cmd; do
+        [[ -z "$cmd" ]] && continue
+        i=$(( i + 1 ))
+        log_info "post_command[$i]: $cmd"
+        chroot "$target" bash -c "$cmd"
+    done < <(jq -r '.post_commands[]?' <<<"$spec")
 }
 
 # ─── Subcommand: export-initrd ──────────────────────────────────────────────
@@ -1597,6 +1651,8 @@ CREATE OPTIONS
   --config   /path/to/chroot.toml          (declarative form; overrides flags)
   --init-script FLAVOR|PATH  write /init at create time: 'busybox', 'systemd', or /host/path
   --init-flavor FLAVOR       same as --init-script for use with export-initrd auto-detect
+  --user        name:pass    create OS user with password (repeatable; groups/shell via TOML)
+  --post-command CMD         run CMD inside the chroot after build (repeatable)
 
 EXPORT-INITRD OPTIONS
   --kernel   PATH    destination for extracted vmlinuz (default: /tmp/<name>-vmlinuz)
@@ -1619,6 +1675,8 @@ EOF
 
 POS_ARGS=()
 EXTRA_ARGS=()
+OPT_POST_COMMANDS=()
+OPT_USERS=()
 
 parse_args() {
     OPT_CONFIG=""
@@ -1631,6 +1689,8 @@ parse_args() {
     OPT_JSON=""
     OPT_INIT_SCRIPT="" OPT_INIT_FLAVOR="" OPT_STRIP_MODULES=""
     OPT_KERNEL_OUT=""
+    OPT_POST_COMMANDS=()
+    OPT_USERS=()
 
     [[ $# -eq 0 ]] && { usage; exit 0; }
 
@@ -1665,6 +1725,8 @@ parse_args() {
             --init-flavor)   OPT_INIT_FLAVOR="$2"; shift 2 ;;
             --strip-modules) OPT_STRIP_MODULES=1; shift ;;
             --kernel)        OPT_KERNEL_OUT="$2"; shift 2 ;;
+            --post-command)  OPT_POST_COMMANDS+=("${2:?--post-command requires a shell command}"); shift 2 ;;
+            --user)          OPT_USERS+=("${2:?--user requires name:password}"); shift 2 ;;
             -h|--help)       usage; exit 0 ;;
             -v|--version)    printf '%s %s\n' "$LAB_PROG" "$LAB_VERSION"; exit 0 ;;
             -*)              die "unknown option: $1 (try --help)" ;;

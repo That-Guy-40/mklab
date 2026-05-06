@@ -48,5 +48,18 @@ include     = [
     "ca-certificates",
     "vim-tiny",
     "less",
+    "cloud-init",        # enables cloud_init=true in vm-netboot-full.toml
+    "sudo",
 ]
 manager     = "none"
+
+# Create a lab user with sudo access and allow SSH password auth.
+# cloud-init will also create this user (with your SSH key) when cloud_init=true.
+users = [
+    {name = "lab", password = "lab", groups = "sudo", shell = "/bin/bash"},
+]
+
+post_commands = [
+    "echo 'PermitRootLogin yes'        >> /etc/ssh/sshd_config",
+    "echo 'PasswordAuthentication yes' >> /etc/ssh/sshd_config",
+]

@@ -1936,6 +1936,16 @@ create_one() {
                     "$pubkey" "$init_flavour")"
                 [[ -z "$append" ]] && append="console=ttyS0 rdinit=/sbin/init"
             fi
+            # Cloud-init seed for custom kernel+initrd images (e.g. full Debian initrd).
+            # Opt-in only: set cloud_init=true in the TOML or --cloud-init on the CLI.
+            # Alpine microvms use dropbear/custom init and never want a cloud-init seed.
+            local cloud_init; cloud_init="$(spec_get "$spec" cloud_init)"
+            if [[ "$cloud_init" == "true" && "$distro" != "alpine" ]]; then
+                seed="$(vm_seed "$name")"
+                log_info "generating cloud-init seed iso (cloud_init=true)"
+                make_seed_iso "$name" "$seed" "$pubkey" "$distro"
+            fi
+
             # Disk selection:
             #   - explicit --image: bake-in backing file (existing v0.1 behaviour)
             #   - persist=SIZE: create a fresh qcow2 at that size for /data

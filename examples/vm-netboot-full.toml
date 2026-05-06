@@ -39,3 +39,9 @@ kernel  = "/home/sqs/netboot/kernel-full"
 initrd  = "/home/sqs/netboot/initrd-full.gz"
 append  = "console=ttyS0 root=/dev/ram0 rw systemd.unified_cgroup_hierarchy=0"
 network = true
+# cloud_init=true: lab-vm.sh generates a NoCloud seed ISO with your SSH pubkey
+# and attaches it as a virtio block device.  cloud-init (installed in the chroot
+# via chroot-netboot-full.toml) reads it on first boot and configures the lab user.
+# The users[] and post_commands[] in the chroot TOML already set up credentials
+# at build time, so SSH works even if cloud-init fails to find the datasource.
+cloud_init = true
