@@ -1200,15 +1200,25 @@ apply_users() {
 
 # apply_post_commands SPEC TARGET
 # Run each string in post_commands[] as a bash -c command inside TARGET.
+# Binds /proc /sys /dev into the chroot first so apt-get and post-install
+# scripts work; unmounts on success or EXIT.
 apply_post_commands() {
     local spec="$1" target="$2"
+    local count
+    count="$(jq '.post_commands | length' <<<"$spec")"
+    [[ "$count" -eq 0 ]] && return 0
+
+    bind_essentials "$target"
+    trap "unbind_essentials '$target'" EXIT
     local i=0 cmd
     while IFS= read -r cmd; do
         [[ -z "$cmd" ]] && continue
         i=$(( i + 1 ))
         log_info "post_command[$i]: $cmd"
-        chroot "$target" bash -c "$cmd"
+        DEBIAN_FRONTEND=noninteractive chroot "$target" bash -c "$cmd"
     done < <(jq -r '.post_commands[]?' <<<"$spec")
+    unbind_essentials "$target"
+    trap - EXIT
 }
 
 # ─── Subcommand: export-initrd ──────────────────────────────────────────────

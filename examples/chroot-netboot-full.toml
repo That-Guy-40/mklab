@@ -48,7 +48,6 @@ include     = [
     "ca-certificates",
     "vim-tiny",
     "less",
-    "cloud-init",        # enables cloud_init=true in vm-netboot-full.toml
     "sudo",
 ]
 manager     = "none"
@@ -60,6 +59,10 @@ users = [
 ]
 
 post_commands = [
+    # cloud-init must be installed after debootstrap completes — its post-install
+    # scripts enable systemd units via deb-systemd-helper, which fails in the
+    # systemd-less environment debootstrap uses for its second stage.
+    "apt-get install -y --no-install-recommends cloud-init",
     "echo 'PermitRootLogin yes'        >> /etc/ssh/sshd_config",
     "echo 'PasswordAuthentication yes' >> /etc/ssh/sshd_config",
 ]
