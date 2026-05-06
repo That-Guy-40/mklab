@@ -1,0 +1,41 @@
+# QEMU direct boot for the full Debian netboot track (systemd PID 1).
+#
+# Uses QEMU -kernel/-initrd to load the full Debian initrd built from
+# chroot-netboot-full.toml. Exports to kernel-full / initrd-full.gz so
+# the minimal track (kernel / initrd.gz) remains intact alongside.
+#
+# The full initrd decompresses to ~1 GB in RAM; this VM is given 2 GB so
+# the kernel has headroom to unpack and run systemd without OOM.
+#
+# Workflow:
+# 1. Build the full chroot (needs root, ~5-10 min):
+#    sudo phase1-chroot/lab-chroot.sh create --config examples/chroot-netboot-full.toml
+#
+# 2. Export kernel + initrd to -full paths (needs root):
+#    sudo phase1-chroot/lab-chroot.sh export-initrd netboot-full \
+#        --kernel ~/netboot/kernel-full \
+#        --output ~/netboot/initrd-full.gz
+#
+# 3. Create and start the VM (no sudo needed):
+#    phase2-qemu-vm/lab-vm.sh create --config examples/vm-netboot-full.toml
+#    phase2-qemu-vm/lab-vm.sh start  netboot-full
+#
+# Expect on the serial console: systemd boot messages, then a login prompt.
+# Default root password: none (press Enter). SSH is available if dhcpcd5
+# obtained an address (check: ip addr show inside the VM).
+#
+# See examples/chroot-netboot-full.toml for the package list.
+# See examples/vm-netboot-direct.toml for the minimal (busybox) equivalent.
+
+[[vm]]
+name    = "netboot-full"
+backend = "kernel+initrd"
+arch    = "x86_64"
+# 2 GB: full Debian initrd decompresses to ~1 GB; systemd + udev need headroom.
+memory  = "2G"
+cpus    = 2
+# Update /home/sqs to your $HOME if different (no shell expansion in TOML).
+kernel  = "/home/sqs/netboot/kernel-full"
+initrd  = "/home/sqs/netboot/initrd-full.gz"
+append  = "console=ttyS0 root=/dev/ram0 rw systemd.unified_cgroup_hierarchy=0"
+network = true
