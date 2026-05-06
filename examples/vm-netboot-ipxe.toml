@@ -1,0 +1,53 @@
+# QEMU boots from an iPXE disk image, which then fetches kernel + initrd from
+# the nginx container over HTTP — simulating what real hardware does when
+# booting from an iPXE USB stick or network card ROM.
+#
+# How the chain works:
+#   QEMU boots ipxe.qcow2 → iPXE runs boot.ipxe → fetches kernel + initrd
+#   from http://10.0.2.2:8181/ → boots the netboot initrd.
+#
+#   10.0.2.2 is the QEMU slirp host address: the guest's view of the host
+#   loopback.  Traffic on port 8181 reaches the nginx container started by
+#   lab-podman.sh (or lab-docker.sh).
+#   Port 8181 is used because 8080 is occupied by SABnzbd on this host.
+#   To use a different port: rebuild with --server http://10.0.2.2:<port> and
+#   update the ports = [] line in podman-netboot-server.toml to match.
+#
+# cloud_init = false: the iPXE image is not a cloud image and has no
+#   cloud-init datasource; setting this to false prevents lab-vm.sh from
+#   injecting a cloud-init ISO that would confuse the boot sequence.
+#
+# Full dependency chain (run in order):
+# 1. Set up the artifact directory:
+#    netboot/setup-netboot-dir.sh
+#
+# 2. Build the chroot and export the initrd:
+#    sudo lab-chroot.sh create       --config examples/chroot-netboot-minimal.toml
+#    sudo lab-chroot.sh export-initrd netboot-minimal \
+#        --kernel ~/netboot/kernel --output ~/netboot/initrd.gz
+#
+# 3. Build the iPXE disk image pointing at the local HTTP server:
+#    netboot/build-ipxe.sh --server http://10.0.2.2:8181
+#    (port must match the ports = [] value in podman-netboot-server.toml)
+#
+# 4. Start the nginx container:
+#    lab-podman.sh up --config examples/podman-netboot-server.toml
+#
+# 5. Create and start the VM (no sudo needed — disk-image backend is rootless):
+#    phase2-qemu-vm/lab-vm.sh create --config examples/vm-netboot-ipxe.toml
+#    phase2-qemu-vm/lab-vm.sh start netboot-ipxe
+#
+# For real hardware: flash ipxe.usb to a USB stick, change --server to your
+# actual server URL, and boot the target machine from USB:
+#    dd if=~/netboot/ipxe.usb of=/dev/sdX bs=4M status=progress
+
+[[vm]]
+name       = "netboot-ipxe"
+backend    = "disk-image"
+# Update /home/sqs to your $HOME if different (no shell expansion in TOML).
+image      = "/home/sqs/netboot/ipxe.qcow2"
+arch       = "x86_64"
+memory     = "512M"
+cpus       = 1
+network    = true
+cloud_init = false

@@ -1,0 +1,39 @@
+# Minimal Debian bookworm chroot for fast netboot iteration.
+# The chroot becomes the initrd rootfs: busybox provides /bin/sh and all
+# standard utils; linux-image-amd64 supplies the kernel that export-initrd
+# copies to /srv/netboot/kernel.
+#
+# init_script = "busybox"  →  export-initrd auto-writes a /init that execs
+#   busybox sh. No manual /init editing step is needed.
+#
+# Workflow:
+# 1. Build the chroot (needs root, ~1-2 min):
+#    sudo lab-chroot.sh create --config examples/chroot-netboot-minimal.toml
+#
+# 2. Export kernel + initrd (needs root):
+#    sudo lab-chroot.sh export-initrd netboot-minimal \
+#        --kernel  ~/netboot/kernel \
+#        --output  ~/netboot/initrd.gz
+#
+# 3. Serve the artifacts:
+#    See examples/podman-netboot-server.toml
+#
+# 4. Boot a VM directly (no iPXE needed) or via iPXE chainloading:
+#    See examples/vm-netboot-direct.toml
+#    See examples/vm-netboot-ipxe.toml
+
+[[chroot]]
+name        = "netboot-minimal"
+backend     = "debootstrap"
+distro      = "debian"
+suite       = "bookworm"
+arch        = "x86_64"
+target      = "/var/chroots/netboot-minimal"
+variant     = "minbase"
+init_script = "busybox"
+include     = [
+    "linux-image-amd64",
+    "busybox-static",
+    "kmod",
+]
+manager     = "none"

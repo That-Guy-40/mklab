@@ -1,0 +1,43 @@
+# Rootless nginx serving kernel + initrd + iPXE script over HTTP on port 8080.
+#
+# Workflow:
+# 1. Set up the ~/netboot artifact directory (once):
+#    netboot/setup-netboot-dir.sh
+#
+# 2. Build and export the chroot initrd (see chroot-netboot-minimal.toml):
+#    sudo lab-chroot.sh create --config examples/chroot-netboot-minimal.toml
+#    sudo lab-chroot.sh export-initrd netboot-minimal \
+#        --kernel ~/netboot/kernel --output ~/netboot/initrd.gz
+#
+# 3. Start the server:
+#    lab-podman.sh up --config examples/podman-netboot-server.toml
+#
+# 4. Verify:
+#    curl -sI http://localhost:8181/kernel        # should return 200
+#    curl -s  http://localhost:8181/boot.ipxe     # should show iPXE script
+#
+# MIME type note: iPXE clients check Content-Type before executing a fetched
+# script.  The ipxe-mime.conf bind-mount adds the application/x-ipxe type so
+# that boot.ipxe is served with the correct Content-Type header; without it,
+# iPXE will refuse to chainload the script.
+#
+# Boot simulation:
+#    See examples/vm-netboot-ipxe.toml  (QEMU + iPXE disk image)
+#    See examples/vm-netboot-direct.toml (QEMU direct kernel, no iPXE)
+
+[lab]
+name        = "netboot-srv"
+description = "Rootless HTTP server for netboot artifacts (kernel + initrd + iPXE script)"
+tags        = ["netboot", "http", "ipxe"]
+
+[[service]]
+name    = "http"
+engine  = "podman"
+image   = "docker.io/library/nginx:alpine"
+ports   = ["8181:80"]
+volumes = [
+    # Update /home/sqs to your $HOME if different (no shell expansion in TOML).
+    # Set LAB_NETBOOT_DIR to override the default ~/netboot location.
+    "/home/sqs/netboot:/usr/share/nginx/html:ro",
+    "/home/sqs/.config/lab-netboot/ipxe-mime.conf:/etc/nginx/conf.d/ipxe-mime.conf:ro",
+]

@@ -1,0 +1,52 @@
+# Full Debian bookworm chroot — Kenneth Finnegan's HTTP netboot approach.
+# Reference: https://blog.thelifeofkenneth.com/2020/03/booting-linux-over-http.html
+#
+# systemd is PID 1; udev handles device discovery; dhcpcd5 acquires DHCP at
+# boot.  A full apt database and SSH server are included for post-boot
+# exploration without needing a serial console.
+#
+# WARNING: the resulting initrd is ~300-500 MB (uncompressed).  The boot
+# target (VM or physical machine) needs ≥1 GB RAM because the entire rootfs
+# is unpacked into RAM before the kernel hands off to /sbin/init.
+#
+# init_script = "systemd"  →  export-initrd writes /init → /sbin/init.
+#
+# Workflow:
+# 1. Build the chroot (needs root, ~5-10 min for all packages):
+#    sudo lab-chroot.sh create --config examples/chroot-netboot-full.toml
+#
+# 2. Export kernel + initrd:
+#    sudo lab-chroot.sh export-initrd netboot-full \
+#        --kernel  ~/netboot/kernel \
+#        --output  ~/netboot/initrd.gz
+#
+# 3. Serve + boot — same as the minimal variant:
+#    See examples/podman-netboot-server.toml
+#    See examples/vm-netboot-direct.toml
+#    See examples/vm-netboot-ipxe.toml
+
+[[chroot]]
+name        = "netboot-full"
+backend     = "debootstrap"
+distro      = "debian"
+suite       = "bookworm"
+arch        = "x86_64"
+target      = "/var/chroots/netboot-full"
+variant     = "minbase"
+init_script = "systemd"
+include     = [
+    "linux-image-amd64",
+    "systemd",
+    "systemd-sysv",
+    "udev",
+    "iproute2",
+    "dhcpcd5",
+    "iputils-ping",
+    "curl",
+    "wget",
+    "openssh-server",
+    "ca-certificates",
+    "vim-tiny",
+    "less",
+]
+manager     = "none"

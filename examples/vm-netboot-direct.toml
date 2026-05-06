@@ -1,0 +1,36 @@
+# QEMU boot using explicit -kernel/-initrd flags — no iPXE needed.
+#
+# This is the fastest way to validate your initrd in isolation.  QEMU's
+# -kernel/-initrd flags do exactly what iPXE does after downloading the files:
+# they load the kernel and initrd into memory and jump to the kernel entry
+# point.  Skipping iPXE removes one moving part and shortens the debug loop.
+#
+# Use this to confirm the initrd boots correctly before wiring up the full
+# nginx → iPXE chain in vm-netboot-ipxe.toml.
+#
+# Prerequisite: export-initrd must have run first:
+#    sudo lab-chroot.sh export-initrd netboot-minimal \
+#        --kernel ~/netboot/kernel --output ~/netboot/initrd.gz
+#
+# Workflow (no sudo needed — kernel+initrd backend is rootless):
+# 1. Create the VM record:
+#    phase2-qemu-vm/lab-vm.sh create --config examples/vm-netboot-direct.toml
+#
+# 2. Start and attach to the serial console:
+#    phase2-qemu-vm/lab-vm.sh start netboot-direct
+#
+# No nginx container or iPXE disk image is needed for this path.
+# See examples/vm-netboot-ipxe.toml for the full iPXE simulation.
+
+[[vm]]
+name    = "netboot-direct"
+backend = "kernel+initrd"
+arch    = "x86_64"
+memory  = "512M"
+cpus    = 1
+microvm = true
+# Update /home/sqs to your $HOME if different (no shell expansion in TOML).
+kernel  = "/home/sqs/netboot/kernel"
+initrd  = "/home/sqs/netboot/initrd.gz"
+append  = "console=ttyS0 root=/dev/ram0 rw"
+network = true

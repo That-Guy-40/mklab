@@ -161,6 +161,48 @@ Drop `--json` for the same data rendered as `[manifest]` and `[live]`
 sections — readable at a glance, useful for `grep`. The Phase 6 TUI's
 chroot detail panel renders straight from the JSON form.
 
+### `export-initrd` — package any chroot as an HTTP-netboot initrd
+
+The new `export-initrd` verb converts a Phase 1 chroot into a kernel +
+cpio.gz initrd pair that iPXE (or QEMU `-kernel`/`-initrd`) can boot
+directly over HTTP — no disk image, no bootloader, no installer.
+
+**`init_script` TOML field** controls what runs as PID 1:
+
+| Value | What ships | Size |
+|---|---|---|
+| `"busybox"` | BusyBox `init` + minimal `/etc/inittab` | ~150 MB initrd |
+| `"systemd"` | Full systemd init inside the chroot | ~400 MB initrd |
+| `/host/path` | Copies the named file to `/init` verbatim | your call |
+
+If `init_script` is unset and `/init` doesn't already exist in the
+chroot, the verb auto-detects: prefers systemd if `systemd` is
+installed, otherwise busybox.
+
+**`--strip-modules`** drops `/lib/modules` from the cpio archive —
+useful when you're booting with the host kernel's modules or want to
+shave ~50–100 MB from the initrd.
+
+```bash
+sudo lab-chroot.sh create --config examples/chroot-netboot-minimal.toml
+sudo lab-chroot.sh export-initrd netboot-minimal \
+    --kernel /srv/netboot/kernel \
+    --output /srv/netboot/initrd.gz
+# → /srv/netboot/kernel + /srv/netboot/initrd.gz, both readable by non-root
+```
+
+The two initrd tracks:
+
+- **Minimal** (`chroot-netboot-minimal.toml`): busybox init, ~150 MB
+  initrd, boots in seconds — ideal for network rescue, PXE testing, or
+  a live-boot scratchpad.
+- **Full Debian** (`chroot-netboot-full.toml`): systemd PID 1, full
+  Debian userland (Kenneth's approach), ~400 MB initrd — same boot
+  experience as a real Debian install, served entirely over HTTP.
+
+Boot it with Phase 2 (`vm-netboot-direct.toml`) or serve it via
+Phase 4 (`podman-netboot-server.toml`).
+
 ### `export-tarball` — the cross-phase bridge
 
 The clean, rootless-friendly handoff to Phase 3/4/5. Tarballs the chroot
@@ -192,7 +234,13 @@ Phase 2's `from-chroot` backend takes a Phase 1 tree (with a kernel and
 initrd installed inside it) and packs it into a bootable BIOS+MBR+ext4
 qcow2. The chroot is the source of truth for the userland; Phase 2
 supplies the disk geometry, bootloader, and machine config. See
-`examples/vm-from-chroot-debian.toml`:
+`examples/vm-from-chroot-debian.toml`.
+
+Phase 2 also supports the `export-initrd` → kernel+initrd boot path:
+pass the kernel and initrd produced by `export-initrd` directly to
+`vm-netboot-direct.toml` (QEMU `-kernel`/`-initrd`) and skip the disk
+image entirely. See [Phase 2 (VMs)](../phase2-qemu-vm/SHOWCASE.md) for
+the full iPXE simulation walkthrough.
 
 ```toml
 [[vm]]

@@ -1329,13 +1329,15 @@ spec_from_cli() {
         --arg lab       "${OPT_LAB:-}" \
         --arg chroot    "${OPT_CHROOT:-}" \
         --arg disk_size "${OPT_DISK_SIZE:-}" \
+        --arg cloud_init "${OPT_CLOUD_INIT:-true}" \
         '{name:$name, backend:$backend, distro:$distro, suite:$suite, arch:$arch,
           memory:$memory, cpus:($cpus|tonumber), microvm:($microvm=="true"),
           image:$image, kernel:$kernel, initrd:$initrd, append:$append,
           ssh_port:($ssh_port|tonumber), pubkey:$pubkey,
           network:($network=="true"), ssh:($ssh=="true"), persist:$persist,
           init_flavour:$init_flavour, lab:$lab,
-          chroot:$chroot, disk_size:$disk_size}'
+          chroot:$chroot, disk_size:$disk_size,
+          cloud_init:$cloud_init}'
 }
 
 specs_from_config() {
@@ -1368,6 +1370,7 @@ specs_from_config() {
             init_flavour: (.init_flavour // "busybox"),
             chroot:    (.chroot    // ""),
             disk_size: (.disk_size // ""),
+            cloud_init: (if .cloud_init == false then "false" else "true" end),
             lab:     ( if $cli_lab != "" then $cli_lab
                        else ($root.lab.name // "") end ) }
     '
@@ -1881,9 +1884,12 @@ create_one() {
             # Kali's prebuilt QEMU images don't ship cloud-init, so a seed
             # ISO would be silently ignored.  Skip it and signal that
             # first-boot config is manual (console login as kali/kali).
+            local cloud_init; cloud_init="$(spec_get "$spec" cloud_init)"
             if [[ "$distro" == "kali" ]]; then
                 log_info "distro=kali: skipping cloud-init seed (image has no cloud-init)"
                 ssh_user="kali"
+            elif [[ "$cloud_init" == "false" ]]; then
+                log_info "cloud_init=false: skipping cloud-init seed"
             else
                 seed="$(vm_seed "$name")"
                 log_info "generating cloud-init seed iso"
@@ -2552,6 +2558,7 @@ CREATE OPTIONS
   --disk-size SIZE                       (from-chroot backend; default 4G)
   --ssh-port  <port>                     (default: auto-allocate from 2222)
   --pubkey    /path/to/id_rsa.pub        (default: invoking user's ~/.ssh/*.pub)
+  --no-cloud-init                        (skip cloud-init NoCloud seeding; for bare/iPXE disk images)
   --config    /path/to/vm.toml
 
 ENVIRONMENT
@@ -2578,6 +2585,7 @@ parse_args() {
     OPT_LAB=""
     OPT_CHROOT="" OPT_DISK_SIZE=""
     OPT_JSON=""
+    OPT_CLOUD_INIT="true"
 
     [[ $# -eq 0 ]] && { usage; exit 0; }
     SUBCMD="$1"; shift
@@ -2609,6 +2617,7 @@ parse_args() {
             --lab)          OPT_LAB="$2"; shift 2 ;;
             --chroot)       OPT_CHROOT="$2"; shift 2 ;;
             --disk-size)    OPT_DISK_SIZE="$2"; shift 2 ;;
+            --no-cloud-init) OPT_CLOUD_INIT="false"; shift ;;
             --json)         OPT_JSON=1; shift ;;
             -h|--help)      usage; exit 0 ;;
             -v|--version)   printf '%s %s\n' "$LAB_PROG" "$LAB_VERSION"; exit 0 ;;
