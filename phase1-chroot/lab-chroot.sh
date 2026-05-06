@@ -1258,7 +1258,7 @@ apply_post_commands() {
         [[ -z "$cmd" ]] && continue
         i=$(( i + 1 ))
         log_info "post_command[$i]: $cmd"
-        DEBIAN_FRONTEND=noninteractive chroot "$target" bash -c "$cmd"
+        DEBIAN_FRONTEND=noninteractive LC_ALL=C chroot "$target" bash -c "$cmd"
     done < <(jq -r '.post_commands[]?' <<<"$spec")
     unbind_essentials "$target"
     trap - EXIT
