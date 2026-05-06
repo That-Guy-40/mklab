@@ -1158,6 +1158,15 @@ SYSTEMD_INIT
             mkdir -p "$target/etc/systemd/system/serial-getty@ttyS0.service.d"
             printf '[Service]\nEnvironment=TERM=linux\n' \
                 > "$target/etc/systemd/system/serial-getty@ttyS0.service.d/term.conf"
+            # SSH clients forward their own $TERM (e.g. xterm-ghostty), which
+            # may not exist in this VM's terminfo database.  Fall back to
+            # xterm-256color so interactive tools (less, vi, …) work without
+            # manual TERM overrides.  No-op when $TERM is already known.
+            cat > "$target/etc/profile.d/term-fallback.sh" << 'TERM_FALLBACK'
+#!/bin/sh
+[ -n "${TERM:-}" ] && ! infocmp "$TERM" >/dev/null 2>&1 && export TERM=xterm-256color
+TERM_FALLBACK
+            chmod 644 "$target/etc/profile.d/term-fallback.sh"
             log_info "init_script: wrote systemd /init"
             ;;
         *)

@@ -50,6 +50,7 @@ include     = [
     "vim-tiny",
     "less",
     "sudo",
+    "locales",
 ]
 manager     = "none"
 
@@ -64,6 +65,10 @@ post_commands = [
     # scripts enable systemd units via deb-systemd-helper, which fails in the
     # systemd-less environment debootstrap uses for its second stage.
     "apt-get install -y --no-install-recommends cloud-init",
+    # Generate en_US.UTF-8 so SSH locale forwarding (LC_CTYPE, LC_MESSAGES)
+    # doesn't produce "invalid locale" warnings.
+    "locale-gen en_US.UTF-8",
+    "update-locale LANG=en_US.UTF-8",
     "echo 'PermitRootLogin yes'        >> /etc/ssh/sshd_config",
     "echo 'PasswordAuthentication yes' >> /etc/ssh/sshd_config",
 ]
