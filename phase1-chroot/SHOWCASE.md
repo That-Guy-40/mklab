@@ -184,11 +184,11 @@ useful when you're booting with the host kernel's modules or want to
 shave ~50–100 MB from the initrd.
 
 ```bash
-sudo lab-chroot.sh create --config examples/chroot-netboot-minimal.toml
-sudo lab-chroot.sh export-initrd netboot-minimal \
-    --kernel /srv/netboot/kernel \
-    --output /srv/netboot/initrd.gz
-# → /srv/netboot/kernel + /srv/netboot/initrd.gz, both readable by non-root
+sudo phase1-chroot/lab-chroot.sh create --config examples/chroot-netboot-minimal.toml
+sudo phase1-chroot/lab-chroot.sh export-initrd netboot-minimal \
+    --kernel ~/netboot/kernel \
+    --output ~/netboot/initrd.gz
+# → ~/netboot/kernel + ~/netboot/initrd.gz, both readable by non-root
 ```
 
 The two initrd tracks:

@@ -208,7 +208,7 @@ access requires `sudo`), but **serving them needs no root at all** —
 a rootless Podman nginx container handles that. This makes the
 separation of concerns clean: privileged build, unprivileged serve.
 
-The `examples/podman-netboot-server.toml` mounts `/srv/netboot/` (the
+The `examples/podman-netboot-server.toml` mounts `~/netboot/` (the
 artifact directory) read-only into the container and side-loads
 `ipxe-mime.conf` so nginx returns `application/x-ipxe` for `.ipxe`
 files — the content-type iPXE firmware requires before executing a
@@ -217,27 +217,27 @@ chainboot script.
 Full example flow:
 
 ```bash
-# One-time setup (root needed for /srv/ and /etc/):
-sudo netboot/setup-netboot-dir.sh
+# One-time setup (no root needed — artifacts live in ~/netboot):
+netboot/setup-netboot-dir.sh
 
 # Build and export the initrd (root needed for chroot access):
 sudo phase1-chroot/lab-chroot.sh create --config examples/chroot-netboot-minimal.toml
 sudo phase1-chroot/lab-chroot.sh export-initrd netboot-minimal \
-    --kernel /srv/netboot/kernel --output /srv/netboot/initrd.gz
+    --kernel ~/netboot/kernel --output ~/netboot/initrd.gz
 
 # Build iPXE (Docker, no root):
-netboot/build-ipxe.sh --server http://10.0.2.2:8080 --output-dir /srv/netboot
+netboot/build-ipxe.sh --server http://10.0.2.2:8181
 
 # Serve (rootless!):
 phase4-podman/lab-podman.sh up --config examples/podman-netboot-server.toml
-curl -s http://localhost:8080/boot.ipxe    # the embedded iPXE chainboot script
-curl -I http://localhost:8080/kernel       # the Debian kernel
-curl -I http://localhost:8080/initrd.gz    # the cpio.gz initrd
+curl -s http://localhost:8181/boot.ipxe    # the embedded iPXE chainboot script
+curl -I http://localhost:8181/kernel       # the Debian kernel
+curl -I http://localhost:8181/initrd.gz    # the cpio.gz initrd
 ```
 
 Phase 2's `netboot-ipxe` VM boots from `ipxe.qcow2`, receives a DHCP
-lease from QEMU slirp, and then hits `http://10.0.2.2:8080/` — that
-address resolves to the host's localhost port 8080, which is exactly
+lease from QEMU slirp, and then hits `http://10.0.2.2:8181/` — that
+address resolves to the host's loopback port 8181, which is exactly
 this Podman nginx server. The guest downloads kernel + initrd over
 HTTP and boots them in RAM, no disk image needed.
 
