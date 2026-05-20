@@ -1,57 +1,60 @@
-# Unified cross-phase netboot lab — one TOML drives Phase 1 (chroot),
-# Phase 4 (rootless nginx), and Phase 2 (iPXE QEMU VM).
+# Unified cross-phase netboot lab — one TOML for the full Debian netboot
+# pipeline: build a busybox initrd (Phase 1), serve it over HTTP (Phase 4),
+# and direct-boot it in QEMU (Phase 2).
 #
 # Each phase tool reads only the blocks it owns and silently ignores the rest:
 #   lab-chroot.sh  reads [[chroot]]
 #   lab-podman.sh  reads [[service]] where engine="podman"
 #   lab-vm.sh      reads [[vm]]
 #
-# Phase 6's TUI will show all three resources together under the "netboot" lab.
+# Phase 6's TUI topology screen will show all three resources together under
+# the "netboot" lab group — a cross-phase view of the entire pipeline.
+#
+# NOTE: There is a manual packaging step between Phase 1 and serving that
+# cannot be automated here (it requires root and produces files that live
+# outside the phase state dirs):
+#   cd /var/chroots/netboot-busybox
+#   sudo find . | cpio -H newc -o | gzip -9 -n > ~/netboot/initrd.gz
+#   sudo cp boot/vmlinuz-* ~/netboot/kernel
 #
 # Full workflow (run in order):
-# 1. Set up the artifact directory (once):
-#    netboot/setup-netboot-dir.sh
 #
-# 2. Build the chroot rootfs (Phase 1, needs root, ~1-2 min):
-#    sudo lab-chroot.sh create --config examples/netboot-lab.toml
+# 1. Build the chroot rootfs (Phase 1, needs root, ~2-3 min):
+#    sudo phase1-chroot/lab-chroot.sh create --config examples/netboot-lab.toml
 #
-# 3. Export kernel + initrd from the chroot (Phase 1, needs root):
-#    sudo lab-chroot.sh export-initrd netboot-minimal \
-#        --kernel ~/netboot/kernel --output ~/netboot/initrd.gz
+# 2. Package the kernel + initrd (manual step — see NOTE above, needs root).
 #
-# 4. Build the iPXE disk image:
-#    netboot/build-ipxe.sh --server http://10.0.2.2:8181
-#    (port must match the ports = [] field in [[service]] below)
-#
-# 5. Bring up the nginx server (Phase 4) and the iPXE VM (Phase 2):
+# 3. Serve the artifacts over HTTP (Phase 4, rootless):
 #    phase4-podman/lab-podman.sh up --config examples/netboot-lab.toml
-#    phase2-qemu-vm/lab-vm.sh create --config examples/netboot-lab.toml
-#    phase2-qemu-vm/lab-vm.sh start  netboot-ipxe
 #
-# Tear down:
-#    lab-vm.sh stop    netboot-ipxe
-#    lab-podman.sh down --lab netboot
-#    sudo lab-chroot.sh destroy netboot-minimal --force
+# 4. Boot in QEMU via direct kernel+initrd (Phase 2, rootless):
+#    phase2-qemu-vm/lab-vm.sh create --config examples/netboot-lab.toml
+#    phase2-qemu-vm/lab-vm.sh start  netboot-direct
 
 [lab]
 name        = "netboot"
-description = "HTTP netboot pipeline: debootstrap initrd → rootless nginx → QEMU iPXE simulation"
-tags        = ["netboot", "ipxe", "http", "initrd"]
+description = "Debian busybox netboot pipeline: debootstrap initrd → rootless nginx → QEMU direct kernel+initrd boot"
+tags        = ["netboot", "busybox", "http", "initrd"]
 
-# ─── Phase 1: build the initrd rootfs ────────────────────────────────────────
+# ─── Phase 1: busybox initrd rootfs (kernel + networking tools) ───────────────
+# Produces /var/chroots/netboot-busybox.  After build, package manually:
+#   cd /var/chroots/netboot-busybox
+#   sudo find . | cpio -H newc -o | gzip -9 -n > ~/netboot/initrd.gz
+#   sudo cp boot/vmlinuz-* ~/netboot/kernel
 [[chroot]]
-name        = "netboot-minimal"
+name        = "netboot-busybox"
+hostname    = "netboot-busybox"
 backend     = "debootstrap"
 distro      = "debian"
 suite       = "bookworm"
 arch        = "x86_64"
-target      = "/var/chroots/netboot-minimal"
+target      = "/var/chroots/netboot-busybox"
 variant     = "minbase"
 init_script = "busybox"
-include     = ["linux-image-amd64", "busybox-static", "kmod"]
+include     = ["linux-image-amd64", "busybox-static", "iproute2", "iputils-ping", "curl", "kmod"]
 manager     = "none"
 
-# ─── Phase 4: rootless nginx serving the artifacts ───────────────────────────
+# ─── Phase 4: rootless nginx serving kernel + initrd over HTTP ───────────────
 [[service]]
 name    = "http"
 engine  = "podman"
@@ -59,22 +62,23 @@ image   = "docker.io/library/nginx:alpine"
 ports   = ["8181:80"]
 volumes = [
     # Update /home/sqs to your $HOME if different (no shell expansion in TOML).
-    # Set LAB_NETBOOT_DIR / LAB_NETBOOT_CONF env vars to use different paths.
+    # Set LAB_NETBOOT_DIR to override the default ~/netboot location.
     "/home/sqs/netboot:/usr/share/nginx/html:ro",
-    # Port 8181 is used here; 8080 is the default but may conflict with other services
-    # (e.g. SABnzbd).  If you change this port, re-run build-ipxe.sh with the
-    # matching --server URL (e.g. --server http://10.0.2.2:8181).
     "/home/sqs/.config/lab-netboot/ipxe-mime.conf:/etc/nginx/conf.d/ipxe-mime.conf:ro",
 ]
 
-# ─── Phase 2: QEMU boots from the iPXE disk image ────────────────────────────
+# ─── Phase 2: QEMU direct-boot using -kernel/-initrd (no iPXE needed) ────────
+# Boots the exported artifacts directly — fastest way to validate the initrd.
+# No nginx container or iPXE disk image is required for this path.
 [[vm]]
-name       = "netboot-ipxe"
-backend    = "disk-image"
+name    = "netboot-direct"
+backend = "kernel+initrd"
+arch    = "x86_64"
+memory  = "512M"
+cpus    = 1
+microvm = true
 # Update /home/sqs to your $HOME if different (no shell expansion in TOML).
-image      = "/home/sqs/netboot/ipxe.qcow2"
-arch       = "x86_64"
-memory     = "512M"
-cpus       = 1
-network    = true
-cloud_init = false
+kernel  = "/home/sqs/netboot/kernel"
+initrd  = "/home/sqs/netboot/initrd.gz"
+append  = "console=ttyS0 root=/dev/ram0 rw"
+network = true

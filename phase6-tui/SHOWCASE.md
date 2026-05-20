@@ -244,24 +244,28 @@ six rows across five backends. The "single pane of glass" the
 phase-script architecture was designed to deliver — this is where it
 becomes visible.
 
-### The netboot lab in the TUI
+### The netboot lab in the TUI — busybox direct-boot pipeline
 
-`examples/netboot-lab.toml` is the cross-phase TOML for the netboot
-pipeline. Load it in the topology screen and the TUI groups everything
-under one `🌐 netboot` label:
+[`examples/netboot-lab.toml`](../examples/netboot-lab.toml) is a unified
+cross-phase TOML for the full Debian netboot pipeline: a busybox initrd
+chroot ([Phase 1](../phase1-chroot/SHOWCASE.md)), a rootless nginx server
+([Phase 4](../phase4-podman/SHOWCASE.md)), and a QEMU direct-boot VM
+([Phase 2](../phase2-qemu-vm/SHOWCASE.md)) — three phases, one file.
+
+Load it in the topology screen and the TUI groups everything under one
+`🌐 netboot` label:
 
 ```text
 🌐 netboot
   chroot (1)
-    netboot-minimal  ● built    [chroot]
+    netboot-busybox  ● built    [chroot]
   podman (1)
     http             ● running  [container]
   vm (1)
-    netboot-ipxe     ● running  [vm]
+    netboot-direct   ● running  [vm]
 ```
 
-Pressing `u` on the topology screen runs the phases in dependency
-order:
+Pressing `u` on the topology screen runs the phases in dependency order:
 
 ```
 → phase chroot: up --config netboot-lab.toml
@@ -269,10 +273,18 @@ order:
 → phase vm:     up --config netboot-lab.toml
 ```
 
-The manual `export-initrd` + `build-ipxe.sh` steps (which require
-`sudo` and a one-time Docker build) still happen outside the TUI — the
-TUI orchestrates the phase scripts, not the setup helpers. Once the
-artifacts are in `/srv/netboot/`, the TUI handles the rest.
+There is one manual step between Phase 1 and Phase 4 that the TUI cannot
+automate: packaging the chroot into a cpio+gzip initrd (it requires root
+and produces files outside the phase state dirs). The plan pane surfaces
+this with a note in the Phase 1 output; the bash quick-start in
+[`README.md`](../README.md) shows the exact commands. Once the kernel and
+initrd are in `~/netboot/`, the TUI handles the rest.
+
+The `backend = "kernel+initrd"` VM entry skips the iPXE chain entirely —
+QEMU's `-kernel`/`-initrd` flags load the exported artifacts directly into
+memory and jump to the kernel entry point. This makes `netboot-lab.toml`
+the fastest path to validating a new initrd before wiring up the full
+nginx → iPXE chain.
 
 ## What's deferred to v0.2
 
