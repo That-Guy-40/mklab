@@ -1,0 +1,46 @@
+# Zero-touch AlmaLinux installer target.
+#
+# Boot-loop design:
+#   disk0 = blank install target (bootindex=0) — BIOS tries it first; skips when
+#           empty on the first boot; becomes the bootable AlmaLinux system after
+#           Anaconda finishes and reboots.
+#   disk1 = ipxe.qcow2 ROM (bootindex=1) — fallback on the first boot only;
+#           chainloads Anaconda which installs to disk0; never reached again once
+#           disk0 is bootable.
+#
+# Result: create + start, walk away, come back to a running AlmaLinux system.
+# No manual disk swap or second VM definition needed.
+#
+# Prereqs (run in order):
+#   1. netboot/fetch-almalinux-installer.sh \
+#          --mirror https://repo.almalinux.org/almalinux --release 9 --arch x86_64
+#   2. netboot/gen-almalinux-ks.sh --mac 52:54:00:AL:MA:01
+#          # -> ~/netboot/ks/52-54-00-al-ma-01.ks
+#   3. netboot/build-ipxe.sh --server http://10.0.2.2:8181 \
+#          --kernel-path /vmlinuz --initrd-path /initrd.img \
+#          --append 'inst.repo=https://repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/ inst.ks=http://10.0.2.2:8181/ks/{MAC}.ks inst.text console=ttyS0 ip=dhcp'
+#          # {MAC} is a literal token replaced at build time; iPXE expands it to
+#          # the NIC's MAC at runtime (e.g. 52-54-00-al-ma-01).
+#   4. phase4-podman/lab-podman.sh up --config examples/podman-netboot-server.toml
+#
+# Then:
+#   phase2-qemu-vm/lab-vm.sh create --config examples/vm-almalinux-pxe-install.toml
+#   phase2-qemu-vm/lab-vm.sh start  almalinux-pxe-install   # walk away; comes back installed
+#   phase2-qemu-vm/lab-vm.sh ssh    almalinux-pxe-install   # login: lab / lab
+#
+# Note: cloud_init = false because the iPXE ROM has no cloud-init datasource;
+# Anaconda provisions root and the lab user directly from the kickstart.
+#
+# Update /home/sqs to your $HOME if different (no shell expansion in TOML).
+
+[[vm]]
+name           = "almalinux-pxe-install"
+backend        = "disk-image"
+image          = "/home/sqs/netboot/ipxe.qcow2"  # iPXE ROM (bootindex=1, fallback)
+install_target = "20G"                             # blank disk (bootindex=0, install dest)
+mac            = "52:54:00:AL:MA:01"               # pinned so the per-MAC kickstart matches
+arch           = "x86_64"
+memory         = "2560M"                           # Anaconda needs ~2 GB+
+cpus           = 2
+network        = true
+cloud_init     = false                             # Anaconda provisions directly; no datasource

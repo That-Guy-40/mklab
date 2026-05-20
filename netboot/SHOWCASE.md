@@ -270,3 +270,116 @@ Both must match — the `--server` URL is baked into `boot.ipxe` at compile time
   [Phase 2 (VMs)](../phase2-qemu-vm/SHOWCASE.md) ·
   [Phase 4 (podman)](../phase4-podman/SHOWCASE.md) ·
   [Phase 6 (TUI)](../phase6-tui/SHOWCASE.md)
+
+---
+
+### AlmaLinux zero-touch PXE install — fully unattended kickstart over iPXE
+
+A six-command pipeline that downloads the AlmaLinux installer, generates a
+per-host kickstart, builds an iPXE ROM, and boots a QEMU VM that installs
+AlmaLinux to disk and reboots into it — no manual steps between `start` and
+`ssh`.
+
+#### The boot-loop design
+
+The key to zero-touch behaviour is QEMU's `bootindex` ordering combined with
+a two-disk VM layout:
+
+- **disk0 = blank install target** (20 GB qcow2), `bootindex=0`: on the first
+  boot the disk has no boot sector, so BIOS skips it and falls through to disk1.
+  After Anaconda installs, disk0 is bootable and wins every subsequent boot.
+- **disk1 = `ipxe.qcow2`** (iPXE ROM), `bootindex=1`: runs on the first boot
+  only, chainloads the AlmaLinux Anaconda installer, then is never reached again.
+
+| Boot | disk0 state | What happens |
+|---|---|---|
+| 1st | empty (no boot sector) | BIOS skips disk0 → boots iPXE (disk1) → Anaconda installs to disk0 → kickstart `reboot` |
+| 2nd+ | bootable AlmaLinux | BIOS boots disk0; iPXE is never reached again |
+
+Result: `create` the VM, `start` it, walk away. SSH in ~10 minutes later to a
+fully installed AlmaLinux system.
+
+#### Six-step happy path
+
+```bash
+# 1. Fetch the AlmaLinux installer kernel and initrd (verifies sha256 checksums):
+netboot/fetch-almalinux-installer.sh \
+    --mirror https://repo.almalinux.org/almalinux --release 9 --arch x86_64
+
+# 2. Generate a per-host kickstart named after the VM's pinned MAC:
+netboot/gen-almalinux-ks.sh --mac 52:54:00:AL:MA:01
+
+# 3. Build iPXE with the AlmaLinux boot parameters embedded:
+netboot/build-ipxe.sh --server http://10.0.2.2:8181 \
+    --kernel-path /vmlinuz --initrd-path /initrd.img \
+    --append 'inst.repo=https://repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/ inst.ks=http://10.0.2.2:8181/ks/{MAC}.ks inst.text console=ttyS0 ip=dhcp'
+
+# 4. Serve artifacts over HTTP via rootless nginx (Phase 4):
+phase4-podman/lab-podman.sh up --config examples/podman-netboot-server.toml
+
+# 5. Create the two-disk target VM:
+phase2-qemu-vm/lab-vm.sh create --config examples/vm-almalinux-pxe-install.toml
+
+# 6. Start it and walk away — Anaconda installs unattended:
+phase2-qemu-vm/lab-vm.sh start almalinux-pxe-install   # walk away; SSH in after ~10 min
+```
+
+After install completes, SSH in with `lab` / `lab`:
+
+```bash
+phase2-qemu-vm/lab-vm.sh ssh almalinux-pxe-install
+```
+
+#### The {MAC} placeholder — why not `${mac:hexhyp}` directly
+
+The embedded `boot.ipxe` script is written via an **unquoted** bash heredoc
+inside `netboot/ipxe-build-inner.sh`. Any `$`-tokens in an unquoted heredoc
+are expanded by bash at build time — so writing `${mac:hexhyp}` literally
+in `--append` would be consumed by bash immediately (expanding to empty) and
+never reach the iPXE script.
+
+The solution is a literal placeholder: write `{MAC}` in `--append`. After the
+heredoc is written, a `sed` pass rewrites `{MAC}` to `${mac:hexhyp}` in the
+resulting file. From that point on it is an iPXE variable — bash has already
+finished expanding — and iPXE's runtime expands `${mac:hexhyp}` to the
+booting NIC's lowercase hyphen-separated MAC (e.g. `52-54-00-al-ma-01`) when
+it fetches the kickstart URL.
+
+In short: you type `{MAC}` as the placeholder; the sed rewrite turns it into
+`${mac:hexhyp}`; iPXE expands it at boot. Bash never sees the `$`.
+
+#### Real-hardware variant
+
+The same pipeline works on physical machines. Rebuild iPXE pointing at your
+LAN IP, generate one kickstart per NIC MAC, and flash the USB image:
+
+```bash
+netboot/build-ipxe.sh --server http://<LAN-IP>:8181 \
+    --kernel-path /vmlinuz --initrd-path /initrd.img \
+    --append 'inst.repo=https://repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/ inst.ks=http://<LAN-IP>:8181/ks/{MAC}.ks inst.text console=ttyS0 ip=dhcp'
+netboot/gen-almalinux-ks.sh --mac <NIC-MAC>
+dd if=~/netboot/ipxe.usb of=/dev/sdX bs=4M status=progress
+# Boot the target machine from the USB stick — same pipeline, only URL and MACs change.
+```
+
+#### Security posture
+
+The kickstart uses `lab:lab` plaintext credentials (root and the `lab` sudo
+user), matching the throwaway posture of the rest of this toolkit. These are
+suitable only for disposable, isolated lab VMs.
+
+- **Do not expose to an untrusted network.** Anyone who can reach the nginx
+  server can download the kickstart and learn the root password.
+- For real deployments, replace `--plaintext` with `--iscrypted` and a
+  SHA-512 hash (see `examples/almalinux-zerotouch.ks` comments for the
+  `python3 -c "import crypt…"` one-liner).
+- For the QEMU-only path, bind nginx to loopback (`127.0.0.1:8181`) — the
+  QEMU slirp stack reaches `10.0.2.2` regardless, and the kickstart never
+  leaves the host.
+
+#### Referenced files
+
+- [`../examples/vm-almalinux-pxe-install.toml`](../examples/vm-almalinux-pxe-install.toml) — the two-disk QEMU VM spec
+- [`../examples/almalinux-pxe-lab.toml`](../examples/almalinux-pxe-lab.toml) — unified cross-phase lab (Phase 4 + Phase 2)
+- [Phase 2 (QEMU VMs)](../phase2-qemu-vm/SHOWCASE.md) — `install_target`, `mac`, and `bootindex` VM spec fields
+- [Phase 4 (Podman)](../phase4-podman/SHOWCASE.md) — rootless nginx serving the artifact directory

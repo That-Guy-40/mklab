@@ -1,0 +1,75 @@
+# Unified AlmaLinux zero-touch PXE lab — one TOML feeds Phase 4 and Phase 2.
+#
+# Each phase tool reads only the blocks it owns and silently ignores the rest:
+#   phase4-podman/lab-podman.sh   reads [[service]] with engine="podman"
+#   phase2-qemu-vm/lab-vm.sh      reads [[vm]]
+#
+# Workflow — run these in order against this file:
+#
+#   # 1. Fetch the AlmaLinux installer kernel and initrd into ~/netboot/:
+#   netboot/fetch-almalinux-installer.sh \
+#       --mirror https://repo.almalinux.org/almalinux --release 9 --arch x86_64
+#
+#   # 2. Generate a per-host kickstart for the VM's pinned MAC:
+#   netboot/gen-almalinux-ks.sh --mac 52:54:00:AL:MA:01
+#       # -> ~/netboot/ks/52-54-00-al-ma-01.ks
+#
+#   # 3. Build iPXE with the per-host {MAC} kickstart URL embedded:
+#   netboot/build-ipxe.sh --server http://10.0.2.2:8181 \
+#       --kernel-path /vmlinuz --initrd-path /initrd.img \
+#       --append 'inst.repo=https://repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/ inst.ks=http://10.0.2.2:8181/ks/{MAC}.ks inst.text console=ttyS0 ip=dhcp'
+#       # {MAC} is a literal token replaced at build time; iPXE expands it to
+#       # the NIC's MAC at runtime (e.g. 52-54-00-al-ma-01).
+#
+#   # 4. Bring up the rootless nginx artifact server (Phase 4):
+#   phase4-podman/lab-podman.sh up --config examples/almalinux-pxe-lab.toml
+#
+#   # 5. Create and start the installer VM (Phase 2) — unattended:
+#   phase2-qemu-vm/lab-vm.sh create --config examples/almalinux-pxe-lab.toml
+#   phase2-qemu-vm/lab-vm.sh start  almalinux-pxe-install   # walk away; comes back installed
+#   phase2-qemu-vm/lab-vm.sh ssh    almalinux-pxe-install   # login: lab / lab
+#
+# Tear down:
+#   phase4-podman/lab-podman.sh down    --lab almalinux-pxe
+#   phase2-qemu-vm/lab-vm.sh    destroy almalinux-pxe-install --force
+#
+# Real hardware: rebuild iPXE with --server http://<LAN-IP>:8181, generate a
+# kickstart per NIC MAC, and dd ~/netboot/ipxe.usb to a USB drive.
+# The nginx server should bind loopback for QEMU-only use; widen to 0.0.0.0
+# only when serving real hardware on the LAN.
+#
+# Update /home/sqs to your $HOME if different (no shell expansion in TOML).
+
+[lab]
+name        = "almalinux-pxe"
+description = "Zero-touch AlmaLinux 9 PXE install: rootless nginx serves vmlinuz/initrd/kickstart (Phase 4); QEMU target VM installs from iPXE -> Anaconda and reboots into AlmaLinux (Phase 2)."
+tags        = ["almalinux", "pxe", "netboot", "zero-touch"]
+
+# ─── Phase 4: rootless nginx serving netboot artifacts ─────────────────────
+# Serves vmlinuz, initrd.img, and ks/*.ks from ~/netboot/ on port 8080.
+# lab-podman.sh auto-appends :Z to the volume when SELinux is enforcing.
+[[service]]
+name    = "http"
+engine  = "podman"
+image   = "docker.io/library/nginx:alpine"
+ports   = ["8181:80"]
+volumes = ["/home/sqs/netboot:/usr/share/nginx/html:ro"]
+
+# ─── Phase 2: QEMU installer VM (boot-loop design) ─────────────────────────
+# disk0 = blank install target (bootindex=0): empty on first boot, bootable
+#         AlmaLinux after Anaconda installs and reboots.
+# disk1 = ipxe.qcow2 ROM (bootindex=1): fallback on first boot only; runs
+#         Anaconda; never reached again once disk0 is bootable.
+# cloud_init = false: Anaconda provisions root and the lab user from the
+#         kickstart directly; no cloud-init datasource in the iPXE ROM.
+[[vm]]
+name           = "almalinux-pxe-install"
+backend        = "disk-image"
+image          = "/home/sqs/netboot/ipxe.qcow2"  # iPXE ROM (bootindex=1, fallback)
+install_target = "20G"                             # blank disk (bootindex=0, install dest)
+mac            = "52:54:00:AL:MA:01"               # pinned so the per-MAC kickstart matches
+arch           = "x86_64"
+memory         = "2560M"                           # Anaconda needs ~2 GB+
+cpus           = 2
+network        = true
+cloud_init     = false                             # Anaconda provisions directly; no datasource
