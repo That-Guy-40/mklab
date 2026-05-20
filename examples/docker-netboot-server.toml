@@ -1,32 +1,38 @@
-# Rootful Docker variant of the netboot HTTP server.
+# Rootful Docker variant: nginx serving netboot artifacts (kernel + initrd.gz +
+# kickstart files) over HTTP on port 8080.
 #
-# This is functionally identical to podman-netboot-server.toml but uses the
-# Docker engine (rootful).  Prefer the Podman variant for rootless operation;
-# use this only when Docker is the required runtime (e.g., Docker-only CI).
+# This is the rootful Docker variant. The rootless Podman variant is
+# examples/podman-netboot-server.toml (preferred when only serving is needed).
 #
-# See examples/podman-netboot-server.toml for the preferred rootless path,
-# full prerequisites, and verification steps.
+# Workflow:
+# 1. Build artifacts with Phase 1 (chroot + cpio export):
+#    sudo lab-chroot.sh create --config examples/chroot-netboot-minimal.toml
+#    sudo lab-chroot.sh export-initrd netboot-minimal \
+#        --kernel ~/netboot/kernel --output ~/netboot/initrd.gz
 #
-# Start:
+# 2. Start this server:
 #    lab-docker.sh up --config examples/docker-netboot-server.toml
 #
+# 3. Boot a VM with Phase 2 or real hardware via iPXE:
+#    sudo phase2-qemu-vm/lab-vm.sh create --config examples/vm-netboot-direct.toml
+#    sudo phase2-qemu-vm/lab-vm.sh start netboot-direct
+#    (or point iPXE client at http://<host-ip>:8080/)
+#
 # Verify:
-#    curl -sI http://localhost:8181/kernel
-#    curl -s  http://localhost:8181/boot.ipxe
+#    curl -I http://localhost:8080/kernel
+#    curl -I http://localhost:8080/initrd.gz
+#
+# Note: /home/sqs is a literal path — TOML does not expand shell variables.
+# Replace it with your actual home directory if different.
+# For AlmaLinux installs the ks/ subdirectory holds kickstart files served
+# from the same root: curl -I http://localhost:8080/ks/almalinux.ks
 
 [lab]
-name        = "netboot-srv-docker"
-description = "Docker HTTP server for netboot artifacts (rootful variant; prefer podman-netboot-server.toml)"
-tags        = ["netboot", "http", "ipxe", "docker"]
+name = "netboot-srv"
 
 [[service]]
 name    = "http"
 engine  = "docker"
 image   = "nginx:alpine"
-ports   = ["8181:80"]
-volumes = [
-    # Update /home/sqs to your $HOME if different (no shell expansion in TOML).
-    # Set LAB_NETBOOT_DIR to override the default ~/netboot location.
-    "/home/sqs/netboot:/usr/share/nginx/html:ro",
-    "/home/sqs/.config/lab-netboot/ipxe-mime.conf:/etc/nginx/conf.d/ipxe-mime.conf:ro",
-]
+ports   = ["8080:80"]
+volumes = ["/home/sqs/netboot:/usr/share/nginx/html:ro"]

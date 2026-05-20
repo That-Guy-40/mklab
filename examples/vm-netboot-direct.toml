@@ -1,26 +1,44 @@
-# QEMU boot using explicit -kernel/-initrd flags — no iPXE needed.
+# QEMU direct boot for the busybox netboot track (no iPXE, no cloud-init).
 #
-# This is the fastest way to validate your initrd in isolation.  QEMU's
-# -kernel/-initrd flags do exactly what iPXE does after downloading the files:
-# they load the kernel and initrd into memory and jump to the kernel entry
-# point.  Skipping iPXE removes one moving part and shortens the debug loop.
+# This VM boots the busybox initrd built by chroot-netboot-busybox.toml.
+# QEMU's -kernel/-initrd flags are equivalent to what iPXE does: both load the
+# kernel and initrd into RAM and jump to the kernel entry point.  The only
+# difference is where the files come from — local path here, HTTP there.
+# Skipping iPXE removes one moving part and shortens the debug loop.
 #
-# Use this to confirm the initrd boots correctly before wiring up the full
-# nginx → iPXE chain in vm-netboot-ipxe.toml.
+# Compared with vm-netboot-full.toml:
+#   memory: 512M instead of 4G — busybox has no locales-all or systemd, so the
+#     initrd decompresses to only a few MB in RAM.
+#   cloud_init: absent — the busybox initrd has no cloud-init agent; a seed ISO
+#     would be silently ignored, so there is no point generating one.
 #
-# Prerequisite: export-initrd must have run first:
-#    sudo lab-chroot.sh export-initrd netboot-minimal \
+# Workflow:
+# 1. Build the busybox chroot (needs root, ~2-3 min):
+#    sudo phase1-chroot/lab-chroot.sh create --config examples/chroot-netboot-busybox.toml
+#
+# 2. Export kernel + initrd (needs root):
+#    sudo phase1-chroot/lab-chroot.sh export-initrd netboot-busybox \
 #        --kernel ~/netboot/kernel --output ~/netboot/initrd.gz
 #
-# Workflow (no sudo needed — kernel+initrd backend is rootless):
-# 1. Create the VM record:
+# 3. Create the VM record and start it (no sudo needed):
 #    phase2-qemu-vm/lab-vm.sh create --config examples/vm-netboot-direct.toml
+#    phase2-qemu-vm/lab-vm.sh start  netboot-direct
 #
-# 2. Start and attach to the serial console:
-#    phase2-qemu-vm/lab-vm.sh start netboot-direct
+# Expect on the serial console: a busybox sh prompt (no login).
+# Press Ctrl-] to detach from the console.
 #
-# No nginx container or iPXE disk image is needed for this path.
-# See examples/vm-netboot-ipxe.toml for the full iPXE simulation.
+# iPXE virtual-disk alternative (manual step):
+#   Build iPXE with an embedded script:
+#     make bin-x86_64-efi/ipxe.efi EMBED=script.ipxe
+#   Then pass it to QEMU as firmware:
+#     qemu-system-x86_64 -bios ipxe.efi ...
+#   (or -drive if=pflash,file=ipxe.efi for UEFI flash)
+#   iPXE will DHCP, fetch boot.ipxe from the Phase 4 nginx server, download
+#   kernel + initrd over HTTP, and hand them to the kernel — same boot path,
+#   different delivery mechanism.  See examples/vm-netboot-ipxe.toml.
+#
+# See examples/chroot-netboot-busybox.toml for the package list.
+# See examples/vm-netboot-full.toml    for the full Debian (systemd) equivalent.
 
 [[vm]]
 name    = "netboot-direct"
@@ -28,7 +46,6 @@ backend = "kernel+initrd"
 arch    = "x86_64"
 memory  = "512M"
 cpus    = 1
-microvm = true
 # Update /home/sqs to your $HOME if different (no shell expansion in TOML).
 kernel  = "/home/sqs/netboot/kernel"
 initrd  = "/home/sqs/netboot/initrd.gz"

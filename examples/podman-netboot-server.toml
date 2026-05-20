@@ -1,43 +1,56 @@
-# Rootless nginx serving kernel + initrd + iPXE script over HTTP on port 8080.
+# Rootless nginx serving netboot artifacts over HTTP on port 8080.
+#
+# Serves two artifact tracks from the same ~/netboot/ directory:
+#
+#   Debian busybox track (Phase 1 chroot):
+#     kernel      — Linux kernel image (vmlinuz extracted from the chroot)
+#     initrd.gz   — cpio.gz RAM disk built by lab-chroot.sh export-initrd
+#
+#   AlmaLinux PXE track (Track B):
+#     vmlinuz     — AlmaLinux installer kernel
+#     initrd.img  — AlmaLinux installer initrd
+#     ks/*.ks     — Kickstart files for zero-touch installation
+#
+# Rootless advantage: Phase 1 chroot artifacts are built with sudo, but
+# serving them requires no root.  A rootless Podman container reads the
+# files via a bind-mount and nginx does the rest — no daemon, no suid bits.
+#
+# SELinux note: lab-podman.sh auto-appends :Z to every volume when SELinux
+# is enforcing, so the container can read the bind-mounted directory without
+# a manual chcon step.
+#
+# Path caveat: TOML does not expand shell variables.  /home/sqs is written
+# literally; update it if your $HOME differs, or set LAB_NETBOOT_DIR to
+# override at runtime.
 #
 # Workflow:
-# 1. Set up the ~/netboot artifact directory (once):
-#    netboot/setup-netboot-dir.sh
-#
-# 2. Build and export the chroot initrd (see chroot-netboot-minimal.toml):
-#    sudo lab-chroot.sh create --config examples/chroot-netboot-minimal.toml
-#    sudo lab-chroot.sh export-initrd netboot-minimal \
+# 1. Build chroot artifacts (root required):
+#    sudo phase1-chroot/lab-chroot.sh create --config examples/chroot-netboot-busybox.toml
+#    sudo phase1-chroot/lab-chroot.sh export-initrd netboot-busybox \
 #        --kernel ~/netboot/kernel --output ~/netboot/initrd.gz
 #
-# 3. Start the server:
-#    lab-podman.sh up --config examples/podman-netboot-server.toml
+#    For the AlmaLinux track, place vmlinuz, initrd.img, and ks/*.ks
+#    directly in ~/netboot/ (see ALMALINUX_PXE_LAB_PLAN.md).
 #
-# 4. Verify:
-#    curl -sI http://localhost:8181/kernel        # should return 200
-#    curl -s  http://localhost:8181/boot.ipxe     # should show iPXE script
+# 2. Start the HTTP server (no sudo needed):
+#    phase4-podman/lab-podman.sh up --config examples/podman-netboot-server.toml
 #
-# MIME type note: iPXE clients check Content-Type before executing a fetched
-# script.  The ipxe-mime.conf bind-mount adds the application/x-ipxe type so
-# that boot.ipxe is served with the correct Content-Type header; without it,
-# iPXE will refuse to chainload the script.
+# 3. Verify both tracks are reachable:
+#    curl -I http://localhost:8080/kernel      # Debian busybox track
+#    curl -I http://localhost:8080/vmlinuz     # AlmaLinux PXE track
 #
-# Boot simulation:
-#    See examples/vm-netboot-ipxe.toml  (QEMU + iPXE disk image)
-#    See examples/vm-netboot-direct.toml (QEMU direct kernel, no iPXE)
+# 4. Boot:
+#    - Debian: see examples/vm-netboot-direct.toml (QEMU direct kernel boot)
+#    - AlmaLinux: PXE-boot real hardware or a VM pointing at this server
 
 [lab]
 name        = "netboot-srv"
-description = "Rootless HTTP server for netboot artifacts (kernel + initrd + iPXE script)"
-tags        = ["netboot", "http", "ipxe"]
+description = "Rootless HTTP server for netboot kernel + initrd"
+tags        = ["netboot", "http", "rootless"]
 
 [[service]]
 name    = "http"
 engine  = "podman"
 image   = "docker.io/library/nginx:alpine"
-ports   = ["8181:80"]
-volumes = [
-    # Update /home/sqs to your $HOME if different (no shell expansion in TOML).
-    # Set LAB_NETBOOT_DIR to override the default ~/netboot location.
-    "/home/sqs/netboot:/usr/share/nginx/html:ro",
-    "/home/sqs/.config/lab-netboot/ipxe-mime.conf:/etc/nginx/conf.d/ipxe-mime.conf:ro",
-]
+ports   = ["8080:80"]
+volumes = ["/home/sqs/netboot:/usr/share/nginx/html:ro"]

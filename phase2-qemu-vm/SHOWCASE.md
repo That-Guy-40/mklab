@@ -216,6 +216,99 @@ The same `ipxe.usb` image `dd`'d to a USB stick runs an **identical
 boot sequence** on real hardware: iPXE DHCP + HTTP download + kernel
 runs in RAM. No disk write needed on the target machine.
 
+### Direct kernel+initrd boot — local iPXE equivalent
+
+`-kernel`/`-initrd` and iPXE perform the same two-step sequence: load the
+kernel and initrd into RAM, then jump to the kernel entry point.  The only
+difference is where the bytes come from:
+
+| Mechanism | Kernel source | Initrd source | Cmdline source |
+|-----------|--------------|---------------|----------------|
+| QEMU `-kernel`/`-initrd` | local file path | local file path | `-append` flag |
+| iPXE `kernel`/`initrd`/`boot` | HTTP URL | HTTP URL | `kernel` line params |
+
+Because the handoff to the kernel is identical, an initrd that boots correctly
+under `-kernel`/`-initrd` will boot correctly under iPXE — validating locally
+first saves a full PXE round-trip.
+
+The `append` field in the TOML is the kernel command line, equivalent to the
+parameters on the `kernel` line in an iPXE script:
+
+```toml
+# TOML (vm-netboot-direct.toml)
+append = "console=ttyS0 root=/dev/ram0 rw"
+```
+
+```text
+# iPXE script equivalent
+kernel http://10.0.2.2:8080/kernel console=ttyS0 root=/dev/ram0 rw
+initrd http://10.0.2.2:8080/initrd.gz
+boot
+```
+
+**Busybox variant** (`vm-netboot-direct.toml`) vs **full Debian variant**
+(`vm-netboot-full.toml`):
+
+| | `vm-netboot-direct.toml` | `vm-netboot-full.toml` |
+|-|--------------------------|------------------------|
+| Chroot source | `chroot-netboot-busybox.toml` | `chroot-netboot-full.toml` |
+| Memory | 512M | 4G |
+| `cloud_init` | absent (busybox has no agent) | `true` (seeds SSH pubkey) |
+| PID 1 | busybox sh | systemd |
+| Console | busybox prompt, no login | login prompt, SSH available |
+
+**End-to-end recipe for the busybox track:**
+
+```bash
+# 1. Build the busybox chroot (~2-3 min, needs root):
+sudo phase1-chroot/lab-chroot.sh create \
+    --config examples/chroot-netboot-busybox.toml
+
+# 2. Export kernel + initrd (needs root):
+sudo phase1-chroot/lab-chroot.sh export-initrd netboot-busybox \
+    --kernel ~/netboot/kernel \
+    --output ~/netboot/initrd.gz
+
+# 3. Create the VM record and start it (rootless):
+phase2-qemu-vm/lab-vm.sh create --config examples/vm-netboot-direct.toml
+phase2-qemu-vm/lab-vm.sh start  netboot-direct
+# Press Ctrl-] to detach from the serial console.
+```
+
+To serve the same artifacts over HTTP and validate the full iPXE chain, start
+the Phase 4 nginx container first:
+
+```bash
+# Serve kernel + initrd over HTTP (rootless):
+phase4-podman/lab-podman.sh up --config examples/podman-netboot-server.toml
+# Then boot via iPXE:
+phase2-qemu-vm/lab-vm.sh create --config examples/vm-netboot-ipxe.toml
+phase2-qemu-vm/lab-vm.sh start  netboot-ipxe
+```
+
+**iPXE virtual-disk variant** (manual, for UEFI firmware testing): build iPXE
+with an embedded chainload script and pass it to QEMU as firmware:
+
+```bash
+# Build iPXE EFI binary with embedded script:
+make bin-x86_64-efi/ipxe.efi EMBED=script.ipxe
+
+# Pass as BIOS replacement:
+qemu-system-x86_64 -bios ipxe.efi <rest-of-flags>
+# Or as a UEFI pflash drive:
+qemu-system-x86_64 -drive if=pflash,file=ipxe.efi <rest-of-flags>
+```
+
+iPXE will DHCP, fetch `boot.ipxe` from the host, download kernel + initrd over
+HTTP, and hand them to the kernel — the same sequence `dd`'d to a USB stick
+runs on real thin-client hardware.
+
+Cross-references:
+- Busybox chroot build: [`examples/chroot-netboot-busybox.toml`](../examples/chroot-netboot-busybox.toml)
+- HTTP artifact server: [`examples/podman-netboot-server.toml`](../examples/podman-netboot-server.toml)
+- Full iPXE simulation: [`examples/vm-netboot-ipxe.toml`](../examples/vm-netboot-ipxe.toml)
+- Full Debian track: [`examples/vm-netboot-full.toml`](../examples/vm-netboot-full.toml)
+
 ## Integrations
 
 ### ← Phase 1 (turn a chroot into a VM)

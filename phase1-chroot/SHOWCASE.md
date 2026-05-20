@@ -203,6 +203,71 @@ The two initrd tracks:
 Boot it with Phase 2 (`vm-netboot-direct.toml`) or serve it via
 Phase 4 (`podman-netboot-server.toml`).
 
+### Netboot chroot tiers — minimal, busybox, full
+
+The Kenneth Finnegan (2020) HTTP-netboot pattern
+([blog post](https://blog.thelifeofkenneth.com/2020/03/booting-linux-over-http.html))
+turns a Phase 1 chroot into an initrd: the entire rootfs is packed into a
+cpio.gz archive and handed to the kernel as its initial ramdisk. At boot the
+kernel decompresses the archive into RAM and the system runs entirely in
+memory — no local disk is touched. Note that during decompression the kernel
+holds both the compressed and uncompressed copies of the rootfs simultaneously,
+so a VM needs roughly twice the uncompressed rootfs size in RAM. The
+`locales-all` package alone pushes an initrd to ~1.5 GB uncompressed, which
+is why the full tier requires 4 GB rather than 2 GB.
+
+Three tiers let you pick the right trade-off:
+
+| Tier | Config file | Packages | initrd size | PID 1 |
+|---|---|---|---|---|
+| Minimal | `chroot-netboot-minimal.toml` | kernel, busybox-static, kmod | ~150 MB | busybox sh |
+| Busybox | `chroot-netboot-busybox.toml` | + iproute2, iputils-ping, curl | ~180 MB | busybox sh |
+| Full | `chroot-netboot-full.toml` | + systemd, SSH, cloud-init, … | ~400 MB | systemd |
+
+The `init_script` TOML field controls what `export-initrd` writes as `/init`:
+
+- `init_script = "busybox"` — writes a minimal `/init` that installs busybox
+  applets and execs a busybox shell. No manual `/init` editing needed.
+- `init_script = "systemd"` — writes `/init` as a symlink to `/sbin/init`
+  inside the chroot. Full systemd unit graph starts as PID 1.
+
+**Busybox tier** fills the gap: it adds `iproute2`, `iputils-ping`, and `curl`
+so the boot shell can reach the network immediately after DHCP without pulling
+in systemd and its service manager. Use it for network rescue, lightweight PXE
+testing, or as the base for `vm-netboot-direct.toml`.
+
+**cpio packaging** (what `export-initrd` does under the hood):
+
+```bash
+# Inside the chroot directory, pack everything into a compressed cpio archive:
+sudo find . | cpio -H newc -o | gzip -9 -n > ~/netboot/initrd.gz
+```
+
+**Copy-pasteable workflow** (busybox tier):
+
+```bash
+# 1. Build the chroot (~2-3 min, needs root):
+sudo phase1-chroot/lab-chroot.sh create \
+    --config examples/chroot-netboot-busybox.toml
+
+# 2. Export kernel + initrd (needs root):
+sudo phase1-chroot/lab-chroot.sh export-initrd netboot-busybox \
+    --kernel  ~/netboot/kernel \
+    --output  ~/netboot/initrd.gz
+
+# 3. Boot it directly in a VM (QEMU -kernel/-initrd, no disk image):
+#    See examples/vm-netboot-direct.toml
+
+# 4. Or serve it over HTTP and boot via iPXE:
+#    See examples/podman-netboot-server.toml
+```
+
+Cross-phase links for the full netboot pipeline:
+- [Phase 2 (VMs)](../phase2-qemu-vm/SHOWCASE.md) — `examples/vm-netboot-direct.toml`
+  boots the exported kernel+initrd directly with QEMU `-kernel`/`-initrd`
+- [Phase 4 (podman)](../phase4-podman/SHOWCASE.md) — `examples/podman-netboot-server.toml`
+  serves the artifacts over HTTP for iPXE chainloading
+
 ### `export-tarball` — the cross-phase bridge
 
 The clean, rootless-friendly handoff to Phase 3/4/5. Tarballs the chroot
