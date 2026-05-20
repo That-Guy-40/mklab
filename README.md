@@ -63,6 +63,24 @@ phase3-docker/lab-docker.sh down --lab demo
 See [`phase3-docker/README.md`](phase3-docker/README.md) and
 [`phase3-docker/MANUAL_TESTING.md`](phase3-docker/MANUAL_TESTING.md).
 
+### A netboot lab (build → serve → boot)
+
+```bash
+sudo phase1-chroot/lab-chroot.sh create --config examples/netboot-lab.toml
+# Package as initrd (one-time step — requires root):
+cd /var/chroots/netboot-busybox
+sudo find . | cpio -H newc -o | gzip -9 -n > ~/netboot/initrd.gz
+sudo cp boot/vmlinuz-* ~/netboot/kernel
+# Serve artifacts (rootless):
+phase4-podman/lab-podman.sh up --config examples/netboot-lab.toml
+# Boot in QEMU:
+phase2-qemu-vm/lab-vm.sh create --config examples/netboot-lab.toml
+phase2-qemu-vm/lab-vm.sh start  netboot-direct
+```
+
+See [`examples/netboot-lab.toml`](examples/netboot-lab.toml) for the unified
+cross-phase config that drives all three steps from one file.
+
 ### A netboot lab (build → serve → boot in RAM)
 
 ```bash
