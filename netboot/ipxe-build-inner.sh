@@ -91,6 +91,13 @@ initrd ${server_url}${initrd_path}
 boot
 EOF
 
+# Rewrite the {MAC} placeholder (written literally by the caller via --append)
+# to the iPXE runtime variable ${mac:hexhyp}, which iPXE expands at boot to
+# the lowercase hyphen-separated MAC of the booting NIC (e.g. 52-54-00-al-ma-01).
+# This must happen after the heredoc because bash would eat ${mac:hexhyp} at
+# write time if it appeared directly in an unquoted heredoc.
+sed -i 's/{MAC}/${mac:hexhyp}/g' /tmp/ipxe/src/boot.ipxe
+
 # ─── Build ──────────────────────────────────────────────────────────────────
 JOBS=$(nproc)
 log_info "building iPXE with -j${JOBS} (arch=$arch)..."

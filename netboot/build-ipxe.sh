@@ -76,6 +76,13 @@ Options:
   --kernel-path PATH  URL path to the kernel   (default: /kernel)
   --initrd-path PATH  URL path to the initrd   (default: /initrd.gz)
   --append      STR   kernel command-line args  (default: "console=ttyS0 root=/dev/ram0 rw")
+                      Use the literal placeholder {MAC} to embed the booting
+                      NIC's MAC address at runtime.  At build time {MAC} is
+                      rewritten to the iPXE variable ${mac:hexhyp}; iPXE then
+                      expands it to the lowercase hyphen-separated MAC of the
+                      booting interface (e.g. 52-54-00-al-ma-01).
+                      Example (per-host AlmaLinux kickstart):
+                        --append 'inst.ks=http://10.0.2.2:8181/ks/{MAC}.ks'
   --output-dir  PATH  where to write outputs   (default: /srv/netboot)
   --arch        ARCH  x86_64 or aarch64        (default: x86_64)
   --ipxe-ref    REF   git branch/tag/SHA to build from (default: master)
