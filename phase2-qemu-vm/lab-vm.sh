@@ -265,6 +265,7 @@ state_init() {
 
 vm_dir()      { printf '%s/%s' "$LAB_VM_STATE_DIR" "$1"; }
 vm_disk()     { printf '%s/disk.qcow2'     "$(vm_dir "$1")"; }
+vm_target()   { printf '%s/%s-target.qcow2' "$(vm_dir "$1")" "$1"; }
 vm_seed()     { printf '%s/seed.iso'       "$(vm_dir "$1")"; }
 vm_pidfile()  { printf '%s/qemu.pid'       "$(vm_dir "$1")"; }
 vm_monitor()  { printf '%s/monitor.sock'   "$(vm_dir "$1")"; }
@@ -292,6 +293,8 @@ microvm     = ${MF_MICROVM}
 accel       = "${MF_ACCEL}"
 ssh_port    = ${MF_SSH_PORT}
 disk        = "${MF_DISK:-}"
+install_target = "${MF_INSTALL_TARGET:-}"
+mac         = "${MF_MAC:-}"
 seed        = "${MF_SEED:-}"
 kernel      = "${MF_KERNEL:-}"
 initrd      = "${MF_INITRD:-}"
@@ -1371,6 +1374,8 @@ specs_from_config() {
             chroot:    (.chroot    // ""),
             disk_size: (.disk_size // ""),
             cloud_init: (if .cloud_init == false then "false" else "true" end),
+            install_target: (.install_target // ""),
+            mac:       (.mac       // ""),
             lab:     ( if $cli_lab != "" then $cli_lab
                        else ($root.lab.name // "") end ) }
     '
@@ -1659,7 +1664,7 @@ pick_ssh_port() {
 build_qemu_argv() {
     # Builds the QEMU argv into the QEMU_ARGV global array.
     # Inputs (via globals): name, arch, microvm, accel, memory, cpus, disk,
-    # seed, kernel, initrd, append, ssh_port, firmware
+    # install_target, mac, seed, kernel, initrd, append, ssh_port, firmware
     QEMU_ARGV=()
 
     local qsys; qsys="$(arch_map "$arch" qemu-system)"
@@ -1768,10 +1773,23 @@ build_qemu_argv() {
 
     # Disk
     if [[ -n "$disk" ]]; then
-        QEMU_ARGV+=(
-            -drive  "file=${disk},if=none,id=disk0,format=qcow2,cache=writeback,discard=unmap"
-            -device "virtio-blk-${virtio_suffix},drive=disk0"
-        )
+        if [[ -n "${install_target:-}" ]]; then
+            # Two-disk boot-loop layout (AlmaLinux PXE install):
+            #   disk0 = blank install target (bootindex=0 — BIOS tries first,
+            #           skips when empty, boots after Anaconda installs)
+            #   disk1 = iPXE ROM image (bootindex=1 — fallback on first boot)
+            QEMU_ARGV+=(
+                -drive  "file=${install_target},if=none,id=disk0,format=qcow2,cache=writeback,discard=unmap"
+                -device "virtio-blk-${virtio_suffix},drive=disk0,bootindex=0"
+                -drive  "file=${disk},if=none,id=disk1,format=qcow2,cache=writeback"
+                -device "virtio-blk-${virtio_suffix},drive=disk1,bootindex=1"
+            )
+        else
+            QEMU_ARGV+=(
+                -drive  "file=${disk},if=none,id=disk0,format=qcow2,cache=writeback,discard=unmap"
+                -device "virtio-blk-${virtio_suffix},drive=disk0"
+            )
+        fi
     fi
 
     # cloud-init seed
@@ -1783,9 +1801,11 @@ build_qemu_argv() {
     fi
 
     # Network: user-mode with hostfwd for ssh.
+    local net_device="virtio-net-${virtio_suffix},netdev=net0"
+    [[ -n "${mac:-}" ]] && net_device="${net_device},mac=${mac}"
     QEMU_ARGV+=(
         -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:${ssh_port}-:22"
-        -device "virtio-net-${virtio_suffix},netdev=net0"
+        -device "${net_device}"
     )
 
     # Serial console exposed as a unix socket so `lab-vm.sh console` can attach
@@ -1845,6 +1865,7 @@ create_one() {
 
     local distro suite memory cpus image kernel initrd append ssh_port pubkey
     local network_enabled ssh_enabled persist_size ssh_user init_flavour
+    local install_target_size mac
     distro="$(spec_get "$spec" distro)"
     suite="$(spec_get "$spec" suite)"
     memory="$(spec_get "$spec" memory)"
@@ -1859,6 +1880,8 @@ create_one() {
     ssh_enabled="$(spec_get "$spec" ssh)"
     persist_size="$(spec_get "$spec" persist)"
     init_flavour="$(spec_get "$spec" init_flavour)"
+    install_target_size="$(spec_get "$spec" install_target)"
+    mac="$(spec_get "$spec" mac)"
     [[ -z "$init_flavour" ]] && init_flavour="busybox"
     ssh_user="lab"  # default for cloud-init VMs
 
@@ -1868,6 +1891,7 @@ create_one() {
     # Build / acquire base disk + seed depending on backend.
     local disk; disk="$(vm_disk "$name")"
     local seed=""
+    local install_target=""   # path to blank install-target disk (install_target spec field)
 
     case "$backend" in
         disk-image)
@@ -1881,6 +1905,12 @@ create_one() {
             fi
             log_info "creating overlay qcow2: $disk (backed by $base)"
             qemu-img create -f qcow2 -F qcow2 -b "$base" "$disk" >/dev/null
+            # install_target: create a blank target disk for Anaconda to install onto.
+            if [[ -n "$install_target_size" ]]; then
+                install_target="$(vm_target "$name")"
+                log_info "creating blank install target: $install_target ($install_target_size)"
+                qemu-img create -f qcow2 "$install_target" "$install_target_size" >/dev/null
+            fi
             # Kali's prebuilt QEMU images don't ship cloud-init, so a seed
             # ISO would be silently ignored.  Skip it and signal that
             # first-boot config is manual (console login as kali/kali).
@@ -1975,6 +2005,7 @@ create_one() {
     MF_BACKEND="$backend" MF_DISTRO="$distro" MF_SUITE="$suite" \
     MF_ARCH="$arch" MF_MEMORY="$memory" MF_CPUS="$cpus" MF_MICROVM="$microvm" \
     MF_ACCEL="$accel" MF_SSH_PORT="$ssh_port" MF_SEED="$seed" MF_DISK="$disk" \
+    MF_INSTALL_TARGET="${install_target:-}" MF_MAC="${mac:-}" \
     MF_KERNEL="$kernel" MF_INITRD="$initrd" MF_APPEND="$append" \
     MF_SSH_USER="$ssh_user" MF_LAB="$lab_name" \
     write_vm_manifest "$name"
@@ -2024,6 +2055,7 @@ cmd_start() {
 
     # Reload manifest into globals expected by build_qemu_argv.
     local arch microvm accel memory cpus ssh_port disk seed kernel initrd append firmware
+    local install_target mac
     arch="$(read_manifest_field "$name" arch)"
     microvm="$(read_manifest_field "$name" microvm)"
     accel="$(read_manifest_field "$name" accel)"
@@ -2031,6 +2063,8 @@ cmd_start() {
     cpus="$(read_manifest_field "$name" cpus)"
     ssh_port="$(read_manifest_field "$name" ssh_port)"
     disk="$(read_manifest_field "$name" disk)"
+    install_target="$(read_manifest_field "$name" install_target)"
+    mac="$(read_manifest_field "$name" mac)"
     seed="$(read_manifest_field "$name" seed)"
     kernel="$(read_manifest_field "$name" kernel)"
     initrd="$(read_manifest_field "$name" initrd)"
