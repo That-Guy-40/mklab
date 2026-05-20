@@ -1,0 +1,38 @@
+# Debian bookworm busybox netboot chroot — networking-capable RAM-boot shell.
+#
+# Sits between the two existing netboot tiers:
+#   minimal  →  kernel + busybox only; no networking (3 packages)
+#   busybox  →  kernel + busybox + iproute2 + ping + curl (this file)
+#   full     →  systemd PID 1, SSH, cloud-init, full Debian userland
+#
+# Use this tier when you want a fast, lightweight boot with a real shell
+# that can still reach the network — enough to wget a script, ping a host,
+# or inspect routing, without pulling in systemd and its dependencies.
+#
+# init_script = "busybox"  →  export-initrd auto-writes /init that execs
+#   busybox sh. No manual /init editing step is needed.
+#
+# Workflow:
+# 1. Build the chroot (needs root, ~2-3 min):
+#    sudo lab-chroot.sh create --config examples/chroot-netboot-busybox.toml
+#
+# 2. Export kernel + initrd (needs root):
+#    sudo lab-chroot.sh export-initrd netboot-busybox \
+#        --kernel  ~/netboot/kernel \
+#        --output  ~/netboot/initrd.gz
+#
+# 3. Boot the exported artifacts directly in a VM (no iPXE needed):
+#    See examples/vm-netboot-direct.toml
+
+[[chroot]]
+name        = "netboot-busybox"
+hostname    = "netboot-busybox"
+backend     = "debootstrap"
+distro      = "debian"
+suite       = "bookworm"
+arch        = "x86_64"
+target      = "/var/chroots/netboot-busybox"
+variant     = "minbase"
+init_script = "busybox"
+include     = ["linux-image-amd64", "busybox-static", "iproute2", "iputils-ping", "curl", "kmod"]
+manager     = "none"

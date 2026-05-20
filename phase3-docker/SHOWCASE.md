@@ -209,25 +209,57 @@ whether `lab-<arg>` exists as a container; if not, it tries the label
 query. So `status web1` and `status demo/web` and `status demo` all do
 the right thing.
 
-### Serving netboot artifacts over HTTP
+### Netboot artifact server — rootful Docker nginx on port 8080
 
-An nginx container can serve the kernel + initrd (and the iPXE
-chainboot script) produced by Phase 1's `export-initrd` verb. The
-`examples/docker-netboot-server.toml` config mounts `/srv/netboot/`
-read-only into nginx and also mounts `ipxe-mime.conf` to register the
-`application/x-ipxe` MIME type so browsers and iPXE clients see the
-correct content-type header:
+Serve the kernel, `initrd.gz`, and (for AlmaLinux) `ks/` kickstart
+files produced by Phase 1's `export-initrd` step so that Phase 2 VMs
+or real hardware booting via iPXE can fetch them over plain HTTP.
 
-```bash
-lab-docker.sh up --config examples/docker-netboot-server.toml
-curl -sI http://localhost:8080/kernel
-curl -s  http://localhost:8080/boot.ipxe
+The config is a single `[[service]]` block that bind-mounts your
+`~/netboot/` directory read-only into the nginx web root:
+
+```toml
+[lab]
+name = "netboot-srv"
+
+[[service]]
+name    = "http"
+engine  = "docker"
+image   = "nginx:alpine"
+ports   = ["8080:80"]
+volumes = ["/home/sqs/netboot:/usr/share/nginx/html:ro"]
 ```
 
-Note: for the rootless variant (no `sudo` needed to run the server),
-see `podman-netboot-server.toml` and
-[Phase 4 (podman)](../phase4-podman/SHOWCASE.md) — Podman is the
-primary serving path.
+Note: TOML does not expand shell variables, so `/home/sqs` is a
+literal path — replace it with your actual home directory if different.
+
+Bring-up and verification:
+
+```bash
+# 1. Build artifacts (Phase 1 chroot + cpio export)
+sudo lab-chroot.sh create --config examples/chroot-netboot-minimal.toml
+sudo lab-chroot.sh export-initrd netboot-minimal \
+    --kernel ~/netboot/kernel --output ~/netboot/initrd.gz
+
+# 2. Start the server
+phase3-docker/lab-docker.sh up --config examples/docker-netboot-server.toml
+
+# 3. Verify the artifacts are reachable
+curl -I http://localhost:8080/kernel
+curl -I http://localhost:8080/initrd.gz
+
+# 4. Boot a VM that fetches from this server (Phase 2)
+sudo phase2-qemu-vm/lab-vm.sh create --config examples/vm-netboot-direct.toml
+sudo phase2-qemu-vm/lab-vm.sh start netboot-direct
+```
+
+This is the **rootful Docker** variant — the daemon must run as root.
+For a rootless alternative that needs no `sudo`, use
+`examples/podman-netboot-server.toml` with
+[Phase 4 (podman)](../phase4-podman/SHOWCASE.md).
+The consumer of these artifacts is
+[`vm-netboot-direct.toml`](../examples/vm-netboot-direct.toml) in
+[Phase 2 (VMs)](../phase2-qemu-vm/SHOWCASE.md).
 
 ## Integrations
 

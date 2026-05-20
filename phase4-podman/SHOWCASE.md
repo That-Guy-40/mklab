@@ -241,6 +241,76 @@ address resolves to the host's loopback port 8181, which is exactly
 this Podman nginx server. The guest downloads kernel + initrd over
 HTTP and boots them in RAM, no disk image needed.
 
+### Dual-track netboot artifact server — one directory, two boot tracks
+
+`examples/podman-netboot-server.toml` is a minimal single-service config:
+a rootless nginx that bind-mounts `~/netboot/` read-only and serves
+everything in it over HTTP on port 8080.  What makes it interesting is
+what lives in that directory:
+
+```text
+~/netboot/
+  kernel        # Debian busybox track — vmlinuz extracted from Phase 1 chroot
+  initrd.gz     # Debian busybox track — cpio.gz RAM disk
+  vmlinuz       # AlmaLinux PXE track  — installer kernel
+  initrd.img    # AlmaLinux PXE track  — installer initrd
+  ks/
+    alma9.ks    # AlmaLinux kickstart for zero-touch install
+```
+
+Both tracks share the same directory and the same nginx instance.
+No reconfiguration is needed when you add AlmaLinux artifacts alongside
+the Debian ones — nginx serves whatever it finds.
+
+**Rootless advantage over the Docker variant**: Phase 1 chroot work runs
+as root, but serving the artifacts does not.  The rootless Podman container
+reads the files through a bind-mount inside a user namespace, so a
+container escape lands you as your unprivileged user, not root.
+See [`docker-netboot-server.toml`](../examples/docker-netboot-server.toml)
+for the rootful Docker variant and a side-by-side comparison.
+
+**SELinux**: on enforcing systems, `lab-podman.sh` automatically appends
+`:Z` to every volume string before passing it to `podman run`.  The `:Z`
+flag relabels the host directory with the container's MCS label so SELinux
+allows the read.  No manual `chcon` step is needed.
+
+```toml
+[[service]]
+name    = "http"
+engine  = "podman"
+image   = "docker.io/library/nginx:alpine"
+ports   = ["8080:80"]
+volumes = ["/home/sqs/netboot:/usr/share/nginx/html:ro"]
+# lab-podman.sh appends :Z automatically when SELinux is enforcing
+```
+
+Full workflow:
+
+```bash
+# 1. Build Debian busybox artifacts (root required):
+sudo phase1-chroot/lab-chroot.sh create --config examples/chroot-netboot-busybox.toml
+sudo phase1-chroot/lab-chroot.sh export-initrd netboot-busybox \
+    --kernel ~/netboot/kernel --output ~/netboot/initrd.gz
+
+# 2. (AlmaLinux track) place vmlinuz, initrd.img, ks/*.ks in ~/netboot/
+
+# 3. Start the server (no sudo):
+phase4-podman/lab-podman.sh up --config examples/podman-netboot-server.toml
+
+# 4. Verify both tracks:
+curl -I http://localhost:8080/kernel      # Debian track
+curl -I http://localhost:8080/vmlinuz     # AlmaLinux track
+curl -I http://localhost:8080/ks/alma9.ks # AlmaLinux kickstart
+
+# 5. Tear down:
+phase4-podman/lab-podman.sh down --lab netboot-srv
+```
+
+Cross-references:
+- Producer (Debian): [Phase 1 chroot — `chroot-netboot-busybox.toml`](../examples/chroot-netboot-busybox.toml)
+- Consumer (Debian VM): [Phase 2 VM — `vm-netboot-direct.toml`](../examples/vm-netboot-direct.toml)
+- Rootful Docker variant: [`docker-netboot-server.toml`](../examples/docker-netboot-server.toml)
+
 ## Integrations
 
 ### ← Phase 1 (turn a chroot into a podman image)
