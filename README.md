@@ -128,6 +128,24 @@ phase2-qemu-vm/lab-vm.sh start  almalinux-pxe-install   # walk away; SSH in afte
 See [`netboot/SHOWCASE.md`](netboot/SHOWCASE.md) and
 [`ALMALINUX_PXE_LAB_PLAN.md`](ALMALINUX_PXE_LAB_PLAN.md) for the full design.
 
+### A from-source micro-distro (compile → boot in RAM)
+
+Compile a Linux kernel + a static BusyBox (or u-root) from upstream source and
+boot straight to a shell — no disk, no packages. Downloads are PGP-verified
+against a vendored key; the build is rootless.
+
+```bash
+micro-linux/mlbuild.sh image                                  # toolchain container (once)
+micro-linux/mlbuild.sh all --arch x86_64,aarch64              # compile + pack → micro-linux/out/
+phase2-qemu-vm/lab-vm.sh create --config examples/micro-linux-x86_64.toml
+phase2-qemu-vm/lab-vm.sh start  micro-linux-x86_64            # → BusyBox shell; Ctrl-A X to quit
+# Faithful "match the source post" track: --arch riscv64  (u-root + plain cpio)
+```
+
+See [`micro-linux/README.md`](micro-linux/README.md),
+[`micro-linux/SHOWCASE.md`](micro-linux/SHOWCASE.md), and
+[`MICRO_LINUX_LAB_PLAN.md`](MICRO_LINUX_LAB_PLAN.md) for the full design.
+
 ## Repo layout
 
 ```

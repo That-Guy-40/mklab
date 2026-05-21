@@ -1,0 +1,35 @@
+# micro-linux — x86_64 from-source distro (kernel + static BusyBox in RAM).
+#
+# Boots the artifacts produced by micro-linux/mlbuild.sh straight to a BusyBox
+# shell over the serial console — no disk, no bootloader, no cloud-init.
+#
+# Build first (rootless):
+#   micro-linux/mlbuild.sh all --arch x86_64
+# Then:
+#   phase2-qemu-vm/lab-vm.sh create --config examples/micro-linux-x86_64.toml
+#   phase2-qemu-vm/lab-vm.sh start  micro-linux-x86_64
+# Expect a "Welcome to micro-linux …" banner and a `/ #` prompt.
+# Press Ctrl-A X to quit QEMU (or Ctrl-] if attached via the console).
+#
+# Notes:
+#   memory  — 256M is ample: a static-busybox initramfs is a few MB in RAM.
+#             (Contrast the full-Debian netboot lab, which needs 4G because
+#             locales-all balloons its initrd to ~1.5 GB uncompressed.)
+#   append  — console only. A cpio initramfs needs NO root= ; do not copy the
+#             root=/dev/ram0 from vm-netboot-direct.toml (that's initrd-image
+#             semantics, wrong here).
+#   network — false: the passwordless root shell exposes no service; keep it
+#             off the network (plan §8 / AUDIT F1).
+#   Boot host needs: qemu-system-x86 + ovmf (lab-vm.sh sets -bios for x86_64).
+
+[[vm]]
+name    = "micro-linux-x86_64"
+backend = "kernel+initrd"
+arch    = "x86_64"
+memory  = "256M"
+cpus    = 1
+# EDIT these to your checkout if it is not at this path:
+kernel  = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/micro-linux/out/x86_64/kernel"
+initrd  = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/micro-linux/out/x86_64/initramfs.cpio.gz"
+append  = "console=ttyS0"
+network = false

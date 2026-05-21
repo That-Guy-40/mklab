@@ -1,0 +1,16 @@
+#!/bin/sh
+# micro-linux /init — PID 1 for the BusyBox initramfs (plan §6.4).
+# Staged at /init; the kernel execs it directly (initramfs default).
+mount -t proc     none /proc
+mount -t sysfs    none /sys
+mount -t devtmpfs none /dev
+# The kernel exec'd us before /dev/console existed, so fd 0/1/2 may be closed.
+# devtmpfs is mounted now → grab the console so the banner *and* errors show.
+# (Harmless no-op when packed with gen_init_cpio, which bakes /dev/console.)
+[ -c /dev/console ] && exec 0<>/dev/console 1>&0 2>&0
+echo
+echo "Welcome to micro-linux — kernel $(uname -r) on $(uname -m)"
+echo "(BusyBox $(busybox | head -1 | awk '{print $2}'))  Ctrl-A X to quit QEMU."
+echo
+# cttyhack gives /bin/sh a controlling tty on the serial console (job control).
+exec setsid cttyhack /bin/sh

@@ -26,3 +26,7 @@ phase6-tui/.pytest_cache/
 phase6-tui/**/__pycache__/
 phase6-tui/**/*.pyc
 phase6-tui/*.egg-info/
+
+# Micro-Linux lab — build outputs + fetched/extracted sources.
+# (versions.lock and keys/ live outside out/ and stay tracked.)
+micro-linux/out/

@@ -1,0 +1,30 @@
+# micro-linux — aarch64 from-source distro (cross-compiled kernel + BusyBox).
+#
+# Same as the x86_64 twin but for arm64; boots on QEMU's `virt` machine. On an
+# x86_64 host this runs under TCG emulation (slow but works — like the existing
+# vm-debian-aarch64.toml).
+#
+# Build first (rootless):
+#   micro-linux/mlbuild.sh all --arch aarch64
+# Then:
+#   phase2-qemu-vm/lab-vm.sh create --config examples/micro-linux-aarch64.toml
+#   phase2-qemu-vm/lab-vm.sh start  micro-linux-aarch64
+#
+# Notes:
+#   append  — console=ttyAMA0 : arm64 `virt` uses the PL011 UART (not 8250).
+#             Still no root= (cpio initramfs).
+#   Boot host needs: qemu-system-arm + qemu-efi-aarch64 (lab-vm.sh resolves a
+#             firmware blob for aarch64 and will fail loud with an install hint
+#             if it is missing).
+
+[[vm]]
+name    = "micro-linux-aarch64"
+backend = "kernel+initrd"
+arch    = "aarch64"
+memory  = "256M"
+cpus    = 1
+# EDIT these to your checkout if it is not at this path:
+kernel  = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/micro-linux/out/aarch64/kernel"
+initrd  = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/micro-linux/out/aarch64/initramfs.cpio.gz"
+append  = "console=ttyAMA0"
+network = false

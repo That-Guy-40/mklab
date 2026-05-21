@@ -1,0 +1,32 @@
+# micro-linux — riscv64 "faithful track" (matches the source post: §11).
+#
+# riscv64 kernel + a u-root (pure-Go) initramfs packed as a PLAIN (un-gzipped)
+# cpio — the closest this repo gets to popovicu's original recipe. u-root's own
+# init sets up /dev and drops you into its shell.
+#
+# Build first (rootless; needs the riscv/Go builder stage — Containerfile):
+#   micro-linux/mlbuild.sh all --arch riscv64
+# Then:
+#   phase2-qemu-vm/lab-vm.sh create --config examples/micro-linux-riscv64.toml
+#   phase2-qemu-vm/lab-vm.sh start  micro-linux-riscv64
+#
+# Notes:
+#   initrd  — initramfs.cpio (PLAIN; u-root does not gzip). The kernel reads an
+#             uncompressed cpio natively.
+#   append  — console=ttyS0 : riscv `virt` exposes an 8250 UART.
+#   Boot host needs: qemu-system-misc (qemu-system-riscv64) + opensbi.
+#             lab-vm.sh auto-resolves the OpenSBI firmware (fw_jump/fw_dynamic)
+#             and dies with an install hint if it is absent. Runs under TCG on
+#             x86_64 hosts (slow).
+
+[[vm]]
+name    = "micro-linux-riscv64"
+backend = "kernel+initrd"
+arch    = "riscv64"
+memory  = "256M"
+cpus    = 1
+# EDIT these to your checkout if it is not at this path:
+kernel  = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/micro-linux/out/riscv64/kernel"
+initrd  = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/micro-linux/out/riscv64/initramfs.cpio"
+append  = "console=ttyS0"
+network = false

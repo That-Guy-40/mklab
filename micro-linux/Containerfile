@@ -1,0 +1,47 @@
+# micro-linux/Containerfile — rootless build toolchain for mlbuild.sh.
+#
+# Single x86_64 image that cross-compiles every target (no qemu-user/binfmt).
+# Build:   podman build -t micro-linux-builder:bookworm micro-linux/
+# Pin F5:  podman build --build-arg BASE=debian:bookworm-slim@sha256:<digest> ...
+# Run:     mlbuild.sh drives `podman run --userns=keep-id -v <repo>:/work:Z ...`
+#          so artifacts land in micro-linux/out/ owned by the invoking user.
+
+# ── Base image — PIN BY DIGEST before real use (AUDIT F5) ────────────────────
+#   skopeo inspect docker://debian:bookworm-slim --format '{{.Digest}}'
+#   → BASE=debian:bookworm-slim@sha256:<digest>
+ARG BASE=debian:bookworm-slim
+FROM ${BASE}
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ── BusyBox track (§6): kernel build + static BusyBox, x86_64 native + aarch64 cross ──
+#   bzip2  — BusyBox ships only as .tar.bz2 (tar shells out to it)
+#   gnupg  — gpgv signature verification (plan §6.0); without it, PGP is a no-op
+#   file   — the "is busybox actually static?" assertion gate (§6.3)
+#   gcc-aarch64-linux-gnu + libc6-dev-arm64-cross — arm64 cross + static arm64 libc.a
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential bc bison flex libelf-dev libssl-dev \
+        cpio gzip xz-utils bzip2 gnupg file curl ca-certificates kmod \
+        gcc-aarch64-linux-gnu libc6-dev-arm64-cross \
+ && rm -rf /var/lib/apt/lists/*
+
+# ── Faithful track (§11): riscv64 kernel cross + Go (u-root) ─────────────────
+# Set --build-arg WITH_RISCV=0 to skip and keep the BusyBox-only image lean
+# (or split this into a separate build stage).
+ARG WITH_RISCV=1
+ARG GO_VER=1.22.5
+ARG GO_SHA256=904b924d435eaea086515bc63235b192ea441bd8c9b198c507e85009e6e4c7f0
+RUN if [ "$WITH_RISCV" = "1" ]; then \
+        apt-get update && apt-get install -y --no-install-recommends \
+            gcc-riscv64-linux-gnu \
+        && rm -rf /var/lib/apt/lists/* ; \
+        # bookworm's golang-go (1.19) is too old for recent u-root → pinned Go,
+        # verified against its published sha256 (passed in from versions.env):
+        curl -fsSLo /tmp/go.tgz "https://dl.google.com/go/go${GO_VER}.linux-amd64.tar.gz" ; \
+        echo "${GO_SHA256}  /tmp/go.tgz" | sha256sum -c - ; \
+        tar -C /usr/local -xzf /tmp/go.tgz ; \
+        rm -f /tmp/go.tgz ; \
+    fi
+ENV PATH="/usr/local/go/bin:${PATH}"
+
+WORKDIR /work/micro-linux
