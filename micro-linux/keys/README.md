@@ -23,6 +23,27 @@ private key.
 
 ---
 
+## Currently vendored
+
+| File | Key(s) | Primary fingerprint | How it was verified |
+|---|---|---|---|
+| `kernel.gpg` | Greg Kroah-Hartman | `647F2865 4894E3BD 457199BE 38DBBDC8 6092693E` | kernel.org **WKD** + cross-checked against `kernel.org/category/signatures.html` |
+| `kernel.gpg` | Sasha Levin | `E27E5D8A 3403A2EF 66873BBC DEA66FF7 97772CDC` | same two channels |
+| `busybox.gpg` | Denys Vlasenko | `C9E9416F 76E610DB D09D040F 47B70C55 ACC9965B` | key-id read from the release `.sig`, fetched from a keyserver |
+
+Pins live in [`../versions.env`](../versions.env) (`KERNEL_FPR`, `BUSYBOX_FPR`);
+`mlbuild.sh` asserts every pinned primary fingerprint is present in the keyring
+before trusting any signature.
+
+> **⚠️ The BusyBox key is verified more weakly than the kernel keys.** kernel.org
+> publishes its signing fingerprints on an authoritative page (a true second
+> channel); BusyBox does not, so the key id was learned from the signature
+> itself and the key fetched from a keyserver. That's effectively trust-on-first-
+> use. Before relying on it beyond a throwaway lab, cross-check
+> `C9E9416F…ACC9965B` against an independent source.
+
+---
+
 ## Files this directory should contain
 
 | File | Keyring for | Fingerprint pinned in `versions.env` |

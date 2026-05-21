@@ -20,12 +20,24 @@ else
 fi
 
 if have gpg; then
-    ( assert_keyring_fpr /dev/null "PIN-ME-foo" t ) >/dev/null 2>&1 \
-        && fail "assert_keyring_fpr must refuse the PIN-ME sentinel" \
-        || note "refuses an unpinned (PIN-ME) fingerprint"
-    ( assert_keyring_fpr /no/such/keyring.gpg "DEADBEEF" t ) >/dev/null 2>&1 \
-        && fail "assert_keyring_fpr must refuse a missing keyring" \
-        || note "refuses a missing keyring"
+    KR="$TEST_DIR/../keys/kernel.gpg"
+    if [[ -r "$KR" ]]; then
+        # positive: the vendored keyring satisfies the pinned fingerprints
+        ( set -e; source "$TEST_DIR/../versions.env"; assert_keyring_fpr "$KR" "$KERNEL_FPR" kernel ) >/dev/null 2>&1 \
+            && note "vendored keys/kernel.gpg matches pinned KERNEL_FPR" \
+            || fail "assert_keyring_fpr should ACCEPT the vendored kernel keyring + pinned fpr"
+        # negative: an unpinned sentinel is refused even with a populated keyring
+        ( assert_keyring_fpr "$KR" "PIN-ME-foo" t ) >/dev/null 2>&1 \
+            && fail "must refuse the PIN-ME sentinel" || note "refuses an unpinned (PIN-ME) fingerprint"
+        # negative: a fingerprint absent from the keyring is refused
+        ( assert_keyring_fpr "$KR" "0000000000000000000000000000000000000000" t ) >/dev/null 2>&1 \
+            && fail "must refuse a fingerprint absent from the keyring" || note "refuses an absent fingerprint"
+    else
+        note "keys/kernel.gpg not vendored yet — positive keyring check skipped"
+    fi
+    # negative: a missing keyring file is refused
+    ( assert_keyring_fpr /no/such/keyring.gpg x t ) >/dev/null 2>&1 \
+        && fail "must refuse a missing keyring" || note "refuses a missing keyring"
 else
     note "gpg not installed — keyring-assertion checks skipped"
 fi

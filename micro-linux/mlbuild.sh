@@ -96,22 +96,29 @@ load_versions() {
 # Confirm the vendored keyring contains EXACTLY the fingerprint pinned in
 # versions.env, so a swapped keyring is caught before we trust any signature.
 assert_keyring_fpr() {
+    # assert_keyring_fpr KEYRING "FPR [FPR ...]" LABEL
+    # Every pinned PRIMARY fingerprint must be present in the keyring (a release
+    # may be signed by any of several pinned signers). A swapped keyring, an
+    # unpinned (PIN-ME) value, or a missing key all fail closed.
     local keyring="$1" want="$2" label="$3"
     require_cmd gpg
     [[ -r "$keyring" ]] || die "$label keyring not found: $keyring  (see keys/README.md)"
-    case "$want" in
-        ''|PIN-ME*) die "$label fingerprint not pinned in versions.env  (see keys/README.md)";;
-    esac
-    want="${want//[[:space:]]/}"
     local have
-    have="$(gpg --no-default-keyring --keyring "$keyring" --list-keys --with-colons 2>/dev/null \
-            | awk -F: '$1=="fpr"{print $10; exit}')"
+    have="$(gpg --no-default-keyring --keyring "$keyring" --with-colons --list-keys 2>/dev/null \
+            | awk -F: '$1=="pub"{p=1;next} $1=="fpr"&&p{print toupper($10);p=0}')"
     [[ -n "$have" ]] || die "$label keyring $keyring contains no keys"
-    [[ "${have^^}" == "${want^^}" ]] || die "$label keyring fingerprint mismatch:
-  keyring: $have
-  pinned : $want
+    local -a fprs; read -ra fprs <<< "$want"
+    local fpr norm n=0
+    for fpr in "${fprs[@]}"; do
+        case "$fpr" in ''|PIN-ME*) die "$label fingerprint not pinned in versions.env  (see keys/README.md)";; esac
+        norm="${fpr//[[:space:]]/}"; norm="${norm^^}"
+        grep -qxF "$norm" <<<"$have" || die "$label keyring is missing a pinned fingerprint:
+  pinned : $norm
+  keyring: $(tr '\n' ' ' <<<"$have")
   refusing to trust this keyring — re-vet out-of-band per keys/README.md"
-    log_info "  $label key OK (${have:0:8}…${have: -8})"
+        n=$((n+1))
+    done
+    log_info "  $label keyring OK ($n pinned key(s) present)"
 }
 
 # Verify a detached signature with gpgv against the vendored keyring.
@@ -379,7 +386,11 @@ detect_engine() {
 ensure_image() {
     "$ENGINE" image inspect "$IMAGE" &>/dev/null && return 0
     log_info "building toolchain image $IMAGE (first run; minutes) …"
-    "$ENGINE" build -t "$IMAGE" ${BASE_IMAGE:+--build-arg BASE="$BASE_IMAGE"} "$SCRIPT_DIR"
+    local -a bargs=()
+    [[ -n "${BASE_IMAGE:-}" ]] && bargs+=(--build-arg "BASE=$BASE_IMAGE")
+    [[ -n "${GO_VER:-}"     ]] && bargs+=(--build-arg "GO_VER=$GO_VER")
+    [[ -n "${GO_SHA256:-}"  ]] && bargs+=(--build-arg "GO_SHA256=$GO_SHA256")
+    "$ENGINE" build -t "$IMAGE" "${bargs[@]}" "$SCRIPT_DIR"
 }
 
 run_in_builder() {

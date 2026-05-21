@@ -30,17 +30,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # (or split this into a separate build stage).
 ARG WITH_RISCV=1
 ARG GO_VER=1.22.5
+ARG GO_SHA256=904b924d435eaea086515bc63235b192ea441bd8c9b198c507e85009e6e4c7f0
 RUN if [ "$WITH_RISCV" = "1" ]; then \
         apt-get update && apt-get install -y --no-install-recommends \
             gcc-riscv64-linux-gnu \
         && rm -rf /var/lib/apt/lists/* ; \
-        # bookworm's golang-go (1.19) is too old for recent u-root, so install a
-        # pinned upstream Go. VERIFY its checksum out-of-band and pin it here:
-        #   curl -fLO https://go.dev/dl/go${GO_VER}.linux-amd64.tar.gz
-        #   echo "<sha256>  go${GO_VER}.linux-amd64.tar.gz" | sha256sum -c -
-        #   tar -C /usr/local -xzf go${GO_VER}.linux-amd64.tar.gz
-        # (left as documented steps so no unverified blob is baked in by default) \
-        echo "riscv64/Go stage: install + verify pinned Go ${GO_VER} per comment above" ; \
+        # bookworm's golang-go (1.19) is too old for recent u-root → pinned Go,
+        # verified against its published sha256 (passed in from versions.env):
+        curl -fsSLo /tmp/go.tgz "https://dl.google.com/go/go${GO_VER}.linux-amd64.tar.gz" ; \
+        echo "${GO_SHA256}  /tmp/go.tgz" | sha256sum -c - ; \
+        tar -C /usr/local -xzf /tmp/go.tgz ; \
+        rm -f /tmp/go.tgz ; \
     fi
 ENV PATH="/usr/local/go/bin:${PATH}"
 
