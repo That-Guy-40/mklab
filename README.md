@@ -27,6 +27,10 @@ earlier ones.
 
 ## Quick starts
 
+The recipes below are a sampler. For the full catalog of every ready-to-run
+spec — grouped by phase, theme, and cross-phase pipeline — see
+[`examples/INDEX.md`](examples/INDEX.md).
+
 ### A throwaway Debian chroot
 
 ```bash
@@ -152,7 +156,7 @@ See [`micro-linux/README.md`](micro-linux/README.md),
 LAB_CREATE_V2/
 ├── PLAN.md                    # full project plan
 ├── README.md                  # this file
-├── examples/                  # ready-to-use TOML configs
+├── examples/                  # ready-to-use TOML configs (see examples/INDEX.md)
 ├── phase1-chroot/
 │   ├── lab-chroot.sh
 │   ├── README.md
