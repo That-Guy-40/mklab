@@ -79,8 +79,11 @@ micro-linux/mlbuild.sh all --arch riscv64
 # 3. Boot (reuses Phase 2)
 phase2-qemu-vm/lab-vm.sh create --config examples/micro-linux-x86_64.toml
 phase2-qemu-vm/lab-vm.sh start  micro-linux-x86_64
-# In the shell, 'exit' or 'poweroff' shuts the VM down cleanly (Ctrl-A X force-quits
-# QEMU).  aarch64/riscv64 twins via their example TOMLs.
+# Log in at the console as root / micro (advertised in /etc/issue).  In the shell,
+# 'poweroff' shuts the VM down cleanly, 'exit' logs out (the prompt respawns);
+# Ctrl-A X force-quits QEMU.  aarch64/riscv64 twins via their example TOMLs.
+# (riscv64 boots into the u-root shell — no getty/login.)
+# Change the lab password with: MLBUILD_LAB_PASSWORD=... mlbuild.sh pack --arch ...
 ```
 
 `mlbuild.sh build` and `pack` are separate subcommands if you want to inspect

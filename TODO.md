@@ -7,8 +7,8 @@ host for **all three architectures**. Every arch builds and boots:
 
 | Arch    | Kernel | Initramfs            | Boots to                         |
 |---------|--------|----------------------|----------------------------------|
-| x86_64  | 13M    | 1.2M gz (BusyBox)    | `Welcome to micro-linux …` + `~ #` |
-| aarch64 | 44M    | 1.2M gz (BusyBox)    | `Welcome to micro-linux …` + `~ #` |
+| x86_64  | 13M    | 1.2M gz (BusyBox)    | `login:` (root / micro) → `~ #`   |
+| aarch64 | 44M    | 1.2M gz (BusyBox)    | `login:` (root / micro) → `~ #`   |
 | riscv64 | 21M    | 15M plain cpio (u-root) | `Welcome to u-root!` + `>` shell |
 
 The first verified run surfaced **seven** bugs that only a real build could
@@ -67,7 +67,7 @@ timeout --foreground 120 qemu-system-x86_64 -M pc -m 256M \
 - [x] kernel `.tar.sign` + busybox `.tar.bz2.sig` pass `gpgv`; the first run
       records sha256s into `micro-linux/versions.lock` (committed).
 - [x] busybox links **static** (the build aborts otherwise — and did, until fix 1).
-- [x] x86_64 boots to `Welcome to micro-linux …` and a `~ #` BusyBox prompt.
+- [x] x86_64 boots to the `login:` prompt (getty); root / micro → a `~ #` shell.
 - [x] aarch64 boots the same (slower under TCG).
 - [x] riscv64 boots into the u-root shell.
 - [x] the initramfs does **not** embed the kernel; `/dev/console` works in-VM.

@@ -8,9 +8,10 @@
 # Then:
 #   phase2-qemu-vm/lab-vm.sh create --config examples/micro-linux-x86_64.toml
 #   phase2-qemu-vm/lab-vm.sh start  micro-linux-x86_64
-# Expect a "Welcome to micro-linux …" banner and a `~ #` prompt.
-# 'exit' or 'poweroff' shuts the VM down cleanly; Ctrl-A X force-quits QEMU
-# (or Ctrl-] if attached via the console).
+# Expect a "Welcome to micro-linux …" /etc/issue banner and a `login:` prompt;
+# log in as root / micro (creds advertised in the banner). At the `~ #` shell,
+# 'poweroff' shuts the VM down cleanly, 'exit' logs out (prompt respawns);
+# Ctrl-A X force-quits QEMU (or Ctrl-] if attached via the console).
 #
 # Notes:
 #   memory  — 256M is ample: a static-busybox initramfs is a few MB in RAM.
@@ -19,8 +20,9 @@
 #   append  — console only. A cpio initramfs needs NO root= ; do not copy the
 #             root=/dev/ram0 from vm-netboot-direct.toml (that's initrd-image
 #             semantics, wrong here).
-#   network — false: the passwordless root shell exposes no service; keep it
-#             off the network (plan §8 / AUDIT F1).
+#   network — false: console login is root / micro (a deliberately weak,
+#             advertised lab credential) and there's no listening service, so
+#             keep it off the network (plan §8 / AUDIT F1).
 #   Boot host needs: qemu-system-x86 + ovmf (lab-vm.sh sets -bios for x86_64).
 
 [[vm]]

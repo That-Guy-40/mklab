@@ -45,6 +45,12 @@ readonly CACHE_DIR="$OUT_DIR/_cache"
 readonly LOCK_FILE="${MLBUILD_LOCK_FILE:-$SCRIPT_DIR/versions.lock}"
 readonly IMAGE="${MLBUILD_IMAGE:-micro-linux-builder:bookworm}"
 
+# BusyBox-track login credentials (getty + login). THROWAWAY-LAB creds — safe
+# ONLY because the VM is network=false (AUDIT F1). They are advertised in
+# /etc/issue so they're discoverable at the prompt. Edit to taste.
+readonly LAB_USER="${MLBUILD_LAB_USER:-root}"
+readonly LAB_PASSWORD="${MLBUILD_LAB_PASSWORD:-micro}"
+
 # ─── Logging (matches netboot/build-ipxe.sh) ─────────────────────────────────
 _log() {
     local level="$1"; shift
@@ -346,14 +352,54 @@ build_gen_init_cpio() {                      # echoes path to the compiled tool
     echo "$bin"
 }
 
+stage_etc() {                                # echoes a staged /etc dir for the login setup
+    local etc="$OUT_DIR/_etc"
+    rm -rf "$etc"; install -d "$etc"
+    # One root account.  passwd points login at /bin/sh; the real secret lives in
+    # shadow (FEATURE_SHADOWPASSWDS=y).
+    printf '%s:x:0:0:root:/root:/bin/sh\n' "$LAB_USER" > "$etc/passwd"
+    printf '%s:x:0:\n'                      "$LAB_USER" > "$etc/group"
+    # securetty: with FEATURE_SECURETTY=y, login refuses root on any line NOT
+    # listed here.  Cover the consoles every arch might use.
+    printf 'console\nttyS0\nttyAMA0\nhvc0\ntty1\n'   > "$etc/securetty"
+    # shadow: derive the crypt() hash from the known lab password.  python3 is in
+    # the builder image; a fixed salt keeps the artifact reproducible.
+    require_cmd python3
+    # NB: python's crypt module is deprecated in 3.11 and removed in 3.13; the
+    # pinned bookworm image ships 3.11, so this is fine. -W ignore silences the
+    # noise. If a newer image drops crypt, the $6$ guard below fails loudly.
+    local hash
+    hash="$(python3 -W ignore -c 'import crypt,sys; print(crypt.crypt(sys.argv[1], "$6$micr0lab$"))' "$LAB_PASSWORD")"
+    [[ "$hash" == \$6\$* ]] || die "stage_etc: crypt() did not return a SHA-512 hash"
+    printf '%s:%s:19000:0:99999:7:::\n' "$LAB_USER" "$hash" > "$etc/shadow"
+    # /etc/issue — getty prints this BEFORE the login: prompt.  \s \r \m are getty
+    # escapes (system / kernel release / machine).  Advertise the creds.
+    cat > "$etc/issue" <<EOF
+Welcome to micro-linux (\\s \\r \\m)
+
+Throwaway OFFLINE lab VM.  Log in with:
+    login:    $LAB_USER
+    password: $LAB_PASSWORD
+
+EOF
+    echo "$etc"
+}
+
 emit_cpio_spec() {                           # stdout: gen_init_cpio spec
-    local init="$1" tree="$2"
+    local init="$1" tree="$2" etc="$3"
     cat <<EOF
 dir /proc 0755 0 0
 dir /sys 0755 0 0
 dir /dev 0755 0 0
 nod /dev/console 0600 0 0 c 5 1
 nod /dev/null 0666 0 0 c 1 3
+dir /root 0700 0 0
+dir /etc 0755 0 0
+file /etc/passwd $etc/passwd 0644 0 0
+file /etc/group $etc/group 0644 0 0
+file /etc/shadow $etc/shadow 0600 0 0
+file /etc/securetty $etc/securetty 0644 0 0
+file /etc/issue $etc/issue 0644 0 0
 file /init $init 0755 0 0
 EOF
     # busybox _install tree → dir/slink/file lines, all uid/gid 0 (reproducible),
@@ -380,7 +426,8 @@ pack_busybox() {
     # Omitting it makes the tool print usage + exit 1 (an empty archive) — caught
     # by pipefail, but pass "-" so the piped spec is actually consumed.
     local img="$OUT_DIR/$arch/initramfs.cpio.gz"
-    emit_cpio_spec "$init" "$OUT_DIR/$arch/_install" \
+    local etc; etc="$(stage_etc)"
+    emit_cpio_spec "$init" "$OUT_DIR/$arch/_install" "$etc" \
         | "$gic" - \
         | gzip -9 -n > "$img"
     # A near-empty archive (e.g. a pack mishap) kernel-panics at boot rather than
@@ -389,6 +436,7 @@ pack_busybox() {
     local entries; entries="$(gzip -dc "$img" | cpio -t 2>/dev/null)"
     grep -qE '(^|/)init$'        <<<"$entries" || die "[$arch] initramfs has no /init — pack failed"
     grep -qE '(^|/)bin/busybox$' <<<"$entries" || die "[$arch] initramfs has no /bin/busybox — pack failed"
+    grep -qE '(^|/)etc/passwd$'  <<<"$entries" || die "[$arch] initramfs has no /etc/passwd — login would fail"
     log_info "[$arch] initramfs → out/$arch/initramfs.cpio.gz ($(gzip -dc "$img" | cpio -t 2>/dev/null | wc -l) entries)"
 }
 
@@ -456,14 +504,20 @@ ensure_image() {                             # auto path (build/pack/all): build
 run_in_builder() {
     load_versions          # so BASE_IMAGE is available to ensure_image
     ensure_image
-    local -a mount
+    local -a mount envs
     if [[ "$ENGINE" == podman ]]; then
         mount=(-v "$REPO_ROOT:/work:Z" --userns=keep-id)        # keep-id → host artifacts owned by you
     else
         mount=(-v "$REPO_ROOT:/work" -u "$(id -u):$(id -g)")
     fi
+    # Forward the knobs the in-container build reads (pack's stage_etc needs the
+    # lab creds, so a host-side override actually reaches it).
+    envs=(-e MLBUILD_IN_CONTAINER=1)
+    [[ -n "${MLBUILD_OFFLINE:-}"      ]] && envs+=(-e "MLBUILD_OFFLINE=1")
+    [[ -n "${MLBUILD_LAB_USER:-}"     ]] && envs+=(-e "MLBUILD_LAB_USER=${MLBUILD_LAB_USER}")
+    [[ -n "${MLBUILD_LAB_PASSWORD:-}" ]] && envs+=(-e "MLBUILD_LAB_PASSWORD=${MLBUILD_LAB_PASSWORD}")
     "$ENGINE" run --rm "${mount[@]}" -w /work/micro-linux \
-        -e MLBUILD_IN_CONTAINER=1 ${MLBUILD_OFFLINE:+-e MLBUILD_OFFLINE=1} \
+        "${envs[@]}" \
         "$IMAGE" bash mlbuild.sh "$@"
 }
 

@@ -1,28 +1,42 @@
 #!/bin/sh
 # micro-linux /init — PID 1 for the BusyBox initramfs (plan §6.4).
 # Staged at /init; the kernel execs it directly (initramfs default).
+#
+# This is a tiny, inittab-free "mini init": mount the virtual filesystems, then
+# present a *respawning* login prompt on the serial console via getty + login.
 mount -t proc     none /proc
 mount -t sysfs    none /sys
 mount -t devtmpfs none /dev
 # The kernel exec'd us before /dev/console existed, so fd 0/1/2 may be closed.
-# devtmpfs is mounted now → grab the console so the banner *and* errors show.
-# (Harmless no-op when packed with gen_init_cpio, which bakes /dev/console.)
+# devtmpfs is mounted now → grab the console so prompts *and* errors show.
 [ -c /dev/console ] && exec 0<>/dev/console 1>&0 2>&0
-echo
-echo "Welcome to micro-linux — kernel $(uname -r) on $(uname -m)"
-echo "(BusyBox $(busybox | head -1 | awk '{print $2}'))"
-echo "Type 'exit' or 'poweroff' to power off the VM; Ctrl-A X to force-quit QEMU."
-echo
-# cttyhack gives /bin/sh a controlling tty on the serial console (job control).
-# Run it as a CHILD — do NOT exec.  If the shell were PID 1, typing `exit` would
-# terminate init and the kernel would panic ("Attempted to kill init!"); that is
-# a kernel invariant (PID 1 must never die), not a misconfiguration.  Staying PID
-# 1 lets us reap the shell and power the VM off cleanly when it exits.  (setsid
-# succeeds here because this child is not a process-group leader, so it does not
-# fork/detach — init blocks until the shell returns.)
-setsid cttyhack /bin/sh
-echo
-echo "micro-linux: shell exited — powering off."
-poweroff -f          # direct reboot(POWER_OFF) syscall: PSCI on arm64 / ACPI on x86
-# Last resort if the platform exposes no power-off: park PID 1 (never exit it).
-while :; do sleep 3600; done
+
+# Make `poweroff` / `reboot` / `halt` (without -f) work. BusyBox sends those to
+# PID 1 as signals (poweroff→SIGUSR2, reboot→SIGTERM, halt→SIGUSR1) and expects
+# init to act; trap them and issue the real syscall. (`poweroff -f` etc. always
+# work directly, bypassing this.)
+trap 'poweroff -f' USR2
+trap 'reboot   -f' TERM
+trap 'halt     -f' USR1
+
+# Respawn a login prompt forever. getty opens /dev/console, prints /etc/issue
+# (which advertises the lab credentials), reads the username, then exec's
+# `login` for the password check; on logout we loop and re-present the prompt.
+# We do NOT exec getty: keeping this script as PID 1 means a logout (or the shell
+# exiting) re-shows the prompt instead of panicking the kernel ("kill init").
+# getty does its own setsid + controlling-tty setup, so no cttyhack is needed.
+#   -L      local line: set CLOCAL, ignore carrier (right for a virtual console)
+#   0       leave the line speed unchanged
+#   console open /dev/console (arch-agnostic: x86 ttyS0, arm ttyAMA0, …)
+#
+# getty runs in the BACKGROUND and we block on `wait`, not on a foreground
+# getty: ash defers traps until a foreground external command returns, so a
+# foreground getty would swallow a `poweroff` until logout. The `wait` builtin
+# *is* interruptible by traps, so `poweroff`/`reboot`/`halt` act immediately.
+while : ; do
+    getty -L console 0 vt100 &
+    wait "$!"
+    # No inittab "respawn too fast" throttle here; a short nap avoids a hot spin
+    # if getty ever fails to start (e.g. console missing).
+    sleep 1
+done

@@ -27,25 +27,30 @@ phase2-qemu-vm/lab-vm.sh start  micro-linux-x86_64
 What the serial console shows:
 
 ```
-Welcome to micro-linux — kernel 6.12.x on x86_64
-(BusyBox v1.36.1)
-Type 'exit' or 'poweroff' to power off the VM; Ctrl-A X to force-quit QEMU.
+Welcome to micro-linux (Linux 6.12.x x86_64)
 
+Throwaway OFFLINE lab VM.  Log in with:
+    login:    root
+    password: micro
+
+(none) login: root
+Password:
+login[56]: root login on 'console'
 ~ # uname -a
 Linux (none) 6.12.x #1 SMP ... x86_64 GNU/Linux
 ~ # cat /proc/1/cmdline
 /init
-~ # ls /bin | head
-[ ash awk base64 busybox cat chmod ...
-~ # exit
-micro-linux: shell exited — powering off.
-[   11.2] reboot: Power down
+~ # exit            # logout → the login: prompt comes back (getty respawns)
+~ # poweroff        # (or 'poweroff -f') → clean ACPI/PSCI power-off, QEMU exits
 ```
 
-`/init` mounts `/proc /sys /dev`, reattaches the console, then runs `setsid
-cttyhack /bin/sh` as a **child** (PID 1 stays `/init`). Keeping the script as
-PID 1 means `exit` reaps the shell and powers the VM off cleanly — if the shell
-were PID 1, the kernel would panic the instant you exited it.
+`/init` is a tiny inittab-free mini-init: it mounts `/proc /sys /dev`, reattaches
+the console, traps the shutdown signals BusyBox sends to PID 1, then loops
+`getty -L console 0 vt100` in the background (blocking on `wait`). getty prints
+`/etc/issue` — which advertises the credentials — and hands off to `login`,
+which checks the password (SHA-512 `crypt()` in `/etc/shadow`) and starts the
+shell. PID 1 stays `/init`, so a logout just re-shows the prompt and `poweroff`
+powers the VM off cleanly instead of panicking the kernel.
 
 ---
 
@@ -82,9 +87,11 @@ identical to `vm-netboot-direct.toml`.
   `versions.lock` with drift detection. A checksum fetched from the same mirror
   as the tarball is *never* trusted — that's the trap F2 found.
 - **Pinned inputs (F5).** Versions pinned; base image pinnable by digest.
-- **Throwaway, but smaller blast radius than F1.** The shell is passwordless
-  root — fine for a diskless RAM VM — but `network = false` by default and there
-  is no SSH/login service, so there's no network auth surface at all.
+- **Throwaway, but smaller blast radius than F1.** Console login is `root` with
+  a *well-known, advertised* lab password (`micro`) — deliberately weak, and fine
+  only because `network = false` by default and there is no SSH/listening
+  service, so there's no network auth surface at all. The credential lives in
+  `/etc/shadow` (SHA-512 `crypt()`); change it via `MLBUILD_LAB_PASSWORD`.
 - **Rootless + guarded.** The build runs rootless (`--userns=keep-id`); the
   initramfs is packed without `mknod`; `clean` refuses any `rm -rf` outside
   `out/` (F7).
