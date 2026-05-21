@@ -1,0 +1,486 @@
+#!/usr/bin/env bash
+# mlbuild.sh — Micro-Linux from-scratch builder.  See ../MICRO_LINUX_LAB_PLAN.md.
+#
+# Compiles a kernel + a tiny userspace from upstream source inside a rootless
+# build container, verifies every download against a VENDORED signing key
+# (never a fetched-and-trusted checksum — plan §6.0/§8), records the verified
+# sha256 in versions.lock, packs an initramfs, and leaves kernel + initramfs in
+# micro-linux/out/<arch>/ ready for Phase 2 (lab-vm.sh kernel+initrd backend).
+#
+# Tracks:
+#   x86_64 / aarch64  → static BusyBox userspace + gen_init_cpio pack   (§6)
+#   riscv64           → u-root userspace, plain cpio ("faithful track", §11)
+#
+# Usage:
+#   mlbuild.sh image                      build the toolchain container image
+#   mlbuild.sh build [--arch LIST] [opt]  fetch + verify + compile   (runs in container)
+#   mlbuild.sh pack  [--arch LIST] [opt]  build the initramfs        (runs in container)
+#   mlbuild.sh all   [--arch LIST] [opt]  build + pack
+#   mlbuild.sh clean [--arch LIST|--all]  remove out/ artifacts (F7-guarded; host)
+#
+# Options:
+#   --arch  LIST   comma list of {x86_64,aarch64,riscv64}  (default: x86_64,aarch64)
+#   --engine ENG   podman | docker            (default: podman if present, else docker)
+#   --offline      do not download; require tarballs already cached in out/_cache
+#   --help
+#
+# Nothing here needs root: the container runs rootless (--userns=keep-id) and the
+# initramfs is packed without mknod (gen_init_cpio bakes /dev/console).
+#
+# STATUS: skeleton. The verify/gpgv/lock flow, the F7 clean guard, and the
+# orchestration are real; fill in the pinned digest/fingerprints (versions.env,
+# keys/) before relying on it. Not yet exercised end-to-end (needs podman + net).
+set -euo pipefail
+
+# BASH_SOURCE (not $0) so paths resolve correctly when sourced by unit tests.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
+readonly REPO_ROOT="${SCRIPT_DIR%/*}"
+readonly OUT_DIR="$SCRIPT_DIR/out"
+readonly CACHE_DIR="$OUT_DIR/_cache"
+readonly LOCK_FILE="${MLBUILD_LOCK_FILE:-$SCRIPT_DIR/versions.lock}"
+readonly IMAGE="${MLBUILD_IMAGE:-micro-linux-builder:bookworm}"
+
+# ─── Logging (matches netboot/build-ipxe.sh) ─────────────────────────────────
+_log() {
+    local level="$1"; shift
+    local color reset
+    if [[ -t 2 ]]; then
+        case "$level" in
+            info)  color=$'\033[36m' ;;
+            warn)  color=$'\033[33m' ;;
+            error) color=$'\033[31m' ;;
+            *)     color='' ;;
+        esac
+        reset=$'\033[0m'
+    else
+        color=""; reset=""
+    fi
+    printf '%s[%s]%s %s\n' "$color" "$level" "$reset" "$*" >&2
+}
+log_info()  { _log info  "$@"; }
+log_warn()  { _log warn  "$@"; }
+log_error() { _log error "$@"; }
+die()       { _log error "$@"; exit 1; }
+
+require_cmd() {
+    local c
+    for c in "$@"; do
+        command -v "$c" &>/dev/null || die "required command not found: $c"
+    done
+}
+
+usage() {
+    # print the header comment block (skip the shebang; stop at the first code line)
+    awk 'NR==1 {next} /^[^#]/ {exit} {sub(/^# ?/, ""); print}' "$0"
+    exit 0
+}
+
+# ─── versions.env ─────────────────────────────────────────────────────────────
+load_versions() {
+    local f="$SCRIPT_DIR/versions.env"
+    [[ -r "$f" ]] || die "missing $f  (see plan §4 and keys/README.md)"
+    # shellcheck source=/dev/null
+    source "$f"
+    : "${LINUX_VER:?set LINUX_VER in versions.env}"
+    : "${LINUX_MAJOR:?set LINUX_MAJOR in versions.env}"
+    : "${BUSYBOX_VER:?set BUSYBOX_VER in versions.env}"
+    : "${UROOT_REF:?set UROOT_REF in versions.env}"
+    : "${KERNEL_KEYRING:?}" "${KERNEL_FPR:?}" "${BUSYBOX_KEYRING:?}" "${BUSYBOX_FPR:?}"
+}
+
+# ════════════════════════════════════════════════════════════════════════════
+# Verification — the supply-chain core (plan §6.0)
+# ════════════════════════════════════════════════════════════════════════════
+
+# Confirm the vendored keyring contains EXACTLY the fingerprint pinned in
+# versions.env, so a swapped keyring is caught before we trust any signature.
+assert_keyring_fpr() {
+    local keyring="$1" want="$2" label="$3"
+    require_cmd gpg
+    [[ -r "$keyring" ]] || die "$label keyring not found: $keyring  (see keys/README.md)"
+    case "$want" in
+        ''|PIN-ME*) die "$label fingerprint not pinned in versions.env  (see keys/README.md)";;
+    esac
+    want="${want//[[:space:]]/}"
+    local have
+    have="$(gpg --no-default-keyring --keyring "$keyring" --list-keys --with-colons 2>/dev/null \
+            | awk -F: '$1=="fpr"{print $10; exit}')"
+    [[ -n "$have" ]] || die "$label keyring $keyring contains no keys"
+    [[ "${have^^}" == "${want^^}" ]] || die "$label keyring fingerprint mismatch:
+  keyring: $have
+  pinned : $want
+  refusing to trust this keyring — re-vet out-of-band per keys/README.md"
+    log_info "  $label key OK (${have:0:8}…${have: -8})"
+}
+
+# Verify a detached signature with gpgv against the vendored keyring.
+# mode=xz → the signature covers the *uncompressed* tar (kernel.org), so we
+# decompress on the fly; mode=plain → signature covers the file as-is (busybox).
+verify_sig() {
+    local file="$1" sig="$2" keyring="$3" mode="${4:-plain}"
+    require_cmd gpgv
+    [[ -r "$sig" ]] || die "signature not found: $sig"
+    if [[ "$mode" == "xz" ]]; then
+        require_cmd xz
+        xz -dc "$file" | gpgv --keyring "$keyring" "$sig" - >&2 \
+            || die "PGP verification FAILED (uncompressed): $file"
+    else
+        gpgv --keyring "$keyring" "$sig" "$file" >&2 \
+            || die "PGP verification FAILED: $file"
+    fi
+    log_info "  signature OK: ${file##*/}"
+}
+
+# TOFU-lock: record the verified sha256 on first sight; on later builds, fail
+# loudly if a pinned version's hash changed (drift detection). versions.lock is
+# committed to git, like uv.lock.
+lock_check_or_record() {
+    local name="$1" file="$2"
+    require_cmd sha256sum
+    local sha; sha="$(sha256sum "$file" | cut -d' ' -f1)"
+    if [[ ! -f "$LOCK_FILE" ]]; then
+        printf '# name  sha256 — auto-recorded on first verified build; commit this file.\n' > "$LOCK_FILE"
+    fi
+    local pinned
+    pinned="$(awk -v n="$name" '$1==n {print $2; exit}' "$LOCK_FILE")"
+    if [[ -n "$pinned" ]]; then
+        [[ "$pinned" == "$sha" ]] || die "LOCK MISMATCH for $name
+  versions.lock: $pinned
+  downloaded   : $sha
+  A pinned version changed upstream — investigate before proceeding."
+        log_info "  $name: sha256 matches versions.lock"
+    else
+        printf '%s  %s\n' "$name" "$sha" >> "$LOCK_FILE"
+        log_info "  $name: recorded sha256 in versions.lock"
+    fi
+}
+
+# Download to cache (skip if present; refuse if --offline and missing).
+fetch() {
+    local url="$1" dest="$2"
+    if [[ -f "$dest" ]]; then
+        log_info "  cached: ${dest##*/}"
+        return 0
+    fi
+    [[ -z "${MLBUILD_OFFLINE:-}" ]] || die "--offline: ${dest##*/} not in $CACHE_DIR"
+    require_cmd curl
+    log_info "  downloading ${dest##*/} …"
+    # --proto =https / --tlsv1.2 defend against an HTTP-downgrade mirror (F2).
+    curl -fSL --proto '=https' --tlsv1.2 --progress-bar -o "$dest" "$url"
+}
+
+# ════════════════════════════════════════════════════════════════════════════
+# Per-arch toolchain knobs
+# ════════════════════════════════════════════════════════════════════════════
+kernel_arch()  { case "$1" in x86_64) echo x86_64;; aarch64) echo arm64;; riscv64) echo riscv;;  esac; }
+kernel_cross() { case "$1" in x86_64) echo "";; aarch64) echo aarch64-linux-gnu-;; riscv64) echo riscv64-linux-gnu-;; esac; }
+kernel_image() { case "$1" in x86_64) echo arch/x86/boot/bzImage;; aarch64) echo arch/arm64/boot/Image;; riscv64) echo arch/riscv/boot/Image;; esac; }
+kernel_cons()  { case "$1" in aarch64) echo CONFIG_SERIAL_AMBA_PL011_CONSOLE;; *) echo CONFIG_SERIAL_8250_CONSOLE;; esac; }
+
+# make wrapper that injects ARCH and (when cross) CROSS_COMPILE
+kmake() {
+    local arch="$1" dir="$2"; shift 2
+    local cross; cross="$(kernel_cross "$arch")"
+    local -a args=(ARCH="$(kernel_arch "$arch")")
+    [[ -n "$cross" ]] && args+=(CROSS_COMPILE="$cross")
+    make -C "$dir" "${args[@]}" "$@"
+}
+
+assert_kconfig() {
+    local dir="$1"; shift
+    local sym
+    for sym in "$@"; do
+        grep -q "^${sym}=y" "$dir/.config" || die "kernel .config missing ${sym}=y"
+    done
+}
+
+# ════════════════════════════════════════════════════════════════════════════
+# Fetch + verify + extract sources (inside the container)
+# ════════════════════════════════════════════════════════════════════════════
+prepare_kernel() {                          # echoes the extracted source dir
+    local arch="$1"
+    local tb="linux-${LINUX_VER}.tar.xz" sig="linux-${LINUX_VER}.tar.sign"
+    local base="https://cdn.kernel.org/pub/linux/kernel/${LINUX_MAJOR}"
+    fetch "$base/$tb"  "$CACHE_DIR/$tb"
+    fetch "$base/$sig" "$CACHE_DIR/$sig"
+    assert_keyring_fpr "$SCRIPT_DIR/$KERNEL_KEYRING" "$KERNEL_FPR" "kernel.org"
+    verify_sig "$CACHE_DIR/$tb" "$CACHE_DIR/$sig" "$SCRIPT_DIR/$KERNEL_KEYRING" xz
+    lock_check_or_record "$tb" "$CACHE_DIR/$tb"
+    local b="$OUT_DIR/$arch/build"; install -d "$b"
+    [[ -d "$b/linux-${LINUX_VER}" ]] || tar -C "$b" -xf "$CACHE_DIR/$tb"
+    echo "$b/linux-${LINUX_VER}"
+}
+
+prepare_busybox() {                         # echoes the extracted source dir
+    local arch="$1"
+    local tb="busybox-${BUSYBOX_VER}.tar.bz2" sig="busybox-${BUSYBOX_VER}.tar.bz2.sig"
+    local base="https://busybox.net/downloads"
+    fetch "$base/$tb"  "$CACHE_DIR/$tb"
+    fetch "$base/$sig" "$CACHE_DIR/$sig"
+    assert_keyring_fpr "$SCRIPT_DIR/$BUSYBOX_KEYRING" "$BUSYBOX_FPR" "BusyBox"
+    verify_sig "$CACHE_DIR/$tb" "$CACHE_DIR/$sig" "$SCRIPT_DIR/$BUSYBOX_KEYRING" plain
+    lock_check_or_record "$tb" "$CACHE_DIR/$tb"
+    require_cmd bzip2
+    local b="$OUT_DIR/$arch/build"; install -d "$b"
+    [[ -d "$b/busybox-${BUSYBOX_VER}" ]] || tar -C "$b" -xf "$CACHE_DIR/$tb"
+    echo "$b/busybox-${BUSYBOX_VER}"
+}
+
+# ════════════════════════════════════════════════════════════════════════════
+# Compile
+# ════════════════════════════════════════════════════════════════════════════
+build_kernel() {
+    local arch="$1" src="$2"
+    log_info "[$arch] kernel: defconfig + build (this takes minutes) …"
+    kmake "$arch" "$src" defconfig    >/dev/null
+    # TODO: merge a pinned fragment here (scripts/kconfig/merge_config.sh) for
+    # reproducibility across kernel versions — see plan §6.1.
+    kmake "$arch" "$src" olddefconfig >/dev/null
+    local -a want=(CONFIG_DEVTMPFS CONFIG_BLK_DEV_INITRD CONFIG_VIRTIO "$(kernel_cons "$arch")")
+    case "$arch" in
+        x86_64|aarch64) want+=(CONFIG_DEVTMPFS_MOUNT CONFIG_RD_GZIP CONFIG_VIRTIO_PCI) ;;  # busybox track gzips its cpio
+        riscv64)        want+=(CONFIG_VIRTIO_MMIO) ;;                                       # riscv virt is mmio; u-root cpio is plain
+    esac
+    assert_kconfig "$src" "${want[@]}"
+    kmake "$arch" "$src" -j"$(nproc)"
+    install -Dm0644 "$src/$(kernel_image "$arch")" "$OUT_DIR/$arch/kernel"
+    log_info "[$arch] kernel → out/$arch/kernel"
+}
+
+build_busybox() {
+    local arch="$1" src="$2"
+    local cross; cross="$(kernel_cross "$arch")"
+    local -a bb=()
+    [[ -n "$cross" ]] && bb+=(CROSS_COMPILE="$cross")
+    log_info "[$arch] busybox: static config + build …"
+    make -C "$src" "${bb[@]}" defconfig >/dev/null
+    # Enable static linking robustly — never blind-sed a comment that may not
+    # exist (a silent miss = a dynamic busybox that dies in the initramfs):
+    echo 'CONFIG_STATIC=y'        >> "$src/.config"
+    echo '# CONFIG_TC is not set' >> "$src/.config"   # tc.c breaks vs kernel >=6.8 (CBQ removed); fixed in busybox 1.37.0
+    make -C "$src" "${bb[@]}" oldconfig >/dev/null
+    grep -q '^CONFIG_STATIC=y'   "$src/.config" || die "[$arch] CONFIG_STATIC didn't take"
+    grep -q '^CONFIG_CTTYHACK=y' "$src/.config" || log_warn "[$arch] CONFIG_CTTYHACK not set — /init handoff may fail (§6.4)"
+    grep -q '^CONFIG_SETSID=y'   "$src/.config" || log_warn "[$arch] CONFIG_SETSID not set — /init handoff may fail (§6.4)"
+    make -C "$src" "${bb[@]}" -j"$(nproc)"
+    # THE gate: a silently-dynamic busybox can't exec in a libc-less initramfs.
+    require_cmd file
+    file "$src/busybox" | grep -q 'statically linked' || die "[$arch] busybox is NOT static — refusing"
+    make -C "$src" "${bb[@]}" CONFIG_PREFIX="$OUT_DIR/$arch/_install" install >/dev/null
+    log_info "[$arch] busybox → out/$arch/_install"
+}
+
+build_uroot() {                              # faithful track (§11); riscv64 only
+    log_info "[riscv64] u-root: build initramfs (Go; needs net for modules unless cached) …"
+    require_cmd go
+    install -d "$OUT_DIR/riscv64"
+    GOARCH=riscv64 GOOS=linux CGO_ENABLED=0 \
+        go run "github.com/u-root/u-root@${UROOT_REF}" -o "$OUT_DIR/riscv64/initramfs.cpio"
+    log_info "[riscv64] u-root → out/riscv64/initramfs.cpio (plain cpio; supply chain via go.sum)"
+}
+
+# ════════════════════════════════════════════════════════════════════════════
+# Pack — gen_init_cpio (kernel's own tool): no kernel-in-initramfs, /dev/console
+# baked without root, uid/gid 0 for reproducibility (plan §5 option B).
+# ════════════════════════════════════════════════════════════════════════════
+build_gen_init_cpio() {                      # echoes path to the compiled tool
+    local src="$1" bin="$OUT_DIR/_tools/gen_init_cpio"
+    if [[ ! -x "$bin" ]]; then
+        install -d "$OUT_DIR/_tools"
+        require_cmd cc
+        cc -O2 -o "$bin" "$src/usr/gen_init_cpio.c"
+    fi
+    echo "$bin"
+}
+
+emit_cpio_spec() {                           # stdout: gen_init_cpio spec
+    local init="$1" tree="$2"
+    cat <<EOF
+dir /proc 0755 0 0
+dir /sys 0755 0 0
+dir /dev 0755 0 0
+nod /dev/console 0600 0 0 c 5 1
+nod /dev/null 0666 0 0 c 1 3
+file /init $init 0755 0 0
+EOF
+    # busybox _install tree → dir/slink/file lines, all uid/gid 0 (reproducible),
+    # LC_ALL=C sorted for determinism.
+    ( cd "$tree" && find . -mindepth 1 \( -type d -o -type l -o -type f \) -print0 \
+        | LC_ALL=C sort -z \
+        | while IFS= read -r -d '' p; do
+              rel="/${p#./}"
+              if   [[ -d "$p" ]]; then printf 'dir %s 0755 0 0\n'        "$rel"
+              elif [[ -L "$p" ]]; then printf 'slink %s %s 0777 0 0\n'   "$rel" "$(readlink "$p")"
+              else                     printf 'file %s %s 0755 0 0\n'    "$rel" "$tree/${p#./}"
+              fi
+          done )
+}
+
+pack_busybox() {
+    local arch="$1" src="$2"
+    local init="$SCRIPT_DIR/init"
+    [[ -r "$init" ]] || die "missing $init (the /init script — plan §6.4)"
+    [[ -d "$OUT_DIR/$arch/_install" ]] || die "[$arch] no _install — run 'mlbuild.sh build' first"
+    local gic; gic="$(build_gen_init_cpio "$src")"
+    log_info "[$arch] packing initramfs (gen_init_cpio: kernel not embedded, /dev/console baked) …"
+    emit_cpio_spec "$init" "$OUT_DIR/$arch/_install" \
+        | "$gic" \
+        | gzip -9 -n > "$OUT_DIR/$arch/initramfs.cpio.gz"
+    log_info "[$arch] initramfs → out/$arch/initramfs.cpio.gz"
+}
+
+# ════════════════════════════════════════════════════════════════════════════
+# Inner entrypoints (run inside the container; MLBUILD_IN_CONTAINER=1)
+# ════════════════════════════════════════════════════════════════════════════
+inner_build() {
+    load_versions
+    install -d "$OUT_DIR" "$CACHE_DIR"
+    local arch
+    for arch in "${ARCHES[@]}"; do
+        install -d "$OUT_DIR/$arch"
+        if [[ "$arch" == riscv64 ]]; then
+            build_kernel riscv64 "$(prepare_kernel riscv64)"
+            build_uroot                                      # produces the initramfs directly
+        else
+            build_kernel  "$arch" "$(prepare_kernel  "$arch")"
+            build_busybox "$arch" "$(prepare_busybox "$arch")"
+        fi
+    done
+}
+
+inner_pack() {
+    load_versions
+    local arch
+    for arch in "${ARCHES[@]}"; do
+        if [[ "$arch" == riscv64 ]]; then
+            [[ -f "$OUT_DIR/riscv64/initramfs.cpio" ]] \
+                && log_info "[riscv64] initramfs already produced by u-root (build step)" \
+                || die "[riscv64] no initramfs — run 'mlbuild.sh build' first"
+            continue
+        fi
+        pack_busybox "$arch" "$OUT_DIR/$arch/build/linux-${LINUX_VER}"
+    done
+}
+
+# ════════════════════════════════════════════════════════════════════════════
+# Host orchestration
+# ════════════════════════════════════════════════════════════════════════════
+detect_engine() {
+    if [[ -n "${ENGINE:-}" ]]; then
+        command -v "$ENGINE" &>/dev/null || die "engine not found: $ENGINE"
+        return
+    fi
+    if   command -v podman &>/dev/null; then ENGINE=podman
+    elif command -v docker &>/dev/null; then ENGINE=docker
+    else die "need podman or docker on PATH"; fi
+}
+
+ensure_image() {
+    "$ENGINE" image inspect "$IMAGE" &>/dev/null && return 0
+    log_info "building toolchain image $IMAGE (first run; minutes) …"
+    "$ENGINE" build -t "$IMAGE" ${BASE_IMAGE:+--build-arg BASE="$BASE_IMAGE"} "$SCRIPT_DIR"
+}
+
+run_in_builder() {
+    load_versions          # so BASE_IMAGE is available to ensure_image
+    ensure_image
+    local -a mount
+    if [[ "$ENGINE" == podman ]]; then
+        mount=(-v "$REPO_ROOT:/work:Z" --userns=keep-id)        # keep-id → host artifacts owned by you
+    else
+        mount=(-v "$REPO_ROOT:/work" -u "$(id -u):$(id -g)")
+    fi
+    "$ENGINE" run --rm "${mount[@]}" -w /work/micro-linux \
+        -e MLBUILD_IN_CONTAINER=1 ${MLBUILD_OFFLINE:+-e MLBUILD_OFFLINE=1} \
+        "$IMAGE" bash mlbuild.sh "$@"
+}
+
+# F7: refuse any rm -rf that isn't squarely inside out/.
+safe_rm() {
+    local p="$1" real
+    real="$(realpath -m -- "$p")"
+    [[ -n "$real"               ]] || die "refusing rm: empty path"
+    [[ "$real" != "/"           ]] || die "refusing rm: /"
+    [[ "$real" != "$HOME"       ]] || die "refusing rm: \$HOME"
+    [[ "$real" != "$REPO_ROOT"  ]] || die "refusing rm: repo root"
+    [[ "$real" != "$SCRIPT_DIR" ]] || die "refusing rm: micro-linux/ itself"
+    [[ "$real" == "$OUT_DIR" || "$real" == "$OUT_DIR"/* ]] \
+        || die "refusing rm outside out/: $real"
+    [[ ! -L "$p" ]] || die "refusing rm: $p is a symlink"
+    log_info "rm -rf $real"
+    rm -rf -- "$real"
+}
+
+cmd_clean() {
+    if [[ "${CLEAN_ALL:-}" == 1 ]]; then
+        [[ -e "$OUT_DIR" ]] && safe_rm "$OUT_DIR" || log_info "nothing to clean ($OUT_DIR absent)"
+        return 0
+    fi
+    local arch
+    for arch in "${ARCHES[@]}"; do
+        [[ -e "$OUT_DIR/$arch" ]] && safe_rm "$OUT_DIR/$arch" || log_info "[$arch] nothing to clean"
+    done
+}
+
+summarize() {
+    log_info "artifacts in $OUT_DIR:"
+    local arch f
+    for arch in "${ARCHES[@]}"; do
+        for f in kernel initramfs.cpio.gz initramfs.cpio; do
+            [[ -f "$OUT_DIR/$arch/$f" ]] && log_info "  $arch/$f  ($(du -h "$OUT_DIR/$arch/$f" | cut -f1))"
+        done
+    done
+}
+
+# ─── Arg parsing + dispatch ───────────────────────────────────────────────────
+parse_arches() {
+    IFS=',' read -r -a ARCHES <<< "${ARCHES_RAW:-x86_64,aarch64}"
+    local a
+    for a in "${ARCHES[@]}"; do
+        case "$a" in x86_64|aarch64|riscv64) ;; *) die "unknown arch: $a (try --help)";; esac
+    done
+}
+
+main() {
+    [[ $# -gt 0 ]] || usage
+    case "$1" in --help|-h) usage ;; esac
+    local subcmd="$1"; shift
+    ARCHES_RAW="x86_64,aarch64"
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --arch)    shift; ARCHES_RAW="${1:?--arch needs a comma list}"; shift ;;
+            --engine)  shift; ENGINE="${1:?--engine needs podman|docker}";  shift ;;
+            --offline) MLBUILD_OFFLINE=1; shift ;;
+            --all)     CLEAN_ALL=1; shift ;;
+            --help|-h) usage ;;
+            *) die "unknown option: $1 (try --help)" ;;
+        esac
+    done
+    parse_arches
+
+    case "$subcmd" in
+        image)
+            detect_engine; load_versions; ensure_image ;;
+        build|pack|all)
+            if [[ -n "${MLBUILD_IN_CONTAINER:-}" ]]; then
+                case "$subcmd" in
+                    build) inner_build ;;
+                    pack)  inner_pack ;;
+                    all)   inner_build; inner_pack ;;
+                esac
+            else
+                detect_engine
+                run_in_builder "$subcmd" --arch "$ARCHES_RAW"
+                summarize
+                log_info "next: phase2-qemu-vm/lab-vm.sh create --config examples/micro-linux-<arch>.toml"
+            fi ;;
+        clean) cmd_clean ;;
+        *) die "unknown subcommand: $subcmd (try --help)" ;;
+    esac
+}
+
+# Run only when executed directly; allow `source mlbuild.sh` from unit tests.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi
