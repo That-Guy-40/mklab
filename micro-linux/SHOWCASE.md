@@ -1,9 +1,9 @@
 # micro-linux — 5-minute tour
 
 **What you get:** a Linux distro you compiled yourself — a fresh kernel plus a
-single static BusyBox (or u-root) binary — booting to a shell in QEMU with no
-disk, no bootloader, and no distro packages. The entire userspace lives in RAM
-and is a few megabytes.
+single static BusyBox (or u-root) binary — booting to a **console login prompt**
+in QEMU with no disk, no bootloader, and no distro packages. The entire
+userspace lives in RAM and is a few megabytes.
 
 It's the third boot pipeline in this repo, and the only one built *from source*:
 

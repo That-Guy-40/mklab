@@ -22,8 +22,8 @@
 
 A from-scratch "almost useless" Linux distribution: a freshly-compiled kernel
 plus a single static BusyBox binary, packed into an initramfs and booted in
-QEMU straight to a shell — no bootloader, no disk, no distro packages. The
-whole userspace lives in RAM.
+QEMU to a console login prompt (getty + login) — no bootloader, no disk, no
+distro packages. The whole userspace lives in RAM.
 
 This contrasts with the repo's two existing boot pipelines:
 
@@ -77,7 +77,7 @@ v1 "faithful to the post" claims have been removed.
    Phase 2  lab-vm.sh --backend kernel+initrd  ◄── REUSE (direct -kernel/-initrd boot)
      --kernel out/<arch>/kernel --initrd out/<arch>/initramfs.cpio.gz
      --append "console=ttyS0"  (x86_64) | "console=ttyAMA0" (aarch64)   # NO root= — it's a cpio initramfs
-        └────► boots to a BusyBox shell, both arches
+        └────► boots to a console login prompt (root / micro), both arches
 ```
 
 | Tutorial step | mklab component | Status |
@@ -253,8 +253,8 @@ initramfs supplies `/init`, the kernel skips the normal root-mount path (where
 the auto-mount lives) and, just before exec'ing `/init`, tries to
 `open("/dev/console")` to wire up fd 0/1/2. With an empty staged `/dev` that
 open fails (`Warning: unable to open an initial console`) and `/init` starts
-with **no stdout** — the welcome banner echoes into the void until `cttyhack`
-re-opens the console at the very end.
+with **no stdout** — output echoes into the void until something re-opens the
+console (the §6.4 stdio reattach, then `getty`).
 
 Fix, per packer:
 
@@ -343,7 +343,8 @@ Rather than trust `defconfig` across kernel versions, **pin a small config
 fragment and assert the must-haves** are `=y` (else abort):
 `CONFIG_DEVTMPFS`, `CONFIG_DEVTMPFS_MOUNT`, `CONFIG_BLK_DEV_INITRD`,
 `CONFIG_RD_GZIP`, `CONFIG_SERIAL_8250_CONSOLE`, `CONFIG_VIRTIO`,
-`CONFIG_VIRTIO_PCI`. These are what make a plain `q35` boot straight to a shell.
+`CONFIG_VIRTIO_PCI`. These are what let a plain `q35` boot cleanly to userspace
+(the login prompt).
 
 ### 6.2 Kernel — aarch64 (cross)
 ```bash
@@ -362,13 +363,18 @@ curl -fLO https://busybox.net/downloads/busybox-${BUSYBOX_VER}.tar.bz2.sig
 tar xf busybox-${BUSYBOX_VER}.tar.bz2 && cd busybox-${BUSYBOX_VER}
 make defconfig
 
-# Enable static linking ROBUSTLY — do not blind-sed a comment line that may not
-# exist (a silent miss yields a DYNAMIC busybox that dies in the initramfs with
-# a baffling "not found" on exec):
+# Enable static linking ROBUSTLY. Do NOT just append the symbol: defconfig
+# already wrote "# CONFIG_STATIC is not set", and a duplicate line makes
+# `oldconfig` warn "trying to reassign symbol" and KEEP THE FIRST value — your
+# =y is silently dropped (→ a DYNAMIC busybox that dies in the libc-less
+# initramfs with a baffling "not found" on exec). Strip any prior definition,
+# then write exactly one line (this is what mlbuild.sh's set_kconfig does):
+sed -i -E '/^(# )?CONFIG_STATIC(=.*| is not set)$/d' .config
 echo 'CONFIG_STATIC=y' >> .config
 # tc.c fails to build against kernel >= 6.8 headers (CBQ symbols removed from
 # pkt_sched.h). BusyBox 1.37.0 fixes this upstream, so this disable is needed
-# ONLY for the 1.36.x pin — revisit on a version bump:
+# ONLY for the 1.36.x pin — same single-definition rule applies:
+sed -i -E '/^(# )?CONFIG_TC(=.*| is not set)$/d' .config
 echo '# CONFIG_TC is not set' >> .config
 make oldconfig
 grep -q '^CONFIG_STATIC=y' .config || { echo "FATAL: static config didn't take"; exit 1; }
@@ -380,32 +386,53 @@ file busybox | grep -q 'statically linked' || { echo "FATAL: busybox is NOT stat
 make CONFIG_PREFIX=_install install                              # → _install/{bin,sbin,usr}
 # aarch64: prefix the make lines with  ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-
 ```
-Also assert `CONFIG_CTTYHACK=y` and `CONFIG_SETSID=y` after `make defconfig` —
-the interactive-shell handoff in §6.4 depends on both applets.
+The console in §6.4 uses **getty + login** (a real login prompt), so confirm
+those applets are enabled after `make defconfig` — all on by default:
+`CONFIG_GETTY`, `CONFIG_LOGIN`, and `CONFIG_FEATURE_SHADOWPASSWDS` (login reads
+`/etc/shadow`). `CONFIG_HALT` (poweroff/reboot/halt) is likewise on.
 
 > **glibc-static caveat (forward-looking):** a static glibc binary that does NSS
 > lookups (DNS, `getpwnam`) warns/fails at runtime. Fine for a pure shell;
 > relevant if the §10 `udhcpc` networking demo lands. A **musl** static build
 > sidesteps it and is smaller — see §10.
 
-### 6.4 `/init` (`micro-linux/init`)
+### 6.4 `/init` (`micro-linux/init`) — a getty + login mini-init
+A tiny, inittab-free PID 1: mount, trap the shutdown signals BusyBox sends to
+PID 1, then present a **respawning login prompt** via `getty` → `login`.
 ```sh
 #!/bin/sh
 mount -t proc     none /proc
 mount -t sysfs    none /sys
 mount -t devtmpfs none /dev
 # The kernel exec'd us before /dev/console existed (empty initramfs /dev), so
-# fd 0/1/2 may be closed. devtmpfs is mounted now → grab the console so the
-# banner *and* any errors are actually visible. (No-op/harmless if the image
-# was packed with gen_init_cpio, which bakes the node — §5 option B.)
+# fd 0/1/2 may be closed. devtmpfs is mounted now → grab the console so prompts
+# *and* errors are visible. (No-op when packed with gen_init_cpio, which bakes
+# the node — §5 option B.)
 [ -c /dev/console ] && exec 0<>/dev/console 1>&0 2>&0
-echo
-echo "Welcome to micro-linux — kernel $(uname -r) on $(uname -m)"
-echo "(BusyBox $(busybox | head -1 | awk '{print $2}'))  Ctrl-A X to quit QEMU."
-echo
-# cttyhack gives /bin/sh a controlling tty on the serial console (job control)
-exec setsid cttyhack /bin/sh
+
+# `poweroff`/`reboot`/`halt` (no -f) just signal PID 1 (USR2/TERM/USR1) and
+# expect init to act; trap them and issue the real syscall.
+trap 'poweroff -f' USR2; trap 'reboot -f' TERM; trap 'halt -f' USR1
+
+# getty opens /dev/console, prints /etc/issue (which advertises the lab creds),
+# then exec's `login` for the password check. Run getty in the BACKGROUND and
+# block on `wait`, NOT in the foreground: ash defers traps until a foreground
+# external command returns, so a foreground getty would swallow `poweroff` until
+# logout — `wait` is trap-interruptible. We don't exec getty, so PID 1 stays
+# /init: a logout re-shows the prompt instead of panicking the kernel.
+while : ; do
+    getty -L console 0 vt100 &
+    wait "$!"
+    sleep 1                  # no inittab respawn-throttle; avoid a hot spin
+done
 ```
+**Login files** (baked into the cpio at pack time by `mlbuild.sh`'s `stage_etc`,
+not committed): `/etc/passwd` + `/etc/group` (one root account), `/etc/shadow`
+(SHA-512 `crypt()` of the lab password — `root` / `micro` by default, override
+with `MLBUILD_LAB_PASSWORD`), `/etc/securetty` (lists `console`/`ttyS0`/`ttyAMA0`
+— `FEATURE_SECURETTY=y` would otherwise deny root), and `/etc/issue` (the banner,
+which advertises the creds for discoverability). `getty` supersedes the old
+`cttyhack`: it does its own `setsid` + controlling-tty setup.
 
 ### 6.5 Boot (what Phase 2 runs for us)
 ```bash
@@ -466,13 +493,16 @@ tarballs so a cached tarball can drive a network-gated integration test — §10
   kernel. (We use no `binfmt`/`--privileged` path — we cross-compile — so that
   slice of F5 doesn't apply.)
 - **Throwaway posture — consistent with audit F1, *minus its sharpest edge*.**
-  `/init` execs a **root BusyBox shell with no password** — acceptable for a
-  disposable, diskless RAM VM. Crucially, unlike F1 (network-reachable
-  `lab`/`lab` + `ssh_pwauth` + the blank-password dropbear fallback), this VM
-  runs with **`network = false` by default and no SSH/login service at all** —
-  there is **no network auth surface to compromise**. F1's "never expose to an
-  untrusted network" banner still applies *iff* the §10 networking demo later
-  adds a NIC.
+  `/init` runs a **console `getty` + `login`** with a deliberately weak,
+  *advertised* lab credential (`root` / `micro`, a SHA-512 `crypt()` hash in
+  `/etc/shadow`; override via `MLBUILD_LAB_PASSWORD`). The login prompt is for
+  ergonomics/learning, not real defense: it adds no protection over a bare shell
+  on a single-user RAM VM. Crucially, unlike F1 (network-reachable `lab`/`lab` +
+  `ssh_pwauth` + the blank-password dropbear fallback), this VM runs with
+  **`network = false` by default and only a *serial-console* login — no SSH or
+  any listening service** — so there is **no network auth surface to
+  compromise**. F1's "never expose to an untrusted network" banner still applies
+  *iff* the §10 networking demo later adds a NIC.
 - **Trust boundary — audit F3 largely N/A here.** F3 concerns root
   `post_commands` / arbitrary `/init` host paths in *chroot* configs. This lab's
   inputs (`versions.env`, the pinned URLs/hashes, the in-repo `/init`) are

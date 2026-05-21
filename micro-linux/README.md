@@ -1,8 +1,8 @@
 # micro-linux — a from-scratch Linux distro (compile → boot in RAM)
 
 Compile a Linux **kernel** and a tiny **userspace** from upstream source, pack
-them into an initramfs, and boot straight to a shell in QEMU — no disk, no
-bootloader, no distro packages. Two tracks:
+them into an initramfs, and boot to a **console login prompt** in QEMU — no
+disk, no bootloader, no distro packages. Two tracks:
 
 | Track | Arches | Userspace | Pack | Matches the post? |
 |---|---|---|---|---|
@@ -104,15 +104,23 @@ gpgv --keyring keys/busybox.gpg busybox-${BUSYBOX_VER}.tar.bz2.sig busybox-${BUS
 # kernel (x86_64): defconfig → assert must-have symbols → build
 make ARCH=x86_64 defconfig && make ARCH=x86_64 olddefconfig && make ARCH=x86_64 -j"$(nproc)"
 
-# busybox: static, with the assert-static gate
-make defconfig; echo CONFIG_STATIC=y >> .config; echo '# CONFIG_TC is not set' >> .config
+# busybox: static, with the assert-static gate.  REPLACE the symbol, don't
+# append it: a duplicate makes `oldconfig` "reassign" and keep the FIRST value,
+# silently dropping your =y (→ a dynamic busybox that can't exec in initramfs).
+make defconfig
+sed -i -E '/^(# )?CONFIG_STATIC(=.*| is not set)$/d' .config; echo CONFIG_STATIC=y >> .config
+sed -i -E '/^(# )?CONFIG_TC(=.*| is not set)$/d'     .config; echo '# CONFIG_TC is not set' >> .config
 make oldconfig && make -j"$(nproc)"
 file busybox | grep -q 'statically linked'      # MUST be static
 make CONFIG_PREFIX=_install install
 
-# pack with gen_init_cpio (no kernel embedded; /dev/console baked; uid 0)
+# login setup: a root account + securetty + an issue banner advertising the creds
+#   (mlbuild.sh's stage_etc bakes /etc/{passwd,group,shadow,securetty,issue})
+
+# pack with gen_init_cpio (no kernel embedded; /dev/console baked; uid 0).
+# Pass "-" so gen_init_cpio reads the spec from stdin (it wants a file arg).
 cc -o gen_init_cpio linux-${LINUX_VER}/usr/gen_init_cpio.c
-./gen_init_cpio <spec> | gzip -9 -n > initramfs.cpio.gz
+./gen_init_cpio - <spec> | gzip -9 -n > initramfs.cpio.gz
 ```
 
 ---
@@ -128,8 +136,11 @@ micro-linux/tests/run-all.sh
 They cover the arg/arch validation, the **F7** `rm -rf` guard, the
 `gen_init_cpio` spec (kernel-not-embedded, `/dev/console` baked, uid 0), the
 `versions.lock` drift detection, and the **fail-closed** verification (refuses
-an unpinned fingerprint / missing keyring). A networked end-to-end build/boot
-is intentionally out of CI scope (plan §9 step 6).
+an unpinned fingerprint / missing keyring), plus the getty/login `/etc` setup
+(the lab password round-trips against the generated shadow hash). The networked
+end-to-end build/boot stays out of CI scope (it compiles a kernel and boots a
+VM), but has been run and verified on all three arches — x86_64 + aarch64 reach
+the login prompt, riscv64 boots the u-root shell.
 
 ---
 
@@ -142,5 +153,5 @@ is intentionally out of CI scope (plan §9 step 6).
 | `versions.env` | version + key-fingerprint pins (sourced) |
 | `versions.lock` | auto-derived, committed sha256 of each verified tarball |
 | `keys/` | vendored signing keys (trust anchor) — see `keys/README.md` |
-| `init` | the BusyBox-track `/init` (§6.4) |
+| `init` | the BusyBox-track `/init`: a getty + login mini-init (§6.4) |
 | `tests/` | network-free unit tests |
