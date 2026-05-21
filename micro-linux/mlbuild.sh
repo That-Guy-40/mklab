@@ -27,16 +27,20 @@
 # Nothing here needs root: the container runs rootless (--userns=keep-id) and the
 # initramfs is packed without mknod (gen_init_cpio bakes /dev/console).
 #
-# STATUS: skeleton. The verify/gpgv/lock flow, the F7 clean guard, and the
-# orchestration are real; fill in the pinned digest/fingerprints (versions.env,
-# keys/) before relying on it. Not yet exercised end-to-end (needs podman + net).
+# STATUS: working — exercised end-to-end on 2026-05-21. All three arches compile,
+# pack, and boot in QEMU (x86_64 + aarch64 → BusyBox shell; riscv64 → u-root).
+# The verify/gpgv/lock flow, the F7 clean guard, and the orchestration are real.
+# Keep the pinned digest/fingerprints (versions.env, keys/) current and re-vet the
+# keys out-of-band (keys/README.md) before relying on it beyond a throwaway lab.
 set -euo pipefail
 
 # BASH_SOURCE (not $0) so paths resolve correctly when sourced by unit tests.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 readonly REPO_ROOT="${SCRIPT_DIR%/*}"
-readonly OUT_DIR="$SCRIPT_DIR/out"
+# OUT_DIR is overridable so tests can point destructive ops (clean/safe_rm) at a
+# throwaway tree — a unit test must never rm the real build artifacts.
+readonly OUT_DIR="${MLBUILD_OUT_DIR:-$SCRIPT_DIR/out}"
 readonly CACHE_DIR="$OUT_DIR/_cache"
 readonly LOCK_FILE="${MLBUILD_LOCK_FILE:-$SCRIPT_DIR/versions.lock}"
 readonly IMAGE="${MLBUILD_IMAGE:-micro-linux-builder:bookworm}"
@@ -103,8 +107,11 @@ assert_keyring_fpr() {
     local keyring="$1" want="$2" label="$3"
     require_cmd gpg
     [[ -r "$keyring" ]] || die "$label keyring not found: $keyring  (see keys/README.md)"
+    # gpg (unlike gpgv) insists on a homedir and writes a trustdb there; keep it
+    # under out/ (gitignored, cleanable) instead of polluting $HOME / the repo.
+    local gnupghome="$OUT_DIR/.gnupg"; install -d -m 700 "$gnupghome"
     local have
-    have="$(gpg --no-default-keyring --keyring "$keyring" --with-colons --list-keys 2>/dev/null \
+    have="$(gpg --homedir "$gnupghome" --no-default-keyring --keyring "$keyring" --with-colons --list-keys 2>/dev/null \
             | awk -F: '$1=="pub"{p=1;next} $1=="fpr"&&p{print toupper($10);p=0}')"
     [[ -n "$have" ]] || die "$label keyring $keyring contains no keys"
     local -a fprs; read -ra fprs <<< "$want"
@@ -202,6 +209,22 @@ assert_kconfig() {
     done
 }
 
+# Force a single, authoritative value for a Kconfig symbol in a .config.
+# Appending alone is UNSAFE: if the symbol is already defined (defconfig writes
+# "# CONFIG_FOO is not set"), oldconfig sees the symbol twice, warns "trying to
+# reassign symbol FOO", and KEEPS THE FIRST value — so the append is silently
+# dropped.  Strip every prior definition first, then write exactly one line.
+#   set_kconfig <file> <SYM-without-CONFIG_> <value | n>
+set_kconfig() {
+    local file="$1" sym="$2" val="$3"
+    sed -i -E "/^(# )?CONFIG_${sym}(=.*| is not set)\$/d" "$file"
+    if [[ "$val" == n ]]; then
+        printf '# CONFIG_%s is not set\n' "$sym" >> "$file"
+    else
+        printf 'CONFIG_%s=%s\n' "$sym" "$val" >> "$file"
+    fi
+}
+
 # ════════════════════════════════════════════════════════════════════════════
 # Fetch + verify + extract sources (inside the container)
 # ════════════════════════════════════════════════════════════════════════════
@@ -262,10 +285,13 @@ build_busybox() {
     [[ -n "$cross" ]] && bb+=(CROSS_COMPILE="$cross")
     log_info "[$arch] busybox: static config + build …"
     make -C "$src" "${bb[@]}" defconfig >/dev/null
-    # Enable static linking robustly — never blind-sed a comment that may not
-    # exist (a silent miss = a dynamic busybox that dies in the initramfs):
-    echo 'CONFIG_STATIC=y'        >> "$src/.config"
-    echo '# CONFIG_TC is not set' >> "$src/.config"   # tc.c breaks vs kernel >=6.8 (CBQ removed); fixed in busybox 1.37.0
+    # Enable static linking robustly.  A bare append is silently dropped:
+    # defconfig already wrote "# CONFIG_STATIC is not set", and a duplicate makes
+    # oldconfig "reassign" → keep-first → our value lost.  set_kconfig replaces
+    # the existing line so there is exactly one definition (a silent miss here =
+    # a dynamic busybox that dies exec-ing in the libc-less initramfs).
+    set_kconfig "$src/.config" STATIC y
+    set_kconfig "$src/.config" TC     n   # tc.c breaks vs kernel >=6.8 (CBQ removed); fixed in busybox 1.37.0
     make -C "$src" "${bb[@]}" oldconfig >/dev/null
     grep -q '^CONFIG_STATIC=y'   "$src/.config" || die "[$arch] CONFIG_STATIC didn't take"
     grep -q '^CONFIG_CTTYHACK=y' "$src/.config" || log_warn "[$arch] CONFIG_CTTYHACK not set — /init handoff may fail (§6.4)"
@@ -279,12 +305,31 @@ build_busybox() {
 }
 
 build_uroot() {                              # faithful track (§11); riscv64 only
-    log_info "[riscv64] u-root: build initramfs (Go; needs net for modules unless cached) …"
+    log_info "[riscv64] u-root: build initramfs (Go modules, go.sum-verified) …"
     require_cmd go
     install -d "$OUT_DIR/riscv64"
-    GOARCH=riscv64 GOOS=linux CGO_ENABLED=0 \
-        go run "github.com/u-root/u-root@${UROOT_REF}" -o "$OUT_DIR/riscv64/initramfs.cpio"
-    log_info "[riscv64] u-root → out/riscv64/initramfs.cpio (plain cpio; supply chain via go.sum)"
+    # Keep the Go module + build cache under out/ (gitignored, removed by `clean`)
+    # rather than polluting $HOME/go and $HOME/.cache.
+    export GOPATH="$OUT_DIR/go" GOCACHE="$OUT_DIR/go/build-cache"
+    # u-root's default command set is "./cmds/core/..." resolved RELATIVE to the
+    # u-root source tree, whose go.sum pins every cmd's transitive deps.  Running
+    # `go run pkg@ver` from an unrelated dir can't resolve cmds/core or its deps
+    # ("no Go commands match"/"invalid package name").  So fetch the pinned module
+    # (integrity via go.sum — plan §11), copy it somewhere writable, drop its
+    # stale vendored tree (forces -mod=mod resolution), and run u-root from inside.
+    local moddir
+    moddir="$(GOFLAGS=-mod=mod go mod download -json "github.com/u-root/u-root@${UROOT_REF}" \
+                | sed -n 's/.*"Dir": "\(.*\)".*/\1/p')"
+    [[ -n "$moddir" && -d "$moddir" ]] || die "[riscv64] u-root: cannot locate module ${UROOT_REF} in cache"
+    local tree="$OUT_DIR/riscv64/uroot-src"
+    rm -rf "$tree"
+    cp -a "$moddir" "$tree"
+    chmod -R u+w "$tree"
+    rm -rf "$tree/vendor"
+    ( cd "$tree" && GOFLAGS=-mod=mod GOARCH=riscv64 GOOS=linux CGO_ENABLED=0 \
+        go run . -o "$OUT_DIR/riscv64/initramfs.cpio" )
+    [[ -s "$OUT_DIR/riscv64/initramfs.cpio" ]] || die "[riscv64] u-root produced no initramfs"
+    log_info "[riscv64] u-root → out/riscv64/initramfs.cpio (plain cpio; go.sum-verified)"
 }
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -331,10 +376,20 @@ pack_busybox() {
     [[ -d "$OUT_DIR/$arch/_install" ]] || die "[$arch] no _install — run 'mlbuild.sh build' first"
     local gic; gic="$(build_gen_init_cpio "$src")"
     log_info "[$arch] packing initramfs (gen_init_cpio: kernel not embedded, /dev/console baked) …"
+    # gen_init_cpio reads the spec from a FILE argument; "-" selects stdin.
+    # Omitting it makes the tool print usage + exit 1 (an empty archive) — caught
+    # by pipefail, but pass "-" so the piped spec is actually consumed.
+    local img="$OUT_DIR/$arch/initramfs.cpio.gz"
     emit_cpio_spec "$init" "$OUT_DIR/$arch/_install" \
-        | "$gic" \
-        | gzip -9 -n > "$OUT_DIR/$arch/initramfs.cpio.gz"
-    log_info "[$arch] initramfs → out/$arch/initramfs.cpio.gz"
+        | "$gic" - \
+        | gzip -9 -n > "$img"
+    # A near-empty archive (e.g. a pack mishap) kernel-panics at boot rather than
+    # failing here, so assert the essentials are actually inside.
+    require_cmd cpio
+    local entries; entries="$(gzip -dc "$img" | cpio -t 2>/dev/null)"
+    grep -qE '(^|/)init$'        <<<"$entries" || die "[$arch] initramfs has no /init — pack failed"
+    grep -qE '(^|/)bin/busybox$' <<<"$entries" || die "[$arch] initramfs has no /bin/busybox — pack failed"
+    log_info "[$arch] initramfs → out/$arch/initramfs.cpio.gz ($(gzip -dc "$img" | cpio -t 2>/dev/null | wc -l) entries)"
 }
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -383,14 +438,19 @@ detect_engine() {
     else die "need podman or docker on PATH"; fi
 }
 
-ensure_image() {
-    "$ENGINE" image inspect "$IMAGE" &>/dev/null && return 0
-    log_info "building toolchain image $IMAGE (first run; minutes) …"
+build_image() {                              # (re)build unconditionally; layer cache makes a no-op fast
+    log_info "building toolchain image $IMAGE …"
     local -a bargs=()
     [[ -n "${BASE_IMAGE:-}" ]] && bargs+=(--build-arg "BASE=$BASE_IMAGE")
     [[ -n "${GO_VER:-}"     ]] && bargs+=(--build-arg "GO_VER=$GO_VER")
     [[ -n "${GO_SHA256:-}"  ]] && bargs+=(--build-arg "GO_SHA256=$GO_SHA256")
     "$ENGINE" build -t "$IMAGE" "${bargs[@]}" "$SCRIPT_DIR"
+}
+
+ensure_image() {                             # auto path (build/pack/all): build only if absent
+    "$ENGINE" image inspect "$IMAGE" &>/dev/null && return 0
+    log_info "(first run) "
+    build_image
 }
 
 run_in_builder() {
@@ -439,7 +499,12 @@ summarize() {
     local arch f
     for arch in "${ARCHES[@]}"; do
         for f in kernel initramfs.cpio.gz initramfs.cpio; do
-            [[ -f "$OUT_DIR/$arch/$f" ]] && log_info "  $arch/$f  ($(du -h "$OUT_DIR/$arch/$f" | cut -f1))"
+            # `if`, not `&&`: a missing optional artifact (e.g. the plain .cpio is
+            # riscv64-only) must not leave a non-zero status as the function's —
+            # and thus the whole command's — exit code.
+            if [[ -f "$OUT_DIR/$arch/$f" ]]; then
+                log_info "  $arch/$f  ($(du -h "$OUT_DIR/$arch/$f" | cut -f1))"
+            fi
         done
     done
 }
@@ -472,7 +537,7 @@ main() {
 
     case "$subcmd" in
         image)
-            detect_engine; load_versions; ensure_image ;;
+            detect_engine; load_versions; build_image ;;
         build|pack|all)
             if [[ -n "${MLBUILD_IN_CONTAINER:-}" ]]; then
                 case "$subcmd" in

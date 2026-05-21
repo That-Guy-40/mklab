@@ -15,13 +15,16 @@ FROM ${BASE}
 ENV DEBIAN_FRONTEND=noninteractive
 
 # ── BusyBox track (§6): kernel build + static BusyBox, x86_64 native + aarch64 cross ──
-#   bzip2  — BusyBox ships only as .tar.bz2 (tar shells out to it)
-#   gnupg  — gpgv signature verification (plan §6.0); without it, PGP is a no-op
-#   file   — the "is busybox actually static?" assertion gate (§6.3)
+#   bzip2   — BusyBox ships only as .tar.bz2 (tar shells out to it)
+#   gnupg   — gpgv signature verification (plan §6.0); without it, PGP is a no-op
+#   file    — the "is busybox actually static?" assertion gate (§6.3)
+#   python3 — the kernel's own header generators need it (e.g. drivers/gpu/drm/msm
+#             builds a2xx.xml.h via a python script); arm64/riscv defconfig pull
+#             it in even though x86_64 defconfig does not.  Missing → make Error 127.
 #   gcc-aarch64-linux-gnu + libc6-dev-arm64-cross — arm64 cross + static arm64 libc.a
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential bc bison flex libelf-dev libssl-dev \
-        cpio gzip xz-utils bzip2 gnupg file curl ca-certificates kmod \
+        cpio gzip xz-utils bzip2 gnupg file python3 curl ca-certificates kmod \
         gcc-aarch64-linux-gnu libc6-dev-arm64-cross \
  && rm -rf /var/lib/apt/lists/*
 
