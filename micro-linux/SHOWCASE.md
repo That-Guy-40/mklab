@@ -28,18 +28,24 @@ What the serial console shows:
 
 ```
 Welcome to micro-linux — kernel 6.12.x on x86_64
-(BusyBox v1.36.1)  Ctrl-A X to quit QEMU.
+(BusyBox v1.36.1)
+Type 'exit' or 'poweroff' to power off the VM; Ctrl-A X to force-quit QEMU.
 
-/ # uname -a
+~ # uname -a
 Linux (none) 6.12.x #1 SMP ... x86_64 GNU/Linux
-/ # cat /proc/1/cmdline
+~ # cat /proc/1/cmdline
 /init
-/ # ls /bin | head
+~ # ls /bin | head
 [ ash awk base64 busybox cat chmod ...
+~ # exit
+micro-linux: shell exited — powering off.
+[   11.2] reboot: Power down
 ```
 
-`/init` is ~6 lines: mount `/proc /sys /dev`, reattach the console, `exec
-setsid cttyhack /bin/sh`. PID 1 is your shell.
+`/init` mounts `/proc /sys /dev`, reattaches the console, then runs `setsid
+cttyhack /bin/sh` as a **child** (PID 1 stays `/init`). Keeping the script as
+PID 1 means `exit` reaps the shell and powers the VM off cleanly — if the shell
+were PID 1, the kernel would panic the instant you exited it.
 
 ---
 

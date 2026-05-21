@@ -10,7 +10,19 @@ mount -t devtmpfs none /dev
 [ -c /dev/console ] && exec 0<>/dev/console 1>&0 2>&0
 echo
 echo "Welcome to micro-linux — kernel $(uname -r) on $(uname -m)"
-echo "(BusyBox $(busybox | head -1 | awk '{print $2}'))  Ctrl-A X to quit QEMU."
+echo "(BusyBox $(busybox | head -1 | awk '{print $2}'))"
+echo "Type 'exit' or 'poweroff' to power off the VM; Ctrl-A X to force-quit QEMU."
 echo
 # cttyhack gives /bin/sh a controlling tty on the serial console (job control).
-exec setsid cttyhack /bin/sh
+# Run it as a CHILD — do NOT exec.  If the shell were PID 1, typing `exit` would
+# terminate init and the kernel would panic ("Attempted to kill init!"); that is
+# a kernel invariant (PID 1 must never die), not a misconfiguration.  Staying PID
+# 1 lets us reap the shell and power the VM off cleanly when it exits.  (setsid
+# succeeds here because this child is not a process-group leader, so it does not
+# fork/detach — init blocks until the shell returns.)
+setsid cttyhack /bin/sh
+echo
+echo "micro-linux: shell exited — powering off."
+poweroff -f          # direct reboot(POWER_OFF) syscall: PSCI on arm64 / ACPI on x86
+# Last resort if the platform exposes no power-off: park PID 1 (never exit it).
+while :; do sleep 3600; done

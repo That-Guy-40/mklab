@@ -79,7 +79,8 @@ micro-linux/mlbuild.sh all --arch riscv64
 # 3. Boot (reuses Phase 2)
 phase2-qemu-vm/lab-vm.sh create --config examples/micro-linux-x86_64.toml
 phase2-qemu-vm/lab-vm.sh start  micro-linux-x86_64
-# Ctrl-A X to quit QEMU.  aarch64/riscv64 twins via their example TOMLs.
+# In the shell, 'exit' or 'poweroff' shuts the VM down cleanly (Ctrl-A X force-quits
+# QEMU).  aarch64/riscv64 twins via their example TOMLs.
 ```
 
 `mlbuild.sh build` and `pack` are separate subcommands if you want to inspect
