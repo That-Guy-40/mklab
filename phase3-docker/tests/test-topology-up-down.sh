@@ -8,6 +8,19 @@ set -euo pipefail
 require_docker
 require_cmd jq curl
 
+# Preflight: confirm containers can be force-removed on this host.  The
+# teardown path uses docker rm -f; hosts with AppArmor profiles that block
+# SIGKILL delivery (permission denied) will fail at the "verify nothing left"
+# assertion rather than an infra issue, so skip early.
+_probe="probe-topo-preflight-$$"
+docker run -d --name "$_probe" alpine:latest sleep 60 >/dev/null 2>&1 \
+    || skip "cannot start containers (docker run failed)"
+sleep 1  # Ensure the container process is fully running before testing kill.
+if ! docker rm -f "$_probe" >/dev/null 2>&1; then
+    docker rm "$_probe" >/dev/null 2>&1 || true
+    skip "docker rm -f not functional on this host (AppArmor / seccomp restriction)"
+fi
+
 # Need a TOML parser.
 if ! command -v tomlq >/dev/null 2>&1 \
    && ! command -v dasel >/dev/null 2>&1 \

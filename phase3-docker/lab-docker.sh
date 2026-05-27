@@ -391,7 +391,8 @@ cmd_run() {
         args+=(--rm)
     fi
     if [[ -n "${OPT_TTY:-}" ]]; then
-        args+=(-it)
+        args+=(-i)
+        [[ -t 0 ]] && args+=(-t)
     fi
 
     log_info "docker run $cname (image=$image)"
@@ -590,9 +591,10 @@ cmd_down() {
     if [[ -n "$ids" ]]; then
         log_info "stopping/removing $(wc -w <<<"$ids") container(s)"
         # shellcheck disable=SC2086
-        docker stop $ids >/dev/null 2>&1 || true
-        # shellcheck disable=SC2086
-        docker rm   $ids >/dev/null 2>&1 || true
+        docker rm -f $ids >/dev/null 2>&1 \
+            || { docker stop $ids >/dev/null 2>&1 || true
+                 # shellcheck disable=SC2086
+                 docker rm   $ids >/dev/null 2>&1 || true; }
     fi
 
     # Then networks.
@@ -613,10 +615,11 @@ cmd_exec() {
     [[ -n "$target" ]] || die "usage: $LAB_PROG exec <name|lab/service> [-- cmd args...]"
     require_docker
     local cname; cname="$(_resolve_container_name "$target")"
+    local -a tty_flag=(); [[ -t 0 ]] && tty_flag=(-t)
     if (( ${#EXTRA_ARGS[@]} > 0 )); then
-        docker exec -it "$cname" "${EXTRA_ARGS[@]}"
+        docker exec -i "${tty_flag[@]}" "$cname" "${EXTRA_ARGS[@]}"
     else
-        docker exec -it "$cname" /bin/sh -c '[ -x /bin/bash ] && exec /bin/bash || exec /bin/sh'
+        docker exec -i "${tty_flag[@]}" "$cname" /bin/sh -c '[ -x /bin/bash ] && exec /bin/bash || exec /bin/sh'
     fi
 }
 
@@ -646,22 +649,30 @@ _resolve_container_name() {
 
 # ─── Subcommand: list ──────────────────────────────────────────────────────
 cmd_list() {
+    # Suppress SIGPIPE for this function: callers often pipe our output through
+    # `grep -q`, which exits on the first match and closes the read end of the
+    # pipe.  External commands then get SIGPIPE (exit 141) which `|| true`
+    # handles, but bash builtins (printf) run *in the shell process* — the
+    # shell itself receives SIGPIPE and exits before `|| true` can fire.
+    # `trap '' PIPE` makes the kernel convert SIGPIPE to EPIPE errno instead,
+    # so builtins return 1 (not die) and `|| true` can catch them.
+    trap '' PIPE
     require_docker
     if [[ -n "${OPT_LAB:-}" ]]; then
-        printf '── lab: %s ──\n' "$OPT_LAB"
+        printf '── lab: %s ──\n' "$OPT_LAB" || true
         docker ps -a --filter "label=${LAB_LABEL_LAB}=${OPT_LAB}" --filter "label=${LAB_LABEL_TOOL}" \
-            --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
-        printf '\n[networks]\n'
+            --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}' || true
+        printf '\n[networks]\n' || true
         docker network ls --filter "label=${LAB_LABEL_LAB}=${OPT_LAB}" --filter "label=${LAB_LABEL_TOOL}" \
-            --format 'table {{.Name}}\t{{.Driver}}\t{{.Scope}}'
-        return
+            --format 'table {{.Name}}\t{{.Driver}}\t{{.Scope}}' || true
+        return 0
     fi
-    printf '── all labs (lab-create-managed only) ──\n'
+    printf '── all labs (lab-create-managed only) ──\n' || true
     docker ps -a --filter "label=${LAB_LABEL_TOOL}" \
-        --format 'table {{.Label "lab-create.lab"}}\t{{.Label "lab-create.svc"}}\t{{.Names}}\t{{.Image}}\t{{.Status}}'
-    printf '\n[networks]\n'
+        --format 'table {{.Label "lab-create.lab"}}\t{{.Label "lab-create.svc"}}\t{{.Names}}\t{{.Image}}\t{{.Status}}' || true
+    printf '\n[networks]\n' || true
     docker network ls --filter "label=${LAB_LABEL_TOOL}" \
-        --format 'table {{.Label "lab-create.lab"}}\t{{.Name}}\t{{.Driver}}'
+        --format 'table {{.Label "lab-create.lab"}}\t{{.Name}}\t{{.Driver}}' || true
 }
 
 # ─── Subcommand: destroy ───────────────────────────────────────────────────
@@ -678,9 +689,12 @@ cmd_destroy() {
 
     local cname; cname="$(_resolve_container_name "$target")"
     if docker ps -a --format '{{.Names}}' | grep -qx "$cname"; then
-        log_info "stop+rm $cname"
-        docker stop "$cname" >/dev/null 2>&1 || true
-        docker rm   "$cname" >/dev/null 2>&1 || true
+        log_info "removing $cname"
+        # docker rm -f handles both running and stopped containers;
+        # fall back to stop+rm for daemons that reject SIGKILL via rm -f.
+        docker rm -f "$cname" >/dev/null 2>&1 \
+            || { docker stop "$cname" >/dev/null 2>&1 || true
+                 docker rm   "$cname" >/dev/null 2>&1 || true; }
     else
         die "no container named $cname"
     fi

@@ -15,6 +15,20 @@ source "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
 require_docker
 require_cmd jq
 
+# Preflight: confirm docker stop works on this host.  Some setups (AppArmor
+# profiles that don't allow kill, containerd-snapshotter misconfigurations)
+# let containers start but refuse signal delivery — the second half of this
+# test explicitly stops a container and can't meaningfully skip just that part.
+_probe="probe-inspect-preflight-$$"
+docker run -d --name "$_probe" alpine:latest sleep 60 >/dev/null 2>&1 \
+    || skip "cannot start containers (docker run failed)"
+sleep 1  # Ensure the container process is fully running before testing signals.
+if ! docker stop "$_probe" >/dev/null 2>&1; then
+    docker rm -f "$_probe" >/dev/null 2>&1 || true
+    skip "docker stop not functional on this host (AppArmor / seccomp restriction)"
+fi
+docker rm -f "$_probe" >/dev/null 2>&1 || true
+
 # --- pick a unique container name + a high host port unlikely to collide ----
 # Using $$ + a fixed suffix keeps it deterministic per-run.  Lab/svc
 # split into the literal name `lab-inspectest-<pid>-svc` so:

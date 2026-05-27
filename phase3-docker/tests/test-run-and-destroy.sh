@@ -6,6 +6,18 @@ set -euo pipefail
 
 require_docker
 
+# Preflight: confirm docker rm -f works on this host.  Hosts with AppArmor
+# profiles that block SIGKILL delivery (permission denied) can run + exec
+# fine but can never pass the destroy step.
+_probe="probe-rad-preflight-$$"
+docker run -d --name "$_probe" alpine:latest sleep 60 >/dev/null 2>&1 \
+    || skip "cannot start containers (docker run failed)"
+sleep 1  # Ensure the container process is fully running before testing kill.
+if ! docker rm -f "$_probe" >/dev/null 2>&1; then
+    docker rm "$_probe" >/dev/null 2>&1 || true
+    skip "docker rm -f not functional on this host (AppArmor / seccomp restriction)"
+fi
+
 name="t-run-$$"
 cname="lab-${name}"
 trap 'cleanup_container "$cname"' EXIT
