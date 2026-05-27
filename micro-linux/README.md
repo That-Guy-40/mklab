@@ -90,6 +90,31 @@ phase2-qemu-vm/lab-vm.sh start  micro-linux-x86_64
 between steps; `all` chains them. `--offline` builds from already-cached
 tarballs in `out/_cache/` (no network).
 
+### Boot it as a real microvm
+
+The same artifacts also boot on QEMU's **microvm** machine — the minimal,
+PCI-less, fast-boot device model (QEMU's answer to Firecracker). Just point
+`lab-vm.sh` at the `-microvm` example TOMLs:
+
+```bash
+phase2-qemu-vm/lab-vm.sh create --config examples/micro-linux-x86_64-microvm.toml
+phase2-qemu-vm/lab-vm.sh start  micro-linux-x86_64-microvm   # log in: root / micro
+# arm64 twin (TCG on x86 hosts): examples/micro-linux-aarch64-microvm.toml
+```
+
+No second build is needed: `mlbuild.sh` bakes `CONFIG_VIRTIO_MMIO` into **every**
+micro-linux kernel, so one universal kernel boots on `q35`/`virt` *and* on microvm
+(whose virtio rides the mmio bus, not PCI). Two things worth knowing:
+
+- **QEMU's `microvm` machine is x86-only.** On aarch64, `microvm = true` gives you
+  the equivalent — a stripped-down `virt` + virtio-mmio booted directly via
+  `-kernel` with **no UEFI firmware** (so the arm microvm twin doesn't even need
+  `qemu-efi-aarch64`).
+- **`network = false`, honestly stated.** No service listens, and the guest never
+  configures a NIC — but on the `kernel+initrd` path QEMU does still *attach* a
+  virtio-net device. It simply rides the mmio bus now, so the day you enable
+  `udhcpc` it works with no extra kernel config.
+
 ### What `mlbuild.sh` does, by hand
 
 If you'd rather run it manually (or audit each step), this is the BusyBox track:

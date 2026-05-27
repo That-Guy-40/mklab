@@ -143,6 +143,8 @@ micro-linux/mlbuild.sh image                                  # toolchain contai
 micro-linux/mlbuild.sh all --arch x86_64,aarch64              # compile + pack → micro-linux/out/
 phase2-qemu-vm/lab-vm.sh create --config examples/micro-linux-x86_64.toml
 phase2-qemu-vm/lab-vm.sh start  micro-linux-x86_64            # log in: root / micro; Ctrl-A X to quit
+# Same kernel on QEMU's real microvm machine (qboot + virtio-mmio, minimal/fast):
+#   ...create/start --config examples/micro-linux-x86_64-microvm.toml
 # Faithful "match the source post" track: --arch riscv64  (u-root shell + plain cpio)
 ```
 

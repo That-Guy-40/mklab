@@ -9,7 +9,7 @@ Create and run QEMU VMs and microvms across the same arch matrix as Phase 1.
 | **Backends** | `disk-image` (cached cloud images + cloud-init NoCloud seed) · `kernel+initrd` (direct boot, microvm-friendly) · `from-chroot` (stub in v0.1) |
 | **Arches** | `x86_64`, `aarch64`, `armv7l`, `ppc64le`, `riscv64`, `s390x` |
 | **Acceleration** | `kvm` if guest arch == host arch and `/dev/kvm` is r+w; otherwise `tcg` (slow but works for any arch) |
-| **microvm** | `--microvm` toggles QEMU's `microvm` machine type on x86_64 / aarch64; falls back with a warning on other arches |
+| **microvm** | `--microvm` selects QEMU's minimal fast-boot device model: the genuine `microvm` machine + qboot on **x86_64**; a stripped `virt` + virtio-mmio + no UEFI on **aarch64** (QEMU has no arm `microvm` machine); falls back with a warning on other arches. Direct `-kernel` boot only. |
 | **Networking** | user-mode (slirp) with per-VM SSH port forwarding; bridge/tap is planned for v0.2 |
 | **Console** | serial console exposed as a unix socket; `lab-vm.sh console` attaches via `socat` |
 | **Lifecycle** | graceful shutdown via QMP `system_powerdown`; SIGTERM → SIGKILL escalation if it doesn't take |
@@ -167,8 +167,9 @@ The script logs the decision and the reason ("no /dev/kvm", "guest != host", etc
 | Guest arch | Loader | Default file lookup |
 |---|---|---|
 | x86_64 (full VM) | OVMF | `/usr/share/OVMF/OVMF_CODE*.fd` |
-| x86_64 (microvm) | none — direct boot | — |
-| aarch64 | AAVMF / QEMU_EFI | `/usr/share/AAVMF/AAVMF_CODE.fd`, etc. |
+| x86_64 (microvm) | qboot (or none under `-kernel`) | `/usr/share/qemu/qboot.rom` |
+| aarch64 (full VM) | AAVMF / QEMU_EFI | `/usr/share/AAVMF/AAVMF_CODE.fd`, etc. |
+| aarch64 (microvm) | none — minimized `virt`, direct boot | — |
 | armv7l | u-boot | `/usr/share/u-boot/qemu_arm/u-boot.bin` |
 | riscv64 | OpenSBI | `/usr/share/opensbi/.../fw_jump.elf` |
 | ppc64le | SLOF (bundled in QEMU) | — |

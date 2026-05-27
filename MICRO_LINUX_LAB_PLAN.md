@@ -86,7 +86,7 @@ v1 "faithful to the post" claims have been removed.
 | **Compile Linux kernel from source** | — (only iPXE is compiled today) | **New** |
 | **Compile static BusyBox from source** | — (`host-copy` only *copies* a host busybox) | **New** |
 | Write `/init`, pack cpio + gzip | `gen_init_cpio` (kernel tree) **or** Phase 1 `export-initrd` (§5) | **Reuse / New** |
-| Boot `-kernel`/`-initrd` in QEMU | Phase 2 `lab-vm.sh --backend kernel+initrd` (`--append`, microvm-capable, all arches) | **Reuse** |
+| Boot `-kernel`/`-initrd` in QEMU | Phase 2 `lab-vm.sh --backend kernel+initrd` (`--append`, all arches; `--microvm` for the minimal machine on x86_64/aarch64) | **Reuse** |
 
 **Why this split works (and stays small):** the only genuinely new code is the
 source-compile (steps 1–3) and a small packer. Booting already exists and is
@@ -339,12 +339,18 @@ make ARCH=x86_64 defconfig
 make ARCH=x86_64 olddefconfig          # after merging the fragment below
 make ARCH=x86_64 -j"$(nproc)"          # → arch/x86/boot/bzImage
 ```
-Rather than trust `defconfig` across kernel versions, **pin a small config
-fragment and assert the must-haves** are `=y` (else abort):
+Rather than trust `defconfig` across kernel versions, **force the must-haves on
+and assert they took** (`=y`, else abort):
 `CONFIG_DEVTMPFS`, `CONFIG_DEVTMPFS_MOUNT`, `CONFIG_BLK_DEV_INITRD`,
 `CONFIG_RD_GZIP`, `CONFIG_SERIAL_8250_CONSOLE`, `CONFIG_VIRTIO`,
-`CONFIG_VIRTIO_PCI`. These are what let a plain `q35` boot cleanly to userspace
-(the login prompt).
+`CONFIG_VIRTIO_PCI`, `CONFIG_VIRTIO_MMIO`. The first set is what lets a plain
+`q35` boot cleanly to userspace (the login prompt); `CONFIG_VIRTIO_MMIO` (plus
+`CONFIG_VIRTIO_MMIO_CMDLINE_DEVICES`, set but not asserted) makes the **same
+kernel** also boot on QEMU's `microvm` machine, whose virtio rides the mmio bus
+rather than PCI — see §10's microvm item. `mlbuild.sh` does this with the
+`set_kconfig` helper (not `merge_config.sh`): defconfig writes
+`# CONFIG_VIRTIO_MMIO is not set`, and a bare append would be silently dropped by
+`olddefconfig`'s keep-first reassign (the same trap as BusyBox's `CONFIG_STATIC`).
 
 ### 6.2 Kernel — aarch64 (cross)
 ```bash
@@ -562,9 +568,15 @@ tarballs so a cached tarball can drive a network-gated integration test — §10
   hashes. This is also the *only* real mitigation for the §6.0 residual — an
   upstream **signing-key** compromise — via independent rebuild attestation
   (multiple parties reproduce the same hash).
-- **microvm boot:** Phase 2 supports microvm on x86_64/aarch64, but it needs a
-  `CONFIG_VIRTIO_MMIO`(+`_CMDLINE`) kernel fragment since defconfig is
-  virtio-pci. Offer a `--microvm` build profile.
+- **microvm boot — DONE (2026-05-27).** Every micro-linux kernel is now built
+  with `CONFIG_VIRTIO_MMIO=y` (+`_CMDLINE_DEVICES`), so one universal kernel boots
+  on q35/virt *and* on QEMU's microvm machine (§6.1). No separate `--microvm`
+  build profile was needed — mmio is nearly free and a single kernel avoids an
+  output-dir split; the microvm-ness is a *boot-time* choice (`microvm = true` in
+  the spec → see `examples/micro-linux-{x86_64,aarch64}-microvm.toml`). Phase 2
+  was also corrected here: QEMU's `microvm` machine is x86-only, so aarch64
+  "microvm" is a minimized `virt` + virtio-mmio + firmware-free direct `-kernel`
+  boot (the prior code emitted a nonexistent `-machine microvm` for arm).
 - **Bake-in variant:** `CONFIG_INITRAMFS_SOURCE=<dir>` to embed the initramfs
   *inside* the kernel image → a single-file boot (no `-initrd`).
 - **More arches:** ppc64le / s390x (riscv64 covered by the faithful track) —

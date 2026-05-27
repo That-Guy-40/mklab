@@ -70,6 +70,23 @@ mlbuild.sh all --arch riscv64           # u-root (Go) + plain cpio — the "fait
 
 ---
 
+## Boot it on QEMU's real microvm machine
+
+Every micro-linux kernel is built with `CONFIG_VIRTIO_MMIO`, so the **same**
+kernel that boots on `q35`/`virt` also boots on QEMU's minimal **microvm**
+machine (no PCIe, ~kilobyte qboot BIOS, virtio on the mmio bus — the QEMU
+analogue of Firecracker). It's a one-line change in the spec:
+
+```bash
+phase2-qemu-vm/lab-vm.sh create --config examples/micro-linux-x86_64-microvm.toml
+phase2-qemu-vm/lab-vm.sh start  micro-linux-x86_64-microvm
+```
+
+QEMU's `microvm` machine is x86-only; on aarch64 the `-microvm.toml` twin gives
+you the equivalent — a stripped-down, firmware-free `virt` + virtio-mmio.
+
+---
+
 ## Why it's faithful *and* lazy
 
 Only the source-compile is new. Packing reuses the kernel's `gen_init_cpio`;

@@ -49,11 +49,17 @@ Three backends, picked with `--backend`:
 | `kernel+initrd`  | Direct kernel boot, no firmware, no bootloader                       | Microvm fast paths, kernel hacking, no-disk experiments |
 | `from-chroot`    | A Phase-1 chroot tree packaged as a bootable qcow2 (MBR + extlinux + ext4) | "I built it as a chroot, now boot it." x86_64 BIOS only in v0.1 |
 
-`--microvm` switches QEMU's machine type to `microvm` on x86_64 / aarch64 — no
-firmware blob, no SeaBIOS, no PCI bus discovery. On Alpine the boot is
-**measurably sub-second** after the rootfs is warm; the rest of the wait is just
-cloud-init setting up the user. On other arches the flag is silently ignored
-with a warning and you fall back to the standard PC machine.
+`--microvm` asks for QEMU's minimal, fast-boot device model. On **x86_64** that's
+the genuine `microvm` machine (`-machine microvm,pic=off,pit=off,rtc=off`) with a
+~kilobyte qboot BIOS instead of OVMF — no PCIe, no ACPI tables to speak of, virtio
+on the **mmio** bus. QEMU's `microvm` machine is **x86-only**, so on **aarch64**
+`--microvm` synthesizes the equivalent: a stripped-down `virt` booted directly via
+`-kernel` with **no UEFI firmware at all** and virtio on mmio (arm's `virt` is the
+de-facto arm microvm). On Alpine the boot is **measurably sub-second** after the
+rootfs is warm; the rest of the wait is just cloud-init setting up the user. On the
+remaining arches the flag is ignored with a warning and you fall back to the
+standard machine. (Direct `-kernel` boot is required either way — stock cloud
+images are UEFI-only and won't boot off qboot.)
 
 ### Cloud-init out of the box
 

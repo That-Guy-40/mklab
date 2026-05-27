@@ -78,9 +78,15 @@ login prompt** (`root` / `micro`) — no disk, no packages. Build with
 
 | File | What you get |
 |---|---|
-| `micro-linux-x86_64.toml` | x86_64 kernel + static BusyBox → getty/login shell over serial. |
+| `micro-linux-x86_64.toml` | x86_64 kernel + static BusyBox → getty/login shell over serial (boots on `q35`). |
+| `micro-linux-x86_64-microvm.toml` | The same artifacts on QEMU's real `microvm` machine (qboot, virtio-mmio) — the minimal, fast-boot device model. |
 | `micro-linux-aarch64.toml` | 🐌 The arm64 twin, cross-compiled; boots on QEMU `virt` (TCG on x86 hosts). |
+| `micro-linux-aarch64-microvm.toml` | 🐌 arm64 microvm-style: a minimized, firmware-free `virt` + virtio-mmio (QEMU has no arm `microvm` machine). |
 | `micro-linux-riscv64.toml` | The "faithful track": riscv64 kernel + a u-root (pure-Go) **plain** cpio — closest to the source post. |
+
+The same compiled kernel boots both the plain and `-microvm` twins: `mlbuild.sh`
+bakes `CONFIG_VIRTIO_MMIO` into every micro-linux kernel, so virtio works on the
+microvm mmio bus as well as on PCI.
 
 ## 🌉 Cross-phase bridges — build once, run elsewhere
 
