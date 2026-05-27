@@ -270,13 +270,23 @@ build_kernel() {
     local arch="$1" src="$2"
     log_info "[$arch] kernel: defconfig + build (this takes minutes) …"
     kmake "$arch" "$src" defconfig    >/dev/null
-    # TODO: merge a pinned fragment here (scripts/kconfig/merge_config.sh) for
-    # reproducibility across kernel versions — see plan §6.1.
+    # defconfig gives us virtio-PCI; QEMU's 'microvm' machine (and arm/riscv 'virt'
+    # with -device virtio-*-device) speak virtio-MMIO instead.  Force MMIO on so ONE
+    # kernel boots on q35/virt AND on microvm — PCI stays enabled too, making this a
+    # universal-transport kernel.  We use set_kconfig rather than the
+    # scripts/kconfig/merge_config.sh the old TODO suggested: it already rewrites the
+    # "# CONFIG_X is not set" line defconfig emits, needs no writable CWD/tempfiles,
+    # and is the same helper the busybox build trusts below.  CMDLINE_DEVICES lets the
+    # kernel consume the 'virtio_mmio.device=' args QEMU's microvm auto-appends; it is
+    # harmless on virt, so we set it but don't gate on it (it could be renamed upstream).
+    set_kconfig "$src/.config" VIRTIO_MMIO y
+    set_kconfig "$src/.config" VIRTIO_MMIO_CMDLINE_DEVICES y
     kmake "$arch" "$src" olddefconfig >/dev/null
-    local -a want=(CONFIG_DEVTMPFS CONFIG_BLK_DEV_INITRD CONFIG_VIRTIO "$(kernel_cons "$arch")")
+    local -a want=(CONFIG_DEVTMPFS CONFIG_BLK_DEV_INITRD CONFIG_VIRTIO CONFIG_VIRTIO_MMIO "$(kernel_cons "$arch")")
     case "$arch" in
-        x86_64|aarch64) want+=(CONFIG_DEVTMPFS_MOUNT CONFIG_RD_GZIP CONFIG_VIRTIO_PCI) ;;  # busybox track gzips its cpio
-        riscv64)        want+=(CONFIG_VIRTIO_MMIO) ;;                                       # riscv virt is mmio; u-root cpio is plain
+        # busybox track gzips its cpio + auto-mounts devtmpfs; the riscv64/u-root track
+        # needs neither (plain cpio).  VIRTIO_MMIO is asserted universally (above).
+        x86_64|aarch64) want+=(CONFIG_DEVTMPFS_MOUNT CONFIG_RD_GZIP CONFIG_VIRTIO_PCI) ;;
     esac
     assert_kconfig "$src" "${want[@]}"
     kmake "$arch" "$src" -j"$(nproc)"
