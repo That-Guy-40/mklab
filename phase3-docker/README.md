@@ -185,13 +185,18 @@ Resource naming:
 - `binfmt_misc` registration is **not** auto-installed. The script errors with two install-path hints (`apt-get install qemu-user-static` *or* `docker run --privileged --rm tonistiigi/binfmt --install all`).
 - Multi-platform manifest lists (single tag, multiple platforms) require `--push` to a registry — single-platform `--load` is what this v1 supports for local-only builds.
 
-## Known gaps in v0.1
+## v0.2 additions
 
-- **No registry push helpers** (just use `docker push <tag>` after `build`).
-- **Volumes** treat the source as a literal path or volume name — no auto-creation of named volumes (Docker creates them implicitly on first reference).
-- **`depends_on` / startup order** not implemented — services are started in the order they appear in the TOML. If you need ordering, put dependents later and add startup retries in the service.
-- **Healthchecks** not yet wired up.
-- **Compose YAML interop** not implemented (the schema is similar but the script reads TOML only). Convert with `yq -p yaml -o toml < compose.yaml`.
+- **`push` subcommand** — `lab-docker.sh push <tag>` (or `--tag TAG`) delegates to `docker push`; warns when `--arch` is present that multi-arch manifest lists need `docker manifest push` separately.
+- **`depends_on` / startup order** — topology services are started in topological (dependency-first) order. Add `depends_on = ["db"]` to a `[[service]]` and the dependency starts first. Cycles are detected and die loudly.
+- **Healthchecks** — `[service.healthcheck]` TOML table (`test`, `interval`, `timeout`, `retries`, `start_period`) wires directly into `docker run --health-*` flags. When a service has a healthcheck, `up` waits for it to become healthy before starting dependents. `export` emits `healthcheck:` blocks in compose output.
+- **Compose YAML interop** — `--config` now accepts `.yml` / `.yaml` files (docker-compose v2 format) in addition to `.toml`. Requires mikefarah/yq. The `up`, `down`, and `export` subcommands all honour the extension.
+
+## Known gaps in v0.2
+
+- **Volumes** treat the source as a literal path or volume name — no explicit management (Docker creates named volumes implicitly on first reference).
+- **Compose volumes in object form** (`type: volume`, `source:`, `target:`) are not converted by the YAML interop path; use the string form (`"vol:/data"`) instead.
+- **Multi-platform manifest lists** require `--push` to a registry; `push` and `build` only support single-platform `--load` for local builds.
 
 ## Tests
 

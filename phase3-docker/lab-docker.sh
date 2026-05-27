@@ -190,6 +190,92 @@ toml_to_json() {
     fi
 }
 
+# ─── Compose YAML → internal JSON (for --config *.yml / *.yaml) ───────────
+# Converts a docker-compose v2 file to the same JSON schema that toml_to_json
+# produces, so all downstream code is format-agnostic.
+# Supported subset: services (image, ports, environment, volumes, networks,
+# command, depends_on, healthcheck), top-level networks, and `name`.
+# Volumes in object form {source, target} are not supported — use string form.
+compose_to_json() {
+    local file="$1"
+    [[ -r "$file" ]] || die "config file not readable: $file"
+    have yq && yq --version 2>&1 | grep -qi 'mikefarah' \
+        || die "Compose YAML interop requires mikefarah/yq.  Install with:  $(install_hint yq)"
+    yq -p yaml -o json "$file" | jq -c '
+        . as $c |
+        # Compose environment can be a {k:v} map or a ["K=V"] list; normalise
+        # to a map so the rest of the code can use to_entries.
+        def env_map(e):
+          if (e | type) == "object" then e
+          elif (e | type) == "array"  then
+            (e | map(
+              split("=") |
+              {key: .[0], value: (.[1:] | join("="))}
+            ) | from_entries)
+          else {} end;
+        # depends_on can be a ["svc"] list or a {svc: {condition:...}} map.
+        def dep_list(d):
+          if (d | type) == "array"  then d
+          elif (d | type) == "object" then [d | keys[]]
+          else [] end;
+        # healthcheck.test: ["CMD-SHELL","cmd"] -> "cmd"; "none" -> ""
+        def hc_test(t):
+          if (t | type) == "array" then
+            if t[0] == "CMD-SHELL" or t[0] == "CMD" then t[1:] | join(" ")
+            else "" end
+          elif (t | type) == "string" and t != "none" then t
+          else "" end;
+        {
+          lab: { name: ($c.name // "") },
+          network: (
+            ($c.networks // {}) | to_entries |
+            map({ key: .key,
+                  value: { driver: (.value.driver // "bridge") } }) |
+            from_entries
+          ),
+          service: [
+            ($c.services // {}) | to_entries[] |
+            .key as $n | .value as $s |
+            {
+              name:        $n,
+              image:       ($s.image // ""),
+              ports:       ($s.ports // []),
+              environment: env_map($s.environment),
+              volumes:     ($s.volumes // []),
+              networks:    (
+                if ($s.networks | type) == "object" then [$s.networks | keys[]]
+                else ($s.networks // []) end
+              ),
+              command:     (if ($s.command | type) == "string" then $s.command else "" end),
+              cmd:         (if ($s.command | type) == "array"  then $s.command else [] end),
+              depends_on:  dep_list($s.depends_on),
+              healthcheck: (
+                if $s.healthcheck then {
+                  test:         hc_test($s.healthcheck.test),
+                  interval:     ($s.healthcheck.interval     // ""),
+                  timeout:      ($s.healthcheck.timeout      // ""),
+                  retries:      ($s.healthcheck.retries      // 0 | tostring),
+                  start_period: ($s.healthcheck.start_period // "")
+                } | with_entries(select(.value != "" and .value != "0"))
+                else null end
+              )
+            } | with_entries(select(
+                  .value != "" and .value != null and .value != [] and .value != {}
+                ))
+          ]
+        }
+    '
+}
+
+# Dispatch on file extension: .yml/.yaml → compose_to_json, else toml_to_json.
+load_config() {
+    local file="$1"
+    case "$file" in
+        *.yml|*.yaml) compose_to_json "$file" ;;
+        *)            toml_to_json    "$file" ;;
+    esac
+}
+
 # ─── Container/image naming helpers ────────────────────────────────────────
 container_name_for() {
     # container_name_for LAB_NAME SERVICE_NAME
@@ -291,6 +377,60 @@ backend_buildx() {
 # (or one ad-hoc container for `run`).
 spec_get() { jq -r --arg k "$2" '.[$k] // ""' <<<"$1"; }
 
+# ─── Topological sort for depends_on ordering ──────────────────────────────
+# Globals used: _TOPO_VISITED (assoc array), _TOPO_SORTED (index array).
+# Both are declared with declare -g by topo_sort() before calling _topo_visit.
+_topo_visit() {
+    local name="$1" svc_json="$2"
+    local state="${_TOPO_VISITED[$name]:-}"
+    [[ "$state" == "done"    ]] && return 0
+    [[ "$state" == "pending" ]] && die "depends_on cycle detected at service '$name'"
+    _TOPO_VISITED[$name]="pending"
+    local dep
+    while IFS= read -r dep; do
+        [[ -z "$dep" ]] && continue
+        # Soft-check: warn if dep not in list (may be a cross-engine service).
+        if ! jq -e --arg d "$dep" 'map(select(.name==$d)) | length > 0' \
+               <<<"$svc_json" >/dev/null 2>&1; then
+            log_warn "service '$name' depends_on '$dep' which is not in this topology"
+        fi
+        _topo_visit "$dep" "$svc_json"
+    done < <(jq -r --arg n "$name" \
+        '.[] | select(.name==$n) | .depends_on // [] | .[]?' <<<"$svc_json")
+    _TOPO_VISITED[$name]="done"
+    _TOPO_SORTED+=("$name")
+}
+
+# topo_sort SVC_JSON_ARRAY — sets _TOPO_SORTED to names in dependency-first order.
+topo_sort() {
+    local svc_json="$1"
+    declare -gA _TOPO_VISITED=()
+    declare -ga _TOPO_SORTED=()
+    local count; count="$(jq 'length' <<<"$svc_json")"
+    local i name
+    for ((i=0; i<count; i++)); do
+        name="$(jq -r --argjson i "$i" '.[$i].name // ""' <<<"$svc_json")"
+        [[ -n "$name" ]] && _topo_visit "$name" "$svc_json"
+    done
+}
+
+# ─── Health-wait helper for depends_on with healthchecks ───────────────────
+_wait_healthy() {
+    local cname="$1"
+    local max_wait="${2:-120}" elapsed=0
+    log_info "waiting for '$cname' to become healthy (max ${max_wait}s)…"
+    while (( elapsed < max_wait )); do
+        local h
+        h="$(docker inspect --format '{{.State.Health.Status}}' "$cname" 2>/dev/null || true)"
+        case "$h" in
+            healthy)   log_debug "'$cname' is healthy"; return 0 ;;
+            unhealthy) die "container '$cname' is unhealthy" ;;
+        esac
+        sleep 2; elapsed=$((elapsed+2))
+    done
+    die "timed out waiting for '$cname' to become healthy (${max_wait}s)"
+}
+
 # ─── Subcommand: build ─────────────────────────────────────────────────────
 cmd_build() {
     local backend="${OPT_BACKEND:-build}"
@@ -323,6 +463,19 @@ cmd_build() {
             backend_from_tarball "$OPT_TARBALL" "$tag"
             ;;
     esac
+}
+
+# ─── Subcommand: push ──────────────────────────────────────────────────────
+cmd_push() {
+    local tag="${OPT_TAG:-${POS_ARGS[0]:-}}"
+    [[ -n "$tag" ]] || die "usage: $LAB_PROG push <tag> | --tag TAG"
+    require_docker
+    if [[ -n "${OPT_ARCH:-}" ]]; then
+        log_warn "push: --arch specified; pushing single-platform image '$tag'."
+        log_warn "  Multi-arch manifest lists require: docker manifest push (after docker manifest create)"
+    fi
+    log_info "docker push $tag"
+    docker push "$tag"
 }
 
 # ─── Subcommand: run (ad-hoc single container) ─────────────────────────────
@@ -409,7 +562,7 @@ cmd_up() {
     [[ -n "${OPT_CONFIG:-}" ]] || die "usage: $LAB_PROG up --config topology.toml"
     require_cmd jq
     require_docker
-    local cfg_json; cfg_json="$(toml_to_json "$OPT_CONFIG")"
+    local cfg_json; cfg_json="$(load_config "$OPT_CONFIG")"
 
     local lab_name
     lab_name="$(jq -r '.lab.name // ""' <<<"$cfg_json")"
@@ -448,15 +601,21 @@ cmd_up() {
     local svc_count; svc_count="$(jq -r '.service // [] | length' <<<"$cfg_json")"
     [[ "$svc_count" -gt 0 ]] || die "config has no [[service]] entries"
 
-    local i skipped=0
-    for ((i=0; i<svc_count; i++)); do
-        local svc; svc="$(jq -c --argjson i "$i" '.service[$i]' <<<"$cfg_json")"
-        local sname simage; sname="$(spec_get "$svc" name)"; simage="$(spec_get "$svc" image)"
-        [[ -n "$sname" ]] || die "service[$i] missing name"
+    # Build a compact JSON array of all service objects, then topologically
+    # sort them so that services listed in depends_on start before their
+    # dependents.  The sort uses all services (including cross-engine ones) so
+    # that depends_on references to podman-managed siblings don't cause errors.
+    local all_svcs; all_svcs="$(jq -c '.service // []' <<<"$cfg_json")"
+    topo_sort "$all_svcs"
+    local -a ordered_names=("${_TOPO_SORTED[@]}")
 
-        # Cross-phase engine routing: a unified lab.toml may carry services
-        # intended for Phase 4 (podman).  If engine is set and !="docker",
-        # skip — lab-podman.sh will claim it when run against the same file.
+    local skipped=0 started=0
+    local sname
+    for sname in "${ordered_names[@]}"; do
+        local svc; svc="$(jq -c --arg n "$sname" '.[] | select(.name==$n)' <<<"$all_svcs")"
+        local simage; simage="$(spec_get "$svc" image)"
+
+        # Cross-phase engine routing.
         local sengine; sengine="$(spec_get "$svc" engine)"
         if [[ -n "$sengine" && "$sengine" != "docker" ]]; then
             log_debug "skipping service '$sname' (engine=$sengine, not docker)"
@@ -469,6 +628,7 @@ cmd_up() {
         # Idempotency: if a container of this name exists already, leave it.
         if docker ps -a --format '{{.Names}}' | grep -qx "$cname"; then
             log_warn "service '$sname' container exists ($cname); leaving as-is"
+            started=$((started+1))
             continue
         fi
 
@@ -536,6 +696,21 @@ cmd_up() {
             [[ -n "$vv2" ]] && args+=(-v "$vv2")
         done < <(jq -r '.volumes[]?' <<<"$svc")
 
+        # Healthcheck — translates TOML [service.healthcheck] to docker run flags.
+        local hc_test hc_interval hc_timeout hc_retries hc_start
+        hc_test="$(    jq -r '.healthcheck.test         // ""' <<<"$svc")"
+        hc_interval="$(jq -r '.healthcheck.interval     // ""' <<<"$svc")"
+        hc_timeout="$( jq -r '.healthcheck.timeout      // ""' <<<"$svc")"
+        hc_retries="$( jq -r '.healthcheck.retries      // ""' <<<"$svc")"
+        hc_start="$(   jq -r '.healthcheck.start_period // ""' <<<"$svc")"
+        if [[ -n "$hc_test" ]]; then
+            args+=(--health-cmd "$hc_test")
+            [[ -n "$hc_interval" ]] && args+=(--health-interval "$hc_interval")
+            [[ -n "$hc_timeout"  ]] && args+=(--health-timeout  "$hc_timeout")
+            [[ -n "$hc_retries"  ]] && args+=(--health-retries  "$hc_retries")
+            [[ -n "$hc_start"    ]] && args+=(--health-start-period "$hc_start")
+        fi
+
         # Optional command after image
         local -a cmd=()
         local cmdline; cmdline="$(jq -r '.command // empty' <<<"$svc")"
@@ -554,6 +729,7 @@ cmd_up() {
 
         log_info "starting service '$sname' as $cname (image=$simage)"
         docker run "${args[@]}" "$simage" "${cmd[@]}" >/dev/null
+        started=$((started+1))
 
         # Attach extra networks (if user listed >1)
         local idx=0
@@ -562,13 +738,18 @@ cmd_up() {
             (( idx > 0 )) && docker network connect "$nn" "$cname" >/dev/null
             idx=$((idx+1))
         done
+
+        # If this service has a healthcheck, wait for it before continuing —
+        # its dependents (which are next in the sorted order) may need it healthy.
+        if [[ -n "$hc_test" ]]; then
+            _wait_healthy "$cname"
+        fi
     done
 
     # Success — clear the partial-up hint trap.
     trap - EXIT
 
-    local handled=$((svc_count - skipped))
-    log_info "── lab '$lab_name' up (${handled} docker service(s), ${skipped} skipped) ──"
+    log_info "── lab '$lab_name' up (${started} docker service(s), ${skipped} skipped) ──"
     log_info "list:  $LAB_PROG list --lab $lab_name"
     log_info "down:  $LAB_PROG down --lab $lab_name"
 }
@@ -578,7 +759,7 @@ cmd_down() {
     local lab_name="${OPT_LAB:-}"
     if [[ -z "$lab_name" && -n "${OPT_CONFIG:-}" ]]; then
         require_cmd jq
-        lab_name="$(toml_to_json "$OPT_CONFIG" | jq -r '.lab.name // ""')"
+        lab_name="$(load_config "$OPT_CONFIG" | jq -r '.lab.name // ""')"
     fi
     [[ -n "$lab_name" ]] || die "usage: $LAB_PROG down --lab NAME | --config topology.toml (need a lab name)"
     require_docker
@@ -926,8 +1107,9 @@ cmd_inspect() {
     fi
 }
 
-# Not emitted: healthcheck, restart, depends_on, secrets (not in the Phase 3
-# TOML schema yet).  `from_chroot` / `from_tarball` / `build` image sources
+# Not emitted: restart, secrets (not in the Phase 3 TOML schema).
+# healthcheck and depends_on are now emitted.
+# `from_chroot` / `from_tarball` / `build` image sources
 # don't round-trip — compose's `build:` key needs a Dockerfile context path,
 # which Phase 3's TOML doesn't carry; those services are emitted with the
 # image tag that `up` would synthesize (`lab-<lab>-<svc>-img`), plus a
@@ -938,7 +1120,7 @@ cmd_export() {
     [[ "$fmt" == "compose" ]] || die "unknown export format: $fmt (phase 3 supports: compose)"
     require_cmd jq
 
-    local cfg; cfg="$(toml_to_json "$OPT_CONFIG")"
+    local cfg; cfg="$(load_config "$OPT_CONFIG")"
     local lab; lab="$(jq -r '.lab.name // ""' <<<"$cfg")"
     [[ -n "$lab" ]] || die "config missing [lab].name"
 
@@ -948,6 +1130,10 @@ cmd_export() {
     if [[ -n "$requested" && "$requested" != "$lab" ]]; then
         die "--config declares [lab].name='$lab' but positional arg is '$requested'"
     fi
+
+    # Compact array of all service objects — used for healthcheck lookups in
+    # depends_on condition resolution.
+    local all_svcs_x; all_svcs_x="$(jq -c '.service // []' <<<"$cfg")"
 
     # No top-level `version:` key — Compose v2 treats it as obsolete and warns.
     printf '# generated by %s export from %s\n' "$LAB_PROG" "$OPT_CONFIG"
@@ -1044,6 +1230,39 @@ cmd_export() {
                 done
             fi
         fi
+
+        # depends_on — emit with condition based on whether the dependency has
+        # a healthcheck (service_healthy) or not (service_started).
+        first=1
+        local dep dep_hc
+        while IFS= read -r dep; do
+            [[ -z "$dep" ]] && continue
+            if (( first )); then printf '    depends_on:\n'; first=0; fi
+            dep_hc="$(jq -r --arg d "$dep" \
+                '.[] | select(.name==$d) | .healthcheck.test // ""' \
+                <<<"$all_svcs_x")"
+            if [[ -n "$dep_hc" ]]; then
+                printf '      %s:\n        condition: service_healthy\n' "$dep"
+            else
+                printf '      %s:\n        condition: service_started\n' "$dep"
+            fi
+        done < <(jq -r '.depends_on // [] | .[]?' <<<"$svc")
+
+        # healthcheck — emit the full block when a [service.healthcheck] is defined.
+        local xhc_test xhc_interval xhc_timeout xhc_retries xhc_start
+        xhc_test="$(    jq -r '.healthcheck.test         // ""' <<<"$svc")"
+        xhc_interval="$(jq -r '.healthcheck.interval     // ""' <<<"$svc")"
+        xhc_timeout="$( jq -r '.healthcheck.timeout      // ""' <<<"$svc")"
+        xhc_retries="$( jq -r '.healthcheck.retries      // ""' <<<"$svc")"
+        xhc_start="$(   jq -r '.healthcheck.start_period // ""' <<<"$svc")"
+        if [[ -n "$xhc_test" ]]; then
+            printf '    healthcheck:\n'
+            printf '      test: ["CMD-SHELL", "%s"]\n' "$xhc_test"
+            [[ -n "$xhc_interval" ]] && printf '      interval: %s\n'     "$xhc_interval"
+            [[ -n "$xhc_timeout"  ]] && printf '      timeout: %s\n'      "$xhc_timeout"
+            [[ -n "$xhc_retries"  ]] && printf '      retries: %s\n'      "$xhc_retries"
+            [[ -n "$xhc_start"    ]] && printf '      start_period: %s\n' "$xhc_start"
+        fi
     done
 
     # Networks — mirror the [network.X] keys as top-level compose networks.
@@ -1076,16 +1295,17 @@ $LAB_PROG $LAB_VERSION — docker container & topology management (LAB_CREATE_V2
 
 USAGE
   $LAB_PROG build    --tag IMG  [--backend buildx|from-chroot] [--context DIR | --chroot PATH] [--arch A]
+  $LAB_PROG push     <tag> | --tag TAG              [--arch A]  # push image to a registry
   $LAB_PROG run      --name N   [--image IMG | --chroot PATH | --context DIR] [opts...]
-  $LAB_PROG up       --config topology.toml
-  $LAB_PROG down     --lab NAME | --config topology.toml
+  $LAB_PROG up       --config topology.toml|compose.yml
+  $LAB_PROG down     --lab NAME | --config topology.toml|compose.yml
   $LAB_PROG exec     <name|lab/service> [-- cmd args...]
   $LAB_PROG logs     <name|lab/service> [--follow]
   $LAB_PROG status   [<name|lab>]
   $LAB_PROG list     [--lab NAME]
   $LAB_PROG inspect  <name|lab/service> [--json]
   $LAB_PROG destroy  <name|lab/service> [--force]
-  $LAB_PROG export   --config topology.toml [--format compose]   # emit compose YAML to stdout
+  $LAB_PROG export   --config topology.toml|compose.yml [--format compose]   # emit compose YAML
   $LAB_PROG version | help
 
 BUILD / RUN OPTIONS
@@ -1107,7 +1327,7 @@ BUILD / RUN OPTIONS
   --tty                               (run: -it)
   --follow                            (logs: -f)
   --lab       NAME                    (list/down/status: scope to one lab)
-  --config    FILE                    (up/down/export: topology TOML)
+  --config    FILE                    (up/down/export: topology .toml or docker-compose .yml/.yaml)
   --format    FMT                     (export: compose — the only format, also the default)
   --force                             (destroy)
 
@@ -1118,7 +1338,9 @@ EXAMPLES
   $LAB_PROG run --name nginx1 --image nginx:alpine --ports 8080:80 --detach
   $LAB_PROG build --tag mychroot:latest --backend from-chroot --chroot /var/jails/busybox
   $LAB_PROG build --tag myimg:arm64 --backend buildx --context ./app --arch aarch64
+  $LAB_PROG push myapp:latest
   $LAB_PROG up     --config examples/docker-3svc-topology.toml
+  $LAB_PROG up     --config examples/docker-compose.yml          # compose YAML also accepted
   $LAB_PROG list   --lab demo
   $LAB_PROG status demo
   $LAB_PROG export --config examples/docker-3svc-topology.toml --format compose > demo-compose.yml
@@ -1184,6 +1406,7 @@ main() {
     parse_args "$@"
     case "$SUBCMD" in
         build)   cmd_build   ;;
+        push)    cmd_push    ;;
         run)     cmd_run     ;;
         up)      cmd_up      ;;
         down)    cmd_down    ;;
@@ -1200,4 +1423,4 @@ main() {
     esac
 }
 
-main "$@"
+[[ "${BASH_SOURCE[0]}" == "${0}" ]] && main "$@"
