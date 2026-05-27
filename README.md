@@ -9,7 +9,7 @@ See [`PLAN.md`](PLAN.md) for the full design and rationale.
 
 | Phase | Component | Status | Tour |
 |---|---|---|---|
-| 1 | [`phase1-chroot/lab-chroot.sh`](phase1-chroot/) | **v0.1 landed** — debootstrap / dnf / host-copy backends, schroot / nspawn / bare managers, foreign-arch via qemu-user-static | [SHOWCASE](phase1-chroot/SHOWCASE.md) |
+| 1 | [`phase1-chroot/lab-chroot.sh`](phase1-chroot/) | **v0.1 landed** — debootstrap / dnf / host-copy backends, schroot / nspawn / bare managers, foreign-arch via qemu-user-static, rootless (fakechroot+fakeroot), `--json` / `--keep-cache` | [SHOWCASE](phase1-chroot/SHOWCASE.md) |
 | 2 | [`phase2-qemu-vm/lab-vm.sh`](phase2-qemu-vm/) | **v0.1 landed** — QEMU full VMs and microvms, cloud-init seeded, all 6 arches | [SHOWCASE](phase2-qemu-vm/SHOWCASE.md) |
 | 3 | [`phase3-docker/lab-docker.sh`](phase3-docker/) | **v0.1 landed** — `run`/`up`/`down`/`exec`/`logs`/`list`/`destroy`, multi-arch buildx, `from-chroot` import, TOML topologies | [SHOWCASE](phase3-docker/SHOWCASE.md) |
 | 4 | [`phase4-podman/lab-podman.sh`](phase4-podman/) | **v0.1 landed** — pods, quadlet systemd-user export, `from-chroot` + `from-tarball` import, rootless-first | [SHOWCASE](phase4-podman/SHOWCASE.md) |

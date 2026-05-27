@@ -291,6 +291,43 @@ list_manifests() {
     done
 }
 
+# Append a `key = "value"` (quoted scalar) line to an existing manifest, for
+# fields written after the base write_manifest (rootless flag + nspawn scalars).
+append_manifest_field() {
+    local name="$1" key="$2" value="$3"
+    printf '%s = "%s"\n' "$key" "${value//\"/\\\"}" >> "$(manifest_path "$name")"
+}
+
+# Append a `key = <raw>` line (no surrounding quotes) — used for compact JSON
+# arrays (nspawn bind_ro / capabilities).  A compact JSON array like
+# ["/a","/b"] is itself valid TOML, and read_manifest_field returns it verbatim
+# (it only strips a *surrounding* pair of quotes), so jq can parse it back.
+append_manifest_raw() {
+    local name="$1" key="$2" raw="$3"
+    printf '%s = %s\n' "$key" "$raw" >> "$(manifest_path "$name")"
+}
+
+# ─── Rootless (fakechroot + fakeroot) helpers ───────────────────────────────
+# ROOTLESS (global, "1" or "") gates the rootless code paths.  CREATE sets it
+# from OPT_ROOTLESS; ENTER/DESTROY set it from the chroot's manifest `rootless`
+# field.  The pattern follows muxup.com: debootstrap --variant=fakechroot built
+# and entered under `fakechroot fakeroot`, so no real uid 0 and no mounts.
+require_rootless_deps() {
+    require_cmd fakechroot fakeroot
+}
+
+# Run a command inside the chroot — wrapped in fakechroot+fakeroot when ROOTLESS,
+# a plain chroot otherwise (byte-identical to the previous behavior when not
+# rootless).  Used by every `chroot "$target" …` call site.
+chroot_exec() {
+    local target="$1"; shift
+    if [[ -n "${ROOTLESS:-}" ]]; then
+        fakechroot fakeroot chroot "$target" "$@"
+    else
+        chroot "$target" "$@"
+    fi
+}
+
 # ─── Spec construction (CLI args → JSON, or config file → JSON array) ──────
 # A "spec" is a JSON object describing one chroot. The create flow takes a
 # spec and runs it. CLI mode produces one spec; config-file mode may produce
@@ -480,6 +517,9 @@ backend_debootstrap_create() {
     mirror="$(spec_get "$spec" mirror)"
     variant="$(spec_get "$spec" variant)"
     [[ -n "$mirror"  ]] || mirror="$(debootstrap_default_mirror "$distro" "$arch")"
+    # Rootless debootstrap uses the fakechroot variant (the muxup.com pattern):
+    # it avoids every operation that needs real uid 0 (mknod, chroot, chown).
+    [[ -n "${ROOTLESS:-}" ]] && variant=fakechroot
 
     local debian_arch qemu_user host_arch
     debian_arch="$(arch_map "$arch" debian)" || die "no debian-arch mapping for $arch"
@@ -495,6 +535,12 @@ backend_debootstrap_create() {
     local -a deboot_args=(--arch="$debian_arch" --keyring="$keyring")
     [[ -n "$variant" ]] && deboot_args+=(--variant="$variant")
     [[ -n "$include" ]] && deboot_args+=(--include="$include")
+    # --keep-cache: reuse a persistent .deb download cache across builds.
+    if [[ -n "${OPT_KEEP_CACHE:-}" ]]; then
+        local dcache="$LAB_CACHE_DIR/debootstrap"; mkdir -p "$dcache"
+        deboot_args+=(--cache-dir="$dcache")
+        log_info "keep-cache: debootstrap --cache-dir=$dcache"
+    fi
 
     if [[ -e "$target" && -n "$(ls -A "$target" 2>/dev/null || true)" ]]; then
         die "$target already exists and is not empty"
@@ -503,7 +549,11 @@ backend_debootstrap_create() {
 
     if [[ "$arch" == "$host_arch" ]]; then
         log_info "debootstrap (native): $distro/$suite arch=$arch → $target"
-        debootstrap "${deboot_args[@]}" "$suite" "$target" "$mirror"
+        if [[ -n "${ROOTLESS:-}" ]]; then
+            fakechroot fakeroot debootstrap "${deboot_args[@]}" "$suite" "$target" "$mirror"
+        else
+            debootstrap "${deboot_args[@]}" "$suite" "$target" "$mirror"
+        fi
     else
         log_info "debootstrap (foreign first stage): $distro/$suite arch=$arch → $target"
         ensure_binfmt "$qemu_user"
@@ -514,7 +564,7 @@ backend_debootstrap_create() {
         log_debug "copying qemu-${qemu_user}-static into chroot"
         install -D -m 0755 "$qemu_bin" "${target}/usr/bin/qemu-${qemu_user}-static"
         log_info "debootstrap (foreign second stage)"
-        chroot "$target" /debootstrap/debootstrap --second-stage
+        chroot_exec "$target" /debootstrap/debootstrap --second-stage
     fi
 
     # Useful defaults a freshly-bootstrapped chroot doesn't get otherwise.
@@ -641,17 +691,26 @@ backend_dnf_create() {
     mkdir -p "${target}/usr/lib/sysimage/rpm" "${target}/var/lib"
     ln -sfn ../../usr/lib/sysimage/rpm "${target}/var/lib/rpm"
 
+    # --keep-cache: persist downloaded rpms in a shared cache (outside the
+    # installroot, so it survives the build and stays out of the chroot tree).
+    local -a cacheopt=()
+    if [[ -n "${OPT_KEEP_CACHE:-}" ]]; then
+        local dcache="$LAB_CACHE_DIR/dnf"; mkdir -p "$dcache"
+        cacheopt=(--setopt=cachedir="$dcache" --setopt=keepcache=1)
+        log_info "keep-cache: dnf cachedir=$dcache (keepcache=1)"
+    fi
+
     log_info "$pm install ($suite/$arch_rpm) → $target"
     "$pm" --setopt=reposdir= -c "$repo_file" \
           --installroot="$target" --releasever="$suite" \
-          "${forcearch[@]}" \
+          "${forcearch[@]}" "${cacheopt[@]}" \
           --assumeyes install "${packages[@]}"
 
     if (( ${#groups[@]} > 0 )); then
         log_info "$pm groupinstall: ${groups[*]}"
         "$pm" --setopt=reposdir= -c "$repo_file" \
               --installroot="$target" --releasever="$suite" \
-              "${forcearch[@]}" \
+              "${forcearch[@]}" "${cacheopt[@]}" \
               --assumeyes groupinstall "${groups[@]}"
     fi
 
@@ -817,7 +876,18 @@ manager_none_register() {
 
 manager_none_enter() {
     local target="$1"; shift
-    [[ $EUID -eq 0 ]] || die "entering a chroot requires root"
+    # Rootless: enter under fakechroot+fakeroot, no root and no bind-mounts.
+    if [[ -n "${ROOTLESS:-}" ]]; then
+        require_rootless_deps
+        local rc=0
+        if (( $# > 0 )); then
+            fakechroot fakeroot chroot "$target" "$@" || rc=$?
+        else
+            fakechroot fakeroot chroot "$target" /bin/bash -l || true
+        fi
+        return "$rc"
+    fi
+    [[ $EUID -eq 0 ]] || die "entering a chroot requires root (or recreate it with --rootless)"
     bind_essentials "$target"
     # IMPORTANT: traps set inside a function persist past function return and
     # fire when the *script* exits.  If we use single quotes here, $target is
@@ -925,21 +995,53 @@ manager_nspawn_register() {
     fi
 }
 
+# Build the systemd-nspawn argv into the global NSPAWN_ARGS array from the
+# create-time settings.  Pure (no nspawn invocation) so it's unit-testable
+# without root.  Mapping:
+#   network: ""/host → share the host net (no flag); veth → --network-veth;
+#            none/private → --private-network; anything else → bridge name
+#            (--network-bridge=NAME).
+#   bind_ro / capabilities: compact JSON arrays (as stored in the manifest) →
+#            one --bind-ro=PATH each; a single --capability=CAP1,CAP2,….
+build_nspawn_args() {
+    local target="$1" boot="$2" network="${3:-}" bind_ro_json="${4:-[]}" caps_json="${5:-[]}"
+    NSPAWN_ARGS=(-D "$target")
+    [[ "$boot" == "true" ]] && NSPAWN_ARGS+=(-b)
+    case "$network" in
+        ""|host)      : ;;
+        veth)         NSPAWN_ARGS+=(--network-veth) ;;
+        none|private) NSPAWN_ARGS+=(--private-network) ;;
+        *)            NSPAWN_ARGS+=(--network-bridge="$network") ;;
+    esac
+    local p
+    while IFS= read -r p; do
+        [[ -n "$p" ]] && NSPAWN_ARGS+=(--bind-ro="$p")
+    done < <(jq -r '.[]?' <<<"$bind_ro_json" 2>/dev/null)
+    local caps
+    caps="$(jq -r 'if length>0 then join(",") else empty end' <<<"$caps_json" 2>/dev/null)"
+    [[ -n "$caps" ]] && NSPAWN_ARGS+=(--capability="$caps")
+    return 0   # never let a falsy final test become the function's exit (set -e)
+}
+
 manager_nspawn_enter() {
     local name="$1"; shift
     require_cmd systemd-nspawn
-    local target boot
+    local target
     target="$(read_manifest_field "$name" target)" || die "no manifest for $name"
-    # Re-read the spec-time settings from machinectl link if needed.
-    boot="${LAB_NSPAWN_BOOT:-false}"
-
-    local -a args=(-D "$target")
-    [[ "$boot" == "true" ]] && args+=(-b)
+    # Reproduce the create-time nspawn config from the manifest.  LAB_NSPAWN_BOOT
+    # still overrides boot for ad-hoc use; older manifests (missing the new
+    # fields) read empty → host network, no extra binds/caps (prior behavior).
+    local boot network bind_ro caps
+    boot="${LAB_NSPAWN_BOOT:-$(read_manifest_field "$name" nspawn_boot 2>/dev/null || echo false)}"
+    network="$(read_manifest_field "$name" nspawn_network      2>/dev/null || true)"
+    bind_ro="$(read_manifest_field "$name" nspawn_bind_ro      2>/dev/null || true)"
+    caps="$(read_manifest_field    "$name" nspawn_capabilities 2>/dev/null || true)"
+    build_nspawn_args "$target" "$boot" "$network" "${bind_ro:-[]}" "${caps:-[]}"
 
     if (( $# > 0 )); then
-        systemd-nspawn "${args[@]}" -- "$@"
+        systemd-nspawn "${NSPAWN_ARGS[@]}" -- "$@"
     else
-        systemd-nspawn "${args[@]}"
+        systemd-nspawn "${NSPAWN_ARGS[@]}"
     fi
 }
 
@@ -961,7 +1063,27 @@ create_one() {
     target="$(spec_get "$spec" target)"
     manager="$(spec_get "$spec" manager)"
 
-    [[ $EUID -eq 0 ]] || die "create requires root (rootless mode is not yet implemented)"
+    # Root, or rootless via fakechroot+fakeroot.  ROOTLESS (global) gates every
+    # chroot/mount call site for the rest of this create.
+    if [[ -n "${OPT_ROOTLESS:-}" ]]; then
+        ROOTLESS=1
+        # Validate the rootless constraints first (clear config errors before we
+        # probe for the fakechroot/fakeroot tools).
+        case "$backend" in
+            debootstrap|host-copy) ;;
+            *) die "--rootless supports backend=debootstrap or host-copy (got '$backend'; dnf needs root)" ;;
+        esac
+        [[ "$manager" == "none" ]] \
+            || die "--rootless requires manager=none (schroot/nspawn need root)"
+        local _rarch; _rarch="$(spec_get "$spec" arch)"
+        [[ -z "$_rarch" || "$_rarch" == "$(detect_host_arch)" ]] \
+            || die "--rootless is native-arch only (got arch='$_rarch', host=$(detect_host_arch)); foreign-arch needs root + qemu-user-static"
+        require_rootless_deps
+        log_info "rootless mode: fakechroot + fakeroot (no root, no bind-mounts)"
+    else
+        ROOTLESS=""
+        [[ $EUID -eq 0 ]] || die "create requires root (or use --rootless — needs fakechroot + fakeroot)"
+    fi
 
     if [[ -e "$(manifest_path "$name")" ]]; then
         die "chroot named '$name' already exists in state — destroy it first or pick a new name"
@@ -991,6 +1113,16 @@ create_one() {
         "$(spec_get "$spec" distro)" "$(spec_get "$spec" suite)" \
         "$(spec_get "$spec" arch)" "$manager" \
         "$(spec_get "$spec" lab)"
+
+    # Persist settings the base manifest doesn't carry, so enter/destroy
+    # reproduce them: the rootless flag, and (for nspawn) the advanced config.
+    append_manifest_field "$name" rootless "$([[ -n "${ROOTLESS:-}" ]] && echo true || echo false)"
+    if [[ "$manager" == "nspawn" ]]; then
+        append_manifest_field "$name" nspawn_boot    "$(jq -r '.nspawn.boot    // false' <<<"$spec")"
+        append_manifest_field "$name" nspawn_network "$(jq -r '.nspawn.network // ""'    <<<"$spec")"
+        append_manifest_raw   "$name" nspawn_bind_ro      "$(jq -c '.nspawn.bind_ro      // []' <<<"$spec")"
+        append_manifest_raw   "$name" nspawn_capabilities "$(jq -c '.nspawn.capabilities // []' <<<"$spec")"
+    fi
 
     local _created_lab; _created_lab="$(spec_get "$spec" lab)"
     [[ -n "$_created_lab" ]] && log_info "lab: $_created_lab"
@@ -1047,7 +1179,11 @@ cmd_enter() {
     local name target manager
     IFS=$'\t' read -r name target manager < <(resolve_target_and_manager "$arg")
 
-    log_debug "enter: name=$name target=$target manager=$manager"
+    # Reproduce the create-time rootless mode from the manifest (empty for a
+    # bare path with no manifest).  Gates manager_none_enter's chroot path.
+    [[ "$(read_manifest_field "$name" rootless 2>/dev/null)" == "true" ]] && ROOTLESS=1 || ROOTLESS=""
+
+    log_debug "enter: name=$name target=$target manager=$manager rootless=${ROOTLESS:-0}"
 
     case "$manager" in
         none)    manager_none_enter    "$target" "${EXTRA_ARGS[@]}" ;;
@@ -1064,7 +1200,12 @@ cmd_destroy() {
     local name target manager
     IFS=$'\t' read -r name target manager < <(resolve_target_and_manager "$arg")
 
-    [[ $EUID -eq 0 ]] || die "destroy requires root"
+    # A rootless chroot is owned by the invoking user and has no mounts — tear
+    # it down without root.  Root is required only for root-created trees.
+    [[ "$(read_manifest_field "$name" rootless 2>/dev/null)" == "true" ]] && ROOTLESS=1 || ROOTLESS=""
+    if [[ -z "${ROOTLESS:-}" ]]; then
+        [[ $EUID -eq 0 ]] || die "destroy requires root (rootless chroots can be destroyed as your user)"
+    fi
 
     if [[ -z "${OPT_FORCE:-}" ]]; then
         printf 'About to destroy:\n  name:    %s\n  target:  %s\n  manager: %s\nProceed? [y/N] ' \
@@ -1089,8 +1230,41 @@ cmd_list() {
     local found=0
     # --lab NAME filters to chroots in that lab.  --lab '' (explicit empty)
     # is taken as a literal "show ungrouped only" request; omitting the
-    # flag shows everything.
-    local filter="${OPT_LAB-__ALL__}"
+    # flag shows everything.  (parse_args always inits OPT_LAB="", so we key
+    # off OPT_LAB_SET — whether --lab was actually given — to tell them apart.)
+    local filter="__ALL__"
+    [[ -n "${OPT_LAB_SET:-}" ]] && filter="$OPT_LAB"
+
+    # --json: a machine-readable array of the script-managed chroots (the
+    # schroot/machinectl cross-checks are human-only).  schema_version matches
+    # `inspect --json`.  Honors --lab filtering.
+    if [[ -n "${OPT_JSON:-}" ]]; then
+        local mp name row_lab
+        for mp in "$LAB_CHROOT_STATE_DIR"/*.toml; do
+            [[ -e "$mp" ]] || continue
+            name="${mp##*/}"; name="${name%.toml}"
+            row_lab="$(read_manifest_field "$name" lab)"
+            if [[ "$filter" != "__ALL__" ]]; then
+                [[ "$row_lab" == "$filter" ]] || continue
+            fi
+            jq -n \
+                --arg name       "$name" \
+                --arg lab        "$row_lab" \
+                --arg backend    "$(read_manifest_field "$name" backend)" \
+                --arg distro     "$(read_manifest_field "$name" distro)" \
+                --arg suite      "$(read_manifest_field "$name" suite)" \
+                --arg arch       "$(read_manifest_field "$name" arch)" \
+                --arg manager    "$(read_manifest_field "$name" manager)" \
+                --arg target     "$(read_manifest_field "$name" target)" \
+                --arg rootless   "$(read_manifest_field "$name" rootless)" \
+                --arg created_at "$(read_manifest_field "$name" created_at)" \
+                '{name:$name, lab:$lab, backend:$backend, distro:$distro, suite:$suite,
+                  arch:$arch, manager:$manager, target:$target,
+                  rootless: ($rootless=="true"), created_at:$created_at}'
+        done | jq -s '{schema_version:1, chroots: .}'
+        return 0
+    fi
+
     if [[ -n "${OPT_LAB:-}" ]]; then
         printf '── lab: %s ──\n' "$OPT_LAB"
     fi
@@ -1209,11 +1383,11 @@ apply_users() {
         ushell="$(jq -r  '.shell // "/bin/bash"' <<<"$user_json")"
         [[ -z "$uname" ]] && continue
         log_info "users: creating '$uname'"
-        chroot "$target" useradd -m -s "$ushell" "$uname" 2>/dev/null \
+        chroot_exec "$target" useradd -m -s "$ushell" "$uname" 2>/dev/null \
             || log_warn "users: useradd '$uname' returned non-zero (already exists?)"
         [[ -n "$upass"   ]] && printf '%s:%s\n' "$uname" "$upass" \
-                                    | chroot "$target" chpasswd
-        [[ -n "$ugroups" ]] && chroot "$target" usermod -aG "$ugroups" "$uname"
+                                    | chroot_exec "$target" chpasswd
+        [[ -n "$ugroups" ]] && chroot_exec "$target" usermod -aG "$ugroups" "$uname"
     done < <(jq -c '.users[]?' <<<"$spec")
 }
 
@@ -1251,17 +1425,23 @@ apply_post_commands() {
     count="$(jq '.post_commands | length' <<<"$spec")"
     [[ "$count" -eq 0 ]] && return 0
 
-    bind_essentials "$target"
-    trap "unbind_essentials '$target'" EXIT
+    # Rootless: fakechroot intercepts path resolution, so there are no real
+    # bind-mounts to set up (and we couldn't mount as non-root anyway).
+    if [[ -z "${ROOTLESS:-}" ]]; then
+        bind_essentials "$target"
+        trap "unbind_essentials '$target'" EXIT
+    fi
     local i=0 cmd
     while IFS= read -r cmd; do
         [[ -z "$cmd" ]] && continue
         i=$(( i + 1 ))
         log_info "post_command[$i]: $cmd"
-        DEBIAN_FRONTEND=noninteractive LC_ALL=C chroot "$target" bash -c "$cmd"
+        DEBIAN_FRONTEND=noninteractive LC_ALL=C chroot_exec "$target" bash -c "$cmd"
     done < <(jq -r '.post_commands[]?' <<<"$spec")
-    unbind_essentials "$target"
-    trap - EXIT
+    if [[ -z "${ROOTLESS:-}" ]]; then
+        unbind_essentials "$target"
+        trap - EXIT
+    fi
 }
 
 # ─── Subcommand: export-initrd ──────────────────────────────────────────────
@@ -1702,6 +1882,10 @@ CREATE OPTIONS
   --binaries /path/to/bin,/path/to/bin     (host-copy only)
   --extras   /etc/foo,/etc/bar             (host-copy: extra files to copy in)
   --manager  {none|schroot|nspawn}         (default: none)
+  --rootless                               build + enter without root via fakechroot+fakeroot
+                                           (debootstrap/host-copy, native arch, manager=none)
+  --keep-cache                             reuse a persistent package download cache under
+                                           \$LAB_CACHE_DIR (debootstrap --cache-dir / dnf cachedir)
   --config   /path/to/chroot.toml          (declarative form; overrides flags)
   --init-script FLAVOR|PATH  write /init at create time: 'busybox', 'systemd', or /host/path
   --init-flavor FLAVOR       same as --init-script for use with export-initrd auto-detect
@@ -1741,6 +1925,8 @@ parse_args() {
     OPT_LAB=""
     OPT_OUTPUT=""
     OPT_JSON=""
+    OPT_ROOTLESS="" OPT_KEEP_CACHE=""
+    OPT_LAB_SET=""   # distinguishes "--lab omitted" (show all) from "--lab ''" (ungrouped only)
     OPT_INIT_SCRIPT="" OPT_INIT_FLAVOR="" OPT_STRIP_MODULES=""
     OPT_KERNEL_OUT=""
     OPT_POST_COMMANDS=()
@@ -1772,10 +1958,12 @@ parse_args() {
             --extras)        OPT_EXTRAS="$2"; shift 2 ;;
             --hostname)      OPT_HOSTNAME="$2"; shift 2 ;;
             --manager)       OPT_MANAGER="$2"; shift 2 ;;
-            --lab)           OPT_LAB="$2"; shift 2 ;;
+            --lab)           OPT_LAB="$2"; OPT_LAB_SET=1; shift 2 ;;
             --output|-o)     OPT_OUTPUT="$2"; shift 2 ;;
             --json)          OPT_JSON=1; shift ;;
             --force|-f)      OPT_FORCE=1; shift ;;
+            --rootless)      OPT_ROOTLESS=1; shift ;;
+            --keep-cache)    OPT_KEEP_CACHE=1; shift ;;
             --init-script)   OPT_INIT_SCRIPT="$2"; shift 2 ;;
             --init-flavor)   OPT_INIT_FLAVOR="$2"; shift 2 ;;
             --strip-modules) OPT_STRIP_MODULES=1; shift ;;
@@ -1812,4 +2000,8 @@ main() {
     esac
 }
 
-main "$@"
+# Run main only when executed directly, not when sourced by unit tests (which
+# exercise helpers like build_nspawn_args / list-json rendering in isolation).
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

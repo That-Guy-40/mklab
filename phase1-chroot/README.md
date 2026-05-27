@@ -129,7 +129,7 @@ manager = "schroot"
 ### Manager-specific keys
 
 - **`[chroot.schroot]`** — `type` (default `directory`), `users`, `groups`
-- **`[chroot.nspawn]`** — `boot` (default `false`), `register` (default `true`), and (planned for v0.2) `network`, `bind_ro`, `capabilities`
+- **`[chroot.nspawn]`** — `boot` (default `false`), `register` (default `true`), `network` (`host`/`veth`/`none`/`<bridge>`), `bind_ro` (array of host paths), `capabilities` (array of `CAP_*`). The advanced keys are persisted in the manifest and applied to `systemd-nspawn` at `enter` time (→ `--network-veth`/`--private-network`/`--network-bridge=`, `--bind-ro=`, `--capability=`).
 
 ### `host-copy` notes
 
@@ -166,14 +166,38 @@ manager = "schroot"
 - `enter` (manager=none) records all bind-mounts so `destroy` can clean them up even after a crashed `enter`.
 - The script never auto-installs host packages and never silently enables `binfmt_misc` without the matching tool being present on the host.
 
-## Known gaps in v0.1
+## Rootless mode (`--rootless`)
 
-- **Rootless mode** (`--rootless`) is not implemented. Will follow the muxup.com user-namespace + `fakechroot` + `fakeroot` pattern in v0.2.
+Create and enter a chroot **without root**, following the muxup.com pattern:
+`debootstrap --variant=fakechroot` (or `host-copy`) built and entered under
+`fakechroot fakeroot`, so no real uid 0, no `mknod`, and no bind-mounts.
+
+```bash
+phase1-chroot/lab-chroot.sh create --rootless \
+    --backend debootstrap --distro debian --suite bookworm \
+    --arch x86_64 --target ~/chroots/bookworm
+phase1-chroot/lab-chroot.sh enter ~/chroots/bookworm        # also rootless
+```
+
+Requires `fakechroot` + `fakeroot` on the host (`sudo apt-get install -y
+fakechroot fakeroot`). Constraints: **native arch only** (foreign-arch needs root +
+qemu-user-static), **`manager=none`** (schroot/nspawn need root), backend
+`debootstrap`/`host-copy` (dnf needs root). State lives under `$XDG_STATE_HOME`,
+and the rootless flag is recorded in the manifest so `enter`/`destroy` reproduce it.
+
+## Other options
+
+- **`--keep-cache`** — reuse a persistent package download cache across builds
+  (debootstrap `--cache-dir`, dnf `cachedir`+`keepcache=1`) under `$LAB_CACHE_DIR`.
+- **`--json`** — machine-readable output for `list` (array of managed chroots,
+  `schema_version=1`) and `inspect` (single chroot, live probes).
+- **`post = [...]`** TOML hooks (and `--post-command`) run inside the chroot after
+  the build, in order.
+
+## Known gaps
+
 - **dnf foreign-arch** works in theory but is fragile under heavy scriptlets. Consider it experimental.
-- **`post = [...]` hooks** in TOML are accepted by the parser but not yet executed.
-- **`--keep-cache`** flag is reserved but not yet wired up.
-- **`--json` output** is not yet implemented.
-- **`nspawn` advanced keys** (`network`, `bind_ro`, `capabilities`) are accepted but not yet applied at enter time.
+- **Rootless is native-arch + debootstrap/host-copy only** — foreign-arch and dnf rootless are out of scope (they need real root / qemu-user-static).
 
 ## Tests
 
