@@ -493,11 +493,17 @@ tarballs so a cached tarball can drive a network-gated integration test — §10
 - **Pinned / reproducible inputs — *implements* audit F5.** Versions are pinned
   in `versions.env` (not a floating ref like iPXE's `master`), and the
   `Containerfile` base image is pinned by **tag + digest** (F5 specifically
-  flags the repo's unpinned `debian:bookworm`). Toward bit-reproducible
-  artifacts: `gzip -9 -n` + `gen_init_cpio` with `uid/gid 0` + a sorted file
-  list get most of the way; set `KBUILD_BUILD_TIMESTAMP/USER/HOST` for the
-  kernel. (We use no `binfmt`/`--privileged` path — we cross-compile — so that
-  slice of F5 doesn't apply.)
+  flags the repo's unpinned `debian:bookworm`). Artifacts are now
+  **bit-reproducible** (verified by double clean builds; see
+  [`REPRODUCIBLE.md`](micro-linux/REPRODUCIBLE.md)): a fixed `SOURCE_DATE_EPOCH` +
+  `KBUILD_BUILD_USER`/`HOST` (`versions.env`, exported by `export_repro_env`) pin
+  the kernel's compile.h identity and busybox's banner date; `gen_init_cpio -t
+  $SOURCE_DATE_EPOCH` pins every cpio entry's mtime (it otherwise stamps
+  `time(NULL)`); `gzip -9 -n` + `uid/gid 0` + an `LC_ALL=C`-sorted file list do
+  the rest. A clean build is required for the kernel's `.version` counter to
+  reset to `#1`. `mlbuild.sh hashes` prints the artifact sha256 for attestation.
+  (We use no `binfmt`/`--privileged` path — we cross-compile — so that slice of
+  F5 doesn't apply.)
 - **Throwaway posture — consistent with audit F1, *minus its sharpest edge*.**
   `/init` runs a **console `getty` + `login`** with a deliberately weak,
   *advertised* lab credential (`root` / `micro`, a SHA-512 `crypt()` hash in
@@ -507,8 +513,11 @@ tarballs so a cached tarball can drive a network-gated integration test — §10
   `ssh_pwauth` + the blank-password dropbear fallback), this VM runs with
   **`network = false` by default and only a *serial-console* login — no SSH or
   any listening service** — so there is **no network auth surface to
-  compromise**. F1's "never expose to an untrusted network" banner still applies
-  *iff* the §10 networking demo later adds a NIC.
+  compromise**. The §10 networking demo
+  ([`examples/micro_linux_dhcp_lease/`](examples/micro_linux_dhcp_lease/)) does
+  bring up a NIC + udhcpc, but only as an explicit, **token-gated opt-in**
+  (`mllab.net` on the kernel cmdline) over QEMU loopback/NAT slirp, and `/init`
+  re-prints F1's "never expose to an untrusted network" banner when it fires.
 - **Trust boundary — audit F3 largely N/A here.** F3 concerns root
   `post_commands` / arbitrary `/init` host paths in *chroot* configs. This lab's
   inputs (`versions.env`, the pinned URLs/hashes, the in-repo `/init`) are
@@ -563,11 +572,14 @@ tarballs so a cached tarball can drive a network-gated integration test — §10
   kernels are minutes-long and multi-hundred-MB build trees).
 - **musl-static BusyBox:** smaller binaries and no glibc static-NSS caveat
   (§6.3) — the idiomatic choice for static busybox.
-- **Reproducible builds:** finish the determinism work flagged in §8
-  (`KBUILD_BUILD_*`, sorted file list, `uid/gid 0`) and publish verifiable
-  hashes. This is also the *only* real mitigation for the §6.0 residual — an
-  upstream **signing-key** compromise — via independent rebuild attestation
-  (multiple parties reproduce the same hash).
+- **Reproducible builds — DONE (2026-05-27).** The determinism work from §8 is
+  complete and bit-reproducibility is verified by double clean builds:
+  `SOURCE_DATE_EPOCH` + `KBUILD_BUILD_USER`/`HOST` + `gen_init_cpio -t` on top of
+  the already-sorted/`uid 0`/`gzip -n` cpio. Published, attestable hashes +
+  the workflow live in [`REPRODUCIBLE.md`](micro-linux/REPRODUCIBLE.md), surfaced
+  by `mlbuild.sh hashes`. This is the *only* real mitigation for the §6.0 residual
+  — an upstream **signing-key** compromise — via independent rebuild attestation
+  (multiple parties reproduce the same hash from the pinned source + toolchain).
 - **microvm boot — DONE (2026-05-27).** Every micro-linux kernel is now built
   with `CONFIG_VIRTIO_MMIO=y` (+`_CMDLINE_DEVICES`), so one universal kernel boots
   on q35/virt *and* on QEMU's microvm machine (§6.1). No separate `--microvm`

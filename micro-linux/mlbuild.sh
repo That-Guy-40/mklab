@@ -16,6 +16,7 @@
 #   mlbuild.sh build [--arch LIST] [opt]  fetch + verify + compile   (runs in container)
 #   mlbuild.sh pack  [--arch LIST] [opt]  build the initramfs        (runs in container)
 #   mlbuild.sh all   [--arch LIST] [opt]  build + pack
+#   mlbuild.sh hashes [--arch LIST]       print sha256 of the built artifacts (host)
 #   mlbuild.sh clean [--arch LIST|--all]  remove out/ artifacts (F7-guarded; host)
 #
 # Options:
@@ -97,6 +98,22 @@ load_versions() {
     : "${BUSYBOX_VER:?set BUSYBOX_VER in versions.env}"
     : "${UROOT_REF:?set UROOT_REF in versions.env}"
     : "${KERNEL_KEYRING:?}" "${KERNEL_FPR:?}" "${BUSYBOX_KEYRING:?}" "${BUSYBOX_FPR:?}"
+}
+
+# Reproducible builds (plan §8): export a fixed build identity + timestamp so the
+# compilers embed nothing machine- or time-specific.  The kernel reads
+# KBUILD_BUILD_{USER,HOST,TIMESTAMP} from the environment for include/generated/
+# compile.h (the `#N SMP … <date>` version string); busybox reads
+# SOURCE_DATE_EPOCH for its banner date.  Defaults here are a safety net — the
+# real values are pinned in versions.env (already sourced by load_versions).
+export_repro_env() {
+    : "${SOURCE_DATE_EPOCH:=1700000000}"
+    export SOURCE_DATE_EPOCH
+    export KBUILD_BUILD_USER="${KBUILD_BUILD_USER:-mklab}"
+    export KBUILD_BUILD_HOST="${KBUILD_BUILD_HOST:-micro-linux}"
+    # LC_ALL=C so the embedded timestamp string is identical regardless of the
+    # builder's locale (e.g. 24-hour "22:13:20 UTC", never a localized "10:13:20 PM").
+    export KBUILD_BUILD_TIMESTAMP="${KBUILD_BUILD_TIMESTAMP:-$(LC_ALL=C date -u -d "@$SOURCE_DATE_EPOCH")}"
 }
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -446,10 +463,15 @@ pack_busybox() {
     # gen_init_cpio reads the spec from a FILE argument; "-" selects stdin.
     # Omitting it makes the tool print usage + exit 1 (an empty archive) — caught
     # by pipefail, but pass "-" so the piped spec is actually consumed.
+    # -t SOURCE_DATE_EPOCH: gen_init_cpio otherwise stamps every entry with the
+    # wall-clock time (time(NULL)) — non-reproducible.  It doesn't read
+    # SOURCE_DATE_EPOCH itself (the kernel's usr/Makefile passes -t for it), so we
+    # pass it explicitly to pin all mtimes (plan §8).  gzip -n already drops the
+    # gzip header's own name+timestamp.
     local img="$OUT_DIR/$arch/initramfs.cpio.gz"
     local etc; etc="$(stage_etc)"
     emit_cpio_spec "$init" "$OUT_DIR/$arch/_install" "$etc" \
-        | "$gic" - \
+        | "$gic" -t "${SOURCE_DATE_EPOCH:-1700000000}" - \
         | gzip -9 -n > "$img"
     # A near-empty archive (e.g. a pack mishap) kernel-panics at boot rather than
     # failing here, so assert the essentials are actually inside.
@@ -466,6 +488,7 @@ pack_busybox() {
 # ════════════════════════════════════════════════════════════════════════════
 inner_build() {
     load_versions
+    export_repro_env
     install -d "$OUT_DIR" "$CACHE_DIR"
     local arch
     for arch in "${ARCHES[@]}"; do
@@ -482,6 +505,7 @@ inner_build() {
 
 inner_pack() {
     load_versions
+    export_repro_env
     local arch
     for arch in "${ARCHES[@]}"; do
         if [[ "$arch" == riscv64 ]]; then
@@ -582,6 +606,27 @@ summarize() {
             fi
         done
     done
+    print_hashes
+}
+
+# Print sha256 of each built artifact — for reproducible-build attestation
+# (plan §8 / REPRODUCIBLE.md).  Two independent builders, same pinned source +
+# digest-pinned toolchain, must get matching hashes here.
+print_hashes() {
+    require_cmd sha256sum
+    local arch f hdr=0
+    for arch in "${ARCHES[@]}"; do
+        for f in kernel initramfs.cpio.gz initramfs.cpio; do
+            [[ -f "$OUT_DIR/$arch/$f" ]] || continue
+            if [[ "$hdr" == 0 ]]; then
+                log_info "artifact sha256 (compare across independent builds — plan §8):"
+                hdr=1
+            fi
+            printf '  %s  %s/%s\n' \
+                "$(sha256sum "$OUT_DIR/$arch/$f" | cut -d' ' -f1)" "$arch" "$f" >&2
+        done
+    done
+    [[ "$hdr" == 1 ]] || log_warn "no artifacts to hash — run 'mlbuild.sh all' first"
 }
 
 # ─── Arg parsing + dispatch ───────────────────────────────────────────────────
@@ -626,6 +671,7 @@ main() {
                 summarize
                 log_info "next: phase2-qemu-vm/lab-vm.sh create --config examples/micro-linux-<arch>.toml"
             fi ;;
+        hashes) print_hashes ;;
         clean) cmd_clean ;;
         *) die "unknown subcommand: $subcmd (try --help)" ;;
     esac

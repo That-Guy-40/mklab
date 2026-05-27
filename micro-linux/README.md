@@ -177,8 +177,10 @@ the login prompt, riscv64 boots the u-root shell.
 |---|---|
 | `Containerfile` | rootless build toolchain (digest-pinnable base) |
 | `mlbuild.sh` | fetch → verify → compile → pack driver; F7-guarded `clean` |
-| `versions.env` | version + key-fingerprint pins (sourced) |
+| `versions.env` | version + key-fingerprint + reproducible-build pins (sourced) |
 | `versions.lock` | auto-derived, committed sha256 of each verified tarball |
 | `keys/` | vendored signing keys (trust anchor) — see `keys/README.md` |
 | `init` | the BusyBox-track `/init`: a getty + login mini-init (§6.4) |
+| `udhcpc.script` | udhcpc lease handler for the opt-in DHCP demo (§10) |
+| `REPRODUCIBLE.md` | bit-reproducibility: deterministic-build knobs + attestable hashes |
 | `tests/` | network-free unit tests |
