@@ -413,7 +413,73 @@ rm ~/.cache/lab-create/images/debian-bookworm-x86_64.qcow2
 # next `create` for that distro/suite/arch will re-fetch
 ```
 
-## 9. Run the automated suite
+## 9. Snapshots (offline qcow2)
+
+Snapshots live inside the VM's qcow2; the VM must be **stopped** (mutating a live
+disk corrupts it).  Works on any qcow2-backed VM (disk-image / from-chroot).
+
+```bash
+lc create --name snapdemo --distro debian --suite bookworm --arch x86_64
+lc start  snapdemo            # let cloud-init finish, change something inside…
+lc stop   snapdemo
+lc snapshot create  snapdemo clean
+lc snapshot list    snapdemo            # → a row tagged "clean"
+# …boot, break something, stop, then roll back:
+lc snapshot restore snapdemo clean
+lc snapshot delete  snapdemo clean
+```
+
+A `kernel+initrd` VM (no disk) is refused with a clear message, as is a snapshot
+op on a running VM.
+
+## 10. CPU topology + pinning
+
+```bash
+lc create --name cpudemo --distro debian --suite bookworm --arch x86_64 \
+          --cpus 4 --cores 2 --threads 1 --cpu-pin 0-3
+lc start cpudemo
+# the running QEMU shows the topology + the pin:
+pid=$(cat ~/.local/state/lab-create/vms/cpudemo/qemu.pid)
+tr '\0' ' ' < /proc/$pid/cmdline | grep -o '\-smp [^ ]*'   # → -smp 4,cores=2,threads=1
+taskset -p "$pid"                                          # → current affinity mask: 0-3
+# inside the guest: `lscpu` shows 2 cores / 1 thread per socket
+```
+
+## 11. Per-VM cloud-init overrides
+
+```bash
+lc create --name ovrdemo --distro debian --suite bookworm --arch x86_64 \
+          --packages "htop,git" --runcmd "touch /etc/lab-ran"
+lc start ovrdemo && lc ssh ovrdemo -- 'which htop && ls -l /etc/lab-ran'
+
+# Or replace the whole user-data with your own file:
+lc create --name ovrfull --distro debian --suite bookworm --arch x86_64 \
+          --user-data ./my-user-data.yaml
+# (inspect the generated seed without booting:)
+xorriso -osirrox on -indev ~/.local/state/lab-create/vms/ovrdemo/seed.iso \
+        -extract /user-data /dev/stdout 2>/dev/null
+```
+
+## 12. --refresh-image · bridge/tap · Kali .7z verification
+
+```bash
+# Force a fresh download of the cached base image:
+lc create --name fresh --distro debian --suite bookworm --arch x86_64 --refresh-image
+
+# Bridge networking (NEEDS ROOT or a setuid qemu-bridge-helper + an allow line in
+# /etc/qemu/bridge.conf; create the bridge first, e.g. `sudo ip link add br0 type bridge`):
+echo 'allow br0' | sudo tee -a /etc/qemu/bridge.conf
+lc create --name bridged --distro debian --suite bookworm --arch x86_64 \
+          --network-mode bridge --bridge br0
+sudo lc start bridged          # guest gets a DHCP lease from br0's L2, not slirp
+
+# Kali: the prebuilt .7z is now verified against the release SHA256SUMS before
+# extraction (a tampered/corrupt archive aborts the create):
+lc create --name kali1 --distro kali --suite kali-rolling --arch x86_64
+# → logs "sha256 verified: kali-linux-<rel>-qemu-amd64.7z" during the download
+```
+
+## 13. Run the automated suite
 
 ```bash
 phase2-qemu-vm/tests/run-all.sh
@@ -421,11 +487,12 @@ phase2-qemu-vm/tests/run-all.sh
 
 Expect (on a fully-tooled host):
 
-- `test-validation.sh` — pass (~1 s)
-- `test-arch-table.sh` — pass (~1 s)
+- `test-validation.sh`, `test-arch-table.sh` — pass (~1 s)
+- `test-microvm-argv.sh`, `test-cpu-net-argv.sh`, `test-snapshot.sh`,
+  `test-seed-and-sha256.sh`, `test-inspect-json.sh` — pass (no root/network)
 - `test-debian-x86_64-boot.sh` — pass (~2–4 min on KVM); skips without `/dev/kvm`
 
-## 10. Troubleshooting
+## 14. Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|

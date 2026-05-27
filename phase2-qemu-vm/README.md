@@ -6,11 +6,12 @@ Create and run QEMU VMs and microvms across the same arch matrix as Phase 1.
 
 | | |
 |---|---|
-| **Backends** | `disk-image` (cached cloud images + cloud-init NoCloud seed) · `kernel+initrd` (direct boot, microvm-friendly) · `from-chroot` (stub in v0.1) |
+| **Backends** | `disk-image` (cached cloud images + cloud-init NoCloud seed) · `kernel+initrd` (direct boot, microvm-friendly) · `from-chroot` (Phase-1 tree → bootable BIOS qcow2, x86_64, needs root) |
 | **Arches** | `x86_64`, `aarch64`, `armv7l`, `ppc64le`, `riscv64`, `s390x` |
 | **Acceleration** | `kvm` if guest arch == host arch and `/dev/kvm` is r+w; otherwise `tcg` (slow but works for any arch) |
 | **microvm** | `--microvm` selects QEMU's minimal fast-boot device model: the genuine `microvm` machine + qboot on **x86_64**; a stripped `virt` + virtio-mmio + no UEFI on **aarch64** (QEMU has no arm `microvm` machine); falls back with a warning on other arches. Direct `-kernel` boot only. |
-| **Networking** | user-mode (slirp) with per-VM SSH port forwarding; bridge/tap is planned for v0.2 |
+| **Networking** | `--network-mode user` (default: slirp + per-VM SSH hostfwd) · `bridge` (`--bridge`) · `tap` (`--tap`) — bridge/tap attach to host L2 and need root (or a setuid `qemu-bridge-helper` + `/etc/qemu/bridge.conf`) |
+| **Snapshots / CPU** | offline qcow2 snapshots (`snapshot create/list/restore/delete`); CPU topology (`--cores`/`--threads`) + host-CPU pinning (`--cpu-pin`, via `taskset`) |
 | **Console** | serial console exposed as a unix socket; `lab-vm.sh console` attaches via `socat` |
 | **Lifecycle** | graceful shutdown via QMP `system_powerdown`; SIGTERM → SIGKILL escalation if it doesn't take |
 | **Config** | CLI flags or TOML (`--config FILE`) |
@@ -185,13 +186,31 @@ Per-VM UEFI variable storage (writable copy of `OVMF_VARS.fd` / `AAVMF_VARS.fd`)
 - `stop --force` skips QMP and goes straight to SIGTERM → SIGKILL.
 - `destroy` will stop a running VM first (with `--force`), prompt for confirmation unless `--force`, and remove the per-VM directory. `--keep-disk` moves the qcow2 to `${LAB_STATE_DIR}/orphaned-disks/` before deletion.
 
-## Known gaps in v0.1
+## v0.2 additions
 
-- **`from-chroot` backend** is a stub. It errors out with a workaround hint (build a chroot in Phase 1, install a kernel inside, point `--backend kernel+initrd` at the extracted vmlinuz/initrd). Real implementation in v0.2.
-- **Bridge / tap networking** not yet supported. User-mode + hostfwd only.
-- **Snapshots, live migration, CPU pinning** not implemented.
-- **Per-VM cloud-init `user-data` overrides** not yet pluggable; the seed is generated from a fixed template.
-- **Image freshness** — cached images are reused indefinitely. `--refresh-image` flag is planned. For now, manually delete files under `${LAB_CACHE_DIR}/images/` to force a re-download.
+- **`from-chroot` backend** — implemented (x86_64): loop-device → `parted` MBR →
+  `mkfs.ext4` → `rsync` the tree → `extlinux` → qcow2. Needs root.
+- **Snapshots** — `snapshot {create|list|restore|delete} <vm> [name]`, offline
+  qcow2 internal snapshots via `qemu-img`. Refuses to mutate a running VM's disk.
+- **CPU topology + pinning** — `--cores`/`--threads` build an explicit `-smp`
+  topology; `--cpu-pin "0-3"` binds the VM (and its vCPU threads) via `taskset`.
+- **Bridge / tap networking** — `--network-mode {user|bridge|tap}` (+ `--bridge`,
+  `--tap`). bridge/tap need root or a setuid `qemu-bridge-helper` + an allow entry
+  in `/etc/qemu/bridge.conf`.
+- **Per-VM cloud-init overrides** — `--packages`, `--runcmd` (repeatable), and
+  `--user-data FILE` (verbatim full override). Also `[vm] packages=/runcmd=/user_data=` in TOML.
+- **`--refresh-image`** — drop the cached cloud image and re-download.
+- **Kali `.7z` integrity** — the prebuilt Kali archive is now verified against the
+  release's published `SHA256SUMS` before extraction.
+
+## Known gaps
+
+- **Live migration** — out of scope for a single-host lab tool.
+- **SSH-pubkey injection via `virt-customize`** — not implemented; cloud-init
+  already injects pubkeys, and the non-cloud-init Kali path documents a one-time
+  manual setup (libguestfs would be a heavy dep for little gain).
+- **Kali arm64** — upstream publishes no arm64 QEMU prebuilt image; errors out
+  until they do.
 - **Alpine NoCloud URL** points to a specific release pattern that may need to be revisited as Alpine's image-server layout evolves.
 
 ## Tests

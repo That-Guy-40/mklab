@@ -3,7 +3,7 @@
 #
 # Backends : disk-image (cached cloud images + cloud-init NoCloud seed)
 #            kernel+initrd (direct -kernel/-initrd boot, microvm-friendly)
-#            from-chroot   (Phase-1 chroot tree → bootable disk; v0.1: stub)
+#            from-chroot   (Phase-1 chroot tree → bootable BIOS qcow2, x86_64)
 # Arches   : x86_64 aarch64 armv7l ppc64le riscv64 s390x
 # Accel    : kvm if host arch == guest arch and /dev/kvm usable; else tcg
 # Config   : CLI flags or TOML file (--config FILE)
@@ -307,6 +307,12 @@ kernel      = "${MF_KERNEL:-}"
 initrd      = "${MF_INITRD:-}"
 append      = "${MF_APPEND:-}"
 ssh_user    = "${MF_SSH_USER:-lab}"
+cores       = ${MF_CORES:-0}
+threads     = ${MF_THREADS:-0}
+cpu_pin     = "${MF_CPU_PIN:-}"
+network_mode = "${MF_NETWORK_MODE:-user}"
+bridge      = "${MF_BRIDGE:-}"
+tap         = "${MF_TAP:-}"
 created_at  = "${now}"
 version     = "${LAB_VERSION}"
 EOF
@@ -430,6 +436,35 @@ kali_resolve_suite() {
     esac
 }
 
+# Expected sha256 of the Kali QEMU .7z for a RESOLVED release, parsed from that
+# release's published SHA256SUMS.  Prints empty (caller skips verification with a
+# warning) if it can't be fetched/parsed — never fatal on its own.
+kali_sha256_for() {
+    local suite="$1" arch="$2" a_deb
+    case "$arch" in x86_64) a_deb=amd64 ;; *) return 0 ;; esac
+    require_cmd curl
+    local sums
+    sums="$(curl --fail --location --silent "https://cdimage.kali.org/kali-${suite}/SHA256SUMS" 2>/dev/null)" || return 0
+    printf '%s\n' "$sums" \
+        | awk -v want="^kali-linux-${suite}-qemu-${a_deb}[.]7z$" '$2 ~ want { print $1; exit }'
+}
+
+# verify_sha256 FILE EXPECTED_HEX — die on mismatch; skip (warn) if expected empty.
+verify_sha256() {
+    local file="$1" expected="$2"
+    if [[ -z "$expected" ]]; then
+        log_warn "no published sha256 for $(basename "$file") — skipping integrity check"
+        return 0
+    fi
+    require_cmd sha256sum
+    local actual; actual="$(sha256sum "$file" | cut -d' ' -f1)"
+    [[ "$actual" == "$expected" ]] || die "SHA256 mismatch for $(basename "$file")
+  expected: $expected
+  actual:   $actual
+  refusing to use a tampered/corrupt download."
+    log_info "sha256 verified: $(basename "$file")"
+}
+
 debian_release_num() {
     case "$1" in
         bookworm) printf '12' ;;
@@ -441,8 +476,8 @@ debian_release_num() {
 }
 
 cache_image() {
-    # cache_image DISTRO SUITE ARCH  →  prints local cache path
-    local distro="$1" suite="$2" arch="$3"
+    # cache_image DISTRO SUITE ARCH [FORCE_REFRESH]  →  prints local cache path
+    local distro="$1" suite="$2" arch="$3" force_refresh="${4:-}"
     install -d -m 0755 "$LAB_IMG_CACHE_DIR"
     # Rolling-suite resolution (currently Kali only): "kali-rolling"
     # becomes whatever release /current/ points at right now.  We key
@@ -463,6 +498,11 @@ cache_image() {
     local url; url="$(image_url "$distro" "$eff_suite" "$arch")"
     local fname="${distro}-${eff_suite}-${arch}.qcow2"
     local dest="${LAB_IMG_CACHE_DIR}/${fname}"
+    # --refresh-image: drop the cached copy so the download below re-runs.
+    if [[ "$force_refresh" == "true" && -e "$dest" ]]; then
+        log_info "refresh-image: removing cached $dest"
+        rm -f "$dest"
+    fi
     if [[ -r "$dest" && -s "$dest" ]]; then
         log_debug "cache hit: $dest"
         printf '%s' "$dest"
@@ -479,6 +519,12 @@ cache_image() {
     # we find to $tmp.  Done before the qemu-img sniff so the rest of
     # this function is agnostic.
     if [[ "$url" == *.7z ]]; then
+        # Kali ships the qcow2 in a .7z; verify it against the published
+        # SHA256SUMS before trusting/extracting it (HTTPS gives transport
+        # integrity, but an explicit content hash catches a tampered mirror).
+        if [[ "$distro" == "kali" ]]; then
+            verify_sha256 "$tmp" "$(kali_sha256_for "$eff_suite" "$arch")"
+        fi
         local sevenz
         if   have 7z;  then sevenz=7z
         elif have 7za; then sevenz=7za
@@ -1223,11 +1269,15 @@ default_pubkey() {
 }
 
 make_seed_iso() {
-    # make_seed_iso NAME OUT_PATH PUBKEY_OPTIONAL DISTRO_OPTIONAL
+    # make_seed_iso NAME OUT PUBKEY DISTRO [PACKAGES_JSON] [RUNCMD_JSON] [USER_DATA_FILE]
+    # PACKAGES_JSON/RUNCMD_JSON: compact JSON arrays appended to the template as
+    # cloud-config `packages:` / `runcmd:`.  USER_DATA_FILE: if set, used verbatim
+    # as the entire user-data (full override — template + packages/runcmd ignored).
     # Note: we use a subshell + EXIT trap rather than a function-level RETURN
     # trap, because RETURN traps in bash are global and fire for every later
     # function return — they cannot reference now-out-of-scope locals.
     local name="$1" out="$2" pubkey="${3:-}" distro="${4:-}"
+    local packages_json="${5:-[]}" runcmd_json="${6:-[]}" user_data_file="${7:-}"
     # Alpine ships busybox's /bin/ash by default and no /bin/bash — setting
     # shell=/bin/bash in the cloud-init user block would let the account
     # authenticate but then fail at session start with "can't execute
@@ -1252,6 +1302,10 @@ instance-id: lab-vm-${name}
 local-hostname: ${name}
 EOF
 
+    # Full override: a caller-supplied user-data file wins outright.
+    if [[ -n "$user_data_file" ]]; then
+      cp "$user_data_file" "$tmp/user-data"
+    else
     {
         printf '#cloud-config\n'
         printf 'preserve_hostname: false\n'
@@ -1298,7 +1352,18 @@ EOF
             printf '    content: |\n'
             printf '      permit nopass lab\n'
         fi
+        # Per-VM overrides: extra packages + first-boot commands (cloud-config
+        # `packages:` / `runcmd:`).  Top-level keys, so order vs. the above is fine.
+        if [[ "$(jq 'length' <<<"$packages_json")" -gt 0 ]]; then
+            printf 'packages:\n'
+            jq -r '.[]' <<<"$packages_json" | while IFS= read -r _p; do printf '  - %s\n' "$_p"; done
+        fi
+        if [[ "$(jq 'length' <<<"$runcmd_json")" -gt 0 ]]; then
+            printf 'runcmd:\n'
+            jq -r '.[]' <<<"$runcmd_json" | while IFS= read -r _c; do printf '  - %s\n' "$_c"; done
+        fi
     } > "$tmp/user-data"
+    fi
 
       if have genisoimage; then
           genisoimage -output "$out" -volid cidata -joliet -rock \
@@ -1317,7 +1382,22 @@ EOF
 # ─── Spec construction ─────────────────────────────────────────────────────
 spec_from_cli() {
     require_cmd jq
+    local packages_json='[]' runcmd_json='[]'
+    [[ -n "${OPT_PACKAGES:-}" ]] && packages_json="$(printf '%s\n' "$OPT_PACKAGES" | tr ',' '\n' | jq -R . | jq -s '[.[]|select(length>0)]')"
+    if [[ ${#OPT_RUNCMD[@]} -gt 0 ]]; then
+        runcmd_json="$(printf '%s\n' "${OPT_RUNCMD[@]}" | jq -R . | jq -s .)"
+    fi
     jq -n \
+        --argjson packages "$packages_json" \
+        --argjson runcmd   "$runcmd_json" \
+        --arg user_data    "${OPT_USER_DATA:-}" \
+        --arg refresh_image "${OPT_REFRESH_IMAGE:-false}" \
+        --arg cores        "${OPT_CORES:-0}" \
+        --arg threads      "${OPT_THREADS:-0}" \
+        --arg cpu_pin      "${OPT_CPU_PIN:-}" \
+        --arg network_mode "${OPT_NETWORK_MODE:-user}" \
+        --arg bridge       "${OPT_BRIDGE:-}" \
+        --arg tap          "${OPT_TAP:-}" \
         --arg name     "${OPT_NAME:-}" \
         --arg backend  "${OPT_BACKEND:-disk-image}" \
         --arg distro   "${OPT_DISTRO:-}" \
@@ -1347,7 +1427,11 @@ spec_from_cli() {
           network:($network=="true"), ssh:($ssh=="true"), persist:$persist,
           init_flavour:$init_flavour, lab:$lab,
           chroot:$chroot, disk_size:$disk_size,
-          cloud_init:$cloud_init}'
+          cloud_init:$cloud_init,
+          refresh_image:($refresh_image=="true"),
+          cores:($cores|tonumber), threads:($threads|tonumber), cpu_pin:$cpu_pin,
+          network_mode:$network_mode, bridge:$bridge, tap:$tap,
+          packages:$packages, runcmd:$runcmd, user_data:$user_data}'
 }
 
 specs_from_config() {
@@ -1383,6 +1467,16 @@ specs_from_config() {
             cloud_init: (if .cloud_init == false then "false" else "true" end),
             install_target: (.install_target // ""),
             mac:       (.mac       // ""),
+            refresh_image: (.refresh_image // false),
+            cores:     (.cores     // 0),
+            threads:   (.threads   // 0),
+            cpu_pin:   (.cpu_pin   // ""),
+            network_mode: (.network_mode // "user"),
+            bridge:    (.bridge    // ""),
+            tap:       (.tap       // ""),
+            packages:  (.packages  // []),
+            runcmd:    (.runcmd     // []),
+            user_data: (.user_data // ""),
             lab:     ( if $cli_lab != "" then $cli_lab
                        else ($root.lab.name // "") end ) }
     '
@@ -1705,8 +1799,16 @@ build_qemu_argv() {
     fi
     QEMU_ARGV+=(-cpu "$cpu")
 
-    # SMP / memory
-    QEMU_ARGV+=(-smp "$cpus" -m "$memory")
+    # SMP / memory.  With cores/threads set, emit an explicit topology
+    # (sockets derived by QEMU); otherwise just the vCPU count, as before.
+    local smp="$cpus"
+    if [[ "${cores:-0}" != "0" || "${threads:-0}" != "0" ]]; then
+        local _c="${cores:-0}" _t="${threads:-0}"
+        [[ "$_c" == "0" ]] && _c=1
+        [[ "$_t" == "0" ]] && _t=1
+        smp="${cpus},cores=${_c},threads=${_t}"
+    fi
+    QEMU_ARGV+=(-smp "$smp" -m "$memory")
 
     # No graphics — serial console only.
     QEMU_ARGV+=(-display none -nographic -no-user-config -nodefaults)
@@ -1811,13 +1913,29 @@ build_qemu_argv() {
         )
     fi
 
-    # Network: user-mode with hostfwd for ssh.
+    # Network.  Default is user-mode slirp with a per-VM ssh hostfwd (rootless).
+    # bridge/tap attach to host L2 (need root or a setuid qemu-bridge-helper +
+    # /etc/qemu/bridge.conf allowing the bridge); the guest then gets a real
+    # DHCP lease from your LAN instead of slirp's 10.0.2.x.
     local net_device="virtio-net-${virtio_suffix},netdev=net0"
     [[ -n "${mac:-}" ]] && net_device="${net_device},mac=${mac}"
-    QEMU_ARGV+=(
-        -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:${ssh_port}-:22"
-        -device "${net_device}"
-    )
+    local netdev
+    case "${network_mode:-user}" in
+        bridge)
+            netdev="bridge,id=net0,br=${bridge:-virbr0}"
+            ;;
+        tap)
+            if [[ -n "${tap:-}" ]]; then
+                netdev="tap,id=net0,ifname=${tap},script=no,downscript=no"
+            else
+                netdev="tap,id=net0,script=no,downscript=no"
+            fi
+            ;;
+        *)  # user-mode (default)
+            netdev="user,id=net0,hostfwd=tcp:127.0.0.1:${ssh_port}-:22"
+            ;;
+    esac
+    QEMU_ARGV+=(-netdev "$netdev" -device "${net_device}")
 
     # Serial console exposed as a unix socket so `lab-vm.sh console` can attach
     QEMU_ARGV+=(
@@ -1896,6 +2014,16 @@ create_one() {
     [[ -z "$init_flavour" ]] && init_flavour="busybox"
     ssh_user="lab"  # default for cloud-init VMs
 
+    # v0.2 knobs: cpu topology/pinning, network mode, image refresh.
+    local cores threads cpu_pin network_mode bridge tap refresh_image
+    cores="$(spec_get "$spec" cores)";     [[ -z "$cores"   ]] && cores=0
+    threads="$(spec_get "$spec" threads)"; [[ -z "$threads" ]] && threads=0
+    cpu_pin="$(spec_get "$spec" cpu_pin)"
+    network_mode="$(spec_get "$spec" network_mode)"; [[ -z "$network_mode" ]] && network_mode=user
+    bridge="$(spec_get "$spec" bridge)"
+    tap="$(spec_get "$spec" tap)"
+    refresh_image="$(spec_get "$spec" refresh_image)"
+
     [[ "$ssh_port" == "0" || -z "$ssh_port" ]] && ssh_port="$(pick_ssh_port)"
     [[ -z "$pubkey" ]] && pubkey="$(default_pubkey || true)"
 
@@ -1912,7 +2040,7 @@ create_one() {
                 [[ -r "$image" ]] || die "image not readable: $image"
                 base="$image"
             else
-                base="$(cache_image "$distro" "$suite" "$arch")"
+                base="$(cache_image "$distro" "$suite" "$arch" "$refresh_image")"
             fi
             log_info "creating overlay qcow2: $disk (backed by $base)"
             qemu-img create -f qcow2 -F qcow2 -b "$base" "$disk" >/dev/null
@@ -1934,7 +2062,10 @@ create_one() {
             else
                 seed="$(vm_seed "$name")"
                 log_info "generating cloud-init seed iso"
-                make_seed_iso "$name" "$seed" "$pubkey" "$distro"
+                make_seed_iso "$name" "$seed" "$pubkey" "$distro" \
+                    "$(jq -c '.packages // []' <<<"$spec")" \
+                    "$(jq -c '.runcmd   // []' <<<"$spec")" \
+                    "$(spec_get "$spec" user_data)"
             fi
             ;;
         from-chroot)
@@ -2019,6 +2150,8 @@ create_one() {
     MF_INSTALL_TARGET="${install_target:-}" MF_MAC="${mac:-}" \
     MF_KERNEL="$kernel" MF_INITRD="$initrd" MF_APPEND="$append" \
     MF_SSH_USER="$ssh_user" MF_LAB="$lab_name" \
+    MF_CORES="$cores" MF_THREADS="$threads" MF_CPU_PIN="$cpu_pin" \
+    MF_NETWORK_MODE="$network_mode" MF_BRIDGE="$bridge" MF_TAP="$tap" \
     write_vm_manifest "$name"
     [[ -n "$lab_name" ]] && log_info "lab: $lab_name"
 
@@ -2067,6 +2200,7 @@ cmd_start() {
     # Reload manifest into globals expected by build_qemu_argv.
     local arch microvm accel memory cpus ssh_port disk seed kernel initrd append firmware
     local install_target mac
+    local cores threads cpu_pin network_mode bridge tap
     arch="$(read_manifest_field "$name" arch)"
     microvm="$(read_manifest_field "$name" microvm)"
     accel="$(read_manifest_field "$name" accel)"
@@ -2080,6 +2214,14 @@ cmd_start() {
     kernel="$(read_manifest_field "$name" kernel)"
     initrd="$(read_manifest_field "$name" initrd)"
     append="$(read_manifest_field "$name" append)"
+    # v0.2 fields (empty on manifests written before this version → safe defaults).
+    cores="$(read_manifest_field "$name" cores 2>/dev/null || true)"
+    threads="$(read_manifest_field "$name" threads 2>/dev/null || true)"
+    cpu_pin="$(read_manifest_field "$name" cpu_pin 2>/dev/null || true)"
+    network_mode="$(read_manifest_field "$name" network_mode 2>/dev/null || true)"
+    [[ -z "$network_mode" ]] && network_mode=user
+    bridge="$(read_manifest_field "$name" bridge 2>/dev/null || true)"
+    tap="$(read_manifest_field "$name" tap 2>/dev/null || true)"
     firmware="$(firmware_for "$arch" "$microvm")"
 
     # Clean up any stale unix sockets from a previous run.
@@ -2087,10 +2229,20 @@ cmd_start() {
 
     build_qemu_argv
 
-    log_info "starting $name (accel=$accel arch=$arch mem=$memory cpus=$cpus)"
-    log_debug "argv: ${QEMU_ARGV[*]}"
+    # CPU pinning: taskset binds the QEMU process (and its vCPU threads inherit
+    # the affinity) to the given host CPU list.  Pre-existing VMs (no cpu_pin)
+    # launch exactly as before.
+    local -a launch=()
+    if [[ -n "${cpu_pin:-}" ]]; then
+        require_cmd taskset
+        launch=(taskset -c "$cpu_pin")
+        log_info "pinning to host CPUs: $cpu_pin"
+    fi
 
-    if "${QEMU_ARGV[@]}" >>"$(vm_log "$name")" 2>&1; then
+    log_info "starting $name (accel=$accel arch=$arch mem=$memory cpus=$cpus)"
+    log_debug "argv: ${launch[*]:-} ${QEMU_ARGV[*]}"
+
+    if "${launch[@]}" "${QEMU_ARGV[@]}" >>"$(vm_log "$name")" 2>&1; then
         sleep 0.3
         if vm_running "$name"; then
             log_info "$name running (pid $(cat "$(vm_pidfile "$name")"))"
@@ -2590,6 +2742,7 @@ USAGE
   $LAB_PROG destroy  <name> [--force] [--keep-disk]
   $LAB_PROG list
   $LAB_PROG inspect  <name> [--json]
+  $LAB_PROG snapshot {create|list|restore|delete} <name> [snap-name]   # offline qcow2 snapshots
   $LAB_PROG version | help
 
 CREATE OPTIONS
@@ -2614,6 +2767,16 @@ CREATE OPTIONS
   --ssh-port  <port>                     (default: auto-allocate from 2222)
   --pubkey    /path/to/id_rsa.pub        (default: invoking user's ~/.ssh/*.pub)
   --no-cloud-init                        (skip cloud-init NoCloud seeding; for bare/iPXE disk images)
+  --refresh-image                        (re-download the cached cloud image, ignoring any cache)
+  --cores     <n>                        (CPU topology: cores per socket; with --threads)
+  --threads   <n>                        (CPU topology: threads per core; sockets derived)
+  --cpu-pin   <cpu-list>                 (pin the VM to host CPUs via taskset, e.g. "0-3" or "0,2")
+  --network-mode {user|bridge|tap}       (default user = slirp+hostfwd; bridge/tap need root)
+  --bridge    <name>                     (bridge to attach for --network-mode bridge; default virbr0)
+  --tap       <ifname>                   (tap device for --network-mode tap)
+  --packages  "p1,p2,..."                (cloud-init: extra packages to install at first boot)
+  --runcmd    "<cmd>"                    (cloud-init: first-boot command; repeatable)
+  --user-data /path/to/user-data         (cloud-init: use this file verbatim — full override)
   --config    /path/to/vm.toml
 
 ENVIRONMENT
@@ -2641,6 +2804,9 @@ parse_args() {
     OPT_CHROOT="" OPT_DISK_SIZE=""
     OPT_JSON=""
     OPT_CLOUD_INIT="true"
+    OPT_REFRESH_IMAGE="" OPT_CORES="" OPT_THREADS="" OPT_CPU_PIN=""
+    OPT_NETWORK_MODE="" OPT_BRIDGE="" OPT_TAP=""
+    OPT_PACKAGES="" OPT_USER_DATA="" OPT_RUNCMD=()
 
     [[ $# -eq 0 ]] && { usage; exit 0; }
     SUBCMD="$1"; shift
@@ -2673,6 +2839,16 @@ parse_args() {
             --chroot)       OPT_CHROOT="$2"; shift 2 ;;
             --disk-size)    OPT_DISK_SIZE="$2"; shift 2 ;;
             --no-cloud-init) OPT_CLOUD_INIT="false"; shift ;;
+            --refresh-image) OPT_REFRESH_IMAGE="true"; shift ;;
+            --cores)        OPT_CORES="$2"; shift 2 ;;
+            --threads)      OPT_THREADS="$2"; shift 2 ;;
+            --cpu-pin)      OPT_CPU_PIN="$2"; shift 2 ;;
+            --network-mode) OPT_NETWORK_MODE="$2"; shift 2 ;;
+            --bridge)       OPT_BRIDGE="$2"; shift 2 ;;
+            --tap)          OPT_TAP="$2"; shift 2 ;;
+            --packages)     OPT_PACKAGES="$2"; shift 2 ;;
+            --runcmd)       OPT_RUNCMD+=("$2"); shift 2 ;;
+            --user-data)    [[ -r "$2" ]] || die "user-data file not readable: $2"; OPT_USER_DATA="$2"; shift 2 ;;
             --json)         OPT_JSON=1; shift ;;
             -h|--help)      usage; exit 0 ;;
             -v|--version)   printf '%s %s\n' "$LAB_PROG" "$LAB_VERSION"; exit 0 ;;
@@ -2682,20 +2858,56 @@ parse_args() {
     done
 }
 
+# ─── Subcommand: snapshot (offline qcow2 snapshots via qemu-img) ───────────
+cmd_snapshot() {
+    local action="${POS_ARGS[0]:-}" name="${POS_ARGS[1]:-}" snap="${POS_ARGS[2]:-}"
+    [[ -n "$action" ]] || die "usage: $LAB_PROG snapshot {create|list|restore|delete} <vm> [snap-name]"
+    [[ -n "$name"   ]] || die "snapshot $action: missing <vm> name"
+    vm_exists "$name" || die "no VM named '$name' (try '$LAB_PROG list')"
+    require_cmd qemu-img
+    local disk; disk="$(read_manifest_field "$name" disk)"
+    [[ -n "$disk" && -r "$disk" ]] \
+        || die "VM '$name' has no disk to snapshot (backend=$(read_manifest_field "$name" backend) has no qcow2)"
+    qemu-img info "$disk" 2>/dev/null | grep -q 'file format: qcow2' \
+        || die "snapshot needs a qcow2 disk; '$disk' is not qcow2"
+
+    case "$action" in
+        list)
+            qemu-img snapshot -l "$disk"
+            ;;
+        create|restore|delete)
+            [[ -n "$snap" ]] || die "snapshot $action: missing <snap-name>"
+            # Mutating a disk under a live QEMU corrupts it — require the VM stopped.
+            ! vm_running "$name" \
+                || die "snapshot $action needs '$name' stopped (would corrupt a live disk).  Run: $LAB_PROG stop $name"
+            case "$action" in
+                create)  qemu-img snapshot -c "$snap" "$disk" || die "qemu-img snapshot create failed"
+                         log_info "snapshot created: ${name}@${snap}" ;;
+                restore) qemu-img snapshot -a "$snap" "$disk" || die "qemu-img snapshot restore failed (does '$snap' exist? try: $LAB_PROG snapshot list $name)"
+                         log_info "snapshot restored: ${name}@${snap}" ;;
+                delete)  qemu-img snapshot -d "$snap" "$disk" || die "qemu-img snapshot delete failed"
+                         log_info "snapshot deleted: ${name}@${snap}" ;;
+            esac
+            ;;
+        *) die "unknown snapshot action: $action (use create|list|restore|delete)" ;;
+    esac
+}
+
 main() {
     parse_args "$@"
     case "$SUBCMD" in
-        create)  cmd_create  ;;
-        start)   cmd_start   ;;
-        stop)    cmd_stop    ;;
-        console) cmd_console ;;
-        ssh)     cmd_ssh     ;;
-        destroy) cmd_destroy ;;
-        list)    cmd_list    ;;
-        inspect) cmd_inspect ;;
-        help)    usage       ;;
-        version) printf '%s %s\n' "$LAB_PROG" "$LAB_VERSION" ;;
-        *)       usage; die "unknown subcommand: $SUBCMD" ;;
+        create)   cmd_create   ;;
+        start)    cmd_start    ;;
+        stop)     cmd_stop     ;;
+        console)  cmd_console  ;;
+        ssh)      cmd_ssh      ;;
+        destroy)  cmd_destroy  ;;
+        list)     cmd_list     ;;
+        inspect)  cmd_inspect  ;;
+        snapshot) cmd_snapshot ;;
+        help)     usage        ;;
+        version)  printf '%s %s\n' "$LAB_PROG" "$LAB_VERSION" ;;
+        *)        usage; die "unknown subcommand: $SUBCMD" ;;
     esac
 }
 
