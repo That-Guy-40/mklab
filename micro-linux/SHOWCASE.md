@@ -87,6 +87,32 @@ you the equivalent — a stripped-down, firmware-free `virt` + virtio-mmio.
 
 ---
 
+## Give it a network: the DHCP demo
+
+The kernel already carries `CONFIG_VIRTIO_MMIO` and the BusyBox ships `udhcpc`, so
+the from-source distro can pull a real DHCP lease over its virtio NIC — in RAM,
+on the microvm machine:
+
+```bash
+phase2-qemu-vm/lab-vm.sh create --config examples/micro_linux_dhcp_lease/micro-linux-x86_64-dhcp.toml
+phase2-qemu-vm/lab-vm.sh start  micro-linux-x86_64-dhcp
+```
+
+```
+*** NETWORK ENABLED (mllab.net): this throwaway VM has a LIVE NIC ...
+udhcpc: eth0 bound to 10.0.2.15 (gw 10.0.2.2, dns 10.0.2.3)
+~ # ifconfig eth0 → inet addr:10.0.2.15      ~ # ip route → default via 10.0.2.2
+```
+
+It's **opt-in**: `/init` only touches the network when the kernel cmdline carries
+the `mllab.net` token (the demo spec sets `append = "... mllab.net=1"`). Every
+other spec stays network-down. See
+[`../examples/micro_linux_dhcp_lease/`](../examples/micro_linux_dhcp_lease/) — and
+mind the AUDIT-F1 caveat there (root has a well-known password; don't bridge it to
+an untrusted network).
+
+---
+
 ## Why it's faithful *and* lazy
 
 Only the source-compile is new. Packing reuses the kernel's `gen_init_cpio`;
@@ -108,7 +134,9 @@ identical to `vm-netboot-direct.toml`.
   a *well-known, advertised* lab password (`micro`) — deliberately weak, and fine
   only because `network = false` by default and there is no SSH/listening
   service, so there's no network auth surface at all. The credential lives in
-  `/etc/shadow` (SHA-512 `crypt()`); change it via `MLBUILD_LAB_PASSWORD`.
+  `/etc/shadow` (SHA-512 `crypt()`); change it via `MLBUILD_LAB_PASSWORD`. The
+  DHCP demo re-enables networking, but only as an explicit, token-gated opt-in
+  (and only over QEMU's loopback/NAT slirp) — never by default.
 - **Rootless + guarded.** The build runs rootless (`--userns=keep-id`); the
   initramfs is packed without `mknod`; `clean` refuses any `rm -rf` outside
   `out/` (F7).
