@@ -6,17 +6,19 @@
 # outputs to /out/ (which is bind-mounted from the host's --output-dir).
 #
 # Args (positional, set by build-ipxe.sh):
-#   $1  server_url   e.g. http://10.0.2.2:8080
+#   $1  server_url   e.g. http://10.0.2.2:8080  or  https://
 #   $2  kernel_path  e.g. /kernel
 #   $3  initrd_path  e.g. /initrd.gz
 #   $4  append       e.g. "console=ttyS0 root=/dev/ram0 rw"
-#   $5  arch         x86_64 | aarch64
+#   $5  arch         x86_64 | aarch64 | riscv64
 #   $6  ipxe_ref     git branch/tag/SHA  e.g. master
+#   $7  tls_mode     "1" to compile with HTTPS support (DOWNLOAD_PROTO_HTTPS)
+#   $8  cert_path    DER cert to embed in trust store (empty = none)
 #
 # Outputs written to /out/:
 #   boot.ipxe   embedded boot script (copy of what was compiled in)
 #   ipxe.usb    raw USB disk image   (x86_64 only)
-#   ipxe.efi    UEFI binary          (both arches)
+#   ipxe.efi    UEFI binary          (all arches)
 
 set -euo pipefail
 
@@ -37,6 +39,8 @@ initrd_path="${3:?arg 3 (initrd_path) is required}"
 append="${4:?arg 4 (append) is required}"
 arch="${5:?arg 5 (arch) is required}"
 ipxe_ref="${6:?arg 6 (ipxe_ref) is required}"
+tls_mode="${7:-}"
+cert_path="${8:-}"
 
 log_info "ipxe-build-inner starting"
 log_info "  server_url  : $server_url"
@@ -48,8 +52,8 @@ log_info "  ipxe_ref    : $ipxe_ref"
 
 # ─── Validate arch ──────────────────────────────────────────────────────────
 case "$arch" in
-    x86_64|aarch64) ;;
-    *) die "unsupported arch '$arch': choose x86_64 or aarch64" ;;
+    x86_64|aarch64|riscv64) ;;
+    *) die "unsupported arch '$arch': choose x86_64, aarch64, or riscv64" ;;
 esac
 
 # ─── Install build dependencies ─────────────────────────────────────────────
@@ -59,9 +63,15 @@ apt-get install -y -qq \
     gcc make git liblzma-dev mtools perl \
     isolinux syslinux binutils wget ca-certificates
 
-# aarch64 cross-compilation deps (not needed for native x86_64 inside Docker)
+# Cross-compilation toolchains for non-x86 arches.
 if [[ "$arch" == "aarch64" ]]; then
     apt-get install -y -qq gcc-aarch64-linux-gnu
+elif [[ "$arch" == "riscv64" ]]; then
+    apt-get install -y -qq gcc-riscv64-linux-gnu
+fi
+# HTTPS support needs the OpenSSL dev headers inside the container.
+if [[ -n "$tls_mode" ]]; then
+    apt-get install -y -qq libssl-dev
 fi
 
 # ─── Clone iPXE ─────────────────────────────────────────────────────────────
@@ -79,6 +89,35 @@ else
     git -C /tmp/ipxe checkout "$ipxe_ref" \
         || die "git checkout '$ipxe_ref' failed — is '$ipxe_ref' a valid iPXE ref?"
     log_info "checked out ref '$ipxe_ref'"
+fi
+
+# ─── Patch iPXE config for HTTPS (if requested) ─────────────────────────────
+if [[ -n "$tls_mode" ]]; then
+    log_info "enabling HTTPS download support in iPXE config..."
+    # iPXE ships a per-feature config in src/config/general.h.  Override it by
+    # adding a local config header that undef/redefines the relevant symbol.
+    mkdir -p /tmp/ipxe/src/config/local
+    cat > /tmp/ipxe/src/config/local/general.h <<'IPXECFG'
+/* local/general.h: compiled-in overrides for this lab build. */
+#include <config/general.h>
+#undef  DOWNLOAD_PROTO_HTTPS
+#define DOWNLOAD_PROTO_HTTPS
+IPXECFG
+    log_info "  DOWNLOAD_PROTO_HTTPS enabled"
+fi
+
+# If a DER cert was provided, embed it in the iPXE trust store.
+if [[ -n "$cert_path" && -f "$cert_path" ]]; then
+    log_info "embedding trust cert: $cert_path"
+    mkdir -p /tmp/ipxe/src/config/local
+    cat >> /tmp/ipxe/src/config/local/general.h <<'IPXETRUST'
+#undef  CERT_CMD
+#define CERT_CMD
+IPXETRUST
+    cp "$cert_path" /tmp/ipxe/src/config/certstore.der
+    # The CERTSTORE macro points iPXE to the DER bytes to compile in.
+    EXTRA_MAKE_FLAGS="CERTSTORE=/tmp/ipxe/src/config/certstore.der"
+    log_info "  embedded cert in trust store"
 fi
 
 # ─── Write embedded boot script ─────────────────────────────────────────────
@@ -104,18 +143,36 @@ log_info "building iPXE with -j${JOBS} (arch=$arch)..."
 
 cd /tmp/ipxe/src
 
+EXTRA_MAKE_FLAGS="${EXTRA_MAKE_FLAGS:-}"
 case "$arch" in
     x86_64)
-        make -j"${JOBS}" EMBED=boot.ipxe bin/ipxe.usb bin-x86_64-efi/ipxe.efi \
+        # shellcheck disable=SC2086
+        make -j"${JOBS}" EMBED=boot.ipxe $EXTRA_MAKE_FLAGS \
+            bin/ipxe.usb bin-x86_64-efi/ipxe.efi \
             || die "iPXE make failed for x86_64"
         ;;
     aarch64)
         # Cross-compile: set CROSS_COMPILE so iPXE's Makefile picks up the
         # aarch64 toolchain installed above.
+        # shellcheck disable=SC2086
         make -j"${JOBS}" EMBED=boot.ipxe \
             CROSS_COMPILE=aarch64-linux-gnu- \
+            $EXTRA_MAKE_FLAGS \
             bin-arm64-efi/ipxe.efi \
             || die "iPXE make failed for aarch64"
+        ;;
+    riscv64)
+        # RISC-V EFI: cross-compile with the riscv64-linux-gnu toolchain.
+        # iPXE uses ARCH=riscv for its internal arch name.
+        # Note: riscv64 iPXE support is experimental upstream; requires a
+        # recent iPXE commit (2023+).  Use --ipxe-ref master or a recent tag.
+        # shellcheck disable=SC2086
+        make -j"${JOBS}" EMBED=boot.ipxe \
+            CROSS_COMPILE=riscv64-linux-gnu- \
+            ARCH=riscv \
+            $EXTRA_MAKE_FLAGS \
+            bin-riscv-efi/ipxe.efi \
+            || die "iPXE make failed for riscv64"
         ;;
 esac
 
@@ -128,7 +185,7 @@ log_info "  /out/boot.ipxe"
 
 case "$arch" in
     x86_64)
-        cp /tmp/ipxe/src/bin/ipxe.usb          /out/ipxe.usb
+        cp /tmp/ipxe/src/bin/ipxe.usb             /out/ipxe.usb
         cp /tmp/ipxe/src/bin-x86_64-efi/ipxe.efi /out/ipxe.efi
         log_info "  /out/ipxe.usb"
         log_info "  /out/ipxe.efi"
@@ -136,6 +193,10 @@ case "$arch" in
     aarch64)
         cp /tmp/ipxe/src/bin-arm64-efi/ipxe.efi /out/ipxe.efi
         log_info "  /out/ipxe.efi  (arm64; no USB image for aarch64)"
+        ;;
+    riscv64)
+        cp /tmp/ipxe/src/bin-riscv-efi/ipxe.efi /out/ipxe.efi
+        log_info "  /out/ipxe.efi  (riscv64; no USB image for riscv64)"
         ;;
 esac
 

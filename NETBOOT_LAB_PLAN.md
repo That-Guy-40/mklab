@@ -536,17 +536,32 @@ For SBCs (aarch64): need `ipxe.efi` (UEFI) or an aarch64-specific boot chain.
 
 ---
 
+## v0.2 additions (done)
+
+- **HTTPS / `--tls`**: `setup-netboot-dir.sh --tls` generates a self-signed
+  cert (PEM + DER).  `build-ipxe.sh --tls [--tls-cert netboot.der]` compiles
+  iPXE with `DOWNLOAD_PROTO_HTTPS` and embeds the cert in the binary trust
+  store.  Use an `https://` `--server` URL with both flags together.
+- **aarch64 iPXE**: `build-ipxe.sh --arch aarch64` → `bin-arm64-efi/ipxe.efi`
+  (cross-compiled with `gcc-aarch64-linux-gnu` inside the Docker build container).
+- **riscv64 iPXE**: `build-ipxe.sh --arch riscv64` → `bin-riscv-efi/ipxe.efi`
+  (cross-compiled with `gcc-riscv64-linux-gnu`, `ARCH=riscv`).  Requires a
+  2023+ iPXE commit (`--ipxe-ref master`).  Experimental upstream — no USB
+  image, EFI only.  Boot via OpenSBI + U-Boot-EFI on QEMU `virt` or a
+  RISC-V SBC with a UEFI firmware.
+- **Phase 1 `write_files`**: `[[chroot.write_files]]` TOML table array writes
+  arbitrary files into the chroot tree at `create` time (host-side, no
+  `chroot exec`).  Replaces the "manual `/init` edit" step — specify
+  `path = "/init"`, `mode = "0755"`, and `content = '''...'''` in TOML.
+- **`lab-vm.sh publish-netboot`**: copies a `kernel+initrd`-backend VM's
+  kernel and initrd to a netboot directory.  Optional `--generate-script
+  --server URL` re-writes `boot.ipxe`.
+
 ## Open items / future work
 
-- **HTTPS**: Replace `http://` with `https://` in embedded iPXE script; nginx
-  needs TLS cert. Can be added as a `--tls` flag to `setup-netboot-dir.sh`.
-- **aarch64 iPXE**: `build-ipxe.sh --arch aarch64` targets `bin-arm64-efi/ipxe.efi`
-- **DHCP/TFTP server** (traditional PXE): Not in scope for v1 — HTTP-only iPXE
-  doesn't need it. Document as future step.
+- **DHCP/TFTP server** (traditional PXE): Not in scope — HTTP-only iPXE
+  doesn't need it.
 - **Signed iPXE** (Secure Boot): `bin-x86_64-efi/ipxe.efi` can be signed with
-  a custom MOK key. Out of scope for v1.
-- **`post_create` hooks in Phase 1**: Would allow the `/init` script to be written
-  automatically from the TOML rather than as a manual step. Nice future feature.
-- **lab-vm.sh `publish-netboot` verb**: Could copy Phase 2 Alpine microvm's
-  cached kernel+initrd to `/srv/netboot/` so the Alpine path works alongside
-  the Debian path without duplicating the download.
+  a custom MOK key. Out of scope.
+- **riscv64 real-hardware PXE**: Verified in QEMU; physical SBC boot depends
+  on the board's UEFI/OpenSBI firmware chain.

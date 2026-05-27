@@ -377,7 +377,7 @@ spec_from_cli() {
           target:$target, mirror:$mirror, variant:$variant, manager:$manager, lab:$lab,
           hostname:$hostname, init_script:$init_script,
           include:$include, binaries:$binaries, extras:$extras, groups:$groups,
-          post_commands:$post_commands, users:$users}'
+          post_commands:$post_commands, users:$users, write_files:[]}'
 }
 
 specs_from_config() {
@@ -415,6 +415,7 @@ specs_from_config() {
             post_commands: (.post_commands // []),
             users:         (.users         // []),
             schroot:       (.schroot       // {}),
+            write_files:   (.write_files   // []),
             nspawn:        (.nspawn        // {}) }
     '
 }
@@ -1106,6 +1107,7 @@ create_one() {
 
     apply_hostname      "$spec" "$target"
     apply_init_script   "$spec" "$target"
+    apply_write_files   "$spec" "$target"
     apply_users         "$spec" "$target"
     apply_post_commands "$spec" "$target"
 
@@ -1413,6 +1415,49 @@ apply_hostname() {
         printf 'ff02::2\t\tip6-allrouters\n'
     } > "$target/etc/hosts"
     log_info "hostname: $hn"
+}
+
+# apply_write_files SPEC TARGET
+# Write files from the write_files[] spec array directly into TARGET on the
+# host (no chroot exec).  Each entry must have a "path" key (relative to the
+# chroot root, e.g. "/init").  Optional keys: "content" (file body), "mode"
+# (octal string, default "0644"), "executable" (bool, shorthand for "0755").
+# TOML example:
+#   [[chroot.write_files]]
+#   path    = "/init"
+#   mode    = "0755"
+#   content = '''
+#   #!/bin/busybox sh
+#   exec /bin/sh
+#   '''
+apply_write_files() {
+    local spec="$1" target="$2"
+    local count
+    count="$(jq '.write_files | length' <<<"$spec")"
+    [[ "$count" -eq 0 ]] && return 0
+    # Iterate by index so multi-line content is fetched cleanly per entry
+    # rather than trying to split it via a line-by-line pipe.
+    local i total
+    total="$(jq '.write_files | length' <<<"$spec")"
+    for (( i=0; i<total; i++ )); do
+        local path mode executable content fmode dest
+        path="$(       jq -r --argjson i "$i" '.write_files[$i].path       // ""'    <<<"$spec")"
+        mode="$(       jq -r --argjson i "$i" '.write_files[$i].mode       // ""'    <<<"$spec")"
+        executable="$( jq -r --argjson i "$i" '.write_files[$i].executable // false' <<<"$spec")"
+        content="$(    jq -r --argjson i "$i" '.write_files[$i].content    // ""'    <<<"$spec")"
+        [[ -z "$path" ]] && continue
+        dest="$target/$path"
+        install -d -m 0755 "$(dirname "$dest")"
+        fmode="0644"
+        if [[ "$executable" == "true" ]]; then
+            fmode="0755"
+        elif [[ -n "$mode" ]]; then
+            fmode="$mode"
+        fi
+        printf '%s' "$content" > "$dest"
+        chmod "$fmode" "$dest"
+        log_info "write_files[$((i+1))]: $path  (mode $fmode)"
+    done
 }
 
 # apply_post_commands SPEC TARGET

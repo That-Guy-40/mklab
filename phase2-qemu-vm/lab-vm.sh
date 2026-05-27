@@ -2807,6 +2807,7 @@ parse_args() {
     OPT_REFRESH_IMAGE="" OPT_CORES="" OPT_THREADS="" OPT_CPU_PIN=""
     OPT_NETWORK_MODE="" OPT_BRIDGE="" OPT_TAP=""
     OPT_PACKAGES="" OPT_USER_DATA="" OPT_RUNCMD=()
+    OPT_NETBOOT_DIR="" OPT_KERNEL_NAME="" OPT_INITRD_NAME="" OPT_GENERATE_SCRIPT="" OPT_SERVER=""
 
     [[ $# -eq 0 ]] && { usage; exit 0; }
     SUBCMD="$1"; shift
@@ -2850,6 +2851,11 @@ parse_args() {
             --runcmd)       OPT_RUNCMD+=("$2"); shift 2 ;;
             --user-data)    [[ -r "$2" ]] || die "user-data file not readable: $2"; OPT_USER_DATA="$2"; shift 2 ;;
             --json)         OPT_JSON=1; shift ;;
+            --netboot-dir)  OPT_NETBOOT_DIR="$2"; shift 2 ;;
+            --kernel-name)  OPT_KERNEL_NAME="$2"; shift 2 ;;
+            --initrd-name)  OPT_INITRD_NAME="$2"; shift 2 ;;
+            --generate-script) OPT_GENERATE_SCRIPT=1; shift ;;
+            --server)       OPT_SERVER="$2"; shift 2 ;;
             -h|--help)      usage; exit 0 ;;
             -v|--version)   printf '%s %s\n' "$LAB_PROG" "$LAB_VERSION"; exit 0 ;;
             -*)             die "unknown option: $1 (try --help)" ;;
@@ -2893,6 +2899,73 @@ cmd_snapshot() {
     esac
 }
 
+# ─── Subcommand: publish-netboot ───────────────────────────────────────────
+# Copy a kernel+initrd VM's kernel and initrd files to a netboot directory so
+# they can be served by the Phase 4 nginx container.  Works for both:
+#   - Explicit kernel+initrd VMs (backend=kernel+initrd) whose manifest carries
+#     absolute kernel/initrd paths.
+#   - Alpine microvm VMs: same — the builder writes absolute paths into the manifest.
+#
+# Usage:
+#   lab-vm.sh publish-netboot <name>
+#               [--netboot-dir DIR]      (default: $LAB_NETBOOT_DIR or ~/netboot)
+#               [--kernel-name NAME]     (default: kernel)
+#               [--initrd-name NAME]     (default: initrd.gz)
+#               [--generate-script]      re-write boot.ipxe in the output dir
+#               [--server URL]           server base URL for --generate-script
+cmd_publish_netboot() {
+    local name="${POS_ARGS[0]:-}"
+    [[ -n "$name" ]] || die "usage: $LAB_PROG publish-netboot <name> [--netboot-dir DIR] ..."
+    vm_exists "$name" || die "no VM named '$name' (try '$LAB_PROG list')"
+
+    local backend; backend="$(read_manifest_field "$name" backend)"
+    [[ "$backend" == "kernel+initrd" ]]         || die "publish-netboot only applies to kernel+initrd VMs; '$name' uses backend=$backend"
+
+    local src_kernel; src_kernel="$(read_manifest_field "$name" kernel)"
+    local src_initrd; src_initrd="$(read_manifest_field "$name" initrd)"
+    [[ -r "$src_kernel" ]] || die "kernel file not readable: ${src_kernel:-<unset>}"
+    [[ -r "$src_initrd" ]] || die "initrd file not readable: ${src_initrd:-<unset>}"
+
+    local netboot_dir="${OPT_NETBOOT_DIR:-${LAB_NETBOOT_DIR:-$HOME/netboot}}"
+    local kernel_name="${OPT_KERNEL_NAME:-kernel}"
+    local initrd_name="${OPT_INITRD_NAME:-initrd.gz}"
+
+    install -d -m 0755 "$netboot_dir"
+
+    local dst_kernel="$netboot_dir/$kernel_name"
+    local dst_initrd="$netboot_dir/$initrd_name"
+
+    log_info "publishing kernel: $src_kernel → $dst_kernel"
+    cp "$src_kernel" "$dst_kernel"
+    log_info "publishing initrd: $src_initrd → $dst_initrd"
+    cp "$src_initrd" "$dst_initrd"
+
+    if [[ -n "${OPT_GENERATE_SCRIPT:-}" ]]; then
+        local server="${OPT_SERVER:-http://10.0.2.2:8080}"
+        local append; append="$(read_manifest_field "$name" append)"
+        local boot_script="$netboot_dir/boot.ipxe"
+        log_info "writing boot.ipxe → $boot_script (server=$server)"
+        cat > "$boot_script" <<EOF
+#!ipxe
+dhcp
+kernel ${server}/${kernel_name} ${append}
+initrd ${server}/${initrd_name}
+boot
+EOF
+        log_info "  kernel cmdline: ${append}"
+    fi
+
+    log_info "── publish-netboot done ──"
+    log_info "  kernel : $dst_kernel"
+    log_info "  initrd : $dst_initrd"
+    if [[ -n "${OPT_GENERATE_SCRIPT:-}" ]]; then
+        log_info "  script : $netboot_dir/boot.ipxe"
+    fi
+    log_info ""
+    log_info "next: phase4-podman/lab-podman.sh up --config examples/podman-netboot-server.toml"
+}
+
+
 main() {
     parse_args "$@"
     case "$SUBCMD" in
@@ -2904,7 +2977,8 @@ main() {
         destroy)  cmd_destroy  ;;
         list)     cmd_list     ;;
         inspect)  cmd_inspect  ;;
-        snapshot) cmd_snapshot ;;
+        snapshot)        cmd_snapshot        ;;
+        publish-netboot) cmd_publish_netboot ;;
         help)     usage        ;;
         version)  printf '%s %s\n' "$LAB_PROG" "$LAB_VERSION" ;;
         *)        usage; die "unknown subcommand: $SUBCMD" ;;

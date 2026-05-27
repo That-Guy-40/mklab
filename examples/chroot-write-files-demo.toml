@@ -1,0 +1,44 @@
+# Demonstrates the write_files key — write arbitrary files into the chroot
+# tree at create time (host-side, no chroot exec needed).
+#
+# Primary use case: auto-write /init for netboot initramfs builds without a
+# manual editing step.  Equivalent to init_script = "busybox" for simple cases,
+# but write_files lets you supply fully custom content inline in TOML.
+#
+# Usage:
+#   sudo lab-chroot.sh create --config examples/chroot-write-files-demo.toml
+
+[[chroot]]
+name        = "write-files-demo"
+hostname    = "demo"
+backend     = "debootstrap"
+distro      = "debian"
+suite       = "bookworm"
+arch        = "x86_64"
+variant     = "minbase"
+target      = "/var/chroots/write-files-demo"
+manager     = "none"
+include     = ["busybox-static"]
+
+# write_files entries are written to the chroot tree by the HOST (no chroot
+# exec).  path is relative to the chroot root.  mode is an octal string.
+# executable = true is shorthand for mode = "0755".
+
+[[chroot.write_files]]
+path       = "/init"
+executable = true
+content    = '''
+#!/bin/busybox sh
+/bin/busybox --install -s
+mount -t proc     proc     /proc
+mount -t sysfs    sysfs    /sys
+mount -t devtmpfs devtmpfs /dev
+export TERM=linux
+echo "=== write_files demo ==="
+exec /bin/sh
+'''
+
+[[chroot.write_files]]
+path    = "/etc/motd"
+mode    = "0644"
+content = "Welcome to the write_files demo chroot!\n"

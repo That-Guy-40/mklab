@@ -54,6 +54,7 @@ Usage: sudo netboot/setup-netboot-dir.sh [--dir PATH] [--conf PATH] [--help]
 
   --dir  PATH   artifact directory  (default: /srv/netboot)
   --conf PATH   config directory    (default: /etc/lab-netboot)
+  --tls         generate a self-signed TLS cert + nginx ssl config snippet
   --help        show this help and exit
 
 Examples:
@@ -66,12 +67,14 @@ EOF
 # ─── Defaults ───────────────────────────────────────────────────────────────
 NETBOOT_DIR="${LAB_NETBOOT_DIR:-$HOME/netboot}"
 CONF_DIR="${LAB_NETBOOT_CONF:-$HOME/.config/lab-netboot}"
+TLS_MODE=""
 
 # ─── Arg parsing ────────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --dir)  shift; NETBOOT_DIR="${1:?--dir requires a path}"; shift ;;
         --conf) shift; CONF_DIR="${1:?--conf requires a path}";   shift ;;
+        --tls)  TLS_MODE=1 ;;
         --help|-h) usage ;;
         *) die "unknown option: $1  (try --help)" ;;
     esac
@@ -101,6 +104,43 @@ types {
     application/x-ipxe  ipxe;
 }
 EOF
+
+# ─── TLS cert + nginx ssl config (optional) ─────────────────────────────────
+if [[ -n "$TLS_MODE" ]]; then
+    if ! command -v openssl >/dev/null 2>&1; then
+        log_warn "--tls requested but openssl not found; skipping cert generation"
+        log_warn "  install with: apt-get install openssl"
+    else
+        CERT_PEM="$CONF_DIR/netboot.crt"
+        KEY_PEM="$CONF_DIR/netboot.key"
+        CERT_DER="$CONF_DIR/netboot.der"
+        SSL_CONF="$CONF_DIR/ipxe-ssl.conf"
+        if [[ ! -f "$CERT_PEM" ]]; then
+            log_info "generating self-signed TLS cert: $CERT_PEM"
+            openssl req -x509 -newkey rsa:4096 -keyout "$KEY_PEM" -out "$CERT_PEM"                 -days 3650 -nodes                 -subj "/CN=netboot-lab"                 -addext "subjectAltName=IP:127.0.0.1,IP:10.0.2.2"                 2>/dev/null
+            openssl x509 -in "$CERT_PEM" -outform DER -out "$CERT_DER" 2>/dev/null
+            chmod 600 "$KEY_PEM"
+            log_info "  cert (PEM) : $CERT_PEM"
+            log_info "  key  (PEM) : $KEY_PEM"
+            log_info "  cert (DER) : $CERT_DER  ← embed this in iPXE with --tls-cert"
+        else
+            log_info "TLS cert already exists: $CERT_PEM"
+        fi
+        log_info "writing nginx SSL config snippet: $SSL_CONF"
+        cat > "$SSL_CONF" <<EOF
+# ipxe-ssl.conf — add to your nginx server{} block alongside ipxe-mime.conf.
+# Requires ssl_certificate and ssl_certificate_key to be set in the same block.
+# Example:
+#   ssl_certificate     $CERT_PEM;
+#   ssl_certificate_key $KEY_PEM;
+#   include             $SSL_CONF;
+ssl_protocols       TLSv1.2 TLSv1.3;
+ssl_ciphers         HIGH:!aNULL:!MD5;
+ssl_session_cache   shared:SSL:1m;
+ssl_session_timeout 10m;
+EOF
+    fi
+fi
 
 # ─── Summary ────────────────────────────────────────────────────────────────
 log_info "setup complete"

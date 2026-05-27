@@ -84,8 +84,11 @@ Options:
                       Example (per-host AlmaLinux kickstart):
                         --append 'inst.ks=http://10.0.2.2:8181/ks/{MAC}.ks'
   --output-dir  PATH  where to write outputs   (default: /srv/netboot)
-  --arch        ARCH  x86_64 or aarch64        (default: x86_64)
+  --arch        ARCH  x86_64, aarch64, or riscv64  (default: x86_64)
   --ipxe-ref    REF   git branch/tag/SHA to build from (default: master)
+  --tls               compile iPXE with HTTPS download support (DOWNLOAD_PROTO_HTTPS)
+  --tls-cert    PATH  DER-format cert to embed in iPXE trust store
+                      (use the .der from setup-netboot-dir.sh --tls)
   --help              show this help and exit
 
 Outputs written to --output-dir:
@@ -110,6 +113,8 @@ append="console=ttyS0 root=/dev/ram0 rw"
 output_dir="${LAB_NETBOOT_DIR:-$HOME/netboot}"
 arch="x86_64"
 ipxe_ref="master"
+tls_mode=""
+tls_cert=""
 
 # ─── Arg parsing ────────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
@@ -119,8 +124,10 @@ while [[ $# -gt 0 ]]; do
         --initrd-path) shift; initrd_path="${1:?--initrd-path requires a path}"; shift ;;
         --append)      shift; append="${1:?--append requires a string}";      shift ;;
         --output-dir)  shift; output_dir="${1:?--output-dir requires a path}"; shift ;;
-        --arch)        shift; arch="${1:?--arch requires x86_64 or aarch64}"; shift ;;
+        --arch)        shift; arch="${1:?--arch requires x86_64/aarch64/riscv64}"; shift ;;
         --ipxe-ref)    shift; ipxe_ref="${1:?--ipxe-ref requires a git ref}"; shift ;;
+        --tls)         tls_mode=1; shift ;;
+        --tls-cert)    shift; tls_cert="${1:?--tls-cert requires a DER file}"; shift ;;
         --help|-h) usage ;;
         *) die "unknown option: $1  (try --help)" ;;
     esac
@@ -128,9 +135,12 @@ done
 
 # ─── Validate arch ──────────────────────────────────────────────────────────
 case "$arch" in
-    x86_64|aarch64) ;;
-    *) die "unsupported arch '$arch': choose x86_64 or aarch64" ;;
+    x86_64|aarch64|riscv64) ;;
+    *) die "unsupported arch '$arch': choose x86_64, aarch64, or riscv64" ;;
 esac
+if [[ -n "$tls_cert" && ! -r "$tls_cert" ]]; then
+    die "--tls-cert file not readable: $tls_cert"
+fi
 
 # ─── Pre-flight checks ──────────────────────────────────────────────────────
 log_info "checking Docker daemon..."
@@ -149,12 +159,21 @@ log_info "starting Docker build (arch=$arch ref=$ipxe_ref) — this takes severa
 log_info "  output dir : $output_dir"
 log_info "  build ctx  : $SCRIPT_DIR"
 
+# Bind-mount the TLS cert into the container if specified.
+docker_tls_vol=""; inner_cert_path=""
+if [[ -n "$tls_cert" ]]; then
+    inner_cert_path="/tls-cert.der"
+    docker_tls_vol="--volume ${tls_cert}:${inner_cert_path}:ro"
+fi
+
 docker run --rm \
     -v "$output_dir:/out" \
     -v "$SCRIPT_DIR:/build-ctx:ro" \
+    ${docker_tls_vol:+"$docker_tls_vol"} \
     debian:bookworm \
     bash /build-ctx/ipxe-build-inner.sh \
-        "$server" "$kernel_path" "$initrd_path" "$append" "$arch" "$ipxe_ref"
+        "$server" "$kernel_path" "$initrd_path" "$append" "$arch" "$ipxe_ref" \
+        "${tls_mode:-}" "${inner_cert_path}"
 
 # ─── Convert USB image to qcow2 ──────────────────────────────────────────────
 if command -v qemu-img &>/dev/null; then
@@ -181,6 +200,9 @@ for f in boot.ipxe ipxe.usb ipxe.efi ipxe.qcow2; do
     fi
 done
 log_info ""
+if [[ -n "$tls_mode" ]]; then
+    log_info "  (built with HTTPS support — server URL must use https://)"
+fi
 log_info "next steps:"
 log_info "  QEMU (Phase 2):    lab-vm.sh --disk $output_dir/ipxe.qcow2"
 log_info "  USB (real hw):     sudo dd if=$output_dir/ipxe.usb of=/dev/sdX bs=4M status=progress"
