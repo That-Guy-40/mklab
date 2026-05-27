@@ -94,7 +94,7 @@ arch_map() {
         aarch64:machine)            printf 'virt'     ;;
         aarch64:default-cpu)        printf 'cortex-a72' ;;
         aarch64:firmware-pkg)       printf 'qemu-efi-aarch64' ;;
-        aarch64:microvm-supported)  printf 'yes'      ;;  # since QEMU 5.0+
+        aarch64:microvm-supported)  printf 'yes'      ;;  # NB: QEMU has no arm 'microvm' machine; we synthesize one as a minimized 'virt' + virtio-mmio (see build_qemu_argv)
 
         armv7l:qemu-system)         printf 'arm'      ;;
         armv7l:machine)             printf 'virt'     ;;
@@ -208,6 +208,13 @@ firmware_for() {
             )
             ;;
         aarch64)
+            if [[ "$microvm" == "true" ]]; then
+                # arm "microvm" = a minimized 'virt' booted directly via -kernel,
+                # which needs no UEFI/pflash at all.  Return empty so build_qemu_argv
+                # skips the firmware block entirely (mirrors the x86_64 microvm case).
+                printf ''
+                return 0
+            fi
             local cands=(
                 /usr/share/AAVMF/AAVMF_CODE.fd
                 /usr/share/qemu-efi-aarch64/QEMU_EFI.fd
@@ -1678,7 +1685,11 @@ build_qemu_argv() {
     if [[ "$microvm" == "true" && "$(arch_map "$arch" microvm-supported)" == "yes" ]]; then
         case "$arch" in
             x86_64)  mach="microvm,pic=off,pit=off,rtc=off" ;;
-            aarch64) mach="microvm" ;;
+            # QEMU has no arm 'microvm' machine type — the arm equivalent is a
+            # 'virt' stripped to virtio-mmio transports + direct -kernel boot (no
+            # UEFI; firmware_for returns empty for aarch64+microvm).  Same fast,
+            # minimal device model; just a different machine name.
+            aarch64) mach="virt" ;;
         esac
     else
         mach="$(arch_map "$arch" machine)"
@@ -2688,4 +2699,8 @@ main() {
     esac
 }
 
-main "$@"
+# Run main only when executed directly, not when sourced (e.g. by unit tests
+# that exercise build_qemu_argv).  Same idiom as micro-linux/mlbuild.sh.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi
