@@ -19,6 +19,23 @@ trap 'poweroff -f' USR2
 trap 'reboot   -f' TERM
 trap 'halt     -f' USR1
 
+# Optional networking (the DHCP demo, plan §10).  OFF unless the kernel cmdline
+# carries the `mllab.net` token, so the default build still boots fully
+# network-down (AUDIT F1: root has a well-known password and there's no auth
+# surface — keep it off untrusted networks).  When opted in, bring up eth0 and
+# grab a lease in the background (QEMU's user-mode net runs a DHCP server), so
+# the login prompt isn't delayed.  udhcpc applies the lease via
+# /usr/share/udhcpc/default.script.  -n: give up rather than loop forever if
+# there's no server; -q: exit once bound (the script already configured eth0).
+if grep -q 'mllab\.net' /proc/cmdline 2>/dev/null; then
+    printf '\n*** NETWORK ENABLED (mllab.net): this throwaway VM has a LIVE NIC and a\n'
+    printf '*** well-known root password.  Do NOT bridge it to an untrusted network\n'
+    printf '*** (AUDIT F1).  Default micro-linux builds boot with no networking.\n\n'
+    ( ifconfig lo up 2>/dev/null
+      ifconfig eth0 up 2>/dev/null
+      udhcpc -i eth0 -t 8 -n -q 2>/dev/null ) &
+fi
+
 # Respawn a login prompt forever. getty opens /dev/console, prints /etc/issue
 # (which advertises the lab credentials), reads the username, then exec's
 # `login` for the password check; on logout we loop and re-present the prompt.

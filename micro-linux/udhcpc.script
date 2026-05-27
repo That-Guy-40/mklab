@@ -1,0 +1,40 @@
+#!/bin/sh
+# micro-linux — BusyBox udhcpc lease handler (the network demo, plan §10).
+#
+# BusyBox's udhcpc doesn't configure the interface itself: on each event it
+# execs this script (path baked in as CONFIG_UDHCPC_DEFAULT_SCRIPT =
+# /usr/share/udhcpc/default.script) with $1 = the action and the lease in env
+# vars ($interface $ip $subnet $router $dns $domain ...).  We apply it with
+# ifconfig/route — both always present in our BusyBox defconfig, no `ip` needed.
+#
+# Deliberately tiny and offline-friendly: under QEMU user-mode networking the
+# lease is the fixed slirp range (ip 10.0.2.15/24, router/DNS 10.0.2.2/10.0.2.3).
+# $interface/$ip/$subnet/$router/$dns/$domain are exported by udhcpc, not us.
+# shellcheck disable=SC2154
+RESOLV=/etc/resolv.conf
+
+case "$1" in
+    deconfig)
+        # Bring the link up but unconfigured (udhcpc calls this before DISCOVER).
+        ifconfig "$interface" 0.0.0.0
+        ;;
+    renew|bound)
+        ifconfig "$interface" "$ip" netmask "${subnet:-255.255.255.0}"
+        if [ -n "$router" ]; then
+            # Drop any stale default route, then install the lease's gateway(s).
+            while route del default gw 0.0.0.0 dev "$interface" 2>/dev/null; do :; done
+            for r in $router; do
+                route add default gw "$r" dev "$interface" 2>/dev/null
+            done
+        fi
+        : > "$RESOLV"
+        [ -n "$domain" ] && echo "search $domain" >> "$RESOLV"
+        for d in $dns; do echo "nameserver $d" >> "$RESOLV"; done
+        # A friendly one-liner so the demo shows the lease on the console.
+        echo "udhcpc: $interface bound to $ip (gw ${router:-none}, dns ${dns:-none})"
+        ;;
+    leasefail|nak)
+        echo "udhcpc: $1 on $interface" >&2
+        ;;
+esac
+exit 0

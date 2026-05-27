@@ -34,6 +34,11 @@ grep -q "^file /etc/securetty $etc/securetty 0644 0 0\$" <<<"$spec" || fail "mis
 grep -q "^file /etc/issue $etc/issue 0644 0 0\$"     <<<"$spec" || fail "missing /etc/issue"
 note "login setup: /etc/{passwd,shadow(0600),securetty,issue} + /root baked"
 
+# Network demo (§10): the udhcpc lease handler ships at the path BusyBox execs.
+grep -q '^dir /usr/share/udhcpc 0755 0 0$'                          <<<"$spec" || fail "missing /usr/share/udhcpc dir"
+grep -q '^file /usr/share/udhcpc/default.script .* 0755 0 0$'       <<<"$spec" || fail "missing udhcpc default.script (network demo)"
+note "udhcpc default.script staged at /usr/share/udhcpc/default.script"
+
 if grep -qiE 'vmlinuz|/boot' <<<"$spec"; then
     fail "spec must NOT embed the kernel (/boot or vmlinuz found)"
 fi

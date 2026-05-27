@@ -423,6 +423,17 @@ EOF
               else                     printf 'file %s %s 0755 0 0\n'    "$rel" "$tree/${p#./}"
               fi
           done )
+    # The udhcpc lease handler, at the path BusyBox's udhcpc execs
+    # (CONFIG_UDHCPC_DEFAULT_SCRIPT=/usr/share/udhcpc/default.script).  Harmless
+    # when unused, so it ships in every initramfs; the network demo (§10) invokes
+    # udhcpc from /init only when the `mllab.net` cmdline token is present.
+    # Emitted AFTER the _install walk so /usr already exists (/usr/share is not
+    # part of the busybox install tree).
+    cat <<EOF
+dir /usr/share 0755 0 0
+dir /usr/share/udhcpc 0755 0 0
+file /usr/share/udhcpc/default.script $SCRIPT_DIR/udhcpc.script 0755 0 0
+EOF
 }
 
 pack_busybox() {
