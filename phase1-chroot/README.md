@@ -185,6 +185,14 @@ qemu-user-static), **`manager=none`** (schroot/nspawn need root), backend
 `debootstrap`/`host-copy` (dnf needs root). State lives under `$XDG_STATE_HOME`,
 and the rootless flag is recorded in the manifest so `enter`/`destroy` reproduce it.
 
+> **glibc skew on rootless `enter`.** fakechroot runs *host* binaries against the
+> *guest's* libraries, so rootless `enter` needs the **guest glibc ≥ the host's**.
+> Entering an older debootstrap guest from a newer host (e.g. bookworm/glibc-2.36
+> from an Ubuntu-24.04/glibc-2.39 host) fails with `GLIBC_2.xx not found`. Build a
+> guest whose release matches/exceeds the host, or use the `host-copy` backend
+> (its tree carries the host's own libc → no skew). Root-mode `enter` is unaffected.
+> *(Rootless `create` is fine either way — it never chroots into the guest.)*
+
 ## Other options
 
 - **`--keep-cache`** — reuse a persistent package download cache across builds

@@ -504,11 +504,126 @@ lc destroy bm-test --force
 If you ever see leftover mounts, `lc destroy <name>` (or running `enter`
 then exiting cleanly) will clear them.
 
-## 13. Run the automated suite to mechanise the rest
+## 13. Rootless mode — create + enter without root (`--rootless`)
+
+Needs `fakechroot` + `fakeroot` on the host
+(`sudo apt-get install -y fakechroot fakeroot`). **None of these steps use sudo.**
+State lands under `~/.local/state/lab-create` (XDG), not `/var`.
+
+```bash
+lc create --rootless --backend debootstrap --distro debian --suite bookworm \
+          --arch x86_64 --target ~/chroots/bk --name bk
+# → builds under: fakechroot fakeroot debootstrap --variant=fakechroot …
+#   (verified: full bookworm base system installs with no root)
+
+# the manifest records the rootless flag (so enter/destroy reproduce it):
+grep rootless ~/.local/state/lab-create/chroots/bk.toml        # → rootless = "true"
+lc list --json | jq '.chroots[] | select(.name=="bk") | {rootless, target}'
+lc destroy bk --force                    # rootless destroy — no sudo, no mounts
+```
+
+> **⚠️ Rootless `enter` and glibc skew.** `fakechroot` runs *host* binaries
+> (`chroot`, `libfakeroot`) but resolves their libraries from inside the guest
+> tree, so the **guest's glibc must be ≥ the host's**. Entering an *older* guest
+> from a newer host (e.g. a Debian bookworm = glibc 2.36 chroot on an Ubuntu
+> 24.04 = glibc 2.39 host) fails with `version 'GLIBC_2.xx' not found`. Options:
+> bootstrap a guest whose release matches/exceeds the host, or use the
+> **`host-copy`** backend below (its tree carries the host's own libc, so there
+> is never any skew). Root-mode `enter` (with real bind-mounts) is unaffected.
+
+Rootless `host-copy` + `enter` — copies host binaries (host glibc → no skew),
+so it round-trips cleanly under fakechroot+fakeroot:
+
+```bash
+lc create --rootless --backend host-copy \
+          --binaries /usr/bin/id,/bin/ls,/usr/bin/uname --target ~/chroots/hc --name hc
+lc enter hc -- /usr/bin/uname -a    # → Linux … x86_64 (host binary, in the chroot)
+lc enter hc -- /usr/bin/id          # → uid=0 gid=0 groups=0  (faked by fakeroot)
+lc destroy hc --force               # tree + manifest removed, no sudo
+```
+
+Gating — these die with a clear message *before* any build:
+```bash
+lc create --rootless --backend dnf --distro rocky --suite 9 --arch x86_64 --target ~/x
+# → --rootless supports backend=debootstrap or host-copy (… dnf needs root)
+lc create --rootless --backend debootstrap --distro debian --suite bookworm --arch aarch64 --target ~/x
+# → --rootless is native-arch only (… foreign-arch needs root + qemu-user-static)
+lc create --rootless --manager schroot --backend debootstrap --distro debian --suite bookworm --arch x86_64 --target ~/x
+# → --rootless requires manager=none (schroot/nspawn need root)
+```
+
+## 14. nspawn advanced keys — `network` / `bind_ro` / `capabilities` (needs root)
+
+```bash
+cat > /tmp/nspawn-adv.toml <<'EOF'
+[[chroot]]
+name    = "nsadv"
+backend = "debootstrap"
+distro  = "debian"
+suite   = "bookworm"
+arch    = "x86_64"
+target  = "/var/lib/machines/nsadv"
+manager = "nspawn"
+
+[chroot.nspawn]
+boot         = false
+network      = "veth"                           # host | veth | none/private | <bridge>
+bind_ro      = ["/etc/hostname", "/usr/share/misc"]
+capabilities = ["CAP_NET_ADMIN", "CAP_SYS_PTRACE"]
+EOF
+
+sudo lc create --config /tmp/nspawn-adv.toml
+
+# the advanced keys are persisted in the manifest …
+sudo grep -E 'nspawn_(network|bind_ro|capabilities)' /var/lib/lab-create/chroots/nsadv.toml
+#   nspawn_network = "veth"
+#   nspawn_bind_ro = ["/etc/hostname","/usr/share/misc"]
+#   nspawn_capabilities = ["CAP_NET_ADMIN","CAP_SYS_PTRACE"]
+
+# … and applied at enter (→ --network-veth, --bind-ro=…, --capability=…):
+sudo lc enter nsadv -- sh -c 'ip -o link | grep host0; mount | grep -E "/etc/hostname|/usr/share/misc"'
+#   → a host0@… veth NIC, and the two paths as read-only bind mounts
+
+sudo lc destroy nsadv --force
+```
+
+## 15. `--keep-cache` — persistent package download cache
+
+```bash
+rm -rf ~/.cache/lab-create/debootstrap
+
+# first build populates the shared cache (debootstrap stores .debs flat in it) …
+lc create --rootless --keep-cache --backend debootstrap --distro debian \
+          --suite bookworm --arch x86_64 --target ~/chroots/kc1 --name kc1
+ls ~/.cache/lab-create/debootstrap/*.deb | wc -l        # → ~160 cached .debs
+
+# … the second build reuses it — debootstrap validates from cache, no re-download:
+time lc create --rootless --keep-cache --backend debootstrap --distro debian \
+          --suite bookworm --arch x86_64 --target ~/chroots/kc2 --name kc2
+# verified: ~164 "Validating <pkg>" cache hits vs ~2 "Retrieving" → ~28s, not minutes
+
+lc destroy kc1 --force; lc destroy kc2 --force
+```
+
+For a **root dnf** build, `--keep-cache` points dnf at `$LAB_CACHE_DIR/dnf` with
+`keepcache=1`, so downloaded rpms persist there instead of bloating the chroot.
+
+## 16. `list --json`
+
+```bash
+lc list --json | jq                       # → {schema_version:1, chroots:[…]}
+lc list --json --lab demo | jq '.chroots | length'   # filtered to one lab
+```
+
+## 17. Run the automated suite to mechanise the rest
 
 ```bash
 sudo phase1-chroot/tests/run-all.sh
 ```
+
+The network-free unit tests (`test-list-json`, `test-nspawn-args`,
+`test-rootless-gating`) run without root or network and exercise §13/§14/§16
+logic directly.
 
 Each test self-skips (exit 77) if its preconditions aren't met. Expect:
 
