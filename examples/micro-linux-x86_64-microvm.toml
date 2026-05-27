@@ -1,0 +1,42 @@
+# micro-linux — x86_64 from-source distro on QEMU's *microvm* machine.
+#
+# Same artifacts as micro-linux-x86_64.toml, but booted on `-machine microvm`
+# instead of q35 — QEMU's minimal, PCI-less, ACPI-light machine type built for
+# fast boot (the QEMU analogue of Firecracker).  The only difference from its
+# q35 twin is `microvm = true`; lab-vm.sh does the rest.
+#
+# Build first (rootless):
+#   micro-linux/mlbuild.sh all --arch x86_64
+# Then:
+#   phase2-qemu-vm/lab-vm.sh create --config examples/micro-linux-x86_64-microvm.toml
+#   phase2-qemu-vm/lab-vm.sh start  micro-linux-x86_64-microvm
+# Log in as root / micro (creds advertised in the /etc/issue banner).
+#
+# What `microvm = true` changes (see lab-vm.sh build_qemu_argv):
+#   machine — `-machine microvm,pic=off,pit=off,rtc=off` (no q35, no PCIe).
+#   firmware— qboot (`-bios`), a ~kilobyte BIOS, instead of OVMF/UEFI pflash.
+#             Under direct -kernel boot QEMU bypasses it anyway.
+#   devices — virtio rides the *mmio* bus (`virtio-*-device`), not PCI.  This is
+#             why the kernel must carry CONFIG_VIRTIO_MMIO — mlbuild.sh now bakes
+#             it into every micro-linux kernel, so one kernel boots q35 AND microvm.
+#   console — still ttyS0: microvm keeps a legacy 16550 (isa-serial) UART.
+#
+# Notes:
+#   append  — console only; a cpio initramfs needs NO root=.
+#   network — false (plan §8 / AUDIT F1).  Heads-up: lab-vm.sh still attaches a
+#             virtio-net device on the kernel+initrd path, but the guest kernel
+#             never brings it up, so there is no live network surface.  When you
+#             do wire one up later, it now rides virtio-mmio with no extra config.
+
+[[vm]]
+name    = "micro-linux-x86_64-microvm"
+backend = "kernel+initrd"
+arch    = "x86_64"
+memory  = "256M"
+cpus    = 1
+microvm = true
+# EDIT these to your checkout if it is not at this path:
+kernel  = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/micro-linux/out/x86_64/kernel"
+initrd  = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/micro-linux/out/x86_64/initramfs.cpio.gz"
+append  = "console=ttyS0"
+network = false

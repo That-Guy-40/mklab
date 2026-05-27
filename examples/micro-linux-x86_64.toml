@@ -23,7 +23,9 @@
 #   network — false: console login is root / micro (a deliberately weak,
 #             advertised lab credential) and there's no listening service, so
 #             keep it off the network (plan §8 / AUDIT F1).
-#   Boot host needs: qemu-system-x86 + ovmf (lab-vm.sh sets -bios for x86_64).
+#   Boot host needs: qemu-system-x86 + ovmf (lab-vm.sh boots this on q35 via
+#             OVMF pflash).  For the leaner 'microvm' machine instead, see
+#             micro-linux-x86_64-microvm.toml.
 
 [[vm]]
 name    = "micro-linux-x86_64"

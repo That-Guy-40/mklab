@@ -1,0 +1,43 @@
+# micro-linux — aarch64 from-source distro, microvm-style.
+#
+# The arm64 twin of micro-linux-x86_64-microvm.toml.  Important: QEMU has NO
+# `microvm` machine for arm — that machine type is x86-only.  So on aarch64,
+# `microvm = true` means a *minimized* `virt`: the same fast, virtio-mmio,
+# direct -kernel boot, but with NO UEFI firmware at all (plain `virt` boots a
+# -kernel directly; the AAVMF/qemu-efi-aarch64 pflash the q35-equivalent twin
+# needs is simply not loaded here).
+#
+# On an x86_64 host this runs under TCG emulation — slower (minutes to the login
+# prompt) but needs no arm hardware, like vm-debian-aarch64.toml.
+#
+# Build first (rootless):
+#   micro-linux/mlbuild.sh all --arch aarch64
+# Then:
+#   phase2-qemu-vm/lab-vm.sh create --config examples/micro-linux-aarch64-microvm.toml
+#   phase2-qemu-vm/lab-vm.sh start  micro-linux-aarch64-microvm
+# Log in as root / micro (creds advertised in the /etc/issue banner).
+#
+# Notes:
+#   append  — console=ttyAMA0 : arm64 `virt` uses the PL011 UART (not 8250).
+#             A cpio initramfs needs NO root=.
+#   devices — virtio rides the mmio bus (`virtio-*-device`); the kernel carries
+#             CONFIG_VIRTIO_MMIO (already in arm64 defconfig, and mlbuild.sh
+#             asserts it on every arch).  QEMU describes the mmio nodes in the
+#             device tree it generates for the direct -kernel boot.
+#   firmware— none.  Unlike micro-linux-aarch64.toml, this does NOT need
+#             qemu-efi-aarch64 — boot host only needs qemu-system-arm.
+#   network — false (plan §8 / AUDIT F1); see the x86_64-microvm twin's note on
+#             the always-attached-but-unconfigured NIC.
+
+[[vm]]
+name    = "micro-linux-aarch64-microvm"
+backend = "kernel+initrd"
+arch    = "aarch64"
+memory  = "256M"
+cpus    = 1
+microvm = true
+# EDIT these to your checkout if it is not at this path:
+kernel  = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/micro-linux/out/aarch64/kernel"
+initrd  = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/micro-linux/out/aarch64/initramfs.cpio.gz"
+append  = "console=ttyAMA0"
+network = false
