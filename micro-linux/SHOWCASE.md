@@ -106,7 +106,9 @@ udhcpc: eth0 bound to 10.0.2.15 (gw 10.0.2.2, dns 10.0.2.3)
 
 It's **opt-in**: `/init` only touches the network when the kernel cmdline carries
 the `mllab.net` token (the demo spec sets `append = "... mllab.net=1"`). Every
-other spec stays network-down. See
+other spec stays network-down. The riscv64 / u-root track works a bit differently
+— it boots to an interactive shell and ships u-root's own `dhclient`, so you run
+`dhclient -ipv6=false eth0` yourself. See
 [`../examples/micro_linux_dhcp_lease/`](../examples/micro_linux_dhcp_lease/) — and
 mind the AUDIT-F1 caveat there (root has a well-known password; don't bridge it to
 an untrusted network).

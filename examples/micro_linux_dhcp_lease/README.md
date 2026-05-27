@@ -19,7 +19,9 @@ phase2-qemu-vm/lab-vm.sh console micro-linux-x86_64-dhcp     # attach the serial
 ```
 
 The arm64 twin is `micro-linux-aarch64-dhcp.toml` (build `--arch aarch64`; runs
-under slow TCG on an x86 host).
+under slow TCG on an x86 host). For the riscv64 / u-root track, see
+"[riscv64: run dhclient yourself](#riscv64-u-root-run-dhclient-yourself)" below —
+it works differently.
 
 On the console you'll see the network warning, then udhcpc binding eth0:
 
@@ -60,6 +62,32 @@ script:
    up `eth0`, runs `udhcpc` in the background, and prints the warning below. With
    the token absent — i.e. every *other* micro-linux spec — `/init` is byte-for-byte
    the network-down behavior it had before, so the default posture is unchanged.
+
+## riscv64 (u-root): run dhclient yourself
+
+The riscv64 "faithful track" runs the u-root (pure-Go) userspace instead of
+BusyBox. It boots to an **interactive shell** (no getty/login) and ships its own
+DHCP client, `dhclient` — so there's no udhcpc, no lease script, and no
+`mllab.net` token. Networking stays off until you ask, which fits u-root's
+interactive nature: just run the client at the shell.
+
+```bash
+micro-linux/mlbuild.sh all --arch riscv64
+phase2-qemu-vm/lab-vm.sh create --config examples/micro_linux_dhcp_lease/micro-linux-riscv64-dhcp.toml
+phase2-qemu-vm/lab-vm.sh start  micro-linux-riscv64-dhcp     # TCG — slow
+phase2-qemu-vm/lab-vm.sh console micro-linux-riscv64-dhcp
+```
+
+```
+> dhclient -v -ipv6=false eth0           # -ipv6=false skips the v6 SOLICIT slirp ignores
+... received message: DHCPv4(... msg_type=ACK, your_ip=10.0.2.15, server_ip=10.0.2.2)
+Configured eth0 with IPv4 DHCP Lease IP 10.0.2.15/24
+> ip addr show eth0                      # → inet 10.0.2.15/24
+> ip route                               # → default via 10.0.2.2
+```
+
+(riscv `virt` puts virtio-net on **PCI**, handled by the kernel's
+`CONFIG_VIRTIO_PCI`; `dhclient`/`ip` are in u-root's default `cmds/core/*` set.)
 
 ## ⚠️ Security (AUDIT F1)
 

@@ -1,0 +1,35 @@
+# micro-linux — the DHCP networking demo, riscv64 "faithful track".
+#
+# Unlike the BusyBox twins, riscv64 runs the u-root (pure-Go) userspace, which
+# boots to an *interactive shell* (no getty/login) and ships its own DHCP client,
+# `dhclient` — so there's no udhcpc and no `mllab.net` auto-bring-up token here.
+# Networking stays off until you ask for it: at the u-root shell, run dhclient
+# yourself.  (QEMU still attaches the NIC on the kernel+initrd path; riscv `virt`
+# puts virtio-net on PCI, which the kernel's CONFIG_VIRTIO_PCI handles.)
+#
+# Build first (rootless; needs the riscv/Go builder stage):
+#   micro-linux/mlbuild.sh all --arch riscv64
+# Then (runs under TCG on an x86_64 host — slow):
+#   phase2-qemu-vm/lab-vm.sh create --config examples/micro_linux_dhcp_lease/micro-linux-riscv64-dhcp.toml
+#   phase2-qemu-vm/lab-vm.sh start  micro-linux-riscv64-dhcp
+#
+# At the u-root shell (-ipv6=false skips the v6 SOLICIT that slirp won't answer):
+#   > dhclient -v -ipv6=false eth0   # grabs QEMU's slirp lease (10.0.2.15/24)
+#   > ip addr show eth0              # → inet 10.0.2.15/24
+#   > ip route                       # → default via 10.0.2.2
+#
+# SECURITY (AUDIT F1): this is a throwaway lab VM with no auth on the console.
+# user-mode slirp is loopback/NAT only, but don't bridge it to an untrusted
+# network.  See ./README.md.
+
+[[vm]]
+name    = "micro-linux-riscv64-dhcp"
+backend = "kernel+initrd"
+arch    = "riscv64"
+memory  = "256M"
+cpus    = 1
+# EDIT these to your checkout if it is not at this path:
+kernel  = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/micro-linux/out/riscv64/kernel"
+initrd  = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/micro-linux/out/riscv64/initramfs.cpio"
+append  = "console=ttyS0"
+network = true

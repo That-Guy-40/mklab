@@ -90,7 +90,7 @@ microvm mmio bus as well as on PCI.
 
 | Dir | What you get |
 |---|---|
-| [`micro_linux_dhcp_lease/`](micro_linux_dhcp_lease/) | The networking demo: the from-source distro brings up a virtio NIC and pulls a **DHCP lease** (opt-in via the `mllab.net` cmdline token; ⚠️ root has a well-known password — see its README + AUDIT F1). |
+| [`micro_linux_dhcp_lease/`](micro_linux_dhcp_lease/) | The networking demo: the from-source distro pulls a **DHCP lease** over a virtio NIC. x86_64/aarch64 auto-bring-up via BusyBox `udhcpc` (opt-in `mllab.net` token); riscv64 runs u-root's `dhclient` at the shell. ⚠️ root has a well-known password — see its README + AUDIT F1. |
 
 ## 🌉 Cross-phase bridges — build once, run elsewhere
 
