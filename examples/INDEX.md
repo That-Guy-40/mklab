@@ -88,6 +88,10 @@ The same compiled kernel boots both the plain and `-microvm` twins: `mlbuild.sh`
 bakes `CONFIG_VIRTIO_MMIO` into every micro-linux kernel, so virtio works on the
 microvm mmio bus as well as on PCI.
 
+| Dir | What you get |
+|---|---|
+| [`micro_linux_dhcp_lease/`](micro_linux_dhcp_lease/) | The networking demo: the from-source distro brings up a virtio NIC and pulls a **DHCP lease** (opt-in via the `mllab.net` cmdline token; ⚠️ root has a well-known password — see its README + AUDIT F1). |
+
 ## 🌉 Cross-phase bridges — build once, run elsewhere
 
 Take a Phase-1 chroot and turn it into a VM or a container image. Build the

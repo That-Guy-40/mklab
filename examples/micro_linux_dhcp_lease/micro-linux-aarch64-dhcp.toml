@@ -1,0 +1,28 @@
+# micro-linux — the DHCP networking demo, arm64 twin.
+#
+# Same as micro-linux-x86_64-dhcp.toml but for aarch64: a minimized, firmware-free
+# `virt` (QEMU has no arm `microvm` machine) with virtio-net on the mmio bus.
+# On an x86_64 host this runs under TCG emulation — slow (minutes to login) but
+# needs no arm hardware.
+#
+# Build first (rootless), then create + start:
+#   micro-linux/mlbuild.sh all --arch aarch64
+#   phase2-qemu-vm/lab-vm.sh create --config examples/micro_linux_dhcp_lease/micro-linux-aarch64-dhcp.toml
+#   phase2-qemu-vm/lab-vm.sh start  micro-linux-aarch64-dhcp
+#
+# After login as root / micro, eth0 holds the slirp lease (10.0.2.15/24, gw
+# 10.0.2.2).  See ./README.md and the AUDIT-F1 caveat there: networking is opt-in
+# (the `mllab.net` cmdline token) precisely because root has a well-known password.
+
+[[vm]]
+name    = "micro-linux-aarch64-dhcp"
+backend = "kernel+initrd"
+arch    = "aarch64"
+memory  = "256M"
+cpus    = 1
+microvm = true          # minimized virt + virtio-mmio (no arm microvm machine exists)
+# EDIT these to your checkout if it is not at this path:
+kernel  = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/micro-linux/out/aarch64/kernel"
+initrd  = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/micro-linux/out/aarch64/initramfs.cpio.gz"
+append  = "console=ttyAMA0 mllab.net=1"
+network = true

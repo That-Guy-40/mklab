@@ -112,8 +112,10 @@ micro-linux kernel, so one universal kernel boots on `q35`/`virt` *and* on micro
   `qemu-efi-aarch64`).
 - **`network = false`, honestly stated.** No service listens, and the guest never
   configures a NIC — but on the `kernel+initrd` path QEMU does still *attach* a
-  virtio-net device. It simply rides the mmio bus now, so the day you enable
-  `udhcpc` it works with no extra kernel config.
+  virtio-net device. It simply rides the mmio bus now, so enabling DHCP needs no
+  extra kernel config: see the opt-in
+  [`examples/micro_linux_dhcp_lease/`](../examples/micro_linux_dhcp_lease/) demo,
+  where `/init` runs `udhcpc` and eth0 picks up a lease over virtio-mmio.
 
 ### What `mlbuild.sh` does, by hand
 

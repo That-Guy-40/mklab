@@ -1,0 +1,39 @@
+# micro-linux — the networking demo: a from-source micro-distro that pulls a
+# DHCP lease over a virtio NIC, booted on QEMU's real microvm machine.
+#
+# This is the same kernel + static-BusyBox initramfs as the other micro-linux
+# specs, with two differences:
+#   network = true                 → intent flag (the NIC is attached regardless
+#                                     on the kernel+initrd path; this documents it)
+#   append  = "... mllab.net=1"    → the opt-in token /init looks for: it brings
+#                                     up eth0 and runs udhcpc at boot, then prints
+#                                     the AUDIT-F1 network-exposure warning.
+#
+# Build first (rootless), then create + start:
+#   micro-linux/mlbuild.sh all --arch x86_64
+#   phase2-qemu-vm/lab-vm.sh create --config examples/micro_linux_dhcp_lease/micro-linux-x86_64-dhcp.toml
+#   phase2-qemu-vm/lab-vm.sh start  micro-linux-x86_64-dhcp
+#
+# Log in as root / micro.  eth0 will already hold QEMU's user-mode (slirp) lease:
+#   ~ # ifconfig eth0        → inet addr:10.0.2.15  Mask:255.255.255.0
+#   ~ # ip route             → default via 10.0.2.2 dev eth0
+#   ~ # cat /etc/resolv.conf → nameserver 10.0.2.3
+#
+# SECURITY (AUDIT F1): networking is OFF in every other micro-linux spec for a
+# reason — root logs in with the well-known password `micro` and nothing
+# authenticates the NIC.  user-mode slirp is loopback/NAT only (no inbound route
+# without an explicit hostfwd), but still: this is a throwaway lab VM.  Do not
+# bridge it to an untrusted network.  See ../README.md in this directory.
+
+[[vm]]
+name    = "micro-linux-x86_64-dhcp"
+backend = "kernel+initrd"
+arch    = "x86_64"
+memory  = "256M"
+cpus    = 1
+microvm = true          # DHCP rides virtio-net over the mmio bus on -machine microvm
+# EDIT these to your checkout if it is not at this path:
+kernel  = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/micro-linux/out/x86_64/kernel"
+initrd  = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/micro-linux/out/x86_64/initramfs.cpio.gz"
+append  = "console=ttyS0 mllab.net=1"
+network = true
