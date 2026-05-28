@@ -1,0 +1,45 @@
+# AlmaLinux 9 zero-touch UEFI PXE install — x86_64, no iPXE ROM disk.
+#
+# Uses backend = "pxe-install": OVMF (UEFI firmware) boots from QEMU slirp
+# TFTP, which serves ipxe.efi from pxe_dir.  iPXE fetches boot.ipxe over HTTP,
+# which downloads Anaconda and triggers the kickstart.  After install, OVMF
+# boots from the EFI partition on vda — no iPXE involved on subsequent boots.
+#
+# Compared to vm-almalinux-pxe-install.toml (BIOS):
+#   - No ipxe.qcow2 (no second disk, no boot-loop trick)
+#   - OVMF (UEFI) is selected automatically by lab-vm.sh for x86_64
+#   - Kickstart: examples/almalinux-uefi-zerotouch.ks (bootloader --location=boot)
+#
+# For Secure Boot: add secure_boot = true and use --sign --use-snakeoil
+# when building iPXE.
+#
+# Prerequisites:
+#   1. netboot/fetch-almalinux-installer.sh  (downloads vmlinuz + initrd.img)
+#   2. netboot/build-ipxe.sh --server http://10.0.2.2:8181 \
+#          --kernel-path /vmlinuz --initrd-path /initrd.img \
+#          --append '... inst.ks=http://10.0.2.2:8181/ks/{MAC}.ks ...'
+#      # produces ipxe.efi  (and ipxe.usb, ipxe.qcow2 — not used here)
+#   3. netboot/gen-almalinux-ks.sh --mac 52:54:00:UE:FI:01 \
+#          --template examples/almalinux-uefi-zerotouch.ks [--default]
+#   4. phase4-podman/lab-podman.sh up --config examples/podman-netboot-server.toml
+#
+#   5. phase2-qemu-vm/lab-vm.sh create --config examples/vm-almalinux-uefi-pxe.toml
+#      phase2-qemu-vm/lab-vm.sh start  almalinux-uefi-pxe   # walk away ~10-15 min
+#      phase2-qemu-vm/lab-vm.sh ssh    almalinux-uefi-pxe   # login: lab / lab
+#
+# Update /home/sqs to your $HOME if different.
+
+[[vm]]
+name           = "almalinux-uefi-pxe"
+backend        = "pxe-install"           # blank disk only; UEFI PXE via slirp TFTP
+install_target = "20G"                   # blank EFI-capable disk
+mac            = "52:54:00:UE:FI:01"    # pinned MAC → ks/52-54-00-ue-fi-01.ks
+arch           = "x86_64"
+memory         = "2560M"
+cpus           = 2
+cloud_init     = false
+pxe_dir        = "/home/sqs/netboot"    # QEMU slirp TFTP root
+pxe_bootfile   = "ipxe.efi"             # UEFI EFI binary
+
+# Uncomment for Secure Boot (requires signed ipxe.efi):
+# secure_boot = true

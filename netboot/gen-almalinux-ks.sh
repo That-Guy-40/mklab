@@ -15,6 +15,7 @@
 #
 # Options:
 #   --mac       <MAC>   MAC address (colon-separated, e.g. 52:54:00:AA:BB:CC)
+#   --default           also write ks/default.ks (fallback for un-enumerated MACs)
 #   --template  <file>  kickstart template path
 #                       (default: examples/almalinux-zerotouch.ks relative to
 #                        the script directory, or CWD if not found there)
@@ -72,6 +73,7 @@ and placed in <out>/ks/ so nginx can serve it at /ks/<mac:hexhyp>.ks.
 
 Options:
   --mac       MAC    MAC address (colon-separated, e.g. 52:54:00:AA:BB:CC)  [required]
+  --default          also write ks/default.ks (nginx fallback for un-enumerated MACs)
   --template  FILE   kickstart template  (default: examples/almalinux-zerotouch.ks)
   --out       DIR    output directory for ks/ subdir  (default: ~/netboot)
   --help             show this help and exit
@@ -90,6 +92,7 @@ EOF
 
 # ─── Defaults ───────────────────────────────────────────────────────────────
 mac_raw=""
+write_default=""
 # Look for the template relative to the script first, then fall back to CWD.
 default_template="${SCRIPT_DIR}/../examples/almalinux-zerotouch.ks"
 template=""
@@ -99,6 +102,7 @@ out_dir="${LAB_NETBOOT_DIR:-$HOME/netboot}"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --mac)      shift; mac_raw="${1:?--mac requires a MAC address}";   shift ;;
+        --default)  write_default=1; shift ;;
         --template) shift; template="${1:?--template requires a path}";    shift ;;
         --out)      shift; out_dir="${1:?--out requires a path}";          shift ;;
         --help|-h) usage ;;
@@ -155,6 +159,21 @@ log_info "serve this file with:"
 log_info "  phase4-podman/lab-podman.sh up --config examples/podman-netboot-server.toml"
 log_info "iPXE will fetch it at:"
 log_info "  http://<server>/ks/${mac_hexhyp}.ks"
+
+# Optionally write ks/default.ks — nginx fallback for un-enumerated MACs.
+# Safety note: this installs ANY unknown machine that PXE-boots.  Disable
+# or remove default.ks when you only want known MACs to install.
+if [[ -n "$write_default" ]]; then
+    default_ks="${ks_dir}/default.ks"
+    cp "$template" "$default_ks"
+    log_info "default.ks written: ${default_ks}"
+    log_info "  To serve as an nginx fallback, add to the nginx server{} block:"
+    log_info "    location /ks/ {"
+    log_info "      root $(dirname "$ks_dir");"
+    log_info "      try_files \$uri /ks/default.ks =404;"
+    log_info "    }"
+    log_info "  (see examples/nginx-ks-fallback.conf for a ready-to-include snippet)"
+fi
 
 # Print the output path on stdout so callers can capture it.
 printf '%s\n' "$out_file"

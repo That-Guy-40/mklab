@@ -281,20 +281,35 @@ from USB. Same flow; only the server URL and MACs change.
 
 ---
 
-## 11. Open items / future work
+## 11. v0.2 additions (done)
+
+- **default.ks fallback:** `gen-almalinux-ks.sh --default` writes
+  `ks/default.ks` (same content as the per-MAC file).  `examples/nginx-ks-fallback.conf`
+  provides a `try_files $uri /ks/default.ks =404;` nginx snippet to enable the
+  fallback.  Safety note in both: enabling default.ks installs *any* unknown
+  machine — only use on an isolated lab network.
+- **aarch64 AlmaLinux:** `fetch-almalinux-installer.sh --arch aarch64` already
+  works (AlmaLinux publishes the aarch64 pxeboot tree).  Added:
+  `examples/almalinux-aarch64-zerotouch.ks` (console=ttyAMA0, aarch64 mirrors),
+  `examples/vm-almalinux-aarch64-pxe.toml` (arch=aarch64, TCG, AAVMF auto-selected).
+  Build with `netboot/build-ipxe.sh --arch aarch64`.
+- **UEFI / Secure Boot targets:**
+  - New `pxe-install` backend in `lab-vm.sh`: creates a blank install-target disk
+    only (no iPXE ROM disk); OVMF network-boots directly via QEMU slirp TFTP.
+    After Anaconda installs, OVMF boots from the EFI partition — clean UEFI path.
+  - `examples/almalinux-uefi-zerotouch.ks` (bootloader --location=boot, EFI autopart).
+  - `examples/vm-almalinux-uefi-pxe.toml` (backend=pxe-install, pxe_dir, pxe_bootfile=ipxe.efi).
+  - Secure Boot: `secure_boot = true` in TOML + `netboot/sign-ipxe.sh --use-snakeoil`.
+- **Phase 6 TUI surfacing:** `lab_tui/backends/vm.py` now classifies VMs with
+  `backend=pxe-install` or `install_target` as `type="pxe-install"`.  These
+  appear with a distinct label in the resource tree and expose a `_ks_file_hint`
+  (e.g. `ks/52-54-00-al-ma-01.ks`) in the detail view.  The `almalinux-pxe-lab.toml`
+  surfaces as a single correlated lab (Phase 4 nginx + Phase 2 pxe-install VM).
+
+## Open items
 
 - **inst.stage2 pinning / proxy:** optionally cache stage2 + a thin local repo
-  proxy for flaky-network installs (the "full local mirror" variant we
-  deferred).
-- **UEFI / Secure Boot targets:** use `ipxe.efi` + an OVMF firmware path in
-  Phase 2; sign with a MOK for Secure Boot. (Phase 2 already resolves OVMF for
-  aarch64; x86_64 UEFI would be a small addition.)
-- **aarch64 AlmaLinux:** fetch `images/pxeboot` for `aarch64` and build
-  `ipxe.efi --arch aarch64`; AlmaLinux publishes aarch64 trees.
-- **Phase 6 TUI:** the unified `almalinux-pxe-lab.toml` should surface as one
-  correlated lab once the example lands.
-- **default.ks fallback:** ship a generic kickstart for un-enumerated MACs so a
-  surprise host still installs (or deliberately 404s for safety).
+  proxy for flaky-network installs (the "full local mirror" variant we deferred).
 
 ---
 

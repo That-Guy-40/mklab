@@ -1,0 +1,52 @@
+# AlmaLinux 9 aarch64 zero-touch PXE install via QEMU TCG emulation.
+#
+# aarch64 AlmaLinux uses the exact same two-disk boot-loop as x86_64:
+#   disk0 = blank 20 GB install target (vda, bootindex=0)
+#   disk1 = iPXE EFI ROM disk (vdb, bootindex=1, fallback on first boot)
+#
+# Key differences from vm-almalinux-pxe-install.toml:
+#   - arch = "aarch64"              → QEMU virt machine + AAVMF UEFI firmware
+#   - image = ipxe-aarch64.qcow2   → aarch64 iPXE EFI built with --arch aarch64
+#   - memory = "3G"                 → TCG needs more headroom than KVM
+#   - console = ttyAMA0             → embedded in the inst.ks= kickstart URL
+#
+# Prerequisites (run in order):
+#   1. netboot/fetch-almalinux-installer.sh --arch aarch64
+#      # -> ~/netboot/vmlinuz  ~/netboot/initrd.img
+#
+#   2. netboot/gen-almalinux-ks.sh \
+#          --mac 52:54:00:AA:64:01 \
+#          --template examples/almalinux-aarch64-zerotouch.ks
+#      # -> ~/netboot/ks/52-54-00-aa-64-01.ks
+#
+#   3. netboot/build-ipxe.sh --arch aarch64 \
+#          --server http://10.0.2.2:8181 \
+#          --kernel-path /vmlinuz --initrd-path /initrd.img \
+#          --append 'inst.repo=https://repo.almalinux.org/almalinux/9/BaseOS/aarch64/os/ inst.ks=http://10.0.2.2:8181/ks/{MAC}.ks inst.text console=ttyAMA0 ip=dhcp'
+#      # -> ~/netboot/ipxe.efi  (aarch64 EFI binary only)
+#      #    qemu-img convert ipxe.efi → ipxe-aarch64.qcow2  (see note below)
+#
+#      NOTE: aarch64 iPXE produces only ipxe.efi (no ipxe.usb).  Convert it:
+#        qemu-img create -f qcow2 ~/netboot/ipxe-aarch64.qcow2 4M
+#        # Then use it as an EFI ROM in the second drive.
+#        # Alternatively: use --pxe-dir + --pxe-bootfile with AAVMF for TFTP boot.
+#
+#   4. phase4-podman/lab-podman.sh up --config examples/podman-netboot-server.toml
+#
+#   5. phase2-qemu-vm/lab-vm.sh create --config examples/vm-almalinux-aarch64-pxe.toml
+#      phase2-qemu-vm/lab-vm.sh start  almalinux-aarch64-pxe   # TCG, ~20-40 min
+#      phase2-qemu-vm/lab-vm.sh ssh    almalinux-aarch64-pxe   # login: lab / lab
+#
+# Update /home/sqs to your $HOME.
+
+[[vm]]
+name           = "almalinux-aarch64-pxe"
+backend        = "disk-image"
+image          = "/home/sqs/netboot/ipxe-aarch64.qcow2"   # aarch64 iPXE EFI ROM
+install_target = "20G"
+mac            = "52:54:00:AA:64:01"
+arch           = "aarch64"
+memory         = "3G"       # TCG emulation; 2G minimum for Anaconda, 3G safer
+cpus           = 2
+network        = true
+cloud_init     = false

@@ -79,15 +79,26 @@ class VMBackend(BackendRunner):
                 ["tail", "-n", "200", "-F", str(log_path)]
                 if log_path.is_file() else []
             )
+            # Classify: pxe-install VMs (AlmaLinux Anaconda target) get their
+            # own type tag so the TUI can show a distinct icon/label and surface
+            # the kickstart MAC association in the detail view.
+            backend_field = data.get("backend", "disk-image")
+            install_target = data.get("install_target", "")
+            vm_type = "pxe-install" if (backend_field == "pxe-install" or install_target) else "vm"
+            extra = {k: v for k, v in data.items() if k not in {"name", "lab"}}
+            # For pxe-install VMs, surface the kickstart MAC path hint.
+            if vm_type == "pxe-install" and data.get("mac"):
+                raw_mac = data["mac"]
+                mac_hexhyp = raw_mac.lower().replace(":", "-")
+                extra["_ks_file_hint"] = f"ks/{mac_hexhyp}.ks"
             out.append(Resource(
                 backend="vm",
                 name=data.get("name", vm_dir.name),
                 lab=this_lab,
                 svc=None,
-                type="vm",
+                type=vm_type,
                 status=status,
-                extra={k: v for k, v in data.items()
-                       if k not in {"name", "lab"}},
+                extra=extra,
                 spec_path=mp,
                 log_command=log_command,
             ))

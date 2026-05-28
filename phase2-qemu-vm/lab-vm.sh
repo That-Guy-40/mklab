@@ -1732,6 +1732,7 @@ validate_spec() {
   See PLAN.md Phase 2 and MANUAL_TESTING §X for the manual kernel+initrd
   workaround that works on any arch."
             ;;
+        pxe-install) ;;   # validated in create_one
         *) die "spec ($name) unknown backend: $backend" ;;
     esac
 
@@ -2114,6 +2115,21 @@ create_one() {
                     "$(jq -c '.runcmd   // []' <<<"$spec")" \
                     "$(spec_get "$spec" user_data)"
             fi
+            ;;
+        pxe-install)
+            # UEFI PXE install: a blank target disk only — no iPXE ROM overlay.
+            # OVMF network-boots directly via QEMU slirp TFTP (pxe_dir).
+            # After Anaconda installs and reboots, OVMF boots the EFI partition.
+            require_cmd qemu-img
+            [[ -n "$install_target_size" ]] \
+                || die "pxe-install backend requires install_target = \"<size>\" in the spec"
+            [[ -n "${pxe_dir:-}" ]] \
+                || die "pxe-install backend requires pxe_dir (or --pxe-dir CLI flag)"
+            install_target="$(vm_target "$name")"
+            log_info "creating blank install target: $install_target ($install_target_size)"
+            qemu-img create -f qcow2 "$install_target" "$install_target_size" >/dev/null
+            # disk stays empty — OVMF handles the boot via TFTP
+            disk=""
             ;;
         from-chroot)
             require_cmd qemu-img
@@ -2798,7 +2814,7 @@ USAGE
 
 CREATE OPTIONS
   --name      <vm-name>                  (required)
-  --backend   {disk-image|kernel+initrd|from-chroot}   (default: disk-image)
+  --backend   {disk-image|kernel+initrd|from-chroot|pxe-install}   (default: disk-image)
                                          from-chroot: turns a Phase-1 chroot tree (with a
                                          kernel installed inside) into a bootable qcow2.
                                          x86_64 BIOS only in v0.1.  Requires root.
