@@ -711,7 +711,29 @@ start_services_in_pod() {
             continue
         fi
         simage="$(spec_get "$svc" image)"
-        [[ -n "$simage" ]] || die "pod service '$sname' needs an image (no auto-build in pod mode v0.1)"
+        # Resolve image source (image | from_tarball | from_chroot | build) —
+        # same logic as plain-mode start_one_service; pod mode was a v0.1 gap.
+        if [[ -z "$simage" ]]; then
+            local tarball; tarball="$(spec_get "$svc" from_tarball)"
+            local chroot;  chroot="$(spec_get "$svc" from_chroot)"
+            local ctx;     ctx="$(spec_get "$svc" build)"
+            if [[ -n "$tarball" && -n "$chroot" ]]; then
+                die "pod service '$sname': from_tarball and from_chroot are mutually exclusive"
+            fi
+            if [[ -n "$tarball" ]]; then
+                simage="$(image_name_for "$lab" "$sname")"
+                backend_from_tarball "$tarball" "$simage"
+            elif [[ -n "$chroot" ]]; then
+                local un; un="$(spec_get "$svc" userns)"
+                simage="$(image_name_for "$lab" "$sname")"
+                backend_from_chroot "$chroot" "$simage" "${un:-keep-id}"
+            elif [[ -n "$ctx" ]]; then
+                simage="$(image_name_for "$lab" "$sname")"
+                backend_build "$ctx" "$simage" "${OPT_ARCH:-$(detect_host_arch)}"
+            else
+                die "pod service '$sname': specify one of image | from_tarball | from_chroot | build"
+            fi
+        fi
 
         local -a args=(
             --detach
@@ -1560,24 +1582,36 @@ cmd_export() {
             fi
             ;;
         compose)
-            # Synthesize compose YAML from the stored spec.toml.  Minimal
-            # v0.1: services + networks; no healthcheck / secrets.
+            # Synthesize compose YAML from the stored spec.toml.
+            # Emits: services (image, container_name, ports, environment,
+            # volumes, command, healthcheck, depends_on), networks, volumes.
             require_cmd jq
             local spec; spec="$(lab_dir "$lab")/spec.toml"
             [[ -r "$spec" ]] || die "no spec.toml for lab '$lab' (was it brought up via 'up --config'?)"
             local cfg; cfg="$(toml_to_json "$spec")"
+            # Pass 1: collect named volumes for top-level declaration.
+            local -A named_volumes=()
+            local svc_count; svc_count="$(jq -r '.service // [] | length' <<<"$cfg")"
+            local i svc sname
+            for ((i=0; i<svc_count; i++)); do
+                svc="$(jq -c --argjson i "$i" '.service[$i]' <<<"$cfg")"
+                local vol_src
+                while IFS= read -r vol_src; do
+                    [[ -z "$vol_src" ]] && continue
+                    case "$vol_src" in /*|./*|../*) : ;; *) named_volumes["$vol_src"]=1 ;; esac
+                done < <(jq -r '.volumes[]? | split(":")[0]' <<<"$svc")
+            done
             printf 'version: "3.9"\n'
             printf 'services:\n'
-            local svc_count; svc_count="$(jq -r '.service // [] | length' <<<"$cfg")"
-            local i svc sname simage
+            local simage
             for ((i=0; i<svc_count; i++)); do
                 svc="$(jq -c --argjson i "$i" '.service[$i]' <<<"$cfg")"
                 sname="$(spec_get "$svc" name)"
                 simage="$(spec_get "$svc" image)"
                 printf '  %s:\n' "$sname"
                 [[ -n "$simage" ]] && printf '    image: %s\n' "$simage"
-                local p
-                local first=1
+                printf '    container_name: %s\n' "$(container_name_for "$lab" "$sname")"
+                local p first=1
                 while IFS= read -r p; do
                     [[ -z "$p" ]] && continue
                     if (( first )); then printf '    ports:\n'; first=0; fi
@@ -1590,6 +1624,41 @@ cmd_export() {
                     if (( first )); then printf '    environment:\n'; first=0; fi
                     printf '      %s: "%s"\n' "$kk" "$vv"
                 done < <(jq -r '.environment // {} | to_entries[]? | "\(.key)\t\(.value)"' <<<"$svc")
+                first=1
+                local vol
+                while IFS= read -r vol; do
+                    [[ -z "$vol" ]] && continue
+                    if (( first )); then printf '    volumes:\n'; first=0; fi
+                    printf '      - "%s"\n' "$vol"
+                done < <(jq -r '.volumes[]?' <<<"$svc")
+                local cmdline; cmdline="$(jq -r '.command // empty' <<<"$svc")"
+                [[ -n "$cmdline" ]] && printf '    command: %s\n' "$cmdline"
+                # healthcheck — emitted when .healthcheck.cmd is set.
+                local hc_cmd; hc_cmd="$(jq -r '.healthcheck.cmd // ""' <<<"$svc")"
+                if [[ -n "$hc_cmd" ]]; then
+                    printf '    healthcheck:\n'
+                    printf '      test: ["CMD-SHELL", "%s"]\n' "$hc_cmd"
+                    local hc_interval; hc_interval="$(jq -r '.healthcheck.interval // ""' <<<"$svc")"
+                    local hc_timeout;  hc_timeout="$(jq -r  '.healthcheck.timeout  // ""' <<<"$svc")"
+                    local hc_retries;  hc_retries="$(jq -r  '.healthcheck.retries  // ""' <<<"$svc")"
+                    [[ -n "$hc_interval" ]] && printf '      interval: %s\n' "$hc_interval"
+                    [[ -n "$hc_timeout"  ]] && printf '      timeout: %s\n'  "$hc_timeout"
+                    [[ -n "$hc_retries"  ]] && printf '      retries: %s\n'  "$hc_retries"
+                fi
+                # depends_on — condition: service_healthy when dep has healthcheck.
+                first=1
+                local dep dep_hc
+                while IFS= read -r dep; do
+                    [[ -z "$dep" ]] && continue
+                    if (( first )); then printf '    depends_on:\n'; first=0; fi
+                    dep_hc="$(jq -r --arg d "$dep" \
+                        '.service[]? | select(.name==$d) | .healthcheck.cmd // ""' <<<"$cfg")"
+                    if [[ -n "$dep_hc" ]]; then
+                        printf '      %s:\n        condition: service_healthy\n' "$dep"
+                    else
+                        printf '      %s:\n        condition: service_started\n' "$dep"
+                    fi
+                done < <(jq -r '.depends_on // [] | .[]?' <<<"$svc")
             done
             printf 'networks:\n'
             local nets net
@@ -1601,6 +1670,12 @@ cmd_export() {
                     local d; d="$(jq -r --arg n "$net" '.network[$n].driver // "bridge"' <<<"$cfg")"
                     printf '  %s:\n    driver: %s\n' "$net" "$d"
                 done
+            fi
+            # Declare named volumes referenced by any service.
+            if (( ${#named_volumes[@]} > 0 )); then
+                printf 'volumes:\n'
+                local vn
+                for vn in "${!named_volumes[@]}"; do printf '  %s:\n' "$vn"; done
             fi
             ;;
         *)
