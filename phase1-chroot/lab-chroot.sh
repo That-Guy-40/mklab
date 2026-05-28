@@ -255,16 +255,22 @@ write_manifest() {
     local lab="${8:-}"
     local mp; mp="$(manifest_path "$name")"
     local now; now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    # Escape embedded double-quotes in free-text fields (target path, lab name)
+    # so the heredoc always produces valid TOML (Finding 13).  The enum-validated
+    # fields (backend/distro/suite/arch/manager) and name (regex-validated) cannot
+    # contain quotes so they need no escaping here.
+    local etarget="${target//\"/\\\"}"
+    local elab="${lab//\"/\\\"}"
     cat > "$mp" <<EOF
 # lab-chroot manifest — do not edit by hand
 name       = "${name}"
-target     = "${target}"
+target     = "${etarget}"
 backend    = "${backend}"
 distro     = "${distro}"
 suite      = "${suite}"
 arch       = "${arch}"
 manager    = "${manager}"
-lab        = "${lab}"
+lab        = "${elab}"
 created_at = "${now}"
 version    = "${LAB_VERSION}"
 EOF
@@ -315,6 +321,18 @@ append_manifest_raw() {
 # from OPT_ROOTLESS; ENTER/DESTROY set it from the chroot's manifest `rootless`
 # field.  The pattern follows muxup.com: debootstrap --variant=fakechroot built
 # and entered under `fakechroot fakeroot`, so no real uid 0 and no mounts.
+#
+# Security boundary (Finding 18): fakechroot is a CONVENIENCE wrapper, not a
+# security sandbox.  It works via LD_PRELOAD, which has well-known escape vectors:
+#   - statically-linked binaries bypass LD_PRELOAD entirely
+#   - direct syscalls (syscall(2), inline asm) bypass LD_PRELOAD
+#   - /proc/self/root still resolves to the real host root
+#   - openat(AT_FDCWD, ...) and execveat escapes
+# A process that escapes the fakechroot jail runs with the INVOKING USER's
+# privileges — not root — so there is no privilege escalation.  The rootless
+# mode is safe in the sense that a break-out can't do more than the user already
+# could; it is NOT safe in the sense that the chroot boundary is reliable.
+# Do not use --rootless to sandbox untrusted code.
 require_rootless_deps() {
     require_cmd fakechroot fakeroot
 }
@@ -590,6 +608,16 @@ backend_debootstrap_create() {
 dnf_bootstrap_repo() {
     # Emit a temporary repo file with Rocky's BaseOS + AppStream for the given
     # release. Stdout = path to a tempfile the caller is responsible for cleaning.
+    #
+    # Trust model (Finding 17): the gpgkey URL is fetched by DNF over HTTPS and
+    # imported on first use — Trust-On-First-Use (TOFU).  Packages are then
+    # verified against that key (gpgcheck=1), so the only attack window is the
+    # key download itself.  The HTTPS transport (Cloudflare CDN) provides strong
+    # practical protection; a successful attack would require compromising Rocky's
+    # CDN origin or a BGP prefix hijack (detectable, nation-state level).  This is
+    # the same model used by virtually every RPM-based bootstrap script.  For a
+    # higher-assurance environment, pre-import the key with a known fingerprint and
+    # set gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-Rocky-<ver> instead.
     local releasever="$1" arch_rpm="$2"
     local f; f="$(mktemp --suffix=.repo)"
     cat > "$f" <<EOF
@@ -1129,7 +1157,7 @@ create_one() {
         [[ -z "$_rarch" || "$_rarch" == "$(detect_host_arch)" ]] \
             || die "--rootless is native-arch only (got arch='$_rarch', host=$(detect_host_arch)); foreign-arch needs root + qemu-user-static"
         require_rootless_deps
-        log_info "rootless mode: fakechroot + fakeroot (no root, no bind-mounts)"
+        log_info "rootless mode: fakechroot + fakeroot (no root, no bind-mounts; LD_PRELOAD jail — not a security sandbox)"
     else
         ROOTLESS=""
         [[ $EUID -eq 0 ]] || die "create requires root (or use --rootless — needs fakechroot + fakeroot)"
@@ -1416,8 +1444,18 @@ apply_init_script() {
     [[ -z "$flavor" ]] && return 0   # nothing requested at create time
 
     if [[ "$flavor" == /* ]]; then
-        # host path — copy verbatim
+        # host path — copy verbatim.
         [[ -r "$flavor" ]] || die "init_script: file not readable: $flavor"
+        # Denylist sensitive host directories (Finding 15): a crafted TOML setting
+        # init_script = "/etc/shadow" would copy that file into the chroot as a
+        # world-readable /init, and export-initrd would then expose it to the
+        # invoking user.  Custom init scripts should live under /usr/local, ~/,
+        # or an explicit scripts directory — not inside system-managed trees.
+        case "$flavor" in
+            /etc/*|/root/*|/var/*|/proc/*|/sys/*|/boot/*|/lib/*|/lib64/*|/usr/lib/*)
+                die "init_script: path '$flavor' is inside a sensitive host directory; place custom init scripts under /usr/local or your home directory" ;;
+        esac
+        [[ -f "$flavor" ]] || die "init_script: not a regular file: $flavor"
         install -m 0755 "$flavor" "$target/init"
         log_info "init_script: installed custom /init from $flavor"
     else
