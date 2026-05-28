@@ -57,12 +57,22 @@ die()       { _log error "$@"; exit 1; }
 
 # ─── Host / arch detection ──────────────────────────────────────────────────
 detect_host_distro() {
+    # Parse with awk — sourcing /etc/os-release executes shell code (Finding 31).
     if [[ -r /etc/os-release ]]; then
-        # shellcheck disable=SC1091
-        ( . /etc/os-release && printf '%s' "${ID:-unknown}" )
+        awk -F= '/^ID=/{v=$2; gsub(/^[[:space:]"'"'"']+|[[:space:]"'"'"']+$/,"",v); print v; exit}' \
+            /etc/os-release
     else
         printf 'unknown'
     fi
+}
+
+# validate_name NAME  — reject anything that could inject into label filters,
+# trap strings, YAML keys, or container/network name prefixes (Findings 1, 10, 13).
+validate_name() {
+    local n="$1" ctx="${2:-name}"
+    [[ -n "$n" ]] || die "$ctx is empty"
+    [[ "$n" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$ ]] \
+        || die "invalid $ctx '$n': use only [a-zA-Z0-9._-], start with alphanumeric, max 63 chars"
 }
 
 detect_host_arch() {
@@ -208,9 +218,16 @@ compose_to_json() {
         def env_map(e):
           if (e | type) == "object" then e
           elif (e | type) == "array"  then
+            # Finding 32: entries without "=" mean "inherit from environment".
+            # Preserve them as null-value so the caller can distinguish from ""
+            # and omit the var rather than setting it to an empty string.
             (e | map(
-              split("=") |
-              {key: .[0], value: (.[1:] | join("="))}
+              if contains("=") then
+                split("=") |
+                {key: .[0], value: (.[1:] | join("="))}
+              else
+                {key: ., value: null}
+              end
             ) | from_entries)
           else {} end;
         # depends_on can be a ["svc"] list or a {svc: {condition:...}} map.
@@ -287,6 +304,9 @@ backend_from_chroot() {
     # backend_from_chroot CHROOT_PATH IMAGE_TAG
     local chroot_path="$1" image_tag="$2"
     [[ -d "$chroot_path" ]] || die "chroot not found: $chroot_path"
+    # Finding 15: reject bare / — tar -C / would archive the entire host.
+    local _real; _real="$(realpath -m "$chroot_path" 2>/dev/null || printf '%s' "$chroot_path")"
+    [[ "$_real" != "/" ]] || die "from-chroot: chroot path '/' is the host root — refusing"
     require_cmd tar
 
     # Readability preflight: chroots built via `sudo lab-chroot create`
@@ -342,6 +362,13 @@ backend_from_tarball() {
     # backend_from_tarball TARBALL_PATH IMAGE_TAG
     local tarball="$1" image_tag="$2"
     [[ -r "$tarball" ]] || die "tarball not readable: $tarball"
+    # Finding 14: validate it looks like a tar archive by extension; docker import
+    # from e.g. /proc/self/environ would attempt to unpack host memory as a layer.
+    [[ -f "$tarball" ]] || die "tarball is not a regular file: $tarball"
+    case "$tarball" in
+        *.tar|*.tar.gz|*.tar.bz2|*.tar.xz|*.tar.zst|*.tgz|*.tbz2) ;;
+        *) die "tarball path does not end in a recognised tar extension (.tar/.tar.gz/.tgz etc.): $tarball" ;;
+    esac
     log_info "docker import $tarball → $image_tag"
     if ! docker import "$tarball" "$image_tag" >/dev/null; then
         docker rmi "$image_tag" >/dev/null 2>&1 || true
@@ -354,6 +381,10 @@ backend_from_tarball() {
 backend_buildx() {
     # backend_buildx CONTEXT_DIR IMAGE_TAG ARCH
     local context="$1" tag="$2" arch="$3"
+    # Finding 18: canonicalize context path so ../../ references are resolved
+    # before passing to docker buildx (which would send the resolved tree as
+    # the build context, potentially including files outside the project).
+    context="$(realpath -m "$context" 2>/dev/null || printf '%s' "$context")"
     [[ -d "$context" ]] || die "build context not a directory: $context"
     [[ -r "$context/Dockerfile" ]] || die "no Dockerfile in $context"
     ensure_buildx
@@ -469,6 +500,9 @@ cmd_build() {
 cmd_push() {
     local tag="${OPT_TAG:-${POS_ARGS[0]:-}}"
     [[ -n "$tag" ]] || die "usage: $LAB_PROG push <tag> | --tag TAG"
+    # Finding 17: reject tags starting with '-' — docker push would parse them
+    # as flags (e.g. --all-tags pushes every local tag to an attacker's registry).
+    [[ "${tag:0:1}" != "-" ]] || die "invalid image tag (cannot start with '-'): $tag"
     require_docker
     if [[ -n "${OPT_ARCH:-}" ]]; then
         log_warn "push: --arch specified; pushing single-platform image '$tag'."
@@ -483,6 +517,8 @@ cmd_run() {
     local image="${OPT_IMAGE:-}"
     local name="${OPT_NAME:-}"
     [[ -n "$name" ]] || die "usage: $LAB_PROG run --name N --image IMG [opts...]"
+    # Finding 10: validate name so it is safe in image tag construction and labels.
+    validate_name "$name" "container name"
     if [[ -z "$image" && -z "${OPT_CHROOT:-}" && -z "${OPT_TARBALL:-}" && -z "${OPT_CONTEXT:-}" ]]; then
         die "need one of: --image IMG | --chroot PATH | --tarball FILE | --context DIR"
     fi
@@ -528,13 +564,26 @@ cmd_run() {
     fi
     local e
     if [[ -n "${OPT_ENV:-}" ]]; then
+        # Finding 6: split on comma is a best-effort convenience; values
+        # containing commas must use --env K=V multiple times on the CLI.
         IFS=',' read -ra _envs <<<"$OPT_ENV"
-        for e in "${_envs[@]}"; do args+=(-e "$e"); done
+        for e in "${_envs[@]}"; do
+            [[ "$e" == *=* ]] || log_warn "env entry '$e' has no '='; passing as-is (may not behave as expected with Docker)"
+            args+=(-e "$e")
+        done
     fi
     local v
     if [[ -n "${OPT_VOLUMES:-}" ]]; then
         IFS=',' read -ra _vols <<<"$OPT_VOLUMES"
-        for v in "${_vols[@]}"; do args+=(-v "$v"); done
+        for v in "${_vols[@]}"; do
+            # Finding 11: warn on sensitive volume mounts.
+            local _vsrc="${v%%:*}"
+            case "$_vsrc" in
+                /var/run/docker.sock) log_warn "volume mount of docker.sock gives container full Docker daemon access (container escape)" ;;
+                /) log_warn "volume mount of '/' exposes the entire host filesystem to the container" ;;
+            esac
+            args+=(-v "$v")
+        done
     fi
 
     if [[ -n "${OPT_DETACH:-}" ]]; then
@@ -567,34 +616,49 @@ cmd_up() {
     local lab_name
     lab_name="$(jq -r '.lab.name // ""' <<<"$cfg_json")"
     [[ -n "$lab_name" ]] || die "config missing [lab].name"
+    # Finding 1: validate before embedding in trap string / label filters.
+    validate_name "$lab_name" "lab name"
 
     log_info "── bringing up lab '$lab_name' from $OPT_CONFIG ──"
 
-    # If we exit with a partial topology, hint at the cleanup command. Embed
-    # the literal lab name into the trap string at trap-set time (function-
-    # scoped traps fire at script-exit, by which point the local is gone;
-    # under `set -u` that turns into "$var: unbound variable" instead of the
-    # intended log line). The actual teardown is label-based and idempotent,
-    # so we only need to point the user at it.
-    trap "log_warn \"partial 'up' for lab '${lab_name}' — clean up with:  ${LAB_PROG} down --lab ${lab_name}\"" EXIT
+    # Finding 23: on partial failure, actually run 'down' to clean up started
+    # containers and networks instead of just printing a hint.
+    # Finding 1: use a helper function in the trap so the validated lab name
+    # is never eval'd as shell code at fire time.
+    _partial_up_cleanup() {
+        local _lab="$1"
+        log_info "partial 'up' — running 'down' to clean up lab '$_lab'"
+        OPT_LAB="$_lab" OPT_CONFIG="" cmd_down 2>/dev/null || true
+    }
+    trap "_partial_up_cleanup '${lab_name}'" EXIT
+
+    # Finding 26: SIGINT (Ctrl-C) during health-wait triggers the EXIT trap
+    # above via set -e — the cleanup runs automatically.  No separate INT trap
+    # needed since the EXIT trap already handles it.
 
     # --- Networks ---
-    local nets
-    nets="$(jq -r '.network // {} | keys[]?' <<<"$cfg_json")"
+    # Finding 3: collect into an array so names with spaces/globs don't
+    # word-split or glob-expand in the for loop.
+    local -a nets=()
+    mapfile -t nets < <(jq -r '.network // {} | keys[]?' <<<"$cfg_json")
     local net
-    for net in $nets; do
+    for net in "${nets[@]}"; do
         local driver; driver="$(jq -r --arg n "$net" '.network[$n].driver // "bridge"' <<<"$cfg_json")"
+        # Finding 16: validate driver name so a value starting with '-' cannot
+        # inject flags into 'docker network create --driver ...'.
+        [[ "$driver" =~ ^[a-zA-Z0-9_-]+$ ]] \
+            || die "invalid network driver '${driver}' for network '${net}': use only [a-zA-Z0-9_-]"
         local netname; netname="lab-${lab_name}-${net}"
-        if docker network ls --format '{{.Name}}' | grep -qx "$netname"; then
-            log_debug "network exists: $netname"
-        else
-            log_info "creating network: $netname (driver=$driver)"
-            docker network create \
-                --label "$LAB_LABEL_TOOL" \
-                --label "${LAB_LABEL_LAB}=${lab_name}" \
-                --driver "$driver" \
-                "$netname" >/dev/null
-        fi
+        # Finding 9: use create-then-inspect instead of inspect-then-create to
+        # avoid the TOCTOU race between two concurrent 'up' invocations.
+        docker network create \
+            --label "$LAB_LABEL_TOOL" \
+            --label "${LAB_LABEL_LAB}=${lab_name}" \
+            --driver "$driver" \
+            "$netname" >/dev/null 2>&1 \
+            || docker network inspect "$netname" >/dev/null 2>&1 \
+            || die "failed to create or verify network '$netname' (driver=$driver)"
+        log_debug "network ready: $netname"
     done
 
     # --- Services ---
@@ -623,14 +687,10 @@ cmd_up() {
             continue
         fi
 
-        local cname; cname="$(container_name_for "$lab_name" "$sname")"
+        # Finding 1: validate service name before using in labels/container names.
+        validate_name "$sname" "service name"
 
-        # Idempotency: if a container of this name exists already, leave it.
-        if docker ps -a --format '{{.Names}}' | grep -qx "$cname"; then
-            log_warn "service '$sname' container exists ($cname); leaving as-is"
-            started=$((started+1))
-            continue
-        fi
+        local cname; cname="$(container_name_for "$lab_name" "$sname")"
 
         # Image source: explicit image | from_tarball | from_chroot | build
         if [[ -z "$simage" ]]; then
@@ -663,11 +723,17 @@ cmd_up() {
             --hostname "$sname"
         )
 
-        # Networks
-        local svc_nets; svc_nets="$(jq -r '.networks[]?' <<<"$svc")"
+        # Finding 28: warn when image uses a mutable tag (no digest pin).
+        if [[ -n "$simage" && "$simage" != *"@sha256:"* ]]; then
+            log_warn "service '$sname': image '$simage' uses a mutable tag — consider pinning with @sha256:... for reproducible deployments"
+        fi
+
+        # Networks — Finding 3: array to prevent glob/word-split on names.
+        local -a svc_nets=()
+        mapfile -t svc_nets < <(jq -r '.networks[]?' <<<"$svc")
         local first_net=""
         local n
-        for n in $svc_nets; do
+        for n in "${svc_nets[@]}"; do
             local nn="lab-${lab_name}-${n}"
             if [[ -z "$first_net" ]]; then
                 args+=(--network "$nn")
@@ -684,16 +750,22 @@ cmd_up() {
             [[ -n "$pp" ]] && args+=(-p "$pp")
         done < <(jq -r '.ports[]?' <<<"$svc")
 
-        # Env
+        # Env — skip null-value entries (inherit-from-host semantics, Finding 32)
         local kk vv
         while IFS=$'\t' read -r kk vv; do
-            [[ -n "$kk" ]] && args+=(-e "${kk}=${vv}")
+            [[ -n "$kk" && "$vv" != "null" ]] && args+=(-e "${kk}=${vv}")
         done < <(jq -r '.environment // {} | to_entries[]? | "\(.key)\t\(.value)"' <<<"$svc")
 
-        # Volumes
+        # Volumes — Finding 11: warn on sensitive host path mounts.
         local vv2
         while IFS= read -r vv2; do
-            [[ -n "$vv2" ]] && args+=(-v "$vv2")
+            [[ -z "$vv2" ]] && continue
+            local _vsrc="${vv2%%:*}"
+            case "$_vsrc" in
+                /var/run/docker.sock) log_warn "service '$sname': docker.sock mount gives container full daemon access (container escape)" ;;
+                /) log_warn "service '$sname': volume mount of '/' exposes the entire host filesystem" ;;
+            esac
+            args+=(-v "$vv2")
         done < <(jq -r '.volumes[]?' <<<"$svc")
 
         # Healthcheck — translates TOML [service.healthcheck] to docker run flags.
@@ -728,14 +800,32 @@ cmd_up() {
         fi
 
         log_info "starting service '$sname' as $cname (image=$simage)"
-        docker run "${args[@]}" "$simage" "${cmd[@]}" >/dev/null
+        # Finding 8: use try-and-handle instead of pre-check to eliminate the
+        # TOCTOU race between two concurrent 'up' invocations.
+        local _run_err
+        if ! _run_err="$(docker run "${args[@]}" "$simage" "${cmd[@]}" 2>&1)"; then
+            # "already in use" means idempotency: another 'up' beat us to it.
+            if [[ "$_run_err" == *"already in use by container"* ]] \
+               || docker ps -a --format '{{.Names}}' | grep -qx "$cname"; then
+                log_warn "service '$sname' container already exists ($cname); leaving as-is"
+            else
+                die "failed to start container '$cname': $_run_err"
+            fi
+        fi
         started=$((started+1))
 
-        # Attach extra networks (if user listed >1)
+        # Attach extra networks (if user listed >1).
+        # Finding 27: pre-validate each network exists before attempting connect
+        # so a missing network declaration produces a clear error before the
+        # container is already running in a partially-networked state.
         local idx=0
-        for n in $svc_nets; do
+        for n in "${svc_nets[@]}"; do
             local nn="lab-${lab_name}-${n}"
-            (( idx > 0 )) && docker network connect "$nn" "$cname" >/dev/null
+            if (( idx > 0 )); then
+                docker network inspect "$nn" >/dev/null 2>&1 \
+                    || die "service '$sname': network '$n' → '$nn' does not exist; add it to the [network] block"
+                docker network connect "$nn" "$cname" >/dev/null
+            fi
             idx=$((idx+1))
         done
 
@@ -762,29 +852,35 @@ cmd_down() {
         lab_name="$(load_config "$OPT_CONFIG" | jq -r '.lab.name // ""')"
     fi
     [[ -n "$lab_name" ]] || die "usage: $LAB_PROG down --lab NAME | --config topology.toml (need a lab name)"
+    # Finding 13: validate before embedding in --filter label= strings.
+    validate_name "$lab_name" "lab name"
     require_docker
 
     log_info "── tearing down lab '$lab_name' ──"
 
     # Containers first.
-    local ids
-    ids="$(docker ps -aq --filter "label=${LAB_LABEL_LAB}=${lab_name}" --filter "label=${LAB_LABEL_TOOL}")"
-    if [[ -n "$ids" ]]; then
-        log_info "stopping/removing $(wc -w <<<"$ids") container(s)"
-        # shellcheck disable=SC2086
-        docker rm -f $ids >/dev/null 2>&1 \
-            || { docker stop $ids >/dev/null 2>&1 || true
-                 # shellcheck disable=SC2086
-                 docker rm   $ids >/dev/null 2>&1 || true; }
+    # Finding 2, 24: collect IDs into an array (mapfile) to avoid word-splitting
+    # and double-expansion issues with unquoted $ids.  Each docker ID is 64-char
+    # hex but quoting is correct-by-construction, not by assumption.
+    local -a ids=()
+    mapfile -t ids < <(docker ps -aq \
+        --filter "label=${LAB_LABEL_LAB}=${lab_name}" \
+        --filter "label=${LAB_LABEL_TOOL}" 2>/dev/null)
+    if (( ${#ids[@]} > 0 )); then
+        log_info "stopping/removing ${#ids[@]} container(s)"
+        docker rm -f "${ids[@]}" >/dev/null 2>&1 \
+            || { docker stop "${ids[@]}" >/dev/null 2>&1 || true
+                 docker rm   "${ids[@]}" >/dev/null 2>&1 || true; }
     fi
 
     # Then networks.
-    local nids
-    nids="$(docker network ls -q --filter "label=${LAB_LABEL_LAB}=${lab_name}" --filter "label=${LAB_LABEL_TOOL}")"
-    if [[ -n "$nids" ]]; then
-        log_info "removing $(wc -w <<<"$nids") network(s)"
-        # shellcheck disable=SC2086
-        docker network rm $nids >/dev/null 2>&1 || true
+    local -a nids=()
+    mapfile -t nids < <(docker network ls -q \
+        --filter "label=${LAB_LABEL_LAB}=${lab_name}" \
+        --filter "label=${LAB_LABEL_TOOL}" 2>/dev/null)
+    if (( ${#nids[@]} > 0 )); then
+        log_info "removing ${#nids[@]} network(s)"
+        docker network rm "${nids[@]}" >/dev/null 2>&1 || true
     fi
 
     log_info "── lab '$lab_name' torn down ──"
@@ -821,6 +917,11 @@ cmd_logs() {
 _resolve_container_name() {
     local t="$1"
     if [[ "$t" == */* ]]; then
+        # Finding 29: reject more than one slash — a/b/c would silently drop
+        # the middle component (%%/* strips to last /, ##*/ strips to last /).
+        local slashes="${t//[^\/]/}"
+        [[ "${#slashes}" -eq 1 ]] \
+            || die "invalid target '$t': use 'lab/service' (exactly one slash) or a bare container name"
         local lab="${t%%/*}" svc="${t##*/}"
         printf 'lab-%s-%s' "$lab" "$svc"
     else
@@ -1114,6 +1215,10 @@ cmd_inspect() {
 # which Phase 3's TOML doesn't carry; those services are emitted with the
 # image tag that `up` would synthesize (`lab-<lab>-<svc>-img`), plus a
 # commented hint so the reader knows it won't build standalone.
+# _yaml_str VALUE  — emit VALUE as a double-quoted YAML string with
+# internal double-quotes and backslashes escaped (Findings 20, 21, 22).
+_yaml_str() { printf '"%s"' "${1//\"/\\\"}"; }
+
 cmd_export() {
     [[ -n "${OPT_CONFIG:-}" ]] || die "usage: $LAB_PROG export --config topology.toml [--format compose]"
     local fmt="${OPT_FORMAT:-compose}"
@@ -1164,16 +1269,19 @@ cmd_export() {
         chroot="$(spec_get "$svc" from_chroot)"
         ctx="$(spec_get "$svc" build)"
 
-        printf '  %s:\n' "$sname"
+        # Finding 21: quote service name as YAML key (names with ':' '#' etc.
+        # would break YAML parsing if unquoted).
+        printf '  %s:\n' "$(_yaml_str "$sname")"
         printf '    container_name: lab-%s-%s\n' "$lab" "$sname"
         if [[ -n "$simage" ]]; then
             printf '    image: %s\n' "$simage"
         elif [[ -n "$tarball" ]]; then
-            printf '    image: lab-%s-%s-img   # source: from_tarball=%s (not rebuildable via compose)\n' "$lab" "$sname" "$tarball"
+            printf '    image: lab-%s-%s-img   # source: from_tarball (not rebuildable via compose)\n' "$lab" "$sname"
         elif [[ -n "$chroot" ]]; then
-            printf '    image: lab-%s-%s-img   # source: from_chroot=%s (not rebuildable via compose)\n' "$lab" "$sname" "$chroot"
+            printf '    image: lab-%s-%s-img   # source: from_chroot (not rebuildable via compose)\n' "$lab" "$sname"
         elif [[ -n "$ctx" ]]; then
-            printf '    build: %s\n' "$ctx"
+            # Finding 22: quote build context path (may contain '#' or '"').
+            printf '    build: %s\n' "$(_yaml_str "$ctx")"
         else
             printf '    image: scratch   # WARNING: service had no image source in the TOML\n'
         fi
@@ -1234,17 +1342,28 @@ cmd_export() {
         # depends_on — emit with condition based on whether the dependency has
         # a healthcheck (service_healthy) or not (service_started).
         first=1
-        local dep dep_hc
+        local dep dep_hc dep_engine
         while IFS= read -r dep; do
             [[ -z "$dep" ]] && continue
+            # Finding 30: skip cross-engine dependencies — a service in this
+            # Compose file cannot depend_on a service that isn't in it.
+            dep_engine="$(jq -r --arg d "$dep" \
+                '.[] | select(.name==$d) | .engine // "docker"' \
+                <<<"$all_svcs_x")"
+            if [[ -n "$dep_engine" && "$dep_engine" != "docker" ]]; then
+                printf '    # depends_on: %s skipped (engine=%s, not in this Compose file)\n' \
+                    "$dep" "$dep_engine"
+                continue
+            fi
             if (( first )); then printf '    depends_on:\n'; first=0; fi
             dep_hc="$(jq -r --arg d "$dep" \
                 '.[] | select(.name==$d) | .healthcheck.test // ""' \
                 <<<"$all_svcs_x")"
+            # Finding 21: quote dep name as YAML key.
             if [[ -n "$dep_hc" ]]; then
-                printf '      %s:\n        condition: service_healthy\n' "$dep"
+                printf '      %s:\n        condition: service_healthy\n' "$(_yaml_str "$dep")"
             else
-                printf '      %s:\n        condition: service_started\n' "$dep"
+                printf '      %s:\n        condition: service_started\n' "$(_yaml_str "$dep")"
             fi
         done < <(jq -r '.depends_on // [] | .[]?' <<<"$svc")
 
@@ -1257,7 +1376,9 @@ cmd_export() {
         xhc_start="$(   jq -r '.healthcheck.start_period // ""' <<<"$svc")"
         if [[ -n "$xhc_test" ]]; then
             printf '    healthcheck:\n'
-            printf '      test: ["CMD-SHELL", "%s"]\n' "$xhc_test"
+            # Finding 20: use jq to produce a properly JSON-escaped array so
+            # a healthcheck containing '"' does not break the Compose YAML.
+            printf '      test: %s\n' "$(jq -n --arg t "$xhc_test" '["CMD-SHELL",$t]')"
             [[ -n "$xhc_interval" ]] && printf '      interval: %s\n'     "$xhc_interval"
             [[ -n "$xhc_timeout"  ]] && printf '      timeout: %s\n'      "$xhc_timeout"
             [[ -n "$xhc_retries"  ]] && printf '      retries: %s\n'      "$xhc_retries"
@@ -1266,15 +1387,17 @@ cmd_export() {
     done
 
     # Networks — mirror the [network.X] keys as top-level compose networks.
-    local nets net
-    nets="$(jq -r '.network // {} | keys[]?' <<<"$cfg")"
-    if [[ -z "$nets" ]]; then
+    # Finding 3: mapfile array; Finding 21: quote network names as YAML keys.
+    local -a exp_nets=()
+    mapfile -t exp_nets < <(jq -r '.network // {} | keys[]?' <<<"$cfg")
+    if (( ${#exp_nets[@]} == 0 )); then
         printf 'networks:\n  default:\n    driver: bridge\n'
     else
         printf 'networks:\n'
-        for net in $nets; do
+        local net
+        for net in "${exp_nets[@]}"; do
             local d; d="$(jq -r --arg n "$net" '.network[$n].driver // "bridge"' <<<"$cfg")"
-            printf '  %s:\n    driver: %s\n' "$net" "$d"
+            printf '  %s:\n    driver: %s\n' "$(_yaml_str "$net")" "$d"
         done
     fi
 

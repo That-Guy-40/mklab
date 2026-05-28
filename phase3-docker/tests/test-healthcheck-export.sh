@@ -51,16 +51,14 @@ grep -q 'start_period: 30s'         <<<"$out" || fail "start_period missing"
 note "healthcheck block emitted correctly"
 
 # ── depends_on block with condition ────────────────────────────────────────
-grep -q '    depends_on:'           <<<"$out" || fail "depends_on: block missing"
-grep -q '      db:'                 <<<"$out" || fail "depends_on: db entry missing"
+grep -q '    depends_on:'            <<<"$out" || fail "depends_on: block missing"
+grep -q '"db":'                     <<<"$out" || fail "depends_on: db entry missing (service names now quoted as YAML keys)"
 grep -q 'condition: service_healthy' <<<"$out" || fail "condition should be service_healthy (db has healthcheck)"
 note "depends_on with service_healthy emitted correctly"
 
 # ── no depends_on emitted for db (it has none) ─────────────────────────────
-# The depends_on block belongs under 'web:' — verify it is NOT under 'db:'.
-# Extract the 'db:' service block (lines between 'db:' and the next top-level
-# service or end of services section) and assert no depends_on there.
-db_section="$(awk '/^  db:/{p=1} p && /^  [a-z]/ && !/^  db:/{p=0} p' <<<"$out")"
+# Service names are now quoted, so match '"db":'
+db_section="$(awk '/^  "db":/{p=1} p && /^  "[a-z]/ && !/^  "db":/{p=0} p' <<<"$out")"
 if grep -q 'depends_on' <<<"$db_section"; then
     fail "db should have no depends_on block; got:\n$db_section"
 fi
