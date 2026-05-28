@@ -18,20 +18,36 @@ export MLBUILD_LOCK_FILE="$tmp/versions.lock"
 # shellcheck disable=SC1090
 source "$MLBUILD"
 
-# ── (1) musl: aarch64 always skips, x86_64 checks for musl-gcc ─────────────
-# We can't ACTUALLY build, but we can verify the guard logic.
+# ── (1) musl: both arches use a musl wrapper; unknown arches skip ───────────
+# We can't ACTUALLY build, but we verify the guard logic and wrapper wiring.
 
-# aarch64 should skip (warn, return 0) regardless of musl-gcc presence.
-note "musl aarch64 skip"
-build_busybox_musl aarch64 /nonexistent 2>/dev/null; rc=$?
-[[ "$rc" -eq 0 ]] || fail "musl aarch64: expected return 0 (skip), got $rc"
-note "musl aarch64 returns 0 (skip)"
-
-# x86_64 must die when musl-gcc is absent (PATH override).
+# x86_64: must die cleanly when musl-gcc is absent (PATH override).
 note "musl x86_64 fails cleanly without musl-gcc"
 out="$(PATH="" build_busybox_musl x86_64 /nonexistent 2>&1)" && fail "expected die, got 0" || true
 echo "$out" | grep -qi "musl" || fail "error message must mention musl; got: $out"
 note "musl x86_64 error mentions musl-gcc"
+
+# aarch64: must die cleanly when aarch64-linux-musl-gcc is absent (PATH override).
+note "musl aarch64 fails cleanly without aarch64-linux-musl-gcc"
+out="$(PATH="" build_busybox_musl aarch64 /nonexistent 2>&1)" && fail "expected die, got 0" || true
+echo "$out" | grep -qi "musl" || fail "error message must mention musl; got: $out"
+note "musl aarch64 error mentions musl-gcc"
+
+# An unsupported arch (riscv64) should skip with return 0, not die.
+note "musl riscv64 skips gracefully"
+build_busybox_musl riscv64 /nonexistent 2>/dev/null; rc=$?
+[[ "$rc" -eq 0 ]] || fail "musl riscv64: expected return 0 (skip), got $rc"
+note "musl riscv64 returns 0 (skip)"
+
+# Verify the aarch64 wrapper wiring in the Containerfile.
+note "Containerfile builds aarch64-linux-musl-gcc"
+grep -q 'aarch64-linux-musl-gcc' \
+    "$(dirname -- "${BASH_SOURCE[0]}")/../Containerfile" \
+    || fail "Containerfile does not create aarch64-linux-musl-gcc wrapper"
+grep -q 'musl-gcc.specs.sh' \
+    "$(dirname -- "${BASH_SOURCE[0]}")/../Containerfile" \
+    || fail "Containerfile does not call musl-gcc.specs.sh"
+note "Containerfile wiring OK"
 
 # ── (2) tiny: set_kconfig/assert_kconfig wiring in build_kernel_tiny ────────
 note "tiny: code-level wiring"

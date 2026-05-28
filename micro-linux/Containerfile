@@ -28,11 +28,52 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc-aarch64-linux-gnu libc6-dev-arm64-cross \
         musl-tools musl-dev \
  && rm -rf /var/lib/apt/lists/*
-# musl-tools installs musl-gcc (an x86_64 gcc wrapper that links against musl
-# libc).  musl-dev provides the musl headers.  Together they enable the --musl
-# variant of mlbuild.sh: a static BusyBox without glibc's NSS caveat, producing
-# a noticeably smaller initramfs.  aarch64 musl cross-compiler is not packaged
-# in Debian bookworm; build_busybox_musl() skips aarch64 with a warning.
+# musl-tools  → musl-gcc (x86_64 gcc wrapper that links against musl libc)
+# musl-dev    → musl headers for x86_64
+# The aarch64 musl cross-compiler is built from source below (no Debian package).
+
+# ── aarch64 musl cross-compiler (built from musl source) ─────────────────────
+# Debian Bookworm ships musl 1.2.3 for x86_64 but has no aarch64 musl
+# cross-compiler package.  We cross-compile musl itself using the already-
+# installed gcc-aarch64-linux-gnu, then use musl's own tools/musl-gcc.specs.sh
+# to generate a GCC specs file that routes includes and linkage to the musl
+# headers/library instead of glibc.  The resulting aarch64-linux-musl-gcc
+# wrapper is a drop-in cross-compiler for fully static musl-linked aarch64
+# binaries (which is what BusyBox CONFIG_STATIC=y produces).
+#
+# Refresh the sha256 with:
+#   curl -fsSL https://musl.libc.org/releases/musl-1.2.3.tar.gz | sha256sum
+ARG WITH_MUSL_AARCH64=1
+ARG MUSL_VER=1.2.3
+ARG MUSL_SHA256=7d5b0b6062521e4627e099e4c9dc8248d32a30285e959b7eecaa780cf8cfd4a4
+RUN if [ "$WITH_MUSL_AARCH64" != "1" ]; then exit 0; fi \
+ && curl -fsSLo /tmp/musl.tar.gz \
+        "https://musl.libc.org/releases/musl-${MUSL_VER}.tar.gz" \
+ && echo "${MUSL_SHA256}  /tmp/musl.tar.gz" | sha256sum -c - \
+ && tar -C /tmp -xf /tmp/musl.tar.gz \
+ && cd /tmp/musl-${MUSL_VER} \
+    # Cross-compile musl for aarch64.  musl's configure derives the target arch
+    # from the CC compiler; setting CC=aarch64-linux-gnu-gcc is sufficient.
+ && ./configure \
+        --prefix=/usr/aarch64-linux-musl \
+        CC=aarch64-linux-gnu-gcc \
+        --disable-shared \
+ && make -j"$(nproc)" \
+ && make install \
+    # Generate the GCC specs file using musl's own script.
+    #   arg1 = include dir, arg2 = lib dir, arg3 = dynamic linker path
+    # For a static-only wrapper (which is all we need for BusyBox) the dynamic
+    # linker path is irrelevant (-static overrides it), but specs.sh requires it.
+ && sh tools/musl-gcc.specs.sh \
+        /usr/aarch64-linux-musl/include \
+        /usr/aarch64-linux-musl/lib \
+        /lib/ld-musl-aarch64.so.1 \
+        > /usr/aarch64-linux-musl/lib/musl-gcc.specs \
+    # Create the wrapper: aarch64-linux-gnu-gcc + musl specs = musl cross-compiler.
+ && printf '#!/bin/sh\nexec aarch64-linux-gnu-gcc -specs /usr/aarch64-linux-musl/lib/musl-gcc.specs "$@"\n' \
+        > /usr/local/bin/aarch64-linux-musl-gcc \
+ && chmod +x /usr/local/bin/aarch64-linux-musl-gcc \
+ && rm -rf /tmp/musl-${MUSL_VER} /tmp/musl.tar.gz
 
 # ── Faithful track (§11): riscv64 kernel cross + Go (u-root) ─────────────────
 # Set --build-arg WITH_RISCV=0 to skip and keep the BusyBox-only image lean

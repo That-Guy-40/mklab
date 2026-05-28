@@ -399,24 +399,40 @@ build_kernel_tiny() {
 }
 
 # ── Variant: musl-static BusyBox ─────────────────────────────────────────────
-# Builds BusyBox with CC=musl-gcc (x86_64) instead of the default glibc-static.
-# musl avoids the glibc static-NSS caveat (dynamic libnss_*.so resolver plugins)
-# and produces a noticeably smaller binary (~30-40% smaller initramfs).
-# aarch64: musl cross-compiler not packaged in Debian bookworm → skip with warn.
+# Builds BusyBox against musl libc instead of glibc.  musl avoids the glibc
+# static-NSS caveat (glibc dlopen()s libnss_*.so at runtime for name resolution;
+# musl has a self-contained resolver — no runtime plugins, smaller binary).
+#
+# x86_64: uses musl-gcc (from Debian's musl-tools package).
+# aarch64: uses aarch64-linux-musl-gcc — a wrapper built in the Containerfile by
+#   cross-compiling musl 1.2.3 with gcc-aarch64-linux-gnu and generating a GCC
+#   specs file via musl's tools/musl-gcc.specs.sh.
+#
 # Output: out/$arch/_install-musl/ + initramfs-musl.cpio.gz
 build_busybox_musl() {
     local arch="$1" src="$2"
-    if [[ "$arch" == "aarch64" ]]; then
-        log_warn "[$arch] musl variant: no aarch64-linux-musl-gcc in Debian bookworm — skipping"
-        log_warn "[$arch]   (build musl-cross-make manually and set CC/CROSS_COMPILE to enable)"
-        return 0
-    fi
-    command -v musl-gcc >/dev/null 2>&1 \
-        || die "[$arch] musl-gcc not found — run 'mlbuild.sh image' to rebuild the toolchain"
-    local cross; cross="$(kernel_cross "$arch")"
-    local -a bb=(CC=musl-gcc)
+    local musl_cc cross
+    case "$arch" in
+        x86_64)
+            musl_cc="musl-gcc"
+            cross=""
+            ;;
+        aarch64)
+            musl_cc="aarch64-linux-musl-gcc"
+            # BusyBox uses $(CROSS_COMPILE)ld/ar/nm etc.; keep the gnu- prefix for
+            # those tools while CC is overridden to the musl wrapper.
+            cross="aarch64-linux-gnu-"
+            ;;
+        *)
+            log_warn "[$arch] musl variant: no musl cross-compiler defined for $arch — skipping"
+            return 0
+            ;;
+    esac
+    command -v "$musl_cc" >/dev/null 2>&1 \
+        || die "[$arch] $musl_cc not found — run 'mlbuild.sh image' to rebuild the toolchain"
+    local -a bb=(CC="$musl_cc")
     [[ -n "$cross" ]] && bb+=(CROSS_COMPILE="$cross")
-    log_info "[$arch] busybox-musl: musl-static config + build …"
+    log_info "[$arch] busybox-musl: musl-static config + build (CC=$musl_cc) …"
     make -C "$src" "${bb[@]}" defconfig >/dev/null
     set_kconfig "$src/.config" STATIC y
     set_kconfig "$src/.config" TC     n
@@ -425,11 +441,13 @@ build_busybox_musl() {
     make -C "$src" "${bb[@]}" -j"$(nproc)"
     require_cmd file
     file "$src/busybox" | grep -q 'statically linked' \
-        || die "[$arch] musl busybox is NOT static — check musl-gcc linkage"
-    # verify musl (not glibc) by checking the binary doesn't pull in glibc strings
-    file "$src/busybox" | grep -qi 'musl\|uclibc' \
-        || strings "$src/busybox" | grep -q 'musl' \
-        || log_warn "[$arch] could not confirm musl linkage — may still be glibc; inspect with: file $src/busybox"
+        || die "[$arch] musl busybox is NOT static — check $musl_cc linkage"
+    # Confirm musl linkage: a genuine musl binary has "musl" in its interpreter
+    # string (dynamic) or in its symbol table (static).  Missing means glibc crept in.
+    if ! file "$src/busybox" | grep -qi 'musl\|uclibc' \
+       && ! strings "$src/busybox" 2>/dev/null | grep -q 'musl'; then
+        log_warn "[$arch] could not confirm musl linkage — inspect with: strings $src/busybox | grep musl"
+    fi
     make -C "$src" "${bb[@]}" CONFIG_PREFIX="$OUT_DIR/$arch/_install-musl" install >/dev/null
     log_info "[$arch] busybox-musl → out/$arch/_install-musl"
 }
