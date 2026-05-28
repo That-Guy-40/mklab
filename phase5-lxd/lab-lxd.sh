@@ -47,6 +47,10 @@ readonly LAB_LABEL_LAB_KEY="user.lab-create.lab"
 readonly LAB_LABEL_SVC_KEY="user.lab-create.svc"
 
 LAB_STATE_DIR="${LAB_STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/lab-create}"
+# L-3: validate LAB_STATE_DIR before use so an attacker-controlled env var
+# cannot redirect rm -rf to an arbitrary directory.
+[[ "$LAB_STATE_DIR" == /* ]] || { printf '%s: LAB_STATE_DIR must be absolute: %s\n' "$0" "$LAB_STATE_DIR" >&2; exit 1; }
+[[ "$LAB_STATE_DIR" != *..* ]] || { printf '%s: LAB_STATE_DIR must not contain "..": %s\n' "$0" "$LAB_STATE_DIR" >&2; exit 1; }
 readonly LAB_LXD_STATE_DIR="${LAB_STATE_DIR}/lxd"
 
 # ─── Logging ────────────────────────────────────────────────────────────────
@@ -79,12 +83,22 @@ die()       { _log error "$@"; exit 1; }
 
 # ─── Host / arch detection ──────────────────────────────────────────────────
 detect_host_distro() {
+    # Parse with awk — sourcing /etc/os-release executes shell code.
     if [[ -r /etc/os-release ]]; then
-        # shellcheck disable=SC1091
-        ( . /etc/os-release && printf '%s' "${ID:-unknown}" )
+        awk -F= '/^ID=/{v=$2; gsub(/^[[:space:]"'"'"']+|[[:space:]"'"'"']+$/,"",v); print v; exit}' \
+            /etc/os-release
     else
         printf 'unknown'
     fi
+}
+
+# validate_name NAME [CONTEXT]  — reject chars that could inject into paths,
+# label filters, trap strings, or YAML keys (C-1, H-2, L-2).
+validate_name() {
+    local n="$1" ctx="${2:-name}"
+    [[ -n "$n" ]] || die "$ctx is empty"
+    [[ "$n" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$ ]] \
+        || die "invalid $ctx '$n': use only [a-zA-Z0-9._-], start with alphanumeric, max 63 chars"
 }
 
 detect_host_arch() {
@@ -120,8 +134,11 @@ install_hint() {
 }
 
 require_cmd() {
-    local tool="$1"
-    have "$tool" || die "$tool not found.  Install with:  $(install_hint "$tool")"
+    # M-2: check every argument, not just the first.
+    local tool
+    for tool in "$@"; do
+        have "$tool" || die "$tool not found.  Install with:  $(install_hint "$tool")"
+    done
 }
 
 # ─── Engine dispatch (incus preferred, lxc fallback) ───────────────────────
@@ -300,17 +317,32 @@ resolve_image() {
 # for that form — it interprets the argument as a literal alias rather than
 # a prefix.  The portable filter is the bare positional `<substring>` form,
 # which both incus and lxc treat as a substring match across alias names.
+# Cache to avoid multiple network round-trips for the same distro (I-3).
+declare -gA _DISTRO_LATEST_CACHE=() 2>/dev/null || declare -A _DISTRO_LATEST_CACHE=()
+
 _resolve_distro_latest() {
     local distro="$1"
+    # I-3: return memoized result if available.
+    if [[ -n "${_DISTRO_LATEST_CACHE[$distro]+x}" ]]; then
+        printf '%s' "${_DISTRO_LATEST_CACHE[$distro]}"
+        return 0
+    fi
     [[ -n "$LXC_CMD" ]] || probe_engine
-    "$LXC_CMD" image list "images:" "$distro" --format=json 2>/dev/null \
+    local result
+    result="$("$LXC_CMD" image list "images:" "$distro" --format=json 2>/dev/null \
         | jq -r --arg d "$distro" '
+            # M-4: use startswith/ltrimstr instead of building a regex from $d.
+            # Concatenating user-supplied strings into test() is a jq regex
+            # injection: "alp.ne" would match "alpXne/3.21" via the . wildcard.
             .[] | .aliases[]?.name
-            | select(test("^" + $d + "/[0-9]+(\\.[0-9]+)?$"))
-            | sub("^" + $d + "/"; "")
+            | select(startswith($d + "/"))
+            | ltrimstr($d + "/")
+            | select(test("^[0-9]+(\\.[0-9]+)?$"))
         ' 2>/dev/null \
         | sort -V \
-        | tail -1
+        | tail -1)"
+    _DISTRO_LATEST_CACHE[$distro]="$result"
+    printf '%s' "$result"
 }
 
 # ─── Engine filter (cross-phase) ───────────────────────────────────────────
@@ -335,6 +367,10 @@ engine_is_ours() {
 # args: arch_canonical (x86_64/aarch64/...) os release
 emit_metadata_yaml_container() {
     local arch="$1" os="$2" release="$3"
+    # H-4, L-5: strip chars that would inject YAML structure — os/release come
+    # from the chroot's os-release file which may be attacker-controlled.
+    os="${os//[^a-zA-Z0-9._-]/}"
+    release="${release//[^a-zA-Z0-9._-]/}"
     cat <<EOF
 architecture: $arch
 creation_date: $(date +%s)
@@ -350,6 +386,9 @@ EOF
 # rootfs.img filename rather than rootfs/ directory.
 emit_metadata_yaml_vm() {
     local arch="$1" os="$2" release="$3"
+    # H-4, L-5: same sanitization as container variant.
+    os="${os//[^a-zA-Z0-9._-]/}"
+    release="${release//[^a-zA-Z0-9._-]/}"
     cat <<EOF
 architecture: $arch
 creation_date: $(date +%s)
@@ -432,9 +471,10 @@ backend_from_tarball() {
 
     log_info "extracting Phase 1 tarball into staging rootfs/"
     install -d "$workdir/rootfs"
-    # Phase 1 tarballs are gzip; --auto-compress would pick the right decoder
-    # for other formats too.
-    tar -C "$workdir/rootfs" -xpf "$tarball" --numeric-owner
+    # H-3: --no-absolute-names prevents absolute-path members from writing
+    # outside the target directory; without it a crafted tarball entry like
+    # /etc/cron.d/evil would write to the host /etc/cron.d/evil.
+    tar -C "$workdir/rootfs" -xpf "$tarball" --numeric-owner --no-absolute-names
 
     local arch; arch="$(detect_host_arch)"
     local distro; distro="$(_detect_chroot_distro "$workdir/rootfs")"
@@ -493,8 +533,12 @@ backend_from_chroot_vm() {
         || die "syslinux MBR binary not found.  Install: apt-get install -y syslinux-common"
 
     local workdir; workdir="$(mktemp -d)"
+    # M-7: register cleanup on RETURN, EXIT, INT, and TERM so that loop
+    # devices and mounts are released even when the caller is interrupted.
+    # SIGKILL cannot be caught; on kill, manually run:
+    #   losetup -a  # find leaked loop devices
     # shellcheck disable=SC2064
-    trap "rm -rf '$workdir'" RETURN
+    trap "rm -rf '$workdir'" RETURN EXIT INT TERM
 
     local raw_img="$workdir/disk.raw"
     log_info "creating 20G raw disk image for VM"
@@ -505,13 +549,13 @@ backend_from_chroot_vm() {
 
     local lodev; lodev="$(losetup --find --partscan --show "$raw_img")"
     # shellcheck disable=SC2064
-    trap "losetup -d '$lodev' 2>/dev/null || true; rm -rf '$workdir'" RETURN
+    trap "losetup -d '$lodev' 2>/dev/null || true; rm -rf '$workdir'" RETURN EXIT INT TERM
 
     mkfs.ext4 -q "${lodev}p1"
     local mnt="$workdir/mnt"; install -d "$mnt"
     mount "${lodev}p1" "$mnt"
     # shellcheck disable=SC2064
-    trap "umount '$mnt' 2>/dev/null || true; losetup -d '$lodev' 2>/dev/null || true; rm -rf '$workdir'" RETURN
+    trap "umount '$mnt' 2>/dev/null || true; losetup -d '$lodev' 2>/dev/null || true; rm -rf '$workdir'" RETURN EXIT INT TERM
 
     log_info "copying chroot → disk (rsync, preserving perms)"
     rsync -aHAX \
@@ -526,13 +570,10 @@ backend_from_chroot_vm() {
     # Install extlinux into /boot/extlinux/.
     install -d "$mnt/boot/extlinux"
     extlinux --install "$mnt/boot/extlinux" 2>/dev/null
-    cat > "$mnt/boot/extlinux/extlinux.conf" <<EXTCFG
-DEFAULT linux
-LABEL linux
-  KERNEL /${kernel##*/chroot_path/boot/}
-  APPEND root=UUID=${uuid} ro console=ttyS0
-EXTCFG
-    # kernel_basename relative to boot/
+    # M-3/I-1: removed the dead first extlinux.conf write that used the
+    # broken literal pattern ${kernel##*/chroot_path/boot/} (not a variable
+    # substitution — chroot_path is never expanded, producing the full kernel
+    # path verbatim as the KERNEL line).  Only the correct write below remains.
     local kname; kname="${kernel##*/}"
     local iname_r; iname_r="${initrd##*/}"
     cat > "$mnt/boot/extlinux/extlinux.conf" <<EXTCFG
@@ -547,7 +588,7 @@ EXTCFG
     dd if="$mbr_bin" of="$lodev" bs=440 count=1 conv=notrunc 2>/dev/null
     losetup -d "$lodev" 2>/dev/null || true
     # shellcheck disable=SC2064
-    trap "rm -rf '$workdir'" RETURN   # clean up the rest
+    trap "rm -rf '$workdir'" RETURN EXIT INT TERM   # clean up the rest
 
     local qcow2="$workdir/disk.qcow2"
     log_info "converting raw → qcow2"
@@ -607,17 +648,28 @@ backend_from_qcow2() {
 # Falls back to "linux" / "unknown" — these only land in metadata.yaml's
 # `properties` block, which is free-form display text.
 _detect_chroot_distro() {
+    # H-1: parse with awk — sourcing os-release from an untrusted chroot or
+    # tarball executes arbitrary shell code inside a subshell.
     local root="$1"
     if [[ -r "$root/etc/os-release" ]]; then
-        ( . "$root/etc/os-release" 2>/dev/null && printf '%s' "${ID:-linux}" )
+        awk -F= '/^ID=/{v=$2; gsub(/^[[:space:]"'"'"']+|[[:space:]"'"'"']+$/,"",v); print v; exit}' \
+            "$root/etc/os-release" 2>/dev/null || printf 'linux'
     else
         printf 'linux'
     fi
 }
 _detect_chroot_release() {
+    # H-1: same no-source approach; try VERSION_CODENAME then VERSION_ID.
     local root="$1"
     if [[ -r "$root/etc/os-release" ]]; then
-        ( . "$root/etc/os-release" 2>/dev/null && printf '%s' "${VERSION_CODENAME:-${VERSION_ID:-unknown}}" )
+        local val
+        val="$(awk -F= '/^VERSION_CODENAME=/{v=$2; gsub(/^[[:space:]"'"'"']+|[[:space:]"'"'"']+$/,"",v); print v; exit}' \
+            "$root/etc/os-release" 2>/dev/null)"
+        if [[ -z "$val" ]]; then
+            val="$(awk -F= '/^VERSION_ID=/{v=$2; gsub(/^[[:space:]"'"'"']+|[[:space:]"'"'"']+$/,"",v); print v; exit}' \
+                "$root/etc/os-release" 2>/dev/null)"
+        fi
+        printf '%s' "${val:-unknown}"
     else
         printf 'unknown'
     fi
@@ -798,13 +850,21 @@ cmd_up() {
     local cfg; cfg="$(toml_to_json "$OPT_CONFIG")"
     local lab_name; lab_name="$(jq -r '.lab.name // ""' <<<"$cfg")"
     [[ -n "$lab_name" ]] || die "config missing [lab].name"
+    # C-1, H-2: validate before embedding in trap/paths/labels.
+    validate_name "$lab_name" "lab name"
     log_info "── bringing up lab '$lab_name' from $OPT_CONFIG ──"
 
     install -d -m 0755 "$(lab_dir "$lab_name")"
     cp -f "$OPT_CONFIG" "$(lab_dir "$lab_name")/spec.toml"
 
-    # Partial-up safety net (matches Phase 3's pattern).
-    trap "log_warn \"partial 'up' for lab '${lab_name}' — clean up with:  ${LAB_PROG} down --lab ${lab_name}\"" EXIT
+    # C-1: use a named function so lab_name is never eval'd as shell code when
+    # the EXIT trap fires; validate_name above ensures no metacharacters.
+    _partial_up_cleanup_5() {
+        local _lab="$1"
+        log_info "partial 'up' — running 'down' to clean up lab '$_lab'"
+        OPT_LAB="$_lab" OPT_CONFIG="" cmd_down 2>/dev/null || true
+    }
+    trap "_partial_up_cleanup_5 '${lab_name}'" EXIT
 
     # --- Projects ---
     local proj_count; proj_count="$(jq -r '.project // [] | length' <<<"$cfg")"
@@ -832,6 +892,8 @@ cmd_up() {
         local inst; inst="$(jq -c --argjson i "$i" '.instance[$i]' <<<"$cfg")"
         local sname; sname="$(spec_get "$inst" name)"
         [[ -n "$sname" ]] || die "instance[$i] missing name"
+        # L-2: validate before using in instance names, labels, and device specs.
+        validate_name "$sname" "instance name"
 
         # Engine filter (cross-phase).
         local sengine; sengine="$(spec_get "$inst" engine)"
@@ -929,17 +991,33 @@ cmd_up() {
         local dname dconf
         while IFS=$'\t' read -r dname dconf; do
             [[ -z "$dname" ]] && continue
+            # M-5: reject commas in device names and values — the -d flag
+            # format is "name,key=val,key=val"; a comma in any component
+            # silently injects extra device properties (e.g. "source=/").
+            [[ "$dname" != *,* ]] \
+                || die "instance '$sname': device name must not contain comma: $dname"
             local dspec="$dname"
             local k v
             while IFS=$'\t' read -r k v; do
                 [[ -z "$k" ]] && continue
+                [[ "$k" != *,* && "$v" != *,* ]] \
+                    || die "instance '$sname': device key/value for '$k' must not contain comma"
                 dspec+=",${k}=${v}"
             done < <(jq -r 'to_entries[]? | "\(.key)\t\(.value)"' <<<"$dconf")
             launch_args+=(-d "$dspec")
         done < <(jq -c '.devices // {} | to_entries[]? | "\(.key)\t\(.value)"' <<<"$inst")
 
         log_info "launching ${type} '$sname' as $iname (image=$image)"
-        "$LXC_CMD" launch "${launch_args[@]}" "$image" "$iname" >/dev/null
+        # L-4: try-and-handle instead of pre-check to close the TOCTOU race
+        # between the earlier `lxc info` idempotency check and the launch.
+        local _launch_err
+        if ! _launch_err="$("$LXC_CMD" launch "${launch_args[@]}" "$image" "$iname" 2>&1)"; then
+            if "$LXC_CMD" info "$iname" >/dev/null 2>&1; then
+                log_warn "instance '$iname' appeared concurrently; skipping"
+            else
+                die "launch of '$iname' failed: $_launch_err"
+            fi
+        fi
 
         handled=$((handled+1))
     done
@@ -958,6 +1036,8 @@ cmd_down() {
         lab_name="$(toml_to_json "$OPT_CONFIG" | jq -r '.lab.name // ""')"
     fi
     [[ -n "$lab_name" ]] || die "usage: $LAB_PROG down --lab NAME | --config topology.toml"
+    # H-2, L-2: validate before use in paths and label filters.
+    validate_name "$lab_name" "lab name"
     require_lxd_or_incus
 
     log_info "── tearing down lab '$lab_name' ──"
@@ -980,7 +1060,13 @@ cmd_down() {
 
     # Clean cached spec.toml; profiles/projects are intentionally left in
     # place (other labs may share them).
-    rm -rf "$(lab_dir "$lab_name")"
+    # H-2: sanity-check the resolved path stays inside LAB_LXD_STATE_DIR
+    # before rm -rf (a traversal in lab_name like ../../home could otherwise
+    # delete an arbitrary directory).
+    local _lab_dir; _lab_dir="$(realpath -m "$(lab_dir "$lab_name")")"
+    [[ "$_lab_dir" == "$LAB_LXD_STATE_DIR"/* ]] \
+        || die "refusing rm -rf: '$_lab_dir' is outside $LAB_LXD_STATE_DIR"
+    rm -rf -- "$_lab_dir"
 
     log_info "── lab '$lab_name' torn down ──"
 }
@@ -1154,12 +1240,16 @@ cmd_destroy() {
 cmd_inspect() {
     local target="${POS_ARGS[0]:-}"
     [[ -n "$target" ]] || die "usage: $LAB_PROG inspect <name|lab/service> [--json]"
+    # M-1: reject targets starting with '-' which would be parsed as flags
+    # by lxc/incus list/profile show/project show.
+    [[ "$target" != -* ]] || die "inspect target must not start with '-': $target"
     require_lxd_or_incus
     require_cmd jq
 
     # --- name resolution: try the literal first, then the rewrite.
-    # Both queries use --all-projects so cross-project instances resolve
-    # without the user having to specify --project.
+    # M-1: validate_name above rejects targets starting with '-'; lxc list
+    # does not support '--' before mixed positional+flag arguments so we
+    # rely on the earlier validation rather than adding '--' here.
     local iname=""
     local raw=""
     raw="$("$LXC_CMD" list "$target" --all-projects --format=json 2>/dev/null)"
@@ -1175,7 +1265,7 @@ cmd_inspect() {
     # --- if no instance matched, try profile then project ---
     if [[ -z "$iname" ]]; then
         # Profile inspect: kind: "profile"
-        local prof_yaml; prof_yaml="$("$LXC_CMD" profile show "$target" 2>/dev/null || true)"
+        local prof_yaml; prof_yaml="$("$LXC_CMD" profile show -- "$target" 2>/dev/null || true)"
         if [[ -n "$prof_yaml" ]]; then
             local prof_json; prof_json="$(printf '%s' "$prof_yaml" | \
                 if have yq && yq --version 2>&1 | grep -qi mikefarah; then
@@ -1219,7 +1309,7 @@ cmd_inspect() {
         fi
 
         # Project inspect: kind: "project"
-        local proj_yaml; proj_yaml="$("$LXC_CMD" project show "$target" 2>/dev/null || true)"
+        local proj_yaml; proj_yaml="$("$LXC_CMD" project show -- "$target" 2>/dev/null || true)"
         if [[ -n "$proj_yaml" ]]; then
             local proj_json; proj_json="$(printf '%s' "$proj_yaml" | \
                 if have yq && yq --version 2>&1 | grep -qi mikefarah; then
@@ -1436,6 +1526,10 @@ cmd_inspect() {
 # concatenated with YAML document separators.  The output is feedable into
 # `$LXC_CMD launch --yaml < file` to recreate identical instance config (LXD
 # accepts a YAML config blob on stdin via --yaml mode).
+# _yaml_str VALUE — emit VALUE as a double-quoted YAML string with internal
+# double-quotes escaped (M-6, I-5).
+_yaml_str() { printf '"%s"' "${1//\"/\\\"}"; }
+
 cmd_export() {
     local lab="${OPT_LAB:-${POS_ARGS[0]:-}}"
     local fmt="${OPT_FORMAT:-lxc-yaml}"
@@ -1474,7 +1568,8 @@ cmd_export() {
             [[ "$itype" == "vm" ]] && { printf '  # (skipped: %s is type=vm, not representable in compose)\n' "$(spec_get "$inst" name)"; continue; }
             sname="$(spec_get "$inst" name)"
             simage="$(spec_get "$inst" image)"
-            printf '  %s:\n' "$sname"
+            # M-6, I-5: quote service names as YAML keys to prevent injection.
+            printf '  %s:\n' "$(_yaml_str "$sname")"
             [[ -n "$simage" ]] && printf '    image: %s\n' "$simage"
             printf '    container_name: %s\n' "$(instance_name_for "$lab" "$sname")"
             local p first=1
@@ -1501,14 +1596,17 @@ cmd_export() {
             [[ -n "$cmdline" ]] && printf '    command: %s\n' "$cmdline"
         done
         printf 'networks:\n'
-        local nets net
-        nets="$(jq -r '.network // {} | keys[]?' <<<"$cfg")"
-        if [[ -z "$nets" ]]; then
+        # L-1: mapfile array prevents word-split/glob on network names.
+        # M-6: quote network names as YAML keys.
+        local -a exp_nets=()
+        mapfile -t exp_nets < <(jq -r '.network // {} | keys[]?' <<<"$cfg")
+        if (( ${#exp_nets[@]} == 0 )); then
             printf '  default:\n    driver: bridge\n'
         else
-            for net in $nets; do
+            local net
+            for net in "${exp_nets[@]}"; do
                 local d; d="$(jq -r --arg n "$net" '.network[$n].driver // "bridge"' <<<"$cfg")"
-                printf '  %s:\n    driver: %s\n' "$net" "$d"
+                printf '  %s:\n    driver: %s\n' "$(_yaml_str "$net")" "$d"
             done
         fi
         if (( ${#named_volumes[@]} > 0 )); then
