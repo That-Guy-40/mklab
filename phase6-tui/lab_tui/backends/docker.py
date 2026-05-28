@@ -117,9 +117,17 @@ class DockerBackend(BackendRunner):
         return f"# docker inspect {resource.name} failed:\n{cp.stderr}"
 
     def destroy_argv(self, resource: Resource, force: bool = False) -> list[str]:
-        # Use the phase script's `destroy` verb so it cleans up labels
-        # AND the container; raw `docker rm -f` would skip the bookkeeping.
-        argv = [str(self.script), "destroy", resource.name]
+        # `lab-docker destroy` resolves names via _resolve_container_name():
+        #   "lab/svc"  → "lab-lab-svc"   (topology container)
+        #   "name"     → "lab-name"       (ad-hoc container)
+        # resource.name is already the full Docker name (e.g. "lab-demo-web"),
+        # so we must pass "lab/svc" to avoid the double-prefix bug.
+        target = (
+            f"{resource.lab}/{resource.svc}"
+            if resource.lab and resource.svc
+            else resource.name.removeprefix("lab-")
+        )
+        argv = [str(self.script), "destroy", target]
         if force:
             argv.append("--force")
         return argv

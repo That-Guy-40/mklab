@@ -153,7 +153,17 @@ class PodmanBackend(BackendRunner):
         return f"# podman inspect {resource.name} failed:\n{cp.stderr}"
 
     def destroy_argv(self, resource: Resource, force: bool = False) -> list[str]:
-        argv = [str(self.script), "destroy", resource.name]
+        # Same resolver convention as Phase 3 and Phase 5:
+        #   "lab/svc"  → "lab-lab-svc"   (managed container / pod)
+        #   "name"     → "lab-name"       (ad-hoc)
+        # resource.name is the full Podman name, so pass "lab/svc" to avoid
+        # the double-prefix bug.
+        target = (
+            f"{resource.lab}/{resource.svc}"
+            if resource.lab and resource.svc
+            else resource.name.removeprefix("lab-")
+        )
+        argv = [str(self.script), "destroy", target]
         if force:
             argv.append("--force")
         return argv

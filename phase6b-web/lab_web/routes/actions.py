@@ -23,7 +23,12 @@ async def destroy(backend: str, name: str, request: Request) -> HTMLResponse:
     resource = await asyncio.to_thread(_find_resource, runner, name)
     if resource is None:
         return HTMLResponse(f"<p class='error'>Resource not found: {name}</p>")
-    result = await asyncio.to_thread(runner.destroy, resource, True)
+    try:
+        result = await asyncio.to_thread(runner.destroy, resource, True)
+    except Exception as exc:  # noqa: BLE001
+        return HTMLResponse(
+            f"<p class='error'>Destroy failed (exception): {exc}</p>"
+        )
     if result.returncode == 0:
         return templates.TemplateResponse(
             request=request,
