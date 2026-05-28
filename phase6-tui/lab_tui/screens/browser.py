@@ -48,6 +48,7 @@ _UNLABELLED = "(unlabelled)"
 class ResourceBrowserScreen(Screen):
     BINDINGS = [
         Binding("r", "refresh", "Refresh"),
+        Binding("n", "new_wizard", "New"),
         Binding("t", "open_topology", "Topology"),
         Binding("l", "open_logs", "Logs"),
         Binding("c", "console", "Console"),
@@ -90,6 +91,34 @@ class ResourceBrowserScreen(Screen):
 
     def action_refresh(self) -> None:
         self.refresh_tree()
+
+    def action_new_wizard(self) -> None:
+        """Open the phase-picker, then launch the chosen wizard."""
+        from lab_tui.screens.wizard_select import WizardSelectScreen
+        self.app.push_screen(WizardSelectScreen(), callback=self._open_wizard)
+
+    def _open_wizard(self, phase_id: str | None) -> None:
+        """Open the wizard for the selected phase; refresh tree on save."""
+        if phase_id is None:
+            return
+        _WIZARDS = {
+            "phase1": "lab_tui.screens.wizards.phase1.ChrootWizard",
+            "phase2": "lab_tui.screens.wizards.phase2.VMWizard",
+            "phase3": "lab_tui.screens.wizards.phase3.DockerServiceWizard",
+            "phase4": "lab_tui.screens.wizards.phase4.PodmanServiceWizard",
+            "phase5": "lab_tui.screens.wizards.phase5.LXDInstanceWizard",
+        }
+        dotted = _WIZARDS.get(phase_id)
+        if dotted is None:
+            return
+        module_path, _, class_name = dotted.rpartition(".")
+        import importlib
+        mod = importlib.import_module(module_path)
+        wizard_cls = getattr(mod, class_name)
+        self.app.push_screen(
+            wizard_cls(),
+            callback=lambda saved_path: self.refresh_tree() if saved_path else None,
+        )
 
     def action_open_topology(self) -> None:
         from lab_tui.screens.topology import TopologyScreen
