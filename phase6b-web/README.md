@@ -47,14 +47,18 @@ interactively; option 2 is the most portable in scripts and aliases.
 
 ```
 lab-web --port 9090                    # bind on a different port
-lab-web --host 0.0.0.0                 # bind all interfaces (prints a warning)
 lab-web --reload                       # auto-reload on source changes (dev mode)
+lab-web --auth USER:PASS               # enable HTTP Basic Auth on all routes
+lab-web --host 0.0.0.0 \                # bind all interfaces — REQUIRES both flags:
+        --allow-network \              #   explicit "yes, expose this" confirmation
+        --auth alice:s3cr3t           #   credentials for HTTP Basic Auth
 lab-web --help
 ```
 
-### SSH port-forward recipe
+### SSH port-forward recipe (recommended — no auth needed)
 
-Run on the lab host, open from your laptop:
+Run on the lab host, open from your laptop. The SSH tunnel IS the auth layer;
+no credentials need to be configured.
 
 ```bash
 # On the lab host:
@@ -67,6 +71,40 @@ ssh -L 8080:localhost:8080 labhost
 # Then browse to:
 http://localhost:8080
 ```
+
+### Network exposure with Basic Auth
+
+If SSH-forward isn't an option (e.g. a shared lab server with multiple users
+reaching it directly), you can bind to a network interface — but you MUST
+explicitly opt in AND provide a credential. `lab-web` refuses to start otherwise:
+
+```bash
+# Bind on all interfaces, port 8080, with HTTP Basic Auth:
+lab-web --host 0.0.0.0 --allow-network --auth alice:s3cr3t
+
+# Same thing with the credential in the environment (avoids ps-list leakage):
+LAB_WEB_AUTH=alice:s3cr3t lab-web --host 0.0.0.0 --allow-network
+```
+
+What the flags enforce:
+
+| `--host` | `--allow-network` | `--auth` | Result |
+|---|---|---|---|
+| `127.0.0.1` (default) | — | — | ✅ start, no auth (loopback only) |
+| `127.0.0.1` | — | `USER:PASS` | ✅ start, auth required (shared machines) |
+| `0.0.0.0` / `eth0`-IP | — | any | ❌ refuse to start (missing `--allow-network`) |
+| `0.0.0.0` / `eth0`-IP | ✅ | — | ❌ refuse to start (missing `--auth`) |
+| `0.0.0.0` / `eth0`-IP | ✅ | `USER:PASS` | ✅ start, auth required |
+
+The auth itself uses HTTP Basic with constant-time password comparison
+(`hmac.compare_digest`). The browser shows the standard login dialog on first
+visit. `/static/*` is exempt so CSS and JS load on the login page itself.
+
+> ⚠️ **Basic Auth is plain HTTP — no TLS.** Credentials travel in clear text.
+> For internet exposure, terminate TLS at nginx/Caddy and use that proxy's
+> stronger auth (OAuth, SSO, mTLS) instead of `--auth`. Basic Auth here is
+> meant for trusted-network use (lab subnet, VPN) where SSH-forward isn't
+> convenient.
 
 ## Textual TUI via browser (`textual serve`)
 
@@ -133,7 +171,21 @@ no phase scripts executed. Backends are stubbed via `MagicMock`.
 
 ## Security note
 
-`lab-web` binds to `127.0.0.1` by default and ships **no authentication**.
-The intended deployment model is SSH port-forward (see above). If you pass
-`--host 0.0.0.0` to expose it on the network, put it behind a reverse proxy
-with authentication (nginx basic-auth, Caddy, Authelia, etc.).
+`lab-web` binds to `127.0.0.1` by default. The intended deployment model is
+SSH port-forward (no auth needed — the tunnel is the auth layer).
+
+To expose on the network, `lab-web` enforces two preconditions:
+
+1. `--allow-network` — explicit acknowledgement that the UI will be reachable.
+2. `--auth USER:PASS` — HTTP Basic Auth on every route (except `/static/*`).
+
+The script refuses to start when `--host` is non-loopback unless both flags
+are supplied. See the **Network exposure with Basic Auth** section above.
+
+Basic Auth is plain HTTP — for internet exposure use a TLS-terminating reverse
+proxy (nginx / Caddy / Authelia / Traefik) with stronger auth instead.
+
+Other hardening already in place: HTMX-only CSRF guard on POST routes, CSP +
+X-Frame-Options + X-Content-Type-Options on every response, Jinja2 autoescape
+for all templates, vendored htmx/sse.js (no CDN supply-chain dependency), and
+constant-time password comparison via `hmac.compare_digest`.

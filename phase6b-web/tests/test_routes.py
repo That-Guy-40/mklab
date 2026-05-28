@@ -188,3 +188,149 @@ def test_default_host_is_loopback() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     args = parser.parse_args([])
     assert args.host == "127.0.0.1"
+
+
+# ── Basic Auth (PLAN spec / audit F-7) ────────────────────────────────────
+
+import base64
+import os
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
+
+
+@pytest_asyncio.fixture
+async def auth_client(sample_resources):
+    """Client with Basic Auth enabled (user 'alice', password 'secret')."""
+    from lab_web.app import app
+    from tests.conftest import _stub_runners
+    app.state.runners = _stub_runners(sample_resources)
+    os.environ["LAB_WEB_AUTH_USER"] = "alice"
+    os.environ["LAB_WEB_AUTH_PASSWORD"] = "secret"
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as ac:
+            yield ac
+    finally:
+        os.environ.pop("LAB_WEB_AUTH_USER", None)
+        os.environ.pop("LAB_WEB_AUTH_PASSWORD", None)
+
+
+def _basic(user: str, password: str) -> dict[str, str]:
+    token = base64.b64encode(f"{user}:{password}".encode()).decode()
+    return {"Authorization": f"Basic {token}"}
+
+
+@pytest.mark.asyncio
+async def test_auth_disabled_no_header_required(client) -> None:
+    """When LAB_WEB_AUTH_* env vars are unset, requests pass through."""
+    resp = await client.get("/")
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_auth_enabled_no_header_returns_401(auth_client) -> None:
+    """With auth enabled, an unauthenticated request returns 401 + WWW-Authenticate."""
+    resp = await auth_client.get("/")
+    assert resp.status_code == 401
+    assert resp.headers.get("WWW-Authenticate", "").startswith("Basic ")
+
+
+@pytest.mark.asyncio
+async def test_auth_enabled_correct_credentials_pass(auth_client) -> None:
+    resp = await auth_client.get("/", headers=_basic("alice", "secret"))
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_auth_enabled_wrong_password_returns_401(auth_client) -> None:
+    resp = await auth_client.get("/", headers=_basic("alice", "wrong"))
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_auth_enabled_wrong_user_returns_401(auth_client) -> None:
+    resp = await auth_client.get("/", headers=_basic("bob", "secret"))
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_auth_enabled_malformed_header_returns_401(auth_client) -> None:
+    """Garbage in the Authorization header is rejected without crashing."""
+    resp = await auth_client.get(
+        "/", headers={"Authorization": "Basic not-valid-base64!!!"}
+    )
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_auth_enabled_non_basic_scheme_returns_401(auth_client) -> None:
+    resp = await auth_client.get(
+        "/", headers={"Authorization": "Bearer some-token"}
+    )
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_auth_enabled_static_files_exempt(auth_client) -> None:
+    """/static/* must be accessible without auth so CSS/JS load on login page."""
+    resp = await auth_client.get("/static/style.css")
+    # 200 if the file exists, 404 if not — but NEVER 401.
+    assert resp.status_code != 401
+
+
+@pytest.mark.asyncio
+async def test_auth_destroy_endpoint_requires_credentials(auth_client) -> None:
+    """The mutating destroy endpoint must be auth-gated too."""
+    resp = await auth_client.post(
+        "/actions/destroy/stub-backend/test-vm",
+        headers={"HX-Request": "true"},  # F-4 CSRF guard
+    )
+    assert resp.status_code == 401
+
+
+# ── CLI validation: --host non-loopback requires --allow-network + --auth ──
+
+def test_cli_refuses_nonloopback_without_allow_network(monkeypatch, capsys) -> None:
+    """--host 0.0.0.0 without --allow-network must exit non-zero."""
+    from lab_web.__main__ import main
+    monkeypatch.setattr("sys.argv", ["lab-web", "--host", "0.0.0.0"])
+    rc = main()
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "--allow-network" in err
+
+
+def test_cli_refuses_allow_network_without_auth(monkeypatch, capsys) -> None:
+    """--allow-network without --auth must exit non-zero."""
+    from lab_web.__main__ import main
+    monkeypatch.setattr(
+        "sys.argv",
+        ["lab-web", "--host", "0.0.0.0", "--allow-network"],
+    )
+    # Make sure the LAB_WEB_AUTH env fallback is not set.
+    monkeypatch.delenv("LAB_WEB_AUTH", raising=False)
+    rc = main()
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "--auth" in err
+
+
+def test_cli_refuses_malformed_auth(monkeypatch, capsys) -> None:
+    """--auth without a colon must exit non-zero."""
+    from lab_web.__main__ import main
+    monkeypatch.setattr("sys.argv", ["lab-web", "--auth", "no-colon-here"])
+    rc = main()
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "USER:PASS" in err
+
+
+def test_cli_refuses_empty_user_or_password(monkeypatch, capsys) -> None:
+    from lab_web.__main__ import main
+    monkeypatch.setattr("sys.argv", ["lab-web", "--auth", ":pass-only"])
+    rc = main()
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "non-empty" in err

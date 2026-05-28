@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import base64
+import hmac
 import logging
+import os
 import re as _re
+import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -73,6 +77,58 @@ async def add_security_headers(request: Request, call_next) -> Response:
         "style-src 'self' 'unsafe-inline';"  # inline styles used by Textual-style theming
     )
     return resp
+
+
+# ── HTTP Basic Auth (PLAN spec / audit F-7) ───────────────────────────────────
+# Credentials are read from env vars set by __main__.py.  When both vars are
+# unset, the middleware is a no-op (loopback-only default).  When set, every
+# request except /static/* must present a matching Authorization header.
+#
+# Security notes:
+#   - hmac.compare_digest is used for the comparison so timing attacks cannot
+#     leak the credential a character at a time.
+#   - The 401 response carries WWW-Authenticate: Basic so browsers show the
+#     login dialog instead of a blank page.
+#   - /static/* is exempt so CSS/scripts load on the login page itself.
+#   - We deliberately do NOT cache the env-var values at module import time:
+#     the test suite mutates them between requests, and __main__.py sets them
+#     before uvicorn.run() in the same process, so reading on each request is
+#     correct and has negligible cost.
+def _basic_auth_check(authorization: str | None) -> bool:
+    user = os.environ.get("LAB_WEB_AUTH_USER", "")
+    password = os.environ.get("LAB_WEB_AUTH_PASSWORD", "")
+    if not user or not password:
+        return True  # auth disabled — pass through
+    if not authorization or not authorization.startswith("Basic "):
+        return False
+    try:
+        decoded = base64.b64decode(authorization[6:].strip()).decode("utf-8")
+    except (ValueError, UnicodeDecodeError):
+        return False
+    sep = decoded.find(":")
+    if sep < 0:
+        return False
+    got_user, got_pass = decoded[:sep], decoded[sep + 1:]
+    # Constant-time comparison on both fields so neither length nor content leaks.
+    user_ok = hmac.compare_digest(got_user.encode(), user.encode())
+    pass_ok = hmac.compare_digest(got_pass.encode(), password.encode())
+    return user_ok and pass_ok
+
+
+@app.middleware("http")
+async def basic_auth(request: Request, call_next) -> Response:
+    # /static/* is unauthenticated so the browser can fetch CSS/JS/font assets
+    # without a separate auth round-trip on every page load.  Nothing under
+    # /static/ is user-supplied — it's vendored htmx, sse.js, and style.css.
+    if request.url.path.startswith("/static/"):
+        return await call_next(request)
+    if _basic_auth_check(request.headers.get("Authorization")):
+        return await call_next(request)
+    return Response(
+        status_code=401,
+        content="Authentication required.",
+        headers={"WWW-Authenticate": 'Basic realm="lab-create"'},
+    )
 
 
 from lab_web.routes import resources, actions, stream  # noqa: E402
