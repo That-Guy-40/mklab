@@ -80,8 +80,21 @@ async def watch_state() -> AsyncIterator[BackendName]:
     # Make sure target dirs exist so watchfiles doesn't error out on a
     # fresh host that's never run a phase script.  We create them as
     # 0o700 so we don't accidentally widen permissions for shared dirs.
+    # F-11: mkdir(mode=0o700) only applies the mode to the *leaf* directory;
+    # intermediate parents get the process umask.  Walk the path and chmod
+    # each component that we create so the full tree is owner-only.
     for path in _FS_BACKENDS.values():
+        parts: list[Path] = []
+        p = path
+        while not p.exists():
+            parts.append(p)
+            p = p.parent
         path.mkdir(parents=True, exist_ok=True, mode=0o700)
+        for created in reversed(parts):
+            try:
+                created.chmod(0o700)
+            except OSError:
+                pass
 
     # We need to match a Change back to a backend.  Build a (path → name)
     # lookup that resolves the longest matching prefix.

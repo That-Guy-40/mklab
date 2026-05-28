@@ -67,6 +67,10 @@ class PodmanBackend(BackendRunner):
             "--format", "json",
         ]
         if lab is not None:
+            # F-08: validate lab name before embedding in filter (same as docker backend).
+            import re as _re
+            if not _re.match(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$", lab):
+                return []
             argv.extend(["--filter", f"label=lab-create.lab={lab}"])
         rc, parsed = run_json(argv)
         if rc != 0 or not isinstance(parsed, list):
@@ -100,6 +104,10 @@ class PodmanBackend(BackendRunner):
             "--format", "json",
         ]
         if lab is not None:
+            # F-08: validate lab name before embedding in filter (same as docker backend).
+            import re as _re
+            if not _re.match(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$", lab):
+                return []
             argv.extend(["--filter", f"label=lab-create.lab={lab}"])
         rc, parsed = run_json(argv)
         if rc != 0 or not isinstance(parsed, list):

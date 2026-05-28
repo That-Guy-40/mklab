@@ -22,6 +22,20 @@ from pydantic import BaseModel, ConfigDict, Field
 # → repo root is three parents up from this file's dir.
 _PHASE_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
+# F-12: warn at import time when _PHASE_ROOT doesn't look like the repo root.
+# This happens when the package is installed as a wheel (site-packages),
+# in which case the phase scripts are not present and every backend returns
+# is_available()=False with no clear diagnostic.
+import warnings as _warnings
+if not (_PHASE_ROOT / "phase1-chroot").is_dir():
+    _warnings.warn(
+        f"lab_tui: phase scripts not found under {_PHASE_ROOT}. "
+        "This package must be used in-tree from the LAB_CREATE_V2 repo, "
+        "not installed as a wheel.  All backends will report unavailable.",
+        RuntimeWarning,
+        stacklevel=1,
+    )
+
 ResourceStatus = Literal[
     "running", "stopped", "built", "missing", "error", "unknown",
 ]

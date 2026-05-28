@@ -75,7 +75,13 @@ class LXDBackend(BackendRunner):
     def is_available(self) -> bool:
         if not super().is_available():
             return False
-        return self._probe_engine() is not None
+        ok = self._probe_engine() is not None
+        # F-10: clear the cached engine command when the probe fails so a
+        # daemon that comes back online after a restart is re-detected rather
+        # than silently returning empty from the stale cache.
+        if not ok:
+            self.__class__._engine_cmd = None
+        return ok
 
     def list_resources(self, lab: str | None = None) -> list[Resource]:
         engine = self._probe_engine()
@@ -122,7 +128,9 @@ class LXDBackend(BackendRunner):
         argv = [engine]
         if project and project != "default":
             argv += ["--project", project]
-        argv += ["console", "--show-log", name]
+        # F-04: '--' stops option parsing so a name starting with '-' is
+        # not interpreted as a flag by the engine CLI.
+        argv += ["console", "--show-log", "--", name]
         return argv
 
     def inspect(self, resource: Resource) -> str:
@@ -150,7 +158,7 @@ class LXDBackend(BackendRunner):
         project = resource.extra.get("project") or "default"
         if project != "default":
             argv += ["--project", project]
-        argv += ["config", "show", "--expanded", resource.name]
+        argv += ["config", "show", "--expanded", "--", resource.name]
         cp = run_capture(argv)
         if cp.returncode == 0:
             return cp.stdout

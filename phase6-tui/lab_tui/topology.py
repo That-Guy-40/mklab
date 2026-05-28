@@ -112,6 +112,14 @@ def plan_down(toml_path: Path) -> list[PhasePlan]:
     parsed = parse_topology(toml_path)
     present = phases_present(parsed)
     lab_name = parsed["lab"]["name"]
+    # F-05: validate before embedding in --lab argument so a name starting
+    # with '--' or containing spaces cannot confuse the bash script's parser.
+    import re as _re
+    if not _re.match(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$", lab_name):
+        raise ValueError(
+            f"lab name {lab_name!r} contains characters not safe for --lab; "
+            "use only [a-zA-Z0-9_-]"
+        )
 
     plans: list[PhasePlan] = []
     for slot in _DOWN_ORDER:

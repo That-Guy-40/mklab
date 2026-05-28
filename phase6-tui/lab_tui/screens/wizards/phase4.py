@@ -10,7 +10,7 @@ from pathlib import Path
 from textual.app import ComposeResult
 from textual.widgets import Checkbox, Input, Label, Select
 
-from lab_tui.screens.wizards.base import WizardModal
+from lab_tui.screens.wizards.base import WizardModal, _toml_str, _sanitize_bare_key
 
 _MANAGERS = [
     ("plain (rootless podman run)", "plain"),
@@ -90,10 +90,11 @@ class PodmanServiceWizard(WizardModal):
             lines.append(
                 "#        lab-podman.sh generate --config <this-file>  (write unit files)"
             )
+        # F-01: escape free-text values; F-02: sanitize env key names.
         lines += [
             "",
             "[lab]",
-            f'name = "{lab}"',
+            f'name = "{_toml_str(lab)}"',
             "",
         ]
 
@@ -101,25 +102,25 @@ class PodmanServiceWizard(WizardModal):
         if manager == "pod" and pod:
             lines += [
                 "[[pod]]",
-                f'name = "{pod}"',
+                f'name = "{_toml_str(pod)}"',
                 "",
             ]
 
         lines += [
             "[[service]]",
-            f'name   = "{svc}"',
+            f'name   = "{_toml_str(svc)}"',
             f'engine = "podman"',
-            f'image  = "{image}"',
+            f'image  = "{_toml_str(image)}"',
         ]
         if manager == "pod" and pod:
-            lines.append(f'pod    = "{pod}"')
+            lines.append(f'pod    = "{_toml_str(pod)}"')
         if net:
-            lines.append(f'networks = ["{net}"]')
+            lines.append(f'networks = ["{_toml_str(net)}"]')
         if ports:
-            port_list = ", ".join(f'"{p.strip()}"' for p in ports.split(",") if p.strip())
+            port_list = ", ".join(f'"{_toml_str(p.strip())}"' for p in ports.split(",") if p.strip())
             lines.append(f"ports  = [{port_list}]")
         if vols:
-            vol_list = ", ".join(f'"{v.strip()}"' for v in vols.split(",") if v.strip())
+            vol_list = ", ".join(f'"{_toml_str(v.strip())}"' for v in vols.split(",") if v.strip())
             lines.append(f"volumes = [{vol_list}]")
         if env:
             pairs = {}
@@ -127,9 +128,9 @@ class PodmanServiceWizard(WizardModal):
                 item = item.strip()
                 if "=" in item:
                     k, _, v = item.partition("=")
-                    pairs[k.strip()] = v.strip()
+                    pairs[_sanitize_bare_key(k.strip())] = v.strip()
             if pairs:
                 lines.append("environment = { "
-                             + ", ".join(f'{k} = "{v}"' for k, v in pairs.items())
+                             + ", ".join(f'{k} = "{_toml_str(v)}"' for k, v in pairs.items())
                              + " }")
         return "\n".join(lines) + "\n"

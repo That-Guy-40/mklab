@@ -59,7 +59,8 @@ def test_destroy_argv_uses_phase_script() -> None:
         type("R", (), {"name": "foo"})()  # noqa: SLF001
     )
     # sudo may or may not be present depending on the host.
-    assert argv[-3:] == [str(b.script), "destroy", "foo"]
+    # F-03: '--' is inserted before the resource name to stop option parsing.
+    assert argv[-4:] == [str(b.script), "destroy", "--", "foo"]
 
 
 def test_inspect_prefers_inspect_json_when_available(

@@ -57,6 +57,12 @@ class ConfirmScreen(ModalScreen[bool]):
         self.dismiss(False)
 
     def action_approve(self) -> None:
+        # F-09: disable the approve button immediately so rapid double-click
+        # or concurrent y-key + button-click cannot re-fire the destroy command.
+        try:
+            self.query_one("#ok", Button).disabled = True
+        except Exception:  # noqa: BLE001
+            pass
         self.run_worker(self._run(), exclusive=True)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:

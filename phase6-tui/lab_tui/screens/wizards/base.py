@@ -30,6 +30,30 @@ import os
 from abc import abstractmethod
 from pathlib import Path
 
+
+def _toml_str(val: str) -> str:
+    """Escape a value for embedding inside a TOML double-quoted string.
+
+    TOML double-quoted strings allow only ``\\`` and ``\"`` as escape
+    sequences for the characters that would otherwise break the literal.
+    F-01: without this, typing ``"`` or ``\\`` in any wizard field produces
+    syntactically broken TOML that is silently swallowed by _refresh_preview
+    and then written to disk on save.
+    """
+    return val.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _sanitize_bare_key(key: str) -> str:
+    """Strip characters not allowed in a TOML bare key (F-02).
+
+    TOML bare keys may only contain ``[A-Za-z0-9_-]``.  Keys containing
+    spaces, ``=``, ``[``, ``"``, or other specials are invalid and cause
+    TOMLDecodeError when the file is parsed.  We strip the offenders rather
+    than rejecting so the preview stays live; the user sees the cleaned key.
+    """
+    import re
+    return re.sub(r"[^A-Za-z0-9_\-]", "", key)
+
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, ScrollableContainer, Vertical
@@ -220,7 +244,19 @@ class WizardModal(ModalScreen[Path | None]):
         if not raw:
             self.notify("Enter a file path first.", severity="warning")
             return
-        path = Path(raw).expanduser()
+        path = Path(raw).expanduser().resolve()
+        # F-06: warn when the target is outside the current working directory
+        # so the user is aware they are writing to an unexpected location.
+        # This is advisory only — we still allow the write (the user controls
+        # the TUI and the filesystem).
+        try:
+            path.relative_to(Path.cwd())
+        except ValueError:
+            self.notify(
+                f"Writing outside CWD: {path}",
+                severity="warning",
+                timeout=4,
+            )
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(self.generate_toml())

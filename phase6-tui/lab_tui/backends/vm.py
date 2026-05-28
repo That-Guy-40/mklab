@@ -148,7 +148,8 @@ class VMBackend(BackendRunner):
         # --force skips the script's interactive read-from-/dev/tty prompt,
         # which would block a web UI request on the server's terminal.
         sudo = ["sudo"] if shutil.which("sudo") and os.geteuid() != 0 else []
-        argv = [*sudo, str(self.script), "destroy", resource.name]
+        # F-03: '--' stops option parsing in the bash script.
+        argv = [*sudo, str(self.script), "destroy", "--", resource.name]
         if force:
             argv.append("--force")
         return argv

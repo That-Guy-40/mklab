@@ -63,6 +63,12 @@ class DockerBackend(BackendRunner):
             "--format", "{{json .}}",
         ]
         if lab is not None:
+            # F-08: a lab name containing '=' would make Docker parse the
+            # filter as label key=wrong-key and value=rest, silently hiding
+            # all containers.  Validate before embedding.
+            import re as _re
+            if not _re.match(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$", lab):
+                return []  # invalid lab name — return empty rather than wrong results
             argv.extend(["--filter", f"label=lab-create.lab={lab}"])
         cp = run_capture(argv)
         if cp.returncode != 0:

@@ -44,6 +44,17 @@ def main() -> int:
             return 1
         # textual serve accepts --port and --host separately; parse combined arg.
         host, _, port = args.serve.rpartition(":")
+        # F-07: warn when binding to a non-loopback address.  textual serve
+        # has NO authentication — any machine that can reach the port gets
+        # full interactive control over resources (destroy, log read, file
+        # write via wizards).  Default the example in --help to 127.0.0.1.
+        if host and host != "127.0.0.1":
+            print(
+                f"lab-tui: WARNING: binding serve to {host} with NO authentication.\n"
+                "  Anyone who reaches this port can destroy resources and read logs.\n"
+                "  Put it behind an authenticated reverse proxy before exposing it.",
+                file=sys.stderr,
+            )
         cmd = [textual_bin, "serve", "lab_tui.app:LabApp"]
         if port:
             cmd += ["--port", port]
