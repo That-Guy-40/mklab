@@ -82,7 +82,7 @@ def test_inspect_prefers_inspect_json_when_available(
             return subprocess.CompletedProcess(argv, 0, json.dumps(fake_doc), "")
         # Bare `podman inspect <name>` — fallback path.  Must NOT be hit
         # when the phase script succeeds.
-        if argv == ["podman", "inspect", "lab-pwn-attacker"]:
+        if argv == ["podman", "inspect", "--", "lab-pwn-attacker"]:
             return subprocess.CompletedProcess(argv, 0, fallback_payload, "")
         if argv[:2] == ["podman", "version"]:
             return subprocess.CompletedProcess(argv, 0, "5.0.0\n", "")
@@ -128,7 +128,7 @@ def test_inspect_falls_back_to_podman_inspect_when_inspect_fails(
         if argv[1:] == ["inspect", "lab-pwn-attacker", "--json"]:
             return subprocess.CompletedProcess(argv, 1, "", "no such verb\n")
         # Bare `podman inspect <name>` — should be exercised here for container.
-        if argv == ["podman", "inspect", "lab-pwn-attacker"]:
+        if argv == ["podman", "inspect", "--", "lab-pwn-attacker"]:
             return subprocess.CompletedProcess(argv, 0, fallback_payload, "")
         if argv[:2] == ["podman", "version"]:
             return subprocess.CompletedProcess(argv, 0, "5.0.0\n", "")
@@ -175,7 +175,7 @@ def test_inspect_pod_fallback_uses_podman_pod_inspect(
         if argv[1:] == ["inspect", "ctf-pod", "--json"]:
             return subprocess.CompletedProcess(argv, 1, "", "no such verb\n")
         # `podman pod inspect ctf-pod` — the correct fallback for a pod.
-        if argv == ["podman", "pod", "inspect", "ctf-pod"]:
+        if argv == ["podman", "pod", "inspect", "--", "ctf-pod"]:
             return subprocess.CompletedProcess(argv, 0, pod_fallback_payload, "")
         # `podman inspect ctf-pod` — WRONG; would be silently empty in
         # real life (pods aren't containers).  If the backend takes this

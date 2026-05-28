@@ -78,7 +78,7 @@ def test_inspect_prefers_inspect_json_when_available(
             return subprocess.CompletedProcess(argv, 0, _j.dumps(fake_doc), "")
         # Bare `docker inspect <name>` — fallback path.  Must NOT be hit
         # when the phase script succeeds.
-        if argv == ["docker", "inspect", "lab-web-nginx"]:
+        if argv == ["docker", "inspect", "--", "lab-web-nginx"]:
             return subprocess.CompletedProcess(argv, 0, fallback_payload, "")
         # The list_resources() / is_available() paths from the original fixture.
         if argv[:3] == ["docker", "ps", "-a"]:
@@ -117,7 +117,7 @@ def test_inspect_falls_back_to_docker_inspect_when_inspect_fails(
         if argv[1:] == ["inspect", "lab-web-nginx", "--json"]:
             return subprocess.CompletedProcess(argv, 1, "", "no such verb\n")
         # Bare `docker inspect <name>` — should be exercised here.
-        if argv == ["docker", "inspect", "lab-web-nginx"]:
+        if argv == ["docker", "inspect", "--", "lab-web-nginx"]:
             return subprocess.CompletedProcess(argv, 0, fallback_payload, "")
         if argv[:3] == ["docker", "ps", "-a"]:
             return subprocess.CompletedProcess(argv, 0, fixture, "")

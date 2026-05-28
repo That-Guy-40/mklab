@@ -22,7 +22,8 @@ async def test_index_returns_html(client) -> None:
 @pytest.mark.asyncio
 async def test_index_contains_htmx(client) -> None:
     resp = await client.get("/")
-    assert "htmx.org" in resp.text or "htmx.min.js" in resp.text
+    # F-5: scripts are now vendored in /static/ — not from external CDN.
+    assert "htmx.min.js" in resp.text
 
 
 # ── resource partial ──────────────────────────────────────────────────────
@@ -104,18 +105,72 @@ async def test_api_resource_unknown_backend(client) -> None:
 
 @pytest.mark.asyncio
 async def test_destroy_returns_html(client) -> None:
-    resp = await client.post("/actions/destroy/stub-backend/test-vm")
+    # F-4: must send HX-Request: true to pass the CSRF guard.
+    resp = await client.post(
+        "/actions/destroy/stub-backend/test-vm",
+        headers={"HX-Request": "true"},
+    )
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
-    # Stub runner returns returncode=0, so should show success message.
     assert "destroyed" in resp.text.lower()
 
 
 @pytest.mark.asyncio
 async def test_destroy_unknown_backend(client) -> None:
-    resp = await client.post("/actions/destroy/ghost/foo")
+    resp = await client.post(
+        "/actions/destroy/ghost/foo",
+        headers={"HX-Request": "true"},
+    )
     assert resp.status_code == 200
     assert "Unknown backend" in resp.text
+
+
+# ── security tests ────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_destroy_requires_htmx_header(client) -> None:
+    """F-4: POST without HX-Request header should be rejected (CSRF guard)."""
+    resp = await client.post("/actions/destroy/stub-backend/test-vm")
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_xss_in_backend_name_is_escaped(client) -> None:
+    """F-3: '<script>' in backend URL param must be HTML-escaped in error response."""
+    resp = await client.post(
+        "/actions/destroy/<script>alert(1)<%2Fscript>/foo",
+        headers={"HX-Request": "true"},
+    )
+    assert "<script>" not in resp.text
+    assert "alert(1)" not in resp.text or "&lt;script&gt;" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_xss_in_resource_name_is_escaped(client) -> None:
+    """F-3: '<img>' in resource name URL param must be HTML-escaped in error response."""
+    resp = await client.post(
+        "/actions/destroy/stub-backend/<img+src=x+onerror=alert(1)>",
+        headers={"HX-Request": "true"},
+    )
+    # The raw tag must not appear verbatim in the response
+    assert "<img" not in resp.text or "&lt;img" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_security_headers_present(client) -> None:
+    """F-15: key security headers must be set on every response."""
+    resp = await client.get("/")
+    assert resp.headers.get("X-Frame-Options") == "DENY"
+    assert resp.headers.get("X-Content-Type-Options") == "nosniff"
+    assert "Content-Security-Policy" in resp.headers
+
+
+@pytest.mark.asyncio
+async def test_htmx_loaded_from_static(client) -> None:
+    """F-5: HTMX must be loaded from /static/ not from an external CDN."""
+    resp = await client.get("/")
+    assert "unpkg.com" not in resp.text
+    assert "/static/htmx.min.js" in resp.text
 
 
 # ── loopback-only default ─────────────────────────────────────────────────

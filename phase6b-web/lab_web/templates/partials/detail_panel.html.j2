@@ -34,10 +34,12 @@
       <summary>Log tail
         <button class="btn-sm"
                 hx-get="/partials/log/{{ resource.backend }}/{{ resource.name|urlencode }}"
-                hx-target="#log-content"
+                hx-target="#log-{{ resource.name|safe_id }}"
                 hx-swap="innerHTML">load</button>
       </summary>
-      <div id="log-content" class="log-panel">
+      {# F-13: use safe_id filter for the id attribute so resource names with
+         special chars produce valid HTML identifiers. #}
+      <div id="log-{{ resource.name|safe_id }}" class="log-panel">
         <span class="dim">Click "load" to stream the log.</span>
       </div>
     </details>

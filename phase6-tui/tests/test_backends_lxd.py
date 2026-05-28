@@ -80,7 +80,7 @@ def test_destroy_argv_uses_lab_slash_svc(patched_lxd: LXDBackend) -> None:
     rs = patched_lxd.list_resources()
     shell = next(r for r in rs if r.svc == "shell")
     argv = patched_lxd.destroy_argv(shell)
-    assert argv[-2:] == ["destroy", "demo/shell"]
+    assert argv[-3:] == ["destroy", "--", "demo/shell"]
 
 
 def test_inspect_prefers_inspect_json_when_available(

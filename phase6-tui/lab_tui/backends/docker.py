@@ -117,7 +117,8 @@ class DockerBackend(BackendRunner):
             except json.JSONDecodeError:
                 pass  # fall through to `docker inspect`
         # Fallback: raw `docker inspect` output (a JSON array, unprettified).
-        cp = run_capture(["docker", "inspect", resource.name])
+        # F-11: '--' stops option parsing so a name starting with '-' is safe.
+        cp = run_capture(["docker", "inspect", "--", resource.name])
         if cp.returncode == 0:
             return cp.stdout
         return f"# docker inspect {resource.name} failed:\n{cp.stderr}"
@@ -133,7 +134,8 @@ class DockerBackend(BackendRunner):
             if resource.lab and resource.svc
             else resource.name.removeprefix("lab-")
         )
-        argv = [str(self.script), "destroy", target]
+        # F-12: '--' stops option parsing in the bash script.
+        argv = [str(self.script), "destroy", "--", target]
         if force:
             argv.append("--force")
         return argv

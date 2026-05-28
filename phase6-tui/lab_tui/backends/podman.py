@@ -153,9 +153,10 @@ class PodmanBackend(BackendRunner):
         # inspect` for pods (chosen by resource.type since the bare CLI
         # doesn't auto-detect like the phase script does).
         if resource.type == "pod":
-            cp = run_capture(["podman", "pod", "inspect", resource.name])
+            # F-11: '--' stops option parsing so a name starting with '-' is safe.
+            cp = run_capture(["podman", "pod", "inspect", "--", resource.name])
         else:
-            cp = run_capture(["podman", "inspect", resource.name])
+            cp = run_capture(["podman", "inspect", "--", resource.name])
         if cp.returncode == 0:
             return cp.stdout
         return f"# podman inspect {resource.name} failed:\n{cp.stderr}"
@@ -171,7 +172,8 @@ class PodmanBackend(BackendRunner):
             if resource.lab and resource.svc
             else resource.name.removeprefix("lab-")
         )
-        argv = [str(self.script), "destroy", target]
+        # F-12: '--' stops option parsing in the bash script.
+        argv = [str(self.script), "destroy", "--", target]
         if force:
             argv.append("--force")
         return argv

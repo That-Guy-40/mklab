@@ -54,10 +54,19 @@ async def stream_logs(backend: str, name: str, request: Request) -> Response:
                 escaped = html.escape(line)
                 yield f"data: <span class='log-line'>{escaped}</span>\n\n"
         finally:
+            # F-8: always wait for the subprocess to exit after terminating it
+            # so it doesn't accumulate as a zombie in the process table.
             try:
                 proc.terminate()
             except ProcessLookupError:
                 pass
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=5.0)
+            except (asyncio.TimeoutError, ProcessLookupError):
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
 
     return StreamingResponse(generate(), media_type="text/event-stream",
                              headers=_SSE_HEADERS)

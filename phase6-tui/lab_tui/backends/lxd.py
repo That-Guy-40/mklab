@@ -169,7 +169,8 @@ class LXDBackend(BackendRunner):
         # already routes through stop+delete.
         target = resource.lab and resource.svc and f"{resource.lab}/{resource.svc}"
         target = target or resource.name
-        argv = [str(self.script), "destroy", target]
+        # F-12: '--' stops option parsing in the bash script.
+        argv = [str(self.script), "destroy", "--", target]
         if force:
             argv.append("--force")
         return argv
