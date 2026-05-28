@@ -145,5 +145,10 @@ class VMBackend(BackendRunner):
     def destroy_argv(self, resource: Resource, force: bool = False) -> list[str]:
         # `lab-vm destroy <name>` requires sudo (qemu disks live under
         # /var/lib when run as root, or under XDG_STATE_HOME otherwise).
+        # --force skips the script's interactive read-from-/dev/tty prompt,
+        # which would block a web UI request on the server's terminal.
         sudo = ["sudo"] if shutil.which("sudo") and os.geteuid() != 0 else []
-        return [*sudo, str(self.script), "destroy", resource.name]
+        argv = [*sudo, str(self.script), "destroy", resource.name]
+        if force:
+            argv.append("--force")
+        return argv

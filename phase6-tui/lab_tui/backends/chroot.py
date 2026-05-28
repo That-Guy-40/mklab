@@ -13,6 +13,7 @@ Falls back to the raw manifest if the script doesn't recognise `inspect`
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import tomllib
 from pathlib import Path
@@ -85,7 +86,10 @@ class ChrootBackend(BackendRunner):
 
     def destroy_argv(self, resource: Resource, force: bool = False) -> list[str]:
         # `lab-chroot.sh destroy <name>` requires sudo because chroots
-        # are root-owned.  We surface the command literally so the user
-        # is aware before approving.
-        sudo = ["sudo"] if shutil.which("sudo") else []
-        return [*sudo, str(self.script), "destroy", resource.name]
+        # are root-owned.  --force skips the script's interactive
+        # read-from-/dev/tty prompt (which would block a web UI request).
+        sudo = ["sudo"] if shutil.which("sudo") and os.geteuid() != 0 else []
+        argv = [*sudo, str(self.script), "destroy", resource.name]
+        if force:
+            argv.append("--force")
+        return argv
