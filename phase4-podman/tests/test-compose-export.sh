@@ -61,8 +61,8 @@ out="$("$LAB_PODMAN" export "$lab" --format compose 2>/dev/null)" \
 
 # ── services section ────────────────────────────────────────────────────────
 grep -q '^services:'        <<<"$out" || fail "missing 'services:'"
-grep -q '^  db:'            <<<"$out" || fail "missing service 'db'"
-grep -q '^  web:'           <<<"$out" || fail "missing service 'web'"
+grep -q '^  "db":'          <<<"$out" || fail "missing service 'db' (service names now quoted as YAML keys)"
+grep -q '^  "web":'         <<<"$out" || fail "missing service 'web'"
 note "services section present"
 
 # ── image ──────────────────────────────────────────────────────────────────
@@ -110,7 +110,7 @@ note "depends_on with service_healthy condition"
 
 # ── networks section ───────────────────────────────────────────────────────
 grep -q '^networks:'        <<<"$out" || fail "missing 'networks:'"
-grep -q '^  front:'         <<<"$out" || fail "missing network 'front'"
+grep -q '"front":'          <<<"$out" || fail "missing network 'front' (network names now quoted as YAML keys)"
 note "networks section present"
 
 # ── top-level volumes declaration (named volumes only, not bind mounts) ────

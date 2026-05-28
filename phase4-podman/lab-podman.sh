@@ -71,12 +71,32 @@ die()       { _log error "$@"; exit 1; }
 
 # ─── Host / arch detection ──────────────────────────────────────────────────
 detect_host_distro() {
+    # Parse with awk — sourcing /etc/os-release executes shell code.
     if [[ -r /etc/os-release ]]; then
-        # shellcheck disable=SC1091
-        ( . /etc/os-release && printf '%s' "${ID:-unknown}" )
+        awk -F= '/^ID=/{v=$2; gsub(/^[[:space:]"'"'"']+|[[:space:]"'"'"']+$/,"",v); print v; exit}' \
+            /etc/os-release
     else
         printf 'unknown'
     fi
+}
+
+# validate_name NAME [CONTEXT]  — reject anything that could inject into
+# label filters, trap strings, YAML keys, unit file fields, or paths
+# (Findings 1, 3, 4, 16).
+validate_name() {
+    local n="$1" ctx="${2:-name}"
+    [[ -n "$n" ]] || die "$ctx is empty"
+    [[ "$n" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$ ]] \
+        || die "invalid $ctx '$n': use only [a-zA-Z0-9._-], start with alphanumeric, max 63 chars"
+}
+
+# sanitize_unit_value VALUE FIELD  — reject values with newlines that would
+# inject extra directives into a systemd unit file (Finding 3).
+sanitize_unit_value() {
+    local v="$1" field="${2:-field}"
+    [[ "$v" != *$'\n'* && "$v" != *$'\r'* ]] \
+        || die "unit field '$field' contains a newline — rejected to prevent systemd unit injection"
+    printf '%s' "$v"
 }
 
 detect_host_arch() {
@@ -181,12 +201,17 @@ check_subuid_subgid() {
     local user; user="$(id -un)"
     local subuid_ok=1 subgid_ok=1
     if [[ -r /etc/subuid ]]; then
-        grep -q "^${user}:" /etc/subuid || subuid_ok=0
+        # Finding 11: use awk to compare field 1 as a literal string (not a BRE).
+        # grep "^${user}:" treats '.' in usernames as "any char", giving false
+        # positives (alice.bob would match aliceXbob).
+        awk -F: -v u="$user" '$1==u{found=1;exit} END{exit !found}' /etc/subuid \
+            || subuid_ok=0
     else
         subuid_ok=0
     fi
     if [[ -r /etc/subgid ]]; then
-        grep -q "^${user}:" /etc/subgid || subgid_ok=0
+        awk -F: -v u="$user" '$1==u{found=1;exit} END{exit !found}' /etc/subgid \
+            || subgid_ok=0
     else
         subgid_ok=0
     fi
@@ -433,19 +458,27 @@ spec_get() { jq -r --arg k "$2" '.[$k] // ""' <<<"$1"; }
 #   ""                   for auto-map (already baked into the image)
 #   "--uidmap=... --gidmap=..."  for raw custom
 resolve_userns_flags() {
+    # resolve_userns_flags MODE ARRAY_NAME
+    # Populates caller's ARRAY_NAME with the appropriate --userns/--uidmap
+    # flags for MODE.  Uses a nameref so no word-splitting is needed at the
+    # call site (Finding 2: the old string-return form let "keep-id --privileged"
+    # inject --privileged into podman run via word-splitting).
     local mode="${1:-keep-id}"
+    local -n _userns_out="$2"
+    _userns_out=()
     case "$mode" in
-        keep-id|'')  printf -- '--userns=keep-id' ;;
-        auto-map)    printf '' ;;
-        host)        printf -- '--userns=host' ;;
+        keep-id|'')  _userns_out=(--userns=keep-id) ;;
+        auto-map)    _userns_out=() ;;
+        host)        _userns_out=(--userns=host) ;;
         *)
-            # Raw uidmap string.  Accept "U1:U2:U3,..." → pass each comma
-            # segment as a --uidmap (and --gidmap) flag.  Very permissive.
-            local s first=1
-            IFS=',' read -ra parts <<<"$mode"
-            for s in "${parts[@]}"; do
-                if (( first )); then first=0; else printf ' '; fi
-                printf -- '--uidmap=%s --gidmap=%s' "$s" "$s"
+            # Raw uidmap string: "U1:U2:U3,...". Validate each N:N:N segment
+            # before use so an attacker cannot inject flags here (Finding 2).
+            local s
+            IFS=',' read -ra _parts <<<"$mode"
+            for s in "${_parts[@]}"; do
+                [[ "$s" =~ ^[0-9]+:[0-9]+:[0-9]+$ ]] \
+                    || die "invalid uidmap segment '$s' in userns='$mode'; expected N:N:N (e.g. 0:100000:65536)"
+                _userns_out+=(--uidmap="$s" --gidmap="$s")
             done
             ;;
     esac
@@ -469,7 +502,8 @@ emit_pod_unit() {
         local line
         while IFS= read -r line; do
             [[ -z "$line" ]] && continue
-            printf 'PublishPort=%s\n' "$line"
+            # Finding 3: reject newlines in port strings that would inject unit directives.
+            printf 'PublishPort=%s\n' "$(sanitize_unit_value "$line" "PublishPort")"
         done < <(jq -r '.[]?' <<<"$publish_arr")
         printf '\n[Install]\nWantedBy=default.target\n'
     } > "$unit"
@@ -497,7 +531,7 @@ emit_container_unit() {
         printf '[Unit]\nDescription=lab-podman svc %s/%s\n\n' "$lab" "$sname"
         printf '[Container]\n'
         printf 'ContainerName=%s\n' "$(container_name_for "$lab" "$sname")"
-        printf 'Image=%s\n' "$simage"
+        printf 'Image=%s\n' "$(sanitize_unit_value "$simage" "Image")"
         printf 'Label=%s\n' "$LAB_LABEL_TOOL"
         printf 'Label=%s=%s\n' "$LAB_LABEL_LAB" "$lab"
         printf 'Label=%s=%s\n' "$LAB_LABEL_SVC" "$sname"
@@ -507,34 +541,43 @@ emit_container_unit() {
         # PublishPort
         local p
         while IFS= read -r p; do
-            [[ -n "$p" ]] && printf 'PublishPort=%s\n' "$p"
+            [[ -n "$p" ]] && printf 'PublishPort=%s\n' "$(sanitize_unit_value "$p" "PublishPort")"
         done < <(jq -r '.ports[]?' <<<"$svc")
         # Volumes (with :Z appended if SELinux enforcing and no :Z/:z/:O already)
         local v
         while IFS= read -r v; do
             [[ -z "$v" ]] && continue
-            if [[ -n "$selinux_suffix" && "$v" != *:Z && "$v" != *:z && "$v" != *:O ]]; then
-                v="${v}:${selinux_suffix}"
-            fi
-            printf 'Volume=%s\n' "$v"
+            # Finding 10: only append :Z to bind-mount specs (those starting
+            # with / ./ or ../). Named volumes (e.g. "mydata") have no colon,
+            # so appending ":Z" makes podman interpret "Z" as the container
+            # path, silently mounting the volume at /Z instead.
+            case "$v" in
+                /*|./*|../*)
+                    if [[ -n "$selinux_suffix" && "$v" != *:Z && "$v" != *:z && "$v" != *:O ]]; then
+                        v="${v}:${selinux_suffix}"
+                    fi ;;
+            esac
+            printf 'Volume=%s\n' "$(sanitize_unit_value "$v" "Volume")"
         done < <(jq -r '.volumes[]?' <<<"$svc")
-        # Env
+        # Env — Finding 3: sanitize key and value
         local kk vv
         while IFS=$'\t' read -r kk vv; do
-            [[ -n "$kk" ]] && printf 'Environment=%s=%s\n' "$kk" "$vv"
+            [[ -n "$kk" ]] && printf 'Environment=%s=%s\n' \
+                "$(sanitize_unit_value "$kk" "Environment key")" \
+                "$(sanitize_unit_value "$vv" "Environment value")"
         done < <(jq -r '.environment // {} | to_entries[]? | "\(.key)\t\(.value)"' <<<"$svc")
         # Healthcheck
         local hc_cmd hc_interval
         hc_cmd="$(jq -r '.healthcheck.cmd // ""' <<<"$svc")"
         hc_interval="$(jq -r '.healthcheck.interval // ""' <<<"$svc")"
-        [[ -n "$hc_cmd" ]] && printf 'HealthCmd=%s\n' "$hc_cmd"
-        [[ -n "$hc_interval" ]] && printf 'HealthInterval=%s\n' "$hc_interval"
+        [[ -n "$hc_cmd" ]] && printf 'HealthCmd=%s\n' "$(sanitize_unit_value "$hc_cmd" "HealthCmd")"
+        [[ -n "$hc_interval" ]] && printf 'HealthInterval=%s\n' "$(sanitize_unit_value "$hc_interval" "HealthInterval")"
         # Auto-update
         local au; au="$(spec_get "$svc" autoupdate)"
-        [[ -n "$au" ]] && printf 'AutoUpdate=%s\n' "$au"
+        [[ -n "$au" ]] && printf 'AutoUpdate=%s\n' "$(sanitize_unit_value "$au" "AutoUpdate")"
         # Command
         if [[ -n "$scmd" ]]; then
-            printf 'Exec=%s\n' "$scmd"
+            printf 'Exec=%s\n' "$(sanitize_unit_value "$scmd" "Exec")"
         fi
         printf '\n[Service]\nRestart=on-failure\n\n'
         printf '[Install]\nWantedBy=default.target\n'
@@ -596,11 +639,9 @@ start_service_plain() {
     local from_chroot; from_chroot="$(spec_get "$svc" from_chroot)"
     if [[ -n "$from_chroot" ]]; then
         local un; un="$(spec_get "$svc" userns)"
-        local un_flags; un_flags="$(resolve_userns_flags "${un:-keep-id}")"
-        if [[ -n "$un_flags" ]]; then
-            # shellcheck disable=SC2206
-            args+=( $un_flags )
-        fi
+        local -a un_flags=()
+        resolve_userns_flags "${un:-keep-id}" un_flags
+        args+=("${un_flags[@]}")
     fi
 
     # Arch platform override
@@ -608,10 +649,11 @@ start_service_plain() {
     [[ -z "$sarch" ]] && sarch="${OPT_ARCH:-}"
     [[ -n "$sarch" ]] && args+=(--platform "$(podman_platform "$sarch")")
 
-    # Networks
-    local svc_nets; svc_nets="$(jq -r '.networks[]?' <<<"$svc")"
+    # Networks — Finding 7: mapfile array prevents word-split/glob on names.
+    local -a svc_nets=()
+    mapfile -t svc_nets < <(jq -r '.networks[]?' <<<"$svc")
     local nn n first_net=""
-    for n in $svc_nets; do
+    for n in "${svc_nets[@]}"; do
         nn="lab-${lab}-${n}"
         if [[ -z "$first_net" ]]; then
             args+=(--network "$nn"); first_net="$nn"
@@ -652,12 +694,22 @@ start_service_plain() {
     done < <(jq -r '.ports[]?' <<<"$svc")
 
     log_info "starting (plain) service '$sname' as $cname (image=$simage)"
-    log_debug "argv: podman run ${args[*]} $simage ${cmd[*]:-}"
-    podman run "${args[@]}" "$simage" "${cmd[@]}" >/dev/null
+    # Finding 9: env vars may contain secrets; redact their values from debug log.
+    log_debug "argv: podman run [${#args[@]} flags, env vars redacted] $simage ${cmd[*]:-}"
+    # Finding 13: try-and-handle instead of pre-check to close the TOCTOU race.
+    local _run_err
+    if ! _run_err="$(podman run "${args[@]}" "$simage" "${cmd[@]}" 2>&1)"; then
+        if [[ "$_run_err" == *"already in use"* ]] \
+           || podman ps -a --format '{{.Names}}' | grep -qx "$cname"; then
+            log_warn "service '$sname' container already exists ($cname); leaving as-is"
+        else
+            die "failed to start container '$cname': $_run_err"
+        fi
+    fi
 
     # Attach any extra networks after start.
     local idx=0
-    for n in $svc_nets; do
+    for n in "${svc_nets[@]}"; do
         nn="lab-${lab}-${n}"
         (( idx > 0 )) && podman network connect "$nn" "$cname" >/dev/null
         idx=$((idx+1))
@@ -752,9 +804,16 @@ start_services_in_pod() {
         local v
         while IFS= read -r v; do
             [[ -z "$v" ]] && continue
-            if [[ -n "$selinux_suffix" && "$v" != *:Z && "$v" != *:z && "$v" != *:O ]]; then
-                v="${v}:${selinux_suffix}"
-            fi
+            # Finding 10: only append :Z to bind-mount specs (those starting
+            # with / ./ or ../). Named volumes (e.g. "mydata") have no colon,
+            # so appending ":Z" makes podman interpret "Z" as the container
+            # path, silently mounting the volume at /Z instead.
+            case "$v" in
+                /*|./*|../*)
+                    if [[ -n "$selinux_suffix" && "$v" != *:Z && "$v" != *:z && "$v" != *:O ]]; then
+                        v="${v}:${selinux_suffix}"
+                    fi ;;
+            esac
             args+=(-v "$v")
         done < <(jq -r '.volumes[]?' <<<"$svc")
         local -a cmd=()
@@ -827,6 +886,12 @@ stop_lab_quadlet() {
     for link in "$d"/*.container; do
         [[ -L "$link" ]] || continue
         target="$(readlink -f "$link")"
+        # Finding 15: only delete targets inside QUADLET_USER_DIR so a
+        # replaced symlink cannot make 'down' delete arbitrary user files.
+        if [[ "$target" != "$QUADLET_USER_DIR"/* ]]; then
+            log_warn "refusing to rm unexpected quadlet target: $target (symlink: $link)"
+            rm -f "$link"; continue
+        fi
         base="$(basename -- "$link" .container)"
         log_info "systemctl --user stop ${base}.service"
         systemctl --user stop "${base}.service" 2>/dev/null || true
@@ -835,6 +900,10 @@ stop_lab_quadlet() {
     for link in "$d"/*.pod; do
         [[ -L "$link" ]] || continue
         target="$(readlink -f "$link")"
+        if [[ "$target" != "$QUADLET_USER_DIR"/* ]]; then
+            log_warn "refusing to rm unexpected quadlet target: $target (symlink: $link)"
+            rm -f "$link"; continue
+        fi
         base="$(basename -- "$link" .pod)"
         log_info "systemctl --user stop ${base}-pod.service"
         systemctl --user stop "${base}-pod.service" 2>/dev/null || true
@@ -933,9 +1002,9 @@ cmd_run() {
 
     # userns handling for from-chroot runs
     if [[ -n "${OPT_CHROOT:-}" ]]; then
-        local un_flags; un_flags="$(resolve_userns_flags "${OPT_USERNS:-keep-id}")"
-        # shellcheck disable=SC2206
-        [[ -n "$un_flags" ]] && args+=( $un_flags )
+        local -a un_flags=()
+        resolve_userns_flags "${OPT_USERNS:-keep-id}" un_flags
+        args+=("${un_flags[@]}")
     fi
 
     [[ -n "${OPT_ARCH:-}" ]] && args+=(--platform "$(podman_platform "$OPT_ARCH")")
@@ -953,17 +1022,29 @@ cmd_run() {
     fi
     local e
     if [[ -n "${OPT_ENV:-}" ]]; then
+        # Finding 12: comma-split silently truncates values containing commas.
+        # Document: use --env multiple times for values with embedded commas.
         IFS=',' read -ra _envs <<<"$OPT_ENV"
-        for e in "${_envs[@]}"; do args+=(-e "$e"); done
+        for e in "${_envs[@]}"; do
+            [[ "$e" == *=* ]] || log_warn "env entry '$e' has no '='; if this is part of a value with a comma, use --env multiple times"
+            args+=(-e "$e")
+        done
     fi
     local v
     if [[ -n "${OPT_VOLUMES:-}" ]]; then
         IFS=',' read -ra _vols <<<"$OPT_VOLUMES"
         local selinux_suffix; selinux_suffix="$(check_selinux_label)"
         for v in "${_vols[@]}"; do
-            if [[ -n "$selinux_suffix" && "$v" != *:Z && "$v" != *:z && "$v" != *:O ]]; then
-                v="${v}:${selinux_suffix}"
-            fi
+            # Finding 10: only append :Z to bind-mount specs (those starting
+            # with / ./ or ../). Named volumes (e.g. "mydata") have no colon,
+            # so appending ":Z" makes podman interpret "Z" as the container
+            # path, silently mounting the volume at /Z instead.
+            case "$v" in
+                /*|./*|../*)
+                    if [[ -n "$selinux_suffix" && "$v" != *:Z && "$v" != *:z && "$v" != *:O ]]; then
+                        v="${v}:${selinux_suffix}"
+                    fi ;;
+            esac
             args+=(-v "$v")
         done
     fi
@@ -995,6 +1076,8 @@ cmd_up() {
     local lab_name
     lab_name="$(jq -r '.lab.name // ""' <<<"$cfg_json")"
     [[ -n "$lab_name" ]] || die "config missing [lab].name"
+    # Finding 1, 4, 16: validate before trap/paths/labels to prevent injection.
+    validate_name "$lab_name" "lab name"
 
     log_info "── bringing up lab '$lab_name' from $OPT_CONFIG ──"
     log_info "rootless network backend: $(detect_rootless_network)"
@@ -1004,12 +1087,23 @@ cmd_up() {
     # Keep a canonicalized copy of the TOML for export / destroy / status.
     cp -f "$OPT_CONFIG" "$(lab_dir "$lab_name")/spec.toml"
 
-    trap "log_warn \"partial 'up' for lab '${lab_name}' — clean up with:  ${LAB_PROG} down --lab ${lab_name}\"" EXIT
+    # Finding 1: use a named function so lab_name is never eval'd as shell code
+    # when the trap fires. Finding 14: also call stop_lab_quadlet to clean up
+    # any partially-written quadlet units (which would otherwise be picked up
+    # by systemd on the next daemon-reload).
+    _partial_up_cleanup_4() {
+        local _lab="$1"
+        log_info "partial 'up' — cleaning up lab '$_lab'"
+        stop_lab_quadlet "$_lab" 2>/dev/null || true
+        OPT_LAB="$_lab" OPT_CONFIG="" cmd_down 2>/dev/null || true
+    }
+    trap "_partial_up_cleanup_4 '${lab_name}'" EXIT
 
-    # --- Networks ---
-    local nets net driver netname
-    nets="$(jq -r '.network // {} | keys[]?' <<<"$cfg_json")"
-    for net in $nets; do
+    # --- Networks — Finding 7: mapfile array prevents word-split on names ---
+    local -a nets=()
+    mapfile -t nets < <(jq -r '.network // {} | keys[]?' <<<"$cfg_json")
+    local net driver netname
+    for net in "${nets[@]}"; do
         driver="$(jq -r --arg n "$net" '.network[$n].driver // "bridge"' <<<"$cfg_json")"
         netname="lab-${lab_name}-${net}"
         if podman network ls --format '{{.Name}}' | grep -qx "$netname"; then
@@ -1087,6 +1181,7 @@ cmd_down() {
         lab_name="$(toml_to_json "$OPT_CONFIG" | jq -r '.lab.name // ""')"
     fi
     [[ -n "$lab_name" ]] || die "usage: $LAB_PROG down --lab NAME | --config topology.toml (need a lab name)"
+    validate_name "$lab_name" "lab name"
     require_rootless
     require_podman
     state_init
@@ -1096,40 +1191,46 @@ cmd_down() {
     # Quadlet units first (if any).
     stop_lab_quadlet "$lab_name"
 
-    # Pods (this also cleans up member containers).
-    local pods
-    pods="$(podman pod ls --filter "label=${LAB_LABEL_LAB}=${lab_name}" --filter "label=${LAB_LABEL_TOOL}" -q)"
-    if [[ -n "$pods" ]]; then
-        log_info "stopping/removing $(wc -w <<<"$pods") pod(s)"
-        # shellcheck disable=SC2086
-        podman pod stop $pods >/dev/null 2>&1 || true
-        # shellcheck disable=SC2086
-        podman pod rm   $pods >/dev/null 2>&1 || true
+    # Pods — Finding 5: mapfile arrays for all ID/name lists.
+    local -a pods=()
+    mapfile -t pods < <(podman pod ls \
+        --filter "label=${LAB_LABEL_LAB}=${lab_name}" \
+        --filter "label=${LAB_LABEL_TOOL}" -q 2>/dev/null)
+    if (( ${#pods[@]} > 0 )); then
+        log_info "stopping/removing ${#pods[@]} pod(s)"
+        podman pod stop "${pods[@]}" >/dev/null 2>&1 || true
+        podman pod rm   "${pods[@]}" >/dev/null 2>&1 || true
     fi
 
     # Remaining containers (plain manager).
-    local ids
-    ids="$(podman ps -aq --filter "label=${LAB_LABEL_LAB}=${lab_name}" --filter "label=${LAB_LABEL_TOOL}")"
-    if [[ -n "$ids" ]]; then
-        log_info "stopping/removing $(wc -w <<<"$ids") container(s)"
-        # shellcheck disable=SC2086
-        podman stop $ids >/dev/null 2>&1 || true
-        # shellcheck disable=SC2086
-        podman rm   $ids >/dev/null 2>&1 || true
+    local -a ids=()
+    mapfile -t ids < <(podman ps -aq \
+        --filter "label=${LAB_LABEL_LAB}=${lab_name}" \
+        --filter "label=${LAB_LABEL_TOOL}" 2>/dev/null)
+    if (( ${#ids[@]} > 0 )); then
+        log_info "stopping/removing ${#ids[@]} container(s)"
+        podman stop "${ids[@]}" >/dev/null 2>&1 || true
+        podman rm   "${ids[@]}" >/dev/null 2>&1 || true
     fi
 
-    # Networks.
-    local nids
-    nids="$(podman network ls -q --filter "label=${LAB_LABEL_LAB}=${lab_name}" --filter "label=${LAB_LABEL_TOOL}")"
-    if [[ -n "$nids" ]]; then
-        log_info "removing $(wc -w <<<"$nids") network(s)"
-        # shellcheck disable=SC2086
-        podman network rm $nids >/dev/null 2>&1 || true
+    # Networks — network ls -q returns names (not hex IDs); use -- to prevent
+    # flag injection from names starting with '-' (Finding 5).
+    local -a nids=()
+    mapfile -t nids < <(podman network ls -q \
+        --filter "label=${LAB_LABEL_LAB}=${lab_name}" \
+        --filter "label=${LAB_LABEL_TOOL}" 2>/dev/null)
+    if (( ${#nids[@]} > 0 )); then
+        log_info "removing ${#nids[@]} network(s)"
+        podman network rm -- "${nids[@]}" >/dev/null 2>&1 || true
     fi
 
-    # State dir (non-fatal if not there).
-    if [[ -d "$(lab_dir "$lab_name")" ]]; then
-        rm -rf -- "$(lab_dir "$lab_name")"
+    # State dir — Finding 4: sanity-check path before rm -rf.
+    local _lab_dir; _lab_dir="$(lab_dir "$lab_name")"
+    if [[ -d "$_lab_dir" ]]; then
+        local _expected_prefix="$LAB_POD_STATE_DIR"
+        [[ "$_lab_dir" == "$_expected_prefix/"* ]] \
+            || die "refusing rm -rf: lab dir '$_lab_dir' is outside $LAB_POD_STATE_DIR"
+        rm -rf -- "$_lab_dir"
     fi
 
     log_info "── lab '$lab_name' torn down ──"
@@ -1558,6 +1659,10 @@ cmd_destroy() {
 }
 
 # ─── Subcommand: export ────────────────────────────────────────────────────
+# _yaml_str VALUE — emit VALUE as a double-quoted YAML string with
+# internal double-quotes escaped (Finding 8).
+_yaml_str() { printf '"%s"' "${1//\"/\\\"}"; }
+
 cmd_export() {
     local lab="${OPT_LAB:-${POS_ARGS[0]:-}}"
     local fmt="${OPT_FORMAT:-kube}"
@@ -1608,7 +1713,8 @@ cmd_export() {
                 svc="$(jq -c --argjson i "$i" '.service[$i]' <<<"$cfg")"
                 sname="$(spec_get "$svc" name)"
                 simage="$(spec_get "$svc" image)"
-                printf '  %s:\n' "$sname"
+                # Finding 8: quote YAML keys and values to prevent injection.
+                printf '  %s:\n' "$(_yaml_str "$sname")"
                 [[ -n "$simage" ]] && printf '    image: %s\n' "$simage"
                 printf '    container_name: %s\n' "$(container_name_for "$lab" "$sname")"
                 local p first=1
@@ -1637,7 +1743,8 @@ cmd_export() {
                 local hc_cmd; hc_cmd="$(jq -r '.healthcheck.cmd // ""' <<<"$svc")"
                 if [[ -n "$hc_cmd" ]]; then
                     printf '    healthcheck:\n'
-                    printf '      test: ["CMD-SHELL", "%s"]\n' "$hc_cmd"
+                    # Use jq to JSON-escape the healthcheck string (Finding 8).
+                    printf '      test: %s\n' "$(jq -n --arg t "$hc_cmd" '["CMD-SHELL",$t]')"
                     local hc_interval; hc_interval="$(jq -r '.healthcheck.interval // ""' <<<"$svc")"
                     local hc_timeout;  hc_timeout="$(jq -r  '.healthcheck.timeout  // ""' <<<"$svc")"
                     local hc_retries;  hc_retries="$(jq -r  '.healthcheck.retries  // ""' <<<"$svc")"
@@ -1654,21 +1761,22 @@ cmd_export() {
                     dep_hc="$(jq -r --arg d "$dep" \
                         '.service[]? | select(.name==$d) | .healthcheck.cmd // ""' <<<"$cfg")"
                     if [[ -n "$dep_hc" ]]; then
-                        printf '      %s:\n        condition: service_healthy\n' "$dep"
+                        printf '      %s:\n        condition: service_healthy\n' "$(_yaml_str "$dep")"
                     else
-                        printf '      %s:\n        condition: service_started\n' "$dep"
+                        printf '      %s:\n        condition: service_started\n' "$(_yaml_str "$dep")"
                     fi
                 done < <(jq -r '.depends_on // [] | .[]?' <<<"$svc")
             done
             printf 'networks:\n'
-            local nets net
-            nets="$(jq -r '.network // {} | keys[]?' <<<"$cfg")"
-            if [[ -z "$nets" ]]; then
+            local -a exp_nets=()
+            mapfile -t exp_nets < <(jq -r '.network // {} | keys[]?' <<<"$cfg")
+            if (( ${#exp_nets[@]} == 0 )); then
                 printf '  default:\n    driver: bridge\n'
             else
-                for net in $nets; do
+                local net
+                for net in "${exp_nets[@]}"; do
                     local d; d="$(jq -r --arg n "$net" '.network[$n].driver // "bridge"' <<<"$cfg")"
-                    printf '  %s:\n    driver: %s\n' "$net" "$d"
+                    printf '  %s:\n    driver: %s\n' "$(_yaml_str "$net")" "$d"
                 done
             fi
             # Declare named volumes referenced by any service.
