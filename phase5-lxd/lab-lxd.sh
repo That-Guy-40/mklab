@@ -11,10 +11,12 @@
 #                            are rewritten to the highest stable X.Y at run
 #                            time (LXD has no native "latest" alias).
 #             from-chroot  — rebundle a Phase-1 chroot into LXD's unified
-#                            tarball format (./metadata.yaml + ./rootfs/) and
-#                            `image import` it. Container images only in v0.1.
+#                            tarball format and `image import` it.
+#                            type=container: rootless.
+#                            type=vm: root-required (loop mounts + extlinux).
 #             from-tarball — same, but starting from Phase-1's `export-tarball`
-#                            output (rootless-clean path).
+#                            output (rootless-clean for containers; root-required
+#                            for VMs).
 #             from-qcow2   — wrap a prebuilt qcow2 as an LXD VM image
 #                            (./metadata.yaml + ./rootfs.img) and import. The
 #                            documented bridge for chroot → VM via Phase 2.
@@ -451,6 +453,125 @@ backend_from_tarball() {
     log_info "imported: $image_alias"
 }
 
+# ─── Backend: from-chroot (VM image) ──────────────────────────────────────
+# Create a bootable VM disk image from a Phase-1 chroot, then import as an LXD
+# VM.  Mirrors the approach of Phase 2's backend_vm_from_chroot (MBR + ext4 +
+# extlinux); requires root for loop mounts and mkfs.
+#
+# Limitations:
+#   - Requires EUID=0 (loop-device mounts are root-only)
+#   - x86_64 only: uses extlinux (BIOS MBR boot)
+#   - Kernel must be pre-installed in the chroot (/boot/vmlinuz-*)
+#   - aarch64 / VMs with UEFI boot need a different approach
+backend_from_chroot_vm() {
+    local chroot_path="$1" image_alias="$2"
+    [[ -d "$chroot_path" ]] || die "from-chroot (VM): not a directory: $chroot_path"
+    [[ $EUID -eq 0 ]] \
+        || die "from-chroot for VMs requires root (loop mounts + mkfs + extlinux).  Re-run under sudo."
+    require_cmd qemu-img parted mkfs.ext4 losetup extlinux rsync blkid dd
+
+    # Locate kernel + initrd already installed in the chroot.
+    local kernel initrd
+    kernel="$(find "$chroot_path/boot" -maxdepth 1 -name 'vmlinuz-*' \
+        -not -name '*.old' 2>/dev/null | sort -V | tail -1)"
+    [[ -n "$kernel" ]] \
+        || die "from-chroot (VM): no /boot/vmlinuz-* found.  Install a kernel in the chroot first:
+  sudo lab-chroot.sh enter <name> -- apt-get install -y linux-image-amd64"
+    initrd="$(find "$chroot_path/boot" -maxdepth 1 \
+        \( -name 'initrd.img-*' -o -name 'initramfs-*' \) 2>/dev/null | sort -V | tail -1)"
+    [[ -n "$initrd" ]] \
+        || die "from-chroot (VM): no /boot/initrd.img-* found; try: update-initramfs -u -k all"
+
+    # Locate the syslinux MBR blob.
+    local mbr_bin=""
+    local p
+    for p in /usr/lib/syslinux/mbr/mbr.bin /usr/share/syslinux/mbr.bin \
+              /usr/lib/syslinux/mbr.bin /usr/lib/extlinux/mbr.bin; do
+        [[ -r "$p" ]] && { mbr_bin="$p"; break; }
+    done
+    [[ -n "$mbr_bin" ]] \
+        || die "syslinux MBR binary not found.  Install: apt-get install -y syslinux-common"
+
+    local workdir; workdir="$(mktemp -d)"
+    # shellcheck disable=SC2064
+    trap "rm -rf '$workdir'" RETURN
+
+    local raw_img="$workdir/disk.raw"
+    log_info "creating 20G raw disk image for VM"
+    qemu-img create -f raw "$raw_img" 20G >/dev/null
+
+    log_info "partitioning (MBR + single bootable ext4 partition)"
+    parted -s "$raw_img" mklabel msdos mkpart primary ext4 1MiB 100% set 1 boot on
+
+    local lodev; lodev="$(losetup --find --partscan --show "$raw_img")"
+    # shellcheck disable=SC2064
+    trap "losetup -d '$lodev' 2>/dev/null || true; rm -rf '$workdir'" RETURN
+
+    mkfs.ext4 -q "${lodev}p1"
+    local mnt="$workdir/mnt"; install -d "$mnt"
+    mount "${lodev}p1" "$mnt"
+    # shellcheck disable=SC2064
+    trap "umount '$mnt' 2>/dev/null || true; losetup -d '$lodev' 2>/dev/null || true; rm -rf '$workdir'" RETURN
+
+    log_info "copying chroot → disk (rsync, preserving perms)"
+    rsync -aHAX \
+        --exclude=/proc --exclude=/sys --exclude=/dev \
+        --exclude=/run  --exclude=/tmp --exclude='.lab-chroot-mounts' \
+        "$chroot_path/" "$mnt/"
+
+    # Write /etc/fstab with the root partition UUID.
+    local uuid; uuid="$(blkid -s UUID -o value "${lodev}p1")"
+    printf 'UUID=%s / ext4 defaults 0 1\n' "$uuid" > "$mnt/etc/fstab"
+
+    # Install extlinux into /boot/extlinux/.
+    install -d "$mnt/boot/extlinux"
+    extlinux --install "$mnt/boot/extlinux" 2>/dev/null
+    cat > "$mnt/boot/extlinux/extlinux.conf" <<EXTCFG
+DEFAULT linux
+LABEL linux
+  KERNEL /${kernel##*/chroot_path/boot/}
+  APPEND root=UUID=${uuid} ro console=ttyS0
+EXTCFG
+    # kernel_basename relative to boot/
+    local kname; kname="${kernel##*/}"
+    local iname_r; iname_r="${initrd##*/}"
+    cat > "$mnt/boot/extlinux/extlinux.conf" <<EXTCFG
+DEFAULT linux
+LABEL linux
+  KERNEL /boot/${kname}
+  APPEND root=UUID=${uuid} ro console=ttyS0
+  INITRD /boot/${iname_r}
+EXTCFG
+
+    umount "$mnt"
+    dd if="$mbr_bin" of="$lodev" bs=440 count=1 conv=notrunc 2>/dev/null
+    losetup -d "$lodev" 2>/dev/null || true
+    # shellcheck disable=SC2064
+    trap "rm -rf '$workdir'" RETURN   # clean up the rest
+
+    local qcow2="$workdir/disk.qcow2"
+    log_info "converting raw → qcow2"
+    qemu-img convert -f raw -O qcow2 "$raw_img" "$qcow2" >/dev/null
+
+    log_info "importing as LXD VM image alias '$image_alias'"
+    backend_from_qcow2 "$qcow2" "$image_alias"
+}
+
+# from-tarball for VM: extract tarball then delegate to from-chroot-vm.
+backend_from_tarball_vm() {
+    local tarball="$1" image_alias="$2"
+    [[ -r "$tarball" ]] || die "from-tarball (VM): not readable: $tarball"
+    [[ $EUID -eq 0 ]] \
+        || die "from-tarball for VMs requires root (loop mounts).  Re-run under sudo."
+    local workdir; workdir="$(mktemp -d)"
+    # shellcheck disable=SC2064
+    trap "rm -rf '$workdir'" RETURN
+    install -d "$workdir/rootfs"
+    log_info "extracting tarball for VM build"
+    tar -C "$workdir/rootfs" -xpf "$tarball" --numeric-owner
+    backend_from_chroot_vm "$workdir/rootfs" "$image_alias"
+}
+
 # ─── Backend: from-qcow2 (VM image) ────────────────────────────────────────
 # Wrap a prebuilt qcow2 as an LXD VM image.  The unified VM tarball format
 # is metadata.yaml + rootfs.img at root.  This is the documented bridge for
@@ -749,11 +870,17 @@ cmd_up() {
         if [[ -z "$image" ]]; then
             local alias; alias="$(image_alias_for "$lab_name" "$sname")"
             if [[ -n "$from_chroot" ]]; then
-                [[ "$type" == "container" ]] || die "instance '$sname': from_chroot is container-only in v0.1 (build a qcow2 in Phase 2 then use from_qcow2 for VM)"
-                backend_from_chroot "$from_chroot" "$alias"
+                if [[ "$type" == "vm" ]]; then
+                    backend_from_chroot_vm "$from_chroot" "$alias"
+                else
+                    backend_from_chroot "$from_chroot" "$alias"
+                fi
             elif [[ -n "$from_tarball" ]]; then
-                [[ "$type" == "container" ]] || die "instance '$sname': from_tarball is container-only in v0.1"
-                backend_from_tarball "$from_tarball" "$alias"
+                if [[ "$type" == "vm" ]]; then
+                    backend_from_tarball_vm "$from_tarball" "$alias"
+                else
+                    backend_from_tarball "$from_tarball" "$alias"
+                fi
             elif [[ -n "$from_qcow2" ]]; then
                 [[ "$type" == "vm" ]] || die "instance '$sname': from_qcow2 implies type=vm"
                 backend_from_qcow2 "$from_qcow2" "$alias"
@@ -1045,7 +1172,90 @@ cmd_inspect() {
             iname="$rewrite"
         fi
     fi
-    [[ -n "$iname" ]] || die "no instance matches '$target' (tried literal and lab-<...> rewrite across all projects)"
+    # --- if no instance matched, try profile then project ---
+    if [[ -z "$iname" ]]; then
+        # Profile inspect: kind: "profile"
+        local prof_yaml; prof_yaml="$("$LXC_CMD" profile show "$target" 2>/dev/null || true)"
+        if [[ -n "$prof_yaml" ]]; then
+            local prof_json; prof_json="$(printf '%s' "$prof_yaml" | \
+                if have yq && yq --version 2>&1 | grep -qi mikefarah; then
+                    yq -o json
+                elif have python3; then
+                    python3 -c "import sys,json; import yaml; print(json.dumps(yaml.safe_load(sys.stdin)))" 2>/dev/null
+                else
+                    echo "{}"
+                fi)"
+            local rendered_prof; rendered_prof="$(jq -r --arg engine "$LXC_ENGINE" --arg name "$target" '
+                {
+                    schema_version: 1,
+                    kind:           "profile",
+                    engine:         $engine,
+                    name:           ($name),
+                    description:    (.description // ""),
+                    config:         (.config     // {}),
+                    devices:        (.devices    // {})
+                }' <<<"$prof_json")"
+            if [[ -n "${OPT_JSON:-}" ]]; then
+                printf '%s\n' "$rendered_prof"; return 0
+            fi
+            printf '[profile]\n'
+            printf '  name         %s\n' "$target"
+            printf '  description  %s\n' "$(jq -r '.description // "(none)"' <<<"$rendered_prof")"
+            local cfg_keys; cfg_keys="$(jq -r '.config | keys[]?' <<<"$rendered_prof")"
+            if [[ -n "$cfg_keys" ]]; then
+                printf '\n[config]\n'
+                while IFS= read -r k; do
+                    printf '  %-30s %s\n' "$k" "$(jq -r --arg k "$k" '.config[$k]' <<<"$rendered_prof")"
+                done <<<"$cfg_keys"
+            fi
+            local dev_keys; dev_keys="$(jq -r '.devices | keys[]?' <<<"$rendered_prof")"
+            if [[ -n "$dev_keys" ]]; then
+                printf '\n[devices]\n'
+                while IFS= read -r d; do
+                    printf '  %-12s %s\n' "$d" "$(jq -r --arg d "$d" '.devices[$d].type // "—"' <<<"$rendered_prof")"
+                done <<<"$dev_keys"
+            fi
+            return 0
+        fi
+
+        # Project inspect: kind: "project"
+        local proj_yaml; proj_yaml="$("$LXC_CMD" project show "$target" 2>/dev/null || true)"
+        if [[ -n "$proj_yaml" ]]; then
+            local proj_json; proj_json="$(printf '%s' "$proj_yaml" | \
+                if have yq && yq --version 2>&1 | grep -qi mikefarah; then
+                    yq -o json
+                elif have python3; then
+                    python3 -c "import sys,json; import yaml; print(json.dumps(yaml.safe_load(sys.stdin)))" 2>/dev/null
+                else
+                    echo "{}"
+                fi)"
+            local rendered_proj; rendered_proj="$(jq -r --arg engine "$LXC_ENGINE" --arg name "$target" '
+                {
+                    schema_version: 1,
+                    kind:           "project",
+                    engine:         $engine,
+                    name:           ($name),
+                    description:    (.description // ""),
+                    config:         (.config     // {})
+                }' <<<"$proj_json")"
+            if [[ -n "${OPT_JSON:-}" ]]; then
+                printf '%s\n' "$rendered_proj"; return 0
+            fi
+            printf '[project]\n'
+            printf '  name         %s\n' "$target"
+            printf '  description  %s\n' "$(jq -r '.description // "(none)"' <<<"$rendered_proj")"
+            local pcfg_keys; pcfg_keys="$(jq -r '.config | keys[]?' <<<"$rendered_proj")"
+            if [[ -n "$pcfg_keys" ]]; then
+                printf '\n[config]\n'
+                while IFS= read -r k; do
+                    printf '  %-30s %s\n' "$k" "$(jq -r --arg k "$k" '.config[$k]' <<<"$rendered_proj")"
+                done <<<"$pcfg_keys"
+            fi
+            return 0
+        fi
+
+        die "no instance, profile, or project matches '$target'"
+    fi
 
     # --- jq schema transform.  The `lxc/incus list` shape is rich:
     # .architecture, .config (with image.* + user.* + volatile.*),
@@ -1229,10 +1439,86 @@ cmd_inspect() {
 cmd_export() {
     local lab="${OPT_LAB:-${POS_ARGS[0]:-}}"
     local fmt="${OPT_FORMAT:-lxc-yaml}"
-    [[ -n "$lab" ]] || die "usage: $LAB_PROG export <lab> --format lxc-yaml"
-    [[ "$fmt" == "lxc-yaml" ]] || die "unknown export format: $fmt (phase 5 supports: lxc-yaml)"
+    [[ -n "$lab" ]] || die "usage: $LAB_PROG export <lab> --format {lxc-yaml|compose}"
+    case "$fmt" in lxc-yaml|compose) ;; *) die "unknown export format: $fmt (phase 5 supports: lxc-yaml|compose)" ;; esac
     require_lxd_or_incus
 
+    # --- compose format: synthesize from spec.toml (same approach as Phase 3/4)
+    if [[ "$fmt" == "compose" ]]; then
+        require_cmd jq
+        local spec; spec="$(lab_dir "$lab")/spec.toml"
+        [[ -r "$spec" ]] || die "no spec.toml for lab '$lab' (was it brought up via 'up --config'?)"
+        local cfg; cfg="$(toml_to_json "$spec")"
+        # Pass 1: named volumes.
+        local -A named_volumes=()
+        local inst_count; inst_count="$(jq -r '.instance // [] | length' <<<"$cfg")"
+        local i inst itype vol_src
+        for ((i=0; i<inst_count; i++)); do
+            inst="$(jq -c --argjson i "$i" '.instance[$i]' <<<"$cfg")"
+            itype="$(spec_get "$inst" type)"; [[ -z "$itype" ]] && itype="container"
+            [[ "$itype" == "vm" ]] && continue   # VMs not representable in compose
+            while IFS= read -r vol_src; do
+                [[ -z "$vol_src" ]] && continue
+                case "$vol_src" in /*|./*|../*) : ;; *) named_volumes["$vol_src"]=1 ;; esac
+            done < <(jq -r '.volumes[]? | split(":")[0]' <<<"$inst")
+        done
+        printf 'version: "3.9"\n'
+        printf '# Generated by %s export --format compose from lab %s\n' "$LAB_PROG" "$lab"
+        printf '# Note: LXD-specific fields (profiles, project, storage) are not representable\n'
+        printf '# in compose YAML and are omitted.  VMs are skipped entirely.\n'
+        printf 'services:\n'
+        local sname simage
+        for ((i=0; i<inst_count; i++)); do
+            inst="$(jq -c --argjson i "$i" '.instance[$i]' <<<"$cfg")"
+            itype="$(spec_get "$inst" type)"; [[ -z "$itype" ]] && itype="container"
+            [[ "$itype" == "vm" ]] && { printf '  # (skipped: %s is type=vm, not representable in compose)\n' "$(spec_get "$inst" name)"; continue; }
+            sname="$(spec_get "$inst" name)"
+            simage="$(spec_get "$inst" image)"
+            printf '  %s:\n' "$sname"
+            [[ -n "$simage" ]] && printf '    image: %s\n' "$simage"
+            printf '    container_name: %s\n' "$(instance_name_for "$lab" "$sname")"
+            local p first=1
+            while IFS= read -r p; do
+                [[ -z "$p" ]] && continue
+                if (( first )); then printf '    ports:\n'; first=0; fi
+                printf '      - "%s"\n' "$p"
+            done < <(jq -r '.ports[]?' <<<"$inst")
+            first=1
+            local kk vv
+            while IFS=$'\t' read -r kk vv; do
+                [[ -z "$kk" ]] && continue
+                if (( first )); then printf '    environment:\n'; first=0; fi
+                printf '      %s: "%s"\n' "$kk" "$vv"
+            done < <(jq -r '.environment // {} | to_entries[]? | "\(.key)\t\(.value)"' <<<"$inst")
+            first=1
+            local vol
+            while IFS= read -r vol; do
+                [[ -z "$vol" ]] && continue
+                if (( first )); then printf '    volumes:\n'; first=0; fi
+                printf '      - "%s"\n' "$vol"
+            done < <(jq -r '.volumes[]?' <<<"$inst")
+            local cmdline; cmdline="$(jq -r '.command // empty' <<<"$inst")"
+            [[ -n "$cmdline" ]] && printf '    command: %s\n' "$cmdline"
+        done
+        printf 'networks:\n'
+        local nets net
+        nets="$(jq -r '.network // {} | keys[]?' <<<"$cfg")"
+        if [[ -z "$nets" ]]; then
+            printf '  default:\n    driver: bridge\n'
+        else
+            for net in $nets; do
+                local d; d="$(jq -r --arg n "$net" '.network[$n].driver // "bridge"' <<<"$cfg")"
+                printf '  %s:\n    driver: %s\n' "$net" "$d"
+            done
+        fi
+        if (( ${#named_volumes[@]} > 0 )); then
+            printf 'volumes:\n'
+            local vn; for vn in "${!named_volumes[@]}"; do printf '  %s:\n' "$vn"; done
+        fi
+        return 0
+    fi
+
+    # --- lxc-yaml format (original) ---
     local matching; matching="$(_instances_in_lab "$lab")"
     [[ -n "$matching" ]] || die "no instances found for lab '$lab'"
 
@@ -1269,7 +1555,7 @@ USAGE
   $LAB_PROG list     [--lab NAME]
   $LAB_PROG destroy  <name|lab/service> [--force]
   $LAB_PROG inspect  <name|lab/service> [--json]
-  $LAB_PROG export   <lab> --format lxc-yaml         # dump 'config show --expanded' per instance
+  $LAB_PROG export   <lab> --format {lxc-yaml|compose} # lxc-yaml: config show --expanded; compose: Compose YAML
   $LAB_PROG version | help
 
 OPTIONS
@@ -1287,7 +1573,7 @@ OPTIONS
   --profile   PROF                      (single profile; for multiple use [[instance]] profiles=[...])
   --lab       NAME                      (list/down/status: scope to one lab)
   --config    FILE                      (up/down: topology TOML)
-  --format    FMT                       (export: lxc-yaml — the only format)
+  --format    FMT                       (export: lxc-yaml | compose)
   --follow                              (logs: -f)
   --force                               (destroy/down)
 

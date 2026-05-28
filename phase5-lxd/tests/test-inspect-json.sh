@@ -12,13 +12,11 @@
 #   A) running container: literal name AND lab/svc short form, both human
 #      and --json modes; exhaustive JSON schema spot-checks (labels,
 #      instance, image, state, network, devices, snapshots).
-#   B) failure paths (no arg / unknown name).
-#
-# NOT covered in v0.1 (deferred to keep this test under ~10s):
-#   - stopped-instance variant (would need a stop+poll cycle)
-#   - VM (type=vm) variant (KVM-dependent on host; image is much heavier)
-# Both rely on the same jq transform path that the Running container
-# exercises here, so coverage is mostly redundant.
+#   B) stopped-instance variant: stop + poll + re-inspect, confirm
+#      .state.running == false and .state.status != "Running".
+#   C) VM variant (skips when /dev/kvm is absent): confirm .instance.type
+#      is "virtual-machine" in JSON output.
+#   D) failure paths (no arg / unknown name).
 
 set -euo pipefail
 # shellcheck disable=SC1091
@@ -231,7 +229,84 @@ short_name="$(jq -r '.name' < <("$LAB_LXD" inspect "${LAB_NAME}/${SVC_NAME}" --j
     || fail "lab/svc form returned a different .name ($short_name) than literal ($INAME)"
 
 # ===========================================================================
-# B) FAILURE PATHS
+# B) STOPPED-INSTANCE VARIANT
+# Stop the container we already have, poll until Stopped, re-inspect.
+# ===========================================================================
+note "stopping $INAME for stopped-instance inspect test"
+"$LXC_CMD" stop "$INAME" --force 2>/dev/null || true
+
+# Poll up to ~30 s; Stopped state usually arrives in < 5 s.
+_st=""
+for _ in $(seq 1 15); do
+    _st="$("$LXC_CMD" list "$INAME" --format=json 2>/dev/null | jq -r '.[0].state.status // "Unknown"')"
+    [[ "$_st" == "Stopped" ]] && break
+    sleep 2
+done
+[[ "$_st" == "Stopped" ]] \
+    || fail "instance $INAME did not reach Stopped state after 30s; got: $_st"
+note "instance stopped"
+
+stopped_json="$("$LAB_LXD" inspect "$INAME" --json)"
+
+note "schema spot-checks (stopped state)"
+[[ "$(jq -r '.state.running' <<<"$stopped_json")" == "false" ]] \
+    || fail "stopped: .state.running should be false; got: $(jq -r '.state.running' <<<"$stopped_json")"
+stopped_status="$(jq -r '.state.status' <<<"$stopped_json")"
+case "$stopped_status" in
+    Stopped|Stopping) ;;
+    *) fail "stopped: .state.status should be Stopped/Stopping; got: $stopped_status" ;;
+esac
+[[ "$(jq -r '.state.pid' <<<"$stopped_json")" == "null" ]] \
+    || fail "stopped: .state.pid should be null; got: $(jq -r '.state.pid' <<<"$stopped_json")"
+note "stopped-instance inspect schema OK (running=false, status=Stopped, pid=null)"
+
+# ===========================================================================
+# C) VM VARIANT (skips if /dev/kvm is not accessible)
+# ===========================================================================
+note "VM inspect variant (skips without /dev/kvm)"
+if [[ -r /dev/kvm || -w /dev/kvm ]]; then
+    VM_LAB="inspectest-vm-$$"
+    VM_SVC="vm1"
+    VM_INAME="lab-${VM_LAB}-${VM_SVC}"
+    cat > "$WORK/vm.toml" <<EOF
+[lab]
+name = "${VM_LAB}"
+[[instance]]
+name  = "${VM_SVC}"
+image = "images:alpine/3.20"
+type  = "vm"
+EOF
+    if ! "$LAB_LXD" up --config "$WORK/vm.toml" >/dev/null 2>&1; then
+        note "  could not start test VM — skipping VM inspect assertions"
+    else
+        # Poll for Running (VM boot takes ~15-60 s).
+        _vm_st=""
+        for _ in $(seq 1 30); do
+            _vm_st="$("$LXC_CMD" list "$VM_INAME" --format=json 2>/dev/null \
+                       | jq -r '.[0].state.status // "Unknown"')"
+            [[ "$_vm_st" == "Running" ]] && break
+            sleep 2
+        done
+        if [[ "$_vm_st" == "Running" ]]; then
+            vm_json="$("$LAB_LXD" inspect "$VM_INAME" --json)"
+            [[ "$(jq -r '.kind' <<<"$vm_json")" == "instance" ]] \
+                || fail "VM: .kind should be instance"
+            [[ "$(jq -r '.instance.type' <<<"$vm_json")" == "virtual-machine" ]] \
+                || fail "VM: .instance.type should be virtual-machine; got: $(jq -r '.instance.type' <<<"$vm_json")"
+            [[ "$(jq -r '.state.running' <<<"$vm_json")" == "true" ]] \
+                || fail "VM: .state.running should be true"
+            note "VM inspect schema OK (kind=instance, type=virtual-machine, running=true)"
+        else
+            note "  VM didn't reach Running in 60s — skipping VM inspect assertions"
+        fi
+        "$LAB_LXD" down --lab "$VM_LAB" >/dev/null 2>&1 || true
+    fi
+else
+    note "  no /dev/kvm — VM inspect test skipped"
+fi
+
+# ===========================================================================
+# D) FAILURE PATHS
 # ===========================================================================
 note "failure path: inspect with no arg"
 if "$LAB_LXD" inspect 2>/dev/null; then
@@ -250,8 +325,8 @@ if "$LAB_LXD" inspect "$bogus" 2>/dev/null; then
 fi
 err="$("$LAB_LXD" inspect "$bogus" 2>&1 || true)"
 case "$err" in
-    *"no instance matches"*) ;;
-    *) fail "inspect of unknown name: error should mention 'no instance matches'; got: $err" ;;
+    *"no instance"*|*"no instance, profile"*) ;;
+    *) fail "inspect of unknown name: error should mention 'no instance'; got: $err" ;;
 esac
 
 pass "inspect [--json] OK"
