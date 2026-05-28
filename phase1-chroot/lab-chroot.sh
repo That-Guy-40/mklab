@@ -858,7 +858,21 @@ bind_essentials() {
     # Bind-mount /proc /sys /dev /dev/pts /run into the chroot, recording
     # everything in <target>/.lab-chroot-mounts so destroy can reverse it.
     local target="$1"
+
+    # Finding 10: remove any symlink before truncating so an attacker-planted
+    # symlink (e.g. .lab-chroot-mounts -> /etc/fstab) does not truncate a host
+    # file when this runs as root.
+    [[ -L "${target}/.lab-chroot-mounts" ]] && rm -f "${target}/.lab-chroot-mounts"
     : > "${target}/.lab-chroot-mounts"
+
+    # Finding 8: set the EXIT trap HERE, before the first mount, so that any
+    # mid-loop mount failure leaves a cleanup handler in place.  Previously the
+    # trap was set by callers *after* bind_essentials returned, leaving a window
+    # where a failed mount had no cleanup path.
+    # Double-quote the trap string so $target expands NOW (its literal path is
+    # embedded); at trap-fire time this is out-of-scope and `set -u` would fail.
+    trap "unbind_essentials '$target'" EXIT
+
     local m src
     for m in proc sys dev dev/pts run; do
         src="/$m"
@@ -906,13 +920,7 @@ manager_none_enter() {
     fi
     [[ $EUID -eq 0 ]] || die "entering a chroot requires root (or recreate it with --rootless)"
     bind_essentials "$target"
-    # IMPORTANT: traps set inside a function persist past function return and
-    # fire when the *script* exits.  If we use single quotes here, $target is
-    # looked up at trap-fire time — by then the local is gone, and `set -u`
-    # raises "$target: unbound variable" before unbind_essentials runs.
-    # Use double quotes so $target expands NOW, embedding the literal path
-    # into the trap string.
-    trap "unbind_essentials '$target'" EXIT
+    # EXIT trap is now set inside bind_essentials (before the first mount).
     local rc=0
     if (( $# > 0 )); then
         chroot "$target" "$@" || rc=$?
@@ -1150,8 +1158,11 @@ create_one() {
     apply_init_script   "$spec" "$target"
     apply_write_files   "$spec" "$target"
     apply_users         "$spec" "$target"
-    apply_post_commands "$spec" "$target"
 
+    # Finding 9: write the manifest BEFORE apply_post_commands so that if a
+    # post-command fails (set -e exits the script), the tree is still findable
+    # by name and `destroy <name>` can clean it up.  Previously the manifest
+    # was written after post_commands, leaving an orphaned tree with no manifest.
     write_manifest "$name" "$target" "$backend" \
         "$(spec_get "$spec" distro)" "$(spec_get "$spec" suite)" \
         "$(spec_get "$spec" arch)" "$manager" \
@@ -1166,6 +1177,8 @@ create_one() {
         append_manifest_raw   "$name" nspawn_bind_ro      "$(jq -c '.nspawn.bind_ro      // []' <<<"$spec")"
         append_manifest_raw   "$name" nspawn_capabilities "$(jq -c '.nspawn.capabilities // []' <<<"$spec")"
     fi
+
+    apply_post_commands "$spec" "$target"
 
     local _created_lab; _created_lab="$(spec_get "$spec" lab)"
     [[ -n "$_created_lab" ]] && log_info "lab: $_created_lab"
@@ -1528,7 +1541,7 @@ apply_post_commands() {
     # bind-mounts to set up (and we couldn't mount as non-root anyway).
     if [[ -z "${ROOTLESS:-}" ]]; then
         bind_essentials "$target"
-        trap "unbind_essentials '$target'" EXIT
+        # EXIT trap is set inside bind_essentials.
     fi
     local i=0 cmd
     while IFS= read -r cmd; do
