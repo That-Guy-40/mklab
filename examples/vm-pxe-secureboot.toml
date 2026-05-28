@@ -1,0 +1,31 @@
+# QEMU PXE boot with Secure Boot enabled (snakeoil key for QEMU testing).
+#
+# This uses OVMF_CODE_4M.secboot.fd (Secure Boot enforcement) with
+# OVMF_VARS_4M.snakeoil.fd (pre-enrolled snakeoil test key).
+# The iPXE binary MUST be signed with the snakeoil key before booting:
+#
+#   netboot/build-ipxe.sh --server http://10.0.2.2:8080 --sign --use-snakeoil
+#   # or separately:
+#   netboot/sign-ipxe.sh --use-snakeoil
+#
+# Then rename the signed binary to ipxe.efi (or set pxe_bootfile = "ipxe-signed.efi"):
+#   cp ~/netboot/ipxe-signed.efi ~/netboot/ipxe.efi
+#
+# Workflow:
+#   lab-vm.sh create --config examples/vm-pxe-secureboot.toml
+#   lab-vm.sh start  pxe-secureboot
+#   lab-vm.sh console pxe-secureboot
+#   # → OVMF Secure Boot screen → iPXE (signed) → kernel+initrd over HTTP
+
+[[vm]]
+name        = "pxe-secureboot"
+backend     = "disk-image"
+distro      = "debian"
+suite       = "bookworm"
+arch        = "x86_64"
+memory      = "2G"
+cpus        = 2
+cloud_init  = false
+secure_boot = true   # → OVMF_CODE_4M.secboot.fd + OVMF_VARS_4M.snakeoil.fd
+pxe_dir      = "/home/sqs/netboot"
+pxe_bootfile = "ipxe.efi"    # must be signed with snakeoil key

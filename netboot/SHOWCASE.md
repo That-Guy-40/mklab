@@ -186,6 +186,98 @@ used an external `trust` you would have to fetch the cert over **HTTP**
 first, defeating the security goal.  Embedding via `CERTSTORE=` means the
 trust anchor is part of the signed binary itself.
 
+### Traditional DHCP/TFTP PXE — no USB stick, no HTTP-first
+
+iPXE-over-HTTP is the cleanest path, but some hardware or network policies
+require classic DHCP/TFTP PXE.  This pipeline adds that layer without
+replacing the HTTP-serving nginx.
+
+**QEMU (no extra container):**
+
+QEMU's slirp network has a built-in DHCP+TFTP server.  Specify `pxe_dir`
+in the VM spec and QEMU advertises the bootfile via DHCP option 67 and
+serves it via TFTP from 10.0.2.2:
+
+```toml
+# examples/vm-pxe-tftp-boot.toml
+[[vm]]
+name         = "pxe-tftp"
+pxe_dir      = "/home/sqs/netboot"   # serves ipxe.efi via TFTP
+pxe_bootfile = "ipxe.efi"
+```
+
+```bash
+# VM boots: DHCP → TFTP → iPXE → HTTP boot.ipxe → kernel+initrd
+phase2-qemu-vm/lab-vm.sh create --config examples/vm-pxe-tftp-boot.toml
+phase2-qemu-vm/lab-vm.sh start  pxe-tftp
+```
+
+**Real hardware (ProxyDHCP + TFTP — safe on a shared LAN):**
+
+```bash
+# 1. Populate TFTP root + generate dnsmasq ProxyDHCP config:
+netboot/setup-dhcp-tftp.sh --server-ip 192.168.1.50 --iface eth0
+
+# 2. Start dnsmasq (needs host networking + root for DHCP broadcasts):
+sudo docker run --rm -d --name pxe-dnsmasq --network host \
+    --cap-add NET_ADMIN \
+    -v ~/netboot/tftp:/tftp:ro \
+    -v ~/.config/lab-netboot/dnsmasq-pxe.conf:/etc/dnsmasq.conf:ro \
+    alpine:latest sh -c 'apk add -q dnsmasq && dnsmasq --no-daemon'
+```
+
+ProxyDHCP mode responds **only to PXE clients** (DHCP option 60 = `PXEClient`)
+and adds TFTP server/bootfile info alongside your router's DHCP response.
+Your existing DHCP server keeps assigning IPs — no conflict.
+
+Architecture-aware responses are configured automatically: UEFI x64 clients
+get `ipxe.efi`; legacy BIOS clients get `ipxe.usb`.
+
+### Secure Boot — sign iPXE and boot with firmware enforcement
+
+OVMF's Secure Boot enforcement rejects unsigned EFI binaries.  Two paths:
+
+**QEMU (snakeoil key — instant, no firmware interaction):**
+
+```bash
+# Build and sign in one step:
+netboot/build-ipxe.sh --server http://10.0.2.2:8080 --sign --use-snakeoil
+
+# Or sign an existing binary:
+netboot/sign-ipxe.sh --use-snakeoil
+
+# Boot with Secure Boot enforcement (secboot OVMF + snakeoil VARS):
+cp ~/netboot/ipxe-signed.efi ~/netboot/ipxe.efi
+phase2-qemu-vm/lab-vm.sh create --config examples/vm-pxe-secureboot.toml
+```
+
+```toml
+# examples/vm-pxe-secureboot.toml
+[[vm]]
+secure_boot  = true   # → OVMF_CODE_4M.secboot.fd + OVMF_VARS_4M.snakeoil.fd
+pxe_dir      = "/home/sqs/netboot"
+pxe_bootfile = "ipxe.efi"   # must be signed with snakeoil key
+```
+
+The `snakeoil` OVMF has the Ubuntu/Debian test key pre-enrolled in the
+UEFI Signature Database.  `sign-ipxe.sh --use-snakeoil` signs with the
+corresponding private key (`/usr/share/ovmf/PkKek-1-snakeoil.key`).  The
+signed binary boots; an unsigned one triggers `Secure Boot violation`.
+
+**Real hardware (MOK enrollment):**
+
+```bash
+# Generate a personal MOK key pair and sign:
+netboot/sign-ipxe.sh --generate-mok
+
+# Enroll the MOK (requires monitor + keyboard — one-time per machine):
+sudo mokutil --import ~/.config/lab-netboot/MOK.crt
+sudo reboot   # → blue MokManager screen → "Enroll MOK"
+```
+
+After enrollment, any binary signed with your MOK key boots under Secure
+Boot on that machine, regardless of vendor keys.
+
 ### Rootless nginx — serve without root (Phase 4)
 
 `podman-netboot-server.toml` starts a rootless nginx container that

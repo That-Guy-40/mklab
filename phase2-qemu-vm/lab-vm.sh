@@ -200,12 +200,25 @@ firmware_for() {
                 printf ''
                 return 0
             fi
-            local cands=(
-                /usr/share/OVMF/OVMF_CODE.fd
-                /usr/share/OVMF/OVMF_CODE_4M.fd
-                /usr/share/edk2/ovmf/OVMF_CODE.fd
-                /usr/share/edk2-ovmf/x64/OVMF_CODE.fd
-            )
+            local secure_boot="${3:-false}"
+            if [[ "$secure_boot" == "true" ]]; then
+                # Secure Boot: prefer the secboot OVMF variant (MSRs enabled,
+                # Secure Boot enforcement active).  Falls back to snakeoil if
+                # secboot not found (snakeoil = pre-enrolled test cert, good
+                # for QEMU-only testing with sign-ipxe.sh --use-snakeoil).
+                local cands=(
+                    /usr/share/OVMF/OVMF_CODE_4M.secboot.fd
+                    /usr/share/OVMF/OVMF_CODE_4M.snakeoil.fd
+                    /usr/share/OVMF/OVMF_CODE_4M.fd
+                )
+            else
+                local cands=(
+                    /usr/share/OVMF/OVMF_CODE.fd
+                    /usr/share/OVMF/OVMF_CODE_4M.fd
+                    /usr/share/edk2/ovmf/OVMF_CODE.fd
+                    /usr/share/edk2-ovmf/x64/OVMF_CODE.fd
+                )
+            fi
             ;;
         aarch64)
             if [[ "$microvm" == "true" ]]; then
@@ -308,6 +321,9 @@ initrd      = "${MF_INITRD:-}"
 append      = "${MF_APPEND:-}"
 ssh_user    = "${MF_SSH_USER:-lab}"
 cores       = ${MF_CORES:-0}
+secure_boot = "${MF_SECURE_BOOT:-false}"
+pxe_dir     = "${MF_PXE_DIR:-}"
+pxe_bootfile = "${MF_PXE_BOOTFILE:-ipxe.efi}"
 threads     = ${MF_THREADS:-0}
 cpu_pin     = "${MF_CPU_PIN:-}"
 network_mode = "${MF_NETWORK_MODE:-user}"
@@ -1392,6 +1408,9 @@ spec_from_cli() {
         --argjson runcmd   "$runcmd_json" \
         --arg user_data    "${OPT_USER_DATA:-}" \
         --arg refresh_image "${OPT_REFRESH_IMAGE:-false}" \
+        --arg secure_boot  "${OPT_SECURE_BOOT:+true}" \
+        --arg pxe_dir      "${OPT_PXE_DIR:-}" \
+        --arg pxe_bootfile "${OPT_PXE_BOOTFILE:-ipxe.efi}" \
         --arg cores        "${OPT_CORES:-0}" \
         --arg threads      "${OPT_THREADS:-0}" \
         --arg cpu_pin      "${OPT_CPU_PIN:-}" \
@@ -1429,6 +1448,9 @@ spec_from_cli() {
           chroot:$chroot, disk_size:$disk_size,
           cloud_init:$cloud_init,
           refresh_image:($refresh_image=="true"),
+          secure_boot:($secure_boot=="true"),
+          pxe_dir:$pxe_dir,
+          pxe_bootfile:$pxe_bootfile,
           cores:($cores|tonumber), threads:($threads|tonumber), cpu_pin:$cpu_pin,
           network_mode:$network_mode, bridge:$bridge, tap:$tap,
           packages:$packages, runcmd:$runcmd, user_data:$user_data}'
@@ -1468,6 +1490,9 @@ specs_from_config() {
             install_target: (.install_target // ""),
             mac:       (.mac       // ""),
             refresh_image: (.refresh_image // false),
+            secure_boot:   (.secure_boot   // false),
+            pxe_dir:       (.pxe_dir       // ""),
+            pxe_bootfile:  (.pxe_bootfile  // "ipxe.efi"),
             cores:     (.cores     // 0),
             threads:   (.threads   // 0),
             cpu_pin:   (.cpu_pin   // ""),
@@ -1826,11 +1851,21 @@ build_qemu_argv() {
                 local vars_src
                 case "$arch" in
                     x86_64)
-                        for vars_src in /usr/share/OVMF/OVMF_VARS.fd \
-                                        /usr/share/OVMF/OVMF_VARS_4M.fd \
-                                        /usr/share/edk2/ovmf/OVMF_VARS.fd; do
-                            [[ -r "$vars_src" ]] && break
-                        done
+                        if [[ "${secure_boot:-false}" == "true" ]]; then
+                            # Secure Boot VARS: prefer snakeoil (pre-enrolled test
+                            # cert compatible with sign-ipxe.sh --use-snakeoil).
+                            for vars_src in /usr/share/OVMF/OVMF_VARS_4M.snakeoil.fd \
+                                            /usr/share/OVMF/OVMF_VARS_4M.ms.fd \
+                                            /usr/share/OVMF/OVMF_VARS_4M.fd; do
+                                [[ -r "$vars_src" ]] && break
+                            done
+                        else
+                            for vars_src in /usr/share/OVMF/OVMF_VARS.fd \
+                                            /usr/share/OVMF/OVMF_VARS_4M.fd \
+                                            /usr/share/edk2/ovmf/OVMF_VARS.fd; do
+                                [[ -r "$vars_src" ]] && break
+                            done
+                        fi
                         ;;
                     aarch64)
                         for vars_src in /usr/share/AAVMF/AAVMF_VARS.fd \
@@ -1933,9 +1968,18 @@ build_qemu_argv() {
             ;;
         *)  # user-mode (default)
             netdev="user,id=net0,hostfwd=tcp:127.0.0.1:${ssh_port}-:22"
+            # TFTP PXE: when --pxe-dir is set, QEMU's slirp serves the directory
+            # via TFTP and includes the bootfile in DHCP option 67.  The guest will
+            # try to PXE-boot from 10.0.2.2 (the slirp gateway) automatically if
+            # no other bootable device is found first.
+            if [[ -n "${pxe_dir:-}" ]]; then
+                netdev="${netdev},tftp=${pxe_dir},bootfile=/${pxe_bootfile:-ipxe.efi}"
+            fi
             ;;
     esac
     QEMU_ARGV+=(-netdev "$netdev" -device "${net_device}")
+    # Force network-first boot order when PXE TFTP is configured.
+    [[ -n "${pxe_dir:-}" ]] && QEMU_ARGV+=(-boot "order=n,menu=on")
 
     # Serial console exposed as a unix socket so `lab-vm.sh console` can attach
     QEMU_ARGV+=(
@@ -2015,7 +2059,7 @@ create_one() {
     ssh_user="lab"  # default for cloud-init VMs
 
     # v0.2 knobs: cpu topology/pinning, network mode, image refresh.
-    local cores threads cpu_pin network_mode bridge tap refresh_image
+    local cores threads cpu_pin network_mode bridge tap refresh_image secure_boot pxe_dir pxe_bootfile
     cores="$(spec_get "$spec" cores)";     [[ -z "$cores"   ]] && cores=0
     threads="$(spec_get "$spec" threads)"; [[ -z "$threads" ]] && threads=0
     cpu_pin="$(spec_get "$spec" cpu_pin)"
@@ -2023,6 +2067,9 @@ create_one() {
     bridge="$(spec_get "$spec" bridge)"
     tap="$(spec_get "$spec" tap)"
     refresh_image="$(spec_get "$spec" refresh_image)"
+    secure_boot="$(spec_get "$spec" secure_boot)"
+    pxe_dir="$(spec_get "$spec" pxe_dir)"
+    pxe_bootfile="$(spec_get "$spec" pxe_bootfile)"
 
     [[ "$ssh_port" == "0" || -z "$ssh_port" ]] && ssh_port="$(pick_ssh_port)"
     [[ -z "$pubkey" ]] && pubkey="$(default_pubkey || true)"
@@ -2140,7 +2187,7 @@ create_one() {
 
     # Stash for build_qemu_argv
     local firmware
-    firmware="$(firmware_for "$arch" "$microvm")"
+    firmware="$(firmware_for "$arch" "$microvm" "${secure_boot:-false}")"
 
     # Persist manifest before first boot so partial-failure is visible.
     local lab_name; lab_name="$(spec_get "$spec" lab)"
@@ -2152,6 +2199,7 @@ create_one() {
     MF_SSH_USER="$ssh_user" MF_LAB="$lab_name" \
     MF_CORES="$cores" MF_THREADS="$threads" MF_CPU_PIN="$cpu_pin" \
     MF_NETWORK_MODE="$network_mode" MF_BRIDGE="$bridge" MF_TAP="$tap" \
+    MF_SECURE_BOOT="$secure_boot" MF_PXE_DIR="$pxe_dir" MF_PXE_BOOTFILE="$pxe_bootfile" \
     write_vm_manifest "$name"
     [[ -n "$lab_name" ]] && log_info "lab: $lab_name"
 
@@ -2216,13 +2264,16 @@ cmd_start() {
     append="$(read_manifest_field "$name" append)"
     # v0.2 fields (empty on manifests written before this version → safe defaults).
     cores="$(read_manifest_field "$name" cores 2>/dev/null || true)"
+    secure_boot="$(read_manifest_field "$name" secure_boot 2>/dev/null || true)"
+    pxe_dir="$(read_manifest_field "$name" pxe_dir 2>/dev/null || true)"
+    pxe_bootfile="$(read_manifest_field "$name" pxe_bootfile 2>/dev/null || true)"
     threads="$(read_manifest_field "$name" threads 2>/dev/null || true)"
     cpu_pin="$(read_manifest_field "$name" cpu_pin 2>/dev/null || true)"
     network_mode="$(read_manifest_field "$name" network_mode 2>/dev/null || true)"
     [[ -z "$network_mode" ]] && network_mode=user
     bridge="$(read_manifest_field "$name" bridge 2>/dev/null || true)"
     tap="$(read_manifest_field "$name" tap 2>/dev/null || true)"
-    firmware="$(firmware_for "$arch" "$microvm")"
+    firmware="$(firmware_for "$arch" "$microvm" "${secure_boot:-false}")"
 
     # Clean up any stale unix sockets from a previous run.
     rm -f "$(vm_serial "$name")" "$(vm_monitor "$name")" "$(vm_qmp "$name")"
@@ -2808,6 +2859,7 @@ parse_args() {
     OPT_NETWORK_MODE="" OPT_BRIDGE="" OPT_TAP=""
     OPT_PACKAGES="" OPT_USER_DATA="" OPT_RUNCMD=()
     OPT_NETBOOT_DIR="" OPT_KERNEL_NAME="" OPT_INITRD_NAME="" OPT_GENERATE_SCRIPT="" OPT_SERVER=""
+    OPT_PXE_DIR="" OPT_PXE_BOOTFILE="" OPT_SECURE_BOOT=""
 
     [[ $# -eq 0 ]] && { usage; exit 0; }
     SUBCMD="$1"; shift
@@ -2856,6 +2908,9 @@ parse_args() {
             --initrd-name)  OPT_INITRD_NAME="$2"; shift 2 ;;
             --generate-script) OPT_GENERATE_SCRIPT=1; shift ;;
             --server)       OPT_SERVER="$2"; shift 2 ;;
+            --pxe-dir)      OPT_PXE_DIR="$2"; shift 2 ;;
+            --pxe-bootfile) OPT_PXE_BOOTFILE="$2"; shift 2 ;;
+            --secure-boot)  OPT_SECURE_BOOT=1; shift ;;
             -h|--help)      usage; exit 0 ;;
             -v|--version)   printf '%s %s\n' "$LAB_PROG" "$LAB_VERSION"; exit 0 ;;
             -*)             die "unknown option: $1 (try --help)" ;;

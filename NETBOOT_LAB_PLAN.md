@@ -559,9 +559,21 @@ For SBCs (aarch64): need `ipxe.efi` (UEFI) or an aarch64-specific boot chain.
 
 ## Open items / future work
 
-- **DHCP/TFTP server** (traditional PXE): Not in scope — HTTP-only iPXE
-  doesn't need it.
-- **Signed iPXE** (Secure Boot): `bin-x86_64-efi/ipxe.efi` can be signed with
-  a custom MOK key. Out of scope.
+- **DHCP/TFTP PXE**: implemented.
+  - QEMU: `pxe_dir` + `pxe_bootfile` in `[[vm]]` → QEMU slirp built-in TFTP;
+    `--pxe-dir / --pxe-bootfile` CLI flags; `-boot order=n` added automatically.
+  - Real hardware: `netboot/setup-dhcp-tftp.sh` creates TFTP root and a
+    dnsmasq ProxyDHCP + TFTP config.  `examples/podman-pxe-dhcp.toml` runs the
+    container (needs `--network=host` and root).
+  - Example TOMLs: `examples/vm-pxe-tftp-boot.toml`, `examples/vm-pxe-secureboot.toml`,
+    `examples/podman-pxe-dhcp.toml`.
+- **Secure Boot signed iPXE**: implemented.
+  - `netboot/sign-ipxe.sh` signs `ipxe.efi` via `sbsign`.  Three modes:
+    `--use-snakeoil` (QEMU instant test, no enrollment), `--generate-mok`
+    (real hardware, prints `mokutil --import` command), `--key/--cert` (custom).
+  - `build-ipxe.sh --sign [--use-snakeoil]` signs after building.
+  - `lab-vm.sh --secure-boot` selects `OVMF_CODE_4M.secboot.fd` and
+    `OVMF_VARS_4M.snakeoil.fd` as the firmware pair; `secure_boot = true` in
+    `[[vm]]` TOML also works.
 - **riscv64 real-hardware PXE**: Verified in QEMU; physical SBC boot depends
   on the board's UEFI/OpenSBI firmware chain.

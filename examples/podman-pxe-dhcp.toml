@@ -1,0 +1,47 @@
+# Rootless Podman container running dnsmasq in ProxyDHCP + TFTP mode.
+#
+# Use this for REAL HARDWARE on a LAN where you want traditional PXE boot
+# (DHCP/TFTP) without replacing your existing router's DHCP server.
+# ProxyDHCP responds only to PXE-option DHCP requests (option 60 = "PXEClient")
+# and adds TFTP server + bootfile information — your existing DHCP server
+# continues to assign IPs.
+#
+# IMPORTANT: DHCP uses broadcast.  To receive broadcasts from real hardware:
+#   - The container needs --network=host (or macvlan on the LAN interface)
+#   - This requires root or special network capabilities
+#   - Use "sudo" in front of lab-podman.sh for this container, OR run it with
+#     docker/podman directly with --network=host
+#
+# For QEMU testing: use pxe_dir in your [[vm]] TOML instead — no dnsmasq needed.
+#
+# Prerequisites:
+#   1. Run setup-dhcp-tftp.sh to populate ~/netboot/tftp/ and generate the config:
+#      netboot/setup-dhcp-tftp.sh \
+#          --server-ip 192.168.1.50 \
+#          --iface eth0 \
+#          --dir ~/netboot
+#   2. This TOML serves whatever is in ~/netboot/tftp/ as TFTP.
+#
+# Workflow (real hardware):
+#   sudo lab-podman.sh up --config examples/podman-pxe-dhcp.toml
+#   # → Power on the target machine → it PXE-boots → fetches iPXE via TFTP
+#   # → iPXE loads boot.ipxe → fetches kernel+initrd over HTTP from port 8080
+#   sudo lab-podman.sh down --lab pxe-dhcp
+
+[lab]
+name        = "pxe-dhcp"
+description = "dnsmasq ProxyDHCP + TFTP for traditional PXE boot"
+tags        = ["pxe", "tftp", "dhcp", "real-hardware"]
+
+[[service]]
+name    = "dnsmasq"
+engine  = "podman"
+image   = "docker.io/library/alpine:latest"
+# host networking is required to receive DHCP broadcasts from physical machines.
+# NOTE: this bypasses the rootless port restriction — run with sudo.
+network = "host"
+volumes = [
+    "/home/sqs/netboot/tftp:/tftp:ro",
+    "/home/sqs/.config/lab-netboot/dnsmasq-pxe.conf:/etc/dnsmasq.conf:ro",
+]
+command = "sh -c 'apk add -q dnsmasq && dnsmasq --no-daemon --log-facility=-'"

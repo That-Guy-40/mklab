@@ -1,0 +1,44 @@
+# QEMU TFTP PXE boot — traditional network boot via DHCP+TFTP, no USB stick needed.
+#
+# How it works:
+#   QEMU's slirp user-mode network provides a built-in DHCP server (10.0.2.x)
+#   *and* a TFTP server.  When pxe_dir is set, QEMU adds tftp=<dir>,bootfile=
+#   to the netdev and includes TFTP options 66+67 in DHCP responses.  The VM
+#   boots in network-first order, downloads the bootfile (ipxe.efi) from TFTP,
+#   and then iPXE fetches the kernel+initrd over HTTP from boot.ipxe.
+#
+# Prerequisites:
+#   1. kernel + initrd in ~/netboot/   (from lab-chroot.sh export-initrd)
+#   2. iPXE EFI + boot.ipxe in ~/netboot/
+#      (from netboot/build-ipxe.sh --server http://10.0.2.2:8080)
+#   3. nginx serving ~/netboot/ on port 8080
+#      (from lab-podman.sh up --config examples/podman-netboot-server.toml)
+#
+# Then:
+#   lab-vm.sh create --config examples/vm-pxe-tftp-boot.toml
+#   lab-vm.sh start  pxe-tftp
+#   lab-vm.sh console pxe-tftp
+#
+# For Secure Boot TFTP PXE: use vm-pxe-secureboot.toml instead.
+#
+# For real-hardware DHCP+TFTP (LAN): see netboot/setup-dhcp-tftp.sh and
+# examples/podman-pxe-dhcp.toml — QEMU slirp only serves TFTP to the VM itself.
+
+[[vm]]
+name     = "pxe-tftp"
+backend  = "disk-image"
+distro   = "debian"
+suite    = "bookworm"
+arch     = "x86_64"
+memory   = "2G"
+cpus     = 2
+# Empty disk so BIOS falls through to PXE. The VM must have no pre-installed OS.
+# QEMU will try disk first, find nothing bootable, then attempt PXE.
+# cloud_init = false keeps the seed ISO from being attached (we're not booting cloud-init).
+cloud_init = false
+
+# TFTP root: QEMU serves this directory via its built-in TFTP on 10.0.2.2.
+# The bootfile is what DHCP option 67 advertises to the PXE-booting VM.
+# OVMF's PXE client fetches tftp://10.0.2.2/ipxe.efi and executes it.
+pxe_dir      = "/home/sqs/netboot"
+pxe_bootfile = "ipxe.efi"

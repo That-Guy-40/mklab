@@ -568,6 +568,393 @@ docker stop netboot-https 2>/dev/null || true
 
 ---
 
+## 11. Traditional DHCP/TFTP PXE boot
+
+Traditional PXE uses **DHCP options 66 + 67** to tell the client where the
+TFTP server is and what file to download.  The client then fetches that
+file (typically iPXE) via TFTP and executes it.  Once iPXE is running it
+chainloads `boot.ipxe` from the HTTP server exactly as in §6b.
+
+This section covers two paths:
+
+- **QEMU (§11.1–11.3)** — QEMU's slirp network has a built-in DHCP+TFTP
+  server.  Set `pxe_dir` in the VM spec and no extra containers are needed.
+- **Real hardware (§11.4–11.6)** — a dnsmasq container in ProxyDHCP + TFTP
+  mode serves TFTP to physical machines without replacing your router's DHCP.
+
+### 11.1 QEMU TFTP PXE — prerequisites
+
+Everything from §§1–5 must be in place: kernel + initrd in `~/netboot/`,
+iPXE EFI in `~/netboot/ipxe.efi`, and nginx serving `~/netboot/` on port 8080.
+
+```bash
+ls ~/netboot/{kernel,initrd.gz,ipxe.efi,boot.ipxe}   # all must exist
+curl -sI http://localhost:8080/kernel | head -1        # → HTTP/1.1 200 OK
+```
+
+### 11.2 Create and start the QEMU TFTP PXE VM
+
+```bash
+phase2-qemu-vm/lab-vm.sh create \
+    --name pxe-tftp \
+    --distro debian --suite bookworm --arch x86_64 \
+    --memory 2G --cpus 2 \
+    --no-cloud-init \
+    --pxe-dir ~/netboot \
+    --pxe-bootfile ipxe.efi
+```
+
+Or via TOML:
+
+```bash
+# Edit pxe_dir path in the TOML to match your $HOME, then:
+phase2-qemu-vm/lab-vm.sh create --config examples/vm-pxe-tftp-boot.toml
+phase2-qemu-vm/lab-vm.sh start  pxe-tftp
+```
+
+**Verify the manifest carries the PXE fields:**
+
+```bash
+grep -E "pxe_dir|pxe_bootfile" \
+    ~/.local/state/lab-create/vms/pxe-tftp/manifest.toml
+# → pxe_dir     = "/home/<you>/netboot"
+# → pxe_bootfile = "ipxe.efi"
+```
+
+**Verify the QEMU command line includes TFTP:**
+
+```bash
+phase2-qemu-vm/lab-vm.sh inspect pxe-tftp 2>&1 | grep -i tftp
+# OR: check qemu.log after starting the VM
+```
+
+### 11.3 Observe the TFTP PXE boot sequence
+
+```bash
+phase2-qemu-vm/lab-vm.sh console pxe-tftp
+```
+
+**Expect in order on the console:**
+
+```
+UEFI Interactive Shell  v2.2
+...
+Initializing PXE network interface
+DHCP: 10.0.2.15 / 10.0.2.2
+TFTP: downloading ipxe.efi...
+
+iPXE 1.21.1 ...
+net0: <mac> using virtio-net ...
+DHCP (net0 10.0.2.15)... ok
+http://10.0.2.2:8080/kernel... ok
+http://10.0.2.2:8080/initrd.gz... ok
+Booting Linux on physical CPU 0x0
+...
+/ #
+```
+
+> If the VM boots directly to UEFI shell without attempting PXE, check
+> that `-boot order=n` took effect (inspect the QEMU log) and that OVMF
+> has a PXE driver installed.  The standard `ovmf` package includes the
+> `VirtioNet` driver.  You can also force network boot from the UEFI shell:
+> `Shell> bcfg boot add 0 fs0:\EFI\tools\ipxe.efi "iPXE"` — or press F12
+> at the OVMF splash screen.
+
+**Stop:**
+
+```bash
+phase2-qemu-vm/lab-vm.sh stop    pxe-tftp
+phase2-qemu-vm/lab-vm.sh destroy pxe-tftp --force
+```
+
+### 11.4 Real hardware — set up the TFTP directory and dnsmasq config
+
+```bash
+netboot/setup-dhcp-tftp.sh \
+    --server-ip 192.168.1.50 \
+    --iface     eth0 \
+    --dir       ~/netboot
+```
+
+**Expect:**
+
+```
+[info] creating TFTP root: /home/<you>/netboot/tftp
+[info]   copied ipxe.efi → .../netboot/tftp/ipxe.efi
+[info]   copied boot.ipxe → .../netboot/tftp/boot.ipxe
+[info] writing dnsmasq config: ~/.config/lab-netboot/dnsmasq-pxe.conf
+```
+
+**Verify the dnsmasq config:**
+
+```bash
+cat ~/.config/lab-netboot/dnsmasq-pxe.conf
+# Must contain:
+#   enable-tftp
+#   tftp-root=.../netboot/tftp
+#   dhcp-range=192.168.1.50,192.168.1.50,proxy   ← ProxyDHCP mode
+#   dhcp-boot=ipxe.efi
+```
+
+**Verify the TFTP root:**
+
+```bash
+ls ~/netboot/tftp/
+# → ipxe.efi  ipxe-signed.efi (if --sign was used)  boot.ipxe
+```
+
+### 11.5 Start the dnsmasq container for real hardware
+
+dnsmasq needs `--network=host` to receive DHCP broadcasts from physical
+machines.  This requires root on the host (or `CAP_NET_ADMIN`).
+
+```bash
+# Option A: Docker directly (simpler for --network=host):
+sudo docker run --rm -d \
+    --name pxe-dnsmasq \
+    --network host \
+    --cap-add NET_ADMIN \
+    -v ~/netboot/tftp:/tftp:ro \
+    -v ~/.config/lab-netboot/dnsmasq-pxe.conf:/etc/dnsmasq.conf:ro \
+    alpine:latest \
+    sh -c 'apk add -q dnsmasq && dnsmasq --no-daemon --log-facility=-'
+
+# Confirm it's running and listening:
+sudo docker logs pxe-dnsmasq 2>&1 | head -10
+ss -ulnp | grep ':69 '   # TFTP port — should show dnsmasq
+```
+
+**Or via Podman (needs --network=host, also requires root/privs):**
+
+```bash
+# Edit the volume paths in examples/podman-pxe-dhcp.toml, then:
+sudo phase4-podman/lab-podman.sh up --config examples/podman-pxe-dhcp.toml
+```
+
+### 11.6 Test on a physical machine
+
+1. Connect the target machine to the same LAN as your netboot host.
+2. Boot the target — enter the BIOS and ensure network boot is enabled.
+3. The machine will:
+   - Send a DHCP request with `option 60 = "PXEClient"`
+   - Your existing router assigns an IP
+   - dnsmasq (ProxyDHCP) responds with TFTP server = `192.168.1.50`, bootfile = `ipxe.efi`
+   - Machine fetches `ipxe.efi` via TFTP
+   - iPXE loads → fetches `boot.ipxe` via HTTP → boots kernel+initrd
+
+**Monitor dnsmasq logs during boot:**
+
+```bash
+sudo docker logs -f pxe-dnsmasq 2>&1 | grep -E "DHCP|TFTP|boot"
+# → dnsmasq-dhcp: 1234567890 available 192.168.1.50  (ProxyDHCP)
+# → dnsmasq-dhcp: 1234567890 vendor class: PXEClient:Arch:00009
+# → dnsmasq-dhcp: 1234567890 PXE-boot ipxe.efi on 192.168.1.50
+# → dnsmasq-tftp: 23 /tftp/ipxe.efi to 192.168.1.XX
+```
+
+**Cleanup:**
+
+```bash
+sudo docker stop pxe-dnsmasq
+```
+
+### 11.7 DHCP/TFTP troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| VM skips PXE and boots to UEFI shell | OVMF didn't try network boot | Press F12 at OVMF splash, or add `-boot order=n` manually via `LAB_LOG_LEVEL=debug` |
+| `TFTP: timeout` | nginx is running but TFTP dir is wrong | Confirm `pxe_dir` matches where `ipxe.efi` lives; `ls ~/netboot/ipxe.efi` |
+| Physical machine gets DHCP but no TFTP | ProxyDHCP response blocked by router | Some routers filter extra DHCP responses; try `--full-dhcp` on an isolated VLAN |
+| `dnsmasq: bind: Address already in use` | Another DHCP server on port 67 | Use ProxyDHCP mode (default) or stop the conflicting server |
+| Physical machine gets `File not found` via TFTP | Wrong bootfile path in dnsmasq config | Check `dhcp-boot=ipxe.efi` in dnsmasq-pxe.conf; confirm `/tftp/ipxe.efi` exists |
+
+---
+
+## 12. Secure Boot — sign iPXE and boot with Secure Boot enabled
+
+Secure Boot verifies the UEFI binary's signature before executing it.
+For iPXE to run under Secure Boot, the `ipxe.efi` binary must be signed
+with a key that is in the UEFI firmware's **Signature Database (db)**.
+
+This section uses the **snakeoil key** (pre-installed with the `ovmf`
+package on Ubuntu/Debian) for QEMU testing — no MOK enrollment step,
+no firmware interaction.  For real hardware, §12.5 covers the MOK path.
+
+### 12.1 Prerequisites
+
+```bash
+# sbsigntool must be installed:
+sbsign --version 2>&1 | head -1   # sbsign: EFI signing tool
+
+# ovmf must include the snakeoil VARS:
+ls /usr/share/OVMF/OVMF_CODE_4M.secboot.fd  # Secure Boot enforcement
+ls /usr/share/OVMF/OVMF_VARS_4M.snakeoil.fd # Pre-enrolled snakeoil key
+ls /usr/share/ovmf/PkKek-1-snakeoil.{key,pem} # Signing key + cert
+```
+
+If any are missing: `sudo apt-get install -y sbsigntool ovmf`
+
+### 12.2 Build iPXE and sign with the snakeoil key (combined)
+
+```bash
+netboot/build-ipxe.sh \
+    --server http://10.0.2.2:8080 \
+    --sign --use-snakeoil
+```
+
+**Expect at the end of the build:**
+
+```
+[info] signing EFI binary: /home/<you>/netboot/ipxe.efi
+[info] signing with snakeoil key (QEMU test only — NOT for real hardware)
+[warn]   The snakeoil key is world-readable.  Anyone can sign binaries that
+[warn]   will boot under a snakeoil OVMF.  Use --generate-mok for real hardware.
+[info] signing: .../netboot/ipxe.efi → .../netboot/ipxe-signed.efi
+[info] verifying signature...
+[info]   signature valid ✓
+```
+
+**Verify:**
+
+```bash
+ls -lh ~/netboot/ipxe-signed.efi   # ~1–2 MB; slightly larger than ipxe.efi
+
+sbverify --cert /usr/share/ovmf/PkKek-1-snakeoil.pem \
+         ~/netboot/ipxe-signed.efi \
+    && echo "signature OK"
+# → Signature verification OK
+```
+
+### 12.3 Sign an existing binary separately
+
+If you already have `ipxe.efi` and just need to sign it:
+
+```bash
+netboot/sign-ipxe.sh \
+    --use-snakeoil \
+    --input  ~/netboot/ipxe.efi \
+    --output ~/netboot/ipxe-signed.efi
+```
+
+### 12.4 Boot with Secure Boot in QEMU
+
+Replace `ipxe.efi` with the signed binary, then start a VM with `--secure-boot`:
+
+```bash
+# In-place replace so the TFTP dir serves the signed version:
+cp ~/netboot/ipxe-signed.efi ~/netboot/ipxe.efi
+
+phase2-qemu-vm/lab-vm.sh create --config examples/vm-pxe-secureboot.toml
+phase2-qemu-vm/lab-vm.sh start  pxe-secureboot
+phase2-qemu-vm/lab-vm.sh console pxe-secureboot
+```
+
+**Verify the correct OVMF variant is being used:**
+
+```bash
+phase2-qemu-vm/lab-vm.sh inspect pxe-secureboot 2>&1 | grep -i "ovmf\|secboot\|firmware"
+# or check the QEMU log:
+grep "pflash\|secboot\|OVMF" \
+    ~/.local/state/lab-create/vms/pxe-secureboot/qemu.log 2>/dev/null | head -5
+```
+
+**Expect in the console (key indicator):**
+
+```
+OVMF Secure Boot: Enabled
+...
+iPXE 1.21.1 ...
+```
+
+**What Secure Boot rejection looks like** — if the binary is NOT signed
+or signed with the wrong key, OVMF refuses to execute it:
+
+```
+OVMF Secure Boot: Enabled
+Secure Boot violation
+  Image failed Secure Boot verification.
+```
+
+If you see this, re-run §12.2 or §12.3 and confirm the snakeoil cert
+(`/usr/share/OVMF/OVMF_VARS_4M.snakeoil.fd`) is in use.
+
+**Stop:**
+
+```bash
+phase2-qemu-vm/lab-vm.sh stop    pxe-secureboot
+phase2-qemu-vm/lab-vm.sh destroy pxe-secureboot --force
+```
+
+### 12.5 Real hardware — generate a MOK and enroll it
+
+On real hardware with Secure Boot enabled by the firmware vendor (e.g., a
+laptop shipped with Windows keys in the db), you need to add your own key
+to the **Machine Owner Key (MOK)** database.
+
+```bash
+# Step 1: generate a MOK key pair and sign iPXE
+netboot/sign-ipxe.sh \
+    --generate-mok \
+    --input  ~/netboot/ipxe.efi \
+    --output ~/netboot/ipxe-signed.efi
+```
+
+**Expect:**
+
+```
+[info] generating MOK key pair → ~/.config/lab-netboot/MOK.{key,crt}
+[info]   key : ~/.config/lab-netboot/MOK.key
+[info]   cert: ~/.config/lab-netboot/MOK.crt
+[info] signing: .../ipxe.efi → .../ipxe-signed.efi
+[info] signature valid ✓
+[info] MOK enrollment (real hardware, requires physical presence):
+[info]   sudo mokutil --import ~/.config/lab-netboot/MOK.crt
+[info]   # → reboot → 'Enroll MOK' in the blue MokManager screen → reboot again
+```
+
+```bash
+# Step 2: enroll the MOK (requires a monitor + keyboard at the machine)
+sudo mokutil --import ~/.config/lab-netboot/MOK.crt
+# → enter a one-time password (you'll confirm it in the firmware screen)
+
+# Step 3: reboot into the MokManager screen
+sudo reboot
+# → Blue "Shim UEFI key management" screen
+# → "Enroll MOK" → "Continue" → enter the password → "Yes" → reboot
+
+# Step 4: verify the MOK is enrolled
+mokutil --list-enrolled | grep -A3 "Lab iPXE MOK"
+# → Issuer: CN=Lab iPXE MOK <year>
+```
+
+```bash
+# Step 5: use the signed binary
+cp ~/netboot/ipxe-signed.efi ~/netboot/ipxe.efi
+# Boot the target machine from USB or PXE — Secure Boot accepts the signed iPXE
+```
+
+### 12.6 Verify: Secure Boot rejects an unsigned binary
+
+```bash
+# Keep ipxe-signed.efi, then test that the UNSIGNED binary fails:
+cp ~/netboot/ipxe.efi /tmp/unsigned-ipxe.efi
+sbverify --cert /usr/share/ovmf/PkKek-1-snakeoil.pem \
+         /tmp/unsigned-ipxe.efi 2>&1 | grep -q "failed\|no signature" \
+    && echo "unsigned binary correctly rejected by sbverify"
+```
+
+### 12.7 Secure Boot troubleshooting
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `Secure Boot violation` in OVMF | Unsigned binary or wrong signing key | Re-run `sign-ipxe.sh --use-snakeoil`; confirm snakeoil VARS in use |
+| `sbverify: No signature found` | Binary not signed | `sign-ipxe.sh --use-snakeoil` or `--generate-mok` |
+| OVMF doesn't show "Secure Boot: Enabled" | Wrong OVMF code file | Ensure `--secure-boot` in the VM TOML; check firmware path via `LAB_LOG_LEVEL=debug` |
+| `mokutil --import` fails | mokutil not installed or SB not in user-mode | `sudo apt-get install mokutil`; Secure Boot must already be on for MOK enrollment |
+| Signed binary rejected on real hw | Machine uses Microsoft UEFI CA, not MOK | You enrolled MOK correctly but the machine's db only trusts MS-signed shim; either enroll MOK via shim's `MokManager.efi` or disable Secure Boot in BIOS |
+
+---
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |

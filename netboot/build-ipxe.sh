@@ -89,6 +89,10 @@ Options:
   --tls               compile iPXE with HTTPS download support (DOWNLOAD_PROTO_HTTPS)
   --tls-cert    PATH  DER-format cert to embed in iPXE trust store
                       (use the .der from setup-netboot-dir.sh --tls)
+  --sign              sign the EFI output with netboot/sign-ipxe.sh after building
+  --use-snakeoil      sign with the system snakeoil key (QEMU Secure Boot test; not for real hw)
+  --sign-key    PATH  custom signing key (PEM) for --sign
+  --sign-cert   PATH  custom signing cert (PEM) for --sign
   --help              show this help and exit
 
 Outputs written to --output-dir:
@@ -115,6 +119,10 @@ arch="x86_64"
 ipxe_ref="master"
 tls_mode=""
 tls_cert=""
+sign_mode=""
+sign_snakeoil=""
+sign_key=""
+sign_cert=""
 
 # ─── Arg parsing ────────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
@@ -128,6 +136,10 @@ while [[ $# -gt 0 ]]; do
         --ipxe-ref)    shift; ipxe_ref="${1:?--ipxe-ref requires a git ref}"; shift ;;
         --tls)         tls_mode=1; shift ;;
         --tls-cert)    shift; tls_cert="${1:?--tls-cert requires a DER file}"; shift ;;
+        --sign)        sign_mode=1; shift ;;
+        --use-snakeoil) sign_mode=1; sign_snakeoil=1; shift ;;
+        --sign-key)    shift; sign_key="${1:?--sign-key requires a PEM file}"; shift ;;
+        --sign-cert)   shift; sign_cert="${1:?--sign-cert requires a PEM file}"; shift ;;
         --help|-h) usage ;;
         *) die "unknown option: $1  (try --help)" ;;
     esac
@@ -200,6 +212,23 @@ for f in boot.ipxe ipxe.usb ipxe.efi ipxe.qcow2; do
     fi
 done
 log_info ""
+if [[ -n "$sign_mode" ]]; then
+    efi_out="$output_dir/ipxe.efi"
+    if [[ ! -f "$efi_out" ]]; then
+        log_warn "--sign: $efi_out not found; skipping signing step"
+    else
+        log_info "signing EFI binary: $efi_out"
+        sign_args=()
+        if [[ -n "$sign_snakeoil" ]]; then
+            sign_args+=(--use-snakeoil)
+        elif [[ -n "$sign_key" && -n "$sign_cert" ]]; then
+            sign_args+=(--key "$sign_key" --cert "$sign_cert")
+        else
+            sign_args+=(--generate-mok)
+        fi
+        "$(dirname -- "$0")/sign-ipxe.sh"             "${sign_args[@]}"             --input  "$efi_out"             --output "$output_dir/ipxe-signed.efi"
+    fi
+fi
 if [[ -n "$tls_mode" ]]; then
     log_info "  (built with HTTPS support — server URL must use https://)"
 fi
