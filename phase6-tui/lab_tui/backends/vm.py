@@ -87,12 +87,24 @@ class VMBackend(BackendRunner):
                 [str(self.script), "console", data.get("name", vm_dir.name)]
                 if is_running and serial_sock.exists() else []
             )
-            # Classify: pxe-install VMs (AlmaLinux Anaconda target) get their
-            # own type tag so the TUI can show a distinct icon/label and surface
-            # the kickstart MAC association in the detail view.
-            backend_field = data.get("backend", "disk-image")
+            # Classify VM type so the TUI can show a distinct label/icon.
+            # Priority (highest → lowest):
+            #   pxe-install  — blank-disk Anaconda target (backend=pxe-install or
+            #                  install_target set; covers AlmaLinux boot-loop style)
+            #   pxe-tftp     — OVMF/UEFI TFTP PXE boot (pxe_dir in manifest)
+            #   netboot-vm   — direct -kernel/-initrd RAM boot (backend=kernel+initrd)
+            #   vm           — everything else
+            backend_field  = data.get("backend", "disk-image")
             install_target = data.get("install_target", "")
-            vm_type = "pxe-install" if (backend_field == "pxe-install" or install_target) else "vm"
+            pxe_dir        = data.get("pxe_dir", "")
+            if backend_field == "pxe-install" or install_target:
+                vm_type = "pxe-install"
+            elif pxe_dir:
+                vm_type = "pxe-tftp"
+            elif backend_field == "kernel+initrd":
+                vm_type = "netboot-vm"
+            else:
+                vm_type = "vm"
             extra = {k: v for k, v in data.items() if k not in {"name", "lab"}}
             # For pxe-install VMs, surface the kickstart MAC path hint.
             if vm_type == "pxe-install" and data.get("mac"):

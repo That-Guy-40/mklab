@@ -41,7 +41,7 @@ def test_list_resources_running(fake_state_dir: Path, fixtures_dir: Path) -> Non
     assert r.name == "myvm"
     assert r.status == "running"
     assert r.lab == "vmlab"
-    assert r.type == "vm"
+    assert r.type == "netboot-vm"   # fixture uses backend=kernel+initrd
     assert r.log_command[0] == "tail"
     assert str(vm_dir / "qemu.log") in r.log_command
 
