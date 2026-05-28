@@ -70,9 +70,12 @@ die()       { _log error "$@"; exit 1; }
 
 # ─── Host / arch detection ──────────────────────────────────────────────────
 detect_host_distro() {
+    # Parse with awk — consistent with the no-source rule applied to chroot
+    # os-release files; /etc/os-release is root-owned and trusted but sourcing
+    # it executes shell code (Finding 16).
     if [[ -r /etc/os-release ]]; then
-        # shellcheck disable=SC1091
-        ( . /etc/os-release && printf '%s' "${ID:-unknown}" )
+        awk -F= '/^ID=/{v=$2; gsub(/^[[:space:]"'"'"']+|[[:space:]"'"'"']+$/,"",v); print v; exit}' \
+            /etc/os-release
     else
         printf 'unknown'
     fi
@@ -436,6 +439,11 @@ validate_spec() {
     manager="$(spec_get "$spec" manager)"
 
     [[ -n "$name"    ]] || die "spec missing required field: name"
+    # Reject names that could traverse paths in manifest_path(), schroot_conf_path(),
+    # or nspawn_machines_link() — all of which embed $name directly in file paths.
+    [[ "$name" =~ ^[a-zA-Z0-9_.-]+$ ]] \
+        || die "spec: name must match [a-zA-Z0-9_.-]+ (no slashes or special chars) — got: $name"
+    [[ "$name" != .* ]] || die "spec: name must not start with a dot — got: $name"
     [[ -n "$backend" ]] || die "spec ($name) missing required field: backend"
     [[ -n "$target"  ]] || die "spec ($name) missing required field: target"
 
@@ -452,6 +460,11 @@ validate_spec() {
         dnf|yum)
             [[ "$distro" == "rocky" ]] || die "spec ($name) backend=dnf currently supports distro=rocky only"
             [[ -n "$(spec_get "$spec" suite)" ]] || die "spec ($name) backend=dnf requires suite (e.g. \"9\")"
+            # Validate suite is a bare version number so it cannot inject newlines
+            # into the repo file built by dnf_bootstrap_repo() (Finding 5).
+            local _suite; _suite="$(spec_get "$spec" suite)"
+            [[ "$_suite" =~ ^[0-9]+(\.[0-9]+)?$ ]] \
+                || die "spec ($name) backend=dnf suite must be a version number like '9' or '9.3' (got: $_suite)"
             [[ -n "$arch" ]] || die "spec ($name) backend=dnf requires arch"
             is_known_arch "$arch" || die "spec ($name) unknown arch: $arch"
             [[ "$(arch_map "$arch" rocky_supported)" == "yes" ]] \
@@ -634,10 +647,12 @@ backend_dnf_create() {
 
     # Note: do NOT use a RETURN trap here — bash RETURN traps are global, fire
     # for every later function return, and reference now-out-of-scope locals
-    # (manifests as "$var: unbound variable" much later). Clean up explicitly
-    # at end of function and on the error paths instead.
+    # (manifests as "$var: unbound variable" much later).  Use an EXIT trap
+    # scoped to this function instead: set it after mktemp, clear it on normal
+    # exit (Finding 6: repo file not cleaned up on error paths).
     local repo_file
     repo_file="$(dnf_bootstrap_repo "$suite" "$arch_rpm")"
+    trap 'rm -f "$repo_file"' EXIT
 
     # Default seed: distro identity packages plus the `rpm` and `dnf` CLIs.
     # Without `rpm`, `rpm-libs` is still pulled in transitively (gives you
@@ -717,6 +732,7 @@ backend_dnf_create() {
 
     install -D -m 0644 /etc/resolv.conf "${target}/etc/resolv.conf" 2>/dev/null || true
     rm -f "$repo_file"
+    trap - EXIT   # repo_file cleaned up; clear the EXIT trap
 
     # Rebuild the rpmdb from inside the chroot so it lives at the chroot's
     # own `_dbpath` (EL9: /usr/lib/sysimage/rpm; with /var/lib/rpm as a
@@ -910,10 +926,25 @@ manager_none_enter() {
     return "$rc"
 }
 
+# _safe_rm_rf PATH — sanity-check PATH before rm -rf (Finding 14).
+# Protects against operator-tampered manifests or empty/short target fields
+# that could wipe the wrong directory.
+_safe_rm_rf() {
+    local path="$1"
+    [[ -n "$path" ]]   || die "destroy: target path is empty — refusing rm -rf"
+    [[ "$path" == /* ]] || die "destroy: target path is not absolute: $path"
+    [[ "$path" != "/" ]] || die "destroy: refusing rm -rf /"
+    # Require at least 3 path components: /a/b is too short to be a real chroot.
+    local depth; depth="$(awk -F/ '{print NF-1}' <<<"$path")"
+    [[ "$depth" -ge 2 ]] \
+        || die "destroy: target path '$path' is too shallow to be a chroot (at least /a/b required)"
+    rm -rf -- "$path"
+}
+
 manager_none_destroy() {
     local target="$1"
     unbind_essentials "$target"
-    rm -rf -- "$target"
+    _safe_rm_rf "$target"
 }
 
 # ─── Manager: schroot ───────────────────────────────────────────────────────
@@ -930,6 +961,16 @@ manager_schroot_register() {
     local stype; stype="$(jq -r '.schroot.type    // "directory"'  <<<"$spec")"
     local sgrps; sgrps="$(jq -r '.schroot.groups | (.//[]) | join(",")' <<<"$spec")"
     local susrs; susrs="$(jq -r '.schroot.users  | (.//[]) | join(",")' <<<"$spec")"
+    # Strip newlines from schroot fields — a newline would inject extra stanzas
+    # into /etc/schroot/chroot.d/<name>.conf, potentially granting unintended
+    # users access to the chroot (Finding 4).
+    stype="${stype//$'\n'/}"
+    sgrps="${sgrps//$'\n'/}"
+    susrs="${susrs//$'\n'/}"
+    # schroot type must be a known value; reject anything else.
+    case "$stype" in directory|file|loopback|block|btrfs) ;;
+        *) die "schroot.type must be directory|file|loopback|block|btrfs (got: $stype)" ;;
+    esac
 
     log_info "schroot: writing $conf"
     {
@@ -964,7 +1005,7 @@ manager_schroot_enter() {
 manager_schroot_destroy() {
     local name="$1" target="$2"
     rm -f "$(schroot_conf_path "$name")"
-    rm -rf -- "$target"
+    _safe_rm_rf "$target"
 }
 
 # ─── Manager: systemd-nspawn ────────────────────────────────────────────────
@@ -1050,7 +1091,7 @@ manager_nspawn_destroy() {
     local name="$1" target="$2"
     local link; link="$(nspawn_machines_link "$name")"
     [[ -L "$link" ]] && rm -f "$link"
-    rm -rf -- "$target"
+    _safe_rm_rf "$target"
 }
 
 # ─── Subcommand: create ─────────────────────────────────────────────────────
@@ -1387,6 +1428,10 @@ apply_users() {
         log_info "users: creating '$uname'"
         chroot_exec "$target" useradd -m -s "$ushell" "$uname" 2>/dev/null \
             || log_warn "users: useradd '$uname' returned non-zero (already exists?)"
+        # Strip newlines from password — a literal newline would inject a second
+        # "user:pass" line into chpasswd's stdin, setting passwords for unintended
+        # chroot accounts (Finding 12).
+        upass="${upass//$'\n'/}"
         [[ -n "$upass"   ]] && printf '%s:%s\n' "$uname" "$upass" \
                                     | chroot_exec "$target" chpasswd
         [[ -n "$ugroups" ]] && chroot_exec "$target" usermod -aG "$ugroups" "$uname"
@@ -1446,14 +1491,23 @@ apply_write_files() {
         executable="$( jq -r --argjson i "$i" '.write_files[$i].executable // false' <<<"$spec")"
         content="$(    jq -r --argjson i "$i" '.write_files[$i].content    // ""'    <<<"$spec")"
         [[ -z "$path" ]] && continue
-        dest="$target/$path"
-        install -d -m 0755 "$(dirname "$dest")"
+        # Resolve the destination and jail-check it — a path containing ../
+        # sequences could escape the chroot root and write to arbitrary host
+        # paths as root (Finding 1: path traversal → host RCE).
+        dest="$(realpath -m "$target/$path")"
+        [[ "$dest" == "$target/"* ]] \
+            || die "write_files[$((i+1))]: path '$path' escapes chroot root — refusing"
+        # Validate mode is numeric octal to prevent chmod flag injection
+        # (e.g. --reference=/etc/shadow) (Finding 7).
         fmode="0644"
         if [[ "$executable" == "true" ]]; then
             fmode="0755"
         elif [[ -n "$mode" ]]; then
+            [[ "$mode" =~ ^0?[0-7]{3,4}$ ]] \
+                || die "write_files[$((i+1))]: mode must be octal (e.g. 0644), got: $mode"
             fmode="$mode"
         fi
+        install -d -m 0755 "$(dirname "$dest")"
         printf '%s' "$content" > "$dest"
         chmod "$fmode" "$dest"
         log_info "write_files[$((i+1))]: $path  (mode $fmode)"
@@ -1633,8 +1687,15 @@ cmd_verify() {
     [[ -d "$target" ]] || die "target is not a directory: $target"
     printf 'target:    %s\n' "$target"
     if [[ -r "$target/etc/os-release" ]]; then
-        # shellcheck disable=SC1090,SC1091
-        ( . "$target/etc/os-release"; printf 'os:        %s %s\n' "${NAME:-?}" "${VERSION:-?}" )
+        # Parse with awk — never source the chroot's os-release, which could
+        # contain arbitrary shell code and runs as root (Finding 2; same rule
+        # documented at cmd_inspect line ~1683).
+        local _osr_name _osr_ver
+        _osr_name="$(awk -F= '/^NAME=/{v=$2; gsub(/^[[:space:]"'"'"']+|[[:space:]"'"'"']+$/,"",v); print v; exit}' \
+                         "$target/etc/os-release" 2>/dev/null)"
+        _osr_ver="$( awk -F= '/^VERSION=/{v=$2; gsub(/^[[:space:]"'"'"']+|[[:space:]"'"'"']+$/,"",v); print v; exit}' \
+                         "$target/etc/os-release" 2>/dev/null)"
+        printf 'os:        %s %s\n' "${_osr_name:-?}" "${_osr_ver:-?}"
     else
         printf 'os:        (no /etc/os-release)\n'
     fi
