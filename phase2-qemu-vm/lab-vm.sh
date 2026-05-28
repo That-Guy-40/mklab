@@ -59,9 +59,11 @@ die()       { _log error "$@"; exit 1; }
 
 # ─── Host / arch detection ──────────────────────────────────────────────────
 detect_host_distro() {
+    # Parse with awk — sourcing /etc/os-release executes it as shell code
+    # (Finding 23; same pattern as phase1 after its audit).
     if [[ -r /etc/os-release ]]; then
-        # shellcheck disable=SC1091
-        ( . /etc/os-release && printf '%s' "${ID:-unknown}" )
+        awk -F= '/^ID=/{v=$2; gsub(/^[[:space:]"'"'"']+|[[:space:]"'"'"']+$/,"",v); print v; exit}' \
+            /etc/os-release
     else
         printf 'unknown'
     fi
@@ -299,10 +301,30 @@ write_vm_manifest() {
     local name="$1"
     local mp; mp="$(vm_manifest "$name")"
     local now; now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    # Escape double-quotes in free-text string fields so the TOML is always
+    # well-formed (Finding 2: an unescaped " in e.g. MF_APPEND or MF_KERNEL
+    # would allow a crafted --append to inject extra manifest fields, changing
+    # network_mode/bridge/tap/cpu_pin on re-read at start time).
+    # Enum-validated fields (backend/distro/arch/accel/network_mode) and
+    # numeric fields (cpus/ssh_port/cores/threads) cannot contain quotes.
+    local _lab="${MF_LAB:-}"          ; _lab="${_lab//\"/\\\"}"
+    local _disk="${MF_DISK:-}"        ; _disk="${_disk//\"/\\\"}"
+    local _itgt="${MF_INSTALL_TARGET:-}" ; _itgt="${_itgt//\"/\\\"}"
+    local _mac="${MF_MAC:-}"          ; _mac="${_mac//\"/\\\"}"
+    local _seed="${MF_SEED:-}"        ; _seed="${_seed//\"/\\\"}"
+    local _kernel="${MF_KERNEL:-}"    ; _kernel="${_kernel//\"/\\\"}"
+    local _initrd="${MF_INITRD:-}"    ; _initrd="${_initrd//\"/\\\"}"
+    local _append="${MF_APPEND:-}"    ; _append="${_append//\"/\\\"}"
+    local _suser="${MF_SSH_USER:-lab}"; _suser="${_suser//\"/\\\"}"
+    local _cpupin="${MF_CPU_PIN:-}"   ; _cpupin="${_cpupin//\"/\\\"}"
+    local _pxedir="${MF_PXE_DIR:-}"   ; _pxedir="${_pxedir//\"/\\\"}"
+    local _pxebf="${MF_PXE_BOOTFILE:-ipxe.efi}" ; _pxebf="${_pxebf//\"/\\\"}"
+    local _bridge="${MF_BRIDGE:-}"    ; _bridge="${_bridge//\"/\\\"}"
+    local _tap="${MF_TAP:-}"          ; _tap="${_tap//\"/\\\"}"
     cat > "$mp" <<EOF
 # lab-vm manifest — do not edit by hand
 name        = "${name}"
-lab         = "${MF_LAB:-}"
+lab         = "${_lab}"
 backend     = "${MF_BACKEND}"
 distro      = "${MF_DISTRO}"
 suite       = "${MF_SUITE}"
@@ -312,23 +334,23 @@ cpus        = ${MF_CPUS}
 microvm     = ${MF_MICROVM}
 accel       = "${MF_ACCEL}"
 ssh_port    = ${MF_SSH_PORT}
-disk        = "${MF_DISK:-}"
-install_target = "${MF_INSTALL_TARGET:-}"
-mac         = "${MF_MAC:-}"
-seed        = "${MF_SEED:-}"
-kernel      = "${MF_KERNEL:-}"
-initrd      = "${MF_INITRD:-}"
-append      = "${MF_APPEND:-}"
-ssh_user    = "${MF_SSH_USER:-lab}"
+disk        = "${_disk}"
+install_target = "${_itgt}"
+mac         = "${_mac}"
+seed        = "${_seed}"
+kernel      = "${_kernel}"
+initrd      = "${_initrd}"
+append      = "${_append}"
+ssh_user    = "${_suser}"
 cores       = ${MF_CORES:-0}
 secure_boot = "${MF_SECURE_BOOT:-false}"
-pxe_dir     = "${MF_PXE_DIR:-}"
-pxe_bootfile = "${MF_PXE_BOOTFILE:-ipxe.efi}"
+pxe_dir     = "${_pxedir}"
+pxe_bootfile = "${_pxebf}"
 threads     = ${MF_THREADS:-0}
-cpu_pin     = "${MF_CPU_PIN:-}"
+cpu_pin     = "${_cpupin}"
 network_mode = "${MF_NETWORK_MODE:-user}"
-bridge      = "${MF_BRIDGE:-}"
-tap         = "${MF_TAP:-}"
+bridge      = "${_bridge}"
+tap         = "${_tap}"
 created_at  = "${now}"
 version     = "${LAB_VERSION}"
 EOF
@@ -350,6 +372,10 @@ vm_running() {
     [[ -r "$pf" ]] || return 1
     local pid; pid="$(cat "$pf" 2>/dev/null || true)"
     [[ -n "$pid" ]] || return 1
+    # Validate PID is a positive integer before using it in /proc and kill
+    # (Finding 16: a non-numeric or path-like PID file entry would make
+    # /proc/$pid resolve to an unexpected directory and silently report "running").
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
     [[ -d "/proc/$pid" ]]
 }
 
@@ -443,6 +469,10 @@ kali_resolve_suite() {
             local ver="${fname#kali-linux-}"
             ver="${ver%-qemu-${a_deb}.7z}"
             [[ -n "$ver" ]] || die "kali-rolling: failed to parse release tag from '$fname'"
+            # Finding 22: cache the hash we already have from this fetch so
+            # kali_sha256_for() doesn't need a second network round-trip.
+            _KALI_RESOLVED_HASH="$(printf '%s\n' "$sums" | awk -v f="$fname" '$2==f{print $1;exit}')"
+            _KALI_RESOLVED_SUITE="$ver"
             printf '%s' "$ver"
             ;;
         *)
@@ -455,14 +485,68 @@ kali_resolve_suite() {
 # Expected sha256 of the Kali QEMU .7z for a RESOLVED release, parsed from that
 # release's published SHA256SUMS.  Prints empty (caller skips verification with a
 # warning) if it can't be fetched/parsed — never fatal on its own.
+# Globals written by kali_resolve_suite when resolving kali-rolling,
+# consumed by kali_sha256_for to avoid a duplicate SHA256SUMS fetch.
+_KALI_RESOLVED_SUITE=""
+_KALI_RESOLVED_HASH=""
+
 kali_sha256_for() {
     local suite="$1" arch="$2" a_deb
     case "$arch" in x86_64) a_deb=amd64 ;; *) return 0 ;; esac
+    # Finding 22: reuse the hash already fetched by kali_resolve_suite when
+    # resolving "kali-rolling" — both functions need the same SHA256SUMS and
+    # previously made two separate network round-trips.
+    if [[ -n "${_KALI_RESOLVED_HASH}" && "${_KALI_RESOLVED_SUITE}" == "$suite" ]]; then
+        printf '%s' "${_KALI_RESOLVED_HASH}"
+        return 0
+    fi
     require_cmd curl
     local sums
-    sums="$(curl --fail --location --silent "https://cdimage.kali.org/kali-${suite}/SHA256SUMS" 2>/dev/null)" || return 0
+    # Finding 6: die on fetch failure instead of silently returning empty.
+    sums="$(curl --fail --location --silent "https://cdimage.kali.org/kali-${suite}/SHA256SUMS")" \
+        || die "kali: could not fetch SHA256SUMS for release ${suite} (integrity check required); use --refresh-image to retry"
     printf '%s\n' "$sums" \
         | awk -v want="^kali-linux-${suite}-qemu-${a_deb}[.]7z$" '$2 ~ want { print $1; exit }'
+}
+
+# fetch_cloud_checksum DISTRO SUITE ARCH FILENAME  →  sha256 hex, or "" on miss
+# Fetches each distro's published SHA256SUMS / CHECKSUM file and extracts the
+# hash for FILENAME.  On any fetch failure, logs a warning and returns empty
+# (verify_sha256 skips with a warning rather than hard-failing), so broken CDN
+# health doesn't permanently block downloads.
+# Finding 5: called for every non-Kali distro after download.
+fetch_cloud_checksum() {
+    local distro="$1" suite="$2" arch="$3" filename="$4"
+    local a_deb a_other
+    case "$arch" in
+        x86_64)  a_deb=amd64;   a_other=x86_64 ;;
+        aarch64) a_deb=arm64;   a_other=aarch64 ;;
+        ppc64le) a_deb=ppc64el; a_other=ppc64le ;;
+        s390x)   a_deb=s390x;   a_other=s390x ;;
+        riscv64) a_deb=riscv64; a_other=riscv64 ;;
+        armv7l)  a_deb=armhf;   a_other=armhf ;;
+    esac
+    local sums_url=""
+    case "$distro" in
+        debian)  sums_url="https://cloud.debian.org/images/cloud/${suite}/latest/SHA256SUMS" ;;
+        ubuntu)  sums_url="https://cloud-images.ubuntu.com/${suite}/current/SHA256SUMS" ;;
+        rocky)   sums_url="https://download.rockylinux.org/pub/rocky/${suite}/images/${a_other}/CHECKSUM" ;;
+        alpine)  sums_url="https://dl-cdn.alpinelinux.org/alpine/v${suite}/releases/cloud/sha256sums" ;;
+        *)       return 0 ;;
+    esac
+    require_cmd curl
+    local sums
+    sums="$(curl --fail --location --silent "$sums_url" 2>/dev/null)" || {
+        log_warn "could not fetch checksum file from $sums_url — skipping integrity check for $filename"
+        return 0
+    }
+    # Handle two common checksum file formats:
+    #   GNU:  "HASH  filename"  or  "HASH *filename"
+    #   RPM:  "SHA256 (filename) = HASH"
+    printf '%s\n' "$sums" | awk -v fn="$filename" '
+        $2 == fn || $2 == ("*" fn) { print $1; exit }
+        $1 == "SHA256" && $2 == ("(" fn ")") { print $NF; exit }
+    '
 }
 
 # verify_sha256 FILE EXPECTED_HEX — die on mismatch; skip (warn) if expected empty.
@@ -529,6 +613,15 @@ cache_image() {
     local tmp="${dest}.partial"
     curl --fail --location --output "$tmp" "$url" \
         || { rm -f "$tmp"; die "download failed: $url"; }
+
+    # Finding 5: verify the downloaded file against the distro's published
+    # SHA256SUMS before trusting or converting it.  Kali is already verified
+    # below (inside the 7z branch).  For all other distros, check here using
+    # the original filename (last URL component) that SHA256SUMS references.
+    if [[ "$url" != *.7z ]]; then
+        local _orig_fname="${url##*/}"
+        verify_sha256 "$tmp" "$(fetch_cloud_checksum "$distro" "$eff_suite" "$arch" "$_orig_fname")"
+    fi
 
     # Some upstreams (Kali) ship the qcow2 inside a .7z archive.  Detect
     # by URL suffix, extract to a temp dir, and promote the first .qcow2
@@ -855,8 +948,14 @@ alpine_apk_add() {
     #                    minirootfs ships an *installed-packages* list but
     #                    not an apk-tools cache; without --initdb, apk
     #                    can't write lock/index files and fails obscurely).
-    #   --allow-untrusted  skip signature verification — we trust the
-    #                    dl-cdn HTTPS mirror as our trust boundary here.
+    #   --keys-dir       verify package RSA signatures against Alpine's
+    #                    public keys bundled in the minirootfs under
+    #                    $root/etc/apk/keys/.  Finding 14: removed
+    #                    --allow-untrusted which silently bypassed all APK
+    #                    signature verification, trusting the HTTPS CDN as
+    #                    the sole trust boundary.  The minirootfs contains
+    #                    the official Alpine signing keys, so we can verify
+    #                    without needing a pre-installed system keyring.
     #   --no-scripts     skip maintainer scripts; those try to chroot into
     #                    $root, which needs CAP_SYS_CHROOT (not typical
     #                    non-root).  Missing a post-install step is OK for
@@ -867,7 +966,8 @@ alpine_apk_add() {
     "$apk_static" \
         --root "$root" \
         --arch "$arch" \
-        --initdb --allow-untrusted --no-cache --no-scripts \
+        --keys-dir "$root/etc/apk/keys" \
+        --initdb --no-cache --no-scripts \
         --repository "$repo" \
         --repository "$repo_c" \
         add "$@" 2>&1 \
@@ -1277,6 +1377,10 @@ default_pubkey() {
         [[ -r "$f" && -s "$f" ]] || continue
         keys="$(grep -E '^(ssh-(rsa|ed25519|dss)|ecdsa-) ' "$f" 2>/dev/null || true)"
         if [[ -n "$keys" ]]; then
+            # Finding 18: log when using authorized_keys as the source — it is a
+            # non-obvious fallback that may inject multiple keys or keys with
+            # option prefixes (grep above filters those out, but note the source).
+            [[ "$f" == *.pub ]] || log_info "cloud-init: injecting pubkey from $f (authorized_keys fallback)"
             printf '%s\n' "$keys"
             return 0
         fi
@@ -1349,10 +1453,22 @@ EOF
             printf '    ssh_authorized_keys:\n'
             while IFS= read -r line; do
                 [[ -z "$line" ]] && continue
+                # Finding 11: strip any embedded newlines from the key line so a
+                # multi-line key blob cannot break the YAML list structure.
+                line="${line//$'\n'/ }"
                 printf '      - %s\n' "$line"
             done <<<"$pubkey"
         fi
-        printf 'ssh_pwauth: true\n'
+        # Finding 7: if a pubkey was injected, disable password SSH so the
+        # universal 'lab' password is not exploitable over the network.  When
+        # no pubkey is available (rare), keep ssh_pwauth: true so there is
+        # still a way to log in, but warn loudly.
+        if [[ -n "$pubkey" ]]; then
+            printf 'ssh_pwauth: false\n'
+        else
+            log_warn "no SSH pubkey found — VM will use password auth (lab/lab). Add ~/.ssh/id_*.pub to suppress this."
+            printf 'ssh_pwauth: true\n'
+        fi
         printf 'chpasswd:\n'
         printf "  list: |\n"
         printf "    root:lab\n"
@@ -1376,7 +1492,12 @@ EOF
         fi
         if [[ "$(jq 'length' <<<"$runcmd_json")" -gt 0 ]]; then
             printf 'runcmd:\n'
-            jq -r '.[]' <<<"$runcmd_json" | while IFS= read -r _c; do printf '  - %s\n' "$_c"; done
+            # Finding 21: strip embedded newlines from each runcmd entry so a TOML
+            # string containing \n does not silently split into two YAML list items.
+            jq -r '.[]' <<<"$runcmd_json" | while IFS= read -r _c; do
+                _c="${_c//$'\n'/ }"
+                printf '  - %s\n' "$_c"
+            done
         fi
     } > "$tmp/user-data"
     fi
@@ -1532,6 +1653,14 @@ backend_vm_from_chroot() {
         || die "from-chroot backend requires root (loop mounts, mkfs, extlinux install).  Re-run under sudo."
     require_cmd qemu-img parted mkfs.ext4 losetup extlinux rsync blkid dd
 
+    # Finding 12: validate chroot_path is under the Phase-1 state directory.
+    # Running as root with rsync -aAXH, an unchecked --chroot / would copy the
+    # entire host filesystem into the VM disk image.
+    local _chroot_real; _chroot_real="$(realpath -m "$chroot_path" 2>/dev/null || printf '%s' "$chroot_path")"
+    local _allowed_prefix="${LAB_STATE_DIR}/chroots"
+    [[ "$_chroot_real" == "$_allowed_prefix"/* ]] \
+        || die "from-chroot: chroot path must be under $LAB_STATE_DIR/chroots/ (got: $chroot_path).  Use lab-chroot.sh create to build chroots in the expected location."
+
     # Locate the kernel + initrd the chroot already has installed.  The
     # user is expected to have done this in Phase 1 (e.g.,
     # `sudo lab-chroot enter foo -- apt-get install -y linux-image-amd64`).
@@ -1571,19 +1700,21 @@ backend_vm_from_chroot() {
     qemu-img create -f raw "$raw" "$size" >/dev/null \
         || die "qemu-img create failed"
 
-    # Cleanup-on-failure: the trap captures whatever's set below and
-    # releases it.  Using explicit paths in the trap string because
-    # function-scoped traps fire at *script* exit with locals already
-    # gone.
+    # Cleanup-on-failure: RETURN trap fires before the function returns, while
+    # locals are still in scope.  Use single quotes so $mp and $loopdev expand
+    # at trap-fire time (when they hold real values), not at trap-set time when
+    # they are still empty strings (Finding 3: double-quoted trap expanded
+    # mp/loopdev immediately, making the umount/losetup -d calls no-ops on any
+    # failure between losetup and mount, leaking loop devices).
     local loopdev="" mp=""
     local _raw="$raw" _out="$out_qcow2"
-    # shellcheck disable=SC2064
-    trap "
-        [[ -n '${mp}' && -d '${mp}' ]] && umount '${mp}' 2>/dev/null
-        [[ -n '${mp}' && -d '${mp}' ]] && rmdir '${mp}' 2>/dev/null
-        [[ -n '${loopdev}' ]] && losetup -d '${loopdev}' 2>/dev/null
-        rm -f '${_raw}' '${_out}' 2>/dev/null
-    " RETURN
+    # shellcheck disable=SC2016
+    trap '
+        [[ -n "${mp}" && -d "${mp}" ]] && umount "${mp}" 2>/dev/null
+        [[ -n "${mp}" && -d "${mp}" ]] && rmdir  "${mp}" 2>/dev/null
+        [[ -n "${loopdev}" ]] && losetup -d "${loopdev}" 2>/dev/null
+        rm -f "${_raw}" "${_out}" 2>/dev/null
+    ' RETURN
 
     # Partition: MBR, one bootable ext4 primary from 1 MiB to end.
     log_info "partitioning (MBR + ext4)"
@@ -1679,6 +1810,17 @@ EOF
 }
 
 # ─── Validation ─────────────────────────────────────────────────────────────
+validate_vm_name() {
+    # Reject names that contain path separators or other characters that would
+    # allow traversal of LAB_VM_STATE_DIR (Finding 1: vm_dir() builds paths by
+    # concatenating the state dir with the name; a name like ../../etc destroys
+    # the wrong directory under rm -rf).
+    local n="$1"
+    [[ -n "$n" ]] || die "VM name is empty"
+    [[ "$n" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,62}$ ]] \
+        || die "invalid VM name '$n': use only [a-zA-Z0-9._-], start with alphanumeric, max 63 chars"
+}
+
 validate_spec() {
     local spec="$1"
     local name backend arch
@@ -1687,6 +1829,7 @@ validate_spec() {
     arch="$(spec_get "$spec" arch)"
 
     [[ -n "$name"    ]] || die "spec missing required field: name"
+    validate_vm_name "$name"
     [[ -n "$arch"    ]] || die "spec ($name) missing arch"
     is_known_arch "$arch" || die "spec ($name) unknown arch: $arch"
 
@@ -1849,32 +1992,33 @@ build_qemu_argv() {
             x86_64|aarch64)
                 # Two-file pflash setup: code (read-only) + vars (per-VM, RW).
                 local vars_dst="$(vm_dir "$name")/vars.fd"
-                local vars_src
+                # Finding 17: initialize to empty so the final [[ -r "$vars_src" ]]
+                # test is well-defined if the for loop exhausts all candidates.
+                local vars_src=""
                 case "$arch" in
                     x86_64)
                         if [[ "${secure_boot:-false}" == "true" ]]; then
-                            # Secure Boot VARS: prefer snakeoil (pre-enrolled test
-                            # cert compatible with sign-ipxe.sh --use-snakeoil).
                             for vars_src in /usr/share/OVMF/OVMF_VARS_4M.snakeoil.fd \
                                             /usr/share/OVMF/OVMF_VARS_4M.ms.fd \
                                             /usr/share/OVMF/OVMF_VARS_4M.fd; do
-                                [[ -r "$vars_src" ]] && break
+                                [[ -r "$vars_src" ]] && break; vars_src=""
                             done
                         else
                             for vars_src in /usr/share/OVMF/OVMF_VARS.fd \
                                             /usr/share/OVMF/OVMF_VARS_4M.fd \
                                             /usr/share/edk2/ovmf/OVMF_VARS.fd; do
-                                [[ -r "$vars_src" ]] && break
+                                [[ -r "$vars_src" ]] && break; vars_src=""
                             done
                         fi
                         ;;
                     aarch64)
                         for vars_src in /usr/share/AAVMF/AAVMF_VARS.fd \
                                         /usr/share/qemu-efi-aarch64/QEMU_VARS.fd; do
-                            [[ -r "$vars_src" ]] && break
+                            [[ -r "$vars_src" ]] && break; vars_src=""
                         done
                         ;;
                 esac
+                [[ -n "$vars_src" ]] || log_warn "no OVMF/AAVMF VARS file found for $arch — UEFI variables will not persist across reboots"
                 if [[ -r "$vars_src" && ! -r "$vars_dst" ]]; then
                     cp "$vars_src" "$vars_dst"
                 fi
@@ -1953,6 +2097,25 @@ build_qemu_argv() {
     # bridge/tap attach to host L2 (need root or a setuid qemu-bridge-helper +
     # /etc/qemu/bridge.conf allowing the bridge); the guest then gets a real
     # DHCP lease from your LAN instead of slirp's 10.0.2.x.
+
+    # Finding 8: validate fields that are embedded in QEMU comma-separated option
+    # strings; a comma in any of them would inject extra QEMU device options.
+    if [[ -n "${mac:-}" ]]; then
+        [[ "${mac}" =~ ^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$ ]] \
+            || die "invalid MAC address '${mac}': expected xx:xx:xx:xx:xx:xx"
+    fi
+    if [[ -n "${bridge:-}" ]]; then
+        [[ "${bridge}" =~ ^[a-zA-Z0-9._-]{1,15}$ ]] \
+            || die "invalid bridge interface name '${bridge}': use only [a-zA-Z0-9._-], max 15 chars"
+    fi
+    if [[ -n "${tap:-}" ]]; then
+        [[ "${tap}" =~ ^[a-zA-Z0-9._-]{1,15}$ ]] \
+            || die "invalid tap interface name '${tap}': use only [a-zA-Z0-9._-], max 15 chars"
+    fi
+    if [[ -n "${pxe_dir:-}" && "${pxe_dir}" == *,* ]]; then
+        die "pxe_dir must not contain commas (QEMU option string injection): ${pxe_dir}"
+    fi
+
     local net_device="virtio-net-${virtio_suffix},netdev=net0"
     [[ -n "${mac:-}" ]] && net_device="${net_device},mac=${mac}"
     local netdev
@@ -1969,10 +2132,6 @@ build_qemu_argv() {
             ;;
         *)  # user-mode (default)
             netdev="user,id=net0,hostfwd=tcp:127.0.0.1:${ssh_port}-:22"
-            # TFTP PXE: when --pxe-dir is set, QEMU's slirp serves the directory
-            # via TFTP and includes the bootfile in DHCP option 67.  The guest will
-            # try to PXE-boot from 10.0.2.2 (the slirp gateway) automatically if
-            # no other bootable device is found first.
             if [[ -n "${pxe_dir:-}" ]]; then
                 netdev="${netdev},tftp=${pxe_dir},bootfile=/${pxe_bootfile:-ipxe.efi}"
             fi
@@ -2023,7 +2182,17 @@ create_one() {
     fi
 
     state_init
-    install -d -m 0755 "$(vm_dir "$name")"
+    # Finding 4: create the per-VM directory with mode 0700 so only the owning
+    # user can read the QMP/serial/monitor sockets (which otherwise allow any
+    # local user to attach to the VM console or issue arbitrary QMP commands).
+    install -d -m 0700 "$(vm_dir "$name")"
+
+    # Finding 10: validate the socket path length before building state — Unix
+    # sockets have a 108-byte sun_path limit; QEMU silently fails to bind a
+    # longer path leaving an unattachable console and no diagnostic.
+    local _sock_path; _sock_path="$(vm_serial "$name")"
+    [[ ${#_sock_path} -le 107 ]] \
+        || die "VM name '$name' produces a socket path that is too long (${#_sock_path} chars, max 107): $_sock_path"
 
     # Cleanup-on-failure: if any step below fails before write_vm_manifest,
     # remove the half-built VM dir so a re-run doesn't see "already exists"
@@ -2239,6 +2408,16 @@ create_one() {
 }
 
 cmd_create() {
+    # Finding 9: hold an exclusive lock for the duration of create so concurrent
+    # lab-vm.sh create invocations cannot both select the same SSH port (they
+    # both read taken ports before either writes a manifest; the result is two
+    # VMs with port 2222 that fail to start with a QEMU hostfwd bind error).
+    state_init
+    local _lockfile="$LAB_VM_STATE_DIR/.create.lock"
+    local _lockfd
+    exec {_lockfd}>>"$_lockfile"
+    flock -x "$_lockfd" || die "could not acquire VM create lock (another create in progress?)"
+
     if [[ -n "${OPT_CONFIG:-}" ]]; then
         local spec
         while IFS= read -r spec; do
@@ -2249,12 +2428,16 @@ cmd_create() {
         local spec; spec="$(spec_from_cli)"
         create_one "$spec"
     fi
+
+    flock -u "$_lockfd"
+    exec {_lockfd}>&-
 }
 
 # ─── Subcommand: start ─────────────────────────────────────────────────────
 cmd_start() {
     local name="${POS_ARGS[0]:-}"
     [[ -n "$name" ]] || die "usage: $LAB_PROG start <name>"
+    validate_vm_name "$name"
     vm_exists "$name" || die "no VM named '$name' (try 'list')"
     if vm_running "$name"; then
         log_info "$name is already running (pid $(cat "$(vm_pidfile "$name")"))"
@@ -2309,6 +2492,11 @@ cmd_start() {
     log_info "starting $name (accel=$accel arch=$arch mem=$memory cpus=$cpus)"
     log_debug "argv: ${launch[*]:-} ${QEMU_ARGV[*]}"
 
+    # Finding 20: create the log file explicitly with 0600 so QEMU's startup
+    # output is not world-readable (the VM dir is 0700, but a subsequent chmod
+    # or umask change could expose it; belt-and-suspenders).
+    install -m 0600 /dev/null "$(vm_log "$name")"
+
     if "${launch[@]}" "${QEMU_ARGV[@]}" >>"$(vm_log "$name")" 2>&1; then
         sleep 0.3
         if vm_running "$name"; then
@@ -2338,6 +2526,7 @@ qmp_powerdown() {
 cmd_stop() {
     local name="${POS_ARGS[0]:-}"
     [[ -n "$name" ]] || die "usage: $LAB_PROG stop <name> [--force]"
+    validate_vm_name "$name"
     vm_exists "$name" || die "no VM named '$name'"
     if ! vm_running "$name"; then
         log_info "$name not running"
@@ -2373,6 +2562,7 @@ cmd_stop() {
 cmd_console() {
     local name="${POS_ARGS[0]:-}"
     [[ -n "$name" ]] || die "usage: $LAB_PROG console <name>"
+    validate_vm_name "$name"
     vm_exists "$name" || die "no VM named '$name'"
     vm_running "$name" || die "$name is not running"
     require_cmd socat
@@ -2393,6 +2583,7 @@ cmd_console() {
 cmd_ssh() {
     local name="${POS_ARGS[0]:-}"
     [[ -n "$name" ]] || die "usage: $LAB_PROG ssh <name> [-- cmd args...]"
+    validate_vm_name "$name"
     vm_exists "$name" || die "no VM named '$name'"
     vm_running "$name" || die "$name is not running (try '$LAB_PROG start $name')"
     local port user
@@ -2415,18 +2606,40 @@ cmd_ssh() {
         else
             remote_cmd="$(printf '%q ' "${EXTRA_ARGS[@]}")"
         fi
-        ssh -p "$port" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        # Finding 13: use per-VM known_hosts + StrictHostKeyChecking=accept-new.
+        # StrictHostKeyChecking=no silently accepted any host key on every
+        # connection, enabling MITM by any local process that binds the port.
+        # accept-new trusts on first connection, then verifies on subsequent ones.
+        local known_hosts; known_hosts="$(vm_dir "$name")/known_hosts"
+        ssh -p "$port" \
+            -o StrictHostKeyChecking=accept-new \
+            -o UserKnownHostsFile="$known_hosts" \
             "${user}@127.0.0.1" "$remote_cmd"
     else
-        ssh -p "$port" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        local known_hosts; known_hosts="$(vm_dir "$name")/known_hosts"
+        ssh -p "$port" \
+            -o StrictHostKeyChecking=accept-new \
+            -o UserKnownHostsFile="$known_hosts" \
             "${user}@127.0.0.1"
     fi
 }
 
 # ─── Subcommand: destroy ───────────────────────────────────────────────────
+_safe_rm_rf_vm() {
+    local path="$1"
+    [[ -n "$path" ]]    || die "destroy: VM dir path is empty — refusing rm -rf"
+    [[ "$path" == /* ]] || die "destroy: VM dir path is not absolute: $path"
+    [[ "$path" != "/" ]] || die "destroy: refusing rm -rf /"
+    local depth; depth="$(awk -F/ '{print NF-1}' <<<"$path")"
+    [[ "$depth" -ge 2 ]] \
+        || die "destroy: VM dir path '$path' is too shallow (min /a/b required)"
+    rm -rf -- "$path"
+}
+
 cmd_destroy() {
     local name="${POS_ARGS[0]:-}"
     [[ -n "$name" ]] || die "usage: $LAB_PROG destroy <name> [--force] [--keep-disk]"
+    validate_vm_name "$name"
     vm_exists "$name" || die "no VM named '$name'"
 
     if vm_running "$name"; then
@@ -2448,7 +2661,7 @@ cmd_destroy() {
         mv "$(vm_disk "$name")" "$dest" 2>/dev/null && log_info "kept disk: $dest"
     fi
 
-    rm -rf -- "$(vm_dir "$name")"
+    _safe_rm_rf_vm "$(vm_dir "$name")"
     log_info "destroyed: $name"
 }
 
@@ -2940,6 +3153,7 @@ cmd_snapshot() {
     local action="${POS_ARGS[0]:-}" name="${POS_ARGS[1]:-}" snap="${POS_ARGS[2]:-}"
     [[ -n "$action" ]] || die "usage: $LAB_PROG snapshot {create|list|restore|delete} <vm> [snap-name]"
     [[ -n "$name"   ]] || die "snapshot $action: missing <vm> name"
+    validate_vm_name "$name"
     vm_exists "$name" || die "no VM named '$name' (try '$LAB_PROG list')"
     require_cmd qemu-img
     local disk; disk="$(read_manifest_field "$name" disk)"
@@ -2954,10 +3168,15 @@ cmd_snapshot() {
             ;;
         create|restore|delete)
             [[ -n "$snap" ]] || die "snapshot $action: missing <snap-name>"
+            # Finding 19: reject snap names starting with '-' — qemu-img would
+            # parse them as flags (e.g. snap="-l" causes a list instead of create).
+            [[ "$snap" != -* ]] || die "snapshot name cannot start with '-': $snap"
             # Mutating a disk under a live QEMU corrupts it — require the VM stopped.
             ! vm_running "$name" \
                 || die "snapshot $action needs '$name' stopped (would corrupt a live disk).  Run: $LAB_PROG stop $name"
             case "$action" in
+                # Note: qemu-img snapshot does not support -- as an option terminator;
+                # dash-leading names are rejected by the validate above (Finding 19).
                 create)  qemu-img snapshot -c "$snap" "$disk" || die "qemu-img snapshot create failed"
                          log_info "snapshot created: ${name}@${snap}" ;;
                 restore) qemu-img snapshot -a "$snap" "$disk" || die "qemu-img snapshot restore failed (does '$snap' exist? try: $LAB_PROG snapshot list $name)"
