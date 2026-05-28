@@ -83,14 +83,16 @@ login prompt** (`root` / `micro`) — no disk, no packages. Build with
 | `micro-linux-aarch64.toml` | 🐌 The arm64 twin, cross-compiled; boots on QEMU `virt` (TCG on x86 hosts). |
 | `micro-linux-aarch64-microvm.toml` | 🐌 arm64 microvm-style: a minimized, firmware-free `virt` + virtio-mmio (QEMU has no arm `microvm` machine). |
 | `micro-linux-riscv64.toml` | The "faithful track": riscv64 kernel + a u-root (pure-Go) **plain** cpio — closest to the source post. |
+| `micro-linux-ppc64le.toml` | 🐌 ppc64le cross-compiled; boots on QEMU `pseries` (POWER emulation, TCG on x86 hosts). SLOF firmware bundled in qemu-system-ppc64; HVC console. |
+| `micro-linux-s390x.toml` | 🐌 s390x cross-compiled; boots on QEMU `s390-ccw-virtio` (IBM mainframe emulation, TCG). CCW VirtIO bus; SCLP VT220 console → ttyS0. |
 
 The same compiled kernel boots both the plain and `-microvm` twins: `mlbuild.sh`
-bakes `CONFIG_VIRTIO_MMIO` into every micro-linux kernel, so virtio works on the
-microvm mmio bus as well as on PCI.
+bakes `CONFIG_VIRTIO_MMIO` into every micro-linux kernel (except s390x which uses
+the VirtIO-CCW transport), so virtio works on the microvm mmio bus as well as PCI.
 
 | Dir | What you get |
 |---|---|
-| [`micro_linux_dhcp_lease/`](micro_linux_dhcp_lease/) | The networking demo: the from-source distro pulls a **DHCP lease** over a virtio NIC. x86_64/aarch64 auto-bring-up via BusyBox `udhcpc` (opt-in `mllab.net` token); riscv64 runs u-root's `dhclient` at the shell. ⚠️ root has a well-known password — see its README + AUDIT F1. |
+| [`micro_linux_dhcp_lease/`](micro_linux_dhcp_lease/) | The networking demo: the from-source distro pulls a **DHCP lease** over a virtio NIC. x86_64/aarch64/ppc64le/s390x auto-bring-up via BusyBox `udhcpc` (opt-in `mllab.net` token); riscv64 runs u-root's `dhclient` at the shell. ⚠️ root has a well-known password — see its README + AUDIT F1. |
 
 ## 🌉 Cross-phase bridges — build once, run elsewhere
 

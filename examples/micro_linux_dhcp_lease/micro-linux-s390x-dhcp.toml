@@ -1,0 +1,30 @@
+# micro-linux — the DHCP networking demo, s390x twin.
+#
+# Same concept as the x86_64 dhcp twin but running on QEMU's s390-ccw-virtio
+# machine.  /init detects the `mllab.net` cmdline token and brings up eth0 via
+# udhcpc (QEMU's slirp DHCP server provides a 10.0.2.x lease).
+#
+# Build first (requires WITH_EXTRA_ARCHES=1 in the toolchain image):
+#   micro-linux/mlbuild.sh all --arch s390x
+#   phase2-qemu-vm/lab-vm.sh create --config examples/micro_linux_dhcp_lease/micro-linux-s390x-dhcp.toml
+#   phase2-qemu-vm/lab-vm.sh start  micro-linux-s390x-dhcp
+#   phase2-qemu-vm/lab-vm.sh console micro-linux-s390x-dhcp
+#
+# After login as root / micro:
+#   ip addr show eth0    # → 10.0.2.15/24
+#   ip route show        # → default via 10.0.2.2
+#
+# See README.md and the AUDIT-F1 caveat: networking is opt-in via `mllab.net`.
+# Do NOT bridge this VM to an untrusted network — root has a well-known password.
+
+[[vm]]
+name    = "micro-linux-s390x-dhcp"
+backend = "kernel+initrd"
+arch    = "s390x"
+memory  = "512M"
+cpus    = 1
+# EDIT these to your checkout if it is not at this path:
+kernel  = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/micro-linux/out/s390x/kernel"
+initrd  = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/micro-linux/out/s390x/initramfs.cpio.gz"
+append  = "console=ttyS0 mllab.net=1"
+network = true

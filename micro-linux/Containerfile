@@ -94,4 +94,18 @@ RUN if [ "$WITH_RISCV" = "1" ]; then \
     fi
 ENV PATH="/usr/local/go/bin:${PATH}"
 
+# ── ppc64le + s390x cross-compilers (§10: more arches) ───────────────────────
+# Debian bookworm ships glibc cross-toolchains for both arches.  Gated behind
+# an ARG so CI can set WITH_EXTRA_ARCHES=0 to produce a lighter BusyBox-only
+# image while still getting x86_64+aarch64+riscv64 coverage.
+# ppc64le: powerpc64le-linux-gnu-gcc  → pseries QEMU machine
+# s390x:   s390x-linux-gnu-gcc        → s390-ccw-virtio QEMU machine
+ARG WITH_EXTRA_ARCHES=1
+RUN if [ "$WITH_EXTRA_ARCHES" = "1" ]; then \
+        apt-get update && apt-get install -y --no-install-recommends \
+            gcc-powerpc64le-linux-gnu libc6-dev-ppc64el-cross \
+            gcc-s390x-linux-gnu      libc6-dev-s390x-cross \
+        && rm -rf /var/lib/apt/lists/* ; \
+    fi
+
 WORKDIR /work/micro-linux

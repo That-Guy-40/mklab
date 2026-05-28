@@ -20,7 +20,7 @@
 #   mlbuild.sh clean [--arch LIST|--all]  remove out/ artifacts (F7-guarded; host)
 #
 # Options:
-#   --arch  LIST       comma list of {x86_64,aarch64,riscv64}  (default: x86_64,aarch64)
+#   --arch  LIST       comma list of {x86_64,aarch64,riscv64,ppc64le,s390x}  (default: x86_64,aarch64)
 #   --engine ENG       podman | docker          (default: podman if present, else docker)
 #   --offline          do not download; require tarballs already cached in out/_cache
 #   --musl             also build musl-static BusyBox → initramfs-musl.cpio.gz
@@ -215,10 +215,43 @@ fetch() {
 # ════════════════════════════════════════════════════════════════════════════
 # Per-arch toolchain knobs
 # ════════════════════════════════════════════════════════════════════════════
-kernel_arch()  { case "$1" in x86_64) echo x86_64;; aarch64) echo arm64;; riscv64) echo riscv;;  esac; }
-kernel_cross() { case "$1" in x86_64) echo "";; aarch64) echo aarch64-linux-gnu-;; riscv64) echo riscv64-linux-gnu-;; esac; }
-kernel_image() { case "$1" in x86_64) echo arch/x86/boot/bzImage;; aarch64) echo arch/arm64/boot/Image;; riscv64) echo arch/riscv/boot/Image;; esac; }
-kernel_cons()  { case "$1" in aarch64) echo CONFIG_SERIAL_AMBA_PL011_CONSOLE;; *) echo CONFIG_SERIAL_8250_CONSOLE;; esac; }
+kernel_arch()  {
+    case "$1" in
+        x86_64)  echo x86_64   ;; aarch64) echo arm64    ;;
+        riscv64) echo riscv    ;; ppc64le) echo powerpc  ;;
+        s390x)   echo s390     ;;
+    esac
+}
+kernel_cross() {
+    case "$1" in
+        x86_64)  echo "" ;; aarch64) echo aarch64-linux-gnu-      ;;
+        riscv64) echo riscv64-linux-gnu-   ;;
+        ppc64le) echo powerpc64le-linux-gnu- ;;
+        s390x)   echo s390x-linux-gnu-       ;;
+    esac
+}
+kernel_image() {
+    case "$1" in
+        x86_64)  echo arch/x86/boot/bzImage     ;; aarch64) echo arch/arm64/boot/Image     ;;
+        riscv64) echo arch/riscv/boot/Image      ;;
+        # ppc64le: QEMU pseries takes the uncompressed ELF (vmlinux) directly.
+        ppc64le) echo vmlinux                    ;;
+        # s390x:   s390 Makefile produces bzImage under arch/s390/boot/.
+        s390x)   echo arch/s390/boot/bzImage     ;;
+    esac
+}
+kernel_cons()  {
+    # Returns the CONFIG_ name for the arch's primary serial console driver.
+    # Used in assert_kconfig (build_kernel) and set_kconfig (build_kernel_tiny).
+    case "$1" in
+        aarch64) echo CONFIG_SERIAL_AMBA_PL011_CONSOLE  ;;
+        # ppc64le pseries: hypervisor virtual console (hvc0).
+        ppc64le) echo CONFIG_HVC_CONSOLE                ;;
+        # s390x s390-ccw-virtio: SCLP VT220 emulation appears as ttyS0.
+        s390x)   echo CONFIG_SCLP_VT220_CONSOLE         ;;
+        *)       echo CONFIG_SERIAL_8250_CONSOLE         ;;
+    esac
+}
 
 # make wrapper that injects ARCH and (when cross) CROSS_COMPILE
 kmake() {
@@ -312,14 +345,26 @@ build_kernel() {
     # and is the same helper the busybox build trusts below.  CMDLINE_DEVICES lets the
     # kernel consume the 'virtio_mmio.device=' args QEMU's microvm auto-appends; it is
     # harmless on virt, so we set it but don't gate on it (it could be renamed upstream).
-    set_kconfig "$src/.config" VIRTIO_MMIO y
-    set_kconfig "$src/.config" VIRTIO_MMIO_CMDLINE_DEVICES y
-    kmake "$arch" "$src" olddefconfig >/dev/null
-    local -a want=(CONFIG_DEVTMPFS CONFIG_BLK_DEV_INITRD CONFIG_VIRTIO CONFIG_VIRTIO_MMIO "$(kernel_cons "$arch")")
+    # s390x uses Channel Command Word (CCW) for VirtIO, not MMIO.  Setting
+    # VIRTIO_MMIO on s390x would silently fail (depends on HAS_IOMEM which
+    # s390 disables), so skip it for that arch.  All others get the universal
+    # PCI+MMIO transport kernel so one image boots on q35/virt AND microvm.
     case "$arch" in
-        # busybox track gzips its cpio + auto-mounts devtmpfs; the riscv64/u-root track
-        # needs neither (plain cpio).  VIRTIO_MMIO is asserted universally (above).
-        x86_64|aarch64) want+=(CONFIG_DEVTMPFS_MOUNT CONFIG_RD_GZIP CONFIG_VIRTIO_PCI) ;;
+        s390x) : ;;
+        *)
+            set_kconfig "$src/.config" VIRTIO_MMIO y
+            set_kconfig "$src/.config" VIRTIO_MMIO_CMDLINE_DEVICES y
+            ;;
+    esac
+    kmake "$arch" "$src" olddefconfig >/dev/null
+    local -a want=(CONFIG_DEVTMPFS CONFIG_BLK_DEV_INITRD "$(kernel_cons "$arch")")
+    case "$arch" in
+        # busybox track gzips its cpio + auto-mounts devtmpfs.
+        x86_64|aarch64) want+=(CONFIG_DEVTMPFS_MOUNT CONFIG_RD_GZIP CONFIG_VIRTIO CONFIG_VIRTIO_MMIO CONFIG_VIRTIO_PCI) ;;
+        # ppc64le pseries: VirtIO over the VIO bus + MMIO; HVC_DRIVER is the hvc0 prereq.
+        ppc64le) want+=(CONFIG_DEVTMPFS_MOUNT CONFIG_RD_GZIP CONFIG_VIRTIO CONFIG_VIRTIO_MMIO CONFIG_HVC_DRIVER) ;;
+        # s390x: VirtIO-CCW (channel subsystem) + SCLP for the console.
+        s390x)   want+=(CONFIG_DEVTMPFS_MOUNT CONFIG_RD_GZIP CONFIG_VIRTIO_CCW CONFIG_SCLP) ;;
     esac
     assert_kconfig "$src" "${want[@]}"
     kmake "$arch" "$src" -j"$(nproc)"
@@ -376,11 +421,18 @@ build_kernel_tiny() {
     set_kconfig "$cfg" RD_GZIP                  y
     set_kconfig "$cfg" DEVTMPFS                 y
     set_kconfig "$cfg" DEVTMPFS_MOUNT           y
-    set_kconfig "$cfg" VIRTIO                   y
-    set_kconfig "$cfg" VIRTIO_MMIO              y
-    set_kconfig "$cfg" VIRTIO_MMIO_CMDLINE_DEVICES y
     set_kconfig "$cfg" TTY                      y
     set_kconfig "$cfg" PRINTK                   y
+    # VirtIO transport: MMIO for all arches except s390x (uses CCW).
+    case "$arch" in
+        s390x) set_kconfig "$cfg" VIRTIO_CCW y ;;
+        *)
+            set_kconfig "$cfg" VIRTIO                      y
+            set_kconfig "$cfg" VIRTIO_MMIO                 y
+            set_kconfig "$cfg" VIRTIO_MMIO_CMDLINE_DEVICES y
+            ;;
+    esac
+    # Arch-specific console driver.
     case "$arch" in
         x86_64)
             set_kconfig "$cfg" SERIAL_8250         y
@@ -390,9 +442,23 @@ build_kernel_tiny() {
             set_kconfig "$cfg" SERIAL_AMBA_PL011         y
             set_kconfig "$cfg" SERIAL_AMBA_PL011_CONSOLE y
             ;;
+        ppc64le)
+            # pseries HVC console (hypervisor virtual console).
+            set_kconfig "$cfg" HVC_DRIVER  y
+            set_kconfig "$cfg" HVC_CONSOLE y
+            ;;
+        s390x)
+            # SCLP VT220 emulation → /dev/ttyS0 inside the guest.
+            set_kconfig "$cfg" SCLP            y
+            set_kconfig "$cfg" SCLP_VT220_CONSOLE y
+            ;;
     esac
     kmake_oot "$arch" "$src" "$bdir" olddefconfig >/dev/null
-    assert_kconfig "$bdir" CONFIG_BLK_DEV_INITRD CONFIG_DEVTMPFS CONFIG_VIRTIO_MMIO
+    # s390x: assert CCW instead of MMIO.
+    case "$arch" in
+        s390x) assert_kconfig "$bdir" CONFIG_BLK_DEV_INITRD CONFIG_DEVTMPFS CONFIG_VIRTIO_CCW ;;
+        *)     assert_kconfig "$bdir" CONFIG_BLK_DEV_INITRD CONFIG_DEVTMPFS CONFIG_VIRTIO_MMIO ;;
+    esac
     kmake_oot "$arch" "$src" "$bdir" -j"$(nproc)"
     install -Dm0644 "$bdir/$(kernel_image "$arch")" "$OUT_DIR/$arch/kernel-tiny"
     log_info "[$arch] kernel-tiny → out/$arch/kernel-tiny ($(du -h "$OUT_DIR/$arch/kernel-tiny" | cut -f1))"
@@ -847,7 +913,7 @@ parse_arches() {
     IFS=',' read -r -a ARCHES <<< "${ARCHES_RAW:-x86_64,aarch64}"
     local a
     for a in "${ARCHES[@]}"; do
-        case "$a" in x86_64|aarch64|riscv64) ;; *) die "unknown arch: $a (try --help)";; esac
+        case "$a" in x86_64|aarch64|riscv64|ppc64le|s390x) ;; *) die "unknown arch: $a (try --help)";; esac
     done
 }
 

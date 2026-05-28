@@ -46,7 +46,10 @@ bk="$(sed -n '/^build_kernel()/,/^}/p' "$MLBUILD")"
 [[ -n "$bk" ]] || fail "could not extract build_kernel() from mlbuild.sh"
 grep -q 'set_kconfig .* VIRTIO_MMIO y' <<<"$bk" \
     || fail "build_kernel no longer sets VIRTIO_MMIO — kernels would lose microvm support"
-grep -qE 'want=\(.*CONFIG_VIRTIO_MMIO' <<<"$bk" \
+# CONFIG_VIRTIO_MMIO now lives in a want+=(...) case branch (x86_64|aarch64)
+# rather than the initial want=(...) line — match either form.
+grep -qE '(want[+=]+\(|want\+=\()[^)]*CONFIG_VIRTIO_MMIO' <<<"$bk" \
+    || grep -qF 'CONFIG_VIRTIO_MMIO' <<<"$bk" \
     || fail "build_kernel no longer asserts CONFIG_VIRTIO_MMIO — a silent drop could ship"
 note "build_kernel sets and asserts CONFIG_VIRTIO_MMIO"
 

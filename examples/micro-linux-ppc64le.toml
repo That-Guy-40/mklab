@@ -1,0 +1,33 @@
+# micro-linux — ppc64le from-source distro (cross-compiled kernel + BusyBox).
+#
+# Boots the artifacts produced by mlbuild.sh on QEMU's `pseries` machine
+# (IBM POWER emulation).  On an x86_64 host this runs under TCG emulation.
+#
+# Build first (requires the toolchain image with WITH_EXTRA_ARCHES=1):
+#   micro-linux/mlbuild.sh all --arch ppc64le
+# Then:
+#   phase2-qemu-vm/lab-vm.sh create --config examples/micro-linux-ppc64le.toml
+#   phase2-qemu-vm/lab-vm.sh start  micro-linux-ppc64le
+#   phase2-qemu-vm/lab-vm.sh console micro-linux-ppc64le   # Ctrl-] to detach
+#
+# Notes:
+#   kernel  — ppc64le QEMU (pseries) takes the uncompressed ELF `vmlinux`
+#             directly (not a wrapped bzImage).  mlbuild.sh copies it as
+#             out/ppc64le/kernel.
+#   append  — console=hvc0: pseries exposes a hypervisor virtual console (hvc0)
+#             rather than a UART.  /etc/securetty already lists hvc0.
+#   memory  — 512M: pseries firmware (SLOF) uses more headroom than microvm.
+#   firmware — SLOF is bundled inside qemu-system-ppc64; no separate firmware
+#             package needed.
+
+[[vm]]
+name    = "micro-linux-ppc64le"
+backend = "kernel+initrd"
+arch    = "ppc64le"
+memory  = "512M"
+cpus    = 1
+# EDIT these to your checkout if it is not at this path:
+kernel  = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/micro-linux/out/ppc64le/kernel"
+initrd  = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/micro-linux/out/ppc64le/initramfs.cpio.gz"
+append  = "console=hvc0"
+network = false

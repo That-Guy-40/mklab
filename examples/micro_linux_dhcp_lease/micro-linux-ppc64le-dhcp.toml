@@ -1,0 +1,30 @@
+# micro-linux — the DHCP networking demo, ppc64le twin.
+#
+# Same concept as the x86_64 dhcp twin but running on QEMU's pseries machine.
+# /init detects the `mllab.net` cmdline token and brings up eth0 via udhcpc,
+# so the VM gets a DHCP lease from QEMU's built-in slirp DHCP server (10.0.2.x).
+#
+# Build first (requires WITH_EXTRA_ARCHES=1 in the toolchain image):
+#   micro-linux/mlbuild.sh all --arch ppc64le
+#   phase2-qemu-vm/lab-vm.sh create --config examples/micro_linux_dhcp_lease/micro-linux-ppc64le-dhcp.toml
+#   phase2-qemu-vm/lab-vm.sh start  micro-linux-ppc64le-dhcp
+#   phase2-qemu-vm/lab-vm.sh console micro-linux-ppc64le-dhcp
+#
+# After login as root / micro:
+#   ip addr show eth0    # → 10.0.2.15/24
+#   ip route show        # → default via 10.0.2.2
+#
+# See README.md and the AUDIT-F1 caveat: networking is opt-in via `mllab.net`.
+# Do NOT bridge this VM to an untrusted network — root has a well-known password.
+
+[[vm]]
+name    = "micro-linux-ppc64le-dhcp"
+backend = "kernel+initrd"
+arch    = "ppc64le"
+memory  = "512M"
+cpus    = 1
+# EDIT these to your checkout if it is not at this path:
+kernel  = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/micro-linux/out/ppc64le/kernel"
+initrd  = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/micro-linux/out/ppc64le/initramfs.cpio.gz"
+append  = "console=hvc0 mllab.net=1"
+network = true
