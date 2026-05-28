@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>lab-create</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <!-- HTMX — no build step, no npm, no framework. -->
+  <script src="https://unpkg.com/htmx.org@1.9.12/dist/htmx.min.js" crossorigin="anonymous"></script>
+  <!-- SSE extension — used by log-tail partials. -->
+  <script src="https://unpkg.com/htmx-ext-sse@2.2.1/sse.js" crossorigin="anonymous"></script>
+</head>
+<body>
+
+<header>
+  <span class="brand">lab-create</span>
+  <span class="subtitle">resource browser</span>
+  <nav>
+    <a href="/docs" target="_blank">API docs</a>
+    <a href="/api/v1/resources" target="_blank">JSON</a>
+  </nav>
+</header>
+
+<div id="layout">
+
+  <!-- ── left pane: resource tree ─────────────────────────────────── -->
+  <aside id="tree-pane">
+    <div class="pane-title">Resources
+      <button class="btn-sm"
+              hx-get="/partials/resources"
+              hx-target="#resource-tbody"
+              hx-swap="innerHTML"
+              title="Refresh">↺</button>
+    </div>
+    <table id="resource-table">
+      <thead>
+        <tr>
+          <th>name</th>
+          <th>type</th>
+          <th>status</th>
+        </tr>
+      </thead>
+      <tbody id="resource-tbody"
+             hx-get="/partials/resources"
+             hx-trigger="load, every 10s"
+             hx-swap="innerHTML">
+        <tr><td colspan="3" class="loading">loading…</td></tr>
+      </tbody>
+    </table>
+
+    {% if unavailable %}
+    <div class="unavailable-list">
+      <span class="dim">unavailable:</span>
+      {% for b in unavailable %}<span class="unavailable-badge">{{ b }}</span>{% endfor %}
+    </div>
+    {% endif %}
+  </aside>
+
+  <!-- ── right pane: detail / inspect ─────────────────────────────── -->
+  <main id="detail-panel">
+    <div class="empty-detail">
+      <p>Select a resource to inspect.</p>
+      <p class="dim">Press the refresh button or wait for the auto-poll (every 10 s).</p>
+    </div>
+  </main>
+
+</div><!-- #layout -->
+
+</body>
+</html>

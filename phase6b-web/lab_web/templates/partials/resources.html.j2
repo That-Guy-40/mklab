@@ -1,0 +1,32 @@
+{#
+  Returned by GET /partials/resources — swapped into #resource-tbody.
+  Polled every 10 s by HTMX; also triggered by the ↺ button.
+#}
+{% set ns = namespace(count=0) %}
+{% for lab_name in groups.keys()|sort %}
+  <tr class="lab-header">
+    <td colspan="3">🧪 {{ lab_name }}</td>
+  </tr>
+  {% for backend_name in groups[lab_name].keys()|sort %}
+    {% set resources = groups[lab_name][backend_name] %}
+    <tr class="backend-header">
+      <td colspan="3">  {{ backend_name }} ({{ resources|length }})</td>
+    </tr>
+    {% for r in resources|sort(attribute='name') %}
+      {% set ns.count = ns.count + 1 %}
+      <tr class="resource-row"
+          hx-get="/resources/{{ r.backend }}/{{ r.name|urlencode }}"
+          hx-target="#detail-panel"
+          hx-swap="innerHTML"
+          hx-indicator="#detail-panel"
+          title="{{ r.display_name }}">
+        <td class="name-cell">{{ r.svc or r.name }}</td>
+        <td><span class="type-tag type-{{ r.type|replace(' ', '-') }}">{{ r.type }}</span></td>
+        <td><span class="pill pill-{{ r.status }}">{{ r.status }}</span></td>
+      </tr>
+    {% endfor %}
+  {% endfor %}
+{% endfor %}
+{% if ns.count == 0 %}
+  <tr><td colspan="3" class="empty">No resources found across all backends.</td></tr>
+{% endif %}

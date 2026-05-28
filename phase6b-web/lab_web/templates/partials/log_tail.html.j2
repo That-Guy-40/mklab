@@ -1,0 +1,11 @@
+{#
+  Returned by GET /partials/log/{backend}/{name}.
+  Connects to the SSE log stream and appends each line.
+#}
+<div hx-ext="sse"
+     sse-connect="/stream/logs/{{ resource.backend }}/{{ resource.name|urlencode }}"
+     sse-swap="message"
+     hx-swap="beforeend"
+     class="log-lines">
+  <span class="dim">Connecting…</span>
+</div>

@@ -1,0 +1,71 @@
+{#
+  Returned by GET /resources/{backend}/{name} — swapped into #detail-panel.
+  Also used by action routes for post-destroy / error states.
+#}
+{% if resource is none %}
+  {# post-destroy or error message only #}
+  <div class="detail-message {{ message_class|default('') }}">
+    <pre>{{ inspect_text }}</pre>
+    <p><small>Click a resource in the tree to inspect it.</small></p>
+  </div>
+{% else %}
+  <div class="detail-header">
+    <span class="detail-name">{{ resource.display_name }}</span>
+    <span class="type-tag type-{{ resource.type|replace(' ', '-') }}">{{ resource.type }}</span>
+    <span class="pill pill-{{ resource.status }}">{{ resource.status }}</span>
+    <span class="dim">{{ resource.backend }}</span>
+  </div>
+
+  {% if message_class is defined %}
+  <div class="detail-message {{ message_class }}">{{ inspect_text }}</div>
+  {% endif %}
+
+  <div class="detail-body">
+
+    {# ── Inspect output ───────────────────────────────────────────────── #}
+    <details open>
+      <summary>Inspect</summary>
+      <pre class="inspect-output">{{ inspect_text }}</pre>
+    </details>
+
+    {# ── Log tail ─────────────────────────────────────────────────────── #}
+    {% if resource.log_command %}
+    <details>
+      <summary>Log tail
+        <button class="btn-sm"
+                hx-get="/partials/log/{{ resource.backend }}/{{ resource.name|urlencode }}"
+                hx-target="#log-content"
+                hx-swap="innerHTML">load</button>
+      </summary>
+      <div id="log-content" class="log-panel">
+        <span class="dim">Click "load" to stream the log.</span>
+      </div>
+    </details>
+    {% endif %}
+
+    {# ── Console hint ──────────────────────────────────────────────────── #}
+    {% if resource.console_command %}
+    <details>
+      <summary>Console attach</summary>
+      <div class="console-hint">
+        <p>Run this in a local terminal to attach the serial console:</p>
+        <code>{{ resource.console_command|join(' ') }}</code>
+        <p class="dim">Press Ctrl-] to detach (socat raw mode).</p>
+      </div>
+    </details>
+    {% endif %}
+
+    {# ── Actions ──────────────────────────────────────────────────────── #}
+    <div class="detail-actions">
+      <button class="btn-danger"
+              hx-post="/actions/destroy/{{ resource.backend }}/{{ resource.name|urlencode }}"
+              hx-confirm="Destroy {{ resource.display_name }}? This cannot be undone."
+              hx-target="#detail-panel"
+              hx-swap="innerHTML"
+              hx-indicator="this">
+        Destroy
+      </button>
+    </div>
+
+  </div>{# .detail-body #}
+{% endif %}
