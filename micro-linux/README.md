@@ -117,6 +117,83 @@ micro-linux kernel, so one universal kernel boots on `q35`/`virt` *and* on micro
   [`examples/micro_linux_dhcp_lease/`](../examples/micro_linux_dhcp_lease/) demo,
   where `/init` runs `udhcpc` and eth0 picks up a lease over virtio-mmio.
 
+### Build variants — smaller initramfs, smaller kernel, single-file boot
+
+Three optional add-on flags produce alternate output files alongside the
+defaults, without discarding the originals.  All three can be combined:
+
+```bash
+# Build just the default track:
+micro-linux/mlbuild.sh all --arch x86_64,aarch64
+
+# Build defaults + all three variants + a side-by-side size table:
+micro-linux/mlbuild.sh all --arch x86_64,aarch64 --all-variants
+
+# Individual flags:
+micro-linux/mlbuild.sh all --arch x86_64,aarch64 --musl    # musl BusyBox
+micro-linux/mlbuild.sh all --arch x86_64,aarch64 --tiny    # tinyconfig kernel
+micro-linux/mlbuild.sh all --arch x86_64,aarch64 --baked   # baked-in initramfs
+```
+
+| Flag | Output file | What changes |
+|---|---|---|
+| `--musl` | `out/<arch>/initramfs-musl.cpio.gz` | BusyBox built against **musl libc** instead of glibc — avoids the static-NSS caveat; ~30–40% smaller initramfs |
+| `--tiny` | `out/<arch>/kernel-tiny` | Kernel from `make tinyconfig` + only the symbols needed to reach a BusyBox shell via microvm — **3–5× smaller** than defconfig; pairs with `-microvm` TOMLs |
+| `--baked` | `out/<arch>/kernel-baked` | Initramfs **embedded** in the kernel (`CONFIG_INITRAMFS_SOURCE`) — boots with only `-kernel`, no `-initrd`; useful for netboot (one fewer TFTP transfer) |
+
+**musl — why it matters.** A glibc-static binary isn't truly self-contained: glibc
+still `dlopen()`s its Name Service Switch plugins (`libnss_files.so`,
+`libnss_dns.so`, …) at runtime for name resolution. In a libc-free initramfs
+those plugins don't exist, causing silent failures for any call that touches NSS.
+musl has a self-contained resolver baked in — no runtime plugins, smaller binary.
+
+**tinyconfig — why it's different.** `make defconfig` enables several hundred
+drivers to be broadly compatible. `make tinyconfig` enables almost nothing.
+The `--tiny` variant adds back only what's needed for our use case:
+`BLK_DEV_INITRD`, `RD_GZIP`, `DEVTMPFS`, serial console, and `VIRTIO_MMIO` for
+the microvm bus. The result boots only on microvm (no PCI), but it's a
+fraction of the size. Boot it via:
+
+```bash
+phase2-qemu-vm/lab-vm.sh create --config examples/micro-linux-x86_64-tiny.toml
+phase2-qemu-vm/lab-vm.sh start  micro-linux-x86_64-tiny      # --microvm, kernel-tiny
+```
+
+**baked — single-file boot.** `CONFIG_INITRAMFS_SOURCE` tells the kernel's own
+`usr/` Makefile to pack and embed the initramfs at compile time. The resulting
+kernel image contains everything; no `-initrd` flag is needed:
+
+```bash
+phase2-qemu-vm/lab-vm.sh create --config examples/micro-linux-x86_64-baked.toml
+# Or directly:
+qemu-system-x86_64 -machine q35,accel=kvm \
+    -kernel micro-linux/out/x86_64/kernel-baked \
+    -append "console=ttyS0 root=/dev/ram0 rw" \
+    -nographic -m 256M
+# No -initrd — it's inside kernel-baked.
+```
+
+**aarch64 musl.** Unlike x86_64 (where Debian's `musl-tools` provides `musl-gcc`),
+Debian Bookworm has no `aarch64-linux-musl-gcc` package. The Containerfile solves
+this by cross-compiling musl 1.2.3 from source using the already-present
+`gcc-aarch64-linux-gnu`, generating a GCC specs file via musl's own
+`tools/musl-gcc.specs.sh`, and creating `aarch64-linux-musl-gcc` as a wrapper.
+Both arches produce identical-quality musl-linked BusyBox binaries.
+
+`--compare` (included in `--all-variants`) prints a size table after the build:
+
+```
+arch          kernel    initramfs  initramfs   kernel    kernel
+              (defcfg)  (glibc)   -musl       -tiny     -baked
+──────────────────────────────────────────────────────────────────────
+x86_64        8.2M      12.1M     7.8M        1.9M      20.3M
+aarch64       9.4M      14.2M     8.6M        2.1M      23.6M
+```
+
+*(numbers are approximate — exact sizes depend on kernel version + BusyBox feature set)*
+
+---
+
 ### What `mlbuild.sh` does, by hand
 
 If you'd rather run it manually (or audit each step), this is the BusyBox track:
@@ -184,3 +261,10 @@ the login prompt, riscv64 boots the u-root shell.
 | `udhcpc.script` | udhcpc lease handler for the opt-in DHCP demo (§10) |
 | `REPRODUCIBLE.md` | bit-reproducibility: deterministic-build knobs + attestable hashes |
 | `tests/` | network-free unit tests |
+
+**Variant example TOMLs** (in `../examples/`):
+
+| File | Variant |
+|---|---|
+| `micro-linux-x86_64-tiny.toml` | `kernel-tiny` + default initramfs on microvm |
+| `micro-linux-x86_64-baked.toml` | `kernel-baked` (no `-initrd`), q35 or microvm |

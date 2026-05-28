@@ -43,6 +43,33 @@ micro-linux/mlbuild.sh hashes --arch x86_64,aarch64,riscv64  # print the artifac
 Compare your output to the reference set below (and to other people's). A match
 means your toolchain + source reproduced the published binaries exactly.
 
+## Variants produce distinct, reproducible hashes
+
+The `--musl`, `--tiny`, and `--baked` variant builds are **also reproducible**
+— the same pins + toolchain produce byte-identical variant artifacts — but they
+produce *different hashes* from the defaults (different binary content, obviously).
+The reference hashes below cover only the default track (`initramfs.cpio.gz` /
+`kernel`).  For variants, generate your own reference set and commit it:
+
+```bash
+micro-linux/mlbuild.sh clean --all
+micro-linux/mlbuild.sh all --arch x86_64,aarch64 --all-variants
+micro-linux/mlbuild.sh hashes --arch x86_64,aarch64   # prints all present artifacts
+```
+
+`print_hashes` / `hashes` now covers `kernel-tiny`, `kernel-baked`, and
+`initramfs-musl.cpio.gz` alongside the defaults.
+
+Two things to keep in mind when attesting variant builds:
+
+- **`--baked` kernel hash depends on the initramfs content.**  If you change
+  the BusyBox feature set, the credentials (`MLBUILD_LAB_PASSWORD`), or any
+  file in `_install/`, the `kernel-baked` hash changes even if the kernel
+  source is unchanged.  Treat `kernel-baked` as a joint artifact of both source
+  components.
+- **`--tiny` uses an out-of-tree build** (`O=build-tiny/`) — the in-tree default
+  kernel build is untouched and its hash is stable across `--tiny` runs.
+
 ## Reference hashes
 
 Built with, and valid for, exactly these pins:

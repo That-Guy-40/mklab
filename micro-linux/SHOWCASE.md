@@ -115,6 +115,99 @@ an untrusted network).
 
 ---
 
+## Build variants — three levers for size and deployment shape
+
+The default build (`mlbuild.sh all`) produces one kernel and one initramfs per
+arch.  Three optional flags add alternate artifacts *alongside* the defaults —
+no choice required, no prior build wasted:
+
+```bash
+micro-linux/mlbuild.sh all --arch x86_64,aarch64 --all-variants
+```
+
+`--all-variants` is shorthand for `--musl --tiny --baked --compare`.
+`--compare` prints this table after the build:
+
+```
+arch          kernel    initramfs  initramfs   kernel    kernel
+              (defcfg)  (glibc)   -musl       -tiny     -baked
+──────────────────────────────────────────────────────────────────────
+x86_64        8.2M      12.1M     7.8M        1.9M      20.3M
+aarch64       9.4M      14.2M     8.6M        2.1M      23.6M
+```
+
+### `--musl` — smaller initramfs, no NSS caveat
+
+BusyBox rebuilt against **musl libc** instead of glibc.  The critical
+difference: a glibc-static binary still `dlopen()`s Name Service Switch
+plugins at runtime (`libnss_files.so`, `libnss_dns.so`, …).  In a libc-free
+initramfs those `.so` files don't exist, which causes silent failures for any
+code path that touches host lookups.  musl has its resolver baked in — no
+runtime plugins, ~30–40% smaller binary.
+
+x86_64 uses Debian's `musl-gcc` wrapper.  aarch64 uses `aarch64-linux-musl-gcc`,
+built inside the container by cross-compiling musl 1.2.3 with the existing
+`gcc-aarch64-linux-gnu` toolchain, then generating a GCC specs file via musl's
+own `tools/musl-gcc.specs.sh`.
+
+Output: `out/<arch>/initramfs-musl.cpio.gz` — drop-in replacement for the
+default initramfs; boot it with any micro-linux kernel via the same TOML, just
+pointing `initrd` at the `-musl` file.
+
+### `--tiny` — 3–5× smaller kernel, microvm-only
+
+The default kernel comes from `make defconfig`, which enables several hundred
+drivers for broad compatibility.  `make tinyconfig` starts from almost nothing.
+`--tiny` adds back only what's needed for our use case:
+
+| Symbol | Why |
+|---|---|
+| `BLK_DEV_INITRD` + `RD_GZIP` | initramfs support |
+| `DEVTMPFS` + `DEVTMPFS_MOUNT` | `/dev` at boot |
+| `VIRTIO_MMIO` + `VIRTIO_MMIO_CMDLINE_DEVICES` | virtio on the microvm bus |
+| serial console (`SERIAL_8250` or `SERIAL_AMBA_PL011`) | output |
+| `TTY` + `PRINTK` | terminal + kernel messages |
+
+No `VIRTIO_PCI` — this kernel **only boots on microvm** (or the aarch64
+equivalent minimized `virt`).  Uses an out-of-tree build (`O=build-tiny/`) so
+the default defconfig build is untouched.
+
+```bash
+phase2-qemu-vm/lab-vm.sh create --config examples/micro-linux-x86_64-tiny.toml
+phase2-qemu-vm/lab-vm.sh start  micro-linux-x86_64-tiny
+```
+
+Output: `out/<arch>/kernel-tiny`.
+
+### `--baked` — single-file boot, no `-initrd`
+
+`CONFIG_INITRAMFS_SOURCE` tells the kernel's `usr/` Makefile to pack and embed
+the initramfs at compile time, compressing it with gzip.  The final `bzImage`
+(or arm64 `Image`) contains everything — no separate initramfs file is needed
+at boot.
+
+```bash
+# With lab-vm.sh:
+phase2-qemu-vm/lab-vm.sh create --config examples/micro-linux-x86_64-baked.toml
+phase2-qemu-vm/lab-vm.sh start  micro-linux-x86_64-baked
+
+# Or directly with QEMU — note: no -initrd:
+qemu-system-x86_64 -machine q35,accel=kvm \
+    -kernel micro-linux/out/x86_64/kernel-baked \
+    -append "console=ttyS0 root=/dev/ram0 rw" \
+    -nographic -m 256M
+```
+
+Why this is useful:
+- **netboot** — one fewer TFTP/HTTP transfer (kernel-baked + no initrd vs. kernel + initrd.gz)
+- **embedded** — some targets require a single binary; `-kernel` without `-initrd` works everywhere
+- **distribution** — one file to sign, copy, or attest
+
+Uses an out-of-tree build (`O=build-baked/`) so the default defconfig build
+is unaffected.  Output: `out/<arch>/kernel-baked`.
+
+---
+
 ## Why it's faithful *and* lazy
 
 Only the source-compile is new. Packing reuses the kernel's `gen_init_cpio`;
