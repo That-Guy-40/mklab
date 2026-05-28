@@ -5,6 +5,8 @@ Generates a TOML (lab + [[service]]) for lab-podman.sh up --config.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from textual.app import ComposeResult
 from textual.widgets import Checkbox, Input, Label, Select
 
@@ -53,6 +55,19 @@ class PodmanServiceWizard(WizardModal):
     def _default_save_path(self) -> str:
         lab = self._val("f-lab", self) or "my-lab"
         return f"examples/podman-{lab}.toml"
+
+    def run_hint(self, path: Path) -> str:
+        lab = self._val("f-lab", self) or "<lab>"
+        return (
+            f"# TOML saved to: {path}\n"
+            f"#\n"
+            f"# Bring up the lab (rootless — no sudo needed):\n\n"
+            f"phase4-podman/lab-podman.sh up   --config {path}\n\n"
+            f"# List running containers:\n\n"
+            f"phase4-podman/lab-podman.sh list --lab {lab}\n\n"
+            f"# Tear down:\n\n"
+            f"phase4-podman/lab-podman.sh down --lab {lab}\n"
+        )
 
     def generate_toml(self) -> str:
         lab     = self._val("f-lab",     self) or "<lab>"

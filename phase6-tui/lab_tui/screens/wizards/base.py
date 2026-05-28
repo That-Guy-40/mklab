@@ -45,6 +45,9 @@ class WizardModal(ModalScreen[Path | None]):
 
     TITLE: str = "Create resource"
 
+    # Set by _do_save after a successful write so Close/Escape return the path.
+    _saved_path: Path | None = None
+
     BINDINGS = [
         Binding("escape", "dismiss_none", "Close"),
     ]
@@ -135,7 +138,17 @@ class WizardModal(ModalScreen[Path | None]):
                 yield Button("Close",        id="btn-close", variant="default")
         yield Footer()
 
-    # ── abstract interface ────────────────────────────────────────────────────
+    # ── abstract / overridable interface ─────────────────────────────────────
+
+    def run_hint(self, path: Path) -> str:
+        """Return a shell snippet shown after saving so the user knows what to run.
+
+        The base returns "" (dismiss immediately, old behaviour).  Subclasses
+        override to surface the exact command(s) needed to apply the saved TOML.
+        The string is loaded into the preview TextArea; the modal stays open until
+        the user presses Done or Escape.
+        """
+        return ""
 
     @abstractmethod
     def compose_form(self) -> ComposeResult:
@@ -179,7 +192,7 @@ class WizardModal(ModalScreen[Path | None]):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn-close":
-            self.dismiss(None)
+            self.dismiss(self._saved_path)
         elif event.button.id == "btn-save":
             self._toggle_save_row()
 
@@ -190,7 +203,7 @@ class WizardModal(ModalScreen[Path | None]):
     # ── actions ──────────────────────────────────────────────────────────────
 
     def action_dismiss_none(self) -> None:
-        self.dismiss(None)
+        self.dismiss(self._saved_path)
 
     # ── helpers ──────────────────────────────────────────────────────────────
 
@@ -211,8 +224,23 @@ class WizardModal(ModalScreen[Path | None]):
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(self.generate_toml())
-            self.notify(f"Saved: {path}", severity="information")
-            self.dismiss(path)
+            hint = self.run_hint(path)
+            if hint:
+                # Stay open: replace the TOML preview with the run command so the
+                # user can read (and copy) it before closing.
+                self._saved_path = path
+                try:
+                    self.query_one("#preview", TextArea).load_text(hint)
+                    self.query_one("#wizard-header", Label).update(
+                        f"✓ Saved — run this command to apply:"
+                    )
+                    self.query_one("#btn-save", Button).disabled = True
+                    self.query_one("#btn-close", Button).label = "Done"
+                except Exception:  # noqa: BLE001
+                    pass
+            else:
+                self.notify(f"Saved: {path}", severity="information")
+                self.dismiss(path)
         except OSError as e:
             self.notify(f"Save failed: {e}", severity="error")
 

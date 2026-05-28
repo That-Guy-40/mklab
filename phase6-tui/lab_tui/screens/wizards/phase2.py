@@ -5,6 +5,8 @@ Generates a [[vm]] TOML for lab-vm.sh create --config <file>.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from textual.app import ComposeResult
 from textual.widgets import Checkbox, Input, Label, Select
 
@@ -63,6 +65,21 @@ class VMWizard(WizardModal):
     def _default_save_path(self) -> str:
         name = self._val("f-name", self) or "my-vm"
         return f"examples/vm-{name}.toml"
+
+    def run_hint(self, path: Path) -> str:
+        name = self._val("f-name", self) or "<name>"
+        return (
+            f"# TOML saved to: {path}\n"
+            f"#\n"
+            f"# Step 1 — create the VM (provisions disk + seed, does not boot):\n\n"
+            f"phase2-qemu-vm/lab-vm.sh create --config {path}\n\n"
+            f"# Step 2 — boot it:\n\n"
+            f"phase2-qemu-vm/lab-vm.sh start {name}\n\n"
+            f"# Connect via SSH (waits for cloud-init, ~30 s first boot):\n\n"
+            f"phase2-qemu-vm/lab-vm.sh ssh {name}\n\n"
+            f"# Or watch the serial console (Ctrl-] to detach):\n\n"
+            f"phase2-qemu-vm/lab-vm.sh console {name}\n"
+        )
 
     def generate_toml(self) -> str:
         name      = self._val("f-name",    self) or "<name>"

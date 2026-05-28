@@ -5,6 +5,8 @@ Generates a TOML (lab + network + [[service]]) for lab-docker.sh up --config.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from textual.app import ComposeResult
 from textual.widgets import Input, Label
 
@@ -42,6 +44,19 @@ class DockerServiceWizard(WizardModal):
     def _default_save_path(self) -> str:
         lab = self._val("f-lab", self) or "my-lab"
         return f"examples/docker-{lab}.toml"
+
+    def run_hint(self, path: Path) -> str:
+        lab = self._val("f-lab", self) or "<lab>"
+        return (
+            f"# TOML saved to: {path}\n"
+            f"#\n"
+            f"# Bring up the lab:\n\n"
+            f"phase3-docker/lab-docker.sh up   --config {path}\n\n"
+            f"# List running containers:\n\n"
+            f"phase3-docker/lab-docker.sh list --lab {lab}\n\n"
+            f"# Tear down:\n\n"
+            f"phase3-docker/lab-docker.sh down --lab {lab}\n"
+        )
 
     def generate_toml(self) -> str:
         lab   = self._val("f-lab",   self) or "<lab>"

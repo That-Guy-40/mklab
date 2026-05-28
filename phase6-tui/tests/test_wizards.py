@@ -38,6 +38,29 @@ def _make_wizard(cls, vals: dict[str, str], sels: dict[str, str],
     return toml
 
 
+def _make_hint(cls, vals: dict[str, str], sels: dict[str, str],
+               chks: dict[str, bool] | None = None,
+               path: str = "examples/test.toml") -> str:
+    """Call run_hint() on *cls* with patched query helpers, return the hint string."""
+    from pathlib import Path as _Path
+    chks = chks or {}
+    obj = object.__new__(cls)
+
+    def _val(wid, _self):
+        return vals.get(wid, "")
+
+    def _sel(wid, _self):
+        return sels.get(wid, "")
+
+    def _chk(wid, _self):
+        return chks.get(wid, False)
+
+    with patch.object(cls, "_val", staticmethod(_val)), \
+         patch.object(cls, "_sel", staticmethod(_sel)), \
+         patch.object(cls, "_chk", staticmethod(_chk)):
+        return obj.run_hint(_Path(path))
+
+
 # ── Phase 1: ChrootWizard ────────────────────────────────────────────────────
 
 class TestChrootWizard:
@@ -78,6 +101,13 @@ class TestChrootWizard:
     def test_missing_name_uses_placeholder(self) -> None:
         toml = self._toml(sels={"f-backend": "debootstrap"})
         assert '"<name>"' in toml
+
+    def test_run_hint_contains_create_command(self) -> None:
+        from lab_tui.screens.wizards.phase1 import ChrootWizard
+        hint = _make_hint(ChrootWizard, {"f-name": "mychroot"}, {})
+        assert "lab-chroot.sh" in hint
+        assert "create" in hint
+        assert "mychroot" in hint
 
 
 # ── Phase 2: VMWizard ─────────────────────────────────────────────────────────
@@ -127,6 +157,14 @@ class TestVMWizard:
         )
         assert 'lab     = "mylab"' in toml
 
+    def test_run_hint_contains_create_and_start(self) -> None:
+        from lab_tui.screens.wizards.phase2 import VMWizard
+        hint = _make_hint(VMWizard, {"f-name": "myvm"}, {})
+        assert "lab-vm.sh" in hint
+        assert "create" in hint
+        assert "start" in hint
+        assert "myvm" in hint
+
 
 # ── Phase 3: DockerServiceWizard ──────────────────────────────────────────────
 
@@ -174,6 +212,14 @@ class TestDockerServiceWizard:
         toml = self._toml({"f-lab": "demo", "f-svc": "web", "f-image": "nginx"})
         assert toml.count("[[service]]") == 1
 
+    def test_run_hint_contains_up_and_down(self) -> None:
+        from lab_tui.screens.wizards.phase3 import DockerServiceWizard
+        hint = _make_hint(DockerServiceWizard, {"f-lab": "mylab"}, {})
+        assert "lab-docker.sh" in hint
+        assert "up" in hint
+        assert "down" in hint
+        assert "mylab" in hint
+
 
 # ── Phase 4: PodmanServiceWizard ─────────────────────────────────────────────
 
@@ -219,6 +265,14 @@ class TestPodmanServiceWizard:
         )
         assert '"8080:80"' in toml
         assert '"/data:/data:ro"' in toml
+
+    def test_run_hint_contains_up_and_down(self) -> None:
+        from lab_tui.screens.wizards.phase4 import PodmanServiceWizard
+        hint = _make_hint(PodmanServiceWizard, {"f-lab": "mylab"}, {"f-manager": "plain"})
+        assert "lab-podman.sh" in hint
+        assert "up" in hint
+        assert "down" in hint
+        assert "mylab" in hint
 
 
 # ── Phase 5: LXDInstanceWizard ────────────────────────────────────────────────
@@ -282,3 +336,11 @@ class TestLXDInstanceWizard:
         )
         assert 'storage = "vmpool"' in toml
         assert 'project = "demo"' in toml
+
+    def test_run_hint_contains_up_and_down(self) -> None:
+        from lab_tui.screens.wizards.phase5 import LXDInstanceWizard
+        hint = _make_hint(LXDInstanceWizard, {"f-lab": "mylab"}, {"f-type": "container"})
+        assert "lab-lxd.sh" in hint
+        assert "up" in hint
+        assert "down" in hint
+        assert "mylab" in hint

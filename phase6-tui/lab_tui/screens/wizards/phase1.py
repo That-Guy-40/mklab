@@ -5,6 +5,8 @@ Generates a [[chroot]] TOML for lab-chroot.sh create --config <file>.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from textual.app import ComposeResult
 from textual.widgets import Checkbox, Input, Label, Select
 
@@ -57,6 +59,17 @@ class ChrootWizard(WizardModal):
     def _default_save_path(self) -> str:
         name = self._val("f-name", self) or "my-chroot"
         return f"examples/chroot-{name}.toml"
+
+    def run_hint(self, path: Path) -> str:
+        return (
+            f"# TOML saved to: {path}\n"
+            f"#\n"
+            f"# Run this to create the chroot:\n\n"
+            f"sudo phase1-chroot/lab-chroot.sh create --config {path}\n\n"
+            f"# Then enter it:\n"
+            f"sudo phase1-chroot/lab-chroot.sh enter "
+            f"{self._val('f-name', self) or '<name>'}\n"
+        )
 
     def generate_toml(self) -> str:
         name    = self._val("f-name",    self) or "<name>"
