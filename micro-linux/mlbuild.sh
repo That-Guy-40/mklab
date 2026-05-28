@@ -20,9 +20,14 @@
 #   mlbuild.sh clean [--arch LIST|--all]  remove out/ artifacts (F7-guarded; host)
 #
 # Options:
-#   --arch  LIST   comma list of {x86_64,aarch64,riscv64}  (default: x86_64,aarch64)
-#   --engine ENG   podman | docker            (default: podman if present, else docker)
-#   --offline      do not download; require tarballs already cached in out/_cache
+#   --arch  LIST       comma list of {x86_64,aarch64,riscv64}  (default: x86_64,aarch64)
+#   --engine ENG       podman | docker          (default: podman if present, else docker)
+#   --offline          do not download; require tarballs already cached in out/_cache
+#   --musl             also build musl-static BusyBox → initramfs-musl.cpio.gz
+#   --tiny             also build tinyconfig kernel → kernel-tiny (microvm-only, ~3-5× smaller)
+#   --baked            also build baked-in kernel → kernel-baked (initramfs embedded, no -initrd)
+#   --all-variants     shorthand for --musl --tiny --baked --compare
+#   --compare          print a side-by-side size table for all built variants
 #   --help
 #
 # Nothing here needs root: the container runs rootless (--userns=keep-id) and the
@@ -224,6 +229,17 @@ kmake() {
     make -C "$dir" "${args[@]}" "$@"
 }
 
+# Out-of-tree variant: adds O=<builddir> so the source tree stays unmodified.
+# Used by build_kernel_tiny and pack_busybox_baked to avoid clobbering the
+# in-tree default build (defconfig .config + bzImage already in out/$arch/).
+kmake_oot() {
+    local arch="$1" src="$2" bdir="$3"; shift 3
+    local cross; cross="$(kernel_cross "$arch")"
+    local -a args=(ARCH="$(kernel_arch "$arch")" O="$bdir")
+    [[ -n "$cross" ]] && args+=(CROSS_COMPILE="$cross")
+    make -C "$src" "${args[@]}" "$@"
+}
+
 assert_kconfig() {
     local dir="$1"; shift
     local sym
@@ -335,6 +351,174 @@ build_busybox() {
     file "$src/busybox" | grep -q 'statically linked' || die "[$arch] busybox is NOT static — refusing"
     make -C "$src" "${bb[@]}" CONFIG_PREFIX="$OUT_DIR/$arch/_install" install >/dev/null
     log_info "[$arch] busybox → out/$arch/_install"
+}
+
+# ── Variant: tinyconfig kernel ("truly micro") ───────────────────────────────
+# Uses make tinyconfig (near-empty) then enables only what's needed to reach a
+# BusyBox shell via QEMU microvm (virtio-mmio, no PCI).  The result is 3-5×
+# smaller than a defconfig kernel.  Uses an out-of-tree build so the in-tree
+# default build is untouched.
+# Output: out/$arch/kernel-tiny
+build_kernel_tiny() {
+    local arch="$1" src="$2"
+    local bdir="$OUT_DIR/$arch/build-tiny"; install -d "$bdir"
+    log_info "[$arch] kernel-tiny: tinyconfig + microvm-only drivers (out-of-tree: $bdir) …"
+    kmake_oot "$arch" "$src" "$bdir" tinyconfig >/dev/null
+
+    # Enable only what's needed for our use case:
+    #   initramfs  — BLK_DEV_INITRD + RD_GZIP
+    #   /dev       — DEVTMPFS + DEVTMPFS_MOUNT (+ implied TMPFS)
+    #   console    — arch-specific serial driver
+    #   virtio-mmio only (no PCI) — microvm / minimized virt
+    #   TTY + PRINTK — terminal + kernel messages
+    local cfg="$bdir/.config"
+    set_kconfig "$cfg" BLK_DEV_INITRD           y
+    set_kconfig "$cfg" RD_GZIP                  y
+    set_kconfig "$cfg" DEVTMPFS                 y
+    set_kconfig "$cfg" DEVTMPFS_MOUNT           y
+    set_kconfig "$cfg" VIRTIO                   y
+    set_kconfig "$cfg" VIRTIO_MMIO              y
+    set_kconfig "$cfg" VIRTIO_MMIO_CMDLINE_DEVICES y
+    set_kconfig "$cfg" TTY                      y
+    set_kconfig "$cfg" PRINTK                   y
+    case "$arch" in
+        x86_64)
+            set_kconfig "$cfg" SERIAL_8250         y
+            set_kconfig "$cfg" SERIAL_8250_CONSOLE y
+            ;;
+        aarch64)
+            set_kconfig "$cfg" SERIAL_AMBA_PL011         y
+            set_kconfig "$cfg" SERIAL_AMBA_PL011_CONSOLE y
+            ;;
+    esac
+    kmake_oot "$arch" "$src" "$bdir" olddefconfig >/dev/null
+    assert_kconfig "$bdir" CONFIG_BLK_DEV_INITRD CONFIG_DEVTMPFS CONFIG_VIRTIO_MMIO
+    kmake_oot "$arch" "$src" "$bdir" -j"$(nproc)"
+    install -Dm0644 "$bdir/$(kernel_image "$arch")" "$OUT_DIR/$arch/kernel-tiny"
+    log_info "[$arch] kernel-tiny → out/$arch/kernel-tiny ($(du -h "$OUT_DIR/$arch/kernel-tiny" | cut -f1))"
+}
+
+# ── Variant: musl-static BusyBox ─────────────────────────────────────────────
+# Builds BusyBox with CC=musl-gcc (x86_64) instead of the default glibc-static.
+# musl avoids the glibc static-NSS caveat (dynamic libnss_*.so resolver plugins)
+# and produces a noticeably smaller binary (~30-40% smaller initramfs).
+# aarch64: musl cross-compiler not packaged in Debian bookworm → skip with warn.
+# Output: out/$arch/_install-musl/ + initramfs-musl.cpio.gz
+build_busybox_musl() {
+    local arch="$1" src="$2"
+    if [[ "$arch" == "aarch64" ]]; then
+        log_warn "[$arch] musl variant: no aarch64-linux-musl-gcc in Debian bookworm — skipping"
+        log_warn "[$arch]   (build musl-cross-make manually and set CC/CROSS_COMPILE to enable)"
+        return 0
+    fi
+    command -v musl-gcc >/dev/null 2>&1 \
+        || die "[$arch] musl-gcc not found — run 'mlbuild.sh image' to rebuild the toolchain"
+    local cross; cross="$(kernel_cross "$arch")"
+    local -a bb=(CC=musl-gcc)
+    [[ -n "$cross" ]] && bb+=(CROSS_COMPILE="$cross")
+    log_info "[$arch] busybox-musl: musl-static config + build …"
+    make -C "$src" "${bb[@]}" defconfig >/dev/null
+    set_kconfig "$src/.config" STATIC y
+    set_kconfig "$src/.config" TC     n
+    make -C "$src" "${bb[@]}" oldconfig >/dev/null
+    grep -q '^CONFIG_STATIC=y' "$src/.config" || die "[$arch] musl CONFIG_STATIC didn't take"
+    make -C "$src" "${bb[@]}" -j"$(nproc)"
+    require_cmd file
+    file "$src/busybox" | grep -q 'statically linked' \
+        || die "[$arch] musl busybox is NOT static — check musl-gcc linkage"
+    # verify musl (not glibc) by checking the binary doesn't pull in glibc strings
+    file "$src/busybox" | grep -qi 'musl\|uclibc' \
+        || strings "$src/busybox" | grep -q 'musl' \
+        || log_warn "[$arch] could not confirm musl linkage — may still be glibc; inspect with: file $src/busybox"
+    make -C "$src" "${bb[@]}" CONFIG_PREFIX="$OUT_DIR/$arch/_install-musl" install >/dev/null
+    log_info "[$arch] busybox-musl → out/$arch/_install-musl"
+}
+
+pack_busybox_musl() {
+    local arch="$1" src="$2"
+    [[ -d "$OUT_DIR/$arch/_install-musl" ]] \
+        || { log_warn "[$arch] musl _install missing — skipping musl pack"; return 0; }
+    local init="$SCRIPT_DIR/init"
+    [[ -r "$init" ]] || die "missing $init"
+    local gic; gic="$(build_gen_init_cpio "$src")"
+    local img="$OUT_DIR/$arch/initramfs-musl.cpio.gz"
+    local etc; etc="$(stage_etc)"
+    log_info "[$arch] packing initramfs-musl …"
+    emit_cpio_spec "$init" "$OUT_DIR/$arch/_install-musl" "$etc" \
+        | "$gic" -t "${SOURCE_DATE_EPOCH:-1700000000}" - \
+        | gzip -9 -n > "$img"
+    require_cmd cpio
+    local entries; entries="$(gzip -dc "$img" | cpio -t 2>/dev/null)"
+    grep -qE '(^|/)bin/busybox$' <<<"$entries" || die "[$arch] musl initramfs has no /bin/busybox"
+    log_info "[$arch] initramfs-musl → out/$arch/initramfs-musl.cpio.gz ($(du -h "$img" | cut -f1))"
+}
+
+# ── Variant: baked-in initramfs (CONFIG_INITRAMFS_SOURCE) ────────────────────
+# Embeds the initramfs directly into the kernel image, so no -initrd flag is
+# needed at QEMU boot — a single -kernel file is sufficient.
+# Uses an out-of-tree build (build-baked/) so the in-tree default is intact.
+# Output: out/$arch/kernel-baked  (no separate initramfs file)
+pack_busybox_baked() {
+    local arch="$1" src="$2"
+    [[ -d "$OUT_DIR/$arch/_install" ]] || die "[$arch] no _install — run build first"
+    local init="$SCRIPT_DIR/init"
+    [[ -r "$init" ]] || die "missing $init"
+    local bdir="$OUT_DIR/$arch/build-baked"; install -d "$bdir"
+    log_info "[$arch] kernel-baked: embedding initramfs via INITRAMFS_SOURCE (out-of-tree) …"
+
+    # Start from the same defconfig the normal kernel uses so the resulting
+    # binary is compatible with the same QEMU configurations.
+    kmake_oot "$arch" "$src" "$bdir" defconfig >/dev/null
+    local cfg="$bdir/.config"
+    set_kconfig "$cfg" VIRTIO_MMIO              y
+    set_kconfig "$cfg" VIRTIO_MMIO_CMDLINE_DEVICES y
+    kmake_oot "$arch" "$src" "$bdir" olddefconfig >/dev/null
+
+    # Generate the cpio SPEC to a file (not gzipped — the kernel's usr/Makefile
+    # runs gen_init_cpio internally and then optionally compresses).
+    local spec="$OUT_DIR/$arch/initramfs.spec"
+    local etc; etc="$(stage_etc)"
+    emit_cpio_spec "$init" "$OUT_DIR/$arch/_install" "$etc" > "$spec"
+    log_info "[$arch] cpio spec → out/$arch/initramfs.spec ($(wc -l < "$spec") lines)"
+
+    # CONFIG_INITRAMFS_SOURCE tells the kernel's usr/Makefile to pack the cpio
+    # and link it into the final bzImage/Image.  The path must be valid at
+    # kernel build time — since we build inside the container with the repo at
+    # /work, these paths resolve correctly.
+    set_kconfig "$cfg" INITRAMFS_SOURCE "\"$spec\""
+    # Compress the embedded initramfs (gzip, ~50% smaller than raw cpio).
+    set_kconfig "$cfg" INITRAMFS_COMPRESSION_NONE n
+    set_kconfig "$cfg" INITRAMFS_COMPRESSION_GZIP y
+    kmake_oot "$arch" "$src" "$bdir" olddefconfig >/dev/null
+    grep -q "INITRAMFS_SOURCE=\"$spec\"" "$bdir/.config" \
+        || log_warn "[$arch] CONFIG_INITRAMFS_SOURCE not in .config — may not have taken"
+
+    # Build: the kernel's usr/ target packs the cpio, the final link embeds it.
+    kmake_oot "$arch" "$src" "$bdir" -j"$(nproc)"
+    install -Dm0644 "$bdir/$(kernel_image "$arch")" "$OUT_DIR/$arch/kernel-baked"
+    log_info "[$arch] kernel-baked → out/$arch/kernel-baked ($(du -h "$OUT_DIR/$arch/kernel-baked" | cut -f1), no -initrd needed)"
+    log_info "[$arch]   boot with:  -kernel out/$arch/kernel-baked   (no -initrd required)"
+}
+
+# ── Size comparison table ─────────────────────────────────────────────────────
+compare_sizes() {
+    local arch
+    printf '\n%-12s  %-8s  %-8s  %-10s  %-8s  %-12s\n' \
+        "arch" "kernel" "initramfs" "initramfs" "kernel" "kernel"
+    printf '%-12s  %-8s  %-8s  %-10s  %-8s  %-12s\n' \
+        "" "(defcfg)" "(glibc)" "-musl" "-tiny" "-baked"
+    printf '%s\n' "$(printf '%0.s─' {1..70})"
+    for arch in "${ARCHES[@]}"; do
+        local k it im kt kb
+        k="$(du -h  "$OUT_DIR/$arch/kernel"                 2>/dev/null | cut -f1 || echo "—")"
+        it="$(du -h "$OUT_DIR/$arch/initramfs.cpio.gz"      2>/dev/null | cut -f1 || echo "—")"
+        im="$(du -h "$OUT_DIR/$arch/initramfs-musl.cpio.gz" 2>/dev/null | cut -f1 || echo "—")"
+        kt="$(du -h "$OUT_DIR/$arch/kernel-tiny"            2>/dev/null | cut -f1 || echo "—")"
+        kb="$(du -h "$OUT_DIR/$arch/kernel-baked"           2>/dev/null | cut -f1 || echo "—")"
+        printf '%-12s  %-8s  %-8s  %-10s  %-8s  %-12s\n' \
+            "$arch" "$k" "$it" "$im" "$kt" "$kb"
+    done >&2
+    printf '\n' >&2
 }
 
 build_uroot() {                              # faithful track (§11); riscv64 only
@@ -497,8 +681,13 @@ inner_build() {
             build_kernel riscv64 "$(prepare_kernel riscv64)"
             build_uroot                                      # produces the initramfs directly
         else
-            build_kernel  "$arch" "$(prepare_kernel  "$arch")"
-            build_busybox "$arch" "$(prepare_busybox "$arch")"
+            local ksrc bbsrc
+            ksrc="$(prepare_kernel  "$arch")"
+            bbsrc="$(prepare_busybox "$arch")"
+            build_kernel  "$arch" "$ksrc"
+            build_busybox "$arch" "$bbsrc"
+            [[ -n "${OPT_MUSL:-}"  ]] && build_busybox_musl "$arch" "$bbsrc"
+            [[ -n "${OPT_TINY:-}"  ]] && build_kernel_tiny  "$arch" "$ksrc"
         fi
     done
 }
@@ -514,7 +703,10 @@ inner_pack() {
                 || die "[riscv64] no initramfs — run 'mlbuild.sh build' first"
             continue
         fi
-        pack_busybox "$arch" "$OUT_DIR/$arch/build/linux-${LINUX_VER}"
+        local ksrc="$OUT_DIR/$arch/build/linux-${LINUX_VER}"
+        pack_busybox        "$arch" "$ksrc"
+        [[ -n "${OPT_MUSL:-}"  ]] && pack_busybox_musl  "$arch" "$ksrc"
+        [[ -n "${OPT_BAKED:-}" ]] && pack_busybox_baked "$arch" "$ksrc"
     done
 }
 
@@ -561,6 +753,11 @@ run_in_builder() {
     [[ -n "${MLBUILD_OFFLINE:-}"      ]] && envs+=(-e "MLBUILD_OFFLINE=1")
     [[ -n "${MLBUILD_LAB_USER:-}"     ]] && envs+=(-e "MLBUILD_LAB_USER=${MLBUILD_LAB_USER}")
     [[ -n "${MLBUILD_LAB_PASSWORD:-}" ]] && envs+=(-e "MLBUILD_LAB_PASSWORD=${MLBUILD_LAB_PASSWORD}")
+    # Forward variant flags so inner_build/inner_pack see them.
+    [[ -n "${OPT_MUSL:-}"    ]] && envs+=(-e "OPT_MUSL=1")
+    [[ -n "${OPT_TINY:-}"    ]] && envs+=(-e "OPT_TINY=1")
+    [[ -n "${OPT_BAKED:-}"   ]] && envs+=(-e "OPT_BAKED=1")
+    [[ -n "${OPT_COMPARE:-}" ]] && envs+=(-e "OPT_COMPARE=1")
     "$ENGINE" run --rm "${mount[@]}" -w /work/micro-linux \
         "${envs[@]}" \
         "$IMAGE" bash mlbuild.sh "$@"
@@ -597,16 +794,14 @@ summarize() {
     log_info "artifacts in $OUT_DIR:"
     local arch f
     for arch in "${ARCHES[@]}"; do
-        for f in kernel initramfs.cpio.gz initramfs.cpio; do
-            # `if`, not `&&`: a missing optional artifact (e.g. the plain .cpio is
-            # riscv64-only) must not leave a non-zero status as the function's —
-            # and thus the whole command's — exit code.
+        for f in kernel kernel-tiny kernel-baked initramfs.cpio.gz initramfs-musl.cpio.gz initramfs.cpio; do
             if [[ -f "$OUT_DIR/$arch/$f" ]]; then
                 log_info "  $arch/$f  ($(du -h "$OUT_DIR/$arch/$f" | cut -f1))"
             fi
         done
     done
     print_hashes
+    [[ -n "${OPT_COMPARE:-}" ]] && compare_sizes
 }
 
 # Print sha256 of each built artifact — for reproducible-build attestation
@@ -616,7 +811,7 @@ print_hashes() {
     require_cmd sha256sum
     local arch f hdr=0
     for arch in "${ARCHES[@]}"; do
-        for f in kernel initramfs.cpio.gz initramfs.cpio; do
+        for f in kernel kernel-tiny kernel-baked initramfs.cpio.gz initramfs-musl.cpio.gz initramfs.cpio; do
             [[ -f "$OUT_DIR/$arch/$f" ]] || continue
             if [[ "$hdr" == 0 ]]; then
                 log_info "artifact sha256 (compare across independent builds — plan §8):"
@@ -643,12 +838,18 @@ main() {
     case "$1" in --help|-h) usage ;; esac
     local subcmd="$1"; shift
     ARCHES_RAW="x86_64,aarch64"
+    OPT_MUSL="" OPT_TINY="" OPT_BAKED="" OPT_COMPARE=""
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --arch)    shift; ARCHES_RAW="${1:?--arch needs a comma list}"; shift ;;
-            --engine)  shift; ENGINE="${1:?--engine needs podman|docker}";  shift ;;
-            --offline) MLBUILD_OFFLINE=1; shift ;;
-            --all)     CLEAN_ALL=1; shift ;;
+            --arch)         shift; ARCHES_RAW="${1:?--arch needs a comma list}"; shift ;;
+            --engine)       shift; ENGINE="${1:?--engine needs podman|docker}";  shift ;;
+            --offline)      MLBUILD_OFFLINE=1; shift ;;
+            --all)          CLEAN_ALL=1; shift ;;
+            --musl)         OPT_MUSL=1; shift ;;
+            --tiny)         OPT_TINY=1; shift ;;
+            --baked)        OPT_BAKED=1; shift ;;
+            --compare)      OPT_COMPARE=1; shift ;;
+            --all-variants) OPT_MUSL=1; OPT_TINY=1; OPT_BAKED=1; OPT_COMPARE=1; shift ;;
             --help|-h) usage ;;
             *) die "unknown option: $1 (try --help)" ;;
         esac

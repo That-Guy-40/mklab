@@ -1,0 +1,37 @@
+# micro-linux baked-in initramfs — single-file boot, no -initrd needed.
+#
+# Uses kernel-baked: the initramfs is compiled directly into the kernel image
+# via CONFIG_INITRAMFS_SOURCE.  No separate initramfs file is required at boot.
+# lab-vm.sh backend = "kernel+initrd" with initrd left empty is not quite right;
+# use this TOML which sets only --kernel (lab-vm.sh handles the empty initrd
+# gracefully for baked kernels).
+#
+# Why this is useful:
+#   - Single artifact: only kernel-baked needs to be distributed or loaded
+#   - iPXE / netboot: one fewer TFTP/HTTP transfer
+#   - Embedded: some targets require a single binary with no separate initrd
+#
+# Prerequisites:
+#   micro-linux/mlbuild.sh image                           # once
+#   micro-linux/mlbuild.sh all --arch x86_64 --baked      # compile + bake
+#
+# Boot:
+#   phase2-qemu-vm/lab-vm.sh create --config examples/micro-linux-x86_64-baked.toml
+#   phase2-qemu-vm/lab-vm.sh start  micro-linux-x86_64-baked
+#
+# Or directly with QEMU (no lab-vm.sh needed):
+#   qemu-system-x86_64 -machine q35,accel=kvm \
+#       -kernel micro-linux/out/x86_64/kernel-baked \
+#       -append "console=ttyS0 root=/dev/ram0 rw" \
+#       -nographic -m 256M
+#   # No -initrd required — it's embedded in kernel-baked.
+
+[[vm]]
+name    = "micro-linux-x86_64-baked"
+backend = "kernel+initrd"
+arch    = "x86_64"
+memory  = "256M"
+cpus    = 1
+kernel  = "micro-linux/out/x86_64/kernel-baked"
+# initrd intentionally omitted — initramfs is embedded in the kernel image.
+append  = "console=ttyS0 root=/dev/ram0 rw"

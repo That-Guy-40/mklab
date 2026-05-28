@@ -1,0 +1,27 @@
+# micro-linux tinyconfig kernel — "truly micro" variant.
+#
+# Uses kernel-tiny (built with make tinyconfig + minimal hand-selected drivers)
+# instead of the default defconfig kernel.  The tinyconfig kernel is
+# microvm-only: virtio-mmio transport, no PCI, serial console only.
+# Result: a kernel ~3-5× smaller than defconfig, paired with the same
+# BusyBox initramfs.
+#
+# Prerequisites:
+#   micro-linux/mlbuild.sh image                          # once
+#   micro-linux/mlbuild.sh all --arch x86_64 --tiny      # compile + pack
+#
+# Boot:
+#   phase2-qemu-vm/lab-vm.sh create --config examples/micro-linux-x86_64-tiny.toml
+#   phase2-qemu-vm/lab-vm.sh start  micro-linux-x86_64-tiny
+#   # log in: root / micro   Ctrl-A X to quit
+
+[[vm]]
+name    = "micro-linux-x86_64-tiny"
+backend = "kernel+initrd"
+arch    = "x86_64"
+memory  = "128M"
+cpus    = 1
+microvm = true
+kernel  = "micro-linux/out/x86_64/kernel-tiny"
+initrd  = "micro-linux/out/x86_64/initramfs.cpio.gz"
+append  = "console=ttyS0 root=/dev/ram0 rw"

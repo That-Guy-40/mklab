@@ -26,7 +26,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential bc bison flex libelf-dev libssl-dev \
         cpio gzip xz-utils bzip2 gnupg file python3 curl ca-certificates kmod \
         gcc-aarch64-linux-gnu libc6-dev-arm64-cross \
+        musl-tools musl-dev \
  && rm -rf /var/lib/apt/lists/*
+# musl-tools installs musl-gcc (an x86_64 gcc wrapper that links against musl
+# libc).  musl-dev provides the musl headers.  Together they enable the --musl
+# variant of mlbuild.sh: a static BusyBox without glibc's NSS caveat, producing
+# a noticeably smaller initramfs.  aarch64 musl cross-compiler is not packaged
+# in Debian bookworm; build_busybox_musl() skips aarch64 with a warning.
 
 # ── Faithful track (§11): riscv64 kernel cross + Go (u-root) ─────────────────
 # Set --build-arg WITH_RISCV=0 to skip and keep the BusyBox-only image lean
