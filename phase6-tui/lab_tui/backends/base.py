@@ -62,6 +62,12 @@ class Resource(BaseModel):
     log_command: list[str] = Field(default_factory=list)
     """argv to invoke for the log tail; empty if backend has no log surface."""
 
+    console_command: list[str] = Field(default_factory=list)
+    """argv to invoke for an interactive console attach (full-TTY, blocking).
+    Non-empty only when the backend has a serial/console surface AND the
+    resource is currently running.  The TUI suspends itself, runs this as a
+    blocking subprocess, then resumes when the command exits."""
+
     @property
     def display_name(self) -> str:
         """Tree-row label.  Prefer `lab/svc` over the engine-side name."""

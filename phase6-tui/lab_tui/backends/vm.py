@@ -73,11 +73,19 @@ class VMBackend(BackendRunner):
             if lab is not None and this_lab != lab:
                 continue
             pidfile = vm_dir / "qemu.pid"
-            status = "running" if _pid_alive(pidfile) else "stopped"
+            is_running = _pid_alive(pidfile)
+            status = "running" if is_running else "stopped"
             log_path = vm_dir / "qemu.log"
             log_command = (
                 ["tail", "-n", "200", "-F", str(log_path)]
                 if log_path.is_file() else []
+            )
+            # Console attach: only available for running VMs with a serial socket.
+            # lab-vm.sh console <name> uses socat in raw mode; Ctrl-] detaches.
+            serial_sock = vm_dir / "serial.sock"
+            console_command = (
+                [str(self.script), "console", data.get("name", vm_dir.name)]
+                if is_running and serial_sock.exists() else []
             )
             # Classify: pxe-install VMs (AlmaLinux Anaconda target) get their
             # own type tag so the TUI can show a distinct icon/label and surface
@@ -101,6 +109,7 @@ class VMBackend(BackendRunner):
                 extra=extra,
                 spec_path=mp,
                 log_command=log_command,
+                console_command=console_command,
             ))
         return out
 

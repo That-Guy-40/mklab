@@ -16,6 +16,7 @@ engines," which is the reason [lab] exists as a cross-phase idiom.
 
 from __future__ import annotations
 
+import subprocess
 from collections import defaultdict
 
 from rich.text import Text
@@ -29,6 +30,18 @@ from textual.widgets.tree import TreeNode
 from lab_tui.backends import ALL_BACKENDS, BackendRunner, Resource
 from lab_tui.widgets.status_pill import status_pill
 
+
+def _run_console(app: object, argv: list[str]) -> None:
+    """Suspend *app* and run *argv* as a blocking subprocess in the cleared terminal.
+
+    Extracted from action_console() so unit tests can call it without a live
+    Textual app (screen.app is a read-only DOMNode property).
+    """
+    # App.suspend() restores the terminal, yields, then reinstates Textual.
+    # Blocking subprocess.run() inside is the documented and intended pattern.
+    with app.suspend():  # type: ignore[attr-defined]
+        subprocess.run(argv)  # noqa: S603 — caller controls argv
+
 _UNLABELLED = "(unlabelled)"
 
 
@@ -37,6 +50,7 @@ class ResourceBrowserScreen(Screen):
         Binding("r", "refresh", "Refresh"),
         Binding("t", "open_topology", "Topology"),
         Binding("l", "open_logs", "Logs"),
+        Binding("c", "console", "Console"),
         Binding("d", "destroy", "Destroy"),
         Binding("q", "app.quit", "Quit"),
     ]
@@ -89,6 +103,38 @@ class ResourceBrowserScreen(Screen):
             return
         from lab_tui.screens.logs import LogsScreen
         self.app.push_screen(LogsScreen(resource))
+
+    def action_console(self) -> None:
+        """Suspend the TUI and attach to the selected resource's serial console.
+
+        Uses App.suspend() so Textual hands back the terminal entirely —
+        the attached process gets a real TTY in raw mode.  When the user
+        detaches (Ctrl-] for lab-vm.sh console / socat), subprocess.run()
+        returns, the context-manager exits, and Textual resumes.
+
+        Only available for running Phase-2 VMs that have a serial.sock.
+        """
+        resource = self._selected_resource()
+        if resource is None or not resource.console_command:
+            self.notify(
+                "No console available — select a running VM.",
+                severity="warning",
+            )
+            return
+
+        # Print a hint to stderr before suspending so the user knows how to
+        # return once the terminal is in raw-socat mode.
+        import sys
+        print(
+            "\n[lab-create TUI] Attaching to console.  Press Ctrl-] to detach and return to the TUI.\n",
+            file=sys.stderr,
+            flush=True,
+        )
+
+        # App.suspend() is a synchronous context manager: it restores the
+        # terminal, yields, then reinstates Textual when the block exits.
+        # Blocking inside the block is intentional and documented.
+        _run_console(self.app, resource.console_command)
 
     def action_destroy(self) -> None:
         resource = self._selected_resource()
