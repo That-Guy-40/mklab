@@ -120,7 +120,7 @@ Installs AlmaLinux unattended via iPXE + kickstart into a QEMU VM — walk away 
 
 ```bash
 netboot/fetch-almalinux-installer.sh --mirror https://repo.almalinux.org/almalinux --release 9 --arch x86_64
-netboot/gen-almalinux-ks.sh --mac 52:54:00:AL:MA:01
+netboot/gen-almalinux-ks.sh --mac 52:54:00:a1:9a:01
 netboot/build-ipxe.sh --server http://10.0.2.2:8181 \
     --kernel-path /vmlinuz --initrd-path /initrd.img \
     --append 'inst.repo=https://repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/ inst.ks=http://10.0.2.2:8181/ks/{MAC}.ks inst.text console=ttyS0 ip=dhcp'

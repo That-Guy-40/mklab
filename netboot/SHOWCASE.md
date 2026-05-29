@@ -460,7 +460,7 @@ netboot/fetch-almalinux-installer.sh \
     --mirror https://repo.almalinux.org/almalinux --release 9 --arch x86_64
 
 # 2. Generate a per-host kickstart named after the VM's pinned MAC:
-netboot/gen-almalinux-ks.sh --mac 52:54:00:AL:MA:01
+netboot/gen-almalinux-ks.sh --mac 52:54:00:a1:9a:01
 
 # 3. Build iPXE with the AlmaLinux boot parameters embedded:
 netboot/build-ipxe.sh --server http://10.0.2.2:8181 \
@@ -495,7 +495,7 @@ The solution is a literal placeholder: write `{MAC}` in `--append`. After the
 heredoc is written, a `sed` pass rewrites `{MAC}` to `${mac:hexhyp}` in the
 resulting file. From that point on it is an iPXE variable — bash has already
 finished expanding — and iPXE's runtime expands `${mac:hexhyp}` to the
-booting NIC's lowercase hyphen-separated MAC (e.g. `52-54-00-al-ma-01`) when
+booting NIC's lowercase hyphen-separated MAC (e.g. `52-54-00-a1-9a-01`) when
 it fetches the kickstart URL.
 
 In short: you type `{MAC}` as the placeholder; the sed rewrite turns it into

@@ -19,7 +19,7 @@
 #          --kernel-path /vmlinuz --initrd-path /initrd.img \
 #          --append '... inst.ks=http://10.0.2.2:8181/ks/{MAC}.ks ...'
 #      # produces ipxe.efi  (and ipxe.usb, ipxe.qcow2 — not used here)
-#   3. netboot/gen-almalinux-ks.sh --mac 52:54:00:UE:FI:01 \
+#   3. netboot/gen-almalinux-ks.sh --mac 52:54:00:ef:f1:01 \
 #          --template examples/almalinux-uefi-zerotouch.ks [--default]
 #   4. phase4-podman/lab-podman.sh up --config examples/podman-netboot-server.toml
 #
@@ -33,7 +33,7 @@
 name           = "almalinux-uefi-pxe"
 backend        = "pxe-install"           # blank disk only; UEFI PXE via slirp TFTP
 install_target = "20G"                   # blank EFI-capable disk
-mac            = "52:54:00:UE:FI:01"    # pinned MAC → ks/52-54-00-ue-fi-01.ks
+mac            = "52:54:00:ef:f1:01"    # pinned MAC → ks/52-54-00-ef-f1-01.ks
 arch           = "x86_64"
 memory         = "2560M"
 cpus           = 2

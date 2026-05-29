@@ -210,7 +210,7 @@ done
 log_info ""
 log_info "next steps:"
 log_info "  Generate a per-host kickstart:"
-log_info "    netboot/gen-almalinux-ks.sh --mac 52:54:00:AL:MA:01"
+log_info "    netboot/gen-almalinux-ks.sh --mac 52:54:00:a1:9a:01"
 log_info "  Build iPXE with the AlmaLinux boot parameters:"
 log_info "    netboot/build-ipxe.sh --server http://10.0.2.2:8181 \\"
 log_info "        --kernel-path /vmlinuz --initrd-path /initrd.img \\"

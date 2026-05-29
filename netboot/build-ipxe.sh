@@ -80,7 +80,7 @@ Options:
                       NIC's MAC address at runtime.  At build time {MAC} is
                       rewritten to the iPXE variable ${mac:hexhyp}; iPXE then
                       expands it to the lowercase hyphen-separated MAC of the
-                      booting interface (e.g. 52-54-00-al-ma-01).
+                      booting interface (e.g. 52-54-00-a1-9a-01).
                       Example (per-host AlmaLinux kickstart):
                         --append 'inst.ks=http://10.0.2.2:8181/ks/{MAC}.ks'
   --output-dir  PATH  where to write outputs   (default: /srv/netboot)

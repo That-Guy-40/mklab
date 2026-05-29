@@ -193,7 +193,7 @@ reboot
 # Prereqs (run in order):
 #   netboot/setup-netboot-dir.sh
 #   netboot/fetch-almalinux-installer.sh --mirror https://repo.almalinux.org/almalinux --release 9 --arch x86_64
-#   netboot/gen-almalinux-ks.sh --mac 52:54:00:AL:MA:01     # → ~/netboot/ks/52-54-00-al-ma-01.ks
+#   netboot/gen-almalinux-ks.sh --mac 52:54:00:a1:9a:01     # → ~/netboot/ks/52-54-00-a1-9a-01.ks
 #   netboot/build-ipxe.sh --server http://10.0.2.2:8181 \
 #       --kernel-path /vmlinuz --initrd-path /initrd.img \
 #       --append 'inst.repo=https://repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/ inst.ks=http://10.0.2.2:8181/ks/{MAC}.ks inst.text console=ttyS0 ip=dhcp'
@@ -208,7 +208,7 @@ name           = "almalinux-pxe-install"
 backend        = "disk-image"
 image          = "/home/USER/netboot/ipxe.qcow2"   # the iPXE ROM (bootindex=1, fallback)
 install_target = "20G"                              # blank disk, bootindex=0 (install dest)
-mac            = "52:54:00:AL:MA:01"                # pinned so the per-MAC ks matches
+mac            = "52:54:00:a1:9a:01"                # pinned so the per-MAC ks matches
 arch           = "x86_64"
 memory         = "2560M"                            # Anaconda needs ~2 GB+
 cpus           = 2
@@ -229,7 +229,7 @@ netboot/fetch-almalinux-installer.sh \
     --mirror https://repo.almalinux.org/almalinux --release 9 --arch x86_64
 
 # 3. Generate a per-host kickstart for the VM's pinned MAC
-netboot/gen-almalinux-ks.sh --mac 52:54:00:AL:MA:01
+netboot/gen-almalinux-ks.sh --mac 52:54:00:a1:9a:01
 
 # 4. Build iPXE with the per-host {MAC} kickstart URL embedded
 netboot/build-ipxe.sh --server http://10.0.2.2:8181 \
@@ -303,7 +303,7 @@ from USB. Same flow; only the server URL and MACs change.
 - **Phase 6 TUI surfacing:** `lab_tui/backends/vm.py` now classifies VMs with
   `backend=pxe-install` or `install_target` as `type="pxe-install"`.  These
   appear with a distinct label in the resource tree and expose a `_ks_file_hint`
-  (e.g. `ks/52-54-00-al-ma-01.ks`) in the detail view.  The `almalinux-pxe-lab.toml`
+  (e.g. `ks/52-54-00-a1-9a-01.ks`) in the detail view.  The `almalinux-pxe-lab.toml`
   surfaces as a single correlated lab (Phase 4 nginx + Phase 2 pxe-install VM).
 
 ## Open items

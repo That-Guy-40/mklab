@@ -606,7 +606,7 @@ netboot/fetch-almalinux-installer.sh \
     --mirror https://repo.almalinux.org/almalinux --release 9 --arch x86_64
 
 # 2. Generate the per-host kickstart for the VM's pinned MAC
-netboot/gen-almalinux-ks.sh --mac 52:54:00:AL:MA:01
+netboot/gen-almalinux-ks.sh --mac 52:54:00:a1:9a:01
 
 # 3. Build the iPXE ROM with {MAC} kickstart URL embedded
 netboot/build-ipxe.sh --server http://10.0.2.2:8181 \
@@ -617,7 +617,7 @@ netboot/build-ipxe.sh --server http://10.0.2.2:8181 \
 phase4-podman/lab-podman.sh up --config examples/podman-netboot-server.toml
 curl -sI http://localhost:8181/vmlinuz    | head -2
 curl -sI http://localhost:8181/initrd.img | head -2
-curl -sI http://localhost:8181/ks/52-54-00-al-ma-01.ks | head -2
+curl -sI http://localhost:8181/ks/52-54-00-a1-9a-01.ks | head -2
 
 # 5. Create the installer VM (blank target + iPXE ROM, two-disk boot-loop)
 phase2-qemu-vm/lab-vm.sh create --config examples/vm-almalinux-pxe-install.toml

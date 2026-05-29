@@ -18,7 +18,7 @@
 #          --append 'inst.repo=https://repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/ inst.ks=http://10.0.2.2:8181/ks/{MAC}.ks inst.text console=ttyS0 ip=dhcp'
 #      # ipxe.efi is placed in ~/netboot/ alongside ipxe.usb
 #
-#   2. netboot/gen-almalinux-ks.sh --mac 52:54:00:UE:FI:01 \
+#   2. netboot/gen-almalinux-ks.sh --mac 52:54:00:ef:f1:01 \
 #          --template examples/almalinux-uefi-zerotouch.ks [--default]
 #
 #   3. phase4-podman/lab-podman.sh up --config examples/podman-netboot-server.toml

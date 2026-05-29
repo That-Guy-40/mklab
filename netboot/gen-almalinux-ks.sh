@@ -31,7 +31,7 @@
 #   hostname) would add sed substitutions here before the copy step.
 #
 # Examples:
-#   netboot/gen-almalinux-ks.sh --mac 52:54:00:AL:MA:01
+#   netboot/gen-almalinux-ks.sh --mac 52:54:00:a1:9a:01
 #   netboot/gen-almalinux-ks.sh --mac 52:54:00:AA:BB:CC --out /srv/netboot
 
 set -euo pipefail
@@ -82,7 +82,7 @@ Output:
   <out>/ks/<mac:hexhyp>.ks
 
 Examples:
-  netboot/gen-almalinux-ks.sh --mac 52:54:00:AL:MA:01
+  netboot/gen-almalinux-ks.sh --mac 52:54:00:a1:9a:01
   netboot/gen-almalinux-ks.sh --mac 52:54:00:AA:BB:CC --out /srv/netboot
   netboot/gen-almalinux-ks.sh --mac 52:54:00:AA:BB:CC \
       --template /path/to/custom.ks --out ~/netboot

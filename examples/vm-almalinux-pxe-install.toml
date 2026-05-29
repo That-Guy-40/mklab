@@ -14,13 +14,13 @@
 # Prereqs (run in order):
 #   1. netboot/fetch-almalinux-installer.sh \
 #          --mirror https://repo.almalinux.org/almalinux --release 9 --arch x86_64
-#   2. netboot/gen-almalinux-ks.sh --mac 52:54:00:AL:MA:01
-#          # -> ~/netboot/ks/52-54-00-al-ma-01.ks
+#   2. netboot/gen-almalinux-ks.sh --mac 52:54:00:a1:9a:01
+#          # -> ~/netboot/ks/52-54-00-a1-9a-01.ks
 #   3. netboot/build-ipxe.sh --server http://10.0.2.2:8181 \
 #          --kernel-path /vmlinuz --initrd-path /initrd.img \
 #          --append 'inst.repo=https://repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/ inst.ks=http://10.0.2.2:8181/ks/{MAC}.ks inst.text console=ttyS0 ip=dhcp'
 #          # {MAC} is a literal token replaced at build time; iPXE expands it to
-#          # the NIC's MAC at runtime (e.g. 52-54-00-al-ma-01).
+#          # the NIC's MAC at runtime (e.g. 52-54-00-a1-9a-01).
 #   4. phase4-podman/lab-podman.sh up --config examples/podman-netboot-server.toml
 #
 # Then:
@@ -38,7 +38,7 @@ name           = "almalinux-pxe-install"
 backend        = "disk-image"
 image          = "/home/sqs/netboot/ipxe.qcow2"  # iPXE ROM (bootindex=1, fallback)
 install_target = "20G"                             # blank disk (bootindex=0, install dest)
-mac            = "52:54:00:AL:MA:01"               # pinned so the per-MAC kickstart matches
+mac            = "52:54:00:a1:9a:01"               # pinned so the per-MAC kickstart matches
 arch           = "x86_64"
 memory         = "2560M"                           # Anaconda needs ~2 GB+
 cpus           = 2
