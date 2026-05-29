@@ -6,15 +6,15 @@ Boot a blank VM (or a real machine) over the network and have it install
 
 This is the Debian-family cousin of the Rocky/AlmaLinux PXE labs. Those drive
 **Anaconda** with a **kickstart**; Kali is Debian-based, so it drives the
-**Debian installer** with a **preseed**. The surrounding machinery — iPXE ROM,
-rootless nginx, QEMU two-disk boot-loop — is identical.
+**Debian installer** with a **preseed**. The surrounding machinery — iPXE,
+rootless nginx, QEMU `pxe-install` netboot — is identical.
 
 Reference: [Kali docs — *Network PXE Install*](https://www.kali.org/docs/installation/network-pxe/).
 This lab implements **two** paths:
 
-| Path | Use case | DHCP/TFTP source | Bootloader |
+| Path | Use case | DHCP/TFTP source | iPXE delivery |
 |---|---|---|---|
-| **A — QEMU (default)** | a throwaway VM on your workstation | QEMU's built-in slirp | iPXE ROM disk |
+| **A — QEMU (default)** | a throwaway VM on your workstation | QEMU's built-in slirp | NIC PXE ROM → TFTP `ipxe.pxe` (BIOS) / `ipxe.efi` (UEFI) |
 | **B — real hardware** | a physical machine on your LAN | `dnsmasq` DHCP + TFTP | PXELINUX from `netboot.tar.gz` (Kali-docs style) |
 
 Path A is the fastest way to see it work with zero LAN setup. Path B is the
@@ -83,14 +83,15 @@ examples/kali-pxe-lab/fetch-kali-installer.sh --arch amd64
 cp examples/kali-pxe-lab/kali-preseed.cfg ~/netboot/kali/
 ```
 
-### 3. Build the iPXE ROM with the d-i boot params
+### 3. Build the iPXE boot programs with the d-i boot params
 
 ```bash
 netboot/build-ipxe.sh \
     --server http://10.0.2.2:8181 \
     --kernel-path /kali/linux --initrd-path /kali/initrd.gz \
     --append 'auto=true priority=critical preseed/url=http://10.0.2.2:8181/kali/kali-preseed.cfg DEBIAN_FRONTEND=text console=ttyS0,115200n8 ---'
-# → ~/netboot/ipxe.qcow2
+# → ~/netboot/ipxe.pxe (BIOS NBP, served via slirp TFTP — what this lab boots),
+#   ~/netboot/ipxe.efi (UEFI), and ~/netboot/ipxe.qcow2 (legacy disk image)
 ```
 
 - `10.0.2.2` is the host as seen from inside a QEMU slirp guest; `8181` is the
@@ -124,15 +125,19 @@ phase2-qemu-vm/lab-vm.sh start  kali-pxe-install
 phase2-qemu-vm/lab-vm.sh console kali-pxe-install     # watch; Ctrl-] to detach
 ```
 
-What you'll see (the boot-loop in motion):
+What you'll see (the boot-loop in motion — `pxe-install`, BIOS):
 
-1. **First boot:** the blank target disk (`vda`, bootindex 0) has no boot
-   sector, so the firmware falls through to the iPXE ROM (`vdb`, bootindex 1).
-   iPXE DHCPs, fetches `linux`/`initrd.gz`, and the Debian installer starts.
+1. **First boot:** SeaBIOS tries the blank target disk (`vda`, bootindex 0),
+   finds no boot sector, and falls to the NIC's stock PXE ROM → it DHCPs and
+   TFTP-chainloads `ipxe.pxe` → iPXE fetches `linux`/`initrd.gz` over HTTP and the
+   Debian installer starts with the preseed.
 2. **d-i runs the preseed** — partitions `vda`, debootstraps Kali from
    `http.kali.org`, installs GRUB to `vda`, then reboots.
-3. **Second boot:** `vda` is now bootable and wins the boot order; iPXE is never
-   reached again. You land at a Kali login.
+3. **Second boot:** `vda` is now bootable and (being bootindex 0) is tried first;
+   the NIC PXE ROM is never reached again. You land at a Kali login.
+
+> **UEFI?** Set `pxe_bootfile = "ipxe.efi"` and drop `firmware` in the TOML —
+> OVMF PXE-boots the EFI iPXE instead (`build-ipxe.sh` builds both). Same install.
 
 ```bash
 phase2-qemu-vm/lab-vm.sh ssh kali-pxe-install          # login: kali / kali  (root / lab also works)
@@ -252,11 +257,17 @@ proportionally longer than the minimal default.
 - **Why `~/netboot/kali/` instead of `~/netboot/`?** So Kali's `linux`/
   `initrd.gz` don't overwrite the Rocky/Alma `vmlinuz`/`initrd.img` if you run
   more than one PXE lab against the same served directory.
-- **Why pin partman + grub to `/dev/vda`?** d-i, left to its own devices, could
-  partition or install GRUB onto `vdb` — the iPXE ROM disk — and break the
-  boot-loop. `partman-auto/disk` and `grub-installer/bootdev` confine the whole
-  install to `vda`, leaving the fallback chainloader intact (the d-i equivalent
-  of the kickstart's `ignoredisk --only-use=vda`).
+- **Why pin partman + grub to `/dev/vda`?** The VM's only disk is the virtio
+  target, `/dev/vda`. `partman-auto/disk` + `grub-installer/bootdev` pin the
+  install there so it's fully unattended (no disk prompt) and GRUB lands on the
+  disk SeaBIOS boots next (the d-i equivalent of `ignoredisk --only-use=vda`).
+  iPXE arrives over the network (the NIC PXE ROM), not a disk, so there's no
+  second disk to protect.
+- **Why `pxe-install` + `ipxe.pxe`, not a two-disk iPXE-ROM disk?** SeaBIOS only
+  attempts the first hard disk, and x86_64 disk-image VMs default to OVMF (which
+  can't boot a BIOS-MBR disk), so the old two-disk trick doesn't boot in QEMU.
+  The NIC's stock PXE ROM TFTP-chainloading our `ipxe.pxe` (BIOS) / `ipxe.efi`
+  (UEFI) is what actually works.
 - **Why the trailing `---` in the kernel append?** It's the d-i marker dividing
   *installer* kernel args from *installed-system* kernel args; putting
   `console=ttyS0,115200n8` after it carries the serial console into the booted

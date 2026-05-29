@@ -1,5 +1,14 @@
 # Rocky PXE lab — full install walkthrough (the ~15-minute Anaconda run)
 
+> **⚠️ Boot mechanism updated (this runbook predates it).** The lab now boots via
+> QEMU **`pxe-install`** (the NIC's PXE ROM TFTP-chainloads `ipxe.pxe`), **not**
+> the two-disk iPXE-ROM-on-a-disk boot-loop described below — that never booted in
+> QEMU (SeaBIOS only tries the first hard disk; disk-image x86_64 defaults to OVMF,
+> which can't boot a BIOS-MBR disk). The **Anaconda + kickstart** steps are
+> unchanged and still valid; ignore the `vdb` "iPXE ROM disk" / ROM-survival
+> material (there is no second disk now). For the current pxe-install boot checks
+> see [`../kali-preseed-gallery/MANUAL_TESTING.md`](../kali-preseed-gallery/MANUAL_TESTING.md).
+
 This is the end-to-end, copy-pasteable runbook for actually *watching* a Rocky
 Linux 9 zero-touch PXE install complete in QEMU — from a blank disk to an SSH
 login, hands-off. It expands `README.md` Path A with what you should see at

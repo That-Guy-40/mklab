@@ -11,9 +11,9 @@ only the installer-fetch step and the mirror URLs differ.
 Reference: [CIQ — *Booting Rocky Linux via PXE*](https://kb.ciq.com/article/rocky-linux/rl-booting-rocky-linux-via-pxe).
 This lab implements **two** paths:
 
-| Path | Use case | DHCP/TFTP source | Bootloader |
+| Path | Use case | DHCP/TFTP source | iPXE delivery |
 |---|---|---|---|
-| **A — QEMU (default)** | a throwaway VM on your workstation | QEMU's built-in slirp | iPXE ROM disk |
+| **A — QEMU (default)** | a throwaway VM on your workstation | QEMU's built-in slirp | NIC PXE ROM → TFTP `ipxe.pxe` (BIOS) / `ipxe.efi` (UEFI) |
 | **B — real hardware** | a physical machine on your LAN | `dnsmasq` ProxyDHCP + TFTP | iPXE / UEFI grub (CIQ-style) |
 
 Path A is the fastest way to *see it work* with zero LAN setup. Path B is the
@@ -91,7 +91,7 @@ netboot/build-ipxe.sh \
     --server http://10.0.2.2:8181 \
     --kernel-path /vmlinuz --initrd-path /initrd.img \
     --append 'inst.repo=https://download.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/ inst.ks=http://10.0.2.2:8181/ks/{MAC}.ks inst.text console=ttyS0 ip=dhcp'
-# → ~/netboot/ipxe.qcow2  (the QEMU boot ROM)
+# → ~/netboot/ipxe.pxe (BIOS NBP — what this lab boots), ipxe.efi (UEFI), ipxe.qcow2
 ```
 
 - `10.0.2.2` is the host as seen from inside a QEMU slirp guest.
@@ -117,14 +117,16 @@ phase2-qemu-vm/lab-vm.sh start  rocky-pxe-install     # walk away (~10–15 min)
 phase2-qemu-vm/lab-vm.sh console rocky-pxe-install     # optional: watch Anaconda
 ```
 
-Watch the boot-loop do its thing:
+Watch the boot-loop do its thing (`pxe-install`, BIOS):
 
-1. **First boot:** the blank target disk (`vda`, bootindex 0) has no boot
-   sector, so the firmware falls through to the iPXE ROM (`vdb`, bootindex 1).
-   iPXE DHCPs, fetches `vmlinuz`/`initrd.img`, then Anaconda runs the kickstart
-   and installs to `vda`. The kickstart's final `reboot` ends it.
-2. **Second boot:** `vda` is now bootable and wins the boot order; iPXE is never
-   reached again. You land at a Rocky login.
+1. **First boot:** SeaBIOS tries the blank target disk (`vda`, bootindex 0),
+   finds no boot sector, and falls to the NIC's stock PXE ROM → it DHCPs and
+   TFTP-chainloads `ipxe.pxe` → iPXE fetches `vmlinuz`/`initrd.img` over HTTP →
+   Anaconda runs the kickstart and installs to `vda`; the final `reboot` ends it.
+2. **Second boot:** `vda` is now bootable and (being bootindex 0) is tried first;
+   the NIC PXE ROM is never reached again. You land at a Rocky login.
+
+> **UEFI?** Set `pxe_bootfile = "ipxe.efi"` and drop `firmware` in the TOML.
 
 ```bash
 phase2-qemu-vm/lab-vm.sh ssh rocky-pxe-install          # login: lab / lab
@@ -226,15 +228,17 @@ installs. Same boot flow as Path A, just with a real NIC and a real PXE server.
   `[checksums]` section carries `sha256:` for `images/pxeboot/{vmlinuz,initrd.img}`.
   Those hashes change every point release (Rocky 9 → 9.x), so the fetch script
   pulls `.treeinfo` live and parses it rather than pinning a hash that would rot.
-- **Why a two-disk boot-loop instead of two VM definitions?** An installer needs
-  a blank disk to install onto *and* a way to not reinstall on every subsequent
-  boot. QEMU `bootindex` ordering gives that for free in a single VM: empty
-  target (index 0) is skipped on first boot → iPXE (index 1) installs → target is
-  now bootable and wins forever after. True zero-touch, no manual disk swap.
+- **Why `pxe-install` (NIC PXE) instead of a two-disk iPXE-ROM disk?** SeaBIOS
+  only attempts the first hard disk, and x86_64 disk-image VMs default to OVMF
+  (which can't boot a BIOS-MBR disk) — so the older two-disk boot-loop doesn't
+  boot in QEMU.  Instead the NIC's stock PXE ROM TFTP-chainloads our `ipxe.pxe`
+  (BIOS) / `ipxe.efi` (UEFI).  The single install target carries `bootindex=0`:
+  blank on first boot → SeaBIOS falls to the NIC ROM → installs → on the next
+  boot the disk wins → true zero-touch, no manual disk swap.
 - **Why iPXE instead of plain PXELINUX/grub?** iPXE speaks HTTP, so the installer
   kernel/initrd and the per-host kickstart all come over HTTP from one rootless
-  nginx — no large files on TFTP, and `${mac:hexhyp}` lets one ROM serve every
-  host its own kickstart. TFTP only ever carries the tiny iPXE binary (Path B).
-- **Why `ignoredisk --only-use=vda` in the kickstart?** Without it, Anaconda's
-  `clearpart --all` would happily wipe `vdb` — the iPXE ROM disk — mid-install.
-  Pinning the install to `vda` keeps the fallback chainloader intact.
+  nginx — no large files on TFTP, and `${mac:hexhyp}` lets one boot program serve
+  every host its own kickstart. TFTP only ever carries the small iPXE NBP.
+- **Why `ignoredisk --only-use=vda` in the kickstart?** The VM's only disk is the
+  virtio target `/dev/vda`; pinning the install there keeps Anaconda fully
+  unattended (no disk prompt) and lands GRUB on the disk SeaBIOS boots next.

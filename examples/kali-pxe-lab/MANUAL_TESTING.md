@@ -1,5 +1,14 @@
 # Kali PXE lab — full install boot-verify (the ~15-min d-i run)
 
+> **⚠️ Boot mechanism updated (this runbook predates it).** The lab now boots via
+> QEMU **`pxe-install`** (the NIC's PXE ROM TFTP-chainloads `ipxe.pxe`), **not**
+> the two-disk iPXE-ROM-on-a-disk boot-loop described below — that never booted in
+> QEMU (SeaBIOS only tries the first hard disk; disk-image x86_64 defaults to OVMF,
+> which can't boot a BIOS-MBR disk). The **install + preseed** steps are unchanged
+> and still valid; ignore the `vdb` "iPXE ROM disk" / ROM-survival material (there
+> is no second disk now). For the current pxe-install boot checks see
+> [`../kali-preseed-gallery/MANUAL_TESTING.md`](../kali-preseed-gallery/MANUAL_TESTING.md).
+
 End-to-end, copy-pasteable runbook for actually completing a Kali Linux
 zero-touch **Debian-installer (d-i)** PXE install in QEMU — from a blank disk
 to an SSH login, hands-off. This is the Kali/d-i analog of
