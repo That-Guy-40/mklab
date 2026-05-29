@@ -57,18 +57,24 @@ image   = "docker.io/library/nginx:alpine"
 ports   = ["8181:80"]
 volumes = ["/home/sqs/netboot:/usr/share/nginx/html:ro"]
 
-# ─── Phase 2: QEMU installer VM (pxe-install: NIC PXE boots ipxe.pxe) ───────
+# ─── Phase 2: QEMU installer VM (pxe-install: NIC iPXE runs boot.ipxe) ──────
 # SeaBIOS tries the blank target disk (bootindex=0) → fails when empty → falls to
-# the NIC's stock PXE ROM → TFTP-chainloads ipxe.pxe → iPXE fetches Anaconda's
+# the NIC's option ROM.  QEMU's virtio-net ROM *is* iPXE, so it TFTP-fetches
+# boot.ipxe and runs it directly (the file starts with #!ipxe) → fetches Anaconda's
 # vmlinuz/initrd.img + the per-MAC kickstart over HTTP → installs to /dev/vda →
 # reboots into AlmaLinux (disk bootindex=0; the NIC ROM is never reached again).
+#   Why boot.ipxe and not ipxe.pxe?  Running the script in the NIC's *native*
+#   iPXE avoids chainloading our ipxe.pxe binary, whose UNDI re-init + second
+#   DHCP is the flaky step that drops to "No bootable device".  Real hardware
+#   whose firmware PXE is NOT iPXE: set pxe_bootfile = "ipxe.pxe" to chainload
+#   the iPXE binary (which embeds this same script) first.
 #   UEFI variant: see vm-almalinux-uefi-pxe.toml (backend=pxe-install + ipxe.efi).
 # (The older two-disk iPXE-ROM-on-a-disk trick does NOT boot in QEMU: SeaBIOS
 # tries only the first hard disk; disk-image x86_64 defaults to OVMF, which can't
 # boot a BIOS-MBR disk.)  cloud_init=false: Anaconda provisions from the ks.
 [[vm]]
 name           = "almalinux-pxe-install"
-backend        = "pxe-install"          # NIC PXE-boots ipxe.pxe; no iPXE ROM disk
+backend        = "pxe-install"          # NIC's iPXE ROM runs boot.ipxe directly; no binary chainload
 firmware       = "bios"                  # SeaBIOS + NIC option-ROM path (UEFI: see vm-almalinux-uefi-pxe.toml)
 install_target = "20G"                   # blank disk, bootindex=0: install dest + post-install boot disk
 mac            = "52:54:00:a1:9a:01"     # pinned so the per-MAC kickstart matches
@@ -76,5 +82,5 @@ arch           = "x86_64"
 memory         = "4096M"               # 4G: Anaconda + the HTTP stage2 (install.img ~1.2 GB) loads into the initramfs tmpfs
 cpus           = 2
 cloud_init     = false                   # Anaconda provisions directly; no datasource
-pxe_dir        = "/home/sqs/netboot"     # QEMU slirp TFTP root (serves ipxe.pxe)
-pxe_bootfile   = "ipxe.pxe"              # BIOS iPXE NBP
+pxe_dir        = "/home/sqs/netboot"     # QEMU slirp TFTP root (serves boot.ipxe)
+pxe_bootfile   = "boot.ipxe"             # iPXE script, run by QEMU's native iPXE NIC ROM (real HW w/ non-iPXE PXE: ipxe.pxe)

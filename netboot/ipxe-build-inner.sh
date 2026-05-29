@@ -121,13 +121,32 @@ IPXETRUST
 fi
 
 # ─── Write embedded boot script ─────────────────────────────────────────────
+# Collapse every run of whitespace in --append (incl. stray newlines/tabs that
+# sneak in when a long single-quoted --append is copy-pasted out of a wrapped
+# terminal/markdown line) down to single spaces.  Without this, an embedded
+# newline splits the `kernel` command across two iPXE script lines and the tail
+# (e.g. "console=ttyS0 ip=dhcp") is parsed as a bogus command, aborting the boot.
+append_oneline="$(printf '%s' "$append" | tr '\n\t' '  ' | tr -s ' ')"
+append_oneline="${append_oneline#"${append_oneline%%[![:space:]]*}"}"   # ltrim
+append_oneline="${append_oneline%"${append_oneline##*[![:space:]]}"}"   # rtrim
+
+# Retry loop instead of a one-shot `dhcp`: a single transient DHCP/HTTP failure
+# (e.g. the NIC re-initialising over UNDI after a binary chainload) would abort
+# the whole script and drop back to the BIOS boot order ("No bootable device").
+# Looping re-attempts every 3s; once `boot` succeeds the kernel takes over and
+# the loop is never reached.
 log_info "writing embedded boot script to /tmp/ipxe/src/boot.ipxe"
 cat > /tmp/ipxe/src/boot.ipxe <<EOF
 #!ipxe
-dhcp
-kernel ${server_url}${kernel_path} ${append}
-initrd ${server_url}${initrd_path}
-boot
+:start
+dhcp || goto retry
+kernel ${server_url}${kernel_path} ${append_oneline} || goto retry
+initrd ${server_url}${initrd_path} || goto retry
+boot || goto retry
+:retry
+echo iPXE boot step failed -- retrying in 3s
+sleep 3
+goto start
 EOF
 
 # Rewrite the {MAC} placeholder (written literally by the caller via --append)

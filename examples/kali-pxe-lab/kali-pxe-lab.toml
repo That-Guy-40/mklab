@@ -59,15 +59,21 @@ image   = "docker.io/library/nginx:alpine"
 ports   = ["8181:80"]
 volumes = ["/home/sqs/netboot:/usr/share/nginx/html:ro"]
 
-# ─── Phase 2: QEMU installer VM (pxe-install: NIC PXE boots ipxe.pxe) ───────
+# ─── Phase 2: QEMU installer VM (pxe-install: NIC iPXE runs boot.ipxe) ──────
 # SeaBIOS tries the blank target disk (bootindex=0) → fails when empty → falls to
-# the NIC's stock PXE ROM ("Booting from ROM") → TFTP-chainloads ipxe.pxe → iPXE
+# the NIC's option ROM ("Booting from ROM").  QEMU's virtio-net ROM *is* iPXE, so
+# it TFTP-fetches boot.ipxe and runs it directly (the file starts with #!ipxe) →
 # fetches the d-i kernel/initrd over HTTP → installs to /dev/vda → reboots.
 # Post-install the disk (bootindex=0) boots Kali; the NIC ROM is never reached
-# again → the loop terminates.  Verified end-to-end on KVM.
+# again → the loop terminates.
 #
-#   UEFI variant: drop `firmware` and set pxe_bootfile = "ipxe.efi" (OVMF
-#   PXE-boots the EFI iPXE — also verified).  build-ipxe builds both.
+#   Why boot.ipxe and not ipxe.pxe?  Running the script in the NIC's *native*
+#   iPXE avoids chainloading our ipxe.pxe binary, whose UNDI re-init + second
+#   DHCP is the flaky step that can drop to "No bootable device".  Real hardware
+#   whose firmware PXE is NOT iPXE: set pxe_bootfile = "ipxe.pxe" (BIOS) /
+#   "ipxe.efi" (UEFI) to chainload the iPXE binary (which embeds this same
+#   script) first.  build-ipxe builds boot.ipxe + ipxe.pxe + ipxe.efi.
+#   UEFI here: drop `firmware` and set pxe_bootfile = "ipxe.efi".
 #
 # (The older two-disk iPXE-ROM-on-a-disk trick does NOT boot in QEMU: SeaBIOS
 # only attempts the first hard disk, and x86_64 disk-image VMs default to OVMF,
@@ -76,7 +82,7 @@ volumes = ["/home/sqs/netboot:/usr/share/nginx/html:ro"]
 # memory: 1.5 GB is comfortable for d-i (unpacks the initrd + runs apt).
 [[vm]]
 name           = "kali-pxe-install"
-backend        = "pxe-install"          # NIC PXE-boots ipxe.pxe; no iPXE ROM disk
+backend        = "pxe-install"          # NIC's iPXE ROM runs boot.ipxe directly; no binary chainload
 firmware       = "bios"                  # SeaBIOS + NIC option-ROM path (UEFI: drop this + use ipxe.efi)
 install_target = "20G"                   # blank disk, bootindex=0: install dest + post-install boot disk
 mac            = "52:54:00:ca:11:01"     # valid hex; "ca11" ~ kali
@@ -84,5 +90,5 @@ arch           = "x86_64"
 memory         = "1536M"
 cpus           = 2
 cloud_init     = false                   # d-i provisions directly; no datasource
-pxe_dir        = "/home/sqs/netboot"     # QEMU slirp TFTP root (serves ipxe.pxe)
-pxe_bootfile   = "ipxe.pxe"              # BIOS iPXE NBP (UEFI: ipxe.efi)
+pxe_dir        = "/home/sqs/netboot"     # QEMU slirp TFTP root (serves boot.ipxe)
+pxe_bootfile   = "boot.ipxe"             # iPXE script, run by QEMU's native iPXE NIC ROM (real HW w/ non-iPXE PXE: ipxe.pxe)

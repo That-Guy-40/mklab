@@ -4,7 +4,7 @@ Boot a blank VM over the (virtual) network and have it install **Rocky Linux 9**
 or **AlmaLinux 9** with no keystrokes:
 
 ```
-SeaBIOS → NIC PXE ROM → TFTP ipxe.pxe → iPXE → HTTP(vmlinuz+initrd+stage2) → Anaconda → kickstart → reboot into the installed OS
+SeaBIOS → NIC's iPXE ROM → TFTP boot.ipxe (run directly) → HTTP(vmlinuz+initrd+stage2) → Anaconda → kickstart → reboot into the installed OS
 ```
 
 The two labs are twins — identical flow, only three values differ (fetch script,
@@ -146,9 +146,13 @@ phase2-qemu-vm/lab-vm.sh    destroy almalinux-pxe-install --force
 ## What you should see on the console
 
 1. **SeaBIOS** tries the blank target disk (`vda`, bootindex 0) → "no bootable
-   device" → **"Booting from ROM…"** (the NIC's stock PXE option ROM).
-2. iPXE DHCPs over QEMU slirp and **TFTP-chainloads `ipxe.pxe`**; that iPXE then
-   fetches `vmlinuz` + `initrd.img` over HTTP.
+   device" → **"Booting from ROM…"** (the NIC's option ROM — which on QEMU *is*
+   iPXE).
+2. That **native iPXE** DHCPs over QEMU slirp and **TFTP-fetches `boot.ipxe`**;
+   because the file starts with `#!ipxe` it runs it as a script (no second iPXE
+   binary), which fetches `vmlinuz` + `initrd.img` over HTTP. *(In the nginx log
+   you'll see the `vmlinuz`/`initrd.img` GETs carry the `iPXE/1.21.1` user-agent —
+   the NIC ROM itself, not a chainloaded 2.0.0.)*
 3. **dracut** loads the stage2 (`install.img`) from the **local** nginx — the step
    that needs the 4 GB RAM.
 4. **Anaconda** runs the kickstart, partitions and installs to `/dev/vda`, then the
@@ -163,11 +167,24 @@ phase2-qemu-vm/lab-vm.sh    destroy almalinux-pxe-install --force
 These are the fixes baked into the configs; you don't need to do anything, but
 here's the reasoning:
 
-- **`firmware = "bios"` + `pxe_bootfile = "ipxe.pxe"`** — disk-image x86_64 VMs
-  default to **OVMF/UEFI**, which cannot boot a BIOS-MBR iPXE ROM. `firmware =
-  "bios"` selects QEMU's **SeaBIOS**, which network-boots via the NIC's PXE ROM and
-  chainloads `ipxe.pxe`. SeaBIOS only tries the *first* hard disk, so the old
-  "two-disk boot-loop" trick does **not** work here — this NIC-PXE path replaces it.
+- **`firmware = "bios"`** — disk-image x86_64 VMs default to **OVMF/UEFI**, which
+  cannot boot a BIOS-MBR iPXE ROM. `firmware = "bios"` selects QEMU's **SeaBIOS**,
+  which network-boots via the NIC's option ROM. SeaBIOS only tries the *first* hard
+  disk, so the old "two-disk boot-loop" trick does **not** work here — this NIC-PXE
+  path replaces it.
+- **`pxe_bootfile = "boot.ipxe"` (not `ipxe.pxe`)** — QEMU's virtio-net option ROM
+  *is already* iPXE, so we hand it the **script** directly: it TFTP-fetches
+  `boot.ipxe`, sees `#!ipxe`, and runs it in its native (already-DHCP'd) context.
+  Pointing it at `ipxe.pxe` instead would chainload a *second* iPXE binary that
+  re-initialises the NIC over **UNDI** and DHCPs again — that re-DHCP is the flaky
+  step that drops to **"No bootable device."** Serving the script removes it
+  entirely. *(On real hardware whose firmware PXE is **not** iPXE, set
+  `pxe_bootfile = "ipxe.pxe"` / `"ipxe.efi"` to chainload the iPXE binary — which
+  embeds this same `boot.ipxe` — first.)*
+- **`boot.ipxe` is hardened** — `build-ipxe.sh` collapses the `--append` to a single
+  line (a stray newline from a copy-paste-wrapped `--append` used to split the
+  `kernel` command) and wraps `dhcp`/`kernel`/`initrd`/`boot` in a retry loop, so a
+  single transient failure retries instead of aborting to the BIOS boot order.
 - **`memory = "4096M"`** — Anaconda downloads the ~1.2 GB `install.img` stage2 into
   the initramfs **tmpfs** (~½ of RAM). At 2.5 GB the tmpfs filled at ~814 MB →
   `dracut: FATAL: No space left`. 4 GB (≈2 GB tmpfs) is the floor; raise it for a
@@ -181,8 +198,8 @@ here's the reasoning:
 
 ### UEFI instead of BIOS
 
-`build-ipxe.sh` builds **both** `ipxe.pxe` (BIOS) and `ipxe.efi` (UEFI), so switching
-is just a config change:
+`build-ipxe.sh` writes `boot.ipxe` and builds **both** `ipxe.pxe` (BIOS) and
+`ipxe.efi` (UEFI), so switching is just a config change:
 
 - **AlmaLinux** has a ready-made UEFI lab: `examples/vm-almalinux-uefi-pxe.toml`
   (`backend = "pxe-install"`, `pxe_bootfile = "ipxe.efi"`, no `firmware` line → OVMF
@@ -190,7 +207,9 @@ is just a config change:
   (`bootloader --location=boot`).
 - **Rocky / any lab** — delete the `firmware = "bios"` line and set
   `pxe_bootfile = "ipxe.efi"`. For Secure Boot add `secure_boot = true` and build
-  iPXE with `--sign --use-snakeoil`.
+  iPXE with `--sign --use-snakeoil`. (OVMF's NIC ROM is also iPXE, so
+  `pxe_bootfile = "boot.ipxe"` works under UEFI too; the dedicated lab uses
+  `ipxe.efi` as the verified path.)
 
 ### Real hardware (not QEMU)
 
@@ -205,12 +224,14 @@ instead of QEMU's slirp. See `examples/rocky-pxe-lab/README.md` §"Path B".
 | `curl -sI` on any of the four URLs ≠ `200` | nginx volume path wrong (the `$HOME` note), or the fetch step didn't complete. Fix that before booting. |
 | Install dies at dracut "No space left" | RAM too low — keep `memory = "4096M"` (or higher). |
 | Install dies fetching stage2 from a mirror | The `--append` lost `inst.stage2=…` — it must serve the **local** install.img. |
-| Stalls at "Booting from ROM…" with no HTTP fetch in the nginx log | QEMU-slirp DHCP flake (intermittent, sandbox/loaded-host). `destroy` + `start` again — it is not a config problem. |
-| iPXE downloads then "No bootable device" after reboot | Rare slirp re-DHCP flake on the chainloaded iPXE. Re-run `start`. |
+| A second `iPXE 2.0.0+` banner appears, then "Booting from Floppy" / "No bootable device" | You're chainloading the `ipxe.pxe` **binary** (the old failure). Confirm `pxe_bootfile = "boot.ipxe"` in the TOML and that `~/netboot/boot.ipxe` exists (re-run `build-ipxe.sh`). |
+| `kernel` args look truncated / `console=ttyS0: command not found` in iPXE | A newline crept into `--append` on paste, splitting the `kernel` line. Re-run `build-ipxe.sh` (current builds collapse `--append` to one line); keep the whole `--append '…'` on a single line. |
 
-> **Verification status (in this repo's sandbox):** the boot pattern, the resumable
-> `install.img` download (resumes to a complete, checksum-verified 1.17 GB), and the
-> local stage2 serve are all proven directly; the 4 GB sizing is evidenced by the
-> exact `No space left` dracut FATAL at 2.5 GB. A single uninterrupted
-> full-install-to-reboot run was blocked only by QEMU-slirp non-determinism on a
-> loaded host — on a normal network/host these steps complete end-to-end.
+> **Verification status:** re-verified directly on KVM after this fix — the NIC's
+> native iPXE ran `boot.ipxe` and fetched `vmlinuz` + `initrd.img` + the **full
+> 1.2 GB** `install.img` stage2 + the kickstart (nginx confirmed; no 814 MB cutoff
+> at 4 GB RAM), and Anaconda proceeded into the install. The resumable
+> `install.img` download (resumes to a complete, checksum-verified 1.17 GB) and the
+> local stage2 serve are likewise proven directly. From the kickstart onward,
+> Anaconda pulls packages from the upstream mirror (not nginx) and finishes the
+> install + reboot — the network-dependent tail, unchanged by this fix.

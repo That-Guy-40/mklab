@@ -38,7 +38,7 @@
 
 [[vm]]
 name           = "almalinux-pxe-install"
-backend        = "pxe-install"          # NIC PXE-boots ipxe.pxe; no iPXE ROM disk
+backend        = "pxe-install"          # NIC's iPXE ROM runs boot.ipxe directly; no binary chainload
 firmware       = "bios"                  # SeaBIOS + NIC option-ROM path (UEFI: vm-almalinux-uefi-pxe.toml)
 install_target = "20G"                   # blank disk, bootindex=0: install dest + post-install boot disk
 mac            = "52:54:00:a1:9a:01"     # pinned so the per-MAC kickstart matches
@@ -46,5 +46,5 @@ arch           = "x86_64"
 memory         = "4096M"               # 4G: Anaconda + the HTTP stage2 (install.img ~1.2 GB) loads into the initramfs tmpfs
 cpus           = 2
 cloud_init     = false                   # Anaconda provisions directly; no datasource
-pxe_dir        = "/home/sqs/netboot"     # QEMU slirp TFTP root (serves ipxe.pxe)
-pxe_bootfile   = "ipxe.pxe"              # BIOS iPXE NBP
+pxe_dir        = "/home/sqs/netboot"     # QEMU slirp TFTP root (serves boot.ipxe)
+pxe_bootfile   = "boot.ipxe"             # iPXE script, run by QEMU's native iPXE NIC ROM (real HW w/ non-iPXE PXE: ipxe.pxe)
