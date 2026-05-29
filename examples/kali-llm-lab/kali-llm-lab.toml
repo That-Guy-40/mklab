@@ -1,0 +1,83 @@
+# Kali local-LLM lab — Tier 1: headless Ollama + Open WebUI over SSH-forward.
+#
+# The reproducible, self-contained core of the Kali "Local LLM with Ollama &
+# 5ire" blog (https://www.kali.org/blog/kali-llm-ollama-5ire/), adapted to run
+# rootless under Phase 4 and be reached from your laptop over an SSH tunnel.
+#
+#   backend (this lab, on the lab host)        client (your laptop)
+#   ┌───────────────── pod: llmstack ──────────────┐
+#   │  ollama        :11434  ◀── localhost ──┐      │   ssh -L 8088:…:8088   → browser → Open WebUI
+#   │  (LLM runtime, model volume)           │      │   ssh -L 11434:…:11435 → real 5ire (Tier 2)
+#   │  open-webui    :8080  ── OLLAMA_BASE_URL┘      │   (container ports shown; host publishes 8088/11435)
+#   └───────────────────────────────────────────────┘
+#
+# Both services live in ONE POD, so open-webui reaches ollama on plain
+# `localhost:11434` (no brittle container-name DNS).  Ports are published on
+# the host LOOPBACK only — nothing is exposed to the network; you reach them by
+# forwarding over SSH.  See README.md.
+#
+# ─── Workflow ────────────────────────────────────────────────────────────────
+#   # 1. Bring the stack up (rootless; pulls the two images on first run):
+#   phase4-podman/lab-podman.sh up --config examples/kali-llm-lab/kali-llm-lab.toml
+#
+#   # 2. Pull a model into the persistent volume (CPU-friendly default):
+#   examples/kali-llm-lab/pull-models.sh            # → llama3.2:1b
+#
+#   # 3. From your laptop, forward the UI (and the API for Tier-2 5ire):
+#   ssh -L 8088:localhost:8088 -L 11434:localhost:11435 labhost
+#   #   then open http://localhost:8088  (Open WebUI; first account = admin)
+#
+#   # Tear down (the model volume persists unless you also `podman volume rm`):
+#   phase4-podman/lab-podman.sh down --lab kali-llm
+#
+# Update /home/sqs to your $HOME only if you later add bind-mounts; this lab
+# uses named volumes, so no host path is hardcoded.
+
+[lab]
+name        = "kali-llm"
+description = "Local LLM on Kali, headless: Ollama backend + Open WebUI in one rootless pod, reached over SSH-forward. Tier 1 of the Ollama+5ire+MCP blog stack; real 5ire (Tier 2) connects to the same Ollama endpoint."
+tags        = ["kali", "llm", "ollama", "open-webui", "ai", "mcp"]
+
+# One pod → the two services share localhost; ports publish at the pod level.
+# Loopback binds (127.0.0.1) keep the unauthenticated Ollama API and the UI off
+# the network — reach them via SSH-forward (see README "Security").
+# Host ports deliberately avoid the canonical 8080 (Open WebUI) and 11434
+# (Ollama): those are very commonly occupied — e.g. a *native* `ollama serve`
+# already owns 11434, and 8080 is a default for countless apps (this repo's
+# netboot labs dodge it too, using 8181). Pick anything free on your host; the
+# IN-CONTAINER ports stay canonical (8080 / 11434).
+#   host 8088  → Open WebUI    (browser; ssh -L 8088:localhost:8088)
+#   host 11435 → Ollama API    (Tier-2 5ire / direct curl; ssh -L 11434:localhost:11435)
+[[pod]]
+name    = "llmstack"
+publish = [
+    "127.0.0.1:8088:8080",       # Open WebUI (browser client)
+    "127.0.0.1:11435:11434",     # Ollama API — only needed for Tier-2 (real 5ire) / direct curl
+]
+
+# ─── Ollama: the local LLM runtime (the backend that actually runs models) ──
+# Model blobs live in the named volume so `down`/`up` doesn't re-download GBs.
+# Pin a digest (image = "...@sha256:...") for a reproducible/supply-chain-safe
+# lab; :latest is used here for a first run.
+# GPU (opt-in): see README "GPU acceleration" — needs rootless-podman CDI; a
+# per-service `devices` key isn't wired in lab-podman.sh yet, so GPU currently
+# goes through a manual `podman run --device nvidia.com/gpu=all` (documented).
+[[service]]
+name    = "ollama"
+engine  = "podman"
+image   = "docker.io/ollama/ollama:latest"
+manager = "pod"
+pod     = "llmstack"
+volumes = ["kali-llm-ollama:/root/.ollama"]
+
+# ─── Open WebUI: the browser chat client (headless stand-in for 5ire) ───────
+# Talks to ollama over the shared pod localhost.  WEBUI_AUTH=true → the first
+# account you create becomes admin (don't skip this on a shared host).
+[[service]]
+name    = "open-webui"
+engine  = "podman"
+image   = "ghcr.io/open-webui/open-webui:main"
+manager = "pod"
+pod     = "llmstack"
+environment = { OLLAMA_BASE_URL = "http://localhost:11434", WEBUI_AUTH = "true" }
+volumes = ["kali-llm-webui:/app/backend/data"]
