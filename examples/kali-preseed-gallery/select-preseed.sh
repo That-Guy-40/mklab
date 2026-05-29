@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# select-preseed.sh — Pick a gallery variant and (re)build the iPXE ROM that
-#                     boots the Kali d-i installer with THAT preseed.
+# select-preseed.sh — Pick a gallery variant and (re)build the iPXE boot program
+#                     that boots the Kali d-i installer with THAT preseed.
 #
-# The iPXE ROM bakes in the boot params (kernel/initrd URL + preseed/url), so
-# switching variants = rebuilding the tiny ROM.  This is a thin wrapper around
-# the shared netboot/build-ipxe.sh with the gallery's defaults filled in.
+# build-ipxe bakes the boot params (kernel/initrd URL + preseed/url) into every
+# iPXE artifact, so switching variants = rebuilding them.  The pxe-install lab
+# boots ipxe.pxe (BIOS NBP); ipxe.efi (UEFI) and ipxe.qcow2 are built too.  This
+# is a thin wrapper around the shared netboot/build-ipxe.sh with the gallery's
+# defaults filled in.
 #
 #   examples/kali-preseed-gallery/select-preseed.sh <variant> [OPTIONS]
 #
@@ -17,7 +19,7 @@
 #   --preseed-dir <d> staged preseed dir   (default: ~/netboot/kali-preseed)
 #   --kernel-url <p>  served path to the d-i kernel  (default: /kali/linux)
 #   --initrd-url <p>  served path to the d-i initrd  (default: /kali/initrd.gz)
-#   --output-dir <d>  where ipxe.qcow2 is written     (default: ~/netboot)
+#   --output-dir <d>  where ipxe.pxe/.efi/.qcow2 are written (default: ~/netboot)
 #   --arch     <a>    iPXE arch: x86_64|aarch64        (default: x86_64)
 #   --print-only      print the resolved build-ipxe command and exit (no build)
 #   --help            show this help and exit
@@ -135,7 +137,7 @@ if (( print_only )); then
     exit 0
 fi
 
-log_info "building iPXE ROM → ${output_dir}/ipxe.qcow2 …"
+log_info "building iPXE boot programs → ${output_dir}/ipxe.pxe (BIOS), ipxe.efi (UEFI) …"
 
 "$build_ipxe" \
     --server      "$server" \
@@ -145,7 +147,7 @@ log_info "building iPXE ROM → ${output_dir}/ipxe.qcow2 …"
     --output-dir  "$output_dir" \
     --arch        "$arch"
 
-log_ok "iPXE ROM built for '${fname}'. Now serve + boot:"
+log_ok "iPXE boot program built for '${fname}'. Now serve + boot:"
 cat >&2 <<EOF
   phase4-podman/lab-podman.sh up     --config examples/kali-preseed-gallery/kali-preseed-gallery.toml
   phase2-qemu-vm/lab-vm.sh    create --config examples/kali-preseed-gallery/kali-preseed-gallery.toml

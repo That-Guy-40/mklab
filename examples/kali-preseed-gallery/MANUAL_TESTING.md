@@ -2,25 +2,23 @@
 
 Copy-pasteable checks for the gallery, in the order you'd run them. The **new**
 surface here (vs. `../kali-pxe-lab/`) is the **catalog fetch + vda-patch** and
-the **variant selector** — those are checked exhaustively below. The iPXE ROM
-build, the two-disk boot-loop, and the "did d-i clobber the ROM disk?" question
-are shared verbatim with the PXE lab, so for those see
-[`../kali-pxe-lab/MANUAL_TESTING.md`](../kali-pxe-lab/MANUAL_TESTING.md).
+the **variant selector** — those are checked exhaustively below.  The boot path
+is QEMU `pxe-install` (BIOS): SeaBIOS → the NIC's PXE ROM → TFTP `ipxe.pxe` →
+iPXE → d-i → install to `/dev/vda` → reboot into the installed disk.
 
 All commands run from the repo root. Replace `/home/sqs` in the TOML with your
 `$HOME` first.
 
 ---
 
-## ⚠️ Read this first — the one install-breaking risk (inherited)
+## ⚠️ Read this first — the one install-breaking risk
 
-This lab boots the installer from an **iPXE ROM on a second virtio disk**, so the
-guest has `/dev/vda` (blank target) **and** `/dev/vdb` (the ROM). The upstream
-preseeds pin `/dev/sda` and don't set `partman-auto/disk`, which would (a) fail
-`grub-install` (no `sda` on a virtio bus) or (b) let d-i partition over `/dev/vdb`
-and destroy the ROM mid-install. `fetch-preseeds.sh` rewrites both to `/dev/vda`.
-**Section 1 below proves the patch took** before you ever boot. The deep dive on
-the boot-loop + how vda-pinning protects the ROM is in the PXE lab's runbook.
+The VM's only disk is a **virtio** disk, `/dev/vda` (there is no `/dev/sda`).
+Every upstream preseed pins `/dev/sda` and sets no `partman-auto/disk`, which on
+this bus would (a) fail `grub-install` (no `sda`) or (b) leave d-i's partitioner
+**prompting** for the target, breaking the unattended install. `fetch-preseeds.sh`
+rewrites both to `/dev/vda`. **Section 1 below proves the patch took** before you
+ever boot.
 
 ---
 
@@ -94,12 +92,12 @@ examples/kali-preseed-gallery/select-preseed.sh nope 2>&1 | head -3; echo "exit=
 
 ---
 
-## 3. Fetch the installer + build the ROM for real (≈1–3 min, Docker)
+## 3. Fetch the installer + build the iPXE boot program (≈1–3 min, Docker)
 
 ```bash
 examples/kali-pxe-lab/fetch-kali-installer.sh --arch amd64        # → ~/netboot/kali/{linux,initrd.gz}
-examples/kali-preseed-gallery/select-preseed.sh headless-default  # → ~/netboot/ipxe.qcow2
-file ~/netboot/ipxe.qcow2     # → QEMU QCOW2 Image
+examples/kali-preseed-gallery/select-preseed.sh headless-default  # → ~/netboot/ipxe.pxe (+ .efi/.qcow2)
+file ~/netboot/ipxe.pxe       # → … (iPXE BIOS NBP, served via slirp TFTP)
 ```
 
 ---
@@ -116,7 +114,7 @@ done
 
 ---
 
-## 5. Boot it (unattended) — and confirm the ROM survived
+## 5. Boot it (unattended) — and confirm the loop terminates
 
 ```bash
 phase2-qemu-vm/lab-vm.sh create  --config examples/kali-preseed-gallery/kali-preseed-gallery.toml
@@ -124,14 +122,25 @@ phase2-qemu-vm/lab-vm.sh start   kali-preseed-install
 phase2-qemu-vm/lab-vm.sh console kali-preseed-install     # watch; Ctrl-] detaches
 ```
 
-`headless-default` finishes fastest (no desktop). After it reboots into Kali,
-log in on the console (`kali`/`kali`) and confirm d-i partitioned the **target**,
-not the ROM:
+What you'll see: SeaBIOS tries the blank `vda` (bootindex 0) → falls to the NIC
+PXE ROM → TFTP `ipxe.pxe` → iPXE fetches the d-i kernel/initrd → unattended
+install to `/dev/vda` → reboot. `headless-default` finishes fastest (no desktop).
+
+Confirm the loop **terminated** (i.e. the second boot came from the disk, not the
+network) — two host-side checks that don't need a guest login (the installed
+kernel has no serial console):
 
 ```bash
-lsblk
-# Expect:  vda 20G  with vda1 (/) [+ swap]      ← installed here ✓
-#          vdb ~4M  with NO child partitions    ← iPXE ROM untouched ✓
+# (a) nginx logged the netboot fetches exactly ONCE (at install time) — no second
+#     round after the reboot = SeaBIOS booted the installed disk:
+podman logs lab-kali-preseed-gallery-http 2>&1 | grep -a 'GET /kali/linux'   # one timestamp
+
+# (b) the installed disk has a GRUB boot sector (stop the VM first):
+phase2-qemu-vm/lab-vm.sh stop kali-preseed-install
+tgt=~/.local/state/lab-create/vms/kali-preseed-install/kali-preseed-install-target.qcow2
+qemu-img convert -f qcow2 -O raw "$tgt" /tmp/vda.raw
+od -An -tx1 -j510 -N2 /tmp/vda.raw      # 55 aa  (boot signature)
+strings <(head -c2048 /tmp/vda.raw) | grep -i grub   # → GRUB ; rm /tmp/vda.raw
 ```
 
 > Desktop / `*-large` / `crypto*` variants work the same way but take far longer
@@ -145,7 +154,7 @@ lsblk
 ```bash
 phase4-podman/lab-podman.sh down    --lab kali-preseed-gallery
 phase2-qemu-vm/lab-vm.sh    destroy kali-preseed-install --force
-# Optional: reclaim artifacts:  rm -rf ~/netboot/kali ~/netboot/kali-preseed ~/netboot/ipxe.qcow2
+# Optional: reclaim artifacts:  rm -rf ~/netboot/kali ~/netboot/kali-preseed ~/netboot/ipxe.*
 ```
 
 ---
@@ -154,10 +163,10 @@ phase2-qemu-vm/lab-vm.sh    destroy kali-preseed-install --force
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| VM keeps re-running the installer | `grub-install` failed (ROM disk, not target) | confirm §1a pinned `/dev/vda`; check §5 `lsblk` shows `vda1` |
-| `vdb` got partitioned | served an **unpatched** preseed | re-run `fetch-preseeds.sh` (no `--verbatim`); rebuild the ROM |
+| VM keeps re-running the installer (never boots the disk) | `grub-install` failed, or the target lacks `bootindex=0` | confirm §1a pinned `/dev/vda`; check §5(b) for `55 aa` + `GRUB` on the target |
 | d-i stops at a prompt | `partman-auto/disk` missing → guided partitioner asks | §1a should have caught it; ensure you didn't `--verbatim` |
 | `curl …/kali-preseed/<v>` → 404 | variant name typo, or TOML volume still `/home/sqs` | check the staged filename; fix the volume path |
+| iPXE never starts (`No bootable device`) | guest didn't reach the NIC PXE ROM, or `ipxe.pxe` not served | confirm `firmware="bios"` + `pxe_bootfile="ipxe.pxe"`; `ipxe.pxe` present in `pxe_dir` |
 | iPXE can't fetch over HTTP | nginx not up, or guest can't reach `10.0.2.2` | `lab-podman.sh up` first; `10.0.2.2` is the slirp host alias |
 | Install very slow / stalls on apt | a desktop/`*-large` variant pulling GBs | expected; try `headless-default` to validate the pipeline first |
 
@@ -165,8 +174,8 @@ phase2-qemu-vm/lab-vm.sh    destroy kali-preseed-install --force
 
 ## Notes
 
-- **One variant at a time per ROM.** The selected preseed is baked into
-  `ipxe.qcow2`. To switch: `select-preseed.sh <other>`, then `destroy` + `create`
+- **One variant at a time per NBP.** The selected preseed is baked into
+  `ipxe.pxe`. To switch: `select-preseed.sh <other>`, then `destroy` + `create`
   the VM (blank the target disk) before `start`.
 - **The gallery and PXE lab share `~/netboot/` + port 8181.** Run one at a time;
   the nginx service is identical.

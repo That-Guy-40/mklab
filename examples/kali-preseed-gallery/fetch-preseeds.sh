@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # fetch-preseeds.sh — Download the upstream Kali preseed-examples catalog and
-#                     stage lab-ready copies for the QEMU two-disk PXE lab.
+#                     stage lab-ready copies for the QEMU pxe-install lab.
 #
 # Upstream: https://gitlab.com/kalilinux/recipes/kali-preseed-examples
 #   A catalog of complete, standalone Debian-installer (d-i) preseed files:
@@ -9,22 +9,20 @@
 #
 # This fetches the WHOLE catalog so you can experiment with any variant.  It
 # downloads each file VERBATIM into <out>/raw/, then writes a lab-PATCHED copy
-# into <out>/ (served by nginx).  The only patch is the disk pinning the QEMU
-# two-disk boot-loop requires — see "Why patch" below.  Use --verbatim to skip
-# patching (e.g. for real hardware whose disk really is /dev/sda).
+# into <out>/ (served by nginx).  The only patch is the disk pinning the lab's
+# virtio target needs — see "Why patch" below.  Use --verbatim to skip patching
+# (e.g. for real hardware whose disk really is /dev/sda).
 #
 # ─── Why patch (the one genuinely install-breaking issue) ─────────────────────
 # Every upstream variant hardcodes `grub-installer/bootdev string /dev/sda` and
-# sets NO `partman-auto/disk`.  The lab boots the installer from an iPXE ROM on a
-# SECOND virtio disk (the two-disk boot-loop): disks are /dev/vda (blank target)
-# and /dev/vdb (iPXE ROM).  So unpatched:
-#   * /dev/sda does not exist on a virtio bus → grub-install fails, no boot-loop;
-#   * with no partman-auto/disk and two disks present, guided partitioning would
-#     prompt (breaking "unattended") or could even partition /dev/vdb and DESTROY
-#     the iPXE ROM.
+# sets NO `partman-auto/disk`.  The lab's VM has a single VIRTIO disk — /dev/vda,
+# no /dev/sda.  So unpatched:
+#   * /dev/sda does not exist on a virtio bus → grub-install fails, nothing boots;
+#   * with no partman-auto/disk, d-i's guided partitioner PROMPTS for the target,
+#     breaking the "unattended" install.
 # The patch pins both to /dev/vda — exactly what examples/kali-pxe-lab's
-# hand-written preseed bakes in.  On real hardware with a single SATA/NVMe disk
-# (Path B), the upstream /dev/sda is usually correct: use --verbatim there.
+# hand-written preseed bakes in.  On real hardware with a single SATA/NVMe disk,
+# the upstream /dev/sda is usually correct: use --verbatim there.
 #
 # ─── Output layout (shares ~/netboot/ with the other PXE labs, no collision) ──
 #   <out>/raw/<variant>      verbatim upstream copy (reference; never served-patched)
@@ -154,7 +152,7 @@ patch_preseed() {
 }
 
 # ─── Download + stage each variant ────────────────────────────────────────────
-hdr="# >>> staged by ${LAB_PROG} for the QEMU two-disk PXE lab — disk pinned to"
+hdr="# >>> staged by ${LAB_PROG} for the QEMU pxe-install lab — disk pinned to"
 fetched=0
 for v in "${variants[@]}"; do
     raw="${out_dir}/raw/${v}"
@@ -187,7 +185,7 @@ fi
 log_ok "staged ${fetched} preseed variant(s) into ${out_dir}"
 if (( verbatim )); then
     log_warn "VERBATIM mode: files are UNPATCHED — they pin /dev/sda. Use only on"
-    log_warn "real hardware whose disk is /dev/sda, NOT the QEMU two-disk lab."
+    log_warn "real hardware whose disk is /dev/sda, NOT the QEMU pxe-install lab."
 else
     log_info "each served copy is pinned to ${disk}; verbatim upstream is under raw/"
 fi
@@ -198,7 +196,7 @@ cat >&2 <<EOF
 next steps (see examples/kali-preseed-gallery/README.md):
   1. Fetch the d-i kernel+initrd (reuses the kali-pxe-lab helper):
        examples/kali-pxe-lab/fetch-kali-installer.sh --arch amd64
-  2. Pick a variant and build the iPXE ROM pointed at it:
+  2. Pick a variant and build the iPXE boot program (ipxe.pxe) for it:
        examples/kali-preseed-gallery/select-preseed.sh xfce-default
   3. Serve + boot:
        phase4-podman/lab-podman.sh up     --config examples/kali-preseed-gallery/kali-preseed-gallery.toml

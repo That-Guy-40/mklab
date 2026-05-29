@@ -6,13 +6,14 @@ of them into a throwaway VM with **no keystrokes** — PXE → iPXE → d-i → 
 → reboot into the installed Kali.
 
 This is the **pick-a-variant** companion to [`../kali-pxe-lab/`](../kali-pxe-lab/),
-which serves a *single* hand-written preseed. Same iPXE + nginx + QEMU two-disk
-boot-loop; the only new idea is a **selectable gallery** of upstream preseeds.
+which serves a *single* hand-written preseed. Same iPXE + nginx + QEMU
+`pxe-install` netboot; the only new idea is a **selectable gallery** of upstream
+preseeds.
 
 ```
 fetch-preseeds.sh ──► ~/netboot/kali-preseed/   (all variants, vda-patched)
-select-preseed.sh xfce-default ──► ~/netboot/ipxe.qcow2   (ROM baked for that one)
-        nginx (P4) serves ~/netboot/    QEMU (P2) boots the ROM → d-i → preseed
+select-preseed.sh xfce-default ──► ~/netboot/ipxe.pxe   (NBP baked for that one)
+        nginx (P4) serves ~/netboot/    QEMU (P2): NIC PXE → ipxe.pxe → d-i → preseed
 ```
 
 ---
@@ -53,8 +54,8 @@ the verbatim upstream copies are kept under `~/netboot/kali-preseed/raw/`.
 | File | Role |
 |---|---|
 | `fetch-preseeds.sh` | Download the upstream catalog (GitLab API) + stage **vda-patched** copies for this lab. `--verbatim` to skip patching. |
-| `select-preseed.sh` | Pick a variant → (re)build the iPXE ROM pointed at it (wraps `netboot/build-ipxe.sh`). `--print-only` to dry-run. |
-| `kali-preseed-gallery.toml` | Unified config: Phase 4 nginx + Phase 2 two-disk installer VM. |
+| `select-preseed.sh` | Pick a variant → (re)build the iPXE NBP/ROM with that preseed embedded (wraps `netboot/build-ipxe.sh`). `--print-only` to dry-run. |
+| `kali-preseed-gallery.toml` | Unified config: Phase 4 nginx + Phase 2 `pxe-install` (BIOS) installer VM. |
 | `MANUAL_TESTING.md` | Copy-pasteable curl/boot verification runbook. |
 | `README.md` | This file. |
 
@@ -63,7 +64,7 @@ Reused **unchanged** — nothing duplicated:
 | Shared tool | Used for |
 |---|---|
 | `../kali-pxe-lab/fetch-kali-installer.sh` | Fetch + verify the d-i `linux`/`initrd.gz` (same artifacts as the PXE lab). |
-| `netboot/build-ipxe.sh` | Build the iPXE ROM with the chosen preseed's boot params. |
+| `netboot/build-ipxe.sh` | Build the iPXE NBP (`ipxe.pxe`, BIOS) / EFI binary with the chosen preseed's boot params embedded. |
 | `phase4-podman/lab-podman.sh`, `phase2-qemu-vm/lab-vm.sh` | Serve + boot — no new phase code. |
 
 ---
@@ -101,11 +102,12 @@ examples/kali-preseed-gallery/fetch-preseeds.sh
 # → ~/netboot/kali-preseed/raw/<variant>  (verbatim upstream, reference)
 ```
 
-### 3. Pick a variant and build the iPXE ROM
+### 3. Pick a variant and build the iPXE boot program
 
 ```bash
 examples/kali-preseed-gallery/select-preseed.sh headless-default
-# → ~/netboot/ipxe.qcow2  (ROM baked with preseed/url=…/kali-preseed/headless-default)
+# → ~/netboot/ipxe.pxe   (BIOS NBP, baked with preseed/url=…/kali-preseed/headless-default)
+#   (also builds ipxe.efi for the UEFI variant, and ipxe.qcow2)
 # See the exact command without building:  … select-preseed.sh xfce-default --print-only
 ```
 
@@ -132,15 +134,18 @@ phase2-qemu-vm/lab-vm.sh start   kali-preseed-install
 phase2-qemu-vm/lab-vm.sh console kali-preseed-install     # watch; Ctrl-] to detach
 ```
 
-The boot-loop in motion:
+The boot-loop in motion (BIOS, `firmware = "bios"`):
 
-1. **First boot:** the blank target disk (`vda`, bootindex 0) has no boot sector,
-   so the firmware falls through to the iPXE ROM (`vdb`, bootindex 1). iPXE DHCPs,
-   fetches `linux`/`initrd.gz`, and d-i starts with your chosen preseed.
+1. **First boot:** SeaBIOS tries the blank target disk (`vda`, bootindex 0),
+   finds no boot sector, and falls to the NIC's stock PXE ROM ("Booting from
+   ROM") → it DHCPs and TFTP-chainloads `ipxe.pxe` → **our** iPXE runs the
+   embedded script, fetches `linux`/`initrd.gz` over HTTP, and d-i starts with
+   your chosen preseed.
 2. **d-i runs the preseed** — partitions `vda`, debootstraps Kali, installs GRUB
    to `vda`, reboots.
-3. **Second boot:** `vda` is bootable and wins; iPXE is never reached again. You
-   land at a Kali login (or desktop greeter, for the DE variants).
+3. **Second boot:** `vda` is now bootable and (being bootindex 0) is tried first,
+   so SeaBIOS boots the installed Kali; the NIC PXE ROM is never reached again.
+   You land at a Kali login (or desktop greeter, for the DE variants).
 
 ```bash
 phase2-qemu-vm/lab-vm.sh console kali-preseed-install     # serial console always works
@@ -173,19 +178,15 @@ actually boots," so it's worth understanding.
 
 **Every upstream variant hardcodes `d-i grub-installer/bootdev string /dev/sda`
 and sets *no* `partman-auto/disk`.** That's fine on a typical bare-metal box with
-one SATA/NVMe disk. But this lab uses the **two-disk boot-loop**: the installer
-arrives from an **iPXE ROM on a second virtio disk**, so the guest sees:
-
-- `/dev/vda` — the blank install target (bootindex 0)
-- `/dev/vdb` — the iPXE ROM (bootindex 1, the fallback that started d-i)
+one SATA/NVMe disk. But this lab's VM has a single **virtio** disk — `/dev/vda` —
+and no `/dev/sda`.
 
 Served unpatched, that breaks two ways:
 
 1. **`/dev/sda` doesn't exist on a virtio bus** → `grub-install` fails, no boot
-   sector is written to `vda`, and the VM just falls back to iPXE forever.
-2. **With no `partman-auto/disk` and two disks present**, d-i's guided
-   partitioner either *prompts* (breaking "unattended") or could pick `/dev/vdb`
-   and **partition over the iPXE ROM** mid-install.
+   sector is written to `vda`, and the VM just re-netboots forever.
+2. **With no `partman-auto/disk` set**, d-i's guided partitioner *prompts* for the
+   target, breaking the "unattended" install.
 
 So `fetch-preseeds.sh` rewrites each served copy to pin **both** to `/dev/vda`:
 
@@ -243,11 +244,11 @@ Honest about what was actually exercised on this host vs. a written procedure:
 | vda-patch pins grub+partman to `/dev/vda`, `raw/` keeps `/dev/sda` | ✅ verified (all 15, incl. the `packer-preseed` commented-disk edge case) |
 | `select-preseed.sh` resolves a variant + builds the correct iPXE append | ✅ verified (`--print-only`) |
 | `kali-preseed-gallery.toml` parses; MAC valid hex | ✅ verified (`tomllib`) |
-| iPXE ROM build (Docker), nginx serve, full d-i install + reboot | 📄 documented — multi-GB, ~10–60 min per variant |
+| **`headless-default` full BIOS install end-to-end** (SeaBIOS → NIC PXE → `ipxe.pxe` → iPXE 2.0.0 → d-i → partition `/dev/vda` → base + `meta-default` → GRUB → reboot → **boots the installed disk**) | ✅ **verified on KVM** (18 GB installed; GRUB in MBR; zero re-netboot = loop terminated) |
+| Other variants (desktop / lvm / crypto), nginx serve | 📄 documented — same pipeline, multi-GB, ~10–60 min each |
 
-For a path with a recorded end-to-end boot, see [`../kali-pxe-lab/MANUAL_TESTING.md`](../kali-pxe-lab/MANUAL_TESTING.md);
-this gallery shares that lab's iPXE/nginx/boot-loop machinery verbatim. The
-gallery's `MANUAL_TESTING.md` has the copy-pasteable checks for the new parts.
+The gallery's `MANUAL_TESTING.md` has the copy-pasteable checks for the
+fetch/patch parts; the full install above was boot-verified end-to-end on KVM.
 
 ---
 
@@ -257,10 +258,12 @@ gallery's `MANUAL_TESTING.md` has the copy-pasteable checks for the new parts.
   upstream files (kept under `raw/`), while the served copies are the minimum
   changed to boot in this lab. The patch is fail-closed: if a variant can't be
   pinned to the lab disk, the fetch aborts rather than serve a preseed that would
-  silently break the install (or wipe the ROM).
-- **Why rebuild the ROM per variant instead of an iPXE menu?** A baked-in
-  `preseed/url=` keeps the install **zero-touch** (a boot menu needs a keystroke).
-  The ROM is tiny and builds in seconds, so `select-preseed.sh <name>` is the
+  silently break the install.
+- **Why `pxe-install` + `ipxe.pxe`, not an iPXE-ROM disk?** SeaBIOS attempts only
+  the first hard disk, so an iPXE ROM on a *second* disk is never reached; the
+  reliable BIOS path is the NIC's own PXE ROM TFTP-chainloading our `ipxe.pxe`
+  (the BIOS twin of UEFI's `ipxe.efi`). A baked-in `preseed/url=` keeps it
+  **zero-touch**; the NBP builds in seconds, so `select-preseed.sh <name>` is the
   whole "switch" cost.
 - **Why reuse `kali-pxe-lab/fetch-kali-installer.sh`?** The d-i kernel/initrd are
   identical — only the preseed differs between the two labs. No point duplicating
