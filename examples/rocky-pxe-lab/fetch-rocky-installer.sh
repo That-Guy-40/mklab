@@ -196,7 +196,10 @@ if [[ -f "$install_img_dest" && "$(sha256sum "$install_img_dest" | cut -d' ' -f1
     log_info "  images/install.img: already present and verified"
 else
     log_info "  downloading images/install.img (this is the big one)..."
-    curl -fSL --progress-bar -o "$install_img_dest" "${os_url}/images/install.img" \
+    # Resume (-C -) + retry: mirrors/CDNs often drop this ~1 GB transfer partway
+    # (curl 18); resume continues from the partial file across retries.
+    curl -fSL -C - --retry 8 --retry-delay 3 --retry-all-errors --progress-bar \
+        -o "$install_img_dest" "${os_url}/images/install.img" \
         || die "download failed: ${os_url}/images/install.img"
     printf '%s  %s\n' "$install_img_want" "images/install.img" | (cd "$out_dir" && sha256sum --check --strict -) \
         || die "CHECKSUM MISMATCH for images/install.img — refusing to use a tampered/corrupt file"

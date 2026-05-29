@@ -71,7 +71,7 @@ firmware       = "bios"                  # SeaBIOS + NIC option-ROM path (UEFI: 
 install_target = "20G"                   # blank disk, bootindex=0: install dest + post-install boot disk
 mac            = "52:54:00:a1:9a:01"     # pinned so the per-MAC kickstart matches
 arch           = "x86_64"
-memory         = "2560M"                 # Anaconda needs ~2 GB+
+memory         = "4096M"               # 4G: Anaconda + the HTTP stage2 (install.img ~1.2 GB) loads into the initramfs tmpfs
 cpus           = 2
 cloud_init     = false                   # Anaconda provisions directly; no datasource
 pxe_dir        = "/home/sqs/netboot"     # QEMU slirp TFTP root (serves ipxe.pxe)
