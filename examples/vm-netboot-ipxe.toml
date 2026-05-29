@@ -44,6 +44,9 @@
 [[vm]]
 name       = "netboot-ipxe"
 backend    = "disk-image"
+firmware   = "bios"   # SeaBIOS boots the single iPXE-ROM disk; x86_64 disk-image VMs
+                      # otherwise default to OVMF/UEFI, which can't boot a BIOS-MBR disk.
+                      # (verified: SeaBIOS → ipxe.qcow2 → iPXE → netboot)
 # Update /home/sqs to your $HOME if different (no shell expansion in TOML).
 image      = "/home/sqs/netboot/ipxe.qcow2"
 arch       = "x86_64"

@@ -59,23 +59,30 @@ image   = "docker.io/library/nginx:alpine"
 ports   = ["8181:80"]
 volumes = ["/home/sqs/netboot:/usr/share/nginx/html:ro"]
 
-# ─── Phase 2: QEMU installer VM (two-disk boot-loop) ───────────────────────
-# disk0 = blank install target (bootindex=0): empty on first boot, bootable
-#         Kali after d-i installs and reboots.
-# disk1 = ipxe.qcow2 ROM (bootindex=1): fallback on first boot only; runs the
-#         Debian installer; never reached again once disk0 is bootable.
-# cloud_init = false: d-i provisions root + the kali user from the preseed; no
-#         cloud-init datasource in the iPXE ROM.
-# memory: 1.5 GB is comfortable for d-i (it unpacks the initrd + runs apt). A
-#         minimal install needs far less than Anaconda's ~2.5 GB.
+# ─── Phase 2: QEMU installer VM (pxe-install: NIC PXE boots ipxe.pxe) ───────
+# SeaBIOS tries the blank target disk (bootindex=0) → fails when empty → falls to
+# the NIC's stock PXE ROM ("Booting from ROM") → TFTP-chainloads ipxe.pxe → iPXE
+# fetches the d-i kernel/initrd over HTTP → installs to /dev/vda → reboots.
+# Post-install the disk (bootindex=0) boots Kali; the NIC ROM is never reached
+# again → the loop terminates.  Verified end-to-end on KVM.
+#
+#   UEFI variant: drop `firmware` and set pxe_bootfile = "ipxe.efi" (OVMF
+#   PXE-boots the EFI iPXE — also verified).  build-ipxe builds both.
+#
+# (The older two-disk iPXE-ROM-on-a-disk trick does NOT boot in QEMU: SeaBIOS
+# only attempts the first hard disk, and x86_64 disk-image VMs default to OVMF,
+# which can't boot a BIOS-MBR disk — see step 3 above for the bootfile.)
+# cloud_init=false: d-i provisions root + the kali user from the preseed.
+# memory: 1.5 GB is comfortable for d-i (unpacks the initrd + runs apt).
 [[vm]]
 name           = "kali-pxe-install"
-backend        = "disk-image"
-image          = "/home/sqs/netboot/ipxe.qcow2"  # iPXE ROM (bootindex=1, fallback)
-install_target = "20G"                            # blank disk (bootindex=0, install dest)
-mac            = "52:54:00:ca:11:01"              # valid hex; "ca11" ~ kali
+backend        = "pxe-install"          # NIC PXE-boots ipxe.pxe; no iPXE ROM disk
+firmware       = "bios"                  # SeaBIOS + NIC option-ROM path (UEFI: drop this + use ipxe.efi)
+install_target = "20G"                   # blank disk, bootindex=0: install dest + post-install boot disk
+mac            = "52:54:00:ca:11:01"     # valid hex; "ca11" ~ kali
 arch           = "x86_64"
 memory         = "1536M"
 cpus           = 2
-network        = true
-cloud_init     = false                            # d-i provisions directly; no datasource
+cloud_init     = false                   # d-i provisions directly; no datasource
+pxe_dir        = "/home/sqs/netboot"     # QEMU slirp TFTP root (serves ipxe.pxe)
+pxe_bootfile   = "ipxe.pxe"              # BIOS iPXE NBP (UEFI: ipxe.efi)

@@ -58,21 +58,25 @@ image   = "docker.io/library/nginx:alpine"
 ports   = ["8181:80"]
 volumes = ["/home/sqs/netboot:/usr/share/nginx/html:ro"]
 
-# ─── Phase 2: QEMU installer VM (two-disk boot-loop) ───────────────────────
-# disk0 = blank install target (bootindex=0): empty on first boot, bootable
-#         Rocky after Anaconda installs and reboots.
-# disk1 = ipxe.qcow2 ROM (bootindex=1): fallback on first boot only; runs
-#         Anaconda; never reached again once disk0 is bootable.
-# cloud_init = false: Anaconda provisions root and the lab user from the
-#         kickstart directly; no cloud-init datasource in the iPXE ROM.
+# ─── Phase 2: QEMU installer VM (pxe-install: NIC PXE boots ipxe.pxe) ───────
+# SeaBIOS tries the blank target disk (bootindex=0) → fails when empty → falls to
+# the NIC's stock PXE ROM → TFTP-chainloads ipxe.pxe → iPXE fetches Anaconda's
+# vmlinuz/initrd.img over HTTP + the per-MAC kickstart → installs to /dev/vda →
+# reboots into Rocky (the disk, bootindex=0, then boots; the NIC ROM is never
+# reached again → loop terminates).
+#   UEFI variant: drop `firmware` and set pxe_bootfile = "ipxe.efi".
+# (The older two-disk iPXE-ROM-on-a-disk trick does NOT boot in QEMU: SeaBIOS
+# tries only the first hard disk, and disk-image x86_64 defaults to OVMF, which
+# can't boot a BIOS-MBR disk.)  cloud_init=false: Anaconda provisions from the ks.
 [[vm]]
 name           = "rocky-pxe-install"
-backend        = "disk-image"
-image          = "/home/sqs/netboot/ipxe.qcow2"  # iPXE ROM (bootindex=1, fallback)
-install_target = "20G"                            # blank disk (bootindex=0, install dest)
-mac            = "52:54:00:cc:09:09"              # pinned so the per-MAC kickstart matches
+backend        = "pxe-install"          # NIC PXE-boots ipxe.pxe; no iPXE ROM disk
+firmware       = "bios"                  # SeaBIOS + NIC option-ROM path (UEFI: drop this + use ipxe.efi)
+install_target = "20G"                   # blank disk, bootindex=0: install dest + post-install boot disk
+mac            = "52:54:00:cc:09:09"     # pinned so the per-MAC kickstart matches
 arch           = "x86_64"
-memory         = "2560M"                          # Anaconda needs ~2 GB+
+memory         = "2560M"                 # Anaconda needs ~2 GB+
 cpus           = 2
-network        = true
-cloud_init     = false                            # Anaconda provisions directly; no datasource
+cloud_init     = false                   # Anaconda provisions directly; no datasource
+pxe_dir        = "/home/sqs/netboot"     # QEMU slirp TFTP root (serves ipxe.pxe)
+pxe_bootfile   = "ipxe.pxe"              # BIOS iPXE NBP (UEFI: ipxe.efi)

@@ -1,15 +1,18 @@
-# Zero-touch AlmaLinux installer target.
+# Zero-touch AlmaLinux installer target (BIOS, pxe-install).
 #
 # Boot-loop design:
-#   disk0 = blank install target (bootindex=0) — BIOS tries it first; skips when
-#           empty on the first boot; becomes the bootable AlmaLinux system after
-#           Anaconda finishes and reboots.
-#   disk1 = ipxe.qcow2 ROM (bootindex=1) — fallback on the first boot only;
-#           chainloads Anaconda which installs to disk0; never reached again once
-#           disk0 is bootable.
+#   SeaBIOS tries the blank install target (bootindex=0) → fails when empty →
+#   falls to the NIC's stock PXE ROM → TFTP-chainloads ipxe.pxe → iPXE fetches
+#   Anaconda + the per-MAC kickstart over HTTP → installs to /dev/vda → reboots.
+#   On the next boot the disk (bootindex=0) is bootable and wins; the NIC ROM is
+#   never reached again → the loop terminates.
+#
+#   For UEFI, use vm-almalinux-uefi-pxe.toml (backend=pxe-install + ipxe.efi).
+#   (The older two-disk iPXE-ROM-on-a-disk trick does NOT boot in QEMU: SeaBIOS
+#   tries only the first hard disk, and disk-image x86_64 defaults to OVMF which
+#   can't boot a BIOS-MBR disk.)
 #
 # Result: create + start, walk away, come back to a running AlmaLinux system.
-# No manual disk swap or second VM definition needed.
 #
 # Prereqs (run in order):
 #   1. netboot/fetch-almalinux-installer.sh \
@@ -35,12 +38,13 @@
 
 [[vm]]
 name           = "almalinux-pxe-install"
-backend        = "disk-image"
-image          = "/home/sqs/netboot/ipxe.qcow2"  # iPXE ROM (bootindex=1, fallback)
-install_target = "20G"                             # blank disk (bootindex=0, install dest)
-mac            = "52:54:00:a1:9a:01"               # pinned so the per-MAC kickstart matches
+backend        = "pxe-install"          # NIC PXE-boots ipxe.pxe; no iPXE ROM disk
+firmware       = "bios"                  # SeaBIOS + NIC option-ROM path (UEFI: vm-almalinux-uefi-pxe.toml)
+install_target = "20G"                   # blank disk, bootindex=0: install dest + post-install boot disk
+mac            = "52:54:00:a1:9a:01"     # pinned so the per-MAC kickstart matches
 arch           = "x86_64"
-memory         = "2560M"                           # Anaconda needs ~2 GB+
+memory         = "2560M"                 # Anaconda needs ~2 GB+
 cpus           = 2
-network        = true
-cloud_init     = false                             # Anaconda provisions directly; no datasource
+cloud_init     = false                   # Anaconda provisions directly; no datasource
+pxe_dir        = "/home/sqs/netboot"     # QEMU slirp TFTP root (serves ipxe.pxe)
+pxe_bootfile   = "ipxe.pxe"              # BIOS iPXE NBP
