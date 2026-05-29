@@ -2064,25 +2064,37 @@ build_qemu_argv() {
         virtio_suffix="pci"
     fi
 
-    # Disk
-    if [[ -n "$disk" ]]; then
-        if [[ -n "${install_target:-}" ]]; then
-            # Two-disk boot-loop layout (AlmaLinux PXE install):
-            #   disk0 = blank install target (bootindex=0 — BIOS tries first,
-            #           skips when empty, boots after Anaconda installs)
-            #   disk1 = iPXE ROM image (bootindex=1 — fallback on first boot)
-            QEMU_ARGV+=(
-                -drive  "file=${install_target},if=none,id=disk0,format=qcow2,cache=writeback,discard=unmap"
-                -device "virtio-blk-${virtio_suffix},drive=disk0,bootindex=0"
-                -drive  "file=${disk},if=none,id=disk1,format=qcow2,cache=writeback"
-                -device "virtio-blk-${virtio_suffix},drive=disk1,bootindex=1"
-            )
-        else
-            QEMU_ARGV+=(
-                -drive  "file=${disk},if=none,id=disk0,format=qcow2,cache=writeback,discard=unmap"
-                -device "virtio-blk-${virtio_suffix},drive=disk0"
-            )
-        fi
+    # Disk.  Three shapes:
+    #   disk + install_target → two-disk BIOS PXE boot-loop (disk-image backend)
+    #   install_target only   → pxe-install backend (UEFI network boot, no ROM disk)
+    #   disk only             → ordinary disk-image / from-chroot VM
+    if [[ -n "$disk" && -n "${install_target:-}" ]]; then
+        # Two-disk boot-loop layout (BIOS PXE install):
+        #   disk0 = blank install target (bootindex=0 — BIOS tries first,
+        #           skips when empty, boots after the installer writes a loader)
+        #   disk1 = iPXE ROM image (bootindex=1 — fallback on first boot)
+        QEMU_ARGV+=(
+            -drive  "file=${install_target},if=none,id=disk0,format=qcow2,cache=writeback,discard=unmap"
+            -device "virtio-blk-${virtio_suffix},drive=disk0,bootindex=0"
+            -drive  "file=${disk},if=none,id=disk1,format=qcow2,cache=writeback"
+            -device "virtio-blk-${virtio_suffix},drive=disk1,bootindex=1"
+        )
+    elif [[ -n "${install_target:-}" ]]; then
+        # pxe-install backend: a blank target disk and NO iPXE ROM disk.  OVMF
+        # network-boots (`-boot order=n`) into the installer over slirp TFTP,
+        # which installs onto this disk; on later boots OVMF's boot manager finds
+        # the EFI entry the installer registered and boots it.  No bootindex here
+        # (it would conflict with `-boot order=n`); without this drive the guest
+        # has nowhere to install — d-i/Anaconda fail with "no root file system".
+        QEMU_ARGV+=(
+            -drive  "file=${install_target},if=none,id=disk0,format=qcow2,cache=writeback,discard=unmap"
+            -device "virtio-blk-${virtio_suffix},drive=disk0"
+        )
+    elif [[ -n "$disk" ]]; then
+        QEMU_ARGV+=(
+            -drive  "file=${disk},if=none,id=disk0,format=qcow2,cache=writeback,discard=unmap"
+            -device "virtio-blk-${virtio_suffix},drive=disk0"
+        )
     fi
 
     # cloud-init seed
