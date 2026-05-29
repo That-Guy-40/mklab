@@ -90,6 +90,18 @@ validate_name() {
         || die "invalid $ctx '$n': use only [a-zA-Z0-9._-], start with alphanumeric, max 63 chars"
 }
 
+# validate_device SPEC — sanity-check a per-service `devices` entry before it
+# becomes a `--device SPEC` argument.  A spec is either a host device path
+# (/dev/foo[:/dev/bar[:rwm]]) or a CDI device name (vendor.com/class=name, e.g.
+# nvidia.com/gpu=all for rootless-podman GPU passthrough).  podman validates
+# the spec itself; we only defensively reject a newline and a leading '-' so a
+# crafted TOML value can't smuggle in a second flag.
+validate_device() {
+    local d="$1"
+    [[ "$d" != *$'\n'* ]] || die "device spec must not contain a newline: $d"
+    [[ "$d" != -*       ]] || die "device spec must not start with '-': $d"
+}
+
 # sanitize_unit_value VALUE FIELD  — reject values with newlines that would
 # inject extra directives into a systemd unit file (Finding 3).
 sanitize_unit_value() {
@@ -679,6 +691,15 @@ start_service_plain() {
         args+=(-v "$v")
     done < <(jq -r '.volumes[]?' <<<"$svc")
 
+    # Devices — each becomes `--device SPEC` (host /dev path or a CDI device
+    # like nvidia.com/gpu=all for rootless-podman GPU passthrough).
+    local dev
+    while IFS= read -r dev; do
+        [[ -z "$dev" ]] && continue
+        validate_device "$dev"
+        args+=(--device "$dev")
+    done < <(jq -r '.devices[]?' <<<"$svc")
+
     # Command
     local -a cmd=()
     local cmdline; cmdline="$(jq -r '.command // empty' <<<"$svc")"
@@ -816,6 +837,13 @@ start_services_in_pod() {
             esac
             args+=(-v "$v")
         done < <(jq -r '.volumes[]?' <<<"$svc")
+        # Devices — same as the plain path: --device per entry (CDI GPU etc.).
+        local dev
+        while IFS= read -r dev; do
+            [[ -z "$dev" ]] && continue
+            validate_device "$dev"
+            args+=(--device "$dev")
+        done < <(jq -r '.devices[]?' <<<"$svc")
         local -a cmd=()
         local cmdline; cmdline="$(jq -r '.command // empty' <<<"$svc")"
         [[ -n "$cmdline" ]] && read -ra cmd <<<"$cmdline"
@@ -1977,4 +2005,8 @@ main() {
     esac
 }
 
-main "$@"
+# Run main only when executed directly, not when sourced (lets the unit tests
+# source this file and exercise helpers like validate_device in isolation).
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

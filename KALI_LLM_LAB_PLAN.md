@@ -141,7 +141,7 @@ The blog's headline capability: the LLM driving real Kali tools via MCP. This is
 | Browser chat client | Open WebUI `[[service]]` (Tier 1) | **Reuse** |
 | Desktop chat client (5ire) | host, or Phase 2 Kali VM (`vm-kali-amd64.toml`) | **Reuse + document** |
 | Kali-tools MCP server | Phase 4 `build`-backend service from `kalilinux/kali-rolling` | **New** Containerfile |
-| GPU acceleration | rootless podman CDI (`--device nvidia.com/gpu=all`) | **Document** (opt-in) |
+| GPU acceleration | rootless podman CDI via the Phase-4 `devices` key | **Implemented** (`devices = ["nvidia.com/gpu=all"]`) |
 | Surface the running containers | Phase 6 TUI / Phase 6b web | **Reuse** (free) |
 
 **No new phase code is needed.** Everything rides existing `lab-podman.sh`
@@ -200,9 +200,11 @@ volumes = ["kali-llm-webui:/app/backend/data"]
 **Pre-build checks — resolved against `lab-podman.sh` (read + live-verified):**
 `127.0.0.1:`-prefixed publishes pass through verbatim ✅; named volumes
 auto-create and correctly skip the SELinux `:Z` suffix (audit finding F10) ✅;
-pod members honor `volumes` + `environment` ✅. **GPU `devices` key: NOT yet in
-the Phase-4 spec** — Tier 1 documents a manual `podman run --device
-nvidia.com/gpu=all` for GPU; wiring a `devices` key is a small follow-up.
+pod members honor `volumes` + `environment` ✅. **GPU `devices` key: now
+implemented** — a per-service `devices = [...]` field emits `podman run
+--device …` in both the plain and pod paths (validated against flag-injection;
+unit + live `/dev/fuse` passthrough tested). GPU is opt-in by uncommenting
+`devices = ["nvidia.com/gpu=all"]` on the `ollama` service.
 
 ### INDEX.md rows (proposed)
 
@@ -261,8 +263,9 @@ This lab combines two high-risk surfaces. The README must lead with this.
   blog's `llama3.2:3b` / `qwen3:4b` / `llama3.1:8b` as upgrades.
 - **GPU opt-in (rootless podman, NVIDIA).** Document the CDI path:
   `nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml`, then add
-  `--device nvidia.com/gpu=all` (via the service's `devices`). Faithful to the
-  blog's `nvidia-driver` + `nvidia-smi` step, adapted to containers.
+  `--device nvidia.com/gpu=all` via the service's `devices` key (now wired in
+  lab-podman.sh). Faithful to the blog's `nvidia-driver`+`nvidia-smi` step,
+  adapted to containers.
 - **Disk.** Model cache lives in the `ollama-models` volume; a few GB for small
   models, tens of GB if the user pulls the big ones. Persists across restarts.
 
@@ -303,7 +306,7 @@ This lab combines two high-risk surfaces. The README must lead with this.
 
 1. **`lab-podman.sh` feature check** — confirm it supports: (a) a
    `127.0.0.1:`-prefixed host bind in `ports`, (b) named-volume references that
-   podman auto-creates, (c) a per-service `devices` key for CDI GPU passthrough,
+   podman auto-creates, (c) a per-service `devices` key for CDI GPU passthrough — NOW IMPLEMENTED,
    (d) `build` services from a `Containerfile` in the lab dir. Any gaps are
    small, contained Phase-4 additions — to be scoped before implementation, not
    assumed.

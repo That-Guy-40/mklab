@@ -59,9 +59,11 @@ publish = [
 # Model blobs live in the named volume so `down`/`up` doesn't re-download GBs.
 # Pin a digest (image = "...@sha256:...") for a reproducible/supply-chain-safe
 # lab; :latest is used here for a first run.
-# GPU (opt-in): see README "GPU acceleration" — needs rootless-podman CDI; a
-# per-service `devices` key isn't wired in lab-podman.sh yet, so GPU currently
-# goes through a manual `podman run --device nvidia.com/gpu=all` (documented).
+# GPU (opt-in): uncomment the `devices` line below after setting up rootless
+# podman CDI (`sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml`) —
+# see README "GPU acceleration".  The CDI name `nvidia.com/gpu=all` passes the
+# whole GPU through; use e.g. `nvidia.com/gpu=0` for one card.  CPU-only (no
+# devices line) is the default and works for the small models.
 [[service]]
 name    = "ollama"
 engine  = "podman"
@@ -69,6 +71,7 @@ image   = "docker.io/ollama/ollama:latest"
 manager = "pod"
 pod     = "llmstack"
 volumes = ["kali-llm-ollama:/root/.ollama"]
+# devices = ["nvidia.com/gpu=all"]      # ← uncomment for NVIDIA GPU acceleration
 
 # ─── Open WebUI: the browser chat client (headless stand-in for 5ire) ───────
 # Talks to ollama over the shared pod localhost.  WEBUI_AUTH=true → the first

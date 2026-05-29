@@ -134,7 +134,7 @@ This is the blog's exact client, against a reproducible, disposable backend.
 ## GPU acceleration (opt-in)
 
 The default `llama3.2:1b` runs fine on CPU. For the blog's 3–8B models you'll
-want an NVIDIA GPU. Rootless podman uses **CDI**:
+want an NVIDIA GPU. Rootless podman uses **CDI** (Container Device Interface):
 
 ```bash
 # One-time host setup (needs the NVIDIA driver + nvidia-container-toolkit):
@@ -142,19 +142,25 @@ sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
 nvidia-ctk cdi list | grep nvidia.com/gpu      # confirm a device exists
 ```
 
-`lab-podman.sh` doesn't expose a per-service `devices` key yet, so for now run
-Ollama GPU-enabled by hand and let Open WebUI point at it, **or** add the device
-when that key lands. Manual form:
+Then just **uncomment the `devices` line** on the `ollama` service in
+`kali-llm-lab.toml` and re-`up`:
 
-```bash
-podman run -d --name lab-kali-llm-ollama --pod llmstack \
-    --device nvidia.com/gpu=all \
-    -v kali-llm-ollama:/root/.ollama docker.io/ollama/ollama:latest
+```toml
+[[service]]
+name    = "ollama"
+# ...
+devices = ["nvidia.com/gpu=all"]      # whole GPU; or "nvidia.com/gpu=0" for one card
 ```
 
-`nvidia-smi` inside the container (`podman exec lab-kali-llm-ollama nvidia-smi`)
-confirms the GPU is visible. (Wiring `devices` into the Phase 4 spec is a small
-follow-up — tracked in `KALI_LLM_LAB_PLAN.md` §10.)
+`lab-podman.sh` now wires a per-service `devices` key straight to
+`podman run --device …` (works in both plain and pod services). Confirm the GPU
+is visible inside the container:
+
+```bash
+podman exec lab-kali-llm-ollama nvidia-smi     # lists your GPU
+```
+
+CPU-only (no `devices` line) remains the default and needs no setup.
 
 ---
 
