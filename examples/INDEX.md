@@ -125,7 +125,7 @@ kernel+initrd over HTTP (Phase 3/4), and boot it in QEMU directly or via iPXE
 | `vm-almalinux-pxe-install.toml` | Zero-touch AlmaLinux installer target: a boot-loop that chainloads Anaconda, then boots the installed disk. |
 | `almalinux-zerotouch.ks` | 🔑 The kickstart that drives that unattended install (rendered per-host; **plaintext lab creds**). |
 | [`rocky-pxe-lab/`](rocky-pxe-lab/) | 🔗 Self-contained Rocky Linux 9 zero-touch PXE lab in its own directory: fetch+verify installer (checksums from `.treeinfo`), kickstart, unified P4+P2 TOML, and a README with both the QEMU path **and** the CIQ-style real-hardware dnsmasq/TFTP path. Plus a `MANUAL_TESTING.md` walking the full ~15-min Anaconda install. |
-| [`kali-pxe-lab/`](kali-pxe-lab/) | 🔗 Self-contained Kali Linux zero-touch PXE lab: the **Debian-installer + preseed** cousin (not Anaconda/kickstart). Fetch+verify d-i `linux`/`initrd.gz` (checksums from `SHA256SUMS`), preseed, unified P4+P2 TOML, README with the QEMU path **and** the Kali-docs `netboot.tar.gz` + dnsmasq/TFTP/PXELINUX path. |
+| [`kali-pxe-lab/`](kali-pxe-lab/) | 🔗 Self-contained Kali Linux zero-touch PXE lab: the **Debian-installer + preseed** cousin (not Anaconda/kickstart). Fetch+verify d-i `linux`/`initrd.gz` (checksums from `SHA256SUMS`), preseed, unified P4+P2 TOML, README with the QEMU path **and** the Kali-docs `netboot.tar.gz` + dnsmasq/TFTP/PXELINUX path. Plus a `MANUAL_TESTING.md` walking the full ~15-min d-i install — incl. the one install-breaking risk (d-i clobbering the iPXE ROM disk) and how the `vda` pinning closes it. |
 
 ## 🔗 One file, every phase — unified demos
 
