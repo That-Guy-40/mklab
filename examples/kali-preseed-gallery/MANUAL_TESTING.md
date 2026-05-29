@@ -3,8 +3,8 @@
 Copy-pasteable checks for the gallery, in the order you'd run them. The **new**
 surface here (vs. `../kali-pxe-lab/`) is the **catalog fetch + vda-patch** and
 the **variant selector** — those are checked exhaustively below.  The boot path
-is QEMU `pxe-install` (BIOS): SeaBIOS → the NIC's PXE ROM → TFTP `ipxe.pxe` →
-iPXE → d-i → install to `/dev/vda` → reboot into the installed disk.
+is QEMU `pxe-install` (BIOS): SeaBIOS → the NIC's iPXE ROM → TFTP `boot.ipxe`
+(run directly) → d-i → install to `/dev/vda` → reboot into the installed disk.
 
 All commands run from the repo root. Replace `/home/sqs` in the TOML with your
 `$HOME` first.
@@ -96,8 +96,8 @@ examples/kali-preseed-gallery/select-preseed.sh nope 2>&1 | head -3; echo "exit=
 
 ```bash
 examples/kali-pxe-lab/fetch-kali-installer.sh --arch amd64        # → ~/netboot/kali/{linux,initrd.gz}
-examples/kali-preseed-gallery/select-preseed.sh headless-default  # → ~/netboot/ipxe.pxe (+ .efi/.qcow2)
-file ~/netboot/ipxe.pxe       # → … (iPXE BIOS NBP, served via slirp TFTP)
+examples/kali-preseed-gallery/select-preseed.sh headless-default  # → ~/netboot/boot.ipxe (+ ipxe.pxe/.efi/.qcow2)
+head -1 ~/netboot/boot.ipxe   # → #!ipxe  (the script QEMU's NIC iPXE runs, via slirp TFTP)
 ```
 
 ---
@@ -122,9 +122,10 @@ phase2-qemu-vm/lab-vm.sh start   kali-preseed-install
 phase2-qemu-vm/lab-vm.sh console kali-preseed-install     # watch; Ctrl-] detaches
 ```
 
-What you'll see: SeaBIOS tries the blank `vda` (bootindex 0) → falls to the NIC
-PXE ROM → TFTP `ipxe.pxe` → iPXE fetches the d-i kernel/initrd → unattended
-install to `/dev/vda` → reboot. `headless-default` finishes fastest (no desktop).
+What you'll see: SeaBIOS tries the blank `vda` (bootindex 0) → falls to the NIC's
+iPXE ROM → TFTP `boot.ipxe` (run directly) → fetches the d-i kernel/initrd →
+unattended install to `/dev/vda` → reboot. `headless-default` finishes fastest
+(no desktop).
 
 Confirm the loop **terminated** (i.e. the second boot came from the disk, not the
 network) — two host-side checks that don't need a guest login (the installed
@@ -166,7 +167,8 @@ phase2-qemu-vm/lab-vm.sh    destroy kali-preseed-install --force
 | VM keeps re-running the installer (never boots the disk) | `grub-install` failed, or the target lacks `bootindex=0` | confirm §1a pinned `/dev/vda`; check §5(b) for `55 aa` + `GRUB` on the target |
 | d-i stops at a prompt | `partman-auto/disk` missing → guided partitioner asks | §1a should have caught it; ensure you didn't `--verbatim` |
 | `curl …/kali-preseed/<v>` → 404 | variant name typo, or TOML volume still `/home/sqs` | check the staged filename; fix the volume path |
-| iPXE never starts (`No bootable device`) | guest didn't reach the NIC PXE ROM, or `ipxe.pxe` not served | confirm `firmware="bios"` + `pxe_bootfile="ipxe.pxe"`; `ipxe.pxe` present in `pxe_dir` |
+| A second `iPXE 2.0.0+` banner then `No bootable device` | `pxe_bootfile` points at the `ipxe.pxe` **binary** (UNDI re-DHCP flake) | set `pxe_bootfile = "boot.ipxe"`; ensure `~/netboot/boot.ipxe` exists (re-run `select-preseed.sh`) |
+| iPXE never starts (`No bootable device`) | guest didn't reach the NIC iPXE ROM, or `boot.ipxe` not served | confirm `firmware="bios"` + `pxe_bootfile="boot.ipxe"`; `boot.ipxe` present in `pxe_dir` |
 | iPXE can't fetch over HTTP | nginx not up, or guest can't reach `10.0.2.2` | `lab-podman.sh up` first; `10.0.2.2` is the slirp host alias |
 | Install very slow / stalls on apt | a desktop/`*-large` variant pulling GBs | expected; try `headless-default` to validate the pipeline first |
 
@@ -174,8 +176,8 @@ phase2-qemu-vm/lab-vm.sh    destroy kali-preseed-install --force
 
 ## Notes
 
-- **One variant at a time per NBP.** The selected preseed is baked into
-  `ipxe.pxe`. To switch: `select-preseed.sh <other>`, then `destroy` + `create`
-  the VM (blank the target disk) before `start`.
+- **One variant at a time.** The selected preseed is baked into `boot.ipxe` (and
+  the `ipxe.pxe`/`ipxe.efi` binaries). To switch: `select-preseed.sh <other>`, then
+  `destroy` + `create` the VM (blank the target disk) before `start`.
 - **The gallery and PXE lab share `~/netboot/` + port 8181.** Run one at a time;
   the nginx service is identical.

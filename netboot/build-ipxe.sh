@@ -16,7 +16,8 @@
 #       [--ipxe-ref master]
 #
 # Outputs (in --output-dir):
-#   boot.ipxe     plain-text chainboot script (served by nginx / Phase 4 podman)
+#   boot.ipxe     plain-text iPXE boot script — served via TFTP for a native iPXE
+#                 NIC ROM to run directly, and embedded in the .pxe/.efi binaries
 #   ipxe.usb      raw disk image  →  dd if=ipxe.usb of=/dev/sdX
 #   ipxe.efi      UEFI binary     →  copy to EFI partition
 #   ipxe.qcow2    qcow2 of usb   →  Phase 2 QEMU -drive file=ipxe.qcow2
@@ -96,7 +97,7 @@ Options:
   --help              show this help and exit
 
 Outputs written to --output-dir:
-  boot.ipxe   chainboot script (serve this via nginx)
+  boot.ipxe   iPXE boot script (TFTP it to a native iPXE NIC ROM, or chainload via .pxe/.efi)
   ipxe.usb    raw USB disk image (dd to a USB stick)
   ipxe.efi    UEFI binary
   ipxe.qcow2  qcow2 conversion of ipxe.usb (Phase 2 QEMU)

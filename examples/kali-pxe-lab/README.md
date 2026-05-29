@@ -14,7 +14,7 @@ This lab implements **two** paths:
 
 | Path | Use case | DHCP/TFTP source | iPXE delivery |
 |---|---|---|---|
-| **A — QEMU (default)** | a throwaway VM on your workstation | QEMU's built-in slirp | NIC PXE ROM → TFTP `ipxe.pxe` (BIOS) / `ipxe.efi` (UEFI) |
+| **A — QEMU (default)** | a throwaway VM on your workstation | QEMU's built-in slirp | NIC's iPXE ROM → TFTP `boot.ipxe` (runs it directly) |
 | **B — real hardware** | a physical machine on your LAN | `dnsmasq` DHCP + TFTP | PXELINUX from `netboot.tar.gz` (Kali-docs style) |
 
 Path A is the fastest way to see it work with zero LAN setup. Path B is the
@@ -90,8 +90,9 @@ netboot/build-ipxe.sh \
     --server http://10.0.2.2:8181 \
     --kernel-path /kali/linux --initrd-path /kali/initrd.gz \
     --append 'auto=true priority=critical preseed/url=http://10.0.2.2:8181/kali/kali-preseed.cfg DEBIAN_FRONTEND=text console=ttyS0,115200n8 ---'
-# → ~/netboot/ipxe.pxe (BIOS NBP, served via slirp TFTP — what this lab boots),
-#   ~/netboot/ipxe.efi (UEFI), and ~/netboot/ipxe.qcow2 (legacy disk image)
+# → ~/netboot/boot.ipxe (the script this lab boots, via slirp TFTP),
+#   ~/netboot/ipxe.pxe (BIOS NBP for real HW), ~/netboot/ipxe.efi (UEFI),
+#   ~/netboot/ipxe.qcow2 (legacy disk image)
 ```
 
 - `10.0.2.2` is the host as seen from inside a QEMU slirp guest; `8181` is the
@@ -128,9 +129,10 @@ phase2-qemu-vm/lab-vm.sh console kali-pxe-install     # watch; Ctrl-] to detach
 What you'll see (the boot-loop in motion — `pxe-install`, BIOS):
 
 1. **First boot:** SeaBIOS tries the blank target disk (`vda`, bootindex 0),
-   finds no boot sector, and falls to the NIC's stock PXE ROM → it DHCPs and
-   TFTP-chainloads `ipxe.pxe` → iPXE fetches `linux`/`initrd.gz` over HTTP and the
-   Debian installer starts with the preseed.
+   finds no boot sector, and falls to the NIC's option ROM → which on QEMU *is*
+   iPXE → it DHCPs and TFTP-fetches `boot.ipxe`, then runs it directly (the file
+   starts with `#!ipxe`) → fetches `linux`/`initrd.gz` over HTTP and the Debian
+   installer starts with the preseed.
 2. **d-i runs the preseed** — partitions `vda`, debootstraps Kali from
    `http.kali.org`, installs GRUB to `vda`, then reboots.
 3. **Second boot:** `vda` is now bootable and (being bootindex 0) is tried first;
@@ -263,11 +265,13 @@ proportionally longer than the minimal default.
   disk SeaBIOS boots next (the d-i equivalent of `ignoredisk --only-use=vda`).
   iPXE arrives over the network (the NIC PXE ROM), not a disk, so there's no
   second disk to protect.
-- **Why `pxe-install` + `ipxe.pxe`, not a two-disk iPXE-ROM disk?** SeaBIOS only
-  attempts the first hard disk, and x86_64 disk-image VMs default to OVMF (which
-  can't boot a BIOS-MBR disk), so the old two-disk trick doesn't boot in QEMU.
-  The NIC's stock PXE ROM TFTP-chainloading our `ipxe.pxe` (BIOS) / `ipxe.efi`
-  (UEFI) is what actually works.
+- **Why `pxe-install` (NIC runs `boot.ipxe`), not a two-disk iPXE-ROM disk?**
+  SeaBIOS only attempts the first hard disk, and x86_64 disk-image VMs default to
+  OVMF (which can't boot a BIOS-MBR disk), so the old two-disk trick doesn't boot
+  in QEMU. QEMU's NIC option ROM *is* iPXE, so it TFTP-fetches and runs `boot.ipxe`
+  directly — no second iPXE binary, no UNDI re-DHCP (the flaky "No bootable device"
+  step). Real hardware whose firmware PXE is not iPXE: chainload the `ipxe.pxe`
+  (BIOS) / `ipxe.efi` (UEFI) binary first.
 - **Why the trailing `---` in the kernel append?** It's the d-i marker dividing
   *installer* kernel args from *installed-system* kernel args; putting
   `console=ttyS0,115200n8` after it carries the serial console into the booted

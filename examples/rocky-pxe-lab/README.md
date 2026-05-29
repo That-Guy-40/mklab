@@ -13,8 +13,8 @@ This lab implements **two** paths:
 
 | Path | Use case | DHCP/TFTP source | iPXE delivery |
 |---|---|---|---|
-| **A — QEMU (default)** | a throwaway VM on your workstation | QEMU's built-in slirp | NIC PXE ROM → TFTP `ipxe.pxe` (BIOS) / `ipxe.efi` (UEFI) |
-| **B — real hardware** | a physical machine on your LAN | `dnsmasq` ProxyDHCP + TFTP | iPXE / UEFI grub (CIQ-style) |
+| **A — QEMU (default)** | a throwaway VM on your workstation | QEMU's built-in slirp | NIC's iPXE ROM → TFTP `boot.ipxe` (runs it directly) |
+| **B — real hardware** | a physical machine on your LAN | `dnsmasq` ProxyDHCP + TFTP | NIC PXE → chainload `ipxe.pxe`/`ipxe.efi` (CIQ-style) |
 
 Path A is the fastest way to *see it work* with zero LAN setup. Path B is the
 faithful "real PXE server" the CIQ article describes.
@@ -96,7 +96,8 @@ netboot/build-ipxe.sh \
     --server http://10.0.2.2:8181 \
     --kernel-path /vmlinuz --initrd-path /initrd.img \
     --append 'inst.stage2=http://10.0.2.2:8181/ inst.repo=https://download.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/ inst.ks=http://10.0.2.2:8181/ks/{MAC}.ks inst.text console=ttyS0 ip=dhcp'
-# → ~/netboot/ipxe.pxe (BIOS NBP — what this lab boots), ipxe.efi (UEFI), ipxe.qcow2
+# → ~/netboot/boot.ipxe (the script this lab boots), ipxe.pxe (BIOS NBP for real HW),
+#   ipxe.efi (UEFI), ipxe.qcow2
 ```
 
 - `10.0.2.2` is the host as seen from inside a QEMU slirp guest.
@@ -128,11 +129,19 @@ phase2-qemu-vm/lab-vm.sh console rocky-pxe-install     # optional: watch Anacond
 Watch the boot-loop do its thing (`pxe-install`, BIOS):
 
 1. **First boot:** SeaBIOS tries the blank target disk (`vda`, bootindex 0),
-   finds no boot sector, and falls to the NIC's stock PXE ROM → it DHCPs and
-   TFTP-chainloads `ipxe.pxe` → iPXE fetches `vmlinuz`/`initrd.img` over HTTP →
+   finds no boot sector, and falls to the NIC's option ROM → which on QEMU *is*
+   iPXE → it DHCPs and TFTP-fetches `boot.ipxe`, then (the file starts with
+   `#!ipxe`) runs it directly → fetches `vmlinuz`/`initrd.img` over HTTP →
    Anaconda runs the kickstart and installs to `vda`; the final `reboot` ends it.
 2. **Second boot:** `vda` is now bootable and (being bootindex 0) is tried first;
    the NIC PXE ROM is never reached again. You land at a Rocky login.
+
+> **Why `boot.ipxe`, not the `ipxe.pxe` binary?** QEMU's NIC ROM is already iPXE,
+> so handing it the script avoids chainloading a *second* iPXE that re-inits the
+> NIC over UNDI and DHCPs again — the flaky step that otherwise drops to
+> "No bootable device". Real hardware with a non-iPXE firmware PXE: set
+> `pxe_bootfile = "ipxe.pxe"` to chainload the binary (which embeds the same
+> script) first.
 
 > **UEFI?** Set `pxe_bootfile = "ipxe.efi"` and drop `firmware` in the TOML.
 
@@ -239,8 +248,10 @@ installs. Same boot flow as Path A, just with a real NIC and a real PXE server.
 - **Why `pxe-install` (NIC PXE) instead of a two-disk iPXE-ROM disk?** SeaBIOS
   only attempts the first hard disk, and x86_64 disk-image VMs default to OVMF
   (which can't boot a BIOS-MBR disk) — so the older two-disk boot-loop doesn't
-  boot in QEMU.  Instead the NIC's stock PXE ROM TFTP-chainloads our `ipxe.pxe`
-  (BIOS) / `ipxe.efi` (UEFI).  The single install target carries `bootindex=0`:
+  boot in QEMU.  Instead the NIC's option ROM — which on QEMU is itself iPXE —
+  TFTP-fetches and runs `boot.ipxe` directly (real hardware whose firmware PXE is
+  not iPXE chainloads the `ipxe.pxe`/`ipxe.efi` binary first).  The single install
+  target carries `bootindex=0`:
   blank on first boot → SeaBIOS falls to the NIC ROM → installs → on the next
   boot the disk wins → true zero-touch, no manual disk swap.
 - **Why iPXE instead of plain PXELINUX/grub?** iPXE speaks HTTP, so the installer

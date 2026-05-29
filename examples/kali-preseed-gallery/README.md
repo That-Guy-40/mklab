@@ -12,8 +12,8 @@ preseeds.
 
 ```
 fetch-preseeds.sh ──► ~/netboot/kali-preseed/   (all variants, vda-patched)
-select-preseed.sh xfce-default ──► ~/netboot/ipxe.pxe   (NBP baked for that one)
-        nginx (P4) serves ~/netboot/    QEMU (P2): NIC PXE → ipxe.pxe → d-i → preseed
+select-preseed.sh xfce-default ──► ~/netboot/boot.ipxe   (script baked for that one)
+        nginx (P4) serves ~/netboot/    QEMU (P2): NIC's iPXE ROM → boot.ipxe → d-i → preseed
 ```
 
 ---
@@ -64,7 +64,7 @@ Reused **unchanged** — nothing duplicated:
 | Shared tool | Used for |
 |---|---|
 | `../kali-pxe-lab/fetch-kali-installer.sh` | Fetch + verify the d-i `linux`/`initrd.gz` (same artifacts as the PXE lab). |
-| `netboot/build-ipxe.sh` | Build the iPXE NBP (`ipxe.pxe`, BIOS) / EFI binary with the chosen preseed's boot params embedded. |
+| `netboot/build-ipxe.sh` | Write `boot.ipxe` (the script QEMU boots) + build the `ipxe.pxe`/`ipxe.efi` binaries, all with the chosen preseed's boot params embedded. |
 | `phase4-podman/lab-podman.sh`, `phase2-qemu-vm/lab-vm.sh` | Serve + boot — no new phase code. |
 
 ---
@@ -106,8 +106,8 @@ examples/kali-preseed-gallery/fetch-preseeds.sh
 
 ```bash
 examples/kali-preseed-gallery/select-preseed.sh headless-default
-# → ~/netboot/ipxe.pxe   (BIOS NBP, baked with preseed/url=…/kali-preseed/headless-default)
-#   (also builds ipxe.efi for the UEFI variant, and ipxe.qcow2)
+# → ~/netboot/boot.ipxe  (the script QEMU boots, baked with preseed/url=…/kali-preseed/headless-default)
+#   (also writes ipxe.pxe for real HW, ipxe.efi for UEFI, and ipxe.qcow2)
 # See the exact command without building:  … select-preseed.sh xfce-default --print-only
 ```
 
@@ -137,10 +137,10 @@ phase2-qemu-vm/lab-vm.sh console kali-preseed-install     # watch; Ctrl-] to det
 The boot-loop in motion (BIOS, `firmware = "bios"`):
 
 1. **First boot:** SeaBIOS tries the blank target disk (`vda`, bootindex 0),
-   finds no boot sector, and falls to the NIC's stock PXE ROM ("Booting from
-   ROM") → it DHCPs and TFTP-chainloads `ipxe.pxe` → **our** iPXE runs the
-   embedded script, fetches `linux`/`initrd.gz` over HTTP, and d-i starts with
-   your chosen preseed.
+   finds no boot sector, and falls to the NIC's option ROM ("Booting from ROM") →
+   which on QEMU *is* iPXE → it DHCPs and TFTP-fetches `boot.ipxe`, then runs it
+   directly (the file starts with `#!ipxe`), fetches `linux`/`initrd.gz` over HTTP,
+   and d-i starts with your chosen preseed.
 2. **d-i runs the preseed** — partitions `vda`, debootstraps Kali, installs GRUB
    to `vda`, reboots.
 3. **Second boot:** `vda` is now bootable and (being bootindex 0) is tried first,
@@ -244,11 +244,16 @@ Honest about what was actually exercised on this host vs. a written procedure:
 | vda-patch pins grub+partman to `/dev/vda`, `raw/` keeps `/dev/sda` | ✅ verified (all 15, incl. the `packer-preseed` commented-disk edge case) |
 | `select-preseed.sh` resolves a variant + builds the correct iPXE append | ✅ verified (`--print-only`) |
 | `kali-preseed-gallery.toml` parses; MAC valid hex | ✅ verified (`tomllib`) |
-| **`headless-default` full BIOS install end-to-end** (SeaBIOS → NIC PXE → `ipxe.pxe` → iPXE 2.0.0 → d-i → partition `/dev/vda` → base + `meta-default` → GRUB → reboot → **boots the installed disk**) | ✅ **verified on KVM** (18 GB installed; GRUB in MBR; zero re-netboot = loop terminated) |
+| **`headless-default` full BIOS install end-to-end** (SeaBIOS → NIC's iPXE ROM → `boot.ipxe` → d-i → partition `/dev/vda` → base + `meta-default` → GRUB → reboot → **boots the installed disk**) | ✅ **verified on KVM** (18 GB installed; GRUB in MBR; zero re-netboot = loop terminated) |
 | Other variants (desktop / lvm / crypto), nginx serve | 📄 documented — same pipeline, multi-GB, ~10–60 min each |
 
 The gallery's `MANUAL_TESTING.md` has the copy-pasteable checks for the
 fetch/patch parts; the full install above was boot-verified end-to-end on KVM.
+
+> The original end-to-end run used the `ipxe.pxe` binary chainload; the lab has
+> since switched to running `boot.ipxe` directly in the NIC's native iPXE (more
+> reliable — no UNDI re-DHCP). That front-end change is verified on the Rocky twin
+> (same `build-ipxe.sh` + `lab-vm.sh` wiring); d-i onward is unchanged.
 
 ---
 
@@ -259,11 +264,12 @@ fetch/patch parts; the full install above was boot-verified end-to-end on KVM.
   changed to boot in this lab. The patch is fail-closed: if a variant can't be
   pinned to the lab disk, the fetch aborts rather than serve a preseed that would
   silently break the install.
-- **Why `pxe-install` + `ipxe.pxe`, not an iPXE-ROM disk?** SeaBIOS attempts only
-  the first hard disk, so an iPXE ROM on a *second* disk is never reached; the
-  reliable BIOS path is the NIC's own PXE ROM TFTP-chainloading our `ipxe.pxe`
-  (the BIOS twin of UEFI's `ipxe.efi`). A baked-in `preseed/url=` keeps it
-  **zero-touch**; the NBP builds in seconds, so `select-preseed.sh <name>` is the
+- **Why `pxe-install` running `boot.ipxe`, not an iPXE-ROM disk?** SeaBIOS attempts
+  only the first hard disk, so an iPXE ROM on a *second* disk is never reached; the
+  reliable BIOS path is the NIC's own option ROM — which on QEMU is iPXE —
+  TFTP-fetching and running `boot.ipxe` directly (no `ipxe.pxe` binary chainload,
+  so no UNDI re-DHCP to flake on). A baked-in `preseed/url=` keeps it
+  **zero-touch**; the script builds in seconds, so `select-preseed.sh <name>` is the
   whole "switch" cost.
 - **Why reuse `kali-pxe-lab/fetch-kali-installer.sh`?** The d-i kernel/initrd are
   identical — only the preseed differs between the two labs. No point duplicating
