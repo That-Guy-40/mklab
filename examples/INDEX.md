@@ -124,7 +124,8 @@ kernel+initrd over HTTP (Phase 3/4), and boot it in QEMU directly or via iPXE
 | `podman-netboot-server.toml` | 🪶 The rootless Podman equivalent — preferred when you only need to serve. |
 | `vm-almalinux-pxe-install.toml` | Zero-touch AlmaLinux installer target: a boot-loop that chainloads Anaconda, then boots the installed disk. |
 | `almalinux-zerotouch.ks` | 🔑 The kickstart that drives that unattended install (rendered per-host; **plaintext lab creds**). |
-| [`rocky-pxe-lab/`](rocky-pxe-lab/) | 🔗 Self-contained Rocky Linux 9 zero-touch PXE lab in its own directory: fetch+verify installer (checksums from `.treeinfo`), kickstart, unified P4+P2 TOML, and a README with both the QEMU path **and** the CIQ-style real-hardware dnsmasq/TFTP path. |
+| [`rocky-pxe-lab/`](rocky-pxe-lab/) | 🔗 Self-contained Rocky Linux 9 zero-touch PXE lab in its own directory: fetch+verify installer (checksums from `.treeinfo`), kickstart, unified P4+P2 TOML, and a README with both the QEMU path **and** the CIQ-style real-hardware dnsmasq/TFTP path. Plus a `MANUAL_TESTING.md` walking the full ~15-min Anaconda install. |
+| [`kali-pxe-lab/`](kali-pxe-lab/) | 🔗 Self-contained Kali Linux zero-touch PXE lab: the **Debian-installer + preseed** cousin (not Anaconda/kickstart). Fetch+verify d-i `linux`/`initrd.gz` (checksums from `SHA256SUMS`), preseed, unified P4+P2 TOML, README with the QEMU path **and** the Kali-docs `netboot.tar.gz` + dnsmasq/TFTP/PXELINUX path. |
 
 ## 🔗 One file, every phase — unified demos
 
@@ -137,6 +138,7 @@ tools in sequence against the same file.
 | `netboot-lab.toml` | 🔗 The full Debian netboot pipeline: build initrd (P1) → serve (P4) → direct-boot (P2). |
 | `almalinux-pxe-lab.toml` | 🔗 The AlmaLinux zero-touch PXE lab: serve (P4) + install-target VM (P2). |
 | [`rocky-pxe-lab/rocky-pxe-lab.toml`](rocky-pxe-lab/) | 🔗 The Rocky Linux zero-touch PXE lab: serve (P4) + install-target VM (P2). Self-contained dir — see `rocky-pxe-lab/README.md`. |
+| [`kali-pxe-lab/kali-pxe-lab.toml`](kali-pxe-lab/) | 🔗 The Kali Linux zero-touch PXE lab: serve (P4) + install-target VM (P2) via Debian-installer + preseed. Self-contained dir — see `kali-pxe-lab/README.md`. |
 
 ## 📚 Reference & notes
 
