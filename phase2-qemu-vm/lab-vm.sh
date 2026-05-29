@@ -177,11 +177,15 @@ choose_accel() {
 
 # ─── Firmware path discovery ────────────────────────────────────────────────
 firmware_for() {
-    # firmware_for GUEST_ARCH MICROVM
-    # Prints absolute path to a firmware blob, or empty for arches that
-    # don't need an explicit -bios/-drive if=pflash. Errors if expected file
-    # is missing.
+    # firmware_for GUEST_ARCH MICROVM [SECURE_BOOT] [FW_MODE]
+    # Prints absolute path to a firmware blob, or empty for arches/modes that
+    # don't need an explicit -bios/-drive if=pflash (QEMU then uses its built-in
+    # SeaBIOS).  Errors if an expected file is missing.
+    #   FW_MODE: "uefi" (default) | "bios".  bios is x86_64-only and yields an
+    #   empty path → SeaBIOS, which reads an MBR — required by the BIOS iPXE-ROM
+    #   two-disk PXE boot-loop (OVMF/UEFI cannot boot a BIOS-MBR disk).
     local arch="$1" microvm="$2"
+    local fw_mode="${4:-uefi}"
     case "$arch" in
         x86_64)
             if [[ "$microvm" == "true" ]]; then
@@ -199,6 +203,12 @@ firmware_for() {
                 for p in "${cands[@]}"; do
                     [[ -r "$p" ]] && { printf '%s' "$p"; return 0; }
                 done
+                printf ''
+                return 0
+            fi
+            if [[ "$fw_mode" == "bios" ]]; then
+                # Legacy BIOS: emit nothing → QEMU's built-in SeaBIOS, which
+                # reads the MBR (needed by the BIOS iPXE-ROM two-disk boot-loop).
                 printf ''
                 return 0
             fi
@@ -344,6 +354,7 @@ append      = "${_append}"
 ssh_user    = "${_suser}"
 cores       = ${MF_CORES:-0}
 secure_boot = "${MF_SECURE_BOOT:-false}"
+firmware    = "${MF_FIRMWARE:-uefi}"
 pxe_dir     = "${_pxedir}"
 pxe_bootfile = "${_pxebf}"
 threads     = ${MF_THREADS:-0}
@@ -1530,6 +1541,7 @@ spec_from_cli() {
         --arg user_data    "${OPT_USER_DATA:-}" \
         --arg refresh_image "${OPT_REFRESH_IMAGE:-false}" \
         --arg secure_boot  "${OPT_SECURE_BOOT:+true}" \
+        --arg firmware     "${OPT_FIRMWARE:-uefi}" \
         --arg pxe_dir      "${OPT_PXE_DIR:-}" \
         --arg pxe_bootfile "${OPT_PXE_BOOTFILE:-ipxe.efi}" \
         --arg cores        "${OPT_CORES:-0}" \
@@ -1570,6 +1582,7 @@ spec_from_cli() {
           cloud_init:$cloud_init,
           refresh_image:($refresh_image=="true"),
           secure_boot:($secure_boot=="true"),
+          firmware:$firmware,
           pxe_dir:$pxe_dir,
           pxe_bootfile:$pxe_bootfile,
           cores:($cores|tonumber), threads:($threads|tonumber), cpu_pin:$cpu_pin,
@@ -1612,6 +1625,7 @@ specs_from_config() {
             mac:       (.mac       // ""),
             refresh_image: (.refresh_image // false),
             secure_boot:   (.secure_boot   // false),
+            firmware:      (.firmware      // "uefi"),
             pxe_dir:       (.pxe_dir       // ""),
             pxe_bootfile:  (.pxe_bootfile  // "ipxe.efi"),
             cores:     (.cores     // 0),
@@ -2241,7 +2255,7 @@ create_one() {
     ssh_user="lab"  # default for cloud-init VMs
 
     # v0.2 knobs: cpu topology/pinning, network mode, image refresh.
-    local cores threads cpu_pin network_mode bridge tap refresh_image secure_boot pxe_dir pxe_bootfile
+    local cores threads cpu_pin network_mode bridge tap refresh_image secure_boot fw_mode pxe_dir pxe_bootfile
     cores="$(spec_get "$spec" cores)";     [[ -z "$cores"   ]] && cores=0
     threads="$(spec_get "$spec" threads)"; [[ -z "$threads" ]] && threads=0
     cpu_pin="$(spec_get "$spec" cpu_pin)"
@@ -2250,6 +2264,18 @@ create_one() {
     tap="$(spec_get "$spec" tap)"
     refresh_image="$(spec_get "$spec" refresh_image)"
     secure_boot="$(spec_get "$spec" secure_boot)"
+    fw_mode="$(spec_get "$spec" firmware)"; [[ -z "$fw_mode" ]] && fw_mode=uefi
+    # Validate the firmware selector early (before any disk work).
+    case "$fw_mode" in
+        uefi|bios) ;;
+        *) die "invalid firmware '$fw_mode' (use 'uefi' or 'bios')" ;;
+    esac
+    if [[ "$fw_mode" == "bios" ]]; then
+        [[ "$arch" == "x86_64" ]] \
+            || die "firmware = \"bios\" is x86_64-only (arch=$arch has no legacy BIOS; use the default 'uefi')"
+        [[ "${secure_boot:-false}" != "true" ]] \
+            || die "secure_boot requires firmware = \"uefi\" (Secure Boot is a UEFI feature)"
+    fi
     pxe_dir="$(spec_get "$spec" pxe_dir)"
     pxe_bootfile="$(spec_get "$spec" pxe_bootfile)"
 
@@ -2384,7 +2410,7 @@ create_one() {
 
     # Stash for build_qemu_argv
     local firmware
-    firmware="$(firmware_for "$arch" "$microvm" "${secure_boot:-false}")"
+    firmware="$(firmware_for "$arch" "$microvm" "${secure_boot:-false}" "${fw_mode:-uefi}")"
 
     # Persist manifest before first boot so partial-failure is visible.
     local lab_name; lab_name="$(spec_get "$spec" lab)"
@@ -2396,7 +2422,8 @@ create_one() {
     MF_SSH_USER="$ssh_user" MF_LAB="$lab_name" \
     MF_CORES="$cores" MF_THREADS="$threads" MF_CPU_PIN="$cpu_pin" \
     MF_NETWORK_MODE="$network_mode" MF_BRIDGE="$bridge" MF_TAP="$tap" \
-    MF_SECURE_BOOT="$secure_boot" MF_PXE_DIR="$pxe_dir" MF_PXE_BOOTFILE="$pxe_bootfile" \
+    MF_SECURE_BOOT="$secure_boot" MF_FIRMWARE="$fw_mode" \
+    MF_PXE_DIR="$pxe_dir" MF_PXE_BOOTFILE="$pxe_bootfile" \
     write_vm_manifest "$name"
     [[ -n "$lab_name" ]] && log_info "lab: $lab_name"
 
@@ -2459,7 +2486,7 @@ cmd_start() {
     # Reload manifest into globals expected by build_qemu_argv.
     local arch microvm accel memory cpus ssh_port disk seed kernel initrd append firmware
     local install_target mac
-    local cores threads cpu_pin network_mode bridge tap
+    local cores threads cpu_pin network_mode bridge tap secure_boot fw_mode pxe_dir pxe_bootfile
     arch="$(read_manifest_field "$name" arch)"
     microvm="$(read_manifest_field "$name" microvm)"
     accel="$(read_manifest_field "$name" accel)"
@@ -2476,6 +2503,8 @@ cmd_start() {
     # v0.2 fields (empty on manifests written before this version → safe defaults).
     cores="$(read_manifest_field "$name" cores 2>/dev/null || true)"
     secure_boot="$(read_manifest_field "$name" secure_boot 2>/dev/null || true)"
+    # firmware mode (empty on manifests written before this version → uefi default).
+    fw_mode="$(read_manifest_field "$name" firmware 2>/dev/null || true)"; [[ -z "$fw_mode" ]] && fw_mode=uefi
     pxe_dir="$(read_manifest_field "$name" pxe_dir 2>/dev/null || true)"
     pxe_bootfile="$(read_manifest_field "$name" pxe_bootfile 2>/dev/null || true)"
     threads="$(read_manifest_field "$name" threads 2>/dev/null || true)"
@@ -2484,7 +2513,7 @@ cmd_start() {
     [[ -z "$network_mode" ]] && network_mode=user
     bridge="$(read_manifest_field "$name" bridge 2>/dev/null || true)"
     tap="$(read_manifest_field "$name" tap 2>/dev/null || true)"
-    firmware="$(firmware_for "$arch" "$microvm" "${secure_boot:-false}")"
+    firmware="$(firmware_for "$arch" "$microvm" "${secure_boot:-false}" "${fw_mode:-uefi}")"
 
     # Clean up any stale unix sockets from a previous run.
     rm -f "$(vm_serial "$name")" "$(vm_monitor "$name")" "$(vm_qmp "$name")"
@@ -3100,7 +3129,7 @@ parse_args() {
     OPT_NETWORK_MODE="" OPT_BRIDGE="" OPT_TAP=""
     OPT_PACKAGES="" OPT_USER_DATA="" OPT_RUNCMD=()
     OPT_NETBOOT_DIR="" OPT_KERNEL_NAME="" OPT_INITRD_NAME="" OPT_GENERATE_SCRIPT="" OPT_SERVER=""
-    OPT_PXE_DIR="" OPT_PXE_BOOTFILE="" OPT_SECURE_BOOT=""
+    OPT_PXE_DIR="" OPT_PXE_BOOTFILE="" OPT_SECURE_BOOT="" OPT_FIRMWARE=""
 
     [[ $# -eq 0 ]] && { usage; exit 0; }
     SUBCMD="$1"; shift
@@ -3152,6 +3181,7 @@ parse_args() {
             --pxe-dir)      OPT_PXE_DIR="$2"; shift 2 ;;
             --pxe-bootfile) OPT_PXE_BOOTFILE="$2"; shift 2 ;;
             --secure-boot)  OPT_SECURE_BOOT=1; shift ;;
+            --firmware)     shift; OPT_FIRMWARE="${1:?--firmware requires bios|uefi}"; shift ;;
             -h|--help)      usage; exit 0 ;;
             -v|--version)   printf '%s %s\n' "$LAB_PROG" "$LAB_VERSION"; exit 0 ;;
             -*)             die "unknown option: $1 (try --help)" ;;
