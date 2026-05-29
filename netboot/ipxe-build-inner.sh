@@ -146,9 +146,13 @@ cd /tmp/ipxe/src
 EXTRA_MAKE_FLAGS="${EXTRA_MAKE_FLAGS:-}"
 case "$arch" in
     x86_64)
+        # ipxe.hd = bootable HARD-DISK image (the right one for booting iPXE off a
+        # virtio-blk disk under SeaBIOS); ipxe.usb is the USB-stick image, which
+        # SeaBIOS can fail to boot as an HDD ("could not read the boot disk").
+        # ipxe.efi = the UEFI binary (slirp-TFTP / ESP boot).
         # shellcheck disable=SC2086
         make -j"${JOBS}" EMBED=boot.ipxe $EXTRA_MAKE_FLAGS \
-            bin/ipxe.usb bin-x86_64-efi/ipxe.efi \
+            bin/ipxe.hd bin/ipxe.usb bin-x86_64-efi/ipxe.efi \
             || die "iPXE make failed for x86_64"
         ;;
     aarch64)
@@ -185,8 +189,10 @@ log_info "  /out/boot.ipxe"
 
 case "$arch" in
     x86_64)
+        cp /tmp/ipxe/src/bin/ipxe.hd              /out/ipxe.hd
         cp /tmp/ipxe/src/bin/ipxe.usb             /out/ipxe.usb
         cp /tmp/ipxe/src/bin-x86_64-efi/ipxe.efi /out/ipxe.efi
+        log_info "  /out/ipxe.hd"
         log_info "  /out/ipxe.usb"
         log_info "  /out/ipxe.efi"
         ;;

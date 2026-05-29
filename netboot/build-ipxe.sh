@@ -187,14 +187,39 @@ docker run --rm \
         "$server" "$kernel_path" "$initrd_path" "$append" "$arch" "$ipxe_ref" \
         "${tls_mode:-}" "${inner_cert_path}"
 
-# ─── Convert USB image to qcow2 ──────────────────────────────────────────────
+# ─── Convert the BIOS disk image to qcow2 ────────────────────────────────────
+# Prefer ipxe.hd (hard-disk image) over ipxe.usb: SeaBIOS boots the .hd reliably
+# as a virtio-blk disk, whereas the .usb stick image can fail ("could not read
+# the boot disk") when presented as an HDD.  Fall back to .usb if .hd is absent
+# (e.g. an older builder).  Pad to a few MiB so SeaBIOS computes a sane geometry.
 if command -v qemu-img &>/dev/null; then
-    if [[ -f "$output_dir/ipxe.usb" ]]; then
-        log_info "converting ipxe.usb → ipxe.qcow2 (for Phase 2 QEMU boot)..."
-        qemu-img convert -f raw -O qcow2 "$output_dir/ipxe.usb" "$output_dir/ipxe.qcow2"
-        log_info "converted: $output_dir/ipxe.qcow2"
+    rom_src=""
+    [[ -f "$output_dir/ipxe.hd"  ]] && rom_src="ipxe.hd"
+    [[ -z "$rom_src" && -f "$output_dir/ipxe.usb" ]] && rom_src="ipxe.usb"
+    if [[ -n "$rom_src" ]]; then
+        # iPXE's .hd image ships with an MBR partition table but NO active
+        # partition, so SeaBIOS refuses to boot it ("Could not locate active
+        # partition") and never reaches the iPXE MBR code.  Set the active flag
+        # on partition entry 1 (MBR offset 0x1BE = byte 446 → 0x80); SeaBIOS then
+        # executes the iPXE boot sector, which loads the rest of iPXE itself.
+        # Verified: this turns "No bootable device" into a working BIOS iPXE boot.
+        # Patch a WRITABLE COPY (the build output can be root-owned when Docker
+        # runs rootful) and convert that.  (.usb already carries an active entry,
+        # so only .hd needs this.)
+        conv_src="$output_dir/$rom_src"
+        if [[ "$rom_src" == "ipxe.hd" ]]; then
+            conv_src="$output_dir/.ipxe.hd.active"
+            cp -f "$output_dir/ipxe.hd" "$conv_src"
+            printf '\x80' | dd of="$conv_src" bs=1 seek=446 count=1 conv=notrunc status=none 2>/dev/null \
+                || die "failed to set the active partition flag on $conv_src"
+        fi
+        log_info "converting ${rom_src} → ipxe.qcow2 (for Phase 2 QEMU boot)..."
+        qemu-img convert -f raw -O qcow2 "$conv_src" "$output_dir/ipxe.qcow2"
+        qemu-img resize "$output_dir/ipxe.qcow2" 4M >/dev/null 2>&1 || true
+        [[ "$conv_src" == *".ipxe.hd.active" ]] && rm -f "$conv_src"
+        log_info "converted: $output_dir/ipxe.qcow2 (from ${rom_src}, active-flagged + padded)"
     else
-        log_warn "ipxe.usb not found; skipping qcow2 conversion (aarch64 only produces EFI)"
+        log_warn "no ipxe.hd/ipxe.usb found; skipping qcow2 conversion (aarch64 only produces EFI)"
     fi
 else
     log_warn "qemu-img not found; skipping qcow2 conversion"
