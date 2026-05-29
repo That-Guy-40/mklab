@@ -23,12 +23,12 @@ export LAB_STATE_DIR="$tmp/state" LAB_CACHE_DIR="$tmp/cache"
 # shellcheck disable=SC1090
 source "$LAB_VM"
 
-# render DISK INSTALL_TARGET → QEMU_ARGV (space-joined).  firmware="" keeps the
-# arg-gen host-independent (no OVMF needed); disk attachment is independent of it.
+# render DISK INSTALL_TARGET [FW_MODE] → QEMU_ARGV (space-joined).  firmware=""
+# keeps arg-gen host-independent (no OVMF needed); disk attach is independent of it.
 render() {
     name=disktest arch=x86_64 microvm=false accel=tcg cpus=1 memory=256M \
         kernel="" initrd="" append="" seed="" mac="" ssh_port=2222 \
-        firmware="" pxe_dir="" pxe_bootfile="" \
+        firmware="" pxe_dir="" pxe_bootfile="" fw_mode="${3:-uefi}" \
         disk="$1" install_target="$2"
     mkdir -p "$(vm_dir "$name")"
     build_qemu_argv
@@ -36,14 +36,24 @@ render() {
 }
 has() { grep -Fq -- "$2" <<<"$1"; }
 
-# ── pxe-install: install_target ONLY, no iPXE ROM image (the regression) ─────
-note "pxe-install (install_target only) → target attached as virtio-blk disk0"
-a="$(render "" /tmp/target.qcow2)"
+# ── pxe-install UEFI: install_target ONLY, no bootindex (OVMF boots its NVRAM
+#    entry post-install).  This is also the regression guard: the target MUST
+#    attach even though there's no iPXE ROM `disk`. ──────────────────────────
+note "pxe-install UEFI (install_target only) → target attached as disk0, no bootindex"
+a="$(render "" /tmp/target.qcow2 uefi)"
 has "$a" 'file=/tmp/target.qcow2,if=none,id=disk0' \
     || fail "pxe-install: install_target NOT attached (the bug): $a"
 has "$a" 'virtio-blk-pci,drive=disk0' \
     || fail "pxe-install: no virtio-blk device for the target disk: $a"
+if has "$a" 'drive=disk0,bootindex'; then fail "pxe-install UEFI: target should have NO bootindex: $a"; fi
 if has "$a" 'id=disk1'; then fail "pxe-install: unexpected second disk"; fi
+
+# ── pxe-install BIOS: install_target gets bootindex=0 so SeaBIOS tries the disk
+#    before the NIC PXE ROM (loop terminates post-install). ─────────────────
+note "pxe-install BIOS (firmware=bios) → target disk0 with bootindex=0"
+a="$(render "" /tmp/target.qcow2 bios)"
+has "$a" 'virtio-blk-pci,drive=disk0,bootindex=0' \
+    || fail "pxe-install BIOS: target must have bootindex=0 (else the loop never boots the disk): $a"
 
 # ── two-disk BIOS boot-loop: target=disk0 bootindex0 + iPXE ROM=disk1 bootindex1
 note "two-disk (image + install_target) → target disk0/bootindex0, ROM disk1/bootindex1"

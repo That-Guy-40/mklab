@@ -150,9 +150,13 @@ case "$arch" in
         # virtio-blk disk under SeaBIOS); ipxe.usb is the USB-stick image, which
         # SeaBIOS can fail to boot as an HDD ("could not read the boot disk").
         # ipxe.efi = the UEFI binary (slirp-TFTP / ESP boot).
+        # ipxe.pxe = a BIOS PXE NBP (network bootstrap program).  Served over
+        #   slirp TFTP and chainloaded by the NIC's stock PXE ROM, it's the BIOS
+        #   analogue of ipxe.efi for the pxe-install backend (SeaBIOS reaches it
+        #   via "Booting from ROM" → TFTP → our iPXE + embedded script).
         # shellcheck disable=SC2086
         make -j"${JOBS}" EMBED=boot.ipxe $EXTRA_MAKE_FLAGS \
-            bin/ipxe.hd bin/ipxe.usb bin-x86_64-efi/ipxe.efi \
+            bin/ipxe.hd bin/ipxe.usb bin/ipxe.pxe bin-x86_64-efi/ipxe.efi \
             || die "iPXE make failed for x86_64"
         ;;
     aarch64)
@@ -191,9 +195,11 @@ case "$arch" in
     x86_64)
         cp /tmp/ipxe/src/bin/ipxe.hd              /out/ipxe.hd
         cp /tmp/ipxe/src/bin/ipxe.usb             /out/ipxe.usb
+        cp /tmp/ipxe/src/bin/ipxe.pxe             /out/ipxe.pxe
         cp /tmp/ipxe/src/bin-x86_64-efi/ipxe.efi /out/ipxe.efi
         log_info "  /out/ipxe.hd"
         log_info "  /out/ipxe.usb"
+        log_info "  /out/ipxe.pxe"
         log_info "  /out/ipxe.efi"
         ;;
     aarch64)
