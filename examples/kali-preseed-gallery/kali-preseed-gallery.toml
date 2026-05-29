@@ -1,0 +1,83 @@
+# Kali preseed GALLERY — boot any variant from the upstream Kali preseed-examples
+# catalog (https://gitlab.com/kalilinux/recipes/kali-preseed-examples) zero-touch.
+#
+# This is the "pick-a-variant" companion to examples/kali-pxe-lab/ (which serves
+# ONE hand-written preseed).  Here you fetch the WHOLE upstream catalog and swap
+# which one installs by rebuilding the tiny iPXE ROM (select-preseed.sh) — same
+# iPXE + nginx + QEMU two-disk boot-loop, just a selectable preseed.
+#
+# Each phase tool reads only the blocks it owns and ignores the rest:
+#   phase4-podman/lab-podman.sh   reads [[service]] (engine="podman")
+#   phase2-qemu-vm/lab-vm.sh      reads [[vm]]
+#
+# ─── Workflow — run these in order against this file ─────────────────────────
+#
+#   # 1. Fetch + verify the Kali d-i kernel + initrd (reuses the kali-pxe-lab
+#   #    helper — same artifacts, lands in ~/netboot/kali/):
+#   examples/kali-pxe-lab/fetch-kali-installer.sh --arch amd64
+#
+#   # 2. Fetch the whole preseed catalog (staged + vda-patched for this lab):
+#   examples/kali-preseed-gallery/fetch-preseeds.sh
+#
+#   # 3. Pick a variant and build the iPXE ROM pointed at it:
+#   examples/kali-preseed-gallery/select-preseed.sh xfce-default
+#   #   (or: headless-default | kde-large | gnome-default | lvm | lvm-multi |
+#   #        crypto | crypto-multi | regular-multi | skip-wipe-lvm | packer-preseed | …)
+#
+#   # 4. Bring up the rootless nginx artifact server (Phase 4):
+#   phase4-podman/lab-podman.sh up --config examples/kali-preseed-gallery/kali-preseed-gallery.toml
+#
+#   # 5. Create + start the installer VM (Phase 2) — unattended:
+#   phase2-qemu-vm/lab-vm.sh create --config examples/kali-preseed-gallery/kali-preseed-gallery.toml
+#   phase2-qemu-vm/lab-vm.sh start  kali-preseed-install   # walk away
+#   phase2-qemu-vm/lab-vm.sh console kali-preseed-install  # watch the install
+#
+# Switch variants: rerun step 3 with a different name, destroy + recreate the VM
+# (so the target disk is blank again), and start.
+#
+# Tear down:
+#   phase4-podman/lab-podman.sh down    --lab kali-preseed-gallery
+#   phase2-qemu-vm/lab-vm.sh    destroy kali-preseed-install --force
+#
+# Update /home/sqs to your $HOME if different (no shell expansion in TOML).
+
+[lab]
+name        = "kali-preseed-gallery"
+description = "Zero-touch Kali install driven by ANY variant from the upstream kali-preseed-examples catalog. Rootless nginx serves the d-i kernel/initrd + the staged preseed gallery (Phase 4); a QEMU two-disk VM installs the selected variant via iPXE -> d-i -> preseed and reboots into Kali (Phase 2)."
+tags        = ["kali", "kali-linux", "debian-installer", "preseed", "pxe", "netboot", "zero-touch", "gallery"]
+
+# ─── Phase 4: rootless nginx serving netboot artifacts ─────────────────────
+# Serves ~/netboot/ on host port 8181.  The d-i kernel/initrd live under
+# ~/netboot/kali/ and the staged preseed catalog under ~/netboot/kali-preseed/
+# (so neither collides with the Rocky/Alma vmlinuz/initrd.img in ~/netboot/).
+# This is the SAME nginx config as examples/kali-pxe-lab — if that lab's `http`
+# service is already up, you can skip this and reuse it.
+# lab-podman.sh auto-appends :Z to the volume when SELinux is enforcing.
+[[service]]
+name    = "http"
+engine  = "podman"
+image   = "docker.io/library/nginx:alpine"
+ports   = ["8181:80"]
+volumes = ["/home/sqs/netboot:/usr/share/nginx/html:ro"]
+
+# ─── Phase 2: QEMU installer VM (two-disk boot-loop) ───────────────────────
+# disk0 = blank install target (bootindex=0): empty on first boot, bootable
+#         Kali after d-i installs and reboots.
+# disk1 = ipxe.qcow2 ROM (bootindex=1): fallback on first boot only; runs the
+#         Debian installer; never reached again once disk0 is bootable.
+# THE staged preseeds pin partman + grub to /dev/vda (disk0) so d-i can never
+# wander onto /dev/vdb (the iPXE ROM) and break the boot-loop — see README
+# "Why the disk patch".  cloud_init=false: d-i provisions users from the preseed.
+# memory: 2 GB gives d-i headroom for the desktop variants' larger apt sets;
+#         the headless variant needs far less.
+[[vm]]
+name           = "kali-preseed-install"
+backend        = "disk-image"
+image          = "/home/sqs/netboot/ipxe.qcow2"  # iPXE ROM (bootindex=1, fallback)
+install_target = "20G"                            # blank disk (bootindex=0, install dest)
+mac            = "52:54:00:ca:11:5e"              # valid hex; "ca11/5e" ~ kali preseed
+arch           = "x86_64"
+memory         = "2048M"
+cpus           = 2
+network        = true
+cloud_init     = false                            # d-i provisions directly; no datasource

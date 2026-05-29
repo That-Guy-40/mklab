@@ -126,6 +126,7 @@ kernel+initrd over HTTP (Phase 3/4), and boot it in QEMU directly or via iPXE
 | `almalinux-zerotouch.ks` | 🔑 The kickstart that drives that unattended install (rendered per-host; **plaintext lab creds**). |
 | [`rocky-pxe-lab/`](rocky-pxe-lab/) | 🔗 Self-contained Rocky Linux 9 zero-touch PXE lab in its own directory: fetch+verify installer (checksums from `.treeinfo`), kickstart, unified P4+P2 TOML, and a README with both the QEMU path **and** the CIQ-style real-hardware dnsmasq/TFTP path. Plus a `MANUAL_TESTING.md` walking the full ~15-min Anaconda install. |
 | [`kali-pxe-lab/`](kali-pxe-lab/) | 🔗 Self-contained Kali Linux zero-touch PXE lab: the **Debian-installer + preseed** cousin (not Anaconda/kickstart). Fetch+verify d-i `linux`/`initrd.gz` (checksums from `SHA256SUMS`), preseed, unified P4+P2 TOML, README with the QEMU path **and** the Kali-docs `netboot.tar.gz` + dnsmasq/TFTP/PXELINUX path. Plus a `MANUAL_TESTING.md` walking the full ~15-min d-i install — incl. the one install-breaking risk (d-i clobbering the iPXE ROM disk) and how the `vda` pinning closes it. |
+| [`kali-preseed-gallery/`](kali-preseed-gallery/) | 🔗 The **pick-a-variant** companion to `kali-pxe-lab`: fetches the *whole* upstream [Kali preseed-examples catalog](https://gitlab.com/kalilinux/recipes/kali-preseed-examples) (~15 variants — xfce/kde/gnome/headless × regular/lvm/crypto/multi/skip-wipe/packer) and installs any one zero-touch by rebuilding the iPXE ROM (`select-preseed.sh <variant>`). `fetch-preseeds.sh` stages each verbatim **and** auto-patches `/dev/sda`→`/dev/vda` so d-i can't clobber the ROM disk (`--verbatim` to opt out). Same iPXE+nginx+two-disk machinery; `MANUAL_TESTING.md` for the new fetch/patch checks. |
 
 ## 🔗 One file, every phase — unified demos
 
@@ -139,6 +140,7 @@ tools in sequence against the same file.
 | `almalinux-pxe-lab.toml` | 🔗 The AlmaLinux zero-touch PXE lab: serve (P4) + install-target VM (P2). |
 | [`rocky-pxe-lab/rocky-pxe-lab.toml`](rocky-pxe-lab/) | 🔗 The Rocky Linux zero-touch PXE lab: serve (P4) + install-target VM (P2). Self-contained dir — see `rocky-pxe-lab/README.md`. |
 | [`kali-pxe-lab/kali-pxe-lab.toml`](kali-pxe-lab/) | 🔗 The Kali Linux zero-touch PXE lab: serve (P4) + install-target VM (P2) via Debian-installer + preseed. Self-contained dir — see `kali-pxe-lab/README.md`. |
+| [`kali-preseed-gallery/kali-preseed-gallery.toml`](kali-preseed-gallery/) | 🔗 The Kali preseed **gallery**: serve (P4) + install-target VM (P2), but with any of ~15 upstream preseed variants selectable via `select-preseed.sh`. Self-contained dir — see `kali-preseed-gallery/README.md`. |
 
 ## 🤖 AI / LLM — run a model locally
 
