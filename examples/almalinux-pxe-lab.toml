@@ -1,5 +1,7 @@
 # Unified AlmaLinux zero-touch PXE lab — one TOML feeds Phase 4 and Phase 2.
 #
+# Copy-paste runbook (this lab + the Rocky twin): examples/PXE-INSTALL-QUICKSTART.md
+#
 # Each phase tool reads only the blocks it owns and silently ignores the rest:
 #   phase4-podman/lab-podman.sh   reads [[service]] with engine="podman"
 #   phase2-qemu-vm/lab-vm.sh      reads [[vm]]

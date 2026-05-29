@@ -30,6 +30,10 @@ faithful "real PXE server" the CIQ article describes.
 | `rocky-pxe-lab.toml` | Unified config: Phase 4 nginx artifact server + Phase 2 installer VM. |
 | `README.md` | This file. |
 
+> **Just want the copy-paste steps?** See
+> [`examples/PXE-INSTALL-QUICKSTART.md`](../PXE-INSTALL-QUICKSTART.md) — a short
+> runbook covering both this lab and the AlmaLinux twin.
+
 Everything else is **reused** from the shared `netboot/` tooling — nothing is
 duplicated:
 
