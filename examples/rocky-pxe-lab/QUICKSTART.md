@@ -1,18 +1,16 @@
-# QUICKSTART — zero-touch PXE install: Rocky Linux 9 & AlmaLinux 9
+# QUICKSTART — Rocky Linux 9 zero-touch PXE install
 
 Boot a blank VM over the (virtual) network and have it install **Rocky Linux 9**
-or **AlmaLinux 9** with no keystrokes:
+with no keystrokes:
 
 ```
-SeaBIOS → NIC PXE ROM → TFTP ipxe.pxe → iPXE → HTTP(vmlinuz+initrd+stage2) → Anaconda → kickstart → reboot into the installed OS
+SeaBIOS → NIC PXE ROM → TFTP ipxe.pxe → iPXE → HTTP(vmlinuz+initrd+stage2) → Anaconda → kickstart → reboot into Rocky
 ```
 
-The two labs are twins — identical flow, only three values differ (fetch script,
-MAC/repo, config path). Each section below is self-contained and copy-pasteable
-from the **repo root**. Rocky also has a standalone copy of its half in
-`examples/rocky-pxe-lab/QUICKSTART.md`. For the full design write-up see
-`examples/rocky-pxe-lab/README.md`; for the deep debugging log see
-`examples/rocky-pxe-lab/MANUAL_TESTING.md`.
+Copy-paste from the **repo root**. For the full design write-up see
+[`README.md`](README.md); for the deep debugging log see
+[`MANUAL_TESTING.md`](MANUAL_TESTING.md). The AlmaLinux twin lab is documented in
+[`../PXE-INSTALL-QUICKSTART.md`](../PXE-INSTALL-QUICKSTART.md).
 
 ---
 
@@ -24,31 +22,21 @@ sudo apt-get install -y qemu-system-x86 qemu-utils ovmf podman docker.io jq curl
 ls /dev/kvm && echo "KVM present (installs run much faster)"
 ```
 
-> **`$HOME` note.** The lab TOMLs hardcode `/home/sqs/netboot` in two places (the
-> nginx `volumes =` line and `pxe_dir =`). TOML does no shell expansion, so if your
-> `$HOME` is not `/home/sqs`, edit the TOML and replace `/home/sqs` with your home
-> path. The `fetch-*` scripts already write to `~/netboot` automatically.
+> **`$HOME` note.** `rocky-pxe-lab.toml` hardcodes `/home/sqs/netboot` in two places
+> (the nginx `volumes =` line and `pxe_dir =`). TOML does no shell expansion, so if
+> your `$HOME` is not `/home/sqs`, edit the TOML and replace `/home/sqs` with your
+> home path. The fetch script already writes to `~/netboot` automatically.
 
 > **`build-ipxe.sh` needs Docker.** It builds iPXE in a throwaway Docker container.
-> If Docker is the **snap** package, it can only bind-mount paths under `$HOME`
-> (not `/tmp`) — keep `~/netboot` in your home directory.
+> If Docker is the **snap** package it can only bind-mount paths under `$HOME` (not
+> `/tmp`) — keep `~/netboot` in your home directory.
 
-| | Rocky Linux 9 | AlmaLinux 9 |
-|---|---|---|
-| Fetch script | `examples/rocky-pxe-lab/fetch-rocky-installer.sh` | `netboot/fetch-almalinux-installer.sh` |
-| Pinned MAC | `52:54:00:cc:09:09` → `ks/52-54-00-cc-09-09.ks` | `52:54:00:a1:9a:01` → `ks/52-54-00-a1-9a-01.ks` |
-| Kickstart template | `examples/rocky-pxe-lab/rocky9-zerotouch.ks` (`--template`) | `examples/almalinux-zerotouch.ks` (the gen-ks default) |
-| `inst.repo` | `https://download.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/` | `https://repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/` |
-| Config (TOML) | `examples/rocky-pxe-lab/rocky-pxe-lab.toml` | `examples/almalinux-pxe-lab.toml` |
-| Lab name / VM | `rocky-pxe` / `rocky-pxe-install` | `almalinux-pxe` / `almalinux-pxe-install` |
-| nginx container | `lab-rocky-pxe-http` | `lab-almalinux-pxe-http` |
-
-Both labs serve on host **port 8181** and log in as **`lab` / `lab`** (set by the
-kickstart). Both run at **4096M RAM** by design (see [Notes](#notes--why-it-is-built-this-way)).
+This lab serves on host **port 8181** and logs in as **`lab` / `lab`** (set by the
+kickstart). It runs at **4096M RAM** by design (see [Notes](#notes--why-it-is-built-this-way)).
 
 ---
 
-## Rocky Linux 9
+## Steps
 
 ```bash
 # 1. Fetch + verify vmlinuz, initrd.img, AND the ~1.2 GB stage2 (images/install.img).
@@ -58,11 +46,14 @@ examples/rocky-pxe-lab/fetch-rocky-installer.sh --release 9 --arch x86_64
 # 2. Render the per-MAC kickstart (the VM's NIC is pinned to 52:54:00:cc:09:09).
 netboot/gen-almalinux-ks.sh --mac 52:54:00:cc:09:09 \
     --template examples/rocky-pxe-lab/rocky9-zerotouch.ks
+    # -> ~/netboot/ks/52-54-00-cc-09-09.ks   (gen-almalinux-ks.sh is a generic,
+    #    distro-agnostic template→ks copier; pass the Rocky template explicitly)
 
 # 3. Build the iPXE boot programs.  inst.stage2 points at the LOCAL install.img.
 netboot/build-ipxe.sh --server http://10.0.2.2:8181 \
     --kernel-path /vmlinuz --initrd-path /initrd.img \
     --append 'inst.stage2=http://10.0.2.2:8181/ inst.repo=https://download.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/ inst.ks=http://10.0.2.2:8181/ks/{MAC}.ks inst.text console=ttyS0 ip=dhcp'
+    # {MAC} is a literal token: iPXE expands it to the NIC's MAC at runtime.
 
 # 4. Serve the artifacts (rootless nginx on :8181).
 phase4-podman/lab-podman.sh up --config examples/rocky-pxe-lab/rocky-pxe-lab.toml
@@ -92,51 +83,6 @@ cat /etc/rocky-release                               # → Rocky Linux release 9
 ```bash
 phase4-podman/lab-podman.sh down    --lab rocky-pxe
 phase2-qemu-vm/lab-vm.sh    destroy rocky-pxe-install --force
-```
-
----
-
-## AlmaLinux 9
-
-Identical flow — only the fetch script, MAC, repo, and config path differ:
-
-```bash
-# 1. Fetch + verify vmlinuz, initrd.img, AND the stage2 install.img (resumable).
-netboot/fetch-almalinux-installer.sh --release 9 --arch x86_64
-
-# 2. Per-MAC kickstart (NIC pinned to 52:54:00:a1:9a:01; default template = almalinux-zerotouch.ks).
-netboot/gen-almalinux-ks.sh --mac 52:54:00:a1:9a:01
-
-# 3. Build iPXE.  inst.stage2 points at the LOCAL install.img.
-netboot/build-ipxe.sh --server http://10.0.2.2:8181 \
-    --kernel-path /vmlinuz --initrd-path /initrd.img \
-    --append 'inst.stage2=http://10.0.2.2:8181/ inst.repo=https://repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/ inst.ks=http://10.0.2.2:8181/ks/{MAC}.ks inst.text console=ttyS0 ip=dhcp'
-
-# 4. Serve + verify the four artifacts.
-phase4-podman/lab-podman.sh up --config examples/almalinux-pxe-lab.toml
-for u in vmlinuz initrd.img images/install.img ks/52-54-00-a1-9a-01.ks; do
-    printf '%-32s ' "$u"; curl -sI "http://localhost:8181/$u" | head -1
-done   # every line must say HTTP/1.1 200 OK
-
-# 5. Create + start.
-phase2-qemu-vm/lab-vm.sh create  --config examples/almalinux-pxe-lab.toml
-phase2-qemu-vm/lab-vm.sh start   almalinux-pxe-install
-phase2-qemu-vm/lab-vm.sh console almalinux-pxe-install
-```
-
-**Confirm success:**
-
-```bash
-podman logs lab-almalinux-pxe-http 2>&1 | grep -a 'iPXE.*GET /vmlinuz'   # one timestamp only
-phase2-qemu-vm/lab-vm.sh ssh almalinux-pxe-install   # login: lab / lab
-cat /etc/almalinux-release                            # → AlmaLinux release 9.x
-```
-
-**Tear down:**
-
-```bash
-phase4-podman/lab-podman.sh down    --lab almalinux-pxe
-phase2-qemu-vm/lab-vm.sh    destroy almalinux-pxe-install --force
 # Reclaim the big artifacts when fully done:
 #   rm -rf ~/netboot/{vmlinuz,initrd.img,images,ks,ipxe.*,.treeinfo}
 ```
@@ -153,15 +99,15 @@ phase2-qemu-vm/lab-vm.sh    destroy almalinux-pxe-install --force
    that needs the 4 GB RAM.
 4. **Anaconda** runs the kickstart, partitions and installs to `/dev/vda`, then the
    kickstart's `reboot` fires.
-5. **Second boot:** `vda` is now bootable (bootindex 0) → boots the installed OS;
-   the NIC ROM is never reached again. **Done.**
+5. **Second boot:** `vda` is now bootable (bootindex 0) → boots Rocky; the NIC ROM
+   is never reached again. **Done.**
 
 ---
 
 ## Notes — why it is built this way
 
-These are the fixes baked into the configs; you don't need to do anything, but
-here's the reasoning:
+These fixes are baked into `rocky-pxe-lab.toml`; you don't need to do anything,
+but here's the reasoning:
 
 - **`firmware = "bios"` + `pxe_bootfile = "ipxe.pxe"`** — disk-image x86_64 VMs
   default to **OVMF/UEFI**, which cannot boot a BIOS-MBR iPXE ROM. `firmware =
@@ -175,28 +121,22 @@ here's the reasoning:
 - **`inst.stage2=http://10.0.2.2:8181/`** — serving `install.img` **locally** (via
   nginx) instead of streaming it from a remote mirror. Over QEMU slirp the big
   remote transfer truncates (`curl 18`) and the install dies at dracut.
-- **Resumable `install.img` download** — the fetch scripts use
+- **Resumable `install.img` download** — `fetch-rocky-installer.sh` uses
   `curl -fSL -C - --retry 8 --retry-all-errors`, because the public CDNs routinely
   drop that ~1.2 GB transfer partway. Re-running the fetch resumes it.
 
 ### UEFI instead of BIOS
 
 `build-ipxe.sh` builds **both** `ipxe.pxe` (BIOS) and `ipxe.efi` (UEFI), so switching
-is just a config change:
-
-- **AlmaLinux** has a ready-made UEFI lab: `examples/vm-almalinux-uefi-pxe.toml`
-  (`backend = "pxe-install"`, `pxe_bootfile = "ipxe.efi"`, no `firmware` line → OVMF
-  PXE-boots `ipxe.efi`). Uses `examples/almalinux-uefi-zerotouch.ks`
-  (`bootloader --location=boot`).
-- **Rocky / any lab** — delete the `firmware = "bios"` line and set
-  `pxe_bootfile = "ipxe.efi"`. For Secure Boot add `secure_boot = true` and build
-  iPXE with `--sign --use-snakeoil`.
+is just a config change: delete the `firmware = "bios"` line in `rocky-pxe-lab.toml`
+and set `pxe_bootfile = "ipxe.efi"` (OVMF then PXE-boots `ipxe.efi`). For Secure
+Boot add `secure_boot = true` and build iPXE with `--sign --use-snakeoil`.
 
 ### Real hardware (not QEMU)
 
 Rebuild iPXE with `--server http://<your-LAN-IP>:8181`, generate a kickstart per
 NIC MAC, and use a dnsmasq ProxyDHCP + TFTP setup (`netboot/setup-dhcp-tftp.sh`)
-instead of QEMU's slirp. See `examples/rocky-pxe-lab/README.md` §"Path B".
+instead of QEMU's slirp. See [`README.md`](README.md) §"Path B".
 
 ### Troubleshooting
 

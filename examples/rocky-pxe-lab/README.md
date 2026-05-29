@@ -28,11 +28,12 @@ faithful "real PXE server" the CIQ article describes.
 | `fetch-rocky-installer.sh` | Download + verify Rocky's `vmlinuz`/`initrd.img` (checksums from `.treeinfo`). |
 | `rocky9-zerotouch.ks` | The kickstart that drives the unattended install (**plaintext lab creds**). |
 | `rocky-pxe-lab.toml` | Unified config: Phase 4 nginx artifact server + Phase 2 installer VM. |
+| `QUICKSTART.md` | Copy-paste runbook for this lab (Rocky only). |
 | `README.md` | This file. |
 
-> **Just want the copy-paste steps?** See
-> [`examples/PXE-INSTALL-QUICKSTART.md`](../PXE-INSTALL-QUICKSTART.md) — a short
-> runbook covering both this lab and the AlmaLinux twin.
+> **Just want the copy-paste steps?** See [`QUICKSTART.md`](QUICKSTART.md) — a short
+> Rocky-only runbook. The combined Rocky + AlmaLinux runbook is at
+> [`../PXE-INSTALL-QUICKSTART.md`](../PXE-INSTALL-QUICKSTART.md).
 
 Everything else is **reused** from the shared `netboot/` tooling — nothing is
 duplicated:
