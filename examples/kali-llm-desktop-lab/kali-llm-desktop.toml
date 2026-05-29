@@ -1,0 +1,54 @@
+# Kali local-LLM lab — Tier 2-FULL: the faithful blog stack in a Kali desktop VM.
+#
+# This is the heavyweight, blog-faithful companion to examples/kali-llm-lab/
+# (Tier 1, headless containers).  Here EVERYTHING from the Kali blog
+# (https://www.kali.org/blog/kali-llm-ollama-5ire/) runs INSIDE one Kali
+# desktop VM: Ollama, the real 5ire desktop GUI, and mcp-kali-server driving
+# the actual Kali tools — exactly as the post describes.
+#
+#   Phase 2 QEMU  ──►  Kali XFCE VM (prebuilt image)
+#                        ├─ ollama          (LLM runtime, :11434, in-VM)
+#                        ├─ 5ire AppImage   (desktop GUI / MCP client)
+#                        ├─ mcp-kali-server (nmap/sqlmap/metasploit/… as MCP tools)
+#                        └─ TigerVNC + XFCE (the GUI, reached over SSH-forward)
+#
+# lab-vm.sh runs the VM headless (serial console + SSH); the DESKTOP is reached
+# by tunnelling the in-guest VNC server over the VM's SSH (see README §4) — no
+# change to Phase 2 needed, consistent with the repo's SSH-forward posture.
+#
+# ─── Workflow (full detail in README.md) ─────────────────────────────────────
+#   # 1. Create + boot the Kali VM (first run downloads the prebuilt image):
+#   phase2-qemu-vm/lab-vm.sh create --config examples/kali-llm-desktop-lab/kali-llm-desktop.toml
+#   phase2-qemu-vm/lab-vm.sh start  kali-llm-desktop
+#
+#   # 2. First-boot manual setup (Kali prebuilt images have no cloud-init):
+#   phase2-qemu-vm/lab-vm.sh console kali-llm-desktop     # login kali/kali
+#   #   (in guest) sudo systemctl enable --now ssh
+#   #   (in guest) mkdir -p ~/.ssh && paste your pubkey >> ~/.ssh/authorized_keys
+#
+#   # 3. Copy + run the provisioner inside the VM (installs the whole stack).
+#   #    Read the auto-allocated SSH port back from the manifest:
+#   PORT=$(phase2-qemu-vm/lab-vm.sh inspect kali-llm-desktop --json | jq -r .ssh_port)
+#   scp -P "$PORT" examples/kali-llm-desktop-lab/provision-kali-llm.sh kali@127.0.0.1:/tmp/
+#   phase2-qemu-vm/lab-vm.sh ssh kali-llm-desktop -- 'sudo bash /tmp/provision-kali-llm.sh'
+#
+#   # 4. Open the desktop (VNC tunnelled over the VM's SSH), then use 5ire:
+#   ssh -p "$PORT" -L 5901:localhost:5901 kali@127.0.0.1      # keep open
+#   #   point a VNC viewer at localhost:5901  (password set by the provisioner)
+#
+# Tear down:
+#   phase2-qemu-vm/lab-vm.sh destroy kali-llm-desktop --force
+#
+# Hardware: a desktop + Ollama + a 1–3B model wants ~8 GB RAM.  GPU here means
+# vfio passthrough to the VM (advanced, host-specific) — see README "GPU".
+# Update /home/sqs / ssh_port to your environment.
+
+[[vm]]
+name     = "kali-llm-desktop"
+backend  = "disk-image"
+distro   = "kali"
+suite    = "kali-rolling"     # resolved to the current release at create time
+arch     = "x86_64"
+memory   = "8G"               # XFCE desktop + Ollama + a small model
+cpus     = 4
+ssh_port = 0                  # auto-allocate (read it back from the manifest)

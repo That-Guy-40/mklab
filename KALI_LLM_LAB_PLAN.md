@@ -7,11 +7,17 @@
 > boot-verified end-to-end (pod up; `ollama` + `open-webui` running; a model
 > pulled into the volume; a real `/api/generate` returned a completion; Open
 > WebUI served HTTP 200). **Tier 2 (real 5ire) — documented** in the lab README.
-> **Tier 2-full (faithful Kali desktop VM) + Tier 3 (agentic MCP) — TODO /
-> future state** (see §3 and the lab README's "Future state / TODO").
+> **Tier 2-full (faithful Kali desktop VM) + Tier 3 (agentic MCP) —
+> IMPLEMENTED-AS-RUNBOOK (2026-05-29)** in `examples/kali-llm-desktop-lab/`: a
+> Phase-2 Kali XFCE VM + an in-VM provisioner installing Ollama + the real 5ire
+> AppImage + `mcp-kali-server` + the tool set + TigerVNC, reached via
+> VNC-through-SSH. Cheap parts verified (TOML parse, `bash -n`, the
+> `inspect --json | jq .ssh_port` port read-back); the multi-GB VM boot / GUI /
+> MCP demo / GPU vfio are documented procedures (see that lab's "What's verified
+> vs documented").
 > Lives at repo root next to `ALMALINUX_PXE_LAB_PLAN.md` /
 > `NETBOOT_LAB_PLAN.md` / `MICRO_LINUX_LAB_PLAN.md`.
-> **Directory:** `examples/kali-llm-lab/`.
+> **Directories:** `examples/kali-llm-lab/` (Tier 1) + `examples/kali-llm-desktop-lab/` (Tier 2-full).
 
 ---
 
@@ -114,20 +120,28 @@ No new containers. The README documents:
   Security).
 - This is the blog's literal client, talking to our reproducible backend.
 
-### Tier 3 — mcp-kali-server (the agentic pentest payoff) ⚠️ — ⏳ TODO / future
+### Tier 3 — mcp-kali-server (the agentic pentest payoff) ⚠️ — ✅ realized in the Tier 2-full VM
 
 The blog's headline capability: the LLM driving real Kali tools via MCP. This is
-**powerful and dangerous** (see §6) and is **opt-in, default-off, isolated**.
+**powerful and dangerous** (see §6) and is **opt-in, isolated, authorized-targets-only**.
 
-- A **`kali-mcp`** service built from `kalilinux/kali-rolling` + an apt install
-  of `mcp-kali-server` and the tool set (nmap, gobuster, nikto, hydra, john,
-  sqlmap, wpscan, enum4linux-ng, metasploit-framework, wordlists). Runs
-  `mcp-server` / the Flask API on **:5000**.
-- Wired to the client as an MCP tool (5ire → Tools → Local → `mcp-server`, or
-  Open WebUI's tool/pipeline mechanism).
-- Placed on an **isolated podman network** with no route to anything you don't
-  own; the README ships a single explicitly-authorized target example
-  (`scanme.nmap.org`, as the blog uses) and a loud warning.
+As built, Tier 3 lives **inside the Tier 2-full Kali desktop VM**
+(`examples/kali-llm-desktop-lab/`) rather than as a separate container — that's
+the faithful blog topology (5ire spawns `mcp-server` locally over stdio, against
+in-VM tools):
+
+- `provision-kali-llm.sh` installs `mcp-kali-server` + the blog's tool set (nmap,
+  gobuster, nikto, hydra, john, sqlmap, wpscan, enum4linux-ng, and —unless
+  `LITE=1`— metasploit-framework + wordlists).
+- Wired to 5ire as a Local MCP tool (**Tools → Local → Command `/usr/bin/mcp-server`**).
+- The VM is the isolation boundary; the README ships a single explicitly-authorized
+  target (`scanme.nmap.org`, as the blog uses) and a loud warning, and tells you to
+  keep the VM off any network with hosts you don't own.
+
+> An alternative **container-only** Tier 3 (an isolated-network `kali-mcp` service
+> built from `kalilinux/kali-rolling`, `mcp-server` / Flask on :5000) remains a
+> valid lighter-weight variant for the Tier-1 stack — sketched below — but the
+> in-VM realization above is what's faithful to the blog and what's now shipped.
 
 ---
 
@@ -341,9 +355,19 @@ This lab combines two high-risk surfaces. The README must lead with this.
 
 The maintainer chose **Tier 1 as the implemented default** — the headless
 Ollama + Open WebUI pod reached over SSH-forward, with the real 5ire wired
-from the client (Tier 2) — and asked to **plan, but defer, Option 2** (the
-faithful full Kali desktop VM running 5ire + `mcp-kali-server` in-VM) plus
-the agentic MCP Tier 3. Those remain the flagged future state in §3 and in
-the lab README's "Future state / TODO" section. Open WebUI (not a `curl`-only
-Tier 0) is the shipped Tier-1 client, since the maintainer wanted a backing
-GUI on the client side.
+from the client (Tier 2) — and initially asked to **plan, but defer, Option 2**
+(the faithful full Kali desktop VM running 5ire + `mcp-kali-server` in-VM) plus
+the agentic MCP Tier 3. Open WebUI (not a `curl`-only Tier 0) is the shipped
+Tier-1 client, since the maintainer wanted a backing GUI on the client side.
+
+### Update (2026-05-29, same day): Option 2 promoted from deferred to built
+
+The maintainer then asked to *"do a real tier 2-full,"* so Option 2 is no longer
+deferred: it ships as `examples/kali-llm-desktop-lab/` — a Phase-2 Kali XFCE VM
+with an in-VM `provision-kali-llm.sh` that installs the *whole* blog stack
+(Ollama + the real 5ire AppImage + `mcp-kali-server` + tools + TigerVNC), the
+GUI reached over VNC-through-SSH. Tier 3 is realized in-VM there (§3). Verified
+cheaply (TOML parse, `bash -n`, port read-back); the multi-GB VM boot, the GUI,
+the MCP `scanme.nmap.org` demo, and GPU vfio are documented procedures, clearly
+labelled in that lab's "What's verified vs documented" table — not claimed as
+machine-verified here.

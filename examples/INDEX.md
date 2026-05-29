@@ -144,7 +144,8 @@ tools in sequence against the same file.
 
 | File | What you get |
 |---|---|
-| [`kali-llm-lab/`](kali-llm-lab/) | 🔗🪶 Local LLM on Kali, headless: a rootless **Ollama + Open WebUI** pod (Phase 4) reached over SSH-forward — the self-contained Tier 1 of the [Kali Ollama+5ire blog](https://www.kali.org/blog/kali-llm-ollama-5ire/). README also wires the **real 5ire** desktop client (Tier 2) and plans the faithful full-Kali-desktop + agentic-MCP path as a flagged future state. ⚠️ unauthenticated model API — loopback + SSH-forward only. Design doc: `KALI_LLM_LAB_PLAN.md`. |
+| [`kali-llm-lab/`](kali-llm-lab/) | 🔗🪶 Local LLM on Kali, headless: a rootless **Ollama + Open WebUI** pod (Phase 4) reached over SSH-forward — the self-contained Tier 1 of the [Kali Ollama+5ire blog](https://www.kali.org/blog/kali-llm-ollama-5ire/). README also wires the **real 5ire** desktop client (Tier 2). ⚠️ unauthenticated model API — loopback + SSH-forward only. Design doc: `KALI_LLM_LAB_PLAN.md`. |
+| [`kali-llm-desktop-lab/`](kali-llm-desktop-lab/) | 🖥️ **Tier 2-full** — the *whole* blog stack in one Kali XFCE VM (Phase 2): Ollama + the **real 5ire GUI** (over VNC-through-SSH) + **mcp-kali-server** driving real Kali tools (the agentic Tier 3 payoff). In-VM provisioner; ~8 GB RAM. ⚠️ an LLM that runs `nmap`/`sqlmap`/`metasploit` — isolated network + authorized targets only. README marks what's verified vs documented. |
 
 ## 📚 Reference & notes
 

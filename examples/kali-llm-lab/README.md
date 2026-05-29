@@ -12,7 +12,7 @@ The blog's actual stack is three pieces that containerize very differently:
 |---|---|---|
 | **Ollama** | local LLM runtime, HTTP API on :11434 | ✅ containerized (this lab) |
 | **5ire** | a desktop GUI / MCP client | ❌ can't run headless → **Tier 1** uses Open WebUI in your browser; **Tier 2** wires the *real* 5ire on your client to this lab's Ollama |
-| **mcp-kali-server** | exposes nmap/sqlmap/metasploit/… to the model as MCP tools | ⏳ the agentic payoff — see **Future state / TODO** below |
+| **mcp-kali-server** | exposes nmap/sqlmap/metasploit/… to the model as MCP tools | ✅ the agentic payoff — in the sibling **[`kali-llm-desktop-lab/`](../kali-llm-desktop-lab/)** (Tier 2-full) |
 
 > **Design note.** 5ire is an Electron desktop app — there is nothing to serve
 > headlessly, so a fully self-contained headless lab can't *be* 5ire. Tier 1
@@ -195,26 +195,25 @@ This stack has two sharp edges. Treat both seriously:
 
 ---
 
-## Future state / TODO — Option 2: the faithful full Kali desktop
+## Tier 2-full — the faithful full Kali desktop (now its own lab)
 
-> **Status: planned, not implemented.** Tracked in `KALI_LLM_LAB_PLAN.md` (repo
-> root) as Tiers 2-full + 3. This section is the design intent, not a working
-> path yet.
+> **Status: built** — see [`../kali-llm-desktop-lab/`](../kali-llm-desktop-lab/).
+> What was "planned, not implemented" here now ships as a runbook lab.
 
-Tier 1 gives you the backend + a browser client. The blog's *full* experience —
-the real 5ire desktop app **and** the `mcp-kali-server` letting the model drive
-Kali's tools — really wants a **complete Kali desktop**. The planned future
-lab:
+Tier 1 (this lab) gives you the backend + a browser client. The blog's *full*
+experience — the real 5ire desktop app **and** the `mcp-kali-server` letting the
+model drive Kali's tools — really wants a **complete Kali desktop**, so it lives
+in a sibling lab rather than here:
 
-1. **A Phase 2 Kali desktop VM** (built from `examples/vm-kali-amd64.toml` or
-   the `examples/kali-pxe-lab/`), provisioned with Ollama + the 5ire AppImage +
-   `mcp-kali-server` and the tool set (nmap, gobuster, nikto, hydra, john,
-   sqlmap, wpscan, enum4linux-ng, metasploit), reached via SPICE/VNC.
+1. **A Phase 2 Kali XFCE VM** (`kali-llm-desktop.toml`), provisioned by
+   `provision-kali-llm.sh` with Ollama + the 5ire AppImage + `mcp-kali-server`
+   and the tool set (nmap, gobuster, nikto, hydra, john, sqlmap, wpscan,
+   enum4linux-ng, metasploit) + TigerVNC, reached via **VNC-through-SSH**.
 2. **MCP wired into 5ire** (Tools → Local → `/usr/bin/mcp-server`) so a prompt
    like *"port-scan scanme.nmap.org"* makes the model emit a tool call that runs
-   the real `nmap` — the blog's headline demo.
-3. **GPU passthrough to the VM** (vfio) for the larger models — harder than the
-   rootless-podman CDI path Tier 1 documents.
+   the real `nmap` — the blog's headline demo (this is **Tier 3**).
+3. **GPU passthrough to the VM** (vfio) for the larger models — documented as a
+   host-specific hook there; harder than this lab's rootless-podman CDI path.
 
 ### ⚠️ Why Tier 3 is gated behind a serious warning
 
@@ -222,17 +221,18 @@ Giving an LLM an MCP tool that executes `nmap`/`hydra`/`sqlmap`/`metasploit`
 turns "chat" into "an agent that can attack things." Combined with **prompt
 injection** (a malicious page, file, or even a target's service banner that the
 model ingests can rewrite its instructions), the agent can be steered into
-scanning or exploiting hosts you never intended. The planned lab will therefore:
+scanning or exploiting hosts you never intended. The desktop lab therefore:
 
-- ship the MCP tier **default-off**, on an **isolated network** with no route to
+- keeps the offensive tools to the **isolated, disposable VM**, with no route to
   anything you don't own;
-- allow **only explicitly-authorized targets** (the blog uses `scanme.nmap.org`,
+- allows **only explicitly-authorized targets** (the blog uses `scanme.nmap.org`,
   Nmap's sanctioned test host);
-- keep the Kali-tools container/VM **disposable** and trust nothing it produces.
+- trusts nothing the agent produces, and binds Ollama + VNC to **loopback only**.
 
 **Never point an LLM-driven offensive-tool agent at hosts or networks you are
-not authorized to test.** That's the whole reason this tier is a deliberate,
-opt-in future state rather than part of the turnkey default.
+not authorized to test.** That warning is front-and-center in the desktop lab's
+README, alongside an honest "verified vs documented" table.
 
-See `KALI_LLM_LAB_PLAN.md` for the full design (component mapping, the Kali-MCP
-Containerfile sketch, exit criteria, and open questions).
+See [`../kali-llm-desktop-lab/README.md`](../kali-llm-desktop-lab/) for the full
+runbook and `KALI_LLM_LAB_PLAN.md` for the design (component mapping, exit
+criteria, open questions).
