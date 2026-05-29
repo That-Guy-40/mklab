@@ -15,7 +15,7 @@
 # Workflow (UEFI x86_64):
 #   1. netboot/build-ipxe.sh --server http://10.0.2.2:8181 \
 #          --kernel-path /vmlinuz --initrd-path /initrd.img \
-#          --append 'inst.repo=https://repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/ inst.ks=http://10.0.2.2:8181/ks/{MAC}.ks inst.text console=ttyS0 ip=dhcp'
+#          --append 'inst.stage2=http://10.0.2.2:8181/ inst.repo=https://repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/ inst.ks=http://10.0.2.2:8181/ks/{MAC}.ks inst.text console=ttyS0 ip=dhcp'
 #      # ipxe.efi is placed in ~/netboot/ alongside ipxe.usb
 #
 #   2. netboot/gen-almalinux-ks.sh --mac 52:54:00:ef:f1:01 \

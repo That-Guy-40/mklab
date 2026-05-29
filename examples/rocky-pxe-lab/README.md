@@ -90,7 +90,7 @@ netboot/gen-almalinux-ks.sh \
 netboot/build-ipxe.sh \
     --server http://10.0.2.2:8181 \
     --kernel-path /vmlinuz --initrd-path /initrd.img \
-    --append 'inst.repo=https://download.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/ inst.ks=http://10.0.2.2:8181/ks/{MAC}.ks inst.text console=ttyS0 ip=dhcp'
+    --append 'inst.stage2=http://10.0.2.2:8181/ inst.repo=https://download.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/ inst.ks=http://10.0.2.2:8181/ks/{MAC}.ks inst.text console=ttyS0 ip=dhcp'
 # → ~/netboot/ipxe.pxe (BIOS NBP — what this lab boots), ipxe.efi (UEFI), ipxe.qcow2
 ```
 
@@ -98,8 +98,11 @@ netboot/build-ipxe.sh \
 - `8181` is the host port the nginx container publishes (step 4).
 - `{MAC}` is a **literal placeholder**: `build-ipxe.sh` rewrites it to iPXE's
   runtime `${mac:hexhyp}`, so each booting NIC fetches its own kickstart.
-- `inst.repo=` gives Anaconda its stage2 + base repo; the kickstart's own
-  `url`/`repo` lines refine the package sources.
+- `inst.stage2=` points Anaconda at the **local** `install.img` (served by this
+  nginx at `/images/install.img`), so the ~1 GB stage2 doesn't stream from a
+  remote mirror — that large transfer truncates over QEMU slirp and fails the
+  install at dracut. `inst.repo=` is the base package repo (still the upstream
+  mirror); the kickstart's own `url`/`repo` lines refine the package sources.
 
 ### 4. Start the rootless nginx artifact server (Phase 4)
 

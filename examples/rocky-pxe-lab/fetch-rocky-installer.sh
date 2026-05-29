@@ -41,7 +41,6 @@
 
 set -euo pipefail
 
-readonly LAB_PROG="${0##*/}"
 
 # ─── Logging ────────────────────────────────────────────────────────────────
 _log() {
@@ -182,15 +181,38 @@ log_info "fetching + verifying installer files..."
 fetch_and_verify vmlinuz    images/pxeboot/vmlinuz
 fetch_and_verify initrd.img images/pxeboot/initrd.img
 
+# ─── Stage2 runtime image (images/install.img, ~1 GB) ───────────────────────
+# Served LOCALLY so Anaconda's dracut loads it from this nginx instead of
+# streaming ~1 GB from a remote mirror — that large transfer truncates over
+# constrained links (e.g. QEMU slirp).  Kept under images/ so the boot param
+# `inst.stage2=http://SERVER/` resolves it at /images/install.img.  Verified
+# against .treeinfo like the boot images.
+log_info "fetching + verifying the stage2 install.img (large — served locally)..."
+install_img_want="$(treeinfo_sha256 "$treeinfo_dest" images/install.img)"
+[[ -n "$install_img_want" ]] || die "no 'images/install.img' sha256 entry in .treeinfo"
+mkdir -p "${out_dir}/images"
+install_img_dest="${out_dir}/images/install.img"
+if [[ -f "$install_img_dest" && "$(sha256sum "$install_img_dest" | cut -d' ' -f1)" == "$install_img_want" ]]; then
+    log_info "  images/install.img: already present and verified"
+else
+    log_info "  downloading images/install.img (this is the big one)..."
+    curl -fSL --progress-bar -o "$install_img_dest" "${os_url}/images/install.img" \
+        || die "download failed: ${os_url}/images/install.img"
+    printf '%s  %s\n' "$install_img_want" "images/install.img" | (cd "$out_dir" && sha256sum --check --strict -) \
+        || die "CHECKSUM MISMATCH for images/install.img — refusing to use a tampered/corrupt file"
+    log_info "  images/install.img: checksum OK"
+fi
+
 # ─── Step 4: permissions (world-readable so rootless nginx can serve them) ───
 log_info "setting permissions (chmod 644)..."
-chmod 644 "${out_dir}/vmlinuz" "${out_dir}/initrd.img" "$treeinfo_dest"
+chmod 644 "${out_dir}/vmlinuz" "${out_dir}/initrd.img" "$install_img_dest" "$treeinfo_dest"
 
 # If invoked under sudo, hand ownership back to the real user so the artifacts
 # in their ~/netboot are not root-owned.
 if [[ "${EUID}" -eq 0 && -n "${SUDO_UID:-}" ]]; then
     chown "${SUDO_UID}:${SUDO_GID:-$SUDO_UID}" \
-        "${out_dir}/vmlinuz" "${out_dir}/initrd.img" "$treeinfo_dest"
+        "${out_dir}/vmlinuz" "${out_dir}/initrd.img" "$install_img_dest" "$treeinfo_dest"
+    chown "${SUDO_UID}:${SUDO_GID:-$SUDO_UID}" "${out_dir}/images" 2>/dev/null || true
     log_info "chowned to UID ${SUDO_UID}"
 fi
 
@@ -205,10 +227,10 @@ log_info "next steps (see examples/rocky-pxe-lab/README.md):"
 log_info "  1. Generate a per-host kickstart (reuses the generic copy helper):"
 log_info "       netboot/gen-almalinux-ks.sh --mac 52:54:00:cc:09:09 \\"
 log_info "           --template examples/rocky-pxe-lab/rocky9-zerotouch.ks"
-log_info "  2. Build iPXE with Rocky boot params:"
+log_info "  2. Build iPXE with Rocky boot params (inst.stage2 = the LOCAL install.img):"
 log_info "       netboot/build-ipxe.sh --server http://10.0.2.2:8181 \\"
 log_info "           --kernel-path /vmlinuz --initrd-path /initrd.img \\"
-log_info "           --append 'inst.repo=${os_url}/ inst.ks=http://10.0.2.2:8181/ks/{MAC}.ks inst.text console=ttyS0 ip=dhcp'"
+log_info "           --append 'inst.stage2=http://10.0.2.2:8181/ inst.repo=${os_url}/ inst.ks=http://10.0.2.2:8181/ks/{MAC}.ks inst.text console=ttyS0 ip=dhcp'"
 log_info "  3. Serve + boot:"
 log_info "       phase4-podman/lab-podman.sh up     --config examples/rocky-pxe-lab/rocky-pxe-lab.toml"
 log_info "       phase2-qemu-vm/lab-vm.sh    create --config examples/rocky-pxe-lab/rocky-pxe-lab.toml"

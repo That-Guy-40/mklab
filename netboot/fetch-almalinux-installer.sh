@@ -1,10 +1,24 @@
 #!/usr/bin/env bash
 # fetch-almalinux-installer.sh — Download and verify the AlmaLinux PXE installer
-#                                 kernel and initrd from an upstream mirror.
+#                                 kernel, initrd, and stage2 from an upstream mirror.
 #
-# Downloads vmlinuz and initrd.img from the AlmaLinux images/pxeboot/ tree,
-# verifies both files against the published CHECKSUM file, and sets permissions
-# so a rootless nginx container can serve them.
+# Downloads vmlinuz + initrd.img (from images/pxeboot/) and the stage2 runtime
+# images/install.img, verifying all three against the sha256 checksums in the os
+# tree's productmd `.treeinfo`, then makes them world-readable for a rootless
+# nginx container.
+#
+# ─── Why .treeinfo (not the per-dir CHECKSUM)? ───────────────────────────────
+# images/pxeboot/CHECKSUM is not reliably published (it 404s on some mirrors) and
+# does NOT cover images/install.img (the ~1 GB stage2, which lives one dir up).
+# The os tree's `.treeinfo` is a productmd standard that lists sha256 for every
+# image — vmlinuz, initrd.img AND install.img — and is the same source the Rocky
+# fetcher uses.  Checksums move per point release (9 → 9.x), so we fetch it live.
+#
+# ─── Why fetch install.img at all? ───────────────────────────────────────────
+# Serving the stage2 LOCALLY (nginx) lets the install boot param
+# `inst.stage2=http://SERVER/` load it from /images/install.img instead of
+# streaming ~1 GB from a remote mirror — that large transfer truncates over
+# constrained links (e.g. QEMU slirp), which fails the install at dracut.
 #
 # Usage:
 #   netboot/fetch-almalinux-installer.sh [OPTIONS]
@@ -17,14 +31,6 @@
 #   --out     <dir>   output directory         (default: ~/netboot)
 #   --help            show this help and exit
 #
-# Behaviour:
-#   - Constructs the pxeboot URL:
-#       ${mirror}/${release}/BaseOS/${arch}/os/images/pxeboot/
-#   - Downloads vmlinuz, initrd.img, and CHECKSUM from that URL.
-#   - Verifies sha256 checksums for both files; aborts on mismatch.
-#   - Safe to re-run: skips any file whose checksum already matches.
-#   - Sets files world-readable (chmod 644) so rootless nginx can serve them.
-#
 # Examples:
 #   netboot/fetch-almalinux-installer.sh
 #   netboot/fetch-almalinux-installer.sh --release 8 --arch x86_64
@@ -33,7 +39,6 @@
 
 set -euo pipefail
 
-readonly LAB_PROG="${0##*/}"
 
 # ─── Logging ────────────────────────────────────────────────────────────────
 _log() {
@@ -62,8 +67,9 @@ usage() {
     cat >&2 <<'EOF'
 Usage: netboot/fetch-almalinux-installer.sh [OPTIONS]
 
-Download the AlmaLinux PXE installer kernel and initrd from an upstream mirror,
-verify their sha256 checksums, and make them world-readable for rootless nginx.
+Download the AlmaLinux PXE installer kernel, initrd, and stage2 install.img,
+verify their sha256 checksums against the tree's .treeinfo, and make them
+world-readable for rootless nginx.
 
 Options:
   --mirror  URL   upstream AlmaLinux mirror base URL
@@ -74,9 +80,10 @@ Options:
   --help          show this help and exit
 
 Files written to --out:
-  vmlinuz     AlmaLinux installer kernel
-  initrd.img  AlmaLinux installer initrd
-  CHECKSUM    upstream checksum file (kept for reference)
+  vmlinuz             AlmaLinux installer kernel
+  initrd.img          AlmaLinux installer initrd
+  images/install.img  stage2 runtime (served locally via inst.stage2)
+  .treeinfo           the parsed tree metadata (kept for reference)
 
 Examples:
   netboot/fetch-almalinux-installer.sh
@@ -105,115 +112,109 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ─── Pre-flight checks ──────────────────────────────────────────────────────
-if ! command -v curl &>/dev/null; then
-    die "curl is required but not found in PATH"
-fi
-if ! command -v sha256sum &>/dev/null; then
-    die "sha256sum is required but not found in PATH"
-fi
+command -v curl      &>/dev/null || die "curl is required but not found in PATH"
+command -v sha256sum &>/dev/null || die "sha256sum is required but not found in PATH"
 
 # ─── Derived values ──────────────────────────────────────────────────────────
-pxeboot_url="${mirror}/${release}/BaseOS/${arch}/os/images/pxeboot"
+os_url="${mirror}/${release}/BaseOS/${arch}/os"
+pxeboot_url="${os_url}/images/pxeboot"
+treeinfo_url="${os_url}/.treeinfo"
 
-log_info "AlmaLinux ${release} ${arch} pxeboot URL: ${pxeboot_url}"
-log_info "output directory: ${out_dir}"
+log_info "AlmaLinux ${release} ${arch}"
+log_info "  pxeboot URL : ${pxeboot_url}"
+log_info "  treeinfo    : ${treeinfo_url}"
+log_info "  output dir  : ${out_dir}"
 
 mkdir -p "$out_dir"
 
-# ─── Helper: download one file (skip if already present and verified) ────────
-# Usage: fetch_file <remote-url> <local-dest>
-fetch_file() {
-    local url="$1"
-    local dest="$2"
-    local name="${dest##*/}"
+# ─── Step 1: download .treeinfo (always fresh — checksums move per release) ──
+treeinfo_dest="${out_dir}/.treeinfo"
+log_info "downloading .treeinfo..."
+curl -fSL --progress-bar -o "$treeinfo_dest" "$treeinfo_url" \
+    || die "could not fetch .treeinfo from ${treeinfo_url}"
 
-    if [[ -f "$dest" ]]; then
-        log_info "  ${name}: already present (will verify below)"
-    else
-        log_info "  downloading ${name}..."
-        curl -fSL --progress-bar -o "$dest" "$url"
-        log_info "  ${name}: downloaded"
-    fi
+# ─── Helper: pull the sha256 hex for an image key out of .treeinfo ───────────
+# .treeinfo [checksums] lines look like:  images/pxeboot/vmlinuz = sha256:1fd4...
+treeinfo_sha256() {
+    local treeinfo="$1" key="$2"
+    awk -F' = ' -v k="$key" '
+        $1 == k { v=$2; sub(/^sha256:/, "", v); gsub(/[[:space:]]/, "", v); print v; exit }
+    ' "$treeinfo"
 }
 
-# ─── Helper: verify a file against lines from the CHECKSUM file ─────────────
-# Usage: verify_file <checksum-file> <local-path>
-# Filters the CHECKSUM file to the single line for the target filename,
-# then pipes it to sha256sum --check.  AlmaLinux CHECKSUM lines use the form:
-#   SHA256 (vmlinuz) = <hex>
-# which is NOT the two-column sha256sum format.  We normalise it ourselves.
-verify_file() {
-    local checksum_file="$1"
-    local file_path="$2"
-    local name="${file_path##*/}"
-    local dir
-    dir="$(dirname "$file_path")"
+# ─── Helper: download a pxeboot file and verify it against .treeinfo ─────────
+# Usage: fetch_and_verify <pxeboot-filename> <treeinfo-image-key>
+fetch_and_verify() {
+    local name="$1" key="$2"
+    local dest="${out_dir}/${name}"
+    local want
+    want="$(treeinfo_sha256 "$treeinfo_dest" "$key")"
+    [[ -n "$want" ]] || die "no '${key}' sha256 entry in .treeinfo — is the mirror/release correct?"
 
-    # Extract the sha256 hex for this filename.
-    # AlmaLinux CHECKSUM format: "SHA256 (filename) = <hex>"
-    local hex
-    hex=$(grep -i "^SHA256 (${name})" "$checksum_file" \
-              | sed 's/.*= *//' \
-              | tr -d '[:space:]')
-
-    if [[ -z "$hex" ]]; then
-        die "no SHA256 entry for '${name}' found in CHECKSUM file"
+    if [[ -f "$dest" ]]; then
+        local have; have="$(sha256sum "$dest" | cut -d' ' -f1)"
+        if [[ "$have" == "$want" ]]; then
+            log_info "  ${name}: already present and verified (sha256 ${want:0:16}...)"
+            return 0
+        fi
+        log_warn "  ${name}: present but checksum differs — re-downloading"
     fi
 
-    log_info "  verifying ${name} (sha256: ${hex:0:16}...)..."
-    # Build a two-column sha256sum input and check from the file's directory
-    # so the relative path in the manifest matches.
-    printf '%s  %s\n' "$hex" "$name" | (cd "$dir" && sha256sum --check --strict -)
+    log_info "  downloading ${name}..."
+    curl -fSL --progress-bar -o "$dest" "${pxeboot_url}/${name}" \
+        || die "download failed: ${pxeboot_url}/${name}"
+    printf '%s  %s\n' "$want" "$name" | (cd "$out_dir" && sha256sum --check --strict -) \
+        || die "CHECKSUM MISMATCH for ${name} — refusing to use a tampered/corrupt file"
     log_info "  ${name}: checksum OK"
 }
 
-# ─── Step 1: Download CHECKSUM ───────────────────────────────────────────────
-checksum_dest="${out_dir}/CHECKSUM"
-log_info "downloading CHECKSUM..."
-# Always re-download the CHECKSUM file so we always have the latest signature.
-curl -fSL --progress-bar -o "$checksum_dest" "${pxeboot_url}/CHECKSUM"
-log_info "CHECKSUM downloaded"
+# ─── Step 2: download + verify the boot images ───────────────────────────────
+log_info "fetching + verifying installer files..."
+fetch_and_verify vmlinuz    images/pxeboot/vmlinuz
+fetch_and_verify initrd.img images/pxeboot/initrd.img
 
-# ─── Step 2: Download vmlinuz and initrd.img ─────────────────────────────────
-log_info "fetching installer files..."
-fetch_file "${pxeboot_url}/vmlinuz"    "${out_dir}/vmlinuz"
-fetch_file "${pxeboot_url}/initrd.img" "${out_dir}/initrd.img"
+# ─── Stage2 runtime image (images/install.img, ~1 GB) — served LOCALLY ───────
+# Kept under images/ so the boot param `inst.stage2=http://SERVER/` resolves it
+# at /images/install.img.  Verified against .treeinfo like the boot images.
+log_info "fetching + verifying the stage2 install.img (large — served locally)..."
+install_img_want="$(treeinfo_sha256 "$treeinfo_dest" images/install.img)"
+[[ -n "$install_img_want" ]] || die "no 'images/install.img' sha256 entry in .treeinfo"
+mkdir -p "${out_dir}/images"
+install_img_dest="${out_dir}/images/install.img"
+if [[ -f "$install_img_dest" && "$(sha256sum "$install_img_dest" | cut -d' ' -f1)" == "$install_img_want" ]]; then
+    log_info "  images/install.img: already present and verified"
+else
+    log_info "  downloading images/install.img (this is the big one)..."
+    curl -fSL --progress-bar -o "$install_img_dest" "${os_url}/images/install.img" \
+        || die "download failed: ${os_url}/images/install.img"
+    printf '%s  %s\n' "$install_img_want" "images/install.img" | (cd "$out_dir" && sha256sum --check --strict -) \
+        || die "CHECKSUM MISMATCH for images/install.img — refusing to use a tampered/corrupt file"
+    log_info "  images/install.img: checksum OK"
+fi
 
-# ─── Step 3: Verify checksums ────────────────────────────────────────────────
-log_info "verifying checksums..."
-verify_file "$checksum_dest" "${out_dir}/vmlinuz"
-verify_file "$checksum_dest" "${out_dir}/initrd.img"
-
-# ─── Step 4: Set permissions ─────────────────────────────────────────────────
-# world-readable so a rootless nginx container can serve them without needing
-# to run as the owning UID.
+# ─── Step 3: permissions (world-readable so rootless nginx can serve them) ───
 log_info "setting permissions (chmod 644)..."
-chmod 644 "${out_dir}/vmlinuz" "${out_dir}/initrd.img" "${out_dir}/CHECKSUM"
-
-# If running as root (e.g., inside a setup wrapper), chown back to the real
-# invoking user so the files don't end up root-owned in the user's home dir.
+chmod 644 "${out_dir}/vmlinuz" "${out_dir}/initrd.img" "$install_img_dest" "$treeinfo_dest"
 if [[ "${EUID}" -eq 0 && -n "${SUDO_UID:-}" ]]; then
     chown "${SUDO_UID}:${SUDO_GID:-$SUDO_UID}" \
-        "${out_dir}/vmlinuz" "${out_dir}/initrd.img" "${out_dir}/CHECKSUM"
+        "${out_dir}/vmlinuz" "${out_dir}/initrd.img" "$install_img_dest" "$treeinfo_dest"
+    chown "${SUDO_UID}:${SUDO_GID:-$SUDO_UID}" "${out_dir}/images" 2>/dev/null || true
     log_info "chowned to UID ${SUDO_UID}"
 fi
 
 # ─── Summary ────────────────────────────────────────────────────────────────
-log_info "done — installer artifacts ready in ${out_dir}:"
-for f in vmlinuz initrd.img CHECKSUM; do
+log_info "done — AlmaLinux ${release} installer artifacts ready in ${out_dir}:"
+for f in vmlinuz initrd.img images/install.img; do
     fp="${out_dir}/${f}"
-    if [[ -f "$fp" ]]; then
-        size=$(du -sh "$fp" 2>/dev/null | cut -f1)
-        log_info "  ${f}  (${size})"
-    fi
+    [[ -f "$fp" ]] && log_info "  ${f}  ($(du -sh "$fp" 2>/dev/null | cut -f1))"
 done
 log_info ""
 log_info "next steps:"
 log_info "  Generate a per-host kickstart:"
 log_info "    netboot/gen-almalinux-ks.sh --mac 52:54:00:a1:9a:01"
-log_info "  Build iPXE with the AlmaLinux boot parameters:"
+log_info "  Build iPXE (inst.stage2 = the LOCAL install.img):"
 log_info "    netboot/build-ipxe.sh --server http://10.0.2.2:8181 \\"
 log_info "        --kernel-path /vmlinuz --initrd-path /initrd.img \\"
-log_info "        --append 'inst.repo=https://repo.almalinux.org/almalinux/${release}/BaseOS/${arch}/os/ inst.ks=http://10.0.2.2:8181/ks/{MAC}.ks inst.text console=ttyS0 ip=dhcp'"
+log_info "        --append 'inst.stage2=http://10.0.2.2:8181/ inst.repo=${os_url}/ inst.ks=http://10.0.2.2:8181/ks/{MAC}.ks inst.text console=ttyS0 ip=dhcp'"
 log_info "  Start nginx to serve artifacts:"
 log_info "    phase4-podman/lab-podman.sh up --config examples/podman-netboot-server.toml"

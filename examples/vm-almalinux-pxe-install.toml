@@ -21,7 +21,7 @@
 #          # -> ~/netboot/ks/52-54-00-a1-9a-01.ks
 #   3. netboot/build-ipxe.sh --server http://10.0.2.2:8181 \
 #          --kernel-path /vmlinuz --initrd-path /initrd.img \
-#          --append 'inst.repo=https://repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/ inst.ks=http://10.0.2.2:8181/ks/{MAC}.ks inst.text console=ttyS0 ip=dhcp'
+#          --append 'inst.stage2=http://10.0.2.2:8181/ inst.repo=https://repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/ inst.ks=http://10.0.2.2:8181/ks/{MAC}.ks inst.text console=ttyS0 ip=dhcp'
 #          # {MAC} is a literal token replaced at build time; iPXE expands it to
 #          # the NIC's MAC at runtime (e.g. 52-54-00-a1-9a-01).
 #   4. phase4-podman/lab-podman.sh up --config examples/podman-netboot-server.toml

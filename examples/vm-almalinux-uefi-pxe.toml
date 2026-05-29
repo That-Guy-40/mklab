@@ -14,11 +14,14 @@
 # when building iPXE.
 #
 # Prerequisites:
-#   1. netboot/fetch-almalinux-installer.sh  (downloads vmlinuz + initrd.img)
+#   1. netboot/fetch-almalinux-installer.sh  (downloads vmlinuz + initrd.img +
+#                                             the stage2 images/install.img)
 #   2. netboot/build-ipxe.sh --server http://10.0.2.2:8181 \
 #          --kernel-path /vmlinuz --initrd-path /initrd.img \
-#          --append '... inst.ks=http://10.0.2.2:8181/ks/{MAC}.ks ...'
-#      # produces ipxe.efi  (and ipxe.usb, ipxe.qcow2 — not used here)
+#          --append 'inst.stage2=http://10.0.2.2:8181/ inst.repo=https://repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/ inst.ks=http://10.0.2.2:8181/ks/{MAC}.ks inst.text console=ttyS0 ip=dhcp'
+#      # inst.stage2 = the LOCAL install.img (reliable; avoids streaming ~1 GB
+#      #   from a remote mirror).  produces ipxe.efi (this lab boots that),
+#      #   plus ipxe.pxe/.usb/.qcow2.
 #   3. netboot/gen-almalinux-ks.sh --mac 52:54:00:ef:f1:01 \
 #          --template examples/almalinux-uefi-zerotouch.ks [--default]
 #   4. phase4-podman/lab-podman.sh up --config examples/podman-netboot-server.toml

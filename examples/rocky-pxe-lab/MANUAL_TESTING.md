@@ -109,7 +109,7 @@ grep -m1 download.rockylinux.org ~/netboot/ks/52-54-00-cc-09-09.ks && echo OK
 netboot/build-ipxe.sh \
     --server http://10.0.2.2:8181 \
     --kernel-path /vmlinuz --initrd-path /initrd.img \
-    --append 'inst.repo=https://download.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/ inst.ks=http://10.0.2.2:8181/ks/{MAC}.ks inst.text console=ttyS0 ip=dhcp'
+    --append 'inst.stage2=http://10.0.2.2:8181/ inst.repo=https://download.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/ inst.ks=http://10.0.2.2:8181/ks/{MAC}.ks inst.text console=ttyS0 ip=dhcp'
 ```
 
 **Expect** — at the end, a qcow2 ROM:

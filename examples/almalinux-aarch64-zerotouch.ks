@@ -20,7 +20,7 @@
 #
 #   3. netboot/build-ipxe.sh --arch aarch64 --server http://10.0.2.2:8181 \
 #          --kernel-path /vmlinuz --initrd-path /initrd.img \
-#          --append 'inst.repo=https://repo.almalinux.org/almalinux/9/BaseOS/aarch64/os/ inst.ks=http://10.0.2.2:8181/ks/{MAC}.ks inst.text console=ttyAMA0 ip=dhcp'
+#          --append 'inst.stage2=http://10.0.2.2:8181/ inst.repo=https://repo.almalinux.org/almalinux/9/BaseOS/aarch64/os/ inst.ks=http://10.0.2.2:8181/ks/{MAC}.ks inst.text console=ttyAMA0 ip=dhcp'
 #
 #   4. phase4-podman/lab-podman.sh up --config examples/podman-netboot-server.toml
 #
