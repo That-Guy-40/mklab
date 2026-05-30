@@ -79,6 +79,15 @@ sudo phase2-qemu-vm/lab-vm.sh console offsec-awae-vm
 SSH works too once the VM has a DHCP lease (the chroot enables `systemd-networkd`
 to bring up any `en*`/`eth*` NIC): `ssh kali@<vm-ip>`.
 
+## Why `firmware = "bios"`
+
+The `from-chroot` backend writes an **MBR + extlinux** disk (legacy BIOS layout —
+no EFI System Partition). `lab-vm` otherwise defaults to **UEFI/OVMF** for x86_64,
+and OVMF can't boot an MBR disk — it finds no `\EFI\BOOT\BOOTX64.EFI` and drops to
+the **UEFI Shell**. So the `[[vm]]` spec sets `firmware = "bios"`, which makes
+`lab-vm` use QEMU's built-in **SeaBIOS** (it reads the MBR and runs extlinux). This
+is mandatory for any from-chroot VM.
+
 ## How the chroot is made self-bootable
 
 The `from-chroot` backend packages a chroot **tree** into a disk image but does
@@ -130,6 +139,8 @@ SSH, kali login), then the full `offsec-awae` build on top of that proven pipeli
 | `Package 'offsec-awae' has no installation candidate` | components — the TOML's `sed` must enable `contrib non-free non-free-firmware` before the install. |
 | heavy install hits `… not installable` (transient kali-rolling skew) | `sudo phase1-chroot/lab-chroot.sh enter offsec-awae -- apt-get full-upgrade -y`, then re-run the install. |
 | `build-vm.sh` warns about missing `extlinux`/`parted`/`qemu-img` | install them (see Quick start) — needed by the from-chroot backend. |
-| VM boots but serial console is blank | the kernel cmdline must carry `console=ttyS0` (lab-vm sets it); the chroot also enables `serial-getty@ttyS0`. Give it ~20s past GRUB/extlinux. |
+| VM drops to a **UEFI Shell** (`Shell>`) | the disk is MBR/BIOS but it booted UEFI — set `firmware = "bios"` in `[[vm]]` (handled here), then `lab-vm destroy` + re-`create` so the manifest picks it up. |
+| `list`/`console` show no VM, but you built it with `sudo` | `lab-vm` keys its state dir off EUID (root → `/var/lib/lab-create`, user → `~/.local/state`). Use `sudo` for `list`/`console`/`destroy` too. |
+| VM boots but serial console is blank | the kernel cmdline must carry `console=ttyS0` (lab-vm sets it); the chroot also enables `serial-getty@ttyS0`. Give it ~20s past extlinux. |
 | SSH won't connect | wait for a DHCP lease; confirm the NIC came up on the serial console (`ip a`). The chroot's `systemd-networkd` matches `en*`/`eth*`. |
 | want the XFCE GUI | the from-chroot VM is serial-only — see "Getting the desktop". |

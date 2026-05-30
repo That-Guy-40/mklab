@@ -73,6 +73,9 @@ post_commands = [
 [[vm]]
 name      = "offsec-awae-vm"
 backend   = "from-chroot"
+firmware  = "bios"   # REQUIRED: from-chroot builds an MBR/extlinux disk → boot via
+                     # SeaBIOS, not the default UEFI/OVMF (OVMF finds no EFI loader
+                     # on an MBR disk and drops to the UEFI Shell).
 chroot    = "/var/lib/lab-create/chroots/offsec-awae"   # == [[chroot]].target above
 arch      = "x86_64"
 memory    = "4G"

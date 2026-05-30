@@ -25,6 +25,7 @@ REPO="$(cd "$HERE/../.." && pwd)"
 CONFIG="$HERE/offsec-awae-vm.toml"
 VM_NAME="offsec-awae-vm"
 START=1
+VM_ONLY=0
 
 usage() {
   cat <<'EOF'
@@ -38,6 +39,7 @@ Usage (run as root):
   sudo build-vm.sh             # full AWAE build, then start
   sudo build-vm.sh --smoke     # lean pipeline smoke test (no AWAE toolset)
   sudo build-vm.sh --no-start  # build only, don't boot
+  sudo build-vm.sh --vm-only   # skip the chroot; re-image+boot from an existing chroot
   sudo build-vm.sh --config FILE
 
 The full build is large (offsec-awae metapackage + extras — several GB).
@@ -50,6 +52,7 @@ while [[ $# -gt 0 ]]; do
     --smoke)    CONFIG="$HERE/offsec-awae-vm-smoke.toml"; VM_NAME="offsec-awae-smoke-vm" ;;
     --config)   CONFIG="${2:?--config needs a path}"; shift ;;
     --no-start) START=0 ;;
+    --vm-only)  VM_ONLY=1 ;;
     -h|--help)  usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage; exit 1 ;;
   esac
@@ -73,8 +76,12 @@ if [[ ${#missing[@]} -gt 0 ]]; then
   echo "  install with: sudo apt-get install -y syslinux extlinux parted rsync qemu-utils debootstrap" >&2
 fi
 
-echo "==> [1/3] building the chroot   (config: $CONFIG)"
-"$REPO/phase1-chroot/lab-chroot.sh" create --config "$CONFIG"
+if [[ "$VM_ONLY" -eq 1 ]]; then
+  echo "==> [vm-only] skipping the chroot build; re-imaging the VM from the existing chroot"
+else
+  echo "==> [1/3] building the chroot   (config: $CONFIG)"
+  "$REPO/phase1-chroot/lab-chroot.sh" create --config "$CONFIG"
+fi
 
 echo "==> [2/3] packaging the chroot into a bootable VM"
 "$REPO/phase2-qemu-vm/lab-vm.sh" create --config "$CONFIG"

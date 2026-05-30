@@ -58,6 +58,8 @@ tags        = ["cross-phase", "from-chroot"]
 [[vm]]
 name      = "vm-from-chroot-demo"
 backend   = "from-chroot"
+firmware  = "bios"   # from-chroot builds an MBR/extlinux disk → SeaBIOS, not UEFI/OVMF
+                     # (OVMF finds no EFI loader on an MBR disk → drops to the UEFI Shell).
 chroot    = "/var/lib/lab-create/chroots/vm-seed"
 arch      = "x86_64"
 memory    = "1G"

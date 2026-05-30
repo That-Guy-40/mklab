@@ -94,6 +94,8 @@ sudo phase1-chroot/lab-chroot.sh destroy offsec-awae --force   # removes /var/li
 | `Package 'offsec-awae'/'…' has no installation candidate` | the `sed` enabling `contrib non-free non-free-firmware` must run before the install (it's in the TOML). |
 | heavy install: `… not installable` (transient skew) | `sudo lab-chroot.sh enter offsec-awae -- apt-get full-upgrade -y`, then re-run install. Steps [1/3].2-3 already leave a bootable base, so the VM still builds. |
 | `lab-vm create` fails on `extlinux`/`losetup`/`parted` | missing host tools or not root — install (§0) and run under `sudo`. from-chroot is x86_64 BIOS only. |
+| VM lands at a **UEFI Shell** (`Shell>`) | MBR/BIOS disk booted under UEFI — the `[[vm]]` spec needs `firmware = "bios"` (set now). `sudo lab-vm.sh destroy <vm>` then re-`create` (the manifest stores firmware at create time). |
+| `sudo lab-vm.sh list` empty / `console` says "no VM" | run those as **root** too — lab-vm's state dir is EUID-dependent (`/var/lib/lab-create` vs `~/.local/state`). |
 | serial console blank after start | wait ~20s; the chroot enables `serial-getty@ttyS0` and lab-vm sets `console=ttyS0`. |
 | `disk_size` too small (`No space left` during rsync) | the qcow2 must exceed the installed chroot; bump `[[vm]].disk_size` (full lab defaults to 24G). |
 | SSH refused | wait for DHCP; check `ip a` on the console. systemd-networkd matches `en*`/`eth*`. |

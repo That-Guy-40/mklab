@@ -43,6 +43,7 @@ post_commands = [
 [[vm]]
 name      = "offsec-awae-smoke-vm"
 backend   = "from-chroot"
+firmware  = "bios"   # from-chroot builds an MBR/extlinux disk → SeaBIOS, not UEFI/OVMF
 chroot    = "/var/lib/lab-create/chroots/offsec-awae-smoke"
 arch      = "x86_64"
 memory    = "2G"
