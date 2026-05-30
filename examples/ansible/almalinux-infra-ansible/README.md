@@ -113,20 +113,12 @@ rm -rf ~/ansible-lab          # the staged control workdir + lab SSH key
   `openssh-server` and authorises the lab key, so Ansible reaches it as `root`
   over SSH on the `incusbr0` bridge.
 - **control** — AlmaLinux 9 container with `ansible-core` + `ansible.posix` +
-  `community.general`; `~/ansible-lab` is mounted at `/lab`, so it has the
-  inventory, vars, lab-playbooks, the patched roles, and the SSH private key.
+  `community.general`. `~/ansible-lab` is mounted at `/lab` via the control
+  instance's `devices` entry in the TOML (`shift=true` idmaps host ownership so
+  the unprivileged container's root can read the files, incl. the 0600 SSH key),
+  so it has the inventory, vars, lab-playbooks, the patched roles, and the key.
 - The inventory's target IP is re-rendered host-side each run from `incus list`,
   so it survives container restarts.
-
-> **Known issue (worked around):** the Phase-5 tool (`lab-lxd.sh`) can't yet
-> attach a `devices`/profile disk mount from the TOML — its device parser
-> mis-quotes the spec and passes the device type as a `key=val` instead of the
-> positional arg, so both the `[[instance]] devices` and `[[profile]] devices`
-> paths fail (no example had exercised them). Rather than ship a partial fix to a
-> core tool, this lab adds the `/lab` mount at run time via
-> `incus config device add … disk source=… path=/lab shift=true` in
-> `run-recipe.sh`. (`shift=true` idmaps host ownership so the unprivileged
-> container's root can read the 0600 key.)
 
 ---
 

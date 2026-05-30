@@ -723,20 +723,23 @@ ensure_profile() {
         "$LXC_CMD" profile set "${scope[@]}" "$pname" "$kk" "$vv" >/dev/null
     done < <(jq -r '.config // {} | to_entries[]? | "\(.key)\t\(.value)"' <<<"$prof_json")
 
-    # Apply devices.
+    # Apply devices.  dconf is a JSON object {type:..., key:val, …}.
+    # `device add` takes the device TYPE positionally; the remaining keys are
+    # key=value.  (Outer jq is -r so the name<TAB>value split survives; -c would
+    # JSON-quote the whole line and the tab would be escaped, not a separator.)
     local dname dconf
     while IFS=$'\t' read -r dname dconf; do
         [[ -z "$dname" ]] && continue
-        # dconf is a JSON object {type=..., source=..., …} — flatten to
-        # `key=val key=val` for the CLI.
+        local dtype; dtype="$(jq -r '.type // ""' <<<"$dconf")"
+        [[ -n "$dtype" ]] || die "profile '$pname' device '$dname': missing 'type'"
         local -a kvs=()
         local k v
         while IFS=$'\t' read -r k v; do
-            [[ -z "$k" ]] && continue
+            [[ -z "$k" || "$k" == "type" ]] && continue
             kvs+=("${k}=${v}")
         done < <(jq -r 'to_entries[]? | "\(.key)\t\(.value)"' <<<"$dconf")
-        "$LXC_CMD" profile device add "${scope[@]}" "$pname" "$dname" "${kvs[@]}" >/dev/null
-    done < <(jq -c '.devices // {} | to_entries[]? | "\(.key)\t\(.value)"' <<<"$prof_json")
+        "$LXC_CMD" profile device add "${scope[@]}" "$pname" "$dname" "$dtype" "${kvs[@]}" >/dev/null
+    done < <(jq -r '.devices // {} | to_entries[]? | "\(.key)\t\(.value)"' <<<"$prof_json")
 }
 
 # ─── Subcommand: build ─────────────────────────────────────────────────────
@@ -986,26 +989,10 @@ cmd_up() {
             launch_args+=(-c "${kk}=${vv}")
         done < <(jq -r '.config // {} | to_entries[]? | "\(.key)\t\(.value)"' <<<"$inst")
 
-        # Devices via `-d name,key=val,key=val` at launch — same project-
-        # scoping benefit as -c.
-        local dname dconf
-        while IFS=$'\t' read -r dname dconf; do
-            [[ -z "$dname" ]] && continue
-            # M-5: reject commas in device names and values — the -d flag
-            # format is "name,key=val,key=val"; a comma in any component
-            # silently injects extra device properties (e.g. "source=/").
-            [[ "$dname" != *,* ]] \
-                || die "instance '$sname': device name must not contain comma: $dname"
-            local dspec="$dname"
-            local k v
-            while IFS=$'\t' read -r k v; do
-                [[ -z "$k" ]] && continue
-                [[ "$k" != *,* && "$v" != *,* ]] \
-                    || die "instance '$sname': device key/value for '$k' must not contain comma"
-                dspec+=",${k}=${v}"
-            done < <(jq -r 'to_entries[]? | "\(.key)\t\(.value)"' <<<"$dconf")
-            launch_args+=(-d "$dspec")
-        done < <(jq -c '.devices // {} | to_entries[]? | "\(.key)\t\(.value)"' <<<"$inst")
+        # NOTE: devices are attached AFTER launch (below), not via `launch -d`.
+        # LXD/Incus `launch -d` only *overrides* a device inherited from a
+        # profile — it can't add a brand-new one — so new devices go on with
+        # `config device add` once the instance exists.
 
         log_info "launching ${type} '$sname' as $iname (image=$image)"
         # L-4: try-and-handle instead of pre-check to close the TOCTOU race
@@ -1018,6 +1005,31 @@ cmd_up() {
                 die "launch of '$iname' failed: $_launch_err"
             fi
         fi
+
+        # Attach devices now that the instance exists.  `device add` takes the
+        # device TYPE positionally; the remaining keys are key=value.  A device
+        # already present (inherited from a profile, or added on a prior run) is
+        # left as-is, so `up` stays idempotent.  (To OVERRIDE an inherited
+        # device, attach it through a [[profile]] instead.)
+        local -a pscope=(); [[ -n "$proj" ]] && pscope=(--project "$proj")
+        local dname dconf
+        while IFS=$'\t' read -r dname dconf; do
+            [[ -z "$dname" ]] && continue
+            if "$LXC_CMD" config device list "${pscope[@]}" "$iname" 2>/dev/null | grep -qx "$dname"; then
+                log_debug "instance '$sname': device '$dname' already present; leaving as-is"
+                continue
+            fi
+            local dtype; dtype="$(jq -r '.type // ""' <<<"$dconf")"
+            [[ -n "$dtype" ]] || die "instance '$sname' device '$dname': missing 'type'"
+            local -a kvs=(); local k v
+            while IFS=$'\t' read -r k v; do
+                [[ -z "$k" || "$k" == "type" ]] && continue
+                kvs+=("${k}=${v}")
+            done < <(jq -r 'to_entries[]? | "\(.key)\t\(.value)"' <<<"$dconf")
+            "$LXC_CMD" config device add "${pscope[@]}" "$iname" "$dname" "$dtype" "${kvs[@]}" >/dev/null \
+                || die "instance '$sname': failed to add device '$dname'"
+            log_debug "instance '$sname': added device '$dname' ($dtype)"
+        done < <(jq -r '.devices // {} | to_entries[]? | "\(.key)\t\(.value)"' <<<"$inst")
 
         handled=$((handled+1))
     done

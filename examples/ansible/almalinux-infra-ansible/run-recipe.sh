@@ -63,15 +63,11 @@ for inst in "$TARGET" "$CONTROL"; do
     incus info "$inst" >/dev/null 2>&1 || die "container ${inst} not found — run: phase5-lxd/lab-lxd.sh up --config $(dirname "$0")/ansible-infra-lab.toml"
 done
 
-# ─── Mount the staged workdir at /lab in control (idempotent) ────────────────
-# Done here, not in the TOML, because the Phase-5 tool's device support is
-# currently broken (see README "Known issue").  shift=true idmaps host ownership
-# so the unprivileged container's root can read the files incl. the 0600 key.
-if ! incus config device list "$CONTROL" 2>/dev/null | grep -qx lab; then
-    log_info "mounting ${out_dir} → ${CONTROL}:/lab …"
-    incus config device add "$CONTROL" lab disk source="$out_dir" path=/lab shift=true >/dev/null \
-        || die "failed to mount ${out_dir} into ${CONTROL}"
-fi
+# ─── The /lab mount comes from the TOML (control instance `devices`) ─────────
+# Sanity-check it's actually there (e.g. the device wasn't stripped from the
+# TOML, or a custom --out doesn't match the TOML's source path).
+incus exec "$CONTROL" -- test -e /lab/ansible.cfg 2>/dev/null \
+    || die "/lab not mounted in ${CONTROL} (or ${out_dir} not staged). Ensure the control instance's 'devices' mount points at ${out_dir} and re-run: phase5-lxd/lab-lxd.sh up --config $(dirname "$0")/ansible-infra-lab.toml"
 
 # ─── Bootstrap the TARGET: python3 + sshd + the lab key ──────────────────────
 if (( rebootstrap )) || ! incus exec "$TARGET" -- test -x /usr/bin/python3 2>/dev/null \

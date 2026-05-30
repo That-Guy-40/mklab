@@ -41,17 +41,13 @@ image  = "images:almalinux/9"
 # bootstrapped by run-recipe.sh on first run: python3 + sshd + the lab SSH key.
 
 # ─── The Ansible control node ──────────────────────────────────────────────
-# Plain AlmaLinux container.  On first run, run-recipe.sh:
-#   - bind-mounts the staged workdir (~/ansible-lab) at /lab via
-#       incus config device add … disk source=… path=/lab shift=true
-#     (shift=true idmaps the host-owned files so the unprivileged container's
-#      root can read them, incl. the 0600 SSH key), and
-#   - installs ansible-core + ansible.posix + community.general.
-# (The mount is added by run-recipe rather than declared here because the
-# Phase-5 tool's TOML device support is currently broken — see this lab's
-# README "Known issue".)
+# Mounts the staged workdir (~/ansible-lab) at /lab.  shift=true idmaps the
+# host-owned files so the unprivileged container's root can read them (incl.
+# the 0600 SSH key).  run-recipe.sh installs ansible-core + ansible.posix +
+# community.general on first run.
 [[instance]]
-name   = "control"
-engine = "incus"
-type   = "container"
-image  = "images:almalinux/9"
+name    = "control"
+engine  = "incus"
+type    = "container"
+image   = "images:almalinux/9"
+devices = { lab = { type = "disk", source = "/home/sqs/ansible-lab", path = "/lab", shift = "true" } }
