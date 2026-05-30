@@ -42,6 +42,7 @@ Full cloud-image VMs and tiny in-RAM microVMs. `create` then `start`, `ssh` in.
 | `vm-debian-aarch64.toml` | 🐌 arm64 Debian on an x86_64 host (TCG). Slow but needs no arm hardware. |
 | `vm-alpine-amd64.toml` | Latest Alpine cloud image on `q35` + OVMF. |
 | `vm-kali-amd64.toml` | Kali rolling from the upstream prebuilt image (release auto-resolved at create-time). |
+| [`kali-vm-builder/`](kali-vm-builder/) | 🔒 Kali's **official image factory** (`kali-vm` + `debos`) operationalized: `fetch` → `build` (host `debos` *or* Podman/Docker container; `--full` graphical XFCE / `--headless`) → `run-graphical.sh` boots the QCOW2 in a **windowed** QEMU desktop (SeaBIOS/virtio/SSH-forward, COW overlay). The build-it-yourself counterpart to `vm-kali-amd64.toml`. ⚠️ offensive tooling — authorized targets only. |
 | `microvm-alpine.toml` | True microVM: an Alpine minirootfs as an in-RAM initramfs, auto-built — `network`/`ssh`/`persist` flags. |
 | `microvm-alpine-custom-init.toml` | Same microVM, but PID 1 is a hand-rolled static C `/sbin/init` (auto-compiled by `lab-vm.sh`). |
 
