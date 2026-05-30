@@ -44,10 +44,13 @@ users = [
 ]
 
 post_commands = [
-  # 1) Enable all components.  A debootstrap sources.list is main-only, but most
-  #    offsec/kali tooling lives in contrib/non-free (e.g. anything under the
-  #    NPSL or with non-free deps) — main-only gives "no installation candidate".
-  "sed -i 's/ main$/ main contrib non-free non-free-firmware/' /etc/apt/sources.list",
+  # 1) Enable ALL components (main contrib non-free non-free-firmware).  A
+  #    debootstrap sources.list is main-only, but most offsec/kali tooling lives
+  #    in contrib/non-free (NPSL or non-free deps) — main-only gives "no
+  #    installation candidate".  This rewrite preserves whatever mirror
+  #    debootstrap chose, handles deb + deb-src lines, and is idempotent (safe to
+  #    re-run), so a future rebuild can pull anything from non-free too.
+  "sed -i -E 's@^(deb(-src)? .* kali-rolling) main.*@\\1 main contrib non-free non-free-firmware@' /etc/apt/sources.list",
   "export DEBIAN_FRONTEND=noninteractive; apt-get update",
 
   # 2) Generic, VM-bootable initramfs.  Kali uses dracut, which builds a
@@ -73,10 +76,11 @@ post_commands = [
   "echo 'root:toor' | chpasswd; passwd -u root 2>/dev/null || true",
 
   # 5) The AWAE toolset itself (the heavy step): the offsec-awae course
-  #    metapackage + the recipe's three extras.  If this hits a transient
-  #    kali-rolling dependency skew, run `apt-get full-upgrade -y` first
-  #    (see README "Troubleshooting"); steps 1-3 already leave a bootable base.
-  "export DEBIAN_FRONTEND=noninteractive; apt-get install -y --no-install-recommends offsec-awae code-oss gobuster jd-gui",
+  #    metapackage + the recipe's three extras (code-oss/gobuster/jd-gui) plus
+  #    nmap + sqlmap (recon + SQLi, this lab's additions).  If this hits a
+  #    transient kali-rolling dependency skew, run `apt-get full-upgrade -y`
+  #    first (see README "Troubleshooting"); steps 1-3 already leave a bootable base.
+  "export DEBIAN_FRONTEND=noninteractive; apt-get install -y --no-install-recommends offsec-awae code-oss gobuster jd-gui nmap sqlmap",
 ]
 
 # ── Phase 2: package that chroot into a bootable VM ──────────────────────────

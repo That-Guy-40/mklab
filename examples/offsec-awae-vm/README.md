@@ -20,7 +20,7 @@ That recipe builds a **live ISO** with `lb build`:
 |---|---|
 | `lb build` → bootable Kali Live ISO | `lab-chroot create` → chroot, then `lab-vm create` (from-chroot) → bootable qcow2 |
 | `kali-desktop-xfce` (full XFCE desktop) | **omitted** — the from-chroot VM is headless/serial (see "Getting the desktop") |
-| `offsec-awae` metapackage + `code-oss` + `gobuster` + `jd-gui` | same toolset, installed in the chroot |
+| `offsec-awae` metapackage + `code-oss` + `gobuster` + `jd-gui` | same toolset + `nmap` + `sqlmap` (this lab's additions), installed in the chroot |
 | installer preseed: user `kali`/`kali`, UTC, US keymap | `users = [kali]` (kali/kali) + `root`/`toor` for console |
 | installer partitions `/dev/sda`, GRUB | `from-chroot` writes MBR + extlinux + a single ext4 partition |
 

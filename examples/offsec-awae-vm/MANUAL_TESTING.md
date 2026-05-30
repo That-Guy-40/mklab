@@ -68,7 +68,7 @@ Verify the toolset in the chroot before/without booting:
 
 ```bash
 C=offsec-awae
-phase1-chroot/lab-chroot.sh enter $C -- dpkg -l offsec-awae code-oss gobuster jd-gui | grep ^ii
+phase1-chroot/lab-chroot.sh enter $C -- dpkg -l offsec-awae code-oss gobuster jd-gui nmap sqlmap | grep ^ii
 phase1-chroot/lab-chroot.sh enter $C -- su - kali -c 'whoami; command -v gobuster'
 ```
 
@@ -76,6 +76,7 @@ phase1-chroot/lab-chroot.sh enter $C -- su - kali -c 'whoami; command -v gobuste
 
 ```bash
 command -v gobuster            # /usr/bin/gobuster — it runs (NB: no `gobuster version` subcommand; use `dpkg -s gobuster` for the version)
+dpkg -l nmap sqlmap | grep ^ii # the two additions — both should be `ii`
 which code-oss jd-gui          # present; GUI apps — need X (see README "Getting the desktop")
 ```
 
