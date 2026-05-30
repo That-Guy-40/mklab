@@ -1,0 +1,50 @@
+# Smoke test for the AWAE chroot→VM PIPELINE — no AWAE toolset.
+#
+# This is offsec-awae-vm.toml stripped to the bare minimum: a Kali base + kernel
+# + SSH + the kali user, turned into a bootable VM.  It proves the part that's
+# actually novel here — a *Kali* chroot booting as a from-chroot BIOS VM (kernel,
+# systemd, serial console, DHCP, SSH) — in ~a couple of GB and a few minutes,
+# instead of waiting out the full multi-GB offsec-awae install.
+#
+#   sudo examples/offsec-awae-vm/build-vm.sh --smoke
+#
+# Once the smoke VM boots and you can log in (kali/kali on the serial console),
+# the pipeline is good; run the full build-vm.sh for the real AWAE toolset.
+
+[lab]
+name        = "offsec-awae-smoke"
+description = "Pipeline smoke test: minimal kali-rolling chroot → bootable BIOS VM"
+tags        = ["kali", "cross-phase", "from-chroot", "smoke"]
+
+[[chroot]]
+name    = "offsec-awae-smoke"
+backend = "debootstrap"
+distro  = "kali"
+suite   = "kali-rolling"
+arch    = "x86_64"
+target  = "/var/chroots/offsec-awae-smoke"
+variant = "minbase"
+include = ["kali-archive-keyring", "ca-certificates"]
+manager = "none"
+
+users = [
+  { name = "kali", password = "kali", groups = "sudo", shell = "/bin/bash" },
+]
+
+post_commands = [
+  "export DEBIAN_FRONTEND=noninteractive; apt-get update",
+  # same self-bootable base as the full lab — just no offsec-awae on top:
+  "export DEBIAN_FRONTEND=noninteractive; apt-get install -y --no-install-recommends linux-image-amd64 systemd-sysv udev openssh-server",
+  "printf '[Match]\\nName=en* eth*\\n\\n[Network]\\nDHCP=yes\\n' > /etc/systemd/network/10-dhcp.network",
+  "systemctl enable systemd-networkd ssh serial-getty@ttyS0.service",
+  "echo 'root:toor' | chpasswd",
+]
+
+[[vm]]
+name      = "offsec-awae-smoke-vm"
+backend   = "from-chroot"
+chroot    = "/var/chroots/offsec-awae-smoke"
+arch      = "x86_64"
+memory    = "2G"
+cpus      = 2
+disk_size = "6G"

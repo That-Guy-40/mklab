@@ -105,6 +105,7 @@ chroot first, then point the target phase at the same artifact.
 | `vm-from-chroot-debian.toml` | Chroot → bootable BIOS qcow2 (MBR + extlinux + ext4) for Phase 2. |
 | `podman-from-chroot.toml` | Chroot → a rootless Podman image (e.g. import a Kali minbase tree). |
 | `lxd-from-chroot.toml` | Chroot → a Phase 5 LXD/Incus container image. |
+| [`offsec-awae-vm/`](offsec-awae-vm/) | 🔒 End-to-end **automated** chroot→VM: a Kali `kali-rolling` chroot carrying the **OffSec AWAE (WEB-300)** toolset, made self-bootable (kernel + init + SSH) and packaged into a headless BIOS VM by `from-chroot`. `build-vm.sh` chains both phases + boots it (serial/SSH); `--smoke` proves the pipeline first. Chroot-level take on Kali's `offsec-awae-live.sh` live-build recipe. ⚠️ offensive tooling — authorized targets only. |
 
 ## 🌐 Netboot & PXE — build → serve → boot
 

@@ -1,0 +1,80 @@
+# OffSec AWAE (WEB-300) — kali-rolling chroot → bootable VM, in one config.
+#
+# Adapted from Kali's live-build recipe `offsec-awae-live.sh`:
+#   https://gitlab.com/kalilinux/recipes/live-build-config-examples/-/blob/main/offsec-awae-live.sh
+# That recipe builds a *live ISO*: XFCE desktop + the `offsec-awae` course
+# metapackage + code-oss/gobuster/jd-gui, login kali/kali.  This lab keeps the
+# AWAE *toolset* but ships it as a Phase-1 chroot that is turned into a bootable
+# Phase-2 VM by the `from-chroot` backend — see build-vm.sh and README.md.
+#
+# Two phase tools read this one file:
+#   sudo phase1-chroot/lab-chroot.sh create --config <this>   # builds [[chroot]]
+#   sudo phase2-qemu-vm/lab-vm.sh     create --config <this>   # builds [[vm]]
+# build-vm.sh chains both + starts the VM.
+#
+# The from-chroot VM is BIOS/x86_64 and HEADLESS (lab-vm runs QEMU with
+# -nographic — serial console only).  You reach it over SSH (kali/kali) or the
+# serial console (kali/kali, or root/toor).  The recipe's XFCE *desktop* is NOT
+# installed here (you couldn't see it through a serial console anyway); see
+# README.md "Getting the desktop" for the graphical route.
+
+[lab]
+name        = "offsec-awae-vm"
+description = "OffSec AWAE toolset: kali-rolling chroot → bootable BIOS VM (headless, SSH/serial)"
+tags        = ["kali", "offsec-awae", "cross-phase", "from-chroot"]
+
+# ── Phase 1: the AWAE chroot ────────────────────────────────────────────────
+[[chroot]]
+name    = "offsec-awae"
+backend = "debootstrap"
+distro  = "kali"
+suite   = "kali-rolling"
+arch    = "x86_64"
+target  = "/var/chroots/offsec-awae"
+variant = "minbase"
+# kali-archive-keyring: the CHROOT's apt needs the Kali key installed *inside* it
+# (the host keyring only verifies the debootstrap download) or apt-get update
+# fails OpenPGP verification.  A minbase debootstrap won't pull it on its own.
+include = ["kali-archive-keyring", "sudo", "ca-certificates"]
+manager = "none"
+
+# The recipe's credentials: a kali user with password kali (sudo).
+users = [
+  { name = "kali", password = "kali", groups = "sudo", shell = "/bin/bash" },
+]
+
+post_commands = [
+  # 1) Enable all components.  A debootstrap sources.list is main-only, but most
+  #    offsec/kali tooling lives in contrib/non-free (e.g. anything under the
+  #    NPSL or with non-free deps) — main-only gives "no installation candidate".
+  "sed -i 's/ main$/ main contrib non-free non-free-firmware/' /etc/apt/sources.list",
+  "export DEBIAN_FRONTEND=noninteractive; apt-get update",
+
+  # 2) Make the chroot self-bootable: the from-chroot backend does NOT install a
+  #    kernel for you, so we install one here (post_commands have /proc /sys /dev
+  #    bind-mounted, so update-initramfs works).  + init, SSH, sane base.
+  "export DEBIAN_FRONTEND=noninteractive; apt-get install -y --no-install-recommends linux-image-amd64 systemd-sysv udev openssh-server ca-certificates",
+
+  # 3) Headless networking (DHCP on any en*/eth* NIC, via systemd-networkd so it
+  #    doesn't matter what QEMU names the interface), a serial getty for the
+  #    -nographic console, and a root password for console rescue.
+  "printf '[Match]\\nName=en* eth*\\n\\n[Network]\\nDHCP=yes\\n' > /etc/systemd/network/10-dhcp.network",
+  "systemctl enable systemd-networkd ssh serial-getty@ttyS0.service",
+  "echo 'root:toor' | chpasswd",
+
+  # 4) The AWAE toolset itself (the heavy step): the offsec-awae course
+  #    metapackage + the recipe's three extras.  If this hits a transient
+  #    kali-rolling dependency skew, run `apt-get full-upgrade -y` first
+  #    (see README "Troubleshooting"); steps 1-3 already leave a bootable base.
+  "export DEBIAN_FRONTEND=noninteractive; apt-get install -y --no-install-recommends offsec-awae code-oss gobuster jd-gui",
+]
+
+# ── Phase 2: package that chroot into a bootable VM ──────────────────────────
+[[vm]]
+name      = "offsec-awae-vm"
+backend   = "from-chroot"
+chroot    = "/var/chroots/offsec-awae"   # == [[chroot]].target above
+arch      = "x86_64"
+memory    = "4G"
+cpus      = 2
+disk_size = "24G"   # qcow2 is sparse; must exceed the installed chroot (offsec-awae is large)
