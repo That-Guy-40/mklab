@@ -52,8 +52,16 @@ post_commands = [
   # Disable root login (recipe: `d-i passwd/root-login boolean false`) — lock the
   # root password so the `kali` sudo user is the only way in.
   "passwd -l root",
-  # A lean, fast slice of the Kali top-10 tools.  The upstream recipe itself
-  # COMMENTED OUT the full kali-linux-top10 metapackage 'for brevity of build';
-  # for the full set (+ the MATE desktop) see the README.
-  "export DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8; apt-get update -qq && apt-get install -y --no-install-recommends nmap sqlmap hydra",
+  # debootstrap writes a `main`-ONLY sources.list, but Kali ships some tools
+  # outside main — e.g. `nmap` is in `non-free` (its NPSL license isn't
+  # DFSG-free).  Without the extra components, `apt install nmap` fails with
+  # "Package 'nmap' has no installation candidate".  Enable the full set.
+  # (Idempotent: ` main$` only matches the bare debootstrap line.)
+  "sed -i 's/ main$/ main contrib non-free non-free-firmware/' /etc/apt/sources.list",
+  # A lean, fast slice of the Kali top-10 tools (verified: installs + runs as the
+  # `kali` user).  hydra + the full `kali-tools-top10` pull heavy, transition-prone
+  # deps (e.g. hydra -> libfreerdp3 -> a mid-flight gcc-16 base) that on a
+  # freshly-debootstrapped — therefore slightly stale — rolling chroot need an
+  # `apt-get full-upgrade` first; see the README.
+  "export DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8; apt-get update && apt-get install -y --no-install-recommends nmap sqlmap",
 ]

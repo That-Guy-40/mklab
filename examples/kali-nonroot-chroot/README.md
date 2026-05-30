@@ -25,7 +25,7 @@ plain **chroot** built by `phase1-chroot/lab-chroot.sh`:
 |---|---|
 | `lb build` → bootable Kali Live ISO | `lab-chroot.sh create` → a Kali chroot tree |
 | MATE 1.8 from dead `mate-desktop.org/1.8` wheezy repos | (optional) `kali-desktop-mate` from kali-rolling — only meaningful once exported to a VM (a chroot has no GUI) |
-| `kali-linux-top10` (commented out "for brevity") | a lean `nmap`/`sqlmap`/`hydra` slice by default; full `kali-tools-top10` documented below |
+| `kali-linux-top10` (commented out "for brevity") | a lean `nmap` + `sqlmap` slice by default; full `kali-tools-top10` documented below |
 | preseed: `root-login false`, `make-user true` | `users = [kali]` + `passwd -l root` (root locked) |
 
 ## Two senses of "non-root"
@@ -50,7 +50,7 @@ A normal build uses `debootstrap`, which needs **root**:
 
 ```bash
 sudo phase1-chroot/lab-chroot.sh create --config examples/kali-nonroot-chroot/kali-nonroot-chroot.toml
-# → /var/chroots/kali-nonroot   (Kali base + kali user + nmap/sqlmap/hydra)
+# → /var/chroots/kali-nonroot   (Kali base + kali user + nmap + sqlmap)
 
 # enter as the non-root user and run a tool:
 phase1-chroot/lab-chroot.sh enter kali-nonroot -- su - kali -c 'whoami; id; nmap --version'
@@ -80,9 +80,13 @@ For the complete upstream experience, install the full metapackages and turn the
 chroot into a bootable VM (a chroot can't run a desktop):
 
 ```bash
-# add to the TOML's include (or post_commands apt-get install):
+# add to the TOML's post_commands apt-get install line:
 #   kali-tools-top10     # the real top-10 (~3 GB — includes metasploit, burpsuite…)
 #   kali-desktop-mate    # the MATE desktop
+# heads-up: hydra + much of kali-tools-top10 pull heavy, transition-prone deps
+# (e.g. hydra -> libfreerdp3 -> a mid-flight gcc-16 base).  On a freshly
+# debootstrapped — therefore slightly stale — rolling chroot, run an upgrade first:
+phase1-chroot/lab-chroot.sh enter kali-nonroot -- apt-get full-upgrade -y
 # then boot it as a VM to get the actual MATE GUI:
 phase2-qemu-vm/lab-vm.sh create --backend from-chroot --chroot /var/chroots/kali-nonroot ...
 # (see examples/vm-from-chroot-debian.toml for the from-chroot pattern)
@@ -90,11 +94,24 @@ phase2-qemu-vm/lab-vm.sh create --backend from-chroot --chroot /var/chroots/kali
 
 ## What's verified
 
-On this host (Ubuntu 24.04): the TOML parses and matches `lab-chroot.sh`'s spec
-(`distro=kali` accepted, `users[]` + `post_commands[]` schema correct), the
-`kali-archive-keyring` prereq is present, and a `--rootless` attempt confirmed the
-Kali `kali-rolling` base **fetches + extracts** correctly (mirror + keyring +
-suite all good) — it only stopped at fakechroot's `dpkg` core-install limitation
-(above). A full root build needs `sudo` (debootstrap); this environment has no
-passwordless sudo, so the end-to-end build wasn't run here — run the `sudo`
-command above to complete it.
+Built end-to-end with `sudo phase1-chroot/lab-chroot.sh create --config …` on
+Ubuntu 24.04 → a Kali `kali-rolling` chroot with the **`kali` non-root sudo user**
+(root password **locked**) and **`nmap` 7.99 + `sqlmap`** installed and **running
+as `kali`** (`su - kali -c 'nmap --version'`).
+
+Two non-obvious things were needed to get the tools in, both now handled by the
+TOML (so a fresh `create` works unattended):
+
+1. **`kali-archive-keyring` in `include`** — `lab-chroot` uses the *host* keyring
+   only to verify the debootstrap *download*; the chroot's own apt needs the Kali
+   key installed *inside* it or `apt-get update` fails OpenPGP verification
+   ("Missing key …"). A `minbase` debootstrap doesn't pull it.
+2. **Enable `contrib non-free non-free-firmware`** — debootstrap writes a
+   `main`-only sources.list, but `nmap` lives in **`non-free`** (its NPSL license
+   isn't DFSG-free), so `main`-only gives "Package 'nmap' has no installation
+   candidate". A `post_commands` `sed` adds the components before the install.
+
+`hydra` and the full `kali-tools-top10` are *not* in the default set: on this
+date they hit a transient `kali-rolling` gcc-16 transition (via
+`hydra -> libfreerdp3 -> libgomp1 -> gcc-16-base`) and need an `apt-get
+full-upgrade` first (see "Full recipe").
