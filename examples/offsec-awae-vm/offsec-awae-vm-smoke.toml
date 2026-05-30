@@ -33,11 +33,20 @@ users = [
 
 post_commands = [
   "export DEBIAN_FRONTEND=noninteractive; apt-get update",
-  # same self-bootable base as the full lab — just no offsec-awae on top:
+  # Generic, VM-bootable initramfs.  Kali uses dracut, which builds a HOST-ONLY
+  # initramfs by default; generated inside a chroot it bakes the build host's
+  # storage assumptions and drops the virtio transport the VM needs → the VM
+  # falls into the dracut emergency shell.  Force a generic initramfs with virtio
+  # + ext4 BEFORE the kernel postinst generates it.
+  "mkdir -p /etc/dracut.conf.d; printf 'hostonly=no\\nadd_drivers+=\" virtio_blk virtio_pci virtio_scsi virtio_net \"\\nfilesystems+=\" ext4 \"\\n' > /etc/dracut.conf.d/90-lab-vm.conf",
+  # self-bootable base — just no offsec-awae on top:
   "export DEBIAN_FRONTEND=noninteractive; apt-get install -y --no-install-recommends linux-image-amd64 systemd-sysv udev openssh-server",
+  # belt-and-suspenders: rebuild the initramfs with the generic config above.
+  "dracut --regenerate-all --force",
   "printf '[Match]\\nName=en* eth*\\n\\n[Network]\\nDHCP=yes\\n' > /etc/systemd/network/10-dhcp.network",
   "systemctl enable systemd-networkd ssh serial-getty@ttyS0.service",
-  "echo 'root:toor' | chpasswd",
+  # console login: kali/kali, plus root/toor explicitly unlocked.
+  "echo 'root:toor' | chpasswd; passwd -u root 2>/dev/null || true",
 ]
 
 [[vm]]

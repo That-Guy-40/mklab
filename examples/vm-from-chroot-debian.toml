@@ -49,6 +49,15 @@
 # This backend is x86_64 BIOS only in v0.1.  For other arches (or UEFI),
 # use the kernel+initrd workaround — see phase2-qemu-vm/MANUAL_TESTING.md
 # §"chroot-to-VM without the from-chroot backend".
+#
+# Debian bookworm uses initramfs-tools (MODULES=most → virtio included), so its
+# initramfs boots the VM as-is.  On a dracut-based distro (e.g. Kali), dracut's
+# default host-only initramfs built in a chroot omits the virtio transport and
+# the VM drops to the dracut emergency shell — force a generic initramfs first:
+#   mkdir -p /etc/dracut.conf.d
+#   printf 'hostonly=no\nadd_drivers+=" virtio_blk virtio_pci virtio_scsi "\n' \
+#       > /etc/dracut.conf.d/90-lab-vm.conf
+# (See examples/offsec-awae-vm/ for a worked Kali example.)
 
 [lab]
 name        = "vm-from-chroot-demo"

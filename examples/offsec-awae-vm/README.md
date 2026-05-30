@@ -96,9 +96,15 @@ the chroot (where `/proc`, `/sys`, `/dev` are bind-mounted, so `update-initramfs
 works):
 
 - `linux-image-amd64` → `/boot/vmlinuz*` + `/boot/initrd*` for extlinux to boot
+- a **generic initramfs** — Kali's `dracut` defaults to a *host-only* initramfs,
+  and built inside a chroot that bakes in the build host's storage and drops the
+  VM's virtio transport, so the VM lands in the dracut **emergency shell**. A
+  `/etc/dracut.conf.d/90-lab-vm.conf` with `hostonly=no` + the virtio drivers
+  (written *before* the kernel postinst) fixes it; the build also regenerates the
+  initramfs to be sure.
 - `systemd-sysv` + `udev` → a real init + device nodes
 - `openssh-server`, `serial-getty@ttyS0`, `systemd-networkd` (DHCP) → ways in
-- a `root`/`toor` password for console rescue
+- `kali`/`kali` (sudo) + `root`/`toor` (explicitly unlocked) for console login
 
 ## The two Kali-chroot gotchas (handled in the TOML)
 
@@ -140,6 +146,7 @@ SSH, kali login), then the full `offsec-awae` build on top of that proven pipeli
 | heavy install hits `… not installable` (transient kali-rolling skew) | `sudo phase1-chroot/lab-chroot.sh enter offsec-awae -- apt-get full-upgrade -y`, then re-run the install. |
 | `build-vm.sh` warns about missing `extlinux`/`parted`/`qemu-img` | install them (see Quick start) — needed by the from-chroot backend. |
 | VM drops to a **UEFI Shell** (`Shell>`) | the disk is MBR/BIOS but it booted UEFI — set `firmware = "bios"` in `[[vm]]` (handled here), then `lab-vm destroy` + re-`create` so the manifest picks it up. |
+| VM enters the **dracut emergency shell** / "root account is locked" | a host-only initramfs that can't mount the virtio root (the locked root is the *initramfs's*, not yours). The TOML forces `hostonly=no` + virtio drivers — **rebuild the chroot** (not just the VM) so the new initramfs is baked in. |
 | `console`/`destroy` say "no VM named …" after a `sudo` build | `lab-vm` keys its state dir off EUID (root → `/var/lib/lab-create`, user → `~/.local/state`); run those **as root** too. The VM is addressed **by name**, so `sudo lab-vm.sh console <name>` works even if `sudo lab-vm.sh list` looks empty. |
 | VM boots but serial console is blank | the kernel cmdline must carry `console=ttyS0` (lab-vm sets it); the chroot also enables `serial-getty@ttyS0`. Give it ~20s past extlinux. |
 | SSH won't connect | wait for a DHCP lease; confirm the NIC came up on the serial console (`ip a`). The chroot's `systemd-networkd` matches `en*`/`eth*`. |

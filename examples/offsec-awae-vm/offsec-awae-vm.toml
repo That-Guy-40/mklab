@@ -50,19 +50,28 @@ post_commands = [
   "sed -i 's/ main$/ main contrib non-free non-free-firmware/' /etc/apt/sources.list",
   "export DEBIAN_FRONTEND=noninteractive; apt-get update",
 
-  # 2) Make the chroot self-bootable: the from-chroot backend does NOT install a
-  #    kernel for you, so we install one here (post_commands have /proc /sys /dev
-  #    bind-mounted, so update-initramfs works).  + init, SSH, sane base.
-  "export DEBIAN_FRONTEND=noninteractive; apt-get install -y --no-install-recommends linux-image-amd64 systemd-sysv udev openssh-server ca-certificates",
+  # 2) Generic, VM-bootable initramfs.  Kali uses dracut, which builds a
+  #    HOST-ONLY initramfs by default; generated inside a chroot it bakes the
+  #    build host's storage assumptions and drops the virtio transport the VM
+  #    needs, so the VM falls into the dracut emergency shell ("root account is
+  #    locked" there = the initramfs's root, not yours).  Force a generic
+  #    initramfs with virtio + ext4 BEFORE the kernel postinst generates it.
+  "mkdir -p /etc/dracut.conf.d; printf 'hostonly=no\\nadd_drivers+=\" virtio_blk virtio_pci virtio_scsi virtio_net \"\\nfilesystems+=\" ext4 \"\\n' > /etc/dracut.conf.d/90-lab-vm.conf",
 
-  # 3) Headless networking (DHCP on any en*/eth* NIC, via systemd-networkd so it
+  # 3) Make the chroot self-bootable: the from-chroot backend installs no kernel,
+  #    so add one (post_commands have /proc /sys /dev bind-mounted) + init + SSH.
+  "export DEBIAN_FRONTEND=noninteractive; apt-get install -y --no-install-recommends linux-image-amd64 systemd-sysv udev openssh-server ca-certificates",
+  # belt-and-suspenders: rebuild the initramfs with the generic config above.
+  "dracut --regenerate-all --force",
+
+  # 4) Headless networking (DHCP on any en*/eth* NIC, via systemd-networkd so it
   #    doesn't matter what QEMU names the interface), a serial getty for the
-  #    -nographic console, and a root password for console rescue.
+  #    -nographic console, and a root login (kali/kali also works).
   "printf '[Match]\\nName=en* eth*\\n\\n[Network]\\nDHCP=yes\\n' > /etc/systemd/network/10-dhcp.network",
   "systemctl enable systemd-networkd ssh serial-getty@ttyS0.service",
-  "echo 'root:toor' | chpasswd",
+  "echo 'root:toor' | chpasswd; passwd -u root 2>/dev/null || true",
 
-  # 4) The AWAE toolset itself (the heavy step): the offsec-awae course
+  # 5) The AWAE toolset itself (the heavy step): the offsec-awae course
   #    metapackage + the recipe's three extras.  If this hits a transient
   #    kali-rolling dependency skew, run `apt-get full-upgrade -y` first
   #    (see README "Troubleshooting"); steps 1-3 already leave a bootable base.
