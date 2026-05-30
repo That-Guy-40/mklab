@@ -103,6 +103,19 @@ case "$ENGINE" in
         for c in 7zr mkfs.fat qemu-img zerofree; do
             have "$c" || warn "host engine: '$c' not found (kali-vm may need it): part of 7zip/dosfstools/qemu-utils/zerofree"
         done
+        # Ubuntu/Debian ship /boot/vmlinuz* as 0600 root:root; debos/fakemachine
+        # must read the host kernel to boot its build VM, so a non-root host
+        # build dies with "could not open kernel file ... Permission denied".
+        kimg="/boot/vmlinuz-$(uname -r)"
+        if [ -e "$kimg" ] && [ ! -r "$kimg" ]; then
+            die "host engine: kernel image not readable by your user:
+  $kimg  (Ubuntu/Debian ship /boot/vmlinuz* as 0600 root:root)
+debos/fakemachine must read it to boot the build VM.  Either:
+  - build in a container instead (ships its own readable kernel, no host change):
+      $0 --$PROFILE --engine podman      # or --engine docker
+  - or make the host kernel readable (resets on kernel upgrades):
+      sudo chmod +r $kimg"
+        fi
         ;;
     podman|docker)
         have "$ENGINE" || die "engine '$ENGINE' not installed"
