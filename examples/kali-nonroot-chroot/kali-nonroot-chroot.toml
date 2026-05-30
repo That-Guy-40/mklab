@@ -1,0 +1,54 @@
+# Kali "non-root" chroot — Phase 1 (phase1-chroot/lab-chroot.sh).
+#
+# Inspired by the Kali live-build recipe `kali-linux-mate-top10-nonroot.sh`:
+#   https://gitlab.com/kalilinux/recipes/live-build-config-examples
+# That recipe builds a LIVE ISO (MATE 1.8 desktop + kali-linux-top10 tools) whose
+# defining feature is a NON-ROOT user — Kali's old default was root login, and the
+# recipe flips `passwd/root-login` to false + `make-user` to true in the preseed.
+# This lab captures the same idea at the **chroot** level (no live-build / ISO):
+# a Kali kali-rolling chroot with a non-root sudo user `kali` (root login locked)
+# plus a representative slice of the top-10 security tools.
+#
+# Two senses of "non-root":
+#   1. the RESULT is non-root — a `kali` sudo user, root password locked.
+#   2. the BUILD can be non-root — add `--rootless` to lab-chroot.sh create
+#      (fakechroot + fakeroot, no host root). See README "Non-root build".
+#
+# Build (normal, needs root for debootstrap):
+#   sudo phase1-chroot/lab-chroot.sh create --config examples/kali-nonroot-chroot/kali-nonroot-chroot.toml
+#   phase1-chroot/lab-chroot.sh enter kali-nonroot -- su - kali -c 'whoami; nmap --version'
+#
+# Full recipe (heavy) + the actual MATE desktop: see README — add
+# kali-tools-top10 + kali-desktop-mate, then export the chroot to a bootable VM
+# via the from-chroot bridge (a chroot has no GUI of its own).
+
+[[chroot]]
+name    = "kali-nonroot"
+backend = "debootstrap"
+distro  = "kali"
+suite   = "kali-rolling"
+arch    = "x86_64"
+target  = "/var/chroots/kali-nonroot"
+# mirror defaults to http://http.kali.org/kali ; the host must have the
+# kali-archive-keyring package installed (lab-chroot won't fetch the key).
+variant = "minbase"
+# Base essentials in debootstrap; the tools are installed via post_commands
+# (apt resolves their deps + runs maintainer scripts more reliably than
+# debootstrap --include for a non-trivial set).
+include = ["sudo", "ca-certificates"]
+manager = "none"
+
+# The non-root user — the recipe's whole point: kali / kali, in the sudo group.
+users = [
+  { name = "kali", password = "kali", groups = "sudo", shell = "/bin/bash" },
+]
+
+post_commands = [
+  # Disable root login (recipe: `d-i passwd/root-login boolean false`) — lock the
+  # root password so the `kali` sudo user is the only way in.
+  "passwd -l root",
+  # A lean, fast slice of the Kali top-10 tools.  The upstream recipe itself
+  # COMMENTED OUT the full kali-linux-top10 metapackage 'for brevity of build';
+  # for the full set (+ the MATE desktop) see the README.
+  "export DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8; apt-get update -qq && apt-get install -y --no-install-recommends nmap sqlmap hydra",
+]

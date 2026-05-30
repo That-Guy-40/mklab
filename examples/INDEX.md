@@ -30,6 +30,7 @@ later phases. Built with `sudo lab-chroot.sh create --config …`.
 | `chroot-rocky9-vsftpd.toml` | A Rocky 9 chroot sized for jailing `vsftpd` (the RPM/`dnf` backend). |
 | `chroot-host-copy-busybox.toml` | Tiny host-copy chroot: just BusyBox + a few `/etc` files. No debootstrap. |
 | `chroot-nspawn-managed.toml` | Debian bookworm registered with `machinectl` and bootable via `systemd-nspawn -b`. |
+| [`kali-nonroot-chroot/`](kali-nonroot-chroot/) | 🔒 A Kali `kali-rolling` chroot with a **non-root** sudo user (`kali`/`kali`, root locked) + a top-10 tool slice (nmap/sqlmap/hydra) — the chroot-level take on Kali's `kali-linux-mate-top10-nonroot` live-build recipe. `--rootless`-buildable; full top-10 + MATE-desktop-via-VM documented. ⚠️ offensive tools — authorized targets only. |
 
 ## 🖥️ QEMU machines — Phase 2 (`phase2-qemu-vm/lab-vm.sh`)
 
