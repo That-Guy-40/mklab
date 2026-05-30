@@ -101,7 +101,8 @@ sudo phase1-chroot/lab-chroot.sh destroy offsec-awae --force   # removes /var/li
 | `disk_size` too small (`No space left` during rsync) | the qcow2 must exceed the installed chroot; bump `[[vm]].disk_size` (full lab defaults to 24G). |
 | SSH refused | wait for DHCP; check `ip a` on the console. systemd-networkd matches `en*`/`eth*`. |
 
-> **Verification status:** pipeline authored against `lab-vm`'s `from-chroot`
-> backend (the same one `examples/vm-from-chroot-debian.toml` uses) adapted to a
-> Kali chroot. Run `--smoke` to confirm the chroot→VM boot on your host, then the
-> full AWAE build. (Both configs parse; `vm.chroot` is wired to `chroot.target`.)
+> **Verification status:** the `--smoke` pipeline is **verified end-to-end** on
+> Ubuntu 24.04 — `build-vm.sh --smoke` builds the chroot, images it, boots it, and
+> reaches the Kali serial `login:` with `root`/`toor` working (kernel
+> 6.19.14+kali, generic initramfs mounting the virtio root over BIOS/extlinux).
+> The full `offsec-awae` build is the same pipeline plus the toolset.

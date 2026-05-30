@@ -60,7 +60,8 @@ post_commands = [
 
   # 3) Make the chroot self-bootable: the from-chroot backend installs no kernel,
   #    so add one (post_commands have /proc /sys /dev bind-mounted) + init + SSH.
-  "export DEBIAN_FRONTEND=noninteractive; apt-get install -y --no-install-recommends linux-image-amd64 systemd-sysv udev openssh-server ca-certificates",
+  #    libgcrypt20 silences dracut's harmless 'gcrypt dlopen dependency' warning.
+  "export DEBIAN_FRONTEND=noninteractive; apt-get install -y --no-install-recommends linux-image-amd64 systemd-sysv udev openssh-server ca-certificates libgcrypt20",
   # belt-and-suspenders: rebuild the initramfs with the generic config above.
   "dracut --regenerate-all --force",
 

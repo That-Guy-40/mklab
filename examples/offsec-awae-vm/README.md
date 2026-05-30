@@ -132,9 +132,19 @@ options:
 
 ## What's verified
 
-See `MANUAL_TESTING.md`. The intended verification path is **`--smoke` first**
-(proves a Kali chroot boots as a from-chroot VM — kernel, serial console, DHCP,
-SSH, kali login), then the full `offsec-awae` build on top of that proven pipeline.
+The **`--smoke` pipeline is verified end-to-end** on Ubuntu 24.04: `build-vm.sh
+--smoke` builds the Kali chroot, images it (BIOS/MBR/extlinux), and boots it — it
+reaches the Kali serial `login:` and **`root`/`toor` logs in** (kernel
+6.19.14+kali, generic initramfs mounts the virtio root). Getting there took four
+from-chroot lessons, all now baked into the configs:
+
+1. **chroot under `LAB_STATE_DIR/chroots/`** — the backend rejects chroots elsewhere.
+2. **`firmware = "bios"`** — the disk is MBR/extlinux; the UEFI default drops to a UEFI Shell.
+3. **generic dracut initramfs** (`hostonly=no` + virtio) — else it can't mount the virtio root.
+4. **a kernel installed in the chroot** — the backend installs none.
+
+The full `offsec-awae` build is the **same pipeline** with the AWAE toolset added
+on top. See `MANUAL_TESTING.md`.
 
 ## Troubleshooting
 
@@ -150,4 +160,6 @@ SSH, kali login), then the full `offsec-awae` build on top of that proven pipeli
 | `console`/`destroy` say "no VM named …" after a `sudo` build | `lab-vm` keys its state dir off EUID (root → `/var/lib/lab-create`, user → `~/.local/state`); run those **as root** too. The VM is addressed **by name**, so `sudo lab-vm.sh console <name>` works even if `sudo lab-vm.sh list` looks empty. |
 | VM boots but serial console is blank | the kernel cmdline must carry `console=ttyS0` (lab-vm sets it); the chroot also enables `serial-getty@ttyS0`. Give it ~20s past extlinux. |
 | SSH won't connect | wait for a DHCP lease; confirm the NIC came up on the serial console (`ip a`). The chroot's `systemd-networkd` matches `en*`/`eth*`. |
+| dracut: `could not locate dlopen dependency for gcrypt …` | **harmless** — an optional systemd feature; the VM boots fine. `libgcrypt20` is now pulled to silence it. |
+| `ssh … lab@127.0.0.1` / "dropbear" in the start output | lab-vm's generic hint for its cloud-image VMs — ignore it. This VM's logins are `kali`/`kali` and `root`/`toor`; SSH as `ssh -p 2222 kali@127.0.0.1`. |
 | want the XFCE GUI | the from-chroot VM is serial-only — see "Getting the desktop". |
