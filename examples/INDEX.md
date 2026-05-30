@@ -167,6 +167,7 @@ A control node runs Ansible playbooks against managed target host(s) — see the
 |---|---|
 | [`reference/`](reference/) | Standalone build scripts that predate `lab-vm.sh`'s auto-build — read them to see the microVM initramfs built without the framework. |
 | `alpine-custom-init.TXT` | A side-by-side walkthrough of busybox-init vs. a custom C PID 1 (companion to `microvm-alpine-custom-init.toml`). |
+| `<kali-lab>/ADDING-PACKAGES.md` | Per-lab "how to add a package" guides — same add→apply→verify shape, tailored to each lab's real mechanism: chroot `apt` (`kali-nonroot-chroot`), in-guest provisioner (`kali-llm-desktop-lab`), Podman model/service (`kali-llm-lab`), and d-i preseed reinstall (`kali-pxe-lab`, `kali-preseed-gallery`). The offsec-awae flow lives in that lab's own README. |
 
 ---
 
