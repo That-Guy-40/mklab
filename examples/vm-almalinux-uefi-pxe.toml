@@ -14,7 +14,7 @@
 # when building iPXE.
 #
 # Prerequisites:
-#   1. netboot/fetch-almalinux-installer.sh  (downloads vmlinuz + initrd.img +
+#   1. examples/almalinux-pxe-lab/fetch-almalinux-installer.sh  (downloads vmlinuz + initrd.img +
 #                                             the stage2 images/install.img)
 #   2. netboot/build-ipxe.sh --server http://10.0.2.2:8181 \
 #          --kernel-path /vmlinuz --initrd-path /initrd.img \

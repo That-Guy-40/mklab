@@ -119,7 +119,7 @@ See [`examples/netboot-lab.toml`](examples/netboot-lab.toml) and
 Installs AlmaLinux unattended via iPXE + kickstart into a QEMU VM — walk away after `start`, SSH in ~10 minutes later to a running system.
 
 ```bash
-netboot/fetch-almalinux-installer.sh --mirror https://repo.almalinux.org/almalinux --release 9 --arch x86_64
+examples/almalinux-pxe-lab/fetch-almalinux-installer.sh --mirror https://repo.almalinux.org/almalinux --release 9 --arch x86_64
 netboot/gen-almalinux-ks.sh --mac 52:54:00:a1:9a:01
 netboot/build-ipxe.sh --server http://10.0.2.2:8181 \
     --kernel-path /vmlinuz --initrd-path /initrd.img \
@@ -130,7 +130,7 @@ phase2-qemu-vm/lab-vm.sh start  almalinux-pxe-install   # walk away; SSH in afte
 ```
 
 See [`netboot/SHOWCASE.md`](netboot/SHOWCASE.md) and
-[`ALMALINUX_PXE_LAB_PLAN.md`](ALMALINUX_PXE_LAB_PLAN.md) for the full design.
+[`examples/almalinux-pxe-lab/ALMALINUX_PXE_LAB_PLAN.md`](examples/almalinux-pxe-lab/ALMALINUX_PXE_LAB_PLAN.md) for the full design.
 
 ### A from-source micro-distro (compile → boot in RAM)
 

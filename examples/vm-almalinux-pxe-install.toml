@@ -15,7 +15,7 @@
 # Result: create + start, walk away, come back to a running AlmaLinux system.
 #
 # Prereqs (run in order):
-#   1. netboot/fetch-almalinux-installer.sh \
+#   1. examples/almalinux-pxe-lab/fetch-almalinux-installer.sh \
 #          --mirror https://repo.almalinux.org/almalinux --release 9 --arch x86_64
 #   2. netboot/gen-almalinux-ks.sh --mac 52:54:00:a1:9a:01
 #          # -> ~/netboot/ks/52-54-00-a1-9a-01.ks

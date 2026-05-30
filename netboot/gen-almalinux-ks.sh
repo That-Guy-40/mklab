@@ -17,8 +17,8 @@
 #   --mac       <MAC>   MAC address (colon-separated, e.g. 52:54:00:AA:BB:CC)
 #   --default           also write ks/default.ks (fallback for un-enumerated MACs)
 #   --template  <file>  kickstart template path
-#                       (default: examples/almalinux-zerotouch.ks relative to
-#                        the script directory, or CWD if not found there)
+#                       (default: examples/almalinux-pxe-lab/almalinux-zerotouch.ks
+#                        relative to the script directory, or CWD if not found there)
 #   --out       <dir>   output directory for ks/ subdir  (default: ~/netboot)
 #   --help              show this help and exit
 #
@@ -36,7 +36,6 @@
 
 set -euo pipefail
 
-readonly LAB_PROG="${0##*/}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly SCRIPT_DIR
 
@@ -74,7 +73,7 @@ and placed in <out>/ks/ so nginx can serve it at /ks/<mac:hexhyp>.ks.
 Options:
   --mac       MAC    MAC address (colon-separated, e.g. 52:54:00:AA:BB:CC)  [required]
   --default          also write ks/default.ks (nginx fallback for un-enumerated MACs)
-  --template  FILE   kickstart template  (default: examples/almalinux-zerotouch.ks)
+  --template  FILE   kickstart template  (default: examples/almalinux-pxe-lab/almalinux-zerotouch.ks)
   --out       DIR    output directory for ks/ subdir  (default: ~/netboot)
   --help             show this help and exit
 
@@ -94,7 +93,7 @@ EOF
 mac_raw=""
 write_default=""
 # Look for the template relative to the script first, then fall back to CWD.
-default_template="${SCRIPT_DIR}/../examples/almalinux-zerotouch.ks"
+default_template="${SCRIPT_DIR}/../examples/almalinux-pxe-lab/almalinux-zerotouch.ks"
 template=""
 out_dir="${LAB_NETBOOT_DIR:-$HOME/netboot}"
 

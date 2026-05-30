@@ -21,7 +21,7 @@
 # constrained links (e.g. QEMU slirp), which fails the install at dracut.
 #
 # Usage:
-#   netboot/fetch-almalinux-installer.sh [OPTIONS]
+#   examples/almalinux-pxe-lab/fetch-almalinux-installer.sh [OPTIONS]
 #
 # Options:
 #   --mirror  <url>   upstream AlmaLinux mirror base URL
@@ -32,9 +32,9 @@
 #   --help            show this help and exit
 #
 # Examples:
-#   netboot/fetch-almalinux-installer.sh
-#   netboot/fetch-almalinux-installer.sh --release 8 --arch x86_64
-#   netboot/fetch-almalinux-installer.sh \
+#   examples/almalinux-pxe-lab/fetch-almalinux-installer.sh
+#   examples/almalinux-pxe-lab/fetch-almalinux-installer.sh --release 8 --arch x86_64
+#   examples/almalinux-pxe-lab/fetch-almalinux-installer.sh \
 #       --mirror https://mirror.example.org/almalinux --out /srv/netboot
 
 set -euo pipefail
@@ -65,7 +65,7 @@ die()       { _log error "$@"; exit 1; }
 # ─── Usage ──────────────────────────────────────────────────────────────────
 usage() {
     cat >&2 <<'EOF'
-Usage: netboot/fetch-almalinux-installer.sh [OPTIONS]
+Usage: examples/almalinux-pxe-lab/fetch-almalinux-installer.sh [OPTIONS]
 
 Download the AlmaLinux PXE installer kernel, initrd, and stage2 install.img,
 verify their sha256 checksums against the tree's .treeinfo, and make them
@@ -86,9 +86,9 @@ Files written to --out:
   .treeinfo           the parsed tree metadata (kept for reference)
 
 Examples:
-  netboot/fetch-almalinux-installer.sh
-  netboot/fetch-almalinux-installer.sh --release 8
-  netboot/fetch-almalinux-installer.sh --mirror https://mirror.example.org/almalinux --out /srv/netboot
+  examples/almalinux-pxe-lab/fetch-almalinux-installer.sh
+  examples/almalinux-pxe-lab/fetch-almalinux-installer.sh --release 8
+  examples/almalinux-pxe-lab/fetch-almalinux-installer.sh --mirror https://mirror.example.org/almalinux --out /srv/netboot
 EOF
     exit 0
 }

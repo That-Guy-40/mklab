@@ -11,7 +11,7 @@
 #   - console = ttyAMA0             → embedded in the inst.ks= kickstart URL
 #
 # Prerequisites (run in order):
-#   1. netboot/fetch-almalinux-installer.sh --arch aarch64
+#   1. examples/almalinux-pxe-lab/fetch-almalinux-installer.sh --arch aarch64
 #      # -> ~/netboot/vmlinuz  ~/netboot/initrd.img
 #
 #   2. netboot/gen-almalinux-ks.sh \

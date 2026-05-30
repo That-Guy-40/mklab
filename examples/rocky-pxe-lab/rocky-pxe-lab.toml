@@ -4,7 +4,7 @@
 #   phase4-podman/lab-podman.sh   reads [[service]] with engine="podman"
 #   phase2-qemu-vm/lab-vm.sh      reads [[vm]]
 #
-# This is the Rocky Linux twin of examples/almalinux-pxe-lab.toml.  The only
+# This is the Rocky Linux twin of examples/almalinux-pxe-lab/almalinux-pxe-lab.toml.  The only
 # distro-specific differences are the installer fetch step (Rocky checksums
 # live in .treeinfo, not a per-dir CHECKSUM) and the upstream repo URLs.
 #

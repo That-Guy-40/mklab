@@ -456,7 +456,7 @@ fully installed AlmaLinux system.
 
 ```bash
 # 1. Fetch the AlmaLinux installer kernel and initrd (verifies sha256 checksums):
-netboot/fetch-almalinux-installer.sh \
+examples/almalinux-pxe-lab/fetch-almalinux-installer.sh \
     --mirror https://repo.almalinux.org/almalinux --release 9 --arch x86_64
 
 # 2. Generate a per-host kickstart named after the VM's pinned MAC:
@@ -524,7 +524,7 @@ suitable only for disposable, isolated lab VMs.
 - **Do not expose to an untrusted network.** Anyone who can reach the nginx
   server can download the kickstart and learn the root password.
 - For real deployments, replace `--plaintext` with `--iscrypted` and a
-  SHA-512 hash (see `examples/almalinux-zerotouch.ks` comments for the
+  SHA-512 hash (see `examples/almalinux-pxe-lab/almalinux-zerotouch.ks` comments for the
   `python3 -c "import crypt…"` one-liner).
 - For the QEMU-only path, bind nginx to loopback (`127.0.0.1:8181`) — the
   QEMU slirp stack reaches `10.0.2.2` regardless, and the kickstart never
@@ -533,6 +533,6 @@ suitable only for disposable, isolated lab VMs.
 #### Referenced files
 
 - [`../examples/vm-almalinux-pxe-install.toml`](../examples/vm-almalinux-pxe-install.toml) — the two-disk QEMU VM spec
-- [`../examples/almalinux-pxe-lab.toml`](../examples/almalinux-pxe-lab.toml) — unified cross-phase lab (Phase 4 + Phase 2)
+- [`../examples/almalinux-pxe-lab/almalinux-pxe-lab.toml`](../examples/almalinux-pxe-lab/almalinux-pxe-lab.toml) — unified cross-phase lab (Phase 4 + Phase 2)
 - [Phase 2 (QEMU VMs)](../phase2-qemu-vm/SHOWCASE.md) — `install_target`, `mac`, and `bootindex` VM spec fields
 - [Phase 4 (Podman)](../phase4-podman/SHOWCASE.md) — rootless nginx serving the artifact directory

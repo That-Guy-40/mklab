@@ -116,7 +116,7 @@ per-host MAC kickstart faithfully, add a literal-token escape hatch:
 
 ### 4.3 Per-host kickstart generation  *(new helper)*
 
-`netboot/gen-almalinux-ks.sh --mac <MAC> [--template examples/almalinux-zerotouch.ks] [--out ~/netboot/ks/]`
+`netboot/gen-almalinux-ks.sh --mac <MAC> [--template examples/almalinux-pxe-lab/almalinux-zerotouch.ks] [--out ~/netboot/ks/]`
 → renders the template to `ks/<mac:hexhyp>.ks` (lowercase, `-`-separated). For
 QEMU, feed it the VM's pinned MAC (§4.1); for real hardware, run once per NIC
 MAC. A 404 on an unknown MAC simply means "no kickstart for this host" — we'll
@@ -131,18 +131,18 @@ document shipping a `default.ks` symlink fallback as an option.
 | `phase2-qemu-vm/lab-vm.sh` | edit | `install_target`, `mac`, bootindex ordering |
 | `netboot/ipxe-build-inner.sh` | edit | `{MAC}` → `${mac:hexhyp}` token rewrite |
 | `netboot/build-ipxe.sh` | edit | document `{MAC}` placeholder in `--append` |
-| `netboot/fetch-almalinux-installer.sh` | new | curl `images/pxeboot/{vmlinuz,initrd.img}` from `--mirror`; chown for rootless nginx |
+| `examples/almalinux-pxe-lab/fetch-almalinux-installer.sh` | new | curl `images/pxeboot/{vmlinuz,initrd.img}` from `--mirror`; chown for rootless nginx |
 | `netboot/gen-almalinux-ks.sh` | new | render per-MAC kickstart from template |
-| `examples/almalinux-zerotouch.ks` | new | kickstart template (see §6) |
+| `examples/almalinux-pxe-lab/almalinux-zerotouch.ks` | new | kickstart template (see §6) |
 | `examples/vm-almalinux-pxe-install.toml` | new | Phase 2 install-target VM (§7) |
-| `examples/almalinux-pxe-lab.toml` | new | unified cross-phase lab (Phase 4 + Phase 2) |
+| `examples/almalinux-pxe-lab/almalinux-pxe-lab.toml` | new | unified cross-phase lab (Phase 4 + Phase 2) |
 | `netboot/SHOWCASE.md` | edit | add an AlmaLinux zero-touch section |
 | `README.md` | edit | add a quick-start entry |
 | `phase2-qemu-vm/tests/…` | new | unit test: `install_target` creates a blank disk + argv has two bootindexed drives |
 
 ---
 
-## 6. Kickstart template (`examples/almalinux-zerotouch.ks`)
+## 6. Kickstart template (`examples/almalinux-pxe-lab/almalinux-zerotouch.ks`)
 
 ```kickstart
 # AlmaLinux 9 zero-touch install — throwaway lab posture (see AUDIT.md F1).
@@ -192,7 +192,7 @@ reboot
 #
 # Prereqs (run in order):
 #   netboot/setup-netboot-dir.sh
-#   netboot/fetch-almalinux-installer.sh --mirror https://repo.almalinux.org/almalinux --release 9 --arch x86_64
+#   examples/almalinux-pxe-lab/fetch-almalinux-installer.sh --mirror https://repo.almalinux.org/almalinux --release 9 --arch x86_64
 #   netboot/gen-almalinux-ks.sh --mac 52:54:00:a1:9a:01     # → ~/netboot/ks/52-54-00-a1-9a-01.ks
 #   netboot/build-ipxe.sh --server http://10.0.2.2:8181 \
 #       --kernel-path /vmlinuz --initrd-path /initrd.img \
@@ -225,7 +225,7 @@ cloud_init     = false                              # iPXE ROM has no cloud-init
 netboot/setup-netboot-dir.sh
 
 # 2. Fetch the AlmaLinux installer kernel + initrd into ~/netboot/
-netboot/fetch-almalinux-installer.sh \
+examples/almalinux-pxe-lab/fetch-almalinux-installer.sh \
     --mirror https://repo.almalinux.org/almalinux --release 9 --arch x86_64
 
 # 3. Generate a per-host kickstart for the VM's pinned MAC

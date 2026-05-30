@@ -15,8 +15,8 @@
 > `inspect --json | jq .ssh_port` port read-back); the multi-GB VM boot / GUI /
 > MCP demo / GPU vfio are documented procedures (see that lab's "What's verified
 > vs documented").
-> Lives at repo root next to `ALMALINUX_PXE_LAB_PLAN.md` /
-> `NETBOOT_LAB_PLAN.md` / `MICRO_LINUX_LAB_PLAN.md`.
+> Lives at repo root next to `NETBOOT_LAB_PLAN.md` / `MICRO_LINUX_LAB_PLAN.md`
+> (the AlmaLinux plan now lives in `examples/almalinux-pxe-lab/`).
 > **Directories:** `examples/kali-llm-lab/` (Tier 1) + `examples/kali-llm-desktop-lab/` (Tier 2-full).
 
 ---

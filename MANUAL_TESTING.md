@@ -517,7 +517,7 @@ and `eula --agreed`.
 ### 7.2 AlmaLinux installer fetch ⚡→🐢 (net)
 
 ```bash
-netboot/fetch-almalinux-installer.sh \
+examples/almalinux-pxe-lab/fetch-almalinux-installer.sh \
     --mirror https://repo.almalinux.org/almalinux \
     --release 9 --arch x86_64 --out ~/netboot
 ls -lh ~/netboot/vmlinuz ~/netboot/initrd.img
@@ -602,7 +602,7 @@ install → SSH into installed system. Walk away after step 6; it takes ~10 min.
 
 ```bash
 # 1. Fetch the AlmaLinux installer kernel + initrd
-netboot/fetch-almalinux-installer.sh \
+examples/almalinux-pxe-lab/fetch-almalinux-installer.sh \
     --mirror https://repo.almalinux.org/almalinux --release 9 --arch x86_64
 
 # 2. Generate the per-host kickstart for the VM's pinned MAC

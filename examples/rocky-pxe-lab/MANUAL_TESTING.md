@@ -270,10 +270,10 @@ tail -F ~/.local/state/lab-create/vms/rocky-pxe-install/qemu.log   # path varies
 ## Notes
 
 - **The AlmaLinux lab is identical in shape.** Swap the fetch script
-  (`netboot/fetch-almalinux-installer.sh`), the kickstart template
-  (`examples/almalinux-zerotouch.ks`), the MAC (`52:54:00:a1:9a:01`), and the
+  (`examples/almalinux-pxe-lab/fetch-almalinux-installer.sh`), the kickstart template
+  (`examples/almalinux-pxe-lab/almalinux-zerotouch.ks`), the MAC (`52:54:00:a1:9a:01`), and the
   repo URL (`repo.almalinux.org`). Everything else — iPXE build, nginx serve,
-  boot-loop — is the same. See `examples/almalinux-pxe-lab.toml`.
+  boot-loop — is the same. See `examples/almalinux-pxe-lab/almalinux-pxe-lab.toml`.
 - **This is a network install.** It pulls packages live from
   `download.rockylinux.org`. There's no local RPM mirror; only the kernel,
   initrd, and kickstart are served locally. That keeps the lab small but means

@@ -9,7 +9,7 @@
 #
 # ─── Why .treeinfo and not a CHECKSUM file? ──────────────────────────────────
 # AlmaLinux ships a per-directory `CHECKSUM` inside images/pxeboot/, so its
-# fetch helper (netboot/fetch-almalinux-installer.sh) reads that.  Rocky does
+# fetch helper (examples/almalinux-pxe-lab/fetch-almalinux-installer.sh) reads that.  Rocky does
 # NOT publish a CHECKSUM in pxeboot/ — requesting it returns 404.  Rocky's
 # canonical integrity source for the boot images is the productmd `.treeinfo`
 # file at the root of the BaseOS `os/` tree, whose `[checksums]` section lists:

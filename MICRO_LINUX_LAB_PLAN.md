@@ -30,7 +30,7 @@ This contrasts with the repo's two existing boot pipelines:
 | Lab | Rootfs source | Kernel source | Boot |
 |---|---|---|---|
 | `NETBOOT_LAB_PLAN.md` | debootstrap (Debian pkgs) | host/distro kernel | iPXE → HTTP → RAM |
-| `ALMALINUX_PXE_LAB_PLAN.md` | Anaconda → disk | AlmaLinux installer kernel | iPXE → install-to-disk |
+| `examples/almalinux-pxe-lab/ALMALINUX_PXE_LAB_PLAN.md` | Anaconda → disk | AlmaLinux installer kernel | iPXE → install-to-disk |
 | **`micro-linux` (this plan)** | **BusyBox, compiled from source** | **Linux, compiled from source** | **QEMU `-kernel`/`-initrd`** |
 
 ### 1.1 Fidelity & deltas (read this first)

@@ -12,7 +12,7 @@
 # SECURITY WARNING: see almalinux-zerotouch.ks header.  Same throwaway posture.
 #
 # Workflow (aarch64):
-#   1. netboot/fetch-almalinux-installer.sh --arch aarch64 --release 9
+#   1. examples/almalinux-pxe-lab/fetch-almalinux-installer.sh --arch aarch64 --release 9
 #      # -> ~/netboot/vmlinuz  ~/netboot/initrd.img (aarch64 binaries)
 #
 #   2. netboot/gen-almalinux-ks.sh --mac 52:54:00:AA:64:01 [--default]

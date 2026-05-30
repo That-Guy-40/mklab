@@ -4,7 +4,7 @@ Boot a brand-new VM (or a real machine) over the network and have it install
 **Rocky Linux 9** with **no keystrokes** — PXE → iPXE → Anaconda → kickstart →
 reboot into the installed system.
 
-This is the Rocky twin of the AlmaLinux PXE lab (`examples/almalinux-pxe-lab.toml`).
+This is the Rocky twin of the AlmaLinux PXE lab (`examples/almalinux-pxe-lab/almalinux-pxe-lab.toml`).
 Both are RHEL-family rebuilds, so the Anaconda/kickstart machinery is identical;
 only the installer-fetch step and the mirror URLs differ.
 

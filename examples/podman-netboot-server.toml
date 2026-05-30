@@ -30,7 +30,7 @@
 #        --kernel ~/netboot/kernel --output ~/netboot/initrd.gz
 #
 #    For the AlmaLinux track, place vmlinuz, initrd.img, and ks/*.ks
-#    directly in ~/netboot/ (see ALMALINUX_PXE_LAB_PLAN.md).
+#    directly in ~/netboot/ (see examples/almalinux-pxe-lab/ALMALINUX_PXE_LAB_PLAN.md).
 #
 # 2. Start the HTTP server (no sudo needed):
 #    phase4-podman/lab-podman.sh up --config examples/podman-netboot-server.toml

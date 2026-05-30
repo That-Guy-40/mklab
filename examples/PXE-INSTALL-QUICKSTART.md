@@ -9,10 +9,10 @@ SeaBIOS → NIC's iPXE ROM → TFTP boot.ipxe (run directly) → HTTP(vmlinuz+in
 
 The two labs are twins — identical flow, only three values differ (fetch script,
 MAC/repo, config path). Each section below is self-contained and copy-pasteable
-from the **repo root**. Rocky also has a standalone copy of its half in
-`examples/rocky-pxe-lab/QUICKSTART.md`. For the full design write-up see
-`examples/rocky-pxe-lab/README.md`; for the deep debugging log see
-`examples/rocky-pxe-lab/MANUAL_TESTING.md`.
+from the **repo root**. Each lab also has a self-contained standalone copy of its
+half: `examples/rocky-pxe-lab/QUICKSTART.md` and
+`examples/almalinux-pxe-lab/QUICKSTART.md`. For the full design write-ups see each
+lab's `README.md`; for deep debugging logs see each lab's `MANUAL_TESTING.md`.
 
 ---
 
@@ -35,11 +35,11 @@ ls /dev/kvm && echo "KVM present (installs run much faster)"
 
 | | Rocky Linux 9 | AlmaLinux 9 |
 |---|---|---|
-| Fetch script | `examples/rocky-pxe-lab/fetch-rocky-installer.sh` | `netboot/fetch-almalinux-installer.sh` |
+| Fetch script | `examples/rocky-pxe-lab/fetch-rocky-installer.sh` | `examples/almalinux-pxe-lab/fetch-almalinux-installer.sh` |
 | Pinned MAC | `52:54:00:cc:09:09` → `ks/52-54-00-cc-09-09.ks` | `52:54:00:a1:9a:01` → `ks/52-54-00-a1-9a-01.ks` |
-| Kickstart template | `examples/rocky-pxe-lab/rocky9-zerotouch.ks` (`--template`) | `examples/almalinux-zerotouch.ks` (the gen-ks default) |
+| Kickstart template | `examples/rocky-pxe-lab/rocky9-zerotouch.ks` (`--template`) | `examples/almalinux-pxe-lab/almalinux-zerotouch.ks` (the gen-ks default) |
 | `inst.repo` | `https://download.rockylinux.org/pub/rocky/9/BaseOS/x86_64/os/` | `https://repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/` |
-| Config (TOML) | `examples/rocky-pxe-lab/rocky-pxe-lab.toml` | `examples/almalinux-pxe-lab.toml` |
+| Config (TOML) | `examples/rocky-pxe-lab/rocky-pxe-lab.toml` | `examples/almalinux-pxe-lab/almalinux-pxe-lab.toml` |
 | Lab name / VM | `rocky-pxe` / `rocky-pxe-install` | `almalinux-pxe` / `almalinux-pxe-install` |
 | nginx container | `lab-rocky-pxe-http` | `lab-almalinux-pxe-http` |
 
@@ -102,7 +102,7 @@ Identical flow — only the fetch script, MAC, repo, and config path differ:
 
 ```bash
 # 1. Fetch + verify vmlinuz, initrd.img, AND the stage2 install.img (resumable).
-netboot/fetch-almalinux-installer.sh --release 9 --arch x86_64
+examples/almalinux-pxe-lab/fetch-almalinux-installer.sh --release 9 --arch x86_64
 
 # 2. Per-MAC kickstart (NIC pinned to 52:54:00:a1:9a:01; default template = almalinux-zerotouch.ks).
 netboot/gen-almalinux-ks.sh --mac 52:54:00:a1:9a:01
@@ -113,13 +113,13 @@ netboot/build-ipxe.sh --server http://10.0.2.2:8181 \
     --append 'inst.stage2=http://10.0.2.2:8181/ inst.repo=https://repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/ inst.ks=http://10.0.2.2:8181/ks/{MAC}.ks inst.text console=ttyS0 ip=dhcp'
 
 # 4. Serve + verify the four artifacts.
-phase4-podman/lab-podman.sh up --config examples/almalinux-pxe-lab.toml
+phase4-podman/lab-podman.sh up --config examples/almalinux-pxe-lab/almalinux-pxe-lab.toml
 for u in vmlinuz initrd.img images/install.img ks/52-54-00-a1-9a-01.ks; do
     printf '%-32s ' "$u"; curl -sI "http://localhost:8181/$u" | head -1
 done   # every line must say HTTP/1.1 200 OK
 
 # 5. Create + start.
-phase2-qemu-vm/lab-vm.sh create  --config examples/almalinux-pxe-lab.toml
+phase2-qemu-vm/lab-vm.sh create  --config examples/almalinux-pxe-lab/almalinux-pxe-lab.toml
 phase2-qemu-vm/lab-vm.sh start   almalinux-pxe-install
 phase2-qemu-vm/lab-vm.sh console almalinux-pxe-install
 ```

@@ -36,7 +36,7 @@
 # finding F2 (unverified downloads) for the package layer.
 #
 # The installer kernel (vmlinuz) and initrd (initrd.img) are fetched separately
-# by netboot/fetch-almalinux-installer.sh, which verifies them against
+# by examples/almalinux-pxe-lab/fetch-almalinux-installer.sh, which verifies them against
 # AlmaLinux's published CHECKSUM file (sha256sum).
 # ─────────────────────────────────────────────────────────────────────────────
 

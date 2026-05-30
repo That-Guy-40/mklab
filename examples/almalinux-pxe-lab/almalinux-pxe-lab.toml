@@ -1,6 +1,7 @@
 # Unified AlmaLinux zero-touch PXE lab — one TOML feeds Phase 4 and Phase 2.
 #
-# Copy-paste runbook (this lab + the Rocky twin): examples/PXE-INSTALL-QUICKSTART.md
+# Copy-paste runbook: examples/almalinux-pxe-lab/QUICKSTART.md  (or the combined
+# Rocky+Alma runbook: examples/PXE-INSTALL-QUICKSTART.md)
 #
 # Each phase tool reads only the blocks it owns and silently ignores the rest:
 #   phase4-podman/lab-podman.sh   reads [[service]] with engine="podman"
@@ -9,7 +10,7 @@
 # Workflow — run these in order against this file:
 #
 #   # 1. Fetch the AlmaLinux installer kernel and initrd into ~/netboot/:
-#   netboot/fetch-almalinux-installer.sh \
+#   examples/almalinux-pxe-lab/fetch-almalinux-installer.sh \
 #       --mirror https://repo.almalinux.org/almalinux --release 9 --arch x86_64
 #
 #   # 2. Generate a per-host kickstart for the VM's pinned MAC:
@@ -24,10 +25,10 @@
 #       # the NIC's MAC at runtime (e.g. 52-54-00-a1-9a-01).
 #
 #   # 4. Bring up the rootless nginx artifact server (Phase 4):
-#   phase4-podman/lab-podman.sh up --config examples/almalinux-pxe-lab.toml
+#   phase4-podman/lab-podman.sh up --config examples/almalinux-pxe-lab/almalinux-pxe-lab.toml
 #
 #   # 5. Create and start the installer VM (Phase 2) — unattended:
-#   phase2-qemu-vm/lab-vm.sh create --config examples/almalinux-pxe-lab.toml
+#   phase2-qemu-vm/lab-vm.sh create --config examples/almalinux-pxe-lab/almalinux-pxe-lab.toml
 #   phase2-qemu-vm/lab-vm.sh start  almalinux-pxe-install   # walk away; comes back installed
 #   phase2-qemu-vm/lab-vm.sh ssh    almalinux-pxe-install   # login: lab / lab
 #
