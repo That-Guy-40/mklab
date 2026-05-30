@@ -69,13 +69,13 @@ Verify the toolset in the chroot before/without booting:
 ```bash
 C=offsec-awae
 phase1-chroot/lab-chroot.sh enter $C -- dpkg -l offsec-awae code-oss gobuster jd-gui | grep ^ii
-phase1-chroot/lab-chroot.sh enter $C -- su - kali -c 'whoami; gobuster version'
+phase1-chroot/lab-chroot.sh enter $C -- su - kali -c 'whoami; command -v gobuster'
 ```
 
 …or in the booted VM (`lab-vm console offsec-awae-vm`, login kali/kali):
 
 ```bash
-gobuster version
+command -v gobuster            # /usr/bin/gobuster — it runs (NB: no `gobuster version` subcommand; use `dpkg -s gobuster` for the version)
 which code-oss jd-gui          # present; GUI apps — need X (see README "Getting the desktop")
 ```
 
