@@ -126,6 +126,22 @@ rm -rf ~/ansible-lab          # the staged control workdir + lab SSH key
 
 ---
 
+## Troubleshooting — incus daemon wedges on profile writes
+
+Building this lab, I hit an intermittent **incus daemon hang on profile/config
+*write* operations** (e.g. `lab-lxd.sh up` stalling at "creating profile", or a
+bare `incus profile create` timing out) — while reads like `incus list` stayed
+instant. It showed up after the host rebooted mid-session plus a lot of rapid
+`lab-lxd.sh up`/`down` churn, and `incus operation list` reported nothing stuck.
+
+**Fix:** `sudo systemctl restart incus` clears it immediately; it also tends to
+self-clear after a minute. If you only need to confirm a single profile/device
+command, running the `incus …` command directly often works even while the full
+`up` sequence is wedged. This lab attaches its `/lab` mount as an **instance**
+device (not a profile), so it rarely triggers the wedge in practice.
+
+---
+
 ## Security posture
 
 Throwaway lab. `fetch-recipes.sh` generates an **unencrypted** SSH keypair under

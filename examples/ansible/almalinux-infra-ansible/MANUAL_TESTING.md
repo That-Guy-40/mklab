@@ -98,6 +98,7 @@ rm -rf ~/ansible-lab
 | ansible can't reach target (ssh) | `--rebootstrap` re-installs sshd + re-authorises the key; check `incus list` shows the target with an IP. |
 | `Permission denied (publickey)` reading `/lab/ssh/id_ed25519` | the `/lab` mount needs `shift=true` (declared in the TOML's control `devices`); on an old kernel without idmapped mounts the container root can't read the host 0600 key. |
 | recipe needs Vault/FreeIPA/DB | that recipe is deferred — see README catalog. |
+| `lab-lxd.sh up` hangs at "creating profile" / a bare `incus profile create` hangs | the incus daemon can intermittently wedge on profile/config **writes** (while `incus list` etc. stay fine), seen after a host reboot + heavy churn. Recover with `sudo systemctl restart incus`; it also self-clears after a minute. This lab uses an instance `devices` mount (not a profile), so it's rarely hit here. |
 
 > **Verified on KVM/Incus** (all `failed=0` against a vanilla AlmaLinux 9 container):
 > - **common** — hostname, EPEL, CRB, firewalld (zone rules), base packages; re-run `changed=0`.
