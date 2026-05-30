@@ -1,0 +1,79 @@
+# Rocky Linux 9 kickstart gallery — pick any official Rocky image kickstart and
+# install it zero-touch in a QEMU VM.  One TOML feeds Phase 4 and Phase 2.
+#
+# The Anaconda/kickstart cousin of examples/kali-preseed-gallery (which does the
+# same with Debian-installer preseeds).  fetch-kickstarts.sh stages the whole
+# upstream rocky-linux/kickstarts (r9) catalog; select-kickstart.sh bakes a
+# chosen variant's URL into boot.ipxe.
+#
+# Copy-paste runbook: examples/rocky-kickstart-gallery/README.md
+#
+# Each phase tool reads only the blocks it owns and silently ignores the rest:
+#   phase4-podman/lab-podman.sh   reads [[service]] with engine="podman"
+#   phase2-qemu-vm/lab-vm.sh      reads [[vm]]
+#
+# ─── Workflow — run these in order ───────────────────────────────────────────
+#
+#   # 1. Fetch the Rocky installer kernel + initrd + stage2 (reuses rocky-pxe-lab):
+#   examples/rocky-pxe-lab/fetch-rocky-installer.sh --release 9 --arch x86_64
+#
+#   # 2. Stage the whole upstream kickstart catalog (raw/ + lab-patched copies):
+#   examples/rocky-kickstart-gallery/fetch-kickstarts.sh
+#       # -> ~/netboot/rocky-kickstart/Rocky-9-*.ks   (served at /rocky-kickstart/)
+#
+#   # 3. Pick a variant -> bakes inst.ks + repos into boot.ipxe (+ ipxe.pxe/.efi):
+#   examples/rocky-kickstart-gallery/select-kickstart.sh GenericCloud-Base
+#
+#   # 4. Bring up the rootless nginx artifact server (Phase 4):
+#   phase4-podman/lab-podman.sh up --config examples/rocky-kickstart-gallery/rocky-kickstart-gallery.toml
+#
+#   # 5. Create and start the installer VM (Phase 2) — unattended:
+#   phase2-qemu-vm/lab-vm.sh create --config examples/rocky-kickstart-gallery/rocky-kickstart-gallery.toml
+#   phase2-qemu-vm/lab-vm.sh start  rocky-kickstart-install   # walk away; reboots into the install
+#
+# To switch variants: re-run select-kickstart.sh <other>, then `destroy` +
+# `create` the VM (blank the target disk) before `start`.
+#
+# Tear down:
+#   phase4-podman/lab-podman.sh down    --lab rocky-kickstart
+#   phase2-qemu-vm/lab-vm.sh    destroy rocky-kickstart-install --force
+#
+# Update /home/sqs to your $HOME if different (no shell expansion in TOML).
+
+[lab]
+name        = "rocky-kickstart"
+description = "Rocky Linux 9 kickstart gallery: install any official Rocky image kickstart (GenericCloud/EC2/Workstation/KDE/XFCE/…) zero-touch via QEMU pxe-install. Anaconda cousin of kali-preseed-gallery."
+tags        = ["rocky", "rocky-linux", "kickstart", "pxe", "netboot", "gallery", "zero-touch"]
+
+# ─── Phase 4: rootless nginx serving netboot artifacts ─────────────────────
+# Serves vmlinuz, initrd.img, images/install.img, and the staged kickstarts
+# (rocky-kickstart/*.ks) from ~/netboot/ on host port 8181.
+[[service]]
+name    = "http"
+engine  = "podman"
+image   = "docker.io/library/nginx:alpine"
+ports   = ["8181:80"]
+volumes = ["/home/sqs/netboot:/usr/share/nginx/html:ro"]
+
+# ─── Phase 2: QEMU installer VM (pxe-install: NIC iPXE runs boot.ipxe) ──────
+# SeaBIOS tries the blank target disk (bootindex=0) → falls to the NIC's option
+# ROM (which on QEMU *is* iPXE) → it TFTP-fetches boot.ipxe and runs it directly
+# → fetches the Rocky vmlinuz/initrd.img + stage2 + the selected kickstart over
+# HTTP → Anaconda installs to /dev/vda → the gallery patch makes it reboot into
+# the installed system (the upstream kickstarts `shutdown` instead — see
+# fetch-kickstarts.sh).  On that reboot the disk (bootindex=0) wins and the NIC
+# ROM is never reached again → the loop terminates.
+#   UEFI variant: drop `firmware` and set pxe_bootfile = "ipxe.efi".
+#   Real hardware w/ non-iPXE firmware PXE: set pxe_bootfile = "ipxe.pxe".
+[[vm]]
+name           = "rocky-kickstart-install"
+backend        = "pxe-install"          # NIC's iPXE ROM runs boot.ipxe directly; no binary chainload
+firmware       = "bios"                  # SeaBIOS + NIC option-ROM path (UEFI: drop this + use ipxe.efi)
+install_target = "20G"                   # blank disk, bootindex=0: install dest + post-install boot disk
+mac            = "52:54:00:cc:09:5e"     # pinned; distinct from rocky-pxe / almalinux-pxe / kali labs
+arch           = "x86_64"
+memory         = "4096M"               # 4G: Anaconda + the HTTP stage2 (install.img ~1.2 GB) loads into the initramfs tmpfs
+cpus           = 2
+cloud_init     = false                   # Anaconda provisions from the kickstart; no datasource
+pxe_dir        = "/home/sqs/netboot"     # QEMU slirp TFTP root (serves boot.ipxe)
+pxe_bootfile   = "boot.ipxe"             # iPXE script, run by QEMU's native iPXE NIC ROM (real HW w/ non-iPXE PXE: ipxe.pxe)
