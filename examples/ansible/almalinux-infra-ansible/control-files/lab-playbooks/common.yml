@@ -1,0 +1,16 @@
+---
+# Lab driver playbook for the `common` recipe.
+#
+# The upstream `common` role (infra-ansible/roles/common, used unchanged) does
+# the base host setup: hostname, EPEL + CRB repos, firewalld, a base package
+# set, and root authorized_keys.  Every upstream service playbook starts with
+# it, so it's the natural first recipe.  This thin lab play just points it at
+# the lab inventory group and runs as root (the target is reached as root over
+# SSH — see ../inventory.ini).  Lab vars live in ../group_vars/lab.yml.
+#
+# Verified end-to-end + idempotent against an AlmaLinux 9 incus container.
+- name: "infra-ansible recipe: common (base host setup)"
+  hosts: lab
+  gather_facts: true
+  roles:
+    - common

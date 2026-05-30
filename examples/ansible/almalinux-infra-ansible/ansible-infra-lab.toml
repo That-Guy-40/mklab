@@ -1,0 +1,57 @@
+# AlmaLinux infra-ansible lab — a control container runs the curated AlmaLinux
+# infrastructure recipes against a target container, both LXD/Incus (Phase 5).
+#
+# The first lab in the examples/ansible/ category.  See the category README and
+# this lab's README.md for the full picture; the short version:
+#
+#   control  — AlmaLinux 9 container with ansible-core + the lab workdir mounted
+#              at /lab (from ~/ansible-lab, staged by fetch-recipes.sh).  Runs the
+#              playbooks.
+#   target   — AlmaLinux 9 container the recipes configure (reached as root over
+#              SSH on the incusbr0 bridge).
+#
+# ─── Workflow ────────────────────────────────────────────────────────────────
+#   # 1. Stage the recipe catalog + control workdir (clone + patch + lab overlay):
+#   examples/ansible/almalinux-infra-ansible/fetch-recipes.sh
+#
+#   # 2. Bring up both containers (mounts ~/ansible-lab into control at /lab):
+#   phase5-lxd/lab-lxd.sh up --config examples/ansible/almalinux-infra-ansible/ansible-infra-lab.toml
+#
+#   # 3. Run a recipe (first run also bootstraps ansible + SSH + the inventory):
+#   examples/ansible/almalinux-infra-ansible/run-recipe.sh common
+#
+# Tear down:
+#   phase5-lxd/lab-lxd.sh down --lab ansible-infra
+#   (and `rm -rf ~/ansible-lab` to drop the staged workdir)
+#
+# Update /home/sqs to your $HOME if different (no shell expansion in TOML) — it
+# appears in the control instance's disk-device source below.
+
+[lab]
+name        = "ansible-infra"
+description = "Run AlmaLinux's infra-ansible recipes (common, services) from a control container against an AlmaLinux target container — both LXD/Incus."
+tags        = ["ansible", "almalinux", "infra-ansible", "lxd", "incus", "config-management"]
+
+# ─── The managed host the recipes configure ────────────────────────────────
+[[instance]]
+name   = "target"
+engine = "incus"
+type   = "container"
+image  = "images:almalinux/9"
+# bootstrapped by run-recipe.sh on first run: python3 + sshd + the lab SSH key.
+
+# ─── The Ansible control node ──────────────────────────────────────────────
+# Plain AlmaLinux container.  On first run, run-recipe.sh:
+#   - bind-mounts the staged workdir (~/ansible-lab) at /lab via
+#       incus config device add … disk source=… path=/lab shift=true
+#     (shift=true idmaps the host-owned files so the unprivileged container's
+#      root can read them, incl. the 0600 SSH key), and
+#   - installs ansible-core + ansible.posix + community.general.
+# (The mount is added by run-recipe rather than declared here because the
+# Phase-5 tool's TOML device support is currently broken — see this lab's
+# README "Known issue".)
+[[instance]]
+name   = "control"
+engine = "incus"
+type   = "container"
+image  = "images:almalinux/9"

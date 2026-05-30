@@ -151,6 +151,14 @@ tools in sequence against the same file.
 | [`kali-llm-lab/`](kali-llm-lab/) | 🔗🪶 Local LLM on Kali, headless: a rootless **Ollama + Open WebUI** pod (Phase 4) reached over SSH-forward — the self-contained Tier 1 of the [Kali Ollama+5ire blog](https://www.kali.org/blog/kali-llm-ollama-5ire/). README also wires the **real 5ire** desktop client (Tier 2). ⚠️ unauthenticated model API — loopback + SSH-forward only. Design doc: `KALI_LLM_LAB_PLAN.md`. |
 | [`kali-llm-desktop-lab/`](kali-llm-desktop-lab/) | 🖥️ **Tier 2-full** — the *whole* blog stack in one Kali XFCE VM (Phase 2): Ollama + the **real 5ire GUI** (over VNC-through-SSH) + **mcp-kali-server** driving real Kali tools (the agentic Tier 3 payoff). In-VM provisioner; ~8 GB RAM. ⚠️ an LLM that runs `nmap`/`sqlmap`/`metasploit` — isolated network + authorized targets only. README marks what's verified vs documented. |
 
+## 🔧 Ansible — configuration management
+
+A control node runs Ansible playbooks against managed target host(s) — see the category [`ansible/`](ansible/) README.
+
+| File | What you get |
+|---|---|
+| [`ansible/almalinux-infra-ansible/`](ansible/almalinux-infra-ansible/) | 🔧 Run AlmaLinux's own [infra-ansible](https://github.com/AlmaLinux/infra-ansible) recipes from an Ansible **control** container against an AlmaLinux **target** container (both Phase-5 LXD/Incus). `fetch-recipes.sh` stages the catalog verbatim under `raw/` **and** patches the playbooks (comments the Zabbix/FreeIPA/Vault/hardening roles that need AlmaLinux's real infra; roles untouched); `run-recipe.sh` bootstraps + runs one. The `common` base recipe is **verified green + idempotent**; service recipes (gitea/mattermost/…) are deferred (need DB/Vault). |
+
 ## 📚 Reference & notes
 
 | Path | What it is |

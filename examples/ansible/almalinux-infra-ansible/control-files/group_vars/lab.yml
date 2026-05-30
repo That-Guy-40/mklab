@@ -1,0 +1,19 @@
+---
+# Lab values for the upstream infra-ansible roles.
+#
+# AlmaLinux's production deployment supplies these from its own group_vars /
+# host_vars + HashiCorp Vault.  In the lab we provide safe, self-contained
+# defaults so the curated recipes run against a vanilla AlmaLinux target with
+# no external Vault/FreeIPA/Zabbix.
+
+# --- common role -------------------------------------------------------------
+# users.yml loops over this to add root authorized_keys; empty = add none
+# (the lab already injects the control container's key for Ansible itself).
+ssh_authorized_keys: []
+# packages.yml installs this set (upstream pulls it from infra group_vars).
+common_packages:
+  - vim-enhanced
+  - curl
+  - rsync
+  - tar
+  - bind-utils
