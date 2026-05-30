@@ -35,7 +35,12 @@ variant = "minbase"
 # Base essentials in debootstrap; the tools are installed via post_commands
 # (apt resolves their deps + runs maintainer scripts more reliably than
 # debootstrap --include for a non-trivial set).
-include = ["sudo", "ca-certificates"]
+#   kali-archive-keyring is REQUIRED here: lab-chroot uses the HOST keyring to
+#   verify the debootstrap *download*, but the chroot's own apt needs the Kali
+#   signing key installed *inside* it, or `apt-get update` fails OpenPGP
+#   verification ("Missing key …") and no packages install.  minbase doesn't
+#   pull it — the upstream recipe lists it for the same reason.
+include = ["kali-archive-keyring", "sudo", "ca-certificates"]
 manager = "none"
 
 # The non-root user — the recipe's whole point: kali / kali, in the sudo group.

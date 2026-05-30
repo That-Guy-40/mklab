@@ -57,7 +57,8 @@ sudo phase1-chroot/lab-chroot.sh destroy kali-nonroot --force   # removes /var/c
 
 | Symptom | Cause / fix |
 |---|---|
-| `missing /usr/share/keyrings/kali-archive-keyring.gpg` | install `kali-archive-keyring` on the host (lab-chroot won't download the key). |
+| `missing /usr/share/keyrings/kali-archive-keyring.gpg` | install `kali-archive-keyring` on the **host** (lab-chroot won't download the key — it verifies the *download*). |
+| post-install apt fails: `OpenPGP signature verification failed … Missing key …` / `Package 'nmap' has no installation candidate` | the **chroot's** apt has no Kali key — `kali-archive-keyring` wasn't installed *inside* it. It's now in this lab's `include`, so rebuild. To fix an **existing** chroot in place: `sudo cp /usr/share/keyrings/kali-archive-keyring.gpg /var/chroots/kali-nonroot/etc/apt/trusted.gpg.d/` then `sudo lab-chroot.sh enter kali-nonroot -- bash -c 'apt-get update && apt-get install -y --no-install-recommends kali-archive-keyring nmap sqlmap hydra'`. |
 | build needs root / `sudo` prompts | debootstrap requires root; this is expected. Use `--rootless` for a root-free build (caveat below). |
 | `--rootless` fails at `dpkg --install base-passwd` | fakechroot can't run dpkg's core-package install on recent debootstrap/dpkg — a known fakechroot limitation, not a config issue. Use the normal root build. |
 | want the MATE desktop | a chroot has no GUI — add `kali-desktop-mate` + export to a VM via `from-chroot` (see README "Full recipe"). |
