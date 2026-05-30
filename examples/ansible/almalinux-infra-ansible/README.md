@@ -40,14 +40,18 @@ so they're curated:
 
 | Recipe | Status | Notes |
 |---|---|---|
-| **common** | ✅ **verified** | Base host setup: hostname, EPEL + CRB, firewalld, base packages. The role every other playbook starts with. Runs green + idempotent against a vanilla AlmaLinux 9 container; only lab vars needed (`ssh_authorized_keys`, `common_packages`). |
-| gitea, mattermost, matrix_synapse, cachet, keycloak | ⏸ deferred | Service roles that also need a database (geerlingguy.mysql/postgresql), app secrets, and TLS — feasible with extra `group_vars`, but more than a first lab. |
-| mqtt | ⏸ deferred | The mosquitto password is pulled from **HashiCorp Vault** (`community.hashi_vault` lookup) — needs a Vault. |
+| **common** | ✅ **verified** | Base host setup: hostname, EPEL + CRB, firewalld, base packages. The role every other playbook starts with. Green + idempotent; lab vars `ssh_authorized_keys`, `common_packages`. |
+| **gitea** | ✅ **verified** | Self-hosted Git. Lab runs it with **SQLite** (sidesteps the `geerlingguy.mysql` role — gated `when gitea_database in (mysql,mariadb)`) + **Valkey** cache + **Caddy** reverse proxy (all EL9 AppStream/EPEL); secret keys auto-generated. Serves its web UI on `:3000`. |
+| **matterbridge** | ✅ **verified** | Chat-bridge daemon (EPEL). Lab runs it with a local **REST-API gateway**, so the daemon starts + listens on `127.0.0.1:4242` without external chat-service tokens. |
+| mattermost, matrix_synapse, cachet, keycloak | ⏸ deferred | Service roles needing Postgres/MySQL + app secrets + TLS (heavier; matrix/keycloak also pull big collections). |
+| mqtt | ⏸ deferred | The mosquitto password is an **inline Vault lookup in the role itself** (not group_vars), so it can't be overridden without editing the role. |
+| hashivault | ⏸ deferred | Installs Vault, but the role also runs `certbot` (TLS) + wires LDAP→FreeIPA + inits Vault. |
 | mirror, almalinux_repo | ⏸ deferred | Full mirror servers (rsync + nginx/caddy + certbot + Route53/Cloudflare DNS). |
-| ipa_client, hashivault, astra, people, matterbridge | ⏸ deferred | Tied to FreeIPA / Vault / AlmaLinux-specific services. |
+| ipa_client, astra, people | ⏸ deferred | FreeIPA-tied (`astra`'s upstream role is also an empty placeholder). |
 
-Adding a recipe = drop a `lab-playbooks/<name>.yml` + any vars in
-`group_vars/lab.yml`, then `run-recipe.sh <name>`.
+Each recipe gets a thin `control-files/lab-playbooks/<recipe>.yml` (`hosts: lab`,
+applies the upstream role(s) unchanged, with its lab-specific vars in the play's
+`vars:`). Add one + `run-recipe.sh <name>`.
 
 ---
 
@@ -133,9 +137,17 @@ anything you don't own. `~/ansible-lab` (key included) is removed on teardown.
 
 ## What's verified
 
-`common` was run end-to-end on KVM/Incus: `fetch-recipes.sh` → `lab-lxd.sh up` →
-`run-recipe.sh common` configured a vanilla AlmaLinux 9 container (hostname, EPEL,
-CRB, firewalld with zone rules, base packages) with **`failed=0`**, and a second
-run reported **`changed=0`** (idempotent). The bootstrap is idempotent too (re-runs
-skip the installs + the mount). The deferred recipes share this exact path and
-differ only in their role's external dependencies (see the catalog).
+Run end-to-end on KVM/Incus (`fetch-recipes.sh` → `lab-lxd.sh up` →
+`run-recipe.sh <recipe>`), all `failed=0` against a vanilla AlmaLinux 9 container:
+
+- **common** — hostname, EPEL, CRB, firewalld (with zone rules), base packages;
+  re-run `changed=0` (idempotent).
+- **gitea** — gitea 1.22.6 active on `:3000` (SQLite DB created, Valkey + Caddy
+  up, web UI responds); re-run drops to `changed=2` (just the `ansible_managed`
+  timestamp in the two templated configs).
+- **matterbridge** — service active, listening on `127.0.0.1:4242`; re-run
+  `changed=0` (idempotent).
+
+The bootstrap is idempotent too (re-runs skip the installs + the mount). The
+deferred recipes share this exact path and differ only in their role's external
+dependencies (see the catalog).

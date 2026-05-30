@@ -157,7 +157,7 @@ A control node runs Ansible playbooks against managed target host(s) — see the
 
 | File | What you get |
 |---|---|
-| [`ansible/almalinux-infra-ansible/`](ansible/almalinux-infra-ansible/) | 🔧 Run AlmaLinux's own [infra-ansible](https://github.com/AlmaLinux/infra-ansible) recipes from an Ansible **control** container against an AlmaLinux **target** container (both Phase-5 LXD/Incus). `fetch-recipes.sh` stages the catalog verbatim under `raw/` **and** patches the playbooks (comments the Zabbix/FreeIPA/Vault/hardening roles that need AlmaLinux's real infra; roles untouched); `run-recipe.sh` bootstraps + runs one. The `common` base recipe is **verified green + idempotent**; service recipes (gitea/mattermost/…) are deferred (need DB/Vault). |
+| [`ansible/almalinux-infra-ansible/`](ansible/almalinux-infra-ansible/) | 🔧 Run AlmaLinux's own [infra-ansible](https://github.com/AlmaLinux/infra-ansible) recipes from an Ansible **control** container against an AlmaLinux **target** container (both Phase-5 LXD/Incus). `fetch-recipes.sh` stages the catalog verbatim under `raw/` **and** patches the playbooks (comments the Zabbix/FreeIPA/Vault/hardening roles that need AlmaLinux's real infra; roles untouched); `run-recipe.sh` bootstraps + runs one. **Verified green:** `common` (base setup, idempotent), `gitea` (SQLite + Valkey + Caddy, web UI on :3000), and `matterbridge` (daemon on :4242); heavier recipes (mattermost/matrix/keycloak/mirror/…) deferred — need Postgres/Vault/FreeIPA. |
 
 ## 📚 Reference & notes
 

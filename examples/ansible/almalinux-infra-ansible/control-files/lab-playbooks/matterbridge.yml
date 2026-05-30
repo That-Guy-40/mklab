@@ -1,0 +1,29 @@
+---
+# Lab driver for the `matterbridge` recipe.
+#
+# matterbridge (https://github.com/42wim/matterbridge) bridges chat networks
+# (Slack/Discord/Matrix/IRC/…). The upstream role installs it from EPEL and
+# templates matterbridge.toml from `matterbridge_config` + `matterbridge_channels`.
+#
+# A real bridge needs tokens for external chat services, which a lab can't have —
+# so instead we configure matterbridge's built-in **local REST API** gateway:
+# the daemon actually starts and listens on 127.0.0.1:4242 with no external
+# credentials, which is enough to prove the recipe end-to-end. The role + EPEL
+# package are used unchanged; only these lab vars differ from production.
+#
+# Verified: green + the matterbridge service comes up listening on :4242.
+- name: "infra-ansible recipe: matterbridge (chat bridge daemon)"
+  hosts: lab
+  roles:
+    - common        # installs EPEL (matterbridge lives there) + base setup
+    - matterbridge
+  vars:
+    # → [api.local] section in matterbridge.toml
+    matterbridge_config:
+      api.local:
+        BindAddress: "127.0.0.1:4242"
+        Buffer: 1000
+    # → a [[gateway]] "lab" wiring the api account to itself (loopback bridge)
+    matterbridge_channels:
+      lab:
+        api.local: "api"

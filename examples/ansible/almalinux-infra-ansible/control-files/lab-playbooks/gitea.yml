@@ -1,0 +1,58 @@
+---
+# Lab driver for the `gitea` recipe — self-hosted Git.
+#
+# The upstream gitea role downloads the gitea binary, installs Valkey (cache) and
+# Caddy (reverse proxy), templates /etc/gitea/app.ini from `gitea_config`, and
+# runs gitea as a systemd service. In production it uses MySQL (+ Vault for the
+# DB password / secret keys); here we point it at **SQLite** so no database role
+# or secrets are needed — the upstream playbook only pulls in geerlingguy.mysql
+# `when gitea_database == 'mysql'`, so SQLite sidesteps it entirely. Secret keys
+# are omitted so gitea generates its own on first start. Role + packages
+# (Valkey/Caddy from AppStream/EPEL) are used unchanged.
+#
+# Verified: green + gitea serves its web UI on http://<target>:3000/ (SQLite DB,
+# Valkey cache, Caddy reverse-proxying on the container's hostname).
+- name: "infra-ansible recipe: gitea (self-hosted Git — SQLite + Valkey + Caddy)"
+  hosts: lab
+  roles:
+    - common
+    - gitea
+  vars:
+    gitea_version: "1.22.6"
+    gitea_database: sqlite     # → no DB role, no DB password/Vault
+    gitea_cache: valkey        # systemd After=valkey.service; cache adapter below
+    gitea_hostname: localhost
+    gitea_config:
+      no_section:
+        APP_NAME: "AlmaLinux infra-ansible lab — Gitea"
+        RUN_MODE: prod
+        RUN_USER: git
+        WORK_PATH: /var/lib/gitea
+      sections:
+        database:
+          DB_TYPE: sqlite3
+          PATH: /var/lib/gitea/data/gitea.db
+          LOG_SQL: "false"
+        server:
+          HTTP_PORT: 3000
+          ROOT_URL: "http://localhost:3000/"
+          DOMAIN: localhost
+          APP_DATA_PATH: /var/lib/gitea/data
+          DISABLE_SSH: "true"
+          OFFLINE_MODE: "true"
+          LANDING_PAGE: explore
+        security:
+          INSTALL_LOCK: "true"   # skip the web install wizard; secrets auto-generated
+        service:
+          DISABLE_REGISTRATION: "true"
+        mailer:
+          ENABLED: "false"
+        session:
+          PROVIDER: file
+        cache:
+          ADAPTER: redis         # Valkey is redis-compatible, on 127.0.0.1:6379
+          HOST: "redis://127.0.0.1:6379/0?pool_size=100&idle_timeout=60s"
+        log:
+          MODE: console
+          LEVEL: info
+          ROOT_PATH: /var/lib/gitea/log

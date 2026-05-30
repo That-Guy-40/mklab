@@ -74,9 +74,10 @@ incus exec lab-ansible-infra-target -- bash -lc '
 ## 6. List / add recipes
 
 ```bash
-examples/ansible/almalinux-infra-ansible/run-recipe.sh        # lists available lab-playbooks
-# add one: drop control-files/lab-playbooks/<name>.yml + vars in group_vars/lab.yml,
-# re-run fetch-recipes.sh (re-stages the overlay), then run-recipe.sh <name>.
+examples/ansible/almalinux-infra-ansible/run-recipe.sh        # lists: common, gitea, matterbridge
+# add one: drop control-files/lab-playbooks/<name>.yml (hosts: lab, the upstream
+# role(s) + the recipe's lab vars in the play's `vars:`), re-run fetch-recipes.sh
+# (re-stages the overlay), then run-recipe.sh <name>.
 ```
 
 ## 7. Tear down
@@ -95,9 +96,10 @@ rm -rf ~/ansible-lab
 | `workdir ~/ansible-lab not staged` | run `fetch-recipes.sh` first. |
 | `container lab-ansible-infra-* not found` | run `lab-lxd.sh up --config …ansible-infra-lab.toml` first. |
 | ansible can't reach target (ssh) | `--rebootstrap` re-installs sshd + re-authorises the key; check `incus list` shows the target with an IP. |
-| `Permission denied (publickey)` reading `/lab/ssh/id_ed25519` | the mount needs `shift=true` (run-recipe adds it); on an old kernel without idmapped mounts, the container root can't read the host 0600 key. |
+| `Permission denied (publickey)` reading `/lab/ssh/id_ed25519` | the `/lab` mount needs `shift=true` (declared in the TOML's control `devices`); on an old kernel without idmapped mounts the container root can't read the host 0600 key. |
 | recipe needs Vault/FreeIPA/DB | that recipe is deferred — see README catalog. |
 
-> **Verified on KVM/Incus:** `common` ran green (`failed=0`) and idempotent
-> (`changed=0` on re-run) against a vanilla AlmaLinux 9 container — hostname, EPEL,
-> CRB, firewalld (with zone rules), and base packages all applied.
+> **Verified on KVM/Incus** (all `failed=0` against a vanilla AlmaLinux 9 container):
+> - **common** — hostname, EPEL, CRB, firewalld (zone rules), base packages; re-run `changed=0`.
+> - **gitea** — gitea 1.22.6 active on `:3000` (SQLite + Valkey + Caddy, web UI responds); re-run `changed=2` (`ansible_managed` timestamps).
+> - **matterbridge** — service active, listening on `127.0.0.1:4242`; re-run `changed=0`.
