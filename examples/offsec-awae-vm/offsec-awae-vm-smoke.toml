@@ -22,7 +22,7 @@ backend = "debootstrap"
 distro  = "kali"
 suite   = "kali-rolling"
 arch    = "x86_64"
-target  = "/var/chroots/offsec-awae-smoke"
+target  = "/var/lib/lab-create/chroots/offsec-awae-smoke"   # from-chroot requires chroots under LAB_STATE_DIR/chroots/
 variant = "minbase"
 include = ["kali-archive-keyring", "ca-certificates"]
 manager = "none"
@@ -43,7 +43,7 @@ post_commands = [
 [[vm]]
 name      = "offsec-awae-smoke-vm"
 backend   = "from-chroot"
-chroot    = "/var/chroots/offsec-awae-smoke"
+chroot    = "/var/lib/lab-create/chroots/offsec-awae-smoke"
 arch      = "x86_64"
 memory    = "2G"
 cpus      = 2

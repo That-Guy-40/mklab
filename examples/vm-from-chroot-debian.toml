@@ -5,12 +5,16 @@
 # The chroot must already contain a kernel and an initrd — lab-vm.sh
 # does NOT install those for you.
 #
+# NOTE: from-chroot only accepts chroots under LAB_STATE_DIR/chroots/
+# (default /var/lib/lab-create/chroots/) — lab-chroot.sh's own home.  Build
+# the chroot there (as below); a chroot elsewhere is rejected by design.
+#
 # Full workflow:
 #
 #   # 1) Build the chroot:
 #   sudo phase1-chroot/lab-chroot.sh create \
 #       --backend debootstrap --distro debian --suite bookworm \
-#       --arch x86_64 --target /var/chroots/vm-seed --variant minbase \
+#       --arch x86_64 --target /var/lib/lab-create/chroots/vm-seed --variant minbase \
 #       --name vm-seed
 #
 #   # 2) Install a kernel + basic system + SSH inside the chroot:
@@ -54,7 +58,7 @@ tags        = ["cross-phase", "from-chroot"]
 [[vm]]
 name      = "vm-from-chroot-demo"
 backend   = "from-chroot"
-chroot    = "/var/chroots/vm-seed"
+chroot    = "/var/lib/lab-create/chroots/vm-seed"
 arch      = "x86_64"
 memory    = "1G"
 cpus      = 2

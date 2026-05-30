@@ -83,7 +83,7 @@ which code-oss jd-gui          # present; GUI apps — need X (see README "Getti
 
 ```bash
 sudo phase2-qemu-vm/lab-vm.sh   destroy offsec-awae-vm
-sudo phase1-chroot/lab-chroot.sh destroy offsec-awae --force   # removes /var/chroots/offsec-awae
+sudo phase1-chroot/lab-chroot.sh destroy offsec-awae --force   # removes /var/lib/lab-create/chroots/offsec-awae
 ```
 
 ## Troubleshooting

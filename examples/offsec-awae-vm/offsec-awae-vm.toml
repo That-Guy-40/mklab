@@ -30,7 +30,7 @@ backend = "debootstrap"
 distro  = "kali"
 suite   = "kali-rolling"
 arch    = "x86_64"
-target  = "/var/chroots/offsec-awae"
+target  = "/var/lib/lab-create/chroots/offsec-awae"   # from-chroot requires chroots under LAB_STATE_DIR/chroots/
 variant = "minbase"
 # kali-archive-keyring: the CHROOT's apt needs the Kali key installed *inside* it
 # (the host keyring only verifies the debootstrap download) or apt-get update
@@ -73,7 +73,7 @@ post_commands = [
 [[vm]]
 name      = "offsec-awae-vm"
 backend   = "from-chroot"
-chroot    = "/var/chroots/offsec-awae"   # == [[chroot]].target above
+chroot    = "/var/lib/lab-create/chroots/offsec-awae"   # == [[chroot]].target above
 arch      = "x86_64"
 memory    = "4G"
 cpus      = 2
