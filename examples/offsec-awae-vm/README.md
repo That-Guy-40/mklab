@@ -140,7 +140,7 @@ SSH, kali login), then the full `offsec-awae` build on top of that proven pipeli
 | heavy install hits `… not installable` (transient kali-rolling skew) | `sudo phase1-chroot/lab-chroot.sh enter offsec-awae -- apt-get full-upgrade -y`, then re-run the install. |
 | `build-vm.sh` warns about missing `extlinux`/`parted`/`qemu-img` | install them (see Quick start) — needed by the from-chroot backend. |
 | VM drops to a **UEFI Shell** (`Shell>`) | the disk is MBR/BIOS but it booted UEFI — set `firmware = "bios"` in `[[vm]]` (handled here), then `lab-vm destroy` + re-`create` so the manifest picks it up. |
-| `list`/`console` show no VM, but you built it with `sudo` | `lab-vm` keys its state dir off EUID (root → `/var/lib/lab-create`, user → `~/.local/state`). Use `sudo` for `list`/`console`/`destroy` too. |
+| `console`/`destroy` say "no VM named …" after a `sudo` build | `lab-vm` keys its state dir off EUID (root → `/var/lib/lab-create`, user → `~/.local/state`); run those **as root** too. The VM is addressed **by name**, so `sudo lab-vm.sh console <name>` works even if `sudo lab-vm.sh list` looks empty. |
 | VM boots but serial console is blank | the kernel cmdline must carry `console=ttyS0` (lab-vm sets it); the chroot also enables `serial-getty@ttyS0`. Give it ~20s past extlinux. |
 | SSH won't connect | wait for a DHCP lease; confirm the NIC came up on the serial console (`ip a`). The chroot's `systemd-networkd` matches `en*`/`eth*`. |
 | want the XFCE GUI | the from-chroot VM is serial-only — see "Getting the desktop". |
