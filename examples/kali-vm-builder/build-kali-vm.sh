@@ -37,7 +37,16 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-WORKDIR="${KALI_VM_DIR:-$HOME/kali-vm-build}"
+# Default work dir.  Under sudo, $HOME is often /root, which would strand the
+# image where your normal user (who runs the graphical helper) can't read it.
+# So when invoked via sudo, default to the *invoking* user's home instead.
+if [ -n "${KALI_VM_DIR:-}" ]; then
+    WORKDIR="$KALI_VM_DIR"
+elif [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ]; then
+    WORKDIR="$(getent passwd "$SUDO_USER" | cut -d: -f6)/kali-vm-build"
+else
+    WORKDIR="$HOME/kali-vm-build"
+fi
 ENGINE="auto"
 PROFILE="full"
 YES=0
@@ -136,11 +145,19 @@ esac
 log "running: ${RUNNER[*]} ${BUILD_ARGS[*]}   (cwd: $CHECKOUT)"
 log "this is a long, multi-GB build (downloads a Kali package set; container path also builds a Kali image first)"
 
+log "work dir: $WORKDIR"
 cd "$CHECKOUT"
 if [ "$YES" -eq 1 ]; then
     yes | "${RUNNER[@]}" "${BUILD_ARGS[@]}"
 else
     "${RUNNER[@]}" "${BUILD_ARGS[@]}"
+fi
+
+# Hand root-built artifacts back to the invoking user, so the graphical runner
+# (run as your normal user) can read the image without sudo.
+if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ]; then
+    log "chowning $WORKDIR back to $SUDO_USER (built under sudo)"
+    chown -R "$SUDO_USER" "$WORKDIR" 2>/dev/null || warn "could not chown $WORKDIR to $SUDO_USER"
 fi
 
 # ── Report the artifact + how to run it ──────────────────────────────────────

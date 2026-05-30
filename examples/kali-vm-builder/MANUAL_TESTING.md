@@ -99,6 +99,7 @@ rm -rf "$KALI_VM_DIR"                      # everything incl. the upstream check
 | Symptom | Cause / fix |
 |---|---|
 | host build: `could not open kernel file … Permission denied` | Ubuntu/Debian ship `/boot/vmlinuz*` as `0600 root:root`; `debos`/`fakemachine` can't read the host kernel as your user. **Use a container engine** (`--engine podman`/`docker`) — it ships its own readable kernel — or `sudo chmod +r /boot/vmlinuz-$(uname -r)` (resets on kernel upgrades). `build-kali-vm.sh` now pre-checks this and stops early with the same advice. |
+| built image vanished / `run-graphical.sh` can't find it after a **sudo** host build | `sudo` set `$HOME=/root`, so it built into `/root/kali-vm-build/…` (root-owned). `build-kali-vm.sh` now defaults to the invoking user's workdir (via `$SUDO_USER`) and chowns artifacts back. For one already stranded in `/root`: `sudo mv /root/kali-vm-build/kali-vm/images/*.qcow2 ~/kali-vm-build/kali-vm/images/ && sudo chown $USER ~/kali-vm-build/kali-vm/images/*.qcow2`, or just rebuild with `--engine podman` (rootless — writes as you). |
 | `no usable engine` | install `debos` (host) or `podman`/`docker` (container), and ensure `/dev/kvm` exists. |
 | container build: KVM permission denied | add yourself to `kvm` (`sudo adduser $USER kvm`) and re-login; the runner passes `/dev/kvm` in. |
 | build: `No space left on device` | scratch too small — append `-- --scratchsize=60G` (forwarded to debos), or free space / move `--workdir`. |
