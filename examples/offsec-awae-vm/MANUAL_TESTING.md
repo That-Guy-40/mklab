@@ -105,4 +105,7 @@ sudo phase1-chroot/lab-chroot.sh destroy offsec-awae --force   # removes /var/li
 > Ubuntu 24.04 — `build-vm.sh --smoke` builds the chroot, images it, boots it, and
 > reaches the Kali serial `login:` with `root`/`toor` working (kernel
 > 6.19.14+kali, generic initramfs mounting the virtio root over BIOS/extlinux).
-> The full `offsec-awae` build is the same pipeline plus the toolset.
+> The **full `offsec-awae 2025.4.0` build is verified the same way** — the toolset
+> chroot images into a BIOS VM that boots to the Kali `login:` with `root`/`toor`.
+> (A chroot built *before* the `90-lab-vm.conf` dracut fix needs a manual
+> initramfs regenerate first — see `INITRAMFS-TROUBLESHOOTING.md`.)
