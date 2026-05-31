@@ -21,7 +21,7 @@ Phase 1 (debootstrap)
              │            └─ ipxe.usb  (dd → USB stick → real HW)
              │            └─ ipxe.qcow2 (Phase 2 QEMU boot target)
              │
-             ├─ Phase 4 (rootless nginx) ──► http://HOST:8080/
+             ├─ Phase 4 (rootless nginx) ──► http://HOST:8181/
              │   ├── kernel
              │   ├── initrd.gz
              │   └── boot.ipxe   [generated iPXE chainboot script]
@@ -232,7 +232,7 @@ New directory: `netboot/`
 #
 # Usage:
 #   netboot/build-ipxe.sh \
-#       --server http://10.0.2.2:8080 \
+#       --server http://10.0.2.2:8181 \
 #       --kernel  /kernel \
 #       --initrd  /initrd.gz \
 #       --append  "console=ttyS0 root=/dev/ram0 rw" \
@@ -283,9 +283,9 @@ docker run --rm \
 #
 # After `lab-chroot.sh export-initrd` and `netboot/build-ipxe.sh`:
 #   lab-podman.sh up --config examples/podman-netboot-server.toml
-#   curl -sI http://localhost:8080/kernel      # → 200 OK
-#   curl -sI http://localhost:8080/initrd.gz   # → 200 OK
-#   curl -s  http://localhost:8080/boot.ipxe   # → #!ipxe\ndhcp\n...
+#   curl -sI http://localhost:8181/kernel      # → 200 OK
+#   curl -sI http://localhost:8181/initrd.gz   # → 200 OK
+#   curl -s  http://localhost:8181/boot.ipxe   # → #!ipxe\ndhcp\n...
 
 [lab]
 name        = "netboot-srv"
@@ -296,7 +296,7 @@ tags        = ["netboot", "http", "ipxe"]
 name    = "http"
 engine  = "podman"
 image   = "docker.io/library/nginx:alpine"
-ports   = ["8080:80"]
+ports   = ["8181:80"]
 volumes = [
     "/srv/netboot:/usr/share/nginx/html:ro",
     "/etc/lab-netboot/ipxe-mime.conf:/etc/nginx/conf.d/ipxe-mime.conf:ro",
@@ -353,7 +353,7 @@ network = true
 ```toml
 # QEMU boots the iPXE disk image exactly as a thin client would boot from
 # a USB stick. iPXE gets a DHCP lease (from QEMU slirp at 10.0.2.2),
-# downloads kernel + initrd from the nginx container at http://10.0.2.2:8080/,
+# downloads kernel + initrd from the nginx container at http://10.0.2.2:8181/,
 # and boots the system in RAM.
 #
 # Prereqs:
@@ -361,7 +361,7 @@ network = true
 #   2. sudo lab-chroot.sh create --config examples/chroot-netboot-minimal.toml
 #   3. sudo lab-chroot.sh export-initrd netboot-minimal \
 #          --kernel /srv/netboot/kernel --output /srv/netboot/initrd.gz
-#   4. netboot/build-ipxe.sh --server http://10.0.2.2:8080 --output-dir /srv/netboot
+#   4. netboot/build-ipxe.sh --server http://10.0.2.2:8181 --output-dir /srv/netboot
 #   5. lab-podman.sh up --config examples/podman-netboot-server.toml
 #
 # Phase 2 will need a small extension to support booting from a raw/qcow2
@@ -416,7 +416,7 @@ may confuse QEMU's boot ordering.
 #       --kernel /srv/netboot/kernel --output /srv/netboot/initrd.gz
 #
 #   # 3. Build iPXE and convert to qcow2:
-#   netboot/build-ipxe.sh --server http://10.0.2.2:8080 --output-dir /srv/netboot
+#   netboot/build-ipxe.sh --server http://10.0.2.2:8181 --output-dir /srv/netboot
 #   qemu-img convert -f raw -O qcow2 /srv/netboot/ipxe.usb /srv/netboot/ipxe.qcow2
 #
 #   # 4. Serve artifacts (rootless):
@@ -450,7 +450,7 @@ manager = "none"
 name    = "http"
 engine  = "podman"
 image   = "docker.io/library/nginx:alpine"
-ports   = ["8080:80"]
+ports   = ["8181:80"]
 volumes = [
     "/srv/netboot:/usr/share/nginx/html:ro",
     "/etc/lab-netboot/ipxe-mime.conf:/etc/nginx/conf.d/ipxe-mime.conf:ro",
@@ -477,9 +477,9 @@ QEMU's slirp user-mode network provides:
 - Host IP (as seen from guest): `10.0.2.2`
 - Internet access: yes (via host NAT)
 
-So if the nginx container is published on the host at `0.0.0.0:8080`, the
-embedded iPXE script should use `http://10.0.2.2:8080/` as the server URL.
-`netboot/build-ipxe.sh --server http://10.0.2.2:8080` is the right invocation
+So if the nginx container is published on the host at `0.0.0.0:8181`, the
+embedded iPXE script should use `http://10.0.2.2:8181/` as the server URL.
+`netboot/build-ipxe.sh --server http://10.0.2.2:8181` is the right invocation
 for the QEMU simulation path.
 
 For real hardware on a LAN, the server URL changes to the host's LAN IP.
@@ -489,7 +489,7 @@ For real hardware on a LAN, the server URL changes to the host's LAN IP.
 
 ## Real hardware path (post-QEMU validation)
 
-1. Run `netboot/build-ipxe.sh --server http://<LAN-IP>:8080 --output-dir /srv/netboot`
+1. Run `netboot/build-ipxe.sh --server http://<LAN-IP>:8181 --output-dir /srv/netboot`
 2. `dd if=/srv/netboot/ipxe.usb of=/dev/sdX bs=4M status=progress`
 3. Plug USB into thin client / SBC, boot from USB
 4. iPXE gets DHCP from LAN router → downloads kernel + initrd from nginx → boots in RAM

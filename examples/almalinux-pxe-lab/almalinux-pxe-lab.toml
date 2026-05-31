@@ -49,7 +49,7 @@ description = "Zero-touch AlmaLinux 9 PXE install: rootless nginx serves vmlinuz
 tags        = ["almalinux", "pxe", "netboot", "zero-touch"]
 
 # ─── Phase 4: rootless nginx serving netboot artifacts ─────────────────────
-# Serves vmlinuz, initrd.img, and ks/*.ks from ~/netboot/ on port 8080.
+# Serves vmlinuz, initrd.img, and ks/*.ks from ~/netboot/ on port 8181.
 # lab-podman.sh auto-appends :Z to the volume when SELinux is enforcing.
 [[service]]
 name    = "http"

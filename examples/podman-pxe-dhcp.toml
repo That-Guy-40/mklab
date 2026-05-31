@@ -25,7 +25,7 @@
 # Workflow (real hardware):
 #   sudo lab-podman.sh up --config examples/podman-pxe-dhcp.toml
 #   # → Power on the target machine → it PXE-boots → fetches iPXE via TFTP
-#   # → iPXE loads boot.ipxe → fetches kernel+initrd over HTTP from port 8080
+#   # → iPXE loads boot.ipxe → fetches kernel+initrd over HTTP from port 8181
 #   sudo lab-podman.sh down --lab pxe-dhcp
 
 [lab]

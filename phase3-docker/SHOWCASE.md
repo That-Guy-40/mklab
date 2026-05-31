@@ -209,7 +209,7 @@ whether `lab-<arg>` exists as a container; if not, it tries the label
 query. So `status web1` and `status demo/web` and `status demo` all do
 the right thing.
 
-### Netboot artifact server — rootful Docker nginx on port 8080
+### Netboot artifact server — rootful Docker nginx on port 8181
 
 Serve the kernel, `initrd.gz`, and (for AlmaLinux) `ks/` kickstart
 files produced by Phase 1's `export-initrd` step so that Phase 2 VMs
@@ -226,7 +226,7 @@ name = "netboot-srv"
 name    = "http"
 engine  = "docker"
 image   = "nginx:alpine"
-ports   = ["8080:80"]
+ports   = ["8181:80"]
 volumes = ["/home/sqs/netboot:/usr/share/nginx/html:ro"]
 ```
 
@@ -245,8 +245,8 @@ sudo lab-chroot.sh export-initrd netboot-minimal \
 phase3-docker/lab-docker.sh up --config examples/docker-netboot-server.toml
 
 # 3. Verify the artifacts are reachable
-curl -I http://localhost:8080/kernel
-curl -I http://localhost:8080/initrd.gz
+curl -I http://localhost:8181/kernel
+curl -I http://localhost:8181/initrd.gz
 
 # 4. Boot a VM that fetches from this server (Phase 2)
 sudo phase2-qemu-vm/lab-vm.sh create --config examples/vm-netboot-direct.toml

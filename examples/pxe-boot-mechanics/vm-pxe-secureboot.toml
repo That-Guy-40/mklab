@@ -4,7 +4,7 @@
 # OVMF_VARS_4M.snakeoil.fd (pre-enrolled snakeoil test key).
 # The iPXE binary MUST be signed with the snakeoil key before booting:
 #
-#   netboot/build-ipxe.sh --server http://10.0.2.2:8080 --sign --use-snakeoil
+#   netboot/build-ipxe.sh --server http://10.0.2.2:8181 --sign --use-snakeoil
 #   # or separately:
 #   netboot/sign-ipxe.sh --use-snakeoil
 #

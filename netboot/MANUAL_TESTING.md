@@ -585,11 +585,11 @@ This section covers two paths:
 ### 11.1 QEMU TFTP PXE — prerequisites
 
 Everything from §§1–5 must be in place: kernel + initrd in `~/netboot/`,
-iPXE EFI in `~/netboot/ipxe.efi`, and nginx serving `~/netboot/` on port 8080.
+iPXE EFI in `~/netboot/ipxe.efi`, and nginx serving `~/netboot/` on port 8181.
 
 ```bash
 ls ~/netboot/{kernel,initrd.gz,ipxe.efi,boot.ipxe}   # all must exist
-curl -sI http://localhost:8080/kernel | head -1        # → HTTP/1.1 200 OK
+curl -sI http://localhost:8181/kernel | head -1        # → HTTP/1.1 200 OK
 ```
 
 ### 11.2 Create and start the QEMU TFTP PXE VM
@@ -646,8 +646,8 @@ TFTP: downloading ipxe.efi...
 iPXE 1.21.1 ...
 net0: <mac> using virtio-net ...
 DHCP (net0 10.0.2.15)... ok
-http://10.0.2.2:8080/kernel... ok
-http://10.0.2.2:8080/initrd.gz... ok
+http://10.0.2.2:8181/kernel... ok
+http://10.0.2.2:8181/initrd.gz... ok
 Booting Linux on physical CPU 0x0
 ...
 / #
@@ -798,7 +798,7 @@ If any are missing: `sudo apt-get install -y sbsigntool ovmf`
 
 ```bash
 netboot/build-ipxe.sh \
-    --server http://10.0.2.2:8080 \
+    --server http://10.0.2.2:8181 \
     --sign --use-snakeoil
 ```
 

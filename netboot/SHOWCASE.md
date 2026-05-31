@@ -241,7 +241,7 @@ OVMF's Secure Boot enforcement rejects unsigned EFI binaries.  Two paths:
 
 ```bash
 # Build and sign in one step:
-netboot/build-ipxe.sh --server http://10.0.2.2:8080 --sign --use-snakeoil
+netboot/build-ipxe.sh --server http://10.0.2.2:8181 --sign --use-snakeoil
 
 # Or sign an existing binary:
 netboot/sign-ipxe.sh --use-snakeoil

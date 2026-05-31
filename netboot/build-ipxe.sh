@@ -7,7 +7,7 @@
 #
 # Usage:
 #   netboot/build-ipxe.sh \
-#       --server http://10.0.2.2:8080 \
+#       --server http://10.0.2.2:8181 \
 #       [--kernel-path /kernel] \
 #       [--initrd-path /initrd.gz] \
 #       [--append "console=ttyS0 root=/dev/ram0 rw"] \
@@ -28,10 +28,10 @@
 #
 # Examples:
 #   # QEMU slirp simulation (host is 10.0.2.2 from inside the guest):
-#   netboot/build-ipxe.sh --server http://10.0.2.2:8080
+#   netboot/build-ipxe.sh --server http://10.0.2.2:8181
 #
 #   # Real hardware on LAN:
-#   netboot/build-ipxe.sh --server http://192.168.1.10:8080 --arch x86_64
+#   netboot/build-ipxe.sh --server http://192.168.1.10:8181 --arch x86_64
 
 set -euo pipefail
 
@@ -73,7 +73,7 @@ EFI, and qcow2 boot images along with a plain-text boot.ipxe script.
 
 Options:
   --server      URL   HTTP server seen by the booting machine
-                      (default: http://10.0.2.2:8080  — QEMU slirp host)
+                      (default: http://10.0.2.2:8181  — QEMU slirp host)
   --kernel-path PATH  URL path to the kernel   (default: /kernel)
   --initrd-path PATH  URL path to the initrd   (default: /initrd.gz)
   --append      STR   kernel command-line args  (default: "console=ttyS0 root=/dev/ram0 rw")
@@ -103,15 +103,15 @@ Outputs written to --output-dir:
   ipxe.qcow2  qcow2 conversion of ipxe.usb (Phase 2 QEMU)
 
 Examples:
-  netboot/build-ipxe.sh --server http://10.0.2.2:8080
-  netboot/build-ipxe.sh --server http://192.168.1.10:8080 --arch aarch64
-  netboot/build-ipxe.sh --server http://10.0.2.2:8080 --ipxe-ref v1.21.1
+  netboot/build-ipxe.sh --server http://10.0.2.2:8181
+  netboot/build-ipxe.sh --server http://192.168.1.10:8181 --arch aarch64
+  netboot/build-ipxe.sh --server http://10.0.2.2:8181 --ipxe-ref v1.21.1
 EOF
     exit 0
 }
 
 # ─── Defaults ───────────────────────────────────────────────────────────────
-server="http://10.0.2.2:8080"
+server="http://10.0.2.2:8181"
 kernel_path="/kernel"
 initrd_path="/initrd.gz"
 append="console=ttyS0 root=/dev/ram0 rw"
@@ -261,4 +261,4 @@ fi
 log_info "next steps:"
 log_info "  QEMU (Phase 2):    lab-vm.sh --disk $output_dir/ipxe.qcow2"
 log_info "  USB (real hw):     sudo dd if=$output_dir/ipxe.usb of=/dev/sdX bs=4M status=progress"
-log_info "  Serve artifacts:   lab-podman.sh (Phase 4 nginx on :8080)"
+log_info "  Serve artifacts:   lab-podman.sh (Phase 4 nginx on :8181)"

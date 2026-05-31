@@ -6,7 +6,7 @@
 # outputs to /out/ (which is bind-mounted from the host's --output-dir).
 #
 # Args (positional, set by build-ipxe.sh):
-#   $1  server_url   e.g. http://10.0.2.2:8080  or  https://
+#   $1  server_url   e.g. http://10.0.2.2:8181  or  https://
 #   $2  kernel_path  e.g. /kernel
 #   $3  initrd_path  e.g. /initrd.gz
 #   $4  append       e.g. "console=ttyS0 root=/dev/ram0 rw"

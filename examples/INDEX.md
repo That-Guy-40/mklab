@@ -128,7 +128,7 @@ kernel+initrd over HTTP (Phase 3/4), and boot it in QEMU directly or via iPXE
 | `vm-netboot-direct.toml` | Boots the tier-2 busybox initrd via QEMU `-kernel/-initrd` (no iPXE — short debug loop). |
 | `vm-netboot-full.toml` | Boots the full systemd initrd (given 2 GB so it can unpack ~1 GB in RAM). |
 | `vm-netboot-ipxe.toml` | Boots an iPXE disk that fetches kernel+initrd over HTTP — simulates real PXE hardware. |
-| `docker-netboot-server.toml` | Rootful Docker nginx serving the netboot artifacts on :8080. |
+| `docker-netboot-server.toml` | Rootful Docker nginx serving the netboot artifacts on :8181. |
 | `podman-netboot-server.toml` | 🪶 The rootless Podman equivalent — preferred when you only need to serve. |
 | [`pxe-boot-mechanics/`](pxe-boot-mechanics/) | PXE **boot-mechanics** demos (how a VM boots, not what it installs): `vm-pxe-tftp-boot.toml` (DHCP+TFTP delivery) and `vm-pxe-secureboot.toml` (UEFI Secure Boot enforced, snakeoil-signed iPXE). Both reuse `netboot/build-ipxe.sh`. |
 | [`almalinux-pxe-lab/`](almalinux-pxe-lab/) | 🔗 Self-contained AlmaLinux 9 zero-touch PXE lab in its own directory: fetch+verify installer (checksums from `.treeinfo`), kickstart (rendered per-host; **plaintext lab creds**), unified P4+P2 TOML, README with the QEMU path **and** real-hardware notes, and a `MANUAL_TESTING.md` walking the full Anaconda install. The Rocky twin. Now also houses the **UEFI / aarch64 / standalone-BIOS** variant configs (`vm-almalinux-*.toml` + matching `*-zerotouch.ks`) and the `nginx-ks-fallback.conf` snippet. |

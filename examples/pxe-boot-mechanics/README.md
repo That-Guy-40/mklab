@@ -20,11 +20,11 @@ so HTTP/TFTP have something to hand out, then:
 
 ```bash
 # TFTP delivery:
-netboot/build-ipxe.sh --server http://10.0.2.2:8080 ...          # builds boot.ipxe + ipxe.efi
+netboot/build-ipxe.sh --server http://10.0.2.2:8181 ...          # builds boot.ipxe + ipxe.efi
 phase2-qemu-vm/lab-vm.sh create --config examples/pxe-boot-mechanics/vm-pxe-tftp-boot.toml
 
 # Secure Boot (sign iPXE with the snakeoil key):
-netboot/build-ipxe.sh --server http://10.0.2.2:8080 --sign --use-snakeoil
+netboot/build-ipxe.sh --server http://10.0.2.2:8181 --sign --use-snakeoil
 phase2-qemu-vm/lab-vm.sh create --config examples/pxe-boot-mechanics/vm-pxe-secureboot.toml
 ```
 

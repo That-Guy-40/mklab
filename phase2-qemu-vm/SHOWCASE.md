@@ -204,7 +204,7 @@ lab-vm.sh start netboot-direct
 
 **2. Full iPXE simulation** (`vm-netboot-ipxe.toml`) — boot from
 `ipxe.qcow2`. The VM starts, iPXE does DHCP (via QEMU slirp),
-then fetches `http://10.0.2.2:8080/boot.ipxe` — the Phase 4 nginx
+then fetches `http://10.0.2.2:8181/boot.ipxe` — the Phase 4 nginx
 server running on the host. iPXE downloads the kernel + initrd and
 boots them in RAM, exactly as real thin-client hardware would:
 
@@ -215,8 +215,8 @@ lab-vm.sh start netboot-ipxe
 ```
 
 The QEMU slirp network gives the guest `10.0.2.2` as a gateway that
-reaches the host's localhost — so `http://10.0.2.2:8080/` in the
-iPXE script resolves to the Phase 4 Podman container's port 8080.
+reaches the host's localhost — so `http://10.0.2.2:8181/` in the
+iPXE script resolves to the Phase 4 Podman container's port 8181.
 
 The same `ipxe.usb` image `dd`'d to a USB stick runs an **identical
 boot sequence** on real hardware: iPXE DHCP + HTTP download + kernel
@@ -247,8 +247,8 @@ append = "console=ttyS0 root=/dev/ram0 rw"
 
 ```text
 # iPXE script equivalent
-kernel http://10.0.2.2:8080/kernel console=ttyS0 root=/dev/ram0 rw
-initrd http://10.0.2.2:8080/initrd.gz
+kernel http://10.0.2.2:8181/kernel console=ttyS0 root=/dev/ram0 rw
+initrd http://10.0.2.2:8181/initrd.gz
 boot
 ```
 

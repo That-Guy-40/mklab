@@ -245,7 +245,7 @@ HTTP and boots them in RAM, no disk image needed.
 
 `examples/podman-netboot-server.toml` is a minimal single-service config:
 a rootless nginx that bind-mounts `~/netboot/` read-only and serves
-everything in it over HTTP on port 8080.  What makes it interesting is
+everything in it over HTTP on port 8181.  What makes it interesting is
 what lives in that directory:
 
 ```text
@@ -279,7 +279,7 @@ allows the read.  No manual `chcon` step is needed.
 name    = "http"
 engine  = "podman"
 image   = "docker.io/library/nginx:alpine"
-ports   = ["8080:80"]
+ports   = ["8181:80"]
 volumes = ["/home/sqs/netboot:/usr/share/nginx/html:ro"]
 # lab-podman.sh appends :Z automatically when SELinux is enforcing
 ```
@@ -298,9 +298,9 @@ sudo phase1-chroot/lab-chroot.sh export-initrd netboot-busybox \
 phase4-podman/lab-podman.sh up --config examples/podman-netboot-server.toml
 
 # 4. Verify both tracks:
-curl -I http://localhost:8080/kernel      # Debian track
-curl -I http://localhost:8080/vmlinuz     # AlmaLinux track
-curl -I http://localhost:8080/ks/alma9.ks # AlmaLinux kickstart
+curl -I http://localhost:8181/kernel      # Debian track
+curl -I http://localhost:8181/vmlinuz     # AlmaLinux track
+curl -I http://localhost:8181/ks/alma9.ks # AlmaLinux kickstart
 
 # 5. Tear down:
 phase4-podman/lab-podman.sh down --lab netboot-srv

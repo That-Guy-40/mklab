@@ -1,4 +1,4 @@
-# Rootless nginx serving netboot artifacts over HTTP on port 8080.
+# Rootless nginx serving netboot artifacts over HTTP on port 8181.
 #
 # Serves two artifact tracks from the same ~/netboot/ directory:
 #
@@ -36,8 +36,8 @@
 #    phase4-podman/lab-podman.sh up --config examples/podman-netboot-server.toml
 #
 # 3. Verify both tracks are reachable:
-#    curl -I http://localhost:8080/kernel      # Debian busybox track
-#    curl -I http://localhost:8080/vmlinuz     # AlmaLinux PXE track
+#    curl -I http://localhost:8181/kernel      # Debian busybox track
+#    curl -I http://localhost:8181/vmlinuz     # AlmaLinux PXE track
 #
 # 4. Boot:
 #    - Debian: see examples/vm-netboot-direct.toml (QEMU direct kernel boot)
@@ -52,5 +52,5 @@ tags        = ["netboot", "http", "rootless"]
 name    = "http"
 engine  = "podman"
 image   = "docker.io/library/nginx:alpine"
-ports   = ["8080:80"]
+ports   = ["8181:80"]
 volumes = ["/home/sqs/netboot:/usr/share/nginx/html:ro"]

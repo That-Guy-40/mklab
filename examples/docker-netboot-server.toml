@@ -1,5 +1,5 @@
 # Rootful Docker variant: nginx serving netboot artifacts (kernel + initrd.gz +
-# kickstart files) over HTTP on port 8080.
+# kickstart files) over HTTP on port 8181.
 #
 # This is the rootful Docker variant. The rootless Podman variant is
 # examples/podman-netboot-server.toml (preferred when only serving is needed).
@@ -16,16 +16,16 @@
 # 3. Boot a VM with Phase 2 or real hardware via iPXE:
 #    sudo phase2-qemu-vm/lab-vm.sh create --config examples/vm-netboot-direct.toml
 #    sudo phase2-qemu-vm/lab-vm.sh start netboot-direct
-#    (or point iPXE client at http://<host-ip>:8080/)
+#    (or point iPXE client at http://<host-ip>:8181/)
 #
 # Verify:
-#    curl -I http://localhost:8080/kernel
-#    curl -I http://localhost:8080/initrd.gz
+#    curl -I http://localhost:8181/kernel
+#    curl -I http://localhost:8181/initrd.gz
 #
 # Note: /home/sqs is a literal path — TOML does not expand shell variables.
 # Replace it with your actual home directory if different.
 # For AlmaLinux installs the ks/ subdirectory holds kickstart files served
-# from the same root: curl -I http://localhost:8080/ks/almalinux.ks
+# from the same root: curl -I http://localhost:8181/ks/almalinux.ks
 
 [lab]
 name = "netboot-srv"
@@ -34,5 +34,5 @@ name = "netboot-srv"
 name    = "http"
 engine  = "docker"
 image   = "nginx:alpine"
-ports   = ["8080:80"]
+ports   = ["8181:80"]
 volumes = ["/home/sqs/netboot:/usr/share/nginx/html:ro"]

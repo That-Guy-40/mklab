@@ -10,8 +10,8 @@
 # Prerequisites:
 #   1. kernel + initrd in ~/netboot/   (from lab-chroot.sh export-initrd)
 #   2. iPXE EFI + boot.ipxe in ~/netboot/
-#      (from netboot/build-ipxe.sh --server http://10.0.2.2:8080)
-#   3. nginx serving ~/netboot/ on port 8080
+#      (from netboot/build-ipxe.sh --server http://10.0.2.2:8181)
+#   3. nginx serving ~/netboot/ on port 8181
 #      (from lab-podman.sh up --config examples/podman-netboot-server.toml)
 #
 # Then:

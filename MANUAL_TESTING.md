@@ -299,7 +299,7 @@ Verify connectivity:
 
 ```bash
 # Confirm nginx is reachable
-curl -si http://localhost:8080/ | head -3
+curl -si http://localhost:8181/ | head -3
 
 # Confirm postgres is up (port published in TOML)
 phase3-docker/lab-docker.sh exec --config examples/docker-3svc-topology.toml \
@@ -316,8 +316,8 @@ phase3-docker/lab-docker.sh down --config examples/docker-3svc-topology.toml
 
 ```bash
 phase3-docker/lab-docker.sh up --config examples/docker-netboot-server.toml
-curl -sI http://localhost:8080/kernel    | head -2
-curl -sI http://localhost:8080/initrd.gz | head -2
+curl -sI http://localhost:8181/kernel    | head -2
+curl -sI http://localhost:8181/initrd.gz | head -2
 phase3-docker/lab-docker.sh down --config examples/docker-netboot-server.toml
 ```
 
@@ -352,7 +352,7 @@ without root.
 ```bash
 phase4-podman/lab-podman.sh up --config examples/podman-pod-3svc.toml
 phase4-podman/lab-podman.sh status --config examples/podman-pod-3svc.toml
-curl -si http://localhost:8080/ | head -3
+curl -si http://localhost:8181/ | head -3
 phase4-podman/lab-podman.sh down --config examples/podman-pod-3svc.toml
 ```
 
@@ -384,8 +384,8 @@ Pass: service starts via systemd; nginx responds; logs visible via
 
 ```bash
 phase4-podman/lab-podman.sh up --config examples/podman-netboot-server.toml
-curl -sI http://localhost:8080/kernel    | head -2
-curl -sI http://localhost:8080/initrd.gz | head -2
+curl -sI http://localhost:8181/kernel    | head -2
+curl -sI http://localhost:8181/initrd.gz | head -2
 phase4-podman/lab-podman.sh down --config examples/podman-netboot-server.toml
 ```
 
@@ -563,8 +563,8 @@ cd -
 
 # 3. Serve the artifacts rootlessly (Phase 4 reads [[service]] blocks)
 phase4-podman/lab-podman.sh up --config examples/netboot-lab.toml
-curl -sI http://localhost:8080/kernel    | head -2
-curl -sI http://localhost:8080/initrd.gz | head -2
+curl -sI http://localhost:8181/kernel    | head -2
+curl -sI http://localhost:8181/initrd.gz | head -2
 
 # 4. Boot the initrd directly in QEMU (Phase 2 reads [[vm]] blocks)
 phase2-qemu-vm/lab-vm.sh create --config examples/netboot-lab.toml
@@ -572,7 +572,7 @@ phase2-qemu-vm/lab-vm.sh start  netboot-direct
 
 # 5. Attach to the serial console — you should see a busybox shell
 phase2-qemu-vm/lab-vm.sh console netboot-direct
-# At the prompt: ip addr show ; curl -I http://10.0.2.2:8080/kernel
+# At the prompt: ip addr show ; curl -I http://10.0.2.2:8181/kernel
 # Ctrl-] to detach
 ```
 
@@ -581,7 +581,7 @@ phase2-qemu-vm/lab-vm.sh console netboot-direct
 - nginx returns HTTP 200 for both artifacts
 - QEMU serial console drops to a busybox shell within ~5 seconds
 - `ip addr show` inside the VM shows a network interface
-- `curl -I http://10.0.2.2:8080/kernel` from inside the VM returns 200
+- `curl -I http://10.0.2.2:8181/kernel` from inside the VM returns 200
   (the VM successfully reaching the host-side nginx proves the full
   build → serve → boot chain)
 

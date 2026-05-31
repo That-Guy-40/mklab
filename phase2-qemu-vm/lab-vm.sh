@@ -3376,7 +3376,7 @@ cmd_publish_netboot() {
     cp "$src_initrd" "$dst_initrd"
 
     if [[ -n "${OPT_GENERATE_SCRIPT:-}" ]]; then
-        local server="${OPT_SERVER:-http://10.0.2.2:8080}"
+        local server="${OPT_SERVER:-http://10.0.2.2:8181}"
         local append; append="$(read_manifest_field "$name" append)"
         local boot_script="$netboot_dir/boot.ipxe"
         log_info "writing boot.ipxe → $boot_script (server=$server)"
