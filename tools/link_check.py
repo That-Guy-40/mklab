@@ -20,9 +20,9 @@ under examples/) without leaving dangling references behind:
                      rename/move/delete it.
 
 Why basename-grep and not just the INDEX?  Because references live in many
-places — examples/INDEX.md, each subsystem's README/SHOWCASE, scripts, other
+places — examples/00-INDEX.md, each subsystem's README/SHOWCASE, scripts, other
 TOMLs.  "Not in INDEX" does NOT mean "unused" (e.g. the micro-linux *-tiny /
-*-baked TOMLs are documented in micro-linux/README.md, not INDEX.md).
+*-baked TOMLs are documented in micro-linux/README.md, not 00-INDEX.md).
 
 Usage:
   tools/link_check.py                      # full report: broken links + orphans

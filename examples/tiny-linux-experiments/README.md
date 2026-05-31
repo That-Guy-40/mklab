@@ -15,7 +15,7 @@ in-RAM" theme but built very differently:
    `lab-vm.sh` (no separate build step). The `microvm-alpine*.toml` files.
 
 > This dir was split out of the flat `examples/` root as one cohesive group (see
-> [`../INDEX.md`](../INDEX.md)). It is **not** the build tooling — that's the
+> [`../00-INDEX.md`](../00-INDEX.md)). It is **not** the build tooling — that's the
 > top-level [`../../micro-linux/`](../../micro-linux/) subsystem (`mlbuild.sh`,
 > the kernel `.config`s, the toolchain Containerfile, tests).
 

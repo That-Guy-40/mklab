@@ -28,7 +28,7 @@ netboot/build-ipxe.sh --server http://10.0.2.2:8181 --sign --use-snakeoil
 phase2-qemu-vm/lab-vm.sh create --config examples/pxe-boot-mechanics/vm-pxe-secureboot.toml
 ```
 
-See the [examples index](../INDEX.md) for the full netboot/PXE picture.
+See the [examples index](../00-INDEX.md) for the full netboot/PXE picture.
 
 ## ⚠️ Security
 

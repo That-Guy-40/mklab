@@ -220,7 +220,7 @@ implemented** — a per-service `devices = [...]` field emits `podman run
 unit + live `/dev/fuse` passthrough tested). GPU is opt-in by uncommenting
 `devices = ["nvidia.com/gpu=all"]` on the `ollama` service.
 
-### INDEX.md rows (proposed)
+### 00-INDEX.md rows (proposed)
 
 - A new **"🤖 AI / LLM"** subsection (or under Phase 4) with a
   `[`kali-llm-lab/`](kali-llm-lab/)` row describing the tiered stack.
