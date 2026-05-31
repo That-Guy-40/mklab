@@ -27,6 +27,9 @@
 # Other:
 #   --workdir DIR Where the checkout + images/ live (default: $KALI_VM_DIR or
 #                 $HOME/kali-vm-build). Needs tens of GB free.
+#   --mirror URL  APT mirror baked into the build. Default: http://kali.download/kali
+#                 (Kali's Cloudflare CDN; upstream's http.kali.org redirector can
+#                 roll onto a mirror with an untrusted cert and break the build).
 #   -y, --yes     Don't wait at kali-vm's confirmation prompt (pipe `yes`).
 #   --help        show this help and exit
 #
@@ -49,6 +52,7 @@ else
 fi
 ENGINE="auto"
 PROFILE="full"
+MIRROR="http://kali.download/kali"   # reliable Cloudflare CDN; override with --mirror
 YES=0
 PASSTHRU=()
 
@@ -64,6 +68,7 @@ while [ $# -gt 0 ]; do
         --workdir)  WORKDIR="${2:?--workdir needs a path}"; shift 2 ;;
         --full)     PROFILE="full"; shift ;;
         --headless) PROFILE="headless"; shift ;;
+        --mirror)   MIRROR="${2:?--mirror needs a URL}"; shift 2 ;;
         -y|--yes)   YES=1; shift ;;
         --help|-h)  usage 0 ;;
         --)         shift; PASSTHRU=("$@"); break ;;
@@ -73,9 +78,10 @@ done
 
 case "$ENGINE" in auto|host|podman|docker) ;; *) die "invalid --engine '$ENGINE'" ;; esac
 
-# ── Profile → build.sh args.  -v qemu first so the default output is a QCOW2;
-#    a `-v ...` in PASSTHRU comes later on the command line and wins. ──────────
-BUILD_ARGS=(-v qemu)
+# ── Profile → build.sh args.  -v qemu + -m <mirror> go first; anything after `--`
+#    lands later on the command line and wins (build.sh: last flag wins), so
+#    `-- -m URL` / `-- -v generic` overrides these defaults. ────────────────────
+BUILD_ARGS=(-v qemu -m "$MIRROR")
 case "$PROFILE" in
     full)     BUILD_ARGS+=(-D xfce -T default) ;;
     headless) BUILD_ARGS+=(-D none -T headless -s 20) ;;
@@ -148,7 +154,9 @@ log "this is a long, multi-GB build (downloads a Kali package set; container pat
 log "work dir: $WORKDIR"
 cd "$CHECKOUT"
 if [ "$YES" -eq 1 ]; then
-    yes | "${RUNNER[@]}" "${BUILD_ARGS[@]}"
+    # Closed stdin makes kali-vm's build.sh auto-confirm (ask_confirmation sees no
+    # tty → assumes yes).  Avoid `yes |`, whose SIGPIPE trips pipefail → exit 141.
+    "${RUNNER[@]}" "${BUILD_ARGS[@]}" < /dev/null
 else
     "${RUNNER[@]}" "${BUILD_ARGS[@]}"
 fi

@@ -86,6 +86,13 @@ examples/kali-vm-builder/build-kali-vm.sh -- -v generic -f raw
 (See `build.sh -h` in the checkout for the full upstream option set: `-b` branch,
 `-s` size, `-D` desktop, `-T` toolset, `-K`/`-L`/`-Z` keyboard/locale/tz, etc.)
 
+**Mirror (applies to every build):** the wrapper defaults the apt mirror to Kali's
+Cloudflare CDN, `http://kali.download/kali` — reliable, and it dodges the
+`http.kali.org` *redirector* occasionally rolling onto a community mirror whose
+TLS cert the minimal build VM can't verify (which aborts debootstrap, more likely
+on big `--full` builds). Override with `--mirror URL` (e.g. a local mirror, or
+`--mirror http://http.kali.org/kali` for the geo-redirector).
+
 ## Running it graphically
 
 `run-graphical.sh` boots the image the way it's *meant* to be run — with a real

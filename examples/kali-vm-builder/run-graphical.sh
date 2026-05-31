@@ -81,6 +81,12 @@ if [ "$OVERLAY" -eq 1 ]; then
     RUNDIR="$WORKDIR/run"; mkdir -p "$RUNDIR"
     DISK="$RUNDIR/$(basename "${IMAGE%.qcow2}").overlay.qcow2"
     if [ "$FRESH" -eq 1 ] && [ -e "$DISK" ]; then log "removing overlay (--fresh): $DISK"; rm -f "$DISK"; fi
+    # Auto-refresh a stale overlay: a rebuild reuses the same image filename, so an
+    # overlay backed by the OLD master would now point at changed content (boot junk).
+    if [ -e "$DISK" ] && [ "$IMAGE" -nt "$DISK" ]; then
+        log "master is newer than the overlay — recreating (rebuild detected): $DISK"
+        rm -f "$DISK"
+    fi
     if [ ! -e "$DISK" ]; then
         log "creating overlay (master stays pristine): $DISK"
         qemu-img create -f qcow2 -F qcow2 -b "$IMAGE" "$DISK" >/dev/null
