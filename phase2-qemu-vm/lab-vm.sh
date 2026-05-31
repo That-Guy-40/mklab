@@ -367,28 +367,34 @@ version     = "${LAB_VERSION}"
 EOF
 }
 
-read_manifest_field() {
-    local mp; mp="$(vm_manifest "$1")"
+# Store-relative readers: locate a VM by its directory rather than the global
+# $LAB_VM_STATE_DIR, so `list` can report VMs from more than one store (your
+# per-EUID user store *and* the system/root store) in a single view.
+_mf_field_at() {  # _mf_field_at <vmdir> <key>
+    local mp="$1/manifest.toml"
     [[ -r "$mp" ]] || return 1
     awk -v k="$2" '
         /^[[:space:]]*#/ { next }
         $1 == k { sub(/^[^=]*=[[:space:]]*/, ""); gsub(/^"|"$/, ""); print; exit }
     ' "$mp"
 }
-
-vm_exists() { [[ -r "$(vm_manifest "$1")" ]]; }
-
-vm_running() {
-    local pf; pf="$(vm_pidfile "$1")"
+_running_at() {  # _running_at <vmdir>  → 0 iff a live qemu pid is recorded there
+    local pf="$1/qemu.pid" pid
     [[ -r "$pf" ]] || return 1
-    local pid; pid="$(cat "$pf" 2>/dev/null || true)"
-    [[ -n "$pid" ]] || return 1
+    pid="$(cat "$pf" 2>/dev/null || true)"
     # Validate PID is a positive integer before using it in /proc and kill
     # (Finding 16: a non-numeric or path-like PID file entry would make
     # /proc/$pid resolve to an unexpected directory and silently report "running").
     [[ "$pid" =~ ^[0-9]+$ ]] || return 1
     [[ -d "/proc/$pid" ]]
 }
+
+# Current-store wrappers — the rest of the script addresses VMs by name.
+read_manifest_field() { _mf_field_at "$(vm_dir "$1")" "$2"; }
+
+vm_exists() { [[ -r "$(vm_manifest "$1")" ]]; }
+
+vm_running() { _running_at "$(vm_dir "$1")"; }
 
 list_vm_names() {
     local d
@@ -397,6 +403,30 @@ list_vm_names() {
         local n="${d%/}"; n="${n##*/}"
         printf '%s\n' "$n"
     done
+}
+
+# Emit the VM stores to show in `list`: this EUID's own store, plus its
+# counterpart — the system/root store when invoked as a normal user, or the
+# invoking user's store when invoked under sudo.  Deduped by canonical path so
+# a custom $LAB_STATE_DIR that collapses the two doesn't list twice.  This is a
+# *visibility* aid only; create/start/destroy still act on the current store.
+vm_store_candidates() {
+    printf '%s\n' "$LAB_VM_STATE_DIR"
+    local other=""
+    if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
+        # root: the counterpart is the invoking user's store (only knowable via sudo).
+        if [[ -n "${SUDO_USER:-}" ]]; then
+            local h; h="$(getent passwd "$SUDO_USER" | cut -d: -f6)"
+            [[ -n "$h" ]] && other="${h}/.local/state/lab-create/vms"
+        fi
+    else
+        other="/var/lib/lab-create/vms"   # the system/root store
+    fi
+    [[ -n "$other" ]] || return 0
+    local rp_self rp_other
+    rp_self="$(readlink -f -- "$LAB_VM_STATE_DIR" 2>/dev/null || printf '%s' "$LAB_VM_STATE_DIR")"
+    rp_other="$(readlink -f -- "$other" 2>/dev/null || printf '%s' "$other")"
+    [[ "$rp_other" != "$rp_self" ]] && printf '%s\n' "$other"
 }
 
 # ─── Image cache (cloud images) ─────────────────────────────────────────────
@@ -3037,29 +3067,53 @@ cmd_inspect() {
 
 cmd_list() {
     state_init
-    local filter="${OPT_LAB-__ALL__}"
-    [[ -n "${OPT_LAB:-}" ]] && printf '── lab: %s ──\n' "$OPT_LAB"
-    printf '%-20s  %-14s  %-13s  %-10s  %-8s  %-8s  %-7s  %s\n' \
-        NAME LAB BACKEND DISTRO ARCH STATUS SSHPORT MEMORY
-    local n state port row_lab
-    while IFS= read -r n; do
-        [[ -z "$n" ]] && continue
-        row_lab="$(read_manifest_field "$n" lab 2>/dev/null || true)"
-        if [[ "$filter" != "__ALL__" ]]; then
-            [[ "$row_lab" == "$filter" ]] || continue
-        fi
-        if vm_running "$n"; then state="running"; else state="stopped"; fi
-        port="$(read_manifest_field "$n" ssh_port)"
-        printf '%-20s  %-14s  %-13s  %-10s  %-8s  %-8s  %-7s  %s\n' \
-            "$n" \
-            "${row_lab:-(none)}" \
-            "$(read_manifest_field "$n" backend)" \
-            "$(read_manifest_field "$n" distro)" \
-            "$(read_manifest_field "$n" arch)" \
-            "$state" \
-            "$port" \
-            "$(read_manifest_field "$n" memory)"
-    done < <(list_vm_names)
+    # Empty/unset OPT_LAB = no filter (show all).  Note: use ${..:-}, not the
+    # ${..-} sentinel trick — OPT_LAB is set-but-empty by default, so a single-
+    # dash default never fires and an empty filter must mean "match everything".
+    local filter="${OPT_LAB:-}"
+    [[ -n "$filter" ]] && printf '── lab: %s ──\n' "$filter"
+    local fmt='%-20s  %-9s  %-14s  %-13s  %-10s  %-8s  %-8s  %-7s  %s\n'
+    # shellcheck disable=SC2059
+    printf "$fmt" NAME OWNER LAB BACKEND DISTRO ARCH STATUS SSHPORT MEMORY
+    local store d n owner state port row_lab hidden=0
+    while IFS= read -r store; do
+        [[ -d "$store" ]] || continue
+        for d in "$store"/*/; do
+            [[ -d "$d" ]] || continue
+            n="${d%/}"; n="${n##*/}"
+            # Owner reads from inode metadata — works even on a 0700 dir we
+            # can't enter, so the OWNER flag is always accurate.
+            owner="$(stat -c '%U' "$d" 2>/dev/null || printf '?')"
+            if [[ -r "$d" && -x "$d" && -r "$d/manifest.toml" ]]; then
+                row_lab="$(_mf_field_at "$d" lab 2>/dev/null || true)"
+                if [[ -n "$filter" && "$row_lab" != "$filter" ]]; then continue; fi
+                if _running_at "$d"; then state="running"; else state="stopped"; fi
+                port="$(_mf_field_at "$d" ssh_port 2>/dev/null || true)"
+                # shellcheck disable=SC2059
+                printf "$fmt" \
+                    "$n" "$owner" "${row_lab:-(none)}" \
+                    "$(_mf_field_at "$d" backend)" \
+                    "$(_mf_field_at "$d" distro)" \
+                    "$(_mf_field_at "$d" arch)" \
+                    "$state" "$port" \
+                    "$(_mf_field_at "$d" memory)"
+            else
+                # A VM in another store whose 0700 dir we can't read.  We can
+                # still flag its name + owner; details need that owner (sudo).
+                # A --lab filter can't be matched against an unreadable manifest.
+                if [[ -n "$filter" ]]; then continue; fi
+                hidden=1
+                # ASCII '-' (not '—'): printf pads %-Ns by bytes, and a 3-byte
+                # em-dash would under-pad the column and skew the table.
+                # shellcheck disable=SC2059
+                printf "$fmt" "$n" "$owner" "-" "-" "-" "-" "?" "-" "-"
+            fi
+        done
+    done < <(vm_store_candidates)
+    if [[ "$hidden" -eq 1 ]]; then
+        printf '\n# STATUS "?" = a VM in another user'\''s store (0700, owner-only) — re-run with sudo for full detail.\n' >&2
+    fi
+    return 0
 }
 
 # ─── CLI parsing ───────────────────────────────────────────────────────────
@@ -3074,7 +3128,7 @@ USAGE
   $LAB_PROG console  <name>          # attach to serial console (Ctrl-] to detach)
   $LAB_PROG ssh      <name> [-- cmd args...]
   $LAB_PROG destroy  <name> [--force] [--keep-disk]
-  $LAB_PROG list
+  $LAB_PROG list                     # VMs in your store + the system store, with OWNER (sudo to see all)
   $LAB_PROG inspect  <name> [--json]
   $LAB_PROG snapshot {create|list|restore|delete} <name> [snap-name]   # offline qcow2 snapshots
   $LAB_PROG version | help
