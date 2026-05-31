@@ -134,7 +134,7 @@ document shipping a `default.ks` symlink fallback as an option.
 | `examples/almalinux-pxe-lab/fetch-almalinux-installer.sh` | new | curl `images/pxeboot/{vmlinuz,initrd.img}` from `--mirror`; chown for rootless nginx |
 | `netboot/gen-almalinux-ks.sh` | new | render per-MAC kickstart from template |
 | `examples/almalinux-pxe-lab/almalinux-zerotouch.ks` | new | kickstart template (see §6) |
-| `examples/vm-almalinux-pxe-install.toml` | new | Phase 2 install-target VM (§7) |
+| `examples/almalinux-pxe-lab/vm-almalinux-pxe-install.toml` | new | Phase 2 install-target VM (§7) |
 | `examples/almalinux-pxe-lab/almalinux-pxe-lab.toml` | new | unified cross-phase lab (Phase 4 + Phase 2) |
 | `netboot/SHOWCASE.md` | edit | add an AlmaLinux zero-touch section |
 | `README.md` | edit | add a quick-start entry |
@@ -184,7 +184,7 @@ reboot
 
 ---
 
-## 7. Phase 2 install-target VM (`examples/vm-almalinux-pxe-install.toml`)
+## 7. Phase 2 install-target VM (`examples/almalinux-pxe-lab/vm-almalinux-pxe-install.toml`)
 
 ```toml
 # Zero-touch AlmaLinux installer target.  Boots iPXE (fallback), which chainloads
@@ -200,7 +200,7 @@ reboot
 #   phase4-podman/lab-podman.sh up --config examples/podman-netboot-server.toml
 #
 # Then:
-#   phase2-qemu-vm/lab-vm.sh create --config examples/vm-almalinux-pxe-install.toml
+#   phase2-qemu-vm/lab-vm.sh create --config examples/almalinux-pxe-lab/vm-almalinux-pxe-install.toml
 #   phase2-qemu-vm/lab-vm.sh start  almalinux-pxe-install     # walk away; comes back installed
 
 [[vm]]
@@ -240,7 +240,7 @@ netboot/build-ipxe.sh --server http://10.0.2.2:8181 \
 phase4-podman/lab-podman.sh up --config examples/podman-netboot-server.toml
 
 # 6. Create + start the target VM — unattended install, reboot into AlmaLinux
-phase2-qemu-vm/lab-vm.sh create --config examples/vm-almalinux-pxe-install.toml
+phase2-qemu-vm/lab-vm.sh create --config examples/almalinux-pxe-lab/vm-almalinux-pxe-install.toml
 phase2-qemu-vm/lab-vm.sh start  almalinux-pxe-install
 phase2-qemu-vm/lab-vm.sh ssh    almalinux-pxe-install   # lab / lab
 ```
@@ -284,21 +284,21 @@ from USB. Same flow; only the server URL and MACs change.
 ## 11. v0.2 additions (done)
 
 - **default.ks fallback:** `gen-almalinux-ks.sh --default` writes
-  `ks/default.ks` (same content as the per-MAC file).  `examples/nginx-ks-fallback.conf`
+  `ks/default.ks` (same content as the per-MAC file).  `examples/almalinux-pxe-lab/nginx-ks-fallback.conf`
   provides a `try_files $uri /ks/default.ks =404;` nginx snippet to enable the
   fallback.  Safety note in both: enabling default.ks installs *any* unknown
   machine — only use on an isolated lab network.
 - **aarch64 AlmaLinux:** `fetch-almalinux-installer.sh --arch aarch64` already
   works (AlmaLinux publishes the aarch64 pxeboot tree).  Added:
-  `examples/almalinux-aarch64-zerotouch.ks` (console=ttyAMA0, aarch64 mirrors),
-  `examples/vm-almalinux-aarch64-pxe.toml` (arch=aarch64, TCG, AAVMF auto-selected).
+  `examples/almalinux-pxe-lab/almalinux-aarch64-zerotouch.ks` (console=ttyAMA0, aarch64 mirrors),
+  `examples/almalinux-pxe-lab/vm-almalinux-aarch64-pxe.toml` (arch=aarch64, TCG, AAVMF auto-selected).
   Build with `netboot/build-ipxe.sh --arch aarch64`.
 - **UEFI / Secure Boot targets:**
   - New `pxe-install` backend in `lab-vm.sh`: creates a blank install-target disk
     only (no iPXE ROM disk); OVMF network-boots directly via QEMU slirp TFTP.
     After Anaconda installs, OVMF boots from the EFI partition — clean UEFI path.
-  - `examples/almalinux-uefi-zerotouch.ks` (bootloader --location=boot, EFI autopart).
-  - `examples/vm-almalinux-uefi-pxe.toml` (backend=pxe-install, pxe_dir, pxe_bootfile=ipxe.efi).
+  - `examples/almalinux-pxe-lab/almalinux-uefi-zerotouch.ks` (bootloader --location=boot, EFI autopart).
+  - `examples/almalinux-pxe-lab/vm-almalinux-uefi-pxe.toml` (backend=pxe-install, pxe_dir, pxe_bootfile=ipxe.efi).
   - Secure Boot: `secure_boot = true` in TOML + `netboot/sign-ipxe.sh --use-snakeoil`.
 - **Phase 6 TUI surfacing:** `lab_tui/backends/vm.py` now classifies VMs with
   `backend=pxe-install` or `install_target` as `type="pxe-install"`.  These

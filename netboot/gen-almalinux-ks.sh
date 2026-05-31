@@ -171,7 +171,7 @@ if [[ -n "$write_default" ]]; then
     log_info "      root $(dirname "$ks_dir");"
     log_info "      try_files \$uri /ks/default.ks =404;"
     log_info "    }"
-    log_info "  (see examples/nginx-ks-fallback.conf for a ready-to-include snippet)"
+    log_info "  (see examples/almalinux-pxe-lab/nginx-ks-fallback.conf for a ready-to-include snippet)"
 fi
 
 # Print the output path on stdout so callers can capture it.

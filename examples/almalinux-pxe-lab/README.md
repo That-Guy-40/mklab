@@ -27,6 +27,7 @@ PXE server for physical targets.
 | `fetch-almalinux-installer.sh` | Download + verify Alma's `vmlinuz`/`initrd.img`/`install.img` (checksums from `.treeinfo`). |
 | `almalinux-zerotouch.ks` | The kickstart that drives the unattended install (**plaintext lab creds**); also the `gen-almalinux-ks.sh` default template. |
 | `almalinux-pxe-lab.toml` | Unified config: Phase 4 nginx artifact server + Phase 2 installer VM. |
+| `nginx-ks-fallback.conf` | Optional nginx `server{}` snippet that serves `ks/default.ks` to any un-enumerated MAC (Path B; ⚠️ auto-installs unknown machines — see Security). |
 | `QUICKSTART.md` | Copy-paste runbook for this lab (AlmaLinux only). |
 | `MANUAL_TESTING.md` | The full ~install walkthrough + boot-chain checks. |
 | `ALMALINUX_PXE_LAB_PLAN.md` | The original design/plan doc (history). |
@@ -45,14 +46,13 @@ duplicated:
 | `netboot/gen-almalinux-ks.sh` | Generic template→`ks/<mac>.ks` copier (distro-agnostic; defaults to this lab's `almalinux-zerotouch.ks`). |
 | `netboot/setup-dhcp-tftp.sh` | Path B: dnsmasq ProxyDHCP + TFTP for real hardware. |
 
-**Related standalone examples** (kept flat in `examples/`, following the repo's
-`vm-*` single-VM convention):
+**Variant configs** (also in this directory — firmware/arch spins on the lab above):
 
 | File | Variant |
 |---|---|
-| [`../vm-almalinux-pxe-install.toml`](../vm-almalinux-pxe-install.toml) | The standalone BIOS install-target VM (just the `[[vm]]` half of this lab). |
-| [`../vm-almalinux-uefi-pxe.toml`](../vm-almalinux-uefi-pxe.toml) + [`../almalinux-uefi-zerotouch.ks`](../almalinux-uefi-zerotouch.ks) | UEFI variant (OVMF + `ipxe.efi`, `bootloader --location=boot`). |
-| [`../vm-almalinux-aarch64-pxe.toml`](../vm-almalinux-aarch64-pxe.toml) + [`../almalinux-aarch64-zerotouch.ks`](../almalinux-aarch64-zerotouch.ks) | aarch64 variant (AAVMF, `console=ttyAMA0`). |
+| [`vm-almalinux-pxe-install.toml`](vm-almalinux-pxe-install.toml) | Standalone **BIOS** install-target VM: just the `[[vm]]` half of `almalinux-pxe-lab.toml` (no `[[service]]` block). Same install — use the lab `.toml` for the one-shot serve **and** boot; use this when the artifact server is already up and you just want to (re)boot the VM. |
+| [`vm-almalinux-uefi-pxe.toml`](vm-almalinux-uefi-pxe.toml) + [`almalinux-uefi-zerotouch.ks`](almalinux-uefi-zerotouch.ks) | **UEFI** variant (OVMF + `ipxe.efi`, `bootloader --location=boot`). |
+| [`vm-almalinux-aarch64-pxe.toml`](vm-almalinux-aarch64-pxe.toml) + [`almalinux-aarch64-zerotouch.ks`](almalinux-aarch64-zerotouch.ks) | **aarch64** variant (AAVMF, `console=ttyAMA0`, TCG). |
 
 ---
 
@@ -152,7 +152,7 @@ What you'll see (`pxe-install`, BIOS):
 > `pxe_bootfile = "ipxe.pxe"` to chainload the binary (which embeds the same
 > script) first.
 
-> **UEFI?** Use [`../vm-almalinux-uefi-pxe.toml`](../vm-almalinux-uefi-pxe.toml), or
+> **UEFI?** Use [`vm-almalinux-uefi-pxe.toml`](vm-almalinux-uefi-pxe.toml), or
 > set `pxe_bootfile = "ipxe.efi"` and drop `firmware` in this TOML.
 
 ```bash

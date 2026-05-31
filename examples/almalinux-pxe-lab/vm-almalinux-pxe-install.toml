@@ -27,7 +27,7 @@
 #   4. phase4-podman/lab-podman.sh up --config examples/podman-netboot-server.toml
 #
 # Then:
-#   phase2-qemu-vm/lab-vm.sh create --config examples/vm-almalinux-pxe-install.toml
+#   phase2-qemu-vm/lab-vm.sh create --config examples/almalinux-pxe-lab/vm-almalinux-pxe-install.toml
 #   phase2-qemu-vm/lab-vm.sh start  almalinux-pxe-install   # walk away; comes back installed
 #   phase2-qemu-vm/lab-vm.sh ssh    almalinux-pxe-install   # login: lab / lab
 #

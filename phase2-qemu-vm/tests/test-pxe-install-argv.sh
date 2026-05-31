@@ -7,7 +7,7 @@
 # iPXE-ROM `image`) left the target disk UNATTACHED: the whole disk block was
 # gated on the ROM `$disk` being present, so the guest booted diskless and
 # d-i/Anaconda died at "No root file system is defined".  That silently broke
-# every UEFI-PXE lab (e.g. vm-almalinux-uefi-pxe.toml).
+# every UEFI-PXE lab (e.g. examples/almalinux-pxe-lab/vm-almalinux-uefi-pxe.toml).
 
 # render() sets globals consumed by the *sourced* build_qemu_argv via dynamic
 # scope; shellcheck can't follow that, so SC2034 here is a false positive.

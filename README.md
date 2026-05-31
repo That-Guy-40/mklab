@@ -125,7 +125,7 @@ netboot/build-ipxe.sh --server http://10.0.2.2:8181 \
     --kernel-path /vmlinuz --initrd-path /initrd.img \
     --append 'inst.repo=https://repo.almalinux.org/almalinux/9/BaseOS/x86_64/os/ inst.ks=http://10.0.2.2:8181/ks/{MAC}.ks inst.text console=ttyS0 ip=dhcp'
 phase4-podman/lab-podman.sh up --config examples/podman-netboot-server.toml
-phase2-qemu-vm/lab-vm.sh create --config examples/vm-almalinux-pxe-install.toml
+phase2-qemu-vm/lab-vm.sh create --config examples/almalinux-pxe-lab/vm-almalinux-pxe-install.toml
 phase2-qemu-vm/lab-vm.sh start  almalinux-pxe-install   # walk away; SSH in after ~10 min
 ```
 

@@ -8,7 +8,7 @@
 # Compared to vm-almalinux-pxe-install.toml (BIOS):
 #   - No ipxe.qcow2 (no second disk, no boot-loop trick)
 #   - OVMF (UEFI) is selected automatically by lab-vm.sh for x86_64
-#   - Kickstart: examples/almalinux-uefi-zerotouch.ks (bootloader --location=boot)
+#   - Kickstart: examples/almalinux-pxe-lab/almalinux-uefi-zerotouch.ks (bootloader --location=boot)
 #
 # For Secure Boot: add secure_boot = true and use --sign --use-snakeoil
 # when building iPXE.
@@ -23,10 +23,10 @@
 #      #   from a remote mirror).  produces ipxe.efi (this lab boots that),
 #      #   plus ipxe.pxe/.usb/.qcow2.
 #   3. netboot/gen-almalinux-ks.sh --mac 52:54:00:ef:f1:01 \
-#          --template examples/almalinux-uefi-zerotouch.ks [--default]
+#          --template examples/almalinux-pxe-lab/almalinux-uefi-zerotouch.ks [--default]
 #   4. phase4-podman/lab-podman.sh up --config examples/podman-netboot-server.toml
 #
-#   5. phase2-qemu-vm/lab-vm.sh create --config examples/vm-almalinux-uefi-pxe.toml
+#   5. phase2-qemu-vm/lab-vm.sh create --config examples/almalinux-pxe-lab/vm-almalinux-uefi-pxe.toml
 #      phase2-qemu-vm/lab-vm.sh start  almalinux-uefi-pxe   # walk away ~10-15 min
 #      phase2-qemu-vm/lab-vm.sh ssh    almalinux-uefi-pxe   # login: lab / lab
 #

@@ -16,7 +16,7 @@
 #      # -> ~/netboot/vmlinuz  ~/netboot/initrd.img (aarch64 binaries)
 #
 #   2. netboot/gen-almalinux-ks.sh --mac 52:54:00:AA:64:01 [--default]
-#      # template = examples/almalinux-aarch64-zerotouch.ks
+#      # template = examples/almalinux-pxe-lab/almalinux-aarch64-zerotouch.ks
 #
 #   3. netboot/build-ipxe.sh --arch aarch64 --server http://10.0.2.2:8181 \
 #          --kernel-path /vmlinuz --initrd-path /initrd.img \
@@ -24,7 +24,7 @@
 #
 #   4. phase4-podman/lab-podman.sh up --config examples/podman-netboot-server.toml
 #
-#   5. phase2-qemu-vm/lab-vm.sh create --config examples/vm-almalinux-aarch64-pxe.toml
+#   5. phase2-qemu-vm/lab-vm.sh create --config examples/almalinux-pxe-lab/vm-almalinux-aarch64-pxe.toml
 #      phase2-qemu-vm/lab-vm.sh start  almalinux-aarch64-pxe
 
 text

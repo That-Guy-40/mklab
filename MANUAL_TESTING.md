@@ -620,7 +620,7 @@ curl -sI http://localhost:8181/initrd.img | head -2
 curl -sI http://localhost:8181/ks/52-54-00-a1-9a-01.ks | head -2
 
 # 5. Create the installer VM (blank target + iPXE ROM, two-disk boot-loop)
-phase2-qemu-vm/lab-vm.sh create --config examples/vm-almalinux-pxe-install.toml
+phase2-qemu-vm/lab-vm.sh create --config examples/almalinux-pxe-lab/vm-almalinux-pxe-install.toml
 
 # 6. Start the VM — Anaconda installs unattended, then reboots
 phase2-qemu-vm/lab-vm.sh start almalinux-pxe-install

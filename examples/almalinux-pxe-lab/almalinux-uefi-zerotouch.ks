@@ -19,11 +19,11 @@
 #      # ipxe.efi is placed in ~/netboot/ alongside ipxe.usb
 #
 #   2. netboot/gen-almalinux-ks.sh --mac 52:54:00:ef:f1:01 \
-#          --template examples/almalinux-uefi-zerotouch.ks [--default]
+#          --template examples/almalinux-pxe-lab/almalinux-uefi-zerotouch.ks [--default]
 #
 #   3. phase4-podman/lab-podman.sh up --config examples/podman-netboot-server.toml
 #
-#   4. phase2-qemu-vm/lab-vm.sh create --config examples/vm-almalinux-uefi-pxe.toml
+#   4. phase2-qemu-vm/lab-vm.sh create --config examples/almalinux-pxe-lab/vm-almalinux-uefi-pxe.toml
 #      phase2-qemu-vm/lab-vm.sh start  almalinux-uefi-pxe
 #
 # For UEFI Secure Boot: add --sign --use-snakeoil to build-ipxe.sh,

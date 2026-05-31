@@ -201,9 +201,9 @@ here's the reasoning:
 `build-ipxe.sh` writes `boot.ipxe` and builds **both** `ipxe.pxe` (BIOS) and
 `ipxe.efi` (UEFI), so switching is just a config change:
 
-- **AlmaLinux** has a ready-made UEFI lab: `examples/vm-almalinux-uefi-pxe.toml`
+- **AlmaLinux** has a ready-made UEFI lab: `examples/almalinux-pxe-lab/vm-almalinux-uefi-pxe.toml`
   (`backend = "pxe-install"`, `pxe_bootfile = "ipxe.efi"`, no `firmware` line → OVMF
-  PXE-boots `ipxe.efi`). Uses `examples/almalinux-uefi-zerotouch.ks`
+  PXE-boots `ipxe.efi`). Uses `examples/almalinux-pxe-lab/almalinux-uefi-zerotouch.ks`
   (`bootloader --location=boot`).
 - **Rocky / any lab** — delete the `firmware = "bios"` line and set
   `pxe_bootfile = "ipxe.efi"`. For Secure Boot add `secure_boot = true` and build

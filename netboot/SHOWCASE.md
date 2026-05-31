@@ -471,7 +471,7 @@ netboot/build-ipxe.sh --server http://10.0.2.2:8181 \
 phase4-podman/lab-podman.sh up --config examples/podman-netboot-server.toml
 
 # 5. Create the two-disk target VM:
-phase2-qemu-vm/lab-vm.sh create --config examples/vm-almalinux-pxe-install.toml
+phase2-qemu-vm/lab-vm.sh create --config examples/almalinux-pxe-lab/vm-almalinux-pxe-install.toml
 
 # 6. Start it and walk away — Anaconda installs unattended:
 phase2-qemu-vm/lab-vm.sh start almalinux-pxe-install   # walk away; SSH in after ~10 min
@@ -532,7 +532,7 @@ suitable only for disposable, isolated lab VMs.
 
 #### Referenced files
 
-- [`../examples/vm-almalinux-pxe-install.toml`](../examples/vm-almalinux-pxe-install.toml) — the two-disk QEMU VM spec
+- [`../examples/almalinux-pxe-lab/vm-almalinux-pxe-install.toml`](../examples/almalinux-pxe-lab/vm-almalinux-pxe-install.toml) — the two-disk QEMU VM spec
 - [`../examples/almalinux-pxe-lab/almalinux-pxe-lab.toml`](../examples/almalinux-pxe-lab/almalinux-pxe-lab.toml) — unified cross-phase lab (Phase 4 + Phase 2)
 - [Phase 2 (QEMU VMs)](../phase2-qemu-vm/SHOWCASE.md) — `install_target`, `mac`, and `bootindex` VM spec fields
 - [Phase 4 (Podman)](../phase4-podman/SHOWCASE.md) — rootless nginx serving the artifact directory

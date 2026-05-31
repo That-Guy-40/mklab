@@ -149,14 +149,14 @@ but here's the reasoning:
 
 `build-ipxe.sh` writes `boot.ipxe` and builds **both** `ipxe.pxe` (BIOS) and
 `ipxe.efi` (UEFI). AlmaLinux ships a ready-made UEFI lab at
-[`../vm-almalinux-uefi-pxe.toml`](../vm-almalinux-uefi-pxe.toml)
+[`vm-almalinux-uefi-pxe.toml`](vm-almalinux-uefi-pxe.toml)
 (`backend = "pxe-install"`, `pxe_bootfile = "ipxe.efi"`, no `firmware` line → OVMF
-PXE-boots `ipxe.efi`), using [`../almalinux-uefi-zerotouch.ks`](../almalinux-uefi-zerotouch.ks)
+PXE-boots `ipxe.efi`), using [`almalinux-uefi-zerotouch.ks`](almalinux-uefi-zerotouch.ks)
 (`bootloader --location=boot`). For Secure Boot add `secure_boot = true` and build
 iPXE with `--sign --use-snakeoil`. (OVMF's NIC ROM is also iPXE, so
 `pxe_bootfile = "boot.ipxe"` works under UEFI too.) There's also an aarch64 variant:
-[`../vm-almalinux-aarch64-pxe.toml`](../vm-almalinux-aarch64-pxe.toml) +
-[`../almalinux-aarch64-zerotouch.ks`](../almalinux-aarch64-zerotouch.ks).
+[`vm-almalinux-aarch64-pxe.toml`](vm-almalinux-aarch64-pxe.toml) +
+[`almalinux-aarch64-zerotouch.ks`](almalinux-aarch64-zerotouch.ks).
 
 ### Real hardware (not QEMU)
 
