@@ -199,7 +199,7 @@ in the VM spec and QEMU advertises the bootfile via DHCP option 67 and
 serves it via TFTP from 10.0.2.2:
 
 ```toml
-# examples/vm-pxe-tftp-boot.toml
+# examples/pxe-boot-mechanics/vm-pxe-tftp-boot.toml
 [[vm]]
 name         = "pxe-tftp"
 pxe_dir      = "/home/sqs/netboot"   # serves ipxe.efi via TFTP
@@ -208,7 +208,7 @@ pxe_bootfile = "ipxe.efi"
 
 ```bash
 # VM boots: DHCP → TFTP → iPXE → HTTP boot.ipxe → kernel+initrd
-phase2-qemu-vm/lab-vm.sh create --config examples/vm-pxe-tftp-boot.toml
+phase2-qemu-vm/lab-vm.sh create --config examples/pxe-boot-mechanics/vm-pxe-tftp-boot.toml
 phase2-qemu-vm/lab-vm.sh start  pxe-tftp
 ```
 
@@ -248,11 +248,11 @@ netboot/sign-ipxe.sh --use-snakeoil
 
 # Boot with Secure Boot enforcement (secboot OVMF + snakeoil VARS):
 cp ~/netboot/ipxe-signed.efi ~/netboot/ipxe.efi
-phase2-qemu-vm/lab-vm.sh create --config examples/vm-pxe-secureboot.toml
+phase2-qemu-vm/lab-vm.sh create --config examples/pxe-boot-mechanics/vm-pxe-secureboot.toml
 ```
 
 ```toml
-# examples/vm-pxe-secureboot.toml
+# examples/pxe-boot-mechanics/vm-pxe-secureboot.toml
 [[vm]]
 secure_boot  = true   # → OVMF_CODE_4M.secboot.fd + OVMF_VARS_4M.snakeoil.fd
 pxe_dir      = "/home/sqs/netboot"

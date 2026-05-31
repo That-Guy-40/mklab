@@ -15,7 +15,7 @@
 #      (from lab-podman.sh up --config examples/podman-netboot-server.toml)
 #
 # Then:
-#   lab-vm.sh create --config examples/vm-pxe-tftp-boot.toml
+#   lab-vm.sh create --config examples/pxe-boot-mechanics/vm-pxe-tftp-boot.toml
 #   lab-vm.sh start  pxe-tftp
 #   lab-vm.sh console pxe-tftp
 #

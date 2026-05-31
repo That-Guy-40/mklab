@@ -565,7 +565,7 @@ For SBCs (aarch64): need `ipxe.efi` (UEFI) or an aarch64-specific boot chain.
   - Real hardware: `netboot/setup-dhcp-tftp.sh` creates TFTP root and a
     dnsmasq ProxyDHCP + TFTP config.  `examples/podman-pxe-dhcp.toml` runs the
     container (needs `--network=host` and root).
-  - Example TOMLs: `examples/vm-pxe-tftp-boot.toml`, `examples/vm-pxe-secureboot.toml`,
+  - Example TOMLs: `examples/pxe-boot-mechanics/vm-pxe-tftp-boot.toml`, `examples/pxe-boot-mechanics/vm-pxe-secureboot.toml`,
     `examples/podman-pxe-dhcp.toml`.
 - **Secure Boot signed iPXE**: implemented.
   - `netboot/sign-ipxe.sh` signs `ipxe.efi` via `sbsign`.  Three modes:

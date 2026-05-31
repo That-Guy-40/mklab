@@ -12,7 +12,7 @@
 #   cp ~/netboot/ipxe-signed.efi ~/netboot/ipxe.efi
 #
 # Workflow:
-#   lab-vm.sh create --config examples/vm-pxe-secureboot.toml
+#   lab-vm.sh create --config examples/pxe-boot-mechanics/vm-pxe-secureboot.toml
 #   lab-vm.sh start  pxe-secureboot
 #   lab-vm.sh console pxe-secureboot
 #   # → OVMF Secure Boot screen → iPXE (signed) → kernel+initrd over HTTP

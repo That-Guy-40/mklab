@@ -1,0 +1,38 @@
+# PXE boot mechanics — Secure Boot & TFTP delivery
+
+Two small QEMU labs that exercise *how* a VM boots over PXE, rather than *what*
+it installs. Both reuse the shared iPXE builder
+([`../../netboot/build-ipxe.sh`](../../netboot/build-ipxe.sh)) and boot via
+[`../../phase2-qemu-vm/lab-vm.sh`](../../phase2-qemu-vm/lab-vm.sh)'s `pxe-install`
+backend — they're the boot-transport / firmware counterpart to the
+*distro-install* PXE labs ([`../almalinux-pxe-lab/`](../almalinux-pxe-lab/),
+[`../rocky-pxe-lab/`](../rocky-pxe-lab/), [`../kali-pxe-lab/`](../kali-pxe-lab/)).
+
+| File | What it demonstrates |
+|---|---|
+| [`vm-pxe-tftp-boot.toml`](vm-pxe-tftp-boot.toml) | Traditional **DHCP + TFTP** network boot: QEMU's slirp hands out DHCP options 66/67, the VM pulls `ipxe.efi` over TFTP, then iPXE fetches kernel+initrd over HTTP. No install media, no USB stick. |
+| [`vm-pxe-secureboot.toml`](vm-pxe-secureboot.toml) | PXE boot with **UEFI Secure Boot enforced** — OVMF `*.secboot.fd` firmware + a pre-enrolled snakeoil test key. The iPXE binary must be **signed** with that key first or the firmware refuses it. |
+
+## Run
+
+Serve the artifacts first (e.g. [`../podman-netboot-server.toml`](../podman-netboot-server.toml))
+so HTTP/TFTP have something to hand out, then:
+
+```bash
+# TFTP delivery:
+netboot/build-ipxe.sh --server http://10.0.2.2:8080 ...          # builds boot.ipxe + ipxe.efi
+phase2-qemu-vm/lab-vm.sh create --config examples/pxe-boot-mechanics/vm-pxe-tftp-boot.toml
+
+# Secure Boot (sign iPXE with the snakeoil key):
+netboot/build-ipxe.sh --server http://10.0.2.2:8080 --sign --use-snakeoil
+phase2-qemu-vm/lab-vm.sh create --config examples/pxe-boot-mechanics/vm-pxe-secureboot.toml
+```
+
+See the [examples index](../INDEX.md) for the full netboot/PXE picture.
+
+## ⚠️ Security
+
+The Secure Boot demo uses a **snakeoil** (well-known, public) test key purely so
+the chain validates under QEMU — it provides **no** real trust. Never enroll it
+on real hardware or sign anything you care about with it. Keep these on an
+isolated lab network.

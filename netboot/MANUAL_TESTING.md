@@ -608,7 +608,7 @@ Or via TOML:
 
 ```bash
 # Edit pxe_dir path in the TOML to match your $HOME, then:
-phase2-qemu-vm/lab-vm.sh create --config examples/vm-pxe-tftp-boot.toml
+phase2-qemu-vm/lab-vm.sh create --config examples/pxe-boot-mechanics/vm-pxe-tftp-boot.toml
 phase2-qemu-vm/lab-vm.sh start  pxe-tftp
 ```
 
@@ -844,7 +844,7 @@ Replace `ipxe.efi` with the signed binary, then start a VM with `--secure-boot`:
 # In-place replace so the TFTP dir serves the signed version:
 cp ~/netboot/ipxe-signed.efi ~/netboot/ipxe.efi
 
-phase2-qemu-vm/lab-vm.sh create --config examples/vm-pxe-secureboot.toml
+phase2-qemu-vm/lab-vm.sh create --config examples/pxe-boot-mechanics/vm-pxe-secureboot.toml
 phase2-qemu-vm/lab-vm.sh start  pxe-secureboot
 phase2-qemu-vm/lab-vm.sh console pxe-secureboot
 ```
