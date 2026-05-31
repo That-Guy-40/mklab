@@ -203,7 +203,7 @@ phase2-qemu-vm/lab-vm.sh destroy vm-alpine-amd64
 ### 2.3 Microvm (Alpine, minimal machine type) 🐢 (kvm, net)
 
 ```bash
-phase2-qemu-vm/lab-vm.sh create --config examples/microvm-alpine.toml
+phase2-qemu-vm/lab-vm.sh create --config examples/tiny-linux-experiments/microvm-alpine.toml
 phase2-qemu-vm/lab-vm.sh start  microvm-alpine
 phase2-qemu-vm/lab-vm.sh ssh    microvm-alpine -- cat /proc/cpuinfo | grep 'model name'
 phase2-qemu-vm/lab-vm.sh stop   microvm-alpine

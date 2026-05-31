@@ -6,7 +6,7 @@
 # Build first (rootless):
 #   micro-linux/mlbuild.sh all --arch x86_64
 # Then:
-#   phase2-qemu-vm/lab-vm.sh create --config examples/micro-linux-x86_64.toml
+#   phase2-qemu-vm/lab-vm.sh create --config examples/tiny-linux-experiments/micro-linux-x86_64.toml
 #   phase2-qemu-vm/lab-vm.sh start  micro-linux-x86_64
 # Expect a "Welcome to micro-linux …" /etc/issue banner and a `login:` prompt;
 # log in as root / micro (creds advertised in the banner). At the `~ #` shell,

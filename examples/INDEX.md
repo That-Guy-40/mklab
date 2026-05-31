@@ -14,8 +14,11 @@ drive an entire build → serve → boot pipeline from one file. Look for the
 **Legend:** 🔗 unified (feeds multiple phases) · 🔑 needs `sudo`/root ·
 🐌 runs under TCG emulation (slow, no host HW needed) · 🪶 rootless.
 
-> Files stay in `examples/` (their paths are referenced across the docs); this
-> index is the map, not a move.
+> Most specs sit flat in `examples/`; a cohesive multi-file lab gets its own
+> subdir (the kali/pxe labs, and the from-source
+> [`tiny-linux-experiments/`](tiny-linux-experiments/) family). Paths are
+> referenced across the docs, so when a group earns a subdir, move it as a unit
+> and fix the links (`tools/link_check.py` finds them).
 
 ---
 
@@ -43,8 +46,8 @@ Full cloud-image VMs and tiny in-RAM microVMs. `create` then `start`, `ssh` in.
 | `vm-alpine-amd64.toml` | Latest Alpine cloud image on `q35` + OVMF. |
 | `vm-kali-amd64.toml` | Kali rolling from the upstream prebuilt image (release auto-resolved at create-time). |
 | [`kali-vm-builder/`](kali-vm-builder/) | 🔒 Kali's **official image factory** (`kali-vm` + `debos`) operationalized: `fetch` → `build` (host `debos` *or* Podman/Docker container; `--full` graphical XFCE / `--headless`) → `run-graphical.sh` boots the QCOW2 in a **windowed** QEMU desktop (SeaBIOS/virtio/SSH-forward, COW overlay). The build-it-yourself counterpart to `vm-kali-amd64.toml`. ⚠️ offensive tooling — authorized targets only. |
-| `microvm-alpine.toml` | True microVM: an Alpine minirootfs as an in-RAM initramfs, auto-built — `network`/`ssh`/`persist` flags. |
-| `microvm-alpine-custom-init.toml` | Same microVM, but PID 1 is a hand-rolled static C `/sbin/init` (auto-compiled by `lab-vm.sh`). |
+| `tiny-linux-experiments/microvm-alpine.toml` | True microVM: an Alpine minirootfs as an in-RAM initramfs, auto-built — `network`/`ssh`/`persist` flags. |
+| `tiny-linux-experiments/microvm-alpine-custom-init.toml` | Same microVM, but PID 1 is a hand-rolled static C `/sbin/init` (auto-compiled by `lab-vm.sh`). |
 
 ## 🐳 Docker topologies — Phase 3 (`phase3-docker/lab-docker.sh`)
 
@@ -76,7 +79,9 @@ System containers and hardware VMs under one API, with profiles and projects.
 
 Compile a kernel + a tiny userspace from upstream source and boot to a **console
 login prompt** (`root` / `micro`) — no disk, no packages. Build with
-`mlbuild.sh all --arch …` first, then boot via `lab-vm.sh`.
+`mlbuild.sh all --arch …` first, then boot via `lab-vm.sh`. These specs live
+under [`tiny-linux-experiments/`](tiny-linux-experiments/) — the filenames in
+the table below are relative to that dir.
 
 | File | What you get |
 |---|---|
@@ -94,7 +99,7 @@ the VirtIO-CCW transport), so virtio works on the microvm mmio bus as well as PC
 
 | Dir | What you get |
 |---|---|
-| [`micro_linux_dhcp_lease/`](micro_linux_dhcp_lease/) | The networking demo: the from-source distro pulls a **DHCP lease** over a virtio NIC. x86_64/aarch64/ppc64le/s390x auto-bring-up via BusyBox `udhcpc` (opt-in `mllab.net` token); riscv64 runs u-root's `dhclient` at the shell. ⚠️ root has a well-known password — see its README + AUDIT F1. |
+| [`micro_linux_dhcp_lease/`](tiny-linux-experiments/micro_linux_dhcp_lease/) | The networking demo: the from-source distro pulls a **DHCP lease** over a virtio NIC. x86_64/aarch64/ppc64le/s390x auto-bring-up via BusyBox `udhcpc` (opt-in `mllab.net` token); riscv64 runs u-root's `dhclient` at the shell. ⚠️ root has a well-known password — see its README + AUDIT F1. |
 
 ## 🌉 Cross-phase bridges — build once, run elsewhere
 
@@ -166,8 +171,8 @@ A control node runs Ansible playbooks against managed target host(s) — see the
 
 | Path | What it is |
 |---|---|
-| [`reference/`](reference/) | Standalone build scripts that predate `lab-vm.sh`'s auto-build — read them to see the microVM initramfs built without the framework. |
-| `alpine-custom-init.TXT` | A side-by-side walkthrough of busybox-init vs. a custom C PID 1 (companion to `microvm-alpine-custom-init.toml`). |
+| [`tiny-linux-experiments/reference/`](tiny-linux-experiments/reference/) | Standalone build scripts that predate `lab-vm.sh`'s auto-build — read them to see the microVM initramfs built without the framework. |
+| `tiny-linux-experiments/alpine-custom-init.TXT` | A side-by-side walkthrough of busybox-init vs. a custom C PID 1 (companion to `microvm-alpine-custom-init.toml`). |
 | `<kali-lab>/ADDING-PACKAGES.md` | Per-lab "how to add a package" guides — same add→apply→verify shape, tailored to each lab's real mechanism: chroot `apt` (`kali-nonroot-chroot`), in-guest provisioner (`kali-llm-desktop-lab`), Podman model/service (`kali-llm-lab`), and d-i preseed reinstall (`kali-pxe-lab`, `kali-preseed-gallery`). The offsec-awae flow lives in that lab's own README. |
 
 ---

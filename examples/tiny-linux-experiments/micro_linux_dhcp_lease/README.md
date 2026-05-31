@@ -13,7 +13,7 @@ nice end-to-end proof that virtio-net rides the **mmio** bus on microvm.
 micro-linux/mlbuild.sh all --arch x86_64
 
 # 2. Boot the DHCP demo (x86_64, uses KVM if available)
-phase2-qemu-vm/lab-vm.sh create --config examples/micro_linux_dhcp_lease/micro-linux-x86_64-dhcp.toml
+phase2-qemu-vm/lab-vm.sh create --config examples/tiny-linux-experiments/micro_linux_dhcp_lease/micro-linux-x86_64-dhcp.toml
 phase2-qemu-vm/lab-vm.sh start  micro-linux-x86_64-dhcp
 phase2-qemu-vm/lab-vm.sh console micro-linux-x86_64-dhcp     # attach the serial
 ```
@@ -55,7 +55,7 @@ script:
 2. **udhcpc.** BusyBox's DHCP client is already in our static BusyBox
    (`CONFIG_UDHCPC=y`). On each lease event it execs the handler baked at
    `/usr/share/udhcpc/default.script` (vendored as
-   [`micro-linux/udhcpc.script`](../../micro-linux/udhcpc.script)), which applies
+   [`micro-linux/udhcpc.script`](../../../micro-linux/udhcpc.script)), which applies
    the address/route/DNS with `ifconfig`/`route`.
 3. **Opt-in bring-up.** `/init` only touches the network when the kernel cmdline
    carries the `mllab.net` token (set via `append = "... mllab.net=1"`). It brings
@@ -73,7 +73,7 @@ interactive nature: just run the client at the shell.
 
 ```bash
 micro-linux/mlbuild.sh all --arch riscv64
-phase2-qemu-vm/lab-vm.sh create --config examples/micro_linux_dhcp_lease/micro-linux-riscv64-dhcp.toml
+phase2-qemu-vm/lab-vm.sh create --config examples/tiny-linux-experiments/micro_linux_dhcp_lease/micro-linux-riscv64-dhcp.toml
 phase2-qemu-vm/lab-vm.sh start  micro-linux-riscv64-dhcp     # TCG — slow
 phase2-qemu-vm/lab-vm.sh console micro-linux-riscv64-dhcp
 ```

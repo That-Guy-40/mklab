@@ -30,3 +30,4 @@ phase6-tui/*.egg-info/
 # Micro-Linux lab — build outputs + fetched/extracted sources.
 # (versions.lock and keys/ live outside out/ and stay tracked.)
 micro-linux/out/
+__pycache__/

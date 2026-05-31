@@ -16,7 +16,7 @@
 #   micro-linux/mlbuild.sh all --arch x86_64 --baked      # compile + bake
 #
 # Boot:
-#   phase2-qemu-vm/lab-vm.sh create --config examples/micro-linux-x86_64-baked.toml
+#   phase2-qemu-vm/lab-vm.sh create --config examples/tiny-linux-experiments/micro-linux-x86_64-baked.toml
 #   phase2-qemu-vm/lab-vm.sh start  micro-linux-x86_64-baked
 #
 # Or directly with QEMU (no lab-vm.sh needed):

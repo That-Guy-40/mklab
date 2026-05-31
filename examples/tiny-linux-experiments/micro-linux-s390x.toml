@@ -7,7 +7,7 @@
 # Build first (requires the toolchain image with WITH_EXTRA_ARCHES=1):
 #   micro-linux/mlbuild.sh all --arch s390x
 # Then:
-#   phase2-qemu-vm/lab-vm.sh create --config examples/micro-linux-s390x.toml
+#   phase2-qemu-vm/lab-vm.sh create --config examples/tiny-linux-experiments/micro-linux-s390x.toml
 #   phase2-qemu-vm/lab-vm.sh start  micro-linux-s390x
 #   phase2-qemu-vm/lab-vm.sh console micro-linux-s390x   # Ctrl-] to detach
 #

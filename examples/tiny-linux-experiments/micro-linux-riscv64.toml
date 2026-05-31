@@ -7,7 +7,7 @@
 # Build first (rootless; needs the riscv/Go builder stage — Containerfile):
 #   micro-linux/mlbuild.sh all --arch riscv64
 # Then:
-#   phase2-qemu-vm/lab-vm.sh create --config examples/micro-linux-riscv64.toml
+#   phase2-qemu-vm/lab-vm.sh create --config examples/tiny-linux-experiments/micro-linux-riscv64.toml
 #   phase2-qemu-vm/lab-vm.sh start  micro-linux-riscv64
 #
 # Notes:

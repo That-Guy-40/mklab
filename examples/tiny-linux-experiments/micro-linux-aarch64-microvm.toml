@@ -13,7 +13,7 @@
 # Build first (rootless):
 #   micro-linux/mlbuild.sh all --arch aarch64
 # Then:
-#   phase2-qemu-vm/lab-vm.sh create --config examples/micro-linux-aarch64-microvm.toml
+#   phase2-qemu-vm/lab-vm.sh create --config examples/tiny-linux-experiments/micro-linux-aarch64-microvm.toml
 #   phase2-qemu-vm/lab-vm.sh start  micro-linux-aarch64-microvm
 # Log in as root / micro (creds advertised in the /etc/issue banner).
 #

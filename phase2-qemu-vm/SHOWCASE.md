@@ -357,8 +357,8 @@ truth, just a friendlier presentation.
   [`examples/vm-debian-amd64.toml`](../examples/vm-debian-amd64.toml),
   [`examples/vm-debian-aarch64.toml`](../examples/vm-debian-aarch64.toml),
   [`examples/vm-kali-amd64.toml`](../examples/vm-kali-amd64.toml),
-  [`examples/microvm-alpine.toml`](../examples/microvm-alpine.toml),
-  [`examples/microvm-alpine-custom-init.toml`](../examples/microvm-alpine-custom-init.toml),
+  [`examples/tiny-linux-experiments/microvm-alpine.toml`](../examples/tiny-linux-experiments/microvm-alpine.toml),
+  [`examples/tiny-linux-experiments/microvm-alpine-custom-init.toml`](../examples/tiny-linux-experiments/microvm-alpine-custom-init.toml),
   [`examples/vm-from-chroot-debian.toml`](../examples/vm-from-chroot-debian.toml)
 - Sibling SHOWCASEs:
   [Phase 1 (chroots)](../phase1-chroot/SHOWCASE.md) ·

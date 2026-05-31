@@ -4,7 +4,7 @@
 # SSH:   lab-vm.sh ssh    alp0
 #
 # Uses the upstream Alpine NoCloud qcow2 (GPT+ESP).  For a true microvm
-# boot (direct -kernel, no firmware) see microvm-alpine.toml.
+# boot (direct -kernel, no firmware) see tiny-linux-experiments/microvm-alpine.toml.
 #
 # `suite = "latest"` resolves at run time to whichever X.Y is currently
 # served by https://dl-cdn.alpinelinux.org/alpine/latest-stable/ (e.g.

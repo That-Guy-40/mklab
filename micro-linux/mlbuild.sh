@@ -954,7 +954,7 @@ main() {
                 detect_engine
                 run_in_builder "$subcmd" --arch "$ARCHES_RAW"
                 summarize
-                log_info "next: phase2-qemu-vm/lab-vm.sh create --config examples/micro-linux-<arch>.toml"
+                log_info "next: phase2-qemu-vm/lab-vm.sh create --config examples/tiny-linux-experiments/micro-linux-<arch>.toml"
             fi ;;
         hashes) print_hashes ;;
         clean) cmd_clean ;;

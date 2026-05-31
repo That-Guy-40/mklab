@@ -157,9 +157,9 @@ is the precedent for a cross-phase orchestrating lab):
 | `micro-linux/versions.env` | new | pinned `LINUX_VER`/`BUSYBOX_VER` + **PGP key fingerprints** (per-version hashes are auto-derived into `versions.lock`, not hand-pinned) |
 | `micro-linux/versions.lock` | new | git-tracked, auto-derived sha256 of each *verified* tarball (à la `uv.lock`); drift alarm on change — §6.0 |
 | `micro-linux/keys/` | new | vendored kernel.org + BusyBox release public keys (gpgv keyring; fingerprints pinned in `versions.env`) — F2 |
-| `examples/micro-linux-x86_64.toml` | new | Phase 2 `kernel+initrd` VM, `console=ttyS0`, `network=false` |
-| `examples/micro-linux-aarch64.toml` | new | Phase 2 `kernel+initrd` VM, `console=ttyAMA0`, `network=false` |
-| `examples/micro-linux-riscv64.toml` | new | **faithful track** (§11): riscv64 + u-root, `console=ttyS0`, `network=false` |
+| `examples/tiny-linux-experiments/micro-linux-x86_64.toml` | new | Phase 2 `kernel+initrd` VM, `console=ttyS0`, `network=false` |
+| `examples/tiny-linux-experiments/micro-linux-aarch64.toml` | new | Phase 2 `kernel+initrd` VM, `console=ttyAMA0`, `network=false` |
+| `examples/tiny-linux-experiments/micro-linux-riscv64.toml` | new | **faithful track** (§11): riscv64 + u-root, `console=ttyS0`, `network=false` |
 | `micro-linux/README.md` | new | quick start + the full manual command walk-through |
 | `micro-linux/SHOWCASE.md` | new | 5-minute tour, matching the other phases |
 | `micro-linux/tests/` | new | unit tests: builder argv, staging layout, version-pin parse (network-free) |
@@ -442,7 +442,7 @@ which advertises the creds for discoverability). `getty` supersedes the old
 
 ### 6.5 Boot (what Phase 2 runs for us)
 ```bash
-phase2-qemu-vm/lab-vm.sh create --config examples/micro-linux-x86_64.toml
+phase2-qemu-vm/lab-vm.sh create --config examples/tiny-linux-experiments/micro-linux-x86_64.toml
 phase2-qemu-vm/lab-vm.sh start  micro-linux-x86_64
 # Equivalent bare QEMU (for reference). NOTE: a cpio initramfs needs NO root= —
 # do NOT copy the `root=/dev/ram0 rw` from examples/vm-netboot-direct.toml,
@@ -467,9 +467,9 @@ micro-linux/mlbuild.sh build --arch x86_64,aarch64   # → out/<arch>/{kernel,_i
 micro-linux/mlbuild.sh pack --arch x86_64,aarch64
 
 # 4. Boot it (reuses Phase 2)
-phase2-qemu-vm/lab-vm.sh create --config examples/micro-linux-x86_64.toml
+phase2-qemu-vm/lab-vm.sh create --config examples/tiny-linux-experiments/micro-linux-x86_64.toml
 phase2-qemu-vm/lab-vm.sh start  micro-linux-x86_64
-# … and the aarch64 twin via examples/micro-linux-aarch64.toml
+# … and the aarch64 twin via examples/tiny-linux-experiments/micro-linux-aarch64.toml
 ```
 
 `mlbuild.sh` is a thin orchestrator: steps 2–3 are its subcommands so a single
@@ -514,7 +514,7 @@ tarballs so a cached tarball can drive a network-gated integration test — §10
   **`network = false` by default and only a *serial-console* login — no SSH or
   any listening service** — so there is **no network auth surface to
   compromise**. The §10 networking demo
-  ([`examples/micro_linux_dhcp_lease/`](examples/micro_linux_dhcp_lease/)) does
+  ([`examples/tiny-linux-experiments/micro_linux_dhcp_lease/`](examples/tiny-linux-experiments/micro_linux_dhcp_lease/)) does
   bring up a NIC + udhcpc, but only as an explicit, **token-gated opt-in**
   (`mllab.net` on the kernel cmdline) over QEMU loopback/NAT slirp, and `/init`
   re-prints F1's "never expose to an untrusted network" banner when it fires.
@@ -548,7 +548,7 @@ tarballs so a cached tarball can drive a network-gated integration test — §10
    (§8). Add `--offline` to build from a pinned tarball cache.
 3. `micro-linux/init` + `mlbuild.sh pack` — `gen_init_cpio` recommended (§5 B),
    `export-initrd` as the alternative (§5 A).
-4. `examples/micro-linux-{x86_64,aarch64}.toml` (Phase 2 boot specs;
+4. `examples/tiny-linux-experiments/micro-linux-{x86_64,aarch64}.toml` (Phase 2 boot specs;
    `network=false`, `memory=256M`–`512M`).
 5. Docs (`README.md` quick-start, `micro-linux/README.md`, `SHOWCASE.md`) +
    `.gitignore` entry for `out/`.
@@ -557,7 +557,7 @@ tarballs so a cached tarball can drive a network-gated integration test — §10
    integration test must be skippable (exit 77), matching the repo's test idiom.
 7. *(Optional, parallel — the faithful track, §11)* add `gcc-riscv64-linux-gnu`
    + Go to the builder, pin `UROOT_REF`/`GO_VER`, build the riscv kernel (same
-   verify/lock as step 2) + u-root cpio, add `examples/micro-linux-riscv64.toml`.
+   verify/lock as step 2) + u-root cpio, add `examples/tiny-linux-experiments/micro-linux-riscv64.toml`.
    Independent of steps 2–6; needs host `opensbi` + `qemu-system-misc` to boot.
 
 ---
@@ -585,7 +585,7 @@ tarballs so a cached tarball can drive a network-gated integration test — §10
   on q35/virt *and* on QEMU's microvm machine (§6.1). No separate `--microvm`
   build profile was needed — mmio is nearly free and a single kernel avoids an
   output-dir split; the microvm-ness is a *boot-time* choice (`microvm = true` in
-  the spec → see `examples/micro-linux-{x86_64,aarch64}-microvm.toml`). Phase 2
+  the spec → see `examples/tiny-linux-experiments/micro-linux-{x86_64,aarch64}-microvm.toml`). Phase 2
   was also corrected here: QEMU's `microvm` machine is x86-only, so aarch64
   "microvm" is a minimized `virt` + virtio-mmio + firmware-free direct `-kernel`
   boot (the prior code emitted a nonexistent `-machine microvm` for arm).
@@ -650,7 +650,7 @@ GOARCH=riscv64 GOOS=linux CGO_ENABLED=0 \
   early logs). u-root's init lands at `/init`, so no `rdinit=` is needed.
 
 ### 11.4 Boot
-`examples/micro-linux-riscv64.toml`: `backend=kernel+initrd`, `arch=riscv64`,
+`examples/tiny-linux-experiments/micro-linux-riscv64.toml`: `backend=kernel+initrd`, `arch=riscv64`,
 `kernel=out/riscv64/kernel`, `initrd=out/riscv64/initramfs.cpio`,
 `append="console=ttyS0"`, `network=false`, `memory="512M"`.
 ```bash

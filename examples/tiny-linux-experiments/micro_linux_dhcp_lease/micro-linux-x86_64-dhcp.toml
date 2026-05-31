@@ -11,7 +11,7 @@
 #
 # Build first (rootless), then create + start:
 #   micro-linux/mlbuild.sh all --arch x86_64
-#   phase2-qemu-vm/lab-vm.sh create --config examples/micro_linux_dhcp_lease/micro-linux-x86_64-dhcp.toml
+#   phase2-qemu-vm/lab-vm.sh create --config examples/tiny-linux-experiments/micro_linux_dhcp_lease/micro-linux-x86_64-dhcp.toml
 #   phase2-qemu-vm/lab-vm.sh start  micro-linux-x86_64-dhcp
 #
 # Log in as root / micro.  eth0 will already hold QEMU's user-mode (slirp) lease:

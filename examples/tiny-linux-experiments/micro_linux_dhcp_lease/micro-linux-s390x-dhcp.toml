@@ -6,7 +6,7 @@
 #
 # Build first (requires WITH_EXTRA_ARCHES=1 in the toolchain image):
 #   micro-linux/mlbuild.sh all --arch s390x
-#   phase2-qemu-vm/lab-vm.sh create --config examples/micro_linux_dhcp_lease/micro-linux-s390x-dhcp.toml
+#   phase2-qemu-vm/lab-vm.sh create --config examples/tiny-linux-experiments/micro_linux_dhcp_lease/micro-linux-s390x-dhcp.toml
 #   phase2-qemu-vm/lab-vm.sh start  micro-linux-s390x-dhcp
 #   phase2-qemu-vm/lab-vm.sh console micro-linux-s390x-dhcp
 #

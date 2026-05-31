@@ -77,7 +77,7 @@ micro-linux/mlbuild.sh all --arch riscv64
 # Artifacts land in micro-linux/out/<arch>/{kernel, initramfs.cpio.gz|initramfs.cpio}
 
 # 3. Boot (reuses Phase 2)
-phase2-qemu-vm/lab-vm.sh create --config examples/micro-linux-x86_64.toml
+phase2-qemu-vm/lab-vm.sh create --config examples/tiny-linux-experiments/micro-linux-x86_64.toml
 phase2-qemu-vm/lab-vm.sh start  micro-linux-x86_64
 # Log in at the console as root / micro (advertised in /etc/issue).  In the shell,
 # 'poweroff' shuts the VM down cleanly, 'exit' logs out (the prompt respawns);
@@ -97,9 +97,9 @@ PCI-less, fast-boot device model (QEMU's answer to Firecracker). Just point
 `lab-vm.sh` at the `-microvm` example TOMLs:
 
 ```bash
-phase2-qemu-vm/lab-vm.sh create --config examples/micro-linux-x86_64-microvm.toml
+phase2-qemu-vm/lab-vm.sh create --config examples/tiny-linux-experiments/micro-linux-x86_64-microvm.toml
 phase2-qemu-vm/lab-vm.sh start  micro-linux-x86_64-microvm   # log in: root / micro
-# arm64 twin (TCG on x86 hosts): examples/micro-linux-aarch64-microvm.toml
+# arm64 twin (TCG on x86 hosts): examples/tiny-linux-experiments/micro-linux-aarch64-microvm.toml
 ```
 
 No second build is needed: `mlbuild.sh` bakes `CONFIG_VIRTIO_MMIO` into **every**
@@ -114,7 +114,7 @@ micro-linux kernel, so one universal kernel boots on `q35`/`virt` *and* on micro
   configures a NIC — but on the `kernel+initrd` path QEMU does still *attach* a
   virtio-net device. It simply rides the mmio bus now, so enabling DHCP needs no
   extra kernel config: see the opt-in
-  [`examples/micro_linux_dhcp_lease/`](../examples/micro_linux_dhcp_lease/) demo,
+  [`examples/tiny-linux-experiments/micro_linux_dhcp_lease/`](../examples/tiny-linux-experiments/micro_linux_dhcp_lease/) demo,
   where `/init` runs `udhcpc` and eth0 picks up a lease over virtio-mmio.
 
 ### Build variants — smaller initramfs, smaller kernel, single-file boot
@@ -155,7 +155,7 @@ the microvm bus. The result boots only on microvm (no PCI), but it's a
 fraction of the size. Boot it via:
 
 ```bash
-phase2-qemu-vm/lab-vm.sh create --config examples/micro-linux-x86_64-tiny.toml
+phase2-qemu-vm/lab-vm.sh create --config examples/tiny-linux-experiments/micro-linux-x86_64-tiny.toml
 phase2-qemu-vm/lab-vm.sh start  micro-linux-x86_64-tiny      # --microvm, kernel-tiny
 ```
 
@@ -164,7 +164,7 @@ phase2-qemu-vm/lab-vm.sh start  micro-linux-x86_64-tiny      # --microvm, kernel
 kernel image contains everything; no `-initrd` flag is needed:
 
 ```bash
-phase2-qemu-vm/lab-vm.sh create --config examples/micro-linux-x86_64-baked.toml
+phase2-qemu-vm/lab-vm.sh create --config examples/tiny-linux-experiments/micro-linux-x86_64-baked.toml
 # Or directly:
 qemu-system-x86_64 -machine q35,accel=kvm \
     -kernel micro-linux/out/x86_64/kernel-baked \
@@ -262,7 +262,7 @@ the login prompt, riscv64 boots the u-root shell.
 | `REPRODUCIBLE.md` | bit-reproducibility: deterministic-build knobs + attestable hashes |
 | `tests/` | network-free unit tests |
 
-**Variant example TOMLs** (in `../examples/`):
+**Variant example TOMLs** (in `../examples/tiny-linux-experiments/`):
 
 | File | Variant |
 |---|---|

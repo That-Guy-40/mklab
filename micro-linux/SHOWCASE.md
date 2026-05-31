@@ -20,7 +20,7 @@ It's the third boot pipeline in this repo, and the only one built *from source*:
 ```bash
 micro-linux/mlbuild.sh image                       # toolchain container (once)
 micro-linux/mlbuild.sh all --arch x86_64           # compile + pack → out/x86_64/
-phase2-qemu-vm/lab-vm.sh create --config examples/micro-linux-x86_64.toml
+phase2-qemu-vm/lab-vm.sh create --config examples/tiny-linux-experiments/micro-linux-x86_64.toml
 phase2-qemu-vm/lab-vm.sh start  micro-linux-x86_64
 ```
 
@@ -78,7 +78,7 @@ machine (no PCIe, ~kilobyte qboot BIOS, virtio on the mmio bus — the QEMU
 analogue of Firecracker). It's a one-line change in the spec:
 
 ```bash
-phase2-qemu-vm/lab-vm.sh create --config examples/micro-linux-x86_64-microvm.toml
+phase2-qemu-vm/lab-vm.sh create --config examples/tiny-linux-experiments/micro-linux-x86_64-microvm.toml
 phase2-qemu-vm/lab-vm.sh start  micro-linux-x86_64-microvm
 ```
 
@@ -94,7 +94,7 @@ the from-source distro can pull a real DHCP lease over its virtio NIC — in RAM
 on the microvm machine:
 
 ```bash
-phase2-qemu-vm/lab-vm.sh create --config examples/micro_linux_dhcp_lease/micro-linux-x86_64-dhcp.toml
+phase2-qemu-vm/lab-vm.sh create --config examples/tiny-linux-experiments/micro_linux_dhcp_lease/micro-linux-x86_64-dhcp.toml
 phase2-qemu-vm/lab-vm.sh start  micro-linux-x86_64-dhcp
 ```
 
@@ -109,7 +109,7 @@ the `mllab.net` token (the demo spec sets `append = "... mllab.net=1"`). Every
 other spec stays network-down. The riscv64 / u-root track works a bit differently
 — it boots to an interactive shell and ships u-root's own `dhclient`, so you run
 `dhclient -ipv6=false eth0` yourself. See
-[`../examples/micro_linux_dhcp_lease/`](../examples/micro_linux_dhcp_lease/) — and
+[`../examples/tiny-linux-experiments/micro_linux_dhcp_lease/`](../examples/tiny-linux-experiments/micro_linux_dhcp_lease/) — and
 mind the AUDIT-F1 caveat there (root has a well-known password; don't bridge it to
 an untrusted network).
 
@@ -173,7 +173,7 @@ equivalent minimized `virt`).  Uses an out-of-tree build (`O=build-tiny/`) so
 the default defconfig build is untouched.
 
 ```bash
-phase2-qemu-vm/lab-vm.sh create --config examples/micro-linux-x86_64-tiny.toml
+phase2-qemu-vm/lab-vm.sh create --config examples/tiny-linux-experiments/micro-linux-x86_64-tiny.toml
 phase2-qemu-vm/lab-vm.sh start  micro-linux-x86_64-tiny
 ```
 
@@ -188,7 +188,7 @@ at boot.
 
 ```bash
 # With lab-vm.sh:
-phase2-qemu-vm/lab-vm.sh create --config examples/micro-linux-x86_64-baked.toml
+phase2-qemu-vm/lab-vm.sh create --config examples/tiny-linux-experiments/micro-linux-x86_64-baked.toml
 phase2-qemu-vm/lab-vm.sh start  micro-linux-x86_64-baked
 
 # Or directly with QEMU — note: no -initrd:
@@ -242,4 +242,4 @@ identical to `vm-netboot-direct.toml`.
 
 - Full design + the deltas from the source post: [`../MICRO_LINUX_LAB_PLAN.md`](../MICRO_LINUX_LAB_PLAN.md)
 - Manual build steps, prerequisites, key vendoring: [`README.md`](README.md)
-- Boot specs: [`../examples/micro-linux-x86_64.toml`](../examples/micro-linux-x86_64.toml) (+ `aarch64`, `riscv64`)
+- Boot specs: [`../examples/tiny-linux-experiments/micro-linux-x86_64.toml`](../examples/tiny-linux-experiments/micro-linux-x86_64.toml) (+ `aarch64`, `riscv64`)
