@@ -99,7 +99,7 @@ the VirtIO-CCW transport), so virtio works on the microvm mmio bus as well as PC
 
 | Dir | What you get |
 |---|---|
-| [`micro_linux_dhcp_lease/`](tiny-linux-experiments/micro_linux_dhcp_lease/) | The networking demo: the from-source distro pulls a **DHCP lease** over a virtio NIC. x86_64/aarch64/ppc64le/s390x auto-bring-up via BusyBox `udhcpc` (opt-in `mllab.net` token); riscv64 runs u-root's `dhclient` at the shell. ⚠️ root has a well-known password — see its README + AUDIT F1. |
+| [`micro_linux_dhcp_lease/`](tiny-linux-experiments/micro_linux_dhcp_lease/) | The networking demo: the from-source distro pulls a **DHCP lease** over a virtio NIC. One `micro-linux-<arch>-dhcp.toml` per arch — x86_64/aarch64/ppc64le/s390x auto-bring-up via BusyBox `udhcpc` (opt-in `mllab.net` token; ppc64le/s390x need a `WITH_EXTRA_ARCHES=1` build), riscv64 runs u-root's `dhclient` at the shell. ⚠️ root has a well-known password — see its README + AUDIT F1. |
 
 ## 🌉 Cross-phase bridges — build once, run elsewhere
 

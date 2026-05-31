@@ -18,10 +18,29 @@ phase2-qemu-vm/lab-vm.sh start  micro-linux-x86_64-dhcp
 phase2-qemu-vm/lab-vm.sh console micro-linux-x86_64-dhcp     # attach the serial
 ```
 
-The arm64 twin is `micro-linux-aarch64-dhcp.toml` (build `--arch aarch64`; runs
-under slow TCG on an x86 host). For the riscv64 / u-root track, see
+The same BusyBox/udhcpc demo has a cross-arch twin for each non-native target —
+identical steps to the x86_64 run above, just swap the `--config` file (the VM
+name matches its filename) and `console=`. All run under slow TCG on an x86
+host; **ppc64le and s390x need the extra-arch toolchain**, so build their image
+with `WITH_EXTRA_ARCHES=1`:
+
+| arch | config (under `micro_linux_dhcp_lease/`) | QEMU machine | console | build |
+|---|---|---|---|---|
+| aarch64 | `micro-linux-aarch64-dhcp.toml` | `virt` | `ttyAMA0` | `mlbuild.sh all --arch aarch64` |
+| ppc64le | `micro-linux-ppc64le-dhcp.toml` | `pseries` (SLOF) | `hvc0` | `WITH_EXTRA_ARCHES=1 mlbuild.sh all --arch ppc64le` |
+| s390x | `micro-linux-s390x-dhcp.toml` | `s390-ccw-virtio` | `ttyS0` (SCLP) | `WITH_EXTRA_ARCHES=1 mlbuild.sh all --arch s390x` |
+
+e.g. for ppc64le (after `WITH_EXTRA_ARCHES=1 micro-linux/mlbuild.sh all --arch ppc64le`):
+
+```bash
+phase2-qemu-vm/lab-vm.sh create --config examples/tiny-linux-experiments/micro_linux_dhcp_lease/micro-linux-ppc64le-dhcp.toml
+phase2-qemu-vm/lab-vm.sh start  micro-linux-ppc64le-dhcp
+phase2-qemu-vm/lab-vm.sh console micro-linux-ppc64le-dhcp     # → udhcpc binds eth0 to 10.0.2.15
+```
+
+For the riscv64 / u-root track, see
 "[riscv64: run dhclient yourself](#riscv64-u-root-run-dhclient-yourself)" below —
-it works differently.
+it works differently (no udhcpc; you run `dhclient` at the shell).
 
 On the console you'll see the network warning, then udhcpc binding eth0:
 
