@@ -69,18 +69,34 @@ debos needs KVM and the container needs `/dev/kvm` passed in.
 
 | Flag | Expands to | Result |
 |---|---|---|
-| `--full` (default) | `-v qemu -D xfce -T default` | The faithful full Kali XFCE desktop + default toolset (large). |
-| `--headless` | `-v qemu -D none -T headless -s 20` | No desktop, headless toolset, 20 GB (fast, lean). |
+| `--full` (default) | `-D xfce -T default` | The faithful full Kali XFCE desktop + default toolset (large). |
+| `--headless` | `-D none -T headless -s 20` | No desktop, headless toolset, 20 GB (fast, lean). |
 
-Everything after `--` is forwarded verbatim to upstream `build.sh`. The variant
-defaults to `qemu` (→ a QCOW2 + `qemu-guest-agent`/`spice-vdagent`); override it
-or anything else after `--`:
+**Variant & format** — pick which VM engine the image targets and its disk
+format with `--variant` (`-v`) / `--format` (`-f`):
+
+| `--variant` | default `--format` | disk produced |
+|---|---|---|
+| `qemu` (default) | `qemu` | QCOW2 — what `run-graphical.sh` boots |
+| `generic` | `raw` | raw sparse (or `--format ova`/`ovf` for VMDK + OVF) |
+| `virtualbox` | `virtualbox` | VDI (+ `.vbox`) |
+| `vmware` | `vmware` | VMDK (+ `.vmx`) |
+| `hyperv` | `hyperv` | VHDX (UEFI) |
+| `rootfs` | — | a `.tar.gz` rootfs (no kernel/bootloader; reuse with `build.sh -r`) |
 
 ```bash
-# extra packages, bigger scratch area, a custom user:
-examples/kali-vm-builder/build-kali-vm.sh --headless -- -P metasploit-framework -U hacker:hunter2 -- --scratchsize=50G
-# a different variant entirely (e.g. a generic raw image):
-examples/kali-vm-builder/build-kali-vm.sh -- -v generic -f raw
+examples/kali-vm-builder/build-kali-vm.sh --variant virtualbox --full      # VDI for VirtualBox
+examples/kali-vm-builder/build-kali-vm.sh --variant generic --format ova    # OVA for VBox/VMware
+```
+
+`run-graphical.sh` boots only the **qemu/QCOW2** output; for the other variants,
+import the produced file(s) into that hypervisor.
+
+Anything without a dedicated flag is still forwarded verbatim after `--` (branch,
+size, extra packages, custom user, release label, …):
+
+```bash
+examples/kali-vm-builder/build-kali-vm.sh --headless -- -P metasploit-framework -U hacker:hunter2 -x lean -- --scratchsize=50G
 ```
 
 (See `build.sh -h` in the checkout for the full upstream option set: `-b` branch,

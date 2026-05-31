@@ -24,6 +24,15 @@
 #   --full        Full graphical image: -D xfce -T default   (the faithful Kali VM)
 #   --headless    Lean image:           -D none -T headless -s 20
 #
+# Variant & format (which VM engine the image targets, and the disk format):
+#   --variant V   -v: generic | qemu | virtualbox | vmware | hyperv | rootfs
+#                 (default: qemu). Bakes in that engine's guest tools.
+#   --format F    -f: qemu (QCOW2) | raw | ova | ovf | virtualbox (VDI) |
+#                 vmware (VMDK) | hyperv (VHDX). Default: auto from the variant
+#                 (qemu→qemu, generic→raw, virtualbox→virtualbox, …).
+#   NOTE: run-graphical.sh boots the qemu/QCOW2 output only; other variants are
+#   for importing into their target hypervisor (VirtualBox/VMware/Hyper-V).
+#
 # Other:
 #   --workdir DIR Where the checkout + images/ live (default: $KALI_VM_DIR or
 #                 $HOME/kali-vm-build). Needs tens of GB free.
@@ -52,6 +61,8 @@ else
 fi
 ENGINE="auto"
 PROFILE="full"
+VARIANT="qemu"                       # -v: image variant (engine tools baked in). qemu → QCOW2.
+FORMAT=""                            # -f: disk format; empty = build.sh picks from the variant.
 MIRROR="http://kali.download/kali"   # reliable Cloudflare CDN; override with --mirror
 YES=0
 PASSTHRU=()
@@ -60,7 +71,8 @@ _c() { [ -t 2 ] && printf '\033[%sm' "$1" >&2 || :; }
 log()  { _c 36; printf '[build]'   >&2; _c 0; printf ' %s\n' "$*" >&2; }
 warn() { _c 33; printf '[build] WARNING:' >&2; _c 0; printf ' %s\n' "$*" >&2; }
 die()  { _c 31; printf '[build] ERROR:'   >&2; _c 0; printf ' %s\n' "$*" >&2; exit 1; }
-usage() { sed -n '2,38p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+# Help = the leading comment block (line 2 → first non-comment line); robust to edits.
+usage() { awk 'NR>1{ if(/^#/){sub(/^# ?/,"");print} else exit }' "$0"; exit "${1:-0}"; }
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -68,6 +80,8 @@ while [ $# -gt 0 ]; do
         --workdir)  WORKDIR="${2:?--workdir needs a path}"; shift 2 ;;
         --full)     PROFILE="full"; shift ;;
         --headless) PROFILE="headless"; shift ;;
+        --variant)  VARIANT="${2:?--variant needs a value}"; shift 2 ;;
+        --format)   FORMAT="${2:?--format needs a value}"; shift 2 ;;
         --mirror)   MIRROR="${2:?--mirror needs a URL}"; shift 2 ;;
         -y|--yes)   YES=1; shift ;;
         --help|-h)  usage 0 ;;
@@ -78,10 +92,11 @@ done
 
 case "$ENGINE" in auto|host|podman|docker) ;; *) die "invalid --engine '$ENGINE'" ;; esac
 
-# ── Profile → build.sh args.  -v qemu + -m <mirror> go first; anything after `--`
-#    lands later on the command line and wins (build.sh: last flag wins), so
-#    `-- -m URL` / `-- -v generic` overrides these defaults. ────────────────────
-BUILD_ARGS=(-v qemu -m "$MIRROR")
+# ── Assemble build.sh args.  Variant/format/mirror + profile go first; anything
+#    after `--` lands later on the command line and wins (build.sh: last flag
+#    wins), so `-- -v generic` / `-- -f ova` still overrides these. ─────────────
+BUILD_ARGS=(-v "$VARIANT" -m "$MIRROR")
+[ -n "$FORMAT" ] && BUILD_ARGS+=(-f "$FORMAT")
 case "$PROFILE" in
     full)     BUILD_ARGS+=(-D xfce -T default) ;;
     headless) BUILD_ARGS+=(-D none -T headless -s 20) ;;
@@ -168,12 +183,18 @@ if [ "$(id -u)" -eq 0 ] && [ -n "${SUDO_USER:-}" ]; then
     chown -R "$SUDO_USER" "$WORKDIR" 2>/dev/null || warn "could not chown $WORKDIR to $SUDO_USER"
 fi
 
-# ── Report the artifact + how to run it ──────────────────────────────────────
-IMG="$(ls -t "$CHECKOUT"/images/kali-linux-*-qemu-amd64.qcow2 2>/dev/null | head -1 || :)"
-if [ -n "$IMG" ]; then
-    log "built image: $IMG"
-    log "run it graphically:"
-    printf '    %s --image %q\n' "$SCRIPT_DIR/run-graphical.sh" "$IMG" >&2
+# ── Report artifacts (from kali-vm's own .artifacts manifest) + how to run ────
+ART="$CHECKOUT/images/.artifacts"
+if [ -s "$ART" ]; then
+    log "build artifacts:"
+    while IFS= read -r a; do [ -n "$a" ] && printf '    %s/images/%s\n' "$CHECKOUT" "$a" >&2; done < "$ART"
+    QCOW="$(grep -E '\.qcow2$' "$ART" | head -1 || :)"
+    if [ -n "$QCOW" ]; then
+        log "run it graphically:"
+        printf '    %s --image %q\n' "$SCRIPT_DIR/run-graphical.sh" "$CHECKOUT/images/$QCOW" >&2
+    else
+        log "non-QCOW2 output — run-graphical.sh boots the qemu variant only; import the file(s) above into the matching engine (VirtualBox/VMware/Hyper-V), or boot a raw/generic image in your own QEMU."
+    fi
 else
-    warn "no kali-linux-*-qemu-amd64.qcow2 found in $CHECKOUT/images/ — check the build log above (different -v variant?)"
+    warn "no .artifacts manifest in $CHECKOUT/images/ — check the build log above"
 fi
