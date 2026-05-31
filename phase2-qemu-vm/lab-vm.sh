@@ -572,7 +572,7 @@ fetch_cloud_checksum() {
         debian)  sums_url="https://cloud.debian.org/images/cloud/${suite}/latest/SHA256SUMS" ;;
         ubuntu)  sums_url="https://cloud-images.ubuntu.com/${suite}/current/SHA256SUMS" ;;
         rocky)   sums_url="https://download.rockylinux.org/pub/rocky/${suite}/images/${a_other}/CHECKSUM" ;;
-        alpine)  sums_url="https://dl-cdn.alpinelinux.org/alpine/v${suite}/releases/cloud/sha256sums" ;;
+        # alpine: no combined sums file — handled by fetch_alpine_sha512 (per-image .sha512).
         *)       return 0 ;;
     esac
     require_cmd curl
@@ -604,6 +604,37 @@ verify_sha256() {
   actual:   $actual
   refusing to use a tampered/corrupt download."
     log_info "sha256 verified: $(basename "$file")"
+}
+
+# Alpine cloud images don't publish a combined sums file; each image has a
+# sibling <image>.sha512 (usually a bare hex digest, occasionally GNU
+# "HASH  name").  Fetch it for URL's image and print the hash; empty on failure
+# so the caller skips verification with a warning instead of hard-failing.
+fetch_alpine_sha512() {
+    local url="$1"
+    require_cmd curl
+    local out
+    out="$(curl --fail --location --silent "${url}.sha512" 2>/dev/null)" || {
+        log_warn "could not fetch ${url##*/}.sha512 — skipping integrity check"
+        return 0
+    }
+    printf '%s\n' "$out" | awk 'NR==1 { print $1; exit }'
+}
+
+# verify_sha512 FILE EXPECTED_HEX — die on mismatch; skip (warn) if empty.
+verify_sha512() {
+    local file="$1" expected="$2"
+    if [[ -z "$expected" ]]; then
+        log_warn "no published sha512 for $(basename "$file") — skipping integrity check"
+        return 0
+    fi
+    require_cmd sha512sum
+    local actual; actual="$(sha512sum "$file" | cut -d' ' -f1)"
+    [[ "$actual" == "$expected" ]] || die "SHA512 mismatch for $(basename "$file")
+  expected: $expected
+  actual:   $actual
+  refusing to use a tampered/corrupt download."
+    log_info "sha512 verified: $(basename "$file")"
 }
 
 debian_release_num() {
@@ -660,8 +691,13 @@ cache_image() {
     # below (inside the 7z branch).  For all other distros, check here using
     # the original filename (last URL component) that SHA256SUMS references.
     if [[ "$url" != *.7z ]]; then
-        local _orig_fname="${url##*/}"
-        verify_sha256 "$tmp" "$(fetch_cloud_checksum "$distro" "$eff_suite" "$arch" "$_orig_fname")"
+        if [[ "$distro" == "alpine" ]]; then
+            # Alpine publishes a per-image .sha512, not a combined sha256 sums file.
+            verify_sha512 "$tmp" "$(fetch_alpine_sha512 "$url")"
+        else
+            local _orig_fname="${url##*/}"
+            verify_sha256 "$tmp" "$(fetch_cloud_checksum "$distro" "$eff_suite" "$arch" "$_orig_fname")"
+        fi
     fi
 
     # Some upstreams (Kali) ship the qcow2 inside a .7z archive.  Detect
