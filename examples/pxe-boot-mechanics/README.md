@@ -30,6 +30,23 @@ phase2-qemu-vm/lab-vm.sh create --config examples/pxe-boot-mechanics/vm-pxe-secu
 
 See the [examples index](../00-INDEX.md) for the full netboot/PXE picture.
 
+## Probe the transports by hand
+
+The labs above boot a VM the real way. To instead *watch* the individual
+TFTP/HTTP fetches a PXE boot does — and record/replay them — use the probes in
+[`tools/`](tools/):
+
+```bash
+tools/pxe-fetch.sh probe                          # what's actually served?
+tools/pxe-fetch.sh from-ipxe ~/netboot/boot.ipxe  # replay iPXE's exact GETs
+```
+
+`tools/pxe-fetch.sh` is a quick `curl`-based probe; `tools/socwrap.sh` (vendored)
+is a guided, asciicast-recordable walkthrough driven by
+[`tools/macros/pxe-fetch.json`](tools/macros/pxe-fetch.json). Run these from the
+**host** (the client vantage point), not the artifact server — see
+[`tools/README.md`](tools/README.md) for why `localhost` ≠ `10.0.2.2` here.
+
 ## ⚠️ Security
 
 The Secure Boot demo uses a **snakeoil** (well-known, public) test key purely so

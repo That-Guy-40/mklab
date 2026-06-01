@@ -1,0 +1,135 @@
+{
+  "help": {
+    "type": "help",
+    "description": "PXE netboot HTTP-fetch macros (drive iPXE's kernel/initrd GETs by hand)",
+    "text": "PXE NETBOOT — HTTP FETCH MACROS\n════════════════════════════════════════════════\n\nThese reproduce, by hand, the HTTP GETs that iPXE performs after it boots:\nit fetches boot.ipxe, then the `kernel` and `initrd` URLs that script names.\nDoing them yourself — and watching the status line + headers come back — is\nthe quickest way to see exactly what your VM's iPXE will (or won't) get.\n\nLAUNCH (raw HTTP over TCP, CRLF line endings, from the HOST):\n  socwrap.sh --macros --macro-file macros/pxe-fetch.json --crlf -t localhost 8181\n\n  NOTE on host vs. port:\n    From the host the netboot nginx is on  localhost:8181  (TLS: localhost:8443).\n    `10.0.2.2:8181` is the QEMU slirp gateway — that address only resolves\n    INSIDE a slirp VM, so connect to localhost when probing from the host.\n\nSET TARGETS (defaults match the minimal-netboot lab; override for distro labs):\n  //set HOST localhost           Host: header value\n  //set KERNEL /kernel           kernel path (Rocky/Alma labs: /vmlinuz)\n  //set INITRD /initrd.gz        initrd path (Rocky/Alma labs: /initrd.img)\n\nREQUEST PIECES (type one per line, blank line ends the request):\n  //get-kernel    GET {{KERNEL}}      //get-initrd   GET {{INITRD}}\n  //get-bootipxe  GET /boot.ipxe      //get  GET {{PATH}} (set PATH first)\n  //host          Host: {{HOST}}      //ua    User-Agent: iPXE-like\n  //accept-any    Accept: */*         //close Connection: close\n  //end           blank line — sends the request, triggers the response\n\nFULL WALKTHROUGHS (auto-stepped, good for --record):\n  //demo-bootipxe   Fetch boot.ipxe and read it back (what iPXE chainloads)\n  //demo-kernel     Full GET of the kernel — request + response headers\n  //demo-chain      The whole iPXE sequence: boot.ipxe → kernel → initrd\n\nNOTES:\n  - HTTP/1.1 needs a Host: header; nginx serves the file regardless of its value.\n  - HEAD instead of GET (//get → change to HEAD) returns headers with no body —\n    handy to confirm Content-Length without pulling a 300 MB initrd.\n  - For TFTP (fetching ipxe.efi the way firmware does), use the tftp client +\n    macros/tftp.json instead — TFTP is binary UDP, not hand-typable over TCP.\n  - Record any session:  socwrap.sh --record run.cast ...   then  --replay run.cast"
+  },
+
+  "get-kernel": {
+    "type": "send",
+    "description": "Request line: GET {{KERNEL}} HTTP/1.1",
+    "send": "GET {{KERNEL}} HTTP/1.1"
+  },
+  "get-initrd": {
+    "type": "send",
+    "description": "Request line: GET {{INITRD}} HTTP/1.1",
+    "send": "GET {{INITRD}} HTTP/1.1"
+  },
+  "get-bootipxe": {
+    "type": "send",
+    "description": "Request line: GET /boot.ipxe HTTP/1.1",
+    "send": "GET /boot.ipxe HTTP/1.1"
+  },
+  "get": {
+    "type": "send",
+    "description": "Request line: GET {{PATH}} HTTP/1.1 (set PATH first)",
+    "send": "GET {{PATH}} HTTP/1.1"
+  },
+  "head-kernel": {
+    "type": "send",
+    "description": "HEAD {{KERNEL}} — headers only, no body (confirm size fast)",
+    "send": "HEAD {{KERNEL}} HTTP/1.1"
+  },
+  "host": {
+    "type": "send",
+    "description": "Host header: Host: {{HOST}}",
+    "send": "Host: {{HOST}}"
+  },
+  "ua": {
+    "type": "send",
+    "description": "User-Agent header (iPXE-like)",
+    "send": "User-Agent: iPXE/1.21.1+ (pxe-boot-mechanics probe)"
+  },
+  "accept-any": {
+    "type": "send",
+    "description": "Accept: */*",
+    "send": "Accept: */*"
+  },
+  "close": {
+    "type": "send",
+    "description": "Connection: close (server closes after this response)",
+    "send": "Connection: close"
+  },
+  "end": {
+    "type": "send",
+    "description": "End headers — send the blank line that triggers the response",
+    "send": ""
+  },
+
+  "demo-bootipxe": {
+    "type": "demo",
+    "description": "Demo: fetch /boot.ipxe — the script iPXE chainloads",
+    "steps": [
+      { "display": "═══ Fetch boot.ipxe (what iPXE runs after it loads) ═══" },
+      { "display": "iPXE's embedded script usually does `chain http://.../boot.ipxe`." },
+      { "display": "Here we pull that script the same way, over plain HTTP." },
+      { "delay": 0.6 },
+      { "display": "Request line  (//get-bootipxe)" },
+      { "send": "GET /boot.ipxe HTTP/1.1", "waitfor": "" },
+      { "delay": 0.3 },
+      { "display": "Host header  (//host)" },
+      { "send": "Host: {{HOST}}", "waitfor": "" },
+      { "delay": 0.3 },
+      { "display": "Connection: close  (//close)" },
+      { "send": "Connection: close", "waitfor": "" },
+      { "delay": 0.3 },
+      { "display": "Blank line ends the request  (//end)" },
+      { "send": "", "waitfor": "200" },
+      { "delay": 1 },
+      { "display": "═══ The body above IS your boot.ipxe — note its kernel/initrd URLs ═══" }
+    ]
+  },
+  "demo-kernel": {
+    "type": "demo",
+    "description": "Demo: full GET of the kernel — request + response headers",
+    "steps": [
+      { "display": "═══ GET the kernel ({{KERNEL}}) ═══" },
+      { "display": "This is exactly iPXE's `kernel http://{{HOST}}{{KERNEL}} ...` fetch." },
+      { "delay": 0.6 },
+      { "display": "Request line  (//get-kernel)" },
+      { "send": "GET {{KERNEL}} HTTP/1.1", "waitfor": "" },
+      { "delay": 0.3 },
+      { "display": "Host header  (//host)" },
+      { "send": "Host: {{HOST}}", "waitfor": "" },
+      { "delay": 0.3 },
+      { "display": "User-Agent  (//ua)" },
+      { "send": "User-Agent: iPXE/1.21.1+ (pxe-boot-mechanics probe)", "waitfor": "" },
+      { "delay": 0.3 },
+      { "display": "Connection: close  (//close)" },
+      { "send": "Connection: close", "waitfor": "" },
+      { "delay": 0.3 },
+      { "display": "Blank line  (//end) — watch for 200 OK + Content-Length" },
+      { "send": "", "waitfor": "200" },
+      { "delay": 1.5 },
+      { "display": "═══ 200 OK + Content-Length = the kernel iPXE would boot ═══" },
+      { "display": "(The binary body streams below; use //head-kernel to see headers only.)" }
+    ]
+  },
+  "demo-chain": {
+    "type": "demo",
+    "description": "Demo: the whole iPXE HTTP sequence — boot.ipxe → kernel → initrd",
+    "steps": [
+      { "display": "═══ The full HTTP side of a PXE boot ═══" },
+      { "display": "Reconnect (Connection: close drops the socket between requests)." },
+      { "display": "Step 1/3 — GET /boot.ipxe (the script)" },
+      { "send": "GET /boot.ipxe HTTP/1.1", "waitfor": "" },
+      { "send": "Host: {{HOST}}", "waitfor": "" },
+      { "send": "Connection: close", "waitfor": "" },
+      { "send": "", "waitfor": "200" },
+      { "delay": 1 },
+      { "display": "Step 2/3 — GET {{KERNEL}} (the kernel named in that script)" },
+      { "send": "GET {{KERNEL}} HTTP/1.1", "waitfor": "" },
+      { "send": "Host: {{HOST}}", "waitfor": "" },
+      { "send": "Connection: close", "waitfor": "" },
+      { "send": "", "waitfor": "200" },
+      { "delay": 1 },
+      { "display": "Step 3/3 — GET {{INITRD}} (the initramfs)" },
+      { "send": "GET {{INITRD}} HTTP/1.1", "waitfor": "" },
+      { "send": "Host: {{HOST}}", "waitfor": "" },
+      { "send": "Connection: close", "waitfor": "" },
+      { "send": "", "waitfor": "200" },
+      { "delay": 1 },
+      { "display": "═══ Three 200s = everything iPXE needs is being served correctly ═══" }
+    ]
+  }
+}
