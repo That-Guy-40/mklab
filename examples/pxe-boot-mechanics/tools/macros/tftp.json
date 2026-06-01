@@ -1,0 +1,121 @@
+{
+  "help": {
+    "type": "help",
+    "description": "TFTP client session macros",
+    "text": "TFTP CLIENT SESSION MACROS\n════════════════════════════════════════════════\n\nLaunch:\n  socwrap --macros --macro-file tftp.json -p 'tftp > ' -- tftp\n\nSETUP:\n  //set HOST 192.168.1.1         TFTP server address\n  //set PORT 69                  TFTP server port (default 69)\n  //set FILE firmware.bin         File to get or put\n  //set LOCAL localfile.bin       Local filename (optional)\n\nCONNECTION:\n  //connect       Connect to {{HOST}} on port {{PORT}}\n  //connect69     Connect to {{HOST}} on default port 69\n\nTRANSFER MODE:\n  //binary        Set binary (octet) transfer mode\n  //ascii         Set ASCII (netascii) transfer mode\n\nFILE OPERATIONS:\n  //get           Get {{FILE}} from server\n  //get-as        Get {{FILE}} and save as {{LOCAL}}\n  //put           Put {{FILE}} to server\n  //put-as        Put {{LOCAL}} to server as {{FILE}}\n\nSESSION:\n  //status        Show connection status\n  //verbose       Toggle verbose mode\n  //trace         Toggle packet tracing\n  //quit          End TFTP session\n\nQUICK ONE-SHOT (run outside tftp, via bash):\n  //oneshot-get   tftp one-liner to get {{FILE}}\n  //oneshot-put   tftp one-liner to put {{FILE}}\n\nNOTES:\n  - Always //connect before get/put operations\n  - Use //binary for firmware, images, archives\n  - Use //ascii for config files, text\n  - TFTP has no authentication — use only on trusted networks\n  - Default blocksize is 512 bytes; some servers support larger\n  - TFTP uses UDP, not TCP"
+  },
+
+  "connect": {
+    "type": "send",
+    "description": "Connect to TFTP server {{HOST}}:{{PORT}}",
+    "send": "connect {{HOST}} {{PORT}}"
+  },
+  "connect69": {
+    "type": "send",
+    "description": "Connect to TFTP server {{HOST}} on default port 69",
+    "send": "connect {{HOST}}"
+  },
+
+  "binary": {
+    "type": "send",
+    "description": "Set binary (octet) transfer mode",
+    "send": "binary"
+  },
+  "ascii": {
+    "type": "send",
+    "description": "Set ASCII (netascii) transfer mode",
+    "send": "ascii"
+  },
+
+  "get": {
+    "type": "send",
+    "description": "Get {{FILE}} from TFTP server",
+    "send": "get {{FILE}}"
+  },
+  "get-as": {
+    "type": "send",
+    "description": "Get {{FILE}} from server, save as {{LOCAL}}",
+    "send": "get {{FILE}} {{LOCAL}}"
+  },
+  "put": {
+    "type": "send",
+    "description": "Put {{FILE}} to TFTP server",
+    "send": "put {{FILE}}"
+  },
+  "put-as": {
+    "type": "send",
+    "description": "Put {{LOCAL}} to server as {{FILE}}",
+    "send": "put {{LOCAL}} {{FILE}}"
+  },
+
+  "status": {
+    "type": "send",
+    "description": "Show TFTP connection status",
+    "send": "status"
+  },
+  "verbose": {
+    "type": "send",
+    "description": "Toggle verbose mode",
+    "send": "verbose"
+  },
+  "trace": {
+    "type": "send",
+    "description": "Toggle packet tracing",
+    "send": "trace"
+  },
+  "quit": {
+    "type": "send",
+    "description": "End TFTP session",
+    "send": "quit"
+  },
+
+  "oneshot-get": {
+    "type": "send",
+    "description": "One-liner: get {{FILE}} from {{HOST}} via tftp",
+    "send": "tftp {{HOST}} {{PORT}} -c get {{FILE}}"
+  },
+  "oneshot-put": {
+    "type": "send",
+    "description": "One-liner: put {{FILE}} to {{HOST}} via tftp",
+    "send": "tftp {{HOST}} {{PORT}} -c put {{FILE}}"
+  },
+
+  "demo-session": {
+    "type": "demo",
+    "description": "Demo: full TFTP session — connect, set mode, transfer files",
+    "steps": [
+      { "display": "═══ TFTP Session Demo ═══" },
+      { "display": "TFTP (Trivial File Transfer Protocol) — RFC 1350" },
+      { "display": "A simple, no-auth file transfer protocol over UDP." },
+      { "display": "Common uses: PXE boot, router config backup, firmware updates." },
+      { "delay": 1 },
+      { "display": "Step 1: Connect to the TFTP server" },
+      { "send": "connect {{HOST}} {{PORT}}", "waitfor": "" },
+      { "delay": 0.5 },
+      { "display": "Step 2: Check connection status" },
+      { "send": "status", "waitfor": "" },
+      { "delay": 0.5 },
+      { "display": "Step 3: Set binary mode (for non-text files)" },
+      { "send": "binary", "waitfor": "" },
+      { "delay": 0.5 },
+      { "display": "Step 4: Enable verbose output" },
+      { "send": "verbose", "waitfor": "" },
+      { "delay": 0.5 },
+      { "display": "Step 5: Get a file from the server" },
+      { "send": "get {{FILE}}", "waitfor": "" },
+      { "delay": 1 },
+      { "display": "Step 6: Put a file to the server" },
+      { "send": "put {{FILE}}", "waitfor": "" },
+      { "delay": 1 },
+      { "display": "Step 7: End the session" },
+      { "send": "quit", "waitfor": "" },
+      { "delay": 0.5 },
+      { "display": "═══ Demo complete ═══" },
+      { "display": "TFTP protocol summary:" },
+      { "display": "  - UDP port 69 (default)" },
+      { "display": "  - No authentication, no directory listing" },
+      { "display": "  - Two modes: binary (octet) and ASCII (netascii)" },
+      { "display": "  - 512-byte blocks with stop-and-wait ACK" }
+    ]
+  }
+}

@@ -1,0 +1,207 @@
+{
+  "help": {
+    "type": "help",
+    "description": "HTTP/1.1 protocol cheat sheet",
+    "text": "HTTP/1.1 PROTOCOL REFERENCE\n════════════════════════════════════════════════\n\nREQUEST FORMAT:\n  METHOD PATH HTTP/1.1\\r\\n\n  Header: Value\\r\\n\n  Header: Value\\r\\n\n  \\r\\n                          ← blank line ends headers\n  [optional body]\n\nCOMMON METHODS:\n  GET      Retrieve a resource\n  POST     Create a resource (body required)\n  PUT      Replace a resource (body required)\n  PATCH    Partial update (body required)\n  DELETE   Remove a resource\n  HEAD     Like GET but response has no body\n  OPTIONS  Show allowed methods for a resource\n\nRESPONSE STATUS CODES:\n  1xx  Informational    100 Continue\n  2xx  Success          200 OK, 201 Created, 204 No Content\n  3xx  Redirection      301 Moved Permanently, 302 Found, 304 Not Modified\n  4xx  Client Error     400 Bad Request, 401 Unauthorized, 403 Forbidden,\n                        404 Not Found, 405 Method Not Allowed, 429 Too Many\n  5xx  Server Error     500 Internal Server Error, 502 Bad Gateway,\n                        503 Service Unavailable\n\nESSENTIAL HEADERS:\n  Host: hostname           (REQUIRED in HTTP/1.1)\n  Content-Type: mime/type  (for POST/PUT/PATCH)\n  Content-Length: N        (byte count of body)\n  Accept: mime/type        (preferred response format)\n  Authorization: scheme credentials\n  Connection: close|keep-alive\n  User-Agent: product/version\n  Cookie: name=value\n\nCOMMON CONTENT TYPES:\n  application/json                  JSON data\n  application/x-www-form-urlencoded Form data\n  text/html                         HTML\n  text/plain                        Plain text\n  multipart/form-data               File uploads\n\nHTTPBIN.ORG TEST ENDPOINTS:\n  /get         Echo GET request data\n  /post        Echo POST request data\n  /put         Echo PUT data\n  /delete      Echo DELETE data\n  /headers     Show request headers\n  /ip          Show origin IP\n  /user-agent  Show User-Agent\n  /status/:N   Return HTTP status N\n  /redirect/:N Redirect N times\n  /basic-auth/:user/:pass  HTTP Basic auth test\n  /cookies     Show cookies\n  /delay/:N    Delay response by N seconds\n\nSocwrap HTTP Macros:\n  //get //post //put //delete //head //options //patch  Request lines\n  //host //useragent //close //keepalive                 Headers\n  //accept-json //accept-html //accept-any               Accept headers\n  //content-json //content-form //content-length          Content headers\n  //auth-basic //auth-bearer //cookie                    Auth/cookie\n  //end                                                  End headers (blank line)\n  //demo-get  //demo-post  //demo-headers                Demos\n\nUsage:  socwrap --macros --macro-file http-protocol.json --crlf -t HOST PORT"
+  },
+  "get": {
+    "type": "send",
+    "description": "GET request line: GET {{PATH}} HTTP/1.1",
+    "send": "GET {{PATH}} HTTP/1.1"
+  },
+  "post": {
+    "type": "send",
+    "description": "POST request line: POST {{PATH}} HTTP/1.1",
+    "send": "POST {{PATH}} HTTP/1.1"
+  },
+  "put": {
+    "type": "send",
+    "description": "PUT request line: PUT {{PATH}} HTTP/1.1",
+    "send": "PUT {{PATH}} HTTP/1.1"
+  },
+  "delete": {
+    "type": "send",
+    "description": "DELETE request line: DELETE {{PATH}} HTTP/1.1",
+    "send": "DELETE {{PATH}} HTTP/1.1"
+  },
+  "head": {
+    "type": "send",
+    "description": "HEAD request line: HEAD {{PATH}} HTTP/1.1",
+    "send": "HEAD {{PATH}} HTTP/1.1"
+  },
+  "options": {
+    "type": "send",
+    "description": "OPTIONS request line: OPTIONS {{PATH}} HTTP/1.1",
+    "send": "OPTIONS {{PATH}} HTTP/1.1"
+  },
+  "patch": {
+    "type": "send",
+    "description": "PATCH request line: PATCH {{PATH}} HTTP/1.1",
+    "send": "PATCH {{PATH}} HTTP/1.1"
+  },
+  "host": {
+    "type": "send",
+    "description": "Host header: Host: {{HOST}}",
+    "send": "Host: {{HOST}}"
+  },
+  "useragent": {
+    "type": "send",
+    "description": "User-Agent header",
+    "send": "User-Agent: socwrap/8.0 (HTTP protocol explorer)"
+  },
+  "accept-json": {
+    "type": "send",
+    "description": "Accept: application/json",
+    "send": "Accept: application/json"
+  },
+  "accept-html": {
+    "type": "send",
+    "description": "Accept: text/html",
+    "send": "Accept: text/html"
+  },
+  "accept-any": {
+    "type": "send",
+    "description": "Accept: */*",
+    "send": "Accept: */*"
+  },
+  "content-json": {
+    "type": "send",
+    "description": "Content-Type: application/json",
+    "send": "Content-Type: application/json"
+  },
+  "content-form": {
+    "type": "send",
+    "description": "Content-Type: application/x-www-form-urlencoded",
+    "send": "Content-Type: application/x-www-form-urlencoded"
+  },
+  "content-length": {
+    "type": "send",
+    "description": "Content-Length: {{LENGTH}}",
+    "send": "Content-Length: {{LENGTH}}"
+  },
+  "auth-basic": {
+    "type": "send",
+    "description": "Authorization: Basic {{TOKEN}}",
+    "send": "Authorization: Basic {{TOKEN}}"
+  },
+  "auth-bearer": {
+    "type": "send",
+    "description": "Authorization: Bearer {{TOKEN}}",
+    "send": "Authorization: Bearer {{TOKEN}}"
+  },
+  "cookie": {
+    "type": "send",
+    "description": "Cookie: {{COOKIE}}",
+    "send": "Cookie: {{COOKIE}}"
+  },
+  "close": {
+    "type": "send",
+    "description": "Connection: close (server closes after response)",
+    "send": "Connection: close"
+  },
+  "keepalive": {
+    "type": "send",
+    "description": "Connection: keep-alive (reuse connection)",
+    "send": "Connection: keep-alive"
+  },
+  "end": {
+    "type": "send",
+    "description": "End headers — send blank line to trigger response",
+    "send": ""
+  },
+  "demo-get": {
+    "type": "demo",
+    "description": "Demo: GET request to httpbin.org/get",
+    "steps": [
+      { "display": "═══ HTTP GET Request Demo ═══" },
+      { "display": "Target: httpbin.org/get (echoes request details back as JSON)" },
+      { "delay": 0.5 },
+      { "display": "Step 1: Send request line  (macro: //get)" },
+      { "send": "GET /get HTTP/1.1", "waitfor": "" },
+      { "delay": 0.3 },
+      { "display": "Step 2: Send Host header  (macro: //host)" },
+      { "send": "Host: httpbin.org", "waitfor": "" },
+      { "delay": 0.3 },
+      { "display": "Step 3: Send User-Agent  (macro: //useragent)" },
+      { "send": "User-Agent: socwrap/8.0 (HTTP protocol explorer)", "waitfor": "" },
+      { "delay": 0.3 },
+      { "display": "Step 4: Send Accept header  (macro: //accept-json)" },
+      { "send": "Accept: application/json", "waitfor": "" },
+      { "delay": 0.3 },
+      { "display": "Step 5: Send Connection: close  (macro: //close)" },
+      { "send": "Connection: close", "waitfor": "" },
+      { "delay": 0.3 },
+      { "display": "Step 6: End headers with blank line  (macro: //end)" },
+      { "send": "", "waitfor": "" },
+      { "delay": 2 },
+      { "display": "═══ Demo complete — server response should appear above ═══" },
+      { "display": "The JSON response echoes back your request headers, origin IP, and URL." }
+    ]
+  },
+  "demo-post": {
+    "type": "demo",
+    "description": "Demo: POST request with JSON body to httpbin.org/post",
+    "steps": [
+      { "display": "═══ HTTP POST Request Demo ═══" },
+      { "display": "Target: httpbin.org/post (echoes POST data back as JSON)" },
+      { "delay": 0.5 },
+      { "display": "Step 1: Send request line  (macro: //post)" },
+      { "send": "POST /post HTTP/1.1", "waitfor": "" },
+      { "delay": 0.3 },
+      { "display": "Step 2: Send Host header  (macro: //host)" },
+      { "send": "Host: httpbin.org", "waitfor": "" },
+      { "delay": 0.3 },
+      { "display": "Step 3: Content-Type for JSON  (macro: //content-json)" },
+      { "send": "Content-Type: application/json", "waitfor": "" },
+      { "delay": 0.3 },
+      { "display": "Step 4: Content-Length of body (26 bytes)" },
+      { "send": "Content-Length: 26", "waitfor": "" },
+      { "delay": 0.3 },
+      { "display": "Step 5: Accept JSON response  (macro: //accept-json)" },
+      { "send": "Accept: application/json", "waitfor": "" },
+      { "delay": 0.3 },
+      { "display": "Step 6: Connection: close  (macro: //close)" },
+      { "send": "Connection: close", "waitfor": "" },
+      { "delay": 0.3 },
+      { "display": "Step 7: End headers  (macro: //end)" },
+      { "send": "", "waitfor": "" },
+      { "delay": 0.3 },
+      { "display": "Step 8: Send JSON body" },
+      { "send": "{\"message\":\"hello world\"}", "waitfor": "" },
+      { "delay": 2 },
+      { "display": "═══ Demo complete — server echoes your JSON in the 'data' field ═══" }
+    ]
+  },
+  "demo-headers": {
+    "type": "demo",
+    "description": "Demo: Inspect request headers via httpbin.org/headers",
+    "steps": [
+      { "display": "═══ HTTP Headers Inspection Demo ═══" },
+      { "display": "Target: httpbin.org/headers (returns all received headers as JSON)" },
+      { "delay": 0.5 },
+      { "display": "Step 1: GET /headers  (macro: //get)" },
+      { "send": "GET /headers HTTP/1.1", "waitfor": "" },
+      { "delay": 0.3 },
+      { "display": "Step 2: Host header  (macro: //host)" },
+      { "send": "Host: httpbin.org", "waitfor": "" },
+      { "delay": 0.3 },
+      { "display": "Step 3: Custom Accept header  (macro: //accept-json)" },
+      { "send": "Accept: application/json", "waitfor": "" },
+      { "delay": 0.3 },
+      { "display": "Step 4: Custom User-Agent  (macro: //useragent)" },
+      { "send": "User-Agent: socwrap/8.0 (HTTP protocol explorer)", "waitfor": "" },
+      { "delay": 0.3 },
+      { "display": "Step 5: Add a custom header (X-Socwrap: testing)" },
+      { "send": "X-Socwrap: testing-custom-headers", "waitfor": "" },
+      { "delay": 0.3 },
+      { "display": "Step 6: Connection: close  (macro: //close)" },
+      { "send": "Connection: close", "waitfor": "" },
+      { "delay": 0.3 },
+      { "display": "Step 7: End headers  (macro: //end)" },
+      { "send": "", "waitfor": "" },
+      { "delay": 2 },
+      { "display": "═══ Demo complete — response shows all headers the server received ═══" },
+      { "display": "Notice X-Socwrap appears in the response — any header you send is visible." }
+    ]
+  }
+}
