@@ -470,10 +470,10 @@ server {
     listen       8443 ssl;
     server_name  _;
 
-    ssl_certificate     $CONF/netboot.crt;
-    ssl_certificate_key $CONF/netboot.key;
-    include             $CONF/ipxe-ssl.conf;
-    include             $CONF/ipxe-mime.conf;
+    ssl_certificate     /certs/netboot.crt;
+    ssl_certificate_key /certs/netboot.key;
+    include             /certs/ipxe-ssl.conf;
+    include             /certs/ipxe-mime.conf;
 
     root  /srv/netboot;
     autoindex on;

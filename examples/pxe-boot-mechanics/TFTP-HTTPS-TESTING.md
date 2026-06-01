@@ -114,29 +114,35 @@ grep -E '^kernel|^initrd' ~/netboot/boot.ipxe   # → https://10.0.2.2:8443/...
 
 ### 2.3 Serve the artifacts over TLS on :8443
 
+The cert paths in the config must be the **container-internal** `/certs/…`
+(where we mount `~/.config/lab-netboot`), *not* host paths — nginx resolves them
+inside the container, where your host `$HOME` doesn't exist.
+
 ```bash
-CONF=~/.config/lab-netboot
-cat > ~/netboot/nginx-tls.conf <<EOF
+cat > ~/netboot/nginx-tls.conf <<'EOF'
 server {
     listen 8443 ssl;
     server_name _;
-    ssl_certificate     $CONF/netboot.crt;
-    ssl_certificate_key $CONF/netboot.key;
-    include             $CONF/ipxe-ssl.conf;
+    ssl_certificate     /certs/netboot.crt;
+    ssl_certificate_key /certs/netboot.key;
+    include             /certs/ipxe-ssl.conf;
     root /srv/netboot;
     autoindex on;
-    location / { try_files \$uri =404; }
+    location / { try_files $uri =404; }
 }
 EOF
 
-docker run --rm -d --name netboot-https -p 8443:8443 \
+# Rootless podman (nginx:alpine) — no sudo; use `sudo docker run …` if you prefer:
+podman run --rm -d --name netboot-https -p 8443:8443 \
     -v ~/netboot:/srv/netboot:ro \
     -v ~/.config/lab-netboot:/certs:ro \
     -v ~/netboot/nginx-tls.conf:/etc/nginx/conf.d/tls.conf:ro \
     nginx:alpine
+
+podman exec netboot-https nginx -t   # sanity: config OK
 ```
 
-(Full detail + the rootless/podman variant: `netboot/MANUAL_TESTING.md` §10.4.)
+(Background on the cert/nginx setup: `netboot/MANUAL_TESTING.md` §10.4.)
 
 ### 2.4 Test the HTTPS fetch with the probe
 
@@ -154,17 +160,21 @@ tools/pxe-fetch.sh from-ipxe ~/netboot/boot.ipxe --tls
   ...
 ```
 
-> **Why `-k` (verification off)?** The cert's SAN lists the *IP* `127.0.0.1`,
-> not the name `localhost`, so verifying by name fails. Two honest ways to see
-> real verification succeed instead of skipping it:
+> **Why `-k` (verification off)?** The cert is **self-signed**, so curl rejects
+> it by default with **`exit 60`** — *regardless of hostname*, because nothing
+> trusts the issuer. (Matching the SAN only fixes a *name* mismatch; it does not
+> make an untrusted cert trusted.) `--tls` adds `-k` to skip the check for the
+> lab. To verify *for real* instead of skipping, trust the cert explicitly as
+> its own CA — and since the SAN covers the **IP** `127.0.0.1` (not the name
+> `localhost`), connect by that IP:
 > ```bash
-> # Verify against the IP SAN (no -k needed):
-> tools/pxe-fetch.sh probe --server https://127.0.0.1:8443
-> # Or trust the cert explicitly:
 > curl --cacert ~/.config/lab-netboot/netboot.crt -sI https://127.0.0.1:8443/kernel
+> # → HTTP/1.1 200 OK   (trusted issuer + SAN matches 127.0.0.1)
+> # vs. plain: curl -sI https://127.0.0.1:8443/kernel   → exit 60 (untrusted)
 > ```
 > Inside QEMU, iPXE connects to `10.0.2.2:8443` and verifies for real against
-> the embedded cert — that's the path §2.2 set up.
+> the cert embedded by `build-ipxe.sh --tls` (§2.2) — same principle: an explicit
+> trust anchor, not a skipped check.
 
 ### 2.5 Guided, recordable HTTPS walkthrough (socwrap)
 
@@ -282,7 +292,7 @@ Read the **curl exit code** the probe prints — it pinpoints the layer:
 |---|---|---|
 | `curl failed (exit 7)` | TCP connect | Server not up, or wrong port. Host sees nginx on `localhost:8181`, **not** `10.0.2.2`. Start the server (§1/§2.3). |
 | `curl failed (exit 28)` | timeout | For TFTP: dnsmasq not up (UDP never "refuses" — that's why the probe sets a timeout). `ss -ulnp \| grep :69`. |
-| `curl failed (exit 35/60)` | TLS | Handshake / cert verify failed. Snakeoil cert → use `--tls` (adds `-k`) or `--server https://127.0.0.1:8443` to match the IP SAN. |
+| `curl failed (exit 35/60)` | TLS | Handshake / cert verify failed. Self-signed cert → use `--tls` (adds `-k`) for the lab, or verify for real with `curl --cacert …/netboot.crt https://127.0.0.1:8443/…` (switching to the IP alone does **not** fix exit 60 — the issuer is still untrusted). |
 | HTTP `404` on a path | HTTP | That artifact name isn't served. Run `probe` to see real names; the minimal lab serves `/kernel`+`/initrd.gz`, distro labs `/vmlinuz`+`/initrd.img`. |
 | iPXE in QEMU: `Error 0x… Untrusted` | iPXE TLS | Cert not embedded / wrong file. Rebuild with `--tls --tls-cert …netboot.der` (DER, not PEM). See `netboot/MANUAL_TESTING.md` §10.6. |
 | `curl -V` shows no `tftp` | client | This curl lacks TFTP support; install a `tftp` client and use socwrap + `tftp.json` (§3.3). |
