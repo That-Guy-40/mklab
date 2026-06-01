@@ -74,7 +74,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --dir)  shift; NETBOOT_DIR="${1:?--dir requires a path}"; shift ;;
         --conf) shift; CONF_DIR="${1:?--conf requires a path}";   shift ;;
-        --tls)  TLS_MODE=1 ;;
+        --tls)  TLS_MODE=1; shift ;;
         --help|-h) usage ;;
         *) die "unknown option: $1  (try --help)" ;;
     esac
