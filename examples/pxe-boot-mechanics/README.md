@@ -47,6 +47,11 @@ is a guided, asciicast-recordable walkthrough driven by
 **host** (the client vantage point), not the artifact server — see
 [`tools/README.md`](tools/README.md) for why `localhost` ≠ `10.0.2.2` here.
 
+For a step-by-step **TFTP & HTTPS testing** walkthrough — standing up the
+server, running the probes, expected output, and a troubleshooting matrix
+keyed on `curl` exit codes — see
+[`TFTP-HTTPS-TESTING.md`](TFTP-HTTPS-TESTING.md).
+
 ## ⚠️ Security
 
 The Secure Boot demo uses a **snakeoil** (well-known, public) test key purely so

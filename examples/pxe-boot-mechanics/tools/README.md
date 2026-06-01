@@ -7,6 +7,10 @@ invisibly, and record/replay them. They're companions to the labs one level up
 [`../vm-pxe-secureboot.toml`](../vm-pxe-secureboot.toml)): those boot a VM the
 real way; these let you reproduce each step in isolation.
 
+For a step-by-step **testing walkthrough** built on these tools — set up a
+server, run the probes, expected output, troubleshooting — see
+[`../TFTP-HTTPS-TESTING.md`](../TFTP-HTTPS-TESTING.md).
+
 ```
 tools/
 ├── pxe-fetch.sh          native, dependency-light probe (curl-based)
