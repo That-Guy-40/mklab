@@ -43,7 +43,7 @@ The script's preflight prints the exact `apt-get` / `dnf` command for any tool t
 lab-chroot.sh create   [--config FILE | --backend B --distro D --suite S --arch A --target PATH ...]
 lab-chroot.sh enter    <name|path> [-- cmd args...]
 lab-chroot.sh destroy  <name|path> [--force]
-lab-chroot.sh list
+lab-chroot.sh list     [--lab NAME] [--system] [--json]
 lab-chroot.sh verify   <name|path>
 ```
 
@@ -199,6 +199,15 @@ and the rootless flag is recorded in the manifest so `enter`/`destroy` reproduce
   (debootstrap `--cache-dir`, dnf `cachedir`+`keepcache=1`) under `$LAB_CACHE_DIR`.
 - **`--json`** — machine-readable output for `list` (array of managed chroots,
   `schema_version=1`) and `inspect` (single chroot, live probes).
+- **`--system`** (for `list`) — the chroot registry lives in a per-privilege
+  state dir (`/var/lib/lab-create` under `sudo`, `~/.local/state/lab-create`
+  otherwise), so a plain `list` won't show chroots you built with `sudo`.
+  `list --system` also reads root's registry (read-only — the manifests are
+  world-readable, no `sudo` needed) and adds an `OWNER` column. Entries from
+  your own registry win on name collisions. It is **`list`-only**: `inspect`,
+  `enter`, and `destroy` resolve against your active registry (and a root-owned
+  `/var/chroots` tree needs root anyway), so run those under `sudo` to act on a
+  `sudo`-built chroot.
 - **`post = [...]`** TOML hooks (and `--post-command`) run inside the chroot after
   the build, in order.
 

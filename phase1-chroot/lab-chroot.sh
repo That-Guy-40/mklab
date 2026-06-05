@@ -277,14 +277,22 @@ EOF
     log_debug "wrote manifest $mp"
 }
 
-read_manifest_field() {
-    # read_manifest_field NAME FIELD
-    local mp; mp="$(manifest_path "$1")"
+read_manifest_field_at() {
+    # read_manifest_field_at MANIFEST_PATH FIELD
+    # Like read_manifest_field but takes an explicit manifest path, so read-only
+    # callers (e.g. `list --system`) can read manifests from a registry other
+    # than the active LAB_CHROOT_STATE_DIR without touching manifest_path().
+    local mp="$1"
     [[ -r "$mp" ]] || return 1
     awk -v k="$2" '
         /^[[:space:]]*#/ { next }
         $1 == k { sub(/^[^=]*=[[:space:]]*/, ""); gsub(/^"|"$/, ""); print; exit }
     ' "$mp"
+}
+
+read_manifest_field() {
+    # read_manifest_field NAME FIELD
+    read_manifest_field_at "$(manifest_path "$1")" "$2"
 }
 
 remove_manifest() {
@@ -1319,32 +1327,58 @@ cmd_list() {
     local filter="__ALL__"
     [[ -n "${OPT_LAB_SET:-}" ]] && filter="$OPT_LAB"
 
+    # Registries to scan, as "dir|owner" pairs.  Always the active one.  With
+    # --system, also fold in root's registry (/var/lib/lab-create) so chroots
+    # built under sudo are visible from an unprivileged `list` — read-only, no
+    # sudo needed (the manifests are world-readable).  Skipped when already root
+    # (the active registry is already root's) or when the dirs coincide.
+    local -a regs=("$LAB_CHROOT_STATE_DIR|$(id -un)")
+    # The system registry root chroots are recorded in.  Overridable via
+    # LAB_SYSTEM_STATE_DIR for tests; defaults to the standard root state dir.
+    local sys_reg="${LAB_SYSTEM_STATE_DIR:-/var/lib/lab-create}/chroots"
+    if [[ -n "${OPT_SYSTEM:-}" && ${EUID:-$(id -u)} -ne 0 \
+          && "$LAB_CHROOT_STATE_DIR" != "$sys_reg" && -d "$sys_reg" ]]; then
+        regs+=("$sys_reg|root")
+    fi
+
     # --json: a machine-readable array of the script-managed chroots (the
     # schroot/machinectl cross-checks are human-only).  schema_version matches
-    # `inspect --json`.  Honors --lab filtering.
+    # `inspect --json`.  Honors --lab filtering.  With --system each row also
+    # carries an "owner" key (the registry it came from); default output is
+    # unchanged.
     if [[ -n "${OPT_JSON:-}" ]]; then
-        local mp name row_lab
-        for mp in "$LAB_CHROOT_STATE_DIR"/*.toml; do
-            [[ -e "$mp" ]] || continue
-            name="${mp##*/}"; name="${name%.toml}"
-            row_lab="$(read_manifest_field "$name" lab)"
-            if [[ "$filter" != "__ALL__" ]]; then
-                [[ "$row_lab" == "$filter" ]] || continue
-            fi
-            jq -n \
-                --arg name       "$name" \
-                --arg lab        "$row_lab" \
-                --arg backend    "$(read_manifest_field "$name" backend)" \
-                --arg distro     "$(read_manifest_field "$name" distro)" \
-                --arg suite      "$(read_manifest_field "$name" suite)" \
-                --arg arch       "$(read_manifest_field "$name" arch)" \
-                --arg manager    "$(read_manifest_field "$name" manager)" \
-                --arg target     "$(read_manifest_field "$name" target)" \
-                --arg rootless   "$(read_manifest_field "$name" rootless)" \
-                --arg created_at "$(read_manifest_field "$name" created_at)" \
-                '{name:$name, lab:$lab, backend:$backend, distro:$distro, suite:$suite,
-                  arch:$arch, manager:$manager, target:$target,
-                  rootless: ($rootless=="true"), created_at:$created_at}'
+        local reg dir owner mp name row_lab
+        local -A seen=()
+        local with_owner=false; [[ -n "${OPT_SYSTEM:-}" ]] && with_owner=true
+        for reg in "${regs[@]}"; do
+            dir="${reg%|*}"; owner="${reg##*|}"
+            for mp in "$dir"/*.toml; do
+                [[ -e "$mp" ]] || continue
+                name="${mp##*/}"; name="${name%.toml}"
+                [[ -n "${seen[$name]:-}" ]] && continue
+                seen[$name]=1
+                row_lab="$(read_manifest_field_at "$mp" lab)"
+                if [[ "$filter" != "__ALL__" ]]; then
+                    [[ "$row_lab" == "$filter" ]] || continue
+                fi
+                jq -n \
+                    --arg name       "$name" \
+                    --arg lab        "$row_lab" \
+                    --arg backend    "$(read_manifest_field_at "$mp" backend)" \
+                    --arg distro     "$(read_manifest_field_at "$mp" distro)" \
+                    --arg suite      "$(read_manifest_field_at "$mp" suite)" \
+                    --arg arch       "$(read_manifest_field_at "$mp" arch)" \
+                    --arg manager    "$(read_manifest_field_at "$mp" manager)" \
+                    --arg target     "$(read_manifest_field_at "$mp" target)" \
+                    --arg rootless   "$(read_manifest_field_at "$mp" rootless)" \
+                    --arg created_at "$(read_manifest_field_at "$mp" created_at)" \
+                    --arg owner      "$owner" \
+                    --argjson with_owner "$with_owner" \
+                    '{name:$name, lab:$lab, backend:$backend, distro:$distro, suite:$suite,
+                      arch:$arch, manager:$manager, target:$target,
+                      rootless: ($rootless=="true"), created_at:$created_at}
+                     + (if $with_owner then {owner:$owner} else {} end)'
+            done
         done | jq -s '{schema_version:1, chroots: .}'
         return 0
     fi
@@ -1352,24 +1386,46 @@ cmd_list() {
     if [[ -n "${OPT_LAB:-}" ]]; then
         printf '── lab: %s ──\n' "$OPT_LAB"
     fi
-    printf '%-20s  %-14s  %-12s  %-10s  %-8s  %-8s  %s\n' \
-        NAME LAB BACKEND DISTRO ARCH MANAGER TARGET
-    local mp name row_lab
-    for mp in "$LAB_CHROOT_STATE_DIR"/*.toml; do
-        name="${mp##*/}"; name="${name%.toml}"
-        row_lab="$(read_manifest_field "$name" lab)"
-        if [[ "$filter" != "__ALL__" ]]; then
-            [[ "$row_lab" == "$filter" ]] || continue
-        fi
+    if [[ -n "${OPT_SYSTEM:-}" ]]; then
+        printf '%-20s  %-14s  %-12s  %-10s  %-8s  %-8s  %-8s  %s\n' \
+            NAME LAB BACKEND DISTRO ARCH MANAGER OWNER TARGET
+    else
         printf '%-20s  %-14s  %-12s  %-10s  %-8s  %-8s  %s\n' \
-            "$name" \
-            "${row_lab:-(none)}" \
-            "$(read_manifest_field "$name" backend)" \
-            "$(read_manifest_field "$name" distro)" \
-            "$(read_manifest_field "$name" arch)" \
-            "$(read_manifest_field "$name" manager)" \
-            "$(read_manifest_field "$name" target)"
-        found=$((found+1))
+            NAME LAB BACKEND DISTRO ARCH MANAGER TARGET
+    fi
+    local reg dir owner mp name row_lab
+    local -A seen=()
+    for reg in "${regs[@]}"; do
+        dir="${reg%|*}"; owner="${reg##*|}"
+        for mp in "$dir"/*.toml; do
+            [[ -e "$mp" ]] || continue
+            name="${mp##*/}"; name="${name%.toml}"
+            [[ -n "${seen[$name]:-}" ]] && continue
+            seen[$name]=1
+            row_lab="$(read_manifest_field_at "$mp" lab)"
+            if [[ "$filter" != "__ALL__" ]]; then
+                [[ "$row_lab" == "$filter" ]] || continue
+            fi
+            if [[ -n "${OPT_SYSTEM:-}" ]]; then
+                printf '%-20s  %-14s  %-12s  %-10s  %-8s  %-8s  %-8s  %s\n' \
+                    "$name" "${row_lab:-(none)}" \
+                    "$(read_manifest_field_at "$mp" backend)" \
+                    "$(read_manifest_field_at "$mp" distro)" \
+                    "$(read_manifest_field_at "$mp" arch)" \
+                    "$(read_manifest_field_at "$mp" manager)" \
+                    "$owner" \
+                    "$(read_manifest_field_at "$mp" target)"
+            else
+                printf '%-20s  %-14s  %-12s  %-10s  %-8s  %-8s  %s\n' \
+                    "$name" "${row_lab:-(none)}" \
+                    "$(read_manifest_field_at "$mp" backend)" \
+                    "$(read_manifest_field_at "$mp" distro)" \
+                    "$(read_manifest_field_at "$mp" arch)" \
+                    "$(read_manifest_field_at "$mp" manager)" \
+                    "$(read_manifest_field_at "$mp" target)"
+            fi
+            found=$((found+1))
+        done
     done
     if have schroot; then
         printf '\n[schroot -l]\n'
@@ -1379,7 +1435,11 @@ cmd_list() {
         printf '\n[machinectl list-images]\n'
         machinectl list-images --no-pager 2>/dev/null || true
     fi
-    [[ $found -eq 0 ]] && log_info "(no script-managed chroots)"
+    # Use an `if` (not `&&`) so a non-empty list doesn't leave cmd_list with the
+    # test's exit status 1 — `list` should exit 0 on success.
+    if [[ $found -eq 0 ]]; then
+        log_info "(no script-managed chroots)"
+    fi
 }
 
 # ─── init_script helpers ────────────────────────────────────────────────────
@@ -2017,7 +2077,8 @@ USAGE
   $LAB_PROG create   [--config FILE | --backend B --distro D --suite S --arch A --target PATH ...]
   $LAB_PROG enter    <name|path> [-- cmd args...]
   $LAB_PROG destroy  <name|path> [--force]
-  $LAB_PROG list     [--lab NAME]
+  $LAB_PROG list     [--lab NAME] [--system] [--json]
+                     (--system: also show sudo-built chroots from root's registry)
   $LAB_PROG verify   <name|path>
   $LAB_PROG inspect  <name|path> [--json]
   $LAB_PROG export-tarball <name|path> [--output /tmp/x.tar.gz]
@@ -2082,6 +2143,7 @@ parse_args() {
     OPT_LAB=""
     OPT_OUTPUT=""
     OPT_JSON=""
+    OPT_SYSTEM=""    # list: also surface root's registry (/var/lib/lab-create) when run unprivileged
     OPT_ROOTLESS="" OPT_KEEP_CACHE=""
     OPT_LAB_SET=""   # distinguishes "--lab omitted" (show all) from "--lab ''" (ungrouped only)
     OPT_INIT_SCRIPT="" OPT_INIT_FLAVOR="" OPT_STRIP_MODULES=""
@@ -2118,6 +2180,7 @@ parse_args() {
             --lab)           OPT_LAB="$2"; OPT_LAB_SET=1; shift 2 ;;
             --output|-o)     OPT_OUTPUT="$2"; shift 2 ;;
             --json)          OPT_JSON=1; shift ;;
+            --system)        OPT_SYSTEM=1; shift ;;
             --force|-f)      OPT_FORCE=1; shift ;;
             --rootless)      OPT_ROOTLESS=1; shift ;;
             --keep-cache)    OPT_KEEP_CACHE=1; shift ;;
