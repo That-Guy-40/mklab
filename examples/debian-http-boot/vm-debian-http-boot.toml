@@ -1,0 +1,40 @@
+# QEMU direct boot for the debian-http-boot lab (Debian 13 trixie, RAM-only).
+#
+# QEMU's -kernel/-initrd is exactly what iPXE does over HTTP: load the kernel
+# and the cpio initrd into RAM and jump to the kernel.  The only difference is
+# where the bytes come from (local path here, HTTP in the faithful path).  This
+# direct boot is the short debug loop that proves Kenneth's /init -> systemd
+# hand-off works; HTTP delivery is layered on top in README.md.
+#
+# RAM sizing: a full trixie systemd rootfs decompresses to ~0.8-1.2 GB and the
+# kernel briefly holds BOTH the compressed initrd and the unpacked rootfs in RAM
+# at once.  4 GB leaves headroom; 2 GB risks an OOM panic mid-unpack.
+#
+# Workflow (after building + exporting per debian-http-boot.toml):
+#   phase2-qemu-vm/lab-vm.sh create --config examples/debian-http-boot/vm-debian-http-boot.toml
+#   phase2-qemu-vm/lab-vm.sh start  debian-http-boot
+#
+# EXPECTED on the serial console (not yet booted end-to-end at authoring time):
+#   set -x trace from /init (the mount commands), then systemd's boot messages,
+#   then a `debian-http-boot login:` prompt.  Log in as root / lab.
+#   Press Ctrl-] to detach from the console.
+#   systemd-networkd DHCPs the first NIC automatically; check with `ip addr`.
+
+[[vm]]
+name    = "debian-http-boot"
+backend = "kernel+initrd"
+arch    = "x86_64"
+memory  = "4G"
+cpus    = 2
+# Update /home/sqs to your $HOME if different (no shell expansion in TOML),
+# and match the --kernel/--output names you exported with.
+kernel  = "/home/sqs/netboot/kernel-debian-http"
+initrd  = "/home/sqs/netboot/initrd-debian-http.gz"
+# console=ttyS0  -> systemd auto-spawns serial-getty@ttyS0 for a login prompt.
+# root=/dev/ram0 rw -> conventional "the initramfs IS the root fs" marker.
+# If systemd trips on cgroups, append: systemd.unified_cgroup_hierarchy=0
+append  = "console=ttyS0 root=/dev/ram0 rw"
+network = true
+# No cloud-init: the blog doesn't use it and this rootfs has no cloud-init agent
+# (a seed ISO would be ignored).  Credentials come from the chroot post_commands.
+cloud_init = false

@@ -1,0 +1,39 @@
+#!/bin/sh
+# Kenneth Finnegan, 2020
+# https://blog.thelifeofkenneth.com/
+# Huge thanks to Gandi.net for most of this code
+
+set -x
+set -e
+
+# Create the mount points for all of the virtual file systems which don't
+#  actually map to disks, but are views into the kernel
+[ -d /dev ] || mkdir -m 0755 /dev
+[ -d /root ] || mkdir -m 0700 /root
+[ -d /sys ] || mkdir /sys
+[ -d /proc ] || mkdir /proc
+[ -d /tmp ] || mkdir /tmp
+mkdir -p /var/lock || true
+
+# Mount the required virtual file systems
+mount -t sysfs -o nodev,noexec,nosuid sysfs /sys
+mount -t proc -o nodev,noexec,nosuid proc /proc
+
+tmpfs_size=10240k
+if ! mount -t devtmpfs -o size=$tmpfs_size,mode=0755 udev /dev; then
+	echo "W: devtmpfs not available, falling back to tmpfs for /dev"
+	mount -t tmpfs -o size=$tmpfs_size,mode=0755 udev /dev
+	[ -e /dev/console ] || mknod -m 0600 /dev/console c 5 1
+	[ -e /dev/null ] || mknod /dev/null c 1 3
+fi
+unset tmpfs_size
+
+mkdir /dev/pts
+mount -t devpts -o noexec,nosuid,gid=5,mode=0620 devpts /dev/pts || true
+mount -t tmpfs -o "nosuid,size=20%,mode=0755" tmpfs /run
+
+# Set dmesg to private if you want
+echo 1 > /proc/sys/kernel/dmesg_restrict
+
+# Replace ourselves with the actual init daemon which will handle starting every other daemon
+exec /sbin/init

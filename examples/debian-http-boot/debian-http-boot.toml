@@ -1,0 +1,86 @@
+# debian-http-boot — Kenneth Finnegan's "Booting Linux over HTTP", on Debian 13.
+# Reference: https://blog.thelifeofkenneth.com/2020/03/booting-linux-over-http.html
+#
+# A FULL Debian trixie rootfs that runs entirely from RAM: the cpio archive IS
+# the root filesystem (there is no disk), the kernel execs /init, and /init
+# hands PID 1 to systemd with `exec /sbin/init`.  See README.md for the full
+# walkthrough and the "what's actually happening" deep-dive.
+#
+# Faithful-clone notes (vs. the repo's existing chroot-netboot-full.toml, which
+# does the same thing on bookworm):
+#   * suite = "trixie"        — Debian 13, not bookworm.  Resolves via the sid
+#                               debootstrap script on Ubuntu hosts; that's fine.
+#   * NO init_script here     — Kenneth's /init is applied VERBATIM at export
+#                               time, see step 2 below.  Leaving it unset means
+#                               `create` writes no /init, so export-initrd's
+#                               --init-script wins (it only fills in a default
+#                               when no /init already exists).
+#   * NO cloud-init / locales-all — not in the blog; dropping them keeps this
+#                               close to the original and avoids the
+#                               cloud-init/ds-identify/Perl-locale pitfalls.
+#                               Kenneth's locale was plain LANG=C.UTF-8.
+#
+# Workflow:
+# 1. Build the trixie chroot (needs root, ~5-10 min):
+#      sudo phase1-chroot/lab-chroot.sh create \
+#          --config examples/debian-http-boot/debian-http-boot.toml
+#
+# 2. Export kernel + initrd, installing Kenneth's /init verbatim.  The
+#    $PWD/... absolute path is what makes the file-based init portable across
+#    checkouts (export-initrd needs an absolute --init-script path):
+#      sudo phase1-chroot/lab-chroot.sh export-initrd debian-http-boot \
+#          --init-script "$PWD/examples/debian-http-boot/init" \
+#          --kernel ~/netboot/kernel-debian-http \
+#          --output ~/netboot/initrd-debian-http.gz
+#
+# 3. Boot it the short way (QEMU -kernel/-initrd, proves the init mechanic):
+#      See vm-debian-http-boot.toml
+#
+# 4. Boot it "over HTTP" the faithful way (iPXE → nginx):
+#      See README.md §"Booting it over HTTP" — reuses the repo's netboot
+#      pipeline (netboot/build-ipxe.sh + examples/podman-netboot-server.toml).
+
+[[chroot]]
+name        = "debian-http-boot"
+hostname    = "debian-http-boot"
+backend     = "debootstrap"
+distro      = "debian"
+suite       = "trixie"
+arch        = "x86_64"
+target      = "/var/chroots/debian-http-boot"
+mirror      = "http://deb.debian.org/debian"
+# Default variant (NOT minbase): we want a real /sbin/init.  systemd-sysv is
+# pulled in explicitly below so `exec /sbin/init` resolves to systemd.
+include     = [
+    "linux-image-amd64",   # the kernel export-initrd extracts from /boot
+    "systemd",
+    "systemd-sysv",        # provides /sbin/init -> systemd
+    "udev",                # device manager (works the devtmpfs /dev that /init mounts)
+    "iproute2",
+    "iputils-ping",
+    "curl",
+    "ca-certificates",
+    "less",
+    "vim-tiny",
+]
+manager     = "none"
+# NOTE on DHCP: we deliberately do NOT pull a standalone DHCP client.
+# `isc-dhcp-client` (dhclient) still ships in trixie (4.4.3-P1-8), but ISC's dhcp
+# suite is end-of-life upstream (unmaintained since 2022) and Debian is steering
+# away from it.  Rather than add an EOL package we use systemd-networkd — already
+# shipped with systemd, zero extra packages — configured below to DHCP the first
+# ethernet NIC automatically at boot.
+
+# Throwaway lab credential — this VM runs only in RAM on an isolated network.
+# debootstrap LOCKS the root password by default, which would make the serial
+# console unloggable; set it explicitly.
+post_commands = [
+    # Kenneth's locale: plain C.UTF-8, no locales package, no Perl locale noise.
+    "printf 'LANG=C.UTF-8\\n' > /etc/default/locale",
+    # Unlock root with a known throwaway password (lab-only, never ship).
+    "echo 'root:lab' | chpasswd",
+    # Auto-DHCP the first ethernet NIC via systemd-networkd (no extra package).
+    "mkdir -p /etc/systemd/network",
+    "printf '[Match]\\nName=en* eth*\\n\\n[Network]\\nDHCP=yes\\n' > /etc/systemd/network/10-dhcp.network",
+    "systemctl enable systemd-networkd || true",
+]
