@@ -49,6 +49,10 @@ phase2-qemu-vm/lab-vm.sh start  debian-http-boot          # log in: root / lab
 Step 3 is the *short* path. The *faithful* path — actually fetching those bytes
 over HTTP with iPXE — is in [§ Booting it over HTTP](#booting-it-over-http).
 
+> For a stepped, copy-pasteable runbook that tests **each** piece in isolation
+> (with the real expected output at every stage) and then runs the whole thing,
+> see [`MANUAL_TESTING.md`](./MANUAL_TESTING.md).
+
 ---
 
 ## The blog, faithfully retold (buster → trixie)
@@ -223,12 +227,21 @@ phase2-qemu-vm/lab-vm.sh create --config examples/debian-http-boot/vm-debian-htt
 phase2-qemu-vm/lab-vm.sh start  debian-http-boot
 ```
 
-**Expected** (this lab is shipped *written-and-reasoned*, not yet booted
-end-to-end on this machine — see [Status](#status)): the `set -x` trace from
-`/init` (you'll literally watch each `mount` run), then systemd's boot output,
-then a `debian-http-boot login:` prompt. Log in **`root` / `lab`**. `Ctrl-]`
-detaches. The first NIC should already have a DHCP lease (systemd-networkd is
-enabled in the chroot) — check with `ip addr`.
+**Observed** (booted end-to-end under KVM — see [Status](#status)): the `set -x`
+trace from `/init` scrolls past first — you literally watch each `mount` run and
+then `+ exec /sbin/init` as the very last line the shell prints — then systemd's
+boot output, then a `Debian GNU/Linux 13 debian-http-boot login:` prompt in
+**~2 seconds**. Log in **`root` / `lab`**. `Ctrl-]` detaches. The first NIC
+already has a DHCP lease (systemd-networkd) — `ip addr` shows `10.0.2.15/24` on
+the slirp net. The proof it's truly RAM-resident: `findmnt /` reports
+**`rootfs rootfs`** (the initramfs tmpfs itself is `/` — no disk, no
+`switch_root`), and `systemctl is-system-running` returns `running` (no failed
+units).
+
+> If you drive it by hand and hit `[error] spec missing required field: name`,
+> you used the bare-flags form of `lab-vm.sh create` — that path needs an
+> explicit `--name`. Use `--config …/vm-debian-http-boot.toml` (above) instead;
+> the name lives in the spec.
 
 ## Booting it over HTTP
 
@@ -300,15 +313,20 @@ unpacks the same initramfs and runs the same `/init`.
 | Login prompt appears but **`root` won't log in** | A bare debootstrap **locks** root. The chroot's `post_commands` run `echo 'root:lab' | chpasswd` to fix this; if you removed it, root has no valid password. |
 | No network after boot | systemd-networkd should DHCP the first NIC automatically (enabled in the chroot). Check `systemctl status systemd-networkd` and `networkctl`. If the NIC name doesn't match `en*`/`eth*`, edit `/etc/systemd/network/10-dhcp.network`. |
 | systemd errors about cgroups on boot | Append `systemd.unified_cgroup_hierarchy=0` to `append` in the VM toml (rarely needed on trixie's modern systemd). |
+| `create` fails under `--rootless` with `systemd-sysusers: … libsystemd-shared-NNN.so: cannot open shared object file` (exit 127) | **Don't build this rootfs `--rootless`.** fakechroot is an `LD_PRELOAD` shim with no real `chroot()`; trixie's systemd helpers (run by maintainer scripts like `cron-daemon-common`'s) load a private `libsystemd-shared-*.so` via RUNPATH, which the fakechroot jail can't resolve → the second stage aborts and you get *no kernel and no `post_commands`*. A full-systemd rootfs needs **real root** (`sudo`). Rootless is fine for the busybox/minimal netboot tiers, not this one. |
 
 ## Status
 
-Written and reasoned end-to-end against the repo's tooling; **not yet booted
-end-to-end on this machine** (the build needs root and the VM boot takes ~10 min
-and a lot of RAM). The build/pack/boot commands mirror the verified
-`chroot-netboot-full.toml` + `vm-netboot-full.toml` track, so they should run as
-written — but the “Expected …” console output is a reasoned prediction, not an
-observed result. Run it and the “Expected” notes become facts (or bug reports).
+**Verified end-to-end (2026-06-04).** Built with `sudo lab-chroot.sh create`
+(real root — a `--rootless` attempt failed, see Troubleshooting), packed with
+`export-initrd --init-script …/init` (Kenneth's `/init` installed verbatim), and
+booted under QEMU/KVM with `-kernel`/`-initrd`. Observed: the `/init` `set -x`
+trace ending in `exec /sbin/init`, systemd reaching `graphical.target`, a trixie
+serial login (`root`/`lab`) in ~2 s, `findmnt /` → `rootfs rootfs` (RAM-resident
+root, no `switch_root`), a systemd-networkd DHCP lease (`10.0.2.15/24`), and
+`systemctl is-system-running` → `running`. Artifacts:
+`~/netboot/kernel-debian-http` (12 MB, Linux 6.12.86) +
+`~/netboot/initrd-debian-http.gz` (384 MB).
 
 ## ⚠️ Security
 
@@ -326,4 +344,5 @@ test cert — no real trust).
 | [`init`](./init) | Kenneth Finnegan's `/init`, **verbatim** (Gandi.net-derived). The centerpiece. |
 | [`debian-http-boot.toml`](./debian-http-boot.toml) | The trixie debootstrap chroot spec (Phase 1). |
 | [`vm-debian-http-boot.toml`](./vm-debian-http-boot.toml) | QEMU `-kernel/-initrd` direct boot (Phase 2). |
+| [`MANUAL_TESTING.md`](./MANUAL_TESTING.md) | Step-by-step runbook: test each piece + run it end-to-end, with real captured output. |
 | `README.md` | This walkthrough. |
