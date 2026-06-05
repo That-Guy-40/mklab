@@ -204,15 +204,25 @@ LANG=C.UTF-8
 ### 5a. The documented way — `lab-vm.sh` (interactive)
 
 ```bash
-phase2-qemu-vm/lab-vm.sh create --config examples/debian-http-boot/vm-debian-http-boot.toml
-phase2-qemu-vm/lab-vm.sh start   debian-http-boot
-phase2-qemu-vm/lab-vm.sh console  debian-http-boot     # attach; Ctrl-] to detach
+phase2-qemu-vm/lab-vm.sh create  --config examples/debian-http-boot/vm-debian-http-boot.toml
+phase2-qemu-vm/lab-vm.sh start    debian-http-boot   # create only provisions — start boots it
+phase2-qemu-vm/lab-vm.sh console  debian-http-boot   # attach; Ctrl-] to detach
 ```
 
-> **Gotcha:** the *bare-flags* form `lab-vm.sh create --backend kernel+initrd
-> --kernel … --initrd …` errors with `[error] spec missing required field:
-> name` — that path needs an explicit `--name`. Use `--config` (above); the name
-> lives in the spec.
+> **Gotcha 1 — `create` ≠ `start`.** `create` only writes the VM record (it says
+> `not started`); nothing is running until `start`. The bare-flags form
+> `lab-vm.sh create --backend kernel+initrd --kernel … --initrd …` also errors
+> with `[error] spec missing required field: name` — that path needs an explicit
+> `--name`. Use `--config` (above); the name lives in the spec.
+>
+> **Gotcha 2 — this lab is console-only; there is no SSH.** On `create`,
+> `lab-vm.sh` prints a generic `ssh access after boot: … lab@127.0.0.1 (default
+> password 'lab')` hint. **Ignore it here.** The rootfs is deliberately lean (no
+> `openssh-server`) and has no `lab` user — only `root`'s password is set, so
+> `ssh -p 2222 lab@127.0.0.1` is *refused* (nothing listens on guest `:22`, and
+> the hostfwd only exists while the VM runs). Reach it with `lab-vm.sh console`
+> and log in `root` / `lab`. (SSH is the heavier `../chroot-netboot-full.toml`
+> track, which ships `openssh-server` + a `lab` user.)
 
 On the console you'll watch the `/init` `set -x` trace run, then systemd boot,
 then a login prompt. Log in `root` / `lab`. `Ctrl-]` detaches without killing

@@ -223,9 +223,19 @@ You now have a kernel and a `~1 GB`-in-RAM initrd that contain a complete Debian
 ## Boot it directly (the short path)
 
 ```bash
-phase2-qemu-vm/lab-vm.sh create --config examples/debian-http-boot/vm-debian-http-boot.toml
-phase2-qemu-vm/lab-vm.sh start  debian-http-boot
+phase2-qemu-vm/lab-vm.sh create  --config examples/debian-http-boot/vm-debian-http-boot.toml
+phase2-qemu-vm/lab-vm.sh start    debian-http-boot   # create only provisions — start actually boots it
+phase2-qemu-vm/lab-vm.sh console  debian-http-boot   # attach to the serial console; Ctrl-] detaches
 ```
+
+> **This lab is console-only — there is no SSH.** On `create`, `lab-vm.sh` prints
+> a generic `ssh access after boot: … lab@127.0.0.1 (default password 'lab')`
+> hint. **Ignore it here:** the rootfs is deliberately lean (no `openssh-server`)
+> and has no `lab` user — only `root`'s password is set. `ssh -p 2222 …` will be
+> *refused* (nothing listens on guest `:22`, and the forward only exists while the
+> VM runs). Get in with `lab-vm.sh console` and log in **`root` / `lab`**. (If you
+> *want* SSH, that's the heavier [`../chroot-netboot-full.toml`](../chroot-netboot-full.toml)
+> track — it ships `openssh-server` + a `lab` user.)
 
 **Observed** (booted end-to-end under KVM — see [Status](#status)): the `set -x`
 trace from `/init` scrolls past first — you literally watch each `mount` run and
