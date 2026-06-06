@@ -218,9 +218,11 @@ reboot: System halted
   floppy's FAT mounted.
 - `/dev/fd0 on /home` — the bind-mount; `cat /home/hello.txt` reads real data off
   the physical medium.
-- `reboot: System halted` — `halt` worked. (Under `-nographic`, QEMU stays up
-  after a *halt*; quit with `Ctrl-A X`. Only `poweroff` — not in this applet set
-  — makes QEMU exit on its own.)
+- `reboot: System halted` — `halt` worked. **Shutting down:** this kernel has no
+  ACPI/APM, so `halt` *and* `poweroff` only halt the CPU — QEMU keeps running
+  (`poweroff` prints `Power off not available: halting system`). To exit QEMU,
+  type **`reboot`** (the guest reset + `-no-reboot` makes QEMU exit) or press
+  **`Ctrl-A` then `X`**. To make `poweroff` actually power the machine off, see §9.
 
 Write something to `/home`, halt, and re-`test` — it persists, because `/home` is
 the floppy.
@@ -260,5 +262,6 @@ the toolchain or recompiling the kernel. **Pass:** `pack` re-emits the
 | `make bzImage` errors on `<openssl/*.h>`/`<libelf.h>` | Missing optional kernel build deps. | `sudo apt-get install libssl-dev libelf-dev`. |
 | 32-bit kernel won't compile on amd64 | You dropped the cross toolchain and used host gcc. | Keep `CROSS_COMPILE` (the script's default), or `apt-get install gcc-multilib`. |
 | Boots but blank screen on the **graphical** path | VGA console missing — only happens if you edited the fragment. | Ensure `CONFIG_VT`/`VT_CONSOLE`/`VGA_CONSOLE=y` (§2). |
-| `poweroff: not found` / `uname: not found` at the shell | Not in the curated applet set. | Use `/sbin/halt -f`; add `POWEROFF REBOOT UNAME …` to the applet loop + rebuild. |
+| `poweroff: not found` / `uname: not found` at the shell | Not in the curated applet set (they're in `BUSYBOX_FULL`). | Use `/sbin/halt -f`; or add `POWEROFF REBOOT UNAME …` to the applet loop + rebuild. |
+| `poweroff` runs but QEMU keeps running (`Power off not available: halting system`) | The kernel has **no ACPI/APM**, so `reboot(RB_POWER_OFF)` has no handler and falls back to halting. | To *exit QEMU*: `reboot` (resets → `-no-reboot` exits) or `Ctrl-A X`. For a real power-off, add **APM** (`CONFIG_PM`+`CONFIG_SUSPEND`+`CONFIG_APM`+`CONFIG_APM_DO_ENABLE`; small, 486-era) or **`CONFIG_ACPI`** (bigger, QEMU-native) to `kernel.config-fragment` and rebuild. |
 | `FAT-fs (fd0): Volume was not properly unmounted` | A prior run was killed mid-mount (e.g. timeout). | Cosmetic; harmless. |

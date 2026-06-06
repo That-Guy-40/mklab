@@ -209,5 +209,28 @@ which already has them. See [`README.md`](README.md) and the variant's
 
 **Validate the baked version** (after the `QOL=1` rebuild boots): no
 "job control turned off" message, the prompt is `root@floppinux:/home#`,
-`whoami` → `root`, `poweroff` works without a full path, and typing `exit`
-re-spawns the shell instead of panicking.
+`whoami` → `root`, and typing `exit` re-spawns the shell instead of panicking.
+
+## Shutting down — and why `poweroff` only halts
+
+`poweroff` is on `PATH` (and runs), but on this kernel it **doesn't power the
+machine off** — you'll see `Power off not available: halting system` and QEMU
+keeps running. That's not a BusyBox problem: the `tinyconfig` kernel has **no
+ACPI and no APM**, so `reboot(RB_POWER_OFF)` finds no handler and falls back to
+halting the CPU. `halt` does the same.
+
+**To leave QEMU cleanly today (no rebuild):**
+```sh
+reboot           # in `test`/-no-reboot mode the guest reset makes QEMU exit
+```
+…or press **`Ctrl-A` then `X`** on the serial console, or close the graphical
+window. (`reboot` works because the kernel *can* reset via the keyboard
+controller; QEMU's `-no-reboot` turns that reset into a clean exit.)
+
+**To make `poweroff` actually power off** (rebuild — adds to the kernel):
+- **APM** (small, 486-era): `CONFIG_PM=y`, `CONFIG_SUSPEND=y`, `CONFIG_APM=y`,
+  `CONFIG_APM_DO_ENABLE=y` in [`kernel.config-fragment`](kernel.config-fragment).
+  APM registers `pm_power_off`, and QEMU's SeaBIOS APM turns it into a real
+  power-off. Leave `CONFIG_APM_CPU_IDLE` **off** (its idle BIOS calls can hang).
+- **ACPI** (bigger, rock-solid): `CONFIG_ACPI=y` — QEMU's native power-off, but
+  it adds a few hundred KB to `bzImage` (fine on the 2.88 MB floppy, not 1.44).

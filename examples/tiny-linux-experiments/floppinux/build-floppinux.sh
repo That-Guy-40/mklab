@@ -350,6 +350,8 @@ EOF
 
  Welcome to FLOPPINUX (QoL build).  `busybox --list` shows every applet.
  Job control is on; `exit` respawns the shell; history persists to /home.
+ To leave QEMU: `reboot`  (or press Ctrl-A then X).  Note: no ACPI/APM, so
+ `poweroff` only halts the CPU — see QUALITY_OF_LIFE.md to add real power-off.
 
 EOF
 }

@@ -41,7 +41,7 @@ cd examples/tiny-linux-experiments/floppinux
 
 # 3. boot it
 ./build-floppinux.sh boot      # faithful: graphical VGA, -cpu 486 -m 20M
-./build-floppinux.sh test      # headless: serial console, auto-poweroff (no display needed)
+./build-floppinux.sh test      # headless: serial console (no display); exit with `reboot` or Ctrl-A X
 ```
 
 Artifacts land in `~/.cache/lab-create/floppinux/` (override with
@@ -91,8 +91,16 @@ with `init=/sbin/init`. This is exactly the "shell as PID 1" design discussed in
 this repo's [`../alpine-custom-init.TXT`](../alpine-custom-init.TXT), with the
 same gotcha: **`rc` ends with `/bin/sh` (not `exec`), so when you type `exit`,
 `rc` falls off its last line, PID 1 dies, and the kernel panics** (`Attempted to
-kill init!`). That's not a bug — it's what "PID 1 is a script" means. (To
-poweroff cleanly instead, the floppy carries BusyBox `halt`/`poweroff`.)
+kill init!`). That's not a bug — it's what "PID 1 is a script" means. (`QOL=1`
+hands PID 1 to BusyBox `init`, which respawns the shell so `exit` is harmless.)
+
+> **Shutting down / leaving QEMU.** This kernel has **no ACPI and no APM**, so
+> `halt`/`poweroff` only *halt the CPU* — QEMU keeps running (you'll see `Power
+> off not available: halting system`). To exit QEMU: type **`reboot`** (in
+> `test`/`-no-reboot` mode the guest reset makes QEMU exit cleanly), press
+> **`Ctrl-A` then `X`** on the serial console, or close the graphical window. A
+> real `poweroff` needs APM or ACPI compiled into the kernel — see
+> [`MANUAL_TESTING.md`](MANUAL_TESTING.md) §9.
 
 **2. `mdev -s` is the no-udev `/dev` populator.** The cpio ships only
 `/dev/console` (so PID 1 has stdio) and `/dev/null`. Everything else — crucially
