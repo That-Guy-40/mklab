@@ -44,6 +44,8 @@
 #                  instead of the ~20-applet curated set. ~1 MB binary → needs
 #                  FLOPPY_KB=2880 (won't fit 1.44 MB). Network applets are inert
 #                  (the kernel has no net stack); file/text/archive utils work.
+#                  Also merges kernel-apm.config-fragment so `poweroff` really
+#                  powers off (APM); the curated build stays APM-free (faithful 20M).
 #                FLOPPINUX_MEM — QEMU RAM for boot/test (default 20M; auto-256M
 #                  when the initramfs is large, e.g. BUSYBOX_FULL).
 #                QOL=1 — bake in a quality-of-life pack: BusyBox-init login shell
@@ -66,6 +68,7 @@ TOOLCHAIN_DIR_NAME="i486-linux-musl-cross"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly SCRIPT_DIR
 FRAGMENT="$SCRIPT_DIR/kernel.config-fragment"
+APM_FRAGMENT="$SCRIPT_DIR/kernel-apm.config-fragment"   # merged only for BUSYBOX_FULL
 
 OUT="${FLOPPINUX_BUILD_DIR:-$HOME/.cache/lab-create/floppinux}"
 TOOLCHAIN="$OUT/$TOOLCHAIN_DIR_NAME"
@@ -129,7 +132,15 @@ build_kernel() {
 
     log "configuring kernel (tinyconfig + fragment + olddefconfig)"
     "${mk[@]}" tinyconfig >/dev/null
-    "$KSRC/scripts/kconfig/merge_config.sh" -m -O "$KSRC" "$KSRC/.config" "$FRAGMENT" >/dev/null
+    local frags=("$FRAGMENT")
+    # APM (real `poweroff`) only for BUSYBOX_FULL — that build has the poweroff
+    # applet and already runs at higher RAM. Out of the default kernel, the
+    # curated build stays faithful (boots in ~20 MB). See kernel-apm.config-fragment.
+    if [[ "${BUSYBOX_FULL:-0}" == 1 ]]; then
+        frags+=("$APM_FRAGMENT")
+        log "BUSYBOX_FULL: + APM power-off (kernel-apm.config-fragment)"
+    fi
+    "$KSRC/scripts/kconfig/merge_config.sh" -m -O "$KSRC" "$KSRC/.config" "${frags[@]}" >/dev/null
     "${mk[@]}" olddefconfig >/dev/null
 
     verify_kconfig "$KSRC/.config"
@@ -150,8 +161,9 @@ verify_kconfig() {
         CONFIG_BINFMT_ELF CONFIG_BINFMT_SCRIPT
         CONFIG_BLOCK CONFIG_BLK_DEV_FD CONFIG_BLK_DEV_RAM
         CONFIG_FAT_FS CONFIG_MSDOS_FS CONFIG_NLS_CODEPAGE_437
-        CONFIG_APM   # real power-off (poweroff); needs SUSPEND→PM_SLEEP, see fragment
     )
+    # APM (real `poweroff`) is merged only for BUSYBOX_FULL — assert it there.
+    [[ "${BUSYBOX_FULL:-0}" == 1 ]] && want+=(CONFIG_APM)
     for sym in "${want[@]}"; do
         grep -q "^${sym}=y" "$cfg" || miss+=("$sym")
     done
@@ -351,7 +363,7 @@ EOF
 
  Welcome to FLOPPINUX (QoL build).  `busybox --list` shows every applet.
  Job control is on; `exit` respawns the shell; history persists to /home.
- To leave QEMU: `poweroff` (real power-off via APM), `reboot`, or Ctrl-A then X.
+ To leave QEMU: `reboot`, Ctrl-A then X, or `poweroff` (full build: real APM power-off).
 
 EOF
 }

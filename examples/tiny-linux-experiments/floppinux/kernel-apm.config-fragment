@@ -1,0 +1,23 @@
+# FLOPPINUX kernel fragment — APM power-off (BUSYBOX_FULL only)
+# -----------------------------------------------------------------------------
+# Merged on top of kernel.config-fragment by build-floppinux.sh ONLY when
+# BUSYBOX_FULL=1 — i.e. the build that ships the `poweroff` applet.
+#
+# Why it's separate: without ACPI or APM the kernel has no way to cut power, so
+# `poweroff` (reboot(RB_POWER_OFF)) finds no handler and falls back to halting
+# the CPU ("Power off not available: halting system") — QEMU keeps running.
+# APM is the small, 486-era fix: it registers pm_power_off, and QEMU's SeaBIOS
+# APM turns that into a real power-off (QEMU exits).
+#
+# It's NOT in the default fragment because (a) the curated build has no
+# `poweroff` applet to use it, and (b) the bigger kernel raises the boot RAM
+# floor above upstream's 20 MB (the curated build then can't boot in 20 MB).
+# The full build already runs at 256 MB (its larger initramfs), so it absorbs
+# the cost for free.  `reboot` and Ctrl-A X work on every build regardless.
+#
+# APM `depends on X86_32 && PM_SLEEP`; CONFIG_SUSPEND=y satisfies PM_SLEEP
+# (which auto-selects PM).  We deliberately do NOT enable CONFIG_APM_CPU_IDLE —
+# its idle BIOS calls can hang under emulation.
+CONFIG_SUSPEND=y
+CONFIG_APM=y
+CONFIG_APM_DO_ENABLE=y
