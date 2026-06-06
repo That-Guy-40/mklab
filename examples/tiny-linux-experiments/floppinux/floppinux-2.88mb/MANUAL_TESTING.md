@@ -110,11 +110,14 @@ printing `applet not found`.
 
 > **What's actually verified vs. expected.** The full config is verified
 > toolchain-free: `defconfig` resolves to **401 applet symlinks** (402 minus the
-> dropped `tc`), static, with all boot-critical applets present. The **compile
-> and boot are yours to run** — the `~1.0M`/boot lines above are projections from
-> that config, since the musl cross-compile is the one agent-gated step. If an
-> applet beyond `tc` fails to build against musl, set `CONFIG_<X>=n` and rebuild.
-> **Networking applets (`wget`/`ping`/…) are inert** — the kernel has no net stack.
+> dropped `tc`; `nslookup` is kept), static, with all boot-critical applets
+> present, and the two known static-musl breakers handled — `tc` (won't compile)
+> and `CONFIG_FEATURE_NSLOOKUP_BIG` (its `ns_*` calls aren't in musl, so it's
+> forced to the small `getaddrinfo` form). The **compile and boot are yours to
+> run** — the `~1.0M`/boot lines above are projections, since the musl
+> cross-compile is the one agent-gated step. If a *further* applet fails against
+> musl, set `CONFIG_<X>=n` and rebuild. **Networking applets (`wget`/`ping`/…)
+> are inert** — the kernel has no net stack.
 
 ## §6 — Switch back to 1.44 MB (and the curated BusyBox)
 
@@ -137,4 +140,4 @@ file "$O"/floppinux.img | grep -o 'sectors 2880'
 | Want it on real hardware | 2.88 MB ED drives/media are rare. | For physical floppies prefer 1.44 MB; 2.88 MB shines in QEMU. |
 | `<cmd>: applet not found` for a util you expected | That applet wasn't compiled in. | Use `BUSYBOX_FULL=1 ./build-2.88.sh build` (§5), or add it to the curated loop in `../build-floppinux.sh`. |
 | `BUSYBOX_FULL=1` floppy: `mcopy` "No space left" | The ~1 MB BusyBox + kernel overflowed a smaller floppy. | Make sure you're on 2.88 MB (`./build-2.88.sh`, not the parent default 1.44). |
-| `BUSYBOX_FULL=1` build: a `.c` fails to compile against musl | An applet beyond `tc` is musl-incompatible. | `CONFIG_<applet>=n` in the BusyBox `.config` (or the script's full branch) and rebuild. |
+| `BUSYBOX_FULL=1` build ends in `... busybox_unstripped Error 1` after only *warnings* | A **link** failure — an applet references a symbol musl lacks. The two known ones (`tc` compile, `nslookup` `ns_*` link) are already handled in the script. | Find it: `cd "$O"/busybox-1_36_1 && make 2>&1 \| grep -i 'undefined reference'`; map the symbol to its applet and `CONFIG_<applet>=n` in the script's full branch, then rebuild. |
