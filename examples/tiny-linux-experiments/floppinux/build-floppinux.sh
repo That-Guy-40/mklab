@@ -221,7 +221,16 @@ build_busybox() {
     grep -q '^CONFIG_STATIC=y' "$cfg" || die "BusyBox CONFIG_STATIC didn't stick"
 
     log "compiling BusyBox (-j$JOBS)"
-    make -C "$BBSRC" -j"$JOBS" >/dev/null
+    # Capture to a log: BusyBox links via scripts/trylink, which prints the
+    # "undefined reference" diagnostics to STDOUT — so a bare >/dev/null hides
+    # exactly the errors you need when a defconfig applet hits a musl gap.
+    if ! make -C "$BBSRC" -j"$JOBS" >"$OUT/busybox-build.log" 2>&1; then
+        warn "BusyBox build failed. Undefined references (musl gaps), if any:"
+        grep -ioE 'undefined reference to .*' "$OUT/busybox-build.log" | sort -u | sed 's/^/    /' >&2 || true
+        die "BusyBox compile/link failed — full log: $OUT/busybox-build.log
+Map an undefined symbol to its applet (grep the BusyBox source) and disable that
+applet with CONFIG_<APPLET>=n in this script's BUSYBOX_FULL branch, then rebuild."
+    fi
     make -C "$BBSRC" install >/dev/null     # populates $BBSRC/_install
     # Must be self-contained for the initramfs (no libs to load there). A musl
     # toolchain with -static yields a "static-pie linked" binary — still has no
