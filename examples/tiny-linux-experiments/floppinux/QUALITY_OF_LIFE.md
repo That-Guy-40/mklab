@@ -223,11 +223,20 @@ so the bare commands work:
 
 `halt` only halts the CPU (QEMU stays up).
 
-**Why the aliases:** the *bare* `poweroff`/`reboot` ask init (SIGUSR2/SIGTERM) for
-a graceful shutdown, which doesn't fire in this minimal init — they just no-op.
-The `-f` forms call `reboot(2)` directly (and still `sync` first), so they
-actually work. On a non-QoL build there's no alias — use `poweroff -f` / `reboot
--f` explicitly.
+**The alias workaround — apply it live (any build):**
+```sh
+alias poweroff='poweroff -f' reboot='reboot -f'
+```
+**Validate:** `poweroff` now powers the machine off (before the alias it was a
+*no-op* — the prompt just returned). `poweroff -d 10` works too (it becomes
+`poweroff -f -d 10`). To keep it without `QOL=1`, add that `alias` line to your
+`/home/profile` (§5) and source it at boot; `QOL=1` bakes the same two aliases
+into `/etc/profile`.
+
+**Why the aliases are needed:** the *bare* `poweroff`/`reboot` (BusyBox applets)
+do `kill(1, SIGUSR2/SIGTERM)` to ask **BusyBox `init`** for a graceful shutdown,
+which doesn't fire in this minimal init — so they no-op. The `-f` forms skip init
+and call `reboot(2)` directly (still `sync`ing first), so they actually work.
 
 **How `poweroff` powers off:** [`kernel-apm.config-fragment`](kernel-apm.config-fragment)
 (merged only for `BUSYBOX_FULL`) adds APM — `CONFIG_SUSPEND=y` (→ `PM_SLEEP` →
