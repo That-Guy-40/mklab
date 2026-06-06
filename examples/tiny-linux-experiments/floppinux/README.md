@@ -22,6 +22,8 @@ script, same `qemu-system-i386 -fda` payload.
 |---|---|
 | [`build-floppinux.sh`](build-floppinux.sh) | The whole pipeline. Subcommands: `build` (fetch toolchain → kernel → BusyBox → pack initramfs → write floppy), `pack` (re-pack the rootfs + floppy from an already-compiled tree — resume after `build`, no toolchain), `boot` (graphical), `test` (headless serial), `clean`. |
 | [`kernel.config-fragment`](kernel.config-fragment) | The non-interactive equivalent of upstream's `menuconfig` walk — merged onto `tinyconfig`. Every symbol is commented with the menu bullet it replaces. |
+| [`ARTIFACTS.md`](ARTIFACTS.md) | Guided tour of every build artifact and **how they connect** — the data-flow graph, producer→consumer table, and read-only commands to peek inside each piece. Start here to *understand* the build. |
+| [`MANUAL_TESTING.md`](MANUAL_TESTING.md) | Pass/fail runbook: test each stage and the end-to-end boot, with the **real expected output** captured from a verified run. Start here to *verify* it works. |
 | [`upstream-tutorial/`](upstream-tutorial/) | An exact, unmodified offline archive of Krzysztof Jankowski's original tutorial (HTML + CSS), with provenance/attribution and sha256s. Copyright remains the author's. |
 
 ## Quick start (Debian / Ubuntu)
