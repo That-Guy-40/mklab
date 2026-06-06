@@ -211,26 +211,25 @@ which already has them. See [`README.md`](README.md) and the variant's
 "job control turned off" message, the prompt is `root@floppinux:/home#`,
 `whoami` → `root`, and typing `exit` re-spawns the shell instead of panicking.
 
-## Shutting down — and why `poweroff` only halts
+## Shutting down / leaving QEMU
 
-`poweroff` is on `PATH` (and runs), but on this kernel it **doesn't power the
-machine off** — you'll see `Power off not available: halting system` and QEMU
-keeps running. That's not a BusyBox problem: the `tinyconfig` kernel has **no
-ACPI and no APM**, so `reboot(RB_POWER_OFF)` finds no handler and falls back to
-halting the CPU. `halt` does the same.
+Three ways, all valid — pick whichever:
 
-**To leave QEMU cleanly today (no rebuild):**
-```sh
-reboot           # in `test`/-no-reboot mode the guest reset makes QEMU exit
-```
-…or press **`Ctrl-A` then `X`** on the serial console, or close the graphical
-window. (`reboot` works because the kernel *can* reset via the keyboard
-controller; QEMU's `-no-reboot` turns that reset into a clean exit.)
+- **`poweroff`** — powers the machine off; QEMU exits. The kernel compiles in
+  **APM** (the 486-era power-management BIOS path), so `reboot(RB_POWER_OFF)` now
+  has a handler and QEMU's SeaBIOS turns it into a real power-off. (The
+  `poweroff` applet ships in the **full** build; the curated set has only `halt`.)
+- **`reboot`** — in `test`/`-no-reboot` mode the guest reset makes QEMU exit
+  (the kernel resets via the keyboard controller; `-no-reboot` turns that into a
+  clean exit).
+- **`Ctrl-A` then `X`** on the serial console, or close the graphical window.
 
-**To make `poweroff` actually power off** (rebuild — adds to the kernel):
-- **APM** (small, 486-era): `CONFIG_PM=y`, `CONFIG_SUSPEND=y`, `CONFIG_APM=y`,
-  `CONFIG_APM_DO_ENABLE=y` in [`kernel.config-fragment`](kernel.config-fragment).
-  APM registers `pm_power_off`, and QEMU's SeaBIOS APM turns it into a real
-  power-off. Leave `CONFIG_APM_CPU_IDLE` **off** (its idle BIOS calls can hang).
-- **ACPI** (bigger, rock-solid): `CONFIG_ACPI=y` — QEMU's native power-off, but
-  it adds a few hundred KB to `bzImage` (fine on the 2.88 MB floppy, not 1.44).
+`halt` still only halts the CPU (QEMU stays up).
+
+**How `poweroff` works here:** [`kernel.config-fragment`](kernel.config-fragment)
+sets `CONFIG_SUSPEND=y` (→ `PM_SLEEP` → `PM`), `CONFIG_APM=y`, and
+`CONFIG_APM_DO_ENABLE=y` (and deliberately leaves `CONFIG_APM_CPU_IDLE` **off** —
+its idle BIOS calls can hang under emulation). If `poweroff` ever only halts
+(`Power off not available: halting system`), APM didn't engage — fall back to
+`reboot`/`Ctrl-A X`, try the kernel cmdline `apm=power-off`, or swap APM for
+`CONFIG_ACPI=y` (bigger, QEMU-native).

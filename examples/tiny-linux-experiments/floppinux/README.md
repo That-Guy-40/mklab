@@ -94,13 +94,16 @@ same gotcha: **`rc` ends with `/bin/sh` (not `exec`), so when you type `exit`,
 kill init!`). That's not a bug — it's what "PID 1 is a script" means. (`QOL=1`
 hands PID 1 to BusyBox `init`, which respawns the shell so `exit` is harmless.)
 
-> **Shutting down / leaving QEMU.** This kernel has **no ACPI and no APM**, so
-> `halt`/`poweroff` only *halt the CPU* — QEMU keeps running (you'll see `Power
-> off not available: halting system`). To exit QEMU: type **`reboot`** (in
-> `test`/`-no-reboot` mode the guest reset makes QEMU exit cleanly), press
-> **`Ctrl-A` then `X`** on the serial console, or close the graphical window. A
-> real `poweroff` needs APM or ACPI compiled into the kernel — see
-> [`MANUAL_TESTING.md`](MANUAL_TESTING.md) §9.
+> **Shutting down / leaving QEMU.** Three ways, all valid:
+> - **`poweroff`** — powers the machine off (QEMU exits). Works because the
+>   kernel compiles in **APM** (`CONFIG_APM`, the 486-era power-off path); QEMU's
+>   SeaBIOS turns it into a real power-off. The `poweroff` applet ships in the
+>   **full** build (`BUSYBOX_FULL`); the curated build has only `halt`.
+> - **`reboot`** — in `test`/`-no-reboot` mode the guest reset makes QEMU exit.
+> - **`Ctrl-A` then `X`** on the serial console (or close the graphical window).
+>
+> `halt` still just halts the CPU (QEMU stays). Note APM is the *486-era*
+> mechanism; if `poweroff` ever only halts, see [`MANUAL_TESTING.md`](MANUAL_TESTING.md) §9.
 
 **2. `mdev -s` is the no-udev `/dev` populator.** The cpio ships only
 `/dev/console` (so PID 1 has stdio) and `/dev/null`. Everything else — crucially

@@ -150,6 +150,7 @@ verify_kconfig() {
         CONFIG_BINFMT_ELF CONFIG_BINFMT_SCRIPT
         CONFIG_BLOCK CONFIG_BLK_DEV_FD CONFIG_BLK_DEV_RAM
         CONFIG_FAT_FS CONFIG_MSDOS_FS CONFIG_NLS_CODEPAGE_437
+        CONFIG_APM   # real power-off (poweroff); needs SUSPEND→PM_SLEEP, see fragment
     )
     for sym in "${want[@]}"; do
         grep -q "^${sym}=y" "$cfg" || miss+=("$sym")
@@ -350,8 +351,7 @@ EOF
 
  Welcome to FLOPPINUX (QoL build).  `busybox --list` shows every applet.
  Job control is on; `exit` respawns the shell; history persists to /home.
- To leave QEMU: `reboot`  (or press Ctrl-A then X).  Note: no ACPI/APM, so
- `poweroff` only halts the CPU — see QUALITY_OF_LIFE.md to add real power-off.
+ To leave QEMU: `poweroff` (real power-off via APM), `reboot`, or Ctrl-A then X.
 
 EOF
 }

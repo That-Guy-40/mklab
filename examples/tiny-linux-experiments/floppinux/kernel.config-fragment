@@ -68,3 +68,17 @@ CONFIG_NLS_CODEPAGE_437=y
 
 # --- Library routines → XZ decompression -------------------------------------
 CONFIG_XZ_DEC=y
+
+# --- Power-off via APM (Advanced Power Management) ---------------------------
+# Without ACPI or APM, `poweroff` has no way to cut power: reboot(RB_POWER_OFF)
+# finds no handler and the kernel falls back to halting the CPU ("Power off not
+# available: halting system"), so QEMU keeps running. APM is the small, 486-era
+# fix — it registers pm_power_off, and QEMU's SeaBIOS APM turns that into a real
+# power-off (QEMU exits). APM `depends on X86_32 && PM_SLEEP`; CONFIG_SUSPEND=y
+# satisfies PM_SLEEP (which auto-selects PM). We deliberately do NOT enable
+# CONFIG_APM_CPU_IDLE — its idle BIOS calls can hang under emulation.
+# (`reboot` and Ctrl-A X still work regardless; this just makes `poweroff` real
+# for the BUSYBOX_FULL build, which carries the `poweroff` applet.)
+CONFIG_SUSPEND=y
+CONFIG_APM=y
+CONFIG_APM_DO_ENABLE=y
