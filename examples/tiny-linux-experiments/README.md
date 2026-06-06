@@ -60,6 +60,7 @@ initramfs on first `create`.
 
 | Dir | What it is |
 |---|---|
+| [`floppinux/`](floppinux/) | Krzysztof Jankowski's **FLOPPINUX** (a whole Linux on a 1.44 MB floppy) operationalized for Debian — a standalone, rootless `build-floppinux.sh` that cross-builds kernel 6.14.11 + BusyBox 1.36.1 and writes a `syslinux` floppy you boot with `qemu-system-i386 -fda`. The "physical floppy + FAT + syslinux" cousin of the in-RAM tracks. See its [README](floppinux/README.md). |
 | [`micro_linux_dhcp_lease/`](micro_linux_dhcp_lease/) | The networking demo: the from-source distro pulls a **DHCP lease** over a virtio NIC (one `micro-linux-<arch>-dhcp.toml` per arch). See its [README](micro_linux_dhcp_lease/README.md). |
 | [`reference/`](reference/) | Standalone build scripts that predate `lab-vm.sh`'s auto-build — read them to see the microVM initramfs built without the framework. |
 

@@ -1,0 +1,69 @@
+# FLOPPINUX kernel config fragment
+# -----------------------------------------------------------------------------
+# Merged onto a `make ARCH=x86 tinyconfig` baseline by build-floppinux.sh:
+#
+#     make ARCH=x86 tinyconfig
+#     scripts/kconfig/merge_config.sh -m .config kernel.config-fragment
+#     make ARCH=x86 olddefconfig
+#
+# This is the non-interactive equivalent of the upstream HOWTO's `menuconfig`
+# walk.  Every symbol here maps to one of Krzysztof Jankowski's menuconfig
+# bullets; the comments say which.  build-floppinux.sh re-greps the resulting
+# .config for the load-bearing symbols and ABORTS if any failed to stick, so a
+# renamed/cross-version symbol fails loudly instead of producing a kernel that
+# builds clean and boots to a blank screen.
+#
+# Target: 32-bit i486.  tinyconfig already gives a 32-bit (CONFIG_64BIT=n)
+# build; we pin it explicitly so a stray default can't flip us to x86_64.
+# CONFIG_64BIT is not set
+
+# --- Processor type → 486DX family -------------------------------------------
+# tinyconfig leaves the CPU choice at its minimum; we pin 486DX so the image
+# runs under `qemu-system-i386 -cpu 486`.  This is a Kconfig `choice` block —
+# if v6.14 has renamed the symbol (it has churned: M486 / M486SX), the build's
+# post-config grep will catch it and print arch/x86/Kconfig.cpu for you.
+CONFIG_M486=y
+
+# --- General Setup → printk + initramfs --------------------------------------
+CONFIG_PRINTK=y
+CONFIG_BLK_DEV_INITRD=y
+# "Initial RAM filesystem → Support XZ compression only"
+CONFIG_RD_XZ=y
+
+# --- Console: tinyconfig strips the ENTIRE VT layer --------------------------
+# The shipped syslinux.cfg boots with `console=tty0`, which needs the VGA text
+# console — and that needs the whole VT stack.  The HOWTO's lone "Character
+# devices → TTY" bullet is NOT enough; miss VT/VGA_CONSOLE and you get a kernel
+# that boots fine but shows nothing.  We also compile in the 8250 serial
+# console so the same image works on a serial line and so `build-floppinux.sh
+# test` can boot it headlessly (console=ttyS0).
+CONFIG_TTY=y
+CONFIG_VT=y
+CONFIG_VT_CONSOLE=y
+CONFIG_VGA_CONSOLE=y
+CONFIG_SERIAL_8250=y
+CONFIG_SERIAL_8250_CONSOLE=y
+
+# --- Executable file formats → ELF & scripts (#!) ----------------------------
+CONFIG_BINFMT_ELF=y
+CONFIG_BINFMT_SCRIPT=y
+
+# --- Enable block layer + Block devices → Floppy + RAM disk (count=1) --------
+CONFIG_BLOCK=y
+CONFIG_BLK_DEV=y
+# Floppy: also what lets `mdev -s` materialise /dev/fd0 for the rc script's
+# `mount -t msdos /dev/fd0 /mnt`.
+CONFIG_BLK_DEV_FD=y
+CONFIG_BLK_DEV_RAM=y
+CONFIG_BLK_DEV_RAM_COUNT=1
+
+# --- File systems: MSDOS (FAT), /proc, sysfs, Codepage 437 -------------------
+CONFIG_PROC_FS=y
+CONFIG_SYSFS=y
+CONFIG_FAT_FS=y
+CONFIG_MSDOS_FS=y
+CONFIG_NLS=y
+CONFIG_NLS_CODEPAGE_437=y
+
+# --- Library routines → XZ decompression -------------------------------------
+CONFIG_XZ_DEC=y
