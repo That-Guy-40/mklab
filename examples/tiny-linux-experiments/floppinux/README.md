@@ -24,6 +24,7 @@ script, same `qemu-system-i386 -fda` payload.
 | [`kernel.config-fragment`](kernel.config-fragment) | The non-interactive equivalent of upstream's `menuconfig` walk — merged onto `tinyconfig`. Every symbol is commented with the menu bullet it replaces. |
 | [`ARTIFACTS.md`](ARTIFACTS.md) | Guided tour of every build artifact and **how they connect** — the data-flow graph, producer→consumer table, and read-only commands to peek inside each piece. Start here to *understand* the build. |
 | [`MANUAL_TESTING.md`](MANUAL_TESTING.md) | Pass/fail runbook: test each stage and the end-to-end boot, with the **real expected output** captured from a verified run. Start here to *verify* it works. |
+| [`floppinux-2.88mb/`](floppinux-2.88mb/) | The 2.88 MB extended-density variant (the `FLOPPY_KB=2880` knob) — a `build-2.88.sh` wrapper + differential README/MANUAL_TESTING. ~1.7 MiB free, still boots in QEMU. |
 | [`upstream-tutorial/`](upstream-tutorial/) | An exact, unmodified offline archive of Krzysztof Jankowski's original tutorial (HTML + CSS), with provenance/attribution and sha256s. Copyright remains the author's. |
 
 ## Quick start (Debian / Ubuntu)
@@ -136,9 +137,14 @@ will emulate — and on actual retro hardware.
   rootfs and packs it with `gen_init_cpio`; FLOPPINUX *compiles* one too but
   targets a **physical FAT floppy + syslinux** instead of QEMU `-initrd`. Three
   takes on "tiny in-RAM Linux," each making a different part explicit.
-- **Idea: a 1.68 MB variant.** Upstream notes you can reformat to 1.68 MB
-  ("superformat") for more room. The mtools path here makes that a one-line
-  change (`mkfs.fat` geometry) if you ever want the headroom for, say, `tcc`.
+- **Bigger floppies: the `FLOPPY_KB` knob.** `FLOPPY_KB=2880 ./build-floppinux.sh
+  build` writes a **2.88 MB** extended-density image instead of 1.44 MB — ~1.7 MiB
+  free vs 264 KiB, and it still boots in QEMU (`fd0 is 2.88M AMI BIOS`). It's a
+  one-line change because `mkfs.fat`/`syslinux`/`mtools`/QEMU all adapt to the
+  size on their own. The 2.88 MB variant has its own lab:
+  [`floppinux-2.88mb/`](floppinux-2.88mb/). `FLOPPY_KB=1680` also works but is a
+  **real-hardware-only** DMF/`superformat` image (21 sectors/track via `mformat`)
+  that does **not** boot under QEMU/SeaBIOS — the build warns when you pick it.
 - **Idea: drive it from a TOML like the rest of the family.** `lab-vm.sh` has no
   `-fda` backend today (only `disk` / `kernel+initrd`), which is why this lab is a
   standalone script like those in [`../reference/`](../reference/). A small

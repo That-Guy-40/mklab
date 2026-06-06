@@ -194,7 +194,9 @@ stdin/stdout before anything is mounted. Make it wrong and the VM boots to
 ## 7. The floppy — `floppinux.img`
 
 A 1.44 MB FAT12 image that is **three things at once**: a bootloader medium, the
-kernel/initramfs store, and a writable data disk.
+kernel/initramfs store, and a writable data disk. (Size is the one part that
+varies — `FLOPPY_KB=2880` makes it a 2.88 MB ED image instead; see
+[`floppinux-2.88mb/`](floppinux-2.88mb/). Everything below is size-independent.)
 
 ```bash
 file "$O"/floppinux.img

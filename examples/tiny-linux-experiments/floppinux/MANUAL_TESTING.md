@@ -129,6 +129,22 @@ present; `data/` holds the user disk; **264,192 bytes free** (upstream quotes
 ~253 KiB). `ROOTFS~1.XZ` is just the 8.3 short name — the long name
 `rootfs.cpio.xz` is what `syslinux.cfg` references and what VFAT serves.
 
+**Other floppy sizes — `FLOPPY_KB`.** The size is a one-knob change (only
+`make_floppy` cares; bzImage/rootfs are size-independent). There is one shared
+`floppinux.img`; a new size replaces it.
+
+```bash
+FLOPPY_KB=2880 ./build-floppinux.sh pack   # 2.88 MB ED → sectors 5760, 36 spt, ~1.7 MiB free, BOOTS
+FLOPPY_KB=1680 ./build-floppinux.sh pack   # 1.68 MB DMF → sectors 3360, 21 spt; valid media, does NOT boot in QEMU (warns)
+FLOPPY_KB=9999 ./build-floppinux.sh pack   # → dies: "FLOPPY_KB must be 1440, 1680, or 2880"
+./build-floppinux.sh pack                  # back to the 1.44 MB default
+```
+
+**Pass:** each prints `building floppinux.img — <size> …`; `file "$O"/floppinux.img`
+shows the matching `sectors` count; `1680` emits the 3-line "does NOT boot under
+QEMU" warning. The 2.88 MB variant has its own runbook in
+[`floppinux-2.88mb/MANUAL_TESTING.md`](floppinux-2.88mb/MANUAL_TESTING.md).
+
 ## §5 — Boot it (headless serial)
 
 The quick way — interactive, you watch it boot and get a shell:

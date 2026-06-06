@@ -36,7 +36,10 @@
 #   build-floppinux.sh help
 #
 # Env overrides: FLOPPINUX_BUILD_DIR (default ~/.cache/lab-create/floppinux),
-#                KERNEL_VER, BB_VER, JOBS.
+#                KERNEL_VER, BB_VER, JOBS,
+#                FLOPPY_KB ∈ {1440 (default), 1680, 2880} — floppy size in KiB.
+#                  1440 = 1.44 MB HD, 2880 = 2.88 MB ED (both boot in QEMU);
+#                  1680 = 1.68 MB DMF (valid media, but does NOT boot in QEMU).
 #
 # THROWAWAY LAB: the booted system drops straight to a root shell with no
 # password and no network.  That is fine for a floppy you boot in QEMU; do not
@@ -310,9 +313,20 @@ $nodes"
     log "rootfs: $(du -h "$OUT/rootfs.cpio.xz" | cut -f1) (/dev/console verified as char 5,1)"
 }
 
-# ─── 4. Bootable 1.44 MB floppy (mkdosfs → syslinux → mtools) ────────────────
+# ─── 4. Bootable floppy (mkdosfs/mformat → syslinux → mtools) ────────────────
+# Size knob: FLOPPY_KB ∈ {1440 (default, 1.44 MB HD), 1680 (1.68 MB DMF),
+# 2880 (2.88 MB ED)}.  bzImage/rootfs are size-independent, so this only
+# changes make_floppy.  NOTE: there is ONE $OUT/floppinux.img — building a new
+# size REPLACES it (boot/test always act on that single file).
 make_floppy() {
-    log "building floppinux.img (1.44 MB, rootless via mtools)"
+    local kb="${FLOPPY_KB:-1440}" desc
+    case "$kb" in
+        1440) desc="1.44 MB (standard high-density)" ;;
+        1680) desc="1.68 MB (DMF/superformat — real hardware only)" ;;
+        2880) desc="2.88 MB (extended density)" ;;
+        *)    die "FLOPPY_KB must be 1440, 1680, or 2880 (got: '$kb')" ;;
+    esac
+    log "building floppinux.img — $desc, rootless via mtools"
     local img="$OUT/floppinux.img"
 
     # syslinux.cfg — faithful 0.3.1 (graphical VGA console).
@@ -326,9 +340,20 @@ APPEND root=/dev/ram rdinit=/etc/init.d/rc console=tty0 tsc=unstable
 EOF
     printf 'Hello, FLOPPINUX user!\n' > "$OUT/hello.txt"
 
-    dd if=/dev/zero of="$img" bs=1k count=1440 status=none
-    mkfs.fat -F 12 -n FLOPPINUX "$img" >/dev/null
-    syslinux --install "$img"           # writes the boot sector + ldlinux.sys
+    dd if=/dev/zero of="$img" bs=1k count="$kb" status=none
+    if [[ "$kb" == 1680 ]]; then
+        # mkfs.fat has no table entry for the 1.68 MB superformat, so it would
+        # write a hard-disk-style BPB.  Force the DMF floppy geometry (80 cyl,
+        # 2 heads, 21 sectors/track) with mformat instead.
+        MTOOLS_SKIP_CHECK=1 mformat -i "$img" -t 80 -h 2 -s 21 -v FLOPPINUX ::
+        warn "1.68 MB is a real-hardware DMF format — it does NOT boot under QEMU/SeaBIOS"
+        warn "(the emulated floppy/BIOS path can't read the 21-sector DMF layout)."
+        warn "For QEMU use FLOPPY_KB=1440 (default) or FLOPPY_KB=2880."
+    else
+        # mkfs.fat auto-detects the 1.44 MB (18 spt) and 2.88 MB (36 spt) geometries.
+        mkfs.fat -F 12 -n FLOPPINUX "$img" >/dev/null
+    fi
+    syslinux --install "$img"           # writes the boot sector + ldlinux.{sys,c32}
 
     # Populate via mtools — no loop mount, no root.  Order matters only in that
     # syslinux must run before we copy (it rewrites the boot sector).
