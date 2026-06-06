@@ -46,14 +46,54 @@ track, 2 sectors/cluster to stay within FAT12's ~4084-cluster limit), `syslinux`
 installs normally, `mtools` doesn't care, and QEMU auto-sizes drive A to 2.88 MB
 from the image length.
 
+## Fill the room: a full BusyBox (`BUSYBOX_FULL=1`)
+
+The headline use for the extra space — **the whole BusyBox toolbox** instead of
+the 1.44 MB build's ~20 curated commands:
+
+```bash
+BUSYBOX_FULL=1 ./build-2.88.sh build      # ~400 applets on a 2.88 MB floppy
+```
+
+> **Why a flag and not just symlinks?** BusyBox is one binary that dispatches on
+> `argv[0]`, but it only contains the applets **compiled into it**. `ln -s
+> busybox grep` then running `grep` just prints `grep: applet not found` — the
+> code was never built in. `BUSYBOX_FULL=1` switches the build from
+> `allnoconfig`+curated to **`make defconfig`** (BusyBox's full standard set),
+> and `make install` then creates all ~400 symlinks for you. It's the *config*,
+> not the symlinks, that enables an applet.
+
+What you get and what to expect:
+
+| | curated (default) | `BUSYBOX_FULL=1` |
+|---|---|---|
+| Applets | ~20 | **~400** (grep, sed, awk, find, tar, gzip, less, sort, cut, xargs, …) |
+| `busybox` binary | ~206 KB | **~1 MB** (static) |
+| Fits 1.44 MB? | yes | **no** — needs this 2.88 MB floppy |
+| `tc` applet | n/a | dropped (`tc.c` doesn't build against musl) |
+
+Two honest caveats:
+
+- **Networking applets are inert.** `wget`, `ping`, `ifconfig`, `nc`, `telnet`
+  etc. are compiled in, but the FLOPPINUX kernel is built with **no network
+  stack** (no NIC, no TCP/IP), so they exist and fail at runtime. The file/text/
+  archive/process utilities (grep/sed/awk/find/tar/gzip/ps/…) all work. Wiring up
+  networking would mean enabling `CONFIG_NET`/`CONFIG_INET` + a NIC driver in
+  `kernel.config-fragment` — out of scope here.
+- **The compile is yours to run.** The full `defconfig` build is validated at the
+  *config* level (it resolves to ~401 applets, static, `tc` dropped), but the
+  actual musl cross-compile happens on your machine (the toolchain fetch is the
+  one agent-gated step). If some applet beyond `tc` ever fails to build against
+  musl, disable it the same way (`CONFIG_<X>=n`) and rebuild.
+
 ## Why bother — and the hardware caveat
 
 The lever the extra ~1.45 MiB buys you:
 
 - **A bigger kernel** — the 1.44 MB build spends 884 K of 1440 K on `bzImage`;
   at 2.88 MB you could enable more drivers/filesystems and still fit.
-- **More userspace** — add `grep`/`sed`/`find`/`less`/networking applets to the
-  BusyBox list without running out of room.
+- **More userspace** — the full ~400-applet BusyBox fits here
+  (`BUSYBOX_FULL=1`, see above) instead of the 1.44 MB build's ~20.
 - **More `/data`** — the floppy's `data/` dir (mounted at `/home`) has space for
   real payloads.
 

@@ -78,19 +78,63 @@ These are size-independent — run them from the parent runbook as-is:
 | BusyBox static-pie + applet set + `/dev/console` 5,1 | [`../MANUAL_TESTING.md`](../MANUAL_TESTING.md) §3 |
 | In-VM mount / `/home` / `halt` | [`../MANUAL_TESTING.md`](../MANUAL_TESTING.md) §6 |
 
-## §5 — Switch back to 1.44 MB
+## §5 — Optional: the full BusyBox toolbox (`BUSYBOX_FULL=1`)
 
-There is one shared `floppinux.img`; rebuild it at the default size to return:
+The whole point of the extra room — ~400 applets instead of ~20. This recompiles
+BusyBox, so it needs a full `build` (not `pack`, which reuses the existing
+binary):
 
 ```bash
-../build-floppinux.sh pack          # back to 1.44 MB (2880 sectors)
-file "$O"/floppinux.img | grep -o 'sectors 2880'
+BUSYBOX_FULL=1 ./build-2.88.sh build
 ```
 
-## §6 — Troubleshooting (delta only)
+**Pass (build log):**
+
+```text
+[floppinux] configuring BusyBox (defconfig — FULL ~400-applet set, static)
+[floppinux] WARN: BUSYBOX_FULL: ~1 MB binary — use FLOPPY_KB=2880 (won't fit 1.44 MB).
+[floppinux] WARN: Applets needing networking (wget/ping/ifconfig…) are built but inert: …
+[floppinux] busybox: 1.0M self-contained, 401 applets
+```
+
+**Verify the applet set + use it:**
+
+```bash
+find "$O"/busybox-1_36_1/_install -type l | wc -l       # → ~401 (402 defconfig − tc)
+# in the booted VM (./build-2.88.sh test):
+grep root /etc/mtab ; echo "hi there" | sed 's/hi/HELLO/' ; find / -name welcome
+```
+
+**Pass:** the count is ~401, and `grep`/`sed`/`awk`/`find`/`tar` run instead of
+printing `applet not found`.
+
+> **What's actually verified vs. expected.** The full config is verified
+> toolchain-free: `defconfig` resolves to **401 applet symlinks** (402 minus the
+> dropped `tc`), static, with all boot-critical applets present. The **compile
+> and boot are yours to run** — the `~1.0M`/boot lines above are projections from
+> that config, since the musl cross-compile is the one agent-gated step. If an
+> applet beyond `tc` fails to build against musl, set `CONFIG_<X>=n` and rebuild.
+> **Networking applets (`wget`/`ping`/…) are inert** — the kernel has no net stack.
+
+## §6 — Switch back to 1.44 MB (and the curated BusyBox)
+
+There is one shared `floppinux.img`; rebuild it at the default size to return.
+To also drop back to the ~20-applet curated BusyBox, run a full `build` (no
+`BUSYBOX_FULL`) — `pack` alone keeps whatever BusyBox is already compiled:
+
+```bash
+../build-floppinux.sh pack          # back to 1.44 MB floppy (2880 sectors)
+file "$O"/floppinux.img | grep -o 'sectors 2880'
+# ../build-floppinux.sh build       # also recompiles the curated (small) BusyBox
+```
+
+## §7 — Troubleshooting (delta only)
 
 | Symptom | Cause | Fix |
 |---|---|---|
 | Booted image is 1.44 MB, not 2.88 | A later `../build-floppinux.sh build/pack` (no `FLOPPY_KB`) overwrote the shared `floppinux.img`. | Re-run `./build-2.88.sh pack`. |
 | `fd0 is 1.44M` at boot | You booted a stale/1.44 image. | Rebuild here, confirm §2 shows `sectors 5760`. |
 | Want it on real hardware | 2.88 MB ED drives/media are rare. | For physical floppies prefer 1.44 MB; 2.88 MB shines in QEMU. |
+| `<cmd>: applet not found` for a util you expected | That applet wasn't compiled in. | Use `BUSYBOX_FULL=1 ./build-2.88.sh build` (§5), or add it to the curated loop in `../build-floppinux.sh`. |
+| `BUSYBOX_FULL=1` floppy: `mcopy` "No space left" | The ~1 MB BusyBox + kernel overflowed a smaller floppy. | Make sure you're on 2.88 MB (`./build-2.88.sh`, not the parent default 1.44). |
+| `BUSYBOX_FULL=1` build: a `.c` fails to compile against musl | An applet beyond `tc` is musl-incompatible. | `CONFIG_<applet>=n` in the BusyBox `.config` (or the script's full branch) and rebuild. |

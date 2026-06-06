@@ -170,9 +170,19 @@ sbin: halt init mdev          usr/bin: clear test
 That's it — ~15 commands. `halt` is the clean-shutdown command (`/sbin/halt -f`).
 `poweroff`/`reboot` are *separate* BusyBox applets not in this minimal set (so
 the inittab's `::ctrlaltdel:/sbin/reboot` is vestigial — harmless, since `rdinit`
-bypasses the inittab anyway). Want them? Add `POWEROFF REBOOT` to the applet loop
-in `build-floppinux.sh` and rebuild. There is deliberately no `grep`, `sed`,
-`find`, or `uname` — that's the 137 KiB-of-userspace point.
+bypasses the inittab anyway). Want a few more? Add e.g. `POWEROFF REBOOT GREP` to
+the applet loop in `build-floppinux.sh` and rebuild. There is deliberately no
+`grep`, `sed`, `find`, or `uname` — that's the 137 KiB-of-userspace point.
+
+> **A symlink can't enable an applet.** BusyBox dispatches on `argv[0]`, but it
+> only knows the applets **compiled into the binary** — `ln -s busybox grep`
+> then `grep` just prints `grep: applet not found`. To get more utilities you
+> recompile with them selected; `make install` then makes the symlinks. The
+> all-in switch is **`BUSYBOX_FULL=1`** (uses `make defconfig` → ~400 applets:
+> grep/sed/awk/find/tar/gzip/less/…). That binary is ~1 MB, so it only fits a
+> bigger floppy — pair it with `FLOPPY_KB=2880`; see
+> [`floppinux-2.88mb/`](floppinux-2.88mb/). (Network applets like `wget`/`ping`
+> are built but inert — the kernel has no network stack.)
 
 ## Status — verified end-to-end (2026-06-05)
 

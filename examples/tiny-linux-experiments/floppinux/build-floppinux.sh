@@ -40,6 +40,10 @@
 #                FLOPPY_KB ∈ {1440 (default), 1680, 2880} — floppy size in KiB.
 #                  1440 = 1.44 MB HD, 2880 = 2.88 MB ED (both boot in QEMU);
 #                  1680 = 1.68 MB DMF (valid media, but does NOT boot in QEMU).
+#                BUSYBOX_FULL=1 — build the FULL ~400-applet BusyBox (defconfig)
+#                  instead of the ~20-applet curated set. ~1 MB binary → needs
+#                  FLOPPY_KB=2880 (won't fit 1.44 MB). Network applets are inert
+#                  (the kernel has no net stack); file/text/archive utils work.
 #
 # THROWAWAY LAB: the booted system drops straight to a root shell with no
 # password and no network.  That is fine for a floppy you boot in QEMU; do not
@@ -170,28 +174,43 @@ build_busybox() {
         rm -f "$OUT/busybox.tar.gz"
     fi
     local cfg="$BBSRC/.config"
-    log "configuring BusyBox (allnoconfig + curated applets, static)"
-    make -C "$BBSRC" allnoconfig >/dev/null
+    if [[ "${BUSYBOX_FULL:-0}" == 1 ]]; then
+        # FULL applet set: `make defconfig` enables BusyBox's whole standard
+        # toolbox (~400 applets — grep/sed/awk/find/tar/gzip/less/…). A symlink
+        # alone can't enable an applet; the code must be COMPILED IN, which is
+        # exactly what defconfig does (and `make install` then makes the ~400
+        # symlinks). The full static binary is ~1 MB, so this only fits a larger
+        # floppy — pair it with FLOPPY_KB=2880 (see floppinux-2.88mb/).
+        log "configuring BusyBox (defconfig — FULL ~400-applet set, static)"
+        make -C "$BBSRC" defconfig >/dev/null
+        bb_set "$cfg" CONFIG_TC n   # tc.c does not compile against musl; drop it
+        warn "BUSYBOX_FULL: ~1 MB binary — use FLOPPY_KB=2880 (won't fit 1.44 MB)."
+        warn "Applets needing networking (wget/ping/ifconfig…) are built but inert:"
+        warn "the FLOPPINUX kernel has no network stack. File/text/archive utils work."
+    else
+        log "configuring BusyBox (allnoconfig + curated applets, static)"
+        make -C "$BBSRC" allnoconfig >/dev/null
+        # Applets the HOWTO lists, PLUS the few its own rc/inittab actually invoke
+        # (ln, the halt/reboot trio) which the upstream checklist quietly omits.
+        local app
+        for app in CAT CP DF ECHO LS MKDIR MV RM SYNC TEST LN \
+                   CLEAR VI INIT MDEV MOUNT UMOUNT ASH HALT; do
+            bb_set "$cfg" "CONFIG_$app" y
+        done
+        # ash with aliases; mount with -o flags + --bind support.
+        bb_set "$cfg" CONFIG_ASH_ALIAS y
+        bb_set "$cfg" CONFIG_FEATURE_MOUNT_FLAGS y
+        bb_set "$cfg" CONFIG_FEATURE_MDEV_CONF n   # -s scan doesn't need a conf
+    fi
 
-    # Settings: static binary + large-file support, cross toolchain.
+    # Common to BOTH modes: static binary + large-file support, cross toolchain.
+    # (defconfig builds DYNAMIC, so forcing STATIC here is load-bearing for full.)
     bb_set "$cfg" CONFIG_STATIC y
     bb_set "$cfg" CONFIG_LFS y
     bb_set "$cfg" CONFIG_CROSS_COMPILER_PREFIX "\"$CROSS\""
     bb_set "$cfg" CONFIG_SYSROOT "\"$TOOLCHAIN\""
     bb_set "$cfg" CONFIG_EXTRA_CFLAGS "\"-I$TOOLCHAIN/include\""
     bb_set "$cfg" CONFIG_EXTRA_LDFLAGS "\"-L$TOOLCHAIN/lib\""
-
-    # Applets the HOWTO lists, PLUS the few its own rc/inittab actually invoke
-    # (ln, the halt/reboot trio) which the upstream checklist quietly omits.
-    local app
-    for app in CAT CP DF ECHO LS MKDIR MV RM SYNC TEST LN \
-               CLEAR VI INIT MDEV MOUNT UMOUNT ASH HALT; do
-        bb_set "$cfg" "CONFIG_$app" y
-    done
-    # ash with aliases; mount with -o flags + --bind support.
-    bb_set "$cfg" CONFIG_ASH_ALIAS y
-    bb_set "$cfg" CONFIG_FEATURE_MOUNT_FLAGS y
-    bb_set "$cfg" CONFIG_FEATURE_MDEV_CONF n   # -s scan doesn't need a conf
 
     yes '' | make -C "$BBSRC" oldconfig >/dev/null 2>&1 || true
     grep -q '^CONFIG_STATIC=y' "$cfg" || die "BusyBox CONFIG_STATIC didn't stick"
@@ -221,7 +240,7 @@ build_busybox() {
         [[ $found == 1 ]] || die "BusyBox applet '$a' missing from _install — it was dropped at oldconfig.
 Check its CONFIG_$a dependency chain (run: make -C '$BBSRC' menuconfig)."
     done
-    log "busybox: $(du -h "$BBSRC/_install/bin/busybox" | cut -f1) self-contained, boot applets present"
+    log "busybox: $(du -h "$BBSRC/_install/bin/busybox" | cut -f1) self-contained, $(find "$BBSRC/_install" -type l | wc -l) applets"
 }
 
 # Set a kconfig symbol in-place: drop any existing line, append the new value.
