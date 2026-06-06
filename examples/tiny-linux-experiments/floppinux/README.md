@@ -94,17 +94,20 @@ same gotcha: **`rc` ends with `/bin/sh` (not `exec`), so when you type `exit`,
 kill init!`). That's not a bug — it's what "PID 1 is a script" means. (`QOL=1`
 hands PID 1 to BusyBox `init`, which respawns the shell so `exit` is harmless.)
 
-> **Shutting down / leaving QEMU.** Three ways:
-> - **`poweroff`** — powers the machine off (QEMU exits). **`BUSYBOX_FULL` builds
->   only**: that build ships the `poweroff` applet *and* compiles in **APM** (the
->   486-era power-off path; QEMU's SeaBIOS turns it into a real power-off). The
->   curated build has only `halt` and no APM — use `reboot`/Ctrl-A X there.
-> - **`reboot`** — in `test`/`-no-reboot` mode the guest reset makes QEMU exit. *(all builds)*
-> - **`Ctrl-A` then `X`** on the serial console (or close the graphical window). *(always)*
+> **Shutting down / leaving QEMU.** Use the **`-f`** (force) forms — bare
+> `poweroff`/`reboot` ask init for a *graceful* shutdown, which doesn't fire in
+> this minimal init (they no-op). The **QoL** build aliases `poweroff`/`reboot`
+> to `-f` so the bare commands work there.
+> - **`poweroff -f`** — APM power-off; QEMU exits (graphical *and* headless).
+>   **`BUSYBOX_FULL` only** — that build ships the `poweroff` applet *and* compiles
+>   in APM. The curated build has neither.
+> - **`reboot -f`** — CPU reset; in `test`/`-no-reboot` mode QEMU exits (graphical
+>   reboots in place). *(all builds)*
+> - **`Ctrl-A` then `X`** on the serial console, or close the graphical window. *(always)*
 >
 > `halt` only halts the CPU (QEMU stays up). APM is kept out of the curated kernel
-> on purpose — it would raise the boot RAM floor above upstream's 20 MB. If
-> `poweroff` only halts on a full build, see [`MANUAL_TESTING.md`](MANUAL_TESTING.md) §9.
+> on purpose (it would raise the boot RAM floor above 20 MB). See
+> [`MANUAL_TESTING.md`](MANUAL_TESTING.md) §9.
 
 **2. `mdev -s` is the no-udev `/dev` populator.** The cpio ships only
 `/dev/console` (so PID 1 has stdio) and `/dev/null`. Everything else — crucially

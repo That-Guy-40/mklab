@@ -348,6 +348,10 @@ export ENV=/etc/profile
 export HISTFILE=/home/.ash_history HISTSIZE=500
 alias ls='ls --color=auto' ll='ls -alF' la='ls -A' l='ls -CF'
 alias grep='grep --color=auto' df='df -h' ..='cd ..'
+# Plain poweroff/reboot signal init for a graceful shutdown, but that doesn't
+# fire in this minimal init — force the direct (still synced) path so the bare
+# commands (and `poweroff -d N`) actually power off / reset.
+alias poweroff='poweroff -f' reboot='reboot -f'
 PS1='\u@\h:\w\$ '
 # Greet + cd home once per login (not on every subshell).
 if [ -z "$_FLOPPINUX_GREETED" ]; then

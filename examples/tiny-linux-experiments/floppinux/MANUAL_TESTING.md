@@ -219,12 +219,11 @@ reboot: System halted
 - `/dev/fd0 on /home` — the bind-mount; `cat /home/hello.txt` reads real data off
   the physical medium.
 - `reboot: System halted` — `halt` halts the CPU (QEMU stays up). **Shutting
-  down:** on a **`BUSYBOX_FULL`** build, **`poweroff`** powers the machine off
-  (QEMU exits) — that build ships the `poweroff` applet *and* compiles in APM.
-  On every build, **`reboot`** exits under `-no-reboot`, or press **`Ctrl-A`
-  then `X`**. (The curated build has only `halt` and no APM — use reboot/Ctrl-A
-  X. If `poweroff` only halts on a full build — `Power off not available` — APM
-  didn't engage; see §9.)
+  down:** use the **`-f`** forms — bare `poweroff`/`reboot` ask init for a
+  *graceful* shutdown that doesn't fire in this minimal init (they no-op); the
+  QoL build aliases them to `-f`. **`poweroff -f`** powers off + exits QEMU
+  (`BUSYBOX_FULL` only — applet + APM); **`reboot -f`** resets → exits under
+  `-no-reboot`; or press **`Ctrl-A` then `X`**.
 
 Write something to `/home`, halt, and re-`test` — it persists, because `/home` is
 the floppy.
@@ -265,6 +264,7 @@ the toolchain or recompiling the kernel. **Pass:** `pack` re-emits the
 | 32-bit kernel won't compile on amd64 | You dropped the cross toolchain and used host gcc. | Keep `CROSS_COMPILE` (the script's default), or `apt-get install gcc-multilib`. |
 | Boots but blank screen on the **graphical** path | VGA console missing — only happens if you edited the fragment. | Ensure `CONFIG_VT`/`VT_CONSOLE`/`VGA_CONSOLE=y` (§2). |
 | `poweroff: not found` / `uname: not found` at the shell | Not in the curated applet set (they're in `BUSYBOX_FULL`). | Use `/sbin/halt -f`; or add `POWEROFF REBOOT UNAME …` to the applet loop + rebuild. |
-| `poweroff` *still* halts on a full build (`Power off not available: halting system`) | APM (merged from `kernel-apm.config-fragment` for `BUSYBOX_FULL`) didn't engage — BIOS/APM detection. | `reboot` and `Ctrl-A X` always work as a fallback. To debug APM, boot with the kernel cmdline `apm=power-off` (or `apm=on`); or swap APM for `CONFIG_ACPI=y` (bigger, QEMU-native). |
+| Bare `poweroff` / `reboot` do nothing (prompt just returns) | The non-`-f` forms signal init (SIGUSR2/SIGTERM) for a *graceful* shutdown, which doesn't fire in this minimal init. | Use **`poweroff -f`** / **`reboot -f`** (the QoL build aliases the bare commands to these). `poweroff -d N` → use `poweroff -f -d N`. |
+| `poweroff -f` *still* halts (`Power off not available: halting system`) | APM (merged from `kernel-apm.config-fragment` for `BUSYBOX_FULL`) didn't engage — BIOS/APM detection. | `reboot -f` and `Ctrl-A X` always work. To debug APM, boot with the kernel cmdline `apm=power-off` (or `apm=on`); or swap APM for `CONFIG_ACPI=y` (bigger, QEMU-native). |
 | `poweroff: not found` on a *curated* build | The curated set has no `poweroff` applet, and its kernel has no APM (kept faithful at 20 MB). | Use `reboot`/`Ctrl-A X`; or build with `BUSYBOX_FULL=1` for the applet + APM. |
 | `FAT-fs (fd0): Volume was not properly unmounted` | A prior run was killed mid-mount (e.g. timeout). | Cosmetic; harmless. |

@@ -213,25 +213,26 @@ which already has them. See [`README.md`](README.md) and the variant's
 
 ## Shutting down / leaving QEMU
 
-Three ways — pick whichever:
+In the QoL build, the profile aliases `poweroff`/`reboot` to their **`-f`** forms,
+so the bare commands work:
 
-- **`poweroff`** — powers the machine off; QEMU exits. **`BUSYBOX_FULL` builds
-  only:** that build ships the `poweroff` applet *and* compiles in **APM** (the
-  486-era power-management BIOS path), so `reboot(RB_POWER_OFF)` has a handler and
-  QEMU's SeaBIOS turns it into a real power-off. The curated build has only `halt`
-  and no APM.
-- **`reboot`** — in `test`/`-no-reboot` mode the guest reset makes QEMU exit
-  (the kernel resets via the keyboard controller; `-no-reboot` turns that into a
-  clean exit). *(all builds)*
-- **`Ctrl-A` then `X`** on the serial console, or close the graphical window.
+- **`poweroff`** (= `poweroff -f`) — direct, synced APM power-off; QEMU exits,
+  graphical *and* headless. Needs `BUSYBOX_FULL` (the `poweroff` applet + APM kernel).
+- **`reboot`** (= `reboot -f`) — CPU reset; in `test`/`-no-reboot` QEMU exits.
+- **`Ctrl-A` then `X`**, or close the graphical window.
 
 `halt` only halts the CPU (QEMU stays up).
 
-**How `poweroff` works:** [`kernel-apm.config-fragment`](kernel-apm.config-fragment)
-(merged only for `BUSYBOX_FULL`) sets `CONFIG_SUSPEND=y` (→ `PM_SLEEP` → `PM`),
-`CONFIG_APM=y`, `CONFIG_APM_DO_ENABLE=y` (and leaves `CONFIG_APM_CPU_IDLE` **off** —
-its idle BIOS calls can hang). It's kept out of the curated kernel because APM
-raises the boot RAM floor above upstream's 20 MB and the curated build has no
-`poweroff` applet to use it anyway. If `poweroff` only halts on a full build
-(`Power off not available`), APM didn't engage — fall back to `reboot`/`Ctrl-A X`,
-try the kernel cmdline `apm=power-off`, or swap APM for `CONFIG_ACPI=y`.
+**Why the aliases:** the *bare* `poweroff`/`reboot` ask init (SIGUSR2/SIGTERM) for
+a graceful shutdown, which doesn't fire in this minimal init — they just no-op.
+The `-f` forms call `reboot(2)` directly (and still `sync` first), so they
+actually work. On a non-QoL build there's no alias — use `poweroff -f` / `reboot
+-f` explicitly.
+
+**How `poweroff` powers off:** [`kernel-apm.config-fragment`](kernel-apm.config-fragment)
+(merged only for `BUSYBOX_FULL`) adds APM — `CONFIG_SUSPEND=y` (→ `PM_SLEEP` →
+`PM`), `CONFIG_APM=y`, `CONFIG_APM_DO_ENABLE=y` (and leaves `CONFIG_APM_CPU_IDLE`
+**off** — idle BIOS calls can hang). It's kept out of the curated kernel (APM
+raises the boot RAM floor above 20 MB, and curated has no `poweroff` applet). If
+`poweroff -f` only halts (`Power off not available`), APM didn't engage — try the
+cmdline `apm=power-off`, or `CONFIG_ACPI=y`.
