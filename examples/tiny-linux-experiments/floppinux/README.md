@@ -9,8 +9,12 @@ on a **Debian** host: same kernel (6.14.11), same BusyBox (1.36.1), same boot
 script, same `qemu-system-i386 -fda` payload.
 
 > All credit for the distro, the boot script, and the splash art is Krzysztof's
-> (https://krzysztofjankowski.com/floppinux/). This directory is just his recipe,
-> automated for Debian and folded into the `tiny-linux-experiments/` family.
+> (<https://krzysztofjankowski.com/floppinux/>). This directory is just his
+> recipe, automated for Debian and folded into the `tiny-linux-experiments/`
+> family. An **exact, offline copy of the original tutorial** is archived under
+> [`upstream-tutorial/`](upstream-tutorial/) — read [the canonical
+> page](https://krzysztofjankowski.com/floppinux/floppinux-2025.html) for the
+> authoritative, maintained version (and to support the author).
 
 ## Files
 
@@ -18,6 +22,7 @@ script, same `qemu-system-i386 -fda` payload.
 |---|---|
 | [`build-floppinux.sh`](build-floppinux.sh) | The whole pipeline. Subcommands: `build` (fetch toolchain → kernel → BusyBox → pack initramfs → write floppy), `pack` (re-pack the rootfs + floppy from an already-compiled tree — resume after `build`, no toolchain), `boot` (graphical), `test` (headless serial), `clean`. |
 | [`kernel.config-fragment`](kernel.config-fragment) | The non-interactive equivalent of upstream's `menuconfig` walk — merged onto `tinyconfig`. Every symbol is commented with the menu bullet it replaces. |
+| [`upstream-tutorial/`](upstream-tutorial/) | An exact, unmodified offline archive of Krzysztof Jankowski's original tutorial (HTML + CSS), with provenance/attribution and sha256s. Copyright remains the author's. |
 
 ## Quick start (Debian / Ubuntu)
 

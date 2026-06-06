@@ -7,7 +7,8 @@
 #     make ARCH=x86 olddefconfig
 #
 # This is the non-interactive equivalent of the upstream HOWTO's `menuconfig`
-# walk.  Every symbol here maps to one of Krzysztof Jankowski's menuconfig
+# walk (https://krzysztofjankowski.com/floppinux/floppinux-2025.html, "Kernel"
+# section).  Every symbol here maps to one of Krzysztof Jankowski's menuconfig
 # bullets; the comments say which.  build-floppinux.sh re-greps the resulting
 # .config for the load-bearing symbols and ABORTS if any failed to stick, so a
 # renamed/cross-version symbol fails loudly instead of producing a kernel that

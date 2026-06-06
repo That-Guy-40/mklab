@@ -1,0 +1,58 @@
+html {
+  color-scheme: light dark;
+}
+body {
+  font-family: monospace;
+  font-size: 1.25rem;
+  line-height: 1.5;
+}
+
+img,
+svg,
+video {
+  max-width: 640px;
+  display: block;
+}
+main {
+  max-width: min(70ch, 100% - 4rem);
+  margin-inline: auto;
+}
+sup {
+  color: red;
+  font-weight: bold;
+}
+em,
+code {
+  text-wrap: auto;
+  border: 1px solid;
+  display: block;
+  padding: 2%;
+}
+blockquote {
+  border: dotted;
+  padding: 0.5em;
+  padding-left: 1rem;
+  font-style: italic;
+  font-size: smaller;
+}
+
+@media (prefers-color-scheme: light) {
+  em,
+  code {
+    border-color: black;
+  }
+  blockquote {
+    border-color: #777;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  em,
+  code {
+    border-color: white;
+  }
+  blockquote {
+    border-color: #444;
+    color: #aaa;
+  }
+}
