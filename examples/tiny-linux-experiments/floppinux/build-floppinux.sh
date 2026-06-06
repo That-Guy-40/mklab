@@ -183,12 +183,16 @@ build_busybox() {
         # floppy — pair it with FLOPPY_KB=2880 (see floppinux-2.88mb/).
         log "configuring BusyBox (defconfig — FULL ~400-applet set, static)"
         make -C "$BBSRC" defconfig >/dev/null
-        # Two defconfig settings break a static musl build (both are networking
-        # internals — the kernel has no net stack anyway, so no real loss):
+        # A few defconfig settings break this static-musl / static-PIE build.
+        # None are real losses (networking is inert here; SHA falls back to C):
         bb_set "$cfg" CONFIG_TC n                    # tc.c won't COMPILE against musl
-        bb_set "$cfg" CONFIG_FEATURE_NSLOOKUP_BIG n  # nslookup BIG uses the ns_* resolver
-                                                     # API musl lacks (link error); the
-                                                     # small getaddrinfo form stays + links
+        bb_set "$cfg" CONFIG_FEATURE_NSLOOKUP_BIG n  # nslookup BIG uses ns_* resolver API
+                                                     # musl lacks; small getaddrinfo form stays
+        # The x86 SHA-NI hand-written .S has absolute text relocations, which a
+        # static-PIE link rejects ("read-only segment has dynamic relocations").
+        # Turn HWACCEL off → those .S compile empty; sha1sum/sha256sum use C.
+        bb_set "$cfg" CONFIG_SHA1_HWACCEL n
+        bb_set "$cfg" CONFIG_SHA256_HWACCEL n
         warn "BUSYBOX_FULL: ~1 MB binary — use FLOPPY_KB=2880 (won't fit 1.44 MB)."
         warn "Applets needing networking (wget/ping/ifconfig…) are built but inert:"
         warn "the FLOPPINUX kernel has no network stack. File/text/archive utils work."

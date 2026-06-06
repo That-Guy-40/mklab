@@ -111,13 +111,15 @@ printing `applet not found`.
 > **What's actually verified vs. expected.** The full config is verified
 > toolchain-free: `defconfig` resolves to **401 applet symlinks** (402 minus the
 > dropped `tc`; `nslookup` is kept), static, with all boot-critical applets
-> present, and the two known static-musl breakers handled — `tc` (won't compile)
-> and `CONFIG_FEATURE_NSLOOKUP_BIG` (its `ns_*` calls aren't in musl, so it's
-> forced to the small `getaddrinfo` form). The **compile and boot are yours to
-> run** — the `~1.0M`/boot lines above are projections, since the musl
-> cross-compile is the one agent-gated step. If a *further* applet fails against
-> musl, set `CONFIG_<X>=n` and rebuild. **Networking applets (`wget`/`ping`/…)
-> are inert** — the kernel has no net stack.
+> present, and the three known breakers handled — `tc` (won't compile vs musl),
+> `CONFIG_FEATURE_NSLOOKUP_BIG` (its `ns_*` calls aren't in musl → forced to the
+> small `getaddrinfo` form), and SHA `HWACCEL` (the x86 SHA-NI asm has text
+> relocations the static-PIE link rejects → C SHA, `sha*sum` kept). The
+> **compile and boot are yours to run** — the `~1.0M`/boot lines above are
+> projections, since the cross-compile is the one agent-gated step. If a
+> *further* applet fails, the build now prints the error + a log path; set
+> `CONFIG_<X>=n` and rebuild. **Networking applets (`wget`/`ping`/…) are inert** —
+> the kernel has no net stack.
 
 ## §6 — Switch back to 1.44 MB (and the curated BusyBox)
 
