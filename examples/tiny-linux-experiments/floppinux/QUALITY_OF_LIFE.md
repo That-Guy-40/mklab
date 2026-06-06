@@ -213,35 +213,53 @@ which already has them. See [`README.md`](README.md) and the variant's
 
 ## Shutting down / leaving QEMU
 
-In the QoL build, the profile aliases `poweroff`/`reboot` to their **`-f`** forms,
-so the bare commands work:
+The QoL build defines `poweroff`/`reboot` as **shell functions** that do the
+graceful cleanup themselves, then force the power-off/reset:
 
-- **`poweroff`** (= `poweroff -f`) — direct, synced APM power-off; QEMU exits,
-  graphical *and* headless. Needs `BUSYBOX_FULL` (the `poweroff` applet + APM kernel).
-- **`reboot`** (= `reboot -f`) — CPU reset; in `test`/`-no-reboot` QEMU exits.
+- **`poweroff`** — `cd /`, `sync`, unmount the floppy (`/home`, then `/mnt`, so
+  the FAT is cleanly unmounted — no "not properly unmounted" next boot), then
+  `poweroff -f`. QEMU exits (graphical *and* headless). Needs `BUSYBOX_FULL` (the
+  `poweroff` applet + the APM kernel).
+- **`reboot`** — same cleanup, then `reboot -f`; in `test`/`-no-reboot` QEMU exits.
 - **`Ctrl-A` then `X`**, or close the graphical window.
 
 `halt` only halts the CPU (QEMU stays up).
 
-**The alias workaround — apply it live (any build):**
+**Apply it live (any build):**
 ```sh
-alias poweroff='poweroff -f' reboot='reboot -f'
+poweroff() { cd /; sync; umount /home 2>/dev/null; umount /mnt 2>/dev/null; command poweroff -f "$@"; }
 ```
-**Validate:** `poweroff` now powers the machine off (before the alias it was a
-*no-op* — the prompt just returned). `poweroff -d 10` works too (it becomes
-`poweroff -f -d 10`). To keep it without `QOL=1`, add that `alias` line to your
-`/home/profile` (§5) and source it at boot; `QOL=1` bakes the same two aliases
-into `/etc/profile`.
+**Validate:** `poweroff` now unmounts the floppy (`mount | grep -c fd0` → 0) and
+powers off — before, bare `poweroff` was a *no-op*. `QOL=1` bakes these functions
+into `/etc/profile`; without it, add them to your `/home/profile` (§5).
 
-**Why the aliases are needed:** the *bare* `poweroff`/`reboot` (BusyBox applets)
-do `kill(1, SIGUSR2/SIGTERM)` to ask **BusyBox `init`** for a graceful shutdown,
-which doesn't fire in this minimal init — so they no-op. The `-f` forms skip init
-and call `reboot(2)` directly (still `sync`ing first), so they actually work.
+### Why bare `poweroff`/`reboot` no-op — the init-signal dead end
 
-**How `poweroff` powers off:** [`kernel-apm.config-fragment`](kernel-apm.config-fragment)
-(merged only for `BUSYBOX_FULL`) adds APM — `CONFIG_SUSPEND=y` (→ `PM_SLEEP` →
-`PM`), `CONFIG_APM=y`, `CONFIG_APM_DO_ENABLE=y` (and leaves `CONFIG_APM_CPU_IDLE`
-**off** — idle BIOS calls can hang). It's kept out of the curated kernel (APM
-raises the boot RAM floor above 20 MB, and curated has no `poweroff` applet). If
-`poweroff -f` only halts (`Power off not available`), APM didn't engage — try the
-cmdline `apm=power-off`, or `CONFIG_ACPI=y`.
+We traced this; it's a genuine BusyBox/PID-1 interaction worth understanding.
+Bare `poweroff`/`reboot` (the BusyBox applets, non-`-f`) do `kill(1, SIGUSR2)` /
+`kill(1, SIGTERM)` to ask **BusyBox `init`** to run its `::shutdown:` actions and
+power off. That *should* work — and it's **not** the inittab or how init is
+started (a trivial `::shutdown:/bin/true` and a direct `rdinit=/sbin/init` boot
+both still fail). The real chain:
+
+1. BusyBox 1.36.1 init installs **no signal handler** for the shutdown signals —
+   it `sigprocmask`-blocks them and drains them with `sigtimedwait` in its main
+   loop. Their disposition stays **`SIG_DFL`** (`/proc/1/status` `SigCgt` = only
+   `SIGTSTP`).
+2. init is **PID 1**, and the kernel's init-protection **won't deliver a `SIG_DFL`
+   signal whose default action is *fatal*** (SIGUSR2/SIGTERM/…) to PID 1 — even to
+   `sigtimedwait`. The signal **queues** (`/proc/1/status` `ShdPnd` shows the bit)
+   but is never dispatched, so init never enters its shutdown path.
+3. `SIGCHLD` is the tell: same blocked set, but its default action is *ignore*
+   (not fatal), so the kernel **does** deliver it — which is exactly why
+   **respawn works but signal-driven shutdown doesn't.**
+
+So the graceful *init* path is a dead end in this BusyBox+kernel combo short of
+patching BusyBox to install handlers. The functions above get the same outcome
+(cleanup, then power-off) reliably.
+
+**The `-f` power-off itself** is APM: [`kernel-apm.config-fragment`](kernel-apm.config-fragment)
+(merged only for `BUSYBOX_FULL`) sets `CONFIG_SUSPEND=y` (→ `PM_SLEEP` → `PM`),
+`CONFIG_APM=y`, `CONFIG_APM_DO_ENABLE=y` (and leaves `CONFIG_APM_CPU_IDLE` **off**).
+If `poweroff -f` only halts (`Power off not available`), APM didn't engage — try
+the cmdline `apm=power-off`, or `CONFIG_ACPI=y`.

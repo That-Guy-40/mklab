@@ -94,20 +94,20 @@ same gotcha: **`rc` ends with `/bin/sh` (not `exec`), so when you type `exit`,
 kill init!`). That's not a bug — it's what "PID 1 is a script" means. (`QOL=1`
 hands PID 1 to BusyBox `init`, which respawns the shell so `exit` is harmless.)
 
-> **Shutting down / leaving QEMU.** Use the **`-f`** (force) forms — bare
-> `poweroff`/`reboot` ask init for a *graceful* shutdown, which doesn't fire in
-> this minimal init (they no-op). The **QoL** build aliases `poweroff`/`reboot`
-> to `-f` so the bare commands work there.
-> - **`poweroff -f`** — APM power-off; QEMU exits (graphical *and* headless).
->   **`BUSYBOX_FULL` only** — that build ships the `poweroff` applet *and* compiles
->   in APM. The curated build has neither.
-> - **`reboot -f`** — CPU reset; in `test`/`-no-reboot` mode QEMU exits (graphical
->   reboots in place). *(all builds)*
-> - **`Ctrl-A` then `X`** on the serial console, or close the graphical window. *(always)*
+> **Shutting down / leaving QEMU.** The **QoL** build makes `poweroff`/`reboot`
+> shell functions that gracefully `sync` + unmount the floppy, then force:
+> - **`poweroff`** — clean unmount, then APM power-off; QEMU exits (graphical *and*
+>   headless). **`BUSYBOX_FULL` only** — that build has the `poweroff` applet *and*
+>   the APM kernel.
+> - **`reboot`** — same cleanup, then CPU reset; in `test`/`-no-reboot` QEMU exits.
+> - **`Ctrl-A` then `X`**, or close the graphical window. *(always)*
 >
-> `halt` only halts the CPU (QEMU stays up). APM is kept out of the curated kernel
-> on purpose (it would raise the boot RAM floor above 20 MB). See
-> [`MANUAL_TESTING.md`](MANUAL_TESTING.md) §9.
+> `halt` only halts the CPU (QEMU stays up). On a **non-QoL** build use `poweroff
+> -f`/`reboot -f` explicitly — *bare* `poweroff`/`reboot` no-op there, because
+> BusyBox init (PID 1) can't be signaled to shut down in this minimal setup (it
+> installs no handler, and the kernel won't deliver `SIG_DFL` fatal signals to
+> init). The full diagnosis + the graceful functions are in
+> [`QUALITY_OF_LIFE.md`](QUALITY_OF_LIFE.md); APM details in [`MANUAL_TESTING.md`](MANUAL_TESTING.md) §9.
 
 **2. `mdev -s` is the no-udev `/dev` populator.** The cpio ships only
 `/dev/console` (so PID 1 has stdio) and `/dev/null`. Everything else — crucially

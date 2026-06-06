@@ -348,10 +348,16 @@ export ENV=/etc/profile
 export HISTFILE=/home/.ash_history HISTSIZE=500
 alias ls='ls --color=auto' ll='ls -alF' la='ls -A' l='ls -CF'
 alias grep='grep --color=auto' df='df -h' ..='cd ..'
-# Plain poweroff/reboot signal init for a graceful shutdown, but that doesn't
-# fire in this minimal init — force the direct (still synced) path so the bare
-# commands (and `poweroff -d N`) actually power off / reset.
-alias poweroff='poweroff -f' reboot='reboot -f'
+# Graceful poweroff/reboot as shell functions. BusyBox init's signal-driven
+# shutdown can't fire as PID 1 here: init installs no handler for SIGUSR2/SIGTERM
+# (it relies on sigtimedwait over a blocked set), and the kernel won't DELIVER a
+# SIG_DFL signal whose default action is fatal to PID 1 — so the signal queues
+# but is never dispatched, and bare poweroff/reboot no-op. (SIGCHLD works only
+# because its default action is "ignore", which is why respawn works.) So we do
+# the graceful cleanup ourselves — leave /home, sync, unmount the floppy (clean
+# FAT, no "not properly unmounted") — then the direct -f. See QUALITY_OF_LIFE.md.
+poweroff() { cd /; sync; umount /home 2>/dev/null; umount /mnt 2>/dev/null; command poweroff -f "$@"; }
+reboot()   { cd /; sync; umount /home 2>/dev/null; umount /mnt 2>/dev/null; command reboot   -f "$@"; }
 PS1='\u@\h:\w\$ '
 # Greet + cd home once per login (not on every subshell).
 if [ -z "$_FLOPPINUX_GREETED" ]; then

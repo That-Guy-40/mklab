@@ -219,11 +219,11 @@ reboot: System halted
 - `/dev/fd0 on /home` — the bind-mount; `cat /home/hello.txt` reads real data off
   the physical medium.
 - `reboot: System halted` — `halt` halts the CPU (QEMU stays up). **Shutting
-  down:** use the **`-f`** forms — bare `poweroff`/`reboot` ask init for a
-  *graceful* shutdown that doesn't fire in this minimal init (they no-op); the
-  QoL build aliases them to `-f`. **`poweroff -f`** powers off + exits QEMU
-  (`BUSYBOX_FULL` only — applet + APM); **`reboot -f`** resets → exits under
-  `-no-reboot`; or press **`Ctrl-A` then `X`**.
+  down:** the QoL build makes `poweroff`/`reboot` shell functions that `sync` +
+  unmount the floppy, then force — so bare **`poweroff`** powers off + exits QEMU
+  (`BUSYBOX_FULL` only — applet + APM) and **`reboot`** resets → exits under
+  `-no-reboot`. On a non-QoL build use `poweroff -f`/`reboot -f` (the bare forms
+  no-op — init can't be signaled; see §9). Or press **`Ctrl-A` then `X`**.
 
 Write something to `/home`, halt, and re-`test` — it persists, because `/home` is
 the floppy.
@@ -264,7 +264,7 @@ the toolchain or recompiling the kernel. **Pass:** `pack` re-emits the
 | 32-bit kernel won't compile on amd64 | You dropped the cross toolchain and used host gcc. | Keep `CROSS_COMPILE` (the script's default), or `apt-get install gcc-multilib`. |
 | Boots but blank screen on the **graphical** path | VGA console missing — only happens if you edited the fragment. | Ensure `CONFIG_VT`/`VT_CONSOLE`/`VGA_CONSOLE=y` (§2). |
 | `poweroff: not found` / `uname: not found` at the shell | Not in the curated applet set (they're in `BUSYBOX_FULL`). | Use `/sbin/halt -f`; or add `POWEROFF REBOOT UNAME …` to the applet loop + rebuild. |
-| Bare `poweroff` / `reboot` do nothing (prompt just returns) | The non-`-f` forms signal init (SIGUSR2/SIGTERM) for a *graceful* shutdown, which doesn't fire in this minimal init. | Use **`poweroff -f`** / **`reboot -f`** (the QoL build aliases the bare commands to these). `poweroff -d N` → use `poweroff -f -d N`. |
+| Bare `poweroff` / `reboot` do nothing (prompt just returns) | The non-`-f` forms `kill(1, SIGUSR2/SIGTERM)` to ask BusyBox init to shut down, but init (PID 1) installs no handler for them and the kernel won't deliver `SIG_DFL` *fatal* signals to init — the signal queues (`/proc/1/status` `ShdPnd`) but is never dispatched. (`SIGCHLD` works → respawn works, because its default action is *ignore*.) | The QoL build replaces them with `poweroff()`/`reboot()` **functions** that `sync`+unmount the floppy then `-f`. On non-QoL builds use `poweroff -f`/`reboot -f`. Full diagnosis in `QUALITY_OF_LIFE.md`. |
 | `poweroff -f` *still* halts (`Power off not available: halting system`) | APM (merged from `kernel-apm.config-fragment` for `BUSYBOX_FULL`) didn't engage — BIOS/APM detection. | `reboot -f` and `Ctrl-A X` always work. To debug APM, boot with the kernel cmdline `apm=power-off` (or `apm=on`); or swap APM for `CONFIG_ACPI=y` (bigger, QEMU-native). |
 | `poweroff: not found` on a *curated* build | The curated set has no `poweroff` applet, and its kernel has no APM (kept faithful at 20 MB). | Use `reboot`/`Ctrl-A X`; or build with `BUSYBOX_FULL=1` for the applet + APM. |
 | `FAT-fs (fd0): Volume was not properly unmounted` | A prior run was killed mid-mount (e.g. timeout). | Cosmetic; harmless. |
