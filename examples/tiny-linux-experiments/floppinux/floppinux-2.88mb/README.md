@@ -52,8 +52,16 @@ The headline use for the extra space — **the whole BusyBox toolbox** instead o
 the 1.44 MB build's ~20 curated commands:
 
 ```bash
-BUSYBOX_FULL=1 ./build-2.88.sh build      # ~400 applets on a 2.88 MB floppy
+BUSYBOX_FULL=1 ./build-2.88.sh build              # ~400 applets on a 2.88 MB floppy
+QOL=1 BUSYBOX_FULL=1 ./build-2.88.sh build         # ...plus the quality-of-life pack
 ```
+
+> **`QOL=1`** bakes in the niceties a normal shell has — a BusyBox-`init` login
+> shell with **job control** (and `exit` respawns instead of panicking),
+> `/etc/profile` (PATH incl `/sbin`, prompt, aliases, history persisted to the
+> floppy), `/etc/passwd`+`group` (names not UIDs), hostname, motd. To add any of
+> these **by hand from inside the running box** (with validations) first, see
+> [`../QUALITY_OF_LIFE.md`](../QUALITY_OF_LIFE.md).
 
 > **Why a flag and not just symlinks?** BusyBox is one binary that dispatches on
 > `argv[0]`, but it only contains the applets **compiled into it**. `ln -s

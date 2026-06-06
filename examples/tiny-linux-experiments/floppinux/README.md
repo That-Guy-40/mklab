@@ -24,6 +24,7 @@ script, same `qemu-system-i386 -fda` payload.
 | [`kernel.config-fragment`](kernel.config-fragment) | The non-interactive equivalent of upstream's `menuconfig` walk — merged onto `tinyconfig`. Every symbol is commented with the menu bullet it replaces. |
 | [`ARTIFACTS.md`](ARTIFACTS.md) | Guided tour of every build artifact and **how they connect** — the data-flow graph, producer→consumer table, and read-only commands to peek inside each piece. Start here to *understand* the build. |
 | [`MANUAL_TESTING.md`](MANUAL_TESTING.md) | Pass/fail runbook: test each stage and the end-to-end boot, with the **real expected output** captured from a verified run. Start here to *verify* it works. |
+| [`QUALITY_OF_LIFE.md`](QUALITY_OF_LIFE.md) | Hands-on: add the niceties a normal shell/distro has (PATH+`/sbin`, prompt, aliases, history, job control, names) **live while logged in**, each with a validation — then bake them in with `QOL=1`. |
 | [`floppinux-2.88mb/`](floppinux-2.88mb/) | The 2.88 MB extended-density variant (the `FLOPPY_KB=2880` knob) — a `build-2.88.sh` wrapper + differential README/MANUAL_TESTING. ~1.7 MiB free, still boots in QEMU. |
 | [`upstream-tutorial/`](upstream-tutorial/) | An exact, unmodified offline archive of Krzysztof Jankowski's original tutorial (HTML + CSS), with provenance/attribution and sha256s. Copyright remains the author's. |
 

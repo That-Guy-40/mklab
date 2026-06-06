@@ -46,6 +46,10 @@
 #                  (the kernel has no net stack); file/text/archive utils work.
 #                FLOPPINUX_MEM — QEMU RAM for boot/test (default 20M; auto-256M
 #                  when the initramfs is large, e.g. BUSYBOX_FULL).
+#                QOL=1 — bake in a quality-of-life pack: BusyBox-init login shell
+#                  (job control, `exit` respawns), /etc/profile (PATH incl /sbin,
+#                  prompt, aliases, persistent history), passwd/group, hostname,
+#                  motd. Pairs with BUSYBOX_FULL; see QUALITY_OF_LIFE.md.
 #
 # THROWAWAY LAB: the booted system drops straight to a root shell with no
 # password and no network.  That is fine for a floppy you boot in QEMU; do not
@@ -223,6 +227,20 @@ build_busybox() {
     bb_set "$cfg" CONFIG_EXTRA_CFLAGS "\"-I$TOOLCHAIN/include\""
     bb_set "$cfg" CONFIG_EXTRA_LDFLAGS "\"-L$TOOLCHAIN/lib\""
 
+    if [[ "${QOL:-0}" == 1 ]]; then
+        # BusyBox features the QoL pack relies on. All are on in defconfig (the
+        # full build); these bb_set lines are no-ops there and enable QoL in the
+        # curated set.
+        bb_set "$cfg" CONFIG_FEATURE_USE_INITTAB y        # init must read /etc/inittab
+        bb_set "$cfg" CONFIG_FEATURE_INIT_SCTTY y         # ctty for a leading-dash (login) cmd
+        bb_set "$cfg" CONFIG_FEATURE_EDITING y            # up-arrow history + line edit
+        bb_set "$cfg" CONFIG_FEATURE_EDITING_SAVEHISTORY y
+        bb_set "$cfg" CONFIG_FEATURE_TAB_COMPLETION y
+        bb_set "$cfg" CONFIG_FEATURE_LS_COLOR y
+        bb_set "$cfg" CONFIG_ASH_EXPAND_PRMT y            # PS1 \u \h \w escapes
+        bb_set "$cfg" CONFIG_SETSID y                     # for the live job-control demo
+    fi
+
     yes '' | make -C "$BBSRC" oldconfig >/dev/null 2>&1 || true
     grep -q '^CONFIG_STATIC=y' "$cfg" || die "BusyBox CONFIG_STATIC didn't stick"
 
@@ -276,6 +294,66 @@ bb_set() {
     fi
 }
 
+# QoL rootfs (QOL=1): hand PID 1 to BusyBox init, which respawns a *login* shell
+# (`-/bin/sh`) with a controlling tty — so job control works, `exit` respawns
+# instead of panicking, and /etc/profile is sourced. Plus passwd/group (names),
+# hostname, motd, and a friendly profile (PATH incl /sbin, prompt, aliases,
+# history persisted to /home). Needs the QoL BusyBox features (build_busybox).
+write_qol_rootfs() {
+    # rc runs the same setup, sets the hostname, then EXECs init (no shell drop).
+    # The QoL inittab has NO ::sysinit, so init does not re-run rc.
+    cat > "$FS/etc/init.d/rc" <<'EOF'
+#!/bin/sh
+mount -t proc none /proc
+mount -t sysfs none /sys
+mdev -s
+ln -s /proc/mounts /etc/mtab
+[ -r /etc/hostname ] && hostname "$(cat /etc/hostname)"
+mkdir -p /mnt /home
+mount -t msdos -o rw /dev/fd0 /mnt
+mkdir -p /mnt/data
+mount --bind /mnt/data /home
+clear
+cat welcome
+exec /sbin/init || exec /bin/sh
+EOF
+    cat > "$FS/etc/inittab" <<'EOF'
+# QoL boot: rc (rdinit) does setup then execs init; init respawns a login shell
+# with a controlling tty. No ::sysinit — rc already ran the setup.
+::respawn:-/bin/sh
+::ctrlaltdel:/sbin/reboot
+::shutdown:/bin/umount -a -r
+EOF
+    cat > "$FS/etc/profile" <<'EOF'
+# FLOPPINUX QoL — sourced by login shells, and re-sourced by interactive
+# subshells via $ENV (so aliases/prompt survive a nested `sh`).
+export PATH=/bin:/sbin:/usr/bin:/usr/sbin
+export HOME=/home
+export TERM="${TERM:-linux}"
+export PAGER=less EDITOR=vi
+export ENV=/etc/profile
+export HISTFILE=/home/.ash_history HISTSIZE=500
+alias ls='ls --color=auto' ll='ls -alF' la='ls -A' l='ls -CF'
+alias grep='grep --color=auto' df='df -h' ..='cd ..'
+PS1='\u@\h:\w\$ '
+# Greet + cd home once per login (not on every subshell).
+if [ -z "$_FLOPPINUX_GREETED" ]; then
+	export _FLOPPINUX_GREETED=1
+	cd "$HOME" 2>/dev/null
+	[ -f /etc/motd ] && cat /etc/motd
+fi
+EOF
+    printf 'root:x:0:0:root:/home:/bin/sh\n' > "$FS/etc/passwd"
+    printf 'root:x:0:\n'                     > "$FS/etc/group"
+    printf 'floppinux\n'                     > "$FS/etc/hostname"
+    cat > "$FS/etc/motd" <<'EOF'
+
+ Welcome to FLOPPINUX (QoL build).  `busybox --list` shows every applet.
+ Job control is on; `exit` respawns the shell; history persists to /home.
+
+EOF
+}
+
 # ─── 3. Root filesystem → rootfs.cpio.xz (device nodes via fakeroot) ─────────
 assemble_rootfs() {
     log "assembling root filesystem"
@@ -283,6 +361,10 @@ assemble_rootfs() {
     cp -a "$BBSRC/_install" "$FS"
     mkdir -p "$FS"/{dev,proc,sys,tmp,home,mnt,etc/init.d}
 
+    if [[ "${QOL:-0}" == 1 ]]; then
+        log "QOL=1: init-handoff login shell + /etc/{profile,passwd,group,hostname,motd}"
+        write_qol_rootfs
+    else
     # /etc/inittab — busybox init's job list (verbatim from FLOPPINUX 0.3.1).
     cat > "$FS/etc/inittab" <<'EOF'
 ::sysinit:/etc/init.d/rc
@@ -310,6 +392,7 @@ cat welcome
 cd /home
 /bin/sh
 EOF
+    fi
     chmod +x "$FS/etc/init.d/rc"
 
     # /welcome — the 0.3.1 splash (cat'd by rc at the end of boot).
