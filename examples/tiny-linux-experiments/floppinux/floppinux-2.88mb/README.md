@@ -70,6 +70,7 @@ What you get and what to expect:
 | Applets | ~20 | **~400** (grep, sed, awk, find, tar, gzip, less, sort, cut, xargs, …) |
 | `busybox` binary | ~206 KB | **~1 MB** (static) |
 | Fits 1.44 MB? | yes | **no** — needs this 2.88 MB floppy |
+| QEMU RAM | upstream's `-m 20M` | **auto `-m 256M`** — the ~1.7 MB initramfs can't unpack in 20 MB (`build-floppinux.sh` bumps it by initramfs size; override with `FLOPPINUX_MEM`) |
 | build fix-ups | n/a | `tc` dropped (won't compile vs musl); `nslookup` forced small (`NSLOOKUP_BIG=n` — big uses `ns_*` musl lacks); SHA `HWACCEL` off (the x86 SHA-NI asm has text relocations a static-PIE link rejects → C SHA) |
 
 Two honest caveats:
@@ -80,13 +81,13 @@ Two honest caveats:
   archive/process utilities (grep/sed/awk/find/tar/gzip/ps/…) all work. Wiring up
   networking would mean enabling `CONFIG_NET`/`CONFIG_INET` + a NIC driver in
   `kernel.config-fragment` — out of scope here.
-- **The compile is yours to run.** The full `defconfig` build is validated at the
-  *config* level (it resolves to **401 applets**, static, with the three known
-  breakers handled — `tc` (musl compile), `nslookup` BIG (musl `ns_*` link), and
-  SHA `HWACCEL` (static-PIE text relocs)). The actual cross-compile happens on
-  your machine (the toolchain fetch is the one agent-gated step). If a *further*
-  applet ever fails, the build now prints the error + log path — disable that
-  applet (`CONFIG_<X>=n` in the script's full branch) and rebuild.
+- **Built + booted (2026-06-06).** The full set cross-compiles, statically links,
+  and boots to the shell once the three breakers are handled — `tc` (musl
+  compile), `nslookup` BIG (musl `ns_*` link), and SHA `HWACCEL` (static-PIE text
+  relocs) — all baked into the script's full branch. The cross-compile itself
+  runs on your machine (the toolchain fetch is the one agent-gated step). If you
+  swap BusyBox versions and a *further* applet fails, the build now prints the
+  error + a log path — disable that applet (`CONFIG_<X>=n`) and rebuild.
 
 ## Why bother — and the hardware caveat
 

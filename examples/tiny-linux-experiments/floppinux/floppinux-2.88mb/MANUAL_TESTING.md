@@ -101,25 +101,31 @@ BUSYBOX_FULL=1 ./build-2.88.sh build
 
 ```bash
 find "$O"/busybox-1_36_1/_install -type l | wc -l       # → ~401 (402 defconfig − tc)
-# in the booted VM (./build-2.88.sh test):
-grep root /etc/mtab ; echo "hi there" | sed 's/hi/HELLO/' ; find / -name welcome
+./build-2.88.sh test                                    # auto-boots with -m 256M (see below)
+# at the # prompt:
+grep root /proc/mounts ; echo "hi there" | sed 's/hi/HELLO/' ; find / -name welcome
 ```
 
 **Pass:** the count is ~401, and `grep`/`sed`/`awk`/`find`/`tar` run instead of
 printing `applet not found`.
 
-> **What's actually verified vs. expected.** The full config is verified
-> toolchain-free: `defconfig` resolves to **401 applet symlinks** (402 minus the
-> dropped `tc`; `nslookup` is kept), static, with all boot-critical applets
-> present, and the three known breakers handled — `tc` (won't compile vs musl),
-> `CONFIG_FEATURE_NSLOOKUP_BIG` (its `ns_*` calls aren't in musl → forced to the
-> small `getaddrinfo` form), and SHA `HWACCEL` (the x86 SHA-NI asm has text
-> relocations the static-PIE link rejects → C SHA, `sha*sum` kept). The
-> **compile and boot are yours to run** — the `~1.0M`/boot lines above are
-> projections, since the cross-compile is the one agent-gated step. If a
-> *further* applet fails, the build now prints the error + a log path; set
-> `CONFIG_<X>=n` and rebuild. **Networking applets (`wget`/`ping`/…) are inert** —
-> the kernel has no net stack.
+> **Memory: the full build needs more than upstream's 20 MB.** The ~1.7 MB
+> initramfs can't be placed/unpacked in `-m 20M` — the kernel panics with
+> *"rootfs image is not initramfs (invalid magic …); looks like an initrd"* →
+> *"Unable to mount root fs on /dev/ram"*. `build-floppinux.sh` auto-bumps QEMU
+> RAM to **256 MB** when the initramfs is large (keeps 20 MB for the tiny curated
+> image), so `test`/`boot` just work; override with `FLOPPINUX_MEM=…`.
+
+> **Status: BUSYBOX_FULL built + booted end-to-end (2026-06-06).** The full
+> `defconfig` set cross-compiled and statically linked once the three breakers
+> were handled — `tc` (won't compile vs musl), `CONFIG_FEATURE_NSLOOKUP_BIG`
+> (its `ns_*` calls aren't in musl → forced to the small `getaddrinfo` form),
+> and SHA `HWACCEL` (the x86 SHA-NI asm has text relocations the static-PIE link
+> rejects → C SHA, `sha*sum` kept) — and **boots to the FLOPPINUX shell** (with
+> the 256 MB auto-bump), where BusyBox applets run. **Networking applets
+> (`wget`/`ping`/…) are inert** — the kernel has no net stack. If you ever swap
+> in a different BusyBox version and a further applet fails to build/link, the
+> build now prints the error + a log path; set `CONFIG_<X>=n` and rebuild.
 
 ## §6 — Switch back to 1.44 MB (and the curated BusyBox)
 

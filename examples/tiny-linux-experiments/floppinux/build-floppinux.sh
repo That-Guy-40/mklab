@@ -44,6 +44,8 @@
 #                  instead of the ~20-applet curated set. ~1 MB binary → needs
 #                  FLOPPY_KB=2880 (won't fit 1.44 MB). Network applets are inert
 #                  (the kernel has no net stack); file/text/archive utils work.
+#                FLOPPINUX_MEM — QEMU RAM for boot/test (default 20M; auto-256M
+#                  when the initramfs is large, e.g. BUSYBOX_FULL).
 #
 # THROWAWAY LAB: the booted system drops straight to a root shell with no
 # password and no network.  That is fine for a floppy you boot in QEMU; do not
@@ -405,12 +407,25 @@ EOF
 }
 
 # ─── boot / test ─────────────────────────────────────────────────────────────
+# Pick the VM RAM. Upstream's 20M is right for the tiny curated image, but a big
+# (BUSYBOX_FULL) initramfs — ~1.7 MB unpacked — can't be placed/unpacked in 20M
+# (kernel panics: "invalid magic ... looks like an initrd"). Auto-bump when the
+# initramfs is large; override either way with FLOPPINUX_MEM.
+floppy_mem() {
+    local def=20M
+    if [[ -f "$OUT/rootfs.cpio.xz" && $(stat -c%s "$OUT/rootfs.cpio.xz") -gt 262144 ]]; then
+        def=256M    # full BusyBox (>256 KiB compressed) needs the headroom
+    fi
+    printf '%s' "${FLOPPINUX_MEM:-$def}"
+}
+
 # Faithful graphical boot (needs a display / VNC). This is the upstream command.
 do_boot() {
     preflight 1
     [[ -f "$OUT/floppinux.img" ]] || die "no floppinux.img — run 'build' first"
-    log "booting (graphical, -cpu 486 -m 20M). Close the window to exit."
-    exec qemu-system-i386 -fda "$OUT/floppinux.img" -m 20M -cpu 486
+    local mem; mem="$(floppy_mem)"
+    log "booting (graphical, -cpu 486 -m $mem). Close the window to exit."
+    exec qemu-system-i386 -fda "$OUT/floppinux.img" -m "$mem" -cpu 486
 }
 
 # Headless verification boot.  Bypasses syslinux so we can force the serial
@@ -420,12 +435,13 @@ do_test() {
     preflight 1
     [[ -f "$OUT/bzImage" && -f "$OUT/rootfs.cpio.xz" && -f "$OUT/floppinux.img" ]] \
         || die "missing artifacts — run 'build' first"
-    log "headless boot test (serial console, -nographic). Ctrl-A X to abort."
+    local mem; mem="$(floppy_mem)"
+    log "headless boot test (serial console, -m $mem, -nographic). Ctrl-A X to abort."
     qemu-system-i386 \
         -kernel "$OUT/bzImage" -initrd "$OUT/rootfs.cpio.xz" \
         -fda "$OUT/floppinux.img" \
         -append "root=/dev/ram rdinit=/etc/init.d/rc console=ttyS0 tsc=unstable" \
-        -m 20M -cpu 486 -nographic -no-reboot
+        -m "$mem" -cpu 486 -nographic -no-reboot
 }
 
 do_clean() { log "removing $OUT"; rm -rf "$OUT"; }
