@@ -690,11 +690,11 @@ etc.) — same discipline as Phases 1 and 3.
 
 ### Example TOMLs
 
-- `examples/podman-plain-single.toml` — one service, plain manager.
-- `examples/podman-pod-3svc.toml` — web+app+db pod, shared namespace.
-- `examples/podman-quadlet-service.toml` — systemd-user managed.
-- `examples/podman-from-chroot.toml` — consumes a Phase 1 chroot name.
-- `examples/podman-multiarch-build.toml` — cross-arch build matrix.
+- `examples/podman-examples/podman-plain-single.toml` — one service, plain manager.
+- `examples/podman-examples/podman-pod-3svc.toml` — web+app+db pod, shared namespace.
+- `examples/podman-examples/podman-quadlet-service.toml` — systemd-user managed.
+- `examples/podman-examples/podman-from-chroot.toml` — consumes a Phase 1 chroot name.
+- `examples/podman-examples/podman-multiarch-build.toml` — cross-arch build matrix.
 
 ### Exit criteria
 

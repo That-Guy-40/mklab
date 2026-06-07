@@ -324,7 +324,7 @@ either as `from_chroot = "/path/to/chroot"` (direct) or `from_tarball =
 `sudo` on the import side).
 
 ```toml
-# examples/podman-from-chroot.toml
+# examples/podman-examples/podman-from-chroot.toml
 [[service]]
 name        = "payload-builder"
 from_chroot = "/var/chroots/kali-amd64"

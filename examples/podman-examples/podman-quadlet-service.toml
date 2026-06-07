@@ -3,8 +3,8 @@
 # --user start`s it.  Units survive reboots (with `loginctl enable-linger`)
 # and are auto-restarted by systemd on failure.
 #
-# Up:      lab-podman.sh up       --config examples/podman-quadlet-service.toml
-# Gen:     lab-podman.sh generate --config examples/podman-quadlet-service.toml
+# Up:      lab-podman.sh up       --config examples/podman-examples/podman-quadlet-service.toml
+# Gen:     lab-podman.sh generate --config examples/podman-examples/podman-quadlet-service.toml
 #          (generate without starting — inspect the units first)
 # Status:  systemctl --user status lab-persistent-web.service
 # Logs:    lab-podman.sh logs persistent-web/web   # auto-routes to journalctl

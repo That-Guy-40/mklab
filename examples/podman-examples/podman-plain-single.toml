@@ -1,7 +1,7 @@
 # Single service in plain mode — simplest possible Phase 4 topology.
 # Brings up one rootless container and exposes a port.
 #
-# Up:   lab-podman.sh up   --config examples/podman-plain-single.toml
+# Up:   lab-podman.sh up   --config examples/podman-examples/podman-plain-single.toml
 # Ls:   lab-podman.sh list --lab hello-nginx
 # Down: lab-podman.sh down --lab hello-nginx
 #

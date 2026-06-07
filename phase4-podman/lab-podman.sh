@@ -1918,8 +1918,8 @@ ENVIRONMENT
 
 EXAMPLES
   $LAB_PROG run  --name nginx1 --image docker.io/library/nginx:alpine --ports 8080:80 --detach
-  $LAB_PROG up   --config examples/podman-pod-3svc.toml
-  $LAB_PROG generate --config examples/podman-quadlet-service.toml
+  $LAB_PROG up   --config examples/podman-examples/podman-pod-3svc.toml
+  $LAB_PROG generate --config examples/podman-examples/podman-quadlet-service.toml
   $LAB_PROG export demo --format kube    > demo.yaml
   $LAB_PROG build --tag mykali --backend from-chroot --chroot /var/chroots/kali-amd64 --userns keep-id
 EOF

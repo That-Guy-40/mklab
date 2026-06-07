@@ -6,7 +6,7 @@
 #        --arch x86_64 --target /var/chroots/kali-amd64 --variant minbase
 #
 # Then:
-#    lab-podman.sh up --config examples/podman-from-chroot.toml
+#    lab-podman.sh up --config examples/podman-examples/podman-from-chroot.toml
 #    lab-podman.sh exec chroot-kali/payload-builder -- uname -a
 #    lab-podman.sh down --lab chroot-kali
 #

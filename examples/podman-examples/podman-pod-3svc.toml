@@ -3,7 +3,7 @@
 # so they see each other on localhost and ports are published at the
 # pod level (not per-service).
 #
-# Up:   lab-podman.sh up   --config examples/podman-pod-3svc.toml
+# Up:   lab-podman.sh up   --config examples/podman-examples/podman-pod-3svc.toml
 # Exec: lab-podman.sh exec tutorial-pod/web -- /bin/sh
 # Down: lab-podman.sh down --lab tutorial-pod
 #

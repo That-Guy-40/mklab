@@ -36,7 +36,7 @@ podman info   # should succeed as non-root
 ### 2. Run a single container (plain mode)
 
 ```bash
-phase4-podman/lab-podman.sh up --config examples/podman-plain-single.toml
+phase4-podman/lab-podman.sh up --config examples/podman-examples/podman-plain-single.toml
 # Brings up rootless nginx on port 18080.
 
 curl http://127.0.0.1:18080/
@@ -47,7 +47,7 @@ phase4-podman/lab-podman.sh down --lab hello-nginx
 ### 3. Or bring up a three-service pod
 
 ```bash
-phase4-podman/lab-podman.sh up   --config examples/podman-pod-3svc.toml
+phase4-podman/lab-podman.sh up   --config examples/podman-examples/podman-pod-3svc.toml
 phase4-podman/lab-podman.sh list --lab tutorial-pod
 # All three services share the same POD ID — localhost is shared.
 
@@ -62,11 +62,11 @@ Ready-to-run examples in `examples/`:
 
 | File | What it builds |
 |---|---|
-| `podman-plain-single.toml` | Single rootless nginx, simplest possible topology |
-| `podman-pod-3svc.toml` | Web + cache + ping sharing a pod (localhost-shared namespace) |
-| `podman-quadlet-service.toml` | nginx as a systemd-user unit that survives reboot |
-| `podman-from-chroot.toml` | Import a Phase-1 chroot as a rootless Podman image |
-| `podman-multiarch-build.toml` | Build + run a foreign-arch image (e.g. aarch64 on x86_64) |
+| `podman-examples/podman-plain-single.toml` | Single rootless nginx, simplest possible topology |
+| `podman-examples/podman-pod-3svc.toml` | Web + cache + ping sharing a pod (localhost-shared namespace) |
+| `podman-examples/podman-quadlet-service.toml` | nginx as a systemd-user unit that survives reboot |
+| `podman-examples/podman-from-chroot.toml` | Import a Phase-1 chroot as a rootless Podman image |
+| `podman-examples/podman-multiarch-build.toml` | Build + run a foreign-arch image (e.g. aarch64 on x86_64) |
 | `podman-netboot-server.toml` | Rootless nginx serving PXE artifacts from `~/netboot/` |
 
 ```bash

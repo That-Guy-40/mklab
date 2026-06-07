@@ -49,7 +49,7 @@ lp status                                   # → podman info summary
 Run one nginx container and hit it from the host.
 
 ```bash
-lp up --config examples/podman-plain-single.toml
+lp up --config examples/podman-examples/podman-plain-single.toml
 ```
 
 **Expect:**
@@ -78,7 +78,7 @@ lp list                                      # → no hello-nginx rows
 Exercises the `pod` manager — N containers sharing network/IPC/PID.
 
 ```bash
-lp up --config examples/podman-pod-3svc.toml
+lp up --config examples/podman-examples/podman-pod-3svc.toml
 ```
 
 **Expect:** creates `lab-tutorial-pod-pod-frontend` pod plus
@@ -121,7 +121,7 @@ loginctl show-user $(id -un) -p Linger            # want Linger=yes
 **Generate units without running:**
 
 ```bash
-lp generate --config examples/podman-quadlet-service.toml
+lp generate --config examples/podman-examples/podman-quadlet-service.toml
 ls ~/.config/containers/systemd/                  # → lab-persistent-web-web.container
 cat ~/.config/containers/systemd/lab-persistent-web-web.container
 ```
@@ -133,7 +133,7 @@ WantedBy=default.target`.
 **Bring up for real:**
 
 ```bash
-lp up --config examples/podman-quadlet-service.toml
+lp up --config examples/podman-examples/podman-quadlet-service.toml
 systemctl --user status lab-persistent-web-web.service   # → active (running)
 curl -s http://127.0.0.1:8081/ | head -3                 # → nginx default
 ```
@@ -176,7 +176,7 @@ sudo phase1-chroot/lab-chroot.sh create \
 see `phase1-chroot/INSTALL-KALI-KEYRING.md`.)
 
 ```bash
-lp up --config examples/podman-from-chroot.toml
+lp up --config examples/podman-examples/podman-from-chroot.toml
 lp exec chroot-kali/payload-builder -- cat /etc/os-release | head -3
 # → PRETTY_NAME="Kali Linux Rolling"
 lp exec chroot-kali/payload-builder -- id
@@ -195,8 +195,8 @@ podman inspect lab-chroot-kali-payload-builder | jq '.[0].HostConfig.IDMappings'
 
 ```bash
 lp down --lab chroot-kali
-# Edit examples/podman-from-chroot.toml, change userns to "auto-map"
-lp up --config examples/podman-from-chroot.toml
+# Edit examples/podman-examples/podman-from-chroot.toml, change userns to "auto-map"
+lp up --config examples/podman-examples/podman-from-chroot.toml
 lp exec chroot-kali/payload-builder -- stat -c '%u %U' /etc/os-release
 # → "0 root" (auto-map forced 0:0 ownership during import)
 ```
@@ -212,7 +212,7 @@ This is PLAN.md **exit criterion #3**.
 ## 5. Export to Kubernetes YAML
 
 ```bash
-lp up --config examples/podman-pod-3svc.toml
+lp up --config examples/podman-examples/podman-pod-3svc.toml
 lp export tutorial-pod --format kube > /tmp/tutorial-pod.yaml
 head -30 /tmp/tutorial-pod.yaml         # → apiVersion: v1, kind: Pod
 ```
@@ -232,7 +232,7 @@ This is PLAN.md **exit criterion #4**.
 **Compose export (best-effort, uses stored spec.toml):**
 
 ```bash
-lp up --config examples/podman-pod-3svc.toml
+lp up --config examples/podman-examples/podman-pod-3svc.toml
 lp export tutorial-pod --format compose > /tmp/tutorial-pod.compose.yaml
 cat /tmp/tutorial-pod.compose.yaml
 lp down --lab tutorial-pod
@@ -241,7 +241,7 @@ lp down --lab tutorial-pod
 ## 6. The rootless-first gate
 
 ```bash
-sudo env PATH="$PATH" lp up --config examples/podman-plain-single.toml
+sudo env PATH="$PATH" lp up --config examples/podman-examples/podman-plain-single.toml
 # → [error] lab-podman.sh is rootless-first; refusing to run as root.
 ```
 

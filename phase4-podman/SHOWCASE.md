@@ -14,7 +14,7 @@ without the daemon, without root, and with a few tricks of its own.
 
 ```bash
 # Bring up a 3-service pod (web + cache + ping, all sharing localhost):
-phase4-podman/lab-podman.sh up --config examples/podman-pod-3svc.toml
+phase4-podman/lab-podman.sh up --config examples/podman-examples/podman-pod-3svc.toml
 
 # All three rows show the same POD ID; ports publish at the pod, not the svc:
 phase4-podman/lab-podman.sh list --lab tutorial-pod
@@ -112,7 +112,7 @@ know it's quadlet-managed.
 Generate without running — useful for audit or config-management:
 
 ```bash
-phase4-podman/lab-podman.sh generate --config examples/podman-quadlet-service.toml
+phase4-podman/lab-podman.sh generate --config examples/podman-examples/podman-quadlet-service.toml
 ```
 
 ### `userns` modes (keep-id / auto-map / host)
@@ -317,7 +317,7 @@ Cross-references:
 
 Same `from-chroot` / `from-tarball` backends as Phase 3, with the same
 readability preflight, but the result is rootless. See
-`examples/podman-from-chroot.toml`. Pair `userns = "keep-id"` with a
+`examples/podman-examples/podman-from-chroot.toml`. Pair `userns = "keep-id"` with a
 chroot you own and bind-mounts just work.
 
 ### ↔ Phases 3 & 5 (mixed-engine TOMLs)
@@ -346,11 +346,11 @@ render.
 - [`PLAN.md`](../PLAN.md) — design rationale and exit criteria
 - [`MANUAL_TESTING.md`](MANUAL_TESTING.md) — copy-paste verification walkthrough
 - [`../examples/`](../examples/) — every TOML referenced above lives here:
-  - [`podman-plain-single.toml`](../examples/podman-plain-single.toml)
-  - [`podman-pod-3svc.toml`](../examples/podman-pod-3svc.toml)
-  - [`podman-quadlet-service.toml`](../examples/podman-quadlet-service.toml)
-  - [`podman-from-chroot.toml`](../examples/podman-from-chroot.toml)
-  - [`podman-multiarch-build.toml`](../examples/podman-multiarch-build.toml)
+  - [`podman-examples/podman-plain-single.toml`](../examples/podman-examples/podman-plain-single.toml)
+  - [`podman-examples/podman-pod-3svc.toml`](../examples/podman-examples/podman-pod-3svc.toml)
+  - [`podman-examples/podman-quadlet-service.toml`](../examples/podman-examples/podman-quadlet-service.toml)
+  - [`podman-examples/podman-from-chroot.toml`](../examples/podman-examples/podman-from-chroot.toml)
+  - [`podman-examples/podman-multiarch-build.toml`](../examples/podman-examples/podman-multiarch-build.toml)
 - Sibling SHOWCASEs:
   [Phase 1 (chroots)](../phase1-chroot/SHOWCASE.md) ·
   [Phase 2 (VMs)](../phase2-qemu-vm/SHOWCASE.md) ·

@@ -337,11 +337,11 @@ phase4-podman/lab-podman.sh list
 ### 4.2 Plain rootless container ⚡ (net)
 
 ```bash
-phase4-podman/lab-podman.sh up --config examples/podman-plain-single.toml
+phase4-podman/lab-podman.sh up --config examples/podman-examples/podman-plain-single.toml
 phase4-podman/lab-podman.sh list
-phase4-podman/lab-podman.sh exec --config examples/podman-plain-single.toml \
+phase4-podman/lab-podman.sh exec --config examples/podman-examples/podman-plain-single.toml \
     http -- nginx -v
-phase4-podman/lab-podman.sh down --config examples/podman-plain-single.toml
+phase4-podman/lab-podman.sh down --config examples/podman-examples/podman-plain-single.toml
 ```
 
 Pass: `nginx -v` prints the version; `list` shows the container running
@@ -350,10 +350,10 @@ without root.
 ### 4.3 Pod with three services ⚡ (net)
 
 ```bash
-phase4-podman/lab-podman.sh up --config examples/podman-pod-3svc.toml
-phase4-podman/lab-podman.sh status --config examples/podman-pod-3svc.toml
+phase4-podman/lab-podman.sh up --config examples/podman-examples/podman-pod-3svc.toml
+phase4-podman/lab-podman.sh status --config examples/podman-examples/podman-pod-3svc.toml
 curl -si http://localhost:8181/ | head -3
-phase4-podman/lab-podman.sh down --config examples/podman-pod-3svc.toml
+phase4-podman/lab-podman.sh down --config examples/podman-examples/podman-pod-3svc.toml
 ```
 
 Pass: all three services running in the same pod; nginx accessible.
@@ -361,7 +361,7 @@ Pass: all three services running in the same pod; nginx accessible.
 ### 4.4 Quadlet (systemd-user persistent unit) ⚡ (net)
 
 ```bash
-phase4-podman/lab-podman.sh generate --config examples/podman-quadlet-service.toml
+phase4-podman/lab-podman.sh generate --config examples/podman-examples/podman-quadlet-service.toml
 ls ~/.config/containers/systemd/
 ```
 
@@ -446,13 +446,13 @@ sudo phase1-chroot/lab-chroot.sh export-tarball debian-bookworm \
     --output /tmp/debian-bookworm.tar.gz
 
 # Import into rootless Podman
-phase4-podman/lab-podman.sh up --config examples/podman-from-chroot.toml
+phase4-podman/lab-podman.sh up --config examples/podman-examples/podman-from-chroot.toml
 
 # Verify the chroot's files are in the container
-phase4-podman/lab-podman.sh exec --config examples/podman-from-chroot.toml \
+phase4-podman/lab-podman.sh exec --config examples/podman-examples/podman-from-chroot.toml \
     app -- cat /etc/debian_version
 
-phase4-podman/lab-podman.sh down --config examples/podman-from-chroot.toml
+phase4-podman/lab-podman.sh down --config examples/podman-examples/podman-from-chroot.toml
 sudo phase1-chroot/lab-chroot.sh destroy debian-bookworm
 ```
 

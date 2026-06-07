@@ -63,10 +63,10 @@ the netboot section below).
 
 | File | What you get |
 |---|---|
-| `podman-plain-single.toml` | The simplest topology: one rootless container, one published port. |
-| `podman-pod-3svc.toml` | Three containers sharing a **pod** (one net/IPC/PID namespace; localhost between them). |
-| `podman-quadlet-service.toml` | Exports a `.container` **quadlet** unit to systemd-user — survives reboots, auto-restarts. |
-| `podman-multiarch-build.toml` | Builds an image for a *foreign* arch via `qemu-user-static` (a `build` step, not `up`). |
+| `podman-examples/podman-plain-single.toml` | The simplest topology: one rootless container, one published port. |
+| `podman-examples/podman-pod-3svc.toml` | Three containers sharing a **pod** (one net/IPC/PID namespace; localhost between them). |
+| `podman-examples/podman-quadlet-service.toml` | Exports a `.container` **quadlet** unit to systemd-user — survives reboots, auto-restarts. |
+| `podman-examples/podman-multiarch-build.toml` | Builds an image for a *foreign* arch via `qemu-user-static` (a `build` step, not `up`). |
 
 ## 📦 LXD / Incus — Phase 5 (`phase5-lxd/lab-lxd.sh`)
 
@@ -116,7 +116,7 @@ chroot first, then point the target phase at the same artifact.
 | File | What you get |
 |---|---|
 | `vm-from-chroot-debian.toml` | Chroot → bootable BIOS qcow2 (MBR + extlinux + ext4) for Phase 2. |
-| `podman-from-chroot.toml` | Chroot → a rootless Podman image (e.g. import a Kali minbase tree). |
+| `podman-examples/podman-from-chroot.toml` | Chroot → a rootless Podman image (e.g. import a Kali minbase tree). |
 | `lxd-examples/lxd-from-chroot.toml` | Chroot → a Phase 5 LXD/Incus container image. |
 | [`offsec-awae-vm/`](offsec-awae-vm/) | 🔒 End-to-end **automated** chroot→VM: a Kali `kali-rolling` chroot carrying the **OffSec AWAE (WEB-300)** toolset, made self-bootable (kernel + init + SSH) and packaged into a headless BIOS VM by `from-chroot`. `build-vm.sh` chains both phases + boots it (serial/SSH); `--smoke` proves the pipeline first. Chroot-level take on Kali's `offsec-awae-live.sh` live-build recipe. ⚠️ offensive tooling — authorized targets only. |
 
