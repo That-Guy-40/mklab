@@ -53,7 +53,7 @@ Full cloud-image VMs and tiny in-RAM microVMs. `create` then `start`, `ssh` in.
 
 | File | What you get |
 |---|---|
-| `docker-3svc-topology.toml` | nginx + postgres + an idle alpine client on a shared bridge — the Phase 3 showcase. |
+| `docker-examples/docker-3svc-topology.toml` | nginx + postgres + an idle alpine client on a shared bridge — the Phase 3 showcase. |
 
 ## 🦭 Podman, rootless — Phase 4 (`phase4-podman/lab-podman.sh`) 🪶
 
@@ -131,7 +131,7 @@ kernel+initrd over HTTP (Phase 3/4), and boot it in QEMU directly or via iPXE
 | `vm-netboot-direct.toml` | Boots the tier-2 busybox initrd via QEMU `-kernel/-initrd` (no iPXE — short debug loop). |
 | `vm-netboot-full.toml` | Boots the full systemd initrd (given 2 GB so it can unpack ~1 GB in RAM). |
 | `vm-netboot-ipxe.toml` | Boots an iPXE disk that fetches kernel+initrd over HTTP — simulates real PXE hardware. |
-| `docker-netboot-server.toml` | Rootful Docker nginx serving the netboot artifacts on :8181. |
+| `docker-examples/docker-netboot-server.toml` | Rootful Docker nginx serving the netboot artifacts on :8181. |
 | `podman-netboot-server.toml` | 🪶 The rootless Podman equivalent — preferred when you only need to serve. |
 | [`debian-http-boot/`](debian-http-boot/) | 🔗 Self-contained clone of Kenneth Finnegan's *“Booting Linux over HTTP”* on **Debian 13 trixie**: a full systemd rootfs run **entirely from RAM** via his **verbatim** hand-rolled `/init` (`exec /sbin/init`, no `switch_root`). README explains *why* the initramfs-as-rootfs hand-off works; a `MANUAL_TESTING.md` runs each piece + the full boot with real captured output. The teaching twin of `chroot-netboot-full.toml` (same blog, bookworm). |
 | [`pxe-boot-mechanics/`](pxe-boot-mechanics/) | PXE **boot-mechanics** demos (how a VM boots, not what it installs): `vm-pxe-tftp-boot.toml` (DHCP+TFTP delivery) and `vm-pxe-secureboot.toml` (UEFI Secure Boot enforced, snakeoil-signed iPXE). Both reuse `netboot/build-ipxe.sh`. Plus `tools/` — hand-driven TFTP/HTTP fetch probes (`pxe-fetch.sh` + vendored `socwrap.sh`) to watch & record the transport steps. |

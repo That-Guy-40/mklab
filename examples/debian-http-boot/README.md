@@ -261,7 +261,7 @@ existing netboot pipeline rather than rebuilding one here:
 
 1. **Serve the artifacts.** Point an nginx container at `~/netboot` on `:8181`:
    [`../podman-netboot-server.toml`](../podman-netboot-server.toml) (rootless) or
-   [`../docker-netboot-server.toml`](../docker-netboot-server.toml). (Rename or
+   [`../docker-examples/docker-netboot-server.toml`](../docker-examples/docker-netboot-server.toml). (Rename or
    symlink `kernel-debian-http`/`initrd-debian-http.gz` to whatever your
    `boot.ipxe` references.)
 2. **Build an iPXE that chainloads it.** [`../../netboot/build-ipxe.sh`](../../netboot/build-ipxe.sh)

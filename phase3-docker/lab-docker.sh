@@ -1462,11 +1462,11 @@ EXAMPLES
   $LAB_PROG build --tag mychroot:latest --backend from-chroot --chroot /var/jails/busybox
   $LAB_PROG build --tag myimg:arm64 --backend buildx --context ./app --arch aarch64
   $LAB_PROG push myapp:latest
-  $LAB_PROG up     --config examples/docker-3svc-topology.toml
+  $LAB_PROG up     --config examples/docker-examples/docker-3svc-topology.toml
   $LAB_PROG up     --config examples/docker-compose.yml          # compose YAML also accepted
   $LAB_PROG list   --lab demo
   $LAB_PROG status demo
-  $LAB_PROG export --config examples/docker-3svc-topology.toml --format compose > demo-compose.yml
+  $LAB_PROG export --config examples/docker-examples/docker-3svc-topology.toml --format compose > demo-compose.yml
   $LAB_PROG down   --lab demo
 EOF
 }

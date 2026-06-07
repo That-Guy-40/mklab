@@ -59,7 +59,7 @@ phase3-docker/lab-docker.sh destroy web1 --force
 
 ```bash
 # Three-service topology: nginx + postgres + alpine client on a shared network
-phase3-docker/lab-docker.sh up   --config examples/docker-3svc-topology.toml
+phase3-docker/lab-docker.sh up   --config examples/docker-examples/docker-3svc-topology.toml
 phase3-docker/lab-docker.sh list --lab demo
 
 curl http://localhost:8088/
@@ -68,7 +68,7 @@ phase3-docker/lab-docker.sh exec demo/db -- psql -U lab -c '\l'
 phase3-docker/lab-docker.sh down --lab demo
 ```
 
-Ready-to-run examples in `examples/`:
+Ready-to-run examples in `examples/docker-examples/`:
 
 | File | What it builds |
 |---|---|

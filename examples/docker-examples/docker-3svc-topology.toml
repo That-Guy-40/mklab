@@ -1,7 +1,7 @@
 # Three-service demo topology: nginx + postgres + an idle alpine client,
 # all on a shared bridge network. Hits Phase 3 exit criteria.
 #
-# Bring up: lab-docker.sh up   --config docker-3svc-topology.toml
+# Bring up: lab-docker.sh up   --config examples/docker-examples/docker-3svc-topology.toml
 # Inspect:  lab-docker.sh list --lab demo
 # Tear down: lab-docker.sh down --lab demo
 

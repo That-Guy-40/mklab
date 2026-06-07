@@ -290,9 +290,9 @@ phase3-docker/lab-docker.sh list
 ### 3.2 Three-service topology ⚡ (net)
 
 ```bash
-phase3-docker/lab-docker.sh up --config examples/docker-3svc-topology.toml
+phase3-docker/lab-docker.sh up --config examples/docker-examples/docker-3svc-topology.toml
 phase3-docker/lab-docker.sh list
-phase3-docker/lab-docker.sh status --config examples/docker-3svc-topology.toml
+phase3-docker/lab-docker.sh status --config examples/docker-examples/docker-3svc-topology.toml
 ```
 
 Verify connectivity:
@@ -302,23 +302,23 @@ Verify connectivity:
 curl -si http://localhost:8181/ | head -3
 
 # Confirm postgres is up (port published in TOML)
-phase3-docker/lab-docker.sh exec --config examples/docker-3svc-topology.toml \
+phase3-docker/lab-docker.sh exec --config examples/docker-examples/docker-3svc-topology.toml \
     db -- pg_isready
 ```
 
 Pass: nginx returns HTTP 200; `pg_isready` reports `accepting connections`.
 
 ```bash
-phase3-docker/lab-docker.sh down --config examples/docker-3svc-topology.toml
+phase3-docker/lab-docker.sh down --config examples/docker-examples/docker-3svc-topology.toml
 ```
 
 ### 3.3 Netboot artifact server ⚡ (net, needs ~/netboot/kernel + initrd.gz)
 
 ```bash
-phase3-docker/lab-docker.sh up --config examples/docker-netboot-server.toml
+phase3-docker/lab-docker.sh up --config examples/docker-examples/docker-netboot-server.toml
 curl -sI http://localhost:8181/kernel    | head -2
 curl -sI http://localhost:8181/initrd.gz | head -2
-phase3-docker/lab-docker.sh down --config examples/docker-netboot-server.toml
+phase3-docker/lab-docker.sh down --config examples/docker-examples/docker-netboot-server.toml
 ```
 
 Pass: both `curl -I` responses return `HTTP/1.1 200 OK`.

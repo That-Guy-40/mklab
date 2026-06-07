@@ -132,7 +132,7 @@ rm -rf /tmp/myapp
 ## 5. Three-service topology (`up` / `down`)
 
 ```bash
-ld up --config examples/docker-3svc-topology.toml
+ld up --config examples/docker-examples/docker-3svc-topology.toml
 ld list --lab demo
 docker network ls --filter label=lab-create.lab=demo
 ```
@@ -164,8 +164,8 @@ If you keep the named pgdata volume around between runs you can re-`up` and the 
 ## 6. Idempotency
 
 ```bash
-ld up --config examples/docker-3svc-topology.toml
-ld up --config examples/docker-3svc-topology.toml   # → second run is a no-op for existing services
+ld up --config examples/docker-examples/docker-3svc-topology.toml
+ld up --config examples/docker-examples/docker-3svc-topology.toml   # → second run is a no-op for existing services
 ld down --lab demo
 ```
 
@@ -867,5 +867,5 @@ Expect (on a docker-equipped host):
 `LAB_LOG_LEVEL=debug` shows the underlying `docker run` argv:
 
 ```bash
-LAB_LOG_LEVEL=debug ld up --config examples/docker-3svc-topology.toml
+LAB_LOG_LEVEL=debug ld up --config examples/docker-examples/docker-3svc-topology.toml
 ```

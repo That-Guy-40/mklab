@@ -11,7 +11,7 @@
 #        --kernel ~/netboot/kernel --output ~/netboot/initrd.gz
 #
 # 2. Start this server:
-#    lab-docker.sh up --config examples/docker-netboot-server.toml
+#    lab-docker.sh up --config examples/docker-examples/docker-netboot-server.toml
 #
 # 3. Boot a VM with Phase 2 or real hardware via iPXE:
 #    sudo phase2-qemu-vm/lab-vm.sh create --config examples/vm-netboot-direct.toml

@@ -266,7 +266,7 @@ the Debian ones — nginx serves whatever it finds.
 as root, but serving the artifacts does not.  The rootless Podman container
 reads the files through a bind-mount inside a user namespace, so a
 container escape lands you as your unprivileged user, not root.
-See [`docker-netboot-server.toml`](../examples/docker-netboot-server.toml)
+See [`docker-netboot-server.toml`](../examples/docker-examples/docker-netboot-server.toml)
 for the rootful Docker variant and a side-by-side comparison.
 
 **SELinux**: on enforcing systems, `lab-podman.sh` automatically appends
@@ -309,7 +309,7 @@ phase4-podman/lab-podman.sh down --lab netboot-srv
 Cross-references:
 - Producer (Debian): [Phase 1 chroot — `chroot-netboot-busybox.toml`](../examples/chroot-netboot-busybox.toml)
 - Consumer (Debian VM): [Phase 2 VM — `vm-netboot-direct.toml`](../examples/vm-netboot-direct.toml)
-- Rootful Docker variant: [`docker-netboot-server.toml`](../examples/docker-netboot-server.toml)
+- Rootful Docker variant: [`docker-netboot-server.toml`](../examples/docker-examples/docker-netboot-server.toml)
 
 ## Integrations
 

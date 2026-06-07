@@ -319,7 +319,7 @@ types {
 # Usage: sudo netboot/setup-netboot-dir.sh [--dir /srv/netboot]
 ```
 
-**`examples/docker-netboot-server.toml`** (Phase 3, secondary — rootful):
+**`examples/docker-examples/docker-netboot-server.toml`** (Phase 3, secondary — rootful):
 - Same structure as podman variant but `engine = "docker"` and `[lab] name = "netboot-srv-docker"`
 
 ---
@@ -512,7 +512,7 @@ For SBCs (aarch64): need `ipxe.efi` (UEFI) or an aarch64-specific boot chain.
 | `examples/chroot-netboot-minimal.toml` | new | Busybox initrd chroot |
 | `examples/chroot-netboot-full.toml` | new | Full Debian initrd chroot |
 | `examples/podman-netboot-server.toml` | new | Phase 4 nginx (primary) |
-| `examples/docker-netboot-server.toml` | new | Phase 3 nginx (secondary) |
+| `examples/docker-examples/docker-netboot-server.toml` | new | Phase 3 nginx (secondary) |
 | `examples/vm-netboot-direct.toml` | new | Phase 2 direct -kernel/-initrd |
 | `examples/vm-netboot-ipxe.toml` | new | Phase 2 iPXE disk image boot |
 | `examples/netboot-lab.toml` | new | Unified cross-phase |

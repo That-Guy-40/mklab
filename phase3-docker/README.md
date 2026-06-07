@@ -98,7 +98,7 @@ lab-docker.sh run --name bb --image bbox:lab --rm --tty -- /bin/busybox sh
 ### Multi-service topology
 
 ```bash
-lab-docker.sh up   --config examples/docker-3svc-topology.toml
+lab-docker.sh up   --config examples/docker-examples/docker-3svc-topology.toml
 lab-docker.sh list --lab demo
 curl http://localhost:8088/                # web service
 lab-docker.sh exec demo/db -- psql -U postgres -c '\l'

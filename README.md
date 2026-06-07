@@ -64,7 +64,7 @@ See [`phase2-qemu-vm/README.md`](phase2-qemu-vm/README.md) and
 ### A throwaway 3-service Docker lab
 
 ```bash
-phase3-docker/lab-docker.sh up   --config examples/docker-3svc-topology.toml
+phase3-docker/lab-docker.sh up   --config examples/docker-examples/docker-3svc-topology.toml
 phase3-docker/lab-docker.sh list --lab demo
 curl http://localhost:8088/
 phase3-docker/lab-docker.sh down --lab demo

@@ -414,7 +414,7 @@ Both must match — the `--server` URL is baked into `boot.ipxe` at compile time
   - [`chroot-netboot-minimal.toml`](../examples/chroot-netboot-minimal.toml)
   - [`chroot-netboot-full.toml`](../examples/chroot-netboot-full.toml)
   - [`podman-netboot-server.toml`](../examples/podman-netboot-server.toml)
-  - [`docker-netboot-server.toml`](../examples/docker-netboot-server.toml)
+  - [`docker-netboot-server.toml`](../examples/docker-examples/docker-netboot-server.toml)
   - [`vm-netboot-direct.toml`](../examples/vm-netboot-direct.toml)
   - [`vm-netboot-ipxe.toml`](../examples/vm-netboot-ipxe.toml)
   - [`netboot-lab.toml`](../examples/netboot-lab.toml)

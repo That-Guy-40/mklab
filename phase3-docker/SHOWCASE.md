@@ -17,7 +17,7 @@ to drift, and `list`/`down`/`status` work even after a reboot.
 cd /media/sqs/COLD_STORAGE/LAB_CREATE_V2
 
 # 1. Bring up nginx + postgres + an idle alpine "client" on a shared bridge.
-phase3-docker/lab-docker.sh up --config examples/docker-3svc-topology.toml
+phase3-docker/lab-docker.sh up --config examples/docker-examples/docker-3svc-topology.toml
 
 # 2. See what just landed.
 phase3-docker/lab-docker.sh list --lab demo
@@ -49,7 +49,7 @@ lab-demo-frontend     bridge    local
 
 ### Topology as TOML, not docker-compose
 
-The canonical 3-service demo (`examples/docker-3svc-topology.toml`) is
+The canonical 3-service demo (`examples/docker-examples/docker-3svc-topology.toml`) is
 20 lines of declarative TOML — one `[lab]` block, one `[network.*]`,
 three `[[service]]` arrays:
 
@@ -145,7 +145,7 @@ it by hand:
 
 ```bash
 phase3-docker/lab-docker.sh export \
-    --config examples/docker-3svc-topology.toml --format compose \
+    --config examples/docker-examples/docker-3svc-topology.toml --format compose \
     > /tmp/compose.yml
 
 docker compose -f /tmp/compose.yml config --quiet   # validates
@@ -242,7 +242,7 @@ sudo lab-chroot.sh export-initrd netboot-minimal \
     --kernel ~/netboot/kernel --output ~/netboot/initrd.gz
 
 # 2. Start the server
-phase3-docker/lab-docker.sh up --config examples/docker-netboot-server.toml
+phase3-docker/lab-docker.sh up --config examples/docker-examples/docker-netboot-server.toml
 
 # 3. Verify the artifacts are reachable
 curl -I http://localhost:8181/kernel
@@ -290,7 +290,7 @@ topology view alongside chroots, VMs, podman pods, and LXD instances.
 
 - [`PLAN.md` §Phase 3](../PLAN.md) — design rationale and exit criteria
 - [`MANUAL_TESTING.md`](MANUAL_TESTING.md) — copy-paste verification walkthrough
-- [`examples/docker-3svc-topology.toml`](../examples/docker-3svc-topology.toml) — the lab used above
+- [`examples/docker-examples/docker-3svc-topology.toml`](../examples/docker-examples/docker-3svc-topology.toml) — the lab used above
 - [`examples/lab-unified-demo.toml`](../examples/lab-unified-demo.toml) — cross-phase example
 - Sibling SHOWCASEs:
   [Phase 1 (chroots)](../phase1-chroot/SHOWCASE.md) ·
