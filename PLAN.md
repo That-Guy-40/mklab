@@ -73,7 +73,7 @@ LAB_CREATE_V2/
 ├── phase5-lxd/              # lab-lxd.sh      + README/SHOWCASE/MANUAL_TESTING/START_HERE_*  + tests/
 ├── phase6-tui/              # Textual TUI front-end — read-only inventory across all 5 phases
 │   └── lab_tui/             # app.py, screens/, backends/, widgets/, state.py, topology.py
-└── phase6b-web/             # FastAPI + HTMX web UI (deferred; scaffold present)
+└── phase6b-web/             # FastAPI + HTMX web UI (read-only inventory + topology)
     └── lab_web/             # app.py, routes/, templates/, static/
 ```
 
@@ -863,8 +863,9 @@ nothing in Phases 1–5 breaks.
 
 **Status: v0.1 landed.** Read-only inventory and cross-phase topology
 orchestration — the highest-value slice of the original spec. Create
-wizards, console attach, and the Phase 6b web UI are **deferred to v0.2**
-so the read-only surface can be proven out first.
+wizards and console attach are **deferred to v0.2** so the read-only
+surface can be proven out first; the Phase 6b web UI has since shipped
+(`phase6b-web/`).
 
 ### Stack
 
@@ -945,8 +946,6 @@ backend's `list_resources()`.
 - **Console attach** — suspend Textual, drop into `lab-vm.sh console
   <name>`, resume on exit. Fiddly cross-platform; v0.1 users can run it
   standalone in another terminal.
-- **Phase 6b web UI** — same `BackendRunner` surface lifted into FastAPI
-  handlers.
 - **`textual serve lab_tui`** integration — blocked on the same
   `BackendRunner` abstraction being proven stable in v0.1.
 

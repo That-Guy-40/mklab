@@ -198,11 +198,11 @@ free-fast events.
 
 ### Framework-agnostic backends (Phase 6b's foundation)
 
-Because `backends/*.py` import zero Textual symbols, Phase 6b will
-import `BackendRunner` and `Resource` from this same module and put
-each runner behind a FastAPI route handler. The Pydantic `Resource`
-model is JSON-serialisable out of the box. The web UI is deferred to
-v0.2, but the foundation it'll sit on is what ships in v0.1.
+Because `backends/*.py` import zero Textual symbols, Phase 6b imports
+`BackendRunner` and `Resource` from this same module and puts each
+runner behind a FastAPI route handler. The Pydantic `Resource` model is
+JSON-serialisable out of the box — exactly the foundation the now-shipped
+[`../phase6b-web/`](../phase6b-web/) web UI sits on.
 
 ## The cross-phase showcase
 
@@ -288,7 +288,7 @@ nginx → iPXE chain.
 
 ## What's deferred to v0.2
 
-v0.1 covers read-only inventory + topology orchestration. **Three
+v0.1 covers read-only inventory + topology orchestration. **Two
 things are intentionally deferred** so the read-only surface could
 ship and be proven first:
 
@@ -299,9 +299,10 @@ ship and be proven first:
 - **Console attach**: Textual-suspend → `lab-vm.sh console <name>` →
   resume on exit is fiddly cross-platform. v0.1 users run `console`
   in another terminal.
-- **Phase 6b web UI** (FastAPI + HTMX): blocked on the
-  `BackendRunner` abstraction being proven stable in v0.1, which is
-  exactly what shipped.
+
+(The **Phase 6b web UI** — FastAPI + HTMX — was the third deferred item;
+it has since shipped on this exact `BackendRunner` foundation. See
+[`../phase6b-web/`](../phase6b-web/).)
 
 The 44-test fixture-based suite (`uv run pytest -v` — no live
 daemons) gives that "proven stable" claim its teeth.

@@ -5,7 +5,8 @@ A Python 3.11+ Textual app that surfaces resources produced by Phases 1–5
 keyboard-driven UI, plus cross-phase topology bring-up / tear-down.
 
 This is **v0.1** — read-only inventory + topology orchestration. Create
-wizards, console attach, and the Phase 6b web UI are deferred.
+wizards and console attach are deferred to v0.2; the Phase 6b web UI
+([`../phase6b-web/`](../phase6b-web/)) has since shipped.
 
 ## Install + run
 

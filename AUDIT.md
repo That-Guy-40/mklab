@@ -77,11 +77,13 @@ These are genuine and worth preserving:
   (`phase1-chroot/lab-chroot.sh:779-811`).
 - **Clean architecture.** Backends are framework-agnostic (an explicit "NO
   `textual` imports here, ever" contract in `base.py:8`), use Pydantic
-  models, and are designed for reuse by a future web UI. The bash/Python
+  models, and are reused as-is by the Phase 6b web UI (`phase6b-web/`). The bash/Python
   split — Python never reimplements provisioning, only surfaces it — is a
   sound boundary.
 - **Repo hygiene.** No committed secrets or private keys, no world-writable
-  `chmod`, exactly **one** TODO/FIXME in the entire tree. `.gitignore`
+  `chmod`, and just **one** inline `TODO`/`FIXME` marker in the project's
+  own source (`micro-linux/mlbuild.sh` — a since-resolved note; the
+  deliberate `TODO.md` backlog doc is separate). `.gitignore`
   correctly excludes state, caches, venvs, and downloaded artifacts.
 - **Documentation.** README, a 57 KB `PLAN.md`, a `NETBOOT_LAB_PLAN.md`, and
   per-phase `README` / `SHOWCASE` / `MANUAL_TESTING` docs. Comments explain
