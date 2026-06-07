@@ -228,6 +228,32 @@ reboot: System halted
 Write something to `/home`, halt, and re-`test` — it persists, because `/home` is
 the floppy.
 
+### §6b — the `LOGIN=1` build
+
+If you built with `LOGIN=1 QOL=1 BUSYBOX_FULL=1`, boot ends at a `floppinux
+login:` prompt instead of a bare `#`:
+
+```text
+floppinux login: root
+Password:                ← type "lab" (not echoed)
+root@floppinux:~# tty
+/dev/console
+root@floppinux:~# sleep 5 & jobs
+[1]+  Running                    sleep 5
+root@floppinux:~# exit
+floppinux login:         ← init respawns getty (not a panic, not a bare shell)
+```
+
+- **`root` / `lab`** authenticates against the inline hash in `/etc/passwd`
+  (`busybox cryptpw -m md5 -S floppinx lab` reproduces it byte-for-byte); a wrong
+  password gives `Login incorrect`.
+- **`tty` → `/dev/console`** and `sleep 5 & jobs` lists the job → job control
+  works (getty grabbed the console as the controlling terminal).
+- **`exit` → `login:`** is the visible difference from the non-login QoL build
+  (whose `exit` respawns the shell directly). Shutting down is unchanged — the
+  QoL `poweroff`/`reboot` functions. Background:
+  [`QUALITY_OF_LIFE.md`](QUALITY_OF_LIFE.md) → "Add a login prompt".
+
 ## §7 — Both boot paths
 
 Two independent ways the kernel can start; testing both isolates a kernel/rootfs
@@ -268,3 +294,5 @@ the toolchain or recompiling the kernel. **Pass:** `pack` re-emits the
 | `poweroff -f` *still* halts (`Power off not available: halting system`) | APM (merged from `kernel-apm.config-fragment` for `BUSYBOX_FULL`) didn't engage — BIOS/APM detection. | `reboot -f` and `Ctrl-A X` always work. To debug APM, boot with the kernel cmdline `apm=power-off` (or `apm=on`); or swap APM for `CONFIG_ACPI=y` (bigger, QEMU-native). |
 | `poweroff: not found` on a *curated* build | The curated set has no `poweroff` applet, and its kernel has no APM (kept faithful at 20 MB). | Use `reboot`/`Ctrl-A X`; or build with `BUSYBOX_FULL=1` for the applet + APM. |
 | `FAT-fs (fd0): Volume was not properly unmounted` | A prior run was killed mid-mount (e.g. timeout). | Cosmetic; harmless. |
+| `LOGIN=1` boots to a `#` shell, not a `login:` prompt | `LOGIN=1` needs **both** `QOL=1` (init→login handoff) and `BUSYBOX_FULL=1` (getty/login applets); build errors early if either is missing. | Pass all three: `LOGIN=1 QOL=1 BUSYBOX_FULL=1 ./build-2.88.sh build`. |
+| `Login incorrect` for `root`/`lab` | Typo, or the hash doesn't match this BusyBox's crypt. | Password is `lab`. Confirm the stored hash: `busybox cryptpw -m md5 -S floppinx lab` should equal field 2 of `/etc/passwd`. |

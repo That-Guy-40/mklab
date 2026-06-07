@@ -52,8 +52,9 @@ The headline use for the extra space — **the whole BusyBox toolbox** instead o
 the 1.44 MB build's ~20 curated commands:
 
 ```bash
-BUSYBOX_FULL=1 ./build-2.88.sh build              # ~400 applets on a 2.88 MB floppy
-QOL=1 BUSYBOX_FULL=1 ./build-2.88.sh build         # ...plus the quality-of-life pack
+BUSYBOX_FULL=1 ./build-2.88.sh build                    # ~400 applets on a 2.88 MB floppy
+QOL=1 BUSYBOX_FULL=1 ./build-2.88.sh build               # ...plus the quality-of-life pack
+LOGIN=1 QOL=1 BUSYBOX_FULL=1 ./build-2.88.sh build        # ...plus a real login: prompt
 ```
 
 > **`QOL=1`** bakes in the niceties a normal shell has — a BusyBox-`init` login
@@ -62,6 +63,13 @@ QOL=1 BUSYBOX_FULL=1 ./build-2.88.sh build         # ...plus the quality-of-life
 > floppy), `/etc/passwd`+`group` (names not UIDs), hostname, motd. To add any of
 > these **by hand from inside the running box** (with validations) first, see
 > [`../QUALITY_OF_LIFE.md`](../QUALITY_OF_LIFE.md).
+
+> **`LOGIN=1`** (on top of `QOL=1`) replaces the auto-spawned root shell with a
+> real `floppinux login:` prompt — `init` respawns `getty`, which hands off to
+> `login` (account **`root`**, password **`lab`** — a *throwaway* credential, fine
+> for a QEMU floppy, never for an untrusted network). `exit` then returns to the
+> `login:` prompt. Needs `BUSYBOX_FULL=1` (the curated set has no `getty`/`login`).
+> Full walkthrough: [`../QUALITY_OF_LIFE.md`](../QUALITY_OF_LIFE.md) → "Add a login prompt".
 
 > **Why a flag and not just symlinks?** BusyBox is one binary that dispatches on
 > `argv[0]`, but it only contains the applets **compiled into it**. `ln -s

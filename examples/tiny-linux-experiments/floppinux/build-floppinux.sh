@@ -52,10 +52,15 @@
 #                  (job control, `exit` respawns), /etc/profile (PATH incl /sbin,
 #                  prompt, aliases, persistent history), passwd/group, hostname,
 #                  motd. Pairs with BUSYBOX_FULL; see QUALITY_OF_LIFE.md.
+#                LOGIN=1 — (needs QOL=1 + BUSYBOX_FULL=1) replace the auto-spawned
+#                  root shell with a real `login:` prompt: init respawns getty,
+#                  which hands off to /bin/login. Account: root / password "lab"
+#                  (throwaway). See QUALITY_OF_LIFE.md "Add a login prompt".
 #
 # THROWAWAY LAB: the booted system drops straight to a root shell with no
-# password and no network.  That is fine for a floppy you boot in QEMU; do not
-# treat it as a hardened system.
+# password and no network (with LOGIN=1: a `login:` prompt, root / "lab" — still
+# a throwaway credential).  That is fine for a floppy you boot in QEMU; do not
+# treat it as a hardened system or expose it on an untrusted network.
 set -euo pipefail
 
 # ─── Pinned versions (match FLOPPINUX 0.3.1) ─────────────────────────────────
@@ -330,13 +335,29 @@ clear
 cat welcome
 exec /sbin/init || exec /bin/sh
 EOF
-    cat > "$FS/etc/inittab" <<'EOF'
+    if [[ "${LOGIN:-0}" == 1 ]]; then
+        # LOGIN=1: init respawns getty → /bin/login (a real `login:` prompt).
+        # getty's TTY arg "-" reuses init's already-open /dev/console, so the same
+        # entry works on the tty0 graphical console AND the ttyS0 serial console.
+        # No TERMTYPE arg → TERM stays unset and /etc/profile's ${TERM:-linux}
+        # default holds (passing e.g. vt100 would downgrade the VGA console).
+        cat > "$FS/etc/inittab" <<'EOF'
+# QoL+login boot: rc (rdinit) does setup then execs init; init respawns getty,
+# which shows /etc/issue + a login: prompt and hands off to /bin/login.
+# No ::sysinit — rc already ran the setup.
+::respawn:/sbin/getty -L 0 -
+::ctrlaltdel:/sbin/reboot
+::shutdown:/bin/umount -a -r
+EOF
+    else
+        cat > "$FS/etc/inittab" <<'EOF'
 # QoL boot: rc (rdinit) does setup then execs init; init respawns a login shell
 # with a controlling tty. No ::sysinit — rc already ran the setup.
 ::respawn:-/bin/sh
 ::ctrlaltdel:/sbin/reboot
 ::shutdown:/bin/umount -a -r
 EOF
+    fi
     cat > "$FS/etc/profile" <<'EOF'
 # FLOPPINUX QoL — sourced by login shells, and re-sourced by interactive
 # subshells via $ENV (so aliases/prompt survive a nested `sh`).
@@ -359,6 +380,20 @@ alias grep='grep --color=auto' df='df -h' ..='cd ..'
 poweroff() { cd /; sync; umount /home 2>/dev/null; umount /mnt 2>/dev/null; command poweroff -f "$@"; }
 reboot()   { cd /; sync; umount /home 2>/dev/null; umount /mnt 2>/dev/null; command reboot   -f "$@"; }
 PS1='\u@\h:\w\$ '
+EOF
+    # Greet tail: cd to $HOME once per login. With LOGIN=1, /bin/login already
+    # prints /etc/motd, so the profile must NOT cat it again (avoid a double
+    # banner); without login (auto-spawned shell) the profile shows it.
+    if [[ "${LOGIN:-0}" == 1 ]]; then
+        cat >> "$FS/etc/profile" <<'EOF'
+# Greet: cd home once per login (login already printed /etc/motd).
+if [ -z "$_FLOPPINUX_GREETED" ]; then
+	export _FLOPPINUX_GREETED=1
+	cd "$HOME" 2>/dev/null
+fi
+EOF
+    else
+        cat >> "$FS/etc/profile" <<'EOF'
 # Greet + cd home once per login (not on every subshell).
 if [ -z "$_FLOPPINUX_GREETED" ]; then
 	export _FLOPPINUX_GREETED=1
@@ -366,7 +401,26 @@ if [ -z "$_FLOPPINUX_GREETED" ]; then
 	[ -f /etc/motd ] && cat /etc/motd
 fi
 EOF
-    printf 'root:x:0:0:root:/home:/bin/sh\n' > "$FS/etc/passwd"
+    fi
+    if [[ "${LOGIN:-0}" == 1 ]]; then
+        # Inline MD5-crypt hash of "lab" (= busybox `cryptpw -m md5 -S floppinx lab`,
+        # the same pw_encrypt /bin/login uses). get_passwd() returns this field
+        # directly — no /etc/shadow needed (it only redirects to shadow when the
+        # field is exactly "x"/"*"). No /etc/securetty either: when that file is
+        # absent every tty counts as "secure", so root may log in on console.
+        # THROWAWAY credential — never expose this on an untrusted network.
+        # shellcheck disable=SC2016  # the $1$..$.. crypt hash is literal, must NOT expand
+        printf 'root:$1$floppinx$2WKWnHcP/VZpbTpD57PW30:0:0:root:/home:/bin/sh\n' > "$FS/etc/passwd"
+        # getty prints /etc/issue above the login: prompt. busybox getty expands
+        # \\ and % escapes here, so keep it plain (no stray backslashes).
+        cat > "$FS/etc/issue" <<'EOF'
+
+ FLOPPINUX (QoL + login).  Log in as  root  (password: lab)
+
+EOF
+    else
+        printf 'root:x:0:0:root:/home:/bin/sh\n' > "$FS/etc/passwd"
+    fi
     printf 'root:x:0:\n'                     > "$FS/etc/group"
     printf 'floppinux\n'                     > "$FS/etc/hostname"
     cat > "$FS/etc/motd" <<'EOF'
@@ -380,6 +434,20 @@ EOF
 
 # ─── 3. Root filesystem → rootfs.cpio.xz (device nodes via fakeroot) ─────────
 assemble_rootfs() {
+    # LOGIN=1 rides the QoL init handoff (needs QOL=1) and needs getty+login,
+    # which only the FULL BusyBox carries. Verify the applets are actually in the
+    # built tree (truer than trusting the BUSYBOX_FULL flag) and fail early.
+    if [[ "${LOGIN:-0}" == 1 ]]; then
+        [[ "${QOL:-0}" == 1 ]] || die "LOGIN=1 needs QOL=1 (the login prompt rides the QoL BusyBox-init handoff)."
+        local ap d found
+        for ap in getty login; do
+            found=0
+            for d in bin sbin usr/bin usr/sbin; do
+                [[ -e "$BBSRC/_install/$d/$ap" ]] && { found=1; break; }
+            done
+            [[ $found == 1 ]] || die "LOGIN=1 needs BUSYBOX_FULL=1 — '$ap' applet missing from the built BusyBox (the curated set omits it)."
+        done
+    fi
     log "assembling root filesystem"
     rm -rf "$FS"
     cp -a "$BBSRC/_install" "$FS"

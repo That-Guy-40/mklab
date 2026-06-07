@@ -94,6 +94,14 @@ same gotcha: **`rc` ends with `/bin/sh` (not `exec`), so when you type `exit`,
 kill init!`). That's not a bug — it's what "PID 1 is a script" means. (`QOL=1`
 hands PID 1 to BusyBox `init`, which respawns the shell so `exit` is harmless.)
 
+> **Login prompt (`LOGIN=1`).** On top of `QOL=1`, `LOGIN=1` swaps the
+> auto-spawned root shell for a real `floppinux login:` prompt — `init` respawns
+> `getty`, which hands off to `login` (account `root`, password `lab`, a
+> *throwaway* credential). Needs `BUSYBOX_FULL=1` (the curated set has no
+> `getty`/`login`). With it, `exit` returns to the `login:` prompt instead of
+> respawning a shell. See [`QUALITY_OF_LIFE.md`](QUALITY_OF_LIFE.md) → "Add a
+> login prompt".
+
 > **Shutting down / leaving QEMU.** The **QoL** build makes `poweroff`/`reboot`
 > shell functions that gracefully `sync` + unmount the floppy, then force:
 > - **`poweroff`** — clean unmount, then APM power-off; QEMU exits (graphical *and*

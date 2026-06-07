@@ -166,9 +166,11 @@ Some "distro" features aren't runtime tweaks:
 
 - **A `login:` prompt / proper sessions / `exit` not panicking.** PID 1 is the
   `rc` script; to get BusyBox `init` to respawn a login shell you change the
-  boot (that's what `QOL=1` does). You *can* preview the mechanics:
-  `getty 38400 /dev/tty1` or run `login` as a command — but the boot itself is
-  fixed once running.
+  boot (that's what `QOL=1` does). `QOL=1` gives you the init-handoff login
+  *shell*; add **`LOGIN=1`** on top for a real `floppinux login:` prompt with a
+  password — see **[Add a login prompt](#add-a-login-prompt-login1)** below. You
+  *can* preview the mechanics live: `getty -L 0 - vt100` or run `login` as a
+  command — but the boot itself is fixed once running.
 - **`tmpfs` / `devpts`.** Handy for a separate `/tmp` or pseudo-terminals, but
   this kernel doesn't include them — prove it:
   ```sh
@@ -210,6 +212,92 @@ which already has them. See [`README.md`](README.md) and the variant's
 **Validate the baked version** (after the `QOL=1` rebuild boots): no
 "job control turned off" message, the prompt is `root@floppinux:/home#`,
 `whoami` → `root`, and typing `exit` re-spawns the shell instead of panicking.
+
+## Add a login prompt (`LOGIN=1`)
+
+By default the QoL build drops you **straight to a root shell** — convenient, but
+not what a "real" distro does. `LOGIN=1` swaps that auto-spawned shell for a
+proper `floppinux login:` prompt: you authenticate as **`root`** (password
+**`lab`**) before you get a shell.
+
+> **Throwaway credential.** `root`/`lab` is baked into the image so you can boot a
+> floppy in QEMU — it is *not* security (anyone holding the image has it). Never
+> put a `LOGIN=1` floppy on, or bridge its VM to, an untrusted network.
+
+### Why this one isn't a live tweak (it needs a rebuild)
+
+Unlike §1–§9, you can't switch a *running* system to a login prompt. The prompt
+is produced by **`getty`**, and `getty` has to be spawned by `init` from
+`/etc/inittab` **at boot**. Making a running `init` re-read a changed inittab
+needs `SIGHUP` — and that's the exact PID-1 signal wall we hit with shutdown (see
+[Shutting down](#shutting-down--leaving-qemu) below): the kernel won't deliver a
+fatal-default signal like `SIGHUP` to PID 1, so `kill -HUP 1` no-ops and `init`
+never reloads. So a login prompt is inherently a **boot-time** change. You can
+still preview the moving parts live (below).
+
+### The flow: `getty` → `login` → shell
+
+1. **`getty`** opens the console, prints `/etc/issue`, shows `login:`, reads the
+   username, then execs **`/bin/login`**.
+2. **`login`** finds the user in `/etc/passwd`, prompts `Password:`, hashes what
+   you type and compares it to the stored hash, prints `/etc/motd`, then execs
+   the login shell (`-/bin/sh`) — which sources `/etc/profile` (so all of §1–§8
+   and the `poweroff`/`reboot` functions are live the moment you're in).
+
+Preview the prompt half live (the full build carries both applets) — `getty`
+grabs the current console, shows the issue + `login:`, then hands to `login`:
+```sh
+getty -L 0 - vt100        # type a name to watch the hand-off; Ctrl-C to back out
+```
+(`login` then checks `/etc/passwd`; the non-login build's `root:x:…` has no
+password set, so it'll say `Login incorrect` — `LOGIN=1` is what fills in the
+hashed `root` account.)
+
+### What `LOGIN=1` writes
+
+`LOGIN=1` needs **`QOL=1`** (for the init→login-shell handoff) and
+**`BUSYBOX_FULL=1`** (the curated set omits `getty`/`login`/crypt); the build
+errors early if either is missing.
+
+| File | Non-login QoL | `LOGIN=1` |
+|------|---------------|-----------|
+| `/etc/inittab` | `::respawn:-/bin/sh` | `::respawn:/sbin/getty -L 0 -` |
+| `/etc/passwd`  | `root:x:0:0:…`       | `root:$1$floppinx$…:0:0:…` (hash of `lab`) |
+| `/etc/issue`   | *(none)*             | one-line pre-login banner |
+
+The design choices (all source-verified against BusyBox 1.36.1):
+
+- **`getty -L 0 -`** — `-L` = ignore carrier-detect, baud `0` = leave the line
+  speed alone, TTY `-` = *reuse the console fd `init` already opened* for me.
+  That one entry serves **both** the `tty0` graphical console and the `ttyS0`
+  serial console — no separate per-tty lines. No `TERMTYPE` argument, so `TERM`
+  stays unset and `/etc/profile`'s `${TERM:-linux}` default holds (passing, say,
+  `vt100` would silently downgrade the VGA console).
+- **Hash inline in `/etc/passwd`, no `/etc/shadow`.** BusyBox `login` only
+  redirects to `/etc/shadow` when the password field is *exactly* `x`/`*`; a real
+  hash in field 2 is used directly. The hash is reproducible —
+  `busybox cryptpw -m md5 -S floppinx lab` prints exactly the stored string.
+- **No `/etc/securetty`.** When that file is *absent*, BusyBox treats every tty
+  as "secure", so `root` may log in on the console. (If you ever *add* a
+  `securetty`, the console tty must be listed or root login is refused.)
+
+### Make it permanent
+
+```sh
+cd examples/tiny-linux-experiments/floppinux/floppinux-2.88mb
+LOGIN=1 QOL=1 BUSYBOX_FULL=1 ./build-2.88.sh build
+./build-2.88.sh test
+```
+
+### Validate (after the `LOGIN=1` boot)
+
+- A `floppinux login:` prompt appears, with the issue banner above it.
+- `root` + `lab` logs you in; a wrong password gives `Login incorrect`.
+- `tty` → `/dev/console` and `sleep 5 & jobs` shows the job — **job control
+  works** (the shell has a controlling terminal; no "job control turned off").
+- **`exit` returns you to the `login:` prompt** (init respawns `getty`) — *not* a
+  panic and *not* a bare root shell. That's the visible behaviour change from the
+  non-login QoL build.
 
 ## Shutting down / leaving QEMU
 
