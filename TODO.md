@@ -82,10 +82,14 @@ the URLs):**
   plan's status line — which finally gives the plan's ~20 "the source post"
   references a resolvable canonical URL. The archive README notes the deliberate
   "adaptation in the spirit of" divergence (plan §1.1 / §11).
-- **`phase1-chroot --rootless`** — dated citation (a phase feature, not a lab):
-  the exact muxup.com post URL
-  (<https://muxup.com/2024q4/rootless-cross-architecture-debootstrap>) +
-  as-of date added to `phase1-chroot/README.md` and the two PLAN.md mentions.
+- **`phase1-chroot --rootless`** — full-vendored (a phase feature, but archived
+  for parity at the user's request): Alex Bradbury's *"Rootless cross-architecture
+  debootstrap"*
+  (<https://muxup.com/2024q4/rootless-cross-architecture-debootstrap>, published
+  2024-12-03) archived byte-exact under `phase1-chroot/upstream-tutorial/` (a
+  single self-contained HTML — inline CSS + inline `data:` SVG — + provenance +
+  `sha256`). Linked from `phase1-chroot/README.md`; the exact URL is also in the
+  two PLAN.md mentions.
 
 ## 3. Container lab to hand-implement each upstream tutorial
 

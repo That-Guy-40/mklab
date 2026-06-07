@@ -169,7 +169,8 @@ manager = "schroot"
 ## Rootless mode (`--rootless`)
 
 Create and enter a chroot **without root**, following the [muxup.com pattern](https://muxup.com/2024q4/rootless-cross-architecture-debootstrap)
-(*Rootless cross-architecture debootstrap*; technique followed, not vendored; as-of **2026-06-07**):
+(Alex Bradbury, *Rootless cross-architecture debootstrap*; vendored byte-exact under
+[`upstream-tutorial/`](upstream-tutorial/), as-of **2026-06-07**):
 `debootstrap --variant=fakechroot` (or `host-copy`) built and entered under
 `fakechroot fakeroot`, so no real uid 0, no `mknod`, and no bind-mounts.
 

@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta property="og:title" content="Rootless cross-architecture debootstrap"/>
+<meta property="og:site_name" content="Muxup">
+<meta property="og:description" content="Using debootstrap to make a full rootfs for a different archiecture without root privileges"/>
+<meta property="og:type" content="article"/>
+<meta property="og:url" content="https://muxup.com/2024q4/rootless-cross-architecture-debootstrap"/>
+<meta property="og:image" content="https://v1.screenshot.11ty.dev/https%3A%2F%2Fmuxup.com%2F2024q4%2Frootless-cross-architecture-debootstrap/opengraph/ar/bigger"/>
+<title>Rootless cross-architecture debootstrap - Muxup</title>
+<link rel="icon" sizes="any" href="data:image/svg+xml,%3Csvg%20xmlns='http:%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox='0%200%20100%20100'%3E%3Ctext%20y='80'%20font-size='110'%3E▨%3C%2Ftext%3E%3C%2Fsvg%3E">
+<meta name="description" content="Using debootstrap to make a full rootfs for a different archiecture without root privileges">
+<style>
+@font-face {
+font-family:'Nunito Var';
+src:url('/static/Nunito.var.v2.woff2') format('woff2-variations');
+font-display:swap;
+font-weight: 200 1000;
+}
+*, *::before, *::after {
+box-sizing:border-box;
+}
+* {
+margin:0;
+}
+input, button, textarea, select {
+font:inherit;
+}
+img, picture, video, canvas, svg {
+display:block;
+max-width:100%;
+}
+html {
+font-family:'Nunito Var', sans-serif;
+height:100%;
+font-size:16px;
+-webkit-tap-highlight-color:transparent;
+}
+@media screen and (min-width:640px) {
+html {
+font-size:18px;
+}
+}
+body {
+line-height:1.5;
+color:#222;
+display:grid;
+height:100%;
+grid-template-rows:1fr auto;
+background:#fff no-repeat 0% 0% / 100% .7rem linear-gradient(120deg, #ffffe3 20%, #ddfffc 20%, #ddfffc 40%, #e2eeff 40%, #e2eeff 60%, #f2e2ff 60%, #f2e2ff 80%, #ffdef2 80%, #ffdef2 100%);
+tab-size:4;
+}
+h1, h2, h3, h4, h5, h6 {
+line-height:1.25;
+font-weight:600;
+overflow-wrap:break-word;
+letter-spacing:-.025em;
+margin:1.75rem 0 .75rem;
+}
+h1 {
+font-size:2.986rem
+}
+h2 {
+font-size:2.488rem
+}
+p {
+margin:.75rem 0;
+font-weight:400;
+overflow-wrap:break-word;
+}
+a {
+color:inherit;
+text-decoration:underline;
+text-decoration-color:#aaa;
+text-underline-offset:.15em;
+}
+a:hover {
+text-decoration-thickness:2px;
+}
+ol, ul {
+margin:0 0 0 1.5rem;
+padding-left:0;
+}
+li {
+margin:0 0 .25rem
+}
+::selection {
+background:#ffdac0;
+}
+footer {
+font-size:.833rem;
+color:#777;
+padding:0 1rem;
+width:100%;
+max-width:min(calc(750px + 2rem), calc(100vw - 1rem));
+margin:0 auto;
+}
+footer p {
+text-align:center;
+margin:0 0 .75rem;
+}
+#footer-image {
+margin:0 auto;
+cursor:pointer;
+}
+#article-logo {
+line-height:1.25;
+margin:.5rem 0 0;
+font-size:1.44rem;
+font-weight:700;
+position:relative;
+}
+#article-logo a {
+text-decoration:none;
+}
+#article-title {
+margin:1.5rem 0 0;
+position:relative;
+}
+#article-meta {
+font-size:.833rem;
+color:#777;
+}
+#article-container {
+margin:0 auto;
+padding:1rem;
+max-width:min(calc(750px + 2rem), calc(100vw - 1rem));
+width:100%;
+}
+.anchor {
+position: absolute;
+text-decoration: none;
+width:1.75ex;
+margin-left:-1.4ex;
+visibility:hidden;
+font-size:.8em;
+padding-top:.2em;
+color:#aaa;
+}
+h2:hover .anchor,
+h3:hover .anchor,
+h4:hover .anchor,
+h5:hover .anchor,
+h6:hover .anchor,
+summary:hover .anchor {
+visibility:visible;
+}
+.anchor::before {
+content:"#";
+}
+details {
+font-size:.833rem;
+}
+details summary {
+margin:.75rem 0 .5rem 0;
+font-weight:600;
+cursor:pointer;
+font-size:1.2rem;
+line-height:1.25;
+letter-spacing:-.025em;
+list-style:none;
+}
+details summary > * {
+display:inline;
+}
+summary::-webkit-details-marker {
+display:none;
+}
+summary::after {
+content: " »";
+}
+details[open] summary::after {
+content: " «";
+}
+hr {
+border:none;
+border-top:4px solid #f1f3f5;
+}
+code {
+background:#f5f5f5;
+padding:.125rem .25rem;
+font-size:.833rem
+}
+pre > code {
+padding:0;
+background:#fff;
+}
+pre {
+word-wrap:break-word;
+overflow-x:auto;
+padding:.5rem 1rem;
+margin:1rem -1rem;
+border-radius:.4rem;
+border:1px solid #d2d2d2;
+}
+</style>
+<link rel="alternate" type="application/atom+xml" title="Atom Feed" href="/feed.xml"/>
+<link rel="canonical" href="https://muxup.com/2024q4/rootless-cross-architecture-debootstrap"/>
+</head>
+<body>
+<div id="article-container">
+<div>
+<div id="article-logo"><span id="logo-highlight"><a href="/">Muxup</a></span></div>
+</div>
+<h1 id="article-title"><span id="title-highlight">Rootless cross-architecture debootstrap</span></h1>
+<div id="article-meta"><span title="2024-12-03">2024Q4</span>.</div>
+<p>As usual, let's start by introducing the problem. Suppose you want to produce
+either a Debian-derived sysroot for cross-compilation, something you can
+chroot into, or even a full image you can boot with QEMU or on real hardware.
+<a href="https://salsa.debian.org/installer-team/debootstrap">Debootstrap</a> can get you
+started and has minimal external dependencies. If you wish to avoid using
+<code>sudo</code>, Running <code>debootstrap</code> under <code>fakeroot</code> and <code>fakechroot</code> works if
+building a rootfs for the same architecture as the current host, but it has
+problems out of the box for a foreign architecture. These tools are packaged
+and in the main repositories for at least Debian, Arch, and Fedora, so a
+solution that works without additional dependencies is advantageous.</p>
+<p>I'm presenting my preferred solution / approach in the first subheading and
+relegating more discussion and background explanation to later on in the
+article, in order to cater for those who just want something they can try out
+without wading through lots of text.</p>
+<p><strong>Warning</strong>: I haven't found <code>fakeroot</code> to be as robust as I would like, even
+knowing its fundamental limitations with e.g. statically linked binaries.
+Specifically, a sporadically reproducible case involving installing lots of
+packages on riscv64 sid resulted in
+<code>/usr/lib/riscv64-linux-gnu/libcbor.so.0.10.2</code> being given the directory bit
+in <code>fakeroot</code>'s database (which I haven't yet managed to track down to the
+point I can file a useful bug report). I'm sharing this post because the
+approach may still be useful to people, especially if you rely on <code>fakeroot</code>
+for only the minimum needed to get a bootable image in qemu-system.</p>
+<p>Not explored in this article: using newuidmap/newgidmap with appropriate
+/etc/subuid (see
+<a href="https://rootlesscontaine.rs/getting-started/common/subuid/">here</a>), though
+note one-off setup is needed to allow your user to set sufficient UIDs.</p>
+<h2 id="my-preferred-solution"><a href="#my-preferred-solution" class="anchor" aria-hidden="true" tabindex="-1"></a>My preferred solution</h2>
+<p>Assuming you have <code>debootstrap</code> and <code>fakeroot</code> installed (<code>sudo pacman -S debootstrap fakeroot</code> will suffice on Arch), and to support transparent
+emulation of binaries for other architectures you also have user-mode QEMU
+installed and set to execute via binfmt_misc (<code>sudo pacman -S qemu-user-static qemu-user-static-binfmt</code> on Arch) we proceed to:</p>
+<ul>
+<li>Do the first stage debootstrap under <code>fakeroot</code> on the host, saving the
+state (the uid/gid and permissions set after operations like chown/chmod) to
+a file, and including <code>fakeroot</code> in the list of packages to install for the
+target.</li>
+<li>Extract the contents of the fakeroot and libfakeroot <code>.deb</code>s into the directory tree
+created by debootstrap directory (as we need to be able to use it as a
+pre-requisite of initiating the second-stage debootstrap which extracts and
+installs all the packages).</li>
+<li>Make use of user namespaces to <code>chroot</code> into the debootstrapped sysroot
+without needing root permissions. Then give the illusion of permissions to
+set arbitrary uid/gid and other permissions on files via <code>fakeroot</code> (loading
+the environment saved earlier).</li>
+<li>Run the second stage debootstrap.</li>
+</ul>
+<p>Translated into shell commands (and later <a href="https://github.com/muxup/medley/blob/main/rootless-debootstrap-wrapper">a
+script</a>),
+you can do this by:</p>
+<div class="highlight" style="background: #ffffff"><pre style="line-height: 125%;"><span></span><code><span style="color: #000">SYSROOT_DIR=</span>sysroot-deb-riscv64-sid
+<span style="color: #000">TMP_FAKEROOT_ENV=</span><span style="color: #A90D91">$(</span>mktemp<span style="color: #A90D91">)</span>
+fakeroot -s <span style="color: #C41A16">&quot;</span><span style="color: #000">$TMP_FAKEROOT_ENV</span><span style="color: #C41A16">&quot;</span> debootstrap <span style="color: #C41A16">\</span>
+  --variant<span style="color: #000">=</span>minbase <span style="color: #C41A16">\</span>
+  --include<span style="color: #000">=</span>fakeroot,symlinks <span style="color: #C41A16">\</span>
+  --arch<span style="color: #000">=</span>riscv64 --foreign <span style="color: #C41A16">\</span>
+  sid <span style="color: #C41A16">\</span>
+  <span style="color: #C41A16">&quot;</span><span style="color: #000">$SYSROOT_DIR</span><span style="color: #C41A16">&quot;</span>
+mv <span style="color: #C41A16">&quot;</span><span style="color: #000">$TMP_FAKEROOT_ENV</span><span style="color: #C41A16">&quot;</span> <span style="color: #C41A16">&quot;</span><span style="color: #000">$SYSROOT_DIR</span><span style="color: #C41A16">/.fakeroot.env&quot;</span>
+fakeroot -i <span style="color: #C41A16">&quot;</span><span style="color: #000">$SYSROOT_DIR</span><span style="color: #C41A16">/.fakeroot.env&quot;</span> -s <span style="color: #C41A16">&quot;</span><span style="color: #000">$SYSROOT_DIR</span><span style="color: #C41A16">/.fakeroot.env&quot;</span> sh <span style="color: #C41A16">&lt;&lt;EOF</span>
+<span style="color: #C41A16">ar p &quot;$SYSROOT_DIR&quot;/var/cache/apt/archives/libfakeroot_*.deb &#39;data.tar.xz&#39; | tar xv -J -C &quot;$SYSROOT_DIR&quot;</span>
+<span style="color: #C41A16">ar p &quot;$SYSROOT_DIR&quot;/var/cache/apt/archives/fakeroot_*.deb &#39;data.tar.xz&#39; | tar xv -J -C &quot;$SYSROOT_DIR&quot;</span>
+<span style="color: #C41A16">ln -s fakeroot-sysv &quot;$SYSROOT_DIR/usr/bin/fakeroot&quot;</span>
+<span style="color: #C41A16">EOF</span>
+cat <span style="color: #C41A16">&lt;&lt;&#39;EOF&#39; &gt; &quot;$SYSROOT_DIR/_enter&quot;</span>
+<span style="color: #C41A16">#!/bin/sh</span>
+<span style="color: #C41A16">export PATH=/usr/sbin:$PATH</span>
+<span style="color: #C41A16">FAKEROOTDONTTRYCHOWN=1 unshare -fpr --mount-proc -R &quot;$(dirname -- &quot;$0&quot;)&quot; \</span>
+<span style="color: #C41A16">  fakeroot -i .fakeroot.env -s .fakeroot.env &quot;$@&quot;</span>
+<span style="color: #C41A16">EOF</span>
+chmod +x <span style="color: #C41A16">&quot;</span><span style="color: #000">$SYSROOT_DIR</span><span style="color: #C41A16">/_enter&quot;</span>
+<span style="color: #C41A16">&quot;</span><span style="color: #000">$SYSROOT_DIR</span><span style="color: #C41A16">/_enter&quot;</span> debootstrap/debootstrap --second-stage
+</code></pre></div>
+
+<p>You'll note this creates a helper <code>_enter</code> within the root of the rootfs for
+chrooting into it and executing <code>fakeroot</code> with appropriate arguments.</p>
+<p>If you want to use this rootfs as a sysroot for cross-compiling, you'll need
+to convert any absolute symlinks to relative symlinks so that they resolve
+properly when being accessed outside of a chroot. We use the symlinks utility
+installed within the target filesystem for this:</p>
+<div class="highlight" style="background: #ffffff"><pre style="line-height: 125%;"><span></span><code><span style="color: #C41A16">&quot;</span><span style="color: #000">$SYSROOT_DIR</span><span style="color: #C41A16">/_enter&quot;</span> symlinks -cr .
+</code></pre></div>
+
+<p>I've written a slightly more robust and configurable encapsulation of the
+above logic in the form of
+<a href="https://github.com/muxup/medley/blob/main/rootless-debootstrap-wrapper">rootless-debootstrap-wrapper</a>
+which I would recommend using/adapting in preference to the above. Further
+code examples in the rest of this post use the <code>rootless-debootstrap-wrapper</code>
+script for convenience.</p>
+<h2 id="further-discussion"><a href="#further-discussion" class="anchor" aria-hidden="true" tabindex="-1"></a>Further discussion</h2>
+<p>Depending on how you look at it, <code>fakeroot</code> is either a horrendous hack or a
+clever use of <code>LD_PRELOAD</code> developed at a time where there weren't lots of
+options for syscall interposition. As there's been so much development in that
+area I'd hope there are other alternatives by now, but I didn't see something
+that's quite so easy to use, well tested for this use case, widely packaged,
+and up to date.</p>
+<p>I've avoided using <code>fakechroot</code> both because I couldn't get it to work
+reliably in the cross-architecture bootstrap scenario, and also because
+thinking through how it logically <em>should</em> work in that scenario is fairly
+complex. Given we're able to use user namespaces to <code>chroot</code>, let's save
+ourselves the hassle and do that. Except there was a slight hiccup in that
+<code>chown</code> was failing (running under <code>fakeroot</code>) when <code>chroot</code>ed in this way.
+Thankfully the folks in the buildroot project had <a href="https://patchwork.ozlabs.org/project/buildroot/patch/20190403201325.31664-1-peter@korsgaard.com/">run into the same
+issue</a>
+and their patch alerted me to the undocumented <code>FAKEROOTDONTTRYCHOWN</code>
+environment variable. As written up in that commit message, the issue is that
+under a user namespace with limited uid/gid mappings (in my case, just one),
+<code>chown</code> returns <code>EINVAL</code> which isn't masked by <code>fakeroot</code> unless this
+environment variable is set.</p>
+<p>There has of course been previous work on rootless debootstrap, notably
+<a href="https://blog.mister-muffin.de/2011/04/02/foreign-debian-bootstrapping-without-root-priviliges-with-fakeroot,-fakechroot-and-qemu-user-emulation/">Johannes Schauer's blog
+post</a>
+that takes a slightly different route (by my understanding, including
+communication between <code>LD_PRELOAD</code>ed fakeroot on the target and a <code>faked</code>
+running on the host). A variant of this approach is used in
+<a href="https://gitlab.mister-muffin.de/josch/mmdebstrap">mmdebstrap</a> from the same
+author.</p>
+<h2 id="limitations"><a href="#limitations" class="anchor" aria-hidden="true" tabindex="-1"></a>Limitations</h2>
+<ul>
+<li>See the <strong>warning</strong> near the top of this article about correctness issues I've
+encountered in some cases.</li>
+<li>As the file permissions info stored in <code>fakeroot.env</code> is keyed by the inode,
+you may lose important permissions information if you copy the rootfs. You
+should instead <code>tar</code> it under <code>fakeroot</code>, and if extracting in an unprivileged
+environment again then untar it under <code>fakeroot</code>, creating a new
+<code>fakeroot.env</code>.</li>
+<li>The use of <code>unshare</code> requires that unprivileged user namespace support is
+enabled. I believe this is the case in all common distributions by now, but
+please check your distro's guidance if not.</li>
+</ul>
+<h2 id="litmus-test-across-many-architectures"><a href="#litmus-test-across-many-architectures" class="anchor" aria-hidden="true" tabindex="-1"></a>Litmus test across many architectures</h2>
+<p>Just to demonstrate how this working, here is how you can debootstrap all
+architectures supported by Debian + QEMU (except for mips, where I had issues
+with qemu) then run a trivial test - compiling and running a hello world:</p>
+<div class="highlight" style="background: #ffffff"><pre style="line-height: 125%;"><span></span><code><span style="color: #177500">#!/bin/sh</span>
+
+error<span style="color: #000">()</span> <span style="color: #000">{</span>
+  <span style="color: #A90D91">printf</span> <span style="color: #C41A16">&quot;!!!!!!!!!! Error: %s !!!!!!!!!!\n&quot;</span> <span style="color: #C41A16">&quot;</span><span style="color: #000">$*</span><span style="color: #C41A16">&quot;</span> &gt;&amp;<span style="color: #1C01CE">2</span>
+  <span style="color: #A90D91">exit</span> <span style="color: #1C01CE">1</span>
+<span style="color: #000">}</span>
+
+<span style="color: #177500"># TODO: mips skipped due to QEMU issues.</span>
+<span style="color: #000">ARCHES=</span><span style="color: #C41A16">&quot;amd64 arm64 armel armhf i386 ppc64el riscv64 s390x&quot;</span>
+mkdir -p <span style="color: #C41A16">&quot;</span><span style="color: #000">$HOME</span><span style="color: #C41A16">/debcache&quot;</span>
+
+<span style="color: #A90D91">for</span> arch <span style="color: #A90D91">in</span> <span style="color: #000">$ARCHES</span>; <span style="color: #A90D91">do</span>
+  rootless-debootstrap-wrapper <span style="color: #C41A16">\</span>
+    --arch<span style="color: #000">=$arch</span> <span style="color: #C41A16">\</span>
+    --suite<span style="color: #000">=</span>sid <span style="color: #C41A16">\</span>
+    --cache-dir<span style="color: #000">=</span><span style="color: #C41A16">&quot;</span><span style="color: #000">$HOME</span><span style="color: #C41A16">/debcache&quot;</span> <span style="color: #C41A16">\</span>
+    --target-dir<span style="color: #000">=</span>debootstrap-all-test-<span style="color: #000">$arch</span> <span style="color: #C41A16">\</span>
+    --include<span style="color: #000">=</span>build-essential <span style="color: #000">||</span> error <span style="color: #C41A16">&quot;Debootstrap failed for arch </span><span style="color: #000">$arch</span><span style="color: #C41A16">&quot;</span>
+<span style="color: #A90D91">done</span>
+
+<span style="color: #A90D91">for</span> arch <span style="color: #A90D91">in</span> <span style="color: #000">$ARCHES</span>; <span style="color: #A90D91">do</span>
+  <span style="color: #000">rootfs_dir=</span><span style="color: #C41A16">&quot;./debootstrap-all-test-</span><span style="color: #000">$arch</span><span style="color: #C41A16">&quot;</span>
+  cat <span style="color: #C41A16">&lt;&lt;EOF &gt; &quot;$rootfs_dir/hello.c&quot;</span>
+<span style="color: #C41A16">#include &lt;stdio.h&gt;</span>
+<span style="color: #C41A16">#include &lt;sys/utsname.h&gt;</span>
+
+<span style="color: #C41A16">int main() {</span>
+<span style="color: #C41A16">  struct utsname buffer;</span>
+<span style="color: #C41A16">  if (uname(&amp;buffer) != 0) {</span>
+<span style="color: #C41A16">      perror(&quot;uname&quot;);</span>
+<span style="color: #C41A16">      return 1;</span>
+<span style="color: #C41A16">    }</span>
+<span style="color: #C41A16">  printf(&quot;Hello from %s\n&quot;, buffer.machine);</span>
+<span style="color: #C41A16">  return 0;</span>
+<span style="color: #C41A16">}</span>
+<span style="color: #C41A16">EOF</span>
+  ./debootstrap-all-test-<span style="color: #000">$arch</span>/_enter sh -c <span style="color: #C41A16">&quot;gcc hello.c &amp;&amp; ./a.out&quot;</span>
+<span style="color: #A90D91">done</span>
+</code></pre></div>
+
+<p>Executing the above script eventually gives you:</p>
+<pre><code>Hello from x86_64
+Hello from aarch64
+Hello from armv7l
+Hello from armv7l
+Hello from x86_64
+Hello from ppc64le
+Hello from riscv64
+Hello from s390x
+</code></pre>
+<p>(The repeated "armv7l" is because armel and armhf differ in ABI rather than
+the architecture as returned by uname).</p>
+<h2 id="making-a-risc-v-image-bootable-in-qemu"><a href="#making-a-risc-v-image-bootable-in-qemu" class="anchor" aria-hidden="true" tabindex="-1"></a>Making a RISC-V image bootable in QEMU</h2>
+<p>Here is how to use the tool to build a bootable RISC-V image. First build the
+rootfs:</p>
+<div class="highlight" style="background: #ffffff"><pre style="line-height: 125%;"><span></span><code><span style="color: #000">TGT=</span>riscv-sid-for-qemu
+rootless-debootstrap-wrapper <span style="color: #C41A16">\</span>
+  --arch<span style="color: #000">=</span>riscv64 <span style="color: #C41A16">\</span>
+  --suite<span style="color: #000">=</span>sid <span style="color: #C41A16">\</span>
+  --cache-dir<span style="color: #000">=</span><span style="color: #C41A16">&quot;</span><span style="color: #000">$HOME</span><span style="color: #C41A16">/debcache&quot;</span> <span style="color: #C41A16">\</span>
+  --target-dir<span style="color: #000">=$TGT</span> <span style="color: #C41A16">\</span>
+  --include<span style="color: #000">=</span>linux-image-riscv64,zstd,default-dbus-system-bus <span style="color: #000">||</span> error <span style="color: #C41A16">&quot;Debootstrap failed&quot;</span>
+cat - <span style="color: #C41A16">&lt;&lt;EOF &gt; $TGT/etc/resolv.conf</span>
+<span style="color: #C41A16">nameserver 1.1.1.1</span>
+<span style="color: #C41A16">EOF</span>
+<span style="color: #C41A16">&quot;</span><span style="color: #000">$TGT</span><span style="color: #C41A16">/_enter&quot;</span> sh -e <span style="color: #C41A16">&lt;&lt;EOF</span>
+<span style="color: #C41A16">ln -s /dev/null /etc/udev/rules.d/80-net-setup-link.rules # disable persistent network names</span>
+<span style="color: #C41A16">cat - &lt;&lt;INNER_EOF</span> &gt; /etc/systemd/network/10-eth0.network
+<span style="color: #000">[</span>Match<span style="color: #000">]</span>
+<span style="color: #000">Name=</span>eth0
+
+<span style="color: #000">[</span>Network<span style="color: #000">]</span>
+<span style="color: #000">DHCP=</span>yes
+INNER_EOF
+systemctl <span style="color: #A90D91">enable</span> systemd-networkd
+<span style="color: #A90D91">echo</span> root:root | chpasswd
+ln -sf /dev/null /etc/systemd/system/serial-getty@hvc0.service
+EOF
+</code></pre></div>
+
+<p>Then produce an ext4 partition and extract the kernel and initrd:</p>
+<div class="highlight" style="background: #ffffff"><pre style="line-height: 125%;"><span></span><code>fakeroot -i riscv-sid-for-qemu/.fakeroot.env sh <span style="color: #C41A16">&lt;&lt;EOF</span>
+<span style="color: #C41A16">ln -L riscv-sid-for-qemu/vmlinuz kernel</span>
+<span style="color: #C41A16">ln -L riscv-sid-for-qemu/initrd.img initrd</span>
+<span style="color: #C41A16">fallocate -l 30GiB rootfs.img</span>
+<span style="color: #C41A16">mkfs.ext4 -d riscv-sid-for-qemu rootfs.img</span>
+<span style="color: #C41A16">EOF</span>
+</code></pre></div>
+
+<p>And boot it in qemu:</p>
+<div class="highlight" style="background: #ffffff"><pre style="line-height: 125%;"><span></span><code>qemu-system-riscv64 <span style="color: #C41A16">\</span>
+  -machine virt <span style="color: #C41A16">\</span>
+  -cpu rv64 <span style="color: #C41A16">\</span>
+  -smp <span style="color: #1C01CE">4</span> <span style="color: #C41A16">\</span>
+  -m 8G <span style="color: #C41A16">\</span>
+  -device virtio-blk-device,drive<span style="color: #000">=</span>hd <span style="color: #C41A16">\</span>
+  -drive <span style="color: #000">file=</span>rootfs.img,if<span style="color: #000">=</span>none,id<span style="color: #000">=</span>hd,format<span style="color: #000">=</span>raw <span style="color: #C41A16">\</span>
+  -device virtio-net-device,netdev<span style="color: #000">=</span>net <span style="color: #C41A16">\</span>
+  -netdev user,id<span style="color: #000">=</span>net,hostfwd<span style="color: #000">=</span>tcp:127.0.0.1:10222-:22 <span style="color: #C41A16">\</span>
+  -bios /usr/share/qemu/opensbi-riscv64-generic-fw_dynamic.bin <span style="color: #C41A16">\</span>
+  -kernel kernel <span style="color: #C41A16">\</span>
+  -initrd initrd <span style="color: #C41A16">\</span>
+  -object rng-random,filename<span style="color: #000">=</span>/dev/urandom,id<span style="color: #000">=</span>rng <span style="color: #C41A16">\</span>
+  -device virtio-rng-device,rng<span style="color: #000">=</span>rng <span style="color: #C41A16">\</span>
+  -nographic <span style="color: #C41A16">\</span>
+  -append <span style="color: #C41A16">&quot;rw noquiet root=/dev/vda console=ttyS0&quot;</span>
+</code></pre></div>
+
+<p>You can then log in with user <code>root</code> and password <code>root</code>. We haven't installed
+<code>sshd</code> so far, but the above command line sets up forwarding from port 10222
+on the local interface to port 22 on the guest in anticipation of that.</p>
+
+<hr style="margin-top:1.75rem"/><details id="article-changelog"><summary><a href="#article-changelog" class="anchor" aria-hidden="true" tabindex="-1"></a>Article changelog</summary>
+<ul>
+<li>2024-12-03: Initial publication date.</li>
+</ul>
+</details>
+</div>
+<footer class="footer">
+<img id="footer-image" src="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%3E%3C/svg%3E" width="50" height="50"/>
+<p>Curated by Alex Bradbury | &copy; <a href="/">Muxup</a> contributors | <a href="/about">About</a> | <a href="https://github.com/muxup">GitHub</a></p>
+</footer>
+<script>
+const t="http://www.w3.org/2000/svg";function o(t){return Math.random()*(2*t)-t}function n(t){const n=t.t.getBoundingClientRect();const e=t.o.getClientRects();let c="";for(const t of e){const e=t.x-n.x,f=t.y-n.y,s=t.width,r=t.height;const i=f+r/2;let u=s<75?3:s<300?6:8;const l=.2+.2*Math.random();c=`${c}\n      M${e+o(u)} ${i+o(u)}\n      C${e+s*l+o(u)} ${i+o(u)},\n       ${e+2*s*l+o(u)} ${i+o(u)}\n       ${e+s+o(u)} ${i+o(u)}`}t.i=c;t.strokeWidth=.85*e[0].height}const e=new Map;let c=new ResizeObserver(t=>{for(const o of t){const t=e.get(o.target);if(!t.i)n(t)}for(const o of t){s(e.get(o.target))}});function f(o){const n=document.createElementNS(t,"svg");n.style.position="absolute";n.style.zIndex=-1;n.style.top="0";n.style.left="0";n.style.overflow="visible";const e=document.createElementNS(t,"path");e.setAttribute("fill","none");e.setAttribute("stroke",o.u);n.appendChild(e);o.o.insertAdjacentElement("beforebegin",n);o.t=n}function s(t){if(!t.i){n(t)}const o=t.t.children[0];o.setAttribute("stroke-width",t.strokeWidth);o.setAttribute("d",t.i);t.i=null}function r(){for(const t of e.values()){f(t)}for(const t of e.values()){n(t)}for(const t of e.keys()){c.observe(t)}document.fonts.ready.then(()=>i())}function i(){for(const t of e.values()){n(t)}for(const t of e.values()){s(t)}}function u(t,o){let n;t.addEventListener("mouseover",()=>{s(o);n=setInterval(()=>s(o),240)},false);t.addEventListener("mouseout",()=>{clearInterval(n)});t.addEventListener("click",()=>{clearInterval(n)})}function l(t,o,n){let c={o:t,l:o,u:n};e.set(o,c);return c}let a=new Set([window.location.pathname]);const h=document.querySelector("#footer-image");let d=null;function m(){let t=Math.floor(Math.random()*282);d="/static/footer/"+String(t).padStart(4,"0")+".svg"}function g(t){h.src=d;m();if(!t)v()}function v(){if(a.has(d))return;a.add(d);fetch(d)}m();g(true);const w=[{transform:"rotate(0)"},{transform:"rotate(360deg)"}];const $={duration:600,h:1};h.addEventListener("click",()=>{h.animate(w,$);g()});function M(){h.animate(w,$);v()}h.addEventListener("mouseover",M);h.addEventListener("touchstart",M,{passive:true});function k(t){const o=t.currentTarget.getAttribute("href").split("#")[0];if(a.has(o))return;a.add(o);fetch(o)}const p=document.getElementsByTagName("a");for(const t of p){const o=(t.getAttribute("href")??"").split("#")[0];if(o.includes("?")||!o.startsWith("/")||o.slice(o.lastIndexOf("/")+1).includes(".")){continue}t.addEventListener("mouseover",k);t.addEventListener("touchstart",k,{passive:true})}const b=["#ffdef2","#f2e2ff","#e2eeff","#ddfffc","#ffffe3"];const I=document.querySelector("#title-highlight");l(I,I.parentNode,b[Math.floor(Math.random()*b.length)]);const C=document.querySelector("#logo-highlight");const E=l(C,C.parentNode,"#ffdac0");r();u(C,E);document.querySelectorAll("pre:has(code)").forEach(t=>{let o=0,n=0,e=null;t.addEventListener("click",c=>{const f=Date.now();if(c.target!==e||f-n>=500){o=1}else{o++}if(o===4){window.getSelection().selectAllChildren(t);o=0}e=c.target;n=f})});
+
+</script>
+</body>
+</html>
