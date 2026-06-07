@@ -1,8 +1,10 @@
 # Micro-Linux From-Scratch Lab — Design Plan v2
 
 > **Status**: Draft v2 — *inspired by* popovicu's *"Making a Micro Linux
-> Distro"*, deliberately re-targeted onto LAB_CREATE_V2's existing phase
-> machinery.
+> Distro"* (<https://popovicu.com/posts/making-a-micro-linux-distro/>, vendored
+> byte-exact under [`micro-linux/upstream-tutorial/`](micro-linux/upstream-tutorial/)
+> with provenance + `sha256`s), deliberately re-targeted onto LAB_CREATE_V2's
+> existing phase machinery.
 > **Decisions locked (this session):** compile **both** the Linux kernel
 > (kernel.org) **and** static BusyBox (busybox.net) from upstream source; run
 > the compile inside a **Phase 3/4 container**; target **x86_64 + aarch64**

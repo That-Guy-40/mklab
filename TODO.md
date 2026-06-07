@@ -60,29 +60,32 @@ retrieved date), per-file `sha256`s, and a copyright/attribution note.
 - [x] Record the convention in [`CLAUDE.md`](CLAUDE.md) so future labs follow it.
 - [x] Keep `tools/link_check.py` green (0 broken links) after every add.
 
-**Largely done 2026-06-07 (`examples/` scope).** Five single-write-up labs
-vendored byte-exact under their own `upstream-tutorial/` (HTML + CSS + `sha256`s +
-attribution, parent README linked): `debian-http-boot/` & `almalinux-pxe-lab/` &
+**✅ Done 2026-06-07.** Six single-write-up labs vendored byte-exact under their
+own `upstream-tutorial/` (HTML + CSS + `sha256`s + attribution, parent README
+linked): five under `examples/` — `debian-http-boot/` & `almalinux-pxe-lab/` &
 `rocky-pxe-lab/` (Kenneth Finnegan / CIQ write-ups), `kali-llm-lab/` &
 `kali-llm-desktop-lab/` (the Kali Ollama+5ire blog, byte-identical copy in each
-per self-containment). Seven official-docs / upstream-wrapper labs got a dated
+per self-containment) — plus `micro-linux/` (Uros Popovic's post; see the
+*Closed* note below). Seven official-docs / upstream-wrapper labs got a dated
 provenance note (URL + as-of date, not mirrored): `kali-pxe-lab/`,
 `kali-preseed-gallery/`, `rocky-kickstart-gallery/`,
 `ansible/almalinux-infra-ansible/`, `kali-nonroot-chroot/`, `offsec-awae-vm/`,
 `kali-vm-builder/`. Convention recorded in `CLAUDE.md` › *Provenance*.
 `link_check.py`: 0 broken.
 
-**Open (outside the `examples/` audit scope — need a decision):**
-- **`micro-linux/`** — clearly tutorial-derived (~20 "the source post" / "letter
-  of the post" references in `MICRO_LINUX_LAB_PLAN.md`), but **no source-post URL
-  is recorded anywhere in the repo**, so it can't be vendored or dated-noted
-  until the canonical URL is identified. The plan also calls v2 "an adaptation
-  *in the spirit of* the post" with the v1 "faithful" claims removed — so it may
-  warrant only a citation, not a full vendor. Needs the URL.
-- **`phase1-chroot --rootless`** — follows a **muxup.com** cross-arch post
-  (PLAN.md:39/232, `phase1-chroot/README.md:171`, `lab-chroot.sh`); a phase
-  feature rather than an `examples/` lab, and again no specific post URL is
-  captured. Candidate for a dated citation if the URL is recovered.
+**Closed 2026-06-07 (the two out-of-`examples/` items, once the user supplied
+the URLs):**
+- **`micro-linux/`** — full-vendored: Uros Popovic's *"Making a micro Linux
+  distro"* (<https://popovicu.com/posts/making-a-micro-linux-distro/>, published
+  2023-09-21) archived byte-exact under `micro-linux/upstream-tutorial/` (HTML +
+  3 CSS + provenance + `sha256`s); linked from `micro-linux/README.md` and the
+  plan's status line — which finally gives the plan's ~20 "the source post"
+  references a resolvable canonical URL. The archive README notes the deliberate
+  "adaptation in the spirit of" divergence (plan §1.1 / §11).
+- **`phase1-chroot --rootless`** — dated citation (a phase feature, not a lab):
+  the exact muxup.com post URL
+  (<https://muxup.com/2024q4/rootless-cross-architecture-debootstrap>) +
+  as-of date added to `phase1-chroot/README.md` and the two PLAN.md mentions.
 
 ## 3. Container lab to hand-implement each upstream tutorial
 

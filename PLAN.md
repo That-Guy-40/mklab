@@ -36,7 +36,7 @@ repo can be rebased to any prior phase as a known-good checkpoint.
 - **Idempotent.** Re-running a phase script with the same config converges,
   doesn't duplicate state, and exits 0 if nothing to do.
 - **Root vs rootless.** Default is root (simpler, matches debootstrap/dnf).
-  Phase 1 includes a `--rootless` mode based on the muxup.com cross-arch
+  Phase 1 includes a `--rootless` mode based on the [muxup.com](https://muxup.com/2024q4/rootless-cross-architecture-debootstrap) cross-arch
   technique (user namespaces + fakeroot + qemu-user-static) for the chroot
   backends that support it.
 
@@ -229,7 +229,7 @@ each requested binary:
 
 ### Rootless mode (`--rootless`)
 
-Follows the muxup.com pattern: `unshare -Ur` + `fakechroot` + `fakeroot` +
+Follows the [muxup.com pattern](https://muxup.com/2024q4/rootless-cross-architecture-debootstrap): `unshare -Ur` + `fakechroot` + `fakeroot` +
 `qemu-user-static`. Limitations are documented in `phase1-chroot/README.md`
 (no `mknod`, no real uid/gid mapping inside the chroot beyond the user's
 subuid/subgid range, no binfmt registration — must be pre-registered by an

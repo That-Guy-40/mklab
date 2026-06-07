@@ -10,6 +10,9 @@ disk, no bootloader, no distro packages. Two tracks:
 | **Faithful** (§11) | riscv64 | u-root (pure Go) | plain cpio | yes |
 
 Design + rationale: [`../MICRO_LINUX_LAB_PLAN.md`](../MICRO_LINUX_LAB_PLAN.md).
+Based on Uros Popovic's [*Making a micro Linux distro*](https://popovicu.com/posts/making-a-micro-linux-distro/),
+vendored byte-exact under [`upstream-tutorial/`](upstream-tutorial/) (HTML + CSS +
+provenance + `sha256`s).
 Security posture is cross-referenced with [`../AUDIT.md`](../AUDIT.md) (F2 download
 integrity, F5 pinned inputs, F7 destructive-op guard).
 

@@ -1,0 +1,123 @@
+/* Post (article) page */
+.post-page { padding: 48px 0 64px; max-width: 720px; margin: 0 auto; }
+
+.post-header { margin-bottom: 40px; padding-bottom: 28px; border-bottom: 1px solid var(--border); }
+.post-header h1 {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: clamp(28px, 4vw, 38px); font-weight: 700;
+  color: var(--text-primary); line-height: 1.15; letter-spacing: -1px; margin-bottom: 14px;
+}
+.post-desc {
+  font-size: 16px; color: var(--text-secondary); line-height: 1.7; font-weight: 300;
+}
+
+/* Meta row: publication date + tags */
+.post-meta {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 16px;
+  margin-top: 20px;
+}
+.post-date {
+  font-family: 'IBM Plex Mono', monospace; font-size: 12px;
+  color: var(--text-dim); letter-spacing: 0.5px;
+}
+.post-date::before { content: "▸ "; color: var(--primary); }
+
+.post-tags { list-style: none; display: inline-flex; flex-wrap: wrap; gap: 8px; }
+.post-tags a {
+  font-family: 'IBM Plex Mono', monospace; font-size: 11px;
+  color: var(--accent); text-decoration: none;
+  border: 1px solid var(--accent-dim); padding: 1px 6px; border-radius: 3px;
+}
+.post-tags a:hover { background: var(--accent-dim); }
+
+/* Article body typography */
+.post-body { font-size: 16px; line-height: 1.8; color: var(--text-secondary); }
+.post-body h2 {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 24px; font-weight: 600; color: var(--text-primary);
+  margin: 48px 0 16px; letter-spacing: -0.5px;
+}
+.post-body h3 {
+  font-family: 'Space Grotesk', sans-serif;
+  font-size: 19px; font-weight: 600; color: var(--text-primary);
+  margin: 36px 0 12px; letter-spacing: -0.3px;
+}
+.post-body p { margin-bottom: 20px; }
+.post-body strong { color: var(--text-primary); font-weight: 500; }
+.post-body em { font-style: italic; }
+.post-body a { color: var(--primary); text-decoration: none; border-bottom: 1px solid var(--primary-dim); transition: border-color 0.2s; }
+.post-body a:hover { border-color: var(--primary); }
+
+.post-body code {
+  font-family: 'IBM Plex Mono', monospace; font-size: 14px;
+  background: var(--bg-elevated); color: var(--primary);
+  padding: 2px 6px; border-radius: 3px; border: 1px solid var(--border);
+}
+.post-body pre {
+  background: var(--bg-deep); border: 1px solid var(--border-bright);
+  border-radius: 6px; padding: 20px 24px; margin: 24px 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-bright) transparent;
+}
+.post-body pre::-webkit-scrollbar { height: 8px; width: 8px; }
+.post-body pre::-webkit-scrollbar-track { background: transparent; }
+.post-body pre::-webkit-scrollbar-thumb {
+  background: var(--border-bright); border-radius: 4px;
+}
+.post-body pre::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+.post-body pre code {
+  background: none; border: none; padding: 0;
+  color: var(--text-secondary); font-size: 13px; line-height: 1.7;
+}
+
+.post-body ul, .post-body ol {
+  margin: 0 0 20px 24px; padding: 0;
+}
+.post-body li { margin-bottom: 8px; }
+
+.post-body hr {
+  border: 0;
+  border-top: 1px solid var(--border-bright);
+  margin: 48px 0 24px;
+}
+.post-body hr + h2 { margin-top: 24px; }
+
+.post-body blockquote {
+  border-left: 3px solid var(--primary); padding: 12px 20px; margin: 24px 0;
+  background: var(--primary-glow); border-radius: 0 6px 6px 0;
+}
+.post-body blockquote p { margin-bottom: 0; color: var(--text-primary); }
+
+.post-body img { display: block; max-width: 100%; height: auto; margin: 24px auto; }
+.post-body iframe, .post-body video { display: block; max-width: 100%; margin: 24px auto; }
+
+/* Auto-generated TOC injected by pageforge under `## Table of contents` */
+.post-body .pageforge-toc {
+  margin: 0 0 32px;
+  padding: 16px 20px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.post-body .pageforge-toc summary {
+  font-family: 'Space Grotesk', sans-serif;
+  font-weight: 600; color: var(--text-primary);
+  cursor: pointer; list-style: none;
+}
+.post-body .pageforge-toc summary::-webkit-details-marker { display: none; }
+.post-body .pageforge-toc summary::before {
+  content: "▸ "; color: var(--primary);
+  display: inline-block; transition: transform 0.15s ease;
+}
+.post-body .pageforge-toc[open] summary::before { transform: rotate(90deg); }
+.post-body .pageforge-toc ul {
+  margin: 12px 0 0 20px;
+}
+.post-body .pageforge-toc > ul { margin-top: 12px; }
+.post-body .pageforge-toc li { margin-bottom: 4px; }
+.post-body .pageforge-toc a {
+  border-bottom: none;
+  color: var(--text-secondary);
+}
+.post-body .pageforge-toc a:hover { color: var(--primary); }
