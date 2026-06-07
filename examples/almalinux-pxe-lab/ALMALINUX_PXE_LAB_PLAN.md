@@ -316,5 +316,7 @@ from USB. Same flow; only the server URL and MACs change.
 ## Sources
 
 - [Installing AlmaLinux Over the Network With No Hands — The Life of Kenneth (Jan 2026)](https://blog.thelifeofkenneth.com/2026/01/almalinux-pxe-zerotouh.html)
+  — vendored byte-exact under [`upstream-tutorial/`](upstream-tutorial/) (HTML +
+  CSS + provenance + `sha256`s) for offline reference.
 - [PXE Booting the AlmaLinux Installer — netboot.xyz](https://netboot.xyz/docs/kb/pxe/almalinux/)
 - [Kickstart installation of EL Linux systems — DTU IT wiki](https://wiki.fysik.dtu.dk/ITwiki/Kickstart/)

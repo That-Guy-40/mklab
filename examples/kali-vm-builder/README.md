@@ -1,7 +1,7 @@
 # Kali VM image factory — `kali-vm`, operationalized
 
 Wraps Kali's **official VM image builder**
-([`kali-vm`](https://gitlab.com/kalilinux/build-scripts/kali-vm)) so you can,
+([`kali-vm`](https://gitlab.com/kalilinux/build-scripts/kali-vm), fetched live as-of **2026-06-07**) so you can,
 from this repo: **fetch** it, **build** a real Kali VM image (choosing *where*
 the build runs), and **run** the result in a windowed QEMU desktop.
 

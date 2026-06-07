@@ -8,7 +8,9 @@ This is the Rocky twin of the AlmaLinux PXE lab (`examples/almalinux-pxe-lab/alm
 Both are RHEL-family rebuilds, so the Anaconda/kickstart machinery is identical;
 only the installer-fetch step and the mirror URLs differ.
 
-Reference: [CIQ — *Booting Rocky Linux via PXE*](https://kb.ciq.com/article/rocky-linux/rl-booting-rocky-linux-via-pxe).
+Reference: [CIQ — *Booting Rocky Linux via PXE*](https://kb.ciq.com/article/rocky-linux/rl-booting-rocky-linux-via-pxe)
+— vendored byte-exact under [`upstream-tutorial/`](upstream-tutorial/) (HTML +
+CSS + provenance + `sha256`s) for offline reference.
 This lab implements **two** paths:
 
 | Path | Use case | DHCP/TFTP source | iPXE delivery |

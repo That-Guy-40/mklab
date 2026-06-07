@@ -38,3 +38,34 @@ references (`--impact <name>` shows every place a file is referenced — the edi
 list before a rename/move/delete). Run it before/after any such change; it must
 report **0 broken links** (it also exits non-zero on broken links, for CI/commit
 gating).
+
+### Provenance: vendor the upstream source for tutorial-based labs
+
+Any lab that **operationalizes a specific external write-up** keeps a byte-exact,
+attributed archive of that source *alongside* the operationalization, so the lab
+is reproducible offline and its provenance is explicit (sources move, rot, or
+get paywalled). Two tiers, by how tightly the lab tracks one source:
+
+- **Built from one specific tutorial / blog post → vendor it.** Add an
+  `upstream-tutorial/` subdir with the page saved **byte-exact** (HTML + its
+  primary CSS so it renders offline) plus a `README.md` carrying: a provenance
+  table (Title / Author / Canonical URL / Published / **Retrieved** date), a
+  per-file **`sha256`** table, a note of what's left un-vendored (images, JS,
+  fonts — absolute links to the live site), and a copyright/attribution
+  paragraph ("all rights remain with the author; archived for offline reference;
+  `git rm` to remove"). The parent lab's README/PLAN **must link the archive**
+  (else `link_check.py` flags it as an orphan). Exemplars:
+  [`examples/tiny-linux-experiments/floppinux/upstream-tutorial/`](examples/tiny-linux-experiments/floppinux/upstream-tutorial/),
+  [`examples/debian-http-boot/upstream-tutorial/`](examples/debian-http-boot/upstream-tutorial/).
+- **Follows official docs / an upstream catalog / upstream code (not one page)
+  → cite, don't mirror.** Capture the exact URL(s) + a **retrieved/as-of date**
+  + a one-line note in the lab's README; don't archive whole doc sites. (Labs
+  that *fetch* their upstream live — gallery/ansible/vm-builder wrappers — pin or
+  date the fetch instead.)
+
+Fetching is allowed for archival (`curl`/`wget` of HTML/CSS is fine — the agent
+Bash runner only gates fetch+**exec** of prebuilt toolchains). **Verify each URL
+resolves 200 + has the expected title before hashing** — never enshrine an error
+page's `sha256` as "the tutorial." Two labs sharing one source each keep their
+own copy (self-containment rule), byte-identical. Keep `link_check.py` green
+after every add.

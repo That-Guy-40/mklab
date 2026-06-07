@@ -3,7 +3,8 @@
 Experiment with the **whole** [Kali preseed-examples catalog](https://gitlab.com/kalilinux/recipes/kali-preseed-examples):
 fetch all ~15 official Debian-installer preseed variants, then install any one
 of them into a throwaway VM with **no keystrokes** — PXE → iPXE → d-i → preseed
-→ reboot into the installed Kali.
+→ reboot into the installed Kali. The catalog is **fetched live** from GitLab at
+run time (via `fetch-preseeds.sh`); upstream cited as-of **2026-06-07**.
 
 This is the **pick-a-variant** companion to [`../kali-pxe-lab/`](../kali-pxe-lab/),
 which serves a *single* hand-written preseed. Same iPXE + nginx + QEMU

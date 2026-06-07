@@ -1,6 +1,6 @@
 # AlmaLinux infra-ansible lab
 
-Run AlmaLinux's **own** infrastructure playbooks — [AlmaLinux/infra-ansible](https://github.com/AlmaLinux/infra-ansible),
+Run AlmaLinux's **own** infrastructure playbooks — [AlmaLinux/infra-ansible](https://github.com/AlmaLinux/infra-ansible) (fetched live as-of **2026-06-07**),
 the curated recipes they use to build their gitea / keycloak / mattermost /
 matrix / mirror / mqtt servers — from an **Ansible control container** against an
 **AlmaLinux target container**, both LXD/Incus (Phase 5). The Ansible cousin of

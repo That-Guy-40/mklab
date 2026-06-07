@@ -3,7 +3,9 @@
 The heavyweight, **blog-faithful** companion to [`../kali-llm-lab/`](../kali-llm-lab/)
 (Tier 1, headless containers). Here the *entire* experience from the Kali post
 [*Local LLM with Ollama & 5ire*](https://www.kali.org/blog/kali-llm-ollama-5ire/)
-runs **inside one Kali XFCE VM**:
+runs **inside one Kali XFCE VM**. The source post is vendored byte-exact under
+[`upstream-tutorial/`](upstream-tutorial/) (HTML + CSS + provenance + `sha256`s)
+so this lab stays reproducible and attributed offline:
 
 | Blog piece | What it is | Here |
 |---|---|---|

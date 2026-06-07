@@ -11,7 +11,7 @@ select-kickstart.sh GenericCloud-Base ─► ~/netboot/boot.ipxe   (inst.ks bake
         nginx (P4) serves ~/netboot/    QEMU (P2): NIC's iPXE ROM → boot.ipxe → Anaconda → kickstart
 ```
 
-Upstream: <https://github.com/rocky-linux/kickstarts> (branch **r9**) — the same
+Upstream: <https://github.com/rocky-linux/kickstarts> (branch **r9**, fetched live as-of **2026-06-07**) — the same
 kickstarts Rocky uses to build its cloud, container, vagrant, desktop, EC2/Azure,
 OCP and RPI images.
 

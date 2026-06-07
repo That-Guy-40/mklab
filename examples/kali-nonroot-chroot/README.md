@@ -12,7 +12,7 @@ Kali **top-10** security tools.
 ## Lineage
 
 Adapted from Kali's live-build recipe
-[`kali-linux-mate-top10-nonroot.sh`](https://gitlab.com/kalilinux/recipes/live-build-config-examples/-/blob/main/kali-linux-mate-top10-nonroot.sh).
+[`kali-linux-mate-top10-nonroot.sh`](https://gitlab.com/kalilinux/recipes/live-build-config-examples/-/blob/main/kali-linux-mate-top10-nonroot.sh) (upstream recipe, adapted not vendored; as-of **2026-06-07**).
 That recipe builds a **live ISO** — MATE 1.8 desktop + `kali-linux-top10` tools —
 and its whole point is enabling a **non-root** user (Kali's old default was to log
 in as root; the recipe sets `passwd/root-login boolean false` and `make-user

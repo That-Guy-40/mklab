@@ -50,15 +50,39 @@ Exemplar to copy:
 — vendored HTML/CSS, a provenance table (title / author / canonical URL /
 retrieved date), per-file `sha256`s, and a copyright/attribution note.
 
-- [ ] Audit `examples/` for labs derived from a *specific* external tutorial or
+- [x] Audit `examples/` for labs derived from a *specific* external tutorial or
       blog post (candidates to confirm: the PXE / netboot labs, the
       kickstart / preseed galleries, the `kali-*` builders).
-- [ ] For each, add an `upstream-tutorial/` dir with the vendored source + a
+- [x] For each, add an `upstream-tutorial/` dir with the vendored source + a
       README matching the floppinux exemplar (provenance, `sha256`s, attribution).
-- [ ] Where a lab follows *official docs* rather than one page, capture the exact
+- [x] Where a lab follows *official docs* rather than one page, capture the exact
       URLs + retrieval date + a note instead of mirroring whole doc sites.
-- [ ] Record the convention in [`CLAUDE.md`](CLAUDE.md) so future labs follow it.
-- [ ] Keep `tools/link_check.py` green (0 broken links) after every add.
+- [x] Record the convention in [`CLAUDE.md`](CLAUDE.md) so future labs follow it.
+- [x] Keep `tools/link_check.py` green (0 broken links) after every add.
+
+**Largely done 2026-06-07 (`examples/` scope).** Five single-write-up labs
+vendored byte-exact under their own `upstream-tutorial/` (HTML + CSS + `sha256`s +
+attribution, parent README linked): `debian-http-boot/` & `almalinux-pxe-lab/` &
+`rocky-pxe-lab/` (Kenneth Finnegan / CIQ write-ups), `kali-llm-lab/` &
+`kali-llm-desktop-lab/` (the Kali Ollama+5ire blog, byte-identical copy in each
+per self-containment). Seven official-docs / upstream-wrapper labs got a dated
+provenance note (URL + as-of date, not mirrored): `kali-pxe-lab/`,
+`kali-preseed-gallery/`, `rocky-kickstart-gallery/`,
+`ansible/almalinux-infra-ansible/`, `kali-nonroot-chroot/`, `offsec-awae-vm/`,
+`kali-vm-builder/`. Convention recorded in `CLAUDE.md` › *Provenance*.
+`link_check.py`: 0 broken.
+
+**Open (outside the `examples/` audit scope — need a decision):**
+- **`micro-linux/`** — clearly tutorial-derived (~20 "the source post" / "letter
+  of the post" references in `MICRO_LINUX_LAB_PLAN.md`), but **no source-post URL
+  is recorded anywhere in the repo**, so it can't be vendored or dated-noted
+  until the canonical URL is identified. The plan also calls v2 "an adaptation
+  *in the spirit of* the post" with the v1 "faithful" claims removed — so it may
+  warrant only a citation, not a full vendor. Needs the URL.
+- **`phase1-chroot --rootless`** — follows a **muxup.com** cross-arch post
+  (PLAN.md:39/232, `phase1-chroot/README.md:171`, `lab-chroot.sh`); a phase
+  feature rather than an `examples/` lab, and again no specific post URL is
+  captured. Candidate for a dated citation if the URL is recovered.
 
 ## 3. Container lab to hand-implement each upstream tutorial
 

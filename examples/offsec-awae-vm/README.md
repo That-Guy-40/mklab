@@ -13,7 +13,7 @@ A **Phase-1 Kali chroot** carrying the **OffSec AWAE (WEB-300)** toolset, with a
 ## Lineage
 
 Adapted from Kali's live-build recipe
-[`offsec-awae-live.sh`](https://gitlab.com/kalilinux/recipes/live-build-config-examples/-/blob/main/offsec-awae-live.sh).
+[`offsec-awae-live.sh`](https://gitlab.com/kalilinux/recipes/live-build-config-examples/-/blob/main/offsec-awae-live.sh) (upstream recipe, adapted not vendored; as-of **2026-06-07**).
 That recipe builds a **live ISO** with `lb build`:
 
 | Upstream recipe (live ISO) | This lab (chroot → VM) |

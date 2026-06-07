@@ -9,7 +9,7 @@ This is the Debian-family cousin of the Rocky/AlmaLinux PXE labs. Those drive
 **Debian installer** with a **preseed**. The surrounding machinery — iPXE,
 rootless nginx, QEMU `pxe-install` netboot — is identical.
 
-Reference: [Kali docs — *Network PXE Install*](https://www.kali.org/docs/installation/network-pxe/).
+Reference: [Kali docs — *Network PXE Install*](https://www.kali.org/docs/installation/network-pxe/) — official Kali documentation, followed (not vendored), as-of **2026-06-07**.
 This lab implements **two** paths:
 
 | Path | Use case | DHCP/TFTP source | iPXE delivery |

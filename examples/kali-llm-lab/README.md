@@ -4,7 +4,9 @@ Run a **local LLM on Kali**, the reproducible/headless way: the heavy
 **Ollama** backend runs rootless on a lab host; you reach a chat UI from your
 laptop over an **SSH tunnel**. This is Tier 1 of the Kali blog
 [*Local LLM with Ollama & 5ire*](https://www.kali.org/blog/kali-llm-ollama-5ire/),
-adapted to LAB_CREATE_V2's Phase 4 (rootless podman).
+adapted to LAB_CREATE_V2's Phase 4 (rootless podman). The source post is
+vendored byte-exact under [`upstream-tutorial/`](upstream-tutorial/) (HTML + CSS
++ provenance + `sha256`s) so this lab stays reproducible and attributed offline.
 
 The blog's actual stack is three pieces that containerize very differently:
 

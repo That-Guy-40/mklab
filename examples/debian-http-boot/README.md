@@ -20,6 +20,10 @@ up a few kernel mounts and then `exec`s the real `/sbin/init` (systemd).
 >    `systemd` init preset.
 > 3. **A standalone walkthrough** that explains *why* it works, which is what you
 >    actually asked for. The mechanic — not the artifact — is the point.
+> 4. **The upstream write-up, vendored** — a byte-exact offline archive of
+>    Kenneth's post lives in [`upstream-tutorial/`](upstream-tutorial/) (HTML +
+>    CSS + provenance + `sha256`s) so the lab stays reproducible and attributed
+>    even if the original moves.
 >
 > It's also *leaner* than `chroot-netboot-full.toml` on purpose: no cloud-init,
 > no `locales-all`. Neither is in the blog, and dropping them keeps this close to

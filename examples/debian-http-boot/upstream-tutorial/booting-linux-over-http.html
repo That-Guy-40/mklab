@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+  <meta charset="utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1"><!-- Begin Jekyll SEO tag v2.8.0 -->
+<title>Booting Linux Over HTTP | The Life of Kenneth</title>
+<meta name="generator" content="Jekyll v4.4.1" />
+<meta property="og:title" content="Booting Linux Over HTTP" />
+<meta name="author" content="Kenneth Finnegan" />
+<meta property="og:locale" content="en_US" />
+<meta name="description" content="The thoughts and projects of an engineer who likes to convert solder, firmware, and wire into all sorts of different forms of entertainment." />
+<meta property="og:description" content="The thoughts and projects of an engineer who likes to convert solder, firmware, and wire into all sorts of different forms of entertainment." />
+<link rel="canonical" href="https://blog.thelifeofkenneth.com/2020/03/booting-linux-over-http.html" />
+<meta property="og:url" content="https://blog.thelifeofkenneth.com/2020/03/booting-linux-over-http.html" />
+<meta property="og:site_name" content="The Life of Kenneth" />
+<meta property="og:type" content="article" />
+<meta property="article:published_time" content="2020-03-29T06:00:00-07:00" />
+<meta name="twitter:card" content="summary" />
+<meta property="twitter:title" content="Booting Linux Over HTTP" />
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"BlogPosting","author":{"@type":"Person","name":"Kenneth Finnegan"},"dateModified":"2020-03-29T06:00:00-07:00","datePublished":"2020-03-29T06:00:00-07:00","description":"The thoughts and projects of an engineer who likes to convert solder, firmware, and wire into all sorts of different forms of entertainment.","headline":"Booting Linux Over HTTP","mainEntityOfPage":{"@type":"WebPage","@id":"https://blog.thelifeofkenneth.com/2020/03/booting-linux-over-http.html"},"url":"https://blog.thelifeofkenneth.com/2020/03/booting-linux-over-http.html"}</script>
+<!-- End Jekyll SEO tag -->
+<link rel="stylesheet" href="/assets/css/style.css"><link type="application/atom+xml" rel="alternate" href="https://blog.thelifeofkenneth.com/feeds/posts/default" title="The Life of Kenneth" /><script async src="https://www.googletagmanager.com/gtag/js?id=G-HRMP3S475V"></script>
+<script>
+  window['ga-disable-G-HRMP3S475V'] = window.doNotTrack === "1" || navigator.doNotTrack === "1" || navigator.doNotTrack === "yes" || navigator.msDoNotTrack === "1";
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'G-HRMP3S475V');
+</script>
+
+</head>
+<body><header class="site-header">
+
+  <div class="wrapper"><a class="site-title" rel="author" href="/">The Life of Kenneth</a><nav class="site-nav">
+        <input type="checkbox" id="nav-trigger" class="nav-trigger" />
+        <label for="nav-trigger">
+          <span class="menu-icon">
+            <svg viewBox="0 0 18 15" width="18px" height="15px">
+              <path d="M18,1.484c0,0.82-0.665,1.484-1.484,1.484H1.484C0.665,2.969,0,2.304,0,1.484l0,0C0,0.665,0.665,0,1.484,0 h15.032C17.335,0,18,0.665,18,1.484L18,1.484z M18,7.516C18,8.335,17.335,9,16.516,9H1.484C0.665,9,0,8.335,0,7.516l0,0 c0-0.82,0.665-1.484,1.484-1.484h15.032C17.335,6.031,18,6.696,18,7.516L18,7.516z M18,13.516C18,14.335,17.335,15,16.516,15H1.484 C0.665,15,0,14.335,0,13.516l0,0c0-0.82,0.665-1.483,1.484-1.483h15.032C17.335,12.031,18,12.695,18,13.516L18,13.516z"/>
+            </svg>
+          </span>
+        </label>
+
+        <div class="trigger"><a class="page-link" href="/about/">About</a></div>
+      </nav></div>
+</header>
+<main class="page-content" aria-label="Content">
+      <div class="wrapper">
+        <article class="post h-entry" itemscope itemtype="http://schema.org/BlogPosting">
+
+  <header class="post-header">
+    <h1 class="post-title p-name" itemprop="name headline">Booting Linux Over HTTP</h1>
+    <p class="post-meta"><time class="dt-published" datetime="2020-03-29T06:00:00-07:00" itemprop="datePublished">
+        Mar 29, 2020
+      </time>• 
+          <span itemprop="author" itemscope itemtype="http://schema.org/Person">
+            <span class="p-author h-card" itemprop="name">Kenneth Finnegan</span></span></p>
+  </header>
+
+  <div class="post-content e-content" itemprop="articleBody">
+    <p><img src="/2020/03/httpboot/small-thinclient.jpg" alt="Two FX160s" /></p>
+
+<p>A couple years ago, one of my friends gave me a big pile of little Dell FX160 thin clients, which are cute little computers which have low power Atom 230 processors in them with the ability to support 3GB of RAM.
+Being thin clients means they were originally meant to be diskless nodes that could boot a remote desktop application to essentially act as remote graphical consoles to applications running on a beefier server somewhere else.</p>
+
+<p>That being said, they’re great as low power Linux boxes, and I’ve been deploying them in various projects over the years when I need a Linux box somewhere but want/need something a little more substantial than a Raspberry Pi.</p>
+
+<p><img src="/2020/03/httpboot/small-sataboard.jpg" alt="Cute SATA SSD" /></p>
+
+<p>The one big problem with them is that they didn’t come with the 2.5” hard disk bracket, so I needed to source those drive sled kits on eBay to add more storage than the 1GB embedded SATA drive they all came with.
+Which is nominally fine; I bought a few of the kits for about $10 a piece, and for that to be the only expense to be able to deploy a 1TB 2.5” drive somewhere has been handy a few times.</p>
+
+<p>But it always left me thinking about what I could do with the original 1GB drive in these things.
+Obviously, with enough effort and hand wringing, you can get Linux installed on a 1G partition, but that feels like it’s been done before, and these are thin clients! They’re meant to depend on the network to boot!</p>
+
+<p>Fast forward to this year, and thanks to one of their network engineers hearing <a href="https://oxide.computer/podcast/on-the-metal-6-kenneth-finnegan/" target="_blank">my interview for On the Metal</a>, I’ve been working with <a href="https://www.gandi.net/">Gandi.net</a> to help deploy one of their DNS anycast nodes in Fremont as part of the <a href="https://fcix.net/">Fremont Cabal Internet Exchange</a>.
+The thing is, how they designed their anycast DNS nodes is awesome! <a href="https://news.gandi.net/en/2019/03/booting-an-anycast-dns-network/">They have a 10,000 foot view blog post about it</a>, but the tl;dr is that they don’t deploy their remote DNS nodes with an OS image on them.
+Each server gets deployed with a USB key plugged into them with a custom build of <a href="https://ipxe.org/">iPXE</a>, which gives the server enough smarts to, over authenticated HTTPS, download the OS image for their central servers and run the service entirely from RAM.</p>
+
+<p>Operationally, this is awesome because it means that when they want to update software on one of their anycast nodes, they can build the new image in advance on their provisioning server centrally, and just tell the server to reboot.
+When it reboots, it automatically downloads the new image from the provisioning servers, and you’re up to date.
+If something goes terribly wrong and the OS on a node becomes unresponsive? Open a remote hands ticket with the data center “please power cycle our server” and the iPXE ROM will once again download a fresh copy of the OS image to run in RAM.</p>
+
+<p>Granted, they’ve got all sorts of awesome extra engineering involved in their system; cryptographic authentication of their boot images, local SSDs so while the OS is stateless, their nodes don’t need to perform an entire DNS zone transfer from scratch every time it reboots, etc, etc.
+Which is all well and good, but this iPXE netbooting an entire OS image over the wide Internet using HTTP is just the sort of kind-of-silly, kind-of-awesome sort of project I’ve been looking to do with these thin clients I’ve got sitting around in my apartment.</p>
+
+<h2 id="understanding-the-boot-process">Understanding The Boot Process</h2>
+
+<p>This left me with a few problems:</p>
+
+<ol>
+  <li>
+    <p>The Gandi blog post regarding their DNS system was a 10,000 foot view conceptual overview, so they rightfully-so glossed over some of the technical specifics that weren’t important to their blog post’s message but really important for actually making it work.</p>
+  </li>
+  <li>
+    <p>I have been blissfully ignorant up until now of most of the mechanics involved with Linux booting in the gap between “The BIOS runs the bootloader” and “The Linux kernel is running with your <a href="https://en.wikipedia.org/wiki/Init">Init</a> server running as PID 1 and your fstab mounted”</p>
+  </li>
+  <li>
+    <p>I’m trying to do something exceedingly weird here, where there are no additional file systems to mount while the system is booting.
+There’s plenty of guides available on booting Linux with an NFS or iSCSI root file system, but I’m looking at even less than that; I want the entire system just running from local RAM.</p>
+  </li>
+</ol>
+
+<p>So before talking about what I ended up with, let’s talk about the journey and what I had to learn about the boot process on Linux.</p>
+
+<p>On a typical traditional Linux host, when you power it on, the local BIOS has enough smarts to find local disks with boot sectors, and read that first sector from the disk and execute it in RAM.
+That small piece of machine code then has enough smarts to load a more sophisticated bootloader like GRUB from somewhere close on the disk, which then has enough smarts to do more complicated things like load a Linux kernel and init RAM disk to boot Linux, or give the user a user interface to select which Linux kernel to boot, etc.
+One of the reasons why many Unix systems had a separate /boot partition was because this chainloader between the BIOS and the full running kernel couldn’t mount more sophisticated file systems so needed a smaller and simpler partition for just the bare minimum boot files needed to get the kernel running.</p>
+
+<p>The kernel file plus init RAM disk (often called initrd) are the two files Linux really requires to boot, and the part where my understanding was lacking.
+Granted, my understanding is still pretty lacking, but the main insight I gained was that the initrd file is a packed SVR4 archive of the bare minimum of files that the Linux kernel needs to then go and mount the real root file system and switch to it to have a fully running system.
+These SVR4 archives can be created using the “cpio” command as the “newc” file format, and the Linux kernel is smart enough to decompress it using gzip before mounting the archive, so we can gzip the initrd file to save bandwidth when ultimately booting the system.</p>
+
+<p>(Related aside; there’s many different pathways from the BIOS to having the kernel and initrd files in RAM.
+One of the most popular “net booting” processes, which I have used quite a bit in the past, is PXE booting, where the BIOS boot ROM in the network card itself has <i>juuuust</i> enough smarts to send out a DHCP request for a lease which includes a TFTP server and file path for a file on that TFTP server as DHCP options, and the PXE ROM downloads this file and runs it.
+This file is usually pxelinux.0, which I think is another chainloader which then downloads the kernel and initrd files from the same TFTP server, and you’re off to the races.)</p>
+
+<p>The missing piece for me inside the initrd file is that the kernel immediately runs a shell script in the root of the filesystem named “/init”.
+This shell script is what switches the root file system over to whatever you specified in your /etc/fstab file, and ultimately at the very end of the /init script is where it “exec /sbin/init” to replace itself with the regular <a href="https://en.wikipedia.org/wiki/Init">init daemon</a> which you’re used to being PID 1 and being the parent of every other process on the system.</p>
+
+<p>I had never seen this /init script before, which is understandable because it’s normally not included in your actual “/” root file system! It’s only included in the initrd archive’s “/” file system (which you can actually unpack yourself using gunzip and cpio), and disappears when it remounts the actual root and exec’s /sbin/init…
+So since I want to run Linux entirely from RAM, “all” I need to do is figure out how to create my own initrd file, generate one that is not a bare minimum to mount another file system but everything I need to run my application in Linux, and figure out a simpler /init script to package with it which doesn’t need to mount any local volumes but only needs to mount all the required virtual file systems (like /proc, /sys, and /dev) and exec the real /sbin/init to start the rest of the system.</p>
+
+<h2 id="generating-my-own-initrd-file">Generating My Own Initrd File</h2>
+
+<p>So the first step in this puzzle for me is figuring out how to generate my own initrd file including the ENTIRE contents of a Linux install instead of just the bare minimum to get it started.
+And to generate that initrd archive, I first need to create a minimal root file system that I can configure to do what I want to then pack as the initrd file we’ll be booting.</p>
+
+<p>Thankfully, Debian has some really good <a href="https://www.debian.org/releases/stable/i386/apds03.en.html">documentation on using their debootstrap tool</a> to start with an empty folder on your computer and end up with a minimal system.
+The first section of that documentation talks about partitioning the disk you’re installing Debian on, but we just need the file system, so I skipped that part and went straight to running debootstrap in an empty directory.</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>$ sudo debootstrap buster /home/kenneth/tmp/rootfs http://ftp.us.debian.org/debian/
+</code></pre></div></div>
+
+<p>Remember that there’s plenty of Debian mirrors, so feel free to <a href="https://www.debian.org/mirror/list">pick a closer one off their list</a>.</p>
+
+<p>Once debootstrap is done building the basic image, from a terminal we can jump into the new Linux system using chroot, which doesn’t really boot this system, but jump the terminal into it like it was the root of the currently running system, so you can interact with it <i>like</i> it’s running.
+This lets us edit config files like /etc/network/interfaces, apt install needed packages, etc etc.
+Pretty much just following the rest of the Debian debootstrap guide and then also doing the configuration work needed to set up whatever the system should actually be doing.
+(things like setting a root password, installing ssh, configuring network interfaces, etc etc)</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>$ LANG=C.UTF-8 sudo chroot /home/kenneth/tmp/rootfs /bin/bash
+</code></pre></div></div>
+
+<p>Since we’re not installing this system on an actual disk, we don’t need to worry about installing the GRUB or LILO bootloader like the guide says, but I did install the Linux kernel package since it was the easiest way to grab a built Linux kernel to pair with the final initrd file we’re creating.
+Apt install linux-image-amd64 and copy that vmlinuz file out of the …/boot/ directory in the new filesystem to somewhere handy.</p>
+
+<p>The next step is to place the much simpler /init script in this new file system, so when the kernel loads this entire folder as its initrd we don’t go off and try and mount other file systems or anything.
+This is the part where my friend at Gandi.net was SUPER helpful, since trying to figure out each of the various virtual file systems that still need to be mounted on my own only yielded me a lot of kernel panics.</p>
+
+<p>So huge thanks to Arthur for giving me this chunk of shell code! Copy it into the root of the freshly debootstrapped system and mark it executable (chmod +x)</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="c">#!/bin/sh</span>
+<span class="c"># Kenneth Finnegan, 2020</span>
+<span class="c"># https://blog.thelifeofkenneth.com/</span>
+<span class="c"># Huge thanks to Gandi.net for most of this code</span>
+
+<span class="nb">set</span> <span class="nt">-x</span>
+<span class="nb">set</span> <span class="nt">-e</span>
+
+<span class="c"># Create the mount points for all of the virtual file systems which don't</span>
+<span class="c">#  actually map to disks, but are views into the kernel</span>
+<span class="o">[</span> <span class="nt">-d</span> /dev <span class="o">]</span> <span class="o">||</span> <span class="nb">mkdir</span> <span class="nt">-m</span> 0755 /dev
+<span class="o">[</span> <span class="nt">-d</span> /root <span class="o">]</span> <span class="o">||</span> <span class="nb">mkdir</span> <span class="nt">-m</span> 0700 /root
+<span class="o">[</span> <span class="nt">-d</span> /sys <span class="o">]</span> <span class="o">||</span> <span class="nb">mkdir</span> /sys
+<span class="o">[</span> <span class="nt">-d</span> /proc <span class="o">]</span> <span class="o">||</span> <span class="nb">mkdir</span> /proc
+<span class="o">[</span> <span class="nt">-d</span> /tmp <span class="o">]</span> <span class="o">||</span> <span class="nb">mkdir</span> /tmp
+<span class="nb">mkdir</span> <span class="nt">-p</span> /var/lock <span class="o">||</span> <span class="nb">true</span>
+
+<span class="c"># Mount the required virtual file systems</span>
+mount <span class="nt">-t</span> sysfs <span class="nt">-o</span> nodev,noexec,nosuid sysfs /sys
+mount <span class="nt">-t</span> proc <span class="nt">-o</span> nodev,noexec,nosuid proc /proc
+
+<span class="nv">tmpfs_size</span><span class="o">=</span>10240k
+<span class="k">if</span> <span class="o">!</span> mount <span class="nt">-t</span> devtmpfs <span class="nt">-o</span> <span class="nv">size</span><span class="o">=</span><span class="nv">$tmpfs_size</span>,mode<span class="o">=</span>0755 udev /dev<span class="p">;</span> <span class="k">then
+	</span><span class="nb">echo</span> <span class="s2">"W: devtmpfs not available, falling back to tmpfs for /dev"</span>
+	mount <span class="nt">-t</span> tmpfs <span class="nt">-o</span> <span class="nv">size</span><span class="o">=</span><span class="nv">$tmpfs_size</span>,mode<span class="o">=</span>0755 udev /dev
+	<span class="o">[</span> <span class="nt">-e</span> /dev/console <span class="o">]</span> <span class="o">||</span> <span class="nb">mknod</span> <span class="nt">-m</span> 0600 /dev/console c 5 1
+	<span class="o">[</span> <span class="nt">-e</span> /dev/null <span class="o">]</span> <span class="o">||</span> <span class="nb">mknod</span> /dev/null c 1 3
+<span class="k">fi
+</span><span class="nb">unset </span>tmpfs_size
+
+<span class="nb">mkdir</span> /dev/pts
+mount <span class="nt">-t</span> devpts <span class="nt">-o</span> noexec,nosuid,gid<span class="o">=</span>5,mode<span class="o">=</span>0620 devpts /dev/pts <span class="o">||</span> <span class="nb">true
+</span>mount <span class="nt">-t</span> tmpfs <span class="nt">-o</span> <span class="s2">"nosuid,size=20%,mode=0755"</span> tmpfs /run
+
+<span class="c"># Set dmesg to private if you want</span>
+<span class="nb">echo </span>1 <span class="o">&gt;</span> /proc/sys/kernel/dmesg_restrict
+
+<span class="c"># Replace ourselves with the actual init daemon which will handle starting every other daemon</span>
+<span class="nb">exec</span> /sbin/init
+</code></pre></div></div>
+
+<p>At this point, we’re ready to pack this filesystem into an initrd archive and give it a shot.
+To create the archive, I followed <a href="https://www.kernel.org/doc/html/latest/admin-guide/initrd.html">this guide</a>, which boils down to passing cpio a list of all the file names, and then piping the output of cpio to gzip to compress the image.</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>$ cd /home/kenneth/tmp/rootfs
+$ sudo find . | sudo cpio -H newc -o | gzip -9 -n &gt;~/www/initrd
+</code></pre></div></div>
+
+<p>At this point, you should have this initrd file which is a few hundred MB compressed, and the vmlinuz file (vmlinuz being a compressed version of the usual vmlinux kernel file!) which you grabbed out of the /boot directory, and that <em>should</em> be everything you need for booting Linux on its own.
+Place both of those files on a handy HTTP server to be downloaded by the client later.</p>
+
+<h2 id="netbooting-this-linux-image">Netbooting This Linux Image</h2>
+
+<p>Given the initrd and kernel images, the next step is to somehow get the target system to actually load and boot these files.
+Aside from what I’m talking about here of using HTTP, you can use any of the more traditional booting methods like putting these files on some local storage media and installing GRUB, or using the PXE boot ROM in your computer’s network interface to download these files from a TFTP server, etc.</p>
+
+<p>TFTP would probably be pretty cute since many computers can support it stock, but that depends on your target system being on a subnet with a DHCP server that can hand out the right DHCP options to tell it where to look for the TFTP server.
+I didn’t want to depend on DHCP, and I wanted to use HTTP, so I instead opted to use <a href="https://ipxe.org/">iPXE</a>, which is a much more sophisticated boot ROM than the typical PXE ROMs you get.</p>
+
+<p>It is possible to directly install iPXE on the firmware flash of NICs, but that’s often challenging and hardware specific, and a good point that Arthur pointed out was that since they boot iPXE from USB, if for some reason they need to swap the iPXE image remotely, it’s <em>MUCH</em> easier to mail a USB flash drive and ask them to replace it than to try and walk someone else through how to reflash the firmware on a NIC over the phone…
+I’m not going to be using a USB drive, since these thin clients happen to have convenient 1GB SSDs in them already, but it’s the same image.
+Instead of dd’ing the ipxe.usb image onto a flash drive, I just temporarily booted Linux on the thin clients and dd’ed the ipxe ROM onto the internal /dev/sda.</p>
+
+<p>The stock iPXE image is pretty generic, and like a normal PXE ROM sends out a DHCP request for a local network boot image to download.
+This isn’t what we want here, so we’re definitely going to need to build our own iPXE binary in the end, but I started with the stock ROM because it allows you to hit control-B during the boot process and interactively poke at the iPXE command line, and manually step through the entire process of configuring the network, downloading the Linux kernel, downloading the initrd file, and booting them.</p>
+
+<p>So before building my own custom ROM, I burned iPXE onto a USB flash drive and poked at the iPXE console with the following commands on my apartment network:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>dhcp
+kernel http://example.com/vmlinux1
+initrd http://example.com/init1
+boot
+</code></pre></div></div>
+
+<p>And that was enough to start iterating on my initrd file to get it to what I wanted.
+Since I was still doing this in my apartment which has a DHCP server, I was able to ask iPXE to automatically configure the network with the “dhcp” command, then download a kernel and initrd file, and then finally boot with the two files it just downloaded.</p>
+
+<p>So at this point, I was able to boot the built Linux image interactively from the iPXE console, and had a fully running Linux system in RAM, which was kind of awesome, but I wanted to fully automate the iPXE booting process, which means I need to build a custom image with an embedded “iPXE script” which is essentially just a list of commands for iPXE to run to configure the network interface, download the boot files, and boot.</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>#!gpxe
+ifopen net0
+set net0/ip 192.0.2.100
+set net0/netmask 255.255.255.0
+set net0/gateway 192.0.2.1
+set net0/dns 192.0.2.1
+
+echo Configuring network...
+sleep 3
+
+kernel http://example.com/vmlinux1
+initrd http://example.com/init1
+
+echo And away we go!
+boot
+</code></pre></div></div>
+
+<p>So given that script, we follow the <a href="https://ipxe.org/download">iPXE instructions to download their source</a> using git, install their build dependencies (which I apparently already had on my system from past projects, so good luck…), and the key step is that when performing the final build, we pass make the path to our iPXE boot script file to embed it in the image as what to run.</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>$ cd ~/src/ipxe/src
+$ make EMBEDDED_IMAGE=./bootscript bin/ipxe.usb
+</code></pre></div></div>
+
+<p>And at this point in the ipxe/src/bin folder is the built image of ipxe.usb which has our custom boot script embedded in it! Since the internal SATA disk is close enough to a USB drive, from a booting perspective, that’s the variant of ROM I’m using.</p>
+
+<p>So given this custom iPXE ROM, I manually booted a live Linux image on the thin client, used dd to write the ROM to /dev/sda which is the internal 1G SSD, and the box is ready to go!</p>
+
+<p>Now, when I power on the box, the BIOS sees that the internal 1G SSD is bootable, so it boots that, which is iPXE, which runs the embedded script we handed it, which configures the network interface, downloads our custom initrd file and the Linux kernel from my HTTP server, and boots those.
+Linux then unpacks our initrd file, and runs the /init script embedded in that, which just mounts the virtual file systems like /proc/, /sys/, and /dev, and then <i>doesn’t</i> try and mount any other local file system, and finally our /init/ script exec’s /sbin/init, which in the case of Debian happens to be systemd, and we’re got a fully running system in RAM!</p>
+
+<p><a href="https://www.youtube.com/watch?v=7ppdut16aYA">Video of generally what that looks like</a>:</p>
+<iframe allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture" allowfullscreen="" frameborder="0" height="315" src="https://www.youtube.com/embed/7ppdut16aYA" width="560"></iframe>
+
+<p>So once again, thanks to Arthur from Gandi.net for the original idea and gentle nudges in the right direction when I got stuck.</p>
+
+<p>Of course, the next thing to do is start playing “disk space golf” with the OS image to see how small I can make the initrd file, since the smaller the initrd file, the more RAM that is left over for running the application in the end!  And actually doing something useful with one of these boxes running iPXE…
+a topic for another blog post.</p>
+
+<p>Update: One thing to note is that this documentation is for the minimum viable “booting Linux over HTTP”.
+iPXE does support crypto such as HTTPS, client TLS certificates for client authentication, and code signing.
+<a href="https://ipxe.org/crypto">More details can be found in their documentation</a>.</p>
+
+  </div><a class="u-url" href="/2020/03/booting-linux-over-http.html" hidden></a>
+</article>
+
+      </div>
+    </main><footer class="site-footer h-card">
+  <data class="u-url" href="/"></data>
+
+  <div class="wrapper">
+
+    <div class="footer-col-wrapper">
+      <div class="footer-col">
+        <p class="feed-subscribe">
+          <a href="/feeds/posts/default">
+            <svg class="svg-icon orange">
+              <use xlink:href="/assets/minima-social-icons.svg#rss"></use>
+            </svg><span>Subscribe</span>
+          </a>
+        </p>
+        <ul class="contact-list">
+          <li class="p-name">Kenneth Finnegan</li>
+          <li><a class="u-email" href="mailto:kennethfinnegan2007@gmail.com">kennethfinnegan2007@gmail.com</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <p>The thoughts and projects of an engineer who likes to convert solder, firmware, and wire into all sorts of different forms of entertainment.
+</p>
+      </div>
+    </div>
+
+    <div class="social-links"><ul class="social-media-list"><li><a rel="me" href="https://github.com/phirephly" title="phirephly"><svg class="svg-icon grey"><use xlink:href="/assets/minima-social-icons.svg#github"></use></svg></a></li><li><a rel="me" href="https://social.afront.org/@kwf" title="kwf"><svg class="svg-icon grey"><use xlink:href="/assets/minima-social-icons.svg#mastodon"></use></svg></a></li></ul>
+</div>
+
+  </div>
+
+</footer>
+</body>
+
+</html>
