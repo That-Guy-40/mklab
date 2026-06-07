@@ -41,6 +41,9 @@ netboot-tier chroots stay flat in the netboot section below).
 ## 🖥️ QEMU machines — Phase 2 (`phase2-qemu-vm/lab-vm.sh`)
 
 Full cloud-image VMs and tiny in-RAM microVMs. `create` then `start`, `ssh` in.
+The standalone VM specs are grouped under
+[`vm-examples/`](vm-examples/README.md) (`vm-kali-amd64.toml` stays flat — the
+Kali labs build around it; the netboot VMs stay flat in the netboot section).
 
 | File | What you get |
 |---|---|
