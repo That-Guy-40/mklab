@@ -309,7 +309,7 @@ sudo phase1-chroot/lab-chroot.sh enter vm-seed -- /bin/bash -c '
 '
 
 # 3) Build the bootable VM:
-sudo phase2-qemu-vm/lab-vm.sh create --config examples/vm-from-chroot-debian.toml
+sudo phase2-qemu-vm/lab-vm.sh create --config examples/vm-examples/vm-from-chroot-debian.toml
 
 # 4) Start + console in (root/lab):
 sudo phase2-qemu-vm/lab-vm.sh start   vm-from-chroot-demo

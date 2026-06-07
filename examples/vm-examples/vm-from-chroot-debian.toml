@@ -31,7 +31,7 @@
 #   '
 #
 #   # 3) Build the bootable VM (runs as root — needs losetup, mkfs, extlinux):
-#   sudo phase2-qemu-vm/lab-vm.sh create --config examples/vm-from-chroot-debian.toml
+#   sudo phase2-qemu-vm/lab-vm.sh create --config examples/vm-examples/vm-from-chroot-debian.toml
 #
 #   # 4) Start it:
 #   sudo phase2-qemu-vm/lab-vm.sh start vm-from-chroot-demo

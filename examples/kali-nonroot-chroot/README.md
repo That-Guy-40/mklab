@@ -89,7 +89,7 @@ chroot into a bootable VM (a chroot can't run a desktop):
 phase1-chroot/lab-chroot.sh enter kali-nonroot -- apt-get full-upgrade -y
 # then boot it as a VM to get the actual MATE GUI:
 phase2-qemu-vm/lab-vm.sh create --backend from-chroot --chroot /var/chroots/kali-nonroot ...
-# (see examples/vm-from-chroot-debian.toml for the from-chroot pattern)
+# (see examples/vm-examples/vm-from-chroot-debian.toml for the from-chroot pattern)
 ```
 
 ## What's verified

@@ -44,9 +44,9 @@ Full cloud-image VMs and tiny in-RAM microVMs. `create` then `start`, `ssh` in.
 
 | File | What you get |
 |---|---|
-| `vm-debian-amd64.toml` | Native x86_64 Debian bookworm via QEMU/KVM — fast, SSH-ready. |
-| `vm-debian-aarch64.toml` | 🐌 arm64 Debian on an x86_64 host (TCG). Slow but needs no arm hardware. |
-| `vm-alpine-amd64.toml` | Latest Alpine cloud image on `q35` + OVMF. |
+| `vm-examples/vm-debian-amd64.toml` | Native x86_64 Debian bookworm via QEMU/KVM — fast, SSH-ready. |
+| `vm-examples/vm-debian-aarch64.toml` | 🐌 arm64 Debian on an x86_64 host (TCG). Slow but needs no arm hardware. |
+| `vm-examples/vm-alpine-amd64.toml` | Latest Alpine cloud image on `q35` + OVMF. |
 | `vm-kali-amd64.toml` | Kali rolling from the upstream prebuilt image (release auto-resolved at create-time). |
 | [`kali-vm-builder/`](kali-vm-builder/) | 🔒 Kali's **official image factory** (`kali-vm` + `debos`) operationalized: `fetch` → `build` (host `debos` *or* Podman/Docker container; `--full` graphical XFCE / `--headless`) → `run-graphical.sh` boots the QCOW2 in a **windowed** QEMU desktop (SeaBIOS/virtio/SSH-forward, COW overlay). The build-it-yourself counterpart to `vm-kali-amd64.toml`. ⚠️ offensive tooling — authorized targets only. |
 | `tiny-linux-experiments/microvm-alpine.toml` | True microVM: an Alpine minirootfs as an in-RAM initramfs, auto-built — `network`/`ssh`/`persist` flags. |
@@ -122,7 +122,7 @@ chroot first, then point the target phase at the same artifact.
 
 | File | What you get |
 |---|---|
-| `vm-from-chroot-debian.toml` | Chroot → bootable BIOS qcow2 (MBR + extlinux + ext4) for Phase 2. |
+| `vm-examples/vm-from-chroot-debian.toml` | Chroot → bootable BIOS qcow2 (MBR + extlinux + ext4) for Phase 2. |
 | `podman-examples/podman-from-chroot.toml` | Chroot → a rootless Podman image (e.g. import a Kali minbase tree). |
 | `lxd-examples/lxd-from-chroot.toml` | Chroot → a Phase 5 LXD/Incus container image. |
 | [`offsec-awae-vm/`](offsec-awae-vm/) | 🔒 End-to-end **automated** chroot→VM: a Kali `kali-rolling` chroot carrying the **OffSec AWAE (WEB-300)** toolset, made self-bootable (kernel + init + SSH) and packaged into a headless BIOS VM by `from-chroot`. `build-vm.sh` chains both phases + boots it (serial/SSH); `--smoke` proves the pipeline first. Chroot-level take on Kali's `offsec-awae-live.sh` live-build recipe. ⚠️ offensive tooling — authorized targets only. |
@@ -193,7 +193,7 @@ A control node runs Ansible playbooks against managed target host(s) — see the
 
 ---
 
-*New here? Start with `chroot-examples/chroot-debian-bookworm.toml` or `vm-debian-amd64.toml`
+*New here? Start with `chroot-examples/chroot-debian-bookworm.toml` or `vm-examples/vm-debian-amd64.toml`
 for a feel, then jump to `netboot-lab.toml` or `lab-unified-demo.toml` to watch
 one file light up several phases at once. Each phase also ships a `SHOWCASE.md`
 with copy-pasteable tours.*

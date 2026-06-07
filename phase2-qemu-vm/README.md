@@ -96,7 +96,7 @@ lab-vm.sh create --name kboot --backend kernel+initrd --arch x86_64 \
 Same VM from a TOML config:
 
 ```bash
-lab-vm.sh create --config examples/vm-debian-amd64.toml
+lab-vm.sh create --config examples/vm-examples/vm-debian-amd64.toml
 ```
 
 ## Configuration (TOML)

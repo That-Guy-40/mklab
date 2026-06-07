@@ -299,7 +299,7 @@ Phase 2's `from-chroot` backend takes a Phase 1 tree (with a kernel and
 initrd installed inside it) and packs it into a bootable BIOS+MBR+ext4
 qcow2. The chroot is the source of truth for the userland; Phase 2
 supplies the disk geometry, bootloader, and machine config. See
-`examples/vm-from-chroot-debian.toml`.
+`examples/vm-examples/vm-from-chroot-debian.toml`.
 
 Phase 2 also supports the `export-initrd` → kernel+initrd boot path:
 pass the kernel and initrd produced by `export-initrd` directly to

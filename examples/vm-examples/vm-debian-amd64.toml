@@ -1,5 +1,5 @@
 # Native x86_64 Debian bookworm VM via QEMU/KVM.
-# Build: lab-vm.sh create --config vm-debian-amd64.toml
+# Build: lab-vm.sh create --config examples/vm-examples/vm-debian-amd64.toml
 # Boot:  lab-vm.sh start  deb-amd64
 # SSH:   lab-vm.sh ssh    deb-amd64
 

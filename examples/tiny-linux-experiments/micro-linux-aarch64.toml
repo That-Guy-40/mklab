@@ -2,7 +2,7 @@
 #
 # Same as the x86_64 twin but for arm64; boots on QEMU's `virt` machine. On an
 # x86_64 host this runs under TCG emulation (slow but works — like the existing
-# vm-debian-aarch64.toml).
+# vm-examples/vm-debian-aarch64.toml).
 #
 # Build first (rootless):
 #   micro-linux/mlbuild.sh all --arch aarch64

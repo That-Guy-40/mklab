@@ -179,7 +179,7 @@ phase2-qemu-vm/lab-vm.sh list
 ### 2.2 Alpine disk-image VM (native x86_64) 🐢 (kvm, net)
 
 ```bash
-phase2-qemu-vm/lab-vm.sh create --config examples/vm-alpine-amd64.toml
+phase2-qemu-vm/lab-vm.sh create --config examples/vm-examples/vm-alpine-amd64.toml
 phase2-qemu-vm/lab-vm.sh list
 phase2-qemu-vm/lab-vm.sh start vm-alpine-amd64
 ```
@@ -216,7 +216,7 @@ active, `dmesg` will show `microvm` in the machine type line.
 ### 2.4 Foreign-arch VM (aarch64 on x86_64) 🐢 (TCG, net)
 
 ```bash
-phase2-qemu-vm/lab-vm.sh create --config examples/vm-debian-aarch64.toml
+phase2-qemu-vm/lab-vm.sh create --config examples/vm-examples/vm-debian-aarch64.toml
 phase2-qemu-vm/lab-vm.sh start  vm-debian-aarch64
 ```
 
@@ -663,12 +663,12 @@ different architectures and comparing `uname -m`.
 
 ```bash
 # Native x86_64 (KVM — fast)
-phase2-qemu-vm/lab-vm.sh create --config examples/vm-debian-amd64.toml
+phase2-qemu-vm/lab-vm.sh create --config examples/vm-examples/vm-debian-amd64.toml
 phase2-qemu-vm/lab-vm.sh start  vm-debian-amd64
 phase2-qemu-vm/lab-vm.sh ssh vm-debian-amd64 -- uname -m   # → x86_64
 
 # Emulated aarch64 (TCG — slow, ~5 min to boot)
-phase2-qemu-vm/lab-vm.sh create --config examples/vm-debian-aarch64.toml
+phase2-qemu-vm/lab-vm.sh create --config examples/vm-examples/vm-debian-aarch64.toml
 phase2-qemu-vm/lab-vm.sh start  vm-debian-aarch64
 phase2-qemu-vm/lab-vm.sh ssh vm-debian-aarch64 -- uname -m  # → aarch64
 

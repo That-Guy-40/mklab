@@ -8,7 +8,7 @@
 # needs is simply not loaded here).
 #
 # On an x86_64 host this runs under TCG emulation — slower (minutes to the login
-# prompt) but needs no arm hardware, like vm-debian-aarch64.toml.
+# prompt) but needs no arm hardware, like vm-examples/vm-debian-aarch64.toml.
 #
 # Build first (rootless):
 #   micro-linux/mlbuild.sh all --arch aarch64

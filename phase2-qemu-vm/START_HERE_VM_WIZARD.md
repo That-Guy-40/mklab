@@ -66,7 +66,7 @@ phase2-qemu-vm/lab-vm.sh destroy deb1 --force
 ## Option C — use a TOML config (from the wizard or an example)
 
 ```bash
-phase2-qemu-vm/lab-vm.sh create --config examples/vm-debian-amd64.toml
+phase2-qemu-vm/lab-vm.sh create --config examples/vm-examples/vm-debian-amd64.toml
 phase2-qemu-vm/lab-vm.sh start  deb-amd64
 phase2-qemu-vm/lab-vm.sh ssh    deb-amd64
 phase2-qemu-vm/lab-vm.sh destroy deb-amd64 --force
@@ -76,14 +76,14 @@ Ready-to-run examples in `examples/`:
 
 | File | What it builds |
 |---|---|
-| `vm-debian-amd64.toml` | Debian bookworm, x86_64, KVM, 2 GB |
-| `vm-debian-aarch64.toml` | Debian bookworm, aarch64, TCG (slow) |
-| `vm-alpine-amd64.toml` | Alpine, tiny + fast |
+| `vm-examples/vm-debian-amd64.toml` | Debian bookworm, x86_64, KVM, 2 GB |
+| `vm-examples/vm-debian-aarch64.toml` | Debian bookworm, aarch64, TCG (slow) |
+| `vm-examples/vm-alpine-amd64.toml` | Alpine, tiny + fast |
 | `vm-kali-amd64.toml` | Kali Linux (prebuilt `.7z` image) |
 | `tiny-linux-experiments/microvm-alpine.toml` | Alpine + `microvm=true` — fastest x86_64 boot path |
 | `tiny-linux-experiments/micro-linux-x86_64.toml` | Your own from-source kernel + initrd |
 | `tiny-linux-experiments/micro-linux-x86_64-microvm.toml` | From-source kernel on the `microvm` machine |
-| `vm-from-chroot-debian.toml` | Boot a Phase-1 chroot as a VM (needs root) |
+| `vm-examples/vm-from-chroot-debian.toml` | Boot a Phase-1 chroot as a VM (needs root) |
 
 ---
 

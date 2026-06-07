@@ -137,7 +137,7 @@ sudo phase1-chroot/lab-chroot.sh enter vm-seed -- /bin/bash -c '
 '
 
 # Phase 2 turns it into a bootable VM:
-sudo phase2-qemu-vm/lab-vm.sh create --config examples/vm-from-chroot-debian.toml
+sudo phase2-qemu-vm/lab-vm.sh create --config examples/vm-examples/vm-from-chroot-debian.toml
 sudo phase2-qemu-vm/lab-vm.sh start  vm-from-chroot-demo
 sudo phase2-qemu-vm/lab-vm.sh console vm-from-chroot-demo   # Ctrl-] to detach
 ```
@@ -322,7 +322,7 @@ Cross-references:
 The `from-chroot` backend (above) is the headline cross-phase: any tree
 `phase1-chroot/lab-chroot.sh` builds — debootstrap, dnf bootstrap, an Alpine
 apk install — boots as a Phase 2 VM as long as it has a kernel and initrd
-installed. See [`examples/vm-from-chroot-debian.toml`](../examples/vm-from-chroot-debian.toml).
+installed. See [`examples/vm-examples/vm-from-chroot-debian.toml`](../examples/vm-examples/vm-from-chroot-debian.toml).
 
 ### → Phase 5 (export qcow2 as an LXD VM image)
 
@@ -331,7 +331,7 @@ for "I want a VM in LXD that came from a chroot" goes through Phase 2:
 
 ```bash
 # Phase 2: build the qcow2 from a chroot.
-sudo phase2-qemu-vm/lab-vm.sh create --config examples/vm-from-chroot-debian.toml
+sudo phase2-qemu-vm/lab-vm.sh create --config examples/vm-examples/vm-from-chroot-debian.toml
 # (qcow2 lands at ~/.local/state/lab-create/vms/vm-from-chroot-demo/disk.qcow2)
 
 # Phase 5: import it as an LXD VM image, then launch.
@@ -353,13 +353,13 @@ truth, just a friendlier presentation.
 - Reference walk-through, every flag exercised: [`MANUAL_TESTING.md`](MANUAL_TESTING.md)
 - Why it's shaped this way: [`PLAN.md`](../PLAN.md) §Phase 2
 - Real configs to copy:
-  [`examples/vm-alpine-amd64.toml`](../examples/vm-alpine-amd64.toml),
-  [`examples/vm-debian-amd64.toml`](../examples/vm-debian-amd64.toml),
-  [`examples/vm-debian-aarch64.toml`](../examples/vm-debian-aarch64.toml),
+  [`examples/vm-examples/vm-alpine-amd64.toml`](../examples/vm-examples/vm-alpine-amd64.toml),
+  [`examples/vm-examples/vm-debian-amd64.toml`](../examples/vm-examples/vm-debian-amd64.toml),
+  [`examples/vm-examples/vm-debian-aarch64.toml`](../examples/vm-examples/vm-debian-aarch64.toml),
   [`examples/vm-kali-amd64.toml`](../examples/vm-kali-amd64.toml),
   [`examples/tiny-linux-experiments/microvm-alpine.toml`](../examples/tiny-linux-experiments/microvm-alpine.toml),
   [`examples/tiny-linux-experiments/microvm-alpine-custom-init.toml`](../examples/tiny-linux-experiments/microvm-alpine-custom-init.toml),
-  [`examples/vm-from-chroot-debian.toml`](../examples/vm-from-chroot-debian.toml)
+  [`examples/vm-examples/vm-from-chroot-debian.toml`](../examples/vm-examples/vm-from-chroot-debian.toml)
 - Sibling SHOWCASEs:
   [Phase 1 (chroots)](../phase1-chroot/SHOWCASE.md) ·
   [Phase 3 (docker)](../phase3-docker/SHOWCASE.md) ·
