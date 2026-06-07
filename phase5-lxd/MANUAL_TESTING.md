@@ -102,7 +102,7 @@ ll status                                 # → engine info summary
 ## 1. Plain mode: single container
 
 ```bash
-ll up --config examples/lxd-plain-single.toml
+ll up --config examples/lxd-examples/lxd-plain-single.toml
 ```
 
 **Expect:**
@@ -136,7 +136,7 @@ Prereqs:
   / `incus storage list` shows what you have.
 
 ```bash
-ll up --config examples/lxd-vm-single.toml
+ll up --config examples/lxd-examples/lxd-vm-single.toml
 ```
 
 **Expect:** `[info] launching vm 'alpine' as lab-hello-vm-alpine …`.
@@ -162,7 +162,7 @@ management surface.
 ## 3. Mixed topology (2 containers + 1 VM)
 
 ```bash
-ll up --config examples/lxd-mixed-topology.toml
+ll up --config examples/lxd-examples/lxd-mixed-topology.toml
 ll list --lab demo-mixed
 ll status demo-mixed
 ll down --lab demo-mixed
@@ -171,7 +171,7 @@ ll down --lab demo-mixed
 ## 4. Profiles and projects
 
 ```bash
-ll up --config examples/lxd-profiles-projects.toml
+ll up --config examples/lxd-examples/lxd-profiles-projects.toml
 incus profile show webnode --project demo-pp      # or: lxc profile show …
 incus project list
 ll down --lab demo-pp
@@ -193,7 +193,7 @@ sudo phase1-chroot/lab-chroot.sh create \
 sudo phase1-chroot/lab-chroot.sh export-tarball kali-amd64 \
                                                --output /tmp/kali-amd64.tar.gz
 
-ll up --config examples/lxd-from-chroot.toml
+ll up --config examples/lxd-examples/lxd-from-chroot.toml
 ll exec lxd-kali/attacker -- cat /etc/os-release
 # → PRETTY_NAME="Kali Linux Rolling"
 ll exec lxd-kali/attacker -- apt --version
@@ -321,8 +321,8 @@ ll inspect webnode --json | jq '.config, .devices'
 # --- Project inspect (Incus/LXD ≥ 5.x) ---
 ll inspect default --json | jq .             # "kind": "project"
 
-# After bringing up examples/lxd-profiles-projects.toml:
-ll up --config examples/lxd-profiles-projects.toml
+# After bringing up examples/lxd-examples/lxd-profiles-projects.toml:
+ll up --config examples/lxd-examples/lxd-profiles-projects.toml
 ll inspect demo-pp --json | jq '.kind, .config'
 # → "project"
 # → { "features.profiles": "false", "features.storage.volumes": "false" }
@@ -351,7 +351,7 @@ launch --yaml` to recreate identical instances — same config, same devices,
 same `user.lab-create.*` labels.
 
 ```bash
-ll up --config examples/lxd-mixed-topology.toml
+ll up --config examples/lxd-examples/lxd-mixed-topology.toml
 ll export demo-mixed --format lxc-yaml > /tmp/demo.yaml
 head -40 /tmp/demo.yaml
 grep '^# instance:' /tmp/demo.yaml         # → one line per instance
@@ -372,7 +372,7 @@ because Compose has no VM concept.  LXD-specific fields (profiles, project,
 storage) are noted as omitted.
 
 ```bash
-ll up --config examples/lxd-mixed-topology.toml
+ll up --config examples/lxd-examples/lxd-mixed-topology.toml
 
 ll export demo-mixed --format compose > /tmp/demo-compose.yml
 cat /tmp/demo-compose.yml
@@ -492,7 +492,7 @@ test skips and you get `passed: 2, skipped: 7`.
 | `incus info failed — daemon not reachable` | service not running | `sudo systemctl start incus` (or `snap.lxd.daemon` for LXD) |
 | `you are not in group 'incus-admin'` warning | unprivileged user not in the LXD/Incus control group | `sudo usermod -aG incus-admin $USER && newgrp incus-admin` |
 | `Failed getting root disk: No root device could be found` | post-install state — engine is running but never bootstrapped (no storage pool, default profile has no root device) | `sudo incus admin init --auto` (Incus) or `sudo lxd init --auto` (LXD); see §0a |
-| `image … is incompatible with secureboot. Please set security.secureboot=false` | community VM images (Alpine, etc.) aren't signed for UEFI Secure Boot | add `config = { "security.secureboot" = "false" }` to the `[[instance]]` block; see `examples/lxd-vm-single.toml` |
+| `image … is incompatible with secureboot. Please set security.secureboot=false` | community VM images (Alpine, etc.) aren't signed for UEFI Secure Boot | add `config = { "security.secureboot" = "false" }` to the `[[instance]]` block; see `examples/lxd-examples/lxd-vm-single.toml` |
 | `VM up failed (likely dir-pool without block support)` | default storage pool is `dir`, which can't host VMs | `incus storage create vmpool zfs` (or btrfs/lvm); reference via `[[instance]] storage = "vmpool"` |
 | `image import failed` with a half-created alias | prior run died mid-import | Phase 5 now cleans these up on failure; if you hit one, `incus image delete <alias>` and retry |
 | `chroot 'X' contains files unreadable by this user` | you pointed `from_chroot` at a root-owned chroot | for **containers**: use `sudo lab-chroot.sh export-tarball <name>` and switch to `from_tarball`. For **VMs**: run `sudo ll up …` (the VM path already requires root) |

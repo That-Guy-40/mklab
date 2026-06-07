@@ -839,12 +839,12 @@ LXD/Incus daemon itself; image cache is LXD-native
 - `test-export-lxc-yaml.sh` — YAML shape + round-trip of `user.lab-create.lab`
 
 ### Example TOMLs
-- `lxd-plain-single.toml` — one Alpine container
-- `lxd-vm-single.toml` — one Alpine VM (`type = "vm"`)
-- `lxd-mixed-topology.toml` — 2 containers + 1 VM in one lab
-- `lxd-from-chroot.toml` — Kali container imported from a Phase 1 chroot
+- `lxd-examples/lxd-plain-single.toml` — one Alpine container
+- `lxd-examples/lxd-vm-single.toml` — one Alpine VM (`type = "vm"`)
+- `lxd-examples/lxd-mixed-topology.toml` — 2 containers + 1 VM in one lab
+- `lxd-examples/lxd-from-chroot.toml` — Kali container imported from a Phase 1 chroot
   (with a VM-via-Phase-2 workaround noted inline)
-- `lxd-profiles-projects.toml` — `[[project]]` + `[[profile]]` demo
+- `lxd-examples/lxd-profiles-projects.toml` — `[[project]]` + `[[profile]]` demo
 
 The unified `examples/lab-unified-demo.toml` grows an `[[instance]]` block
 with `engine = "lxd"` so the cross-phase demo exercises all three engines.

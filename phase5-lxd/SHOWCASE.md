@@ -20,7 +20,7 @@ sudo incus admin init --auto --storage-backend zfs --storage-create-loop 20
 # (or `sudo lxd init --auto …` if you went the LXD route)
 
 cd /media/sqs/COLD_STORAGE/LAB_CREATE_V2
-phase5-lxd/lab-lxd.sh up   --config examples/lxd-mixed-topology.toml
+phase5-lxd/lab-lxd.sh up   --config examples/lxd-examples/lxd-mixed-topology.toml
 phase5-lxd/lab-lxd.sh list --lab demo-mixed
 phase5-lxd/lab-lxd.sh exec demo-mixed/web -- cat /etc/os-release
 phase5-lxd/lab-lxd.sh down --lab demo-mixed
@@ -68,7 +68,7 @@ dir-pool default hosts containers fine but not VMs, and Phase 5 reports
 that cleanly with a `try: incus storage create vmpool zfs` hint.
 
 ```toml
-# examples/lxd-mixed-topology.toml — excerpt
+# examples/lxd-examples/lxd-mixed-topology.toml — excerpt
 [[instance]]
 name = "web"
 type = "container"
@@ -88,7 +88,7 @@ images, networks. **Profiles** are reusable config+device bundles that
 instances inherit via `profiles = ["default", "webnode"]`.
 
 ```toml
-# examples/lxd-profiles-projects.toml — excerpt
+# examples/lxd-examples/lxd-profiles-projects.toml — excerpt
 [[project]]
 name = "demo-pp"
 
@@ -308,7 +308,7 @@ become an expandable subtree. Cross-project instances (the TUI queries
 
 - [`PLAN.md` § Phase 5](../PLAN.md) — design rationale, exit criteria, what's in/out of v0.1
 - [`MANUAL_TESTING.md`](MANUAL_TESTING.md) — every verb, every backend, walkthrough form (incl. §0a bootstrap and §10 troubleshooting)
-- [`../examples/`](../examples/) — `lxd-plain-single.toml`, `lxd-vm-single.toml`, `lxd-mixed-topology.toml`, `lxd-from-chroot.toml`, `lxd-profiles-projects.toml`
+- [`../examples/lxd-examples/`](../examples/lxd-examples/) — `lxd-plain-single.toml`, `lxd-vm-single.toml`, `lxd-mixed-topology.toml`, `lxd-from-chroot.toml`, `lxd-profiles-projects.toml`
 - Sibling SHOWCASEs:
   [Phase 1 (chroots)](../phase1-chroot/SHOWCASE.md) ·
   [Phase 2 (VMs)](../phase2-qemu-vm/SHOWCASE.md) ·

@@ -8,7 +8,7 @@
 #     otherwise:  lxc storage create vmpool zfs  (or btrfs/lvm)
 #
 # Try it:
-#   phase5-lxd/lab-lxd.sh up  --config examples/lxd-vm-single.toml
+#   phase5-lxd/lab-lxd.sh up  --config examples/lxd-examples/lxd-vm-single.toml
 #   phase5-lxd/lab-lxd.sh list --lab hello-vm
 #   phase5-lxd/lab-lxd.sh exec hello-vm/alpine -- uname -a
 #   phase5-lxd/lab-lxd.sh down --lab hello-vm

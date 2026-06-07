@@ -17,7 +17,7 @@
 #                                                   --output /tmp/kali-amd64.tar.gz
 #
 #   # 3) Bring up the lab:
-#   phase5-lxd/lab-lxd.sh up  --config examples/lxd-from-chroot.toml
+#   phase5-lxd/lab-lxd.sh up  --config examples/lxd-examples/lxd-from-chroot.toml
 #
 #   # 4) Exec into it:
 #   phase5-lxd/lab-lxd.sh exec lxd-kali/attacker -- cat /etc/os-release
@@ -34,7 +34,7 @@
 #          type = "vm"
 #          from_qcow2 = "/home/$USER/.local/state/lab-create/vms/kvmseed/disk.qcow2"
 #      (remove the from_tarball line)
-#   c) phase5-lxd/lab-lxd.sh up --config examples/lxd-from-chroot.toml
+#   c) phase5-lxd/lab-lxd.sh up --config examples/lxd-examples/lxd-from-chroot.toml
 
 [lab]
 name        = "lxd-kali"

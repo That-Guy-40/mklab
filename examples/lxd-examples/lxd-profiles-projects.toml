@@ -3,7 +3,7 @@
 # profiles, etc.).  Both are LXD-native, no Phase 3/4 analogue.
 #
 # Try it:
-#   phase5-lxd/lab-lxd.sh up     --config examples/lxd-profiles-projects.toml
+#   phase5-lxd/lab-lxd.sh up     --config examples/lxd-examples/lxd-profiles-projects.toml
 #   phase5-lxd/lab-lxd.sh list   --lab demo-pp
 #   # LXD-native queries (Phase 5 deliberately doesn't wrap these):
 #   incus project list                         # or: lxc project list

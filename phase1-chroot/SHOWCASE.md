@@ -340,7 +340,7 @@ VMs, take the two-hop route: chroot → Phase 2 `from-chroot` qcow2 → Phase 5
 `from_qcow2` instance.
 
 ```toml
-# examples/lxd-from-chroot.toml
+# examples/lxd-examples/lxd-from-chroot.toml
 [[instance]]
 name         = "attacker"
 type         = "container"

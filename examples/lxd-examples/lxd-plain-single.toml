@@ -2,7 +2,7 @@
 # Phase 5 lab: one upstream image, one instance, no profiles/projects.
 #
 # Try it:
-#   phase5-lxd/lab-lxd.sh up   --config examples/lxd-plain-single.toml
+#   phase5-lxd/lab-lxd.sh up   --config examples/lxd-examples/lxd-plain-single.toml
 #   phase5-lxd/lab-lxd.sh list --lab hello-lxd
 #   phase5-lxd/lab-lxd.sh exec hello-lxd/shell -- cat /etc/os-release
 #   phase5-lxd/lab-lxd.sh down --lab hello-lxd

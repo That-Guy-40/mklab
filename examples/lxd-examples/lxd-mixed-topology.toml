@@ -2,7 +2,7 @@
 # [[instance]] array-of-tables schema plus the container/vm discriminator.
 #
 # Try it:
-#   phase5-lxd/lab-lxd.sh up     --config examples/lxd-mixed-topology.toml
+#   phase5-lxd/lab-lxd.sh up     --config examples/lxd-examples/lxd-mixed-topology.toml
 #   phase5-lxd/lab-lxd.sh list   --lab demo-mixed
 #   phase5-lxd/lab-lxd.sh status --lab demo-mixed
 #   phase5-lxd/lab-lxd.sh export demo-mixed --format lxc-yaml | head -40

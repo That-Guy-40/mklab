@@ -49,7 +49,7 @@ sudo incus admin init --auto   # creates default storage pool + bridge network
 ### 2. Start a container
 
 ```bash
-phase5-lxd/lab-lxd.sh up   --config examples/lxd-plain-single.toml
+phase5-lxd/lab-lxd.sh up   --config examples/lxd-examples/lxd-plain-single.toml
 phase5-lxd/lab-lxd.sh list --lab hello-lxd
 ```
 
@@ -69,7 +69,7 @@ phase5-lxd/lab-lxd.sh down --lab hello-lxd
 
 ## Option C — use a TOML config (from the wizard or an example)
 
-Ready-to-run examples in `examples/`:
+Ready-to-run examples in `examples/lxd-examples/`:
 
 | File | What it builds |
 |---|---|
@@ -80,7 +80,7 @@ Ready-to-run examples in `examples/`:
 | `lxd-from-chroot.toml` | Import a Phase-1 chroot/tarball as an LXD instance |
 
 ```bash
-phase5-lxd/lab-lxd.sh up   --config examples/lxd-mixed-topology.toml
+phase5-lxd/lab-lxd.sh up   --config examples/lxd-examples/lxd-mixed-topology.toml
 phase5-lxd/lab-lxd.sh list --lab demo-mixed
 phase5-lxd/lab-lxd.sh down --lab demo-mixed
 ```

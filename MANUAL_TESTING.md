@@ -400,11 +400,11 @@ Pass: both return HTTP 200; no root required (`id` shows normal user).
 ### 5.1 Single Alpine container ⚡ (net)
 
 ```bash
-phase5-lxd/lab-lxd.sh run --config examples/lxd-plain-single.toml
+phase5-lxd/lab-lxd.sh run --config examples/lxd-examples/lxd-plain-single.toml
 phase5-lxd/lab-lxd.sh list
-phase5-lxd/lab-lxd.sh exec --config examples/lxd-plain-single.toml \
+phase5-lxd/lab-lxd.sh exec --config examples/lxd-examples/lxd-plain-single.toml \
     alpine -- uname -a
-phase5-lxd/lab-lxd.sh destroy --config examples/lxd-plain-single.toml
+phase5-lxd/lab-lxd.sh destroy --config examples/lxd-examples/lxd-plain-single.toml
 ```
 
 Pass: `uname -a` runs inside the LXD container.
@@ -412,9 +412,9 @@ Pass: `uname -a` runs inside the LXD container.
 ### 5.2 Mixed topology (containers + VM) 🐢 (net)
 
 ```bash
-phase5-lxd/lab-lxd.sh up --config examples/lxd-mixed-topology.toml
-phase5-lxd/lab-lxd.sh status --config examples/lxd-mixed-topology.toml
-phase5-lxd/lab-lxd.sh down --config examples/lxd-mixed-topology.toml
+phase5-lxd/lab-lxd.sh up --config examples/lxd-examples/lxd-mixed-topology.toml
+phase5-lxd/lab-lxd.sh status --config examples/lxd-examples/lxd-mixed-topology.toml
+phase5-lxd/lab-lxd.sh down --config examples/lxd-examples/lxd-mixed-topology.toml
 ```
 
 Pass: status shows 2 containers and 1 VM running; all reachable via
@@ -423,9 +423,9 @@ Pass: status shows 2 containers and 1 VM running; all reachable via
 ### 5.3 Profiles and projects ⚡
 
 ```bash
-phase5-lxd/lab-lxd.sh up --config examples/lxd-profiles-projects.toml
-phase5-lxd/lab-lxd.sh inspect --config examples/lxd-profiles-projects.toml
-phase5-lxd/lab-lxd.sh down --config examples/lxd-profiles-projects.toml
+phase5-lxd/lab-lxd.sh up --config examples/lxd-examples/lxd-profiles-projects.toml
+phase5-lxd/lab-lxd.sh inspect --config examples/lxd-examples/lxd-profiles-projects.toml
+phase5-lxd/lab-lxd.sh down --config examples/lxd-examples/lxd-profiles-projects.toml
 ```
 
 Pass: instances created inside the custom project; profiles applied.

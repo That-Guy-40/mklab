@@ -67,13 +67,14 @@ Full cloud-image VMs and tiny in-RAM microVMs. `create` then `start`, `ssh` in.
 ## 📦 LXD / Incus — Phase 5 (`phase5-lxd/lab-lxd.sh`)
 
 System containers and hardware VMs under one API, with profiles and projects.
+Grouped under [`lxd-examples/`](lxd-examples/README.md).
 
 | File | What you get |
 |---|---|
-| `lxd-plain-single.toml` | Smallest useful lab: one Alpine **container**, no profiles/projects. |
-| `lxd-vm-single.toml` | One Alpine **VM** (real QEMU virt under LXD — needs `/dev/kvm` + block storage). |
-| `lxd-mixed-topology.toml` | 2 containers + 1 VM in a single lab — exercises the container/VM discriminator. |
-| `lxd-profiles-projects.toml` | `[[profile]]` + `[[project]]` demo — LXD-native config bundles and namespace isolation. |
+| `lxd-examples/lxd-plain-single.toml` | Smallest useful lab: one Alpine **container**, no profiles/projects. |
+| `lxd-examples/lxd-vm-single.toml` | One Alpine **VM** (real QEMU virt under LXD — needs `/dev/kvm` + block storage). |
+| `lxd-examples/lxd-mixed-topology.toml` | 2 containers + 1 VM in a single lab — exercises the container/VM discriminator. |
+| `lxd-examples/lxd-profiles-projects.toml` | `[[profile]]` + `[[project]]` demo — LXD-native config bundles and namespace isolation. |
 
 ## ⚙️ From source: micro-linux — compile → boot in RAM (`micro-linux/mlbuild.sh` → Phase 2)
 
@@ -112,7 +113,7 @@ chroot first, then point the target phase at the same artifact.
 |---|---|
 | `vm-from-chroot-debian.toml` | Chroot → bootable BIOS qcow2 (MBR + extlinux + ext4) for Phase 2. |
 | `podman-from-chroot.toml` | Chroot → a rootless Podman image (e.g. import a Kali minbase tree). |
-| `lxd-from-chroot.toml` | Chroot → a Phase 5 LXD/Incus container image. |
+| `lxd-examples/lxd-from-chroot.toml` | Chroot → a Phase 5 LXD/Incus container image. |
 | [`offsec-awae-vm/`](offsec-awae-vm/) | 🔒 End-to-end **automated** chroot→VM: a Kali `kali-rolling` chroot carrying the **OffSec AWAE (WEB-300)** toolset, made self-bootable (kernel + init + SSH) and packaged into a headless BIOS VM by `from-chroot`. `build-vm.sh` chains both phases + boots it (serial/SSH); `--smoke` proves the pipeline first. Chroot-level take on Kali's `offsec-awae-live.sh` live-build recipe. ⚠️ offensive tooling — authorized targets only. |
 
 ## 🌐 Netboot & PXE — build → serve → boot

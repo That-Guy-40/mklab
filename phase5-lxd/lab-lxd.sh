@@ -1696,7 +1696,7 @@ EXAMPLES
   $LAB_PROG run --name v --image images:alpine/latest --type vm
   $LAB_PROG run --name p --image images:alpine/3.23          # pin a specific version
   $LAB_PROG build --alias kali-rolling --backend from-chroot --chroot /var/chroots/kali
-  $LAB_PROG up   --config examples/lxd-mixed-topology.toml
+  $LAB_PROG up   --config examples/lxd-examples/lxd-mixed-topology.toml
   $LAB_PROG list --lab demo-lxd
   $LAB_PROG export demo-lxd --format lxc-yaml > demo-lxd.yaml
   $LAB_PROG down --lab demo-lxd

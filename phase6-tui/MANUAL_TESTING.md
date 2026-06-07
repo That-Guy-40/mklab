@@ -45,7 +45,7 @@ the easiest if you followed the Phase 5 bootstrap in
 `../phase5-lxd/MANUAL_TESTING.md`:
 
 ```bash
-../phase5-lxd/lab-lxd.sh up --config ../examples/lxd-plain-single.toml
+../phase5-lxd/lab-lxd.sh up --config ../examples/lxd-examples/lxd-plain-single.toml
 uv run python -m lab_tui
 ```
 
@@ -72,7 +72,7 @@ uv run python -m lab_tui
 In terminal B, while the TUI is running:
 
 ```bash
-../phase5-lxd/lab-lxd.sh up --config ../examples/lxd-plain-single.toml
+../phase5-lxd/lab-lxd.sh up --config ../examples/lxd-examples/lxd-plain-single.toml
 ```
 
 **Expect:** within ~2 seconds the TUI's tree re-renders and the new
