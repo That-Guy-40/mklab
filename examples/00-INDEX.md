@@ -61,6 +61,10 @@ the netboot section below).
 
 ## 🦭 Podman, rootless — Phase 4 (`phase4-podman/lab-podman.sh`) 🪶
 
+Rootless container topologies — `plain`, `pod`, and `quadlet` managers. Grouped
+under [`podman-examples/`](podman-examples/README.md) (the netboot-server and
+PXE-DHCP specs stay flat below — they're reused across the netboot labs).
+
 | File | What you get |
 |---|---|
 | `podman-examples/podman-plain-single.toml` | The simplest topology: one rootless container, one published port. |
