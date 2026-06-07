@@ -35,6 +35,7 @@ netboot-tier chroots stay flat in the netboot section below).
 | `chroot-examples/chroot-rocky9-vsftpd.toml` | A Rocky 9 chroot sized for jailing `vsftpd` (the RPM/`dnf` backend). |
 | `chroot-examples/chroot-host-copy-busybox.toml` | Tiny host-copy chroot: just BusyBox + a few `/etc` files. No debootstrap. |
 | `chroot-examples/chroot-nspawn-managed.toml` | Debian bookworm registered with `machinectl` and bootable via `systemd-nspawn -b`. |
+| `chroot-examples/chroot-write-files-demo.toml` | Demonstrates the `write_files` key — inject files (e.g. a custom `/init`) into the tree at build time, host-side. The mechanism behind auto-writing `/init` for the netboot initramfs builds. |
 | [`kali-nonroot-chroot/`](kali-nonroot-chroot/) | 🔒 A Kali `kali-rolling` chroot with a **non-root** sudo user (`kali`/`kali`, root locked) + a top-10 tool slice (nmap + sqlmap) — the chroot-level take on Kali's `kali-linux-mate-top10-nonroot` live-build recipe. Enables `contrib non-free` (nmap is non-free) + installs `kali-archive-keyring` so the chroot's apt works; full top-10 + MATE-desktop-via-VM documented. ⚠️ offensive tools — authorized targets only. |
 
 ## 🖥️ QEMU machines — Phase 2 (`phase2-qemu-vm/lab-vm.sh`)

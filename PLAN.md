@@ -44,58 +44,37 @@ repo can be rebased to any prior phase as a known-good checkpoint.
 
 ```
 LAB_CREATE_V2/
-├── PLAN.md                          # this file
-├── README.md                        # quickstart + phase index
-├── examples/
-│   ├── chroot-debian-bookworm.toml
-│   ├── chroot-rocky9-vsftpd.toml
-│   ├── chroot-host-copy-busybox.toml
-│   ├── chroot-nspawn-managed.toml
-│   ├── vm-debian-aarch64.yaml
-│   └── microvm-alpine.yaml
-├── phase1-chroot/
-│   ├── lab-chroot.sh                # the script
-│   ├── lab-chroot.1                 # man page (optional)
-│   ├── tests/
-│   │   ├── test-debootstrap-amd64.sh
-│   │   ├── test-debootstrap-arm64-foreign.sh
-│   │   ├── test-dnf-rocky9.sh
-│   │   ├── test-host-copy.sh
-│   │   └── test-schroot-integration.sh
-│   └── README.md
-├── phase2-qemu-vm/
-│   ├── lab-vm.sh
-│   ├── tests/
-│   └── README.md
-├── phase3-docker/
-│   ├── lab-docker.sh
-│   └── ...
-├── phase4-podman/
-│   └── ...
-├── phase5-lxd/
-│   └── ...
-├── phase6-tui/                      # optional Textual TUI front-end
-│   ├── pyproject.toml
-│   ├── lab_tui/
-│   │   ├── __main__.py              # entry: `python -m lab_tui`
-│   │   ├── app.py                   # Textual App
-│   │   ├── screens/                 # resource browser, detail, wizards
-│   │   ├── backends/                # thin subprocess wrappers per phase
-│   │   ├── state.py                 # reads phase state files
-│   │   └── topology.py              # lab.toml parsing
-│   ├── tests/
-│   └── README.md
-└── phase6b-web/                     # optional FastAPI + HTMX web UI
-    ├── pyproject.toml
-    ├── lab_web/
-    │   ├── __main__.py              # entry: `python -m lab_web`
-    │   ├── app.py                   # FastAPI app
-    │   ├── routes/
-    │   ├── templates/               # Jinja2 + HTMX partials
-    │   ├── static/
-    │   └── backends/                # shared shape with phase6-tui
-    ├── tests/
-    └── README.md
+├── PLAN.md                  # this file — full design + per-phase specs
+├── README.md                # quickstart + phase index
+├── CLAUDE.md                # working practices for this repo
+├── MANUAL_TESTING.md        # top-level cross-phase test walkthrough
+├── TODO.md , AUDIT.md       # backlog + audit notes
+├── NETBOOT_LAB_PLAN.md , MICRO_LINUX_LAB_PLAN.md , KALI_LLM_LAB_PLAN.md   # per-lab design docs
+├── examples/                # every lab spec — see examples/00-INDEX.md for the full catalog
+│   ├── 00-INDEX.md          # the catalog: every spec, grouped by phase/theme
+│   ├── chroot-examples/     # Phase-1 chroot specs   (grouped bucket)
+│   ├── docker-examples/     # Phase-3 topologies      (grouped bucket)
+│   ├── podman-examples/     # Phase-4 rootless specs  (grouped bucket)
+│   ├── lxd-examples/        # Phase-5 specs           (grouped bucket)
+│   ├── tiny-linux-experiments/    # from-source micro-distros (micro-linux / floppinux)
+│   ├── <many cohesive labs>/      # almalinux/rocky/kali pxe-labs, *-gallery, debian-http-boot,
+│   │                              #   offsec-awae-vm, kali-llm-* — one dir each (see 00-INDEX.md)
+│   ├── chroot-netboot-*.toml      # netboot-tier chroots — kept flat (reused across labs)
+│   ├── podman-netboot-server.toml , podman-pxe-dhcp.toml   # netboot infra — kept flat (reused)
+│   ├── vm-*.toml                  # standalone VM specs
+│   └── netboot-lab.toml , lab-unified-demo.toml            # cross-phase unified specs
+├── netboot/                 # shared netboot tooling (build-ipxe.sh, setup-*.sh, gen-*.sh)
+├── micro-linux/             # from-source micro-distro builder (mlbuild.sh + container, keys/)
+├── tools/                   # repo tooling (link_check.py)
+├── phase1-chroot/           # lab-chroot.sh   + README/SHOWCASE/MANUAL_TESTING/START_HERE_*  + tests/
+├── phase2-qemu-vm/          # lab-vm.sh       + README/SHOWCASE/MANUAL_TESTING/START_HERE_*  + tests/
+├── phase3-docker/           # lab-docker.sh   + README/SHOWCASE/MANUAL_TESTING/START_HERE_*  + tests/
+├── phase4-podman/           # lab-podman.sh   + README/SHOWCASE/MANUAL_TESTING/START_HERE_*  + tests/
+├── phase5-lxd/              # lab-lxd.sh      + README/SHOWCASE/MANUAL_TESTING/START_HERE_*  + tests/
+├── phase6-tui/              # Textual TUI front-end — read-only inventory across all 5 phases
+│   └── lab_tui/             # app.py, screens/, backends/, widgets/, state.py, topology.py
+└── phase6b-web/             # FastAPI + HTMX web UI (deferred; scaffold present)
+    └── lab_web/             # app.py, routes/, templates/, static/
 ```
 
 Each `phaseN-*/` directory is a complete unit. Deleting `phase3-docker/`
