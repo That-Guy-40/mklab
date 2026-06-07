@@ -25,7 +25,9 @@ drive an entire build → serve → boot pipeline from one file. Look for the
 ## 🪤 Throwaway chroots — Phase 1 (`phase1-chroot/lab-chroot.sh`) 🔑
 
 Disposable root filesystems you can `enter`, boot under nspawn, or feed into
-later phases. Built with `sudo lab-chroot.sh create --config …`.
+later phases. Built with `sudo lab-chroot.sh create --config …`. The standalone
+specs are grouped under [`chroot-examples/`](chroot-examples/README.md) (the
+netboot-tier chroots stay flat in the netboot section below).
 
 | File | What you get |
 |---|---|
