@@ -3,7 +3,13 @@
 A staged toolkit for creating throwaway lab environments — chroots, VMs,
 and (in later phases) containers — across multiple architectures.
 
-See [`PLAN.md`](PLAN.md) for the full design and rationale.
+See [`PLAN.md`](PLAN.md) for the full design and rationale, and
+[`TODO.md`](TODO.md) for the project backlog.
+
+> **Note on the backlog's hash-cracking item:** it's an educational exercise on
+> *our own* throwaway lab credential (the published FLOPPINUX `root`/`lab`
+> login) — demonstrating the recovery and the cryptographic *why*, not targeting
+> anyone else's secret.
 
 ## Status
 
