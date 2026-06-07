@@ -51,6 +51,10 @@ Full cloud-image VMs and tiny in-RAM microVMs. `create` then `start`, `ssh` in.
 
 ## 🐳 Docker topologies — Phase 3 (`phase3-docker/lab-docker.sh`)
 
+Declarative rootful container topologies. Grouped under
+[`docker-examples/`](docker-examples/README.md) (the netboot server spec lives in
+the netboot section below).
+
 | File | What you get |
 |---|---|
 | `docker-examples/docker-3svc-topology.toml` | nginx + postgres + an idle alpine client on a shared bridge — the Phase 3 showcase. |
