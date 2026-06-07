@@ -72,7 +72,7 @@ only the registration layer differs, and `destroy` reverses whichever
 layer was added.
 
 ```bash
-sudo phase1-chroot/lab-chroot.sh create --config examples/chroot-nspawn-managed.toml
+sudo phase1-chroot/lab-chroot.sh create --config examples/chroot-examples/chroot-nspawn-managed.toml
 sudo systemd-nspawn -b -M bookworm-nspawn   # actually boot it
 ```
 
@@ -106,7 +106,7 @@ either way — `test-cli-vs-config-parity.sh` compares the resulting trees
 byte-for-byte. A single config can carry many `[[chroot]]` blocks.
 
 ```toml
-# examples/chroot-debian-bookworm.toml
+# examples/chroot-examples/chroot-debian-bookworm.toml
 [[chroot]]
 name    = "bookworm-amd64"
 backend = "debootstrap"
@@ -123,10 +123,10 @@ manager = "schroot"
   groups = ["sbuild", "sudo"]
 ```
 
-Reference configs to crib from: `examples/chroot-debian-bookworm.toml`
-(schroot-managed, sbuild-ready), `examples/chroot-rocky9-vsftpd.toml`
-(Rocky 9 + vsftpd jail), `examples/chroot-host-copy-busybox.toml`
-(host-copy, busybox + a few `/etc` files), `examples/chroot-nspawn-managed.toml`
+Reference configs to crib from: `examples/chroot-examples/chroot-debian-bookworm.toml`
+(schroot-managed, sbuild-ready), `examples/chroot-examples/chroot-rocky9-vsftpd.toml`
+(Rocky 9 + vsftpd jail), `examples/chroot-examples/chroot-host-copy-busybox.toml`
+(host-copy, busybox + a few `/etc` files), `examples/chroot-examples/chroot-nspawn-managed.toml`
 (`boot = true` + `register = true`, bootable under `systemd-nspawn -b`).
 
 ### `inspect --json` — live state

@@ -118,7 +118,7 @@ lc destroy busybox --force
 ## 3. host-copy via TOML config (parity check)
 
 ```bash
-lc create --config examples/chroot-host-copy-busybox.toml
+lc create --config examples/chroot-examples/chroot-host-copy-busybox.toml
 lc list                                    # → "minimal-busybox"
 lc enter minimal-busybox -- /bin/busybox echo hello
 lc destroy minimal-busybox --force
@@ -345,7 +345,7 @@ sudo chroot /srv/rocky9-base /bin/rpm -q rocky-release
 ## 7. Rocky 9 vsftpd jail (TOML config example)
 
 ```bash
-lc create --config examples/chroot-rocky9-vsftpd.toml
+lc create --config examples/chroot-examples/chroot-rocky9-vsftpd.toml
 lc verify rocky9-vsftpd
 sudo chroot /srv/ftpjail /usr/sbin/vsftpd -version 2>&1 | head -1
 ```
@@ -423,7 +423,7 @@ ls -l /var/lib/machines/ns-test 2>&1       # → No such file
 This requires a chroot with systemd installed. Build one:
 
 ```bash
-lc create --config examples/chroot-nspawn-managed.toml
+lc create --config examples/chroot-examples/chroot-nspawn-managed.toml
 ```
 
 **Expect:** debootstrap pulls systemd + dbus, then nspawn registers it.

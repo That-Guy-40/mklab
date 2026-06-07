@@ -71,7 +71,7 @@ sudo lab-chroot.sh create \
 Rocky 9 with vsftpd, registered with schroot:
 
 ```bash
-sudo lab-chroot.sh create --config examples/chroot-rocky9-vsftpd.toml
+sudo lab-chroot.sh create --config examples/chroot-examples/chroot-rocky9-vsftpd.toml
 sudo lab-chroot.sh enter rocky9-vsftpd -- vsftpd --version
 ```
 
@@ -87,13 +87,13 @@ sudo lab-chroot.sh create \
 Same chroot via TOML config:
 
 ```bash
-sudo lab-chroot.sh create --config examples/chroot-host-copy-busybox.toml
+sudo lab-chroot.sh create --config examples/chroot-examples/chroot-host-copy-busybox.toml
 ```
 
 systemd-nspawn-managed (full PID 1 inside, exposed to `machinectl`):
 
 ```bash
-sudo lab-chroot.sh create --config examples/chroot-nspawn-managed.toml
+sudo lab-chroot.sh create --config examples/chroot-examples/chroot-nspawn-managed.toml
 sudo lab-chroot.sh enter bookworm-nspawn
 ```
 

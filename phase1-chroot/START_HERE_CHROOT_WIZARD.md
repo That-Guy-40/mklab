@@ -62,7 +62,7 @@ sudo phase1-chroot/lab-chroot.sh destroy bookworm --force
 
 ```bash
 # The simplest example — a schroot-managed Debian bookworm chroot:
-sudo phase1-chroot/lab-chroot.sh create --config examples/chroot-debian-bookworm.toml
+sudo phase1-chroot/lab-chroot.sh create --config examples/chroot-examples/chroot-debian-bookworm.toml
 sudo phase1-chroot/lab-chroot.sh enter  bookworm-amd64
 sudo phase1-chroot/lab-chroot.sh destroy bookworm-amd64 --force
 ```
@@ -71,11 +71,11 @@ Other ready-to-run examples in `examples/`:
 
 | File | What it builds |
 |---|---|
-| `chroot-debian-bookworm.toml` | Debian bookworm, schroot-managed, with build tools |
-| `chroot-rocky9-vsftpd.toml` | Rocky 9 via `dnf` backend, vsftpd installed |
-| `chroot-host-copy-busybox.toml` | Minimal jail from host binaries (`host-copy` backend) |
-| `chroot-nspawn-managed.toml` | Debian, `systemd-nspawn`-managed, full PID 1 inside |
-| `chroot-write-files-demo.toml` | Shows `write_files` — inject config files at build time |
+| `chroot-examples/chroot-debian-bookworm.toml` | Debian bookworm, schroot-managed, with build tools |
+| `chroot-examples/chroot-rocky9-vsftpd.toml` | Rocky 9 via `dnf` backend, vsftpd installed |
+| `chroot-examples/chroot-host-copy-busybox.toml` | Minimal jail from host binaries (`host-copy` backend) |
+| `chroot-examples/chroot-nspawn-managed.toml` | Debian, `systemd-nspawn`-managed, full PID 1 inside |
+| `chroot-examples/chroot-write-files-demo.toml` | Shows `write_files` — inject config files at build time |
 
 ---
 

@@ -67,7 +67,7 @@ The fastest chroot to build — no debootstrap, just copies host binaries.
 
 ```bash
 sudo phase1-chroot/lab-chroot.sh create \
-    --config examples/chroot-host-copy-busybox.toml
+    --config examples/chroot-examples/chroot-host-copy-busybox.toml
 ```
 
 Verify:
@@ -439,7 +439,7 @@ Pass: instances created inside the custom project; profiles applied.
 ```bash
 # Build the chroot
 sudo phase1-chroot/lab-chroot.sh create \
-    --config examples/chroot-debian-bookworm.toml
+    --config examples/chroot-examples/chroot-debian-bookworm.toml
 
 # Export as tarball (runs rootless)
 sudo phase1-chroot/lab-chroot.sh export-tarball debian-bookworm \

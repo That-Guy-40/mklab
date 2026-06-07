@@ -1,5 +1,5 @@
 # Rocky 9 chroot suitable for vsftpd jailing.
-# Build with: sudo lab-chroot.sh create --config chroot-rocky9-vsftpd.toml
+# Build with: sudo lab-chroot.sh create --config examples/chroot-examples/chroot-rocky9-vsftpd.toml
 
 [[chroot]]
 name    = "rocky9-vsftpd"

@@ -2123,7 +2123,7 @@ EXAMPLES
   sudo $LAB_PROG create --backend debootstrap --distro debian --suite bookworm \\
         --arch x86_64 --target /var/chroots/bookworm-amd64
 
-  sudo $LAB_PROG create --config examples/chroot-rocky9-vsftpd.toml
+  sudo $LAB_PROG create --config examples/chroot-examples/chroot-rocky9-vsftpd.toml
 
   sudo $LAB_PROG enter /var/chroots/bookworm-amd64 -- apt-get update
 EOF

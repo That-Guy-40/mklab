@@ -1,5 +1,5 @@
 # Minimal host-copy chroot containing busybox + a few /etc files.
-# Build with: sudo lab-chroot.sh create --config chroot-host-copy-busybox.toml
+# Build with: sudo lab-chroot.sh create --config examples/chroot-examples/chroot-host-copy-busybox.toml
 # Then:      sudo lab-chroot.sh enter minimal-busybox -- /bin/busybox sh
 
 [[chroot]]

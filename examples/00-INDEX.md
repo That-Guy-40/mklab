@@ -29,10 +29,10 @@ later phases. Built with `sudo lab-chroot.sh create --config …`.
 
 | File | What you get |
 |---|---|
-| `chroot-debian-bookworm.toml` | Native x86_64 Debian bookworm, schroot-managed — the canonical starting point. |
-| `chroot-rocky9-vsftpd.toml` | A Rocky 9 chroot sized for jailing `vsftpd` (the RPM/`dnf` backend). |
-| `chroot-host-copy-busybox.toml` | Tiny host-copy chroot: just BusyBox + a few `/etc` files. No debootstrap. |
-| `chroot-nspawn-managed.toml` | Debian bookworm registered with `machinectl` and bootable via `systemd-nspawn -b`. |
+| `chroot-examples/chroot-debian-bookworm.toml` | Native x86_64 Debian bookworm, schroot-managed — the canonical starting point. |
+| `chroot-examples/chroot-rocky9-vsftpd.toml` | A Rocky 9 chroot sized for jailing `vsftpd` (the RPM/`dnf` backend). |
+| `chroot-examples/chroot-host-copy-busybox.toml` | Tiny host-copy chroot: just BusyBox + a few `/etc` files. No debootstrap. |
+| `chroot-examples/chroot-nspawn-managed.toml` | Debian bookworm registered with `machinectl` and bootable via `systemd-nspawn -b`. |
 | [`kali-nonroot-chroot/`](kali-nonroot-chroot/) | 🔒 A Kali `kali-rolling` chroot with a **non-root** sudo user (`kali`/`kali`, root locked) + a top-10 tool slice (nmap + sqlmap) — the chroot-level take on Kali's `kali-linux-mate-top10-nonroot` live-build recipe. Enables `contrib non-free` (nmap is non-free) + installs `kali-archive-keyring` so the chroot's apt works; full top-10 + MATE-desktop-via-VM documented. ⚠️ offensive tools — authorized targets only. |
 
 ## 🖥️ QEMU machines — Phase 2 (`phase2-qemu-vm/lab-vm.sh`)
@@ -190,7 +190,7 @@ A control node runs Ansible playbooks against managed target host(s) — see the
 
 ---
 
-*New here? Start with `chroot-debian-bookworm.toml` or `vm-debian-amd64.toml`
+*New here? Start with `chroot-examples/chroot-debian-bookworm.toml` or `vm-debian-amd64.toml`
 for a feel, then jump to `netboot-lab.toml` or `lab-unified-demo.toml` to watch
 one file light up several phases at once. Each phase also ships a `SHOWCASE.md`
 with copy-pasteable tours.*
