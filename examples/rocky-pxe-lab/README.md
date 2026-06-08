@@ -31,6 +31,7 @@ faithful "real PXE server" the CIQ article describes.
 | `rocky9-zerotouch.ks` | The kickstart that drives the unattended install (**plaintext lab creds**). |
 | `rocky-pxe-lab.toml` | Unified config: Phase 4 nginx artifact server + Phase 2 installer VM. |
 | `QUICKSTART.md` | Copy-paste runbook for this lab (Rocky only). |
+| [`hand-walk/`](hand-walk/) | A Rocky-Linux container that reproduces the CIQ article's **Lorax + dnsmasq + TFTP** server stack, to walk the article **by hand** (then install the existing client VM). Follows the article's Lorax route, unlike this lab's fetch-the-images automation. |
 | `README.md` | This file. |
 
 > **Just want the copy-paste steps?** See [`QUICKSTART.md`](QUICKSTART.md) — a short

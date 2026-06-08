@@ -1,0 +1,56 @@
+# examples/debian-http-boot/hand-walk/Containerfile — reproduce Kenneth Finnegan's
+# environment so you can walk "Booting Linux over HTTP" BY HAND, step-by-step.
+#
+#   Upstream post : ../upstream-tutorial/  (byte-exact archive + provenance)
+#   Canonical URL : https://blog.thelifeofkenneth.com/2020/03/booting-linux-over-http.html
+#   What it shows : pack a WHOLE Debian system into one gzipped cpio initramfs and
+#                   boot it entirely from RAM over HTTP — no disk; the initrd *is*
+#                   the root filesystem, with a hand-rolled /init that execs systemd.
+#
+# This is the HAND-WALK sandbox (TODO #3): a disposable box carrying the post's
+# SERVER-side prerequisites (debootstrap + cpio + an iPXE toolchain + an HTTP
+# server). You build the kernel+initrd artifacts here by hand; the *client* is the
+# repo's existing QEMU lab (../vm-debian-http-boot.toml) — "server in a container,
+# client is the existing VM," per the lab's design. The automated counterpart is
+# the repo's netboot pipeline + that Phase-2 spec.
+#
+# ── HOW TO RUN (note the wrinkle, same as the muxup hand-walk) ────────────────
+# `debootstrap` builds a rootfs by chrooting + mounting /proc inside the target,
+# which a rootless container can't do by default. Build via the phase tool, then
+# launch with the cap + /proc un-mask, bind-mounting an output dir for the
+# kernel+initrd you produce:
+#
+#   phase4-podman/lab-podman.sh build --tag debhttp-handwalk \
+#       --context examples/debian-http-boot/hand-walk
+#   mkdir -p out
+#   podman run --rm -it --cap-add SYS_ADMIN --security-opt systempaths=unconfined \
+#       -v "$PWD/out:/out:Z" -v "$PWD/examples/debian-http-boot:/lab:ro" \
+#       debhttp-handwalk bash
+# Then follow RUNBOOK.md. (Why not `up`: it injects no privileges — see RUNBOOK §0.)
+
+# ── Base — Debian (you're building a Debian-from-RAM system; debootstrap's home).
+ARG BASE=debian:bookworm-slim
+FROM ${BASE}
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ── The post's server-side prerequisites.  Each maps to a step:
+#   debootstrap        → build the Debian rootfs that becomes the initramfs
+#   cpio gzip          → `find . | cpio -H newc -o | gzip -9` packs the initrd
+#   git build-essential perl liblzma-dev
+#                      → build iPXE with an EMBEDDED boot script (Kenneth flashed
+#                        it to each client's SSD; you build the same ROM).
+#                        build-essential (not bare gcc) so iPXE's host helper
+#                        zbin compiles — bare gcc lacks libc6-dev → no <stdint.h>.
+#   mtools             → iPXE's bin/ipxe.usb image assembly
+#   python3            → the HTTP server that serves kernel + initrd (port 8181,
+#                        the repo's netboot port — 8080 is taken by SABnzbd)
+#   ca-certificates    → HTTPS for debootstrap/git
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        debootstrap fakeroot cpio gzip xz-utils \
+        git build-essential perl liblzma-dev mtools \
+        python3 ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /work
+CMD ["bash"]

@@ -30,6 +30,7 @@ The blog's actual stack is three pieces that containerize very differently:
 |---|---|
 | `kali-llm-lab.toml` | Phase 4 pod: `ollama` + `open-webui`, loopback-published. |
 | `pull-models.sh` | Pull model(s) into the persistent volume via the running container. |
+| [`hand-walk/`](hand-walk/) | A Kali container for walking the blog's **server-side** install *by hand* (Ollama the post's fetch+verify way, CPU, + `mcp-kali-server`) — the learning counterpart to this automated pod. ⚠️ authored / you-build (multi-GB; Ollama is a fetch-and-exec you authorize). |
 | `README.md` | This file. |
 
 Reuses `phase4-podman/lab-podman.sh` unchanged — no new phase code.

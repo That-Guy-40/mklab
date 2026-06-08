@@ -1,0 +1,47 @@
+# examples/kali-llm-lab/hand-walk/Containerfile — reproduce the Kali blog's
+# environment so you can walk "Kali & LLM: local with Ollama & 5ire" BY HAND.
+#
+#   Upstream post : ../upstream-tutorial/  (byte-exact archive + provenance)
+#   Canonical URL : https://www.kali.org/blog/kali-llm-ollama-5ire/
+#   What it shows : run a local LLM on Kali with Ollama, expose Kali's tools to
+#                   the model via mcp-kali-server (the agentic payoff), and chat
+#                   from a GUI (5ire).
+#
+# This is the HAND-WALK sandbox (TODO #3): a **Kali** box for the *server side* —
+# Ollama (CPU) + mcp-kali-server, headless. Per the scoping decision this is
+# **CPU-only** (no NVIDIA driver) and **server-only** (the 5ire desktop GUI is the
+# client — see the sibling ../../kali-llm-desktop-lab/ for the real-5ire VM).
+#
+# ── AUTHORED, YOU BUILD (not built in this sandbox) ──────────────────────────
+# Two reasons, both flagged honestly: (1) the Kali base + an LLM model are a
+# multi-GB pull; (2) the post installs Ollama by fetching + executing a prebuilt
+# binary from ollama.com — which is your machine's call to trust (the same posture
+# as this repo's toolchain-fetch gate; the post even sha512-verifies it, and so
+# does RUNBOOK §1). So the Ollama install + model pull live in RUNBOOK.md as steps
+# you run, not baked here. The repo's AUTOMATED, verified counterpart is the
+# Phase-4 pod ../kali-llm-lab.toml (Ollama + Open WebUI) — use that if you just
+# want it working.
+#
+# Build + run (on your machine):
+#   phase4-podman/lab-podman.sh build --tag kali-llm-handwalk \
+#       --context examples/kali-llm-lab/hand-walk
+#   podman run --rm -it -p 11434:11434 kali-llm-handwalk bash   # then RUNBOOK.md
+
+# ── Base — Kali (the post is written for Kali; this is its environment).
+ARG BASE=docker.io/kalilinux/kali-rolling
+FROM ${BASE}
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ── The post's CPU/server prerequisites we CAN bake (apt, from Kali's repos):
+#   curl ca-certificates xz-utils zstd → fetch + unpack the Ollama tarball (§1)
+#   procps                            → ps/free, for poking at the running server
+# NOTE: nvidia-driver/nvidia-smi from the post are deliberately OMITTED (CPU-only).
+# mcp-kali-server + the tool metapackages are LARGE; install them per RUNBOOK §4
+# so this image stays lean and the heavy pull is an explicit choice.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl ca-certificates xz-utils zstd procps \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /root
+CMD ["bash"]

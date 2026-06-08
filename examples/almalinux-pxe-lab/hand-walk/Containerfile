@@ -1,0 +1,50 @@
+# examples/almalinux-pxe-lab/hand-walk/Containerfile — reproduce Kenneth Finnegan's
+# PXE-server environment so you can walk "Installing AlmaLinux over the network
+# with no hands" BY HAND, step-by-step.
+#
+#   Upstream post : ../upstream-tutorial/  (byte-exact archive + provenance)
+#   Canonical URL : https://blog.thelifeofkenneth.com/2026/01/almalinux-pxe-zerotouh.html
+#   What it shows : build an iPXE EFI binary with an embedded script that DHCPs,
+#                   then chainloads the AlmaLinux installer (vmlinuz+initrd) over
+#                   HTTP and feeds Anaconda a kickstart → a zero-touch install.
+#
+# This is the HAND-WALK sandbox (TODO #3): a box with the SERVER-side tools —
+# an iPXE build toolchain, dnsmasq (ProxyDHCP + TFTP for real-hardware Path B),
+# and an HTTP server for the installer + kickstart. You build + serve here by
+# hand; the INSTALL TARGET is the repo's existing QEMU client
+# (../vm-almalinux-pxe-install.toml). The automated counterpart is the lab's
+# ../almalinux-pxe-lab.toml (Phase-4 nginx + Phase-2 VM in one shot).
+#
+# The server role is distro-neutral — Kenneth built iPXE on his own Linux box and
+# served upstream AlmaLinux pxeboot images; only the *target* is AlmaLinux. So a
+# Debian base carries the build+serve stack cleanly.
+#
+# Build + run via the phase tool, then serve (HTTP needs no privileges; the Path-B
+# dnsmasq ProxyDHCP/TFTP wants NET_ADMIN/NET_BIND — see RUNBOOK §4):
+#   phase4-podman/lab-podman.sh build --tag almapxe-handwalk \
+#       --context examples/almalinux-pxe-lab/hand-walk
+#   podman run --rm -it -p 8181:8181 \
+#       -v "$PWD/out:/out:Z" almapxe-handwalk bash
+ARG BASE=debian:bookworm-slim
+FROM ${BASE}
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ── The post's server-side prerequisites.  Each maps to a step:
+#   git build-essential perl liblzma-dev
+#                      → build iPXE's EFI binary (make bin-x86_64-efi/ipxe.efi
+#                        EMBED=almascript.ipxe).  build-essential (not bare gcc)
+#                        so iPXE's host helper zbin gets libc6-dev / <stdint.h>.
+#   dnsmasq            → Path B (real hardware): ProxyDHCP + TFTP responder that
+#                        coexists with your router's DHCP and hands out ipxe.efi
+#   python3            → serve the installer + kickstart over HTTP (:8181 — the
+#                        repo's netboot port; 8080 is taken by SABnzbd on this host)
+#   wget ca-certificates → fetch the upstream AlmaLinux pxeboot vmlinuz/initrd
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git build-essential perl liblzma-dev \
+        dnsmasq \
+        python3 wget ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /work
+CMD ["bash"]

@@ -27,6 +27,7 @@ script, same `qemu-system-i386 -fda` payload.
 | [`QUALITY_OF_LIFE.md`](QUALITY_OF_LIFE.md) | Hands-on: add the niceties a normal shell/distro has (PATH+`/sbin`, prompt, aliases, history, job control, names) **live while logged in**, each with a validation — then bake them in with `QOL=1`. |
 | [`floppinux-2.88mb/`](floppinux-2.88mb/) | The 2.88 MB extended-density variant (the `FLOPPY_KB=2880` knob) — a `build-2.88.sh` wrapper + differential README/MANUAL_TESTING. ~1.7 MiB free, still boots in QEMU. |
 | [`upstream-tutorial/`](upstream-tutorial/) | An exact, unmodified offline archive of Krzysztof Jankowski's original tutorial (HTML + CSS), with provenance/attribution and sha256s. Copyright remains the author's. |
+| [`hand-walk/`](hand-walk/) | An **Arch** container (the author's distro) for walking the tutorial *by hand*, command by command, instead of running `build-floppinux.sh`. The musl.cc toolchain fetch and the `mknod`/loop-mount floppy step run on your host (`--privileged`); the build environment itself is verified. The learning counterpart to the script. |
 
 ## Quick start (Debian / Ubuntu)
 

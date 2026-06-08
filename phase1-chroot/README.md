@@ -174,6 +174,12 @@ Create and enter a chroot **without root**, following the [muxup.com pattern](ht
 `debootstrap --variant=fakechroot` (or `host-copy`) built and entered under
 `fakechroot fakeroot`, so no real uid 0, no `mknod`, and no bind-mounts.
 
+> To **walk the muxup post by hand** — including the *foreign-arch* (riscv64)
+> rootless bootstrap this mode leaves [out of scope](#known-gaps) — see
+> [`hand-walk/`](hand-walk/): a disposable container that reproduces the author's
+> environment (`fakeroot` + `unshare -Ur` + `qemu-user-static`), verified
+> end-to-end. The learning counterpart to this automated mode.
+
 ```bash
 phase1-chroot/lab-chroot.sh create --rootless \
     --backend debootstrap --distro debian --suite bookworm \

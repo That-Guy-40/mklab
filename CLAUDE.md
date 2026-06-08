@@ -69,3 +69,40 @@ resolves 200 + has the expected title before hashing** — never enshrine an err
 page's `sha256` as "the tutorial." Two labs sharing one source each keep their
 own copy (self-containment rule), byte-identical. Keep `link_check.py` green
 after every add.
+
+### Hand-walk sandboxes: reproduce the author's environment to follow a tutorial by hand
+
+For a tutorial-based lab, a `hand-walk/` subdir (sibling of `upstream-tutorial/`)
+gives a **disposable container that reproduces the author's working environment**,
+so a human can type the recipe step-by-step — distinct from the automated
+`build-*.sh`. The deliverable per lab is a fixed shape:
+
+- **`Containerfile`** — the environment *as code*: base = **the author's distro**
+  where the tutorial is distro-specific (Arch for floppinux, Rocky for the
+  Lorax-based rocky-pxe, Kali for kali-llm), a **neutral Debian** base where it's
+  "any POSIX" (micro-linux, muxup, debian-http-boot, almalinux-server). Bake the
+  tutorial's exact `apt`/`dnf`/`pacman` prereqs as readable `RUN` lines, one
+  comment per line tying it to a tutorial step. Include the tool the post *runs in*
+  (e.g. `qemu-system-*`) so build **and** boot happen in one box.
+- **`RUNBOOK.md`** — walks the upstream steps with the **why** at each, links the
+  vendored sibling `../upstream-tutorial/` as the source of truth, and contrasts
+  with the repo's automated counterpart.
+- **A 00-INDEX entry + an inbound link** from the parent lab's README (else
+  `link_check.py` orphans it). Cataloged under *🚶 Hand-walk the tutorials*.
+
+**Drive it through the existing phases** (`lab-podman.sh build`/`up` with a
+`build =` Containerfile) — no one-off images — *unless* a step needs a privilege
+the phase tool won't inject (muxup's `binfmt` → `--cap-add SYS_ADMIN
+--security-opt systempaths=unconfined`); then build the image via the phase tool
+and document the `podman run` launch. **Reproduce the author's env, then build +
+boot it yourself to verify** — examining prereqs this way *surfaces* the real
+gotchas (a hosted-C cross needs `libc6-dev-<arch>-cross`; `gcc` alone lacks
+`<stdint.h>` for iPXE's host helper; debootstrap's `mknod` needs `fakeroot`;
+`unshare --mount-proc` needs `/proc` un-masked). **Partition by what the sandbox
+can run:** a step that hits the **toolchain-fetch gate** (musl.cc) or needs
+**loop-mount/`mknod`** (blocked here even `--privileged`) is **authored with an
+explicit "you run this" marker**, not silently claimed as verified — the agent
+authors the Containerfile (a clean reproducible layer); the user runs the build.
+Exemplars: [`micro-linux/hand-walk/`](micro-linux/hand-walk/) (clean, fully
+verified), [`phase1-chroot/hand-walk/`](phase1-chroot/hand-walk/) (cap/binfmt),
+[`examples/tiny-linux-experiments/floppinux/hand-walk/`](examples/tiny-linux-experiments/floppinux/hand-walk/) (author-only steps).

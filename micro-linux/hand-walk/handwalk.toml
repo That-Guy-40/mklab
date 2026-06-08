@@ -1,0 +1,24 @@
+# micro-linux hand-walk sandbox — drive the existing Phase 4 (rootless Podman)
+# tool to build + run the box you follow Uros Popovic's post inside.
+#
+# The environment itself is defined in ./Containerfile (the author's Debian box +
+# riscv64 cross-toolchain + qemu-system-riscv64).  This spec just hands it to the
+# phase tool via `build =`, so no one-off `podman` invocations are needed.
+#
+# Run from the REPO ROOT (the `build` path is resolved from the current dir):
+#   phase4-podman/lab-podman.sh up   --config micro-linux/hand-walk/handwalk.toml
+#   phase4-podman/lab-podman.sh exec micro-linux-handwalk/sandbox -- bash
+#   phase4-podman/lab-podman.sh down --config micro-linux/hand-walk/handwalk.toml
+#
+# Then walk RUNBOOK.md.  Rootless, no devices, no /dev/kvm: qemu runs under TCG.
+
+[lab]
+name        = "micro-linux-handwalk"
+description = "Hand-walk Uros Popovic's 'Making a micro Linux distro' (riscv64): build a kernel + initramfs from source and boot it, by hand, in one disposable box"
+tags        = ["tutorial", "hand-walk", "micro-linux", "riscv64"]
+
+[[service]]
+name    = "sandbox"
+build   = "./micro-linux/hand-walk"
+# Idle PID 1 so the box stays up; you `exec ... bash` in and type the recipe.
+command = "sleep infinity"

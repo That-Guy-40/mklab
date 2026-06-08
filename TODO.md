@@ -99,18 +99,45 @@ tutorial by hand, step-by-step** — distinct from the automated `build-*.sh`
 operationalization. Value: a sandbox to learn the recipe manually, and a way to
 catch upstream drift against our scripts.
 
-- [ ] Pick the runtime per tutorial (FLOPPINUX's cross-build → a Debian
-      Docker/Podman image carrying the toolchain deps; heavier or systemd-y labs
-      → Incus/LXD).
-- [ ] Reuse the existing phases instead of one-off containers: `phase3-docker`,
-      `phase4-podman`, `phase5-lxd` already build these — drive them from a TOML
-      spec.
-- [ ] Per tutorial: a container spec + a short "follow the upstream steps here"
-      runbook pointing at the `upstream-tutorial/` copy from item 2.
-- [ ] Start with FLOPPINUX: a cross-toolchain *inside* a container sidesteps the
-      host `musl.cc` fetch gate — the build step an agent can't run on the host
-      becomes a clean, reproducible container layer.
-- [ ] Catalog the container labs in [`examples/00-INDEX.md`](examples/00-INDEX.md).
+- [x] Pick the runtime per tutorial (rootless Phase-4 podman for all seven;
+      `--cap-add SYS_ADMIN` where `binfmt`/chroot needs it; the author's distro
+      as base where the tutorial is distro-specific).
+- [x] Reuse the existing phases instead of one-off containers: each `hand-walk/`
+      ships a `Containerfile` driven via `lab-podman.sh build`/`up` (`build =`).
+- [x] Per tutorial: a `Containerfile` + a `RUNBOOK.md` pointing at the
+      `upstream-tutorial/` copy from item 2, + a 00-INDEX entry + parent inbound link.
+- [x] ~~Start with FLOPPINUX~~ → **started with micro-linux instead** (fully
+      unblocked: apt cross-toolchain, pure TCG, no devices, no fetch gate — the one
+      lab the agent can build *and* boot to verify end-to-end). FLOPPINUX turned out
+      to be the *worst* first pick: it hits **both** the `musl.cc` fetch gate **and**
+      loop-mount/`mknod` (blocked in-sandbox even `--privileged`) — both are
+      author-only. (The TODO's "container sidesteps the gate" claim is **half-true**:
+      the layer is a clean artifact, but an *agent-triggered* `podman build` of a
+      musl.cc fetch is still gated — the classifier reads the Containerfile; the
+      *user* runs that build.)
+- [x] Catalog the container labs in [`examples/00-INDEX.md`](examples/00-INDEX.md)
+      (§ *🚶 Hand-walk the tutorials*).
+
+**✅ Done 2026-06-08.** Seven `hand-walk/` sandboxes, each = Containerfile (the
+author's environment as code) + RUNBOOK (the post by hand, with the *why*) +
+00-INDEX entry + parent inbound link; `link_check.py` green. Split by what the
+build sandbox can run:
+- **Agent built + boot/run-verified end-to-end:** `micro-linux/` (kernel→`init.c`→
+  u-root boots), `phase1-chroot/` (muxup rootless foreign debootstrap, `uname -m
+  → riscv64`), `examples/debian-http-boot/` (fakeroot debootstrap + initrd + iPXE),
+  `examples/almalinux-pxe-lab/` (iPXE EFI build + dnsmasq config).
+- **Agent built env + verified the tractable parts; one step author-only:**
+  `examples/rocky-pxe-lab/` (box + `lorax`/`dnsmasq`/`tftp` present; the **Lorax
+  run** needs loop → host), `examples/tiny-linux-experiments/floppinux/` (Arch env
+  verified; **musl.cc fetch + `mknod`/loop floppy** → host).
+- **Authored, you-build:** `examples/kali-llm-lab/` (multi-GB Kali + model; Ollama
+  is a fetch-and-exec you authorize — RUNBOOK §1 sha512-verifies it).
+
+Convention recorded in `CLAUDE.md` › *Hand-walk sandboxes*. Three real prereq
+gotchas the "reproduce the env" exercise surfaced + fixed: `libc6-dev-riscv64-cross`
+(hosted-C cross), `build-essential` not bare `gcc` (iPXE host helper needs
+`<stdint.h>`), `fakeroot`+`systempaths=unconfined` (rootless debootstrap `mknod` +
+`unshare --mount-proc`).
 
 ---
 

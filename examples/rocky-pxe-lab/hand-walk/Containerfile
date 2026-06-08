@@ -1,0 +1,40 @@
+# examples/rocky-pxe-lab/hand-walk/Containerfile — reproduce the CIQ article's
+# environment so you can walk "Booting Rocky Linux via PXE (Lorax, dnsmasq, TFTP)"
+# BY HAND, step-by-step.
+#
+#   Upstream post : ../upstream-tutorial/  (byte-exact archive + provenance)
+#   Canonical URL : https://kb.ciq.com/article/rocky-linux/rl-booting-rocky-linux-via-pxe
+#   What it shows : use **Lorax** to build PXE boot images from a Rocky repo, then
+#                   serve them with **dnsmasq** (DHCP+TFTP) + HTTP so a machine
+#                   network-boots the installer.
+#
+# This is the HAND-WALK sandbox (TODO #3): a **RHEL-family** box (Lorax + dnsmasq
+# + tftp-server are dnf packages) for running the CIQ server stack by hand. The
+# INSTALL TARGET is the repo's existing QEMU client (../rocky-pxe-lab.toml).
+#
+# ── One step is author-only here ─────────────────────────────────────────────
+# `lorax` builds boot images via a throwaway install root that needs **loop
+# devices + mknod** — which this build sandbox blocks even with --privileged. So
+# the Lorax step (RUNBOOK §1) is "run it on your own host"; everything after
+# (dnsmasq/TFTP/HTTP) runs here. On your host:
+#   phase4-podman/lab-podman.sh build --tag rockypxe-handwalk \
+#       --context examples/rocky-pxe-lab/hand-walk
+#   podman run --rm -it --privileged -v "$PWD/out:/out:Z" rockypxe-handwalk bash
+# (--privileged because Lorax needs real loop/mknod; a normal host grants them.)
+
+# ── Base — Rocky Linux (you're PXE-installing Rocky; Lorax is RHEL-family).
+ARG BASE=rockylinux:9
+FROM ${BASE}
+
+# ── The article's prerequisites (dnf):
+#   lorax        → build the PXE boot images (vmlinuz/initrd/install tree)
+#   dnsmasq      → DHCP + TFTP responder (the article's serving core)
+#   tftp-server  → the TFTP root layout dnsmasq hands out
+#   python3      → simple HTTP server for the install tree + kickstart (:8181)
+#   which findutils → the article's shell steps assume them present
+RUN dnf install -y --setopt=install_weak_deps=False \
+        lorax dnsmasq tftp-server python3 which findutils \
+ && dnf clean all
+
+WORKDIR /work
+CMD ["bash"]

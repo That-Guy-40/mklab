@@ -1,0 +1,74 @@
+# micro-linux/hand-walk/Containerfile — reproduce Uros Popovic's environment so
+# you can walk "Making a micro Linux distro" BY HAND, step-by-step.
+#
+#   Upstream post : ../upstream-tutorial/  (byte-exact archive + provenance)
+#   Canonical URL : https://popovicu.com/posts/making-a-micro-linux-distro/
+#   Author's box  : Debian — the post's own boot log reads
+#                   "riscv64-linux-gnu-gcc (Debian 10.2.1-6) ... uros-debian-desktop"
+#                   so we match it: a Debian base with the same cross-toolchain.
+#
+# This is the HAND-WALK sandbox (TODO #3): a clean, disposable box that carries
+# exactly the tools the post assumes, INCLUDING qemu-system-riscv64, so you build
+# AND boot in one place.  It is deliberately distinct from the repo's AUTOMATED
+# builder (../Containerfile + ../mlbuild.sh), which cross-compiles every arch for
+# you and boots on the host via Phase 2.  Here you type the commands yourself.
+#
+# Build + run via the existing phase tool (from the repo root):
+#   phase4-podman/lab-podman.sh up   --config micro-linux/hand-walk/handwalk.toml
+#   phase4-podman/lab-podman.sh exec micro-linux-handwalk/sandbox -- bash
+#   phase4-podman/lab-podman.sh down --config micro-linux/hand-walk/handwalk.toml
+# Then follow RUNBOOK.md inside the shell.  Rootless: no root, no /dev/kvm, no
+# devices — qemu-system-riscv64 runs under pure TCG emulation.
+
+# ── Base — the author's distro.  PIN BY DIGEST before relying on it (AUDIT F5):
+#   skopeo inspect docker://debian:bookworm-slim --format '{{.Digest}}'
+ARG BASE=debian:bookworm-slim
+FROM ${BASE}
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ── The post's prerequisites, one apt layer.  Each group maps to a tutorial step:
+#   gcc-riscv64-linux-gnu  → the riscv64 cross-compiler the whole post is built on
+#                            (kernel CROSS_COMPILE= AND the hand-written init.c)
+#   libc6-dev-riscv64-cross → the riscv64 C library + headers.  The kernel builds
+#                            *freestanding* (no libc), so gcc-riscv64-linux-gnu
+#                            alone suffices for it — but the post's init.c is a
+#                            *hosted* C program (#include <stdio.h>, -static).
+#                            Without this, the cross-gcc falls back to the host's
+#                            x86_64 /usr/include and dies on bits/libc-header-start.h.
+#   build-essential bc bison flex libelf-dev libssl-dev python3
+#                          → kernel build deps (`make ARCH=riscv ... defconfig` →
+#                            `... -j$(nproc)`; python3 feeds riscv defconfig's
+#                            header generators — missing it = make Error 127)
+#   libncurses-dev         → `make menuconfig` (the post's config-tweak step)
+#   cpio gzip xz-utils     → pack the initramfs (cpio -H newc) + the kernel
+#                            tarball ships as .tar.xz
+#   wget ca-certificates    → fetch the kernel source from cdn.kernel.org
+#   qemu-system-misc        → qemu-system-riscv64: boot Image (+ -initrd) right here
+#   file                    → "is my init actually static?" sanity check
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gcc-riscv64-linux-gnu libc6-dev-riscv64-cross \
+        build-essential bc bison flex libelf-dev libssl-dev python3 \
+        libncurses-dev \
+        cpio gzip xz-utils \
+        wget ca-certificates \
+        qemu-system-misc \
+        file git \
+ && rm -rf /var/lib/apt/lists/*
+
+# ── Go (the post's finale: u-root, a real userspace, not just a hello-world init)
+# The RUNBOOK `git clone`s u-root (as the post does) and builds it with `go run .`.
+# Bookworm's golang-go (1.19) is too old for u-root; pin the same Go the repo's
+# automated track verifies (versions.env), checked against its published sha256.
+#   curl -fsSL https://dl.google.com/go/go${GO_VER}.linux-amd64.tar.gz | sha256sum
+ARG GO_VER=1.22.5
+ARG GO_SHA256=904b924d435eaea086515bc63235b192ea441bd8c9b198c507e85009e6e4c7f0
+RUN wget -qO /tmp/go.tgz "https://dl.google.com/go/go${GO_VER}.linux-amd64.tar.gz" \
+ && echo "${GO_SHA256}  /tmp/go.tgz" | sha256sum -c - \
+ && tar -C /usr/local -xzf /tmp/go.tgz \
+ && rm -f /tmp/go.tgz
+ENV PATH="/usr/local/go/bin:/root/go/bin:${PATH}"
+
+# A scratch workspace; the RUNBOOK builds everything under here.
+WORKDIR /work
+CMD ["sleep", "infinity"]

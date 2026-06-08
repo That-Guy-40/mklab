@@ -1,0 +1,65 @@
+# phase1-chroot/hand-walk/Containerfile — reproduce Alex Bradbury's environment so
+# you can walk "Rootless cross-architecture debootstrap" BY HAND, step-by-step.
+#
+#   Upstream post : ../upstream-tutorial/  (byte-exact archive + provenance)
+#   Canonical URL : https://muxup.com/2024q4/rootless-cross-architecture-debootstrap
+#   What it shows : building a *foreign-architecture* Debian rootfs (riscv64, arm64,
+#                   s390x, …) with NO root — using `unshare -Ur` + `fakeroot` +
+#                   `qemu-user-static` instead of sudo/chroot.
+#
+# This is the HAND-WALK sandbox (TODO #3): a disposable box carrying the post's
+# prerequisites, so you type the rootless-debootstrap dance yourself. It is the
+# learning counterpart to the repo's `phase1-chroot/lab-chroot.sh --rootless`,
+# which adopts this same technique as an automated phase feature.
+#
+# ── HOW TO RUN — note the one wrinkle (binfmt) ───────────────────────────────
+# The foreign `--second-stage` runs riscv64 binaries on your x86_64 host, which
+# needs `qemu-user-static` registered in **binfmt_misc**. On a normal host that's
+# a one-time `apt install qemu-user-static`. Inside a *rootless* container,
+# binfmt_misc is empty (it's namespaced away) and registering it needs
+# CAP_SYS_ADMIN — which the Phase-4 `up` path deliberately will NOT inject. So
+# build the image with the phase tool, then launch it yourself with the cap:
+#
+#   phase4-podman/lab-podman.sh build --tag muxup-handwalk \
+#       --context phase1-chroot/hand-walk
+#   podman run --rm -it --cap-add SYS_ADMIN \
+#       --security-opt systempaths=unconfined muxup-handwalk bash
+#
+# That stays rootless (your own podman, no host root) — `--cap-add` only grants
+# the cap *within your user namespace*, enough to mount+register binfmt in-box.
+# `systempaths=unconfined` lifts podman's default /proc masking, without which the
+# post's `unshare --mount-proc` (in the `_enter` wrapper) fails with EPERM — a
+# bare host has an unmasked /proc, so the post never hits this; a container does.
+# Then follow RUNBOOK.md. (Why not the full `up`/TOML flow: see RUNBOOK §0.)
+
+# ── Base — Debian (debootstrap's native home; you're building a Debian rootfs).
+#   skopeo inspect docker://debian:bookworm-slim --format '{{.Digest}}'  # pin (F5)
+ARG BASE=debian:bookworm-slim
+FROM ${BASE}
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ── The post's prerequisites.  Each maps to a step:
+#   debootstrap        → the two-stage foreign bootstrap (--foreign / --second-stage)
+#   fakeroot           → fake the root-owned files a rootfs needs, as a normal user
+#   symlinks           → `symlinks -cr` converts absolute symlinks to relative
+#                        (so the rootfs is self-contained / not pointing at the host)
+#   binutils xz-utils  → `ar` + `xz`: the post extracts libfakeroot/fakeroot from
+#                        their .debs by hand (`ar p … | tar -J`); a dev host has
+#                        these, the slim base does not (→ "ar: not found")
+#   qemu-user-static   → the riscv64/arm64/… ELF interpreter that runs foreign
+#                        binaries during the second stage
+#   binfmt-support     → `update-binfmts` to register those interpreters
+#   uidmap             → newuidmap/newgidmap for unprivileged user namespaces
+#   qemu-system-misc   → qemu-system-riscv64: boot the finished rootfs as a real VM
+#   e2fsprogs          → mkfs.ext4 -d to pack the rootfs into a bootable disk image
+#   ca-certificates wget → fetch over HTTPS
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        debootstrap fakeroot symlinks binutils xz-utils \
+        qemu-user-static binfmt-support uidmap \
+        qemu-system-misc e2fsprogs \
+        ca-certificates wget \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /root
+CMD ["bash"]

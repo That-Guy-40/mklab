@@ -31,6 +31,7 @@ PXE server for physical targets.
 | `QUICKSTART.md` | Copy-paste runbook for this lab (AlmaLinux only). |
 | `MANUAL_TESTING.md` | The full ~install walkthrough + boot-chain checks. |
 | `ALMALINUX_PXE_LAB_PLAN.md` | The original design/plan doc (history). |
+| [`hand-walk/`](hand-walk/) | A disposable container that reproduces Kenneth's **PXE-server** box, so you build the iPXE EFI ROM + serve the installer **by hand** (then install the existing client VM). The hands-on counterpart to the automated `.toml`. |
 | `README.md` | This file. |
 
 > **Just want the copy-paste steps?** See [`QUICKSTART.md`](QUICKSTART.md) — a short

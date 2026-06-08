@@ -1,0 +1,49 @@
+# examples/tiny-linux-experiments/floppinux/hand-walk/Containerfile — reproduce
+# Krzysztof Jankowski's environment so you can walk "FLOPPINUX (2025 edition)"
+# BY HAND, step-by-step.
+#
+#   Upstream post : ../upstream-tutorial/  (byte-exact archive + provenance)
+#   Canonical URL : https://krzysztofjankowski.com/floppinux/floppinux-2025.html
+#   What it shows : a whole bootable Linux (kernel + BusyBox) on a single 1.44 MB
+#                   floppy, cross-built with a musl toolchain and made bootable
+#                   with syslinux.
+#
+# This is the HAND-WALK sandbox (TODO #3): an **Arch Linux** box (the author runs
+# "Omarchy" = Arch; the post's commands are `pacman`) carrying the build deps, so
+# you follow Jankowski's exact recipe by hand. The repo's automated counterpart is
+# ../build-floppinux.sh (rootless; the same gate split applies — see below).
+#
+# ── TWO steps are author-only — flagged honestly ─────────────────────────────
+# 1. **musl cross-toolchain (RUNBOOK §2).** The post `wget`s a prebuilt toolchain
+#    from musl.cc and compiles with it. Fetching + executing a third-party
+#    prebuilt toolchain is your machine's call to trust — and this repo's agent
+#    runner blocks it (same posture as ../README.md's build note). So you run the
+#    fetch + `make bzImage`/busybox compile.
+# 2. **The floppy image (RUNBOOK §5).** `mknod` for /dev/console+/dev/null and
+#    `mount -o loop` need real device access, which this build sandbox denies even
+#    with --privileged. On your own host they work; here they're author-only.
+#
+# What IS verified here: the Arch environment builds and carries the build deps.
+# On your host:
+#   phase4-podman/lab-podman.sh build --tag floppinux-handwalk \
+#       --context examples/tiny-linux-experiments/floppinux/hand-walk
+#   podman run --rm -it --privileged floppinux-handwalk bash   # --privileged for §5
+ARG BASE=docker.io/library/archlinux:latest
+FROM ${BASE}
+
+# ── The post's prerequisites (pacman).  Each maps to a step:
+#   base-devel       → host gcc/make/etc. for the kernel kconfig + build machinery
+#                      (the *cross* compile uses the musl.cc toolchain from §2)
+#   ncurses bc flex bison → kernel + BusyBox `menuconfig` and build
+#   cpio xz          → pack the initramfs (cpio -H newc | xz)
+#   syslinux         → make the FAT floppy bootable
+#   dosfstools       → mkdosfs (mkfs.fat) to format the 1.44 MB image
+#   wget             → fetch the musl toolchain (§2) + the kernel/BusyBox sources
+#   qemu-system-x86  → boot the finished floppy: qemu-system-i386 -fda
+RUN pacman -Syu --noconfirm \
+        base-devel ncurses bc flex bison \
+        cpio xz syslinux dosfstools wget qemu-system-x86 \
+ && pacman -Scc --noconfirm
+
+WORKDIR /work
+CMD ["bash"]

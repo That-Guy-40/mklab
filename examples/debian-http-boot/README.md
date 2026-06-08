@@ -24,6 +24,11 @@ up a few kernel mounts and then `exec`s the real `/sbin/init` (systemd).
 >    Kenneth's post lives in [`upstream-tutorial/`](upstream-tutorial/) (HTML +
 >    CSS + provenance + `sha256`s) so the lab stays reproducible and attributed
 >    even if the original moves.
+> 5. **A by-hand build sandbox** — [`hand-walk/`](hand-walk/): a disposable
+>    container that reproduces Kenneth's *server* environment so you run the
+>    `debootstrap` → `cpio` → iPXE steps yourself (artifacts to a bind-mounted
+>    `out/`, then boot with the client below). The hands-on counterpart to this
+>    lab's automated build.
 >
 > It's also *leaner* than `chroot-netboot-full.toml` on purpose: no cloud-init,
 > no `locales-all`. Neither is in the blog, and dropping them keeps this close to

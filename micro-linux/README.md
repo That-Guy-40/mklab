@@ -12,7 +12,9 @@ disk, no bootloader, no distro packages. Two tracks:
 Design + rationale: [`../MICRO_LINUX_LAB_PLAN.md`](../MICRO_LINUX_LAB_PLAN.md).
 Based on Uros Popovic's [*Making a micro Linux distro*](https://popovicu.com/posts/making-a-micro-linux-distro/),
 vendored byte-exact under [`upstream-tutorial/`](upstream-tutorial/) (HTML + CSS +
-provenance + `sha256`s).
+provenance + `sha256`s). To **walk that post by hand** — kernel → bare `init.c` →
+u-root, in a disposable container that reproduces the author's Debian box — see
+[`hand-walk/`](hand-walk/) (the learning path; `mlbuild.sh` below is the turnkey one).
 Security posture is cross-referenced with [`../AUDIT.md`](../AUDIT.md) (F2 download
 integrity, F5 pinned inputs, F7 destructive-op guard).
 
