@@ -139,6 +139,70 @@ gotchas the "reproduce the env" exercise surfaced + fixed: `libc6-dev-riscv64-cr
 `<stdint.h>`), `fakeroot`+`systempaths=unconfined` (rootless debootstrap `mknod` +
 `unshare --mount-proc`).
 
+## 4. Net-booted, RAM-resident infrastructure images (immutable infra; reboot = newest build)
+
+Explore **stateless infrastructure nodes** that PXE/iPXE-boot a kernel + initramfs
+**entirely into RAM** (the initramfs *is* the root fs — no OS on local disk), so a
+**reboot re-pulls the latest image**: update centrally, reboot the fleet, done.
+Where a role needs persistent data, the **OS stays ephemeral** and only the *state*
+is mounted from elsewhere — local disk (a ZFS pool) or network storage
+(iSCSI/NFS) — attached by `/init` or an early systemd unit, never baked into the
+image. Boot transport is HTTP **and HTTPS**, so nodes can boot over a LAN *or* the
+open internet.
+
+This is the immutable-infrastructure / "golden image" pattern, and the repo
+already has the load-bearing mechanic: [`examples/debian-http-boot/`](examples/debian-http-boot/)
+boots a whole systemd Debian from a single gzipped-cpio initramfs over HTTP
+(Kenneth Finnegan's hand-rolled `/init`). The work here is to grow that one trick
+into *role-specific* infra images and the serving/state plumbing around them.
+
+**Candidate roles (each a lab):**
+- **AnyCast DNS node** — RAM OS + an authoritative DNS server; the **zone/record
+  database is the state** (mounted from local disk or fetched at boot). Announce
+  the anycast prefix (BGP via `bird`/ExaBGP) **only while healthy**, withdraw on
+  failure — the point of anycast. Models Gandi's design (ref below).
+- **CDN edge** — RAM OS + a local **ZFS pool** holding the cache/content
+  (persists across reboots though the OS doesn't); cache/webserver (nginx/varnish)
+  runs from RAM.
+- **Lightweight package mirror** — RAM OS, the mirror tree mounted over **iSCSI**,
+  webserver served from RAM. Rebuild the image whenever; a reboot picks it up.
+
+**Sketch / sub-tasks:**
+- [ ] Boot path: iPXE (the [`EMBED=` script pattern](examples/debian-http-boot/upstream-tutorial/))
+      chainloading kernel + initramfs over **HTTP and HTTPS**; reuse the repo's
+      netboot pipeline ([`NETBOOT_LAB_PLAN.md`](NETBOOT_LAB_PLAN.md),
+      [`netboot/`](netboot/), [`examples/pxe-boot-mechanics/`](examples/pxe-boot-mechanics/)).
+- [ ] **Image integrity is non-negotiable here** — "reboot pulls newest" must mean
+      *newest **verified***, not "trust whatever the server returns." Sign the
+      kernel+initramfs (or pin a hash / TLS cert), in the spirit of the repo's
+      verified-download ethos (`micro-linux` gpgv + `versions.lock`). Booting
+      executable code over the internet is a supply-chain surface — treat it like one.
+- [ ] Stateless-OS + externalized-state split: the image is ephemeral; `/init` (or
+      a systemd unit) mounts ZFS / iSCSI / NFS for the *data* after boot. One
+      state model documented per role.
+- [ ] Health-gated service announce (anycast): bring the route up only when the
+      service answers; pull it on failure.
+- [ ] Versioned / A-B images so a bad build rolls back by booting the prior one.
+- [ ] Build the images on existing foundations — [`micro-linux/`](micro-linux/)
+      (from-source kernel+initramfs; the `--baked` single-file blob is ideal to
+      sign+serve) and/or [`phase1-chroot/`](phase1-chroot/) (debootstrap the rootfs)
+      → packed like `debian-http-boot`'s initramfs.
+- [ ] Per the conventions: **vendor** the Gandi post (CLAUDE.md › *Provenance*),
+      add **hand-walk** sandboxes (CLAUDE.md › *Hand-walk sandboxes*), and a
+      [`examples/00-INDEX.md`](examples/00-INDEX.md) entry for each lab.
+
+Large — likely graduates to its own `*_LAB_PLAN.md` (cf.
+[`NETBOOT_LAB_PLAN.md`](NETBOOT_LAB_PLAN.md)), perhaps split per role.
+
+**References:**
+- Gandi, *Booting an anycast DNS network* (2019) —
+  <https://news.gandi.net/en/2019/03/booting-an-anycast-dns-network/> (the
+  10,000-ft view; **vendor when the lab is built**).
+- Kenneth Finnegan, *Booting Linux over HTTP* (2020) —
+  <https://blog.thelifeofkenneth.com/2020/03/booting-linux-over-http.html> —
+  **already vendored** at [`examples/debian-http-boot/upstream-tutorial/`](examples/debian-http-boot/upstream-tutorial/);
+  the RAM-root-over-HTTP building block.
+
 ---
 
 *Created 2026-06-06.*
