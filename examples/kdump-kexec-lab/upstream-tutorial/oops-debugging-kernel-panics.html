@@ -1,0 +1,1593 @@
+<!DOCTYPE html>
+<html  lang="en" dir="ltr" prefix="content: http://purl.org/rss/1.0/modules/content/  dc: http://purl.org/dc/terms/  foaf: http://xmlns.com/foaf/0.1/  og: http://ogp.me/ns#  rdfs: http://www.w3.org/2000/01/rdf-schema#  schema: http://schema.org/  sioc: http://rdfs.org/sioc/ns#  sioct: http://rdfs.org/sioc/types#  skos: http://www.w3.org/2004/02/skos/core#  xsd: http://www.w3.org/2001/XMLSchema# " class="no-js wf-loading">
+  <head>
+    <meta charset="utf-8" />
+<meta name="Generator" content="Drupal 9 (https://www.drupal.org)" />
+<meta name="MobileOptimized" content="width" />
+<meta name="HandheldFriendly" content="true" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<link rel="icon" href="/themes/linuxjournal/favicon.ico" type="image/vnd.microsoft.icon" />
+<link rel="canonical" href="https://www.linuxjournal.com/content/oops-debugging-kernel-panics-0" />
+<link rel="shortlink" href="https://www.linuxjournal.com/node/1340581" />
+
+    <title>Oops! Debugging Kernel Panics | Linux Journal</title>
+    <link rel="stylesheet" media="all" href="/core/modules/system/css/components/align.module.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/system/css/components/fieldgroup.module.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/system/css/components/container-inline.module.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/system/css/components/clearfix.module.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/system/css/components/details.module.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/system/css/components/hidden.module.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/system/css/components/item-list.module.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/system/css/components/js.module.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/system/css/components/nowrap.module.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/system/css/components/position-container.module.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/system/css/components/progress.module.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/system/css/components/reset-appearance.module.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/system/css/components/resize.module.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/system/css/components/sticky-header.module.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/system/css/components/system-status-counter.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/system/css/components/system-status-report-counters.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/system/css/components/system-status-report-general-info.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/system/css/components/tablesort.module.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/system/css/components/tree-child.module.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/modules/contrib/poll/css/poll.base.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/modules/contrib/poll/css/poll.theme.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/views/css/views.module.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/libraries/shariff/shariff.complete.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/modules/contrib/webform/modules/webform_bootstrap/css/webform_bootstrap.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/themes/linuxjournal/css/style.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/themes/linuxjournal/css/fonts.css?tfpujm" />
+
+      <!--   <script defer src="https://use.fontawesome.com/releases/v5.0.9/js/all.js" integrity="sha384-8iPTk2s/jMVj81dnzb/iFR2sdA7u06vHJyyLlAd4snFpCl/SnyUjRrbdJsw1pGIl" crossorigin="anonymous"></script>-->
+
+    <script>
+      // Non-blocking webfonts.
+      (function iife() {
+        'use strict';
+
+        // JS is able to start executing.
+        document.documentElement.classList.remove('no-js');
+
+        // Optimization for Repeat Views
+        // Stop early for repeat views that have already cached fonts.
+        if (sessionStorage.fontsLoadedLateef && sessionStorage.fontsLoadedOpensans /* && sessionStorage.fontsLoadedNEWFONT */) {
+          document.documentElement.classList.remove('wf-loading');
+          document.documentElement.classList.add('wf-opensans');
+          document.documentElement.classList.add('wf-lateef');
+          // document.documentElement.classList.add('wf-NEWFONT');
+          return;
+        }
+
+        // Inlined Font Face Observer script + Promise polyfill.
+        /*! Font Face Observer v2.0.13 - © Bram Stein. License: BSD-3-Clause */
+        (function(){'use strict';var f,g=[];function l(a){g.push(a);1==g.length&&f()}function m(){for(;g.length;)g[0](),g.shift()}f=function(){setTimeout(m)};function n(a){this.a=p;this.b=void 0;this.f=[];var b=this;try{a(function(a){q(b,a)},function(a){r(b,a)})}catch(c){r(b,c)}}var p=2;function t(a){return new n(function(b,c){c(a)})}function u(a){return new n(function(b){b(a)})}function q(a,b){if(a.a==p){if(b==a)throw new TypeError;var c=!1;try{var d=b&&b.then;if(null!=b&&"object"==typeof b&&"function"==typeof d){d.call(b,function(b){c||q(a,b);c=!0},function(b){c||r(a,b);c=!0});return}}catch(e){c||r(a,e);return}a.a=0;a.b=b;v(a)}}
+        function r(a,b){if(a.a==p){if(b==a)throw new TypeError;a.a=1;a.b=b;v(a)}}function v(a){l(function(){if(a.a!=p)for(;a.f.length;){var b=a.f.shift(),c=b[0],d=b[1],e=b[2],b=b[3];try{0==a.a?"function"==typeof c?e(c.call(void 0,a.b)):e(a.b):1==a.a&&("function"==typeof d?e(d.call(void 0,a.b)):b(a.b))}catch(h){b(h)}}})}n.prototype.g=function(a){return this.c(void 0,a)};n.prototype.c=function(a,b){var c=this;return new n(function(d,e){c.f.push([a,b,d,e]);v(c)})};
+        function w(a){return new n(function(b,c){function d(c){return function(d){h[c]=d;e+=1;e==a.length&&b(h)}}var e=0,h=[];0==a.length&&b(h);for(var k=0;k<a.length;k+=1)u(a[k]).c(d(k),c)})}function x(a){return new n(function(b,c){for(var d=0;d<a.length;d+=1)u(a[d]).c(b,c)})};window.Promise||(window.Promise=n,window.Promise.resolve=u,window.Promise.reject=t,window.Promise.race=x,window.Promise.all=w,window.Promise.prototype.then=n.prototype.c,window.Promise.prototype["catch"]=n.prototype.g);}());
+
+        (function(){function l(a,b){document.addEventListener?a.addEventListener("scroll",b,!1):a.attachEvent("scroll",b)}function m(a){document.body?a():document.addEventListener?document.addEventListener("DOMContentLoaded",function c(){document.removeEventListener("DOMContentLoaded",c);a()}):document.attachEvent("onreadystatechange",function k(){if("interactive"==document.readyState||"complete"==document.readyState)document.detachEvent("onreadystatechange",k),a()})};function r(a){this.a=document.createElement("div");this.a.setAttribute("aria-hidden","true");this.a.appendChild(document.createTextNode(a));this.b=document.createElement("span");this.c=document.createElement("span");this.h=document.createElement("span");this.f=document.createElement("span");this.g=-1;this.b.style.cssText="max-width:none;display:inline-block;position:absolute;height:100%;width:100%;overflow:scroll;font-size:16px;";this.c.style.cssText="max-width:none;display:inline-block;position:absolute;height:100%;width:100%;overflow:scroll;font-size:16px;";
+        this.f.style.cssText="max-width:none;display:inline-block;position:absolute;height:100%;width:100%;overflow:scroll;font-size:16px;";this.h.style.cssText="display:inline-block;width:200%;height:200%;font-size:16px;max-width:none;";this.b.appendChild(this.h);this.c.appendChild(this.f);this.a.appendChild(this.b);this.a.appendChild(this.c)}
+        function t(a,b){a.a.style.cssText="max-width:none;min-width:20px;min-height:20px;display:inline-block;overflow:hidden;position:absolute;width:auto;margin:0;padding:0;top:-999px;white-space:nowrap;font-synthesis:none;font:"+b+";"}function y(a){var b=a.a.offsetWidth,c=b+100;a.f.style.width=c+"px";a.c.scrollLeft=c;a.b.scrollLeft=a.b.scrollWidth+100;return a.g!==b?(a.g=b,!0):!1}function z(a,b){function c(){var a=k;y(a)&&a.a.parentNode&&b(a.g)}var k=a;l(a.b,c);l(a.c,c);y(a)};function A(a,b){var c=b||{};this.family=a;this.style=c.style||"normal";this.weight=c.weight||"normal";this.stretch=c.stretch||"normal"}var B=null,C=null,E=null,F=null;function G(){if(null===C)if(J()&&/Apple/.test(window.navigator.vendor)){var a=/AppleWebKit\/([0-9]+)(?:\.([0-9]+))(?:\.([0-9]+))/.exec(window.navigator.userAgent);C=!!a&&603>parseInt(a[1],10)}else C=!1;return C}function J(){null===F&&(F=!!document.fonts);return F}
+        function K(){if(null===E){var a=document.createElement("div");try{a.style.font="condensed 100px sans-serif"}catch(b){}E=""!==a.style.font}return E}function L(a,b){return[a.style,a.weight,K()?a.stretch:"","100px",b].join(" ")}
+        A.prototype.load=function(a,b){var c=this,k=a||"BESbswy",q=0,D=b||3E3,H=(new Date).getTime();return new Promise(function(a,b){if(J()&&!G()){var M=new Promise(function(a,b){function e(){(new Date).getTime()-H>=D?b():document.fonts.load(L(c,'"'+c.family+'"'),k).then(function(c){1<=c.length?a():setTimeout(e,25)},function(){b()})}e()}),N=new Promise(function(a,c){q=setTimeout(c,D)});Promise.race([N,M]).then(function(){clearTimeout(q);a(c)},function(){b(c)})}else m(function(){function u(){var b;if(b=-1!=
+        f&&-1!=g||-1!=f&&-1!=h||-1!=g&&-1!=h)(b=f!=g&&f!=h&&g!=h)||(null===B&&(b=/AppleWebKit\/([0-9]+)(?:\.([0-9]+))/.exec(window.navigator.userAgent),B=!!b&&(536>parseInt(b[1],10)||536===parseInt(b[1],10)&&11>=parseInt(b[2],10))),b=B&&(f==v&&g==v&&h==v||f==w&&g==w&&h==w||f==x&&g==x&&h==x)),b=!b;b&&(d.parentNode&&d.parentNode.removeChild(d),clearTimeout(q),a(c))}function I(){if((new Date).getTime()-H>=D)d.parentNode&&d.parentNode.removeChild(d),b(c);else{var a=document.hidden;if(!0===a||void 0===a)f=e.a.offsetWidth,
+        g=n.a.offsetWidth,h=p.a.offsetWidth,u();q=setTimeout(I,50)}}var e=new r(k),n=new r(k),p=new r(k),f=-1,g=-1,h=-1,v=-1,w=-1,x=-1,d=document.createElement("div");d.dir="ltr";t(e,L(c,"sans-serif"));t(n,L(c,"serif"));t(p,L(c,"monospace"));d.appendChild(e.a);d.appendChild(n.a);d.appendChild(p.a);document.body.appendChild(d);v=e.a.offsetWidth;w=n.a.offsetWidth;x=p.a.offsetWidth;I();z(e,function(a){f=a;u()});t(e,L(c,'"'+c.family+'",sans-serif'));z(n,function(a){g=a;u()});t(n,L(c,'"'+c.family+'",serif'));
+        z(p,function(a){h=a;u()});t(p,L(c,'"'+c.family+'",monospace'))})})};"object"===typeof module?module.exports=A:(window.FontFaceObserver=A,window.FontFaceObserver.prototype.load=A.prototype.load);}());
+
+        // Load and observe Lateef
+        var Lateef = new FontFaceObserver('Lateef', {weight: 400});
+        Promise.all([Lateef.load()]).then(function() {
+          document.documentElement.classList.remove('wf-loading');
+          document.documentElement.classList.add('wf-lateef');
+
+          // Optimization for Repeat Views
+          // Set a flag in localstorage so repeat views can skip processing FFO.
+          sessionStorage.fontsLoadedLateef = true;
+        });
+
+        // Load and observe Open Sans
+        var os300 = new FontFaceObserver('Open Sans', {weight: 300});
+        var os400 = new FontFaceObserver('Open Sans', {weight: 400});
+        Promise.all([os300.load(), os400.load()]).then(function() {
+          document.documentElement.classList.remove('wf-loading');
+          document.documentElement.classList.add('wf-opensans');
+
+          // Optimization for Repeat Views
+          // Set a flag in localstorage so repeat views can skip processing FFO.
+          sessionStorage.fontsLoadedOpensans = true;
+        });
+
+        // Load and observe NEWFONT
+        /*
+        var NEWFONT = new FontFaceObserver('NEWFONT', {weight: 400});
+        Promise.all([NEWFONT.load()]).then(function() {
+          document.documentElement.classList.remove('wf-loading');
+          document.documentElement.classList.add('wf-NEWFONT');
+
+          // Optimization for Repeat Views
+          // Set a flag in localstorage so repeat views can skip processing FFO.
+          sessionStorage.fontsLoadedNEWFONT = true;
+        });
+        */
+      })();
+    </script>
+    
+    <script src=https://slashdot.org/country.js></script>
+    <script src="/themes/linuxjournal/js/ada.js"></script>
+    <script src="/themes/linuxjournal/js/accessibility.js"></script>
+    <script>window.addEventListener('load', function() { new Accessibility(); });</script>
+    <script src="//a.fsdn.com/con/js/sftheme/cmp2.js"></script>
+    <link rel="stylesheet" href="//a.fsdn.com/con/css/sftheme/sandiego/cmp.css" type="text/css">
+    <link rel="stylesheet" href="/themes/linuxjournal/css/ccpa.css" type="text/css">
+    <script>window.bizx.cmp.init({ geo: window });</script>
+    <script>
+    function bm_trace() {
+        (function (w,d,t) {
+          _ml = w._ml || {};
+          _ml.eid = '771';
+          var s, cd, tag; s = d.getElementsByTagName(t)[0]; cd = new Date();
+          tag = d.createElement(t); tag.async = 1;
+          tag.src = 'https://ml314.com/tag.aspx?' + cd.getDate() + cd.getMonth();
+          s.parentNode.insertBefore(tag, s);
+        })(window,document,'script');
+    }
+    bizx.cmp.ifConsent('', ['all', 'bombora'],bm_trace);
+    </script>
+
+  </head>
+  <body class="path-node page-node-type-story has-glyphicons">
+    <a href="#main-content" class="visually-hidden focusable skip-link">
+      Skip to main content
+    </a>
+    
+      <div class="dialog-off-canvas-main-canvas" data-off-canvas-main-canvas>
+    <div id="wrap">
+<div class="leader-wrapper" id="leader-wrapper">
+</div>
+
+<div class="brand-wrapper" id="brand-wrapper">
+  <div class="brand container">
+    <div class="region region-brand">
+          <a class="logo navbar-btn" href="/" title="Home" rel="home">
+      <h1><img src="/themes/linuxjournal/images/ljlogo.png" alt="Linux Journal" /></h1>
+    </a>
+      <section id="block-topbannernearlogo" class="block block-block-content block-block-contenta8e75a3d-967c-416d-8944-4015d1f90a84 clearfix">
+  
+    
+
+      
+  </section>
+
+
+  </div>
+
+  </div>
+
+          <div class="header-wrapper">
+    <header class="navbar navbar-default container" id="navbar" role="banner">
+                                            <button type="button" class="navbar-toggle" data-toggle="collapse" data-target="#navbar-collapse">
+            <span class="sr-only">Toggle navigation</span>
+            <span class="icon-bar"></span>
+            <span class="icon-bar"></span>
+            <span class="icon-bar"></span>
+          </button>
+                <div id="navbar-collapse" class="navbar-collapse collapse">
+            <div class="region region-navigation-collapsible">
+    <section id="block-linuxjournal-main-menu" class="block block-system block-system-menu-blockmain clearfix navbar__menu col-xs-12 col-sm-8">
+  
+    
+
+      
+      <ul class="menu menu--main nav navbar-nav">
+                      <li class="expanded dropdown first">
+                                                                    <a href="/" class="dropdown-toggle" data-toggle="dropdown" data-drupal-link-system-path="&lt;front&gt;">Topics+ <span class="caret"></span></a>
+                        <ul class="dropdown-menu">
+                      <li class="first">
+                                        <a href="/tag/cloud">Cloud</a>
+              </li>
+                      <li>
+                                        <a href="/tag/containers" data-drupal-link-system-path="taxonomy/term/978">Containers</a>
+              </li>
+                      <li>
+                                        <a href="/tag/desktop">Desktop</a>
+              </li>
+                      <li>
+                                        <a href="/tag/kernel" data-drupal-link-system-path="taxonomy/term/662">Kernel</a>
+              </li>
+                      <li>
+                                        <a href="/tag/mobile">Mobile</a>
+              </li>
+                      <li>
+                                        <a href="/tag/networking">Networking</a>
+              </li>
+                      <li>
+                                        <a href="/tag/privacy">Privacy</a>
+              </li>
+                      <li>
+                                        <a href="/tag/programming">Programming</a>
+              </li>
+                      <li>
+                                        <a href="/tag/security" data-drupal-link-system-path="taxonomy/term/31">Security</a>
+              </li>
+                      <li>
+                                        <a href="/tag/servers">Servers</a>
+              </li>
+                      <li class="last">
+                                        <a href="/tag/sysadmin" data-drupal-link-system-path="taxonomy/term/21">SysAdmin</a>
+              </li>
+        </ul>
+  
+              </li>
+                      <li>
+                                        <a href="/news" data-drupal-link-system-path="news">News</a>
+              </li>
+                      <li class="last">
+                                        <a href="/books" data-drupal-link-system-path="books">eBooks</a>
+              </li>
+        </ul>
+  
+
+  </section>
+
+<section class="search-block-form block block-search block-search-form-block clearfix navbar__search col-xs-12 col-sm-4 col-md-4 col-md-offset-0" data-drupal-selector="search-block-form" id="block-linuxjournal-search" role="search">
+  
+      <h2 class="block-title sr-only">Search</h2>
+    
+
+      <form action="/search/node" method="get" id="search-block-form" accept-charset="UTF-8">
+  <div class="form-item js-form-item form-type-search js-form-type-search form-item-keys js-form-item-keys form-no-label form-group">
+      <label for="edit-keys" class="control-label sr-only">Search</label>
+  
+  
+  <div class="input-group"><input title="Enter the terms you wish to search for." data-drupal-selector="edit-keys" class="form-search form-control" placeholder="Search" type="search" id="edit-keys" name="keys" value="" size="15" maxlength="128" /><span class="input-group-btn"><button type="submit" value="Search" class="button js-form-submit form-submit btn-primary btn icon-only" name=""><span class="sr-only">Search</span><span class="icon glyphicon glyphicon-search" aria-hidden="true"></span></button></span></div>
+
+  
+  
+      <div id="edit-keys--description" class="description help-block">
+      Enter the terms you wish to search for.
+    </div>
+  </div>
+<div class="form-actions form-group js-form-wrapper form-wrapper" data-drupal-selector="edit-actions" id="edit-actions"></div>
+
+</form>
+
+  </section>
+
+
+  </div>
+
+        </div>
+            <div class="navbar-header">
+          <div class="region region-navigation">
+    <section id="block-mobilenavigation" class="block block-system block-system-menu-blockmenu-mobile-navbar clearfix col-xs-12 col-md-8 col-md-offset-2 col-lg-8 col-lg-offset-0 navbar__menu navbar__mobilenavigation">
+  
+    
+
+      
+      <ul class="menu menu--menu-mobile-navbar nav">
+                      <li class="first">
+                                        <a href="/news" data-drupal-link-system-path="news">News</a>
+              </li>
+                      <li>
+                                        <a href="/popular" data-drupal-link-system-path="popular">Popular</a>
+              </li>
+                      <li class="last">
+                                        <a href="/recent" data-drupal-link-system-path="recent">Recent</a>
+              </li>
+        </ul>
+  
+
+  </section>
+
+  </div>
+
+      </div>
+          </header>
+    </div>
+  
+</div>
+  <div role="main" class="main-container container js-quickedit-main-content" id="main">
+    <div class="row">
+
+            
+            
+                  <section class="col-sm-12">
+
+                                      <div class="highlighted">  <div class="region region-highlighted">
+    <div data-drupal-messages-fallback class="hidden"></div>
+<section id="block-contentsectionad" class="block block-block-content block-block-content23002994-ad54-4b02-9817-f4cee4ea308a clearfix">
+  
+    
+
+      
+            <div class="field field--name-body field--type-text-with-summary field--label-hidden field--item"><div id="sitewide-top-banner-placeholder" style="height:100px;width:100%;padding-top:10px;"> </div>
+<script data-source="linuxjournal" src="https://a.fsdn.com/con/js/sandiego/floating-unit.js?2026-03-23"></script><style type="text/css">
+<!--/*--><![CDATA[/* ><!--*/
+.header-wrapper{ margin-bottom:0;}
+#sitewide-top-banner-placeholder{
+margin-bottom: 25px;
+height:100px;
+width:100%
+}
+
+/*--><!]]>*/
+</style></div>
+      
+  </section>
+
+
+  </div>
+</div>
+                  
+                
+                
+                
+                          <a id="main-content"></a>
+            <div class="region region-content">
+      <article data-history-node-id="1340581" class="row bs-2col-stacked node node--type-story node--view-mode-full">
+  
+
+    <div class="col-sm-12 bs-region bs-region--top">
+    
+      <div class="field field--name-field-tags field--type-entity-reference field--label-hidden field--items">
+              <div class="field--item"><div about="/tag/kernel" typeof="schema:Thing">
+  
+      <h2><a href="/tag/kernel">
+            <div property="schema:name" class="field field--name-name field--type-string field--label-hidden field--item">kernel</div>
+      </a></h2>
+      <span property="schema:name" content="kernel" class="hidden"></span>
+
+  
+</div>
+</div>
+              <div class="field--item"><div about="/tag/how-tos" typeof="schema:Thing">
+  
+      <h2><a href="/tag/how-tos">
+            <div property="schema:name" class="field field--name-name field--type-string field--label-hidden field--item">HOW-TOs</div>
+      </a></h2>
+      <span property="schema:name" content="HOW-TOs" class="hidden"></span>
+
+  
+</div>
+</div>
+          </div>
+  
+            <div class="field field--name-node-title field--type-ds field--label-hidden field--item"><h1>
+  Oops! Debugging Kernel Panics
+</h1>
+</div>
+      
+            <div class="field field--name-node-author field--type-ds field--label-hidden field--item">by <a title="View user profile." href="/users/petros-koutoupis" lang="" about="/users/petros-koutoupis" typeof="schema:Person" property="schema:name" datatype="">Petros Koutoupis</a></div>
+      
+            <div class="field field--name-node-post-date field--type-ds field--label-hidden field--item">on August 7, 2019</div>
+      
+  </div>
+  
+    <div class="col-sm-9 bs-region bs-region--left">
+    <div class="shariff"   data-services="[&quot;twitter&quot;,&quot;facebook&quot;,&quot;linkedin&quot;,&quot;reddit&quot;,&quot;mail&quot;]" data-theme="white" data-css="complete" data-orientation="horizontal" data-twitter-via="linuxjournal" data-mail-url="mailto:" data-lang="en">
+    
+        
+</div>
+
+            <div class="field field--name-body field--type-text-with-summary field--label-hidden field--item"><p><em>A look into what causes kernel panics and some utilities to help gain
+more information.</em></p>
+
+<p>
+Working in a Linux environment, how often have you seen a kernel panic?
+When it happens, your system is left in a crippled state until
+you reboot it completely. And, even after you get your system back into a
+functional state, you're still left with the question: why? You may have no
+idea what happened or why it happened. Those questions can be answered
+though,
+and the following guide will help you root out the cause of some of the conditions
+that led to the original crash.
+</p>
+
+<img src="/sites/default/files/styles/max_650x650/public/u%5Buid%5D/panic.png" width="650" height="358" alt="&quot;&quot;" class="image-max_650x650" /><p>
+<em>Figure 1. A Typical Kernel Panic</em>
+</p>
+
+<p>
+Let's start by looking at a set of utilities known as
+<code>kexec</code> and <code>kdump</code>. <code>kexec</code> allows you to boot into
+another kernel from an existing (and running) kernel, and
+<code>kdump</code> is a
+<code>kexec</code>-based crash-dumping mechanism for Linux.
+</p>
+
+
+<span class="h3-replacement">
+Installing the Required Packages</span>
+
+<p>
+First and foremost, your kernel should have the following components statically built in to its image:
+
+</p><pre>
+<code>
+CONFIG_RELOCATABLE=y
+CONFIG_KEXEC=y
+CONFIG_CRASH_DUMP=y
+CONFIG_DEBUG_INFO=y
+CONFIG_MAGIC_SYSRQ=y
+CONFIG_PROC_VMCORE=y
+</code>
+</pre>
+
+
+<p>
+You can find this in <code>/boot/config-`uname -r`</code>.
+</p>
+
+<p>
+Make sure that your operating system is up to date with the latest-and-greatest package versions:
+
+</p><pre>
+<code>
+$ sudo apt update &amp;&amp; sudo apt upgrade
+</code>
+</pre>
+
+
+<p>
+Install the following packages
+(I'm currently using Debian, but the
+same should and will apply to Ubuntu):
+
+</p><pre>
+<code>
+$ sudo apt install gcc make binutils linux-headers-`uname -r`
+ ↪kdump-tools crash `uname -r`-dbg
+</code>
+</pre>
+
+
+<p><em>Note: Package names may vary
+across distributions.</em>
+</p>
+
+<p>
+During the installation, you will be prompted with questions to enable
+<code>kexec</code> to handle reboots (answer whatever you'd like, but I answered
+"no"; see Figure 2).
+</p>
+
+<img src="/sites/default/files/styles/max_650x650/public/u%5Buid%5D/kexec.png" width="650" height="362" alt="&quot;&quot;" class="image-max_650x650" /><p>
+<em>Figure 2.
+kexec Configuration Menu</em>
+</p>
+
+<p>
+And to enable <code>kdump</code> to run and load at system boot, answer
+"yes" (Figure 3).
+</p>
+
+<img src="/sites/default/files/styles/max_650x650/public/u%5Buid%5D/kdump.png" width="650" height="361" alt="&quot;&quot;" class="image-max_650x650" /><p>
+<em>Figure 3.
+kdump Configuration Menu</em></p>
+
+<span class="h3-replacement">
+Configuring kdump</span>
+
+<p>
+Open the /etc/default/kdump-tools file, and at the very top,
+you should see the following:
+
+</p><pre>
+<code>
+USE_KDUMP=1
+#KDUMP_SYSCTL="kernel.panic_on_oops=1"
+</code>
+</pre>
+
+
+<p>
+Eventually, you'll write a custom module that will trigger an OOPS kernel
+condition, and in order to have <code>kdump</code> gather and save the state of the
+system for post-mortem analysis, you'll need to enable your kernel to
+panic on this OOPS condition. In order to do this, uncomment the line
+that starts with <code>KDUMP_SYSCTL</code>:
+
+</p><pre>
+<code>
+USE_KDUMP=1
+KDUMP_SYSCTL="kernel.panic_on_oops=1"
+</code>
+</pre>
+
+
+<p>
+The initial testing will require that SysRq be enabled. There
+are a few ways to do that, but here I provide instructions
+to enable support for this feature on system reboot. Open the
+/etc/sysctl.d/99-sysctl.conf file, and make sure that the
+following line (closer to the bottom of the file) is uncommented:
+
+</p><pre>
+<code>
+kernel.sysrq=1
+</code>
+</pre>
+
+
+<p>
+Now, open this file: /etc/default/grub.d/kdump-tools.default. You
+will find a single line that looks like this:
+
+</p><pre>
+<code>
+GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT
+ ↪crashkernel=384M-:128M"
+</code>
+</pre>
+
+
+<p>
+Modify the section that reads <code>crashkernel=384M-:128M</code> to
+<code>crashkernel=128M</code>.
+</p>
+
+<p>
+Now, update your GRUB boot configuration file:
+
+</p><pre>
+<code>
+$ sudo update-grub
+[sudo] password for petros:
+Generating grub configuration file ...
+Found linux image: /boot/vmlinuz-4.9.0-8-amd64
+Found initrd image: /boot/initrd.img-4.9.0-8-amd64
+done
+</code>
+</pre>
+
+
+<p>
+And, reboot the system.
+</p>
+
+<span class="h3-replacement">
+Verifying Your kdump Environment</span>
+
+<p>
+After coming back from the reboot, <code>dmesg</code> will log the
+following:
+
+</p><pre>
+<code>
+$ sudo dmesg |grep -i crash
+[    0.000000] Command line: BOOT_IMAGE=/boot/vmlinuz-4.9.0-8-amd64
+ ↪root=UUID=bd76b0fe-9d09-40a9-a0d8-a7533620f6fa ro quiet
+ ↪crashkernel=128M
+[    0.000000] Reserving 128MB of memory at 720MB for crashkernel
+ ↪(System RAM: 4095MB)
+[    0.000000] Kernel command line: BOOT_IMAGE=/boot/
+↪vmlinuz-4.9.0-8-amd64
+ ↪root=UUID=bd76b0fe-9d09-40a9-a0d8-a7533620f6fa ro
+ ↪quiet crashkernel=128M
+</code>
+</pre>
+
+
+<p>
+While your kernel will have the following features enabled (a "1"
+means enabled):
+
+</p><pre>
+<code>
+$ sudo sysctl -a|grep kernel|grep -e panic_on_oops -e sysrq
+kernel.panic_on_oops = 1
+kernel.sysrq = 1
+</code>
+</pre>
+
+
+<p>
+Your <code>kdump</code> service should be running:
+
+</p><pre>
+<code>
+$ sudo systemctl status kdump-tools.service
+ kdump-tools.service - Kernel crash dump capture service
+   Loaded: loaded (/lib/systemd/system/kdump-tools.service;
+    ↪enabled; vendor preset: enabled)
+   Active: active (exited) since Tue 2019-02-26 08:13:34 CST;
+    ↪1h 33min ago
+  Process: 371 ExecStart=/etc/init.d/kdump-tools start
+   ↪(code=exited, status=0/SUCCESS)
+ Main PID: 371 (code=exited, status=0/SUCCESS)
+    Tasks: 0 (limit: 4915)
+   CGroup: /system.slice/kdump-tools.service
+
+Feb 26 08:13:34 deb-panic systemd[1]: Starting Kernel crash
+ ↪dump capture service...
+Feb 26 08:13:34 deb-panic kdump-tools[371]: Starting
+ ↪kdump-tools: loaded kdump kernel.
+Feb 26 08:13:34 deb-panic kdump-tools[505]: /sbin/kexec -p
+ ↪--command-line="BOOT_IMAGE=/boot/vmlinuz-4.9.0-8-amd64 root=
+Feb 26 08:13:34 deb-panic kdump-tools[506]: loaded kdump kernel
+Feb 26 08:13:34 deb-panic systemd[1]: Started Kernel crash dump
+ ↪capture service.
+</code>
+</pre>
+
+
+<p>
+Your crash kernel should be loaded (into memory and in the 128M region
+you defined earlier):
+
+</p><pre>
+<code>
+$ cat /sys/kernel/kexec_crash_loaded
+1
+</code>
+</pre>
+
+
+<p>
+You can verify your <code>kdump</code> configuration further here:
+
+</p><pre>
+<code>
+$ sudo kdump-config show
+DUMP_MODE:        kdump
+USE_KDUMP:        1
+KDUMP_SYSCTL:     kernel.panic_on_oops=1
+KDUMP_COREDIR:    /var/crash
+crashkernel addr: 0x2d000000
+   /var/lib/kdump/vmlinuz: symbolic link to /boot/
+↪vmlinuz-4.9.0-8-amd64
+kdump initrd:
+   /var/lib/kdump/initrd.img: symbolic link to /var/lib/kdump/
+↪initrd.img-4.9.0-8-amd64
+current state:    ready to kdump
+
+kexec command:
+  /sbin/kexec -p --command-line="BOOT_IMAGE=/boot/
+↪vmlinuz-4.9.0-8-amd64 root=UUID=bd76b0fe-9d09-40a9-
+↪a0d8-a7533620f6fa ro quiet irqpoll nr_cpus=1 nousb
+ ↪systemd.unit=kdump-tools.service
+ ↪ata_piix.prefer_ms_hyperv=0"
+ ↪--initrd=/var/lib/kdump/initrd.img /var/lib/kdump/vmlinuz
+</code>
+</pre>
+
+
+<p>
+Let's also test it without actually running it:
+
+</p><pre>
+<code>
+$ sudo kdump-config test
+USE_KDUMP:         1
+KDUMP_SYSCTL:      kernel.panic_on_oops=1
+KDUMP_COREDIR:     /var/crash
+crashkernel addr:  0x2d000000
+kdump kernel addr:
+kdump kernel:
+   /var/lib/kdump/vmlinuz: symbolic link to /boot/
+↪vmlinuz-4.9.0-8-amd64
+kdump initrd:
+   /var/lib/kdump/initrd.img: symbolic link to
+ ↪/var/lib/kdump/initrd.img-4.9.0-8-amd64
+kexec command to be used:
+  /sbin/kexec -p --command-line="BOOT_IMAGE=/boot/
+↪vmlinuz-4.9.0-8-amd64 root=UUID=bd76b0fe-9d09-40a9-
+↪a0d8-a7533620f6fa ro quiet irqpoll nr_cpus=1 nousb
+ ↪systemd.unit=kdump-tools.service
+ ↪ata_piix.prefer_ms_hyperv=0"
+ ↪--initrd=/var/lib/kdump/initrd.img /var/lib/kdump/vmlinuz
+</code>
+</pre>
+
+
+<span class="h3-replacement">
+The Moment of Truth</span>
+
+<p>
+Now that your environment is loaded to make use of <code>kdump</code>, you
+probably should test it, and the best way to test it is by forcing a
+kernel crash over SysRq. Assuming your kernel is built with SysRq support,
+crashing a running kernel is as simple as typing:
+
+</p><pre>
+<code>
+$ echo "c" | sudo tee -a /proc/sysrq-trigger
+</code>
+</pre>
+
+
+<p>
+What should you expect? You'll see a kernel panic/crash similar to the
+one shown in Figure 1. Following this crash, the kernel loaded over kexec will
+collect the state of the system, which includes everything relevant in
+memory, on the CPU, in dmesg, in loaded modules and more. It then
+will save this valuable crash data somewhere in /var/crash for
+further analysis. Once the collection of information completes, the system
+will reboot automatically and will bring you back to a functional state.
+</p>
+
+<span class="h3-replacement">
+What Now?</span>
+
+<p>
+You now have your crash file, and again, it's located in
+/var/crash:
+
+</p><pre>
+<code>
+$ cd /var/crash/
+$ ls
+201902261006  kexec_cmd
+$ cd 201902261006/
+</code>
+</pre>
+
+
+<p>
+Although before opening the crash file, you probably should install the
+kernel's source package:
+
+</p><pre>
+<code>
+$ sudo apt source linux-image-`uname -r`
+</code>
+</pre>
+
+
+<p>
+Earlier, you installed a debug version of your Linux kernel containing
+the unstripped debug symbols required for this type of debugging
+analysis. Now you need that kernel. Open the kernel crash file with the
+<code>crash</code> utility:
+
+</p><pre>
+<code>
+$ sudo crash dump.201902261006 /usr/lib/debug/
+↪vmlinux-4.9.0-8-amd64
+</code>
+</pre>
+
+
+<p>
+Once everything loads, a summary of the panic will appear on the screen:
+
+</p><pre>
+<code>
+      KERNEL: /usr/lib/debug/vmlinux-4.9.0-8-amd64
+    DUMPFILE: dump.201902261006  [PARTIAL DUMP]
+        CPUS: 4
+        DATE: Tue Feb 26 10:07:21 2019
+      UPTIME: 00:04:09
+LOAD AVERAGE: 0.00, 0.00, 0.00
+       TASKS: 100
+    NODENAME: deb-panic
+     RELEASE: 4.9.0-8-amd64
+     VERSION: #1 SMP Debian 4.9.144-3 (2019-02-02)
+     MACHINE: x86_64  (2592 Mhz)
+      MEMORY: 4 GB
+       PANIC: "sysrq: SysRq : Trigger a crash"
+         PID: 563
+     COMMAND: "tee"
+        TASK: ffff88e69628c080 [THREAD_INFO: ffff88e69628c080]
+         CPU: 2
+       STATE: TASK_RUNNING (SYSRQ)
+</code>
+</pre>
+
+
+<p>
+Notice the reason for the panic: <code>sysrq: SysRq : Trigger
+a crash</code>. Also, notice the command that led to it:
+<code>tee</code>. None of this should be a surprise since you
+triggered it.
+</p>
+
+<p>
+If you run a backtrace of what the kernel functions were that led to the
+panic, you should see the following (processed by CPU core no. 2):
+
+</p><pre>
+<code>
+crash&gt; bt
+PID: 563    TASK: ffff88e69628c080  CPU: 2   COMMAND: "tee"
+ #0 [ffffa67440b23ba0] machine_kexec at ffffffffa0c53f68
+ #1 [ffffa67440b23bf8] __crash_kexec at ffffffffa0d086d1
+ #2 [ffffa67440b23cb8] crash_kexec at ffffffffa0d08738
+ #3 [ffffa67440b23cd0] oops_end at ffffffffa0c298b3
+ #4 [ffffa67440b23cf0] no_context at ffffffffa0c619b1
+ #5 [ffffa67440b23d50] __do_page_fault at ffffffffa0c62476
+ #6 [ffffa67440b23dc0] page_fault at ffffffffa121a618
+    [exception RIP: sysrq_handle_crash+18]
+    RIP: ffffffffa102be62  RSP: ffffa67440b23e78  RFLAGS: 00010282
+    RAX: ffffffffa102be50  RBX: 0000000000000063  RCX: 0000000000000000
+    RDX: 0000000000000000  RSI: ffff88e69fd10648  RDI: 0000000000000063
+    RBP: ffffffffa18bf320   R8: 0000000000000001   R9: 0000000000007eb8
+    R10: 0000000000000001  R11: 0000000000000001  R12: 0000000000000004
+    R13: 0000000000000000  R14: 0000000000000000  R15: 0000000000000000
+    ORIG_RAX: ffffffffffffffff  CS: 0010  SS: 0018
+ #7 [ffffa67440b23e78] __handle_sysrq at ffffffffa102c597
+ #8 [ffffa67440b23ea0] write_sysrq_trigger at ffffffffa102c9db
+ #9 [ffffa67440b23eb0] proc_reg_write at ffffffffa0e7ac00
+#10 [ffffa67440b23ec8] vfs_write at ffffffffa0e0b3b0
+#11 [ffffa67440b23ef8] sys_write at ffffffffa0e0c7f2
+#12 [ffffa67440b23f38] do_syscall_64 at ffffffffa0c03b7d
+#13 [ffffa67440b23f50] entry_SYSCALL_64_after_swapgs at ffffffffa121924e
+    RIP: 00007f3952463970  RSP: 00007ffc7f3a4e58  RFLAGS: 00000246
+    RAX: ffffffffffffffda  RBX: 0000000000000002  RCX: 00007f3952463970
+    RDX: 0000000000000002  RSI: 00007ffc7f3a4f60  RDI: 0000000000000003
+    RBP: 00007ffc7f3a4f60   R8: 00005648f508b610   R9: 00007f3952944480
+    R10: 0000000000000839  R11: 0000000000000246  R12: 0000000000000002
+    R13: 0000000000000001  R14: 00005648f508b530  R15: 0000000000000002
+    ORIG_RAX: 0000000000000001  CS: 0033  SS: 002b
+</code>
+</pre>
+
+
+<p>
+In your backtrace, you should notice the symbol address of what is stored in
+your Return Instruction Pointer (RIP): <code>ffffffffa102be62</code>. Let's take a look at this symbol address:
+
+</p><pre>
+<code>
+crash&gt; sym ffffffffa102be62
+ffffffffa102be62 (t) sysrq_handle_crash+18 ./debian/build/
+↪build_amd64_none_amd64/./drivers/tty/sysrq.c: 144
+</code>
+</pre>
+
+
+<p>
+Wait a minute! The exception seems to have been triggered in line 144
+of the drivers/tty/sysrq.c file <em>and</em> inside the
+<code>sysrq_handle_crash</code> function. Hmm...I wonder what's happening
+in this kernel source file. (This is why I had you installed your kernel source
+package moments ago.) Let's navigate to the /usr/src
+directory and untar the source package:
+
+</p><pre>
+<code>
+$ cd /usr/src
+$ ls
+linux_4.9.144-3.debian.tar.xz  linux_4.9.144.orig.tar.xz
+ ↪linux-headers-4.9.0-8-common
+linux_4.9.144-3.dsc            linux-headers-4.9.0-8-amd64
+ ↪linux-kbuild-4.9
+$ sudo tar xJf linux_4.9.144.orig.tar.xz
+$ vim linux-4.9.144/drivers/tty/sysrq.c
+</code>
+</pre>
+
+
+<p>
+Locate the  <code>sysrq_handle_crash</code> function:
+
+</p><pre>
+<code>
+static void sysrq_handle_crash(int key)
+{
+    char *killer = NULL;
+
+    /* we need to release the RCU read lock here,
+     * otherwise we get an annoying
+     * 'BUG: sleeping function called from invalid context'
+     * complaint from the kernel before the panic.
+     */
+    rcu_read_unlock();
+    panic_on_oops = 1;      /* force panic */
+    wmb();
+    *killer = 1;
+}
+</code>
+</pre>
+
+
+<p>
+And more specifically, look at line 144:
+
+</p><pre>
+<code>
+*killer = 1;
+</code>
+</pre>
+
+
+<p>
+It was this line that led to the page fault logged in line #6 of the
+backtrace:
+
+</p><pre>
+<code>
+#6 [ffffa67440b23dc0] page_fault at ffffffffa121a618
+</code>
+</pre>
+
+
+<p>
+Okay. So, now you should have a basic understanding of how to debug bad
+kernel code,
+but what happens if you want to debug your very own custom kernel modules
+(for example, drivers)? I wrote a simple Linux kernel module that essentially
+invokes a similar style of a kernel crash when loaded. Call it
+test-module.c and save it somewhere in your home directory:
+
+</p><pre>
+<code>
+#include &lt;linux/init.h&gt;
+#include &lt;linux/module.h&gt;
+#include &lt;linux/version.h&gt;
+
+static int test_module_init(void)
+{
+        int *p = 1;
+printk("%d\n", *p);
+        return 0;
+}
+static void test_module_exit(void)
+{
+        return;
+}
+
+module_init(test_module_init);
+module_exit(test_module_exit);
+</code>
+</pre>
+
+
+<p>
+You'll need a Makefile to compile this kernel module (save it in the
+same directory):
+
+</p><pre>
+<code>
+obj-m += test-module.o
+
+all:
+    $(MAKE) -C/lib/modules/$(shell uname -r)/build M=$(PWD)
+</code>
+</pre>
+
+
+<p>
+Run the <code>make</code> command to compile the module and do
+<em>not</em> delete any of the compilation artifacts; you'll need
+those later:
+
+</p><pre>
+<code>
+$ make
+make -C/lib/modules/4.9.0-8-amd64/build M=/home/petros
+make[1]: Entering directory '/usr/src/
+↪linux-headers-4.9.0-8-amd64'
+  CC [M]  /home/petros/test-module.o
+/home/petros/test-module.c: In function "test_module_init":
+/home/petros/test-module.c:7:11: warning: initialization makes
+ ↪pointer from integer without a cast [-Wint-conversion]
+  int *p = 1;
+           ^
+  Building modules, stage 2.
+  MODPOST 1 modules
+  LD [M]  /home/petros/test-module.ko
+make[1]: Leaving directory '/usr/src/
+↪linux-headers-4.9.0-8-amd64'
+</code>
+</pre>
+
+
+<p><em>Note: you may see a compilation warning. Ignore it
+for now. This warning will be what triggers your kernel crash.</em></p>
+
+<p>
+Be careful now. Once you load the .ko file, the system will
+crash, so make sure everything is saved and synchronized to disk:
+
+</p><pre>
+<code>
+$ sync &amp;&amp; sudo insmod test-module.ko
+</code>
+</pre>
+
+
+<p>
+Similar to before, the system will crash, the <code>kexec</code>
+kernel/environment will help gather everything and save it somewhere in
+/var/crash, followed by an automatic reboot. After you have
+rebooted and are back into a functional state, locate the new crash
+directory and change into it:
+
+</p><pre>
+<code>
+$ cd /var/crash/201902261035/
+</code>
+</pre>
+
+
+<p>
+Also, copy the unstripped kernel object file for your <code>test-module</code> from
+your home directory and into the current working directory:
+
+</p><pre>
+<code>
+$ sudo cp ~/test.o /var/crash/201902261035/
+</code>
+</pre>
+
+
+<p>
+Load the crash file with your debug kernel:
+
+</p><pre>
+<code>
+$ sudo crash dump.201902261035 /usr/lib/debug/
+↪vmlinux-4.9.0-8-amd64
+</code>
+</pre>
+
+
+<p>
+Your summary should look something like this:
+
+</p><pre>
+<code>
+      KERNEL: /usr/lib/debug/vmlinux-4.9.0-8-amd64
+    DUMPFILE: dump.201902261035  [PARTIAL DUMP]
+        CPUS: 4
+        DATE: Tue Feb 26 10:37:47 2019
+      UPTIME: 00:11:16
+LOAD AVERAGE: 0.24, 0.06, 0.02
+       TASKS: 102
+    NODENAME: deb-panic
+     RELEASE: 4.9.0-8-amd64
+     VERSION: #1 SMP Debian 4.9.144-3 (2019-02-02)
+     MACHINE: x86_64  (2592 Mhz)
+      MEMORY: 4 GB
+       PANIC: "BUG: unable to handle kernel NULL pointer
+ ↪dereference at 0000000000000001"
+         PID: 1493
+     COMMAND: "insmod"
+        TASK: ffff893c5a5a5080 [THREAD_INFO: ffff893c5a5a5080]
+         CPU: 3
+       STATE: TASK_RUNNING (PANIC)
+</code>
+</pre>
+
+
+<p>
+The reason for the kernel crash is summarized as follows:
+<code>BUG: unable to handle kernel NULL pointer dereference at
+0000000000000001</code>. The userspace command that led to the panic
+was your <code>insmod</code>.
+</p>
+
+<p>
+A backtrace will reveal a page fault exception at address
+<code>ffffffffc05ed005</code>:
+
+</p><pre>
+<code>
+crash&gt; bt
+PID: 1493   TASK: ffff893c5a5a5080  CPU: 3  COMMAND: "insmod"
+ #0 [ffff9dcd013b79f0] machine_kexec at ffffffffa3a53f68
+ #1 [ffff9dcd013b7a48] __crash_kexec at ffffffffa3b086d1
+ #2 [ffff9dcd013b7b08] crash_kexec at ffffffffa3b08738
+ #3 [ffff9dcd013b7b20] oops_end at ffffffffa3a298b3
+ #4 [ffff9dcd013b7b40] no_context at ffffffffa3a619b1
+ #5 [ffff9dcd013b7ba0] __do_page_fault at ffffffffa3a62476
+ #6 [ffff9dcd013b7c10] page_fault at ffffffffa401a618
+    [exception RIP: init_module+5]
+    RIP: ffffffffc05ed005  RSP: ffff9dcd013b7cc8  RFLAGS: 00010246
+    RAX: 0000000000000000  RBX: 0000000000000000  RCX: 0000000000000000
+    RDX: 0000000080000000  RSI: ffff893c5a5a5ac0  RDI: ffffffffc05ed000
+    RBP: ffffffffc05ed000   R8: 0000000000020098   R9: 0000000000000006
+    R10: 0000000000000000  R11: ffff893c5a4d8100  R12: ffff893c5880d460
+    R13: ffff893c56500e80  R14: ffffffffc05ef000  R15: ffffffffc05ef050
+    ORIG_RAX: ffffffffffffffff  CS: 0010  SS: 0018
+ #7 [ffff9dcd013b7cc8] do_one_initcall at ffffffffa3a0218e
+ #8 [ffff9dcd013b7d38] do_init_module at ffffffffa3b81531
+ #9 [ffff9dcd013b7d58] load_module at ffffffffa3b04aaa
+#10 [ffff9dcd013b7e90] SYSC_finit_module at ffffffffa3b051f6
+#11 [ffff9dcd013b7f38] do_syscall_64 at ffffffffa3a03b7d
+#12 [ffff9dcd013b7f50] entry_SYSCALL_64_after_swapgs at ffffffffa401924e
+    RIP: 00007f124662c469  RSP: 00007fffc4ca04a8  RFLAGS: 00000246
+    RAX: ffffffffffffffda  RBX: 0000564213d111f0  RCX: 00007f124662c469
+    RDX: 0000000000000000  RSI: 00005642129d3638  RDI: 0000000000000003
+    RBP: 00005642129d3638   R8: 0000000000000000   R9: 00007f12468e3ea0
+    R10: 0000000000000003  R11: 0000000000000246  R12: 0000000000000000
+    R13: 0000564213d10130  R14: 0000000000000000  R15: 0000000000000000
+    ORIG_RAX: 0000000000000139  CS: 0033  SS: 002b
+</code>
+</pre>
+
+
+<p>
+Let's attempt to look at the symbol at the address
+<code>ffffffffc05ed005</code>:
+
+</p><pre>
+<code>
+crash&gt; sym ffffffffc05ed005
+ffffffffc05ed005 (t) init_module+5 [test-module]
+</code>
+</pre>
+
+
+<p>
+Hmm. The issue occurred somewhere in the module initialization code of
+the <code>test-module</code> kernel driver. But what happened to all of
+the details shown in the earlier analysis? Well, because this code is
+not part of the debug kernel image, you'll need to find a way to load
+it into your crash analysis. This is why I instructed you to copy over the
+unstripped object file into your current working directory. Now it's time to load
+the module's object file:
+
+</p><pre>
+<code>
+crash&gt; mod -s test ./test.o
+     MODULE       NAME                   SIZE  OBJECT FILE
+ffffffffc05ef000  test                  16384  ./test.o
+</code>
+</pre>
+
+
+<p>
+Now you can go back and look at the same symbol address:
+
+</p><pre>
+<code>
+crash&gt; sym ffffffffc05ed005
+ffffffffc05ed005 (T) init_module+5 [test-module]
+ ↪/home/petros/test-module.c: 8
+</code>
+</pre>
+
+
+<p>
+And, now it's time to revisit to your code and look at line 8:
+
+</p><pre>
+<code>
+$ sed -n 8p test.c
+        printk("%d\n", *p);
+</code>
+</pre>
+
+
+<p>
+There you have it. The page fault occurred when you attempted to
+print the poorly defined pointer. Remember the compilation warning from
+earlier? Well, it was warning you for a reason, and in this current case,
+it's the reason that triggered the kernel panic. You may not be as
+fortunate in future coding cases.
+</p>
+
+<span class="h3-replacement">
+What Else Can You Do Here?</span>
+
+<p>
+The kernel crash file will preserve many artifacts from your system at the
+event of your crash. You can list a short summary of available commands with the
+<code>help</code> command:
+
+</p><pre>
+<code>
+crash&gt; help
+
+*            files        mach         repeat       timer
+alias        foreach      mod          runq         tree
+ascii        fuser        mount        search       union
+bt           gdb          net          set          vm
+btop         help         p            sig          vtop
+dev          ipcs         ps           struct       waitq
+dis          irq          pte          swap         whatis
+eval         kmem         ptob         sym          wr
+exit         list         ptov         sys          q
+extend       log          rd           task
+</code>
+</pre>
+
+
+<p>
+For instance, if you want to see a general summary of memory utilization:
+
+</p><pre>
+<code>
+crash&gt; kmem -i
+                 PAGES        TOTAL      PERCENTAGE
+    TOTAL MEM   979869       3.7 GB         ----
+         FREE   835519       3.2 GB   85% of TOTAL MEM
+         USED   144350     563.9 MB   14% of TOTAL MEM
+       SHARED     8374      32.7 MB    0% of TOTAL MEM
+      BUFFERS     3849        15 MB    0% of TOTAL MEM
+       CACHED        0            0    0% of TOTAL MEM
+         SLAB     5911      23.1 MB    0% of TOTAL MEM
+
+   TOTAL SWAP  1047807         4 GB         ----
+    SWAP USED        0            0    0% of TOTAL SWAP
+    SWAP FREE  1047807         4 GB  100% of TOTAL SWAP
+
+ COMMIT LIMIT  1537741       5.9 GB         ----
+    COMMITTED    16370      63.9 MB    1% of TOTAL LIMIT
+</code>
+</pre>
+
+
+<p>
+If you want to see what <code>dmesg</code> logged up to the point of
+the failure:
+
+</p><pre>
+<code>
+crash&gt; log
+
+[    0.000000] Linux version 4.9.0-8-amd64
+ ↪(debian-kernel@lists.debian.org) (gcc version 6.3.0
+ ↪20170516 (Debian 6.3.0-18+deb9u1) ) #1 SMP Debian
+ ↪4.9.144-3 (2019-02-02)
+[    0.000000] Command line: BOOT_IMAGE=/boot/
+↪vmlinuz-4.9.0-8-amd64 root=UUID=bd76b0fe-9d09-40a9-
+↪a0d8-a7533620f6fa ro quiet crashkernel=128M
+[    0.000000] x86/fpu: Supporting XSAVE feature 0x001:
+ ↪'x87 floating point registers'
+[    0.000000] x86/fpu: Supporting XSAVE feature 0x002:
+ ↪'SSE registers'
+[    0.000000] x86/fpu: Supporting XSAVE feature 0x004:
+ ↪'AVX registers'
+[    0.000000] x86/fpu: xstate_offset[2]:  576, xstate_sizes[2]:
+ ↪256
+
+[ .... ]
+</code>
+</pre>
+
+
+<p>
+Using the same crash utility, you can drill even deeper into memory
+locations and their contents, what is being handled by every CPU core
+at the time of the crash and so much more. If you want to learn more
+about these functions, simply type <code>help</code> followed by the
+function name:
+
+</p><pre>
+<code>
+crash&gt; help mount
+</code>
+</pre>
+
+
+<p>
+Something similar to a man page will load onto your screen.
+</p>
+
+<span class="h3-replacement">
+Summary</span>
+
+<p>
+So, there you have it: an introduction into kernel crash debugging. This
+article
+barely scrapes the surface, but hopefully, it will provide
+you with a proper starting point to help diagnose kernel crashes in
+production, development and test environments.
+</p></div>
+      
+            <div class="field field--name-dynamic-token-fieldnode-author field--type-ds field--label-hidden field--item"><div>  <img loading="lazy" src="/sites/default/files/pictures/picture-1019751.jpg" width="85" height="85" typeof="foaf:Image" class="img-responsive" />
+
+</div>
+<p>Petros Koutoupis, <em>LJ</em> Editor at Large, is currently a senior performance software engineer at Cray for its Lustre High Performance File System division.
+He is also the creator and maintainer of the RapidDisk Project. Petros has worked in the data storage industry for well over a decade and has helped pioneer the many technologies unleashed in the wild today.</p>
+</div>
+      
+    <section class="section--disqus">
+    <a id="comments-link" class="btn btn-default" href="https://www.linuxjournal.com/content/oops-debugging-kernel-panics-0#disqus_thread">Load Disqus comments</a>
+
+    <div id="disqus_thread"></div>
+  <noscript>Our discussions are <a href="https://disqus.com/?ref_noscript" rel="nofollow">powered by Disqus</a>, which require JavaScript.</noscript>
+
+    
+</section>
+  </div>
+  
+    <div class="col-sm-3 bs-region bs-region--right">
+    
+            <div class="field field--name-dynamic-block-fieldnode-sidebar-image field--type-ds field--label-hidden field--item"><div class="views-element-container form-group"><div class="view view-sidebar-image view-id-sidebar_image view-display-id-block_1 js-view-dom-id-acec226155c9065392bd6ccd69a04c78bd72547eb98e8829c2707f4ac788a944">
+  
+    
+      
+  
+          </div>
+</div>
+</div>
+      
+            <div class="field field--name-dynamic-block-fieldnode-recent-content field--type-ds field--label-hidden field--item"><div class="views-element-container form-group"><div class="view view-related-content view-id-related_content view-display-id-block_2 js-view-dom-id-b25cbf01e1ce00b5ce56a621c517a92a1f224636e4ce5cc812ec3d909b4eb735">
+  
+    
+      <div class="view-header">
+      <h2 class="block-title">Recent Articles</h2>
+    </div>
+      
+      <div class="view-content">
+          <div class="views-row"><div class="views-field views-field-field-node-image"><div class="field-content">  <a href="/content/how-digital-software-powering-innovation-modern-product-design" hreflang="en"><img loading="lazy" src="/sites/default/files/styles/75x75_square/public/nodeimage/story/how-digital-software-is-powering-innovation-in-modern-product-design.jpg?itok=OHZn1L3x" width="75" height="75" alt="How Digital Software Is Powering Innovation in Modern Product Design" typeof="foaf:Image" class="img-responsive" />
+
+</a>
+</div></div><div class="views-field views-field-title"><span class="field-content"><a href="/content/how-digital-software-powering-innovation-modern-product-design" hreflang="en">How Digital Software Is Powering Innovation in Modern Product Design</a></span></div><div class="views-field views-field-uid"><span class="field-content"><a href="/users/will-jones" hreflang="en">Will Jones</a></span></div></div>
+    <div class="views-row"><div class="views-field views-field-field-node-image"><div class="field-content">  <a href="/content/gnome-files-supercharges-search-faster-results-smarter-filters-and-better-file-discovery" hreflang="en"><img loading="lazy" src="/sites/default/files/styles/75x75_square/public/nodeimage/story/gnome-files-supercharges-search-with-faster-results-smarter-filters-and-better-file-discovery.jpg?itok=GOlydVSi" width="75" height="75" alt="GNOME Files Supercharges Search with Faster Results, Smarter Filters, and Better File Discovery" typeof="foaf:Image" class="img-responsive" />
+
+</a>
+</div></div><div class="views-field views-field-title"><span class="field-content"><a href="/content/gnome-files-supercharges-search-faster-results-smarter-filters-and-better-file-discovery" hreflang="en">GNOME Files Supercharges Search with Faster Results, Smarter Filters, and Better File Discovery</a></span></div><div class="views-field views-field-uid"><span class="field-content"><a href="/users/george-whittaker" hreflang="en">George Whittaker</a></span></div></div>
+    <div class="views-row"><div class="views-field views-field-field-node-image"><div class="field-content">  <a href="/content/nixos-2605-yarara-released-systemd-initrd-default-and-major-infrastructure-updates" hreflang="en"><img loading="lazy" src="/sites/default/files/styles/75x75_square/public/nodeimage/story/nixos-26-05-yarara-released-with-systemd-initrd-by-default-and-major-infrastructure-updates.jpg?itok=3OC6EKQ4" width="75" height="75" alt="NixOS 26.05 ‘Yarara’ Released with Systemd Initrd by Default and Major Infrastructure Updates" typeof="foaf:Image" class="img-responsive" />
+
+</a>
+</div></div><div class="views-field views-field-title"><span class="field-content"><a href="/content/nixos-2605-yarara-released-systemd-initrd-default-and-major-infrastructure-updates" hreflang="en">NixOS 26.05 ‘Yarara’ Released with Systemd Initrd by Default and Major Infrastructure Updates</a></span></div><div class="views-field views-field-uid"><span class="field-content"><a href="/users/george-whittaker" hreflang="en">George Whittaker</a></span></div></div>
+    <div class="views-row"><div class="views-field views-field-field-node-image"><div class="field-content">  <a href="/content/gnome-51-development-officially-begins-coruna-cycle-gets-underway" hreflang="en"><img loading="lazy" src="/sites/default/files/styles/75x75_square/public/nodeimage/story/gnome-51-development-officially-begins-as-a-coruna-cycle-gets-underway.jpg?itok=J6F4qqr1" width="75" height="75" alt="GNOME 51 Development Officially Begins as ‘A Coruña’ Cycle Gets Underway" typeof="foaf:Image" class="img-responsive" />
+
+</a>
+</div></div><div class="views-field views-field-title"><span class="field-content"><a href="/content/gnome-51-development-officially-begins-coruna-cycle-gets-underway" hreflang="en">GNOME 51 Development Officially Begins as ‘A Coruña’ Cycle Gets Underway</a></span></div><div class="views-field views-field-uid"><span class="field-content"><a href="/users/george-whittaker" hreflang="en">George Whittaker</a></span></div></div>
+    <div class="views-row"><div class="views-field views-field-field-node-image"><div class="field-content">  <a href="/content/alpine-linux-experiments-systemd-compatibility-while-keeping-its-lightweight-identity" hreflang="en"><img loading="lazy" src="/sites/default/files/styles/75x75_square/public/nodeimage/story/alpine-linux-experiments-with-systemd-compatibility-while-keeping-its-lightweight-identity.jpg?itok=tZn3qhIF" width="75" height="75" alt="Alpine Linux Experiments with Systemd Compatibility While Keeping Its Lightweight Identity" typeof="foaf:Image" class="img-responsive" />
+
+</a>
+</div></div><div class="views-field views-field-title"><span class="field-content"><a href="/content/alpine-linux-experiments-systemd-compatibility-while-keeping-its-lightweight-identity" hreflang="en">Alpine Linux Experiments with Systemd Compatibility While Keeping Its Lightweight Identity</a></span></div><div class="views-field views-field-uid"><span class="field-content"><a href="/users/george-whittaker" hreflang="en">George Whittaker</a></span></div></div>
+    <div class="views-row"><div class="views-field views-field-field-node-image"><div class="field-content">  <a href="/content/debian-experiments-ai-assisted-bug-triage-open-source-projects-face-growing-report-overload" hreflang="en"><img loading="lazy" src="/sites/default/files/styles/75x75_square/public/nodeimage/story/debian-experiments-with-ai-assisted-bug-triage-as-open-source-projects-face-growing-report-overload.jpg?itok=0VvYDPD1" width="75" height="75" alt="Debian Experiments with AI-Assisted Bug Triage as Open-Source Projects Face Growing Report Overload" typeof="foaf:Image" class="img-responsive" />
+
+</a>
+</div></div><div class="views-field views-field-title"><span class="field-content"><a href="/content/debian-experiments-ai-assisted-bug-triage-open-source-projects-face-growing-report-overload" hreflang="en">Debian Experiments with AI-Assisted Bug Triage as Open-Source Projects Face Growing Report Overload</a></span></div><div class="views-field views-field-uid"><span class="field-content"><a href="/users/george-whittaker" hreflang="en">George Whittaker</a></span></div></div>
+
+    </div>
+  
+          </div>
+</div>
+</div>
+      
+            <div class="field field--name-dynamic-block-fieldnode-sponsors field--type-ds field--label-hidden field--item"><div class="views-element-container form-group"><div class="view view-latest-sponsor-block view-id-latest_sponsor_block view-display-id-block_1 js-view-dom-id-3434a1f92004d7abdaf25b85942ab67209ef35c39c357affba857dfadb50183b">
+  
+    
+      <div class="view-header">
+      
+    </div>
+      
+      <div class="view-content">
+          <div class="views-row">
+            <div class="field field--name-body field--type-text-with-summary field--label-hidden field--item">
+</div>
+      </div>
+
+    </div>
+  
+          </div>
+</div>
+</div>
+      
+  </div>
+  
+  
+</article>
+
+
+
+  </div>
+
+              </section>
+
+                </div>
+  </div>
+
+      <footer class="footer container" role="contentinfo">
+        <div class="region region-footer">
+    <section class="views-element-container block block-views block-views-blocknewsletter-promo-block-block-1 clearfix" id="block-views-block-newsletter-promo-block-block-1">
+  
+    
+
+      <div class="form-group"><div class="view view-newsletter-promo-block view-id-newsletter_promo_block view-display-id-block_1 js-view-dom-id-b434a607783283feab47cdb5ea7c1acf1fe6a29778e56e3d727beb941628b593">
+  
+    
+      
+      <div class="view-content">
+          <div class="views-row">
+            <div class="field field--name-body field--type-text-with-summary field--label-hidden field--item"><div class="newsletter-bottom">
+<div class="col-md-9 col-sm-12 signup-form">
+<!--<h3>Linux Journal Week in Review</h3>
+<p>Sign up to get all the good stuff delivered to your inbox every week.</p>
+
+
+<form id="subForm" class="js-cm-form" action="https://www.createsend.com/t/subscribeerror?description=" method="post" data-id="A61C50BEC994754B1D79C5819EC1255CDBC34DDF3E170B13E2BAC2D68C42BF424F853383C84F5BAE38EAB4CFA5C73907CAC074FF8192503AF80F3699F7FE5CE1">	
+<div class="flexform">-->
+    <!--<label for="fieldEmail">Email</label>
+    <br />-->
+    <!--<input id="fieldEmail" name="cm-gjjtdh-gjjtdh" type="email" class="js-cm-email-input" placeholder="Enter your email. Get the newsletter." 
+    required />
+
+    <button class="js-cm-submit-button" type="submit">Sign Up</button>
+</div>
+<div>
+    <input id="cm-privacy-consent" name="cm-privacy-consent" required type="checkbox"
+    />
+    <label for="cm-privacy-consent">I give my consent to be emailed</label>
+    <input id="cm-privacy-consent-hidden"
+    name="cm-privacy-consent-hidden" type="hidden" value="true" />
+</div>
+
+</form>
+<script type="text/javascript" src="https://js.createsend1.com/javascript/copypastesubscribeformlogic.js"></script>
+</div>-->
+<!--<div class="col-md-3 col-sm-12 subs-callout">
+<img src="/sites/default/files/styles/large/public/2019-01/LJ294-Jan2019-Cover_0.jpg" width="100px" />
+
+<h3>The Value of Open Source Journalism</h3>
+<p>
+Subscribe and support our coverage for technology's biggest thinkers – with up to 52% savings.
+</p>
+<strong><a href="https://www.linuxjournal.com/subscribe">Subscribe <i class="fa fa-angle-double-right" aria-hidden="true"></i></a> 
+</strong>
+
+
+
+</div>-->
+</div>
+
+</div>
+      </div>
+
+    </div>
+  
+          </div>
+</div>
+
+  </section>
+
+
+  </div>
+
+      		<div class="footer-blocks col-sm-12">
+                <div class="col-md-6 col-sm-12 footer-left">
+                        <div class="region region-footer-left">
+    <section id="block-connectwithusfooter" class="block block-block-content block-block-content5e722bd4-5e08-454b-8507-956089bfa661 clearfix">
+  
+    
+
+      
+            <div class="field field--name-body field--type-text-with-summary field--label-hidden field--item"><div class="footer-heading">Connect With Us <span class="social-media sm-a-no-underline"><a href="https://youtube.com/linuxjournalonline"  alt="Linux Journal on YouTube" aria-label="YouTube"><i class="fa fa-youtube fa-2x"></i></a><a href="https://www.facebook.com/linuxjournal/" alt="Linux Journal on Facebook" aria-label="Facebook"><i class="fa fa-facebook-f fa-2x"></i><a href="https://twitter.com/linuxjournal" alt="Linux Journal on Twitter" aria-label="Twitter"><i class="fa fa-twitter fa-2x"></i></a></span></div>
+
+<p>Linux Journal, representing 25+ years of publication, is the original magazine of the global Open Source community.</p></div>
+      
+  </section>
+
+<section id="block-linuxjournal-block-9" class="block block-block-content block-block-content8669793b-e217-4426-a79e-eb3c21ede127 clearfix">
+  
+    
+
+      
+            <div class="field field--name-body field--type-text-with-summary field--label-hidden field--item"><div id="copyright">© 2026 Slashdot Media, LLC. All rights reserved.</div>
+</div>
+      
+  </section>
+
+<section id="block-privacyterms" class="block block-block-content block-block-contenta203b8bd-80ef-4982-bf6e-784dd7b44120 clearfix">
+  
+    
+
+      
+            <div class="field field--name-body field--type-text-with-summary field--label-hidden field--item"><ul class="menu menu--footer-submenu nav" id="terms-nav">
+	<li><a href="https://slashdotmedia.com/privacy-statement/" rel="nofollow" target="_blank">PRIVACY POLICY</a></li>
+	<li><a href="https://slashdotmedia.com/terms-of-use/" rel="nofollow" target="_blank">TERMS OF SERVICE</a></li>
+	<li><a href="/sponsors">ADVERTISE</a></li>
+</ul></div>
+      
+  </section>
+
+
+  </div>
+
+                  </div>
+        
+        		<div class="col-md-4 col-sm-8 footer-middle">
+                        <div class="region region-footer-middle">
+    <nav role="navigation" aria-labelledby="block-footermenucolumn2-menu" id="block-footermenucolumn2">
+            
+  <h2 class="visually-hidden" id="block-footermenucolumn2-menu">Footer Menu Column 2</h2>
+  
+
+        
+      <ul class="menu menu--footer-menu-column-2 nav">
+                      <li class="first">
+                                        <a href="/content/masthead" data-drupal-link-system-path="node/1007727">Masthead</a>
+              </li>
+                      <li>
+                                        <a href="/author" data-drupal-link-system-path="node/1009249">Authors</a>
+              </li>
+                      <li class="last">
+                                        <a href="/form/contact" data-drupal-link-system-path="webform/contact">Contact Us</a>
+              </li>
+        </ul>
+  
+
+  </nav>
+<nav role="navigation" aria-labelledby="block-footermenucolumn3-menu" id="block-footermenucolumn3">
+            
+  <h2 class="visually-hidden" id="block-footermenucolumn3-menu">Footer Menu Column 3</h2>
+  
+
+        
+      <ul class="menu menu--footer-menu-column-3 nav">
+                      <li class="first">
+                                        <a href="/rss_feeds" data-drupal-link-system-path="node/1000457">RSS Feeds</a>
+              </li>
+                      <li class="last">
+                                        <a href="/aboutus" data-drupal-link-system-path="node/1000267">About Us</a>
+              </li>
+        </ul>
+  
+
+  </nav>
+
+  </div>
+
+                  </div>
+        
+                </div>
+    </footer>
+  
+</div> 
+  </div>
+
+    
+    <script type="application/json" data-drupal-selector="drupal-settings-json">{"path":{"baseUrl":"\/","scriptPath":null,"pathPrefix":"","currentPath":"node\/1340581","currentPathIsAdmin":false,"isFront":false,"currentLanguage":"en"},"pluralDelimiter":"\u0003","suppressDeprecationErrors":true,"bootstrap":{"forms_has_error_value_toggle":1,"popover_enabled":1,"popover_animation":1,"popover_auto_close":1,"popover_container":"body","popover_content":"","popover_delay":"0","popover_html":0,"popover_placement":"right","popover_selector":"","popover_title":"","popover_trigger":"click"},"linuxjournal":{"googleAnalytics":{"account":"UA-1117794-1"},"disqus":{"origin":"https:\/\/www.linuxjournal.com","prettyUrl":"\/content\/oops-debugging-kernel-panics-0","fullUrl":"https:\/\/www.linuxjournal.com\/content\/oops-debugging-kernel-panics-0","embedUrl":"https:\/\/linuxjournal.disqus.com\/embed.js","shortname":"linuxjournal"}},"statistics":{"data":{"nid":"1340581"},"url":"\/core\/modules\/statistics\/statistics.php"},"ajaxTrustedUrl":{"\/search\/node":true},"user":{"uid":0,"permissionsHash":"a7b3a803411eb9cbd5d7d374ffb326721ee8274ab5a665df8f38311e3aad858c"}}</script>
+<script src="/core/assets/vendor/jquery/jquery.min.js?v=3.6.3"></script>
+<script src="/core/assets/vendor/underscore/underscore-min.js?v=1.13.6"></script>
+<script src="/core/misc/polyfills/element.matches.js?v=9.5.11"></script>
+<script src="/core/misc/polyfills/object.assign.js?v=9.5.11"></script>
+<script src="/core/assets/vendor/once/once.min.js?v=1.0.1"></script>
+<script src="/core/assets/vendor/jquery-once/jquery.once.min.js?v=9.5.11"></script>
+<script src="/core/misc/drupalSettingsLoader.js?v=9.5.11"></script>
+<script src="/core/misc/drupal.js?v=9.5.11"></script>
+<script src="/core/misc/drupal.init.js?v=9.5.11"></script>
+<script src="/themes/contrib/bootstrap/js/drupal.bootstrap.js?tfpujm"></script>
+<script src="/themes/contrib/bootstrap/js/attributes.js?tfpujm"></script>
+<script src="/themes/contrib/bootstrap/js/theme.js?tfpujm"></script>
+<script src="/themes/linuxjournal/bootstrap/assets/javascripts/bootstrap/affix.js?tfpujm"></script>
+<script src="/themes/linuxjournal/bootstrap/assets/javascripts/bootstrap/alert.js?tfpujm"></script>
+<script src="/themes/linuxjournal/bootstrap/assets/javascripts/bootstrap/button.js?tfpujm"></script>
+<script src="/themes/linuxjournal/bootstrap/assets/javascripts/bootstrap/carousel.js?tfpujm"></script>
+<script src="/themes/linuxjournal/bootstrap/assets/javascripts/bootstrap/collapse.js?tfpujm"></script>
+<script src="/themes/linuxjournal/bootstrap/assets/javascripts/bootstrap/dropdown.js?tfpujm"></script>
+<script src="/themes/linuxjournal/bootstrap/assets/javascripts/bootstrap/modal.js?tfpujm"></script>
+<script src="/themes/linuxjournal/bootstrap/assets/javascripts/bootstrap/tooltip.js?tfpujm"></script>
+<script src="/themes/linuxjournal/bootstrap/assets/javascripts/bootstrap/popover.js?tfpujm"></script>
+<script src="/themes/linuxjournal/bootstrap/assets/javascripts/bootstrap/scrollspy.js?tfpujm"></script>
+<script src="/themes/linuxjournal/bootstrap/assets/javascripts/bootstrap/tab.js?tfpujm"></script>
+<script src="/themes/linuxjournal/bootstrap/assets/javascripts/bootstrap/transition.js?tfpujm"></script>
+<script src="/themes/linuxjournal/js/lj-consentmanager.js?tfpujm"></script>
+<script src="/modules/contrib/webform/js/webform.behaviors.js?v=9.5.11"></script>
+<script src="/core/misc/jquery.once.bc.js?v=9.5.11"></script>
+<script src="/core/misc/states.js?v=9.5.11"></script>
+<script src="/themes/contrib/bootstrap/js/misc/states.js?tfpujm"></script>
+<script src="/modules/contrib/webform/js/webform.states.js?v=9.5.11"></script>
+<script src="/modules/contrib/webform/modules/webform_bootstrap/js/webform_bootstrap.states.js?v=9.5.11"></script>
+<script src="/themes/contrib/bootstrap/js/popover.js?tfpujm"></script>
+<script src="/core/modules/statistics/statistics.js?v=9.5.11"></script>
+<script src="/themes/linuxjournal/js/lj-disqus.js?tfpujm"></script>
+<script src="/libraries/shariff/shariff.complete.js?v=9.5.11"></script>
+
+    <!-- START EMBED -->
+    <noscript><img src="https://api.b2c.com/api/noscript-448i7exgpyqpr9c144q.gif"></noscript>
+<!-- END EMBED -->
+<!-- Matomo -->
+<script type="text/javascript">
+var _paq = _paq || [];
+function initPiwik() {
+  _paq.push(['trackPageView']);
+  _paq.push(['enableLinkTracking']);
+  (function() {
+    var u="https://analytics.linuxjournal.com/";
+    _paq.push(['setTrackerUrl', u+'piwik.php']);
+    _paq.push(['setSiteId', '50']);
+    var d=document, g=d.createElement('script'), s=d.getElementsByTagName('script')[0];
+    g.type='text/javascript'; g.async=true; g.defer=true; g.src=u+'piwik.js'; s.parentNode.insertBefore(g,s);
+  })();
+}
+</script>
+<noscript><p><img src="https://analytics.linuxjournal.com/piwik.php?idsite=50&amp;rec=1" style="border:0;" alt="" /></p></noscript>
+<!-- End Matomo Code -->
+<div class="modal-custom overlay-custom" id="ccpa-modal" style="margin-left: 0; display: none; max-width: 100%; width: 100%">
+    <div id="modal-content" class="modal-content">
+        <div class="modal-header" id="ccpa-modal-content-destination"></div>
+        <span class="close" id="modal-close">&times;</span>
+    </div>
+</div>
+  </body>
+</html>

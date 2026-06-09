@@ -1,0 +1,35 @@
+# kdump-kexec-lab — a Debian VM for exploring a kernel panic with kexec/kdump.
+#
+#   Operationalises: Petros Koutoupis, "Oops! Debugging Kernel Panics" (Linux Journal)
+#   ./upstream-tutorial/  ·  https://www.linuxjournal.com/content/oops-debugging-kernel-panics-0
+#
+# This spec only builds the right-sized VM.  The faithful tutorial is then driven
+# BY HAND inside the guest — see README.md / RUNBOOK.md.  In short:
+#
+#   phase2-qemu-vm/lab-vm.sh create --config examples/kdump-kexec-lab/kdump-kexec-lab.toml
+#
+#   # kdump's kernel debug symbols are ~5.7 GB, but the Debian cloud image's root
+#   # is only ~3 GB.  Grow the disk BEFORE first boot (cloud-init auto-expands the
+#   # filesystem on boot once the virtual disk is bigger):
+#   VMDIR="${XDG_STATE_HOME:-$HOME/.local/state}/lab-create/vms/kdump-kexec-lab"
+#   qemu-img resize "$VMDIR/disk.qcow2" 30G                              # see README §0
+#
+#   phase2-qemu-vm/lab-vm.sh start kdump-kexec-lab
+#   scp -P <port> examples/kdump-kexec-lab/provision-kdump.sh lab@127.0.0.1:    # then:
+#   lab-vm.sh ssh kdump-kexec-lab -- 'sudo bash provision-kdump.sh && sudo reboot'
+#   # ...reboot reserves the crashkernel region; then RUNBOOK §4 onward (verify -> panic).
+#
+# Why a VM (not a chroot/container): kdump reserves a `crashkernel=` memory region
+# AT BOOT, then `kexec`s into a SEPARATE crash kernel when the running kernel
+# panics — and you trigger a REAL panic.  None of that is possible without a full
+# machine and control of the boot path.
+
+[[vm]]
+name     = "kdump-kexec-lab"
+backend  = "disk-image"
+distro   = "debian"
+suite    = "bookworm"          # article used Debian (4.9/stretch, EOL); method is identical
+arch     = "x86_64"
+memory   = "6G"                # crash kernel reserves 128M; the live system needs room. Article used 4G.
+cpus     = 4                   # matches the article's "CPUS: 4" in the crash summary
+ssh_port = 0                   # auto-allocate from 2222
