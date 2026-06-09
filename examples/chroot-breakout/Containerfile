@@ -1,0 +1,38 @@
+# Containerfile — reproduce Thomas Van Laere's environment so you can walk
+# "Exploring Containers - Part 1" BY HAND, step-by-step, and ESCAPE a chroot.
+#
+#   Upstream post : ./upstream-tutorial/  (byte-exact archive + provenance)
+#   Canonical URL : https://thomasvanlaere.com/posts/2020/04/exploring-containers-part-1/
+#   What it shows : a chroot is NOT a security boundary — a 12-line C program
+#                   (breakout.c) walks back out of it to the real root, which is
+#                   why real containers need namespaces (the post's later half).
+#
+# ── Base — Alpine 3.11, the author's EXACT distro+version ─────────────────────
+# The post opens with `docker run -it --rm --privileged alpine:3.11`, then proves
+# it with `cat /etc/issue` -> "Welcome to Alpine Linux 3.11". Faithfulness pins
+# 3.11 on purpose: the musl loader is named `ld-musl-x86_64.so.1`, busybox lives
+# at /bin/busybox, and `/etc/issue` says 3.11 — all of which the RUNBOOK relies
+# on verbatim. 3.11 is EOL, but this is a throwaway teaching box; the v3.11
+# package repo is still served, so `apk add` below resolves.
+#   skopeo inspect docker://alpine:3.11 --format '{{.Digest}}'   # pin if you like
+ARG BASE=docker.io/library/alpine:3.11
+FROM ${BASE}
+
+# ── The post's two prerequisites, each mapped to the step that needs it ───────
+#   build-base  -> `apk add build-base` in the post: pulls gcc + musl-dev + make
+#                  so `gcc /newroot/breakout.c -o /newroot/bin/breakout` works
+#                  (RUNBOOK §3 — the escape program).
+#   util-linux  -> `apk add util-linux` in the post: provides `pivot_root` (and a
+#                  full `mount`/`unshare`/`nsenter`) for the namespaces +
+#                  pivot_root half (RUNBOOK §4-§5). BusyBox's applets aren't
+#                  enough for `pivot_root --version` or `nsenter --target`.
+# Baking both up front means the box is ready to build AND to demonstrate the
+# real isolation primitives without a second `apk add` mid-walk.
+RUN apk add --no-cache build-base util-linux
+
+# The lab's working copy of the escape program, so it's already in the box.
+# (Pristine byte-exact source: ./upstream-tutorial/.)
+COPY breakout.c /root/breakout.c
+
+WORKDIR /root
+CMD ["/bin/sh"]
