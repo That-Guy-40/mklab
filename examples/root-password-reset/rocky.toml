@@ -1,0 +1,30 @@
+# root-password-reset — Rocky Linux 9, for the rd.break (dracut) method.
+#
+#   Part of examples/root-password-reset/ — see README.md / RUNBOOK-rd-break.md.
+#   Operationalises CIQ's "Reset Root Password on Rocky Linux".  RHEL-family
+#   distros use dracut, so the canonical recovery is `rd.break` — break into the
+#   initramfs BEFORE the pivot, `chroot /sysroot`, `passwd`, and (the easy-to-miss
+#   step) `touch /.autorelabel` so SELinux relabels /etc/shadow on next boot.
+#
+#   phase2-qemu-vm/lab-vm.sh create --config examples/root-password-reset/rocky.toml
+#   phase2-qemu-vm/lab-vm.sh start  rpr-rocky
+#   phase2-qemu-vm/lab-vm.sh ssh rpr-rocky -- 'sudo bash -s' < examples/root-password-reset/setup/prestage.sh
+#   # prestage.sh auto-detects Rocky and uses grub2-mkconfig (not update-grub).
+#   # then RUNBOOK-rd-break.md.
+#
+# STATUS: author-run.  The reset CHAIN (boot to a root shell → remount rw →
+# passwd → relabel → login) is verified on Debian; Rocky's rd.break + SELinux
+# relabel specifics (and grub2-mkconfig prestage) are to be confirmed on this VM.
+# The `console=` line in the Rocky entry may need removing in a VM to see the
+# shell prompt (CIQ note — see RUNBOOK-rd-break.md).
+
+[[vm]]
+name     = "rpr-rocky"
+backend  = "disk-image"
+distro   = "rocky"
+suite    = "9"
+arch     = "x86_64"
+firmware = "bios"          # match the verified serial-GRUB baseline; rd.break is firmware-agnostic
+memory   = "2G"
+cpus     = 2
+ssh_port = 0

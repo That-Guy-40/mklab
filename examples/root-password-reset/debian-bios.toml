@@ -1,0 +1,25 @@
+# root-password-reset — Debian, legacy BIOS (SeaBIOS) boot.
+#
+#   Part of examples/root-password-reset/ — see README.md.
+#   Demonstrates resetting a lost root password by editing the GRUB kernel
+#   command line at boot.  This spec is the *BIOS* half of the firmware pair
+#   (debian-uefi.toml is the UEFI/OVMF half); the reset technique is identical —
+#   only *reaching the GRUB editor* differs between firmwares.
+#
+#   phase2-qemu-vm/lab-vm.sh create --config examples/root-password-reset/debian-bios.toml
+#   phase2-qemu-vm/lab-vm.sh start  rpr-debian-bios
+#   # one-time lab setup (NOT part of the reset): make GRUB show an interruptible
+#   # menu on the serial console + set a root password we then "forget":
+#   phase2-qemu-vm/lab-vm.sh ssh rpr-debian-bios -- 'sudo bash -s' < examples/root-password-reset/setup/prestage.sh
+#   # then follow RUNBOOK-init-shell.md (reboot → interrupt GRUB → init=/bin/bash → passwd).
+
+[[vm]]
+name     = "rpr-debian-bios"
+backend  = "disk-image"
+distro   = "debian"
+suite    = "bookworm"
+arch     = "x86_64"
+firmware = "bios"          # SeaBIOS (legacy). The UEFI counterpart is debian-uefi.toml.
+memory   = "2G"
+cpus     = 2
+ssh_port = 0               # auto-allocate from 2222

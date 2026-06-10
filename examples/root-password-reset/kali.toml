@@ -1,0 +1,35 @@
+# root-password-reset — Kali Linux (rolling), init=/bin/bash method.
+#
+#   Part of examples/root-password-reset/ — see README.md / RUNBOOK-init-shell.md.
+#   Operationalises linuxconfig's "How to reset Kali Linux root password".  Kali
+#   is Debian-derived, so the method is identical to Debian's: edit the GRUB
+#   `linux` line to add `init=/bin/bash`, remount rw, `passwd`.
+#
+#   TWO Kali-specific notes:
+#   - Since 2020 Kali is NON-ROOT by default (the live/installed user is `kali`,
+#     and `sudo` is how you get root).  "Reset the root password" may mean: set a
+#     root password (`passwd root`) AND/OR reset the `kali` user (`passwd kali`).
+#   - lab-vm.sh builds Kali from the upstream PREBUILT qemu image (7z), which has
+#     NO cloud-init — so prestage.sh is delivered over ssh as the `kali` user
+#     (default creds kali/kali), not via a cloud-init seed.
+#
+#   phase2-qemu-vm/lab-vm.sh create --config examples/root-password-reset/kali.toml
+#   phase2-qemu-vm/lab-vm.sh start  rpr-kali
+#   phase2-qemu-vm/lab-vm.sh ssh rpr-kali -- 'sudo bash -s' < examples/root-password-reset/setup/prestage.sh
+#   # then RUNBOOK-init-shell.md.
+#
+# STATUS: author-run.  The init=/bin/bash reset is verified on Debian (same
+# family).  TO CONFIRM on the Kali prebuilt image: whether its GRUB is reachable
+# on the serial console (the image targets a graphical desktop; its GRUB may need
+# the serial-terminal prestage, or a graphical QEMU), and the non-root nuance.
+
+[[vm]]
+name     = "rpr-kali"
+backend  = "disk-image"
+distro   = "kali"
+suite    = "kali-rolling"
+arch     = "x86_64"        # lab-vm.sh: Kali is x86_64-only
+firmware = "bios"
+memory   = "2G"
+cpus     = 2
+ssh_port = 0

@@ -106,3 +106,44 @@ authors the Containerfile (a clean reproducible layer); the user runs the build.
 Exemplars: [`micro-linux/hand-walk/`](micro-linux/hand-walk/) (clean, fully
 verified), [`phase1-chroot/hand-walk/`](phase1-chroot/hand-walk/) (cap/binfmt),
 [`examples/tiny-linux-experiments/floppinux/hand-walk/`](examples/tiny-linux-experiments/floppinux/hand-walk/) (author-only steps).
+
+### Driving a boot loader / firmware serial console from a script: no flow control
+
+Scripting a **serial console** (GRUB, SeaBIOS, an initramfs shell, a getty login)
+over QEMU's unix `serial.sock` — e.g. driving a `lab-vm.sh` VM to interrupt GRUB
+and edit the kernel command line — hits a trap nothing warns you about: **GRUB's
+serial input has no flow control and silently DROPS characters** fed faster than
+it consumes them. A long `linux …` line or a rapid key burst arrives garbled, the
+edit "didn't take", and there is **no error**. (Found the hard way building
+[`examples/root-password-reset/`](examples/root-password-reset/) — ~18 failed boot
+cycles, all this one bug.)
+
+- **Slow-send everything you "type":** one byte at a time with a **~40 ms** delay
+  (`for ch in s: sock.sendall(bytes([ch])); sleep(0.04)`). Faster drops chars.
+  Space out keystrokes (~0.3–0.4 s) and **single-step** them — bursts drop keys.
+- **Arrow-key escapes (`\x1b[B`) are unreliable** in GRUB's editor — the leading
+  `Esc` reads as "discard edits / exit". Use single-byte emacs keys
+  (`Ctrl-n`/`Ctrl-p`/`Ctrl-a`/`Ctrl-e`). Even then, blind multi-line navigation of
+  a **wrapping** menu entry is fragile; for *deterministic automation* the GRUB
+  **command line** (`c` → one slow-typed `search` / `linux … init=/bin/bash` /
+  `initrd` / `boot`) beats editing the entry. Document the faithful `e`-menu-edit
+  for **humans** (who navigate it visually with no trouble) — the fragility is
+  purely an automation concern.
+- **Catch the menu** with `EXPECT "automatically in"` (countdown, reprinted each
+  second) or `"Welcome to GRUB"` (not "GNU GRUB"); **any keypress cancels** the
+  countdown (the menu then waits forever — looks hung). **One client at a time** on
+  the serial socket — a stray second connection silently steals the bytes. QEMU
+  monitor **`sendkey` does not reach a serial GRUB** (it targets the emulated
+  PS/2/VGA keyboard). For deterministic reruns, power-cycle with
+  `lab-vm.sh stop --force && start` (ssh `reboot` races the attach/boot timing).
+- **Ground-truth the result** with the booted kernel's **`/proc/cmdline`**, not by
+  screen-scraping GRUB's noisy per-keystroke ANSI redraws.
+
+Cloud images also bake `timeout=0` into their `grub.cfg` (menu hidden); a one-time
+prestage that sets `GRUB_TIMEOUT=5` + `GRUB_TIMEOUT_STYLE=menu` and regenerates
+(Debian `update-grub`, Rocky `grub2-mkconfig`) restores an interruptible **serial**
+menu — lab setup, not part of the reset. Exemplar:
+[`examples/root-password-reset/`](examples/root-password-reset/)
+([`RUNBOOK-init-shell.md`](examples/root-password-reset/RUNBOOK-init-shell.md) +
+[`MANUAL_TESTING.md`](examples/root-password-reset/MANUAL_TESTING.md)) — verified
+end-to-end on Debian/BIOS.
