@@ -26,7 +26,7 @@ machine and its boot path. Panicking/rebooting a throwaway VM is free.
 | Method | RUNBOOK | Upstream source(s) | Demonstrated on | Status |
 |---|---|---|---|---|
 | `init=/bin/bash` · `init=/bin/sh` | [init-shell](RUNBOOK-init-shell.md) | Debian (ggCircuit), Kali (linuxconfig), Arch, Rocky (method 1) | [`debian-bios`](debian-bios.toml) / [`-uefi`](debian-uefi.toml), [`kali`](kali.toml) † | ✅ **verified** (Debian/BIOS) |
-| `rd.break` → `chroot /sysroot` (+SELinux relabel) | [rd-break](RUNBOOK-rd-break.md) | Rocky / RHEL family (CIQ) | [`rocky`](rocky.toml) → gallery | ✅ **verified** (Rocky 9) |
+| `rd.break` → `chroot /sysroot` (+SELinux relabel) | [rd-break](RUNBOOK-rd-break.md) | Rocky / RHEL family (CIQ) | [`rocky`](rocky.toml) · [`almalinux`](almalinux.toml) → galleries | ✅ **verified** (Rocky 9 · AlmaLinux 9) |
 | **systemd debug shell** (`systemd.debug_shell`) | [systemd-debug-shell](RUNBOOK-systemd-debug-shell.md) | Arch | (any systemd distro) | ⏳ author-run |
 | **Other** — live media, offline disk edit, recovery mode, *why `sulogin` doesn't help* | [other-approaches](RUNBOOK-other-approaches.md) | general | — | reference |
 
@@ -131,9 +131,10 @@ media attacks. Layer them.
 | [`RUNBOOK-other-approaches.md`](RUNBOOK-other-approaches.md) | live media, offline edit, recovery mode, why `sulogin` doesn't help |
 | [`MANUAL_TESTING.md`](MANUAL_TESTING.md) | real verified serial transcript + author-run status |
 | [`debian-bios.toml`](debian-bios.toml) · [`debian-uefi.toml`](debian-uefi.toml) | the firmware pair |
-| [`kali.toml`](kali.toml) · [`rocky.toml`](rocky.toml) | Both **delegate to their galleries** (no `[[vm]]`): `kali.toml` → [`../kali-preseed-gallery/`](../kali-preseed-gallery/) (the prebuilt 7z is unbootable headless), `rocky.toml` → [`../rocky-kickstart-gallery/`](../rocky-kickstart-gallery/); each carries its distro's pre-stage + reset workflow |
+| [`kali.toml`](kali.toml) · [`rocky.toml`](rocky.toml) · [`almalinux.toml`](almalinux.toml) | All **delegate to their galleries** (no `[[vm]]`): `kali.toml` → [`../kali-preseed-gallery/`](../kali-preseed-gallery/) (the prebuilt 7z is unbootable headless), `rocky.toml` → [`../rocky-kickstart-gallery/`](../rocky-kickstart-gallery/), `almalinux.toml` → [`../almalinux-kickstart-gallery/`](../almalinux-kickstart-gallery/); each carries its distro's pre-stage + reset workflow |
 | [`setup-kali-target.sh`](setup-kali-target.sh) · [`reset-demo.sh`](reset-demo.sh) | **Kali** on-ramp + hands-off proof: build/pre-stage a real headless Kali, then serial-drive the `init=/bin/bash` reset and verify *old-rejected / new-`uid=0`* |
 | [`setup-rocky-target.sh`](setup-rocky-target.sh) · [`reset-demo-rocky.sh`](reset-demo-rocky.sh) | **Rocky** on-ramp + hands-off proof: build/pre-stage a real Rocky 9 (kickstart), then serial-drive the **`rd.break`** reset (incl. the SELinux relabel) and verify |
+| [`setup-almalinux-target.sh`](setup-almalinux-target.sh) · [`reset-demo-almalinux.sh`](reset-demo-almalinux.sh) | **AlmaLinux** on-ramp + hands-off proof: the Rocky pair's twin on a real AlmaLinux 9 (kickstart) — AlmaLinux 9 ≡ Rocky 9 for `rd.break`; only the hidden `--timeout=0` GRUB menu differs (the pre-stage reveals it) |
 | [`setup/prestage.sh`](setup/prestage.sh) | one-time lab setup (interruptible serial menu + "forgotten" pw) for the cloud-image distros (Debian/Rocky) |
 | [`tools/`](tools/) | [`serial-drive.py`](tools/serial-drive.py) — scripts the QEMU serial console (the GRUB char-drop workaround); behind the verified transcripts |
 | [`upstream-tutorial/`](upstream-tutorial/) | provenance for all four sources; Rocky archived byte-exact |

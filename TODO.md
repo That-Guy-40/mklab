@@ -216,7 +216,7 @@ char-drop fix (`serial-drive.py --char-delay 0.08`) and the **editor-append** fo
 `rd.break`.
 
 **Primary / first subproject — port the kickstart gallery to AlmaLinux:**
-- [ ] `examples/almalinux-kickstart-gallery/` ported from
+- [x] `examples/almalinux-kickstart-gallery/` ported from
       [`examples/rocky-kickstart-gallery/`](examples/rocky-kickstart-gallery/):
       `fetch-kickstarts.sh` + `select-kickstart.sh` + the unified P4+P2 TOML +
       README + MANUAL_TESTING. Point it at AlmaLinux's upstream kickstart catalog
@@ -224,16 +224,23 @@ char-drop fix (`serial-drive.py --char-delay 0.08`) and the **editor-append** fo
       [`examples/almalinux-pxe-lab/`](examples/almalinux-pxe-lab/)'s installer fetch
       (`vmlinuz`/`initrd.img`/`install.img`) the way the Rocky gallery reuses
       `rocky-pxe-lab/fetch-rocky-installer.sh`.
-- [ ] Same gallery patches as Rocky where needed (`shutdown`→`reboot`, unlock root
+- [x] Same gallery patches as Rocky where needed (`shutdown`→`reboot`, unlock root
       via `--root-pw`, `/dev/vda` pinning if any kickstart hardcodes a disk).
       Provenance: a dated note (official upstream catalog → cite, don't mirror).
+      *(AlmaLinux's were Packer kickstarts hardcoding `/dev/sda` → the `/dev/vda`
+      rewrite is REQUIRED here, not the no-op it is for Rocky; gencloud install
+      boot-verified end-to-end on KVM, root/lab, AlmaLinux 9.8.)*
 
 **Then the reset pair (mirror the Rocky scripts):**
-- [ ] `examples/root-password-reset/setup-almalinux-target.sh` +
-      `reset-demo-almalinux.sh` — build via the new gallery (e.g. `GenericCloud-Base`),
+- [x] `examples/root-password-reset/setup-almalinux-target.sh` +
+      `reset-demo-almalinux.sh` — build via the new gallery (`gencloud`),
       pre-stage (widen GRUB `--timeout` via `grub2-mkconfig`), then serial-drive the
       `rd.break` reset + verify *old-rejected / new-`uid=0`* with the relabel applied.
-- [ ] `almalinux.toml` in the reset lab, delegating to the gallery (mirrors
+      *(VERIFIED end-to-end on KVM 2026-06-11, first attempt: Ctrl-n×3 to the BLS
+      `linux` line carries over from Rocky; one AlmaLinux difference — gencloud bakes
+      `bootloader --timeout=0`, a hidden menu, so the pre-stage also sets
+      `GRUB_TIMEOUT_STYLE=menu`.)*
+- [x] `almalinux.toml` in the reset lab, delegating to the gallery (mirrors
       `rocky.toml` / `kali.toml`); update `RUNBOOK-rd-break.md` (note AlmaLinux),
       the README matrix, MANUAL_TESTING; add a 00-INDEX entry; keep `link_check.py`
       green.

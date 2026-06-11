@@ -1,0 +1,55 @@
+# root-password-reset — AlmaLinux 9, rd.break (dracut) method.  The reset TARGET
+# is built by the sibling almalinux-kickstart-gallery, NOT here.  (Mirrors rocky.toml
+# and kali.toml — same dogfooding shape: delegate the target to a gallery.)
+#
+# WHY THERE IS NO [[vm]] BLOCK.  The RHEL-family recovery is rd.break: break into
+# the dracut initramfs BEFORE the pivot, `chroot /sysroot`, `passwd`, and the
+# easy-to-miss `touch /.autorelabel` so SELinux relabels /etc/shadow on the next
+# boot (see RUNBOOK-rd-break.md).  The target is a real Anaconda/kickstart install
+# from examples/almalinux-kickstart-gallery/ (variant: gencloud), which is already
+# serial-ready (the kickstart bakes console=ttyS0) and sets the "forgotten" root
+# password directly (the gallery's --root-pw), with SELinux enforcing so the relabel
+# is real.  `lab-vm.sh create --config almalinux.toml` has nothing to build here on
+# purpose — AlmaLinux 9 and Rocky 9 are the same RHEL 9 rebuild for this method.
+#
+# ── AUTOMATED (a .toml can't run a process; these driver scripts do, reusing the
+#    gallery + tools/serial-drive.py — they run exactly the manual steps below) ──
+#
+#   examples/root-password-reset/setup-almalinux-target.sh   # build + pre-stage a ready
+#                                                            # target, then HAND-WALK the reset
+#   examples/root-password-reset/reset-demo-almalinux.sh     # OR fully hands-off: setup +
+#                                                            # serial-drive rd.break + verify
+#
+# ── Build + reset a REAL AlmaLinux BY HAND (verified 2026-06-11, kernel 5.14.0-687.el9) ──
+#
+#   # 1. Build an AlmaLinux 9 install via the gallery (Anaconda + gencloud):
+#   examples/almalinux-pxe-lab/fetch-almalinux-installer.sh --release 9 --arch x86_64
+#   examples/almalinux-kickstart-gallery/fetch-kickstarts.sh --root-pw S0meForgottenPass
+#   examples/almalinux-kickstart-gallery/select-kickstart.sh gencloud
+#   phase4-podman/lab-podman.sh up     --config examples/almalinux-kickstart-gallery/almalinux-kickstart-gallery.toml
+#   phase2-qemu-vm/lab-vm.sh    create --config examples/almalinux-kickstart-gallery/almalinux-kickstart-gallery.toml
+#   phase2-qemu-vm/lab-vm.sh    start  almalinux-kickstart-install   # unattended Anaconda; reboots into AlmaLinux
+#
+#   # 2. Pre-stage over the serial console (login root/S0meForgottenPass) — lab setup:
+#   #    the kickstart bakes GRUB --timeout=0 (menu HIDDEN), so reveal + widen it:
+#   sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=5/' /etc/default/grub
+#   grep -q TIMEOUT_STYLE /etc/default/grub || echo GRUB_TIMEOUT_STYLE=menu >> /etc/default/grub
+#   grub2-mkconfig -o /boot/grub2/grub.cfg     # AlmaLinux uses grub2-mkconfig, not update-grub
+#
+#   # 3. Reset: follow RUNBOOK-rd-break.md on almalinux-kickstart-install — at GRUB press
+#   #    `e`, add `rd.break` to the linux line, Ctrl-x; then in the dracut shell:
+#   #      mount -o remount,rw /sysroot ; chroot /sysroot ; passwd root ;
+#   #      touch /.autorelabel ; exit ; exit
+#   #    The boot continues, SELinux relabels the whole fs (slow) and reboots; then
+#   #    OLD "S0meForgottenPass" is rejected and the new password logs in (uid=0).
+#
+#   # 4. Teardown:
+#   phase4-podman/lab-podman.sh down    --lab almalinux-kickstart
+#   phase2-qemu-vm/lab-vm.sh    destroy almalinux-kickstart-install --force
+#
+# STATUS: the rd.break recipe is VERIFIED end-to-end on this kickstart-installed
+# AlmaLinux 9 (2026-06-11) — incl. the SELinux relabel (new login shows the correct
+# context).  Throwaway lab creds only — never on a real/networked host.
+#
+# (Intentionally no [[vm]] / [[service]] tables — this file is a pointer + the
+#  AlmaLinux rd.break pre-stage/reset workflow; the VM comes from the gallery.)

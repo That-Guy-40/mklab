@@ -184,15 +184,34 @@ install_img_dest="${out_dir}/images/install.img"
 if [[ -f "$install_img_dest" && "$(sha256sum "$install_img_dest" | cut -d' ' -f1)" == "$install_img_want" ]]; then
     log_info "  images/install.img: already present and verified"
 else
-    log_info "  downloading images/install.img (this is the big one)..."
-    # Resume (-C -) + retry: mirrors/CDNs often drop this ~1 GB transfer partway
-    # (curl 18); resume continues from the partial file across retries.
-    curl -fSL -C - --retry 8 --retry-delay 3 --retry-all-errors --progress-bar \
-        -o "$install_img_dest" "${os_url}/images/install.img" \
-        || die "download failed: ${os_url}/images/install.img"
-    printf '%s  %s\n' "$install_img_want" "images/install.img" | (cd "$out_dir" && sha256sum --check --strict -) \
-        || die "CHECKSUM MISMATCH for images/install.img — refusing to use a tampered/corrupt file"
-    log_info "  images/install.img: checksum OK"
+    # Download to a .part sidecar — NEVER straight to $install_img_dest.  Why:
+    # `-C -` (resume) keys off the dest file's CURRENT size.  If $install_img_dest
+    # already holds a *full-size but wrong* file (a stale leftover at the identical
+    # byte length — e.g. a prior distro's install.img, which is exactly how this bit
+    # once: a Rocky stage2 sat here at the same 1264664576 bytes), `-C -` sees a
+    # "complete" file, resumes from EOF, appends nothing, and the stale bytes persist
+    # — failing the checksum forever with no way to self-heal.  Resuming a .part only
+    # ever continues a genuine partial transfer; the real artifact is only ever
+    # written by the atomic mv after a passing checksum.
+    install_img_part="${install_img_dest}.part"
+    for _attempt in 1 2; do
+        log_info "  downloading images/install.img (this is the big one)..."
+        # Resume (-C -) + retry: mirrors/CDNs often drop this ~1 GB transfer partway
+        # (curl 18); resume continues from the partial .part across retries.
+        curl -fSL -C - --retry 8 --retry-delay 3 --retry-all-errors --progress-bar \
+            -o "$install_img_part" "${os_url}/images/install.img" \
+            || die "download failed: ${os_url}/images/install.img"
+        if printf '%s  %s\n' "$install_img_want" "$install_img_part" | sha256sum --check --strict --status -; then
+            mv -f "$install_img_part" "$install_img_dest"
+            log_info "  images/install.img: checksum OK"
+            break
+        fi
+        # Mismatch: a stale/partial .part or a mirror caught mid-publish (.treeinfo
+        # updated ahead of the file sync).  Discard and re-fetch ONCE truly fresh.
+        log_warn "  images/install.img: checksum mismatch — discarding and re-fetching fresh"
+        rm -f "$install_img_part"
+        [[ "$_attempt" == 2 ]] && die "CHECKSUM MISMATCH for images/install.img after a fresh re-download — the mirror may be mid-publish (.treeinfo ahead of the file); retry shortly, or pass a different --mirror"
+    done
 fi
 
 # ─── Step 3: permissions (world-readable so rootless nginx can serve them) ───

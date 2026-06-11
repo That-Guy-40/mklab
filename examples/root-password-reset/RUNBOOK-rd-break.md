@@ -19,6 +19,18 @@ correct context). Build + reset it hands-off with
 [`setup-rocky-target.sh`](setup-rocky-target.sh). Evidence in
 [`MANUAL_TESTING.md`](MANUAL_TESTING.md#rocky-rdbreak--verified-end-to-end-on-a-kickstart-installed-rocky-9).
 
+> **AlmaLinux is identical.** AlmaLinux 9 and Rocky 9 are the same RHEL 9 rebuild —
+> same dracut, grub2, BLS menuentry layout, and SELinux — so every step below is
+> byte-for-byte the same. The only distro difference is upstream of the reset: the
+> AlmaLinux `gencloud` kickstart bakes `bootloader --timeout=0` (a *hidden* menu, vs.
+> Rocky's `--timeout=1`), so the pre-stage also sets `GRUB_TIMEOUT_STYLE=menu` to
+> reveal it. VM: [`almalinux.toml`](almalinux.toml) → a real AlmaLinux 9 install from
+> the [almalinux-kickstart-gallery](../almalinux-kickstart-gallery/) (variant
+> `gencloud`). **STATUS: ✅ verified end-to-end** (2026-06-11, kernel
+> `5.14.0-687.el9`, relabel included). Build + reset it hands-off with
+> [`reset-demo-almalinux.sh`](reset-demo-almalinux.sh), or stage a hand-walk target
+> with [`setup-almalinux-target.sh`](setup-almalinux-target.sh).
+
 ---
 
 ## 0. Bring up the box

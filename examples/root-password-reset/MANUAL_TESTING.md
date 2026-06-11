@@ -30,6 +30,7 @@ SELinux relabel and all.
 | GRUB **command-line** (`c`) variant | same chain, deterministic | ✅ verified |
 | Debian **UEFI/OVMF** firmware path | reach GRUB menu over serial under OVMF | ⏳ author-run |
 | **Rocky** `rd.break` + `/.autorelabel` on real Rocky 9 | dracut `switch_root:/#`; relabel runs; old pw `Login incorrect`, new pw `uid=0(root)` (correct SELinux context) | ✅ **verified** ([below](#rocky-rdbreak--verified-end-to-end-on-a-kickstart-installed-rocky-9)) |
+| **AlmaLinux** `rd.break` + `/.autorelabel` on real AlmaLinux 9 | same chain as Rocky (AlmaLinux 9 ≡ Rocky 9, RHEL 9 rebuild); old pw `Login incorrect`, new pw `uid=0(root)` | ✅ **verified** ([below](#almalinux-rdbreak--verified-end-to-end-on-a-kickstart-installed-almalinux-9)) |
 | **Kali** prebuilt QEMU image on serial | boot-loops at GRUB — no video device | ❌ **tested → not serial-bootable** ([below](#kali-prebuilt-image--tested-not-serial-bootable)) |
 | **Kali method** on a *real installed* Kali (linuxconfig recipe) | `/proc/cmdline`=`…rw init=/bin/bash…`; old pw `Login incorrect`, new pw `uid=0(root)` | ✅ **verified** ([below](#kali-method--verified-end-to-end-on-a-preseed-installed-kali)) |
 | **systemd debug shell** (tty9 / serial-redirect) | passwordless root shell | ⏳ author-run |
@@ -339,6 +340,60 @@ password). Verified on KVM 2026-06-11: `setup-rocky-target.sh` → `6/6 DONE`;
 
 ---
 
+## AlmaLinux rd.break — verified end-to-end on a kickstart-installed AlmaLinux 9
+
+Same RHEL-family method on AlmaLinux instead of Rocky — and it really is the *same*
+method: AlmaLinux 9 and Rocky 9 are both RHEL 9 rebuilds sharing dracut, grub2, the
+BLS menuentry layout, and SELinux, so every keystroke in the Rocky walk above is
+identical. **Verified end-to-end on a real AlmaLinux 9** (kernel `5.14.0-687.el9`,
+SELinux **enforcing**). The target is an Anaconda/kickstart install from the sibling
+[`../almalinux-kickstart-gallery/`](../almalinux-kickstart-gallery/) (`gencloud`),
+which boots fine on serial (the kickstart bakes `console=ttyS0`) and sets the
+"forgotten" root password directly (the gallery's `--root-pw S0meForgottenPass`).
+
+**The one AlmaLinux difference is upstream of the reset:** AlmaLinux's `gencloud`
+kickstart bakes `bootloader --timeout=0` — the GRUB menu is *hidden entirely* (vs.
+Rocky's `--timeout=1`, which merely flashes by). So the pre-stage sets **both**
+`GRUB_TIMEOUT=5` **and** `GRUB_TIMEOUT_STYLE=menu`, then
+**`grub2-mkconfig -o /boot/grub2/grub.cfg`** (AlmaLinux, not `update-grub`). The
+reset itself — `e`, Ctrl-n×3 to the `linux` line, Ctrl-e, ` rd.break`, Ctrl-x →
+dracut `switch_root:/#` → `mount -o remount,rw /sysroot` → `chroot /sysroot` →
+`chpasswd` + `touch /.autorelabel` → `exit` → SELinux relabel → old-rejected /
+new-`uid=0` — is byte-for-byte the Rocky chain above.
+
+Driven by [`reset-demo-almalinux.sh`](reset-demo-almalinux.sh) (setup via
+[`setup-almalinux-target.sh`](setup-almalinux-target.sh)); same
+[`tools/serial-drive.py`](tools/serial-drive.py), same `--char-delay 0.08`.
+
+```
+# → Entering emergency mode. Exit the shell to continue.
+# → switch_root:/#                         ← the dracut initramfs shell (real root at /sysroot, ro)
+# → switch_root:/# mount -o remount,rw /sysroot
+# → switch_root:/# chroot /sysroot /bin/bash -c 'echo root:toor | chpasswd && touch /.autorelabel && echo CHROOT-RESET-OK'
+# → CHROOT-RESET-OK
+# → switch_root:/# exit                     ← continue boot → SELinux relabels the whole fs
+# → *** Warning -- SELinux targeted policy relabel is required.   ← the slow, easy-to-forget step
+# → localhost login: root
+# → Password:  (OLD "S0meForgottenPass")  → Login incorrect      ← ✓ old rejected
+# → localhost login: root
+# → Password:  (NEW "toor")               → [root@localhost ~]#
+# → # id  → uid=0(root) … context=unconfined_u:unconfined_r:unconfined_t:s0   ← ✓ reset + relabel confirmed
+```
+
+**PASS** — old rejected, new `uid=0`, SELinux context correct. Verified on KVM
+2026-06-11: `setup-almalinux-target.sh` → `6/6 DONE`; `reset-demo-almalinux.sh` →
+PASS. The Rocky gotchas above (serial char-drop → `--char-delay 0.08`, editor-append
+not command-line, the relabel reboot → `EXPECT[360] login:`) all apply unchanged.
+
+> **A trap worth flagging from this lab's own setup:** the GenericCloud install
+> first booted a *Rocky* installer because a same-size leftover `install.img` from
+> the rocky lab shadowed AlmaLinux's in `~/netboot/images/` — `fetch-almalinux-installer.sh`'s
+> `curl -C -` resume saw a full-size file and appended nothing. The fixed fetch
+> downloads via a `.part` sidecar + atomic move, so a wrong same-size file can't
+> survive its `.treeinfo` checksum gate. (Detail in the gallery's `MANUAL_TESTING.md`.)
+
+---
+
 ## Author-run items (to confirm; chain already proven on Debian)
 
 - **`debian-uefi.toml`** — only the firmware *path to the menu* differs (OVMF
@@ -347,6 +402,10 @@ password). Verified on KVM 2026-06-11: `setup-rocky-target.sh` → `6/6 DONE`;
   `rocky.toml` delegates to the kickstart gallery; the CIQ `rd.break` →
   `chroot /sysroot` → `passwd` → **`touch /.autorelabel`** chain (incl. the SELinux
   relabel) is proven on a real Rocky 9 via [`reset-demo-rocky.sh`](reset-demo-rocky.sh).
+- **`almalinux.toml`** — **not author-run: VERIFIED** (see *AlmaLinux rd.break*
+  above). Same chain on a real AlmaLinux 9 via
+  [`reset-demo-almalinux.sh`](reset-demo-almalinux.sh); AlmaLinux 9 ≡ Rocky 9 for
+  this method, with the hidden `--timeout=0` GRUB menu revealed in the pre-stage.
 - **`kali.toml`** — **not author-run: VERIFIED** (see *Kali method* above). The
   prebuilt-7z spec is gone; `kali.toml` now delegates to the preseed gallery and
   the linuxconfig recipe (`ro`→`rw`, `quiet`→`init=/bin/bash`, `passwd` root,

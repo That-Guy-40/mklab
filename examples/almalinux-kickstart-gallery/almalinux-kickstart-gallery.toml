@@ -1,0 +1,79 @@
+# AlmaLinux kickstart gallery — pick any official AlmaLinux image-build kickstart
+# and install it zero-touch in a QEMU VM.  One TOML feeds Phase 4 and Phase 2.
+#
+# The AlmaLinux counterpart of examples/rocky-kickstart-gallery (and the Anaconda
+# cousin of examples/kali-preseed-gallery).  fetch-kickstarts.sh stages AlmaLinux's
+# upstream cloud-images kickstarts (http/almalinux-9.*-x86_64.ks); select-kickstart.sh
+# bakes a chosen variant's URL into boot.ipxe.
+#
+# Copy-paste runbook: examples/almalinux-kickstart-gallery/README.md
+#
+# Each phase tool reads only the blocks it owns and silently ignores the rest:
+#   phase4-podman/lab-podman.sh   reads [[service]] with engine="podman"
+#   phase2-qemu-vm/lab-vm.sh      reads [[vm]]
+#
+# ─── Workflow — run these in order ───────────────────────────────────────────
+#
+#   # 1. Fetch the AlmaLinux installer kernel + initrd + stage2 (reuses almalinux-pxe-lab):
+#   examples/almalinux-pxe-lab/fetch-almalinux-installer.sh --release 9 --arch x86_64
+#
+#   # 2. Stage the upstream kickstart catalog (raw/ + lab-patched copies):
+#   examples/almalinux-kickstart-gallery/fetch-kickstarts.sh
+#       # -> ~/netboot/almalinux-kickstart/almalinux-9.*-x86_64.ks  (served at /almalinux-kickstart/)
+#
+#   # 3. Pick a variant -> bakes inst.ks + AppStream into boot.ipxe (+ ipxe.pxe/.efi):
+#   examples/almalinux-kickstart-gallery/select-kickstart.sh gencloud
+#
+#   # 4. Bring up the rootless nginx artifact server (Phase 4):
+#   phase4-podman/lab-podman.sh up --config examples/almalinux-kickstart-gallery/almalinux-kickstart-gallery.toml
+#
+#   # 5. Create and start the installer VM (Phase 2) — unattended:
+#   phase2-qemu-vm/lab-vm.sh create --config examples/almalinux-kickstart-gallery/almalinux-kickstart-gallery.toml
+#   phase2-qemu-vm/lab-vm.sh start  almalinux-kickstart-install   # walk away; reboots into the install
+#
+# To switch variants: re-run select-kickstart.sh <other>, then `destroy` +
+# `create` the VM (blank the target disk) before `start`.
+#
+# Tear down:
+#   phase4-podman/lab-podman.sh down    --lab almalinux-kickstart
+#   phase2-qemu-vm/lab-vm.sh    destroy almalinux-kickstart-install --force
+#
+# Update /home/sqs to your $HOME if different (no shell expansion in TOML).
+
+[lab]
+name        = "almalinux-kickstart"
+description = "AlmaLinux kickstart gallery: install any official AlmaLinux image-build kickstart (GenericCloud/OCI/GCP/Azure/Vagrant) zero-touch via QEMU pxe-install. AlmaLinux counterpart of rocky-kickstart-gallery; Anaconda cousin of kali-preseed-gallery."
+tags        = ["almalinux", "kickstart", "pxe", "netboot", "gallery", "zero-touch"]
+
+# ─── Phase 4: rootless nginx serving netboot artifacts ─────────────────────
+# Serves vmlinuz, initrd.img, images/install.img, and the staged kickstarts
+# (almalinux-kickstart/*.ks) from ~/netboot/ on host port 8181.
+[[service]]
+name    = "http"
+engine  = "podman"
+image   = "docker.io/library/nginx:alpine"
+ports   = ["8181:80"]
+volumes = ["/home/sqs/netboot:/usr/share/nginx/html:ro"]
+
+# ─── Phase 2: QEMU installer VM (pxe-install: NIC iPXE runs boot.ipxe) ──────
+# SeaBIOS tries the blank target disk (bootindex=0) → falls to the NIC's option
+# ROM (which on QEMU *is* iPXE) → it TFTP-fetches boot.ipxe and runs it directly
+# → fetches the AlmaLinux vmlinuz/initrd.img + stage2 + the selected kickstart over
+# HTTP → Anaconda partitions /dev/vda (the gallery rewrites the upstream /dev/sda)
+# and installs → reboots into the installed system (the kickstart's `reboot`).
+# On that reboot the disk (bootindex=0) wins and the NIC ROM is never reached
+# again → the netboot loop terminates.
+#   UEFI variant: drop `firmware` and set pxe_bootfile = "ipxe.efi".
+#   Real hardware w/ non-iPXE firmware PXE: set pxe_bootfile = "ipxe.pxe".
+[[vm]]
+name           = "almalinux-kickstart-install"
+backend        = "pxe-install"          # NIC's iPXE ROM runs boot.ipxe directly; no binary chainload
+firmware       = "bios"                  # SeaBIOS + NIC option-ROM path (UEFI: drop this + use ipxe.efi)
+install_target = "20G"                   # blank disk, bootindex=0: install dest + post-install boot disk
+mac            = "52:54:00:a1:5a:5e"     # pinned; distinct from rocky-kickstart / *-pxe / kali labs
+arch           = "x86_64"
+memory         = "4096M"               # 4G: Anaconda + the HTTP stage2 (install.img ~1 GB) loads into the initramfs tmpfs
+cpus           = 2
+cloud_init     = false                   # Anaconda provisions from the kickstart; no datasource
+pxe_dir        = "/home/sqs/netboot"     # QEMU slirp TFTP root (serves boot.ipxe)
+pxe_bootfile   = "boot.ipxe"             # iPXE script, run by QEMU's native iPXE NIC ROM (real HW w/ non-iPXE PXE: ipxe.pxe)
