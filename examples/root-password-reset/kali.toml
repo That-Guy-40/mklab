@@ -18,7 +18,15 @@
 # → "Kali (prebuilt image)" and "Kali method — verified end-to-end on a
 # preseed-installed Kali".
 #
-# ── Build + reset a REAL Kali (verified 2026-06-11, kernel 6.19.14+kali-amd64) ──
+# ── AUTOMATED (a .toml can't run a process; these driver scripts do, reusing the
+#    gallery + tools/serial-drive.py — they run exactly the manual steps below) ──
+#
+#   examples/root-password-reset/setup-kali-target.sh   # build + pre-stage a ready
+#                                                       # target, then HAND-WALK the reset
+#   examples/root-password-reset/reset-demo.sh          # OR fully hands-off: setup +
+#                                                       # serial-drive the reset + verify
+#
+# ── Build + reset a REAL Kali BY HAND (verified 2026-06-11, kernel 6.19.14+kali-amd64) ──
 #
 #   # 1. Build a headless Kali via the gallery (d-i + the headless-default preseed):
 #   examples/kali-pxe-lab/fetch-kali-installer.sh --arch amd64

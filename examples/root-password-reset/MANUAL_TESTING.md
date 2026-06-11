@@ -211,6 +211,15 @@ headless). The human-facing `e`-menu-edit (`ro`→`rw`, `quiet`→`init=/bin/bas
 
 ### Reproduce it (the exact methodology used)
 
+> **Scripted.** [`setup-kali-target.sh`](setup-kali-target.sh) runs steps 1–2 below
+> and leaves a ready-to-reset target (hand-walk the reset yourself);
+> [`reset-demo.sh`](reset-demo.sh) does that **and** step 3 hands-off, then verifies
+> *old-rejected / new-`uid=0`*. Both reuse [`tools/serial-drive.py`](tools/serial-drive.py),
+> confirm every step **live** (each `EXPECT`-gated), and **retry** transient serial
+> hiccups (GRUB's input has no flow control). **Verified on KVM** (2026-06-11):
+> `setup` → `6/6 DONE`; `reset-demo` → PASS, 4/4 consecutive runs. The manual steps
+> below are what they automate:
+
 ```bash
 # 1. Install a REAL Kali via d-i + preseed (not the unbootable desktop 7z):
 examples/kali-pxe-lab/fetch-kali-installer.sh --arch amd64          # d-i kernel/initrd → ~/netboot/kali/

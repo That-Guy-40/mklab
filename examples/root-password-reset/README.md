@@ -132,7 +132,9 @@ media attacks. Layer them.
 | [`MANUAL_TESTING.md`](MANUAL_TESTING.md) | real verified serial transcript + author-run status |
 | [`debian-bios.toml`](debian-bios.toml) · [`debian-uefi.toml`](debian-uefi.toml) | the firmware pair |
 | [`rocky.toml`](rocky.toml) · [`kali.toml`](kali.toml) | RHEL-family spec; **`kali.toml` delegates to [`../kali-preseed-gallery/`](../kali-preseed-gallery/)** (no `[[vm]]` — the prebuilt 7z is unbootable headless) and carries the Kali pre-stage + reset workflow |
-| [`setup/prestage.sh`](setup/prestage.sh) | one-time lab setup (interruptible serial menu + "forgotten" pw) |
+| [`setup-kali-target.sh`](setup-kali-target.sh) | **Kali on-ramp** — builds + pre-stages a real headless Kali (gallery install → serial pre-stage), leaving it ready to **hand-walk** the reset |
+| [`reset-demo.sh`](reset-demo.sh) | **Kali hands-off proof** — calls the setup, then serial-drives the reset and verifies *old-rejected / new-`uid=0`* (PASS/FAIL) |
+| [`setup/prestage.sh`](setup/prestage.sh) | one-time lab setup (interruptible serial menu + "forgotten" pw) for the cloud-image distros (Debian/Rocky) |
 | [`tools/`](tools/) | [`serial-drive.py`](tools/serial-drive.py) — scripts the QEMU serial console (the GRUB char-drop workaround); behind the verified transcripts |
 | [`upstream-tutorial/`](upstream-tutorial/) | provenance for all four sources; Rocky archived byte-exact |
 
