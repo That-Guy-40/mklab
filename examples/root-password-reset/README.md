@@ -25,10 +25,22 @@ machine and its boot path. Panicking/rebooting a throwaway VM is free.
 
 | Method | RUNBOOK | Upstream source(s) | Demonstrated on | Status |
 |---|---|---|---|---|
-| `init=/bin/bash` · `init=/bin/sh` | [init-shell](RUNBOOK-init-shell.md) | Debian (ggCircuit), Kali (linuxconfig), Arch, Rocky (method 1) | [`debian-bios`](debian-bios.toml) / [`-uefi`](debian-uefi.toml), [`kali`](kali.toml) | ✅ **verified** (Debian/BIOS) |
+| `init=/bin/bash` · `init=/bin/sh` | [init-shell](RUNBOOK-init-shell.md) | Debian (ggCircuit), Kali (linuxconfig), Arch, Rocky (method 1) | [`debian-bios`](debian-bios.toml) / [`-uefi`](debian-uefi.toml), [`kali`](kali.toml) † | ✅ **verified** (Debian/BIOS) |
 | `rd.break` → `chroot /sysroot` (+SELinux relabel) | [rd-break](RUNBOOK-rd-break.md) | Rocky / RHEL family (CIQ) | [`rocky`](rocky.toml) | ⏳ author-run |
 | **systemd debug shell** (`systemd.debug_shell`) | [systemd-debug-shell](RUNBOOK-systemd-debug-shell.md) | Arch | (any systemd distro) | ⏳ author-run |
 | **Other** — live media, offline disk edit, recovery mode, *why `sulogin` doesn't help* | [other-approaches](RUNBOOK-other-approaches.md) | general | — | reference |
+
+† Kali, two ways: its **prebuilt QEMU image is not serial-bootable** under this
+headless harness — it boot-loops at GRUB (the image's GRUB wants a video device;
+`lab-vm.sh` runs `-display none -nographic -nodefaults`; tested 2026-06-10). **But
+the linuxconfig recipe is verified end-to-end on a *real* installed Kali** — built
+with d-i + a preseed via [`../kali-preseed-gallery/`](../kali-preseed-gallery/)
+(`headless-default`), which produces a serial-reachable grub-pc; the
+`ro`→`rw` / `quiet`→`init=/bin/bash` reset gives old-pw-rejected, new-pw-`uid=0`.
+Both in [`MANUAL_TESTING.md`](MANUAL_TESTING.md#kali-method--verified-end-to-end-on-a-preseed-installed-kali).
+So **[`kali.toml`](kali.toml) now *delegates* to that gallery** (it carries the
+Kali pre-stage + reset workflow but no `[[vm]]` of its own — dogfooding the
+gallery's verified install instead of the dead-end 7z).
 
 **Firmware axis:** [`debian-bios.toml`](debian-bios.toml) (SeaBIOS, verified) and
 [`debian-uefi.toml`](debian-uefi.toml) (OVMF/UEFI) are a **pair** proving the
@@ -119,8 +131,9 @@ media attacks. Layer them.
 | [`RUNBOOK-other-approaches.md`](RUNBOOK-other-approaches.md) | live media, offline edit, recovery mode, why `sulogin` doesn't help |
 | [`MANUAL_TESTING.md`](MANUAL_TESTING.md) | real verified serial transcript + author-run status |
 | [`debian-bios.toml`](debian-bios.toml) · [`debian-uefi.toml`](debian-uefi.toml) | the firmware pair |
-| [`rocky.toml`](rocky.toml) · [`kali.toml`](kali.toml) | RHEL-family and Kali specs |
+| [`rocky.toml`](rocky.toml) · [`kali.toml`](kali.toml) | RHEL-family spec; **`kali.toml` delegates to [`../kali-preseed-gallery/`](../kali-preseed-gallery/)** (no `[[vm]]` — the prebuilt 7z is unbootable headless) and carries the Kali pre-stage + reset workflow |
 | [`setup/prestage.sh`](setup/prestage.sh) | one-time lab setup (interruptible serial menu + "forgotten" pw) |
+| [`tools/`](tools/) | [`serial-drive.py`](tools/serial-drive.py) — scripts the QEMU serial console (the GRUB char-drop workaround); behind the verified transcripts |
 | [`upstream-tutorial/`](upstream-tutorial/) | provenance for all four sources; Rocky archived byte-exact |
 
 **Verified** end-to-end on Debian 12 / BIOS (KVM); other distros/firmware/methods

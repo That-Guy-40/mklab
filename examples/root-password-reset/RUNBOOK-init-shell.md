@@ -156,7 +156,11 @@ Faithful per-source details:
   **`ro`→`rw`** (mounts the root fs writable **at boot**, so there's no remount,
   only a `mount` check) and **`quiet`→`init=/bin/bash`**. If boot misbehaves, also
   remove **`splash`**, and finish with **`exec /sbin/init`** (a plain `reboot`
-  panics). It resets **root** via `passwd`.
+  panics). It resets **root** via `passwd`. *Note:* `lab-vm.sh`'s **prebuilt Kali
+  image won't reach this menu on a serial console** (boot-loops at GRUB headless),
+  but this exact recipe is **verified end-to-end on a real installed Kali** —
+  `/proc/cmdline` showed `… rw init=/bin/bash …`, old pw rejected, new pw
+  `uid=0(root)`. Both results in [`MANUAL_TESTING.md`](MANUAL_TESTING.md#kali-method--verified-end-to-end-on-a-preseed-installed-kali).
 - **`/bin/sh` vs `/bin/bash`:** both give a root shell as PID 1 (every distro has
   `/bin/sh`); Rocky's page uses `/bin/sh`, the others `/bin/bash`.
 - **SELinux (Rocky/RHEL):** you **must** `touch /.autorelabel` or the relabel-on-
@@ -179,5 +183,8 @@ lost root password*; Rocky — CIQ KB. The per-source steps above were **reconci
 against the archived pages** in [`upstream-tutorial/`](upstream-tutorial/) (Debian,
 Kali, Rocky vendored byte-exact; Arch cited as a living wiki). All rights remain
 with the respective authors. The `init=/bin/bash` reset is **verified** end-to-end
-here on Debian 12 / BIOS; the UEFI, Rocky, and Kali **VM runs** are author-run
-(see [`MANUAL_TESTING.md`](MANUAL_TESTING.md)).
+here on Debian 12 / BIOS; the UEFI and Rocky **VM runs** are author-run. **Kali**
+is verified two ways: its upstream *prebuilt image* is **not serial-bootable**
+(boot-loops at GRUB headless), but the linuxconfig recipe is **verified
+end-to-end on a *real* installed Kali** (built via [`../kali-preseed-gallery/`](../kali-preseed-gallery/);
+kernel `6.19.14+kali-amd64`) — see [`MANUAL_TESTING.md`](MANUAL_TESTING.md#kali-method--verified-end-to-end-on-a-preseed-installed-kali).
