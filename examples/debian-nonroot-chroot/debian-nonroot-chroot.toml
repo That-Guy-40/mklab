@@ -1,0 +1,49 @@
+# Debian "non-root" chroot — Phase 1 (phase1-chroot/lab-chroot.sh).
+#
+# The Debian sibling of examples/kali-nonroot-chroot/.  Same idea, two senses of
+# "non-root":
+#   1. the RESULT is non-root — a `debian` sudo user, root password locked.
+#   2. the BUILD can be non-root — `lab-chroot.sh create --rootless` builds via
+#      fakechroot + fakeroot, no host root.  See README "Non-root build" — and the
+#      honest caveat: a full systemd base does NOT finish rootless on a host whose
+#      glibc is newer than the chroot's (the bookworm *base tree* does build
+#      rootless; the user + lock + tools need the sudo build or a glibc-matched host).
+#
+# Unlike the Kali lab, Debian needs NO keyring/component gymnastics: the tools live
+# in `main` and `debian-archive-keyring` is standard (no `non-free`, no extra key).
+#
+# Build (normal, needs root for debootstrap):
+#   sudo phase1-chroot/lab-chroot.sh create --config examples/debian-nonroot-chroot/debian-nonroot-chroot.toml
+#   phase1-chroot/lab-chroot.sh enter debian-nonroot -- su - debian -c 'whoami; id; cowsay non-root'
+#
+# Suite = bookworm on purpose: its glibc-2.36 base is the one whose *rootless*
+# tree-build completes on a newer host (trixie/13 pulls systemd, which breaks the
+# rootless build — see README's matrix).  Bump to trixie for the sudo build if you
+# want current stable.
+
+[[chroot]]
+name    = "debian-nonroot"
+backend = "debootstrap"
+distro  = "debian"
+suite   = "bookworm"
+arch    = "x86_64"
+target  = "/var/chroots/debian-nonroot"   # sudo build; for --rootless override with --target ~/debian-nonroot
+variant = "minbase"
+# debian-archive-keyring: belt-and-suspenders so the chroot's own apt trusts the
+# Debian archive for the post_commands (minbase usually pulls it, but be explicit).
+include = ["debian-archive-keyring", "sudo", "ca-certificates"]
+manager = "none"
+
+# The non-root user — the whole point: debian / debian, in the sudo group.
+users = [
+  { name = "debian", password = "debian", groups = "sudo", shell = "/bin/bash" },
+]
+
+post_commands = [
+  # Lock root so the `debian` sudo user is the only login (Kali's "root-login false").
+  "passwd -l root",
+  # A small, main-only slice that shows apt works + runs as the unprivileged user.
+  # (No `non-free`, no `sed` — the Debian contrast with the Kali lab, where `nmap`
+  # is in non-free and needs the components enabled first.)
+  "export DEBIAN_FRONTEND=noninteractive LANG=C.UTF-8; apt-get update && apt-get install -y --no-install-recommends jq cowsay",
+]
