@@ -278,6 +278,56 @@ firmware-axis note in
 [`examples/root-password-reset/README.md`](examples/root-password-reset/README.md)
 (`lab-vm.sh` `firmware = "uefi"` = OVMF/edk2).
 
+## 7. Vendor the official **Packer** image-builder repos (Kali first, then AlmaLinux) — whole + automated
+
+Both Kali and AlmaLinux publish a **Packer-based image-builder repo** that produces
+their official cloud/VM images. AlmaLinux's is
+[`AlmaLinux/cloud-images`](https://github.com/AlmaLinux/cloud-images) — the *same*
+repo the [`almalinux-kickstart-gallery`](examples/almalinux-kickstart-gallery/)
+already pulls its `http/*.ks` kickstarts from, but here we want the **whole Packer
+builder**, not just the kickstarts. Kali has an equivalent (URL **to be supplied by
+the user** — see the prerequisite). Each lab has **two halves**: (a) the upstream
+repo **vendored in full**, runnable **per its own instructions** (offline,
+byte-faithful), and (b) an **mklab automation wrapper** that drives the Packer build
+through the existing phases.
+
+> **Vendoring note (deliberate exception).** CLAUDE.md's default for "follows
+> upstream *code*" is *cite, don't mirror* — but the explicit requirement here is to
+> have each builder **available in whole to run per the repo's own instructions**,
+> so this is a **full vendor**: pin the exact upstream **commit** + a **Retrieved**
+> date, keep the upstream **LICENSE**, and add a provenance `README.md` (a
+> `git rm`-to-remove note). Decide submodule-pin vs. flattened copy when starting;
+> a flattened copy is more self-contained (matches the repo's offline ethos).
+
+**Prerequisite — do this FIRST, before any work:**
+- [ ] **Ask the user for the Kali Packer image-builder repo URL.** Requested
+      explicitly; do **not** guess the repo or begin until it's confirmed.
+
+**Kali first:**
+- [ ] Vendor the Kali Packer builder **in full** (pinned commit + provenance +
+      LICENSE) under its own `examples/` subdir, runnable per upstream's README.
+- [ ] **mklab automation wrapper** — a build script + a hand-walk `Containerfile`
+      (Packer + QEMU baked in, per the *Hand-walk sandboxes* convention) so the build
+      runs through the phases; partition what the agent can run vs. an explicit
+      "you run this" marker (Packer needs KVM/`/dev/kvm`; flag if blocked here).
+
+**AlmaLinux second:**
+- [ ] Vendor [`AlmaLinux/cloud-images`](https://github.com/AlmaLinux/cloud-images)
+      **in full** (same provenance discipline), and cross-link it with the
+      kickstart gallery (which already consumes a slice of this repo).
+- [ ] Same automation wrapper + hand-walk `Containerfile` shape as the Kali half.
+
+Per-lab, both halves: a `README.md` + `MANUAL_TESTING.md`, a 00-INDEX entry, and
+`tools/link_check.py` green (0 broken, no orphans).
+
+Exemplars: the *Provenance* + *Hand-walk sandboxes* conventions in
+[`CLAUDE.md`](CLAUDE.md); existing vendored sources under
+`examples/*/upstream-tutorial/` and hand-walk `Containerfile`s
+([`micro-linux/hand-walk/`](micro-linux/hand-walk/)); the distros' existing labs
+([`examples/kali-preseed-gallery/`](examples/kali-preseed-gallery/),
+[`examples/almalinux-kickstart-gallery/`](examples/almalinux-kickstart-gallery/))
+as the d-i/kickstart counterparts to these Packer builders.
+
 ---
 
-*Created 2026-06-06; #5–#6 added 2026-06-11.*
+*Created 2026-06-06; #5–#6 added 2026-06-11; #7 added 2026-06-11.*
