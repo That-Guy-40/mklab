@@ -12,6 +12,10 @@ upstream **prebuilt desktop image boot-loops at GRUB** on this headless harness
 but the **linuxconfig recipe is verified end-to-end on a *real* installed Kali**
 (built via the [preseed gallery](../kali-preseed-gallery/) —
 [Kali method](#kali-method--verified-end-to-end-on-a-preseed-installed-kali)).
+**Rocky**'s `rd.break` method is likewise **verified end-to-end on a real Rocky 9**
+(kickstart-installed via the [kickstart gallery](../rocky-kickstart-gallery/) —
+[Rocky rd.break](#rocky-rdbreak--verified-end-to-end-on-a-kickstart-installed-rocky-9)),
+SELinux relabel and all.
 
 | Step | Proof | Status |
 |---|---|---|
@@ -25,7 +29,7 @@ but the **linuxconfig recipe is verified end-to-end on a *real* installed Kali**
 | **NEW password works** | `root@…# id`→`uid=0(root)` for `toor` | ✅ verified |
 | GRUB **command-line** (`c`) variant | same chain, deterministic | ✅ verified |
 | Debian **UEFI/OVMF** firmware path | reach GRUB menu over serial under OVMF | ⏳ author-run |
-| **Rocky** `rd.break` + `/.autorelabel` | RHEL initramfs + SELinux relabel | ⏳ author-run |
+| **Rocky** `rd.break` + `/.autorelabel` on real Rocky 9 | dracut `switch_root:/#`; relabel runs; old pw `Login incorrect`, new pw `uid=0(root)` (correct SELinux context) | ✅ **verified** ([below](#rocky-rdbreak--verified-end-to-end-on-a-kickstart-installed-rocky-9)) |
 | **Kali** prebuilt QEMU image on serial | boot-loops at GRUB — no video device | ❌ **tested → not serial-bootable** ([below](#kali-prebuilt-image--tested-not-serial-bootable)) |
 | **Kali method** on a *real installed* Kali (linuxconfig recipe) | `/proc/cmdline`=`…rw init=/bin/bash…`; old pw `Login incorrect`, new pw `uid=0(root)` | ✅ **verified** ([below](#kali-method--verified-end-to-end-on-a-preseed-installed-kali)) |
 | **systemd debug shell** (tty9 / serial-redirect) | passwordless root shell | ⏳ author-run |
@@ -275,14 +279,74 @@ window isn't missed.
 
 ---
 
+## Rocky rd.break — verified end-to-end on a kickstart-installed Rocky 9
+
+The RHEL-family method (CIQ's `rd.break`) is **verified end-to-end on a real Rocky
+Linux 9** (kernel `5.14.0-687.el9`, SELinux **enforcing**). The target is an
+Anaconda/kickstart install from the sibling
+[`../rocky-kickstart-gallery/`](../rocky-kickstart-gallery/) (`GenericCloud-Base`)
+— the Rocky analogue of the Kali preseed install. Unlike Kali's desktop 7z it boots
+fine on serial (the kickstart bakes `console=ttyS0`) and sets the "forgotten" root
+password directly (`rootpw S0meForgottenPass`).
+
+**Pre-stage (lab setup).** The only thing to fix is the kickstart's
+`bootloader --timeout=1` (the GRUB menu flashes by): log in `root`/`S0meForgottenPass`
+over serial, `GRUB_TIMEOUT=5`, **`grub2-mkconfig -o /boot/grub2/grub.cfg`** (Rocky,
+not `update-grub`). No console-baking, no root-pw change.
+
+**The reset** (driven by [`reset-demo-rocky.sh`](reset-demo-rocky.sh) with
+[`tools/serial-drive.py`](tools/serial-drive.py); the `rd.break` word is appended in
+the GRUB **editor** — `e`, Ctrl-n×3 to the `linux` line, Ctrl-e, ` rd.break`, Ctrl-x):
+
+```
+# → [    1.9] dracut-pre-pivot: Warning: Break before switch_root
+# → Entering emergency mode. Exit the shell to continue.
+# → switch_root:/#                         ← the dracut initramfs shell (real root at /sysroot, ro)
+# → switch_root:/# mount -o remount,rw /sysroot
+# → switch_root:/# chroot /sysroot /bin/bash -c 'echo root:toor | chpasswd && touch /.autorelabel && echo OK'
+# → OK
+# → switch_root:/# exit                     ← continue boot → SELinux relabels the whole fs
+# → *** Warning -- SELinux targeted policy relabel is required.
+# → Running: /sbin/fixfiles -T 0 restore ;  Relabeling / /boot /dev …     ← the slow, easy-to-forget step
+# → localhost login: root
+# → Password:  (OLD "S0meForgottenPass")  → Login incorrect      ← ✓ old rejected
+# → localhost login: root
+# → Password:  (NEW "toor")               → [root@localhost ~]#
+# → # id  → uid=0(root) … context=unconfined_u:unconfined_r:unconfined_t:s0   ← ✓ reset + relabel confirmed
+```
+
+**PASS** — old rejected, new `uid=0`, and the **SELinux context is correct** (proof
+the `/.autorelabel` did its job — skip it and login can fail even with the right
+password). Verified on KVM 2026-06-11: `setup-rocky-target.sh` → `6/6 DONE`;
+`reset-demo-rocky.sh` → PASS.
+
+### Rocky gotchas (and the fixes)
+
+- **Rocky's grub2 drops typed input on long lines over serial** — it redraws the
+  whole line on every keystroke, and under that flood it loses keys (a `boot` came
+  out `obot`). Fix: a tunable **`--char-delay`** on `serial-drive.py` (Rocky uses
+  `0.08`, double the default), and the `rd.break` edit is an **editor-append** (one
+  word) rather than retyping the long `linux`/`initrd` lines at the GRUB command line.
+- **The dracut emergency shell is on serial** because the cmdline has only
+  `console=ttyS0` (no `console=tty0`) — so the CIQ "remove `console=`" caveat does
+  *not* apply here; keep it. The prompt is **`switch_root:/#`**.
+- **`chroot /sysroot /bin/bash -c '…'`** runs the reset non-interactively (the
+  initramfs has no `passwd`/`chpasswd` — that's *why* you chroot into the real root).
+- **SELinux relabel takes real time** (`fixfiles … restore`) and reboots once more,
+  so the demo waits `EXPECT[360] login:` after the `exit`.
+- **Editor-append timing matters**: pace Ctrl-n (~0.7 s apart) and let GRUB settle
+  (~2 s) after the append before Ctrl-x, or the boot races the edit.
+
+---
+
 ## Author-run items (to confirm; chain already proven on Debian)
 
 - **`debian-uefi.toml`** — only the firmware *path to the menu* differs (OVMF
   shows its own phase first); the edit + reset are identical.
-- **`rocky.toml`** — `rd.break` → `chroot /sysroot` → `passwd root` → **`touch
-  /.autorelabel`** (the SELinux relabel; skipping it can deny login even with the
-  right password); prestage uses `grub2-mkconfig`; a `console=` arg may need
-  removing to see the initramfs shell (CIQ note).
+- **`rocky.toml`** — **not author-run: VERIFIED** (see *Rocky rd.break* above).
+  `rocky.toml` delegates to the kickstart gallery; the CIQ `rd.break` →
+  `chroot /sysroot` → `passwd` → **`touch /.autorelabel`** chain (incl. the SELinux
+  relabel) is proven on a real Rocky 9 via [`reset-demo-rocky.sh`](reset-demo-rocky.sh).
 - **`kali.toml`** — **not author-run: VERIFIED** (see *Kali method* above). The
   prebuilt-7z spec is gone; `kali.toml` now delegates to the preseed gallery and
   the linuxconfig recipe (`ro`→`rw`, `quiet`→`init=/bin/bash`, `passwd` root,

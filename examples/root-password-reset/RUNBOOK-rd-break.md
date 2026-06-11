@@ -10,24 +10,33 @@ one everybody forgets — and it will lock you out if you skip it.
 > Same lesson as the other methods: boot-time access to the kernel command line
 > ⇒ root. See [`README.md`](README.md#mitigations) for the defenses.
 
-VM: [`rocky.toml`](rocky.toml) (Rocky 9). **STATUS: author-run** — the reset
-*chain* (root shell → remount → `passwd` → relabel → login) is verified on Debian
-in this lab; the Rocky-specific `rd.break`/SELinux/`grub2-mkconfig` details below
-are faithful to CIQ and to be confirmed on the Rocky VM (see
-[`MANUAL_TESTING.md`](MANUAL_TESTING.md)).
+VM: [`rocky.toml`](rocky.toml) → a real Rocky 9 install from the
+[rocky-kickstart-gallery](../rocky-kickstart-gallery/) (variant `GenericCloud-Base`).
+**STATUS: ✅ verified end-to-end** on that kickstart-installed Rocky 9 (2026-06-11,
+kernel `5.14.0-687.el9`) — including the SELinux relabel (the new login shows the
+correct context). Build + reset it hands-off with
+[`reset-demo-rocky.sh`](reset-demo-rocky.sh), or stage a hand-walk target with
+[`setup-rocky-target.sh`](setup-rocky-target.sh). Evidence in
+[`MANUAL_TESTING.md`](MANUAL_TESTING.md#rocky-rdbreak--verified-end-to-end-on-a-kickstart-installed-rocky-9).
 
 ---
 
 ## 0. Bring up the box
 
+Build a real Rocky 9 install (Anaconda + the `GenericCloud-Base` kickstart) and
+pre-stage it with one script — see [`rocky.toml`](rocky.toml) for the by-hand
+gallery commands it runs:
+
 ```bash
-phase2-qemu-vm/lab-vm.sh create --config examples/root-password-reset/rocky.toml
-phase2-qemu-vm/lab-vm.sh start  rpr-rocky
-# prestage auto-detects Rocky → grub2-mkconfig (not update-grub):
-phase2-qemu-vm/lab-vm.sh ssh rpr-rocky -- 'sudo bash -s' < examples/root-password-reset/setup/prestage.sh
-phase2-qemu-vm/lab-vm.sh console rpr-rocky
-# reboot it (over ssh: lab-vm.sh ssh rpr-rocky -- sudo reboot)
+examples/root-password-reset/setup-rocky-target.sh   # install + pre-stage, ~10-15 min
+phase2-qemu-vm/lab-vm.sh console rocky-kickstart-install   # then follow this RUNBOOK
 ```
+
+The kickstart already sets `console=ttyS0` (serial-ready) and `rootpw
+S0meForgottenPass`; the only pre-stage is widening GRUB's `--timeout=1` to an
+interruptible 5 s (**`grub2-mkconfig`**, not `update-grub` — Rocky). To watch the
+whole thing run itself instead, use
+[`reset-demo-rocky.sh`](reset-demo-rocky.sh).
 
 The [serial-console gotchas in `RUNBOOK-init-shell.md`](RUNBOOK-init-shell.md#0-bring-up-the-box-and-attach-the-console)
 apply here too (type slowly, use `Ctrl-n`/`Ctrl-e`, any key halts the countdown).
@@ -105,7 +114,8 @@ write-up uses — so that is Debian's primary path here.
 ## Teardown & provenance
 
 ```bash
-phase2-qemu-vm/lab-vm.sh destroy rpr-rocky --force
+phase4-podman/lab-podman.sh down    --lab rocky-kickstart
+phase2-qemu-vm/lab-vm.sh    destroy rocky-kickstart-install --force
 ```
 
 Source: **CIQ Knowledge Base**, *Reset Root Password on Rocky Linux* — archived

@@ -25,13 +25,18 @@ this — the fragility is purely an automation concern. Ground-truth a reset wit
 the booted kernel's `/proc/cmdline`, not by screen-scraping GRUB's ANSI redraws.
 
 USAGE
-  serial-drive.py SOCK [--timeout N] [--log FILE] < script    # run a DSL script
+  serial-drive.py SOCK [--timeout N] [--char-delay S] [--log FILE] < script
   serial-drive.py SOCK --capture SECONDS [--log FILE]         # passive: read & dump
 
   SOCK is the VM's serial socket, e.g.
     ~/.local/state/lab-create/vms/<name>/serial.sock
   Stop the VM first so nothing else holds the socket:
     lab-vm.sh stop <name> --force && lab-vm.sh start <name>
+
+  --char-delay S   per-character send delay in seconds (default 0.04).  RAISE it
+                   (e.g. 0.08) for boot loaders that redraw the line aggressively
+                   over serial and drop input under that load — Rocky/RHEL grub2
+                   needs this where Debian/Kali grub is fine at the default.
 
 SCRIPT DSL (one command per line; blank lines and '#' comments ignored)
   EXPECT <substr>        wait until <substr> appears in the stream (uses --timeout)
@@ -71,11 +76,13 @@ def main():
     timeout = DEFAULT_TIMEOUT
     log_path = "/tmp/sc.transcript"
     capture = None
-    i = 0
+    char_delay = CHAR_DELAY   # per-char send delay; raise it for GRUBs that redraw
+    i = 0                     # aggressively over serial and drop input under load (Rocky)
     while i < len(args):
-        if args[i] == "--timeout":   timeout = float(args[i + 1]); i += 2
-        elif args[i] == "--log":     log_path = args[i + 1];       i += 2
-        elif args[i] == "--capture": capture = float(args[i + 1]); i += 2
+        if args[i] == "--timeout":      timeout = float(args[i + 1]);    i += 2
+        elif args[i] == "--log":        log_path = args[i + 1];          i += 2
+        elif args[i] == "--capture":    capture = float(args[i + 1]);    i += 2
+        elif args[i] == "--char-delay": char_delay = float(args[i + 1]); i += 2
         else: i += 1
     logf = open(log_path, "ab", buffering=0)
 
@@ -112,7 +119,7 @@ def main():
     def send_slow(text):
         for ch in text.encode():
             s.sendall(bytes([ch]))
-            time.sleep(CHAR_DELAY)
+            time.sleep(char_delay)
             pump(time.monotonic())       # drain the echo so buf tracks reality
 
     if capture is not None:

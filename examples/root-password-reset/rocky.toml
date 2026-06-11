@@ -1,30 +1,58 @@
-# root-password-reset — Rocky Linux 9, for the rd.break (dracut) method.
+# root-password-reset — Rocky Linux 9, rd.break (dracut) method.  The reset TARGET
+# is built by the sibling rocky-kickstart-gallery, NOT here.  (Mirrors kali.toml,
+# which delegates to the kali-preseed-gallery — same dogfooding shape.)
 #
-#   Part of examples/root-password-reset/ — see README.md / RUNBOOK-rd-break.md.
-#   Operationalises CIQ's "Reset Root Password on Rocky Linux".  RHEL-family
-#   distros use dracut, so the canonical recovery is `rd.break` — break into the
-#   initramfs BEFORE the pivot, `chroot /sysroot`, `passwd`, and (the easy-to-miss
-#   step) `touch /.autorelabel` so SELinux relabels /etc/shadow on next boot.
+# WHY THERE IS NO [[vm]] BLOCK.  The RHEL-family recovery is rd.break: break into
+# the dracut initramfs BEFORE the pivot, `chroot /sysroot`, `passwd`, and the
+# easy-to-miss `touch /.autorelabel` so SELinux relabels /etc/shadow on the next
+# boot (CIQ's method 2 — see RUNBOOK-rd-break.md).  The target is a real
+# Anaconda/kickstart install from examples/rocky-kickstart-gallery/ (variant:
+# GenericCloud-Base), which is already serial-ready (the kickstart bakes
+# console=ttyS0) and sets the "forgotten" root password directly
+# (rootpw S0meForgottenPass), with SELinux enforcing so the relabel is real.
+# `lab-vm.sh create --config rocky.toml` has nothing to build here on purpose.
 #
-#   phase2-qemu-vm/lab-vm.sh create --config examples/root-password-reset/rocky.toml
-#   phase2-qemu-vm/lab-vm.sh start  rpr-rocky
-#   phase2-qemu-vm/lab-vm.sh ssh rpr-rocky -- 'sudo bash -s' < examples/root-password-reset/setup/prestage.sh
-#   # prestage.sh auto-detects Rocky and uses grub2-mkconfig (not update-grub).
-#   # then RUNBOOK-rd-break.md.
+# (A plain disk-image Rocky cloud qcow2 would ALSO boot on this serial harness —
+#  unlike Kali's graphical 7z — but the lab uses the gallery for a real kickstart
+#  install and parallelism with the Kali pair.)
 #
-# STATUS: author-run.  The reset CHAIN (boot to a root shell → remount rw →
-# passwd → relabel → login) is verified on Debian; Rocky's rd.break + SELinux
-# relabel specifics (and grub2-mkconfig prestage) are to be confirmed on this VM.
-# The `console=` line in the Rocky entry may need removing in a VM to see the
-# shell prompt (CIQ note — see RUNBOOK-rd-break.md).
-
-[[vm]]
-name     = "rpr-rocky"
-backend  = "disk-image"
-distro   = "rocky"
-suite    = "9"
-arch     = "x86_64"
-firmware = "bios"          # match the verified serial-GRUB baseline; rd.break is firmware-agnostic
-memory   = "2G"
-cpus     = 2
-ssh_port = 0
+# ── AUTOMATED (a .toml can't run a process; these driver scripts do, reusing the
+#    gallery + tools/serial-drive.py — they run exactly the manual steps below) ──
+#
+#   examples/root-password-reset/setup-rocky-target.sh   # build + pre-stage a ready
+#                                                        # target, then HAND-WALK the reset
+#   examples/root-password-reset/reset-demo-rocky.sh     # OR fully hands-off: setup +
+#                                                        # serial-drive rd.break + verify
+#
+# ── Build + reset a REAL Rocky BY HAND (verified 2026-06-11, kernel 5.14.0-687.el9) ──
+#
+#   # 1. Build a Rocky 9 install via the gallery (Anaconda + GenericCloud-Base):
+#   examples/rocky-pxe-lab/fetch-rocky-installer.sh --release 9 --arch x86_64
+#   examples/rocky-kickstart-gallery/fetch-kickstarts.sh --root-pw S0meForgottenPass
+#   examples/rocky-kickstart-gallery/select-kickstart.sh GenericCloud-Base
+#   phase4-podman/lab-podman.sh up     --config examples/rocky-kickstart-gallery/rocky-kickstart-gallery.toml
+#   phase2-qemu-vm/lab-vm.sh    create --config examples/rocky-kickstart-gallery/rocky-kickstart-gallery.toml
+#   phase2-qemu-vm/lab-vm.sh    start  rocky-kickstart-install   # unattended Anaconda; reboots into Rocky
+#
+#   # 2. Pre-stage over the serial console (login root/S0meForgottenPass) — lab setup:
+#   #    the kickstart sets GRUB --timeout=1 (menu flashes by), so widen it:
+#   sed -i 's/^GRUB_TIMEOUT=.*/GRUB_TIMEOUT=5/' /etc/default/grub
+#   grub2-mkconfig -o /boot/grub2/grub.cfg     # Rocky uses grub2-mkconfig, not update-grub
+#
+#   # 3. Reset: follow RUNBOOK-rd-break.md on rocky-kickstart-install — at GRUB press
+#   #    `e`, add `rd.break` to the linux line, Ctrl-x; then in the dracut shell:
+#   #      mount -o remount,rw /sysroot ; chroot /sysroot ; passwd root ;
+#   #      touch /.autorelabel ; exit ; exit
+#   #    The boot continues, SELinux relabels the whole fs (slow) and reboots; then
+#   #    OLD "S0meForgottenPass" is rejected and the new password logs in (uid=0).
+#
+#   # 4. Teardown:
+#   phase4-podman/lab-podman.sh down    --lab rocky-kickstart
+#   phase2-qemu-vm/lab-vm.sh    destroy rocky-kickstart-install --force
+#
+# STATUS: the CIQ rd.break recipe is VERIFIED end-to-end on this kickstart-installed
+# Rocky 9 (2026-06-11) — incl. the SELinux relabel (new login shows the correct
+# context).  Throwaway lab creds only — never on a real/networked host.
+#
+# (Intentionally no [[vm]] / [[service]] tables — this file is a pointer + the Rocky
+#  rd.break pre-stage/reset workflow; the VM comes from the gallery.)
