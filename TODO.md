@@ -203,6 +203,74 @@ Large — likely graduates to its own `*_LAB_PLAN.md` (cf.
   **already vendored** at [`examples/debian-http-boot/upstream-tutorial/`](examples/debian-http-boot/upstream-tutorial/);
   the RAM-root-over-HTTP building block.
 
+## 5. AlmaLinux: demo + automated run (RHEL-family `rd.break`, mirror Rocky)
+
+The AlmaLinux sibling of the Rocky root-password-reset work
+([`setup-rocky-target.sh`](examples/root-password-reset/setup-rocky-target.sh) +
+[`reset-demo-rocky.sh`](examples/root-password-reset/reset-demo-rocky.sh)) — a
+hand-walk on-ramp + a hands-off serial-driven **`rd.break`** proof on a real
+AlmaLinux 9. AlmaLinux is RHEL-family, so the method is identical to Rocky's
+(dracut initramfs → `chroot /sysroot` → `passwd` → `touch /.autorelabel` → SELinux
+relabel) and the scripts should port nearly verbatim — including the grub2 serial
+char-drop fix (`serial-drive.py --char-delay 0.08`) and the **editor-append** for
+`rd.break`.
+
+**Primary / first subproject — port the kickstart gallery to AlmaLinux:**
+- [ ] `examples/almalinux-kickstart-gallery/` ported from
+      [`examples/rocky-kickstart-gallery/`](examples/rocky-kickstart-gallery/):
+      `fetch-kickstarts.sh` + `select-kickstart.sh` + the unified P4+P2 TOML +
+      README + MANUAL_TESTING. Point it at AlmaLinux's upstream kickstart catalog
+      (find the AlmaLinux equivalent of `rocky-linux/kickstarts`) and reuse
+      [`examples/almalinux-pxe-lab/`](examples/almalinux-pxe-lab/)'s installer fetch
+      (`vmlinuz`/`initrd.img`/`install.img`) the way the Rocky gallery reuses
+      `rocky-pxe-lab/fetch-rocky-installer.sh`.
+- [ ] Same gallery patches as Rocky where needed (`shutdown`→`reboot`, unlock root
+      via `--root-pw`, `/dev/vda` pinning if any kickstart hardcodes a disk).
+      Provenance: a dated note (official upstream catalog → cite, don't mirror).
+
+**Then the reset pair (mirror the Rocky scripts):**
+- [ ] `examples/root-password-reset/setup-almalinux-target.sh` +
+      `reset-demo-almalinux.sh` — build via the new gallery (e.g. `GenericCloud-Base`),
+      pre-stage (widen GRUB `--timeout` via `grub2-mkconfig`), then serial-drive the
+      `rd.break` reset + verify *old-rejected / new-`uid=0`* with the relabel applied.
+- [ ] `almalinux.toml` in the reset lab, delegating to the gallery (mirrors
+      `rocky.toml` / `kali.toml`); update `RUNBOOK-rd-break.md` (note AlmaLinux),
+      the README matrix, MANUAL_TESTING; add a 00-INDEX entry; keep `link_check.py`
+      green.
+
+Exemplars: the just-built Rocky pair +
+[`examples/rocky-kickstart-gallery/`](examples/rocky-kickstart-gallery/);
+[`examples/kali-preseed-gallery/`](examples/kali-preseed-gallery/) (the gallery shape).
+
+## 6. UEFI variant of each root-password-reset method
+
+The lab already argues the reset is **firmware-agnostic** with a Debian
+**BIOS + UEFI pair** ([`debian-bios.toml`](examples/root-password-reset/debian-bios.toml)
+verified; [`debian-uefi.toml`](examples/root-password-reset/debian-uefi.toml) on
+OVMF, author-run). Round that out: a **UEFI variant of every method/distro**, using
+`debian-uefi.toml` as the exemplar — once you reach the GRUB editor the steps are
+identical; only *getting to the menu* differs (OVMF shows its own phase first; on
+EFI the loader may be systemd-boot, also `e`).
+
+- [ ] Verify the existing [`debian-uefi.toml`](examples/root-password-reset/debian-uefi.toml)
+      end-to-end (currently author-run) — reach GRUB over serial under OVMF, run the
+      `init=/bin/bash` reset — to lock in the exemplar.
+- [ ] **Kali UEFI** — a UEFI build of the preseed-gallery target (drop `firmware`,
+      set `pxe_bootfile = "ipxe.efi"` per the gallery README) + the `init=/bin/bash`
+      reset under OVMF.
+- [ ] **Rocky / AlmaLinux UEFI** — a UEFI build of the kickstart-gallery target +
+      the `rd.break` reset under OVMF. Watch the EFI specifics: the bootloader config
+      lives under `/boot/efi/EFI/<distro>/` (the `grub2-mkconfig` target differs),
+      and Secure Boot (if enabled) changes the picture.
+- [ ] **systemd debug shell** — note the UEFI path if it differs.
+- [ ] Extend the README firmware matrix to each method × BIOS/UEFI; add 00-INDEX
+      coverage; keep `link_check.py` green.
+
+Exemplar: [`debian-uefi.toml`](examples/root-password-reset/debian-uefi.toml) + the
+firmware-axis note in
+[`examples/root-password-reset/README.md`](examples/root-password-reset/README.md)
+(`lab-vm.sh` `firmware = "uefi"` = OVMF/edk2).
+
 ---
 
-*Created 2026-06-06.*
+*Created 2026-06-06; #5–#6 added 2026-06-11.*
