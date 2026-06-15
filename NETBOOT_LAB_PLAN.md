@@ -233,8 +233,8 @@ New directory: `netboot/`
 # Usage:
 #   netboot/build-ipxe.sh \
 #       --server http://10.0.2.2:8181 \
-#       --kernel  /kernel \
-#       --initrd  /initrd.gz \
+#       --kernel-path /kernel \
+#       --initrd-path /initrd.gz \
 #       --append  "console=ttyS0 root=/dev/ram0 rw" \
 #       --output-dir /srv/netboot
 #

@@ -367,14 +367,14 @@ machine-class profiles:
 lab-vm.sh create   --name N --arch A --memory 2G --cpus 2 \
                    --backend {disk-image|from-chroot|kernel+initrd} \
                    --image|--chroot|--kernel ... \
-                   [--microvm] [--accel {kvm|hvf|tcg}] \
-                   [--net {user|bridge:br0|tap}] \
-                   [--ssh-port 2222] [--cloud-init user-data.yaml]
+                   [--microvm] \
+                   [--network-mode {user|bridge|tap}] [--bridge name] [--tap ifname] \
+                   [--ssh-port 2222] [--user-data user-data.yaml]
 lab-vm.sh start    NAME
-lab-vm.sh stop     NAME [--graceful]
+lab-vm.sh stop     NAME [--force]   # graceful by default (QMP); --force kills
 lab-vm.sh console  NAME           # attach to serial
 lab-vm.sh ssh      NAME [-- cmd]
-lab-vm.sh destroy  NAME [--keep-disk]
+lab-vm.sh destroy  NAME [--force] [--keep-disk]
 lab-vm.sh list
 ```
 
@@ -467,7 +467,7 @@ topologies described in YAML.
   `destroy`.
 - Config schema mirrors a subset of compose, plus a `lab:` block for arch
   matrix builds and per-service capabilities.
-- `--from-chroot` builder: take a Phase 1 chroot tree and `docker import` it
+- `from-chroot` builder (`--backend from-chroot --chroot <path>`): take a Phase 1 chroot tree and `docker import` it
   as an image (no Dockerfile needed).
 - Exit criteria: build and run an aarch64 image on an x86_64 host; bring up
   a 3-service topology; tear down cleanly.
@@ -479,7 +479,7 @@ topologies described in YAML.
 Rootless-first OCI container orchestration on Linux. Same problem space as
 Phase 3 (Docker), different assumptions and different first-class features:
 pods (shared-namespace groups), quadlet (systemd-user unit generation),
-`--from-chroot` as a rootless-aware bridge to Phase 1, and export to
+`from-chroot` as a rootless-aware bridge to Phase 1, and export to
 Kubernetes/Compose YAML for handoff. Spiritually complements Phase 3 rather
 than replacing it — either can be rebased away without breaking the other.
 
@@ -511,12 +511,12 @@ without `/etc/subuid` / `/etc/subgid` provisioning will either fix that
 ### CLI
 
 ```
-lab-podman.sh build    <service> [--from-chroot <name>] [--platform <arch>]
+lab-podman.sh build    --tag IMG  [--chroot <path>] [--arch <arch>]
                 build    --config FILE
                run      <image> [--manager plain|pod|quadlet] [-- args...]
                up       --config FILE
                down     <lab-name>
-               exec     <service> [--pod <pod>] -- <cmd>
+               exec     <service> -- <cmd>
                logs     <service> [--follow]     # routes to journalctl for quadlet mode
                status   <service|lab>            # health, userns, ports, uptime
                list
@@ -626,7 +626,7 @@ best-effort. First-time rootless podman users trip on all of them:
   4.4, 2023). Older podman on Rocky 8 / Ubuntu 20.04 works for
   `plain`/`pod` only; `up --manager=quadlet` errors with a version hint.
 - **`podman` ≥ 4.0** — minimum for any mode.
-- **`qemu-user-static` + `binfmt_misc`** — for `build --platform` on a
+- **`qemu-user-static` + `binfmt_misc`** — for `build --arch` on a
   foreign arch, same probe as Phase 3.
 - **`systemctl --user`** — required for `quadlet`; error if running in a
   session without a user DBus (containerized shells, some SSH configs).
@@ -682,7 +682,7 @@ etc.) — same discipline as Phases 1 and 3.
 2. Generate + enable + run a quadlet unit from a TOML spec; verify it
    survives a logout (`loginctl enable-linger`).
 3. Cross-phase: `lc create` a Kali chroot in Phase 1; `lab-podman build
-   --from-chroot <name>` → runnable rootless image, UID mapping sane.
+   --chroot <name>` → runnable rootless image, UID mapping sane.
 4. `lab-podman export <name> --format=kube` produces YAML that
    `podman kube play` accepts unmodified — handoff-grade roundtrip,
    even though we don't run `kube play` ourselves.
