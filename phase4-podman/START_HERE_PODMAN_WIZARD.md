@@ -148,6 +148,25 @@ querying the live runtime.
 
 ---
 
+## Prefer the CLI? Ad-hoc subcommands
+
+The TOML + `up` idiom is the recommended path, but you don't *need* a config
+for a throwaway container. `lab-podman.sh` also exposes the container verbs
+directly: `run` (start one container imperatively — the CLI form of a single
+`[[service]]`, with `--name`/`--image`/`--ports`/`--env`/`--volumes`/`--detach`/`--rm`),
+`build` (build an image: `build` / `from-chroot` / `from-tarball`), `status`,
+`logs`, and `destroy`. Quick example:
+
+```bash
+phase4-podman/lab-podman.sh run --name nginx1 \
+    --image docker.io/library/nginx:alpine --ports 8080:80 --detach
+```
+
+See **`SHOWCASE.md` → CLI escape hatches** for the full flag-to-TOML mapping,
+or `lab-podman.sh --help`.
+
+---
+
 ## Next steps
 
 - **`SHOWCASE.md`** — live-verified demos: pods, quadlet, from-chroot, netboot server

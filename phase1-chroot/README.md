@@ -45,7 +45,18 @@ lab-chroot.sh enter    <name|path> [-- cmd args...]
 lab-chroot.sh destroy  <name|path> [--force]
 lab-chroot.sh list     [--lab NAME] [--system] [--json]
 lab-chroot.sh verify   <name|path>
+lab-chroot.sh inspect  <name|path> [--json]
+lab-chroot.sh export-tarball <name|path> [--output PATH]
+lab-chroot.sh export-initrd  <name|path> --kernel PATH --output PATH \
+                  [--init-script FLAVOR|PATH] [--init-flavor X] [--strip-modules]
 ```
+
+- **`inspect`** — human-readable (or `--json`) view of one chroot: manifest
+  fields plus live probes (target size/owner, `os-release`, manager state).
+- **`export-tarball`** — emit a gzipped tarball of the chroot tree, chowned to the
+  invoking user. The bridge to Phase 4 (`lab-podman ... from_tarball = "..."`).
+- **`export-initrd`** — package the chroot as a `vmlinuz` + `initrd.gz` pair for
+  the netboot / `kernel+initrd` pipeline (auto-finds the kernel in `<target>/boot`).
 
 Run `lab-chroot.sh help` for the full flag list.
 
@@ -96,6 +107,52 @@ systemd-nspawn-managed (full PID 1 inside, exposed to `machinectl`):
 sudo lab-chroot.sh create --config examples/chroot-examples/chroot-nspawn-managed.toml
 sudo lab-chroot.sh enter bookworm-nspawn
 ```
+
+### `create` flags
+
+Every TOML key has a matching CLI flag (`--config` overrides flags when both are given). The full set:
+
+| Flag | Applies to | Meaning |
+|---|---|---|
+| `--backend B` | all | `debootstrap` \| `dnf` \| `host-copy` |
+| `--distro D` | debootstrap/dnf | `debian` \| `ubuntu` \| `kali` \| `rocky` |
+| `--suite S` | debootstrap/dnf | release codename/version (e.g. `bookworm`, `jammy`, `kali-rolling`, `9`) |
+| `--arch A` | all | `x86_64` \| `aarch64` \| `armv7l` \| `ppc64le` \| `riscv64` \| `s390x` |
+| `--target PATH` | all | path to the chroot tree |
+| `--name NAME` | all | short name for the manifest (defaults to basename of `--target`) |
+| `--hostname NAME` | all | hostname written into the chroot (auto: `<host-short>-<4rand>` if omitted) |
+| `--mirror URL` | debootstrap | package mirror (backend default if omitted) |
+| `--variant NAME` | debootstrap | `minbase` \| `buildd` \| `fakechroot` |
+| `--include pkg,pkg` | debootstrap/dnf | extra packages |
+| `--groups group,group` | dnf | dnf package groups |
+| `--binaries p,p` | host-copy | binaries to copy in (with their library deps) |
+| `--extras p,p` | host-copy | extra files to copy in |
+| `--manager M` | all | `none` (default) \| `schroot` \| `nspawn` |
+| `--rootless` | all | build + enter without root (see [Rootless mode](#rootless-mode---rootless)) |
+| `--keep-cache` | all | reuse a persistent download cache under `$LAB_CACHE_DIR` |
+| `--init-script FLAVOR\|PATH` | all | write `/init` at create time: `busybox`, `systemd`, or a `/host/path` |
+| `--init-flavor X` | all | same as `--init-script`, for use with `export-initrd` auto-detect |
+| `--user name:pass` | all | create an OS user with that password (repeatable; groups/shell via TOML) |
+| `--post-command CMD` | all | run `CMD` inside the chroot after build (repeatable) |
+| `--config FILE` | all | declarative TOML form (overrides flags) |
+
+### Export flags
+
+`export-tarball`:
+
+| Flag | Meaning |
+|---|---|
+| `--output`, `-o PATH` | tarball destination (default: `/tmp/<name>.tar.gz`) |
+
+`export-initrd`:
+
+| Flag | Meaning |
+|---|---|
+| `--kernel PATH` | **output** path for the extracted `vmlinuz` (default: `/tmp/<name>-vmlinuz`). The *source* kernel is auto-found in `<target>/boot/vmlinuz-*` — this is where the copy is written, not where it's read from. |
+| `--output`, `-o PATH` | output path for the `initrd.gz` (default: `/tmp/<name>-initrd.gz`) |
+| `--init-script FLAVOR\|PATH` | write `/init`: `busybox`, `systemd`, or a `/host/path` (used if the chroot has no `/init` yet) |
+| `--init-flavor X` | flavor for `/init` auto-detect (alternative to `--init-script`) |
+| `--strip-modules` | exclude `/lib/modules/` from the initrd (reduces size ~100–300 MB) |
 
 ## Configuration (TOML)
 

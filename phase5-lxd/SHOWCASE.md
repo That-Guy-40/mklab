@@ -42,6 +42,66 @@ one `--lab` filter, one `down`.
 > profile has no root-disk device. One-shot: `sudo incus admin init
 > --auto` (or `sudo lxd init --auto`). `MANUAL_TESTING.md` §0a covers it.
 
+## Imperative verbs — `run` and `build` (no TOML)
+
+The demos above all go through `up --config <topology.toml>`, the declarative
+path. But Phase 5 also exposes two **imperative** verbs that launch or build a
+single instance straight from CLI flags — handy for one-offs, scripting, and
+poking at a backend before you commit it to a TOML.
+
+### `run` — launch one instance, ad-hoc
+
+`run` is the imperative twin of `up`'s `[[instance]]` table: it launches exactly
+one instance, always tagged with the lab labels (a bare `--name` is treated as a
+one-row "lab"). Pick **one** image source:
+
+```bash
+# upstream image (latest resolved at run time, same resolver as up)
+phase5-lxd/lab-lxd.sh run --name a --image images:alpine/latest
+
+# a VM instead of a container
+phase5-lxd/lab-lxd.sh run --name v --image images:debian/bookworm --type vm
+
+# from a Phase-1 chroot / tarball, or a Phase-2 qcow2 (cross-phase bridges)
+phase5-lxd/lab-lxd.sh run --name worker --chroot /var/chroots/debian --type vm
+phase5-lxd/lab-lxd.sh run --name att    --tarball /tmp/kali-amd64.tar.gz
+phase5-lxd/lab-lxd.sh run --name vm1    --qcow2 /tmp/kali.qcow2          # implies --type vm
+```
+
+| Flag | Purpose |
+|---|---|
+| `--name N` | short instance name (the instance becomes `lab-<lab>-<name>`) — required |
+| `--image I` | upstream image alias (`images:alpine/latest`, `images:debian/bookworm`) |
+| `--chroot PATH` | Phase-1 chroot tree (CLI-flag spelling of the `from_chroot` TOML key) |
+| `--tarball PATH` | Phase-1 `export-tarball` output (CLI spelling of `from_tarball`) |
+| `--qcow2 PATH` | Phase-2 qcow2 disk image (CLI spelling of `from_qcow2`; implies `--type vm`) |
+| `--type container\|vm` | instance flavour (default: `container`) |
+| `--project P` | LXD project (created if needed) |
+| `--storage POOL` | LXD storage pool |
+| `--network NET` | attach the instance to an existing LXD network (e.g. `lxdbr0`) |
+
+> **CLI flag vs TOML key:** `--chroot` / `--tarball` / `--qcow2` are the *flag*
+> spellings used by `run` and `build`; the declarative `up` path spells the same
+> sources as the TOML keys `from_chroot` / `from_tarball` / `from_qcow2`. Same
+> backends, two surfaces — don't mix the spellings.
+
+### `build` — bake a reusable local image alias
+
+`build` doesn't launch anything; it imports a source into the **local image
+store** under an alias you name, so later `run`/`up` calls can reference it.
+Pick the backend explicitly:
+
+```bash
+phase5-lxd/lab-lxd.sh build --alias kali-rolling --backend from-chroot --chroot /var/chroots/kali
+phase5-lxd/lab-lxd.sh build --alias deb13        --backend upstream    --image images:debian/13
+```
+
+| Flag | Purpose |
+|---|---|
+| `--alias, --tag TAG` | name for the resulting local image alias — required (`--tag` is an alias of `--alias`) |
+| `--backend {upstream\|from-chroot\|from-tarball\|from-qcow2}` | which import path to use |
+| `--image\|--chroot\|--tarball\|--qcow2 SRC` | the source, matched to the chosen backend |
+
 ## Feature tour
 
 ### Dual engine (incus preferred, lxc fallback)

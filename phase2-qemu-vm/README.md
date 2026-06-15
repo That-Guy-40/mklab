@@ -6,12 +6,13 @@ Create and run QEMU VMs and microvms across the same arch matrix as Phase 1.
 
 | | |
 |---|---|
-| **Backends** | `disk-image` (cached cloud images + cloud-init NoCloud seed) · `kernel+initrd` (direct boot, microvm-friendly) · `from-chroot` (Phase-1 tree → bootable BIOS qcow2, x86_64, needs root) |
+| **Backends** | `disk-image` (cached cloud images + cloud-init NoCloud seed) · `kernel+initrd` (direct boot, microvm-friendly) · `from-chroot` (Phase-1 tree → bootable BIOS qcow2, x86_64, needs root) · `pxe-install` (boot an installer over PXE/iPXE) |
 | **Arches** | `x86_64`, `aarch64`, `armv7l`, `ppc64le`, `riscv64`, `s390x` |
 | **Acceleration** | `kvm` if guest arch == host arch and `/dev/kvm` is r+w; otherwise `tcg` (slow but works for any arch) |
 | **microvm** | `--microvm` selects QEMU's minimal fast-boot device model: the genuine `microvm` machine + qboot on **x86_64**; a stripped `virt` + virtio-mmio + no UEFI on **aarch64** (QEMU has no arm `microvm` machine); falls back with a warning on other arches. Direct `-kernel` boot only. |
 | **Networking** | `--network-mode user` (default: slirp + per-VM SSH hostfwd) · `bridge` (`--bridge`) · `tap` (`--tap`) — bridge/tap attach to host L2 and need root (or a setuid `qemu-bridge-helper` + `/etc/qemu/bridge.conf`) |
 | **Snapshots / CPU** | offline qcow2 snapshots (`snapshot create/list/restore/delete`); CPU topology (`--cores`/`--threads`) + host-CPU pinning (`--cpu-pin`, via `taskset`) |
+| **Create overrides** | `--image PATH` (use a specific qcow2/.img instead of the cached cloud image) · `--ssh-port N` (pin the host SSH forward instead of auto-allocating from 2222) · `--pubkey PATH` (inject this SSH public key) · `--no-cloud-init` (skip NoCloud seeding, for bare/iPXE disk images) |
 | **Console** | serial console exposed as a unix socket; `lab-vm.sh console` attaches via `socat` |
 | **Lifecycle** | graceful shutdown via QMP `system_powerdown`; SIGTERM → SIGKILL escalation if it doesn't take |
 | **Config** | CLI flags or TOML (`--config FILE`) |
@@ -51,7 +52,13 @@ lab-vm.sh console  <name>
 lab-vm.sh ssh      <name> [-- cmd args...]
 lab-vm.sh destroy  <name> [--force] [--keep-disk]
 lab-vm.sh list
+lab-vm.sh inspect  <name> [--json]
+lab-vm.sh publish-netboot <name> [opts...]
 ```
+
+`inspect` prints a VM's manifest and runtime status (add `--json` for machine-readable
+output). `publish-netboot` copies a `kernel+initrd` VM's kernel and initrd into a netboot
+directory (and optionally writes a `boot.ipxe`) so Phase 4's nginx container can serve them.
 
 `lab-vm.sh help` for the full flag list.
 

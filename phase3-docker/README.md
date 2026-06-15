@@ -6,8 +6,8 @@ Wrap `docker` for ad-hoc containers, multi-arch image builds (`buildx` + `qemu-u
 
 | | |
 |---|---|
-| **Backends** | `image` (pull/use existing) · `from-chroot` (`docker import` a Phase-1 chroot tree) · `buildx` (multi-arch builds) |
-| **Subcommands** | `build`, `run`, `up`, `down`, `exec`, `logs`, `list`, `destroy` |
+| **Backends** | `image` (pull/use existing) · `from-chroot` (`docker import` a Phase-1 chroot tree) · `from-tarball` (`docker import` an exported `.tar`/`.tar.gz`) · `buildx` (multi-arch builds) |
+| **Subcommands** | `build`, `push`, `run`, `up`, `down`, `exec`, `logs`, `status`, `list`, `inspect`, `destroy`, `export` |
 | **Arches** | `x86_64`, `aarch64`, `armv7l`, `ppc64le`, `riscv64`, `s390x` (mapped to `linux/amd64`, `linux/arm64`, `linux/arm/v7`, `linux/ppc64le`, `linux/riscv64`, `linux/s390x`) |
 | **Topologies** | TOML — `[lab]`, `[network.*]`, repeated `[[service]]` tables |
 | **Ownership** | tracked via Docker labels (`lab-create.tool`, `lab-create.lab`, `lab-create.svc`) — no separate state file |
@@ -23,6 +23,7 @@ Drop `lab-docker.sh` anywhere on `$PATH`.
 | For `--backend buildx` | `docker buildx` plugin |
 | For multi-arch (foreign-arch) builds | `qemu-user-static` + `binfmt-support` *or* `docker run --privileged --rm tonistiigi/binfmt --install all` |
 | For `from-chroot` | a Phase-1 chroot directory |
+| For `from-tarball` | an exported root-fs tarball (`.tar`/`.tar.gz`/`.tgz`/`.tar.xz`/…), e.g. from `lab-chroot export-tarball` |
 
 The script never auto-runs `docker run --privileged` on your behalf — if the binfmt registration is missing it tells you the exact command to run.
 
@@ -41,7 +42,7 @@ docker info               # should succeed without sudo
 ## Usage
 
 ```text
-lab-docker.sh build    --tag IMG  [--backend buildx|from-chroot] [--context DIR | --chroot PATH] [--arch A]
+lab-docker.sh build    --tag IMG  [--backend buildx|from-chroot|from-tarball] [--context DIR | --chroot PATH | --tarball FILE] [--arch A]
 lab-docker.sh run      --name N   [--image IMG | --chroot PATH | --context DIR] [opts...]
 lab-docker.sh up       --config topology.toml
 lab-docker.sh down     --lab NAME | --config topology.toml
@@ -52,6 +53,23 @@ lab-docker.sh destroy  <name|lab/service> [--force]
 ```
 
 `lab-docker.sh help` for the full flag list.
+
+### Subcommands
+
+| Subcommand | What it does |
+|---|---|
+| `build` | Build/import an image — `buildx`, `from-chroot`, or `from-tarball` backend |
+| `push` | `docker push <tag>` (or `--tag TAG`) to a registry; warns that multi-arch manifest lists need `docker manifest push` separately |
+| `run` | Launch an ad-hoc single container |
+| `up` | Bring up a multi-service topology from `--config` (`.toml` or compose `.yml`/`.yaml`) |
+| `down` | Tear a lab down — `--lab NAME` or `--config FILE` |
+| `exec` | Exec into a container (`<name>` or `<lab/service>`) |
+| `logs` | Stream container logs (`--follow`) |
+| `status` | Show daemon info (no arg) or per-lab/per-container status (`[<name\|lab>]`) |
+| `list` | List lab-owned containers (`--lab NAME` to scope) |
+| `inspect` | Human-readable summary of one container (`--json` for raw `docker inspect` JSON) |
+| `destroy` | Remove a container (`--force`) |
+| `export` | Emit docker-compose YAML for a topology (`--config FILE [--format compose]`) |
 
 ## Quick examples
 
@@ -94,6 +112,17 @@ lab-docker.sh run --name bb --image bbox:lab --rm --tty -- /bin/busybox sh
 ```
 
 `docker import` produces a single-layer image with no metadata — set the entry command via `--` (or wrap with a `Dockerfile FROM` to add CMD/ENV layers).
+
+### Import an exported tarball as an image
+
+```bash
+sudo phase1-chroot/lab-chroot.sh export-tarball busybox --output /tmp/busybox.tar.gz
+
+lab-docker.sh build --tag bbox:lab --backend from-tarball --tarball /tmp/busybox.tar.gz
+lab-docker.sh run --name bb --image bbox:lab --rm --tty -- /bin/busybox sh
+```
+
+`from-tarball` `docker import`s a pre-made `.tar`/`.tar.gz`/`.tgz`/`.tar.xz`/`.tar.bz2`/`.tar.zst` directly — no `tar`-from-a-directory step, so a root-owned chroot can be imported without `sudo`. The path must be a regular, user-readable file ending in a recognised tar extension. As with `from-chroot`, the result is a single-layer image with no metadata.
 
 ### Multi-service topology
 
@@ -139,7 +168,8 @@ command  = "sleep infinity"
 | Key | Type | Notes |
 |---|---|---|
 | `name` | string | required |
-| `image` | string | one of `image`/`from_chroot`/`build` is required |
+| `image` | string | one of `image`/`from_tarball`/`from_chroot`/`build` is required |
+| `from_tarball` | path | `docker import` this `.tar`/`.tar.gz`/… archive, then run (mutually exclusive with `from_chroot`) |
 | `from_chroot` | path | `docker import` this tree, then run |
 | `build` | path | `docker buildx build` this directory, then run |
 | `networks` | array | first one is attached at run time, the rest via `docker network connect` |
@@ -174,7 +204,7 @@ Resource naming:
 | Ad-hoc container | `lab-<name>` |
 | Topology network | `lab-<labname>-<network>` |
 | Auto-built image (topology) | `lab-<labname>-<service>-img` |
-| Auto-built image (`run`) | `lab-build-<name>` / `lab-from-chroot-<name>` |
+| Auto-built image (`run`) | `lab-build-<name>` / `lab-from-chroot-<name>` / `lab-from-tarball-<name>` |
 
 `down` and `destroy` query labels to find what to tear down — they don't depend on a manifest file, so external `docker rm` operations don't desync state.
 
@@ -187,7 +217,8 @@ Resource naming:
 
 ## v0.2 additions
 
-- **`push` subcommand** — `lab-docker.sh push <tag>` (or `--tag TAG`) delegates to `docker push`; warns when `--arch` is present that multi-arch manifest lists need `docker manifest push` separately.
+(The `push`, `status`, `inspect`, and `export` subcommands are listed under [Subcommands](#subcommands) above.)
+
 - **`depends_on` / startup order** — topology services are started in topological (dependency-first) order. Add `depends_on = ["db"]` to a `[[service]]` and the dependency starts first. Cycles are detected and die loudly.
 - **Healthchecks** — `[service.healthcheck]` TOML table (`test`, `interval`, `timeout`, `retries`, `start_period`) wires directly into `docker run --health-*` flags. When a service has a healthcheck, `up` waits for it to become healthy before starting dependents. `export` emits `healthcheck:` blocks in compose output.
 - **Compose YAML interop** — `--config` now accepts `.yml` / `.yaml` files (docker-compose v2 format) in addition to `.toml`. Requires mikefarah/yq. The `up`, `down`, and `export` subcommands all honour the extension.

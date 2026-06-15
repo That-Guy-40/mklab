@@ -1872,8 +1872,8 @@ usage() {
 $LAB_PROG $LAB_VERSION — rootless podman container & lab management (LAB_CREATE_V2 phase 4)
 
 USAGE
-  $LAB_PROG build    --tag IMG  [--backend build|from-chroot] [--context DIR | --chroot PATH] [--arch A]
-  $LAB_PROG run      --name N   [--image IMG | --chroot PATH | --context DIR] [opts...]
+  $LAB_PROG build    --tag IMG  [--backend build|from-chroot|from-tarball] [--context DIR | --chroot PATH | --tarball FILE] [--arch A]
+  $LAB_PROG run      --name N   [--image IMG | --chroot PATH | --tarball FILE | --context DIR] [opts...]
   $LAB_PROG up       --config topology.toml
   $LAB_PROG down     --lab NAME | --config topology.toml
   $LAB_PROG exec     <name|lab/service> [-- cmd args...]

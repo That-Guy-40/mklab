@@ -1669,7 +1669,7 @@ USAGE
   $LAB_PROG version | help
 
 OPTIONS
-  --alias     TAG                       (build target)
+  --alias, --tag TAG                    (build target; --tag is an alias of --alias)
   --backend   {upstream|from-chroot|from-tarball|from-qcow2}
   --image     SRC                       (upstream image alias OR existing local alias)
   --chroot    PATH                      (Phase 1 chroot tree; must be user-readable)

@@ -311,6 +311,52 @@ Cross-references:
 - Consumer (Debian VM): [Phase 2 VM — `vm-netboot-direct.toml`](../examples/vm-netboot-direct.toml)
 - Rootful Docker variant: [`docker-netboot-server.toml`](../examples/docker-examples/docker-netboot-server.toml)
 
+### CLI escape hatches — the ad-hoc subcommands
+
+Everything above drives whole labs through `up --config <topology.toml>`.
+That's the idiom, but `lab-podman.sh` also exposes the underlying
+container verbs directly — handy for a throwaway container, a quick
+status peek, or scripting one-offs without authoring a TOML.
+
+| Subcommand | What it does |
+|---|---|
+| `run`     | Start **one** ad-hoc container imperatively (the CLI form of a single `[[service]]`) — `plain` manager only |
+| `build`   | Build an image: `--backend build` (Containerfile/context), `from-chroot`, or `from-tarball` |
+| `status`  | Show state for one container/lab, or a podman-side summary when given no target |
+| `logs`    | Tail a container's logs (routes to `journalctl --user` for quadlet-managed units; `--follow` to stream) |
+| `destroy` | Stop + remove one container/service (prompts unless `--force`) |
+
+`run` is the imperative mirror of the TOML keys the configs already use —
+each flag maps to a key you'd otherwise write in a `[[service]]` block:
+
+```bash
+phase4-podman/lab-podman.sh run \
+    --name nginx1 \
+    --image docker.io/library/nginx:alpine \
+    --ports "8080:80" \
+    --env "ENV=demo,TZ=UTC" \
+    --volumes "/srv/www:/usr/share/nginx/html:ro" \
+    --network mynet \
+    --hostname web1 \
+    --detach        # -d ; --rm to auto-remove on exit, --tty/-t for an interactive shell
+```
+
+| `run` flag | TOML equivalent | Notes |
+|---|---|---|
+| `--name` *(required)* | `name` | container name |
+| `--image` | `image` | one of `--image` / `--chroot` / `--tarball` / `--context` is required |
+| `--ports` | `ports` | `"8080:80,5432:5432"` |
+| `--env` | `environment` | `"K1=V1,K2=V2"` |
+| `--volumes` | `volumes` | `"src:dst,src2:dst2"` — `:Z` appended on SELinux hosts |
+| `--network` | `network` | named network to join |
+| `--hostname` | `hostname` | container hostname |
+| `--detach` / `-d` | (run-only) | background the container |
+| `--rm` | (run-only) | auto-remove on exit |
+| `--tty` / `-t` | (run-only) | allocate a TTY (interactive) |
+
+`run` is `plain`-manager only — for `pod` or `quadlet` lifecycles, author
+a TOML and use `up`. Full flag reference: `lab-podman.sh --help`.
+
 ## Integrations
 
 ### ← Phase 1 (turn a chroot into a podman image)

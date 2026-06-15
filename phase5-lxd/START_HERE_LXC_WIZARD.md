@@ -87,6 +87,30 @@ phase5-lxd/lab-lxd.sh down --lab demo-mixed
 
 ---
 
+## Option D — imperative one-liners (no TOML)
+
+For a quick one-off — no config file — use the imperative verbs `run` (launch a
+single instance) and `build` (bake a reusable local image alias):
+
+```bash
+# launch one container straight from the CLI
+phase5-lxd/lab-lxd.sh run --name a --image images:alpine/latest
+
+# a VM, attached to an existing LXD network
+phase5-lxd/lab-lxd.sh run --name v --image images:debian/bookworm --type vm --network lxdbr0
+
+# bake a chroot into a reusable local image alias, then launch from it
+phase5-lxd/lab-lxd.sh build --alias kali --backend from-chroot --chroot /var/chroots/kali
+phase5-lxd/lab-lxd.sh run   --name k --image kali
+```
+
+`run` takes `--name`, `--image`/`--chroot`/`--tarball`/`--qcow2`, `--type`,
+`--project`, `--storage`, and `--network`; `build` takes `--alias` (a.k.a.
+`--tag`), `--backend`, and the matching source flag. See **`SHOWCASE.md` §
+Imperative verbs** for the full flag reference — or `lab-lxd.sh help`.
+
+---
+
 ## Anatomy of a config
 
 ```toml

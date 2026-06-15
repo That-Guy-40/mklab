@@ -3167,10 +3167,12 @@ USAGE
   $LAB_PROG list                     # VMs in your store + the system store, with OWNER (sudo to see all)
   $LAB_PROG inspect  <name> [--json]
   $LAB_PROG snapshot {create|list|restore|delete} <name> [snap-name]   # offline qcow2 snapshots
+  $LAB_PROG publish-netboot <name> [opts...]   # copy a kernel+initrd VM's kernel/initrd to a netboot dir
   $LAB_PROG version | help
 
 CREATE OPTIONS
   --name      <vm-name>                  (required)
+  --lab       <lab-name>                 (group VMs into a named lab; recorded in the manifest)
   --backend   {disk-image|kernel+initrd|from-chroot|pxe-install}   (default: disk-image)
                                          from-chroot: turns a Phase-1 chroot tree (with a
                                          kernel installed inside) into a bootable qcow2.
@@ -3182,6 +3184,8 @@ CREATE OPTIONS
   --memory    <size>                     (default: 2G)
   --cpus      <n>                        (default: 2)
   --microvm                              (use the microvm machine type, x86_64/aarch64)
+  --firmware  {bios|uefi}                (override firmware selection for a full VM)
+  --secure-boot                          (use the Secure Boot OVMF variant, x86_64 UEFI)
   --image     /path/to/qcow2|.img        (override the cached cloud image)
   --kernel    /path/to/vmlinuz           (kernel+initrd backend)
   --initrd    /path/to/initrd            (kernel+initrd backend)
@@ -3202,6 +3206,15 @@ CREATE OPTIONS
   --runcmd    "<cmd>"                    (cloud-init: first-boot command; repeatable)
   --user-data /path/to/user-data         (cloud-init: use this file verbatim — full override)
   --config    /path/to/vm.toml
+
+PUBLISH-NETBOOT OPTIONS
+  --netboot-dir   <dir>                  (default: \$LAB_NETBOOT_DIR or ~/netboot)
+  --kernel-name   <name>                 (default: kernel)
+  --initrd-name   <name>                 (default: initrd.gz)
+  --generate-script                      (re-write boot.ipxe in the output dir)
+  --server        <url>                  (server base URL for --generate-script)
+  --pxe-dir       <dir>                  (PXE/TFTP output directory)
+  --pxe-bootfile  <file>                 (PXE boot filename)
 
 ENVIRONMENT
   LAB_LOG_LEVEL  debug|info|warn|error  (default: info)
