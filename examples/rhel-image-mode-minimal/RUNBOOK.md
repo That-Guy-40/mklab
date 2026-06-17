@@ -181,18 +181,29 @@ podman run --rm localhost/bootc-minimal:centos sh -c \
     'command -v bootc dnf sshd; ls /usr/lib/modules/*/vmlinuz'
 ```
 
-### An optional cow (faithful to §9.2, EPEL caveat made explicit)
+### An optional cow — and a multi-stage demo (faithful to §9.2)
 
-To honor §9.2's `cowsay` without a silent failure, enable EPEL in the
-customization step (add before the install in `Containerfile.centos`):
-```dockerfile
-RUN set -xeuo pipefail && \
-    dnf -y install epel-release && \
-    dnf -y install NetworkManager openssh-server cowsay && \
-    dnf clean all && rm -rf /var/log/* /var/cache/* /var/lib/* && \
-    bootc container lint
+§9.2's example installs `cowsay`, which is **EPEL-only** (a plain
+`dnf -y install cowsay` fails with `No match for argument: cowsay`). Rather than
+fold that into the base, the lab ships it as a **layered variant**,
+[`Containerfile.cowsay`](Containerfile.cowsay) — which also demonstrates the
+minimal image's stated purpose, *"a starting point for subsequent multi-stage
+builds"*: it just `FROM`s the image you already built and adds the cow on top.
+
+**▶ run**
+```bash
+./build-minimal.sh --base cowsay        # layers EPEL + cowsay onto :centos → :cowsay
+podman run --rm localhost/bootc-minimal:cowsay cowsay 'minimal, but mighty'
 ```
-Then `podman run --rm localhost/bootc-minimal:centos cowsay 'minimal, but mighty'`.
+
+Make the cow **boot** — install + boot the cowsay variant; it greets you with a
+cow at every serial login (via `/etc/profile.d/00-cowsay-login.sh`):
+```bash
+./make-disk.sh localhost/bootc-minimal:cowsay     # → output/disk.qcow2
+../../phase2-qemu-vm/lab-vm.sh create  --config vm-bootc-minimal.toml
+../../phase2-qemu-vm/lab-vm.sh start   bootc-minimal
+../../phase2-qemu-vm/lab-vm.sh console bootc-minimal     # serial login: root / lab → 🐄
+```
 The cow approves. 🐄
 
 ---

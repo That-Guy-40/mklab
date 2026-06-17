@@ -92,7 +92,9 @@ order (§9.1 → §9.5), with the *why* at each step and the verified output.
 | [`MANUAL_TESTING.md`](MANUAL_TESTING.md) | Verified pass/fail with **real captured output** (1.98 GB base → 812 MB minimal; `bootc container lint` pass; the full ostree-boot serial transcript) + the heredoc/EPEL **and** four boot gotchas. |
 | [`Containerfile.rhel`](Containerfile.rhel) | **Byte-faithful** to upstream §9.4 (`registry.redhat.io/rhel9/rhel-bootc`, `RUN <<EORUN` heredoc). |
 | [`Containerfile.centos`](Containerfile.centos) | **Runnable, verified** equivalent on CentOS Stream 9 bootc (adds `bubblewrap` + a throwaway `root:lab` to make it directly bootable). |
-| [`build-minimal.sh`](build-minimal.sh) | Wraps `podman build` with the tutorial's §9.3 privileges; verifies size + lint. |
+| [`Containerfile.cowsay`](Containerfile.cowsay) | The EPEL/`cowsay` variant (§9.2), **layered on top** of `:centos` to show "minimal as a base for multi-stage builds"; greets you with a cow at login. |
+| [`cowsay-login.sh`](cowsay-login.sh) | `/etc/profile.d` snippet the cowsay variant installs — moos at interactive login. |
+| [`build-minimal.sh`](build-minimal.sh) | Wraps `podman build` with the tutorial's §9.3 privileges; verifies size + lint. `--base centos\|rhel\|cowsay`. |
 | [`make-disk.sh`](make-disk.sh) | Image → bootable qcow2 via `bootc install to-disk` (handles the rootless→root storage copy + `sudo`). |
 | [`vm-bootc-minimal.toml`](vm-bootc-minimal.toml) | Phase-2 VM spec to boot the installed qcow2 (UEFI, no cloud-init). |
 | [`upstream-tutorial/`](upstream-tutorial/) | Byte-exact archive of the RHEL 9 chapter + provenance. |

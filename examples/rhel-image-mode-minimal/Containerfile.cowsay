@@ -1,0 +1,38 @@
+# Containerfile.cowsay — the EPEL/cowsay variant, layered ON TOP of the minimal
+# image.  This does double duty:
+#
+#   1. It honors §9.2's example, which installs `cowsay` — a package that lives in
+#      EPEL, NOT the RHEL/CentOS base repos (a plain `dnf -y install cowsay` fails
+#      with "No match for argument: cowsay"; see MANUAL_TESTING.md).  So we enable
+#      epel-release first, then install the cow.
+#
+#   2. It demonstrates the minimal image's STATED PURPOSE — the manifest blurb
+#      calls it "a starting point for subsequent multi-stage builds."  Rather than
+#      rebuild from scratch, we just `FROM` the minimal image we already built and
+#      layer the cow on top.  That is exactly how you'd derive an app image from a
+#      custom base in a real pipeline.
+#
+# Build it (build-minimal.sh --base cowsay auto-builds the base first if missing):
+#   ./build-minimal.sh --base centos       # → localhost/bootc-minimal:centos
+#   ./build-minimal.sh --base cowsay       # this file → localhost/bootc-minimal:cowsay
+#
+# Then install + boot it like any other variant (it greets you with a cow at login):
+#   ./make-disk.sh localhost/bootc-minimal:cowsay
+#   ../../phase2-qemu-vm/lab-vm.sh create  --config vm-bootc-minimal.toml
+#   ../../phase2-qemu-vm/lab-vm.sh start   bootc-minimal
+#   ../../phase2-qemu-vm/lab-vm.sh console bootc-minimal      # serial login: root / lab
+
+FROM localhost/bootc-minimal:centos
+
+# §9.2's cow.  cowsay is EPEL-only, so enable EPEL, then install it.  bootc
+# container lint runs last, as the article instructs.
+RUN set -xeuo pipefail && \
+    dnf -y install epel-release && \
+    dnf -y install cowsay && \
+    dnf clean all && \
+    rm -rf /var/log/* /var/cache/* /var/lib/* && \
+    bootc container lint
+
+# Greet every interactive login with a cow — the cheeky payoff of "make the cow
+# boot."  profile.d is sourced by login shells (the serial getty hands you one).
+COPY cowsay-login.sh /etc/profile.d/00-cowsay-login.sh

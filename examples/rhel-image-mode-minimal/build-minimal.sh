@@ -16,6 +16,8 @@
 #   --base rhel     build Containerfile.rhel on registry.redhat.io/rhel9/rhel-bootc
 #                   — needs an active Red Hat subscription + `podman login
 #                   registry.redhat.io`, and a heredoc-aware builder (podman >= 5).
+#   --base cowsay   the EPEL/cowsay variant: layers §9.2's cow (from EPEL) onto the
+#                   centos image and greets you at login.  Auto-builds centos first.
 #   --tag TAG       image tag (default: localhost/bootc-minimal:<base>)
 #   --no-cache      pass --no-cache to podman build
 set -euo pipefail
@@ -38,12 +40,20 @@ done
 case "$base" in
     centos) cf="$here/Containerfile.centos" ;;
     rhel)   cf="$here/Containerfile.rhel" ;;
-    *) echo "--base must be 'centos' or 'rhel' (got: $base)" >&2; exit 2 ;;
+    cowsay) cf="$here/Containerfile.cowsay" ;;
+    *) echo "--base must be 'centos', 'rhel', or 'cowsay' (got: $base)" >&2; exit 2 ;;
 esac
 [[ -r "$cf" ]] || { echo "missing Containerfile: $cf" >&2; exit 1; }
 [[ -n "$tag" ]] || tag="localhost/bootc-minimal:$base"
 
 command -v podman >/dev/null || { echo "podman not found" >&2; exit 1; }
+
+# The cowsay variant is layered on top of the minimal CentOS image; build that
+# base first if it isn't already present.
+if [[ "$base" == "cowsay" ]] && ! podman image exists localhost/bootc-minimal:centos; then
+    echo "==> base localhost/bootc-minimal:centos not found — building it first"
+    "$0" --base centos
+fi
 
 echo "==> building $tag from $(basename "$cf")"
 echo "    privileges (tutorial §9.3): --cap-add=all --security-opt=label=type:container_runtime_t --device /dev/fuse"
