@@ -1,0 +1,4 @@
+# Build artifacts produced by make-disk.sh — large, regenerable, never committed.
+output/
+*.qcow2
+*.raw

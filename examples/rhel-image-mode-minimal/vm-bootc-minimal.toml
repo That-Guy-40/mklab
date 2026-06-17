@@ -1,0 +1,39 @@
+# vm-bootc-minimal.toml — boot the custom minimal bootc image as a real OS.
+#
+#   Part of examples/rhel-image-mode-minimal/ — see README.md / RUNBOOK.md.
+#
+# This is step 2 of "build → boot".  First build the image (build-minimal.sh) and
+# install it to a qcow2 via make-disk.sh (which runs `bootc install to-disk`),
+# writing  examples/rhel-image-mode-minimal/output/disk.qcow2  (the absolute
+# `image` path below already points there).  Then:
+#
+#   ./build-minimal.sh --base centos      # build the image (rootless)
+#   ./make-disk.sh                        # image → qcow2 (calls sudo; bootc install --privileged)
+#   phase2-qemu-vm/lab-vm.sh create --config examples/rhel-image-mode-minimal/vm-bootc-minimal.toml
+#   phase2-qemu-vm/lab-vm.sh start   bootc-minimal
+#   phase2-qemu-vm/lab-vm.sh console bootc-minimal          # serial login: root / lab
+#
+# NOTE: `image` is an ABSOLUTE path tied to this checkout's location.  If your repo
+# lives elsewhere, edit it (or symlink) to your output/disk.qcow2.
+#
+# lab-vm.sh builds a COPY-ON-WRITE overlay backed by this qcow2 (lab-vm.sh:2380),
+# so the installed disk image is never mutated — destroy/recreate freely.
+#
+# Why these settings:
+#   backend=disk-image + image=<qcow2>  → boot an existing disk (not a cloud image).
+#   cloud_init=false                    → the minimal image has NO cloud-init
+#                                         datasource; the root login is baked into
+#                                         the image (Containerfile.centos), not a seed.
+#   firmware=uefi                       → bootc x86_64 disks boot via GRUB on UEFI
+#                                         (bootupd installs the EFI bootloader).
+
+[[vm]]
+name     = "bootc-minimal"
+backend  = "disk-image"
+image    = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/examples/rhel-image-mode-minimal/output/disk.qcow2"
+arch     = "x86_64"
+firmware = "uefi"
+cloud_init = false             # minimal image has no datasource; root pw baked into the image
+memory   = "2G"
+cpus     = 2
+ssh_port = 0                   # auto-allocate from 2222

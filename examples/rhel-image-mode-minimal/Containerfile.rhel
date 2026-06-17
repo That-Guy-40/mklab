@@ -1,0 +1,58 @@
+# Containerfile.rhel — BYTE-FAITHFUL to the upstream RHEL 9 tutorial, §9.4
+# "Generating your bootc images from scratch".
+#
+#   Source: ./upstream-tutorial/generating-a-custom-minimal-base-image.html
+#   (Red Hat, "Chapter 9. Creating bootc images from scratch", RHEL 9 image mode)
+#
+# This file reproduces the article's example verbatim, including the `RUN <<EORUN`
+# heredoc and the registry.redhat.io base.
+#
+# NOTE — directly bootable disks: the article's example installs only
+# NetworkManager + openssh-server, which is enough for a *base for layering* but
+# NOT enough to install to a disk and log in.  To boot the image (our extension
+# beyond the page) you also need `bubblewrap` — `bootc install` runs bootupd in a
+# `bwrap` chroot, and the minimal manifest strips bwrap — plus a login (the
+# manifest leaves root locked).  See Containerfile.centos, which adds both, and
+# MANUAL_TESTING.md "Boot gotchas".  (Kept out of this file to preserve byte-
+# fidelity with §9.4; the bootloader *payload* itself IS already in minimal.)
+#
+# It REQUIRES a Red Hat subscription:
+#
+#   subscription-manager register          # or a registry.redhat.io service account
+#   podman login registry.redhat.io
+#
+# ...and a container builder that parses Dockerfile heredocs (buildah >= 1.34 /
+# podman >= 5).  If you do NOT have a RHEL entitlement, build Containerfile.centos
+# instead — it is the same procedure on the freely-pullable CentOS Stream 9 bootc
+# image (RHEL 9's upstream) and is the one verified in MANUAL_TESTING.md.
+#
+# Build it (note the privileges from §9.3 — the inner build-rootfs needs nested
+# mount namespacing, off by default):
+#
+#   podman build -t quay.io/<namespace>/<image>:<tag> . \
+#       --cap-add=all --security-opt=label=type:container_runtime_t --device /dev/fuse
+
+# The following example reuses the default base image as a "builder" image. Optionally,  you can use the commented instructions to configure or override the RPM repositories in /etc/yum.repos.d to, for example, refer to pinned versions
+FROM registry.redhat.io/rhel9/rhel-bootc:latest as builder
+# RUN rm -rf /etc/yum.repos.d/*
+# COPY mycustom.repo /etc/yum.repos.d
+RUN /usr/libexec/bootc-base-imagectl build-rootfs --manifest=minimal /target-rootfs
+# Create a new, empty image from scratch.
+FROM scratch
+# Copy the root file system built in the previous step into this image.
+COPY --from=builder /target-rootfs/ /
+# You can make arbitrary changes such as copying the systemd units and other tweaks from the baseconfig container image. This example uses the heredocs syntax, to improve and make it easy to add complex instructions, and install critical components
+RUN <<EORUN
+set -xeuo pipefail
+# Install networking support and SSH which are not in minimal
+dnf -y install NetworkManager openssh-server
+dnf clean all
+rm /var/{log,cache,lib}/* -rf
+bootc container lint
+EORUN
+# This label is required
+LABEL containers.bootc 1
+LABEL ostree.bootable 1
+# These labels are optional but useful if you want to keep the default of running under systemd when run as a container image.
+STOPSIGNAL SIGRTMIN+3
+CMD ["/sbin/init"]
