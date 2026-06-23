@@ -148,14 +148,39 @@ Partition "vda2" given in part command does not exist.
 
 Fix: `setup-pxe-net.sh` now **generates** a clean whole-disk kickstart
 (`clearpart --all --drives=vda` + `autopart`, ending in `poweroff`) at
-`~/netboot/vbmc-almalinux.ks`. With that, the **full lifecycle was verified
-end-to-end** (2026-06-23): PXE network up → node created → `netboot` → Anaconda
-installs `@^minimal-environment` from the public mirror → **poweroff** →
-`bootdev disk` → `power on` → AlmaLinux 9 boots from disk. ✅
+`~/netboot/vbmc-almalinux.ks`.
 
-> The clean installed-OS serial login wasn't captured verbatim in this session;
-> paste it here on the next run to complete the record (`./vbmc-lab.sh console`
-> after the disk boot → `localhost login: root`).
+### The verified finale (captured 2026-06-23)
+
+The full lifecycle was then driven end-to-end by [`run-finale.sh`](run-finale.sh)
+(PXE network → node → BMC → `netboot` install → poweroff → `bootdev disk` →
+`power on`), and [`capture-login.py`](capture-login.py) logged in over the serial
+console. The node booted the OS it had just installed **from disk** — note the
+GRUB entry and the `BOOT_IMAGE=(hd0,msdos1)…` kernel command line (disk, not PXE):
+
+```
+Booting `AlmaLinux (5.14.0-687.15.1.el9_8.x86_64) 9.8 (Olive Jaguar)'
+[    0.000000] Command line: BOOT_IMAGE=(hd0,msdos1)/vmlinuz-5.14.0-687.15.1.el9_8.x86_64 \
+                 root=UUID=08c71a1e-… ro console=ttyS0,115200 crashkernel=… console=ttyS0
+…
+[  OK  ] Started Serial Getty on ttyS0.
+
+AlmaLinux 9.8 (Olive Jaguar)
+Kernel 5.14.0-687.15.1.el9_8.x86_64 on an x86_64
+
+localhost login: root
+Password:
+[root@localhost ~]# cat /etc/os-release | grep PRETTY_NAME; uname -r
+PRETTY_NAME="AlmaLinux 9.8 (Olive Jaguar)"
+5.14.0-687.15.1.el9_8.x86_64
+[root@localhost ~]#
+```
+
+**The full IPMI provisioning lifecycle, verified end-to-end on KVM:** a node that
+started as a blank 10 GB disk was PXE-installed *entirely over IPMI* — `bootdev pxe`
+→ firmware netboot → Anaconda kickstart-install of `@^minimal-environment` from the
+public mirror → `poweroff` — then `bootdev disk` + `power on` booted the installed
+**AlmaLinux 9.8** to a working serial login (`root`/`alpine`). ✅ 🎉
 
 ---
 

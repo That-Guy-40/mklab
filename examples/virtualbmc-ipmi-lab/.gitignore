@@ -1,6 +1,7 @@
 # Lab scratch — downloaded base images, per-node overlays, vbmc state.
 cache/
 state/
+*.log
 *.qcow2
 *.img
 *.iso
