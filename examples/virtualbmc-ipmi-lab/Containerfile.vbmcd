@@ -1,0 +1,43 @@
+# Containerfile.vbmcd — OpenStack VirtualBMC daemon (vbmcd) in a disposable
+# container.
+#
+# vbmcd exposes an IPMI-over-LAN endpoint and actuates power on *libvirt
+# domains* via the libvirt API.  The `vbmc` CLI is a thin client that talks to
+# this daemon over a Unix socket under /root/.vbmc — so we drive it with
+# `podman exec <ctr> vbmc ...` (see vbmc-lab.sh).
+#
+# We mirror the host (Ubuntu 24.04) on purpose: the in-container libvirt-python
+# then speaks the same RPC version as the host's libvirtd, which we reach by
+# bind-mounting the host's /var/run/libvirt socket dir into the container
+# (vbmc-lab.sh `up`).  --network host puts the IPMI UDP listener straight on
+# the host network namespace, so `ipmitool -H 127.0.0.1 -p 6230` just works.
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# python3-libvirt = apt's prebuilt C binding for libvirt (so pip need not
+# compile libvirt-python).  libvirt-clients gives us `virsh` inside the
+# container for debugging the mounted socket.
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        python3 python3-pip \
+        python3-libvirt \
+        libvirt-clients \
+        iproute2 procps ca-certificates; \
+    rm -rf /var/lib/apt/lists/*
+
+# Ubuntu 24.04's system Python is PEP 668 "externally managed", so a plain
+# `pip install` is refused.  Inside this DISPOSABLE container we deliberately
+# --break-system-packages so virtualbmc lands in the system site-packages and
+# can import apt's python3-libvirt (a pipx/venv would hide that C binding).
+#
+# On the HOST you would NOT do this — there you'd `pipx install virtualbmc`.
+# That host-vs-container contrast is a deliberate teaching beat in the RUNBOOK.
+RUN pip3 install --no-cache-dir --break-system-packages virtualbmc
+
+# vbmcd is the long-running server; run it as PID 1 in the foreground so the
+# container's lifecycle == the daemon's.  IPMI's well-known UDP port is 623,
+# but the lab binds an unprivileged 6230 per node via `vbmc add --port`.
+EXPOSE 623/udp
+CMD ["vbmcd", "--foreground"]

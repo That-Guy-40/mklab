@@ -1,0 +1,1207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Ubuntu 24.04 : KVM : Use VirtualBMC : Server World</title>
+<meta name="description" content="This is an example of how to install and use VirtualBMC in a virtual environment using KVM on Ubuntu 24.04 LTS.">
+<link href="./css/base.css?20260102" media="screen" rel="stylesheet" type="text/css">
+<link href="./css/navi.css?20260102" media="screen" rel="stylesheet" type="text/css">
+<link href="./css/main.css?20260102" media="screen" rel="stylesheet" type="text/css">
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-ZE66RTNTHG"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'G-ZE66RTNTHG');
+</script>
+<script src="./freepass_bidder.js?cb=202606151526"></script>
+</head>
+<body>
+<div id="top-menu">
+<table id="menu-table">
+<tr>
+<td class="menu" style="width: 15%;"><a href="./">Server World</a></td>
+<td class="menu">
+<div class="top_navi">
+<ul>
+<li><a href="./note?p=oslist">Other OS Configs</a>
+<ul>
+<li><a href="./note?os=CentOS_Stream_10&amp;p=download">CentOS Stream 10</a></li>
+<li><a href="./note?os=CentOS_Stream_9&amp;p=download">CentOS Stream 9</a></li>
+<li><a href="./note?os=Ubuntu_26.04&amp;p=download">Ubuntu 26.04 LTS</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=download">Ubuntu 24.04 LTS</a></li>
+<li><a href="./note?os=Windows_Server_2025&amp;p=download">Windows Server 2025</a></li>
+<li><a href="./note?os=Windows_Server_2022&amp;p=download">Windows Server 2022</a></li>
+<li><a href="./note?os=Debian_13&amp;p=download">Debian 13</a></li>
+<li><a href="./note?os=Fedora_44&amp;p=download">Fedora 44</a></li>
+<li><a href="./note?os=Rocky_Linux_10&amp;p=download">Rocky Linux 10</a></li>
+<li><a href="./note?os=openSUSE_Leap_16&amp;p=download">openSUSE Leap 16</a></li>
+<li><a href="./note?os=FreeBSD_15&amp;p=download">FreeBSD 15</a></li>
+<li><a href="./note?os=Proxmox_VE_9&amp;p=download">Proxmox VE 9</a></li>
+<li><a href="./note?p=command" style="border-bottom: #aaaaaa 0px solid;">Command Help</a></li>
+</ul>
+<ul style="position: absolute; margin-left: 14em; z-index: 90;">
+<li><a href="./note?os=AlmaLinux_9&amp;p=download">AlmaLinux 9</a></li>
+<li><a href="./note?os=Rocky_Linux_8&amp;p=download">Rocky Linux 8</a></li>
+<li><a href="./note?os=Ubuntu_25.04&amp;p=download">Ubuntu 25.04</a></li>
+<li><a href="./note?os=Ubuntu_22.04&amp;p=download">Ubuntu 22.04 LTS</a></li>
+<li><a href="./note?os=Windows_Server_2019&amp;p=download">Windows 2019</a></li>
+<li><a href="./note?os=Windows_Server_2016&amp;p=download">Windows 2016</a></li>
+<li><a href="./note?os=Debian_12&amp;p=download">Debian 12</a></li>
+<li><a href="./note?os=Fedora_43&amp;p=download">Fedora 43</a></li>
+<li><a href="./note?os=CentOS_Stream_8&amp;p=download">CentOS Stream 8</a></li>
+<li><a href="./note?os=SUSE_Linux_Enterprise_15&amp;p=download">SUSE Enterprise 15</a></li>
+<li><a href="./note?os=FreeBSD_14&amp;p=download">FreeBSD 14</a></li>
+<li><a href="./note?os=ESXi_8&amp;p=download">VMware ESXi 8</a></li>
+<li><a href="./note?os=ESXi_7&amp;p=download" style="border-bottom: #aaaaaa 0px solid;">VMware ESXi 7</a></li>
+</ul>
+<ul style="position: absolute; margin-left: 27em; z-index: 95; width: 120px;">
+<li><a href="./note?os=CentOS_8&amp;p=download">CentOS 8</a></li>
+<li><a href="./note?os=CentOS_7&amp;p=download">CentOS 7</a></li>
+<li><a href="./note?os=CentOS_6&amp;p=download">CentOS 6</a></li>
+<li><a href="./note?os=CentOS_5&amp;p=make_media">CentOS 5</a></li>
+<li><a href="./note?os=Debian_11&amp;p=download">Debian 11</a></li>
+<li><a href="./note?os=Debian_10&amp;p=download">Debian 10</a></li>
+<li><a href="./note?os=Debian_9&amp;p=download">Debian 9</a></li>
+<li><a href="./note?os=Debian_8&amp;p=download">Debian 8</a></li>
+<li><a href="./note?os=Debian_7.0&amp;p=download">Debian 7</a></li>
+<li><a href="./note?os=Debian_6.0&amp;p=download">Debian 6</a></li>
+<li><a href="./note?os=Fedora_42&amp;p=download">Fedora 42</a></li>
+<li><a href="./note?os=Fedora_41&amp;p=download">Fedora 41</a></li>
+<li><a href="./note?os=Fedora_40&amp;p=download" style="border-bottom: #aaaaaa 0px solid;">Fedora 40</a></li>
+</ul>
+<ul style="position: absolute; margin-left: 36em; z-index: 99; width: 120px;">
+<li><a href="./note?os=Fedora_39&amp;p=download">Fedora 39</a></li>
+<li><a href="./note?os=Fedora_38&amp;p=download">Fedora 38</a></li>
+<li><a href="./note?os=Fedora_37&amp;p=download">Fedora 37</a></li>
+<li><a href="./note?os=Fedora_36&amp;p=download">Fedora 36</a></li>
+<li><a href="./note?os=Fedora_35&amp;p=download">Fedora 35</a></li>
+<li><a href="./note?os=Fedora_34&amp;p=download">Fedora 34</a></li>
+<li><a href="./note?os=Fedora_33&amp;p=download">Fedora 33</a></li>
+<li><a href="./note?os=Fedora_32&amp;p=download">Fedora 32</a></li>
+<li><a href="./note?os=Fedora_31&amp;p=download">Fedora 31</a></li>
+<li><a href="./note?os=Fedora_30&amp;p=download">Fedora 30</a></li>
+<li><a href="./note?os=Fedora_29&amp;p=download">Fedora 29</a></li>
+<li><a href="./note?os=Other">Other Tips</a></li>
+<li style="font-size: 12px;"><a href="./note?p=oslist" style="border-bottom: #aaaaaa 0px solid;">Full OS List</a></li>
+<!-- 
+<li><a href="./note?os=Fedora_28&amp;p=download">Fedora 28</a></li>
+<li><a href="./note?os=Fedora_27&amp;p=download">Fedora 27</a></li>
+<li><a href="./note?os=Fedora_26&amp;p=download">Fedora 26</a></li>
+<li><a href="./note?os=Fedora_25&amp;p=download">Fedora 25</a></li>
+<li><a href="./note?os=Fedora_24&amp;p=download">Fedora 24</a></li>
+<li><a href="./note?os=Fedora_23&amp;p=download">Fedora 23</a></li>
+<li><a href="./note?os=Fedora_22&amp;p=download">Fedora 22</a></li>
+<li><a href="./note?os=Fedora_21&amp;p=download">Fedora 21</a></li>
+<li><a href="./note?os=Fedora_20&amp;p=download">Fedora 20</a></li>
+<li><a href="./note?os=Fedora_19&amp;p=download">Fedora 19</a></li>
+<li><a href="./note?os=Fedora_18&amp;p=download">Fedora 18</a></li>
+<li><a href="./note?os=Fedora_17&amp;p=download">Fedora 17</a></li>
+<li><a href="./note?os=Fedora_16&amp;p=download">Fedora 16</a></li>
+<li><a href="./note?os=Fedora_15&amp;p=download">Fedora 15</a></li>
+<li><a href="./note?os=Fedora_14&amp;p=download">Fedora 14</a></li>
+<li><a href="./note?os=Fedora_13&amp;p=make_media">Fedora 13</a></li>
+<li><a href="./note?os=Fedora_12&amp;p=make_media">Fedora 12</a></li>
+<li><a href="./note?os=Fedora_10&amp;p=make_media">Fedora 11</a></li>
+<li><a href="./note?os=Fedora_10&amp;p=make_media">Fedora 10</a></li>
+<li><a href="./note?os=Ubuntu_23.04&amp;p=download">Ubuntu 23.04</a></li>
+<li><a href="./note?os=Ubuntu_21.04&amp;p=download">Ubuntu 21.04</a></li>
+<li><a href="./note?os=Ubuntu_20.04&amp;p=download">Ubuntu 20.04</a></li>
+<li><a href="./note?os=Ubuntu_19.04&amp;p=download">Ubuntu 19.04</a></li>
+<li><a href="./note?os=Ubuntu_18.04&amp;p=download">Ubuntu 18.04</a></li>
+<li><a href="./note?os=Ubuntu_17.04&amp;p=download">Ubuntu 17.04</a></li>
+<li><a href="./note?os=Ubuntu_16.04&amp;p=download">Ubuntu 16.04</a></li>
+<li><a href="./note?os=Ubuntu_15.04&amp;p=download">Ubuntu 15.04</a></li>
+<li><a href="./note?os=Ubuntu_14.04&amp;p=download">Ubuntu 14.04</a></li>
+<li><a href="./note?os=Ubuntu_13.04&amp;p=download">Ubuntu 13.04</a></li>
+<li><a href="./note?os=Ubuntu_12.04&amp;p=download">Ubuntu 12.04</a></li>
+<li><a href="./note?os=Ubuntu_11.04&amp;p=download">Ubuntu 11.04</a></li>
+<li><a href="./note?os=Ubuntu_10.04&amp;p=make_media">Ubuntu 10.04 LTS</a></li>
+<li><a href="./note?os=Windows_Server_2012&amp;p=download">Windows 2012 R2</a></li>
+<li><a href="./note?os=SUSE_Linux_Enterprise_12&amp;p=download">SUSE Enterprise 12</a></li>
+<li><a href="./note?os=SUSE_Linux_Enterprise_Server_11&amp;p=make_media">SUSE Enterprise 11</a></li>
+<li><a href="./note?os=Scientific_Linux_6&amp;p=download" style="border-bottom: #aaaaaa 0px solid;">Scientific Linux 6</a></li>
+-->
+</ul>
+</li>
+</ul>
+</div>
+</td>
+<td class="menu"><a href="./note?p=policy">Privacy Policy</a></td>
+<td class="menu"><a href="./note?p=send">Support/Contact us</a></td>
+<td class="menu" style="width: 15%;">
+<div class="count">3851 / 128754429</div>
+</td>
+</tr>
+</table>
+</div>
+<div id="left">
+<div class="os">Ubuntu 24.04</div>
+<div class="navi">
+<ul>
+<li class="tree"><a href="./note?os=Ubuntu_24.04&amp;p=download&amp;f=1">Install Ubuntu</a>
+<ul style="position: absolute; margin-top: -1.9em;">
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=download">Install</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=download">(01) Get Ubuntu 24.04</a></li>
+<li style="border-bottom: 0px"><a href="./note?os=Ubuntu_24.04&amp;p=install">(02) Install Ubuntu 24.04</a></li>
+<li class="scolor" style="border-top: #696969 1px solid; border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=initial_conf&amp;f=1">Initial Settings</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=initial_conf&amp;f=1">(01) Add a user</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=initial_conf&amp;f=2">(02) Enable root user</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=initial_conf&amp;f=3">(03) Network Settings</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=initial_conf&amp;f=4">(04) Configure Services</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=initial_conf&amp;f=5">(05) Update System</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=initial_conf&amp;f=6">(06) Configure Vim</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=initial_conf&amp;f=7">(07) Configure Sudo</a></li>
+</ul>
+</li>
+<li class="tree"><a href="./note?os=Ubuntu_24.04&amp;p=ntp&amp;f=1">NTP / SSH Server</a>
+<ul style="position: absolute; margin-top: -1.9em;">
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=ntp&amp;f=1">NTP Server</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ntp&amp;f=1">(01) Configure NTP Server (NTPsec)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ntp&amp;f=2">(02) Configure NTP Server (Chrony)</a></li>
+<li style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=ntp&amp;f=3">(03) Configure NTP Client</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=ssh&amp;f=1">SSH Server</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ssh&amp;f=1">(01) Password Authentication</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ssh&amp;f=2">(02) SSH File Transfer (Ubuntu)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ssh&amp;f=3">(03) SSH File Transfer (Windows)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ssh&amp;f=4">(04) SSH Keys Pair Authentication</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ssh&amp;f=5">(05) SFTP only + Chroot</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ssh&amp;f=6">(06) Use SSH-Agent</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ssh&amp;f=7">(07) Use SSHPass</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ssh&amp;f=8">(08) Use SSHFS</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ssh&amp;f=9">(09) SSH Port Forwarding</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=ssh&amp;f=10">(10) Use Parallel SSH</a></li>
+</ul>
+</li>
+<li class="tree"><a href="./note?os=Ubuntu_24.04&amp;p=dns&amp;f=1">DNS / DHCP Server</a>
+<ul style="position: absolute; margin-top: -3.7em;">
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=dnsmasq&amp;f=1">DNS / DHCP Server (Dnsmasq)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=dnsmasq&amp;f=1">(01) Install Dnsmasq</a></li>
+<li style="border-bottom: #696969 1px solid"><a href="./note?os=Ubuntu_24.04&amp;p=dnsmasq&amp;f=2">(02) Configure DHCP Server</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=dns&amp;f=1">DNS Server (BIND)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=dns&amp;f=1">(01) Configure for Internal Network</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=dns&amp;f=2">(02) Configure for External Network</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=dns&amp;f=3">(03) Configure Zone Files</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=dns&amp;f=4">(04) Verify Resolution</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=dns&amp;f=5">(05) Use View Statement</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=dns&amp;f=6">(06) Set Alias (CNAME)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=dns&amp;f=10">(07) Set SPF record</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=dns&amp;f=11">(08) Set DMARC record</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=dns&amp;f=7">(09) Configure Secondary Server</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=dns&amp;f=8">(10) DNS over HTTPS (Server)</a></li>
+<li style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=dns&amp;f=9">(11) DNS over HTTPS (Client)</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=dhcp&amp;f=1">DHCP Server</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=dhcp&amp;f=1">(01) Configure DHCP Server</a></li>
+<li style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=dhcp&amp;f=2">(02) Configure DHCP Client</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=kea&amp;f=1">DHCP Server (Kea)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kea&amp;f=1">(01) Configure Kea DHCP Server</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kea&amp;f=2">(02) Configure Host Reservations</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=kea&amp;f=3">(03) Kea Control Agent</a></li>
+</ul>
+</li>
+<li class="tree"><a href="./note?os=Ubuntu_24.04&amp;p=nfs&amp;f=1">Storage Server</a>
+<ul style="position: absolute; margin-top: -5.55em;">
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=nfs&amp;f=1">NFS</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nfs&amp;f=1">(01) Configure NFS Server</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nfs&amp;f=2">(02) Configure NFS Client</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=nfs&amp;f=3">(03) NFS 4 ACL Tool</a></li>
+<li class="scolor" style="border-top: #696969 1px solid; border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=iscsi&amp;f=1">iSCSI</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=iscsi&amp;f=1">(01) Conf iSCSI Target (targetcli)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=iscsi&amp;f=2">(02) Configure iSCSI Target (tgt)</a></li>
+<li style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=iscsi&amp;f=3">(03) Configure iSCSI Initiator</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=ceph&amp;f=1">Ceph Squid</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ceph&amp;f=1">(01) Configure Ceph Cluster #1</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ceph&amp;f=2">(02) Configure Ceph Cluster #2</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ceph&amp;f=3">(03) Use Block Device</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ceph&amp;f=4">(04) Use File System</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ceph&amp;f=5">(05) CephFS + NFS-Ganesha</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ceph&amp;f=6">(06) Ceph Object Gateway</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ceph&amp;f=8">(07) Add or Remove OSDs</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=ceph&amp;f=9">(08) Add or Remove Monitor Nodes</a></li>
+</ul>
+<ul style="position: absolute; margin-top: -5.55em; margin-left: 22.8em; border-left: #696969 1px dashed; z-index: 70;">
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=glusterfs&amp;f=1">GlusterFS</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=glusterfs&amp;f=1">(01) Install GlusterFS</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=glusterfs&amp;f=2">(02) Distributed Configuration</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=glusterfs&amp;f=3">(03) GlusterFS Client</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=glusterfs&amp;f=4">(04) GlusterFS + NFS-Ganesha</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=glusterfs&amp;f=5">(05) GlusterFS + SMB</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=glusterfs&amp;f=7">(06) Set Quota</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=glusterfs&amp;f=8">(07) Add Nodes (Bricks)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=glusterfs&amp;f=9">(08) Remove Nodes (Bricks)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=glusterfs&amp;f=10">(09) Replication Configuration</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=glusterfs&amp;f=11">(10) Distributed + Replication</a></li>
+<li style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=glusterfs&amp;f=12">(11) Dispersed Configuration</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=drbd&amp;f=1">DRBD</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=drbd&amp;f=1">(01) Install DRBD</a></li>
+</ul>
+</li>
+<li class="tree"><a href="./note?os=Ubuntu_24.04&amp;p=kvm&amp;f=1">Virtualization</a>
+<ul style="position: absolute; margin-top: -7.35em;">
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=kvm&amp;f=1">KVM</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kvm&amp;f=1">(01) Install KVM</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kvm&amp;f=2">(02) Create Virtual Machine</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kvm&amp;f=3">(03) Create Virtual Machine (GUI)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kvm&amp;f=4">(04) Basic Operation for VM</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kvm&amp;f=5">(05) Install Management tools</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kvm&amp;f=6">(06) VNC Connection Setting</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kvm&amp;f=7">(07) VNC Connection (Client)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kvm&amp;f=8">(08) Configure Nested KVM</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kvm&amp;f=9">(09) Live Migration</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kvm&amp;f=10">(10) Storage Migration</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kvm&amp;f=11">(11) UEFI boot for VM</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kvm&amp;f=12">(12) Enable TPM 2.0</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kvm&amp;f=13">(13) GPU Passthrough</a></li>
+<li style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=kvm&amp;f=14">(14) Use VirtualBMC</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=virtualbox&amp;f=1">VirtualBox</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=virtualbox&amp;f=1">(01) Install VirtualBox</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=virtualbox&amp;f=2">(02) Create Virtual Machines</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=virtualbox&amp;f=3">(03) Install GuestAdditions</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=virtualbox&amp;f=4">(04) Create Virtual Machines (GUI)</a></li>
+</ul>
+</li>
+<li class="tree"><a href="./note?os=Ubuntu_24.04&amp;p=podman&amp;f=1">Container Platform</a>
+<ul style="position: absolute; margin-top: -9.2em;">
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=podman&amp;f=1">Podman</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=podman&amp;f=1">(01) Install Podman</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=podman&amp;f=2">(02) Add Container Images</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=podman&amp;f=3">(03) Access to Container Services</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=podman&amp;f=4">(04) Use Dockerfile</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=podman&amp;f=5">(05) Use External Storage</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=podman&amp;f=6">(06) Use External Storage (NFS)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=podman&amp;f=7">(07) Use Registry</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=podman&amp;f=8">(08) Podman Network Basis</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=podman&amp;f=9">(09) Use Docker CLI</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=podman&amp;f=10">(10) Use Docker Compose</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=podman&amp;f=11">(11) Create Pods</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=podman&amp;f=12">(12) Use by common users</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=podman&amp;f=13">(13) Generate Systemd unit file</a></li>
+<li style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=podman&amp;f=14">(14) Container resource usage</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=buildah&amp;f=1">Buildah</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=buildah&amp;f=1">(01) Install Buildah</a></li>
+<li style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=buildah&amp;f=2">(02) Create images from Scratch</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=minikube&amp;f=1">Minikube</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=minikube&amp;f=1">(01) Install Minikube</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=minikube&amp;f=2">(02) Basic Usage</a></li>
+<li class="scolor" style="border-top: #696969 1px solid; border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=lxc&amp;f=1">LXC</a></li>
+</ul>
+<ul style="position: absolute; margin-top: -9.2em; margin-left: 22.8em; border-left: #696969 1px dashed; z-index: 80;">
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=kubernetes&amp;f=1">Kubernetes</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kubernetes&amp;f=1">(01) Configure Manager Node</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kubernetes&amp;f=2">(02) Install Kubeadm</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kubernetes&amp;f=3">(03) Configure Control Plane Node</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kubernetes&amp;f=4">(04) Configure Worker Node</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kubernetes&amp;f=5">(05) Deploy Pods</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kubernetes&amp;f=6">(06) Install Helm</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kubernetes&amp;f=7">(07) Enable Dashboard</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kubernetes&amp;f=8">(08) Add Control Plane Node</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kubernetes&amp;f=9">(09) Add Worker Node</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kubernetes&amp;f=10">(10) Remove Nodes</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kubernetes&amp;f=11">(11) Configure External Storage</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kubernetes&amp;f=12">(12) Configure Private Registry</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kubernetes&amp;f=13">(13) Deploy Metrics Server</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kubernetes&amp;f=14">(14) Horizontal Pod Autoscaler</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kubernetes&amp;f=15">(15) Dynamic Provisioning (NFS)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kubernetes&amp;f=16">(16) Deploy Prometheus</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kubernetes&amp;f=17">(17) Install KubeVirt</a></li>
+<li style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=kubernetes&amp;f=18">(18) Create Virtual Machine</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=microk8s&amp;f=1">MicroK8s</a></li>
+<li class="scolor" style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=docker&amp;f=1">Docker</a></li>
+</ul>
+</li>
+<li class="tree"><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo&amp;f=1">Cloud Compute</a>
+<ul style="position: absolute; margin-top: -11.0em;">
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo&amp;f=1">OpenStack Flamingo</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo&amp;f=1">(01) Flamingo Overview</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo&amp;f=2">(02) Pre-Requirements</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo&amp;f=3">(03) Configure Keystone #1</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo&amp;f=4">(04) Configure Keystone #2</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo&amp;f=5">(05) Configure Glance</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo&amp;f=6">(06) Add VM Images</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo&amp;f=7">(07) Configure Nova #1</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo&amp;f=8">(08) Configure Nova #2</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo&amp;f=9">(09) Configure Nova #3</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo&amp;f=10">(10) Configure Neutron #1</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo&amp;f=11">(11) Configure Neutron #2</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo&amp;f=12">(12) Configure Networking</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo&amp;f=13">(13) Add new Users</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo&amp;f=14">(14) Add Flavors</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo&amp;f=15">(15) Create Instances</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo2&amp;f=1">(16) Create Instances (Windows)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo2&amp;f=3">(17) Add Compute Nodes</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo2&amp;f=4">(18) Conf Neutron (Control Node)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo2&amp;f=5">(19) Conf Neutron (Network Node)</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo2&amp;f=6">(20) Conf Neutron (Compute Node)</a></li>
+</ul>
+<ul style="position: absolute; margin-top: -11.0em; margin-left: 22.8em; border-left: #696969 1px dashed; z-index: 70; border-right: #696969 1px dashed;">
+<li class="scolor" style="border-bottom: #696969 1px solid; width: 250px; line-height: 19px;">&nbsp;</li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo2&amp;f=7">(21) Neutron Network (FLAT)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo2&amp;f=8">(22) Neutron Network (VXLAN)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo2&amp;f=9">(23) Conf Neutron OVN (Network)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo2&amp;f=10">(24) Conf Neutron OVN (Compute)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo2&amp;f=11">(25) Neutron Network (Geneve)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo2&amp;f=12">(26) Add Compute Nodes (GPU)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo2&amp;f=13">(27) Conf Cinder (Control Node)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo2&amp;f=14">(28) Conf Cinder (Storage Node)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo2&amp;f=15">(29) Cinder Storage (LVM)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo3&amp;f=1">(30) Cinder Storage (NFS)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo3&amp;f=2">(31) Cinder Storage (Multi-Back)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo3&amp;f=3">(32) Cinder Backup Service</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo3&amp;f=4">(33) Configure Heat (Control Node)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo3&amp;f=5">(34) Configure Heat (Network Node)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo3&amp;f=6">(35) How to use Heat</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo3&amp;f=7">(36) Configure Barbican</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo3&amp;f=8">(37) How to use Barbican</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo3&amp;f=9">(38) Configure Swift (Control Node)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo3&amp;f=10">(39) Configure Swift (Proxy Node)</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo3&amp;f=11">(40) Configure Swift (Storage Node)</a></li>
+</ul>
+<ul style="position: absolute; margin-top: -11.0em; margin-left: 45.6em;">
+<li class="scolor" style="border-bottom: #696969 1px solid; width: 250px; line-height: 19px;">&nbsp;</li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo3&amp;f=12">(41) How to use Swift</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo3&amp;f=13">(42) Conf Manila (Control Node)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo3&amp;f=14">(43) Conf Manila (Storage Node)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo3&amp;f=15">(44) Use Manila (Local Device)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo4&amp;f=1">(45) Conf Designate (Control Node)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo4&amp;f=2">(46) Conf Designate (Network Node)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo4&amp;f=3">(47) How to use Designate</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo4&amp;f=4">(48) Conf Octavia (Control Node)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo4&amp;f=5">(49) Conf Octavia (Network Node)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo4&amp;f=6">(50) Create LoadBalancer Image</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo4&amp;f=7">(51) How to use Octavia</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo4&amp;f=8">(52) Configure Gnocchi</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo4&amp;f=9">(53) Conf Ceilometer (Network)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo4&amp;f=10">(54) Conf Ceilometer (Compute)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo4&amp;f=11">(55) How to use Ceilometer (Nova)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo4&amp;f=12">(56) How to use Ceilometer (Glance)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo4&amp;f=13">(57) How to use Ceilometer (Cinder)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo4&amp;f=14">(58) Configure CloudKitty</a></li>
+<li style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=openstack_flamingo4&amp;f=15">(59) How to use CloudKitty</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=openstack_epoxy&amp;f=1">OpenStack Epoxy</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=openstack_dalmatian&amp;f=1">OpenStack Dalmatian</a></li>
+<li class="scolor" style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=openstack_caracal&amp;f=1">OpenStack Caracal</a></li>
+</ul>
+</li>
+<li class="tree"><a href="./note?os=Ubuntu_24.04&amp;p=openldap&amp;f=1">Directory Server</a>
+<ul style="position: absolute; margin-top: -9.2em;">
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=openldap&amp;f=1">OpenLDAP</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openldap&amp;f=1">(01) Configure LDAP Server</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openldap&amp;f=2">(02) Add User Accounts</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openldap&amp;f=3">(03) Configure LDAP Client</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openldap&amp;f=4">(04) LDAP over SSL/TLS</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openldap&amp;f=5">(05) OpenLDAP Replication</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openldap&amp;f=6">(06) Multi-Master Replication</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=openldap&amp;f=7">(07) LDAP Account Manager</a></li>
+</ul>
+</li>
+<li class="tree"><a href="./note?os=Ubuntu_24.04&amp;p=httpd&amp;f=1">Web Server</a>
+<ul style="position: absolute; margin-top: -14.6em;">
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=httpd&amp;f=1">Apache2</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=httpd&amp;f=1">(01) Install Apache2</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=httpd&amp;f=2">(02) Configure Virtual Hostings</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=httpd&amp;f=3">(03) Configure SSL/TLS</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=httpd&amp;f=4">(04) Enable Userdir</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=httpd&amp;f=5">(05) Use CGI Scripts</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=httpd&amp;f=6">(06) Use PHP Scripts</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=httpd&amp;f=7">(07) PHP + PHP-FPM</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=httpd&amp;f=8">(08) Basic Authentication</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=httpd&amp;f=9">(09) Configure WebDAV Folder</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=httpd&amp;f=10">(10) Basic Authentication + PAM</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=httpd&amp;f=11">(11) Basic Authentication + LDAP</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=httpd&amp;f=12">(12) Configure mod_md</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=httpd&amp;f=13">(13) Configure mod_proxy</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=httpd&amp;f=14">(14) Configure mod_security</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=httpd&amp;f=15">(15) Configure mod_ratelimit</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=httpd2&amp;f=1">(16) Configure mod_http2</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=httpd2&amp;f=2">(17) Configure mod_evasive</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=httpd2&amp;f=6">(18) Configure mod_perl</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=httpd2&amp;f=7">(19) Configure mod_wsgi</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=httpd2&amp;f=3">(20) Log Report : AWStats</a></li>
+</ul>
+<ul style="position: absolute; margin-top: -14.6em; margin-left: 22.8em; border-left: #696969 1px dashed; z-index: 70;">
+<li class="scolor" style="border-bottom: #696969 1px solid; width: 250px; line-height: 19px;">&nbsp;</li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=httpd2&amp;f=4">(21) Blog System : WordPress</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=httpd2&amp;f=8">(22) Wiki System : MediaWiki</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=httpd2&amp;f=5">(23) Web Mail : RoundCube</a></li>
+<li style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=httpd2&amp;f=9">(24) Photo Gallery : Piwigo</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=nginx&amp;f=1">Nginx</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nginx&amp;f=1">(01) Install Nginx</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nginx&amp;f=2">(02) Configure Virtual Hostings</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nginx&amp;f=3">(03) Configure SSL/TLS</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nginx&amp;f=4">(04) Enable Userdir</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nginx&amp;f=5">(05) Basic Authentication</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nginx&amp;f=6">(06) Basic Auth + PAM</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nginx&amp;f=7">(07) Basic Auth + Kerberos</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nginx&amp;f=8">(08) Use CGI Scripts</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nginx&amp;f=9">(09) Use PHP Scripts</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nginx&amp;f=10">(10) Nginx Reverse Proxy</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nginx&amp;f=11">(11) Nginx Load Balancing</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nginx&amp;f=12">(12) Use Stream module</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=nginx&amp;f=13">(13) Wiki System : Wiki.js</a></li>
+</ul>
+</li>
+<li class="tree"><a href="./note?os=Ubuntu_24.04&amp;p=mariadb&amp;f=1">Database</a>
+<ul style="position: absolute; margin-top: -16.5em;">
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=postgresql&amp;f=1">PostgreSQL 16</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=postgresql&amp;f=1">(01) Install PostgreSQL</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=postgresql&amp;f=2">(02) Settings for Remote Connection</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=postgresql&amp;f=3">(03) PostgreSQL over SSL/TLS</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=postgresql&amp;f=4">(04) Backup and Restore</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=postgresql&amp;f=5">(05) Streaming Replication</a></li>
+<li style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=postgresql&amp;f=6">(06) Install phpPgAdmin</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=mariadb&amp;f=1">MariaDB 10.11</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=mariadb&amp;f=1">(01) Install MariaDB</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=mariadb&amp;f=2">(02) MariaDB over SSL/TLS</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=mariadb&amp;f=3">(03) MariaDB Backup</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=mariadb&amp;f=4">(04) MariaDB Replication</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=mariadb&amp;f=5">(05) MariaDB Galera Cluster</a></li>
+<li style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=mariadb&amp;f=6">(06) Install phpMyAdmin</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=mssql2025&amp;f=1">SQL Server 2025</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=mssql2025&amp;f=1">(01) Install SQL Server 2025</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=mssql2025&amp;f=2">(02) Connect from Win Client</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=mssql2025&amp;f=3">(03) T-SQL Basic Usage</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=mssql2025&amp;f=4">(04) Use bcp Utility</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=mssql2025&amp;f=5">(05) SQL Server Agent</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=mssql2025&amp;f=6">(06) Full-Text Search</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=mssql2025&amp;f=7">(07) Use from Python</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=mssql2025&amp;f=8">(08) Use from PHP</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=mssql2025&amp;f=9">(09) Use from C#</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=mssql2025&amp;f=10">(10) Windows Authentication</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=mssql2025&amp;f=11">(11) Always On Availability Group</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=mssql2025&amp;f=12">(12) Failover Cluster Instance</a></li>
+</ul>
+<ul style="position: absolute; margin-top: -16.5em; margin-left: 22.8em; border-left: #696969 1px dashed; z-index: 70;">
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=mysql8&amp;f=1">MySQL 8.0</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=redis&amp;f=1">Redis 7</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=valkey&amp;f=1">Valkey</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=valkey&amp;f=1">(01) Install Valkey</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=valkey&amp;f=2">(02) Basic Operation for Server</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=valkey&amp;f=3">(03) Basic Operation for Database</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=valkey&amp;f=4">(04) SSL/TLS Setting</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=valkey&amp;f=5">(05) Valkey Replication</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=valkey&amp;f=6">(06) Configure Valkey Sentinel</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=valkey&amp;f=7">(07) Use Valkey Benchmark</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=valkey&amp;f=8">(08) Use on Python</a></li>
+<li style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=valkey&amp;f=9">(09) Use on PHP</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=influxdb&amp;f=1">InfluxDB</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=influxdb&amp;f=1">(01) Install InfluxDB</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=influxdb&amp;f=2">(02) Basic User Management</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=influxdb&amp;f=3">(03) Basic Database Management</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=influxdb&amp;f=4">(04) Set Retention Policy</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=influxdb&amp;f=5">(05) Enable HTTPS</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=influxdb&amp;f=6">(06) Backup and Restore</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=influxdb&amp;f=7">(07) Install Telegraf</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=influxdb&amp;f=8">(08) Visualize with Grafana</a></li>
+</ul>
+</li>
+<li class="tree"><a href="./note?os=Ubuntu_24.04&amp;p=samba&amp;f=1">FTP / Samba / Mail</a>
+<ul style="position: absolute; margin-top: -14.6em;">
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=ftp&amp;f=1">FTP Server</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ftp&amp;f=1">(01) Install Vsftpd</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ftp&amp;f=2">(02) Install ProFTPD</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ftp&amp;f=3">(03) FTP Client (Ubuntu)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ftp&amp;f=4">(04) FTP Client (Windows)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ftp&amp;f=5">(05) Vsftpd over SSL/TLS</a></li>
+<li style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=ftp&amp;f=6">(06) ProFTPD over SSL/TLS</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=samba&amp;f=1">Samba</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=samba&amp;f=1">(01) Fully Accessed Shared Folder</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=samba&amp;f=2">(02) Limited Shared Folder</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=samba&amp;f=3">(03) Access to Share from Clients</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=samba&amp;f=4">(04) Samba Winbind</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=samba&amp;f=5">(05) AD DC : Configure DC</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=samba&amp;f=6">(06) AD DC : Basic User Manage</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=samba&amp;f=7">(07) AD DC : Join in Domain</a></li>
+</ul>
+<ul style="position: absolute; margin-top: -14.6em; margin-left: 22.8em; border-left: #696969 1px dashed; z-index: 70;">
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=mail&amp;f=1">Mail Server</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=mail&amp;f=1">(01) Install Postfix</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=mail&amp;f=2">(02) Install Dovecot</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=mail&amp;f=3">(03) Add Mail User Accounts</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=mail&amp;f=4">(04) Email Client Setting</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=mail&amp;f=5">(05) SSL/TLS Setting</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=mail&amp;f=6">(06) Set Virtual Domain</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=mail&amp;f=10">(07) Set SPF Checking</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=mail&amp;f=11">(08) Set DKIM</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=mail&amp;f=12">(09) Set DMARC Checking</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=mail&amp;f=7">(10) Postfix + Clamav + Amavisd</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=mail&amp;f=8">(11) Mail Log Report : pflogsumm</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=mail&amp;f=9">(12) Add Mail User (Virtual User)</a></li>
+</ul>
+</li>
+<li class="tree"><a href="./note?os=Ubuntu_24.04&amp;p=haproxy&amp;f=1">Proxy / Load Balance</a>
+<ul style="position: absolute; margin-top: -12.8em;">
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=squid&amp;f=1">Squid</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=squid&amp;f=1">(01) Install Squid</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=squid&amp;f=2">(02) Configure Proxy Clients</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=squid&amp;f=3">(03) Set Basic Authentication</a></li>
+<li style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=squid&amp;f=4">(04) Configure as a Reverse Proxy</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=haproxy&amp;f=1">HAProxy</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=haproxy&amp;f=1">(01) HTTP Load Balancing</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=haproxy&amp;f=2">(02) SSL/TLS Setting</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=haproxy&amp;f=3">(03) Refer to the Statistics (Web)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=haproxy&amp;f=4">(04) Refer to the Statistics (CUI)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=haproxy&amp;f=5">(05) Load Balancing on Layer 4</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=haproxy&amp;f=6">(06) ACL Settings</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=haproxy&amp;f=7">(07) ACL Settings (L4)</a></li>
+</ul>
+</li>
+<li class="tree"><a href="./note?os=Ubuntu_24.04&amp;p=sysstat&amp;f=1">Monitoring</a>
+<ul style="position: absolute; margin-top: -21.9em;">
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=prometheus&amp;f=1">Prometheus</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=prometheus&amp;f=1">(01) Install Prometheus</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=prometheus&amp;f=2">(02) Enable Auth and HTTPS</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=prometheus&amp;f=3">(03) Add Monitoring Target</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=prometheus&amp;f=4">(04) Add Monitoring Target (Win)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=prometheus&amp;f=5">(05) Set Alert Notification (Email)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=prometheus&amp;f=6">(06) Visualize on Grafana</a></li>
+<li style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=prometheus&amp;f=7">(07) Set Blackbox exporter</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=zabbix70&amp;f=1">Zabbix 7.0 LTS</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=zabbix70&amp;f=1">(01) Install Zabbix 7.0</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=zabbix70&amp;f=2">(02) Initial Setup</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=zabbix70&amp;f=3">(03) Change Admin Password</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=zabbix70&amp;f=4">(04) Set Notification</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=zabbix70&amp;f=5">(05) Add Monitoring Target (Ubuntu)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=zabbix70&amp;f=6">(06) Add Monitoring Target (Win)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=zabbix70&amp;f=7">(07) Add Monitoring Target Item</a></li>
+<li style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=zabbix70&amp;f=8">(08) Configure Zabbix Proxy</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=sysstat&amp;f=1">SysStat</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=sysstat&amp;f=1">(01) Install SysStat</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=sysstat&amp;f=2">(02) How to Use SysStat</a></li>
+</ul>
+<ul style="position: absolute; margin-top: -21.9em; margin-left: 22.8em; border-left: #696969 1px dashed; z-index: 70;">
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=netdata&amp;f=1">NetData</a></li>
+<li style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=netdata&amp;f=1">(01) Install NetData</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=munin&amp;f=1">Munin</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=munin&amp;f=1">(01) Install Munin</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=munin&amp;f=2">(02) Set Email Notification</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=munin&amp;f=3">(03) Set Thresholds</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=munin&amp;f=4">(04) Add Target Hosts</a></li>
+<li style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=munin&amp;f=5">(05) Add Target Items</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=nagios&amp;f=1">Nagios</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nagios&amp;f=1">(01) Install Nagios</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nagios&amp;f=2">(02) Notification Email Setting</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nagios&amp;f=3">(03) Set Thresholds</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nagios&amp;f=4">(04) Add Monitoring Target Item</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nagios&amp;f=5">(05) Add Target Host (Ping)</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=nagios&amp;f=6">(06) Add Target Host (Services)</a></li>
+</ul>
+</li>
+<li class="tree"><a href="./note?os=Ubuntu_24.04&amp;p=ufw&amp;f=1">Security</a>
+<ul style="position: absolute; margin-top: -21.9em;">
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=audit&amp;f=1">Auditd</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=audit&amp;f=1">(01) Install Auditd</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=audit&amp;f=2">(02) Search Logs with ausearch</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=audit&amp;f=3">(03) Display Logs with aureport</a></li>
+<li style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=audit&amp;f=4">(04) Add Audit Rules</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=apparmor&amp;f=1">AppArmor</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=apparmor&amp;f=1">(01) Enable / Disable AppArmor</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=apparmor&amp;f=2">(02) Enable / Disable Profiles</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=apparmor&amp;f=3">(03) Create Profiles : aa-genprof</a></li>
+<li style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=apparmor&amp;f=4">(04) Create Profiles : aa-autodep</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=ufw&amp;f=1">UFW</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ufw&amp;f=1">(01) UFW Basic Usage</a></li>
+<li style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=ufw&amp;f=2">(02) IP Masquerade</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=nftables&amp;f=1">Nftables</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nftables&amp;f=1">(01) Enable Service</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=nftables&amp;f=2">(02) Nftables Basic Operation</a></li>
+</ul>
+<ul style="position: absolute; margin-top: -12.8em; margin-left: 22.8em; border-left: #696969 1px dashed; z-index: 70;">
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=acl&amp;f=1">Others</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openscap">OpenSCAP <span style="display:inline;position:absolute;left:90px;">- Security Audit</span></a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=lynis">Lynis <span style="display:inline;position:absolute;left:90px;">- Security Audit</span></a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=rkhunter">RKHunter <span style="display:inline;position:absolute;left:90px;">- Detect Rootkit</span></a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=suricata">Suricata <span style="display:inline;position:absolute;left:90px;">- Network Based IDS</span></a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=aide">AIDE <span style="display:inline;position:absolute;left:90px;">- Host Based IDS</span></a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=fail2ban">Fail2Ban <span style="display:inline;position:absolute;left:90px;">- Intrusion Prevention</span></a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=pam&amp;f=2">Faillock <span style="display:inline;position:absolute;left:90px;">- Login lock</span></a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=pam&amp;f=1">Pwquality <span style="display:inline;position:absolute;left:90px;">- Password Rules</span></a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=clamav">Clamav <span style="display:inline;position:absolute;left:90px;">- AntiVirus</span></a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=acl">ACL <span style="display:inline;position:absolute;left:90px;">- Access Control List</span></a></li>
+</ul>
+</li>
+<li class="tree"><a href="./note?os=Ubuntu_24.04&amp;p=php&amp;f=1">Lang / Development</a>
+<ul style="position: absolute; margin-top: -25.55em; border-right: #696969 1px dashed; z-index: 70;">
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=flutter&amp;f=1">Flutter</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=androidsdk&amp;f=1">Android Studio</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=vscode&amp;f=1">Code Server</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=dotnet&amp;f=1">.NET</a></li>
+<li style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=dotnet&amp;f=1">(01) Install .NET 8.0</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=php&amp;f=1">PHP</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=php&amp;f=1">(01) Install PHP 8.3</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=php&amp;f=2">(02) Install Laravel</a></li>
+<li style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=php&amp;f=3">(03) Install CakePHP</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=nodejs&amp;f=1">JavaScript / TypeScript</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nodejs&amp;f=1">(01) Install Node.js 18</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nodejs&amp;f=2">(02) Install [n] command</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nodejs&amp;f=8">(03) Install Angular 20</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nodejs&amp;f=4">(04) Install React</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nodejs&amp;f=5">(05) Install Next.js</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nodejs&amp;f=9">(06) Install Vite</a></li>
+<li style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=nodejs&amp;f=6">(07) Node.js + TypeScript</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=python&amp;f=1">Python</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=python&amp;f=1">(01) Install Python 3.12</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=python&amp;f=2">(02) Install Django 4</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=python&amp;f=3">(03) Install Django 5</a></li>
+</ul>
+<ul style="position: absolute; margin-top: -25.55em; margin-left: 22.8em;">
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=nvidia&amp;f=1">NVIDIA</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nvidia&amp;f=1">(01) Install Graphic Driver</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nvidia&amp;f=2">(02) Install CUDA 12.0</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nvidia&amp;f=3">(03) Install Container Toolkit</a></li>
+<li style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=nvidia&amp;f=4">(04) Install NVIDIA HPC SDK</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=tensorflow&amp;f=1">TensorFlow</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=tensorflow&amp;f=1">(01) Install TensorFlow (CPU)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=tensorflow&amp;f=2">(02) Install TensorFlow (GPU)</a></li>
+<li style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=tensorflow&amp;f=3">(03) TensorFlow Docker Image</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=ollama&amp;f=1">LLM / LDM</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ollama&amp;f=1">Install Ollama</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openwebui&amp;f=1">Install Open WebUI</a></li>
+<li style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=stablediffusion&amp;f=1">Install Stable Diffusion</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=go&amp;f=1">Go</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=rust&amp;f=1">Rust</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=ruby&amp;f=1">Ruby</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ruby&amp;f=1">(01) Install Ruby 3.2</a></li>
+<li style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=ruby&amp;f=3">(02) Install Ruby on Rails 8</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=java&amp;f=1">Java</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=java&amp;f=4">(01) Install OpenJDK 21</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=java&amp;f=5">(02) Install Tomcat 10</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=java&amp;f=6">(03) Install Jenkins</a></li>
+</ul>
+</li>
+<li class="tree"><a href="./note?os=Ubuntu_24.04&amp;p=desktop">Desktop / Others</a>
+<ul style="position: absolute; margin-top: -27.4em;">
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=hostname&amp;f=1">Others</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ssl&amp;f=1">Create SSL Certificates (Self Sign)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ssl&amp;f=2">Get SSL Certificates (Let's Encrypt)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=runlevel">Change Run-Level</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=timezone">Set System Timezone</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=locale">Set System Locale</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=hostname">Set Hostname</a></li>
+<li style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=realmd">Join in AD Domain</a></li>
+<li class="scolor" style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=desktop&amp;f=1">Desktop Environment</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=desktop&amp;f=1">(01) GNOME Desktop Environment</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=desktop&amp;f=2">(02) KDE Desktop Environment</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=desktop&amp;f=3">(03) Cinnamon Desktop Environmen</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=desktop&amp;f=4">(04) MATE Desktop Environment</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=desktop&amp;f=5">(05) Xfce Desktop Environment</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=desktop&amp;f=9">(06) LXDE Desktop Environment</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=desktop&amp;f=10">(07) Budgie Desktop Environment</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=desktop&amp;f=6">(08) Configure VNC Server</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=desktop&amp;f=7">(09) Configure Xrdp Server</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=desktop&amp;f=8">(10) VNC Client : noVNC</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=desktop&amp;f=11">(11) GNOME Remote Desktop</a></li>
+</ul>
+<ul style="position: absolute; margin-top: -27.4em; margin-left: 22.8em; border-left: #696969 1px dashed; z-index: 70;">
+<li class="scolor" style="border-bottom: #696969 1px solid; width: 250px; line-height: 19px;">&nbsp;</li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=raid1">Configure RAID 1</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=diskinfo">Display Disk Settings info</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=quota">Set Disk Quota</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=iperf3">Check Network Bandwidth</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=bonding">Configure Network Bonding</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=jitsi">Jitsi Meet <span style="display:inline;position:absolute;left:95px;">- Video Conference</span></a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=gitlab">GitLab <span style="display:inline;position:absolute;left:95px;">- DevOps Platform</span></a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=redmine">Redmine <span style="display:inline;position:absolute;left:95px;">- Project Manage</span></a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=syncthing">Syncthing <span style="display:inline;position:absolute;left:95px;">- File Sync</span></a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=lsync">Lsync <span style="display:inline;position:absolute;left:95px;">- File Sync</span></a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=rsync">Rsync <span style="display:inline;position:absolute;left:95px;">- File Sync</span></a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=grafana">Grafana <span style="display:inline;position:absolute;left:95px;">- Web Dashboard</span></a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=powershell">PowerShell <span style="display:inline;position:absolute;left:95px;">- CommandLine Shell</span></a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=snappy">Snappy <span style="display:inline;position:absolute;left:95px;">- Package Manage</span></a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=usermin">Usermin <span style="display:inline;position:absolute;left:95px;">- System Manage</span></a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=webmin">Webmin <span style="display:inline;position:absolute;left:95px;">- System Manage</span></a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=cockpit">Cockpit <span style="display:inline;position:absolute;left:95px;">- System Manage</span></a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=rsyslog">Rsyslog <span style="display:inline;position:absolute;left:95px;">- Log Manage</span></a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=journald">Journald <span style="display:inline;position:absolute;left:95px;">- Log Manage</span></a></li>
+</ul>
+</li>
+<li id="other"><a href="./note?os=Ubuntu_24.04&amp;p=lvm&amp;f=1">Others #2</a>
+<ul style="position: absolute; margin-top: -21.9em;">
+<li class="tree2"><a href="./note?os=Ubuntu_24.04&amp;p=bacula&amp;f=1">Bacula <span style="display:inline;position:absolute;left:95px;">- Backup</span></a>
+<ul style="position: absolute; margin-top: -1.9em;">
+<li><a href="./note?os=Ubuntu_24.04&amp;p=bacula&amp;f=1">(01) Install Bacula</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=bacula&amp;f=2">(02) Configure Bacula Components</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=bacula&amp;f=3">(03) Run Backup</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=bacula&amp;f=4">(04) Run Restore</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=bacula&amp;f=5">(05) Add remote Clients</a></li>
+</ul>
+</li>
+<li class="tree2"><a href="./note?os=Ubuntu_24.04&amp;p=elasticstack8&amp;f=1">ElasticStack <span style="display:inline;position:absolute;left:95px;">- Search Engine++</span></a>
+<ul style="position: absolute; margin-top: -1.9em;">
+<li><a href="./note?os=Ubuntu_24.04&amp;p=elasticstack8&amp;f=1">(01) Install Elasticsearch</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=elasticstack8&amp;f=2">(02) Elasticsearch Cluster</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=elasticstack8&amp;f=3">(03) Install Kibana</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=elasticstack8&amp;f=4">(04) Install Metricbeat</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=elasticstack8&amp;f=5">(05) Install Packetbeat</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=elasticstack8&amp;f=6">(06) Install Auditbeat</a></li>
+</ul>
+</li>
+<li class="tree2"><a href="./note?os=Ubuntu_24.04&amp;p=memcached&amp;f=1">Memcached <span style="display:inline;position:absolute;left:95px;">- Memory Cache</span></a>
+<ul style="position: absolute; margin-top: -1.9em;">
+<li><a href="./note?os=Ubuntu_24.04&amp;p=memcached&amp;f=1">(01) Install Memcached</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=memcached&amp;f=2">(02) Basic Usage</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=memcached&amp;f=3">(03) Use on Python</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=memcached&amp;f=4">(04) Use on PHP</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=memcached&amp;f=5">(05) Use on Perl</a></li>
+</ul>
+</li>
+<li class="tree2"><a href="./note?os=Ubuntu_24.04&amp;p=rabbitmq&amp;f=1">RabbitMQ <span style="display:inline;position:absolute;left:95px;">- Message Broker</span></a>
+<ul style="position: absolute; margin-top: -3.7em;">
+<li><a href="./note?os=Ubuntu_24.04&amp;p=rabbitmq&amp;f=1">(01) Install RabbitMQ</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=rabbitmq&amp;f=2">(02) Use on Python</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=rabbitmq&amp;f=3">(03) Use on PHP</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=rabbitmq&amp;f=4">(04) Use on Ruby</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=rabbitmq&amp;f=5">(05) Enable Web UI</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=rabbitmq&amp;f=6">(06) Use rabbitmqadmin</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=rabbitmq&amp;f=7">(07) Configure Cluster</a></li>
+</ul>
+</li>
+<li class="tree2"><a href="./note?os=Ubuntu_24.04&amp;p=subversion&amp;f=1">Subversion <span style="display:inline;position:absolute;left:95px;">- Revision Control</span></a>
+<ul style="position: absolute; margin-top: -1.9em;">
+<li><a href="./note?os=Ubuntu_24.04&amp;p=subversion&amp;f=1">(01) Install Subversion</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=subversion&amp;f=2">(02) Remote Access to Repositories</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=subversion&amp;f=3">(03) Set Access Permission</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=subversion&amp;f=4">(04) HTTP Access to Repositories</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=subversion&amp;f=5">(05) Access from Windows Clients</a></li>
+</ul>
+</li>
+<li class="tree2"><a href="./note?os=Ubuntu_24.04&amp;p=git&amp;f=1">Git <span style="display:inline;position:absolute;left:95px;">- Revision Control</span></a>
+<ul style="position: absolute; margin-top: -7.35em;">
+<li><a href="./note?os=Ubuntu_24.04&amp;p=git&amp;f=1">(01) Install Git</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=git&amp;f=2">(02) Create Shared Repositories</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=git&amp;f=3">(03) Access to Repos via SSH</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=git&amp;f=4">(04) Access to Repos via Git</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=git&amp;f=5">(05) Access to Repos via HTTP</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=git&amp;f=6">(06) Install Gitweb</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=git&amp;f=7">(07) Install Git for Windows</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=git&amp;f=8">(08) Install TortoiseGit</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=git&amp;f=9">(09) Use Git-SVN</a></li>
+</ul>
+</li>
+<li class="tree2"><a href="./note?os=Ubuntu_24.04&amp;p=puppet&amp;f=1">Puppet <span style="display:inline;position:absolute;left:95px;">- Config Manage</span></a>
+<ul style="position: absolute; margin-top: -5.55em;">
+<li><a href="./note?os=Ubuntu_24.04&amp;p=puppet&amp;f=1">(01) Install Puppet</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=puppet&amp;f=2">(02) file Resource</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=puppet&amp;f=3">(03) package Resource</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=puppet&amp;f=4">(04) service Resource</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=puppet&amp;f=5">(05) group Resource</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=puppet&amp;f=6">(06) user Resource</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=puppet&amp;f=7">(07) exec Resource</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=puppet&amp;f=8">(08) node Section</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=puppet&amp;f=9">(09) class Section</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=puppet&amp;f=10">(10) facter Variable</a></li>
+</ul>
+</li>
+<li class="tree2"><a href="./note?os=Ubuntu_24.04&amp;p=ansible&amp;f=1">Ansible <span style="display:inline;position:absolute;left:95px;">- Config Manage</span></a>
+<ul style="position: absolute; margin-top: -12.8em;">
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ansible&amp;f=1">(01) Install Ansible</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ansible&amp;f=2">(02) Ansible Basic Usage</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ansible&amp;f=3">(03) Use Playbook (basic)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ansible&amp;f=4">(04) Use Playbook (variables)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ansible&amp;f=5">(05) Use Playbook (when)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ansible&amp;f=6">(06) Use Playbook (notify)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ansible&amp;f=7">(07) Use Playbook (include)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ansible&amp;f=8">(08) Use Playbook (Roles)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ansible&amp;f=9">(09) Install Ansible AWX</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ansible&amp;f=10">(10) AWX : Add Inventories</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ansible&amp;f=11">(11) AWX : Add Credentials</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ansible&amp;f=12">(12) AWX : Add Projects</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=ansible&amp;f=13">(13) AWX : Add Job Templates</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=ansible&amp;f=14">(14) AWX : Run Jobs</a></li>
+</ul>
+</li>
+<li class="tree2"><a href="./note?os=Ubuntu_24.04&amp;p=keepalived&amp;f=1">Keepalived <span style="display:inline;position:absolute;left:95px;">- VRRP</span></a>
+<ul style="position: absolute; margin-top: -1.8em;">
+<li><a href="./note?os=Ubuntu_24.04&amp;p=keepalived&amp;f=1">(01) Install Keepalived</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=keepalived&amp;f=2">(02) Set Email Notification</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=keepalived&amp;f=3">(03) Monitor processes</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=keepalived&amp;f=4">(04) Monitor with script</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=keepalived&amp;f=5">(05) Set notification script</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=keepalived&amp;f=6">(06) Group VRRP instances</a></li>
+</ul>
+</li>
+<li class="tree2"><a href="./note?os=Ubuntu_24.04&amp;p=pacemaker&amp;f=1">Pacemaker <span style="display:inline;position:absolute;left:95px;">- HA Cluster</span></a>
+<ul style="position: absolute; margin-top: -5.55em;">
+<li><a href="./note?os=Ubuntu_24.04&amp;p=pacemaker&amp;f=1">(01) Install Pacemaker</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=pacemaker&amp;f=2">(02) Set Fence Device</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=pacemaker&amp;f=3">(03) Set LVM Shared Storage</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=pacemaker&amp;f=4">(04) Set Cluster Resource (NFS)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=pacemaker&amp;f=5">(05) Set Cluster Resource (Apache2)</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=pacemaker&amp;f=6">(06) Add or Remove Nodes</a></li>
+</ul>
+</li>
+<li class="tree2"><a href="./note?os=Ubuntu_24.04&amp;p=openvpn&amp;f=1">OpenVPN <span style="display:inline;position:absolute;left:95px;">- VPN Server</span></a>
+<ul>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openvpn&amp;f=1">(01) Configure OpenVPN Server</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=openvpn&amp;f=2">(02) Conf OpenVPN Client (Ubuntu)</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=openvpn&amp;f=3">(03) Conf OpenVPN Client (Windows)</a></li>
+</ul>
+</li>
+<li class="tree2"><a href="./note?os=Ubuntu_24.04&amp;p=wireguard&amp;f=1">WireGuard <span style="display:inline;position:absolute;left:95px;">- VPN Server</span></a>
+<ul style="position: absolute; margin-top: -1.9em;">
+<li><a href="./note?os=Ubuntu_24.04&amp;p=wireguard&amp;f=1">(01) Configure WireGuard Server</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=wireguard&amp;f=2">(02) Conf WireGuard Client (Ubu)</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=wireguard&amp;f=3">(03) Conf WireGuard Client (Win)</a></li>
+</ul>
+</li>
+<li class="tree2"><a href="./note?os=Ubuntu_24.04&amp;p=nextcloud&amp;f=1">NextCloud <span style="display:inline;position:absolute;left:95px;">- Cloud Storage</span></a>
+<ul style="position: absolute; margin-top: -18.25em;">
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nextcloud&amp;f=1">(01) Install NextCloud</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nextcloud&amp;f=2">(02) Add User Accounts</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nextcloud&amp;f=3">(03) Upload Files</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nextcloud&amp;f=4">(04) Use Office Apps</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nextcloud&amp;f=5">(05) Access via WebDAV</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nextcloud&amp;f=6">(06) Access via Desktop Client</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nextcloud&amp;f=7">(07) Chat / Talk / Screen Share</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nextcloud&amp;f=8">(08) Use Mail</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nextcloud&amp;f=9">(09) Use Calendar</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nextcloud&amp;f=10">(10) Use Address Book</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=nextcloud&amp;f=11">(11) Use External Storage</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=nextcloud&amp;f=12">(12) Active Directory Integration</a></li>
+</ul>
+</li>
+<li class="tree2" style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=lvm&amp;f=1">LVM <span style="display:inline;position:absolute;left:95px;">- LVM Manage</span></a>
+<ul style="position: absolute; margin-top: -5.55em;">
+<li><a href="./note?os=Ubuntu_24.04&amp;p=lvm&amp;f=1">(01) Manage Physical Volumes</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=lvm&amp;f=2">(02) Manage Volume Groups</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=lvm&amp;f=3">(03) Manage Logical Volumes</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=lvm&amp;f=4">(04) Configure Mirroring Volumes</a></li>
+<li style="border-bottom: #696969 0px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=lvm&amp;f=5">(05) Configure Striped Volumes</a></li>
+</ul>
+</li>
+</ul>
+</li>
+</ul>
+</div>
+<div class="splink">Sponsored Link</div>
+<div id="bann">
+<div id='div-gpt-ad-1781239333246-0'>
+<script>
+googletag.cmd.push(function() { googletag.display('div-gpt-ad-1781239333246-0'); });
+</script>
+</div>
+</div>
+</div>
+<div id="contents">
+<br>
+<table style="width: 96%; line-height: 1.5; margin-top: 5px; margin-bottom: 10px; margin-left: auto; margin-right: auto;">
+<tr>
+<td style="width: 100%; height: 28px; color: #ff3399; padding-left: 50px; background: url(./img/icon.gif) no-repeat 0 0;">
+<h1 class="subject">KVM : Use VirtualBMC<span class="date">2024/05/10</span></h1>
+</td>
+</tr>
+</table>
+<table class="base">
+<tr>
+<td class="num">&nbsp;</td>
+<td>
+<p class="block">
+Install VirtualBMC to enable IPMI commands to Virtual machines.<br>
+VirtualBMC supports a small part of IPMI commands like power on/off operation, however, it is sometimes useful.
+</p>
+</td>
+</tr>
+<tr>
+<td class="num">[1]</td>
+<td>Install VirtualBMC on KVM Host.
+</td>
+</tr>
+</table>
+<table class="term">
+<tr>
+<td>
+<div class="block">
+root@dlp:~# <div class="color1"><a href="./note?p=command&amp;q=apt">apt</a> -y install python3-pip python3-venv ipmitool </div></div>
+<div class="block">
+<div class="color2"># create Python virtual environment under the [/opt/virtualbmc]</div><br>
+root@dlp:~# <div class="color1">python3 -m venv --system-site-packages /opt/virtualbmc </div>
+</div>
+<div class="block">
+<div class="color2"># install VirtualBMC</div><br>
+root@dlp:~# <div class="color1">/opt/virtualbmc/bin/pip3 install virtualbmc </div></div>
+<div class="block">
+<div class="color2"># create a systemd setting file</div><br>
+root@dlp:~# <div class="color1"><a href="./note?p=command&amp;q=vi">vi</a> /usr/lib/systemd/system/virtualbmc.service  </div></div>
+<div class="color1">
+<div class="color2"># create new</div><br>
+<pre style="font-family: Consolas, 'Courier New', Courier, Monaco, monospace; letter-spacing: 0;">
+[Unit]
+Description=Virtual BMC Service
+After=network.target libvirtd.service
+
+[Service]
+Type=simple
+ExecStart=/opt/virtualbmc/bin/vbmcd --foreground
+ExecStop=/bin/kill -HUP $MAINPID
+User=root
+Group=root
+
+[Install]
+WantedBy=multi-user.target
+
+</pre>
+</div>
+<div class="block">
+root@dlp:~# <div class="color1"><a href="./note?p=command&amp;q=systemctl">systemctl</a> daemon-reload </div><br>
+root@dlp:~# <div class="color1"><a href="./note?p=command&amp;q=systemctl">systemctl</a> enable --now virtualbmc.service </div>
+</div>
+<div class="color2"># show status (OK if no error is shown)</div><br>
+root@dlp:~# <div class="color1">/opt/virtualbmc/bin/vbmc list </div>
+</td>
+</tr>
+</table>
+<table class="base">
+<tr>
+<td class="num">[2]</td>
+<td>Set VirtualBMC to virtual machines.
+</td>
+</tr>
+</table>
+<table class="term">
+<tr>
+<td>
+root@dlp:~# <div class="color1">virsh list --all </div><br>
+<pre style="font-family: Consolas, 'Courier New', Courier, Monaco, monospace; letter-spacing: 0;">
+ Id   Name   State
+-----------------------
+ -    rx-7   shut off
+ -    rx-8   shut off
+
+</pre>
+<div class="block">
+<div class="color2"># set VirtualBMC to a VM [rx-7]<br>
+# for [port], [username], [password], it's OK to set any values you like</div><br>
+root@dlp:~# <div class="color1">/opt/virtualbmc/bin/vbmc add rx-7 --port 6230 --username vbmcadmin --password adminpassword </div>
+</div>
+root@dlp:~# <div class="color1">/opt/virtualbmc/bin/vbmc list </div><br>
+<pre style="font-family: Consolas, 'Courier New', Courier, Monaco, monospace; letter-spacing: 0;">
++-------------+--------+---------+------+
+| Domain name | Status | Address | Port |
++-------------+--------+---------+------+
+| rx-7        | down   | ::      | 6230 |
++-------------+--------+---------+------+
+
+</pre>
+<div class="block">
+<div class="color2"># start VirtualBMC</div><br>
+root@dlp:~# <div class="color1">/opt/virtualbmc/bin/vbmc start rx-7 </div>
+</div>
+root@dlp:~# <div class="color1">/opt/virtualbmc/bin/vbmc list </div><br>
+<pre style="font-family: Consolas, 'Courier New', Courier, Monaco, monospace; letter-spacing: 0;">
++-------------+---------+---------+------+
+| Domain name | Status  | Address | Port |
++-------------+---------+---------+------+
+| rx-7        | running | ::      | 6230 |
++-------------+---------+---------+------+
+
+</pre>
+root@dlp:~# <div class="color1">/opt/virtualbmc/bin/vbmc show rx-7 </div><br>
+<pre style="font-family: Consolas, 'Courier New', Courier, Monaco, monospace; letter-spacing: 0;">
++-----------------------+----------------+
+| Property              | Value          |
++-----------------------+----------------+
+| active                | True           |
+| address               | ::             |
+| domain_name           | rx-7           |
+| libvirt_sasl_password | ***            |
+| libvirt_sasl_username | None           |
+| libvirt_uri           | qemu:///system |
+| password              | ***            |
+| port                  | 6230           |
+| status                | running        |
+| username              | vbmcadmin      |
++-----------------------+----------------+
+
+</pre>
+<div class="block">
+<div class="color2"># show status of power on [rx-7] via VirtualBMC</div><br>
+root@dlp:~# <div class="color1">ipmitool -I lanplus -H 127.0.0.1 -p 6230 -U vbmcadmin -P adminpassword power status </div><br>
+Chassis Power is off
+</div>
+<div class="block">
+<div class="color2"># power on via VirtualBMC</div><br>
+root@dlp:~# <div class="color1">ipmitool -I lanplus -H 127.0.0.1 -p 6230 -U vbmcadmin -P adminpassword power on </div><br>
+Chassis Power Control: Up/On
+</div>
+root@dlp:~# <div class="color1">virsh list --all </div><br>
+<pre style="font-family: Consolas, 'Courier New', Courier, Monaco, monospace; letter-spacing: 0;">
+ Id   Name   State
+-----------------------
+ 3    rx-7   running
+ -    rx-8   shut off
+
+</pre>
+<div class="block">
+<div class="color2"># power off via VirtualBMC</div><br>
+root@dlp:~# <div class="color1">ipmitool -I lanplus -H 127.0.0.1 -p 6230 -U vbmcadmin -P adminpassword power off </div><br>
+Chassis Power Control: Down/Off
+</div>
+root@dlp:~# <div class="color1">virsh list --all </div><br>
+<pre style="font-family: Consolas, 'Courier New', Courier, Monaco, monospace; letter-spacing: 0;">
+ Id   Name   State
+-----------------------
+ -    rx-7   shut off
+ -    rx-8   shut off
+</pre>
+</td>
+</tr>
+</table>
+<table class="base">
+<tr>
+<td class="num">[3]</td>
+<td>If you'd like to use VirtualBMC not on KVM Host but on other Hosts, configure like follows.<br>
+For SSH key-pair settings, it had better to change sshd setting to [PermitRootLogin prohibit-password] after setting key-pair.
+</td>
+</tr>
+</table>
+<table class="term">
+<tr>
+<td>
+<div class="color2"># generate SSH key-pair and set to own host</div><br>
+root@dlp:~# <div class="color1">ssh-keygen -q -N "" </div><br>
+Enter file in which to save the key (/root/.ssh/id_ed25519):<br>
+root@dlp:~# <div class="color1"><a href="./note?p=command&amp;q=mv">mv</a> ~/.ssh/id_ed25519.pub ~/.ssh/authorized_keys </div><br>
+<div class="block">
+root@dlp:~# <div class="color1">ssh 10.0.0.30 hostname </div><br>
+dlp.srv.world
+</div>
+root@dlp:~# <div class="color1">virsh list --all </div><br>
+<pre style="font-family: Consolas, 'Courier New', Courier, Monaco, monospace; letter-spacing: 0;">
+ Id   Name   State
+-----------------------
+ -    rx-7   shut off
+ -    rx-8   shut off
+
+</pre>
+<div class="block">
+<div class="color2"># set VirtualBMC to [rx-8]<br>
+# for [--libvirt-uri], specify KVM Host</div><br>
+root@dlp:~# <div class="color1">/opt/virtualbmc/bin/vbmc add rx-8 --port 6231 --username vbmcadmin --password adminpassword --libvirt-uri qemu+ssh://root@10.0.0.30/system </div><br>
+root@dlp:~# <div class="color1">/opt/virtualbmc/bin/vbmc start rx-8 </div>
+</div>
+root@dlp:~# <div class="color1">/opt/virtualbmc/bin/vbmc list </div><br>
+<pre style="font-family: Consolas, 'Courier New', Courier, Monaco, monospace; letter-spacing: 0;">
++-------------+---------+---------+------+
+| Domain name | Status  | Address | Port |
++-------------+---------+---------+------+
+| rx-7        | running | ::      | 6230 |
+| rx-8        | running | ::      | 6231 |
++-------------+---------+---------+------+
+
+</pre>
+root@dlp:~# <div class="color1">/opt/virtualbmc/bin/vbmc show rx-8 </div><br>
+<pre style="font-family: Consolas, 'Courier New', Courier, Monaco, monospace; letter-spacing: 0;">
++-----------------------+----------------------------------+
+| Property              | Value                            |
++-----------------------+----------------------------------+
+| active                | True                             |
+| address               | ::                               |
+| domain_name           | rx-8                             |
+| libvirt_sasl_password | ***                              |
+| libvirt_sasl_username | None                             |
+| libvirt_uri           | qemu+ssh://root@10.0.0.30/system |
+| password              | ***                              |
+| port                  | 6231                             |
+| status                | running                          |
+| username              | vbmcadmin                        |
++-----------------------+----------------------------------+
+
+</pre>
+<div class="block">
+<div class="color2"># that's OK<br>
+# for SSH key-pair generated on KVM Host,<br>
+#  it needs to transfer private-key [id_ed25519] to the Hosts you'd like to use VirtualBMC</div>
+</div>
+<div class="color2"># for example, execute ipmitool on [rx-7] host to [rx-8] host</div><br>
+root@rx-7:~# <div class="color1"><a href="./note?p=command&amp;q=ls">ll</a> .ssh </div><br>
+<pre style="font-family: Consolas, 'Courier New', Courier, Monaco, monospace; letter-spacing: 0;">
+total 20
+drwx------ 2 root root 4096 May 10 04:04 ./
+drwx------ 5 root root 4096 May 10 01:02 ../
+-rw------- 1 root root    0 May  9 08:15 authorized_keys
+-rw------- 1 root root  411 May 10 04:04 id_ed25519
+-rw------- 1 root root  978 May 10 04:03 known_hosts
+-rw-r--r-- 1 root root  142 May 10 04:03 known_hosts.old
+
+</pre>
+<div class="block">
+root@rx-7:~# <div class="color1">ssh 10.0.0.30 hostname </div><br>
+dlp.srv.world
+</div>
+<div class="block">
+root@rx-7:~# <div class="color1">ipmitool -I lanplus -H 10.0.0.30 -p 6231 -U vbmcadmin -P adminpassword power status </div><br>
+Chassis Power is off
+</div>
+<div class="block">
+root@rx-7:~# <div class="color1">ipmitool -I lanplus -H 10.0.0.30 -p 6231 -U vbmcadmin -P adminpassword power on </div><br>
+Chassis Power Control: Up/On
+</div>
+
+root@rx-7:~# <div class="color1">ssh 10.0.0.30 "virsh list" </div><br>
+<pre style="font-family: Consolas, 'Courier New', Courier, Monaco, monospace; letter-spacing: 0;">
+ Id   Name   State
+----------------------
+ 4    rx-7   running
+ 5    rx-8   running
+</pre>
+</td>
+</tr>
+</table>
+<div class="scolor" style="width: 100%; border-top: 1px #696969 solid; text-align:center; letter-spacing: 10px;">Matched Content</div>
+<div style="width: 100%; border-top: 1px #696969 solid; padding-top: 10px; padding-bottom: 35px; margin-right: 300px; text-align: center;">
+<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"></script>
+<ins class="adsbygoogle"
+     style="display:block"
+     data-ad-format="autorelaxed"
+     data-ad-client="ca-pub-6423793798099903"
+     data-ad-slot="9863218866"></ins>
+<script>
+     (adsbygoogle = window.adsbygoogle || []).push({});
+</script>
+<div class="gliaplayer-container" data-slot="serverworldinfo_desktop"></div>
+<script src="https://player.gliacloud.com/player/serverworldinfo_desktop" data-media-query="(min-width: 601px)" async></script>
+<div class="gliaplayer-container" data-slot="serverworldinfo_mobile"></div>
+<script src="https://player.gliacloud.com/player/serverworldinfo_mobile" data-media-query="(max-width: 600px)" async></script>
+</div>
+</div>
+<div id="right">
+<div class="os" style="overflow: hidden;">Ubuntu 24.04 : KVM</div>
+<div class="navi2">
+<ul>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kvm&amp;f=1">(01) Install KVM</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kvm&amp;f=2">(02) Create Virtual Machine</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kvm&amp;f=3">(03) Create Virtual Machine (GUI)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kvm&amp;f=4">(04) Basic Operation for Virtual Machines</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kvm&amp;f=5">(05) Install VM Management tools</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kvm&amp;f=6">(06) VNC Connection Setting</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kvm&amp;f=7">(07) VNC Connection (Client)</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kvm&amp;f=8">(08) Configure Nested KVM</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kvm&amp;f=9">(09) Live Migration</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kvm&amp;f=10">(10) Storage Migration</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kvm&amp;f=11">(11) UEFI boot for VM</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kvm&amp;f=12">(12) Enable TPM 2.0</a></li>
+<li><a href="./note?os=Ubuntu_24.04&amp;p=kvm&amp;f=13">(13) GPU Passthrough</a></li>
+<li style="border-bottom: #696969 1px solid;"><a href="./note?os=Ubuntu_24.04&amp;p=kvm&amp;f=14">(14) Use VirtualBMC</a></li>
+</ul>
+</div>
+<table style="width: 100%; text-align: center; font-size: 12px;">
+<tr>
+<td class="scolor" style="border-bottom: 1px solid #696969;">Sponsored Link</td>
+</tr>
+<tr>
+<td>
+<div id='div-gpt-ad-1781239346942-0'>
+<script>
+googletag.cmd.push(function() { googletag.display('div-gpt-ad-1781239346942-0'); });
+</script>
+</div>
+</td>
+</tr>
+</table>
+</div>
+<div id="footer">Copyright &copy; 2007-2026 Server World All Rights Reserved.
+<script type="text/javascript" src="./bin/count.js"></script>
+<img src="../bin/count/count.cgi?1" width="1" height="1" alt="">
+</div>
+</body>
+</html>
