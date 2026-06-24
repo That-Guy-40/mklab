@@ -149,7 +149,7 @@ in minimal and which you need to log in to the booted VM.
 
 **▶ run** — build the runnable CentOS form (= [`Containerfile.centos`](Containerfile.centos)):
 ```bash
-cd examples/rhel-image-mode-minimal
+cd examples/rhel-bootc-minimal
 ./build-minimal.sh --base centos
 ```
 which runs, in effect:
@@ -229,7 +229,7 @@ loopback file) and runs as root, so it reads **root** container storage.
 (`podman save | sudo podman load`) and runs the install. **Run it as your user,
 NOT `sudo`** — under sudo, `podman save` would read root's (possibly stale) image:
 ```bash
-cd examples/rhel-image-mode-minimal
+cd examples/rhel-bootc-minimal
 ./make-disk.sh                                 # → output/disk.qcow2
 ```
 which is, unrolled:

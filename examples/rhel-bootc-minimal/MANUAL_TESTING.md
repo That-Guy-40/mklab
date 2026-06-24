@@ -1,4 +1,4 @@
-# MANUAL_TESTING — rhel-image-mode-minimal
+# MANUAL_TESTING — rhel-bootc-minimal
 
 Real, captured results. Both the **build + verify** path (RUNBOOK §9.0–§9.4) and
 the **boot** path (`bootc install to-disk` → QEMU) are **VERIFIED end to end** on

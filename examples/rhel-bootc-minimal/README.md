@@ -1,4 +1,4 @@
-# rhel-image-mode-minimal — build a custom *minimal* bootc base image, then boot it
+# rhel-bootc-minimal — build a custom *minimal* bootc base image, then boot it
 
 A faithful, by-hand reproduction of Red Hat's
 **[*Chapter 9. Creating bootc images from scratch*](upstream-tutorial/)**
@@ -59,7 +59,7 @@ image needs to actually install + boot — which the §9.4 page, being about ima
 ## Quick start (runnable / CentOS path)
 
 ```bash
-cd examples/rhel-image-mode-minimal
+cd examples/rhel-bootc-minimal
 
 # 1. Build the minimal image (needs the §9.3 build privileges; ~3 min, pulls ~2 GB once)
 ./build-minimal.sh --base centos                 # → localhost/bootc-minimal:centos

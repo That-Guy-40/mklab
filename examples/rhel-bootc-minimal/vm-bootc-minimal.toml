@@ -1,15 +1,15 @@
 # vm-bootc-minimal.toml — boot the custom minimal bootc image as a real OS.
 #
-#   Part of examples/rhel-image-mode-minimal/ — see README.md / RUNBOOK.md.
+#   Part of examples/rhel-bootc-minimal/ — see README.md / RUNBOOK.md.
 #
 # This is step 2 of "build → boot".  First build the image (build-minimal.sh) and
 # install it to a qcow2 via make-disk.sh (which runs `bootc install to-disk`),
-# writing  examples/rhel-image-mode-minimal/output/disk.qcow2  (the absolute
+# writing  examples/rhel-bootc-minimal/output/disk.qcow2  (the absolute
 # `image` path below already points there).  Then:
 #
 #   ./build-minimal.sh --base centos      # build the image (rootless)
 #   ./make-disk.sh                        # image → qcow2 (calls sudo; bootc install --privileged)
-#   phase2-qemu-vm/lab-vm.sh create --config examples/rhel-image-mode-minimal/vm-bootc-minimal.toml
+#   phase2-qemu-vm/lab-vm.sh create --config examples/rhel-bootc-minimal/vm-bootc-minimal.toml
 #   phase2-qemu-vm/lab-vm.sh start   bootc-minimal
 #   phase2-qemu-vm/lab-vm.sh console bootc-minimal          # serial login: root / lab
 #
@@ -30,7 +30,7 @@
 [[vm]]
 name     = "bootc-minimal"
 backend  = "disk-image"
-image    = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/examples/rhel-image-mode-minimal/output/disk.qcow2"
+image    = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/examples/rhel-bootc-minimal/output/disk.qcow2"
 arch     = "x86_64"
 firmware = "uefi"
 cloud_init = false             # minimal image has no datasource; root pw baked into the image
