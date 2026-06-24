@@ -1,0 +1,31 @@
+# "Bash by example" (Daniel Robbins) intermediate workshop — Debian 13 (trixie).
+#
+# A throwaway system container with BASH + the standard complement of Unix tools
+# and a non-root `learner` user, so you can work through the three vendored
+# "Bash by example" articles (upstream-tutorial/bash{,2,3}.pdf) — writing and
+# running scripts as you read. Driven through phase5-lxd/lab-lxd.sh (LXD or Incus).
+#
+#   # 1) launch the container
+#   phase5-lxd/lab-lxd.sh up   --config examples/shell-intermediate-workshop/shell-intermediate-debian.toml
+#
+#   # 2) provision it (install tools + a `learner` user + a scripting playground)
+#   examples/shell-intermediate-workshop/setup-workshop.sh shell-intermediate-debian/shell
+#
+#   # 3) start the workshop — log in as the learner and follow the PDFs
+#   phase5-lxd/lab-lxd.sh exec shell-intermediate-debian/shell -- su - learner
+#
+#   # 4) tear down
+#   phase5-lxd/lab-lxd.sh down --lab shell-intermediate-debian
+#
+# The by-hand walkthrough (what setup-workshop.sh automates, and why) is RUNBOOK.md.
+
+[lab]
+name        = "shell-intermediate-debian"
+description = "Bash by example (Robbins) intermediate bash-programming env on Debian 13 (trixie)"
+tags        = ["bash-by-example", "robbins", "bash", "scripting", "workshop", "debian", "trixie"]
+
+[[instance]]
+name  = "shell"
+type  = "container"
+# Debian 13 / trixie container, from the linuxcontainers `images:` remote.
+image = "images:debian/13"
