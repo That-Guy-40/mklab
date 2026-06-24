@@ -1,0 +1,31 @@
+# Software Carpentry "shell-novice" workshop in an Alpine Linux container.
+#
+# The same workshop env as shell-novice-debian.toml on a musl/BusyBox base. The
+# workshop assumes BASH + GNU coreutils; Alpine ships ash + BusyBox applets, so
+# setup-workshop.sh installs `bash` + the GNU tools to follow the lesson
+# faithfully (a documented divergence — see RUNBOOK.md / MANUAL_TESTING.md).
+# Engine-agnostic: phase5-lxd/lab-lxd.sh speaks LXD or Incus identically.
+#
+#   # 1) launch the container
+#   phase5-lxd/lab-lxd.sh up   --config examples/shell-novice-workshop/shell-novice-alpine.toml
+#
+#   # 2) provision it (install bash + GNU tools + a `learner` user + unzip data)
+#   examples/shell-novice-workshop/setup-workshop.sh shell-novice-alpine/shell
+#
+#   # 3) start the workshop — log in as the learner and follow aio.html
+#   phase5-lxd/lab-lxd.sh exec shell-novice-alpine/shell -- su - learner
+#
+#   # 4) tear down
+#   phase5-lxd/lab-lxd.sh down --lab shell-novice-alpine
+
+[lab]
+name        = "shell-novice-alpine"
+description = "Software Carpentry shell-novice workshop env (BASH + GNU tools) on Alpine"
+tags        = ["shell-novice", "carpentry", "bash", "workshop", "alpine", "musl"]
+
+[[instance]]
+name  = "shell"
+type  = "container"
+# `images:alpine/latest` is rewritten by lab-lxd.sh to the highest stable
+# alpine/X.Y on the `images:` remote.
+image = "images:alpine/latest"

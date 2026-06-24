@@ -1,0 +1,31 @@
+# Software Carpentry "shell-novice" workshop in a Debian 13 (trixie) container.
+#
+# A throwaway system container with BASH + the standard complement of Unix tools,
+# pre-loaded with the workshop's `shell-lesson-data/`, so you can work through the
+# vendored all-in-one lesson (upstream-tutorial/aio.html) for a full day. Driven
+# through phase5-lxd/lab-lxd.sh, which speaks LXD or Incus identically.
+#
+#   # 1) launch the container
+#   phase5-lxd/lab-lxd.sh up   --config examples/shell-novice-workshop/shell-novice-debian.toml
+#
+#   # 2) provision it (install tools + a `learner` user + unzip the data)
+#   examples/shell-novice-workshop/setup-workshop.sh shell-novice-debian/shell
+#
+#   # 3) start the workshop — log in as the learner and follow aio.html
+#   phase5-lxd/lab-lxd.sh exec shell-novice-debian/shell -- su - learner
+#
+#   # 4) tear down
+#   phase5-lxd/lab-lxd.sh down --lab shell-novice-debian
+#
+# The by-hand walkthrough (what setup-workshop.sh automates, and why) is RUNBOOK.md.
+
+[lab]
+name        = "shell-novice-debian"
+description = "Software Carpentry shell-novice workshop env (BASH) on Debian 13 (trixie)"
+tags        = ["shell-novice", "carpentry", "bash", "workshop", "debian", "trixie"]
+
+[[instance]]
+name  = "shell"
+type  = "container"
+# Debian 13 / trixie container, from the linuxcontainers `images:` remote.
+image = "images:debian/13"

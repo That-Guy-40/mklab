@@ -100,6 +100,7 @@ Cohesive own-subdir lab built on this layer:
 | Lab | What you get |
 |---|---|
 | [`oils-shell-container/`](oils-shell-container/README.md) | Build **Oils for Unix** (OSH/YSH) from the 0.37.0 source tarball in a throwaway system container — **Debian 13** *and* **Alpine**, GNU readline as a hard dependency (`./configure --with-readline`). Verified end-to-end on both. |
+| [`shell-novice-workshop/`](shell-novice-workshop/README.md) | A ready **BASH** box for the Software Carpentry **shell-novice** full-day lesson (vendored byte-exact, CC-BY) — tools + a `learner` user + the workshop data, on **Debian 13** *and* **Alpine** (which installs bash + GNU tools over BusyBox). Verified end-to-end on both. |
 
 ## ⚙️ From source: micro-linux — compile → boot in RAM (`micro-linux/mlbuild.sh` → Phase 2)
 
