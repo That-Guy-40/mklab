@@ -26,20 +26,30 @@ base systems** so you can see the same source land on a glibc and a musl box:
 
 ## Quick start
 
+Both bases are first-class — pick either (or run both; the labs are independent
+and coexist). The flow is identical bar the name:
+
 ```bash
-# Debian 13 (trixie)
+# ── Alpine (musl / BusyBox) ─────────────────────────────────────
+phase5-lxd/lab-lxd.sh up --config examples/oils-shell-container/oils-alpine.toml
+examples/oils-shell-container/setup-oils.sh oils-alpine/shell      # ~2 min: deps + build + install
+phase5-lxd/lab-lxd.sh exec oils-alpine/shell -- osh                # pop into your fresh OSH
+phase5-lxd/lab-lxd.sh down --lab oils-alpine                       # tear down
+
+# ── Debian 13 (trixie / glibc) ──────────────────────────────────
 phase5-lxd/lab-lxd.sh up --config examples/oils-shell-container/oils-debian.toml
-examples/oils-shell-container/setup-oils.sh oils-debian/shell      # ~2 min: deps + build + install
-
-phase5-lxd/lab-lxd.sh exec oils-debian/shell -- osh -c 'echo hi from OSH'
-phase5-lxd/lab-lxd.sh exec oils-debian/shell -- ysh -c 'json write ({x: 42})'
-phase5-lxd/lab-lxd.sh exec oils-debian/shell -- osh                # interactive — readline line editing
-
-phase5-lxd/lab-lxd.sh down --lab oils-debian                       # tear down
+examples/oils-shell-container/setup-oils.sh oils-debian/shell
+phase5-lxd/lab-lxd.sh exec oils-debian/shell -- osh
+phase5-lxd/lab-lxd.sh down --lab oils-debian
 ```
 
-Swap `oils-debian` → `oils-alpine` (and the `.toml`) for the musl build. The two
-labs are independent and can coexist.
+A few things to try once you're in (either base):
+
+```bash
+phase5-lxd/lab-lxd.sh exec oils-alpine/shell -- osh -c 'echo hi from OSH'
+phase5-lxd/lab-lxd.sh exec oils-alpine/shell -- ysh -c 'json write ({x: 42})'
+phase5-lxd/lab-lxd.sh exec oils-alpine/shell -- ysh                # interactive — readline line editing
+```
 
 ## What `setup-oils.sh` does
 
