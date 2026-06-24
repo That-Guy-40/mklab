@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Installing Oils</title>
+    <link rel="stylesheet" type="text/css" href="../web/base.css" />
+<link rel="stylesheet" type="text/css" href="../web/install.css" />
+
+  </head>
+  <body class="width40">
+    <p id="home-link">
+      <span id="why-sponsor"><a href="/why-sponsor.html">Why Sponsor Oils?</a></span> |
+      <a href="https://github.com/oilshell/oil/blob/master/INSTALL.txt" id="source-link">source</a> |
+      <span id="all-docs"><a href=".">all docs</a>
+        for <span id="version-in-header">version 0.37.0</span></span> |
+      <a href="/releases.html">all versions</a> |
+      <a href="/">oils.pub</a>
+      <span id="draft-warning" style="visibility: hidden;"></span>
+
+      <script type="text/javascript">
+      function showWarning(el) {
+        el.innerHTML = '<br/>This is a DRAFT.  Latest docs are at <a href="/release/latest/doc/">/release/latest/doc/</a> ';
+        el.style.visibility = "visible";
+      }
+      function removeVersion(el) {
+        el.innerHTML = '<a href=".">drafts</a>';
+      }
+
+      var url = window.location.href;
+      if (url.indexOf('/preview/') === -1) {
+        console.log("Not a draft");
+      } else {
+        showWarning(document.querySelector('#draft-warning'));
+        removeVersion(document.querySelector('#all-docs'));
+      }
+      </script>
+</p><h1>Building and Installing Oils</h1>
+<p>Oils is a new Unix shell.  This file describes how to configure, build, and
+install it from the release tarball (NOT the git repo).</p>
+<p>This doc is aimed at end users and distro maintainers.</p>
+<h2>Quick Start</h2>
+<p>If you haven't already done so, extract the tarball:</p>
+<pre><code>tar -x --gz &lt; oils-for-unix-0.37.0.tar.gz
+cd oils-for-unix-0.37.0
+</code></pre>
+<p>This is the traditional way to install it:</p>
+<pre><code>./configure      # completes very quickly
+_build/oils.sh   # 30-60 seconds
+sudo ./install
+</code></pre>
+<p>You'll end up with an oils-for-unix binary and two symlinks:</p>
+<pre><code>/usr/local/bin/   
+  oils-for-unix
+  osh -&gt; oils-for-unix
+  ysh -&gt; oils-for-unix
+</code></pre>
+<p>This structure is similar to the busybox tool.</p>
+<h2>Smoke Test</h2>
+<p>OSH behaves like a POSIX shell:</p>
+<pre><code>$ osh -c 'echo hi'
+hi
+</code></pre>
+<p>The -n flag parses and prints a syntax tree for the 'configure' script:</p>
+<pre><code>osh -n configure
+</code></pre>
+<p>YSH is a legacy-free shell, with structured data:</p>
+<pre><code>$ ysh -c 'echo hi'
+hi
+
+$ ysh -c 'json write ({x: 42})'
+{
+  &quot;x&quot;: 42
+}
+</code></pre>
+<h2>More Documentation</h2>
+<p>Every release has a home page with links:</p>
+<ul>
+<li><a href="https://oils.pub/release/0.37.0/">https://oils.pub/release/0.37.0/</a></li>
+</ul>
+<h2>System Requirements</h2>
+<p>Oils is designed to have very few dependencies.  You need:</p>
+<ul>
+<li>A C++11 compiler
+<ul>
+<li>with libc and libstdc++</li>
+</ul>
+</li>
+<li>A POSIX shell to invoke _build/oils.sh</li>
+</ul>
+<p>Optional:</p>
+<ul>
+<li>GNU readline library, for interactive features
+(https://cnswww.cns.cwru.edu/php/chet/readline/rltop.html)</li>
+</ul>
+<p>Build deps on Debian-like distros, including Ubuntu:</p>
+<pre><code>sudo apt-get install build-essential libreadline-dev
+</code></pre>
+<p>Alpine Linux:</p>
+<pre><code>apk add libc-dev gcc readline-dev
+</code></pre>
+<p>Oils has been tested on several Linux distros and OS X.  It aims to run on any
+POSIX system.  If it doesn't, file a bug here:</p>
+<ul>
+<li><a href="https://github.com/oilshell/oil/issues">https://github.com/oilshell/oil/issues</a></li>
+</ul>
+<h2>Non-root Install</h2>
+<p>You can run the binary in-place, e.g.</p>
+<pre><code>$ _bin/cxx-opt-sh/osh -c 'echo hi'
+hi
+</code></pre>
+<p>Or you can install into ~/bin, with the man page at
+~/.local/share/man/man1/osh.1:</p>
+<pre><code>./configure --prefix ~ --datarootdir ~/.local/share
+_build/oils.sh
+./install
+</code></pre>
+<p>This doesn't require root access, but it requires:</p>
+<ul>
+<li>~/bin to be in your $PATH</li>
+<li>Pages under ~/.local/share/man to be found by 'man'.  (See manpath or
+$MANPATH.)</li>
+</ul>
+<p>NOTE: Out-of-tree builds are NOT currently supported, so you have to be in the
+oils-for-unix-0.37.0 directory.</p>
+<h2>Build Options</h2>
+<p>Show options with:</p>
+<pre><code>./configure --help 
+_build/oils.sh --help
+./install --help
+</code></pre>
+<p>Common flags to <code>configure</code>:</p>
+<pre><code>--prefix
+--with-readline
+--without-readline
+--readline  # the location
+</code></pre>
+<h2>Links</h2>
+<ul>
+<li>Mirror of the help text:
+<a href="https://oils.pub/release/0.37.0/doc/help-mirror.html">https://oils.pub/release/0.37.0/doc/help-mirror.html</a></li>
+<li>Notes on portability:
+<a href="https://oils.pub/release/0.37.0/doc/portability.html">https://oils.pub/release/0.37.0/doc/portability.html</a></li>
+</ul>
+    <div id="build-timestamp">
+      <i>Generated on Sun, 30 Nov 2025 13:00:06 -0500</i>
+    </div>
+  </body>
+</html>

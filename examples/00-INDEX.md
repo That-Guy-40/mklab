@@ -95,6 +95,12 @@ Grouped under [`lxd-examples/`](lxd-examples/README.md).
 | `lxd-examples/lxd-mixed-topology.toml` | 2 containers + 1 VM in a single lab — exercises the container/VM discriminator. |
 | `lxd-examples/lxd-profiles-projects.toml` | `[[profile]]` + `[[project]]` demo — LXD-native config bundles and namespace isolation. |
 
+Cohesive own-subdir lab built on this layer:
+
+| Lab | What you get |
+|---|---|
+| [`oils-shell-container/`](oils-shell-container/README.md) | Build **Oils for Unix** (OSH/YSH) from the 0.37.0 source tarball in a throwaway system container — **Debian 13** *and* **Alpine**, GNU readline as a hard dependency (`./configure --with-readline`). Verified end-to-end on both. |
+
 ## ⚙️ From source: micro-linux — compile → boot in RAM (`micro-linux/mlbuild.sh` → Phase 2)
 
 Compile a kernel + a tiny userspace from upstream source and boot to a **console

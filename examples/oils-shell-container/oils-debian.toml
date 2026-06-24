@@ -1,0 +1,34 @@
+# Oils-for-Unix 0.37.0 in a Debian 13 (trixie) system container.
+#
+# One throwaway container to experiment with OSH/YSH, built from the vendored
+# release tarball with GNU readline as a HARD dependency (./configure
+# --with-readline).  Engine-agnostic: drive it through phase5-lxd/lab-lxd.sh,
+# which speaks LXD or Incus identically.
+#
+#   # 1) launch the container
+#   phase5-lxd/lab-lxd.sh up   --config examples/oils-shell-container/oils-debian.toml
+#
+#   # 2) build + install Oils inside it (apt deps -> push tarball -> configure
+#   #    --with-readline -> _build/oils.sh -> ./install -> smoke test)
+#   examples/oils-shell-container/setup-oils.sh oils-debian/shell
+#
+#   # 3) play
+#   phase5-lxd/lab-lxd.sh exec oils-debian/shell -- osh -c 'echo hi from OSH'
+#   phase5-lxd/lab-lxd.sh exec oils-debian/shell -- ysh -c 'json write ({x: 42})'
+#   phase5-lxd/lab-lxd.sh exec oils-debian/shell        # interactive: try `osh`
+#
+#   # 4) tear down
+#   phase5-lxd/lab-lxd.sh down --lab oils-debian
+#
+# The by-hand walkthrough (what setup-oils.sh automates, and why) is RUNBOOK.md.
+
+[lab]
+name        = "oils-debian"
+description = "Oils-for-Unix 0.37.0 built from source in a Debian 13 (trixie) container"
+tags        = ["oils", "shell", "debian", "trixie", "build-from-source"]
+
+[[instance]]
+name  = "shell"
+type  = "container"
+# Debian 13 / trixie, container image from the linuxcontainers `images:` remote.
+image = "images:debian/13"

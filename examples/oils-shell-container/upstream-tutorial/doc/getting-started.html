@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Getting Started</title>
+    <link rel="stylesheet" type="text/css" href="../web/base.css" />
+<link rel="stylesheet" type="text/css" href="../web/manual.css" />
+<link rel="stylesheet" type="text/css" href="../web/toc.css" />
+<link rel="stylesheet" type="text/css" href="../web/language.css" />
+<link rel="stylesheet" type="text/css" href="../web/code.css" />
+
+  </head>
+  <body class="width40">
+    <p id="home-link">
+      <span id="why-sponsor"><a href="/why-sponsor.html">Why Sponsor Oils?</a></span> |
+      <a href="https://github.com/oilshell/oil/blob/master/doc/getting-started.md" id="source-link">source</a> |
+      <span id="all-docs"><a href=".">all docs</a>
+        for <span id="version-in-header">version 0.37.0</span></span> |
+      <a href="/releases.html">all versions</a> |
+      <a href="/">oils.pub</a>
+      <span id="draft-warning" style="visibility: hidden;"></span>
+
+      <script type="text/javascript">
+      function showWarning(el) {
+        el.innerHTML = '<br/>This is a DRAFT.  Latest docs are at <a href="/release/latest/doc/">/release/latest/doc/</a> ';
+        el.style.visibility = "visible";
+      }
+      function removeVersion(el) {
+        el.innerHTML = '<a href=".">drafts</a>';
+      }
+
+      var url = window.location.href;
+      if (url.indexOf('/preview/') === -1) {
+        console.log("Not a draft");
+      } else {
+        showWarning(document.querySelector('#draft-warning'));
+        removeVersion(document.querySelector('#all-docs'));
+      }
+      </script>
+</p><h1>Getting Started</h1>
+<p>There are many ways to use Oils!</p>
+<ul>
+<li>You can use it <em>interactively</em>, or you can write &quot;shell scripts&quot; with it.
+Shell is the best language for <em>ad hoc</em> automation.</li>
+<li>You can use it in <em>compatible</em> mode with <code>bin/osh</code>, or in <em>legacy-free</em> mode
+with <code>bin/ysh</code>.</li>
+</ul>
+<p>As of 2024, <a href="https://oils.pub/cross-ref.html?tag=OSH#OSH">OSH</a> is mature, and <a href="https://oils.pub/cross-ref.html?tag=YSH#YSH">YSH</a> is under development.  See <a href="https://www.oilshell.org/blog/tags.html?tag=FAQ#FAQ">blog
+posts tagged #FAQ</a> for more detail.</p>
+<p>This doc walks you through setting up Oils, explains some concepts, and links
+to more documentation.</p>
+<div id="toc">
+<div id="toctitle">Table of Contents</div>
+  <div class="toclevel1"><a href="#setup">Setup</a></div>
+  <div class="toclevel2"><a href="#downloading-oils">Downloading Oils</a></div>
+  <div class="toclevel2"><a href="#your-configuration-dir">Your Configuration Dir</a></div>
+  <div class="toclevel2"><a href="#initialization-with-rc-files">Initialization with <code>rc</code> Files</a></div>
+  <div class="toclevel2"><a href="#setting-the-prompt">Setting the Prompt</a></div>
+  <div class="toclevel2"><a href="#editor-support">Editor Support</a></div>
+  <div class="toclevel1"><a href="#getting-help">Getting Help</a></div>
+  <div class="toclevel1"><a href="#tips">Tips</a></div>
+  <div class="toclevel2"><a href="#troubleshooting">Troubleshooting</a></div>
+  <div class="toclevel2"><a href="#sh-and-bash-docs-are-useful-for-osh"><code>sh</code> and Bash Docs Are Useful for OSH</a></div>
+  <div class="toclevel1"><a href="#what-is-expected-to-run-under-osh">What Is Expected to Run Under OSH</a></div>
+  <div class="toclevel1"><a href="#features-unique-to-osh">Features Unique to OSH</a></div>
+  <div class="toclevel2"><a href="#dumping-the-ast">Dumping the AST</a></div>
+  <div class="toclevel2"><a href="#oils_hijack_shebang"><code>OILS_HIJACK_SHEBANG</code></a></div>
+  <div class="toclevel2"><a href="#debug-file"><code>--debug-file</code></a></div>
+  <div class="toclevel1"><a href="#appendix">Appendix</a></div>
+  <div class="toclevel2"><a href="#links">Links</a></div>
+</div>
+<a name="setup"></a>
+<h2>Setup</h2>
+<a name="downloading-oils"></a>
+<h3>Downloading Oils</h3>
+<p>The <a href="https://oils.pub/releases.html">releases page</a> links to source
+tarballs for every release.  It also links to the documentation tree, which
+includes this page.</p>
+<a name="your-configuration-dir"></a>
+<h3>Your Configuration Dir</h3>
+<p>After running the instructions in <a href="INSTALL.html">INSTALL</a>, run:</p>
+<pre><code>mkdir -p ~/.config/oils       <span class="sh-comment"># for oshrc and yshrc</span>
+mkdir -p ~/.local/share/oils  <span class="sh-comment"># for osh_history</span>
+</code></pre>
+<a name="initialization-with-rc-files"></a>
+<h3>Initialization with <code>rc</code> Files</h3>
+<p>Note that</p>
+<ul>
+<li><code>bin/osh</code> runs <code>~/.config/oils/oshrc</code></li>
+<li><code>bin/ysh</code> runs <code>~/.config/oils/yshrc</code></li>
+</ul>
+<p>These are the <strong>only</strong> files that are &quot;sourced&quot;.  Other shells <a href="https://shreevatsa.wordpress.com/2008/03/30/zshbash-startup-files-loading-order-bashrc-zshrc-etc/">have a
+confusing initialization sequence involving many files</a> (<a href="http://www.solipsys.co.uk/new/BashInitialisationFiles.html">original</a>).
+It's very hard to tell when and if <code>/etc/profile</code>, <code>~/.bashrc</code>,
+<code>~/.bash_profile</code>, etc. are executed.</p>
+<p>OSH and YSH intentionally avoid this.  If you want those files, simply <code>source</code>
+them in your <code>oshrc</code>.</p>
+<ul>
+<li>Related: the <a href="ref/chap-front-end.html#config">config</a> reference topic.</li>
+</ul>
+<p>I describe my own <code>oshrc</code> file on the Wiki: <a href="https://github.com/oils-for-unix/oils/wiki/How-To-Test-OSH">How To Test
+OSH</a>.</p>
+<a name="setting-the-prompt"></a>
+<h3>Setting the Prompt</h3>
+<p>OSH supports the <code>$PS1</code> variable, with bash-style escape codes.  See <a href="ref/chap-plugin.html#PS1">PS1</a> for details.</p>
+<p>Example:</p>
+<pre><code><span class="sh-comment"># oshrc</span>
+PS1='\s '
+</code></pre>
+<p>YSH has the <a href="ref/chap-plugin.html#renderPrompt">renderPrompt()</a> hook, which is a YSH function.  It
+often uses <a href="ref/chap-type-method.html#promptVal">io.promptVal()</a>.</p>
+<p>Example:</p>
+<pre><code><span class="sh-comment"># yshrc</span>
+func renderPrompt(io) {
+  return (io.promptVal('s') ++ ' ')
+}
+</code></pre>
+<a name="editor-support"></a>
+<h3>Editor Support</h3>
+<p>See <a href="https://github.com/oilshell/oil/wiki/YSH-Editor-Support">YSH Editor Support</a> on the wiki.</p>
+<a name="getting-help"></a>
+<h2>Getting Help</h2>
+<p>Type <code>help</code> in <code>osh</code> or <code>ysh</code>, which links to URLs in the <a href="ref/index.html">Oils
+Reference</a>.</p>
+<a name="tips"></a>
+<h2>Tips</h2>
+<ul>
+<li>If you get tired of typing <code>~/.config/oils/oshrc</code>, symlink it to <code>~/.oshrc</code>.</li>
+</ul>
+<a name="troubleshooting"></a>
+<h3>Troubleshooting</h3>
+<ul>
+<li>If you're running OSH from <code>bash</code> or <code>zsh</code>, then the prompt string <code>$PS1</code> may
+be unintentionally inherited.  Running <code>PS1=''</code> before <code>bin/osh</code> avoids this.
+This is also true for <code>$PS2</code>, <code>$PS4</code>, etc.</li>
+<li>On Arch Linux and other distros,<code>$LANG</code> may not get set without
+<code>/etc/profile</code>.  Adding <code>source /etc/profile</code> to your <code>oshrc</code> may solve this
+problem.</li>
+<li>See <a href="https://github.com/oils-for-unix/oils/wiki/OSH-Compatibility-Tips">OSH Compatibility Tips</a> to configure programs that rely on <code>eval</code> to initialize (e.g. starship, zoxide).</li>
+</ul>
+<a name="sh-and-bash-docs-are-useful-for-osh"></a>
+<h3><code>sh</code> and Bash Docs Are Useful for OSH</h3>
+<p>Existing educational materials for the Unix shell apply to OSH, because they
+generally don't teach the quirks that OSH disallows.  For example, much of the
+information and advice in <a href="https://mywiki.wooledge.org/BashGuide">BashGuide</a> can be used without worrying about
+which shell you're using.  See the end of this manual for more resources.</p>
+<p>For this reason, we're focusing efforts on documenting <a href="https://oils.pub/cross-ref.html?tag=YSH#YSH">YSH</a>.</p>
+<a name="what-is-expected-to-run-under-osh"></a>
+<h2>What Is Expected to Run Under OSH</h2>
+<p>&quot;Batch&quot; programs are most likely to run unmodified under OSH.  On the other
+hand, Interactive programs like <code>.bashrc</code> and bash completion scripts may
+require small changes.</p>
+<ul>
+<li>Wiki: <a href="https://github.com/oilshell/oil/wiki/What-Is-Expected-to-Run-Under-OSH">What Is Expected to Run Under OSH</a></li>
+</ul>
+<a name="features-unique-to-osh"></a>
+<h2>Features Unique to OSH</h2>
+<a name="dumping-the-ast"></a>
+<h3>Dumping the AST</h3>
+<p>The <code>-n</code> flag tells OSH to parse the program rather than executing it.  By
+default, it prints an abbreviated abstract syntax tree:</p>
+<pre><code><span class="sh-prompt">$</span> <span class="sh-command">bin/osh -n -c 'ls | wc -l'</span>
+(command.Pipeline children:[(C {(ls)}) (C {(wc)} {(-l)})] negated:F)
+</code></pre>
+<p>You can also ask for the full <code>text</code> format:</p>
+<pre><code><span class="sh-prompt">$</span> <span class="sh-command">bin/osh -n --ast-format text -c 'ls | wc -l'</span>
+(command.Pipeline
+  children: [
+    (command.Simple
+      words: [
+        (word.Compound
+          parts: [(word_part.Literal
+                   token:(token id:Lit_Chars val:ls span_id:0))]
+        )
+      ]
+    )
+    (command.Simple
+      words: [
+        (word.Compound
+          parts: [(word_part.Literal
+                   token:(token id:Lit_Chars val:wc span_id:4))]
+        )
+        (word.Compound
+          parts: [(word_part.Literal
+                   token:(token id:Lit_Chars val:-l span_id:6))]
+        )
+      ]
+    )
+  ]
+  negated: F
+  spids: [2]
+)
+</code></pre>
+<p>This format is <strong>subject to change</strong>.  It's there for debugging the parser, but
+sophisticated users may use it to interpret tricky shell programs without
+running them.</p>
+<a name="oils_hijack_shebang"></a>
+<h3><code>OILS_HIJACK_SHEBANG</code></h3>
+<p>This environment variable can be set to the path of a <strong>shell</strong>.  Before OSH
+executes a program, it will inspect the shebang line to see if it looks like a
+shell script.  If it does, it will use this shell instead of the one specified
+in the shebang line.</p>
+<p>For example, suppose you have <code>myscript.sh</code>:</p>
+<pre><code><span class="sh-comment">#!/bin/sh</span>
+<span class="sh-comment"># myscript.sh</span>
+
+./otherscript.sh --flag ...
+</code></pre>
+<p>and <code>otherscript.sh</code>:</p>
+<pre><code><span class="sh-comment">#!/bin/sh</span>
+<span class="sh-comment"># otherscript.sh</span>
+
+echo 'hello world'
+</code></pre>
+<p>Then you can run <code>myscript.sh</code> like this:</p>
+<pre><code>OILS_HIJACK_SHEBANG=osh osh myscript.sh
+</code></pre>
+<p>and <code>otherscript.sh</code> will be executed with OSH rather than the <code>/bin/sh</code>.</p>
+<p>Note that <code>osh</code> appears <strong>twice</strong> in that command line: once for the initial
+run, and once for all recursive runs.</p>
+<p>(This is an environment variable rather than a flag because it needs to be
+<strong>inherited</strong>.)</p>
+<a name="debug-file"></a>
+<h3><code>--debug-file</code></h3>
+<p>Print internal debug logs to this file.  It's useful to make it a FIFO:</p>
+<pre><code>mkfifo _tmp/debug
+osh --debug-file _tmp/debug
+</code></pre>
+<p>Then run this in another window to see logs as you type:</p>
+<pre><code>cat _tmp/debug
+</code></pre>
+<p>Related:</p>
+<ul>
+<li>The <code>OSH_DEBUG_DIR</code> environment variable is the inherited version of
+<code>--debug-file</code>.  A file named <code>$PID-osh.log</code> will be written in that
+directory for every shell process.</li>
+<li>The <code>--xtrace-to-debug-file</code> flag sends <code>set -o xtrace</code> output to that file
+instead of to <code>stderr</code>.</li>
+</ul>
+
+<a name="appendix"></a>
+<h2>Appendix</h2>
+<a name="links"></a>
+<h3>Links</h3>
+<ul>
+<li><a href="https://www.oilshell.org/blog/tags.html?tag=FAQ#FAQ">Blog Posts Tagged #FAQ</a>
+tell you why OSH exists and how it's designed.</li>
+<li><a href="known-differences.html">Known Differences</a> lists incompatibilities between
+OSH and other shells.  They are unlikely to appear in real programs, or
+there is a trivial workaround.</li>
+</ul>
+<p>External:</p>
+<ul>
+<li><a href="https://www.gnu.org/software/bash/manual/">GNU Bash Manual</a>.  I frequently
+referred to this document when implementing OSH.</li>
+<li><a href="https://mywiki.wooledge.org/BashGuide">BashGuide</a>.  A wiki with detailed information about bash.
+<ul>
+<li><a href="https://mywiki.wooledge.org/BashPitfalls">BashPitfalls</a>.</li>
+</ul>
+</li>
+<li><a href="https://devhints.io/bash">Bash Cheat Sheet</a>.  A short overview.</li>
+</ul>
+    <div id="build-timestamp">
+      <i>Generated on Sun, 30 Nov 2025 13:00:06 -0500</i>
+    </div>
+  </body>
+</html>

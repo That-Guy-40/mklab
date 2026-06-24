@@ -1,0 +1,36 @@
+# Oils-for-Unix 0.37.0 in an Alpine Linux system container.
+#
+# The same lab as oils-debian.toml on a musl/BusyBox base — Oils is built from
+# the vendored release tarball with GNU readline as a HARD dependency
+# (./configure --with-readline).  Engine-agnostic: phase5-lxd/lab-lxd.sh speaks
+# LXD or Incus identically.
+#
+#   # 1) launch the container
+#   phase5-lxd/lab-lxd.sh up   --config examples/oils-shell-container/oils-alpine.toml
+#
+#   # 2) build + install Oils inside it (apk deps -> push tarball -> configure
+#   #    --with-readline -> _build/oils.sh -> ./install -> smoke test)
+#   examples/oils-shell-container/setup-oils.sh oils-alpine/shell
+#
+#   # 3) play
+#   phase5-lxd/lab-lxd.sh exec oils-alpine/shell -- osh -c 'echo hi from OSH'
+#   phase5-lxd/lab-lxd.sh exec oils-alpine/shell -- ysh -c 'json write ({x: 42})'
+#   phase5-lxd/lab-lxd.sh exec oils-alpine/shell        # interactive: try `osh`
+#
+#   # 4) tear down
+#   phase5-lxd/lab-lxd.sh down --lab oils-alpine
+#
+# NOTE: Oils is C++, so the compiler must be g++ (Alpine `build-base`), NOT the
+# `gcc`-only line in the upstream Alpine one-liner — see RUNBOOK.md / MANUAL_TESTING.md.
+
+[lab]
+name        = "oils-alpine"
+description = "Oils-for-Unix 0.37.0 built from source in an Alpine container"
+tags        = ["oils", "shell", "alpine", "musl", "build-from-source"]
+
+[[instance]]
+name  = "shell"
+type  = "container"
+# `images:alpine/latest` is rewritten by lab-lxd.sh to the highest stable
+# alpine/X.Y on the `images:` remote (3.24 at time of writing).
+image = "images:alpine/latest"
