@@ -147,3 +147,24 @@ menu — lab setup, not part of the reset. Exemplar:
 ([`RUNBOOK-init-shell.md`](examples/root-password-reset/RUNBOOK-init-shell.md) +
 [`MANUAL_TESTING.md`](examples/root-password-reset/MANUAL_TESTING.md)) — verified
 end-to-end on Debian/BIOS.
+
+### Killing a process: by PID, never by pattern
+
+When a process must be killed, resolve it to a **PID first** (`pgrep`, `ps`, a
+recorded `$!`, a pidfile) and `kill <pid>`. **Never** use `pkill -f` / `pkill` /
+`killall` on a name or command-line substring to do the actual kill.
+
+A pattern matches *every* process whose argv contains the string — including ones
+you didn't mean and, crucially, **the very thing the pattern names**. Real
+incident: `pkill -f <vm>/serial.sock` to reap a capture `socat` also matched
+**QEMU itself** (its `-chardev …serial.sock` carries that exact path), so it
+killed the VM — and the agent's own shell — with **exit 144**. The path you grep
+for is usually shared by the workload you are trying to protect.
+
+- **Find with a pattern, kill by PID:** `pgrep -f <pat>` to *list*, eyeball the
+  hits, then `kill` the specific PID(s). Inspecting the match before killing is
+  the whole point.
+- This applies to any shared-substring footgun — `serial.sock` paths, a port
+  number, a config filename, a lab/VM name that recurs across cmdlines.
+- Prefer the tool's own lifecycle verb when there is one (`lab-vm.sh stop`,
+  `lab-lxd.sh down`, `incus delete -f <name>`) over a raw signal.
