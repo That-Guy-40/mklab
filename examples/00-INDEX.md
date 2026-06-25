@@ -100,6 +100,7 @@ Cohesive own-subdir lab built on this layer:
 | Lab | What you get |
 |---|---|
 | [`oils-shell-container/`](oils-shell-container/README.md) | Build **Oils for Unix** (OSH/YSH) from the 0.37.0 source tarball in a throwaway system container — **Debian 13** *and* **Alpine**, GNU readline as a hard dependency (`./configure --with-readline`). Verified end-to-end on both. |
+| [`UNIX_novice_survival_guide/`](UNIX_novice_survival_guide/README.md) | A ready **BASH** box for Matt Might's **"survival guide for Unix beginners"** (vendored byte-exact) — tools + a `learner` user + a `~/unix-survival/` sandbox mirroring the guide's examples, on **Debian 13** *and* **Alpine** (which lacks *both* `man` and `ssh` by default). The gentle on-ramp before shell-novice. Verified end-to-end on both. |
 | [`shell-novice-workshop/`](shell-novice-workshop/README.md) | A ready **BASH** box for the Software Carpentry **shell-novice** full-day lesson (vendored byte-exact, CC-BY) — tools + a `learner` user + the workshop data, on **Debian 13** *and* **Alpine** (which installs bash + GNU tools over BusyBox). Verified end-to-end on both. |
 | [`shell-intermediate-workshop/`](shell-intermediate-workshop/README.md) | A **BASH scripting** box for Daniel Robbins' **"Bash by example"** series (3 vendored PDFs) — tools + a `learner` user + a `~/bash-by-example/` playground, on **Debian 13** *and* **Alpine** (which has *no bash* by default). The programming follow-on to shell-novice. Verified end-to-end on both. |
 

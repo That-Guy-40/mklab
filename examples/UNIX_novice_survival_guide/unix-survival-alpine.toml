@@ -1,0 +1,32 @@
+# Matt Might "survival guide for Unix beginners" box on Alpine Linux.
+#
+# The same environment as unix-survival-debian.toml on a musl/BusyBox base. The
+# guide assumes BASH + the GNU userland; Alpine ships ash + BusyBox applets and,
+# notably, has NO `man` and NO `ssh` by default — the very tools the guide's
+# "man up" and "Remote access: ssh" sections teach. setup-workshop.sh installs
+# them (a documented divergence — see RUNBOOK.md / MANUAL_TESTING.md).
+# Engine-agnostic: phase5-lxd/lab-lxd.sh speaks LXD or Incus identically.
+#
+#   # 1) launch the container
+#   phase5-lxd/lab-lxd.sh up   --config examples/UNIX_novice_survival_guide/unix-survival-alpine.toml
+#
+#   # 2) provision it (install bash + GNU/man/ssh tools + a `learner` user + sandbox)
+#   examples/UNIX_novice_survival_guide/setup-workshop.sh unix-survival-alpine/shell
+#
+#   # 3) start reading — log in as the learner and follow the guide
+#   phase5-lxd/lab-lxd.sh exec unix-survival-alpine/shell -- su - learner
+#
+#   # 4) tear down
+#   phase5-lxd/lab-lxd.sh down --lab unix-survival-alpine
+
+[lab]
+name        = "unix-survival-alpine"
+description = "Matt Might 'survival guide for Unix beginners' env (BASH + GNU/man/ssh tools) on Alpine"
+tags        = ["unix-survival", "matt-might", "bash", "tutorial", "alpine", "musl"]
+
+[[instance]]
+name  = "shell"
+type  = "container"
+# `images:alpine/latest` is rewritten by lab-lxd.sh to the highest stable
+# alpine/X.Y on the `images:` remote.
+image = "images:alpine/latest"
