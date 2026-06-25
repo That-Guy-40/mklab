@@ -1104,10 +1104,20 @@ cmd_exec() {
     [[ -n "$target" ]] || die "usage: $LAB_PROG exec <name|lab/service> [-- cmd args...]"
     require_lxd_or_incus
     local iname; iname="$(_resolve_instance_name "$target")"
+    # On an interactive session, force a TERM the guest actually has a terminfo
+    # entry for. lxc/incus exec propagates the *client's* $TERM, which is often
+    # an exotic value (xterm-ghostty, alacritty, kitty, …) the container's
+    # terminfo DB doesn't know — which breaks less/vim/man/clear/tput inside.
+    # A classic, near-universally-present entry avoids that. Override with
+    # LAB_TERM (e.g. LAB_TERM=xterm-256color). Gated on a TTY so the many
+    # non-interactive `exec … -- sh -c …` callers (setup scripts, tests) are
+    # unaffected.
+    local -a env_args=()
+    [[ -t 0 ]] && env_args=(--env "TERM=${LAB_TERM:-xterm}")
     if (( ${#EXTRA_ARGS[@]} > 0 )); then
-        "$LXC_CMD" exec "$iname" -- "${EXTRA_ARGS[@]}"
+        "$LXC_CMD" exec "${env_args[@]}" "$iname" -- "${EXTRA_ARGS[@]}"
     else
-        "$LXC_CMD" exec "$iname" -- /bin/sh -c '[ -x /bin/bash ] && exec /bin/bash || exec /bin/sh'
+        "$LXC_CMD" exec "${env_args[@]}" "$iname" -- /bin/sh -c '[ -x /bin/bash ] && exec /bin/bash || exec /bin/sh'
     fi
 }
 
@@ -1690,6 +1700,8 @@ OPTIONS
 ENVIRONMENT
   LAB_LOG_LEVEL  debug|info|warn|error  (default: info)
   LAB_STATE_DIR  override the default state-dir location
+  LAB_TERM       TERM to set for interactive exec sessions (default: xterm);
+                 avoids exotic client TERMs (xterm-ghostty, …) the guest lacks
 
 EXAMPLES
   $LAB_PROG run --name a --image images:alpine/latest        # newest stable X.Y, resolved at run time
