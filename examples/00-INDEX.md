@@ -105,6 +105,13 @@ Cohesive own-subdir lab built on this layer:
 | [`shell-intermediate-workshop/`](shell-intermediate-workshop/README.md) | A **BASH scripting** box for Daniel Robbins' **"Bash by example"** series (3 vendored PDFs) — tools + a `learner` user + a `~/bash-by-example/` playground, on **Debian 13** *and* **Alpine** (which has *no bash* by default). The programming follow-on to shell-novice. Verified end-to-end on both. |
 | [`shell-intermediate-programming-by-example/`](shell-intermediate-programming-by-example/README.md) | A **BASH scripting** box for Matt Might's **"bash: by example, by counter-example"** (vendored byte-exact) — tools + a `learner` user + a `~/bash-by-example/` playground with a runnable starter, on **Debian 13** *and* **Alpine** (no bash by default; ash also lacks arrays + `(( ))`). A Matt-Might alternative to shell-intermediate-workshop. Verified end-to-end on both. |
 
+> **Suggested learning order.** Two self-contained tracks of the same
+> novice → intermediate arc, by different authors:
+> - **Matt Might:** [survival guide](UNIX_novice_survival_guide/README.md) → [bash by example](shell-intermediate-programming-by-example/README.md) — *find your feet at the shell, then program it.* (Might names the survival guide as the prerequisite to bash-by-example.)
+> - **Carpentries + Robbins:** [shell-novice](shell-novice-workshop/README.md) → [shell-intermediate-workshop](shell-intermediate-workshop/README.md) — a full-day hands-on lesson, then the "Bash by example" PDF series.
+>
+> [`oils-shell-container/`](oils-shell-container/README.md) is orthogonal — it *builds* a shell rather than teaching one.
+
 ## ⚙️ From source: micro-linux — compile → boot in RAM (`micro-linux/mlbuild.sh` → Phase 2)
 
 Compile a kernel + a tiny userspace from upstream source and boot to a **console
