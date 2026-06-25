@@ -232,6 +232,12 @@ phase5-lxd/lab-lxd.sh down --lab oils-debian
 - **`./configure` fails on readline** → `--with-readline` is doing its job;
   install `libreadline-dev` / `readline-dev` first. To build *without* readline,
   use `./configure --without-readline` (you lose interactive niceties).
+- **The `osh`/`ysh` REPL or `vim`/`less` looks garbled / "unknown terminal
+  type"** → your client's `$TERM` (e.g. Ghostty's `xterm-ghostty`) has no
+  terminfo entry inside the container. `lab-lxd.sh exec` sets `TERM=xterm` for
+  interactive sessions so the shell you just built has working line editing;
+  override with `LAB_TERM` (e.g. `LAB_TERM=xterm-256color`). See
+  [START_HERE](../../phase5-lxd/START_HERE_LXC_WIZARD.md).
 - **Image won't download / `up` hangs** → the `images:` remote can stall; it's
   not a lab bug. Pre-pull once with `incus image copy images:alpine/3.24 local:`
   (or `images:debian/13`) and retry.

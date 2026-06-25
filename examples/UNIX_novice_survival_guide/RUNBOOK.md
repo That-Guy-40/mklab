@@ -189,6 +189,11 @@ phase5-lxd/lab-lxd.sh down --lab unix-survival-debian
   `man-db` builds it automatically.
 - **`emacs: command not found`** → this box installs `vim` + `nano`, not emacs;
   the guide recommends either. `apt install emacs` / `apk add emacs` if you prefer it.
+- **`man`/`less`/`vim`/`clear` looks garbled / "unknown terminal type"** → your
+  client's `$TERM` (e.g. Ghostty's `xterm-ghostty`) has no terminfo entry inside
+  the container. `lab-lxd.sh exec` sets `TERM=xterm` for interactive sessions to
+  avoid this; override with `LAB_TERM` (e.g. `LAB_TERM=xterm-256color`). See
+  [START_HERE](../../phase5-lxd/START_HERE_LXC_WIZARD.md).
 - **Image won't download / `up` hangs** → the `images:` remote can stall; it's
   not a lab bug. Pre-pull once with `incus image copy images:alpine/3.24 local:`
   (or `images:debian/13`) and retry.

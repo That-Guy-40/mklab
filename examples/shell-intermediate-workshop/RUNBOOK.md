@@ -181,6 +181,12 @@ phase5-lxd/lab-lxd.sh down --lab shell-intermediate-debian
   does. On Alpine, per-tool man pages also need their `*-doc` subpackage.
 - **Part 3's `emerge`/ebuild commands don't work** → expected; Part 3 is
   Gentoo-specific *reading*. The bash patterns it shows still apply.
+- **`vim`/`nano`/`less`/`clear` looks garbled / "unknown terminal type"** → your
+  client's `$TERM` (e.g. Ghostty's `xterm-ghostty`) has no terminfo entry inside
+  the container. `lab-lxd.sh exec` sets `TERM=xterm` for interactive sessions so
+  editing your scripts works; override with `LAB_TERM` (e.g.
+  `LAB_TERM=xterm-256color`). See
+  [START_HERE](../../phase5-lxd/START_HERE_LXC_WIZARD.md).
 - **Image won't download / `up` hangs** → the `images:` remote can stall; it's
   not a lab bug. Pre-pull once with `incus image copy images:alpine/3.24 local:`
   (or `images:debian/13`) and retry.

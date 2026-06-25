@@ -177,6 +177,11 @@ phase5-lxd/lab-lxd.sh down --lab shell-novice-debian
   BusyBox applet, not the GNU tool. See [BusyBox vs GNU](#busybox-vs-gnu).
 - **`man ls` says "No manual entry"** on Alpine → per-tool man pages live in
   `*-doc` subpackages (`coreutils-doc`, `grep-doc`, …); step 2 installs them.
+- **`man`/`less`/`nano`/`clear` looks garbled / "unknown terminal type"** → your
+  client's `$TERM` (e.g. Ghostty's `xterm-ghostty`) has no terminfo entry inside
+  the container. `lab-lxd.sh exec` sets `TERM=xterm` for interactive sessions to
+  avoid this; override with `LAB_TERM` (e.g. `LAB_TERM=xterm-256color`). See
+  [START_HERE](../../phase5-lxd/START_HERE_LXC_WIZARD.md).
 - **Image won't download / `up` hangs** → the `images:` remote can stall; it's
   not a lab bug. Pre-pull once with `incus image copy images:alpine/3.24 local:`
   (or `images:debian/13`) and retry.
