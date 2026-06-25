@@ -56,8 +56,19 @@ phase5-lxd/lab-lxd.sh list --lab hello-lxd
 ### 3. Execute a command inside it
 
 ```bash
-phase5-lxd/lab-lxd.sh exec hello-lxd/shell -- cat /etc/os-release
+phase5-lxd/lab-lxd.sh exec hello-lxd/shell -- cat /etc/os-release   # one-off command
+phase5-lxd/lab-lxd.sh exec hello-lxd/shell                          # interactive shell
 ```
+
+> **Interactive `exec` and `TERM`.** When you drop into a shell (or run `less`,
+> `vim`, `man`, `clear`), `exec` sets `TERM=xterm` in the guest. `lxc`/`incus`
+> would otherwise propagate your *client's* `$TERM` — and modern emulators
+> (Ghostty → `xterm-ghostty`, Kitty, Alacritty) ship terminfo entries the
+> container's database doesn't have, so those programs error with "unknown
+> terminal type". The classic `xterm` is near-universally present and keeps
+> colour. Want 256 colours (or a stricter entry)? Override it:
+> `LAB_TERM=xterm-256color phase5-lxd/lab-lxd.sh exec hello-lxd/shell`. This only
+> affects interactive sessions (a TTY) — scripted `exec … -- cmd` is untouched.
 
 ### 4. Tear down
 
