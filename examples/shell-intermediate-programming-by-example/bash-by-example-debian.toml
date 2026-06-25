@@ -1,0 +1,33 @@
+# Matt Might "bash by example" scripting box on Debian 13 (trixie).
+#
+# A throwaway system container with BASH + the standard complement of Unix tools,
+# a non-root `learner` user, and a `~/bash-by-example/` playground (with a
+# runnable starter script exercising constructs from the article) so you can work
+# through Matt Might's intermediate bash-programming guide while writing and
+# running scripts. Driven through phase5-lxd/lab-lxd.sh, which speaks LXD or Incus
+# identically.
+#
+#   # 1) launch the container
+#   phase5-lxd/lab-lxd.sh up   --config examples/shell-intermediate-programming-by-example/bash-by-example-debian.toml
+#
+#   # 2) provision it (install tools + a `learner` user + the playground)
+#   examples/shell-intermediate-programming-by-example/setup-workshop.sh bash-by-example-debian/shell
+#
+#   # 3) start scripting — log in as the learner and follow the guide
+#   phase5-lxd/lab-lxd.sh exec bash-by-example-debian/shell -- su - learner
+#
+#   # 4) tear down
+#   phase5-lxd/lab-lxd.sh down --lab bash-by-example-debian
+#
+# The by-hand walkthrough (what setup-workshop.sh automates, and why) is RUNBOOK.md.
+
+[lab]
+name        = "bash-by-example-debian"
+description = "Matt Might 'bash by example' intermediate scripting env (BASH) on Debian 13 (trixie)"
+tags        = ["bash-by-example", "matt-might", "bash", "scripting", "debian", "trixie"]
+
+[[instance]]
+name  = "shell"
+type  = "container"
+# Debian 13 / trixie container, from the linuxcontainers `images:` remote.
+image = "images:debian/13"

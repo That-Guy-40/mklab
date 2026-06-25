@@ -1,0 +1,32 @@
+# Matt Might "bash by example" scripting box on Alpine Linux.
+#
+# The same environment as bash-by-example-debian.toml on a musl/BusyBox base. The
+# article is pure BASH (arrays, ${var/x/y}, (( )), declare -i); Alpine ships ash +
+# BusyBox and has NO bash at all by default, so setup-workshop.sh installs real
+# bash + GNU tools to follow it (a documented divergence — see RUNBOOK.md /
+# MANUAL_TESTING.md). Engine-agnostic: phase5-lxd/lab-lxd.sh speaks LXD or Incus
+# identically.
+#
+#   # 1) launch the container
+#   phase5-lxd/lab-lxd.sh up   --config examples/shell-intermediate-programming-by-example/bash-by-example-alpine.toml
+#
+#   # 2) provision it (install bash + GNU tools + a `learner` user + the playground)
+#   examples/shell-intermediate-programming-by-example/setup-workshop.sh bash-by-example-alpine/shell
+#
+#   # 3) start scripting — log in as the learner and follow the guide
+#   phase5-lxd/lab-lxd.sh exec bash-by-example-alpine/shell -- su - learner
+#
+#   # 4) tear down
+#   phase5-lxd/lab-lxd.sh down --lab bash-by-example-alpine
+
+[lab]
+name        = "bash-by-example-alpine"
+description = "Matt Might 'bash by example' intermediate scripting env (BASH + GNU tools) on Alpine"
+tags        = ["bash-by-example", "matt-might", "bash", "scripting", "alpine", "musl"]
+
+[[instance]]
+name  = "shell"
+type  = "container"
+# `images:alpine/latest` is rewritten by lab-lxd.sh to the highest stable
+# alpine/X.Y on the `images:` remote.
+image = "images:alpine/latest"
