@@ -1,0 +1,33 @@
+# Matt Might "Hello, Perceptron" machine-learning sandbox on Debian 13 (trixie).
+#
+# A throwaway system container with Python 3 (no third-party libraries — the
+# tutorial is pure stdlib), a non-root `learner` user, and a `~/hello-perceptron/`
+# playground (with a runnable starter script that builds and trains a perceptron)
+# so you can work through Matt Might's "Hello, Perceptron" neural-net intro while
+# writing and running code. Driven through phase5-lxd/lab-lxd.sh, which speaks LXD
+# or Incus identically.
+#
+#   # 1) launch the container
+#   phase5-lxd/lab-lxd.sh up   --config examples/AI-build-a-perceptron/perceptron-debian.toml
+#
+#   # 2) provision it (install python3 + a `learner` user + the playground)
+#   examples/AI-build-a-perceptron/setup-workshop.sh perceptron-debian/python
+#
+#   # 3) start hacking — log in as the learner and follow the tutorial
+#   phase5-lxd/lab-lxd.sh exec perceptron-debian/python -- su - learner
+#
+#   # 4) tear down
+#   phase5-lxd/lab-lxd.sh down --lab perceptron-debian
+#
+# The by-hand walkthrough (what setup-workshop.sh automates, and why) is RUNBOOK.md.
+
+[lab]
+name        = "perceptron-debian"
+description = "Matt Might 'Hello, Perceptron' neural-net intro (Python 3, stdlib only) on Debian 13 (trixie)"
+tags        = ["hello-perceptron", "matt-might", "python", "machine-learning", "neural-net", "debian", "trixie"]
+
+[[instance]]
+name  = "python"
+type  = "container"
+# Debian 13 / trixie container, from the linuxcontainers `images:` remote.
+image = "images:debian/13"

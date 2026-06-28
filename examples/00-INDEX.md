@@ -104,13 +104,14 @@ Cohesive own-subdir lab built on this layer:
 | [`shell-novice-workshop/`](shell-novice-workshop/README.md) | A ready **BASH** box for the Software Carpentry **shell-novice** full-day lesson (vendored byte-exact, CC-BY) — tools + a `learner` user + the workshop data, on **Debian 13** *and* **Alpine** (which installs bash + GNU tools over BusyBox). Verified end-to-end on both. |
 | [`shell-intermediate-workshop/`](shell-intermediate-workshop/README.md) | A **BASH scripting** box for Daniel Robbins' **"Bash by example"** series (3 vendored PDFs) — tools + a `learner` user + a `~/bash-by-example/` playground, on **Debian 13** *and* **Alpine** (which has *no bash* by default). The programming follow-on to shell-novice. Verified end-to-end on both. |
 | [`shell-intermediate-programming-by-example/`](shell-intermediate-programming-by-example/README.md) | A **BASH scripting** box for Matt Might's **"bash: by example, by counter-example"** (vendored byte-exact) — tools + a `learner` user + a `~/bash-by-example/` playground with a runnable starter, on **Debian 13** *and* **Alpine** (no bash by default; ash also lacks arrays + `(( ))`). A Matt-Might alternative to shell-intermediate-workshop. Verified end-to-end on both. |
+| [`AI-build-a-perceptron/`](AI-build-a-perceptron/README.md) | A **Python 3** box for Matt Might's **"Hello, Perceptron"** neural-net intro (vendored byte-exact) — `python3` + a `learner` user + a `~/hello-perceptron/` starter that **trains a perceptron from scratch** (AND/OR learn, XOR provably cannot), on **Debian 13** *and* **Alpine** (neither ships Python; Debian has no bare `python`, Alpine does). Verified end-to-end on both. |
 
 > **Suggested learning order.** Two self-contained tracks of the same
 > novice → intermediate arc, by different authors:
 > - **Matt Might:** [survival guide](UNIX_novice_survival_guide/README.md) → [bash by example](shell-intermediate-programming-by-example/README.md) — *find your feet at the shell, then program it.* (Might names the survival guide as the prerequisite to bash-by-example.)
 > - **Carpentries + Robbins:** [shell-novice](shell-novice-workshop/README.md) → [shell-intermediate-workshop](shell-intermediate-workshop/README.md) — a full-day hands-on lesson, then the "Bash by example" PDF series.
 >
-> [`oils-shell-container/`](oils-shell-container/README.md) is orthogonal — it *builds* a shell rather than teaching one.
+> [`oils-shell-container/`](oils-shell-container/README.md) is orthogonal — it *builds* a shell rather than teaching one. [`AI-build-a-perceptron/`](AI-build-a-perceptron/README.md) is a Matt-Might **bonus in a different subject** — once you can program the shell, the same author builds a neural network from scratch in ~40 lines of **Python**; same vendor-the-page-and-build-the-sandbox shape, not a shell lab.
 
 ## ⚙️ From source: micro-linux — compile → boot in RAM (`micro-linux/mlbuild.sh` → Phase 2)
 

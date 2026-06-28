@@ -1,0 +1,33 @@
+# Matt Might "Hello, Perceptron" machine-learning sandbox on Alpine Linux.
+#
+# The same environment as perceptron-debian.toml on a musl/BusyBox base. The
+# tutorial is pure-stdlib Python 3 (only the `random` module), so once python3 is
+# installed it runs byte-for-byte identically on musl — a small, honest contrast
+# with the shell labs, where Alpine's BusyBox genuinely lacks language features.
+# Neither minimal image ships an interpreter, so setup-workshop.sh installs
+# python3 on BOTH bases (see RUNBOOK.md / MANUAL_TESTING.md). Engine-agnostic:
+# phase5-lxd/lab-lxd.sh speaks LXD or Incus identically.
+#
+#   # 1) launch the container
+#   phase5-lxd/lab-lxd.sh up   --config examples/AI-build-a-perceptron/perceptron-alpine.toml
+#
+#   # 2) provision it (install python3 + a `learner` user + the playground)
+#   examples/AI-build-a-perceptron/setup-workshop.sh perceptron-alpine/python
+#
+#   # 3) start hacking — log in as the learner and follow the tutorial
+#   phase5-lxd/lab-lxd.sh exec perceptron-alpine/python -- su - learner
+#
+#   # 4) tear down
+#   phase5-lxd/lab-lxd.sh down --lab perceptron-alpine
+
+[lab]
+name        = "perceptron-alpine"
+description = "Matt Might 'Hello, Perceptron' neural-net intro (Python 3, stdlib only) on Alpine"
+tags        = ["hello-perceptron", "matt-might", "python", "machine-learning", "neural-net", "alpine", "musl"]
+
+[[instance]]
+name  = "python"
+type  = "container"
+# `images:alpine/latest` is rewritten by lab-lxd.sh to the highest stable
+# alpine/X.Y on the `images:` remote.
+image = "images:alpine/latest"
