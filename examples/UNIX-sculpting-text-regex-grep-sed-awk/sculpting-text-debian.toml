@@ -1,0 +1,31 @@
+# Matt Might "Sculpting text with regex, grep, sed, awk" box on Debian 13 (trixie).
+#
+# A throwaway system container with GNU grep/sed/gawk + a dictionary, a non-root
+# `learner` user, and a `~/sculpting-text/` sandbox (sample data + a runnable
+# demo) so you can work through Matt Might's text-processing guide hands-on.
+# Driven through phase5-lxd/lab-lxd.sh, which speaks LXD or Incus identically.
+#
+#   # 1) launch the container
+#   phase5-lxd/lab-lxd.sh up   --config examples/UNIX-sculpting-text-regex-grep-sed-awk/sculpting-text-debian.toml
+#
+#   # 2) provision it (install grep/sed/gawk + dict + a `learner` user + the sandbox)
+#   examples/UNIX-sculpting-text-regex-grep-sed-awk/setup-workshop.sh sculpting-text-debian/shell
+#
+#   # 3) start sculpting — log in as the learner and follow the guide
+#   phase5-lxd/lab-lxd.sh exec sculpting-text-debian/shell -- su - learner
+#
+#   # 4) tear down
+#   phase5-lxd/lab-lxd.sh down --lab sculpting-text-debian
+#
+# The by-hand walkthrough (what setup-workshop.sh automates, and why) is RUNBOOK.md.
+
+[lab]
+name        = "sculpting-text-debian"
+description = "Matt Might 'Sculpting text' regex/grep/sed/awk env (GNU tools) on Debian 13 (trixie)"
+tags        = ["sculpting-text", "matt-might", "grep", "sed", "awk", "regex", "debian", "trixie"]
+
+[[instance]]
+name  = "shell"
+type  = "container"
+# Debian 13 / trixie container, from the linuxcontainers `images:` remote.
+image = "images:debian/13"
