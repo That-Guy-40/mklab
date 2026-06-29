@@ -1,0 +1,1393 @@
+<!DOCTYPE html>
+<!--[if IE 7]>
+<html class="ie ie7" lang="en">
+<![endif]-->
+<!--[if IE 8]>
+<html class="ie ie8" lang="en">
+<![endif]-->
+<!--[if !(IE 7) & !(IE 8)]><!-->
+<html lang="en">
+<!--<![endif]-->
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width" />
+<title>Automated Kickstart Install of RHEL/Clones | 𝚟𝚎𝚛𝚖𝚊𝚍𝚎𝚗</title>
+<link rel="profile" href="https://gmpg.org/xfn/11" />
+<link rel="pingback" href="https://vermaden.wordpress.com/xmlrpc.php">
+<!--[if lt IE 9]>
+<script src="https://s0.wp.com/wp-content/themes/pub/twentytwelve/js/html5.js?m=1394055319i&amp;ver=3.7.0" type="text/javascript"></script>
+<![endif]-->
+<script type="text/javascript">
+  WebFontConfig = {"google":{"families":["Josefin+Sans:r:latin,latin-ext","Poppins:r,i,b,bi:latin,latin-ext"]},"api_url":"https:\/\/fonts-api.wp.com\/css"};
+  (function() {
+    var wf = document.createElement('script');
+    wf.src = '/wp-content/plugins/custom-fonts/js/webfont.js';
+    wf.type = 'text/javascript';
+    wf.async = 'true';
+    var s = document.getElementsByTagName('script')[0];
+    s.parentNode.insertBefore(wf, s);
+	})();
+</script><style id="jetpack-custom-fonts-css">.wf-active .site-header h1{font-family:"Josefin Sans",sans-serif;font-style:normal;font-weight:400}.wf-active body, .wf-active body.custom-font-enabled{font-family:"Poppins",sans-serif}.wf-active .site-header h2{font-family:"Poppins",sans-serif}.wf-active h1, .wf-active h2, .wf-active h3, .wf-active h4, .wf-active h5, .wf-active h6{font-family:"Josefin Sans",sans-serif;font-style:normal;font-weight:400}.wf-active .entry-header .entry-title{font-weight:400;font-style:normal}.wf-active .comment-content h1, .wf-active .entry-content h1{font-style:normal;font-weight:400}.wf-active .comment-content h2, .wf-active .entry-content h2{font-style:normal;font-weight:400}.wf-active .comment-content h3, .wf-active .entry-content h3{font-style:normal;font-weight:400}.wf-active .comment-content h4, .wf-active .entry-content h4{font-style:normal;font-weight:400}.wf-active .comment-content h5, .wf-active .entry-content h5{font-style:normal;font-weight:400}.wf-active .comment-content h6, .wf-active .entry-content h6{font-style:normal;font-weight:400}.wf-active article.format-image footer h1{font-weight:400;font-style:normal}.wf-active article.format-image footer h2{font-style:normal;font-weight:400}.wf-active article.format-link header{font-weight:400;font-style:normal}.wf-active .comments-title{font-weight:400;font-style:normal}.wf-active .comments-area article header h4{font-weight:400;font-style:normal}.wf-active #respond h3#reply-title{font-style:normal;font-weight:400}.wf-active .entry-header .entry-title{font-style:normal;font-weight:400}</style>
+<meta name='robots' content='max-image-preview:large' />
+<link rel='dns-prefetch' href='//s0.wp.com' />
+<link rel='dns-prefetch' href='//widgets.wp.com' />
+<link rel='dns-prefetch' href='//wordpress.com' />
+<link rel='dns-prefetch' href='//fonts-api.wp.com' />
+<link href='https://fonts.gstatic.com' crossorigin rel='preconnect' />
+<link rel="alternate" type="application/rss+xml" title="𝚟𝚎𝚛𝚖𝚊𝚍𝚎𝚗 &raquo; Feed" href="https://vermaden.wordpress.com/feed/" />
+<link rel="alternate" type="application/rss+xml" title="𝚟𝚎𝚛𝚖𝚊𝚍𝚎𝚗 &raquo; Comments Feed" href="https://vermaden.wordpress.com/comments/feed/" />
+<link rel="alternate" type="application/rss+xml" title="𝚟𝚎𝚛𝚖𝚊𝚍𝚎𝚗 &raquo; Automated Kickstart Install of&nbsp;RHEL/Clones Comments Feed" href="https://vermaden.wordpress.com/2022/04/11/automated-kickstart-install-of-rhel-clones/feed/" />
+	<script type="text/javascript">
+		/* <![CDATA[ */
+		function addLoadEvent(func) {
+			var oldonload = window.onload;
+			if (typeof window.onload != 'function') {
+				window.onload = func;
+			} else {
+				window.onload = function () {
+					oldonload();
+					func();
+				}
+			}
+		}
+		/* ]]> */
+	</script>
+	<style id="wp-img-auto-sizes-contain-inline-css">
+img:is([sizes=auto i],[sizes^="auto," i]){contain-intrinsic-size:3000px 1500px}
+/*# sourceURL=wp-img-auto-sizes-contain-inline-css */
+</style>
+<link crossorigin='anonymous' rel='stylesheet' id='all-css-2-1' href='/_static/??-eJxtjEsOwjAMBS9EcIuKWhaIs6SpFaVxnCh2xPUpCIH4LOfpzcC1GJdZkRVSM4WaDyywohbr4pNBGkPKSyMUqEhWcTEli37R3ons4H+RQsR390E/95myfwnJ1oga2JvZVtiun8tdvqRzP47dqT8O02G9AeE0S3o=&cssminify=yes' type='text/css' media='all' />
+<style id="wp-emoji-styles-inline-css">
+
+	img.wp-smiley, img.emoji {
+		display: inline !important;
+		border: none !important;
+		box-shadow: none !important;
+		height: 1em !important;
+		width: 1em !important;
+		margin: 0 0.07em !important;
+		vertical-align: -0.1em !important;
+		background: none !important;
+		padding: 0 !important;
+	}
+/*# sourceURL=wp-emoji-styles-inline-css */
+</style>
+<style id="wp-block-library-inline-css">
+:root{--wp-block-synced-color:#7a00df;--wp-block-synced-color--rgb:122,0,223;--wp-bound-block-color:var(--wp-block-synced-color);--wp-editor-canvas-background:#ddd;--wp-admin-theme-color:#007cba;--wp-admin-theme-color--rgb:0,124,186;--wp-admin-theme-color-darker-10:#006ba1;--wp-admin-theme-color-darker-10--rgb:0,107,160.5;--wp-admin-theme-color-darker-20:#005a87;--wp-admin-theme-color-darker-20--rgb:0,90,135;--wp-admin-border-width-focus:2px}@media (min-resolution:192dpi){:root{--wp-admin-border-width-focus:1.5px}}.wp-element-button{cursor:pointer}:root .has-very-light-gray-background-color{background-color:#eee}:root .has-very-dark-gray-background-color{background-color:#313131}:root .has-very-light-gray-color{color:#eee}:root .has-very-dark-gray-color{color:#313131}:root .has-vivid-green-cyan-to-vivid-cyan-blue-gradient-background{background:linear-gradient(135deg,#00d084,#0693e3)}:root .has-purple-crush-gradient-background{background:linear-gradient(135deg,#34e2e4,#4721fb 50%,#ab1dfe)}:root .has-hazy-dawn-gradient-background{background:linear-gradient(135deg,#faaca8,#dad0ec)}:root .has-subdued-olive-gradient-background{background:linear-gradient(135deg,#fafae1,#67a671)}:root .has-atomic-cream-gradient-background{background:linear-gradient(135deg,#fdd79a,#004a59)}:root .has-nightshade-gradient-background{background:linear-gradient(135deg,#330968,#31cdcf)}:root .has-midnight-gradient-background{background:linear-gradient(135deg,#020381,#2874fc)}:root{--wp--preset--font-size--normal:16px;--wp--preset--font-size--huge:42px}.has-regular-font-size{font-size:1em}.has-larger-font-size{font-size:2.625em}.has-normal-font-size{font-size:var(--wp--preset--font-size--normal)}.has-huge-font-size{font-size:var(--wp--preset--font-size--huge)}:root .has-text-align-center{text-align:center}:root .has-text-align-left{text-align:left}:root .has-text-align-right{text-align:right}.has-fit-text{white-space:nowrap!important}#end-resizable-editor-section{display:none}.aligncenter{clear:both}.items-justified-left{justify-content:flex-start}.items-justified-center{justify-content:center}.items-justified-right{justify-content:flex-end}.items-justified-space-between{justify-content:space-between}.screen-reader-text{word-wrap:normal!important;border:0;clip-path:inset(50%);height:1px;margin:-1px;overflow:hidden;padding:0;position:absolute;width:1px;word-break:normal!important}.screen-reader-text:focus{background-color:#ddd;clip-path:none;color:#444;display:block;font-size:1em;height:auto;left:5px;line-height:normal;padding:15px 23px 14px;text-decoration:none;top:5px;width:auto;z-index:100000}html :where(.has-border-color){border-style:solid}html :where([style^=border-color],[style*=";border-color"],[style*="; border-color"]){border-style:solid}html :where([style^=border-top-color],[style*=";border-top-color"],[style*="; border-top-color"]){border-top-style:solid}html :where([style^=border-right-color],[style*=";border-right-color"],[style*="; border-right-color"]){border-right-style:solid}html :where([style^=border-bottom-color],[style*=";border-bottom-color"],[style*="; border-bottom-color"]){border-bottom-style:solid}html :where([style^=border-left-color],[style*=";border-left-color"],[style*="; border-left-color"]){border-left-style:solid}html :where([style^=border-width],[style*=";border-width"],[style*="; border-width"]){border-style:solid}html :where([style^=border-top-width],[style*=";border-top-width"],[style*="; border-top-width"]){border-top-style:solid}html :where([style^=border-right-width],[style*=";border-right-width"],[style*="; border-right-width"]){border-right-style:solid}html :where([style^=border-bottom-width],[style*=";border-bottom-width"],[style*="; border-bottom-width"]){border-bottom-style:solid}html :where([style^=border-left-width],[style*=";border-left-width"],[style*="; border-left-width"]){border-left-style:solid}html :where(img[class*=wp-image-]){height:auto;max-width:100%}:where(figure){margin:0 0 1em}html :where(.is-position-sticky){--wp-admin--admin-bar--position-offset:var(--wp-admin--admin-bar--height,0px)}@media screen and (max-width:600px){html :where(.is-position-sticky){--wp-admin--admin-bar--position-offset:0px}}
+
+/*# sourceURL=/wp-content/plugins/gutenberg-core/v23.4.0/build/styles/block-library/common.min.css */
+</style>
+<style id="wp-block-library-inline-css-extra">
+.has-text-align-justify {
+	text-align:justify;
+}
+.has-text-align-justify{text-align:justify;}
+/*# sourceURL=wp-block-library-inline-css */
+</style>
+
+<style id="classic-theme-styles-inline-css">
+.wp-block-button__link{background-color:#32373c;border-radius:9999px;box-shadow:none;color:#fff;font-size:1.125em;padding:calc(.667em + 2px) calc(1.333em + 2px);text-decoration:none}.wp-block-file__button{background:#32373c;color:#fff}.wp-block-accordion-heading{margin:0}.wp-block-accordion-heading__toggle{background-color:inherit!important;color:inherit!important}.wp-block-accordion-heading__toggle:not(:focus-visible){outline:none}.wp-block-accordion-heading__toggle:focus,.wp-block-accordion-heading__toggle:hover{background-color:inherit!important;border:none;box-shadow:none;color:inherit;padding:var(--wp--preset--spacing--20,1em) 0;text-decoration:none}.wp-block-accordion-heading__toggle:focus-visible{outline:auto;outline-offset:0}.wp-block-tab:not(.has-text-color){color:inherit!important}.wp-block-tab:not(.has-background){background-color:inherit!important}.wp-block-tab:focus,.wp-block-tab:hover{text-decoration:none}.wp-block-tab:focus-visible{outline:auto;outline-offset:0}
+/*# sourceURL=/wp-content/plugins/gutenberg-core/v23.4.0/build/styles/block-library/classic.min.css */
+</style>
+
+<link crossorigin='anonymous' rel='stylesheet' id='all-css-10-1' href='/_static/??/wp-content/mu-plugins/core-compat/wp-mediaelement.css,/wp-content/mu-plugins/wpcom-bbpress-premium-themes.css?m=1432920480j&cssminify=yes' type='text/css' media='all' />
+<style id="global-styles-inline-css">
+:root{--wp--preset--aspect-ratio--square: 1;--wp--preset--aspect-ratio--4-3: 4/3;--wp--preset--aspect-ratio--3-4: 3/4;--wp--preset--aspect-ratio--3-2: 3/2;--wp--preset--aspect-ratio--2-3: 2/3;--wp--preset--aspect-ratio--16-9: 16/9;--wp--preset--aspect-ratio--9-16: 9/16;--wp--preset--color--black: #000000;--wp--preset--color--cyan-bluish-gray: #abb8c3;--wp--preset--color--white: #fff;--wp--preset--color--pale-pink: #f78da7;--wp--preset--color--vivid-red: #cf2e2e;--wp--preset--color--luminous-vivid-orange: #ff6900;--wp--preset--color--luminous-vivid-amber: #fcb900;--wp--preset--color--light-green-cyan: #7bdcb5;--wp--preset--color--vivid-green-cyan: #00d084;--wp--preset--color--pale-cyan-blue: #8ed1fc;--wp--preset--color--vivid-cyan-blue: #0693e3;--wp--preset--color--vivid-purple: #9b51e0;--wp--preset--color--blue: #21759b;--wp--preset--color--dark-gray: #444;--wp--preset--color--medium-gray: #9f9f9f;--wp--preset--color--light-gray: #e6e6e6;--wp--preset--gradient--vivid-cyan-blue-to-vivid-purple: linear-gradient(135deg,rgb(6,147,227) 0%,rgb(155,81,224) 100%);--wp--preset--gradient--light-green-cyan-to-vivid-green-cyan: linear-gradient(135deg,rgb(122,220,180) 0%,rgb(0,208,130) 100%);--wp--preset--gradient--luminous-vivid-amber-to-luminous-vivid-orange: linear-gradient(135deg,rgb(252,185,0) 0%,rgb(255,105,0) 100%);--wp--preset--gradient--luminous-vivid-orange-to-vivid-red: linear-gradient(135deg,rgb(255,105,0) 0%,rgb(207,46,46) 100%);--wp--preset--gradient--very-light-gray-to-cyan-bluish-gray: linear-gradient(135deg,rgb(238,238,238) 0%,rgb(169,184,195) 100%);--wp--preset--gradient--cool-to-warm-spectrum: linear-gradient(135deg,rgb(74,234,220) 0%,rgb(151,120,209) 20%,rgb(207,42,186) 40%,rgb(238,44,130) 60%,rgb(251,105,98) 80%,rgb(254,248,76) 100%);--wp--preset--gradient--blush-light-purple: linear-gradient(135deg,rgb(255,206,236) 0%,rgb(152,150,240) 100%);--wp--preset--gradient--blush-bordeaux: linear-gradient(135deg,rgb(254,205,165) 0%,rgb(254,45,45) 50%,rgb(107,0,62) 100%);--wp--preset--gradient--luminous-dusk: linear-gradient(135deg,rgb(255,203,112) 0%,rgb(199,81,192) 50%,rgb(65,88,208) 100%);--wp--preset--gradient--pale-ocean: linear-gradient(135deg,rgb(255,245,203) 0%,rgb(182,227,212) 50%,rgb(51,167,181) 100%);--wp--preset--gradient--electric-grass: linear-gradient(135deg,rgb(202,248,128) 0%,rgb(113,206,126) 100%);--wp--preset--gradient--midnight: linear-gradient(135deg,rgb(2,3,129) 0%,rgb(40,116,252) 100%);--wp--preset--font-size--small: 13px;--wp--preset--font-size--medium: 20px;--wp--preset--font-size--large: 36px;--wp--preset--font-size--x-large: 42px;--wp--preset--font-family--albert-sans: 'Albert Sans', sans-serif;--wp--preset--font-family--alegreya: Alegreya, serif;--wp--preset--font-family--arvo: Arvo, serif;--wp--preset--font-family--bodoni-moda: 'Bodoni Moda', serif;--wp--preset--font-family--bricolage-grotesque: 'Bricolage Grotesque', sans-serif;--wp--preset--font-family--cabin: Cabin, sans-serif;--wp--preset--font-family--chivo: Chivo, sans-serif;--wp--preset--font-family--commissioner: Commissioner, sans-serif;--wp--preset--font-family--cormorant: Cormorant, serif;--wp--preset--font-family--courier-prime: 'Courier Prime', monospace;--wp--preset--font-family--crimson-pro: 'Crimson Pro', serif;--wp--preset--font-family--dm-mono: 'DM Mono', monospace;--wp--preset--font-family--dm-sans: 'DM Sans', sans-serif;--wp--preset--font-family--dm-serif-display: 'DM Serif Display', serif;--wp--preset--font-family--domine: Domine, serif;--wp--preset--font-family--eb-garamond: 'EB Garamond', serif;--wp--preset--font-family--epilogue: Epilogue, sans-serif;--wp--preset--font-family--fahkwang: Fahkwang, sans-serif;--wp--preset--font-family--figtree: Figtree, sans-serif;--wp--preset--font-family--fira-sans: 'Fira Sans', sans-serif;--wp--preset--font-family--fjalla-one: 'Fjalla One', sans-serif;--wp--preset--font-family--fraunces: Fraunces, serif;--wp--preset--font-family--gabarito: Gabarito, system-ui;--wp--preset--font-family--ibm-plex-mono: 'IBM Plex Mono', monospace;--wp--preset--font-family--ibm-plex-sans: 'IBM Plex Sans', sans-serif;--wp--preset--font-family--ibarra-real-nova: 'Ibarra Real Nova', serif;--wp--preset--font-family--instrument-serif: 'Instrument Serif', serif;--wp--preset--font-family--inter: Inter, sans-serif;--wp--preset--font-family--josefin-sans: 'Josefin Sans', sans-serif;--wp--preset--font-family--jost: Jost, sans-serif;--wp--preset--font-family--libre-baskerville: 'Libre Baskerville', serif;--wp--preset--font-family--libre-franklin: 'Libre Franklin', sans-serif;--wp--preset--font-family--literata: Literata, serif;--wp--preset--font-family--lora: Lora, serif;--wp--preset--font-family--merriweather: Merriweather, serif;--wp--preset--font-family--montserrat: Montserrat, sans-serif;--wp--preset--font-family--newsreader: Newsreader, serif;--wp--preset--font-family--noto-sans-mono: 'Noto Sans Mono', sans-serif;--wp--preset--font-family--nunito: Nunito, sans-serif;--wp--preset--font-family--open-sans: 'Open Sans', sans-serif;--wp--preset--font-family--overpass: Overpass, sans-serif;--wp--preset--font-family--pt-serif: 'PT Serif', serif;--wp--preset--font-family--petrona: Petrona, serif;--wp--preset--font-family--piazzolla: Piazzolla, serif;--wp--preset--font-family--playfair-display: 'Playfair Display', serif;--wp--preset--font-family--plus-jakarta-sans: 'Plus Jakarta Sans', sans-serif;--wp--preset--font-family--poppins: Poppins, sans-serif;--wp--preset--font-family--raleway: Raleway, sans-serif;--wp--preset--font-family--roboto: Roboto, sans-serif;--wp--preset--font-family--roboto-slab: 'Roboto Slab', serif;--wp--preset--font-family--rubik: Rubik, sans-serif;--wp--preset--font-family--rufina: Rufina, serif;--wp--preset--font-family--sora: Sora, sans-serif;--wp--preset--font-family--source-sans-3: 'Source Sans 3', sans-serif;--wp--preset--font-family--source-serif-4: 'Source Serif 4', serif;--wp--preset--font-family--space-mono: 'Space Mono', monospace;--wp--preset--font-family--syne: Syne, sans-serif;--wp--preset--font-family--texturina: Texturina, serif;--wp--preset--font-family--urbanist: Urbanist, sans-serif;--wp--preset--font-family--work-sans: 'Work Sans', sans-serif;--wp--preset--spacing--20: 0.44rem;--wp--preset--spacing--30: 0.67rem;--wp--preset--spacing--40: 1rem;--wp--preset--spacing--50: 1.5rem;--wp--preset--spacing--60: 2.25rem;--wp--preset--spacing--70: 3.38rem;--wp--preset--spacing--80: 5.06rem;--wp--preset--shadow--natural: 6px 6px 9px rgba(0, 0, 0, 0.2);--wp--preset--shadow--deep: 12px 12px 50px rgba(0, 0, 0, 0.4);--wp--preset--shadow--sharp: 6px 6px 0px rgba(0, 0, 0, 0.2);--wp--preset--shadow--outlined: 6px 6px 0px -3px rgb(255, 255, 255), 6px 6px rgb(0, 0, 0);--wp--preset--shadow--crisp: 6px 6px 0px rgb(0, 0, 0);}.wp-block-button{--wp--preset--dimension--25: 25%;--wp--preset--dimension--50: 50%;--wp--preset--dimension--75: 75%;--wp--preset--dimension--100: 100%;}:where(body) { margin: 0; }:where(.is-layout-flex){gap: 0.5em;}:where(.is-layout-grid){gap: 0.5em;}body .is-layout-flex{display: flex;}.is-layout-flex{flex-wrap: wrap;align-items: center;}.is-layout-flex > :is(*, div){margin: 0;}body .is-layout-grid{display: grid;}.is-layout-grid > :is(*, div){margin: 0;}body{padding-top: 0px;padding-right: 0px;padding-bottom: 0px;padding-left: 0px;}:root :where(.wp-element-button, .wp-block-button__link){background-color: #32373c;border-width: 0;color: #fff;font-family: inherit;font-size: inherit;font-style: inherit;font-weight: inherit;letter-spacing: inherit;line-height: inherit;padding-top: calc(0.667em + 2px);padding-right: calc(1.333em + 2px);padding-bottom: calc(0.667em + 2px);padding-left: calc(1.333em + 2px);text-decoration: none;text-transform: inherit;}.has-black-color{color: var(--wp--preset--color--black) !important;}.has-cyan-bluish-gray-color{color: var(--wp--preset--color--cyan-bluish-gray) !important;}.has-white-color{color: var(--wp--preset--color--white) !important;}.has-pale-pink-color{color: var(--wp--preset--color--pale-pink) !important;}.has-vivid-red-color{color: var(--wp--preset--color--vivid-red) !important;}.has-luminous-vivid-orange-color{color: var(--wp--preset--color--luminous-vivid-orange) !important;}.has-luminous-vivid-amber-color{color: var(--wp--preset--color--luminous-vivid-amber) !important;}.has-light-green-cyan-color{color: var(--wp--preset--color--light-green-cyan) !important;}.has-vivid-green-cyan-color{color: var(--wp--preset--color--vivid-green-cyan) !important;}.has-pale-cyan-blue-color{color: var(--wp--preset--color--pale-cyan-blue) !important;}.has-vivid-cyan-blue-color{color: var(--wp--preset--color--vivid-cyan-blue) !important;}.has-vivid-purple-color{color: var(--wp--preset--color--vivid-purple) !important;}.has-blue-color{color: var(--wp--preset--color--blue) !important;}.has-dark-gray-color{color: var(--wp--preset--color--dark-gray) !important;}.has-medium-gray-color{color: var(--wp--preset--color--medium-gray) !important;}.has-light-gray-color{color: var(--wp--preset--color--light-gray) !important;}.has-black-background-color{background-color: var(--wp--preset--color--black) !important;}.has-cyan-bluish-gray-background-color{background-color: var(--wp--preset--color--cyan-bluish-gray) !important;}.has-white-background-color{background-color: var(--wp--preset--color--white) !important;}.has-pale-pink-background-color{background-color: var(--wp--preset--color--pale-pink) !important;}.has-vivid-red-background-color{background-color: var(--wp--preset--color--vivid-red) !important;}.has-luminous-vivid-orange-background-color{background-color: var(--wp--preset--color--luminous-vivid-orange) !important;}.has-luminous-vivid-amber-background-color{background-color: var(--wp--preset--color--luminous-vivid-amber) !important;}.has-light-green-cyan-background-color{background-color: var(--wp--preset--color--light-green-cyan) !important;}.has-vivid-green-cyan-background-color{background-color: var(--wp--preset--color--vivid-green-cyan) !important;}.has-pale-cyan-blue-background-color{background-color: var(--wp--preset--color--pale-cyan-blue) !important;}.has-vivid-cyan-blue-background-color{background-color: var(--wp--preset--color--vivid-cyan-blue) !important;}.has-vivid-purple-background-color{background-color: var(--wp--preset--color--vivid-purple) !important;}.has-blue-background-color{background-color: var(--wp--preset--color--blue) !important;}.has-dark-gray-background-color{background-color: var(--wp--preset--color--dark-gray) !important;}.has-medium-gray-background-color{background-color: var(--wp--preset--color--medium-gray) !important;}.has-light-gray-background-color{background-color: var(--wp--preset--color--light-gray) !important;}.has-black-border-color{border-color: var(--wp--preset--color--black) !important;}.has-cyan-bluish-gray-border-color{border-color: var(--wp--preset--color--cyan-bluish-gray) !important;}.has-white-border-color{border-color: var(--wp--preset--color--white) !important;}.has-pale-pink-border-color{border-color: var(--wp--preset--color--pale-pink) !important;}.has-vivid-red-border-color{border-color: var(--wp--preset--color--vivid-red) !important;}.has-luminous-vivid-orange-border-color{border-color: var(--wp--preset--color--luminous-vivid-orange) !important;}.has-luminous-vivid-amber-border-color{border-color: var(--wp--preset--color--luminous-vivid-amber) !important;}.has-light-green-cyan-border-color{border-color: var(--wp--preset--color--light-green-cyan) !important;}.has-vivid-green-cyan-border-color{border-color: var(--wp--preset--color--vivid-green-cyan) !important;}.has-pale-cyan-blue-border-color{border-color: var(--wp--preset--color--pale-cyan-blue) !important;}.has-vivid-cyan-blue-border-color{border-color: var(--wp--preset--color--vivid-cyan-blue) !important;}.has-vivid-purple-border-color{border-color: var(--wp--preset--color--vivid-purple) !important;}.has-blue-border-color{border-color: var(--wp--preset--color--blue) !important;}.has-dark-gray-border-color{border-color: var(--wp--preset--color--dark-gray) !important;}.has-medium-gray-border-color{border-color: var(--wp--preset--color--medium-gray) !important;}.has-light-gray-border-color{border-color: var(--wp--preset--color--light-gray) !important;}.has-vivid-cyan-blue-to-vivid-purple-gradient-background{background: var(--wp--preset--gradient--vivid-cyan-blue-to-vivid-purple) !important;}.has-light-green-cyan-to-vivid-green-cyan-gradient-background{background: var(--wp--preset--gradient--light-green-cyan-to-vivid-green-cyan) !important;}.has-luminous-vivid-amber-to-luminous-vivid-orange-gradient-background{background: var(--wp--preset--gradient--luminous-vivid-amber-to-luminous-vivid-orange) !important;}.has-luminous-vivid-orange-to-vivid-red-gradient-background{background: var(--wp--preset--gradient--luminous-vivid-orange-to-vivid-red) !important;}.has-very-light-gray-to-cyan-bluish-gray-gradient-background{background: var(--wp--preset--gradient--very-light-gray-to-cyan-bluish-gray) !important;}.has-cool-to-warm-spectrum-gradient-background{background: var(--wp--preset--gradient--cool-to-warm-spectrum) !important;}.has-blush-light-purple-gradient-background{background: var(--wp--preset--gradient--blush-light-purple) !important;}.has-blush-bordeaux-gradient-background{background: var(--wp--preset--gradient--blush-bordeaux) !important;}.has-luminous-dusk-gradient-background{background: var(--wp--preset--gradient--luminous-dusk) !important;}.has-pale-ocean-gradient-background{background: var(--wp--preset--gradient--pale-ocean) !important;}.has-electric-grass-gradient-background{background: var(--wp--preset--gradient--electric-grass) !important;}.has-midnight-gradient-background{background: var(--wp--preset--gradient--midnight) !important;}.has-small-font-size{font-size: var(--wp--preset--font-size--small) !important;}.has-medium-font-size{font-size: var(--wp--preset--font-size--medium) !important;}.has-large-font-size{font-size: var(--wp--preset--font-size--large) !important;}.has-x-large-font-size{font-size: var(--wp--preset--font-size--x-large) !important;}.has-albert-sans-font-family{font-family: var(--wp--preset--font-family--albert-sans) !important;}.has-alegreya-font-family{font-family: var(--wp--preset--font-family--alegreya) !important;}.has-arvo-font-family{font-family: var(--wp--preset--font-family--arvo) !important;}.has-bodoni-moda-font-family{font-family: var(--wp--preset--font-family--bodoni-moda) !important;}.has-bricolage-grotesque-font-family{font-family: var(--wp--preset--font-family--bricolage-grotesque) !important;}.has-cabin-font-family{font-family: var(--wp--preset--font-family--cabin) !important;}.has-chivo-font-family{font-family: var(--wp--preset--font-family--chivo) !important;}.has-commissioner-font-family{font-family: var(--wp--preset--font-family--commissioner) !important;}.has-cormorant-font-family{font-family: var(--wp--preset--font-family--cormorant) !important;}.has-courier-prime-font-family{font-family: var(--wp--preset--font-family--courier-prime) !important;}.has-crimson-pro-font-family{font-family: var(--wp--preset--font-family--crimson-pro) !important;}.has-dm-mono-font-family{font-family: var(--wp--preset--font-family--dm-mono) !important;}.has-dm-sans-font-family{font-family: var(--wp--preset--font-family--dm-sans) !important;}.has-dm-serif-display-font-family{font-family: var(--wp--preset--font-family--dm-serif-display) !important;}.has-domine-font-family{font-family: var(--wp--preset--font-family--domine) !important;}.has-eb-garamond-font-family{font-family: var(--wp--preset--font-family--eb-garamond) !important;}.has-epilogue-font-family{font-family: var(--wp--preset--font-family--epilogue) !important;}.has-fahkwang-font-family{font-family: var(--wp--preset--font-family--fahkwang) !important;}.has-figtree-font-family{font-family: var(--wp--preset--font-family--figtree) !important;}.has-fira-sans-font-family{font-family: var(--wp--preset--font-family--fira-sans) !important;}.has-fjalla-one-font-family{font-family: var(--wp--preset--font-family--fjalla-one) !important;}.has-fraunces-font-family{font-family: var(--wp--preset--font-family--fraunces) !important;}.has-gabarito-font-family{font-family: var(--wp--preset--font-family--gabarito) !important;}.has-ibm-plex-mono-font-family{font-family: var(--wp--preset--font-family--ibm-plex-mono) !important;}.has-ibm-plex-sans-font-family{font-family: var(--wp--preset--font-family--ibm-plex-sans) !important;}.has-ibarra-real-nova-font-family{font-family: var(--wp--preset--font-family--ibarra-real-nova) !important;}.has-instrument-serif-font-family{font-family: var(--wp--preset--font-family--instrument-serif) !important;}.has-inter-font-family{font-family: var(--wp--preset--font-family--inter) !important;}.has-josefin-sans-font-family{font-family: var(--wp--preset--font-family--josefin-sans) !important;}.has-jost-font-family{font-family: var(--wp--preset--font-family--jost) !important;}.has-libre-baskerville-font-family{font-family: var(--wp--preset--font-family--libre-baskerville) !important;}.has-libre-franklin-font-family{font-family: var(--wp--preset--font-family--libre-franklin) !important;}.has-literata-font-family{font-family: var(--wp--preset--font-family--literata) !important;}.has-lora-font-family{font-family: var(--wp--preset--font-family--lora) !important;}.has-merriweather-font-family{font-family: var(--wp--preset--font-family--merriweather) !important;}.has-montserrat-font-family{font-family: var(--wp--preset--font-family--montserrat) !important;}.has-newsreader-font-family{font-family: var(--wp--preset--font-family--newsreader) !important;}.has-noto-sans-mono-font-family{font-family: var(--wp--preset--font-family--noto-sans-mono) !important;}.has-nunito-font-family{font-family: var(--wp--preset--font-family--nunito) !important;}.has-open-sans-font-family{font-family: var(--wp--preset--font-family--open-sans) !important;}.has-overpass-font-family{font-family: var(--wp--preset--font-family--overpass) !important;}.has-pt-serif-font-family{font-family: var(--wp--preset--font-family--pt-serif) !important;}.has-petrona-font-family{font-family: var(--wp--preset--font-family--petrona) !important;}.has-piazzolla-font-family{font-family: var(--wp--preset--font-family--piazzolla) !important;}.has-playfair-display-font-family{font-family: var(--wp--preset--font-family--playfair-display) !important;}.has-plus-jakarta-sans-font-family{font-family: var(--wp--preset--font-family--plus-jakarta-sans) !important;}.has-poppins-font-family{font-family: var(--wp--preset--font-family--poppins) !important;}.has-raleway-font-family{font-family: var(--wp--preset--font-family--raleway) !important;}.has-roboto-font-family{font-family: var(--wp--preset--font-family--roboto) !important;}.has-roboto-slab-font-family{font-family: var(--wp--preset--font-family--roboto-slab) !important;}.has-rubik-font-family{font-family: var(--wp--preset--font-family--rubik) !important;}.has-rufina-font-family{font-family: var(--wp--preset--font-family--rufina) !important;}.has-sora-font-family{font-family: var(--wp--preset--font-family--sora) !important;}.has-source-sans-3-font-family{font-family: var(--wp--preset--font-family--source-sans-3) !important;}.has-source-serif-4-font-family{font-family: var(--wp--preset--font-family--source-serif-4) !important;}.has-space-mono-font-family{font-family: var(--wp--preset--font-family--space-mono) !important;}.has-syne-font-family{font-family: var(--wp--preset--font-family--syne) !important;}.has-texturina-font-family{font-family: var(--wp--preset--font-family--texturina) !important;}.has-urbanist-font-family{font-family: var(--wp--preset--font-family--urbanist) !important;}.has-work-sans-font-family{font-family: var(--wp--preset--font-family--work-sans) !important;}
+/*# sourceURL=global-styles-inline-css */
+</style>
+
+<link crossorigin='anonymous' rel='stylesheet' id='all-css-12-1' href='/wp-content/mu-plugins/jetpack-mu-wpcom-plugin/sun/jetpack_vendor/automattic/jetpack-mu-wpcom/src/build/verbum-comments/verbum-comments.css?m=1777406400i&cssminify=yes' type='text/css' media='all' />
+<link rel='stylesheet' id='verbum-gutenberg-css-css' href='https://widgets.wp.com/verbum-block-editor/block-editor.css?ver=1771405207' media='all' />
+<link crossorigin='anonymous' rel='stylesheet' id='all-css-14-1' href='/_static/??/wp-content/mu-plugins/comment-likes/css/comment-likes.css,/i/noticons/noticons.css?m=1436783281j&cssminify=yes' type='text/css' media='all' />
+<link rel='stylesheet' id='twentytwelve-fonts-css' href='https://fonts-api.wp.com/css?family=Open+Sans%3A400italic%2C700italic%2C400%2C700&#038;subset=latin%2Clatin-ext&#038;display=fallback' media='all' />
+<link crossorigin='anonymous' rel='stylesheet' id='all-css-16-1' href='/_static/??-eJzTLy/QTc7PK0nNK9EvyUjNTS3WLyhN0i8pBwpUAsmcslT94pLKnFS95OJiHX0iVAPV6Sfl5CdnF4O02OfaGpqbWpibWJiZW2YBADBZKMU=&cssminify=yes' type='text/css' media='all' />
+<link crossorigin='anonymous' rel='stylesheet' id='all-css-18-1' href='/_static/??-eJx9i0EOwjAMBD+EcUEiggPiLW1k0iAnjmqnUX9PuLUXLqud1Q62Al6yUTa0mRIpljqhtT5sPXklVNuYoBUv6exVT7hzUoXCNcSsuNDEEnoN2F87/CcFEmDxo0XJB4A3j3H5qa/0vNyGh3PD1d0/X5shQdY=&cssminify=yes' type='text/css' media='all' />
+<style id="jetpack-global-styles-frontend-style-inline-css">
+:root { --font-headings: unset; --font-base: unset; --font-headings-default: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Oxygen-Sans,Ubuntu,Cantarell,"Helvetica Neue",sans-serif; --font-base-default: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Oxygen-Sans,Ubuntu,Cantarell,"Helvetica Neue",sans-serif;}
+/*# sourceURL=jetpack-global-styles-frontend-style-inline-css */
+</style>
+<link crossorigin='anonymous' rel='stylesheet' id='all-css-20-1' href='/_static/??-eJyNjcsKAjEMRX/IGgaqgwvxU6TTlDZjmhTTIv69D9yIG3f3wOUcuDUXVXqSDnW4xiOTGKyptxAvHwYbAlVxcDKwEq4JA+L9PUnyNppt4G/RmSTCMogRTCMFdqxZ7Qt+lL2k+owXD5l1Cfw6nOpxmme/837aH9YHfvpKpw==&cssminify=yes' type='text/css' media='all' />
+<script id="jetpack_related-posts-js-extra">
+var related_posts_js_options = {"post_heading":"h4"};
+//# sourceURL=jetpack_related-posts-js-extra
+</script>
+<script id="wpcom-actionbar-placeholder-js-extra">
+var actionbardata = {"siteID":"141813113","postID":"3881","siteURL":"https://vermaden.wordpress.com","xhrURL":"https://vermaden.wordpress.com/wp-admin/admin-ajax.php","nonce":"a384d8bf5a","isLoggedIn":"","statusMessage":"","subsEmailDefault":"instantly","proxyScriptUrl":"https://s0.wp.com/wp-content/js/wpcom-proxy-request.js?m=1513050504i&amp;ver=20211021","shortlink":"https://wp.me/p9B24h-10B","i18n":{"followedText":"New posts from this site will now appear in your \u003Ca href=\"https://wordpress.com/reader\"\u003EReader\u003C/a\u003E","foldBar":"Collapse this bar","unfoldBar":"Expand this bar","shortLinkCopied":"Shortlink copied to clipboard."}};
+//# sourceURL=wpcom-actionbar-placeholder-js-extra
+</script>
+<script id="jetpack-mu-wpcom-settings-js-before">
+var JETPACK_MU_WPCOM_SETTINGS = {"assetsUrl":"https://s0.wp.com/wp-content/mu-plugins/jetpack-mu-wpcom-plugin/sun/jetpack_vendor/automattic/jetpack-mu-wpcom/src/build/"};
+//# sourceURL=jetpack-mu-wpcom-settings-js-before
+</script>
+<script crossorigin='anonymous' type='text/javascript'  src='/_static/??-eJx1jcEOwiAQRH9IunJo2ovxU0yFTQPCguyS2r8XE0zqwdNkMi9vYMvKJBIkgVhVDnV1xOBR8mIevQNXgpsjA/fqgoWCYRG0KicW/m1DdDR4PsHB6xsTROWSXvt3a7JQLfJn9M+KZe9xFPyFVHRraacdvsaLnsbxrPU0z/4NC+ROAA=='></script>
+<script id="rlt-proxy-js-after">
+	rltInitialize( {"token":null,"iframeOrigins":["https:\/\/widgets.wp.com"]} );
+//# sourceURL=rlt-proxy-js-after
+</script>
+<link rel="EditURI" type="application/rsd+xml" title="RSD" href="https://vermaden.wordpress.com/xmlrpc.php?rsd" />
+<meta name="generator" content="WordPress.com" />
+<link rel="canonical" href="https://vermaden.wordpress.com/2022/04/11/automated-kickstart-install-of-rhel-clones/" />
+<link rel='shortlink' href='https://wp.me/p9B24h-10B' />
+<link rel="alternate" type="application/json+oembed" href="https://public-api.wordpress.com/oembed/?format=json&amp;url=https%3A%2F%2Fvermaden.wordpress.com%2F2022%2F04%2F11%2Fautomated-kickstart-install-of-rhel-clones%2F&amp;for=wpcom-auto-discovery" /><link rel="alternate" type="application/xml+oembed" href="https://public-api.wordpress.com/oembed/?format=xml&amp;url=https%3A%2F%2Fvermaden.wordpress.com%2F2022%2F04%2F11%2Fautomated-kickstart-install-of-rhel-clones%2F&amp;for=wpcom-auto-discovery" />
+<!-- Jetpack Open Graph Tags -->
+<meta property="og:type" content="article" />
+<meta property="og:title" content="Automated Kickstart Install of RHEL/Clones" />
+<meta property="og:url" content="https://vermaden.wordpress.com/2022/04/11/automated-kickstart-install-of-rhel-clones/" />
+<meta property="og:description" content="There are two approaches to making your life more automated about installing multiple instances of operating systems. You can either maintain up-to-date templates for them or you can have automated…" />
+<meta property="article:published_time" content="2022-04-11T13:43:30+00:00" />
+<meta property="article:modified_time" content="2022-04-13T11:48:56+00:00" />
+<meta property="og:site_name" content="𝚟𝚎𝚛𝚖𝚊𝚍𝚎𝚗" />
+<meta property="og:image" content="https://vermaden.wordpress.com/wp-content/uploads/2022/04/rhel-logo.png" />
+<meta property="og:image:width" content="600" />
+<meta property="og:image:height" content="600" />
+<meta property="og:image:alt" content="rhel-logo" />
+<meta property="og:locale" content="en_US" />
+<meta property="fb:app_id" content="249643311490" />
+<meta property="article:publisher" content="https://www.facebook.com/WordPresscom" />
+<meta name="twitter:creator" content="@vermaden" />
+<meta name="twitter:site" content="@vermaden" />
+<meta name="twitter:text:title" content="Automated Kickstart Install of&nbsp;RHEL/Clones" />
+<meta name="twitter:image" content="https://vermaden.wordpress.com/wp-content/uploads/2022/04/rhel-logo.png?w=640" />
+<meta name="twitter:image:alt" content="rhel-logo" />
+<meta name="twitter:card" content="summary_large_image" />
+
+<!-- End Jetpack Open Graph Tags -->
+<link rel="search" type="application/opensearchdescription+xml" href="https://vermaden.wordpress.com/osd.xml" title="𝚟𝚎𝚛𝚖𝚊𝚍𝚎𝚗" />
+<link rel="search" type="application/opensearchdescription+xml" href="https://s1.wp.com/opensearch.xml" title="WordPress.com" />
+<meta name="description" content="There are two approaches to making your life more automated about installing multiple instances of operating systems. You can either maintain up-to-date templates for them or you can have automated/scripted installations. In this article I will share how to generate ISO image and Kickstart configuration to install Red Hat Enterprise Linux (and its clones such&hellip;" />
+<style type="text/css" id="custom-colors-css">.menu-toggle,
+input[type="submit"],
+li.bypostauthor cite span {
+	background-color: rgba(225, 225, 225, .9);
+	background-image: -moz-linear-gradient(top, rgba(244, 244, 244, .8), rgba(230, 230, 230, .8));
+	background-image: -ms-linear-gradient(top, rgba(244, 244, 244, .8), rgba(230, 230, 230, .8));
+	background-image: -webkit-linear-gradient(top, rgba(244, 244, 244, .8), rgba(230, 230, 230, .8));
+	background-image: -o-linear-gradient(top, rgba(244, 244, 244, .8), rgba(230, 230, 230, .8));
+	background-image: linear-gradient(top, rgba(244, 244, 244, .8), rgba(230, 230, 230, .8));
+}
+.menu-toggle:hover,
+.menu-toggle:focus,
+input[type="submit"]:hover {
+	background-color: rgba(235, 235, 235, .9);
+	background-image: -moz-linear-gradient(top, rgba(249, 249, 249, .8), rgba(235, 235, 235, .8));
+	background-image: -ms-linear-gradient(top, rgba(249, 249, 249, .8), rgba(235, 235, 235, .8));
+	background-image: -webkit-linear-gradient(top, rgba(249, 249, 249, .8), rgba(235, 235, 235, .8));
+	background-image: -o-linear-gradient(top, rgba(249, 249, 249, .8), rgba(235, 235, 235, .8));
+	background-image: linear-gradient(top, rgba(249, 249, 249, .8), rgba(235, 235, 235, .8));
+}
+.menu-toggle:active,
+.menu-toggle.toggled-on,
+input[type="submit"]:active,
+input[type="submit"].toggled-on {
+	background-color: rgba(225, 225, 225, .9);
+	background-image: -moz-linear-gradient(top, rgba(235, 235, 235, .8), rgba(225, 225, 225, .8));
+	background-image: -ms-linear-gradient(top, rgba(235, 235, 235, .8), rgba(225, 225, 225, .8));
+	background-image: -webkit-linear-gradient(top, rgba(235, 235, 235, .8), rgba(225, 225, 225, .8));
+	background-image: -o-linear-gradient(top, rgba(235, 235, 235, .8), rgba(225, 225, 225, .8));
+	background-image: linear-gradient(top, rgba(235, 235, 235, .8), rgba(225, 225, 225, .8));
+}
+.site { background-color: #fff;}
+.site { background-color: rgba( 255, 255, 255, 0.95 );}
+body.custom-background-empty { background-color: #fff;}
+body.custom-background-empty { background-color: rgba( 255, 255, 255, 0.95 );}
+body.custom-background-empty { background-color: #fff;}
+body.custom-background-empty { background-color: rgba( 255, 255, 255, 0.9 );}
+input[type="text"], input[type="password"], input[type="email"], input[type="url"], textarea { background-color: #fff;}
+input[type="text"], input[type="password"], input[type="email"], input[type="url"], textarea { background-color: rgba( 255, 255, 255, 0.4 );}
+input[type="text"]:focus, input[type="password"]:focus, input[type="email"]:focus, input[type="url"], textarea:focus { background-color: #fff;}
+input[type="text"]:focus, input[type="password"]:focus, input[type="email"]:focus, input[type="url"], textarea:focus { background-color: rgba( 255, 255, 255, 0.9 );}
+.menu-toggle, input[type="submit"], li.bypostauthor cite span { border-color: #d2d2d2;}
+.menu-toggle, input[type="submit"], li.bypostauthor cite span { border-color: rgba( 210, 210, 210, 0.8 );}
+input[type="text"], input[type="password"], input[type="email"], input[type="url"], textarea { border-color: #ccc;}
+input[type="text"], input[type="password"], input[type="email"], input[type="url"], textarea { border-color: rgba( 204, 204, 204, 0.4 );}
+.comments-area article header cite a { color: #444;}
+.main-navigation ul.nav-menu, .main-navigation div.nav-menu > ul, .main-navigation li ul li a { border-color: #000;}
+.main-navigation ul.nav-menu, .main-navigation div.nav-menu > ul, .main-navigation li ul li a { border-color: rgba( 0, 0, 0, 0.1 );}
+#author-info { border-color: #000;}
+#author-info { border-color: rgba( 0, 0, 0, 0.1 );}
+footer[role="contentinfo"] { border-color: #000;}
+footer[role="contentinfo"] { border-color: rgba( 0, 0, 0, 0.1 );}
+article.sticky .featured-post { border-color: #000;}
+article.sticky .featured-post { border-color: rgba( 0, 0, 0, 0.1 );}
+pre, table, td, hr { border-color: #000;}
+pre, table, td, hr { border-color: rgba( 0, 0, 0, 0.1 );}
+.site-content article { border-color: #000;}
+.site-content article { border-color: rgba( 0, 0, 0, 0.1 );}
+.archive-header, .page-header { border-color: #000;}
+.archive-header, .page-header { border-color: rgba( 0, 0, 0, 0.1 );}
+.template-home .widget-area { border-color: #000;}
+.template-home .widget-area { border-color: rgba( 0, 0, 0, 0.1 );}
+</style>
+<link rel="icon" href="https://vermaden.wordpress.com/wp-content/uploads/2024/11/cropped-avatar-big-static-noborder-small.png?w=32" sizes="32x32" />
+<link rel="icon" href="https://vermaden.wordpress.com/wp-content/uploads/2024/11/cropped-avatar-big-static-noborder-small.png?w=192" sizes="192x192" />
+<link rel="apple-touch-icon" href="https://vermaden.wordpress.com/wp-content/uploads/2024/11/cropped-avatar-big-static-noborder-small.png?w=180" />
+<meta name="msapplication-TileImage" content="https://vermaden.wordpress.com/wp-content/uploads/2024/11/cropped-avatar-big-static-noborder-small.png?w=270" />
+<link crossorigin='anonymous' rel='stylesheet' id='all-css-2-3' href='/_static/??-eJyNjMEKgzAQBX+o9qUgzan4KWLXRRKTTXCz+Psi1J49zjAM9tpRkcbSkK2ryZYgisitTrT+GGqCMQjhmwqtCt1D5e1Jqg/cHuQyW2IFTVsx5fRvLnH+hvx5ee979+6diweuWDqh&cssminify=yes' type='text/css' media='all' />
+
+</head>
+
+<body class="wp-singular post-template-default single single-post postid-3881 single-format-standard wp-embed-responsive wp-theme-pubtwentytwelve customizer-styles-applied full-width custom-font-enabled single-author jetpack-reblog-enabled has-marketing-bar has-marketing-bar-theme-twenty-twelve">
+<div id="page" class="hfeed site">
+	<header id="masthead" class="site-header">
+				<hgroup>
+			<h1 class="site-title"><a href="https://vermaden.wordpress.com/" title="𝚟𝚎𝚛𝚖𝚊𝚍𝚎𝚗" rel="home">𝚟𝚎𝚛𝚖𝚊𝚍𝚎𝚗</a></h1>
+			<h2 class="site-description">Another ${RANDOM} sysadmin sharing his experiences of work at IT industry.</h2>
+		</hgroup>
+
+		<nav id="site-navigation" class="main-navigation">
+			<button class="menu-toggle">Menu</button>
+			<a class="assistive-text" href="#content" title="Skip to content">Skip to content</a>
+			<div class="menu-primary-container"><ul id="menu-primary" class="nav-menu"><li id="menu-item-6" class="menu-item menu-item-type-custom menu-item-object-custom menu-item-has-children menu-item-6"><a href="/">Home</a>
+<ul class="sub-menu">
+	<li id="menu-item-363" class="menu-item menu-item-type-post_type menu-item-object-page current_page_parent menu-item-363"><a href="https://vermaden.wordpress.com/posts/">Posts</a></li>
+</ul>
+</li>
+<li id="menu-item-54" class="menu-item menu-item-type-post_type menu-item-object-page menu-item-54"><a href="https://vermaden.wordpress.com/archive/">Archive</a></li>
+<li id="menu-item-7619" class="menu-item menu-item-type-custom menu-item-object-custom menu-item-7619"><a href="https://vermaden.wordpress.com/external/">External</a></li>
+<li id="menu-item-2243" class="menu-item menu-item-type-post_type menu-item-object-page menu-item-2243"><a href="https://vermaden.wordpress.com/projects/">Projects</a></li>
+<li id="menu-item-1965" class="menu-item menu-item-type-post_type menu-item-object-page menu-item-1965"><a href="https://vermaden.wordpress.com/donate/">Donate</a></li>
+<li id="menu-item-4649" class="menu-item menu-item-type-post_type menu-item-object-page menu-item-4649"><a href="https://vermaden.wordpress.com/news/">News</a></li>
+<li id="menu-item-7" class="menu-item menu-item-type-post_type menu-item-object-page menu-item-7"><a href="https://vermaden.wordpress.com/contact/">Contact</a></li>
+</ul></div>		</nav><!-- #site-navigation -->
+
+						<a href="https://vermaden.wordpress.com/"><img src="https://vermaden.wordpress.com/wp-content/uploads/2024/12/avatar-default-back-logo-pdp.gif" class="header-image" width="650" height="160" alt="" /></a>
+			</header><!-- #masthead -->
+
+	<div id="main" class="wrapper">
+	<div id="primary" class="site-content">
+		<div id="content" role="main">
+
+			
+				
+	<article id="post-3881" class="post-3881 post type-post status-publish format-standard hentry category-uncategorized tag-alma tag-anaconda tag-centos tag-freebsd tag-install tag-iso tag-kickstart tag-linux tag-nginx tag-redhat tag-rhel tag-rocky tag-virtualbox">
+				<header class="entry-header">
+			
+						<h1 class="entry-title">Automated Kickstart Install of&nbsp;RHEL/Clones</h1>
+										<div class="comments-link">
+					<a href="https://vermaden.wordpress.com/2022/04/11/automated-kickstart-install-of-rhel-clones/#comments">3 Replies</a>				</div><!-- .comments-link -->
+					</header><!-- .entry-header -->
+
+				<div class="entry-content">
+			<h1></h1>
+<p>There are two approaches to making your life more automated about installing multiple instances of operating systems. You can either maintain up-to-date templates for them or you can have automated/scripted installations. In this article I will share how to generate ISO image and Kickstart configuration to install Red Hat Enterprise Linux (and its clones such as Alma/Rocky/CentOS/Scientific/&#8230;) in easy and fast way. For the process I will use 8.5 version of RHEL.</p>
+<p>Here is the <em>Table of Contents</em> for this article.</p>
+<ul>
+<li><strong>Logo</strong></li>
+<li><strong>Possibilities</strong></li>
+<li><strong>Environment</strong>
+<ul>
+<li><strong>FreeBSD &#8211; <tt>www</tt></strong></li>
+<li><strong>RHEL Client &#8211; <tt>kickme</tt></strong></li>
+</ul>
+</li>
+<li><strong>Validate</strong></li>
+<li><strong>Generation</strong>
+<ul>
+<li><strong><tt>kickstart.config</tt></strong></li>
+<li><strong><tt>kickstart.skel</tt></strong></li>
+<li><strong><tt>kickstart.sh</tt></strong></li>
+<li><strong>ISO</strong></li>
+</ul>
+</li>
+<li><strong>Result</strong></li>
+<li><strong>Alternatives</strong></li>
+<li><strong>Summary</strong></li>
+</ul>
+<h1>Logo</h1>
+<p>Shortly after IBM acquisition Red Hat started to use kinda boring &#8216;just a red hat&#8217; logo &#8211; but its earlier logo &#8211; shown below &#8211; was more interesting.</p>
+<p><img data-attachment-id="3883" data-permalink="https://vermaden.wordpress.com/2022/04/11/automated-kickstart-install-of-rhel-clones/rhel-logo/" data-orig-file="https://vermaden.wordpress.com/wp-content/uploads/2022/04/rhel-logo.png" data-orig-size="600,600" data-comments-opened="1" data-image-meta="{&quot;aperture&quot;:&quot;0&quot;,&quot;credit&quot;:&quot;&quot;,&quot;camera&quot;:&quot;&quot;,&quot;caption&quot;:&quot;&quot;,&quot;created_timestamp&quot;:&quot;0&quot;,&quot;copyright&quot;:&quot;&quot;,&quot;focal_length&quot;:&quot;0&quot;,&quot;iso&quot;:&quot;0&quot;,&quot;shutter_speed&quot;:&quot;0&quot;,&quot;title&quot;:&quot;&quot;,&quot;orientation&quot;:&quot;0&quot;}" data-image-title="rhel-logo" data-image-description="" data-image-caption="" data-large-file="https://vermaden.wordpress.com/wp-content/uploads/2022/04/rhel-logo.png?w=600" class="alignnone size-full wp-image-3883" src="https://vermaden.wordpress.com/wp-content/uploads/2022/04/rhel-logo.png?w=960" alt="rhel-logo"   srcset="https://vermaden.wordpress.com/wp-content/uploads/2022/04/rhel-logo.png 600w, https://vermaden.wordpress.com/wp-content/uploads/2022/04/rhel-logo.png?w=150&amp;h=150 150w, https://vermaden.wordpress.com/wp-content/uploads/2022/04/rhel-logo.png?w=300&amp;h=300 300w" sizes="(max-width: 600px) 100vw, 600px" /></p>
+<p>If you stare long enough you will see two dinosaurs. The <b>Tyrannosaurus</b> (red) punching a <b>Triceratops</b> (white) in the head. Once you see it you will not be able to unsee it 🙂</p>
+<h1>Possibilities</h1>
+<p>There are many ways to do that automated Kickstart installation. You can use NFS/HTTP/FTP/HTTPS or your own generated DVD media &#8230; or use &#8216;stock&#8217; DVD and Kickstart config available somewhere on the network.</p>
+<p>I will use the following method that I find currently is best suited for my needs:</p>
+<ul>
+<li>FreeBSD host with NGINX serving RHEL 8.5 DVD content (<tt><b>rhel-8.5-x86_64-dvd.iso</b></tt>) over HTTP.</li>
+<li>Generate small (less then 1 MB in size) ISO with Kickstart config on it.</li>
+<li>Boot from small <tt><b>rhel-8.5-x86_64-boot.iso</b></tt> ISO and also with generated Kickstart ISO.</li>
+</ul>
+<h1>Environment</h1>
+<p>I will use VirtualBox for this demo with <i>NAT Network</i> configuration for the virtual machines network adapters. The <tt><b>nat0</b></tt> VirtualBox network is defined as <tt><b>10.0.10.0/24</b></tt> and I use <i>Port Forwarding</i> to access these machines from the FreeBSD host system.</p>
+<p>Machines:</p>
+<ul>
+<li><tt><b>10.0.10.210 - www</b></tt> &#8211; FreeBSD system with NGINX to serve RHEL 8.5 DVD contents</li>
+<li><tt><b>10.0.10.199 - kickme</b></tt> &#8211; RHEL machine that would be installed with automated Kickstart install</li>
+</ul>
+<h2>FreeBSD &#8211; <tt>www</tt></h2>
+<p>Below you will find the FreeBSD machine configuration as seen on VirtualBox.</p>
+<p><img data-attachment-id="3884" data-permalink="https://vermaden.wordpress.com/2022/04/11/automated-kickstart-install-of-rhel-clones/vm-www/" data-orig-file="https://vermaden.wordpress.com/wp-content/uploads/2022/04/vm-www.png" data-orig-size="485,410" data-comments-opened="1" data-image-meta="{&quot;aperture&quot;:&quot;0&quot;,&quot;credit&quot;:&quot;&quot;,&quot;camera&quot;:&quot;&quot;,&quot;caption&quot;:&quot;&quot;,&quot;created_timestamp&quot;:&quot;0&quot;,&quot;copyright&quot;:&quot;&quot;,&quot;focal_length&quot;:&quot;0&quot;,&quot;iso&quot;:&quot;0&quot;,&quot;shutter_speed&quot;:&quot;0&quot;,&quot;title&quot;:&quot;&quot;,&quot;orientation&quot;:&quot;0&quot;}" data-image-title="vm-www" data-image-description="" data-image-caption="" data-large-file="https://vermaden.wordpress.com/wp-content/uploads/2022/04/vm-www.png?w=485" class="alignnone size-full wp-image-3884" src="https://vermaden.wordpress.com/wp-content/uploads/2022/04/vm-www.png?w=960" alt="vm-www"   srcset="https://vermaden.wordpress.com/wp-content/uploads/2022/04/vm-www.png 485w, https://vermaden.wordpress.com/wp-content/uploads/2022/04/vm-www.png?w=150&amp;h=127 150w, https://vermaden.wordpress.com/wp-content/uploads/2022/04/vm-www.png?w=300&amp;h=254 300w" sizes="(max-width: 485px) 100vw, 485px" /></p>
+<p>Its default FreeBSD ZFS install on single disk. Nothing fancy here to be honest. Below you will find its configuration from <tt><b>/etc/rc.conf</b></tt> file. I also installed the <tt><b>nginx</b></tt> package but the only thing I did with NGINX was to enable it to start automatically. I used the default stock config that points at <tt><b>/usr/local/www/nginx</b></tt> place. I later copied the RHEL 8.5 DVD contents to the <tt><b>/usr/local/www/nginx/rhel-8.5</b></tt> directory. It takes about 10 GB.</p>
+<pre>www # <span style="color:#dd0000;"><b>cat /etc/rc.conf</b></span>
+hostname=www
+ifconfig_em0="inet 10.0.10.210 netmask 255.255.255.0"
+defaultrouter=10.0.10.1
+sshd_enable=YES
+<b>nginx_enable=YES</b>
+zfs_enable=YES
+dumpdev=AUTO
+sendmail_enable=NO
+sendmail_submit_enable=NO
+sendmail_outbound_enable=NO
+sendmail_msp_queue_enable=NO
+update_motd=NO
+</pre>
+<p>Here is the unmodified NGINX config but with comments non displayed.</p>
+<pre>www # <span style="color:#dd0000;"><b>grep -v '#' /usr/local/etc/nginx/nginx.conf | grep '^[^#]'</b></span>
+worker_processes  1;
+events {
+    worker_connections  1024;
+}
+http {
+    include       mime.types;
+    default_type  application/octet-stream;
+    sendfile        on;
+    keepalive_timeout  65;
+    server {
+        listen       80;
+        server_name  localhost;
+        location / {
+            root   /usr/local/www/nginx;
+            index  index.html index.htm;
+        }
+        error_page   500 502 503 504  /50x.html;
+        location = /50x.html {
+            root   /usr/local/www/nginx-dist;
+        }
+    }
+}
+</pre>
+<p>Here are the contents of the <tt><b>/usr/local/www/nginx/rhel-8.5</b></tt> directory after copying here contents of RHEL 8.5 DVD.</p>
+<pre>www:~ # <span style="color:#dd0000;"><b>ls -l /usr/local/www/nginx/rhel-8.5/</b></span>
+total 71
+-r--r--r--  1 root  wheel     60 Apr  6 21:34 .discinfo
+-r--r--r--  1 root  wheel   1560 Apr  6 21:34 .treeinfo
+dr-xr-xr-x  4 root  wheel      4 Apr  6 21:50 AppStream
+dr-xr-xr-x  4 root  wheel      4 Apr  6 21:53 BaseOS
+dr-xr-xr-x  3 root  wheel      3 Apr  6 21:53 EFI
+-r--r--r--  1 root  wheel   8154 Apr  6 21:53 EULA
+-r--r--r--  1 root  wheel  18092 Apr  6 21:53 GPL
+-r--r--r--  1 root  wheel   1669 Apr  6 21:53 RPM-GPG-KEY-redhat-beta
+-r--r--r--  1 root  wheel   5135 Apr  6 21:53 RPM-GPG-KEY-redhat-release
+-r--r--r--  1 root  wheel   1796 Apr  6 21:53 TRANS.TBL
+-r--r--r--  1 root  wheel   1455 Apr  6 21:53 extra_files.json
+dr-xr-xr-x  3 root  wheel      6 Apr  6 21:54 images
+dr-xr-xr-x  2 root  wheel     16 Apr  6 21:54 isolinux
+-r--r--r--  1 root  wheel    103 Apr  6 21:54 media.repo
+</pre>
+<h2>RHEL Client &#8211; <tt>kickme</tt></h2>
+<p>Below you will find the RHEL machine that will be used for the automated Kickstart installation &#8211; also as seen on VirtualBox.</p>
+<p><img data-attachment-id="3885" data-permalink="https://vermaden.wordpress.com/2022/04/11/automated-kickstart-install-of-rhel-clones/vm-kickme/" data-orig-file="https://vermaden.wordpress.com/wp-content/uploads/2022/04/vm-kickme.png" data-orig-size="485,465" data-comments-opened="1" data-image-meta="{&quot;aperture&quot;:&quot;0&quot;,&quot;credit&quot;:&quot;&quot;,&quot;camera&quot;:&quot;&quot;,&quot;caption&quot;:&quot;&quot;,&quot;created_timestamp&quot;:&quot;0&quot;,&quot;copyright&quot;:&quot;&quot;,&quot;focal_length&quot;:&quot;0&quot;,&quot;iso&quot;:&quot;0&quot;,&quot;shutter_speed&quot;:&quot;0&quot;,&quot;title&quot;:&quot;&quot;,&quot;orientation&quot;:&quot;0&quot;}" data-image-title="vm-kickme" data-image-description="" data-image-caption="" data-large-file="https://vermaden.wordpress.com/wp-content/uploads/2022/04/vm-kickme.png?w=485" class="alignnone size-full wp-image-3885" src="https://vermaden.wordpress.com/wp-content/uploads/2022/04/vm-kickme.png?w=960" alt="vm-kickme"   srcset="https://vermaden.wordpress.com/wp-content/uploads/2022/04/vm-kickme.png 485w, https://vermaden.wordpress.com/wp-content/uploads/2022/04/vm-kickme.png?w=150&amp;h=144 150w, https://vermaden.wordpress.com/wp-content/uploads/2022/04/vm-kickme.png?w=300&amp;h=288 300w" sizes="(max-width: 485px) 100vw, 485px" /></p>
+<p>To make that example more interesting (and more corporate) I added second NIC for the backup network &#8211; so we will also have to generate additional route for it in the Kickstart config.</p>
+<p>The <tt><b>kickme</b></tt> RHEL machine needs to have two (2) CD-ROM drives. In the PRIMARY (the one to boot from) we will load the <tt><b>rhel-8.5-x86_64-boot.iso</b></tt> ISO file. In the SECONDARY one we will load our generated <tt><b>kickme.oemdrv.iso</b></tt> ISO file containing Kickstart config file.</p>
+<h1>Validate</h1>
+<p>There also exists <tt><b>pykickstart</b></tt> package which offers <tt><b>ksvalidator</b></tt> tool. Theoretically it allows you to make sure that your Kickstart config has proper syntax and that it would work &#8211; but only in theory. Here is what it RHEL documentation states about its accuracy.</p>
+<p><img data-attachment-id="3886" data-permalink="https://vermaden.wordpress.com/2022/04/11/automated-kickstart-install-of-rhel-clones/rhel-ksvalidator/" data-orig-file="https://vermaden.wordpress.com/wp-content/uploads/2022/04/rhel-ksvalidator.png" data-orig-size="800,228" data-comments-opened="1" data-image-meta="{&quot;aperture&quot;:&quot;0&quot;,&quot;credit&quot;:&quot;&quot;,&quot;camera&quot;:&quot;&quot;,&quot;caption&quot;:&quot;&quot;,&quot;created_timestamp&quot;:&quot;0&quot;,&quot;copyright&quot;:&quot;&quot;,&quot;focal_length&quot;:&quot;0&quot;,&quot;iso&quot;:&quot;0&quot;,&quot;shutter_speed&quot;:&quot;0&quot;,&quot;title&quot;:&quot;&quot;,&quot;orientation&quot;:&quot;0&quot;}" data-image-title="rhel-ksvalidator" data-image-description="" data-image-caption="" data-large-file="https://vermaden.wordpress.com/wp-content/uploads/2022/04/rhel-ksvalidator.png?w=800" loading="lazy" class="alignnone size-full wp-image-3886" src="https://vermaden.wordpress.com/wp-content/uploads/2022/04/rhel-ksvalidator.png?w=960" alt="rhel-ksvalidator"   srcset="https://vermaden.wordpress.com/wp-content/uploads/2022/04/rhel-ksvalidator.png 800w, https://vermaden.wordpress.com/wp-content/uploads/2022/04/rhel-ksvalidator.png?w=150&amp;h=43 150w, https://vermaden.wordpress.com/wp-content/uploads/2022/04/rhel-ksvalidator.png?w=300&amp;h=86 300w, https://vermaden.wordpress.com/wp-content/uploads/2022/04/rhel-ksvalidator.png?w=768&amp;h=219 768w" sizes="(max-width: 800px) 100vw, 800px" /></p>
+<p>It means that you will not know if your Kickstart config will work until you really try it &#8211; thus I do not cared that much about this tool as is not available on FreeBSD.</p>
+<h1>Generation</h1>
+<p>Now to the most important part &#8211; Kickstart generation and ISO generation. Probably the easiest way to create new Kickstart config is to install &#8216;by hand&#8217; new RHEL system under virtual machine and then take the generated by Anaconda <tt><b>/root/anaconda-ks.cfg</b></tt> file as a starting point. This is what I also did.</p>
+<p>When you would like to install next host you will have to edit the hostname and IP addresses for next host in that Kickstart file &#8211; which seems not very convenient to say the least. In order to make that less PITA I created a <tt><b>kickstart.sh</b></tt> script that will read values from <tt><b>kickstart.config</b></tt> file and then put them into the <tt><b>kickstart.skel</b></tt> file that would be base for our future installations. Then the <tt><b>kickstart.sh</b></tt> will copy the generated Kickstart file and used Kickstart config with that hostname as a backup or for future reference &#8211; or for example for documentation purposes.</p>
+<h2><tt>kickstart.config</tt></h2>
+<p>Here is how such <tt><b>kickstart.config</b></tt> file looks like.</p>
+<pre># <strong><span style="color:#dd0000;">cat kickstart.config</span></strong>
+  SYSTEM_NAME=kickme
+  REPO_SERVER_IP=10.0.10.210
+  INTERFACE1=enp0s3
+  IP_ADDRESS1=10.0.10.199
+  NETMASK1=255.255.255.0
+  INTERFACE2=enp0s8
+  IP_ADDRESS2=10.0.90.199
+  NETMASK2=255.255.255.0
+  GATEWAY=10.0.10.1
+  NAMESERVER1=1.1.1.1
+  NAMESERVER2=9.9.9.9
+  NTP1=132.163.97.6
+  NTP2=216.239.35.0
+  ROUTE_NET=10.0.40.10/24
+  ROUTE_VIA=10.0.20.1
+</pre>
+<h2><tt>kickstart.skel</tt></h2>
+<p>The <tt><b>kickstart.skel</b></tt> file is little longer &#8211; this is our barebone for the Kickstart configs.</p>
+<pre># <span style="color:#dd0000;"><strong>cat kickstart.skel</strong></span>
+#version=RHEL8
+
+# USE sda DISK
+ignoredisk --only-use=sda
+
+# CLEAR DISK PARTITIONS BEFORE INSTALL
+clearpart --all --initlabel
+
+# USE text INSTALL
+text
+
+# USE ONLINE INSTALLATION MEDIA
+url --url=http://REPO_SERVER_IP/rhel-8.5/BaseOS --noverifyssl
+
+# KEYBOARD LAYOUTS
+keyboard --vckeymap=us --xlayouts='us','pl'
+
+# LANGUAGE
+lang en_US.UTF-8
+
+# NETWORK INFORMATION
+network --bootproto=static --device=INTERFACE1 --ip=IP_ADDRESS1 --netmask=NETMASK1 --gateway=GATEWAY --nameserver=NAMESERVER1,NAMESERVER2 --noipv6 --activate
+network --bootproto=static --device=INTERFACE2 --ip=IP_ADDRESS2 --netmask=NETMASK2 --noipv6 --activate --onboot=on
+network --hostname=SYSTEM_NAME
+
+# REPOS
+repo --name="AppStream" --baseurl=http://REPO_SERVER_IP/rhel-8.5/AppStream
+
+# ROOT PASSWORD
+rootpw --plaintext asd
+
+# DISABLE Setup Agent ON FIRST BOOT
+firstboot --disable
+
+# DISABLE SELinux AND FIREWALL
+selinux --disabled
+firewall --disabled
+
+# OMIT X11
+skipx
+
+# REBOOT AND EJECT BOOT MEDIUM
+reboot --eject
+
+# TIMEZONE
+timezone Europe/Warsaw --isUtc --nontp
+
+# PARTITIONS
+part   /boot/efi --fstype="efi"   --size=600  --ondisk=sda --label=EFI  --fsoptions="umask=0077,shortname=winnt"
+part   /boot     --fstype="xfs"   --size=1024 --ondisk=sda --label=BOOT --fsoptions="rw,noatime,nodiratime"
+part   pv.475    --fstype="lvmpv" --size=1    --ondisk=sda --grow
+
+# LVM
+volgroup rootvg --pesize=4096 pv.475
+logvol /         --fstype="xfs"   --size=1024 --name=root --label="ROOT" --vgname=rootvg --fsoptions="rw,noatime,nodiratime"
+logvol /usr      --fstype="xfs"   --size=5120 --name=usr  --label="USR"  --vgname=rootvg --fsoptions="rw,noatime,nodiratime"
+logvol /var      --fstype="xfs"   --size=3072 --name=var  --label="VAR"  --vgname=rootvg --fsoptions="rw,noatime,nodiratime"
+logvol /tmp      --fstype="xfs"   --size=1024 --name=tmp  --label="TMP"  --vgname=rootvg --fsoptions="rw,noatime,nodiratime"
+logvol /opt      --fstype="xfs"   --size=1024 --name=opt  --label="OPT"  --vgname=rootvg --fsoptions="rw,noatime,nodiratime"
+logvol /home     --fstype="xfs"   --size=1024 --name=home --label="HOME" --vgname=rootvg --fsoptions="rw,noatime,nodiratime"
+logvol swap      --fstype="swap"  --size=4096 --name=swap --label="SWAP" --vgname=rootvg
+
+# RPM PACKAGES
+%packages
+@^minimal-environment
+kexec-tools
+nfs-utils
+nfs4-acl-tools
+perl
+chrony
+%end
+
+# KDUMP
+%addon com_redhat_kdump --enable --reserve-mb='auto'
+%end
+
+# POST INSTALL COMMANDS TO EXECUTE
+%post --log=/root/ks-post.log --interpreter=/usr/bin/bash
+
+  # POST: route
+  echo ROUTE_NET via ROUTE_VIA &gt; /etc/sysconfig/network-scripts/route-INTERFACE2
+
+  # POST: chrony CONFIG
+  cat &lt;&lt; TIME &gt; /etc/chrony.conf
+server NTP1 iburst
+server NTP2 iburst
+driftfile /var/lib/chrony/drift
+makestep 1.0 3
+rtcsync
+logdir /var/log/chrony
+keyfile /etc/chrony.keys
+leapsectz right/UTC
+TIME
+
+  # POST: chrony SERVICE
+  systemctl enable chronyd
+
+%end
+
+# PASSWORD REQUIREMENTS
+%anaconda
+pwpolicy root --minlen=6 --minquality=1 --notstrict --nochanges --notempty
+pwpolicy user --minlen=6 --minquality=1 --notstrict --nochanges --emptyok
+pwpolicy luks --minlen=6 --minquality=1 --notstrict --nochanges --notempty
+%end
+</pre>
+<h2><tt>kickstart.sh</tt></h2>
+<p>&#8230; and last but not least &#8211; the <tt><b>kickstart.sh</b></tt> script. It does not take any arguments &#8211; it just loads the <tt><b>kickstart.config</b></tt> file variables and then replaces all config options in <tt><b>kickstart.skel</b></tt> with <tt><b>sed(1)</b></tt> to generate new Kickstart file as <tt><b>files/${SYSTEM_NAME}.cfg</b></tt> file. It also copies that config into <tt><b>files/${SYSTEM_NAME}.config</b></tt> for convenience.</p>
+<pre># <strong><span style="color:#dd0000;">cat kickstart.sh</span></strong>
+#! /bin/sh
+
+if [ ! -f kickstart.config ]
+then
+  echo "ERROR: file 'kickstart.config' not available"
+  exit 1
+fi
+
+if [ ! -f kickstart.skel ]
+then
+  echo "ERROR: file 'kickstart.skel' not available"
+  exit 1
+fi
+
+. "$( pwd )/kickstart.config"
+
+mkdir -p files ksfloppy iso
+
+cp kickstart.config files/${SYSTEM_NAME}.config
+
+if [ ${?} -eq 0 ]
+then
+  echo "INFO: kickstart config copied to 'files/${SYSTEM_NAME}.config' location"
+else
+  echo "ERROR: could not copy config to 'files/${SYSTEM_NAME}.config' location"
+  exit 1
+fi
+
+sed                                           \
+  -e s@SYSTEM_NAME@${SYSTEM_NAME}@g           \
+  -e s@SALT_MINION_NAME@${SALT_MINION_NAME}@g \
+  -e s@SALT_MASTER_IP@${SALT_MASTER_IP}@g     \
+  -e s@REPO_SERVER_IP@${REPO_SERVER_IP}@g     \
+  -e s@RHEL_MAJOR@${RHEL_MAJOR}@g             \
+  -e s@RHEL_VERSION@${RHEL_VERSION}@g         \
+  -e s@RHEL_ARCH@${RHEL_ARCH}@g               \
+  -e s@INTERFACE1@${INTERFACE1}@g             \
+  -e s@IP_ADDRESS1@${IP_ADDRESS1}@g           \
+  -e s@NETMASK1@${NETMASK1}@g                 \
+  -e s@INTERFACE2@${INTERFACE2}@g             \
+  -e s@IP_ADDRESS2@${IP_ADDRESS2}@g           \
+  -e s@NETMASK2@${NETMASK2}@g                 \
+  -e s@GATEWAY@${GATEWAY}@g                   \
+  -e s@NAMESERVER1@${NAMESERVER1}@g           \
+  -e s@NAMESERVER2@${NAMESERVER2}@g           \
+  -e s@NTP1@${NTP1}@g                         \
+  -e s@NTP2@${NTP2}@g                         \
+  -e s@ROUTE_NET@${ROUTE_NET}@g               \
+  -e s@ROUTE_VIA@${ROUTE_VIA}@g               \
+  kickstart.skel &gt; files/${SYSTEM_NAME}.cfg
+
+if [ ${?} -eq 0 ]
+then
+  echo "INFO: kickstart file 'files/${SYSTEM_NAME}.cfg' generated"
+else
+  echo "ERROR: failed to generate 'files/${SYSTEM_NAME}.cfg' kickstart file"
+  exit 1
+fi
+
+echo "INFO: mkisofs(8) output BEGIN"
+echo "-----------------------------"
+
+mkisofs -J -R -l -graft-points -V "OEMDRV" \
+        -input-charset utf-8 \
+        -o iso/${SYSTEM_NAME}.oemdrv.iso \
+        ks.cfg=files/${SYSTEM_NAME}.cfg ksfloppy
+
+echo "-----------------------------"
+echo "INFO: mkisofs(8) output ENDED"
+
+if [ ${?} -eq 0 ]
+then
+  echo "INFO: ISO image 'iso/${SYSTEM_NAME}.oemdrv.iso' generated"
+else
+  echo "ERROR: failed to generate 'iso/${SYSTEM_NAME}.oemdrv.iso' ISO image"
+  exit 1
+fi
+</pre>
+<h2>ISO</h2>
+<p>It finishes its work in less then a second. Here is its output.</p>
+<p><img data-attachment-id="3894" data-permalink="https://vermaden.wordpress.com/2022/04/11/automated-kickstart-install-of-rhel-clones/kickstart-sh/" data-orig-file="https://vermaden.wordpress.com/wp-content/uploads/2022/04/kickstart.sh_.png" data-orig-size="720,460" data-comments-opened="1" data-image-meta="{&quot;aperture&quot;:&quot;0&quot;,&quot;credit&quot;:&quot;&quot;,&quot;camera&quot;:&quot;&quot;,&quot;caption&quot;:&quot;&quot;,&quot;created_timestamp&quot;:&quot;0&quot;,&quot;copyright&quot;:&quot;&quot;,&quot;focal_length&quot;:&quot;0&quot;,&quot;iso&quot;:&quot;0&quot;,&quot;shutter_speed&quot;:&quot;0&quot;,&quot;title&quot;:&quot;&quot;,&quot;orientation&quot;:&quot;0&quot;}" data-image-title="kickstart.sh" data-image-description="" data-image-caption="" data-large-file="https://vermaden.wordpress.com/wp-content/uploads/2022/04/kickstart.sh_.png?w=720" loading="lazy" class="alignnone size-full wp-image-3894" src="https://vermaden.wordpress.com/wp-content/uploads/2022/04/kickstart.sh_.png?w=960" alt="kickstart.sh"   srcset="https://vermaden.wordpress.com/wp-content/uploads/2022/04/kickstart.sh_.png 720w, https://vermaden.wordpress.com/wp-content/uploads/2022/04/kickstart.sh_.png?w=150&amp;h=96 150w, https://vermaden.wordpress.com/wp-content/uploads/2022/04/kickstart.sh_.png?w=300&amp;h=192 300w" sizes="(max-width: 720px) 100vw, 720px" /></p>
+<p>&#8230; and the generated ISO file.</p>
+<pre># <span style="color:#dd0000;"><strong>ls -lh iso/kickme.oemdrv.iso</strong></span>
+-rw-r--r--  1 root  wheel   366K Apr 10 21:57 iso/kickme.oemdrv.iso
+</pre>
+<h1>Result</h1>
+<p>Now &#8211; when you boot the <tt><b>kickme</b></tt> VirtualBox virtual machine with CD-ROM devices loaded you will end up with RHEL system installed according to your generated Kickstart config. Here are some files from the <tt><b>kickme</b></tt> RHEL installed system.</p>
+<p>Filesystems with LABELs such as <tt><b>BOOT</b></tt> or <tt><b>VAR</b></tt> defined.</p>
+<pre># <span style="color:#dd0000;"><strong>lsblk -i -f</strong></span>
+NAME            FSTYPE      LABEL UUID                                   MOUNTPOINT
+sda
+|-sda1          xfs         BOOT  b5c66ea5-b38a-4072-b1a8-0d5882ace179   /boot
+|-sda2          vfat        EFI   BB7A-4BFD                              /boot/efi
+`-sda3          LVM2_member       e9BwIq-4I2W-zX6y-As42-f9N2-WTTR-WfHKdC
+  |-rootvg-root xfs         ROOT  dbf8dd30-51cc-408a-9d05-b1ae67c0637c   /
+  |-rootvg-swap swap        SWAP  c8a016b5-f43d-4510-9703-e9c68f02ae64   [SWAP]
+  |-rootvg-usr  xfs         USR   c6694796-a5bd-4833-9a6b-a740e8bf83bf   /usr
+  |-rootvg-home xfs         HOME  5264afe6-5d9c-4dc3-9d8d-e19078864aea   /home
+  |-rootvg-opt  xfs         OPT   039e9575-3af8-4a8b-95c0-54fb8a515f70   /opt
+  |-rootvg-tmp  xfs         TMP   11709a48-a64f-4b93-86a3-e943ff9ecf01   /tmp
+  `-rootvg-var  xfs         VAR   ed20343c-b915-4234-b13e-0c6c94e03edc   /var
+sr0
+sr1
+</pre>
+<p>The <tt><b>/etc/fstab</b></tt> file with <tt><b>rw,noatime,nodiratime</b></tt> mount options.</p>
+<pre># <strong><span style="color:#dd0000;">grep '^[^#] /etc/fstab</span></strong>
+/dev/mapper/rootvg-root /                       xfs     rw,noatime,nodiratime 0 0
+UUID=b5c66ea5-b38a-4072-b1a8-0d5882ace179 /boot xfs     rw,noatime,nodiratime 0 0
+UUID=BB7A-4BFD          /boot/efi               vfat    defaults,uid=0,gid=0,umask=077,shortname=winnt 0 2
+/dev/mapper/rootvg-home /home                   xfs     rw,noatime,nodiratime 0 0
+/dev/mapper/rootvg-opt  /opt                    xfs     rw,noatime,nodiratime 0 0
+/dev/mapper/rootvg-tmp  /tmp                    xfs     rw,noatime,nodiratime 0 0
+/dev/mapper/rootvg-usr  /usr                    xfs     rw,noatime,nodiratime 0 0
+/dev/mapper/rootvg-var  /var                    xfs     rw,noatime,nodiratime 0 0
+/dev/mapper/rootvg-swap none                    swap    defaults        0 0
+</pre>
+<p>Networking on two network interfaces and additional route generated.</p>
+<pre># <span style="color:#dd0000;"><strong>cat /etc/sysconfig/network-scripts/ifcfg-enp0s3</strong></span>
+# Generated by parse-kickstart
+TYPE=Ethernet
+DEVICE=enp0s3
+UUID=e1fddd41-f398-4c1d-8bef-e28ef705d568
+ONBOOT=yes
+IPADDR=10.0.10.199
+NETMASK=255.255.255.0
+GATEWAY=10.0.10.1
+IPV6INIT=no
+DNS1=1.1.1.1
+DNS2=9.9.9.9
+PROXY_METHOD=none
+BROWSER_ONLY=no
+PREFIX=24
+DEFROUTE=yes
+IPV4_FAILURE_FATAL=no
+NAME="System enp0s3"
+
+# <strong><span style="color:#dd0000;">cat /etc/sysconfig/network-scripts/ifcfg-enp0s8</span></strong>
+# Generated by parse-kickstart
+TYPE=Ethernet
+DEVICE=enp0s8
+UUID=5454b587-8c29-41a7-93f8-532c814865de
+ONBOOT=yes
+IPADDR=10.0.90.199
+NETMASK=255.255.255.0
+IPV6INIT=no
+PROXY_METHOD=none
+BROWSER_ONLY=no
+PREFIX=24
+DEFROUTE=yes
+IPV4_FAILURE_FATAL=no
+NAME="System enp0s8"
+
+# <span style="color:#dd0000;"><strong>cat /etc/sysconfig/network-scripts/route-enp0s8</strong></span>
+10.0.40.10/24 via 10.0.20.1
+
+# <strong><span style="color:#dd0000;">cat /etc/resolv.conf</span></strong>
+# Generated by NetworkManager
+nameserver 1.1.1.1
+nameserver 9.9.9.9
+
+</pre>
+<h1>Alternatives</h1>
+<p>Its also possible to use the <tt><b>livemedia-creator</b></tt> from the <tt><b>lorax</b></tt> package &#8230; but I would omit it. To be honest I tried it &#8211; and it did not worked at all. I started the following process &#8230; and it run for more then a DAY and produced NOTHING.</p>
+<pre># <span style="color:#dd0000;"><b>livemedia-creator</b> \
+    --make-iso \
+    --ram 4096 \
+    --vcpus 4 \
+    --iso=/mnt/rhel-8.5-x86_64-boot.iso \
+    --ks=/mnt/mykick.cfg
+</span></pre>
+<p>The log file for the operation was also EMPTY. At least that was the run when using the <tt><b>virt-install</b></tt> option with creating everything under virtual machine. This also intrigue me a lot. Why use virtual machines just to create installation media? Its just a bunch of files. There are better options available such as <tt><b>chroot(8)</b></tt> for example &#8230; or even so glorified containers such as Docker or Podman. Why use fully fledged virtual machine just to create ISO image? This is a big mystery for me.</p>
+<p>Seems that <tt><b>livemedia-creator</b></tt> also has <tt><b>--no-virt</b></tt> option available &#8230; but as documentation states &#8211; it can <strong><i>&#8220;render the entire system unusable&#8221;</i></strong> &#8211; not very production ready solution for my taste. Below is a screenshot from the official RHEL documentation.</p>
+<p><img data-attachment-id="3888" data-permalink="https://vermaden.wordpress.com/2022/04/11/automated-kickstart-install-of-rhel-clones/rhel-render/" data-orig-file="https://vermaden.wordpress.com/wp-content/uploads/2022/04/rhel-render.png" data-orig-size="800,357" data-comments-opened="1" data-image-meta="{&quot;aperture&quot;:&quot;0&quot;,&quot;credit&quot;:&quot;&quot;,&quot;camera&quot;:&quot;&quot;,&quot;caption&quot;:&quot;&quot;,&quot;created_timestamp&quot;:&quot;0&quot;,&quot;copyright&quot;:&quot;&quot;,&quot;focal_length&quot;:&quot;0&quot;,&quot;iso&quot;:&quot;0&quot;,&quot;shutter_speed&quot;:&quot;0&quot;,&quot;title&quot;:&quot;&quot;,&quot;orientation&quot;:&quot;0&quot;}" data-image-title="rhel-render" data-image-description="" data-image-caption="" data-large-file="https://vermaden.wordpress.com/wp-content/uploads/2022/04/rhel-render.png?w=800" loading="lazy" class="alignnone size-full wp-image-3888" src="https://vermaden.wordpress.com/wp-content/uploads/2022/04/rhel-render.png?w=960" alt="rhel-render"   srcset="https://vermaden.wordpress.com/wp-content/uploads/2022/04/rhel-render.png 800w, https://vermaden.wordpress.com/wp-content/uploads/2022/04/rhel-render.png?w=150&amp;h=67 150w, https://vermaden.wordpress.com/wp-content/uploads/2022/04/rhel-render.png?w=300&amp;h=134 300w, https://vermaden.wordpress.com/wp-content/uploads/2022/04/rhel-render.png?w=768&amp;h=343 768w" sizes="(max-width: 800px) 100vw, 800px" /></p>
+<p>Pity that <tt><b>livemedia-creator</b></tt> did not worked for me &#8211; but I already have a working process for that.</p>
+<p>Some people also suggested these as valuable alternatives:</p>
+<ul>
+<li><strong>Cobbler</strong> &#8211; <a href="https://cobbler.github.io/">https://cobbler.github.io/</a></li>
+<li><strong>xCAT</strong> &#8211; <a href="https://xcat.org/">https://xcat.org/</a></li>
+</ul>
+<p>Maybe some day I will find time to check them out.</p>
+<h1>Summary</h1>
+<p>I am not the best at summaries so I will just write here that the article has ended successfully 🙂</p>
+<p>Regards.</p>
+<div style="height:512px;">EOF</div>
+<div id="jp-post-flair" class="sharedaddy sd-like-enabled sd-sharing-enabled"><div class="sharedaddy sd-sharing-enabled"><div class="robots-nocontent sd-block sd-social sd-social-icon-text sd-sharing"><h3 class="sd-title">Share this:</h3><div class="sd-content"><ul><li class="share-twitter"><a rel="nofollow noopener noreferrer"
+				data-shared="sharing-twitter-3881"
+				class="share-twitter sd-button share-icon"
+				href="https://vermaden.wordpress.com/2022/04/11/automated-kickstart-install-of-rhel-clones/?share=twitter"
+				target="_blank"
+				aria-labelledby="sharing-twitter-3881"
+				>
+				<span id="sharing-twitter-3881" hidden>Share on X (Opens in new window)</span>
+				<span>X</span>
+			</a></li><li class="share-facebook"><a rel="nofollow noopener noreferrer"
+				data-shared="sharing-facebook-3881"
+				class="share-facebook sd-button share-icon"
+				href="https://vermaden.wordpress.com/2022/04/11/automated-kickstart-install-of-rhel-clones/?share=facebook"
+				target="_blank"
+				aria-labelledby="sharing-facebook-3881"
+				>
+				<span id="sharing-facebook-3881" hidden>Share on Facebook (Opens in new window)</span>
+				<span>Facebook</span>
+			</a></li><li class="share-end"></li></ul></div></div></div><div class='sharedaddy sd-block sd-like jetpack-likes-widget-wrapper jetpack-likes-widget-unloaded' id='like-post-wrapper-141813113-3881-6a41f96423949' data-src='//widgets.wp.com/likes/index.html?ver=20260629#blog_id=141813113&amp;post_id=3881&amp;origin=vermaden.wordpress.com&amp;obj_id=141813113-3881-6a41f96423949' data-name='like-post-frame-141813113-3881-6a41f96423949' data-title='Like or Reblog'><div class='likes-widget-placeholder post-likes-widget-placeholder' style='height: 55px;'><span class='button'><span>Like</span></span> <span class='loading'>Loading...</span></div><span class='sd-text-color'></span><a class='sd-link-color'></a></div>
+<div id='jp-relatedposts' class='jp-relatedposts' >
+	<h3 class="jp-relatedposts-headline"><em>Related</em></h3>
+</div></div>					</div><!-- .entry-content -->
+		
+		<footer class="entry-meta">
+			This entry was posted in <a href="https://vermaden.wordpress.com/category/uncategorized/" rel="category tag">Uncategorized</a> and tagged <a href="https://vermaden.wordpress.com/tag/alma/" rel="tag">alma</a>, <a href="https://vermaden.wordpress.com/tag/anaconda/" rel="tag">anaconda</a>, <a href="https://vermaden.wordpress.com/tag/centos/" rel="tag">centos</a>, <a href="https://vermaden.wordpress.com/tag/freebsd/" rel="tag">freebsd</a>, <a href="https://vermaden.wordpress.com/tag/install/" rel="tag">install</a>, <a href="https://vermaden.wordpress.com/tag/iso/" rel="tag">iso</a>, <a href="https://vermaden.wordpress.com/tag/kickstart/" rel="tag">kickstart</a>, <a href="https://vermaden.wordpress.com/tag/linux/" rel="tag">linux</a>, <a href="https://vermaden.wordpress.com/tag/nginx/" rel="tag">nginx</a>, <a href="https://vermaden.wordpress.com/tag/redhat/" rel="tag">redhat</a>, <a href="https://vermaden.wordpress.com/tag/rhel/" rel="tag">rhel</a>, <a href="https://vermaden.wordpress.com/tag/rocky/" rel="tag">rocky</a>, <a href="https://vermaden.wordpress.com/tag/virtualbox/" rel="tag">virtualbox</a> on <a href="https://vermaden.wordpress.com/2022/04/11/automated-kickstart-install-of-rhel-clones/" title="15:43" rel="bookmark"><time class="entry-date" datetime="2022-04-11T15:43:30+02:00">2022/04/11</time></a><span class="by-author"> by <span class="author vcard"><a class="url fn n" href="https://vermaden.wordpress.com/author/vermaden/" title="View all posts by vermaden" rel="author">vermaden</a></span></span>.								</footer><!-- .entry-meta -->
+	</article><!-- #post -->
+
+				<nav class="nav-single">
+					<h3 class="assistive-text">Post navigation</h3>
+					<span class="nav-previous"><a href="https://vermaden.wordpress.com/2022/04/04/valuable-news-2022-04-04/" rel="prev"><span class="meta-nav">&larr;</span> Valuable News &#8211;&nbsp;2022/04/04</a></span>
+					<span class="nav-next"><a href="https://vermaden.wordpress.com/2022/04/11/valuable-news-2022-04-11/" rel="next">Valuable News &#8211;&nbsp;2022/04/11 <span class="meta-nav">&rarr;</span></a></span>
+				</nav><!-- .nav-single -->
+
+				
+<div id="comments" class="comments-area">
+
+	
+			<h2 class="comments-title">
+			3 thoughts on &ldquo;<span>Automated Kickstart Install of&nbsp;RHEL/Clones</span>&rdquo;		</h2>
+
+		<ol class="commentlist">
+				<li class="pingback even thread-even depth-1" id="comment-23481">
+		<p>Pingback: <a href="https://www.makemoneyonlinecom.com/servers/2022/04/11/automated-kickstart-install-of-rhel-clones/" class="url" rel="ugc external nofollow">Automated Kickstart Install of RHEL/Clones - makemoneyonlinecom.com</a> </p>
+	</li><!-- #comment-## -->
+	<li class="pingback odd alt thread-odd thread-alt depth-1" id="comment-23482">
+		<p>Pingback: <a href="https://vermaden.wordpress.com/2022/04/11/valuable-news-2022-04-11/" class="url" rel="ugc">Valuable News &#8211; 2022/04/11 | 𝚟𝚎𝚛𝚖𝚊𝚍𝚎𝚗</a> </p>
+	</li><!-- #comment-## -->
+	<li class="pingback even thread-even depth-1" id="comment-23488">
+		<p>Pingback: <a href="https://smrasirdaw.wordpress.com/2022/04/12/automated-kickstart-install-of-rhel-clones/" class="url" rel="ugc external nofollow">Automated Kickstart Install of RHEL/Clones &#8211; Actualidad &#8211; SMR/ASIR/DAW &#8211; by lantolin</a> </p>
+	</li><!-- #comment-## -->
+		</ol><!-- .commentlist -->
+
+		
+		
+	
+		<div id="respond" class="comment-respond">
+		<h3 id="reply-title" class="comment-reply-title">Leave a comment <small><a rel="nofollow" id="cancel-comment-reply-link" href="/2022/04/11/automated-kickstart-install-of-rhel-clones/#respond" style="display:none;">Cancel reply</a></small></h3><form action="https://vermaden.wordpress.com/wp-comments-post.php" method="post" id="commentform" class="comment-form">
+
+
+<div class="comment-form__verbum transparent"></div><div class="verbum-form-meta"><input type='hidden' name='comment_post_ID' value='3881' id='comment_post_ID' />
+<input type='hidden' name='comment_parent' id='comment_parent' value='0' />
+
+			<input type="hidden" name="highlander_comment_nonce" id="highlander_comment_nonce" value="5e3cbc86c9" />
+			<input type="hidden" name="verbum_show_subscription_modal" value="" /></div><p style="display: none;"><input type="hidden" id="akismet_comment_nonce" name="akismet_comment_nonce" value="72562b88eb" /></p><p style="display: none !important;" class="akismet-fields-container" data-prefix="ak_"><label>&#916;<textarea name="ak_hp_textarea" cols="45" rows="8" maxlength="100"></textarea></label><input type="hidden" id="ak_js_1" name="ak_js" value="204"/><script>
+document.getElementById( "ak_js_1" ).setAttribute( "value", ( new Date() ).getTime() );
+</script>
+</p></form>	</div><!-- #respond -->
+	
+</div><!-- #comments .comments-area -->
+
+			
+		</div><!-- #content -->
+	</div><!-- #primary -->
+
+
+		</div><!-- #main .wrapper -->
+	<footer id="colophon" role="contentinfo">
+		<div class="site-info">
+									<a href="https://wordpress.com/?ref=footer_custom_svg" title="Create a website or blog at WordPress.com" rel="nofollow"><svg style="fill: currentColor; position: relative; top: 1px;" width="14px" height="15px" viewBox="0 0 14 15" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" aria-labelledby="title" role="img">
+				<desc id="title">Create a website or blog at WordPress.com</desc>
+				<path d="M12.5225848,4.97949746 C13.0138466,5.87586309 13.2934037,6.90452431 13.2934037,7.99874074 C13.2934037,10.3205803 12.0351007,12.3476807 10.1640538,13.4385638 L12.0862862,7.88081544 C12.4453251,6.98296834 12.5648813,6.26504621 12.5648813,5.62667922 C12.5648813,5.39497674 12.549622,5.17994084 12.5225848,4.97949746 L12.5225848,4.97949746 Z M7.86730089,5.04801561 C8.24619178,5.02808979 8.58760099,4.98823815 8.58760099,4.98823815 C8.9267139,4.94809022 8.88671369,4.44972248 8.54745263,4.46957423 C8.54745263,4.46957423 7.52803983,4.54957381 6.86996227,4.54957381 C6.25158863,4.54957381 5.21247202,4.46957423 5.21247202,4.46957423 C4.87306282,4.44972248 4.83328483,4.96816418 5.17254589,4.98823815 C5.17254589,4.98823815 5.49358462,5.02808979 5.83269753,5.04801561 L6.81314716,7.73459399 L5.43565839,11.8651647 L3.14394256,5.04801561 C3.52312975,5.02808979 3.86416859,4.98823815 3.86416859,4.98823815 C4.20305928,4.94809022 4.16305906,4.44972248 3.82394616,4.46957423 C3.82394616,4.46957423 2.80475558,4.54957381 2.14660395,4.54957381 C2.02852925,4.54957381 1.88934333,4.54668493 1.74156477,4.54194422 C2.86690406,2.83350881 4.80113651,1.70529256 6.99996296,1.70529256 C8.638342,1.70529256 10.1302017,2.33173369 11.2498373,3.35765419 C11.222726,3.35602457 11.1962815,3.35261718 11.1683554,3.35261718 C10.5501299,3.35261718 10.1114609,3.89113285 10.1114609,4.46957423 C10.1114609,4.98823815 10.4107217,5.42705065 10.7296864,5.94564049 C10.969021,6.36482346 11.248578,6.90326506 11.248578,7.68133501 C11.248578,8.21992476 11.0413918,8.84503256 10.7696866,9.71584277 L10.1417574,11.8132391 L7.86730089,5.04801561 Z M6.99996296,14.2927074 C6.38218192,14.2927074 5.78595654,14.2021153 5.22195356,14.0362644 L7.11048207,8.54925635 L9.04486267,13.8491542 C9.05760348,13.8802652 9.07323319,13.9089317 9.08989995,13.9358945 C8.43574834,14.1661896 7.73285573,14.2927074 6.99996296,14.2927074 L6.99996296,14.2927074 Z M0.706448182,7.99874074 C0.706448182,7.08630113 0.902152921,6.22015756 1.25141403,5.43749503 L4.25357806,13.6627848 C2.15393732,12.6427902 0.706448182,10.4898387 0.706448182,7.99874074 L0.706448182,7.99874074 Z M6.99996296,0.999 C3.14016476,0.999 0,4.13905746 0,7.99874074 C0,11.8585722 3.14016476,14.999 6.99996296,14.999 C10.8596871,14.999 14,11.8585722 14,7.99874074 C14,4.13905746 10.8596871,0.999 6.99996296,0.999 L6.99996296,0.999 Z" id="wordpress-logo-simplified-cmyk" stroke="none" fill=“currentColor” fill-rule="evenodd"></path>
+			</svg></a>
+		</div><!-- .site-info -->
+	</footer><!-- #colophon -->
+</div><!-- #page -->
+
+<!--  -->
+<script type="speculationrules">
+{"prefetch":[{"source":"document","where":{"and":[{"href_matches":"/*"},{"not":{"href_matches":["/wp-*.php","/wp-admin/*","/files/*","/wp-content/*","/wp-content/plugins/*","/wp-content/themes/pub/twentytwelve/*","/*\\?(.+)"]}},{"not":{"selector_matches":"a[rel~=\"nofollow\"]"}},{"not":{"selector_matches":".no-prefetch, .no-prefetch a"}}]},"eagerness":"conservative"}]}
+</script>
+<script id="grofiles-cards-js" src="//0.gravatar.com/js/hovercards/hovercards.min.js?ver=202627d1133547e8a1f2801609f51cef12522abe7f6647d869e9fbc974fe356a37e613"></script>
+<script id="wpgroho-js-extra">
+var WPGroHo = {"my_hash":""};
+//# sourceURL=wpgroho-js-extra
+</script>
+<script crossorigin='anonymous' type='text/javascript'  src='/wp-content/mu-plugins/gravatar-hovercards/wpgroho.js?m=1610363240i'></script>
+
+	<script>
+		// Initialize and attach hovercards to all gravatars
+		( function() {
+			function init() {
+				if ( typeof Gravatar === 'undefined' ) {
+					return;
+				}
+
+				if ( typeof Gravatar.init !== 'function' ) {
+					return;
+				}
+
+				Gravatar.profile_cb = function ( hash, id ) {
+					WPGroHo.syncProfileData( hash, id );
+				};
+
+				Gravatar.my_hash = WPGroHo.my_hash;
+				Gravatar.init(
+					'body',
+					'#wp-admin-bar-my-account',
+					{
+						i18n: {
+							'Edit your profile →': 'Edit your profile →',
+							'View profile →': 'View profile →',
+							'Contact': 'Contact',
+							'Send money': 'Send money',
+							'Sorry, we are unable to load this Gravatar profile.': 'Sorry, we are unable to load this Gravatar profile.',
+							'Gravatar not found.': 'Gravatar not found.',
+							'Too Many Requests.': 'Too Many Requests.',
+							'Internal Server Error.': 'Internal Server Error.',
+							'Is this you?': 'Is this you?',
+							'Claim your free profile.': 'Claim your free profile.',
+							'Email': 'Email',
+							'Home Phone': 'Home Phone',
+							'Work Phone': 'Work Phone',
+							'Cell Phone': 'Cell Phone',
+							'Contact Form': 'Contact Form',
+							'Calendar': 'Calendar',
+						},
+					}
+				);
+			}
+
+			if ( document.readyState !== 'loading' ) {
+				init();
+			} else {
+				document.addEventListener( 'DOMContentLoaded', init );
+			}
+		} )();
+	</script>
+
+		<div style="display:none">
+	</div>
+		<div id="actionbar" dir="ltr" style="display: none;"
+			class="actnbr-pub-twentytwelve actnbr-has-follow actnbr-has-actions">
+		<ul>
+								<li class="actnbr-btn actnbr-hidden">
+						<a class="actnbr-action actnbr-actn-comment" href="https://vermaden.wordpress.com/2022/04/11/automated-kickstart-install-of-rhel-clones/#comments">
+							<svg class="gridicon gridicons-comment" height="20" width="20" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><g><path d="M12 16l-5 5v-5H5c-1.1 0-2-.9-2-2V5c0-1.1.9-2 2-2h14c1.1 0 2 .9 2 2v9c0 1.1-.9 2-2 2h-7z"/></g></svg>							<span>Comment						</span>
+						</a>
+					</li>
+									<li class="actnbr-btn actnbr-hidden">
+						<a class="actnbr-action actnbr-actn-reblog" href="">
+							<svg class="gridicon gridicons-reblog" height="20" width="20" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><g><path d="M22.086 9.914L20 7.828V18c0 1.105-.895 2-2 2h-7v-2h7V7.828l-2.086 2.086L14.5 8.5 19 4l4.5 4.5-1.414 1.414zM6 16.172V6h7V4H6c-1.105 0-2 .895-2 2v10.172l-2.086-2.086L.5 15.5 5 20l4.5-4.5-1.414-1.414L6 16.172z"/></g></svg><span>Reblog</span>
+						</a>
+					</li>
+									<li class="actnbr-btn actnbr-hidden">
+								<a class="actnbr-action actnbr-actn-follow " href="">
+			<svg class="gridicon" height="20" width="20" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path clip-rule="evenodd" d="m4 4.5h12v6.5h1.5v-6.5-1.5h-1.5-12-1.5v1.5 10.5c0 1.1046.89543 2 2 2h7v-1.5h-7c-.27614 0-.5-.2239-.5-.5zm10.5 2h-9v1.5h9zm-5 3h-4v1.5h4zm3.5 1.5h-1v1h1zm-1-1.5h-1.5v1.5 1 1.5h1.5 1 1.5v-1.5-1-1.5h-1.5zm-2.5 2.5h-4v1.5h4zm6.5 1.25h1.5v2.25h2.25v1.5h-2.25v2.25h-1.5v-2.25h-2.25v-1.5h2.25z"  fill-rule="evenodd"></path></svg>
+			<span>Subscribe</span>
+		</a>
+		<a class="actnbr-action actnbr-actn-following  no-display" href="">
+			<svg class="gridicon" height="20" width="20" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path fill-rule="evenodd" clip-rule="evenodd" d="M16 4.5H4V15C4 15.2761 4.22386 15.5 4.5 15.5H11.5V17H4.5C3.39543 17 2.5 16.1046 2.5 15V4.5V3H4H16H17.5V4.5V12.5H16V4.5ZM5.5 6.5H14.5V8H5.5V6.5ZM5.5 9.5H9.5V11H5.5V9.5ZM12 11H13V12H12V11ZM10.5 9.5H12H13H14.5V11V12V13.5H13H12H10.5V12V11V9.5ZM5.5 12H9.5V13.5H5.5V12Z" fill="#008A20"></path><path class="following-icon-tick" d="M13.5 16L15.5 18L19 14.5" stroke="#008A20" stroke-width="1.5"></path></svg>
+			<span>Subscribed</span>
+		</a>
+							<div class="actnbr-popover tip tip-top-left actnbr-notice" id="follow-bubble">
+							<div class="tip-arrow"></div>
+							<div class="tip-inner actnbr-follow-bubble">
+															<ul>
+											<li class="actnbr-sitename">
+			<a href="https://vermaden.wordpress.com">
+				<img loading='lazy' alt='' src='https://vermaden.wordpress.com/wp-content/uploads/2024/11/cropped-avatar-big-static-noborder-small.png?w=50' srcset='https://vermaden.wordpress.com/wp-content/uploads/2024/11/cropped-avatar-big-static-noborder-small.png?w=50 1x, https://vermaden.wordpress.com/wp-content/uploads/2024/11/cropped-avatar-big-static-noborder-small.png?w=75 1.5x, https://vermaden.wordpress.com/wp-content/uploads/2024/11/cropped-avatar-big-static-noborder-small.png?w=100 2x, https://vermaden.wordpress.com/wp-content/uploads/2024/11/cropped-avatar-big-static-noborder-small.png?w=150 3x, https://vermaden.wordpress.com/wp-content/uploads/2024/11/cropped-avatar-big-static-noborder-small.png?w=200 4x' class='avatar avatar-50' height='50' width='50' />				𝚟𝚎𝚛𝚖𝚊𝚍𝚎𝚗			</a>
+		</li>
+										<div class="actnbr-message no-display"></div>
+									<form method="post" action="https://subscribe.wordpress.com" accept-charset="utf-8" style="display: none;">
+																						<div class="actnbr-follow-count">Join 266 other subscribers</div>
+																					<div>
+										<input type="email" name="email" placeholder="Enter your email address" class="actnbr-email-field" aria-label="Enter your email address" />
+										</div>
+										<input type="hidden" name="action" value="subscribe" />
+										<input type="hidden" name="blog_id" value="141813113" />
+										<input type="hidden" name="source" value="https://vermaden.wordpress.com/2022/04/11/automated-kickstart-install-of-rhel-clones/" />
+										<input type="hidden" name="sub-type" value="actionbar-follow" />
+										<input type="hidden" id="_wpnonce" name="_wpnonce" value="294f17b6c7" />										<div class="actnbr-button-wrap">
+											<button type="submit" value="Sign me up">
+												Sign me up											</button>
+										</div>
+									</form>
+									<li class="actnbr-login-nudge">
+										<div>
+											Already have a WordPress.com account? <a href="https://wordpress.com/log-in?redirect_to=https%3A%2F%2Fvermaden.wordpress.com%2F2022%2F04%2F11%2Fautomated-kickstart-install-of-rhel-clones%2F&#038;signup_flow=account">Log in now.</a>										</div>
+									</li>
+								</ul>
+															</div>
+						</div>
+					</li>
+							<li class="actnbr-ellipsis actnbr-hidden">
+				<svg class="gridicon gridicons-ellipsis" height="24" width="24" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><g><path d="M7 12c0 1.104-.896 2-2 2s-2-.896-2-2 .896-2 2-2 2 .896 2 2zm12-2c-1.104 0-2 .896-2 2s.896 2 2 2 2-.896 2-2-.896-2-2-2zm-7 0c-1.104 0-2 .896-2 2s.896 2 2 2 2-.896 2-2-.896-2-2-2z"/></g></svg>				<div class="actnbr-popover tip tip-top-left actnbr-more">
+					<div class="tip-arrow"></div>
+					<div class="tip-inner">
+						<ul>
+								<li class="actnbr-sitename">
+			<a href="https://vermaden.wordpress.com">
+				<img loading='lazy' alt='' src='https://vermaden.wordpress.com/wp-content/uploads/2024/11/cropped-avatar-big-static-noborder-small.png?w=50' srcset='https://vermaden.wordpress.com/wp-content/uploads/2024/11/cropped-avatar-big-static-noborder-small.png?w=50 1x, https://vermaden.wordpress.com/wp-content/uploads/2024/11/cropped-avatar-big-static-noborder-small.png?w=75 1.5x, https://vermaden.wordpress.com/wp-content/uploads/2024/11/cropped-avatar-big-static-noborder-small.png?w=100 2x, https://vermaden.wordpress.com/wp-content/uploads/2024/11/cropped-avatar-big-static-noborder-small.png?w=150 3x, https://vermaden.wordpress.com/wp-content/uploads/2024/11/cropped-avatar-big-static-noborder-small.png?w=200 4x' class='avatar avatar-50' height='50' width='50' />				𝚟𝚎𝚛𝚖𝚊𝚍𝚎𝚗			</a>
+		</li>
+								<li class="actnbr-folded-follow">
+										<a class="actnbr-action actnbr-actn-follow " href="">
+			<svg class="gridicon" height="20" width="20" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path clip-rule="evenodd" d="m4 4.5h12v6.5h1.5v-6.5-1.5h-1.5-12-1.5v1.5 10.5c0 1.1046.89543 2 2 2h7v-1.5h-7c-.27614 0-.5-.2239-.5-.5zm10.5 2h-9v1.5h9zm-5 3h-4v1.5h4zm3.5 1.5h-1v1h1zm-1-1.5h-1.5v1.5 1 1.5h1.5 1 1.5v-1.5-1-1.5h-1.5zm-2.5 2.5h-4v1.5h4zm6.5 1.25h1.5v2.25h2.25v1.5h-2.25v2.25h-1.5v-2.25h-2.25v-1.5h2.25z"  fill-rule="evenodd"></path></svg>
+			<span>Subscribe</span>
+		</a>
+		<a class="actnbr-action actnbr-actn-following  no-display" href="">
+			<svg class="gridicon" height="20" width="20" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path fill-rule="evenodd" clip-rule="evenodd" d="M16 4.5H4V15C4 15.2761 4.22386 15.5 4.5 15.5H11.5V17H4.5C3.39543 17 2.5 16.1046 2.5 15V4.5V3H4H16H17.5V4.5V12.5H16V4.5ZM5.5 6.5H14.5V8H5.5V6.5ZM5.5 9.5H9.5V11H5.5V9.5ZM12 11H13V12H12V11ZM10.5 9.5H12H13H14.5V11V12V13.5H13H12H10.5V12V11V9.5ZM5.5 12H9.5V13.5H5.5V12Z" fill="#008A20"></path><path class="following-icon-tick" d="M13.5 16L15.5 18L19 14.5" stroke="#008A20" stroke-width="1.5"></path></svg>
+			<span>Subscribed</span>
+		</a>
+								</li>
+														<li class="actnbr-signup"><a href="https://wordpress.com/start/">Sign up</a></li>
+							<li class="actnbr-login"><a href="https://wordpress.com/log-in?redirect_to=https%3A%2F%2Fvermaden.wordpress.com%2F2022%2F04%2F11%2Fautomated-kickstart-install-of-rhel-clones%2F&#038;signup_flow=account">Log in</a></li>
+																<li class="actnbr-shortlink">
+										<a href="https://wp.me/p9B24h-10B">
+											<span class="actnbr-shortlink__text">Copy shortlink</span>
+											<span class="actnbr-shortlink__icon"><svg class="gridicon gridicons-checkmark" height="16" width="16" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><g><path d="M9 19.414l-6.707-6.707 1.414-1.414L9 16.586 20.293 5.293l1.414 1.414"/></g></svg></span>
+										</a>
+									</li>
+																<li class="flb-report">
+									<a href="https://wordpress.com/abuse/?report_url=https://vermaden.wordpress.com/2022/04/11/automated-kickstart-install-of-rhel-clones/" target="_blank" rel="noopener noreferrer">
+										Report this content									</a>
+								</li>
+															<li class="actnbr-reader">
+									<a href="https://wordpress.com/reader/blogs/141813113/posts/3881">
+										View post in Reader									</a>
+								</li>
+															<li class="actnbr-subs">
+									<a href="https://subscribe.wordpress.com/">Manage subscriptions</a>
+								</li>
+																<li class="actnbr-fold"><a href="">Collapse this bar</a></li>
+														</ul>
+					</div>
+				</div>
+			</li>
+		</ul>
+	</div>
+	
+<script>
+window.addEventListener( "DOMContentLoaded", function( event ) {
+	var link = document.createElement( "link" );
+	link.href = "/wp-content/mu-plugins/actionbar/actionbar.css?v=20250116";
+	link.type = "text/css";
+	link.rel = "stylesheet";
+	document.head.appendChild( link );
+
+	var script = document.createElement( "script" );
+	script.src = "/wp-content/mu-plugins/actionbar/actionbar.js?v=20250204";
+	document.body.appendChild( script );
+} );
+</script>
+
+			<div id="jp-carousel-loading-overlay">
+			<div id="jp-carousel-loading-wrapper">
+				<span id="jp-carousel-library-loading"><svg class="jetpack-spinner" width="40" height="40" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false"><circle cx="50" cy="50" r="46" fill="none" stroke="#ddd" stroke-width="8"/><path d="M 50 4 A 46 46 0 0 1 96 50" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round"><animateTransform attributeName="transform" type="rotate" dur="1.4s" from="0 50 50" to="360 50 50" repeatCount="indefinite"/></path></svg></span>
+			</div>
+		</div>
+		<div class="jp-carousel-overlay" style="display: none;">
+
+		<div class="jp-carousel-container">
+			<!-- The Carousel Swiper -->
+			<div
+				class="jp-carousel-wrap swiper jp-carousel-swiper-container jp-carousel-transitions"
+				itemscope
+				itemtype="https://schema.org/ImageGallery">
+				<div class="jp-carousel swiper-wrapper"></div>
+				<div class="jp-swiper-button-prev swiper-button-prev">
+					<svg width="25" height="24" viewBox="0 0 25 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+						<mask id="maskPrev" mask-type="alpha" maskUnits="userSpaceOnUse" x="8" y="6" width="9" height="12">
+							<path d="M16.2072 16.59L11.6496 12L16.2072 7.41L14.8041 6L8.8335 12L14.8041 18L16.2072 16.59Z" fill="white"/>
+						</mask>
+						<g mask="url(#maskPrev)">
+							<rect x="0.579102" width="23.8823" height="24" fill="#FFFFFF"/>
+						</g>
+					</svg>
+				</div>
+				<div class="jp-swiper-button-next swiper-button-next">
+					<svg width="25" height="24" viewBox="0 0 25 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+						<mask id="maskNext" mask-type="alpha" maskUnits="userSpaceOnUse" x="8" y="6" width="8" height="12">
+							<path d="M8.59814 16.59L13.1557 12L8.59814 7.41L10.0012 6L15.9718 12L10.0012 18L8.59814 16.59Z" fill="white"/>
+						</mask>
+						<g mask="url(#maskNext)">
+							<rect x="0.34375" width="23.8822" height="24" fill="#FFFFFF"/>
+						</g>
+					</svg>
+				</div>
+			</div>
+			<!-- The main close buton -->
+			<div class="jp-carousel-close-hint">
+				<svg width="25" height="24" viewBox="0 0 25 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+					<mask id="maskClose" mask-type="alpha" maskUnits="userSpaceOnUse" x="5" y="5" width="15" height="14">
+						<path d="M19.3166 6.41L17.9135 5L12.3509 10.59L6.78834 5L5.38525 6.41L10.9478 12L5.38525 17.59L6.78834 19L12.3509 13.41L17.9135 19L19.3166 17.59L13.754 12L19.3166 6.41Z" fill="white"/>
+					</mask>
+					<g mask="url(#maskClose)">
+						<rect x="0.409668" width="23.8823" height="24" fill="#FFFFFF"/>
+					</g>
+				</svg>
+			</div>
+			<!-- Image info, comments and meta -->
+			<div class="jp-carousel-info">
+				<div class="jp-carousel-info-footer">
+					<div class="jp-carousel-pagination-container">
+						<div class="jp-swiper-pagination swiper-pagination"></div>
+						<div class="jp-carousel-pagination"></div>
+					</div>
+					<div class="jp-carousel-photo-title-container">
+						<h2 class="jp-carousel-photo-caption"></h2>
+					</div>
+					<div class="jp-carousel-photo-icons-container">
+						<a href="#" class="jp-carousel-icon-btn jp-carousel-icon-info" aria-label="Toggle photo metadata visibility">
+							<span class="jp-carousel-icon">
+								<svg width="25" height="24" viewBox="0 0 25 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+									<mask id="maskInfo" mask-type="alpha" maskUnits="userSpaceOnUse" x="2" y="2" width="21" height="20">
+										<path fill-rule="evenodd" clip-rule="evenodd" d="M12.7537 2C7.26076 2 2.80273 6.48 2.80273 12C2.80273 17.52 7.26076 22 12.7537 22C18.2466 22 22.7046 17.52 22.7046 12C22.7046 6.48 18.2466 2 12.7537 2ZM11.7586 7V9H13.7488V7H11.7586ZM11.7586 11V17H13.7488V11H11.7586ZM4.79292 12C4.79292 16.41 8.36531 20 12.7537 20C17.142 20 20.7144 16.41 20.7144 12C20.7144 7.59 17.142 4 12.7537 4C8.36531 4 4.79292 7.59 4.79292 12Z" fill="white"/>
+									</mask>
+									<g mask="url(#maskInfo)">
+										<rect x="0.8125" width="23.8823" height="24" fill="#FFFFFF"/>
+									</g>
+								</svg>
+							</span>
+						</a>
+												<a href="#" class="jp-carousel-icon-btn jp-carousel-icon-comments" aria-label="Toggle photo comments visibility">
+							<span class="jp-carousel-icon">
+								<svg width="25" height="24" viewBox="0 0 25 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+									<mask id="maskComments" mask-type="alpha" maskUnits="userSpaceOnUse" x="2" y="2" width="21" height="20">
+										<path fill-rule="evenodd" clip-rule="evenodd" d="M4.3271 2H20.2486C21.3432 2 22.2388 2.9 22.2388 4V16C22.2388 17.1 21.3432 18 20.2486 18H6.31729L2.33691 22V4C2.33691 2.9 3.2325 2 4.3271 2ZM6.31729 16H20.2486V4H4.3271V18L6.31729 16Z" fill="white"/>
+									</mask>
+									<g mask="url(#maskComments)">
+										<rect x="0.34668" width="23.8823" height="24" fill="#FFFFFF"/>
+									</g>
+								</svg>
+
+								<span class="jp-carousel-has-comments-indicator" aria-label="This image has comments."></span>
+							</span>
+						</a>
+											</div>
+				</div>
+				<div class="jp-carousel-info-extra">
+					<div class="jp-carousel-info-content-wrapper">
+						<div class="jp-carousel-photo-title-container">
+							<h2 class="jp-carousel-photo-title"></h2>
+						</div>
+						<div class="jp-carousel-comments-wrapper">
+															<div id="jp-carousel-comments-loading">
+									<span>Loading Comments...</span>
+								</div>
+								<div class="jp-carousel-comments"></div>
+								<div id="jp-carousel-comment-form-container">
+									<span id="jp-carousel-comment-form-spinner"><svg class="jetpack-spinner" width="20" height="20" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false"><circle cx="50" cy="50" r="46" fill="none" stroke="#ddd" stroke-width="8"/><path d="M 50 4 A 46 46 0 0 1 96 50" fill="none" stroke="currentColor" stroke-width="8" stroke-linecap="round"><animateTransform attributeName="transform" type="rotate" dur="1.4s" from="0 50 50" to="360 50 50" repeatCount="indefinite"/></path></svg></span>
+									<div id="jp-carousel-comment-post-results"></div>
+																														<form id="jp-carousel-comment-form">
+												<label for="jp-carousel-comment-form-comment-field" class="screen-reader-text">Write a Comment...</label>
+												<textarea
+													name="comment"
+													class="jp-carousel-comment-form-field jp-carousel-comment-form-textarea"
+													id="jp-carousel-comment-form-comment-field"
+													placeholder="Write a Comment..."
+												></textarea>
+												<div id="jp-carousel-comment-form-submit-and-info-wrapper">
+													<div id="jp-carousel-comment-form-commenting-as">
+																													<fieldset>
+																<label for="jp-carousel-comment-form-email-field">Email (Required)</label>
+																<input type="text" name="email" class="jp-carousel-comment-form-field jp-carousel-comment-form-text-field" id="jp-carousel-comment-form-email-field" />
+															</fieldset>
+															<fieldset>
+																<label for="jp-carousel-comment-form-author-field">Name (Required)</label>
+																<input type="text" name="author" class="jp-carousel-comment-form-field jp-carousel-comment-form-text-field" id="jp-carousel-comment-form-author-field" />
+															</fieldset>
+															<fieldset>
+																<label for="jp-carousel-comment-form-url-field">Website</label>
+																<input type="text" name="url" class="jp-carousel-comment-form-field jp-carousel-comment-form-text-field" id="jp-carousel-comment-form-url-field" />
+															</fieldset>
+																											</div>
+													<input
+														type="submit"
+														name="submit"
+														class="jp-carousel-comment-form-button"
+														id="jp-carousel-comment-form-button-submit"
+														value="Post Comment" />
+												</div>
+											</form>
+																											</div>
+													</div>
+						<div class="jp-carousel-image-meta">
+							<div class="jp-carousel-title-and-caption">
+								<div class="jp-carousel-photo-info">
+									<h3 class="jp-carousel-caption" itemprop="caption description"></h3>
+								</div>
+
+								<div class="jp-carousel-photo-description"></div>
+							</div>
+							<ul class="jp-carousel-image-exif" style="display: none;"></ul>
+							<a class="jp-carousel-image-download" href="#" target="_blank" style="display: none;">
+								<svg width="25" height="24" viewBox="0 0 25 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+									<mask id="mask0" mask-type="alpha" maskUnits="userSpaceOnUse" x="3" y="3" width="19" height="18">
+										<path fill-rule="evenodd" clip-rule="evenodd" d="M5.84615 5V19H19.7775V12H21.7677V19C21.7677 20.1 20.8721 21 19.7775 21H5.84615C4.74159 21 3.85596 20.1 3.85596 19V5C3.85596 3.9 4.74159 3 5.84615 3H12.8118V5H5.84615ZM14.802 5V3H21.7677V10H19.7775V6.41L9.99569 16.24L8.59261 14.83L18.3744 5H14.802Z" fill="white"/>
+									</mask>
+									<g mask="url(#mask0)">
+										<rect x="0.870605" width="23.8823" height="24" fill="#FFFFFF"/>
+									</g>
+								</svg>
+								<span class="jp-carousel-download-text"></span>
+							</a>
+							<div class="jp-carousel-image-map" style="display: none;"></div>
+						</div>
+					</div>
+				</div>
+			</div>
+		</div>
+
+		</div>
+		
+	<script type="text/javascript">
+		window.WPCOM_sharing_counts = {"https://vermaden.wordpress.com/2022/04/11/automated-kickstart-install-of-rhel-clones/":3881};
+	</script>
+				
+	<script type="text/javascript">
+		(function () {
+			var wpcom_reblog = {
+				source: 'toolbar',
+
+				toggle_reblog_box_flair: function (obj_id, post_id) {
+
+					// Go to site selector. This will redirect to their blog if they only have one.
+					const postEndpoint = `https://wordpress.com/post`;
+
+					// Ideally we would use the permalink here, but fortunately this will be replaced with the 
+					// post permalink in the editor.
+					const originalURL = `${ document.location.href }?page_id=${ post_id }`; 
+					
+					const url =
+						postEndpoint +
+						'?url=' +
+						encodeURIComponent( originalURL ) +
+						'&is_post_share=true' +
+						'&v=5';
+
+					const redirect = function () {
+						if (
+							! window.open( url, '_blank' )
+						) {
+							location.href = url;
+						}
+					};
+
+					if ( /Firefox/.test( navigator.userAgent ) ) {
+						setTimeout( redirect, 0 );
+					} else {
+						redirect();
+					}
+				},
+			};
+
+			window.wpcom_reblog = wpcom_reblog;
+		})();
+	</script>
+<script crossorigin='anonymous' type='text/javascript'  src='/wp-content/mu-plugins/likes/queuehandler.js?m=1741961244i'></script>
+<script id="wp-hooks-js" src="/wp-content/plugins/gutenberg-core/v23.4.0/build/scripts/hooks/index.min.js?m=1781748289i&#038;ver=7496969728ca0f95732d"></script>
+<script id="wp-i18n-js" src="/wp-content/plugins/gutenberg-core/v23.4.0/build/scripts/i18n/index.min.js?m=1781748289i&#038;ver=125448662852c5e18937"></script>
+<script id="wp-i18n-js-after">
+wp.i18n.setLocaleData( { 'text direction\u0004ltr': [ 'ltr' ] } );
+//# sourceURL=wp-i18n-js-after
+</script>
+<script id="verbum-settings-js-before">
+window.VerbumComments = {"Log in or provide your name and email to leave a reply.":"Log in or provide your name and email to leave a reply.","Log in or provide your name and email to leave a comment.":"Log in or provide your name and email to leave a comment.","Receive web and mobile notifications for posts on this site.":"Receive web and mobile notifications for posts on this site.","Name":"Name","Email (address never made public)":"Email (address never made public)","Website (optional)":"Website (optional)","Leave a reply. (log in optional)":"Leave a reply. (log in optional)","Leave a comment. (log in optional)":"Leave a comment. (log in optional)","Log in to leave a reply.":"Log in to leave a reply.","Log in to leave a comment.":"Log in to leave a comment.","Logged in via %s":"Logged in via %s","Log out":"Log out","Email":"Email","(Address never made public)":"(Address never made public)","Instantly":"Instantly","Daily":"Daily","Reply":"Reply","Comment":"Comment","WordPress":"WordPress","Weekly":"Weekly","Notify me of new posts":"Notify me of new posts","Email me new posts":"Email me new posts","Email me new comments":"Email me new comments","Cancel":"Cancel","Write a comment...":"Write a comment...","Write a reply...":"Write a reply...","Website":"Website","Optional":"Optional","We'll keep you in the loop!":"We'll keep you in the loop!","Loading your comment...":"Loading your comment...","Discover more from":"Discover more from \ud835\ude9f\ud835\ude8e\ud835\ude9b\ud835\ude96\ud835\ude8a\ud835\ude8d\ud835\ude8e\ud835\ude97","Subscribe now to keep reading and get access to the full archive.":"Subscribe now to keep reading and get access to the full archive.","Continue reading":"Continue reading","Never miss a beat!":"Never miss a beat!","Interested in getting blog post updates? Simply click the button below to stay in the loop!":"Interested in getting blog post updates? Simply click the button below to stay in the loop!","Enter your email address":"Enter your email address","Subscribe":"Subscribe","Comment sent successfully":"Comment sent successfully","Save my name, email, and website in this browser for the next time I comment.":"Save my name, email, and website in this browser for the next time I comment.","hovercardi18n":{"Edit your profile \u2192":"Edit your profile \u2192","View profile \u2192":"View profile \u2192","Contact":"Contact","Send money":"Send money","Gravatar not found.":"Gravatar not found.","This profile is private.":"This profile is private.","Too Many Requests.":"Too Many Requests.","Internal Server Error.":"Internal Server Error.","Sorry, we are unable to load this Gravatar profile.":"Sorry, we are unable to load this Gravatar profile."},"siteId":141813113,"postId":3881,"mustLogIn":false,"requireNameEmail":true,"commentRegistration":false,"connectURL":"https://vermaden.wordpress.com/public.api/connect/?action=request\u0026from_comments=yes","logoutURL":"https://vermaden.wordpress.com/wp-login.php?action=logout\u0026_wpnonce=9516ba8b7c","homeURL":"https://vermaden.wordpress.com/","subscribeToBlog":true,"subscribeToComment":true,"isJetpackCommentsLoggedIn":false,"jetpackUsername":"","jetpackUserId":0,"jetpackSignature":"","jetpackAvatar":"https://0.gravatar.com/avatar/?s=96\u0026amp;d=identicon\u0026amp;r=G","enableBlocks":true,"enableSubscriptionModal":true,"currentLocale":"en","isJetpackComments":false,"allowedBlocks":["core/paragraph","core/list","core/code","core/list-item","core/quote","core/image","core/embed","core/quote","core/code"],"embedNonce":"0950464fcf","verbumBundleUrl":"/wp-content/mu-plugins/jetpack-mu-wpcom-plugin/sun/jetpack_vendor/automattic/jetpack-mu-wpcom/src/features/verbum-comments/dist/index.js","isRTL":false,"vbeCacheBuster":1771405207,"iframeUniqueId":0,"colorScheme":false}
+//# sourceURL=verbum-settings-js-before
+</script>
+<script data-wp-strategy="defer" defer id="verbum-dynamic-loader-js" src="/wp-content/mu-plugins/jetpack-mu-wpcom-plugin/sun/jetpack_vendor/automattic/jetpack-mu-wpcom/src/build/verbum-comments/assets/dynamic-loader.js?m=1772522099i&#038;minify=false&#038;ver=8b5296f9195db92c42e4"></script>
+<script id="comment-like-js-extra">
+var comment_like_text = {"loading":"Loading...","swipeUrl":"https://s0.wp.com/wp-content/mu-plugins/comment-likes/js/lib/swipe.js?m=1382645497i&amp;ver=20131008"};
+//# sourceURL=comment-like-js-extra
+</script>
+<script id="jetpack-carousel-js-extra">
+var jetpackSwiperLibraryPath = {"url":"/wp-content/mu-plugins/jetpack-plugin/sun/_inc/blocks/swiper.js"};
+var jetpackCarouselStrings = {"widths":[370,700,1000,1200,1400,2000],"is_logged_in":"","lang":"en","ajaxurl":"https://vermaden.wordpress.com/wp-admin/admin-ajax.php","nonce":"dca0c7c1b1","display_exif":"1","display_comments":"1","single_image_gallery":"1","single_image_gallery_media_file":"","background_color":"black","comment":"Comment","post_comment":"Post Comment","write_comment":"Write a Comment...","loading_comments":"Loading Comments...","image_label":"Open image in full-screen.","download_original":"View full size \u003Cspan class=\"photo-size\"\u003E{0}\u003Cspan class=\"photo-size-times\"\u003E\u00d7\u003C/span\u003E{1}\u003C/span\u003E","no_comment_text":"Please be sure to submit some text with your comment.","no_comment_email":"Please provide an email address to comment.","no_comment_author":"Please provide your name to comment.","comment_post_error":"Sorry, but there was an error posting your comment. Please try again later.","comment_approved":"Your comment was approved.","comment_unapproved":"Your comment is in moderation.","camera":"Camera","aperture":"Aperture","shutter_speed":"Shutter Speed","focal_length":"Focal Length","copyright":"Copyright","comment_registration":"0","require_name_email":"1","login_url":"https://vermaden.wordpress.com/wp-login.php?redirect_to=https%3A%2F%2Fvermaden.wordpress.com%2F2022%2F04%2F11%2Fautomated-kickstart-install-of-rhel-clones%2F","blog_id":"141813113","meta_data":["camera","aperture","shutter_speed","focal_length","copyright"],"stats_query_args":"blog=141813113&v=wpcom&tz=2&user_id=0&subd=vermaden","is_public":"1"};
+//# sourceURL=jetpack-carousel-js-extra
+</script>
+<script id="sharing-js-js-extra">
+var sharing_js_options = {"lang":"en","counts":"1","is_stats_active":"1"};
+//# sourceURL=sharing-js-js-extra
+</script>
+<script id="jetpack-script-data-js-before">
+window.JetpackScriptData = {"site":{"host":"wpcom","is_wpcom_platform":true}};
+//# sourceURL=jetpack-script-data-js-before
+</script>
+<script crossorigin='anonymous' type='text/javascript'  src='/_static/??-eJydUFtuwyAQvFAxsZoq+al6lGgDxFmbl9jFlm9fkhjLTauq6g+C2XkwK6coVPBsPEuXRbS5Q09SBecKJCwOhmT/BDQ9vcgiRK9s1l8JyUQ7Nw59JVV3vhpXqDGfJU8FmMtpR3PTehixA8bwTbT5Um84ghpEgaZY0paBpOzr7DQar0OSkDk4YEa1qoDIMMlzRqtXkFTCyEIDwx+CN3mn0nzxUpBCJmNXWgV+2sHGFQYkZ1i8NruHXQUu6U7Wv2hrxGMRT89/N6ErJKNB6/l+Rd8tFT7ce3s47t7a/fHQ9p8Eb9OF'></script>
+<script id="sharing-js-js-after">
+var windowOpen;
+			( function () {
+				function matches( el, sel ) {
+					return !! (
+						el.matches && el.matches( sel ) ||
+						el.msMatchesSelector && el.msMatchesSelector( sel )
+					);
+				}
+
+				document.body.addEventListener( 'click', function ( event ) {
+					if ( ! event.target ) {
+						return;
+					}
+
+					var el;
+					if ( matches( event.target, 'a.share-twitter' ) ) {
+						el = event.target;
+					} else if ( event.target.parentNode && matches( event.target.parentNode, 'a.share-twitter' ) ) {
+						el = event.target.parentNode;
+					}
+
+					if ( el ) {
+						event.preventDefault();
+
+						// If there's another sharing window open, close it.
+						if ( typeof windowOpen !== 'undefined' ) {
+							windowOpen.close();
+						}
+						windowOpen = window.open( el.getAttribute( 'href' ), 'wpcomtwitter', 'menubar=1,resizable=1,width=600,height=350' );
+						return false;
+					}
+				} );
+			} )();
+var windowOpen;
+			( function () {
+				function matches( el, sel ) {
+					return !! (
+						el.matches && el.matches( sel ) ||
+						el.msMatchesSelector && el.msMatchesSelector( sel )
+					);
+				}
+
+				document.body.addEventListener( 'click', function ( event ) {
+					if ( ! event.target ) {
+						return;
+					}
+
+					var el;
+					if ( matches( event.target, 'a.share-facebook' ) ) {
+						el = event.target;
+					} else if ( event.target.parentNode && matches( event.target.parentNode, 'a.share-facebook' ) ) {
+						el = event.target.parentNode;
+					}
+
+					if ( el ) {
+						event.preventDefault();
+
+						// If there's another sharing window open, close it.
+						if ( typeof windowOpen !== 'undefined' ) {
+							windowOpen.close();
+						}
+						windowOpen = window.open( el.getAttribute( 'href' ), 'wpcomfacebook', 'menubar=1,resizable=1,width=600,height=400' );
+						return false;
+					}
+				} );
+			} )();
+//# sourceURL=sharing-js-js-after
+</script>
+<script id="wp-emoji-settings" type="application/json">
+{"baseUrl":"https://s0.wp.com/wp-content/mu-plugins/wpcom-smileys/twemoji/2/72x72/","ext":".png","svgUrl":"https://s0.wp.com/wp-content/mu-plugins/wpcom-smileys/twemoji/2/svg/","svgExt":".svg","source":{"concatemoji":"/wp-includes/js/wp-emoji-release.min.js?m=1764078722i&ver=7.0-RC4-62382"}}
+</script>
+<script type="module">
+/*! This file is auto-generated */
+const a=JSON.parse(document.getElementById("wp-emoji-settings").textContent),o=(window._wpemojiSettings=a,"wpEmojiSettingsSupports"),s=["flag","emoji"];function i(e){try{var t={supportTests:e,timestamp:(new Date).valueOf()};sessionStorage.setItem(o,JSON.stringify(t))}catch(e){}}function c(e,t,n){e.clearRect(0,0,e.canvas.width,e.canvas.height),e.fillText(t,0,0);t=new Uint32Array(e.getImageData(0,0,e.canvas.width,e.canvas.height).data);e.clearRect(0,0,e.canvas.width,e.canvas.height),e.fillText(n,0,0);const a=new Uint32Array(e.getImageData(0,0,e.canvas.width,e.canvas.height).data);return t.every((e,t)=>e===a[t])}function p(e,t){e.clearRect(0,0,e.canvas.width,e.canvas.height),e.fillText(t,0,0);var n=e.getImageData(16,16,1,1);for(let e=0;e<n.data.length;e++)if(0!==n.data[e])return!1;return!0}function u(e,t,n,a){switch(t){case"flag":return n(e,"\ud83c\udff3\ufe0f\u200d\u26a7\ufe0f","\ud83c\udff3\ufe0f\u200b\u26a7\ufe0f")?!1:!n(e,"\ud83c\udde8\ud83c\uddf6","\ud83c\udde8\u200b\ud83c\uddf6")&&!n(e,"\ud83c\udff4\udb40\udc67\udb40\udc62\udb40\udc65\udb40\udc6e\udb40\udc67\udb40\udc7f","\ud83c\udff4\u200b\udb40\udc67\u200b\udb40\udc62\u200b\udb40\udc65\u200b\udb40\udc6e\u200b\udb40\udc67\u200b\udb40\udc7f");case"emoji":return!a(e,"\ud83e\u1fac8")}return!1}function f(e,t,n,a){let r;const o=(r="undefined"!=typeof WorkerGlobalScope&&self instanceof WorkerGlobalScope?new OffscreenCanvas(300,150):document.createElement("canvas")).getContext("2d",{willReadFrequently:!0}),s=(o.textBaseline="top",o.font="600 32px Arial",{});return e.forEach(e=>{s[e]=t(o,e,n,a)}),s}function r(e){var t=document.createElement("script");t.src=e,t.defer=!0,document.head.appendChild(t)}a.supports={everything:!0,everythingExceptFlag:!0},new Promise(t=>{let n=function(){try{var e=JSON.parse(sessionStorage.getItem(o));if("object"==typeof e&&"number"==typeof e.timestamp&&(new Date).valueOf()<e.timestamp+604800&&"object"==typeof e.supportTests)return e.supportTests}catch(e){}return null}();if(!n){if("undefined"!=typeof Worker&&"undefined"!=typeof OffscreenCanvas&&"undefined"!=typeof URL&&URL.createObjectURL&&"undefined"!=typeof Blob)try{var e="postMessage("+f.toString()+"("+[JSON.stringify(s),u.toString(),c.toString(),p.toString()].join(",")+"));",a=new Blob([e],{type:"text/javascript"});const r=new Worker(URL.createObjectURL(a),{name:"wpTestEmojiSupports"});return void(r.onmessage=e=>{i(n=e.data),r.terminate(),t(n)})}catch(e){}i(n=f(s,u,c,p))}t(n)}).then(e=>{for(const n in e)a.supports[n]=e[n],a.supports.everything=a.supports.everything&&a.supports[n],"flag"!==n&&(a.supports.everythingExceptFlag=a.supports.everythingExceptFlag&&a.supports[n]);var t;a.supports.everythingExceptFlag=a.supports.everythingExceptFlag&&!a.supports.flag,a.supports.everything||((t=a.source||{}).concatemoji?r(t.concatemoji):t.wpemoji&&t.twemoji&&(r(t.twemoji),r(t.wpemoji)))});
+//# sourceURL=/wp-includes/js/wp-emoji-loader.min.js
+</script>
+	<iframe src='https://widgets.wp.com/likes/master.html?ver=20260629#ver=20260629' scrolling='no' id='likes-master' name='likes-master' style='display:none;'></iframe>
+	<div id='likes-other-gravatars' role="dialog" aria-hidden="true" tabindex="-1"><div class="likes-text"><span>%d</span></div><ul class="wpl-avatars sd-like-gravatars"></ul></div>
+	<script src="//stats.wp.com/w.js?68" defer></script> <script type="text/javascript">
+_tkq = window._tkq || [];
+_stq = window._stq || [];
+_tkq.push(['storeContext', {'blog_id':'141813113','blog_tz':'2','user_lang':'en','blog_lang':'en','user_id':'0'}]);
+		// Prevent sending pageview tracking from WP-Admin pages.
+		_stq.push(['view', {'blog':'141813113','v':'wpcom','tz':'2','user_id':'0','post':'3881','subd':'vermaden'}]);
+		_stq.push(['extra', {'crypt':'UE5tW3cvZGQ/JUs1UEpSdi1BRVlaLixtWWVadTAwLTFrNG9mU0c9K0tmZ0dkM1lSbGtYTGlEcmVrb2NhNkYrNng0OHxUaF0zaHdDbEU5ODBadWtudCtVKzZwJWJMUm8lZS9ZYW4xdnBJeklkNnxrcjZ0U0tNd2dORk5HaCwuUWldfEFEeStmP1gwJUdyVE5pLix6ZTgxQXd2WEJvMyZdLjN4Rit6Y0JpW0pvZl1LZTBEVDA0UkhjUnR2PV1dfi9mNXowR25JRE5Keg=='}]);
+_stq.push([ 'clickTrackerInit', '141813113', '3881' ]);
+</script>
+<noscript><img src="https://pixel.wp.com/b.gif?v=noscript" style="height:1px;width:1px;overflow:hidden;position:absolute;bottom:1px;" alt="" /></noscript>
+<meta id="bilmur" property="bilmur:data" content="" data-provider="wordpress.com" data-service="simple" data-site-tz="Europe/Warsaw" data-custom-props="{&quot;enq_jquery&quot;:&quot;1&quot;,&quot;logged_in&quot;:&quot;0&quot;,&quot;wptheme&quot;:&quot;pub\/twentytwelve&quot;,&quot;wptheme_is_block&quot;:&quot;0&quot;}"  >
+		<script defer src="/wp-content/js/bilmur.min.js?i=17&amp;m=202627"></script> 	<div id="marketingbar" class="marketing-bar noskim  "><div class="marketing-bar-text">Design a site like this with WordPress.com</div><a class="marketing-bar-button" href="https://wordpress.com/start/?ref=marketing_bar">Get started</a><a class="marketing-bar-link" tabindex="-1" aria-label="Create your website at WordPress.com" href="https://wordpress.com/start/?ref=marketing_bar"></a></div>		<script type="text/javascript">
+			window._tkq = window._tkq || [];
+
+			window._tkq.push( [ 'recordEvent', 'wpcom_marketing_bar_impression', {"is_current_user_blog_owner":false} ] );
+
+			document.querySelectorAll( '#marketingbar > a' ).forEach( link => {
+				link.addEventListener( 'click', ( e ) => {
+					window._tkq.push( [ 'recordEvent', 'wpcom_marketing_bar_cta_click', {"is_current_user_blog_owner":false} ] );
+				} );
+			});
+		</script>
+<script>
+(function() {
+	'use strict';
+
+	const fetches = {};
+	const promises = {};
+	const urls = {
+		'wp-polyfill': '/wp-includes/js/dist/vendor/wp-polyfill.min.js?m=1775575011i&ver=3.15.0',
+		'verbum': '/wp-content/mu-plugins/jetpack-mu-wpcom-plugin/sun/jetpack_vendor/automattic/jetpack-mu-wpcom/src/build/verbum-comments/verbum-comments.js?m=1782418491i&minify=false&ver=6a6d3297975baa07911a'
+	};
+	const loaders = {
+		'verbum': () => {
+			fetchExternalScript('wp-polyfill');
+			fetchExternalScript('verbum');
+			promises['wp-polyfill'] = promises['wp-polyfill'] || loadWPScript('wp-polyfill');
+			promises['verbum'] = promises['verbum'] || promises['wp-polyfill'].then( () => loadWPScript('verbum') );
+			return promises['verbum'];
+		},
+		
+	};
+	const scriptExtras = {
+		
+	};
+
+	window.WP_Enqueue_Dynamic_Script = {
+		loadScript: (handle) => {
+			if (!loaders[handle]) {
+				console.error('WP_Enqueue_Dynamic_Script: unregistered script `' + handle + '`.');
+			}
+			return loaders[handle]();
+		}
+	};
+
+	function fetchExternalScript(handle) {
+		if (!urls[handle]) {
+			return Promise.resolve();
+		}
+
+		fetches[handle] = fetches[handle] || fetch(urls[handle], { mode: 'no-cors' });
+		return fetches[handle];
+	}
+
+	function runExtraScript(handle, type, index) {
+		const id = 'wp-enqueue-dynamic-script:' + handle + ':' + type + ':' + (index + 1);
+		const template = document.getElementById(id);
+		if (!template) {
+			return Promise.reject();
+		}
+
+		const script = document.createElement( 'script' );
+		script.innerHTML = template.innerHTML;
+		document.body.appendChild( script );
+		return Promise.resolve();
+	}
+
+	function loadExternalScript(handle) {
+		if (!urls[handle]) {
+			return Promise.resolve();
+		}
+
+		return fetches[handle].then(() => {
+			return new Promise((resolve, reject) => {
+				const script = document.createElement('script');
+				script.onload = () => resolve();
+				script.onerror = (e) => reject(e);
+				script.src = urls[handle];
+				document.body.appendChild(script);
+			});
+		});
+	}
+
+	function loadExtra(handle, pos) {
+		const count = (scriptExtras[handle] && scriptExtras[handle][pos]) || 0;
+		let promise = Promise.resolve();
+
+		for (let i = 0; i < count; i++) {
+			promise = promise.then(() => runExtraScript(handle, pos, i));
+		}
+
+		return promise;
+	}
+
+	function loadWPScript(handle) {
+		// Core loads scripts in this order. See: https://github.com/WordPress/WordPress/blob/a59eb9d39c4fcba834b70c9e8dfd64feeec10ba6/wp-includes/class-wp-scripts.php#L428.
+		return loadExtra(handle, 'translations')
+			.then(() => loadExtra(handle, 'before'))
+			.then(() => loadExternalScript(handle))
+			.then(() => loadExtra(handle, 'after'));
+	}
+} )();
+</script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+#cloud-config
+# NoCloud user-data for the FreeBSD "www" VM.
+#
+# IMPORTANT: the FreeBSD BASIC-CLOUDINIT image runs **nuageinit**, not full
+# cloud-init. nuageinit reliably honours only a SMALL subset of cloud-config:
+# ssh_authorized_keys, the default-user setup, and chpasswd. It does NOT process
+# `packages:`, `runcmd:`, or `write_files:` dependably (see WALKTHROUGH.md). So we
+# use cloud-config ONLY to (a) install the lab ssh key and (b) set a root password
+# so you can `su` after boot — then setup-freebsd.sh does the real provisioning.
+#
+# run-freebsd-server.sh replaces __LAB_PUBKEY__ with your generated public key.
+
+ssh_pwauth: true
+
+ssh_authorized_keys:
+  - __LAB_PUBKEY__
+
+chpasswd:
+  expire: false
+  users:
+    - {name: root,    password: freebsd, type: text}
+    - {name: freebsd, password: freebsd, type: text}

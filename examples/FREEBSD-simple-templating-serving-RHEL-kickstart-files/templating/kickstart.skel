@@ -1,0 +1,73 @@
+#version=RHEL9
+# Kickstart TEMPLATE (skeleton) — adapted from vermaden's RHEL-8.5 example to
+# AlmaLinux 9. The ALL-CAPS tokens are replaced by kickstart.sh via
+# `sed -e s@TOKEN@${TOKEN}@g` using values from kickstart.config.
+
+# USE sda DISK
+ignoredisk --only-use=sda
+
+# CLEAR DISK PARTITIONS BEFORE INSTALL
+clearpart --all --initlabel
+
+# USE text INSTALL (no GUI; serial/headless friendly)
+text
+
+# ONLINE INSTALL MEDIA — the FreeBSD nginx box serves the AlmaLinux tree
+url --url=http://REPO_SERVER_IP/almalinux/ALMA_MAJOR/BaseOS/ALMA_ARCH/os
+
+# KEYBOARD + LANGUAGE
+keyboard --vckeymap=us --xlayouts='us'
+lang en_US.UTF-8
+
+# NETWORK — single static NIC on the lab LAN (vermaden used two; see kickstart.config)
+network --bootproto=static --device=INTERFACE1 --ip=IP_ADDRESS1 --netmask=NETMASK1 --gateway=GATEWAY --nameserver=NAMESERVER1,NAMESERVER2 --noipv6 --activate
+network --hostname=SYSTEM_NAME
+
+# EXTRA REPO — AppStream, also from the FreeBSD box
+repo --name="AppStream" --baseurl=http://REPO_SERVER_IP/almalinux/ALMA_MAJOR/AppStream/ALMA_ARCH/os
+
+# ROOT PASSWORD (throwaway lab credential — change for anything real)
+rootpw --plaintext alma
+
+# FIRST-BOOT + SECURITY
+firstboot --disable
+selinux --disabled
+firewall --disabled
+skipx
+
+# REBOOT AND EJECT BOOT MEDIUM WHEN DONE
+reboot --eject
+
+# TIMEZONE
+timezone UTC --utc
+
+# PARTITIONS — UEFI (matches vermaden's /boot/efi); LVM root
+part /boot/efi --fstype="efi"   --size=600  --ondisk=sda --label=EFI  --fsoptions="umask=0077,shortname=winnt"
+part /boot     --fstype="xfs"   --size=1024 --ondisk=sda --label=BOOT
+part pv.01     --fstype="lvmpv" --size=1    --ondisk=sda --grow
+
+# LVM
+volgroup rootvg pv.01
+logvol /    --fstype="xfs"  --size=4096 --name=root --vgname=rootvg --grow
+logvol swap --fstype="swap" --size=1024 --name=swap --vgname=rootvg
+
+# PACKAGES — a minimal environment plus a few admin tools (vermaden's spirit)
+%packages
+@^minimal-environment
+chrony
+%end
+
+# POST INSTALL — configure chrony from the templated NTP servers
+%post --log=/root/ks-post.log --interpreter=/usr/bin/bash
+
+  cat << TIME > /etc/chrony.conf
+server NTP1 iburst
+server NTP2 iburst
+driftfile /var/lib/chrony/drift
+makestep 1.0 3
+rtcsync
+TIME
+
+  systemctl enable chronyd
+
+%end
