@@ -137,6 +137,47 @@ OVMF (one banner, no kexec) — handy to confirm the firmware path in isolation.
 
 ---
 
+## Tier A — `build-coreboot.sh` + `run-coreboot-linuxboot.sh` (real coreboot ROM)
+
+Verified at coreboot `e95bdb7e`, host gcc 13.3, 32 cores. The build fetches gcc/
+binutils source for coreboot's toolchain, then downloads+compiles linux-6.3 and
+builds u-root v0.14.0, assembling a 16 MB ROM:
+
+```
+$ ./build-coreboot.sh
+==> building coreboot crossgcc-i386 (CPUS=32) — this is the long part
+... You can now run IASL ACPI compiler from .../xgcc.
+==> building coreboot.rom (kernel + u-root + assembly)
+    WWW        linux-6.3.tar.xz          ← coreboot downloads the kernel
+... Built emulation/qemu-q35 (QEMU x86 q35/ich9)
+==> checkpoints
+-rw-rw-r-- 1 sqs sqs 16M ... build/coreboot.rom
+    fallback/payload   0x1ee00   simple elf   5812913 none   ← the LinuxBoot kernel+u-root
+```
+
+```
+$ ./run-coreboot-linuxboot.sh
+==> Tier A boot (45s cap, accel=kvm) → .../tierA.log
+==> proof (real coreboot firmware → Linux payload → u-root):
+```
+
+The serial log (`tierA.log`), in order (ANSI stripped):
+
+```
+[NOTE ]  coreboot-e95bdb7eee0a ... x86_32 bootblock starting (log level: 7)...   ← coreboot, not OVMF/SeaBIOS
+[NOTE ]  coreboot-e95bdb7eee0a ... x86_32 romstage starting ...
+[NOTE ]  coreboot-e95bdb7eee0a ... x86_32 ramstage starting ...
+[DEBUG]  Jumping to boot code at 0x00040000(0x7fe98000)                          ← coreboot → CBFS payload
+Linux version 6.3.0 (coreboot@reproducible) (gcc (Ubuntu 13.3.0-...) 13.3.0 ...   ← kernel coreboot compiled
+Kernel command line: console=ttyS0
+Run /init as init process
+2026/06/30 04:48:02 Welcome to u-root!                                           ← u-root as PID 1
+```
+
+Real firmware in the ROM, booting Linux + u-root: the canonical LinuxBoot.
+
+---
+
 ## Summary
 
 | Step | Result |
@@ -146,4 +187,5 @@ OVMF (one banner, no kexec) — handy to confirm the firmware path in isolation.
 | **Tier C** `run-linuxboot.sh` — `-kernel` + u-root + kexec | ✅ 2 banners, `STAGE1→STAGE2` |
 | `build-uki.sh` — UKI on a FAT ESP | ✅ `PE32+` with `.linux/.initrd/.cmdline/.osrel` |
 | **Tier B** `run-uefi-linuxboot.sh kexec` — OVMF → UKI → u-root → kexec | ✅ `BdsDxe`+`EDK II`, 2 banners, `STAGE1→STAGE2` |
-| **Tier A** coreboot ROM | ⏳ author-run build, not yet (see [PLAN.md](PLAN.md)) |
+| `build-coreboot.sh` — coreboot toolchain + ROM | ✅ 16 MB `coreboot.rom`, LinuxBoot payload |
+| **Tier A** `run-coreboot-linuxboot.sh` — `qemu -bios` → coreboot → Linux → u-root | ✅ coreboot stages, `Linux 6.3`, u-root banner |

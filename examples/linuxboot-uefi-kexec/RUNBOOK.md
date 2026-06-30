@@ -174,7 +174,44 @@ kexec chain as Tier C, but everything downstream of *genuine UEFI*.
 
 ---
 
-## 5. Going further
+## 5. Tier A — the canonical coreboot ROM (real firmware replacement)
+
+Tiers B and C put Linux *behind* an existing firmware (OVMF, or QEMU's loader).
+Tier A makes Linux **the firmware**: a **coreboot** ROM whose CBFS payload *is* a
+Linux kernel + u-root. `qemu -bios coreboot.rom` — coreboot does the silicon init,
+then jumps straight into Linux. This is what LinuxBoot flashes onto a real server.
+
+```bash
+./build-coreboot.sh           # author-run, ~20 min, NO sudo (deps are checked, not installed)
+./run-coreboot-linuxboot.sh   # qemu -bios coreboot.rom
+```
+
+`build-coreboot.sh` does two from-source builds (see its header): **(1)** coreboot's
+own `crossgcc-i386` toolchain (~15 min, cached after), then **(2)** the ROM — driven
+by [`coreboot-qemu-q35-linuxboot.config`](coreboot-qemu-q35-linuxboot.config), coreboot
+**downloads and compiles linux-6.3** (its shipped minimal x86_64 defconfig — serial
+console + `CONFIG_KEXEC` + initrd) and **builds u-root v0.14.0** as the initramfs,
+then assembles them into a 16 MB `coreboot.rom`. Two notes baked into the script:
+
+- It's **author-run by convention** (the toolchain build is long) but needs **no
+  sudo** — every coreboot prereq (`gnat`, `iasl`/`acpica-tools`, flex, bison, the dev
+  libs) is *checked*; install any missing and re-run.
+- `GOTOOLCHAIN=local` is exported for the build — coreboot's `u-root.mk` does
+  `go build`, which would otherwise grab Go 1.25 and fail (the §2 trap, again).
+
+> **Checkpoint — real coreboot, then Linux, then u-root** (`tierA.log`):
+> ```
+> coreboot-e95bdb7e ... x86_32 bootblock starting     ← coreboot firmware (not OVMF/SeaBIOS)
+>   ... romstage ... ramstage ...
+> Jumping to boot code at 0x00040000                  ← coreboot → its CBFS payload
+> Linux version 6.3.0 (coreboot@reproducible) ...     ← the kernel coreboot compiled
+> Kernel command line: console=ttyS0
+> Run /init as init process
+> Welcome to u-root!                                  ← u-root as PID 1
+> ```
+> Real firmware, in the ROM, booting Linux+u-root. (`timeout`-capped; u-root idles.)
+
+## 6. Going further
 
 - **kexec a *real* OS, not a second u-root.** Swap the hard-coded `dokexec.sh` for
   u-root's **`localboot`** (scans disks, parses their bootloader config, boots the
@@ -182,11 +219,11 @@ kexec chain as Tier C, but everything downstream of *genuine UEFI*.
   Attach one of the repo's installed disks (e.g. from
   [`almalinux-pxe-lab/`](../almalinux-pxe-lab/) or a `vm-from-chroot-*` image) and
   let u-root find and boot its kernel. This is the lab's intended "finale".
-- **Tier A — the real firmware replacement.** Build a **coreboot** `qemu-q35` ROM
-  with a LinuxBoot payload (our kernel + u-root) and `qemu -bios coreboot.rom`. The
-  `crossgcc` toolchain is a ~hour from-source build, so it's **author-run** per the
-  repo's toolchain convention; the plan + dep list is in [`PLAN.md`](PLAN.md) §4/§8.
-  The *boot* of the resulting ROM is verifiable here, same as these tiers.
+- **The kexec handoff on Tier A.** The coreboot-built kernel has `CONFIG_KEXEC=y`, so
+  the same `dokexec.sh` mechanic works from its u-root too. To embed a second kernel,
+  inject it (and the policy) into the payload's u-root via coreboot's
+  `LINUXBOOT_UROOT_FILES` + `LINUXBOOT_UROOT_UINITCMD` — minding the 16 MB ROM
+  budget (use the 2.4 MB coreboot-built bzImage as the target, not a 15 MB distro one).
 - **Secure Boot.** Plain QEMU has none, so `kexec_file_load` of an unsigned kernel
   just works. On a locked-down host you'd sign the kernel (and the UKI) or fall back
   to the legacy `kexec_load` syscall — `dokexec.sh` already tries `-L` on failure.

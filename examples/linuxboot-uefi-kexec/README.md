@@ -33,7 +33,7 @@ scripting available at "firmware" time.
                  ┌─────────────────────── the LinuxBoot kernel + u-root ──────────────────────┐
    firmware  ─►  │  Linux boots, PID 1 = u-root /init   ─►  boot policy  ─►  kexec  │  ─►  target kernel
                  └────────────────────────────────────────────────────────────────┘
-   Tier A: coreboot ROM (qemu -bios)         the canonical LinuxBoot — author-run build (not yet)
+   Tier A: coreboot ROM (qemu -bios)         the canonical LinuxBoot — real firmware  ✅ verified here
    Tier B: OVMF / UEFI  ───────────────►     a UKI the firmware launches      ✅ verified here
    Tier C: qemu -kernel (no firmware) ──►     the bare mechanic, fast loop     ✅ verified here
 ```
@@ -42,7 +42,7 @@ scripting available at "firmware" time.
 |---|---|---|---|
 | **C** | `qemu -kernel/-initrd` (no firmware) | the bare **u-root → kexec** handoff; fastest inner loop | ✅ **verified** ([PoC](POC-MATRYOSHKA.md)) |
 | **B** | **OVMF / UEFI (EDK II)** boots a **UKI** off an ESP | LinuxBoot *on genuine UEFI* — a single firmware-flashable EFI blob | ✅ **verified** ([PoC](POC-UEFI-MATRYOSHKA.md)) |
-| **A** | **coreboot** `qemu-q35` ROM (`qemu -bios coreboot.rom`) | the canonical LinuxBoot — real firmware replacement | ⏳ author-run build (next; see [PLAN.md](PLAN.md)) |
+| **A** | **coreboot** `qemu-q35` ROM (`qemu -bios coreboot.rom`) | the **canonical** LinuxBoot — Linux+u-root *as the firmware payload*, real firmware replacement | ✅ **verified** (build author-run; see [PLAN.md](PLAN.md)) |
 
 Tiers B and C are **the same u-root + kexec core**; they differ only in *how the
 first kernel gets loaded*. Tier C lets QEMU cheat and load it directly (great for
@@ -71,6 +71,10 @@ cd examples/linuxboot-uefi-kexec
 ./build-uki.sh                     # fuse kernel+initramfs+cmdline into a UKI on an ESP
 ./run-uefi-linuxboot.sh kexec      # OVMF launches \EFI\BOOT\BOOTX64.EFI → u-root → kexec
 ./run-uefi-linuxboot.sh shell      # (or: just drop to a u-root shell under OVMF)
+
+# Tier A — the canonical LinuxBoot: a real coreboot ROM (author-run build):
+./build-coreboot.sh                # coreboot toolchain + ROM w/ Linux+u-root payload (~20 min)
+./run-coreboot-linuxboot.sh        # qemu -bios coreboot.rom → coreboot → Linux → u-root
 ```
 
 Each script ends by printing its own checkpoints. Artifacts (u-root clone,
@@ -95,7 +99,11 @@ not a userspace trick. The machine booted Linux, and that Linux booted Linux.
 | [`run-linuxboot.sh`](run-linuxboot.sh) | **Tier C** boot: `qemu -kernel` + u-root + kexec |
 | [`build-uki.sh`](build-uki.sh) | **Tier B**: fuse into a UKI + stage it on a FAT ESP |
 | [`run-uefi-linuxboot.sh`](run-uefi-linuxboot.sh) | **Tier B** boot: OVMF/UEFI launches the UKI |
+| [`build-coreboot.sh`](build-coreboot.sh) | **Tier A**: build a coreboot ROM with a LinuxBoot payload (author-run; no sudo) |
+| [`coreboot-qemu-q35-linuxboot.config`](coreboot-qemu-q35-linuxboot.config) | pinned coreboot config — q35 board + LinuxBoot payload |
+| [`run-coreboot-linuxboot.sh`](run-coreboot-linuxboot.sh) | **Tier A** boot: `qemu -bios coreboot.rom` |
 | [`RUNBOOK.md`](RUNBOOK.md) | by-hand walk of both tiers, with the *why* at each step |
+| [`WALKTHROUGH.md`](WALKTHROUGH.md) | first-person Tier B run + deep-dives on **`ukify`** and **`pefile`** (what they are, how the UKI is grafted) |
 | [`MANUAL_TESTING.md`](MANUAL_TESTING.md) | real captured serial transcripts |
 | [`POC-MATRYOSHKA.md`](POC-MATRYOSHKA.md) / [`POC-UEFI-MATRYOSHKA.md`](POC-UEFI-MATRYOSHKA.md) | the Tier C / Tier B feasibility spikes |
 | [`PLAN.md`](PLAN.md) | the full design + the Tier A (coreboot) plan |
@@ -112,9 +120,10 @@ not a userspace trick. The machine booted Linux, and that Linux booted Linux.
 
 ## Going further
 
-The verified core kexecs a **second u-root** (deterministic, unmistakable in the
-log). The natural next steps, sketched in [`RUNBOOK.md`](RUNBOOK.md): point the boot
-policy at a **real installed OS** with u-root's `localboot` (find a disk's kernel
-and boot it) or `pxeboot` (netboot) — and **Tier A**, building an actual coreboot
-ROM with a LinuxBoot payload (the ~hour `crossgcc` build is author-run per the
-repo's toolchain convention; [PLAN.md](PLAN.md) §4/§8).
+All three tiers are verified. The Tiers B/C core kexecs a **second kernel**
+(deterministic, unmistakable in the log); Tier A's coreboot ROM boots **coreboot →
+Linux → u-root** and drops to a u-root shell (the kernel has `CONFIG_KEXEC`, so the
+kexec finale applies there too — see [`RUNBOOK.md`](RUNBOOK.md) "Going further").
+The natural next step is to point the boot policy at a **real installed OS** with
+u-root's `localboot` (find a disk's kernel and boot it) or `pxeboot` (netboot) —
+the actual LinuxBoot boot policies — reusing one of the repo's installed disks.

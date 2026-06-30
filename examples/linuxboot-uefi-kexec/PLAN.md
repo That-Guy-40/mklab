@@ -46,7 +46,7 @@ companion**, with an honest build-vs-boot split.
 
 | Tier | What | Fidelity | Build cost | Verifiable here? |
 |---|---|---|---|---|
-| **A (primary)** | **coreboot `qemu-q35` ROM** embedding a Linux kernel + **u-root** initramfs; `qemu -bios coreboot.rom`; u-root `init` **kexecs** a target kernel | The canonical LinuxBoot — real firmware replacement | High: coreboot crossgcc (from source) + Go/u-root | **Build = author-run** (toolchain gate); **ROM boot + u-root + kexec = verified in QEMU** |
+| **A (primary)** | **coreboot `qemu-q35` ROM** embedding a Linux kernel + **u-root** initramfs; `qemu -bios coreboot.rom`; u-root `init` boots (kexec finale optional) | The canonical LinuxBoot — real firmware replacement | High: coreboot crossgcc (from source) + Go/u-root | **✅ verified end-to-end in QEMU** — build author-run (~20 min, no sudo); `MANUAL_TESTING.md` |
 | **B (companion)** | **OVMF/UEFI** boots an **EFISTUB Linux** "boot kernel" + u-root initramfs (fused into a **UKI**) → `kexec` the target | LinuxBoot *in spirit, on genuine UEFI* (the user's literal framing) | Moderate (no firmware rebuild; reuse lab-vm.sh OVMF) | **✅ verified end-to-end** ([POC-UEFI-MATRYOSHKA](POC-UEFI-MATRYOSHKA.md)) |
 | **C (optional fast loop)** | `qemu -kernel/-initrd` a small kernel + custom `init` that `kexec`s a 2nd kernel | The *mechanic* only; not firmware/UEFI | Low | Fully verifiable; a quick inner-loop sanity tier |
 
@@ -141,9 +141,15 @@ examples/linuxboot-uefi-kexec/
    `EFI stub: Loaded initrd`, two u-root banners, `STAGE1→STAGE2` cmdlines, clock
    reset). UKI toolchain (`ukify`/stub/`pefile`) obtained **without `sudo`** via
    `apt-get download` + `dpkg-deb -x`.
-2. Tier A: author `build-coreboot.sh` + defconfig; user runs the build; verify the
-   ROM boot + kexec.
-3. Docs (README/RUNBOOK/MANUAL_TESTING), 00-INDEX, link_check, memory, vendoring.
+2. **Tier A — ✅ DONE**: `build-coreboot.sh` + `coreboot-qemu-q35-linuxboot.config`
+   build a real coreboot q35 ROM whose CBFS payload is linux-6.3 + u-root v0.14.0;
+   `run-coreboot-linuxboot.sh` boots it. **Verified end-to-end** (coreboot bootblock
+   /romstage/ramstage → Jumping to boot code → Linux 6.3 → u-root banner). Build is
+   author-run (~20 min) but needs **no sudo** — all coreboot deps were present.
+   Kexec finale on Tier A is optional (kernel has `CONFIG_KEXEC`); the natural
+   "kexec further" is u-root `localboot`/`pxeboot` to a real OS.
+3. Docs (README/RUNBOOK/MANUAL_TESTING/WALKTHROUGH), 00-INDEX, link_check, memory,
+   vendoring. ✅
 
 ## 9. Upstream / vendoring
 
