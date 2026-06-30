@@ -17,11 +17,21 @@ WORKDIR="${WORKDIR:-$HOME/linuxboot-lab}"
 KERNEL="${KERNEL:-$WORKDIR/vmlinuz}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
+# UKI toolchain: prefer the no-sudo deb-extract in $WORKDIR/debs (what deps.sh
+# stages), but fall back to a system-wide install of systemd-ukify /
+# systemd-boot-efi / python3-pefile (`sudo apt install` of the three). Either works.
 DEBS="$WORKDIR/debs/extracted"
-STUB="$DEBS/usr/lib/systemd/boot/efi/linuxx64.efi.stub"
-UKIFY="$DEBS/usr/bin/ukify"
-PP="$DEBS/usr/lib/python3/dist-packages"          # vendored pefile (ukify dep)
-[[ -f "$STUB" && -f "$UKIFY" ]] || { echo "UKI toolchain missing — run ./deps.sh first" >&2; exit 1; }
+if [[ -f "$DEBS/usr/bin/ukify" ]]; then
+  UKIFY="$DEBS/usr/bin/ukify"
+  STUB="$DEBS/usr/lib/systemd/boot/efi/linuxx64.efi.stub"
+  PP="$DEBS/usr/lib/python3/dist-packages"        # vendored pefile (ukify dep)
+elif command -v ukify >/dev/null && [[ -f /usr/lib/systemd/boot/efi/linuxx64.efi.stub ]]; then
+  UKIFY="$(command -v ukify)"
+  STUB="/usr/lib/systemd/boot/efi/linuxx64.efi.stub"
+  PP=""                                            # system pefile already importable
+else
+  echo "UKI toolchain missing — run ./deps.sh first" >&2; exit 1
+fi
 [[ -f "$WORKDIR/initramfs-stage1.cpio" ]] || { echo "no initramfs — run ./build-uroot.sh first" >&2; exit 1; }
 
 cat > "$WORKDIR/os-release.txt" <<'EOF'
