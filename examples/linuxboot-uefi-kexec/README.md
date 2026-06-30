@@ -18,6 +18,10 @@ spikes behind it are written up blow-by-blow with real serial logs in
 [`POC-UEFI-MATRYOSHKA.md`](POC-UEFI-MATRYOSHKA.md) (Tier B); [`MANUAL_TESTING.md`](MANUAL_TESTING.md)
 has the transcripts from the lab scripts themselves.
 
+> 🪆 **Want the tour, not the manual?** [`SHOWCASE.md`](SHOWCASE.md) is a guided,
+> run-it-yourself showcase — four escalating stops ending with a coreboot ROM booting
+> real Debian off a disk. Start there for the *wow*; come back here for the *how*.
+
 ## LinuxBoot in three sentences
 
 A normal boot is *firmware → bootloader (GRUB) → kernel*. LinuxBoot deletes the
@@ -105,6 +109,7 @@ not a userspace trick. The machine booted Linux, and that Linux booted Linux.
 | [`fetch-os-disk.sh`](fetch-os-disk.sh) | **Tier A finale**: fetch a real GRUB-installed OS disk (Debian 12) |
 | [`run-coreboot-boot-disk.sh`](run-coreboot-boot-disk.sh) / [`drive-boot.py`](drive-boot.py) | **Tier A finale** boot: coreboot → u-root → `boot` → kexec the disk's OS |
 | [`RUNBOOK.md`](RUNBOOK.md) | by-hand walk of both tiers, with the *why* at each step |
+| [`SHOWCASE.md`](SHOWCASE.md) | 🪆 the guided, run-it-yourself **tour** — all four stops, from the fast loop to a real OS booting off disk |
 | [`WALKTHROUGH.md`](WALKTHROUGH.md) | first-person Tier B run + deep-dives on **`ukify`** and **`pefile`** (what they are, how the UKI is grafted) |
 | [`MANUAL_TESTING.md`](MANUAL_TESTING.md) | real captured serial transcripts |
 | [`POC-MATRYOSHKA.md`](POC-MATRYOSHKA.md) / [`POC-UEFI-MATRYOSHKA.md`](POC-UEFI-MATRYOSHKA.md) | the Tier C / Tier B feasibility spikes |
