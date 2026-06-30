@@ -32,8 +32,10 @@ the ROM, automatically**" — the actual reason LinuxBoot exists at scale.
   says coreboot support "will likely be added in a later release," and the build
   **requires Go 1.23**. ⇒ **Resolution:** the **pxeboot tiers run from the coreboot
   ROM (Tier A)**; **System Transparency runs on the genuine-UEFI / OVMF + UKI path
-  (Tier B)** — its *native* deployment model. coreboot-native ST is documented as an
-  upstream-future frontier.
+  (Tier B)** — its *native* deployment model. PLUS a **stretch goalpost (P3b):** chase a
+  **coreboot-ROM front-end for ST** via coreboot's **edk2 UefiPayload** — coreboot does
+  silicon init, edk2 supplies the UEFI environment, which launches the **same stboot UKI**
+  — realizing "ST *from the ROM*" without waiting on upstream coreboot-native stboot.
 - The **Go 1.23** stboot needs is the *same* newer Go that unlocks the **hands-off
   `uinit=pxeboot`** (gated to u-root *main*). One no-sudo Go tarball serves both.
 - **Existing HTTPS in the repo is scattered snakeoil.** `pxe-boot-mechanics` already
@@ -53,6 +55,7 @@ P1/P2  coreboot ROM ─► Linux + u-root ─► pxeboot ─► DHCP ─► (HTT
 P3     OVMF/UEFI ─► stboot UKI ─► host_config (net) ─► HTTPS fetch SIGNED OSPKG
                                        └─► verify Ed25519 sigs (≥threshold) vs baked-in root cert
                                             └─► kexec ─► the (signed) Rocky/Kali installer ─► AUTO-INSTALL
+P3b    coreboot ROM ─► edk2 UefiPayload (UEFI) ─► stboot UKI ─► (… same as P3 …)   # ST *from the ROM*
 ```
 
 ## 4. Tiers (escalating strictness)
@@ -61,7 +64,8 @@ P3     OVMF/UEFI ─► stboot UKI ─► host_config (net) ─► HTTPS fetch S
 |---|---|---|---|---|---|
 | **P1** | coreboot ROM | u-root `pxeboot` | **HTTP** | none | ✅ fully |
 | **P2** | coreboot ROM | u-root `pxeboot` | **HTTPS** (lab CA) | none (TLS only) | ✅ fully |
-| **P3** | OVMF/UEFI + UKI | **stboot** (System Transparency) | **HTTPS** | **signed OSPKG** (Ed25519, N-of-M) | ⚠️ mostly; coreboot-native ST = author-run frontier |
+| **P3** | OVMF/UEFI + UKI | **stboot** (System Transparency) | **HTTPS** | **signed OSPKG** (Ed25519, N-of-M) | ✅ mostly (verify + negative test) |
+| **P3b** | **coreboot ROM → edk2 UEFI** + UKI | **stboot**, *from the ROM* | **HTTPS** | **signed OSPKG** | ⚠️ stretch / author-run frontier (heavy edk2 build + QEMU gotcha) |
 
 Each tier provisions **both** Rocky 9 and Kali (two boot.ipxe / two OSPKGs).
 
@@ -128,8 +132,23 @@ Each tier provisions **both** Rocky 9 and Kali (two boot.ipxe / two OSPKGs).
 - `run-stboot.sh <rocky|kali>`: OVMF + the stboot UKI (reuse the `run-uefi-linuxboot.sh`
   pattern) → stboot fetches the OSPKG over HTTPS, **verifies signatures**, kexecs the
   signed installer. Negative test: tamper a byte / wrong key → **stboot refuses to boot**.
-- Document coreboot-native ST as upstream-future (and the edk2-`UefiPayload`-on-coreboot
-  chain as the eventual "ST from a coreboot ROM" route).
+**P3b — System Transparency *from a coreboot ROM* (stretch goalpost, edk2 UefiPayload)**
+Realizes "ST from the ROM" without waiting on upstream coreboot-native stboot: let
+**coreboot supply a UEFI environment** via its edk2 payload, then have that UEFI launch
+the **same stboot UKI** as P3. The chain:
+`coreboot ROM ─► edk2 UefiPayload (UEFI) ─► stboot UKI ─► HTTPS signed OSPKG ─► verify ─► kexec`.
+- `build-coreboot-edk2.sh`: a 2nd coreboot ROM variant built with the **edk2 UefiPayload**
+  (`CONFIG_PAYLOAD_EDK2` / `payloads/external/edk2` — UefiPayloadPkg from source; confirm
+  the exact symbol against the cloned tree) **instead of** the LinuxBoot payload. coreboot
+  → silicon init → **edk2 UEFI** (DXE/BDS + boot manager + FAT/ESP).
+- `run-stboot-coreboot.sh <rocky|kali>`: `qemu -bios coreboot-edk2.rom` + an ESP holding
+  the **stboot UKI** (reuse P3 / Tier-B UKI + ESP staging) + the netboot HTTPS server →
+  coreboot → edk2 → stboot → verify → kexec the signed installer. Same OSPKG, CA, server.
+- **Caveats (author-run frontier):** the edk2 payload is a **heavy from-source build**, and
+  there's a known **QEMU hand-off gotcha** — coreboot's UEFI payload assumes all interrupt
+  sources are masked before transfer, which QEMU violates → possible boot failure (may need
+  a patched payload / workaround). Most moving parts of any tier ⇒ spike-gated, likely
+  author-run; the *boot* of whatever ROM results is verified, same convention as Tier A.
 
 **Automation (cross-cutting, the "both" decision)**
 - *Typed/verified:* `drive-boot.py` types `pxeboot` (P1/P2) — proven mechanism from the
@@ -193,6 +212,7 @@ examples/linuxboot-uefi-kexec/
 ├── serve-netboot.sh           # :8181 nginx (reuse podman netboot TOML); --tls uses a lab-ca server cert
 ├── run-coreboot-pxe.sh        # P1/P2: coreboot ROM + slirp DHCP/TFTP/HTTP, drive pxeboot
 ├── fetch-go.sh build-st.sh make-ospkg.sh run-stboot.sh   # P3 (ST; keys come from examples/lab-ca/)
+├── build-coreboot-edk2.sh run-stboot-coreboot.sh         # P3b (ST from a coreboot ROM via edk2 UEFI)
 └── RUNBOOK-pxeboot.md MANUAL_TESTING-pxeboot.md           # (later) by-hand walk + real transcripts
 ```
 (+ 00-INDEX entry for `lab-ca/`, README/SHOWCASE "Going further" updates, `link_check` green.)
@@ -206,8 +226,11 @@ examples/linuxboot-uefi-kexec/
 - **P2**: same over **HTTPS**; prove plain-HTTP is refused without the CA and HTTPS works
   with the lab CA baked in.
 - **P3**: stboot (OVMF) fetches a **signed** OSPKG over HTTPS, verifies, kexecs the
-  installer; **negative test** — tampered/unsigned OSPKG is **rejected**. coreboot-native
-  ST documented as frontier (author-run / not-in-session).
+  installer; **negative test** — tampered/unsigned OSPKG is **rejected**.
+- **P3b** (stretch): the **same** stboot/OSPKG flow but launched by **coreboot's edk2 UEFI**
+  (`qemu -bios coreboot-edk2.rom`) — verify coreboot → edk2 → stboot → verified kexec.
+  Author-run (heavy edk2 build + the QEMU interrupt gotcha); the resulting ROM's *boot* is
+  verified (Tier-A convention).
 - `tools/link_check.py` green; reuse the finale's PID-kill + COW-overlay hygiene.
 
 ## 9. Risks / open questions
@@ -219,6 +242,10 @@ examples/linuxboot-uefi-kexec/
 - **ROM/initramfs size**: NIC drivers + CA + extra u-root commands inflate the payload
   (16 MB ROM budget) — watch it, bump `COREBOOT_ROMSIZE` only if needed.
 - **System Transparency moving target** (glasklar.is); pin a release (st-1.x) and date it.
+- **P3b edk2 payload** (stretch): heavy from-source build, **and** coreboot's UEFI payload
+  has a known QEMU hand-off bug (assumes interrupts masked → QEMU may fail to boot the
+  payload) — budget a spike + a possible patched-payload workaround; keep P3-on-OVMF as the
+  always-green ST path.
 - **Provisioning vs install loop**: the OSPKG/iPXE boots an *installer*; ensure the
   kickstart/preseed `reboot`→`poweroff` so we don't reinstall-loop (the galleries already
   patch this — reuse).
@@ -237,7 +264,9 @@ examples/linuxboot-uefi-kexec/
 2. P2 HTTPS: issue a server cert from lab-ca, bake `lab-ca.crt`, serve `:8443`, verify (no `-k`).
 3. P3 System Transparency: Go 1.23 → build stboot + stmgr → **issue signing leaf from lab-ca** → signed OSPKG
    (wrapping an installer) → OVMF run → verify + negative test.
-4. Docs (RUNBOOK/MANUAL_TESTING/SHOWCASE/00-INDEX), vendoring (cite ST + u-root, date-pinned), `link_check`.
+3b. **(stretch) P3b**: build the edk2-UefiPayload coreboot ROM → boot it → edk2 launches the
+   stboot UKI → verify the same signed-OSPKG flow *from the ROM*. Spike the QEMU gotcha first.
+4. Docs (RUNBOOK/MANUAL_TESTING/SHOWCASE/00-INDEX), vendoring (cite ST + u-root + coreboot edk2, date-pinned), `link_check`.
 
 ## 11. Upstream / vendoring
 
