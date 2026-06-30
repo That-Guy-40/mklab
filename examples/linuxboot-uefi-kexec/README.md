@@ -114,6 +114,7 @@ not a userspace trick. The machine booted Linux, and that Linux booted Linux.
 | [`MANUAL_TESTING.md`](MANUAL_TESTING.md) | real captured serial transcripts |
 | [`POC-MATRYOSHKA.md`](POC-MATRYOSHKA.md) / [`POC-UEFI-MATRYOSHKA.md`](POC-UEFI-MATRYOSHKA.md) | the Tier C / Tier B feasibility spikes |
 | [`PLAN.md`](PLAN.md) | the full design + the Tier A (coreboot) plan |
+| [`PLAN-PXEBOOT.md`](PLAN-PXEBOOT.md) | design plan for the **network-boot / verified-provisioning** track — u-root `pxeboot` (Rocky + Kali, auto-install from the ROM) escalating to HTTPS + **System Transparency** signed images |
 | [`upstream-tutorial/`](upstream-tutorial/README.md) | provenance: who to cite (linuxboot.org, u-root, the UKI spec) |
 
 ## Sibling labs (the "close to the metal" family)
@@ -134,4 +135,6 @@ kernel** (deterministic, unmistakable in the log); Tier A's coreboot ROM boots
 `boot` parses a real disk's GRUB config and **kexecs the installed OS** (verified:
 coreboot → Linux 6.3 + u-root → kexec → **Debian 12** to a login prompt). That's the
 production LinuxBoot lifecycle: firmware boots Linux, which boots the OS off disk.
-See [`RUNBOOK.md`](RUNBOOK.md) §6. (`pxeboot` is the same idea over the network.)
+See [`RUNBOOK.md`](RUNBOOK.md) §6. (`pxeboot` is the same idea over the network —
+planned in [`PLAN-PXEBOOT.md`](PLAN-PXEBOOT.md): Rocky + Kali auto-installed from the
+ROM, escalating to HTTPS and **System Transparency** signed images.)
