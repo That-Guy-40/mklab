@@ -102,6 +102,8 @@ not a userspace trick. The machine booted Linux, and that Linux booted Linux.
 | [`build-coreboot.sh`](build-coreboot.sh) | **Tier A**: build a coreboot ROM with a LinuxBoot payload (author-run; no sudo) |
 | [`coreboot-qemu-q35-linuxboot.config`](coreboot-qemu-q35-linuxboot.config) | pinned coreboot config — q35 board + LinuxBoot payload |
 | [`run-coreboot-linuxboot.sh`](run-coreboot-linuxboot.sh) | **Tier A** boot: `qemu -bios coreboot.rom` |
+| [`fetch-os-disk.sh`](fetch-os-disk.sh) | **Tier A finale**: fetch a real GRUB-installed OS disk (Debian 12) |
+| [`run-coreboot-boot-disk.sh`](run-coreboot-boot-disk.sh) / [`drive-boot.py`](drive-boot.py) | **Tier A finale** boot: coreboot → u-root → `boot` → kexec the disk's OS |
 | [`RUNBOOK.md`](RUNBOOK.md) | by-hand walk of both tiers, with the *why* at each step |
 | [`WALKTHROUGH.md`](WALKTHROUGH.md) | first-person Tier B run + deep-dives on **`ukify`** and **`pefile`** (what they are, how the UKI is grafted) |
 | [`MANUAL_TESTING.md`](MANUAL_TESTING.md) | real captured serial transcripts |
@@ -120,10 +122,11 @@ not a userspace trick. The machine booted Linux, and that Linux booted Linux.
 
 ## Going further
 
-All three tiers are verified. The Tiers B/C core kexecs a **second kernel**
-(deterministic, unmistakable in the log); Tier A's coreboot ROM boots **coreboot →
-Linux → u-root** and drops to a u-root shell (the kernel has `CONFIG_KEXEC`, so the
-kexec finale applies there too — see [`RUNBOOK.md`](RUNBOOK.md) "Going further").
-The natural next step is to point the boot policy at a **real installed OS** with
-u-root's `localboot` (find a disk's kernel and boot it) or `pxeboot` (netboot) —
-the actual LinuxBoot boot policies — reusing one of the repo's installed disks.
+All three tiers are verified, **and so is the finale**: Tiers B/C kexec a **second
+kernel** (deterministic, unmistakable in the log); Tier A's coreboot ROM boots
+**coreboot → Linux → u-root**; and the **Tier A finale**
+([`run-coreboot-boot-disk.sh`](run-coreboot-boot-disk.sh)) goes all the way — u-root's
+`boot` parses a real disk's GRUB config and **kexecs the installed OS** (verified:
+coreboot → Linux 6.3 + u-root → kexec → **Debian 12** to a login prompt). That's the
+production LinuxBoot lifecycle: firmware boots Linux, which boots the OS off disk.
+See [`RUNBOOK.md`](RUNBOOK.md) §6. (`pxeboot` is the same idea over the network.)

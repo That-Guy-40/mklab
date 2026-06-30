@@ -44,7 +44,26 @@ if [ ! -x util/crossgcc/xgcc/bin/i386-elf-gcc ]; then
   make crossgcc-i386 CPUS="$JOBS"
 fi
 
-# --- 3. config: q35 + LinuxBoot payload (see coreboot-qemu-q35-linuxboot.config) ---
+# --- 3a. give the payload KERNEL disk/fs/partition drivers ---
+# The shipped LinuxBoot defconfig is *very* minimal — no block, fs, or partition
+# support — so it boots u-root but can't SEE a disk. Add just enough for u-root's
+# `boot` to find a real OS on a virtio (or SATA/AHCI) disk and kexec it (the Tier A
+# "boot a real OS" finale; see run-coreboot-boot-disk.sh / RUNBOOK §6). Idempotent.
+KDC=payloads/external/LinuxBoot/x86_64/defconfig
+if ! grep -q '^CONFIG_VIRTIO_BLK=y' "$KDC"; then
+  cat >> "$KDC" <<'EOF'
+CONFIG_VIRTIO_MENU=y
+CONFIG_VIRTIO=y
+CONFIG_VIRTIO_PCI=y
+CONFIG_VIRTIO_BLK=y
+CONFIG_SATA_AHCI=y
+CONFIG_ATA_PIIX=y
+CONFIG_MSDOS_PARTITION=y
+CONFIG_EFI_PARTITION=y
+EOF
+fi
+
+# --- 3b. config: q35 + LinuxBoot payload (see coreboot-qemu-q35-linuxboot.config) ---
 cp "$HERE/coreboot-qemu-q35-linuxboot.config" .config
 make olddefconfig
 

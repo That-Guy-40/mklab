@@ -178,6 +178,30 @@ Real firmware in the ROM, booting Linux + u-root: the canonical LinuxBoot.
 
 ---
 
+## Tier A finale — `run-coreboot-boot-disk.sh` (boot a real OS off disk)
+
+After [`build-coreboot.sh`](build-coreboot.sh) (which now adds disk/fs/partition
+drivers) + [`fetch-os-disk.sh`](fetch-os-disk.sh) (Debian 12 genericcloud). The
+ROM boots Linux+u-root; the driver types `boot`; u-root's localboot parses the
+disk's GRUB config and kexecs Debian's own kernel. Captured (ANSI stripped):
+
+```
+coreboot-e95bdb7e … x86_32 bootblock starting …                       ← firmware
+Linux version 6.3.0 (coreboot@reproducible) …                         ← kernel #1 (coreboot-built)
+2026/… Welcome to u-root!                          ← we type `boot`
+01. Debian GNU/Linux
+02. Debian GNU/Linux, with Linux 6.1.0-49-cloud-amd64                  ← u-root parsed the disk's grub.cfg
+Linux version 6.1.0-49-cloud-amd64 (debian-kernel@lists.debian.org) … ← kernel #2 = the disk's OS, via KEXEC
+Welcome to Debian GNU/Linux 12 (bookworm)!                            ← real Debian systemd
+Debian GNU/Linux 12 localhost ttyS0                                   ← login prompt
+```
+
+Two distinct kernels (coreboot-built `6.3.0` → the disk's `6.1.0-49-cloud-amd64`),
+the disk's GRUB menu parsed by u-root, and a real Debian login. coreboot → Linux +
+u-root → **the installed OS**: the real LinuxBoot lifecycle.
+
+---
+
 ## Summary
 
 | Step | Result |
@@ -189,3 +213,4 @@ Real firmware in the ROM, booting Linux + u-root: the canonical LinuxBoot.
 | **Tier B** `run-uefi-linuxboot.sh kexec` — OVMF → UKI → u-root → kexec | ✅ `BdsDxe`+`EDK II`, 2 banners, `STAGE1→STAGE2` |
 | `build-coreboot.sh` — coreboot toolchain + ROM | ✅ 16 MB `coreboot.rom`, LinuxBoot payload |
 | **Tier A** `run-coreboot-linuxboot.sh` — `qemu -bios` → coreboot → Linux → u-root | ✅ coreboot stages, `Linux 6.3`, u-root banner |
+| **Tier A finale** `run-coreboot-boot-disk.sh` — coreboot → u-root → `boot` → kexec a real OS | ✅ Debian `6.1.0` kexec'd off disk, systemd + login |

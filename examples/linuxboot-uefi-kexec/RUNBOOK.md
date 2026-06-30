@@ -211,19 +211,52 @@ then assembles them into a 16 MB `coreboot.rom`. Two notes baked into the script
 > ```
 > Real firmware, in the ROM, booting Linux+u-root. (`timeout`-capped; u-root idles.)
 
-## 6. Going further
+## 6. Tier A finale — boot a *real OS* off disk (the production LinuxBoot)
 
-- **kexec a *real* OS, not a second u-root.** Swap the hard-coded `dokexec.sh` for
-  u-root's **`localboot`** (scans disks, parses their bootloader config, boots the
-  found kernel) or **`pxeboot`** (netboot) — the actual LinuxBoot boot policies.
-  Attach one of the repo's installed disks (e.g. from
-  [`almalinux-pxe-lab/`](../almalinux-pxe-lab/) or a `vm-from-chroot-*` image) and
-  let u-root find and boot its kernel. This is the lab's intended "finale".
-- **The kexec handoff on Tier A.** The coreboot-built kernel has `CONFIG_KEXEC=y`, so
-  the same `dokexec.sh` mechanic works from its u-root too. To embed a second kernel,
-  inject it (and the policy) into the payload's u-root via coreboot's
-  `LINUXBOOT_UROOT_FILES` + `LINUXBOOT_UROOT_UINITCMD` — minding the 16 MB ROM
-  budget (use the 2.4 MB coreboot-built bzImage as the target, not a 15 MB distro one).
-- **Secure Boot.** Plain QEMU has none, so `kexec_file_load` of an unsigned kernel
-  just works. On a locked-down host you'd sign the kernel (and the UKI) or fall back
-  to the legacy `kexec_load` syscall — `dokexec.sh` already tries `-L` on failure.
+The truest payoff: don't kexec a toy 2nd kernel — kexec the **installed OS off a
+disk**, which is exactly what LinuxBoot does on a real server. u-root's **`boot`**
+command scans block devices, parses their bootloader config (GRUB), and kexecs the
+found kernel.
+
+```bash
+./fetch-os-disk.sh            # a real GRUB-installed OS disk (Debian 12 genericcloud)
+./run-coreboot-boot-disk.sh   # coreboot ROM + that disk; drives `boot` over serial
+```
+
+Two pieces make it work, both handled for you:
+
+- **The kernel must *see* the disk.** The shipped LinuxBoot defconfig is so minimal
+  it has no block/fs/partition drivers, so [`build-coreboot.sh`](build-coreboot.sh)
+  adds `VIRTIO_BLK`/`SATA_AHCI`/`EXT4`/`VFAT`/`MSDOS`+`EFI` partitions. Without them
+  u-root comes up but finds no disks.
+- **We *type* `boot` at the u-root shell.** coreboot only auto-runs `boot` as the
+  uinit for u-root **main** (Go ≥ 1.23); with our pinned v0.14.0 (Go 1.22) no uinit
+  runs, so u-root drops to a shell — the genuine interactive LinuxBoot prompt a
+  human types `boot` at. [`drive-boot.py`](drive-boot.py) does that over a serial
+  socket (slow keystrokes — serial input has no flow control). Build with u-root
+  main on a newer Go for the hands-off version.
+
+> **Checkpoint — two distinct kernels + real userspace** (`tierA-boot.log`):
+> ```
+> coreboot-… bootblock starting                      ← firmware (coreboot)
+> Linux version 6.3.0 (coreboot@reproducible) …      ← kernel #1 (coreboot-built) + u-root
+> Welcome to u-root!        ← (we type `boot`)
+> 02. Debian GNU/Linux, with Linux 6.1.0-49-cloud…   ← u-root `boot` parsed the disk's grub.cfg
+> Linux version 6.1.0-49-cloud-amd64 (debian-kernel…)← kernel #2 — the disk's OS, via KEXEC
+> Welcome to Debian GNU/Linux 12 (bookworm)!         ← real Debian systemd + login
+> Debian GNU/Linux 12 localhost ttyS0
+> ```
+> coreboot → Linux+u-root → the **installed OS**. That's LinuxBoot doing its real job.
+
+## 7. Going further
+
+- **`pxeboot` instead of `localboot`.** u-root also ships `pxeboot` — the same idea
+  over the network (DHCP + netboot), the other real LinuxBoot policy.
+- **A synthetic 2nd-kernel matryoshka on Tier A** (parity with B/C) is awkward here:
+  the clean `uinitcmd` knob is gated to u-root *main*, the minimal kernel disables
+  `BINFMT_SCRIPT` (so a `#!` uinit can't exec), and injecting a script uinit hits a
+  `fork/exec … resource temporarily unavailable`. The real-OS finale above is both
+  easier *and* more faithful — prefer it.
+- **Secure Boot.** Plain QEMU has none, so `kexec_file_load`/`kexec_load` of an
+  unsigned kernel just works. On a locked-down host you'd sign the kernel (and the
+  UKI) or fall back to the legacy `kexec_load` syscall (`dokexec.sh` tries `-L`).

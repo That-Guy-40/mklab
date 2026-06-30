@@ -146,8 +146,12 @@ examples/linuxboot-uefi-kexec/
    `run-coreboot-linuxboot.sh` boots it. **Verified end-to-end** (coreboot bootblock
    /romstage/ramstage → Jumping to boot code → Linux 6.3 → u-root banner). Build is
    author-run (~20 min) but needs **no sudo** — all coreboot deps were present.
-   Kexec finale on Tier A is optional (kernel has `CONFIG_KEXEC`); the natural
-   "kexec further" is u-root `localboot`/`pxeboot` to a real OS.
+   **Finale ✅ verified**: with disk/fs/partition drivers added to the payload
+   kernel, u-root's `boot` parses a real Debian 12 disk's GRUB config and **kexecs
+   the installed OS** to a login prompt (coreboot → Linux 6.3 + u-root → kexec →
+   Debian 6.1) — the production LinuxBoot lifecycle. `run-coreboot-boot-disk.sh` +
+   `drive-boot.py`. (`boot` is *typed* at the u-root shell; the auto-uinit is gated
+   to u-root main / Go ≥ 1.23.)
 3. Docs (README/RUNBOOK/MANUAL_TESTING/WALKTHROUGH), 00-INDEX, link_check, memory,
    vendoring. ✅
 
