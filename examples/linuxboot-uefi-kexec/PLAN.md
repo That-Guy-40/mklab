@@ -47,7 +47,7 @@ companion**, with an honest build-vs-boot split.
 | Tier | What | Fidelity | Build cost | Verifiable here? |
 |---|---|---|---|---|
 | **A (primary)** | **coreboot `qemu-q35` ROM** embedding a Linux kernel + **u-root** initramfs; `qemu -bios coreboot.rom`; u-root `init` **kexecs** a target kernel | The canonical LinuxBoot — real firmware replacement | High: coreboot crossgcc (from source) + Go/u-root | **Build = author-run** (toolchain gate); **ROM boot + u-root + kexec = verified in QEMU** |
-| **B (companion)** | **OVMF/UEFI** boots an **EFISTUB Linux** "boot kernel" + u-root initramfs → `kexec` the target | LinuxBoot *in spirit, on genuine UEFI* (the user's literal framing) | Moderate (no firmware rebuild; reuse lab-vm.sh OVMF) | **Fully verifiable** end-to-end |
+| **B (companion)** | **OVMF/UEFI** boots an **EFISTUB Linux** "boot kernel" + u-root initramfs (fused into a **UKI**) → `kexec` the target | LinuxBoot *in spirit, on genuine UEFI* (the user's literal framing) | Moderate (no firmware rebuild; reuse lab-vm.sh OVMF) | **✅ verified end-to-end** ([POC-UEFI-MATRYOSHKA](POC-UEFI-MATRYOSHKA.md)) |
 | **C (optional fast loop)** | `qemu -kernel/-initrd` a small kernel + custom `init` that `kexec`s a 2nd kernel | The *mechanic* only; not firmware/UEFI | Low | Fully verifiable; a quick inner-loop sanity tier |
 
 **Userland: u-root** (Go) over a hand-rolled BusyBox/C `init` — u-root *is*
@@ -134,7 +134,13 @@ examples/linuxboot-uefi-kexec/
    work here, Tiers B/A are unlocked. THEN attempt a coreboot `qemu-q35` +
    LinuxBoot ROM build (the big unknown) — or hand it to the user if the build is
    too long/blocked, and verify the boot of whatever ROM results.
-1. Tier B (OVMF) end-to-end, fully verified.
+1. **Tier B (OVMF) — ✅ DONE** (written up as [`POC-UEFI-MATRYOSHKA.md`](POC-UEFI-MATRYOSHKA.md)):
+   genuine OVMF/EDK II UEFI boots a **UKI** (systemd-stub + EFISTUB kernel +
+   u-root initramfs + cmdline) off an ESP at `\EFI\BOOT\BOOTX64.EFI` → u-root
+   PID 1 → **kexec** into a 2nd kernel. Verified end-to-end (EDK II banner,
+   `EFI stub: Loaded initrd`, two u-root banners, `STAGE1→STAGE2` cmdlines, clock
+   reset). UKI toolchain (`ukify`/stub/`pefile`) obtained **without `sudo`** via
+   `apt-get download` + `dpkg-deb -x`.
 2. Tier A: author `build-coreboot.sh` + defconfig; user runs the build; verify the
    ROM boot + kexec.
 3. Docs (README/RUNBOOK/MANUAL_TESTING), 00-INDEX, link_check, memory, vendoring.
