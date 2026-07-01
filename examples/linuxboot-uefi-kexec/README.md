@@ -119,6 +119,8 @@ not a userspace trick. The machine booted Linux, and that Linux booted Linux.
 | [`PLAN-PXEBOOT.md`](PLAN-PXEBOOT.md) | design plan for the **network-boot / verified-provisioning** track — u-root `pxeboot` (Rocky + Kali, auto-install from the ROM) escalating to HTTPS + **System Transparency** signed images |
 | [`POC-PXEBOOT.md`](POC-PXEBOOT.md) | the **network-boot spike — VERIFIED FROM THE REAL ROM**: `qemu -bios coreboot.rom` → `pxeboot -file` auto-installs AlmaLinux 9.8 over the net (309/309 pkgs); the diagnosed u-root-DHCP-over-slirp wall + the `ip=dhcp`/`-cpu host` recipe + the coreboot stale-cache trap |
 | pxeboot scripts | [`fetch-go.sh`](fetch-go.sh) · [`coreboot-qemu-q35-pxeboot.config`](coreboot-qemu-q35-pxeboot.config) · [`serve-netboot.sh`](serve-netboot.sh) · [`fetch-netboot-os.sh`](fetch-netboot-os.sh) · [`run-coreboot-pxe.sh`](run-coreboot-pxe.sh) — the P1 scaffolding (see POC-PXEBOOT.md) |
+| [`showcase-pxeboot.sh`](showcase-pxeboot.sh) | 🪆 **P1 one-shot**: serve → stage → boot the ROM per OS (AlmaLinux + Rocky + Kali) → print a proof grid |
+| [`MANUAL_TESTING-pxeboot.md`](MANUAL_TESTING-pxeboot.md) | by-hand walk of the pxeboot install (type `pxeboot -file` yourself) + real transcripts for all three OSes |
 | [`upstream-tutorial/`](upstream-tutorial/README.md) | provenance: who to cite (linuxboot.org, u-root, the UKI spec) |
 
 ## Sibling labs (the "close to the metal" family)
@@ -139,6 +141,15 @@ kernel** (deterministic, unmistakable in the log); Tier A's coreboot ROM boots
 `boot` parses a real disk's GRUB config and **kexecs the installed OS** (verified:
 coreboot → Linux 6.3 + u-root → kexec → **Debian 12** to a login prompt). That's the
 production LinuxBoot lifecycle: firmware boots Linux, which boots the OS off disk.
-See [`RUNBOOK.md`](RUNBOOK.md) §6. (`pxeboot` is the same idea over the network —
-planned in [`PLAN-PXEBOOT.md`](PLAN-PXEBOOT.md): Rocky + Kali auto-installed from the
-ROM, escalating to HTTPS and **System Transparency** signed images.)
+See [`RUNBOOK.md`](RUNBOOK.md) §6.
+
+**And the same idea over the network is verified too** — `pxeboot` (PLAN-PXEBOOT P1):
+the ROM's u-root fetches an OS installer over HTTP and `kexec`s it, running an
+**unattended install**. Proven from the real ROM for **three OSes, two installer
+families** — AlmaLinux 9 + Rocky 9 (Anaconda/kickstart, AlmaLinux to 309/309 packages)
+and Kali (Debian d-i/preseed, base system installed). Watch it all with
+[`showcase-pxeboot.sh`](showcase-pxeboot.sh), do it by hand with
+[`MANUAL_TESTING-pxeboot.md`](MANUAL_TESTING-pxeboot.md), or read the diagnosed
+DHCP-over-slirp wall + the recipe in [`POC-PXEBOOT.md`](POC-PXEBOOT.md). Still ahead
+([`PLAN-PXEBOOT.md`](PLAN-PXEBOOT.md)): HTTPS via a lab CA (P2) and **System
+Transparency** signed images (P3).

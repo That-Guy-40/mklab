@@ -8,12 +8,15 @@
 #   • run-coreboot-pxe.sh         types `pxeboot`  → netboot: DHCP, fetch the iPXE
 #                                                    script, kexec the installer
 #
-# Why we *type* the command instead of it running automatically: coreboot's
-# LinuxBoot payload only wires an auto-uinit (SPECIFIC_BOOTLOADER_* -> uinit=<cmd>)
-# for u-root **main**, which needs Go >= 1.23. We pin u-root v0.14.0 (Go 1.22), so
-# no uinit runs and u-root drops to a shell — exactly the interactive LinuxBoot
-# prompt a human would type the command at. (Build with u-root main on a newer Go
-# to get the hands-off version; see PLAN-PXEBOOT.md's Go-1.23 track.)
+# Why we *type* the command instead of it running automatically:
+#   • disk-boot (v0.14.0): coreboot only wires an auto-uinit (SPECIFIC_BOOTLOADER_*
+#     -> uinit=<cmd>) for u-root **main**; the disk tier pins v0.14.0 (Go 1.22), so
+#     no uinit runs and u-root drops to a shell.
+#   • pxeboot (u-root main): even though main *can* auto-uinit, we set
+#     SPECIFIC_BOOTLOADER_NONE on purpose — a uinit symlink can't carry the `-file`
+#     flag `pxeboot` needs (POC-PXEBOOT.md), so we type `pxeboot -file <URI>` too.
+# Either way u-root drops to exactly the interactive LinuxBoot prompt a human would
+# type at. (A hands-off pxeboot needs a uinit *wrapper* script — PLAN-PXEBOOT.md.)
 #
 # Usage: drive-boot.py <serial.sock> <out.log> [command=boot] [post_wait_secs=40]
 #   command        what to type at the u-root shell (default "boot")
