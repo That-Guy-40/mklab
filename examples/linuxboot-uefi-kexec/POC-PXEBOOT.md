@@ -1,13 +1,15 @@
 # POC-PXEBOOT — network boot/provision from the coreboot ROM, and the u-root DHCP wall
 
-> **Status: spike PROVEN end-to-end.** The full chain — coreboot-style firmware →
-> Linux → u-root → `pxeboot` → `kexec` → an OS installer running an **automated,
-> unattended install over the network** — was verified on this host (Ubuntu 24.04 +
-> QEMU 8.2.2 / KVM). The verified transcript is at the bottom (AlmaLinux 9.8 Anaconda
-> installing 309 packages). What is **not** yet done: folding this into the actual
-> coreboot ROM (a `build-coreboot.sh` rebuild with u-root main); that's the P1
-> follow-up. This document is the feasibility spike + the hard-won recipe, in the
-> spirit of [`POC-MATRYOSHKA.md`](POC-MATRYOSHKA.md) and
+> **Status: VERIFIED FROM THE REAL COREBOOT ROM.** The full chain — the actual
+> `coreboot.rom` (16 MB, `qemu -bios`) → Linux → u-root **main** → `pxeboot -file`
+> → `kexec` → an OS installer running an **automated, unattended install over the
+> network** — was verified end-to-end on this host (Ubuntu 24.04 + QEMU 8.2.2 / KVM).
+> AlmaLinux 9.8 Anaconda ran its kickstart to **309/309 packages + boot loader**
+> straight off the ROM (transcript at the bottom). The first pass of this doc proved
+> the *mechanism* in the fast `qemu -kernel` loop; it is now proven in the real
+> firmware. Still open (P1 follow-up): the same run for **Rocky 9 + Kali** from the
+> same ROM, and a hands-off `uinit` wrapper. In the spirit of
+> [`POC-MATRYOSHKA.md`](POC-MATRYOSHKA.md) and
 > [`POC-UEFI-MATRYOSHKA.md`](POC-UEFI-MATRYOSHKA.md).
 
 This is the network sibling of the disk finale ([`RUNBOOK.md`](RUNBOOK.md) §6): instead
@@ -30,7 +32,7 @@ Four non-obvious keys, each forced by a concrete failure:
 | **u-root `main`** (Go ≥1.25) | v0.14.0 has no usable path | main's `pxeboot -file` skips DHCP; v0.14.0's does too but see below — both share the DHCP bug, so we need `-file` regardless, and `-file` is cleanest on main |
 | **kernel `ip=dhcp`** (`CONFIG_IP_PNP_DHCP`) | no IP at all | u-root's own DHCP client emits **zero packets** over QEMU slirp (see below); the *kernel's* in-stack DHCP works fine |
 | **`pxeboot -file <URI>`** | `pxeboot` hangs at "Attempting to get DHCPv4 lease" | `-file` = a "manual target" that **skips DHCP** and fetches over the already-configured interface |
-| **`-device virtio-rng-pci`** + **`-cpu host`** | `could not get random number` / glibc `x86-64-v2` panic | u-root netboot needs entropy; RHEL9 userspace needs a v2 CPU |
+| **`-cpu host`** (+ `-device virtio-rng-pci`) | glibc `x86-64-v2` panic / `could not get random number` | RHEL9 userspace needs a v2 microarch; u-root netboot needs early entropy. `-cpu host` also exposes **RDRAND**, which seeds the kernel CRNG in time — so on the real ROM (no `CONFIG_HW_RANDOM_VIRTIO` in the payload kernel) the entropy stall **did not recur** even though the kernel couldn't use the virtio-rng device. Keep `virtio-rng-pci` as insurance / for the TCG path where RDRAND is absent. |
 
 ## The wall: u-root's DHCP emits no packets over QEMU slirp
 
@@ -102,36 +104,72 @@ Two more speed bumps, both from u-root's own test harness (`qemu.VirtioRandom()`
 - The installer kexec'd, then `Fatal glibc error: CPU does not support x86-64-v2` →
   kernel panic. AlmaLinux/RHEL 9 userspace needs a v2 microarch. Add **`-cpu host`**.
 
-## Verified transcript (fast `-kernel` loop, the mechanism the ROM will carry)
+## Verified transcript (the REAL ROM — `qemu -bios coreboot.rom`)
 
-Command driven: `pxeboot -v -ipv6=false -file http://10.0.2.2:8181/boot-alma.ipxe`,
-kernel booted with `ip=dhcp`, QEMU with `-cpu host -device e1000 -device virtio-rng-pci`:
+`./run-coreboot-pxe.sh alma` — a genuine coreboot ROM boots, the driver types
+`pxeboot -v -ipv6=false -file http://10.0.2.2:8181/boot-alma.ipxe`, QEMU with
+`-M q35 -cpu host -device e1000 -device virtio-rng-pci`:
 
 ```
-IP-Config: Got DHCP answer from 10.0.2.2, my address is 10.0.2.15   ← kernel DHCP (real lease)
-Welcome to u-root!
+IP-Config: Got DHCP answer from 10.0.2.2, my address is 10.0.2.15   ← the KERNEL's DHCP (ip=dhcp)
+Welcome to u-root!                                                  ← u-root main, PID 1
 2026/… Skipping DHCP for manual target..                            ← pxeboot -file: no u-root DHCP
-[kexec into the installer kernel 5.14.0-…el9_8.x86_64]
+2026/… Boot URI: http://10.0.2.2:8181/boot-alma.ipxe               ← fetch the iPXE script over the lease
+[    0.000000] Linux version 5.14.0-687.5.3.el9_8.x86_64 …          ← KEXEC — clock resets (fresh kernel)
+Welcome to AlmaLinux 9.8 (Olive Jaguar)!
 anaconda 34.25.7.14-1.el9.alma.1 for AlmaLinux 9.8 started.
-Not asking for VNC because text mode was explicitly asked for in kickstart
-Starting automated install.                                         ← the kickstart runs, unattended
-Starting package installation process
-Installing glibc.x86_64 (27/309) … Installing dracut-network.x86_64 (262/309)
+Starting automated install.                                        ← the kickstart runs, unattended
+Installing rootfiles.noarch (309/309)                              ← all 309 packages
+Installing boot loader                                             ← install complete
+Configuring installed system
 ```
 
-Firmware-Linux booted Linux, which fetched an OS over the network and `kexec`'d into an
-**unattended install**. That's LinuxBoot's real job, reproduced.
+A real firmware ROM booted Linux, which fetched an OS over the network and `kexec`'d
+into an **unattended install that ran to completion**. That's LinuxBoot's real job,
+reproduced in genuine firmware. (The first proof of the *mechanism* was in the fast
+`qemu -kernel` loop — same four keys, same result, ~20 s per iteration instead of a
+ROM rebuild; that loop remains the way to iterate.)
 
-## What remains (P1 build-out, deferred to a fresh session)
+## The coreboot rebuild trap (what it took to get the ROM to match the config)
 
-- **Rebuild the ROM** with the network config:
-  `./fetch-go.sh` then
-  `CBCONFIG=coreboot-qemu-q35-pxeboot.config UROOT_GOBIN=$HOME/linuxboot-lab/go1.25/bin ./build-coreboot.sh`
-  (u-root main; `ip=dhcp`, NIC, `virtio-rng`, `IP_PNP_DHCP` are baked in).
-- `./serve-netboot.sh up` and `./fetch-netboot-os.sh both` (Rocky 9 + Kali), then
-  `./run-coreboot-pxe.sh rocky` / `kali` — verify the same chain **from the real ROM**.
+Flipping the coreboot config to `CONFIG_LINUXBOOT_UROOT_MAIN=y` + `ip=dhcp` and
+re-running `build-coreboot.sh` produced a ROM that **looked** rebuilt but wasn't —
+the booted kernel printed `Unknown kernel command line parameters "ip=dhcp", will be
+passed to user space` (no in-kernel DHCP → `network is unreachable`). Two stale
+caches, both silent:
+
+- **u-root stayed v0.14.0.** coreboot's payload Makefile clones u-root with an
+  **order-only prerequisite** — `$(uroot_build): | build/ ; git clone … ; git checkout
+  $(VERSION)`. Order-only means "run only if the *directory* is absent"; it does **not**
+  re-fire when `UROOT_VERSION` flips `v0.14.0`→`main`. The old checkout persisted.
+- **The kernel stayed the wrong build.** `build/kernel-6_3` held a **CI-config** kernel
+  from an earlier spike (`NETFILTER=y`, ~3975-line `.config`) and `build/Image` was an
+  even older copy — neither carried `CONFIG_IP_PNP`. coreboot happily re-wrapped that
+  stale payload into CBFS.
+
+Fix = a **clean payload rebuild**: remove `build/kernel-6_3`, `build/Image`,
+`build/initramfs*`, and the `build/go/src/github.com/u-root/u-root` checkout (keep the
+137 MB `linux-6.3.tar.xz` and the crossgcc toolchain), then rebuild. The result: a
+fresh kernel from the **committed minimal defconfig** (IP_PNP present, no NETFILTER)
+and u-root **main** — the ROM that produced the transcript below. **Ground-truth the
+running kernel** (the `ip=dhcp` accept/reject line, `/proc/cmdline`), never the config
+on disk.
+
+## What remains (P1 follow-up)
+
+- **Rocky 9 + Kali from the same ROM.** `./serve-netboot.sh up` +
+  `./fetch-netboot-os.sh both`, then `./run-coreboot-pxe.sh rocky` / `kali`. (The ROM
+  is OS-agnostic — only the staged installer + `boot-<os>.ipxe` change.)
 - A hands-off `uinit` wrapper (a uinit symlink can't carry the `-file` flag), then P2
   (HTTPS via the lab CA) and P3 (System Transparency). See [`PLAN-PXEBOOT.md`](PLAN-PXEBOOT.md).
+
+### To rebuild the ROM from scratch
+
+`./fetch-go.sh` then
+`CBCONFIG=coreboot-qemu-q35-pxeboot.config UROOT_GOBIN=$HOME/linuxboot-lab/go1.25/bin ./build-coreboot.sh`
+(u-root main; `ip=dhcp`, NIC, `IP_PNP_DHCP`, virtio-rng are baked into the config +
+`build-coreboot.sh` §3a). On a **fresh** coreboot clone this is one clean shot; on a
+tree from an earlier build, clear the stale caches above first.
 
 ## Files this spike leaves behind
 

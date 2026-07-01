@@ -1,9 +1,11 @@
 # PLAN — LinuxBoot **pxeboot + verified provisioning**
 
-> Status: **DESIGN plan**, with **P1's mechanism now spike-PROVEN** — see
-> [`POC-PXEBOOT.md`](POC-PXEBOOT.md): the full chain (firmware → Linux → u-root →
-> `pxeboot` → kexec → an OS auto-installing over the network) was verified end-to-end
-> (AlmaLinux 9.8 Anaconda, unattended). That spike also uncovered a load-bearing
+> Status: **DESIGN plan**, with **P1 now VERIFIED FROM THE REAL COREBOOT ROM** — see
+> [`POC-PXEBOOT.md`](POC-PXEBOOT.md): the full chain (`qemu -bios coreboot.rom` →
+> Linux → u-root main → `pxeboot -file` → kexec → an OS auto-installing over the
+> network) ran end-to-end off the actual ROM (AlmaLinux 9.8 Anaconda, unattended,
+> **309/309 packages + boot loader**). Rocky 9 + Kali from the same ROM are the P1
+> follow-up (§10). That work also uncovered a load-bearing
 > finding that revises §2 and §6 below: **u-root's own DHCP client emits no packets
 > over QEMU slirp (any version)**, so the working recipe is **kernel `ip=dhcp` +
 > `pxeboot -file` + `virtio-rng` + `-cpu host`**, and the pxeboot ROM needs **u-root
@@ -262,9 +264,10 @@ examples/linuxboot-uefi-kexec/
 
 ## 10. Implementation sequencing (spike-first)
 
-0. Spike: add NIC drivers + `pxeboot`; from the ROM, type `pxeboot`, watch slirp DHCP →
-   fetch `boot.ipxe` → kexec **one** installer (Rocky). Gate the rest.
-1. P1 both OSes (Rocky+Kali), typed; then the hands-off Go-1.23/main build.
+0. ✅ **DONE** — Spike: NIC drivers + `pxeboot`; from the **real ROM**, `pxeboot -file` →
+   kernel DHCP → fetch `boot-alma.ipxe` → kexec → **AlmaLinux 9.8 auto-installs (309/309)**.
+   The DHCP wall + the stale-cache trap were found and fixed here ([`POC-PXEBOOT.md`](POC-PXEBOOT.md)).
+1. P1 the other OSes (**Rocky 9 + Kali**) from the same ROM, typed; then the hands-off `uinit`/main build.
 1b. **Establish `examples/lab-ca/`** (the shared root) — `make-ca.sh`, commit `lab-ca.crt`
    + fingerprint, gitignore the keystore. Prerequisite for P2/P3.
 2. P2 HTTPS: issue a server cert from lab-ca, bake `lab-ca.crt`, serve `:8443`, verify (no `-k`).
