@@ -1,9 +1,15 @@
 # PLAN — LinuxBoot **pxeboot + verified provisioning**
 
-> Status: **DESIGN plan** (pre-implementation). A forward extension of this lab's
-> verified Tiers A/B/C + disk finale. Sibling to [`PLAN.md`](PLAN.md) (the original
-> three-tier design); this file plans the **network-boot / provisioning** track.
-> Decisions captured from the planning session are in §1.
+> Status: **DESIGN plan**, with **P1's mechanism now spike-PROVEN** — see
+> [`POC-PXEBOOT.md`](POC-PXEBOOT.md): the full chain (firmware → Linux → u-root →
+> `pxeboot` → kexec → an OS auto-installing over the network) was verified end-to-end
+> (AlmaLinux 9.8 Anaconda, unattended). That spike also uncovered a load-bearing
+> finding that revises §2 and §6 below: **u-root's own DHCP client emits no packets
+> over QEMU slirp (any version)**, so the working recipe is **kernel `ip=dhcp` +
+> `pxeboot -file` + `virtio-rng` + `-cpu host`**, and the pxeboot ROM needs **u-root
+> main (Go 1.25)** — captured in [`coreboot-qemu-q35-pxeboot.config`](coreboot-qemu-q35-pxeboot.config).
+> A forward extension of this lab's verified Tiers A/B/C + disk finale. Sibling to
+> [`PLAN.md`](PLAN.md). Decisions from the planning session are in §1.
 
 ## 1. Context — why
 

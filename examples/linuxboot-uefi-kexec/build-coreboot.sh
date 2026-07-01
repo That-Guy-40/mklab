@@ -22,6 +22,15 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 JOBS="$(nproc)"
 mkdir -p "$WORKDIR"
 
+# Which coreboot config to build. Default = the verified disk-finale ROM (u-root
+# v0.14.0). For the NETWORK-boot ROM, pass CBCONFIG=coreboot-qemu-q35-pxeboot.config
+# (u-root main) + UROOT_GOBIN=$WORKDIR/go1.25/bin — see PLAN-PXEBOOT.md / POC-PXEBOOT.md.
+CBCONFIG="${CBCONFIG:-$HERE/coreboot-qemu-q35-linuxboot.config}"
+[[ "$CBCONFIG" = /* ]] || CBCONFIG="$HERE/$CBCONFIG"
+# u-root main needs Go >= 1.25; UROOT_GOBIN puts it ahead of the apt Go 1.22 (which
+# stays default for the v0.14.0 tiers). Get it with ./fetch-go.sh.
+[[ -n "${UROOT_GOBIN:-}" ]] && export PATH="$UROOT_GOBIN:$PATH"
+
 # --- 0. prerequisites (no sudo done for you — just reported) ---
 miss=""
 for c in gcc g++ make git gnat flex bison m4 nasm iasl; do command -v "$c" >/dev/null || miss="$miss $c"; done
@@ -63,8 +72,39 @@ CONFIG_EFI_PARTITION=y
 EOF
 fi
 
-# --- 3b. config: q35 + LinuxBoot payload (see coreboot-qemu-q35-linuxboot.config) ---
-cp "$HERE/coreboot-qemu-q35-linuxboot.config" .config
+# --- 3a-net. give the payload KERNEL a NIC + TCP/IP so u-root's `pxeboot` works ---
+# The disk block above lets `boot` see a local disk (the Tier A finale). For the
+# NETWORK boot policy `pxeboot` (PLAN-PXEBOOT.md P1) the payload kernel also needs
+# the whole net stack — u-root does DHCP over a raw AF_PACKET socket, then fetches
+# the kernel/initrd over TCP/IP (HTTP now, HTTPS at P2). The minimal defconfig has
+# none of it, so add: NET/INET/PACKET + a driver for QEMU's NIC. virtio-net matches
+# our `-device virtio-net`; e1000/e1000e cover slirp's default NIC too. Idempotent.
+if ! grep -q '^CONFIG_VIRTIO_NET=y' "$KDC"; then
+  cat >> "$KDC" <<'EOF'
+CONFIG_NET=y
+CONFIG_PACKET=y
+CONFIG_UNIX=y
+CONFIG_INET=y
+CONFIG_NETDEVICES=y
+CONFIG_NET_CORE=y
+CONFIG_VIRTIO_NET=y
+CONFIG_E1000=y
+CONFIG_E1000E=y
+CONFIG_IP_PNP=y
+CONFIG_IP_PNP_DHCP=y
+CONFIG_HW_RANDOM=y
+CONFIG_HW_RANDOM_VIRTIO=y
+EOF
+fi
+# IP_PNP_DHCP: the KERNEL does the DHCP (with `ip=dhcp`, set in the pxeboot config) —
+# u-root's own DHCP client emits no packets over QEMU slirp (POC-PXEBOOT.md), but the
+# kernel's in-stack client works, and `pxeboot -file` then reuses that config.
+# HW_RANDOM_VIRTIO: u-root's netboot needs entropy (else "could not get random
+# number") — pair with QEMU `-device virtio-rng-pci`. All harmless for the disk tiers.
+
+# --- 3b. config: q35 + LinuxBoot payload (CBCONFIG; default = the disk-finale ROM) ---
+echo "==> using coreboot config: $CBCONFIG"
+cp "$CBCONFIG" .config
 make olddefconfig
 
 # --- 4. build the ROM (downloads+compiles linux-6.3, builds u-root, assembles) ---

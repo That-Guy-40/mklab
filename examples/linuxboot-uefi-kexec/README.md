@@ -14,8 +14,10 @@ here we reproduce it in QEMU, two ways.
 
 **Verified end-to-end on this host (Ubuntu 24.04 + QEMU/KVM).** The feasibility
 spikes behind it are written up blow-by-blow with real serial logs in
-[`POC-MATRYOSHKA.md`](POC-MATRYOSHKA.md) (Tier C) and
-[`POC-UEFI-MATRYOSHKA.md`](POC-UEFI-MATRYOSHKA.md) (Tier B); [`MANUAL_TESTING.md`](MANUAL_TESTING.md)
+[`POC-MATRYOSHKA.md`](POC-MATRYOSHKA.md) (Tier C),
+[`POC-UEFI-MATRYOSHKA.md`](POC-UEFI-MATRYOSHKA.md) (Tier B), and
+[`POC-PXEBOOT.md`](POC-PXEBOOT.md) (network boot — `pxeboot` provisioning an OS,
+plus the diagnosed u-root-DHCP-over-slirp wall); [`MANUAL_TESTING.md`](MANUAL_TESTING.md)
 has the transcripts from the lab scripts themselves.
 
 > 🪆 **Want the tour, not the manual?** [`SHOWCASE.md`](SHOWCASE.md) is a guided,
@@ -115,6 +117,8 @@ not a userspace trick. The machine booted Linux, and that Linux booted Linux.
 | [`POC-MATRYOSHKA.md`](POC-MATRYOSHKA.md) / [`POC-UEFI-MATRYOSHKA.md`](POC-UEFI-MATRYOSHKA.md) | the Tier C / Tier B feasibility spikes |
 | [`PLAN.md`](PLAN.md) | the full design + the Tier A (coreboot) plan |
 | [`PLAN-PXEBOOT.md`](PLAN-PXEBOOT.md) | design plan for the **network-boot / verified-provisioning** track — u-root `pxeboot` (Rocky + Kali, auto-install from the ROM) escalating to HTTPS + **System Transparency** signed images |
+| [`POC-PXEBOOT.md`](POC-PXEBOOT.md) | the **network-boot spike (PROVEN)**: `pxeboot -file` auto-installs an OS over the net; the diagnosed u-root-DHCP-over-slirp wall + the `ip=dhcp`/`virtio-rng`/`-cpu host` recipe |
+| pxeboot scripts | [`fetch-go.sh`](fetch-go.sh) · [`coreboot-qemu-q35-pxeboot.config`](coreboot-qemu-q35-pxeboot.config) · [`serve-netboot.sh`](serve-netboot.sh) · [`fetch-netboot-os.sh`](fetch-netboot-os.sh) · [`run-coreboot-pxe.sh`](run-coreboot-pxe.sh) — the P1 scaffolding (see POC-PXEBOOT.md) |
 | [`upstream-tutorial/`](upstream-tutorial/README.md) | provenance: who to cite (linuxboot.org, u-root, the UKI spec) |
 
 ## Sibling labs (the "close to the metal" family)
