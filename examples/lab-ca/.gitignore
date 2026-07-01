@@ -1,0 +1,6 @@
+# The lab CA's PRIVATE material — never commit. Only lab-ca.crt + lab-ca.fingerprint
+# (the public trust anchor) are tracked. Regenerate with ./make-ca.sh if lost.
+private/
+*.key
+*key.pem
+*.srl

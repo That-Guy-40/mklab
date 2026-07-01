@@ -173,7 +173,7 @@ same level as the netboot servers** (`examples/`), so any lab needing TLS or sig
 artifacts anchors to one root. It supersedes the scattered self-signed/snakeoil certs
 (`pxe-boot-mechanics` + `~/.config/lab-netboot/`).
 
-**Lives at `examples/lab-ca/`** (sibling to `podman-netboot-server.toml`). Provides:
+**Lives at [`examples/lab-ca/`](../lab-ca/README.md)** (sibling to `podman-netboot-server.toml`) — **BUILT & verified** (make-ca + issue-server-cert + issue-signing-cert all chain to one root; keys gitignored). Provides:
 - `make-ca.sh` — **idempotent**: generates the root **once** if absent, into a
   gitignored keystore; prints + records the fingerprint. Safe to re-run (won't clobber).
 - `issue-server-cert.sh <cn>` — TLS **server** leaf (e.g. `10.0.2.2` / `netboot.lab`)
