@@ -118,6 +118,8 @@ not a userspace trick. The machine booted Linux, and that Linux booted Linux.
 | [`PLAN.md`](PLAN.md) | the full design + the Tier A (coreboot) plan |
 | [`PLAN-PXEBOOT.md`](PLAN-PXEBOOT.md) | design plan for the **network-boot / verified-provisioning** track — u-root `pxeboot` (Rocky + Kali, auto-install from the ROM) escalating to HTTPS + **System Transparency** signed images |
 | [`POC-PXEBOOT.md`](POC-PXEBOOT.md) | the **network-boot spike — VERIFIED FROM THE REAL ROM**: `qemu -bios coreboot.rom` → `pxeboot -file` auto-installs AlmaLinux 9.8 over the net (309/309 pkgs); the diagnosed u-root-DHCP-over-slirp wall + the `ip=dhcp`/`-cpu host` recipe + the coreboot stale-cache trap |
+| [`POC-PXEBOOT-P2.md`](POC-PXEBOOT-P2.md) | **P2 — HTTPS, PROVEN pos+neg**: `pxeboot` has no https scheme, so the ROM fetches kernel+initrd with `wget https://…` (trusting a lab CA baked into the initramfs) + `kexec`; rogue cert refused. Uses [`../lab-ca/`](../lab-ca/README.md) |
+| [`run-coreboot-pxe-https.sh`](run-coreboot-pxe-https.sh) | **P2 boot**: `serve-netboot.sh --tls` (nginx :8443, lab-CA cert) → drive `wget https:// + kexec` (reuses `boot-<os>.ipxe`) |
 | pxeboot scripts | [`fetch-go.sh`](fetch-go.sh) · [`coreboot-qemu-q35-pxeboot.config`](coreboot-qemu-q35-pxeboot.config) · [`serve-netboot.sh`](serve-netboot.sh) · [`fetch-netboot-os.sh`](fetch-netboot-os.sh) · [`run-coreboot-pxe.sh`](run-coreboot-pxe.sh) — the P1 scaffolding (see POC-PXEBOOT.md) |
 | [`showcase-pxeboot.sh`](showcase-pxeboot.sh) | 🪆 **P1 one-shot**: serve → stage → boot the ROM per OS (AlmaLinux + Rocky + Kali) → print a proof grid |
 | [`MANUAL_TESTING-pxeboot.md`](MANUAL_TESTING-pxeboot.md) | by-hand walk of the pxeboot install (type `pxeboot -file` yourself) + real transcripts for all three OSes |
@@ -150,6 +152,10 @@ families** — AlmaLinux 9 + Rocky 9 (Anaconda/kickstart, AlmaLinux to 309/309 p
 and Kali (Debian d-i/preseed, base system installed). Watch it all with
 [`showcase-pxeboot.sh`](showcase-pxeboot.sh), do it by hand with
 [`MANUAL_TESTING-pxeboot.md`](MANUAL_TESTING-pxeboot.md), or read the diagnosed
-DHCP-over-slirp wall + the recipe in [`POC-PXEBOOT.md`](POC-PXEBOOT.md). Still ahead
-([`PLAN-PXEBOOT.md`](PLAN-PXEBOOT.md)): HTTPS via a lab CA (P2) and **System
-Transparency** signed images (P3).
+DHCP-over-slirp wall + the recipe in [`POC-PXEBOOT.md`](POC-PXEBOOT.md).
+
+**P2 (HTTPS) is verified too:** since `pxeboot` has no https scheme, the ROM fetches the
+kernel+initrd with `wget https://…` — verified against a **lab CA baked into the
+initramfs** ([`../lab-ca/`](../lab-ca/README.md)) — then `kexec`s them; a rogue cert is
+refused. Positive + negative proof in [`POC-PXEBOOT-P2.md`](POC-PXEBOOT-P2.md). Still
+ahead ([`PLAN-PXEBOOT.md`](PLAN-PXEBOOT.md)): **System Transparency** signed images (P3).

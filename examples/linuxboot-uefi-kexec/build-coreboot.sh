@@ -107,6 +107,29 @@ echo "==> using coreboot config: $CBCONFIG"
 cp "$CBCONFIG" .config
 make olddefconfig
 
+# --- 3c. P2: stage the shared lab CA into the initramfs (if the config bakes it) ---
+# When the config sets CONFIG_LINUXBOOT_UROOT_FILES=lab-ca.crt:… the LinuxBoot Makefile
+# runs `u-root -files $(PWD)/lab-ca.crt:<dst>`, so the PUBLIC cert must sit at the tree
+# root. Copy it from the shared lab CA (examples/lab-ca) — never the private key.
+if grep -q 'CONFIG_LINUXBOOT_UROOT_FILES=.*lab-ca\.crt' .config; then
+  LABCA="$HERE/../lab-ca/lab-ca.crt"
+  [[ -f "$LABCA" ]] || { echo "config bakes lab-ca.crt but $LABCA missing — run examples/lab-ca/make-ca.sh" >&2; exit 1; }
+  cp "$LABCA" "$CB/lab-ca.crt"
+  echo "==> staged lab CA → $CB/lab-ca.crt (initramfs /etc/ssl/certs/ca-certificates.crt)"
+fi
+
+# --- 3d. force the u-root initramfs to rebuild so command/-files changes take effect ---
+# The cpio target depends only on the u-root TOOL binary, not on the arg list, so a
+# changed CONFIG_LINUXBOOT_UROOT_COMMANDS/FILES would otherwise ship a STALE initramfs
+# (the same class of trap as the kernel cache — POC-PXEBOOT.md). coreboot's payload
+# integration does NOT honor a `touch` of the prereq, but it DOES rebuild a REMOVED
+# artifact, so delete just the initramfs/payload-combine outputs (regenerable in ~30s;
+# the kernel `build/kernel-6_3` and the u-root clone are left intact — no 15-min
+# recompile). This is the script invalidating its own cache, like `make clean`.
+LBB="$CB/payloads/external/LinuxBoot/build"
+rm -f "$LBB/initramfs_u-root.cpio" "$LBB/initramfs" "$LBB/Image"
+echo "==> invalidated stale initramfs cache (forces u-root repack from current config)"
+
 # --- 4. build the ROM (downloads+compiles linux-6.3, builds u-root, assembles) ---
 # GOTOOLCHAIN=local: u-root's `go build` must use the apt Go 1.22, not an
 # auto-downloaded 1.25 (which breaks u-root — same trap as build-uroot.sh).

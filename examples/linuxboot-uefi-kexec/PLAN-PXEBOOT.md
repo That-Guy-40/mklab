@@ -4,8 +4,13 @@
 > [`POC-PXEBOOT.md`](POC-PXEBOOT.md): the full chain (`qemu -bios coreboot.rom` →
 > Linux → u-root main → `pxeboot -file` → kexec → an OS auto-installing over the
 > network) ran end-to-end off the actual ROM (AlmaLinux 9.8 Anaconda, unattended,
-> **309/309 packages + boot loader**). Rocky 9 + Kali from the same ROM are the P1
-> follow-up (§10). That work also uncovered a load-bearing
+> **309/309 packages + boot loader**), and for **Rocky 9 + Kali** too (three OSes, two
+> installer families, one ROM — see [`showcase-pxeboot.sh`](showcase-pxeboot.sh)).
+> **P2 (HTTPS) is also PROVEN** ([`POC-PXEBOOT-P2.md`](POC-PXEBOOT-P2.md)): `pxeboot` has
+> no https scheme, so the ROM fetches kernel+initrd with `wget https://…` verified
+> against a **lab CA baked into the initramfs** ([`../lab-ca/`](../lab-ca/README.md)),
+> then `kexec`s — positive + negative (rogue cert refused), stock u-root. **P3** (System
+> Transparency) is next. That work also uncovered a load-bearing
 > finding that revises §2 and §6 below: **u-root's own DHCP client emits no packets
 > over QEMU slirp (any version)**, so the working recipe is **kernel `ip=dhcp` +
 > `pxeboot -file` + `virtio-rng` + `-cpu host`**, and the pxeboot ROM needs **u-root
@@ -270,7 +275,10 @@ examples/linuxboot-uefi-kexec/
 1. P1 the other OSes (**Rocky 9 + Kali**) from the same ROM, typed; then the hands-off `uinit`/main build.
 1b. **Establish `examples/lab-ca/`** (the shared root) — `make-ca.sh`, commit `lab-ca.crt`
    + fingerprint, gitignore the keystore. Prerequisite for P2/P3.
-2. P2 HTTPS: issue a server cert from lab-ca, bake `lab-ca.crt`, serve `:8443`, verify (no `-k`).
+2. ✅ **DONE** — P2 HTTPS: lab-ca server cert + `serve-netboot.sh --tls` (:8443); ROM bakes
+   `lab-ca.crt` at `/etc/ssl/certs/ca-certificates.crt`; `wget https://…` + `kexec` (pxeboot
+   has no https scheme). Verified pos (AlmaLinux installs) + neg (rogue cert refused) —
+   [`POC-PXEBOOT-P2.md`](POC-PXEBOOT-P2.md).
 3. P3 System Transparency: Go 1.23 → build stboot + stmgr → **issue signing leaf from lab-ca** → signed OSPKG
    (wrapping an installer) → OVMF run → verify + negative test.
 3b. **(stretch) P3b**: build the edk2-UefiPayload coreboot ROM → boot it → edk2 launches the

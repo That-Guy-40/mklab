@@ -237,7 +237,29 @@ Tear down the server when done: `./serve-netboot.sh down`.
 | **AlmaLinux 9.8** | (Anaconda/kickstart) | ✅ kexec `5.14`, **309/309 pkgs + boot loader** |
 | **Rocky 9.8** | (Anaconda/kickstart) | ✅ kexec `5.14` (Rocky keys), automated install started |
 | **Kali** | (d-i/preseed) | ✅ kexec `7.0.12+kali`, **base system installed** |
-| one-shot | `./showcase-pxeboot.sh alma rocky kali` | ✅ full proof grid |
+| one-shot | `./showcase-pxeboot.sh alma rocky kali` | ✅ full proof grid |    
+  
 
 Firmware booted Linux, which fetched three different OSes over the network and `kexec`'d
 each into an unattended install. That's LinuxBoot's real job — reproduced from a real ROM.
+  
+ To sum up, A compact version of the demo.    
+
+
+  Everything's already built and staged, so it's a one-liner
+
+  cd examples/linuxboot-uefi-kexec
+  ./showcase-pxeboot.sh                 # all three: alma rocky kali → the proof grid
+
+  Or drive a single OS / go by hand:
+  ./showcase-pxeboot.sh alma            # just the fastest one (already staged)
+  ./run-coreboot-pxe.sh rocky           # one OS, verbose serial + proof
+
+  If you ever start cold (fresh terminal, server down):
+  ./serve-netboot.sh up                 # bring the netboot server on :8181 back
+  ./fetch-netboot-os.sh both            # only needed if ~/netboot/{rocky,kali} were cleared
+  ./showcase-pxeboot.sh
+  ./serve-netboot.sh down               # stop the server when done
+
+  And to feel each piece — boot the ROM with -nographic and type pxeboot -file … yourself — follow MANUAL_TESTING-pxeboot.md §3.
+
