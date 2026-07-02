@@ -9,8 +9,12 @@
 > **P2 (HTTPS) is also PROVEN** ([`POC-PXEBOOT-P2.md`](POC-PXEBOOT-P2.md)): `pxeboot` has
 > no https scheme, so the ROM fetches kernel+initrd with `wget https://…` verified
 > against a **lab CA baked into the initramfs** ([`../lab-ca/`](../lab-ca/README.md)),
-> then `kexec`s — positive + negative (rogue cert refused), stock u-root. **P3** (System
-> Transparency) is next. That work also uncovered a load-bearing
+> then `kexec`s — positive + negative (rogue cert refused), stock u-root. **P3 (System
+> Transparency) is also PROVEN** ([`POC-PXEBOOT-P3.md`](POC-PXEBOOT-P3.md)): a from-source
+> `stboot` UKI on OVMF fetches a **signed OSPKG** over HTTPS, verifies its **Ed25519
+> signature against the shared lab CA** baked into its initramfs, and `kexec`s the
+> AlmaLinux installer — positive + negative (rogue-signed package refused). That work also
+> uncovered a load-bearing
 > finding that revises §2 and §6 below: **u-root's own DHCP client emits no packets
 > over QEMU slirp (any version)**, so the working recipe is **kernel `ip=dhcp` +
 > `pxeboot -file` + `virtio-rng` + `-cpu host`**, and the pxeboot ROM needs **u-root
@@ -77,7 +81,7 @@ P3b    coreboot ROM ─► edk2 UefiPayload (UEFI) ─► stboot UKI ─► (…
 |---|---|---|---|---|---|
 | **P1** | coreboot ROM | u-root `pxeboot` | **HTTP** | none | ✅ fully |
 | **P2** | coreboot ROM | u-root `pxeboot` | **HTTPS** (lab CA) | none (TLS only) | ✅ fully |
-| **P3** | OVMF/UEFI + UKI | **stboot** (System Transparency) | **HTTPS** | **signed OSPKG** (Ed25519, N-of-M) | ✅ mostly (verify + negative test) |
+| **P3** | OVMF/UEFI + UKI | **stboot** (System Transparency) | **HTTPS** | **signed OSPKG** (Ed25519, N-of-M) | ✅ **DONE** (verified + negative — [`POC-PXEBOOT-P3.md`](POC-PXEBOOT-P3.md)) |
 | **P3b** | **coreboot ROM → edk2 UEFI** + UKI | **stboot**, *from the ROM* | **HTTPS** | **signed OSPKG** | ⚠️ stretch / author-run frontier (heavy edk2 build + QEMU gotcha) |
 
 Each tier provisions **both** Rocky 9 and Kali (two boot.ipxe / two OSPKGs).
@@ -279,8 +283,13 @@ examples/linuxboot-uefi-kexec/
    `lab-ca.crt` at `/etc/ssl/certs/ca-certificates.crt`; `wget https://…` + `kexec` (pxeboot
    has no https scheme). Verified pos (AlmaLinux installs) + neg (rogue cert refused) —
    [`POC-PXEBOOT-P2.md`](POC-PXEBOOT-P2.md).
-3. P3 System Transparency: Go 1.23 → build stboot + stmgr → **issue signing leaf from lab-ca** → signed OSPKG
-   (wrapping an installer) → OVMF run → verify + negative test.
+3. ✅ **DONE** — P3 System Transparency: Go 1.25 → build stboot + stmgr **from source (v0.7.0)**
+   → **issue Ed25519 signing leaf from lab-ca** → signed OSPKG (wrapping the P1/P2 installer)
+   → **stboot UKI on OVMF** → verify + negative test. Proven pos (Alma installs after
+   `OS package passed verification` → kexec) + neg (rogue-signed package refused). Gotchas:
+   stboot DHCP is dead over slirp too (→ `network_mode:static`); the signing leaf must carry
+   **no codeSigning EKU** (stboot's Verify defaults to ServerAuth); ECDSA-root→Ed25519-leaf
+   chain is accepted. [`POC-PXEBOOT-P3.md`](POC-PXEBOOT-P3.md).
 3b. **(stretch) P3b**: build the edk2-UefiPayload coreboot ROM → boot it → edk2 launches the
    stboot UKI → verify the same signed-OSPKG flow *from the ROM*. Spike the QEMU gotcha first.
 4. Docs (RUNBOOK/MANUAL_TESTING/SHOWCASE/00-INDEX), vendoring (cite ST + u-root + coreboot edk2, date-pinned), `link_check`.
