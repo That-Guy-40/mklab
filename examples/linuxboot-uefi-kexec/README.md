@@ -162,3 +162,8 @@ kernel+initrd with `wget https://…` — verified against a **lab CA baked into
 initramfs** ([`../lab-ca/`](../lab-ca/README.md)) — then `kexec`s them; a rogue cert is
 refused. Positive + negative proof in [`POC-PXEBOOT-P2.md`](POC-PXEBOOT-P2.md). Still
 ahead ([`PLAN-PXEBOOT.md`](PLAN-PXEBOOT.md)): **System Transparency** signed images (P3).
+
+**Repo-wide spin-off tool:** the sudo-free QEMU driver
+[`tools/qemu-guestfwd-boot/`](../../tools/qemu-guestfwd-boot/README.md) is a Python port
+of stboot's own test harness — it boots a VM and serves it files over slirp `guestfwd`
+with **no host port and no server process**, then gates on a serial marker.
