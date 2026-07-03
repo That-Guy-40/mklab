@@ -1,0 +1,503 @@
+
+
+<!DOCTYPE html>
+<html lang="en" itemscope itemtype="http://schema.org/WebPage">
+  <head>
+    
+
+  <meta charset="utf-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+
+ 
+
+
+      <title>Update on Easy PXE boot testing post: minus PXELINUX - </title>
+
+  <meta name="description" content="Introduction
+This is an update to my
+previous post
+about easily testing PXE booting by using libvirt &#43; iPXE.
+Several people have notified me (thanks Lukas Zapletal and others) that instead
+of leveraging
+PXELINUX
+that I could just use an iPXE script to do the same thing. I hadn&rsquo;t
+used iPXE much so here&rsquo;s an update on how to achieve the same goal
+using an iPXE script instead of a PXELINUX binary&#43;config."><script type="application/ld+json">
+{
+    "@context": "http://schema.org",
+    "@type": "WebSite",
+    "name": "A Random Walk Down Tech Street",
+    
+    "url": "https:\/\/dustymabe.com\/"
+}
+</script><script type="application/ld+json">
+{
+  "@context": "http://schema.org",
+  "@type": "Organization",
+  "name": "",
+  "url": "https:\/\/dustymabe.com\/"
+  
+  
+  
+  
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "http://schema.org",
+  "@type": "BreadcrumbList",
+  "itemListElement": [{
+        "@type": "ListItem",
+        "position": 1,
+        "item": {
+          "@id": "https:\/\/dustymabe.com\/",
+          "name": "home"
+        }
+    },{
+        "@type": "ListItem",
+        "position": 3,
+        "item": {
+          "@id": "https:\/\/dustymabe.com\/2019\/09\/13\/update-on-easy-pxe-boot-testing-post-minus-pxelinux\/",
+          "name": "Update on easy pxe boot testing post minus pxelinux"
+        }
+    }]
+}
+</script><script type="application/ld+json">
+{
+  "@context": "http://schema.org",
+  "@type": "Article",
+  "author": {
+    "name" : "dustymabe"
+  },
+  "headline": "Update on Easy PXE boot testing post: minus PXELINUX",
+  "description" : "Introduction This is an update to my previous post about easily testing PXE booting by using libvirt \u002b iPXE.\nSeveral people have notified me (thanks Lukas Zapletal and others) that instead of leveraging PXELINUX that I could just use an iPXE script to do the same thing. I hadn\u0026rsquo;t used iPXE much so here\u0026rsquo;s an update on how to achieve the same goal using an iPXE script instead of a PXELINUX binary\u002bconfig.\n",
+  "inLanguage" : "en",
+  "wordCount":  364 ,
+  "datePublished" : "2019-09-13T00:00:00\u002b00:00",
+  "dateModified" : "2019-09-13T00:00:00\u002b00:00",
+  "image" : "https:\/\/dustymabe.com\/img\/dustymabecom-logo.png",
+  "keywords" : [ "fedora, libvirt, PXE" ],
+  "mainEntityOfPage" : "https:\/\/dustymabe.com\/2019\/09\/13\/update-on-easy-pxe-boot-testing-post-minus-pxelinux\/",
+  "publisher" : {
+    "@type": "Organization",
+    "name" : "https:\/\/dustymabe.com\/",
+    "logo" : {
+        "@type" : "ImageObject",
+        "url" : "https:\/\/dustymabe.com\/img\/dustymabecom-logo.png",
+        "height" :  60 ,
+        "width" :  60
+    }
+  }
+}
+</script>
+
+
+<meta property="og:title" content="Update on Easy PXE boot testing post: minus PXELINUX" />
+<meta property="og:description" content="Introduction
+This is an update to my
+previous post
+about easily testing PXE booting by using libvirt &#43; iPXE.
+Several people have notified me (thanks Lukas Zapletal and others) that instead
+of leveraging
+PXELINUX
+that I could just use an iPXE script to do the same thing. I hadn&rsquo;t
+used iPXE much so here&rsquo;s an update on how to achieve the same goal
+using an iPXE script instead of a PXELINUX binary&#43;config.">
+<meta property="og:image" content="https://dustymabe.com/img/dustymabecom-logo.png" />
+<meta property="og:url" content="https://dustymabe.com/2019/09/13/update-on-easy-pxe-boot-testing-post-minus-pxelinux/" />
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="A Random Walk Down Tech Street" />
+
+  <meta name="twitter:title" content="Update on Easy PXE boot testing post: minus PXELINUX" />
+  <meta name="twitter:description" content="Introduction
+This is an update to my
+previous post
+about easily testing PXE booting by using libvirt &#43; iPXE.
+Several people have notified me (thanks Lukas Zapletal and others) that instead
+of …">
+  <meta name="twitter:image" content="https://dustymabe.com/img/dustymabecom-logo.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <link href='https://dustymabe.com/img/dustymabecom-favicon.ico' rel='icon' type='image/x-icon'/>
+  <meta name="generator" content="Hugo 0.152.2">
+  <link rel="alternate" href="https://dustymabe.com/index.xml" type="application/rss+xml" title="A Random Walk Down Tech Street"><link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.css" integrity="sha384-5TcZemv2l/9On385z///+d7MSYlvIEw9FuZTIdZ14vJLqWphw7e7ZPuOiCHJcFCP" crossorigin="anonymous">
+  <link rel="stylesheet" href="https://use.fontawesome.com/releases/v7.0.1/css/brands.css" integrity="sha384-+eXGm6TmVoCZR1gX03US+L++L2mJIfOvp2X0+luTuEktXaF5F+e3zn0sO0HBvOyT" crossorigin="anonymous">
+  <link rel="stylesheet" href="https://use.fontawesome.com/releases/v7.0.1/css/fontawesome.css" integrity="sha384-B5nyPZa7e84uCJEYHtevCdVYtQosWsbDSRtq3cy/jeSVtQW05GL8CKXO7waXsjPK" crossorigin="anonymous">
+  <link rel="stylesheet" href="https://use.fontawesome.com/releases/v7.0.1/css/regular.css" integrity="sha384-V71z/A/p/DGaZAryHhiSXRQj8HdQmK2nBgL2bX23MGD+h6ZKpyxOO76f5eSXmIaj" crossorigin="anonymous">
+  <link rel="stylesheet" href="https://use.fontawesome.com/releases/v7.0.1/css/solid.css" integrity="sha384-1IIShlrK5iYgvS7OAgIH3prz4RAFP7hHZ2MaLIb9l3+trFwwnw/NdCWcUHlymZDU" crossorigin="anonymous">
+  <link rel="stylesheet" href="https://use.fontawesome.com/releases/v7.0.1/css/svg.css" integrity="sha384-iBa7uugTOHXqQ2ngvDYJyKrPPQbd9n2P3EQe+o/0+HZe5TNvV+LO5X0lLLUrXLHP" crossorigin="anonymous">
+  <link rel="stylesheet" href="https://use.fontawesome.com/releases/v7.0.1/css/svg-with-js.css" integrity="sha384-STWnS5AGz6M2YxsnGAd536EqcE2y+ktGovMMuhtXLsCBtl7lujeQj2eN4eDxa57x" crossorigin="anonymous">
+  <link rel="stylesheet" href="https://use.fontawesome.com/releases/v7.0.1/css/v4-font-face.css" integrity="sha384-fH83IkgQi7kturzlxpXfNdsR8aUOcqj5HUORRVnSvJgObZkIw6aqKAaQx20IWyB/" crossorigin="anonymous">
+  <link rel="stylesheet" href="https://use.fontawesome.com/releases/v7.0.1/css/v4-shims.css" integrity="sha384-cCODJHSivNBsaHei/8LC0HUD58kToSbDU+xT7Rs51BO1v/IvgT/uM0W6xMoUqKfn" crossorigin="anonymous">
+  <link rel="stylesheet" href="https://use.fontawesome.com/releases/v7.0.1/css/v5-font-face.css" integrity="sha384-atSdF89mIn15dv+o2LKkDM6mCh3hwh6A7mwZ6F2it/kenqZbMu+QW/ye1OG4XSWV" crossorigin="anonymous">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@3.4.1/dist/css/bootstrap.min.css" integrity="sha384-HSMxcRTRxnN+Bdg0JdbxYKrThecOKuH5zCYotlSAcp1+c8xmyTe9GYg1l9a69psu" crossorigin="anonymous"><link rel="stylesheet" href="https://dustymabe.com/css/main-nodark.css" /><link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Lora:400,700,400italic,700italic" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Open+Sans:300italic,400italic,600italic,700italic,800italic,400,300,600,700,800" /><link rel="stylesheet" href="https://dustymabe.com/css/syntax.css" /><link rel="stylesheet" href="https://dustymabe.com/css/codeblock.css" /><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/photoswipe/4.1.2/photoswipe.min.css" integrity="sha384-h/L2W9KefUClHWaty3SLE5F/qvc4djlyR4qY3NUV5HGQBBW7stbcfff1+I/vmsHh" crossorigin="anonymous">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/photoswipe/4.1.2/default-skin/default-skin.min.css" integrity="sha384-iD0dNku6PYSIQLyfTOpB06F2KCZJAKLOThS5HRe8b3ibhdEQ6eKsFf/EeFxdOt5R" crossorigin="anonymous"> 
+
+<style type="text/css">
+
+ 
+ 
+pre code {
+    white-space: pre;
+}
+
+ 
+ 
+.highlight td:first-child pre, .highlight pre {
+    overflow: scroll
+}
+
+</style>
+
+  </head>
+  <body>
+    <nav class="navbar navbar-default navbar-fixed-top navbar-custom">
+  <div class="container-fluid">
+    <div class="navbar-header">
+      <button type="button" class="navbar-toggle" data-toggle="collapse" data-target="#main-navbar">
+        <span class="sr-only">Toggle navigation</span>
+        <span class="icon-bar"></span>
+        <span class="icon-bar"></span>
+        <span class="icon-bar"></span>
+      </button>
+      <a class="navbar-brand" href="https://dustymabe.com/">A Random Walk Down Tech Street</a>
+    </div>
+
+    <div class="collapse navbar-collapse" id="main-navbar">
+      <ul class="nav navbar-nav navbar-right">
+        
+          
+            <li>
+              <a title="Blog" href="/">Blog</a>
+            </li>
+          
+        
+          
+            <li>
+              <a title="Speaking" href="/page/speaking/">Speaking</a>
+            </li>
+          
+        
+          
+            <li>
+              <a title="Tags" href="/tags/">Tags</a>
+            </li>
+          
+        
+
+        
+
+        
+      </ul>
+    </div>
+
+    
+      <div class="avatar-container">
+        <div class="avatar-img-border">
+          <a title="A Random Walk Down Tech Street" href="https://dustymabe.com/">
+            <img class="avatar-img" src="https://dustymabe.com/img/dustymabecom-logo.png" alt="A Random Walk Down Tech Street" />
+           
+          </a>
+        </div>
+      </div>
+    
+
+  </div>
+</nav>
+
+
+
+
+    
+
+
+<div class="pswp" tabindex="-1" role="dialog" aria-hidden="true">
+
+<div class="pswp__bg"></div>
+
+<div class="pswp__scroll-wrap">
+    
+    <div class="pswp__container">
+      <div class="pswp__item"></div>
+      <div class="pswp__item"></div>
+      <div class="pswp__item"></div>
+    </div>
+    
+    <div class="pswp__ui pswp__ui--hidden">
+    <div class="pswp__top-bar">
+      
+      <div class="pswp__counter"></div>
+      <button class="pswp__button pswp__button--close" title="Close (Esc)"></button>
+      <button class="pswp__button pswp__button--share" title="Share"></button>
+      <button class="pswp__button pswp__button--fs" title="Toggle fullscreen"></button>
+      <button class="pswp__button pswp__button--zoom" title="Zoom in/out"></button>
+      
+      
+      <div class="pswp__preloader">
+        <div class="pswp__preloader__icn">
+          <div class="pswp__preloader__cut">
+            <div class="pswp__preloader__donut"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="pswp__share-modal pswp__share-modal--hidden pswp__single-tap">
+      <div class="pswp__share-tooltip"></div>
+    </div>
+    <button class="pswp__button pswp__button--arrow--left" title="Previous (arrow left)">
+    </button>
+    <button class="pswp__button pswp__button--arrow--right" title="Next (arrow right)">
+    </button>
+    <div class="pswp__caption">
+      <div class="pswp__caption__center"></div>
+    </div>
+    </div>
+    </div>
+</div>
+
+
+  
+  
+  
+
+
+
+
+
+
+  
+
+  <header class="header-section ">
+    
+    
+    <div class="intro-header no-img">
+      <div class="container">
+        <div class="row">
+          <div class="col-lg-8 col-lg-offset-2 col-md-10 col-md-offset-1">
+            <div class="post-heading">
+              
+                <h1>Update on Easy PXE boot testing post: minus PXELINUX</h1>
+              
+              
+              
+              
+                <span class="post-meta">
+  
+  
+  
+  <i class="fas fa-calendar"></i>&nbsp;Posted on September 13, 2019
+  
+  
+  
+  
+    
+      
+        &nbsp;|&nbsp;<i class="fas fa-user"></i>&nbsp;dustymabe
+      
+    
+  
+  
+</span>
+
+
+              
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  
+  </header>
+
+
+    
+<div class="container" role="main">
+  <div class="row">
+    <div class="col-lg-8 col-lg-offset-2 col-md-10 col-md-offset-1">
+      <article role="main" class="blog-post">
+        <h1 id="introduction">Introduction</h1>
+<p>This is an update to my
+<a href="/2019/01/04/easy-pxe-boot-testing-with-only-http-using-ipxe-and-libvirt/">previous post</a>
+about easily testing PXE booting by using libvirt + iPXE.</p>
+<p>Several people have notified me (thanks Lukas Zapletal and others) that instead
+of leveraging
+<a href="https://wiki.syslinux.org/wiki/index.php?title=PXELINUX">PXELINUX</a>
+that I could just use an iPXE script to do the same thing. I hadn&rsquo;t
+used iPXE much so here&rsquo;s an update on how to achieve the same goal
+using an iPXE script instead of a PXELINUX binary+config.</p>
+<h1 id="using-an-ipxe-script">Using an iPXE script</h1>
+<p>From my
+<a href="/2019/01/04/easy-pxe-boot-testing-with-only-http-using-ipxe-and-libvirt/">previous post</a>
+you would do all of the same steps except in the <strong>Web Server Setup</strong>
+section you don&rsquo;t need to install the <code>syslinux-nonlinux</code> package to
+grab the binaries out and you also don&rsquo;t need to make a <code>pxelinux.cfg</code> file/directory
+structure.</p>
+<p>Instead you create a an iPXE script (let&rsquo;s call it <code>boot.ipxe</code>) with
+contents like so:</p>
+<pre tabindex="0"><code class="language-nohighlight" data-lang="nohighlight">$ cat boot.ipxe 
+#!ipxe
+kernel Fedora-Server-dvd-x86_64-29-1.2.iso/images/pxeboot/vmlinuz console=ttyS0 inst.ks=http://192.168.122.1:8000/kickstart.cfg
+initrd Fedora-Server-dvd-x86_64-29-1.2.iso/images/pxeboot/initrd.img
+boot
+</code></pre><p>In the <strong>Libvirt network DHCP setup</strong> of the
+<a href="/2019/01/04/easy-pxe-boot-testing-with-only-http-using-ipxe-and-libvirt/">previous post</a>
+you would then make your <code>bootp file</code> point at the iPXE script
+(<code>boot.ipxe</code>) instead of the <code>pxelinux.0</code> binary like is instructed
+in that previous post.</p>
+<p>My final XML looks like:</p>
+<pre tabindex="0"><code class="language-nohighlight" data-lang="nohighlight">&lt;network&gt;
+  &lt;name&gt;default&lt;/name&gt;
+  &lt;uuid&gt;d8be1970-37ca-44f2-965a-7e63305e6850&lt;/uuid&gt;
+  &lt;forward mode=&#39;nat&#39;/&gt;
+  &lt;bridge name=&#39;virbr0&#39; stp=&#39;on&#39; delay=&#39;0&#39;/&gt;
+  &lt;mac address=&#39;52:54:00:93:a5:73&#39;/&gt;
+  &lt;ip address=&#39;192.168.122.1&#39; netmask=&#39;255.255.255.0&#39;&gt;
+    &lt;dhcp&gt;
+      &lt;range start=&#39;192.168.122.2&#39; end=&#39;192.168.122.254&#39;/&gt;
+      &lt;bootp file=&#39;http://192.168.122.1:8000/boot.ipxe&#39;/&gt;
+    &lt;/dhcp&gt;
+  &lt;/ip&gt;
+&lt;/network&gt;
+</code></pre><p>Everything else from the previous post should be the the same!</p>
+<h1 id="pxe-booting">PXE Booting</h1>
+<p>You can boot like so:</p>
+<pre tabindex="0"><code class="language-nohighlight" data-lang="nohighlight">$ virt-install --pxe --network network=default --name pxe --memory 2048 --disk size=10 --nographics --boot menu=on,useserial=on
+</code></pre><p>And in the serial console you see the fact that <code>boot.ipxe</code> was
+used this time instead of <code>pxelinux.0</code>.</p>
+<pre tabindex="0"><code class="language-nohighlight" data-lang="nohighlight">SeaBIOS (version ?-20180724_192412-buildhw-07.phx2.fedoraproject.org-1.fc29)
+Machine UUID 9358886f-f5c0-4839-9ce4-8d7c59c5f9ab
+
+
+iPXE (http://ipxe.org) 00:02.0 C100 PCI2.10 PnP PMM+7FF91130+7FED1130 C100
+
+
+
+Press ESC for boot menu.
+
+Booting from ROM...
+iPXE (PCI 00:02.0) starting execution...ok
+iPXE initialising devices...ok
+
+
+
+iPXE 1.0.0+ -- Open Source Network Boot Firmware -- http://ipxe.org
+Features: DNS HTTP iSCSI TFTP AoE ELF MBOOT PXE bzImage Menu PXEXT
+
+net0: 52:54:00:2f:bb:8a using 82540em on 0000:00:02.0 (open)
+  [Link:up, TX:0 TXE:0 RX:0 RXE:0]
+Configuring (net0 52:54:00:2f:bb:8a).................. ok
+net0: 192.168.122.216/255.255.255.0 gw 192.168.122.1
+net0: fe80::5054:ff:fe2f:bb8a/64
+Next server: 192.168.122.1
+Filename: http://192.168.122.1:8000/boot.ipxe
+http://192.168.122.1:8000/boot.ipxe... ok
+boot.ipxe : 209 bytes [script]
+Fedora-Server-dvd-x86_64-29-1.2.iso/images/pxeboot/vmlinuz... ok
+Fedora-Server-dvd-x86_64-29-1.2.iso/images/pxeboot/initrd.img... ok
+Probing EDD (edd=off to disable)... ok
+</code></pre><h1 id="conclusion">Conclusion</h1>
+<p>PXE booting has become even easier! Who knew :)</p>
+
+
+        
+          <div class="blog-tags">
+            
+              
+              <a href="https://dustymabe.com/tags/fedora/">fedora</a>&nbsp;
+            
+              
+              <a href="https://dustymabe.com/tags/libvirt/">libvirt</a>&nbsp;
+            
+              
+              <a href="https://dustymabe.com/tags/pxe/">PXE</a>&nbsp;
+            
+          </div>
+        
+
+        
+
+        
+      </article>
+
+      
+        <ul class="pager blog-pager">
+          
+            <li class="previous">
+              <a href="https://dustymabe.com/2019/01/06/fedora-btrfs-snapper-the-fedora-29-edition/" data-toggle="tooltip" data-placement="top" title="Fedora BTRFS&#43;Snapper - The Fedora 29 Edition">&larr; Previous Post</a>
+            </li>
+          
+          
+            <li class="next">
+              <a href="https://dustymabe.com/2019/11/06/running-a-script-on-bootup-via-ignition/" data-toggle="tooltip" data-placement="top" title="Running a script on bootup via Ignition">Next Post &rarr;</a>
+            </li>
+          
+        </ul>
+      
+
+
+      
+      
+      
+      
+      
+        
+      
+
+    </div>
+  </div>
+</div>
+
+      <footer>
+  <div class="container">
+    
+    <div class="row">
+      <div class="col-lg-8 col-lg-offset-2 col-md-10 col-md-offset-1">
+        <ul class="list-inline text-center footer-links">
+          
+          
+          
+          
+        </ul>
+        <p class="credits copyright text-muted">
+          
+
+          &nbsp;&bull;&nbsp;&copy;
+          
+            2025
+          
+
+          
+            &nbsp;&bull;&nbsp;
+            <a href="https://dustymabe.com/">A Random Walk Down Tech Street</a>
+          
+        </p>
+        
+        <p class="credits theme-by text-muted">
+          <a href="https://gohugo.io">Hugo v0.152.2</a> powered &nbsp;&bull;&nbsp; Theme <a href="https://github.com/halogenica/beautifulhugo">Beautiful Hugo</a> adapted from <a href="https://deanattali.com/beautiful-jekyll/">Beautiful Jekyll</a>
+          
+        </p>
+      </div>
+    </div>
+  </div>
+</footer><script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.js" integrity="sha384-cMkvdD8LoxVzGF/RPUKAcvmm49FQ0oxwDF3BGKtDXcEc+T1b2N+teh/OJfpU0jr6" crossorigin="anonymous"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/contrib/auto-render.min.js" integrity="sha384-hCXGrW6PitJEwbkoStFjeJxv+fSOOQKOPbJxSfM6G5sWZjAyWhXiTIIAmQqnlLlh" crossorigin="anonymous" onload="renderMathInElement(document.body);"></script>
+<script src="https://code.jquery.com/jquery-3.7.0.slim.min.js" integrity="sha384-w5y/xIeYixWvfM+A1cEbmHPURnvyqmVg5eVENruEdDjcyRLUSNej7512JQGspFUr" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@3.4.1/dist/js/bootstrap.min.js" integrity="sha384-aJ21OjlMXNL5UyIl/XNwTMqvzeRMZH2w8c5cRVpzpU8Y5bApTppSuUkhZXN0VxHd" crossorigin="anonymous"></script>
+
+<script src="https://dustymabe.com/js/main.js"></script><script src="https://cdnjs.cloudflare.com/ajax/libs/photoswipe/4.1.2/photoswipe.min.js" integrity="sha384-QELNnmcmU8IR9ZAykt67vGr9/rZJdHbiWi64V88fCPaOohUlHCqUD/unNN0BXSqy" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/photoswipe/4.1.2/photoswipe-ui-default.min.js" integrity="sha384-m67o7SkQ1ALzKZIFh4CiTA8tmadaujiTa9Vu+nqPSwDOqHrDmxLezTdFln8077+q" crossorigin="anonymous"></script><script src="https://dustymabe.com/js/load-photoswipe.js"></script>
+
+
+
+
+
+
+
+
+
+
+    
+  </body>
+</html>
+
