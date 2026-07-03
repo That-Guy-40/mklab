@@ -59,6 +59,11 @@ cd examples/libvirt-ipxe-http-pxe/https
 
 # 2. Build the custom iPXE + rewrite boot.ipxe to chainload it (clones iPXE, ~1–2 min):
 ./build-ipxe-https.sh                       # --ip / --http-port / --https-port to override
+#    …or, to keep a C toolchain OFF your host, build it in a disposable container
+#    (same edit + recompile, baked into Containerfile) — see RUNBOOK.md §B2★:
+#      podman build -t mklab/ipxe-https . && \
+#      podman run --rm -v "$PWD/../../lab-ca:/ca:ro" -v "$WWW:/out" \
+#          -e IP=192.168.122.1 -e ISOBASE=<your-fedora-dvd>.iso mklab/ipxe-https
 
 # 3. Serve the tree twice — HTTP bootstraps, HTTPS carries the payload:
 ( cd ~/.cache/lab-create/libvirt-ipxe-http-pxe/pxeserver && python3 -m http.server 8000 )   # terminal A
@@ -91,9 +96,13 @@ negative, in plain qemu (`-kernel ipxe-https.lkrn`, slirp, e1000):
   refuses — `vmlinuz... Permission denied (https://ipxe.org/0216eb3c)` → `Nothing
   to boot`. So the trust is real, not "accept anything."
 
-Transcripts + the exact commands: [MANUAL_TESTING-https.md](MANUAL_TESTING-https.md).
-The **libvirt half** (chainload from the default network, run the VM) is yours to
-run, same as the base lab.
+Both builders were verified to produce a working firmware: the host
+`build-ipxe-https.sh` **and** the container ([`Containerfile`](Containerfile) +
+[`container-build.sh`](container-build.sh)) — the container-built `.lkrn`
+HTTPS-boots identically. Transcripts + exact commands:
+[MANUAL_TESTING-https.md](MANUAL_TESTING-https.md). The **libvirt half**
+(chainload from the default network, run the VM) is yours to run, same as the
+base lab.
 
 ## Going further — HTTPS for Anaconda too
 

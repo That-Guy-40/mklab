@@ -31,6 +31,18 @@ the tree:
 [ipxe-https] installed: …/ipxe-https.lkrn  +  chainloader …/boot.ipxe
 ```
 
+**Container escape hatch (verified equivalent).** The same firmware can be built
+without a host toolchain (see [RUNBOOK.md](../RUNBOOK.md) §B2★). Verified
+2026-07-03: `podman build -t mklab/ipxe-https .` then
+
+```bash
+podman run --rm -v "$PWD/../../lab-ca:/ca:ro" -v "$WWW:/out" \
+    -e IP=10.0.2.2 -e ISOBASE=<fedora-dvd>.iso mklab/ipxe-https
+```
+
+emits `ipxe-https.lkrn`, and booting *that* container-built binary (§1) prints
+the same `... ok` HTTPS fetches — behaviourally identical to the host build.
+
 ## §1 — Positive: lab-CA cert → HTTPS boot succeeds
 
 Serve the tree over TLS with the **lab-CA leaf**, boot the `.lkrn` in qemu:

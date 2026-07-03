@@ -8,6 +8,17 @@ step-by-step and see every moving part. The **HTTPS section (§B)** is the
 centerpiece: enabling HTTPS in iPXE is *an edit to a source file and a
 recompile*, shown in full.
 
+### Where each step runs — host vs. container
+
+Most of this is **inherently host-side**: libvirt/`virsh`/`virt-install` drive
+*your* host's `qemu:///system`, and the HTTP/HTTPS servers must sit on the
+`192.168.122.1` bridge the guest talks to. Those can't meaningfully move into a
+container. The **one** step with no host coupling is compiling the custom HTTPS
+iPXE — pure toolchain in, one `.lkrn` out. So §B offers it **two ways**: a
+disposable **container** ([`https/Containerfile`](https/Containerfile)) that
+keeps a C toolchain off your host, or the raw commands if you'd rather watch the
+build happen. Either way you end up with the same `ipxe-https.lkrn`.
+
 Conventions used below:
 
 ```bash
@@ -154,7 +165,29 @@ source and rebuild the firmware.** Here is exactly that.
 The SAN **must** contain the address in the URL — iPXE matches the leaf's
 `subjectAltName` against the host it connected to.
 
-## B2. Get the iPXE source
+## B2★. Escape hatch — build the firmware in a container (skip B2–B6)
+
+Don't want a C toolchain on your libvirt host? Build the `.lkrn` in a disposable
+box instead. The **HTTPS edit and the recompile still happen** — they're just
+baked into [`https/Containerfile`](https/Containerfile) (the `RUN sed …
+DOWNLOAD_PROTO_HTTPS …` line) and [`https/container-build.sh`](https/container-build.sh)
+(the `make … TRUST= EMBED=`), so nothing is hidden:
+
+```bash
+podman build -t mklab/ipxe-https https/
+podman run --rm \
+    -v "$PWD/../lab-ca:/ca:ro" \                 # the lab CA (only lab-ca.crt is read)
+    -v "$WWW:/out" \                             # where the artifact lands
+    -e IP="$IP" -e ISOBASE="$ISOBASE" \
+    mklab/ipxe-https
+# → $WWW/ipxe-https.lkrn  +  $WWW/boot.ipxe (chainloader) — then jump to B7
+```
+
+Only the finished `ipxe-https.lkrn` crosses back to the host; the toolchain,
+the iPXE clone, and the build all stay in the container. **Or** do it by hand on
+the host — B2–B6:
+
+## B2. Get the iPXE source (host path)
 
 ```bash
 git clone --depth=1 https://github.com/ipxe/ipxe.git

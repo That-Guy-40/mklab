@@ -1,0 +1,47 @@
+# https/Containerfile — a disposable, rootless build box for the custom HTTPS
+# iPXE firmware. The "escape hatch": produce ipxe-https.lkrn without installing a
+# C toolchain (or cloning iPXE) on your libvirt host. The host still runs the
+# servers and virt-install — those are inherently host-side — but the FIRMWARE
+# COMPILE happens here and only the artifact crosses back out.
+#
+# Build the box, then run it to emit the .lkrn onto a bind mount:
+#   podman build -t mklab/ipxe-https examples/libvirt-ipxe-http-pxe/https
+#   podman run --rm \
+#       -v "$PWD/examples/lab-ca:/ca:ro" \
+#       -v "$HOME/.cache/lab-create/libvirt-ipxe-http-pxe/pxeserver:/out" \
+#       -e IP=192.168.122.1 \
+#       -e ISOBASE=Fedora-Server-dvd-x86_64-41-1.4.iso \
+#       mklab/ipxe-https
+#   # → $PXE_HTTP_DIR/ipxe-https.lkrn + boot.ipxe (chainloader)
+#
+# Rootless: no root, no /dev/kvm, no host packages touched.
+
+FROM debian:bookworm-slim
+ENV DEBIAN_FRONTEND=noninteractive
+
+# iPXE build prerequisites (see https://ipxe.org/download):
+#   build-essential perl  → the compiler/linker + iPXE's Perl build helpers
+#   git ca-certificates   → clone the source over HTTPS
+#   liblzma-dev mtools xz-utils → compression + other image targets (harmless for .lkrn)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git build-essential perl liblzma-dev mtools xz-utils ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+# iPXE source (pin by editing this if you want a fixed revision)
+RUN git clone --depth=1 https://github.com/ipxe/ipxe.git /opt/ipxe
+
+# ⭐ THE EDIT — this is how HTTPS is enabled. Modern iPXE *removes* HTTPS from
+# BIOS builds (config/general.h: `#if defined(PLATFORM_pcbios) #undef
+# DOWNLOAD_PROTO_HTTPS`), so we delete that #undef. Also turn on the serial
+# console so iPXE shows up under virt-install --nographics.
+RUN sed -i 's|^  #undef DOWNLOAD_PROTO_HTTPS|  /* DOWNLOAD_PROTO_HTTPS kept enabled for lab HTTPS PXE */|' \
+        /opt/ipxe/src/config/general.h \
+ && grep -q '^#define DOWNLOAD_PROTO_HTTPS' /opt/ipxe/src/config/general.h \
+ && sed -i 's|^//#define\s*CONSOLE_SERIAL|#define CONSOLE_SERIAL|' \
+        /opt/ipxe/src/config/console.h
+
+# The actual `make … TRUST=/ca/lab-ca.crt EMBED=…` happens at run time (it needs
+# the mounted CA + your IP/ISO), so the same image serves any lab config.
+COPY container-build.sh /usr/local/bin/build
+RUN chmod +x /usr/local/bin/build
+ENTRYPOINT ["/usr/local/bin/build"]
