@@ -1,0 +1,41 @@
+# Containerfile — reproduce Thomas Van Laere's environment so you can walk
+# "Exploring Containers - Part 2" BY HAND: IPC, network, and TIME namespaces.
+#
+#   Upstream post : ./upstream-tutorial/  (byte-exact archive + provenance)
+#   Canonical URL : https://thomasvanlaere.com/posts/2020/08/exploring-containers-part-2/
+#   What it shows : the namespaces that isolate a container's IPC objects, its
+#                   network stack (veth + bridge + NAT), and its clocks.
+#
+# ── Base — LATEST stable Alpine, NOT 3.11 (a deliberate, documented divergence) ─
+# Part 1 pins Alpine 3.11 because the chroot escape depends on 3.11's exact musl
+# loader name. Part 2 does NOT: nothing here is version-specific EXCEPT the TIME
+# namespace, which needs `unshare` from util-linux >= 2.36. Alpine 3.11 ships
+# util-linux 2.34 (no `--time`), which is why the AUTHOR himself reached out to
+# Alpine edge for `util-linux=2.36`. That 2020 trick is dead today (edge rotated
+# its signing key -> "UNTRUSTED signature", and =2.36 is long gone), so we simply
+# use a current Alpine where a new-enough util-linux ships natively. Any Alpine
+# >= 3.13 works; 3.23 is the latest stable at authoring (2026-07).
+#   podman/skopeo inspect docker://alpine:3.23 --format '{{.Digest}}'  # pin if you like
+ARG BASE=docker.io/library/alpine:3.23
+FROM ${BASE}
+
+# ── The post's prerequisites, each mapped to the section that needs it ─────────
+#   build-base  -> gcc + musl-dev + make, to compile the two IPC programs
+#                  (processA.c / processB.c) in the System V shared-memory demo.
+#   iproute2    -> `ip` (link/netns/addr/route) for the network-namespace demo:
+#                  veth pairs, a bridge, and moving interfaces between namespaces.
+#   iptables    -> the NAT/MASQUERADE rule that lets a namespace reach the outside
+#                  (the post's final network step). Needs rootful privileges to
+#                  apply — see RUNBOOK §Network for the honest verification split.
+#   util-linux  -> `unshare` and `nsenter`. On a current Alpine this is >= 2.40,
+#                  so `unshare --time --boottime` (the TIME-namespace demo) works
+#                  in-box with no edge hacks — the whole reason for the base bump.
+RUN apk add --no-cache build-base iproute2 iptables util-linux
+
+# The lab's working copies of the two IPC programs, so they're already in the box.
+# (Pristine byte-exact source is also under ./upstream-tutorial/ in the HTML.)
+COPY processA.c /root/processA.c
+COPY processB.c /root/processB.c
+
+WORKDIR /root
+CMD ["/bin/sh"]

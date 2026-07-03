@@ -1,0 +1,33 @@
+# Containerfile — reproduce Thomas Van Laere's environment so you can walk
+# "Exploring Containers - Part 3" BY HAND: PID, cgroup, and USER namespaces
+# (plus a memory cgroup that OOM-kills a runaway allocator).
+#
+#   Upstream post : ./upstream-tutorial/  (byte-exact archive + provenance)
+#   Canonical URL : https://thomasvanlaere.com/posts/2020/12/exploring-containers-part-3/
+#   What it shows : the primitives that give a container its own process tree, its
+#                   own resource limits, and its own (unprivileged) "root".
+#
+# ── Base — LATEST stable Alpine, matching Part 2 (see that Containerfile) ───────
+# Same reasoning as Part 2: nothing here needs 3.11 specifically, and the cgroup-
+# namespace section again wants a util-linux >= 2.36 `unshare` (Alpine 3.11's 2.34
+# is too old, which is why the author reached to edge). A current Alpine ships it
+# natively. Any Alpine >= 3.13 works; 3.23 is the latest stable at authoring.
+#   podman/skopeo inspect docker://alpine:3.23 --format '{{.Digest}}'  # pin if you like
+ARG BASE=docker.io/library/alpine:3.23
+FROM ${BASE}
+
+# ── The post's prerequisites, each mapped to the section that needs it ─────────
+#   procps      -> a real `ps` with `-e --forest --sort=-pid`, to SEE the nested
+#                  PID-namespace tree (BusyBox `ps` can't render the forest).
+#   build-base  -> gcc, to compile alloc.c (the 10-MB-at-a-time memory hog that
+#                  the memory cgroup OOM-kills).
+#   util-linux  -> `unshare` / `nsenter` for the PID, cgroup, and user namespace
+#                  demos (>= 2.40 on a current Alpine).
+RUN apk add --no-cache procps build-base util-linux
+
+# The lab's working copy of the allocator, so it's already in the box.
+# (Pristine byte-exact source is also under ./upstream-tutorial/ in the HTML.)
+COPY alloc.c /root/alloc.c
+
+WORKDIR /root
+CMD ["/bin/sh"]
