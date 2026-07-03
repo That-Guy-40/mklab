@@ -1,0 +1,1180 @@
+<!doctype html>
+<html lang="en">
+  <head prefix="og: http://ogp.me/ns# article: http://ogp.me/ns/article#">
+    <title>Process resource limits under the hood | ops.tips</title>
+
+<meta charset="utf-8">
+<meta http-equiv="content-type" content="text/html; charset=utf-8" >
+
+<meta name="viewport"     content="width=device-width,minimum-scale=1,initial-scale=1">
+<meta name="theme-color"  content="#ffffff">
+<meta name="description"  content="Go through the internals of implementing ulimit, how prlimit works, as well as inspecting how the kernel limits the number of open files">
+<meta name="author"       content="Ciro S. Costa">
+<meta name="keywords"     content="linux, procfs, process, limits">
+
+<meta name="twitter:card"     content="summary" />
+<meta name="twitter:creator"  content="@cirowrc" />
+<meta name="twitter:site"     content="@cirowrc" />
+
+
+<meta property="og:title"       content="Process resource limits under the hood" />
+<meta property="og:type"        content="article">
+<meta property="og:url"         content="https://ops.tips/blog/proc-pid-limits-under-the-hood">
+<meta property="og:image"       content="https://ops.tips/blog/-/images/slash-proc.png" >
+<meta property="og:image:alt"   content="Article image" >
+<meta property="og:description" content="Go through the internals of implementing ulimit, how prlimit works, as well as inspecting how the kernel limits the number of open files" >
+<meta property="og:site_name"   content="ops.tips">
+
+
+<meta property="article:author"         content="Ciro S. Costa">
+<meta property="article:published_time" content="2018-10-13T00:00:00&#43;0000">
+<meta property="article:tag"            content="linux">
+
+
+<meta name="google-site-verification" content="nJDg4CxanyHivDq4bwex7CwpV4qc2rpDW-PCr0HfsX8" />
+
+<link rel="feed" href="https://ops.tips/index.xml" type="application/rss+xml" title="ops.tips">
+<link rel="shortcut icon" href="https://ops.tips/favicon.ico">
+
+    <script type="application/ld+json">
+{
+  "@context" : "http://schema.org",
+  "@type" : "NewsArticle",
+  "articleSection" : "blog",
+  "name" : "Process resource limits under the hood",
+  "headline" : "Process resource limits under the hood",
+  "description" : "Go through the internals of implementing ulimit, how prlimit works, as well as inspecting how the kernel limits the number of open files",
+  "inLanguage" : "en-US",
+  "author": {
+    "@type": "Person",
+    "name": "Ciro S. Costa",
+    "sameAs": [
+        "https://twitter.com/cirowrc",
+        "https://www.linkedin.com/in/cirocosta/",
+        "https://github.com/cirocosta"
+    ],
+    "image": {
+      "@type": "ImageObject",
+      "url": "https:\/\/ops.tips\/blog/-/images/slash-proc.png",
+      "width": 800,
+      "height": 800
+    }
+  },
+  "creator": {
+    "@type": "Person",
+    "name": "Ciro S. Costa",
+    "sameAs": [
+        "https://twitter.com/cirowrc",
+        "https://www.linkedin.com/in/cirocosta/",
+        "https://github.com/cirocosta"
+    ],
+    "image": {
+      "@type": "ImageObject",
+      "url": "https:\/\/ops.tips\/me.jpg",
+      "width": 800,
+      "height": 800
+    }
+  },
+  "accountablePerson": {
+    "@type": "Person",
+    "name": "Ciro S. Costa",
+    "sameAs": [
+        "https://twitter.com/cirowrc",
+        "https://www.linkedin.com/in/cirocosta/",
+        "https://github.com/cirocosta"
+    ],
+    "image": {
+      "@type": "ImageObject",
+      "url": "https:\/\/ops.tips\/me.jpg",
+      "width": 800,
+      "height": 800
+    }
+  },
+  "copyrightHolder": {
+    "@type": "Person",
+    "name": "Ciro S. Costa",
+    "sameAs": [
+        "https://twitter.com/cirowrc",
+        "https://www.linkedin.com/in/cirocosta/",
+        "https://github.com/cirocosta"
+    ],
+    "image": {
+      "@type": "ImageObject",
+      "url": "https:\/\/ops.tips\/me.jpg",
+      "width": 800,
+      "height": 800
+    }
+  },
+  "copyrightYear" : "2018",
+  "datePublished" : "2018-10-13T00:00:00\u002b0000",
+  "dateModified" : "2018-10-13T00:00:00\u002b0000",
+  "publisher": {
+    "@type": "Organization",
+    "name": "ops.tips",
+    "url" : "https:\/\/ops.tips\/",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https:\/\/ops.tips\/opstips.png"
+    }
+  },
+  "wordCount" : "2932",
+  "image": {
+    "@type": "ImageObject",
+    "url": "https:\/\/ops.tips\/blog/-/images/slash-proc.png",
+    "width": 1200,
+    "height": 1200
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https:\/\/ops.tips\/blog/proc-pid-limits-under-the-hood"
+  },
+  "keywords" : [ "linux", "procfs", "process", "limits" ]
+}
+</script>
+
+  </head>
+
+  <body class="article">
+    <main class="main">
+
+  <header>
+    <h1 itemprop="name headline">Process resource limits under the hood</h1>
+    <h2 itemprop="description">Go through the internals of implementing ulimit, how prlimit works, as well as inspecting how the kernel limits the number of open files</h2>
+
+    <aside>
+      <p>
+        by <a href="https://twitter.com/cirowrc">Ciro S. Costa</a> -
+        <time datetime="2018-10-13T00:00:00&#43;0000" itemprop="datePublished">
+          Oct 13, 2018
+        </time>
+      </p>
+
+      
+        <p>
+          tags:
+
+          
+            <a href="/tags/linux">
+              linux
+            </a>
+          
+        </p>
+      
+
+    </aside>
+  </header>
+
+  <article itemtype="http://schema.org/NewsArticle">
+    <section class= "article-body" itemprop="articleBody">
+      <p>Hey,</p>
+<p>When dealing with web servers, it&rsquo;s not uncommon to face the problem of &ldquo;too many files open&rdquo;.</p>
+<p>Usually, people solve that by modifying a number using <code>ulimit -n</code>, and then, sometimes that doesn&rsquo;t work as such setting is per-process, and not system-wide.</p>
+<figure class="expanded-container"
+  
+  >
+    <img
+        width="100%" height="100%"
+       style="max-width: 65rem; "
+       src="/blog/-/images/ulimits-example.svg"
+       alt="Illustration of ulimits not working as expected " >
+
+    
+</figure>
+
+<p>In this article, I go through how that <code>ulimit</code> setting works under the hood, and how you can make use of <code>/proc</code> to inspect other processes limits without the need for additional tools.</p>
+<div class="ps">
+
+<p>This is the fourth article in a series of 30 articles around <em>procfs</em>: <a href="/blog/a-month-of-proc/">A Month of /proc</a>.</p>
+<p>If you&rsquo;d like to keep up to date with it, make sure you <a href="https://google.us3.list-manage.com/subscribe/post?u=1941019739d6aa1a25eda3787&amp;id=ff9c3cc11e"><strong>join the mailing list</strong></a>!</p>
+
+</div>
+
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+<ul>
+<li><a href="#what-are-resource-limits">What are resource limits</a></li>
+<li><a href="#how-does-the-kernel-limit-the-number-of-files-open-by-a-process">How does the kernel limit the number of files open by a process?</a></li>
+<li><a href="#under-the-hood-of-the-ulimit-command">Under the hood of the ulimit &ldquo;command&rdquo;</a></li>
+<li><a href="#a-sample-ulimit-implementation">A sample ulimit implementation</a></li>
+<li><a href="#setting-and-getting-resource-limits-at-the-kernel-level">Setting and getting resource limits at the Kernel level</a></li>
+<li><a href="#gathering-process-limits-via-proc">Gathering process limits via /proc</a></li>
+<li><a href="#why-expose-limits-through-procfs-if-prlimit-already-exists">Why expose limits through procfs if prlimit already exists</a></li>
+<li><a href="#closing-thoughts">Closing thoughts</a></li>
+<li><a href="#resources">Resources</a></li>
+</ul>
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+<h3 id="what-are-resource-limits">What are resource limits</h3>
+<p>Resource limits can be thought as ceilings that can be set for specific resources from the Kernel that a given process might end up consuming.</p>
+<p>These limits are made up of two values:</p>
+<ul>
+<li><strong>soft</strong>: limits the number of resources that the process may consume; and</li>
+<li><strong>hard</strong>: a ceiling on the value to which the soft limit may be adjusted by an unprivileged process.</li>
+</ul>
+<p>Throughout this article, I&rsquo;ll be covering only one resource - the number of open files -, but there are many other resources that can have their consumption limited via resource limits.</p>
+<p>So, to set a quick example, let&rsquo;s consider the following program that opens <code>n</code> files and leaves them open:</p>
+<div class="highlight"><pre class="chroma"><code class="language-go" data-lang="go"><span class="kn">package</span> <span class="nx">main</span>
+
+<span class="kn">import</span> <span class="p">(</span>
+	<span class="s">&#34;flag&#34;</span>
+	<span class="s">&#34;fmt&#34;</span>
+	<span class="s">&#34;io/ioutil&#34;</span>
+	<span class="s">&#34;os&#34;</span>
+<span class="p">)</span>
+
+<span class="cm">/**
+</span><span class="cm"> * Take as user input the number of files
+</span><span class="cm"> * that we want to create and keep open.
+</span><span class="cm"> */</span>
+<span class="kd">var</span> <span class="nx">files</span> <span class="p">=</span> <span class="nx">flag</span><span class="p">.</span><span class="nf">Uint</span><span class="p">(</span><span class="s">&#34;files&#34;</span><span class="p">,</span> <span class="mi">10</span><span class="p">,</span> <span class="s">&#34;number of files to open&#34;</span><span class="p">)</span>
+
+<span class="cm">/**
+</span><span class="cm"> * open-files - opens files and leaves them open.
+</span><span class="cm"> *
+</span><span class="cm"> * Usage: ./open-files -files=&lt;number_of_files&gt;
+</span><span class="cm"> *
+</span><span class="cm"> */</span>
+<span class="kd">func</span> <span class="nf">main</span><span class="p">()</span> <span class="p">{</span>
+	<span class="nx">flag</span><span class="p">.</span><span class="nf">Parse</span><span class="p">()</span>
+
+	<span class="k">if</span> <span class="o">*</span><span class="nx">files</span> <span class="o">==</span> <span class="mi">0</span> <span class="p">{</span>
+		<span class="nx">fmt</span><span class="p">.</span><span class="nf">Fprintf</span><span class="p">(</span><span class="nx">os</span><span class="p">.</span><span class="nx">Stderr</span><span class="p">,</span> <span class="s">&#34;number of files must be &gt; 0&#34;</span><span class="p">)</span>
+		<span class="nx">os</span><span class="p">.</span><span class="nf">Exit</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
+	<span class="p">}</span>
+
+	<span class="cm">/**
+</span><span class="cm">	 * Show the PID of the current process so
+</span><span class="cm">	 * that we can mess with it in another
+</span><span class="cm">	 * terminal.
+</span><span class="cm">	 */</span>
+	<span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="s">&#34;pid: &#34;</span><span class="p">,</span> <span class="nx">os</span><span class="p">.</span><span class="nf">Getpid</span><span class="p">())</span>
+
+	<span class="cm">/**
+</span><span class="cm">	 * Starts the process of creating N files
+</span><span class="cm">	 * and leaving them open.
+</span><span class="cm">	 */</span>
+	<span class="k">for</span> <span class="nx">i</span> <span class="o">:=</span> <span class="mi">0</span><span class="p">;</span> <span class="nx">i</span> <span class="p">&lt;</span> <span class="nb">int</span><span class="p">(</span><span class="o">*</span><span class="nx">files</span><span class="p">);</span> <span class="nx">i</span><span class="o">++</span> <span class="p">{</span>
+		<span class="nx">fmt</span><span class="p">.</span><span class="nf">Println</span><span class="p">(</span><span class="nx">i</span><span class="p">,</span> <span class="s">&#34;files open&#34;</span><span class="p">)</span>
+
+		<span class="nx">tmpfile</span><span class="p">,</span> <span class="nx">err</span> <span class="o">:=</span> <span class="nx">ioutil</span><span class="p">.</span><span class="nf">TempFile</span><span class="p">(</span><span class="s">&#34;&#34;</span><span class="p">,</span> <span class="s">&#34;example&#34;</span><span class="p">)</span>
+		<span class="k">if</span> <span class="nx">err</span> <span class="o">!=</span> <span class="kc">nil</span> <span class="p">{</span>
+			<span class="nx">fmt</span><span class="p">.</span><span class="nf">Fprintf</span><span class="p">(</span><span class="nx">os</span><span class="p">.</span><span class="nx">Stderr</span><span class="p">,</span> <span class="s">&#34;failed to create and &#34;</span> <span class="o">+</span>
+                                <span class="s">&#34;open tmp file: %v\n&#34;</span><span class="p">,</span> <span class="nx">err</span><span class="p">)</span>
+			<span class="k">return</span>
+		<span class="p">}</span>
+
+		<span class="k">defer</span> <span class="nx">os</span><span class="p">.</span><span class="nf">Remove</span><span class="p">(</span><span class="nx">tmpfile</span><span class="p">.</span><span class="nf">Name</span><span class="p">())</span>
+	<span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div><p>Running them on a shell with a high limit of open files, we can see it properly working:</p>
+<div class="highlight"><pre class="chroma"><code class="language-sh" data-lang="sh">./open-files
+pid:  <span class="m">726</span>
+<span class="m">0</span> files open
+<span class="m">1</span> files open
+<span class="m">2</span> files open
+<span class="m">3</span> files open
+<span class="m">4</span> files open
+<span class="m">5</span> files open
+<span class="m">6</span> files open
+<span class="m">7</span> files open
+<span class="m">8</span> files open
+<span class="m">9</span> files open
+</code></pre></div><p>Now, if we make that limit very small - 10 -, we can see it failing:</p>
+<div class="highlight"><pre class="chroma"><code class="language-sh" data-lang="sh"><span class="c1"># Set the maximum number of open files to 10.</span>
+<span class="nb">ulimit</span> -n <span class="m">10</span>
+
+<span class="c1"># Try to open 10 files.</span>
+<span class="c1">#</span>
+<span class="c1"># Naturally, it should fail, given that </span>
+<span class="c1"># the execution of `open-files` will also open</span>
+<span class="c1"># some shared libraries before opening the other</span>
+<span class="c1"># 10 files.</span>
+./open-files
+pid:  <span class="m">732</span>
+<span class="m">0</span> files open
+<span class="m">1</span> files open
+<span class="m">2</span> files open
+<span class="m">3</span> files open
+<span class="m">4</span> files open
+<span class="m">5</span> files open
+<span class="m">6</span> files open
+failed to create and open tmp file: 
+  open /tmp/example484763765: too many open files
+</code></pre></div><h3 id="how-does-the-kernel-limit-the-number-of-files-open-by-a-process">How does the kernel limit the number of files open by a process?</h3>
+<p>In the case of open files, we can see in the Kernel code how that&rsquo;s strictly enforced by following the methods invoked in the code path for an <a href="http://man7.org/linux/man-pages/man2/open.2.html"><code>open(2)</code></a> syscall:</p>
+<div class="highlight"><pre class="chroma"><code class="language-sh" data-lang="sh">          ^   __alloc_fd
+          <span class="p">|</span>   get_unused_fd_flags
+<span class="o">(</span>kernel<span class="o">)</span>  <span class="p">|</span>   do_sys_open
+          <span class="p">|</span>   sys_openat
+          <span class="p">|</span>   do_syscall_64
+          <span class="p">|</span>   entry_SYSCALL_64_after_hwframe
+----------+--------------------------
+<span class="o">(</span>user<span class="o">)</span>    <span class="p">|</span>   open<span class="o">(</span>2<span class="o">)</span> 
+</code></pre></div><p>Having everything started at <code>do_syscall</code> and going towards <code>do_sys_open</code>, nothing particularly interesting happens when it comes to resource limits.</p>
+<p>Things get interesting when it comes to <a href="https://elixir.bootlin.com/linux/v4.15.18/source/fs/file.c#L547"><code>get_unused_fd_flags</code></a>, which then calls <a href="https://elixir.bootlin.com/linux/v4.15.18/source/fs/file.c#L484"><code>__alloc_fd</code></a> with the resource limit boundaries:</p>
+<div class="highlight"><pre class="chroma"><code class="language-c" data-lang="c"><span class="cm">/**
+</span><span class="cm"> * Sets up the ranges for __alloc_fd
+</span><span class="cm"> * so that when trying to allocate a
+</span><span class="cm"> * file descriptor, it performs some
+</span><span class="cm"> * bounds checking.
+</span><span class="cm"> */</span>
+<span class="kt">int</span> <span class="nf">get_unused_fd_flags</span><span class="p">(</span><span class="kt">unsigned</span> <span class="n">flags</span><span class="p">)</span>
+<span class="p">{</span>
+	<span class="k">return</span> <span class="n">__alloc_fd</span><span class="p">(</span>
+                <span class="n">current</span><span class="o">-&gt;</span><span class="n">files</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> 
+                <span class="n">rlimit</span><span class="p">(</span><span class="n">RLIMIT_NOFILE</span><span class="p">),</span>
+                <span class="n">flags</span><span class="p">);</span>               
+<span class="p">}</span>
+
+<span class="cm">/*
+</span><span class="cm"> * Tries to allocate a file descriptor
+</span><span class="cm"> * for the process, marking it as busy.
+</span><span class="cm"> */</span>
+<span class="kt">int</span> <span class="nf">__alloc_fd</span><span class="p">(</span><span class="k">struct</span> <span class="n">files_struct</span> <span class="o">*</span><span class="n">files</span><span class="p">,</span>
+	       <span class="kt">unsigned</span> <span class="n">start</span><span class="p">,</span> <span class="kt">unsigned</span> <span class="n">end</span><span class="p">,</span> <span class="kt">unsigned</span> <span class="n">flags</span><span class="p">)</span>
+<span class="p">{</span>
+	<span class="kt">unsigned</span> <span class="kt">int</span> <span class="n">fd</span><span class="p">;</span>
+	<span class="kt">int</span> <span class="n">error</span><span class="p">;</span>
+	<span class="k">struct</span> <span class="n">fdtable</span> <span class="o">*</span><span class="n">fdt</span><span class="p">;</span>
+
+        <span class="c1">// ...
+</span><span class="c1"></span>
+        <span class="c1">// tries to gather the next available
+</span><span class="c1"></span>        <span class="c1">// file descriptor
+</span><span class="c1"></span>	<span class="n">fd</span> <span class="o">=</span> <span class="n">start</span><span class="p">;</span>
+	<span class="k">if</span> <span class="p">(</span><span class="n">fd</span> <span class="o">&lt;</span> <span class="n">files</span><span class="o">-&gt;</span><span class="n">next_fd</span><span class="p">)</span>
+		<span class="n">fd</span> <span class="o">=</span> <span class="n">files</span><span class="o">-&gt;</span><span class="n">next_fd</span><span class="p">;</span>
+	<span class="k">if</span> <span class="p">(</span><span class="n">fd</span> <span class="o">&lt;</span> <span class="n">fdt</span><span class="o">-&gt;</span><span class="n">max_fds</span><span class="p">)</span>
+		<span class="n">fd</span> <span class="o">=</span> <span class="n">find_next_fd</span><span class="p">(</span><span class="n">fdt</span><span class="p">,</span> <span class="n">fd</span><span class="p">);</span>
+
+        <span class="c1">// Verifies if the file descriptor that
+</span><span class="c1"></span>        <span class="c1">// we have available falls within the
+</span><span class="c1"></span>        <span class="c1">// boundaries set by the open files
+</span><span class="c1"></span>        <span class="c1">// resource limit.
+</span><span class="c1"></span>	<span class="n">error</span> <span class="o">=</span> <span class="o">-</span><span class="n">EMFILE</span><span class="p">;</span>
+	<span class="k">if</span> <span class="p">(</span><span class="n">fd</span> <span class="o">&gt;=</span> <span class="n">end</span><span class="p">)</span>
+		<span class="k">goto</span> <span class="n">out</span><span class="p">;</span>
+
+	<span class="c1">// ...
+</span><span class="c1"></span><span class="p">}</span>
+</code></pre></div><p>Knowing where all these checks take place, we can tailor a specific <a href="https://github.com/iovisor/bpftrace"><code>bpftrace</code></a> program that targets <code>__alloc_file</code> and then lets us know what is the result from it.</p>
+<div class="highlight"><pre class="chroma"><code class="language-perl" data-lang="perl"><span class="k">BEGIN</span>
+<span class="p">{</span>
+        <span class="nb">printf</span><span class="p">(</span><span class="s">&#34;Looking for EMFILE when opening\n&#34;</span><span class="p">);</span>
+<span class="p">}</span>
+
+
+<span class="sr">//</span> <span class="n">Place</span> <span class="n">a</span> <span class="k">return</span> <span class="n">probe</span> <span class="n">in</span> <span class="n">the</span> <span class="sb">`__alloc_fd`</span>
+<span class="sr">//</span> <span class="n">so</span> <span class="n">that</span> <span class="n">we</span> <span class="n">can</span> <span class="n">verify</span> <span class="n">whether</span> <span class="n">an</span> <span class="n">error</span> <span class="n">is</span>
+<span class="sr">//</span> <span class="n">returned</span> <span class="n">from</span> <span class="n">it</span><span class="o">.</span>
+<span class="n">kretprobe:__alloc_fd</span> <span class="sr">/comm == &#34;open-files&#34;/</span>
+<span class="p">{</span>
+        <span class="nb">printf</span><span class="p">(</span><span class="s">&#34;returned: %d\n&#34;</span><span class="p">,</span> <span class="n">retval</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div><p>Leaving the tracing running in a terminal while we run <code>open-files</code> in another with a low limit:</p>
+<div class="highlight"><pre class="chroma"><code class="language-sh" data-lang="sh"><span class="c1"># Run the trace program and then</span>
+<span class="c1"># see the values returned.</span>
+<span class="c1"># </span>
+<span class="c1"># What we expect: file descriptors being</span>
+<span class="c1"># properly created up until `9`, then `-EMFILE`</span>
+<span class="c1"># (24) at the 10th try.</span>
+<span class="c1">#</span>
+<span class="c1"># #define EMFILE 24 /* Too many open files */</span>
+
+sudo bpftrace ./limit-check.d
+Attaching <span class="m">2</span> probes...
+Looking <span class="k">for</span> EMFILE when opening
+returned: <span class="m">3</span>
+returned: <span class="m">4</span>
+returned: <span class="m">5</span>
+returned: <span class="m">6</span>
+returned: <span class="m">7</span>
+returned: <span class="m">8</span>
+returned: <span class="m">9</span>
+returned: -24
+</code></pre></div><h3 id="under-the-hood-of-the-ulimit-command">Under the hood of the ulimit &ldquo;command&rdquo;</h3>
+<p>Now that we know how the Kernel is able to check for the limits whenever our process tries to create a program, it&rsquo;s time to discover what that <code>ulimit -n</code> command is all about.</p>
+<p>The first thing one might notice is that <code>ulimit</code> is not really a binary that the shell is calling - it&rsquo;s usually a builtin command that your shell provides.</p>
+<p>For instance, looking at <code>ash</code>, the shell that <a href="https://busybox.net/about.html"><code>busybox</code></a> provides, we can see it in <a href="https://elixir.bootlin.com/busybox/1.29.2/source/shell/shell_common.c#L453"><code>ash</code>&rsquo;s code</a>:</p>
+<div class="highlight"><pre class="chroma"><code class="language-c" data-lang="c"><span class="cm">/**
+</span><span class="cm"> * Implementation of all of the
+</span><span class="cm"> * ulimit builtin functionality.
+</span><span class="cm"> *
+</span><span class="cm"> * No `execve` calling a `/usr/bin/ulimit`
+</span><span class="cm"> * or somethign like that.
+</span><span class="cm"> *
+</span><span class="cm"> * Pure code implemented from ground up.
+</span><span class="cm"> */</span>
+<span class="kt">int</span> <span class="n">FAST_FUNC</span>
+<span class="nf">shell_builtin_ulimit</span><span class="p">(</span><span class="kt">char</span> <span class="o">**</span><span class="n">argv</span><span class="p">)</span>
+<span class="p">{</span>
+        <span class="k">struct</span> <span class="n">rlimit</span> <span class="n">limit</span><span class="p">;</span>
+
+         <span class="c1">// ...
+</span><span class="c1"></span>        <span class="k">for</span> <span class="p">(</span><span class="n">l</span> <span class="o">=</span> <span class="n">limits_tbl</span><span class="p">;</span> 
+                <span class="n">l</span> <span class="o">!=</span> <span class="o">&amp;</span><span class="n">limits_tbl</span><span class="p">[</span><span class="n">ARRAY_SIZE</span><span class="p">(</span><span class="n">limits_tbl</span><span class="p">)];</span> 
+                <span class="n">l</span><span class="o">++</span><span class="p">)</span> <span class="p">{</span>
+
+                <span class="c1">// ...
+</span><span class="c1"></span>                <span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">opts</span><span class="p">)</span>
+                        <span class="n">opts</span> <span class="o">=</span> <span class="n">OPT_hard</span> <span class="o">+</span> <span class="n">OPT_soft</span><span class="p">;</span>
+                <span class="k">if</span> <span class="p">(</span><span class="n">opts</span> <span class="o">&amp;</span> <span class="n">OPT_hard</span><span class="p">)</span>
+                        <span class="n">limit</span><span class="p">.</span><span class="n">rlim_max</span> <span class="o">=</span> <span class="n">val</span><span class="p">;</span>
+                <span class="k">if</span> <span class="p">(</span><span class="n">opts</span> <span class="o">&amp;</span> <span class="n">OPT_soft</span><span class="p">)</span>
+                        <span class="n">limit</span><span class="p">.</span><span class="n">rlim_cur</span> <span class="o">=</span> <span class="n">val</span><span class="p">;</span>
+                <span class="k">if</span> <span class="p">(</span><span class="n">setrlimit</span><span class="p">(</span><span class="n">l</span><span class="o">-&gt;</span><span class="n">cmd</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">limit</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
+                        <span class="n">bb_perror_msg</span><span class="p">(</span><span class="s">&#34;error setting limit&#34;</span><span class="p">);</span>
+                        <span class="k">return</span> <span class="n">EXIT_FAILURE</span><span class="p">;</span>
+                <span class="p">}</span>
+        <span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div><p><em>ps.: the same is valid for <code>bash</code> - see <a href="http://git.savannah.gnu.org/cgit/bash.git/tree/builtins/ulimit.def">bash/builtins/ulimit.def</a>.</em></p>
+<p>Being a builtin or not, it doesn&rsquo;t matter - at some point, it touches the Kernel with a syscall.</p>
+<p>For doing so, three syscalls can be used (see <a href="https://linux.die.net/man/2/prlimit">man 2 prlimit</a>):</p>
+<ul>
+<li><code>setrlimit</code> and <code>getrlimit</code>: respectively, sets and gets resource limits corresponding to the currently running process (and its future children); and</li>
+<li><code>prlimit</code>, which allows settings and gettings resource limits corresponding to an arbitrary process.</li>
+</ul>
+<p>As we can see from the description, in the end, <code>prlimit</code> is what really matters.</p>
+<p>If we look under the hood of <code>setrlimit</code> and <code>getrlimit</code>, we even discover that they&rsquo;re just wrapping parts of the <code>prlimit</code> functionality (see <a href="https://elixir.bootlin.com/linux/v4.15/source/kernel/sys.c#L1330"><code>kernel/sys.c</code></a>):</p>
+<div class="highlight"><pre class="chroma"><code class="language-c" data-lang="c"><span class="n">SYSCALL_DEFINE2</span><span class="p">(</span><span class="n">getrlimit</span><span class="p">,</span> 
+        <span class="kt">unsigned</span> <span class="kt">int</span><span class="p">,</span> <span class="n">resource</span><span class="p">,</span> 
+        <span class="k">struct</span> <span class="n">rlimit</span> <span class="n">__user</span> <span class="o">*</span><span class="p">,</span> <span class="n">rlim</span><span class="p">)</span>
+<span class="p">{</span>
+	<span class="k">struct</span> <span class="n">rlimit</span> <span class="n">value</span><span class="p">;</span>
+	<span class="kt">int</span> <span class="n">ret</span><span class="p">;</span>
+
+	<span class="n">ret</span> <span class="o">=</span> <span class="n">do_prlimit</span><span class="p">(</span><span class="n">current</span><span class="p">,</span> <span class="n">resource</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">value</span><span class="p">);</span>
+	<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">ret</span><span class="p">)</span>
+		<span class="n">ret</span> <span class="o">=</span> <span class="n">copy_to_user</span><span class="p">(</span><span class="n">rlim</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">value</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="o">*</span><span class="n">rlim</span><span class="p">))</span> <span class="o">?</span> <span class="o">-</span><span class="nl">EFAULT</span> <span class="p">:</span> <span class="mi">0</span><span class="p">;</span>
+
+	<span class="k">return</span> <span class="n">ret</span><span class="p">;</span>
+<span class="p">}</span>
+
+
+<span class="n">SYSCALL_DEFINE2</span><span class="p">(</span><span class="n">setrlimit</span><span class="p">,</span> 
+        <span class="kt">unsigned</span> <span class="kt">int</span><span class="p">,</span> <span class="n">resource</span><span class="p">,</span> 
+        <span class="k">struct</span> <span class="n">rlimit</span> <span class="n">__user</span> <span class="o">*</span><span class="p">,</span> <span class="n">rlim</span><span class="p">)</span>
+<span class="p">{</span>
+	<span class="k">struct</span> <span class="n">rlimit</span> <span class="n">new_rlim</span><span class="p">;</span>
+
+	<span class="k">if</span> <span class="p">(</span><span class="n">copy_from_user</span><span class="p">(</span><span class="o">&amp;</span><span class="n">new_rlim</span><span class="p">,</span> <span class="n">rlim</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="o">*</span><span class="n">rlim</span><span class="p">)))</span>
+		<span class="k">return</span> <span class="o">-</span><span class="n">EFAULT</span><span class="p">;</span>
+	<span class="k">return</span> <span class="nf">do_prlimit</span><span class="p">(</span><span class="n">current</span><span class="p">,</span> <span class="n">resource</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">new_rlim</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div><p>So, how does <code>prlimit</code> work?</p>
+<h3 id="a-sample-ulimit-implementation">A sample ulimit implementation</h3>
+<p>We can see its functionality in place by creating a quick program in C that is able to change the resource limits regarding the number of open files associated with a given process id:</p>
+<div class="highlight"><pre class="chroma"><code class="language-c" data-lang="c"><span class="cp">#define _GNU_SOURCE
+</span><span class="cp"></span>
+<span class="cp">#include</span> <span class="cpf">&lt;stdio.h&gt;</span><span class="cp">
+</span><span class="cp">#include</span> <span class="cpf">&lt;stdlib.h&gt;</span><span class="cp">
+</span><span class="cp">#include</span> <span class="cpf">&lt;sys/resource.h&gt;</span><span class="cp">
+</span><span class="cp">#include</span> <span class="cpf">&lt;unistd.h&gt;</span><span class="cp">
+</span><span class="cp"></span>
+<span class="c1">// A hardcoded number that sets the maximum number
+</span><span class="c1">// of open files that the supplied PID can handle.
+</span><span class="c1"></span><span class="cp">#define MAX_OPEN_FILES 10
+</span><span class="cp"></span>
+<span class="c1">// Hardcode the resource that we&#39;ll be changing.
+</span><span class="c1">//
+</span><span class="c1">// RLIMIT_NOFILE - number of files that can be
+</span><span class="c1">//                 opened by this process.
+</span><span class="c1"></span><span class="cp">#define RESOURCE RLIMIT_NOFILE
+</span><span class="cp"></span>
+<span class="cm">/**
+</span><span class="cm"> * limit-open-files - limits the number of open files that
+</span><span class="cm"> *                    a given PID can hold to 10.
+</span><span class="cm"> *
+</span><span class="cm"> * Usage: ./limit-open-files.out &lt;PID&gt;
+</span><span class="cm"> *
+</span><span class="cm"> */</span>
+<span class="kt">int</span>
+<span class="nf">main</span><span class="p">(</span><span class="kt">int</span> <span class="n">argc</span><span class="p">,</span> <span class="kt">char</span><span class="o">**</span> <span class="n">argv</span><span class="p">)</span>
+<span class="p">{</span>
+	<span class="kt">int</span>        <span class="n">err</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+
+        <span class="c1">// parse the arguments supplied via
+</span><span class="c1"></span>        <span class="c1">// flags (code omitted for brevity).
+</span><span class="c1"></span>	<span class="k">struct</span> <span class="n">cli</span> <span class="n">cli</span> <span class="o">=</span> <span class="p">{</span> <span class="mi">0</span> <span class="p">};</span>
+	<span class="n">cli_parse</span><span class="p">(</span><span class="n">argc</span><span class="p">,</span> <span class="n">argv</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">cli</span><span class="p">);</span>
+
+        <span class="c1">// Initialize the data structures that
+</span><span class="c1"></span>        <span class="c1">// carry information about the process
+</span><span class="c1"></span>        <span class="c1">// resource limits.
+</span><span class="c1"></span>        <span class="c1">//
+</span><span class="c1"></span>        <span class="c1">// `old` is supposed to have its values
+</span><span class="c1"></span>        <span class="c1">// filled by the kernel at the `get` 
+</span><span class="c1"></span>        <span class="c1">// phase of `prlimit`.
+</span><span class="c1"></span>	<span class="k">struct</span> <span class="n">rlimit</span> <span class="n">old</span> <span class="o">=</span> <span class="p">{</span> <span class="mi">0</span> <span class="p">};</span>
+
+        <span class="c1">// `new` is supposed to contain the values
+</span><span class="c1"></span>        <span class="c1">// that we want to change.
+</span><span class="c1"></span>	<span class="k">struct</span> <span class="n">rlimit</span> <span class="n">new</span> <span class="o">=</span> <span class="p">{</span>
+		<span class="p">.</span><span class="n">rlim_cur</span> <span class="o">=</span> <span class="n">cli</span><span class="p">.</span><span class="n">soft</span><span class="p">,</span>
+		<span class="p">.</span><span class="n">rlim_max</span> <span class="o">=</span> <span class="n">cli</span><span class="p">.</span><span class="n">hard</span><span class="p">,</span>
+	<span class="p">};</span>
+
+	<span class="c1">// Perform a &#34;get-and-set&#34; operation.
+</span><span class="c1"></span>	<span class="c1">//
+</span><span class="c1"></span>	<span class="c1">// By passing non-NULL `new` and `old` values,
+</span><span class="c1"></span>	<span class="c1">// the values supplied at `new` will be used as
+</span><span class="c1"></span>	<span class="c1">// the new values for such resource.
+</span><span class="c1"></span>	<span class="c1">//
+</span><span class="c1"></span>	<span class="c1">// The `old` will get filled with the previous
+</span><span class="c1"></span>	<span class="c1">// values.
+</span><span class="c1"></span>
+        <span class="c1">// int prlimit(
+</span><span class="c1"></span>        <span class="c1">//
+</span><span class="c1"></span>        <span class="c1">//   pid_t pid,      --&gt; process ID to affect
+</span><span class="c1"></span>        <span class="c1">// 
+</span><span class="c1"></span>        <span class="c1">//   int resource,   --&gt; resource to tweak / gather info
+</span><span class="c1"></span>        <span class="c1">// 
+</span><span class="c1"></span>        <span class="c1">//   const struct rlimit *new_limit, --&gt; if set; new limit 
+</span><span class="c1"></span>        <span class="c1">//                                       to place.
+</span><span class="c1"></span>        <span class="c1">// 
+</span><span class="c1"></span>        <span class="c1">//   struct rlimit *old_limit   --&gt; if non-nil, gathers info 
+</span><span class="c1"></span>        <span class="c1">//                                  about the previous soft 
+</span><span class="c1"></span>        <span class="c1">//                                  and hard limits.
+</span><span class="c1"></span>        <span class="c1">// );
+</span><span class="c1"></span>        <span class="c1">// 
+</span><span class="c1"></span>	<span class="n">err</span> <span class="o">=</span> <span class="n">prlimit</span><span class="p">(</span><span class="n">cli</span><span class="p">.</span><span class="n">pid</span><span class="p">,</span> <span class="n">RLIMIT_NOFILE</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">new</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">old</span><span class="p">);</span>
+	<span class="k">if</span> <span class="p">(</span><span class="n">err</span> <span class="o">==</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span> <span class="p">{</span>
+		<span class="n">perror</span><span class="p">(</span><span class="s">&#34;prlimit - get and set:&#34;</span><span class="p">);</span>
+		<span class="k">return</span> <span class="mi">1</span><span class="p">;</span>
+	<span class="p">}</span>
+
+	<span class="n">printf</span><span class="p">(</span><span class="s">&#34;before: soft=%lld; hard=%lld</span><span class="se">\n</span><span class="s">&#34;</span><span class="p">,</span>
+	       <span class="p">(</span><span class="kt">long</span> <span class="kt">long</span><span class="p">)</span><span class="n">old</span><span class="p">.</span><span class="n">rlim_cur</span><span class="p">,</span>
+	       <span class="p">(</span><span class="kt">long</span> <span class="kt">long</span><span class="p">)</span><span class="n">old</span><span class="p">.</span><span class="n">rlim_max</span><span class="p">);</span>
+
+	<span class="c1">// Perform a `get` operation to retrieve the
+</span><span class="c1"></span>	<span class="c1">// current values set for the resource.
+</span><span class="c1"></span>	<span class="n">err</span> <span class="o">=</span> <span class="n">prlimit</span><span class="p">(</span><span class="n">cli</span><span class="p">.</span><span class="n">pid</span><span class="p">,</span> <span class="n">RLIMIT_NOFILE</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">old</span><span class="p">);</span>
+	<span class="k">if</span> <span class="p">(</span><span class="n">err</span> <span class="o">==</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span> <span class="p">{</span>
+		<span class="n">perror</span><span class="p">(</span><span class="s">&#34;prlimit - get:&#34;</span><span class="p">);</span>
+		<span class="k">return</span> <span class="mi">1</span><span class="p">;</span>
+	<span class="p">}</span>
+
+	<span class="n">printf</span><span class="p">(</span><span class="s">&#34;now:    soft=%lld; hard=%lld</span><span class="se">\n</span><span class="s">&#34;</span><span class="p">,</span>
+	       <span class="p">(</span><span class="kt">long</span> <span class="kt">long</span><span class="p">)</span><span class="n">old</span><span class="p">.</span><span class="n">rlim_cur</span><span class="p">,</span>
+	       <span class="p">(</span><span class="kt">long</span> <span class="kt">long</span><span class="p">)</span><span class="n">old</span><span class="p">.</span><span class="n">rlim_max</span><span class="p">);</span>
+
+	<span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div><p>Run it against a particular process and then see it changing its resources limits:</p>
+<div class="highlight"><pre class="chroma"><code class="language-sh" data-lang="sh"><span class="c1"># Modify the limit of open files that process</span>
+<span class="c1"># 29871 can hold to soft=12 and hard=12.</span>
+./limit-open-files.out -p <span class="m">29871</span> -s <span class="m">12</span> -h <span class="m">12</span>
+before: <span class="nv">soft</span><span class="o">=</span>1024<span class="p">;</span> <span class="nv">hard</span><span class="o">=</span><span class="m">1048576</span>
+now: <span class="nv">soft</span><span class="o">=</span>12<span class="p">;</span> <span class="nv">hard</span><span class="o">=</span><span class="m">12</span>
+
+
+<span class="c1"># Trying to modify it again, we can see that </span>
+<span class="c1"># the process was previously set to `12` </span>
+<span class="c1"># (given that we had just changed to 12).</span>
+./limit-open-files.out -p <span class="m">29871</span> -s <span class="m">12</span> -h <span class="m">12</span>
+before: <span class="nv">soft</span><span class="o">=</span>12<span class="p">;</span> <span class="nv">hard</span><span class="o">=</span><span class="m">12</span>
+now: <span class="nv">soft</span><span class="o">=</span>12<span class="p">;</span> <span class="nv">hard</span><span class="o">=</span><span class="m">12</span>
+
+
+<span class="c1"># Try to increase the hard limit from 12 to 13.</span>
+./limit-open-files.out -p <span class="m">29871</span> -s <span class="m">12</span> -h <span class="m">13</span>
+prlimit - get and set:: Operation not permitted
+</code></pre></div><p>Notice how in the end we were not able to complete our desired operation of increasing hard limit.</p>
+<p>That&rsquo;s because some of the operations that <code>prlimit</code> performs (like increasing the hard limit) require elevated privileges, which we didn&rsquo;t have when running it as an unprivileged user.</p>
+<p>Making use of a <a href="https://github.com/iovisor/bpftrace"><code>bpftrace</code></a> tool called <a href="https://github.com/iovisor/bpftrace/blob/master/tools/capable_example.txt"><code>capable</code></a> we&rsquo;re able to see how <code>prlimit</code> checks for <code>CAP_SYS_RESOURCE</code> when trying to elevate the hard limit:</p>
+<div class="highlight"><pre class="chroma"><code class="language-sh" data-lang="sh">sudo capable
+UID    PID    COMM             CAP  NAME                 AUDIT
+<span class="m">1001</span>   <span class="m">29882</span>  limit-open-file  <span class="m">24</span>   CAP_SYS_RESOURCE     <span class="m">1</span>
+</code></pre></div><p>Now that we&rsquo;re aware of the <code>prlimit</code> syscall, can we see the Kernel code that sets and gets these limits?</p>
+<h3 id="setting-and-getting-resource-limits-at-the-kernel-level">Setting and getting resource limits at the Kernel level</h3>
+<p>Tracing down the methods invoked by <code>prlimit</code>, we can see that all ends up in the method <a href="https://elixir.bootlin.com/linux/v4.15/source/kernel/sys.c#L1472"><code>do_prlimit</code> at <code>kernel/sys.c</code></a>:</p>
+<p>Here&rsquo;s a break down of it, full of comments of my own (and mutual exclusion - through locks - stripped out):</p>
+<div class="highlight"><pre class="chroma"><code class="language-c" data-lang="c"><span class="cm">/**
+</span><span class="cm"> * `do_prlimit` constitutes the underlying functionality
+</span><span class="cm"> * of `prlimit` (which is also partly used by `getrlimit`
+</span><span class="cm"> * and `setrlimit`).
+</span><span class="cm"> */</span>
+<span class="kt">int</span> <span class="nf">do_prlimit</span><span class="p">(</span><span class="k">struct</span> <span class="n">task_struct</span> <span class="o">*</span><span class="n">tsk</span><span class="p">,</span> <span class="kt">unsigned</span> <span class="kt">int</span> <span class="n">resource</span><span class="p">,</span>
+		<span class="k">struct</span> <span class="n">rlimit</span> <span class="o">*</span><span class="n">new_rlim</span><span class="p">,</span> <span class="k">struct</span> <span class="n">rlimit</span> <span class="o">*</span><span class="n">old_rlim</span><span class="p">)</span>
+<span class="p">{</span>
+	<span class="k">struct</span> <span class="n">rlimit</span> <span class="o">*</span><span class="n">rlim</span><span class="p">;</span>
+	<span class="kt">int</span> <span class="n">retval</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+
+	<span class="c1">// Checks if the resource is a valid one (given that
+</span><span class="c1"></span>        <span class="c1">// we can provide whatever we want from the syscall
+</span><span class="c1"></span>        <span class="c1">// interface).
+</span><span class="c1"></span>	<span class="k">if</span> <span class="p">(</span><span class="n">resource</span> <span class="o">&gt;=</span> <span class="n">RLIM_NLIMITS</span><span class="p">)</span>
+		<span class="k">return</span> <span class="o">-</span><span class="n">EINVAL</span><span class="p">;</span>
+
+        <span class="c1">// If we specified a non-NULL `new_rlim`, it means
+</span><span class="c1"></span>        <span class="c1">// that we&#39;re planning to set some limits on a given
+</span><span class="c1"></span>        <span class="c1">// resource.
+</span><span class="c1"></span>	<span class="k">if</span> <span class="p">(</span><span class="n">new_rlim</span><span class="p">)</span> <span class="p">{</span>
+		<span class="c1">// Check if the values even make sense.
+</span><span class="c1"></span>		<span class="k">if</span> <span class="p">(</span><span class="n">new_rlim</span><span class="o">-&gt;</span><span class="n">rlim_cur</span> <span class="o">&gt;</span> <span class="n">new_rlim</span><span class="o">-&gt;</span><span class="n">rlim_max</span><span class="p">)</span>
+			<span class="k">return</span> <span class="o">-</span><span class="n">EINVAL</span><span class="p">;</span>
+
+		<span class="c1">// Check if it&#39;d be getting above the system-wide limit
+</span><span class="c1"></span>		<span class="c1">// already set (sysctl)
+</span><span class="c1"></span>		<span class="k">if</span> <span class="p">(</span><span class="n">resource</span> <span class="o">==</span> <span class="n">RLIMIT_NOFILE</span> <span class="o">&amp;&amp;</span>
+                                <span class="n">new_rlim</span><span class="o">-&gt;</span><span class="n">rlim_max</span> <span class="o">&gt;</span> <span class="n">sysctl_nr_open</span><span class="p">)</span>
+			<span class="k">return</span> <span class="o">-</span><span class="n">EPERM</span><span class="p">;</span>
+	<span class="p">}</span>
+
+	<span class="c1">// Grab the current resource limits for
+</span><span class="c1"></span>	<span class="c1">// the desired resource.
+</span><span class="c1"></span>	<span class="c1">//
+</span><span class="c1"></span>	<span class="c1">// - Maybe we&#39;ll be able to see that /proc/pid/limits
+</span><span class="c1"></span>	<span class="c1">//   looks at the very same thing (tsk-&gt;signal-&gt;rlim)?
+</span><span class="c1"></span>	<span class="n">rlim</span> <span class="o">=</span> <span class="n">tsk</span><span class="o">-&gt;</span><span class="n">signal</span><span class="o">-&gt;</span><span class="n">rlim</span> <span class="o">+</span> <span class="n">resource</span><span class="p">;</span>
+
+	<span class="c1">// If we&#39;re going to set new values,
+</span><span class="c1"></span>	<span class="c1">// that is, if we&#39;re going to change limits, then ...
+</span><span class="c1"></span>	<span class="k">if</span> <span class="p">(</span><span class="n">new_rlim</span><span class="p">)</span> <span class="p">{</span>
+
+		<span class="c1">// If we&#39;re increasing the hard limit, make
+</span><span class="c1"></span>		<span class="c1">// sure that the user has the proper capabilities.
+</span><span class="c1"></span>		<span class="k">if</span> <span class="p">(</span><span class="n">new_rlim</span><span class="o">-&gt;</span><span class="n">rlim_max</span> <span class="o">&gt;</span> <span class="n">rlim</span><span class="o">-&gt;</span><span class="n">rlim_max</span> <span class="o">&amp;&amp;</span>
+				<span class="o">!</span><span class="n">capable</span><span class="p">(</span><span class="n">CAP_SYS_RESOURCE</span><span class="p">))</span>
+			<span class="n">retval</span> <span class="o">=</span> <span class="o">-</span><span class="n">EPERM</span><span class="p">;</span>
+
+		<span class="c1">// Go ahead and perform the update, but first,
+</span><span class="c1"></span>                <span class="c1">// apply a security check.
+</span><span class="c1"></span>		<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">retval</span><span class="p">)</span>
+			<span class="n">retval</span> <span class="o">=</span> <span class="n">security_task_setrlimit</span><span class="p">(</span><span class="n">tsk</span><span class="p">,</span> <span class="n">resource</span><span class="p">,</span> <span class="n">new_rlim</span><span class="p">);</span>
+
+		<span class="c1">// ...
+</span><span class="c1"></span>	<span class="p">}</span>
+
+	<span class="c1">// If everything went right so far,
+</span><span class="c1"></span>	<span class="c1">// update `old_rlim` with the values of
+</span><span class="c1"></span>	<span class="c1">// what has been captured as the current
+</span><span class="c1"></span>	<span class="c1">// limits as of before updating.
+</span><span class="c1"></span>	<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">retval</span><span class="p">)</span> <span class="p">{</span>
+		<span class="k">if</span> <span class="p">(</span><span class="n">old_rlim</span><span class="p">)</span>
+			<span class="o">*</span><span class="n">old_rlim</span> <span class="o">=</span> <span class="o">*</span><span class="n">rlim</span><span class="p">;</span>
+		<span class="k">if</span> <span class="p">(</span><span class="n">new_rlim</span><span class="p">)</span>
+			<span class="o">*</span><span class="n">rlim</span> <span class="o">=</span> <span class="o">*</span><span class="n">new_rlim</span><span class="p">;</span>
+	<span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div><p>Cool! So now we know that the limits (per-task) are set at <code>task-&gt;signal-&gt;rlim + &lt;rlimit_offset&gt;</code>.</p>
+<p>You might&rsquo;ve noticed that we didn&rsquo;t explicitly look at <code>task-&gt;signal-&gt;rlim</code> in the section <a href="#how-does-the-kernel-limits-the-number-of-files-open-by-a-process">&ldquo;How does the kernel limits the number of files open by a process&rdquo;</a>.</p>
+<p>To remember you, this is what we saw:</p>
+<div class="highlight"><pre class="chroma"><code class="language-c" data-lang="c"><span class="cm">/**
+</span><span class="cm"> * Sets up the ranges for __alloc_fd
+</span><span class="cm"> * so that when trying to allocate a
+</span><span class="cm"> * file descriptor, it performs some
+</span><span class="cm"> * bounds checking.
+</span><span class="cm"> */</span>
+<span class="kt">int</span> <span class="nf">get_unused_fd_flags</span><span class="p">(</span><span class="kt">unsigned</span> <span class="n">flags</span><span class="p">)</span>
+<span class="p">{</span>
+	<span class="k">return</span> <span class="n">__alloc_fd</span><span class="p">(</span>
+                <span class="n">current</span><span class="o">-&gt;</span><span class="n">files</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> 
+                <span class="n">rlimit</span><span class="p">(</span><span class="n">RLIMIT_NOFILE</span><span class="p">),</span>
+                <span class="n">flags</span><span class="p">);</span>               
+<span class="p">}</span>
+</code></pre></div><p>Looking deeper into it, we can start inspecting what is that <code>rlimit(RLIMIT_NOFILE)</code> thing, which leads to the fact that under the hood, it looks at the current task and inspects <code>-&gt;signal-&gt;rlim</code> in the next function that gets called (<a href="https://elixir.bootlin.com/linux/v4.15/source/include/linux/sched/signal.h#L591">task_rlimit</a>):</p>
+<div class="highlight"><pre class="chroma"><code class="language-c" data-lang="c"><span class="cm">/**
+</span><span class="cm"> * Looks at the current task&#39;s resource
+</span><span class="cm"> * limit.
+</span><span class="cm"> *
+</span><span class="cm"> * ps.: notice how it doesn&#39;t look at the **hard**
+</span><span class="cm"> *      limit, but the **soft** limit.
+</span><span class="cm"> */</span>
+<span class="k">static</span> <span class="kr">inline</span> <span class="kt">unsigned</span> <span class="kt">long</span> <span class="nf">task_rlimit</span><span class="p">(</span><span class="k">const</span> <span class="k">struct</span> <span class="n">task_struct</span> <span class="o">*</span><span class="n">tsk</span><span class="p">,</span>
+		<span class="kt">unsigned</span> <span class="kt">int</span> <span class="n">limit</span><span class="p">)</span>
+<span class="p">{</span>
+	<span class="k">return</span> <span class="n">READ_ONCE</span><span class="p">(</span><span class="n">tsk</span><span class="o">-&gt;</span><span class="n">signal</span><span class="o">-&gt;</span><span class="n">rlim</span><span class="p">[</span><span class="n">limit</span><span class="p">].</span><span class="n">rlim_cur</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div><p>So, now that we know how limits can be updated, as well as read, we can start imagining how <code>/proc/&lt;pid&gt;/limits</code> works under the hood.</p>
+<h3 id="gathering-process-limits-via-proc">Gathering process limits via /proc</h3>
+<p>Not only we&rsquo;re able to retrieve information about what are the limits set for a given process via the <code>prlimit(2)</code> syscall, we can also do that by inspecting <code>/proc</code>, more specifically, <code>/proc/&lt;pid&gt;/limits</code> (where <code>&lt;pid&gt;</code> corresponds to the process ID of the process we want to know the limits).</p>
+<p>For instance, we can check the limits of the current process either via <code>ulimit -n</code> or <code>/proc/self/limits</code> (<code>/proc/self</code> is a link to <code>/proc/&lt;pid&gt;</code> where <code>&lt;pid&gt;</code> is the current process' <code>pid</code>).</p>
+<div class="highlight"><pre class="chroma"><code class="language-sh" data-lang="sh"><span class="c1"># Check the limit of open files</span>
+<span class="c1"># using `ulimit` (`prlimit` under the hood).</span>
+<span class="nb">ulimit</span> -n
+<span class="m">1024</span>
+
+
+<span class="c1"># Check the limit of open files</span>
+<span class="c1"># using the `proc` filesystem under `/proc`.</span>
+cat /proc/self/limits  <span class="p">|</span> grep <span class="s1">&#39;open files&#39;</span>
+Limit           Soft Limit  Hard Limit   Units
+Max open files  <span class="m">1024</span>        <span class="m">1048576</span>      files
+</code></pre></div><p>Knowing from the past articles (see <a href="/blog/what-is-slash-proc/">What is /proc?</a>) how procfs is able to register methods to respond to Virtual Filesystem (VFS) calls, we can start digging into how the method registered for handling calls to <code>/proc/&lt;pid&gt;/limits</code> work.</p>
+<div class="highlight"><pre class="chroma"><code class="language-c" data-lang="c"><span class="cm">/**
+</span><span class="cm"> * Display limits for a process 
+</span><span class="cm"> */</span>
+<span class="k">static</span> <span class="kt">int</span> <span class="nf">proc_pid_limits</span><span class="p">(</span><span class="k">struct</span> <span class="n">seq_file</span> <span class="o">*</span><span class="n">m</span><span class="p">,</span> <span class="k">struct</span> <span class="n">pid_namespace</span> <span class="o">*</span><span class="n">ns</span><span class="p">,</span>
+			   <span class="k">struct</span> <span class="n">pid</span> <span class="o">*</span><span class="n">pid</span><span class="p">,</span> <span class="k">struct</span> <span class="n">task_struct</span> <span class="o">*</span><span class="n">task</span><span class="p">)</span>
+<span class="p">{</span>
+	<span class="kt">unsigned</span> <span class="kt">int</span> <span class="n">i</span><span class="p">;</span>
+	<span class="kt">unsigned</span> <span class="kt">long</span> <span class="n">flags</span><span class="p">;</span>
+
+	<span class="k">struct</span> <span class="n">rlimit</span> <span class="n">rlim</span><span class="p">[</span><span class="n">RLIM_NLIMITS</span><span class="p">];</span>
+
+        <span class="c1">// Make sure we have exclusive access
+</span><span class="c1"></span>        <span class="c1">// to the task struct while reading
+</span><span class="c1"></span>        <span class="c1">// it.
+</span><span class="c1"></span>	<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">lock_task_sighand</span><span class="p">(</span><span class="n">task</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">flags</span><span class="p">))</span>
+		<span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
+
+        <span class="c1">// Copy to our current execution all of
+</span><span class="c1"></span>        <span class="c1">// the limits that are set for the task
+</span><span class="c1"></span>        <span class="c1">// provided as argument.
+</span><span class="c1"></span>	<span class="n">memcpy</span><span class="p">(</span><span class="n">rlim</span><span class="p">,</span> <span class="n">task</span><span class="o">-&gt;</span><span class="n">signal</span><span class="o">-&gt;</span><span class="n">rlim</span><span class="p">,</span> 
+                <span class="k">sizeof</span><span class="p">(</span><span class="k">struct</span> <span class="n">rlimit</span><span class="p">)</span> <span class="o">*</span> <span class="n">RLIM_NLIMITS</span><span class="p">);</span>
+
+        <span class="c1">// Release the exclusive access
+</span><span class="c1"></span>	<span class="n">unlock_task_sighand</span><span class="p">(</span><span class="n">task</span><span class="p">,</span> <span class="o">&amp;</span><span class="n">flags</span><span class="p">);</span>
+
+        <span class="c1">// Print the header
+</span><span class="c1"></span>        <span class="n">seq_printf</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="s">&#34;%-25s %-20s %-20s %-10s</span><span class="se">\n</span><span class="s">&#34;</span><span class="p">,</span>
+		  <span class="s">&#34;Limit&#34;</span><span class="p">,</span> <span class="s">&#34;Soft Limit&#34;</span><span class="p">,</span> <span class="s">&#34;Hard Limit&#34;</span><span class="p">,</span> <span class="s">&#34;Units&#34;</span><span class="p">);</span>
+
+        <span class="c1">// Iterate over each limit and then display it.
+</span><span class="c1"></span>	<span class="k">for</span> <span class="p">(</span><span class="n">i</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">i</span> <span class="o">&lt;</span> <span class="n">RLIM_NLIMITS</span><span class="p">;</span> <span class="n">i</span><span class="o">++</span><span class="p">)</span> <span class="p">{</span>
+		<span class="k">if</span> <span class="p">(</span><span class="n">rlim</span><span class="p">[</span><span class="n">i</span><span class="p">].</span><span class="n">rlim_cur</span> <span class="o">==</span> <span class="n">RLIM_INFINITY</span><span class="p">)</span>
+			<span class="n">seq_printf</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="s">&#34;%-25s %-20s &#34;</span><span class="p">,</span>
+				   <span class="n">lnames</span><span class="p">[</span><span class="n">i</span><span class="p">].</span><span class="n">name</span><span class="p">,</span> <span class="s">&#34;unlimited&#34;</span><span class="p">);</span>
+		<span class="k">else</span>
+			<span class="n">seq_printf</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="s">&#34;%-25s %-20lu &#34;</span><span class="p">,</span>
+				   <span class="n">lnames</span><span class="p">[</span><span class="n">i</span><span class="p">].</span><span class="n">name</span><span class="p">,</span> <span class="n">rlim</span><span class="p">[</span><span class="n">i</span><span class="p">].</span><span class="n">rlim_cur</span><span class="p">);</span>
+                <span class="c1">// ...
+</span><span class="c1"></span>	<span class="p">}</span>
+
+	<span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div><p>That&rsquo;s it!</p>
+<h3 id="why-expose-limits-through-procfs-if-prlimit-already-exists">Why expose limits through procfs if prlimit already exists</h3>
+<p>I don&rsquo;t know!</p>
+<p>While the kernel doesn&rsquo;t provide convenient ways of accessing some of its internal resources, for <code>limits</code> it&rsquo;s definitely not the case - prlimit can supply all of its functionality.</p>
+<p>Do you know why? Please let me know!</p>
+<h3 id="closing-thoughts">Closing thoughts</h3>
+<p>It was interesting to see how a resource limit is actually applied by the kernel, and in the end, discover that <code>/proc/&lt;pid&gt;/limits</code> is very redundant when looking at the functionality that a syscall (<code>prlimit</code>) already provides.</p>
+<p>If you have any further questions, or just want to connect, let me know! I&rsquo;m <a href="https://twitter.com/cirowrc">cirowrc</a> on Twitter.</p>
+<p>Have a good one!</p>
+<h3 id="resources">Resources</h3>
+<p>Here are some interesting books to learn more about some of the concepts highlighted here:</p>
+<ul>
+<li><a href="https://amzn.to/2QD0kU4">Understanding the Linux Kernel, 3rd Ed</a></li>
+<li><a href="https://amzn.to/2CIpde2">Linux System Programming: Talking Directly to the Kernel and C Library</a></li>
+<li><a href="https://amzn.to/2DAORD5">Systems Performance: Enterprise and the Cloud</a></li>
+<li><a href="https://amzn.to/2zE5jOV">The C Programming Language</a></li>
+<li><a href="https://amzn.to/2QWyXp9">The Linux Programming Interface</a></li>
+</ul>
+
+    </section>
+  </article>
+
+</main>
+
+    
+
+
+
+
+
+
+
+
+
+        
+
+        
+                
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+
+
+
+                                    
+
+
+
+  <section class="recommendation">
+
+    <h3>
+    
+      Recommended articles
+    
+    </h3>
+
+    <p>
+      If you've gotten some knowledge from this article, these are some others that you might take advatange of as well!
+    </p>
+
+    <ul>
+      
+        <li>
+          <a href="https://ops.tips/blog/why-top-inside-container-wrong-memory/">
+            Why top and free inside containers don&#39;t show the correct container memory
+          </a>
+        </li>
+      
+        <li>
+          <a href="https://ops.tips/blog/raspberry-pi-concourse-ci-worker/">
+            A Raspberry PI Concourse Worker
+          </a>
+        </li>
+      
+        <li>
+          <a href="https://ops.tips/blog/how-linux-creates-sockets/">
+            How Linux creates sockets and counts them
+          </a>
+        </li>
+      
+        <li>
+          <a href="https://ops.tips/blog/how-is-proc-able-to-list-pids/">
+            How is /proc able to list process IDs?
+          </a>
+        </li>
+      
+        <li>
+          <a href="https://ops.tips/blog/using-procfs-to-get-process-stack-trace/">
+            Using /proc to get a process&#39; current stack trace
+          </a>
+        </li>
+      
+    </ul>
+  </section>
+
+
+
+    <footer class="footer">
+
+  <ul>
+    <li>
+      <a href="https://github.com/cirocosta">GitHub</a>
+    </li>
+
+    <li>
+      <a href="https://www.linkedin.com/in/cirocosta">LinkedIn</a>
+    </li>
+  </ul>
+
+  <p>
+    © Ciro da Silva da Costa, 2018.
+  </p>
+</footer>
+
+
+    
+
+
+
+
+
+<link rel="stylesheet"
+      href="https://ops.tips/bundle.min.75922cc496f110bdc184ab4d765a2174146459fd2494dc8a354af9ea71997227.css"
+      integrity="sha256-dZIsxJbxEL3BhKtNdlohdBRkWf0klNyKNUr56nGZcic=">
+
+  </body>
+</html>

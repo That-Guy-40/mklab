@@ -1,16 +1,18 @@
 # Manual testing — linux-proc-vfs-internals
 
 Verified **end-to-end, rootless Incus, no sudo**, 2026-07-03, on **both** bases
-(Debian 13 / glibc and Alpine / musl). The box is built by `setup-workshop.sh`
-(which ends by running `~/proc-lab/demo.sh` as the `learner`); the transcripts
-below are that demo's real captured output. Host kernel: `Linux 6.8.0-134-generic`.
+(Debian 13 / glibc and Alpine / musl), for **both container sets**: Set A (the
+unlimited VFS box, articles 1–2) and Set B (the 512 MiB-capped box, articles
+3–4). Each setup script ends by running its demo as the `learner`; the
+transcripts below are that real captured output. Host kernel:
+`Linux 6.8.0-134-generic`.
 
-## Full run (either base)
+## Full run — Set A (VFS box, articles 1–2)
 
 ```bash
 cd examples/linux-proc-vfs-internals
 phase5-lxd/lab-lxd.sh up --config linux-proc-vfs-internals-debian.toml   # or -alpine
-./setup-workshop.sh linux-proc-vfs-internals-debian/shell                # ~1 min; runs the demo
+./setup-workshop.sh linux-proc-vfs-internals-debian/shell                # ~1 min; runs demo.sh
 phase5-lxd/lab-lxd.sh exec linux-proc-vfs-internals-debian/shell -- su - learner
 ```
 
@@ -127,6 +129,103 @@ lxcfs /proc/meminfo fuse.lxcfs rw,nosuid,nodev,relatime,user_id=0,group_id=0,all
   mounts here, so they report the container's cgroup view. Procfs content
   produced by a *userspace* program — "generated on read" made physical. (Tell:
   these FUSE files show a real size, e.g. `1535`, unlike the size-0 native file.)
+
+## Full run — Set B (memory-capped box, articles 3–4)
+
+```bash
+phase5-lxd/lab-lxd.sh up --config linux-proc-vfs-internals-debian-limited.toml   # 512 MiB, swap off
+./setup-limits.sh linux-proc-vfs-internals-debian-limited/shell                  # runs demo-limits.sh
+```
+
+The cap applied and lxcfs reflected it before provisioning even started:
+
+```text
+$ … exec …-debian-limited/shell -- sh -c 'cat /sys/fs/cgroup/memory.max; grep MemTotal /proc/meminfo'
+536870912
+MemTotal:         524288 kB
+```
+
+### Debian 13 (glibc) — `demo-limits.sh`
+
+```text
+== ARTICLE 3 — free reads /proc/meminfo; in a plain container that is the HOST view ==
+               total        used        free      shared  buff/cache   available
+Mem:           512Mi        28Mi       386Mi       132Ki        96Mi       483Mi
+Swap:             0B          0B          0B
+   MemTotal straight from /proc/meminfo (lxcfs = the limit we set):
+MemTotal:         524288 kB
+
+== ARTICLE 3 — the cgroup that enforces it (modern kernels = cgroup v2 memory.max) ==
+   cgroup v2:  /sys/fs/cgroup/memory.max = 536870912 bytes
+
+== ARTICLE 3 — free really does open /proc/meminfo (strace proof) ==
+openat(AT_FDCWD, "/proc/meminfo", O_RDONLY) = 3
+
+== ARTICLE 3 — the allocator (mem-hog.c): exceed the cap → the cgroup OOM-kills it ==
+   asking for far more than the limit; the cgroup page_counter stops us:
+Killed
+   >>> mem-hog exit status: 137  (137 = 128 + SIGKILL(9) = OOM-killed)
+
+== ARTICLE 4 — ulimit -n and /proc/self/limits agree (both are prlimit under the hood) ==
+   ulimit -n           = 1024
+Max open files            1024                 1048576              files
+
+== ARTICLE 4 — limit-open-files.c: use prlimit() to change another PID’s NOFILE ==
+   target background pid = 939 — lower its open-files limit to 12/12:
+before: soft=1024; hard=1048576
+now:    soft=12; hard=12
+   confirm through the kernel’s own view, /proc/939/limits:
+Max open files            12                   12                   files
+
+== ARTICLE 4 — raising the HARD limit needs CAP_SYS_RESOURCE (we lack it → EPERM) ==
+prlimit - get and set: Operation not permitted
+```
+
+### Alpine (musl / BusyBox) — `demo-limits.sh`
+
+Identical container view; the libc/tool differences are called out below:
+
+```text
+== ARTICLE 3 — free reads /proc/meminfo … ==
+Mem:           512Mi       2.2Mi       503Mi        60Ki       5.9Mi       509Mi
+MemTotal:         524288 kB
+   cgroup v2:  /sys/fs/cgroup/memory.max = 536870912 bytes
+
+== ARTICLE 3 — free really does open /proc/meminfo (strace proof) ==
+open("/proc/meminfo", O_RDONLY|O_LARGEFILE) = 3        # musl free uses open(), not openat()
+
+== ARTICLE 3 — the allocator (mem-hog.c) … ==
+allocating: 100000MB
+Killed
+   >>> mem-hog exit status: 137  (137 = 128 + SIGKILL(9) = OOM-killed)
+
+== ARTICLE 4 — ulimit -n … ==
+   ulimit -n           = 1048576                        # Alpine default (Debian = 1024)
+Max open files            1048576              1048576              files
+
+== ARTICLE 4 — limit-open-files.c … ==
+before: soft=1048576; hard=1048576
+now:    soft=12; hard=12
+Max open files            12                   12                   files
+
+== ARTICLE 4 — raising the HARD limit … ==
+prlimit - get and set: Operation not permitted
+```
+
+### Set B divergences observed
+
+1. **`open` vs `openat` again** — GNU `free` (Debian) opens `/proc/meminfo` with
+   `openat`; musl's `free` (Alpine) uses the older `open`. Same split as `ls` in
+   Set A — it's the libc, not the tool.
+2. **Default soft `NOFILE`** — Debian `1024`, Alpine `1048576` (same as Set A).
+3. **Everything cgroup-side is identical** on both bases — 512 MiB `MemTotal`,
+   `memory.max = 536870912`, `mem-hog` OOM-killed at `137` — because that view is
+   the kernel + lxcfs, not libc.
+4. **Provisioning survived the cap** and **the OOM stayed contained**: the demo
+   ran straight through article 4 after `mem-hog` was killed — the cgroup OOM
+   killer took only the allocator, not the container's init.
+5. One **transient** `apk` DNS hiccup fetching `APKINDEX` on Alpine; a plain
+   re-run of `setup-limits.sh` succeeded (a network flake, not the lab).
 
 ## Not run here (privileged / needs BPF) — by design
 

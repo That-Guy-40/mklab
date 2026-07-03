@@ -1,0 +1,34 @@
+# The cgroups/limits half of the /proc series — a MEMORY-CAPPED Debian 13 box.
+#
+# Same idea as linux-proc-vfs-internals-debian.toml, but this container is
+# launched with a hard memory limit (and swap disabled) so you can watch the
+# cgroup actually bite: `free`/`top` report the cap (lxcfs), and the allocator
+# gets OOM-killed at the limit. It hosts Ciro Costa's articles 3 & 4:
+#   • "Why top and free inside containers don't show the correct container memory"
+#   • "Process resource limits under the hood"
+#
+#   # 1) launch the capped container
+#   phase5-lxd/lab-lxd.sh up   --config examples/linux-proc-vfs-internals/linux-proc-vfs-internals-debian-limited.toml
+#
+#   # 2) provision it (toolchain + procps + strace + the cgroups/limits sandbox)
+#   examples/linux-proc-vfs-internals/setup-limits.sh linux-proc-vfs-internals-debian-limited/shell
+#
+#   # 3) explore — log in as the learner and re-run the tour
+#   phase5-lxd/lab-lxd.sh exec linux-proc-vfs-internals-debian-limited/shell -- su - learner
+#
+#   # 4) tear down
+#   phase5-lxd/lab-lxd.sh down --lab linux-proc-vfs-internals-debian-limited
+
+[lab]
+name        = "linux-proc-vfs-internals-debian-limited"
+description = "Ciro Costa's /proc series (memory + rlimits) in a 512 MiB-capped Debian 13 container"
+tags        = ["proc", "cgroups", "memory", "rlimits", "prlimit", "lxcfs", "debian", "trixie"]
+
+[[instance]]
+name  = "shell"
+type  = "container"
+image = "images:debian/13"
+# The memory cap is the whole point: 512 MiB is roomy enough to apt-install the
+# toolchain, yet small enough that mem-hog.c OOMs quickly. Swap off makes the OOM
+# deterministic (no spillover). lab-lxd.sh passes these config keys at launch.
+config = { "limits.memory" = "512MiB", "limits.memory.swap" = "false" }

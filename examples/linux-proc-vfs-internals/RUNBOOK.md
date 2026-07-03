@@ -1,16 +1,19 @@
 # RUNBOOK — exploring `/proc` by hand
 
-This walks the same build [`setup-workshop.sh`](setup-workshop.sh) automates, but
-step by step with the **why** at each stop, mapped to Ciro Costa's two articles
-([archived here](upstream-tutorial/README.md)). The script is the source of truth
-for exact commands; this is for *understanding* and for poking one thing at a time.
+This walks the same builds the setup scripts automate, but step by step with the
+**why** at each stop, mapped to Ciro Costa's four articles
+([archived here](upstream-tutorial/README.md)). The scripts are the source of
+truth for exact commands; this is for *understanding* and poking one thing at a
+time. **Parts I–II** ([`setup-workshop.sh`](setup-workshop.sh)) run on the
+unlimited **Set A** box; **Parts III–IV** ([`setup-limits.sh`](setup-limits.sh))
+run on the memory-capped **Set B** box.
 
 Everything runs through `phase5-lxd/lab-lxd.sh`. Shorthand used below:
 
 ```bash
 cd examples/linux-proc-vfs-internals
 L() { ../../phase5-lxd/lab-lxd.sh "$@"; }   # L exec linux-proc-vfs-internals-debian/shell -- …
-T=linux-proc-vfs-internals-debian/shell     # or -alpine/shell
+T=linux-proc-vfs-internals-debian/shell     # Set A; -alpine/shell for musl
 ```
 
 `/proc` is provided by the **host kernel**, so it behaves the same on Debian and
@@ -160,10 +163,126 @@ above — a handy tell for which is which.)
 
 ---
 
+## Setup — the capped box (Set B, for Parts III–IV)
+
+Parts III–IV need a container with a **memory limit**, so use the `-limited`
+specs and `setup-limits.sh`:
+
+```bash
+L up --config linux-proc-vfs-internals-debian-limited.toml   # 512 MiB, swap off
+T=linux-proc-vfs-internals-debian-limited/shell
+./setup-limits.sh $T      # toolchain + strace + procps + mem-hog.c/limit-open-files.c
+```
+
+The cap rides on the TOML instance's `config = { "limits.memory" = "512MiB",
+"limits.memory.swap" = "false" }`, which `lab-lxd.sh` passes to the launch. 512
+MiB is roomy enough to `apt`/`apk` the toolchain, small enough that `mem-hog`
+OOMs fast; swap-off makes the OOM deterministic.
+
+---
+
+## Part III — *Why top/free show the wrong memory* (the cgroup view)
+
+*Upstream: [why-top-inside-container-wrong-memory.html](upstream-tutorial/why-top-inside-container-wrong-memory.html) —
+`/proc/meminfo` reads global counters; cgroups enforce a limit it can't see.*
+
+### free shows the cap — because lxcfs rewrites /proc/meminfo
+
+```bash
+L exec $T -- su - learner -c 'free -h; grep MemTotal /proc/meminfo'
+```
+
+`free` and `top` compute their numbers from `/proc/meminfo`, whose
+`meminfo_proc_show()` calls `si_meminfo()` — **global** kernel counters
+(`totalram_pages`), blind to your cgroup (the article's `meminfo-uncontained.svg`).
+So in a plain container they show the **host's** RAM. The article's fix is
+**lxcfs**: Incus/LXD bind-mount a FUSE-served `/proc/meminfo` that reports the
+cgroup limit. Here MemTotal reads `524288 kB` = the 512 MiB cap, not the host's
+128 GB. (Contrast the size-0 native file from Part I: this lxcfs file even
+advertises a real size — a tell for which `/proc` files are lxcfs-served.)
+
+### the cgroup that enforces it — cgroup v2
+
+```bash
+L exec $T -- su - learner -c 'cat /sys/fs/cgroup/memory.max'   # 536870912 = 512 MiB
+```
+
+⚠ **DIVERGENCE 7 (era, not distro).** The 2018 article uses **cgroup v1**
+(`/sys/fs/cgroup/memory/<group>/memory.limit_in_bytes`, `.../tasks`). Modern
+kernels default to **unified cgroup v2** — the limit is `memory.max`. The demo
+checks both paths.
+
+### watch the cgroup OOM-kill the allocator
+
+```bash
+L exec $T -- su - learner -c 'cd ~/proc-lab && gcc -Wall -o mem-hog mem-hog.c &&
+                              ./mem-hog 100000; echo "exit=$?"'
+```
+
+`mem-hog.c` `malloc`s 1 MiB at a time **and `memset`s it** — malloc is lazy, so
+you must *touch* the pages for the kernel to really back them and charge the
+cgroup's `page_counter`. Past the cap, `page_counter_try_charge()` fails and the
+cgroup OOM-killer sends SIGKILL → the shell reports **exit 137** (128 + 9). Only
+`mem-hog` dies; the container lives on.
+
+**⚠ Author-run (needs root + BPF).** The article's `bpftrace` on
+`page_counter_try_charge` (printing REQUESTED/CURRENT/LIMIT as memory is charged)
+needs `CAP_BPF` — run it on a host you control.
+
+---
+
+## Part IV — *Resource limits under the hood* (prlimit)
+
+*Upstream: [proc-pid-limits-under-the-hood.html](upstream-tutorial/proc-pid-limits-under-the-hood.html) —
+`ulimit`/`getrlimit`/`setrlimit` all funnel into `prlimit(2)`; `/proc/<pid>/limits`.*
+
+### ulimit and /proc/self/limits are the same thing
+
+```bash
+L exec $T -- su - learner -c 'echo "ulimit -n = $(ulimit -n)";
+                              grep "Max open files" /proc/self/limits'
+```
+
+`ulimit -n` (a shell builtin — no `execve`) and the "Max open files" line of
+`/proc/<pid>/limits` (the kernel's `proc_pid_limits()` printing
+`task->signal->rlim`, the article's `ulimits-example.svg`) report the same soft
+limit, because both go through the same `do_prlimit` machinery.
+
+### change another process's limit with prlimit()
+
+```bash
+L exec $T -- su - learner -c 'cd ~/proc-lab && gcc -Wall -o limit-open-files limit-open-files.c &&
+   sleep 120 & t=$!; sleep 0.3
+   ./limit-open-files -p $t -s 12 -h 12
+   grep "Max open files" /proc/$t/limits          # now 12 / 12
+   ./limit-open-files -p $t -s 12 -h 13            # EPERM
+   kill $t'
+```
+
+`limit-open-files.c` calls `prlimit(pid, RLIMIT_NOFILE, &new, &old)` — a
+get-and-set in one syscall. The change is instantly visible in the target's
+`/proc/<pid>/limits` (both read the same `tsk->signal->rlim`). Then it tries to
+**raise the hard limit** from 12 to 13: `do_prlimit` checks
+`new_rlim->rlim_max > rlim->rlim_max && !capable(CAP_SYS_RESOURCE)` and returns
+**`-EPERM`** — an unprivileged process can lower a hard limit but never raise it.
+
+Once a process hits its soft `RLIMIT_NOFILE`, the next `open()` fails with
+**`EMFILE`**: `get_unused_fd_flags()` → `__alloc_fd()` bounds the new descriptor
+by `rlimit(RLIMIT_NOFILE)` and returns `-EMFILE` past it. (The article also gives
+a Go `open-files` program that opens N temp files to trip this; we keep the
+toolchain to C, but `apk add go` / `apt-get install golang` and `go run` it if
+you like.)
+
+**⚠ Author-run (needs root + BPF).** The article's `bpftrace` on `do_prlimit` and
+the `capable` tool (watching the `CAP_SYS_RESOURCE` check) need privileges.
+
+---
+
 ## Tear down
 
 ```bash
-L down --lab linux-proc-vfs-internals-debian     # or -alpine
+L down --lab linux-proc-vfs-internals-debian             # Set A  (or -alpine)
+L down --lab linux-proc-vfs-internals-debian-limited     # Set B  (or -alpine-limited)
 ```
 
 ## Going further

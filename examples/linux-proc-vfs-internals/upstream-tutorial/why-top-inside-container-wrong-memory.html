@@ -1,0 +1,1059 @@
+<!doctype html>
+<html lang="en">
+  <head prefix="og: http://ogp.me/ns# article: http://ogp.me/ns/article#">
+    <title>Why top and free inside containers don&#39;t show the correct container memory | ops.tips</title>
+
+<meta charset="utf-8">
+<meta http-equiv="content-type" content="text/html; charset=utf-8" >
+
+<meta name="viewport"     content="width=device-width,minimum-scale=1,initial-scale=1">
+<meta name="theme-color"  content="#ffffff">
+<meta name="description"  content="Go through the reason why free and top show the host&#39;s memory instead of container memory.">
+<meta name="author"       content="Ciro S. Costa">
+<meta name="keywords"     content="linux, procfs, memory, meminfo, namespaces">
+
+<meta name="twitter:card"     content="summary" />
+<meta name="twitter:creator"  content="@cirowrc" />
+<meta name="twitter:site"     content="@cirowrc" />
+
+
+<meta property="og:title"       content="Why top and free inside containers don&#39;t show the correct container memory" />
+<meta property="og:type"        content="article">
+<meta property="og:url"         content="https://ops.tips/blog/why-top-inside-container-wrong-memory">
+<meta property="og:image"       content="https://ops.tips/blog/-/images/slash-proc.png" >
+<meta property="og:image:alt"   content="Article image" >
+<meta property="og:description" content="Go through the reason why free and top show the host&#39;s memory instead of container memory." >
+<meta property="og:site_name"   content="ops.tips">
+
+
+<meta property="article:author"         content="Ciro S. Costa">
+<meta property="article:published_time" content="2018-10-12T00:00:00&#43;0000">
+<meta property="article:tag"            content="linux">
+
+
+<meta name="google-site-verification" content="nJDg4CxanyHivDq4bwex7CwpV4qc2rpDW-PCr0HfsX8" />
+
+<link rel="feed" href="https://ops.tips/index.xml" type="application/rss+xml" title="ops.tips">
+<link rel="shortcut icon" href="https://ops.tips/favicon.ico">
+
+    <script type="application/ld+json">
+{
+  "@context" : "http://schema.org",
+  "@type" : "NewsArticle",
+  "articleSection" : "blog",
+  "name" : "Why top and free inside containers don\u0027t show the correct container memory",
+  "headline" : "Why top and free inside containers don\u0027t show the correct container memory",
+  "description" : "Go through the reason why free and top show the host\u0027s memory instead of container memory.",
+  "inLanguage" : "en-US",
+  "author": {
+    "@type": "Person",
+    "name": "Ciro S. Costa",
+    "sameAs": [
+        "https://twitter.com/cirowrc",
+        "https://www.linkedin.com/in/cirocosta/",
+        "https://github.com/cirocosta"
+    ],
+    "image": {
+      "@type": "ImageObject",
+      "url": "https:\/\/ops.tips\/blog/-/images/slash-proc.png",
+      "width": 800,
+      "height": 800
+    }
+  },
+  "creator": {
+    "@type": "Person",
+    "name": "Ciro S. Costa",
+    "sameAs": [
+        "https://twitter.com/cirowrc",
+        "https://www.linkedin.com/in/cirocosta/",
+        "https://github.com/cirocosta"
+    ],
+    "image": {
+      "@type": "ImageObject",
+      "url": "https:\/\/ops.tips\/me.jpg",
+      "width": 800,
+      "height": 800
+    }
+  },
+  "accountablePerson": {
+    "@type": "Person",
+    "name": "Ciro S. Costa",
+    "sameAs": [
+        "https://twitter.com/cirowrc",
+        "https://www.linkedin.com/in/cirocosta/",
+        "https://github.com/cirocosta"
+    ],
+    "image": {
+      "@type": "ImageObject",
+      "url": "https:\/\/ops.tips\/me.jpg",
+      "width": 800,
+      "height": 800
+    }
+  },
+  "copyrightHolder": {
+    "@type": "Person",
+    "name": "Ciro S. Costa",
+    "sameAs": [
+        "https://twitter.com/cirowrc",
+        "https://www.linkedin.com/in/cirocosta/",
+        "https://github.com/cirocosta"
+    ],
+    "image": {
+      "@type": "ImageObject",
+      "url": "https:\/\/ops.tips\/me.jpg",
+      "width": 800,
+      "height": 800
+    }
+  },
+  "copyrightYear" : "2018",
+  "datePublished" : "2018-10-12T00:00:00\u002b0000",
+  "dateModified" : "2018-10-12T00:00:00\u002b0000",
+  "publisher": {
+    "@type": "Organization",
+    "name": "ops.tips",
+    "url" : "https:\/\/ops.tips\/",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https:\/\/ops.tips\/opstips.png"
+    }
+  },
+  "wordCount" : "2383",
+  "image": {
+    "@type": "ImageObject",
+    "url": "https:\/\/ops.tips\/blog/-/images/slash-proc.png",
+    "width": 1200,
+    "height": 1200
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https:\/\/ops.tips\/blog/why-top-inside-container-wrong-memory"
+  },
+  "keywords" : [ "linux", "procfs", "memory", "meminfo", "namespaces" ]
+}
+</script>
+
+  </head>
+
+  <body class="article">
+    <main class="main">
+
+  <header>
+    <h1 itemprop="name headline">Why top and free inside containers don&#39;t show the correct container memory</h1>
+    <h2 itemprop="description">Go through the reason why free and top show the host&#39;s memory instead of container memory.</h2>
+
+    <aside>
+      <p>
+        by <a href="https://twitter.com/cirowrc">Ciro S. Costa</a> -
+        <time datetime="2018-10-12T00:00:00&#43;0000" itemprop="datePublished">
+          Oct 12, 2018
+        </time>
+      </p>
+
+      
+        <p>
+          tags:
+
+          
+            <a href="/tags/linux">
+              linux
+            </a>
+          
+        </p>
+      
+
+    </aside>
+  </header>
+
+  <article itemtype="http://schema.org/NewsArticle">
+    <section class= "article-body" itemprop="articleBody">
+      <p>Hey,</p>
+<p>Something that is very common to get wrong when starting with Linux containers is to think that <code>free</code> and other tools like <code>top</code> should report the memory limits.</p>
+<figure class="expanded-container"
+  
+  >
+    <img
+        width="100%" height="100%"
+       style="max-width: 65rem; "
+       src="/blog/-/images/meminfo-uncontained.svg"
+       alt="Illustration of the access to procfs from a container " >
+
+    
+</figure>
+
+<p>Here you&rsquo;ll not only go through why that happens and how to get it right, but also take a look at where is the Kernel looking for information when you ask it for memory statistics.</p>
+<p>Also, if you&rsquo;re curious about how the code for keeping track of per-cgroup page counter looks, stick to the end!</p>
+<div class="ps">
+
+<p>This is the third article in a series of 30 articles around <em>procfs</em>: <a href="/blog/a-month-of-proc/">A Month of /proc</a>.</p>
+<p>If you&rsquo;d like to keep up to date with it, make sure you <a href="https://google.us3.list-manage.com/subscribe/post?u=1941019739d6aa1a25eda3787&amp;id=ff9c3cc11e"><strong>join the mailing list</strong></a>!</p>
+
+</div>
+
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+<ul>
+<li><a href="#running-top-within-a-container">Running top within a container</a></li>
+<li><a href="#how-the-top-and-free-tools-gather-memory-statistics">How the top and free tools gather memory statistics</a></li>
+<li><a href="#setting-container-limits">Setting container limits</a></li>
+<li><a href="#memory-limits-set-by-cgroups-are-not-namespaced">Memory limits set by cgroups are not namespaced</a></li>
+<li><a href="#whos-controlling-the-allocation-of-memory">Who&rsquo;s controlling the allocation of memory?</a></li>
+<li><a href="#tracing-a-cgroup-running-out-of-memory">Tracing a cgroup running out of memory</a></li>
+<li><a href="#closing-thoughts">Closing thoughts</a></li>
+<li><a href="#resources">Resources</a></li>
+</ul>
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+<h3 id="running-top-within-a-container">Running top within a container</h3>
+<p>To get a testbed for the rest of the article, consider the case of running a single container with a memory limit of 10MB in a system that has 2GB of RAM available:</p>
+<div class="highlight"><pre class="chroma"><code class="language-sh" data-lang="sh"><span class="c1"># Check the amount of memory available</span>
+<span class="c1"># outside the container (i.e., in the host)</span>
+free -h
+      total   used   free   available
+Mem:   1.9G   312M   385M        1.5G
+
+<span class="c1"># Define the total number of bytes that</span>
+<span class="c1"># will dictate the memory limit of the</span>
+<span class="c1"># container.</span>
+<span class="nv">MEM_MAX</span><span class="o">=</span><span class="s2">&#34;</span><span class="k">$((</span><span class="m">1024</span> <span class="o">*</span> <span class="m">1024</span> <span class="o">*</span> <span class="m">10</span><span class="k">))</span><span class="s2">&#34;</span>
+
+
+<span class="c1"># Run a container using the ubuntu image</span>
+<span class="c1"># as its base image, with the memory limit</span>
+<span class="c1"># set to 10MB, and a tty as well as interactive</span>
+<span class="c1"># support.</span>
+docker run <span class="se">\
+</span><span class="se"></span>        --interactive <span class="se">\
+</span><span class="se"></span>        --tty <span class="se">\
+</span><span class="se"></span>        --memory <span class="nv">$MEM_MAX</span> <span class="se">\
+</span><span class="se"></span>        ubuntu
+</code></pre></div><p>With the container running, we can now check what are the results from executing <code>top</code> over there:</p>
+<div class="highlight"><pre class="chroma"><code class="language-sh" data-lang="sh">top -bn1
+
+Tasks:   <span class="m">2</span> total,   <span class="m">1</span> running,   <span class="m">1</span> sleeping,   <span class="m">0</span> stopped,   <span class="m">0</span> zombie
+%Cpu<span class="o">(</span>s<span class="o">)</span>:  0.2 us,  0.1 sy,  0.0 ni, 99.7 id,  0.1 wa,  0.0 hi,  0.0 si,  0.0 st
+         .----------------.
+         <span class="p">|</span>                <span class="p">|</span>
+KiB Mem :<span class="p">|</span> <span class="m">2040940</span> total, <span class="p">|</span> <span class="m">117612</span> free,   <span class="m">651204</span> used,  <span class="m">1272124</span> buff/cache
+KiB Swap:<span class="p">|</span>       <span class="m">0</span> total, <span class="p">|</span>      <span class="m">0</span> free,        <span class="m">0</span> used.  <span class="m">1196972</span> avail Mem
+         *--+-------------*
+  PID USER  <span class="p">|</span>   PR  NI    VIRT    RES    SHR S  %CPU %MEM     TIME+ COMMAND
+    <span class="m">1</span> root  <span class="p">|</span>   <span class="m">20</span>   <span class="m">0</span>   <span class="m">18508</span>   <span class="m">3432</span>   <span class="m">3016</span> S   0.0  0.2   0:00.02 bash
+   <span class="m">12</span> root  <span class="p">|</span>   <span class="m">20</span>   <span class="m">0</span>   <span class="m">36484</span>   <span class="m">3104</span>   <span class="m">2748</span> R   0.0  0.2   0:00.00 top
+            <span class="p">|</span>
+            *---&gt; Not really what we 
+                  expect, that is 2GB!!
+</code></pre></div><p>As we outlined before, not what one would typically expect (it reports the total available memory as seen in the host - not showing the 10MB limit at all).</p>
+<p>What about <code>free</code>?  Same thing:</p>
+<div class="highlight"><pre class="chroma"><code class="language-sh" data-lang="sh">free -h
+        total    used     free   available
+Mem:     1.9G    612M     131M        1.2G
+Swap:      0B      0B       0B
+</code></pre></div><h3 id="how-the-top-and-free-tools-gather-memory-statistics">How the top and free tools gather memory statistics</h3>
+<p>If we go inspect what are the syscalls being used by both <code>top</code> and <code>free</code>, we can see that they&rsquo;re making use of plain <code>open(2)</code> and <code>read(2)</code> calls:</p>
+<div class="highlight"><pre class="chroma"><code class="language-sh" data-lang="sh"><span class="c1"># Check what are the syscalls being</span>
+<span class="c1"># used by `free`</span>
+strace -f free
+...
+openat<span class="o">(</span>AT_FDCWD, <span class="s2">&#34;/proc/meminfo&#34;</span>, O_RDONLY<span class="o">)</span> <span class="o">=</span> <span class="m">3</span>
+
+                        .-------.
+                        <span class="p">|</span>       v
+read<span class="o">(</span>3, <span class="s2">&#34;MemTotal:      | 2040940 kB\nMemF&#34;</span>..., 8191<span class="o">)</span> <span class="o">=</span> <span class="m">1307</span>
+...                     <span class="p">|</span>       
+                     That is 2GB!
+
+
+
+<span class="c1"># Check what are the syscalls being used</span>
+<span class="c1"># by `top`</span>
+strace -f top -p <span class="m">19282</span>  -bn1
+...
+openat<span class="o">(</span>AT_FDCWD, <span class="s2">&#34;/proc/meminfo&#34;</span>, O_RDONLY<span class="o">)</span> <span class="o">=</span> <span class="m">5</span>
+lseek<span class="o">(</span>5, 0, SEEK_SET<span class="o">)</span>                   <span class="o">=</span> <span class="m">0</span>
+read<span class="o">(</span>5, <span class="s2">&#34;MemTotal:        2040940 kB\nMemF&#34;</span>..., 8191<span class="o">)</span> <span class="o">=</span> <span class="m">1307</span>
+...                             ^
+                                <span class="p">|</span>
+             2GB again  --------*
+</code></pre></div><p>Looking at those return values (what it&rsquo;s read), we can spot that the &ldquo;problem&rdquo; is coming from <code>/proc/meminfo</code>, which <code>free</code> and <code>top</code> are just blindly trusting.</p>
+<p>Before we go check what the Kernel is doing when reporting those values, let&rsquo;s quickly remember how a container gets memory limits set.</p>
+<h3 id="setting-container-limits">Setting container limits</h3>
+<p>The way that Docker (ok, <code>runc</code>) ends up setting the container limits is via the use of <code>cgroups</code>.</p>
+<p>As very well documented in the man page (see <a href="http://man7.org/linux/man-pages/man7/cgroups.7.html"><code>man 7 cgroups</code></a>:</p>
+<blockquote>
+<p>Control cgroups, usually referred to as cgroups, are a Linux kernel feature which allows processes to be organized into hierarchical groups whose usage of various types of resources can then be limited and monitored.</p>
+</blockquote>
+<p>To see that in action, consider the following program that allocates memory in chunks of 1MB:</p>
+<div class="highlight"><pre class="chroma"><code class="language-c" data-lang="c"><span class="cp">#include</span> <span class="cpf">&lt;stdio.h&gt;</span><span class="cp">
+</span><span class="cp">#include</span> <span class="cpf">&lt;stdlib.h&gt;</span><span class="cp">
+</span><span class="cp">#include</span> <span class="cpf">&lt;string.h&gt;</span><span class="cp">
+</span><span class="cp"></span>
+<span class="cp">#define MEGABYTE (1 &lt;&lt; 20)
+</span><span class="cp">#define ALLOCATIONS 20
+</span><span class="cp"></span>
+
+<span class="cm">/**
+</span><span class="cm"> * alloc - a &#34;leaky&#34; program that just allocated
+</span><span class="cm"> *         a predefined amount of memory and then
+</span><span class="cm"> *         exits.
+</span><span class="cm"> */</span>
+<span class="kt">int</span>
+<span class="nf">main</span><span class="p">(</span><span class="kt">int</span> <span class="n">argc</span><span class="p">,</span> <span class="kt">char</span><span class="o">**</span> <span class="n">argv</span><span class="p">)</span>
+<span class="p">{</span>
+	<span class="n">printf</span><span class="p">(</span><span class="s">&#34;allocating: %dMB</span><span class="se">\n</span><span class="s">&#34;</span><span class="p">,</span> <span class="n">ALLOCATIONS</span><span class="p">);</span>
+
+
+	<span class="kt">void</span><span class="o">*</span> <span class="n">p</span><span class="p">;</span>
+	<span class="kt">int</span>   <span class="n">i</span> <span class="o">=</span> <span class="n">ALLOCATIONS</span><span class="p">;</span>
+
+
+	<span class="k">while</span> <span class="p">(</span><span class="n">i</span><span class="o">--</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
+		<span class="c1">// Allocate 1MB (not initializing it
+</span><span class="c1"></span>		<span class="c1">// though).
+</span><span class="c1"></span>		<span class="n">p</span> <span class="o">=</span> <span class="n">malloc</span><span class="p">(</span><span class="n">MEGABYTE</span><span class="p">);</span>
+		<span class="k">if</span> <span class="p">(</span><span class="n">p</span> <span class="o">==</span> <span class="nb">NULL</span><span class="p">)</span> <span class="p">{</span>
+			<span class="n">perror</span><span class="p">(</span><span class="s">&#34;malloc&#34;</span><span class="p">);</span>
+			<span class="k">return</span> <span class="mi">1</span><span class="p">;</span>
+		<span class="p">}</span>
+
+		<span class="c1">// Explicitly initialize the area that
+</span><span class="c1"></span>		<span class="c1">// has been allocated.
+</span><span class="c1"></span>		<span class="n">memset</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="mi">65</span><span class="p">,</span> <span class="n">MEGABYTE</span><span class="p">);</span>
+
+		<span class="n">printf</span><span class="p">(</span><span class="s">&#34;remaining</span><span class="se">\t</span><span class="s">%d</span><span class="se">\n</span><span class="s">&#34;</span><span class="p">,</span> <span class="n">i</span><span class="p">);</span>
+	<span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div><p>We can see that without any limits, we can keep allocating past 20MB without problems.</p>
+<div class="highlight"><pre class="chroma"><code class="language-sh" data-lang="sh"><span class="c1"># Keep allocating memory until the 20MB</span>
+<span class="c1"># mark gets reached.</span>
+./alloc.out
+allocating: 20MB
+remaining	<span class="m">19</span>
+remaining	<span class="m">18</span>
+...
+remaining	<span class="m">1</span>
+remaining	<span class="m">0</span>
+</code></pre></div><p>That changes after we put our process under a cgroup with memory limits set:</p>
+<div class="highlight"><pre class="chroma"><code class="language-sh" data-lang="sh"><span class="c1"># Create our custom cgroup</span>
+mkdir /sys/fs/cgroup/memory/custom-group
+
+<span class="c1"># Configure the maximum amount of memory</span>
+<span class="c1"># that all of the processes in such cgroup</span>
+<span class="c1"># will be able to allocate</span>
+<span class="nb">echo</span> <span class="s2">&#34;</span><span class="k">$((</span><span class="m">1024</span> <span class="o">*</span> <span class="m">1024</span> <span class="o">*</span> <span class="m">10</span><span class="k">))</span><span class="s2">&#34;</span> &gt; <span class="se">\
+</span><span class="se"></span>        /sys/fs/cgroup/memory/custom-group/memory.limit_in_bytes
+
+<span class="c1"># Put the current process tree under such</span>
+<span class="c1"># cgroup</span>
+<span class="nb">echo</span> <span class="nv">$$</span> &gt; <span class="se">\
+</span><span class="se"></span>        /sys/fs/cgroup/memory/custom-group/tasks
+
+<span class="c1"># Try to allocate the 20MB</span>
+./alloc.out
+allocating: 20MB
+remaining	<span class="m">19</span>
+remaining	<span class="m">18</span>
+remaining	<span class="m">17</span>
+remaining	<span class="m">16</span>
+remaining	<span class="m">15</span>
+remaining	<span class="m">14</span>
+remaining	<span class="m">13</span>
+remaining	<span class="m">12</span>
+Killed
+</code></pre></div><p>Looking at the results from <code>dmesg</code>, we can see what happened:</p>
+<div class="highlight"><pre class="chroma"><code class="language-sh" data-lang="sh">                        our thing getting killed!
+                                  .------------.
+<span class="o">[</span>181346.109904<span class="o">]</span> alloc.out invoked <span class="p">|</span> oom-killer:<span class="p">|</span>
+                                  *------------*
+<span class="o">[</span>181346.109906<span class="o">]</span> alloc.out <span class="nv">cpuset</span><span class="o">=</span>/ <span class="nv">mems_allowed</span><span class="o">=</span><span class="m">0</span>
+<span class="o">[</span>181346.109911<span class="o">]</span> CPU: <span class="m">0</span> PID: <span class="m">22074</span> Comm: alloc.out Not tainted 4.15.0-36-generic <span class="c1">#39-Ubuntu</span>
+<span class="o">[</span>181346.109911<span class="o">]</span> Hardware name: innotek GmbH VirtualBox/VirtualBox, BIOS VirtualBox 12/01/2006
+<span class="o">[</span>181346.109912<span class="o">]</span> Call Trace:
+<span class="o">[</span>181346.109918<span class="o">]</span>  dump_stack+0x63/0x8b
+<span class="o">[</span>181346.109920<span class="o">]</span>  dump_header+0x71/0x285
+<span class="o">[</span>181346.109923<span class="o">]</span>  oom_kill_process+0x220/0x440
+<span class="o">[</span>181346.109924<span class="o">]</span>  out_of_memory+0x2d1/0x4f0
+<span class="o">[</span>181346.109926<span class="o">]</span>  mem_cgroup_out_of_memory+0x4b/0x80
+<span class="o">[</span>181346.109928<span class="o">]</span>  mem_cgroup_oom_synchronize+0x2e8/0x320
+<span class="o">[</span>181346.109930<span class="o">]</span>  ? mem_cgroup_css_online+0x40/0x40
+<span class="o">[</span>181346.109931<span class="o">]</span>  pagefault_out_of_memory+0x36/0x7b
+<span class="o">[</span>181346.109934<span class="o">]</span>  mm_fault_error+0x90/0x180
+<span class="o">[</span>181346.109935<span class="o">]</span>  __do_page_fault+0x4a5/0x4d0
+<span class="o">[</span>181346.109937<span class="o">]</span>  do_page_fault+0x2e/0xe0
+<span class="o">[</span>181346.109940<span class="o">]</span>  ? page_fault+0x2f/0x50
+<span class="o">[</span>181346.109941<span class="o">]</span>  page_fault+0x45/0x50
+
+                        Killed!
+...               ____________________________
+                 /                            <span class="se">\
+</span><span class="se"></span><span class="o">[</span>181346.109950<span class="o">]</span> Task in /custom-group killed as 
+                a result of limit of /custom-group
+<span class="o">[</span>181346.109954<span class="o">]</span> memory: usage 10240kB, limit 10240kB, failcnt <span class="m">56</span>
+<span class="o">[</span>181346.109954<span class="o">]</span> memory+swap: usage 0kB, limit 9007199254740988kB, failcnt <span class="m">0</span>
+<span class="o">[</span>181346.109955<span class="o">]</span> kmem: usage 940kB, limit 9007199254740988kB, failcnt <span class="m">0</span>
+<span class="o">[</span>181346.109955<span class="o">]</span> Memory cgroup stats <span class="k">for</span> /custom-group: cache:0KB rss:9300KB rss_huge:0KB shmem:0KB mapped_file:0KB dirty:0KB writeback:0KB inactive_anon:0KB active_anon:9248KB inactive_file:0KB active_file:0KB unevictable:0KB
+<span class="o">[</span>181346.109965<span class="o">]</span> <span class="o">[</span> pid <span class="o">]</span>   uid  tgid total_vm      rss pgtables_bytes swapents oom_score_adj name
+<span class="o">[</span>181346.110005<span class="o">]</span> <span class="o">[</span>21530<span class="o">]</span>     <span class="m">0</span> <span class="m">21530</span>     <span class="m">5837</span>     <span class="m">1381</span>    <span class="m">90112</span>        <span class="m">0</span>             <span class="m">0</span> bash
+<span class="o">[</span>181346.110011<span class="o">]</span> <span class="o">[</span>22074<span class="o">]</span>     <span class="m">0</span> <span class="m">22074</span>     <span class="m">3440</span>     <span class="m">2594</span>    <span class="m">69632</span>        <span class="m">0</span>             <span class="m">0</span> alloc.out
+<span class="o">[</span>181346.110012<span class="o">]</span> Memory cgroup out of memory: Kill process <span class="m">22074</span> <span class="o">(</span>alloc.out<span class="o">)</span> score <span class="m">989</span> or sacrifice child
+<span class="o">[</span>181346.318942<span class="o">]</span> Killed process <span class="m">22074</span> <span class="o">(</span>alloc.out<span class="o">)</span> total-vm:13760kB, anon-rss:8988kB, file-rss:1388kB, shmem-rss:0kB
+<span class="o">[</span>181346.322003<span class="o">]</span> oom_reaper: reaped process <span class="m">22074</span> <span class="o">(</span>alloc.out<span class="o">)</span>, now anon-rss:0kB, file-rss:0kB, shmem-rss:0kB
+</code></pre></div><p>So we can see pretty well that limits <strong>are</strong> being enforced.</p>
+<p>Again, why is <code>/proc</code> telling us that we have 2GB of memory?</p>
+<h3 id="memory-limits-set-by-cgroups-are-not-namespaced">Memory limits set by cgroups are not namespaced</h3>
+<p>The reason why is that the memory retrieved by <code>/proc/meminfo</code> is not namespaced.</p>
+<p>Differently from other things like listing pids from <code>/proc</code>, when the <a href="https://elixir.bootlin.com/linux/v4.15.17/source/include/linux/fs.h#L1693"><code>file_operations</code></a> that procfs implements reach the point of gathering memory information, it doesn&rsquo;t acquire a namespaced view of it.</p>
+<p>For instance, let&rsquo;s compare the way that listing the differences in showing contents under <code>/proc/</code> (listing the directory entries) and <code>/proc/meminfo</code>.</p>
+<p>In the case of <a href="https://elixir.bootlin.com/linux/v4.15.18/source/fs/proc/base.c#L3202">listing <code>/proc</code></a> (see <a href="/blog/how-is-proc-able-to-list-pids/">How is /proc able to list process IDs?</a>), we can see procfs taking the namespace reference and using it:</p>
+<div class="highlight"><pre class="chroma"><code class="language-c" data-lang="c"><span class="kt">int</span> <span class="nf">proc_pid_readdir</span><span class="p">(</span><span class="k">struct</span> <span class="n">file</span> <span class="o">*</span><span class="n">file</span><span class="p">,</span> <span class="k">struct</span> <span class="n">dir_context</span> <span class="o">*</span><span class="n">ctx</span><span class="p">)</span>
+<span class="p">{</span>
+        <span class="c1">// Takes the namespace as seen by the file
+</span><span class="c1"></span>        <span class="c1">// provided.
+</span><span class="c1"></span>	<span class="k">struct</span> <span class="n">pid_namespace</span> <span class="o">*</span><span class="n">ns</span> <span class="o">=</span> <span class="n">file_inode</span><span class="p">(</span><span class="n">file</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">i_sb</span><span class="o">-&gt;</span><span class="n">s_fs_info</span><span class="p">;</span>
+
+        <span class="c1">// ...
+</span><span class="c1"></span>        
+        <span class="c1">// Iterates through the next available tasks
+</span><span class="c1"></span>        <span class="c1">// (processes) as seen by the namespace that
+</span><span class="c1"></span>        <span class="c1">// we are within.
+</span><span class="c1"></span>	<span class="k">for</span> <span class="p">(</span><span class="n">iter</span> <span class="o">=</span> <span class="n">next_tgid</span><span class="p">(</span><span class="n">ns</span><span class="p">,</span> <span class="n">iter</span><span class="p">);</span>
+	     <span class="n">iter</span><span class="p">.</span><span class="n">task</span><span class="p">;</span>
+	     <span class="n">iter</span><span class="p">.</span><span class="n">tgid</span> <span class="o">+=</span> <span class="mi">1</span><span class="p">,</span> <span class="n">iter</span> <span class="o">=</span> <span class="n">next_tgid</span><span class="p">(</span><span class="n">ns</span><span class="p">,</span> <span class="n">iter</span><span class="p">))</span> <span class="p">{</span>
+                <span class="c1">// ...
+</span><span class="c1"></span>        <span class="p">}</span>
+
+        <span class="c1">// ...
+</span><span class="c1"></span><span class="p">}</span>
+</code></pre></div><p>Meanwhile, in the case of <a href="https://elixir.bootlin.com/linux/latest/source/fs/proc/meminfo.c#L33">reading <code>/proc/meminfo</code></a>, that doesn&rsquo;t happen at all (well, as expected, it&rsquo;s not about namespaces! It&rsquo;s about cgroups):</p>
+<div class="highlight"><pre class="chroma"><code class="language-c" data-lang="c"><span class="k">static</span> <span class="kt">int</span> <span class="nf">meminfo_proc_show</span><span class="p">(</span><span class="k">struct</span> <span class="n">seq_file</span> <span class="o">*</span><span class="n">m</span><span class="p">,</span> <span class="kt">void</span> <span class="o">*</span><span class="n">v</span><span class="p">)</span>
+<span class="p">{</span>
+	<span class="k">struct</span> <span class="n">sysinfo</span> <span class="n">i</span><span class="p">;</span>
+	<span class="c1">// ...
+</span><span class="c1"></span>
+        <span class="c1">// Populate the sysinfo struct with memory-related
+</span><span class="c1"></span>        <span class="c1">// stuff
+</span><span class="c1"></span>	<span class="n">si_meminfo</span><span class="p">(</span><span class="o">&amp;</span><span class="n">i</span><span class="p">);</span>
+
+        <span class="c1">// Add swap information
+</span><span class="c1"></span>	<span class="n">si_swapinfo</span><span class="p">(</span><span class="o">&amp;</span><span class="n">i</span><span class="p">);</span>
+        
+        <span class="c1">// ... start displaying
+</span><span class="c1"></span>
+	<span class="n">show_val_kb</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="s">&#34;MemTotal:       &#34;</span><span class="p">,</span> <span class="n">i</span><span class="p">.</span><span class="n">totalram</span><span class="p">);</span>
+	<span class="n">show_val_kb</span><span class="p">(</span><span class="n">m</span><span class="p">,</span> <span class="s">&#34;MemFree:        &#34;</span><span class="p">,</span> <span class="n">i</span><span class="p">.</span><span class="n">freeram</span><span class="p">);</span>
+
+        <span class="c1">// ...
+</span><span class="c1"></span><span class="p">}</span>
+</code></pre></div><p>As expected, no single reference to namespaces (or cgroups).</p>
+<p>Also, <code>si_meminfo</code>, the method that fills the <code>sysinfo</code> interface takes some global values and bring it to <code>/proc/meminfo</code>, has no idea about cgroups either:</p>
+<div class="highlight"><pre class="chroma"><code class="language-c" data-lang="c"><span class="cm">/**
+</span><span class="cm"> * The struct that holds part of the memory information
+</span><span class="cm"> * that ends up being displayed in the end.
+</span><span class="cm"> */</span>
+<span class="k">struct</span> <span class="n">sysinfo</span> <span class="p">{</span>
+	<span class="n">__kernel_long_t</span> <span class="n">uptime</span><span class="p">;</span>		<span class="cm">/* Seconds since boot */</span>
+	<span class="n">__kernel_ulong_t</span> <span class="n">loads</span><span class="p">[</span><span class="mi">3</span><span class="p">];</span>	<span class="cm">/* 1, 5, and 15 minute load averages */</span>
+	<span class="n">__kernel_ulong_t</span> <span class="n">totalram</span><span class="p">;</span>	<span class="cm">/* Total usable main memory size */</span>
+	<span class="n">__kernel_ulong_t</span> <span class="n">freeram</span><span class="p">;</span>	<span class="cm">/* Available memory size */</span>
+	<span class="n">__kernel_ulong_t</span> <span class="n">sharedram</span><span class="p">;</span>	<span class="cm">/* Amount of shared memory */</span>
+	<span class="n">__kernel_ulong_t</span> <span class="n">bufferram</span><span class="p">;</span>	<span class="cm">/* Memory used by buffers */</span>
+	<span class="n">__kernel_ulong_t</span> <span class="n">totalswap</span><span class="p">;</span>	<span class="cm">/* Total swap space size */</span>
+	<span class="n">__kernel_ulong_t</span> <span class="n">freeswap</span><span class="p">;</span>	<span class="cm">/* swap space still available */</span>
+	<span class="n">__u16</span> <span class="n">procs</span><span class="p">;</span>		   	<span class="cm">/* Number of current processes */</span>
+	<span class="n">__u16</span> <span class="n">pad</span><span class="p">;</span>		   	<span class="cm">/* Explicit padding for m68k */</span>
+	<span class="n">__kernel_ulong_t</span> <span class="n">totalhigh</span><span class="p">;</span>	<span class="cm">/* Total high memory size */</span>
+	<span class="n">__kernel_ulong_t</span> <span class="n">freehigh</span><span class="p">;</span>	<span class="cm">/* Available high memory size */</span>
+	<span class="n">__u32</span> <span class="n">mem_unit</span><span class="p">;</span>			<span class="cm">/* Memory unit size in bytes */</span>
+	<span class="kt">char</span> <span class="n">_f</span><span class="p">[</span><span class="mi">20</span><span class="o">-</span><span class="mi">2</span><span class="o">*</span><span class="k">sizeof</span><span class="p">(</span><span class="n">__kernel_ulong_t</span><span class="p">)</span><span class="o">-</span><span class="k">sizeof</span><span class="p">(</span><span class="n">__u32</span><span class="p">)];</span>	<span class="cm">/* Padding: libc5 uses this.. */</span>
+<span class="p">};</span>
+
+<span class="cm">/**
+</span><span class="cm"> * Fills the `sysinfo` struct passed as a pointer
+</span><span class="cm"> * with values collected from the system (globally
+</span><span class="cm"> * set).
+</span><span class="cm"> */</span>
+<span class="kt">void</span> <span class="nf">si_meminfo</span><span class="p">(</span><span class="k">struct</span> <span class="n">sysinfo</span> <span class="o">*</span><span class="n">val</span><span class="p">)</span>
+<span class="p">{</span>
+	<span class="n">val</span><span class="o">-&gt;</span><span class="n">totalram</span> <span class="o">=</span> <span class="n">totalram_pages</span><span class="p">;</span>
+	<span class="n">val</span><span class="o">-&gt;</span><span class="n">sharedram</span> <span class="o">=</span> <span class="n">global_node_page_state</span><span class="p">(</span><span class="n">NR_SHMEM</span><span class="p">);</span>
+	<span class="n">val</span><span class="o">-&gt;</span><span class="n">freeram</span> <span class="o">=</span> <span class="n">global_zone_page_state</span><span class="p">(</span><span class="n">NR_FREE_PAGES</span><span class="p">);</span>
+	<span class="n">val</span><span class="o">-&gt;</span><span class="n">bufferram</span> <span class="o">=</span> <span class="n">nr_blockdev_pages</span><span class="p">();</span>
+	<span class="n">val</span><span class="o">-&gt;</span><span class="n">totalhigh</span> <span class="o">=</span> <span class="n">totalhigh_pages</span><span class="p">;</span>
+	<span class="n">val</span><span class="o">-&gt;</span><span class="n">freehigh</span> <span class="o">=</span> <span class="n">nr_free_highpages</span><span class="p">();</span>
+	<span class="n">val</span><span class="o">-&gt;</span><span class="n">mem_unit</span> <span class="o">=</span> <span class="n">PAGE_SIZE</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div><p>Interesting fact: <code>totalram_pages</code> (reported from <code>MemTotal</code>) <strong>can</strong> change - see this StackOverflow question: <a href="https://unix.stackexchange.com/questions/114024/why-does-memtotal-in-proc-meminfo-change">Why does MemTotal in /proc/meminfo change?</a>.</p>
+<h3 id="whos-controlling-the-allocation-of-memory">Who&rsquo;s controlling the allocation of memory?</h3>
+<p>If you&rsquo;re now wondering where we end up reaching that limit that we set in the cgroup, we need to look at the path that a memory allocation takes.</p>
+<pre><code>
+   alloc.out	(our process)
+      |
+      |
+      *--&gt; task_struct (process descriptor)
+            |
+            |
+   	    *--&gt; mm_struct (memory descriptor)
+   	           |
+   	           |
+   m_cgroup &lt;------*
+   |
+   +------&gt; page_counter memory
+   |          |
+   |          *--&gt; { atomic_long_t count, unsigned long limit }
+   |
+   |
+   *------&gt; page_counter swap
+
+</code></pre><p>Within the Kernel, each process created (in our case, <code>alloc.out</code>) is referenced internally via a process descriptor <a href="https://elixir.bootlin.com/linux/v4.15.18/source/include/linux/sched.h#L520"><code>task_struct</code></a>:</p>
+<div class="highlight"><pre class="chroma"><code class="language-c" data-lang="c"><span class="k">struct</span> <span class="n">task_struct</span> <span class="p">{</span>
+	<span class="k">struct</span> <span class="n">thread_info</span>		<span class="n">thread_info</span><span class="p">;</span>
+
+        <span class="c1">// ... 
+</span><span class="c1"></span> 
+	<span class="kt">unsigned</span> <span class="kt">int</span>			<span class="n">cpu</span><span class="p">;</span>
+	<span class="k">struct</span> <span class="n">mm_struct</span>		<span class="o">*</span><span class="n">mm</span><span class="p">;</span>       
+</code></pre></div><p>Such process descriptor references a memory descriptor <code>mm</code> defined as <a href="https://elixir.bootlin.com/linux/v4.15.18/source/include/linux/mm_types.h#L356"><code>mm_struct</code></a>:</p>
+<div class="highlight"><pre class="chroma"><code class="language-c" data-lang="c"><span class="k">struct</span> <span class="n">mm_struct</span> <span class="p">{</span>
+	<span class="k">struct</span> <span class="n">vm_area_struct</span> <span class="o">*</span><span class="n">mmap</span><span class="p">;</span>		<span class="cm">/* list of VMAs */</span>
+	<span class="kt">unsigned</span> <span class="kt">long</span> <span class="n">mmap_base</span><span class="p">;</span>		<span class="cm">/* base of mmap area */</span>
+	<span class="kt">unsigned</span> <span class="kt">long</span> <span class="n">task_size</span><span class="p">;</span>		<span class="cm">/* size of task vm space */</span>
+
+	<span class="c1">// ...
+</span><span class="c1"></span>
+<span class="cp">#ifdef CONFIG_MEMCG
+</span><span class="cp"></span>	<span class="k">struct</span> <span class="n">mem_cgroup</span> <span class="o">*</span><span class="n">mem_cgroup</span><span class="p">;</span>
+<span class="cp">#endif
+</span><span class="cp"></span>
+<span class="p">}</span>
+</code></pre></div><p>Such memory descriptor references a <a href="https://elixir.bootlin.com/linux/v4.15.18/source/include/linux/memcontrol.h#L162"><code>mem_cgroup</code></a>, a data structure that keeps track of the cgroup semantics for memory limiting and accounting:</p>
+<div class="highlight"><pre class="chroma"><code class="language-c" data-lang="c"><span class="k">struct</span> <span class="n">mem_cgroup</span> <span class="p">{</span>
+	<span class="k">struct</span> <span class="n">cgroup_subsys_state</span> <span class="n">css</span><span class="p">;</span>
+
+	<span class="cm">/* Private memcg ID. Used to ID objects that outlive the cgroup */</span>
+	<span class="k">struct</span> <span class="n">mem_cgroup_id</span> <span class="n">id</span><span class="p">;</span>
+
+	<span class="cm">/* Accounted resources */</span>
+	<span class="k">struct</span> <span class="n">page_counter</span> <span class="n">memory</span><span class="p">;</span>
+	<span class="k">struct</span> <span class="n">page_counter</span> <span class="n">swap</span><span class="p">;</span>
+        
+        <span class="c1">// ...
+</span><span class="c1"></span><span class="p">}</span>
+</code></pre></div><p>Such cgroup data structure then references some page counters (<code>memory</code> and <code>swap</code>, for instance) defined via the <a href="https://elixir.bootlin.com/linux/v4.15.18/source/include/linux/page_counter.h#L9"><code>page_counter</code> struct</a>, which are responsible for keeping track of usage and providing the limiting functionality when someone tries to acquire a page:</p>
+<div class="highlight"><pre class="chroma"><code class="language-c" data-lang="c"><span class="k">struct</span> <span class="n">page_counter</span> <span class="p">{</span>
+	<span class="n">atomic_long_t</span> <span class="n">count</span><span class="p">;</span>
+	<span class="kt">unsigned</span> <span class="kt">long</span> <span class="n">limit</span><span class="p">;</span>
+
+        <span class="c1">// The parent CGROUP (remember, cgroups are
+</span><span class="c1"></span>        <span class="c1">// hierarchical!)
+</span><span class="c1"></span>	<span class="k">struct</span> <span class="n">page_counter</span> <span class="o">*</span><span class="n">parent</span><span class="p">;</span>
+        
+        <span class="c1">// ...
+</span><span class="c1"></span><span class="p">};</span>
+</code></pre></div><p>Whenever a process needs some pages assigned to it, <code>page_counter_try_charge</code> goes through the cgroup memory hierarchy, trying to charge a given number of pages, which in case of success (new value would be smaller than the limit), it updates the counts, otherwise, it triggers OOM behavior.</p>
+<p>Using <code>bcc</code> to trace <code>page_counter_try_charge</code>, we can see how the act of <code>page_fault</code>ing leads to <code>mem_cgroup_try_charge</code> calling <code>page_counter_try_charge</code>:</p>
+<pre><code>25641   25641   alloc.out       page_counter_try_charge
+        page_counter_try_charge+0x1 [kernel]
+        mem_cgroup_try_charge+0x93 [kernel]
+        handle_pte_fault+0x3e3 [kernel]
+        __handle_mm_fault+0x478 [kernel]
+        handle_mm_fault+0xb1 [kernel]
+        __do_page_fault+0x250 [kernel]
+        do_page_fault+0x2e [kernel]
+        page_fault+0x45 [kernel]
+</code></pre><h3 id="tracing-a-cgroup-running-out-of-memory">Tracing a cgroup running out of memory</h3>
+<p>If we&rsquo;re even more curious and decide to trace the <code>page_counter_try_charge</code> arguments, we can see the tries failing in the case when we&rsquo;re within a container and try to grab more memory than we&rsquo;re allowed to.</p>
+<p>Using <code>bpftrace</code>, we&rsquo;re able to tailor a small program that inspects the <code>page_counter</code> used in <code>page_counter_try_charge</code> and see how the limit changes over time (until the point that we reach the exhaustion - receiving an OOM then).</p>
+<div class="highlight"><pre class="chroma"><code class="language-perl" data-lang="perl"><span class="c1">#include &lt;linux/page_counter.h&gt;</span>
+
+
+<span class="k">BEGIN</span>
+<span class="p">{</span>
+        <span class="nb">printf</span><span class="p">(</span><span class="s">&#34;Tracing page_counter_try_charge... Hit Ctrl-C to end.\n&#34;</span><span class="p">);</span>
+        <span class="nb">printf</span><span class="p">(</span><span class="s">&#34;%-8s %-6s %-16s %-10s %-10s %-10s\n&#34;</span><span class="p">,</span>
+                <span class="s">&#34;TIME&#34;</span><span class="p">,</span> <span class="s">&#34;PID&#34;</span><span class="p">,</span> <span class="s">&#34;COMM&#34;</span><span class="p">,</span> <span class="s">&#34;REQUESTED&#34;</span><span class="p">,</span> <span class="s">&#34;CURRENT&#34;</span><span class="p">,</span> <span class="s">&#34;LIMIT&#34;</span><span class="p">);</span>
+
+	<span class="nv">@epoch</span> <span class="o">=</span> <span class="n">nsecs</span><span class="p">;</span>
+<span class="p">}</span>
+
+
+<span class="n">kprobe:page_counter_try_charge</span>
+<span class="p">{</span>
+        <span class="nv">$pcounter</span> <span class="o">=</span> <span class="p">(</span><span class="n">page_counter</span><span class="o">*</span><span class="p">)</span><span class="n">arg0</span><span class="p">;</span>
+
+        <span class="nv">$limit</span> <span class="o">=</span> <span class="nv">$pcounter</span><span class="o">-&gt;</span><span class="n">limit</span><span class="p">;</span>
+        <span class="nv">$current</span> <span class="o">=</span> <span class="nv">$pcounter</span><span class="o">-&gt;</span><span class="n">count</span><span class="o">.</span><span class="n">counter</span><span class="p">;</span>
+        <span class="nv">$requested</span> <span class="o">=</span> <span class="n">arg1</span><span class="p">;</span>
+
+        <span class="nb">printf</span><span class="p">(</span><span class="s">&#34;%-8d %-6d %-16s %-10ld %-10ld %-10ld\n&#34;</span><span class="p">,</span>
+                <span class="p">(</span><span class="n">nsecs</span> <span class="o">-</span> <span class="nv">@epoch</span><span class="p">)</span> <span class="o">/</span> <span class="mi">1000000</span><span class="p">,</span>
+                <span class="n">pid</span><span class="p">,</span>
+                <span class="n">comm</span><span class="p">,</span>
+                <span class="nv">$requested</span><span class="p">,</span>
+                <span class="nv">$current</span><span class="p">,</span>
+                <span class="nv">$limit</span>
+        <span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div><p>Running the tracer with a shell session put into the cgroup that limits our memory, we can see it running out of pages:</p>
+<div class="highlight"><pre class="chroma"><code class="language-sh" data-lang="sh">sudo bpftrace ./try-charge-counter.d
+Attaching <span class="m">2</span> probes...
+Tracing page_counter_try_charge... Hit Ctrl-C to end.
+TIME     PID     REQUESTED  CURRENT    LIMIT
+...
+<span class="m">3301</span>     <span class="m">25980</span>   <span class="m">32</span>         <span class="m">1288</span>       <span class="m">2560</span>
+<span class="m">3302</span>     <span class="m">25980</span>   <span class="m">32</span>         <span class="m">1320</span>       <span class="m">2560</span>
+...
+<span class="m">3307</span>     <span class="m">25980</span>   <span class="m">1</span>          <span class="m">2553</span>       <span class="m">2560</span>
+<span class="m">3307</span>     <span class="m">25980</span>   <span class="m">32</span>         <span class="m">2554</span>       <span class="m">2560</span>
+                        .--------------------.
+<span class="m">3307</span>     <span class="m">25980</span>   <span class="m">1</span>      <span class="p">|</span>   <span class="m">2554</span>       <span class="m">2560</span>  <span class="p">|</span>
+<span class="m">3308</span>     <span class="m">25980</span>   <span class="m">32</span>     <span class="p">|</span>   <span class="m">2555</span>       <span class="m">2560</span>  <span class="p">|</span>
+<span class="m">3308</span>     <span class="m">25980</span>   <span class="m">1</span>      <span class="p">|</span>   <span class="m">2555</span>       <span class="m">2560</span>  <span class="p">|</span>
+<span class="m">3308</span>     <span class="m">25980</span>   <span class="m">32</span>     <span class="p">|</span>   <span class="m">2556</span>       <span class="m">2560</span>  <span class="p">|</span>
+<span class="m">3308</span>     <span class="m">25980</span>   <span class="m">1</span>      <span class="p">|</span>   <span class="m">2556</span>       <span class="m">2560</span>  <span class="p">|</span>
+<span class="m">3308</span>     <span class="m">25980</span>   <span class="m">32</span>     <span class="p">|</span>   <span class="m">2557</span>       <span class="m">2560</span>  <span class="p">|</span>
+<span class="m">3308</span>     <span class="m">25980</span>   <span class="m">1</span>      <span class="p">|</span>   <span class="m">2557</span>       <span class="m">2560</span>  <span class="p">|</span>
+<span class="m">3308</span>     <span class="m">25980</span>   <span class="m">32</span>     <span class="p">|</span>   <span class="m">2558</span>       <span class="m">2560</span>  <span class="p">|</span>
+                        *----------.---------*
+                                   <span class="p">|</span>
+                                still possible
+                                to increase the
+                                number of pages 
+                                   ...
+
+<span class="m">3308</span>     <span class="m">25980</span>   <span class="m">1</span>          <span class="m">2558</span>       <span class="m">2560</span>
+<span class="m">3308</span>     <span class="m">25980</span>   <span class="m">32</span>         <span class="m">2559</span>       <span class="m">2560</span>
+<span class="m">3308</span>     <span class="m">25980</span>   <span class="m">1</span>          <span class="m">2559</span>       <span class="m">2560</span>
+<span class="m">3308</span>     <span class="m">25980</span>   <span class="m">32</span>         <span class="m">2560</span>       <span class="m">2560</span> * LIMIT REACHED
+<span class="m">3308</span>     <span class="m">25980</span>   <span class="m">1</span>          <span class="m">2560</span>       <span class="m">2560</span> *
+<span class="m">3308</span>     <span class="m">25980</span>   <span class="m">1</span>          <span class="m">2560</span>       <span class="m">2560</span> *
+                             <span class="p">|</span>          <span class="p">|</span>
+                             *-----.----*
+                                   <span class="p">|</span>
+   Whoopsy, can<span class="err">&#39;</span>t allocate  &lt;------*
+   anymore!
+
+
+</code></pre></div><h3 id="closing-thoughts">Closing thoughts</h3>
+<p>Although I&rsquo;ve understood that <code>meminfo</code> wasn&rsquo;t namespaced, it wasn&rsquo;t clear for my why.</p>
+<p>Going through the exercise of tailoring a quick program to inspect the arguments passed to <code>page_counter_try_charge</code> was very interesting (and easier than I thought!).</p>
+<p>Shout out to <a href="https://github.com/iovisor/bpftrace">bpftrace</a> once again for allowing us to go deep into the Kernel with ease!</p>
+<p>If you have any further questions, or just want to connect, let me know! I&rsquo;m <a href="https://twitter.com/cirowrc">cirowrc</a> on Twitter.</p>
+<p>Have a good one!</p>
+<h3 id="resources">Resources</h3>
+<ul>
+<li><a href="https://amzn.to/2QD0kU4">Understanding the Linux Kernel, 3rd Ed</a></li>
+<li><a href="https://amzn.to/2zE5jOV">The C Programming Language</a></li>
+<li><a href="https://amzn.to/2QWyXp9">The Linux Programming Interface</a></li>
+</ul>
+
+    </section>
+  </article>
+
+</main>
+
+    
+
+
+
+
+
+
+
+
+
+        
+
+        
+                
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+
+
+
+                                    
+
+
+
+  <section class="recommendation">
+
+    <h3>
+    
+      Recommended articles
+    
+    </h3>
+
+    <p>
+      If you've gotten some knowledge from this article, these are some others that you might take advatange of as well!
+    </p>
+
+    <ul>
+      
+        <li>
+          <a href="https://ops.tips/blog/raspberry-pi-concourse-ci-worker/">
+            A Raspberry PI Concourse Worker
+          </a>
+        </li>
+      
+        <li>
+          <a href="https://ops.tips/blog/how-linux-creates-sockets/">
+            How Linux creates sockets and counts them
+          </a>
+        </li>
+      
+        <li>
+          <a href="https://ops.tips/blog/how-is-proc-able-to-list-pids/">
+            How is /proc able to list process IDs?
+          </a>
+        </li>
+      
+        <li>
+          <a href="https://ops.tips/blog/using-procfs-to-get-process-stack-trace/">
+            Using /proc to get a process&#39; current stack trace
+          </a>
+        </li>
+      
+        <li>
+          <a href="https://ops.tips/blog/proc-pid-limits-under-the-hood/">
+            Process resource limits under the hood
+          </a>
+        </li>
+      
+    </ul>
+  </section>
+
+
+
+    <footer class="footer">
+
+  <ul>
+    <li>
+      <a href="https://github.com/cirocosta">GitHub</a>
+    </li>
+
+    <li>
+      <a href="https://www.linkedin.com/in/cirocosta">LinkedIn</a>
+    </li>
+  </ul>
+
+  <p>
+    © Ciro da Silva da Costa, 2018.
+  </p>
+</footer>
+
+
+    
+
+
+
+
+
+<link rel="stylesheet"
+      href="https://ops.tips/bundle.min.75922cc496f110bdc184ab4d765a2174146459fd2494dc8a354af9ea71997227.css"
+      integrity="sha256-dZIsxJbxEL3BhKtNdlohdBRkWf0klNyKNUr56nGZcic=">
+
+  </body>
+</html>

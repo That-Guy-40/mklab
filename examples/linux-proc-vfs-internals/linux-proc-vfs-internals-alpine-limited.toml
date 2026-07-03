@@ -1,0 +1,29 @@
+# The cgroups/limits half of the /proc series — a MEMORY-CAPPED Alpine box.
+#
+# The musl/BusyBox counterpart of linux-proc-vfs-internals-debian-limited.toml.
+# Same 512 MiB cap + swap off, so `free` (lxcfs) shows the limit and mem-hog.c
+# gets OOM-killed. Hosts Ciro Costa's articles 3 & 4 (memory + rlimits).
+#
+#   # 1) launch the capped container
+#   phase5-lxd/lab-lxd.sh up   --config examples/linux-proc-vfs-internals/linux-proc-vfs-internals-alpine-limited.toml
+#
+#   # 2) provision it (toolchain + linux-headers + procps + strace + the sandbox)
+#   examples/linux-proc-vfs-internals/setup-limits.sh linux-proc-vfs-internals-alpine-limited/shell
+#
+#   # 3) explore — log in as the learner and re-run the tour
+#   phase5-lxd/lab-lxd.sh exec linux-proc-vfs-internals-alpine-limited/shell -- su - learner
+#
+#   # 4) tear down
+#   phase5-lxd/lab-lxd.sh down --lab linux-proc-vfs-internals-alpine-limited
+
+[lab]
+name        = "linux-proc-vfs-internals-alpine-limited"
+description = "Ciro Costa's /proc series (memory + rlimits) in a 512 MiB-capped Alpine container"
+tags        = ["proc", "cgroups", "memory", "rlimits", "prlimit", "lxcfs", "alpine", "musl"]
+
+[[instance]]
+name  = "shell"
+type  = "container"
+# `images:alpine/latest` is rewritten by lab-lxd.sh to the highest stable alpine.
+image = "images:alpine/latest"
+config = { "limits.memory" = "512MiB", "limits.memory.swap" = "false" }
