@@ -20,6 +20,14 @@ drive an entire build → serve → boot pipeline from one file. Look for the
 > referenced across the docs, so when a group earns a subdir, move it as a unit
 > and fix the links (`tools/link_check.py` finds them).
 
+**🧭 Want a guided route, not a catalog?** This page lists the labs *by phase*;
+[`learning-paths/`](learning-paths/README.md) lists them *by journey* — ordered
+**learning paths** (with prerequisites + an observable checkpoint per lab) and
+themed **collections**, generated from
+[`learning-paths.toml`](learning-paths.toml) by
+[`tools/paths.py`](../tools/paths.py) (which also lints that every lab is routed
+into ≥1 journey).
+
 ---
 
 ## 🪤 Throwaway chroots — Phase 1 (`phase1-chroot/lab-chroot.sh`) 🔑
@@ -112,7 +120,9 @@ Cohesive own-subdir lab built on this layer:
 | [`linux-proc-vfs-internals/`](linux-proc-vfs-internals/README.md) | 🔬 A **C + `/proc`** box for Ciro S. Costa's six-part **[ops.tips](linux-proc-vfs-internals/upstream-tutorial/README.md)** `/proc` series (vendored byte-exact), in **three container sets** on **Debian 13** *and* **Alpine**, each with a `learner` + `~/proc-lab/` sandbox. **Set A** (unlimited) — *What is /proc?* + *list PIDs*: `open-fd.c` and a **raw-`getdents64`** `list-pids.c`; procfs as a **VFS** (size-0 files generated on read; PID-namespaced). **Set B** (512 MiB-capped) — *top/free wrong memory* + *resource limits*: `mem-hog.c` (**cgroup-v2 OOM-kill**) + `limit-open-files.c` (**`prlimit()`**, `EPERM` on hard-raise), **lxcfs** rewriting `/proc/meminfo` to the cap. **Set C** (gdb/strace debug box) — *stack traces* + *sockets*: `accept.c` blocked in the kernel shows **`/proc/<pid>/wchan` = `inet_csk_accept`** (full `stack` is host-only), `socket.c` shows **`socket:[inode]`** fds + climbing `sockstat`. Divergences: Alpine needs `linux-headers`; glibc `openat` vs musl/BusyBox `open`. Verified end-to-end, all six base×set combos. |
 | [`tiny-internet-project/`](tiny-internet-project/README.md) | 🌐 A **self-contained internet** — John S. Tonello's 3-part **[Tiny Internet Project](tiny-internet-project/upstream-tutorial/)** (Linux Journal, byte-exact vendored) rebuilt as **six Debian 13 containers** on a private bridge: authoritative **BIND9 DNS primary + secondary (real AXFR zone transfer)**, an **apt-cacher-ng** package source, **Postfix + Dovecot** mail, and **LAMP + phpMyAdmin** — all on `tiny.lab` / `10.128.1.0/24`. One `tiny-internet.sh` driver (`up`/`provision`/`verify`) over `lab-lxd.sh`. Documents 10 sharp **Debian-13-vs-Ubuntu-14.04** divergences (Dovecot 2.4 `mail_location`/`mail_inbox_path`, `named` not `bind9`, no `lamp-server^`, dnsmasq-vs-BIND, …). **Verified end-to-end** (ALL PROBES PASSED). ⚠️ throwaway creds, no TLS — NAT bridge only. |
 
-> **Suggested learning order.** Two self-contained tracks of the same
+> **Suggested learning order** (formalized as the generated
+> [**Shell fluency** path](learning-paths/path-shell-fluency.md), with a
+> checkpoint per lab). Two self-contained tracks of the same
 > novice → intermediate arc, by different authors:
 > - **Matt Might:** [survival guide](UNIX_novice_survival_guide/README.md) → [bash by example](shell-intermediate-programming-by-example/README.md) → [sculpting text](UNIX-sculpting-text-regex-grep-sed-awk/README.md) — *find your feet at the shell, program it, then wield grep/sed/awk on real text.* (Might names the survival guide as the prerequisite to bash-by-example.)
 > - **Carpentries + Robbins:** [shell-novice](shell-novice-workshop/README.md) → [shell-intermediate-workshop](shell-intermediate-workshop/README.md) — a full-day hands-on lesson, then the "Bash by example" PDF series.

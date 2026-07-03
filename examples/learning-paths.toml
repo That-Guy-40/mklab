@@ -1,0 +1,534 @@
+# learning-paths.toml — the source of truth for the learning-paths/ docs.
+#
+# Rendered into examples/learning-paths/{README.md,path-*.md} by tools/paths.py.
+# EDIT THIS FILE, then run `tools/paths.py render`.  `tools/paths.py --check`
+# gates CI: every lab is routed into >=1 path/collection, every ref resolves,
+# and the generated docs match this file.
+#
+# Every `lab`/`member`/`branch.lab`/`capstone.lab` is written RELATIVE TO
+# examples/ (e.g. "chroot-breakout/", "chroot-examples/foo.toml", or an
+# out-of-tree hand-walk as "../micro-linux/hand-walk/") — the same forms
+# 00-INDEX.md already uses.  Every `checkpoint` must be OBSERVABLE (a command
+# output, a file, a boot banner) — mirror each lab's MANUAL_TESTING.md.
+
+[meta]
+difficulty_levels = ["🟢 gentle", "🟡 moderate", "🔴 deep"]
+time_buckets      = ["⏱ <30m", "⏱ ~1–2h", "⏱ half-day+"]
+
+# Lab units intentionally NOT routed into any journey (kept honest, with a why).
+[meta.coverage_exempt]
+"learning-paths.toml" = "the source of truth itself, not a lab"
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  PATHS  (ordered, dependency-aware syllabi)
+# ════════════════════════════════════════════════════════════════════════════
+
+[[path]]
+id         = "container-internals"
+title      = "Containers from first principles"
+difficulty = "🟡"
+est        = "⏱ half-day+"
+audience   = "intermediate; comfortable reading a little C"
+prereqs    = ["shell-fluency"]
+goal       = "Understand what a container *is* by assembling one primitive at a time, then meet the managers that package those primitives for you."
+  [[path.step]]
+  lab        = "chroot-examples/chroot-debian-bookworm.toml"
+  tags       = ["🔑"]
+  learn      = "a chroot swaps the filesystem root — and *only* that; the process keeps every other namespace."
+  checkpoint = "`enter` the chroot: `cat /etc/os-release` says Debian, but `ps -e` still lists the host's PIDs — so it is not isolation."
+  [[path.step]]
+  lab        = "chroot-examples/chroot-host-copy-busybox.toml"
+  tags       = ["🔑"]
+  learn      = "a root filesystem is just a directory of files — no debootstrap required."
+  checkpoint = "the tree holds only BusyBox + a few `/etc` files; name which came from the host copy vs were fabricated."
+  [[path.step]]
+  lab        = "chroot-breakout/"
+  learn      = "a chroot is not a security boundary; `pivot_root` + mount/UTS namespaces are."
+  checkpoint = "`breakout` prints the escape banner, then `ls /` shows the FULL container root — versus the sparse jail it showed a moment earlier."
+  verify_cmd    = "printf 'ls /' | chroot /newroot /bin/breakout"
+  verify_marker = "Time to break things"
+  [[path.step]]
+  lab        = "exploring-containers/part-2-namespaces/"
+  learn      = "namespaces scope what a process can SEE — IPC and network, by hand."
+  checkpoint = "a fresh `unshare --ipc ./processB` reads an EMPTY segment while the host namespace still sees the message; two net namespaces ping across a veth at 0% loss."
+  [[path.step]]
+  lab        = "exploring-containers/part-3-pid-cgroups-users/"
+  learn      = "PID/cgroup/user namespaces + a memory cgroup finish the container; the user namespace is the keystone that lets an unprivileged user make the rest."
+  checkpoint = "inside `unshare --pid --fork --mount-proc` your shell is PID 1; `podman run --memory=50m` + `alloc.c` is OOM-killed (exit 137); `unshare --user --map-root-user` shows uid 0 mapped."
+  verify_marker = "EXIT=137"
+  [[path.step]]
+  lab        = "chroot-examples/chroot-nspawn-managed.toml"
+  tags       = ["🔑"]
+  learn      = "systemd-nspawn/machinectl assemble those primitives into a managed, bootable machine."
+  checkpoint = "`machinectl list` shows the machine; `systemd-nspawn -b` boots it to a login prompt."
+  [[path.step]]
+  lab        = "podman-examples/podman-pod-3svc.toml"
+  tags       = ["🪶"]
+  learn      = "a real rootless engine builds that whole namespace stack for you."
+  checkpoint = "three containers in one pod reach each other over `localhost`; map each shared namespace back to one you built by hand."
+  [[path.step]]
+  lab        = "lxd-examples/lxd-plain-single.toml"
+  learn      = "the system-container manager — a persistent machine, contrasted with the app-container pod."
+  checkpoint = "`incus launch` the Alpine container; `incus list` shows it RUNNING; contrast its lifecycle with the podman pod."
+  [[path.branch]]
+  lab = "linux-proc-vfs-internals/"
+  why = "go deeper on what `/proc` actually is, in C + strace — its cgroup-v2 OOM demo mirrors step 5."
+
+[[path]]
+id         = "shell-fluency"
+title      = "Shell fluency — from lost at the prompt to sculpting text"
+difficulty = "🟢"
+est        = "⏱ ~1–2h"
+prereqs    = []
+audience   = "complete beginners welcome"
+goal       = "Find your feet at the shell, learn to program it, then wield grep/sed/awk on real text. The primary track is Matt Might's (he names the survival guide as the prerequisite to bash-by-example); an equivalent Carpentries + Robbins track is a side-quest."
+  [[path.step]]
+  lab        = "UNIX_novice_survival_guide/"
+  learn      = "navigate, pipe, redirect, and get help without a cheat-sheet."
+  checkpoint = "in the `~/unix-survival` sandbox, reproduce the guide's `find | grep READ` and rename `baz`→`bar`, unaided."
+  [[path.step]]
+  lab        = "shell-intermediate-programming-by-example/"
+  learn      = "variables, loops, functions, arguments — programming the shell, not just typing at it."
+  checkpoint = "run `demo.sh` → it prints `5!=120`; then write your own script with a loop + a function that processes argv."
+  [[path.step]]
+  lab        = "UNIX-sculpting-text-regex-grep-sed-awk/"
+  learn      = "wield the GNU grep/sed/awk trio on real text."
+  checkpoint = "run `demo.sh` (byte-identical on Debian + Alpine); then extract and reformat fields from a log in a single `awk` line."
+  [[path.branch]]
+  lab = "shell-novice-workshop/"
+  why = "the Carpentries (CC-BY) full-day equivalent of steps 1–2, by different authors."
+  [[path.branch]]
+  lab = "shell-intermediate-workshop/"
+  why = "Robbins' 'Bash by example' — the Carpentries track's programming follow-on."
+
+[[path]]
+id         = "container-topologies"
+title      = "Container topologies across the engines"
+difficulty = "🟡"
+est        = "⏱ ~1–2h"
+prereqs    = ["container-internals"]
+audience   = "you can start a container; now wire several together"
+goal       = "Express the same multi-service idea in Docker, Podman, and LXD/Incus — and see what each abstraction buys you."
+  [[path.step]]
+  lab        = "docker-examples/docker-3svc-topology.toml"
+  tags       = ["🔑"]
+  learn      = "a rootful, declarative bridge topology."
+  checkpoint = "nginx + postgres + an alpine client share one bridge; the client resolves the others by name."
+  [[path.step]]
+  lab        = "podman-examples/podman-plain-single.toml"
+  tags       = ["🪶"]
+  learn      = "the simplest rootless container with a published port."
+  checkpoint = "`curl localhost:<port>` from the host reaches the container."
+  [[path.step]]
+  lab        = "podman-examples/podman-pod-3svc.toml"
+  tags       = ["🪶"]
+  learn      = "a pod shares net/IPC/PID across its containers."
+  checkpoint = "the three containers talk to each other over `localhost`."
+  [[path.step]]
+  lab        = "podman-examples/podman-quadlet-service.toml"
+  tags       = ["🪶"]
+  learn      = "a `.container` quadlet becomes a systemd-user unit that survives reboots."
+  checkpoint = "`systemctl --user status` shows the generated unit; it comes back after `systemctl --user restart`."
+  [[path.step]]
+  lab        = "podman-examples/podman-multiarch-build.toml"
+  tags       = ["🪶", "🐌"]
+  learn      = "build an image for a *foreign* architecture via qemu-user-static."
+  checkpoint = "`file` on the built image's binary reports the other architecture."
+  [[path.step]]
+  lab        = "lxd-examples/lxd-vm-single.toml"
+  learn      = "LXD/Incus runs real QEMU VMs under the same API as its containers."
+  checkpoint = "`incus list` shows TYPE=VIRTUAL-MACHINE (needs `/dev/kvm` + block storage)."
+  [[path.step]]
+  lab        = "lxd-examples/lxd-mixed-topology.toml"
+  learn      = "containers and a VM in one lab — the container/VM discriminator."
+  checkpoint = "the lab holds 2 containers + 1 VM in a single `incus list`."
+  [[path.step]]
+  lab        = "lxd-examples/lxd-profiles-projects.toml"
+  learn      = "profiles bundle config; projects isolate namespaces."
+  checkpoint = "`incus project list` shows the lab's project isolating its instances."
+  [[path.branch]]
+  lab = "tiny-internet-project/"
+  why = "capstone — six Debian containers wired into a miniature internet (BIND primary+secondary AXFR, apt-cacher-ng, Postfix+Dovecot, LAMP+phpMyAdmin)."
+
+[[path]]
+id         = "linux-from-source"
+title      = "Build a Linux from source, one arch at a time"
+difficulty = "🔴"
+est        = "⏱ half-day+"
+prereqs    = ["shell-fluency"]
+audience   = "you have a kernel-build toolchain and patience for TCG"
+goal       = "Compile a kernel + a tiny userspace from upstream source and boot it in RAM — then repeat across architectures, and shrink it onto a floppy."
+  [[path.step]]
+  lab        = "../micro-linux/hand-walk/"
+  learn      = "a kernel panics with no rootfs; a hand-written static `init.c` fixes it, then a Go shell, then u-root."
+  checkpoint = "reproduce the 'Hello world' from your own static init in the box, then drop into a u-root shell."
+  [[path.step]]
+  lab        = "tiny-linux-experiments/microvm-alpine.toml"
+  learn      = "an Alpine minirootfs as an in-RAM initramfs — a true microVM."
+  checkpoint = "boots to a shell with no disk attached."
+  [[path.step]]
+  lab        = "tiny-linux-experiments/microvm-alpine-custom-init.toml"
+  learn      = "swap PID 1 for a hand-rolled static C `/sbin/init`."
+  checkpoint = "the boot log shows your C init as PID 1; diff its behaviour against the BusyBox-init boot."
+  [[path.step]]
+  lab        = "tiny-linux-experiments/micro-linux-x86_64.toml"
+  learn      = "the automated from-source kernel + static BusyBox build → getty/login over serial."
+  checkpoint = "reach a `login:` prompt (root/micro) built entirely from source on `q35`."
+  [[path.step]]
+  lab        = "tiny-linux-experiments/micro-linux-x86_64-microvm.toml"
+  learn      = "the same artifacts on QEMU's real `microvm` machine (qboot, virtio-mmio)."
+  checkpoint = "boots on the microvm device model; note the faster boot vs `q35`."
+  [[path.step]]
+  lab        = "tiny-linux-experiments/micro_linux_dhcp_lease/"
+  learn      = "the from-source distro pulls a DHCP lease over a virtio NIC."
+  checkpoint = "`udhcpc` (or u-root `dhclient` on riscv64) acquires an address; `ip addr` shows it."
+  [[path.step]]
+  lab        = "tiny-linux-experiments/micro-linux-aarch64.toml"
+  tags       = ["🐌"]
+  learn      = "cross-compile and boot a foreign architecture on QEMU `virt` under TCG."
+  checkpoint = "boots arm64 to a login; try the riscv64/ppc64le/s390x twins and explain each console quirk (HVC on pseries, SCLP→ttyS0 on s390x)."
+  [[path.step]]
+  lab        = "tiny-linux-experiments/floppinux/"
+  learn      = "a whole bootable Linux on a 1.44 MB floppy (syslinux FAT)."
+  checkpoint = "`qemu-system-i386 -fda floppinux.img -cpu 486` boots to a root shell."
+  [[path.step]]
+  lab        = "tiny-linux-experiments/minimal-arm-linux-qemu/"
+  learn      = "a single static C binary as PID 1 on PXA270 — a from-scratch kernel running one program."
+  checkpoint = "`qemu-system-arm -M mainstone` prints 'Tiny init …'; understand why you cannot log in (no shell/getty)."
+  [[path.branch]]
+  lab = "tiny-linux-experiments/floppinux/floppinux-2.88mb/"
+  why = "the 2.88 MB extended-density variant + the `BUSYBOX_FULL=1` (~400-applet) option that only fits the bigger floppy."
+
+[[path]]
+id         = "boot-and-crash"
+title      = "The boot path & kernel-crash forensics"
+difficulty = "🔴"
+est        = "⏱ half-day+"
+prereqs    = []
+audience   = "you can bring up a Debian VM; comfort with GRUB/serial helps"
+goal       = "Own every stage from firmware to a captured kernel panic: interrupt the boot loader, force and dissect a crash, then replace the firmware's boot logic with Linux itself."
+  [[path.step]]
+  lab        = "vm-examples/vm-debian-amd64.toml"
+  learn      = "a baseline KVM cloud VM to experiment on."
+  checkpoint = "`lab-vm.sh ssh` logs you in."
+  [[path.step]]
+  lab        = "root-password-reset/"
+  tags       = ["🔑"]
+  learn      = "console/boot access equals root — via `init=/bin/bash` or `rd.break`."
+  checkpoint = "reset root on the VM; the OLD password is rejected and the NEW one works; `/proc/cmdline` proves your GRUB edit took (mind the serial char-drop gotcha)."
+  [[path.step]]
+  lab        = "kdump-kexec-lab/"
+  learn      = "arm kdump, force a panic, let the kexec capture kernel save a vmcore, then read it in `crash`."
+  checkpoint = "`echo c > /proc/sysrq-trigger` yields a ~42 MB vmcore in `/var/crash`; `crash` `sym` resolves the panic to `test-module.c:8`."
+  [[path.step]]
+  lab        = "linuxboot-uefi-kexec/"
+  learn      = "firmware is just software: u-root as the firmware's `init`, which `kexec`s the real OS."
+  checkpoint = "two 'Welcome to u-root!' banners + a `[0.000000]` clock reset (Tier C fast-loop → Tier B UKI on OVMF → Tier A coreboot ROM); the System-Transparency capstone boots ONLY a signed OSPKG and refuses a rogue one."
+
+[[path]]
+id         = "netboot-pipeline"
+title      = "The netboot pipeline: build → serve → boot"
+difficulty = "🟡"
+est        = "⏱ half-day+"
+prereqs    = ["container-internals"]
+audience   = "you can build a chroot and run a VM"
+goal       = "Turn a root filesystem into something a machine boots over the network, at three fidelity tiers — minimal, networked-busybox, full-systemd."
+  [[path.step]]
+  lab        = "chroot-netboot-minimal.toml"
+  tags       = ["🔑"]
+  learn      = "kernel + BusyBox + an auto-written `/init`, no networking — Tier 1."
+  checkpoint = "boots to a BusyBox shell entirely in RAM."
+  [[path.step]]
+  lab        = "chroot-netboot-busybox.toml"
+  tags       = ["🔑"]
+  learn      = "add iproute2/ping/curl → a fast, networked RAM shell — Tier 2."
+  checkpoint = "(paired with the next step) `curl` succeeds from a RAM-only shell."
+  [[path.step]]
+  lab        = "vm-netboot-direct.toml"
+  learn      = "boot the Tier-2 initrd via QEMU `-kernel/-initrd` — the short debug loop, no iPXE."
+  checkpoint = "kernel + initrd boot directly to the networked shell."
+  [[path.step]]
+  lab        = "chroot-netboot-full.toml"
+  tags       = ["🔑"]
+  learn      = "systemd PID 1 + SSH + cloud-init from RAM (~300–500 MB initrd) — Tier 3."
+  checkpoint = "(with the next step) you SSH into a diskless systemd system."
+  [[path.step]]
+  lab        = "vm-netboot-full.toml"
+  learn      = "give the VM enough RAM to unpack ~1 GB of initrd."
+  checkpoint = "boots the full systemd initrd; `systemctl` works with no disk."
+  [[path.step]]
+  lab        = "debian-http-boot/"
+  tags       = ["🔗"]
+  learn      = "Finnegan's boot-over-HTTP: a full systemd rootfs run from RAM via a verbatim hand-rolled `/init`."
+  checkpoint = "explain why initramfs-as-rootfs needs no `switch_root`; MANUAL_TESTING boots it end-to-end."
+  [[path.step]]
+  lab        = "podman-netboot-server.toml"
+  tags       = ["🪶"]
+  learn      = "serve the kernel + initrd over HTTP (:8181), rootless."
+  checkpoint = "`curl http://localhost:8181/…` fetches the artifacts."
+  [[path.step]]
+  lab        = "vm-netboot-ipxe.toml"
+  learn      = "an iPXE disk fetches kernel + initrd over HTTP — simulates real PXE hardware."
+  checkpoint = "iPXE chainloads and boots the served initrd."
+  [[path.step]]
+  lab        = "pxe-boot-mechanics/"
+  learn      = "watch the transport (TFTP then HTTP), then UEFI Secure Boot enforcement."
+  checkpoint = "`pxe-fetch.sh` records a TFTP then an HTTP fetch; Secure Boot rejects an unsigned iPXE binary."
+  [[path.branch]]
+  lab = "docker-examples/docker-netboot-server.toml"
+  why = "the rootful Docker equivalent of the serve step."
+  [[path.branch]]
+  lab = "podman-pxe-dhcp.toml"
+  why = "🔑 real-hardware ProxyDHCP + TFTP responder (needs `--network=host` to hear DHCP broadcasts)."
+
+[[path]]
+id         = "zero-touch-provisioning"
+title      = "Zero-touch OS provisioning: PXE installs & galleries"
+difficulty = "🟡"
+est        = "⏱ half-day+"
+prereqs    = ["netboot-pipeline"]
+audience   = "you can serve + netboot; now install an OS unattended"
+goal       = "Go from 'boots the network' to 'installs an OS with no keystrokes' across Anaconda/kickstart and debian-installer/preseed — then pick any variant from an upstream gallery."
+  [[path.step]]
+  lab        = "almalinux-pxe-lab/"
+  tags       = ["🔗"]
+  learn      = "zero-touch AlmaLinux 9 via an Anaconda kickstart."
+  checkpoint = "Anaconda installs with no keystrokes; the second boot comes off disk."
+  [[path.step]]
+  lab        = "rocky-pxe-lab/"
+  tags       = ["🔗"]
+  learn      = "the Rocky twin (+ the CIQ Lorax real-hardware path)."
+  checkpoint = "the full ~15-min install completes and reboots into the OS."
+  [[path.step]]
+  lab        = "kali-pxe-lab/"
+  tags       = ["🔗"]
+  learn      = "the debian-installer + preseed cousin (not Anaconda)."
+  checkpoint = "a preseed install completes; explain the `vda`-pinning that stops d-i clobbering the iPXE ROM disk."
+  [[path.step]]
+  lab        = "libvirt-ipxe-http-pxe/"
+  tags       = ["🔗"]
+  learn      = "libvirt's own iPXE ROM fetches the DHCP bootfile over HTTP — no TFTP; then TLS verified vs the lab CA."
+  checkpoint = "the whole flow comes off one `python3 -m http.server`; with the `https/` extension a rogue cert makes iPXE refuse."
+  [[path.step]]
+  lab        = "virtualbmc-ipmi-lab/"
+  learn      = "give a VM an IPMI BMC and drive it like bare metal — `ipmitool … bootdev pxe`."
+  checkpoint = "power round-trip, then a PXE kickstart install, then `bootdev disk` boots the OS you just provisioned (the OpenStack-Ironic lifecycle in miniature)."
+  [[path.step]]
+  lab        = "FREEBSD-simple-templating-serving-RHEL-kickstart-files/"
+  learn      = "a FreeBSD box `sed`-templates a kickstart and serves AlmaLinux via an OEMDRV ISO (no PXE at all)."
+  checkpoint = "`ksvalidator` passes the rendered `ks.cfg`; the OEMDRV ISO builds on both GNU and BSD `sed`."
+  [[path.step]]
+  lab        = "rocky-kickstart-gallery/"
+  learn      = "install any of ~34 upstream Rocky-9 kickstart variants."
+  checkpoint = "`select-kickstart.sh GenericCloud-Base` then a zero-touch install boots off disk."
+  [[path.step]]
+  lab        = "kali-preseed-gallery/"
+  learn      = "pick from ~15 upstream Kali preseed variants."
+  checkpoint = "`select-preseed.sh headless-default` installs; explain the `/dev/sda`→`/dev/vda` auto-patch."
+  [[path.step]]
+  lab        = "almalinux-kickstart-gallery/"
+  learn      = "the AlmaLinux Packer kickstarts — where the `sda`→`vda` rewrite is load-bearing."
+  checkpoint = "`select-kickstart.sh gencloud` installs; the fetch fails closed if any `sda` survives the rewrite."
+
+[[path]]
+id         = "chroot-to-system"
+title      = "Chroot → running system: the cross-phase bridges"
+difficulty = "🟡"
+est        = "⏱ ~1–2h"
+prereqs    = ["container-internals"]
+audience   = "you can build a chroot; now boot it as a VM, image, or container"
+goal       = "Build a root filesystem once (Phase 1), then run the SAME artifact as a bootable VM, a rootless OCI image, and an LXD container."
+  [[path.step]]
+  lab        = "chroot-examples/chroot-debian-bookworm.toml"
+  tags       = ["🔑"]
+  learn      = "the source rootfs every bridge starts from."
+  checkpoint = "the chroot builds and enters cleanly."
+  [[path.step]]
+  lab        = "vm-examples/vm-from-chroot-debian.toml"
+  learn      = "chroot → a bootable BIOS qcow2 (MBR + extlinux + ext4)."
+  checkpoint = "the qcow2 boots as a real VM to a login."
+  [[path.step]]
+  lab        = "podman-examples/podman-from-chroot.toml"
+  tags       = ["🪶"]
+  learn      = "chroot → a rootless OCI image."
+  checkpoint = "`podman run` the imported tree drops you into it."
+  [[path.step]]
+  lab        = "lxd-examples/lxd-from-chroot.toml"
+  learn      = "chroot → an LXD/Incus container image."
+  checkpoint = "`incus launch` the imported image starts it."
+  [[path.step]]
+  lab        = "offsec-awae-vm/"
+  tags       = ["🔒"]
+  learn      = "an automated Kali chroot → headless BIOS VM carrying the OffSec AWAE (WEB-300) toolset."
+  checkpoint = "`build-vm.sh --smoke` proves the pipeline; the VM boots with the WEB-300 tools installed."
+  [[path.step]]
+  lab        = "rhel-bootc-minimal/"
+  learn      = "a *minimal* bootc base image → `bootc install to-disk` → boot it as a real OS."
+  checkpoint = "the image is ~59% smaller than stock; serial login shows an `ostree=` boot of the image's own kernel."
+
+[[path]]
+id         = "kali-security"
+title      = "Offensive security with Kali, across every substrate"
+difficulty = "🔴"
+est        = "⏱ half-day+"
+prereqs    = ["container-internals", "chroot-to-system"]
+audience   = "🔒 authorized targets only — throwaway/isolated networks"
+goal       = "Stand up Kali as a chroot, a VM, a built image, and a PXE install — ending in an agentic LLM that drives real Kali tools."
+  [[path.step]]
+  lab        = "vm-kali-amd64.toml"
+  learn      = "the prebuilt Kali rolling VM — the quickest way in."
+  checkpoint = "boot Kali; `nmap` a loopback target returns a scan."
+  [[path.step]]
+  lab        = "kali-nonroot-chroot/"
+  tags       = ["🔒"]
+  learn      = "a non-root Kali chroot + a top-10 tool slice (contrib/non-free + archive keyring)."
+  checkpoint = "`nmap`/`sqlmap` run as the non-root `kali` user; root is locked (`su` fails)."
+  [[path.step]]
+  lab        = "kali-vm-builder/"
+  tags       = ["🔒"]
+  learn      = "Kali's official `kali-vm`/`debos` image factory."
+  checkpoint = "build your own QCOW2 (`--headless`); `run-graphical.sh` boots it."
+  [[path.step]]
+  lab        = "kali-preseed-gallery/"
+  learn      = "install Kali unattended via a preseed variant."
+  checkpoint = "a zero-touch variant install completes and reboots into Kali."
+  [[path.step]]
+  lab        = "offsec-awae-vm/"
+  tags       = ["🔒"]
+  learn      = "the AWAE (WEB-300) toolset chroot → VM (shared with the chroot-to-system path)."
+  checkpoint = "the VM boots with the WEB-300 tooling ready."
+  [[path.step]]
+  lab        = "kali-llm-lab/"
+  tags       = ["🪶"]
+  learn      = "a rootless Ollama + Open WebUI pod reached over SSH-forward."
+  checkpoint = "Ollama answers a prompt over the forwarded port."
+  [[path.step]]
+  lab        = "kali-llm-desktop-lab/"
+  learn      = "the full XFCE VM with the real 5ire GUI + mcp-kali-server — the agentic payoff."
+  checkpoint = "the LLM invokes `nmap` through mcp-kali-server against an isolated target."
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  COLLECTIONS  (themed, unordered bundles)
+# ════════════════════════════════════════════════════════════════════════════
+
+[[collection]]
+id      = "matt-might-corpus"
+title   = "The Matt Might corpus"
+theme   = "Same 'vendor the page, build a learner sandbox' shape, one author — shell to neural nets."
+members = ["UNIX_novice_survival_guide/", "shell-intermediate-programming-by-example/",
+           "UNIX-sculpting-text-regex-grep-sed-awk/", "AI-build-a-perceptron/"]
+
+[[collection]]
+id      = "tutorial-hand-walks"
+title   = "Tutorial hand-walks"
+theme   = "A disposable container reproducing the tutorial author's OWN environment, so you type the recipe by hand."
+members = ["../micro-linux/hand-walk/", "../phase1-chroot/hand-walk/",
+           "debian-http-boot/hand-walk/", "almalinux-pxe-lab/hand-walk/",
+           "rocky-pxe-lab/hand-walk/", "kali-llm-lab/hand-walk/",
+           "tiny-linux-experiments/floppinux/hand-walk/"]
+
+[[collection]]
+id      = "magazine-reproductions"
+title   = "Magazine & blog reproductions"
+theme   = "Labs operationalizing a specific published write-up (Linux Journal, kaizou.org, LinuxBoot)."
+members = ["kdump-kexec-lab/", "tiny-internet-project/", "linuxboot-uefi-kexec/",
+           "tiny-linux-experiments/minimal-arm-linux-qemu/"]
+
+[[collection]]
+id      = "kali-offensive"
+title   = "Kali / offensive-security suite"
+theme   = "🔒 Kali across every substrate — authorized targets only."
+members = ["vm-kali-amd64.toml", "kali-nonroot-chroot/", "kali-vm-builder/",
+           "kali-pxe-lab/", "kali-preseed-gallery/", "offsec-awae-vm/",
+           "kali-llm-lab/", "kali-llm-desktop-lab/"]
+
+[[collection]]
+id      = "libvirt-labs"
+title   = "libvirt-native labs"
+theme   = "Talk to qemu:///system / libvirt directly, not through the phase tools."
+members = ["virtualbmc-ipmi-lab/", "libvirt-ipxe-http-pxe/"]
+
+[[collection]]
+id      = "from-source-micro-distros"
+title   = "From-source micro-distros"
+theme   = "Compile a kernel + userspace from upstream source and boot it in RAM or off a floppy."
+members = ["tiny-linux-experiments/micro-linux-x86_64.toml",
+           "tiny-linux-experiments/micro-linux-riscv64.toml",
+           "tiny-linux-experiments/micro_linux_dhcp_lease/",
+           "tiny-linux-experiments/floppinux/",
+           "tiny-linux-experiments/minimal-arm-linux-qemu/"]
+
+[[collection]]
+id      = "pki-lab-ca"
+title   = "PKI / lab-CA consumers"
+theme   = "One reusable trust anchor for real HTTPS + signed artifacts across labs."
+members = ["lab-ca/", "linuxboot-uefi-kexec/", "libvirt-ipxe-http-pxe/https/"]
+
+[[collection]]
+id      = "close-to-the-metal"
+title   = "Close to the metal"
+theme   = "Firmware, boot, and RAM-only systems — the lowest layers."
+members = ["linuxboot-uefi-kexec/", "kdump-kexec-lab/", "root-password-reset/",
+           "tiny-linux-experiments/", "pxe-boot-mechanics/", "chroot-netboot-minimal.toml"]
+
+[[collection]]
+id      = "multi-arch-tcg"
+title   = "Multi-arch / TCG"
+theme   = "🐌 Foreign architectures emulated under TCG — no exotic hardware needed."
+members = ["vm-examples/vm-debian-aarch64.toml",
+           "tiny-linux-experiments/micro-linux-aarch64.toml",
+           "tiny-linux-experiments/micro-linux-riscv64.toml",
+           "tiny-linux-experiments/micro-linux-ppc64le.toml",
+           "tiny-linux-experiments/micro-linux-s390x.toml",
+           "podman-examples/podman-multiarch-build.toml",
+           "../phase1-chroot/hand-walk/"]
+
+[[collection]]
+id      = "provenance-vendored"
+title   = "Provenance-vendored labs"
+theme   = "Ship a byte-exact upstream-tutorial/ archive per the repo's provenance convention."
+members = ["chroot-breakout/", "exploring-containers/", "kdump-kexec-lab/",
+           "FREEBSD-simple-templating-serving-RHEL-kickstart-files/",
+           "virtualbmc-ipmi-lab/", "linuxboot-uefi-kexec/",
+           "tiny-linux-experiments/minimal-arm-linux-qemu/",
+           "libvirt-ipxe-http-pxe/", "rhel-bootc-minimal/",
+           "shell-novice-workshop/", "shell-intermediate-workshop/",
+           "debian-http-boot/"]
+
+[[collection]]
+id      = "chroot-mechanics"
+title   = "Chroot mechanics & the rootless vise"
+theme   = "The chroot specs that aren't a journey step on their own — flavours, injection, non-root users, and why a newer host blocks rootless full bases."
+members = ["chroot-examples/chroot-rocky9-vsftpd.toml",
+           "chroot-examples/chroot-write-files-demo.toml",
+           "chroot-examples/chroot-host-copy-busybox.toml",
+           "chroot-examples/chroot-nspawn-managed.toml",
+           "kali-nonroot-chroot/", "debian-nonroot-chroot/"]
+
+[[collection]]
+id      = "services-and-infra"
+title   = "Services & infrastructure"
+theme   = "Multi-node service topologies and configuration management."
+members = ["tiny-internet-project/", "ansible/almalinux-infra-ansible/",
+           "docker-examples/docker-3svc-topology.toml"]
+
+[[collection]]
+id      = "build-a-tool"
+title   = "Build a tool, don't just use one"
+theme   = "Compile the thing itself — a shell, a neural net — from source."
+members = ["oils-shell-container/", "AI-build-a-perceptron/"]
+
+
+# ════════════════════════════════════════════════════════════════════════════
+#  CAPSTONES  (pan-phase demos that belong to no single journey)
+# ════════════════════════════════════════════════════════════════════════════
+
+[[capstone]]
+lab  = "lab-unified-demo.toml"
+note = "one TOML feeding all five phase tools — the capstone of the whole toolkit."
+
+[[capstone]]
+lab  = "netboot-lab.toml"
+note = "the full Debian netboot pipeline in one file: build initrd (P1) → serve (P4) → direct-boot (P2)."
