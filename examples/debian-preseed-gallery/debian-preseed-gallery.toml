@@ -1,0 +1,71 @@
+# Unified Debian 13 "trixie" preseed GALLERY lab — one TOML feeds Phase 4 + Phase 2.
+#
+# The "pick-a-variant" companion to examples/debian-pxe-lab: same iPXE + nginx +
+# QEMU pxe-install machinery, but any of six partitioning variants (generated
+# from Debian's official example) selectable via select-preseed.sh.
+#
+# Each phase tool reads only the blocks it owns:
+#   phase4-podman/lab-podman.sh   reads [[service]] with engine="podman"
+#   phase2-qemu-vm/lab-vm.sh      reads [[vm]]
+#
+# ─── Workflow — run these in order against this file ─────────────────────────
+#
+#   # 1. Generate the variant gallery into ~/netboot/debian-preseed/:
+#   examples/debian-preseed-gallery/fetch-preseeds.sh
+#
+#   # 2. Fetch + verify the trixie d-i kernel + initrd (reuses the pxe-lab helper):
+#   examples/debian-pxe-lab/fetch-debian-installer.sh --arch amd64
+#
+#   # 3. Pick a variant and build iPXE for it (bakes preseed/url into boot.ipxe):
+#   examples/debian-preseed-gallery/select-preseed.sh lvm-atomic
+#
+#   # 4. Bring up the rootless nginx artifact server (Phase 4):
+#   phase4-podman/lab-podman.sh up --config examples/debian-preseed-gallery/debian-preseed-gallery.toml
+#
+#   # 5. Create and start the installer VM (Phase 2) — unattended:
+#   phase2-qemu-vm/lab-vm.sh create --config examples/debian-preseed-gallery/debian-preseed-gallery.toml
+#   phase2-qemu-vm/lab-vm.sh start  debian-preseed-install
+#   phase2-qemu-vm/lab-vm.sh ssh    debian-preseed-install   # login: debian / debian  (or root / lab)
+#
+# Switch variants: re-run select-preseed.sh <other-variant>, then destroy +
+# recreate the VM (a fresh blank disk) and start again.
+#
+# Tear down:
+#   phase4-podman/lab-podman.sh down    --lab debian-preseed
+#   phase2-qemu-vm/lab-vm.sh    destroy debian-preseed-install --force
+#
+# Update /home/sqs to your $HOME if different (no shell expansion in TOML).
+
+[lab]
+name        = "debian-preseed"
+description = "Debian 13 (trixie) preseed gallery: rootless nginx serves the Debian-installer kernel/initrd + a selectable preseed variant (Phase 4); QEMU target VM installs via iPXE -> d-i -> preseed and reboots into Debian (Phase 2). Variants generated from Debian's official example-preseed.txt."
+tags        = ["debian", "trixie", "debian-installer", "preseed", "gallery", "pxe", "netboot", "zero-touch"]
+
+# ─── Phase 4: rootless nginx serving netboot artifacts ─────────────────────
+# Serves ~/netboot/ on host port 8181; the d-i kernel/initrd live under
+# ~/netboot/debian/ (shared with debian-pxe-lab), the variants under
+# ~/netboot/debian-preseed/.  lab-podman.sh auto-appends :Z under SELinux.
+[[service]]
+name    = "http"
+engine  = "podman"
+image   = "docker.io/library/nginx:alpine"
+ports   = ["8181:80"]
+volumes = ["/home/sqs/netboot:/usr/share/nginx/html:ro"]
+
+# ─── Phase 2: QEMU installer VM (pxe-install: NIC iPXE runs boot.ipxe) ──────
+# Same boot mechanics as examples/debian-pxe-lab (see that TOML for the full
+# boot-loop explanation).  The only difference is WHICH preseed boot.ipxe points
+# at — set by select-preseed.sh <variant> before you start.
+# cloud_init=false: d-i provisions root + the debian user from the preseed.
+[[vm]]
+name           = "debian-preseed-install"
+backend        = "pxe-install"          # NIC's iPXE ROM runs boot.ipxe directly; no binary chainload
+firmware       = "bios"                  # SeaBIOS + NIC option-ROM path (UEFI: drop this + use ipxe.efi)
+install_target = "20G"                   # blank disk, bootindex=0: install dest + post-install boot disk
+mac            = "52:54:00:de:b1:02"     # valid hex; "deb1" ~ debian, 02 = gallery
+arch           = "x86_64"
+memory         = "1536M"
+cpus           = 2
+cloud_init     = false                   # d-i provisions directly; no datasource
+pxe_dir        = "/home/sqs/netboot"     # QEMU slirp TFTP root (serves boot.ipxe)
+pxe_bootfile   = "boot.ipxe"             # iPXE script (variant baked in by select-preseed.sh), run by QEMU's native iPXE NIC ROM

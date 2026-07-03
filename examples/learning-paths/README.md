@@ -89,9 +89,9 @@ These are orthogonal to 00-INDEX's *run-cost* tags, which are carried through un
 
 ### Provenance-vendored labs
 
-*Ship a byte-exact upstream-tutorial/ archive per the repo's provenance convention.*
+*Ship a byte-exact upstream archive (upstream-tutorial/ or upstream-preseed/) per the repo's provenance convention.*
 
-[`chroot-breakout`](../chroot-breakout/) · [`exploring-containers`](../exploring-containers/) · [`kdump-kexec-lab`](../kdump-kexec-lab/) · [`FREEBSD-simple-templating-serving-RHEL-kickstart-files`](../FREEBSD-simple-templating-serving-RHEL-kickstart-files/) · [`virtualbmc-ipmi-lab`](../virtualbmc-ipmi-lab/) · [`linuxboot-uefi-kexec`](../linuxboot-uefi-kexec/) · [`tiny-linux-experiments/minimal-arm-linux-qemu`](../tiny-linux-experiments/minimal-arm-linux-qemu/) · [`libvirt-ipxe-http-pxe`](../libvirt-ipxe-http-pxe/) · [`rhel-bootc-minimal`](../rhel-bootc-minimal/) · [`shell-novice-workshop`](../shell-novice-workshop/) · [`shell-intermediate-workshop`](../shell-intermediate-workshop/) · [`debian-http-boot`](../debian-http-boot/)
+[`chroot-breakout`](../chroot-breakout/) · [`exploring-containers`](../exploring-containers/) · [`kdump-kexec-lab`](../kdump-kexec-lab/) · [`FREEBSD-simple-templating-serving-RHEL-kickstart-files`](../FREEBSD-simple-templating-serving-RHEL-kickstart-files/) · [`virtualbmc-ipmi-lab`](../virtualbmc-ipmi-lab/) · [`linuxboot-uefi-kexec`](../linuxboot-uefi-kexec/) · [`tiny-linux-experiments/minimal-arm-linux-qemu`](../tiny-linux-experiments/minimal-arm-linux-qemu/) · [`libvirt-ipxe-http-pxe`](../libvirt-ipxe-http-pxe/) · [`rhel-bootc-minimal`](../rhel-bootc-minimal/) · [`shell-novice-workshop`](../shell-novice-workshop/) · [`shell-intermediate-workshop`](../shell-intermediate-workshop/) · [`debian-http-boot`](../debian-http-boot/) · [`debian-pxe-lab`](../debian-pxe-lab/) · [`debian-preseed-gallery`](../debian-preseed-gallery/)
 
 ### Chroot mechanics & the rootless vise
 

@@ -306,9 +306,14 @@ goal       = "Go from 'boots the network' to 'installs an OS with no keystrokes'
   learn      = "the Rocky twin (+ the CIQ Lorax real-hardware path)."
   checkpoint = "the full ~15-min install completes and reboots into the OS."
   [[path.step]]
+  lab        = "debian-pxe-lab/"
+  tags       = ["🔗"]
+  learn      = "the debian-installer + preseed cousin (not Anaconda) — plain Debian 13 (trixie), the UPSTREAM of the whole d-i family, distilled from Debian's official example."
+  checkpoint = "an unattended preseed install completes and reboots into trixie; `lsblk` shows the atomic layout (`vda1` ext4 `/`, `vda5` swap)."
+  [[path.step]]
   lab        = "kali-pxe-lab/"
   tags       = ["🔗"]
-  learn      = "the debian-installer + preseed cousin (not Anaconda)."
+  learn      = "the same d-i + preseed machinery on Kali (the offensive-distro sibling of debian-pxe-lab)."
   checkpoint = "a preseed install completes; explain the `vda`-pinning that stops d-i clobbering the iPXE ROM disk."
   [[path.step]]
   lab        = "libvirt-ipxe-http-pxe/"
@@ -331,6 +336,13 @@ goal       = "Go from 'boots the network' to 'installs an OS with no keystrokes'
   lab        = "kali-preseed-gallery/"
   learn      = "pick from ~15 upstream Kali preseed variants."
   checkpoint = "`select-preseed.sh headless-default` installs; explain the `/dev/sda`→`/dev/vda` auto-patch."
+  [[path.step]]
+  lab        = "debian-preseed-gallery/"
+  learn      = "the Debian gallery — six partitioning variants (regular/lvm/crypto/home/multi/minimal) GENERATED from Debian's one official example, not fetched from an upstream catalog like Kali's."
+  checkpoint = "`select-preseed.sh crypto-atomic` installs; `lsblk` shows LUKS → LVM. Explain why Debian derives variants where Kali fetches them."
+  verify_cmd = "examples/debian-preseed-gallery/fetch-preseeds.sh --no-refresh --only crypto-atomic --out /tmp/dpg-smoke >/dev/null 2>&1 && grep -q '^d-i partman-crypto/passphrase' /tmp/dpg-smoke/crypto-atomic.cfg && echo GEN-OK"
+  verify_marker = "GEN-OK"
+  verify_host = true
   [[path.step]]
   lab        = "almalinux-kickstart-gallery/"
   learn      = "the AlmaLinux Packer kickstarts — where the `sda`→`vda` rewrite is load-bearing."
@@ -493,14 +505,14 @@ members = ["vm-examples/vm-debian-aarch64.toml",
 [[collection]]
 id      = "provenance-vendored"
 title   = "Provenance-vendored labs"
-theme   = "Ship a byte-exact upstream-tutorial/ archive per the repo's provenance convention."
+theme   = "Ship a byte-exact upstream archive (upstream-tutorial/ or upstream-preseed/) per the repo's provenance convention."
 members = ["chroot-breakout/", "exploring-containers/", "kdump-kexec-lab/",
            "FREEBSD-simple-templating-serving-RHEL-kickstart-files/",
            "virtualbmc-ipmi-lab/", "linuxboot-uefi-kexec/",
            "tiny-linux-experiments/minimal-arm-linux-qemu/",
            "libvirt-ipxe-http-pxe/", "rhel-bootc-minimal/",
            "shell-novice-workshop/", "shell-intermediate-workshop/",
-           "debian-http-boot/"]
+           "debian-http-boot/", "debian-pxe-lab/", "debian-preseed-gallery/"]
 
 [[collection]]
 id      = "chroot-mechanics"

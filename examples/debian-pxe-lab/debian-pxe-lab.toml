@@ -1,0 +1,92 @@
+# Unified Debian 13 "trixie" zero-touch PXE lab — one TOML feeds Phase 4 and Phase 2.
+#
+# Each phase tool reads only the blocks it owns and silently ignores the rest:
+#   phase4-podman/lab-podman.sh   reads [[service]] with engine="podman"
+#   phase2-qemu-vm/lab-vm.sh      reads [[vm]]
+#
+# Debian is the UPSTREAM of the Debian-installer (d-i + preseed) family: the
+# Kali PXE lab (examples/kali-pxe-lab) is the same machinery pointed at the Kali
+# mirror.  Both are the d-i cousins of the Rocky/AlmaLinux Anaconda+kickstart
+# labs.  Same iPXE + nginx + QEMU boot machinery; only the installer family
+# (d-i, driven by a preseed) and the mirror differ.
+# Reference: https://www.debian.org/releases/trixie/example-preseed.txt
+#
+# ─── Workflow — run these in order against this file ─────────────────────────
+#
+#   # 1. Fetch + verify the Debian trixie d-i kernel + initrd into ~/netboot/debian/:
+#   examples/debian-pxe-lab/fetch-debian-installer.sh --arch amd64
+#
+#   # 2. Stage the preseed into the served directory:
+#   cp examples/debian-pxe-lab/debian-preseed.cfg ~/netboot/debian/
+#
+#   # 3. Build iPXE with the d-i boot params (preseed URL + serial console):
+#   netboot/build-ipxe.sh --server http://10.0.2.2:8181 \
+#       --kernel-path /debian/linux --initrd-path /debian/initrd.gz \
+#       --append 'auto=true priority=critical preseed/url=http://10.0.2.2:8181/debian/debian-preseed.cfg DEBIAN_FRONTEND=text console=ttyS0,115200n8 ---'
+#       # The trailing `---` hands the post-`---` args to the INSTALLED kernel.
+#       # d-i fetches the preseed early; `auto=true priority=critical` makes it
+#       # fully unattended.
+#
+#   # 4. Bring up the rootless nginx artifact server (Phase 4):
+#   phase4-podman/lab-podman.sh up --config examples/debian-pxe-lab/debian-pxe-lab.toml
+#
+#   # 5. Create and start the installer VM (Phase 2) — unattended:
+#   phase2-qemu-vm/lab-vm.sh create --config examples/debian-pxe-lab/debian-pxe-lab.toml
+#   phase2-qemu-vm/lab-vm.sh start  debian-pxe-install   # walk away; comes back installed
+#   phase2-qemu-vm/lab-vm.sh ssh    debian-pxe-install   # login: debian / debian  (or root / lab)
+#
+# Tear down:
+#   phase4-podman/lab-podman.sh down    --lab debian-pxe
+#   phase2-qemu-vm/lab-vm.sh    destroy debian-pxe-install --force
+#
+# Real hardware: serve pxelinux/GRUB from the official netboot.tar.gz over
+# dnsmasq DHCP+TFTP — see examples/debian-pxe-lab/README.md §"Path B".
+#
+# Update /home/sqs to your $HOME if different (no shell expansion in TOML).
+
+[lab]
+name        = "debian-pxe"
+description = "Zero-touch Debian 13 (trixie) PXE install: rootless nginx serves the Debian-installer kernel/initrd + preseed (Phase 4); QEMU target VM installs via iPXE -> d-i -> preseed and reboots into Debian (Phase 2)."
+tags        = ["debian", "trixie", "debian-installer", "preseed", "pxe", "netboot", "zero-touch"]
+
+# ─── Phase 4: rootless nginx serving netboot artifacts ─────────────────────
+# Serves ~/netboot/ on host port 8181; the Debian bits live under ~/netboot/debian/
+# (so they never collide with the Kali ~/netboot/kali/ or the Rocky/Alma
+# vmlinuz/initrd.img in ~/netboot/).  lab-podman.sh auto-appends :Z under SELinux.
+[[service]]
+name    = "http"
+engine  = "podman"
+image   = "docker.io/library/nginx:alpine"
+ports   = ["8181:80"]
+volumes = ["/home/sqs/netboot:/usr/share/nginx/html:ro"]
+
+# ─── Phase 2: QEMU installer VM (pxe-install: NIC iPXE runs boot.ipxe) ──────
+# SeaBIOS tries the blank target disk (bootindex=0) → fails when empty → falls to
+# the NIC's option ROM ("Booting from ROM").  QEMU's virtio-net ROM *is* iPXE, so
+# it TFTP-fetches boot.ipxe and runs it directly (the file starts with #!ipxe) →
+# fetches the d-i kernel/initrd over HTTP → installs to /dev/vda → reboots.
+# Post-install the disk (bootindex=0) boots Debian; the NIC ROM is never reached
+# again → the loop terminates.
+#
+#   Why boot.ipxe and not ipxe.pxe?  Running the script in the NIC's *native*
+#   iPXE avoids chainloading our ipxe.pxe binary, whose UNDI re-init + second
+#   DHCP is the flaky step that can drop to "No bootable device".  Real hardware
+#   whose firmware PXE is NOT iPXE: set pxe_bootfile = "ipxe.pxe" (BIOS) /
+#   "ipxe.efi" (UEFI) to chainload the iPXE binary (which embeds this same
+#   script) first.  build-ipxe builds boot.ipxe + ipxe.pxe + ipxe.efi.
+#   UEFI here: drop `firmware` and set pxe_bootfile = "ipxe.efi".
+#
+# cloud_init=false: d-i provisions root + the debian user from the preseed.
+# memory: 1.5 GB is comfortable for d-i (unpacks the initrd + runs apt).
+[[vm]]
+name           = "debian-pxe-install"
+backend        = "pxe-install"          # NIC's iPXE ROM runs boot.ipxe directly; no binary chainload
+firmware       = "bios"                  # SeaBIOS + NIC option-ROM path (UEFI: drop this + use ipxe.efi)
+install_target = "20G"                   # blank disk, bootindex=0: install dest + post-install boot disk
+mac            = "52:54:00:de:b1:01"     # valid hex; "deb1" ~ debian
+arch           = "x86_64"
+memory         = "1536M"
+cpus           = 2
+cloud_init     = false                   # d-i provisions directly; no datasource
+pxe_dir        = "/home/sqs/netboot"     # QEMU slirp TFTP root (serves boot.ipxe)
+pxe_bootfile   = "boot.ipxe"             # iPXE script, run by QEMU's native iPXE NIC ROM (real HW w/ non-iPXE PXE: ipxe.pxe)
