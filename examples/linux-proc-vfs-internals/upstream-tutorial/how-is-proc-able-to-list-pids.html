@@ -1,0 +1,1062 @@
+<!doctype html>
+<html lang="en">
+  <head prefix="og: http://ogp.me/ns# article: http://ogp.me/ns/article#">
+    <title>How is /proc able to list process IDs? | ops.tips</title>
+
+<meta charset="utf-8">
+<meta http-equiv="content-type" content="text/html; charset=utf-8" >
+
+<meta name="viewport"     content="width=device-width,minimum-scale=1,initial-scale=1">
+<meta name="theme-color"  content="#ffffff">
+<meta name="description"  content="Go through how we can use syscalls to list directory entries and at which point procfs responds to that.">
+<meta name="author"       content="Ciro S. Costa">
+<meta name="keywords"     content="linux, procfs, process, pids">
+
+<meta name="twitter:card"     content="summary" />
+<meta name="twitter:creator"  content="@cirowrc" />
+<meta name="twitter:site"     content="@cirowrc" />
+
+
+<meta property="og:title"       content="How is /proc able to list process IDs?" />
+<meta property="og:type"        content="article">
+<meta property="og:url"         content="https://ops.tips/blog/how-is-proc-able-to-list-pids">
+<meta property="og:image"       content="https://ops.tips/blog/-/images/slash-proc.png" >
+<meta property="og:image:alt"   content="Article image" >
+<meta property="og:description" content="Go through how we can use syscalls to list directory entries and at which point procfs responds to that." >
+<meta property="og:site_name"   content="ops.tips">
+
+
+<meta property="article:author"         content="Ciro S. Costa">
+<meta property="article:published_time" content="2018-10-11T00:00:00&#43;0000">
+<meta property="article:tag"            content="linux">
+
+
+<meta name="google-site-verification" content="nJDg4CxanyHivDq4bwex7CwpV4qc2rpDW-PCr0HfsX8" />
+
+<link rel="feed" href="https://ops.tips/index.xml" type="application/rss+xml" title="ops.tips">
+<link rel="shortcut icon" href="https://ops.tips/favicon.ico">
+
+    <script type="application/ld+json">
+{
+  "@context" : "http://schema.org",
+  "@type" : "NewsArticle",
+  "articleSection" : "blog",
+  "name" : "How is \/proc able to list process IDs?",
+  "headline" : "How is \/proc able to list process IDs?",
+  "description" : "Go through how we can use syscalls to list directory entries and at which point procfs responds to that.",
+  "inLanguage" : "en-US",
+  "author": {
+    "@type": "Person",
+    "name": "Ciro S. Costa",
+    "sameAs": [
+        "https://twitter.com/cirowrc",
+        "https://www.linkedin.com/in/cirocosta/",
+        "https://github.com/cirocosta"
+    ],
+    "image": {
+      "@type": "ImageObject",
+      "url": "https:\/\/ops.tips\/blog/-/images/slash-proc.png",
+      "width": 800,
+      "height": 800
+    }
+  },
+  "creator": {
+    "@type": "Person",
+    "name": "Ciro S. Costa",
+    "sameAs": [
+        "https://twitter.com/cirowrc",
+        "https://www.linkedin.com/in/cirocosta/",
+        "https://github.com/cirocosta"
+    ],
+    "image": {
+      "@type": "ImageObject",
+      "url": "https:\/\/ops.tips\/me.jpg",
+      "width": 800,
+      "height": 800
+    }
+  },
+  "accountablePerson": {
+    "@type": "Person",
+    "name": "Ciro S. Costa",
+    "sameAs": [
+        "https://twitter.com/cirowrc",
+        "https://www.linkedin.com/in/cirocosta/",
+        "https://github.com/cirocosta"
+    ],
+    "image": {
+      "@type": "ImageObject",
+      "url": "https:\/\/ops.tips\/me.jpg",
+      "width": 800,
+      "height": 800
+    }
+  },
+  "copyrightHolder": {
+    "@type": "Person",
+    "name": "Ciro S. Costa",
+    "sameAs": [
+        "https://twitter.com/cirowrc",
+        "https://www.linkedin.com/in/cirocosta/",
+        "https://github.com/cirocosta"
+    ],
+    "image": {
+      "@type": "ImageObject",
+      "url": "https:\/\/ops.tips\/me.jpg",
+      "width": 800,
+      "height": 800
+    }
+  },
+  "copyrightYear" : "2018",
+  "datePublished" : "2018-10-11T00:00:00\u002b0000",
+  "dateModified" : "2018-10-11T00:00:00\u002b0000",
+  "publisher": {
+    "@type": "Organization",
+    "name": "ops.tips",
+    "url" : "https:\/\/ops.tips\/",
+    "logo": {
+      "@type": "ImageObject",
+      "url": "https:\/\/ops.tips\/opstips.png"
+    }
+  },
+  "wordCount" : "2474",
+  "image": {
+    "@type": "ImageObject",
+    "url": "https:\/\/ops.tips\/blog/-/images/slash-proc.png",
+    "width": 1200,
+    "height": 1200
+  },
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https:\/\/ops.tips\/blog/how-is-proc-able-to-list-pids"
+  },
+  "keywords" : [ "linux", "procfs", "process", "pids" ]
+}
+</script>
+
+  </head>
+
+  <body class="article">
+    <main class="main">
+
+  <header>
+    <h1 itemprop="name headline">How is /proc able to list process IDs?</h1>
+    <h2 itemprop="description">Go through how we can use syscalls to list directory entries and at which point procfs responds to that.</h2>
+
+    <aside>
+      <p>
+        by <a href="https://twitter.com/cirowrc">Ciro S. Costa</a> -
+        <time datetime="2018-10-11T00:00:00&#43;0000" itemprop="datePublished">
+          Oct 11, 2018
+        </time>
+      </p>
+
+      
+        <p>
+          tags:
+
+          
+            <a href="/tags/linux">
+              linux
+            </a>
+          
+        </p>
+      
+
+    </aside>
+  </header>
+
+  <article itemtype="http://schema.org/NewsArticle">
+    <section class= "article-body" itemprop="articleBody">
+      <p>Hey,</p>
+<p>Continuing with the <a href="/blog/a-month-of-proc/">Month of /proc</a>, today&rsquo;s blog post is about how reading <code>/proc</code> works (yep, the directory) .</p>
+<figure class="expanded-container"
+  
+  >
+    <img
+        width="100%" height="100%"
+       style="max-width: 65rem; "
+       src="/blog/-/images/ls-proc.svg"
+       alt="Illustration of what happens after ls is called " >
+
+    
+</figure>
+
+<p>Not only is this article&rsquo;s content about <code>/proc</code>, but also about reading directories in general (<em>expect syscalls and Kernel inspection</em>).</p>
+<p>If you&rsquo;ve been curious about how listing directory entries works under the hood, this is for you!</p>
+<div class="ps">
+
+<p>This is the second article in a series of 30 articles around <em>procfs</em>: <a href="/blog/a-month-of-proc/">A Month of /proc</a>.</p>
+<p>If you&rsquo;d like to keep up to date with it, make sure you <a href="https://google.us3.list-manage.com/subscribe/post?u=1941019739d6aa1a25eda3787&amp;id=ff9c3cc11e"><strong>join the mailing list</strong></a>!</p>
+
+</div>
+
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
+<ul>
+<li><a href="#listing-directory-entries-in-linux">Listing directory entries in Linux</a></li>
+<li><a href="#opening-a-directory">Opening a directory</a></li>
+<li><a href="#reading-directory-entries-from-userspace">Reading directory entries from userspace</a></li>
+<li><a href="#under-the-hood-of-getdents">Under the hood of getdents</a></li>
+<li><a href="#how-procfs-handles-getdents-calls">How procfs handles getdents calls</a></li>
+<li><a href="#linux-and-its-pids">Linux and its pids</a></li>
+<li><a href="#how-procfs-lists-process-ids">How procfs lists process IDs</a></li>
+<li><a href="#closing-thoughts">Closing thoughts</a></li>
+<li><a href="#resources">Resources</a></li>
+</ul>
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+<h3 id="listing-directory-entries-in-linux">Listing directory entries in Linux</h3>
+<p>Whenever you issue <code>ls</code> in a Linux system, three things happen:</p>
+<ul>
+<li><code>/bin/ls</code> (or the equivalent of it) is executed;</li>
+<li>the given directory is opened, and</li>
+<li>a syscall is issued to read the directory entries of such directory.</li>
+</ul>
+<p>We can discover all these three things by making use of <a href="https://linux.die.net/man/1/strace"><code>strace</code></a>, a utility that allows us to trace the syscalls called by a given process:</p>
+<div class="highlight"><pre class="chroma"><code class="language-sh" data-lang="sh"><span class="c1"># Create a directory somewhere</span>
+mkdir /tmp/ciro
+
+<span class="c1"># Run `strace` with the option of </span>
+<span class="c1"># tracing child processes as they are</span>
+<span class="c1"># created.</span>
+strace -f ls /tmp/ciro
+execve<span class="o">(</span><span class="s2">&#34;/bin/ls&#34;</span>, <span class="o">[</span><span class="s2">&#34;ls&#34;</span>, <span class="s2">&#34;/tmp/ciro/&#34;</span><span class="o">]</span>, 0x7ffd091bfe30 /* <span class="m">20</span> vars */<span class="o">)</span> <span class="o">=</span> <span class="m">0</span>
+...
+        <span class="c1"># Open the file, passing some flags to it.</span>
+        openat<span class="o">(</span>AT_FDCWD,     
+                <span class="s2">&#34;/tmp/ciro/&#34;</span>,
+                O_RDONLY<span class="p">|</span>O_NONBLOCK<span class="p">|</span>O_CLOEXEC<span class="p">|</span>O_DIRECTORY<span class="o">)</span> <span class="o">=</span> <span class="m">3</span>
+
+        <span class="c1"># Read the directory entries.</span>
+        getdents<span class="o">(</span>3,             
+                /* <span class="m">2</span> entries */, 32768<span class="o">)</span>     <span class="o">=</span> <span class="m">48</span>
+</code></pre></div><p>While <code>execve</code> is interesting in it self, we&rsquo;re not going to focus on it in this article - we can know just that it&rsquo;s what executes the given program.</p>
+<h3 id="opening-a-directory">Opening a directory</h3>
+<p>The next syscall is <code>openat</code>.</p>
+<p>This one is pretty much the same as <code>open(2)</code>, which we covered in the last article (see <a href="/blog/what-is-slash-proc/#translating-a-file-read-to-an-internal-kernel-method">What is /proc - section: Translating a file read to an internal kernel method</a>), except that it has a special flag set: <code>O_DIRECTORY</code>.</p>
+<p>According to the <a href="http://man7.org/linux/man-pages/man2/open.2.html">man open</a>:</p>
+<blockquote>
+<p><strong>O_DIRECTORY</strong>: If pathname is not a directory, cause the open to fail.</p>
+</blockquote>
+<p>That is pretty much an optimization so that we can avoid an extra <a href="http://man7.org/linux/man-pages/man2/stat.2.html"><code>stat(2)</code></a> just for checking if the file is a directory before doing any following directory operations.</p>
+<p>If you&rsquo;re curious about how that works, check out the following trace:</p>
+<pre><code>do_last
+path_openat
+do_sys_open
+sys_openat
+do_syscall_64
+</code></pre><p>Where <a href="https://elixir.bootlin.com/linux/v4.15.18/source/fs/namei.c#L3222"><code>do_last</code></a>, which finishes the file opening, performs the following check:</p>
+<div class="highlight"><pre class="chroma"><code class="language-c" data-lang="c"><span class="c1">//                     .--&gt; flag set if 
+</span><span class="c1"></span><span class="n">error</span> <span class="o">=</span> <span class="o">-</span><span class="n">ENOTDIR</span><span class="p">;</span> <span class="c1">//   |    `O_DIRECTORY` is passed
+</span><span class="c1">//                     |    to open(2)
+</span><span class="c1">//                     |
+</span><span class="c1"></span><span class="k">if</span> <span class="p">((</span><span class="n">nd</span><span class="o">-&gt;</span><span class="n">flags</span> <span class="o">&amp;</span> <span class="n">LOOKUP_DIRECTORY</span><span class="p">)</span> <span class="o">&amp;&amp;</span> 
+        <span class="o">!</span><span class="n">d_can_lookup</span><span class="p">(</span><span class="n">nd</span><span class="o">-&gt;</span><span class="n">path</span><span class="p">.</span><span class="n">dentry</span><span class="p">))</span> <span class="p">{</span>
+
+        <span class="k">goto</span> <span class="n">out</span><span class="p">;</span>       <span class="c1">// ends up returning ENOTDIR
+</span><span class="c1"></span><span class="p">}</span>
+</code></pre></div><div class="ps">
+
+<p>If you&rsquo;d like to know more about <code>open(2)</code>, make sure you also the last article: <a href="/blog/what-is-slash-proc/">what is <code>/proc</code></a>.</p>
+<p>There I cover how <code>open</code> works under the hood when the Virtual Filesystem interacts with procfs.</p>
+<p>Another great resource is the book <a href="https://amzn.to/2QD0kU4">Understanding the Linux Kernel, 3rd Ed</a>. It goes down to what the kernel does when opening a file too!</p>
+
+</div>
+
+<h3 id="reading-directory-entries-from-userspace">Reading directory entries from userspace</h3>
+<p>Now, once the directory has been opened, that is, in the Kernel we have a file description and in userspace we have the file descriptor, we can make use of the <a href="http://man7.org/linux/man-pages/man2/getdents.2.html"><code>getdents</code></a> syscall.</p>
+<blockquote>
+<p>The system call getdents() reads several linux_dirent structures from the directory referred to by the open file descriptor fd into the buffer pointed to by <code>dirp</code>.</p>
+</blockquote>
+<p>Something interesting about this one is that it&rsquo;s not wrapped by <code>glibc</code>, meaning that we need to call it via the <code>syscall(2)</code> method ourselves.</p>
+<p><em>I don&rsquo;t really know why this syscall in specific is not wrapped! Do you? Please let me know! Reach at <a href="https://twitter.com/cirowrc">cirowrc</a> on Twitter!</em></p>
+<p>Not being a <code>glibc</code>-wrapped syscall, we need to call it directly with <a href="http://man7.org/linux/man-pages/man2/syscall.2.html"><code>syscall</code></a>, providing the arguments that it expects and memory areas for the Kernel to fill (so we can retrieve the response).</p>
+<p>Here&rsquo;s how we can do it (check the comments!):</p>
+<div class="highlight"><pre class="chroma"><code class="language-c" data-lang="c"><span class="cp">#include</span> <span class="cpf">&lt;fcntl.h&gt;</span><span class="cp">
+</span><span class="cp">#include</span> <span class="cpf">&lt;linux/types.h&gt;</span><span class="cp">
+</span><span class="cp">#include</span> <span class="cpf">&lt;stdio.h&gt;</span><span class="cp">
+</span><span class="cp">#include</span> <span class="cpf">&lt;sys/syscall.h&gt;</span><span class="cp">
+</span><span class="cp">#include</span> <span class="cpf">&lt;unistd.h&gt;</span><span class="cp">
+</span><span class="cp"></span>
+<span class="c1">// Total size that the buffer that we&#39;ll allocate
+</span><span class="c1">// in the stack can have.
+</span><span class="c1"></span><span class="cp">#define BUF_SIZE 1024
+</span><span class="cp"></span>
+<span class="c1">// The directory we&#39;ll end up reading.
+</span><span class="c1"></span><span class="k">const</span> <span class="kt">char</span><span class="o">*</span> <span class="n">proc_directory_path</span> <span class="o">=</span> <span class="s">&#34;/proc&#34;</span><span class="p">;</span>
+
+<span class="cm">/**
+</span><span class="cm"> * Provide the structure that fits our current kernel structure
+</span><span class="cm"> * for directory entries (see linux#include/linux/dirent.h).
+</span><span class="cm"> */</span>
+<span class="k">struct</span> <span class="n">linux_dirent64</span> <span class="p">{</span>
+	<span class="kt">long</span>           <span class="n">d_ino</span><span class="p">;</span>    <span class="cm">/* 64-bit inode number */</span>
+	<span class="n">off_t</span>          <span class="n">d_off</span><span class="p">;</span>    <span class="cm">/* 64-bit offset to next structure */</span>
+	<span class="kt">unsigned</span> <span class="kt">short</span> <span class="n">d_reclen</span><span class="p">;</span> <span class="cm">/* Size of this dirent */</span>
+	<span class="kt">unsigned</span> <span class="kt">char</span>  <span class="n">d_type</span><span class="p">;</span>   <span class="cm">/* File type */</span>
+	<span class="kt">char</span>           <span class="n">d_name</span><span class="p">[];</span> <span class="cm">/* Filename (null-terminated) */</span>
+<span class="p">};</span>
+
+<span class="cm">/**
+</span><span class="cm"> * Reads the directory entries from `/proc`.
+</span><span class="cm"> *
+</span><span class="cm"> * It does so using by using the non-wrapped syscall
+</span><span class="cm"> * getdents64 until it returns 0 entries.
+</span><span class="cm"> */</span>
+<span class="kt">int</span>
+<span class="nf">main</span><span class="p">(</span><span class="kt">int</span> <span class="n">argc</span><span class="p">,</span> <span class="kt">char</span><span class="o">**</span> <span class="n">argv</span><span class="p">)</span>
+<span class="p">{</span>
+	<span class="c1">// `buf` that holds a piece of allocated memory to
+</span><span class="c1"></span>	<span class="c1">// be given to the Kernel to retrieve data.
+</span><span class="c1"></span>	<span class="c1">//
+</span><span class="c1"></span>	<span class="c1">// Given that we&#39;re initializing it with `BUF_SIZE`,
+</span><span class="c1"></span>	<span class="c1">// this is allocating `BUFSIZE * 1` bytes in the stack.
+</span><span class="c1"></span>	<span class="kt">char</span> <span class="n">buf</span><span class="p">[</span><span class="n">BUF_SIZE</span><span class="p">];</span>
+
+	<span class="c1">// file descriptor to hold the open file (directory)
+</span><span class="c1"></span>	<span class="kt">int</span> <span class="n">fd</span><span class="p">;</span>
+
+	<span class="c1">// number of directory entries that were read and put
+</span><span class="c1"></span>	<span class="c1">// in the buffer that we allocated in the stack.
+</span><span class="c1"></span>	<span class="kt">int</span> <span class="n">directory_entries_read</span><span class="p">;</span>
+
+	<span class="c1">// error code to exit.
+</span><span class="c1"></span>	<span class="kt">int</span> <span class="n">err</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+
+
+        <span class="c1">// Open the directory so that we&#39;re able to let the
+</span><span class="c1"></span>        <span class="c1">// kernel deal with the underlying file description.
+</span><span class="c1"></span>	<span class="n">fd</span> <span class="o">=</span> <span class="n">open</span><span class="p">(</span><span class="n">proc_directory_path</span><span class="p">,</span> <span class="n">O_RDONLY</span> <span class="o">|</span> <span class="n">O_DIRECTORY</span><span class="p">);</span>
+	<span class="k">if</span> <span class="p">(</span><span class="n">fd</span> <span class="o">==</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span> <span class="p">{</span>
+		<span class="n">perror</span><span class="p">(</span><span class="s">&#34;open&#34;</span><span class="p">);</span>
+		<span class="k">return</span> <span class="mi">1</span><span class="p">;</span>
+	<span class="p">}</span>
+
+	<span class="k">for</span> <span class="p">(;;)</span> <span class="p">{</span>
+		<span class="c1">// Call the `getdents64` syscall passing the buffer
+</span><span class="c1"></span>		<span class="c1">// to the kernel so that it can fill with directory
+</span><span class="c1"></span>		<span class="c1">// entries.
+</span><span class="c1"></span>		<span class="n">directory_entries_read</span> <span class="o">=</span>
+		  <span class="n">syscall</span><span class="p">(</span><span class="n">SYS_getdents64</span><span class="p">,</span> <span class="n">fd</span><span class="p">,</span> <span class="n">buf</span><span class="p">,</span> <span class="n">BUF_SIZE</span><span class="p">);</span>
+		<span class="k">if</span> <span class="p">(</span><span class="n">directory_entries_read</span> <span class="o">==</span> <span class="o">-</span><span class="mi">1</span><span class="p">)</span> <span class="p">{</span>
+			<span class="n">perror</span><span class="p">(</span><span class="s">&#34;SYS_getdents64&#34;</span><span class="p">);</span>
+			<span class="n">err</span> <span class="o">=</span> <span class="mi">1</span><span class="p">;</span>
+			<span class="k">break</span><span class="p">;</span>
+		<span class="p">}</span>
+
+		<span class="k">if</span> <span class="p">(</span><span class="n">directory_entries_read</span> <span class="o">==</span> <span class="mi">0</span><span class="p">)</span> <span class="p">{</span>
+			<span class="n">err</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span>
+			<span class="k">break</span><span class="p">;</span>
+		<span class="p">}</span>
+
+		<span class="k">struct</span> <span class="n">linux_dirent64</span><span class="o">*</span> <span class="n">entry</span><span class="p">;</span>
+
+		<span class="c1">// Given that the Kernel filled our array of memory with
+</span><span class="c1"></span>		<span class="c1">// `N` entries (directory_entries_read), iterate over those
+</span><span class="c1"></span>		<span class="c1">// structs using the right offset.
+</span><span class="c1"></span>		<span class="k">for</span> <span class="p">(</span><span class="kt">int</span> <span class="n">off</span> <span class="o">=</span> <span class="mi">0</span><span class="p">;</span> <span class="n">off</span> <span class="o">&lt;</span> <span class="n">directory_entries_read</span><span class="p">;)</span> <span class="p">{</span>
+			<span class="n">entry</span> <span class="o">=</span> <span class="p">(</span><span class="k">struct</span> <span class="n">linux_dirent64</span><span class="o">*</span><span class="p">)(</span><span class="n">buf</span> <span class="o">+</span> <span class="n">off</span><span class="p">);</span>
+
+			<span class="n">printf</span><span class="p">(</span><span class="s">&#34;entry: %s</span><span class="se">\n</span><span class="s">&#34;</span><span class="p">,</span> <span class="n">entry</span><span class="o">-&gt;</span><span class="n">d_name</span><span class="p">);</span>
+			<span class="n">off</span> <span class="o">+=</span> <span class="n">entry</span><span class="o">-&gt;</span><span class="n">d_reclen</span><span class="p">;</span>
+		<span class="p">}</span>
+	<span class="p">}</span>
+
+	<span class="c1">// Given that we&#39;re done with reading
+</span><span class="c1"></span>	<span class="c1">// from the file, close it to free the
+</span><span class="c1"></span>	<span class="c1">// underlying structures allocated for
+</span><span class="c1"></span>	<span class="c1">// it (and make further reads fail).
+</span><span class="c1"></span>	<span class="n">close</span><span class="p">(</span><span class="n">fd</span><span class="p">);</span>
+	<span class="k">return</span> <span class="n">err</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div><div class="ps">
+
+<p>IF you&rsquo;re not very familiar with some of the Linux concepts presented above, a great book that covers that is <a href="https://amzn.to/2QWyXp9">The Linux Programming Interface</a>.</p>
+<p>I&rsquo;ve based some of the explanations from it!</p>
+
+</div>
+
+<p>Having that, we&rsquo;re able to read a directory with pure C.</p>
+<p>Given that the interface is the same for any filesystem, we can swap <code>/proc</code> by <code>/something.txt</code> and it should work the same way - if <code>/something.txt</code> is a directory and we have the right permissions, done!</p>
+<h3 id="under-the-hood-of-getdents">Under the hood of getdents</h3>
+<p>With the knowledge of what happens at the userspace (<a href="http://man7.org/linux/man-pages/man2/getdents.2.html"><code>getdents</code></a>), now it&rsquo;s time to look at what happens under the hood - once <code>getdents</code> crosses to kernelspace.</p>
+<p>Remembering that the filesystems need to implement the corresponding methods from <a href="https://elixir.bootlin.com/linux/v4.15.17/source/include/linux/fs.h#L1693"><code>file_operations</code></a> interface, we can guess that:</p>
+<ol>
+<li>there is a method in such interface for listing directory entries, and</li>
+<li>such method gets called by <code>sys_getdents</code> at some point.</li>
+</ol>
+<p>The first point can be confirmed by looking at the interface itself:</p>
+<div class="highlight"><pre class="chroma"><code class="language-c" data-lang="c"><span class="cm">/**
+</span><span class="cm"> * file_operations describe an interface that
+</span><span class="cm"> * filesystems must implement in order to handle
+</span><span class="cm"> * calls from syscalls that interact with filesystems.
+</span><span class="cm"> */</span>
+<span class="k">struct</span> <span class="n">file_operations</span> <span class="p">{</span>
+	<span class="n">loff_t</span> <span class="p">(</span><span class="o">*</span><span class="n">llseek</span><span class="p">)</span> <span class="p">(</span><span class="k">struct</span> <span class="n">file</span> <span class="o">*</span><span class="p">,</span> <span class="n">loff_t</span><span class="p">,</span> <span class="kt">int</span><span class="p">);</span>
+	<span class="n">ssize_t</span> <span class="p">(</span><span class="o">*</span><span class="n">read</span><span class="p">)</span> <span class="p">(</span><span class="k">struct</span> <span class="n">file</span> <span class="o">*</span><span class="p">,</span> <span class="kt">char</span> <span class="n">__user</span> <span class="o">*</span><span class="p">,</span> <span class="n">size_t</span><span class="p">,</span> <span class="n">loff_t</span> <span class="o">*</span><span class="p">);</span>
+	<span class="n">ssize_t</span> <span class="p">(</span><span class="o">*</span><span class="n">write</span><span class="p">)</span> <span class="p">(</span><span class="k">struct</span> <span class="n">file</span> <span class="o">*</span><span class="p">,</span> <span class="k">const</span> <span class="kt">char</span> <span class="n">__user</span> <span class="o">*</span><span class="p">,</span> <span class="n">size_t</span><span class="p">,</span> <span class="n">loff_t</span> <span class="o">*</span><span class="p">);</span>
+	<span class="c1">// ...
+</span><span class="c1"></span>
+        <span class="c1">// The method for iterating over the directory
+</span><span class="c1"></span>        <span class="c1">// entries under a given directory.
+</span><span class="c1"></span>	<span class="kt">int</span> <span class="p">(</span><span class="o">*</span><span class="n">iterate</span><span class="p">)</span> <span class="p">(</span><span class="k">struct</span> <span class="n">file</span> <span class="o">*</span><span class="p">,</span> <span class="k">struct</span> <span class="n">dir_context</span> <span class="o">*</span><span class="p">);</span>
+
+        <span class="c1">// A method that is similar to `iterate` but allows
+</span><span class="c1"></span>        <span class="c1">// multiple calls to be performed simultaneously.
+</span><span class="c1"></span>	<span class="kt">int</span> <span class="p">(</span><span class="o">*</span><span class="n">iterate_shared</span><span class="p">)</span> <span class="p">(</span><span class="k">struct</span> <span class="n">file</span> <span class="o">*</span><span class="p">,</span> <span class="k">struct</span> <span class="n">dir_context</span> <span class="o">*</span><span class="p">);</span>
+	<span class="c1">// ...
+</span><span class="c1"></span><span class="p">}</span> <span class="n">__randomize_layout</span><span class="p">;</span>
+</code></pre></div><p>Now, regarding the second point (checking where in the <code>sys_getdents</code> path one of those two methods gets called), we can look at the syscall implementation at <a href="https://elixir.bootlin.com/linux/v4.15.17/source/fs/readdir.c#L212"><code>fs/readdir.c</code></a>.</p>
+<p>It first starts by verifying if the task can perform such call at <a href="https://elixir.bootlin.com/linux/v4.15.18/source/fs/readdir.c#L212"><code>sys_getdents</code></a>, then it goes to <a href="https://elixir.bootlin.com/linux/v4.15.18/source/fs/readdir.c#L26"><code>iterate_dir</code></a>, which is all about offloading the directory entries iteration to the implementor of the <a href="https://elixir.bootlin.com/linux/v4.15.17/source/include/linux/fs.h#L1693"><code>file_operations</code></a> interface.</p>
+<figure class="expanded-container"
+  
+  >
+    <img
+        width="100%" height="100%"
+       style="max-width: 65rem; "
+       src="/blog/-/images/getdents-under-the-hood.svg"
+        >
+
+    
+</figure>
+
+<p>Looking at the at the actual Linux implementation, we can see how <code>iterate_dir</code> makes use of the underlying filesystem implementation of <code>iterate_shared</code> (<code>f-&gt;f_op-&gt;iterate_shared</code>):</p>
+<div class="highlight"><pre class="chroma"><code class="language-c" data-lang="c"><span class="kt">int</span> <span class="nf">iterate_dir</span><span class="p">(</span><span class="k">struct</span> <span class="n">file</span> <span class="o">*</span><span class="n">file</span><span class="p">,</span> <span class="k">struct</span> <span class="n">dir_context</span> <span class="o">*</span><span class="n">ctx</span><span class="p">)</span>
+<span class="p">{</span>
+	<span class="k">struct</span> <span class="n">inode</span> <span class="o">*</span><span class="n">inode</span> <span class="o">=</span> <span class="n">file_inode</span><span class="p">(</span><span class="n">file</span><span class="p">);</span>
+	<span class="kt">bool</span> <span class="n">shared</span> <span class="o">=</span> <span class="nb">false</span><span class="p">;</span>
+	<span class="kt">int</span> <span class="n">res</span> <span class="o">=</span> <span class="o">-</span><span class="n">ENOTDIR</span><span class="p">;</span>
+
+        <span class="c1">// making sure that either the iterate_shared or
+</span><span class="c1"></span>        <span class="c1">// iterate methods of the file_operations interface
+</span><span class="c1"></span>        <span class="c1">// are implemented
+</span><span class="c1"></span>	<span class="k">if</span> <span class="p">(</span><span class="n">file</span><span class="o">-&gt;</span><span class="n">f_op</span><span class="o">-&gt;</span><span class="n">iterate_shared</span><span class="p">)</span>
+		<span class="n">shared</span> <span class="o">=</span> <span class="nb">true</span><span class="p">;</span>
+	<span class="k">else</span> <span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">file</span><span class="o">-&gt;</span><span class="n">f_op</span><span class="o">-&gt;</span><span class="n">iterate</span><span class="p">)</span>
+		<span class="k">goto</span> <span class="n">out</span><span class="p">;</span>
+
+	<span class="c1">// ...
+</span><span class="c1"></span>
+        <span class="c1">// is the directory really there?
+</span><span class="c1"></span>        <span class="c1">// if so, hand the file to the underlying
+</span><span class="c1"></span>        <span class="c1">// filesystem implementation and let it 
+</span><span class="c1"></span>        <span class="c1">// iterate over the directory entries.
+</span><span class="c1"></span>	<span class="n">res</span> <span class="o">=</span> <span class="o">-</span><span class="n">ENOENT</span><span class="p">;</span>
+	<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">IS_DEADDIR</span><span class="p">(</span><span class="n">inode</span><span class="p">))</span> <span class="p">{</span>
+		<span class="n">ctx</span><span class="o">-&gt;</span><span class="n">pos</span> <span class="o">=</span> <span class="n">file</span><span class="o">-&gt;</span><span class="n">f_pos</span><span class="p">;</span>
+
+                <span class="c1">// In either case, let the filesystem
+</span><span class="c1"></span>                <span class="c1">// implementation do it.
+</span><span class="c1"></span>		<span class="k">if</span> <span class="p">(</span><span class="n">shared</span><span class="p">)</span>
+			<span class="n">res</span> <span class="o">=</span> <span class="n">file</span><span class="o">-&gt;</span><span class="n">f_op</span><span class="o">-&gt;</span><span class="n">iterate_shared</span><span class="p">(</span><span class="n">file</span><span class="p">,</span> <span class="n">ctx</span><span class="p">);</span>
+		<span class="k">else</span>
+			<span class="n">res</span> <span class="o">=</span> <span class="n">file</span><span class="o">-&gt;</span><span class="n">f_op</span><span class="o">-&gt;</span><span class="n">iterate</span><span class="p">(</span><span class="n">file</span><span class="p">,</span> <span class="n">ctx</span><span class="p">);</span>
+
+                <span class="c1">// update the reading offset
+</span><span class="c1"></span>                <span class="c1">// (&#34;file pointer&#34;)
+</span><span class="c1"></span>		<span class="n">file</span><span class="o">-&gt;</span><span class="n">f_pos</span> <span class="o">=</span> <span class="n">ctx</span><span class="o">-&gt;</span><span class="n">pos</span><span class="p">;</span>
+
+                <span class="c1">// notify that we accessed the file
+</span><span class="c1"></span>		<span class="n">fsnotify_access</span><span class="p">(</span><span class="n">file</span><span class="p">);</span>
+		<span class="n">file_accessed</span><span class="p">(</span><span class="n">file</span><span class="p">);</span>
+	<span class="p">}</span>
+	
+        <span class="c1">// ...
+</span><span class="c1"></span><span class="p">}</span>
+</code></pre></div><h3 id="how-procfs-handles-getdents-calls">How procfs handles getdents calls</h3>
+<p>Now, to know where is the implementation of either <code>iterate_shared</code> or <code>iterate</code> from <code>proc</code>, we can go over to the procfs source code (at <code>fs/proc</code>) and search for the method signature (<code>iterate</code> or <code>iterate_shared</code>):</p>
+<div class="highlight"><pre class="chroma"><code class="language-sh" data-lang="sh">ubuntu@bionic:~/linux/fs/proc$ ag iterate_shared
+fd.c
+269:	.iterate_shared	<span class="o">=</span> proc_readfd,
+353:	.iterate_shared	<span class="o">=</span> proc_readfdinfo,
+
+generic.c
+306:	.iterate_shared	<span class="o">=</span> proc_readdir,
+
+root.c
+190:	.iterate_shared	<span class="o">=</span> proc_root_readdir,
+
+proc_net.c
+184:	.iterate_shared	<span class="o">=</span> proc_tgid_net_readdir,
+
+base.c
+2215:	.iterate_shared	<span class="o">=</span> proc_map_files_readdir,
+2587:	.iterate_shared	<span class="o">=</span> proc_attr_dir_readdir,
+3009:	.iterate_shared	<span class="o">=</span> proc_tgid_base_readdir,
+3402:	.iterate_shared	<span class="o">=</span> proc_tid_base_readdir,
+3612:	.iterate_shared	<span class="o">=</span> proc_task_readdir,
+
+namespaces.c
+143:	.iterate_shared	<span class="o">=</span> proc_ns_dir_readdir,
+
+proc_sysctl.c
+847:	.iterate_shared	<span class="o">=</span> proc_sys_readdir,
+</code></pre></div><p>To filter that list out, we can make use of <a href="https://github.com/iovisor/bcc/blob/master/tools/funccount.py"><code>funccount</code></a> from <a href="https://github.com/iovisor/bcc"><code>iovisor/bcc</code></a> to check which of those methods get called whenever we issue a call to <code>getdents</code> on <code>/proc</code>:</p>
+<div class="highlight"><pre class="chroma"><code class="language-sh" data-lang="sh">root@bionic:~# funccount <span class="s1">&#39;proc_*readdir&#39;</span>
+FUNC                                    COUNT
+proc_readdir                                <span class="m">1</span>
+proc_root_readdir                           <span class="m">2</span>
+proc_pid_readdir                            <span class="m">2</span>
+</code></pre></div><p>Having narrowed our scope, now we can learn about those three functions.</p>
+<p>From the naming, we can guess that <code>proc_root_readdir</code> is responsible for being the first to respond to a request to list all directory entries from <code>/proc</code>.</p>
+<p>Such affirmation can be confirmed by looking at the <a href="https://elixir.bootlin.com/linux/v4.15.18/source/fs/proc/root.c#L205"><code>proc_dir_entry</code></a> set:</p>
+<div class="highlight"><pre class="chroma"><code class="language-c" data-lang="c"><span class="cm">/*
+</span><span class="cm"> * This is the root &#34;inode&#34; in the /proc tree..
+</span><span class="cm"> */</span>
+<span class="k">struct</span> <span class="n">proc_dir_entry</span> <span class="n">proc_root</span> <span class="o">=</span> <span class="p">{</span>
+	<span class="p">.</span><span class="n">low_ino</span>	<span class="o">=</span> <span class="n">PROC_ROOT_INO</span><span class="p">,</span> 
+	<span class="p">.</span><span class="n">namelen</span>	<span class="o">=</span> <span class="mi">5</span><span class="p">,</span> 
+	<span class="p">.</span><span class="n">mode</span>		<span class="o">=</span> <span class="n">S_IFDIR</span> <span class="o">|</span> <span class="n">S_IRUGO</span> <span class="o">|</span> <span class="n">S_IXUGO</span><span class="p">,</span> 
+	<span class="p">.</span><span class="n">nlink</span>		<span class="o">=</span> <span class="mi">2</span><span class="p">,</span> 
+	<span class="p">.</span><span class="n">count</span>		<span class="o">=</span> <span class="n">ATOMIC_INIT</span><span class="p">(</span><span class="mi">1</span><span class="p">),</span>
+	<span class="p">.</span><span class="n">proc_iops</span>	<span class="o">=</span> <span class="o">&amp;</span><span class="n">proc_root_inode_operations</span><span class="p">,</span> 
+
+        <span class="c1">// Sets the implementation of the `file_operations`
+</span><span class="c1"></span>        <span class="c1">// interface to use.
+</span><span class="c1"></span>	<span class="p">.</span><span class="n">proc_fops</span>	<span class="o">=</span> <span class="o">&amp;</span><span class="n">proc_root_operations</span><span class="p">,</span>
+	<span class="p">.</span><span class="n">parent</span>		<span class="o">=</span> <span class="o">&amp;</span><span class="n">proc_root</span><span class="p">,</span>
+	<span class="p">.</span><span class="n">subdir</span>		<span class="o">=</span> <span class="n">RB_ROOT_CACHED</span><span class="p">,</span>
+	<span class="p">.</span><span class="n">name</span>		<span class="o">=</span> <span class="s">&#34;/proc&#34;</span><span class="p">,</span>
+<span class="p">};</span>
+
+
+<span class="cm">/*
+</span><span class="cm"> * The root /proc directory is special, as it has the
+</span><span class="cm"> * &lt;pid&gt; directories. Thus we don&#39;t use the generic
+</span><span class="cm"> * directory handling functions for that..
+</span><span class="cm"> */</span>
+<span class="k">static</span> <span class="k">const</span> <span class="k">struct</span> <span class="n">file_operations</span> <span class="n">proc_root_operations</span> <span class="o">=</span> <span class="p">{</span>
+	<span class="p">.</span><span class="n">read</span>		 <span class="o">=</span> <span class="n">generic_read_dir</span><span class="p">,</span>
+
+        <span class="c1">// Sets the method for iterating over directory entries.
+</span><span class="c1"></span>	<span class="p">.</span><span class="n">iterate_shared</span>	 <span class="o">=</span> <span class="n">proc_root_readdir</span><span class="p">,</span>
+	<span class="p">.</span><span class="n">llseek</span>		<span class="o">=</span> <span class="n">generic_file_llseek</span><span class="p">,</span>
+<span class="p">};</span>
+
+<span class="cm">/**
+</span><span class="cm"> * Starts the process of listing the entries from
+</span><span class="cm"> * `/proc`.
+</span><span class="cm"> */</span>
+<span class="k">static</span> <span class="kt">int</span> <span class="nf">proc_root_readdir</span><span class="p">(</span><span class="k">struct</span> <span class="n">file</span> <span class="o">*</span><span class="n">file</span><span class="p">,</span> <span class="k">struct</span> <span class="n">dir_context</span> <span class="o">*</span><span class="n">ctx</span><span class="p">)</span>
+<span class="p">{</span>
+        <span class="c1">// Check if we&#39;re still in the context of
+</span><span class="c1"></span>        <span class="c1">// listing non-PID entries.
+</span><span class="c1"></span>	<span class="k">if</span> <span class="p">(</span><span class="n">ctx</span><span class="o">-&gt;</span><span class="n">pos</span> <span class="o">&lt;</span> <span class="n">FIRST_PROCESS_ENTRY</span><span class="p">)</span> <span class="p">{</span>
+		<span class="kt">int</span> <span class="n">error</span> <span class="o">=</span> <span class="n">proc_readdir</span><span class="p">(</span><span class="n">file</span><span class="p">,</span> <span class="n">ctx</span><span class="p">);</span>
+		<span class="k">if</span> <span class="p">(</span><span class="n">unlikely</span><span class="p">(</span><span class="n">error</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">))</span>
+			<span class="k">return</span> <span class="n">error</span><span class="p">;</span>
+		<span class="n">ctx</span><span class="o">-&gt;</span><span class="n">pos</span> <span class="o">=</span> <span class="n">FIRST_PROCESS_ENTRY</span><span class="p">;</span>
+	<span class="p">}</span>
+
+        <span class="c1">// Having already read the non-pid directory
+</span><span class="c1"></span>        <span class="c1">// entries (like `/proc/meminfo`), now go 
+</span><span class="c1"></span>        <span class="c1">// list the PIDs.
+</span><span class="c1"></span>	<span class="k">return</span> <span class="n">proc_pid_readdir</span><span class="p">(</span><span class="n">file</span><span class="p">,</span> <span class="n">ctx</span><span class="p">);</span>
+<span class="p">}</span>
+</code></pre></div><p>The first part (listing non-pid directories) doesn&rsquo;t reveal a lot for us - it goes through a list of directories that have registered via their corresponding directory entries structs.</p>
+<p>The second though (listing processes directories), is <strong>the thing</strong>.</p>
+<p>Before we get there, we need to review the differences between how the Kernel looks at PIDs and threads compared to the userspace.</p>
+<h3 id="linux-and-its-pids">Linux and its pids</h3>
+<p>While in the userspace we&rsquo;re accustomed to the term <code>pid</code> (process identifier), it&rsquo;s not the same thing for <code>tgid</code> (thread group id).</p>
+<p>Whenever we create a process in userspace, a PID is received.</p>
+<p>Now, considering that this process creates a thread, we can see from userspace that this thread inherits such PID.</p>
+<pre><code>USERSPACE:
+
+         (pid=123)
+        my_root_proc      .--&gt; my_root_proc (pid=123)
+           |              |
+           *----&gt; fork ---+
+                          |
+                          *-&gt;  my_root_proc (pid=123)
+</code></pre><p>When it comes to the kernel space though, a <code>pid</code> refers to a single execution, so that those things now differ:</p>
+<pre><code>KERNEL:
+
+         (pid=123)
+        my_root_proc      .--&gt; my_root_proc (pid=123)
+           |              |
+           *----&gt; fork ---+
+                          |
+                          *-&gt;  my_root_proc (pid=124) 
+                                (new pid!)
+</code></pre><p>What unites them is the notion of a <code>tgid</code> (thread group id). This is a property that gets inherited so that we can keep track of who initiated the whole three:</p>
+<pre><code>KERNEL:
+
+         (pid=123,tgid=123)
+        my_root_proc      .--&gt; my_root_proc (pid=123,tgid=123)
+           |              |
+           *----&gt; fork ---+
+                          |
+                          *-&gt;  my_root_proc (pid=124,tgid=123)
+                                (new pid!)
+</code></pre><p>With that in mind, let&rsquo;s proceed.</p>
+<h3 id="how-procfs-lists-process-ids">How procfs lists process IDs</h3>
+<p>The whole implementation of process listing can be found at <a href="https://elixir.bootlin.com/linux/v4.15.18/source/fs/proc/base.c#L3202"><code>proc_pid_readdir</code></a>:</p>
+<div class="highlight"><pre class="chroma"><code class="language-c" data-lang="c"><span class="cm">/**
+</span><span class="cm"> * For the /proc/ directory itself, 
+</span><span class="cm"> * after non-process stuff has been done.
+</span><span class="cm"> */</span>
+<span class="kt">int</span> <span class="nf">proc_pid_readdir</span><span class="p">(</span><span class="k">struct</span> <span class="n">file</span> <span class="o">*</span><span class="n">file</span><span class="p">,</span> <span class="k">struct</span> <span class="n">dir_context</span> <span class="o">*</span><span class="n">ctx</span><span class="p">)</span>
+<span class="p">{</span>
+	<span class="c1">// ...
+</span><span class="c1"></span>
+        <span class="c1">// Given that calls to `/proc`
+</span><span class="c1"></span>        <span class="c1">// are namespaced (check out `ls /proc`
+</span><span class="c1"></span>        <span class="c1">// from within a docker container),
+</span><span class="c1"></span>        <span class="c1">// we start by grabbing the PID namespace
+</span><span class="c1"></span>        <span class="c1">// of the current task executing the 
+</span><span class="c1"></span>        <span class="c1">// getdents call.
+</span><span class="c1"></span>	<span class="k">struct</span> <span class="n">pid_namespace</span> <span class="o">*</span><span class="n">ns</span> <span class="o">=</span> <span class="n">file_inode</span><span class="p">(</span><span class="n">file</span><span class="p">)</span><span class="o">-&gt;</span><span class="n">i_sb</span><span class="o">-&gt;</span><span class="n">s_fs_info</span><span class="p">;</span>
+
+	<span class="c1">// ... do some checks ...
+</span><span class="c1"></span>
+        <span class="c1">// Iterate over all thread group ids 
+</span><span class="c1"></span>        <span class="c1">// (`tgid`s), capturing the task struct
+</span><span class="c1"></span>        <span class="c1">// associated with them.
+</span><span class="c1"></span>	<span class="k">for</span> <span class="p">(</span><span class="n">iter</span> <span class="o">=</span> <span class="n">next_tgid</span><span class="p">(</span><span class="n">ns</span><span class="p">,</span> <span class="n">iter</span><span class="p">);</span>
+	     <span class="n">iter</span><span class="p">.</span><span class="n">task</span><span class="p">;</span>
+	     <span class="n">iter</span><span class="p">.</span><span class="n">tgid</span> <span class="o">+=</span> <span class="mi">1</span><span class="p">,</span> <span class="n">iter</span> <span class="o">=</span> <span class="n">next_tgid</span><span class="p">(</span><span class="n">ns</span><span class="p">,</span> <span class="n">iter</span><span class="p">))</span> <span class="p">{</span>
+		<span class="kt">char</span> <span class="n">name</span><span class="p">[</span><span class="n">PROC_NUMBUF</span><span class="p">];</span>
+		<span class="kt">int</span> <span class="n">len</span><span class="p">;</span>
+
+		<span class="n">cond_resched</span><span class="p">();</span>
+		<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">has_pid_permissions</span><span class="p">(</span><span class="n">ns</span><span class="p">,</span> <span class="n">iter</span><span class="p">.</span><span class="n">task</span><span class="p">,</span> <span class="n">HIDEPID_INVISIBLE</span><span class="p">))</span>
+			<span class="k">continue</span><span class="p">;</span>
+
+                <span class="c1">// convert the tgid to a string that we can
+</span><span class="c1"></span>                <span class="c1">// return in the dir entries
+</span><span class="c1"></span>		<span class="n">len</span> <span class="o">=</span> <span class="n">snprintf</span><span class="p">(</span><span class="n">name</span><span class="p">,</span> <span class="k">sizeof</span><span class="p">(</span><span class="n">name</span><span class="p">),</span> <span class="s">&#34;%d&#34;</span><span class="p">,</span> <span class="n">iter</span><span class="p">.</span><span class="n">tgid</span><span class="p">);</span>
+		<span class="n">ctx</span><span class="o">-&gt;</span><span class="n">pos</span> <span class="o">=</span> <span class="n">iter</span><span class="p">.</span><span class="n">tgid</span> <span class="o">+</span> <span class="n">TGID_OFFSET</span><span class="p">;</span>
+		<span class="k">if</span> <span class="p">(</span><span class="o">!</span><span class="n">proc_fill_cache</span><span class="p">(</span><span class="n">file</span><span class="p">,</span> <span class="n">ctx</span><span class="p">,</span> <span class="n">name</span><span class="p">,</span> <span class="n">len</span><span class="p">,</span>
+				     <span class="n">proc_pid_instantiate</span><span class="p">,</span> <span class="n">iter</span><span class="p">.</span><span class="n">task</span><span class="p">,</span> <span class="nb">NULL</span><span class="p">))</span> <span class="p">{</span>
+			<span class="n">put_task_struct</span><span class="p">(</span><span class="n">iter</span><span class="p">.</span><span class="n">task</span><span class="p">);</span>
+			<span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
+		<span class="p">}</span>
+	<span class="p">}</span>
+	<span class="n">ctx</span><span class="o">-&gt;</span><span class="n">pos</span> <span class="o">=</span> <span class="n">PID_MAX_LIMIT</span> <span class="o">+</span> <span class="n">TGID_OFFSET</span><span class="p">;</span>
+	<span class="k">return</span> <span class="mi">0</span><span class="p">;</span>
+<span class="p">}</span>
+</code></pre></div><p>If you&rsquo;re curious about how the kernel is able to fill that <code>struct task</code> that <code>next_tgid</code> gets, then make sure you stick with the <a href="/blog/a-month-of-proc/">Month of proc</a>!</p>
+<p>In the next articles we go further into what information we can grab from such tasks.</p>
+<h3 id="closing-thoughts">Closing thoughts</h3>
+<p>Having never wrapped a syscall using <code>C</code> before, it was a great exercise to learn how that&rsquo;s done.</p>
+<p>I had never really given attention to how a process can list contents from a given directory - it was pretty clear for me that it involved opening a file and then issuing a certain syscall, but really learning what happens under the hood was amazing.</p>
+<p>I&rsquo;d like also to point out how helpful <a href="https://github.com/iovisor/bcc">bcc</a> and <a href="https://github.com/iovisor/bpftrace">bpftrace</a> are for learning about how Linux works internally. Kudos for everyone involved!</p>
+<p>If you have any further questions or would like to drop a comment, let me know! I&rsquo;m <a href="https://twitter.com/cirowrc">cirowrc</a> on Twitter.</p>
+<p>Have a good one!</p>
+<h3 id="resources">Resources</h3>
+<ul>
+<li><a href="https://amzn.to/2QWyXp9">The Linux Programming Interface</a></li>
+<li><a href="https://amzn.to/2QD0kU4">Understanding the Linux Kernel, 3rd Ed</a></li>
+</ul>
+
+    </section>
+  </article>
+
+</main>
+
+    
+
+
+
+
+
+
+
+
+
+        
+
+        
+                
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+                
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+        
+
+
+
+
+                                    
+
+
+
+  <section class="recommendation">
+
+    <h3>
+    
+      Recommended articles
+    
+    </h3>
+
+    <p>
+      If you've gotten some knowledge from this article, these are some others that you might take advatange of as well!
+    </p>
+
+    <ul>
+      
+        <li>
+          <a href="https://ops.tips/blog/using-procfs-to-get-process-stack-trace/">
+            Using /proc to get a process&#39; current stack trace
+          </a>
+        </li>
+      
+        <li>
+          <a href="https://ops.tips/blog/raspberry-pi-concourse-ci-worker/">
+            A Raspberry PI Concourse Worker
+          </a>
+        </li>
+      
+        <li>
+          <a href="https://ops.tips/blog/how-linux-creates-sockets/">
+            How Linux creates sockets and counts them
+          </a>
+        </li>
+      
+        <li>
+          <a href="https://ops.tips/blog/why-top-inside-container-wrong-memory/">
+            Why top and free inside containers don&#39;t show the correct container memory
+          </a>
+        </li>
+      
+        <li>
+          <a href="https://ops.tips/blog/proc-pid-limits-under-the-hood/">
+            Process resource limits under the hood
+          </a>
+        </li>
+      
+    </ul>
+  </section>
+
+
+
+    <footer class="footer">
+
+  <ul>
+    <li>
+      <a href="https://github.com/cirocosta">GitHub</a>
+    </li>
+
+    <li>
+      <a href="https://www.linkedin.com/in/cirocosta">LinkedIn</a>
+    </li>
+  </ul>
+
+  <p>
+    © Ciro da Silva da Costa, 2018.
+  </p>
+</footer>
+
+
+    
+
+
+
+
+
+<link rel="stylesheet"
+      href="https://ops.tips/bundle.min.75922cc496f110bdc184ab4d765a2174146459fd2494dc8a354af9ea71997227.css"
+      integrity="sha256-dZIsxJbxEL3BhKtNdlohdBRkWf0klNyKNUr56nGZcic=">
+
+  </body>
+</html>

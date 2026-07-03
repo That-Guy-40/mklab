@@ -1,0 +1,33 @@
+# Ciro S. Costa's two /proc articles (ops.tips) as a hands-on box on Debian 13.
+#
+# A throwaway system container with a C toolchain + strace, a non-root `learner`
+# user, and a `~/proc-lab/` sandbox (the two articles' C programs + a runnable
+# demo) so you can work through "What is /proc?" and "How is /proc able to list
+# process IDs?" — reading /proc, tracing getdents64, and compiling the code as
+# you read it. Driven through phase5-lxd/lab-lxd.sh, which speaks LXD or Incus
+# identically.
+#
+#   # 1) launch the container
+#   phase5-lxd/lab-lxd.sh up   --config examples/linux-proc-vfs-internals/linux-proc-vfs-internals-debian.toml
+#
+#   # 2) provision it (gcc + strace + a `learner` user + the ~/proc-lab sandbox)
+#   examples/linux-proc-vfs-internals/setup-workshop.sh linux-proc-vfs-internals-debian/shell
+#
+#   # 3) start exploring — log in as the learner and run the tour
+#   phase5-lxd/lab-lxd.sh exec linux-proc-vfs-internals-debian/shell -- su - learner
+#
+#   # 4) tear down
+#   phase5-lxd/lab-lxd.sh down --lab linux-proc-vfs-internals-debian
+#
+# The by-hand walkthrough (what setup-workshop.sh automates, and why) is RUNBOOK.md.
+
+[lab]
+name        = "linux-proc-vfs-internals-debian"
+description = "Ciro Costa's /proc VFS articles: procfs + getdents64 + strace box (glibc) on Debian 13"
+tags        = ["proc", "procfs", "vfs", "getdents64", "strace", "c", "debian", "trixie"]
+
+[[instance]]
+name  = "shell"
+type  = "container"
+# Debian 13 / trixie container, from the linuxcontainers `images:` remote.
+image = "images:debian/13"

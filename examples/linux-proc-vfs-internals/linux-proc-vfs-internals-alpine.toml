@@ -1,0 +1,32 @@
+# Ciro S. Costa's two /proc articles (ops.tips) as a hands-on box on Alpine Linux.
+#
+# The same environment as linux-proc-vfs-internals-debian.toml on a musl/BusyBox
+# base. /proc itself is kernel-provided, so its *contents* are identical to the
+# Debian box — the interest is the toolchain: musl instead of glibc, and Alpine
+# needs `linux-headers` for the article's raw-getdents64 program to compile
+# (a documented divergence — see RUNBOOK.md / MANUAL_TESTING.md). Engine-agnostic:
+# phase5-lxd/lab-lxd.sh speaks LXD or Incus identically.
+#
+#   # 1) launch the container
+#   phase5-lxd/lab-lxd.sh up   --config examples/linux-proc-vfs-internals/linux-proc-vfs-internals-alpine.toml
+#
+#   # 2) provision it (gcc + musl-dev + linux-headers + strace + a `learner` user + the sandbox)
+#   examples/linux-proc-vfs-internals/setup-workshop.sh linux-proc-vfs-internals-alpine/shell
+#
+#   # 3) start exploring — log in as the learner and run the tour
+#   phase5-lxd/lab-lxd.sh exec linux-proc-vfs-internals-alpine/shell -- su - learner
+#
+#   # 4) tear down
+#   phase5-lxd/lab-lxd.sh down --lab linux-proc-vfs-internals-alpine
+
+[lab]
+name        = "linux-proc-vfs-internals-alpine"
+description = "Ciro Costa's /proc VFS articles: procfs + getdents64 + strace box (musl) on Alpine"
+tags        = ["proc", "procfs", "vfs", "getdents64", "strace", "c", "alpine", "musl"]
+
+[[instance]]
+name  = "shell"
+type  = "container"
+# `images:alpine/latest` is rewritten by lab-lxd.sh to the highest stable
+# alpine/X.Y on the `images:` remote.
+image = "images:alpine/latest"
