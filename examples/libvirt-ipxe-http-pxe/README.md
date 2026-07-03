@@ -36,6 +36,10 @@ You need `libvirt` + `virt-install` + `xorriso` + a **Fedora Server DVD ISO**
 (any current release; the posts used Fedora 29). The bridge IP `192.168.122.1` is
 libvirt's `default` network out of the box.
 
+> **Prefer to type every command yourself?** [`RUNBOOK.md`](RUNBOOK.md) unrolls
+> both scripts into the exact by-hand commands — including, front and center, how
+> HTTPS is enabled in iPXE by **an edit to `config/general.h` and a recompile**.
+
 ```bash
 cd examples/libvirt-ipxe-http-pxe
 
