@@ -61,6 +61,7 @@ initramfs on first `create`.
 | Dir | What it is |
 |---|---|
 | [`floppinux/`](floppinux/) | Krzysztof Jankowski's **FLOPPINUX** (a whole Linux on a 1.44 MB floppy) operationalized for Debian — a standalone, rootless `build-floppinux.sh` that cross-builds kernel 6.14.11 + BusyBox 1.36.1 and writes a `syslinux` floppy you boot with `qemu-system-i386 -fda`. The "physical floppy + FAT + syslinux" cousin of the in-RAM tracks. See its [README](floppinux/README.md). |
+| [`minimal-arm-linux-qemu/`](minimal-arm-linux-qemu/) | David Corvoysier's **[*Build and boot a minimal Linux system with qemu*](minimal-arm-linux-qemu/upstream-tutorial/README.md)** (kaizou.org, CC BY-NC-SA 3.0) operationalized for a modern Debian host — a rootless `build-minimal-arm.sh` that cross-compiles a **Linux 6.1 kernel** for QEMU's **Mainstone (PXA270)** board, hand-writes a **static C `/init`**, packs an initramfs, and boots to `Tiny init ...`. The **ARM** cousin of `micro-linux`/`floppinux`: a from-scratch kernel running a single static binary as PID 1 — no BusyBox, no shell. See its [README](minimal-arm-linux-qemu/README.md). |
 | [`micro_linux_dhcp_lease/`](micro_linux_dhcp_lease/) | The networking demo: the from-source distro pulls a **DHCP lease** over a virtio NIC (one `micro-linux-<arch>-dhcp.toml` per arch). See its [README](micro_linux_dhcp_lease/README.md). |
 | [`reference/`](reference/) | Standalone build scripts that predate `lab-vm.sh`'s auto-build — read them to see the microVM initramfs built without the framework. |
 

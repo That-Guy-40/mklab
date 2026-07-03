@@ -1,0 +1,825 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+	<meta charset=UTF-8>
+
+    <!-- Metadata -->
+
+    <meta http-equiv="date" content="Friday, 23  2016 16:00:00 GMT" />
+
+
+    <meta name="keywords" content="build,linux,croostool-ng,qemu,busybox" />
+
+
+    <title>Build and boot a minimal Linux system with qemu</title>
+
+	<link rel="alternate" type="application/rss+xml" href="/feed/index.xml">
+	<link rel="stylesheet" media="all" data-noprefix href="/css/style.css">
+	
+  <script type="text/javascript" src="/js/prefixfree.min.js"></script>
+</head>
+<body>
+<div id='wrap'>
+<header role="banner">
+	<ul>
+    	<li><a href='/'>Kaizou</a></li>
+		<li><a href="/about.html">?</a></li>
+	</ul>
+</header>
+<div id="content">
+<script type="text/javascript"
+    src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.5/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  MathJax.Hub.Config({
+  tex2jax: {
+    inlineMath: [['$','$'], ['\\(','\\)']],
+    processEscapes: true
+  }
+});
+</script>
+	<!-- Post -->
+<div id='first-col'>
+<article role='main'>
+<header class='title'>
+  <h1><a href="/2016/09/boot-minimal-linux-qemu.html" rel="bookmark">Build and boot a minimal Linux system with qemu</a></h1>
+  <small><span>23 Sep 2016</span> by David Corvoysier</small>
+</header>
+<script type="text/javascript"
+    src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.5/MathJax.js?config=TeX-AMS-MML_HTMLorMML">
+  MathJax.Hub.Config({
+  tex2jax: {
+    inlineMath: [['$','$'], ['\\(','\\)']],
+    processEscapes: true
+  }
+});
+</script>
+<p>When you want to build a Linux system for an embedded target these days, it is very unlikely that you decide to do it from scratch.</p>
+
+<p>Embedded Linux build systems are really smart and efficients, and will fit almost all use cases: should you need only a simple system, <a href="https://buildroot.org/">buildroot</a> should be your first choice, and if you want to include more advanced features, or even create a full distribution, <a href="https://www.yoctoproject.org/">Yocto</a> is the way to go.</p>
+
+<p>That said, even if these tools will do all the heavy-lifting for you, they are not perfect, and if you are using less common configurations, you may stumble upon issues that were not expected. In that case, it may be important to understand what happens behind the scenes.</p>
+
+<p>In this post, I will describe step-by-step how you can build a minimal Linux system for an embedded target and boot it using <a href="http://wiki.qemu.org/Main_Page">QEMU</a>.</p>
+
+<!--more-->
+
+<h1 id="install-qemu">Install QEMU</h1>
+
+<p><a href="http://wiki.qemu.org/Main_Page">QEMU</a> is available for all major distros.</p>
+
+<div class="language-shell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nb">sudo </span>apt-get <span class="nb">install </span>qemu
+</code></pre></div></div>
+
+<p>In this post I will create a system for an ARM target, just to make sure I don’t mix between my host and target systems (see the last paragraph of <a href="https://landley.net/writing/docs/cross-compiling.html">this introduction on cross-compilation</a>).</p>
+
+<p>You can list the ARM machines your <a href="http://wiki.qemu.org/Main_Page">QEMU</a> setup supports from the command-line:</p>
+
+<div class="language-shell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span>qemu-system-arm <span class="nt">--machine</span> <span class="nb">help
+</span>Supported machines are:
+versatileab          ARM Versatile/AB <span class="o">(</span>ARM926EJ-S<span class="o">)</span>
+...
+mainstone            Mainstone II <span class="o">(</span>PXA27x<span class="o">)</span>
+...
+midway               Calxeda Midway <span class="o">(</span>ECX-2000<span class="o">)</span>
+virt                 ARM Virtual Machine
+borzoi               Borzoi PDA <span class="o">(</span>PXA270<span class="o">)</span>
+</code></pre></div></div>
+
+<p>I will use in this tutorial an old Intel ARM platform, the Mainstone.</p>
+
+<blockquote>
+  <p>The only reason I chose this platform is because the maintainer of this board is Robert Jarzmik, who has been sitting next to me in the Open space for the last year. He is _very_knowledgeable on the Kernel and also very nice. Thanks to you, Bob !</p>
+</blockquote>
+
+<p>#Generate the toolchain</p>
+
+<p>To generate the binaries for our embedded target, we need a toolchain, which is a set of tools targeting the corresponding processor architecture.</p>
+
+<p>Most of the time, the board manufacturer will have provided the toolchain as part of the BSP (Board Support Package).</p>
+
+<p>Generating a toolchain used to be quite painful, but since the awesome <a href="http://crosstool-ng.org/">crosstool-ng</a> tool has been made available, this is a piece of cake.</p>
+
+<blockquote>
+  <p>More namedropping: kudos to my friend <a href="http://ymorin.is-a-geek.org/">Yann E. Morin</a> for developping <a href="http://crosstool-ng.org/">crosstool-ng</a></p>
+</blockquote>
+
+<p>First, we need to fetch and install the tool.</p>
+
+<div class="language-shell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span>wget http://crosstool-ng.org/download/crosstool-ng/crosstool-ng-1.22.0.tar.xz
+<span class="nv">$ </span><span class="nb">tar </span>xf crosstool-ng-1.22.0.tar.xz
+<span class="nv">$ </span><span class="nb">cd </span>crosstool-ng/
+<span class="nv">$ </span>./configure
+<span class="nv">$ </span>make
+<span class="nv">$ </span><span class="nb">sudo </span>make <span class="nb">install</span>
+</code></pre></div></div>
+
+<p>You can list the pre-configured toolchains that your cross-tool ng version supports:</p>
+
+<div class="language-shell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span>ct-ng list-samples
+Status  Sample name
+  LN    config
+  MKDIR config.gen
+  IN    config.gen/arch.in
+  IN    config.gen/kernel.in
+  IN    config.gen/cc.in
+  IN    config.gen/binutils.in
+  IN    config.gen/libc.in
+  IN    config.gen/debug.in
+<span class="o">[</span>G..]   alphaev56-unknown-linux-gnu
+...
+<span class="o">[</span>G..]   armeb-unknown-linux-uclibcgnueabi
+...
+<span class="o">[</span>G..]   xtensa-unknown-linux-uclibc
+ L <span class="o">(</span>Local<span class="o">)</span>       : sample was found <span class="k">in </span>current directory
+ G <span class="o">(</span>Global<span class="o">)</span>      : sample was installed with crosstool-NG
+ X <span class="o">(</span>EXPERIMENTAL<span class="o">)</span>: sample may use EXPERIMENTAL features
+ B <span class="o">(</span>BROKEN<span class="o">)</span>      : sample is currently broken
+</code></pre></div></div>
+
+<p>For the Mainstone board, we will use a generic ARM toolchain with <a href="https://www.uclibc.org/">uCLibc</a>, a smaller C library for embedded targets.</p>
+
+<p>You can get the details of the toolchain that will be produced from the command-line:</p>
+
+<div class="language-shell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span>ct-ng show-arm-unknown-linux-uclibcgnueabi
+  IN    config.gen/arch.in
+  IN    config.gen/kernel.in
+  IN    config.gen/cc.in
+  IN    config.gen/binutils.in
+  IN    config.gen/libc.in
+<span class="o">[</span>G..]   arm-unknown-linux-uclibcgnueabi
+    OS             : linux-4.3
+    Companion libs : gmp-6.0.0a mpfr-3.1.3 mpc-1.0.3 libelf-0.8.13 expat-2.1.0 ncurses-6.0
+    binutils       : binutils-2.25.1
+    C compilers    : gcc  |  5.2.0
+    Languages      : C,C++
+    C library      : uClibc-ng-1.0.9 <span class="o">(</span>threads: nptl<span class="o">)</span>
+    Tools          : dmalloc-5.5.2 duma-2_5_15 gdb-7.10 ltrace-0.7.3 strace-4.10
+</code></pre></div></div>
+
+<p>Let’s generate (this <em>will</em> take a while):</p>
+
+<div class="language-shell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span>ct-ng arm-unknown-linux-uclibcgnueabi
+<span class="nv">$ </span>ct-ng build
+</code></pre></div></div>
+
+<p>By default, the toolchain will be installed under $(HOME)/x-tools/arm-unknown-linux-uclibcgnueabi. In order to use it, we add the toolchain bin directory to the PATH:</p>
+
+<div class="language-shell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span><span class="nb">export </span><span class="nv">PATH</span><span class="o">=</span><span class="s2">"</span><span class="k">${</span><span class="nv">PATH</span><span class="k">}</span><span class="s2">:</span><span class="k">${</span><span class="nv">HOME</span><span class="k">}</span><span class="s2">/x-tools/arm-unknown-linux-gnueabi/bin"</span>
+<span class="nv">$ </span>arm-unknown-linux-uclibcgnueabi-gcc <span class="nt">--version</span>
+arm-unknown-linux-uclibcgnueabi-gcc <span class="o">(</span>crosstool-NG crosstool-ng-1.22.0<span class="o">)</span> 5.2.0
+Copyright <span class="o">(</span>C<span class="o">)</span> 2015 Free Software Foundation, Inc.
+This is free software<span class="p">;</span> see the <span class="nb">source </span><span class="k">for </span>copying conditions.  There is NO
+warranty<span class="p">;</span> not even <span class="k">for </span>MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+</code></pre></div></div>
+
+<blockquote>
+  <p>Note that I have added a small routine to my shell startup script to automatically add paths to toolchains:</p>
+  <div class="language-shell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="k">for </span><span class="nb">dir </span><span class="k">in</span> <span class="sb">`</span><span class="nb">ls</span> ~/x-tools<span class="sb">`</span><span class="p">;</span> <span class="k">do
+</span><span class="nv">PATH</span><span class="o">=</span>~/x-tools/<span class="nv">$dir</span>/bin:<span class="nv">$PATH</span>
+<span class="k">done
+</span><span class="nb">export </span>PATH
+</code></pre></div>  </div>
+</blockquote>
+
+<h1 id="sanity-check-test-cross-compilation-environment">Sanity check: test cross-compilation environment</h1>
+
+<p>It is always a good practice to verify at regular intervals that your setup is correct. Here, we will make sure that the toolchain is able to generate ARM code that can be run by qemu-arm, the QEMU ARM CPU emulator.</p>
+
+<p>For those unfamiliar with cross-compilation, this may also help to put things in perspective.</p>
+
+<p>We will compile a very simple program:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>main.c
+
+#include &lt;stdio.h&gt;
+
+int main(int argc, char*argv[])
+{
+	printf("Genuinely generated by the toolchain\n");
+}
+</code></pre></div></div>
+
+<p>Let’s first build with a naive command:</p>
+
+<div class="language-shell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span>arm-unknown-linux-uclibcgnueabi-gcc main.c <span class="nt">-o</span> sanity
+<span class="nv">$ </span><span class="nb">chmod</span> +x sanity
+</code></pre></div></div>
+
+<p>We verify that sanity is an ARM exec that cannot run on our system:</p>
+
+<div class="language-shell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span>./sanity
+bash: ./sanity: cannot execute binary file: Exec format error
+<span class="nv">$ </span>file sanity
+sanity: ELF 32-bit LSB  executable, ARM, EABI5 version 1 <span class="o">(</span>SYSV<span class="o">)</span>, dynamically linked <span class="o">(</span>uses shared libs<span class="o">)</span>, not stripped
+</code></pre></div></div>
+
+<p>Now, let’s try to run it with QEMU:</p>
+
+<div class="language-shell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span>qemu-arm sanity
+/lib/ld-uClibc.so.0: No such file or directory
+</code></pre></div></div>
+
+<p>What happened ? The reason we get this error is because by default GCC has generated a sanity executable that requires dynamic linking of system libraries, as the following command reveals:</p>
+
+<div class="language-shell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span>readelf <span class="nt">-d</span> sanity
+
+Dynamic section at offset 0x4f0 contains 18 entries:
+  Tag        Type                         Name/Value
+ 0x00000001 <span class="o">(</span>NEEDED<span class="o">)</span>                     Shared library: <span class="o">[</span>libc.so.1]
+ 0x0000000c <span class="o">(</span>INIT<span class="o">)</span>                       0x102d4
+...
+</code></pre></div></div>
+
+<p>Here, QEMU needs to find the C library, and to load it using the dynamic linker, which happens to be also a library, ld-uClibc.so.0, as the INTERP program header reveals:</p>
+
+<div class="language-shell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span>readelf <span class="nt">-l</span> sanity
+Elf file <span class="nb">type </span>is EXEC <span class="o">(</span>Executable file<span class="o">)</span>
+Entry point 0x10334
+There are 6 program headers, starting at offset 52
+
+Program Headers:
+  Type           Offset   VirtAddr   PhysAddr   FileSiz MemSiz  Flg Align
+  PHDR           0x000034 0x00010034 0x00010034 0x000c0 0x000c0 R E 0x4
+  INTERP         0x0000f4 0x000100f4 0x000100f4 0x00014 0x00014 R   0x1
+      <span class="o">[</span>Requesting program interpreter: /lib/ld-uClibc.so.0]
+...
+</code></pre></div></div>
+
+<p>Both libraries are under the toolchain ‘sysroot’ directory.</p>
+
+<blockquote>
+  <p>Should you decide to support dynamic linking, the dynamic linker and the C library should at some point end up on your target.</p>
+</blockquote>
+
+<p>Specifically for that purpose, QEMU supports specifying the path to dynamically linked libraries using the -L option or the QEMU_LD_PREFIX environment variable.</p>
+
+<div class="language-shell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span>qemu-arm <span class="nt">-L</span> ~/x-tools/arm-unknown-linux-uclibcgnueabi/arm-unknown-linux-uclibcgnueabi/sysroot/ sanity
+Genuinely generated by the toolchain
+</code></pre></div></div>
+
+<p>or</p>
+
+<div class="language-shell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ QEMU_LD_PREFIX</span><span class="o">=</span>~/x-tools/arm-unknown-linux-uclibcgnueabi/arm-unknown-linux-uclibcgnueabi/sysroot/ qemu-arm sanity
+Genuinely generated by the toolchain
+</code></pre></div></div>
+
+<p>If you want to avoid these linking issues, you can tell GCC to generate a static executable instead:</p>
+
+<div class="language-shell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span>arm-unknown-linux-uclibcgnueabi-gcc <span class="nt">-static</span> main.c <span class="nt">-o</span> sanity
+<span class="nv">$ </span>qemu-arm sanity
+Genuinely generated by the toolchain
+</code></pre></div></div>
+
+<h1 id="configure-and-build-the-linux-kernel">Configure and build the Linux Kernel</h1>
+
+<p>At the time this article is written, the latest Kernel stable version is 4.7.5.</p>
+
+<div class="language-shell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span><span class="nb">mkdir </span>linux
+<span class="nv">$ </span>wget https://cdn.kernel.org/pub/linux/kernel/linux-4.7.5.tar.xz <span class="nt">-O</span> linux/linux-4.7.5.tar.xz
+<span class="nv">$ </span><span class="nb">tar </span>xf linux/linux-4.7.5.tar.xz <span class="nt">-C</span> linux
+</code></pre></div></div>
+
+<p>We select the mainstone configuration to build the Kernel</p>
+
+<div class="language-shell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span>make <span class="nt">-C</span> linux/linux-4.7.5 <span class="nv">ARCH</span><span class="o">=</span>arm mainstone_defconfig <span class="nv">O</span><span class="o">=</span>linux/build
+</code></pre></div></div>
+
+<blockquote>
+  <p>You need to specify the architecture to tell the Kernel where it should look for existing configurations (here arch/arm/configs)</p>
+</blockquote>
+
+<p>The Linux Kernel is very versatile in the way it boots, and it can be frankly overwhelming if you consider all options.</p>
+
+<p>In this article, I will illustrate two boot modes: a stand-alone Kernel with a RAM initrd, and a Kernel that boots on a root filesystem on an SD card.</p>
+
+<p>As per the Linux Kernel documentation:</p>
+
+<blockquote>
+  <p>initrd provides the capability to load a RAM disk by the boot loader.
+This RAM disk can then be mounted as the root file system and programs
+can be run from it. Afterwards, a new root file system can be mounted
+from a different device. The previous root (from initrd) is then moved
+to a directory and can be subsequently unmounted.</p>
+
+  <p>initrd is mainly designed to allow system startup to occur in two phases,
+where the kernel comes up with a minimum set of compiled-in drivers, and
+where additional modules are loaded from initrd.</p>
+</blockquote>
+
+<p>initrd is primarily intended to be a bootstrap in RAM that allows the Kernel to get access to the ‘real’ rootfs, but we can also use it to simply boot the Kernel without providing a rootfs.</p>
+
+<p>We will see how we can create an initrd in the subsequent paragraphs.</p>
+
+<p>The mainstone default configuration is fairly minimal, and we will need to add a few options to support these two boot modes.</p>
+
+<p>First, we need to add initrd support by activating the BLK_DEV_INITRD configuration option.</p>
+
+<p>Second, we need to add SD cards support for the mainstone board, that belongs to the PXA family. The driver is called MultiMedia card driver for PXA, and it requires Direct Memory Access: we will therefore need to select MMC, MMC_PXA, DMADEVICES and PXA_DMA.</p>
+
+<p>We also need to activate the AEABI configuration to make sure the Kernel uses the latest ARM EABI convention. As per the Linux Kernel documentation:</p>
+
+<blockquote>
+  <p>This option allows for the kernel to be compiled using the latest ARM ABI (aka EABI).  This is only useful if you are using a user space environment that is also compiled with EABI.</p>
+</blockquote>
+
+<p>We need to add these options manually using the curses menuconfig interface:</p>
+
+<div class="language-shell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span>make <span class="nt">-C</span> linux/build <span class="nv">ARCH</span><span class="o">=</span>arm menuconfig
+</code></pre></div></div>
+
+<blockquote>
+  <p>General Setup-&gt;Initial RAM filesystem and RAM disk (initramfs/initrd) support
+Device Drivers-&gt;MMC/SD/SDIO card support-&gt;Intel PXA25x/.. Multimedia Card Interface support
+Device Drivers-&gt;DMA Engine support-&gt;PXA DMA support
+Kernel Features-&gt;Use the ARM EABI to compile the kernel</p>
+</blockquote>
+
+<p>Once our Kernel has been properly configured, we can build it:</p>
+
+<div class="language-shell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span>make <span class="nt">-C</span> linux/build <span class="nv">ARCH</span><span class="o">=</span>arm <span class="nv">CROSS_COMPILE</span><span class="o">=</span>arm-unknown-linux-uclibcgnueabi-
+</code></pre></div></div>
+
+<p>At the end of the build, our Kernel will be under linux/build/arch/arm/boot.</p>
+
+<div class="language-shell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span><span class="nb">ls </span>linux/build/arch/arm/boot/
+compressed  Image  zImage
+</code></pre></div></div>
+
+<h1 id="sanity-check-launch-the-linux-kernel-with-qemu">Sanity check: launch the Linux Kernel with QEMU</h1>
+
+<p>We verify that the Kernel has been properly generated by launching it with qemu-system-arm, the <a href="http://wiki.qemu.org/Main_Page">QEMU</a> system emulator (note the difference with qemu-arm, the CPU emulator).</p>
+
+<p>We pass four parameters on the command-line:</p>
+
+<ul>
+  <li>kernel: path to our Kernel,</li>
+  <li>machine: the machine w euse (here ‘mainstone’),</li>
+  <li>serial: set to ‘stdio’ to the Kernel printk logs in the console,</li>
+  <li>append: parameters to add to the Kernel command-line</li>
+</ul>
+
+<div class="language-shell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span>qemu-system-arm <span class="nt">-kernel</span> linux/zImage <span class="nt">-serial</span> stdio <span class="nt">-append</span> <span class="s1">'console=ttyS0'</span> <span class="nt">-M</span> mainstone
+Two flash images must be given with the <span class="s1">'pflash'</span> parameter
+</code></pre></div></div>
+
+<p>The mainstone board has two 64 Mb flash banks whose images must be provided on the qemu-system-arm command-line.</p>
+
+<p>We create two empty images:</p>
+
+<div class="language-shell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span><span class="nb">dd </span><span class="k">if</span><span class="o">=</span>/dev/zero <span class="nv">of</span><span class="o">=</span>mainstone-flash0.img <span class="nv">bs</span><span class="o">=</span>1024 <span class="nv">count</span><span class="o">=</span>65536
+<span class="nv">$ </span><span class="nb">dd </span><span class="k">if</span><span class="o">=</span>/dev/zero <span class="nv">of</span><span class="o">=</span>mainstone-flash1.img <span class="nv">bs</span><span class="o">=</span>1024 <span class="nv">count</span><span class="o">=</span>65536
+</code></pre></div></div>
+
+<p>We can now launch the Kernel.</p>
+
+<div class="language-shell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span>qemu-system-arm <span class="nt">-kernel</span> linux/zImage <span class="nt">-append</span> <span class="s1">'console=ttyS0'</span> <span class="nt">-machine</span> mainstone <span class="nt">-serial</span> stdio <span class="nt">-pflash</span> mainstone-flash0.img <span class="nt">-pflash</span> mainstone-flash1.img
+Booting Linux on physical CPU 0x0
+Linux version 4.7.5 <span class="o">(</span>xxx@yyy<span class="o">)</span> <span class="o">(</span>gcc version 5.2.0 <span class="o">(</span>crosstool-NG crosstool-ng-1.22.0<span class="o">)</span> <span class="o">)</span> <span class="c">#1 Tue Sep 27 09:35:52 CEST 2016</span>
+CPU: XScale-PXA270 <span class="o">[</span>69054117] revision 7 <span class="o">(</span>ARMv5TE<span class="o">)</span>, <span class="nv">cr</span><span class="o">=</span>00007977
+...
+XScale iWMMXt coprocessor detected.
+VFS: Cannot open root device <span class="s2">"(null)"</span> or unknown-block<span class="o">(</span>0,0<span class="o">)</span>: error <span class="nt">-6</span>
+Please append a correct <span class="s2">"root="</span> boot option<span class="p">;</span> here are the available partitions:
+Kernel panic - not syncing: VFS: Unable to mount root fs on unknown-block<span class="o">(</span>0,0<span class="o">)</span>
+...
+</code></pre></div></div>
+
+<p>It still fails because we didn’t provide a rootfs nor an initrd.</p>
+
+<h1 id="create-a-tiny-init">Create a tiny init</h1>
+
+<p>Let’s create a simplistic bootstrap:</p>
+
+<div class="language-plaintext highlighter-rouge"><div class="highlight"><pre class="highlight"><code>main.c:
+
+#include &lt;stdio.h&gt;
+
+void main()
+{
+	printf("Tiny init ...\n");
+	while(1);
+}
+</code></pre></div></div>
+
+<p>We compile it using the ARM toolchain, passing a few CFLAGS to specify the mainstone CPU instruction set:</p>
+
+<div class="language-shell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span>arm-unknown-linux-uclibcgnueabi-gcc <span class="nt">-static</span> <span class="nt">-march</span><span class="o">=</span>armv5te <span class="nt">-mtune</span><span class="o">=</span>xscale <span class="nt">-Wa</span>,-mcpu<span class="o">=</span>xscale main.c <span class="nt">-o</span> init
+<span class="nv">$ </span><span class="nb">chmod</span> +x init
+</code></pre></div></div>
+
+<p>We will now use that bootstrap to boot the system after the Kernel has been loaded.</p>
+
+<h1 id="ram-boot-using-initrd">RAM boot using initrd</h1>
+
+<p>We create a CPIO RAM image that contains only the init program:</p>
+
+<div class="language-shell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span><span class="nb">echo </span>init | cpio <span class="nt">-o</span> <span class="nt">--format</span><span class="o">=</span>newc <span class="o">&gt;</span> initramfs
+</code></pre></div></div>
+
+<p>Now, if we launch the Kernel again, specifying our initramfs, we end up in the tiny init loop:</p>
+
+<div class="language-shell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span>qemu-system-arm <span class="nt">-kernel</span> linux/zImage <span class="nt">-append</span> <span class="s1">'console=ttyS0'</span> <span class="nt">-machine</span> mainstone <span class="nt">-serial</span> stdio <span class="nt">-pflash</span> mainstone-flash0.img <span class="nt">-pflash</span> mainstone-flash1.img <span class="nt">-initrd</span> initramfs
+Booting Linux on physical CPU 0x0
+Linux version 4.7.5 <span class="o">(</span>xxx@yyy<span class="o">)</span> <span class="o">(</span>gcc version 5.2.0 <span class="o">(</span>crosstool-NG crosstool-ng-1.22.0<span class="o">)</span> <span class="o">)</span> <span class="c">#1 Tue Sep 27 09:35:52 CEST 2016</span>
+CPU: XScale-PXA270 <span class="o">[</span>69054117] revision 7 <span class="o">(</span>ARMv5TE<span class="o">)</span>, <span class="nv">cr</span><span class="o">=</span>00007977
+...
+XScale iWMMXt coprocessor detected.
+Freeing unused kernel memory: 148K <span class="o">(</span>c03cf000 - c03f4000<span class="o">)</span>
+This architecture does not have kernel memory protection.
+Tiny init ...
+</code></pre></div></div>
+
+<h1 id="boot-on-a-sd-card-image">Boot on a SD card image</h1>
+
+<p>We will now create an SD card image containing the tiny init code.</p>
+
+<div class="language-shell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span>qemu-img create init.img 128K
+</code></pre></div></div>
+
+<p>We format the SD card image with an ext2 file-system.</p>
+
+<div class="language-shell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span>mkfs.ext2 init.img
+mke2fs 1.42.13 <span class="o">(</span>17-May-2015<span class="o">)</span>
+Discarding device blocks: <span class="k">done
+</span>Creating filesystem with 128 1k blocks and 16 inodes
+
+Allocating group tables: <span class="k">done
+</span>Writing inode tables: <span class="k">done
+</span>Writing superblocks and filesystem accounting information: <span class="k">done</span>
+</code></pre></div></div>
+
+<p>Then, we can mount it and copy the init program into the image</p>
+
+<div class="language-shell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span><span class="nb">mkdir </span>tmp
+<span class="nv">$ </span><span class="nb">sudo </span>mount <span class="nt">-o</span> loop init.img tmp
+<span class="nv">$ </span><span class="nb">mkdir</span> <span class="nt">-p</span> tmp/sbin
+<span class="nv">$ </span><span class="nb">sudo cp </span>init tmp/sbin/
+<span class="nv">$ </span><span class="nb">sudo </span>umount tmp
+<span class="nv">$ </span><span class="nb">rmdir </span>tmp
+</code></pre></div></div>
+
+<blockquote>
+  <p>Note that the Kernel expects the init bootstrap to be under /sbin/init, and not at the root of the file system like in the initram file system.</p>
+</blockquote>
+
+<p>We can now launch the Kernel specifying that the rootfs is on /dev/mmcblk0, which is the pseudo-device for the SD card passed to <a href="http://wiki.qemu.org/Main_Page">QEMU</a> with the -sd option.</p>
+
+<div class="language-shell highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span>qemu-system-arm <span class="nt">-kernel</span> linux/zImage <span class="nt">-append</span> <span class="s1">'console=ttyS0 root=/dev/mmcblk0'</span> <span class="nt">-machine</span> mainstone <span class="nt">-serial</span> stdio <span class="nt">-pflash</span> mainstone-flash0.img <span class="nt">-pflash</span> mainstone-flash1.img <span class="nt">-sd</span> init.img
+Booting Linux on physical CPU 0x0
+Linux version 4.7.5 <span class="o">(</span>xxx@yyy<span class="o">)</span> <span class="o">(</span>gcc version 5.2.0 <span class="o">(</span>crosstool-NG crosstool-ng-1.22.0<span class="o">)</span> <span class="o">)</span> <span class="c">#1 Tue Sep 27 09:35:52 CEST 2016</span>
+CPU: XScale-PXA270 <span class="o">[</span>69054117] revision 7 <span class="o">(</span>ARMv5TE<span class="o">)</span>, <span class="nv">cr</span><span class="o">=</span>00007977
+...
+XScale iWMMXt coprocessor detected.
+mmc0: host does not support reading read-only switch, assuming write-enable
+mmc0: new SD card at address 4567
+mmcblk0: mmc0:4567 QEMU! 1.00 GiB
+VFS: Mounted root <span class="o">(</span>ext2 filesystem<span class="o">)</span> <span class="nb">readonly </span>on device 179:0.
+Freeing unused kernel memory: 152K <span class="o">(</span>c03ee000 - c0414000<span class="o">)</span>
+This architecture does not have kernel memory protection.
+Tiny init ...
+</code></pre></div></div>
+
+<p>Voila !</p>
+
+<p>In a following article, I will demonstrate how to create a small rootfs using <a href="https://busybox.net/">BusyBox</a>.</p>
+
+<!-- Comments -->
+<div id="disqus_thread"></div>
+    <script type="text/javascript">
+        /* * * CONFIGURATION VARIABLES: EDIT BEFORE PASTING INTO YOUR WEBPAGE * * */
+        var disqus_shortname = 'kaizouorg';
+
+        /* * * DON'T EDIT BELOW THIS LINE * * */
+        (function() {
+            var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+            dsq.src = '//' + disqus_shortname + '.disqus.com/embed.js';
+            (document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+        })();
+    </script>
+    <noscript>Please enable JavaScript to view the <a href="https://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
+    <a href="https://disqus.com" class="dsq-brlink">comments powered by <span class="logo-disqus">Disqus</span></a>
+</article>
+</div>
+<aside id='second-col'>
+<div id="me">
+<h2>Hi</h2>
+<p>I am David Corvoysier, versatile developer and open Source enthusiast.</p>
+</div>
+
+<div id='social'>
+  <h2>Follow me: 
+    <a href="https://github.com/dacorvo">
+<img alt="David Corvoysier github account" src="/images/Octocat.png" />
+</a>
+           
+    <a href="/feed/">
+<img alt="Site Feed" src="/images/rss.svg" />
+</a>
+
+    <a href="https://fr.linkedin.com/pub/david-corvoysier/a3/2aa/a90">
+<img alt="David Corvoysier on linkedIn" src="/images/linkedin.jpg" />
+</a>
+
+  </h2>
+</div>
+
+<!-- Related Posts -->
+<div id="related-posts">
+  <div class='tuple'><h2>Related Posts</h2></div>
+    
+        
+        
+            <div class='tuple'>
+        
+    	<article>
+    <header>
+      <h1><a href="/2023/05/quantization-scales-alignment.html" rel="bookmark">Aligning quantization scales before incompatible operations</a></h1>
+      <small><span>30 May 2023</span> by David Corvoysier</small>
+    </header>
+    <section>
+      <p>As explained in my introduction to [Machine Learning quantization](/2023/05/ml-quantization-introduction#quantized-linear-operations),
+ important restrictions apply to operations performed on quantized inputs.
+
+First, additions between the integer mantissa of quantized inputs can only be performed if they are in the same scale.
+
+This comes from the representation of the quantized numbers:
+
+$a = (n - zeropoint_a) * scale_a$
+
+$b = (m - zeropoint) * scale_b$
+
+$a$ and $b$ integer mantissa can only be added if $scale_a == scale_b$, allowing us to write directly:
+
+$a + b = (n - zeropoint_a + m - zeropoint_b) * scale_a$
+
+Intuitively, this is analog to say that you cannot add two quantities expressed in different units (like bytes and kilobytes) without converting one
+number representation to the other.
+
+</p>
+      <p><a href="/2023/05/quantization-scales-alignment.html">(more…)</a></p>
+    </section>
+    <footer>
+      <span>Categories: 
+        
+        <a href="/categories.html#Machine Learning" rel="tag">Machine Learning</a>
+        
+      </span>
+      <span>Tags: 
+        
+        <a href="/tags.html#quantization" rel="tag">quantization</a>
+        
+      </span>
+    </footer>
+</article>
+
+        
+    
+        
+        
+    	<article>
+    <header>
+      <h1><a href="/2023/05/quantization-scale-out.html" rel="bookmark">Resolve quantization scales after an operation</a></h1>
+      <small><span>29 May 2023</span> by David Corvoysier</small>
+    </header>
+    <section>
+      <p>As explained in my introduction to [Machine Learning quantization](/2023/05/ml-quantization-introduction#quantized-linear-operations),
+ the inputs, weights and outputs of a quantized operation are quantized each with a different scale.
+
+In the same post, I explain how these scales can be folded into a single output scale, allowing the operation to be performed on the integer mantissa
+of the quantized inputs and weights:
+
+$scale_{folded} = \frac{scale_{out}}{scale_{in} . scale_{w}}$
+
+In [another post](/2023/05/quantization-scales-alignment) I explain how heterogenous input scales could be converted to a fixed-point representation
+and aligned before the operation, resulting in yet another implicit scale expressed as a power-of-two that needs to be applied to the output scale.
+
+In this post I explain how these output scales can be applied using integer arithmetics only. 
+
+</p>
+      <p><a href="/2023/05/quantization-scale-out.html">(more…)</a></p>
+    </section>
+    <footer>
+      <span>Categories: 
+        
+        <a href="/categories.html#Machine Learning" rel="tag">Machine Learning</a>
+        
+      </span>
+      <span>Tags: 
+        
+        <a href="/tags.html#quantization" rel="tag">quantization</a>
+        
+      </span>
+    </footer>
+</article>
+
+        
+            </div>
+        
+    
+        
+        
+            <div class='tuple'>
+        
+    	<article>
+    <header>
+      <h1><a href="/2023/05/quantization-fixed-point.html" rel="bookmark">Fixed-point representation for quantization</a></h1>
+      <small><span>26 May 2023</span> by David Corvoysier</small>
+    </header>
+    <section>
+      <p>As explained in my introduction to [Machine Learning quantization](/2023/05/ml-quantization-introduction.html#quantized-linear-operations),
+ the quantization of a ML model produces a graph of operations applied on quantized tensors.
+
+Quantized tensors are actually integer tensors that share the same float scale and integer zero-point.
+
+The implementation of the quantized operations is device-specific.
+
+One of the main design decision is how the inputs, weights and output float scales are propagated and applied in the quantized graph.
+
+In two other posts I will explain how is is possible to use integer arithmetic operators for that purpose if the scales are represented
+as fixed-point numbers.
+
+This posts is a brief introduction to the fixed-point representation and to the fixed-point arithmetic operators.
+
+</p>
+      <p><a href="/2023/05/quantization-fixed-point.html">(more…)</a></p>
+    </section>
+    <footer>
+      <span>Categories: 
+        
+        <a href="/categories.html#Machine Learning" rel="tag">Machine Learning</a>
+        
+      </span>
+      <span>Tags: 
+        
+        <a href="/tags.html#quantization" rel="tag">quantization</a>
+        
+      </span>
+    </footer>
+</article>
+
+        
+    
+        
+        
+    	<article>
+    <header>
+      <h1><a href="/2023/05/machine-learning-quantization-introduction.html" rel="bookmark">A brief introduction to Machine Learning models quantization</a></h1>
+      <small><span>25 May 2023</span> by David Corvoysier</small>
+    </header>
+    <section>
+      <p>Even before the development of Large Language Models (LLM), the increasing
+memory and computing requirements of Deep Neural Networks (DNN) has been a concern.
+
+Functionally, DNN are graphs of arithmetic operations: the inputs are fed at the
+stem and the chain of operations produces the outputs at the head.
+
+From an implementation perspective, the operations are performed on floating point
+numbers, which are a digital representation of decimal numbers composed of a mantissa and an
+exponent:
+
+$$x = mantissa . 2^{exponent}$$
+
+</p>
+      <p><a href="/2023/05/machine-learning-quantization-introduction.html">(more…)</a></p>
+    </section>
+    <footer>
+      <span>Categories: 
+        
+        <a href="/categories.html#Machine Learning" rel="tag">Machine Learning</a>
+        
+      </span>
+      <span>Tags: 
+        
+        <a href="/tags.html#quantization" rel="tag">quantization</a>
+        
+      </span>
+    </footer>
+</article>
+
+        
+            </div>
+        
+    
+</div>
+<div id='tag_cloud'>
+
+<a href="tags.html#CMake" title="CMake" rel="2">CMake</a>
+
+<a href="tags.html#GoogleTest" title="GoogleTest" rel="1">GoogleTest</a>
+
+<a href="tags.html#gcc" title="gcc" rel="1">gcc</a>
+
+<a href="tags.html#ld" title="ld" rel="1">ld</a>
+
+<a href="tags.html#ELF" title="ELF" rel="1">ELF</a>
+
+<a href="tags.html#sections" title="sections" rel="1">sections</a>
+
+<a href="tags.html#build" title="build" rel="2">build</a>
+
+<a href="tags.html#make" title="make" rel="1">make</a>
+
+<a href="tags.html#ninja" title="ninja" rel="1">ninja</a>
+
+<a href="tags.html#kbuild" title="kbuild" rel="1">kbuild</a>
+
+<a href="tags.html#cmake" title="cmake" rel="1">cmake</a>
+
+<a href="tags.html#linux" title="linux" rel="1">linux</a>
+
+<a href="tags.html#croostool-ng" title="croostool-ng" rel="1">croostool-ng</a>
+
+<a href="tags.html#qemu" title="qemu" rel="1">qemu</a>
+
+<a href="tags.html#busybox" title="busybox" rel="1">busybox</a>
+
+<a href="tags.html#tensorflow" title="tensorflow" rel="4">tensorflow</a>
+
+<a href="tags.html#CIFAR10" title="CIFAR10" rel="1">CIFAR10</a>
+
+<a href="tags.html#CNN" title="CNN" rel="1">CNN</a>
+
+<a href="tags.html#machine learning" title="machine learning" rel="3">machine learning</a>
+
+<a href="tags.html#spiking neural nets" title="spiking neural nets" rel="3">spiking neural nets</a>
+
+<a href="tags.html#snn" title="snn" rel="3">snn</a>
+
+<a href="tags.html#lif" title="lif" rel="1">lif</a>
+
+<a href="tags.html#stdp" title="stdp" rel="1">stdp</a>
+
+<a href="tags.html#quantization" title="quantization" rel="4">quantization</a>
+
+</div>
+
+<script src="https://code.jquery.com/jquery-3.4.1.min.js" type="text/javascript"></script>
+<script src="/js/jquery.tagcloud.js" type="text/javascript" charset="utf-8"></script> 
+<script language="javascript">
+$.fn.tagcloud.defaults = {
+    size: {start: 0.9, end: 2, unit: 'em'},
+      color: {start: '#e77471', end: '#f62817'}
+};
+
+$(function () {
+    $('#tag_cloud a').tagcloud();
+});
+</script>
+
+</aside>
+
+</div>
+<footer role="contentinfo">
+    <ul>
+        <li>
+            <a rel="license" href="https://creativecommons.org/licenses/by-nc-sa/3.0/">
+<img alt="Creative Commons License" src="https://i.creativecommons.org/l/by-nc-sa/3.0/88x31.png" />
+</a>
+
+        </li>
+        <li>
+            <span>Generated by <a href='https://github.com/mojombo/jekyll'>Jekyll</a></span>
+        </li>
+        <li>
+            <a href="https://github.com/dacorvo">
+<img alt="David Corvoysier github account" src="/images/Octocat.png" />
+</a>
+           
+        </li>
+        <li>
+            <a href="/feed/">
+<img alt="Site Feed" src="/images/rss.svg" />
+</a>
+
+        </li>
+    </ul>
+</footer>
+</div>
+<!-- Code Highlighting -->
+<script type='text/javascript' src='/js/code-highlight.js'>
+</script>
+<!-- Diagrams -->
+<!-- Mermaid: converts <pre class='mermaid'> tags to diagrams -->
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+mermaid.initialize({ startOnLoad: true });
+</script>
+<!-- Markdeep:
+    - gives access to extended markdeep syntax for <pre class='markdeep'> tags
+    - converts <pre class='diagram'> into diagrams
+-->
+<script>window.markdeepOptions = {mode: 'html', detectMath: false};</script> 
+<script src="https://morgan3d.github.io/markdeep/latest/markdeep.min.js" charset="utf-8"></script>
+<!-- Google Analytics -->
+<script>
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-57955939-1', 'auto');
+  ga('require', 'displayfeatures');
+  ga('send', 'pageview');
+
+</script>
+
+</body>
