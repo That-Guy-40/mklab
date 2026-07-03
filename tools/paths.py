@@ -35,13 +35,24 @@ Lab refs in the TOML are written RELATIVE TO examples/ (e.g. "chroot-breakout/",
 renderer, writing into examples/learning-paths/, prepends "../" so every emitted
 link resolves for link_check.py too.
 
+A step may also carry a machine-hintable checkpoint: verify_cmd + verify_marker
+(and verify_host = true if the command is safe to run on the bare host).  These
+feed a smoke-tester:
+
+  3. SMOKE (smoke) — list the machine-checkable checkpoints, or (--run) actually
+     execute the HOST-SAFE ones and confirm the marker appears; lab-context ones
+     are listed for a per-lab harness (--json emits the manifest).
+
 Usage:
   tools/paths.py                 # render the learning-paths/ docs from the TOML
   tools/paths.py render          # (same)
   tools/paths.py --check         # CI gate: refs resolve + full coverage + fresh
-  tools/paths.py --json          # machine-readable check report
+  tools/paths.py smoke           # list the machine-checkable checkpoints
+  tools/paths.py smoke --run     # execute the host-safe checkpoints, check markers
+  tools/paths.py --json          # machine-readable report (check or smoke)
 
-Exit status: non-zero if --check finds any failure (refs / coverage / freshness).
+Exit status: non-zero if --check finds any failure (refs / coverage / freshness),
+or if `smoke --run` has any FAIL/ERROR.
 Defaults: --root auto-detected via .git; source = examples/learning-paths.toml;
           output = examples/learning-paths/.
 """
@@ -145,6 +156,21 @@ def iter_refs(spec: dict):
         yield ("capstone", cap["lab"])
 
 
+def iter_checkpoints(spec: dict):
+    """Yield the machine-checkable checkpoints — steps carrying BOTH a
+    verify_cmd and a verify_marker.  Each dict is what a smoke-tester (here or a
+    per-lab CI harness via --json) needs to run one checkpoint and judge it."""
+    for p in spec.get("path", []):
+        for i, s in enumerate(p.get("step", []), 1):
+            cmd, marker = s.get("verify_cmd", ""), s.get("verify_marker", "")
+            if cmd and marker:
+                yield {
+                    "path": p["id"], "step": i, "lab": strip_slash(s["lab"]),
+                    "cmd": cmd, "marker": marker,
+                    "host": bool(s.get("verify_host", False)),
+                }
+
+
 # ── Coverage universe: the lab units that must each be routed somewhere ──────
 def lab_units(root: Path) -> list[str]:
     """Immediate children of examples/ that count as a lab: a subdir containing a
@@ -210,9 +236,11 @@ def render_path(spec: dict, p: dict) -> str:
         if tags:
             lab_cell += f" {tags}"
         chk = s["checkpoint"]
-        if s.get("verify_cmd"):
-            marker = s.get("verify_marker", "")
-            chk += f"<br>`{s['verify_cmd']}`" + (f" → `{marker}`" if marker else "")
+        if s.get("verify_cmd") and s.get("verify_marker"):
+            # Machine-checkable: show a compact badge, not the (possibly long)
+            # command — the full command lives in the TOML and `paths.py smoke`.
+            host = " 🖥️" if s.get("verify_host") else ""
+            chk += f"<br>🔎 auto-checkable → marker `{s['verify_marker']}`{host}"
         L.append(f"| {i} | {cell(lab_cell)} | {cell(s['learn'])} | {cell(chk)} |")
     L.append("")
     branches = p.get("branch", [])
@@ -311,7 +339,11 @@ def render_hub(spec: dict) -> str:
              "[`../learning-paths.toml`](../learning-paths.toml) — every `lab`/"
              "`member` is an `examples/`-relative ref, and every `checkpoint` must "
              "be *observable* (mirror the style of each lab's `MANUAL_TESTING.md` "
-             "success signatures). Then `tools/paths.py render` && `tools/paths.py "
+             "success signatures). A step can also carry `verify_cmd` + "
+             "`verify_marker` (and `verify_host = true` when the command is safe "
+             "to run on the bare host) — `tools/paths.py smoke --run` then executes "
+             "the host-safe ones and checks the marker; lab-context ones are listed "
+             "for a per-lab harness. Then `tools/paths.py render` && `tools/paths.py "
              "--check`.")
     L.append("")
     return "\n".join(L)
@@ -416,13 +448,78 @@ def cmd_check(root: Path, spec: dict, as_json: bool) -> int:
     return 0 if ok else 1
 
 
+def cmd_smoke(root: Path, spec: dict, run: bool, as_json: bool, timeout: int) -> int:
+    """The dormant seed, wired: collect the machine-checkable checkpoints and,
+    with --run, actually execute the HOST-SAFE ones (verify_host=true) and check
+    the marker.  Lab-context checkpoints are SKIPPED here — they must run inside
+    their provisioned lab (a per-lab CI harness consumes the --json manifest).
+
+    Only verify_host=true commands are ever executed, and they run in a shell —
+    so a verify_host command MUST be host-safe, idempotent, and throwaway (it is
+    authored in the repo TOML, never arbitrary input)."""
+    entries = list(iter_checkpoints(spec))
+
+    if not run:
+        if as_json:
+            print(json.dumps({"checkpoints": entries}, indent=2))
+            return 0
+        host = sum(1 for e in entries if e["host"])
+        print(f"== machine-checkable checkpoints: {len(entries)} "
+              f"({host} host-runnable, {len(entries) - host} lab-context) ==")
+        for e in entries:
+            flag = "🖥️  host" if e["host"] else "📦 lab "
+            print(f"  [{flag}] {e['path']} #{e['step']}  ({e['lab']})")
+            print(f"           $ {e['cmd']}")
+            print(f"           expect: {e['marker']}")
+        print("\n(add `--run` to execute the host-runnable ones; the lab-context "
+              "ones run inside their provisioned lab / a per-lab CI harness.)")
+        return 0
+
+    results = []
+    for e in entries:
+        if not e["host"]:
+            results.append({**e, "status": "SKIP",
+                            "detail": "needs lab context (build/boot the lab, or set verify_host once host-safe)"})
+            continue
+        try:
+            proc = subprocess.run(e["cmd"], shell=True, capture_output=True,
+                                  text=True, timeout=timeout, cwd=str(root))
+            out = (proc.stdout or "") + (proc.stderr or "")
+            ok = e["marker"] in out
+            results.append({**e, "status": "PASS" if ok else "FAIL",
+                            "detail": f"exit={proc.returncode}" +
+                            ("" if ok else f"; marker {e['marker']!r} not in output")})
+        except subprocess.TimeoutExpired:
+            results.append({**e, "status": "ERROR", "detail": f"timeout after {timeout}s"})
+        except Exception as ex:  # noqa: BLE001 — surface any launch failure as ERROR
+            results.append({**e, "status": "ERROR", "detail": str(ex)})
+
+    bad = [r for r in results if r["status"] in ("FAIL", "ERROR")]
+    if as_json:
+        print(json.dumps({"ok": not bad, "results": results}, indent=2))
+        return 0 if not bad else 1
+
+    print("== smoke --run (host-runnable checkpoints only) ==")
+    for r in results:
+        icon = {"PASS": "✓", "FAIL": "✗", "ERROR": "✗", "SKIP": "·"}[r["status"]]
+        print(f"  {icon} {r['status']:5} {r['path']} #{r['step']} ({r['lab']}) — {r['detail']}")
+    ran = [r for r in results if r["status"] != "SKIP"]
+    print(f"\n{len(ran)} run · {sum(1 for r in ran if r['status']=='PASS')} pass · "
+          f"{len(bad)} fail/error · {len(results)-len(ran)} skipped (lab-context)")
+    return 0 if not bad else 1
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("command", nargs="?", default="render", choices=["render", "check"],
-                    help="render (default) the docs, or check the source")
+    ap.add_argument("command", nargs="?", default="render",
+                    choices=["render", "check", "smoke"],
+                    help="render (default) the docs, check the source, or smoke the checkpoints")
     ap.add_argument("--check", action="store_true", help="alias for the `check` command (CI gate)")
-    ap.add_argument("--json", action="store_true", help="machine-readable check report")
+    ap.add_argument("--smoke", action="store_true", help="alias for the `smoke` command")
+    ap.add_argument("--run", action="store_true", help="smoke: actually execute the host-runnable checkpoints (else just list)")
+    ap.add_argument("--timeout", type=int, default=300, help="smoke --run: per-checkpoint timeout in seconds (default 300)")
+    ap.add_argument("--json", action="store_true", help="machine-readable report")
     ap.add_argument("--root", type=Path, default=None, help="repo root (default: auto-detect via .git)")
     args = ap.parse_args(argv)
 
@@ -431,6 +528,8 @@ def main(argv=None) -> int:
 
     if args.check or args.command == "check":
         return cmd_check(root, spec, args.json)
+    if args.smoke or args.command == "smoke":
+        return cmd_smoke(root, spec, args.run, args.json, args.timeout)
     return cmd_render(root, spec)
 
 

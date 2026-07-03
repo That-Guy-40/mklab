@@ -39,6 +39,40 @@ list before a rename/move/delete). Run it before/after any such change; it must
 report **0 broken links** (it also exits non-zero on broken links, for CI/commit
 gating).
 
+### Route every new example into the learning-paths catalog
+
+The labs are indexed **two** ways, and a new example must land in **both** or CI
+fails. `examples/00-INDEX.md` is the *by-phase reference* (every spec gets a 00-INDEX
+row). The orthogonal *by-journey* view is generated:
+**`examples/learning-paths.toml`** is the single
+hand-edited source of truth, rendered by **`tools/paths.py`** into
+`examples/learning-paths/` (a hub + one file per path — **never hand-edit the
+generated files; they carry a DO-NOT-EDIT banner**).
+
+So when you add a cohesive lab (or a standalone root `.toml`), also **route it**:
+add it as an ordered **step in a `[[path]]`** (when it fits a dependency-aware
+journey — chroot *before* namespaces, a plain VM *before* kdump) and/or a
+**member of a `[[collection]]`** (a themed, unordered bundle). Then
+`tools/paths.py render && tools/paths.py --check`. The `--check` gate is a sibling
+of `link_check.py` and must be **green**: it fails if any lab unit under
+`examples/` is **unrouted** (the coverage/anti-drift guard — a lab nobody put in a
+journey trips CI; intentional exclusions go in `[meta].coverage_exempt` **with a
+reason**), if any ref doesn't resolve, or if the generated docs are stale.
+
+- **Refs are `examples/`-relative** (`chroot-breakout/`, `chroot-examples/x.toml`,
+  an out-of-tree hand-walk as `../micro-linux/hand-walk/`) — the same forms
+  00-INDEX uses; the renderer prepends `../` so links resolve for `link_check.py`
+  too. Keep **both** checkers green.
+- **Every path step needs an *observable* checkpoint** — a command output, a
+  file, a boot banner (mirror the lab's `MANUAL_TESTING.md` success signature),
+  not "you should understand X".
+- **Optionally machine-hintable:** a step may carry `verify_cmd` + `verify_marker`
+  (and `verify_host = true` when the command is **host-safe, idempotent, and
+  throwaway**). `tools/paths.py smoke --run` then *executes* the host-safe ones
+  and greps for the marker; lab-context checkpoints are listed (via `--json`) for
+  a per-lab harness. Exemplar: the `container-internals` path's part-3 OOM step
+  (`verify_host=true`, marker `EXIT=137`).
+
 ### Provenance: vendor the upstream source for tutorial-based labs
 
 Any lab that **operationalizes a specific external write-up** keeps a byte-exact,

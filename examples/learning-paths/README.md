@@ -120,4 +120,4 @@ Pan-phase demos that belong to no single journey — run them once the paths hav
 
 ---
 
-*Extending this?* Add a `[[path]]`/`[[collection]]` to [`../learning-paths.toml`](../learning-paths.toml) — every `lab`/`member` is an `examples/`-relative ref, and every `checkpoint` must be *observable* (mirror the style of each lab's `MANUAL_TESTING.md` success signatures). Then `tools/paths.py render` && `tools/paths.py --check`.
+*Extending this?* Add a `[[path]]`/`[[collection]]` to [`../learning-paths.toml`](../learning-paths.toml) — every `lab`/`member` is an `examples/`-relative ref, and every `checkpoint` must be *observable* (mirror the style of each lab's `MANUAL_TESTING.md` success signatures). A step can also carry `verify_cmd` + `verify_marker` (and `verify_host = true` when the command is safe to run on the bare host) — `tools/paths.py smoke --run` then executes the host-safe ones and checks the marker; lab-context ones are listed for a per-lab harness. Then `tools/paths.py render` && `tools/paths.py --check`.

@@ -56,7 +56,12 @@ goal       = "Understand what a container *is* by assembling one primitive at a 
   lab        = "exploring-containers/part-3-pid-cgroups-users/"
   learn      = "PID/cgroup/user namespaces + a memory cgroup finish the container; the user namespace is the keystone that lets an unprivileged user make the rest."
   checkpoint = "inside `unshare --pid --fork --mount-proc` your shell is PID 1; `podman run --memory=50m` + `alloc.c` is OOM-killed (exit 137); `unshare --user --map-root-user` shows uid 0 mapped."
+  # Self-contained + host-safe: builds a throwaway rootless image, runs alloc.c
+  # under a 50 MiB cap, the OOM killer fires → exit 137.  `paths.py smoke --run`
+  # executes this one; the chroot-breakout checkpoint above stays lab-context.
+  verify_cmd    = "phase4-podman/lab-podman.sh build --tag ec-part3-smoke --context examples/exploring-containers/part-3-pid-cgroups-users >/dev/null 2>&1 && podman run --rm --memory=50m --memory-swap=50m ec-part3-smoke sh -c 'gcc alloc.c -o alloc; ./alloc'; echo EXIT=$?"
   verify_marker = "EXIT=137"
+  verify_host   = true
   [[path.step]]
   lab        = "chroot-examples/chroot-nspawn-managed.toml"
   tags       = ["🔑"]
