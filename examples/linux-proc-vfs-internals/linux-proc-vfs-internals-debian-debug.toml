@@ -1,0 +1,29 @@
+# The observability half of the /proc series — a DEBUG/TOOLS Debian 13 box.
+#
+# Same substrate as the other specs, but provisioned with a debugging toolset
+# (gdb, strace, iproute2, procps) so you can OBSERVE running processes through
+# /proc. Hosts Ciro Costa's articles 5 & 6:
+#   • "Using /proc to get a process' current stack trace"
+#   • "How Linux creates sockets and counts them"
+#
+#   # 1) launch the container
+#   phase5-lxd/lab-lxd.sh up   --config examples/linux-proc-vfs-internals/linux-proc-vfs-internals-debian-debug.toml
+#
+#   # 2) provision it (toolchain + gdb + strace + iproute2 + procps + the sandbox)
+#   examples/linux-proc-vfs-internals/setup-observe.sh linux-proc-vfs-internals-debian-debug/shell
+#
+#   # 3) explore — log in as the learner and re-run the tour
+#   phase5-lxd/lab-lxd.sh exec linux-proc-vfs-internals-debian-debug/shell -- su - learner
+#
+#   # 4) tear down
+#   phase5-lxd/lab-lxd.sh down --lab linux-proc-vfs-internals-debian-debug
+
+[lab]
+name        = "linux-proc-vfs-internals-debian-debug"
+description = "Ciro Costa's /proc series (stack traces + sockets) — a gdb/strace debug box on Debian 13"
+tags        = ["proc", "stack", "wchan", "socket", "gdb", "strace", "debian", "trixie"]
+
+[[instance]]
+name  = "shell"
+type  = "container"
+image = "images:debian/13"

@@ -1,0 +1,30 @@
+# The observability half of the /proc series — a DEBUG/TOOLS Alpine box.
+#
+# The musl/BusyBox counterpart of linux-proc-vfs-internals-debian-debug.toml:
+# gdb + strace + iproute2 + procps over a musl base, hosting Ciro Costa's
+# articles 5 & 6 (stack traces + sockets). /proc contents are kernel-provided
+# and identical to the Debian box; the interest is the toolchain (gdb on musl,
+# BusyBox vs GNU) — a documented divergence (RUNBOOK.md / MANUAL_TESTING.md).
+#
+#   # 1) launch the container
+#   phase5-lxd/lab-lxd.sh up   --config examples/linux-proc-vfs-internals/linux-proc-vfs-internals-alpine-debug.toml
+#
+#   # 2) provision it (toolchain + gdb + strace + iproute2 + procps + the sandbox)
+#   examples/linux-proc-vfs-internals/setup-observe.sh linux-proc-vfs-internals-alpine-debug/shell
+#
+#   # 3) explore — log in as the learner and re-run the tour
+#   phase5-lxd/lab-lxd.sh exec linux-proc-vfs-internals-alpine-debug/shell -- su - learner
+#
+#   # 4) tear down
+#   phase5-lxd/lab-lxd.sh down --lab linux-proc-vfs-internals-alpine-debug
+
+[lab]
+name        = "linux-proc-vfs-internals-alpine-debug"
+description = "Ciro Costa's /proc series (stack traces + sockets) — a gdb/strace debug box on Alpine"
+tags        = ["proc", "stack", "wchan", "socket", "gdb", "strace", "alpine", "musl"]
+
+[[instance]]
+name  = "shell"
+type  = "container"
+# `images:alpine/latest` is rewritten by lab-lxd.sh to the highest stable alpine.
+image = "images:alpine/latest"

@@ -1,11 +1,11 @@
 # Manual testing — linux-proc-vfs-internals
 
 Verified **end-to-end, rootless Incus, no sudo**, 2026-07-03, on **both** bases
-(Debian 13 / glibc and Alpine / musl), for **both container sets**: Set A (the
-unlimited VFS box, articles 1–2) and Set B (the 512 MiB-capped box, articles
-3–4). Each setup script ends by running its demo as the `learner`; the
-transcripts below are that real captured output. Host kernel:
-`Linux 6.8.0-134-generic`.
+(Debian 13 / glibc and Alpine / musl), for **all three container sets**: Set A
+(the unlimited VFS box, articles 1–2), Set B (the 512 MiB-capped box, articles
+3–4), and Set C (the gdb/strace debug box, articles 5–6). Each setup script ends
+by running its demo as the `learner`; the transcripts below are that real
+captured output. Host kernel: `Linux 6.8.0-134-generic`.
 
 ## Full run — Set A (VFS box, articles 1–2)
 
@@ -226,6 +226,91 @@ prlimit - get and set: Operation not permitted
    killer took only the allocator, not the container's init.
 5. One **transient** `apk` DNS hiccup fetching `APKINDEX` on Alpine; a plain
    re-run of `setup-limits.sh` succeeded (a network flake, not the lab).
+
+## Full run — Set C (debug box, articles 5–6)
+
+```bash
+phase5-lxd/lab-lxd.sh up --config linux-proc-vfs-internals-debian-debug.toml
+./setup-observe.sh linux-proc-vfs-internals-debian-debug/shell                   # runs demo-observe.sh
+```
+
+### Debian 13 (glibc) — `demo-observe.sh` (as the `learner`)
+
+```text
+== ARTICLE 5 — a TCP server that BLOCKS in accept(); what is it doing? ==
+listening on port 32000 (pid 1327) — now blocking in accept()
+   /proc/1327/status — it is asleep:
+State:	S (sleeping)
+
+== ARTICLE 5 — /proc/<pid>/wchan: the KERNEL function it is parked in (unprivileged!) ==
+   wchan = inet_csk_accept
+
+== ARTICLE 5 — the FULL kernel stack (/proc/<pid>/stack) needs CAP_SYS_ADMIN ==
+   cat /proc/1327/stack → cat: /proc/1327/stack: Permission denied
+
+== ARTICLE 6 — socket() returns an fd that appears as socket:[inode] ==
+   /proc/1338/fd (fd 3 is the socket the program made):
+lrwx------ 1 learner learner 64 … 3 -> socket:[6513569]
+
+== ARTICLE 6 — the 100-socket variant: watch /proc/<pid>/net/sockstat ==
+   socket:[inode] fds held by pid 1342 (the 100 we opened):
+100
+   the kernel's own tally, /proc/1342/net/sockstat:
+sockets: used 201
+
+== ARTICLE 6 — strace: the socket(2) syscall itself, returning a small fd ==
+socket(AF_INET, SOCK_STREAM, IPPROTO_IP) = 3
+```
+
+### Alpine (musl / BusyBox) — same, differences noted
+
+```text
+== ARTICLE 5 — wchan ==
+   wchan = inet_csk_accept
+== ARTICLE 5 — /proc/<pid>/stack ==
+   cat /proc/554/stack → cat: read error: Permission denied    # BusyBox cat wording
+== ARTICLE 6 — socket:[inode] ==
+3 -> socket:[6530354]
+== ARTICLE 6 — 100 sockets ==
+100
+sockets: used 102          # different baseline count; the +100 is what matters
+== ARTICLE 6 — strace ==
+socket(AF_INET, SOCK_STREAM, IPPROTO_IP) = 3
+```
+
+### The privileged view (run as **root**, for reference)
+
+`/proc/<pid>/wchan` gives the top kernel frame unprivileged; the full stacks need
+privilege. As container-root:
+
+```text
+# gdb -p <pid> -batch -ex bt   → the USERSPACE stack (works with CAP_SYS_PTRACE):
+#2  accept () from /lib/x86_64-linux-gnu/libc.so.6
+#3  server_accept_and_close ()
+#4  main ()
+
+# cat /proc/<pid>/stack   → the full KERNEL stack, DENIED even to container-root:
+cat: /proc/<pid>/stack: Permission denied
+```
+
+That denial is the sharp lesson: `/proc/<pid>/stack` wants `CAP_SYS_ADMIN` in the
+**initial** user namespace, which no rootless container has — so `wchan` (the top
+frame) is the best you get inside a container, and the full kernel stack is a
+host-only read.
+
+### Set C divergences observed
+
+1. **BusyBox `cat` wording** — a denied read prints `cat: read error: Permission
+   denied` (Alpine) vs `cat: <path>: Permission denied` (Debian). The EPERM is
+   identical; only the message differs.
+2. **`ptrace_scope = 1`** in both containers → as the `learner`, `gdb -p` and
+   `/proc/<pid>/syscall` are denied (not a descendant, no `CAP_SYS_PTRACE`); the
+   demo uses the unprivileged `wchan`. `strace ./socket` works because strace
+   launches the program as its **own child**.
+3. **Everything kernel-provided is identical** on both bases — `wchan`,
+   `socket:[inode]`, the `socket()` syscall trace.
+4. One **transient** `apk` DNS hiccup fetching `APKINDEX` on Alpine again; a plain
+   re-run of `setup-observe.sh` succeeded.
 
 ## Not run here (privileged / needs BPF) — by design
 

@@ -1,12 +1,13 @@
 # RUNBOOK — exploring `/proc` by hand
 
 This walks the same builds the setup scripts automate, but step by step with the
-**why** at each stop, mapped to Ciro Costa's four articles
+**why** at each stop, mapped to Ciro Costa's six articles
 ([archived here](upstream-tutorial/README.md)). The scripts are the source of
 truth for exact commands; this is for *understanding* and poking one thing at a
 time. **Parts I–II** ([`setup-workshop.sh`](setup-workshop.sh)) run on the
 unlimited **Set A** box; **Parts III–IV** ([`setup-limits.sh`](setup-limits.sh))
-run on the memory-capped **Set B** box.
+run on the memory-capped **Set B** box; **Parts V–VI**
+([`setup-observe.sh`](setup-observe.sh)) run on the gdb/strace **Set C** box.
 
 Everything runs through `phase5-lxd/lab-lxd.sh`. Shorthand used below:
 
@@ -278,11 +279,116 @@ the `capable` tool (watching the `CAP_SYS_RESOURCE` check) need privileges.
 
 ---
 
+## Setup — the debug box (Set C, for Parts V–VI)
+
+Parts V–VI observe *running* processes, so they need the debugging toolset. Use
+the `-debug` specs and `setup-observe.sh`:
+
+```bash
+L up --config linux-proc-vfs-internals-debian-debug.toml
+T=linux-proc-vfs-internals-debian-debug/shell
+./setup-observe.sh $T     # toolchain + gdb + strace + iproute2 + procps + accept.c/socket.c
+```
+
+---
+
+## Part V — *Getting a process' current stack trace*
+
+*Upstream: [using-procfs-to-get-process-stack-trace.html](upstream-tutorial/using-procfs-to-get-process-stack-trace.html) —
+`/proc/<pid>/stack`, `/proc/<pid>/wchan`, per-thread `task/<tid>/stack`.*
+
+### park a process in the kernel, then ask what it's doing
+
+```bash
+L exec $T -- su - learner -c 'cd ~/proc-lab && gcc -Wall -o accept accept.c &&
+   ./accept & a=$!; sleep 1
+   grep ^State /proc/$a/status      # S (sleeping)
+   cat /proc/$a/wchan; echo         # inet_csk_accept
+   kill $a'
+```
+
+`accept.c` opens a listening socket and blocks in `accept()` with nothing
+connecting. **`/proc/<pid>/wchan`** names the kernel function the task is parked
+in — `inet_csk_accept` — the single most useful frame, and **readable by any
+user** (the article's `tcp-server-blocking-main-thread.svg`). That one word
+usually answers "what is it waiting on?".
+
+### the full stacks (privileged)
+
+```bash
+# full KERNEL stack — needs CAP_SYS_ADMIN in the INIT userns (host only):
+sudo cat /proc/$(pidof accept)/stack
+#   [<0>] inet_csk_accept+0x...   [<0>] inet_accept+0x...
+#   [<0>] __sys_accept4+0x...     [<0>] do_syscall_64+0x...
+
+# USERSPACE stack — needs root / CAP_SYS_PTRACE here (ptrace_scope=1):
+sudo gdb -p $(pidof accept) -batch -ex bt
+#   #2 accept ()   #3 server_accept_and_close ()   #4 main ()
+```
+
+⚠ **DIVERGENCE 8 (privilege, not distro).** `/proc/<pid>/stack` is gated on
+`CAP_SYS_ADMIN` **in the initial user namespace**, so it is *denied even to root
+inside* a (rootless, userns'd) container — the demo shows the `Permission denied`.
+Read it on the host. `gdb -p` / `/proc/<pid>/syscall` need `CAP_SYS_PTRACE` (or a
+descendant relationship) under `ptrace_scope=1`; as the `learner` they're denied,
+so the demo relies on `wchan`. Per-thread stacks live at
+`/proc/<pid>/task/<tid>/stack` (the article's `find … -name stack` sweep).
+
+**⚠ Author-run:** the article's `dlv attach` (Go/Delve) needs the Go toolchain;
+`apk add delve` / build it, then `dlv attach $(pidof …)`.
+
+---
+
+## Part VI — *How Linux creates sockets and counts them*
+
+*Upstream: [how-linux-creates-sockets.html](upstream-tutorial/how-linux-creates-sockets.html) —
+`socket(2)` → `__sock_create` → `sock_alloc`; `socket:[inode]` fds; `sockstat`.*
+
+### a socket is a file descriptor
+
+```bash
+L exec $T -- su - learner -c 'cd ~/proc-lab && gcc -Wall -o socket socket.c &&
+   ./socket 1 3600 & s=$!; sleep 1
+   ls -l /proc/$s/fd | grep socket:      # 3 -> socket:[NNNN]
+   kill $s'
+```
+
+`socket(AF_INET, SOCK_STREAM, 0)` returns an ordinary fd, so it shows up under
+`/proc/<pid>/fd` as a symlink to **`socket:[inode]`** — a handle into the
+anonymous `sockfs` filesystem where the kernel's `sock_alloc()` parked the
+`struct socket` (the article's `net-internal-socket.svg`).
+
+### counting them
+
+```bash
+L exec $T -- su - learner -c 'cd ~/proc-lab &&
+   ./socket 100 3600 & s=$!; sleep 1
+   ls -l /proc/$s/fd | grep -c socket:        # 100
+   grep "sockets: used" /proc/$s/net/sockstat # the kernel'"'"'s tally
+   kill $s'
+```
+
+The 100-socket variant opens a hundred and `/proc/<pid>/net/sockstat` — the
+network namespace's own tally — reflects them. See the socket syscall itself:
+
+```bash
+L exec $T -- su - learner -c 'cd ~/proc-lab &&
+   strace -f -e trace=socket ./socket 1 0'   # socket(AF_INET, SOCK_STREAM, IPPROTO_IP) = 3
+```
+
+**⚠ Author-run:** the article isolates sockets per **network namespace**
+(`ip netns add namespace1; ip netns exec namespace1 …`) — `ip netns` needs
+`CAP_NET_ADMIN` (denied to the unprivileged `learner`); its `trace -K` kernel
+stack of `sys_socket → __sock_create` needs bcc/BPF on a host.
+
+---
+
 ## Tear down
 
 ```bash
 L down --lab linux-proc-vfs-internals-debian             # Set A  (or -alpine)
 L down --lab linux-proc-vfs-internals-debian-limited     # Set B  (or -alpine-limited)
+L down --lab linux-proc-vfs-internals-debian-debug       # Set C  (or -alpine-debug)
 ```
 
 ## Going further
