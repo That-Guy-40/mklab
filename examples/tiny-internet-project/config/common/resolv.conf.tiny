@@ -1,0 +1,14 @@
+# /etc/resolv.conf for every tiny.lab node — point at OUR nameservers.
+#
+# dns01 primary first, dns02 secondary as fallback. `search tiny.lab` lets you
+# say `ping web01` instead of `web01.tiny.lab`. Because these BIND servers also
+# recurse (forwarders in named.conf.options), this is the node's ONLY resolver —
+# it reaches both tiny.lab and the outside world through dns01/dns02.
+#
+# Applying this is a documented Debian-13 gotcha: the stock image runs
+# systemd-resolved, which owns /etc/resolv.conf (a symlink to its stub at
+# 127.0.0.53). The driver disables systemd-resolved and replaces the symlink
+# with this static file, or BIND never becomes the resolver.
+nameserver 10.128.1.3
+nameserver 10.128.1.4
+search tiny.lab

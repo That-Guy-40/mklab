@@ -1,0 +1,19 @@
+// named.conf.local — zone declarations for the PRIMARY (dns01, 10.128.1.3).
+//
+// dns01 is `type master` for both the forward zone (tiny.lab) and the reverse
+// zone (1.128.10.in-addr.arpa). It allows zone transfer to — and notifies —
+// dns02 (10.128.1.4), which is how the secondary stays in sync (AXFR). This
+// primary/secondary AXFR pair is the DNS "gem" of the Tiny Internet Project.
+zone "tiny.lab" {
+        type master;
+        file "/etc/bind/db.tiny.lab";
+        allow-transfer { 10.128.1.4; };   // dns02 may pull the zone
+        also-notify { 10.128.1.4; };      // ping dns02 on every change
+};
+
+zone "1.128.10.in-addr.arpa" {
+        type master;
+        file "/etc/bind/db.10.128.1";
+        allow-transfer { 10.128.1.4; };
+        also-notify { 10.128.1.4; };
+};

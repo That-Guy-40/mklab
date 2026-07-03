@@ -1,0 +1,30 @@
+// named.conf.options — BIND9 global options for the tiny.lab nameservers.
+//
+// This is authoritative-AND-recursive on purpose: every tiny.lab node uses
+// dns01/dns02 as its ONLY resolver, so BIND must also answer for the outside
+// world (deb.debian.org, etc.) by forwarding. In Tonello's original this was an
+// Ubuntu 14.04 box; on Debian 13 the file layout is the same but the service is
+// `named` and the default file is /etc/default/named (see config/dns/README-ish
+// notes in the lab RUNBOOK).
+options {
+        directory "/var/cache/bind";
+
+        // Recurse for the lab subnet + localhost only (not an open resolver).
+        recursion yes;
+        allow-recursion { 127.0.0.1; 10.128.1.0/24; };
+
+        // Forward everything we're not authoritative for to the Incus bridge
+        // gateway, which NATs/forwards to the host's upstream resolver. This is
+        // the one hop that reaches the real internet (needed to warm the apt
+        // cache on `mirror`); after that the lab is air-gappable.
+        forwarders { 10.128.1.1; };
+        forward first;
+
+        // The bridge's forwarder path isn't a DNSSEC-validating resolver, so
+        // turn validation off to keep external lookups from SERVFAILing. Lab
+        // simplification; a production resolver would leave this `auto`.
+        dnssec-validation no;
+
+        listen-on { any; };
+        listen-on-v6 { none; };
+};

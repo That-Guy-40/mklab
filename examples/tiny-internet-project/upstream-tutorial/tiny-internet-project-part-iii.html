@@ -1,0 +1,1977 @@
+<!DOCTYPE html>
+<html  lang="en" dir="ltr" prefix="content: http://purl.org/rss/1.0/modules/content/  dc: http://purl.org/dc/terms/  foaf: http://xmlns.com/foaf/0.1/  og: http://ogp.me/ns#  rdfs: http://www.w3.org/2000/01/rdf-schema#  schema: http://schema.org/  sioc: http://rdfs.org/sioc/ns#  sioct: http://rdfs.org/sioc/types#  skos: http://www.w3.org/2004/02/skos/core#  xsd: http://www.w3.org/2001/XMLSchema# " class="no-js wf-loading">
+  <head>
+    <meta charset="utf-8" />
+<meta name="Generator" content="Drupal 9 (https://www.drupal.org)" />
+<meta name="MobileOptimized" content="width" />
+<meta name="HandheldFriendly" content="true" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<link rel="icon" href="/themes/linuxjournal/favicon.ico" type="image/vnd.microsoft.icon" />
+<link rel="canonical" href="https://www.linuxjournal.com/content/tiny-internet-project-part-iii" />
+<link rel="shortlink" href="https://www.linuxjournal.com/node/1339243" />
+
+    <title>The Tiny Internet Project, Part III | Linux Journal</title>
+    <link rel="stylesheet" media="all" href="/core/modules/system/css/components/align.module.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/system/css/components/fieldgroup.module.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/system/css/components/container-inline.module.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/system/css/components/clearfix.module.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/system/css/components/details.module.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/system/css/components/hidden.module.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/system/css/components/item-list.module.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/system/css/components/js.module.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/system/css/components/nowrap.module.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/system/css/components/position-container.module.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/system/css/components/progress.module.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/system/css/components/reset-appearance.module.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/system/css/components/resize.module.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/system/css/components/sticky-header.module.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/system/css/components/system-status-counter.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/system/css/components/system-status-report-counters.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/system/css/components/system-status-report-general-info.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/system/css/components/tablesort.module.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/system/css/components/tree-child.module.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/modules/contrib/poll/css/poll.base.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/modules/contrib/poll/css/poll.theme.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/core/modules/views/css/views.module.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/libraries/shariff/shariff.complete.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/modules/contrib/webform/modules/webform_bootstrap/css/webform_bootstrap.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/themes/linuxjournal/css/style.css?tfpujm" />
+<link rel="stylesheet" media="all" href="/themes/linuxjournal/css/fonts.css?tfpujm" />
+
+      <!--   <script defer src="https://use.fontawesome.com/releases/v5.0.9/js/all.js" integrity="sha384-8iPTk2s/jMVj81dnzb/iFR2sdA7u06vHJyyLlAd4snFpCl/SnyUjRrbdJsw1pGIl" crossorigin="anonymous"></script>-->
+
+    <script>
+      // Non-blocking webfonts.
+      (function iife() {
+        'use strict';
+
+        // JS is able to start executing.
+        document.documentElement.classList.remove('no-js');
+
+        // Optimization for Repeat Views
+        // Stop early for repeat views that have already cached fonts.
+        if (sessionStorage.fontsLoadedLateef && sessionStorage.fontsLoadedOpensans /* && sessionStorage.fontsLoadedNEWFONT */) {
+          document.documentElement.classList.remove('wf-loading');
+          document.documentElement.classList.add('wf-opensans');
+          document.documentElement.classList.add('wf-lateef');
+          // document.documentElement.classList.add('wf-NEWFONT');
+          return;
+        }
+
+        // Inlined Font Face Observer script + Promise polyfill.
+        /*! Font Face Observer v2.0.13 - © Bram Stein. License: BSD-3-Clause */
+        (function(){'use strict';var f,g=[];function l(a){g.push(a);1==g.length&&f()}function m(){for(;g.length;)g[0](),g.shift()}f=function(){setTimeout(m)};function n(a){this.a=p;this.b=void 0;this.f=[];var b=this;try{a(function(a){q(b,a)},function(a){r(b,a)})}catch(c){r(b,c)}}var p=2;function t(a){return new n(function(b,c){c(a)})}function u(a){return new n(function(b){b(a)})}function q(a,b){if(a.a==p){if(b==a)throw new TypeError;var c=!1;try{var d=b&&b.then;if(null!=b&&"object"==typeof b&&"function"==typeof d){d.call(b,function(b){c||q(a,b);c=!0},function(b){c||r(a,b);c=!0});return}}catch(e){c||r(a,e);return}a.a=0;a.b=b;v(a)}}
+        function r(a,b){if(a.a==p){if(b==a)throw new TypeError;a.a=1;a.b=b;v(a)}}function v(a){l(function(){if(a.a!=p)for(;a.f.length;){var b=a.f.shift(),c=b[0],d=b[1],e=b[2],b=b[3];try{0==a.a?"function"==typeof c?e(c.call(void 0,a.b)):e(a.b):1==a.a&&("function"==typeof d?e(d.call(void 0,a.b)):b(a.b))}catch(h){b(h)}}})}n.prototype.g=function(a){return this.c(void 0,a)};n.prototype.c=function(a,b){var c=this;return new n(function(d,e){c.f.push([a,b,d,e]);v(c)})};
+        function w(a){return new n(function(b,c){function d(c){return function(d){h[c]=d;e+=1;e==a.length&&b(h)}}var e=0,h=[];0==a.length&&b(h);for(var k=0;k<a.length;k+=1)u(a[k]).c(d(k),c)})}function x(a){return new n(function(b,c){for(var d=0;d<a.length;d+=1)u(a[d]).c(b,c)})};window.Promise||(window.Promise=n,window.Promise.resolve=u,window.Promise.reject=t,window.Promise.race=x,window.Promise.all=w,window.Promise.prototype.then=n.prototype.c,window.Promise.prototype["catch"]=n.prototype.g);}());
+
+        (function(){function l(a,b){document.addEventListener?a.addEventListener("scroll",b,!1):a.attachEvent("scroll",b)}function m(a){document.body?a():document.addEventListener?document.addEventListener("DOMContentLoaded",function c(){document.removeEventListener("DOMContentLoaded",c);a()}):document.attachEvent("onreadystatechange",function k(){if("interactive"==document.readyState||"complete"==document.readyState)document.detachEvent("onreadystatechange",k),a()})};function r(a){this.a=document.createElement("div");this.a.setAttribute("aria-hidden","true");this.a.appendChild(document.createTextNode(a));this.b=document.createElement("span");this.c=document.createElement("span");this.h=document.createElement("span");this.f=document.createElement("span");this.g=-1;this.b.style.cssText="max-width:none;display:inline-block;position:absolute;height:100%;width:100%;overflow:scroll;font-size:16px;";this.c.style.cssText="max-width:none;display:inline-block;position:absolute;height:100%;width:100%;overflow:scroll;font-size:16px;";
+        this.f.style.cssText="max-width:none;display:inline-block;position:absolute;height:100%;width:100%;overflow:scroll;font-size:16px;";this.h.style.cssText="display:inline-block;width:200%;height:200%;font-size:16px;max-width:none;";this.b.appendChild(this.h);this.c.appendChild(this.f);this.a.appendChild(this.b);this.a.appendChild(this.c)}
+        function t(a,b){a.a.style.cssText="max-width:none;min-width:20px;min-height:20px;display:inline-block;overflow:hidden;position:absolute;width:auto;margin:0;padding:0;top:-999px;white-space:nowrap;font-synthesis:none;font:"+b+";"}function y(a){var b=a.a.offsetWidth,c=b+100;a.f.style.width=c+"px";a.c.scrollLeft=c;a.b.scrollLeft=a.b.scrollWidth+100;return a.g!==b?(a.g=b,!0):!1}function z(a,b){function c(){var a=k;y(a)&&a.a.parentNode&&b(a.g)}var k=a;l(a.b,c);l(a.c,c);y(a)};function A(a,b){var c=b||{};this.family=a;this.style=c.style||"normal";this.weight=c.weight||"normal";this.stretch=c.stretch||"normal"}var B=null,C=null,E=null,F=null;function G(){if(null===C)if(J()&&/Apple/.test(window.navigator.vendor)){var a=/AppleWebKit\/([0-9]+)(?:\.([0-9]+))(?:\.([0-9]+))/.exec(window.navigator.userAgent);C=!!a&&603>parseInt(a[1],10)}else C=!1;return C}function J(){null===F&&(F=!!document.fonts);return F}
+        function K(){if(null===E){var a=document.createElement("div");try{a.style.font="condensed 100px sans-serif"}catch(b){}E=""!==a.style.font}return E}function L(a,b){return[a.style,a.weight,K()?a.stretch:"","100px",b].join(" ")}
+        A.prototype.load=function(a,b){var c=this,k=a||"BESbswy",q=0,D=b||3E3,H=(new Date).getTime();return new Promise(function(a,b){if(J()&&!G()){var M=new Promise(function(a,b){function e(){(new Date).getTime()-H>=D?b():document.fonts.load(L(c,'"'+c.family+'"'),k).then(function(c){1<=c.length?a():setTimeout(e,25)},function(){b()})}e()}),N=new Promise(function(a,c){q=setTimeout(c,D)});Promise.race([N,M]).then(function(){clearTimeout(q);a(c)},function(){b(c)})}else m(function(){function u(){var b;if(b=-1!=
+        f&&-1!=g||-1!=f&&-1!=h||-1!=g&&-1!=h)(b=f!=g&&f!=h&&g!=h)||(null===B&&(b=/AppleWebKit\/([0-9]+)(?:\.([0-9]+))/.exec(window.navigator.userAgent),B=!!b&&(536>parseInt(b[1],10)||536===parseInt(b[1],10)&&11>=parseInt(b[2],10))),b=B&&(f==v&&g==v&&h==v||f==w&&g==w&&h==w||f==x&&g==x&&h==x)),b=!b;b&&(d.parentNode&&d.parentNode.removeChild(d),clearTimeout(q),a(c))}function I(){if((new Date).getTime()-H>=D)d.parentNode&&d.parentNode.removeChild(d),b(c);else{var a=document.hidden;if(!0===a||void 0===a)f=e.a.offsetWidth,
+        g=n.a.offsetWidth,h=p.a.offsetWidth,u();q=setTimeout(I,50)}}var e=new r(k),n=new r(k),p=new r(k),f=-1,g=-1,h=-1,v=-1,w=-1,x=-1,d=document.createElement("div");d.dir="ltr";t(e,L(c,"sans-serif"));t(n,L(c,"serif"));t(p,L(c,"monospace"));d.appendChild(e.a);d.appendChild(n.a);d.appendChild(p.a);document.body.appendChild(d);v=e.a.offsetWidth;w=n.a.offsetWidth;x=p.a.offsetWidth;I();z(e,function(a){f=a;u()});t(e,L(c,'"'+c.family+'",sans-serif'));z(n,function(a){g=a;u()});t(n,L(c,'"'+c.family+'",serif'));
+        z(p,function(a){h=a;u()});t(p,L(c,'"'+c.family+'",monospace'))})})};"object"===typeof module?module.exports=A:(window.FontFaceObserver=A,window.FontFaceObserver.prototype.load=A.prototype.load);}());
+
+        // Load and observe Lateef
+        var Lateef = new FontFaceObserver('Lateef', {weight: 400});
+        Promise.all([Lateef.load()]).then(function() {
+          document.documentElement.classList.remove('wf-loading');
+          document.documentElement.classList.add('wf-lateef');
+
+          // Optimization for Repeat Views
+          // Set a flag in localstorage so repeat views can skip processing FFO.
+          sessionStorage.fontsLoadedLateef = true;
+        });
+
+        // Load and observe Open Sans
+        var os300 = new FontFaceObserver('Open Sans', {weight: 300});
+        var os400 = new FontFaceObserver('Open Sans', {weight: 400});
+        Promise.all([os300.load(), os400.load()]).then(function() {
+          document.documentElement.classList.remove('wf-loading');
+          document.documentElement.classList.add('wf-opensans');
+
+          // Optimization for Repeat Views
+          // Set a flag in localstorage so repeat views can skip processing FFO.
+          sessionStorage.fontsLoadedOpensans = true;
+        });
+
+        // Load and observe NEWFONT
+        /*
+        var NEWFONT = new FontFaceObserver('NEWFONT', {weight: 400});
+        Promise.all([NEWFONT.load()]).then(function() {
+          document.documentElement.classList.remove('wf-loading');
+          document.documentElement.classList.add('wf-NEWFONT');
+
+          // Optimization for Repeat Views
+          // Set a flag in localstorage so repeat views can skip processing FFO.
+          sessionStorage.fontsLoadedNEWFONT = true;
+        });
+        */
+      })();
+    </script>
+    
+    <script src=https://slashdot.org/country.js></script>
+    <script src="/themes/linuxjournal/js/ada.js"></script>
+    <script src="/themes/linuxjournal/js/accessibility.js"></script>
+    <script>window.addEventListener('load', function() { new Accessibility(); });</script>
+    <script src="//a.fsdn.com/con/js/sftheme/cmp2.js"></script>
+    <link rel="stylesheet" href="//a.fsdn.com/con/css/sftheme/sandiego/cmp.css" type="text/css">
+    <link rel="stylesheet" href="/themes/linuxjournal/css/ccpa.css" type="text/css">
+    <script>window.bizx.cmp.init({ geo: window });</script>
+    <script>
+    function bm_trace() {
+        (function (w,d,t) {
+          _ml = w._ml || {};
+          _ml.eid = '771';
+          var s, cd, tag; s = d.getElementsByTagName(t)[0]; cd = new Date();
+          tag = d.createElement(t); tag.async = 1;
+          tag.src = 'https://ml314.com/tag.aspx?' + cd.getDate() + cd.getMonth();
+          s.parentNode.insertBefore(tag, s);
+        })(window,document,'script');
+    }
+    bizx.cmp.ifConsent('', ['all', 'bombora'],bm_trace);
+    </script>
+
+  </head>
+  <body class="path-node page-node-type-story has-glyphicons">
+    <a href="#main-content" class="visually-hidden focusable skip-link">
+      Skip to main content
+    </a>
+    
+      <div class="dialog-off-canvas-main-canvas" data-off-canvas-main-canvas>
+    <div id="wrap">
+<div class="leader-wrapper" id="leader-wrapper">
+</div>
+
+<div class="brand-wrapper" id="brand-wrapper">
+  <div class="brand container">
+    <div class="region region-brand">
+          <a class="logo navbar-btn" href="/" title="Home" rel="home">
+      <h1><img src="/themes/linuxjournal/images/ljlogo.png" alt="Linux Journal" /></h1>
+    </a>
+      <section id="block-topbannernearlogo" class="block block-block-content block-block-contenta8e75a3d-967c-416d-8944-4015d1f90a84 clearfix">
+  
+    
+
+      
+  </section>
+
+
+  </div>
+
+  </div>
+
+          <div class="header-wrapper">
+    <header class="navbar navbar-default container" id="navbar" role="banner">
+                                            <button type="button" class="navbar-toggle" data-toggle="collapse" data-target="#navbar-collapse">
+            <span class="sr-only">Toggle navigation</span>
+            <span class="icon-bar"></span>
+            <span class="icon-bar"></span>
+            <span class="icon-bar"></span>
+          </button>
+                <div id="navbar-collapse" class="navbar-collapse collapse">
+            <div class="region region-navigation-collapsible">
+    <section id="block-linuxjournal-main-menu" class="block block-system block-system-menu-blockmain clearfix navbar__menu col-xs-12 col-sm-8">
+  
+    
+
+      
+      <ul class="menu menu--main nav navbar-nav">
+                      <li class="expanded dropdown first">
+                                                                    <a href="/" class="dropdown-toggle" data-toggle="dropdown" data-drupal-link-system-path="&lt;front&gt;">Topics+ <span class="caret"></span></a>
+                        <ul class="dropdown-menu">
+                      <li class="first">
+                                        <a href="/tag/cloud">Cloud</a>
+              </li>
+                      <li>
+                                        <a href="/tag/containers" data-drupal-link-system-path="taxonomy/term/978">Containers</a>
+              </li>
+                      <li>
+                                        <a href="/tag/desktop">Desktop</a>
+              </li>
+                      <li>
+                                        <a href="/tag/kernel" data-drupal-link-system-path="taxonomy/term/662">Kernel</a>
+              </li>
+                      <li>
+                                        <a href="/tag/mobile">Mobile</a>
+              </li>
+                      <li>
+                                        <a href="/tag/networking">Networking</a>
+              </li>
+                      <li>
+                                        <a href="/tag/privacy">Privacy</a>
+              </li>
+                      <li>
+                                        <a href="/tag/programming">Programming</a>
+              </li>
+                      <li>
+                                        <a href="/tag/security" data-drupal-link-system-path="taxonomy/term/31">Security</a>
+              </li>
+                      <li>
+                                        <a href="/tag/servers">Servers</a>
+              </li>
+                      <li class="last">
+                                        <a href="/tag/sysadmin" data-drupal-link-system-path="taxonomy/term/21">SysAdmin</a>
+              </li>
+        </ul>
+  
+              </li>
+                      <li>
+                                        <a href="/news" data-drupal-link-system-path="news">News</a>
+              </li>
+                      <li class="last">
+                                        <a href="/books" data-drupal-link-system-path="books">eBooks</a>
+              </li>
+        </ul>
+  
+
+  </section>
+
+<section class="search-block-form block block-search block-search-form-block clearfix navbar__search col-xs-12 col-sm-4 col-md-4 col-md-offset-0" data-drupal-selector="search-block-form" id="block-linuxjournal-search" role="search">
+  
+      <h2 class="block-title sr-only">Search</h2>
+    
+
+      <form action="/search/node" method="get" id="search-block-form" accept-charset="UTF-8">
+  <div class="form-item js-form-item form-type-search js-form-type-search form-item-keys js-form-item-keys form-no-label form-group">
+      <label for="edit-keys" class="control-label sr-only">Search</label>
+  
+  
+  <div class="input-group"><input title="Enter the terms you wish to search for." data-drupal-selector="edit-keys" class="form-search form-control" placeholder="Search" type="search" id="edit-keys" name="keys" value="" size="15" maxlength="128" /><span class="input-group-btn"><button type="submit" value="Search" class="button js-form-submit form-submit btn-primary btn icon-only" name=""><span class="sr-only">Search</span><span class="icon glyphicon glyphicon-search" aria-hidden="true"></span></button></span></div>
+
+  
+  
+      <div id="edit-keys--description" class="description help-block">
+      Enter the terms you wish to search for.
+    </div>
+  </div>
+<div class="form-actions form-group js-form-wrapper form-wrapper" data-drupal-selector="edit-actions" id="edit-actions"></div>
+
+</form>
+
+  </section>
+
+
+  </div>
+
+        </div>
+            <div class="navbar-header">
+          <div class="region region-navigation">
+    <section id="block-mobilenavigation" class="block block-system block-system-menu-blockmenu-mobile-navbar clearfix col-xs-12 col-md-8 col-md-offset-2 col-lg-8 col-lg-offset-0 navbar__menu navbar__mobilenavigation">
+  
+    
+
+      
+      <ul class="menu menu--menu-mobile-navbar nav">
+                      <li class="first">
+                                        <a href="/news" data-drupal-link-system-path="news">News</a>
+              </li>
+                      <li>
+                                        <a href="/popular" data-drupal-link-system-path="popular">Popular</a>
+              </li>
+                      <li class="last">
+                                        <a href="/recent" data-drupal-link-system-path="recent">Recent</a>
+              </li>
+        </ul>
+  
+
+  </section>
+
+  </div>
+
+      </div>
+          </header>
+    </div>
+  
+</div>
+  <div role="main" class="main-container container js-quickedit-main-content" id="main">
+    <div class="row">
+
+            
+            
+                  <section class="col-sm-12">
+
+                                      <div class="highlighted">  <div class="region region-highlighted">
+    <div data-drupal-messages-fallback class="hidden"></div>
+<section id="block-contentsectionad" class="block block-block-content block-block-content23002994-ad54-4b02-9817-f4cee4ea308a clearfix">
+  
+    
+
+      
+            <div class="field field--name-body field--type-text-with-summary field--label-hidden field--item"><div id="sitewide-top-banner-placeholder" style="height:100px;width:100%;padding-top:10px;"> </div>
+<script data-source="linuxjournal" src="https://a.fsdn.com/con/js/sandiego/floating-unit.js?2026-03-23"></script><style type="text/css">
+<!--/*--><![CDATA[/* ><!--*/
+.header-wrapper{ margin-bottom:0;}
+#sitewide-top-banner-placeholder{
+margin-bottom: 25px;
+height:100px;
+width:100%
+}
+
+/*--><!]]>*/
+</style></div>
+      
+  </section>
+
+
+  </div>
+</div>
+                  
+                
+                
+                
+                          <a id="main-content"></a>
+            <div class="region region-content">
+      <article data-history-node-id="1339243" class="row bs-2col-stacked node node--type-story node--view-mode-full">
+  
+
+    <div class="col-sm-12 bs-region bs-region--top">
+    
+      <div class="field field--name-field-tags field--type-entity-reference field--label-hidden field--items">
+              <div class="field--item"><div about="/tag/virtualization" typeof="schema:Thing">
+  
+      <h2><a href="/tag/virtualization">
+            <div property="schema:name" class="field field--name-name field--type-string field--label-hidden field--item">Virtualization</div>
+      </a></h2>
+      <span property="schema:name" content="Virtualization" class="hidden"></span>
+
+  
+</div>
+</div>
+              <div class="field--item"><div about="/tag/networking" typeof="schema:Thing">
+  
+      <h2><a href="/tag/networking">
+            <div property="schema:name" class="field field--name-name field--type-string field--label-hidden field--item">Networking</div>
+      </a></h2>
+      <span property="schema:name" content="Networking" class="hidden"></span>
+
+  
+</div>
+</div>
+              <div class="field--item"><div about="/tag/howtos" typeof="schema:Thing">
+  
+      <h2><a href="/tag/howtos">
+            <div property="schema:name" class="field field--name-name field--type-string field--label-hidden field--item">HOWTOs</div>
+      </a></h2>
+      <span property="schema:name" content="HOWTOs" class="hidden"></span>
+
+  
+</div>
+</div>
+              <div class="field--item"><div about="/tag/cool-projects" typeof="schema:Thing">
+  
+      <h2><a href="/tag/cool-projects">
+            <div property="schema:name" class="field field--name-name field--type-string field--label-hidden field--item">Cool Projects</div>
+      </a></h2>
+      <span property="schema:name" content="Cool Projects" class="hidden"></span>
+
+  
+</div>
+</div>
+          </div>
+  
+            <div class="field field--name-node-title field--type-ds field--label-hidden field--item"><h1>
+  The Tiny Internet Project, Part III
+</h1>
+</div>
+      
+            <div class="field field--name-node-author field--type-ds field--label-hidden field--item">by <a title="View user profile." href="/users/john-s-tonello" lang="" about="/users/john-s-tonello" typeof="schema:Person" property="schema:name" datatype="">John S. Tonello</a></div>
+      
+            <div class="field field--name-node-post-date field--type-ds field--label-hidden field--item">on December 22, 2016</div>
+      
+  </div>
+  
+    <div class="col-sm-9 bs-region bs-region--left">
+    <div class="shariff"   data-services="[&quot;twitter&quot;,&quot;facebook&quot;,&quot;linkedin&quot;,&quot;reddit&quot;,&quot;mail&quot;]" data-theme="white" data-css="complete" data-orientation="horizontal" data-twitter-via="linuxjournal" data-mail-url="mailto:" data-lang="en">
+    
+        
+</div>
+
+            <div class="field field--name-body field--type-text-with-summary field--label-hidden field--item"><p>
+In a previous article, I <a href="http://www.linuxjournal.com/content/tiny-internet-project-part-i">introduced 
+the Tiny Internet Project</a>, a
+self-contained Linux project that shows you how to build key pieces
+of the internet on a single computer using virtualization software,
+a router and free open-source applications. In the <a href="http://www.linuxjournal.com/content/tiny-internet-project-part-ii">second 
+installment</a>,
+I explained how to set up the host server using Proxmox and build a first basic Ubuntu
+14.04 virtual machine. In this third installment, you'll learn how to
+set up an Ubuntu mirror, a DNS server, a mail server and a web server.
+</p>
+
+<p>
+As you finished with <a href="http://www.linuxjournal.com/content/tiny-internet-project-part-ii">Part 
+II</a>, you hopefully had just booted a raw Ubuntu 14.04 server
+VM. Now, I'll describe how to customize that VM with some user accounts and software,
+keeping it fairly generic, but ready to become a template for most
+everything else you'll build.
+</p>
+
+<p>
+Initially, you'll do all your work from the Proxmox web interface on
+your Proxmox server: https://10.128.1.2:8006.
+</p>
+
+<p>
+Log in and start the Ubuntu VM you made, which probably was named "100
+(ubuntu)". Wait a moment for it to boot, and click the Proxmox Console
+button to launch what is essentially a web-based terminal.
+</p>
+<img src="http://www.linuxjournal.com/files/linuxjournal.com/ufiles/imagecache/large-550px-centered/u1000009/12056f1.png" alt="" title="" class="imagecache-large-550px-centered" /><p>
+<strong>Figure 1. Ubuntu Installation Screen—Selecting Your
+Language</strong>
+</p>
+
+<p>
+When the shell opens, you'll see the Ubuntu installation screens. Select
+your language and choose "Install Ubuntu Server" from the action
+list. You'll be prompted again for language choices and keyboard layouts;
+choose the ones that suit your needs. The installer will detect your
+network and prompt you to enter a hostname.
+</p>
+<img src="http://www.linuxjournal.com/files/linuxjournal.com/ufiles/imagecache/large-550px-centered/u1000009/12056f2.png" alt="" title="" class="imagecache-large-550px-centered" /><p>
+<strong>Figure 2. Entering a Hostname</strong>
+</p>
+
+<p>
+Since you'll be making this VM a template, give the machine a generic
+hostname like "ubuntu". That way, if you later deploy a different type
+of server (say, ArchLinux), you'll easily be able to tell them apart.
+</p>
+
+<p>
+When
+you're asked to create a user name, choose something that follows a naming
+convention you can use for all future users, such as your first initial
+and your full last name. Then when you need to figure out user
+names (and email addresses) later, you won't have to guess.
+</p>
+<img src="http://www.linuxjournal.com/files/linuxjournal.com/ufiles/imagecache/large-550px-centered/u1000009/12056f3.png" alt="" title="" class="imagecache-large-550px-centered" /><p>
+<strong>Figure 3. Selecting a User Name</strong>
+</p>
+
+<p>
+Provide a password, add encryption if you like, set your time zone and
+proceed to the disk partitioning.
+</p>
+
+<p>
+When you first created this VM under Proxmox, you gave it a main virtual
+disk, which is what the Ubuntu installer now sees. Select "Guided
+— use entire disk", not the default with the LVM option. Accept the
+configuration and then write the changes to disk.
+</p>
+<img src="http://www.linuxjournal.com/files/linuxjournal.com/ufiles/imagecache/large-550px-centered/u1000009/12056f4.png" alt="" title="" class="imagecache-large-550px-centered" /><p>
+<strong>Figure 4. Disk Partitioning</strong>
+</p>
+
+<p>
+The installer will set up the system, which takes a few
+minutes. If you've ever installed an operating system onto hardware from
+a DVD, this is the same thing.
+</p>
+
+<p>
+When you're prompted for HTTP proxy information, leave it blank and
+continue unless your school or situation requires a proxy to access the
+public internet.
+</p>
+
+<p>
+Once the installer configures <code>apt</code>, it'll set up all the base software
+and prompt you about how to manage upgrades. Select "Install security
+updates automatically" and continue. On the Software selection page,
+select only "OpenSSH server" for now. Doing so will give this base VM
+template direct shell access and won't load up the machine with packages
+you don't need.
+</p>
+<img src="http://www.linuxjournal.com/files/linuxjournal.com/ufiles/imagecache/large-550px-centered/u1000009/12056f5.png" alt="" title="" class="imagecache-large-550px-centered" /><p>
+<strong>Figure 5. Software Selection—Selecting Only OpenSSH
+Server</strong>
+</p>
+
+<p>
+When prompted to install the GRUB bootloader to the master boot record,
+choose "Yes", and reboot when prompted. The VM will launch
+into the GRUB menu quickly, boot and drop you at the login prompt.
+</p>
+<img src="http://www.linuxjournal.com/files/linuxjournal.com/ufiles/imagecache/large-550px-centered/u1000009/12056f6.png" alt="" title="" class="imagecache-large-550px-centered" /><p>
+<strong>Figure 6. Login Prompt</strong>
+</p>
+
+<p>
+Log in using the user name and password you set up during the installation
+and check the system's IP address. It was dynamically configured with
+DHCP during the installation, and it will be handy to know so you can
+<code>ssh</code> into your new VM:
+
+</p><pre>
+<code>
+$ ifconfig
+</code>
+</pre>
+
+<img src="http://www.linuxjournal.com/files/linuxjournal.com/ufiles/imagecache/large-550px-centered/u1000009/12056f7.png" alt="" title="" class="imagecache-large-550px-centered" /><p>
+<strong>Figure 7. Logging in and <code>ifconfig</code> Output
+</strong></p>
+
+<p>
+You'll see two entries, one for eth0 and one for lo (local). In my
+example, the automatically assigned address is 10.128.1.26. If your
+administration PC is a Linux box or Mac, open a terminal and
+<code>ssh</code> in to
+your new VM by typing:
+
+</p><pre>
+<code>
+$ ssh username@10.128.1.26
+</code>
+</pre>
+
+
+<p>
+If you're on Windows, <code>ssh</code> in using PuTTY or a similar tool. If you get a
+login prompt, you're good to go. You always can use the Proxmox console
+to connect to your VMs, but being able to <code>ssh</code> in directly is handy.
+</p>
+
+<span class="h3-replacement">
+Customize the VM</span>
+
+<p>
+With your Ubuntu VM up and accessible, it's time to make some
+customizations that will save time for all future deployments. Start by
+adding any other administrative users you want. That way, when you make a
+template out of this VM, all those users already will be set up. You're
+already an administrative (sudo) user yourself, but it might be handy to have
+someone else with admin rights:
+
+</p><pre>
+<code>
+$ sudo adduser msmith
+</code>
+</pre>
+
+
+<p>
+Follow the prompts and enter the user's full name and any of the rest
+you care to add. Next, add your new user to the sudoers group:
+
+</p><pre>
+<code>
+$ sudo adduser msmith sudo
+</code>
+</pre>
+
+
+<p>
+These steps can be combined, but I think it's useful to see the output so
+you better understand what's happening under the covers.
+</p>
+
+<span class="h3-replacement">
+Set a Static IP Address</span>
+
+<p>
+All your servers will have static IP addresses so they can be mapped to
+DNS later, so this is a good time to change them by editing the network
+configuration file:
+
+</p><pre>
+<code>
+$ sudo vi /etc/network/interfaces
+</code>
+</pre>
+
+
+<p>
+Change the eth0 entry from this:
+
+</p><pre>
+<code>
+auto eth0
+iface eth0 inet dhcp
+</code>
+</pre>
+
+
+<p>
+to this:
+
+</p><pre>
+<code>
+auto eth0
+iface eth0 inet static
+    address 10.128.1.200   # .200 is out of range of anything
+                           # I might be adding soon
+    netmask 255.255.255.0
+    dns-nameservers 10.128.1.3
+    dns-search tiny.lab
+</code>
+</pre>
+
+
+<p>
+Save the file and reboot.
+</p>
+
+<span class="h3-replacement">
+Add a Second Network Interface</span>
+
+<p>
+The goal of your tiny internet is to make a self-contained system that
+doesn't rely on the public internet, but you'll need to cheat a little
+with this first VM and, later, with the mirror server. These VMs need
+a second NIC so they can access both your private and
+public networks simultaneously.
+</p>
+
+<p>
+Once this VM is customized and updated, you can delete the second NIC
+by reversing the steps you're about to take.
+</p>
+
+<p>
+In the main Proxmox web interface, click on the Hardware tab for your
+VM. Click Add and select Network Device from the menu. In the modal
+window, select "Bridge mode" and bridge the second network interface,
+in my example "vmbr1". Click OK, and for good measure, restart the VM.
+</p>
+<img src="http://www.linuxjournal.com/files/linuxjournal.com/ufiles/imagecache/large-550px-centered/u1000009/12056f8.png" alt="" title="" class="imagecache-large-550px-centered" /><p>
+<strong>Figure 8. Bridge Mode</strong>
+</p>
+
+<p>
+When you type <code>ifconfig</code> at the prompt after you log in, you'll still
+see only eth0 and lo, so you need to activate the newly added NIC. In
+the console window (or shell), edit the network configuration file:
+
+</p><pre>
+<code>
+$ sudo vi /etc/network/interfaces
+</code>
+</pre>
+
+
+<p>
+Create a static IP entry for the second NIC:
+
+</p><pre>
+<code>
+auto eth1
+iface eth1 inet static
+    address 192.168.1.200   # .200 is an available address on
+                            # my network
+    netmask 255.255.255.0
+    gateway 192.168.1.1
+    dns-nameservers 8.8.8.8 8.8.4.4
+</code>
+</pre>
+
+
+<p>
+In this example, I choose .200 because it's a free address on my
+LAN. Assign one of your own that doesn't conflict with other machines
+on your network. The dns-nameservers are Google's.
+</p>
+
+<p>
+Save the file and reboot the VM. When you log in and run
+<code>ifconfig</code> now,
+you should see that the eth0 and eth1 interfaces are active (Figure 9).
+</p>
+<img src="http://www.linuxjournal.com/files/linuxjournal.com/ufiles/imagecache/large-550px-centered/u1000009/12056f9.png" alt="" title="" class="imagecache-large-550px-centered" /><p>
+<strong>Figure 9. eth0 and eth1 are both active.</strong>
+</p>
+
+<p>
+This VM now has access to your private network and the public internet
+so you can do updates and downloads. Run this update so you have the
+latest version of your software and kernel:
+
+</p><pre>
+<code>
+$ sudo apt-get update &amp;&amp; sudo apt-get upgrade -y
+ ↪&amp;&amp; sudo apt-get autoremove -y
+</code>
+</pre>
+
+
+<span class="h3-replacement">
+Install Webmin</span>
+
+<p>
+You're now ready to install Webmin, a browser-based tool for administering
+your Linux server. It's worth installing on the template VM so it's
+available on every server you build from here on out.
+</p>
+
+<p>
+First, install a few packages Webmin needs to work properly:
+
+</p><pre>
+<code>
+$ sudo apt-get install libnet-ssleay-perl libauthen-pam-perl
+ ↪libio-pty-perl apt-show-versions libapt-pkg-perl
+</code>
+</pre>
+
+
+<p>
+When those packages are installed, copy the URL of the latest Debian
+installer from the Webmin downloads page (see the Resources section),
+and fetch it to your home directory on this VM:
+
+</p><pre>
+<code>
+$ cd ~
+$ wget http://prdownloads.sourceforge.net/webadmin/
+↪webmin_1.791_all.deb
+</code>
+</pre>
+
+
+<p>
+Now, install it:
+
+</p><pre>
+<code>
+$ sudo dpkg -i webmin_1.791_all.deb
+</code>
+</pre>
+
+
+<p>
+The installer will take a little while, so be patient. When it's done,
+it'll direct you to log in at https://ubuntu:10000, but since you
+don't have DNS set up yet, you'll have to use https://10.128.1.200:10000
+for now. Use your administration PC and log in with your user name and
+password.
+</p>
+<img src="http://www.linuxjournal.com/files/linuxjournal.com/ufiles/imagecache/large-550px-centered/u1000009/12056f10.png" alt="" title="" class="imagecache-large-550px-centered" /><p>
+<strong>Figure 10. Logging in to Webmin</strong>
+</p>
+
+<span class="h3-replacement">
+Set Up the Firewall</span>
+
+<p>
+If you want to enable a firewall on your template, this is the time to
+do it. It's easy with the Webmin interface—under Networking, click
+Linux Firewall. Check the box at the bottom that says "Enable firewall
+at boot time", and click the "Setup Firewall" button. Create four
+basic rules:
+</p>
+
+
+<ul><li>
+<p>
+Accept if state of connection is ESTABLISHED,RELATED.
+</p></li>
+
+<li>
+<p>
+Accept if interface is not eth0.
+</p></li>
+
+<li>
+<p>
+Accept if source is 10.128.1.0/24.
+</p></li>
+
+<li>
+<p>
+Accept if source is 192.168.1.0/24.
+</p></li></ul><p>
+These rules allow traffic only from devices on your two networks—the
+one you use to connect to the internet and the private one that makes up
+your tiny internet. Set the "Default Action To:" button to "Drop" on the first
+entry ("Accept" on the other two), and click Apply Configuration.
+</p>
+<img src="http://www.linuxjournal.com/files/linuxjournal.com/ufiles/imagecache/large-550px-centered/u1000009/12056f11.png" alt="" title="" class="imagecache-large-550px-centered" /><p>
+<strong>Figure 11. Setting Up the Firewall Rules</strong>
+</p>
+
+<p>
+You can confirm these rules are active by running this simple command:
+
+</p><pre>
+<code>
+$ sudo iptables -L
+</code>
+</pre>
+
+<img src="http://www.linuxjournal.com/files/linuxjournal.com/ufiles/imagecache/large-550px-centered/u1000009/12056f12.png" alt="" title="" class="imagecache-large-550px-centered" /><p>
+<strong>Figure 12. Output of the <code>sudo iptables -L</code> Command
+</strong></p>
+
+<span class="h3-replacement">
+Change Your Local sources.list</span>
+
+<p>
+Next, you'll change the apt package repository listed in
+/etc/apt/sources.list from the Ubuntu default to your own. This will enable
+you to update all your VMs locally without them ever needing to access
+the public internet. Note that this won't work until your apt-mirror is
+fully operational (if you don't want to set up a mirror, skip this step):
+
+</p><pre>
+<code>
+$ mv /etc/apt/sources.list /etc/apt/sources.list.bak
+$ sudo vi /etc/apt/sources.list
+</code>
+</pre>
+
+
+<p>
+Enter the following three lines in sources.list and save it. The URL
+points to the VM you'll make called "mirror" on the domain you'll
+create called "tiny.lab":
+
+</p><pre>
+<code>
+deb http://mirror.tiny.lab/ubuntu trusty main restricted
+ ↪universe multiverse
+deb http://mirror.tiny.lab/ubuntu trusty-security main
+ ↪restricted universe multiverse
+deb http://mirror.tiny.lab/ubuntu trusty-updates main
+ ↪restricted universe multiverse
+</code>
+</pre>
+
+
+<span class="h3-replacement">
+Set Up a Proxy</span>
+
+<p>
+If you're planning to build and use an HTTP proxy, edit /etc/environment
+to add the following lines. In this example, I used addresses and a port number
+created later by installing tinyproxy. After the
+<code>PATH</code> line, add:
+
+</p><pre>
+<code>
+no_proxy="127.0.0.1, localhost, *tiny.lab"
+http_proxy="http://proxy.tiny.lab:8888"
+ftp_proxy="http://proxy.tiny.lab:8888"
+</code>
+</pre>
+
+
+<p>
+In this case, I don't want the system to use the proxy for anything on
+my private tiny internet domain (*tiny.lab), but it can for anything
+else that isn't local. If you're not planning to build your own mirror
+and plan to use a public repository (the default), you'll also need to
+edit /etc/apt/apt.conf to add a line telling apt to use your proxy
+to get to the repository:
+
+</p><pre>
+<code>
+Acquire::http::Proxy "http://proxy.tiny.lab:8888";
+</code>
+</pre>
+
+
+<span class="h3-replacement">
+Convert Your VM to a Template</span>
+
+<p>
+Now you're ready to convert this VM to a template. It's been customized with
+your credentials, static IP addresses that can be modified easily, Webmin
+for easy system management, simple firewall rules, a custom sources.list
+and proxy settings, if necessary.
+</p>
+
+<p>
+To convert it, return to the Proxmox browser interface and shut down the
+machine. Right-click on the VM and select "Convert to
+template" from
+the menu.
+</p>
+<img src="http://www.linuxjournal.com/files/linuxjournal.com/ufiles/imagecache/large-550px-centered/u1000009/12056f13.png" alt="" title="" class="imagecache-large-550px-centered" /><p>
+<strong>Figure 13. Converting the VM to a Template</strong>
+</p>
+
+<p>
+After a few moments, the VM's icon will change, showing you that the machine
+is now purely a template. It no longer can be started as is.
+</p>
+
+<p>
+If you installed a second hard drive on your Proxmox host server, now
+is a good time to back up this new template. Check the Proxmox website
+for more information.
+</p>
+
+<span class="h3-replacement">
+Deploy a Linux Repository Mirror</span>
+
+<p>
+You have two choices when it comes to deploying the Ubuntu repository:
+clone your new VM template and resize its 30GB virtual disk, or create
+an all-new VM with a larger disk. I explain the latter here.
+</p>
+
+<p>
+Start by creating a new VM from the Ubuntu .iso file you used to
+create your template VM. This time, give the machine a virtual disk
+that's at least 200GB. Boot the machine and step through the server
+installation process as before, making sure to give the machine the
+hostname "mirror" and an IP address of 10.128.1.6. Use the same
+user name and password you set on your template, and install only OpenSSH
+from the application list.
+</p>
+
+<p>
+Follow the procedure for adding a second NIC, and be sure to leave the
+/etc/apt/sources.list unchanged for now. You'll need it to point to the
+default external Ubuntu repository.
+</p>
+
+<span class="h3-replacement">
+Install apt-mirror</span>
+
+<p>
+With the machine set with access to both your tiny internet and the
+public internet, install <code>apt-mirror</code> and the web server that will serve
+up packages:
+
+</p><pre>
+<code>
+$ sudo apt-get install apt-mirror apache2
+</code>
+</pre>
+
+
+<p>
+The core of the <code>apt-mirror</code> configuration is the list of repository
+URLs. Make a backup of the default file and edit the original:
+
+</p><pre>
+<code>
+$ sudo cp /etc/apt/mirror.list /etc/apt/mirror.list.bak
+$ sudo vi /etc/apt/mirror.list
+</code>
+</pre>
+
+
+<p>
+Leave the <code>config</code> section at the top as is, and don't change the first
+three <code>deb</code> listings. However, to save disk space, remove all the
+<code>deb-src</code> entries and replace them with the 32-bit repositories. Your
+entries should look like this:
+
+</p><pre>
+<code>
+deb http://archive.ubuntu.com/ubuntu trusty main restricted
+ ↪universe multiverse
+deb http://archive.ubuntu.com/ubuntu trusty-security main
+ ↪restricted universe multiverse
+deb http://archive.ubuntu.com/ubuntu trusty-updates main
+ ↪restricted universe multiverse
+
+deb-i386 http://archive.ubuntu.com/ubuntu trusty main
+ ↪restricted universe multiverse
+deb-i386 http://archive.ubuntu.com/ubuntu trusty-security main
+ ↪restricted universe multiverse
+deb-i386 http://archive.ubuntu.com/ubuntu trusty-updates main
+ ↪restricted universe multiverse
+
+clean http://archive.ubuntu.com/ubuntu
+</code>
+</pre>
+
+
+<p>
+Save the file and start <code>apt-mirror</code> with your edited
+mirror.list. Depending on your internet connection, this likely
+will take many hours. You'll get a hint of just how long when it tells you how
+many gigabytes will be downloaded. Be patient:
+
+</p><pre>
+<code>
+$ sudo apt-mirror /etc/apt/mirror.list
+</code>
+</pre>
+
+
+<p>
+Continue your work during this download by opening another shell into the
+server. You can configure apache2 while <code>apt-mirror</code> is doing its thing
+by creating a symbolic link from the <code>apt-mirror</code> repository to the web
+directory that was created automatically when you installed
+apache2.
+</p>
+
+<p>
+If you haven't already, test to see that the web server is up by pointing
+your browser to http://10.128.1.6.
+</p>
+
+<p>
+If it works, create a new directory at the root of the web server:
+
+</p><pre>
+<code>
+$ sudo mkdir /var/www/html/ubuntu
+</code>
+</pre>
+
+
+<p>
+Create a symbolic link from the directory where
+<code>apt-mirror</code> stores the
+packages to the new directory:
+
+</p><pre>
+<code>
+$ sudo ln -s /var/spool/apt-mirror/mirror/archive.ubuntu.com/
+↪ubuntu/pool/ /var/www/html/ubuntu
+</code>
+</pre>
+
+
+<p>
+Test it by pointing your browser to http://10.128.1.6/ubuntu. If you
+see a list of directories, you're all set. Any VMs built with the local
+sources.list will be able to download packages from this local server once
+apt-mirror completes. (See the Resources section for more information.)
+</p>
+<img src="http://www.linuxjournal.com/files/linuxjournal.com/ufiles/imagecache/large-550px-centered/u1000009/12056f14.png" alt="" title="" class="imagecache-large-550px-centered" /><p>
+<strong>Figure 14. Installing apt-mirror</strong>
+</p>
+
+<span class="h3-replacement">
+Set Up DNS (bind9)</span>
+
+<p>
+If you want to use domain names instead of IP addresses for reaching all
+your tiny internet machines, it's time to deploy a DNS server. Use the
+addresses you established as part of your tiny internet schema. Here's
+a reminder:
+</p>
+
+<ul><li>
+<p>
+pve — 10.128.1.2
+</p></li>
+
+<li>
+<p>
+dns01 — 10.128.1.3
+</p></li>
+
+<li>
+<p>
+dns02 — 10.128.1.4
+</p></li>
+
+<li>
+<p>
+mail — 10.128.1.5
+</p></li>
+
+<li>
+<p>
+mirror — 10.128.1.6
+</p></li>
+
+<li>
+<p>
+web01 –10.128.1.7
+</p></li></ul><p>
+Start by cloning your VM template. Right-click on the template and select
+"Clone". The target node will default to "pve" (or whatever you
+called your Proxmox host). Set the VM ID and name to whatever you
+want. Leave the auto-incrementing ID as is, and give the VM a name that's
+the same as the hostname you'll assign. In my example, I used
+"dns01". Set
+the Mode to "Full Clone", and set the Target Storage to
+"local"
+with "Raw disk image" as the format.
+</p>
+<img src="http://www.linuxjournal.com/files/linuxjournal.com/ufiles/imagecache/large-550px-centered/u1000009/12056f15.png" alt="" title="" class="imagecache-large-550px-centered" /><p>
+<strong>Figure 15. Cloning the Template</strong>
+</p>
+
+<p>
+It takes less than a minute to spawn a new VM from your template. In
+its current state, it's exactly like the original "ubuntu"
+VM—same IP address, same hostname. Of course, you'll need to change those
+before putting the machine into production:
+</p>
+
+<ul><li>
+<p>
+Edit /etc/hosts — change <code>127.0.1.1 ubuntu</code> to
+<code>10.128.1.3 dns01.tiny.lab dns01</code>.
+</p></li>
+
+<li>
+<p>
+Edit /etc/hostname — change <code>ubuntu</code> to
+<code>dns01.tiny.lab</code>.
+</p></li>
+
+<li>
+<p>
+Edit /etc/network/interfaces — change the
+<code>10.128.1.200</code> address to
+<code>10.128.1.3</code>.
+</p></li></ul><p>
+Once you've made these basic changes, reboot, log in and install
+<code>bind9</code>:
+
+</p><pre>
+<code>
+$ sudo apt-get update
+$ sudo apt-get install bind9 bind9utils dnsutils bind9-doc
+</code>
+</pre>
+
+
+<p>
+The main DNS configuration is done in these three files:
+</p>
+
+<ul><li>
+<p>
+/etc/default/bind9
+</p></li>
+
+<li>
+<p>
+/etc/bind/named.conf.options
+</p></li>
+
+<li>
+<p>
+/etc/bind/named.conf.local
+</p></li></ul><p>
+You'll finish by creating your zone files in /etc/bind/zones. I'm
+using the "tiny.lab" domain name in all these examples, but you can
+set the name to anything you want.
+</p>
+
+<p>
+Start by adding an IPv4 option:
+
+</p><pre>
+<code>
+$ sudo vi /etc/default/bind9
+</code>
+</pre>
+
+
+<p>
+Add the following to the end of the file:
+
+</p><pre>
+<code>
+OPTIONS="-4 -u bind"
+</code>
+</pre>
+
+
+<p>
+Make backup copies of the next two files before editing them, then edit
+/etc/bind/named.conf.options and add your trusted hosts (one for each
+server and resource you have), and set the options:
+
+</p><pre>
+<code>
+acl "trusted" {
+    10.128.1.1;
+    10.128.1.2;
+    10.128.1.3;
+    10.128.1.4;
+    10.128.1.5;
+    10.128.1.6;
+    10.128.1.7;
+    10.128.0.0/16;
+};
+
+options {
+    directory "/var/cache/bind";
+
+    recursion   yes;   # enables recursive queries
+    allow-recursion     { trusted; };   # allows queries from "trusted"
+                                        # clients
+    listen-on { 10.128.1.3; };   # dns01 IP address
+    allow-transfer { none; };   # disable zone transfer by default
+
+    forwarders {
+        8.8.8.8;   # These are Google's DNS servers
+        8.8.4.4;
+    };
+
+    ...
+};
+</code>
+</pre>
+
+
+<p>
+Save the file and create your zones by editing
+/etc/bind/named.conf.local. This is where you set your domain name,
+replacing "tiny.lab" with whatever you want:
+
+</p><pre>
+<code>
+zone "tiny.lab" {
+    type master;
+    file "/etc/bind/zones/db.tiny.lab";
+    allow-transfer { 10.128.1.4; };  # Setting this for a
+                                     # future secondary DNS server
+};
+
+zone "128.10.in-addr.arpa" {
+    type master;
+    file "/etc/bind/zones/db.10.128";
+    allow-transfer { 10.128.1.4; };
+};
+</code>
+</pre>
+
+
+<p>
+Now create the forward and reverse zone files, placing them in the
+/etc/bind/zones folder. If it doesn't exist, create it:
+
+</p><pre>
+<code>
+$ cd /etc/bind
+$ sudo mkdir zones
+</code>
+</pre>
+
+
+<p>
+Copy the default DNS forward and reverse zone config files into that
+folder, renaming them to match your domain name and IP subnet:
+
+</p><pre>
+<code>
+$ sudo cp db.local ./zones/db.tiny.lab
+$ sudo cp db.127 ./zones/db.10.128
+</code>
+</pre>
+
+
+<p>
+Edit /etc/bind/zones/db.tiny.lab, and enter your current and future
+hosts. The file I set up includes comments at the top to remind me of
+changes I make. I also created entries for my router (10.128.1.1) and a
+proxy server, which I put on the same box as my dns02. Each time you make
+modifications, increment the Serial entry before saving. Also note the
+".?" after each name. Don't leave those off. You can find more information about
+DNS in the Resources section at the end of this article,
+but this will get you started:
+
+</p><pre>
+<code>
+; BIND data file for local loopback interface
+;
+;       20150505        JST     Modified proxy address
+;       20160505        JST     Added web01
+
+$TTL    604800
+@       IN      SOA     dns01.tiny.lab admin.dns01.tiny.lab. (
+                             12         ; Serial
+                         604800         ; Refresh
+                          86400         ; Retry
+                        2419200         ; Expire
+                         604800 )       ; Negative Cache TTL
+; name servers -- NS records
+        IN      NS      dns01.tiny.lab.
+        IN      NS      dns02.tiny.lab.
+
+; name servers -- A records
+dhcp.tiny.lab.          IN      A       10.128.1.1
+pve.tiny.lab.           IN      A       10.128.1.2
+dns01.tiny.lab.         IN      A       10.128.1.3
+dns02.tiny.lab.         IN      A       10.128.1.4
+proxy.tiny.lab.         IN      CNAME   dns02.tiny.lab.
+mail.tiny.lab.          IN      A       10.128.1.5
+mirror.tiny.lab.        IN      A       10.128.1.6
+web01.tiny.lab.         IN      A       10.128.1.7
+</code>
+</pre>
+
+
+<p>
+Save the file and edit the /etc/bind/db.10.128 reverse zone file. The IP
+addresses for each server under "PTR records" are truncated-looking
+and can be confusing. Imagine each leading off with an invisible
+"10.128." to envision the addresses. Again, be sure to increment
+the Serial entry each time you make a change:
+
+</p><pre>
+<code>
+; BIND reverse data file for local loopback interface
+;
+; 20160505      JST     Added cname for proxy
+; 20160505      JST     Added mirror01
+
+$TTL    604800
+@       IN      SOA     tiny.lab. admin.tiny.org. (
+                             11         ; Serial
+                         604800         ; Refresh
+                          86400         ; Retry
+                        2419200         ; Expire
+                         604800 )       ; Negative Cache TTL
+;
+; name servers -- NS records
+        IN      NS      dns01.tiny.lab.
+        IN      NS      dns02.tiny.lab.
+
+; PTR records
+1.1     IN      PTR     dhcp.tiny.lab.
+1.2     IN      PTR     pve.tiny.lab.
+1.3     IN      PTR     dns01.tiny.lab.
+1.4     IN      PTR     dns02.tiny.lab.
+1.5     IN      PTR     mail.tiny.lab.
+1.6     IN      PTR     mirror.tiny.lab.
+1.7     IN      PTR     web01.tiny.lab.
+</code>
+</pre>
+
+
+<p>
+Save the file and check the syntax of your files by running:
+
+</p><pre>
+<code>
+$ sudo named-checkconf
+</code>
+</pre>
+
+
+<p>
+If everything is correct, you'll get no output and no errors. Check the
+configurations further with <code>named-checkzone</code>:
+
+</p><pre>
+<code>
+$ sudo named-checkzone tiny.lab /etc/bind/zones/db.tiny.lab
+$ sudo named-checkzone 128.10.in-addr.arpa /etc/bind/zones/db.10.128
+</code>
+</pre>
+
+
+<p>
+You'll see "OK" if everything checks out. If not, edit the
+files. Leaving off the trailing ".?" is a common mistake.
+</p>
+
+<p>
+Restart bind to get it up and running:
+
+</p><pre>
+<code>
+$ sudo service bind9 restart
+</code>
+</pre>
+
+
+<p>
+When <code>bind9</code> restarts, do a quick check with the
+<code>dig</code> utility,
+or simply open a browser and navigate to your mirror server at
+http://mirror.tiny.lab:
+
+</p><pre>
+<code>
+$ dig mirror.tiny.lab
+</code>
+</pre>
+
+
+<p>
+If you see 10.128.1.6 in the <code>dig</code> output, you've succeeded. DNS is
+working. You can complete your DNS setup by deploying a second VM or
+installing <code>bind9</code> on a physically separate machine on your tiny internet
+network, but it's not strictly necessary at this point. You also can set
+this VM to start automatically when your Proxmox host starts, so you have
+DNS running whenever your tiny internet is up.
+</p>
+
+<span class="h3-replacement">
+Deploy a Mail Server</span>
+
+<p>
+Mail servers have two key components: a service that transfers mail and
+a service that serves up mail. Postfix is a common transfer agent (SMTP),
+and when coupled with Dovecot, it will provide you with all you need to
+send and receive mail via IMAP (or POP if you're so inclined).
+</p>
+
+<p>
+Deploy another clone of your "ubuntu" template, this time naming
+it "mail", making sure the Mode is "Full Clone" and your Target
+Storage is "local". Once it's generated, start it up, open a
+console,
+and update the same basic information you did for your mirror server: set
+the static IP address for <code>eth0</code> as 10.128.1.5, and
+change the <code>hostname</code>
+to <code>mail.tiny.lab</code>.
+</p>
+
+<p>
+Reboot and install Postfix and Dovecot:
+
+</p><pre>
+<code>
+$ sudo apt-get update
+$ sudo apt-get install postfix
+</code>
+</pre>
+
+
+<p>
+During the install, you'll be prompted to select the type of installation
+you want. Choose "Internet Site". Follow that by setting the
+"System
+mail name" as "mail"—the same as the hostname.
+</p>
+
+<p>
+When it's done, install <code>mailutils</code> and Dovecot tools:
+
+</p><pre>
+<code>
+$ sudo apt-get install dovecot-imapd dovecot-pop3d
+</code>
+</pre>
+
+
+<p>
+Reply "Yes" to install the self-signed certificate, set the hostname
+as "mail" and allow the install to complete.
+</p>
+
+<p>
+To configure Postfix, run this command:
+
+</p><pre>
+<code>
+$ sudo dpkg-reconfigure postfix
+</code>
+</pre>
+
+
+<p>
+You can confirm the entries you made during the Postfix install,
+and then proceed to set your user name for the "Root and postmaster
+mail recipient"—in my case, "jtonello". Look over the
+other destinations from which to accept mail, and add your domain
+("tiny.lab"). Don't force synchronous updates on the mail queue,
+but under the local networks, be sure to add "10.128.1.0/24" to the
+list. That's the scope you defined for all your machines. If you leave
+this out, the mail server will reject all incoming mail.
+</p>
+<img src="http://www.linuxjournal.com/files/linuxjournal.com/ufiles/imagecache/large-550px-centered/u1000009/12056f16.png" alt="" title="" class="imagecache-large-550px-centered" /><p>
+<strong>Figure 16. Postfix Configuration</strong>
+</p>
+
+<p>
+Set the mailbox limits to suit your needs, and set "all" as the
+internet protocols to use. You'll start with IPv4, but having IPv6
+enabled offers future flexibility.
+</p>
+
+<p>
+With the basics now in place, check out the main Ubuntu Postfix and
+Dovecot pages listed in the Resources section for more information.
+</p>
+
+<p>
+You'll be able to use any email client with your new mail server,
+including Thunderbird and Evolution, two common tools that come
+pre-installed on many Linux distributions. You also might consider
+installing a web-based mail tool like Roundcube. It provides a great
+interface and plenty of features that work well with Postfix and Dovecot.
+</p>
+
+<p>
+If you want to dig in to the mail configuration, use Webmin. Log in at
+https://mail.tiny.lab:10000 and look under the Servers tab for the
+Postfix and Dovecot entries. From there, you can explore and
+manage the servers easily.
+</p>
+
+<span class="h3-replacement">
+Set Up a Web Server</span>
+
+<p>
+So far, without possibly being aware, you've installed apache2 on the
+mirror and mail servers. These allow web connections to those services,
+but you'll want a more full-featured LAMP stack (Linux, Apache, MySQL
+and PHP) for building robust websites.
+</p>
+
+<p>
+When you first installed Ubuntu from the .iso, you may have noticed a
+LAMP choice during the applications install step. You definitely
+can create a VM from scratch and check that box; it'll give you everything
+you need. However, since you have a nice pre-made VM template, you can
+use that and add LAMP to it.
+</p>
+
+<p>
+Start by cloning your Ubuntu template. Follow the same steps you did
+with previous clones—change the IP address (10.128.1.7) and hostname
+(web01). Reboot and open a terminal to install the LAMP components:
+
+</p><pre>
+<code>
+$ sudo apt-get install lamp-server^
+</code>
+</pre>
+
+
+<p>
+The caret (^) is important; don't leave it off. As the installers proceed,
+you'll be asked to create a root password for the MySQL database. Jot
+it down or put it in your password safe so you don't forget it.
+</p>
+
+<p>
+The installation will create the /var/www/html folder and the default
+index.html. If you point your browser to the machine (either by IP or
+DNS name if you set it up), you'll see the default Apache2 page. Test
+the PHP installation by creating a new file in the same directory:
+
+</p><pre>
+<code>
+$ sudo vi /var/www/html/phpinfo.php
+</code>
+</pre>
+
+<p>
+Add these lines to the file:
+
+</p><pre>
+<code>
+&lt;?php
+        phpinfo();
+?&gt;
+</code>
+</pre>
+
+
+<p>
+Point your browser to the page at http://web01.tiny.lab/phpinfo.php. If
+you see a page with information, your server is successfully serving
+up PHP.
+</p>
+
+<p>
+To make it easier to work with the MySQL database, install phpMyAdmin:
+
+</p><pre>
+<code>
+$ sudo apt-get install phpmyadmin
+</code>
+</pre>
+
+
+<p>
+Select "apache2" as the server to reconfigure automatically,
+and answer "No" to the next question (because the database is
+already configured). When the installation is complete, you'll have
+a very robust web-based tool to manage all your databases. Log in at
+http://web01.tiny.lab/phpmyadmin with the MySQL user name
+"root" and
+the password you set.
+</p>
+
+<p>
+If you plan to deploy multiple web servers, go ahead and convert this
+web01 VM to a template. That way, it will be full-featured and ready with
+only a few small changes. If you want each VM to use WordPress or another
+content-management tool, install that before you make your template.
+</p>
+
+<span class="h3-replacement">Conclusion</span>
+
+<p>
+You now have a fully operational tiny internet, complete with a Linux
+repository; mail, DNS and web servers; and a number of useful tools. Use
+this setup to explore and learn about Linux. If you mess up a VM server,
+just deploy another one from your template. Most important, share what
+you've learned and get others involved, and help spur the curiosity of
+the next generation of Linux enthusiasts.
+</p>
+
+<span class="h3-replacement">Resources</span>
+
+<p>
+Download PuTTY:
+<a href="http://www.chiark.greenend.org.uk/~sgtatham/putty/download.html">http://www.chiark.greenend.org.uk/~sgtatham/putty/download.html</a>
+</p>
+
+<p>
+Webmin Downloads:
+<a href="http://webmin.com/download.html">http://webmin.com/download.html</a> and
+<a href="http://prdownloads.sourceforge.net/webadmin/webmin_1.791_all.deb">http://prdownloads.sourceforge.net/webadmin/webmin_1.791_all.deb</a>
+</p>
+
+<p>
+Setting Up a Mirror:
+<a href="https://www.howtoforge.com/local_debian_ubuntu_mirror_p2">https://www.howtoforge.com/local_debian_ubuntu_mirror_p2</a>
+</p>
+
+<p>
+Setting Up DNS (bind9):
+<a href="https://www.digitalocean.com/community/tutorials/how-to-configure-bind-as-a-private-network-dns-server-on-ubuntu-14-04">https://www.digitalocean.com/community/tutorials/how-to-configure-bind-as-a-private-network-dns-server-on-ubuntu-14-04</a>
+and
+<a href="https://help.ubuntu.com/community/BIND9ServerHowto">https://help.ubuntu.com/community/BIND9ServerHowto</a>
+</p>
+
+<p>
+Postfix and Dovecot Installation:
+<a href="https://help.ubuntu.com/community/Postfix">https://help.ubuntu.com/community/Postfix</a> and
+<a href="https://help.ubuntu.com/community/Dovecot">https://help.ubuntu.com/community/Dovecot</a>
+</p>
+
+<p>
+Installing Roundcube:
+<a href="https://github.com/roundcube/roundcubemail/wiki/Installation">https://github.com/roundcube/roundcubemail/wiki/Installation</a>
+</p>
+
+<p>
+Install a LAMP Stack:
+<a href="https://help.ubuntu.com/community/ApacheMySQLPHP">https://help.ubuntu.com/community/ApacheMySQLPHP</a>
+</p>
+
+<p>
+TinyProxy How-To:
+<a href="https://tinyproxy.github.io">https://tinyproxy.github.io</a>
+</p></div>
+      
+            <div class="field field--name-dynamic-token-fieldnode-author field--type-ds field--label-hidden field--item"><div></div>
+<p>
+John Tonello is a Global Technical Marketing Manager for SUSE, where he specializes in software-defined infrastructure. He's been a Linux user and enthusiast since building his first Slackware system from diskette more than 20 years ago.
+</p>
+</div>
+      
+    <section class="section--disqus">
+    <a id="comments-link" class="btn btn-default" href="https://www.linuxjournal.com/content/tiny-internet-project-part-iii#disqus_thread">Load Disqus comments</a>
+
+    <div id="disqus_thread"></div>
+  <noscript>Our discussions are <a href="https://disqus.com/?ref_noscript" rel="nofollow">powered by Disqus</a>, which require JavaScript.</noscript>
+
+    
+</section>
+  </div>
+  
+    <div class="col-sm-3 bs-region bs-region--right">
+    
+            <div class="field field--name-dynamic-block-fieldnode-sidebar-image field--type-ds field--label-hidden field--item"><div class="views-element-container form-group"><div class="view view-sidebar-image view-id-sidebar_image view-display-id-block_1 js-view-dom-id-283c6a9f95395e731d2515d62125f1327c4670be1cec61e9a1b1a14e2c5716de">
+  
+    
+      
+  
+          </div>
+</div>
+</div>
+      
+            <div class="field field--name-dynamic-block-fieldnode-recent-content field--type-ds field--label-hidden field--item"><div class="views-element-container form-group"><div class="view view-related-content view-id-related_content view-display-id-block_2 js-view-dom-id-2edf759e2b32f6dc36c3c0de738fb7f4b9b58d4fc79e21ed60ff8b9a39be042d">
+  
+    
+      <div class="view-header">
+      <h2 class="block-title">Recent Articles</h2>
+    </div>
+      
+      <div class="view-content">
+          <div class="views-row"><div class="views-field views-field-field-node-image"><div class="field-content">  <a href="/content/cachyos-june-2026-iso-released-hyprland-noctalia-faster-performance-and-smarter-system" hreflang="en"><img loading="lazy" src="/sites/default/files/styles/75x75_square/public/nodeimage/story/cachyos-june-2026-iso-released-with-hyprland-noctalia-faster-performance-and-smarter-system-tools.jpg?itok=h3MpZ9P7" width="75" height="75" alt="CachyOS June 2026 ISO Released with Hyprland Noctalia, Faster Performance, and Smarter System Tools" typeof="foaf:Image" class="img-responsive" />
+
+</a>
+</div></div><div class="views-field views-field-title"><span class="field-content"><a href="/content/cachyos-june-2026-iso-released-hyprland-noctalia-faster-performance-and-smarter-system" hreflang="en">CachyOS June 2026 ISO Released with Hyprland Noctalia, Faster Performance, and Smarter System Tools</a></span></div><div class="views-field views-field-uid"><span class="field-content"><a href="/users/george-whittaker" hreflang="en">George Whittaker</a></span></div></div>
+    <div class="views-row"><div class="views-field views-field-field-node-image"><div class="field-content">  <a href="/content/git-255-released-faster-performance-smarter-hooks-and-expanded-rust-integration" hreflang="en"><img loading="lazy" src="/sites/default/files/styles/75x75_square/public/nodeimage/story/git-2-55-released-with-faster-performance-smarter-hooks-and-expanded-rust-integration.jpg?itok=PzvXCfNm" width="75" height="75" alt="Git 2.55 Released with Faster Performance, Smarter Hooks, and Expanded Rust Integration" typeof="foaf:Image" class="img-responsive" />
+
+</a>
+</div></div><div class="views-field views-field-title"><span class="field-content"><a href="/content/git-255-released-faster-performance-smarter-hooks-and-expanded-rust-integration" hreflang="en">Git 2.55 Released with Faster Performance, Smarter Hooks, and Expanded Rust Integration</a></span></div><div class="views-field views-field-uid"><span class="field-content"><a href="/users/george-whittaker" hreflang="en">George Whittaker</a></span></div></div>
+    <div class="views-row"><div class="views-field views-field-field-node-image"><div class="field-content">  <a href="/content/fedora-governance-changes-take-effect-project-refines-leadership-policy-and-contributor" hreflang="en"><img loading="lazy" src="/sites/default/files/styles/75x75_square/public/nodeimage/story/fedora-governance-changes-take-effect-as-project-refines-leadership-policy-and-contributor-oversight.jpg?itok=JPoQemM7" width="75" height="75" alt="Fedora Governance Changes Take Effect as Project Refines Leadership, Policy, and Contributor Oversight" typeof="foaf:Image" class="img-responsive" />
+
+</a>
+</div></div><div class="views-field views-field-title"><span class="field-content"><a href="/content/fedora-governance-changes-take-effect-project-refines-leadership-policy-and-contributor" hreflang="en">Fedora Governance Changes Take Effect as Project Refines Leadership, Policy, and Contributor Oversight</a></span></div><div class="views-field views-field-uid"><span class="field-content"><a href="/users/george-whittaker" hreflang="en">George Whittaker</a></span></div></div>
+    <div class="views-row"><div class="views-field views-field-field-node-image"><div class="field-content">  <a href="/content/growth-vulnerability-management-rise-agentic-ai-pentesting" hreflang="en"><img loading="lazy" src="/sites/default/files/styles/75x75_square/public/nodeimage/story/the-growth-of-vulnerability-management-the-rise-of-agentic-ai-pentesting.jpg?itok=LROs5zdH" width="75" height="75" alt="The Growth of Vulnerability Management: The Rise of Agentic AI Pentesting" typeof="foaf:Image" class="img-responsive" />
+
+</a>
+</div></div><div class="views-field views-field-title"><span class="field-content"><a href="/content/growth-vulnerability-management-rise-agentic-ai-pentesting" hreflang="en">The Growth of Vulnerability Management: The Rise of Agentic AI Pentesting</a></span></div><div class="views-field views-field-uid"><span class="field-content"><a href="/users/malana-vantyler" hreflang="en">Malana VanTyler</a></span></div></div>
+    <div class="views-row"><div class="views-field views-field-field-node-image"><div class="field-content">  <a href="/content/linux-kernel-71-officially-released-new-ntfs-driver-intel-fred-and-major-code-cleanup" hreflang="en"><img loading="lazy" src="/sites/default/files/styles/75x75_square/public/nodeimage/story/linux-kernel-7-1-officially-released-with-new-ntfs-driver-intel-fred-and-major-code-cleanup.jpg?itok=t-TJMk52" width="75" height="75" alt="Linux Kernel 7.1 Officially Released with New NTFS Driver, Intel FRED, and Major Code Cleanup" typeof="foaf:Image" class="img-responsive" />
+
+</a>
+</div></div><div class="views-field views-field-title"><span class="field-content"><a href="/content/linux-kernel-71-officially-released-new-ntfs-driver-intel-fred-and-major-code-cleanup" hreflang="en">Linux Kernel 7.1 Officially Released with New NTFS Driver, Intel FRED, and Major Code Cleanup</a></span></div><div class="views-field views-field-uid"><span class="field-content"><a href="/users/george-whittaker" hreflang="en">George Whittaker</a></span></div></div>
+    <div class="views-row"><div class="views-field views-field-field-node-image"><div class="field-content">  <a href="/content/canonical-launches-arm-laptop-certification-program-boost-ubuntus-next-generation-mobile" hreflang="en"><img loading="lazy" src="/sites/default/files/styles/75x75_square/public/nodeimage/story/canonical-launches-arm-laptop-certification-program-to-boost-ubuntus-next-generation-of-mobile-computing.jpg?itok=_Oy6A32K" width="75" height="75" alt="Canonical Launches ARM Laptop Certification Program to Boost Ubuntu’s Next Generation of Mobile Computing" typeof="foaf:Image" class="img-responsive" />
+
+</a>
+</div></div><div class="views-field views-field-title"><span class="field-content"><a href="/content/canonical-launches-arm-laptop-certification-program-boost-ubuntus-next-generation-mobile" hreflang="en">Canonical Launches ARM Laptop Certification Program to Boost Ubuntu’s Next Generation of Mobile Computing</a></span></div><div class="views-field views-field-uid"><span class="field-content"><a href="/users/george-whittaker" hreflang="en">George Whittaker</a></span></div></div>
+
+    </div>
+  
+          </div>
+</div>
+</div>
+      
+            <div class="field field--name-dynamic-block-fieldnode-sponsors field--type-ds field--label-hidden field--item"><div class="views-element-container form-group"><div class="view view-latest-sponsor-block view-id-latest_sponsor_block view-display-id-block_1 js-view-dom-id-d158fcb196366366e00bb9b546bfe62bbcb8099a250563db067a4c2f76df79bd">
+  
+    
+      <div class="view-header">
+      
+    </div>
+      
+      <div class="view-content">
+          <div class="views-row">
+            <div class="field field--name-body field--type-text-with-summary field--label-hidden field--item">
+</div>
+      </div>
+
+    </div>
+  
+          </div>
+</div>
+</div>
+      
+  </div>
+  
+  
+</article>
+
+
+
+  </div>
+
+              </section>
+
+                </div>
+  </div>
+
+      <footer class="footer container" role="contentinfo">
+        <div class="region region-footer">
+    <section class="views-element-container block block-views block-views-blocknewsletter-promo-block-block-1 clearfix" id="block-views-block-newsletter-promo-block-block-1">
+  
+    
+
+      <div class="form-group"><div class="view view-newsletter-promo-block view-id-newsletter_promo_block view-display-id-block_1 js-view-dom-id-f05147d8eac1d9e3bb3dc1cf67a6fe8213ec1b2b4013b3c5f00121e25fd056d3">
+  
+    
+      
+      <div class="view-content">
+          <div class="views-row">
+            <div class="field field--name-body field--type-text-with-summary field--label-hidden field--item"><div class="newsletter-bottom">
+<div class="col-md-9 col-sm-12 signup-form">
+<!--<h3>Linux Journal Week in Review</h3>
+<p>Sign up to get all the good stuff delivered to your inbox every week.</p>
+
+
+<form id="subForm" class="js-cm-form" action="https://www.createsend.com/t/subscribeerror?description=" method="post" data-id="A61C50BEC994754B1D79C5819EC1255CDBC34DDF3E170B13E2BAC2D68C42BF424F853383C84F5BAE38EAB4CFA5C73907CAC074FF8192503AF80F3699F7FE5CE1">	
+<div class="flexform">-->
+    <!--<label for="fieldEmail">Email</label>
+    <br />-->
+    <!--<input id="fieldEmail" name="cm-gjjtdh-gjjtdh" type="email" class="js-cm-email-input" placeholder="Enter your email. Get the newsletter." 
+    required />
+
+    <button class="js-cm-submit-button" type="submit">Sign Up</button>
+</div>
+<div>
+    <input id="cm-privacy-consent" name="cm-privacy-consent" required type="checkbox"
+    />
+    <label for="cm-privacy-consent">I give my consent to be emailed</label>
+    <input id="cm-privacy-consent-hidden"
+    name="cm-privacy-consent-hidden" type="hidden" value="true" />
+</div>
+
+</form>
+<script type="text/javascript" src="https://js.createsend1.com/javascript/copypastesubscribeformlogic.js"></script>
+</div>-->
+<!--<div class="col-md-3 col-sm-12 subs-callout">
+<img src="/sites/default/files/styles/large/public/2019-01/LJ294-Jan2019-Cover_0.jpg" width="100px" />
+
+<h3>The Value of Open Source Journalism</h3>
+<p>
+Subscribe and support our coverage for technology's biggest thinkers – with up to 52% savings.
+</p>
+<strong><a href="https://www.linuxjournal.com/subscribe">Subscribe <i class="fa fa-angle-double-right" aria-hidden="true"></i></a> 
+</strong>
+
+
+
+</div>-->
+</div>
+
+</div>
+      </div>
+
+    </div>
+  
+          </div>
+</div>
+
+  </section>
+
+
+  </div>
+
+      		<div class="footer-blocks col-sm-12">
+                <div class="col-md-6 col-sm-12 footer-left">
+                        <div class="region region-footer-left">
+    <section id="block-connectwithusfooter" class="block block-block-content block-block-content5e722bd4-5e08-454b-8507-956089bfa661 clearfix">
+  
+    
+
+      
+            <div class="field field--name-body field--type-text-with-summary field--label-hidden field--item"><div class="footer-heading">Connect With Us <span class="social-media sm-a-no-underline"><a href="https://youtube.com/linuxjournalonline"  alt="Linux Journal on YouTube" aria-label="YouTube"><i class="fa fa-youtube fa-2x"></i></a><a href="https://www.facebook.com/linuxjournal/" alt="Linux Journal on Facebook" aria-label="Facebook"><i class="fa fa-facebook-f fa-2x"></i><a href="https://twitter.com/linuxjournal" alt="Linux Journal on Twitter" aria-label="Twitter"><i class="fa fa-twitter fa-2x"></i></a></span></div>
+
+<p>Linux Journal, representing 25+ years of publication, is the original magazine of the global Open Source community.</p></div>
+      
+  </section>
+
+<section id="block-linuxjournal-block-9" class="block block-block-content block-block-content8669793b-e217-4426-a79e-eb3c21ede127 clearfix">
+  
+    
+
+      
+            <div class="field field--name-body field--type-text-with-summary field--label-hidden field--item"><div id="copyright">© 2026 Slashdot Media, LLC. All rights reserved.</div>
+</div>
+      
+  </section>
+
+<section id="block-privacyterms" class="block block-block-content block-block-contenta203b8bd-80ef-4982-bf6e-784dd7b44120 clearfix">
+  
+    
+
+      
+            <div class="field field--name-body field--type-text-with-summary field--label-hidden field--item"><ul class="menu menu--footer-submenu nav" id="terms-nav">
+	<li><a href="https://slashdotmedia.com/privacy-statement/" rel="nofollow" target="_blank">PRIVACY POLICY</a></li>
+	<li><a href="https://slashdotmedia.com/terms-of-use/" rel="nofollow" target="_blank">TERMS OF SERVICE</a></li>
+	<li><a href="/sponsors">ADVERTISE</a></li>
+</ul></div>
+      
+  </section>
+
+
+  </div>
+
+                  </div>
+        
+        		<div class="col-md-4 col-sm-8 footer-middle">
+                        <div class="region region-footer-middle">
+    <nav role="navigation" aria-labelledby="block-footermenucolumn2-menu" id="block-footermenucolumn2">
+            
+  <h2 class="visually-hidden" id="block-footermenucolumn2-menu">Footer Menu Column 2</h2>
+  
+
+        
+      <ul class="menu menu--footer-menu-column-2 nav">
+                      <li class="first">
+                                        <a href="/content/masthead" data-drupal-link-system-path="node/1007727">Masthead</a>
+              </li>
+                      <li>
+                                        <a href="/author" data-drupal-link-system-path="node/1009249">Authors</a>
+              </li>
+                      <li class="last">
+                                        <a href="/form/contact" data-drupal-link-system-path="webform/contact">Contact Us</a>
+              </li>
+        </ul>
+  
+
+  </nav>
+<nav role="navigation" aria-labelledby="block-footermenucolumn3-menu" id="block-footermenucolumn3">
+            
+  <h2 class="visually-hidden" id="block-footermenucolumn3-menu">Footer Menu Column 3</h2>
+  
+
+        
+      <ul class="menu menu--footer-menu-column-3 nav">
+                      <li class="first">
+                                        <a href="/rss_feeds" data-drupal-link-system-path="node/1000457">RSS Feeds</a>
+              </li>
+                      <li class="last">
+                                        <a href="/aboutus" data-drupal-link-system-path="node/1000267">About Us</a>
+              </li>
+        </ul>
+  
+
+  </nav>
+
+  </div>
+
+                  </div>
+        
+                </div>
+    </footer>
+  
+</div> 
+  </div>
+
+    
+    <script type="application/json" data-drupal-selector="drupal-settings-json">{"path":{"baseUrl":"\/","scriptPath":null,"pathPrefix":"","currentPath":"node\/1339243","currentPathIsAdmin":false,"isFront":false,"currentLanguage":"en"},"pluralDelimiter":"\u0003","suppressDeprecationErrors":true,"bootstrap":{"forms_has_error_value_toggle":1,"popover_enabled":1,"popover_animation":1,"popover_auto_close":1,"popover_container":"body","popover_content":"","popover_delay":"0","popover_html":0,"popover_placement":"right","popover_selector":"","popover_title":"","popover_trigger":"click"},"linuxjournal":{"googleAnalytics":{"account":"UA-1117794-1"},"disqus":{"origin":"https:\/\/www.linuxjournal.com","prettyUrl":"\/content\/tiny-internet-project-part-iii","fullUrl":"https:\/\/www.linuxjournal.com\/content\/tiny-internet-project-part-iii","embedUrl":"https:\/\/linuxjournal.disqus.com\/embed.js","shortname":"linuxjournal"}},"statistics":{"data":{"nid":"1339243"},"url":"\/core\/modules\/statistics\/statistics.php"},"ajaxTrustedUrl":{"\/search\/node":true},"user":{"uid":0,"permissionsHash":"a7b3a803411eb9cbd5d7d374ffb326721ee8274ab5a665df8f38311e3aad858c"}}</script>
+<script src="/core/assets/vendor/jquery/jquery.min.js?v=3.6.3"></script>
+<script src="/core/assets/vendor/underscore/underscore-min.js?v=1.13.6"></script>
+<script src="/core/misc/polyfills/element.matches.js?v=9.5.11"></script>
+<script src="/core/misc/polyfills/object.assign.js?v=9.5.11"></script>
+<script src="/core/assets/vendor/once/once.min.js?v=1.0.1"></script>
+<script src="/core/assets/vendor/jquery-once/jquery.once.min.js?v=9.5.11"></script>
+<script src="/core/misc/drupalSettingsLoader.js?v=9.5.11"></script>
+<script src="/core/misc/drupal.js?v=9.5.11"></script>
+<script src="/core/misc/drupal.init.js?v=9.5.11"></script>
+<script src="/themes/contrib/bootstrap/js/drupal.bootstrap.js?tfpujm"></script>
+<script src="/themes/contrib/bootstrap/js/attributes.js?tfpujm"></script>
+<script src="/themes/contrib/bootstrap/js/theme.js?tfpujm"></script>
+<script src="/themes/linuxjournal/bootstrap/assets/javascripts/bootstrap/affix.js?tfpujm"></script>
+<script src="/themes/linuxjournal/bootstrap/assets/javascripts/bootstrap/alert.js?tfpujm"></script>
+<script src="/themes/linuxjournal/bootstrap/assets/javascripts/bootstrap/button.js?tfpujm"></script>
+<script src="/themes/linuxjournal/bootstrap/assets/javascripts/bootstrap/carousel.js?tfpujm"></script>
+<script src="/themes/linuxjournal/bootstrap/assets/javascripts/bootstrap/collapse.js?tfpujm"></script>
+<script src="/themes/linuxjournal/bootstrap/assets/javascripts/bootstrap/dropdown.js?tfpujm"></script>
+<script src="/themes/linuxjournal/bootstrap/assets/javascripts/bootstrap/modal.js?tfpujm"></script>
+<script src="/themes/linuxjournal/bootstrap/assets/javascripts/bootstrap/tooltip.js?tfpujm"></script>
+<script src="/themes/linuxjournal/bootstrap/assets/javascripts/bootstrap/popover.js?tfpujm"></script>
+<script src="/themes/linuxjournal/bootstrap/assets/javascripts/bootstrap/scrollspy.js?tfpujm"></script>
+<script src="/themes/linuxjournal/bootstrap/assets/javascripts/bootstrap/tab.js?tfpujm"></script>
+<script src="/themes/linuxjournal/bootstrap/assets/javascripts/bootstrap/transition.js?tfpujm"></script>
+<script src="/themes/linuxjournal/js/lj-consentmanager.js?tfpujm"></script>
+<script src="/modules/contrib/webform/js/webform.behaviors.js?v=9.5.11"></script>
+<script src="/core/misc/jquery.once.bc.js?v=9.5.11"></script>
+<script src="/core/misc/states.js?v=9.5.11"></script>
+<script src="/themes/contrib/bootstrap/js/misc/states.js?tfpujm"></script>
+<script src="/modules/contrib/webform/js/webform.states.js?v=9.5.11"></script>
+<script src="/modules/contrib/webform/modules/webform_bootstrap/js/webform_bootstrap.states.js?v=9.5.11"></script>
+<script src="/themes/contrib/bootstrap/js/popover.js?tfpujm"></script>
+<script src="/core/modules/statistics/statistics.js?v=9.5.11"></script>
+<script src="/themes/linuxjournal/js/lj-disqus.js?tfpujm"></script>
+<script src="/libraries/shariff/shariff.complete.js?v=9.5.11"></script>
+
+    <!-- START EMBED -->
+    <noscript><img src="https://api.b2c.com/api/noscript-448i7exgpyqpr9c144q.gif"></noscript>
+<!-- END EMBED -->
+<!-- Matomo -->
+<script type="text/javascript">
+var _paq = _paq || [];
+function initPiwik() {
+  _paq.push(['trackPageView']);
+  _paq.push(['enableLinkTracking']);
+  (function() {
+    var u="https://analytics.linuxjournal.com/";
+    _paq.push(['setTrackerUrl', u+'piwik.php']);
+    _paq.push(['setSiteId', '50']);
+    var d=document, g=d.createElement('script'), s=d.getElementsByTagName('script')[0];
+    g.type='text/javascript'; g.async=true; g.defer=true; g.src=u+'piwik.js'; s.parentNode.insertBefore(g,s);
+  })();
+}
+</script>
+<noscript><p><img src="https://analytics.linuxjournal.com/piwik.php?idsite=50&amp;rec=1" style="border:0;" alt="" /></p></noscript>
+<!-- End Matomo Code -->
+<div class="modal-custom overlay-custom" id="ccpa-modal" style="margin-left: 0; display: none; max-width: 100%; width: 100%">
+    <div id="modal-content" class="modal-content">
+        <div class="modal-header" id="ccpa-modal-content-destination"></div>
+        <span class="close" id="modal-close">&times;</span>
+    </div>
+</div>
+  </body>
+</html>

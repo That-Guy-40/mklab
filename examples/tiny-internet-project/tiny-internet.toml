@@ -1,0 +1,70 @@
+# tiny-internet.toml — the six machines of John Tonello's "Tiny Internet
+# Project", as Debian 13 Incus containers on the managed bridge `labbr0`.
+#
+# Each [[instance]] pins a STATIC IP by overriding the default profile's `eth0`
+# nic with one on labbr0 (name = "eth0" replaces the inherited incusbr0 nic; the
+# "ipv4.address" key reserves the address in the bridge's DHCP). The bridge
+# itself is NOT created here — lab-lxd.sh never creates networks — so run
+#   ./tiny-internet.sh net      (incus network create labbr0 …)
+# BEFORE `up`, or use `./tiny-internet.sh up` which does both.
+#
+# Bring the whole lab up + configure it:
+#   ./tiny-internet.sh up          # net + lab-lxd.sh up + settle on labbr0
+#   ./tiny-internet.sh provision   # install + configure every daemon
+#   ./tiny-internet.sh verify      # dig / apt / imap / curl probes from admin
+# Tear down:
+#   ./tiny-internet.sh down        # phase5-lxd/lab-lxd.sh down --lab tiny-internet
+#   ./tiny-internet.sh clean       # + delete the labbr0 bridge (opt-in)
+
+[lab]
+name        = "tiny-internet"
+description = "A self-contained 'tiny internet' (tiny.lab): authoritative BIND9 DNS (primary+secondary/AXFR), apt-cacher-ng repo, Postfix+Dovecot mail, and a LAMP+phpMyAdmin web host — six Debian 13 Incus containers on 10.128.1.0/24."
+tags        = ["lxd", "incus", "dns", "bind9", "mail", "postfix", "dovecot", "lamp", "apt-cacher-ng", "tiny-internet", "linux-journal"]
+
+# ─── dns01 — BIND9 PRIMARY, authoritative for tiny.lab (fwd + reverse) ───────
+[[instance]]
+name    = "dns01"
+engine  = "incus"
+type    = "container"
+image   = "images:debian/13"
+devices = { eth0 = { type = "nic", network = "labbr0", name = "eth0", "ipv4.address" = "10.128.1.3" } }
+
+# ─── dns02 — BIND9 SECONDARY, pulls both zones from dns01 by AXFR ────────────
+[[instance]]
+name    = "dns02"
+engine  = "incus"
+type    = "container"
+image   = "images:debian/13"
+devices = { eth0 = { type = "nic", network = "labbr0", name = "eth0", "ipv4.address" = "10.128.1.4" } }
+
+# ─── mail — Postfix (Internet Site) + Dovecot IMAP/POP3 ─────────────────────
+[[instance]]
+name    = "mail"
+engine  = "incus"
+type    = "container"
+image   = "images:debian/13"
+devices = { eth0 = { type = "nic", network = "labbr0", name = "eth0", "ipv4.address" = "10.128.1.5" } }
+
+# ─── mirror — apt-cacher-ng caching proxy (http://mirror.tiny.lab:3142) ──────
+[[instance]]
+name    = "mirror"
+engine  = "incus"
+type    = "container"
+image   = "images:debian/13"
+devices = { eth0 = { type = "nic", network = "labbr0", name = "eth0", "ipv4.address" = "10.128.1.6" } }
+
+# ─── web01 — Apache + MariaDB + PHP + phpMyAdmin ────────────────────────────
+[[instance]]
+name    = "web01"
+engine  = "incus"
+type    = "container"
+image   = "images:debian/13"
+devices = { eth0 = { type = "nic", network = "labbr0", name = "eth0", "ipv4.address" = "10.128.1.7" } }
+
+# ─── admin — the "admin PC": client that runs the verify probes ─────────────
+[[instance]]
+name    = "admin"
+engine  = "incus"
+type    = "container"
+image   = "images:debian/13"
+devices = { eth0 = { type = "nic", network = "labbr0", name = "eth0", "ipv4.address" = "10.128.1.25" } }

@@ -1,0 +1,14 @@
+# phpMyAdmin debconf preseed — answer its install dialogs non-interactively.
+# Like Postfix, phpmyadmin puts up dialogs (dbconfig-common + "which web server")
+# that hang a TTY-less `apt-get install`. Feed this with debconf-set-selections
+# BEFORE installing phpmyadmin.
+#
+# dbconfig-install=true  → let the package create + populate its own MySQL DB
+#                          (it connects to MariaDB as root over the unix socket,
+#                          which is passwordless-for-root by default on Debian).
+# reconfigure-webserver=apache2 → drop its config into Apache and reload.
+# app-pass → the password phpmyadmin's own DB user will use (lab throwaway).
+phpmyadmin phpmyadmin/dbconfig-install boolean true
+phpmyadmin phpmyadmin/reconfigure-webserver multiselect apache2
+phpmyadmin phpmyadmin/mysql/app-pass password tinylab
+phpmyadmin phpmyadmin/app-password-confirm password tinylab

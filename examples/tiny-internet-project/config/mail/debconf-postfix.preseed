@@ -1,0 +1,10 @@
+# Postfix debconf preseed — answer the two questions the package would otherwise
+# ask interactively. There is no TTY in `lab-lxd.sh exec … apt-get install`, so
+# without this the postfix install hangs on the pink "General mail configuration"
+# dialog. Feed it with `debconf-set-selections` BEFORE apt-get install postfix.
+#
+# Tonello's tutorial clicks through this dialog by hand; the container equivalent
+# is preseeding it. "Internet Site" = deliver/relay mail directly (no smarthost);
+# mailname = the FQDN that appears in the SMTP greeting and outbound envelopes.
+postfix postfix/main_mailer_type select Internet Site
+postfix postfix/mailname string mail.tiny.lab

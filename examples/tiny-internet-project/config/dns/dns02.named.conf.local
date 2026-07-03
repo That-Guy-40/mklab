@@ -1,0 +1,22 @@
+// dns02.named.conf.local — zone declarations for the SECONDARY (dns02, 10.128.1.4).
+//
+// dns02 holds no zone files of its own: it pulls both zones from the primary
+// (dns01, 10.128.1.3) by AXFR the first time, then again whenever dns01's serial
+// bumps (dns01 `also-notify`s it). The transferred copies land under
+// /var/cache/bind, which the `bind` user can write — a master-style /etc/bind
+// path would be read-only and the transfer would fail.
+//
+// Proving `dig @10.128.1.4` returns the same records as `dig @10.128.1.3` is the
+// whole point: the secondary learned the zone over the wire, not from a file you
+// copied. Uses the shared config/dns/named.conf.options (recursion/forwarders).
+zone "tiny.lab" {
+        type slave;
+        file "/var/cache/bind/db.tiny.lab";
+        masters { 10.128.1.3; };
+};
+
+zone "1.128.10.in-addr.arpa" {
+        type slave;
+        file "/var/cache/bind/db.10.128.1";
+        masters { 10.128.1.3; };
+};

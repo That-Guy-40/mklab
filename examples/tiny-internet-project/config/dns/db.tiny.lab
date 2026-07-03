@@ -1,0 +1,29 @@
+; db.tiny.lab — forward zone for the tiny.lab private TLD.
+;
+; Bump the Serial on every edit or the secondary won't pull the change (BIND
+; compares serials to decide whether an AXFR is needed). Format YYYYMMDDNN is
+; the convention; a plain integer works too as long as it only ever increases.
+$TTL    604800
+@       IN      SOA     dns01.tiny.lab. admin.tiny.lab. (
+                     2026070301         ; Serial
+                         604800         ; Refresh
+                          86400         ; Retry
+                        2419200         ; Expire
+                         604800 )       ; Negative Cache TTL
+;
+; Nameservers for the zone
+@       IN      NS      dns01.tiny.lab.
+@       IN      NS      dns02.tiny.lab.
+;
+; A records — one per node in the tiny internet
+dns01   IN      A       10.128.1.3
+dns02   IN      A       10.128.1.4
+mail    IN      A       10.128.1.5
+mirror  IN      A       10.128.1.6
+web01   IN      A       10.128.1.7
+admin   IN      A       10.128.1.25
+;
+; Mail routing + web convenience names
+@       IN      MX      10 mail.tiny.lab.
+@       IN      A       10.128.1.7          ; tiny.lab -> the web server
+www     IN      CNAME   web01.tiny.lab.

@@ -1,0 +1,26 @@
+# Postfix settings for mail.tiny.lab — applied line-by-line with `postconf -e`
+# by the driver (each line is a KEY = VALUE that postconf writes into main.cf).
+# Using postconf instead of shipping a whole main.cf keeps us version-agnostic:
+# we only override the handful of keys the lab needs and leave Debian's defaults
+# for everything else.
+#
+# Blank lines and lines starting with '#' are skipped by the driver.
+
+# Identity — who this mail server says it is.
+myhostname = mail.tiny.lab
+mydomain = tiny.lab
+myorigin = $mydomain
+
+# Accept mail FOR these domains locally (final delivery, not relay).
+mydestination = mail.tiny.lab, tiny.lab, localhost.tiny.lab, localhost
+
+# Trust the lab subnet to relay through us; reject everyone else (no open relay).
+mynetworks = 127.0.0.0/8, 10.128.1.0/24
+
+# Deliver into ~/Maildir/ (Maildir format) so Dovecot can serve the same store.
+# The trailing slash is what selects Maildir over the older mbox format.
+home_mailbox = Maildir/
+
+# Listen on all interfaces (the container's eth0), not just loopback.
+inet_interfaces = all
+inet_protocols = ipv4

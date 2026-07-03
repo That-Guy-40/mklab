@@ -1,0 +1,22 @@
+; db.10.128.1 — reverse zone (PTR) for 10.128.1.0/24 -> *.tiny.lab.
+;
+; Zone name is 1.128.10.in-addr.arpa, so the left-hand labels below are just the
+; final octet of each host's address. Keep the Serial in lock-step with the
+; forward zone's edits (bump on every change).
+$TTL    604800
+@       IN      SOA     dns01.tiny.lab. admin.tiny.lab. (
+                     2026070301         ; Serial
+                         604800         ; Refresh
+                          86400         ; Retry
+                        2419200         ; Expire
+                         604800 )       ; Negative Cache TTL
+;
+@       IN      NS      dns01.tiny.lab.
+@       IN      NS      dns02.tiny.lab.
+;
+3       IN      PTR     dns01.tiny.lab.
+4       IN      PTR     dns02.tiny.lab.
+5       IN      PTR     mail.tiny.lab.
+6       IN      PTR     mirror.tiny.lab.
+7       IN      PTR     web01.tiny.lab.
+25      IN      PTR     admin.tiny.lab.
