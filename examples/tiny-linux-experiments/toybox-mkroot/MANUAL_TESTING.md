@@ -114,6 +114,39 @@ Expected shape (sh4):
 … a toybox shell on emulated SuperH …
 ```
 
+### Verified boot — m68k → Macintosh Quadra 800 (user-run, 2026-07-04)
+
+`./build-toybox-mkroot.sh --arch m68k` fetched the toolchain
+(**`m68k-linux-musl-gcc (GCC) 15.1.0`**), cross-built a 6.1.176 kernel + toybox,
+and booted it on QEMU's `q800` — a real emulated 68040 Macintosh:
+
+```text
+Linux version 6.1.176 (…) (m68k-linux-musl-gcc (GCC) 15.1.0, GNU ld 2.44) #1 …
+Detected Macintosh model: 35
+Apple Macintosh Quadra 800
+…
+mac_esp mac_esp.0: esp0: is a ESP236, 16 MHz (ccf=4), SCSI ID 7
+scsi 0:0:2:0: CD-ROM  MATSHITA CD-ROM CR-8005  1.0k
+Onboard/comm-slot SONIC, revision 0x0004, 32 bit DMA
+SONIC ethernet @50f0a000, MAC 08:00:07:12:34:56, IRQ 3
+scc.0: ttyS0 … is a Z85c30 ESCC - Serial port
+Run /init as init process
+$ ls
+bin  etc   init  mnt   root  sbin  tmp  var
+dev  home  lib   proc  run   sys   usr
+$ whoami
+root
+```
+
+The success signature is the real Mac hardware the kernel probes — `mac_esp`
+SCSI, the `SONIC` Ethernet, the `Z85c30 ESCC` serial, `via1` clocksource — then a
+toybox shell as root. Two expected quirks: **`Unknown kernel command line
+parameters "HOST=m68k", will be passed to user space`** is by design (mkroot's
+`run-qemu.sh` passes `HOST=<arch>` for userspace; the kernel forwards unknown
+`k=v` params to PID 1's environment), and **`last` isn't built** into the default
+toybox set (fine — `ls`/`whoami`/`pwd` are all toybox applets). Note the toolchain
+is **gcc 15.1** cross-building a 6.1 longterm kernel with no edits.
+
 **Why author-run:** it fetches **and executes** a third-party prebuilt toolchain,
 which this repo's **toolchain-fetch gate** blocks for an agent — verified here:
 attempting the fetch+exec in-agent was denied by the sandbox classifier
@@ -140,7 +173,7 @@ below); **you** run `--arch <arch>` on your box. Prefer no toolchain at all?
 | 4 | **default: `make root LINUX=6.1.176`** | a **bzImage 6.1.176 I compiled** + toybox initramfs → **booted to a toybox shell**, 210 commands, clean `reboot: Restarting system` |
 | 5 | `--prebuilt x86_64 --smoke` | Landley's image booted: toybox `0.8.13` / **Linux 6.17.0**, 422 cmd-links |
 | 6 | script plumbing | `bash -n` clean; shellcheck clean; `--binary`, default `--smoke`, `--prebuilt … --smoke` all green; `--list-arches`/`--help` render; unknown-arg dies cleanly |
-| 7 | `--arch` cross mode | **dry-verified**: toolchain tarballs resolve (sh4/m68k/mips/or1k/… → 200), per-arch trivia + `CROSS=` command render, `--no-fetch-toolchain` guidance + exit 3 clean. The fetch+exec + boot is **author-run** (below) — the in-agent fetch+run of the sh4 toolchain was **denied by the sandbox gate**, confirming the split. |
+| 7 | `--arch` cross mode | **dry-verified** here (toolchain tarballs resolve, trivia + `CROSS=` render, `--no-fetch-toolchain` guidance + exit 3) **and booted end-to-end by the user**: `--arch m68k` cross-built (gcc 15.1 → 6.1.176) and booted on QEMU `q800` = a **Macintosh Quadra 800**, toybox shell as root (transcript in §5). fetch+exec is **author-run** — the in-agent sh4 toolchain fetch+run was **denied by the sandbox gate**, confirming the split. |
 
 The `make root LINUX=` kernel compile took **~20 s** (it's a tiny miniconfig
 kernel, not a full distro kernel), so the whole from-source path — clone, build
