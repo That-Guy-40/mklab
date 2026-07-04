@@ -1,0 +1,72 @@
+# Unified Debian "Hands-Off" install lab — one TOML feeds Phase 4 and Phase 2.
+#
+# Operationalizes Philip Hands' "Hands-Off" d-i FRAMEWORK (https://hands.com/d-i/):
+# a tiny entry preseed chains via `preseed/run` into a GPG-bootstrapped, class-
+# composed preseed assembled on the fly.  Same iPXE + nginx + QEMU pxe-install
+# machinery as examples/debian-pxe-lab; the difference is entirely in WHAT the
+# preseed is — a live-assembled framework, not one static file.
+#
+# ─── Workflow — run these in order against this file ─────────────────────────
+#
+#   # 1. Fetch + pin Phil Hands' framework:
+#   examples/debian-hands-off-install/fetch-hands-off.sh
+#
+#   # 2. Stage it into the served dir + apply the lab `local/` overlay:
+#   examples/debian-hands-off-install/setup-hands-off.sh          # unsigned (checksigs=false)
+#   #   …or the full-integrity path (re-signs with a throwaway lab key):
+#   # examples/debian-hands-off-install/setup-hands-off.sh --sign
+#
+#   # 3. Fetch the trixie d-i kernel + initrd (reuses the debian-pxe-lab helper):
+#   examples/debian-pxe-lab/fetch-debian-installer.sh --arch amd64
+#
+#   # 4. Build iPXE pointed at the Hands-Off entry preseed + a class selection.
+#   #    UNSIGNED (default staging) — note `hands-off/checksigs=false`:
+#   netboot/build-ipxe.sh --server http://10.0.2.2:8181 \
+#       --kernel-path /debian/linux --initrd-path /debian/initrd.gz \
+#       --append 'auto=true priority=critical preseed/url=http://10.0.2.2:8181/hands-off/trixie/preseed.cfg auto-install/classes=partition/atomic hands-off/checksigs=false DEBIAN_FRONTEND=text console=ttyS0,115200n8 ---'
+#   #    SIGNED (setup --sign) — drop `hands-off/checksigs=false` so gpgv runs.
+#
+#   # 5. Serve (Phase 4) + install (Phase 2):
+#   phase4-podman/lab-podman.sh up     --config examples/debian-hands-off-install/debian-hands-off-lab.toml
+#   phase2-qemu-vm/lab-vm.sh    create --config examples/debian-hands-off-install/debian-hands-off-lab.toml
+#   phase2-qemu-vm/lab-vm.sh    start  debian-hands-off-install
+#   phase2-qemu-vm/lab-vm.sh    ssh    debian-hands-off-install   # login: debian / debian  (or root / lab)
+#
+# Tear down:
+#   phase4-podman/lab-podman.sh down    --lab debian-hands-off
+#   phase2-qemu-vm/lab-vm.sh    destroy debian-hands-off-install --force
+#
+# Update /home/sqs to your $HOME if different (no shell expansion in TOML).
+
+[lab]
+name        = "debian-hands-off"
+description = "Debian install driven by Philip Hands' Hands-Off d-i framework: rootless nginx serves the framework tree + a lab local/ overlay (Phase 4); QEMU target VM installs via iPXE -> d-i -> chained/class-composed preseed and reboots into Debian (Phase 2)."
+tags        = ["debian", "trixie", "debian-installer", "preseed", "hands-off", "pxe", "netboot", "zero-touch"]
+
+# ─── Phase 4: rootless nginx serving netboot artifacts ─────────────────────
+# Serves ~/netboot/ on host port 8181; the d-i kernel/initrd live under
+# ~/netboot/debian/ (shared with debian-pxe-lab), the framework under
+# ~/netboot/hands-off/trixie/.  lab-podman.sh auto-appends :Z under SELinux.
+[[service]]
+name    = "http"
+engine  = "podman"
+image   = "docker.io/library/nginx:alpine"
+ports   = ["8181:80"]
+volumes = ["/home/sqs/netboot:/usr/share/nginx/html:ro"]
+
+# ─── Phase 2: QEMU installer VM (pxe-install: NIC iPXE runs boot.ipxe) ──────
+# Same boot mechanics as examples/debian-pxe-lab (see that TOML for the full
+# boot-loop explanation).  cloud_init=false: the framework provisions accounts
+# from the assembled preseed (the lab local/ overlay).
+[[vm]]
+name           = "debian-hands-off-install"
+backend        = "pxe-install"          # NIC's iPXE ROM runs boot.ipxe directly; no binary chainload
+firmware       = "bios"                  # SeaBIOS + NIC option-ROM path (UEFI: drop this + use ipxe.efi)
+install_target = "20G"                   # blank disk, bootindex=0: install dest + post-install boot disk
+mac            = "52:54:00:de:b1:03"     # valid hex; "deb1" ~ debian, 03 = hands-off
+arch           = "x86_64"
+memory         = "1536M"
+cpus           = 2
+cloud_init     = false                   # the framework provisions directly; no datasource
+pxe_dir        = "/home/sqs/netboot"     # QEMU slirp TFTP root (serves boot.ipxe)
+pxe_bootfile   = "boot.ipxe"             # iPXE script (Hands-Off entry preseed URL + class selection baked in)

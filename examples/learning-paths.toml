@@ -344,6 +344,10 @@ goal       = "Go from 'boots the network' to 'installs an OS with no keystrokes'
   verify_marker = "GEN-OK"
   verify_host = true
   [[path.step]]
+  lab        = "debian-hands-off-install/"
+  learn      = "push d-i preseeding to its limit: Philip Hands' Hands-Off FRAMEWORK — a chained preseed (`preseed/run`) that GPG-bootstraps trust then COMPOSES the real preseed live from per-class fragments (`auto-install/classes=`)."
+  checkpoint = "the class-assembled install reaches a `debian login:`; `dpkg -l molly-guard pwgen` shows the framework's own defaults (proof a composed preseed, not a static file, drove it)."
+  [[path.step]]
   lab        = "almalinux-kickstart-gallery/"
   learn      = "the AlmaLinux Packer kickstarts — where the `sda`→`vda` rewrite is load-bearing."
   checkpoint = "`select-kickstart.sh gencloud` installs; the fetch fails closed if any `sda` survives the rewrite."

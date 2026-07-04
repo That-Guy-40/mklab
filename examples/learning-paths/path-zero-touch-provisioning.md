@@ -20,7 +20,8 @@
 | 8 | [`rocky-kickstart-gallery`](../rocky-kickstart-gallery/) | install any of ~34 upstream Rocky-9 kickstart variants. | `select-kickstart.sh GenericCloud-Base` then a zero-touch install boots off disk. |
 | 9 | [`kali-preseed-gallery`](../kali-preseed-gallery/) | pick from ~15 upstream Kali preseed variants. | `select-preseed.sh headless-default` installs; explain the `/dev/sda`→`/dev/vda` auto-patch. |
 | 10 | [`debian-preseed-gallery`](../debian-preseed-gallery/) | the Debian gallery — six partitioning variants (regular/lvm/crypto/home/multi/minimal) GENERATED from Debian's one official example, not fetched from an upstream catalog like Kali's. | `select-preseed.sh crypto-atomic` installs; `lsblk` shows LUKS → LVM. Explain why Debian derives variants where Kali fetches them.<br>🔎 auto-checkable → marker `GEN-OK` 🖥️ |
-| 11 | [`almalinux-kickstart-gallery`](../almalinux-kickstart-gallery/) | the AlmaLinux Packer kickstarts — where the `sda`→`vda` rewrite is load-bearing. | `select-kickstart.sh gencloud` installs; the fetch fails closed if any `sda` survives the rewrite. |
+| 11 | [`debian-hands-off-install`](../debian-hands-off-install/) | push d-i preseeding to its limit: Philip Hands' Hands-Off FRAMEWORK — a chained preseed (`preseed/run`) that GPG-bootstraps trust then COMPOSES the real preseed live from per-class fragments (`auto-install/classes=`). | the class-assembled install reaches a `debian login:`; `dpkg -l molly-guard pwgen` shows the framework's own defaults (proof a composed preseed, not a static file, drove it). |
+| 12 | [`almalinux-kickstart-gallery`](../almalinux-kickstart-gallery/) | the AlmaLinux Packer kickstarts — where the `sda`→`vda` rewrite is load-bearing. | `select-kickstart.sh gencloud` installs; the fetch fails closed if any `sda` survives the rewrite. |
 
 ---
 

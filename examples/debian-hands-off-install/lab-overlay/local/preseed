@@ -1,0 +1,42 @@
+# mklab hands-off lab — local SITE OVERLAY (replaces upstream preseed/local/preseed).
+#
+# "local/" is Hands-Off's intended site-customization hook (see the upstream
+# preseed/local/README): files here layer on top of the framework's classes and
+# are pulled in by the _/core/locals class.  Here we make the framework's
+# "minimal default install" fully UNATTENDED for a single-virtio-disk lab VM.
+#
+# What the framework already provides (classes/_/defaults/debian/preseed):
+#   mirror deb.debian.org, tasksel manual (minimal), openssh-server + friends,
+#   passwd/root-login=false (sudo-only, NO preseeded user) → which PROMPTS.
+# So the only things we add here are: real accounts, the disk pin + wipe
+# confirmations, and a serial console.  The partitioning RECIPE itself comes
+# from the `partition/atomic` class, selected on the boot line via
+# `auto-install/classes=partition/atomic`.
+#
+#   WARNING: throwaway plaintext lab creds (root: lab, debian: debian).  Never
+#   serve on an untrusted network; for real use switch to *-crypted keys.
+
+### Localization — full UTF-8 locale (upstream default is bare en_US).
+d-i debian-installer/locale          string en_US.UTF-8
+
+### Accounts — enable root + a sudo-capable user (override root-login=false).
+d-i passwd/root-login                boolean true
+d-i passwd/root-password             password lab
+d-i passwd/root-password-again       password lab
+d-i passwd/user-fullname             string Debian Lab User
+d-i passwd/username                  string debian
+d-i passwd/user-password             password debian
+d-i passwd/user-password-again       password debian
+d-i passwd/user-default-groups       string audio cdrom dip plugdev netdev sudo
+
+### Partitioning — single virtio disk.  The recipe comes from partition/atomic;
+### here we pin the disk and auto-confirm the (destructive) write.
+d-i partman-auto/disk                string /dev/vda
+d-i partman-partitioning/confirm_write_new_label boolean true
+d-i partman/choose_partition         select finish
+d-i partman/confirm                  boolean true
+d-i partman/confirm_nooverwrite      boolean true
+
+### Bootloader + carry a serial console into the installed system.
+d-i grub-installer/bootdev           string /dev/vda
+d-i debian-installer/add-kernel-opts string console=ttyS0,115200n8

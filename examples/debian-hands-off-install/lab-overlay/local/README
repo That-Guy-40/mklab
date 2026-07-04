@@ -1,0 +1,16 @@
+mklab hands-off lab — local site overlay
+
+This directory is copied over the upstream `preseed/local/` tree by
+setup-hands-off.sh, replacing Philip Hands' own example site data (his
+customers' hostnames/users) with the lab's.  It is the framework's intended
+per-site customization hook — see the upstream `preseed/local/README`.
+
+Contents:
+  preseed   -- site-wide preseed pulled in by the _/core/locals class; here it
+               makes the minimal default install unattended (accounts, disk pin,
+               serial console).
+
+To add site-specific classes / per-host overrides, follow the upstream layout
+documented in preseed/local/README (local/_hostname/<fqdn>/…, local/_users/…,
+local/partition/…). When you change anything here and are running WITH signature
+checking, re-run `setup-hands-off.sh --sign` so the regenerated MD5SUMS covers it.
