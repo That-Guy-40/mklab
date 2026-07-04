@@ -1,0 +1,154 @@
+# mklab debos recipe — a bootable Debian 13 "trixie" VM image (UEFI + systemd-boot).
+#
+# debos (https://github.com/go-debos/debos) is THE Debian OS image builder — the
+# same tool Kali's `kali-vm` wraps (see examples/kali-vm-builder).  It reads this
+# YAML recipe, spins up its own KVM build VM via fakemachine, and runs each action
+# in sequence to assemble a partitioned, self-booting disk image.
+#
+# Structure & ordering follow a proven pattern (Andrew Bradford's
+# bradfa/debos-configs `x86_64-uefi-*`), adapted to trixie: lab creds, a serial
+# console, ext4 root, and self-contained (no external overlay dir).  See
+# UPSTREAM.md for provenance.
+#
+# ─── The load-bearing ORDERING (don't reshuffle blindly) ─────────────────────
+#   linux-image-amd64 is installed BEFORE the ESP exists; `systemd-boot` is
+#   installed AFTER filesystem-deploy (once /boot/efi is a real mounted ESP), so
+#   its postinst's `bootctl install` + kernel-install hooks populate the ESP with
+#   the loader AND an entry for the already-installed kernel.  A belt-and-braces
+#   `kernel-install add` loop after it guarantees the entry exists.
+#
+# Build it with:  examples/debian-vm-builder/build-debian-vm.sh
+# Override vars:  debos -t suite:trixie -t disksize:8G -t mirror:http://… debian-vm.yaml
+
+{{- $suite := or .suite "trixie" }}
+{{- $mirror := or .mirror "http://deb.debian.org/debian/" }}
+{{- $disksize := or .disksize "6G" }}
+{{- $imagename := or .imagename "debian-vm.img" }}
+{{- $desktop := or .desktop "none" }}
+
+architecture: amd64
+
+actions:
+  - action: debootstrap
+    description: Debootstrap the trixie base system
+    suite: {{ $suite }}
+    components: [ main, contrib, non-free-firmware ]
+    mirror: {{ $mirror }}
+    merged-usr: true
+
+  - action: apt
+    description: Kernel + base packages (NOT the bootloader yet — see ordering note)
+    packages:
+      - linux-image-amd64
+      - systemd-resolved
+      - systemd-timesyncd
+      - openssh-server
+      - sudo
+      - ca-certificates
+      - locales
+      - less
+      - vim-tiny
+      - bash-completion
+
+{{- if ne $desktop "none" }}
+  - action: apt
+    description: Desktop environment ({{ $desktop }})
+    recommends: true
+    packages:
+      - task-{{ $desktop }}-desktop
+{{- end }}
+
+  - action: run
+    description: Locale, hostname, throwaway lab accounts, DHCP, enable services
+    chroot: true
+    command: |
+      set -e
+      sed -i 's/^# *en_US.UTF-8/en_US.UTF-8/' /etc/locale.gen && locale-gen
+      echo debian-vm > /etc/hostname
+      printf '127.0.0.1\tlocalhost\n127.0.1.1\tdebian-vm\n' > /etc/hosts
+      echo 'root:lab' | chpasswd
+      useradd -m -s /bin/bash -G sudo debian && echo 'debian:debian' | chpasswd
+      # DHCP on every wired NIC via systemd-networkd (net.ifnames=0 → eth0).
+      mkdir -p /etc/systemd/network
+      printf '[Match]\nName=en* eth*\n\n[Network]\nDHCP=yes\n' > /etc/systemd/network/20-wired.network
+      systemctl enable ssh systemd-networkd systemd-resolved systemd-timesyncd
+      mkdir -p /boot/efi
+
+  - action: run
+    description: Make sshd regenerate its host keys on first boot (idempotent ExecStartPre)
+    chroot: true
+    # Wipe the install-time host keys so every built VM isn't identical, then add
+    # an ssh.service drop-in that runs `ssh-keygen -A` BEFORE the config test
+    # (Debian's ssh.service runs `sshd -t`, which FAILS with no host keys — that's
+    # why a naive wipe leaves sshd dead; verified from the boot log).  We reset the
+    # ExecStartPre list so keygen runs FIRST, then re-add the `-t` test.  keygen -A
+    # is idempotent (only creates missing keys), so this is safe every boot.
+    # printf (not a heredoc) keeps this recipe YAML-safe.
+    command: >
+      set -e;
+      rm -vf /etc/ssh/ssh_host*key*;
+      mkdir -p /etc/systemd/system/ssh.service.d;
+      printf '%s\n'
+      '[Service]'
+      'ExecStartPre='
+      'ExecStartPre=/usr/bin/ssh-keygen -A'
+      'ExecStartPre=/usr/sbin/sshd -t'
+      > /etc/systemd/system/ssh.service.d/regen-hostkeys.conf
+
+  - action: image-partition
+    description: Partition the image — GPT with an ESP + an ext4 root
+    imagename: {{ $imagename }}
+    imagesize: {{ $disksize }}
+    partitiontype: gpt
+    mountpoints:
+      - mountpoint: /boot/efi
+        partition: esp
+      - mountpoint: /
+        partition: root
+    partitions:
+      - name: esp
+        parlabel: ESP
+        flags: [ boot, esp ]
+        fs: vfat
+        start: 0%
+        end: 300M
+      - name: root
+        parlabel: root
+        fs: ext4
+        start: 300M
+        end: 100%
+
+  - action: filesystem-deploy
+    description: Deploy the rootfs + generate /etc/fstab + the kernel cmdline
+    setup-fstab: true
+    setup-kernel-cmdline: true
+    # net.ifnames=0 → eth0 (matches the DHCP stanza above); a SERIAL console
+    # (ttyS0) so the build can be boot-verified headless, plus tty0 for graphics.
+    append-kernel-cmdline: net.ifnames=0 console=tty0 console=ttyS0,115200
+
+  - action: apt
+    description: Install the systemd-boot bootloader (ESP is mounted now)
+    packages:
+      - systemd-boot
+
+  - action: run
+    description: Ensure the loader + a boot entry for the installed kernel exist
+    chroot: true
+    command: |
+      set -e
+      bootctl install || true
+      for kv in $(ls /usr/lib/modules); do
+        [ -e "/boot/vmlinuz-$kv" ] && kernel-install add "$kv" "/boot/vmlinuz-$kv" || true
+      done
+      # Show a 3s menu instead of the default hidden/instant boot.
+      if [ -f /boot/efi/loader/loader.conf ]; then
+        grep -q '^timeout' /boot/efi/loader/loader.conf \
+          && sed -i 's/^timeout.*/timeout 3/' /boot/efi/loader/loader.conf \
+          || echo 'timeout 3' >> /boot/efi/loader/loader.conf
+      fi
+      bootctl list || true
+
+  - action: run
+    description: Clean the apt cache to shrink the image
+    chroot: true
+    command: apt-get clean

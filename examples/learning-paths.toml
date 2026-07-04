@@ -541,6 +541,12 @@ title   = "Build a tool, don't just use one"
 theme   = "Compile the thing itself — a shell, a neural net — from source."
 members = ["oils-shell-container/", "AI-build-a-perceptron/"]
 
+[[collection]]
+id      = "os-image-factories"
+title   = "OS image factories (debos)"
+theme   = "Bake a whole bootable OS image from a declarative recipe with debos (or its kali-vm wrapper) — fetch → build → run, no installer involved."
+members = ["kali-vm-builder/", "debian-vm-builder/"]
+
 
 # ════════════════════════════════════════════════════════════════════════════
 #  CAPSTONES  (pan-phase demos that belong to no single journey)

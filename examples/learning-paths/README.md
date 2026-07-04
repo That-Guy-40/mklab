@@ -111,6 +111,12 @@ These are orthogonal to 00-INDEX's *run-cost* tags, which are carried through un
 
 [`oils-shell-container`](../oils-shell-container/) · [`AI-build-a-perceptron`](../AI-build-a-perceptron/)
 
+### OS image factories (debos)
+
+*Bake a whole bootable OS image from a declarative recipe with debos (or its kali-vm wrapper) — fetch → build → run, no installer involved.*
+
+[`kali-vm-builder`](../kali-vm-builder/) · [`debian-vm-builder`](../debian-vm-builder/)
+
 ## Capstones
 
 Pan-phase demos that belong to no single journey — run them once the paths have given you the pieces:
