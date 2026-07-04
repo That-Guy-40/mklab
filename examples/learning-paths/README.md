@@ -68,7 +68,7 @@ These are orthogonal to 00-INDEX's *run-cost* tags, which are carried through un
 
 *Compile a kernel + userspace from upstream source and boot it in RAM or off a floppy.*
 
-[`tiny-linux-experiments/micro-linux-x86_64.toml`](../tiny-linux-experiments/micro-linux-x86_64.toml) · [`tiny-linux-experiments/micro-linux-riscv64.toml`](../tiny-linux-experiments/micro-linux-riscv64.toml) · [`tiny-linux-experiments/micro_linux_dhcp_lease`](../tiny-linux-experiments/micro_linux_dhcp_lease/) · [`tiny-linux-experiments/floppinux`](../tiny-linux-experiments/floppinux/) · [`tiny-linux-experiments/minimal-arm-linux-qemu`](../tiny-linux-experiments/minimal-arm-linux-qemu/)
+[`tiny-linux-experiments/micro-linux-x86_64.toml`](../tiny-linux-experiments/micro-linux-x86_64.toml) · [`tiny-linux-experiments/micro-linux-riscv64.toml`](../tiny-linux-experiments/micro-linux-riscv64.toml) · [`tiny-linux-experiments/micro_linux_dhcp_lease`](../tiny-linux-experiments/micro_linux_dhcp_lease/) · [`tiny-linux-experiments/floppinux`](../tiny-linux-experiments/floppinux/) · [`tiny-linux-experiments/toybox-mkroot`](../tiny-linux-experiments/toybox-mkroot/) · [`tiny-linux-experiments/minimal-arm-linux-qemu`](../tiny-linux-experiments/minimal-arm-linux-qemu/)
 
 ### PKI / lab-CA consumers
 

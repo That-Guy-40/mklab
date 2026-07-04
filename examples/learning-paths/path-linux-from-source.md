@@ -18,10 +18,12 @@
 | 6 | [`tiny-linux-experiments/micro_linux_dhcp_lease`](../tiny-linux-experiments/micro_linux_dhcp_lease/) | the from-source distro pulls a DHCP lease over a virtio NIC. | `udhcpc` (or u-root `dhclient` on riscv64) acquires an address; `ip addr` shows it. |
 | 7 | [`tiny-linux-experiments/micro-linux-aarch64.toml`](../tiny-linux-experiments/micro-linux-aarch64.toml) 🐌 | cross-compile and boot a foreign architecture on QEMU `virt` under TCG. | boots arm64 to a login; try the riscv64/ppc64le/s390x twins and explain each console quirk (HVC on pseries, SCLP→ttyS0 on s390x). |
 | 8 | [`tiny-linux-experiments/floppinux`](../tiny-linux-experiments/floppinux/) | a whole bootable Linux on a 1.44 MB floppy (syslinux FAT). | `qemu-system-i386 -fda floppinux.img -cpu 486` boots to a root shell. |
-| 9 | [`tiny-linux-experiments/minimal-arm-linux-qemu`](../tiny-linux-experiments/minimal-arm-linux-qemu/) | a single static C binary as PID 1 on PXA270 — a from-scratch kernel running one program. | `qemu-system-arm -M mainstone` prints 'Tiny init …'; understand why you cannot log in (no shell/getty). |
+| 9 | [`tiny-linux-experiments/toybox-mkroot`](../tiny-linux-experiments/toybox-mkroot/) | swap BusyBox for toybox — the other multicall binary — whose built-in mkroot (`make root`) *ships the distro builder itself*; compile a kernel + toybox initramfs with the host gcc (no cross toolchain). | `build-toybox-mkroot.sh --smoke` boots a from-source `toybox 0.8.13` shell (marker `TOYBOX_MKROOT_SMOKE_OK`); then `--prebuilt aarch64` boots a foreign arch under TCG with no toolchain at all. |
+| 10 | [`tiny-linux-experiments/minimal-arm-linux-qemu`](../tiny-linux-experiments/minimal-arm-linux-qemu/) | a single static C binary as PID 1 on PXA270 — a from-scratch kernel running one program. | `qemu-system-arm -M mainstone` prints 'Tiny init …'; understand why you cannot log in (no shell/getty). |
 
 ### Optional side-quests
 
+- [`tiny-linux-experiments/toybox-mkroot/LINEAGE-aboriginal.md`](../tiny-linux-experiments/toybox-mkroot/LINEAGE-aboriginal.md) — Landley's Aboriginal Linux — 'the simplest Linux that compiles itself' — distilled for its design gems (the 7-package self-hosting bootstrap; cross-compile only far enough to stop cross-compiling).
 - [`tiny-linux-experiments/floppinux/floppinux-2.88mb`](../tiny-linux-experiments/floppinux/floppinux-2.88mb/) — the 2.88 MB extended-density variant + the `BUSYBOX_FULL=1` (~400-applet) option that only fits the bigger floppy.
 
 ---
