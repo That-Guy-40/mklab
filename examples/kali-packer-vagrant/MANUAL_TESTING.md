@@ -125,12 +125,15 @@ or `File exists` once the cache is fixed. See README "Known issues".)
 
 ```bash
 examples/kali-packer-vagrant/run-graphical.sh          # gtk window; login vagrant / vagrant
-# headless boot-check (no window):
-examples/kali-packer-vagrant/run-graphical.sh --display none
+examples/kali-packer-vagrant/run-graphical.sh --memory 6G --cpus 4   # more muscle for the desktop
+examples/kali-packer-vagrant/run-graphical.sh --display sdl          # if GTK/GL misbehaves
+examples/kali-packer-vagrant/run-graphical.sh --display none         # headless boot-check (no window)
 ```
 
-It unpacks `box.img` (the QCOW2) from the `.box`, makes a COW overlay, and boots
-under SeaBIOS + virtio-scsi. Then:
+It auto-finds the newest `packer_kalirolling_*.box` (or pass `--box <path>` /
+`--image <qcow2>`), unpacks `box.img` (the QCOW2) from the `.box` into
+`<workdir>/images/`, makes a COW overlay (`--snapshot` throwaway / `--fresh`
+reset), and boots under SeaBIOS + virtio-scsi. Then:
 
 ```bash
 ssh -p 2222 vagrant@127.0.0.1        # password: vagrant  (passwordless sudo inside)

@@ -147,6 +147,9 @@ build — read it from the log. `MANUAL_TESTING.md` has the details.
 - **Access:** log in at the GTK window as `vagrant`/`vagrant`; the runner
   forwards host `:2222` → guest `:22` and sshd is enabled by the preseed, so
   `ssh -p 2222 vagrant@127.0.0.1` (password `vagrant`) works immediately.
+- **Display backend:** windowed `--display gtk` (default; needs an X/Wayland
+  session); use `--display sdl` if GTK/GL misbehaves on your host, or
+  `--display none` for a headless boot-check.
 
 ```bash
 examples/kali-packer-vagrant/run-graphical.sh --memory 6G --cpus 4
