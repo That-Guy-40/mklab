@@ -21,10 +21,11 @@
 #                     architectures and boot its run-qemu.sh. No toolchain, no
 #                     compile — the multi-arch fast lane.
 #
-# Cross-compiling from source for a FOREIGN arch (--arch <arch>) needs the
-# musl-cross-make "ccc/" toolchains, whose fetch+exec is author-run here (the
-# repo's toolchain-fetch gate); the script wires the command and tells you what
-# to run. See README.md "Three build modes" + UPSTREAM.md.
+# Cross-compiling from source for a FOREIGN arch (--arch <arch>) auto-fetches
+# Landley's prebuilt "ccc/" toolchain, builds, and boots it under TCG — e.g.
+# --arch sh4 (Dreamcast), m68k (Mac Quadra 800), mips (PS1/N64), or1k (open ISA).
+# Because it fetches+runs a third-party prebuilt toolchain it is AUTHOR-RUN (the
+# repo's toolchain-fetch gate): run it on your own host. See README.md.
 #
 # Rootless. Artifacts live under $WORKDIR (default ~/toybox-mkroot-build),
 # OUTSIDE this repo. Nothing here needs sudo.
@@ -36,6 +37,7 @@ TOYBOX_REPO_DEFAULT="https://github.com/landley/toybox.git"
 TOYBOX_REF_DEFAULT="0.8.13"                 # release tag; matches the mkroot 'latest' binaries
 KERNEL_DEFAULT="6.1.176"                     # a current longterm; mkroot itself tracks mainline
 MKROOT_BIN_BASE="https://landley.net/toybox/downloads/binaries/mkroot/latest"
+TOOLCHAIN_BASE="https://landley.net/toybox/downloads/binaries/toolchains/latest"
 
 # The ~22 architectures Landley publishes prebuilt mkroot images for (and that
 # `make root CROSS=<arch>` builds given a ccc/ toolchain). Resolved live too.
@@ -56,6 +58,8 @@ ACCEL="auto"          # auto | kvm | tcg
 MEM="256"
 SMOKE=0               # non-interactive: drive the shell, grep a marker, exit
 FORCE=0
+FETCH_TOOLCHAIN=1     # --arch: auto-fetch Landley's prebuilt ccc toolchain
+BOOT_TIMEOUT=90       # --smoke timeout (bumped for slow foreign-arch TCG)
 
 # ---- pretty -----------------------------------------------------------------
 c_g=$'\e[32m'; c_y=$'\e[33m'; c_r=$'\e[31m'; c_b=$'\e[1m'; c_0=$'\e[0m'
@@ -65,7 +69,8 @@ warn() { printf '%s[toybox] WARN:%s %s\n' "$c_y" "$c_0" "$*" >&2; }
 die()  { printf '%s[toybox] ERROR:%s %s\n' "$c_r" "$c_0" "$*" >&2; exit 1; }
 
 usage() {
-  sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//; s/^#//'
+  # print the leading comment block (after the shebang) up to the first code line
+  awk 'NR==1{next} /^#/{l=$0; sub(/^# ?/,"",l); print l; next} {exit}' "$0"
   cat <<EOF
 
 Usage: $(basename "$0") [MODE] [options]
@@ -76,14 +81,16 @@ Modes (default is a full from-source bootable image for the host arch):
                           boot it on a kernel (needs --prebuilt-kernel or a
                           prior full build to borrow a kernel from).
   --prebuilt <arch>       Fetch + boot Landley's prebuilt image for <arch>.
-  --arch <arch>           Cross-compile from source for <arch> (needs ccc/;
-                          author-run — prints the fetch step if missing).
+  --arch <arch>           Cross-compile from source for <arch>: auto-fetches
+                          Landley's prebuilt toolchain, builds, boots under TCG
+                          (author-run — fetch+exec of a prebuilt toolchain).
   --list-arches           Print the supported architectures and exit.
 
 Options:
   --kernel <ver>          Kernel version to fetch from kernel.org (default $KERNEL_DEFAULT).
   --toybox-ref <ref>      toybox git tag/branch/commit (default $TOYBOX_REF_DEFAULT).
   --no-boot               Build only; do not launch QEMU.
+  --no-fetch-toolchain    With --arch: use an existing ccc/ instead of fetching.
   --smoke                 Non-interactive: drive the shell, assert a marker, exit.
   --accel kvm|tcg         Force acceleration (default: kvm if /dev/kvm, else tcg).
   --memory <MB>           Guest RAM (default $MEM).
@@ -96,7 +103,8 @@ Examples:
   $(basename "$0")                          # full from-source x86_64 distro, boot it
   $(basename "$0") --kernel 6.1.176 --smoke # reproducible, non-interactive check
   $(basename "$0") --prebuilt aarch64       # boot a foreign arch under TCG, no toolchain
-  $(basename "$0") --arch sh4               # cross-from-source (author-run ccc fetch)
+  $(basename "$0") --arch sh4               # Dreamcast SuperH from source (auto-fetches ccc)
+  $(basename "$0") --arch m68k              # Motorola 68040 → QEMU emulates a Mac Quadra 800
 EOF
 }
 
@@ -111,6 +119,7 @@ while [ $# -gt 0 ]; do
     --kernel)        KERNEL="${2:?}"; shift ;;
     --toybox-ref)    TOYBOX_REF="${2:?}"; shift ;;
     --no-boot)       DO_BOOT=0 ;;
+    --no-fetch-toolchain) FETCH_TOOLCHAIN=0 ;;
     --smoke)         SMOKE=1 ;;
     --accel)         ACCEL="${2:?}"; shift ;;
     --memory)        MEM="${2:?}"; shift ;;
@@ -180,6 +189,52 @@ fetch_kernel() {   # echoes the extracted kernel source dir
   echo "$src"
 }
 
+# A dash of retro trivia per target — mkroot boots each on a real emulated board.
+arch_note() {
+  case "$1" in
+    sh4)     echo "Hitachi/Renesas SuperH-4 — the Dreamcast's CPU family (QEMU 'r2d' SH4 board)." ;;
+    sh4eb)   echo "big-endian SuperH-4 — the Sega Saturn ran dual big-endian SH-2." ;;
+    m68k)    echo "Motorola 68040 — QEMU '-M q800' emulates a Macintosh Quadra 800 (1993)." ;;
+    mips|mipsel|mips64) echo "MIPS — the ISA behind the PlayStation 1/2, N64 and PSP (QEMU 'malta')." ;;
+    or1k)    echo "OpenRISC 1000 — a fully open-source ISA, years before RISC-V." ;;
+    powerpc) echo "PowerPC — QEMU '-M g3beige' is a beige Power Mac G3 (1997)." ;;
+    powerpc64|powerpc64le) echo "64-bit POWER — QEMU 'pseries', IBM's server line (HVC console)." ;;
+    s390x)   echo "IBM Z mainframe — the polar opposite of a game console." ;;
+    microblaze) echo "Xilinx MicroBlaze — a soft-core CPU that only exists inside an FPGA." ;;
+    armv4l|armv5l) echo "classic ARM — the Game Boy Advance (ARMv4T) / Nintendo DS (ARMv5) era." ;;
+    *)       echo "one of mkroot's ~22 targets." ;;
+  esac
+}
+
+# Resolve Landley's toolchain tarball for an arch (names vary: -musl- vs -musleabihf-).
+resolve_toolchain_tarball() {   # $1 = arch ; echoes the tarball basename
+  local a="$1" cand="$1-linux-musl-cross.tar.xz"
+  if curl -o /dev/null -sfIL "$TOOLCHAIN_BASE/$cand" >/dev/null 2>&1; then echo "$cand"; return; fi
+  # fall back to grepping the directory index (covers aarch64/armv* eabi variants)
+  local hit
+  hit=$(curl -fsSL "$TOOLCHAIN_BASE/" 2>/dev/null \
+        | grep -oE "${a}-[a-z0-9]*-cross\.tar\.xz" | sort -u | head -1)
+  [ -n "$hit" ] && echo "$hit"
+}
+
+# Fetch + lay out a prebuilt cross toolchain so `make root CROSS=<arch>` finds it.
+# NOTE: this fetches AND runs a third-party prebuilt toolchain — that's why --arch
+# is author-run under the repo's toolchain-fetch gate. Runs fine on YOUR host.
+fetch_toolchain() {   # $1 = arch ; sets up $WORKDIR/ccc/<arch>-*-cross + toybox/ccc symlink
+  local a="$1" tb dir="$WORKDIR/ccc"
+  mkdir -p "$dir"
+  if ! ls -d "$dir/$a"-*-cross >/dev/null 2>&1 || [ "$FORCE" = 1 ]; then
+    tb=$(resolve_toolchain_tarball "$a") || true
+    [ -n "$tb" ] || die "no prebuilt toolchain for '$a' at $TOOLCHAIN_BASE/ (try --list-arches)"
+    log "fetching cross toolchain $tb (~40-70 MB; prebuilt musl-cross)"
+    curl -fSL -o "$dir/$tb" "$TOOLCHAIN_BASE/$tb"
+    ( cd "$dir" && tar xf "$tb" )
+  fi
+  ls -d "$dir/$a"-*-cross >/dev/null 2>&1 || die "toolchain for '$a' did not extract as expected"
+  ln -sfn "$dir" "$WORKDIR/toybox/ccc"     # mkroot looks for ./ccc in the toybox tree
+  log "ccc ready: $(ls -d "$dir/$a"-*-cross)"
+}
+
 # mkroot's arg parser trips on make's -j/--jobserver flags — it self-parallelizes.
 # NEVER pass -j to `make root`. (Learned the hard way; see MANUAL_TESTING.md.)
 make_root() {      # $1 = toybox dir ; rest = extra VAR=val (e.g. LINUX=, CROSS=)
@@ -196,7 +251,7 @@ boot_image() {     # $1 = dir containing run-qemu.sh (linux-kernel + initramfs)
   if [ "$SMOKE" = 1 ]; then
     # sacrificial first line absorbs the pre-prompt byte; then assert a marker
     printf '# warmup\ntoybox --version\nuname -mrs\necho TOYBOX_MKROOT_SMOKE_OK\necho "commands: $(ls /usr/bin | wc -l)"\nexit\n' \
-      | timeout 90 "$d/run-qemu.sh" $acc -m "$MEM" 2>&1 | sed 's/\r$//' \
+      | timeout "$BOOT_TIMEOUT" "$d/run-qemu.sh" $acc -m "$MEM" 2>&1 | sed 's/\r$//' \
       | tee "$WORKDIR/smoke.log" | grep -aE 'toybox 0|Linux|TOYBOX_MKROOT_SMOKE_OK|commands:' || true
     grep -aq TOYBOX_MKROOT_SMOKE_OK "$WORKDIR/smoke.log" \
       && log "SMOKE OK — booted to a toybox shell" \
@@ -230,31 +285,39 @@ case "$MODE" in
     [ "$DO_BOOT" = 1 ] && boot_image "$d" || log "built only (--no-boot): $d"
     ;;
 
-  # -- cross: from-source for a foreign arch (needs ccc/ toolchains) -----------
+  # -- cross: from-source for a FOREIGN arch (needs a ccc/ toolchain) ----------
   cross)
-    tb=$(fetch_toybox); build_binary "$tb"
-    if [ ! -e "$tb/ccc" ]; then
-      warn "no ccc/ cross-toolchain symlink in $tb."
+    tb=$(fetch_toybox)
+    log "target: ${c_b}$CROSS_ARCH${c_0} — $(arch_note "$CROSS_ARCH")"
+    if [ "$FETCH_TOOLCHAIN" = 1 ]; then
+      warn "--arch fetches + runs a prebuilt cross toolchain — ${c_b}author-run${c_0} under the"
+      warn "repo's toolchain-fetch gate (fine on your host; an agent must hand this to you)."
+      fetch_toolchain "$CROSS_ARCH"
+    elif [ ! -e "$tb/ccc" ]; then
+      warn "no ccc/ toolchain and --no-fetch-toolchain set. Point ccc/ at your toolchains:"
       cat >&2 <<EOF
-${c_b}Cross-from-source is author-run here${c_0} (the repo's toolchain-fetch gate blocks
-fetch+exec of third-party prebuilt toolchains). To do it on YOUR host:
-
-  # grab Landley's musl-cross-make toolchains, point ccc/ at them, then:
   cd "$tb"
-  ln -sf /path/to/ccc ccc            # dir of <arch>-*-cross toolchains
+  ln -sf /path/to/ccc ccc            # a dir of <arch>-*-cross toolchains
   make root CROSS=$CROSS_ARCH LINUX="$WORKDIR/linux-$KERNEL"   # (no -j!)
   ./root/$CROSS_ARCH/run-qemu.sh
-
-Prebuilt toolchains: https://landley.net/toybox/downloads/binaries/  and
-  https://github.com/richfelker/musl-cross-make
-Or skip the toolchain entirely: ${c_b}$(basename "$0") --prebuilt $CROSS_ARCH${c_0}
+Prebuilt toolchains: $TOOLCHAIN_BASE/   ·   or: $(basename "$0") --prebuilt $CROSS_ARCH
 EOF
       exit 3
     fi
     src=$(fetch_kernel "$KERNEL")
     make_root "$tb" "CROSS=$CROSS_ARCH" "LINUX=$src"
     d="$tb/root/$CROSS_ARCH"
-    [ "$DO_BOOT" = 1 ] && boot_image "$d" || log "built: $d"
+    [ -x "$d/run-qemu.sh" ] || die "cross build produced no $d/run-qemu.sh (check the log above)"
+    # foreign arch → no KVM (TCG only), and TCG boots are slow → give it room
+    ACCEL=tcg; BOOT_TIMEOUT=300
+    qb=$(grep -oE 'qemu-system-[a-z0-9_]+' "$d/run-qemu.sh" | head -1)
+    have "$qb" || warn "$qb not installed — 'apt install qemu-system-misc' (or -mips/-ppc). Image built at $d."
+    if [ "$DO_BOOT" = 1 ]; then
+      log "booting $CROSS_ARCH under TCG (slow — it's a foreign CPU). 'exit' powers off."
+      boot_image "$d"
+    else
+      log "built: $d   (boot by hand: $d/run-qemu.sh)"
+    fi
     ;;
 
   # -- binary: just the multicall binary --------------------------------------

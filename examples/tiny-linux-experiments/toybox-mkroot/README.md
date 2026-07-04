@@ -71,13 +71,42 @@ binary (`make defconfig && make`), then does one of:
    The script downloads one and runs its `run-qemu.sh` — **no toolchain, no
    compile**, boots aarch64 / mips / riscv / s390x / m68k / sh4 / … under TCG.
 
-**The gate:** cross-compiling from source for a *foreign* arch (`--arch sh4`)
-needs the musl-cross-make **`ccc/`** toolchains, and fetch+exec of a third-party
-prebuilt toolchain is **author-run** in this repo (the
-[toolchain-fetch gate](../../../CLAUDE.md)). The script wires the exact
-`make root CROSS=<arch> LINUX=…` command and, if `ccc/` is missing, prints how to
-get it — or steers you to `--prebuilt <arch>`, which needs no toolchain at all.
-Native host-arch builds (mode 1) never touch the gate.
+**The gate:** cross-compiling from source for a *foreign* arch (`--arch <arch>`)
+needs a musl-cross **`ccc/`** toolchain, and fetch+exec of a third-party prebuilt
+toolchain is **author-run** in this repo (the
+[toolchain-fetch gate](../../../CLAUDE.md)) — an *agent* must hand it to you; on
+**your** host it's fully turnkey. `--arch <arch>` **auto-fetches** Landley's
+prebuilt toolchain into `ccc/`, runs `make root CROSS=<arch> LINUX=…`, and boots
+the result under **TCG** (foreign CPU → no KVM, so it's slow but real).
+`--no-fetch-toolchain` uses an existing `ccc/` instead; `--prebuilt <arch>`
+skips the toolchain entirely. Native host-arch builds (mode 1) never touch the
+gate.
+
+### A retro-silicon tour (`--arch <arch>`)
+
+mkroot boots each target on a *real emulated board* — so `--arch` is a museum of
+CPUs you've probably used without knowing:
+
+| `--arch` | Chip | mkroot boots it on | You'll recognise it from |
+|---|---|---|---|
+| `sh4` | Hitachi/Renesas **SuperH-4** | QEMU SH4 `r2d` | the **Sega Dreamcast** |
+| `sh4eb` | big-endian SuperH | " (big-endian) | the **Sega Saturn** ran dual big-endian SH-2 |
+| `m68k` | Motorola **68040** | QEMU **`-M q800`** | a **Macintosh Quadra 800** (1993); also Genesis/Amiga/Atari ST |
+| `mips` | **MIPS** | QEMU `malta` | **PlayStation 1/2, N64, PSP** (and every old router) |
+| `or1k` | **OpenRISC 1000** | QEMU `virt` | a *fully open* ISA, years before RISC-V |
+| `powerpc` | **PowerPC** | QEMU **`-M g3beige`** | a beige **Power Mac G3** (1997) |
+| `s390x` | IBM **Z** | QEMU `s390-ccw` | a **mainframe** — the anti-console |
+
+```bash
+./build-toybox-mkroot.sh --arch sh4        # Dreamcast SuperH, from source, booted under TCG
+./build-toybox-mkroot.sh --arch m68k       # → QEMU emulates a 1993 Macintosh
+./build-toybox-mkroot.sh --arch mips       # needs: apt install qemu-system-mips
+```
+
+You need the matching `qemu-system-<arch>` (`qemu-system-sh4`, `-m68k`, `-or1k`
+are in `qemu-system-misc`; `mips`/`ppc` in `qemu-system-mips`/`-ppc`). Each build
+grabs a ~40–70 MB toolchain once, compiles a target kernel + toybox, and drops
+you at a toybox shell running on emulated vintage hardware. `exit` powers it off.
 
 > ### ⚠️ Never pass `-j` to `make root`
 > mkroot's `mkroot.sh` does its own parallelism; make's `-j`/`--jobserver-auth`

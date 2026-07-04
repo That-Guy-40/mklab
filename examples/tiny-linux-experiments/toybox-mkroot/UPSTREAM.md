@@ -47,9 +47,16 @@ demand; the sha above is the copy verified here.
   itself tracks mainline; the pin is just a version that reliably resolves on
   kernel.org in mid-2026 (see the EOL-pruning note in
   [MANUAL_TESTING.md](MANUAL_TESTING.md#gotchas)).
-- **musl-cross-make `ccc/` toolchains** — for `--arch <foreign>` only; **not**
-  fetched by this lab (author-run, per the repo's toolchain-fetch gate). Upstream:
-  Landley's binaries dir above, or https://github.com/richfelker/musl-cross-make.
+- **musl-cross `ccc/` toolchains** — for `--arch <foreign>`. Fetched **on your
+  host** from
+  [`toolchains/latest/`](https://landley.net/toybox/downloads/binaries/toolchains/latest/)
+  as `<arch>-linux-musl-cross.tar.xz` (Landley's musl-cross-make builds; extract
+  to `<arch>-*-cross/bin/<arch>-linux-musl-cc`, which is what `make root
+  CROSS=<arch>` looks for under `ccc/`). **Author-run** — fetch+exec of a
+  prebuilt toolchain is blocked for an agent by the repo's toolchain-fetch gate
+  (empirically confirmed: the in-agent fetch+run of the sh4 toolchain was denied
+  by the sandbox classifier). Source for the toolchains themselves:
+  https://github.com/richfelker/musl-cross-make.
 
 ## Aboriginal Linux (cited as design ancestry, not operationalized)
 

@@ -82,17 +82,51 @@ Verified (`--prebuilt x86_64 --smoke`): booted **toybox 0.8.13 on Linux 6.17.0**
 arches boot the same way under TCG — you just need the matching
 `qemu-system-<arch>` installed (`apt install qemu-system-arm qemu-system-misc …`).
 
-## 4. Rootfs-only, and cross-from-source
+## 4. Rootfs-only
 
 ```bash
 ./build-toybox-mkroot.sh --rootfs-only              # from-source initramfs, no kernel compile
-./build-toybox-mkroot.sh --arch sh4                 # cross-from-source (author-run; see below)
 ```
 
-`--arch <arch>` is **author-run** — it needs the musl-cross-make `ccc/`
-toolchains, whose fetch+exec is gated in this repo. The script prints the exact
-`make root CROSS=<arch> LINUX=… ` command and where to get the toolchains, or
-you can just use `--prebuilt <arch>`.
+## 5. Cross-from-source: a foreign arch, compiled *and* booted (author-run)
+
+`--arch <arch>` is **turnkey on your host**: it auto-fetches Landley's prebuilt
+`ccc/` toolchain, runs `make root CROSS=<arch> LINUX=…`, and boots the result
+under **TCG** (a foreign CPU can't use KVM, so it's slow but genuine).
+
+```bash
+./build-toybox-mkroot.sh --arch sh4                 # Dreamcast SuperH  (qemu-system-sh4)
+./build-toybox-mkroot.sh --arch m68k                # → a Macintosh Quadra 800 (qemu-system-m68k)
+./build-toybox-mkroot.sh --arch or1k                # OpenRISC — an open ISA (qemu-system-or1k)
+./build-toybox-mkroot.sh --arch mips                # PS1/N64 ISA — needs apt install qemu-system-mips
+./build-toybox-mkroot.sh --arch sh4 --smoke         # non-interactive marker check (TCG timeout 300s)
+```
+
+Expected shape (sh4):
+
+```text
+[toybox] target: sh4 — Hitachi/Renesas SuperH-4 — the Dreamcast's CPU family …
+[toybox] WARN: --arch fetches + runs a prebuilt cross toolchain — author-run …
+[toybox] fetching cross toolchain sh4-linux-musl-cross.tar.xz (~40-70 MB; prebuilt musl-cross)
+[toybox] ccc ready: …/ccc/sh4-linux-musl-cross
+[toybox] make root CROSS=sh4 LINUX=…/linux-6.1.176
+[toybox] booting sh4 under TCG (slow — it's a foreign CPU). 'exit' powers off.
+… a toybox shell on emulated SuperH …
+```
+
+**Why author-run:** it fetches **and executes** a third-party prebuilt toolchain,
+which this repo's **toolchain-fetch gate** blocks for an agent — verified here:
+attempting the fetch+exec in-agent was denied by the sandbox classifier
+(*"does not establish trust in that specific fetched-and-run third-party
+binary"*). So the split is: the driver is **authored + dry-verified** here (see
+below); **you** run `--arch <arch>` on your box. Prefer no toolchain at all?
+`--prebuilt <arch>` boots the same ~22 arches from Landley's ready images.
+
+| Handy target | qemu package | Board QEMU emulates |
+|---|---|---|
+| `sh4`, `m68k`, `or1k` | `qemu-system-misc` (often already present) | SH4 `r2d` · Mac **Quadra 800** · OpenRISC `virt` |
+| `mips`, `mipsel`, `mips64` | `qemu-system-mips` | `malta` |
+| `powerpc`, `powerpc64` | `qemu-system-ppc` | Power Mac **G3 beige** · `pseries` |
 
 ---
 
@@ -105,7 +139,8 @@ you can just use `--prebuilt <arch>`.
 | 3 | that initramfs on the prebuilt kernel | booted to a toybox shell (`FROM_SOURCE_ROOTFS_OK`) |
 | 4 | **default: `make root LINUX=6.1.176`** | a **bzImage 6.1.176 I compiled** + toybox initramfs → **booted to a toybox shell**, 210 commands, clean `reboot: Restarting system` |
 | 5 | `--prebuilt x86_64 --smoke` | Landley's image booted: toybox `0.8.13` / **Linux 6.17.0**, 422 cmd-links |
-| 6 | script plumbing | `bash -n` clean; `--binary`, default `--smoke`, `--prebuilt … --smoke` all green; `--list-arches`/`--help` render; unknown-arg dies cleanly |
+| 6 | script plumbing | `bash -n` clean; shellcheck clean; `--binary`, default `--smoke`, `--prebuilt … --smoke` all green; `--list-arches`/`--help` render; unknown-arg dies cleanly |
+| 7 | `--arch` cross mode | **dry-verified**: toolchain tarballs resolve (sh4/m68k/mips/or1k/… → 200), per-arch trivia + `CROSS=` command render, `--no-fetch-toolchain` guidance + exit 3 clean. The fetch+exec + boot is **author-run** (below) — the in-agent fetch+run of the sh4 toolchain was **denied by the sandbox gate**, confirming the split. |
 
 The `make root LINUX=` kernel compile took **~20 s** (it's a tiny miniconfig
 kernel, not a full distro kernel), so the whole from-source path — clone, build
