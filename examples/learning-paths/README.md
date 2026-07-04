@@ -30,7 +30,7 @@ These are orthogonal to 00-INDEX's *run-cost* tags, which are carried through un
 | [Zero-touch OS provisioning: PXE installs & galleries](path-zero-touch-provisioning.md) | 🟡 | ⏱ half-day+ | Go from 'boots the network' to 'installs an OS with no keystrokes' across Anaconda/kickstart and debian-installer/preseed — then pick any variant from an upstream gallery. |
 | [Chroot → running system: the cross-phase bridges](path-chroot-to-system.md) | 🟡 | ⏱ ~1–2h | Build a root filesystem once (Phase 1), then run the SAME artifact as a bootable VM, a rootless OCI image, and an LXD container. |
 | [Offensive security with Kali, across every substrate](path-kali-security.md) | 🔴 | ⏱ half-day+ | Stand up Kali as a chroot, a VM, a built image, and a PXE install — ending in an agentic LLM that drives real Kali tools. |
-| [OS image factories: bake a bootable image with debos](path-os-image-factories.md) | 🟡 | ⏱ ~1–2h | Assemble a whole bootable OS image from a declarative recipe with debos (the Debian image builder), then meet the distro wrapper — Kali's kali-vm — built on the very same engine. Learn the tool, then the thing built on it. |
+| [OS image factories: two ways to bake a bootable image](path-os-image-factories.md) | 🟡 | ⏱ half-day+ | Bake a whole bootable OS image two fundamentally different ways. First *assemble the rootfs*: a declarative debos recipe (the Debian image builder), then Kali's kali-vm wrapper built on the very same engine. Then *drive the installer*: Kali's retired Packer scripts boot the real installer ISO and script it with a preseed — the opposite mechanism, and the bridge back to the preseed labs. |
 
 ## Collections
 
@@ -56,7 +56,7 @@ These are orthogonal to 00-INDEX's *run-cost* tags, which are carried through un
 
 *🔒 Kali across every substrate — authorized targets only.*
 
-[`vm-kali-amd64.toml`](../vm-kali-amd64.toml) · [`kali-nonroot-chroot`](../kali-nonroot-chroot/) · [`kali-vm-builder`](../kali-vm-builder/) · [`kali-pxe-lab`](../kali-pxe-lab/) · [`kali-preseed-gallery`](../kali-preseed-gallery/) · [`offsec-awae-vm`](../offsec-awae-vm/) · [`kali-llm-lab`](../kali-llm-lab/) · [`kali-llm-desktop-lab`](../kali-llm-desktop-lab/)
+[`vm-kali-amd64.toml`](../vm-kali-amd64.toml) · [`kali-nonroot-chroot`](../kali-nonroot-chroot/) · [`kali-vm-builder`](../kali-vm-builder/) · [`kali-packer-vagrant`](../kali-packer-vagrant/) · [`kali-pxe-lab`](../kali-pxe-lab/) · [`kali-preseed-gallery`](../kali-preseed-gallery/) · [`offsec-awae-vm`](../offsec-awae-vm/) · [`kali-llm-lab`](../kali-llm-lab/) · [`kali-llm-desktop-lab`](../kali-llm-desktop-lab/)
 
 ### libvirt-native labs
 

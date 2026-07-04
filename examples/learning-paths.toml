@@ -431,12 +431,12 @@ goal       = "Stand up Kali as a chroot, a VM, a built image, and a PXE install 
 
 [[path]]
 id         = "os-image-factories"
-title      = "OS image factories: bake a bootable image with debos"
+title      = "OS image factories: two ways to bake a bootable image"
 difficulty = "🟡"
-est        = "⏱ ~1–2h"
+est        = "⏱ half-day+"
 prereqs    = ["chroot-to-system"]
-audience   = "you've turned a rootfs into a bootable VM by hand — now do it declaratively"
-goal       = "Assemble a whole bootable OS image from a declarative recipe with debos (the Debian image builder), then meet the distro wrapper — Kali's kali-vm — built on the very same engine. Learn the tool, then the thing built on it."
+audience   = "you've turned a rootfs into a bootable VM by hand — now do it with a factory"
+goal       = "Bake a whole bootable OS image two fundamentally different ways. First *assemble the rootfs*: a declarative debos recipe (the Debian image builder), then Kali's kali-vm wrapper built on the very same engine. Then *drive the installer*: Kali's retired Packer scripts boot the real installer ISO and script it with a preseed — the opposite mechanism, and the bridge back to the preseed labs."
   [[path.step]]
   lab        = "debian-vm-builder/"
   learn      = "debos directly: a YAML recipe (debootstrap → apt → image-partition → filesystem-deploy → systemd-boot) assembled inside a fakemachine KVM build VM — no installer, no by-hand loop-mounting."
@@ -446,6 +446,11 @@ goal       = "Assemble a whole bootable OS image from a declarative recipe with 
   tags       = ["🔒"]
   learn      = "Kali's official `kali-vm` is a thin wrapper around the SAME debos engine, producing the image you'd otherwise download — now the wrapper reads clearly, because you saw the machinery underneath."
   checkpoint = "`build-kali-vm.sh --headless` builds a QCOW2; `run-graphical.sh` boots it to a Kali login."
+  [[path.step]]
+  lab        = "kali-packer-vagrant/"
+  tags       = ["🔒"]
+  learn      = "The OPPOSITE mechanism: Kali's retired Packer scripts don't assemble a rootfs — they boot the real installer ISO, type a `boot_command` over VNC that points d-i at a preseed served over HTTP, run the unattended install, then SSH in to provision and package a Vagrant `.box`. Packer automates the human install; debos skips it. This is also the bridge back to the preseed labs — `http/preseed.cfg` is just a d-i preseed, delivered differently."
+  checkpoint = "`build-kali-box.sh --validate-only` → `validate: OK`; a full `build-kali-box.sh` bakes `packer_kalirolling_libvirt_amd64.box`; `run-graphical.sh` unpacks the QCOW2 and boots it to a Kali `vagrant` login."
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -480,8 +485,8 @@ id      = "kali-offensive"
 title   = "Kali / offensive-security suite"
 theme   = "🔒 Kali across every substrate — authorized targets only."
 members = ["vm-kali-amd64.toml", "kali-nonroot-chroot/", "kali-vm-builder/",
-           "kali-pxe-lab/", "kali-preseed-gallery/", "offsec-awae-vm/",
-           "kali-llm-lab/", "kali-llm-desktop-lab/"]
+           "kali-packer-vagrant/", "kali-pxe-lab/", "kali-preseed-gallery/",
+           "offsec-awae-vm/", "kali-llm-lab/", "kali-llm-desktop-lab/"]
 
 [[collection]]
 id      = "libvirt-labs"
