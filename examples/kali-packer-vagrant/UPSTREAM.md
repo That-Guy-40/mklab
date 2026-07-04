@@ -16,9 +16,10 @@ pinned checkout** at build time rather than vendoring a copy (the same posture a
 | **Status upstream** | **Archived / "no longer in production"** — Kali moved to debos at the 2025.2 release; these scripts no longer produce the published Vagrant boxes |
 | **License** | Repo `LICENSE` documents that `scripts/minimize.sh` derives from [chef/bento](https://github.com/chef/bento) (**Apache-2.0**); the rest is Kali's build tooling. Nothing is vendored here — `git rm` this lab to remove. |
 
-## What we use from the checkout (unmodified)
+## What we use from the checkout (as-is, bar two compat patches)
 
-`fetch-kali-packer.sh` pins the checkout; `build-kali-box.sh` runs it as-is:
+`fetch-kali-packer.sh` pins the checkout; `build-kali-box.sh` runs it essentially
+as-is:
 
 - **`config.pkr.hcl`** — the Packer template: four `source` builders
   (`qemu`, `virtualbox-iso`, `vmware-iso`, `hyperv-iso`), the `boot_command` that
@@ -32,10 +33,20 @@ pinned checkout** at build time rather than vendoring a copy (the same posture a
 - **`Vagrantfile.tpl`** — the per-provider Vagrantfile baked into the `.box`.
 
 We pass the ISO URL/checksum and QEMU knobs as `-var`s and build **only** the
-QEMU source, with `-except vagrant-cloud` so nothing is ever uploaded. We do
-**not** modify any upstream file — divergences (e.g. that `/dev/sda` is correct
-for virtio-scsi, so no `→/dev/vda` patch is needed) are documented in the README,
-not patched in.
+QEMU source, with `-except vagrant-cloud` so nothing is ever uploaded.
+
+**Two documented compat patches** (applied by default, `--verbatim` to skip) are
+the *only* edits to upstream files — needed because the retired scripts no longer
+build on 2026 Kali (see the README "Known issues" for the full why):
+
+- `config.pkr.hcl`: `disk_cache = "unsafe"` → `"writeback"` — the "unsafe" cache
+  ignores guest flushes, leaving root read-only after d-i's post-install reboot
+  under KVM.
+- `scripts/vagrant.sh`: `mkdir /home/vagrant/.ssh` → `mkdir -p …` — modern Kali's
+  login session auto-creates `~/.ssh`, so the bare `mkdir` hits "File exists".
+
+Other divergences are documented, **not** patched — e.g. `/dev/sda` is correct
+for the builder's virtio-scsi disk, so no `→/dev/vda` rewrite is needed.
 
 ## Live data resolved at build time (dated, not vendored)
 

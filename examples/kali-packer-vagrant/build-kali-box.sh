@@ -45,7 +45,27 @@
 #                     use it (verifies the SHA256). For hosts without packer.
 #   --ref REF         upstream git ref to build from (passed to fetch-kali-packer.sh)
 #   --force           pass -force to packer build (overwrite a previous output)
+#   --on-error MODE   packer -on-error: cleanup (default) | abort | ask |
+#                     run-cleanup-provisioner. `abort` KEEPS the half-built VM +
+#                     output dir on failure so you can boot/inspect it (debugging).
+#   --verbatim        build the RETIRED upstream scripts totally unmodified — no
+#                     compat patches. On current Kali/KVM this FAILS (see below);
+#                     use it to watch the bitrot for yourself.
+#   --disk-cache MODE cache mode the compat patch writes into config.pkr.hcl
+#                     (default: writeback). Ignored under --verbatim.
 #   --help            show this help and exit
+#
+# COMPAT PATCHES (applied by default; skip with --verbatim) — the upstream is
+# archived/"no longer in production" and has bit-rotted against 2026 Kali in two
+# spots, each of which otherwise aborts the build:
+#   1. config.pkr.hcl `disk_cache = "unsafe"` → "writeback".  "unsafe" makes QEMU
+#      ignore the guest's flushes, so d-i's post-install REBOOT boots on unflushed
+#      metadata → a transient ext4 error → `errors=remount-ro` → the provisioner
+#      dies with "Read-only file system".  writeback honors flushes.
+#   2. scripts/vagrant.sh `mkdir /home/vagrant/.ssh` → `mkdir -p …`.  On modern
+#      Kali the vagrant login's systemd-user session auto-creates ~/.ssh (gcr /
+#      ssh-agent), so the bare mkdir now hits "File exists".
+# See README "Known issues (retired-script bitrot)" for the full write-up.
 #
 # Output:  <workdir>/kali-packer/packer_kalirolling_libvirt_amd64.box
 #          (boot it with run-graphical.sh)
@@ -68,6 +88,9 @@ INSTALL_PACKER=0
 REF="main"
 VALIDATE_ONLY=0
 FORCE=0
+ON_ERROR="cleanup"
+VERBATIM=0
+DISK_CACHE="writeback"
 
 _c() { [ -t 2 ] && printf '\033[%sm' "$1" >&2 || :; }
 log()  { _c 36; printf '[build]'   >&2; _c 0; printf ' %s\n' "$*" >&2; }
@@ -90,6 +113,9 @@ while [ $# -gt 0 ]; do
         --install-packer) INSTALL_PACKER=1; shift ;;
         --ref)       REF="${2:?}"; shift 2 ;;
         --force)     FORCE=1; shift ;;
+        --on-error)  ON_ERROR="${2:?}"; shift 2 ;;
+        --verbatim)  VERBATIM=1; shift ;;
+        --disk-cache) DISK_CACHE="${2:?}"; shift 2 ;;
         --help|-h)   usage 0 ;;
         *)           die "unknown argument: $1  (try --help)" ;;
     esac
@@ -116,6 +142,25 @@ if [ ! -e "$CHECKOUT/config.pkr.hcl" ]; then
     "$SCRIPT_DIR/fetch-kali-packer.sh" --workdir "$WORKDIR" --ref "$REF" >/dev/null
 fi
 [ -e "$CHECKOUT/config.pkr.hcl" ] || die "checkout missing config.pkr.hcl at $CHECKOUT"
+
+# ── Compat patches: make the RETIRED upstream build on current Kali/KVM ───────
+# Two independent bit-rots (see the header + README). Applied by default; the
+# checkout is a throwaway work dir, so patching it in place is fine. --verbatim
+# skips both to reproduce the upstream failures.
+if [ "$VERBATIM" -eq 1 ]; then
+    warn "--verbatim: building unmodified upstream — expect a 'Read-only file system' (disk_cache=unsafe) or 'File exists' (~/.ssh) provisioner failure on current Kali/KVM"
+else
+    # 1. disk_cache "unsafe" → writeback (KVM post-install-reboot read-only fix)
+    sed -i -E "s/(disk_cache[[:space:]]*=[[:space:]]*)\"[a-z]+\"/\1\"$DISK_CACHE\"/" "$CHECKOUT/config.pkr.hcl"
+    grep -qE "disk_cache[[:space:]]*=[[:space:]]*\"$DISK_CACHE\"" "$CHECKOUT/config.pkr.hcl" \
+        || die "compat: failed to set disk_cache=\"$DISK_CACHE\" in config.pkr.hcl"
+    log "compat: config.pkr.hcl disk_cache → \"$DISK_CACHE\"  (KVM read-only-root fix)"
+    # 2. scripts/vagrant.sh: bare mkdir → mkdir -p (~/.ssh pre-exists on modern Kali)
+    if grep -qE '^[[:space:]]*mkdir[[:space:]]+/home/vagrant/\.ssh[[:space:]]*$' "$CHECKOUT/scripts/vagrant.sh"; then
+        sed -i -E 's#^([[:space:]]*)mkdir([[:space:]]+/home/vagrant/\.ssh)[[:space:]]*$#\1mkdir -p\2#' "$CHECKOUT/scripts/vagrant.sh"
+        log "compat: scripts/vagrant.sh 'mkdir' → 'mkdir -p /home/vagrant/.ssh'  (~/.ssh already exists)"
+    fi
+fi
 
 # ── Locate (or install) packer ───────────────────────────────────────────────
 if [ -z "$PACKER_BIN" ]; then
@@ -183,6 +228,7 @@ fi
 [ -e /dev/kvm ] || warn "/dev/kvm missing — the build VM has no acceleration"
 BUILD_ARGS=(build)
 [ "$FORCE" -eq 1 ] && BUILD_ARGS+=(-force)
+[ "$ON_ERROR" != cleanup ] && BUILD_ARGS+=(-on-error "$ON_ERROR")
 BUILD_ARGS+=(
     -only "$ONLY"
     -except vagrant-cloud

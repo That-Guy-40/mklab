@@ -51,14 +51,19 @@ Packer SSHes in  ──►  scripts/vagrant.sh   (insecure Vagrant key + passwor
 `vagrant` post-processor  ──►  packer_kalirolling_libvirt_amd64.box
 ```
 
-## What's here (a driver — upstream is used unmodified)
+## What's here (a driver + two small compat patches)
 
 | File | Role |
 |---|---|
 | `fetch-kali-packer.sh` | Clone/pin the upstream `kali-packer` checkout into a work dir **outside** this repo (default pin `b8c9b34`; see [`UPSTREAM.md`](UPSTREAM.md)). |
-| `build-kali-box.sh` | Resolve the current Kali ISO + checksum, `packer init`, then `packer build` the **QEMU** builder only (never uploads). `--validate-only` for the fast config check; `--install-packer` if you don't have packer. |
+| `build-kali-box.sh` | Resolve the current Kali ISO + checksum, apply the two [compat patches](#known-issues-retired-script-bitrot) (`--verbatim` to skip), `packer init`, then `packer build` the **QEMU** builder only (never uploads). `--validate-only` for the fast config check; `--install-packer` if you don't have packer. |
 | `run-graphical.sh` | Unpack the QCOW2 out of the `.box` and boot it in a **windowed QEMU desktop** (SeaBIOS/BIOS + **virtio-scsi** to match the build + SSH-forward, on a COW overlay). |
 | `README.md` / `MANUAL_TESTING.md` / `UPSTREAM.md` | This file · the runbook · provenance. |
+
+The upstream is used **as-is except for two documented one-line compat patches**
+(applied by default, opt out with `--verbatim`) — without them the *retired*
+scripts no longer build on 2026 Kali. See
+[Known issues](#known-issues-retired-script-bitrot) for exactly what and why.
 
 Artifacts live under `$KALI_PACKER_DIR` (default `$HOME/kali-packer-build`),
 **not** in this repo — a build pulls a ~4 GB ISO and writes a ~6 GB box plus
@@ -112,11 +117,19 @@ The upstream config defines four builders; **QEMU is the one this lab boots**:
 examples/kali-packer-vagrant/build-kali-box.sh --accel kvm            # fast (default when /dev/kvm exists)
 examples/kali-packer-vagrant/build-kali-box.sh --accel tcg --ssh-timeout 180m   # no KVM: HOURS, bump the timeout
 examples/kali-packer-vagrant/build-kali-box.sh --headless false       # watch the installer in a QEMU window
+examples/kali-packer-vagrant/build-kali-box.sh --verbatim             # NO compat patches → reproduces the bitrot
 ```
 
 **Accel matters a lot.** On KVM the QEMU build is ~20–40 min; under `tcg`
 (software emulation, e.g. a CI runner with no `/dev/kvm`) it's *hours* — raise
 `--ssh-timeout` so Packer doesn't give up mid-install.
+
+**Watch it install (VNC), even headless.** A headless build still serves the
+guest screen over VNC — Packer logs `connect via VNC without a password to
+vnc://127.0.0.1:59XX`. Point a viewer at it to watch d-i run:
+`xtightvncviewer 127.0.0.1::59XX` (note the **`::`** = a literal TCP port; a
+single `:` is read as a VNC *display number*). The port is chosen fresh each
+build — read it from the log. `MANUAL_TESTING.md` has the details.
 
 ## Running it graphically
 
@@ -164,12 +177,44 @@ examples/kali-packer-vagrant/run-graphical.sh --snapshot         # throwaway ses
 - **packer:** installed, or fetched via `--install-packer`.
 - **Display:** `run-graphical.sh` opens an X/Wayland window (`--display none` to skip).
 
+## Known issues (retired-script bitrot)
+
+The upstream is **archived / "no longer in production"**, and it has **bit-rotted
+against 2026 Kali** in two independent spots — each aborts the build. Both are
+patched by default (opt out with `--verbatim` to watch them fail); each is one
+line, and the *why* is the interesting part:
+
+1. **`disk_cache = "unsafe"` → read-only root after the install reboot** *(→ `writeback`)*
+   The QEMU builder sets `disk_cache = "unsafe"`, which tells QEMU to **ignore the
+   guest's flush/barrier requests** (a build-speed trick). When d-i finishes and
+   the guest **reboots** — a guest reset, *not* a clean QEMU shutdown — writes the
+   guest "flushed" during install may still be in host RAM, so the box boots on
+   slightly-inconsistent ext4. The provisioner's first write then trips an ext4
+   error, and the root fstab's **`errors=remount-ro`** flips `/` read-only — so
+   `scripts/vagrant.sh`'s `mkdir /home/vagrant/.ssh` dies with **"Read-only file
+   system."** (The error line can't even be logged — the journal's own fs is now
+   read-only.) Kali's CI only builds under **`tcg`** and never hits it; a KVM host
+   does, reliably. `writeback` honors flushes and fixes it. The *installed image*
+   is fine either way — it's read back after a clean shutdown.
+2. **`mkdir` without `-p` → `~/.ssh` already exists** *(→ `mkdir -p`)*
+   `scripts/vagrant.sh` runs a bare `mkdir /home/vagrant/.ssh`. On modern Kali the
+   `vagrant` login's **systemd-user session auto-creates `~/.ssh`** (gcr /
+   ssh-agent socket), so by the time the provisioner runs, the dir exists →
+   **"File exists"** → `set -e` aborts. `mkdir -p` is idempotent.
+
+Only #1 is masked-and-deadly (it looks like a filesystem/hardware fault); #2 is a
+plain bitrot. Together they're a neat lesson in why a *retired* image factory
+stops working even though nothing in it "changed."
+
 ## Verification status
 
-Fetch/pin, **`packer validate` on the real upstream config** (packer 1.13.1 + all
-five plugins → *"The configuration is valid."*), the driver scripts (syntax +
-option handling), and the `.box`→QCOW2 extraction + QEMU boot pipeline are
-**verified here** (the extraction/boot proven with a synthetic box; see
-`MANUAL_TESTING.md`). The **full Packer build is author-run** — it's long,
-downloads gigabytes, and is host-specific (same posture as `kali-vm-builder`).
-`MANUAL_TESTING.md` walks the whole thing end to end.
+**Built + booted end-to-end here (2026-07-03, KVM).** With the two compat patches,
+`build-kali-box.sh` produced a real **`packer_kalirolling_libvirt_amd64.box`
+(5.7 GB)**; `run-graphical.sh` unpacked its QCOW2 and booted it to a working Kali
+(`Kali GNU/Linux Rolling`, kernel 6.19; **passwordless sudo** + the **Vagrant
+insecure key** in `~/.ssh/authorized_keys` confirm `scripts/vagrant.sh` ran; 2877
+pkgs incl. the XFCE desktop; zero failed units). Also verified: fetch/pin,
+`packer validate` on the real config (packer 1.13.1 + all five plugins), and the
+`.box`→QCOW2 extraction. Getting there **surfaced the two bitrots above** (2 failed
+builds → root-caused from the aborted VM's journal → fixed → green). `--verbatim`
+reproduces the failures; `MANUAL_TESTING.md` has the full transcript.
