@@ -30,6 +30,7 @@ These are orthogonal to 00-INDEX's *run-cost* tags, which are carried through un
 | [Zero-touch OS provisioning: PXE installs & galleries](path-zero-touch-provisioning.md) | 🟡 | ⏱ half-day+ | Go from 'boots the network' to 'installs an OS with no keystrokes' across Anaconda/kickstart and debian-installer/preseed — then pick any variant from an upstream gallery. |
 | [Chroot → running system: the cross-phase bridges](path-chroot-to-system.md) | 🟡 | ⏱ ~1–2h | Build a root filesystem once (Phase 1), then run the SAME artifact as a bootable VM, a rootless OCI image, and an LXD container. |
 | [Offensive security with Kali, across every substrate](path-kali-security.md) | 🔴 | ⏱ half-day+ | Stand up Kali as a chroot, a VM, a built image, and a PXE install — ending in an agentic LLM that drives real Kali tools. |
+| [OS image factories: bake a bootable image with debos](path-os-image-factories.md) | 🟡 | ⏱ ~1–2h | Assemble a whole bootable OS image from a declarative recipe with debos (the Debian image builder), then meet the distro wrapper — Kali's kali-vm — built on the very same engine. Learn the tool, then the thing built on it. |
 
 ## Collections
 
@@ -110,12 +111,6 @@ These are orthogonal to 00-INDEX's *run-cost* tags, which are carried through un
 *Compile the thing itself — a shell, a neural net — from source.*
 
 [`oils-shell-container`](../oils-shell-container/) · [`AI-build-a-perceptron`](../AI-build-a-perceptron/)
-
-### OS image factories (debos)
-
-*Bake a whole bootable OS image from a declarative recipe with debos (or its kali-vm wrapper) — fetch → build → run, no installer involved.*
-
-[`kali-vm-builder`](../kali-vm-builder/) · [`debian-vm-builder`](../debian-vm-builder/)
 
 ## Capstones
 

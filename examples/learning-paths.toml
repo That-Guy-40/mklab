@@ -429,6 +429,24 @@ goal       = "Stand up Kali as a chroot, a VM, a built image, and a PXE install 
   learn      = "the full XFCE VM with the real 5ire GUI + mcp-kali-server — the agentic payoff."
   checkpoint = "the LLM invokes `nmap` through mcp-kali-server against an isolated target."
 
+[[path]]
+id         = "os-image-factories"
+title      = "OS image factories: bake a bootable image with debos"
+difficulty = "🟡"
+est        = "⏱ ~1–2h"
+prereqs    = ["chroot-to-system"]
+audience   = "you've turned a rootfs into a bootable VM by hand — now do it declaratively"
+goal       = "Assemble a whole bootable OS image from a declarative recipe with debos (the Debian image builder), then meet the distro wrapper — Kali's kali-vm — built on the very same engine. Learn the tool, then the thing built on it."
+  [[path.step]]
+  lab        = "debian-vm-builder/"
+  learn      = "debos directly: a YAML recipe (debootstrap → apt → image-partition → filesystem-deploy → systemd-boot) assembled inside a fakemachine KVM build VM — no installer, no by-hand loop-mounting."
+  checkpoint = "`build-debian-vm.sh` bakes a trixie qcow2; `run-graphical.sh` boots it under OVMF to a `debian-vm login:` (SSH `debian`/`debian`)."
+  [[path.step]]
+  lab        = "kali-vm-builder/"
+  tags       = ["🔒"]
+  learn      = "Kali's official `kali-vm` is a thin wrapper around the SAME debos engine, producing the image you'd otherwise download — now the wrapper reads clearly, because you saw the machinery underneath."
+  checkpoint = "`build-kali-vm.sh --headless` builds a QCOW2; `run-graphical.sh` boots it to a Kali login."
+
 
 # ════════════════════════════════════════════════════════════════════════════
 #  COLLECTIONS  (themed, unordered bundles)
@@ -540,12 +558,6 @@ id      = "build-a-tool"
 title   = "Build a tool, don't just use one"
 theme   = "Compile the thing itself — a shell, a neural net — from source."
 members = ["oils-shell-container/", "AI-build-a-perceptron/"]
-
-[[collection]]
-id      = "os-image-factories"
-title   = "OS image factories (debos)"
-theme   = "Bake a whole bootable OS image from a declarative recipe with debos (or its kali-vm wrapper) — fetch → build → run, no installer involved."
-members = ["kali-vm-builder/", "debian-vm-builder/"]
 
 
 # ════════════════════════════════════════════════════════════════════════════
