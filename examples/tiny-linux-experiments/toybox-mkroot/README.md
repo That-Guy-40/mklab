@@ -108,10 +108,14 @@ are in `qemu-system-misc`; `mips`/`ppc` in `qemu-system-mips`/`-ppc`). Each buil
 grabs a ~40–70 MB toolchain once, compiles a target kernel + toybox, and drops
 you at a toybox shell running on emulated vintage hardware. `exit` powers it off.
 
-> **✓ Verified: `--arch m68k`** cross-built (Landley's `gcc 15.1`) a 6.1.176
-> kernel + toybox and booted on QEMU `q800` — the kernel prints `Apple Macintosh
-> Quadra 800` and probes the real Mac silicon (`mac_esp` SCSI, `SONIC` Ethernet,
-> `Z85c30 ESCC` serial) before dropping to a toybox root shell. Full transcript in
+> **✓ Verified end-to-end** (Landley's `gcc 15.1` → 6.1.176 → toybox root shell):
+> - **`--arch m68k`** on QEMU `q800` prints `Apple Macintosh Quadra 800` and probes
+>   the real Mac silicon (`mac_esp` SCSI, `SONIC` Ethernet, `Z85c30 ESCC` serial).
+> - **`--arch sh4`** on QEMU `r2d` boots `machvec: RTS7751R2D` / `CPU: SH7751R` —
+>   the SH-4 family behind the **Sega Dreamcast** — with `echo $HOST → sh4` proving
+>   the forwarded kernel param.
+>
+> Full transcripts in
 > [MANUAL_TESTING.md §5](MANUAL_TESTING.md#5-cross-from-source-a-foreign-arch-compiled-and-booted-author-run).
 
 > ### ⚠️ Never pass `-j` to `make root`

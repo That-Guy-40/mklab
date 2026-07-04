@@ -147,6 +147,36 @@ parameters "HOST=m68k", will be passed to user space`** is by design (mkroot's
 toybox set (fine — `ls`/`whoami`/`pwd` are all toybox applets). Note the toolchain
 is **gcc 15.1** cross-building a 6.1 longterm kernel with no edits.
 
+### Verified boot — sh4 → the Dreamcast's SuperH (user-run, 2026-07-04)
+
+`./build-toybox-mkroot.sh --arch sh4` (`sh4-linux-musl-gcc 15.1`) booted on QEMU's
+`r2d` machine — Renesas's **RTS7751R2D** board with an **SH7751R**, the same SH-4
+CPU family that powered the Sega Dreamcast (which used the SH7091):
+
+```text
+Linux version 6.1.176 (…) (sh4-linux-musl-gcc (GCC) 15.1.0, …) #1 …
+Booting machvec: RTS7751R2D
+Renesas Technology Sales RTS7751R2D support.
+Kernel command line: HOST=sh4 console=ttySC1 noiotrap
+Unknown kernel command line parameters "HOST=sh4", will be passed to user space.
+CPU: SH7751R
+SuperH (H)SCI(F) driver initialized
+sh-sci.1: ttySC1 … is a scif
+8139cp 0000:00:02.0 eth0: RTL-8139C+ …
+Run /init as init process
+$ whoami; pwd
+root
+/
+$ echo $HOST          # ← the HOST= param the kernel forwarded to userspace
+sh4
+```
+
+The `echo $HOST → sh4` is the payoff for the "unknown param passed to user space"
+line: mkroot's `run-qemu.sh` sets `HOST=<arch>`, the kernel doesn't claim it, so
+it lands in PID 1's environment — visible right there in the toybox shell.
+Success signature: `machvec: RTS7751R2D` + `CPU: SH7751R` + the SuperH `SCIF`
+console, then a toybox root shell.
+
 **Why author-run:** it fetches **and executes** a third-party prebuilt toolchain,
 which this repo's **toolchain-fetch gate** blocks for an agent — verified here:
 attempting the fetch+exec in-agent was denied by the sandbox classifier
@@ -173,7 +203,7 @@ below); **you** run `--arch <arch>` on your box. Prefer no toolchain at all?
 | 4 | **default: `make root LINUX=6.1.176`** | a **bzImage 6.1.176 I compiled** + toybox initramfs → **booted to a toybox shell**, 210 commands, clean `reboot: Restarting system` |
 | 5 | `--prebuilt x86_64 --smoke` | Landley's image booted: toybox `0.8.13` / **Linux 6.17.0**, 422 cmd-links |
 | 6 | script plumbing | `bash -n` clean; shellcheck clean; `--binary`, default `--smoke`, `--prebuilt … --smoke` all green; `--list-arches`/`--help` render; unknown-arg dies cleanly |
-| 7 | `--arch` cross mode | **dry-verified** here (toolchain tarballs resolve, trivia + `CROSS=` render, `--no-fetch-toolchain` guidance + exit 3) **and booted end-to-end by the user**: `--arch m68k` cross-built (gcc 15.1 → 6.1.176) and booted on QEMU `q800` = a **Macintosh Quadra 800**, toybox shell as root (transcript in §5). fetch+exec is **author-run** — the in-agent sh4 toolchain fetch+run was **denied by the sandbox gate**, confirming the split. |
+| 7 | `--arch` cross mode | **dry-verified** here (toolchain tarballs resolve, trivia + `CROSS=` render, `--no-fetch-toolchain` guidance + exit 3) **and booted end-to-end by the user**: `--arch m68k` → QEMU `q800` (**Macintosh Quadra 800**) and `--arch sh4` → QEMU `r2d` (**SH7751R**, the Dreamcast's SH-4 family), both cross-built gcc 15.1 → 6.1.176 to a toybox root shell; `echo $HOST` confirms the forwarded param (transcripts in §5). fetch+exec is **author-run** — the in-agent sh4 toolchain fetch+run was **denied by the sandbox gate**, confirming the split. |
 
 The `make root LINUX=` kernel compile took **~20 s** (it's a tiny miniconfig
 kernel, not a full distro kernel), so the whole from-source path — clone, build
