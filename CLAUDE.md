@@ -17,6 +17,16 @@ use the `pass`/`fail`/`skip`/`note` helpers in each phase's `tests/lib.sh`. **No
 test may ever exit silently.** A bare non-zero exit with no message is a test
 bug, not a result — the reader can't tell a real failure from a broken harness.
 
+- **A failure must name the specific defect, not just say "failed."** Give each
+  assertion its own `fail`/`REGRESSION:` message that states *what* broke and,
+  ideally, the expected-vs-actual — e.g.
+  `fail "REGRESSION: rm -rf recursed through the live bind and deleted the source"`,
+  not `fail "assertion 3"`. One assertion → one specific message, so the printed
+  line alone tells you which invariant was violated. **Prefix the message with
+  `REGRESSION:`** when the assertion guards a previously-fixed bug from coming
+  back (a regression test) — it flags the failure as "a fix was undone," which is
+  more urgent than a first-time failure.
+
 - Prefer intermediate progress via `note` (a `  - …` line), but the run must
   still **end on a `PASS`/`FAIL`/`SKIP`**.
 - **The silent-exit trap:** functions under test report failure/refusal with
