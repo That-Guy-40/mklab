@@ -1272,7 +1272,9 @@ cmd_inspect() {
 # commented hint so the reader knows it won't build standalone.
 # _yaml_str VALUE  — emit VALUE as a double-quoted YAML string with
 # internal double-quotes and backslashes escaped (Findings 20, 21, 22).
-_yaml_str() { printf '"%s"' "${1//\"/\\\"}"; }
+# Review L1: escape backslash FIRST, then double-quote, so a value ending in `\`
+# (or containing `"`) can't break out of / malform the quoted YAML scalar.
+_yaml_str() { local s="${1//\\/\\\\}"; printf '"%s"' "${s//\"/\\\"}"; }
 
 cmd_export() {
     [[ -n "${OPT_CONFIG:-}" ]] || die "usage: $LAB_PROG export --config topology.toml [--format compose]"
@@ -1347,7 +1349,7 @@ cmd_export() {
         while IFS= read -r p; do
             [[ -z "$p" ]] && continue
             if (( first )); then printf '    ports:\n'; first=0; fi
-            printf '      - "%s"\n' "$p"
+            printf '      - %s\n' "$(_yaml_str "$p")"
         done < <(jq -r '.ports[]?' <<<"$svc")
 
         first=1
@@ -1355,7 +1357,7 @@ cmd_export() {
         while IFS=$'\t' read -r kk vv; do
             [[ -z "$kk" ]] && continue
             if (( first )); then printf '    environment:\n'; first=0; fi
-            printf '      %s: "%s"\n' "$kk" "$vv"
+            printf '      %s: %s\n' "$kk" "$(_yaml_str "$vv")"
         done < <(jq -r '.environment // {} | to_entries[]? | "\(.key)\t\(.value)"' <<<"$svc")
 
         first=1
@@ -1363,7 +1365,7 @@ cmd_export() {
         while IFS= read -r vol; do
             [[ -z "$vol" ]] && continue
             if (( first )); then printf '    volumes:\n'; first=0; fi
-            printf '      - "%s"\n' "$vol"
+            printf '      - %s\n' "$(_yaml_str "$vol")"
             vol_src="${vol%%:*}"
             case "$vol_src" in
                 /*|./*|../*) : ;;                           # bind mount
@@ -1389,7 +1391,7 @@ cmd_export() {
                 local k part
                 for ((k=0; k<cmdcount; k++)); do
                     part="$(jq -r --argjson k "$k" '.cmd[$k]' <<<"$svc")"
-                    printf '      - "%s"\n' "$part"
+                    printf '      - %s\n' "$(_yaml_str "$part")"
                 done
             fi
         fi

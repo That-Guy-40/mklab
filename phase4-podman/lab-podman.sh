@@ -1755,7 +1755,9 @@ cmd_destroy() {
 # ─── Subcommand: export ────────────────────────────────────────────────────
 # _yaml_str VALUE — emit VALUE as a double-quoted YAML string with
 # internal double-quotes escaped (Finding 8).
-_yaml_str() { printf '"%s"' "${1//\"/\\\"}"; }
+# Review L1: escape backslash FIRST, then double-quote, so a value ending in `\`
+# (or containing `"`) can't break out of / malform the quoted YAML scalar.
+_yaml_str() { local s="${1//\\/\\\\}"; printf '"%s"' "${s//\"/\\\"}"; }
 
 cmd_export() {
     local lab="${OPT_LAB:-${POS_ARGS[0]:-}}"
@@ -1807,7 +1809,10 @@ cmd_export() {
                 svc="$(jq -c --argjson i "$i" '.service[$i]' <<<"$cfg")"
                 sname="$(spec_get "$svc" name)"
                 simage="$(spec_get "$svc" image)"
-                # Finding 8: quote YAML keys and values to prevent injection.
+                # Finding 8 + Review L1: emit the free-text values (env values,
+                # ports, volumes) as escaped YAML scalars via _yaml_str so a `"`
+                # or `\` can't inject sibling keys / malform the doc.  Image and
+                # command keep their original format (engine-validated / plain).
                 printf '  %s:\n' "$(_yaml_str "$sname")"
                 [[ -n "$simage" ]] && printf '    image: %s\n' "$simage"
                 printf '    container_name: %s\n' "$(container_name_for "$lab" "$sname")"
@@ -1815,21 +1820,21 @@ cmd_export() {
                 while IFS= read -r p; do
                     [[ -z "$p" ]] && continue
                     if (( first )); then printf '    ports:\n'; first=0; fi
-                    printf '      - "%s"\n' "$p"
+                    printf '      - %s\n' "$(_yaml_str "$p")"
                 done < <(jq -r '.ports[]?' <<<"$svc")
                 first=1
                 local kk vv
                 while IFS=$'\t' read -r kk vv; do
                     [[ -z "$kk" ]] && continue
                     if (( first )); then printf '    environment:\n'; first=0; fi
-                    printf '      %s: "%s"\n' "$kk" "$vv"
+                    printf '      %s: %s\n' "$kk" "$(_yaml_str "$vv")"
                 done < <(jq -r '.environment // {} | to_entries[]? | "\(.key)\t\(.value)"' <<<"$svc")
                 first=1
                 local vol
                 while IFS= read -r vol; do
                     [[ -z "$vol" ]] && continue
                     if (( first )); then printf '    volumes:\n'; first=0; fi
-                    printf '      - "%s"\n' "$vol"
+                    printf '      - %s\n' "$(_yaml_str "$vol")"
                 done < <(jq -r '.volumes[]?' <<<"$svc")
                 local cmdline; cmdline="$(jq -r '.command // empty' <<<"$svc")"
                 [[ -n "$cmdline" ]] && printf '    command: %s\n' "$cmdline"
