@@ -1515,6 +1515,9 @@ SYSTEMD_INIT
             # may not exist in this VM's terminfo database.  Fall back to
             # xterm-256color so interactive tools (less, vi, …) work without
             # manual TERM overrides.  No-op when $TERM is already known.
+            # A minimal chroot may not have /etc/profile.d yet — create it
+            # (found by CI: export-initrd errored on a bare fakeroot).
+            mkdir -p "$target/etc/profile.d"
             cat > "$target/etc/profile.d/term-fallback.sh" << 'TERM_FALLBACK'
 #!/bin/sh
 [ -n "${TERM:-}" ] && ! infocmp "$TERM" >/dev/null 2>&1 && export TERM=xterm-256color
