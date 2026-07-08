@@ -1777,24 +1777,28 @@ backend_vm_from_chroot() {
     log_info "building bootable qcow2 from $chroot_path  (size=$size)"
 
     local raw="${out_qcow2}.raw.partial"
-    qemu-img create -f raw "$raw" "$size" >/dev/null \
-        || die "qemu-img create failed"
 
-    # Cleanup-on-failure: RETURN trap fires before the function returns, while
-    # locals are still in scope.  Use single quotes so $mp and $loopdev expand
-    # at trap-fire time (when they hold real values), not at trap-set time when
-    # they are still empty strings (Finding 3: double-quoted trap expanded
-    # mp/loopdev immediately, making the umount/losetup -d calls no-ops on any
-    # failure between losetup and mount, leaking loop devices).
-    local loopdev="" mp=""
-    local _raw="$raw" _out="$out_qcow2"
-    # shellcheck disable=SC2016
-    trap '
-        [[ -n "${mp}" && -d "${mp}" ]] && umount "${mp}" 2>/dev/null
-        [[ -n "${mp}" && -d "${mp}" ]] && rmdir  "${mp}" 2>/dev/null
-        [[ -n "${loopdev}" ]] && losetup -d "${loopdev}" 2>/dev/null
-        rm -f "${_raw}" "${_out}" 2>/dev/null
-    ' RETURN
+    # Review H2 (supersedes Finding 3): run the whole loop-device / mkfs / mount
+    # / convert sequence inside a SUBSHELL guarded by an EXIT trap.  The previous
+    # RETURN trap never fired on failure — every error path is `|| die`, and
+    # `die` is `exit`, which does NOT run a RETURN trap — so an aborted build
+    # leaked a root-owned loop device AND a live mount every single time.  An
+    # EXIT trap fires on ANY exit (including `die`); being subshell-local it also
+    # cannot clobber create_one's own EXIT trap (the partial vm-dir cleanup).
+    # `ok=1` at the very end tells the trap the build succeeded, so it keeps the
+    # output qcow2; on any earlier exit the trap removes the partial output.
+    (
+        loopdev="" mp="" ok=""
+        # shellcheck disable=SC2064
+        trap '
+            [[ -n "$mp" && -d "$mp" ]] && { umount "$mp" 2>/dev/null; rmdir "$mp" 2>/dev/null; }
+            [[ -n "$loopdev" ]] && losetup -d "$loopdev" 2>/dev/null
+            rm -f "$raw" 2>/dev/null
+            [[ -n "$ok" ]] || rm -f "$out_qcow2" 2>/dev/null
+        ' EXIT
+
+        qemu-img create -f raw "$raw" "$size" >/dev/null \
+            || die "qemu-img create failed"
 
     # Partition: MBR, one bootable ext4 primary from 1 MiB to end.
     log_info "partitioning (MBR + ext4)"
@@ -1879,13 +1883,13 @@ EOF
     losetup -d "$loopdev" || true
     loopdev=""
 
-    # Raw → qcow2.
-    log_info "converting raw → qcow2: $out_qcow2"
-    qemu-img convert -f raw -O qcow2 "$raw" "$out_qcow2" \
-        || die "qemu-img convert failed"
-    rm -f "$raw"
-
-    trap - RETURN
+        # Raw → qcow2.
+        log_info "converting raw → qcow2: $out_qcow2"
+        qemu-img convert -f raw -O qcow2 "$raw" "$out_qcow2" \
+            || die "qemu-img convert failed"
+        rm -f "$raw"
+        ok=1
+    ) || die "from-chroot: bootable image build failed (see errors above)"
     log_info "bootable qcow2 ready: $out_qcow2"
 }
 

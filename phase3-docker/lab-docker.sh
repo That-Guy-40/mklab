@@ -75,6 +75,15 @@ validate_name() {
         || die "invalid $ctx '$n': use only [a-zA-Z0-9._-], start with alphanumeric, max 63 chars"
 }
 
+# _in_set VALUE [MEMBER...] — true if VALUE equals one of the MEMBERs.  Used by
+# the partial-'up' rollback to skip pre-existing resources (Review H4).
+_in_set() {
+    local v="$1"; shift
+    local x
+    for x in "$@"; do [[ "$x" == "$v" ]] && return 0; done
+    return 1
+}
+
 detect_host_arch() {
     case "$(uname -m)" in
         x86_64|amd64)         printf 'x86_64' ;;
@@ -321,6 +330,7 @@ backend_from_chroot() {
             -not -path "${chroot_path}/proc/*" \
             -not -path "${chroot_path}/sys/*" \
             -not -path "${chroot_path}/dev/*" \
+            ! -type l \
             -not -readable -print -quit 2>/dev/null
     )"
     if [[ -n "$unreadable" ]]; then
@@ -621,14 +631,38 @@ cmd_up() {
 
     log_info "── bringing up lab '$lab_name' from $OPT_CONFIG ──"
 
-    # Finding 23: on partial failure, actually run 'down' to clean up started
-    # containers and networks instead of just printing a hint.
-    # Finding 1: use a helper function in the trap so the validated lab name
-    # is never eval'd as shell code at fire time.
+    # Review H4: snapshot the container/network IDs that ALREADY belong to this
+    # lab, so the partial-'up' rollback removes ONLY what THIS run creates.  `up`
+    # is idempotent (existing services are "left as-is"), so an incremental
+    # re-'up' that adds one service must NOT tear down the healthy, pre-existing
+    # containers if the new one fails.
+    local -a _PRE_C=() _PRE_N=()
+    mapfile -t _PRE_C < <(docker ps -aq \
+        --filter "label=${LAB_LABEL_LAB}=${lab_name}" --filter "label=${LAB_LABEL_TOOL}" 2>/dev/null)
+    mapfile -t _PRE_N < <(docker network ls -q \
+        --filter "label=${LAB_LABEL_LAB}=${lab_name}" --filter "label=${LAB_LABEL_TOOL}" 2>/dev/null)
+
+    # Finding 23 + Review H4: on partial failure, roll back the resources THIS
+    # run created (diff current-vs-pre-existing by ID) instead of tearing the
+    # whole lab down.  Finding 1: the validated lab name is passed as an arg, so
+    # it is never eval'd as shell code when the trap fires.
     _partial_up_cleanup() {
-        local _lab="$1"
-        log_info "partial 'up' — running 'down' to clean up lab '$_lab'"
-        OPT_LAB="$_lab" OPT_CONFIG="" cmd_down 2>/dev/null || true
+        local _lab="$1" _id _removed=0
+        local -a _now_c=() _now_n=()
+        mapfile -t _now_c < <(docker ps -aq \
+            --filter "label=${LAB_LABEL_LAB}=${_lab}" --filter "label=${LAB_LABEL_TOOL}" 2>/dev/null)
+        mapfile -t _now_n < <(docker network ls -q \
+            --filter "label=${LAB_LABEL_LAB}=${_lab}" --filter "label=${LAB_LABEL_TOOL}" 2>/dev/null)
+        for _id in "${_now_c[@]}"; do
+            _in_set "$_id" "${_PRE_C[@]}" && continue   # _PRE_C: cmd_up local, via dynamic scope
+            docker rm -f "$_id" >/dev/null 2>&1 || true
+            _removed=$((_removed+1))
+        done
+        for _id in "${_now_n[@]}"; do
+            _in_set "$_id" "${_PRE_N[@]}" && continue
+            docker network rm "$_id" >/dev/null 2>&1 || true
+        done
+        log_info "partial 'up': rolled back ${_removed} new container(s) in lab '$_lab' (pre-existing left intact)"
     }
     trap "_partial_up_cleanup '${lab_name}'" EXIT
 
@@ -1546,4 +1580,9 @@ main() {
     esac
 }
 
-[[ "${BASH_SOURCE[0]}" == "${0}" ]] && main "$@"
+# Guard so `source`-ing this script (unit tests) defines functions without
+# running main.  Use the `if` form (not `[[ ]] && main`, which returns 1 when
+# sourced and would trip a caller's `set -e`) — matches phase1/2/4/5.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

@@ -416,6 +416,7 @@ backend_from_chroot() {
             -not -path "${chroot_path}/proc/*" \
             -not -path "${chroot_path}/sys/*" \
             -not -path "${chroot_path}/dev/*" \
+            ! -type l \
             -not -readable -print -quit 2>/dev/null
     )"
     if [[ -n "$unreadable" ]]; then
@@ -431,31 +432,43 @@ backend_from_chroot() {
     local distro; distro="$(_detect_chroot_distro "$chroot_path")"
     local release; release="$(_detect_chroot_release "$chroot_path")"
 
-    local workdir; workdir="$(mktemp -d)"
-    # shellcheck disable=SC2064
-    trap "rm -rf '$workdir'" RETURN
+    # Review H3 + trap-shape: stage + import inside a subshell with an EXIT trap,
+    # so the workdir is reclaimed on EVERY exit — including `die` (which is
+    # `exit`, and would skip a RETURN trap, leaking the staging dir).  The trap
+    # is subshell-local, so it cannot clobber cmd_up's EXIT trap (the partial-up
+    # rollback).
+    (
+        local workdir; workdir="$(mktemp -d)"
+        trap 'rm -rf "$workdir"' EXIT
 
-    emit_metadata_yaml_container "$arch" "$distro" "$release" > "$workdir/metadata.yaml"
+        emit_metadata_yaml_container "$arch" "$distro" "$release" > "$workdir/metadata.yaml"
 
-    log_info "rebundling chroot → unified tarball"
-    # rootfs/ is a symlink into the chroot so we don't double the disk usage.
-    ln -s "$chroot_path" "$workdir/rootfs"
-    local out="$workdir/image.tar.gz"
-    # -h dereferences the rootfs symlink so its content lands as ./rootfs/
-    # in the archive.  Excludes match Phase 1's export-tarball excludes.
-    tar -C "$workdir" -h \
-        --exclude='./rootfs/proc/*' --exclude='./rootfs/sys/*' \
-        --exclude='./rootfs/dev/*'  --exclude='./rootfs/run/*' \
-        --exclude='./rootfs/tmp/*'  --exclude='./rootfs/.lab-chroot-mounts' \
-        --numeric-owner \
-        -czpf "$out" metadata.yaml rootfs
+        log_info "rebundling chroot → unified tarball"
+        local out="$workdir/image.tar.gz"
+        # Review H3: tar the chroot DIRECTLY under a rootfs/ prefix (via
+        # --transform).  We do NOT use `tar -h`: -h dereferences EVERY symlink in
+        # the tree, which (a) bakes host files into the image through absolute
+        # symlinks (host-content disclosure) and (b) aborts the build under
+        # set -e on a dangling symlink such as a systemd chroot's
+        # /etc/resolv.conf -> /run/... .  Preserving inner symlinks AS symlinks
+        # is correct and safe.  Excludes mirror Phase 1's export-tarball excludes,
+        # now expressed on chroot-relative paths.  The chroot -C comes first so a
+        # relative chroot_path resolves against the original cwd.
+        tar --numeric-owner -czpf "$out" \
+            --transform='s,^\./,rootfs/,' \
+            --exclude='./proc/*' --exclude='./sys/*' --exclude='./dev/*' \
+            --exclude='./run/*'  --exclude='./tmp/*' \
+            --exclude='./.lab-chroot-mounts' \
+            -C "$chroot_path" . \
+            -C "$workdir" metadata.yaml
 
-    log_info "importing into $LXC_ENGINE as alias '$image_alias'"
-    if ! "$LXC_CMD" image import "$out" --alias "$image_alias" >/dev/null; then
-        # Cleanup partial: a half-imported alias would block re-runs.
-        "$LXC_CMD" image delete "$image_alias" >/dev/null 2>&1 || true
-        die "$LXC_CMD image import failed; partial alias removed"
-    fi
+        log_info "importing into $LXC_ENGINE as alias '$image_alias'"
+        if ! "$LXC_CMD" image import "$out" --alias "$image_alias" >/dev/null; then
+            # Cleanup partial: a half-imported alias would block re-runs.
+            "$LXC_CMD" image delete "$image_alias" >/dev/null 2>&1 || true
+            die "$LXC_CMD image import failed; partial alias removed"
+        fi
+    ) || die "from_chroot: image build/import failed"
     log_info "imported: $image_alias"
 }
 
@@ -860,12 +873,32 @@ cmd_up() {
     install -d -m 0755 "$(lab_dir "$lab_name")"
     cp -f "$OPT_CONFIG" "$(lab_dir "$lab_name")/spec.toml"
 
-    # C-1: use a named function so lab_name is never eval'd as shell code when
-    # the EXIT trap fires; validate_name above ensures no metacharacters.
+    # Review H4: snapshot the instances that ALREADY belong to this lab (as
+    # `project\tname` lines, across all projects) so the partial-'up' rollback
+    # removes ONLY instances THIS run creates.  `up` is idempotent (existing
+    # instances are "left as-is"), so an incremental re-'up' that adds one
+    # instance must NOT force-delete the healthy pre-existing ones if the new
+    # one fails to come up.
+    local _PRE_INST; _PRE_INST="$(_instances_in_lab "$lab_name")"
+
+    # C-1: named function so lab_name is never eval'd as shell code when the EXIT
+    # trap fires; validate_name above ensures no metacharacters.
     _partial_up_cleanup_5() {
         local _lab="$1"
-        log_info "partial 'up' — running 'down' to clean up lab '$_lab'"
-        OPT_LAB="$_lab" OPT_CONFIG="" cmd_down 2>/dev/null || true
+        local _now; _now="$(_instances_in_lab "$_lab")"
+        [[ -n "$_now" ]] || return 0
+        local proj iname
+        while IFS=$'\t' read -r proj iname; do
+            [[ -z "$iname" ]] && continue
+            # Skip instances that pre-existed this run (transactional rollback).
+            grep -qxF "${proj}"$'\t'"${iname}" <<<"$_PRE_INST" && continue
+            local -a scope=()
+            [[ -n "$proj" && "$proj" != "default" ]] && scope=(--project "$proj")
+            log_info "partial 'up': removing new instance $iname"
+            "$LXC_CMD" stop   "${scope[@]}" "$iname" --force >/dev/null 2>&1 || true
+            "$LXC_CMD" delete "${scope[@]}" "$iname" --force >/dev/null 2>&1 || true
+        done <<<"$_now"
+        log_info "partial 'up': new instances rolled back in lab '$_lab' (pre-existing left intact)"
     }
     trap "_partial_up_cleanup_5 '${lab_name}'" EXIT
 
@@ -1778,4 +1811,8 @@ main() {
     esac
 }
 
-main "$@"
+# Guard so `source`-ing this script (unit tests) defines functions without
+# running main — matches phase1/2/3/4's source guard.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

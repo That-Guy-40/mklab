@@ -90,6 +90,15 @@ validate_name() {
         || die "invalid $ctx '$n': use only [a-zA-Z0-9._-], start with alphanumeric, max 63 chars"
 }
 
+# _in_set VALUE [MEMBER...] — true if VALUE equals one of the MEMBERs.  Used by
+# the partial-'up' rollback to skip pre-existing resources (Review H4).
+_in_set() {
+    local v="$1"; shift
+    local x
+    for x in "$@"; do [[ "$x" == "$v" ]] && return 0; done
+    return 1
+}
+
 # validate_device SPEC — sanity-check a per-service `devices` entry before it
 # becomes a `--device SPEC` argument.  A spec is either a host device path
 # (/dev/foo[:/dev/bar[:rwm]]) or a CDI device name (vendor.com/class=name, e.g.
@@ -378,6 +387,7 @@ backend_from_chroot() {
             -not -path "${chroot_path}/proc/*" \
             -not -path "${chroot_path}/sys/*" \
             -not -path "${chroot_path}/dev/*" \
+            ! -type l \
             -not -readable -print -quit 2>/dev/null
     )"
     if [[ -n "$unreadable" ]]; then
@@ -1115,15 +1125,53 @@ cmd_up() {
     # Keep a canonicalized copy of the TOML for export / destroy / status.
     cp -f "$OPT_CONFIG" "$(lab_dir "$lab_name")/spec.toml"
 
-    # Finding 1: use a named function so lab_name is never eval'd as shell code
-    # when the trap fires. Finding 14: also call stop_lab_quadlet to clean up
-    # any partially-written quadlet units (which would otherwise be picked up
-    # by systemd on the next daemon-reload).
+    # Review H4: snapshot the pod/container/network IDs that ALREADY belong to
+    # this lab, so the partial-'up' rollback removes ONLY what THIS run creates.
+    # `up` is idempotent (existing services are "left as-is"), so an incremental
+    # re-'up' that adds one service must NOT tear down the healthy pre-existing
+    # instances if the new one fails.
+    local -a _PRE_P=() _PRE_C=() _PRE_N=()
+    mapfile -t _PRE_P < <(podman pod ls -q \
+        --filter "label=${LAB_LABEL_LAB}=${lab_name}" --filter "label=${LAB_LABEL_TOOL}" 2>/dev/null)
+    mapfile -t _PRE_C < <(podman ps -aq \
+        --filter "label=${LAB_LABEL_LAB}=${lab_name}" --filter "label=${LAB_LABEL_TOOL}" 2>/dev/null)
+    mapfile -t _PRE_N < <(podman network ls -q \
+        --filter "label=${LAB_LABEL_LAB}=${lab_name}" --filter "label=${LAB_LABEL_TOOL}" 2>/dev/null)
+    local _PRE_TOTAL=$(( ${#_PRE_P[@]} + ${#_PRE_C[@]} + ${#_PRE_N[@]} ))
+
+    # Finding 1: named function so lab_name is never eval'd as shell code when
+    # the trap fires.  Finding 14: clean up partially-written quadlet units.
+    # Review H4: if NOTHING pre-existed this was a fresh 'up' and a full rollback
+    # is correct; otherwise (incremental re-'up') remove only the pods/containers/
+    # networks that appeared THIS run so a healthy pre-existing lab survives.
     _partial_up_cleanup_4() {
-        local _lab="$1"
-        log_info "partial 'up' — cleaning up lab '$_lab'"
-        stop_lab_quadlet "$_lab" 2>/dev/null || true
-        OPT_LAB="$_lab" OPT_CONFIG="" cmd_down 2>/dev/null || true
+        local _lab="$1" _id
+        if (( _PRE_TOTAL == 0 )); then
+            log_info "partial 'up' — fresh lab, rolling back '$_lab'"
+            stop_lab_quadlet "$_lab" 2>/dev/null || true
+            OPT_LAB="$_lab" OPT_CONFIG="" cmd_down 2>/dev/null || true
+            return 0
+        fi
+        local -a _now_p=() _now_c=() _now_n=()
+        mapfile -t _now_p < <(podman pod ls -q \
+            --filter "label=${LAB_LABEL_LAB}=${_lab}" --filter "label=${LAB_LABEL_TOOL}" 2>/dev/null)
+        mapfile -t _now_c < <(podman ps -aq \
+            --filter "label=${LAB_LABEL_LAB}=${_lab}" --filter "label=${LAB_LABEL_TOOL}" 2>/dev/null)
+        mapfile -t _now_n < <(podman network ls -q \
+            --filter "label=${LAB_LABEL_LAB}=${_lab}" --filter "label=${LAB_LABEL_TOOL}" 2>/dev/null)
+        for _id in "${_now_p[@]}"; do
+            _in_set "$_id" "${_PRE_P[@]}" && continue
+            podman pod rm -f "$_id" >/dev/null 2>&1 || true
+        done
+        for _id in "${_now_c[@]}"; do
+            _in_set "$_id" "${_PRE_C[@]}" && continue
+            podman rm -f "$_id" >/dev/null 2>&1 || true
+        done
+        for _id in "${_now_n[@]}"; do
+            _in_set "$_id" "${_PRE_N[@]}" && continue
+            podman network rm -- "$_id" >/dev/null 2>&1 || true
+        done
+        log_info "partial 'up': rolled back new resources in lab '$_lab' (pre-existing left intact)"
     }
     trap "_partial_up_cleanup_4 '${lab_name}'" EXIT
 
