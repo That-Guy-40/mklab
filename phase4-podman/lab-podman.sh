@@ -90,6 +90,37 @@ validate_name() {
         || die "invalid $ctx '$n': use only [a-zA-Z0-9._-], start with alphanumeric, max 63 chars"
 }
 
+# _in_set VALUE [MEMBER...] — true if VALUE equals one of the MEMBERs.  Used by
+# the partial-'up' rollback to skip pre-existing resources (Review H4).
+_in_set() {
+    local v="$1"; shift
+    local x
+    for x in "$@"; do [[ "$x" == "$v" ]] && return 0; done
+    return 1
+}
+
+# _pub_host SPEC — default a published port to loopback (Review F4).  A bare
+# "8080:80" binds 0.0.0.0 (every host interface, reachable from the lab LAN);
+# prepend a host bind IP so a throwaway lab isn't exposed by default.  A spec
+# that already names a bind IP (ip:host:container, or [ipv6]:…) is left alone —
+# the explicit opt-in to a wider bind.  Override with LAB_PUBLISH_HOST (e.g.
+# 0.0.0.0 for all interfaces; empty = the engine's default).
+_pub_host() {
+    local spec="$1" host="${LAB_PUBLISH_HOST-127.0.0.1}"
+    [[ -z "$host" ]] && { printf '%s' "$spec"; return; }
+    local body="${spec%%/*}" proto=""
+    [[ "$spec" == */* ]] && proto="/${spec#*/}"
+    local colons="${body//[^:]/}"
+    if [[ "$body" == \[* || ${#colons} -ge 2 ]]; then
+        printf '%s' "$spec"; return
+    fi
+    if [[ ${#colons} -eq 1 ]]; then
+        printf '%s:%s%s' "$host" "$body" "$proto"
+    else
+        printf '%s::%s%s' "$host" "$body" "$proto"
+    fi
+}
+
 # validate_device SPEC — sanity-check a per-service `devices` entry before it
 # becomes a `--device SPEC` argument.  A spec is either a host device path
 # (/dev/foo[:/dev/bar[:rwm]]) or a CDI device name (vendor.com/class=name, e.g.
@@ -251,12 +282,18 @@ check_linger_if_quadlet() {
 }
 
 check_selinux_label() {
-    # Return "Z" if SELinux is enforcing, empty otherwise.  Used to auto-append
-    # :Z to volume mounts so bind-mounts work on Fedora/Rocky/Alma.
+    # Return "z" if SELinux is enforcing, empty otherwise.  Used to auto-append
+    # a relabel suffix to bind mounts so they work on Fedora/Rocky/Alma.
+    # Review M3: default to ":z" (SHARED relabel), not ":Z" (PRIVATE, per-container
+    # MCS category).  ":Z" recursively relabels the host tree with a category the
+    # host itself can no longer access — mounting a large/shared dir like /usr or
+    # /home could lock the host out of its own files.  ":z" is the safer default;
+    # a user who truly needs private isolation can write ":Z" explicitly (it is
+    # honored — see the `!= *:Z` guard at the call sites).
     if have getenforce; then
         local s; s="$(getenforce 2>/dev/null || true)"
         if [[ "$s" == "Enforcing" ]]; then
-            printf 'Z'
+            printf 'z'
             return 0
         fi
     fi
@@ -378,6 +415,7 @@ backend_from_chroot() {
             -not -path "${chroot_path}/proc/*" \
             -not -path "${chroot_path}/sys/*" \
             -not -path "${chroot_path}/dev/*" \
+            ! -type l \
             -not -readable -print -quit 2>/dev/null
     )"
     if [[ -n "$unreadable" ]]; then
@@ -515,7 +553,7 @@ emit_pod_unit() {
         while IFS= read -r line; do
             [[ -z "$line" ]] && continue
             # Finding 3: reject newlines in port strings that would inject unit directives.
-            printf 'PublishPort=%s\n' "$(sanitize_unit_value "$line" "PublishPort")"
+            printf 'PublishPort=%s\n' "$(sanitize_unit_value "$(_pub_host "$line")" "PublishPort")"
         done < <(jq -r '.[]?' <<<"$publish_arr")
         printf '\n[Install]\nWantedBy=default.target\n'
     } > "$unit"
@@ -553,7 +591,7 @@ emit_container_unit() {
         # PublishPort
         local p
         while IFS= read -r p; do
-            [[ -n "$p" ]] && printf 'PublishPort=%s\n' "$(sanitize_unit_value "$p" "PublishPort")"
+            [[ -n "$p" ]] && printf 'PublishPort=%s\n' "$(sanitize_unit_value "$(_pub_host "$p")" "PublishPort")"
         done < <(jq -r '.ports[]?' <<<"$svc")
         # Volumes (with :Z appended if SELinux enforcing and no :Z/:z/:O already)
         local v
@@ -566,6 +604,7 @@ emit_container_unit() {
             case "$v" in
                 /*|./*|../*)
                     if [[ -n "$selinux_suffix" && "$v" != *:Z && "$v" != *:z && "$v" != *:O ]]; then
+                        log_warn "SELinux: relabeling '${v%%:*}' with ':${selinux_suffix}' (shared) so the bind mount works; add an explicit ':Z'/':z'/':O' to override"
                         v="${v}:${selinux_suffix}"
                     fi ;;
             esac
@@ -675,7 +714,7 @@ start_service_plain() {
     # Ports, env, volumes
     local p
     while IFS= read -r p; do
-        [[ -n "$p" ]] && args+=(-p "$p")
+        [[ -n "$p" ]] && args+=(-p "$(_pub_host "$p")")
     done < <(jq -r '.ports[]?' <<<"$svc")
     local kk vv
     while IFS=$'\t' read -r kk vv; do
@@ -686,6 +725,7 @@ start_service_plain() {
     while IFS= read -r v; do
         [[ -z "$v" ]] && continue
         if [[ -n "$selinux_suffix" && "$v" != *:Z && "$v" != *:z && "$v" != *:O ]]; then
+            log_warn "SELinux: relabeling '${v%%:*}' with ':${selinux_suffix}' (shared) so the bind mount works; add an explicit ':Z'/':z'/':O' to override"
             v="${v}:${selinux_suffix}"
         fi
         args+=(-v "$v")
@@ -760,7 +800,7 @@ start_services_in_pod() {
         # Pod-level published ports.
         local p
         while IFS= read -r p; do
-            [[ -n "$p" ]] && pod_args+=(-p "$p")
+            [[ -n "$p" ]] && pod_args+=(-p "$(_pub_host "$p")")
             [[ -n "$p" ]] && {
                 local hp="${p%%:*}"
                 [[ "$hp" =~ ^[0-9]+$ ]] && check_ip_unprivileged_port_start "$hp"
@@ -832,6 +872,7 @@ start_services_in_pod() {
             case "$v" in
                 /*|./*|../*)
                     if [[ -n "$selinux_suffix" && "$v" != *:Z && "$v" != *:z && "$v" != *:O ]]; then
+                        log_warn "SELinux: relabeling '${v%%:*}' with ':${selinux_suffix}' (shared) so the bind mount works; add an explicit ':Z'/':z'/':O' to override"
                         v="${v}:${selinux_suffix}"
                     fi ;;
             esac
@@ -1043,7 +1084,7 @@ cmd_run() {
     if [[ -n "${OPT_PORTS:-}" ]]; then
         IFS=',' read -ra _ports <<<"$OPT_PORTS"
         for p in "${_ports[@]}"; do
-            args+=(-p "$p")
+            args+=(-p "$(_pub_host "$p")")
             local hp="${p%%:*}"
             [[ "$hp" =~ ^[0-9]+$ ]] && check_ip_unprivileged_port_start "$hp"
         done
@@ -1070,6 +1111,7 @@ cmd_run() {
             case "$v" in
                 /*|./*|../*)
                     if [[ -n "$selinux_suffix" && "$v" != *:Z && "$v" != *:z && "$v" != *:O ]]; then
+                        log_warn "SELinux: relabeling '${v%%:*}' with ':${selinux_suffix}' (shared) so the bind mount works; add an explicit ':Z'/':z'/':O' to override"
                         v="${v}:${selinux_suffix}"
                     fi ;;
             esac
@@ -1106,6 +1148,17 @@ cmd_up() {
     [[ -n "$lab_name" ]] || die "config missing [lab].name"
     # Finding 1, 4, 16: validate before trap/paths/labels to prevent injection.
     validate_name "$lab_name" "lab name"
+    # Review (name validation): the lab name was validated but service/pod names
+    # were not — yet they become quadlet unit *paths*, `--name`/`--hostname`,
+    # label values, and `grep` patterns.  Validate them ALL up front, before any
+    # state dir or unit file is written, so a bad name fails fast and cleanly.
+    local _n
+    while IFS= read -r _n; do
+        [[ -n "$_n" ]] && validate_name "$_n" "service name"
+    done < <(jq -r '.service // [] | .[].name // empty' <<<"$cfg_json")
+    while IFS= read -r _n; do
+        [[ -n "$_n" ]] && validate_name "$_n" "pod name"
+    done < <(jq -r '.pod // [] | .[].name // empty' <<<"$cfg_json")
 
     log_info "── bringing up lab '$lab_name' from $OPT_CONFIG ──"
     log_info "rootless network backend: $(detect_rootless_network)"
@@ -1115,15 +1168,53 @@ cmd_up() {
     # Keep a canonicalized copy of the TOML for export / destroy / status.
     cp -f "$OPT_CONFIG" "$(lab_dir "$lab_name")/spec.toml"
 
-    # Finding 1: use a named function so lab_name is never eval'd as shell code
-    # when the trap fires. Finding 14: also call stop_lab_quadlet to clean up
-    # any partially-written quadlet units (which would otherwise be picked up
-    # by systemd on the next daemon-reload).
+    # Review H4: snapshot the pod/container/network IDs that ALREADY belong to
+    # this lab, so the partial-'up' rollback removes ONLY what THIS run creates.
+    # `up` is idempotent (existing services are "left as-is"), so an incremental
+    # re-'up' that adds one service must NOT tear down the healthy pre-existing
+    # instances if the new one fails.
+    local -a _PRE_P=() _PRE_C=() _PRE_N=()
+    mapfile -t _PRE_P < <(podman pod ls -q \
+        --filter "label=${LAB_LABEL_LAB}=${lab_name}" --filter "label=${LAB_LABEL_TOOL}" 2>/dev/null)
+    mapfile -t _PRE_C < <(podman ps -aq \
+        --filter "label=${LAB_LABEL_LAB}=${lab_name}" --filter "label=${LAB_LABEL_TOOL}" 2>/dev/null)
+    mapfile -t _PRE_N < <(podman network ls -q \
+        --filter "label=${LAB_LABEL_LAB}=${lab_name}" --filter "label=${LAB_LABEL_TOOL}" 2>/dev/null)
+    local _PRE_TOTAL=$(( ${#_PRE_P[@]} + ${#_PRE_C[@]} + ${#_PRE_N[@]} ))
+
+    # Finding 1: named function so lab_name is never eval'd as shell code when
+    # the trap fires.  Finding 14: clean up partially-written quadlet units.
+    # Review H4: if NOTHING pre-existed this was a fresh 'up' and a full rollback
+    # is correct; otherwise (incremental re-'up') remove only the pods/containers/
+    # networks that appeared THIS run so a healthy pre-existing lab survives.
     _partial_up_cleanup_4() {
-        local _lab="$1"
-        log_info "partial 'up' — cleaning up lab '$_lab'"
-        stop_lab_quadlet "$_lab" 2>/dev/null || true
-        OPT_LAB="$_lab" OPT_CONFIG="" cmd_down 2>/dev/null || true
+        local _lab="$1" _id
+        if (( _PRE_TOTAL == 0 )); then
+            log_info "partial 'up' — fresh lab, rolling back '$_lab'"
+            stop_lab_quadlet "$_lab" 2>/dev/null || true
+            OPT_LAB="$_lab" OPT_CONFIG="" cmd_down 2>/dev/null || true
+            return 0
+        fi
+        local -a _now_p=() _now_c=() _now_n=()
+        mapfile -t _now_p < <(podman pod ls -q \
+            --filter "label=${LAB_LABEL_LAB}=${_lab}" --filter "label=${LAB_LABEL_TOOL}" 2>/dev/null)
+        mapfile -t _now_c < <(podman ps -aq \
+            --filter "label=${LAB_LABEL_LAB}=${_lab}" --filter "label=${LAB_LABEL_TOOL}" 2>/dev/null)
+        mapfile -t _now_n < <(podman network ls -q \
+            --filter "label=${LAB_LABEL_LAB}=${_lab}" --filter "label=${LAB_LABEL_TOOL}" 2>/dev/null)
+        for _id in "${_now_p[@]}"; do
+            _in_set "$_id" "${_PRE_P[@]}" && continue
+            podman pod rm -f "$_id" >/dev/null 2>&1 || true
+        done
+        for _id in "${_now_c[@]}"; do
+            _in_set "$_id" "${_PRE_C[@]}" && continue
+            podman rm -f "$_id" >/dev/null 2>&1 || true
+        done
+        for _id in "${_now_n[@]}"; do
+            _in_set "$_id" "${_PRE_N[@]}" && continue
+            podman network rm -- "$_id" >/dev/null 2>&1 || true
+        done
+        log_info "partial 'up': rolled back new resources in lab '$_lab' (pre-existing left intact)"
     }
     trap "_partial_up_cleanup_4 '${lab_name}'" EXIT
 
@@ -1676,10 +1767,18 @@ cmd_destroy() {
     fi
 
     local cname; cname="$(_resolve_container_name "$target")"
-    if podman ps -a --format '{{.Names}}' | grep -qx "$cname"; then
+    # Review M2: only destroy containers THIS tool manages (carry the
+    # lab-create.tool label) — `down` is label-scoped, so `destroy` must be too.
+    # Review L2: read owned names into a var (pipefail-safe) and match with
+    # `grep -Fxq` so a '.' in a name is literal, not a regex wildcard.
+    local _owned; _owned="$(podman ps -a --filter "label=${LAB_LABEL_TOOL}" \
+        --format '{{.Names}}' 2>/dev/null || true)"
+    if grep -Fxq "$cname" <<<"$_owned"; then
         log_info "stop+rm $cname"
         podman stop "$cname" >/dev/null 2>&1 || true
         podman rm   "$cname" >/dev/null 2>&1 || true
+    elif podman container exists "$cname"; then
+        die "refusing to destroy '$cname': not managed by $LAB_PROG (no ${LAB_LABEL_TOOL} label)"
     else
         die "no container named $cname"
     fi
@@ -1689,7 +1788,9 @@ cmd_destroy() {
 # ─── Subcommand: export ────────────────────────────────────────────────────
 # _yaml_str VALUE — emit VALUE as a double-quoted YAML string with
 # internal double-quotes escaped (Finding 8).
-_yaml_str() { printf '"%s"' "${1//\"/\\\"}"; }
+# Review L1: escape backslash FIRST, then double-quote, so a value ending in `\`
+# (or containing `"`) can't break out of / malform the quoted YAML scalar.
+_yaml_str() { local s="${1//\\/\\\\}"; printf '"%s"' "${s//\"/\\\"}"; }
 
 cmd_export() {
     local lab="${OPT_LAB:-${POS_ARGS[0]:-}}"
@@ -1741,7 +1842,10 @@ cmd_export() {
                 svc="$(jq -c --argjson i "$i" '.service[$i]' <<<"$cfg")"
                 sname="$(spec_get "$svc" name)"
                 simage="$(spec_get "$svc" image)"
-                # Finding 8: quote YAML keys and values to prevent injection.
+                # Finding 8 + Review L1: emit the free-text values (env values,
+                # ports, volumes) as escaped YAML scalars via _yaml_str so a `"`
+                # or `\` can't inject sibling keys / malform the doc.  Image and
+                # command keep their original format (engine-validated / plain).
                 printf '  %s:\n' "$(_yaml_str "$sname")"
                 [[ -n "$simage" ]] && printf '    image: %s\n' "$simage"
                 printf '    container_name: %s\n' "$(container_name_for "$lab" "$sname")"
@@ -1749,21 +1853,21 @@ cmd_export() {
                 while IFS= read -r p; do
                     [[ -z "$p" ]] && continue
                     if (( first )); then printf '    ports:\n'; first=0; fi
-                    printf '      - "%s"\n' "$p"
+                    printf '      - %s\n' "$(_yaml_str "$p")"
                 done < <(jq -r '.ports[]?' <<<"$svc")
                 first=1
                 local kk vv
                 while IFS=$'\t' read -r kk vv; do
                     [[ -z "$kk" ]] && continue
                     if (( first )); then printf '    environment:\n'; first=0; fi
-                    printf '      %s: "%s"\n' "$kk" "$vv"
+                    printf '      %s: %s\n' "$kk" "$(_yaml_str "$vv")"
                 done < <(jq -r '.environment // {} | to_entries[]? | "\(.key)\t\(.value)"' <<<"$svc")
                 first=1
                 local vol
                 while IFS= read -r vol; do
                     [[ -z "$vol" ]] && continue
                     if (( first )); then printf '    volumes:\n'; first=0; fi
-                    printf '      - "%s"\n' "$vol"
+                    printf '      - %s\n' "$(_yaml_str "$vol")"
                 done < <(jq -r '.volumes[]?' <<<"$svc")
                 local cmdline; cmdline="$(jq -r '.command // empty' <<<"$svc")"
                 [[ -n "$cmdline" ]] && printf '    command: %s\n' "$cmdline"

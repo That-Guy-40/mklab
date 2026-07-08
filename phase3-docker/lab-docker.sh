@@ -75,6 +75,37 @@ validate_name() {
         || die "invalid $ctx '$n': use only [a-zA-Z0-9._-], start with alphanumeric, max 63 chars"
 }
 
+# _in_set VALUE [MEMBER...] — true if VALUE equals one of the MEMBERs.  Used by
+# the partial-'up' rollback to skip pre-existing resources (Review H4).
+_in_set() {
+    local v="$1"; shift
+    local x
+    for x in "$@"; do [[ "$x" == "$v" ]] && return 0; done
+    return 1
+}
+
+# _pub_host SPEC — default a published port to loopback (Review F4).  A bare
+# "8080:80" binds 0.0.0.0 (every host interface, reachable from the lab LAN);
+# prepend a host bind IP so a throwaway lab isn't exposed by default.  A spec
+# that already names a bind IP (ip:host:container, or [ipv6]:…) is left alone —
+# that's the explicit opt-in to a wider bind.  Override the default with
+# LAB_PUBLISH_HOST (e.g. 0.0.0.0 for all interfaces; empty = docker's default).
+_pub_host() {
+    local spec="$1" host="${LAB_PUBLISH_HOST-127.0.0.1}"
+    [[ -z "$host" ]] && { printf '%s' "$spec"; return; }
+    local body="${spec%%/*}" proto=""
+    [[ "$spec" == */* ]] && proto="/${spec#*/}"
+    local colons="${body//[^:]/}"
+    if [[ "$body" == \[* || ${#colons} -ge 2 ]]; then
+        printf '%s' "$spec"; return
+    fi
+    if [[ ${#colons} -eq 1 ]]; then
+        printf '%s:%s%s' "$host" "$body" "$proto"
+    else
+        printf '%s::%s%s' "$host" "$body" "$proto"
+    fi
+}
+
 detect_host_arch() {
     case "$(uname -m)" in
         x86_64|amd64)         printf 'x86_64' ;;
@@ -321,6 +352,7 @@ backend_from_chroot() {
             -not -path "${chroot_path}/proc/*" \
             -not -path "${chroot_path}/sys/*" \
             -not -path "${chroot_path}/dev/*" \
+            ! -type l \
             -not -readable -print -quit 2>/dev/null
     )"
     if [[ -n "$unreadable" ]]; then
@@ -522,6 +554,10 @@ cmd_run() {
     if [[ -z "$image" && -z "${OPT_CHROOT:-}" && -z "${OPT_TARBALL:-}" && -z "${OPT_CONTEXT:-}" ]]; then
         die "need one of: --image IMG | --chroot PATH | --tarball FILE | --context DIR"
     fi
+    # Review M1: image is the first positional to `docker run`; reject a
+    # '-'-leading value so it can't inject flags (e.g. --privileged, -v /:/host).
+    [[ -z "$image" || "$image" != -* ]] \
+        || die "--image '$image' must not start with '-' (would inject flags into 'docker run')"
 
     require_docker
 
@@ -560,7 +596,7 @@ cmd_run() {
     local p
     if [[ -n "${OPT_PORTS:-}" ]]; then
         IFS=',' read -ra _ports <<<"$OPT_PORTS"
-        for p in "${_ports[@]}"; do args+=(-p "$p"); done
+        for p in "${_ports[@]}"; do args+=(-p "$(_pub_host "$p")"); done
     fi
     local e
     if [[ -n "${OPT_ENV:-}" ]]; then
@@ -621,14 +657,38 @@ cmd_up() {
 
     log_info "── bringing up lab '$lab_name' from $OPT_CONFIG ──"
 
-    # Finding 23: on partial failure, actually run 'down' to clean up started
-    # containers and networks instead of just printing a hint.
-    # Finding 1: use a helper function in the trap so the validated lab name
-    # is never eval'd as shell code at fire time.
+    # Review H4: snapshot the container/network IDs that ALREADY belong to this
+    # lab, so the partial-'up' rollback removes ONLY what THIS run creates.  `up`
+    # is idempotent (existing services are "left as-is"), so an incremental
+    # re-'up' that adds one service must NOT tear down the healthy, pre-existing
+    # containers if the new one fails.
+    local -a _PRE_C=() _PRE_N=()
+    mapfile -t _PRE_C < <(docker ps -aq \
+        --filter "label=${LAB_LABEL_LAB}=${lab_name}" --filter "label=${LAB_LABEL_TOOL}" 2>/dev/null)
+    mapfile -t _PRE_N < <(docker network ls -q \
+        --filter "label=${LAB_LABEL_LAB}=${lab_name}" --filter "label=${LAB_LABEL_TOOL}" 2>/dev/null)
+
+    # Finding 23 + Review H4: on partial failure, roll back the resources THIS
+    # run created (diff current-vs-pre-existing by ID) instead of tearing the
+    # whole lab down.  Finding 1: the validated lab name is passed as an arg, so
+    # it is never eval'd as shell code when the trap fires.
     _partial_up_cleanup() {
-        local _lab="$1"
-        log_info "partial 'up' — running 'down' to clean up lab '$_lab'"
-        OPT_LAB="$_lab" OPT_CONFIG="" cmd_down 2>/dev/null || true
+        local _lab="$1" _id _removed=0
+        local -a _now_c=() _now_n=()
+        mapfile -t _now_c < <(docker ps -aq \
+            --filter "label=${LAB_LABEL_LAB}=${_lab}" --filter "label=${LAB_LABEL_TOOL}" 2>/dev/null)
+        mapfile -t _now_n < <(docker network ls -q \
+            --filter "label=${LAB_LABEL_LAB}=${_lab}" --filter "label=${LAB_LABEL_TOOL}" 2>/dev/null)
+        for _id in "${_now_c[@]}"; do
+            _in_set "$_id" "${_PRE_C[@]}" && continue   # _PRE_C: cmd_up local, via dynamic scope
+            docker rm -f "$_id" >/dev/null 2>&1 || true
+            _removed=$((_removed+1))
+        done
+        for _id in "${_now_n[@]}"; do
+            _in_set "$_id" "${_PRE_N[@]}" && continue
+            docker network rm "$_id" >/dev/null 2>&1 || true
+        done
+        log_info "partial 'up': rolled back ${_removed} new container(s) in lab '$_lab' (pre-existing left intact)"
     }
     trap "_partial_up_cleanup '${lab_name}'" EXIT
 
@@ -678,6 +738,13 @@ cmd_up() {
     for sname in "${ordered_names[@]}"; do
         local svc; svc="$(jq -c --arg n "$sname" '.[] | select(.name==$n)' <<<"$all_svcs")"
         local simage; simage="$(spec_get "$svc" image)"
+        # Review M1: the image is the first POSITIONAL to `docker run`, so an
+        # `image = "--privileged"` / `"-v"` in a TOML topology would inject flags
+        # and defeat the "no privileged, no host-mounts from config" posture.
+        # Every other config value lands in a flag-argument slot; this one didn't
+        # have the '-'-leading guard the push/network paths already use.
+        [[ -z "$simage" || "$simage" != -* ]] \
+            || die "service '$sname': image '$simage' must not start with '-' (would inject flags into 'docker run')"
 
         # Cross-phase engine routing.
         local sengine; sengine="$(spec_get "$svc" engine)"
@@ -747,7 +814,7 @@ cmd_up() {
         # Ports
         local pp
         while IFS= read -r pp; do
-            [[ -n "$pp" ]] && args+=(-p "$pp")
+            [[ -n "$pp" ]] && args+=(-p "$(_pub_host "$pp")")
         done < <(jq -r '.ports[]?' <<<"$svc")
 
         # Env — skip null-value entries (inherit-from-host semantics, Finding 32)
@@ -970,13 +1037,23 @@ cmd_destroy() {
     fi
 
     local cname; cname="$(_resolve_container_name "$target")"
-    if docker ps -a --format '{{.Names}}' | grep -qx "$cname"; then
+    # Review M2: only destroy containers THIS tool manages (carry the
+    # lab-create.tool label) — `down` is label-scoped, so `destroy` must be too,
+    # or a student could remove another student's like-named container on a
+    # shared daemon.  Review L2: read the owned-names list into a var first, so a
+    # `grep -q` closing the pipe can't invert the check under `set -o pipefail`;
+    # `grep -Fxq` treats '.' in names literally, not as a regex wildcard.
+    local _owned; _owned="$(docker ps -a --filter "label=${LAB_LABEL_TOOL}" \
+        --format '{{.Names}}' 2>/dev/null || true)"
+    if grep -Fxq "$cname" <<<"$_owned"; then
         log_info "removing $cname"
         # docker rm -f handles both running and stopped containers;
         # fall back to stop+rm for daemons that reject SIGKILL via rm -f.
         docker rm -f "$cname" >/dev/null 2>&1 \
             || { docker stop "$cname" >/dev/null 2>&1 || true
                  docker rm   "$cname" >/dev/null 2>&1 || true; }
+    elif docker inspect "$cname" >/dev/null 2>&1; then
+        die "refusing to destroy '$cname': not managed by $LAB_PROG (no ${LAB_LABEL_TOOL} label)"
     else
         die "no container named $cname"
     fi
@@ -1217,7 +1294,9 @@ cmd_inspect() {
 # commented hint so the reader knows it won't build standalone.
 # _yaml_str VALUE  — emit VALUE as a double-quoted YAML string with
 # internal double-quotes and backslashes escaped (Findings 20, 21, 22).
-_yaml_str() { printf '"%s"' "${1//\"/\\\"}"; }
+# Review L1: escape backslash FIRST, then double-quote, so a value ending in `\`
+# (or containing `"`) can't break out of / malform the quoted YAML scalar.
+_yaml_str() { local s="${1//\\/\\\\}"; printf '"%s"' "${s//\"/\\\"}"; }
 
 cmd_export() {
     [[ -n "${OPT_CONFIG:-}" ]] || die "usage: $LAB_PROG export --config topology.toml [--format compose]"
@@ -1292,7 +1371,7 @@ cmd_export() {
         while IFS= read -r p; do
             [[ -z "$p" ]] && continue
             if (( first )); then printf '    ports:\n'; first=0; fi
-            printf '      - "%s"\n' "$p"
+            printf '      - %s\n' "$(_yaml_str "$p")"
         done < <(jq -r '.ports[]?' <<<"$svc")
 
         first=1
@@ -1300,7 +1379,7 @@ cmd_export() {
         while IFS=$'\t' read -r kk vv; do
             [[ -z "$kk" ]] && continue
             if (( first )); then printf '    environment:\n'; first=0; fi
-            printf '      %s: "%s"\n' "$kk" "$vv"
+            printf '      %s: %s\n' "$kk" "$(_yaml_str "$vv")"
         done < <(jq -r '.environment // {} | to_entries[]? | "\(.key)\t\(.value)"' <<<"$svc")
 
         first=1
@@ -1308,7 +1387,7 @@ cmd_export() {
         while IFS= read -r vol; do
             [[ -z "$vol" ]] && continue
             if (( first )); then printf '    volumes:\n'; first=0; fi
-            printf '      - "%s"\n' "$vol"
+            printf '      - %s\n' "$(_yaml_str "$vol")"
             vol_src="${vol%%:*}"
             case "$vol_src" in
                 /*|./*|../*) : ;;                           # bind mount
@@ -1334,7 +1413,7 @@ cmd_export() {
                 local k part
                 for ((k=0; k<cmdcount; k++)); do
                     part="$(jq -r --argjson k "$k" '.cmd[$k]' <<<"$svc")"
-                    printf '      - "%s"\n' "$part"
+                    printf '      - %s\n' "$(_yaml_str "$part")"
                 done
             fi
         fi
@@ -1546,4 +1625,9 @@ main() {
     esac
 }
 
-[[ "${BASH_SOURCE[0]}" == "${0}" ]] && main "$@"
+# Guard so `source`-ing this script (unit tests) defines functions without
+# running main.  Use the `if` form (not `[[ ]] && main`, which returns 1 when
+# sourced and would trip a caller's `set -e`) — matches phase1/2/4/5.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

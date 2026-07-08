@@ -9,6 +9,37 @@ their own subdir under `examples/` (e.g. `tiny-linux-experiments/`,
 
 ## Working practices
 
+### Every test emits exactly one human-readable verdict line
+
+A test's **minimal output is a single terminal verdict**: `PASS: <what was
+proven>` (exit 0), `FAIL: <what broke>` (exit 1), or `SKIP: <why>` (exit 77) —
+use the `pass`/`fail`/`skip`/`note` helpers in each phase's `tests/lib.sh`. **No
+test may ever exit silently.** A bare non-zero exit with no message is a test
+bug, not a result — the reader can't tell a real failure from a broken harness.
+
+- **A failure must name the specific defect, not just say "failed."** Give each
+  assertion its own `fail`/`REGRESSION:` message that states *what* broke and,
+  ideally, the expected-vs-actual — e.g.
+  `fail "REGRESSION: rm -rf recursed through the live bind and deleted the source"`,
+  not `fail "assertion 3"`. One assertion → one specific message, so the printed
+  line alone tells you which invariant was violated. **Prefix the message with
+  `REGRESSION:`** when the assertion guards a previously-fixed bug from coming
+  back (a regression test) — it flags the failure as "a fix was undone," which is
+  more urgent than a first-time failure.
+
+- Prefer intermediate progress via `note` (a `  - …` line), but the run must
+  still **end on a `PASS`/`FAIL`/`SKIP`**.
+- **The silent-exit trap:** functions under test report failure/refusal with
+  `die` (which is `exit`, not `return`). Calling one in a plain `if f; then …`
+  lets that `exit` blow past the `if` and kill the whole test *before its
+  assertions run* — and if you redirected its stderr, the terminal is left blank
+  with a bare `rc=1`. **Wrap a `die`-ing call in a subshell** — `if ( f ); then
+  …` — so the exit is contained and the test continues to its verdict.
+- **Belt-and-suspenders:** give the test an `EXIT`-trap safety net that prints
+  `FAIL: test exited early (rc=N)` when `rc ∉ {0,77}`, so an unexpected `die`
+  can never again produce silent output. (Real incident: two root-gated tests
+  did exactly this — see [`REVIEW-phases-1-5.md`](REVIEW-phases-1-5.md).)
+
 ### "Fix a value everywhere" tasks: map the full blast radius BEFORE the first edit
 
 When changing a value, path, or name that recurs across the repo (a **port**, a

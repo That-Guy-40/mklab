@@ -173,7 +173,7 @@ command  = "sleep infinity"
 | `from_chroot` | path | `docker import` this tree, then run |
 | `build` | path | `docker buildx build` this directory, then run |
 | `networks` | array | first one is attached at run time, the rest via `docker network connect` |
-| `ports` | array | strings, docker `-p` syntax |
+| `ports` | array | strings, docker `-p` syntax. **Bind defaults to loopback:** a bare `"8080:80"` publishes on `127.0.0.1` (not every interface), so a throwaway lab isn't exposed to the LAN. Write an explicit bind (`"0.0.0.0:8080:80"`) to widen it, or set `LAB_PUBLISH_HOST=0.0.0.0` to change the default. |
 | `environment` | table | key→value, becomes `-e K=V` |
 | `volumes` | array | strings, docker `-v` syntax |
 | `command` | string | space-split. For complex argv use `cmd = ["a", "b", "c"]` |

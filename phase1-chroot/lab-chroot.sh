@@ -970,6 +970,32 @@ manager_none_enter() {
     return "$rc"
 }
 
+# _mounts_under PATH — print every /proc/mounts mountpoint at or under PATH,
+# deepest first.  Ground truth for the two functions below.  NOTE: mount points
+# in /proc/mounts are octal-escaped (space → \040); lab targets live under the
+# state dir and don't contain such characters, so a literal compare is safe here.
+_mounts_under() {
+    local real; real="$(realpath -m "$1" 2>/dev/null || printf '%s' "$1")"
+    awk -v t="$real" '
+        $2==t || index($2, t "/")==1 { print length($2) "\t" $2 }
+    ' /proc/mounts 2>/dev/null | sort -rn | cut -f2-
+}
+
+# _force_unmount_tree TARGET — lazily unmount anything still mounted at/under
+# TARGET, verified against /proc/mounts (Review H1).  destroy() must NOT trust
+# the .lab-chroot-mounts tracking file alone: if that file is missing or stale
+# (a crash between `mount` and its record, an externally-added bind, an old-format
+# file) while a bind mount such as /dev is still live, a later `rm -rf` recurses
+# THROUGH the bind into the host's real /dev and deletes device nodes as root.
+_force_unmount_tree() {
+    local target="$1" mp
+    [[ -n "$target" ]] || return 0
+    while IFS= read -r mp; do
+        [[ -n "$mp" ]] || continue
+        umount -l "$mp" 2>/dev/null || log_warn "could not unmount $mp before rm -rf"
+    done < <(_mounts_under "$target")
+}
+
 # _safe_rm_rf PATH — sanity-check PATH before rm -rf (Finding 14).
 # Protects against operator-tampered manifests or empty/short target fields
 # that could wipe the wrong directory.
@@ -982,12 +1008,19 @@ _safe_rm_rf() {
     local depth; depth="$(awk -F/ '{print NF-1}' <<<"$path")"
     [[ "$depth" -ge 2 ]] \
         || die "destroy: target path '$path' is too shallow to be a chroot (at least /a/b required)"
+    # Review H1: fail closed if ANYTHING is still mounted under the tree.  The
+    # destroy paths call _force_unmount_tree first; this is the last-resort
+    # assertion so no rm -rf can ever recurse into a live bind mount (host /dev).
+    local _stale; _stale="$(_mounts_under "$path")"
+    [[ -z "$_stale" ]] \
+        || die "destroy: '$path' still has active mounts under it — refusing rm -rf:"$'\n'"$_stale"
     rm -rf -- "$path"
 }
 
 manager_none_destroy() {
     local target="$1"
     unbind_essentials "$target"
+    _force_unmount_tree "$target"   # Review H1: /proc/mounts ground truth, not just the tracking file
     _safe_rm_rf "$target"
 }
 
@@ -1049,6 +1082,7 @@ manager_schroot_enter() {
 manager_schroot_destroy() {
     local name="$1" target="$2"
     rm -f "$(schroot_conf_path "$name")"
+    _force_unmount_tree "$target"   # Review H1
     _safe_rm_rf "$target"
 }
 
@@ -1135,6 +1169,7 @@ manager_nspawn_destroy() {
     local name="$1" target="$2"
     local link; link="$(nspawn_machines_link "$name")"
     [[ -L "$link" ]] && rm -f "$link"
+    _force_unmount_tree "$target"   # Review H1
     _safe_rm_rf "$target"
 }
 
@@ -1480,6 +1515,9 @@ SYSTEMD_INIT
             # may not exist in this VM's terminfo database.  Fall back to
             # xterm-256color so interactive tools (less, vi, …) work without
             # manual TERM overrides.  No-op when $TERM is already known.
+            # A minimal chroot may not have /etc/profile.d yet — create it
+            # (found by CI: export-initrd errored on a bare fakeroot).
+            mkdir -p "$target/etc/profile.d"
             cat > "$target/etc/profile.d/term-fallback.sh" << 'TERM_FALLBACK'
 #!/bin/sh
 [ -n "${TERM:-}" ] && ! infocmp "$TERM" >/dev/null 2>&1 && export TERM=xterm-256color

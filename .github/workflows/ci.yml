@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: shellcheck + bash -n
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Syntax check every tracked shell script
+        run: |
+          rc=0
+          while IFS= read -r f; do
+            bash -n "$f" || { echo "bash -n FAILED: $f"; rc=1; }
+          done < <(git ls-files '*.sh')
+          exit $rc
+      - name: shellcheck the phase drivers
+        # -x follows sourced libs. --severity=warning ignores info-level *style*
+        # notes (SC2295/SC2012/SC2015 etc.) that vary by shellcheck version; the
+        # three excluded codes are the repo's documented-intentional warnings
+        # (validated-name traps, declare+assign, dynamic-scope vars). Fail on any
+        # real warning or error.
+        run: |
+          shellcheck -x --severity=warning -e SC2064,SC2155,SC2034 \
+            phase1-chroot/lab-chroot.sh \
+            phase2-qemu-vm/lab-vm.sh \
+            phase3-docker/lab-docker.sh \
+            phase4-podman/lab-podman.sh \
+            phase5-lxd/lab-lxd.sh
+
+  docs:
+    name: link + learning-path integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Markdown link check (0 broken links)
+        run: python3 tools/link_check.py
+      - name: Learning-path routing + freshness gate
+        run: python3 tools/paths.py --check
+
+  shell-tests:
+    name: shell test suites (daemon/root tests self-skip)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Install jq + tomlq
+        run: |
+          sudo apt-get update && sudo apt-get install -y jq
+          pip install yq            # provides tomlq (needs jq)
+      - name: Run every phase's run-all.sh
+        # Tests needing docker/podman/incus/root exit 77 (skip); run-all.sh only
+        # fails the job on a real FAIL, so the pure-logic tests are the gate here.
+        run: |
+          rc=0
+          for d in phase1-chroot phase2-qemu-vm phase3-docker phase4-podman phase5-lxd; do
+            echo "::group::$d"
+            bash "$d/tests/run-all.sh" || rc=1
+            echo "::endgroup::"
+          done
+          exit $rc
+
+  python-tests:
+    name: pytest (phase6 TUI + phase6b web)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+      - name: phase6-tui pytest
+        working-directory: phase6-tui
+        run: uv run --frozen pytest -q
+      - name: phase6b-web pytest
+        working-directory: phase6b-web
+        run: uv run --frozen pytest -q

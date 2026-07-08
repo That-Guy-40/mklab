@@ -185,13 +185,13 @@ probe_engine() {
         if [[ "$incus_status" == "fail" ]]; then
             msg+="
         incus is installed but failed; underlying error:
-          $(incus info 2>&1 | head -3 | sed 's/^/          /')
+          $(incus info 2>&1 | head -3 | sed 's/^/          /' || true)
         Fix:  sudo systemctl start incus    AND    sudo usermod -aG incus-admin \$USER"
         fi
         if [[ "$lxc_status" == "fail" ]]; then
             msg+="
         lxc is installed but failed; underlying error:
-          $(lxc info 2>&1 | head -3 | sed 's/^/          /')
+          $(lxc info 2>&1 | head -3 | sed 's/^/          /' || true)
         Fix:  sudo systemctl start snap.lxd.daemon    AND    sudo usermod -aG lxd \$USER"
         fi
         die "$msg"
@@ -416,6 +416,7 @@ backend_from_chroot() {
             -not -path "${chroot_path}/proc/*" \
             -not -path "${chroot_path}/sys/*" \
             -not -path "${chroot_path}/dev/*" \
+            ! -type l \
             -not -readable -print -quit 2>/dev/null
     )"
     if [[ -n "$unreadable" ]]; then
@@ -431,31 +432,43 @@ backend_from_chroot() {
     local distro; distro="$(_detect_chroot_distro "$chroot_path")"
     local release; release="$(_detect_chroot_release "$chroot_path")"
 
-    local workdir; workdir="$(mktemp -d)"
-    # shellcheck disable=SC2064
-    trap "rm -rf '$workdir'" RETURN
+    # Review H3 + trap-shape: stage + import inside a subshell with an EXIT trap,
+    # so the workdir is reclaimed on EVERY exit — including `die` (which is
+    # `exit`, and would skip a RETURN trap, leaking the staging dir).  The trap
+    # is subshell-local, so it cannot clobber cmd_up's EXIT trap (the partial-up
+    # rollback).
+    (
+        local workdir; workdir="$(mktemp -d)"
+        trap 'rm -rf "$workdir"' EXIT
 
-    emit_metadata_yaml_container "$arch" "$distro" "$release" > "$workdir/metadata.yaml"
+        emit_metadata_yaml_container "$arch" "$distro" "$release" > "$workdir/metadata.yaml"
 
-    log_info "rebundling chroot → unified tarball"
-    # rootfs/ is a symlink into the chroot so we don't double the disk usage.
-    ln -s "$chroot_path" "$workdir/rootfs"
-    local out="$workdir/image.tar.gz"
-    # -h dereferences the rootfs symlink so its content lands as ./rootfs/
-    # in the archive.  Excludes match Phase 1's export-tarball excludes.
-    tar -C "$workdir" -h \
-        --exclude='./rootfs/proc/*' --exclude='./rootfs/sys/*' \
-        --exclude='./rootfs/dev/*'  --exclude='./rootfs/run/*' \
-        --exclude='./rootfs/tmp/*'  --exclude='./rootfs/.lab-chroot-mounts' \
-        --numeric-owner \
-        -czpf "$out" metadata.yaml rootfs
+        log_info "rebundling chroot → unified tarball"
+        local out="$workdir/image.tar.gz"
+        # Review H3: tar the chroot DIRECTLY under a rootfs/ prefix (via
+        # --transform).  We do NOT use `tar -h`: -h dereferences EVERY symlink in
+        # the tree, which (a) bakes host files into the image through absolute
+        # symlinks (host-content disclosure) and (b) aborts the build under
+        # set -e on a dangling symlink such as a systemd chroot's
+        # /etc/resolv.conf -> /run/... .  Preserving inner symlinks AS symlinks
+        # is correct and safe.  Excludes mirror Phase 1's export-tarball excludes,
+        # now expressed on chroot-relative paths.  The chroot -C comes first so a
+        # relative chroot_path resolves against the original cwd.
+        tar --numeric-owner -czpf "$out" \
+            --transform='s,^\./,rootfs/,' \
+            --exclude='./proc/*' --exclude='./sys/*' --exclude='./dev/*' \
+            --exclude='./run/*'  --exclude='./tmp/*' \
+            --exclude='./.lab-chroot-mounts' \
+            -C "$chroot_path" . \
+            -C "$workdir" metadata.yaml
 
-    log_info "importing into $LXC_ENGINE as alias '$image_alias'"
-    if ! "$LXC_CMD" image import "$out" --alias "$image_alias" >/dev/null; then
-        # Cleanup partial: a half-imported alias would block re-runs.
-        "$LXC_CMD" image delete "$image_alias" >/dev/null 2>&1 || true
-        die "$LXC_CMD image import failed; partial alias removed"
-    fi
+        log_info "importing into $LXC_ENGINE as alias '$image_alias'"
+        if ! "$LXC_CMD" image import "$out" --alias "$image_alias" >/dev/null; then
+            # Cleanup partial: a half-imported alias would block re-runs.
+            "$LXC_CMD" image delete "$image_alias" >/dev/null 2>&1 || true
+            die "$LXC_CMD image import failed; partial alias removed"
+        fi
+    ) || die "from_chroot: image build/import failed"
     log_info "imported: $image_alias"
 }
 
@@ -465,31 +478,34 @@ backend_from_tarball() {
     local tarball="$1" image_alias="$2"
     [[ -r "$tarball" ]] || die "from-tarball: not readable: $tarball"
 
-    local workdir; workdir="$(mktemp -d)"
-    # shellcheck disable=SC2064
-    trap "rm -rf '$workdir'" RETURN
+    # Review trap-shape: subshell + EXIT trap (reclaims workdir on `die`; a
+    # RETURN trap would not fire; subshell-local so no clobber of cmd_up's trap).
+    (
+        workdir="$(mktemp -d)"
+        trap 'rm -rf "$workdir"' EXIT
 
-    log_info "extracting Phase 1 tarball into staging rootfs/"
-    install -d "$workdir/rootfs"
-    # H-3: --no-absolute-names prevents absolute-path members from writing
-    # outside the target directory; without it a crafted tarball entry like
-    # /etc/cron.d/evil would write to the host /etc/cron.d/evil.
-    tar -C "$workdir/rootfs" -xpf "$tarball" --numeric-owner --no-absolute-names
+        log_info "extracting Phase 1 tarball into staging rootfs/"
+        install -d "$workdir/rootfs"
+        # H-3: --no-absolute-names prevents absolute-path members from writing
+        # outside the target directory; without it a crafted tarball entry like
+        # /etc/cron.d/evil would write to the host /etc/cron.d/evil.
+        tar -C "$workdir/rootfs" -xpf "$tarball" --numeric-owner --no-absolute-names
 
-    local arch; arch="$(detect_host_arch)"
-    local distro; distro="$(_detect_chroot_distro "$workdir/rootfs")"
-    local release; release="$(_detect_chroot_release "$workdir/rootfs")"
-    emit_metadata_yaml_container "$arch" "$distro" "$release" > "$workdir/metadata.yaml"
+        local arch; arch="$(detect_host_arch)"
+        local distro; distro="$(_detect_chroot_distro "$workdir/rootfs")"
+        local release; release="$(_detect_chroot_release "$workdir/rootfs")"
+        emit_metadata_yaml_container "$arch" "$distro" "$release" > "$workdir/metadata.yaml"
 
-    local out="$workdir/image.tar.gz"
-    log_info "rebundling → unified tarball"
-    tar -C "$workdir" --numeric-owner -czpf "$out" metadata.yaml rootfs
+        local out="$workdir/image.tar.gz"
+        log_info "rebundling → unified tarball"
+        tar -C "$workdir" --numeric-owner -czpf "$out" metadata.yaml rootfs
 
-    log_info "importing into $LXC_ENGINE as alias '$image_alias'"
-    if ! "$LXC_CMD" image import "$out" --alias "$image_alias" >/dev/null; then
-        "$LXC_CMD" image delete "$image_alias" >/dev/null 2>&1 || true
-        die "$LXC_CMD image import failed; partial alias removed"
-    fi
+        log_info "importing into $LXC_ENGINE as alias '$image_alias'"
+        if ! "$LXC_CMD" image import "$out" --alias "$image_alias" >/dev/null; then
+            "$LXC_CMD" image delete "$image_alias" >/dev/null 2>&1 || true
+            die "$LXC_CMD image import failed; partial alias removed"
+        fi
+    ) || die "from-tarball: image build/import failed"
     log_info "imported: $image_alias"
 }
 
@@ -532,51 +548,53 @@ backend_from_chroot_vm() {
     [[ -n "$mbr_bin" ]] \
         || die "syslinux MBR binary not found.  Install: apt-get install -y syslinux-common"
 
-    local workdir; workdir="$(mktemp -d)"
-    # M-7: register cleanup on RETURN, EXIT, INT, and TERM so that loop
-    # devices and mounts are released even when the caller is interrupted.
-    # SIGKILL cannot be caught; on kill, manually run:
-    #   losetup -a  # find leaked loop devices
-    # shellcheck disable=SC2064
-    trap "rm -rf '$workdir'" RETURN EXIT INT TERM
-
-    local raw_img="$workdir/disk.raw"
-    log_info "creating 20G raw disk image for VM"
-    qemu-img create -f raw "$raw_img" 20G >/dev/null
-
-    log_info "partitioning (MBR + single bootable ext4 partition)"
-    parted -s "$raw_img" mklabel msdos mkpart primary ext4 1MiB 100% set 1 boot on
-
-    local lodev; lodev="$(losetup --find --partscan --show "$raw_img")"
-    # shellcheck disable=SC2064
-    trap "losetup -d '$lodev' 2>/dev/null || true; rm -rf '$workdir'" RETURN EXIT INT TERM
-
-    mkfs.ext4 -q "${lodev}p1"
-    local mnt="$workdir/mnt"; install -d "$mnt"
-    mount "${lodev}p1" "$mnt"
-    # shellcheck disable=SC2064
-    trap "umount '$mnt' 2>/dev/null || true; losetup -d '$lodev' 2>/dev/null || true; rm -rf '$workdir'" RETURN EXIT INT TERM
-
-    log_info "copying chroot → disk (rsync, preserving perms)"
-    rsync -aHAX \
-        --exclude=/proc --exclude=/sys --exclude=/dev \
-        --exclude=/run  --exclude=/tmp --exclude='.lab-chroot-mounts' \
-        "$chroot_path/" "$mnt/"
-
-    # Write /etc/fstab with the root partition UUID.
-    local uuid; uuid="$(blkid -s UUID -o value "${lodev}p1")"
-    printf 'UUID=%s / ext4 defaults 0 1\n' "$uuid" > "$mnt/etc/fstab"
-
-    # Install extlinux into /boot/extlinux/.
-    install -d "$mnt/boot/extlinux"
-    extlinux --install "$mnt/boot/extlinux" 2>/dev/null
-    # M-3/I-1: removed the dead first extlinux.conf write that used the
-    # broken literal pattern ${kernel##*/chroot_path/boot/} (not a variable
-    # substitution — chroot_path is never expanded, producing the full kernel
-    # path verbatim as the KERNEL line).  Only the correct write below remains.
+    # Review trap-shape: do ALL loop-device / mount / mkfs work inside a subshell
+    # with a SINGLE EXIT trap.  The previous code set successive
+    # `RETURN EXIT INT TERM` traps at function scope, which (a) never fired the
+    # RETURN part on `die` (leaking a loop device + 20G raw on failure) and
+    # (b) CLOBBERED cmd_up's EXIT trap — silently disabling the partial-'up'
+    # rollback for the rest of the run.  A subshell EXIT trap fires on ANY exit
+    # (including `die`) and is local to the subshell, so it cannot clobber the
+    # caller's.  (SIGKILL still can't be caught; `losetup -a` finds leaks.)
     local kname; kname="${kernel##*/}"
     local iname_r; iname_r="${initrd##*/}"
-    cat > "$mnt/boot/extlinux/extlinux.conf" <<EXTCFG
+    (
+        lodev="" mnt="" workdir=""
+        # shellcheck disable=SC2064
+        trap '
+            [[ -n "$mnt" ]] && mountpoint -q "$mnt" 2>/dev/null && umount "$mnt" 2>/dev/null
+            [[ -n "$lodev" ]] && losetup -d "$lodev" 2>/dev/null
+            [[ -n "$workdir" ]] && rm -rf "$workdir"
+        ' EXIT
+
+        workdir="$(mktemp -d)"
+        mnt="$workdir/mnt"
+        local raw_img="$workdir/disk.raw"
+        log_info "creating 20G raw disk image for VM"
+        qemu-img create -f raw "$raw_img" 20G >/dev/null
+
+        log_info "partitioning (MBR + single bootable ext4 partition)"
+        parted -s "$raw_img" mklabel msdos mkpart primary ext4 1MiB 100% set 1 boot on
+
+        lodev="$(losetup --find --partscan --show "$raw_img")"
+        mkfs.ext4 -q "${lodev}p1"
+        install -d "$mnt"
+        mount "${lodev}p1" "$mnt"
+
+        log_info "copying chroot → disk (rsync, preserving perms)"
+        rsync -aHAX \
+            --exclude=/proc --exclude=/sys --exclude=/dev \
+            --exclude=/run  --exclude=/tmp --exclude='.lab-chroot-mounts' \
+            "$chroot_path/" "$mnt/"
+
+        # Write /etc/fstab with the root partition UUID.
+        local uuid; uuid="$(blkid -s UUID -o value "${lodev}p1")"
+        printf 'UUID=%s / ext4 defaults 0 1\n' "$uuid" > "$mnt/etc/fstab"
+
+        # Install extlinux into /boot/extlinux/.
+        install -d "$mnt/boot/extlinux"
+        extlinux --install "$mnt/boot/extlinux" 2>/dev/null
+        cat > "$mnt/boot/extlinux/extlinux.conf" <<EXTCFG
 DEFAULT linux
 LABEL linux
   KERNEL /boot/${kname}
@@ -584,18 +602,17 @@ LABEL linux
   INITRD /boot/${iname_r}
 EXTCFG
 
-    umount "$mnt"
-    dd if="$mbr_bin" of="$lodev" bs=440 count=1 conv=notrunc 2>/dev/null
-    losetup -d "$lodev" 2>/dev/null || true
-    # shellcheck disable=SC2064
-    trap "rm -rf '$workdir'" RETURN EXIT INT TERM   # clean up the rest
+        umount "$mnt"
+        dd if="$mbr_bin" of="$lodev" bs=440 count=1 conv=notrunc 2>/dev/null
+        losetup -d "$lodev" 2>/dev/null || true; lodev=""
 
-    local qcow2="$workdir/disk.qcow2"
-    log_info "converting raw → qcow2"
-    qemu-img convert -f raw -O qcow2 "$raw_img" "$qcow2" >/dev/null
+        local qcow2="$workdir/disk.qcow2"
+        log_info "converting raw → qcow2"
+        qemu-img convert -f raw -O qcow2 "$raw_img" "$qcow2" >/dev/null
 
-    log_info "importing as LXD VM image alias '$image_alias'"
-    backend_from_qcow2 "$qcow2" "$image_alias"
+        log_info "importing as LXD VM image alias '$image_alias'"
+        backend_from_qcow2 "$qcow2" "$image_alias"
+    ) || die "from-chroot (VM): build/import failed"
 }
 
 # from-tarball for VM: extract tarball then delegate to from-chroot-vm.
@@ -604,13 +621,19 @@ backend_from_tarball_vm() {
     [[ -r "$tarball" ]] || die "from-tarball (VM): not readable: $tarball"
     [[ $EUID -eq 0 ]] \
         || die "from-tarball for VMs requires root (loop mounts).  Re-run under sudo."
-    local workdir; workdir="$(mktemp -d)"
-    # shellcheck disable=SC2064
-    trap "rm -rf '$workdir'" RETURN
-    install -d "$workdir/rootfs"
-    log_info "extracting tarball for VM build"
-    tar -C "$workdir/rootfs" -xpf "$tarball" --numeric-owner
-    backend_from_chroot_vm "$workdir/rootfs" "$image_alias"
+    # Review trap-shape: subshell + EXIT trap so the extracted rootfs is always
+    # reclaimed, including on `die` (a RETURN trap would not fire); subshell-local
+    # so it cannot clobber cmd_up's EXIT trap.
+    (
+        workdir="$(mktemp -d)"
+        trap 'rm -rf "$workdir"' EXIT
+        install -d "$workdir/rootfs"
+        log_info "extracting tarball for VM build"
+        # --no-absolute-names refuses absolute-path members (host-write vector),
+        # matching the container from_tarball path (H-3).
+        tar -C "$workdir/rootfs" -xpf "$tarball" --numeric-owner --no-absolute-names
+        backend_from_chroot_vm "$workdir/rootfs" "$image_alias"
+    ) || die "from-tarball (VM): build/import failed"
 }
 
 # ─── Backend: from-qcow2 (VM image) ────────────────────────────────────────
@@ -622,25 +645,27 @@ backend_from_qcow2() {
     local qcow2="$1" image_alias="$2"
     [[ -r "$qcow2" ]] || die "from-qcow2: not readable: $qcow2"
 
-    local workdir; workdir="$(mktemp -d)"
-    # shellcheck disable=SC2064
-    trap "rm -rf '$workdir'" RETURN
-
     local arch; arch="$(detect_host_arch)"
-    emit_metadata_yaml_vm "$arch" "Generic" "qcow2-import" > "$workdir/metadata.yaml"
+    # Review trap-shape: subshell + EXIT trap (fires on `die`; local, no clobber).
+    (
+        workdir="$(mktemp -d)"
+        trap 'rm -rf "$workdir"' EXIT
 
-    log_info "staging qcow2 as rootfs.img"
-    cp -f --reflink=auto "$qcow2" "$workdir/rootfs.img"
+        emit_metadata_yaml_vm "$arch" "Generic" "qcow2-import" > "$workdir/metadata.yaml"
 
-    local out="$workdir/image.tar.gz"
-    log_info "bundling VM image"
-    tar -C "$workdir" --numeric-owner -czpf "$out" metadata.yaml rootfs.img
+        log_info "staging qcow2 as rootfs.img"
+        cp -f --reflink=auto "$qcow2" "$workdir/rootfs.img"
 
-    log_info "importing as VM image alias '$image_alias'"
-    if ! "$LXC_CMD" image import "$out" --alias "$image_alias" >/dev/null; then
-        "$LXC_CMD" image delete "$image_alias" >/dev/null 2>&1 || true
-        die "$LXC_CMD image import failed; partial alias removed"
-    fi
+        local out="$workdir/image.tar.gz"
+        log_info "bundling VM image"
+        tar -C "$workdir" --numeric-owner -czpf "$out" metadata.yaml rootfs.img
+
+        log_info "importing as VM image alias '$image_alias'"
+        if ! "$LXC_CMD" image import "$out" --alias "$image_alias" >/dev/null; then
+            "$LXC_CMD" image delete "$image_alias" >/dev/null 2>&1 || true
+            die "$LXC_CMD image import failed; partial alias removed"
+        fi
+    ) || die "from-qcow2: build/import failed"
     log_info "imported: $image_alias"
 }
 
@@ -860,12 +885,32 @@ cmd_up() {
     install -d -m 0755 "$(lab_dir "$lab_name")"
     cp -f "$OPT_CONFIG" "$(lab_dir "$lab_name")/spec.toml"
 
-    # C-1: use a named function so lab_name is never eval'd as shell code when
-    # the EXIT trap fires; validate_name above ensures no metacharacters.
+    # Review H4: snapshot the instances that ALREADY belong to this lab (as
+    # `project\tname` lines, across all projects) so the partial-'up' rollback
+    # removes ONLY instances THIS run creates.  `up` is idempotent (existing
+    # instances are "left as-is"), so an incremental re-'up' that adds one
+    # instance must NOT force-delete the healthy pre-existing ones if the new
+    # one fails to come up.
+    local _PRE_INST; _PRE_INST="$(_instances_in_lab "$lab_name")"
+
+    # C-1: named function so lab_name is never eval'd as shell code when the EXIT
+    # trap fires; validate_name above ensures no metacharacters.
     _partial_up_cleanup_5() {
         local _lab="$1"
-        log_info "partial 'up' — running 'down' to clean up lab '$_lab'"
-        OPT_LAB="$_lab" OPT_CONFIG="" cmd_down 2>/dev/null || true
+        local _now; _now="$(_instances_in_lab "$_lab")"
+        [[ -n "$_now" ]] || return 0
+        local proj iname
+        while IFS=$'\t' read -r proj iname; do
+            [[ -z "$iname" ]] && continue
+            # Skip instances that pre-existed this run (transactional rollback).
+            grep -qxF "${proj}"$'\t'"${iname}" <<<"$_PRE_INST" && continue
+            local -a scope=()
+            [[ -n "$proj" && "$proj" != "default" ]] && scope=(--project "$proj")
+            log_info "partial 'up': removing new instance $iname"
+            "$LXC_CMD" stop   "${scope[@]}" "$iname" --force >/dev/null 2>&1 || true
+            "$LXC_CMD" delete "${scope[@]}" "$iname" --force >/dev/null 2>&1 || true
+        done <<<"$_now"
+        log_info "partial 'up': new instances rolled back in lab '$_lab' (pre-existing left intact)"
     }
     trap "_partial_up_cleanup_5 '${lab_name}'" EXIT
 
@@ -1098,12 +1143,25 @@ _instances_in_lab() {
              | "\(.project // "default")\t\(.name)"'
 }
 
+# Helper: print the project of the instance named $1 that carries our tool label
+# (searching ALL projects), or nothing.  Lets exec/logs/status/destroy re-scope
+# `--project` so an instance in a user-defined project is reachable, not just
+# those in the default project (Review M5).
+_instance_project() {
+    "$LXC_CMD" list --all-projects --format=json 2>/dev/null \
+        | jq -r --arg n "$1" --arg tk "$LAB_LABEL_TOOL_KEY" --arg tv "$LAB_LABEL_TOOL_VAL" \
+            'first(.[] | select(.name==$n and .config[$tk]==$tv) | (.project // "default")) // empty'
+}
+
 # ─── Subcommand: exec ──────────────────────────────────────────────────────
 cmd_exec() {
     local target="${POS_ARGS[0]:-}"
     [[ -n "$target" ]] || die "usage: $LAB_PROG exec <name|lab/service> [-- cmd args...]"
     require_lxd_or_incus
     local iname; iname="$(_resolve_instance_name "$target")"
+    # Review M5: locate the instance across all projects and re-scope --project.
+    local _proj; _proj="$(_instance_project "$iname")"
+    local -a scope=(); [[ -n "$_proj" && "$_proj" != "default" ]] && scope=(--project "$_proj")
     # On an interactive session, force a TERM the guest actually has a terminfo
     # entry for. lxc/incus exec propagates the *client's* $TERM, which is often
     # an exotic value (xterm-ghostty, alacritty, kitty, …) the container's
@@ -1115,9 +1173,9 @@ cmd_exec() {
     local -a env_args=()
     [[ -t 0 ]] && env_args=(--env "TERM=${LAB_TERM:-xterm}")
     if (( ${#EXTRA_ARGS[@]} > 0 )); then
-        "$LXC_CMD" exec "${env_args[@]}" "$iname" -- "${EXTRA_ARGS[@]}"
+        "$LXC_CMD" exec "${scope[@]}" "${env_args[@]}" "$iname" -- "${EXTRA_ARGS[@]}"
     else
-        "$LXC_CMD" exec "${env_args[@]}" "$iname" -- /bin/sh -c '[ -x /bin/bash ] && exec /bin/bash || exec /bin/sh'
+        "$LXC_CMD" exec "${scope[@]}" "${env_args[@]}" "$iname" -- /bin/sh -c '[ -x /bin/bash ] && exec /bin/bash || exec /bin/sh'
     fi
 }
 
@@ -1127,13 +1185,14 @@ cmd_logs() {
     [[ -n "$target" ]] || die "usage: $LAB_PROG logs <name|lab/service> [--follow]"
     require_lxd_or_incus
     local iname; iname="$(_resolve_instance_name "$target")"
+    # Review M5: re-scope --project so an instance in a user-defined project is
+    # reachable, not just those in the default project.
+    local _proj; _proj="$(_instance_project "$iname")"
+    local -a scope=(); [[ -n "$_proj" && "$_proj" != "default" ]] && scope=(--project "$_proj")
     # `console --show-log` is the LXD/Incus equivalent of `docker logs`.
-    if [[ -n "${OPT_FOLLOW:-}" ]]; then
-        "$LXC_CMD" console "$iname" --show-log
-    else
-        # No "tail N lines" knob; show whatever's there.
-        "$LXC_CMD" console "$iname" --show-log
-    fi
+    # (--follow has no LXD equivalent for the log buffer, so both paths show the
+    # current buffer; usage documents this.)
+    "$LXC_CMD" console "${scope[@]}" "$iname" --show-log
 }
 
 # ─── Subcommand: status ────────────────────────────────────────────────────
@@ -1155,8 +1214,12 @@ cmd_status() {
     # Lab-scoped check first.
     local lab_hits; lab_hits="$(_instances_in_lab "$target")"
     local iname; iname="$(_resolve_instance_name "$target")"
+    # Review M5: re-scope --project so a single instance in a user-defined
+    # project is found by `info`, not just default-project ones.
+    local _iproj; _iproj="$(_instance_project "$iname")"
+    local -a iscope=(); [[ -n "$_iproj" && "$_iproj" != "default" ]] && iscope=(--project "$_iproj")
     local instance_hit=0
-    "$LXC_CMD" info "$iname" >/dev/null 2>&1 && instance_hit=1
+    "$LXC_CMD" info "${iscope[@]}" "$iname" >/dev/null 2>&1 && instance_hit=1
 
     if [[ -n "$lab_hits" ]] && (( ! instance_hit )); then
         printf '── lab: %s ──\n' "$target"
@@ -1174,7 +1237,7 @@ cmd_status() {
     fi
 
     if (( instance_hit )); then
-        "$LXC_CMD" info "$iname"
+        "$LXC_CMD" info "${iscope[@]}" "$iname"
         return 0
     fi
 
@@ -1208,8 +1271,10 @@ cmd_list() {
              | @tsv' \
         | column -t -s $'\t' )"
     # Above always prints the header row.  If only the header came back,
-    # there were no matches.
-    local rows; rows="$(printf '%s\n' "$out" | tail -n +2 | grep -c .)"
+    # there were no matches.  Review M6: `grep -c` exits 1 when the count is 0,
+    # which under `set -e` would kill `list` on an empty result — `|| true` keeps
+    # the printed "0" while neutralizing the exit status.
+    local rows; rows="$(printf '%s\n' "$out" | tail -n +2 | grep -c . || true)"
     if (( rows == 0 )); then
         printf '(no matching instances)\n'
         return 0
@@ -1230,10 +1295,23 @@ cmd_destroy() {
     fi
 
     local iname; iname="$(_resolve_instance_name "$target")"
-    if "$LXC_CMD" info "$iname" >/dev/null 2>&1; then
-        log_info "stop+delete $iname"
-        "$LXC_CMD" stop   "$iname" --force >/dev/null 2>&1 || true
-        "$LXC_CMD" delete "$iname" --force >/dev/null 2>&1 || true
+    # Review M2: only destroy instances THIS tool manages (carry our tool label)
+    # — `down` is label-scoped, so `destroy` must be too.  Review M5: locate the
+    # instance across ALL projects and re-scope `--project`, so an instance in a
+    # user-defined project is reachable (bare `stop/delete` only sees default).
+    local _proj
+    _proj="$("$LXC_CMD" list --all-projects --format=json 2>/dev/null \
+        | jq -r --arg n "$iname" --arg tk "$LAB_LABEL_TOOL_KEY" --arg tv "$LAB_LABEL_TOOL_VAL" \
+            'first(.[] | select(.name==$n and .config[$tk]==$tv) | (.project // "default")) // empty')"
+    if [[ -n "$_proj" ]]; then
+        local -a scope=()
+        [[ "$_proj" != "default" ]] && scope=(--project "$_proj")
+        local proj_tag=""; [[ "$_proj" != "default" ]] && proj_tag=" (project=$_proj)"
+        log_info "stop+delete $iname$proj_tag"
+        "$LXC_CMD" stop   "${scope[@]}" "$iname" --force >/dev/null 2>&1 || true
+        "$LXC_CMD" delete "${scope[@]}" "$iname" --force >/dev/null 2>&1 || true
+    elif "$LXC_CMD" info "$iname" >/dev/null 2>&1; then
+        die "refusing to destroy '$iname': not managed by $LAB_PROG (no ${LAB_LABEL_TOOL_KEY} label)"
     else
         die "no instance named $iname"
     fi
@@ -1778,4 +1856,8 @@ main() {
     esac
 }
 
-main "$@"
+# Guard so `source`-ing this script (unit tests) defines functions without
+# running main — matches phase1/2/3/4's source guard.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi
