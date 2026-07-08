@@ -96,24 +96,34 @@ EXIT trap, disabling the H4 rollback mid-run), `backend_from_tarball_vm`, and
 `backend_from_qcow2`. `backend_from_tarball_vm` also gained the
 `--no-absolute-names` its container sibling already had.
 
-## 4. Deferred / recommended (not done this pass)
+## 4. Deferred / recommended
 
-- **L1 — hand-rolled compose/YAML export escaping** (phase 3 `_yaml_str` and
-  phase 4 compose synthesizer don't escape `\`; phase 4 env values aren't
-  quote-escaped). *Export correctness only* (`up` unaffected). Fix: escape `\`
-  and `"`, or emit via `jq`/`yq`.
-- **Sub-element name validation** (phase 4 service/pod names skip `validate_name`;
-  traversal is contained by the `lab-<lab>-` prefix but drives confusing hard
-  failures). Recommend running service/pod/instance names through `validate_name`.
-- **Phase-4 quadlet incremental residual** — the H4 rollback removes new
-  containers/pods/networks on an incremental re-`up`, but a *new quadlet unit
-  file* written for the failed service is left on disk (the next `down` clears
-  it). Acceptable tradeoff vs. the previous whole-lab teardown; noted for a future
-  per-unit rollback.
-- **From `AUDIT.md`, still open:** **F6** (no CI — `.github/workflows/` absent;
-  a `shellcheck` + test-suite workflow would lock in this discipline) and **F9**
-  (no root `LICENSE` despite `pyproject.toml` declaring MIT). **F4** (published
-  ports default `0.0.0.0`) also persists in phases 3/4.
+**A second pass (also 2026-07-08) closed the deferred items below.** What
+remains is one intentional tradeoff, noted for the future.
+
+- **L1 — compose/YAML export escaping.** **Fixed** — `_yaml_str` now escapes
+  backslash-then-quote, and the free-text values (env values, ports, volumes)
+  route through it; image/command/keys keep their original format.
+- **Sub-element name validation.** **Fixed (phase 4)** — every service/pod name
+  is run through `validate_name` up front in `cmd_up`, before any state dir or
+  unit file is written. (Phases 3/5 already validated their sub-names.)
+- **F4 — published ports default to loopback.** **Fixed** — a bare `"8080:80"`
+  now binds `127.0.0.1` via a shared `_pub_host` helper at every publish site
+  (run/pod/quadlet); an explicit bind IP is the opt-in to a wider bind, and
+  `LAB_PUBLISH_HOST` overrides the default. Test: `test-publish-loopback.sh`.
+- **F6 — CI.** **Fixed** — `.github/workflows/ci.yml` runs `bash -n` +
+  `shellcheck`, the link/routing doc gates, the shell test suites (daemon/root
+  tests self-skip), and pytest for phases 6/6b.
+- **F9 — LICENSE.** **Fixed** — MIT `LICENSE` added at the repo root.
+
+- **Phase-4 quadlet incremental residual (intentional tradeoff, not fixed).**
+  The H4 rollback removes new containers/pods/networks on an incremental re-`up`,
+  but a *new quadlet unit file* written for the failed service is left on disk
+  (the next `down` clears it). Acceptable vs. the previous whole-lab teardown;
+  noted for a future per-unit rollback.
+- **F4's LAN-exposure default was a behavior change** — documented in the phase 3
+  README ports row and the phase 4 SHOWCASE so existing labs know how to opt back
+  into a wider bind.
 
 ## 5. Calibration — good patterns preserved
 
