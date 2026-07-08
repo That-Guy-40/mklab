@@ -1126,6 +1126,17 @@ cmd_up() {
     [[ -n "$lab_name" ]] || die "config missing [lab].name"
     # Finding 1, 4, 16: validate before trap/paths/labels to prevent injection.
     validate_name "$lab_name" "lab name"
+    # Review (name validation): the lab name was validated but service/pod names
+    # were not — yet they become quadlet unit *paths*, `--name`/`--hostname`,
+    # label values, and `grep` patterns.  Validate them ALL up front, before any
+    # state dir or unit file is written, so a bad name fails fast and cleanly.
+    local _n
+    while IFS= read -r _n; do
+        [[ -n "$_n" ]] && validate_name "$_n" "service name"
+    done < <(jq -r '.service // [] | .[].name // empty' <<<"$cfg_json")
+    while IFS= read -r _n; do
+        [[ -n "$_n" ]] && validate_name "$_n" "pod name"
+    done < <(jq -r '.pod // [] | .[].name // empty' <<<"$cfg_json")
 
     log_info "── bringing up lab '$lab_name' from $OPT_CONFIG ──"
     log_info "rootless network backend: $(detect_rootless_network)"
