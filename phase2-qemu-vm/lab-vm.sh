@@ -276,12 +276,16 @@ firmware_for() {
 toml_to_json() {
     local file="$1"
     [[ -r "$file" ]] || die "config file not readable: $file"
+    # Review: `|| die` on each parser so a malformed TOML is a hard, explicit
+    # error.  Without it the non-zero exit gets swallowed (set -e is suppressed
+    # when this runs inside a command substitution / `||` context), and an
+    # empty-input jq downstream returns 0 → `create` silently succeeds.
     if have tomlq; then
-        tomlq -c '.' "$file"
+        tomlq -c '.' "$file" || die "failed to parse TOML: $file (tomlq error above)"
     elif have yq && yq --version 2>&1 | grep -qi 'mikefarah'; then
-        yq -p toml -o json "$file"
+        yq -p toml -o json "$file" || die "failed to parse TOML: $file (yq error above)"
     elif have dasel; then
-        dasel -f "$file" -r toml -w json
+        dasel -f "$file" -r toml -w json || die "failed to parse TOML: $file (dasel error above)"
     else
         die "no TOML parser found.  Install one with:
         $(install_hint yq)        # mikefarah/yq, supports -p toml
@@ -1672,7 +1676,10 @@ spec_from_cli() {
 specs_from_config() {
     local file="$1"
     require_cmd jq
-    local json; json="$(toml_to_json "$file")"
+    # Explicit `|| die` (not set -e, which is suppressed in a `$(…)`/`||` caller
+    # context) so a parse failure propagates instead of yielding empty JSON.
+    local json; json="$(toml_to_json "$file")" || die "failed to parse config: $file"
+    [[ -n "$json" ]] || die "config produced no JSON (empty or unparseable): $file"
     # Propagate top-level [lab].name into every [[vm]] spec so a unified
     # lab.toml (also carrying [[chroot]] / [[service]] for sibling phases)
     # works unchanged.  --lab on the CLI overrides.
@@ -2554,11 +2561,19 @@ cmd_create() {
     flock -x "$_lockfd" || die "could not acquire VM create lock (another create in progress?)"
 
     if [[ -n "${OPT_CONFIG:-}" ]]; then
+        # Review: capture specs_from_config to a var (not a `< <(…)` process
+        # substitution) so a `die` on a malformed TOML PROPAGATES.  In a process
+        # substitution the parser runs in a subshell — its exit(1) is swallowed,
+        # the loop body just never runs, and `create` returns 0 (a silent no-op
+        # that fools any script/CI treating exit code as truth).
+        local _specs
+        _specs="$(specs_from_config "$OPT_CONFIG")" \
+            || die "failed to parse config: $OPT_CONFIG"
         local spec
         while IFS= read -r spec; do
             [[ -z "$spec" ]] && continue
             create_one "$spec"
-        done < <(specs_from_config "$OPT_CONFIG")
+        done <<<"$_specs"
     else
         local spec; spec="$(spec_from_cli)"
         create_one "$spec"
