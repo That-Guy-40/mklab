@@ -25,11 +25,13 @@ jobs:
           done < <(git ls-files '*.sh')
           exit $rc
       - name: shellcheck the phase drivers
-        # -x follows sourced libs; the three excluded codes are the repo's
-        # documented-intentional patterns (validated-name traps, declare+assign,
-        # dynamic-scope vars). Fail on anything else.
+        # -x follows sourced libs. --severity=warning ignores info-level *style*
+        # notes (SC2295/SC2012/SC2015 etc.) that vary by shellcheck version; the
+        # three excluded codes are the repo's documented-intentional warnings
+        # (validated-name traps, declare+assign, dynamic-scope vars). Fail on any
+        # real warning or error.
         run: |
-          shellcheck -x -e SC2064,SC2155,SC2034 \
+          shellcheck -x --severity=warning -e SC2064,SC2155,SC2034 \
             phase1-chroot/lab-chroot.sh \
             phase2-qemu-vm/lab-vm.sh \
             phase3-docker/lab-docker.sh \
