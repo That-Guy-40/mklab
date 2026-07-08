@@ -29,13 +29,16 @@ done
 
 work="$(mktemp -d)"
 # Safety net: detach any loop bound to our raw + unmount stragglers, even if the
-# code-under-test regressed and leaked them.
+# code-under-test regressed and leaked them; and always print a clear FAIL if the
+# test exits early (uncaught `die`/`set -e`) so the terminal is never silent.
 cleanup() {
+    local rc=$?
     local d
     for d in $(losetup -j "$work/out.qcow2.raw.partial" -O NAME --noheadings 2>/dev/null); do
         losetup -d "$d" 2>/dev/null || true
     done
     rm -rf -- "$work"
+    (( rc == 0 || rc == 77 )) || printf 'FAIL: test exited early (rc=%s) — see messages above\n' "$rc" >&2
 }
 trap cleanup EXIT
 
@@ -61,8 +64,11 @@ export PATH="$shim:$PATH"
 source "$LAB_VM"
 
 out="$work/out.qcow2"
-# The build MUST fail (mkfs shim), and the function MUST NOT return 0.
-if backend_vm_from_chroot "$chroot" "$out" 64M >/dev/null 2>&1; then
+# The build MUST fail (mkfs shim).  Run in a subshell: backend_vm_from_chroot
+# reports failure via `die` (=exit), which would otherwise kill this test before
+# the assertions run.  The subshell contains the exit; a non-zero result is
+# expected here.
+if ( backend_vm_from_chroot "$chroot" "$out" 64M ) >/dev/null 2>&1; then
     fail "backend_vm_from_chroot returned success despite forced mkfs failure"
 fi
 note "build aborted at mkfs.ext4 as intended"

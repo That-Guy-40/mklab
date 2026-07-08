@@ -17,11 +17,17 @@ require_root                      # bind mount needs CAP_SYS_ADMIN
 require_cmd mountpoint realpath
 
 work="$(mktemp -d)"
-trap '
-    awk -v t="$work" "index(\$2, t)==1 {print \$2}" /proc/mounts 2>/dev/null \
+# EXIT trap: unmount any stragglers, remove the workdir, and — the readability
+# safety net — always print a clear FAIL if the test exits early (an uncaught
+# `die`/`set -e`) instead of leaving the terminal silent.
+_finish() {
+    local rc=$?
+    awk -v t="$work" 'index($2, t)==1 {print $2}' /proc/mounts 2>/dev/null \
         | sort -r | while IFS= read -r m; do umount -l "$m" 2>/dev/null || true; done
     rm -rf -- "$work"
-' EXIT
+    (( rc == 0 || rc == 77 )) || printf 'FAIL: test exited early (rc=%s) — see messages above\n' "$rc" >&2
+}
+trap _finish EXIT
 
 target="$work/chroot"
 src="$work/host-dev-standin"
@@ -53,7 +59,10 @@ note "live bind unmounted before rm -rf; bind source intact"
 # And the fail-closed assertion: _safe_rm_rf must REFUSE if a mount is still live.
 target2="$work/chroot2"; mkdir -p "$target2/mnt"
 mount --bind "$src" "$target2/mnt" || skip "second bind unavailable"
-if _safe_rm_rf "$target2" 2>/dev/null; then
+# Run in a subshell: _safe_rm_rf REFUSES via `die` (=exit), which would
+# otherwise blow past this `if` and kill the test.  A refusal (subshell exits
+# non-zero) is the PASS case here.
+if ( _safe_rm_rf "$target2" ) 2>/dev/null; then
     umount -l "$target2/mnt" 2>/dev/null || true
     fail "REGRESSION: _safe_rm_rf deleted a tree with an active mount under it"
 fi
