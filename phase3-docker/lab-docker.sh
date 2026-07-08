@@ -84,6 +84,28 @@ _in_set() {
     return 1
 }
 
+# _pub_host SPEC — default a published port to loopback (Review F4).  A bare
+# "8080:80" binds 0.0.0.0 (every host interface, reachable from the lab LAN);
+# prepend a host bind IP so a throwaway lab isn't exposed by default.  A spec
+# that already names a bind IP (ip:host:container, or [ipv6]:…) is left alone —
+# that's the explicit opt-in to a wider bind.  Override the default with
+# LAB_PUBLISH_HOST (e.g. 0.0.0.0 for all interfaces; empty = docker's default).
+_pub_host() {
+    local spec="$1" host="${LAB_PUBLISH_HOST-127.0.0.1}"
+    [[ -z "$host" ]] && { printf '%s' "$spec"; return; }
+    local body="${spec%%/*}" proto=""
+    [[ "$spec" == */* ]] && proto="/${spec#*/}"
+    local colons="${body//[^:]/}"
+    if [[ "$body" == \[* || ${#colons} -ge 2 ]]; then
+        printf '%s' "$spec"; return
+    fi
+    if [[ ${#colons} -eq 1 ]]; then
+        printf '%s:%s%s' "$host" "$body" "$proto"
+    else
+        printf '%s::%s%s' "$host" "$body" "$proto"
+    fi
+}
+
 detect_host_arch() {
     case "$(uname -m)" in
         x86_64|amd64)         printf 'x86_64' ;;
@@ -574,7 +596,7 @@ cmd_run() {
     local p
     if [[ -n "${OPT_PORTS:-}" ]]; then
         IFS=',' read -ra _ports <<<"$OPT_PORTS"
-        for p in "${_ports[@]}"; do args+=(-p "$p"); done
+        for p in "${_ports[@]}"; do args+=(-p "$(_pub_host "$p")"); done
     fi
     local e
     if [[ -n "${OPT_ENV:-}" ]]; then
@@ -792,7 +814,7 @@ cmd_up() {
         # Ports
         local pp
         while IFS= read -r pp; do
-            [[ -n "$pp" ]] && args+=(-p "$pp")
+            [[ -n "$pp" ]] && args+=(-p "$(_pub_host "$pp")")
         done < <(jq -r '.ports[]?' <<<"$svc")
 
         # Env — skip null-value entries (inherit-from-host semantics, Finding 32)

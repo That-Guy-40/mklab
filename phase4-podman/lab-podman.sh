@@ -99,6 +99,28 @@ _in_set() {
     return 1
 }
 
+# _pub_host SPEC — default a published port to loopback (Review F4).  A bare
+# "8080:80" binds 0.0.0.0 (every host interface, reachable from the lab LAN);
+# prepend a host bind IP so a throwaway lab isn't exposed by default.  A spec
+# that already names a bind IP (ip:host:container, or [ipv6]:…) is left alone —
+# the explicit opt-in to a wider bind.  Override with LAB_PUBLISH_HOST (e.g.
+# 0.0.0.0 for all interfaces; empty = the engine's default).
+_pub_host() {
+    local spec="$1" host="${LAB_PUBLISH_HOST-127.0.0.1}"
+    [[ -z "$host" ]] && { printf '%s' "$spec"; return; }
+    local body="${spec%%/*}" proto=""
+    [[ "$spec" == */* ]] && proto="/${spec#*/}"
+    local colons="${body//[^:]/}"
+    if [[ "$body" == \[* || ${#colons} -ge 2 ]]; then
+        printf '%s' "$spec"; return
+    fi
+    if [[ ${#colons} -eq 1 ]]; then
+        printf '%s:%s%s' "$host" "$body" "$proto"
+    else
+        printf '%s::%s%s' "$host" "$body" "$proto"
+    fi
+}
+
 # validate_device SPEC — sanity-check a per-service `devices` entry before it
 # becomes a `--device SPEC` argument.  A spec is either a host device path
 # (/dev/foo[:/dev/bar[:rwm]]) or a CDI device name (vendor.com/class=name, e.g.
@@ -531,7 +553,7 @@ emit_pod_unit() {
         while IFS= read -r line; do
             [[ -z "$line" ]] && continue
             # Finding 3: reject newlines in port strings that would inject unit directives.
-            printf 'PublishPort=%s\n' "$(sanitize_unit_value "$line" "PublishPort")"
+            printf 'PublishPort=%s\n' "$(sanitize_unit_value "$(_pub_host "$line")" "PublishPort")"
         done < <(jq -r '.[]?' <<<"$publish_arr")
         printf '\n[Install]\nWantedBy=default.target\n'
     } > "$unit"
@@ -569,7 +591,7 @@ emit_container_unit() {
         # PublishPort
         local p
         while IFS= read -r p; do
-            [[ -n "$p" ]] && printf 'PublishPort=%s\n' "$(sanitize_unit_value "$p" "PublishPort")"
+            [[ -n "$p" ]] && printf 'PublishPort=%s\n' "$(sanitize_unit_value "$(_pub_host "$p")" "PublishPort")"
         done < <(jq -r '.ports[]?' <<<"$svc")
         # Volumes (with :Z appended if SELinux enforcing and no :Z/:z/:O already)
         local v
@@ -692,7 +714,7 @@ start_service_plain() {
     # Ports, env, volumes
     local p
     while IFS= read -r p; do
-        [[ -n "$p" ]] && args+=(-p "$p")
+        [[ -n "$p" ]] && args+=(-p "$(_pub_host "$p")")
     done < <(jq -r '.ports[]?' <<<"$svc")
     local kk vv
     while IFS=$'\t' read -r kk vv; do
@@ -778,7 +800,7 @@ start_services_in_pod() {
         # Pod-level published ports.
         local p
         while IFS= read -r p; do
-            [[ -n "$p" ]] && pod_args+=(-p "$p")
+            [[ -n "$p" ]] && pod_args+=(-p "$(_pub_host "$p")")
             [[ -n "$p" ]] && {
                 local hp="${p%%:*}"
                 [[ "$hp" =~ ^[0-9]+$ ]] && check_ip_unprivileged_port_start "$hp"
@@ -1062,7 +1084,7 @@ cmd_run() {
     if [[ -n "${OPT_PORTS:-}" ]]; then
         IFS=',' read -ra _ports <<<"$OPT_PORTS"
         for p in "${_ports[@]}"; do
-            args+=(-p "$p")
+            args+=(-p "$(_pub_host "$p")")
             local hp="${p%%:*}"
             [[ "$hp" =~ ^[0-9]+$ ]] && check_ip_unprivileged_port_start "$hp"
         done

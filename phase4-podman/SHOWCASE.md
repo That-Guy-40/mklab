@@ -28,6 +28,12 @@ phase4-podman/lab-podman.sh exec tutorial-pod/web -- \
 phase4-podman/lab-podman.sh down --lab tutorial-pod
 ```
 
+> **Published ports default to loopback.** A bare `"8080:80"` (in a service or
+> pod `publish`) binds `127.0.0.1`, not every interface, so a throwaway lab
+> isn't exposed to the LAN — including in generated quadlet `PublishPort=`
+> lines. Write an explicit bind (`"0.0.0.0:8080:80"`) to widen it, or set
+> `LAB_PUBLISH_HOST=0.0.0.0`.
+
 That's the elevator pitch. The rest of this doc is the things you didn't
 get with `docker run`.
 

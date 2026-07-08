@@ -44,7 +44,10 @@ note "unit file created: $UNIT"
 grep -q '^\[Container\]' "$UNIT" || fail "no [Container] section in unit"
 grep -q '^\[Install\]' "$UNIT"   || fail "no [Install] section in unit"
 grep -q "^Image=docker.io/library/nginx:alpine" "$UNIT" || fail "wrong Image= line"
-grep -q "^PublishPort=19999:80" "$UNIT" || fail "no PublishPort= line"
+# Review F4: a bare "host:container" port now defaults to a loopback bind, so
+# the emitted PublishPort carries 127.0.0.1 (override via LAB_PUBLISH_HOST).
+grep -q "^PublishPort=127\.0\.0\.1:19999:80" "$UNIT" \
+    || fail "no loopback-defaulted PublishPort= line (F4)"
 grep -q "^Label=${LAB_LABEL_TOOL:-lab-create.tool=lab-podman}" "$UNIT" \
     || grep -q "^Label=lab-create.tool=lab-podman" "$UNIT" \
     || fail "no tool label"
