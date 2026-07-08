@@ -306,31 +306,39 @@ vm_qmp()      { printf '%s/qmp.sock'       "$(vm_dir "$1")"; }
 vm_manifest() { printf '%s/manifest.toml'  "$(vm_dir "$1")"; }
 vm_log()      { printf '%s/qemu.log'       "$(vm_dir "$1")"; }
 
+# _mf_clean VALUE — sanitize a free-text manifest field.  Review M4: strip CR/LF
+# FIRST — the prior code escaped only `"`, so a NEWLINE in e.g. MF_APPEND (via
+# `--append $'a\nnetwork_mode = tap'` or a multi-line TOML string) injected extra
+# manifest lines that the start-time reader honored, silently flipping
+# network_mode/tap/bridge/disk.  Then escape embedded `"` (Finding 2) so the TOML
+# stays well-formed.  Enum/numeric fields can't carry these, so they're not run
+# through this.
+_mf_clean() {
+    local s="$1"
+    s="${s//$'\n'/ }"; s="${s//$'\r'/ }"
+    s="${s//\"/\\\"}"
+    printf '%s' "$s"
+}
+
 write_vm_manifest() {
     # write_vm_manifest NAME  (reads other fields from globals MF_*)
     local name="$1"
     local mp; mp="$(vm_manifest "$name")"
     local now; now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    # Escape double-quotes in free-text string fields so the TOML is always
-    # well-formed (Finding 2: an unescaped " in e.g. MF_APPEND or MF_KERNEL
-    # would allow a crafted --append to inject extra manifest fields, changing
-    # network_mode/bridge/tap/cpu_pin on re-read at start time).
-    # Enum-validated fields (backend/distro/arch/accel/network_mode) and
-    # numeric fields (cpus/ssh_port/cores/threads) cannot contain quotes.
-    local _lab="${MF_LAB:-}"          ; _lab="${_lab//\"/\\\"}"
-    local _disk="${MF_DISK:-}"        ; _disk="${_disk//\"/\\\"}"
-    local _itgt="${MF_INSTALL_TARGET:-}" ; _itgt="${_itgt//\"/\\\"}"
-    local _mac="${MF_MAC:-}"          ; _mac="${_mac//\"/\\\"}"
-    local _seed="${MF_SEED:-}"        ; _seed="${_seed//\"/\\\"}"
-    local _kernel="${MF_KERNEL:-}"    ; _kernel="${_kernel//\"/\\\"}"
-    local _initrd="${MF_INITRD:-}"    ; _initrd="${_initrd//\"/\\\"}"
-    local _append="${MF_APPEND:-}"    ; _append="${_append//\"/\\\"}"
-    local _suser="${MF_SSH_USER:-lab}"; _suser="${_suser//\"/\\\"}"
-    local _cpupin="${MF_CPU_PIN:-}"   ; _cpupin="${_cpupin//\"/\\\"}"
-    local _pxedir="${MF_PXE_DIR:-}"   ; _pxedir="${_pxedir//\"/\\\"}"
-    local _pxebf="${MF_PXE_BOOTFILE:-ipxe.efi}" ; _pxebf="${_pxebf//\"/\\\"}"
-    local _bridge="${MF_BRIDGE:-}"    ; _bridge="${_bridge//\"/\\\"}"
-    local _tap="${MF_TAP:-}"          ; _tap="${_tap//\"/\\\"}"
+    local _lab;    _lab="$(_mf_clean "${MF_LAB:-}")"
+    local _disk;   _disk="$(_mf_clean "${MF_DISK:-}")"
+    local _itgt;   _itgt="$(_mf_clean "${MF_INSTALL_TARGET:-}")"
+    local _mac;    _mac="$(_mf_clean "${MF_MAC:-}")"
+    local _seed;   _seed="$(_mf_clean "${MF_SEED:-}")"
+    local _kernel; _kernel="$(_mf_clean "${MF_KERNEL:-}")"
+    local _initrd; _initrd="$(_mf_clean "${MF_INITRD:-}")"
+    local _append; _append="$(_mf_clean "${MF_APPEND:-}")"
+    local _suser;  _suser="$(_mf_clean "${MF_SSH_USER:-lab}")"
+    local _cpupin; _cpupin="$(_mf_clean "${MF_CPU_PIN:-}")"
+    local _pxedir; _pxedir="$(_mf_clean "${MF_PXE_DIR:-}")"
+    local _pxebf;  _pxebf="$(_mf_clean "${MF_PXE_BOOTFILE:-ipxe.efi}")"
+    local _bridge; _bridge="$(_mf_clean "${MF_BRIDGE:-}")"
+    local _tap;    _tap="$(_mf_clean "${MF_TAP:-}")"
     cat > "$mp" <<EOF
 # lab-vm manifest — do not edit by hand
 name        = "${name}"
@@ -1452,7 +1460,12 @@ default_pubkey() {
     for f in "${home}/.ssh/id_ed25519.pub" "${home}/.ssh/id_ecdsa.pub" \
              "${home}/.ssh/id_rsa.pub"     "${home}/.ssh/authorized_keys"; do
         [[ -r "$f" && -s "$f" ]] || continue
-        keys="$(grep -E '^(ssh-(rsa|ed25519|dss)|ecdsa-) ' "$f" 2>/dev/null || true)"
+        # Review M7: real ECDSA keys are `ecdsa-sha2-nistp256 AAAA…` — the type
+        # token carries a variable suffix (nistp256/384/521), so the old
+        # `ecdsa- ` (dash then space) never matched, and an ECDSA-only user
+        # silently fell back to password auth.  Match a known type PREFIX, then
+        # the rest of the type token `[^ ]*`, then the space before the key blob.
+        keys="$(grep -E '^(ssh-(rsa|ed25519|dss)|ecdsa-sha2-|sk-ssh-ed25519|sk-ecdsa-sha2-)[^ ]* ' "$f" 2>/dev/null || true)"
         if [[ -n "$keys" ]]; then
             # Finding 18: log when using authorized_keys as the source — it is a
             # non-obvious fallback that may inject multiple keys or keys with

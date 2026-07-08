@@ -532,6 +532,10 @@ cmd_run() {
     if [[ -z "$image" && -z "${OPT_CHROOT:-}" && -z "${OPT_TARBALL:-}" && -z "${OPT_CONTEXT:-}" ]]; then
         die "need one of: --image IMG | --chroot PATH | --tarball FILE | --context DIR"
     fi
+    # Review M1: image is the first positional to `docker run`; reject a
+    # '-'-leading value so it can't inject flags (e.g. --privileged, -v /:/host).
+    [[ -z "$image" || "$image" != -* ]] \
+        || die "--image '$image' must not start with '-' (would inject flags into 'docker run')"
 
     require_docker
 
@@ -712,6 +716,13 @@ cmd_up() {
     for sname in "${ordered_names[@]}"; do
         local svc; svc="$(jq -c --arg n "$sname" '.[] | select(.name==$n)' <<<"$all_svcs")"
         local simage; simage="$(spec_get "$svc" image)"
+        # Review M1: the image is the first POSITIONAL to `docker run`, so an
+        # `image = "--privileged"` / `"-v"` in a TOML topology would inject flags
+        # and defeat the "no privileged, no host-mounts from config" posture.
+        # Every other config value lands in a flag-argument slot; this one didn't
+        # have the '-'-leading guard the push/network paths already use.
+        [[ -z "$simage" || "$simage" != -* ]] \
+            || die "service '$sname': image '$simage' must not start with '-' (would inject flags into 'docker run')"
 
         # Cross-phase engine routing.
         local sengine; sengine="$(spec_get "$svc" engine)"
@@ -1004,13 +1015,23 @@ cmd_destroy() {
     fi
 
     local cname; cname="$(_resolve_container_name "$target")"
-    if docker ps -a --format '{{.Names}}' | grep -qx "$cname"; then
+    # Review M2: only destroy containers THIS tool manages (carry the
+    # lab-create.tool label) — `down` is label-scoped, so `destroy` must be too,
+    # or a student could remove another student's like-named container on a
+    # shared daemon.  Review L2: read the owned-names list into a var first, so a
+    # `grep -q` closing the pipe can't invert the check under `set -o pipefail`;
+    # `grep -Fxq` treats '.' in names literally, not as a regex wildcard.
+    local _owned; _owned="$(docker ps -a --filter "label=${LAB_LABEL_TOOL}" \
+        --format '{{.Names}}' 2>/dev/null || true)"
+    if grep -Fxq "$cname" <<<"$_owned"; then
         log_info "removing $cname"
         # docker rm -f handles both running and stopped containers;
         # fall back to stop+rm for daemons that reject SIGKILL via rm -f.
         docker rm -f "$cname" >/dev/null 2>&1 \
             || { docker stop "$cname" >/dev/null 2>&1 || true
                  docker rm   "$cname" >/dev/null 2>&1 || true; }
+    elif docker inspect "$cname" >/dev/null 2>&1; then
+        die "refusing to destroy '$cname': not managed by $LAB_PROG (no ${LAB_LABEL_TOOL} label)"
     else
         die "no container named $cname"
     fi

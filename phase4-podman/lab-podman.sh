@@ -260,12 +260,18 @@ check_linger_if_quadlet() {
 }
 
 check_selinux_label() {
-    # Return "Z" if SELinux is enforcing, empty otherwise.  Used to auto-append
-    # :Z to volume mounts so bind-mounts work on Fedora/Rocky/Alma.
+    # Return "z" if SELinux is enforcing, empty otherwise.  Used to auto-append
+    # a relabel suffix to bind mounts so they work on Fedora/Rocky/Alma.
+    # Review M3: default to ":z" (SHARED relabel), not ":Z" (PRIVATE, per-container
+    # MCS category).  ":Z" recursively relabels the host tree with a category the
+    # host itself can no longer access — mounting a large/shared dir like /usr or
+    # /home could lock the host out of its own files.  ":z" is the safer default;
+    # a user who truly needs private isolation can write ":Z" explicitly (it is
+    # honored — see the `!= *:Z` guard at the call sites).
     if have getenforce; then
         local s; s="$(getenforce 2>/dev/null || true)"
         if [[ "$s" == "Enforcing" ]]; then
-            printf 'Z'
+            printf 'z'
             return 0
         fi
     fi
@@ -576,6 +582,7 @@ emit_container_unit() {
             case "$v" in
                 /*|./*|../*)
                     if [[ -n "$selinux_suffix" && "$v" != *:Z && "$v" != *:z && "$v" != *:O ]]; then
+                        log_warn "SELinux: relabeling '${v%%:*}' with ':${selinux_suffix}' (shared) so the bind mount works; add an explicit ':Z'/':z'/':O' to override"
                         v="${v}:${selinux_suffix}"
                     fi ;;
             esac
@@ -696,6 +703,7 @@ start_service_plain() {
     while IFS= read -r v; do
         [[ -z "$v" ]] && continue
         if [[ -n "$selinux_suffix" && "$v" != *:Z && "$v" != *:z && "$v" != *:O ]]; then
+            log_warn "SELinux: relabeling '${v%%:*}' with ':${selinux_suffix}' (shared) so the bind mount works; add an explicit ':Z'/':z'/':O' to override"
             v="${v}:${selinux_suffix}"
         fi
         args+=(-v "$v")
@@ -842,6 +850,7 @@ start_services_in_pod() {
             case "$v" in
                 /*|./*|../*)
                     if [[ -n "$selinux_suffix" && "$v" != *:Z && "$v" != *:z && "$v" != *:O ]]; then
+                        log_warn "SELinux: relabeling '${v%%:*}' with ':${selinux_suffix}' (shared) so the bind mount works; add an explicit ':Z'/':z'/':O' to override"
                         v="${v}:${selinux_suffix}"
                     fi ;;
             esac
@@ -1080,6 +1089,7 @@ cmd_run() {
             case "$v" in
                 /*|./*|../*)
                     if [[ -n "$selinux_suffix" && "$v" != *:Z && "$v" != *:z && "$v" != *:O ]]; then
+                        log_warn "SELinux: relabeling '${v%%:*}' with ':${selinux_suffix}' (shared) so the bind mount works; add an explicit ':Z'/':z'/':O' to override"
                         v="${v}:${selinux_suffix}"
                     fi ;;
             esac
@@ -1724,10 +1734,18 @@ cmd_destroy() {
     fi
 
     local cname; cname="$(_resolve_container_name "$target")"
-    if podman ps -a --format '{{.Names}}' | grep -qx "$cname"; then
+    # Review M2: only destroy containers THIS tool manages (carry the
+    # lab-create.tool label) — `down` is label-scoped, so `destroy` must be too.
+    # Review L2: read owned names into a var (pipefail-safe) and match with
+    # `grep -Fxq` so a '.' in a name is literal, not a regex wildcard.
+    local _owned; _owned="$(podman ps -a --filter "label=${LAB_LABEL_TOOL}" \
+        --format '{{.Names}}' 2>/dev/null || true)"
+    if grep -Fxq "$cname" <<<"$_owned"; then
         log_info "stop+rm $cname"
         podman stop "$cname" >/dev/null 2>&1 || true
         podman rm   "$cname" >/dev/null 2>&1 || true
+    elif podman container exists "$cname"; then
+        die "refusing to destroy '$cname': not managed by $LAB_PROG (no ${LAB_LABEL_TOOL} label)"
     else
         die "no container named $cname"
     fi
