@@ -199,12 +199,22 @@ def run_capture(
     pass `timeout=None` to opt a specific call out (e.g. a legitimately
     long-running build).
     """
+    if env is None:
+        env = os.environ.copy()
+        # W2 (Review phase6): the web UI stashes its Basic Auth credential in
+        # LAB_WEB_AUTH_* env vars for the auth middleware.  The phase scripts
+        # run via `sudo` as root, so an un-scrubbed copy would hand that secret
+        # (and anything the scripts spawn) the UI password.  Drop it here — the
+        # single choke point every backend mutation/query flows through.
+        env.pop("LAB_WEB_AUTH_USER", None)
+        env.pop("LAB_WEB_AUTH_PASSWORD", None)
+        env.pop("LAB_WEB_AUTH", None)
     try:
         return subprocess.run(
             argv,
             capture_output=True,
             text=True,
-            env=env if env is not None else os.environ.copy(),
+            env=env,
             check=False,
             timeout=timeout,
         )
