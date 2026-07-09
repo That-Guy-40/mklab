@@ -40,7 +40,7 @@ def test_list_parses_newline_json(patched_docker: DockerBackend) -> None:
 def test_log_command_per_resource(patched_docker: DockerBackend) -> None:
     rs = patched_docker.list_resources()
     nginx = next(r for r in rs if r.svc == "nginx")
-    assert nginx.log_command == ["docker", "logs", "--tail", "200", "-f", "lab-web-nginx"]
+    assert nginx.log_command == ["docker", "logs", "--tail", "200", "-f", "--", "lab-web-nginx"]
 
 
 def test_destroy_argv_routes_through_phase_script(patched_docker: DockerBackend) -> None:
@@ -147,3 +147,14 @@ def test_inspect_falls_back_to_docker_inspect_when_inspect_fails(
     assert "FALLBACK_MARKER" in out
     # And it should NOT have been pretty-printed (no two-space indent).
     assert '"schema_version": 1' not in out
+
+
+def test_log_command_has_dashdash_before_name(patched_docker) -> None:
+    # Regression (Review phase6 T4): '--' must precede the container name so a
+    # '-'-leading name is an operand, not a flag to `docker logs`.
+    rs = patched_docker.list_resources()
+    lc = rs[0].log_command
+    assert lc[:2] == ["docker", "logs"]
+    assert "--" in lc, "missing '--' option terminator before the container name"
+    assert lc.index("--") == len(lc) - 2, "'--' must be immediately before the name operand"
+    assert not lc[-1].startswith("-"), "name operand must follow '--'"

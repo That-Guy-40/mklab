@@ -93,7 +93,8 @@ class PodmanBackend(BackendRunner):
                     "created_at": row.get("CreatedAt", ""),
                 },
                 spec_path=None,
-                log_command=["podman", "logs", "--tail", "200", "-f", name],
+                # T4 (Review phase6): '--' so a '-'-leading name is an operand.
+                log_command=["podman", "logs", "--tail", "200", "-f", "--", name],
             ))
         return out
 
@@ -129,7 +130,8 @@ class PodmanBackend(BackendRunner):
                     "created_at": row.get("Created", ""),
                 },
                 spec_path=None,
-                log_command=["podman", "pod", "logs", "--tail", "200", "-f", name],
+                # T4 (Review phase6): '--' so a '-'-leading pod name is an operand.
+                log_command=["podman", "pod", "logs", "--tail", "200", "-f", "--", name],
             ))
         return out
 

@@ -97,7 +97,9 @@ class DockerBackend(BackendRunner):
                     "created_at": row.get("CreatedAt", ""),
                 },
                 spec_path=None,
-                log_command=["docker", "logs", "--tail", "200", "-f", row.get("Names", "")],
+                # T4 (Review phase6): '--' before the name so a container whose
+                # name begins with '-' is an operand, not a flag to `docker logs`.
+                log_command=["docker", "logs", "--tail", "200", "-f", "--", row.get("Names", "")],
             ))
         return out
 

@@ -197,3 +197,12 @@ def test_inspect_pod_fallback_uses_podman_pod_inspect(
     assert "FALLBACK_MARKER" in out
     # Belt-and-braces: prove we did NOT take the container-fallback branch.
     assert "WRONG_VERB" not in out
+
+
+def test_log_commands_have_dashdash_before_name(patched_podman) -> None:
+    # Regression (Review phase6 T4): both container and pod log argv must place
+    # '--' before the name so a '-'-leading name can't act as a flag.
+    for r in patched_podman.list_resources():
+        lc = r.log_command
+        assert "--" in lc, f"{r.type} log_command missing '--': {lc}"
+        assert lc.index("--") == len(lc) - 2, f"'--' not before name: {lc}"
