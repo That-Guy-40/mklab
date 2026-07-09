@@ -8,6 +8,13 @@ from __future__ import annotations
 
 import pytest
 
+from lab_web.app import CSRF_TOKEN
+
+# W3 (Review phase6): HTMX requests must carry BOTH the HX-Request marker and
+# the per-process CSRF token.  Passing destroy calls use this; the negative
+# tests below omit one or the other on purpose.
+_HX = {"HX-Request": "true", "X-CSRFToken": CSRF_TOKEN}
+
 
 # ── index page ────────────────────────────────────────────────────────────
 
@@ -108,7 +115,7 @@ async def test_destroy_returns_html(client) -> None:
     # F-4: must send HX-Request: true to pass the CSRF guard.
     resp = await client.post(
         "/actions/destroy/stub-backend/test-vm",
-        headers={"HX-Request": "true"},
+        headers=_HX,
     )
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
@@ -119,7 +126,7 @@ async def test_destroy_returns_html(client) -> None:
 async def test_destroy_unknown_backend(client) -> None:
     resp = await client.post(
         "/actions/destroy/ghost/foo",
-        headers={"HX-Request": "true"},
+        headers=_HX,
     )
     assert resp.status_code == 200
     assert "Unknown backend" in resp.text
@@ -139,7 +146,7 @@ async def test_xss_in_backend_name_is_escaped(client) -> None:
     """F-3: '<script>' in backend URL param must be HTML-escaped in error response."""
     resp = await client.post(
         "/actions/destroy/<script>alert(1)<%2Fscript>/foo",
-        headers={"HX-Request": "true"},
+        headers=_HX,
     )
     assert "<script>" not in resp.text
     assert "alert(1)" not in resp.text or "&lt;script&gt;" in resp.text
@@ -150,7 +157,7 @@ async def test_xss_in_resource_name_is_escaped(client) -> None:
     """F-3: '<img>' in resource name URL param must be HTML-escaped in error response."""
     resp = await client.post(
         "/actions/destroy/stub-backend/<img+src=x+onerror=alert(1)>",
-        headers={"HX-Request": "true"},
+        headers=_HX,
     )
     # The raw tag must not appear verbatim in the response
     assert "<img" not in resp.text or "&lt;img" in resp.text
@@ -174,6 +181,80 @@ async def test_detail_panel_escapes_missing_resource_name(client) -> None:
     resp = await client.get("/resources/stub-backend/<img src=x onerror=alert(1)>")
     assert "<img src=x onerror=alert(1)>" not in resp.text
     assert "&lt;img" in resp.text
+
+
+# ── W3: CSRF token (not just HX-Request presence) ──────────────────────────
+
+@pytest.mark.asyncio
+async def test_destroy_without_csrf_token_rejected(client) -> None:
+    """Regression (W3): HX-Request alone (the old, forgeable guard) must no
+    longer pass — the request must also carry the per-process CSRF token."""
+    resp = await client.post(
+        "/actions/destroy/stub-backend/test-vm",
+        headers={"HX-Request": "true"},  # deliberately NO X-CSRFToken
+    )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_destroy_with_wrong_csrf_token_rejected(client) -> None:
+    """Regression (W3): a wrong token is refused (constant-time compare)."""
+    resp = await client.post(
+        "/actions/destroy/stub-backend/test-vm",
+        headers={"HX-Request": "true", "X-CSRFToken": "not-the-real-token"},
+    )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_page_embeds_csrf_token(client) -> None:
+    """Regression (W3): the token is injected into the page so HTMX can echo
+    it — otherwise legitimate destroys would be impossible."""
+    resp = await client.get("/")
+    assert CSRF_TOKEN in resp.text
+    assert "hx-headers" in resp.text
+
+
+# ── W4: /static/ auth exemption is normalized, not raw-prefix ──────────────
+
+def test_static_exemption_is_traversal_safe() -> None:
+    """Regression (W4): the auth exemption must test the NORMALIZED path so a
+    crafted /static/../<control-route> cannot skip auth by sharing the prefix."""
+    from lab_web.app import _is_static_path
+    assert _is_static_path("/static/style.css")
+    assert _is_static_path("/static")
+    # A traversal that Starlette would route to the control plane must NOT be
+    # treated as a static asset (i.e. must NOT skip auth).
+    assert not _is_static_path("/static/../actions/destroy/stub-backend/x")
+    assert not _is_static_path("/static/../../etc/passwd")
+    assert not _is_static_path("/actions/destroy/stub-backend/x")
+
+
+# ── W5: security headers on 401 + inspect errors return a clean fragment ───
+
+@pytest.mark.asyncio
+async def test_401_carries_security_headers(auth_client) -> None:
+    """Regression (W5): the security-headers middleware is now OUTER, so even
+    the auth 401 short-circuit gets X-Frame-Options / CSP (previously bare)."""
+    resp = await auth_client.get("/")
+    assert resp.status_code == 401
+    assert resp.headers.get("X-Frame-Options") == "DENY"
+    assert "Content-Security-Policy" in resp.headers
+
+
+@pytest.mark.asyncio
+async def test_inspect_backend_error_returns_clean_fragment(client) -> None:
+    """Regression (W5): a backend inspect() that raises must return a clean,
+    escaped HTMX fragment (logged server-side) — not a bare 500 stack."""
+    from lab_web.app import app
+    app.state.runners["stub-backend"].inspect.side_effect = RuntimeError("boom")
+    try:
+        resp = await client.get("/resources/stub-backend/test-vm")
+    finally:
+        app.state.runners["stub-backend"].inspect.side_effect = None
+    assert resp.status_code == 200          # HTMX partial, not a 500
+    assert "Inspect failed" in resp.text
+    assert "boom" not in resp.text          # no internal detail leaked
 
 
 @pytest.mark.asyncio

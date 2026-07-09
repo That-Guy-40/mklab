@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import html
+import logging
 from collections import defaultdict
 from urllib.parse import unquote
 
@@ -13,6 +14,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from lab_web.app import templates
 from lab_tui.backends.base import BackendRunner, Resource
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _UNLABELLED = "(unlabelled)"
@@ -94,7 +96,17 @@ async def detail_panel(backend: str, name: str, request: Request) -> HTMLRespons
     resource = await asyncio.to_thread(_find_resource, runner, name)
     if resource is None:
         return HTMLResponse(f"<p class='error'>Resource not found: {html.escape(name)}</p>")
-    inspect_text = await asyncio.to_thread(runner.inspect, resource)
+    # W5 (Review phase6): a backend inspect() that raises used to bubble to a
+    # bare 500; wrap it like the hardened destroy path — log server-side,
+    # return a clean escaped fragment for HTMX to swap in.
+    try:
+        inspect_text = await asyncio.to_thread(runner.inspect, resource)
+    except Exception:  # noqa: BLE001
+        logger.exception("inspect failed for %s/%s", backend, resource.name)
+        return HTMLResponse(
+            f"<p class='error'>Inspect failed for "
+            f"{html.escape(resource.display_name)} — see server logs.</p>"
+        )
     return templates.TemplateResponse(
         request=request,
         name="partials/detail_panel.html.j2",
@@ -159,7 +171,11 @@ async def api_resource_detail(
     resource = await asyncio.to_thread(_find_resource, runner, name)
     if resource is None:
         return JSONResponse({"error": f"not found: {name}"}, status_code=404)
-    inspect_text = await asyncio.to_thread(runner.inspect, resource)
+    try:  # W5: mirror the HTML path — no bare 500 on a backend inspect error.
+        inspect_text = await asyncio.to_thread(runner.inspect, resource)
+    except Exception:  # noqa: BLE001
+        logger.exception("inspect failed for %s/%s", backend, resource.name)
+        return JSONResponse({"error": "inspect failed — see server logs"}, status_code=500)
     return JSONResponse({
         "schema_version": 1,
         "backend": resource.backend,
