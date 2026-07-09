@@ -7,7 +7,9 @@
 > **Follow-up:** a deeper, phase-driver-focused review was done on 2026-07-08 —
 > see [`REVIEW-phases-1-5.md`](REVIEW-phases-1-5.md). It re-checks phases 1–5
 > against current code and fixes the HIGH/MED issues it found (host-damage,
-> lab-escape, cleanup correctness) with regression tests.
+> lab-escape, cleanup correctness) with regression tests. A companion review of
+> the Phase 6 UIs (Textual TUI + FastAPI/HTMX web) followed the same day —
+> see [`REVIEW-phase6.md`](REVIEW-phase6.md).
 
 ---
 

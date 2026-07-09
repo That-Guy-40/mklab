@@ -172,20 +172,53 @@ def phase_script(rel: str) -> Path:
     return _PHASE_ROOT / rel
 
 
-def run_capture(argv: list[str], *, env: dict | None = None) -> subprocess.CompletedProcess[str]:
+# S1 (Review phase6): a phase-script mutation or engine query that runs longer
+# than this is treated as hung.  Without it, a wedged `lab-*.sh`, a stuck
+# docker/podman/lxd daemon, or a `sudo` awaiting input pins the caller forever
+# — in the web UI that call runs in an `asyncio.to_thread` worker, so enough
+# stuck calls exhaust the threadpool and wedge uvicorn.  124 mirrors coreutils
+# `timeout(1)` so callers/tests can recognise the timeout exit distinctly.
+DEFAULT_TIMEOUT = 120  # seconds
+TIMEOUT_RC = 124
+
+
+def run_capture(
+    argv: list[str],
+    *,
+    env: dict | None = None,
+    timeout: float | None = DEFAULT_TIMEOUT,
+) -> subprocess.CompletedProcess[str]:
     """Run `argv`, capture stdout+stderr, never raise on non-zero exit.
 
     Caller decides whether `cp.returncode != 0` is an error condition.
     Used for both engine queries (where non-zero often means "no daemon")
     and for actual mutations (where non-zero is a real failure to surface).
+
+    A hung command is killed after `timeout` seconds and surfaced as a
+    non-zero (`TIMEOUT_RC`) CompletedProcess rather than blocking forever;
+    pass `timeout=None` to opt a specific call out (e.g. a legitimately
+    long-running build).
     """
-    return subprocess.run(
-        argv,
-        capture_output=True,
-        text=True,
-        env=env if env is not None else os.environ.copy(),
-        check=False,
-    )
+    try:
+        return subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            env=env if env is not None else os.environ.copy(),
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        # subprocess kills the child before raising; partial output may be
+        # present (str in text mode, or None if nothing was captured).
+        out = exc.stdout or ""
+        err = exc.stderr or ""
+        if not isinstance(out, str):
+            out = out.decode("utf-8", "replace")
+        if not isinstance(err, str):
+            err = err.decode("utf-8", "replace")
+        err += f"\nlab-create: command timed out after {timeout}s and was killed"
+        return subprocess.CompletedProcess(argv, TIMEOUT_RC, out, err)
 
 
 def run_json(argv: list[str]) -> tuple[int, list | dict | None]:

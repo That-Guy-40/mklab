@@ -4,9 +4,11 @@ A Python 3.11+ Textual app that surfaces resources produced by Phases 1–5
 (chroots, VMs, docker/podman containers, LXD/Incus instances) in one
 keyboard-driven UI, plus cross-phase topology bring-up / tear-down.
 
-This is **v0.1** — read-only inventory + topology orchestration. Create
-wizards and console attach are deferred to v0.2; the Phase 6b web UI
-([`../phase6b-web/`](../phase6b-web/)) has since shipped.
+This is **v0.1**: read-only inventory + cross-phase topology orchestration,
+**plus** five per-phase create wizards (`n`) and interactive console attach
+(`c`) — both shipped. The Phase 6b web UI
+([`../phase6b-web/`](../phase6b-web/)) has since shipped on the same
+`BackendRunner` foundation.
 
 ## Install + run
 

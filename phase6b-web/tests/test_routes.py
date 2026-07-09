@@ -157,6 +157,26 @@ async def test_xss_in_resource_name_is_escaped(client) -> None:
 
 
 @pytest.mark.asyncio
+async def test_detail_panel_escapes_unknown_backend(client) -> None:
+    """Regression (Review phase6 W1): the GET detail-panel 'Unknown backend'
+    fragment reflected the URL param RAW (unlike the escaped actions.py
+    fragments).  A '<script>' backend must come back escaped."""
+    resp = await client.get("/resources/<script>alert(1)</script>/foo")
+    assert "<script>alert(1)</script>" not in resp.text
+    assert "&lt;script&gt;" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_detail_panel_escapes_missing_resource_name(client) -> None:
+    """Regression (Review phase6 W1): the 'Resource not found' fragment
+    reflected the resource name RAW.  A '<img onerror=…>' name (no match on
+    the stub backend) must come back escaped, not verbatim."""
+    resp = await client.get("/resources/stub-backend/<img src=x onerror=alert(1)>")
+    assert "<img src=x onerror=alert(1)>" not in resp.text
+    assert "&lt;img" in resp.text
+
+
+@pytest.mark.asyncio
 async def test_security_headers_present(client) -> None:
     """F-15: key security headers must be set on every response."""
     resp = await client.get("/")

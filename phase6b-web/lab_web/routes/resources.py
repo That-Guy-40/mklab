@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 from collections import defaultdict
 from urllib.parse import unquote
 
@@ -87,10 +88,12 @@ async def detail_panel(backend: str, name: str, request: Request) -> HTMLRespons
     name = unquote(name)
     runner = _all_runners(request).get(backend)
     if runner is None:
-        return HTMLResponse(f"<p class='error'>Unknown backend: {backend}</p>")
+        # W1 (Review phase6): escape reflected path params — the sibling
+        # actions.py fragments already do this; detail_panel did not.
+        return HTMLResponse(f"<p class='error'>Unknown backend: {html.escape(backend)}</p>")
     resource = await asyncio.to_thread(_find_resource, runner, name)
     if resource is None:
-        return HTMLResponse(f"<p class='error'>Resource not found: {name}</p>")
+        return HTMLResponse(f"<p class='error'>Resource not found: {html.escape(name)}</p>")
     inspect_text = await asyncio.to_thread(runner.inspect, resource)
     return templates.TemplateResponse(
         request=request,
