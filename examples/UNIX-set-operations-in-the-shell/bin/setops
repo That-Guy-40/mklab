@@ -1,0 +1,68 @@
+# setops — the article's set operations, AS PUBLISHED.  Source, don't execute:
+#
+#     . bin/setops
+#     set_intersect data/A data/B
+#
+# Transcribed from Peteris Krumins, "Set Operations in the Unix Shell" and its
+# "Simplified" cheat-sheet companion:
+#   https://catonmat.net/set-operations-in-unix-shell
+#   https://catonmat.net/set-operations-in-unix-shell-simplified
+# Storing the recipes as sourceable shell functions is Thomas Guest's suggestion
+# from "He Sells Shell Scripts to Intersect Sets" (Overload 80, Aug 2007).
+#
+# The sets are NUMERIC, so every sort carries -n, exactly as the article
+# instructs: "if you have a numeric set, then sort must take -n option".
+#
+# ============================ READ THIS ======================================
+# THREE OF THESE FUNCTIONS ARE WRONG.  That is deliberate: this file is the
+# object of study, not a tool.  Use bin/fixed/setops for anything real, and
+# `diff -u bin/setops bin/fixed/setops` to see every correction.
+#
+#   * set_intersect / set_complement / set_symdiff / set_subset all feed
+#     `sort -n` output to `comm`.  comm merges BYTE-WISE.  On P={1,9,10} and
+#     Q={10} the intersection comes back EMPTY.  See demo.sh sections 12-13.
+#   * set_max is fine here, but the article's own worked example prints the
+#     maximum using `head -1` (which is the minimum).
+#   * set_product emits pairs from set2 x set1, not set1 x set2 -- the article's
+#     nested loop reads set1 in the INNER loop.
+# =============================================================================
+
+# Set Membership: is element $1 in set $2?   (returns 0 if yes)
+# NOTE: $1 is a REGEX, not a literal -- `set_member . A` matches every 1-char line.
+set_member() { grep -xq "$1" "$2"; }
+
+# Set Equality: are sets $1 and $2 the same?  (returns 0 if equal)
+set_equal() { diff -q <(sort "$1" | uniq) <(sort "$2" | uniq) >/dev/null; }
+
+# Set Cardinality: how many elements in set $1?
+set_card() { wc -l < "$1"; }
+
+# Subset Test: is $1 a subset of $2?  (returns 0 if yes)
+set_subset() { [ -z "$(comm -23 <(sort -n "$1" | uniq) <(sort -n "$2" | uniq) | head -1)" ]; }
+
+# Set Union: $1 ∪ $2
+set_union() { sort -n "$1" "$2" | uniq; }
+
+# Set Intersection: $1 ∩ $2
+set_intersect() { comm -12 <(sort -n "$1") <(sort -n "$2"); }
+
+# Set Complement: $1 - $2  (elements in $1 that are not in $2)
+set_complement() { comm -23 <(sort -n "$1") <(sort -n "$2"); }
+
+# Set Symmetric Difference: $1 △ $2
+set_symdiff() { comm -3 <(sort -n "$1") <(sort -n "$2") | tr -d '\t'; }
+
+# Disjoint Set Test: do $1 and $2 share no element?  (returns 0 if disjoint)
+# NOTE: reports "not disjoint" if EITHER file contains a duplicate of its own.
+set_disjoint() { awk '{ if (++seen[$0]==2) exit 1 }' "$1" "$2"; }
+
+# Empty Set Test: is $1 empty?  (returns 0 if empty)
+set_empty() { [ "$(wc -l < "$1")" -eq 0 ]; }
+
+# Minimum / Maximum element of the numeric set $1
+set_min() { head -1 <(sort -n "$1"); }
+set_max() { tail -1 <(sort -n "$1"); }
+
+# Set Cartesian Product.  The article's nested loop, verbatim -- note that it
+# reads set1 in the INNER loop, so it emits set2 x set1.
+set_product() { while read a; do while read b; do echo "$a, $b"; done < "$1"; done < "$2"; }

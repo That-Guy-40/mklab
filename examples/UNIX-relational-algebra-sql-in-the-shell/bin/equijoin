@@ -1,0 +1,48 @@
+#!/bin/bash
+# equijoin — join two relations where col1 of rel1 equals col2 of rel2.
+#
+#   equijoin [ -d <delim> | -t ] rel1 rel2 col1 col2
+#
+# Transcribed VERBATIM from Matt Might, "Relational shell programming"
+#   https://matt.might.net/articles/sql-in-the-shell/
+# Only this header comment is added.
+#
+# A join is not a primitive: it is Cartesian product, then selection on equality.
+# You can see exactly that in the body -- the nested `while read` loops build the
+# product, and the trailing `awk` selects. That is the whole lesson.
+#
+# `-t` is broken here for the same reason it is broken in `cartesian` (bash's echo
+# does not expand "\t"); pass -d "$(printf '\t')" for TSV.
+#
+# It materializes the full product first, so O(|rel1| x |rel2|). The native
+# `join(1)` streams two SORTED inputs in O(n + m) -- demo.sh proves they agree.
+
+delim="," # CSV by default
+
+# Parse flagged arguments:
+while getopts "td:" flag
+do
+  case $flag in
+    d) delim=$OPTARG;;
+    t) delim="\t";;
+    ?) exit;;
+  esac
+done
+
+# Delete the flagged arguments:
+shift $(($OPTIND -1))
+
+f1=$1
+f2=$2
+col1=$3
+col2=$4
+
+cols=`awk -F "${delim}" '{ print NF ; exit }' $f1`
+
+while read a
+ do while read b
+      do
+        echo "$a${delim}$b"
+      done < $f2
+ done < $f1 |
+ awk -F "${delim}" "{ if ( \$${col1} == \$$(( col2 + cols )) ) print }"

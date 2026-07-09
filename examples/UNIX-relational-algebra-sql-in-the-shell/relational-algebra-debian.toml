@@ -1,0 +1,34 @@
+# Relational algebra in the shell — Matt Might's "Relational shell programming"
+# + Jason Walsh's "SQL in the Shell" — on Debian 13 (trixie).
+#
+# A throwaway system container with bash, GNU coreutils (`join`, `comm`), gawk and
+# sqlite3, a non-root `learner` user, and a `~/relational-algebra/` sandbox: Might's
+# four scripts verbatim (cartesian, memberp, difference, equijoin), corrected twins
+# under bin/fixed/, both articles' sample relations, and a runnable demo.sh that
+# proves the hand-rolled bash, coreutils, and SQL all compute the same relations.
+# Driven through phase5-lxd/lab-lxd.sh, which speaks LXD or Incus identically.
+#
+#   # 1) launch the container
+#   phase5-lxd/lab-lxd.sh up   --config examples/UNIX-relational-algebra-sql-in-the-shell/relational-algebra-debian.toml
+#
+#   # 2) provision it (bash + coreutils + gawk + sqlite3 + a `learner` + the sandbox)
+#   examples/UNIX-relational-algebra-sql-in-the-shell/setup-workshop.sh relational-algebra-debian/shell
+#
+#   # 3) start querying — log in as the learner and follow the articles
+#   phase5-lxd/lab-lxd.sh exec relational-algebra-debian/shell -- su - learner
+#
+#   # 4) tear down
+#   phase5-lxd/lab-lxd.sh down --lab relational-algebra-debian
+#
+# The by-hand walkthrough (what setup-workshop.sh automates, and why) is RUNBOOK.md.
+
+[lab]
+name        = "relational-algebra-debian"
+description = "Relational algebra with Unix tools (join/comm/cut/awk + sqlite3 oracle) on Debian 13 (trixie)"
+tags        = ["relational-algebra", "sql", "matt-might", "join", "comm", "awk", "sqlite", "debian", "trixie"]
+
+[[instance]]
+name  = "shell"
+type  = "container"
+# Debian 13 / trixie container, from the linuxcontainers `images:` remote.
+image = "images:debian/13"

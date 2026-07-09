@@ -1,0 +1,668 @@
+/* Style: Minimal Light - Clean, typography-focused design */
+/* Based on style-minimal-light.css with org-mode specifics preserved */
+:root {
+    --bg: #fafafa;
+    --bg-content: #ffffff;
+    --text: #1a1a1a;
+    --text-secondary: #666;
+    --accent: #0066cc;
+    --accent-light: #e6f2ff;
+    --border: #eaeaea;
+    --code-bg: #f6f8fa;
+    --success: #4CAF50;
+    --warning: #FFA500;
+}
+
+/* Global Styles */
+body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    line-height: 1.8;
+    color: var(--text);
+    background-color: #ffffff;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 3rem clamp(1rem, 5vw, 4rem);
+    font-size: 17px;
+    font-weight: 400;
+}
+
+/* Typography */
+h1, h2, h3, h4, h5, h6 {
+    color: var(--text);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    margin-top: 2.5rem;
+    margin-bottom: 1rem;
+}
+
+h1 { font-size: 2.5rem; }
+h2 { font-size: 1.75rem; margin-top: 3rem; }
+h3 { font-size: 1.25rem; }
+h4 { font-size: 1.1rem; }
+h5 { font-size: 1rem; }
+h6 { font-size: 0.9rem; }
+
+/* ─── section numbers in accent color ─────────────────────── */
+.section-number-2, .section-number-3, .section-number-4 {
+    color: var(--accent);
+    font-weight: 400;
+    margin-right: 0.3em;
+}
+
+/* ─── thin divider between top-level sections ─────────────── */
+.outline-2 {
+    border-top: 1px solid var(--border);
+    padding-top: 2rem;
+}
+.outline-2:first-of-type {
+    border-top: none;
+    padding-top: 0;
+}
+
+/* ─── table of contents card ──────────────────────────────── */
+#table-of-contents {
+    background: #ffffff;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.5rem 2rem;
+    margin: 2rem 0;
+}
+#table-of-contents h2 {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-secondary);
+    margin: 0 0 1rem;
+}
+#table-of-contents ul {
+    columns: 2;
+    column-gap: 2rem;
+}
+#table-of-contents li {
+    margin-bottom: 0.3rem;
+    font-size: 0.9rem;
+}
+#table-of-contents a {
+    color: var(--text);
+    text-decoration: none;
+}
+#table-of-contents a:hover {
+    color: var(--accent);
+}
+
+/* ─── page title ──────────────────────────────────────────── */
+.title {
+    font-size: 2.5rem;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    text-align: left;
+    margin-bottom: 0.5rem;
+}
+
+/* ─── self-linked headlines: look like normal headings ────── */
+h2 > a[href^="#"], h3 > a[href^="#"], h4 > a[href^="#"] {
+    color: inherit;
+    text-decoration: none;
+}
+h2 > a[href^="#"]:hover, h3 > a[href^="#"]:hover, h4 > a[href^="#"]:hover {
+    color: inherit;
+    text-decoration: none;
+}
+
+/* ─── heading anchor links ────────────────────────────────── */
+.heading-anchor {
+    color: #f5f5f5;
+    font-weight: 400;
+    text-decoration: none;
+    margin-left: 0.3em;
+    transition: color 0.15s ease;
+}
+h2:hover .heading-anchor,
+h3:hover .heading-anchor,
+h4:hover .heading-anchor {
+    color: #ccc;
+}
+
+a {
+    color: var(--accent);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    transition: background-color 0.2s ease;
+}
+
+/* ─── keyword chips (site-wide, from #+KEYWORDS) ─────────── */
+.page-tags {
+    margin: -1rem 0 1rem;
+    padding: 0;
+    width: 100%;
+}
+.page-tags-inner {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+}
+/* Reuses .pes-kw from pocket-es for consistent chip styling.
+   If pocket-es JS isn't loaded, define the fallback here: */
+.page-tags .pes-kw {
+    font-size: 0.65rem;
+    padding: 0.05rem 0.35rem;
+    background: #f0fdf4;
+    color: #166534;
+    border-radius: 3px;
+    text-decoration: none;
+    cursor: pointer;
+}
+.page-tags .pes-kw:hover {
+    opacity: 0.7;
+}
+
+a:hover {
+    background-color: var(--accent-light);
+}
+
+/* Header Styles */
+.site-header {
+    border-bottom: 1px solid var(--border);
+    padding: 0.75rem clamp(1rem, 5vw, 4rem);
+    background: rgba(250, 250, 250, 0.85);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 100;
+    box-sizing: border-box;
+}
+
+/* Compensate for fixed header height */
+#preamble {
+    padding-top: 3.5rem;
+}
+#content {
+    /* Fallback if no preamble */
+}
+body > #preamble:first-child {
+    margin-top: 0;
+}
+
+html {
+    scrollbar-gutter: stable;
+}
+
+body {
+    overflow-x: clip;
+}
+
+.site-header .container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.site-header nav ul {
+    display: flex;
+    gap: 2rem;
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.site-header nav ul li a {
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-size: 0.9rem;
+    transition: color 0.2s ease;
+}
+
+.site-header nav ul li a:hover {
+    color: var(--text);
+    background: none;
+}
+
+.site-logo {
+    display: block;
+    line-height: 0;
+}
+
+/* ─── site footer ─────────────────────────────────────────── */
+.site-footer {
+    border-top: 1px solid var(--border);
+    margin-top: 3rem;
+    padding-top: 1rem;
+    padding-bottom: 0.5rem;
+    background: var(--bg);
+}
+.site-footer .container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.site-footer .footer-nav {
+    display: flex;
+    gap: 1.5rem;
+}
+.site-footer .footer-nav a {
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-size: 0.85rem;
+    transition: color 0.2s ease;
+}
+.site-footer .footer-nav a:hover {
+    color: var(--text);
+}
+.site-footer .footer-meta {
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+.site-footer .footer-meta code {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    background: none;
+    padding: 0;
+}
+.site-footer .footer-meta a {
+    color: var(--text-secondary);
+    text-decoration: none;
+}
+.site-footer .footer-meta a:hover {
+    color: var(--text);
+}
+
+.site-logo img {
+    width: 48px;
+    height: 48px;
+    margin: 0;
+}
+
+/* Content Styles */
+.content {
+    background-color: inherit;
+}
+
+.title {
+    text-align: center;
+    margin-bottom: 1.5em;
+    color: var(--text);
+}
+
+img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: 2rem auto;
+    border-radius: 4px;
+}
+
+/* Code and Pre Styles */
+code, pre {
+    background-color: var(--code-bg);
+    border-radius: 4px;
+    font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+}
+
+pre {
+    padding: 1.25rem;
+    overflow-x: auto;
+    font-size: 0.9rem;
+    border: 1px solid var(--border);
+    line-height: 1.5;
+}
+
+code {
+    padding: 0.15rem 0.35rem;
+    font-size: 0.85em;
+}
+
+/* Org-mode source block syntax highlighting (light theme) */
+pre.src {
+    background-color: #f6f8fa;
+    color: #24292e;
+    border: 1px solid #e1e4e8;
+    border-radius: 6px;
+    position: relative;
+}
+
+/* Language-specific labels */
+pre.src::before {
+    content: attr(class);
+    display: block;
+    font-size: 0.7rem;
+    color: #959da5;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid #e1e4e8;
+}
+
+pre.src-python::before { content: "python"; }
+pre.src-javascript::before { content: "javascript"; }
+pre.src-javascript { color: #1a1a1a; font-weight: 450; }
+pre.src-typescript::before { content: "typescript"; }
+pre.src-rust::before { content: "rust"; }
+pre.src-json::before { content: "json"; }
+pre.src-sql::before { content: "sql"; }
+pre.src-bash::before, pre.src-shell::before, pre.src-sh::before { content: "shell"; }
+pre.src-elisp::before, pre.src-emacs-lisp::before { content: "elisp"; }
+pre.src-scheme::before { content: "scheme"; }
+pre.src-clojure::before { content: "clojure"; }
+pre.src-yaml::before { content: "yaml"; }
+pre.src-toml::before { content: "toml"; }
+pre.src-hcl::before { content: "hcl"; }
+pre.src-text::before { content: ""; border: none; margin: 0; padding: 0; }
+
+/* htmlize semantic CSS classes (light theme) */
+/* Keywords: def, class, return, if, else, for, while, import, from, etc. */
+.org-keyword { color: #d73a49; }
+
+/* Strings and docstrings */
+.org-string { color: #032f62; }
+.org-doc { color: #032f62; font-style: italic; }
+
+/* Built-in functions: len, sum, max, min, print, etc. */
+.org-builtin { color: #005cc5; }
+
+/* Function and method names at definition */
+.org-function-name { color: #6f42c1; }
+
+/* Variable names */
+.org-variable-name { color: #e36209; }
+
+/* Type names and annotations */
+.org-type { color: #005cc5; }
+
+/* Clojure keywords (:foo, :bar) */
+.org-clojure-keyword { color: #005cc5; }
+
+/* Constants: True, False, None, numbers */
+.org-constant { color: #005cc5; }
+
+/* Comments */
+.org-comment, .org-comment-delimiter { color: #6a737d; font-style: italic; }
+
+/* Decorators (@property, @staticmethod, etc.) */
+.org-preprocessor { color: #6f42c1; }
+
+/* Operators and punctuation */
+.org-operator { color: #24292e; }
+.org-negation-char { color: #d73a49; }
+.org-rainbow-delimiters-depth-1 { color: #d73a49; }
+.org-rainbow-delimiters-depth-2 { color: #e36209; }
+.org-rainbow-delimiters-depth-3 { color: #005cc5; }
+
+/* Special for self/this */
+.org-variable-name.org-builtin { color: #6f42c1; }
+
+/* Fallback for inline styles from older exports (backwards compatibility) */
+pre.src span[style*="font-weight: bold"]:not([style*="font-style: italic"]) {
+    color: #d73a49 !important;
+}
+pre.src span[style*="font-style: italic"]:not([style*="font-weight"]) {
+    color: #032f62 !important;
+}
+pre.src span[style*="font-weight: bold"][style*="font-style: italic"] {
+    color: #e36209 !important;
+}
+pre.src span[style*="text-decoration: underline"] {
+    color: #005cc5 !important;
+}
+
+/* List Styles */
+ul, ol {
+    padding-left: 1.5rem;
+    margin-bottom: 1em;
+}
+
+ul.org-ul {
+    padding-left: 1.5rem;
+}
+
+ul.org-ul li {
+    padding: 0.25rem 0;
+}
+
+li {
+    margin-bottom: 0.5em;
+}
+
+/* Blockquote Styles */
+blockquote {
+    border-left: 3px solid var(--accent);
+    padding-left: 1.25em;
+    margin-left: 0;
+    font-style: italic;
+    color: var(--text-secondary);
+}
+
+/* Table Styles */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 1.5rem 0;
+    font-size: 0.95rem;
+}
+
+th, td {
+    padding: 0.75rem 1rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+}
+
+th {
+    font-weight: 600;
+}
+
+/* ─── breadcrumbs (eyebrow style, monospace uppercase) ────── */
+.breadcrumbs {
+    font-family: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+    font-size: 0.8rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    padding: 0;
+    margin: 0.5rem 0 1.5rem;
+}
+
+.breadcrumbs::before {
+    content: "●  ";
+    color: var(--accent);
+}
+
+.breadcrumbs a {
+    color: var(--text-secondary);
+    text-decoration: none;
+}
+
+.breadcrumbs a:hover {
+    color: var(--text);
+}
+
+.breadcrumb-date {
+    letter-spacing: 0.05em;
+}
+
+.breadcrumbs .last-modified {
+    font-size: 0.8em;
+    color: var(--text-secondary);
+}
+
+/* Page Header Styles */
+.page-header {
+    margin-top: 2rem;
+    margin-bottom: 2rem;
+}
+
+.page-header h1 {
+    margin: 0;
+}
+
+.page-header .author,
+.page-header .date,
+.page-header .description,
+.page-header .keywords {
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    margin: 0.25rem 0;
+}
+
+/* Footer Styles */
+#postamble {
+    font-size: 0.85em;
+    color: var(--text-secondary);
+    text-align: center;
+    margin-top: 3rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+}
+
+#postamble p {
+    display: inline;
+    margin: 0 0.5em;
+}
+
+#postamble a {
+    color: var(--accent);
+}
+
+#postamble p:first-child {
+    font-weight: 600;
+}
+
+#postamble p.email:before {
+    content: "<";
+}
+
+#postamble p.email:after {
+    content: ">";
+}
+
+/* AI Block Styles */
+.ai {
+    position: relative;
+    background-color: var(--accent-light);
+    border-left: 3px solid var(--accent);
+    padding: 1rem;
+    margin: 1.5rem 0;
+    border-radius: 0 4px 4px 0;
+}
+
+.ai p {
+    font-family: inherit;
+    margin: 0;
+}
+
+.ai .copy-javascript {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    background-color: var(--accent);
+    border: none;
+    color: white;
+    padding: 0.25rem 0.5rem;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 0.8rem;
+}
+
+.ai .copy-javascript:hover {
+    opacity: 0.9;
+}
+
+/* Misc Styles */
+hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 2em 0;
+}
+
+.property-drawer {
+    color: var(--text-secondary);
+    font-size: 0.8em;
+    white-space: pre;
+    font-family: monospace;
+}
+
+/* Hide specific elements */
+#org-div-home-and-up, #table-of-contents, .py-terminal-docked, py-config {
+    display: none;
+}
+
+/* TODO/DONE Styles */
+span.todo, span.done {
+    display: inline-block;
+    font-size: 0.7em;
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    margin-right: 0.25rem;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+span.todo-TODO {
+    color: var(--warning);
+    background-color: rgba(255, 165, 0, 0.1);
+}
+
+span.todo-DONE, .todo-DONE {
+    color: var(--success);
+    background-color: rgba(76, 175, 80, 0.1);
+    text-decoration: none;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    body {
+        padding: 1.5rem 1rem;
+        font-size: 16px;
+    }
+
+    .site-header nav ul {
+        flex-wrap: wrap;
+        gap: 1rem;
+    }
+
+    h1 { font-size: 1.75rem; }
+    h2 { font-size: 1.35rem; }
+
+    table {
+        display: block;
+        overflow-x: auto;
+    }
+
+    pre {
+        font-size: 0.85rem;
+    }
+}
+
+@media (min-width: 1400px) {
+    body {
+        max-width: 1400px;
+    }
+}
+
+#content > h1 {
+    display: none;
+}
+
+/* ─── wal.sh stylized wordmark ────────────────────────────── */
+.wordmark, a.wordmark, a.wordmark:visited, a.wordmark:hover {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-weight: 800;
+    letter-spacing: -0.04em;
+    color: var(--text);
+    white-space: nowrap;
+    text-decoration: none;
+}
+a.wordmark .dot { color: var(--accent); }
+a.wordmark .sh, .wordmark .sh  {
+    color: var(--text-secondary);
+    font-weight: 500;
+    font-style: italic;
+    letter-spacing: -0.02em;
+}
+
+.wordmark-sm { font-size: 1.1rem; }
+.wordmark-md { font-size: 2rem;   }
+.wordmark-lg { font-size: 4rem;   }
+.wordmark-xl { font-size: 8rem; line-height: 0.9; }

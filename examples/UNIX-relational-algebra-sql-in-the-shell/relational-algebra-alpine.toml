@@ -1,0 +1,37 @@
+# Relational algebra in the shell — Matt Might's "Relational shell programming"
+# + Jason Walsh's "SQL in the Shell" — on Alpine Linux.
+#
+# The same environment as relational-algebra-debian.toml on a musl/BusyBox base.
+# Alpine ships NO bash (Might's scripts are #!/bin/bash, and a missing interpreter
+# reports the misleading "not found"), NO `join` applet at all, and no sqlite3.
+# Sharper still: BusyBox `grep -E` reads `\t` as a TAB while GNU grep reads it as a
+# literal `t`, so one of Walsh's published commands behaves DIFFERENTLY on the two
+# bases. (Conversely BusyBox ash *does* have `<(...)` process substitution, which
+# Debian's dash does not — the usual story inverted.) setup-workshop.sh installs
+# bash + GNU coreutils + gawk + sqlite so both articles can be followed faithfully
+# — a documented divergence, see RUNBOOK.md / MANUAL_TESTING.md. Engine-agnostic:
+# phase5-lxd/lab-lxd.sh speaks LXD or Incus identically.
+#
+#   # 1) launch the container
+#   phase5-lxd/lab-lxd.sh up   --config examples/UNIX-relational-algebra-sql-in-the-shell/relational-algebra-alpine.toml
+#
+#   # 2) provision it (bash + coreutils + gawk + sqlite3 + a `learner` + the sandbox)
+#   examples/UNIX-relational-algebra-sql-in-the-shell/setup-workshop.sh relational-algebra-alpine/shell
+#
+#   # 3) start querying — log in as the learner and follow the articles
+#   phase5-lxd/lab-lxd.sh exec relational-algebra-alpine/shell -- su - learner
+#
+#   # 4) tear down
+#   phase5-lxd/lab-lxd.sh down --lab relational-algebra-alpine
+
+[lab]
+name        = "relational-algebra-alpine"
+description = "Relational algebra with Unix tools (GNU coreutils over BusyBox, which has no join) on Alpine"
+tags        = ["relational-algebra", "sql", "matt-might", "join", "comm", "awk", "sqlite", "alpine", "musl"]
+
+[[instance]]
+name  = "shell"
+type  = "container"
+# `images:alpine/latest` is rewritten by lab-lxd.sh to the highest stable
+# alpine/X.Y on the `images:` remote.
+image = "images:alpine/latest"

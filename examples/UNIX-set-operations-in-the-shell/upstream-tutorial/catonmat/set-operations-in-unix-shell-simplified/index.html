@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,minimum-scale=1,initial-scale=1">
+
+    <title>Set Operations in the Unix Shell Simplified</title>
+
+    <link href="https://catonmat.net/set-operations-in-unix-shell-simplified" rel="canonical">
+    <link rel="alternate" type="application/rss+xml" href="https://catonmat.net/feed">
+
+    <meta property="og:title" content="Set Operations in the Unix Shell Simplified">
+    <meta property="og:description" content="Remember my article on Set Operations in the Unix Shell? I implemented 14 various set operations by using common Unix utilities such as diff, comm, head, tail, grep, wc and others. I decided to create a simpler version of that post that just lists the operations. I also created a .txt cheat-sheet version of it and to...">
+    <meta property="og:url" content="https://catonmat.net/set-operations-in-unix-shell-simplified">
+        <meta property="og:image" content="https://catonmat.net/images/catonmat-preview-image.png">
+    
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:site" content="@catonmat">
+    <meta name="twitter:title" content="Set Operations in the Unix Shell Simplified">
+    <meta name="twitter:description" content="Remember my article on Set Operations in the Unix Shell? I implemented 14 various set operations by using common Unix utilities such as diff, comm, head, tail, grep, wc and others. I decided to create a simpler version of that post that just lists the operations. I also created a .txt cheat-sheet version of it and to...">
+    <meta name="twitter:creator" content="@pkrumins">
+
+        <meta name="twitter:image:src" content="https://catonmat.net/images/catonmat-preview-image.png">
+    
+    <link rel="apple-touch-icon" href="/favicon.png">
+    <link rel="icon" href="/favicon.png">
+
+    <script src="/js/catonmat.js?v=e5f5bf"></script>
+    
+
+    <link rel="stylesheet" href="/css/normalize.css?v=e5f5bf">
+    <link rel="stylesheet" href="/css/stylesheet.css?v=e5f5bf">
+    
+</head>
+<body>
+    <div class="site-page">
+        <header class="site-header">
+            <div class="logo">
+                <a href="/"><img src="/images/catonmat-logo-clean.png"></a>
+            </div>
+            <div class="navigation">
+                
+
+                    
+    <nav>
+        <ul>
+            
+        <li ><a href="/archive">archive</a></li>
+    
+            
+        <li ><a href="/books">books</a></li>
+    
+            
+        <li ><a href="/tools">tools</a></li>
+    
+            
+        <li ><a href="/projects">projects</a></li>
+    
+                        
+        <li ><a href="/about">about</a></li>
+    
+        </ul>
+    </nav>
+
+            </div>
+        </header>
+
+        
+    <section class="site-articles">
+        <article>
+            
+                <h1>
+    <a href="/set-operations-in-unix-shell-simplified">Set Operations in the Unix Shell Simplified</a>
+</h1>
+            
+            
+                <div class="last-updated">Last updated 
+    7 weeks ago
+</div>
+            
+            <div class="article-body">
+                
+    <p><img src="https://catonmat.net/wp-content/uploads/2008/10/set-union-intersect-complement.jpg" alt="set operations" class="post-icon" align="left" />Remember my article on <a href="https://catonmat.net/set-operations-in-unix-shell">Set Operations in the Unix Shell</a>? I implemented 14 various set operations by using common Unix utilities such as diff, comm, head, tail, grep, wc and others. I decided to create a simpler version of that post that just lists the operations. I also created a <strong>.txt cheat-sheet</strong> version of it and to make things more interesting I added an Awk implementation of each set op. If you want a detailed explanations of each operation, go to the <a href="https://catonmat.net/set-operations-in-unix-shell">original article</a>.</p>
+<p>Download .txt right away: <a href="https://catonmat.net/ftp/setops.txt">set operations in unix shell (.txt)</a><br />
+Download path: <code>https://catonmat.net/ftp/setops.txt</code></p>
+<h2 style="margin-bottom:10px">Set Membership</h2>
+<pre>
+$ grep -xc &#039;element&#039; set    # outputs 1 if element is in set
+                            # outputs &gt;1 if set is a multi-set
+                            # outputs 0 if element is not in set
+
+$ grep -xq &#039;element&#039; set    # returns 0 (true)  if element is in set
+                            # returns 1 (false) if element is not in set
+
+$ awk &#039;$0 == &quot;element&quot; { s=1; exit } END { exit !s }&#039; set
+# returns 0 if element is in set, 1 otherwise.
+
+$ awk -v e=&#039;element&#039; &#039;$0 == e { s=1; exit } END { exit !s }&#039;
+</pre>
+<h2 style="margin-bottom:10px">Set Equality</h2>
+<pre>
+$ diff -q &lt;(sort set1) &lt;(sort set2) # returns 0 if set1 is equal to set2
+                                    # returns 1 if set1 != set2
+
+$ diff -q &lt;(sort set1 | uniq) &lt;(sort set2 | uniq)
+# collapses multi-sets into sets and does the same as previous
+
+$ awk &#039;{ if (!($0 in a)) c++; a[$0] } END{ exit !(c==NR/2) }&#039; set1 set2
+# returns 0 if set1 == set2
+# returns 1 if set1 != set2
+
+$ awk &#039;{ a[$0] } END{ exit !(length(a)==NR/2) }&#039; set1 set2
+# same as previous, requires &gt;= gnu awk 3.1.5
+</pre>
+<h2 style="margin-bottom:10px">Set Cardinality</h2>
+<pre>
+$ wc -l set | cut -d&#039; &#039; -f1    # outputs number of elements in set
+
+$ wc -l &lt; set
+
+$ awk &#039;END { print NR }&#039; set
+</pre>
+<h2 style="margin-bottom:10px">Subset Test</h2>
+<pre>
+$ comm -23 &lt;(sort subset | uniq) &lt;(sort set | uniq) | head -1
+# outputs something if subset is not a subset of set
+# does not putput anything if subset is a subset of set
+
+$ awk &#039;NR==FNR { a[$0]; next } { if !($0 in a) exit 1 }&#039; set subset
+# returns 0 if subset is a subset of set
+# returns 1 if subset is not a subset of set
+</pre>
+<h2 style="margin-bottom:10px">Set Union</h2>
+<pre>
+$ cat set1 set2     # outputs union of set1 and set2
+                    # assumes they are disjoint
+
+$ awk 1 set1 set2   # ditto
+
+$ cat set1 set2 ... setn   # union over n sets
+
+$ cat set1 set2 | sort -u  # same, but assumes they are not disjoint
+
+$ sort set1 set2 | uniq
+
+# sort -u set1 set2
+
+$ awk &#039;!a[$0]++&#039;           # ditto
+</pre>
+<h2 style="margin-bottom:10px">Set Intersection</h2>
+<pre>
+$ comm -12 &lt;(sort set1) &lt;(sort set2)  # outputs insersect of set1 and set2
+
+$ grep -xF -f set1 set2
+
+$ sort set1 set2 | uniq -d
+
+$ join &lt;(sort -n A) &lt;(sort -n B)
+
+$ awk &#039;NR==FNR { a[$0]; next } $0 in a&#039; set1 set2
+</pre>
+<h2 style="margin-bottom:10px">Set Complement</h2>
+<pre>
+$ comm -23 &lt;(sort set1) &lt;(sort set2)
+# outputs elements in set1 that are not in set2
+
+$ grep -vxF -f set2 set1           # ditto
+
+$ sort set2 set2 set1 | uniq -u    # ditto
+
+$ awk &#039;NR==FNR { a[$0]; next } !($0 in a)&#039; set2 set1
+
+</pre>
+<h2 style="margin-bottom:10px">Set Symmetric Difference</h2>
+<pre>
+$ comm -3 &lt;(sort set1) &lt;(sort set2) | sed &#039;s/\t//g&#039;
+# outputs elements that are in set1 or in set2 but not both
+
+$ comm -3 &lt;(sort set1) &lt;(sort set2) | tr -d &#039;\t&#039;
+
+$ sort set1 set2 | uniq -u
+
+$ cat &lt;(grep -vxF -f set1 set2) &lt;(grep -vxF -f set2 set1)
+
+$ grep -vxF -f set1 set2; grep -vxF -f set2 set1
+
+$ awk &#039;NR==FNR { a[$0]; next } $0 in a { delete a[$0]; next } 1;
+       END { for (b in a) print b }&#039; set1 set2
+</pre>
+<h2 style="margin-bottom:10px">Power Set</h2>
+<pre>
+$ p() { [ $# -eq 0 ] &amp;&amp; echo || (shift; p &quot;$@&quot;) |
+        while read r ; do echo -e &quot;$1 $r\n$r&quot;; done }
+$ p `cat set`
+
+# no nice awk solution, you are welcome to email me one:
+# peter@catonmat.net
+</pre>
+<h2 style="margin-bottom:10px">Set Cartesian Product</h2>
+<pre>
+$ while read a; do while read b; do echo &quot;$a, $b&quot;; done &lt; set1; done &lt; set2
+
+$ awk &#039;NR==FNR { a[$0]; next } { for (i in a) print i, $0 }&#039; set1 set2
+</pre>
+<h2 style="margin-bottom:10px">Disjoint Set Test</h2>
+<pre>
+$ comm -12 &lt;(sort set1) &lt;(sort set2)  # does not output anything if disjoint
+
+$ awk &#039;++seen[$0] == 2 { exit 1 }&#039; set1 set2 # returns 0 if disjoint
+                                             # returns 1 if not
+</pre>
+<h2 style="margin-bottom:10px">Empty Set Test</h2>
+<pre>
+$ wc -l &lt; set            # outputs 0  if the set is empty
+                         # outputs &gt;0 if the set is not empty
+
+$ awk &#039;{ exit 1 }&#039; set   # returns 0 if set is empty, 1 otherwise
+</pre>
+<h2 style="margin-bottom:10px">Minimum</h2>
+<pre>
+$ head -1 &lt;(sort set)    # outputs the minimum element in the set
+
+$ awk &#039;NR == 1 { min = $0 } $0 &lt; min { min = $0 } END { print min }&#039;
+</pre>
+<h2 style="margin-bottom:10px">Maximum</h2>
+<pre>
+$ tail -1 &lt;(sort set)    # outputs the maximum element in the set
+
+$ awk &#039;$0 &gt; max { max = $0 } END { print max }&#039;
+</pre>
+<h2>Download All Set Operations in Unix Shell Documents</h2>
+<p>For your convenience here are the download links one more time.</p>
+<p>Download .txt document: <a href="https://catonmat.net/ftp/setops.txt" title="set operations in unix shell (.txt)">setops.txt</a><br />
+Download link: <code>https://catonmat.net/ftp/setops.txt</code></p>
+<p>Download .pdf document: <a href="https://catonmat.net/ftp/setops.pdf" title="set operations in unix shell (.pdf)">setops.pdf</a><br />
+Download link: <code>https://catonmat.net/ftp/setops.pdf</code></p>
+<h2>Credits</h2>
+<p>Thanks to waldner and pgas from #awk in FreeNode, and to <a href="http://lysium.de/blog">Andreas</a> for coming up with the cool power set function for bash.</p>
+<h2>Have fun!</h2>
+<p>If you have any other tips or tricks, or can think of other set operations let me know. Have fun and until next time!</p>
+
+            </div>
+        </article>
+    </section>
+    
+        <div class="more">
+            
+    <a href="/archive">Read more articles →</a>
+
+        </div>
+    
+    <div class="catonmat-news-box">
+        <div class="catonmat-news-text">
+            
+    Thanks for reading my post. If you enjoyed it and would like to receive my posts automatically, you can subscribe to new posts via <a href="/feed">rss feed</a> or email.
+
+        </div>
+        <div class="catonmat-news-email">
+            <input type="text" name="email" placeholder="Your email">
+            <button>Subscribe</button>
+        </div>
+        <div class="catonmat-news-email-error" hidden></div>
+        <div class="catonmat-news-email-success" hidden></div>
+    </div>
+            <div class="article-navigation">
+            <div class="go back">
+                                    <a href="/musical-geek-friday-dont-copy-that-floppy">Don't Copy That Floppy – Musical Geek Friday</a>
+                            </div>
+            <div class="go forward">
+                                    <a href="/what-would-john-mccarthy-say-if-he-saw-you-programming">What Would John McCarthy Say if He Saw You Programming?</a>
+                            </div>
+        </div>
+    
+
+        <footer class="site-footer">
+            <div class="virtual-browser">
+                <a href="/try-a-virtual-browser-for-free">Try a Virtual Browser – For Free!</a>
+            </div>
+            <div class="jelly-stains">
+                <img src="/images/this-space-reserved-for-jelly-stains.png" alt="">
+            </div>
+                        <div class="secret-message">
+                Secret message: Use coupon code <span class="jellyling">JELLYLING</span> to get a discount at my company Browserling!
+            </div>
+                    </footer>
+    </div>
+    
+
+<!-- Start of StatCounter Code -->
+<script type="text/javascript">
+var sc_project=3189873;
+var sc_invisible=1;
+var sc_security="dc7255a7";
+</script>
+<script type="text/javascript" src="https://www.statcounter.com/counter/counter.js" async></script>
+
+<!-- End of StatCounter Code -->
+</body>
+</html>

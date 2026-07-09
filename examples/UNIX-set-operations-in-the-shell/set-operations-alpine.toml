@@ -1,0 +1,37 @@
+# Set operations in the Unix shell — Peteris Krumins' "Set Operations in the Unix
+# Shell" (+ its cheat sheet and the Google Treasure Hunt puzzle that inspired it)
+# and Thomas Guest's "He Sells Shell Scripts to Intersect Sets" — on Alpine Linux.
+#
+# The same environment as set-operations-debian.toml on a musl/BusyBox base.
+# Alpine ships NO bash (every `comm -12 <(sort A) <(sort B)` needs process
+# substitution), NO `join` applet, no perl and no sqlite3. It is also the base
+# that makes two of the articles' errata visible: BusyBox `sort` REJECTS Guest's
+# obsolete `+0n -1n` key syntax that GNU sort still accepts, and BusyBox `grep -E`
+# reads `\t` as a tab where GNU grep does not. setup-workshop.sh installs bash +
+# GNU coreutils + gawk + perl + sqlite so both articles can be followed faithfully
+# — a documented divergence, see RUNBOOK.md / MANUAL_TESTING.md. Engine-agnostic:
+# phase5-lxd/lab-lxd.sh speaks LXD or Incus identically.
+#
+#   # 1) launch the container
+#   phase5-lxd/lab-lxd.sh up   --config examples/UNIX-set-operations-in-the-shell/set-operations-alpine.toml
+#
+#   # 2) provision it (bash + coreutils + gawk + perl + sqlite3 + a `learner` + the sandbox)
+#   examples/UNIX-set-operations-in-the-shell/setup-workshop.sh set-operations-alpine/shell
+#
+#   # 3) start intersecting — log in as the learner and follow the articles
+#   phase5-lxd/lab-lxd.sh exec set-operations-alpine/shell -- su - learner
+#
+#   # 4) tear down
+#   phase5-lxd/lab-lxd.sh down --lab set-operations-alpine
+
+[lab]
+name        = "set-operations-alpine"
+description = "Set operations with Unix tools (GNU coreutils over BusyBox, which has no join) on Alpine"
+tags        = ["set-operations", "sets", "catonmat", "krumins", "accu", "comm", "uniq", "awk", "sqlite", "alpine", "musl"]
+
+[[instance]]
+name  = "shell"
+type  = "container"
+# `images:alpine/latest` is rewritten by lab-lxd.sh to the highest stable
+# alpine/X.Y on the `images:` remote.
+image = "images:alpine/latest"

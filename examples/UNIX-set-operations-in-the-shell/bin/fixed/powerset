@@ -1,0 +1,33 @@
+#!/bin/bash
+# powerset (CORRECTED) — generate all 2^n subsets of a set, one per line.
+#
+#   fixed/powerset <set-file>
+#
+# Drop-in replacement for ../powerset (Krumins, crediting Andreas).  Same
+# recursion, same subsets, same order — without the cosmetic warts:
+#
+#   * no TRAILING SPACE on singleton subsets (the original emits "a " because
+#     it always writes "$1 $r" and $r is empty at the base of the recursion);
+#   * `printf` instead of `echo -e`, so an element that looks like a flag
+#     (-n, -e) or contains a backslash survives;
+#   * `read -r`, so a backslash in an element is not eaten.
+#
+# Still splits its arguments on whitespace, so elements must not contain spaces,
+# and still exponential: a 30-element set is a billion lines.
+
+[ $# -eq 1 ] || { echo "usage: ${0##*/} <set-file>" >&2; exit 1; }
+
+p() {
+  if [ $# -eq 0 ]; then
+    echo
+  else
+    ( shift; p "$@" ) | while IFS= read -r r; do
+        if [ -n "$r" ]; then printf '%s %s\n%s\n' "$1" "$r" "$r"
+        else               printf '%s\n\n' "$1"
+        fi
+      done
+  fi
+}
+
+# shellcheck disable=SC2046  # word splitting is exactly what p() wants here
+p $(cat "$1")

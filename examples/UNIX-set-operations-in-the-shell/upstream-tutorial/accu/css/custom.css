@@ -1,0 +1,485 @@
+/* your styles go here */
+
+.box-image-text .image {
+  min-height: 200px;
+  max-height: 200px;
+}
+
+.box-simple {
+  min-height: 230px;
+}
+
+/*!
+ *  ACCU-specific css elements
+ */
+
+ hr.accu {
+  width: 100%;
+  border-width: 5px;
+}
+
+div.article-content table {
+  margin: 0.5em;
+  border-top-style: none;
+  border-bottom-style: none;
+}
+
+div.article-content img {
+  max-width: 100%;
+}
+
+div.article-content p img {
+  vertical-align: baseline;
+}
+
+table.sidebartable img {
+  display: block;
+  margin: auto;
+}
+
+table.sidebartable {
+  width:100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  border: 3px solid silver;
+  padding: 5px;
+  margin-top: auto;
+  margin-left: auto;
+  margin-right: auto;
+  margin-bottom: 2em;
+}
+
+.sidebartable tr {
+  border: 3px solid silver;
+}
+
+.journaltable tr {
+  border: none;
+}
+
+td.sidebar {
+  background: LightGrey;
+}
+
+td.title {
+  background: silver;
+  text-align: center;
+}
+
+p.footnotes {
+  border-top-style: solid;
+  border-top-color: black;
+  border-top-width: 1px;
+}
+
+img.journal {
+  padding: 5px 10px 5px 5px;
+}
+
+p.bibliomixed {
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+}
+
+p.Byline {
+  font-style: italic;
+  font-weight: bold;
+  margin-bottom: 1.5em;
+}
+
+.quote {
+  margin-left: 1em;
+  margin-right: 1em;
+  font-style: italic;
+  text-align: right;
+}
+
+.blockquote {
+  font-style: italic;
+  margin-left: 1em;
+  margin-right: 1em;
+  border-left: none;
+}
+
+blockquote {
+  font-style: italic;
+  margin-left: 1em;
+  margin-right: 1em;
+  border-left: none;
+}
+
+p.indented {
+  margin-left: 1.0em;
+}
+
+p.EditorIntro {
+  font-weight: bold;
+}
+
+p.editorintro,
+div.article-summary {
+  font-weight: bold;
+  font-style: italic;
+}
+
+a.register-here{
+    font-size: 100%;
+    color: white;
+    background-color: #A901F7;
+    padding: 6px 12px;
+    border-radius: 4px;
+    vertical-align: middle;
+}
+
+pre.programlisting {
+    font-size: 0.9em;
+    font-weight: normal;
+    line-height: 1.5em;
+    padding: 2px;
+    margin: 10px;
+    white-space: pre;
+    width:95%;
+    overflow:auto;
+}
+
+.Code-Muted {
+    opacity: 0.66;
+}
+
+/* for overload 86 */
+table.lesson {
+    width: 100%;
+	border-width: 1px 1px 1px 1px;
+	border-spacing: 2px;
+	border-style: solid none solid none;
+	border-color: black black black black;
+	border-collapse: separate;
+}
+table.lesson td {
+	border-width: 0px 0px 0px 0px;
+	padding: 1px 20px 1px 20px;
+	border-style: none none none none;
+	border-color: gray gray gray gray;
+}
+/* end overload 86 */
+
+/* overload 87 */
+  table.results {
+  	border-width: 2px 2px 2px 2px;
+  	border-spacing: 0px;
+  	padding: 0px;
+  	border-style: solid solid solid solid;
+  	border-color: black black black black;
+  	border-collapse: separate;
+  }
+  table.results th {
+  	border-width: 1px 1px 1px 1px;
+  	border-spacing: 0px;
+  	padding: 1px 1px 1px 1px;
+  	border-style: solid solid solid solid;
+  	border-color: black black black black;
+  }
+  table.results td {
+  	border-width: 1px 1px 1px 1px;
+  	border-spacing: 0px;
+  	padding: 1px 4px 1px 4px;
+  	border-style: solid solid solid solid;
+  	border-color: black black black black;
+  }
+
+p.lesson {
+    border-width: 1px 0px 1px 0px;
+    border-style: solid none solid none;
+    border-color: black blac black black;
+    padding: 1px 20px 1px 20px;
+}
+/* end overload 87 */
+
+/**
+  * ------------------------------------------------------------------------------------------------- #
+  *
+  * Tables | Tabellen
+  *
+  * (en) Generic classes for table-width and design definition
+  * (de) Generische Klassen für die Tabellenbreite und Gestaltungsvorschriften für Tabellen
+  *
+  * @section content-tables
+  */
+
+table { 
+    width: auto; 
+    border-collapse:collapse; 
+    margin-bottom: 0.5em; 
+    border-top: 2px #888 solid; 
+    border-bottom: 2px #888 solid; 
+}
+
+table caption { 
+    font-variant:small-caps; 
+}
+
+table.full { 
+    width: 100%; 
+}
+
+table.fixed { 
+    table-layout:fixed; 
+}
+
+th,td { 
+    padding: 0.5em; 
+}
+
+thead th { 
+    color: #000; 
+    border-bottom: 2px #888 solid; 
+}
+
+tbody th { 
+    background: #e0e0e0; 
+    color: #333; 
+}
+
+tbody th[scope="row"], tbody th.sub { 
+    background: #f0f0f0; 
+}
+
+tbody th { 
+    border-bottom: 1px solid #fff; 
+    text-align: left; 
+}
+
+tbody td { 
+    border-bottom: 1px solid #eee; 
+}
+
+/**
+  * Pager elements for the top of each video list page, mostly
+  * copied from standard .pager element above.
+  */
+
+.pagertop {
+    margin: 0 0 20px 0;
+    border-bottom: solid 1px #eeeeee;
+    padding-bottom: 20px;
+    padding-left: 0px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-family: "Roboto", Helvetica, Arial, sans-serif;
+}
+  
+.pagertop li {
+    display: inline;
+}
+
+.pagertop li > a,
+.pagertop li > span {
+    background-color: #ffffff;
+    border: 1px solid #38a7bb;
+    border-radius: 0;
+    padding: 6px 14px;
+}
+
+.pagertop li > a:hover,
+.pagertop li > a:focus {
+    text-decoration: none;
+    color: #fff;
+    background-color: #38a7bb;
+}
+
+.pagertop .disabled > a,
+.pagertop .disabled > a:hover,
+.pagertop .disabled > a:focus,
+.pagertop .disabled > span {
+    color: #999999;
+    background-color: #ffffff;
+    border-color: #ddd;
+}
+
+.pagertop .next > a,
+.pagertop .next > span {
+  float: right
+}
+
+.pagertop .previous > a,
+.pagertop .previous > span {
+  float: left
+}
+
+.pagertop .disabled > a,
+.pagertop .disabled > a:focus, 
+.pagertop .disabled > a:hover,
+.pagertop .disabled > span {
+  color: #777;
+  cursor: not-allowed;
+  background-color: #fff
+}
+
+.pagertop:after,
+.pagertop:before {
+  display: table;
+  content: " ";
+}
+
+.pagertop:after {
+  clear: both;
+}
+
+.dropdown-content {
+  display: none;
+  position: absolute;
+  background-color: #f9f9f9;
+  box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
+  padding: 3px 3px;
+  min-width:max-content;
+  z-index: 1;
+}
+
+.dropdown:hover .dropdown-content {
+  display: block;
+}
+
+/* the following are for the mail list pages */
+.listdesription {
+  font-size: 0.9em;
+  line-height: 0.8em;
+}
+.mailinglists {
+    border-collapse: separate;
+    border-spacing: 3px;
+    text-align: center;
+}
+.mailinglists th {
+    font-weight: bold;
+    background-color: #DCE3F1;
+}
+.mailinglists tbody {
+    text-align: center;
+    background-color: #DCE3F1;
+}
+.mailinglists th tr td {
+    background-color: #DCE3F1;
+}
+.mailinglists-category {
+    background-color: #CED9EF;
+    text-align: center;
+}
+.mailinglists-description {
+    text-align: left;
+}
+/* end of the mail list pages */
+
+.center {
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* For the HTML Timetable */
+.timetable {
+  border-collapse: separate;
+  border-spacing: 3px;
+  text-align: center;
+}
+.timetable a {
+  color: #666666;
+}
+.timetable p {
+  line-height: 1.35em;
+}
+.timetable th, .timetable td {
+  font-size: 0.9em;
+  padding: 5px;
+}
+.timetable th {
+  font-weight: bold;
+}
+.timetable thead {
+  background-color: #666666;
+  color: #ffffff;
+}
+.timetable tbody th {
+  vertical-align: top;
+  text-align: center;
+}
+.timetable tbody td {
+  color: #666666;
+  background-color: #F5F5F5;
+}
+.timetable .presenters, .timetable .presenters a {
+  color: #000000;
+}
+.section {
+  margin: 1em;
+  margin-bottom: 4em;
+}
+.section h1 {
+  margin: 0;
+  margin-bottom: 1em;
+  padding: 0.2em;
+  background-color: #EEEEEE;
+}
+/* end of timetable section */
+
+/* from Xaraya site content.css (other styles from this block not used): */
+
+.dimmed { 
+  color: #888; 
+}
+
+/* for CVu 34.5 */
+
+pre.output-programlisting {
+	border-width: 2px 2px 2px 2px;
+	border-spacing: 0px;
+	border-style: solid solid solid solid;
+	border-color: grey grey grey grey;
+  font-size: 0.9em;
+  font-weight: normal;
+  line-height: 1.5em;
+  padding: 2px;
+  margin: 10px;
+  white-space: pre;
+  width:95%;
+  overflow:auto;
+}
+
+/* This is used for the CVu and Overload issue by cover pages. */
+
+div.accudoc img { margin: 1.3%; width: 30%; border:2px solid black; }
+
+/* This is used in author bios in the individual articles. */
+
+.author { Font-Weight: bold; }
+
+/* end of section */
+
+/* Modified from w3schools.com */
+/* The snackbar - used to show the GDPR permissions box. */
+#snackbar {
+  visibility: hidden;
+  
+  max-width: 500px;
+  background-color: #CED9EF;
+  color: black;
+  text-align: center;
+  border-radius: 10px;
+  padding: 16px;
+  position: fixed;
+  left: 10px;
+  right: 10px;
+  bottom: 10px;
+  border: 3px solid black;
+}
+
+#snackbar.show {
+  visibility: visible;
+}
+/* end of snackbar */
+
+/* Replacement for standard table formatting, which was specialized above. */
+table.stdtbl, table.stdtbl tbody, table.stdtbl thead, table.stdtbl tfoot, table.stdtbl tr, table.stdtbl th, table.stdtbl td {
+	border: 2px solid black;
+	border-collapse: collapse;
+	text-align: left;
+}

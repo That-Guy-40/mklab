@@ -1,0 +1,35 @@
+#!/bin/bash
+# memberp (CORRECTED) — set membership test.
+#
+#   memberp file line     # exit 0 if `file` contains exactly the line `line`
+#
+# Drop-in replacement for ../memberp (Matt Might, "Relational shell programming").
+#
+# What changed, and why:
+#   1. `exit 1` instead of `exit -1`.  `exit` takes 0..255; bash quietly coerces
+#      -1 to 255, but other shells error out.  Nothing ever read the value.
+#   2. `IFS= read -r` — see ../fixed/cartesian.  Without it a line whose first or
+#      last character is a space/tab never compares equal to itself.
+#   3. Quoted "$file" — a path with a space used to be a syntax-level surprise.
+#   4. The needle is now "$1" after shift (i.e. "$*" collapsed to one argument),
+#      which is what every caller passes anyway; `$*` re-joined its arguments
+#      with the first character of IFS, so a needle containing a tab could match
+#      a line containing a space.
+#
+# Still a full rescan of `file` per call — that is what makes `difference`
+# quadratic.  Fixing THAT is Might's closing Exercise; see ../../RUNBOOK.md.
+
+[ $# -ge 2 ] || { echo "usage: ${0##*/} file line" >&2; exit 2; }
+
+file=$1
+shift
+needle=$*
+
+while IFS= read -r a
+do
+  if [ "$a" = "$needle" ]; then
+    exit 0
+  fi
+done < "$file"
+
+exit 1

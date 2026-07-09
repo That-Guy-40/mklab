@@ -1,0 +1,1283 @@
+<!DOCTYPE html>
+<!-- journal -->
+<html lang="en-gb">
+
+<style>
+.lap {
+    text-align: right;
+}
+</style> 
+
+  <head>
+  <meta charset="utf-8">
+  <meta name="robots" content="all,follow">
+  <meta name="googlebot" content="index,follow,snippet,archive">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  
+  
+     <title>He Sells Shell Scripts to Intersect Sets</title>
+  
+  <meta name="author" content="ACCU" />
+  
+  
+  
+  
+  <meta name="keywords" content="accu, C&#43;&#43;">
+  
+  
+  <meta name="description" content="Graphical User Interfaces are in great demand but for some tasks there are better tools. Thomas Guest demonstrates the capabilities of command shells.">
+
+  
+
+  
+
+  
+
+  <meta name="generator" content="Hugo 0.131.0">
+
+  
+  
+  
+
+  
+  
+  
+  
+  <link href="/css/bootstrap.3.3.7.css" rel="stylesheet">
+
+  
+  <link href="/css/animate.css" rel="stylesheet">
+
+  
+  
+    <link href="/css/style.default.css" rel="stylesheet" id="theme-stylesheet">
+  
+
+  
+  <link href="/css/custom.css" rel="stylesheet">
+
+  
+  
+    <!--[if lt IE 9]>
+        <script src="https://oss.maxcdn.com/html5shiv/3.7.2/html5shiv.min.js"></script>
+        <script src="https://oss.maxcdn.com/respond/1.4.2/respond.min.js"></script>
+    <![endif]-->
+  
+
+  
+  <link rel="shortcut icon" href="/img/favicon.ico" type="image/x-icon" />
+  <link rel="apple-touch-icon" href="/img/apple-touch-icon.png" />
+
+  
+  <link href="/css/owl.carousel.css" rel="stylesheet">
+  <link href="/css/owl.theme.css" rel="stylesheet">
+
+  
+  <link rel="alternate" href="https://accu.org/index.xml" type="application/rss+xml" title="ACCU">
+
+  
+  
+  
+  
+  
+  
+  <meta property="og:updated_time" content="2007-08-12T11:58:00Z">
+  
+
+  
+  <meta name="twitter:card" content="summary">
+  
+  <meta name="twitter:title" content="He Sells Shell Scripts to Intersect Sets">
+  
+  <meta name="twitter:description" content="Graphical User Interfaces are in great demand but for some tasks there are better tools. Thomas Guest demonstrates the capabilities of command shells.">
+  
+
+
+  <script>
+
+    
+         https:
+	
+
+    function getCookie ( cname )
+    {
+        var name          = cname + "=";
+        var decodedCookie = decodeURIComponent ( document.cookie );
+        var ca            = decodedCookie.split ( ';' );
+
+        for ( var i = 0;   i < ca.length;   i++ )
+        {
+            var c = ca[ i ];
+            while ( c.charAt ( 0 ) == ' ' )
+            {
+                c = c.substring ( 1 );
+            }
+
+            if ( c.indexOf ( name ) == 0 )
+            {
+                return c.substring ( name.length, c.length );
+            }
+        }
+
+        return "";
+    }
+
+    function checkCookie ()
+    {
+        var username = getCookie ( "login-name" );
+
+        if ( username != "" )
+        {
+            document.getElementById ( "login" ).innerHTML   = "Logged in as " + username;
+            document.getElementById ( "already" ).innerHTML = username + " is already logged into this session."
+        }
+        else
+        {
+            document.getElementById ( "login" ).innerHTML = "";
+        }
+    }
+
+  </script>
+
+</head>
+
+
+  <body  onload="checkCookie()">
+
+    <div id="all">
+
+        <header>
+
+          
+<div id="top">
+  <div class="container">
+    <div class="row">
+      <div class="col-xs-5">
+
+        
+
+        <p id="login"></p>
+
+      </div>
+
+      <div class="col-xs-7">
+        <div class="social">
+          
+          <a href="https://bsky.app/profile/accuorg.bsky.social" target="_blank" style="opacity: 1;"><img src='/img/bsky.png'></a>
+          
+          <a href="https://mastodon.social/@ACCU" target="_blank" style="opacity: 1;"><img src='/img/mastadon.png'></a>
+          
+          <a href="https://www.facebook.com/accuorg" target="_blank" style="opacity: 1;"><img src='/img/facebook.png'></a>
+          
+          <a href="https://www.linkedin.com/company/accu/" target="_blank" style="opacity: 1;"><img src='/img/linkedin.png'></a>
+          
+          <a href="https://www.github.com/accu-org" target="_blank" style="opacity: 1;"><img src='/img/github.png'></a>
+          
+          <a href="https://www.flickr.com/groups/accu-org" target="_blank" style="opacity: 1;"><img src='/img/flickr.png'></a>
+          
+          <a href="https://www.youtube.com/channel/UCJhay24LTpO1s4bIZxuIqKw" target="_blank" style="opacity: 1;"><img src='/img/youtube.png'></a>
+          
+          <a href="https://discord.com/channels/823242577213128784/823242577213128788" target="_blank" style="opacity: 1;"><img src='/img/discord.png'></a>
+          
+          <a href="https://accu.org/index.xml" target="_blank" style="opacity: 1;"><img src='/img/rss.png'></a>
+          
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+
+          <div class="navbar-affixed-top" data-spy="affix-top" data-offset-top="200">
+    <div class="navbar navbar-default yamm" role="navigation" id="navbar">
+        <div class="container">
+
+            <div class="navbar-header">
+                <a class="navbar-brand home" href="/">
+                    <img src="/img/logo.png" alt="He Sells Shell Scripts to Intersect Sets logo" class="hidden-xs hidden-sm">
+                    <img src="/img/logo-small.png" alt="He Sells Shell Scripts to Intersect Sets logo" class="visible-xs visible-sm">
+                    <span class="sr-only">He Sells Shell Scripts to Intersect Sets - go to homepage</span>
+                </a>
+                <div class="navbar-buttons">
+                    <button type="button" class="navbar-toggle btn-template-main" data-toggle="collapse" data-target="#navigation">
+                      <span class="sr-only">Toggle Navigation</span>
+                        <img src="/img/hamburger.png" width="25" height="25">
+                    </button>
+                </div>
+            </div>
+
+            <div class="navbar-collapse collapse" id="navigation">
+                <ul class="nav navbar-nav navbar-right">
+                  
+                  
+                  
+                  <li class="dropdown">
+                    
+                    <a href="/">Home</a>
+                    
+                  </li>
+                  
+                  
+                  <li class="dropdown">
+                    
+                    <a href="/news/">News</a>
+                    
+                  </li>
+                  
+                  
+                  <li class="dropdown">
+                    
+                    <a href="/conf-main/main/">Conferences</a>
+                    
+                  </li>
+                  
+                  
+                  <li class="dropdown">
+                    
+                      <a href="#" class="dropdown-toggle" data-toggle="dropdown" role="button" aria-haspopup="true" aria-expanded="false">Videos <span class="caret"></span></a>
+                    <ul class="dropdown-menu">
+                      
+                        <li><a href="/video/online/">ACCU Online</a></li>
+                      
+                        <li><a href="/video/spring-2025-day-1/">ACCU 2025 Bristol</a></li>
+                      
+                        <li><a href="/video/spring-2024-day-1/">ACCU 2024 Bristol</a></li>
+                      
+                        <li><a href="/video/spring-2023-day-1/">ACCU 2023 Bristol</a></li>
+                      
+                        <li><a href="/video/spring-2022-day-1/">ACCU 2022 Bristol</a></li>
+                      
+                        <li><a href="/video/spring-2021-preview/">ACCU 2021 Online</a></li>
+                      
+                        <li><a href="/video/autumn-2019/">ACCU Autumn 2019 Belfast</a></li>
+                      
+                        <li><a href="/video/spring-2019-day-1/">ACCU 2019 Bristol</a></li>
+                      
+                        <li><a href="/video/spring-2018-day-1/">ACCU 2018 Bristol</a></li>
+                      
+                        <li><a href="/video/spring-2017-day-1/">ACCU 2017 Bristol</a></li>
+                      
+                        <li><a href="/menu-overviews/all-conferences/">Conferences 2013-2025</a></li>
+                      
+                    </ul>
+                    
+                  </li>
+                  
+                  
+                  <li class="dropdown">
+                    
+                      <a href="#" class="dropdown-toggle" data-toggle="dropdown" role="button" aria-haspopup="true" aria-expanded="false">Journals <span class="caret"></span></a>
+                    <ul class="dropdown-menu">
+                      
+                        <li><a href="/menu-overviews/journals-overview/">Journals Overview</a></li>
+                      
+                        <li><a href="/journals/nonmembers/overload_issue_members/">Overload by Issue</a></li>
+                      
+                        <li><a href="/journals/nonmembers/overload_article_members/">Overload by Article</a></li>
+                      
+                        <li><a href="/journals/nonmembers/overload_author_members/">Overload by Author</a></li>
+                      
+                        <li><a href="/journals/nonmembers/overload_cover_members/">Overload by Cover</a></li>
+                      
+                        <li><a href="/journals/nonmembers/cvu_issue_neutered/">C Vu by Issue</a></li>
+                      
+                        <li><a href="/journals/nonmembers/cvu_article_neutered/">C Vu by Article</a></li>
+                      
+                        <li><a href="/journals/nonmembers/cvu_author_neutered/">C Vu by Author</a></li>
+                      
+                        <li><a href="/journals/nonmembers/cvu_cover_neutered/">C Vu by Cover</a></li>
+                      
+                    </ul>
+                    
+                  </li>
+                  
+                  
+                  <li class="dropdown">
+                    
+                      <a href="#" class="dropdown-toggle" data-toggle="dropdown" role="button" aria-haspopup="true" aria-expanded="false">Reviews <span class="caret"></span></a>
+                    <ul class="dropdown-menu">
+                      
+                        <li><a href="/menu-overviews/reviews-overview/">Reviews Overview</a></li>
+                      
+                        <li><a href="/reviews/by_date/">Reviews by Date</a></li>
+                      
+                        <li><a href="/reviews/by_title/">Reviews by Title</a></li>
+                      
+                        <li><a href="/reviews/by_author/">Reviews by Author</a></li>
+                      
+                        <li><a href="/reviews/by_reviewer/">Reviews by Reviewer</a></li>
+                      
+                        <li><a href="/reviews/by_publisher/">Reviews by Publisher</a></li>
+                      
+                        <li><a href="/reviews/by_rating/">Reviews by Rating</a></li>
+                      
+                        <li><a href="/reviews/old-digests/">Digests of Old Reviews</a></li>
+                      
+                    </ul>
+                    
+                  </li>
+                  
+                  
+                  <li class="dropdown">
+                    
+                    <a href="/menu-overviews/local-groups/">Local Groups</a>
+                    
+                  </li>
+                  
+                  
+                  <li class="dropdown">
+                    
+                    <a href="/menu-overviews/membership/">JOIN!</a>
+                    
+                  </li>
+                  
+                  
+                  <li class="dropdown">
+                    
+                    <a href="/loginout/log-in/">Log In</a>
+                    
+                  </li>
+                  
+                </ul>
+            </div>
+            
+        </div>
+    </div>
+</div>
+
+
+
+
+        </header>
+
+        
+    <div id="heading-breadcrumbs">
+        <div class="container">
+            <div class="row">
+                <div class="col-md-12">
+                        <h1>He Sells Shell Scripts to Intersect Sets</h1>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+
+        <div id="content">
+
+            <div class="container">
+
+                <div class="row">
+
+                    <div class="col-md-10">
+
+                        <div class="row">
+                            <div class="col-md-12">
+                                <p><b>He Sells Shell Scripts to Intersect Sets</b></p>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-12">
+                                <p>By Thomas Guest</p>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-12">
+                                <p><i>Overload, 15(80):, August 2007</i></p>
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-12">
+                                <hr class="accu">
+                            </div>
+                        </div>
+
+                        <div class="row">
+                            <div class="col-md-12">
+
+                                <div>
+                                    <div class="article-content">
+<div class="article-summary">
+<p>Graphical User Interfaces are in great demand but for some tasks there are better tools. Thomas Guest demonstrates the capabilities of command shells.</p>
+</div>
+
+<h2>
+ Introduction
+</h2>
+<p>
+ The Unix command shell contains a lot of what I like in a programming environment: it's dynamic, high-level, interpreted, flexible, succinct. It's even reasonably portable now that bash seems to have become the shell of choice. Although there's much about shell scripting I don't like, on many occasions it turns out to be the best tool for the job.
+</p>
+<p>
+ In this article we shall demonstrate how simple shell scripts can be used to implement sets, providing one line recipes for set creation, set union, set intersection and more. Having explored the power of the Unix shell we'll consider its limitations, before finally discussing the more general lessons we can learn from the Unix tools.
+</p>
+<h2>
+ An example: Apache server logs
+</h2>
+<p>
+ As an example, let's suppose we want to analyse sets of IP addresses contained in a couple of Apache HTTP Server [
+ <a href="#Apache">
+  Apache
+ </a>
+ ] access logs: access_log1 and access_log2. Each log file contains many thousands of lines which look something like this:
+</p>
+
+<pre class="programlisting">
+    65.214.44.29 - - [25/Jun/2007:00:03:21 +0000] ...
+    74.6.87.40 - - [25/Jun/2007:00:03:24 +0000] ...
+    65.214.44.29 - - [25/Jun/2007:00:03:24 +0000] ...
+    74.6.86.212 - - [25/Jun/2007:00:03:36 +0000] ...
+    ...
+</pre>
+<p>
+ We can
+ <tt class="code">
+  cut
+ </tt>
+ this file down to leave just the IP address at the start of each line.
+ <tt class="code">
+  cut
+ </tt>
+ is a simple tool which we'll be using again later, and here we're passing it options
+ <tt class="code">
+  -f1
+ </tt>
+ to select the first field from each line and
+ <tt class="code">
+  -d" "
+ </tt>
+ to use the space character as a field separator.
+</p>
+
+<pre class="programlisting">
+    $ cut -f1 -d" " access_log1
+    65.214.44.29
+    74.6.87.40
+    65.214.44.29
+    74.6.86.212
+    ...
+</pre>
+<h2>
+ Set creation
+</h2>
+<p>
+ The output from this command is likely to be full of duplicates. Regular site visitors typically hit the web server a few times; web spiders and robots are much more hungry. To obtain the
+ <b>
+  sets
+ </b>
+ of unique IP addresses contained in each log file, we could do this:
+</p>
+
+<pre class="programlisting">
+    $ cut -f1 -d" " access_log1 | sort | uniq &gt; IP1
+    $ cut -f1 -d" " access_log2 | sort | uniq &gt; IP2
+ </pre>
+<p>
+ Here
+ <tt class="code">
+  cut
+ </tt>
+ picks out the IP addresses,
+ <tt class="code">
+  sort
+ </tt>
+ orders the results,
+ <tt class="code">
+  uniq
+ </tt>
+ eliminates duplicates, and we've redirected the output into files IP1 and IP2. By the way, we could have eliminated a link from the pipeline using the
+ <tt class="code">
+  -u
+ </tt>
+ option to sort. The Unix shell tools aren't entirely orthogonal!
+</p>
+
+<pre class="programlisting">
+     $ cut -f1 -d" " access_log1 | sort -u &gt; IP1
+ </pre>
+<p>
+ The resulting sets are ordered - a set implementation which should be familiar to C++ programmers. The IP addresses will be lexicographically rather than numerically ordered, since we went with the
+ <tt class="code">
+  sort
+ </tt>
+ defaults. This means that, for example,
+ <tt class="code">
+  122.152.128.10
+ </tt>
+ appears before
+ <tt class="code">
+  58.167.213.128
+ </tt>
+ because
+ <tt class="code">
+  1
+ </tt>
+ alphabetically precedes
+ <tt class="code">
+  5
+ </tt>
+ . With a little more effort, we could probably persuade
+ <tt class="code">
+  sort
+ </tt>
+ to yield a numeric ordering (no,
+ <tt class="code">
+  sort -n
+ </tt>
+ isn't good enough).
+</p>
+<h2>
+ Multiset creation
+</h2>
+<p>
+ If instead we wanted a
+ <b>
+  multiset
+ </b>
+ - that is, a set in which elements may appear more than once, we could count the number of times items are repeated in the sorted output using the
+ <tt class="code">
+  -c
+ </tt>
+ option to
+ <tt class="code">
+  uniq
+ </tt>
+ .
+</p>
+
+<pre class="programlisting">
+    $ cut -f1 -d" " access_log1 | sort | uniq -c
+       8 12.153.20.132
+       2 12.217.178.11
+      14 12.30.66.226
+       1 122.152.128.49
+      ...
+</pre>
+<p>
+ Here, each IP address is prefixed by the number of times it occurred in the log file, so our multiset contains
+ <tt class="code">
+  12.153.20.132
+ </tt>
+ 8 times, etc. This will be useful later when we discuss intersection operations.
+</p>
+<h2>
+ Set union
+</h2>
+<p>
+ Let's assume we've followed the steps above and IP1 and IP2 contain the set of IP addresses in the two access logs.  Forming the
+ <tt class="code">
+  union
+ </tt>
+ of these sets is simple.
+</p>
+
+<pre class="programlisting">
+    $ sort -m IP1 IP2 | uniq &gt; IP1_union_IP2
+</pre>
+<p>
+ The
+ <tt class="code">
+  -m
+ </tt>
+ (merge) option to
+ <tt class="code">
+  sort
+ </tt>
+ is purely for efficiency and the result would be equally correct without it. Since the inputs are already sorted, we can just merge them together, line by line. For C++ users, it's the difference between the
+ <tt class="code">
+  std::sort
+ </tt>
+ and
+ <tt class="code">
+  std::merge
+ </tt>
+ algorithms.
+</p>
+<h2>
+ Set intersection
+</h2>
+<p>
+ The best recipe I've come up with for creating the
+ <tt class="code">
+  intersection
+ </tt>
+ of the sets IP1 and IP2 isn't quite as simple. Here's how it works. We form the multiset union of IP1 and IP2, then filter it to leave just the elements which appear twice in this multiset.
+</p>
+
+<pre class="programlisting">
+    $ sort -m IP1 IP2 | uniq -c | grep "^ *2" | \
+      tr -s " " | cut -f3 -d" " &gt; IP1_intersection_IP2
+ </pre>
+<p>
+ Let's unpick this pipeline. First,
+ <tt class="code">
+  sort -m IP1 IP2 | uniq -c
+ </tt>
+ generates the multiset of IP addresses in IP1 and IP2. Since IP1 and IP2 are sets and therefore
+ <span style="  font-style: italic; font-weight: normal; vertical-align: baseline">
+  individually
+ </span>
+ contain no repeats, the resulting multiset looks something like this:
+</p>
+
+<pre class="programlisting">
+    $ sort -m IP1 IP2 | uniq -c
+       1 12.30.66.226
+       1 122.152.128.10
+       2 122.152.128.49
+       1 122.152.129.54
+       ...
+</pre>
+<p>
+ Each line in the output starts with a count which
+ <span style="  font-style: italic; font-weight: normal; vertical-align: baseline">
+  must
+ </span>
+ be either 1 or 2. Lines starting with
+ <tt class="code">
+  2
+ </tt>
+ correspond to IP addresses common to both files - and these are the IP addresses which form the intersection of IP1 and IP2. The other lines, the ones starting with
+ <tt class="code">
+  1
+ </tt>
+ , are the IP addresses in just one of IP1 or IP2.
+</p>
+<p>
+ We then use
+ <tt class="code">
+  grep
+ </tt>
+ to pick out lines starting with any number of spaces followed by a
+ <tt class="code">
+  2
+ </tt>
+ . Next
+ <tt class="code">
+  tr -s " "
+ </tt>
+ squeezes repeated spaces from each line, making the output suitable for use with
+ <tt class="code">
+  cut
+ </tt>
+ using the space character as a field delimiter. Finally
+ <tt class="code">
+  cut
+ </tt>
+ itself extracts the column we want (the one with the IP address).
+</p>
+<h2>
+ Set symmetric difference
+</h2>
+<p>
+ The same recipe with a simple tweak finds the
+ <b>
+  set symmetric difference
+ </b>
+ between IP1 and IP2 (the IP addresses in just one of IP1 and IP2 that is). All we need to do is change the
+ <tt class="code">
+  grep
+ </tt>
+ pattern to include a
+ <tt class="code">
+  1
+ </tt>
+ instead of a
+ <tt class="code">
+  2
+ </tt>
+ . The magic of the shell command history allows us to hit the up arrow key -⇑- and edit the previous command directly; we don't even have to type it all in again.
+</p>
+
+<pre class="programlisting">
+    $ sort -m IP1 IP2 | uniq -c | grep "^ *1" | \
+      tr -s " " | cut -f3 -d" " &gt; IP1_symmetric_diff_IP2
+</pre>
+<h2>
+ Set subtraction
+</h2>
+<p>
+ What about the elements in IP1 but not IP2? We can just intersect
+ <tt class="code">
+  IP1
+ </tt>
+ and
+ <tt class="code">
+  IP1_symmetric_diff_IP2
+ </tt>
+ . Again, we can use the command shell history to recall and adapt the previous command.
+</p>
+
+<pre class="programlisting">
+    $ sort -m IP1 IP1_symmetric_diff_IP2 | uniq -c | grep "^ *2" | \
+      tr -s " " | cut -f3 -d" " &gt; IP1_subtract_IP2
+</pre>
+<h2>
+ More set operations
+</h2>
+<p>
+ One of the nice things about set operations is there aren't many of them. We've already covered the important ones, and these can easily be extended. Try and work out what set operations are going on in the the command history shown below.
+</p>
+
+<pre class="programlisting">
+    $ diff -q S1 S2
+    $ head -1 S1
+    $ sort -m S1 S2 S3 S4 S5 | uniq
+    $ sort -m S1 S2 S3 | uniq -c | grep -c "^ *3"
+    $ sort -m S1 S2 | uniq -c | grep "^ *2" | tr -s " " | cut -f3 -d" " | diff S1 -
+    $ sort -m S1 S2 | uniq -c | grep -c "^ *2"
+    $ tail -1 S2
+    $ wc -l S1
+</pre>
+<p>
+ As a hint, the answers in lexicographical order are:
+</p>
+
+<ul>
+ <li>
+  are two sets the same?
+ </li>
+ <li>
+  are two sets disjoint?
+ </li>
+ <li>
+  first element of a set
+ </li>
+ <li>
+  how big is the intersection of three sets?
+ </li>
+ <li>
+  how many elements in a set?
+ </li>
+ <li>
+  is a subset of?
+ </li>
+ <li>
+  last element of a set
+ </li>
+ <li>
+  unite five sets
+ </li>
+</ul>
+<h2>
+ Extending the toolset
+</h2>
+<p>
+ The command shell is a powerful, dynamic and extensible programming environment. Even these simple one-line scripts can be stored as functions which can be sourced when a new shell is started; you can add command-line help to them, you can find them using tab-completion, you can keep them in your source control system. In this way you can create your own customised shell working environment and port it from platform to platform just by checking it out [
+ <a href="#Guest06a">
+  Guest06a
+ </a>
+ ].
+</p>
+<h2>
+ A script's got to know its limitations
+</h2>
+<p>
+ Apache server logs are no more and no less than line oriented text. Each record in the log is terminated by a newline character, and each field within each record is delimited in an obvious way: by brackets, spaces, hyphens, whatever - who needs XML? This is the kind of format shell scripts handle well. Conversely, anything more complicated, XML for example, or records which span multiple lines, is likely to push the shell tools too far. Maybe
+ <tt class="code">
+  awk
+ </tt>
+ could cope, but I don't think many people bother learning
+ <tt class="code">
+  awk
+ </tt>
+ these days: it's better to use one of the popular high-level languages when basic shell commands won't do.
+</p>
+<p>
+ Shell scripts tend not to fail safely. For example, the following command is meant to clear out files in a temporary directory:
+</p>
+
+<pre class="programlisting">
+    # Don't try this at home!
+    $ rm -rf $TEMP_WORK_DIR/*
+</pre>
+<p>
+ You can imagine what happens if TEMP_WORK_DIR has not been set. In general, the Unix commands build on a couple of dangerous assumptions: that programmers know what they are doing; and that the show must go on - by which I mean that, given malformed input, a shell script will not throw an exception. The IP filters we discussed in this article work quite happily with any old text file as input - if it wasn't an Apache http server log, the only indication of failure may well be smaller sets than expected.
+</p>
+<p>
+ I'll admit that I personally avoid writing any shell scripts much longer than the ones shown here. As with Makefiles, I admire and respect the technology but I'd rather have someone else deal with the details. The
+ <tt class="code">
+  bash
+ </tt>
+ manual may be brief to a fault, but I've yet to get to grips with its finer details. Sometimes it's just too subtle.
+</p>
+<p>
+ On the subject of details, earlier in this article I said that by default
+ <tt class="code">
+  sort
+ </tt>
+ uses lexicographical ordering, which isn't perhaps the ordering we'd prefer for IP addresses; and I also said that a numeric
+ <tt class="code">
+  sort -n
+ </tt>
+ wouldn't do the job either: IP addresses aren't really numbers, they're dot separated number quartets. You
+ <span style="  font-style: italic; font-weight: normal; vertical-align: baseline">
+  can
+ </span>
+ use
+ <tt class="code">
+  sort
+ </tt>
+ to place IP addresses in a more natural order, but the command you'll need is anything but natural.
+</p>
+
+<pre class="programlisting">
+    # Natural ordering of IP addresses
+    $ sort -t. +0n -1n +1n -2n +2n -3n +3n IP
+</pre>
+<p>
+ If you want to know how this works you'll have to read the manual. The code, on its own, is unreadable [
+ <a href="#Guest06b">
+  Guest06b
+ </a>
+ ]. If you don't know where the manual is, just open a shell window and type
+ <tt class="code">
+  man
+ </tt>
+ . If the output from this command doesn't help, try
+ <tt class="code">
+  man man
+ </tt>
+ , and if you don't know how to open a shell window, I'm surprised you're even reading this sentence!
+</p>
+<h2>
+ Conclusion
+</h2>
+<p>
+ Modern graphical development environments tend to hide the shell and the command line, probably with good reason, and I don't suppose this article will persuade anyone they're worth hunting out. And yet the Unix shell embodies so much that is modern and, I suspect, future, best practice.
+</p>
+<p>
+ For me, it's not just what the shell tools can do, it's the example they set. Look again at some of the recipes presented in this article and you'll see container operations without explicit loops. You'll see flexible and generic algorithms. You'll see functional programming. You'll see programs which can parallel-process data without a thread or a mutex in sight; no chance of shared memory corruption or race conditions here. The original design of the shell tools may have become somewhat polluted - we've already seen that
+ <tt class="code">
+  sort
+ </tt>
+ does some of what
+ <tt class="code">
+  uniq
+ </tt>
+ can do - but I think the intent shines through as clearly as ever: we have a compact suite of orthogonal tools, each with its own responsibility, which cooperate using simple interfaces. We would do well to emulate this model in our own software designs.
+</p>
+<h2>
+ Credits
+</h2>
+<p>
+ I would like to thank the Overload editorial team for their help with this article.
+</p>
+<h2>
+ References
+</h2>
+<p class="bibliomixed">
+ [
+ <a name="Apache">
+ </a>
+ Apache]:
+ <a href="http://httpd.apache.org/">
+  http://httpd.apache.org/
+ </a>
+</p>
+<p class="bibliomixed">
+ [
+ <a name="Guest06a">
+ </a>
+ Guest06a]:
+ <a href="http://blog.wordaligned.org/articles/2006/09/07/personal-version-control">
+  http://blog.wordaligned.org/articles/2006/09/07/personal-version-control
+ </a>
+</p>
+<p class="bibliomixed">
+ [
+ <a name="Guest06b">
+ </a>
+ Guest06b]:
+ <a href="http://blog.wordaligned.org/articles/2006/08/06/readable-code">
+  http://blog.wordaligned.org/articles/2006/08/06/readable-code
+ </a>
+</p></div>
+                                    <br>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+
+                    <div class="col-md-2">
+
+                        
+
+<div class="panel panel-default sidebar-menu">
+
+    <div class="panel-heading" align="center">
+      <h5 class="panel-title">Advertisement</h5>
+    </div>
+
+    <div class="panel-body" align="center">
+
+        <a href = 'https://ads.accu.org/www/delivery/ck.php?n=ac1df087&amp;cb=879648978587659'>
+           <img src = 'https://ads.accu.org/www/delivery/avw.php?zoneid=2&amp;cb=879648978587659&amp;n=ac1df087'/>
+        </a>
+
+    </div>
+</div>
+
+
+<br>
+
+<div class="panel panel-default sidebar-menu">
+
+    <div class="panel-body" align="center">
+
+        <a href='/menu-overviews/membership/'><img src='/img/accu/join.png'/></a>
+
+    </div>
+</div>
+
+
+<br>
+
+
+
+
+
+
+<br>
+
+
+
+
+<br>
+
+
+
+
+
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <style>
+  .dropbtn {
+    background: #555555;
+    color: #38a7bb;
+    padding: 0px;
+    border: none;
+  }
+  
+  .dropdown {
+    position: relative;
+    display: inline-block;
+  }
+  
+  .dropdown-content {
+    display: none;
+    padding: 16px;
+  }
+  
+  .dropdown-content a {
+    display: block
+  }
+  
+  .dropdown-content a:hover {background-color: #ddd;}
+  
+  .dropdown:hover .dropdown-content {display: block;}
+  
+  .dropdown:hover .dropbtn {background-color: #555555;}
+</style>
+  
+
+<footer id="footer">
+    <div class="container">
+
+        <div class="col-md-2 col-sm-2">
+            <h4>FAQ:</h4>
+            <div class="dropdown">
+              <button class="dropbtn"          > About Us</button>
+              <div class="dropdown-content" style="min-width:max-content">
+                <a href="/faq/about"           > About ACCU                 </a>
+                <a href="/faq/what-is"         > What is ACCU? An Editorial </a>
+              </div>
+            </div>
+            <br>
+            <a href="/faq/advertise"         > Advertise with ACCU </a></br>
+            <a href="/faq/conference"        > Conferences         </a></br>
+            <a href="/faq/short-committee"   > Committee Members   </a></br>
+            <a href="/faq/constitution"      > Constitution        </a></br>
+            <a href="/faq/values"            > Values              </a></br>
+            <a href="/faq/study-groups-faq"  > Study Groups        </a></br>
+            <a href="/faq/mailing-lists-faq" > Mailing Lists       </a></br>
+            <a href="/faq/privacy-policy"    > Privacy Policy      </a></br>
+            <a href="/faq/cookie-policy"     > Cookie Policy       </a>
+
+            <hr class="hidden-md hidden-lg hidden-sm">
+        </div>
+
+        <div class="col-md-3 col-sm-3">
+            <h4>Members Only:</h4>
+            <a href="/members/study-groups"  > Study Groups  </a></br>
+            <a href="/members/mailing-lists" > Mailing Lists </a></br>
+            <a href="/members/review-a-book" > Review a Book </a></br>
+
+            <div class="dropdown">
+              <button class="dropbtn"                 > ACCU Committee</button>
+              <div class="dropdown-content" style="min-width:max-content">
+                <a href="/members/long-committee"     > Committee Members  </a>
+                <a href="/members/posts-and-roles"    > Posts and Roles    </a>
+                <a href="/members/attending-meetings" > Attending Meetings </a>
+                <a href="/members/minutes"            > Minutes            </a>
+                <a href="/members/archive"            > Archive            </a>
+              </div>
+            </div>
+            
+            </br>
+            <a href="/members/agm"        > Annual General Meetings </a></br>
+            <a href="/members/complaints" > Complaints Procedure    </a></br>
+
+            <div class="dropdown">
+              <button class="dropbtn"                > Member's Account  </button>
+              <div class="dropdown-content" style="min-width:max-content">
+                <a href="/actions/display-subs"    > Subscription Details  </a>
+                <a href="/actions/display-details" > Update Member Details </a>
+                <a href="/actions/change-password" > Update Password       </a>
+                <a href="/actions/change-email"    > Update Email Address  </a>
+              </div>
+            </div>
+
+            </br>
+            <a href="/loginout/log-out"> Log Out </a>
+
+            <hr class="hidden-md hidden-lg hidden-sm">
+        </div>
+
+        <div class="col-md-2 col-sm-2">
+
+            <h4>Contact:</h4>
+            <a href="mailto:info@accu.org?subject=[ACCU]"           > General Information </a></br>
+            <a href="mailto:accumembership@accu.org?subject=[ACCU]" > Membership          </a></br>
+            <a href="mailto:localgroups@accu.org?subject=[ACCU]"    > Local Groups        </a></br>
+            <a href="mailto:ads@accu.org?subject=[ACCU]"            > Advertising         </a></br>
+            <a href="mailto:webmaster@accu.org?subject=[ACCU]"      > Web Master          </a></br>
+            <a href="mailto:webeditor@accu.org?subject=[ACCU]"      > Web Editor          </a></br>
+            <a href="mailto:conference@accu.org?subject=[ACCU]"     > Conference          </a>
+
+            <hr class="hidden-md hidden-lg hidden-sm">
+        </div>
+
+        <div class="col-md-2 col-sm-2">
+
+          <h4>Links:</h4>
+          <a href="https://blogs.accu.org"                                   > World of Code   </a></br>
+          <a href="https://github.com/accu-org/essential-books/wiki"         > Essential Books </a></br>
+          <a href="https://bsky.app/profile/accuorg.bsky.social"             > Bluesky         </a></br>
+          <a href="https://mastodon.social/@ACCU"                            > Mastodon        </a></br>
+          <a href="https://www.facebook.com/accuorg"                         > Facebook        </a></br>
+          <a href="https://www.linkedin.com/company/accu/"                   > LinkedIn        </a></br>
+          <a href="https://www.github.com/accu-org"                          > GitHub          </a></br>
+          <a href="https://www.flickr.com/groups/accu-org"                   > flickr          </a></br>
+          <a href="https://www.youtube.com/channel/UCJhay24LTpO1s4bIZxuIqKw" > YouTube         </a></br>
+          <a href="https://accu.org/index.xml"                               > RSS Feed        </a>
+
+          <hr class="hidden-md hidden-lg hidden-sm">
+      </div>
+
+      <div class="col-md-3 col-sm-3">
+            <h4>Buttons for your website:</h4>
+
+            <a href="/img/accu/button-logo-120x32.png" title="ACCU: professionalism in programming (120x32 px)" download>
+            <img src="/img/accu/button-logo-120x32.png" alt="ACCU: professionalism in programming (120x32 px)" />
+            </a><br />
+            
+            <a href="/img/accu/button-logo-225x60.png" title="ACCU: professionalism in programming (225x60 px)" download>
+            <img src="/img/accu/button-logo-225x60.png" alt="ACCU: professionalism in programming (225x60 px)" />
+            </a>
+          
+      </div>
+    </div>
+</footer>
+
+
+
+
+
+<div id="copyright">
+    <div class="container">
+      <div class="row">
+        <div class="col-md-4">
+            
+               <p class="pull-left">Copyright (c) 2018-2025 ACCU; all rights reserved.</p>
+            
+        </div>
+
+        <div class="col-md-4">
+            <p>
+              <h5 class="panel-title" align="center">Advertisement</h5>
+            </p>
+            <p>
+              <a href="https://ads.accu.org/www/delivery/ck.php?n=a7cc1ec0&cb=78725481">
+                <img src="https://ads.accu.org/www/delivery/avw.php?zoneid=3&cb=78725481&n=a7cc1ec0">
+              </a>
+            </p>
+        </div>
+
+        <div class="col-md-4">
+            <p class="pull-right">
+              Template by <a href="https://bootstrapious.com/p/universal-business-e-commerce-template">Bootstrapious</a>.
+              
+            </p>
+
+            </br>
+
+            <p class="pull-right">
+              Ported to Hugo by <a href="https://github.com/devcows/hugo-universal-theme">DevCows</a>.
+            </p>
+
+            </br>
+
+            <p class="pull-right">
+              Customized for ACCU by Jim and Bob.
+            </p>
+
+            
+        </div>
+
+      </div>
+    </div>
+</div>
+
+
+
+
+
+    </div>
+
+    
+
+
+<script src="/js/jquery.3.1.1.min.js"></script>
+
+<script src="/js/bootstrap.3.3.7.min.js"></script>
+
+
+<script src="/js/jquery.cookie.1.4.1.min.js"></script>
+
+<script src="/js/jquery.waypoints.4.0.1.min.js"></script>
+
+<script src="/js/jquery.counterup.1.0.min.js"></script>
+
+<script src="/js/jquery.parallax.1.1.3.js"></script>
+
+
+
+<script src="/js/front.js"></script>
+
+
+<script src="/js/owl.carousel.min.js"></script>
+
+
+    <div id="snackbar">
+  <div>
+    <h5>Your Privacy</h5>
+  </div>
+  <hr>
+  <div>
+    <p>By clicking "Accept Non-Essential Cookies" you agree ACCU can store non-essential cookies on your device and disclose information in accordance with our <a href="/faq/privacy-policy/">Privacy Policy</a> and <a href="/faq/cookie-policy/">Cookie Policy</a>.</p>
+    <button type="button" id="b1" onclick="accept_cookies_function()" >Accept Non-Essential Cookies</button>
+    <b><p id="t1">Current Setting: Non-Essential Cookies REJECTED</p></b>
+  </div>
+  <hr>
+  <div>
+    <p>By clicking "Include Third Party Content" you agree ACCU can forward your IP address to third-party sites (such as YouTube) to enhance the information presented on this site, and that third-party sites may store cookies on your device.</p>
+    <button type="button" id="b2" onClick="share_ip_function()" >Include Third Party Content</button>
+    <b><p id="t2">Current Setting: Third Party Content EXCLUDED</p></b>
+  </div>
+  <hr>
+  <div>
+    <button type="button" id="b3" onClick="close_function()" >Close this dialog box, leaving the settings as shown above.</button>
+  </div>
+  <hr>
+  <div>
+    <p>Settings can be changed at any time from the <a href="/faq/cookie-policy/">Cookie Policy</a> page.</p>
+  </div>
+</div>
+
+<script>
+
+  document.addEventListener ( "visibilitychange", reload_selected_pages );
+  checkPrivacy ();
+
+  function checkPrivacy () {
+    if ( getCookie ( "privacy_accepted" ) != "yes" )
+      modify_privacy_settings ();
+  }
+
+  function modify_privacy_settings () {
+    if ( getCookie ( "cookies_accepted" ) == "yes" ) {
+      document.getElementById ( "t1" ).textContent = "Current Setting: Non-Essential Cookies ACCEPTED";
+      document.getElementById ( "b1" ).textContent = "REJECT Non-Essential Cookies";
+    }
+
+    if ( getCookie ( "ip_shared" ) == "yes" ) {
+      document.getElementById ( "t2" ).textContent = "Current Setting: Third Party Content INCLUDED";
+      document.getElementById ( "b2" ).textContent = "EXCLUDE Third Party Content";
+    }
+
+    document.cookie = "privacy_accepted=;path=/";      
+
+    var x = document.getElementById ( "snackbar" );
+    x.className = "show";
+  }
+
+  function accept_cookies_function () {
+    if ( getCookie ( "cookies_accepted" ) == "yes" ) {
+      document.cookie = "cookies_accepted=;path=/";
+      document.getElementById ( "t1" ).textContent = "Current Setting: Non-Essential Cookies REJECTED";
+      document.getElementById ( "b1" ).textContent = "ACCEPT Non-Essential Cookies";
+    }
+    else {
+      document.cookie = "cookies_accepted=yes;path=/";
+      document.getElementById ( "t1" ).textContent = "Current Setting: Non-Essential Cookies ACCEPTED";
+      document.getElementById ( "b1" ).textContent = "REJECT Non-Essential Cookies";
+    }
+  }
+
+  function share_ip_function () {
+    if ( getCookie ( "ip_shared" ) == "yes" ) {
+      document.cookie = "ip_shared=;path=/";
+      document.getElementById ( "t2" ).textContent = "Current Setting: Third Party Content EXCLUDED";
+      document.getElementById ( "b2" ).textContent = "INCLUDE Third Party Content";
+    }
+    else {
+      document.cookie = "ip_shared=yes;path=/";
+      document.getElementById ( "t2" ).textContent = "Current Setting: Third Party Content INCLUDED";
+      document.getElementById ( "b2" ).textContent = "EXCLUDE Third Party Content";
+    }
+  }
+
+  function close_function () {
+    document.cookie = "privacy_accepted=yes;path=/";
+    var x = document.getElementById("snackbar");
+    x.className = x.className.replace ( "show", "" );
+
+    if ( getCookie ( "cookies_accepted" ) != "yes" ) {
+      document.cookie = "login-name=;path=/"
+      location.reload ();
+    }
+    else 
+      reload_selected_pages ();    
+  }
+
+  function reload_selected_pages () {
+    const currentUrl = window.location.href;
+    var position1 = currentUrl.search ( "\/video\/" );
+    var position2 = currentUrl.search ( "\/bookreviews\/" );
+    if ( position1 != -1 || position2 != -1 )
+      location.reload();
+  }
+
+</script>
+
+
+  </body>
+</html>

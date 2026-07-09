@@ -1,0 +1,721 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+"http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en" xml:lang="en">
+<head>
+<!-- 2026-06-12 Fri 22:32 -->
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SQL in the Shell: Relational Algebra with Unix Tools</title>
+<meta name="author" content="Jason Walsh" />
+<meta name="description" content="A practical mapping between SQL/relational algebra operations and Unix command-line tools. Covers selection, projection, joins, aggregation with examples showing equivalent operations across paradigms." />
+<meta name="keywords" content="sql, relational algebra, unix tools, awk, cut, sort, uniq, grep, join, data processing, pipes, shell scripting, sqlite, duckdb" />
+<meta name="generator" content="Org Mode" />
+<link rel="stylesheet" href="/static/css/style.css" type="text/css"/>
+<link rel="icon" type="image/x-icon" href="/favicon.ico"/>
+<link rel="icon" type="image/png" href="/favicon.png"/>
+<link rel="alternate" type="application/atom+xml" title="wal.sh research picks" href="/current/research.atom">
+<link rel="stylesheet" href="/static/css/webring.css" type="text/css"/>
+<link rel="canonical" href="https://wal.sh/research/relational-algebra"/>
+</head>
+<body>
+<div id="preamble" class="status">
+<header class="site-header">
+  <div class="container">
+    <a href="/" class="wordmark wordmark-sm">wal<span class="dot">.</span><span class="sh">sh</span></a>
+    <nav>
+      <ul>
+        <li><a href="/current/research">Current</a></li>
+        <li><a href="/tools/">Tools</a></li>
+        <li><a href="/events/">Events</a></li>
+        <li><a href="/search">Search</a></li>
+      </ul>
+    </nav>
+  </div>
+</header><div class="breadcrumbs"><a href="/">home</a> &gt; <a href="/research">research</a> &gt; <a href="/research/relational-algebra">relational-algebra</a><span class="breadcrumb-date"> · May 23, 2026</span></div><header class="page-header">
+  <h1 class="title">SQL in the Shell: Relational Algebra with Unix Tools</h1>
+</header><div class="page-tags"><div class="page-tags-inner"><a href="/search?q=sql" class="pes-kw">sql</a><a href="/search?q=relational%20algebra" class="pes-kw">relational algebra</a><a href="/search?q=unix%20tools" class="pes-kw">unix tools</a><a href="/search?q=awk" class="pes-kw">awk</a><a href="/search?q=cut" class="pes-kw">cut</a><a href="/search?q=sort" class="pes-kw">sort</a><a href="/search?q=uniq" class="pes-kw">uniq</a><a href="/search?q=grep" class="pes-kw">grep</a><a href="/search?q=join" class="pes-kw">join</a><a href="/search?q=data%20processing" class="pes-kw">data processing</a><a href="/search?q=pipes" class="pes-kw">pipes</a><a href="/search?q=shell%20scripting" class="pes-kw">shell scripting</a><a href="/search?q=sqlite" class="pes-kw">sqlite</a><a href="/search?q=duckdb" class="pes-kw">duckdb</a></div></div>
+</div>
+<div id="content" class="content">
+<h1 class="title">SQL in the Shell: Relational Algebra with Unix Tools
+<br />
+<span class="subtitle">Mapping database operations to command-line pipelines</span>
+</h1>
+<div id="table-of-contents" role="doc-toc">
+<h2>Table of Contents</h2>
+<div id="text-table-of-contents" role="doc-toc">
+<ul>
+<li><a href="#orgcf29bab">1. Overview</a></li>
+<li><a href="#orgb11b42d">2. The Core Correspondence</a></li>
+<li><a href="#orge6b0dda">3. Sample Data</a></li>
+<li><a href="#org5fc90c8">4. Selection (WHERE)</a>
+<ul>
+<li><a href="#orgaf714fe">4.1. SQL</a></li>
+<li><a href="#org8963b63">4.2. Shell</a></li>
+</ul>
+</li>
+<li><a href="#org394fdba">5. Projection (SELECT columns)</a>
+<ul>
+<li><a href="#org303ff74">5.1. SQL</a></li>
+<li><a href="#orgaa376bb">5.2. Shell</a></li>
+</ul>
+</li>
+<li><a href="#orge0dc489">6. Natural Join</a>
+<ul>
+<li><a href="#orgd22d646">6.1. SQL</a></li>
+<li><a href="#org7f73766">6.2. Shell</a></li>
+</ul>
+</li>
+<li><a href="#orge0e39e3">7. Aggregation (GROUP BY)</a>
+<ul>
+<li><a href="#orgda8e78c">7.1. SQL</a></li>
+<li><a href="#org83d2b80">7.2. Shell</a></li>
+</ul>
+</li>
+<li><a href="#org4061dcc">8. Set Operations</a>
+<ul>
+<li><a href="#org2d6d021">8.1. Union</a></li>
+<li><a href="#orgfee67ac">8.2. Difference</a></li>
+<li><a href="#org6be6ed9">8.3. Intersection</a></li>
+</ul>
+</li>
+<li><a href="#orge4672cd">9. Historical Context: 2010 vs 2026</a>
+<ul>
+<li><a href="#org7076f3b">9.1. 2010: The Peak of Shell Data Processing</a></li>
+<li><a href="#orga20e443">9.2. 2026: Embedded SQL Engines</a></li>
+<li><a href="#orgac30249">9.3. When Shell Still Wins</a></li>
+</ul>
+</li>
+<li><a href="#orgec58438">10. Performance Characteristics</a>
+<ul>
+<li><a href="#org18c49cf">10.1. Inefficient (filter late)</a></li>
+<li><a href="#orgeb37d5f">10.2. Efficient (filter early)</a></li>
+</ul>
+</li>
+<li><a href="#org2c839a3">11. Matt Might's Treatment</a></li>
+<li><a href="#org37a1e4e">12. Codd's Relational Model</a></li>
+<li><a href="#org94c79d4">13. References</a></li>
+</ul>
+</div>
+</div>
+<div id="outline-container-orgcf29bab" class="outline-2">
+<h2 id="orgcf29bab"><span class="section-number-2">1.</span> <a href="#orgcf29bab">Overview</a></h2>
+<div class="outline-text-2" id="text-1">
+<p>
+Relational algebra and Unix pipelines share a computational model: composable operations on streams of structured data. The correspondence is not accidental. Codd's relational operators (1970) and Thompson's Unix pipes (1973) emerged from the same era's concern with data transformation.
+</p>
+
+<p>
+This note maps relational operations to their shell equivalents, demonstrating that grep/awk/cut/sort/uniq form a complete toolkit for ad-hoc data analysis without a database.
+</p>
+</div>
+</div>
+<div id="outline-container-orgb11b42d" class="outline-2">
+<h2 id="orgb11b42d"><span class="section-number-2">2.</span> <a href="#orgb11b42d">The Core Correspondence</a></h2>
+<div class="outline-text-2" id="text-2">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">Relational Algebra</th>
+<th scope="col" class="org-left">SQL</th>
+<th scope="col" class="org-left">Unix Tools</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">Selection (σ)</td>
+<td class="org-left"><code>WHERE</code></td>
+<td class="org-left"><code>grep</code>, <code>awk '$3 &gt; 100'</code></td>
+</tr>
+
+<tr>
+<td class="org-left">Projection (π)</td>
+<td class="org-left"><code>SELECT col1, col2</code></td>
+<td class="org-left"><code>cut</code>, <code>awk '{print $1, $3}'</code></td>
+</tr>
+
+<tr>
+<td class="org-left">Rename (ρ)</td>
+<td class="org-left"><code>AS</code></td>
+<td class="org-left"><code>awk '{print "new_name", $2}'</code></td>
+</tr>
+
+<tr>
+<td class="org-left">Union (∪)</td>
+<td class="org-left"><code>UNION</code></td>
+<td class="org-left"><code>cat file1 file2 \vert sort -u</code></td>
+</tr>
+
+<tr>
+<td class="org-left">Difference (−)</td>
+<td class="org-left"><code>EXCEPT</code></td>
+<td class="org-left"><code>comm -23</code></td>
+</tr>
+
+<tr>
+<td class="org-left">Intersection (∩)</td>
+<td class="org-left"><code>INTERSECT</code></td>
+<td class="org-left"><code>comm -12</code></td>
+</tr>
+
+<tr>
+<td class="org-left">Cartesian Product (×)</td>
+<td class="org-left"><code>CROSS JOIN</code></td>
+<td class="org-left">nested loops in <code>awk</code></td>
+</tr>
+
+<tr>
+<td class="org-left">Natural Join (⋈)</td>
+<td class="org-left"><code>JOIN ... ON</code></td>
+<td class="org-left"><code>join</code></td>
+</tr>
+
+<tr>
+<td class="org-left">Aggregation</td>
+<td class="org-left"><code>GROUP BY</code>, <code>COUNT</code>, <code>SUM</code></td>
+<td class="org-left"><code>sort \vert uniq -c</code>, <code>awk</code></td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<div id="outline-container-orge6b0dda" class="outline-2">
+<h2 id="orge6b0dda"><span class="section-number-2">3.</span> <a href="#orge6b0dda">Sample Data</a></h2>
+<div class="outline-text-2" id="text-3">
+<p>
+Two files simulate a minimal database:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-bash"><span class="org-comment-delimiter"># </span><span class="org-comment">employees.tsv
+</span>cat &gt; /tmp/employees.tsv &lt;&lt; <span class="org-string">'EOF'</span><span class="org-sh-heredoc">
+id      name    dept_id salary
+1       alice   10      95000
+2       bob     20      87000
+3       carol   10      102000
+4       dave    30      78000
+5       eve     20      91000
+EOF
+</span>
+<span class="org-comment-delimiter"># </span><span class="org-comment">departments.tsv
+</span>cat &gt; /tmp/departments.tsv &lt;&lt; <span class="org-string">'EOF'</span><span class="org-sh-heredoc">
+dept_id dept_name       location
+10      engineering     sf
+20      sales   nyc
+30      support austin
+EOF</span>
+</pre>
+</div>
+</div>
+</div>
+<div id="outline-container-org5fc90c8" class="outline-2">
+<h2 id="org5fc90c8"><span class="section-number-2">4.</span> <a href="#org5fc90c8">Selection (WHERE)</a></h2>
+<div class="outline-text-2" id="text-4">
+<p>
+Selection filters rows matching a predicate.
+</p>
+</div>
+<div id="outline-container-orgaf714fe" class="outline-3">
+<h3 id="orgaf714fe"><span class="section-number-3">4.1.</span> <a href="#orgaf714fe">SQL</a></h3>
+<div class="outline-text-3" id="text-4-1">
+<div class="org-src-container">
+<pre class="src src-sql"><span class="org-keyword">SELECT</span> * <span class="org-keyword">FROM</span> employees <span class="org-keyword">WHERE</span> salary &gt; 90000;
+</pre>
+</div>
+</div>
+</div>
+<div id="outline-container-org8963b63" class="outline-3">
+<h3 id="org8963b63"><span class="section-number-3">4.2.</span> <a href="#org8963b63">Shell</a></h3>
+<div class="outline-text-3" id="text-4-2">
+<div class="org-src-container">
+<pre class="src src-bash">awk -F<span class="org-string">'\t'</span> <span class="org-string">'NR==1 || $4 &gt; 90000'</span> /tmp/employees.tsv
+</pre>
+</div>
+
+<p>
+The <code>NR==1</code> preserves the header row. The field separator <code>-F'\t'</code> handles TSV format.
+</p>
+
+<p>
+For simple string matching, <code>grep</code> suffices:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-bash">grep -E <span class="org-string">'^(id|.*\tengineering)'</span> /tmp/departments.tsv
+</pre>
+</div>
+</div>
+</div>
+</div>
+<div id="outline-container-org394fdba" class="outline-2">
+<h2 id="org394fdba"><span class="section-number-2">5.</span> <a href="#org394fdba">Projection (SELECT columns)</a></h2>
+<div class="outline-text-2" id="text-5">
+<p>
+Projection selects specific columns.
+</p>
+</div>
+<div id="outline-container-org303ff74" class="outline-3">
+<h3 id="org303ff74"><span class="section-number-3">5.1.</span> <a href="#org303ff74">SQL</a></h3>
+<div class="outline-text-3" id="text-5-1">
+<div class="org-src-container">
+<pre class="src src-sql"><span class="org-keyword">SELECT</span> <span class="org-keyword">name</span>, salary <span class="org-keyword">FROM</span> employees;
+</pre>
+</div>
+</div>
+</div>
+<div id="outline-container-orgaa376bb" class="outline-3">
+<h3 id="orgaa376bb"><span class="section-number-3">5.2.</span> <a href="#orgaa376bb">Shell</a></h3>
+<div class="outline-text-3" id="text-5-2">
+<div class="org-src-container">
+<pre class="src src-bash">cut -f2,4 /tmp/employees.tsv
+</pre>
+</div>
+
+<p>
+Or with <code>awk</code> for reordering and transformation:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-bash">awk -F<span class="org-string">'\t'</span> <span class="org-string">'{print $2, $4/1000 "k"}'</span> /tmp/employees.tsv
+</pre>
+</div>
+</div>
+</div>
+</div>
+<div id="outline-container-orge0dc489" class="outline-2">
+<h2 id="orge0dc489"><span class="section-number-2">6.</span> <a href="#orge0dc489">Natural Join</a></h2>
+<div class="outline-text-2" id="text-6">
+<p>
+Join combines rows from two tables on matching keys.
+</p>
+</div>
+<div id="outline-container-orgd22d646" class="outline-3">
+<h3 id="orgd22d646"><span class="section-number-3">6.1.</span> <a href="#orgd22d646">SQL</a></h3>
+<div class="outline-text-3" id="text-6-1">
+<div class="org-src-container">
+<pre class="src src-sql"><span class="org-keyword">SELECT</span> e.<span class="org-keyword">name</span>, d.dept_name
+<span class="org-keyword">FROM</span> employees e
+<span class="org-keyword">JOIN</span> departments d <span class="org-keyword">ON</span> e.dept_id = d.dept_id;
+</pre>
+</div>
+</div>
+</div>
+<div id="outline-container-org7f73766" class="outline-3">
+<h3 id="org7f73766"><span class="section-number-3">6.2.</span> <a href="#org7f73766">Shell</a></h3>
+<div class="outline-text-3" id="text-6-2">
+<p>
+The <code>join</code> command requires sorted input on the join key:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-bash"><span class="org-comment-delimiter"># </span><span class="org-comment">Sort both files by dept_id (field 3 in employees, field 1 in departments)
+</span>join -t$<span class="org-string">'\t'</span> -1 3 -2 1 <span class="org-sh-escaped-newline">\</span>
+  &lt;(tail -n +2 /tmp/employees.tsv | sort -t$<span class="org-string">'\t'</span> -k3) <span class="org-sh-escaped-newline">\</span>
+  &lt;(tail -n +2 /tmp/departments.tsv | sort -t$<span class="org-string">'\t'</span> -k1) <span class="org-sh-escaped-newline">\</span>
+| cut -f2,4
+</pre>
+</div>
+
+<p>
+The <code>tail -n +2</code> skips headers. Process substitution <code>&lt;(...)</code> creates virtual files from sorted streams.
+</p>
+</div>
+</div>
+</div>
+<div id="outline-container-orge0e39e3" class="outline-2">
+<h2 id="orge0e39e3"><span class="section-number-2">7.</span> <a href="#orge0e39e3">Aggregation (GROUP BY)</a></h2>
+<div class="outline-text-2" id="text-7">
+<p>
+Aggregation computes summary statistics per group.
+</p>
+</div>
+<div id="outline-container-orgda8e78c" class="outline-3">
+<h3 id="orgda8e78c"><span class="section-number-3">7.1.</span> <a href="#orgda8e78c">SQL</a></h3>
+<div class="outline-text-3" id="text-7-1">
+<div class="org-src-container">
+<pre class="src src-sql"><span class="org-keyword">SELECT</span> dept_id, <span class="org-builtin">COUNT</span>(*), <span class="org-builtin">AVG</span>(salary)
+<span class="org-keyword">FROM</span> employees
+<span class="org-keyword">GROUP</span> <span class="org-keyword">BY</span> dept_id;
+</pre>
+</div>
+</div>
+</div>
+<div id="outline-container-org83d2b80" class="outline-3">
+<h3 id="org83d2b80"><span class="section-number-3">7.2.</span> <a href="#org83d2b80">Shell</a></h3>
+<div class="outline-text-3" id="text-7-2">
+<div class="org-src-container">
+<pre class="src src-bash">tail -n +2 /tmp/employees.tsv | <span class="org-sh-escaped-newline">\</span>
+  awk -F<span class="org-string">'\t'</span> <span class="org-string">'{
+    count[$3]++;
+    sum[$3]+=$4
+  }
+  END {
+    for (d in count)
+      printf "%s\t%d\t%.0f\n", d, count[d], sum[d]/count[d]
+  }'</span> | sort -t$<span class="org-string">'\t'</span> -k1
+</pre>
+</div>
+
+<p>
+For simple counting, <code>sort | uniq -c</code> handles the common case:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-bash">cut -f3 /tmp/employees.tsv | tail -n +2 | sort | uniq -c
+</pre>
+</div>
+</div>
+</div>
+</div>
+<div id="outline-container-org4061dcc" class="outline-2">
+<h2 id="org4061dcc"><span class="section-number-2">8.</span> <a href="#org4061dcc">Set Operations</a></h2>
+<div class="outline-text-2" id="text-8">
+</div>
+<div id="outline-container-org2d6d021" class="outline-3">
+<h3 id="org2d6d021"><span class="section-number-3">8.1.</span> <a href="#org2d6d021">Union</a></h3>
+<div class="outline-text-3" id="text-8-1">
+<p>
+Combine rows from two files, removing duplicates:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-bash">cat /tmp/employees.tsv /tmp/employees.tsv | sort -u
+</pre>
+</div>
+</div>
+</div>
+<div id="outline-container-orgfee67ac" class="outline-3">
+<h3 id="orgfee67ac"><span class="section-number-3">8.2.</span> <a href="#orgfee67ac">Difference</a></h3>
+<div class="outline-text-3" id="text-8-2">
+<p>
+Rows in file A but not file B (both must be sorted):
+</p>
+
+<div class="org-src-container">
+<pre class="src src-bash"><span class="org-comment-delimiter"># </span><span class="org-comment">Employees in dept 10 but not in dept 20
+</span>comm -23 <span class="org-sh-escaped-newline">\</span>
+  &lt;(awk -F<span class="org-string">'\t'</span> <span class="org-string">'$3==10 {print $2}'</span> /tmp/employees.tsv | sort) <span class="org-sh-escaped-newline">\</span>
+  &lt;(awk -F<span class="org-string">'\t'</span> <span class="org-string">'$3==20 {print $2}'</span> /tmp/employees.tsv | sort)
+</pre>
+</div>
+</div>
+</div>
+<div id="outline-container-org6be6ed9" class="outline-3">
+<h3 id="org6be6ed9"><span class="section-number-3">8.3.</span> <a href="#org6be6ed9">Intersection</a></h3>
+<div class="outline-text-3" id="text-8-3">
+<p>
+Rows present in both files:
+</p>
+
+<div class="org-src-container">
+<pre class="src src-bash"><span class="org-comment-delimiter"># </span><span class="org-comment">Names appearing in both queries (contrived example)
+</span>comm -12 <span class="org-sh-escaped-newline">\</span>
+  &lt;(awk -F<span class="org-string">'\t'</span> <span class="org-string">'$4&gt;80000 {print $2}'</span> /tmp/employees.tsv | sort) <span class="org-sh-escaped-newline">\</span>
+  &lt;(awk -F<span class="org-string">'\t'</span> <span class="org-string">'$4&lt;100000 {print $2}'</span> /tmp/employees.tsv | sort)
+</pre>
+</div>
+</div>
+</div>
+</div>
+<div id="outline-container-orge4672cd" class="outline-2">
+<h2 id="orge4672cd"><span class="section-number-2">9.</span> <a href="#orge4672cd">Historical Context: 2010 vs 2026</a></h2>
+<div class="outline-text-2" id="text-9">
+</div>
+<div id="outline-container-org7076f3b" class="outline-3">
+<h3 id="org7076f3b"><span class="section-number-3">9.1.</span> <a href="#org7076f3b">2010: The Peak of Shell Data Processing</a></h3>
+<div class="outline-text-3" id="text-9-1">
+<p>
+In 2010, shell pipelines were the default for log analysis, data munging, and ad-hoc queries. Tools like <code>awk</code> and <code>sed</code> were essential knowledge for sysadmins and data engineers.
+</p>
+
+<p>
+The workflow: dump data to CSV/TSV, process with shell tools, import results to Excel or a database.
+</p>
+
+<p>
+Limitations accepted as normal:
+</p>
+<ul class="org-ul">
+<li>No type checking (string comparison on numbers)</li>
+<li>Brittle parsing (embedded delimiters break <code>cut</code>)</li>
+<li>Memory constraints (<code>sort</code> external merge for large files)</li>
+<li>No query optimizer (manual pipeline ordering)</li>
+</ul>
+</div>
+</div>
+<div id="outline-container-orga20e443" class="outline-3">
+<h3 id="orga20e443"><span class="section-number-3">9.2.</span> <a href="#orga20e443">2026: Embedded SQL Engines</a></h3>
+<div class="outline-text-3" id="text-9-2">
+<p>
+By 2026, lightweight SQL engines eliminated many shell pipeline use cases:
+</p>
+</div>
+<div id="outline-container-orgf80da77" class="outline-4">
+<h4 id="orgf80da77"><span class="section-number-4">9.2.1.</span> <a href="#orgf80da77">SQLite</a></h4>
+<div class="outline-text-4" id="text-9-2-1">
+<div class="org-src-container">
+<pre class="src src-bash">sqlite3 :memory: &lt;&lt;EOF<span class="org-sh-heredoc">
+.mode csv
+.import employees.csv employees
+SELECT dept_id, AVG(salary) FROM employees GROUP BY dept_id;
+EOF</span>
+</pre>
+</div>
+</div>
+</div>
+<div id="outline-container-org1907f26" class="outline-4">
+<h4 id="org1907f26"><span class="section-number-4">9.2.2.</span> <a href="#org1907f26">DuckDB</a></h4>
+<div class="outline-text-4" id="text-9-2-2">
+<div class="org-src-container">
+<pre class="src src-bash">duckdb -c <span class="org-string">"SELECT * FROM 'employees.parquet' WHERE salary &gt; 90000"</span>
+</pre>
+</div>
+
+<p>
+DuckDB reads CSV, Parquet, and JSON directly. The query optimizer handles pipeline ordering. Types are inferred or enforced.
+</p>
+</div>
+</div>
+<div id="outline-container-org7d6a672" class="outline-4">
+<h4 id="org7d6a672"><span class="section-number-4">9.2.3.</span> <a href="#org7d6a672">Comparison Table</a></h4>
+<div class="outline-text-4" id="text-9-2-3">
+<table border="2" cellspacing="0" cellpadding="6" rules="groups" frame="hsides">
+
+
+<colgroup>
+<col  class="org-left" />
+
+<col  class="org-left" />
+
+<col  class="org-left" />
+</colgroup>
+<thead>
+<tr>
+<th scope="col" class="org-left">Dimension</th>
+<th scope="col" class="org-left">Shell Pipelines (2010)</th>
+<th scope="col" class="org-left">Embedded SQL (2026)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="org-left">Setup cost</td>
+<td class="org-left">Zero (tools pre-installed)</td>
+<td class="org-left">One binary download</td>
+</tr>
+
+<tr>
+<td class="org-left">Type safety</td>
+<td class="org-left">None</td>
+<td class="org-left">Schema inference</td>
+</tr>
+
+<tr>
+<td class="org-left">Query optimization</td>
+<td class="org-left">Manual</td>
+<td class="org-left">Automatic</td>
+</tr>
+
+<tr>
+<td class="org-left">Memory handling</td>
+<td class="org-left">External sort</td>
+<td class="org-left">Columnar + streaming</td>
+</tr>
+
+<tr>
+<td class="org-left">File formats</td>
+<td class="org-left">Text only</td>
+<td class="org-left">CSV, Parquet, JSON</td>
+</tr>
+
+<tr>
+<td class="org-left">Debugging</td>
+<td class="org-left">Echo intermediate stages</td>
+<td class="org-left"><code>EXPLAIN</code> plans</td>
+</tr>
+
+<tr>
+<td class="org-left">Composability</td>
+<td class="org-left">Pipes</td>
+<td class="org-left">CTEs, subqueries</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+<div id="outline-container-orgac30249" class="outline-3">
+<h3 id="orgac30249"><span class="section-number-3">9.3.</span> <a href="#orgac30249">When Shell Still Wins</a></h3>
+<div class="outline-text-3" id="text-9-3">
+<p>
+Shell pipelines remain superior for:
+</p>
+
+<ol class="org-ol">
+<li><b>Log tailing</b>: <code>tail -f access.log | grep ERROR</code> has no SQL equivalent for real-time streams</li>
+<li><b>One-liners</b>: <code>cut -d: -f1 /etc/passwd | sort</code> is faster to type than loading into a database</li>
+<li><b>No dependencies</b>: Air-gapped systems or minimal containers lack DuckDB</li>
+<li><b>Text transformation</b>: <code>sed 's/foo/bar/g'</code> is simpler than SQL string functions</li>
+</ol>
+
+<p>
+The heuristic: shell for streaming/transformation, SQL for filtering/aggregation/joins.
+</p>
+</div>
+</div>
+</div>
+<div id="outline-container-orgec58438" class="outline-2">
+<h2 id="orgec58438"><span class="section-number-2">10.</span> <a href="#orgec58438">Performance Characteristics</a></h2>
+<div class="outline-text-2" id="text-10">
+<p>
+Pipeline performance depends on operation ordering. The optimizer's job is done manually.
+</p>
+</div>
+<div id="outline-container-org18c49cf" class="outline-3">
+<h3 id="org18c49cf"><span class="section-number-3">10.1.</span> <a href="#org18c49cf">Inefficient (filter late)</a></h3>
+<div class="outline-text-3" id="text-10-1">
+<div class="org-src-container">
+<pre class="src src-bash"><span class="org-comment-delimiter"># </span><span class="org-comment">Reads all rows, then filters
+</span>cut -f2,4 employees.tsv | awk -F<span class="org-string">'\t'</span> <span class="org-string">'$2 &gt; 90000'</span>
+</pre>
+</div>
+</div>
+</div>
+<div id="outline-container-orgeb37d5f" class="outline-3">
+<h3 id="orgeb37d5f"><span class="section-number-3">10.2.</span> <a href="#orgeb37d5f">Efficient (filter early)</a></h3>
+<div class="outline-text-3" id="text-10-2">
+<div class="org-src-container">
+<pre class="src src-bash"><span class="org-comment-delimiter"># </span><span class="org-comment">Filters first, then projects
+</span>awk -F<span class="org-string">'\t'</span> <span class="org-string">'$4 &gt; 90000 {print $2, $4}'</span> employees.tsv
+</pre>
+</div>
+
+<p>
+For large files, early filtering reduces I/O. The manual optimization mirrors query planning in databases.
+</p>
+</div>
+</div>
+</div>
+<div id="outline-container-org2c839a3" class="outline-2">
+<h2 id="org2c839a3"><span class="section-number-2">11.</span> <a href="#org2c839a3">Matt Might's Treatment</a></h2>
+<div class="outline-text-2" id="text-11">
+<p>
+Matt Might's "<a href="http://matt.might.net/articles/sql-in-the-shell/">SQL in the Shell</a>" provides the canonical reference. Key additions from that treatment:
+</p>
+
+<ul class="org-ul">
+<li><code>mlr</code> (Miller): Typed data processing with <code>mlr --csv filter '$salary &gt; 90000'</code></li>
+<li><code>csvkit</code>: Python-based CSV tools with SQL interface (<code>csvsql</code>)</li>
+<li><code>q</code>: Direct SQL on CSV files</li>
+</ul>
+
+<p>
+These tools bridge the shell/SQL divide, offering SQL syntax with pipeline composability.
+</p>
+</div>
+</div>
+<div id="outline-container-org37a1e4e" class="outline-2">
+<h2 id="org37a1e4e"><span class="section-number-2">12.</span> <a href="#org37a1e4e">Codd's Relational Model</a></h2>
+<div class="outline-text-2" id="text-12">
+<p>
+The mapping to shell tools validates Codd's insight: relational operations are orthogonal and composable. Selection, projection, and join are the primitives; complex queries compose them.
+</p>
+
+<p>
+The shell implementation exposes what databases hide:
+</p>
+<ul class="org-ul">
+<li>Sort order matters for joins (B-tree indexes automate this)</li>
+<li>Streaming vs materialization tradeoffs are explicit</li>
+<li>Type coercion is manual</li>
+</ul>
+
+<p>
+Learning relational algebra via shell tools builds intuition for database internals.
+</p>
+</div>
+</div>
+<div id="outline-container-org94c79d4" class="outline-2">
+<h2 id="org94c79d4"><span class="section-number-2">13.</span> <a href="#org94c79d4">References</a></h2>
+<div class="outline-text-2" id="text-13">
+<ul class="org-ul">
+<li><a href="http://matt.might.net/articles/sql-in-the-shell/">SQL in the Shell</a> &#x2013; Matt Might's canonical treatment</li>
+<li><a href="https://www.cs.rochester.edu/~nelson/courses/csc_173/relations/algebra.html">Relational Algebra</a> &#x2013; Academic introduction</li>
+<li><a href="https://duckdb.org/docs/data/overview">DuckDB Data Import</a> &#x2013; Modern SQL-on-files approach</li>
+<li><a href="https://miller.readthedocs.io/">Miller Documentation</a> &#x2013; Record-oriented data processing</li>
+<li>E.F. Codd, "A Relational Model of Data for Large Shared Data Banks" (1970)</li>
+</ul>
+</div>
+</div>
+</div>
+<div id="postamble" class="status">
+<footer class="site-footer">
+  <div class="container">
+    <a href="/" class="wordmark wordmark-sm">wal<span class="dot">.</span><span class="sh">sh</span></a>
+    <span class="footer-meta">Updated Jun 12, 2026 · <code>build: 2026-06-12 22:32 | sha: 3711baa3</code></span>
+  </div>
+</footer><script src="/static/js/adtech/ceddl.js"></script>
+
+<script src="/static/js/adtech/tag-manager.js"></script>
+
+<script src="/static/js/adtech/beacon.js"></script>
+
+<script src="/static/js/adtech/attribution.js"></script>
+
+<script src="/static/js/adtech/sponsored-products.js"></script>
+
+<script src="/static/js/adtech/search-ads.js"></script>
+
+<script src="/static/js/adtech/prebid-lite.js"></script>
+
+<script src="/static/js/adtech/native-ads.js"></script>
+
+<script src="/static/js/adtech/metered-access.js"></script>
+
+<script src="/static/js/adtech/content-gate.js"></script>
+
+<script src="/static/js/adtech/pricing-engine.js"></script>
+
+<script src="/static/js/adtech/affiliate-engine.js"></script>
+
+<script src="/static/js/adtech/referral-program.js"></script>
+
+<script src="/static/js/adtech/promo-engine.js"></script>
+
+<script src="/static/js/adtech/influencer-links.js"></script>
+
+<script src="/static/js/adtech/ab-engine.js"></script>
+
+<script src="/static/js/adtech/clean-room.js"></script>
+
+<script src="/static/js/adtech/bot-greeting.js"></script>
+<script type="module" src="/static/js/web-vitals-init.js"></script>
+
+<script src="/static/js/heading-anchors.js"></script>
+
+<script src="/static/js/event-pixel.js"></script>
+
+<script src="/static/js/color-swatches.js"></script>
+
+<script src="/static/js/research-checklist.js"></script>
+
+<script src="/static/js/bot-signal.js"></script>
+
+<script src="/static/js/global-pollution.js"></script>
+<nav class="webring" data-wwn data-wwn-rewrite-links="true" aria-label="Webring navigation">
+  <a id="webring-prev" rel="prev">&larr; prev</a>
+  <span id="webring-status"></span>
+  <a id="webring-next" rel="next">next &rarr;</a>
+</nav>
+<script src="/static/js/webring.js"></script>
+</div>
+</body>
+</html>

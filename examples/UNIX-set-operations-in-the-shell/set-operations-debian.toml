@@ -1,0 +1,36 @@
+# Set operations in the Unix shell — Peteris Krumins' "Set Operations in the Unix
+# Shell" (+ its cheat sheet and the Google Treasure Hunt puzzle that inspired it)
+# and Thomas Guest's "He Sells Shell Scripts to Intersect Sets" — on Debian 13.
+#
+# A throwaway system container with bash, GNU coreutils (`comm`, `join`, `uniq`,
+# `factor`), gawk, perl and sqlite3, a non-root `learner` user, and a
+# `~/set-operations/` sandbox: the articles' 14 set-operation recipes as
+# sourceable shell functions (verbatim), corrected twins under bin/fixed/, both
+# authors' sample data, a demo.sh that proves merge == count == hash == SQL, and
+# a treasure-hunt.sh that reproduces the 2008 puzzle answer (7830239) from scratch.
+# Driven through phase5-lxd/lab-lxd.sh, which speaks LXD or Incus identically.
+#
+#   # 1) launch the container
+#   phase5-lxd/lab-lxd.sh up   --config examples/UNIX-set-operations-in-the-shell/set-operations-debian.toml
+#
+#   # 2) provision it (bash + coreutils + gawk + perl + sqlite3 + a `learner` + the sandbox)
+#   examples/UNIX-set-operations-in-the-shell/setup-workshop.sh set-operations-debian/shell
+#
+#   # 3) start intersecting — log in as the learner and follow the articles
+#   phase5-lxd/lab-lxd.sh exec set-operations-debian/shell -- su - learner
+#
+#   # 4) tear down
+#   phase5-lxd/lab-lxd.sh down --lab set-operations-debian
+#
+# The by-hand walkthrough (what setup-workshop.sh automates, and why) is RUNBOOK.md.
+
+[lab]
+name        = "set-operations-debian"
+description = "Set operations with Unix tools (comm/uniq/awk + sqlite3 oracle) on Debian 13 (trixie)"
+tags        = ["set-operations", "sets", "catonmat", "krumins", "accu", "comm", "uniq", "awk", "sqlite", "debian", "trixie"]
+
+[[instance]]
+name  = "shell"
+type  = "container"
+# Debian 13 / trixie container, from the linuxcontainers `images:` remote.
+image = "images:debian/13"

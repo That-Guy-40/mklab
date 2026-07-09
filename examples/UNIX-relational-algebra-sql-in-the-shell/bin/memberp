@@ -1,0 +1,27 @@
+#!/bin/bash
+# memberp — set membership test, the helper `difference` is built on.
+#
+#   memberp file line     # exit 0 if `file` contains the line `line`, else nonzero
+#
+# Transcribed VERBATIM from Matt Might, "Relational shell programming"
+#   https://matt.might.net/articles/sql-in-the-shell/
+# Only this header comment is added.
+#
+# `exit -1` is not portable; bash coerces it to 255. It works, but `exit 1` is
+# what you would write today. Each call rescans `file` from the top, which is
+# what makes `difference` quadratic -- see the article's closing Exercise.
+
+# Usage: memberp file line
+
+file=$1
+
+shift
+
+while read a;
+ do
+   if [ "$a" = "$*" ]; then
+     exit 0
+   fi
+ done < $file
+
+exit -1

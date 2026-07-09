@@ -1,0 +1,36 @@
+#!/bin/bash
+# difference (CORRECTED) — relational set difference (A - B).
+#
+#   difference rel1 rel2       # lines of rel1 that do not appear in rel2
+#
+# Drop-in replacement for ../difference (Matt Might, "Relational shell
+# programming").
+#
+# What changed, and why:
+#   1. It calls the CORRECTED `memberp` (this directory is prepended to PATH),
+#      not whichever one PATH happened to find first.  The original relied on an
+#      ambient PATH lookup, so it silently changed behaviour depending on where
+#      you ran it from.
+#   2. `IFS= read -r` and quoted "$1"/"$2" — see ../fixed/cartesian.
+#   3. `printf '%s\n'` instead of `echo` — `echo` mangles a tuple that begins
+#      with `-n`, or that contains a backslash on some shells.
+#
+# STILL O(|rel1| x |rel2|): every line of rel1 rescans all of rel2.  The linear
+# equivalent on SORTED input is the coreutils one-liner
+#
+#     comm -23 <(sort rel1) <(sort rel2)
+#
+# and demo.sh proves the two agree.  Making *this* script linear is the article's
+# closing Exercise -- see ../../RUNBOOK.md.
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+PATH="$HERE:$PATH"; export PATH
+
+[ $# -eq 2 ] || { echo "usage: ${0##*/} rel1 rel2" >&2; exit 1; }
+
+while IFS= read -r a
+do
+  if ! memberp "$2" "$a"; then
+    printf '%s\n' "$a"
+  fi
+done < "$1"

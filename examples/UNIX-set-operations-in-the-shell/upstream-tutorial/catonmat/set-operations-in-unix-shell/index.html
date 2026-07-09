@@ -1,0 +1,564 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,minimum-scale=1,initial-scale=1">
+
+    <title>Set Operations in the Unix Shell</title>
+
+    <link href="https://catonmat.net/set-operations-in-unix-shell" rel="canonical">
+    <link rel="alternate" type="application/rss+xml" href="https://catonmat.net/feed">
+
+    <meta property="og:title" content="Set Operations in the Unix Shell">
+    <meta property="og:description" content="A while ago I wrote about how I solved the Google Treasure Hunt Puzzle #4 about prime numbers. I took an unusual approach and solved this problem entirely from the Unix shell. The solution involved finding the intersection between a bunch of files containing numbers. This lead me to an idea to write a post about how to...">
+    <meta property="og:url" content="https://catonmat.net/set-operations-in-unix-shell">
+        <meta property="og:image" content="https://catonmat.net/images/catonmat-preview-image.png">
+    
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:site" content="@catonmat">
+    <meta name="twitter:title" content="Set Operations in the Unix Shell">
+    <meta name="twitter:description" content="A while ago I wrote about how I solved the Google Treasure Hunt Puzzle #4 about prime numbers. I took an unusual approach and solved this problem entirely from the Unix shell. The solution involved finding the intersection between a bunch of files containing numbers. This lead me to an idea to write a post about how to...">
+    <meta name="twitter:creator" content="@pkrumins">
+
+        <meta name="twitter:image:src" content="https://catonmat.net/images/catonmat-preview-image.png">
+    
+    <link rel="apple-touch-icon" href="/favicon.png">
+    <link rel="icon" href="/favicon.png">
+
+    <script src="/js/catonmat.js?v=e5f5bf"></script>
+    
+
+    <link rel="stylesheet" href="/css/normalize.css?v=e5f5bf">
+    <link rel="stylesheet" href="/css/stylesheet.css?v=e5f5bf">
+    
+</head>
+<body>
+    <div class="site-page">
+        <header class="site-header">
+            <div class="logo">
+                <a href="/"><img src="/images/catonmat-logo-clean.png"></a>
+            </div>
+            <div class="navigation">
+                
+
+                    
+    <nav>
+        <ul>
+            
+        <li ><a href="/archive">archive</a></li>
+    
+            
+        <li ><a href="/books">books</a></li>
+    
+            
+        <li ><a href="/tools">tools</a></li>
+    
+            
+        <li ><a href="/projects">projects</a></li>
+    
+                        
+        <li ><a href="/about">about</a></li>
+    
+        </ul>
+    </nav>
+
+            </div>
+        </header>
+
+        
+    <section class="site-articles">
+        <article>
+            
+                <h1>
+    <a href="/set-operations-in-unix-shell">Set Operations in the Unix Shell</a>
+</h1>
+            
+            
+                <div class="last-updated">Last updated 
+    2 weeks ago
+</div>
+            
+            <div class="article-body">
+                
+    <img src="https://catonmat.net/wp-content/uploads/2008/10/set-union-intersect-complement.jpg" alt="set operations" class="post-icon" align="left">
+<p>A while ago I wrote about how I solved the <a href="https://catonmat.net/solving-google-treasure-hunt-prime-number-problem-four">Google Treasure Hunt Puzzle #4</a> about prime numbers. I took an unusual approach and solved this problem entirely from the Unix shell. The solution involved finding the intersection between a bunch of files containing numbers. This lead me to an idea to write a post about how to do various set operations from the shell by using common utilities such as <code>sort</code>, <code>uniq</code>, <code>diff</code>, <code>grep</code>, <code>head</code>, <code>tail</code>, <code>comm</code>, and others.</p>
+<p>I'll cover the following set operations in this article.</p>
+<ul>
+    <li><strong>Set Membership</strong>. Test if an element belongs to a set.</li>
+    <li><strong>Set Equality</strong>. Test if two sets contain the same elements.</li>
+    <li><strong>Set Cardinality</strong>. Return the  number of elements in the set.</li>
+    <li><strong>Subset Test</strong>. Test if a given set is a subset of another set.</li>
+    <li><strong>Set Union</strong>. Find union of two sets.</li>
+    <li><strong>Set Intersection</strong>. Find intersection of two sets.</li>
+    <li><strong>Set Complement</strong>. Given two sets <strong>A</strong> and <strong>B</strong>, find all elements in <strong>A</strong> that are not in <strong>B</strong>.</li>
+    <li><strong>Set Symmetric Difference</strong>. Find symmetric difference of two sets.</li>
+    <li><strong>Power Set</strong>. Generate all subsets of a set.</li>
+    <li><strong>Set Cartesian Product</strong>. Find <strong>A</strong> x <strong>B</strong>.</li>
+    <li><strong>Disjoint Set Test</strong>. Test if two sets are disjoint.</li>
+    <li><strong>Empty Set Test</strong>. Test if a given set is empty.</li>
+    <li><strong>Minimum</strong>. Find the smallest element of a set.</li>
+    <li><strong>Maximum</strong>. Find the largest element of a set.</li>
+</ul>
+<p><strong>Update</strong>: I wrote <a href="https://catonmat.net/set-operations-in-unix-shell-simplified">another post</a> about these operations and created a cheat sheet.</p>
+<p>Download cheat sheet: <a href="https://catonmat.net/ftp/setops.txt">set operations in unix shell (.txt)</a></p>
+<p>To illustrate these operations, I created a couple of random sets to work with. Each set is represented as a file with one element per line. The elements are positive numbers.</p>
+<p>First, I created two sets <strong>A</strong> and <strong>B</strong> with 5 elements each so that I could easily check if the operations really worked.</p>
+<p>Sets <strong>A</strong> and <strong>B</strong> are hand-crafted. It's easy to see that only elements 1, 2 and 3 are in common:</p>
+<pre>
+$ cat A     $ cat B
+3           11
+5           1
+1           12
+2           3
+4           2
+</pre>
+<p>I also created a set <strong>Asub</strong> which is a subset of set <strong>A</strong> and <strong>Anotsub</strong> which is not a subset of A (to test the Subset Test operation):</p>
+<pre>
+$ cat Asub     $ cat Anotsub
+3              6
+2              7
+5              8
+</pre>
+<p>Next, I created two equal sets <strong>Aequal</strong> and <strong>Bequal</strong> again with 5 elements each:</p>
+<pre>
+$ cat Aequal     $ cat Bequal
+103              100
+102              101
+101              102
+104              103
+100              104
+</pre>
+<p>Then, I created two huge sets <strong>Abig</strong> and <strong>Bbig</strong> with 100,000 elements with repeated elements.</p>
+<p>The easiest way to generate sets <strong>Abig</strong> and <strong>Bbig</strong> was to take natural numbers from /dev/urandom. There are two shell commands that can easily do that. The first is <code>od</code> and the second is <code>hexdump</code>.</p>
+<p>Here is how to create two files with 100,000 natural numbers with both commands.</p>
+<p>With hexdump:</p>
+<pre>
+$ hexdump -e &#039;1/4 &quot;%u\n&quot;&#039; -n400000 /dev/urandom &gt; Abig
+$ hexdump -e &#039;1/4 &quot;%u\n&quot;&#039; -n400000 /dev/urandom &gt; Bbig
+</pre>
+<p>The <code>-e</code> switch specifies the output format. It says - take 1 element of size 4 bytes and output it as an unsigned integer. The <code>-n</code> switch specifies how many bytes to read from /dev/urandom. In this case it's 400000 (400000 bytes / 4 bytes per element = 100000 elements).</p>
+<p>With od:</p>
+<pre>
+$ od -An -w4 -tu4 -N400000 /dev/urandom | sed &#039;s/ *//&#039; &gt; Abig
+$ od -An -w4 -tu4 -N400000 /dev/urandom | sed &#039;s/ *//&#039; &gt; Bbig
+</pre>
+<p>The &quot;-An&quot; switch specifies that no line address is necessary. The &quot;-w4&quot; switch specifies number of bytes to output per line. The &quot;-tu4&quot; says to output unsigned 4-byte numbers and &quot;-N400000&quot; limits the output to 400000 bytes (400000/4 = 100000 elements). The output from od has to be filtered through sed to drop the leading whitespace characters.</p>
+<p>Okay, now let's look at various set operations.</p>
+<h2 style="margin-bottom:10px">Set Membership</h2>
+<p>The set membership operation tests if an element belongs to a set. We write <strong>a</strong> ? <strong>A</strong>, if element <strong>a</strong> belongs to set <strong>A</strong>, and we write <strong>a</strong> ? <strong>A</strong>, if it does not.</p>
+<p>The easiest way to test if an element is in a set is to use &quot;<strong>grep</strong>&quot; command. Grep searches the file for lines matching a pattern:</p>
+<pre>
+$ grep -xc &#039;element&#039; set
+</pre>
+<p>The &quot;-c&quot; flag outputs number of elements in the set. If it is not a multi-set, the number of elements should be 0 or 1. The &quot;-x&quot; option specifies to match the whole line only (no partial matches).</p>
+<p>Here is an example of this operation run on set A:</p>
+<pre>
+$ grep -xc &#039;4&#039; A
+1
+$ grep -xc &#039;999&#039; A
+0
+</pre>
+<p>That's correct. Set A contains element 4 but does not contain element 999.</p>
+<p>If the membership operation has to be used from a shell script, the return code from grep can be used instead. Unix commands succeed if the return code is 0, and fail otherwise:</p>
+<pre>
+$ grep -xq &#039;element&#039; set
+# returns 0 if element ? set
+# returns 1 if element ? set
+</pre>
+<p>The &quot;-q&quot; flag makes sure that grep does not output the element if it is in the set.</p>
+<h2 style="margin-bottom:10px">Set Equality</h2>
+<p>The set equality operation tests if two sets are the same, i.e., contain the same elements. We write <strong>A</strong> = <strong>B</strong> if sets <strong>A</strong> and <strong>B</strong> are equal and <strong>A</strong> ? <strong>B</strong> if they are not.</p>
+<p>The easiest way to test if two sets are equal is to use &quot;<strong>diff</strong>&quot; command. Diff command compares two files for differences. It will find that the order of lines differ, so the files have to be sorted first. If they are multi-sets, the output of sort has to be run through &quot;uniq&quot; command to eliminate duplicate elements:</p>
+<pre>
+$ diff -q &lt;(sort set1 | uniq) &lt;(sort set2 | uniq)
+# returns 0 if set1 = set2
+# returns 1 if set1 ? set2
+</pre>
+<p>The &quot;-q&quot; flag quiets the output of diff command.</p>
+<p>Let's test this operation on sets A, B, Aequal and Bequal:</p>
+<pre>
+$ diff -q &lt;(sort A | uniq) &lt;(sort B | uniq)
+# return code 1 -- sets A and B are not equal
+
+$ diff -q &lt;(sort Aequal | uniq) &lt;(sort Bequal | uniq)
+# return code 0 -- sets A and B are equal
+</pre>
+<p>If you have already sorted sets, then just run:</p>
+<pre>
+$ diff -q set1 set2
+</pre>
+<h2 style="margin-bottom:10px">Set Cardinality</h2>
+<p>The set cardinality operations returns the number of elements in the set. We write |<strong>A</strong>| to denote the cardinality of the set <strong>A</strong>.</p>
+<p>The simplest way to count the number of elements in a set is to use &quot;<strong>wc</strong>&quot; command. Wc command counts the number of characters, words or lines in a file. Since each element in the set appears on a new line, counting the number of lines in the file will return the cardinality of the set:</p>
+<pre>
+$ wc -l set | cut -d&#039; &#039; -f1
+</pre>
+<p>Cut command is necessary because &quot;wc -l&quot; also outputs the name of the file it was ran on. The cut command outputs the first field which is number of lines in the file.</p>
+<p>We can actually get rid of cut:</p>
+<pre>
+$ wc -l &lt; set
+</pre>
+<p>Let's test if on sets A and Abig:</p>
+<pre>
+$ wc -l A | cut -d&#039; &#039; -f1
+5
+
+$ wc -l Abig | cut -d&#039; &#039; -f1
+100000
+
+$ wc -l &lt; A
+5
+
+$ wc -l &lt; Abig 
+100000
+</pre>
+<h2 style="margin-bottom:10px">Subset Test</h2>
+<p>The subset test tests if the given set is a subset of another set. We write <strong>S</strong> ? <strong>A</strong> if <strong>S</strong> is a subset of <strong>A</strong>, and <strong>S</strong> ? <strong>A</strong>, if it's not.</p>
+<p>I found a very easy way to do it using the &quot;<strong>comm</strong>&quot; utility. Comm compares two sorted files line by line. It may be run in such a way that it outputs lines that appear only in the first specified file. If the first file is subset of the second, then all the lines in the 1st file also appear in the 2nd, so no output is produced:</p>
+<pre>
+$ comm -23 &lt;(sort subset | uniq) &lt;(sort set | uniq) | head -1
+# comm returns no output if subset ? set
+# comm outputs something if subset ? set
+</pre>
+<p>Please remember that if you have a numeric set, then sort must take &quot;-n&quot; option.</p>
+<p>Let's test if Asub is a subset of A:</p>
+<pre>
+$ comm -23 &lt;(sort -n Asub|uniq) &lt;(sort -n A|uniq) | head -1
+# no output - yes, Asub ? A
+</pre>
+<p>Now let's test if Anotsub is a subset of A:</p>
+<pre>
+$ comm -23 &lt;(sort -n Anotsub|uniq) &lt;(sort -n A|uniq) | head -1
+6 # has output - no, Anotsub ? A
+</pre>
+<p>If you want to use it from a shell script, you'd have to test if the output from this command was empty or not.</p>
+<h2 style="margin-bottom:10px">Set Union</h2>
+<p>The set union operation unions two sets, i.e., join them into one set. We write <strong>C</strong> = <strong>A</strong> ? <strong>B</strong> to denote union of sets <strong>A</strong> and <strong>B</strong> which produces set <strong>C</strong>.</p>
+<p>Set union is extremely easy to create. Just use the &quot;<strong>cat</strong>&quot; utility to concatenate two files:</p>
+<pre>
+$ cat set1 set2
+</pre>
+<p>If the duplicates (elements which are both in set1 and set2) are not welcome, then the output of cat can be filtered via <strong>awk</strong>:</p>
+<pre> 
+$ cat set1 set2 | awk &#039;!found[$1]++&#039;
+
+# we can also get rid of cat by just using awk:
+
+$ awk &#039;!found[$1]++&#039; set1 set2
+</pre>
+<p>If we don't want to use awk, which is a whole-blown programming language, then we can <strong>sort</strong> the output of cat and filter it via <strong>uniq</strong>:</p>
+<pre>
+$ cat set1 set2 | sort | uniq
+
+# we can get rid of cat by specifying arguments to sort:
+
+$ sort set1 set2 | uniq
+
+# finally we can get rid of uniq by specifying -u flag to sort
+
+$ sort -u set1 set2
+
+</pre>
+<p>If the sets set1 and set2 are already sorted, then the union operation can be made much faster by specifying the &quot;-m&quot; command line option, which merges the files (like the final step of merge-sort algorithm):</p>
+<pre>
+$ sort -m set1 set2 | uniq
+
+# or
+
+$ set -um set1 set2
+</pre>
+<p>Let's test this operation on sets A and B:</p>
+<pre>
+$ cat A B # with duplicates
+3
+5
+1
+2
+4
+11
+1
+12
+3
+2
+
+$ awk &#039;!found[$1]++&#039; # without dupes
+3
+5
+1
+2
+4
+11
+12
+
+$ sort -n A B | uniq # with sort &amp;&amp; uniq
+1
+2
+3
+4
+5
+11
+12
+</pre>
+<h2 style="margin-bottom:10px">Set Intersection</h2>
+<p>The set intersection operation finds elements that are in both sets at the same time. We write <strong>C</strong> = <strong>A</strong> ? <strong>B</strong> to denote the intersection of sets <strong>A</strong> and <strong>B</strong>, which produces the set <strong>C</strong>.</p>
+<p>There are many ways to do set intersection. The first way that I am going to show you uses &quot;comm&quot;:</p>
+<pre>
+$ comm -12 &lt;(sort set1) &lt;(sort set2)
+</pre>
+<p>The &quot;-12&quot; option to comm directs it to suppress output of lines appearing just in the 1st and the 2nd file and makes it output lines appearing in both 1st and 2nd, which is the intersection of two sets.</p>
+<p>Please remember that if you have a numeric set, then sort must take &quot;-n&quot; option.</p>
+<p>Another way to do it is to use &quot;grep&quot; utility. I actually found about this method as I was writing this article:</p>
+<pre>
+$ grep -xF -f set1 set2
+</pre>
+<p>The &quot;-x&quot; option forces grep to match the whole lines (no partial matches). The &quot;-f set1&quot; specifies the patterns to use for searching. The &quot;-F&quot; option makes grep interpret the given patterns literally (no regexes). It works by matching all lines of set1 in set2. The lines that appear just in set1 or just in set2 are never output.</p>
+<p>The next way to find intersection is by using &quot;sort&quot; and &quot;uniq&quot;:</p>
+<pre>
+$ sort set1 set2 | uniq -d
+</pre>
+<p>The &quot;-d&quot; option to uniq forces it to print only the duplicate lines. Obviously, if a line appears in set1 and set2, after sorting there will be two consecutive equal lines in the output. The &quot;uniq -d&quot; command prints such repeated lines (but only 1 copy of it), thus it's the intersection operation.</p>
+<p>Just a few minutes before publishing this article I found another way to do intersection with &quot;join&quot; command. Join command joins files on a common field:</p>
+<pre>
+$ join &lt;(sort -n A) &lt;(sort -n B)
+</pre>
+<p>Here is a test run:</p>
+<pre>
+$ sort -n A B | uniq -d
+1
+2
+3
+
+$ grep -xF -f A B
+1
+3
+2
+
+$ comm -12 &lt;(sort -n A) &lt;(sort -n B)
+1
+2
+3
+</pre>
+<h2 style="margin-bottom:10px">Set Complement</h2>
+<p>The set complement operation finds elements that are in one set but not the other. We write <strong>A</strong> - <strong>B</strong> or <strong>A</strong> \ <strong>B</strong> to denote set's <strong>B</strong> complement in set <strong>A</strong>.</p>
+<p><strong>Comm</strong> has become a pretty useful command for operating on sets. It can be applied to implement set complement operation as well:</p>
+<pre>
+$ comm -23 &lt;(sort set1) &lt;(sort set2)
+</pre>
+<p>The option &quot;-23&quot; specifies that comm should not print elements that appear just in set2 and that are common to both. It leaves comm to print elements which are just in set1 (and not in set2).</p>
+<p>The &quot;<strong>grep</strong>&quot; command can also be used to implement this operation:</p>
+<pre>
+$ grep -vxF -f set2 set1
+</pre>
+<p>Notice that the order of sets has been reversed from that of comm. That's because we are searching those elements in set1, which are not in set2.</p>
+<p>Another way to do it is, of course, with &quot;<strong>sort</strong>&quot; and &quot;<strong>uniq</strong>&quot;:</p>
+<pre>
+$ sort set2 set2 set1 | uniq -u
+</pre>
+<p>This is a pretty tricky command. Suppose that a line appears in set1 but does not appear in set2. Then it will be output just once and will not get removed by uniq. All other lines get removed.</p>
+<p>Let's put these commands to test:</p>
+<pre>
+$ comm -23 &lt;(sort -n A) &lt;(sort -n B)
+4
+5
+
+$ grep -vxF -f B A
+5
+4
+
+$ sort -n B B A | uniq -u
+4
+5
+</pre>
+<h2 style="margin-bottom:10px">Set Symmetric Difference</h2>
+<p>The set symmetric difference operation finds elements that are in one set, or in the other but not both. We write <strong>A</strong> ? <strong>B</strong> to denote symmetric difference of sets <strong>A</strong> and <strong>B</strong>.</p>
+<p>The operation can be implemented very easily with &quot;<strong>comm</strong>&quot; utility:</p>
+<pre>
+$ comm -3 &lt;(sort set1) &lt;(sort set2) | sed &#039;s/\t//g&#039;
+
+# sed can be replaced with tr
+
+$ comm -3 &lt;(sort set1) &lt;(sort set2) | tr -d &#039;\t&#039;
+
+</pre>
+<p>Here comm is instructed via &quot;-3&quot; not to output fields that are common to both files, but to output fields that are just in set1 and just in set2. Sed is necessary because comm outputs two columns of data and some of it is right padded with a \t tab character.</p>
+<p>It can also be done with &quot;<strong>sort</strong>&quot; and &quot;<strong>uniq</strong>&quot;:</p>
+<pre>
+$ sort set1 set2 | uniq -u
+</pre>
+<p>We can use mathematics and derive a few formulas involving previously used operations for symmetric difference: <strong>A</strong> ? <strong>B</strong> = (<strong>A</strong> - <strong>B</strong>) ? (<strong>B</strong> - <strong>A</strong>). Now we can use grep:</p>
+<pre>
+$ cat &lt;(grep -vxF -f set1 set2) &lt;(grep -vxF -f set2 set1)
+# does (B - A) ? (A - B)
+
+# this can be simplified
+
+$ grep -vxF -f set1 set2; grep -vxF -f set2 set1
+</pre>
+<p>Let's test it:</p>
+<pre>
+$ comm -3 &lt;(sort -n A) &gt;(sort -n B) | sed &#039;s/\t//g&#039;
+11
+12
+4
+5
+
+$ sort -n A B | uniq -u
+4
+5
+11
+12
+
+$ cat &lt;(grep -vxF -f B A) &lt;(grep -vxF -f A B)
+5
+4
+11
+12
+</pre>
+<h2 style="margin-bottom:10px">Power Set</h2>
+<p>The power set operation generates a power-set of a set. What's a power set? It's a set that contains all subsets of the set. We write P(<strong>A</strong>) or 2<sup><strong>A</strong></sup> to denote all subsets of A. For a set with n elements, the power set contains 2<sup>n</sup> elements.</p>
+<p>For example, the power-set of the set { a, b, c } contains 2<sup>3</sup> = 8 elements. The power-set is { {}, {a}, {b}, {c}, {a, b}, {a, c}, {b, c}, {a, b, c} }.</p>
+<p>It's not easy to do that with simple Unix tools. I could not think of anything better than a silly Perl solution:</p>
+<pre>
+$ perl -le &#039;
+sub powset {
+ return [[]] unless @_;
+ my $head = shift;
+ my $list = &amp;powset;
+ [@$list, map { [$head, @$_] } @$list]
+}
+chomp(my @e = &lt;&gt;);
+for $p (@{powset(@e)}) {
+ print @$p;
+}&#039; set
+</pre>
+<p>Can you think of a way to do it with Unix tools?</p>
+<h2 style="margin-bottom:10px">Set Cartesian Product</h2>
+<p>The set Cartesian product operation produces produces a new set that contains all possible pairs of elements from one set and the other. The notation for Cartesian product of sets <strong>A</strong> and <strong>B</strong> is <strong>A</strong> x <strong>B</strong>.</p>
+<p>For example, if set <strong>A</strong> = { a, b, c } and set <strong>B</strong> = { 1, 2 } then the Cartesian product <strong>A</strong> x <strong>B</strong> = { (a, 1), (a, 2), (b, 1), (b, 2), (c, 1), (c, 2) }.</p>
+<p>I can't think of a great solution. I have a very silly solution in bash:</p>
+<pre>
+$ while read a; do while read b; do echo &quot;$a, $b&quot;; done &lt; set1; done &lt; set2
+</pre>
+<p>Can you think of other solutions?</p>
+<h2 style="margin-bottom:10px">Disjoint Set Test</h2>
+<p>The disjoint set test operation finds if two sets are disjoint, i.e., they do not contain common elements.</p>
+<p>Two sets are disjoint if their intersection is the empty set. Any of the set intersection commands (mentioned earlier) can be applied on the sets and the output can be tested for emptiness. If it is empty, then the sets are disjoint, if it is not, then the sets are not disjoint.</p>
+<p>Another way to test if two sets are disjoint is to use awk:</p>
+<pre>
+$ awk &#039;{ if (++seen[$0]==2) exit 1 }&#039; set1 set2
+# returns 0 if sets are disjoint
+# returns 1 if sets are not disjoint
+</pre>
+<p>It works by counting seen elements in set1 and then set2. If any of the elements appear both in set1 and set2, seen count for that element would be 2 and awk would quit with exit code 1.</p>
+<h2 style="margin-bottom:10px">Empty Set Test</h2>
+<p>The empty set test tests if the set is empty, i.e., contains no elements. The empty set is usually written as Ø.</p>
+<p>It's very easy to test if the set is empty. The cardinality of an empty set is 0:</p>
+<pre>
+$ wc -l set | cut -d&#039; &#039; -f1
+# outputs 0 if the set is empty
+# outputs &gt; 0 if the set is not empty
+</pre>
+<p>Getting rid of cut:</p>
+<pre>
+$ wc -l &lt; set
+# outputs 0 if the set is empty
+# outputs &gt; 0 if the set is not empty
+</pre>
+<h2 style="margin-bottom:10px">Minimum</h2>
+<p>The minimum operation returns the smallest number in the set. We write min(<strong>A</strong>) to denote the minimum operation on the set <strong>A</strong>.</p>
+<p>The minimum element of a set can be found by first sorting it in ascending order and then taking the first element. The first element can be taken with &quot;head&quot; Unix command which outputs the first part of the file:</p>
+<pre>
+$ head -1 &lt;(sort set)
+</pre>
+<p>The &quot;-1&quot; option specifies to output the first line only.</p>
+<p>If the set is already sorted, then it's even simpler:</p>
+<pre>
+$ head -1 set
+</pre>
+<p>Remember to use &quot;sort -n&quot; command if the set contains numeric data.</p>
+<p>Example of running minimum operation on sets A and Abig:</p>
+<pre>
+$ head -1 &lt;(sort -n A)
+1
+$ head -1 &lt;(sort -n Abig)
+2798
+</pre>
+<h2 style="margin-bottom:10px">Maximum</h2>
+<p>The maximum operation returns the biggest number in the set. We write max(<strong>A</strong>) to denote the maximum operation on the set <strong>A</strong>.</p>
+<p>The maximum element of a set can be found by first sorting it in ascending order and then taking the last element. The last element can be taken with &quot;tail&quot; Unix command which outputs the last part of the file:</p>
+<pre>
+$ tail -1 &lt;(sort set)
+</pre>
+<p>The &quot;-1&quot; option specifies to output the last line only.</p>
+<p>If the set is already sorted, then it's even simpler:</p>
+<pre>
+$ tail -1 set
+</pre>
+<p>Remember to use &quot;sort -n&quot; command if the set contains numeric data.</p>
+<p>Example of running maximum operation on sets A and Abig:</p>
+<pre>
+$ tail -1 &lt;(sort -n A)
+5
+$ head -1 &lt;(sort -n Abig)
+4294906714
+</pre>
+<p>Have fun learning all this and see you next time!</p>
+
+            </div>
+        </article>
+    </section>
+    
+        <div class="more">
+            
+    <a href="/archive">Read more articles →</a>
+
+        </div>
+    
+    <div class="catonmat-news-box">
+        <div class="catonmat-news-text">
+            
+    Thanks for reading my post. If you enjoyed it and would like to receive my posts automatically, you can subscribe to new posts via <a href="/feed">rss feed</a> or email.
+
+        </div>
+        <div class="catonmat-news-email">
+            <input type="text" name="email" placeholder="Your email">
+            <button>Subscribe</button>
+        </div>
+        <div class="catonmat-news-email-error" hidden></div>
+        <div class="catonmat-news-email-success" hidden></div>
+    </div>
+            <div class="article-navigation">
+            <div class="go back">
+                                    <a href="/stop-sending-me-job-offers">Stop sending me your job offers</a>
+                            </div>
+            <div class="go forward">
+                                    <a href="/mit-introduction-to-algorithms-part-eight">MIT's Introduction to Algorithms, Lecture 12: Skip Lists</a>
+                            </div>
+        </div>
+    
+
+        <footer class="site-footer">
+            <div class="virtual-browser">
+                <a href="/try-a-virtual-browser-for-free">Try a Virtual Browser – For Free!</a>
+            </div>
+            <div class="jelly-stains">
+                <img src="/images/this-space-reserved-for-jelly-stains.png" alt="">
+            </div>
+                        <div class="secret-message">
+                Secret message: Use coupon code <span class="jellyling">JELLYLING</span> to get a discount at my company Browserling!
+            </div>
+                    </footer>
+    </div>
+    
+
+<!-- Start of StatCounter Code -->
+<script type="text/javascript">
+var sc_project=3189873;
+var sc_invisible=1;
+var sc_security="dc7255a7";
+</script>
+<script type="text/javascript" src="https://www.statcounter.com/counter/counter.js" async></script>
+
+<!-- End of StatCounter Code -->
+</body>
+</html>
