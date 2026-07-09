@@ -9,13 +9,13 @@ backend core, `phase6-tui/lab_tui/backends/`, so its `run_capture` is the single
 subprocess choke point for *both* phases.
 **Method:** each package read end-to-end (including the `backends/`, `screens/`,
 `routes/`, `templates/` subtrees), both test suites run (`uv run pytest`:
-78→**83** TUI, 32→**34** web after this pass), and every finding verified against
+78→**99** TUI, 32→**40** web after the fixes, and every finding verified against
 the code (line-cited) with a concrete failure scenario. Two independent reviewer
 passes (one per phase) plus a maintainer synthesis; the ✓ mark denotes a finding
 re-verified by hand against the source.
 **Relationship to [`REVIEW-phases-1-5.md`](REVIEW-phases-1-5.md):** that review
 covered the host-touching drivers and explicitly deferred Phases 6/6b. This is
-the follow-up over the UI layer. It also **fixes** the top items it found; see
+the follow-up over the UI layer. It also **fixes every item** it found; see
 *Status* per row.
 
 ---
@@ -64,10 +64,10 @@ starve, and an auth boundary reachable by anything that can open a socket.
 | # | Finding | Sev | Where | Status |
 |---|---------|-----|-------|--------|
 | **W1** | **Reflected-XSS inconsistency** ✓ — `detail_panel` interpolated `{backend}`/`{name}` **raw** into `HTMLResponse`, while `actions.py:43,48,64` wrap the *identical* strings in `html.escape`. CSP (`script-src 'self'`) blocks execution, so it was mitigated, not clean. | MED (CSP-mitigated → effectively LOW in a closed lab) | `routes/resources.py:90,93` | **FIXED** — both fragments now `html.escape(...)`, matching the sibling route. Regression: `phase6b-web/tests/test_routes.py::test_detail_panel_escapes_unknown_backend` + `…_missing_resource_name`. |
-| **W2** | Auth password propagates into **every root-`sudo` child's environment** via `os.environ.copy()`, and `--auth u:p` on the CLI is visible in `ps`. | LOW | `__main__.py:98`, `base.py:186` | Open (accepted for closed lab). Recommend scrubbing `LAB_WEB_AUTH_*` from the subprocess `env`, and preferring the `LAB_WEB_AUTH` env form over the CLI flag (README already documents it for the `ps` leak). |
-| **W3** | CSRF guard is header-presence only (`HX-Request: true`), not token-based. Honestly documented; adequate for the browser threat model (a custom header ⇒ CORS preflight this app won't satisfy; a plain cross-origin form can't set it). | LOW (accepted) | `routes/actions.py:20` | Open (accepted). Note it is **not** real CSRF tokens; a same-origin XSS could forge it (W1 now closes the known reflection). |
-| **W4** | `/static/` auth exemption tests the **raw** request path — a smell, but Starlette routes `/static/../…` to the StaticFiles mount (traversal-guarded → 404), so it is **not** exploitable to reach a control route (no control route begins with `/static/`). | LOW | `app.py:123` | Open. Recommend tightening to an exact/normalized match for defense-in-depth. |
-| **W5** | 401 responses skip the security-headers middleware (registration order makes `basic_auth` outer, short-circuiting before `add_security_headers`); `detail_panel`/inspect paths aren't exception-wrapped like the hardened destroy path. Cosmetic (debug off → plain "Internal Server Error", no stack leak). | LOW | `app.py:67,118` | Open. |
+| **W2** | Auth password propagates into **every root-`sudo` child's environment** via `os.environ.copy()`, and `--auth u:p` on the CLI is visible in `ps`. | LOW | `__main__.py:98`, `base.py:186` | **FIXED** — `run_capture` now pops `LAB_WEB_AUTH_USER`/`LAB_WEB_AUTH_PASSWORD`/`LAB_WEB_AUTH` from the default child `env` (the shared choke point), while leaving non-secret vars intact; the `ps` vector already had an escape hatch (`--auth` defaults from `$LAB_WEB_AUTH`). Regression: `test_run_capture_env_scrub.py`. |
+| **W3** | CSRF guard is header-presence only (`HX-Request: true`), not token-based. Honestly documented; adequate for the browser threat model (a custom header ⇒ CORS preflight this app won't satisfy; a plain cross-origin form can't set it). | LOW (accepted) | `routes/actions.py:20` | **FIXED** — added a per-process CSRF token (`app.CSRF_TOKEN`), injected into every page via `<body hx-headers>` and verified with `hmac.compare_digest` in `_csrf_guard` (in addition to the `HX-Request` gate). A cross-origin page can't read it; a same-origin forge of `HX-Request` alone no longer suffices. Regression: `test_destroy_without_csrf_token_rejected`, `…_with_wrong_csrf_token_rejected`, `test_page_embeds_csrf_token`. |
+| **W4** | `/static/` auth exemption tests the **raw** request path — a smell, but Starlette routes `/static/../…` to the StaticFiles mount (traversal-guarded → 404), so it is **not** exploitable to reach a control route (no control route begins with `/static/`). | LOW | `app.py:123` | **FIXED** — the exemption now runs `posixpath.normpath()` first (`_is_static_path`), so a `/static/../<control-route>` collapses to a non-`/static` path and is auth-gated. Regression: `test_static_exemption_is_traversal_safe`. |
+| **W5** | 401 responses skip the security-headers middleware (registration order makes `basic_auth` outer, short-circuiting before `add_security_headers`); `detail_panel`/inspect paths aren't exception-wrapped like the hardened destroy path. Cosmetic (debug off → plain "Internal Server Error", no stack leak). | LOW | `app.py:67,118` | **FIXED** — `add_security_headers` is now registered *after* `basic_auth`, making it the outer middleware, so the 401 short-circuit carries the headers; both `inspect` paths (`detail_panel` + the JSON API) are now try/except-wrapped like `destroy`. Regression: `test_401_carries_security_headers`, `test_inspect_backend_error_returns_clean_fragment`. |
 
 ### phase6-tui
 
@@ -75,9 +75,9 @@ starve, and an auth boundary reachable by anything that can open a socket.
 |---|---------|-----|-------|--------|
 | **T1** | **README/SHOWCASE falsely advertised create-wizards + console-attach as "deferred to v0.2"** ✓ — both are fully implemented and tested (`screens/wizards/phase{1..5}.py`, `browser.py` `n`/`c` bindings, `tests/test_wizards.py`, `tests/test_console_attach.py`). Risk: an auditor concludes "no wizard ⇒ no TOML-generation surface" and skips the code that writes specs. | MED (docs) | `README.md:7`, `SHOWCASE.md:289` | **FIXED** — both docs now describe the wizards (`n`) and console attach (`c`) as shipped. Regression: `phase6-tui/tests/test_docs_reflect_shipped_features.py` fails if the "deferred to v0.2" claim returns while the wizard modules exist. |
 | **T2** | **Tautological test** ✓ — `argv[-2:] == ["destroy","lab-web-nginx"][:1] + ["--force"][:0]` reduces to `argv[-2:] == ["destroy"]` (a 2-elem slice can never equal a 1-elem list), so the whole `… or "--force" in argv` passed for **any** argv containing `--force`, verifying neither the `--` guard nor the target. A silent hole in exactly the regression guard the rest of the suite leans on. | MED (test) | `test_backends_docker.py:49` | **FIXED** — rewritten to assert `argv[1:4] == ["destroy","--","web/nginx"]`, `argv[-1] == "--force"`, that the operand after `--` is not a flag, and that the raw double-prefixed name `lab-web-nginx` is **not** passed. |
-| **T3** | `_toml_str` under-escapes ✓ — only `\`/`"`, not newline/tab/control chars; a pasted multiline value writes **invalid TOML** to disk, and `_refresh_preview`'s bare `except` masks the cause as "(invalid input)". Not injection (tomllib can't exec) — a robustness bug. | LOW/MED | `screens/wizards/base.py:38` | Open. Recommend escaping/refusing control characters and surfacing the real parse error in the preview. |
-| **T4** | Three **read-path** argv builders (VM `console`, docker/podman `logs`) omit the `--` terminator that all five *destroy* paths have. Names come from tool-written manifests/engine labels, so it's defense-in-depth only — but an inconsistency worth closing. | LOW | `vm.py:87`, `docker.py:100`, `podman.py:96,132` | Open. Recommend inserting `--` before the name in the three read paths for uniformity. |
-| **T5** | Hostile-input branches barely tested: no end-to-end `-`-leading/metachar name, no `plan_down` F-05 lab-name-rejection test, no malformed-TOML / missing-script coverage. Coverage skews happy-path. | LOW (test) | `phase6-tui/tests/` | Partially addressed (T2 now asserts the `--` guard; S1/T1 add hostile-branch tests). Recommend adding a `plan_down` rejection test and a docker/podman invalid-lab-name → `[]` test. |
+| **T3** | `_toml_str` under-escapes ✓ — only `\`/`"`, not newline/tab/control chars; a pasted multiline value writes **invalid TOML** to disk, and `_refresh_preview`'s bare `except` masks the cause as "(invalid input)". Not injection (tomllib can't exec) — a robustness bug. | LOW/MED | `screens/wizards/base.py:38` | **FIXED** — `_toml_str` now escapes the full TOML basic-string set (`\b \t \n \f \r`) and `\u`-escapes every other C0/DEL byte, so any input round-trips through `tomllib`. Regression: `test_toml_str_escaping.py` (round-trips newline/tab/CR/NUL/DEL). |
+| **T4** | Three **read-path** argv builders (VM `console`, docker/podman `logs`) omit the `--` terminator that all five *destroy* paths have. Names come from tool-written manifests/engine labels, so it's defense-in-depth only — but an inconsistency worth closing. | LOW | `vm.py:87`, `docker.py:100`, `podman.py:96,132` | **FIXED** for the docker/podman `logs` paths (direct engine CLI → `--` added). **VM `console` deliberately left without `--`** and documented: `lab-vm.sh` routes post-`--` args to `EXTRA_ARGS` (the `ssh … -- <cmd>` passthrough) while `cmd_console` reads `POS_ARGS[0]`, so `--` would blank the name — and it's unnecessary because the script's `-*) die "unknown option"` already fails a `-`-leading name closed. Regression: `test_log_command_has_dashdash_before_name` (docker), `test_log_commands_have_dashdash_before_name` (podman). |
+| **T5** | Hostile-input branches barely tested: no end-to-end `-`-leading/metachar name, no `plan_down` F-05 lab-name-rejection test, no malformed-TOML / missing-script coverage. Coverage skews happy-path. | LOW (test) | `phase6-tui/tests/` | **FIXED** — `test_topology_hostile_input.py` drives `plan_down` with `--evil`/space/`;`/`$( )`/path-ish names (all raise `ValueError` before argv is built), asserts a clean name scopes to `down --lab <name>`, and covers malformed-TOML + missing-`[lab].name`. The `--` guard on a hostile name is now asserted by T2/T4. |
 
 ## 4. Calibration — good patterns preserved
 
@@ -108,23 +108,40 @@ confidence in it:
 - **Confirm modal shows the literal argv** before running and disables approve on
   click (no double-fire, no keyboard bypass).
 
-## 5. What was fixed in this pass
+## 5. What was fixed
 
-`S1 + W1 + T2 + T1`, one regression test per fix (T2's fix *is* its regression
-test — the assertion now verifies what it always claimed to):
+**Every** finding in the review is now resolved, each with a regression test.
+
+*First pass* (`S1 + W1 + T2 + T1`):
 
 - **S1** — subprocess timeout in the shared `run_capture` (`base.py`) →
   `tests/test_run_capture_timeout.py`.
 - **W1** — escape the two `detail_panel` fragments (`routes/resources.py`) →
-  `tests/test_routes.py` (two GET-based escaping tests).
+  two GET-based escaping tests in `tests/test_routes.py`.
 - **T2** — replace the tautological docker destroy-argv assertion
-  (`tests/test_backends_docker.py`).
+  (`tests/test_backends_docker.py`) — the fix *is* its regression test.
 - **T1** — correct README/SHOWCASE "deferred to v0.2" drift →
   `tests/test_docs_reflect_shipped_features.py` (guards against recurrence).
 
-Suites after the pass: **phase6-tui 83 passed**, **phase6b-web 34 passed**.
+*Second pass* (the remaining `W2–W5 + T3–T5`):
 
-The remaining Open items (W2–W5, T3–T5) are all LOW / accepted-risk for the
-closed-lab, SSH-forward threat model; the two most worth doing next are **W2**
-(scrub the auth password from root-child env) and **T4** (add `--` to the three
-read-path builders for uniformity with destroy).
+- **W2** — scrub `LAB_WEB_AUTH*` from the default subprocess `env` in
+  `run_capture` → `test_run_capture_env_scrub.py`.
+- **W3** — per-process CSRF token (`app.CSRF_TOKEN`), injected via
+  `<body hx-headers>`, verified constant-time in `_csrf_guard` → three
+  CSRF tests in `test_routes.py`.
+- **W4** — normalise the path before the `/static/` auth exemption
+  (`_is_static_path`) → `test_static_exemption_is_traversal_safe`.
+- **W5** — reorder middleware so security headers wrap the 401, and
+  try/except-wrap both `inspect` paths → `test_401_carries_security_headers`,
+  `test_inspect_backend_error_returns_clean_fragment`.
+- **T3** — full TOML basic-string escaping in `_toml_str` →
+  `test_toml_str_escaping.py`.
+- **T4** — `--` on the docker/podman `logs` paths (VM `console` documented as
+  already-safe and `--`-incompatible by `lab-vm.sh` design) → `--` assertions
+  in `test_backends_docker.py` / `test_backends_podman.py`.
+- **T5** — hostile-input coverage for the topology dispatcher →
+  `test_topology_hostile_input.py`.
+
+Suites after both passes: **phase6-tui 99 passed** (was 78),
+**phase6b-web 40 passed** (was 32). No Open items remain.

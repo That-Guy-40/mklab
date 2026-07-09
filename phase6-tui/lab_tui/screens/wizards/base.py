@@ -32,15 +32,30 @@ from pathlib import Path
 
 
 def _toml_str(val: str) -> str:
-    """Escape a value for embedding inside a TOML double-quoted string.
+    r"""Escape a value for embedding inside a TOML double-quoted (basic) string.
 
-    TOML double-quoted strings allow only ``\\`` and ``\"`` as escape
-    sequences for the characters that would otherwise break the literal.
-    F-01: without this, typing ``"`` or ``\\`` in any wizard field produces
-    syntactically broken TOML that is silently swallowed by _refresh_preview
-    and then written to disk on save.
+    F-01 / T3 (Review phase6): a TOML basic string permits only a fixed set of
+    escapes — ``\\`` ``\"`` ``\b`` ``\t`` ``\n`` ``\f`` ``\r`` and ``\uXXXX`` —
+    and a *literal* control character (a pasted newline/tab, a NUL, etc.) makes
+    the line invalid TOML.  The earlier version escaped only ``\`` and ``"``, so
+    a multi-line paste in any single-line wizard field wrote a broken spec to
+    disk (masked in the live preview as "(invalid input)").  Escape the named
+    control chars and ``\u``-escape every other C0/DEL byte so the output is
+    always a valid basic string.
     """
-    return val.replace("\\", "\\\\").replace('"', '\\"')
+    named = {
+        "\\": "\\\\", '"': '\\"', "\b": "\\b", "\t": "\\t",
+        "\n": "\\n", "\f": "\\f", "\r": "\\r",
+    }
+    out: list[str] = []
+    for ch in val:
+        if ch in named:
+            out.append(named[ch])
+        elif ord(ch) < 0x20 or ord(ch) == 0x7F:
+            out.append(f"\\u{ord(ch):04X}")
+        else:
+            out.append(ch)
+    return "".join(out)
 
 
 def _sanitize_bare_key(key: str) -> str:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import html
 import logging
 from urllib.parse import unquote
@@ -10,7 +11,7 @@ from urllib.parse import unquote
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
 
-from lab_web.app import templates
+from lab_web.app import CSRF_TOKEN, templates
 from lab_web.routes.resources import _all_runners, _find_resource
 
 logger = logging.getLogger(__name__)
@@ -18,15 +19,22 @@ router = APIRouter(prefix="/actions")
 
 
 def _csrf_guard(request: Request) -> bool:
-    """Return True if the request looks like a legitimate HTMX call.
+    """Return True only for a same-origin request carrying our CSRF token.
 
-    F-4: HTMX sends HX-Request: true on every request it initiates.  A
-    plain cross-origin form submit or fetch() from another origin would not
-    include this header.  This is not a full CSRF defence (the header can be
-    forged by JS on the same origin), but it meaningfully raises the bar for
-    cross-origin abuse of the destroy endpoint.
+    Two gates, both required:
+      - F-4: HTMX sends `HX-Request: true` on every request it initiates; a
+        plain cross-origin form submit would not.  Necessary but forgeable.
+      - W4 (Review phase6): the request must also echo the per-process CSRF
+        token (injected into `<body hx-headers>`; see app.CSRF_TOKEN).  A
+        cross-origin page cannot read it, and setting a custom header
+        cross-origin triggers a CORS preflight this app never approves — so
+        this closes the "same-origin JS forges HX-Request" hole the old guard
+        left open.  Constant-time compare so the token can't leak byte-by-byte.
     """
-    return request.headers.get("HX-Request") == "true"
+    if request.headers.get("HX-Request") != "true":
+        return False
+    token = request.headers.get("X-CSRFToken", "")
+    return bool(CSRF_TOKEN) and hmac.compare_digest(token, CSRF_TOKEN)
 
 
 @router.post("/destroy/{backend}/{name:path}", response_class=HTMLResponse)

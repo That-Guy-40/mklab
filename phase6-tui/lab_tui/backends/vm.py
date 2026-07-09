@@ -82,6 +82,13 @@ class VMBackend(BackendRunner):
             )
             # Console attach: only available for running VMs with a serial socket.
             # lab-vm.sh console <name> uses socat in raw mode; Ctrl-] detaches.
+            # T4 (Review phase6): unlike docker/podman `logs`, we deliberately do
+            # NOT pass '--' here.  lab-vm.sh routes everything after '--' into
+            # EXTRA_ARGS (the `ssh <name> -- <cmd>` passthrough), while
+            # cmd_console reads POS_ARGS[0] — so '--' would blank the name.  It's
+            # unnecessary anyway: the script's arg loop rejects any '-'-leading
+            # positional with `-*) die "unknown option"`, so a hostile name
+            # fails closed rather than injecting a flag.
             serial_sock = vm_dir / "serial.sock"
             console_command = (
                 [str(self.script), "console", data.get("name", vm_dir.name)]

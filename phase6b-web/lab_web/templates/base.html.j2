@@ -9,7 +9,9 @@
   <script src="/static/htmx.min.js"></script>
   <script src="/static/sse.js"></script>
 </head>
-<body>
+<!-- W3: every HTMX request carries the per-process CSRF token; the
+     state-changing routes verify it (see routes/actions.py _csrf_guard). -->
+<body hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
 
 <header>
   <span class="brand">lab-create</span>
