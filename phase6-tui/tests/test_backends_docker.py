@@ -46,8 +46,19 @@ def test_log_command_per_resource(patched_docker: DockerBackend) -> None:
 def test_destroy_argv_routes_through_phase_script(patched_docker: DockerBackend) -> None:
     rs = patched_docker.list_resources()
     argv = patched_docker.destroy_argv(rs[0], force=True)
-    assert argv[-2:] == ["destroy", "lab-web-nginx"][:1] + ["--force"][:0] or "--force" in argv
-    assert str(patched_docker.script) in argv
+    # Regression (Review phase6 T2): the previous assertion was a tautology —
+    # `argv[-2:] == ["destroy","lab-web-nginx"][:1] + ["--force"][:0]` reduces to
+    # `argv[-2:] == ["destroy"]` (a 2-elem slice can never equal a 1-elem list),
+    # so the whole `... or "--force" in argv` passed for ANY argv containing
+    # --force, verifying neither the `--` guard nor the target.  Assert both.
+    assert argv[0] == str(patched_docker.script)
+    # F-12 '--' option terminator, then the lab/svc target (NOT the raw
+    # double-prefixed docker name "lab-web-nginx"), then the force flag.
+    assert argv[1:4] == ["destroy", "--", "web/nginx"]
+    assert argv[-1] == "--force"
+    dd = argv.index("--")
+    assert not argv[dd + 1].startswith("-"), "target after '--' must be an operand, not a flag"
+    assert "lab-web-nginx" not in argv, "must pass lab/svc form, not the raw docker name"
 
 
 def test_inspect_prefers_inspect_json_when_available(

@@ -286,26 +286,23 @@ memory and jump to the kernel entry point. This makes `netboot-lab.toml`
 the fastest path to validating a new initrd before wiring up the full
 nginx → iPXE chain.
 
-## What's deferred to v0.2
+## Interactive surfaces (shipped)
 
-v0.1 covers read-only inventory + topology orchestration. **Two
-things are intentionally deferred** so the read-only surface could
-ship and be proven first:
+Beyond read-only inventory + topology orchestration, v0.1 ships two
+interactive surfaces built on the same `BackendRunner` foundation:
 
-- **Five create wizards** (one per phase): each is a non-trivial
+- **Five create wizards** (`n`, one per phase): each is a non-trivial
   modal TOML generator with backend-specific fields and live
-  validation. v0.1 users author TOML in `$EDITOR` and bring it up via
-  the topology screen.
-- **Console attach**: Textual-suspend → `lab-vm.sh console <name>` →
-  resume on exit is fiddly cross-platform. v0.1 users run `console`
-  in another terminal.
+  validation. (You can still author TOML in `$EDITOR` and bring it up
+  via the topology screen.)
+- **Console attach** (`c`): Textual-suspend → `lab-vm.sh console
+  <name>` → resume on exit, for VMs with a live serial socket.
 
-(The **Phase 6b web UI** — FastAPI + HTMX — was the third deferred item;
-it has since shipped on this exact `BackendRunner` foundation. See
-[`../phase6b-web/`](../phase6b-web/).)
+(The **Phase 6b web UI** — FastAPI + HTMX — also ships on this exact
+`BackendRunner` foundation. See [`../phase6b-web/`](../phase6b-web/).)
 
-The 44-test fixture-based suite (`uv run pytest -v` — no live
-daemons) gives that "proven stable" claim its teeth.
+The fixture-based suite (`uv run pytest -v` — no live daemons) gives
+that "proven stable" claim its teeth.
 
 ## Where next
 
