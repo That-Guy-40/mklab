@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,minimum-scale=1,initial-scale=1">
+
+    <title>Solving Google Treasure Hunt Puzzle 4: Prime Numbers</title>
+
+    <link href="https://catonmat.net/solving-google-treasure-hunt-prime-number-problem-four" rel="canonical">
+    <link rel="alternate" type="application/rss+xml" href="https://catonmat.net/feed">
+
+    <meta property="og:title" content="Solving Google Treasure Hunt Puzzle 4: Prime Numbers">
+    <meta property="og:description" content="I just found out about Google&#039;s Treasure Hunt Challenge. They say that &quot;it&#039;s a puzzle contest designed to test yer problem-solving skills in computer science, networking, and low-level UNIX trivia.&quot; Apparently I have missed the first three puzzles (first, second and third) but I&#039;ll give the fourth puzzle a shot. The...">
+    <meta property="og:url" content="https://catonmat.net/solving-google-treasure-hunt-prime-number-problem-four">
+        <meta property="og:image" content="https://catonmat.net/images/catonmat-preview-image.png">
+    
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:site" content="@catonmat">
+    <meta name="twitter:title" content="Solving Google Treasure Hunt Puzzle 4: Prime Numbers">
+    <meta name="twitter:description" content="I just found out about Google&#039;s Treasure Hunt Challenge. They say that &quot;it&#039;s a puzzle contest designed to test yer problem-solving skills in computer science, networking, and low-level UNIX trivia.&quot; Apparently I have missed the first three puzzles (first, second and third) but I&#039;ll give the fourth puzzle a shot. The...">
+    <meta name="twitter:creator" content="@pkrumins">
+
+        <meta name="twitter:image:src" content="https://catonmat.net/images/catonmat-preview-image.png">
+    
+    <link rel="apple-touch-icon" href="/favicon.png">
+    <link rel="icon" href="/favicon.png">
+
+    <script src="/js/catonmat.js?v=e5f5bf"></script>
+    
+
+    <link rel="stylesheet" href="/css/normalize.css?v=e5f5bf">
+    <link rel="stylesheet" href="/css/stylesheet.css?v=e5f5bf">
+    
+</head>
+<body>
+    <div class="site-page">
+        <header class="site-header">
+            <div class="logo">
+                <a href="/"><img src="/images/catonmat-logo-clean.png"></a>
+            </div>
+            <div class="navigation">
+                
+
+                    
+    <nav>
+        <ul>
+            
+        <li ><a href="/archive">archive</a></li>
+    
+            
+        <li ><a href="/books">books</a></li>
+    
+            
+        <li ><a href="/tools">tools</a></li>
+    
+            
+        <li ><a href="/projects">projects</a></li>
+    
+                        
+        <li ><a href="/about">about</a></li>
+    
+        </ul>
+    </nav>
+
+            </div>
+        </header>
+
+        
+    <section class="site-articles">
+        <article>
+            
+                <h1>
+    <a href="/solving-google-treasure-hunt-prime-number-problem-four">Solving Google Treasure Hunt Puzzle 4: Prime Numbers</a>
+</h1>
+            
+            
+                <div class="last-updated">Last updated 
+    2 weeks ago
+</div>
+            
+            <div class="article-body">
+                
+    <p><img src="https://catonmat.net/wp-content/uploads/2008/06/google-treasure-hunt-2008-prime-numbers.jpg" alt="prime number problem of google treasure hunt 2008" class="post-icon" align="left" />I just found out about Google's Treasure Hunt Challenge. <a href="http://googleblog.blogspot.com/2008/05/google-treasure-hunt-update.html">They say</a> that &quot;it's a puzzle contest designed to test yer problem-solving skills in computer science, networking, and low-level UNIX trivia.&quot;</p>
+<p>Apparently I have missed the first three puzzles (<a href="http://decoding.wordpress.com/2008/05/16/google-treasure-hunt-2008-first-puzzles-solution/">first</a>, <a href="http://www.fsharp.it/2008/05/21/google-treasure-hunt-2008-second-puzzle-in-f/">second</a> and <a href="http://aburad.com/blog/2008/05/google-treasure-hunt-puzzle-3.html">third</a>) but I'll give the fourth puzzle a shot.</p>
+<p>The fourth problem is about prime numbers and it's formulated as following:</p>
+<blockquote>Find the smallest number that can be expressed as
+the sum of 7 consecutive prime numbers,
+the sum of 17 consecutive prime numbers,
+the sum of 41 consecutive prime numbers,
+the sum of 541 consecutive prime numbers,
+and is itself a prime number.
+
+For example, 41 is the smallest prime number that can be expressed as
+the sum of 3 consecutive primes (11 + 13 + 17 = 41) and
+the sum of 6 consecutive primes (2 + 3 + 5 + 7 + 11 + 13 = 41). </blockquote>
+<h2>The Solution</h2>
+<p>Here's how I approached and solved this problem.</p>
+<p>I had no desire to generate lists of prime numbers myself as it's been done <a href="http://www.google.com/search?q=prime+number+algorithm">thousands of times</a> already. I didn't even want to copy any existing prime generating code. I decided to just use a publicly available list of prime numbers. <a href="http://primes.utm.edu/lists/small/millions/">Here</a> is a list of first fifty million primes that I found.</p>
+<p>Next, I used my Unix-fu to find the solution.</p>
+<p>I noticed that the primes are zipped and split into chunks of million primes per file. The file names were like &quot;primes1.zip&quot;, ... &quot;primes50.zip&quot;.</p>
+<p>A quick loop from 1 to 50 and wget got all these files to my hard drive:</p>
+<pre>
+$ for i in $(seq 50); do wget &quot;http://primes.utm.edu/lists/small/millions/primes$i.zip&quot;; done
+</pre>
+<p>Next, I unzip'ped all these files, and removed those zips to save disk space:</p>
+<pre>
+$ for i in $(seq 50); do unzip &quot;primes$i.zip&quot; &amp;&amp; rm -f &quot;primes$i.zip&quot;; done
+</pre>
+<p>After doing that and looking at what I got, I realized that they were in some strange format, 8 primes per line, space padded and with some text on the first two lines. Here is an example of how the first five lines in primes1.txt file looked like:</p>
+<pre>
+                 The First 1,000,000 Primes (from primes.utm.edu)
+
+         2         3         5         7        11        13        17        19
+        23        29        31        37        41        43        47        53
+        59        61        67        71        73        79        83        89
+</pre>
+<p>This is not great. I wanted all my primes to be in one file and one prime per line so I could extract N-th prime by looking at N-th line.</p>
+<p>I used the following command to merge all the files into a single file:</p>
+<pre>
+for i in $(seq 50); do (awk &#039;BEGIN { OFS=&quot;\n&quot; } NR &gt; 2 {print $1,$2,$3,$4,$5,$6,$7,$8}&#039; primes$i.txt &gt;&gt; primes.txt) &amp;&amp; rm -f primes$i.txt; done
+</pre>
+<p>A quick verification that I didn't lose any primes:</p>
+<pre>
+$ wc -l primes.txt
+50000000 primes.txt
+</pre>
+<p>Now I created four files which contain sums of 7, 17, 41 and 541 consecutive primes, not exceeding the biggest prime in primes.txt file. I did that with the following AWK one-liner:</p>
+<pre>
+$ last=$(tail -1 primes.txt)
+$ for N in 7 17 41 541
+  do
+   awk &#039;BEGIN { prev[0] = 0 } NR &lt; &#039;$N&#039; {prev[NR] = $1; sum += $1 } NR &gt;= &#039;$N&#039; { psum += prev[NR-&#039;$N&#039;]; delete prev[NR-&#039;$N&#039;]; prev[NR] = $1; sum += $1; if (sum - psum &gt; &#039;$last&#039;) { exit } printf &quot;%d\n&quot;, sum - psum }&#039; primes.txt &gt; primes$N.txt
+  done
+</pre>
+<p>The command created primes7.txt, primes17.txt, primes 41.txt and primes541.txt files. These files contained sums of prime numbers but only some of them were primes.</p>
+<p>The solution, if it existed in the given data set, was the intersect of all these files. If there were multiple items in the intersect, the smallest should be chosen and checked if it really was a prime.</p>
+<pre>
+$ sort -nm primes541.txt primes41.txt | uniq -d | sort -nm primes17.txt - | uniq -d | sort -nm primes7.txt - | uniq -d
+7830239
+$ grep -m1 7830239 primes.txt
+7830239
+</pre>
+<p>And I found the solution! It was <strong>7830239</strong>. I submitted the answer and after a few minutes it was confirmed to be correct. </p>
+<blockquote>
+Your question: [7, 17, 41, 541]
+Your answer: 7830239
+Time received: 2008-06-06 23:33:26.268414 UTC
+
+Correct answer: 7830239
+<strong>Your answer was: Correct</strong>
+</blockquote>
+<p>Awesome! Now tell me how you solved this problem.</p>
+
+            </div>
+        </article>
+    </section>
+    
+        <div class="more">
+            
+    <a href="/archive">Read more articles →</a>
+
+        </div>
+    
+    <div class="catonmat-news-box">
+        <div class="catonmat-news-text">
+            
+    Thanks for reading my post. If you enjoyed it and would like to receive my posts automatically, you can subscribe to new posts via <a href="/feed">rss feed</a> or email.
+
+        </div>
+        <div class="catonmat-news-email">
+            <input type="text" name="email" placeholder="Your email">
+            <button>Subscribe</button>
+        </div>
+        <div class="catonmat-news-email-error" hidden></div>
+        <div class="catonmat-news-email-success" hidden></div>
+    </div>
+            <div class="article-navigation">
+            <div class="go back">
+                                    <a href="/musical-geek-friday-the-bill-gates-song">Musical Geek Friday #8: The Bill Gates Song</a>
+                            </div>
+            <div class="go forward">
+                                    <a href="/musical-geek-friday-free-software-song">Musical Geek Friday #9: The Free Software Song</a>
+                            </div>
+        </div>
+    
+
+        <footer class="site-footer">
+            <div class="virtual-browser">
+                <a href="/try-a-virtual-browser-for-free">Try a Virtual Browser – For Free!</a>
+            </div>
+            <div class="jelly-stains">
+                <img src="/images/this-space-reserved-for-jelly-stains.png" alt="">
+            </div>
+                        <div class="secret-message">
+                Secret message: Use coupon code <span class="jellyling">JELLYLING</span> to get a discount at my company Browserling!
+            </div>
+                    </footer>
+    </div>
+    
+
+<!-- Start of StatCounter Code -->
+<script type="text/javascript">
+var sc_project=3189873;
+var sc_invisible=1;
+var sc_security="dc7255a7";
+</script>
+<script type="text/javascript" src="https://www.statcounter.com/counter/counter.js" async></script>
+
+<!-- End of StatCounter Code -->
+</body>
+</html>

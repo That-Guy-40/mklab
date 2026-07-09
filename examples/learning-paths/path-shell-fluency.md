@@ -2,9 +2,9 @@
 
 # Shell fluency — from lost at the prompt to querying text like a database 🟢
 
-**Goal.** Find your feet at the shell, learn to program it, wield grep/sed/awk on real text — then discover that composing those tools was relational algebra all along. The primary track is Matt Might's (he names the survival guide as the prerequisite to bash-by-example); an equivalent Carpentries + Robbins track is a side-quest.
+**Goal.** Find your feet at the shell, learn to program it, wield grep/sed/awk on real text — then discover that composing those tools was relational algebra all along, and finally meet the sets underneath it. The first three steps are Matt Might's track (he names the survival guide as the prerequisite to bash-by-example); an equivalent Carpentries + Robbins track is a side-quest.
 
-**Audience:** complete beginners welcome; the last step asks a little more  
+**Audience:** complete beginners welcome; the last two steps ask a little more  
 **Effort:** ⏱ half-day+  
 **Prerequisites:** none
 
@@ -14,6 +14,7 @@
 | 2 | [`shell-intermediate-programming-by-example`](../shell-intermediate-programming-by-example/) | variables, loops, functions, arguments — programming the shell, not just typing at it. | run `demo.sh` → it prints `5!=120`; then write your own script with a loop + a function that processes argv. |
 | 3 | [`UNIX-sculpting-text-regex-grep-sed-awk`](../UNIX-sculpting-text-regex-grep-sed-awk/) | wield the GNU grep/sed/awk trio on real text. | run `demo.sh` (byte-identical on Debian + Alpine); then extract and reformat fields from a log in a single `awk` line. |
 | 4 | [`UNIX-relational-algebra-sql-in-the-shell`](../UNIX-relational-algebra-sql-in-the-shell/) 🟡 | those same tools ARE relational algebra: `cat`=∪, `awk`=σ, `cut`=π, `comm -23`=−, `join`=⋈ — and Unix never shipped a Cartesian product, so Might writes one in 15 lines of bash. | run `demo.sh` → `PASS: all 9 relational identities hold`, i.e. Might's hand-rolled bash, coreutils, and `sqlite3` agree on the same relations; then find why `equijoin -t` silently returns 0 rows. |
+| 5 | [`UNIX-set-operations-in-the-shell`](../UNIX-set-operations-in-the-shell/) 🟡 | the SETS under those relations, and the three algorithm families that build them — merge (`comm`), count (`uniq -c`), hash (`awk`) — plus why `comm` and `sort -n` silently disagree about what 'sorted' means. | run `demo.sh` → `PASS: all 28 set identities hold`; then run `treasure-hunt.sh` → it recovers Google's 2008 puzzle answer `7830239` with `uniq -d`, and shows the article's own `comm + sort -n` recipe losing it. |
 
 ### Optional side-quests
 

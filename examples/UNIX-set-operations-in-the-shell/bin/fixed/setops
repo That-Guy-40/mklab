@@ -1,0 +1,87 @@
+# setops (CORRECTED) — drop-in replacement for ../setops.  Source, don't execute:
+#
+#     . bin/fixed/setops
+#     set_intersect data/A data/B
+#
+# Same interface, same answers as ../setops for every input the originals got
+# right — and the right answers for the ones they got wrong.  Diff the two:
+#
+#     diff -u bin/setops bin/fixed/setops
+#
+# ── The central fix: comm and join merge BYTE-WISE ───────────────────────────
+# The article says "if you have a numeric set, then sort must take -n option".
+# For `comm` and `join` that advice is backwards, and it fails SILENTLY:
+#
+#     P={1,9,10}  Q={10}          P ∩ Q  is  {10}
+#     comm -12 <(sort -n P) <(sort -n Q)   ->  (empty)      WRONG
+#     comm -12 <(sort    P) <(sort    Q)   ->  10           right
+#
+# comm and join stream-merge two inputs and assume both are ordered the way THEY
+# compare lines: byte by byte, under the current LC_COLLATE.  `sort -n` orders
+# 1 < 9 < 10; comm expects 1 < 10 < 9.  Given the wrong order it walks off the
+# end of one file and reports no match.  It does warn on stderr — sometimes —
+# but the exit status stays 0 and the answer is simply missing rows.
+#
+# So: sort LEXICOGRAPHICALLY for comm/join, and pin the collation with LC_ALL=C
+# so glibc and musl agree.  If you need numeric order for the OUTPUT, apply
+# `sort -n` at the END, after the set operation.
+#
+# The count-based recipes (sort | uniq -d, uniq -u, uniq -c) are immune: `uniq`
+# only requires equal lines to be ADJACENT, which any consistent sort provides.
+# That is why Krumins' own Google-puzzle pipeline (`sort -nm … | uniq -d`) was
+# correct while his article's `comm` recipe would have destroyed the answer.
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Other corrections vs ../setops:
+#   * set_member  uses -F: the needle is a literal, not a regex.
+#   * set_max     unchanged (correct); the article's *worked example* is what
+#                 misprints `head -1` where it means `tail -1`.
+#   * set_disjoint no longer reports "not disjoint" when one input merely
+#                 contains a duplicate of its own element.
+#   * set_product emits set1 x set2, in that order, and uses `read -r`.
+#   * set_union   uses `sort -u` (one process, not two).
+
+# Every comparison below is byte-wise, so pin the collation once.
+export LC_ALL=C
+
+# Set Membership: is element $1 in set $2?   (returns 0 if yes)
+set_member() { grep -qxF -- "$1" "$2"; }
+
+# Set Equality: are sets $1 and $2 the same?  (returns 0 if equal)
+set_equal() { diff -q <(sort -u "$1") <(sort -u "$2") >/dev/null; }
+
+# Set Cardinality: how many elements in set $1?
+set_card() { sort -u "$1" | wc -l; }
+
+# Subset Test: is $1 a subset of $2?  (returns 0 if yes)
+set_subset() { [ -z "$(comm -23 <(sort -u "$1") <(sort -u "$2") | head -1)" ]; }
+
+# Set Union: $1 ∪ $2
+set_union() { sort -u "$1" "$2"; }
+
+# Set Intersection: $1 ∩ $2
+set_intersect() { comm -12 <(sort -u "$1") <(sort -u "$2"); }
+
+# Set Complement: $1 - $2  (elements in $1 that are not in $2)
+set_complement() { comm -23 <(sort -u "$1") <(sort -u "$2"); }
+
+# Set Symmetric Difference: $1 △ $2
+set_symdiff() { comm -3 <(sort -u "$1") <(sort -u "$2") | tr -d '\t'; }
+
+# Disjoint Set Test: do $1 and $2 share no element?  (returns 0 if disjoint)
+# Dedupe each side first, so a within-file duplicate cannot fake an overlap.
+set_disjoint() { [ -z "$(set_intersect "$1" "$2" | head -1)" ]; }
+
+# Empty Set Test: is $1 empty?  (returns 0 if empty)
+set_empty() { [ "$(wc -l < "$1")" -eq 0 ]; }
+
+# Minimum / Maximum element of the numeric set $1
+set_min() { sort -n "$1" | head -1; }
+set_max() { sort -n "$1" | tail -1; }
+
+# Set Cartesian Product: $1 x $2, in that order.
+set_product() {
+  while IFS= read -r a; do
+    while IFS= read -r b; do printf '%s, %s\n' "$a" "$b"; done < "$2"
+  done < "$1"
+}

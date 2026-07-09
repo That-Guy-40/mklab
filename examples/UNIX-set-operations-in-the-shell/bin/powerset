@@ -1,0 +1,27 @@
+#!/bin/bash
+# powerset — generate all 2^n subsets of a set, one per line.
+#
+#   powerset <set-file>
+#
+# The recursive shell function is transcribed VERBATIM from Peteris Krumins,
+# "Set Operations in the Unix Shell Simplified", where he credits it to Andreas:
+#   https://catonmat.net/set-operations-in-unix-shell-simplified
+# Only this header and the file-reading wrapper are added.
+#
+# Quirks worth noticing, neither of which is fatal:
+#   * The singleton subsets print with a TRAILING SPACE ("a "), because the
+#     recursion emits "$1 $r" and $r is empty at the base case.
+#   * `echo -e` is a bashism; `p` also splits its arguments on IFS, so an element
+#     containing a space becomes two elements.  Sets of words only, please.
+#   * The empty subset {} prints as an empty line.  |P(S)| = 2^|S| counts it.
+#
+# It is beautifully small, and it is exponential.  A 20-element set is a million
+# lines; a 30-element set is a billion.  Do not "just try it on Abig".
+
+[ $# -eq 1 ] || { echo "usage: ${0##*/} <set-file>" >&2; exit 1; }
+
+p() { [ $# -eq 0 ] && echo || (shift; p "$@") |
+      while read r ; do echo -e "$1 $r\n$r"; done }
+
+# shellcheck disable=SC2046  # word splitting is exactly what p() wants here
+p $(cat "$1")

@@ -22,7 +22,7 @@ These are orthogonal to 00-INDEX's *run-cost* tags, which are carried through un
 | Path | Diff | Effort | Goal |
 |---|---|---|---|
 | [Containers from first principles](path-container-internals.md) | 🟡 | ⏱ half-day+ | Understand what a container *is* by assembling one primitive at a time, then meet the managers that package those primitives for you. |
-| [Shell fluency — from lost at the prompt to querying text like a database](path-shell-fluency.md) | 🟢 | ⏱ half-day+ | Find your feet at the shell, learn to program it, wield grep/sed/awk on real text — then discover that composing those tools was relational algebra all along. The primary track is Matt Might's (he names the survival guide as the prerequisite to bash-by-example); an equivalent Carpentries + Robbins track is a side-quest. |
+| [Shell fluency — from lost at the prompt to querying text like a database](path-shell-fluency.md) | 🟢 | ⏱ half-day+ | Find your feet at the shell, learn to program it, wield grep/sed/awk on real text — then discover that composing those tools was relational algebra all along, and finally meet the sets underneath it. The first three steps are Matt Might's track (he names the survival guide as the prerequisite to bash-by-example); an equivalent Carpentries + Robbins track is a side-quest. |
 | [Container topologies across the engines](path-container-topologies.md) | 🟡 | ⏱ ~1–2h | Express the same multi-service idea in Docker, Podman, and LXD/Incus — and see what each abstraction buys you. |
 | [Build a Linux from source, one arch at a time](path-linux-from-source.md) | 🔴 | ⏱ half-day+ | Compile a kernel + a tiny userspace from upstream source and boot it in RAM — then repeat across architectures, and shrink it onto a floppy. |
 | [The boot path & kernel-crash forensics](path-boot-and-crash.md) | 🔴 | ⏱ half-day+ | Own every stage from firmware to a captured kernel panic: interrupt the boot loader, force and dissect a crash, then replace the firmware's boot logic with Linux itself. |
@@ -48,9 +48,15 @@ These are orthogonal to 00-INDEX's *run-cost* tags, which are carried through un
 
 ### Magazine & blog reproductions
 
-*Labs operationalizing a specific published write-up (Linux Journal, kaizou.org, LinuxBoot).*
+*Labs operationalizing a specific published write-up (Linux Journal, ACCU Overload, kaizou.org, LinuxBoot).*
 
-[`kdump-kexec-lab`](../kdump-kexec-lab/) · [`tiny-internet-project`](../tiny-internet-project/) · [`linuxboot-uefi-kexec`](../linuxboot-uefi-kexec/) · [`tiny-linux-experiments/minimal-arm-linux-qemu`](../tiny-linux-experiments/minimal-arm-linux-qemu/)
+[`kdump-kexec-lab`](../kdump-kexec-lab/) · [`tiny-internet-project`](../tiny-internet-project/) · [`linuxboot-uefi-kexec`](../linuxboot-uefi-kexec/) · [`tiny-linux-experiments/minimal-arm-linux-qemu`](../tiny-linux-experiments/minimal-arm-linux-qemu/) · [`UNIX-set-operations-in-the-shell`](../UNIX-set-operations-in-the-shell/)
+
+### The shell as a database
+
+*Relations, sets, and the coreutils that implement them — each lab cross-checks its pipelines against a live `sqlite3` oracle, and each finds errata in the article it operationalizes.*
+
+[`UNIX-relational-algebra-sql-in-the-shell`](../UNIX-relational-algebra-sql-in-the-shell/) · [`UNIX-set-operations-in-the-shell`](../UNIX-set-operations-in-the-shell/)
 
 ### Kali / offensive-security suite
 
@@ -92,7 +98,7 @@ These are orthogonal to 00-INDEX's *run-cost* tags, which are carried through un
 
 *Ship a byte-exact upstream archive (upstream-tutorial/ or upstream-preseed/) per the repo's provenance convention.*
 
-[`chroot-breakout`](../chroot-breakout/) · [`exploring-containers`](../exploring-containers/) · [`kdump-kexec-lab`](../kdump-kexec-lab/) · [`FREEBSD-simple-templating-serving-RHEL-kickstart-files`](../FREEBSD-simple-templating-serving-RHEL-kickstart-files/) · [`virtualbmc-ipmi-lab`](../virtualbmc-ipmi-lab/) · [`linuxboot-uefi-kexec`](../linuxboot-uefi-kexec/) · [`tiny-linux-experiments/minimal-arm-linux-qemu`](../tiny-linux-experiments/minimal-arm-linux-qemu/) · [`libvirt-ipxe-http-pxe`](../libvirt-ipxe-http-pxe/) · [`rhel-bootc-minimal`](../rhel-bootc-minimal/) · [`shell-novice-workshop`](../shell-novice-workshop/) · [`shell-intermediate-workshop`](../shell-intermediate-workshop/) · [`debian-http-boot`](../debian-http-boot/) · [`debian-pxe-lab`](../debian-pxe-lab/) · [`debian-preseed-gallery`](../debian-preseed-gallery/)
+[`chroot-breakout`](../chroot-breakout/) · [`exploring-containers`](../exploring-containers/) · [`kdump-kexec-lab`](../kdump-kexec-lab/) · [`FREEBSD-simple-templating-serving-RHEL-kickstart-files`](../FREEBSD-simple-templating-serving-RHEL-kickstart-files/) · [`virtualbmc-ipmi-lab`](../virtualbmc-ipmi-lab/) · [`linuxboot-uefi-kexec`](../linuxboot-uefi-kexec/) · [`tiny-linux-experiments/minimal-arm-linux-qemu`](../tiny-linux-experiments/minimal-arm-linux-qemu/) · [`libvirt-ipxe-http-pxe`](../libvirt-ipxe-http-pxe/) · [`rhel-bootc-minimal`](../rhel-bootc-minimal/) · [`shell-novice-workshop`](../shell-novice-workshop/) · [`shell-intermediate-workshop`](../shell-intermediate-workshop/) · [`debian-http-boot`](../debian-http-boot/) · [`debian-pxe-lab`](../debian-pxe-lab/) · [`debian-preseed-gallery`](../debian-preseed-gallery/) · [`UNIX-set-operations-in-the-shell`](../UNIX-set-operations-in-the-shell/)
 
 ### Chroot mechanics & the rootless vise
 

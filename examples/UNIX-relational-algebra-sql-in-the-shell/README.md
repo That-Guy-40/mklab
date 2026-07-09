@@ -238,7 +238,13 @@ attribution).
 - Might: <https://matt.might.net/articles/sql-in-the-shell/>
 - Walsh: <https://wal.sh/research/relational-algebra>
 
-This is a Phase-5 sibling to the other Matt Might labs — the
+**Series:** **1. relational algebra / SQL in the shell** *(this lab)* →
+[2. set operations in the shell](../UNIX-set-operations-in-the-shell/README.md).
+Part 1 builds relations out of the algebra's six primitives; part 2 drops a level
+to the **sets** those relations are made of — `comm`, `uniq`, `sort` — and to a
+collation bug that silently destroys results.
+
+This is also a Phase-5 sibling to the other Matt Might labs — the
 [*survival guide*](../UNIX_novice_survival_guide/README.md),
 [*bash by example*](../shell-intermediate-programming-by-example/README.md),
 [*sculpting text*](../UNIX-sculpting-text-regex-grep-sed-awk/README.md), and
