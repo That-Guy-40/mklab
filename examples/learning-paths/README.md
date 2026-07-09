@@ -22,7 +22,7 @@ These are orthogonal to 00-INDEX's *run-cost* tags, which are carried through un
 | Path | Diff | Effort | Goal |
 |---|---|---|---|
 | [Containers from first principles](path-container-internals.md) | 🟡 | ⏱ half-day+ | Understand what a container *is* by assembling one primitive at a time, then meet the managers that package those primitives for you. |
-| [Shell fluency — from lost at the prompt to sculpting text](path-shell-fluency.md) | 🟢 | ⏱ ~1–2h | Find your feet at the shell, learn to program it, then wield grep/sed/awk on real text. The primary track is Matt Might's (he names the survival guide as the prerequisite to bash-by-example); an equivalent Carpentries + Robbins track is a side-quest. |
+| [Shell fluency — from lost at the prompt to querying text like a database](path-shell-fluency.md) | 🟢 | ⏱ half-day+ | Find your feet at the shell, learn to program it, wield grep/sed/awk on real text — then discover that composing those tools was relational algebra all along. The primary track is Matt Might's (he names the survival guide as the prerequisite to bash-by-example); an equivalent Carpentries + Robbins track is a side-quest. |
 | [Container topologies across the engines](path-container-topologies.md) | 🟡 | ⏱ ~1–2h | Express the same multi-service idea in Docker, Podman, and LXD/Incus — and see what each abstraction buys you. |
 | [Build a Linux from source, one arch at a time](path-linux-from-source.md) | 🔴 | ⏱ half-day+ | Compile a kernel + a tiny userspace from upstream source and boot it in RAM — then repeat across architectures, and shrink it onto a floppy. |
 | [The boot path & kernel-crash forensics](path-boot-and-crash.md) | 🔴 | ⏱ half-day+ | Own every stage from firmware to a captured kernel panic: interrupt the boot loader, force and dissect a crash, then replace the firmware's boot logic with Linux itself. |
@@ -36,9 +36,9 @@ These are orthogonal to 00-INDEX's *run-cost* tags, which are carried through un
 
 ### The Matt Might corpus
 
-*Same 'vendor the page, build a learner sandbox' shape, one author — shell to neural nets.*
+*Same 'vendor the page, build a learner sandbox' shape, one author — shell to relational algebra to neural nets.*
 
-[`UNIX_novice_survival_guide`](../UNIX_novice_survival_guide/) · [`shell-intermediate-programming-by-example`](../shell-intermediate-programming-by-example/) · [`UNIX-sculpting-text-regex-grep-sed-awk`](../UNIX-sculpting-text-regex-grep-sed-awk/) · [`AI-build-a-perceptron`](../AI-build-a-perceptron/)
+[`UNIX_novice_survival_guide`](../UNIX_novice_survival_guide/) · [`shell-intermediate-programming-by-example`](../shell-intermediate-programming-by-example/) · [`UNIX-sculpting-text-regex-grep-sed-awk`](../UNIX-sculpting-text-regex-grep-sed-awk/) · [`UNIX-relational-algebra-sql-in-the-shell`](../UNIX-relational-algebra-sql-in-the-shell/) · [`AI-build-a-perceptron`](../AI-build-a-perceptron/)
 
 ### Tutorial hand-walks
 

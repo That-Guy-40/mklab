@@ -82,12 +82,12 @@ goal       = "Understand what a container *is* by assembling one primitive at a 
 
 [[path]]
 id         = "shell-fluency"
-title      = "Shell fluency — from lost at the prompt to sculpting text"
+title      = "Shell fluency — from lost at the prompt to querying text like a database"
 difficulty = "🟢"
-est        = "⏱ ~1–2h"
+est        = "⏱ half-day+"
 prereqs    = []
-audience   = "complete beginners welcome"
-goal       = "Find your feet at the shell, learn to program it, then wield grep/sed/awk on real text. The primary track is Matt Might's (he names the survival guide as the prerequisite to bash-by-example); an equivalent Carpentries + Robbins track is a side-quest."
+audience   = "complete beginners welcome; the last step asks a little more"
+goal       = "Find your feet at the shell, learn to program it, wield grep/sed/awk on real text — then discover that composing those tools was relational algebra all along. The primary track is Matt Might's (he names the survival guide as the prerequisite to bash-by-example); an equivalent Carpentries + Robbins track is a side-quest."
   [[path.step]]
   lab        = "UNIX_novice_survival_guide/"
   learn      = "navigate, pipe, redirect, and get help without a cheat-sheet."
@@ -100,6 +100,11 @@ goal       = "Find your feet at the shell, learn to program it, then wield grep/
   lab        = "UNIX-sculpting-text-regex-grep-sed-awk/"
   learn      = "wield the GNU grep/sed/awk trio on real text."
   checkpoint = "run `demo.sh` (byte-identical on Debian + Alpine); then extract and reformat fields from a log in a single `awk` line."
+  [[path.step]]
+  lab        = "UNIX-relational-algebra-sql-in-the-shell/"
+  tags       = ["🟡"]
+  learn      = "those same tools ARE relational algebra: `cat`=∪, `awk`=σ, `cut`=π, `comm -23`=−, `join`=⋈ — and Unix never shipped a Cartesian product, so Might writes one in 15 lines of bash."
+  checkpoint = "run `demo.sh` → `PASS: all 9 relational identities hold`, i.e. Might's hand-rolled bash, coreutils, and `sqlite3` agree on the same relations; then find why `equijoin -t` silently returns 0 rows."
   [[path.branch]]
   lab = "shell-novice-workshop/"
   why = "the Carpentries (CC-BY) full-day equivalent of steps 1–2, by different authors."
@@ -467,9 +472,10 @@ goal       = "Bake a whole bootable OS image two fundamentally different ways. F
 [[collection]]
 id      = "matt-might-corpus"
 title   = "The Matt Might corpus"
-theme   = "Same 'vendor the page, build a learner sandbox' shape, one author — shell to neural nets."
+theme   = "Same 'vendor the page, build a learner sandbox' shape, one author — shell to relational algebra to neural nets."
 members = ["UNIX_novice_survival_guide/", "shell-intermediate-programming-by-example/",
-           "UNIX-sculpting-text-regex-grep-sed-awk/", "AI-build-a-perceptron/"]
+           "UNIX-sculpting-text-regex-grep-sed-awk/", "UNIX-relational-algebra-sql-in-the-shell/",
+           "AI-build-a-perceptron/"]
 
 [[collection]]
 id      = "tutorial-hand-walks"

@@ -6,7 +6,7 @@
 
 **Audience:** intermediate; comfortable reading a little C  
 **Effort:** ⏱ half-day+  
-**Prerequisites:** [Shell fluency — from lost at the prompt to sculpting text](path-shell-fluency.md)
+**Prerequisites:** [Shell fluency — from lost at the prompt to querying text like a database](path-shell-fluency.md)
 
 | # | Lab | You'll learn | Checkpoint (observable) |
 |---|---|---|---|

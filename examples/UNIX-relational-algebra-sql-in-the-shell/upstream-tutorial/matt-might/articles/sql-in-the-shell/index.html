@@ -1,0 +1,1005 @@
+<!DOCTYPE html>
+
+<html>
+
+<head>
+
+ <title>Relational shell programming
+</title>
+
+ <link rel="alternate" type="application/rss+xml" title="RSS" href="http://matt.might.net/articles/feed.rss" />
+
+ <link rel="stylesheet" href="../../css/raised-paper-2.css" /> 
+
+
+ <meta name="viewport" content="width=480, initial-scale=1" />
+ <link rel="stylesheet" media="screen and (max-device-width: 480px)" href="../../css/raised-paper-2-handheld.css" />
+
+ <script type="text/javascript" src="../../matt.might.js"></script>
+ <script type="text/javascript">
+  var ArticleVersion = 2 ;
+ </script>
+ <script>
+ <!--
+  include("article-style.js");
+ //-->
+ </script>
+ <script type="text/javascript" src="../manifest.js"></script>
+ <script type="text/javascript" src="../index-manifest.js"></script>
+
+ <script type="text/javascript">
+ <!--
+//  var Key = "[an error occurred while processing the directive]";
+ var Pathname = location.pathname ;
+ var PathParts = Pathname.split(/\//) ;
+ var Key = PathParts[PathParts.length-1] ;
+ if (Key == "")
+  Key = PathParts[PathParts.length-2] ;
+ //-->
+ </script>
+
+</head>
+
+
+
+<body>
+
+<div id="body">
+
+
+
+
+
+
+
+<div id="abstract-container" class="module">
+<div id="abstract-content" class="fat-content">
+
+ <h1>Relational shell programming
+</h1>
+
+ <div>
+ [<a href="../">article index</a>]
+ [<script>
+       var emailMatt = '<a href="mai'+'lto:matt-blog'+'@'+'migh'+'t.net">email me</a>'
+document.write(emailMatt);
+ //-->
+</script>] 
+ [<a href="http://twitter.com/mattmight">@mattmight</a>]
+ [<a href="../feed.rss">rss</a>]
+ </div>
+
+ <p>
+No one would mistake the average
+shell script for principled software.
+</p>
+
+<p>
+Yet, if we look at how scripts are used, patterns emerge.
+</p>
+
+<p>
+Unix is a bestiary 
+of <em>ad hoc</em> databases: comma-, colon-, tab- and space-separated tables.
+Think of <code>/etc/*</code> or <code>/var/log/*</code>, or
+of columnar commands.
+</p>
+
+<p>
+Shell scripts commonly, if unknowingly, compose
+five (of six) primitive relational-algebraic operations
+on these tables:
+union, difference, projection, selection and renaming:
+</p>
+
+<ul>
+ 
+ <li><code>cat</code> acts like union;</li>
+
+ <li><code>sed</code> and <code>grep</code> act like selection;</li>
+
+ <li><code>cut</code> acts like projection;</li>
+
+ <li><code>awk</code> can perform renaming; and</li>
+
+ <li><code>diff</code> acts (almost) like difference.</li>
+
+</ul>
+
+<p>
+Relational algebra (whose sixth primitive operation is Cartesian product)
+is equivalent to both relational calculus and SQL.
+</p>
+
+<p>
+Cartesian product (and equijoin) are not difficult to create in bash.</p>
+
+<p>
+If you find yourself stumbling into a relational design pattern in a shell script, 
+consider making that relationality rigid and explicit.
+</p>
+
+<p>
+Read on to learn a little more about databases, shell scripts or both.
+</p>
+
+<hr />
+
+<p>
+<b>Update:</b> A few readers
+have pointed out the flexible
+<a href="http://linux.die.net/man/1/join">join</a>
+command.
+
+Others have pointed out that the classic text
+<a href="http://www.amazon.com/gp/product/020107981X/ref=as_li_ss_tl?ie=UTF8&tag=mmamzn06-20&linkCode=as2&camp=1789&creative=390957&creativeASIN=020107981X">The AWK Programming Language</a><img src="http://www.assoc-amazon.com/e/ir?t=mmamzn06-20&l=as2&o=1&a=020107981X" width="1" height="1" border="0" alt="" style="border:none !important; margin:0px !important;" />
+contains
+a section on how to implement a relational DB with awk.
+
+
+</p>
+
+
+  
+</div> <!-- /#content -->
+</div> <!-- /#content-container -->
+
+
+
+
+  
+<div id="content-container" class="module">
+<div id="article-content">
+
+  <script type="text/javascript">
+<!--
+// Might.enableSyntaxHighlighting("Scala") ;
+//-->
+</script>
+
+
+<script type="text/x-mathjax-config">
+  MathJax.Hub.Config({tex2jax: {inlineMath: [['$','$'], ['\\(','\\)']]}});
+</script>
+
+<!--
+<script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=default"></script>
+-->
+
+<script type="text/javascript" src="../../lib/MathJax/MathJax.js?config=default"></script>
+
+
+
+<h2>Representing relations</h2>
+
+<p>
+In mathematics, a relation is a set of tuples.
+</p>
+
+<p>
+[A tuple is an ordered collection of values, $(v_1,\ldots,v_n)$.]
+</p>
+
+<p>
+For example, 
+$\{({\tt Bob}, 31), ({\tt Judy}, 32)\}$
+is a relation.
+</p>
+
+<p>
+In database theory, a relation is a set of tuples 
+with an assigned name for each column;
+that is, a relation is a <em>table</em>.
+</p>
+
+<p>
+For the earlier relation, we could define 
+a header tuple $({\tt name}, {\tt age})$
+that names each column.
+</p>
+
+<p>
+We could then represent the relation explicitly as a table:
+</p>
+
+<center>
+<table border="1">
+ <tr>
+  <th>name</th>
+  <th>age</th>
+ </tr>
+
+ <tr>
+  <td>Bob</td>
+  <td>31</td>
+ </tr>
+
+ <tr>
+  <td>Judy</td>
+  <td>32</td>
+ </tr>
+
+
+</table>
+</center>
+
+<p>
+<a href="http://en.wikipedia.org/wiki/Relational_algebra">Relational
+algebra</a> is a theory for manipulating relations whose
+power is equivalent to SQL and relational calculus.
+</p>
+
+<p>
+Remarkably, relational algebra has only six primitive operations.
+</p>
+
+<p>
+I define the six primitives below, but if you're looking for a comprehensive
+work on relational theory, particularly as it relates to modern databases, I recommend Date's 
+
+<a href="http://www.amazon.com/gp/product/0596523068/ref=as_li_ss_tl?ie=UTF8&tag=mmamzn06-20&linkCode=as2&camp=1789&creative=390957&creativeASIN=0596523068">SQL and Relational Theory</a><img src="http://www.assoc-amazon.com/e/ir?t=mmamzn06-20&l=as2&o=1&a=0596523068" width="1" height="1" border="0" alt="" style="border:none !important; margin:0px !important;" />:
+</p>
+
+<div class="graphic">
+<a href="http://www.amazon.com/gp/product/0596523068/ref=as_li_ss_il?ie=UTF8&tag=mmamzn06-20&linkCode=as2&camp=1789&creative=390957&creativeASIN=0596523068"><img border="0" src="http://ws.assoc-amazon.com/widgets/q?_encoding=UTF8&Format=_SL160_&ASIN=0596523068&MarketPlace=US&ID=AsinImage&WS=1&tag=mmamzn06-20&ServiceVersion=20070822" ></a><img src="http://www.assoc-amazon.com/e/ir?t=mmamzn06-20&l=as2&o=1&a=0596523068" width="1" height="1" border="0" alt="" style="border:none !important; margin:0px !important;" />
+</div>
+
+
+<h3>Relations in Unix</h3>
+
+<p>
+Many Unix commands interpret files
+like relations: each line is a tuple.
+</p>
+
+<p>
+CSV or "comma-separated value" files are a crude, generic
+way to encode a relation.
+
+For example, see the 
+<a href="http://www.maxmind.com/app/geolitecountry">MaxMind GeoIP database</a>:
+</p>
+
+<pre>
+  "1.0.0.0","1.0.0.255","16777216","16777471","AU","Australia"
+  "1.0.1.0","1.0.3.255","16777472","16778239","CN","China"
+</pre>
+
+<p>
+The password and group files for a Unix system (<code>/etc/passwd</code> and <code>/etc/group</code>), which store account and login information, are 
+relations with elements of individual tuples separated by
+colons (<code>:</code>):
+</p>
+
+<pre>
+  nobody:*:-2:-2:Unprivileged User:/var/empty:/usr/bin/false
+  root:*:0:0:System Administrator:/var/root:/bin/sh
+  daemon:*:1:1:System Services:/var/root:/usr/bin/false 
+</pre>
+
+<p>
+The <code>/etc/hosts</code> file,
+which can fix a hostname to an IP address,
+is a space-separated relation:
+</p>
+
+<pre>
+  127.0.0.1        localhost
+  255.255.255.255  broadcasthost
+  ::1              localhost 
+  fe80::1%lo0      localhost
+</pre>
+
+<p>
+The <code>/etc/resolv.conf</code> file, 
+which specifies domain name information,
+is a space-separated relation:
+</p>
+
+<pre>
+  domain hsd1.ut.comcast.net.
+  nameserver 208.67.220.220
+  nameserver 208.67.222.222
+</pre>
+
+<p>
+The command <code>netstat -nr</code> produces tables
+of routing information.
+</p>
+
+<pre>
+  Destination     Gateway      Flags      Refs      Use   Netif 
+  127             127.0.0.1    UCS           0        0     lo0
+  127.0.0.1       127.0.0.1    UH            5   151051     lo0
+  224.0.0/4       lo0          UmCS          1        0     lo0
+  224.0.0.251     lo0          UHmW3I        0        0     lo0
+</pre>
+
+<p>
+The command <code>traceroute</code> produces 
+relation-like data:
+</p>
+
+<pre>
+ 5  69.139.247.14  16.560 ms  26.933 ms  11.521 ms
+ 6  68.86.90.125  74.433 ms  40.330 ms  57.565 ms
+ 7  68.86.87.30  54.590 ms  52.155 ms  55.322 ms
+</pre>
+
+<p>
+Many log files are, in effect, giant relations as well.
+</p>
+
+
+
+
+<h2>Union</h2>
+
+<p>
+Mathematically, union $(\cup)$ combines the contents
+of two sets:
+</p>
+
+\[
+  A \cup B = 
+  \{ x \mathrel{|} x \in A \text{ or } x \in B \}
+\]
+
+<p>
+In the shell, union is straightforward--it's <code>cat</code>:
+</p>
+
+<pre>
+ $ cat <i>relation-1</i> <i>relation-2</i> &gt; <i>unioned-relation</i>
+</pre>
+
+<p>
+After any operation in which duplicate entries are a possibility, 
+compose
+with <code>sort</code> and <code>uniq</code>:
+</p>
+
+<pre>
+ $ cat <i>relation-1</i> <i>relation-2</i> | sort | uniq &gt; <i>unioned-relation</i>
+</pre>
+
+<p>
+Since a relation is a set, duplicate entries are not allowed.
+</p>
+
+<p>
+Many other programs accept multiple files as arguments
+and print out their contents:
+<code>sed</code>,
+<code>grep</code>,
+<code>cut</code>,
+<code>awk</code>.
+</p>
+
+<p>
+Thus, these commands can combine
+<i>selection</i> (and <em>projection</em>) with <i>union</i>.
+</p>
+
+<p>
+To "union" the output of one command with another, 
+use a sequencing semicolon with an append:
+</p>
+
+<pre>
+  $ <i>command-1</i> &gt; <i>relation</i>; <i>command-2</i> &gt;&gt; <i>relation</i>
+</pre>
+
+
+
+<h2>Selection</h2>
+
+<p>
+Mathematically, selection $(\sigma_\phi)$ 
+is a filtering operation
+that applies
+a predicate $\phi$ to each member of a set,
+retaining only those for which the 
+predicate is true:
+</p>
+
+\[
+ \sigma_\phi(A) =
+ \{ x \mathrel{|} x \in A \text{ and } \phi(x) \text{ is true } \}
+\]
+
+<p>
+Many Unix commands in serve as selectors (and simultaneously as union);
+that is, many programs can filter a file, line by line.
+</p>
+
+<p>
+The most common selectors are 
+<code>sed</code>,
+<code>grep</code> and
+<code>awk</code>.
+</p>
+
+<p>
+For example, <code>awk</code> can select entries
+from <code>/etc/passwd</code> where the user id and the 
+primary group id are not equal:
+</p>
+
+<pre>
+ awk -F ":" '{ if ( $3 != $4 ) print }' /etc/passwd
+</pre>
+
+
+
+<h2>Projection</h2>
+
+<p>
+Mathematically,
+projection $(\pi_{c_1,\ldots,c_n})$ is a reduction operator
+that retains the specified columns $(c_1,\ldots,c_n)$ in a relation
+and discards the rest.
+</p>
+
+<p>
+If a relation is table, then $c_1,\ldots,c_n$
+can be the names of the columns (and the order in which to preserve them).
+</p>
+
+<p>
+Otherwise, $c_1,\ldots,c_n$ can be column numbers so that:
+</p>
+
+\[
+ \pi_{i_1,\ldots,i_n}(R)
+ =
+ \{ (x_{i_1}, \ldots, x_{i_n}) 
+   \mathrel{|}
+   (x_1,\ldots,x_n) \in R    
+ \}
+\]
+
+<p>
+The Unix command <code>cut</code> is a projection-like command.
+</p>
+
+<p>
+For example, <code>cut</code> can project just the user names and shells
+out of <code>/etc/passwd</code>:
+</p>
+
+<pre>
+ $ cut -d ":" -f 1,7 /etc/passwd
+</pre>
+
+<p>
+The Unix commands <code>sed</code> and <code>awk</code> 
+also behave like projectors.
+</p>
+
+<p>
+For example, <code>cut</code> cannot
+reorder colums, but <code>awk</code> can:
+</p>
+
+<pre>
+ $ awk -F":" '{ print $7 ":" $1 }' /etc/passwd
+</pre>
+
+<p>
+If the syntactic structure of each tuple
+is more complex,
+then <code>sed</code> can pull it apart
+with a regular expression.
+</p>
+
+
+<h2>Rename</h2>
+
+<p>
+For tables, the rename operation $(\rho_{c/c'})$
+changes the name of column $c'$ to $c$.
+</p>
+
+<p>
+Since most Unix tables don't specify headers,
+or the structure is implicit, there is no
+equivalent of or need for rename.
+</p>
+
+<p>
+Columns are implicitly named positionally.
+</p>
+
+<p>
+<code>awk</code> can easily reorder columns.
+</p>
+
+
+
+
+<h2>Cartesian product</h2>
+
+<p>
+Cartesian product is the source of much power
+for relational algebra, since it is the key ingredient
+  in joins--the primitive operation that combines two tables together.
+</p>
+
+
+<p>
+Relational Cartesian product $(\times)$ fully combines
+two relations:
+</p>
+
+\[
+ A \times B =
+ \{
+   (a_1, \ldots, a_n, b_1, \ldots, b_m)
+   \mathrel{|}
+   (a_1,\ldots,a_n) \in A
+   \text{ and }
+   (b_1,\ldots,b_m) \in B
+   \}
+\]
+
+<p>
+Surprisingly, there is no shell equivalent of Cartesian product.
+</p>
+
+<p>
+Fortunately, it's not hard to write a <code>cartesian</code> script:
+</p>
+
+<pre>
+#!/bin/bash
+
+delim="," # CSV by default
+
+# Parse flagged arguments:
+while getopts "td:" flag
+do
+  case $flag in
+    d) delim=$OPTARG;;
+    t) delim="\t";;
+    ?) exit;;
+  esac
+done
+
+# Delete the flagged arguments:
+shift $(($OPTIND -1))
+
+# Remaining args now in $*
+
+# Now join $1 and $2
+while read a; 
+ do while read b; 
+      do echo "$a${delim}$b"; 
+      done &lt; $2;
+ done &lt; $1 </pre>
+
+
+<p> <b>Update</b>: <a href="http://traviscj.com/">Travis Johnson</a> wrote in
+to say that the Unix command <code>paste</code> seems to provide functionality
+of Cartesian product, but it doesn't quite do that.
+
+The <code>paste</code> joins corresponding lines, but does not compute a product:
+</p>
+
+<pre>
+% cat f1
+a
+b
+c
+
+% cat f2
+d
+e
+f
+
+% paste -d "," f1 f2
+a,d
+b,e
+c,f
+
+% cartesian f1 f2
+a,d
+a,e
+a,f
+b,d
+b,e
+b,f
+c,d
+c,e
+c,f
+</pre>
+
+
+
+<h2>Difference</h2>
+
+<p>
+Mathematically, set difference $(-)$ removes the elements
+of a set that are present in another set:
+</p>
+
+\[
+A - B = \{ a
+  \mathrel{|}
+  a \in A \text{ and }
+  a \not\in B
+  \}
+\]
+
+<p>
+The command <code>diff</code> reports the difference between two files,
+but it does not perform relational set difference.
+</p>
+
+<p>
+We need to implement relational set difference.
+</p>
+
+<p>
+It is simpler to implement <code>difference</code>
+if we assume the existence of a membership tester, <code>memberp</code>.
+</p>
+
+<p>
+ The command <code>memberp <i>file</i> <i>line</i></code> exits successfully
+ if the file <i>file</i> contains the line <i>line</i>, and it fails
+   otherwise.
+</p>
+
+<p>
+With access to <code>memberp</code>, <code>difference</code> becomes:
+</p>
+
+<pre>
+#!/bin/bash
+
+while read a; 
+ do 
+   if ! memberp $2 "$a"; then
+     echo "$a"
+   fi
+ done &lt; $1
+</pre>
+
+
+
+<h3>Membership</h3>
+
+<p>
+A membership script, <code>memberp</code>, searches line by line:
+</p>
+
+<pre>
+#!/bin/bash
+
+# Usage: memberp file line
+
+file=$1
+
+shift
+
+while read a; 
+ do 
+   if [ "$a" = "$*" ]; then
+     exit 0
+   fi
+ done &lt; $file
+
+exit -1
+</pre>
+
+
+
+<h3>An alternative: <code>comm</code></h3>
+
+<p>
+The command <code>comm</code> can also 
+compute the difference
+between two files <i>A</i> and <i>B</i>:
+</p>
+
+<pre>
+comm -23 &lt;(sort A) &lt;(sort B)
+</pre>
+
+
+<h2>Join</h2>
+
+<p>
+A join is a synthetic operation composed
+of selection, projection and product.
+</p>
+
+<p>
+We could construct it from 
+</p>
+
+<p>
+A common join is equijoin,
+where the product of two relations
+is filtered based on the equality of two
+columns.
+</p>
+
+<p>
+To peform an equijoin, we need
+two relations and columns to compare.
+</p>
+
+<p> The command <code>equijoin [ -d &lt;delim&gt; | -t ] <i>rel1</i> <i>rel2</i> <i>col1</i>
+</i>col2</i></code> uses <code>awk</code> to combine and compare two tables: </p>
+
+<pre>
+#!/bin/bash
+
+delim="," # CSV by default
+
+# Parse flagged arguments:
+while getopts "td:" flag
+do
+  case $flag in
+    d) delim=$OPTARG;;
+    t) delim="\t";;
+    ?) exit;;
+  esac
+done
+
+# Delete the flagged arguments:
+shift $(($OPTIND -1))
+
+f1=$1
+f2=$2
+col1=$3
+col2=$4
+
+cols=`awk -F "${delim}" '{ print NF ; exit }' $f1`
+
+while read a
+ do while read b
+      do 
+        echo "$a${delim}$b"
+      done &lt; $f2
+ done &lt; $f1 |
+ awk -F "${delim}" "{ if ( \$${col1} == \$$(( col2 + cols )) ) print }"
+</pre>
+
+
+
+
+<h2>Example: Deleting a list of bad users</h2>
+
+<p>
+We're given a list of bad users to remove from 
+<code>/etc/passwd</code>. 
+
+<p>
+They're in the file <code>bad.db</code>:
+</p>
+
+<pre>
+matt
+bob
+</pre>
+
+<p>
+Let's use a simplified <code>/etc/passwd</code> for this example:
+</p>
+
+<pre>
+root:*:0:0:The Admin:/root:/bin/sh
+matt:*:500:500:Matt:/home/matt:/bin/bash
+john:*:501:501:John:/home/john:/bin/bash
+bob:*:502:502:Bob:/home/bob:/bin/bash
+</pre>
+
+<p>
+How can we delete them relationally?
+</p>
+
+<p>
+Start with a product, <code>cartesian -d ":" bad.db /etc/passwd &gt; badpasswd.db</code>:
+</p>
+
+<pre>
+matt:root:*:0:0:The Admin:/root:/bin/sh
+matt:matt:*:500:500:Matt:/home/matt:/bin/bash
+matt:john:*:501:501:John:/home/john:/bin/bash
+matt:bob:*:502:502:Bob:/home/bob:/bin/bash
+bob:root:*:0:0:The Admin:/root:/bin/sh
+bob:matt:*:500:500:Matt:/home/matt:/bin/bash
+bob:john:*:501:501:John:/home/john:/bin/bash
+bob:bob:*:502:502:Bob:/home/bob:/bin/bash
+</pre>
+
+<p>
+Then, select rows where the bad user matches the account name,
+with <code>awk -F: '{ if ( $1 == $2 ) print }' badpasswd.db &gt; offenders.db </code>:
+</p>
+
+<pre>
+matt:matt:*:500:500:Matt:/home/matt:/bin/bash
+bob:bob:*:502:502:Bob:/home/bob:/bin/bash
+</pre>
+
+<p>
+Now, project out the columns that make the result compatible with
+the format of <code>/etc/passwd</code> with <code>cut -d ":" -f2- offenders.db &gt; kill.db</code>:
+</p>
+
+<pre>
+matt:*:500:500:Matt:/home/matt:/bin/bash
+bob:*:502:502:Bob:/home/bob:/bin/bash
+</pre>
+
+<p>
+Finally, use <code>difference /etc/passwd kill.db</code> to
+generate a new password file <em>sans</em> malefactors:
+</p>
+
+<pre>
+root:*:0:0:The Admin:/root:/bin/sh
+john:*:501:501:John:/home/john:/bin/bash
+</pre>
+
+
+<h2>Exercise</h2>
+
+<p>
+Some of these scripts have quadratic time complexity.
+</p>
+
+<p>
+Add a <code>-s</code> flag to <code>equijoin</code> and <code>difference</code>
+that assumes the inputs have been sorted by <code>sort</code> and produces a sorted output.
+</p>
+
+<p>
+Show that <code>-s</code> can achieve better time complexity.
+</p>
+
+<p>
+Then, rewrite the account-deletion example to eliminate Cartesian product and use
+fast <code>equijoin</code> instead.
+</p>
+
+
+<h2>Good resources</h2>
+
+<p>
+Sed and awk have become a lost art.  
+They're the only languages I know that frequently beat perl in semantic density.
+
+If you haven't learned them yet, you'll be impressed with what 
+they can do for you.
+</p>
+
+<p>
+I recommend the O'Reilly classic,
+
+<a href="http://www.amazon.com/gp/product/1565922255/ref=as_li_ss_tl?ie=UTF8&tag=mmamzn06-20&linkCode=as2&camp=1789&creative=390957&creativeASIN=1565922255">sed &amp; awk</a><img src="http://www.assoc-amazon.com/e/ir?t=mmamzn06-20&l=as2&o=1&a=1565922255" width="1" height="1" border="0" alt="" style="border:none !important; margin:0px !important;" />:
+
+
+</p>
+
+<div class="graphic">
+<a href="http://www.amazon.com/gp/product/1565922255/ref=as_li_ss_il?ie=UTF8&tag=mmamzn06-20&linkCode=as2&camp=1789&creative=390957&creativeASIN=1565922255"><img border="0" src="http://ws.assoc-amazon.com/widgets/q?_encoding=UTF8&Format=_SL160_&ASIN=1565922255&MarketPlace=US&ID=AsinImage&WS=1&tag=mmamzn06-20&ServiceVersion=20070822" ></a><img src="http://www.assoc-amazon.com/e/ir?t=mmamzn06-20&l=as2&o=1&a=1565922255" width="1" height="1" border="0" alt="" style="border:none !important; margin:0px !important;" />
+</div>
+
+
+<p>
+I also recommend spending an hour or two going through
+the <a href="http://tldp.org/LDP/abs/html/">advanced bash scripting guide</a>
+and
+<a href="http://mywiki.wooledge.org/BashPitfalls">bash pitfalls</a>.
+
+It's worth the time invested.
+</p>
+
+
+<p>
+If you want a solid theoretical understanding of databases,
+I recommend Date's 
+
+<a href="http://www.amazon.com/gp/product/0596523068/ref=as_li_ss_tl?ie=UTF8&tag=mmamzn06-20&linkCode=as2&camp=1789&creative=390957&creativeASIN=0596523068">SQL and Relational Theory</a><img src="http://www.assoc-amazon.com/e/ir?t=mmamzn06-20&l=as2&o=1&a=0596523068" width="1" height="1" border="0" alt="" style="border:none !important; margin:0px !important;" />:
+</p>
+
+<div class="graphic">
+<a href="http://www.amazon.com/gp/product/0596523068/ref=as_li_ss_il?ie=UTF8&tag=mmamzn06-20&linkCode=as2&camp=1789&creative=390957&creativeASIN=0596523068"><img border="0" src="http://ws.assoc-amazon.com/widgets/q?_encoding=UTF8&Format=_SL160_&ASIN=0596523068&MarketPlace=US&ID=AsinImage&WS=1&tag=mmamzn06-20&ServiceVersion=20070822" ></a><img src="http://www.assoc-amazon.com/e/ir?t=mmamzn06-20&l=as2&o=1&a=0596523068" width="1" height="1" border="0" alt="" style="border:none !important; margin:0px !important;" />
+</div>
+
+
+
+
+
+
+<h2>Related pages</h2>
+<ul>
+<script>
+RenderTagLinks("unix") ;
+</script>
+</ul>
+
+
+
+<script type="text/javascript">
+<!--
+// SyntaxHighlighter.all() ;
+//-->
+</script>
+  
+
+ <hr />
+
+ <div id="footer-links">
+ [<a href="../">article index</a>]
+ [<script>
+       var emailMatt = '<a href="mai'+'lto:matt-blog'+'@'+'migh'+'t.net">email me</a>'
+document.write(emailMatt);
+ //-->
+</script>] 
+ [<a href="http://twitter.com/mattmight">@mattmight</a>]
+ [<a href="../feed.rss">rss</a>]
+ </div>
+
+
+  
+</div> <!-- /#content -->
+</div> <!-- /#content-container -->
+
+
+
+
+
+
+<div id="footer-linode" class="module fat-container">
+ <div class="fat-content"> 
+ <center>
+ matt.might.net is powered by <b><a href="http://www.linode.com/?r=bf5d4e7c8a1af61855b5227279a6744c3bde8a8a">linode</a></b> | 
+   <a href="../legal/">legal information</a>
+ </center>
+ </div>
+</div>
+
+
+
+
+
+
+</div> <!-- /#body -->
+
+
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-KBLDCT7XGS"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'G-KBLDCT7XGS');
+</script>
+
+
+<!--
+Old tracking code:
+
+<script type="text/javascript">
+var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");
+document.write(unescape("%3Cscript src='" + gaJsHost + "google-analytics.com/ga.js' type='text/javascript'%3E%3C/script%3E"));
+</script>
+<script type="text/javascript">
+var pageTracker = _gat._getTracker("UA-3661244-1");
+pageTracker._trackPageview();
+</script>
+-->
+
+
+
+
+</body>
+
+</html>

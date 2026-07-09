@@ -1,0 +1,23 @@
+#!/bin/bash
+# difference — relational set difference (A - B).
+#
+#   difference rel1 rel2       # lines of rel1 that do not appear in rel2
+#
+# Transcribed VERBATIM from Matt Might, "Relational shell programming"
+#   https://matt.might.net/articles/sql-in-the-shell/
+# Only this header comment is added.
+#
+# Needs `memberp` on PATH (the sandbox's ~/relational-algebra/bin is on PATH via
+# ~/.profile). `diff` is NOT set difference: it reports an edit script between two
+# ordered files. This is.
+#
+# O(|rel1| x |rel2|): every line of rel1 rescans all of rel2. The linear-time
+# equivalent on SORTED input is `comm -23 <(sort rel1) <(sort rel2)` -- demo.sh
+# proves the two agree, which is the article's closing Exercise in miniature.
+
+while read a;
+ do
+   if ! memberp $2 "$a"; then
+     echo "$a"
+   fi
+ done < $1

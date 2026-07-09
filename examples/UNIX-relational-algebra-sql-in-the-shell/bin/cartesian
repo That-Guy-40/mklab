@@ -1,0 +1,43 @@
+#!/bin/bash
+# cartesian — relational Cartesian product (×), the one primitive Unix never shipped.
+#
+#   cartesian [ -d <delim> | -t ] rel1 rel2
+#
+# Transcribed VERBATIM from Matt Might, "Relational shell programming"
+#   https://matt.might.net/articles/sql-in-the-shell/
+# Only this header comment is added. Do not "fix" the body — the whole point of
+# this lab is to run the author's code as published. Two things it will teach you
+# the hard way (both covered in ../RUNBOOK.md):
+#
+#   * `-t` is BROKEN under this #!/bin/bash shebang. It sets delim="\t" and emits
+#     it with `echo`, and bash's echo does not expand escapes -> you get a literal
+#     backslash-t. It would work only if `echo` were dash/ash's. Workaround:
+#         cartesian -d "$(printf '\t')" rel1 rel2
+#   * `while read a` (no -r) mangles backslashes and strips leading/trailing
+#     whitespace. Fine for the article's colon-delimited data; not fine in general.
+#
+# Complexity is O(|rel1| x |rel2|) by definition -- it materializes every pair.
+
+delim="," # CSV by default
+
+# Parse flagged arguments:
+while getopts "td:" flag
+do
+  case $flag in
+    d) delim=$OPTARG;;
+    t) delim="\t";;
+    ?) exit;;
+  esac
+done
+
+# Delete the flagged arguments:
+shift $(($OPTIND -1))
+
+# Remaining args now in $*
+
+# Now join $1 and $2
+while read a;
+ do while read b;
+      do echo "$a${delim}$b";
+      done < $2;
+ done < $1

@@ -1,0 +1,49 @@
+#!/bin/bash
+# cartesian (CORRECTED) — relational Cartesian product (×).
+#
+#   cartesian [ -d <delim> | -t ] rel1 rel2
+#
+# Drop-in replacement for ../cartesian (Matt Might, "Relational shell
+# programming"). Same interface, same output for every input the original
+# handled. Diff the two — that is the exercise:
+#
+#     diff -u bin/cartesian bin/fixed/cartesian
+#
+# What changed, and why:
+#   1. `-t` NOW WORKS.  The original set delim="\t" and emitted it with `echo`.
+#      Under its own #!/bin/bash shebang, bash's `echo` does not expand escapes,
+#      so you got a literal backslash-t.  (It would have worked only if `echo`
+#      were dash's or ash's -- a shebang/behaviour mismatch.)  Fixed by using
+#      bash's $'\t' ANSI-C quoting for a real tab, and `printf` to emit it.
+#   2. `read -r` — the bare `read` ate backslashes: a tuple containing `C:\path`
+#      silently lost its backslash.  `IFS=` also stops leading/trailing tabs and
+#      spaces being stripped from a field.
+#   3. Quoted "$1"/"$2" — an input path with a space no longer splits into two.
+#   4. An unknown flag now prints usage and exits 1 instead of exiting 0 silently.
+#
+# Still O(|rel1| x |rel2|) — that is the definition of a product, not a bug.
+
+delim=","   # CSV by default
+
+usage() { echo "usage: ${0##*/} [ -d <delim> | -t ] rel1 rel2" >&2; exit 1; }
+
+while getopts "td:" flag
+do
+  case $flag in
+    d) delim=$OPTARG;;
+    t) delim=$'\t';;   # a REAL tab, not the two characters \ and t
+    *) usage;;
+  esac
+done
+shift $((OPTIND - 1))
+
+[ $# -eq 2 ] || usage
+[ -r "$1" ] && [ -r "$2" ] || { echo "${0##*/}: cannot read input" >&2; exit 1; }
+
+while IFS= read -r a
+do
+  while IFS= read -r b
+  do
+    printf '%s%s%s\n' "$a" "$delim" "$b"
+  done < "$2"
+done < "$1"
