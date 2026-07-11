@@ -39,8 +39,8 @@ running machine.
 |---|---|---|---|
 | A | `nix-build-box` reusable env | Nix in this environment at all | ✅ **DONE** — built + verified, committed |
 | B | Minimal NixOS UEFI image boots under OVMF | Nix→bootable qcow2; systemd version | ✅ **DONE** — Nix-built qcow2 (systemd **261**, kernel 6.18.38) boots under OVMF to autologin root shell; verified via lab-vm.sh |
-| C | swtpm in `lab-vm.sh` + measured boot | shared-driver vTPM change; PCRs; `ConditionSecurity=measured-os` | ⏳ |
-| D | dm-verity root + `RestrictFileSystemAccess=` | exec-only-from-verity enforcement; BPF-LSM | ⏳ |
+| C | swtpm in `lab-vm.sh` + measured boot | shared-driver vTPM change; PCRs; `ConditionSecurity=measured-os` | ✅ **driver+plumbing DONE** — `tpm=true` wires swtpm; guest gets TPM 2.0, PCR7 measured, 25 PCRs; reaped by PID. `measured-os` correctly NOT-MET (PCR11=0, no stub/UKI) → gate turns green in D |
+| D | dm-verity root + `RestrictFileSystemAccess=` (+ UKI so `measured-os` goes green) | exec-only-from-verity enforcement; BPF-LSM; systemd-stub measures PCR 11 | ⏳ |
 | E | iPXE on-disk deploy, both tiers | netboot integration; NixOS-initrd DHCP-over-slirp | ⏳ |
 | F | `ConditionFraction=` 3-VM mock fleet | deterministic staged rollout across machine-IDs | ⏳ |
 | G | TPM2-sealed LUKS + attestation stub | `systemd-cryptenroll` PCR policy; PCR quote | ⏳ |

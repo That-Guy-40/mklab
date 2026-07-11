@@ -23,3 +23,5 @@ memory     = "2G"
 cpus       = 2
 cloud_init = false            # NixOS image is not cloud-init driven; login via serial autologin
 ssh_port   = 0                # auto-allocate from 2222 (root/root over the forward)
+tpm        = true             # swtpm software TPM 2.0 (Spike C) — measured boot / PCRs.
+                              # HONEST: swtpm is plumbing, NOT a trust anchor (see README/PLAN).
