@@ -468,6 +468,9 @@ goal       = "Bake a whole bootable OS image two fundamentally different ways. F
   tags       = ["🔒"]
   learn      = "The OPPOSITE mechanism: Kali's retired Packer scripts don't assemble a rootfs — they boot the real installer ISO, type a `boot_command` over VNC that points d-i at a preseed served over HTTP, run the unattended install, then SSH in to provision and package a Vagrant `.box`. Packer automates the human install; debos skips it. This is also the bridge back to the preseed labs — `http/preseed.cfg` is just a d-i preseed, delivered differently."
   checkpoint = "`build-kali-box.sh --validate-only` → `validate: OK`; a full `build-kali-box.sh` bakes `packer_kalirolling_libvirt_amd64.box`; `run-graphical.sh` unpacks the QCOW2 and boots it to a Kali `vagrant` login."
+  [[path.branch]]
+  lab = "nix-build-box/"
+  why = "a third substrate — Nix. A reusable, pinned, flakes-enabled `nix` in a rootless container; the forthcoming systemd-261 NixOS image factory bakes its dm-verity/UKI image *inside* this box. Verified end-to-end here (`nix build .#hello` → `Hello, world!`)."
 
 
 # ════════════════════════════════════════════════════════════════════════════

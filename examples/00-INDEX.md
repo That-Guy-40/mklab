@@ -95,6 +95,7 @@ PXE-DHCP specs stay flat below — they're reused across the netboot labs).
 | `podman-examples/podman-pod-3svc.toml` | Three containers sharing a **pod** (one net/IPC/PID namespace; localhost between them). |
 | `podman-examples/podman-quadlet-service.toml` | Exports a `.container` **quadlet** unit to systemd-user — survives reboots, auto-restarts. |
 | `podman-examples/podman-multiarch-build.toml` | Builds an image for a *foreign* arch via `qemu-user-static` (a `build` step, not `up`). |
+| [`nix-build-box/`](nix-build-box/README.md) | 🏭 **The repo's first Nix lab** — a reusable, pinned, flakes-enabled **`nix` build environment** as a rootless OCI box (`FROM nixos/nix`, built via `lab-podman.sh build --context`). Mount any flake at `/work` and `nix build` it on a host with **no Nix installed**. Exists as its own unit because the forthcoming systemd-261 measured-boot lab bakes NixOS **disk images** *inside* it. **Verified end-to-end here** — image builds, `nix build .#hello` → `Hello, world!` (Nix substituter fetches from `cache.nixos.org` are **not** blocked by the toolchain-fetch gate); `flake.lock`-pinned nixpkgs for reproducibility. |
 
 ## 📦 LXD / Incus — Phase 5 (`phase5-lxd/lab-lxd.sh`)
 

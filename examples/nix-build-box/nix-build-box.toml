@@ -1,0 +1,36 @@
+# examples/nix-build-box/nix-build-box.toml — declarative form of the Nix build box.
+#
+# Builds the sibling Containerfile and keeps a rootless box alive so you can
+# `exec` into it and run `nix` by hand. The build box is fundamentally
+# INTERACTIVE, so the container just holds open with `sleep infinity`; the real
+# work is done via `exec`.
+#
+#   # build + start (AUTHOR-RUN: podman build pulls nixos/nix, see MANUAL_TESTING.md):
+#   phase4-podman/lab-podman.sh up --config examples/nix-build-box/nix-build-box.toml
+#
+#   # drop into it:
+#   phase4-podman/lab-podman.sh exec nix-build-box/box -- sh
+#   # then, inside:  cd /work && nix build .#hello && ./result/bin/hello
+#
+#   # tear down:
+#   phase4-podman/lab-podman.sh down --config examples/nix-build-box/nix-build-box.toml
+#
+# Most people prefer the imperative interactive path instead (README.md §Quick
+# start): a one-shot `build` + `podman run --rm -it -v "$PWD:/work:Z"` — a build
+# box you type in and throw away. This spec exists so the unit is routable and
+# `up`-able like every other lab.
+
+[lab]
+name        = "nix-build-box"
+description = "Reusable, pinned, flakes-enabled Nix build environment (rootless OCI)"
+tags        = ["nix", "build-env", "rootless", "reusable-infra"]
+
+[[service]]
+name    = "box"
+engine  = "podman"
+build   = "examples/nix-build-box"     # context dir holding the Containerfile
+command = "sleep infinity"             # hold open; the box is used via `exec`
+# To make this flake (or the whole repo) visible inside the box, bind-mount it.
+# TOML does not expand shell vars, so either write an absolute path here or use
+# the imperative `podman run -v "$PWD:/work:Z"` form from the README.
+# volumes = ["/media/sqs/COLD_STORAGE/LAB_CREATE_V2/examples/nix-build-box:/work:Z"]
