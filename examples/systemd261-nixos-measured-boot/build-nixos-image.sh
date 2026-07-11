@@ -1,29 +1,32 @@
 #!/usr/bin/env bash
 # build-nixos-image.sh — build the lab's NixOS image INSIDE the nix-build-box.
 #
-# Runs `nix build .#image` (a UEFI/systemd-boot qcow2) in the reusable Nix build
-# box (../nix-build-box), so the host needs NO Nix — only podman + KVM. The build
-# is KVM-assisted (make-disk-image spins a throwaway build VM), so the box is run
-# with `--device /dev/kvm`.
+# Two images (host needs NO Nix — only podman + KVM):
+#   (default)  .#image        → a plain systemd-boot qcow2 (Spike B)
+#                              → out/nixos261.qcow2
+#   --verity   .#image-verity → a dm-verity /nix/store + UKI raw image (Spike D),
+#              converted to    → out/nixos261-verity.qcow2
 #
-#   ./build-nixos-image.sh            # → out/nixos261.qcow2
-#   ./build-nixos-image.sh /path/out  # custom output dir
+# The build is KVM-assisted (make-disk-image / repart), so the box runs with
+# `--device /dev/kvm`.
 #
-# Then boot it (Spike B success = a serial login banner):
-#   phase2-qemu-vm/lab-vm.sh create --config examples/systemd261-nixos-measured-boot/vm-nixos261-uefi.toml
-#   phase2-qemu-vm/lab-vm.sh start  nixos261
-#   phase2-qemu-vm/lab-vm.sh console nixos261     # expect: 'nixos261 login:'
+#   ./build-nixos-image.sh              # → out/nixos261.qcow2
+#   ./build-nixos-image.sh --verity     # → out/nixos261-verity.qcow2
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 IMG_DIR="$HERE/image"
-OUT="${1:-$HERE/out}"
+OUT="$HERE/out"
 BOX="${NIX_BUILD_BOX_IMAGE:-localhost/nix-build-box}"
+
+MODE=plain
+[[ "${1:-}" == "--verity" ]] && MODE=verity
 
 _done=""
 trap '[[ -n "$_done" ]] || printf "FAIL: build-nixos-image.sh exited early (rc=%s)\n" "$?" >&2' EXIT
 
-command -v podman >/dev/null || { echo "FAIL: podman not found" >&2; exit 1; }
+command -v podman  >/dev/null || { echo "FAIL: podman not found" >&2; exit 1; }
+command -v qemu-img >/dev/null || { echo "FAIL: qemu-img not found (needed for raw→qcow2)" >&2; exit 1; }
 [[ -e /dev/kvm ]] || { echo "SKIP: /dev/kvm absent — this build is KVM-assisted" >&2; exit 77; }
 podman image exists "$BOX" || {
     echo "FAIL: build box '$BOX' not found — build it first:" >&2
@@ -32,22 +35,35 @@ podman image exists "$BOX" || {
 }
 
 mkdir -p "$OUT"
-echo "==> building .#image in $BOX (KVM-assisted); first run pulls a NixOS closure — be patient"
 
-# /work = the flake (rw so flake.lock can be written back for reproducibility);
-# /out  = where the finished qcow2 is copied so it survives the container.
-podman run --rm --device /dev/kvm \
-    -v "$IMG_DIR:/work:Z" -v "$OUT:/out:Z" -w /work \
-    "$BOX" sh -c '
-        set -e
-        echo "--- systemd version baked into this image ---"
-        nix eval --raw .#nixosConfigurations.measured.pkgs.systemd.version || true
-        echo
-        nix build .#image --out-link /tmp/result --print-build-logs
-        # nixos-generators qcow-efi output is a dir holding nixos.qcow2.
-        cp -L /tmp/result/*.qcow2 /out/nixos261.qcow2
-        echo "--- built ---"; ls -lh /out/nixos261.qcow2
-    '
-
-_done=1
-echo "PASS: image built → $OUT/nixos261.qcow2"
+if [[ "$MODE" == plain ]]; then
+    echo "==> building .#image (plain systemd-boot qcow2) in $BOX; first run pulls a closure"
+    podman run --rm --device /dev/kvm \
+        -v "$IMG_DIR:/work:Z" -v "$OUT:/out:Z" -w /work \
+        "$BOX" sh -c '
+            set -e
+            echo "--- systemd version ---"; nix eval --raw .#nixosConfigurations.measured.pkgs.systemd.version || true; echo
+            nix build .#image --out-link /tmp/result --print-build-logs
+            cp -L /tmp/result/*.qcow2 /out/nixos261.qcow2
+        '
+    _done=1
+    echo "PASS: image built → $OUT/nixos261.qcow2"
+else
+    echo "==> building .#image-verity (dm-verity + UKI raw image) in $BOX; first run pulls a closure"
+    # Build the RAW image inside the box, copy it out, then convert on the host.
+    podman run --rm --device /dev/kvm \
+        -v "$IMG_DIR:/work:Z" -v "$OUT:/out:Z" -w /work \
+        "$BOX" sh -c '
+            set -e
+            echo "--- systemd version ---"; nix eval --raw .#nixosConfigurations.verity.pkgs.systemd.version || true; echo
+            nix build .#image-verity --out-link /tmp/result --print-build-logs
+            raw="$(nix eval --raw .#nixosConfigurations.verity.config.image.filePath)"
+            cp -L "/tmp/result/$raw" /out/nixos261-verity.raw
+            echo "--- raw copied: $raw ---"; ls -lh "/out/nixos261-verity.raw"
+        '
+    echo "==> converting raw → qcow2 on the host"
+    qemu-img convert -f raw -O qcow2 "$OUT/nixos261-verity.raw" "$OUT/nixos261-verity.qcow2"
+    rm -f "$OUT/nixos261-verity.raw"
+    _done=1
+    echo "PASS: verity image built → $OUT/nixos261-verity.qcow2"
+fi

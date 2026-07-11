@@ -26,20 +26,33 @@
   outputs = { self, nixpkgs, nixos-generators }:
     let system = "x86_64-linux";
     in {
-      # `nix build .#image` → a UEFI-bootable qcow2 (systemd-boot). KVM-assisted
-      # (make-disk-image builds in a throwaway VM), so the build box is run with
-      # `--device /dev/kvm` (see ../build-nixos-image.sh).
-      packages.${system}.image = nixos-generators.nixosGenerate {
-        inherit system;
-        format = "qcow-efi";
-        modules = [ ./configuration.nix ];
+      # All package outputs live in ONE packages.${system} set — Nix forbids
+      # defining the dynamic ${system} attribute across separate statements.
+      packages.${system} = {
+        # `nix build .#image` → a UEFI-bootable qcow2 (systemd-boot). KVM-assisted
+        # (make-disk-image builds in a throwaway VM); build box gets --device /dev/kvm.
+        image = nixos-generators.nixosGenerate {
+          inherit system;
+          format = "qcow-efi";
+          modules = [ ./configuration.nix ];
+        };
+
+        # Spike D — the dm-verity + UKI golden image. `image.repart` produces a
+        # RAW image; ../build-nixos-image.sh --verity converts it to qcow2.
+        # Booting the UKI measures PCR 11 → measured-os MET.
+        image-verity = self.nixosConfigurations.verity.config.system.build.image;
       };
 
-      # Also expose the system so we can prove which systemd it contains:
-      #   nix eval .#nixosConfigurations.measured.pkgs.systemd.version --raw
-      nixosConfigurations.measured = nixpkgs.lib.nixosSystem {
-        inherit system;
-        modules = [ ./configuration.nix ];
+      nixosConfigurations = {
+        # Expose the systemd version: nix eval .#…measured.pkgs.systemd.version --raw
+        measured = nixpkgs.lib.nixosSystem {
+          inherit system;
+          modules = [ ./configuration.nix ];
+        };
+        verity = nixpkgs.lib.nixosSystem {
+          inherit system;
+          modules = [ ./verity.nix { nixpkgs.hostPlatform = system; } ];
+        };
       };
     };
 }

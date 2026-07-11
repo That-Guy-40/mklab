@@ -18,10 +18,10 @@ the *enforcement* half of the image-based model this repo already leans toward:
 
 | 261 knob | What it does | Spike |
 |---|---|---|
-| `ConditionSecurity=measured-os` | gate a service on having booted with measured-boot semantics | C |
-| `systemd-tpm2-swtpm.service` | a software-TPM fallback (for VMs / no-hardware nodes) | C |
-| `RestrictFileSystemAccess=` | BPF-LSM: execute only from a signed dm-verity filesystem | D |
-| `systemd-repart` verity/UKI | build/lay a dm-verity + UKI golden image | D/E |
+| `ConditionSecurity=measured-os` | gate a service on having booted with measured-boot semantics | C/D — **MET on the verity/UKI image** |
+| `systemd-tpm2-swtpm.service` | a software-TPM fallback (for VMs / no-hardware nodes) | C — swtpm wired into `lab-vm.sh` |
+| `RestrictFileSystemAccess=` | BPF-LSM: execute only from a signed dm-verity filesystem | D — ⚠️ **not compiled into nixpkgs' systemd 261** (honest gap; substrate ready) |
+| `systemd-repart` verity/UKI | build/lay a dm-verity + UKI golden image | D — **image builds + boots** |
 | `ConditionFraction=` | fire a unit on a deterministic fraction of the fleet, no orchestrator | F |
 | `systemd-cryptenroll --tpm2` | TPM2-sealed LUKS with a PCR policy | G |
 

@@ -123,7 +123,89 @@ swtpm is a software TPM — plumbing, not a trust anchor.)
 
 ---
 
-## Spikes D–G — not yet run
+## Spike D — dm-verity + UKI golden image; measured-os MET (✅ 2026-07-11)
+
+Built with `./build-nixos-image.sh --verity` (config: `image/verity.nix`, adapted
+from nixpkgs' own boot-tested `appliance-repart-image-verity-store.nix`).
+
+### D.1 — the image builds (systemd 261), structurally verified
+
+```
+PASS: verity image built → out/nixos261-verity.qcow2      (~1.3 GB)
+# GPT (via fdisk/mtools — libguestfs can't run here):
+  p1 ESP  vfat 100M   → /EFI/BOOT/BOOTX64.EFI  = a ~40 MB UKI (removable path)
+  p2 "Linux /usr verity"  (type 77ff5f63-… usr-verity)
+  p3 "Linux /usr"          (erofs data)
+# UKI .cmdline: init=… console=ttyS0,115200 … usrhash=1174ca58…6beafb2b
+# PARTUUIDs MATCH the roothash: data=1174ca58-… hash=9f0117f9-…  ✓
+```
+
+### D.2 — it boots under OVMF, verity active (via lab-vm.sh + swtpm)
+
+```
+device-mapper: verity: sha256 using "sha256-lib"
+erofs (device dm-0): mounted with root inode @ nid 36
+<<< Welcome to NixOS 26.11.20260708.0bb7ec5 (x86_64) - ttyS0 >>>
+nixos261v login: root (automatic login)
+# in the guest:
+findmnt -no FSTYPE /               → tmpfs           (volatile root)
+dmsetup info --target verity usr   → ACTIVE
+df --output=source /nix/store      → /dev/mapper/usr (store on dm-verity)
+systemctl --version                → systemd 261 (261)
+```
+
+> **Gotcha (cost a build cycle):** at `loglevel=4` the image booted *silently* and
+> the serial stayed blank — it looked identical to a dead VM. The real cause was a
+> stall in the initrd because the appliance initrd lacked the disk/fs drivers to
+> read the verity store. Fix in `verity.nix`:
+> `boot.initrd.availableKernelModules = [ "virtio_pci" "virtio_blk" "virtio_scsi" "erofs" ]`
+> plus `emergencyAccess = true` + a louder console so a future stall is *visible*.
+> A `-kernel`-only probe is misleading here — with no EFI loader info, systemd's
+> GPT-auto disk discovery can't run, so it hangs on by-partuuid device units that
+> the real OVMF boot resolves fine. Diagnose verityStore under **OVMF**, not `-kernel`.
+
+### D.3 — `ConditionSecurity=measured-os` is now MET (Spike-C seam closed)
+
+```
+systemd-analyze condition 'ConditionSecurity=measured-os'   → Conditions succeeded.  (MET)
+tpm2_pcrread sha256:11        → 0x1C10E2D1…            (PCR 11 measured, no longer zero)
+ls …/efivars | grep StubPcrKernelImage   → present    (booted via systemd-stub UKI)
+test -s /run/log/systemd/tpm2-measure.log → present   (stub measurement event log)
+```
+
+Contrast Spike C's plain systemd-boot image: PCR 11 = 0, no stub → not measured.
+The UKI at the removable ESP path is what `systemd-stub` measures into PCR 11.
+
+> **Method note (corrects Spike C):** the authoritative check is
+> `systemd-analyze condition 'ConditionSecurity=measured-os'`. The earlier
+> `systemd-run -p ConditionSecurity=… touch /run/mflag` file-flag trick is
+> **unreliable** (the transient unit's flag didn't propagate even when the
+> condition passed) — don't use it. Spike C's conclusion still holds: that image
+> had PCR 11 = 0 and no systemd-stub, so it is definitively not measured.
+
+### D.4 — `RestrictFileSystemAccess=` is NOT available in nixpkgs' systemd 261 (honest gap)
+
+```
+systemd-analyze verify <unit with RestrictFileSystemAccess=yes>
+  → Unknown key 'RestrictFileSystemAccess' in section [Service], ignoring.
+strings …/systemd/systemd | grep -c RestrictFileSystemAccess   → 0
+grep dm_verity.require_signatures /proc/cmdline                 → (none)
+```
+
+The directive exists in **upstream** systemd 261, but the nixpkgs build shipping in
+`nixos-unstable` (commit `0bb7ec5`, 2026-07-08) does **not** compile it in — the
+symbol is absent from the PID 1 binary, so the key is silently ignored. It also
+requires the kernel booted with `dm_verity.require_signatures=1` + a *signed*
+verity chain (this image uses the roothash-on-cmdline model, trusted via the
+measured UKI, not kernel-keyring signatures). So the "execute only from signed
+dm-verity" enforcement **cannot be demonstrated on this image today**. What IS in
+place is the substrate it builds on: a dm-verity-protected `/usr`/store and BPF-LSM
+(`lsm=…,bpf`). Enforcement is deferred pending the feature in a nixpkgs systemd
+build (or a local systemd override that enables it) + a signed-verity image.
+
+---
+
+## Spikes E–G — not yet run
 
 See [`PLAN.md`](PLAN.md). Measured boot (swtpm PCRs, `ConditionSecurity=measured-os`),
 `RestrictFileSystemAccess=`, the `ConditionFraction=` 3-VM fleet, and TPM2-sealed
