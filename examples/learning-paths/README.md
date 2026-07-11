@@ -31,6 +31,7 @@ These are orthogonal to 00-INDEX's *run-cost* tags, which are carried through un
 | [Chroot → running system: the cross-phase bridges](path-chroot-to-system.md) | 🟡 | ⏱ ~1–2h | Build a root filesystem once (Phase 1), then run the SAME artifact as a bootable VM, a rootless OCI image, and an LXD container. |
 | [Offensive security with Kali, across every substrate](path-kali-security.md) | 🔴 | ⏱ half-day+ | Stand up Kali as a chroot, a VM, a built image, and a PXE install — ending in an agentic LLM that drives real Kali tools. |
 | [OS image factories: two ways to bake a bootable image](path-os-image-factories.md) | 🟡 | ⏱ half-day+ | Bake a whole bootable OS image two fundamentally different ways. First *assemble the rootfs*: a declarative debos recipe (the Debian image builder), then Kali's kali-vm wrapper built on the very same engine. Then *drive the installer*: Kali's retired Packer scripts boot the real installer ISO and script it with a preseed — the opposite mechanism, and the bridge back to the preseed labs. |
+| [Immutable images & fleet rollout: Nix DDIs gated by systemd 261](path-immutable-image-rollout.md) | 🔴 | ⏱ half-day+ | Compose a reproducible immutable Disk Image with Nix, deploy it on-disk via iPXE, and let systemd 261 own the rest: measured boot, execution restriction locked to the verity /nix/store, and a fraction-gated A/B rollout with automatic rollback. |
 
 ## Collections
 
@@ -86,7 +87,7 @@ These are orthogonal to 00-INDEX's *run-cost* tags, which are carried through un
 
 *Firmware, boot, and RAM-only systems — the lowest layers.*
 
-[`linuxboot-uefi-kexec`](../linuxboot-uefi-kexec/) · [`kdump-kexec-lab`](../kdump-kexec-lab/) · [`root-password-reset`](../root-password-reset/) · [`tiny-linux-experiments`](../tiny-linux-experiments/) · [`pxe-boot-mechanics`](../pxe-boot-mechanics/) · [`chroot-netboot-minimal.toml`](../chroot-netboot-minimal.toml)
+[`linuxboot-uefi-kexec`](../linuxboot-uefi-kexec/) · [`kdump-kexec-lab`](../kdump-kexec-lab/) · [`root-password-reset`](../root-password-reset/) · [`tiny-linux-experiments`](../tiny-linux-experiments/) · [`pxe-boot-mechanics`](../pxe-boot-mechanics/) · [`chroot-netboot-minimal.toml`](../chroot-netboot-minimal.toml) · [`nix-systemd-measured-lab`](../nix-systemd-measured-lab/)
 
 ### Multi-arch / TCG
 

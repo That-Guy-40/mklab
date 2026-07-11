@@ -1,0 +1,40 @@
+# Containerfile — Nix-in-a-box for the nix-systemd-measured-lab.
+#
+# Reproduces a working Nix environment so a human can `nix build` the DDI by
+# hand, exactly as ../nix/ intends — the repo's other labs are "any POSIX" or
+# distro-specific; this one is "any Nix", so the base is the official nixos/nix
+# image (not a distro).  See ./RUNBOOK.md for the step-by-step.
+#
+# [YOU-RUN-THIS] — building the image (and everything inside it) hits the
+# toolchain-fetch gate (cache.nixos.org) and needs KVM for the boot steps; the
+# agent authors this clean layer, you run the build.  Drive it through the phase
+# tools:
+#
+#   phase4-podman/lab-podman.sh build --tag nix-measured-handwalk \
+#       --context examples/nix-systemd-measured-lab/hand-walk
+#   podman run --rm -it \
+#       -v "$PWD/examples/nix-systemd-measured-lab/nix":/lab:ro \
+#       nix-measured-handwalk
+#
+# (Building actual DDIs with dm-verity/loop devices inside the container needs
+# --privileged; the RUNBOOK marks which steps require it.)
+
+FROM docker.io/nixos/nix:latest
+
+# Enable flakes + the new nix CLI (the lab's nix/ is a flake).
+RUN mkdir -p /etc/nix && \
+    printf 'experimental-features = nix-command flakes\n' >> /etc/nix/nix.conf
+
+# Tools used while walking the recipe: inspect the built image, its verity, its
+# UKI, and (optionally) boot it.
+RUN nix profile install \
+      nixpkgs#cryptsetup \
+      nixpkgs#util-linux \
+      nixpkgs#qemu \
+      nixpkgs#swtpm \
+    || echo "profile install best-effort — install by hand if this layer is skipped"
+
+# The lab's Nix sources are bind-mounted at /lab (read-only) at run time so you
+# edit them on the host and rebuild in the box.
+WORKDIR /lab
+CMD ["bash"]

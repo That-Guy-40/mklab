@@ -1,0 +1,77 @@
+# Unified Nix + systemd-261 measured-boot deploy lab — one TOML feeds Phase 4
+# (serve) and Phase 2 (the pxe-install target VM).
+#
+# Each phase tool reads only the blocks it owns and ignores the rest:
+#   phase4-podman/lab-podman.sh   reads [[service]] with engine="podman"
+#   phase2-qemu-vm/lab-vm.sh      reads [[vm]]
+#
+# This drives the DEPLOY half (iPXE -> installer UKI -> systemd-repart writes the
+# DDI to local disk slot A -> reboots on-disk).  It runs through the REAL
+# lab-vm.sh because pxe-install + UEFI is first-class supported and needs no TPM.
+#
+# The MEASURED on-disk boot (Pillar 1 needs a vTPM, which lab-vm.sh cannot wire)
+# is a SEPARATE step: after this install completes, boot the disk with
+# ./run-measured-vm.sh (raw QEMU + swtpm).  See ../MANUAL_TESTING.md.
+#
+# Workflow — run in order against this file:
+#
+#   # 1. Build the artifacts with Nix (author-run):
+#   (cd ../nix && nix build .#installer .#ddi-a)
+#   #   -> installer.efi, nixos-measured_1_root.raw, _1_verity.raw, _1.efi
+#   #   copy them into ~/netboot/
+#
+#   # 2. Build the signed iPXE EFI ROM + stage boot.ipxe:
+#   ../ipxe/build-boot-rom.sh --server http://10.0.2.2:8181 --output-dir ~/netboot
+#
+#   # 3. Bring up the rootless nginx artifact server (Phase 4):
+#   phase4-podman/lab-podman.sh up --config examples/nix-systemd-measured-lab/vm/nix-measured-deploy.toml
+#
+#   # 4. Create + start the pxe-install target VM (Phase 2):
+#   phase2-qemu-vm/lab-vm.sh create --config examples/nix-systemd-measured-lab/vm/nix-measured-deploy.toml
+#   phase2-qemu-vm/lab-vm.sh start  nix-measured-install   # installs to slot A, reboots
+#
+#   # 5. Boot the installed disk WITH a measured TPM (Pillar 1):
+#   ../vm/run-measured-vm.sh --disk ~/.local/share/mklab-vm/nix-measured-install/disk.qcow2
+#
+# Tear down:
+#   phase4-podman/lab-podman.sh down    --lab nix-measured
+#   phase2-qemu-vm/lab-vm.sh    destroy nix-measured-install --force
+#
+# Host uses :8181 because :8080 is occupied by SABnzbd.  Update /home/sqs to your
+# $HOME (no shell expansion in TOML).
+
+[lab]
+name        = "nix-measured"
+description = "Nix-composed immutable dm-verity+UKI DDI, iPXE-deployed on-disk to an A/B slot; measured boot + exec-restriction + rollout gating via systemd 261."
+tags        = ["nix", "systemd261", "measured-boot", "dm-verity", "pxe", "on-disk"]
+
+# ─── Phase 4: rootless nginx serving the Nix artifacts ──────────────────────
+# Serves installer.efi + the split DDI raws + UKIs from ~/netboot/ on :8181.
+[[service]]
+name    = "http"
+engine  = "podman"
+image   = "docker.io/library/nginx:alpine"
+ports   = ["8181:80"]
+volumes = ["/home/sqs/netboot:/usr/share/nginx/html:ro"]
+
+# ─── Phase 2: QEMU installer VM (pxe-install + UEFI, no iPXE ROM disk) ───────
+# OVMF network-boots ipxe.efi from slirp TFTP, which runs boot.ipxe -> chain
+# installer.efi.  The installer writes DDI-A to disk slot A and reboots; OVMF
+# then boots the on-disk UKI from the ESP (no iPXE on subsequent boots).
+#   NO secure_boot here so the snakeoil-signed ipxe.efi is accepted without MOK
+#   enrolment; flip it on once you've enrolled the snakeoil cert.
+[[vm]]
+name           = "nix-measured-install"
+backend        = "pxe-install"          # OVMF net-boot -> ipxe.efi -> boot.ipxe
+firmware       = "uefi"                  # UKI + measured boot require UEFI (not BIOS)
+install_target = "8G"                    # blank disk: A/B slots + state laid out by systemd-repart
+mac            = "52:54:00:c0:de:01"     # pinned (stable machine-id derivation)
+arch           = "x86_64"
+memory         = "4096M"                 # installer unpacks the DDI in RAM before writing disk
+cpus           = 2
+cloud_init     = false                   # the installer UKI provisions the disk directly
+pxe_dir        = "/home/sqs/netboot"     # QEMU slirp TFTP root (serves boot.ipxe + ipxe.efi)
+pxe_bootfile   = "ipxe.efi"              # UEFI EFI boot ROM
+
+# Uncomment once the snakeoil cert is enrolled in OVMF's db (Secure Boot):
+# secure_boot = true

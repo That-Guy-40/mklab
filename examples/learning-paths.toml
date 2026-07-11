@@ -470,6 +470,34 @@ goal       = "Bake a whole bootable OS image two fundamentally different ways. F
   checkpoint = "`build-kali-box.sh --validate-only` → `validate: OK`; a full `build-kali-box.sh` bakes `packer_kalirolling_libvirt_amd64.box`; `run-graphical.sh` unpacks the QCOW2 and boots it to a Kali `vagrant` login."
 
 
+[[path]]
+id         = "immutable-image-rollout"
+title      = "Immutable images & fleet rollout: Nix DDIs gated by systemd 261"
+difficulty = "🔴"
+est        = "⏱ half-day+"
+prereqs    = ["zero-touch-provisioning", "os-image-factories"]
+audience   = "you can PXE-install and bake images; now make them immutable, measured, and self-updating"
+goal       = "Compose a reproducible immutable Disk Image with Nix, deploy it on-disk via iPXE, and let systemd 261 own the rest: measured boot, execution restriction locked to the verity /nix/store, and a fraction-gated A/B rollout with automatic rollback."
+  [[path.step]]
+  lab        = "linuxboot-uefi-kexec/"
+  learn      = "recap: a UKI (ukify + systemd-stub) fuses kernel+initrd+cmdline into one signed EFI blob — the unit that both iPXE chainloads and systemd-stub measures."
+  checkpoint = "the UKI tier boots off an ESP under OVMF to a shell (as verified in that lab)."
+  [[path.step]]
+  lab        = "rhel-bootc-minimal/"
+  learn      = "recap: an image IS the OS — build it once, install it to disk, boot the image's own kernel. The image-mode mindset the Nix DDI takes further with dm-verity + measured boot."
+  checkpoint = "serial login shows an image-mode boot (`ostree=`) of the image's own kernel."
+  [[path.step]]
+  lab        = "nix-systemd-measured-lab/"
+  learn      = "Nix owns reproducible image composition (image.repart → dm-verity root + UKI); systemd 261 owns measured boot (ConditionSecurity=measured-os), execution restriction (RestrictFileSystemAccess=/nix/store), and rollout gating (ConditionFraction=/ConditionMachineTag=) — deployed on-disk to A/B slots via systemd-repart, updated by systemd-sysupdate."
+  checkpoint = "the three pillar directives are wired in units/ (host-checkable); then [YOU-RUN-THIS] on a Nix+KVM host: `nix build` yields a byte-reproducible dm-verity DDI, iPXE+systemd-repart write slot A, `journalctl -u measured-os-check` prints `MEASURED-OS: boot measured` with PCR 11 set, an off-`/nix/store` binary is refused exec, the canary fires on only the tagged fraction of a booted fleet, and a bad `ddi-b` boot-counts back to `ddi-a`."
+  verify_cmd    = "grep -q 'ConditionSecurity=measured-os' examples/nix-systemd-measured-lab/units/measured-os-check.service && grep -q 'RestrictFileSystemAccess=/nix/store' examples/nix-systemd-measured-lab/units/verity-exec-restrict.service && grep -Eq 'ConditionFraction=|ConditionMachineTag=' examples/nix-systemd-measured-lab/units/canary-rollout.service && grep -Eq 'backend *= *\"pxe-install\"' examples/nix-systemd-measured-lab/vm/nix-measured-deploy.toml && echo PILLARS-OK"
+  verify_marker = "PILLARS-OK"
+  verify_host   = true
+  [[path.branch]]
+  lab = "linuxboot-uefi-kexec/PLAN-PXEBOOT.md"
+  why = "the System-Transparency / signed-OSPKG angle on the same measured-boot-over-network idea."
+
+
 # ════════════════════════════════════════════════════════════════════════════
 #  COLLECTIONS  (themed, unordered bundles)
 # ════════════════════════════════════════════════════════════════════════════
@@ -542,7 +570,8 @@ id      = "close-to-the-metal"
 title   = "Close to the metal"
 theme   = "Firmware, boot, and RAM-only systems — the lowest layers."
 members = ["linuxboot-uefi-kexec/", "kdump-kexec-lab/", "root-password-reset/",
-           "tiny-linux-experiments/", "pxe-boot-mechanics/", "chroot-netboot-minimal.toml"]
+           "tiny-linux-experiments/", "pxe-boot-mechanics/", "chroot-netboot-minimal.toml",
+           "nix-systemd-measured-lab/"]
 
 [[collection]]
 id      = "multi-arch-tcg"

@@ -1,0 +1,32 @@
+#!ipxe
+# boot.ipxe — served over QEMU slirp TFTP (pxe_dir), run by the NIC's native
+# iPXE ROM.  Unlike the distro-installer labs (which `kernel`+`initrd` a d-i /
+# Anaconda pair), this lab chainloads a single UKI: the Nix-built installer.efi.
+#
+# A UKI is one self-contained EFI blob (kernel + initrd + cmdline + os-release),
+# so there is nothing to `initrd` separately — `chain` is the whole boot.
+#
+# ${server} is rewritten to the real HTTP server at build time by
+# ./build-boot-rom.sh (which drives ../../netboot/build-ipxe.sh).  The QEMU slirp
+# host is 10.0.2.2:8181.
+
+dhcp || goto retry_dhcp
+
+echo
+echo === Nix + systemd 261 measured-boot lab ===========================
+echo Interface : ${netX/mac}
+echo Server    : ${server}
+echo Chainloading installer UKI: ${server}/installer.efi
+echo ===================================================================
+echo
+
+chain ${server}/installer.efi || goto fail
+
+:retry_dhcp
+echo DHCP failed, retrying in 3s...
+sleep 3
+dhcp && chain ${server}/installer.efi
+
+:fail
+echo iPXE chainload failed. Dropping to shell.
+shell

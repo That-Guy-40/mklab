@@ -1,0 +1,24 @@
+# RENDERED REFERENCE COPY — the source of truth is
+# ../nix/pillars/rollout-gating.nix.  This plain-text mirror exists so the
+# systemd-261 directives are grep-able WITHOUT evaluating Nix.  Keep the two in
+# sync by hand; the marker strings are asserted verbatim by ../MANUAL_TESTING.md
+# and the learning-paths verify_cmd (marker: GATE-OK / "CANARY-ACTIVE").
+#
+# PILLAR 3 — rollout gating.  ConditionFraction= and ConditionMachineTag= are
+# both NEW in systemd 261: activate a unit on only a fraction of the fleet, or
+# only on machines tagged in /etc/machine-info — a staged rollout with no central
+# orchestrator, off ONE golden image.
+[Unit]
+Description=Canary unit — activates on only a fraction (or tagged subset) of the fleet
+# NEW in 261: hash(machine-id) selects ~10% of the fleet.
+ConditionFraction=10%
+# NEW in 261: only where /etc/machine-info sets MACHINE_TAGS=canary.
+ConditionMachineTag=canary
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'echo "CANARY-ACTIVE on $(cat /etc/machine-id)"'
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,22 @@
+# RENDERED REFERENCE COPY — the source of truth is
+# ../nix/pillars/measured-boot.nix.  This plain-text mirror exists so the
+# systemd-261 directive is grep-able WITHOUT evaluating Nix (tools/paths.py
+# smoke + link_check.py run with no Nix in CI).  Keep the two in sync by hand;
+# the marker strings below are asserted verbatim by ../MANUAL_TESTING.md and the
+# learning-paths verify_cmd (marker: MEAS-OK / "MEASURED-OS:").
+#
+# PILLAR 1 — measured boot.  ConditionSecurity=measured-os is NEW in systemd 261.
+[Unit]
+Description=Assert this boot was measured into the TPM (PCR 11)
+# NEW in 261: passes only when the system booted with measured-boot semantics
+# (firmware TPM, or the OS-level systemd-tpm2-swtpm.service). Otherwise SKIPPED.
+ConditionSecurity=measured-os
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/run/current-system/sw/bin/systemd-analyze pcrs
+ExecStart=/bin/sh -c 'echo "MEASURED-OS: boot measured, PCR11=$(tpm2_pcrread sha256:11 2>/dev/null || echo present)"'
+
+[Install]
+WantedBy=multi-user.target

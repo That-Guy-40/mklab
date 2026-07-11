@@ -1,0 +1,28 @@
+# RENDERED REFERENCE COPY — the source of truth is
+# ../nix/pillars/exec-restriction.nix.  This plain-text mirror exists so the
+# systemd-261 directive is grep-able WITHOUT evaluating Nix.  Keep the two in
+# sync by hand; the marker strings are asserted verbatim by ../MANUAL_TESTING.md
+# and the learning-paths verify_cmd (marker: RFA-OK / "EXEC-RESTRICT:").
+#
+# PILLAR 2 — execution restriction.  RestrictFileSystemAccess= is NEW in systemd
+# 261: a BPF-LSM that permits execve() ONLY from the listed signed/verified
+# dm-verity filesystem.  This is THE seam tying Nix's verity /nix/store to
+# systemd enforcement.
+[Unit]
+Description=Workload allowed to exec ONLY from the signed verity /nix/store
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# NEW in 261 — the whole point of Pillar 2:
+RestrictFileSystemAccess=/nix/store
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+# 1) an on-store binary runs; 2) a rogue binary copied off-store is refused exec.
+ExecStart=/run/current-system/sw/bin/hello
+ExecStart=/bin/sh -c 'cp /bin/true /tmp/rogue && chmod +x /tmp/rogue; if /tmp/rogue 2>/dev/null; then echo "EXEC-RESTRICT: FAIL off-store exec was ALLOWED"; exit 1; fi; echo "EXEC-RESTRICT: off-store exec denied rc=$?"'
+
+[Install]
+WantedBy=multi-user.target
