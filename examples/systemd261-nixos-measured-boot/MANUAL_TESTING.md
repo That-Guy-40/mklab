@@ -1,0 +1,75 @@
+# MANUAL_TESTING — systemd-261 measured-boot NixOS lab
+
+Verification log, spike by spike. Host: this repo's COLD_STORAGE host (rootless
+podman + KVM). Each spike records the exact commands and the **captured** success
+signature. See [`PLAN.md`](PLAN.md) for the roadmap and what's still ahead.
+
+---
+
+## Spike B — a Nix-built NixOS UEFI image boots under OVMF (✅ VERIFIED 2026-07-11)
+
+### B.0 — systemd 261 is obtainable, no overlay needed
+
+```
+$ nix eval --raw github:NixOS/nixpkgs/nixos-26.05#systemd.version      → 260.2
+$ nix eval --raw github:NixOS/nixpkgs/nixos-unstable#systemd.version   → 261
+```
+
+**Signature:** stable is 260.2; **`nixos-unstable` ships systemd 261**. The flake
+pins `nixos-unstable` — no custom systemd overlay required. `flake.lock` pins the
+exact commit (`0bb7ec5`, 2026-07-08).
+
+### B.1 — the image builds (inside nix-build-box, KVM-assisted)
+
+```
+$ ./build-nixos-image.sh
+--- systemd version baked into this image ---
+261
+… nixos-disk-image> Number  Start   End     Size    File system  Name   Flags
+              1      8389kB  269MB   261MB   fat32   ESP    boot, esp
+              2      269MB   4622MB  4353MB  ext4    primary
+PASS: image built → out/nixos261.qcow2        # 2.2 GB qcow2
+```
+
+The build closure contains `…-systemd-261`, `…-systemd-minimal-261` (grep of the
+build log). Kernel params baked in include **`lsm=landlock,yama,bpf`** — BPF-LSM is
+on, which Spike D's `RestrictFileSystemAccess=` needs.
+
+### B.2 — it boots under OVMF to systemd 261 (via lab-vm.sh)
+
+```
+$ phase2-qemu-vm/lab-vm.sh create --config examples/systemd261-nixos-measured-boot/vm-nixos261-uefi.toml
+$ phase2-qemu-vm/lab-vm.sh start  nixos261        # OVMF (OVMF_CODE_4M.fd) + KVM
+# drive the serial socket:
+BdsDxe: starting Boot0001 "UEFI Misc Device" …
+<<< Welcome to NixOS 26.11.20260708.0bb7ec5 (x86_64) - ttyS0 >>>
+nixos261 login: root (automatic login)
+root@nixos261:~]# grep PRETTY_NAME /etc/os-release; systemctl --version | head -1; uname -sr
+PRETTY_NAME="NixOS 26.11 (Zokor)"
+systemd 261 (261)
+Linux 6.18.38
+```
+
+**Signature:** genuine OVMF (`BdsDxe: starting Boot0001`) launches the Nix-built
+image to an autologin root shell on `ttyS0`; the running system reports **systemd
+261**, kernel 6.18.38.
+
+> **Gotchas found (both fixed / noted):**
+> 1. `boot.loader.timeout` — the `qcow-efi` format already pins it to `0`; also
+>    setting it → *"conflicting definition values"*. Don't redefine it.
+> 2. **Serial-socket capture race.** `lab-vm.sh` wires the serial as a
+>    `socket,server=on,wait=off` chardev, which **drops output produced before a
+>    client connects**. KVM boot is fast and the autologin shell then sits idle
+>    (emits nothing), so a naive reader that *waits to see a prompt* captures zero
+>    bytes and looks like a dead VM. The image is fine — you must **drive** the
+>    idle shell (send a command; read the reply), or capture from `t=0` with a
+>    private `qemu … -serial file:` boot (how B.2's boot log above was obtained).
+
+---
+
+## Spikes C–G — not yet run
+
+See [`PLAN.md`](PLAN.md). Measured boot (swtpm PCRs, `ConditionSecurity=measured-os`),
+`RestrictFileSystemAccess=`, the `ConditionFraction=` 3-VM fleet, and TPM2-sealed
+LUKS + attestation land here as they are built — each with its captured signature
+and the honest swtpm-is-not-a-trust-anchor caveat.

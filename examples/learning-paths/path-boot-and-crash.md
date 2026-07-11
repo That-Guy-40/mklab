@@ -15,6 +15,10 @@
 | 3 | [`kdump-kexec-lab`](../kdump-kexec-lab/) | arm kdump, force a panic, let the kexec capture kernel save a vmcore, then read it in `crash`. | `echo c > /proc/sysrq-trigger` yields a ~42 MB vmcore in `/var/crash`; `crash` `sym` resolves the panic to `test-module.c:8`. |
 | 4 | [`linuxboot-uefi-kexec`](../linuxboot-uefi-kexec/) | firmware is just software: u-root as the firmware's `init`, which `kexec`s the real OS. | two 'Welcome to u-root!' banners + a `[0.000000]` clock reset (Tier C fast-loop → Tier B UKI on OVMF → Tier A coreboot ROM); the System-Transparency capstone boots ONLY a signed OSPKG and refuses a rogue one. |
 
+### Optional side-quests
+
+- [`systemd261-nixos-measured-boot`](../systemd261-nixos-measured-boot/) — boot *integrity* rather than boot *recovery*: a Nix-built NixOS on **systemd 261** measured into a (soft)TPM, execution restricted to a signed dm-verity FS (`RestrictFileSystemAccess=`), deployed on-disk over iPXE, with staged rollout by machine-ID (`ConditionFraction=`). **WIP** — Spike B (the systemd-261 image boots under OVMF) is verified; see its PLAN.md.
+
 ---
 
 ← back to the [learning-paths hub](README.md) · reference catalog: [`00-INDEX.md`](../00-INDEX.md)
