@@ -247,6 +247,9 @@ goal       = "Own every stage from firmware to a captured kernel panic: interrup
   lab        = "linuxboot-uefi-kexec/"
   learn      = "firmware is just software: u-root as the firmware's `init`, which `kexec`s the real OS."
   checkpoint = "two 'Welcome to u-root!' banners + a `[0.000000]` clock reset (Tier C fast-loop → Tier B UKI on OVMF → Tier A coreboot ROM); the System-Transparency capstone boots ONLY a signed OSPKG and refuses a rogue one."
+  [[path.branch]]
+  lab = "systemd261-nixos-measured-boot/"
+  why = "boot *integrity* rather than boot *recovery*: a Nix-built NixOS on **systemd 261** measured into a (soft)TPM, execution restricted to a signed dm-verity FS (`RestrictFileSystemAccess=`), deployed on-disk over iPXE, with staged rollout by machine-ID (`ConditionFraction=`). **WIP** — Spike B (the systemd-261 image boots under OVMF) is verified; see its PLAN.md."
 
 [[path]]
 id         = "netboot-pipeline"
@@ -468,6 +471,9 @@ goal       = "Bake a whole bootable OS image two fundamentally different ways. F
   tags       = ["🔒"]
   learn      = "The OPPOSITE mechanism: Kali's retired Packer scripts don't assemble a rootfs — they boot the real installer ISO, type a `boot_command` over VNC that points d-i at a preseed served over HTTP, run the unattended install, then SSH in to provision and package a Vagrant `.box`. Packer automates the human install; debos skips it. This is also the bridge back to the preseed labs — `http/preseed.cfg` is just a d-i preseed, delivered differently."
   checkpoint = "`build-kali-box.sh --validate-only` → `validate: OK`; a full `build-kali-box.sh` bakes `packer_kalirolling_libvirt_amd64.box`; `run-graphical.sh` unpacks the QCOW2 and boots it to a Kali `vagrant` login."
+  [[path.branch]]
+  lab = "nix-build-box/"
+  why = "a third substrate — Nix. A reusable, pinned, flakes-enabled `nix` in a rootless container; the forthcoming systemd-261 NixOS image factory bakes its dm-verity/UKI image *inside* this box. Verified end-to-end here (`nix build .#hello` → `Hello, world!`)."
 
 
 # ════════════════════════════════════════════════════════════════════════════

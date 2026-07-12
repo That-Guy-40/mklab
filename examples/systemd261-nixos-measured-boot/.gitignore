@@ -1,0 +1,5 @@
+# Build outputs — never commit the multi-GB image or Nix result symlinks.
+out/
+*.qcow2
+image/result
+result

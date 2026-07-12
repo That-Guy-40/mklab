@@ -1,0 +1,27 @@
+# examples/systemd261-nixos-measured-boot/vm-nixos261-uefi.toml
+#
+# Spike B boot spec: boot the Nix-built NixOS image under OVMF/UEFI via lab-vm.sh
+# and gate success on a serial login banner (`nixos261 login:`).
+#
+#   ./build-nixos-image.sh                                  # → out/nixos261.qcow2
+#   phase2-qemu-vm/lab-vm.sh create --config examples/systemd261-nixos-measured-boot/vm-nixos261-uefi.toml
+#   phase2-qemu-vm/lab-vm.sh start  nixos261
+#   phase2-qemu-vm/lab-vm.sh console nixos261                # expect 'nixos261 login:' (autologin root)
+#
+# PATH CAVEAT: `image` is used as the qcow2 BACKING file, so it must be an
+# ABSOLUTE path (a relative one would be resolved against the overlay's own dir
+# and break). It is written literally for this host — adjust if your checkout
+# lives elsewhere. (Same convention as podman-netboot-server.toml's /home/sqs.)
+
+[[vm]]
+name       = "nixos261"
+backend    = "disk-image"
+image      = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/examples/systemd261-nixos-measured-boot/out/nixos261.qcow2"
+firmware   = "uefi"            # OVMF two-file pflash (lab-vm.sh default); UKI/systemd-boot needs UEFI
+arch       = "x86_64"
+memory     = "2G"
+cpus       = 2
+cloud_init = false            # NixOS image is not cloud-init driven; login via serial autologin
+ssh_port   = 0                # auto-allocate from 2222 (root/root over the forward)
+tpm        = true             # swtpm software TPM 2.0 (Spike C) — measured boot / PCRs.
+                              # HONEST: swtpm is plumbing, NOT a trust anchor (see README/PLAN).

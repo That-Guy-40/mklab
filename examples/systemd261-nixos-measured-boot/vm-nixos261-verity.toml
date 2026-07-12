@@ -1,0 +1,26 @@
+# examples/systemd261-nixos-measured-boot/vm-nixos261-verity.toml
+#
+# Spike D boot spec: boot the dm-verity + UKI golden image under OVMF + swtpm.
+# The UKI at \EFI\BOOT\BOOTX64.EFI is launched directly by OVMF and measured by
+# systemd-stub into PCR 11 → `ConditionSecurity=measured-os` becomes MET.
+#
+#   ./build-nixos-image.sh --verity                          # → out/nixos261-verity.qcow2
+#   phase2-qemu-vm/lab-vm.sh create --config examples/systemd261-nixos-measured-boot/vm-nixos261-verity.toml
+#   phase2-qemu-vm/lab-vm.sh start  nixos261v
+#   phase2-qemu-vm/lab-vm.sh console nixos261v               # autologin root
+#
+# PATH CAVEAT: `image` is the qcow2 BACKING file → must be ABSOLUTE (written for
+# this host; adjust for your checkout).
+
+[[vm]]
+name       = "nixos261v"
+backend    = "disk-image"
+image      = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/examples/systemd261-nixos-measured-boot/out/nixos261-verity.qcow2"
+firmware   = "uefi"           # OVMF; the UKI sits at the removable ESP path
+arch       = "x86_64"
+memory     = "2G"
+cpus       = 2
+cloud_init = false            # UKI/verity image; serial autologin
+ssh_port   = 0
+tpm        = true             # swtpm 2.0 — systemd-stub measures the UKI into PCR 11
+                              # HONEST: swtpm is plumbing, NOT a trust anchor.

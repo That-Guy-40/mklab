@@ -309,6 +309,10 @@ vm_serial()   { printf '%s/serial.sock'    "$(vm_dir "$1")"; }
 vm_qmp()      { printf '%s/qmp.sock'       "$(vm_dir "$1")"; }
 vm_manifest() { printf '%s/manifest.toml'  "$(vm_dir "$1")"; }
 vm_log()      { printf '%s/qemu.log'       "$(vm_dir "$1")"; }
+# swtpm (software TPM 2.0) sidecar, per-VM (only when the spec sets tpm = true).
+vm_swtpm_sock()  { printf '%s/swtpm.sock'  "$(vm_dir "$1")"; }
+vm_swtpm_pid()   { printf '%s/swtpm.pid'   "$(vm_dir "$1")"; }
+vm_swtpm_state() { printf '%s/tpm'         "$(vm_dir "$1")"; }
 
 # _mf_clean VALUE — sanitize a free-text manifest field.  Review M4: strip CR/LF
 # FIRST — the prior code escaped only `"`, so a NEWLINE in e.g. MF_APPEND (via
@@ -367,6 +371,7 @@ ssh_user    = "${_suser}"
 cores       = ${MF_CORES:-0}
 secure_boot = "${MF_SECURE_BOOT:-false}"
 firmware    = "${MF_FIRMWARE:-uefi}"
+tpm         = "${MF_TPM:-false}"
 pxe_dir     = "${_pxedir}"
 pxe_bootfile = "${_pxebf}"
 threads     = ${MF_THREADS:-0}
@@ -1712,6 +1717,7 @@ specs_from_config() {
             refresh_image: (.refresh_image // false),
             secure_boot:   (.secure_boot   // false),
             firmware:      (.firmware      // "uefi"),
+            tpm:           (.tpm           // false),
             pxe_dir:       (.pxe_dir       // ""),
             pxe_bootfile:  (.pxe_bootfile  // "ipxe.efi"),
             cores:     (.cores     // 0),
@@ -2035,6 +2041,62 @@ pick_ssh_port() {
 }
 
 # ─── QEMU command construction ─────────────────────────────────────────────
+# ─── swtpm (software TPM 2.0) sidecar ──────────────────────────────────────
+# A per-VM swtpm process emulates a TPM 2.0 that QEMU drives over a control
+# socket, enabling measured boot (systemd measures the UKI/boot chain into PCRs)
+# and TPM2-sealed secrets in the guest.  It MUST be started before QEMU (QEMU
+# connects to the socket at launch) and reaped BY PID afterwards — never by a
+# name/path pattern, which could also match the QEMU cmdline (see CLAUDE.md).
+#
+# HONEST FRAMING: swtpm is a *software* TPM. It faithfully exercises the
+# measured-boot plumbing but is NOT a trust anchor — anything that can read its
+# userspace can forge PCR state. Real assurance needs a hardware TPM, a
+# hypervisor-backed vTPM rooted in host hardware, or confidential computing.
+start_swtpm() {
+    local name="$1"
+    local state; state="$(vm_swtpm_state "$name")"
+    local sock;  sock="$(vm_swtpm_sock "$name")"
+    local pidf;  pidf="$(vm_swtpm_pid "$name")"
+    # Already alive?  Reuse it (idempotent start).
+    if [[ -r "$pidf" ]] && kill -0 "$(cat "$pidf" 2>/dev/null)" 2>/dev/null; then
+        log_debug "swtpm already running for $name"
+        return 0
+    fi
+    mkdir -p "$state"
+    rm -f "$sock" "$pidf"            # clear stale socket/pidfile from a dead run
+    log_info "starting swtpm (software TPM 2.0) for $name"
+    swtpm socket \
+        --tpmstate "dir=$state" \
+        --ctrl "type=unixio,path=$sock" \
+        --tpm2 \
+        --pid "file=$pidf" \
+        --daemon \
+        || die "swtpm failed to start for $name (is 'swtpm' installed?)"
+    # QEMU connects to the ctrl socket at launch; wait for it to appear.
+    local i
+    for i in $(seq 1 20); do
+        [[ -S "$sock" ]] && return 0
+        sleep 0.1
+    done
+    die "swtpm control socket never appeared for $name"
+}
+
+# Reap the swtpm sidecar by its recorded PID (never by pattern).  swtpm in
+# socket+daemon mode outlives its QEMU client, so this is called from BOTH
+# cmd_stop and cmd_destroy.
+stop_swtpm() {
+    local name="$1"
+    local pidf; pidf="$(vm_swtpm_pid "$name")"
+    if [[ -r "$pidf" ]]; then
+        local pid; pid="$(cat "$pidf" 2>/dev/null || true)"
+        if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+            log_info "reaping swtpm (pid $pid) for $name"
+            kill -TERM "$pid" 2>/dev/null || true
+        fi
+    fi
+    rm -f "$pidf" "$(vm_swtpm_sock "$name")"
+}
+
 build_qemu_argv() {
     # Builds the QEMU argv into the QEMU_ARGV global array.
     # Inputs (via globals): name, arch, microvm, accel, memory, cpus, disk,
@@ -2141,6 +2203,20 @@ build_qemu_argv() {
                 ;;
         esac
         fi
+    fi
+
+    # Software TPM 2.0 — the swtpm sidecar (started by cmd_start) is attached
+    # here.  CRB interface on x86_64, TIS on aarch64.  `tpm` is a caller local
+    # (cmd_start), visible via bash dynamic scope like firmware/secure_boot.
+    if [[ "${tpm:-false}" == "true" ]]; then
+        QEMU_ARGV+=(
+            -chardev "socket,id=chrtpm,path=$(vm_swtpm_sock "$name")"
+            -tpmdev  "emulator,id=tpm0,chardev=chrtpm"
+        )
+        case "$arch" in
+            aarch64) QEMU_ARGV+=(-device "tpm-tis-device,tpmdev=tpm0") ;;
+            *)       QEMU_ARGV+=(-device "tpm-crb,tpmdev=tpm0") ;;
+        esac
     fi
 
     # Direct kernel boot (kernel+initrd backend, OR microvm with cloud image
@@ -2358,8 +2434,9 @@ create_one() {
     ssh_user="lab"  # default for cloud-init VMs
 
     # v0.2 knobs: cpu topology/pinning, network mode, image refresh.
-    local cores threads cpu_pin network_mode bridge tap refresh_image secure_boot fw_mode pxe_dir pxe_bootfile
+    local cores threads cpu_pin network_mode bridge tap refresh_image secure_boot fw_mode pxe_dir pxe_bootfile tpm
     cores="$(spec_get "$spec" cores)";     [[ -z "$cores"   ]] && cores=0
+    tpm="$(spec_get "$spec" tpm)";         [[ -z "$tpm"     ]] && tpm=false
     threads="$(spec_get "$spec" threads)"; [[ -z "$threads" ]] && threads=0
     cpu_pin="$(spec_get "$spec" cpu_pin)"
     network_mode="$(spec_get "$spec" network_mode)"; [[ -z "$network_mode" ]] && network_mode=user
@@ -2525,7 +2602,7 @@ create_one() {
     MF_SSH_USER="$ssh_user" MF_LAB="$lab_name" \
     MF_CORES="$cores" MF_THREADS="$threads" MF_CPU_PIN="$cpu_pin" \
     MF_NETWORK_MODE="$network_mode" MF_BRIDGE="$bridge" MF_TAP="$tap" \
-    MF_SECURE_BOOT="$secure_boot" MF_FIRMWARE="$fw_mode" \
+    MF_SECURE_BOOT="$secure_boot" MF_FIRMWARE="$fw_mode" MF_TPM="$tpm" \
     MF_PXE_DIR="$pxe_dir" MF_PXE_BOOTFILE="$pxe_bootfile" \
     write_vm_manifest "$name"
     [[ -n "$lab_name" ]] && log_info "lab: $lab_name"
@@ -2597,7 +2674,7 @@ cmd_start() {
     # Reload manifest into globals expected by build_qemu_argv.
     local arch microvm accel memory cpus ssh_port disk seed kernel initrd append firmware
     local install_target mac
-    local cores threads cpu_pin network_mode bridge tap secure_boot fw_mode pxe_dir pxe_bootfile
+    local cores threads cpu_pin network_mode bridge tap secure_boot fw_mode pxe_dir pxe_bootfile tpm
     arch="$(read_manifest_field "$name" arch)"
     microvm="$(read_manifest_field "$name" microvm)"
     accel="$(read_manifest_field "$name" accel)"
@@ -2614,6 +2691,8 @@ cmd_start() {
     # v0.2 fields (empty on manifests written before this version → safe defaults).
     cores="$(read_manifest_field "$name" cores 2>/dev/null || true)"
     secure_boot="$(read_manifest_field "$name" secure_boot 2>/dev/null || true)"
+    # swtpm (empty on manifests written before this version → tpm disabled).
+    tpm="$(read_manifest_field "$name" tpm 2>/dev/null || true)"; [[ -z "$tpm" ]] && tpm=false
     # firmware mode (empty on manifests written before this version → uefi default).
     fw_mode="$(read_manifest_field "$name" firmware 2>/dev/null || true)"; [[ -z "$fw_mode" ]] && fw_mode=uefi
     pxe_dir="$(read_manifest_field "$name" pxe_dir 2>/dev/null || true)"
@@ -2628,6 +2707,14 @@ cmd_start() {
 
     # Clean up any stale unix sockets from a previous run.
     rm -f "$(vm_serial "$name")" "$(vm_monitor "$name")" "$(vm_qmp "$name")"
+
+    # Bring up the software-TPM sidecar BEFORE QEMU if this VM asked for one
+    # (QEMU connects to its control socket at launch).  Only VMs with tpm = true
+    # depend on swtpm — it is never a hard requirement for ordinary VMs.
+    if [[ "${tpm:-false}" == "true" ]]; then
+        require_cmd swtpm
+        start_swtpm "$name"
+    fi
 
     build_qemu_argv
 
@@ -2682,6 +2769,7 @@ cmd_stop() {
     vm_exists "$name" || die "no VM named '$name'"
     if ! vm_running "$name"; then
         log_info "$name not running"
+        stop_swtpm "$name"        # reap a swtpm that outlived a dead QEMU
         return 0
     fi
     local pid; pid="$(cat "$(vm_pidfile "$name")")"
@@ -2700,13 +2788,14 @@ cmd_stop() {
     # Wait up to 30s for the process to exit
     local i
     for i in $(seq 1 30); do
-        [[ -d "/proc/$pid" ]] || { log_info "$name stopped"; return 0; }
+        [[ -d "/proc/$pid" ]] || { stop_swtpm "$name"; log_info "$name stopped"; return 0; }
         sleep 1
     done
     log_warn "$name did not stop within 30s; sending SIGKILL"
     kill -KILL "$pid" 2>/dev/null || true
     sleep 1
     [[ ! -d "/proc/$pid" ]] || die "could not stop $name"
+    stop_swtpm "$name"
     log_info "$name stopped (SIGKILL)"
 }
 
@@ -2798,6 +2887,7 @@ cmd_destroy() {
         log_info "$name is running; stopping first"
         OPT_FORCE=1 cmd_stop
     fi
+    stop_swtpm "$name"   # reap a swtpm sidecar that outlived a stopped QEMU
 
     if [[ -z "${OPT_FORCE:-}" ]]; then
         printf 'About to destroy VM:\n  name: %s\n  dir : %s\nProceed? [y/N] ' \

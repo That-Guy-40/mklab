@@ -185,6 +185,19 @@ The script logs the decision and the reason ("no /dev/kvm", "guest != host", etc
 
 Per-VM UEFI variable storage (writable copy of `OVMF_VARS.fd` / `AAVMF_VARS.fd`) lives at `<vm-dir>/vars.fd` so that grub/efibootmgr changes survive across boots.
 
+## Emulated TPM (`tpm = true`)
+
+Set `tpm = true` on a `[[vm]]` to attach an emulated **TPM 2.0** (via
+[`swtpm`](https://github.com/stefanberger/swtpm)) — for measured boot, PCR reads,
+and TPM2-sealed secrets. A per-VM `swtpm` sidecar (state under `<vm-dir>/tpm`,
+control socket `<vm-dir>/swtpm.sock`) is started before QEMU and reaped by PID on
+`stop`/`destroy`. The device is `tpm-crb` on x86_64, `tpm-tis-device` on aarch64.
+Requires the `swtpm` package; opt-in, so ordinary VMs are unaffected.
+
+> A software TPM is **plumbing, not a trust anchor** — anything that can read its
+> userspace can forge PCR state. Use it to develop/test attestation flows, not as
+> production assurance (that needs a hardware TPM or a hypervisor-backed vTPM).
+
 ## Lifecycle
 
 - `create` provisions but does **not** start the VM. Run `start` to boot.

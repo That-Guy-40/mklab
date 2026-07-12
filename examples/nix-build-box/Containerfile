@@ -1,0 +1,58 @@
+# examples/nix-build-box/Containerfile — a reusable, pinned, flakes-enabled Nix
+# build environment as a rootless OCI container.
+#
+#   What it is  : the mklab repo's FIRST Nix lab. A disposable box that gives you
+#                 a working `nix` with flakes + the `nix-command` CLI, on a HOST
+#                 THAT HAS NO NIX INSTALLED (this repo's host runs podman/incus,
+#                 not NixOS). Build Nix things here; throw the box away after.
+#   Why it lives: later spikes of the systemd-261 measured-boot lab
+#     apart      (../systemd261-nixos-measured-boot/) build NixOS *disk images*
+#                 with `nix build`. Rather than bolt Nix onto every one of those,
+#                 the build environment is factored out here as its own reusable
+#                 unit — import it, don't reinvent it.
+#   How to run  : through the Phase-4 podman driver, same as every other lab box:
+#
+#     # one-shot build of the image:
+#     phase4-podman/lab-podman.sh build --tag nix-build-box \
+#         --backend build --context examples/nix-build-box
+#
+#     # interactive shell in it (a build box is used by hand):
+#     podman run --rm -it -v "$PWD:/work:Z" -w /work nix-build-box
+#
+#   or declaratively via the shipped spec:
+#     phase4-podman/lab-podman.sh up --config examples/nix-build-box/nix-build-box.toml
+#
+# AUTHOR-RUN NOTE: `podman build` PULLS the upstream `nixos/nix` image and the
+# smoke test runs `nix build`, which fetches+executes prebuilt substituter
+# binaries from cache.nixos.org. That is exactly the "fetch+exec of a prebuilt
+# toolchain" the repo's agent Bash runner gates (see ../../CLAUDE.md). So the
+# BUILD and the SMOKE TEST are run by YOU; this Containerfile is the clean,
+# inspectable layer the agent authors. See MANUAL_TESTING.md for the exact
+# commands + expected output.
+
+# Pin the Nix release. Override at build time with `--build-arg NIX_TAG=…`.
+# For byte-stable rebuilds, replace the tag with a digest once you have pulled it:
+#   podman image inspect nixos/nix:2.31.2 --format '{{index .RepoDigests 0}}'
+#   → FROM nixos/nix@sha256:…
+ARG NIX_TAG=2.31.2
+FROM docker.io/nixos/nix:${NIX_TAG}
+
+# Flakes + the new-style CLI are still "experimental" gates in Nix; every command
+# in this repo's Nix labs uses them, so turn them on image-wide rather than
+# passing --extra-experimental-features on every invocation.
+RUN mkdir -p /etc/nix \
+ && printf 'experimental-features = nix-command flakes\n' >> /etc/nix/nix.conf \
+ && printf 'sandbox = relaxed\n' >> /etc/nix/nix.conf
+
+# git is a hard dependency of flakes (Nix evaluates a flake through a git tree).
+# The `nixos/nix` base image ALREADY ships git-minimal in its profile, so we do
+# NOT reinstall it — doing so collides on git-core helpers and aborts the profile
+# op. We just prove it is present at build time (fail loudly if a future base
+# ever drops it, rather than discovering it at first `nix build`).
+RUN git --version
+
+# A place to bind-mount your flake / this repo.
+WORKDIR /work
+
+# Interactive by default — this is a build box you type in.
+CMD ["/bin/sh"]

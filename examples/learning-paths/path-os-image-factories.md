@@ -14,6 +14,10 @@
 | 2 | [`kali-vm-builder`](../kali-vm-builder/) 🔒 | Kali's official `kali-vm` is a thin wrapper around the SAME debos engine, producing the image you'd otherwise download — now the wrapper reads clearly, because you saw the machinery underneath. | `build-kali-vm.sh --headless` builds a QCOW2; `run-graphical.sh` boots it to a Kali login. |
 | 3 | [`kali-packer-vagrant`](../kali-packer-vagrant/) 🔒 | The OPPOSITE mechanism: Kali's retired Packer scripts don't assemble a rootfs — they boot the real installer ISO, type a `boot_command` over VNC that points d-i at a preseed served over HTTP, run the unattended install, then SSH in to provision and package a Vagrant `.box`. Packer automates the human install; debos skips it. This is also the bridge back to the preseed labs — `http/preseed.cfg` is just a d-i preseed, delivered differently. | `build-kali-box.sh --validate-only` → `validate: OK`; a full `build-kali-box.sh` bakes `packer_kalirolling_libvirt_amd64.box`; `run-graphical.sh` unpacks the QCOW2 and boots it to a Kali `vagrant` login. |
 
+### Optional side-quests
+
+- [`nix-build-box`](../nix-build-box/) — a third substrate — Nix. A reusable, pinned, flakes-enabled `nix` in a rootless container; the forthcoming systemd-261 NixOS image factory bakes its dm-verity/UKI image *inside* this box. Verified end-to-end here (`nix build .#hello` → `Hello, world!`).
+
 ---
 
 ← back to the [learning-paths hub](README.md) · reference catalog: [`00-INDEX.md`](../00-INDEX.md)
