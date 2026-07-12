@@ -1,0 +1,41 @@
+# examples/systemd261-nixos-measured-boot/nixos-pxe-install.toml
+#
+# Spike E, Tier A — iPXE → install NixOS to local disk. A UNIFIED lab: the nginx
+# [[service]] (Phase-4 podman) serves the netboot artifacts on :8181; the
+# [[vm]] (Phase-2, backend=pxe-install) network-boots the NixOS installer over
+# QEMU slirp, which auto-installs the target onto /dev/vda and reboots into it.
+# Each phase tool reads only the blocks it owns.
+#
+#   examples/systemd261-nixos-measured-boot/stage-netboot.sh          # build+stage artifacts
+#   phase4-podman/lab-podman.sh up --config examples/systemd261-nixos-measured-boot/nixos-pxe-install.toml
+#   phase2-qemu-vm/lab-vm.sh create --config examples/systemd261-nixos-measured-boot/nixos-pxe-install.toml
+#   phase2-qemu-vm/lab-vm.sh start  nixos261-pxe
+#   phase2-qemu-vm/lab-vm.sh console nixos261-pxe    # watch install → reboot → nixos261disk login
+#
+# PATH CAVEAT: the nginx volume path is literal (TOML has no shell expansion) —
+# adjust /home/sqs if your $HOME differs.
+
+[lab]
+name        = "nixos261-pxe"
+description = "iPXE → install NixOS (systemd 261) onto local disk (Spike E, Tier A)"
+tags        = ["nixos", "pxe", "netboot", "install", "systemd261"]
+
+[[service]]
+name    = "http"
+engine  = "podman"
+image   = "docker.io/library/nginx:alpine"
+ports   = ["8181:80"]
+volumes = ["/home/sqs/netboot:/usr/share/nginx/html:ro"]
+
+[[vm]]
+name           = "nixos261-pxe"
+backend        = "pxe-install"
+firmware       = "bios"                 # SeaBIOS + QEMU's native iPXE NIC ROM runs nixos-boot.ipxe
+install_target = "20G"                  # blank disk (bootindex=0): install dest + post-install boot
+mac            = "52:54:00:26:11:05"
+arch           = "x86_64"
+memory         = "4096M"                # the netboot initrd (~590 MB store squashfs) loads into RAM
+cpus           = 2
+cloud_init     = false
+pxe_dir        = "/home/sqs/netboot"
+pxe_bootfile   = "nixos-boot.ipxe"

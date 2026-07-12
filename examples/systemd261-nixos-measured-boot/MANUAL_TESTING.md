@@ -205,7 +205,72 @@ build (or a local systemd override that enables it) + a signed-verity image.
 
 ---
 
-## Spikes E–G — not yet run
+## Spike E, Tier A — iPXE → install NixOS to local disk (✅ VERIFIED 2026-07-11)
+
+A real unattended NixOS install over the repo's `pxe-install` backend — the NixOS
+analogue of the kickstart/preseed labs. `stage-netboot.sh` builds a **NixOS netboot
+installer** (`image/installer.nix`) that auto-partitions `/dev/vda` and runs
+`nixos-install`, laying down the target (`image/target.nix`, a BIOS/GRUB minimal
+NixOS on systemd 261). **Offline + fast:** the target closure is baked into the
+installer initrd (`system.extraDependencies`), so the install is a local store
+copy, not a `cache.nixos.org` download.
+
+### E.1 — stage + serve
+
+```
+$ ./stage-netboot.sh
+PASS: staged → ~/netboot/nixos/{bzImage(13M),initrd(563M)} + ~/netboot/nixos-boot.ipxe
+$ phase4-podman/lab-podman.sh up --config …/nixos-pxe-install.toml   # nginx :8181
+$ curl -sI http://localhost:8181/nixos/bzImage | head -1            → HTTP/1.1 200 OK
+```
+
+`nixos-boot.ipxe` (hand-written; BIOS → QEMU's native iPXE NIC ROM runs it) mirrors
+NixOS's generated netboot cmdline **plus `ip=dhcp`** — the slirp DHCP lease iPXE
+gets is not inherited by the booted kernel:
+
+```
+kernel http://10.0.2.2:8181/nixos/bzImage init=…/init initrd=initrd \
+       console=ttyS0,115200 console=tty0 nohibernate root=fstab loglevel=4 \
+       lsm=landlock,yama,bpf ip=dhcp
+initrd http://10.0.2.2:8181/nixos/initrd
+```
+
+### E.2 — install + boot the installed disk (via lab-vm.sh)
+
+```
+$ phase2-qemu-vm/lab-vm.sh create --config …/nixos-pxe-install.toml
+$ phase2-qemu-vm/lab-vm.sh start  nixos261-pxe
+# serial, chronologically:
+SeaBIOS: Boot failed: not a bootable disk      → falls through to the NIC iPXE ROM
+<<< Welcome to NixOS kexec-… - ttyS0 >>>       → the netboot installer
+(journal) === SPIKE-E: partitioning /dev/vda ===   (vda1=2M bios_grub, vda2=20G ext4 "nixos")
+(journal) === SPIKE-E: installing the (pre-built, local) target system ===
+GNU GRUB version 2.12                          → after reboot, SeaBIOS boots vda → GRUB
+nixos261disk login: root (automatic login)     → THE INSTALLED ON-DISK SYSTEM
+```
+
+Confirmed the running system is the on-disk install, not the RAM installer:
+
+```
+hostname                 → nixos261disk          (target, not "nixos-kexec")
+systemctl --version      → systemd 261 (261)
+findmnt -no SOURCE /     → /dev/vda2             (on disk, not tmpfs/squashfs)
+findmnt -no FSTYPE /     → ext4     ·  lsblk LABEL /dev/vda2 → nixos
+```
+
+> **Gotcha (fixed):** the `auto-install` systemd service runs with a **restricted
+> PATH** (services don't inherit the interactive PATH), and `nixos-install` shells
+> out to `nix-env` → first run failed `nix-env: command not found`. Fix: add
+> `config.nix.package` to the service `path`. The partition step had already
+> succeeded, which is how the failure was pinpointed from the journal.
+
+**Tier B (lay the dm-verity golden image down over iPXE via `systemd-repart`/dd)
+— designed, not yet verified.** It needs UEFI PXE (the golden image is a UEFI UKI),
+i.e. an `ipxe.efi` rebuilt with the deploy script embedded — the next increment.
+
+---
+
+## Spikes F–G — not yet run
 
 See [`PLAN.md`](PLAN.md). Measured boot (swtpm PCRs, `ConditionSecurity=measured-os`),
 `RestrictFileSystemAccess=`, the `ConditionFraction=` 3-VM fleet, and TPM2-sealed

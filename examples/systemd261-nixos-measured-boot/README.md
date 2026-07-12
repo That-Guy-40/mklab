@@ -30,8 +30,9 @@ the *enforcement* half of the image-based model this repo already leans toward:
 | File | What it is |
 |---|---|
 | [`image/flake.nix`](image/flake.nix) + [`configuration.nix`](image/configuration.nix) | The NixOS image (pins `nixos-unstable` → **systemd 261**). Grows per spike. |
-| [`build-nixos-image.sh`](build-nixos-image.sh) | Builds the image **inside [`../nix-build-box/`](../nix-build-box/README.md)** — host needs no Nix. |
-| [`vm-nixos261-uefi.toml`](vm-nixos261-uefi.toml) | Boot the image under OVMF via `lab-vm.sh` (Spike B). |
+| [`build-nixos-image.sh`](build-nixos-image.sh) | Builds the image **inside [`../nix-build-box/`](../nix-build-box/README.md)** — host needs no Nix (`--verity` for the Spike-D golden image). |
+| [`vm-nixos261-uefi.toml`](vm-nixos261-uefi.toml) / [`vm-nixos261-verity.toml`](vm-nixos261-verity.toml) | Boot the plain / verity image under OVMF (+swtpm) via `lab-vm.sh` (Spikes B/C/D). |
+| [`image/installer.nix`](image/installer.nix) + [`target.nix`](image/target.nix) · [`stage-netboot.sh`](stage-netboot.sh) · [`nixos-pxe-install.toml`](nixos-pxe-install.toml) | **Spike E, Tier A** — iPXE → install NixOS to local disk (netboot installer + the on-disk target), reusing the `pxe-install` backend + nginx:8181. |
 | [`PLAN.md`](PLAN.md) | The phased spike roadmap + confirmed feasibility facts. |
 | [`MANUAL_TESTING.md`](MANUAL_TESTING.md) | Per-spike verification log with captured output. |
 
