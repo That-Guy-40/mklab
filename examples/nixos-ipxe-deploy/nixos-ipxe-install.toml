@@ -1,0 +1,38 @@
+# examples/nixos-ipxe-deploy/nixos-ipxe-install.toml
+#
+# DEMO — Tier A (BIOS): iPXE → `nixos-install` the demo target onto local disk.
+# Unified lab: nginx (:8181) + a BIOS pxe-install VM. Each phase tool reads only
+# the blocks it owns.
+#
+#   ./stage-deploy.sh
+#   phase4-podman/lab-podman.sh up --config examples/nixos-ipxe-deploy/nixos-ipxe-install.toml
+#   phase2-qemu-vm/lab-vm.sh create --config examples/nixos-ipxe-deploy/nixos-ipxe-install.toml
+#   phase2-qemu-vm/lab-vm.sh start  ipxe-install-demo
+#   phase2-qemu-vm/lab-vm.sh console ipxe-install-demo   # → ipxe-demo-disk login (on /dev/vda2)
+#
+# PATH CAVEAT: nginx volume path is literal — adjust /home/sqs if your $HOME differs.
+
+[lab]
+name        = "nixos-ipxe-install-demo"
+description = "Reusable block DEMO — iPXE → nixos-install NixOS to local disk (BIOS)"
+tags        = ["nixos", "pxe", "netboot", "install", "reusable"]
+
+[[service]]
+name    = "http"
+engine  = "podman"
+image   = "docker.io/library/nginx:alpine"
+ports   = ["8181:80"]
+volumes = ["/home/sqs/netboot:/usr/share/nginx/html:ro"]
+
+[[vm]]
+name           = "ipxe-install-demo"
+backend        = "pxe-install"
+firmware       = "bios"
+install_target = "20G"
+mac            = "52:54:00:1d:eb:0a"
+arch           = "x86_64"
+memory         = "4096M"           # netboot initrd (baked target closure) loads into RAM
+cpus           = 2
+cloud_init     = false
+pxe_dir        = "/home/sqs/netboot"
+pxe_bootfile   = "demo-install.ipxe"

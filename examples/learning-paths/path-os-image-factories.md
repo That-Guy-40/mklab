@@ -16,7 +16,8 @@
 
 ### Optional side-quests
 
-- [`nix-build-box`](../nix-build-box/) — a third substrate — Nix. A reusable, pinned, flakes-enabled `nix` in a rootless container; the forthcoming systemd-261 NixOS image factory bakes its dm-verity/UKI image *inside* this box. Verified end-to-end here (`nix build .#hello` → `Hello, world!`).
+- [`nix-build-box`](../nix-build-box/) — a third substrate — Nix. A reusable, pinned, flakes-enabled `nix` in a rootless container; the systemd-261 NixOS image factory bakes its dm-verity/UKI image *inside* this box. Verified end-to-end here (`nix build .#hello` → `Hello, world!`).
+- [`nixos-ipxe-deploy`](../nixos-ipxe-deploy/) — the *deploy* half — a reusable block that lays a built NixOS onto a machine's disk over iPXE two ways: a netboot installer that `nixos-install`s a target (BIOS), or a deployer that `dd`s a whole-disk image (UEFI). Importable modules future labs parameterize; applied in `systemd261-nixos-measured-boot/`.
 
 ---
 
