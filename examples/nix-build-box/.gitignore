@@ -1,0 +1,6 @@
+# `nix build` drops a `result` symlink into the flake dir. It points into
+# /nix/store/... INSIDE the build box — a path that does not exist on the host
+# (the whole point of this lab is that the host has no Nix). Committing it leaves
+# a dangling symlink in the repo, which is exactly what happened in 7d8b5f7.
+result
+result-*

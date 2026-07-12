@@ -6,9 +6,31 @@
 throw the box away after.
 
 It exists as its **own reusable unit** because later work needs it and shouldn't
-re-bolt Nix onto every lab: the forthcoming systemd-261 measured-boot lab
-(`examples/systemd261-nixos-measured-boot/`) builds NixOS **disk images** with
-`nix build`, and does so *inside this box*. Import it; don't reinvent it.
+re-bolt Nix onto every lab: the systemd-261 measured-boot lab
+([`../systemd261-nixos-measured-boot/`](../systemd261-nixos-measured-boot/README.md))
+and the [`../nixos-ipxe-deploy/`](../nixos-ipxe-deploy/README.md) block build NixOS
+**disk images** with `nix build`, and do so *inside this box*. Import it; don't
+reinvent it.
+
+> ### 🚫 Don't prune me — I'm the foundation
+>
+> `localhost/nix-build-box` is the **root of the repo's whole Nix dependency chain**.
+> Every Nix artifact — `build-nixos-image.sh`, `stage-netboot.sh`,
+> `nixos-ipxe-deploy/stage-deploy.sh` — executes *inside* this image. The host has no
+> Nix precisely **because** this box exists.
+>
+> A `podman image prune -a` (which reaps every image not attached to a running
+> container) **will take it**, and then nothing Nix-related builds until it is back.
+> That happened on **2026-07-12**. If it's gone, rebuild it **first**:
+>
+> ```bash
+> phase4-podman/lab-podman.sh build --tag nix-build-box \
+>     --backend build --context examples/nix-build-box
+> ```
+>
+> It rebuilds in ~1–2 min from the pinned `Containerfile` (nothing is lost — it is,
+> after all, a *reproducible* box). But rebuild it **before** you reach for any of the
+> scripts above, or they will fail with a confusing "build box not found".
 
 ## What's here
 
