@@ -24,7 +24,9 @@
   };
 
   outputs = { self, nixpkgs, nixos-generators }:
-    let system = "x86_64-linux";
+    let
+      system = "x86_64-linux";
+      pkgs = nixpkgs.legacyPackages.${system};
     in {
       # All package outputs live in ONE packages.${system} set — Nix forbids
       # defining the dynamic ${system} attribute across separate statements.
@@ -47,6 +49,28 @@
         # target closure so the install is offline.
         installer-kernel = self.nixosConfigurations.installer.config.system.build.kernel;
         installer-initrd = self.nixosConfigurations.installer.config.system.build.netbootRamdisk;
+
+        # Spike E, Tier B — the deployer's kernel + initrd, and a CUSTOM ipxe.efi
+        # with the deploy boot-script embedded (so OVMF UEFI-PXE runs it directly).
+        # Built via Nix (pkgs.ipxe.override) — no docker, unlike netboot/build-ipxe.sh.
+        deployer-kernel = self.nixosConfigurations.deployer.config.system.build.kernel;
+        deployer-initrd = self.nixosConfigurations.deployer.config.system.build.netbootRamdisk;
+        ipxe-efi =
+          let
+            deployerInit = "${self.nixosConfigurations.deployer.config.system.build.toplevel}/init";
+            embed = pkgs.writeText "deploy-embed.ipxe" ''
+              #!ipxe
+              :start
+              dhcp || goto retry
+              kernel http://10.0.2.2:8181/nixos/deployer-bzImage init=${deployerInit} initrd=initrd console=ttyS0,115200 console=tty0 nohibernate root=fstab loglevel=4 lsm=landlock,yama,bpf ip=dhcp || goto retry
+              initrd http://10.0.2.2:8181/nixos/deployer-initrd || goto retry
+              boot || goto retry
+              :retry
+              echo iPXE boot step failed -- retrying in 3s
+              sleep 3
+              goto start
+            '';
+          in pkgs.ipxe.override { embedScript = embed; };
       };
 
       nixosConfigurations = {
@@ -73,6 +97,12 @@
             targetSystem = self.nixosConfigurations.target.config.system.build.toplevel;
           };
           modules = [ ./installer.nix ];
+        };
+
+        # Spike E, Tier B: the deployer that dd's the golden image onto disk.
+        deployer = nixpkgs.lib.nixosSystem {
+          inherit system;
+          modules = [ ./deployer.nix ];
         };
       };
     };
