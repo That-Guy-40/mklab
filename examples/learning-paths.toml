@@ -87,7 +87,7 @@ difficulty = "🟢"
 est        = "⏱ half-day+"
 prereqs    = []
 audience   = "complete beginners welcome; the last two steps ask a little more"
-goal       = "Find your feet at the shell, learn to program it, wield grep/sed/awk on real text — then discover that composing those tools was relational algebra all along, and finally meet the sets underneath it. The first three steps are Matt Might's track (he names the survival guide as the prerequisite to bash-by-example); an equivalent Carpentries + Robbins track is a side-quest."
+goal       = "Find your feet at the shell, learn to program it, wield grep/sed/awk on real text — then discover that composing those tools was relational algebra all along, meet the sets underneath it, and finally ask the shell for a *number* and find out it cannot divide 1 by 3. The first three steps are Matt Might's track (he names the survival guide as the prerequisite to bash-by-example); an equivalent Carpentries + Robbins track is a side-quest."
   [[path.step]]
   lab        = "UNIX_novice_survival_guide/"
   learn      = "navigate, pipe, redirect, and get help without a cheat-sheet."
@@ -110,6 +110,11 @@ goal       = "Find your feet at the shell, learn to program it, wield grep/sed/a
   tags       = ["🟡"]
   learn      = "the SETS under those relations, and the three algorithm families that build them — merge (`comm`), count (`uniq -c`), hash (`awk`) — plus why `comm` and `sort -n` silently disagree about what 'sorted' means."
   checkpoint = "run `demo.sh` → `PASS: all 28 set identities hold`; then run `treasure-hunt.sh` → it recovers Google's 2008 puzzle answer `7830239` with `uniq -d`, and shows the article's own `comm + sort -n` recipe losing it."
+  [[path.step]]
+  lab        = "UNIX-floating-point-arithmetic-in-bash/"
+  tags       = ["🟡"]
+  learn      = "you have mastered these tools on *text* — now ask the shell for a *number* and watch `$((1/3))` return **0**, silently. Two people refused to accept that: Cyrus does long division in 12 lines of integer `$(( ))`, and Wood's `shellmath` implements + − × ÷ in pure Bash, dodging the `$( )` fork to beat `bc`. The reframe: it's a *bash* limit, not a *shell* one — zsh and ksh93 have had float `$(( ))` all along."
+  checkpoint = "run `demo.sh` → `PASS: all 25 checks hold` (bc == awk == pure-bash div == shellmath); then explain why the same run asserts that `0.1+0.2 == 0.3` is **true** for `bc` and **false** for `awk` — and why *both* are right."
   [[path.branch]]
   lab = "shell-novice-workshop/"
   why = "the Carpentries (CC-BY) full-day equivalent of steps 1–2, by different authors."
