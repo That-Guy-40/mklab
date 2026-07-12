@@ -17,7 +17,7 @@
 
 ### Optional side-quests
 
-- [`systemd261-nixos-measured-boot`](../systemd261-nixos-measured-boot/) — boot *integrity* rather than boot *recovery*: a Nix-built NixOS on **systemd 261** measured into a (soft)TPM, execution restricted to a signed dm-verity FS (`RestrictFileSystemAccess=`), deployed on-disk over iPXE, with staged rollout by machine-ID (`ConditionFraction=`). **WIP** — Spike B (the systemd-261 image boots under OVMF) is verified; see its PLAN.md.
+- [`systemd261-nixos-measured-boot`](../systemd261-nixos-measured-boot/) — boot *integrity* rather than boot *recovery*: a Nix-built NixOS on **systemd 261** measured into a (soft)TPM, deployed on-disk over iPXE, with staged rollout by machine-ID (`ConditionFraction=`) and storage sealed to the measured state (TPM2 LUKS bound to PCR 7+11 + a PCR-quote attestation stub). Spikes A–G verified — measured-os MET on a dm-verity+UKI image, sealed LUKS unseals only on the expected PCRs; honest gap: `RestrictFileSystemAccess=` isn't in nixpkgs' systemd 261. See its PLAN.md.
 
 ---
 

@@ -5,11 +5,13 @@ capabilities on the running machine.** The teaching thesis: **Nix owns
 reproducibility and image composition; systemd 261 owns measured boot, execution
 restriction, and staged rollout** — each tool at what it's best at.
 
-> **Status: under construction, built in phases.** Spike B (a Nix-built NixOS
-> UEFI image boots under OVMF, carrying systemd 261) is **verified**. The measured
-> boot / enforcement / fleet / trust-chain spikes are in progress — see
-> [`PLAN.md`](PLAN.md) for the roadmap and live status, and
-> [`MANUAL_TESTING.md`](MANUAL_TESTING.md) for captured signatures.
+> **Status: all spikes A–G landed.** A Nix-built NixOS UEFI image carrying
+> systemd 261 boots under OVMF (B); swtpm + measured boot (C); dm-verity + UKI
+> golden image with `measured-os` MET (D); iPXE on-disk deploy, both tiers (E);
+> `ConditionFraction=` 3-VM fleet (F); TPM2-sealed LUKS + attestation (G). See
+> [`PLAN.md`](PLAN.md) for the roadmap and per-spike status, and
+> [`MANUAL_TESTING.md`](MANUAL_TESTING.md) for captured signatures. One honest gap
+> stands: `RestrictFileSystemAccess=` is not compiled into nixpkgs' systemd 261.
 
 ## Why systemd 261
 
@@ -23,7 +25,7 @@ the *enforcement* half of the image-based model this repo already leans toward:
 | `RestrictFileSystemAccess=` | BPF-LSM: execute only from a signed dm-verity filesystem | D — ⚠️ **not compiled into nixpkgs' systemd 261** (honest gap; substrate ready) |
 | `systemd-repart` verity/UKI | build/lay a dm-verity + UKI golden image | D — **image builds + boots** |
 | `ConditionFraction=` | fire a unit on a deterministic fraction of the fleet, no orchestrator | F |
-| `systemd-cryptenroll --tpm2` | TPM2-sealed LUKS with a PCR policy | G |
+| `systemd-cryptenroll --tpm2` | TPM2-sealed LUKS with a PCR policy | G — **verified: seal→unseal→attest→refuse, bound to PCR 7+11** |
 
 ## What's here
 
@@ -34,6 +36,8 @@ the *enforcement* half of the image-based model this repo already leans toward:
 | [`vm-nixos261-uefi.toml`](vm-nixos261-uefi.toml) / [`vm-nixos261-verity.toml`](vm-nixos261-verity.toml) | Boot the plain / verity image under OVMF (+swtpm) via `lab-vm.sh` (Spikes B/C/D). |
 | [`image/installer.nix`](image/installer.nix) + [`target.nix`](image/target.nix) · [`stage-netboot.sh`](stage-netboot.sh) · [`nixos-pxe-install.toml`](nixos-pxe-install.toml) | **Spike E, Tier A** — iPXE → `nixos-install` NixOS to local disk (BIOS), reusing the `pxe-install` backend + nginx:8181. |
 | [`image/deployer.nix`](image/deployer.nix) · [`stage-netboot.sh --tier-b`](stage-netboot.sh) · [`nixos-pxe-deploy.toml`](nixos-pxe-deploy.toml) | **Spike E, Tier B** — iPXE (custom Nix-built `ipxe.efi`, UEFI) → dd the **dm-verity golden image** onto disk → reboot → measured on-disk NixOS. |
+| [`fleet.toml`](fleet.toml) · [`fleet-demo.sh`](fleet-demo.sh) | **Spike F** — a 3-VM mock fleet; `ConditionFraction=N%` fires on a deterministic, monotonically-widening slice (canary rollout, no orchestrator). |
+| [`image/sealed.nix`](image/sealed.nix) · [`sealed-luks-demo.sh`](sealed-luks-demo.sh) + [`image/sealed-luks-demo.guest.sh`](image/sealed-luks-demo.guest.sh) · [`stage-netboot.sh --sealed`](stage-netboot.sh) · [`nixos-pxe-sealed.toml`](nixos-pxe-sealed.toml) · [`RUNBOOK-sealed-luks.md`](RUNBOOK-sealed-luks.md) | **Spike G** — TPM2-sealed LUKS bound to the measured PCR 7+11 + a PCR-quote attestation stub; the sealed golden image rides the **same Tier-B iPXE/UEFI path**. |
 
 > The Spike-E deploy mechanism (both tiers) is generalized into a reusable,
 > importable block — [`../nixos-ipxe-deploy/`](../nixos-ipxe-deploy/README.md).

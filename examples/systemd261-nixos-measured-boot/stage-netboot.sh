@@ -12,6 +12,11 @@
 #                         kernel/initrd + a CUSTOM ipxe.efi (Nix-built, deploy
 #                         script embedded). Run `build-nixos-image.sh --verity` first.
 #
+#   --sealed              Spike G — REUSES the Tier-B path for the SEALED-STORAGE
+#                         golden image (out/nixos261-sealed.qcow2). Same deployer/
+#                         ipxe.efi mechanism, sealed artifact names. Run
+#                         `build-nixos-image.sh --sealed` first.
+#
 # Everything builds inside nix-build-box (host needs no Nix).
 set -euo pipefail
 
@@ -23,7 +28,12 @@ BOX="${NIX_BUILD_BOX_IMAGE:-localhost/nix-build-box}"
 SERVER="http://10.0.2.2:8181"
 
 MODE=tier-a
-[[ "${1:-}" == "--tier-b" ]] && MODE=tier-b
+case "${1:-}" in
+  --tier-b) MODE=tier-b ;;
+  --sealed) MODE=sealed ;;
+  --tier-a|"") ;;
+  * ) echo "FAIL: unknown flag '$1' (use --tier-a, --tier-b, or --sealed)" >&2; exit 1 ;;
+esac
 
 command -v podman >/dev/null || { echo "FAIL: podman not found" >&2; exit 1; }
 podman image exists "$BOX" || { echo "FAIL: build box '$BOX' missing (build examples/nix-build-box first)" >&2; exit 1; }
@@ -60,22 +70,35 @@ EOF
     echo "PASS: [Tier A] staged → $NETBOOT/nixos/{bzImage,initrd} + $NETBOOT/nixos-boot.ipxe"
 else
     command -v qemu-img >/dev/null || { echo "FAIL: qemu-img needed to convert the golden image to raw" >&2; exit 1; }
-    [[ -r "$OUT/nixos261-verity.qcow2" ]] || { echo "FAIL: $OUT/nixos261-verity.qcow2 missing — run ./build-nixos-image.sh --verity first" >&2; exit 1; }
-    echo "==> [Tier B] building deployer kernel/initrd + custom ipxe.efi in $BOX"
+    # Tier B (verity golden image) and Spike G --sealed share the identical
+    # curl|dd + ipxe.efi mechanism; only the flake outputs / staged names differ.
+    if [[ "$MODE" == tier-b ]]; then
+        TAG="Tier B"; QCOW="$OUT/nixos261-verity.qcow2"; RAW=nixos261-verity.raw
+        KOUT=deployer-kernel; IOUT=deployer-initrd; XOUT=ipxe-efi
+        KIMG=deployer-bzImage; IIMG=deployer-initrd; EFI=nixos-deploy.efi
+        BUILDFLAG=--verity
+    else
+        TAG="Spike G sealed"; QCOW="$OUT/nixos261-sealed.qcow2"; RAW=nixos261-sealed.raw
+        KOUT=deployer-sealed-kernel; IOUT=deployer-sealed-initrd; XOUT=ipxe-efi-sealed
+        KIMG=sealed-deployer-bzImage; IIMG=sealed-deployer-initrd; EFI=nixos-sealed-deploy.efi
+        BUILDFLAG=--sealed
+    fi
+    [[ -r "$QCOW" ]] || { echo "FAIL: $QCOW missing — run ./build-nixos-image.sh $BUILDFLAG first" >&2; exit 1; }
+    echo "==> [$TAG] building deployer kernel/initrd + custom ipxe.efi in $BOX"
     podman run --rm \
         -v "$IMG_DIR:/work:Z" -v "$NETBOOT:/netboot:Z" -w /work \
-        "$BOX" sh -c '
+        "$BOX" sh -c "
             set -e
-            nix build .#deployer-kernel --out-link /tmp/dk --print-build-logs
-            nix build .#deployer-initrd --out-link /tmp/di --print-build-logs
-            nix build .#ipxe-efi        --out-link /tmp/ix --print-build-logs
-            cp -L /tmp/dk/bzImage /netboot/nixos/deployer-bzImage
-            cp -L /tmp/di/initrd  /netboot/nixos/deployer-initrd
-            cp -L /tmp/ix/ipxe.efi /netboot/nixos-deploy.efi
-            chmod 644 /netboot/nixos/deployer-bzImage /netboot/nixos/deployer-initrd /netboot/nixos-deploy.efi
-        '
-    echo "==> [Tier B] converting golden image → raw for dd (served at /nixos/nixos261-verity.raw)"
-    qemu-img convert -f qcow2 -O raw "$OUT/nixos261-verity.qcow2" "$NETBOOT/nixos/nixos261-verity.raw"
-    chmod 644 "$NETBOOT/nixos/nixos261-verity.raw"
-    echo "PASS: [Tier B] staged → $NETBOOT/nixos/{deployer-bzImage,deployer-initrd,nixos261-verity.raw} + $NETBOOT/nixos-deploy.efi"
+            nix build .#$KOUT --out-link /tmp/dk --print-build-logs
+            nix build .#$IOUT --out-link /tmp/di --print-build-logs
+            nix build .#$XOUT --out-link /tmp/ix --print-build-logs
+            cp -L /tmp/dk/bzImage /netboot/nixos/$KIMG
+            cp -L /tmp/di/initrd  /netboot/nixos/$IIMG
+            cp -L /tmp/ix/ipxe.efi /netboot/$EFI
+            chmod 644 /netboot/nixos/$KIMG /netboot/nixos/$IIMG /netboot/$EFI
+        "
+    echo "==> [$TAG] converting golden image → raw for dd (served at /nixos/$RAW)"
+    qemu-img convert -f qcow2 -O raw "$QCOW" "$NETBOOT/nixos/$RAW"
+    chmod 644 "$NETBOOT/nixos/$RAW"
+    echo "PASS: [$TAG] staged → $NETBOOT/nixos/{$KIMG,$IIMG,$RAW} + $NETBOOT/$EFI"
 fi

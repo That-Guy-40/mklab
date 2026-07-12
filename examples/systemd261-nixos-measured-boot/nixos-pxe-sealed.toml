@@ -1,0 +1,44 @@
+# examples/systemd261-nixos-measured-boot/nixos-pxe-sealed.toml
+#
+# Spike G — iPXE → lay the SEALED-STORAGE golden image onto local disk, REUSING
+# the exact Tier-B path (Spike E). nginx (:8181) serves the sealed golden raw +
+# the sealed deployer; the pxe-install VM (UEFI, so no `firmware` key) UEFI-PXE-
+# boots the custom `nixos-sealed-deploy.efi` (deploy script embedded) → the
+# deployer dd's nixos261-sealed.raw onto /dev/vda → reboots into the MEASURED
+# on-disk NixOS. tpm=true so systemd-stub measures the UKI into PCR 11, and so the
+# baked demo / seal-data can seal LUKS to that measured state post-deploy.
+#
+#   ./build-nixos-image.sh --sealed          # build the sealed golden image first
+#   ./stage-netboot.sh --sealed              # build sealed deployer + custom ipxe.efi + stage raw
+#   phase4-podman/lab-podman.sh up --config …/nixos-pxe-sealed.toml
+#   phase2-qemu-vm/lab-vm.sh create --config …/nixos-pxe-sealed.toml && lab-vm.sh start nixos261-sealed
+#   # then, on the booted host: /etc/lab/sealed-luks-demo   (proves the sealed chain)
+#
+# HONEST FRAMING: swtpm under QEMU/KVM is plumbing, NOT a trust anchor. See
+# RUNBOOK-sealed-luks.md.  PATH CAVEAT: nginx volume path is literal — adjust
+# /home/sqs if your $HOME differs.
+
+[lab]
+name        = "nixos261-sealed"
+description = "iPXE → lay the TPM2-sealed-LUKS measured golden image onto disk (Spike G)"
+tags        = ["nixos", "pxe", "netboot", "dm-verity", "measured", "tpm2", "luks", "systemd261"]
+
+[[service]]
+name    = "http"
+engine  = "podman"
+image   = "docker.io/library/nginx:alpine"
+ports   = ["8181:80"]
+volumes = ["/home/sqs/netboot:/usr/share/nginx/html:ro"]
+
+[[vm]]
+name           = "nixos261-sealed"
+backend        = "pxe-install"          # UEFI (no firmware key): OVMF PXE runs ipxe.efi
+install_target = "20G"                   # blank disk the sealed golden image is dd'd onto
+mac            = "52:54:00:26:11:07"
+arch           = "x86_64"
+memory         = "3072M"
+cpus           = 2
+cloud_init     = false
+tpm            = true                    # measured boot + TPM2 sealing (swtpm → PCR 7+11)
+pxe_dir        = "/home/sqs/netboot"
+pxe_bootfile   = "nixos-sealed-deploy.efi"   # custom Nix-built ipxe.efi (sealed deploy script embedded)

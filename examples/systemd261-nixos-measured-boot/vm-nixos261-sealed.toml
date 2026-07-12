@@ -1,0 +1,31 @@
+# examples/systemd261-nixos-measured-boot/vm-nixos261-sealed.toml
+#
+# Spike G direct-boot spec: boot the SEALED-STORAGE golden image under OVMF +
+# swtpm (skips the iPXE deploy — handy for developing the sealed-LUKS demo). The
+# UKI at \EFI\BOOT\BOOTX64.EFI is measured into PCR 11, so the baked demo can seal
+# to the real measured state:
+#
+#   ./build-nixos-image.sh --sealed
+#   phase2-qemu-vm/lab-vm.sh create --config examples/systemd261-nixos-measured-boot/vm-nixos261-sealed.toml
+#   phase2-qemu-vm/lab-vm.sh start  nixos261s
+#   phase2-qemu-vm/lab-vm.sh console nixos261s          # autologin root
+#   # on the guest:  /etc/lab/sealed-luks-demo          # → PASS (sealed LUKS + attestation)
+#
+# Or drive it from the host without logging in:
+#   examples/systemd261-nixos-measured-boot/sealed-luks-demo.sh nixos261s
+#
+# HONEST: swtpm is plumbing, NOT a trust anchor. See RUNBOOK-sealed-luks.md.
+# PATH CAVEAT: `image` must be ABSOLUTE (written for this host; adjust your checkout).
+
+[[vm]]
+name       = "nixos261s"
+backend    = "disk-image"
+image      = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/examples/systemd261-nixos-measured-boot/out/nixos261-sealed.qcow2"
+firmware   = "uefi"           # OVMF; the UKI sits at the removable ESP path
+arch       = "x86_64"
+memory     = "2G"
+cpus       = 2
+cloud_init = false            # UKI/verity image; serial autologin
+ssh_port   = 0
+tpm        = true             # swtpm 2.0 — measures the UKI into PCR 11; seals LUKS to PCR 7+11
+                              # HONEST: swtpm is plumbing, NOT a trust anchor.
