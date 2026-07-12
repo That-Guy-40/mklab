@@ -41,6 +41,12 @@
         # RAW image; ../build-nixos-image.sh --verity converts it to qcow2.
         # Booting the UKI measures PCR 11 → measured-os MET.
         image-verity = self.nixosConfigurations.verity.config.system.build.image;
+
+        # Spike E, Tier A — the netboot installer's kernel + initrd (served over
+        # HTTP:8181; ../stage-netboot.sh stages them). The initrd bakes in the
+        # target closure so the install is offline.
+        installer-kernel = self.nixosConfigurations.installer.config.system.build.kernel;
+        installer-initrd = self.nixosConfigurations.installer.config.system.build.netbootRamdisk;
       };
 
       nixosConfigurations = {
@@ -52,6 +58,21 @@
         verity = nixpkgs.lib.nixosSystem {
           inherit system;
           modules = [ ./verity.nix { nixpkgs.hostPlatform = system; } ];
+        };
+
+        # Spike E, Tier A: the on-disk target system, and the netboot installer
+        # that lays it down. The installer is handed the target's toplevel so it
+        # can bake it in and install offline.
+        target = nixpkgs.lib.nixosSystem {
+          inherit system;
+          modules = [ ./target.nix ];
+        };
+        installer = nixpkgs.lib.nixosSystem {
+          inherit system;
+          specialArgs = {
+            targetSystem = self.nixosConfigurations.target.config.system.build.toplevel;
+          };
+          modules = [ ./installer.nix ];
         };
       };
     };

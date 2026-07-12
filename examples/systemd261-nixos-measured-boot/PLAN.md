@@ -41,7 +41,7 @@ running machine.
 | B | Minimal NixOS UEFI image boots under OVMF | Nix→bootable qcow2; systemd version | ✅ **DONE** — Nix-built qcow2 (systemd **261**, kernel 6.18.38) boots under OVMF to autologin root shell; verified via lab-vm.sh |
 | C | swtpm in `lab-vm.sh` + measured boot | shared-driver vTPM change; PCRs; `ConditionSecurity=measured-os` | ✅ **driver+plumbing DONE** — `tpm=true` wires swtpm; guest gets TPM 2.0, PCR7 measured, 25 PCRs; reaped by PID. `measured-os` correctly NOT-MET (PCR11=0, no stub/UKI) → gate turns green in D |
 | D | dm-verity + UKI golden image | verity /usr; UKI measured; `measured-os`; `RestrictFileSystemAccess=` | ✅ **verity+UKI+measured-os DONE** — image builds+boots (verity `/usr`, tmpfs root, systemd 261); `measured-os` **MET** (PCR 11 measured, stub present) → closes Spike-C seam. ⚠️ `RestrictFileSystemAccess=` NOT in nixpkgs' systemd 261 build (0 in binary) — honest gap, needs the feature upstream + signed verity |
-| E | iPXE on-disk deploy, both tiers | netboot integration; NixOS-initrd DHCP-over-slirp | ⏳ |
+| E | iPXE on-disk deploy | netboot integration; NixOS-initrd DHCP-over-slirp | ✅ **Tier A DONE** — BIOS iPXE → NixOS netboot installer (offline; target closure baked in) → parted /dev/vda → `nixos-install` → reboot → on-disk NixOS (systemd 261, root on /dev/vda2). Reuses `pxe-install` + nginx:8181. ⏳ Tier B (dd the dm-verity golden image; needs UEFI PXE) designed, next |
 | F | `ConditionFraction=` 3-VM mock fleet | deterministic staged rollout across machine-IDs | ⏳ |
 | G | TPM2-sealed LUKS + attestation stub | `systemd-cryptenroll` PCR policy; PCR quote | ⏳ |
 
