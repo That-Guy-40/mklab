@@ -12,6 +12,10 @@ restriction, and staged rollout** — each tool at what it's best at.
 > [`PLAN.md`](PLAN.md) for the roadmap and per-spike status, and
 > [`MANUAL_TESTING.md`](MANUAL_TESTING.md) for captured signatures. One honest gap
 > stands: `RestrictFileSystemAccess=` is not compiled into nixpkgs' systemd 261.
+>
+> **➜ New here? Read [`SHOWCASE.md`](SHOWCASE.md)** — the capability tour of what
+> this lab lets you *prove*. New to Nix itself?
+> [`../nixos-ipxe-deploy/WHY-NIX.md`](../nixos-ipxe-deploy/WHY-NIX.md) is the primer.
 
 ## Why systemd 261
 
@@ -42,6 +46,7 @@ the *enforcement* half of the image-based model this repo already leans toward:
 > The Spike-E deploy mechanism (both tiers) is generalized into a reusable,
 > importable block — [`../nixos-ipxe-deploy/`](../nixos-ipxe-deploy/README.md).
 > This lab is its measured/dm-verity application.
+| [`SHOWCASE.md`](SHOWCASE.md) | The capability tour — what the lab lets you *prove*, with the verified signatures. |
 | [`PLAN.md`](PLAN.md) | The phased spike roadmap + confirmed feasibility facts. |
 | [`MANUAL_TESTING.md`](MANUAL_TESTING.md) | Per-spike verification log with captured output. |
 
