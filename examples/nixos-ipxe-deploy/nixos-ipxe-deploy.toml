@@ -1,0 +1,37 @@
+# examples/nixos-ipxe-deploy/nixos-ipxe-deploy.toml
+#
+# DEMO — Tier B (UEFI): iPXE → dd the demo whole-disk image onto local disk.
+# Unified lab: nginx (:8181) + a UEFI pxe-install VM booting the custom ipxe.efi.
+#
+#   ./stage-deploy.sh --tier-b
+#   phase4-podman/lab-podman.sh up --config examples/nixos-ipxe-deploy/nixos-ipxe-deploy.toml
+#   phase2-qemu-vm/lab-vm.sh create --config examples/nixos-ipxe-deploy/nixos-ipxe-deploy.toml
+#   phase2-qemu-vm/lab-vm.sh start  ipxe-deploy-demo
+#   phase2-qemu-vm/lab-vm.sh console ipxe-deploy-demo   # → ipxe-demo-image login (dd'd image)
+#
+# For a MEASURED image, point the deployer at a dm-verity + UKI raw and set
+# tpm = true (see ../systemd261-nixos-measured-boot/, the applied example).
+
+[lab]
+name        = "nixos-ipxe-deploy-demo"
+description = "Reusable block DEMO — iPXE → dd a whole-disk NixOS image to local disk (UEFI)"
+tags        = ["nixos", "pxe", "netboot", "image", "reusable"]
+
+[[service]]
+name    = "http"
+engine  = "podman"
+image   = "docker.io/library/nginx:alpine"
+ports   = ["8181:80"]
+volumes = ["/home/sqs/netboot:/usr/share/nginx/html:ro"]
+
+[[vm]]
+name           = "ipxe-deploy-demo"
+backend        = "pxe-install"          # UEFI (no firmware key): OVMF PXE runs the custom ipxe.efi
+install_target = "20G"
+mac            = "52:54:00:1d:eb:0b"
+arch           = "x86_64"
+memory         = "3072M"
+cpus           = 2
+cloud_init     = false
+pxe_dir        = "/home/sqs/netboot"
+pxe_bootfile   = "demo-deploy.efi"

@@ -34,6 +34,10 @@ the *enforcement* half of the image-based model this repo already leans toward:
 | [`vm-nixos261-uefi.toml`](vm-nixos261-uefi.toml) / [`vm-nixos261-verity.toml`](vm-nixos261-verity.toml) | Boot the plain / verity image under OVMF (+swtpm) via `lab-vm.sh` (Spikes B/C/D). |
 | [`image/installer.nix`](image/installer.nix) + [`target.nix`](image/target.nix) · [`stage-netboot.sh`](stage-netboot.sh) · [`nixos-pxe-install.toml`](nixos-pxe-install.toml) | **Spike E, Tier A** — iPXE → `nixos-install` NixOS to local disk (BIOS), reusing the `pxe-install` backend + nginx:8181. |
 | [`image/deployer.nix`](image/deployer.nix) · [`stage-netboot.sh --tier-b`](stage-netboot.sh) · [`nixos-pxe-deploy.toml`](nixos-pxe-deploy.toml) | **Spike E, Tier B** — iPXE (custom Nix-built `ipxe.efi`, UEFI) → dd the **dm-verity golden image** onto disk → reboot → measured on-disk NixOS. |
+
+> The Spike-E deploy mechanism (both tiers) is generalized into a reusable,
+> importable block — [`../nixos-ipxe-deploy/`](../nixos-ipxe-deploy/README.md).
+> This lab is its measured/dm-verity application.
 | [`PLAN.md`](PLAN.md) | The phased spike roadmap + confirmed feasibility facts. |
 | [`MANUAL_TESTING.md`](MANUAL_TESTING.md) | Per-spike verification log with captured output. |
 
