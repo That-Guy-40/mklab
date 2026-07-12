@@ -8,7 +8,12 @@
 # Unlike Tier A's installer this bakes NOTHING in — it just curls the raw image
 # and dd's it. The golden image is UEFI (UKI at the removable ESP path), so the
 # pxe-install VM is UEFI and iPXE-boots this via a custom ipxe.efi (see flake.nix).
-{ config, lib, pkgs, modulesPath, ... }:
+#
+# Reused verbatim by Spike G: the sealed golden image (image/sealed.nix) is laid
+# down by the SAME deployer over the SAME Tier-B path — only the raw filename
+# differs, passed as the `imageFile` specialArg (default = Spike E's verity image,
+# so the already-verified Tier-B run is unchanged).
+{ config, lib, pkgs, modulesPath, imageFile ? "nixos261-verity.raw", ... }:
 {
   imports = [ (modulesPath + "/installer/netboot/netboot-minimal.nix") ];
 
@@ -29,7 +34,7 @@
     path = with pkgs; [ curl coreutils util-linux parted efibootmgr ];
     script = ''
       set -eu
-      URL=http://10.0.2.2:8181/nixos/nixos261-verity.raw
+      URL=http://10.0.2.2:8181/nixos/${imageFile}
       echo "=== SPIKE-E-B: waiting for the image server ==="
       for i in $(seq 1 30); do curl -fsI "$URL" && break || sleep 2; done
       echo "=== SPIKE-E-B: streaming the dm-verity golden image onto /dev/vda ==="

@@ -71,6 +71,31 @@
               goto start
             '';
           in pkgs.ipxe.override { embedScript = embed; };
+
+        # Spike G — the SEALED-STORAGE golden image (measured base + sealed-LUKS
+        # policy + baked demo). Deployed over the SAME Tier-B path as image-verity.
+        image-sealed = self.nixosConfigurations.sealed.config.system.build.image;
+
+        # Spike G's Tier-B deployer trio — same shape as the verity deployer, but
+        # its init dd's `nixos261-sealed.raw` and its ipxe.efi chainloads it.
+        deployer-sealed-kernel = self.nixosConfigurations.deployerSealed.config.system.build.kernel;
+        deployer-sealed-initrd = self.nixosConfigurations.deployerSealed.config.system.build.netbootRamdisk;
+        ipxe-efi-sealed =
+          let
+            init = "${self.nixosConfigurations.deployerSealed.config.system.build.toplevel}/init";
+            embed = pkgs.writeText "deploy-sealed-embed.ipxe" ''
+              #!ipxe
+              :start
+              dhcp || goto retry
+              kernel http://10.0.2.2:8181/nixos/sealed-deployer-bzImage init=${init} initrd=initrd console=ttyS0,115200 console=tty0 nohibernate root=fstab loglevel=4 lsm=landlock,yama,bpf ip=dhcp || goto retry
+              initrd http://10.0.2.2:8181/nixos/sealed-deployer-initrd || goto retry
+              boot || goto retry
+              :retry
+              echo iPXE boot step failed -- retrying in 3s
+              sleep 3
+              goto start
+            '';
+          in pkgs.ipxe.override { embedScript = embed; };
       };
 
       nixosConfigurations = {
@@ -102,6 +127,18 @@
         # Spike E, Tier B: the deployer that dd's the golden image onto disk.
         deployer = nixpkgs.lib.nixosSystem {
           inherit system;
+          modules = [ ./deployer.nix ];
+        };
+
+        # Spike G: the sealed-storage golden image, and the deployer that lays it
+        # down over the SAME Tier-B path (only the raw filename differs).
+        sealed = nixpkgs.lib.nixosSystem {
+          inherit system;
+          modules = [ ./sealed.nix { nixpkgs.hostPlatform = system; } ];
+        };
+        deployerSealed = nixpkgs.lib.nixosSystem {
+          inherit system;
+          specialArgs = { imageFile = "nixos261-sealed.raw"; };
           modules = [ ./deployer.nix ];
         };
       };

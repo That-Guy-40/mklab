@@ -6,12 +6,16 @@
 #                              → out/nixos261.qcow2
 #   --verity   .#image-verity → a dm-verity /nix/store + UKI raw image (Spike D),
 #              converted to    → out/nixos261-verity.qcow2
+#   --sealed   .#image-sealed → the measured base + TPM2-sealed-LUKS policy +
+#              converted to    baked attestation demo (Spike G)
+#                              → out/nixos261-sealed.qcow2
 #
 # The build is KVM-assisted (make-disk-image / repart), so the box runs with
 # `--device /dev/kvm`.
 #
 #   ./build-nixos-image.sh              # → out/nixos261.qcow2
 #   ./build-nixos-image.sh --verity     # → out/nixos261-verity.qcow2
+#   ./build-nixos-image.sh --sealed     # → out/nixos261-sealed.qcow2
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -20,7 +24,12 @@ OUT="$HERE/out"
 BOX="${NIX_BUILD_BOX_IMAGE:-localhost/nix-build-box}"
 
 MODE=plain
-[[ "${1:-}" == "--verity" ]] && MODE=verity
+case "${1:-}" in
+  --verity) MODE=verity ;;
+  --sealed) MODE=sealed ;;
+  "" ) ;;
+  * ) echo "FAIL: unknown flag '$1' (use --verity or --sealed)" >&2; exit 1 ;;
+esac
 
 _done=""
 trap '[[ -n "$_done" ]] || printf "FAIL: build-nixos-image.sh exited early (rc=%s)\n" "$?" >&2' EXIT
@@ -49,21 +58,26 @@ if [[ "$MODE" == plain ]]; then
     _done=1
     echo "PASS: image built → $OUT/nixos261.qcow2"
 else
-    echo "==> building .#image-verity (dm-verity + UKI raw image) in $BOX; first run pulls a closure"
+    # verity and sealed share the same "build RAW via config.system.build.image,
+    # convert raw→qcow2" path — only the flake output / config name / basename differ.
+    if [[ "$MODE" == verity ]]; then CFG=verity; OUT_ATTR=image-verity; NAME=nixos261-verity
+    else                             CFG=sealed; OUT_ATTR=image-sealed; NAME=nixos261-sealed
+    fi
+    echo "==> building .#$OUT_ATTR ($MODE: dm-verity + UKI raw image) in $BOX; first run pulls a closure"
     # Build the RAW image inside the box, copy it out, then convert on the host.
     podman run --rm --device /dev/kvm \
         -v "$IMG_DIR:/work:Z" -v "$OUT:/out:Z" -w /work \
-        "$BOX" sh -c '
+        "$BOX" sh -c "
             set -e
-            echo "--- systemd version ---"; nix eval --raw .#nixosConfigurations.verity.pkgs.systemd.version || true; echo
-            nix build .#image-verity --out-link /tmp/result --print-build-logs
-            raw="$(nix eval --raw .#nixosConfigurations.verity.config.image.filePath)"
-            cp -L "/tmp/result/$raw" /out/nixos261-verity.raw
-            echo "--- raw copied: $raw ---"; ls -lh "/out/nixos261-verity.raw"
-        '
+            echo '--- systemd version ---'; nix eval --raw .#nixosConfigurations.$CFG.pkgs.systemd.version || true; echo
+            nix build .#$OUT_ATTR --out-link /tmp/result --print-build-logs
+            raw=\"\$(nix eval --raw .#nixosConfigurations.$CFG.config.image.filePath)\"
+            cp -L \"/tmp/result/\$raw\" /out/$NAME.raw
+            echo \"--- raw copied: \$raw ---\"; ls -lh \"/out/$NAME.raw\"
+        "
     echo "==> converting raw → qcow2 on the host"
-    qemu-img convert -f raw -O qcow2 "$OUT/nixos261-verity.raw" "$OUT/nixos261-verity.qcow2"
-    rm -f "$OUT/nixos261-verity.raw"
+    qemu-img convert -f raw -O qcow2 "$OUT/$NAME.raw" "$OUT/$NAME.qcow2"
+    rm -f "$OUT/$NAME.raw"
     _done=1
-    echo "PASS: verity image built → $OUT/nixos261-verity.qcow2"
+    echo "PASS: $MODE image built → $OUT/$NAME.qcow2"
 fi

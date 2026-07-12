@@ -336,9 +336,69 @@ A real unit with `ConditionFraction=N%` gates on exactly this evaluation.
 
 ---
 
-## Spike G — not yet run
+## Spike G — TPM2-sealed LUKS + attestation stub (✅ VERIFIED 2026-07-12)
 
-See [`PLAN.md`](PLAN.md). Measured boot (swtpm PCRs, `ConditionSecurity=measured-os`),
-`RestrictFileSystemAccess=`, the `ConditionFraction=` 3-VM fleet, and TPM2-sealed
-LUKS + attestation land here as they are built — each with its captured signature
-and the honest swtpm-is-not-a-trust-anchor caveat.
+> **Honest framing:** the TPM is **swtpm** (`TPM2_PT_MANUFACTURER` = `0x49424D00`
+> = `"IBM"`, the emulator's default). This proves the plumbing, **not** that the
+> node is trustworthy — see [`RUNBOOK-sealed-luks.md`](RUNBOOK-sealed-luks.md).
+
+### G.1 — the mechanism, live on a measured VM
+
+Driven with `sealed-luks-demo.sh` (host pushes `image/sealed-luks-demo.guest.sh`
+over serial). The VM is `tpm=true` and measured (PCR 11 populated), so the seal
+binds to real measured state. Run against the Spike-D verity VM (`nixos261v`):
+
+```
+$ examples/systemd261-nixos-measured-boot/sealed-luks-demo.sh nixos261v
+== systemd 261 — TPM2-sealed LUKS + attestation (measured VM nixos261v) ==
+  - TPM manufacturer: 0x49424D00 (0x49424D00='IBM' = swtpm; plumbing, NOT a trust anchor)
+  - live PCRs sealing binds to:
+      7 : 0xB5710BF57D25623E4019027DA116821FA99F5C81E9E38B87671CC574F9281439
+      11: 0x509F86A14845BB390BE430883EC44DE1A1CA6C61EBFDFD633790617BA0B73F5C
+  - LUKS2 volume created on /dev/loop0 (keyslot 0 = bootstrap passphrase)
+  New TPM2 token enrolled as key slot 1.
+  - TPM2 keyslot enrolled, sealed to PCR 7+11 (luks token count: 1)
+  - UNSEALED by the TPM against live PCRs — /dev/mapper/sealeddemo opened, zero passphrase
+  - attestation: AK-signed PCR 7+11 quote over nonce c3d4cab31ef6… VERIFIED (fresh + TPM-signed)
+  -   caveat: this AK is rooted in swtpm's self-made EK — proves 'a TPM signed it', NOT 'genuine hardware'
+  - after PCR 11 changed, the TPM REFUSED to unseal — the seal is bound to the measured OS ✅
+PASS: TPM2-sealed LUKS: seal→unseal-on-good-PCRs→refuse-on-changed-PCRs, plus a verified AK PCR-quote
+```
+
+**Signature:** `systemd-cryptenroll --tpm2-pcrs=7+11` adds a TPM-sealed keyslot;
+`systemd-cryptsetup … tpm2-device=auto,headless=true` opens the volume with **no
+passphrase**; an AK-signed `tpm2_quote` over PCR 7+11 + a fresh nonce passes
+`tpm2_checkquote`; and after `tpm2_pcrextend 11:…` the TPM **refuses** to unseal —
+the seal is bound to *what booted*, not to mere possession of a chip.
+
+### G.2 — the sealed golden image builds, boots measured, baked demo PASSes
+
+```
+$ examples/systemd261-nixos-measured-boot/build-nixos-image.sh --sealed
+… PASS: sealed image built → out/nixos261-sealed.qcow2   (1.3G)
+
+$ phase2-qemu-vm/lab-vm.sh create --config …/vm-nixos261-sealed.toml && lab-vm.sh start nixos261s
+# on the guest (driven over serial):
+nixos261s
+systemd 261 (261)
+-rwxr-xr-x 1 root root 5992 … /etc/lab/sealed-luks-demo
+  - live PCRs sealing binds to:
+      7 : 0xB5710BF57D25623E4019027DA116821FA99F5C81E9E38B87671CC574F9281439
+      11: 0x3667A7BE9EE02B40A252FF7D1A77E52A1050871706D5A2CBD240F291E9863B2F
+  …
+PASS: TPM2-sealed LUKS: seal→unseal-on-good-PCRs→refuse-on-changed-PCRs, plus a verified AK PCR-quote
+```
+
+**Signature:** the *shipped* golden image (`image/sealed.nix`) boots as
+`nixos261s` on systemd 261; PCR 11 is populated (**measured on its own**); the
+baked `/etc/lab/sealed-luks-demo` proves the sealed chain against the image's own
+measured state.
+
+### G.3 — Tier-B reuse + declarative `/data` (author-run)
+
+`stage-netboot.sh --sealed` + `nixos-pxe-sealed.toml` deploy the sealed image over
+the **identical** custom-`ipxe.efi` → deployer → `dd` → `efibootmgr` path already
+verified for the verity image in **E.3** (only the raw filename differs — the
+sealed flake outputs evaluate to derivations, confirmed). Realizing the opt-in
+`seal-data` `/data` on first boot needs a spare data device + a reboot. Both are
+**author-run**; the crypto core they reuse is the mechanism verified in **G.1**.
