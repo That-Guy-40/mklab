@@ -306,7 +306,37 @@ verity + measured chain travels with the image.
 
 ---
 
-## Spikes F–G — not yet run
+## Spike F — `ConditionFraction=` 3-VM mock fleet (✅ VERIFIED 2026-07-12)
+
+`fleet.toml` boots the plain systemd-261 image as **3 VMs** (`fleet-1/2/3`); each
+overlay generates its **own machine-id** at first boot (the image bakes none), so
+they form a fleet of distinct nodes. `fleet-demo.sh` sweeps
+`systemd-analyze condition 'ConditionFraction=N%'` on each.
+
+> **Syntax gotcha:** `ConditionFraction=` takes a **percentage** — `ConditionFraction=99%`
+> → *"succeeded"*. Decimals/ratios (`0.99`, `1/2`, `tag:0.5`) all give *"Invalid
+> argument"*. (Unlike `RestrictFileSystemAccess=`, this one **is** in nixpkgs'
+> systemd 261 and works.)
+
+```
+$ examples/systemd261-nixos-measured-boot/fleet-demo.sh
+VM         machine-id   10%   25%   50%   75%   90%
+fleet-1    78c6a566      ·     ·     ·     ·     ·
+fleet-2    8e35f248      ·     ·    MET   MET   MET
+fleet-3    2c09b3ee      ·     ·     ·    MET   MET
+included (of 3):          0     0     1     2     2
+```
+
+**Signature:** distinct machine-ids; `ConditionFraction=` **partitions the fleet
+deterministically** (each node has a fixed threshold from `hash(machine-id)`); and
+widening the fraction is **monotonic** — machines only ever *join* (0→0→1→2→2). A
+canary rollout ("50% catches fleet-2; widen to 75% adds fleet-3; fleet-1 is the
+final cohort") driven entirely from a unit condition, **no external orchestrator**.
+A real unit with `ConditionFraction=N%` gates on exactly this evaluation.
+
+---
+
+## Spike G — not yet run
 
 See [`PLAN.md`](PLAN.md). Measured boot (swtpm PCRs, `ConditionSecurity=measured-os`),
 `RestrictFileSystemAccess=`, the `ConditionFraction=` 3-VM fleet, and TPM2-sealed

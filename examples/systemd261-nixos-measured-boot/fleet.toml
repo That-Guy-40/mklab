@@ -1,0 +1,38 @@
+# Spike F — a 3-VM mock fleet for ConditionFraction= (distinct machine-IDs from
+# the plain systemd-261 image). Reuses out/nixos261.qcow2 (built by
+# build-nixos-image.sh); each VM's overlay generates its own machine-id first boot.
+[lab]
+name = "nixos261-fleet"
+
+[[vm]]
+name = "fleet-1"
+backend = "disk-image"
+image = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/examples/systemd261-nixos-measured-boot/out/nixos261.qcow2"
+firmware = "uefi"
+arch = "x86_64"
+memory = "2G"
+cpus = 1
+cloud_init = false
+ssh_port = 0
+
+[[vm]]
+name = "fleet-2"
+backend = "disk-image"
+image = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/examples/systemd261-nixos-measured-boot/out/nixos261.qcow2"
+firmware = "uefi"
+arch = "x86_64"
+memory = "2G"
+cpus = 1
+cloud_init = false
+ssh_port = 0
+
+[[vm]]
+name = "fleet-3"
+backend = "disk-image"
+image = "/media/sqs/COLD_STORAGE/LAB_CREATE_V2/examples/systemd261-nixos-measured-boot/out/nixos261.qcow2"
+firmware = "uefi"
+arch = "x86_64"
+memory = "2G"
+cpus = 1
+cloud_init = false
+ssh_port = 0
