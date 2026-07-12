@@ -5,6 +5,16 @@ A phased, spike-driven build. This file is the living roadmap (mirrors
 de-risks one unknown and lands a verifiable checkpoint before the next begins.
 The approved design lives in the session plan; this tracks execution + findings.
 
+> **Status (2026-07-12): ✅ COMPLETE — spikes A–G landed & merged to `main`.**
+> A Nix-built NixOS on **systemd 261** is deployed on-disk over iPXE (both tiers),
+> boots *measured* (dm-verity + UKI → `ConditionSecurity=measured-os` MET), stages
+> a rollout across a 3-VM fleet (`ConditionFraction=`), and seals LUKS storage to
+> the measured state (TPM2 PCR 7+11) with a verified PCR-quote attestation stub.
+> See [`SHOWCASE.md`](SHOWCASE.md) for the capability tour and
+> [`MANUAL_TESTING.md`](MANUAL_TESTING.md) for captured signatures. **One honest
+> gap remains:** `RestrictFileSystemAccess=` is not compiled into nixpkgs' systemd
+> 261 build (substrate ready; needs the feature upstream + signed verity).
+
 ## Thesis
 
 **Nix owns reproducibility + image composition; systemd 261 owns measured boot,

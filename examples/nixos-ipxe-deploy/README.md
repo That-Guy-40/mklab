@@ -19,6 +19,11 @@ where this mechanism was first proven end-to-end.
 Everything reuses the repo's existing `pxe-install` backend
 (`phase2-qemu-vm/lab-vm.sh`) + a rootless nginx on `:8181` — no new infrastructure.
 
+> **New to Nix?** [`WHY-NIX.md`](WHY-NIX.md) is a ground-up primer (*what, why, how,
+> where, and the problems it solves*) written against these exact Tier A / Tier B
+> modules — it explains why the two tiers are really *one* idea (a Nix **closure**)
+> moved two ways.
+
 ## Use it from your own flake
 
 ```nix
@@ -56,6 +61,7 @@ deployer registers). See [`modules/`](modules/) for the exact contracts.
 | [`demo/`](demo/) | Self-contained minimal payloads (BIOS target + UEFI image) so the block builds/boots standalone. |
 | [`stage-deploy.sh`](stage-deploy.sh) · [`nixos-ipxe-install.toml`](nixos-ipxe-install.toml) · [`nixos-ipxe-deploy.toml`](nixos-ipxe-deploy.toml) | Build/stage the demo + run it through `pxe-install`. |
 | [`RUNBOOK.md`](RUNBOOK.md) · [`MANUAL_TESTING.md`](MANUAL_TESTING.md) | Step-by-step + the captured verification. |
+| [`WHY-NIX.md`](WHY-NIX.md) | Background primer on Nix (what/why/how/where + problems it solves), anchored to these Tier A/B modules. |
 
 ## Gotchas already solved (the reusable value)
 
