@@ -1,0 +1,39 @@
+# examples/systemd261-nixos-measured-boot/nixos-pxe-deploy.toml
+#
+# Spike E, Tier B — iPXE → lay the dm-verity GOLDEN image onto local disk. A
+# UNIFIED lab: nginx (:8181) serves the golden raw + deployer; the pxe-install VM
+# (UEFI, so no `firmware` key) UEFI-PXE-boots a custom ipxe.efi (deploy script
+# embedded) → the deployer dd's the image onto /dev/vda → reboots into the MEASURED
+# on-disk NixOS. tpm=true so systemd-stub measures the UKI into PCR 11 post-deploy.
+#
+#   ./build-nixos-image.sh --verity           # build the golden image first
+#   ./stage-netboot.sh --tier-b               # build deployer + custom ipxe.efi + stage raw
+#   phase4-podman/lab-podman.sh up --config …/nixos-pxe-deploy.toml
+#   phase2-qemu-vm/lab-vm.sh create --config …/nixos-pxe-deploy.toml && lab-vm.sh start nixos261-deploy
+#
+# PATH CAVEAT: nginx volume path is literal — adjust /home/sqs if your $HOME differs.
+
+[lab]
+name        = "nixos261-deploy"
+description = "iPXE → lay the dm-verity golden image onto disk (Spike E, Tier B)"
+tags        = ["nixos", "pxe", "netboot", "dm-verity", "measured", "systemd261"]
+
+[[service]]
+name    = "http"
+engine  = "podman"
+image   = "docker.io/library/nginx:alpine"
+ports   = ["8181:80"]
+volumes = ["/home/sqs/netboot:/usr/share/nginx/html:ro"]
+
+[[vm]]
+name           = "nixos261-deploy"
+backend        = "pxe-install"          # UEFI (no firmware key): OVMF PXE runs ipxe.efi
+install_target = "20G"                   # blank disk the golden image is dd'd onto
+mac            = "52:54:00:26:11:06"
+arch           = "x86_64"
+memory         = "3072M"
+cpus           = 2
+cloud_init     = false
+tpm            = true                    # measured boot after deploy (swtpm → PCR 11)
+pxe_dir        = "/home/sqs/netboot"
+pxe_bootfile   = "nixos-deploy.efi"      # the custom Nix-built ipxe.efi (deploy script embedded)

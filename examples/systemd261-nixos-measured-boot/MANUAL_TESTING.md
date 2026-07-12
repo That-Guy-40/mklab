@@ -264,9 +264,45 @@ findmnt -no FSTYPE /     → ext4     ·  lsblk LABEL /dev/vda2 → nixos
 > `config.nix.package` to the service `path`. The partition step had already
 > succeeded, which is how the failure was pinpointed from the journal.
 
-**Tier B (lay the dm-verity golden image down over iPXE via `systemd-repart`/dd)
-— designed, not yet verified.** It needs UEFI PXE (the golden image is a UEFI UKI),
-i.e. an `ipxe.efi` rebuilt with the deploy script embedded — the next increment.
+### E.3 — Tier B: lay the dm-verity GOLDEN image down over iPXE (✅ VERIFIED 2026-07-12)
+
+The image-based-deploy counterpart: instead of installing package-by-package, dd
+the whole **Spike-D dm-verity + UKI golden image** onto disk. UEFI (the image is a
+UKI), so it needs UEFI PXE — a **custom `ipxe.efi` built via Nix**
+(`pkgs.ipxe.override { embedScript = … }`, no docker) with the deploy boot-script
+embedded. `image/deployer.nix` is a tiny netboot deployer that `curl | dd`s the raw
+image, registers an NVRAM boot entry, and reboots.
+
+```
+$ ./build-nixos-image.sh --verity      # (Spike D golden image)
+$ ./stage-netboot.sh --tier-b          # deployer + custom ipxe.efi + golden raw → ~/netboot
+$ phase4-podman/lab-podman.sh up   --config …/nixos-pxe-deploy.toml
+$ phase2-qemu-vm/lab-vm.sh create  --config …/nixos-pxe-deploy.toml   # UEFI + tpm=true
+$ phase2-qemu-vm/lab-vm.sh start   nixos261-deploy
+# serial:
+BdsDxe: failed to load Boot0001 "UEFI Misc Device" … Not Found   → blank disk
+BdsDxe: loading Boot0002 "UEFI PXEv4 (MAC:525400261106)"
+iPXE 2.0.0 -- Open Source Network Boot Firmware                  → the custom ipxe.efi
+… deployer: curl | dd the golden raw onto /dev/vda … reboot …
+systemd-veritysetup-generator … for usr                         → the DEPLOYED disk booting
+nixos261v login: root (automatic login)
+```
+
+The deployed on-disk system is the **measured** golden image:
+
+```
+hostname                 → nixos261v
+systemctl --version      → systemd 261 (261)
+dmsetup info … verity usr → ACTIVE   ·   df /nix/store → /dev/mapper/usr
+systemd-analyze condition 'ConditionSecurity=measured-os'  → MET
+lsblk /dev/vda           → vda1 ESP(100M) · vda2 usr-verity(75M) · vda3 usr erofs(1.1G)→/dev/mapper/usr
+```
+
+So **both Spike-E tiers are verified**: Tier A installs NixOS package-by-package
+(`nixos-install`, BIOS); Tier B lays down a whole **measured, verity-sealed golden
+image** (dd, UEFI) — and the deployed disk still satisfies `measured-os`. The
+image-based tier needed no `RestrictFileSystemAccess=` to be meaningful — the
+verity + measured chain travels with the image.
 
 ---
 
