@@ -1,0 +1,73 @@
+#!/bin/bash
+# fixed/sci2dec — expand scientific notation to a plain decimal string.
+#
+# WHY THIS EXISTS. shellmath's `_shellmath_add` / `_shellmath_subtract` mis-scale
+# an operand written in scientific notation when its exponent is <= -2: every such
+# exponent is treated as though it were e-1. Silently.
+#
+#     _shellmath_add 1 2e-1   ->  1.2      (correct)
+#     _shellmath_add 1 2e-2   ->  1.2      (WRONG -- should be 1.02)
+#     _shellmath_add 1 2e-3   ->  1.2      (WRONG -- should be 1.002)
+#
+# shellmath's own README leads with an example that lands in this bug:
+#
+#     _shellmath_add 1.009 4.223e-2   ->  1.2643    (WRONG -- should be 1.05123)
+#
+# `_shellmath_multiply` and `_shellmath_divide` handle the same operands fine, so
+# this is specific to the additive path. See ../../MANUAL_TESTING.md (§errata).
+#
+# THE FIX IS NOT TO FORK THE LIBRARY. shellmath is correct on plain decimals, so
+# we normalize the operand before handing it over:
+#
+#     _shellmath_add 1.009 "$(sci2dec 4.223e-2)"   ->  1.05123    (correct)
+#
+# Pure Bash: no bc, no awk, no subshell math -- in the spirit of the thing.
+#
+# Usage:  sci2dec NUMBER        e.g.  sci2dec 4.223e-2  ->  0.04223
+
+sci2dec () {
+    local n="$1" sign='' mant exp int frac digits point
+
+    case "$n" in
+        -*) sign='-'; n="${n#-}" ;;
+        +*) n="${n#+}" ;;
+    esac
+
+    # No exponent -> already a plain decimal.
+    case "$n" in
+        *[eE]*) ;;
+        *) printf '%s%s\n' "$sign" "$n"; return 0 ;;
+    esac
+
+    mant="${n%%[eE]*}"
+    exp="${n##*[eE]}"
+    exp="${exp#+}"
+
+    int="${mant%%.*}"
+    case "$mant" in
+        *.*) frac="${mant#*.}" ;;
+        *)   frac='' ;;
+    esac
+    digits="$int$frac"
+    point=${#int}                 # decimal point sits after this many digits
+    point=$(( point + exp ))      # ...shifted by the exponent
+
+    if [ "$point" -le 0 ]; then
+        # 0.000ddd  -- pad zeros on the left
+        local pad='' i=0
+        while [ "$i" -lt $(( -point )) ]; do pad="0$pad"; i=$(( i + 1 )); done
+        printf '%s0.%s%s\n' "$sign" "$pad" "$digits"
+    elif [ "$point" -ge ${#digits} ]; then
+        # ddd000    -- pad zeros on the right, no fractional part
+        local pad='' i=0
+        while [ "$i" -lt $(( point - ${#digits} )) ]; do pad="${pad}0"; i=$(( i + 1 )); done
+        printf '%s%s%s\n' "$sign" "$digits" "$pad"
+    else
+        printf '%s%s.%s\n' "$sign" "${digits:0:point}" "${digits:point}"
+    fi
+}
+
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+    if [ $# -ne 1 ]; then echo "usage: sci2dec NUMBER" >&2; exit 2; fi
+    sci2dec "$1"
+fi

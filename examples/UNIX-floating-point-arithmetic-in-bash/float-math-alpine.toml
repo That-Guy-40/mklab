@@ -1,0 +1,42 @@
+# Floating-point arithmetic in Bash — Michael Wood's `shellmath` + Cyrus's
+# recursive `div` — on Alpine Linux (musl / BusyBox).
+#
+# The same environment as float-math-debian.toml on a musl/BusyBox base — and the
+# divergence between the two is INVERTED, which is the joke this lab is built on:
+#
+#   Debian 13  ships bash, but NO `bc` and NO `dc`.  The canonical advice
+#              ("Bash can't do floats — just use bc") fails out of the box.
+#   Alpine     ships `bc` AND `dc` — as BusyBox applets! — but NO bash at all.
+#              So shellmath and Cyrus's div (#!/bin/bash) cannot even be
+#              interpreted; a missing interpreter reports the misleading
+#              "not found".
+#
+# Each base is missing exactly what the other has, and this lab needs BOTH: bash
+# to run the pure-Bash implementations, and bc as the arbitrary-precision oracle.
+# setup-workshop.sh installs what each base lacks — a documented divergence, see
+# RUNBOOK.md / MANUAL_TESTING.md. Engine-agnostic: phase5-lxd/lab-lxd.sh speaks
+# LXD or Incus identically.
+#
+#   # 1) launch the container
+#   phase5-lxd/lab-lxd.sh up   --config examples/UNIX-floating-point-arithmetic-in-bash/float-math-alpine.toml
+#
+#   # 2) provision it (bash + bc + gawk + zsh + a `learner` + the sandbox)
+#   examples/UNIX-floating-point-arithmetic-in-bash/setup-workshop.sh float-math-alpine/shell
+#
+#   # 3) start calculating — log in as the learner
+#   phase5-lxd/lab-lxd.sh exec float-math-alpine/shell -- su - learner
+#
+#   # 4) tear down
+#   phase5-lxd/lab-lxd.sh down --lab float-math-alpine
+
+[lab]
+name        = "float-math-alpine"
+description = "Floating-point arithmetic in pure Bash (shellmath + Cyrus's div) — on a base that ships bc but no bash"
+tags        = ["floating-point", "bash", "shellmath", "bc", "awk", "arithmetic", "alpine", "musl", "busybox"]
+
+[[instance]]
+name  = "shell"
+type  = "container"
+# `images:alpine/latest` is rewritten by lab-lxd.sh to the highest stable
+# alpine/X.Y on the `images:` remote.
+image = "images:alpine/latest"

@@ -1,0 +1,77 @@
+#!/bin/bash
+# fixed/div — a drop-in corrected twin of Cyrus's `div` (see ../div for the
+# verbatim original, and `diff -u ../div fixed/div` for the exercise).
+#
+# The original is a genuinely clever piece of work: it does grade-school long
+# division, emitting one digit per recursion, entirely inside Bash's integer
+# `$(( ))`. Everything below preserves that algorithm. What it fixes is the
+# arithmetic *around* it.
+#
+# WHAT WAS BROKEN (all silently — the original exits 0 and prints garbage):
+#
+#  1. NEGATIVE OPERANDS.  Bash's `/` truncates toward zero, so -7/2 = -3 with
+#     remainder -1. The original feeds that negative remainder straight back in,
+#     and every recursive digit then carries its own minus sign:
+#         div -7 2   ->  -3.-5                    (should be -3.5)
+#         div -1 3   ->  0.-3-3-3-3-3-3-3-3-3-3-3-3
+#     FIX: hoist the sign out, divide magnitudes, prepend the sign once.
+#
+#  2. SILENT INT64 OVERFLOW.  Each step computes `e*10` where 0 <= e < divisor.
+#     If the divisor exceeds INTMAX/10 (9223372036854775807/10), that product
+#     wraps negative and you get the same garbage — from perfectly innocent,
+#     positive inputs:
+#         div 999999999999999999 1000000000000000000  ->  0.-8-4-4-6-7-4-40-7-3-70
+#     FIX: refuse, loudly, on stderr with a non-zero exit.
+#
+#  3. `echo -n` is not portable, and unquoted `$1`/`$2` in `[ ]` break on empty
+#     args. FIX: printf, quoted expansions, and an arg check.
+#
+# WHAT IS *NOT* "FIXED" (faithful to the original, by design):
+#     It TRUNCATES to `p` digits; it does not round. `div 2 3` -> 0.666666666666,
+#     never ...667. `bc` with a `scale=` truncates too, so the two agree — which
+#     is exactly why demo.sh can compare them.
+#
+# Usage:  fixed/div DIVIDEND DIVISOR [PRECISION]     (integers; default p=12)
+
+# The unsigned core — Cyrus's algorithm, unchanged in spirit.
+_div_digits ()
+{
+        local p=${p:-12}                      # precision
+        local c=${c:-0}                       # precision counter (dynamic scope)
+        local d=.                             # decimal separator
+        local r=$(( $1 / $2 )); printf '%s' "$r"
+        local m=$(( r * $2 ))
+        [ "$c" -eq 0 ] && [ "$m" -ne "$1" ] && printf '%s' "$d"
+        if [ "$1" -eq "$m" ] || [ "$c" -eq "$p" ]; then printf '\n'; return; fi
+        local e=$(( $1 - m ))
+        c=$(( c + 1 ))
+        _div_digits $(( e * 10 )) "$2"
+}
+
+div ()  # Arguments: dividend, divisor, [precision]
+{
+        local a="$1" b="$2" p="${3:-12}" neg=0 sign='' out
+        if [ "$b" -eq 0 ]; then echo "div: division by 0" >&2; return 1; fi
+
+        # (1) hoist the sign out and divide magnitudes
+        if [ "$a" -lt 0 ]; then a=$(( -a )); neg=$(( 1 - neg )); fi
+        if [ "$b" -lt 0 ]; then b=$(( -b )); neg=$(( 1 - neg )); fi
+
+        # (2) the recursion computes e*10 with 0 <= e < b; refuse if that overflows
+        if [ "$b" -gt 922337203685477580 ]; then
+                echo "div: divisor > INTMAX/10 -- 'e*10' would overflow int64" >&2
+                return 1
+        fi
+
+        local c=0
+        out=$( _div_digits "$a" "$b" )
+        [ "$neg" -eq 1 ] && [ "$out" != "0" ] && sign='-'
+        printf '%s%s\n' "$sign" "$out"
+}
+
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+    if [ $# -lt 2 ] || [ $# -gt 3 ]; then
+        echo "usage: div DIVIDEND DIVISOR [PRECISION]" >&2; exit 2
+    fi
+    div "$1" "$2" "${3:-12}"
+fi

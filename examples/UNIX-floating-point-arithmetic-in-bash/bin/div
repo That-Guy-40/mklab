@@ -1,0 +1,41 @@
+#!/bin/bash
+# div — Cyrus's recursive long-division, VERBATIM from Stack Overflow.
+#
+#   Source   : https://stackoverflow.com/a/24431665
+#   Posted by: Cyrus, modified by community (see the post's 'Timeline')
+#   Retrieved: 2026-07-12
+#   License  : CC BY-SA 4.0
+#
+# This is the "diamond-in-the-rough" that shellmath's own README points to as the
+# prior art for decimal arithmetic in pure Bash. It is reproduced here UNMODIFIED
+# as the object of study — you cannot learn from code that was silently rewritten.
+# Its bugs are real and are the point: see ../MANUAL_TESTING.md (§errata) and the
+# drop-in corrected twin in fixed/div.
+#
+# KNOWN, DEMONSTRATED DEFECTS (all silent — exit 0, no warning):
+#   * negative operands emit non-numeric garbage:  div -7 2  ->  -3.-5
+#   * divisors > ~9.22e17 overflow int64 in `e*10` and emit the same garbage
+#   * it TRUNCATES at p=12; it never rounds
+#
+# Usage:  div DIVIDEND DIVISOR      (integers)
+
+div ()  # Arguments: dividend and divisor
+{
+        if [ $2 -eq 0 ]; then echo division by 0; return 1; fi
+        local p=12                            # precision
+        local c=${c:-0}                       # precision counter
+        local d=.                             # decimal separator
+        local r=$(($1/$2)); echo -n $r        # result of division
+        local m=$(($r*$2))
+        [ $c -eq 0 ] && [ $m -ne $1 ] && echo -n $d
+        [ $1 -eq $m ] || [ $c -eq $p ] && echo && return
+        local e=$(($1-$m))
+        c=$(($c+1))
+        div $(($e*10)) $2
+}
+
+# Allow use both as a sourced function and as a standalone command.
+if [ "${BASH_SOURCE[0]}" = "$0" ]; then
+    if [ $# -ne 2 ]; then echo "usage: div DIVIDEND DIVISOR" >&2; exit 2; fi
+    div "$1" "$2"
+fi

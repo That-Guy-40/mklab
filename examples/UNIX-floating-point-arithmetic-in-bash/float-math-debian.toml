@@ -1,0 +1,39 @@
+# Floating-point arithmetic in Bash — Michael Wood's `shellmath` + Cyrus's
+# recursive `div` — on Debian 13 (trixie).
+#
+# A throwaway system container with bash, `bc`/`dc` (the orthodox external
+# calculators), gawk (the binary-IEEE oracle), zsh + ksh (which have had float
+# arithmetic in `$(( ))` for decades — proving this is a *bash* limitation, not a
+# *shell* one), a non-root `learner` user, and a `~/float-math/` sandbox: Cyrus's
+# `div` verbatim, corrected twins under bin/fixed/, a PINNED clone of shellmath,
+# and a runnable demo.sh proving bc == awk == pure-bash div == shellmath.
+#
+# NOTE THE DIVERGENCE: Debian ships bash but NO bc and NO dc — so the canonical
+# "Bash can't do floats, just use bc" advice does not work out of the box. Alpine
+# is the exact mirror image (bc/dc as BusyBox applets, but no bash at all).
+# Driven through phase5-lxd/lab-lxd.sh, which speaks LXD or Incus identically.
+#
+#   # 1) launch the container
+#   phase5-lxd/lab-lxd.sh up   --config examples/UNIX-floating-point-arithmetic-in-bash/float-math-debian.toml
+#
+#   # 2) provision it (bash + bc/dc + gawk + zsh/ksh + a `learner` + the sandbox)
+#   examples/UNIX-floating-point-arithmetic-in-bash/setup-workshop.sh float-math-debian/shell
+#
+#   # 3) start calculating — log in as the learner
+#   phase5-lxd/lab-lxd.sh exec float-math-debian/shell -- su - learner
+#
+#   # 4) tear down
+#   phase5-lxd/lab-lxd.sh down --lab float-math-debian
+#
+# The by-hand walkthrough (what setup-workshop.sh automates, and why) is RUNBOOK.md.
+
+[lab]
+name        = "float-math-debian"
+description = "Floating-point arithmetic in pure Bash (shellmath + Cyrus's div) vs bc/awk, on Debian 13 (trixie)"
+tags        = ["floating-point", "bash", "shellmath", "bc", "awk", "arithmetic", "debian", "trixie"]
+
+[[instance]]
+name  = "shell"
+type  = "container"
+# Debian 13 / trixie container, from the linuxcontainers `images:` remote.
+image = "images:debian/13"
