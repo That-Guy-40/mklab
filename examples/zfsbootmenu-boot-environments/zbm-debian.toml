@@ -1,0 +1,28 @@
+# zbm-debian.toml — boot the root-on-ZFS + ZFSBootMenu disk under QEMU/OVMF.
+#
+# This does NOT build the image; install-zfs-root.sh does that inside a Debian
+# live VM (see RUNBOOK-install.md).  Point `image` at the qcow2 you produced,
+# then:
+#     phase2-qemu-vm/lab-vm.sh create --config examples/zfsbootmenu-boot-environments/zbm-debian.toml
+#     phase2-qemu-vm/lab-vm.sh start   zbm-debian
+#     phase2-qemu-vm/lab-vm.sh console zbm-debian     # watch ZFSBootMenu, then Debian
+#
+# `image` is used as the qcow2 BACKING file, so it must be an ABSOLUTE path;
+# lab-vm.sh layers a per-VM copy-on-write overlay on top (your base stays
+# pristine).  Edit the path to match where your image lives.
+#
+# Why UEFI: ZFSBootMenu is an EFI executable — OVMF's boot manager launches the
+# efibootmgr entry the installer registered (\EFI\zbm\vmlinuz.EFI).  Under BIOS
+# there is no such NVRAM entry, so keep firmware = "uefi".
+
+[[vm]]
+name       = "zbm-debian"
+backend    = "disk-image"
+image      = "/home/user/mklab/examples/zfsbootmenu-boot-environments/out/root-on-zfs.qcow2"
+firmware   = "uefi"          # OVMF two-file pflash (lab-vm.sh default)
+cloud_init = false           # the ZFS image is not cloud-init driven
+arch       = "x86_64"
+cpus       = 2
+memory     = "2048M"
+# No slirp SSH forward needed to watch the boot; drive it on the serial console.
+ssh_port   = 0

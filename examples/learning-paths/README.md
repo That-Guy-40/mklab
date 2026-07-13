@@ -86,7 +86,7 @@ These are orthogonal to 00-INDEX's *run-cost* tags, which are carried through un
 
 *Firmware, boot, and RAM-only systems — the lowest layers.*
 
-[`linuxboot-uefi-kexec`](../linuxboot-uefi-kexec/) · [`kdump-kexec-lab`](../kdump-kexec-lab/) · [`root-password-reset`](../root-password-reset/) · [`tiny-linux-experiments`](../tiny-linux-experiments/) · [`pxe-boot-mechanics`](../pxe-boot-mechanics/) · [`chroot-netboot-minimal.toml`](../chroot-netboot-minimal.toml)
+[`linuxboot-uefi-kexec`](../linuxboot-uefi-kexec/) · [`kdump-kexec-lab`](../kdump-kexec-lab/) · [`root-password-reset`](../root-password-reset/) · [`zfsbootmenu-boot-environments`](../zfsbootmenu-boot-environments/) · [`tiny-linux-experiments`](../tiny-linux-experiments/) · [`pxe-boot-mechanics`](../pxe-boot-mechanics/) · [`chroot-netboot-minimal.toml`](../chroot-netboot-minimal.toml)
 
 ### Multi-arch / TCG
 
