@@ -87,7 +87,7 @@ difficulty = "🟢"
 est        = "⏱ half-day+"
 prereqs    = []
 audience   = "complete beginners welcome; the last two steps ask a little more"
-goal       = "Find your feet at the shell, learn to program it, wield grep/sed/awk on real text — then discover that composing those tools was relational algebra all along, meet the sets underneath it, and finally ask the shell for a *number* and find out it cannot divide 1 by 3. The first three steps are Matt Might's track (he names the survival guide as the prerequisite to bash-by-example); an equivalent Carpentries + Robbins track is a side-quest."
+goal       = "Find your feet at the shell, learn to program it, wield grep/sed/awk on real text — then discover that composing those tools was relational algebra all along, meet the sets underneath it, rebuild `ls` and the pager you read its output with from bash builtins, and finally ask the shell for a *number* and find out it cannot divide 1 by 3. The first three steps are Matt Might's track (he names the survival guide as the prerequisite to bash-by-example); an equivalent Carpentries + Robbins track is a side-quest."
   [[path.step]]
   lab        = "UNIX_novice_survival_guide/"
   learn      = "navigate, pipe, redirect, and get help without a cheat-sheet."
@@ -110,6 +110,25 @@ goal       = "Find your feet at the shell, learn to program it, wield grep/sed/a
   tags       = ["🟡"]
   learn      = "the SETS under those relations, and the three algorithm families that build them — merge (`comm`), count (`uniq -c`), hash (`awk`) — plus why `comm` and `sort -n` silently disagree about what 'sorted' means."
   checkpoint = "run `demo.sh` → `PASS: all 28 set identities hold`; then run `treasure-hunt.sh` → it recovers Google's 2008 puzzle answer `7830239` with `uniq -d`, and shows the article's own `comm + sort -n` recipe losing it."
+  [[path.step]]
+  lab        = "UNIX-ls-without-ls/"
+  tags       = ["🟡"]
+  learn      = "you've been QUERYING with these tools — now REBUILD one: `ddls` reimplements ls from bash builtins + GNU stat + tput (one `stat --printf` fork per file, `printf %(...)T` instead of `date`, an insertion sort instead of `sort`), and the only honest test for a reimplementation is a byte-for-byte diff against the original. Its own header lies three times (the `dd` in the name is branding); demo.sh pins every lie and every divergence."
+  checkpoint = "run `demo.sh` → `PASS: all 32 checks hold` — including `ddls -la == ls -la` byte-identical; then explain why `--color=never` colors anyway (initialization order) and why `-t` disagrees with ls about same-second files (seconds vs nanoseconds)."
+  # Host-safe: the demo builds its fixture in mktemp, needs only GNU ls/stat +
+  # bash >= 4.2 (+ script(1) for the tty section), and cleans up after itself.
+  verify_cmd    = "bash examples/UNIX-ls-without-ls/demo.sh 2>&1 | tail -2"
+  verify_marker = "PASS: all 32 checks hold"
+  verify_host   = true
+  [[path.step]]
+  lab        = "UNIX-less-without-less/"
+  tags       = ["🟡"]
+  learn      = "then rebuild the screen you read it on: `ddpager` is a working less (search, filters, a file ring, follow mode) from bash builtins + dd + tput. Two mechanisms carry it: dd's stderr byte-count vs bash's NUL-stripping `$( )` as a binary detector, and the raw-mode illusion — `stty raw` turns ICRNL and ISIG off, yet Enter scrolls and Ctrl-C exits 130, because bash's `read -n1` swaps its own termios in during every read. Testing a TUI honestly means a real pty and human-speed keystrokes."
+  checkpoint = "run `demo.sh` → `PASS: all 28 checks hold` — the pager driven through a real pty by `drive-pager.py`; then run the dd-reader experiment and explain why dd sees byte 13 where bash's read saw Enter."
+  # Host-run works (python3 + a pty) but takes ~60 s of real-time typing;
+  # lab-context (the container has everything) is the intended home.
+  verify_cmd    = "bash examples/UNIX-less-without-less/demo.sh 2>&1 | tail -2"
+  verify_marker = "PASS: all 28 checks hold"
   [[path.step]]
   lab        = "UNIX-floating-point-arithmetic-in-bash/"
   tags       = ["🟡"]
@@ -512,6 +531,12 @@ theme   = "Labs operationalizing a specific published write-up (Linux Journal, A
 members = ["kdump-kexec-lab/", "tiny-internet-project/", "linuxboot-uefi-kexec/",
            "tiny-linux-experiments/minimal-arm-linux-qemu/",
            "UNIX-set-operations-in-the-shell/"]
+
+[[collection]]
+id      = "rewrite-the-classics"
+title   = "Rewrite the classics"
+theme   = "First-party reimplementations of everyday Unix tools in bash builtins + one or two externals, each diffed or driven against the original — `ls` (vs GNU ls, byte for byte) and `less` (through a real pty). The `dd` in the names is a family brand; only one of them earns it."
+members = ["UNIX-ls-without-ls/", "UNIX-less-without-less/"]
 
 [[collection]]
 id      = "shell-as-a-database"

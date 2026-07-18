@@ -1,0 +1,39 @@
+# ls without ls — `ddls`, an ls replacement written in bash builtins + GNU
+# stat + tput — on Debian 13 (trixie).
+#
+# A throwaway system container with bash, GNU coreutils (both the `stat` that
+# ddls is built on AND the real `ls` that demo.sh uses as its byte-for-byte
+# oracle), `tput`, util-linux `script` (the demo's tty harness), a non-root
+# `learner` user, and a `~/ls-without-ls/` sandbox: the script VERBATIM, a
+# corrected twin under bin/fixed/, and a runnable demo.sh with 32 checks.
+#
+# NOTE THE DIVERGENCE: ddls "lives off the land" — but the land it assumes is
+# GNU. Debian has all of it out of the box; Alpine has none of it (no bash,
+# BusyBox stat without --printf, no tput, and a BusyBox ls that can't serve
+# as the oracle). See ls-without-ls-alpine.toml for the other half.
+# Driven through phase5-lxd/lab-lxd.sh, which speaks LXD or Incus identically.
+#
+#   # 1) launch the container
+#   phase5-lxd/lab-lxd.sh up   --config examples/UNIX-ls-without-ls/ls-without-ls-debian.toml
+#
+#   # 2) provision it (bash + coreutils + tput + script + `learner` + the sandbox)
+#   examples/UNIX-ls-without-ls/setup-workshop.sh ls-without-ls-debian/shell
+#
+#   # 3) start listing — log in as the learner
+#   phase5-lxd/lab-lxd.sh exec ls-without-ls-debian/shell -- su - learner
+#
+#   # 4) tear down
+#   phase5-lxd/lab-lxd.sh down --lab ls-without-ls-debian
+#
+# The by-hand walkthrough (what setup-workshop.sh automates, and why) is RUNBOOK.md.
+
+[lab]
+name        = "ls-without-ls-debian"
+description = "ddls: an ls replacement in bash builtins + GNU stat + tput, diffed byte-for-byte against real ls, on Debian 13 (trixie)"
+tags        = ["ls", "bash", "stat", "tput", "coreutils", "reimplementation", "debian", "trixie"]
+
+[[instance]]
+name  = "shell"
+type  = "container"
+# Debian 13 / trixie container, from the linuxcontainers `images:` remote.
+image = "images:debian/13"

@@ -1,0 +1,915 @@
+#!/usr/bin/env bash
+# ================================================================
+# ddls — An ls replacement using BASH builtins, stat, tput, and dd
+#
+# Constraints: BASH 4.2+ builtins (printf, test, [[ ]], globs),
+#              GNU stat, tput. No awk, sed, grep, ls, find, date,
+#              column, or other text-processing externals.
+#
+# Features:    Long format (-l), hidden files (-a/-A), recursive
+#              (-R), sort by name/size/time (-S/-t/-U), reverse (-r),
+#              human sizes (-h), classify (-F), color (--color),
+#              inode (-i), directory-as-entry (-d), one-per-line (-1),
+#              columns (default for tty), symlink resolution.
+#
+# Usage:       ddls [OPTIONS] [path ...]
+# ================================================================
+set -uo pipefail
+
+readonly DDLS_VERSION="0.1.0"
+
+# ================================================================
+# Options — populated by parse_args
+# ================================================================
+declare -i OPT_LONG=0         # -l
+declare -i OPT_ALL=0          # -a (. and ..)
+declare -i OPT_ALMOST_ALL=0   # -A (hidden, no . and ..)
+declare -i OPT_RECURSIVE=0    # -R
+declare -i OPT_HUMAN=0        # -h
+declare -i OPT_CLASSIFY=0     # -F
+declare -i OPT_INODE=0        # -i
+declare -i OPT_DIR_ENTRY=0    # -d
+declare -i OPT_ONE_PER_LINE=0 # -1
+declare -i OPT_REVERSE=0      # -r
+declare -i OPT_COLOR=0        # --color
+declare    OPT_SORT="name"    # name | size | time | none
+declare -i OPT_NUMERIC_IDS=0  # -n
+declare -i SKIP_TOTAL=0       # suppress "total" line for single files
+
+# ================================================================
+# Terminal / Color
+# ================================================================
+declare -i TERM_COLS=80
+declare -i IS_TTY=0
+
+# LS_COLORS-style ANSI codes (hardcoded sane defaults)
+declare CLR_RESET="" CLR_DIR="" CLR_LINK="" CLR_EXEC=""
+declare CLR_PIPE="" CLR_SOCK="" CLR_BLK="" CLR_CHR=""
+declare CLR_ORPHAN="" CLR_SETUID="" CLR_SETGID="" CLR_STICKY=""
+declare CLR_OW="" CLR_STICKY_OW=""
+declare CLR_ARCHIVE="" CLR_IMAGE="" CLR_AUDIO="" CLR_VIDEO=""
+
+init_colors() {
+    # Standard LS_COLORS-compatible defaults
+    CLR_RESET=$'\e[0m'
+    CLR_DIR=$'\e[1;34m'         # bold blue
+    CLR_LINK=$'\e[1;36m'        # bold cyan
+    CLR_EXEC=$'\e[1;32m'        # bold green
+    CLR_PIPE=$'\e[33m'          # yellow
+    CLR_SOCK=$'\e[1;35m'        # bold magenta
+    CLR_BLK=$'\e[1;33;40m'      # bold yellow on black
+    CLR_CHR=$'\e[1;33;40m'      # bold yellow on black
+    CLR_ORPHAN=$'\e[1;31;40m'   # bold red on black
+    CLR_SETUID=$'\e[37;41m'     # white on red
+    CLR_SETGID=$'\e[30;43m'     # black on yellow
+    CLR_STICKY=$'\e[37;44m'     # white on blue
+    CLR_OW=$'\e[34;42m'         # blue on green
+    CLR_STICKY_OW=$'\e[30;42m'  # black on green
+    CLR_ARCHIVE=$'\e[1;31m'     # bold red
+    CLR_IMAGE=$'\e[1;35m'       # bold magenta
+    CLR_AUDIO=$'\e[36m'         # cyan
+    CLR_VIDEO=$'\e[1;35m'       # bold magenta
+}
+
+# Return the color escape for a given file
+# Uses: file path, stat mode (octal), file type letter
+color_for_file() {
+    local path="$1" oct_mode="$2" ftype="$3"
+
+    (( ! OPT_COLOR )) && return
+
+    case "$ftype" in
+        d)
+            # Check sticky + other-writable combinations
+            local -i mode_int
+            printf -v mode_int '%d' "0$oct_mode"
+            if (( mode_int & 01000 && mode_int & 0002 )); then
+                printf '%s' "$CLR_STICKY_OW"
+            elif (( mode_int & 0002 )); then
+                printf '%s' "$CLR_OW"
+            elif (( mode_int & 01000 )); then
+                printf '%s' "$CLR_STICKY"
+            else
+                printf '%s' "$CLR_DIR"
+            fi
+            ;;
+        l)
+            # Check if symlink target exists
+            if [[ -e "$path" ]]; then
+                printf '%s' "$CLR_LINK"
+            else
+                printf '%s' "$CLR_ORPHAN"
+            fi
+            ;;
+        p)  printf '%s' "$CLR_PIPE" ;;
+        s)  printf '%s' "$CLR_SOCK" ;;
+        b)  printf '%s' "$CLR_BLK"  ;;
+        c)  printf '%s' "$CLR_CHR"  ;;
+        -)
+            local -i mode_int
+            printf -v mode_int '%d' "0$oct_mode"
+            if (( mode_int & 04000 )); then
+                printf '%s' "$CLR_SETUID"
+            elif (( mode_int & 02000 )); then
+                printf '%s' "$CLR_SETGID"
+            elif (( mode_int & 0111 )); then
+                # Executable — but also check extension-based colors
+                printf '%s' "$CLR_EXEC"
+            else
+                color_for_extension "$path"
+            fi
+            ;;
+    esac
+}
+
+color_for_extension() {
+    local path="$1"
+    local ext="${path##*.}"
+    [[ "$ext" == "$path" ]] && return   # no extension
+
+    ext="${ext,,}"  # lowercase
+
+    case "$ext" in
+        tar|gz|bz2|xz|zip|7z|rar|zst|lz4|tgz|tbz2|deb|rpm)
+            printf '%s' "$CLR_ARCHIVE" ;;
+        jpg|jpeg|png|gif|bmp|svg|webp|ico|tif|tiff)
+            printf '%s' "$CLR_IMAGE" ;;
+        mp3|flac|ogg|wav|aac|wma|m4a|opus)
+            printf '%s' "$CLR_AUDIO" ;;
+        mp4|mkv|avi|mov|wmv|flv|webm|m4v)
+            printf '%s' "$CLR_VIDEO" ;;
+    esac
+}
+
+# ================================================================
+# Human-Readable Size
+# ================================================================
+
+human_size() {
+    local -i bytes=$1
+    local -a units=(B K M G T P)
+    local -i idx=0
+
+    if (( bytes < 1024 )); then
+        printf '%d' "$bytes"
+        return
+    fi
+
+    # Fixed-point arithmetic in tenths to avoid bc/awk
+    local -i scaled=$(( bytes * 10 ))
+    while (( scaled >= 10240 && idx < 5 )); do
+        scaled=$(( scaled / 1024 ))
+        (( idx++ ))
+    done
+
+    local -i whole=$(( scaled / 10 ))
+    local -i frac=$(( scaled % 10 ))
+
+    # GNU ls always shows one decimal for K and above when < 10
+    if (( whole < 10 )); then
+        printf '%d.%d%s' "$whole" "$frac" "${units[$idx]}"
+    else
+        printf '%d%s' "$whole" "${units[$idx]}"
+    fi
+}
+
+# ================================================================
+# Time Formatting
+#
+# Mimic ls behavior: if within ~6 months, show "Mon DD HH:MM"
+# Otherwise show "Mon DD  YYYY"
+# Uses bash's printf %(...)T — no date command needed.
+# ================================================================
+
+format_time() {
+    local -i epoch=$1
+    local -i now
+    printf -v now '%(%s)T' -1
+
+    local -i six_months=$(( 180 * 86400 ))
+
+    if (( epoch > now - six_months && epoch <= now )); then
+        printf '%(%b %e %H:%M)T' "$epoch"
+    else
+        printf '%(%b %e  %Y)T' "$epoch"
+    fi
+}
+
+# ================================================================
+# Stat Gathering — one stat call per file, cache the results
+#
+# We call stat once with a delimited format string and parse the
+# result with bash parameter expansion. This avoids N stat calls
+# per file for N fields.
+# ================================================================
+
+# Delimiter — unlikely to appear in filenames
+readonly STAT_DELIM=$'\x01'
+
+# Gather all metadata for a file in one stat call
+# Sets variables: S_TYPE S_PERMS S_LINKS S_USER S_GROUP S_SIZE
+#                 S_MTIME S_INODE S_BLOCKS S_OCT S_RDEV S_TARGET
+#                 S_RAW_MODE
+stat_file() {
+    local path="$1"
+    local raw
+
+    # Use -L to NOT follow symlinks (lstat behavior, like ls)
+    # %F=type  %A=perms  %h=links  %U=user  %G=group  %s=size
+    # %Y=mtime(epoch)  %i=inode  %b=blocks  %a=octal mode
+    # %t:%T=rdev  %N=quoted name with target
+    raw=$(stat --printf="%F${STAT_DELIM}%A${STAT_DELIM}%h${STAT_DELIM}%U${STAT_DELIM}%G${STAT_DELIM}%s${STAT_DELIM}%Y${STAT_DELIM}%i${STAT_DELIM}%b${STAT_DELIM}%a${STAT_DELIM}%t:%T${STAT_DELIM}%f" \
+        "$path" 2>/dev/null) || return 1
+
+    local -a parts=()
+    local tmp="$raw"
+    while [[ "$tmp" == *"$STAT_DELIM"* ]]; do
+        parts+=("${tmp%%"$STAT_DELIM"*}")
+        tmp="${tmp#*"$STAT_DELIM"}"
+    done
+    parts+=("$tmp")
+
+    S_TYPE="${parts[0]}"
+    S_PERMS="${parts[1]}"
+    S_LINKS="${parts[2]}"
+    S_USER="${parts[3]}"
+    S_GROUP="${parts[4]}"
+    S_SIZE="${parts[5]}"
+    S_MTIME="${parts[6]}"
+    S_INODE="${parts[7]}"
+    S_BLOCKS="${parts[8]}"
+    S_OCT="${parts[9]}"
+    S_RDEV="${parts[10]}"
+    S_RAW_MODE="${parts[11]}"
+
+    # Symlink target — extract separately since %N has quoting
+    S_TARGET=""
+    if [[ "$S_PERMS" == l* ]]; then
+        local link_raw
+        link_raw=$(stat --printf='%N' "$path" 2>/dev/null)
+        # Format: 'path' -> 'target'  — extract the target
+        if [[ "$link_raw" == *" -> "* ]]; then
+            S_TARGET="${link_raw#*-> }"
+            # Strip surrounding quotes
+            S_TARGET="${S_TARGET#\'}"
+            S_TARGET="${S_TARGET%\'}"
+            S_TARGET="${S_TARGET#\"}"
+            S_TARGET="${S_TARGET%\"}"
+        fi
+    fi
+
+    # Use numeric IDs if requested
+    if (( OPT_NUMERIC_IDS )); then
+        S_USER=$(stat --printf='%u' "$path" 2>/dev/null)
+        S_GROUP=$(stat --printf='%g' "$path" 2>/dev/null)
+    fi
+}
+
+# Map stat's %F (type word) to the single-char type letter
+type_letter() {
+    case "$S_TYPE" in
+        "regular file"|"regular empty file") printf '-' ;;
+        "directory")                         printf 'd' ;;
+        "symbolic link")                     printf 'l' ;;
+        "block special file"|"block device") printf 'b' ;;
+        "character special file"|"character device") printf 'c' ;;
+        "fifo"|"FIFO/pipe")                  printf 'p' ;;
+        "socket")                            printf 's' ;;
+        *)                                   printf '?' ;;
+    esac
+}
+
+# Classify suffix (-F flag)
+classify_suffix() {
+    local ftype="$1" path="$2"
+    case "$ftype" in
+        d) printf '/' ;;
+        l) printf '@' ;;
+        p) printf '|' ;;
+        s) printf '=' ;;
+        -)
+            if [[ -x "$path" ]]; then
+                printf '*'
+            fi
+            ;;
+    esac
+}
+
+# ================================================================
+# Entry Collector — build parallel arrays of file metadata
+#
+# Instead of processing one file at a time, we collect everything
+# into arrays, compute column widths, then format. This is how
+# real ls achieves aligned columns in -l mode.
+# ================================================================
+
+# Parallel arrays — each index is one entry
+declare -a ENT_NAME=()     ENT_PATH=()    ENT_PERMS=()
+declare -a ENT_LINKS=()    ENT_USER=()    ENT_GROUP=()
+declare -a ENT_SIZE=()     ENT_MTIME=()   ENT_INODE=()
+declare -a ENT_OCT=()      ENT_FTYPE=()   ENT_TARGET=()
+declare -a ENT_BLOCKS=()   ENT_RDEV=()    ENT_RAW_MODE=()
+declare -a ENT_RAW_SIZE=()  # numeric size for sorting
+
+# Column widths for alignment
+declare -i W_LINKS=0 W_USER=0 W_GROUP=0 W_SIZE=0 W_INODE=0
+
+clear_entries() {
+    ENT_NAME=()   ENT_PATH=()   ENT_PERMS=()
+    ENT_LINKS=()  ENT_USER=()   ENT_GROUP=()
+    ENT_SIZE=()   ENT_MTIME=()  ENT_INODE=()
+    ENT_OCT=()    ENT_FTYPE=()  ENT_TARGET=()
+    ENT_BLOCKS=() ENT_RDEV=()   ENT_RAW_MODE=()
+    ENT_RAW_SIZE=()
+    W_LINKS=0 W_USER=0 W_GROUP=0 W_SIZE=0 W_INODE=0
+}
+
+# Add one entry from current S_* variables
+add_entry() {
+    local name="$1" path="$2"
+    local ftype
+    ftype=$(type_letter)
+
+    local -i idx=${#ENT_NAME[@]}
+
+    ENT_NAME+=("$name")
+    ENT_PATH+=("$path")
+    ENT_PERMS+=("$S_PERMS")
+    ENT_LINKS+=("$S_LINKS")
+    ENT_USER+=("$S_USER")
+    ENT_GROUP+=("$S_GROUP")
+    ENT_MTIME+=("$S_MTIME")
+    ENT_INODE+=("$S_INODE")
+    ENT_BLOCKS+=("$S_BLOCKS")
+    ENT_OCT+=("$S_OCT")
+    ENT_FTYPE+=("$ftype")
+    ENT_TARGET+=("$S_TARGET")
+    ENT_RDEV+=("$S_RDEV")
+    ENT_RAW_MODE+=("$S_RAW_MODE")
+    ENT_RAW_SIZE+=("$S_SIZE")
+
+    # Size display: device files show maj,min; others show size
+    local size_str
+    if [[ "$ftype" == b || "$ftype" == c ]]; then
+        local maj="${S_RDEV%%:*}" min="${S_RDEV##*:}"
+        printf -v size_str '%d, %3d' "0x$maj" "0x$min"
+    elif (( OPT_HUMAN )); then
+        size_str=$(human_size "$S_SIZE")
+    else
+        size_str="$S_SIZE"
+    fi
+    ENT_SIZE+=("$size_str")
+
+    # Update column widths
+    (( ${#S_LINKS} > W_LINKS ))    && W_LINKS=${#S_LINKS}
+    (( ${#S_USER} > W_USER ))      && W_USER=${#S_USER}
+    (( ${#S_GROUP} > W_GROUP ))    && W_GROUP=${#S_GROUP}
+    (( ${#size_str} > W_SIZE ))    && W_SIZE=${#size_str}
+    (( ${#S_INODE} > W_INODE ))    && W_INODE=${#S_INODE}
+}
+
+# ================================================================
+# Sorting — pure bash using a simple comparison-based sort
+#
+# We build an index array and sort it. For typical directory
+# sizes (< few thousand entries), insertion sort is fine.
+# ================================================================
+
+# Indirect insertion sort on ENT_* arrays via an index array
+declare -a SORT_IDX=()
+
+sort_entries() {
+    local -i n=${#ENT_NAME[@]}
+    SORT_IDX=()
+
+    local -i i
+    for (( i = 0; i < n; i++ )); do
+        SORT_IDX+=("$i")
+    done
+
+    (( n <= 1 )) && return
+
+    if [[ "$OPT_SORT" == "none" ]]; then
+        return
+    fi
+
+    # Insertion sort — stable, fine for directory-scale data
+    local -i j key_idx
+    for (( i = 1; i < n; i++ )); do
+        key_idx=${SORT_IDX[$i]}
+        j=$(( i - 1 ))
+
+        while (( j >= 0 )) && compare_entries "$key_idx" "${SORT_IDX[$j]}"; do
+            SORT_IDX[$(( j + 1 ))]=${SORT_IDX[$j]}
+            (( j-- ))
+        done
+        SORT_IDX[$(( j + 1 ))]=$key_idx
+    done
+
+    # Reverse if -r
+    if (( OPT_REVERSE )); then
+        local -a rev=()
+        for (( i = n - 1; i >= 0; i-- )); do
+            rev+=("${SORT_IDX[$i]}")
+        done
+        SORT_IDX=("${rev[@]}")
+    fi
+}
+
+# Return 0 (true) if entry A should come BEFORE entry B
+compare_entries() {
+    local -i a=$1 b=$2
+
+    case "$OPT_SORT" in
+        name)
+            # Byte-order comparison — matches GNU ls in C/POSIX locale
+            [[ "${ENT_NAME[$a]}" < "${ENT_NAME[$b]}" ]]
+            ;;
+        size)
+            # Larger first (descending), then by name
+            local -i sa=${ENT_RAW_SIZE[$a]} sb=${ENT_RAW_SIZE[$b]}
+            if (( sa != sb )); then
+                (( sa > sb ))
+            else
+                [[ "${ENT_NAME[$a]}" < "${ENT_NAME[$b]}" ]]
+            fi
+            ;;
+        time)
+            # Newer first (descending), then by name
+            if [[ "${ENT_MTIME[$a]}" != "${ENT_MTIME[$b]}" ]]; then
+                (( ENT_MTIME[a] > ENT_MTIME[b] ))
+            else
+                [[ "${ENT_NAME[$a]}" < "${ENT_NAME[$b]}" ]]
+            fi
+            ;;
+    esac
+}
+
+# ================================================================
+# Output — Long Format
+# ================================================================
+
+print_long() {
+    local -i n=${#ENT_NAME[@]}
+    local -i i idx
+
+    sort_entries
+
+    # Total blocks line (like ls -l) — skipped for single-file listings
+    if (( ! SKIP_TOTAL )); then
+        local -i total_blocks=0
+        for (( i = 0; i < n; i++ )); do
+            total_blocks+=${ENT_BLOCKS[${SORT_IDX[$i]}]:-0}
+        done
+        local -i total_k=$(( (total_blocks + 1) / 2 ))
+        if (( OPT_HUMAN && total_k >= 1024 )); then
+            local total_h
+            total_h=$(human_size "$(( total_k * 1024 ))")
+            printf 'total %s\n' "$total_h"
+        else
+            if (( OPT_HUMAN )); then
+                printf 'total %dK\n' "$total_k"
+            else
+                printf 'total %d\n' "$total_k"
+            fi
+        fi
+    fi
+
+    (( n == 0 )) && return
+
+    for (( i = 0; i < n; i++ )); do
+        idx=${SORT_IDX[$i]}
+
+        # Inode prefix
+        if (( OPT_INODE )); then
+            printf '%*s ' "$W_INODE" "${ENT_INODE[$idx]}"
+        fi
+
+        # Permissions, links, user, group, size, time, name
+        local time_str
+        time_str=$(format_time "${ENT_MTIME[$idx]}")
+
+        printf '%s %*s %-*s %-*s %*s %s ' \
+            "${ENT_PERMS[$idx]}" \
+            "$W_LINKS"  "${ENT_LINKS[$idx]}" \
+            "$W_USER"   "${ENT_USER[$idx]}" \
+            "$W_GROUP"  "${ENT_GROUP[$idx]}" \
+            "$W_SIZE"   "${ENT_SIZE[$idx]}" \
+            "$time_str"
+
+        # Colorized name
+        local clr=""
+        clr=$(color_for_file "${ENT_PATH[$idx]}" "${ENT_OCT[$idx]}" "${ENT_FTYPE[$idx]}")
+        if [[ -n "$clr" ]]; then
+            printf '%s%s%s' "$clr" "${ENT_NAME[$idx]}" "$CLR_RESET"
+        else
+            printf '%s' "${ENT_NAME[$idx]}"
+        fi
+
+        # Classify suffix — in long mode, skip @ for symlinks (-> already shows it)
+        if (( OPT_CLASSIFY )) && [[ "${ENT_FTYPE[$idx]}" != "l" ]]; then
+            classify_suffix "${ENT_FTYPE[$idx]}" "${ENT_PATH[$idx]}"
+        fi
+
+        # Symlink target
+        if [[ -n "${ENT_TARGET[$idx]}" ]]; then
+            printf ' -> '
+            # Color the target too
+            if (( OPT_COLOR )); then
+                if [[ -e "${ENT_TARGET[$idx]}" || -e "$(dirname "${ENT_PATH[$idx]}")/${ENT_TARGET[$idx]}" ]]; then
+                    # Target exists — would need another stat for proper coloring
+                    printf '%s' "${ENT_TARGET[$idx]}"
+                else
+                    printf '%s%s%s' "$CLR_ORPHAN" "${ENT_TARGET[$idx]}" "$CLR_RESET"
+                fi
+            else
+                printf '%s' "${ENT_TARGET[$idx]}"
+            fi
+        fi
+
+        printf '\n'
+    done
+}
+
+# ================================================================
+# Output — Column Format (default for tty)
+#
+# GNU ls uses a dynamic column-width algorithm: find the widest
+# entry, then pack as many columns as will fit. We replicate this.
+# ================================================================
+
+print_columns() {
+    local -i n=${#ENT_NAME[@]}
+    (( n == 0 )) && return
+
+    sort_entries
+
+    # Compute max display-name width (including classify suffix)
+    local -i max_width=0
+    local -i i idx
+    local -i name_len
+
+    for (( i = 0; i < n; i++ )); do
+        idx=${SORT_IDX[$i]}
+        name_len=${#ENT_NAME[$idx]}
+        # Classify adds one char
+        if (( OPT_CLASSIFY )); then
+            local suffix
+            suffix=$(classify_suffix "${ENT_FTYPE[$idx]}" "${ENT_PATH[$idx]}")
+            (( name_len += ${#suffix} ))
+        fi
+        (( name_len > max_width )) && max_width=$name_len
+    done
+
+    # Pad columns: 2 spaces between
+    local -i col_width=$(( max_width + 2 ))
+    (( col_width < 1 )) && col_width=1
+    local -i num_cols=$(( TERM_COLS / col_width ))
+    (( num_cols < 1 )) && num_cols=1
+
+    local -i num_rows=$(( (n + num_cols - 1) / num_cols ))
+
+    # Print in column-major order (down then across, like ls)
+    local -i row col entry_idx
+    for (( row = 0; row < num_rows; row++ )); do
+        # Inode prefix on separate pass wouldn't align well, 
+        # so if -i is on, fall back to one-per-line
+        if (( OPT_INODE )); then
+            idx=${SORT_IDX[$row]}
+            printf '%*s ' "$W_INODE" "${ENT_INODE[$idx]}"
+            print_entry_name "$idx"
+            printf '\n'
+            continue
+        fi
+
+        for (( col = 0; col < num_cols; col++ )); do
+            entry_idx=$(( col * num_rows + row ))
+            (( entry_idx >= n )) && break
+
+            idx=${SORT_IDX[$entry_idx]}
+
+            local name_out=""
+            local clr=""
+            clr=$(color_for_file "${ENT_PATH[$idx]}" "${ENT_OCT[$idx]}" "${ENT_FTYPE[$idx]}")
+
+            if [[ -n "$clr" ]]; then
+                name_out="${clr}${ENT_NAME[$idx]}${CLR_RESET}"
+            else
+                name_out="${ENT_NAME[$idx]}"
+            fi
+
+            local suffix=""
+            if (( OPT_CLASSIFY )); then
+                suffix=$(classify_suffix "${ENT_FTYPE[$idx]}" "${ENT_PATH[$idx]}")
+            fi
+
+            # Print with padding (based on raw name length, not ANSI-escaped)
+            local -i visible_len=$(( ${#ENT_NAME[$idx]} + ${#suffix} ))
+            printf '%s%s' "$name_out" "$suffix"
+
+            # Pad to column width (except last column)
+            if (( col < num_cols - 1 && entry_idx + num_rows < n )); then
+                local -i pad=$(( col_width - visible_len ))
+                (( pad > 0 )) && printf '%*s' "$pad" ""
+            fi
+        done
+        printf '\n'
+    done
+}
+
+print_entry_name() {
+    local -i idx=$1
+    local clr=""
+    clr=$(color_for_file "${ENT_PATH[$idx]}" "${ENT_OCT[$idx]}" "${ENT_FTYPE[$idx]}")
+
+    if [[ -n "$clr" ]]; then
+        printf '%s%s%s' "$clr" "${ENT_NAME[$idx]}" "$CLR_RESET"
+    else
+        printf '%s' "${ENT_NAME[$idx]}"
+    fi
+
+    if (( OPT_CLASSIFY )); then
+        classify_suffix "${ENT_FTYPE[$idx]}" "${ENT_PATH[$idx]}"
+    fi
+}
+
+# ================================================================
+# Output — One-Per-Line
+# ================================================================
+
+print_one_per_line() {
+    local -i n=${#ENT_NAME[@]}
+    (( n == 0 )) && return
+
+    sort_entries
+
+    local -i i idx
+    for (( i = 0; i < n; i++ )); do
+        idx=${SORT_IDX[$i]}
+
+        if (( OPT_INODE )); then
+            printf '%*s ' "$W_INODE" "${ENT_INODE[$idx]}"
+        fi
+
+        print_entry_name "$idx"
+        printf '\n'
+    done
+}
+
+# ================================================================
+# Output Router
+# ================================================================
+
+print_entries() {
+    if (( OPT_LONG )); then
+        print_long
+    elif (( OPT_ONE_PER_LINE || ! IS_TTY )); then
+        print_one_per_line
+    else
+        print_columns
+    fi
+}
+
+# ================================================================
+# Directory Enumeration
+# ================================================================
+
+# List the contents of a directory
+list_directory() {
+    local dir="$1"
+    local show_header="$2"  # "1" to show "dir:" header
+
+    # Save and set glob options
+    local prev_dotglob prev_nullglob
+    shopt -q dotglob   && prev_dotglob=1 || prev_dotglob=0
+    shopt -q nullglob  && prev_nullglob=1 || prev_nullglob=0
+
+    shopt -s nullglob
+    if (( OPT_ALL || OPT_ALMOST_ALL )); then
+        shopt -s dotglob
+    else
+        shopt -u dotglob
+    fi
+
+    clear_entries
+
+    # Gather entries
+    local -a raw_entries=()
+
+    # Explicit . and .. entries for -a
+    if (( OPT_ALL )); then
+        raw_entries=("." "..")
+    fi
+
+    # Glob expand directory contents
+    local entry
+    local pattern="${dir%/}/*"
+    for entry in $pattern; do
+        # Nullglob means no entries if dir is empty
+        [[ -e "$entry" || -L "$entry" ]] || continue
+        raw_entries+=("$entry")
+    done
+
+    # Stat each entry and add to parallel arrays
+    local name
+    for entry in "${raw_entries[@]}"; do
+        if [[ "$entry" == "." || "$entry" == ".." ]]; then
+            name="$entry"
+            local full_path="${dir%/}/$entry"
+            stat_file "$full_path" || continue
+        else
+            name="${entry##*/}"
+            stat_file "$entry" || continue
+        fi
+
+        add_entry "$name" "$entry"
+    done
+
+    # Restore glob options
+    (( prev_dotglob ))  && shopt -s dotglob  || shopt -u dotglob
+    (( prev_nullglob )) && shopt -s nullglob || shopt -u nullglob
+
+    # Header for multiple dirs or -R
+    if [[ "$show_header" == "1" ]]; then
+        printf '%s:\n' "$dir"
+    fi
+
+    print_entries
+
+    # Recursive: collect subdirectories first (before clear_entries
+    # in the recursive call destroys our ENT_* arrays), then descend.
+    if (( OPT_RECURSIVE )); then
+        sort_entries
+        local -a recurse_dirs=()
+        local -i i idx
+        for (( i = 0; i < ${#ENT_NAME[@]}; i++ )); do
+            idx=${SORT_IDX[$i]}
+            [[ "${ENT_NAME[$idx]}" == "." || "${ENT_NAME[$idx]}" == ".." ]] && continue
+            [[ "${ENT_FTYPE[$idx]}" == "d" ]] && recurse_dirs+=("${ENT_PATH[$idx]}")
+        done
+        for epath in "${recurse_dirs[@]}"; do
+            printf '\n'
+            list_directory "$epath" "1"
+        done
+    fi
+}
+
+# ================================================================
+# Argument Parsing
+# ================================================================
+
+parse_args() {
+    local -a paths=()
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --)
+                shift
+                paths+=("$@")
+                break
+                ;;
+            --color|--color=always)
+                OPT_COLOR=1; shift ;;
+            --color=never)
+                OPT_COLOR=0; shift ;;
+            --color=auto)
+                (( IS_TTY )) && OPT_COLOR=1 || OPT_COLOR=0
+                shift ;;
+            --help)
+                show_help; exit 0 ;;
+            --version)
+                printf 'ddls %s\n' "$DDLS_VERSION"; exit 0 ;;
+            -*)
+                # Parse bundled short options: -laFR
+                local flags="${1#-}"
+                shift
+                local -i fi
+                for (( fi = 0; fi < ${#flags}; fi++ )); do
+                    case "${flags:$fi:1}" in
+                        l) OPT_LONG=1 ;;
+                        a) OPT_ALL=1 ;;
+                        A) OPT_ALMOST_ALL=1 ;;
+                        R) OPT_RECURSIVE=1 ;;
+                        h) OPT_HUMAN=1 ;;
+                        F) OPT_CLASSIFY=1 ;;
+                        i) OPT_INODE=1 ;;
+                        d) OPT_DIR_ENTRY=1 ;;
+                        r) OPT_REVERSE=1 ;;
+                        S) OPT_SORT="size" ;;
+                        t) OPT_SORT="time" ;;
+                        U) OPT_SORT="none" ;;
+                        n) OPT_NUMERIC_IDS=1; OPT_LONG=1 ;;
+                        1) OPT_ONE_PER_LINE=1 ;;
+                        *)
+                            printf 'ddls: invalid option -- '\''%s'\''\n' "${flags:$fi:1}" >&2
+                            printf 'Try '\''ddls --help'\'' for more information.\n' >&2
+                            exit 2
+                            ;;
+                    esac
+                done
+                ;;
+            *)
+                paths+=("$1")
+                shift
+                ;;
+        esac
+    done
+
+    # Default: current directory
+    if (( ${#paths[@]} == 0 )); then
+        paths=(".")
+    fi
+
+    # Return paths via a global
+    ARGS_PATHS=("${paths[@]}")
+}
+
+show_help() {
+    printf 'Usage: ddls [OPTION]... [FILE]...\n'
+    printf 'List directory contents. (BASH/stat/tput implementation)\n\n'
+    printf 'Options:\n'
+    printf '  -a            show all entries including . and ..\n'
+    printf '  -A            show hidden entries (not . and ..)\n'
+    printf '  -d            list directories themselves, not contents\n'
+    printf '  -F            append indicator (*/=>@|) to entries\n'
+    printf '  -h            human-readable sizes (with -l)\n'
+    printf '  -i            print inode number\n'
+    printf '  -l            long listing format\n'
+    printf '  -n            numeric user/group IDs (implies -l)\n'
+    printf '  -r            reverse sort order\n'
+    printf '  -R            list subdirectories recursively\n'
+    printf '  -S            sort by file size (largest first)\n'
+    printf '  -t            sort by modification time (newest first)\n'
+    printf '  -U            do not sort (directory order)\n'
+    printf '  -1            one entry per line\n'
+    printf '  --color[=WHEN]  colorize output (always/auto/never)\n'
+    printf '  --help        display this help\n'
+    printf '  --version     output version information\n'
+}
+
+# ================================================================
+# Main
+# ================================================================
+
+declare -a ARGS_PATHS=()
+
+main() {
+    # Detect tty
+    [[ -t 1 ]] && IS_TTY=1 || IS_TTY=0
+
+    if (( IS_TTY )); then
+        TERM_COLS=$(tput cols 2>/dev/null || printf 80)
+    fi
+
+    parse_args "$@"
+
+    # Auto-color if tty
+    if (( IS_TTY )) && [[ -z "${DDLS_NO_COLOR:-}" ]]; then
+        # Default to color on tty (like modern ls)
+        # Can be overridden by --color=never or DDLS_NO_COLOR=1
+        OPT_COLOR=1
+    fi
+
+    (( OPT_COLOR )) && init_colors
+
+    local -i num_paths=${#ARGS_PATHS[@]}
+    local -i show_headers=0
+    local -i exit_code=0
+
+    # Multiple paths or -R → show directory headers
+    if (( num_paths > 1 || OPT_RECURSIVE )); then
+        show_headers=1
+    fi
+
+    local -i first=1
+    local path
+    for path in "${ARGS_PATHS[@]}"; do
+        if [[ ! -e "$path" && ! -L "$path" ]]; then
+            printf 'ddls: cannot access '\''%s'\'': No such file or directory\n' "$path" >&2
+            exit_code=2
+            continue
+        fi
+
+        # Separator between multiple listings
+        if (( ! first )); then
+            printf '\n'
+        fi
+        first=0
+
+        if [[ -d "$path" ]] && (( ! OPT_DIR_ENTRY )); then
+            list_directory "$path" "$show_headers"
+        else
+            # Single file (or -d): stat it and display
+            clear_entries
+            stat_file "$path" || continue
+            add_entry "$path" "$path"
+            SKIP_TOTAL=1
+            print_entries
+            SKIP_TOTAL=0
+        fi
+    done
+
+    exit "$exit_code"
+}
+
+main "$@"
