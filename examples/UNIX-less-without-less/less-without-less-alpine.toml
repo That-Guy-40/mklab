@@ -1,0 +1,27 @@
+# less without less — `ddpager`, a less-style pager written in bash builtins
+# + dd + tput — on Alpine, where the whole tripod is missing.
+#
+# The point of running this lab on Alpine: "just bash, dd, tput" sounds like
+# it would run anywhere —
+#   no bash       -> the interpreter itself is missing
+#   BusyBox dd    -> a different stderr dialect for detect_binary to parse
+#   no tput       -> every escape the pager draws with is missing
+# setup-workshop.sh installs the real things (bash, coreutils, ncurses,
+# python3), after which the demo passes identically to Debian.
+#
+#   phase5-lxd/lab-lxd.sh up   --config examples/UNIX-less-without-less/less-without-less-alpine.toml
+#   examples/UNIX-less-without-less/setup-workshop.sh less-without-less-alpine/shell
+#   phase5-lxd/lab-lxd.sh exec less-without-less-alpine/shell -- su - learner
+#   phase5-lxd/lab-lxd.sh down --lab less-without-less-alpine
+
+[lab]
+name        = "less-without-less-alpine"
+description = "ddpager: a less-style pager in bash builtins + dd + tput — on a base that ships none of the three"
+tags        = ["pager", "less", "bash", "dd", "tput", "pty", "alpine", "musl", "busybox"]
+
+[[instance]]
+name  = "shell"
+type  = "container"
+# `images:alpine/latest` is rewritten by lab-lxd.sh to the highest stable
+# alpine/X.Y on the `images:` remote.
+image = "images:alpine/latest"

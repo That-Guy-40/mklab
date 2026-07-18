@@ -22,7 +22,7 @@ These are orthogonal to 00-INDEX's *run-cost* tags, which are carried through un
 | Path | Diff | Effort | Goal |
 |---|---|---|---|
 | [Containers from first principles](path-container-internals.md) | 🟡 | ⏱ half-day+ | Understand what a container *is* by assembling one primitive at a time, then meet the managers that package those primitives for you. |
-| [Shell fluency — from lost at the prompt to querying text like a database](path-shell-fluency.md) | 🟢 | ⏱ half-day+ | Find your feet at the shell, learn to program it, wield grep/sed/awk on real text — then discover that composing those tools was relational algebra all along, meet the sets underneath it, and finally ask the shell for a *number* and find out it cannot divide 1 by 3. The first three steps are Matt Might's track (he names the survival guide as the prerequisite to bash-by-example); an equivalent Carpentries + Robbins track is a side-quest. |
+| [Shell fluency — from lost at the prompt to querying text like a database](path-shell-fluency.md) | 🟢 | ⏱ half-day+ | Find your feet at the shell, learn to program it, wield grep/sed/awk on real text — then discover that composing those tools was relational algebra all along, meet the sets underneath it, rebuild `ls` and the pager you read its output with from bash builtins, and finally ask the shell for a *number* and find out it cannot divide 1 by 3. The first three steps are Matt Might's track (he names the survival guide as the prerequisite to bash-by-example); an equivalent Carpentries + Robbins track is a side-quest. |
 | [Container topologies across the engines](path-container-topologies.md) | 🟡 | ⏱ ~1–2h | Express the same multi-service idea in Docker, Podman, and LXD/Incus — and see what each abstraction buys you. |
 | [Build a Linux from source, one arch at a time](path-linux-from-source.md) | 🔴 | ⏱ half-day+ | Compile a kernel + a tiny userspace from upstream source and boot it in RAM — then repeat across architectures, and shrink it onto a floppy. |
 | [The boot path & kernel-crash forensics](path-boot-and-crash.md) | 🔴 | ⏱ half-day+ | Own every stage from firmware to a captured kernel panic: interrupt the boot loader, force and dissect a crash, then replace the firmware's boot logic with Linux itself. |
@@ -51,6 +51,12 @@ These are orthogonal to 00-INDEX's *run-cost* tags, which are carried through un
 *Labs operationalizing a specific published write-up (Linux Journal, ACCU Overload, kaizou.org, LinuxBoot).*
 
 [`kdump-kexec-lab`](../kdump-kexec-lab/) · [`tiny-internet-project`](../tiny-internet-project/) · [`linuxboot-uefi-kexec`](../linuxboot-uefi-kexec/) · [`tiny-linux-experiments/minimal-arm-linux-qemu`](../tiny-linux-experiments/minimal-arm-linux-qemu/) · [`UNIX-set-operations-in-the-shell`](../UNIX-set-operations-in-the-shell/)
+
+### Rewrite the classics
+
+*First-party reimplementations of everyday Unix tools in bash builtins + one or two externals, each diffed or driven against the original — `ls` (vs GNU ls, byte for byte) and `less` (through a real pty). The `dd` in the names is a family brand; only one of them earns it.*
+
+[`UNIX-ls-without-ls`](../UNIX-ls-without-ls/) · [`UNIX-less-without-less`](../UNIX-less-without-less/)
 
 ### The shell as a database
 

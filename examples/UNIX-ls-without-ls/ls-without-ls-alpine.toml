@@ -1,0 +1,28 @@
+# ls without ls — `ddls`, an ls replacement written in bash builtins + GNU
+# stat + tput — on Alpine, the base that ships NONE of its dependencies.
+#
+# The point of running this lab on Alpine: ddls's constraint set ("just bash,
+# stat, tput") sounds minimal, but every leg is a GNU/ncurses dependency —
+#   no bash            -> the interpreter itself is missing
+#   BusyBox stat       -> has -c, but NOT the --printf that ddls is built on
+#   no tput            -> the terminal-width probe is missing
+#   BusyBox ls         -> not GNU, so it cannot even be demo.sh's oracle
+# setup-workshop.sh installs the real things (bash, coreutils, ncurses,
+# util-linux), after which the demo passes identically to Debian.
+#
+#   phase5-lxd/lab-lxd.sh up   --config examples/UNIX-ls-without-ls/ls-without-ls-alpine.toml
+#   examples/UNIX-ls-without-ls/setup-workshop.sh ls-without-ls-alpine/shell
+#   phase5-lxd/lab-lxd.sh exec ls-without-ls-alpine/shell -- su - learner
+#   phase5-lxd/lab-lxd.sh down --lab ls-without-ls-alpine
+
+[lab]
+name        = "ls-without-ls-alpine"
+description = "ddls: an ls replacement in bash builtins + GNU stat + tput — on a base that ships none of the three"
+tags        = ["ls", "bash", "stat", "tput", "reimplementation", "alpine", "musl", "busybox"]
+
+[[instance]]
+name  = "shell"
+type  = "container"
+# `images:alpine/latest` is rewritten by lab-lxd.sh to the highest stable
+# alpine/X.Y on the `images:` remote.
+image = "images:alpine/latest"
