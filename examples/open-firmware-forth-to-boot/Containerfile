@@ -1,0 +1,17 @@
+# Build box for Open Firmware (github.com/openbios/openfirmware), x86 targets.
+# The tree is ~2015-frozen; its host bootstrap compiles forth/wrapper/wrapper.c
+# with `gcc -m32` and links with `ld -melf_i386` (see cpu/x86/Linux/Makefile),
+# so a 32-bit-capable toolchain is the whole requirement.
+FROM docker.io/debian:13
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        make \
+        gcc \
+        gcc-multilib \
+        libc6-dev-i386 \
+        binutils \
+    && rm -rf /var/lib/apt/lists/*
+# make            — drives cpu/x86/pc/emu/build/Makefile
+# gcc + multilib  — wrapper.o etc. are built -m32 (MFLAGS in cpu/x86/Linux/Makefile)
+# libc6-dev-i386  — 32-bit libc headers/CRT for that -m32 build
+# binutils        — ld -melf_i386 for inflate.bin, objcopy -O binary
