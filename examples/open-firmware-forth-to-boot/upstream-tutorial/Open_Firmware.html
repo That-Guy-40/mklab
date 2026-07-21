@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Open Firmware &#8212; OpenBIOS  documentation</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=5ecbeea2" />
+    <link rel="stylesheet" type="text/css" href="_static/basic.css?v=b08954a9" />
+    <link rel="stylesheet" type="text/css" href="_static/alabaster.css?v=27fed22d" />
+    <script src="_static/documentation_options.js?v=5929fcd5"></script>
+    <script src="_static/doctools.js?v=9bcbadda"></script>
+    <script src="_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="genindex.html" />
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Building OFW for QEMU" href="Building_OFW_for_QEMU.html" />
+    <link rel="prev" title="OpenBIOS Licensing" href="GPLv2.html" />
+   
+  <link rel="stylesheet" href="_static/custom.css" type="text/css" />
+  
+
+  
+  
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <section id="open-firmware">
+<h1>Open Firmware<a class="headerlink" href="#open-firmware" title="Link to this heading">¶</a></h1>
+<section id="introduction">
+<h2>Introduction<a class="headerlink" href="#introduction" title="Link to this heading">¶</a></h2>
+<p>In 2006 the company of Open Firmware inventor Mitch Bradley, <a class="reference external" href="http://firmworks.com/">Firmworks,
+Inc</a>, released their Open Firmware implementation
+(OFW) under a BSD license. This code shares some code with SUN’s
+OpenBOOT implementation. The open source OFW supports x86, PowerPC, and
+ARM architectures. Other architectures, including SPARC and MIPS, may be
+added as time and interest dictate.</p>
+<p>The x86 version is used on the OLPC “XO” computer. The x86 version can
+be configured for numerous other environments, including</p>
+<ul class="simple">
+<li><p>Direct QEMU ROM (replacing the “bios.bin” that is supplied with QEMU</p></li>
+<li><p>Coreboot payload</p></li>
+<li><p>Loadable on directly on top of a conventional PC BIOS (booted from
+floppy or hard disk like an OS). In this configuration it can run on
+an arbitrary PC, or on an emulator like QEMU, VirtualBox, or VMWare.</p></li>
+</ul>
+<p>OFW can boot Linux directly from a disk file (FAT, ext2, ISO9660, or
+jffs2 filesystems) without the need for an intermediate bootloader like
+LILO or GRUB. The Linux image can be in either ELF format (as created by
+the first phase of the Linux kernel compilation process) or in the
+“bzImage” format that “wraps” the ELF image. When booting an ELF image,
+OFW can read the ELF symbol table so OFW’s assembly language debugger
+can resolve kernel symbols.</p>
+<p>OFW can also boot other ELF standalone images, providing to them
+rudimentary “libc” capability. That facility has been used for booting,
+for example, Minix, ReactOS, Plan9, Inferno and SqueakNOS. The OLPC
+system ROM includes several such “standalone client programs”, including
+MicroEMACS, memtest86, and NANDblaster (a facility for fast OS updates
+over multicast wireless).</p>
+<p>On the OLPC system, OFW emulates enough legacy BIOS “real mode INTs” to
+boot Windows XP. On another system, OFW supports booting Windows CE.</p>
+</section>
+<section id="download">
+<h2>Download<a class="headerlink" href="#download" title="Link to this heading">¶</a></h2>
+<p>You can <a class="reference external" href="https://github.com/openbios/openfirmware">browse the source code
+online</a>.</p>
+<p>The repository is available through git:</p>
+<p>You can check it out as follows:</p>
+<div class="highlight-none notranslate"><div class="highlight"><pre><span></span> $ git checkout https://github.com/openbios/openfirmware.git
+</pre></div>
+</div>
+</section>
+<section id="building-different-versions">
+<h2>Building Different Versions<a class="headerlink" href="#building-different-versions" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p>Direct QEMU ROM: see <a class="reference internal" href="Building_OFW_for_QEMU.html"><span class="doc std std-doc">Building OFW for QEMU</span></a></p></li>
+<li><p>Coreboot: see <a class="reference internal" href="OFW_as_a_coreboot_Payload.html"><span class="doc std std-doc">OFW as a Coreboot Payload</span></a></p></li>
+<li><p>OLPC: see <a class="reference internal" href="Building_OFW_for_OLPC.html"><span class="doc std std-doc">Building OFW for OLPC</span></a></p></li>
+<li><p>BIOS-loaded: see <a class="reference internal" href="Building_OFW_to_Load_from_BIOS.html"><span class="doc std std-doc">Building OFW to Load from BIOS</span></a></p></li>
+<li><p>ARM: see <a class="reference internal" href="Building_OFW_for_ARM.html"><span class="doc std std-doc">Building OFW for ARM</span></a></p></li>
+</ul>
+</section>
+<section id="mailing-list">
+<h2>Mailing List<a class="headerlink" href="#mailing-list" title="Link to this heading">¶</a></h2>
+<p>There’s an Open Firmware mailing list at:</p>
+<ul class="simple">
+<li><p><a class="reference external" href="http://www.openfirmware.info/mailman/listinfo/openfirmware">http://www.openfirmware.info/mailman/listinfo/openfirmware</a>.</p></li>
+</ul>
+<p>The mailing list archive is also available:</p>
+<ul class="simple">
+<li><p><a class="reference external" href="http://www.openfirmware.info/pipermail/openfirmware/">http://www.openfirmware.info/pipermail/openfirmware/</a></p></li>
+</ul>
+</section>
+<div class="toctree-wrapper compound">
+</div>
+</section>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="index.html">OpenBIOS</a></h1>
+
+
+
+
+
+
+
+
+
+<search id="searchbox" style="display: none" role="search">
+    <div class="searchformwrapper">
+    <form class="search" action="search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Search"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script><h3>Navigation</h3>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="Contact_us.html">Contact us</a></li>
+<li class="toctree-l1"><a class="reference internal" href="Mailinglist.html">Mailinglist</a></li>
+<li class="toctree-l1"><a class="reference internal" href="Code_of_Conduct.html">Code of Conduct</a></li>
+<li class="toctree-l1"><a class="reference internal" href="Credits.html">Credits</a></li>
+<li class="toctree-l1"><a class="reference internal" href="Licensing.html">OpenBIOS Licensing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="Licensing.html#why-gpl">Why GPL?</a></li>
+<li class="toctree-l1"><a class="reference internal" href="Licensing.html#view-the-license">View the license</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Implementations</span></p>
+<ul class="current">
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Open Firmware</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="Building_OFW_for_QEMU.html">Building OFW for QEMU</a></li>
+<li class="toctree-l2"><a class="reference internal" href="OFW_as_a_coreboot_Payload.html">OFW as a coreboot payload</a></li>
+<li class="toctree-l2"><a class="reference internal" href="Building_OFW_for_OLPC.html">Building OFW for OLPC</a></li>
+<li class="toctree-l2"><a class="reference internal" href="Building_OFW_to_Load_from_BIOS.html">Building OFW to Load from BIOS</a></li>
+<li class="toctree-l2"><a class="reference internal" href="Building_OFW_for_ARM.html">Building OFW for ARM</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="SmartFirmware.html">SmartFirmware</a></li>
+<li class="toctree-l1"><a class="reference internal" href="OpenBOOT.html">OpenBOOT</a></li>
+<li class="toctree-l1"><a class="reference internal" href="OpenBIOS.html">OpenBIOS</a></li>
+<li class="toctree-l1"><a class="reference internal" href="OpenBIOS.html#openbios-code-releases">OpenBIOS - Code Releases</a></li>
+<li class="toctree-l1"><a class="reference internal" href="OpenBIOS.html#status-and-use-cases">Status and use cases</a></li>
+<li class="toctree-l1"><a class="reference internal" href="OpenBIOS.html#development-environment">Development Environment</a></li>
+<li class="toctree-l1"><a class="reference internal" href="OpenBIOS.html#development-repository">Development Repository</a></li>
+<li class="toctree-l1"><a class="reference internal" href="OpenBIOS.html#source-code-browsing">Source code browsing</a></li>
+<li class="toctree-l1"><a class="reference internal" href="OpenBIOS.html#snapshots">Snapshots</a></li>
+<li class="toctree-l1"><a class="reference internal" href="OpenBIOS.html#building-openbios">Building OpenBIOS</a></li>
+<li class="toctree-l1"><a class="reference internal" href="OpenBIOS.html#additional-resources">Additional Resources</a></li>
+<li class="toctree-l1"><a class="reference internal" href="OpenBIOS.html#notes-for-building-on-mac-os-x">Notes for Building on Mac OS X</a></li>
+<li class="toctree-l1"><a class="reference internal" href="OpenBIOS.html#troubleshooting">Troubleshooting</a></li>
+<li class="toctree-l1"><a class="reference internal" href="SLOF.html">SLOF</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Development</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="FCODE_suite.html">FCode Suite</a></li>
+<li class="toctree-l1"><a class="reference internal" href="BeginAgain.html">What is BeginAgain?</a></li>
+<li class="toctree-l1"><a class="reference internal" href="BeginAgain.html#how-does-beginagain-work">How does BeginAgain work?</a></li>
+<li class="toctree-l1"><a class="reference internal" href="BeginAgain.html#building-and-using-beginagain">Building and Using BeginAgain</a></li>
+<li class="toctree-l1"><a class="reference internal" href="BeginAgain.html#dictionary-format">Dictionary Format</a></li>
+<li class="toctree-l1"><a class="reference internal" href="BeginAgain.html#glossary">Glossary</a></li>
+<li class="toctree-l1"><a class="reference internal" href="FlashRom.html">Flash Updates with Linux</a></li>
+<li class="toctree-l1"><a class="reference external" href="https://github.com/openbios/openbios/issues">Issues/Bugs</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Documentation</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="IEEE_1275-1994.html">IEEE 1275-1994</a></li>
+<li class="toctree-l1"><a class="reference internal" href="Bindings.html">Bindings</a></li>
+<li class="toctree-l1"><a class="reference internal" href="Forth_FCode.html">What is Forth?</a></li>
+<li class="toctree-l1"><a class="reference internal" href="Forth_FCode.html#why-and-where-is-forth-used">Why and where is Forth used?</a></li>
+<li class="toctree-l1"><a class="reference internal" href="Forth_FCode.html#fcode">FCode</a></li>
+<li class="toctree-l1"><a class="reference internal" href="Forth_FCode.html#why-bytecode">Why bytecode?</a></li>
+<li class="toctree-l1"><a class="reference internal" href="News.html">News</a></li>
+<li class="toctree-l1"><a class="reference internal" href="On_the_Net.html">On the Net</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Tutorials</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="Adding_words_to_openbios.html">Adding words to OpenBIOS</a></li>
+<li class="toctree-l1"><a class="reference internal" href="How_Local_Variables_in_Forth_Work.html">How Local Variables in Forth Work - Using Apple’s Open Firmware Implementation</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="index.html">Documentation overview</a><ul>
+      <li>Previous: <a href="GPLv2.html" title="previous chapter">OpenBIOS Licensing</a></li>
+      <li>Next: <a href="Building_OFW_for_QEMU.html" title="next chapter">Building OFW for QEMU</a></li>
+  </ul></li>
+</ul>
+</div>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &#169;2025, The OpenBIOS authors.
+      
+      |
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 8.2.3</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 1.0.0</a>
+      
+      |
+      <a href="_sources/Open_Firmware.md.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>

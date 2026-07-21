@@ -253,7 +253,7 @@ difficulty = "🔴"
 est        = "⏱ half-day+"
 prereqs    = []
 audience   = "you can bring up a Debian VM; comfort with GRUB/serial helps"
-goal       = "Own every stage from firmware to a captured kernel panic: interrupt the boot loader, force and dissect a crash, then replace the firmware's boot logic with Linux itself."
+goal       = "Own every stage from firmware to a captured kernel panic: interrupt the boot loader, force and dissect a crash, meet the firmware that answers back at a Forth prompt, then replace the firmware's boot logic with Linux itself."
   [[path.step]]
   lab        = "vm-examples/vm-debian-amd64.toml"
   learn      = "a baseline KVM cloud VM to experiment on."
@@ -267,6 +267,11 @@ goal       = "Own every stage from firmware to a captured kernel panic: interrup
   lab        = "kdump-kexec-lab/"
   learn      = "arm kdump, force a panic, let the kexec capture kernel save a vmcore, then read it in `crash`."
   checkpoint = "`echo c > /proc/sysrq-trigger` yields a ~42 MB vmcore in `/var/crash`; `crash` `sym` resolves the panic to `test-module.c:8`."
+  [[path.step]]
+  lab        = "open-firmware-forth-to-boot/"
+  tags       = ["📟"]
+  learn      = "the rival answer to firmware modularity, live: IEEE 1275's `ok` prompt is a Forth REPL on the bare machine — walk the device tree, patch the running firmware, and make it boot Linux; also as a coreboot payload."
+  checkpoint = "`3 4 + .` prints `7` at the `ok` prompt over serial (`smoke-ofw.sh` PASSes both flavors); `showcase-forth-to-boot.sh` ends `PASS: ... booted Linux to u-root` after hand-staging the initrd at the prompt."
   [[path.step]]
   lab        = "linuxboot-uefi-kexec/"
   learn      = "firmware is just software: u-root as the firmware's `init`, which `kexec`s the real OS."
@@ -580,8 +585,9 @@ members = ["lab-ca/", "linuxboot-uefi-kexec/", "libvirt-ipxe-http-pxe/https/"]
 id      = "close-to-the-metal"
 title   = "Close to the metal"
 theme   = "Firmware, boot, and RAM-only systems — the lowest layers."
-members = ["linuxboot-uefi-kexec/", "kdump-kexec-lab/", "root-password-reset/",
-           "tiny-linux-experiments/", "pxe-boot-mechanics/", "chroot-netboot-minimal.toml"]
+members = ["linuxboot-uefi-kexec/", "open-firmware-forth-to-boot/", "kdump-kexec-lab/",
+           "root-password-reset/", "tiny-linux-experiments/", "pxe-boot-mechanics/",
+           "chroot-netboot-minimal.toml"]
 
 [[collection]]
 id      = "multi-arch-tcg"
@@ -602,6 +608,7 @@ theme   = "Ship a byte-exact upstream archive (upstream-tutorial/ or upstream-pr
 members = ["chroot-breakout/", "exploring-containers/", "kdump-kexec-lab/",
            "FREEBSD-simple-templating-serving-RHEL-kickstart-files/",
            "virtualbmc-ipmi-lab/", "linuxboot-uefi-kexec/",
+           "open-firmware-forth-to-boot/",
            "tiny-linux-experiments/minimal-arm-linux-qemu/",
            "libvirt-ipxe-http-pxe/", "rhel-bootc-minimal/",
            "shell-novice-workshop/", "shell-intermediate-workshop/",

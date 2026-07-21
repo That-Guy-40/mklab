@@ -2,7 +2,7 @@
 
 # The boot path & kernel-crash forensics 🔴
 
-**Goal.** Own every stage from firmware to a captured kernel panic: interrupt the boot loader, force and dissect a crash, then replace the firmware's boot logic with Linux itself.
+**Goal.** Own every stage from firmware to a captured kernel panic: interrupt the boot loader, force and dissect a crash, meet the firmware that answers back at a Forth prompt, then replace the firmware's boot logic with Linux itself.
 
 **Audience:** you can bring up a Debian VM; comfort with GRUB/serial helps  
 **Effort:** ⏱ half-day+  
@@ -13,7 +13,8 @@
 | 1 | [`vm-examples/vm-debian-amd64.toml`](../vm-examples/vm-debian-amd64.toml) | a baseline KVM cloud VM to experiment on. | `lab-vm.sh ssh` logs you in. |
 | 2 | [`root-password-reset`](../root-password-reset/) 🔑 | console/boot access equals root — via `init=/bin/bash` or `rd.break`. | reset root on the VM; the OLD password is rejected and the NEW one works; `/proc/cmdline` proves your GRUB edit took (mind the serial char-drop gotcha). |
 | 3 | [`kdump-kexec-lab`](../kdump-kexec-lab/) | arm kdump, force a panic, let the kexec capture kernel save a vmcore, then read it in `crash`. | `echo c > /proc/sysrq-trigger` yields a ~42 MB vmcore in `/var/crash`; `crash` `sym` resolves the panic to `test-module.c:8`. |
-| 4 | [`linuxboot-uefi-kexec`](../linuxboot-uefi-kexec/) | firmware is just software: u-root as the firmware's `init`, which `kexec`s the real OS. | two 'Welcome to u-root!' banners + a `[0.000000]` clock reset (Tier C fast-loop → Tier B UKI on OVMF → Tier A coreboot ROM); the System-Transparency capstone boots ONLY a signed OSPKG and refuses a rogue one. |
+| 4 | [`open-firmware-forth-to-boot`](../open-firmware-forth-to-boot/) 📟 | the rival answer to firmware modularity, live: IEEE 1275's `ok` prompt is a Forth REPL on the bare machine — walk the device tree, patch the running firmware, and make it boot Linux; also as a coreboot payload. | `3 4 + .` prints `7` at the `ok` prompt over serial (`smoke-ofw.sh` PASSes both flavors); `showcase-forth-to-boot.sh` ends `PASS: ... booted Linux to u-root` after hand-staging the initrd at the prompt. |
+| 5 | [`linuxboot-uefi-kexec`](../linuxboot-uefi-kexec/) | firmware is just software: u-root as the firmware's `init`, which `kexec`s the real OS. | two 'Welcome to u-root!' banners + a `[0.000000]` clock reset (Tier C fast-loop → Tier B UKI on OVMF → Tier A coreboot ROM); the System-Transparency capstone boots ONLY a signed OSPKG and refuses a rogue one. |
 
 ### Optional side-quests
 
