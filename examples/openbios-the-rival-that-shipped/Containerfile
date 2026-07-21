@@ -1,0 +1,35 @@
+# Build box for OpenBIOS (github.com/openbios/openbios), x86 + qemu-ppc targets.
+# Unlike its frozen rival (see examples/open-firmware-forth-to-boot/), this tree
+# is CI-green upstream on a Debian-ish builder — the container mirrors that
+# builder but builds `toke` from source instead of pulling upstream's prebuilt
+# ghcr image (house rule: no fetched prebuilt toolchains).
+FROM docker.io/debian:13
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        make \
+        gcc \
+        libc6-dev \
+        libc6-dev-i386 \
+        xsltproc \
+        gcc-multilib-powerpc-linux-gnu \
+    && rm -rf /var/lib/apt/lists/*
+# make            — drives the generated Makefile (config/xml → rules.xml)
+# gcc + libc6-dev — the Forth kernel + libopenbios are plain C; also builds
+#                   fcode-utils (toke/detok) and the hosted openbios-unix
+# libc6-dev-i386  — the x86 target compiles/links 32-bit (-m32) images; NOTE no
+#                   native gcc-multilib — it CONFLICTS with the cross gcc below
+#                   (upstream's builder image makes the same choice)
+# xsltproc        — config/scripts/switch-arch generates the Makefile from
+#                   build.xml/config XML via XSLT (hard requirement)
+# gcc-multilib-powerpc-linux-gnu — cross compiler for the qemu-ppc target (the
+#                   config QEMU's own shipped openbios-ppc blob is built with)
+
+# toke (FCode tokenizer) from source: switch-arch hard-aborts without it.
+# The fcode-utils tree (github.com/openbios/fcode-utils, plain C, maintained in
+# lockstep with openbios) is COPY'd in by the build context — installs to
+# /usr/local/bin (toke/Makefile's DESTDIR default).
+COPY fcode-utils /tmp/fcode-utils
+RUN make -C /tmp/fcode-utils \
+    && make -C /tmp/fcode-utils install \
+    && rm -rf /tmp/fcode-utils \
+    && command -v toke

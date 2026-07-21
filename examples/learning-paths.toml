@@ -253,7 +253,7 @@ difficulty = "🔴"
 est        = "⏱ half-day+"
 prereqs    = []
 audience   = "you can bring up a Debian VM; comfort with GRUB/serial helps"
-goal       = "Own every stage from firmware to a captured kernel panic: interrupt the boot loader, force and dissect a crash, meet the firmware that answers back at a Forth prompt, then replace the firmware's boot logic with Linux itself."
+goal       = "Own every stage from firmware to a captured kernel panic: interrupt the boot loader, force and dissect a crash, meet the firmware that answers back at a Forth prompt (twice — two rival implementations of the same standard), then replace the firmware's boot logic with Linux itself."
   [[path.step]]
   lab        = "vm-examples/vm-debian-amd64.toml"
   learn      = "a baseline KVM cloud VM to experiment on."
@@ -272,6 +272,11 @@ goal       = "Own every stage from firmware to a captured kernel panic: interrup
   tags       = ["📟"]
   learn      = "the rival answer to firmware modularity, live: IEEE 1275's `ok` prompt is a Forth REPL on the bare machine — walk the device tree, patch the running firmware, and make it boot Linux; also as a coreboot payload."
   checkpoint = "`3 4 + .` prints `7` at the `ok` prompt over serial (`smoke-ofw.sh` PASSes both flavors); `showcase-forth-to-boot.sh` ends `PASS: ... booted Linux to u-root` after hand-staging the initrd at the prompt."
+  [[path.step]]
+  lab        = "openbios-the-rival-that-shipped/"
+  tags       = ["☎️"]
+  learn      = "the SAME standard, the OTHER implementation — OpenBIOS, the one still shipping (QEMU's default ppc/sparc firmware). The contrast IS the lesson: where the frozen rival got fixed live at the prompt, this maintained C loader gets fixed in a patch — booting Linux needs no `memmap=`, no hand-staged initrd, no zero-page poke."
+  checkpoint = "`smoke-openbios.sh` PASSes all three tracks (multiboot/coreboot/ppc); the ppc one proves the running firmware is OUR build (banner date ≠ QEMU's bundled blob); `showcase-rival-boots-linux.sh` ends `PASS: the rival boots Linux ... reached u-root` from one `boot` line."
   [[path.step]]
   lab        = "linuxboot-uefi-kexec/"
   learn      = "firmware is just software: u-root as the firmware's `init`, which `kexec`s the real OS."
@@ -585,7 +590,8 @@ members = ["lab-ca/", "linuxboot-uefi-kexec/", "libvirt-ipxe-http-pxe/https/"]
 id      = "close-to-the-metal"
 title   = "Close to the metal"
 theme   = "Firmware, boot, and RAM-only systems — the lowest layers."
-members = ["linuxboot-uefi-kexec/", "open-firmware-forth-to-boot/", "kdump-kexec-lab/",
+members = ["linuxboot-uefi-kexec/", "open-firmware-forth-to-boot/",
+           "openbios-the-rival-that-shipped/", "kdump-kexec-lab/",
            "root-password-reset/", "tiny-linux-experiments/", "pxe-boot-mechanics/",
            "chroot-netboot-minimal.toml"]
 

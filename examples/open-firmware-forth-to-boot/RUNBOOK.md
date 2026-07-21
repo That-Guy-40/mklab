@@ -146,8 +146,11 @@ which fuels the eternal confusion:
   what this lab builds; frozen December 2015.
 - **`github.com/openbios/openbios`** — OpenBIOS proper; still actively
   maintained (the QEMU-bundled ppc build above says Apr 2026), with x86
-  support of its own — a natural follow-on track if you want to compare
-  implementations.
+  support of its own. **That follow-on now exists as its own lab:**
+  [`../openbios-the-rival-that-shipped/`](../openbios-the-rival-that-shipped/README.md)
+  builds this firmware, swaps our own build in for QEMU's, and boots Linux
+  from its x86 prompt — where the era-gaps this lab fixed *at the prompt* are
+  fixed *in C* instead.
 
 One QEMU quirk found while verifying this: OpenBIOS's console input works on
 the muxed stdio chardev (`-nographic`, as above) but a bare
