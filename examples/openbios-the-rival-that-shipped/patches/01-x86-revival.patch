@@ -1,0 +1,294 @@
+diff --git a/arch/x86/boot.c b/arch/x86/boot.c
+index 61f6562..23c299d 100644
+--- a/arch/x86/boot.c
++++ b/arch/x86/boot.c
+@@ -13,11 +13,33 @@
+ #include "libc/diskio.h"
+ #include "libopenbios/initprogram.h"
+ #include "libopenbios/sys_info.h"
++#include "libc/string.h"
+ #include "boot.h"
+ 
+ 
++/* The Linux/bzImage loader (linux_load.c) is compiled into this image but
++ * was never called from the x86 boot word — the call survives only in
++ * arch/amd64/boot.c (which still prints "[x86]": it is this arch's old
++ * boot code, moved there when amd64 split off). Ported back. */
+ void boot(void)
+ {
+-	/* No platform-specific boot code */
+-	return;
++	char *path=pop_fstr_copy(), *param;
++
++	if(!path) {
++		printk("[x86] Booting default not supported.\n");
++		return;
++	}
++
++	param = strchr(path, ' ');
++	if(param) {
++		*param = '\0';
++		param++;
++	}
++
++	printk("[x86] Booting file '%s' with parameters '%s'\n",path, param);
++
++	if (linux_load(&sys_info, path, param) == LOADER_NOT_SUPPORT)
++		printk("Unsupported image format\n");
++
++	free(path);
+ }
+diff --git a/arch/x86/builtin.c b/arch/x86/builtin.c
+index f7d8aba..4e26e93 100644
+--- a/arch/x86/builtin.c
++++ b/arch/x86/builtin.c
+@@ -14,7 +14,7 @@
+  */
+ 
+ /* 256K for the dictionary */
+-#define DICTIONARY_SIZE (256 * 1024 / sizeof(ucell))
++#define DICTIONARY_SIZE (1024 * 1024 / sizeof(ucell))
+ #define DICTIONARY_BASE ((ucell)((char *)&forth_dictionary))
+ 
+ static ucell forth_dictionary[DICTIONARY_SIZE] = {
+diff --git a/arch/x86/linux_load.c b/arch/x86/linux_load.c
+index cfcb338..d2bb878 100644
+--- a/arch/x86/linux_load.c
++++ b/arch/x86/linux_load.c
+@@ -67,6 +67,28 @@ struct linux_header {
+     uint32_t cmd_line_ptr;		/* 0x228 */
+     /* 2.03+ */
+     uint32_t initrd_addr_max;		/* 0x22c */
++    /* 2.05+ */
++    uint32_t kernel_alignment;		/* 0x230 */
++    uint8_t  relocatable_kernel;	/* 0x234 */
++    uint8_t  min_alignment;		/* 0x235 */
++    uint16_t xloadflags;		/* 0x236 */
++    /* 2.06+ */
++    uint32_t cmdline_size;		/* 0x238 */
++    /* 2.07+ */
++    uint32_t hardware_subarch;		/* 0x23c */
++    uint64_t hardware_subarch_data;	/* 0x240 */
++    /* 2.08+ */
++    uint32_t payload_offset;		/* 0x248 */
++    uint32_t payload_length;		/* 0x24c */
++    /* 2.09+ */
++    uint64_t setup_data;		/* 0x250 */
++    /* 2.10+ */
++    uint64_t pref_address;		/* 0x258 */
++    uint32_t init_size;			/* 0x260 */
++    /* 2.11+ */
++    uint32_t handover_offset;		/* 0x264 */
++    /* 2.15+ */
++    uint32_t kernel_info_offset;	/* 0x268 */
+ } __attribute__ ((packed));
+ 
+ 
+@@ -242,6 +264,15 @@ init_linux_params(struct linux_params *params, struct linux_header *hdr)
+     debug("Setting up parameters at %#lx\n", virt_to_phys(params));
+     memset(params, 0, sizeof *params);
+ 
++    /* Boot protocol 2.02+: the loader must copy the ENTIRE setup header
++     * into the zero page at 0x1f1 — modern kernels read fields this 2003
++     * loader never knew (kernel_alignment, init_size, pref_address...);
++     * leaving them zero sent the decompression stub's relocation math to
++     * a >4 GB stack (page fault in startup_64 before the first printk).
++     * Loader-owned fields are overwritten again below/later. */
++    memcpy((uint8_t *)params + 0x1f1, (uint8_t *)hdr + 0x1f1,
++           sizeof(*hdr) - 0x1f1);
++
+     /* Copy some useful values from header */
+     params->mount_root_rdonly = hdr->root_flags;
+     params->orig_root_dev = hdr->root_dev;
+@@ -580,6 +611,12 @@ static int start_linux(uint32_t kern_addr, struct linux_params *params)
+ 
+     ctx = init_context(phys_to_virt(STACK_LOC), 4096, 0);
+ 
++    /* init_context() zeroes the frame; nobody ever set esp on this path
++     * (arch_init_program does it for the generic loaders). switch_to()
++     * pops the segment/flags/eip block from ctx->esp — with esp=0 it
++     * popped garbage and faulted before ever reaching the kernel. */
++    ctx->esp = virt_to_phys(ESP_LOC(ctx));
++
+     /* Linux expects GDT being in low memory */
+     linux_gdt = phys_to_virt(GDT_LOC);
+     memset(linux_gdt, 0, 13*sizeof(struct segment_desc));
+diff --git a/arch/x86/multiboot.h b/arch/x86/multiboot.h
+index fd0fe97..920a561 100644
+--- a/arch/x86/multiboot.h
++++ b/arch/x86/multiboot.h
+@@ -10,8 +10,12 @@
+ /* magic number for multiboot header */
+ #define MULTIBOOT_HEADER_MAGIC		0x1BADB002
+ 
+-/* flags for multiboot header */
+-#define MULTIBOOT_HEADER_FLAGS		0x00010003
++/* flags for multiboot header.
++ * Bit 16 (AOUT_KLUDGE) must NOT be set: struct mbheader in multiboot.c
++ * carries no address fields, so a spec-compliant loader (QEMU -kernel,
++ * GRUB) would read zeros and load/jump to address 0. The image is a valid
++ * ELF; loaders use the program headers when bit 16 is clear. */
++#define MULTIBOOT_HEADER_FLAGS		0x00000003
+ 
+ /* magic number passed by multiboot-compliant boot loader.  */
+ #define MULTIBOOT_BOOTLOADER_MAGIC	0x2BADB002
+diff --git a/arch/x86/openbios.c b/arch/x86/openbios.c
+index 1274d2b..3b87f9c 100644
+--- a/arch/x86/openbios.c
++++ b/arch/x86/openbios.c
+@@ -101,10 +101,22 @@ int openbios(void)
+ 
+         collect_sys_info(&sys_info);
+ 
+-        dict = (unsigned char *)sys_info.dict_start;
+-        dicthead = (cell)sys_info.dict_end;
+-        last = sys_info.dict_last;
+-        dictlimit = sys_info.dict_limit;
++        if (sys_info.dict_last) {
++                /* builtin image: an embedded, ready-to-run dictionary */
++                dict = (unsigned char *)sys_info.dict_start;
++                dicthead = (cell)sys_info.dict_end;
++                last = sys_info.dict_last;
++                dictlimit = sys_info.dict_limit;
++        } else {
++                /* multiboot module: a dictionary FILE (header + reloc
++                 * table) — parse and relocate it, as arch/amd64 does */
++                static char intdict[1024 * 1024];
++                dict = (unsigned char *)intdict;
++                dictlimit = sizeof(intdict);
++                load_dictionary((char *)sys_info.dict_start,
++                                (char *)sys_info.dict_end
++                                - (char *)sys_info.dict_start);
++        }
+ 
+ 	forth_init();
+ 
+diff --git a/forth/admin/nvram.fs b/forth/admin/nvram.fs
+index 3fbd935..8d38c81 100644
+--- a/forth/admin/nvram.fs
++++ b/forth/admin/nvram.fs
+@@ -301,7 +301,14 @@ constant config-info.size
+ \ NVRAM variables
+ \ --------------------------------------------------------
+ \ fcode-debug? input-device output-device
++\ x86: auto-boot is unconditional (main.fs has no interrupt window) and the
++\ post-probe boot attempt detonates when IDE media is attached — land at the
++\ ok prompt instead; boot is typed there. Other arches keep the 1275 default.
++[IFDEF] CONFIG_X86
++s" false"    s" auto-boot?"           bool-config   \ 7.4.3.5
++[ELSE]
+ s" true"     s" auto-boot?"           bool-config   \ 7.4.3.5
++[THEN]
+ s" boot"     s" boot-command"         str-config    \ 7.4.3.5
+ s" "         s" boot-file"            str-config    \ 7.4.3.5
+ s" false"    s" diag-switch?"         bool-config   \ 7.4.3.5
+@@ -342,6 +349,10 @@ s" true"     s" vga-ndrv?"            bool-config
+ [IFDEF] CONFIG_X86
+ \ ---- X86 ----
+ s" true"     s" little-endian?"       bool-config
++\ Every other arch defines load-base; x86 never did, so $load's
++\ `" load-base" evaluate` executed an undefined word and crashed the
++\ auto-boot path (GPF at pc=0) as soon as a disk was attached.
++s" 4000000"  s" load-base"            int-config
+ [THEN]
+ 
+ [IFDEF] CONFIG_SPARC32
+diff --git a/fs/grubfs/grubfs_fs.c b/fs/grubfs/grubfs_fs.c
+index acd2a64..3e580e3 100644
+--- a/fs/grubfs/grubfs_fs.c
++++ b/fs/grubfs/grubfs_fs.c
+@@ -276,7 +276,10 @@ grubfs_files_seek( grubfs_info_t *mi )
+ 		break;
+ 	default:
+ 	case SEEK_SET:
+-		newpos = (offs < 0) ? 0 : offs;
++		/* A negative offset means "seek to EOF" (see file_size() in
++		 * the Linux loaders: seek_io(fd, -1) then tell). Clamping it
++		 * to 0 made file_size() nonsense on every grubfs file. */
++		newpos = (offs < 0) ? file->len : offs;
+ 		break;
+ 	}
+ 
+@@ -291,6 +294,18 @@ grubfs_files_seek( grubfs_info_t *mi )
+ 		RET( 0 );
+ }
+ 
++/* ( -- pos.d ) */
++static void
++grubfs_files_tell( grubfs_info_t *mi )
++{
++	grubfile_t *file = mi->gfs->fd;
++
++	/* grubfs never had a tell method, so libc's tell() returned -1 and
++	 * file_size() with it — the Linux loaders sized every file as ~4 GB. */
++	PUSH( file->pos );
++	PUSH( 0 );
++}
++
+ /* ( addr -- size ) */
+ static void
+ grubfs_files_load( grubfs_info_t *mi )
+@@ -381,6 +396,7 @@ NODE_METHODS( grubfs ) = {
+ 	{ "close",	grubfs_files_close 	},
+ 	{ "read",	grubfs_files_read	},
+ 	{ "seek",	grubfs_files_seek	},
++	{ "tell",	grubfs_files_tell	},
+ 	{ "load",	grubfs_files_load	},
+ 	{ "dir",	grubfs_files_dir	},
+ 
+diff --git a/libopenbios/linuxbios_info.c b/libopenbios/linuxbios_info.c
+index bef996c..d9ce7c5 100644
+--- a/libopenbios/linuxbios_info.c
++++ b/libopenbios/linuxbios_info.c
+@@ -109,9 +109,40 @@ static int find_lb_table(void *start, void *end, struct lb_header **result)
+ 	return 0;
+ }
+ 
++/* Since ~2009 the table in low memory is only a stub whose single record
++ * (LB_TAG_FORWARD) points at the real table up in CBMEM. Without chasing
++ * it, read_lbtable() finds no LB_TAG_MEMORY and the caller falls back to
++ * the hardcoded 640K+31MB map — on any coreboot new enough to forward,
++ * this firmware thought every machine had 32 MB of RAM. */
++#define LB_TAG_FORWARD	0x0011
++struct lb_forward {
++	uint32_t tag;
++	uint32_t size;
++	uint64_t forward;
++};
++
++static int forward_lb_table(struct lb_header *head, struct lb_header **result)
++{
++	struct lb_record *rec;
++
++	for_each_lbrec(head, rec) {
++		if (rec->tag == LB_TAG_FORWARD) {
++			unsigned long addr;
++
++			addr = (unsigned long)
++				((struct lb_forward *) rec)->forward;
++			debug("Forwarding record -> %#lx\n", addr);
++			/* validate the forwarded location like any other */
++			return find_lb_table(phys_to_virt(addr),
++					     phys_to_virt(addr + 16), result);
++		}
++	}
++	return 0;
++}
++
+ void collect_linuxbios_info(struct sys_info *info)
+ {
+-	struct lb_header *lb_table;
++	struct lb_header *lb_table, *fwd_table;
+ 	int found;
+ 	debug("Searching for LinuxBIOS tables...\n");
+ 	found = 0;
+@@ -124,6 +155,9 @@ void collect_linuxbios_info(struct sys_info *info)
+ 	if (!found)
+ 		return;
+ 
++	if (forward_lb_table(lb_table, &fwd_table))
++		lb_table = fwd_table;
++
+ 	debug("Found LinuxBIOS table at: %p\n", lb_table);
+ 	info->firmware = "LinuxBIOS";
+ 	read_lbtable(lb_table, info);

@@ -127,6 +127,8 @@ No valid state has been set by load or init-program
 ```
 
 Ctrl-A X quits. Verified via a real pty (the pager lab's `drive-pager.py`).
+This is now a full lab of its own:
+[`../openbios-the-rival-that-shipped/`](../openbios-the-rival-that-shipped/README.md).
 
 ## Reproducer notes (the sharp edges, so you don't re-cut yourself)
 
