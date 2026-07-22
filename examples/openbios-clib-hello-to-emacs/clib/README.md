@@ -16,7 +16,7 @@ look like ordinary C functions.
 | `of1275.h` / `of1275.c` | C wrappers for every client-interface service (`finddevice`, `getprop`, `open`, `read`, `write`, `claim`, `exit`, …) plus `_start`, which receives the callback pointer | `1275.h`, `callofw.c`, `property.c` |
 | `of1275_io.c` | POSIX-shaped `write` / `read` / `exit` over the stdout/stdin ihandles in `/chosen` | `stdio.h`, `wrappers.c` |
 | `endian.h` | host-vs-firmware cell byte-order helper (a no-op on big-endian ppc, a swap on x86) | (folded into the arch subdirs) |
-| `clib.h` / `clib.c` | **this lab's growth layer**: `strlen`, `puts`, `put_udec`, `put_hex` — built on `write` | `string.c`, `printf.c`, `lib.c` |
+| `clib.h` / `clib.c` | **this lab's growth layer**: console (`strlen`, `puts`, `put_udec`, `put_hex` on `write`) + memory (`clib_claim`/`clib_release` on the `claim` service, `clib_ram_bytes` from the `/memory` node) | `string.c`, `printf.c`, `malloc.c`, `lib.c` |
 
 The client entry convention is the same one real operating systems use to talk
 to Open Firmware: `_start(residual, entry, client_interface_handler, args,
@@ -29,9 +29,10 @@ away from the bare machine.
 `clib` starts deliberately small — enough for `hello.c` (rung 1). It fleshes
 out as the ladder climbs (see [`../PLAN.md`](../PLAN.md)):
 
-- **memtest** (rung 3) adds a `claim`-backed allocator and the `/memory`
-  `reg`/`available` walk.
-- **MicroEMACS** (rung 4) adds a console/termcap shim on `read`/`write`.
+- **memtest** (rung 3, **done**) added a `claim`-backed allocator
+  (`clib_claim`/`clib_release`) and the `/memory` `reg` walk (`clib_ram_bytes`)
+  — see `memtest.c`.
+- **MicroEMACS** (rung 4) will add a console/termcap shim on `read`/`write`.
 
 Never a syscall, never an `#include <stdlib.h>` — the "system call" *is* the
 firmware callback.

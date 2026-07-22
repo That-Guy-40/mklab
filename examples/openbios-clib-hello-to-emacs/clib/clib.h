@@ -29,4 +29,11 @@ void putsn(const char *s);           /* string + newline */
 void put_udec(unsigned int v);       /* unsigned decimal */
 void put_hex(unsigned int v);        /* 0x-prefixed hex */
 
+/* memory, built on the firmware's `claim`/`release` services and the /memory
+ * device node — this is the clib's Phase-2 growth for memtest. There is no
+ * OS heap; `claim` IS the allocator. */
+void        *clib_claim(unsigned int size);      /* claim size bytes, page-aligned; 0 on failure */
+void         clib_release(void *p, unsigned int size);
+unsigned int clib_ram_bytes(void);               /* total RAM per /memory "reg" (0 if unknown) */
+
 #endif /* CLIB_H */
