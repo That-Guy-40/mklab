@@ -122,17 +122,46 @@ Hello world!  --  an OpenBIOS client program, calling back into the firmware.
 A human types at the muxed stdio with no trouble; the flow-control caveat only
 bites scripted drivers.
 
-## 4. x86 track (Phase 3 — not yet)
+## x86 — the revived firmware runs the same clients
+
+Unlike ppc (which needs no firmware build at all), x86 needs the revival — six
+repairs on top of the rival lab's eight. Build it once, then the same smokes run:
 
 ```console
-$ ./build-client.sh x86 hello     # builds fine (Intel 80386 EXEC)
-$ ./smoke-client.sh x86
-SKIP: x86 client track needs the firmware revival (Phase 3) — see PLAN.md / patches/00-x86-cif-plant.patch
+$ ./build-firmware-x86.sh
+==> applying this lab's client-path patch (idempotent)
+    applied
+==> rebuilding OpenBIOS for x86
+ok.
+==> artifacts:
+/home/sqs/openbios-lab/openbios/obj-x86/openbios.dict
+/home/sqs/openbios-lab/openbios/obj-x86/openbios.multiboot
+
+$ ./smoke-client.sh x86 hello
+PASS: revived OpenBIOS-x86 loaded our C client 'hello' and it answered Hello world! over the IEEE 1275 client interface
+
+$ ./smoke-client.sh x86 memtest
+PASS: revived OpenBIOS-x86 loaded our C client 'memtest' and it ran the RAM tester to a clean PASS over the IEEE 1275 client interface
+
+$ ./smoke-client.sh x86 edit
+PASS: revived OpenBIOS-x86 loaded our C client 'edit' and it ran a tiny interactive editor (typed, backspaced, Ctrl-X saved) over the IEEE 1275 client interface
 ```
 
-The x86 binary compiles today; it only *runs* once the firmware is fixed to
-hand a client the callback. That revival is the lab's capstone — fix #1 is
-`patches/00-x86-cif-plant.patch`; see [PLAN.md](PLAN.md) §Phase 3.
+The x86 success signature at the prompt, driven by hand:
+
+```
+0 > " /ide@1/cdrom@0:\hello" $load  ok
+0 > go switching to new context:
+Hello world!  --  an OpenBIOS client program, calling back into the firmware.
+clib proof: 6 * 7 = 42, or in hex 0x2a
+EXIT
+1 >
+```
+
+Note x86 has no `boot cd:` shortcut for a client: `$load` then `go`. The load
+line is long enough that the firmware's flow-control-free serial input drops
+characters without `drive-pty-repl.py --echo-gate` — the smoke passes it.
+Story of all six repairs: [POC-4](POC-4-X86-REVIVAL.md).
 
 ## Reproducer notes (the sharp edges)
 

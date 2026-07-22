@@ -22,6 +22,8 @@ pass() { echo "PASS: $*"; exit 0; }
 fail() { echo "FAIL: $*"; exit 1; }
 skip() { echo "SKIP: $*"; exit 77; }
 note() { echo "  - $*"; }
+ACCEL="$([[ -w /dev/kvm ]] && echo kvm || echo tcg)"
+
 trap 'rc=$?; [[ $rc -eq 0 || $rc -eq 1 || $rc -eq 77 ]] || echo "FAIL: test exited early (rc=$rc)"' EXIT
 
 case "$FLAVOR" in
@@ -85,6 +87,68 @@ case "$FLAVOR" in
     pass "OpenBIOS-ppc loaded our C client '$PROG' and it $WHAT over the IEEE 1275 client interface" ;;
 
   x86)
-    skip "x86 client track blocked on the firmware file-load path (Phase 3, POC-4-X86-REVIVAL.md) — CIF-plant fix #1 landed, load path still open" ;;
+    command -v python3             >/dev/null || skip "python3 not installed"
+    command -v qemu-system-x86_64  >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v genisoimage         >/dev/null || skip "genisoimage not installed"
+    [[ -f "$HERE/clib/$PROG.c" ]] || skip "no such client program: clib/$PROG.c"
+
+    # Unlike ppc, x86 needs the REVIVED firmware (POC-4) — stock OpenBIOS-x86
+    # cannot load or enter a client at all.
+    FW="${OPENBIOS_WORKDIR:-$HOME/openbios-lab}/openbios/obj-x86"
+    if [[ ! -f "$FW/openbios.multiboot" || ! -f "$FW/openbios.dict" ]]; then
+        skip "no revived OpenBIOS-x86 at $FW — run ./build-firmware-x86.sh first"
+    fi
+
+    CLIENT="$WORKDIR/$PROG-x86"
+    if [[ ! -f "$CLIENT" ]]; then
+        note "no $CLIENT yet — building it"
+        ( cd "$HERE" && ./build-client.sh x86 "$PROG" ) >/dev/null 2>&1 \
+            || skip "could not build $PROG-x86 (need podman + the client build box)"
+    fi
+    [[ -f "$CLIENT" ]] || fail "$PROG-x86 missing after build"
+
+    # x86 takes the RockRidge-lowercased name (genisoimage -r), so the path at
+    # the prompt is the plain lowercase one — no ".;1" suffix as on ppc.
+    ISO="$WORKDIR/$PROG-x86.iso"; STAGE="$WORKDIR/.isoroot-x86-$PROG"
+    rm -rf "$STAGE" "$ISO"; mkdir -p "$STAGE"; cp "$CLIENT" "$STAGE/$PROG"
+    genisoimage -quiet -r -o "$ISO" -V CLIENT "$STAGE" || fail "genisoimage failed"
+
+    # x86 has no `boot cd:` shortcut for a client: load it, then go.
+    # shellcheck disable=SC2016  # `$load` is the Forth word, not a shell var
+    LOAD='" /ide@1/cdrom@0:\x5c'"$PROG"'" $load\r'
+    case "$PROG" in
+      hello)
+        MARKER="Hello world!";  WHAT="answered Hello world!"; TMO=150
+        STEPS=(--send "$LOAD" --expect "ok" --send 'go\r' --expect "$MARKER") ;;
+      memtest)
+        MARKER="memtest: PASS"; WHAT="ran the RAM tester to a clean PASS"; TMO=260
+        STEPS=(--send "$LOAD" --expect "ok" --send 'go\r' --expect "$MARKER") ;;
+      edit)
+        MARKER="edit: wrote 5 chars: hello"
+        WHAT="ran a tiny interactive editor (typed, backspaced, Ctrl-X saved)"; TMO=180
+        STEPS=(--send "$LOAD" --expect "ok" --send 'go\r' --expect "Backspace edits"
+               --send 'hellX' --send '\x7f' --send 'o' --expect 'o'
+               --send '\x18' --expect "$MARKER") ;;
+      *)
+        MARKER="EXIT"; WHAT="ran and exited via the client interface"; TMO=150
+        STEPS=(--send "$LOAD" --expect "ok" --send 'go\r' --expect "$MARKER") ;;
+    esac
+
+    LOG="$WORKDIR/smoke-client-x86-$PROG.log"; rm -f "$LOG"
+    note "booting revived OpenBIOS-x86 + our $PROG CD, driving \$load + go → $LOG"
+    # --echo-gate: the firmware prompt has no flow control, and the load line is
+    # long enough to be dropped without it (see CLAUDE.md / POC-4).
+    python3 "$REPO/tools/drive-pty-repl.py" "$LOG" --timeout "$TMO" --echo-gate \
+        --expect "0 > " "${STEPS[@]}" \
+        -- qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 \
+           -kernel "$FW/openbios.multiboot" -initrd "$FW/openbios.dict" \
+           -cdrom "$ISO" -display none -serial mon:stdio -no-reboot
+    RC=$?
+    if grep -aq "memtest: FAIL" "$LOG"; then
+        fail "REGRESSION: memtest reported memory errors on emulated RAM — clib claim/verify path or the x86 cif-claim broke (see $LOG)"
+    fi
+    [[ $RC -eq 0 ]] || fail "$PROG did not reach its success marker '$MARKER' (rc=$RC) — see $LOG"
+    grep -aq "$MARKER" "$LOG" || fail "REGRESSION: firmware entered $PROG but no '$MARKER' — client interface path broke"
+    pass "revived OpenBIOS-x86 loaded our C client '$PROG' and it $WHAT over the IEEE 1275 client interface" ;;
   *) echo "usage: $0 [ppc|x86] [program]" >&2; exit 1 ;;
 esac

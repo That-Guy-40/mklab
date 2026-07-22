@@ -7,9 +7,14 @@
 #                                  build needed — the client interface is
 #                                  already wired on ppc). This is the track
 #                                  that runs today (Phase 1).
-#   x86 → $WORKDIR/<program>-x86   32-bit x86 EXEC. Builds now, but only RUNS
-#                                  once the firmware is revived (Phase 3 —
-#                                  patches/00-x86-cif-plant.patch + two more).
+#   x86 → $WORKDIR/<program>-x86   32-bit x86 EXEC, linked at 0x20000 and run by
+#                                  a REVIVED OpenBIOS-x86 (Phase 3 patches).
+#                                  The link address is not arbitrary: x86 enters
+#                                  a client with the firmware's rebased segments,
+#                                  so the client must live in the virtual window
+#                                  below _start (0x100010), which maps to
+#                                  physical RAM just under the relocated
+#                                  firmware. See POC-4.
 #
 # Artifacts land in ${OPENBIOS_CLIENTS_WORKDIR:-$HOME/openbios-clients-lab}.
 #
@@ -52,7 +57,7 @@ build_x86() {
     podman run --rm -v "$HERE:/lab:ro" -v "$WORKDIR:/out" --userns=keep-id -w /lab "$IMG" sh -c "
         cd /tmp && gcc -std=gnu89 -m32 -fno-pic -fno-builtin -fno-stack-protector -Os -c \
             /lab/clib/of1275.c /lab/clib/of1275_io.c /lab/clib/clib.c /lab/clib/$PROG.c
-        ld -melf_i386 -N -Ttext 0x200000 -e _start -o /out/$PROG-x86 \
+        ld -melf_i386 -N -Ttext 0x20000 -e _start -o /out/$PROG-x86 \
             of1275.o of1275_io.o clib.o $PROG.o
         readelf -h /out/$PROG-x86 | grep -E 'Data|Machine|Entry'"
 }
