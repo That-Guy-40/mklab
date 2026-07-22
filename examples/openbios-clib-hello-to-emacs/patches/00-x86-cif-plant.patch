@@ -1,0 +1,50 @@
+diff --git a/arch/x86/context.c b/arch/x86/context.c
+index 5ed3875..67f2fc7 100644
+--- a/arch/x86/context.c
++++ b/arch/x86/context.c
+@@ -16,6 +16,10 @@
+ #include "boot.h"
+ #include "openbios.h"
+ 
++/* The IEEE 1275 client-interface dispatcher (libopenbios/client.c). Compiled
++ * into every arch but, until now, never handed to a launched client on x86. */
++extern int of_client_interface(int *params);
++
+ #define MAIN_STACK_SIZE 16384
+ #define IMAGE_STACK_SIZE 4096
+ 
+@@ -70,8 +74,10 @@ static void start_main(void)
+ 
+     init_exceptions();
+ 
+-    /* Set up client context */
+-    client_ctx = init_context(image_stack, sizeof image_stack, 1);
++    /* Set up client context.
++     * 5 param slots: an IEEE 1275 client program is entered with five
++     * arguments on its stack — _start(residual, entry, cif, args, argslen). */
++    client_ctx = init_context(image_stack, sizeof image_stack, 5);
+     __context = client_ctx;
+ 
+     /* Start the real fun */
+@@ -135,6 +141,21 @@ arch_init_program(void)
+     entry = POP();
+     ctx->eip = entry;
+ 
++    /* IEEE 1275 client program (a plain ELF, file-type 'elf' = 1, as opposed
++     * to an 'elf-boot' Linux/multiboot image = 0): hand it the client-interface
++     * callback. PPC passes it in r5 (see arch/ppc/qemu/context.c); x86 has no
++     * such register convention, so we lay the five client-entry arguments on
++     * the client stack where its _start(residual, entry, cif, args, argslen)
++     * reads them. param[0..4] sit just above return_addr per ESP_LOC, so on
++     * entry the client sees them as its C arguments 1..5. */
++    if (type == 1) {
++        ctx->param[0] = 0;                                   /* residual data */
++        ctx->param[1] = entry;                               /* program entry */
++        ctx->param[2] = (ucell)(uintptr_t)of_client_interface; /* the CIF */
++        ctx->param[3] = 0;                                   /* args string   */
++        ctx->param[4] = 0;                                   /* args length   */
++    }
++
+     return 0;
+ }
+ 
