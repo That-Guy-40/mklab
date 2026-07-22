@@ -71,6 +71,6 @@ case "$FLAVOR" in
     pass "OpenBIOS-ppc loaded our C client '$PROG' and it $WHAT over the IEEE 1275 client interface" ;;
 
   x86)
-    skip "x86 client track needs the firmware revival (Phase 3) — see PLAN.md / patches/00-x86-cif-plant.patch" ;;
+    skip "x86 client track blocked on the firmware file-load path (Phase 3, POC-4-X86-REVIVAL.md) — CIF-plant fix #1 landed, load path still open" ;;
   *) echo "usage: $0 [ppc|x86] [program]" >&2; exit 1 ;;
 esac

@@ -1,6 +1,7 @@
 # PLAN — openbios-clib-hello-to-emacs
 
-**Status: IN PROGRESS — Phases 0/1/2 COMPLETE and green (ppc); Phases 3–4 planned.**
+**Status: IN PROGRESS — Phases 0/1/2 COMPLETE and green (ppc); Phase 3 STARTED
+(CIF-plant landed + builds, file-load blocker diagnosed — see POC-4); Phase 4 planned.**
 Follow-on to [`../openbios-the-rival-that-shipped/`](../openbios-the-rival-that-shipped/README.md).
 Same house style, same spike→POC→assemble lifecycle. Where the rival lab taught
 **Forth/FCode** extension (words loaded *into* the interpreter), this lab teaches
@@ -55,20 +56,22 @@ because a client is a more general thing than a kernel.
   address-uniqueness + four data fills + a walking-bit pass, reporting
   `memtest: PASS`. `smoke-client.sh ppc memtest`.
   [POC-3](POC-3-MEMTEST.md).
-- **Phase 3 — the x86 revival capstone.** Land the 3 fixes so x86 runs the same
-  clients:
-  1. **CIF-plant** — `arch/x86/context.c arch_init_program` never hands a
-     launched client the callback (ppc does, in `r5`). Fix: 5 client param
-     slots + `param[2]=&of_client_interface`. **Written & builds**
-     ([`patches/00-x86-cif-plant.patch`](patches/00-x86-cif-plant.patch)).
-  2. **iso9660 `load`** — the native `fs/iso9660/iso9660_fs.c` "load" method
-     leaves garbage at load-base (the rival lab only fixed grubfs; linux_load
-     has its own reader, so this path was never run). Visible defect:
-     `iso9660_files_{read,seek,load}` do `if (type != FILE) PUSH(...)` with no
-     `return` → stack corruption.
-  3. **boot detour** — the rival patch's unconditional `linux_load` in
-     `arch/x86/boot.c` shadows the generic `$load`; guard it to a real bzImage.
-  Then `smoke-client.sh x86` turns green and the ladder runs on both arches.
+- **Phase 3 — the x86 revival capstone. ⏳ STARTED (POC-4).** Two independent
+  repairs, not the three originally scoped:
+  1. **CIF-plant — ✅ DONE, builds.** `arch/x86/context.c arch_init_program`
+     never hands a launched client the callback (ppc does, in `r5`). Fix: 5
+     client param slots + `param[2]=&of_client_interface`
+     ([`patches/00-x86-cif-plant.patch`](patches/00-x86-cif-plant.patch), +64
+     bytes). Can't be *demonstrated* until fix #2 lands.
+  2. **File-load path — ⏳ OPEN, diagnosed.** `load /ide@1/cdrom@0:\hello`
+     leaves load-base empty and state invalid; instrumentation shows it reaches
+     *none* of `dlabel_load` / `iso9660_files_load` / generic `load()`, though a
+     direct `open-dev` works — the break is in the disk-label/`interpose`/fs
+     wiring, deeper than the spike's "iso9660 missing-`return`" guess. Genuine
+     firmware archaeology; deferred to a focused follow-up.
+  Until fix #2 is green, `smoke-client.sh x86` `SKIP`s with a pointer to POC-4.
+  Gotchas that cost time (recorded in POC-4): x86 `printk`→VGA (use
+  `forth_printf`); serial drops chars on long input lines.
 - **Phase 4 — MicroEMACS.** Editor core + tutorial-as-data; a console/termcap
   shim on clib `read`/`write`. Documented author-run if it outgrows the sandbox.
 
