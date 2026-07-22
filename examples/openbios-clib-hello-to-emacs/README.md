@@ -16,24 +16,25 @@ the modern `openbios/openbios` codebase, climbing a ladder from a one-line
 
 ```text
 Rung 1  hello      C program -> firmware `write` -> console            [ppc: DONE]
-Rung 2  clib       grow of1275 into a real support lib                 [DONE: puts/printf-ish + claim-backed alloc]
+Rung 2  clib       grow of1275 into a real support lib                 [DONE: console + claim-backed alloc + getch/ANSI]
 Rung 3  memtest    claim-backed allocator + /memory walk, tests RAM    [ppc: DONE — memtest: PASS]
-Rung 4  emacs      MicroEMACS port, tutorial-as-data, console shim     [planned]
+Rung 4  editor     interactive client (getch + ANSI); MicroEMACS=finale[ppc: DONE — a tiny editor; full emacs remaining]
 
 Arc:  ppc proves the mechanism  ─►  revive the x86 client ABI (capstone)  ─►  same clients, both arches
 ```
 
 **Status: Phases 0/1/2 complete and verified on this host** (KVM/TCG, QEMU
-8.2.2); on ppc, both `hello` and a `memtest` client are green end-to-end.
-**Phase 3 (the x86 capstone) is started and honest about where it stands**: the
-client-ABI fix is written and builds, but a deeper x86 file-load bug blocks the
-demo, so the x86 track still `SKIP`s — see [POC-4](POC-4-X86-REVIVAL.md) and
-[PLAN.md](PLAN.md). Blow-by-blow write-ups:
+8.2.2); on ppc, `hello`, a `memtest` client, and a tiny **interactive editor**
+are green end-to-end. **Phase 3 (the x86 capstone) is started and honest about
+where it stands**: the client-ABI fix is written and builds, but a deeper x86
+file-load bug blocks the demo, so the x86 track still `SKIP`s — see
+[POC-4](POC-4-X86-REVIVAL.md). Blow-by-blow write-ups:
 [POC-1-BUILD-BOX-AND-CLIB.md](POC-1-BUILD-BOX-AND-CLIB.md) (a libc that is one
 callback deep), [POC-2-PPC-HELLO.md](POC-2-PPC-HELLO.md) (the firmware runs your
-C program), [POC-3-MEMTEST.md](POC-3-MEMTEST.md) (a RAM tester with no OS), and
-[POC-4-X86-REVIVAL.md](POC-4-X86-REVIVAL.md) (the x86 revival — fix #1 done, the
-load path diagnosed). Exact commands + signatures:
+C program), [POC-3-MEMTEST.md](POC-3-MEMTEST.md) (a RAM tester with no OS),
+[POC-4-X86-REVIVAL.md](POC-4-X86-REVIVAL.md) (the x86 revival — fix #1 done, load
+path diagnosed), and [POC-5-EDITOR.md](POC-5-EDITOR.md) (an interactive editor
+with no OS). Roadmap: [PLAN.md](PLAN.md); exact commands + signatures:
 [MANUAL_TESTING.md](MANUAL_TESTING.md).
 
 ## "A client library" is C, not Forth
@@ -89,7 +90,10 @@ PASS: OpenBIOS-ppc loaded our C client 'hello' and it answered Hello world! over
 $ ./smoke-client.sh ppc memtest     # rung 3: a RAM tester as a client
 PASS: OpenBIOS-ppc loaded our C client 'memtest' and it ran the RAM tester to a clean PASS over the IEEE 1275 client interface
 
-$ ./run-client-qemu.sh ppc memtest  # interactive: drops you at 0 > to type `boot cd:\MEMTEST.;1` yourself
+$ ./smoke-client.sh ppc edit        # rung 4: a tiny interactive editor (driven headlessly)
+PASS: OpenBIOS-ppc loaded our C client 'edit' and it ran a tiny interactive editor (typed, backspaced, Ctrl-X saved) over the IEEE 1275 client interface
+
+$ ./run-client-qemu.sh ppc edit     # interactive: boot cd:\EDIT.;1 and type at it yourself (Ctrl-X saves)
 ```
 
 Everything lands in `~/openbios-clients-lab/` (override with

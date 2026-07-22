@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # smoke-client.sh [ppc|x86] [program] — one verdict that the OpenBIOS client
 # interface runs our C client. program defaults to "hello" (see clib/*.c for
-# the ladder: hello, memtest, …). ppc is the track that works today: the STOCK
-# qemu-system-ppc firmware already wires the client interface, so our
-# cross-compiled client is loaded from a CD, entered via `boot`, and reports
-# over the console — every line a firmware `write` service call.
+# the ladder: hello, memtest, edit, …). ppc is the track that works today: the
+# STOCK qemu-system-ppc firmware already wires the client interface, so our
+# cross-compiled client is loaded from a CD, entered via `boot`, and driven over
+# the console — every line a firmware read/write service call.
 #
 #   ppc: build (if needed) <program>-ppc → a plain ISO9660 CD → boot cd:\NAME.;1
-#        → expect the program's success marker.
+#        → drive it and expect the program's success marker.
 #
-# (x86 gets its own verdict once the firmware is revived — Phase 3.)
+# (x86 gets its own verdict once the firmware is revived — see POC-4.)
 # Exit: 0 PASS / 1 FAIL / 77 SKIP.
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -23,13 +23,6 @@ fail() { echo "FAIL: $*"; exit 1; }
 skip() { echo "SKIP: $*"; exit 77; }
 note() { echo "  - $*"; }
 trap 'rc=$?; [[ $rc -eq 0 || $rc -eq 1 || $rc -eq 77 ]] || echo "FAIL: test exited early (rc=$rc)"' EXIT
-
-# Per-program success marker + how long to allow (memtest hammers RAM under TCG).
-case "$PROG" in
-  hello)   MARKER="Hello world!"; WHAT="answered Hello world!";           TMO=90 ;;
-  memtest) MARKER="memtest: PASS"; WHAT="ran the RAM tester to a clean PASS"; TMO=140 ;;
-  *)       MARKER="EXIT"; WHAT="ran and exited via the client interface";  TMO=90 ;;
-esac
 
 case "$FLAVOR" in
   ppc)
@@ -53,12 +46,33 @@ case "$FLAVOR" in
     rm -rf "$STAGE" "$ISO"; mkdir -p "$STAGE"; cp "$CLIENT" "$STAGE/$NAME"
     genisoimage -quiet -o "$ISO" -V CLIENT "$STAGE" || fail "genisoimage failed"
 
+    # Per-program: the success MARKER, the human phrase, a timeout, and the drive
+    # steps between `boot` and the marker (interactive programs type keystrokes).
+    BOOT="boot cd:\\\\$NAME.;1\r"
+    case "$PROG" in
+      hello)
+        MARKER="Hello world!";  WHAT="answered Hello world!"; TMO=90
+        STEPS=(--send "$BOOT" --expect "$MARKER") ;;
+      memtest)
+        MARKER="memtest: PASS"; WHAT="ran the RAM tester to a clean PASS"; TMO=140
+        STEPS=(--send "$BOOT" --expect "$MARKER") ;;
+      edit)
+        # Interactive: type "hellX", Backspace (\x7f) the X, "o", then Ctrl-X (\x18).
+        MARKER="edit: wrote 5 chars: hello"
+        WHAT="ran a tiny interactive editor (typed, backspaced, Ctrl-X saved)"; TMO=90
+        STEPS=(--send "$BOOT" --expect "Backspace edits"
+               --send 'hellX' --send '\x7f' --send 'o' --expect 'o'
+               --send '\x18' --expect "$MARKER") ;;
+      *)
+        MARKER="EXIT"; WHAT="ran and exited via the client interface"; TMO=90
+        STEPS=(--send "$BOOT" --expect "$MARKER") ;;
+    esac
+
     LOG="$WORKDIR/smoke-client-ppc-$PROG.log"; rm -f "$LOG"
     note "booting stock qemu-system-ppc + our $PROG CD, driving boot cd:\\$NAME.;1 → $LOG"
     # ppc console input needs a real terminal, not a socket → the pty driver.
     python3 "$REPO/tools/drive-pty-repl.py" "$LOG" --timeout "$TMO" \
-        --expect "0 > " \
-        --send "boot cd:\\\\$NAME.;1\r" --expect "$MARKER" \
+        --expect "0 > " "${STEPS[@]}" \
         -- qemu-system-ppc -M mac99 -m 256 -cdrom "$ISO" -nographic -vga none
     RC=$?
     # A program that entered but reported its OWN failure (e.g. memtest: FAIL)

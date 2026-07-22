@@ -19,6 +19,7 @@ int of1275_claim(void *virt, int size, int align, void **baseaddr);
 int of1275_release(void *virt, int size);
 int of1275_finddevice(const char *device_specifier, int *phandle);
 int of1275_getprop(int phandle, const char *name, void *buf, int buflen, int *size);
+int read(int fd, char *buf, int len);
 
 unsigned int clib_strlen(const char *s)
 {
@@ -105,4 +106,34 @@ unsigned int clib_ram_bytes(void)
 	for (i = 1; i < ncells; i += 2)
 		total += ntohl(cells[i]);
 	return total;
+}
+
+int getch(void)
+{
+	char c;
+	/* The firmware read is non-blocking (0 bytes when no key waits); spin
+	 * until one arrives. An editor's main loop is one big getch(). */
+	while (read(0, &c, 1) <= 0)
+		;
+	return (int)(unsigned char)c;
+}
+
+void put_char(int c)
+{
+	char b = (char)c;
+	write(1, &b, 1);
+}
+
+void cls(void)
+{
+	puts("\033[2J\033[H");        /* erase display, cursor home */
+}
+
+void gotoxy(int row, int col)
+{
+	puts("\033[");
+	put_udec((unsigned int)row);
+	put_char(';');
+	put_udec((unsigned int)col);
+	put_char('H');
 }
