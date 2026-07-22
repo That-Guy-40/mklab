@@ -1,6 +1,6 @@
 # PLAN — openbios-clib-hello-to-emacs
 
-**Status: IN PROGRESS — Phase 0/1 COMPLETE and green; Phases 2–4 planned.**
+**Status: IN PROGRESS — Phases 0/1/2 COMPLETE and green (ppc); Phases 3–4 planned.**
 Follow-on to [`../openbios-the-rival-that-shipped/`](../openbios-the-rival-that-shipped/README.md).
 Same house style, same spike→POC→assemble lifecycle. Where the rival lab taught
 **Forth/FCode** extension (words loaded *into* the interpreter), this lab teaches
@@ -49,9 +49,12 @@ because a client is a more general thing than a kernel.
 - **Phase 1 — ppc proves it. ✅ DONE (green).** `smoke-client.sh ppc`: stock
   `qemu-system-ppc` loads `hello-ppc` from a CD and answers `Hello world!` +
   the clib number formatting, all over the client interface. POC-2.
-- **Phase 2 — memtest as a client.** Port a RAM-tester core onto clib
-  (claim-backed allocator + the `/memory` `reg`/`available` walk). ppc first.
-  Finale checkpoint: a walking-ones/zeros pass reports over the console.
+- **Phase 2 — memtest as a client. ✅ DONE (green).** `clib` grew a
+  `claim`-backed allocator (`clib_claim`/`clib_release`) and a `/memory` `reg`
+  walk (`clib_ram_bytes`); `clib/memtest.c` claims 4 MiB and runs
+  address-uniqueness + four data fills + a walking-bit pass, reporting
+  `memtest: PASS`. `smoke-client.sh ppc memtest`.
+  [POC-3](POC-3-MEMTEST.md).
 - **Phase 3 — the x86 revival capstone.** Land the 3 fixes so x86 runs the same
   clients:
   1. **CIF-plant** — `arch/x86/context.c arch_init_program` never hands a

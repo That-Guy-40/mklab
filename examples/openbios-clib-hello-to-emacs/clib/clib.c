@@ -10,6 +10,15 @@
  * clib grows a claim-backed malloc (Phase 2, for memtest).
  */
 #include "clib.h"
+#include "endian.h"
+
+/* The raw client-interface wrappers we lean on (declared in of1275.h, but
+ * that header pulls in the whole service-struct zoo; forward-declare the few
+ * we use to keep this translation unit small). */
+int of1275_claim(void *virt, int size, int align, void **baseaddr);
+int of1275_release(void *virt, int size);
+int of1275_finddevice(const char *device_specifier, int *phandle);
+int of1275_getprop(int phandle, const char *name, void *buf, int buflen, int *size);
 
 unsigned int clib_strlen(const char *s)
 {
@@ -59,4 +68,41 @@ void put_hex(unsigned int v)
 	buf[--i] = 'x';
 	buf[--i] = '0';
 	puts(&buf[i]);
+}
+
+void *clib_claim(unsigned int size)
+{
+	void *base = (void *)0;
+	/* virt = 0 → let the firmware place it; page-aligned. On success the
+	 * `claim` service returns the base both as its value and in baseaddr. */
+	if (of1275_claim((void *)0, (int)size, 0x1000, &base) < 0)
+		return (void *)0;
+	if (base == (void *)-1)
+		return (void *)0;
+	return base;
+}
+
+void clib_release(void *p, unsigned int size)
+{
+	of1275_release(p, (int)size);
+}
+
+unsigned int clib_ram_bytes(void)
+{
+	unsigned int cells[32];
+	unsigned int total = 0;
+	int ph, size = 0, i, ncells;
+
+	if (of1275_finddevice("/memory", &ph) < 0)
+		return 0;
+	of1275_getprop(ph, "reg", cells, (int)sizeof(cells), &size);
+	if (size <= 0)
+		return 0;
+	/* "reg" is a list of (base, size) pairs; sum the sizes. Assumes one
+	 * address cell + one size cell (true on qemu-system-ppc). The cells are
+	 * big-endian by 1275 convention — ntohl is a no-op on ppc, a swap on x86. */
+	ncells = size / (int)sizeof(unsigned int);
+	for (i = 1; i < ncells; i += 2)
+		total += ntohl(cells[i]);
+	return total;
 }

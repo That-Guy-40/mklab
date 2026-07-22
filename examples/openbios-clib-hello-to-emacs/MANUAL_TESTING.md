@@ -27,18 +27,21 @@ Success signature: both `Entry point address` lines, ppc entry at the load base
 image (~30 s, `docker.io/debian:13` + apt); warm builds are seconds. No
 OpenBIOS build is involved — the ppc client runs on the *stock* firmware.
 
-## 2. Phase-1 smoke — ppc hello (one verdict)
+## 2. Phase-1/2 smokes — one verdict per program
+
+`smoke-client.sh [ppc|x86] [program]` builds (if needed), stages a CD, and drives
+`boot cd:\NAME.;1`, expecting each program's success marker. `SKIP` (77) if
+`python3`/`qemu-system-ppc`/`genisoimage` is absent or the program doesn't exist.
+
+### hello (rung 1)
 
 ```console
-$ ./smoke-client.sh ppc
-  - booting stock qemu-system-ppc + our client CD, driving boot cd:\HELLO.;1 → …/smoke-client-ppc.log
-PASS: OpenBIOS-ppc loaded our C client and serviced its write() over the IEEE 1275 client interface (Hello world!)
+$ ./smoke-client.sh ppc hello
+  - booting stock qemu-system-ppc + our hello CD, driving boot cd:\HELLO.;1 → …/smoke-client-ppc-hello.log
+PASS: OpenBIOS-ppc loaded our C client 'hello' and it answered Hello world! over the IEEE 1275 client interface
 ```
 
-Runtime ≈ 15–25 s. `SKIP` (77) if `python3`, `qemu-system-ppc`, or
-`genisoimage` is absent; the smoke auto-builds `hello-ppc` if missing.
-
-The client's own output, from `smoke-client-ppc.log`:
+The client's own output, from the log:
 
 ```
 0 > boot cd:\HELLO.;1  >> switching to new context:
@@ -51,7 +54,36 @@ EXIT
 `switching to new context:` = the firmware entering our `_start`; the
 `clib proof` line = `put_udec`/`put_hex` round-tripping through the firmware's
 `write` service; `EXIT` → `1 >` = `main` returned and the firmware took control
-back. All of it is the IEEE 1275 client interface firing on a real machine.
+back. Runtime ≈ 15–25 s.
+
+### memtest (rung 3)
+
+```console
+$ ./smoke-client.sh ppc memtest
+  - booting stock qemu-system-ppc + our memtest CD, driving boot cd:\MEMTEST.;1 → …/smoke-client-ppc-memtest.log
+PASS: OpenBIOS-ppc loaded our C client 'memtest' and it ran the RAM tester to a clean PASS over the IEEE 1275 client interface
+```
+
+```
+0 > boot cd:\MEMTEST.;1  >> switching to new context:
+OpenBIOS memtest client -- a RAM tester with no OS, served by the firmware.
+  /memory reports 256 MiB of RAM
+  claimed 4 MiB at 0xf858000
+  address test ......... ok
+  pattern 0x0 ... ok
+  pattern 0xffffffff ... ok
+  pattern 0xaaaaaaaa ... ok
+  pattern 0x55555555 ... ok
+  walking-bit test ..... ok
+memtest: PASS -- all patterns verified
+EXIT
+1 >
+```
+
+`256 MiB` matches `-m 256` (the `/memory` "reg" walk); `claimed … at 0xf858000`
+is the firmware's `claim` service answering. Runtime ≈ 5–15 s under TCG; the
+smoke reports a specific `REGRESSION:` if it ever prints `memtest: FAIL` (that
+would mean the clib claim/verify path broke — emulated RAM does not fail).
 
 ## 3. Interactive — run it by hand
 

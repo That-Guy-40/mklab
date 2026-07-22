@@ -16,19 +16,21 @@ the modern `openbios/openbios` codebase, climbing a ladder from a one-line
 
 ```text
 Rung 1  hello      C program -> firmware `write` -> console            [ppc: DONE]
-Rung 2  clib       grow of1275 into a real support lib (puts/printf/…) [seed: DONE]
-Rung 3  memtest    claim-backed allocator + /memory walk, tests RAM    [planned]
+Rung 2  clib       grow of1275 into a real support lib                 [DONE: puts/printf-ish + claim-backed alloc]
+Rung 3  memtest    claim-backed allocator + /memory walk, tests RAM    [ppc: DONE — memtest: PASS]
 Rung 4  emacs      MicroEMACS port, tutorial-as-data, console shim     [planned]
 
 Arc:  ppc proves the mechanism  ─►  revive the x86 client ABI (capstone)  ─►  same clients, both arches
 ```
 
-**Status: Phase 0/1 complete and verified on this host** (KVM/TCG, QEMU 8.2.2);
-the ppc `hello` is green end-to-end. The rest is planned and spike-de-risked —
-see [PLAN.md](PLAN.md). Blow-by-blow spike write-ups:
-[POC-1-BUILD-BOX-AND-CLIB.md](POC-1-BUILD-BOX-AND-CLIB.md) (a libc that is one
-callback deep) and [POC-2-PPC-HELLO.md](POC-2-PPC-HELLO.md) (the firmware runs
-your C program). Exact commands + signatures: [MANUAL_TESTING.md](MANUAL_TESTING.md).
+**Status: Phases 0/1/2 complete and verified on this host** (KVM/TCG, QEMU
+8.2.2); on ppc, both `hello` and a `memtest` client are green end-to-end. The
+rest is planned and spike-de-risked — see [PLAN.md](PLAN.md). Blow-by-blow
+write-ups: [POC-1-BUILD-BOX-AND-CLIB.md](POC-1-BUILD-BOX-AND-CLIB.md) (a libc
+that is one callback deep), [POC-2-PPC-HELLO.md](POC-2-PPC-HELLO.md) (the
+firmware runs your C program), and [POC-3-MEMTEST.md](POC-3-MEMTEST.md) (a RAM
+tester with no OS). Exact commands + signatures:
+[MANUAL_TESTING.md](MANUAL_TESTING.md).
 
 ## "A client library" is C, not Forth
 
@@ -73,11 +75,14 @@ takes a C patch, not a séance.*
 ## Quick start
 
 ```console
-$ ./build-client.sh ppc hello     # cross-compile clib + hello for PowerPC (container)
-$ ./smoke-client.sh ppc           # boot stock qemu-system-ppc, run it, one verdict
-PASS: OpenBIOS-ppc loaded our C client and serviced its write() over the IEEE 1275 client interface (Hello world!)
+$ ./build-client.sh ppc hello       # cross-compile clib + hello for PowerPC (container)
+$ ./smoke-client.sh ppc hello       # boot stock qemu-system-ppc, run it, one verdict
+PASS: OpenBIOS-ppc loaded our C client 'hello' and it answered Hello world! over the IEEE 1275 client interface
 
-$ ./run-client-qemu.sh ppc hello  # interactive: drops you at 0 > to type `boot cd:\HELLO.;1` yourself
+$ ./smoke-client.sh ppc memtest     # rung 3: a RAM tester as a client
+PASS: OpenBIOS-ppc loaded our C client 'memtest' and it ran the RAM tester to a clean PASS over the IEEE 1275 client interface
+
+$ ./run-client-qemu.sh ppc memtest  # interactive: drops you at 0 > to type `boot cd:\MEMTEST.;1` yourself
 ```
 
 Everything lands in `~/openbios-clients-lab/` (override with
