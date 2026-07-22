@@ -85,6 +85,29 @@ is the firmware's `claim` service answering. Runtime ≈ 5–15 s under TCG; the
 smoke reports a specific `REGRESSION:` if it ever prints `memtest: FAIL` (that
 would mean the clib claim/verify path broke — emulated RAM does not fail).
 
+### edit (rung 4 — interactive)
+
+```console
+$ ./smoke-client.sh ppc edit
+  - booting stock qemu-system-ppc + our edit CD, driving boot cd:\EDIT.;1 → …/smoke-client-ppc-edit.log
+PASS: OpenBIOS-ppc loaded our C client 'edit' and it ran a tiny interactive editor (typed, backspaced, Ctrl-X saved) over the IEEE 1275 client interface
+```
+
+The smoke *types* at the editor — `hellX`, then Backspace (`\x7f`), then `o`,
+then Ctrl-X (`\x18`) — so the buffer ends `hello`. Raw console stream (escapes
+left in, so you can see the painting):
+
+```
+[4;1H> hellX o[2J[H[1;1Hedit: wrote 5 chars: hello
+```
+
+`[4;1H> ` positions the prompt; `hellX` is typed; `\b \b` rubs out the `X`; `o`
+lands; Ctrl-X ends the loop; `[2J[H` clears; and the plain marker
+`edit: wrote 5 chars: hello` confirms the buffer. Every keystroke went in through
+the firmware `read` service, every glyph out through `write`. Try it by hand:
+`./run-client-qemu.sh ppc edit`, type, Ctrl-X to save. See
+[POC-5](POC-5-EDITOR.md).
+
 ## 3. Interactive — run it by hand
 
 ```console

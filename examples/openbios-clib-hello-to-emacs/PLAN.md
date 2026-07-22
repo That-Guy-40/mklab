@@ -1,7 +1,9 @@
 # PLAN — openbios-clib-hello-to-emacs
 
 **Status: IN PROGRESS — Phases 0/1/2 COMPLETE and green (ppc); Phase 3 STARTED
-(CIF-plant landed + builds, file-load blocker diagnosed — see POC-4); Phase 4 planned.**
+(CIF-plant landed + builds, file-load blocker diagnosed — POC-4); Phase 4
+foundation COMPLETE and green (an interactive editor client — POC-5), full
+MicroEMACS port remaining.**
 Follow-on to [`../openbios-the-rival-that-shipped/`](../openbios-the-rival-that-shipped/README.md).
 Same house style, same spike→POC→assemble lifecycle. Where the rival lab taught
 **Forth/FCode** extension (words loaded *into* the interpreter), this lab teaches
@@ -72,8 +74,15 @@ because a client is a more general thing than a kernel.
   Until fix #2 is green, `smoke-client.sh x86` `SKIP`s with a pointer to POC-4.
   Gotchas that cost time (recorded in POC-4): x86 `printk`→VGA (use
   `forth_printf`); serial drops chars on long input lines.
-- **Phase 4 — MicroEMACS.** Editor core + tutorial-as-data; a console/termcap
-  shim on clib `read`/`write`. Documented author-run if it outgrows the sandbox.
+- **Phase 4 — the editor rung. ✅ FOUNDATION DONE (green); full port remaining.**
+  `clib` grew its console half — `getch` (polls the non-blocking firmware
+  `read`), `put_char`, `cls`, `gotoxy` (ANSI). `clib/edit.c` is a tiny
+  interactive line editor (input loop + echo + Backspace + Ctrl-X) that runs as
+  a client and is driven headlessly: `smoke-client.sh ppc edit` types `hellX`,
+  Backspaces the `X`, adds `o`, Ctrl-X → `edit: wrote 5 chars: hello`. POC-5.
+  This proves the interactive foundation; the literal `emacs` finale is a
+  **MicroEMACS port** (multi-line buffer + keymap + tutorial-as-data) on top of
+  the same shim + `clib_claim` — a large mechanical port, the honest next step.
 
 ## Justified deviations
 

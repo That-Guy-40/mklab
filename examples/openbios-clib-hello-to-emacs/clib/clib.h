@@ -36,4 +36,13 @@ void        *clib_claim(unsigned int size);      /* claim size bytes, page-align
 void         clib_release(void *p, unsigned int size);
 unsigned int clib_ram_bytes(void);               /* total RAM per /memory "reg" (0 if unknown) */
 
+/* interactive console — the editor half (Phase 4). read() polls the firmware
+ * stdin (0 bytes when no key waits), so getch blocks by spinning; ANSI escapes
+ * drive a real terminal (the muxed-stdio console). No termcap, no OS — just the
+ * `read`/`write` client-interface services and escape sequences. */
+int  getch(void);                    /* one keystroke, blocking */
+void put_char(int c);                /* one byte to stdout */
+void cls(void);                      /* clear screen + home cursor (ANSI) */
+void gotoxy(int row, int col);       /* 1-based cursor position (ANSI) */
+
 #endif /* CLIB_H */
