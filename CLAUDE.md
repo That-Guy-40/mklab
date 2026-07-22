@@ -183,9 +183,29 @@ edit "didn't take", and there is **no error**. (Found the hard way building
 [`examples/root-password-reset/`](examples/root-password-reset/) — ~18 failed boot
 cycles, all this one bug.)
 
-- **Slow-send everything you "type":** one byte at a time with a **~40 ms** delay
-  (`for ch in s: sock.sendall(bytes([ch])); sleep(0.04)`). Faster drops chars.
-  Space out keystrokes (~0.3–0.4 s) and **single-step** them — bursts drop keys.
+- **Prefer `--echo-gate` over guessing a delay.** A fixed per-byte delay is a
+  *guess about someone else's timing*, and this repo has now re-guessed it twice
+  (Rocky's GRUB needed `0.08`; OpenBIOS-x86 dropped chars even at `0.04`) — the
+  safe gap depends on what the consumer is doing at that instant, so no constant
+  is right. Both `tools/drive-serial-repl.py` and `tools/drive-pty-repl.py` take
+  **`--echo-gate`**, which **self-clocks**: send one byte, wait for the console
+  to *echo that byte back*, then send the next. It cannot outrun the consumer at
+  any speed, needs no tuning, and a byte that never echoes is **resent** and then
+  reported (**exit 125**) instead of silently mangling the line. Only printable
+  ASCII is gated (control bytes echo unpredictably: `\r`→`\r\n`, Ctrl-X→`^X`,
+  DEL→`"\b \b"`); it is **opt-in** because a non-echoing prompt (password entry,
+  a raw-mode reader) would never confirm. Regression test, no QEMU needed:
+  `tools/tests/test-echo-gate.sh` (fixture `tools/tests/lossy-console.py` = a
+  FIFO with no flow control; plain 40 ms send delivers `load-base` as `ldbe`,
+  the gate delivers it whole). Verified against real OpenBIOS-ppc.
+- **Slow-send everything you "type":** when you can't gate on echo, one byte at a
+  time with a **~40 ms** delay (`for ch in s: sock.sendall(bytes([ch]));
+  sleep(0.04)`) — the floor, not a guarantee. Faster drops chars. Space out
+  keystrokes (~0.3–0.4 s) and **single-step** them — bursts drop keys.
+- **Short input can't be dropped:** when diagnosing *firmware* over a lossy
+  console, don't type long Forth colon-definitions at the prompt — compile the
+  probe in (a `forth_printf` in the C loader, or a word baked into the
+  dictionary) and type one short word to invoke it.
 - **Arrow-key escapes (`\x1b[B`) are unreliable** in GRUB's editor — the leading
   `Esc` reads as "discard edits / exit". Use single-byte emacs keys
   (`Ctrl-n`/`Ctrl-p`/`Ctrl-a`/`Ctrl-e`). Even then, blind multi-line navigation of
