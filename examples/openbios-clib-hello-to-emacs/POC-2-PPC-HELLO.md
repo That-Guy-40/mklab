@@ -88,7 +88,8 @@ ppc works because its client entry-glue was never allowed to rot — QEMU boots
 it constantly. x86 is the opposite: the `of_client_interface` dispatcher is
 compiled in but **handed to no one** (`arch/x86/context.c` never sets it up),
 and two more x86-only paths are bitrotted on top. That's Phase 3 — the revival
-capstone, fix #1 already in `patches/00-x86-cif-plant.patch`. The satisfying
+capstone, now done — all six repairs in
+`patches/01-x86-client-revival.patch` (POC-4). The satisfying
 part of the lab is watching the same `hello.c` that just ran on ppc come alive
 on x86 once the firmware is fixed to hand it the callback.
 

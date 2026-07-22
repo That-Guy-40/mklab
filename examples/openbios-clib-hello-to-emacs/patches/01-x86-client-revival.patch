@@ -1,0 +1,297 @@
+diff --git a/arch/x86/context.c b/arch/x86/context.c
+index 5ed3875..e83e309 100644
+--- a/arch/x86/context.c
++++ b/arch/x86/context.c
+@@ -16,6 +16,10 @@
+ #include "boot.h"
+ #include "openbios.h"
+ 
++/* The IEEE 1275 client-interface dispatcher (libopenbios/client.c). Compiled
++ * into every arch but, until now, never handed to a launched client on x86. */
++extern int of_client_interface(int *params);
++
+ #define MAIN_STACK_SIZE 16384
+ #define IMAGE_STACK_SIZE 4096
+ 
+@@ -70,8 +74,10 @@ static void start_main(void)
+ 
+     init_exceptions();
+ 
+-    /* Set up client context */
+-    client_ctx = init_context(image_stack, sizeof image_stack, 1);
++    /* Set up client context.
++     * 5 param slots: an IEEE 1275 client program is entered with five
++     * arguments on its stack — _start(residual, entry, cif, args, argslen). */
++    client_ctx = init_context(image_stack, sizeof image_stack, 5);
+     __context = client_ctx;
+ 
+     /* Start the real fun */
+@@ -135,6 +141,51 @@ arch_init_program(void)
+     entry = POP();
+     ctx->eip = entry;
+ 
++    /* IEEE 1275 client program (a plain ELF, file-type 'elf' = 1, as opposed
++     * to an 'elf-boot' Linux/multiboot image = 0): hand it the client-interface
++     * callback. PPC passes it in r5 (see arch/ppc/qemu/context.c); x86 has no
++     * such register convention, so we lay the five client-entry arguments on
++     * the client stack where its _start(residual, entry, cif, args, argslen)
++     * reads them. param[0..4] sit just above return_addr per ESP_LOC, so on
++     * entry the client sees them as its C arguments 1..5. */
++    if (type == 1) {
++        /* Enter the client with the firmware's RELOCATED segments, not the
++         * flat ones an elf-boot image gets. x86 relocates OpenBIOS by rebasing
++         * the GDT (arch/x86/segment.c), so firmware pointers are
++         * segment-relative; running the client in that same segment space
++         * makes every pointer it hands back through the client interface
++         * directly usable by the firmware.
++         *
++         * The alternative -- flat segments plus a switching trampoline -- is a
++         * dead end here: of_client_interface() pushes pb->args[] straight onto
++         * the Forth stack, and *which* of those args are pointers depends on
++         * the service being called. There is no generic place to translate
++         * them, so a flat client would need the whole dispatcher rewritten.
++         *
++         * Cost of this choice: the client must be linked into the virtual
++         * window below _start (0x100010), which maps to physical memory just
++         * below the relocated firmware. That window tracks RAM size
++         * automatically, because both ends move with virt_offset.
++         */
++        ctx->cs = RELOC_CS;
++        ctx->ds = RELOC_DS;
++        ctx->es = RELOC_DS;
++        ctx->fs = RELOC_DS;
++        ctx->gs = RELOC_DS;
++        ctx->ss = RELOC_DS;
++        /* ...so the stack and return address stay VIRTUAL (the flat-model
++         * defaults above ran them through virt_to_phys). gdt_base stays
++         * physical either way -- lgdt always takes a linear address. */
++        ctx->esp = (uint32_t)(uintptr_t)ESP_LOC(ctx);
++        ctx->return_addr = (uint32_t)(uintptr_t)__exit_context;
++
++        ctx->param[0] = 0;                                   /* residual data */
++        ctx->param[1] = entry;                               /* program entry */
++        ctx->param[2] = (ucell)(uintptr_t)of_client_interface; /* the CIF */
++        ctx->param[3] = 0;                                   /* args string   */
++        ctx->param[4] = 0;                                   /* args length   */
++    }
++
+     return 0;
+ }
+ 
+diff --git a/arch/x86/openbios.c b/arch/x86/openbios.c
+index 1274d2b..409b13a 100644
+--- a/arch/x86/openbios.c
++++ b/arch/x86/openbios.c
+@@ -21,6 +21,13 @@
+ #include "openbios.h"
+ #include "relocate.h"
+ #include "boot.h"
++#include "libc/vsprintf.h"
++#include "arch/x86/io.h"
++
++/* Where a loaded client/image lands, as a PHYSICAL address. 4 MiB is
++ * clear of low memory, the dictionary, and the firmware image (which
++ * relocates to the top of RAM). */
++#define LOAD_BASE_PHYS	0x400000
+ 
+ void collect_sys_info(struct sys_info *info);
+ 
+@@ -50,6 +57,128 @@ static void init_memory(void)
+ 	PUSH(0x9FFFF);
+ }
+ 
++extern struct _console_ops arch_console_ops;
++
++/* ---- a console device node -------------------------------------------
++ * x86 boots with NO console node: /chosen stdin and stdout were both 0.
++ * The firmware never noticed, because its own console is the low-level
++ * putchar in arch/x86/console.c -- but a CLIENT program can reach the
++ * console ONLY through those /chosen ihandles, so every write() it made
++ * went to ihandle 0 and vanished silently.
++ *
++ * Rather than enable drivers/pc_serial.c (whose uart_init collides with
++ * the one arch/x86/console.c already defines), wrap the console this arch
++ * ALREADY has in a node with open/read/write, and let /chosen point at it.
++ */
++static void obcon_open(int *idx)  { (void)idx; RET(-1); }
++static void obcon_close(int *idx) { (void)idx; }
++
++/* ( addr len -- actual ) */
++static void obcon_write(int *idx)
++{
++	int len = POP(), i;
++	const char *addr = (const char *)cell2pointer(POP());
++	(void)idx;
++	for (i = 0; i < len; i++)
++		arch_console_ops.putchar(addr[i]);
++	PUSH(len);
++}
++
++/* ( addr len -- actual ). Non-blocking, per IEEE 1275: return what is
++ * available, possibly 0. clib's getch() spins on exactly this. */
++static void obcon_read(int *idx)
++{
++	int len = POP(), n = 0;
++	char *addr = (char *)cell2pointer(POP());
++	(void)idx;
++	while (n < len && arch_console_ops.availchar())
++		addr[n++] = arch_console_ops.getchar();
++	PUSH(n);
++}
++
++DECLARE_UNNAMED_NODE(obcon, 0, sizeof(int));
++
++NODE_METHODS(obcon) = {
++	{ "open",  obcon_open  },
++	{ "close", obcon_close },
++	{ "write", obcon_write },
++	{ "read",  obcon_read  },
++};
++
++static void
++ob_console_init(void)
++{
++	push_str("/");
++	fword("find-device");
++	fword("new-device");
++	push_str("console");
++	fword("device-name");
++	push_str("serial");
++	fword("device-type");
++	BIND_NODE_METHODS(get_cur_dev(), obcon);
++	fword("finish-device");
++
++	/* Claim /chosen now. install-console runs later and tries
++	 * output-device ("screen"), which does not exist under -display none;
++	 * a failed `output` leaves stdout untouched and the CONSOLE-OUT
++	 * fallbacks skip when stdout is already set, so this survives. */
++	feval("\" /console\" input");
++	feval("\" /console\" output");
++}
++
++/* ---- `claim` for x86 -------------------------------------------------
++ * x86 shipped no cif-claim at all (only ppc and sparc64 bind one), so the
++ * IEEE 1275 `claim` service fell through ciface.fs's `else 3drop -1` and
++ * every client allocation failed. x86 has no ofmem, so this is a simple
++ * bump allocator over the free window -- enough for client programs, which
++ * claim a few buffers and exit.
++ *
++ * The window sizes itself: free RAM runs from 8 MiB (clear of load-base at
++ * 4 MiB) up to virtual 0, which is exactly where the client's own address
++ * window begins, just below the relocated firmware. Both ends move with
++ * virt_offset, so this is correct at any -m size.
++ */
++#define CLAIM_BASE_PHYS	0x800000UL
++
++static unsigned long claim_next = CLAIM_BASE_PHYS;
++
++/* ( virt size align -- baseaddr|-1 ) */
++static void
++ciface_claim_x86( void )
++{
++	ucell align = POP(), size = POP(), virt = POP();
++	unsigned long base, limit;
++
++	if (virt) {		/* caller named an address; honour it */
++		PUSH(virt);
++		return;
++	}
++	if (align < 0x1000)
++		align = 0x1000;
++	base = (claim_next + align - 1) & ~((unsigned long)align - 1);
++	limit = virt_to_phys(0);
++	if (!size || base + size > limit || base + size < base) {
++		PUSH((ucell)-1);
++		return;
++	}
++	claim_next = base + size;
++	/* Return it the way the client will use it: firmware-virtual, because
++	 * a client runs in the firmware's rebased segments (arch_init_program). */
++	PUSH((ucell)(uintptr_t)phys_to_virt(base));
++}
++
++/* ( virt size -- ). A bump allocator cannot free; releasing in LIFO order
++ * is the only case worth honouring, and clients exit immediately after. */
++static void
++ciface_release_x86( void )
++{
++	ucell size = POP(), virt = POP();
++	unsigned long base = virt_to_phys((void *)(uintptr_t)virt);
++
++	if (base + size == claim_next)
++		claim_next = base;
++}
++
+ static void
+ arch_init( void )
+ {
+@@ -82,11 +211,42 @@ arch_init( void )
+ 	init_video();
+ 	node_methods_init();
+ #endif
++	ob_console_init();
++
++	push_str("/openprom/client-services");
++	fword("find-device");
++	bind_func("cif-claim", ciface_claim_x86);
++	bind_func("cif-release", ciface_release_x86);
++
+ 	device_end();
+ 	bind_func("platform-boot", boot );
+-}
+ 
+-extern struct _console_ops arch_console_ops;
++	/* x86 relocates itself by REBASING THE GDT data segment (see
++	 * arch/x86/segment.c), so every address Forth and the generic loaders
++	 * hand around is segment-relative: the CPU adds virt_offset to reach
++	 * physical memory. That makes a *constant* load-base wrong by
++	 * construction -- the 0x4000000 defined in forth/admin/nvram.fs
++	 * resolves to physical 0x4000000 + virt_offset, and since relocation
++	 * targets the TOP of RAM, virt_offset scales with memory size and the
++	 * result lands past the end of RAM. Loading a file into it looked like
++	 * it worked (the device read reported the full byte count) but every
++	 * byte went nowhere and load-base read back as zeros.
++	 *
++	 * arch/x86/linux_load.c dodges this by wrapping every access in
++	 * phys_to_virt() -- which is why the Linux boot path works and the
++	 * generic $load path did not. Give $load a load-base that is already
++	 * virtual. Defined here (not in nvram.fs) because only C knows
++	 * virt_offset; this shadows the nvram config word, which stays put so
++	 * that `" load-base" evaluate` still resolves if this ever regresses.
++	 */
++	{
++		char buf[64];
++		/* Forth's number base is hex here, matching nvram.fs's literals. */
++		snprintf(buf, sizeof(buf), "%lx constant load-base",
++			 (unsigned long)(uintptr_t)phys_to_virt(LOAD_BASE_PHYS));
++		feval(buf);
++	}
++}
+ 
+ int openbios(void)
+ {
+diff --git a/libopenbios/elf_load.c b/libopenbios/elf_load.c
+index f09ccf6..0acacd0 100644
+--- a/libopenbios/elf_load.c
++++ b/libopenbios/elf_load.c
+@@ -525,7 +525,20 @@ elf_init_program(void)
+ #endif
+ 	}
+ 
++	/* Declare what we just loaded, as every other loader does (xcoff,
++	 * bootcode, prep, forth all set this). elf_init_program never did, so
++	 * `load-state >ls.file-type` held uninitialised dictionary garbage and
++	 * every arch_init_program() test against it silently fell through --
++	 * including the one that hands a client its interface callback. */
++	feval("elf load-state >ls.file-type !");
++
+ 	// Initialise load-state
++	/* NB x86: the entry point is NOT translated, unlike the segment copy
++	 * above. The copy is performed by the firmware, which runs with the
++	 * rebased data segment; the client is entered with FLAT, base-0
++	 * segments (see the client GDT used by switch_to_context), so it needs
++	 * the physical address. Translating it here jumped to eip 0xe046b092
++	 * and the CPU triple-faulted out of KVM. */
+ 	PUSH(ehdr->e_entry);
+ 	feval("load-state >ls.entry !");
+ 	

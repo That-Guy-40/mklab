@@ -15,21 +15,20 @@ the modern `openbios/openbios` codebase, climbing a ladder from a one-line
 **no operating system underneath.**
 
 ```text
-Rung 1  hello      C program -> firmware `write` -> console            [ppc: DONE]
+Rung 1  hello      C program -> firmware `write` -> console            [ppc + x86: DONE]
 Rung 2  clib       grow of1275 into a real support lib                 [DONE: console + claim-backed alloc + getch/ANSI]
-Rung 3  memtest    claim-backed allocator + /memory walk, tests RAM    [ppc: DONE — memtest: PASS]
-Rung 4  editor     interactive client (getch + ANSI); MicroEMACS=finale[ppc: DONE — a tiny editor; full emacs remaining]
+Rung 3  memtest    claim-backed allocator + /memory walk, tests RAM    [ppc + x86: DONE — memtest: PASS]
+Rung 4  editor     interactive client (getch + ANSI); MicroEMACS=finale[ppc + x86: DONE — a tiny editor; full emacs remaining]
 
-Arc:  ppc proves the mechanism  ─►  revive the x86 client ABI (capstone)  ─►  same clients, both arches
+Arc:  ppc proves the mechanism  ─►  revive the x86 client ABI (capstone)  ─►  same clients, both arches  ✅
 ```
 
-**Status: Phases 0/1/2 complete and verified on this host** (KVM/TCG, QEMU
-8.2.2); on ppc, `hello`, a `memtest` client, and a tiny **interactive editor**
-are green end-to-end. **Phase 3 (the x86 capstone) is root-caused, with two of
-its four fixes landed and verified**: the firmware now loads our client off a CD
-and enters it, and it executes — blocked on the client-interface trampoline, so
-the x86 track still `SKIP`s. [POC-4](POC-4-X86-REVIVAL.md) documents it *and
-retracts the lab's own earlier misdiagnosis*. Blow-by-blow write-ups:
+**Status: the ladder is green on BOTH arches** (verified on this host, KVM,
+QEMU 8.2.2). `hello`, a `memtest` client, and a tiny **interactive editor** all
+run as client programs on stock `qemu-system-ppc` *and* — the capstone — on a
+**revived OpenBIOS-x86**, which took six firmware repairs
+([POC-4](POC-4-X86-REVIVAL.md), which also *retracts the lab's own earlier
+misdiagnosis of that same phase*). Six green smoke verdicts. Blow-by-blow write-ups:
 [POC-1-BUILD-BOX-AND-CLIB.md](POC-1-BUILD-BOX-AND-CLIB.md) (a libc that is one
 callback deep), [POC-2-PPC-HELLO.md](POC-2-PPC-HELLO.md) (the firmware runs your
 C program), [POC-3-MEMTEST.md](POC-3-MEMTEST.md) (a RAM tester with no OS),
@@ -67,22 +66,21 @@ example client. But it has only stayed *wired up* where it's exercised:
 - **ppc** — the client interface **is** the OS boot ABI there (yaboot, Linux,
   the BSDs all enter through it), so it never rotted. Our `hello-ppc` runs on
   the **stock** `qemu-system-ppc` with no firmware build at all (POC-2).
-- **x86** — a museum, and reviving it is this lab's capstone (Phase 3). It has
-  **one root cause**: x86 relocates itself by *rebasing the GDT*, so every
-  firmware address is segment-relative and `virt_offset` scales with RAM size.
-  `linux_load.c` translates every access with `phys_to_virt()` — which is
-  exactly why the rival lab's Linux capstone works and the client path did not.
-  **Two fixes landed and verified**: `load-base` pointed past the end of RAM
-  (reads returned zeros while the device reported success), and the client ELF
-  was copied *on top of the running firmware*
-  ([`patches/01-x86-load-base-and-elf-copy.patch`](patches/01-x86-load-base-and-elf-copy.patch)).
-  The firmware now loads our C client off a CD and **enters it, and it runs its
-  own code**. It dies on its first callback: the client runs with *flat*
-  segments while firmware runs *rebased*, so the client interface needs a
-  trampoline ([`patches/00-x86-cif-plant.patch`](patches/00-x86-cif-plant.patch)
-  is necessary but not sufficient). Blow-by-blow, including a **retraction of
-  this lab's own earlier misdiagnosis**: [POC-4](POC-4-X86-REVIVAL.md). The x86
-  track honestly `SKIP`s until a client speaks.
+- **x86** — a museum, and reviving it was this lab's capstone (Phase 3, now
+  **done**). Every exhibit traced to **one design decision**: x86 relocates
+  itself by *rebasing the GDT*, so firmware pointers are segment-relative and
+  `virt_offset` scales with RAM size — and nobody ever taught the client path.
+  `linux_load.c` wraps every access in `phys_to_virt()`, which is exactly why
+  the rival lab's Linux capstone worked and the client path did not. **Six
+  repairs** ([`patches/01-x86-client-revival.patch`](patches/01-x86-client-revival.patch),
+  applied by [`build-firmware-x86.sh`](build-firmware-x86.sh) on top of the
+  rival lab's eight): a `load-base` past the end of RAM, an unplanted callback,
+  a file type the loader never declared (leaving *both* arms of a dispatch
+  unreachable for years), the flat-vs-rebased segment split, **no console device
+  node at all** (`/chosen` stdin/stdout were `0`, so client output vanished),
+  and no `cif-claim`. Blow-by-blow — including the design fork and a
+  **retraction of this lab's own earlier misdiagnosis** —
+  [POC-4](POC-4-X86-REVIVAL.md).
 
 That asymmetry is the lesson, and it rhymes with the rival lab's: *the same
 standard, alive where it's used and fossilized where it isn't — and the fossil
@@ -102,12 +100,15 @@ $ ./smoke-client.sh ppc edit        # rung 4: a tiny interactive editor (driven 
 PASS: OpenBIOS-ppc loaded our C client 'edit' and it ran a tiny interactive editor (typed, backspaced, Ctrl-X saved) over the IEEE 1275 client interface
 
 $ ./run-client-qemu.sh ppc edit     # interactive: boot cd:\EDIT.;1 and type at it yourself (Ctrl-X saves)
+
+$ ./build-firmware-x86.sh           # the capstone: rival lab's 8 x86 fixes + this lab's 6
+$ ./smoke-client.sh x86 hello       # same C source, same clib, other arch
+PASS: revived OpenBIOS-x86 loaded our C client 'hello' and it answered Hello world! over the IEEE 1275 client interface
 ```
 
 Everything lands in `~/openbios-clients-lab/` (override with
-`OPENBIOS_CLIENTS_WORKDIR`). No sudo anywhere. The x86 track builds today
-(`build-client.sh x86`) but only *runs* after the Phase-3 revival —
-`smoke-client.sh x86` SKIPs with a pointer until then.
+`OPENBIOS_CLIENTS_WORKDIR`); the revived x86 firmware is built in the rival
+lab's tree under `~/openbios-lab/`. No sudo anywhere.
 
 ## Where this sits
 

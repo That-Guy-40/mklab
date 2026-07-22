@@ -1,10 +1,10 @@
 # PLAN — openbios-clib-hello-to-emacs
 
-**Status: IN PROGRESS — Phases 0/1/2 COMPLETE and green (ppc); Phase 3
-ROOT-CAUSED, 2 of 4 fixes landed — the x86 firmware now loads our client and
-enters it, blocked on the CIF trampoline (POC-4); Phase 4 foundation COMPLETE
-and green (an interactive editor client — POC-5), full MicroEMACS port
-remaining.**
+**Status: Phases 0–3 COMPLETE and green on BOTH arches — the capstone is done.**
+`hello`, `memtest`, and `edit` all run as IEEE 1275 client programs on stock
+`qemu-system-ppc` *and* on a revived OpenBIOS-x86 (six firmware repairs, POC-4);
+six green smoke verdicts. Phase 4's foundation is complete (POC-5); the full
+MicroEMACS port is the remaining finale.
 Follow-on to [`../openbios-the-rival-that-shipped/`](../openbios-the-rival-that-shipped/README.md).
 Same house style, same spike→POC→assemble lifecycle. Where the rival lab taught
 **Forth/FCode** extension (words loaded *into* the interpreter), this lab teaches
@@ -59,37 +59,30 @@ because a client is a more general thing than a kernel.
   address-uniqueness + four data fills + a walking-bit pass, reporting
   `memtest: PASS`. `smoke-client.sh ppc memtest`.
   [POC-3](POC-3-MEMTEST.md).
-- **Phase 3 — the x86 revival capstone. ⏳ ROOT-CAUSED; client loads and runs
-  (POC-4).** **One root cause, four repairs** — x86 relocates itself by
-  *rebasing the GDT* (`arch/x86/segment.c`), so every firmware address is
-  segment-relative and `virt_offset` scales with RAM size. `linux_load.c`
-  translates everything with `phys_to_virt()`; the generic client path never
-  did, and that is the whole rot.
-  1. **CIF-plant — ✅ written.** `arch/x86/context.c arch_init_program` never
-     hands a launched client the callback (ppc does, in `r5`). 5 client param
-     slots + `param[2]` ([`patches/00-x86-cif-plant.patch`](patches/00-x86-cif-plant.patch)).
-     Incomplete — see #4.
-  2. **`load-base` — ✅ FIXED, verified.** The `0x4000000` constant resolved to
-     physical ~597 MB, past the end of RAM; reads returned zeros while the
-     device reported full success. Now computed at runtime as
-     `phys_to_virt(4 MiB)`. `load-base l@` = `464c457f` (`\x7fELF`),
-     `load-size` = 7748. **The file load works.**
-  3. **Client ELF copy — ✅ FIXED, verified.** `elf_load.c` copied segments to a
-     raw `p_vaddr`, landing *inside the relocated firmware* and GP-faulting.
-     Now `phys_to_virt()`, matching the elf-boot path in the same file. **`go`
-     now enters the client and it executes its own code.**
-     (2+3: [`patches/01-x86-load-base-and-elf-copy.patch`](patches/01-x86-load-base-and-elf-copy.patch).)
-  4. **CIF trampoline — ⏳ OPEN, scoped.** The client runs with **flat** base-0
-     segments while firmware runs rebased, so `param[2]` needs `virt_to_phys` +
-     a segment-switching trampoline, *and* every pointer crossing the boundary
-     (the params array and the strings inside it) needs translating in
-     `libopenbios/client.c`. Alternative worth weighing: enter the client with
-     the `RELOC` segments so nothing needs translating. That design call is the
-     next step.
-  Until #4 lands, `smoke-client.sh x86` `SKIP`s with a pointer to POC-4.
-  **POC-4 also retracts its own earlier diagnosis** ("reaches none of the
-  loaders" / "the disk-label wiring is broken") — both were instrument
-  artifacts; the wiring was always fine.
+- **Phase 3 — the x86 revival capstone. ✅ DONE (green). POC-4.** All three
+  clients — `hello`, `memtest`, `edit` — run on a revived OpenBIOS-x86, verified
+  by `smoke-client.sh x86 {hello,memtest,edit}` on KVM. **Six** repairs, not the
+  three scoped, all descending from one design decision: x86 relocates the
+  firmware by *rebasing the GDT*, so firmware pointers are segment-relative and
+  `virt_offset` scales with RAM size — and nobody ever taught the client path.
+  1. `load-base` resolved past the end of RAM (reads returned zeros while the
+     device reported full success) → computed at runtime.
+  2. The launched client was never handed the callback (ppc plants it in `r5`).
+  3. The ELF loader never declared `>ls.file-type`, so *both* arms of
+     `arch_init_program`'s type test had been unreachable for years.
+  4. The client was entered with **flat** segments. Fork: a trampoline + rewriting
+     the dispatcher (every `pb->args[i]` may or may not be a pointer, per
+     service), versus entering the client in the firmware's **`RELOC`** segments
+     so nothing needs translating. Chose the latter; the client links at
+     `0x20000`, inside a window that sizes itself with `virt_offset`.
+  5. x86 had **no console device node** — `/chosen` stdin/stdout were both `0`,
+     so every client `write()` went to ihandle 0 and vanished. Wrapped the
+     console the arch already has in an `open`/`read`/`write` node.
+  6. x86 bound no **`cif-claim`** → a bump allocator over the free window.
+  All six: [`patches/01-x86-client-revival.patch`](patches/01-x86-client-revival.patch),
+  applied by [`build-firmware-x86.sh`](build-firmware-x86.sh) on top of the rival
+  lab's eight. POC-4 also **retracts an earlier misdiagnosis of this same
+  phase** — "reaches none of the loaders" was an instrument artifact.
 - **Phase 4 — the editor rung. ✅ FOUNDATION DONE (green); full port remaining.**
   `clib` grew its console half — `getch` (polls the non-blocking firmware
   `read`), `put_char`, `cls`, `gotoxy` (ANSI). `clib/edit.c` is a tiny
