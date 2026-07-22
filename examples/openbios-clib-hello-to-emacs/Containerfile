@@ -1,0 +1,26 @@
+# Build box for OpenBIOS *client programs* (github.com/openbios/openbios clients).
+#
+# Phase 0/1 (this file) only needs to CROSS-COMPILE freestanding C clients for
+# two targets — big-endian 32-bit PowerPC and 32-bit x86 — so the box is lean.
+# Phase 3 (the x86 firmware-revival capstone) will extend it with the OpenBIOS
+# build prerequisites (toke from fcode-utils + xsltproc), exactly as the sibling
+# lab's Containerfile does; kept out here until that phase actually needs them.
+FROM docker.io/debian:13
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        make \
+        gcc \
+        libc6-dev \
+        libc6-dev-i386 \
+        binutils \
+        gcc-multilib-powerpc-linux-gnu \
+    && rm -rf /var/lib/apt/lists/*
+# make            — drives the client Makefile-style build
+# gcc + libc6-dev — the x86 client and libgcc for both arches
+# libc6-dev-i386  — the x86 client links 32-bit (-m32); NOTE no native
+#                   gcc-multilib — it CONFLICTS with the ppc cross gcc below
+#                   (same choice the sibling lab's build box makes)
+# binutils        — ld with -melf_i386 for the flat x86 client link
+# gcc-multilib-powerpc-linux-gnu — big-endian ppc cross compiler; the ppc
+#                   client is entered by the *stock* qemu-system-ppc firmware,
+#                   so no OpenBIOS build is needed for the ppc track at all

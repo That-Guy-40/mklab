@@ -92,7 +92,7 @@ These are orthogonal to 00-INDEX's *run-cost* tags, which are carried through un
 
 *Firmware, boot, and RAM-only systems — the lowest layers.*
 
-[`linuxboot-uefi-kexec`](../linuxboot-uefi-kexec/) · [`open-firmware-forth-to-boot`](../open-firmware-forth-to-boot/) · [`openbios-the-rival-that-shipped`](../openbios-the-rival-that-shipped/) · [`kdump-kexec-lab`](../kdump-kexec-lab/) · [`root-password-reset`](../root-password-reset/) · [`tiny-linux-experiments`](../tiny-linux-experiments/) · [`pxe-boot-mechanics`](../pxe-boot-mechanics/) · [`chroot-netboot-minimal.toml`](../chroot-netboot-minimal.toml)
+[`linuxboot-uefi-kexec`](../linuxboot-uefi-kexec/) · [`open-firmware-forth-to-boot`](../open-firmware-forth-to-boot/) · [`openbios-the-rival-that-shipped`](../openbios-the-rival-that-shipped/) · [`openbios-clib-hello-to-emacs`](../openbios-clib-hello-to-emacs/) · [`kdump-kexec-lab`](../kdump-kexec-lab/) · [`root-password-reset`](../root-password-reset/) · [`tiny-linux-experiments`](../tiny-linux-experiments/) · [`pxe-boot-mechanics`](../pxe-boot-mechanics/) · [`chroot-netboot-minimal.toml`](../chroot-netboot-minimal.toml)
 
 ### Multi-arch / TCG
 

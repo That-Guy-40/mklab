@@ -591,7 +591,8 @@ id      = "close-to-the-metal"
 title   = "Close to the metal"
 theme   = "Firmware, boot, and RAM-only systems — the lowest layers."
 members = ["linuxboot-uefi-kexec/", "open-firmware-forth-to-boot/",
-           "openbios-the-rival-that-shipped/", "kdump-kexec-lab/",
+           "openbios-the-rival-that-shipped/", "openbios-clib-hello-to-emacs/",
+           "kdump-kexec-lab/",
            "root-password-reset/", "tiny-linux-experiments/", "pxe-boot-mechanics/",
            "chroot-netboot-minimal.toml"]
 
