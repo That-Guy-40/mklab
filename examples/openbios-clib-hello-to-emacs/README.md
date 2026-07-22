@@ -24,12 +24,16 @@ Arc:  ppc proves the mechanism  ─►  revive the x86 client ABI (capstone)  �
 ```
 
 **Status: Phases 0/1/2 complete and verified on this host** (KVM/TCG, QEMU
-8.2.2); on ppc, both `hello` and a `memtest` client are green end-to-end. The
-rest is planned and spike-de-risked — see [PLAN.md](PLAN.md). Blow-by-blow
-write-ups: [POC-1-BUILD-BOX-AND-CLIB.md](POC-1-BUILD-BOX-AND-CLIB.md) (a libc
-that is one callback deep), [POC-2-PPC-HELLO.md](POC-2-PPC-HELLO.md) (the
-firmware runs your C program), and [POC-3-MEMTEST.md](POC-3-MEMTEST.md) (a RAM
-tester with no OS). Exact commands + signatures:
+8.2.2); on ppc, both `hello` and a `memtest` client are green end-to-end.
+**Phase 3 (the x86 capstone) is started and honest about where it stands**: the
+client-ABI fix is written and builds, but a deeper x86 file-load bug blocks the
+demo, so the x86 track still `SKIP`s — see [POC-4](POC-4-X86-REVIVAL.md) and
+[PLAN.md](PLAN.md). Blow-by-blow write-ups:
+[POC-1-BUILD-BOX-AND-CLIB.md](POC-1-BUILD-BOX-AND-CLIB.md) (a libc that is one
+callback deep), [POC-2-PPC-HELLO.md](POC-2-PPC-HELLO.md) (the firmware runs your
+C program), [POC-3-MEMTEST.md](POC-3-MEMTEST.md) (a RAM tester with no OS), and
+[POC-4-X86-REVIVAL.md](POC-4-X86-REVIVAL.md) (the x86 revival — fix #1 done, the
+load path diagnosed). Exact commands + signatures:
 [MANUAL_TESTING.md](MANUAL_TESTING.md).
 
 ## "A client library" is C, not Forth
@@ -62,11 +66,14 @@ example client. But it has only stayed *wired up* where it's exercised:
   the BSDs all enter through it), so it never rotted. Our `hello-ppc` runs on
   the **stock** `qemu-system-ppc` with no firmware build at all (POC-2).
 - **x86** — the dispatcher is compiled in but **handed to no client**
-  (`arch/x86/context.c` never plants the callback), and two more x86-only paths
-  are bitrotted on top. This is a *deeper* museum than the Linux-boot path the
-  rival lab revived — a client is more general than a kernel — and reviving it
-  is this lab's capstone (Phase 3), a 3-fix patch whose first fix is already
-  written ([`patches/00-x86-cif-plant.patch`](patches/00-x86-cif-plant.patch)).
+  (`arch/x86/context.c` never plants the callback), *and* the firmware's own
+  file-load path can't read a plain ELF off a device. This is a *deeper* museum
+  than the Linux-boot path the rival lab revived — a client is more general than
+  a kernel — and reviving it is this lab's capstone (Phase 3). The client-ABI
+  fix is **written and builds**
+  ([`patches/00-x86-cif-plant.patch`](patches/00-x86-cif-plant.patch)); the
+  file-load bug is **diagnosed but open** ([POC-4](POC-4-X86-REVIVAL.md)), so the
+  x86 track honestly `SKIP`s until it's solved.
 
 That asymmetry is the lesson, and it rhymes with the rival lab's: *the same
 standard, alive where it's used and fossilized where it isn't — and the fossil
