@@ -11,7 +11,6 @@
 # ppc console I/O is on the muxed stdio (-nographic); a human types fine here —
 # the flow-control caveat only bites scripted drivers (smoke-client.sh).
 set -euo pipefail
-HERE="$(cd "$(dirname "$0")" && pwd)"
 WORKDIR="${OPENBIOS_CLIENTS_WORKDIR:-$HOME/openbios-clients-lab}"
 FLAVOR="${1:-ppc}"
 PROG="${2:-hello}"
