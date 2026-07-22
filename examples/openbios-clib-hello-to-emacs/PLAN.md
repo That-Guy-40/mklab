@@ -1,9 +1,10 @@
 # PLAN — openbios-clib-hello-to-emacs
 
-**Status: IN PROGRESS — Phases 0/1/2 COMPLETE and green (ppc); Phase 3 STARTED
-(CIF-plant landed + builds, file-load blocker diagnosed — POC-4); Phase 4
-foundation COMPLETE and green (an interactive editor client — POC-5), full
-MicroEMACS port remaining.**
+**Status: IN PROGRESS — Phases 0/1/2 COMPLETE and green (ppc); Phase 3
+ROOT-CAUSED, 2 of 4 fixes landed — the x86 firmware now loads our client and
+enters it, blocked on the CIF trampoline (POC-4); Phase 4 foundation COMPLETE
+and green (an interactive editor client — POC-5), full MicroEMACS port
+remaining.**
 Follow-on to [`../openbios-the-rival-that-shipped/`](../openbios-the-rival-that-shipped/README.md).
 Same house style, same spike→POC→assemble lifecycle. Where the rival lab taught
 **Forth/FCode** extension (words loaded *into* the interpreter), this lab teaches
@@ -58,22 +59,37 @@ because a client is a more general thing than a kernel.
   address-uniqueness + four data fills + a walking-bit pass, reporting
   `memtest: PASS`. `smoke-client.sh ppc memtest`.
   [POC-3](POC-3-MEMTEST.md).
-- **Phase 3 — the x86 revival capstone. ⏳ STARTED (POC-4).** Two independent
-  repairs, not the three originally scoped:
-  1. **CIF-plant — ✅ DONE, builds.** `arch/x86/context.c arch_init_program`
-     never hands a launched client the callback (ppc does, in `r5`). Fix: 5
-     client param slots + `param[2]=&of_client_interface`
-     ([`patches/00-x86-cif-plant.patch`](patches/00-x86-cif-plant.patch), +64
-     bytes). Can't be *demonstrated* until fix #2 lands.
-  2. **File-load path — ⏳ OPEN, diagnosed.** `load /ide@1/cdrom@0:\hello`
-     leaves load-base empty and state invalid; instrumentation shows it reaches
-     *none* of `dlabel_load` / `iso9660_files_load` / generic `load()`, though a
-     direct `open-dev` works — the break is in the disk-label/`interpose`/fs
-     wiring, deeper than the spike's "iso9660 missing-`return`" guess. Genuine
-     firmware archaeology; deferred to a focused follow-up.
-  Until fix #2 is green, `smoke-client.sh x86` `SKIP`s with a pointer to POC-4.
-  Gotchas that cost time (recorded in POC-4): x86 `printk`→VGA (use
-  `forth_printf`); serial drops chars on long input lines.
+- **Phase 3 — the x86 revival capstone. ⏳ ROOT-CAUSED; client loads and runs
+  (POC-4).** **One root cause, four repairs** — x86 relocates itself by
+  *rebasing the GDT* (`arch/x86/segment.c`), so every firmware address is
+  segment-relative and `virt_offset` scales with RAM size. `linux_load.c`
+  translates everything with `phys_to_virt()`; the generic client path never
+  did, and that is the whole rot.
+  1. **CIF-plant — ✅ written.** `arch/x86/context.c arch_init_program` never
+     hands a launched client the callback (ppc does, in `r5`). 5 client param
+     slots + `param[2]` ([`patches/00-x86-cif-plant.patch`](patches/00-x86-cif-plant.patch)).
+     Incomplete — see #4.
+  2. **`load-base` — ✅ FIXED, verified.** The `0x4000000` constant resolved to
+     physical ~597 MB, past the end of RAM; reads returned zeros while the
+     device reported full success. Now computed at runtime as
+     `phys_to_virt(4 MiB)`. `load-base l@` = `464c457f` (`\x7fELF`),
+     `load-size` = 7748. **The file load works.**
+  3. **Client ELF copy — ✅ FIXED, verified.** `elf_load.c` copied segments to a
+     raw `p_vaddr`, landing *inside the relocated firmware* and GP-faulting.
+     Now `phys_to_virt()`, matching the elf-boot path in the same file. **`go`
+     now enters the client and it executes its own code.**
+     (2+3: [`patches/01-x86-load-base-and-elf-copy.patch`](patches/01-x86-load-base-and-elf-copy.patch).)
+  4. **CIF trampoline — ⏳ OPEN, scoped.** The client runs with **flat** base-0
+     segments while firmware runs rebased, so `param[2]` needs `virt_to_phys` +
+     a segment-switching trampoline, *and* every pointer crossing the boundary
+     (the params array and the strings inside it) needs translating in
+     `libopenbios/client.c`. Alternative worth weighing: enter the client with
+     the `RELOC` segments so nothing needs translating. That design call is the
+     next step.
+  Until #4 lands, `smoke-client.sh x86` `SKIP`s with a pointer to POC-4.
+  **POC-4 also retracts its own earlier diagnosis** ("reaches none of the
+  loaders" / "the disk-label wiring is broken") — both were instrument
+  artifacts; the wiring was always fine.
 - **Phase 4 — the editor rung. ✅ FOUNDATION DONE (green); full port remaining.**
   `clib` grew its console half — `getch` (polls the non-blocking firmware
   `read`), `put_char`, `cls`, `gotoxy` (ANSI). `clib/edit.c` is a tiny
