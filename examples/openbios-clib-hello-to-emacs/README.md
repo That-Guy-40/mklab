@@ -25,10 +25,11 @@ Arc:  ppc proves the mechanism  ─►  revive the x86 client ABI (capstone)  �
 
 **Status: Phases 0/1/2 complete and verified on this host** (KVM/TCG, QEMU
 8.2.2); on ppc, `hello`, a `memtest` client, and a tiny **interactive editor**
-are green end-to-end. **Phase 3 (the x86 capstone) is started and honest about
-where it stands**: the client-ABI fix is written and builds, but a deeper x86
-file-load bug blocks the demo, so the x86 track still `SKIP`s — see
-[POC-4](POC-4-X86-REVIVAL.md). Blow-by-blow write-ups:
+are green end-to-end. **Phase 3 (the x86 capstone) is root-caused, with two of
+its four fixes landed and verified**: the firmware now loads our client off a CD
+and enters it, and it executes — blocked on the client-interface trampoline, so
+the x86 track still `SKIP`s. [POC-4](POC-4-X86-REVIVAL.md) documents it *and
+retracts the lab's own earlier misdiagnosis*. Blow-by-blow write-ups:
 [POC-1-BUILD-BOX-AND-CLIB.md](POC-1-BUILD-BOX-AND-CLIB.md) (a libc that is one
 callback deep), [POC-2-PPC-HELLO.md](POC-2-PPC-HELLO.md) (the firmware runs your
 C program), [POC-3-MEMTEST.md](POC-3-MEMTEST.md) (a RAM tester with no OS),
@@ -66,15 +67,22 @@ example client. But it has only stayed *wired up* where it's exercised:
 - **ppc** — the client interface **is** the OS boot ABI there (yaboot, Linux,
   the BSDs all enter through it), so it never rotted. Our `hello-ppc` runs on
   the **stock** `qemu-system-ppc` with no firmware build at all (POC-2).
-- **x86** — the dispatcher is compiled in but **handed to no client**
-  (`arch/x86/context.c` never plants the callback), *and* the firmware's own
-  file-load path can't read a plain ELF off a device. This is a *deeper* museum
-  than the Linux-boot path the rival lab revived — a client is more general than
-  a kernel — and reviving it is this lab's capstone (Phase 3). The client-ABI
-  fix is **written and builds**
-  ([`patches/00-x86-cif-plant.patch`](patches/00-x86-cif-plant.patch)); the
-  file-load bug is **diagnosed but open** ([POC-4](POC-4-X86-REVIVAL.md)), so the
-  x86 track honestly `SKIP`s until it's solved.
+- **x86** — a museum, and reviving it is this lab's capstone (Phase 3). It has
+  **one root cause**: x86 relocates itself by *rebasing the GDT*, so every
+  firmware address is segment-relative and `virt_offset` scales with RAM size.
+  `linux_load.c` translates every access with `phys_to_virt()` — which is
+  exactly why the rival lab's Linux capstone works and the client path did not.
+  **Two fixes landed and verified**: `load-base` pointed past the end of RAM
+  (reads returned zeros while the device reported success), and the client ELF
+  was copied *on top of the running firmware*
+  ([`patches/01-x86-load-base-and-elf-copy.patch`](patches/01-x86-load-base-and-elf-copy.patch)).
+  The firmware now loads our C client off a CD and **enters it, and it runs its
+  own code**. It dies on its first callback: the client runs with *flat*
+  segments while firmware runs *rebased*, so the client interface needs a
+  trampoline ([`patches/00-x86-cif-plant.patch`](patches/00-x86-cif-plant.patch)
+  is necessary but not sufficient). Blow-by-blow, including a **retraction of
+  this lab's own earlier misdiagnosis**: [POC-4](POC-4-X86-REVIVAL.md). The x86
+  track honestly `SKIP`s until a client speaks.
 
 That asymmetry is the lesson, and it rhymes with the rival lab's: *the same
 standard, alive where it's used and fossilized where it isn't — and the fossil
