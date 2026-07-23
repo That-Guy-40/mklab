@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# run-client-qemu.sh [ppc|x86] [program] [cd|disk] — boot the firmware with a
-# client medium and drop you at the prompt to run it by hand. program defaults to
-# "hello"; the 3rd arg (x86 only) picks the medium — "cd" (default) or "disk".
+# run-client-qemu.sh [ppc|x86] [program] [cd|disk|disk-fat] — boot the firmware
+# with a client medium and drop you at the prompt to run it by hand. program
+# defaults to "hello"; the 3rd arg (x86 only) picks the medium — "cd" (default),
+# "disk" (ext2), or "disk-fat" (needs the FAT-enabled firmware rebuild).
 #
 #   ppc: stock qemu-system-ppc (its OpenBIOS already wires the client
 #        interface). At the 0 > prompt, type:   boot cd:\HELLO.;1
@@ -41,10 +42,12 @@ case "$FLAVOR" in
     FW="${OPENBIOS_WORKDIR:-$HOME/openbios-lab}/openbios/obj-x86"
     [[ -f "$FW/openbios.multiboot" && -f "$FW/openbios.dict" ]] \
         || { echo "no revived OpenBIOS-x86 — run ./build-firmware-x86.sh first"; exit 1; }
-    if [[ "$MEDIA" == disk ]]; then
-        # ext2 hard disk on the primary-master IDE (POC-7). stage-disk.sh builds it.
-        ( cd "$HERE" && ./stage-disk.sh "$PROG" ) >/dev/null || exit 1
-        IMG="$WORKDIR/$PROG-x86.ext2.img"
+    if [[ "$MEDIA" == disk || "$MEDIA" == disk-fat ]]; then
+        # hard disk on the primary-master IDE (POC-7). ext2 works as shipped; FAT
+        # needs the FAT-enabled firmware rebuild. stage-disk.sh builds the image.
+        FS=ext2; [[ "$MEDIA" == disk-fat ]] && FS=fat
+        ( cd "$HERE" && ./stage-disk.sh "$PROG" "$FS" ) >/dev/null || exit 1
+        IMG="$WORKDIR/$PROG-x86.$FS.img"
         echo "==> at the 0 > prompt, type:   \" /ide@0/disk@0:\\$PROG\" \$load   then   go     (Ctrl-A X quits)"
         exec qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 \
             -kernel "$FW/openbios.multiboot" -initrd "$FW/openbios.dict" \
@@ -57,5 +60,5 @@ case "$FLAVOR" in
     exec qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 \
         -kernel "$FW/openbios.multiboot" -initrd "$FW/openbios.dict" \
         -cdrom "$ISO" -display none -serial mon:stdio -no-reboot ;;
-  *) echo "usage: $0 [ppc|x86] [program] [cd|disk]" >&2; exit 1 ;;
+  *) echo "usage: $0 [ppc|x86] [program] [cd|disk|disk-fat]" >&2; exit 1 ;;
 esac

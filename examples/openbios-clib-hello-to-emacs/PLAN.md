@@ -104,13 +104,16 @@ because a client is a more general thing than a kernel.
 
 - **Extension — load a client from a hard disk, not a CD. ✅ DONE (green, x86).
   POC-7.** The `load` path is medium-agnostic; the same `hello`/`emacs` boot off
-  an **ext2 hard disk** at `/ide@0/disk@0` (`smoke-client.sh x86 <prog> disk`,
-  `stage-disk.sh`, `run-client-qemu.sh … disk`). Three museum gotchas: grubfs
-  here has **no FAT** (`CONFIG_FSYS_FAT=false`; ext2 + iso9660 only), modern
-  `mke2fs` defaults break the **GRUB-0.97 ext2 driver** (needs `-b 1024 -I 128`
-  + a stripped feature set), and the `$load` arg needs a **backslash** path (a
-  `/` is eaten by the device-path parser). ppc disk is a future spike (different
-  device tree). [POC-7](POC-7-DISK-BOOT.md).
+  a hard disk at `/ide@0/disk@0` — **ext2** on the firmware as shipped
+  (`smoke-client.sh x86 <prog> disk`) and **FAT** after `build-firmware-x86.sh`
+  flips `CONFIG_FSYS_FAT=true` (`… <prog> disk-fat`). Helpers: `stage-disk.sh
+  <prog> [ext2|fat]`, `run-client-qemu.sh … [disk|disk-fat]`. Three museum
+  gotchas: **FAT off in the stock config** (a FAT image fails *silently* until
+  the rebuild), modern `mke2fs` defaults break the **GRUB-0.97 ext2 driver**
+  (needs `-b 1024 -I 128` + a stripped feature set), and the `$load` arg needs a
+  **backslash** path (a `/` is eaten by the device-path parser). ppc disk is a
+  future spike (its stock blob's fs set isn't ours to recompile).
+  [POC-7](POC-7-DISK-BOOT.md).
 
 ## Justified deviations
 

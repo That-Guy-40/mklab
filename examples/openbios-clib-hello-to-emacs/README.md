@@ -39,7 +39,8 @@ C program), [POC-3-MEMTEST.md](POC-3-MEMTEST.md) (a RAM tester with no OS),
 cause found), [POC-5-EDITOR.md](POC-5-EDITOR.md) (an interactive editor with no
 OS), [POC-6-MICROEMACS.md](POC-6-MICROEMACS.md) (the finale — a MicroEMACS-style
 multi-line screen editor, both arches), and [POC-7-DISK-BOOT.md](POC-7-DISK-BOOT.md)
-(the same clients loaded off an **ext2 hard disk**, not a CD — `disk` mode).
+(the same clients loaded off a **hard disk**, not a CD — `disk` = ext2 as shipped,
+`disk-fat` = FAT after a firmware rebuild that enables it).
 Roadmap: [PLAN.md](PLAN.md); exact commands + signatures:
 [MANUAL_TESTING.md](MANUAL_TESTING.md).
 
