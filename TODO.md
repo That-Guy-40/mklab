@@ -22,21 +22,32 @@ root:$1$floppinx$2WKWnHcP/VZpbTpD57PW30:0:0:root:/home:/bin/sh
 The plaintext is already known (`lab`) — the point isn't to *learn* it, it's to
 show the recovery and explain the *why*.
 
-- [ ] Recover `lab` from the hash with `john` and/or `hashcat` + a small wordlist
+- [x] Recover `lab` from the hash with `john` and/or `hashcat` + a small wordlist
       (e.g. rockyou); time it and record the exact command + wall-clock.
-- [ ] Write up the WHY: `$1$` = MD5-crypt (1000 iterations, 8-char salt
+- [x] Write up the WHY: `$1$` = MD5-crypt (1000 iterations, 8-char salt
       `floppinx`); why it's trivially crackable on a modern GPU/CPU versus `$6$`
       (SHA-512-crypt) or bcrypt/argon2; what the salt does (kills rainbow
       tables / shared-hash detection) and does **not** do (slow a targeted
       guess).
-- [ ] Lab-hygiene takeaway: a published throwaway credential is fine for an
+- [x] Lab-hygiene takeaway: a published throwaway credential is fine for an
       air-gapped floppy in QEMU — and is exactly why you never ship `LOGIN=1` on
       a real network.
-- [ ] Land it as a short doc under the lab (e.g.
+- [x] Land it as a short doc under the lab (e.g.
       `examples/tiny-linux-experiments/floppinux/HASH_CRACKING.md`), linked from
       that README and `00-INDEX`.
 
 Scope: our own hash, our own lab, educational — not targeting any third party.
+
+**✅ Done 2026-07-23.** [`HASH_CRACKING.md`](examples/tiny-linux-experiments/floppinux/HASH_CRACKING.md)
++ a self-contained [`crack.py`](examples/tiny-linux-experiments/floppinux/crack.py)
+(pure-Python md5crypt — works on 3.13+ where `crypt` is gone; no install/network).
+Recovers `lab`: recompute-verify (`openssl passwd -1` byte-matches), dictionary
+(15-word list, **3.2 ms**), exhaustive `[a-z]³` (7438/17576, **~2.1 s** single-thread
+pure-python; a compiled `crypt(3)` ~4× faster, john/hashcat millions/s). WHY
+written up (MD5-crypt = 1000 MD5 rounds = fast; salt kills rainbow tables + shared-
+hash detection but does NOT slow a *targeted* guess; `$6$`/bcrypt/Argon2 table).
+Linked from the lab README (Files + ⚠️ Security) and 00-INDEX; `john`/`hashcat`
+commands documented (author-run — not installed here). link_check green.
 
 ## 2. Vendor an `upstream-tutorial/` copy for every tutorial-based lab
 
