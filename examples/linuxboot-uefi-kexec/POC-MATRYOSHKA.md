@@ -274,9 +274,14 @@ kill "$(cat qemu-kexec.pid)"
 | A Linux kernel boots **u-root as PID 1** under QEMU/KVM | ✅ proven (Stage A) |
 | u-root's `init` **`kexec`s a second kernel** — the LinuxBoot handoff | ✅ proven (Stage B) |
 | **Tier C** (`-kernel/-initrd` + u-root + kexec) | ✅ this PoC |
-| **Tier B** (OVMF/UEFI front-end → u-root → kexec) | ⏳ not yet spiked |
-| **Tier A** (coreboot `qemu-q35` ROM with a LinuxBoot payload) | ⏳ author-run build, not yet |
+| **Tier B** (OVMF/UEFI front-end → u-root → kexec) | ✅ DONE since — [`POC-UEFI-MATRYOSHKA.md`](POC-UEFI-MATRYOSHKA.md) (`PLAN.md` §Status) |
+| **Tier A** (coreboot `qemu-q35` ROM with a LinuxBoot payload) | ✅ DONE since — `build-coreboot.sh` + `run-coreboot-linuxboot.sh` (`PLAN.md` §Status) |
 | kexec into a **real installed OS** (u-root `localboot`) | ⏳ the lab's "finale" |
+
+> **Note (this is the early Tier-C PoC doc):** Tiers B and A were spiked
+> and landed after this was written — see [`PLAN.md`](PLAN.md) §Status and
+> [`POC-UEFI-MATRYOSHKA.md`](POC-UEFI-MATRYOSHKA.md). The ⏳ rows above are
+> kept as the historical snapshot; the ✅ annotations are the current state.
 
 Two truths worth carrying into the build:
 - **"Cloud/distro kernel" ≠ "kexec-signed."** Plain QEMU has no Secure Boot, so
