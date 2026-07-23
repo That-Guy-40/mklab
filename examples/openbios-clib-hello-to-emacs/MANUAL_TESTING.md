@@ -108,6 +108,35 @@ the firmware `read` service, every glyph out through `write`. Try it by hand:
 `./run-client-qemu.sh ppc edit`, type, Ctrl-X to save. See
 [POC-5](POC-5-EDITOR.md).
 
+### emacs (rung 4 — the finale, MULTI-line)
+
+```console
+$ ./smoke-client.sh ppc emacs
+  - booting stock qemu-system-ppc + our emacs CD, driving boot cd:\EMACS.;1 → …/smoke-client-ppc-emacs.log
+PASS: OpenBIOS-ppc loaded our C client 'emacs' and it ran a MicroEMACS-style multi-line editor (typed, split a line with Enter, C-x C-c saved-and-exited) over the IEEE 1275 client interface
+```
+
+The smoke types `MEOW`, then **Enter** (a line split — the op `edit.c` can't do),
+then `PURR` on the new second line, then `C-x C-c`. On exit the editor clears the
+screen and dumps the buffer as plain text; the tail of the log:
+
+```
+emacs: 11 lines, 437 chars
+| MEOW
+| PURRclib-emacs -- a MicroEMACS-style editor running as an OpenBIOS client (no OS).
+| 
+|   Move    C-f forward  C-b back   C-n next-line  C-p prev-line
+...
+```
+
+`| MEOW` on its **own** line and `PURR` on the **next** is the proof that Enter
+split one line into two (the verdict asserts `^| MEOW$` and `| PURR`). Mid-run,
+the reverse-video mode line tracks the cursor across the split —
+`-- clib-emacs -- L1 C5  10 lines *` before Enter, `L2 C1  11 lines *` after
+(line count 10→11, cursor to the head of the new line). Try it by hand:
+`./run-client-qemu.sh ppc emacs` — type, `C-x C-s` to save, `C-x C-c` to exit.
+See [POC-6](POC-6-MICROEMACS.md).
+
 ## 3. Interactive — run it by hand
 
 ```console
@@ -145,7 +174,15 @@ PASS: revived OpenBIOS-x86 loaded our C client 'memtest' and it ran the RAM test
 
 $ ./smoke-client.sh x86 edit
 PASS: revived OpenBIOS-x86 loaded our C client 'edit' and it ran a tiny interactive editor (typed, backspaced, Ctrl-X saved) over the IEEE 1275 client interface
+
+$ ./smoke-client.sh x86 emacs
+PASS: revived OpenBIOS-x86 loaded our C client 'emacs' and it ran a MicroEMACS-style multi-line editor (typed, split a line with Enter, C-x C-c saved-and-exited) over the IEEE 1275 client interface
 ```
+
+The x86 `emacs` buffer dump is **byte-for-byte identical** to ppc's
+(`emacs: 11 lines, 437 chars`, `| MEOW`, `| PURR…`): the multi-line line-split
+lands the same under x86's rebased-GDT segments as it does on ppc. Interactive by
+hand: `./run-client-qemu.sh x86 emacs` (`" /ide@1/cdrom@0:\emacs" $load` then `go`).
 
 The x86 success signature at the prompt, driven by hand:
 

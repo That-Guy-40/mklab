@@ -34,8 +34,11 @@ out as the ladder climbs (see [`../PLAN.md`](../PLAN.md)):
   — see `memtest.c`.
 - **edit** (rung 4, **done**) added the interactive console — `getch`,
   `put_char`, `cls`, `gotoxy` (ANSI, no termcap) — see `edit.c`, a tiny editor.
-- **MicroEMACS** (rung 4 finale) grows a buffer model + keymap on that same
-  shim; a large mechanical port, still to do.
+- **emacs** (rung 4 finale, **done**) grows a multi-line buffer model + emacs
+  keymap + reverse-video mode line + tutorial-as-data on that same shim and the
+  `claim` allocator — *no new clib*, pure client code. A faithful reimplementation
+  of the MicroEMACS core (not a line-for-line port of Lawrence's OS-coupled
+  uEmacs); see `emacs.c` and [`../POC-6-MICROEMACS.md`](../POC-6-MICROEMACS.md).
 
 Never a syscall, never an `#include <stdlib.h>` — the "system call" *is* the
 firmware callback.
