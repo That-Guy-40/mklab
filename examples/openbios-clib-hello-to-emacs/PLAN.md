@@ -1,10 +1,11 @@
 # PLAN — openbios-clib-hello-to-emacs
 
-**Status: Phases 0–3 COMPLETE and green on BOTH arches — the capstone is done.**
-`hello`, `memtest`, and `edit` all run as IEEE 1275 client programs on stock
-`qemu-system-ppc` *and* on a revived OpenBIOS-x86 (six firmware repairs, POC-4);
-six green smoke verdicts. Phase 4's foundation is complete (POC-5); the full
-MicroEMACS port is the remaining finale.
+**Status: ALL phases COMPLETE and green on BOTH arches — the ladder is done.**
+`hello`, `memtest`, `edit`, and `emacs` all run as IEEE 1275 client programs on
+stock `qemu-system-ppc` *and* on a revived OpenBIOS-x86 (six firmware repairs,
+POC-4); **eight green smoke verdicts** (four rungs × two arches). Phase 4's
+finale — a MicroEMACS-style multi-line editor — landed on top of the POC-5
+foundation (POC-6).
 Follow-on to [`../openbios-the-rival-that-shipped/`](../openbios-the-rival-that-shipped/README.md).
 Same house style, same spike→POC→assemble lifecycle. Where the rival lab taught
 **Forth/FCode** extension (words loaded *into* the interpreter), this lab teaches
@@ -83,15 +84,23 @@ because a client is a more general thing than a kernel.
   applied by [`build-firmware-x86.sh`](build-firmware-x86.sh) on top of the rival
   lab's eight. POC-4 also **retracts an earlier misdiagnosis of this same
   phase** — "reaches none of the loaders" was an instrument artifact.
-- **Phase 4 — the editor rung. ✅ FOUNDATION DONE (green); full port remaining.**
-  `clib` grew its console half — `getch` (polls the non-blocking firmware
-  `read`), `put_char`, `cls`, `gotoxy` (ANSI). `clib/edit.c` is a tiny
-  interactive line editor (input loop + echo + Backspace + Ctrl-X) that runs as
-  a client and is driven headlessly: `smoke-client.sh ppc edit` types `hellX`,
-  Backspaces the `X`, adds `o`, Ctrl-X → `edit: wrote 5 chars: hello`. POC-5.
-  This proves the interactive foundation; the literal `emacs` finale is a
-  **MicroEMACS port** (multi-line buffer + keymap + tutorial-as-data) on top of
-  the same shim + `clib_claim` — a large mechanical port, the honest next step.
+- **Phase 4 — the editor rung. ✅ DONE (green, both arches).** Two rungs:
+  - **4a `edit` (POC-5).** `clib` grew its console half — `getch` (polls the
+    non-blocking firmware `read`), `put_char`, `cls`, `gotoxy` (ANSI). `edit.c`
+    is a tiny one-line editor driven headlessly: `smoke-client.sh {ppc,x86} edit`
+    types `hellX`, Backspaces the `X`, adds `o`, Ctrl-X → `edit: wrote 5 chars:
+    hello`. Proves the interactive foundation.
+  - **4b `emacs` (POC-6, the finale).** `emacs.c` — a **MicroEMACS-style**
+    multi-line screen editor on that same shim + `clib_claim`: a line-array
+    buffer carved from one `claim` arena, the emacs keymap (`C-f/C-b/C-n/C-p`,
+    `C-a/C-e`, `C-d`/Backspace, `C-k`, Enter=split, `C-x C-s`/`C-x C-c`),
+    full-screen redraw with a reverse-video mode line, and the tutorial preloaded
+    as data. Driven headlessly (`smoke-client.sh {ppc,x86} emacs`): type `MEOW`,
+    Enter (a line **split** — the multi-line op `edit` can't do), `PURR`,
+    `C-x C-c` → a plain buffer dump with `| MEOW` on its own line. *No new clib*
+    — pure client code on rungs 3–4's foundation. A faithful reimplementation of
+    the MicroEMACS core, **not** a line-for-line port of Lawrence's OS-coupled
+    uEmacs (termios/files/signals/termcap have no meaning in a no-OS client).
 
 ## Justified deviations
 

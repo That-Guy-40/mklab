@@ -65,6 +65,16 @@ case "$FLAVOR" in
         STEPS=(--send "$BOOT" --expect "Backspace edits"
                --send 'hellX' --send '\x7f' --send 'o' --expect 'o'
                --send '\x18' --expect "$MARKER") ;;
+      emacs)
+        # MicroEMACS-style, multi-line: type MEOW, Enter (split the line), PURR
+        # on the new second line, then C-x C-c (\x18 \x03). The buffer dump on
+        # exit must show both a bare "| MEOW" line and a "PURR" line — proof the
+        # newline split landed (the multi-line op edit.c could not do).
+        MARKER="emacs:"
+        WHAT="ran a MicroEMACS-style multi-line editor (typed, split a line with Enter, C-x C-c saved-and-exited)"; TMO=120
+        STEPS=(--send "$BOOT" --expect "clib-emacs"
+               --send 'MEOW' --send '\r' --send 'PURR'
+               --send '\x18' --send '\x03' --expect "$MARKER") ;;
       *)
         MARKER="EXIT"; WHAT="ran and exited via the client interface"; TMO=90
         STEPS=(--send "$BOOT" --expect "$MARKER") ;;
@@ -84,6 +94,12 @@ case "$FLAVOR" in
     fi
     [[ $RC -eq 0 ]] || fail "$PROG did not reach its success marker '$MARKER' (rc=$RC) — see $LOG"
     grep -aq "$MARKER" "$LOG" || fail "REGRESSION: firmware entered $PROG but no '$MARKER' — client interface path broke"
+    if [[ "$PROG" == emacs ]]; then
+        # The exit dump must show MEOW on its OWN line and PURR on the next —
+        # i.e. Enter really SPLIT the line into two (multi-line editing works).
+        grep -aqE '^\| MEOW[[:space:]]*$' "$LOG" || fail "REGRESSION: emacs buffer dump has no bare '| MEOW' line — the Enter line-split did not land (see $LOG)"
+        grep -aq '| PURR'   "$LOG" || fail "REGRESSION: emacs buffer dump has no 'PURR' — typing on the split-off second line did not land (see $LOG)"
+    fi
     pass "OpenBIOS-ppc loaded our C client '$PROG' and it $WHAT over the IEEE 1275 client interface" ;;
 
   x86)
@@ -129,6 +145,13 @@ case "$FLAVOR" in
         STEPS=(--send "$LOAD" --expect "ok" --send 'go\r' --expect "Backspace edits"
                --send 'hellX' --send '\x7f' --send 'o' --expect 'o'
                --send '\x18' --expect "$MARKER") ;;
+      emacs)
+        # Same multi-line drive as ppc — see the ppc branch for the rationale.
+        MARKER="emacs:"
+        WHAT="ran a MicroEMACS-style multi-line editor (typed, split a line with Enter, C-x C-c saved-and-exited)"; TMO=280
+        STEPS=(--send "$LOAD" --expect "ok" --send 'go\r' --expect "clib-emacs"
+               --send 'MEOW' --send '\r' --send 'PURR'
+               --send '\x18' --send '\x03' --expect "$MARKER") ;;
       *)
         MARKER="EXIT"; WHAT="ran and exited via the client interface"; TMO=150
         STEPS=(--send "$LOAD" --expect "ok" --send 'go\r' --expect "$MARKER") ;;
@@ -149,6 +172,10 @@ case "$FLAVOR" in
     fi
     [[ $RC -eq 0 ]] || fail "$PROG did not reach its success marker '$MARKER' (rc=$RC) — see $LOG"
     grep -aq "$MARKER" "$LOG" || fail "REGRESSION: firmware entered $PROG but no '$MARKER' — client interface path broke"
+    if [[ "$PROG" == emacs ]]; then
+        grep -aqE '^\| MEOW[[:space:]]*$' "$LOG" || fail "REGRESSION: emacs buffer dump has no bare '| MEOW' line — the Enter line-split did not land (see $LOG)"
+        grep -aq '| PURR'   "$LOG" || fail "REGRESSION: emacs buffer dump has no 'PURR' — typing on the split-off second line did not land (see $LOG)"
+    fi
     pass "revived OpenBIOS-x86 loaded our C client '$PROG' and it $WHAT over the IEEE 1275 client interface" ;;
   *) echo "usage: $0 [ppc|x86] [program]" >&2; exit 1 ;;
 esac
