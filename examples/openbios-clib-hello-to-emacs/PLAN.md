@@ -102,6 +102,16 @@ because a client is a more general thing than a kernel.
     the MicroEMACS core, **not** a line-for-line port of Lawrence's OS-coupled
     uEmacs (termios/files/signals/termcap have no meaning in a no-OS client).
 
+- **Extension — load a client from a hard disk, not a CD. ✅ DONE (green, x86).
+  POC-7.** The `load` path is medium-agnostic; the same `hello`/`emacs` boot off
+  an **ext2 hard disk** at `/ide@0/disk@0` (`smoke-client.sh x86 <prog> disk`,
+  `stage-disk.sh`, `run-client-qemu.sh … disk`). Three museum gotchas: grubfs
+  here has **no FAT** (`CONFIG_FSYS_FAT=false`; ext2 + iso9660 only), modern
+  `mke2fs` defaults break the **GRUB-0.97 ext2 driver** (needs `-b 1024 -I 128`
+  + a stripped feature set), and the `$load` arg needs a **backslash** path (a
+  `/` is eaten by the device-path parser). ppc disk is a future spike (different
+  device tree). [POC-7](POC-7-DISK-BOOT.md).
+
 ## Justified deviations
 
 - **No firmware build for the ppc track.** The ppc client is entered by the
