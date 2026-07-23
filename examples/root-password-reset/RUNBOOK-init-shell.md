@@ -183,8 +183,19 @@ lost root password*; Rocky — CIQ KB. The per-source steps above were **reconci
 against the archived pages** in [`upstream-tutorial/`](upstream-tutorial/) (Debian,
 Kali, Rocky vendored byte-exact; Arch cited as a living wiki). All rights remain
 with the respective authors. The `init=/bin/bash` reset is **verified** end-to-end
-here on Debian 12 / BIOS; the UEFI and Rocky **VM runs** are author-run. **Kali**
-is verified two ways: its upstream *prebuilt image* is **not serial-bootable**
-(boot-loops at GRUB headless), but the linuxconfig recipe is **verified
-end-to-end on a *real* installed Kali** (built via [`../kali-preseed-gallery/`](../kali-preseed-gallery/);
-kernel `6.19.14+kali-amd64`) — see [`MANUAL_TESTING.md`](MANUAL_TESTING.md#kali-method--verified-end-to-end-on-a-preseed-installed-kali).
+here on Debian, now on **both BIOS *and* UEFI/OVMF** (2026-07-23 — see
+[`MANUAL_TESTING.md`](MANUAL_TESTING.md#debian-uefiovmf--verified-end-to-end); OVMF
+shows its own `BdsDxe` boot-manager phase, then GRUB surfaces on serial and the
+reset is identical). **Kali** is verified two ways: its upstream *prebuilt image*
+is **not serial-bootable** (boot-loops at GRUB headless), but the linuxconfig
+recipe is **verified end-to-end on a *real* installed Kali** (built via
+[`../kali-preseed-gallery/`](../kali-preseed-gallery/); kernel `6.19.14+kali-amd64`)
+— see [`MANUAL_TESTING.md`](MANUAL_TESTING.md#kali-method--verified-end-to-end-on-a-preseed-installed-kali).
+
+**UEFI variant of the Kali method (author-run).** Build the preseed-gallery target
+as UEFI — drop any `firmware = "bios"` and set the gallery's EFI netboot file
+(`pxe_bootfile = "ipxe.efi"`, per the gallery README) so d-i lays down
+`grub-efi-amd64` — then the *identical* `ro`→`rw` / `quiet`→`init=/bin/bash` edit
+at the GRUB menu. Nothing about the reset changes; only the loader binary
+(`grubx64.efi`) and the OVMF pre-GRUB phase differ, both already exercised by the
+verified Debian/UEFI run above.

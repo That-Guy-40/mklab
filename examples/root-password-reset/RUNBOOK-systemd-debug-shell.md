@@ -83,6 +83,17 @@ works (`id` → `uid=0`).
 
 ---
 
+## UEFI note (author-run)
+
+The debug shell is **firmware-agnostic** — `systemd.debug_shell` (and
+`rd.systemd.debug_shell` for the initramfs one) is a *kernel-command-line* option
+added at the GRUB menu, and reaching that menu over serial under OVMF is already
+proven ([`MANUAL_TESTING.md`](MANUAL_TESTING.md#debian-uefiovmf--verified-end-to-end)).
+Nothing in (A) or (B) changes on UEFI: OVMF runs its own boot-manager phase, then
+GRUB appears exactly as on BIOS and you press `e` / drop to the command line the
+same way. The only firmware caveat is the shared one — a **GRUB password** or
+locked-down Secure-Boot config blocks the cmdline edit (that's the point of it).
+
 ## Provenance
 
 Source: **ArchWiki — *Reset lost root password*** (the `systemd.debug_shell` and

@@ -112,6 +112,30 @@ Password:  <NEW password>  →  # id → uid=0(root) …      # ✓ reset confir
 
 ---
 
+## UEFI variant (Rocky / AlmaLinux, author-run)
+
+`rd.break` is **firmware-agnostic** — it's a kernel-command-line edit at the GRUB
+menu, and the Debian/UEFI run already proved OVMF surfaces that menu on serial
+([`MANUAL_TESTING.md`](MANUAL_TESTING.md#debian-uefiovmf--verified-end-to-end)).
+Build the kickstart-gallery target as UEFI (`firmware = "uefi"` on the gallery VM);
+the *only* EFI-specific differences are:
+
+- **The `grub.cfg` lives under `/boot/efi/EFI/<distro>/grub.cfg`**, not
+  `/boot/grub2/grub.cfg`. So the pre-stage's `grub2-mkconfig` **target path
+  changes** — regenerate to the EFI location:
+  `grub2-mkconfig -o /boot/efi/EFI/rocky/grub.cfg` (or `/EFI/almalinux/…`). Widening
+  `GRUB_TIMEOUT` in `/etc/default/grub` is unchanged.
+- **Secure Boot**, if enabled, boots the signed `shimx64.efi` → `grubx64.efi`
+  chain. Editing the kernel line at the GRUB menu (`e`) still works — Secure Boot
+  verifies the *kernel/shim signatures*, not your one-boot cmdline edit — but a
+  Secure-Boot setup that also sets a **GRUB password** (`grub2-setpassword`) blocks
+  the edit; that's the intended defense (see the lab README's "Secure Boot +
+  firmware password" note). Under OVMF, use the non-secboot `OVMF_CODE_4M.fd` to
+  reproduce the open case, or the `.secboot` variant to exercise the locked one.
+
+The in-menu `rd.break` → `chroot /sysroot` → `passwd` → `touch /.autorelabel` chain
+below is **byte-identical** to the BIOS path.
+
 ## The Debian / initramfs-tools cousin: `break=`
 
 Debian/Ubuntu (initramfs-tools, not dracut) have **no `rd.break`**. The analogue
