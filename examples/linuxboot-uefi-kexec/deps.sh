@@ -10,7 +10,7 @@
 #      build-uki.sh then runs ukify straight out of that tree via PYTHONPATH.
 #
 # Tier A (coreboot) deps are NOT installed here — that's a separate, author-run
-# ~hour crossgcc build (see PLAN.md §4 / build-coreboot.sh, not yet written).
+# ~hour crossgcc build (see PLAN.md §4 / build-coreboot.sh).
 set -euo pipefail
 WORKDIR="${WORKDIR:-$HOME/linuxboot-lab}"
 mkdir -p "$WORKDIR/debs"

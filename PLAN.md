@@ -450,10 +450,11 @@ Known limitations / future work:
 - **microvm** variant is not meaningful here: Kali's kernel+initrd
   aren't published standalone in a convenient form (the installer ISO
   carries them, but extracting cleanly is a project of its own).
-- **Checksum verification** of the downloaded `.7z` is not performed,
-  even though we're already fetching `SHA256SUMS` to resolve the
-  rolling alias. Verifying the downloaded archive against the hash in
-  that same file would be a cheap hardening — worth adding next.
+- **Checksum verification** of the downloaded `.7z` **is performed**
+  (`verify_sha256` against `kali_sha256_for`, which reuses the
+  `SHA256SUMS` already fetched to resolve the rolling alias — see
+  `lab-vm.sh` findings 5 + 22). HTTPS gives transport integrity; the
+  explicit content hash also catches a tampered mirror.
 
 ---
 
@@ -861,11 +862,11 @@ each engine's labelled state (`docker/podman/incus … --format=json`
 filtered on `lab-create.tool=lab-<phase>`). If Phase 6 is removed,
 nothing in Phases 1–5 breaks.
 
-**Status: v0.1 landed.** Read-only inventory and cross-phase topology
-orchestration — the highest-value slice of the original spec. Create
-wizards and console attach are **deferred to v0.2** so the read-only
-surface can be proven out first; the Phase 6b web UI has since shipped
-(`phase6b-web/`).
+**Status: v0.1 landed, and the v0.2 items have since shipped too.**
+Read-only inventory and cross-phase topology orchestration landed first
+(the highest-value slice); the five per-phase **create wizards** (`n`),
+**console attach** (`c`), and **`--serve`** (`textual serve` over HTTP)
+have all since shipped, as has the Phase 6b web UI (`phase6b-web/`).
 
 ### Stack
 
@@ -938,16 +939,18 @@ because Docker has no filesystem surface to watch. Each yield names
 the backend whose surface changed; the browser re-runs only that
 backend's `list_resources()`.
 
-### Deferred to v0.2
+### Landed in v0.2 (were deferred from v0.1)
 
-- **Create wizards** — five modal TOML generators (one per phase). Each
-  exposes backend-specific fields and live validation; the current spec
-  skipped these so the read-only surface could ship first.
+- **Create wizards** — five modal TOML generators (one per phase), each
+  with backend-specific fields and live validation. Shipped: bound to
+  `n` in the browser (`screens/wizards/phase{1..5}.py`,
+  `tests/test_wizards.py`).
 - **Console attach** — suspend Textual, drop into `lab-vm.sh console
-  <name>`, resume on exit. Fiddly cross-platform; v0.1 users can run it
-  standalone in another terminal.
-- **`textual serve lab_tui`** integration — blocked on the same
-  `BackendRunner` abstraction being proven stable in v0.1.
+  <name>`, resume on exit. Shipped: bound to `c`
+  (`tests/test_console_attach.py`).
+- **`textual serve lab_tui`** integration — shipped as `--serve
+  [HOST:]PORT` (`lab_tui/__main__.py`), once the `BackendRunner`
+  abstraction proved stable.
 
 ### v0.1 exit criteria (all met as of landing)
 

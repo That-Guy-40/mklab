@@ -20,7 +20,7 @@ See [`PLAN.md`](PLAN.md) for the full design and rationale, and
 | 3 | [`phase3-docker/lab-docker.sh`](phase3-docker/) | **v0.1 landed** — `run`/`up`/`down`/`exec`/`logs`/`list`/`destroy`, multi-arch buildx, `from-chroot` import, TOML topologies | [SHOWCASE](phase3-docker/SHOWCASE.md) |
 | 4 | [`phase4-podman/lab-podman.sh`](phase4-podman/) | **v0.1 landed** — pods, quadlet systemd-user export, `from-chroot` + `from-tarball` import, rootless-first | [SHOWCASE](phase4-podman/SHOWCASE.md) |
 | 5 | [`phase5-lxd/lab-lxd.sh`](phase5-lxd/) | **v0.1 landed** — LXD/Incus containers + VMs, projects, profiles, `from_qcow2` bridge from Phase 2, `--format lxc-yaml` export | [SHOWCASE](phase5-lxd/SHOWCASE.md) |
-| 6 | [`phase6-tui/`](phase6-tui/) (Textual) | **v0.1 landed** — read-only inventory across all 5 phases + cross-phase topology bring-up / tear-down. Create wizards deferred to v0.2. | [SHOWCASE](phase6-tui/SHOWCASE.md) |
+| 6 | [`phase6-tui/`](phase6-tui/) (Textual) | **v0.1 landed** — read-only inventory across all 5 phases + cross-phase topology bring-up / tear-down, five per-phase **create wizards** (`n`), **console attach** (`c`), and `--serve` (browser access via `textual serve`) | [SHOWCASE](phase6-tui/SHOWCASE.md) |
 | 6b | [`phase6b-web/`](phase6b-web/) (FastAPI + HTMX) | **landed** — the same read-only inventory + topology surface as Phase 6, lifted into FastAPI + HTMX routes for SSH-forward browser use | [README](phase6b-web/README.md) |
 
 **New here?** Each `SHOWCASE.md` above is a 5-minute "what this phase
