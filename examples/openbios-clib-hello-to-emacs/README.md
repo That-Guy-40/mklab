@@ -37,9 +37,11 @@ callback deep), [POC-2-PPC-HELLO.md](POC-2-PPC-HELLO.md) (the firmware runs your
 C program), [POC-3-MEMTEST.md](POC-3-MEMTEST.md) (a RAM tester with no OS),
 [POC-4-X86-REVIVAL.md](POC-4-X86-REVIVAL.md) (the x86 revival — six repairs, root
 cause found), [POC-5-EDITOR.md](POC-5-EDITOR.md) (an interactive editor with no
-OS), and [POC-6-MICROEMACS.md](POC-6-MICROEMACS.md) (the finale — a MicroEMACS-style
-multi-line screen editor, both arches). Roadmap: [PLAN.md](PLAN.md); exact
-commands + signatures: [MANUAL_TESTING.md](MANUAL_TESTING.md).
+OS), [POC-6-MICROEMACS.md](POC-6-MICROEMACS.md) (the finale — a MicroEMACS-style
+multi-line screen editor, both arches), and [POC-7-DISK-BOOT.md](POC-7-DISK-BOOT.md)
+(the same clients loaded off an **ext2 hard disk**, not a CD — `disk` mode).
+Roadmap: [PLAN.md](PLAN.md); exact commands + signatures:
+[MANUAL_TESTING.md](MANUAL_TESTING.md).
 
 ## "A client library" is C, not Forth
 
@@ -110,7 +112,10 @@ $ ./run-client-qemu.sh ppc emacs    # interactive: type at it yourself (C-x C-s 
 
 $ ./build-firmware-x86.sh           # the capstone: rival lab's 8 x86 fixes + this lab's 6
 $ ./smoke-client.sh x86 hello       # same C source, same clib, other arch
-PASS: revived OpenBIOS-x86 loaded our C client 'hello' and it answered Hello world! over the IEEE 1275 client interface
+PASS: revived OpenBIOS-x86 loaded our C client 'hello' from an ISO9660 CD and it answered Hello world! over the IEEE 1275 client interface
+
+$ ./smoke-client.sh x86 hello disk  # POC-7: load the SAME client off an ext2 hard disk, not a CD
+PASS: revived OpenBIOS-x86 loaded our C client 'hello' from an ext2 hard disk and it answered Hello world! over the IEEE 1275 client interface
 ```
 
 Everything lands in `~/openbios-clients-lab/` (override with

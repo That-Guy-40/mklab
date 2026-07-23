@@ -181,8 +181,54 @@ PASS: revived OpenBIOS-x86 loaded our C client 'emacs' and it ran a MicroEMACS-s
 
 The x86 `emacs` buffer dump is **byte-for-byte identical** to ppc's
 (`emacs: 11 lines, 437 chars`, `| MEOW`, `| PURR…`): the multi-line line-split
-lands the same under x86's rebased-GDT segments as it does on ppc. Interactive by
-hand: `./run-client-qemu.sh x86 emacs` (`" /ide@1/cdrom@0:\emacs" $load` then `go`).
+lands the same under x86's rebased-GDT segments as it does on ppc.
+
+Interactive by hand: `./run-client-qemu.sh x86 emacs`. x86 has **no `boot cd:`
+shortcut** for a client — it's a **two-step** load at the `0 >` prompt, each on
+its own line:
+
+```
+" /ide@1/cdrom@0:\emacs" $load     ← reads the ELF + sets load-state → prints "ok"
+go                                 ← ENTERS the client; the editor paints here
+```
+
+`$load` alone only stages the image and returns you to `0 >`; the editor does not
+start until `go`. (Typing anything else at the prompt in between just feeds the
+Forth interpreter — e.g. `sdsd → undefined word`.)
+
+**Ctrl-A gotcha — how to type emacs's `C-a` under `-serial mon:stdio`.** The
+launcher (and the smoke) mux the QEMU monitor onto stdio, so QEMU reserves
+**`Ctrl-A`** as its own escape prefix (`Ctrl-A X` quits, `Ctrl-A C` → monitor).
+A bare `Ctrl-A` therefore never reaches the editor, and emacs's *beginning-of-line*
+appears dead. To send a **literal** `Ctrl-A` (`0x01`) through to the client, press
+the prefix twice — **`Ctrl-A` `Ctrl-A`** (QEMU also accepts `Ctrl-A` then `a`);
+the second press means "pass this byte through," the same convention GNU `screen`
+uses for its own `Ctrl-A`. Every other binding (`C-e`, `C-f`, `C-k`, `C-x C-c`, …)
+is unaffected — `Ctrl-A` is the only hijacked key. The headless smoke sidesteps
+this entirely by never binding `C-a` in its drive sequence.
+
+### From a hard disk instead of a CD (POC-7)
+
+The client `load` path is medium-agnostic — the same client boots off an **ext2
+hard disk**. Pass `disk` as the 3rd arg; the smoke stages a classic-ext2 image
+(`stage-disk.sh`, populated with `debugfs`, no root) and loads from
+`/ide@0/disk@0`:
+
+```console
+$ ./smoke-client.sh x86 hello disk
+  - booting revived OpenBIOS-x86 + our hello on an ext2 hard disk, driving $load /ide@0/disk@0 + go → …
+PASS: revived OpenBIOS-x86 loaded our C client 'hello' from an ext2 hard disk and it answered Hello world! over the IEEE 1275 client interface
+
+$ ./smoke-client.sh x86 emacs disk
+PASS: revived OpenBIOS-x86 loaded our C client 'emacs' from an ext2 hard disk and it ran a MicroEMACS-style multi-line editor (…) over the IEEE 1275 client interface
+```
+
+Interactive by hand: `./run-client-qemu.sh x86 emacs disk`
+(`" /ide@0/disk@0:\emacs" $load` then `go`). Three gotchas make this work — **ext2
+not FAT** (grubfs here has no FAT driver), a **classic-ext2 layout** (modern
+`mke2fs` defaults break the GRUB-0.97 driver), and a **backslash path** (a forward
+slash is eaten by the device-path parser). Full story: [POC-7](POC-7-DISK-BOOT.md).
+`disk` on **ppc** SKIPs — mac99's device tree differs and is left as a future spike.
 
 The x86 success signature at the prompt, driven by hand:
 
@@ -213,6 +259,10 @@ Story of all six repairs: [POC-4](POC-4-X86-REVIVAL.md).
 - **ppc console input needs a real terminal** (muxed stdio); a bare
   `-serial unix:` socket delivers nothing, so the smoke drives QEMU through
   `tools/drive-pty-repl.py` (the pty driver).
+- **`x86 $load` stages, `go` runs** — two separate prompt commands; the editor
+  only appears on `go`. And under the `-serial mon:stdio` mux, **`Ctrl-A` is
+  QEMU's escape**, so type emacs's `C-a` as `Ctrl-A` `Ctrl-A` (see the x86
+  emacs section above).
 - **The prompt is `0 >`** (stack depth) and the default base is **hex** — same
   as the rival lab. Scripted checks anchor on the literal `Hello world!`, not on
   a number the firmware might print in hex.
