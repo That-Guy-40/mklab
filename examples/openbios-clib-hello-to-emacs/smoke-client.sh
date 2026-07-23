@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# smoke-client.sh [ppc|x86] [program] [cd|disk] — one verdict that the OpenBIOS
-# client interface runs our C client. program defaults to "hello" (see clib/*.c
-# for the ladder: hello, memtest, edit, …). The 3rd arg picks the boot medium
-# (x86 only): "cd" (default, ISO9660 on /ide@1/cdrom@0) or "disk" (an ext2 hard
-# disk on /ide@0/disk@0 — POC-7). ppc is the track that works today: the
+# smoke-client.sh [ppc|x86] [program] [cd|disk|disk-fat] — one verdict that the
+# OpenBIOS client interface runs our C client. program defaults to "hello" (see
+# clib/*.c for the ladder: hello, memtest, edit, …). The 3rd arg picks the boot
+# medium (x86 only): "cd" (default, ISO9660 on /ide@1/cdrom@0), "disk" (an ext2
+# hard disk on /ide@0/disk@0 — works as shipped), or "disk-fat" (a FAT disk —
+# needs the FAT-enabled firmware rebuild). All POC-7. ppc is the track that
 # STOCK qemu-system-ppc firmware already wires the client interface, so our
 # cross-compiled client is loaded from a CD, entered via `boot`, and driven over
 # the console — every line a firmware read/write service call.
@@ -19,8 +20,8 @@ REPO="$(cd "$HERE/../.." && pwd)"
 WORKDIR="${OPENBIOS_CLIENTS_WORKDIR:-$HOME/openbios-clients-lab}"
 FLAVOR="${1:-ppc}"
 PROG="${2:-hello}"
-MEDIA="${3:-cd}"          # cd (default) | disk — x86 can load a client from an
-                          # ext2 hard disk instead of a CD (POC-7); ppc is CD-only here.
+MEDIA="${3:-cd}"          # cd (default) | disk (ext2) | disk-fat — x86 can load a
+                          # client from a hard disk, not just a CD (POC-7); ppc is CD-only here.
 
 pass() { echo "PASS: $*"; exit 0; }
 fail() { echo "FAIL: $*"; exit 1; }
@@ -116,7 +117,10 @@ case "$FLAVOR" in
       disk) if ! command -v mke2fs >/dev/null || ! command -v debugfs >/dev/null; then
                 skip "mke2fs/debugfs (e2fsprogs) not installed — needed to stage the ext2 disk"
             fi ;;
-      *)    fail "unknown media '$MEDIA' (want cd|disk)" ;;
+      disk-fat) if ! command -v mkfs.vfat >/dev/null || ! command -v mcopy >/dev/null; then
+                skip "mkfs.vfat (dosfstools)/mcopy (mtools) not installed — needed to stage the FAT disk"
+            fi ;;
+      *)    fail "unknown media '$MEDIA' (want cd|disk|disk-fat)" ;;
     esac
 
     # Unlike ppc, x86 needs the REVIVED firmware (POC-4) — stock OpenBIOS-x86
@@ -134,17 +138,19 @@ case "$FLAVOR" in
     fi
     [[ -f "$CLIENT" ]] || fail "$PROG-x86 missing after build"
 
-    # Stage the client on the chosen medium and pick the device path. Both paths
+    # Stage the client on the chosen medium and pick the device path. All paths
     # end at the same `$load`+`go`; only the device node and the QEMU media flag
-    # differ. genisoimage -r lowercases the CD name; the ext2 file keeps its name.
-    if [[ "$MEDIA" == disk ]]; then
-        # ext2 hard disk on the PRIMARY-master IDE (/ide@0/disk@0). See POC-7 for
-        # why ext2 (grubfs has no FAT here) and why a classic-layout image.
-        IMG="$WORKDIR/$PROG-x86.ext2.img"
-        ( cd "$HERE" && ./stage-disk.sh "$PROG" ) >/dev/null 2>&1 \
-            || skip "could not stage $PROG on an ext2 disk (need podman + e2fsprogs)"
-        [[ -f "$IMG" ]] || fail "$PROG ext2 disk missing after staging"
-        MEDIA_ARGS=(-hda "$IMG"); DEV='/ide@0/disk@0'; MEDIUM="an ext2 hard disk"
+    # differ. genisoimage -r lowercases the CD name; the disk file keeps its name.
+    if [[ "$MEDIA" == disk || "$MEDIA" == disk-fat ]]; then
+        # hard disk on the PRIMARY-master IDE (/ide@0/disk@0). ext2 works on the
+        # firmware as shipped; FAT needs the FAT-enabled rebuild (POC-7).
+        FS=ext2; [[ "$MEDIA" == disk-fat ]] && FS=fat
+        IMG="$WORKDIR/$PROG-x86.$FS.img"
+        ( cd "$HERE" && ./stage-disk.sh "$PROG" "$FS" ) >/dev/null 2>&1 \
+            || skip "could not stage $PROG on a $FS disk (need podman + the staging tools)"
+        [[ -f "$IMG" ]] || fail "$PROG $FS disk missing after staging"
+        if [[ "$FS" == ext2 ]]; then MEDIUM="an ext2 hard disk"; else MEDIUM="a FAT hard disk"; fi
+        MEDIA_ARGS=(-hda "$IMG"); DEV='/ide@0/disk@0'
     else
         # ISO9660 CD on the SECONDARY-master IDE (/ide@1/cdrom@0).
         ISO="$WORKDIR/$PROG-x86.iso"; STAGE="$WORKDIR/.isoroot-x86-$PROG"
@@ -196,7 +202,11 @@ case "$FLAVOR" in
     if grep -aq "memtest: FAIL" "$LOG"; then
         fail "REGRESSION: memtest reported memory errors on emulated RAM — clib claim/verify path or the x86 cif-claim broke (see $LOG)"
     fi
-    [[ $RC -eq 0 ]] || fail "$PROG did not reach its success marker '$MARKER' (rc=$RC) — see $LOG"
+    if [[ $RC -ne 0 ]]; then
+        HINT=""
+        [[ "$MEDIA" == disk-fat ]] && HINT=" (is the firmware FAT-enabled? FAT silently fails on a stock build — rerun ./build-firmware-x86.sh)"
+        fail "$PROG did not reach its success marker '$MARKER' (rc=$RC)$HINT — see $LOG"
+    fi
     grep -aq "$MARKER" "$LOG" || fail "REGRESSION: firmware entered $PROG but no '$MARKER' — client interface path broke"
     if [[ "$PROG" == emacs ]]; then
         grep -aqE '^\| MEOW[[:space:]]*$' "$LOG" || fail "REGRESSION: emacs buffer dump has no bare '| MEOW' line — the Enter line-split did not land (see $LOG)"

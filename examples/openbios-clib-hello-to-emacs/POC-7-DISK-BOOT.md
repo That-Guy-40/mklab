@@ -73,8 +73,16 @@ CONFIG_FSYS_FAT     = false     ← FAT was never built into this grubfs
 
 grubfs's `fsys_table` only lists the filesystems compiled in. FAT is absent, so a
 FAT image mounts-probe-fails with no error and `state-valid` stays `0`. **On the
-firmware as shipped, the disk filesystem is `ext2`** (or iso9660). FAT is a
-one-line config flip + firmware rebuild away — a deliberate non-goal here.
+firmware as shipped, the disk filesystem is `ext2`** (or iso9660).
+
+**FAT is now enabled too** — `build-firmware-x86.sh` flips `CONFIG_FSYS_FAT` to
+`true` before the final `switch-arch` (which regenerates `autoconf.h` and pulls
+`fsys_fat.c` into the build). After that rebuild, a FAT disk loads exactly like
+ext2 — `stage-disk.sh <prog> fat` + `smoke-client.sh x86 <prog> disk-fat` are
+green. The distinction that remains: **ext2 needs no firmware rebuild** (it was
+already compiled in), while **FAT does** (the stock config ships it off). That's
+the whole reason the silent-failure lesson above matters — a FAT image on a
+stock-config firmware gives you *nothing but a `0`*.
 
 ### 2. Modern `mke2fs` defaults break GRUB's ancient ext2 driver
 
@@ -112,6 +120,10 @@ PASS: revived OpenBIOS-x86 loaded our C client 'hello' from an ext2 hard disk an
 
 $ ./smoke-client.sh x86 emacs disk
 PASS: revived OpenBIOS-x86 loaded our C client 'emacs' from an ext2 hard disk and it ran a MicroEMACS-style multi-line editor (typed, split a line with Enter, C-x C-c saved-and-exited) over the IEEE 1275 client interface
+
+$ ./build-firmware-x86.sh            # enables CONFIG_FSYS_FAT, then:
+$ ./smoke-client.sh x86 hello disk-fat
+PASS: revived OpenBIOS-x86 loaded our C client 'hello' from a FAT hard disk and it answered Hello world! over the IEEE 1275 client interface
 ```
 
 The disk-label trace on the successful ext2 load, end to end:
@@ -130,15 +142,20 @@ trace left no residue.
 
 ## How the lab wires it
 
-- **`stage-disk.sh [program]`** — builds the classic-ext2 image and populates it
-  with `debugfs` (no mount, no loop, no root), baking gotchas #1 and #2 into
-  readable comments.
-- **`smoke-client.sh x86 <prog> disk`** — the CD path and the disk path share one
-  branch; only the device node (`/ide@0/disk@0` vs `/ide@1/cdrom@0`) and the QEMU
-  media flag (`-hda` vs `-cdrom`) differ. Both end at the same `$load`+`go`.
-- **`run-client-qemu.sh x86 <prog> disk`** — the same, interactively, for a human.
-- **ppc `disk` SKIPs** with a pointer: mac99's tree is different
-  (`/pci/mac-io/ata-…/disk@N`, `boot hd:…`) and is left as a future mini-spike.
+- **`stage-disk.sh [program] [ext2|fat]`** — builds the image and populates it
+  without mounting (`debugfs` for ext2, `mcopy` for FAT — no loop, no root),
+  baking gotchas #1–#3 into readable comments.
+- **`build-firmware-x86.sh`** flips `CONFIG_FSYS_FAT=true` (idempotent + verified)
+  so the rebuilt firmware carries the FAT driver.
+- **`smoke-client.sh x86 <prog> {disk|disk-fat}`** — the CD and disk paths share
+  one branch; only the device node (`/ide@0/disk@0` vs `/ide@1/cdrom@0`), the
+  filesystem, and the QEMU media flag (`-hda` vs `-cdrom`) differ. All end at the
+  same `$load`+`go`. `disk-fat` adds a hint to its failure line pointing at the
+  firmware rebuild (the #1 silent-failure trap).
+- **`run-client-qemu.sh x86 <prog> {disk|disk-fat}`** — the same, interactively.
+- **ppc `disk`/`disk-fat` SKIP** with a pointer: mac99's tree is different
+  (`/pci/mac-io/ata-…/disk@N`, `boot hd:…`) and its stock blob's filesystem set
+  isn't ours to recompile — left as a future mini-spike.
 
 ## Pitfalls checklist
 
@@ -147,7 +164,10 @@ trace left no residue.
   returning `ok` — check `state-valid @ .`, or just try `go`.
 - **`DPRINTF` → `printk` → VGA** on x86 is invisible on serial; swap to
   `forth_printf` to see the disk-label trace (revert after — it's a debug build).
-- **FAT is not compiled in** (`CONFIG_FSYS_FAT=false`); ext2 and iso9660 are.
+- **FAT is off in the stock config** (`CONFIG_FSYS_FAT=false`); ext2 and iso9660
+  are on. `build-firmware-x86.sh` now flips FAT on — but a FAT image on a
+  *stock-config* firmware still fails silently, so the `disk-fat` smoke hints at
+  the rebuild when it can't reach the marker.
 - **Classic ext2 only**: `-b 1024 -I 128` and strip `resize_inode`/`dir_index`/
   `ext_attr`, or the fs mounts but every lookup says `File not found`.
 - **Backslash path** in the `$load` arg; a leading `/` is eaten by the device-path

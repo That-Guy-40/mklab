@@ -225,10 +225,23 @@ PASS: revived OpenBIOS-x86 loaded our C client 'emacs' from an ext2 hard disk an
 
 Interactive by hand: `./run-client-qemu.sh x86 emacs disk`
 (`" /ide@0/disk@0:\emacs" $load` then `go`). Three gotchas make this work — **ext2
-not FAT** (grubfs here has no FAT driver), a **classic-ext2 layout** (modern
+not FAT** (grubfs ships with no FAT driver), a **classic-ext2 layout** (modern
 `mke2fs` defaults break the GRUB-0.97 driver), and a **backslash path** (a forward
 slash is eaten by the device-path parser). Full story: [POC-7](POC-7-DISK-BOOT.md).
 `disk` on **ppc** SKIPs — mac99's device tree differs and is left as a future spike.
+
+**FAT too (`disk-fat`) — needs the FAT-enabled firmware.** `build-firmware-x86.sh`
+now flips `CONFIG_FSYS_FAT=true`; after that rebuild, a FAT disk loads like ext2:
+
+```console
+$ ./build-firmware-x86.sh              # (enables FAT, then)
+$ ./smoke-client.sh x86 hello disk-fat
+PASS: revived OpenBIOS-x86 loaded our C client 'hello' from a FAT hard disk and it answered Hello world! over the IEEE 1275 client interface
+```
+
+On a *stock-config* firmware a FAT image fails **silently** (`state-valid` stays
+`0`, no error) — so `disk-fat`'s failure line hints at the rebuild. ext2 needs no
+rebuild; FAT does.
 
 The x86 success signature at the prompt, driven by hand:
 
