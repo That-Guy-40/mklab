@@ -28,7 +28,7 @@ SELinux relabel and all.
 | **OLD password rejected** | `Login incorrect` for `S0meForgottenPass` | ✅ verified |
 | **NEW password works** | `root@…# id`→`uid=0(root)` for `toor` | ✅ verified |
 | GRUB **command-line** (`c`) variant | same chain, deterministic | ✅ verified |
-| Debian **UEFI/OVMF** firmware path | reach GRUB menu over serial under OVMF | ⏳ author-run |
+| Debian **UEFI/OVMF** firmware path | GRUB menu reached over serial under OVMF; full `init=/bin/bash` reset + old-rejected/new-`uid=0` | ✅ **verified** ([below](#debian-uefiovmf--verified-end-to-end)) |
 | **Rocky** `rd.break` + `/.autorelabel` on real Rocky 9 | dracut `switch_root:/#`; relabel runs; old pw `Login incorrect`, new pw `uid=0(root)` (correct SELinux context) | ✅ **verified** ([below](#rocky-rdbreak--verified-end-to-end-on-a-kickstart-installed-rocky-9)) |
 | **AlmaLinux** `rd.break` + `/.autorelabel` on real AlmaLinux 9 | same chain as Rocky (AlmaLinux 9 ≡ Rocky 9, RHEL 9 rebuild); old pw `Login incorrect`, new pw `uid=0(root)` | ✅ **verified** ([below](#almalinux-rdbreak--verified-end-to-end-on-a-kickstart-installed-almalinux-9)) |
 | **Kali** prebuilt QEMU image on serial | boot-loops at GRUB — no video device | ❌ **tested → not serial-bootable** ([below](#kali-prebuilt-image--tested-not-serial-bootable)) |
@@ -77,6 +77,46 @@ uid=0(root) gid=0(root) groups=0(root) ← ✓ reset confirmed
 **PASS** — the full chain. The GRUB **command-line** variant (`c` → `search` /
 `linux … init=/bin/bash` / `initrd` / `boot`) reaches the same `root@(none):/#`
 and the same verified login outcome.
+
+---
+
+## Debian UEFI/OVMF — verified end-to-end
+
+The firmware pair's claim — *the reset is firmware-agnostic; only reaching the
+menu differs* — verified on this host (KVM), 2026-07-23, driving
+[`debian-uefi.toml`](debian-uefi.toml) (`firmware = "uefi"` → OVMF/edk2). Same
+`create` → `prestage.sh` → serial-drive as BIOS; the only change is the firmware.
+
+```console
+$ phase2-qemu-vm/lab-vm.sh create --config examples/root-password-reset/debian-uefi.toml
+$ phase2-qemu-vm/lab-vm.sh start  rpr-debian-uefi
+$ phase2-qemu-vm/lab-vm.sh ssh    rpr-debian-uefi -- 'ls -d /sys/firmware/efi'   # UEFI confirmed
+/sys/firmware/efi
+$ phase2-qemu-vm/lab-vm.sh ssh    rpr-debian-uefi -- 'sudo bash -s' < examples/root-password-reset/setup/prestage.sh
+# then serial-drive the GRUB command-line reset (same DSL as reset-demo.sh, root=/dev/vda1)
+```
+
+The transcript proves it was **genuine UEFI**, that GRUB surfaced on the serial
+console under OVMF, and that the full reset landed:
+
+```
+BdsDxe: loading Boot0001 "UEFI Misc Device" from PciRoot(0x0)/Pci(0x1,0x0)   ← OVMF boot manager
+[    0.000000] efi: EFI v2.70 by Ubuntu distribution of EDK II               ← genuine UEFI, not SeaBIOS
+Welcome to GRUB!                                                             ← GRUB menu, over serial, under OVMF
+[    0.000000] Command line: … root=/dev/vda1 rw init=/bin/bash …            ← the edit took
+PID-IS-1                                                                     ← init=/bin/bash IS PID 1
+CMDLINE-INITBASH-OK
+CHPW-RC-0                                                                    ← chpasswd succeeded
+Login incorrect                                                             ← OLD password S0meForgottenPass rejected
+uid=0(root) gid=0(root) groups=0(root)                                      ← NEW password 'toor' → root
+```
+
+Every step was EXPECT-confirmed live by `serial-drive.py` (rc=0). This is the
+same `init=/bin/bash` chain already verified on BIOS — the point of the run was to
+prove OVMF surfaces the GRUB menu on serial and nothing about the reset changes.
+The one firmware-specific note: OVMF shows its own **BdsDxe** boot-manager phase
+before GRUB (SeaBIOS hands straight to GRUB), which is why the first `EXPECT` is
+given a generous window.
 
 ---
 

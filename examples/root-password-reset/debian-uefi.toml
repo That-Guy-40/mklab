@@ -14,9 +14,11 @@
 #   phase2-qemu-vm/lab-vm.sh ssh rpr-debian-uefi -- 'sudo bash -s' < examples/root-password-reset/setup/prestage.sh
 #   # then RUNBOOK-init-shell.md (reboot → interrupt GRUB → init=/bin/bash → passwd).
 #
-# STATUS: author-run.  The init=/bin/bash reset itself is VERIFIED on the BIOS
-# twin (see MANUAL_TESTING.md); what differs here is only the firmware path to the
-# GRUB menu over serial — confirm OVMF surfaces the menu on the serial console.
+# STATUS: ✅ VERIFIED end-to-end on this host (KVM, 2026-07-23).  OVMF surfaces the
+# GRUB menu on the serial console (after its own BdsDxe boot-manager phase); the
+# full init=/bin/bash reset then runs identically to the BIOS twin — old password
+# rejected, new password uid=0(root).  Evidence (BdsDxe / EDK II banner, GRUB over
+# serial, the reset): MANUAL_TESTING.md → "Debian UEFI/OVMF — verified end-to-end".
 
 [[vm]]
 name     = "rpr-debian-uefi"

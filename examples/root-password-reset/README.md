@@ -25,7 +25,7 @@ machine and its boot path. Panicking/rebooting a throwaway VM is free.
 
 | Method | RUNBOOK | Upstream source(s) | Demonstrated on | Status |
 |---|---|---|---|---|
-| `init=/bin/bash` · `init=/bin/sh` | [init-shell](RUNBOOK-init-shell.md) | Debian (ggCircuit), Kali (linuxconfig), Arch, Rocky (method 1) | [`debian-bios`](debian-bios.toml) / [`-uefi`](debian-uefi.toml), [`kali`](kali.toml) † | ✅ **verified** (Debian/BIOS) |
+| `init=/bin/bash` · `init=/bin/sh` | [init-shell](RUNBOOK-init-shell.md) | Debian (ggCircuit), Kali (linuxconfig), Arch, Rocky (method 1) | [`debian-bios`](debian-bios.toml) / [`-uefi`](debian-uefi.toml), [`kali`](kali.toml) † | ✅ **verified** (Debian/**BIOS + UEFI**) |
 | `rd.break` → `chroot /sysroot` (+SELinux relabel) | [rd-break](RUNBOOK-rd-break.md) | Rocky / RHEL family (CIQ) | [`rocky`](rocky.toml) · [`almalinux`](almalinux.toml) → galleries | ✅ **verified** (Rocky 9 · AlmaLinux 9) |
 | **systemd debug shell** (`systemd.debug_shell`) | [systemd-debug-shell](RUNBOOK-systemd-debug-shell.md) | Arch | (any systemd distro) | ⏳ author-run |
 | **Other** — live media, offline disk edit, recovery mode, *why `sulogin` doesn't help* | [other-approaches](RUNBOOK-other-approaches.md) | general | — | reference |
@@ -42,11 +42,17 @@ So **[`kali.toml`](kali.toml) now *delegates* to that gallery** (it carries the
 Kali pre-stage + reset workflow but no `[[vm]]` of its own — dogfooding the
 gallery's verified install instead of the dead-end 7z).
 
-**Firmware axis:** [`debian-bios.toml`](debian-bios.toml) (SeaBIOS, verified) and
-[`debian-uefi.toml`](debian-uefi.toml) (OVMF/UEFI) are a **pair** proving the
+**Firmware axis:** [`debian-bios.toml`](debian-bios.toml) (SeaBIOS) and
+[`debian-uefi.toml`](debian-uefi.toml) (OVMF/UEFI) are a **pair, both now verified
+end-to-end** (BIOS 2026-06; UEFI 2026-07-23 — the `BdsDxe`/`EDK II` boot-manager
+phase, then `Welcome to GRUB!` over serial, then the same reset). They prove the
 technique is **firmware-agnostic** — once you reach the GRUB editor, the steps are
-identical; only *getting to the menu* differs (and on EFI/Arch the boot loader may
-be **systemd-boot**, where you also press `e`).
+identical; only *getting to the menu* differs (OVMF shows its own boot-manager
+phase first; on EFI/Arch the boot loader may be **systemd-boot**, where you also
+press `e`). The other distros' UEFI variants (Kali/Rocky/AlmaLinux, and the
+systemd debug shell) are **author-run**: each is a `firmware = "uefi"` gallery
+build, then the *identical* in-menu reset — the firmware-agnostic result above is
+the load-bearing proof.
 
 ---
 

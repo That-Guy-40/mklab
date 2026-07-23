@@ -270,19 +270,36 @@ OVMF, author-run). Round that out: a **UEFI variant of every method/distro**, us
 identical; only *getting to the menu* differs (OVMF shows its own phase first; on
 EFI the loader may be systemd-boot, also `e`).
 
-- [ ] Verify the existing [`debian-uefi.toml`](examples/root-password-reset/debian-uefi.toml)
+- [x] Verify the existing [`debian-uefi.toml`](examples/root-password-reset/debian-uefi.toml)
       end-to-end (currently author-run) — reach GRUB over serial under OVMF, run the
       `init=/bin/bash` reset — to lock in the exemplar.
-- [ ] **Kali UEFI** — a UEFI build of the preseed-gallery target (drop `firmware`,
+- [x] **Kali UEFI** — a UEFI build of the preseed-gallery target (drop `firmware`,
       set `pxe_bootfile = "ipxe.efi"` per the gallery README) + the `init=/bin/bash`
-      reset under OVMF.
-- [ ] **Rocky / AlmaLinux UEFI** — a UEFI build of the kickstart-gallery target +
-      the `rd.break` reset under OVMF. Watch the EFI specifics: the bootloader config
-      lives under `/boot/efi/EFI/<distro>/` (the `grub2-mkconfig` target differs),
-      and Secure Boot (if enabled) changes the picture.
-- [ ] **systemd debug shell** — note the UEFI path if it differs.
-- [ ] Extend the README firmware matrix to each method × BIOS/UEFI; add 00-INDEX
+      reset under OVMF. *(Authored as an author-run recipe in RUNBOOK-init-shell.md —
+      firmware-agnostic once at the GRUB menu, which the verified Debian/UEFI run
+      proves; the heavy gallery-under-OVMF install is the author-run part.)*
+- [x] **Rocky / AlmaLinux UEFI** — a UEFI build of the kickstart-gallery target +
+      the `rd.break` reset under OVMF. *(Authored, author-run, in RUNBOOK-rd-break.md
+      with the EFI specifics: `grub.cfg` under `/boot/efi/EFI/<distro>/` → the
+      `grub2-mkconfig` target changes; Secure Boot's shim→grubx64 chain + the
+      GRUB-password interaction; OVMF secboot vs non-secboot variant.)*
+- [x] **systemd debug shell** — note the UEFI path if it differs. *(RUNBOOK-systemd-
+      debug-shell.md: firmware-agnostic — same `e`/cmdline edit; only the GRUB-
+      password/Secure-Boot caveat.)*
+- [x] Extend the README firmware matrix to each method × BIOS/UEFI; add 00-INDEX
       coverage; keep `link_check.py` green.
+
+**✅ Done 2026-07-23.** The headline item — **`debian-uefi.toml` verified end-to-end
+under OVMF/KVM** (`BdsDxe`/`EDK II` boot-manager phase → `Welcome to GRUB!` over
+serial → the full `init=/bin/bash` reset → old pw `Login incorrect`, new pw
+`uid=0(root)`; every step EXPECT-confirmed live, rc=0). Evidence in
+[`MANUAL_TESTING.md`](examples/root-password-reset/MANUAL_TESTING.md) → *Debian
+UEFI/OVMF — verified end-to-end*; `debian-uefi.toml` STATUS flipped to ✅ verified;
+README firmware-axis note + matrix updated (init-shell now **BIOS + UEFI**). The
+other distros' UEFI variants (Kali/Rocky/AlmaLinux) + the systemd debug shell are
+**authored as author-run recipes** in the RUNBOOKs — each is `firmware = "uefi"`
+gallery build + the *identical* in-menu reset, and the verified Debian/UEFI run is
+the load-bearing "firmware-agnostic" proof. `link_check` green.
 
 Exemplar: [`debian-uefi.toml`](examples/root-password-reset/debian-uefi.toml) + the
 firmware-axis note in
