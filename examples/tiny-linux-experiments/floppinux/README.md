@@ -25,6 +25,7 @@ script, same `qemu-system-i386 -fda` payload.
 | [`ARTIFACTS.md`](ARTIFACTS.md) | Guided tour of every build artifact and **how they connect** — the data-flow graph, producer→consumer table, and read-only commands to peek inside each piece. Start here to *understand* the build. |
 | [`MANUAL_TESTING.md`](MANUAL_TESTING.md) | Pass/fail runbook: test each stage and the end-to-end boot, with the **real expected output** captured from a verified run. Start here to *verify* it works. |
 | [`QUALITY_OF_LIFE.md`](QUALITY_OF_LIFE.md) | Hands-on: add the niceties a normal shell/distro has (PATH+`/sbin`, prompt, aliases, history, job control, names) **live while logged in**, each with a validation — then bake them in with `QOL=1`. |
+| [`HASH_CRACKING.md`](HASH_CRACKING.md) | Security exercise on our **own** `LOGIN=1` hash: recover `lab` from `$1$floppinx$…` (dictionary + brute), and the **why** — MD5-crypt is fast, what the salt does/doesn't do, and why real hosts use `$6$`/bcrypt/Argon2. Reproducer: [`crack.py`](crack.py) (no install). |
 | [`floppinux-2.88mb/`](floppinux-2.88mb/) | The 2.88 MB extended-density variant (the `FLOPPY_KB=2880` knob) — a `build-2.88.sh` wrapper + differential README/MANUAL_TESTING. ~1.7 MiB free, still boots in QEMU. |
 | [`upstream-tutorial/`](upstream-tutorial/) | An exact, unmodified offline archive of Krzysztof Jankowski's original tutorial (HTML + CSS), with provenance/attribution and sha256s. Copyright remains the author's. |
 | [`hand-walk/`](hand-walk/) | An **Arch** container (the author's distro) for walking the tutorial *by hand*, command by command, instead of running `build-floppinux.sh`. The musl.cc toolchain fetch and the `mknod`/loop-mount floppy step run on your host (`--privileged`); the build environment itself is verified. The learning counterpart to the script. |
@@ -182,6 +183,13 @@ system drops **straight to a root shell with no password**, and there is **no
 networking** in the build at all. That's perfectly fine for a floppy you boot in
 QEMU or on an air-gapped retro box — but it is not, and is not meant to be, a
 hardened system. Don't put secrets on the floppy's `/data`.
+
+The `LOGIN=1` account's `$1$` (MD5-crypt) password is deliberately trivial, and
+[`HASH_CRACKING.md`](HASH_CRACKING.md) shows *exactly* how trivial — recovering
+`lab` from the shipped hash in milliseconds, with the *why* (MD5-crypt is fast;
+what the salt does and doesn't buy you; what to use on a networked host). A
+published throwaway credential is fine for an air-gapped floppy — and is the very
+thing you never ship on a real network.
 
 ## What actually ships (the applet set)
 
