@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # run-client-qemu.sh [ppc|x86] [program] [cd|disk|disk-fat] — boot the firmware
 # with a client medium and drop you at the prompt to run it by hand. program
-# defaults to "hello"; the 3rd arg (x86 only) picks the medium — "cd" (default),
-# "disk" (ext2), or "disk-fat" (needs the FAT-enabled firmware rebuild).
+# defaults to "hello"; the 3rd arg picks the medium — "cd" (default), "disk"
+# (ext2), or "disk-fat" (x86 only; needs the FAT-enabled firmware rebuild).
 #
 #   ppc: stock qemu-system-ppc (its OpenBIOS already wires the client
 #        interface). At the 0 > prompt, type:   boot cd:\HELLO.;1
 #        (uppercase name, the ".;1" ISO9660 version suffix is required.)
+#        With `disk`: an ext2 hard disk read by the stock blob's native ext2
+#        driver (POC-7) — type instead:   boot hd:\hello   (backslash, NO comma).
 #        Quit QEMU with Ctrl-A X.
 #   x86: needs the revived firmware (Phase 3 / POC-4 — build it once with
 #        ./build-firmware-x86.sh). No `boot cd:` shortcut for a client; at the
@@ -28,6 +30,14 @@ MEDIA="${3:-cd}"
 
 case "$FLAVOR" in
   ppc)
+    if [[ "$MEDIA" == disk ]]; then
+        # ext2 hard disk on the STOCK qemu-system-ppc (its native ext2 reader —
+        # no firmware build). Load with `boot hd:\<prog>` (backslash, NO comma).
+        ( cd "$HERE" && ./stage-disk.sh "$PROG" ext2 ppc ) >/dev/null || exit 1
+        IMG="$WORKDIR/$PROG-ppc.ext2.img"
+        echo "==> at the 0 > prompt, type:   boot hd:\\$PROG     (backslash, NO comma; Ctrl-A X quits)"
+        exec qemu-system-ppc -M mac99 -m 256 -drive "file=$IMG,format=raw" -nographic -vga none
+    fi
     CLIENT="$WORKDIR/$PROG-ppc"
     [[ -f "$CLIENT" ]] || { echo "build it first: ./build-client.sh ppc $PROG"; exit 1; }
     ISO="$WORKDIR/$PROG-ppc.iso"; STAGE="$WORKDIR/.isoroot-ppc"

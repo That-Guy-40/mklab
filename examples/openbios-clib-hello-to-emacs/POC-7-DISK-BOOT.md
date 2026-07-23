@@ -1,12 +1,14 @@
-# POC-7 — loading a client from a hard disk, not a CD (x86)
+# POC-7 — loading a client from a hard disk, not a CD (x86 + ppc)
 
 **Goal:** prove the client `load` path is *device- and filesystem-agnostic* —
 that the same C client that boots off an ISO9660 CD also boots off a **hard
 disk**, exercising OpenBIOS's disk-label + filesystem plumbing directly.
-**Result: DONE and green.** Both `hello` and `emacs` load from an **ext2 hard
-disk** at `/ide@0/disk@0` and run on the revived OpenBIOS-x86 — no CD, no
-firmware change, no sudo. `smoke-client.sh x86 {hello,emacs} disk` are two new
-green verdicts.
+**Result: DONE and green on BOTH arches.** `hello` and `emacs` load from an
+**ext2 hard disk** — at `/ide@0/disk@0` on the revived OpenBIOS-x86 (`$load`+`go`),
+and via `boot hd:\<prog>` on the **stock** qemu-system-ppc (its *native* ext2
+reader, no firmware build at all). Also **FAT** on x86 once its firmware enables
+it. No CD, no sudo. New green verdicts: `smoke-client.sh {x86,ppc} {hello,emacs}
+disk` and `smoke-client.sh x86 {hello,emacs} disk-fat`.
 
 ## The thinking
 
@@ -152,10 +154,40 @@ trace left no residue.
   filesystem, and the QEMU media flag (`-hda` vs `-cdrom`) differ. All end at the
   same `$load`+`go`. `disk-fat` adds a hint to its failure line pointing at the
   firmware rebuild (the #1 silent-failure trap).
-- **`run-client-qemu.sh x86 <prog> {disk|disk-fat}`** — the same, interactively.
-- **ppc `disk`/`disk-fat` SKIP** with a pointer: mac99's tree is different
-  (`/pci/mac-io/ata-…/disk@N`, `boot hd:…`) and its stock blob's filesystem set
-  isn't ours to recompile — left as a future mini-spike.
+- **`run-client-qemu.sh {x86,ppc} <prog> disk`** (and x86 `disk-fat`) — the same,
+  interactively.
+- **ppc `disk` works on the STOCK blob** (see the ppc section below); `disk-fat`
+  SKIPs on ppc (no FAT reader there).
+
+## ppc — a disk that "just works," for a different reason
+
+The **stock** `qemu-system-ppc` — which this lab never rebuilds — loads a client
+off an ext2 disk with **no firmware work at all**. That sounds like it
+contradicts x86, until you look at *why*, and the contrast is the lesson:
+
+- **ppc's grubfs is empty** (`ppc_config.xml` sets every `CONFIG_FSYS_*` to
+  false, even ISO9660) — but ppc has a **separate, native ext2 reader**
+  (`CONFIG_EXT2=true`, `fs/ext2/`) plus native HFS/HFS+/ISO9660 and *both* Apple
+  (`MAC_PARTS`) and MBR (`PC_PARTS`) partition maps. So the CD never went through
+  grubfs either; ppc has always used native readers.
+- The load verb is **`boot`**, not `$load`+`go`: `boot hd:\hello` loads *and*
+  enters in one step (`hd` is a devalias the firmware already auto-probes for
+  `\\:tbxi` / `\ppc\bootinfo.txt` at power-on).
+- **A plain ext2 superfloppy is enough** — no Apple partition map, no HFS
+  tooling. disk-label's missing-partition-map fallback hands the whole disk to
+  the native ext2 reader, exactly as on x86.
+
+The **ppc gotcha** (cost one failed boot): the path is `boot hd:\hello` —
+**backslash, and NO comma.** `boot hd:,\hello` (the `partition,path` form the
+firmware itself uses for `hd:,\ppc\bootinfo.txt`) returns *"No valid state"* on a
+superfloppy, because the empty partition field selects a partition that isn't
+there. Drop the comma and the whole-disk fallback runs.
+
+So the disk-boot story is symmetric in outcome (same clients, off a disk, both
+arches) but asymmetric in machinery: **x86 needed a whole firmware revival and a
+`CONFIG_FSYS_*` flip; ppc needed nothing but the right path string** — because on
+ppc the client-from-disk path is the OS boot ABI that never rotted, the same
+reason ppc needed no revival back in POC-2.
 
 ## Pitfalls checklist
 
@@ -172,5 +204,9 @@ trace left no residue.
   `ext_attr`, or the fs mounts but every lookup says `File not found`.
 - **Backslash path** in the `$load` arg; a leading `/` is eaten by the device-path
   parser.
+- **ppc: `boot hd:\name`, backslash and NO comma.** `boot hd:,\name` fails on a
+  superfloppy (the empty partition field selects a nonexistent partition).
+- **ppc uses native readers, not grubfs** — its grubfs is compiled empty; ext2
+  works via `CONFIG_EXT2` (`fs/ext2/`), no firmware build needed.
 - **Stage sudo-free** with `debugfs -w -R "write <file> <name>"` — no mount, no
   root, exactly the house constraint.

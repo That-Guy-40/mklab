@@ -108,6 +108,25 @@ the firmware `read` service, every glyph out through `write`. Try it by hand:
 `./run-client-qemu.sh ppc edit`, type, Ctrl-X to save. See
 [POC-5](POC-5-EDITOR.md).
 
+### ppc from a hard disk (POC-7)
+
+The stock `qemu-system-ppc` also loads a client off an **ext2 hard disk** — its
+*native* ext2 reader (no firmware build), via `boot hd:\<prog>`:
+
+```console
+$ ./smoke-client.sh ppc hello disk
+  - booting stock qemu-system-ppc + our hello on an ext2 hard disk, driving 'boot hd:\hello' → …
+PASS: OpenBIOS-ppc loaded our C client 'hello' from an ext2 hard disk and it answered Hello world! over the IEEE 1275 client interface
+
+$ ./smoke-client.sh ppc emacs disk        # the editor too, off the disk
+PASS: OpenBIOS-ppc loaded our C client 'emacs' from an ext2 hard disk …
+```
+
+By hand: `./run-client-qemu.sh ppc hello disk`, then `boot hd:\hello`. The
+gotcha: **backslash, NO comma** — `boot hd:,\hello` returns "No valid state" on a
+superfloppy. ppc `disk-fat` SKIPs (ppc has no FAT reader). Full story:
+[POC-7](POC-7-DISK-BOOT.md).
+
 ### emacs (rung 4 — the finale, MULTI-line)
 
 ```console
