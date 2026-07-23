@@ -2,9 +2,10 @@
 # smoke-client.sh [ppc|x86] [program] [cd|disk|disk-fat] — one verdict that the
 # OpenBIOS client interface runs our C client. program defaults to "hello" (see
 # clib/*.c for the ladder: hello, memtest, edit, …). The 3rd arg picks the boot
-# medium (x86 only): "cd" (default, ISO9660 on /ide@1/cdrom@0), "disk" (an ext2
-# hard disk on /ide@0/disk@0 — works as shipped), or "disk-fat" (a FAT disk —
-# needs the FAT-enabled firmware rebuild). All POC-7. ppc is the track that
+# medium: "cd" (default, ISO9660), "disk" (an ext2 hard disk — x86 /ide@0/disk@0,
+# ppc `boot hd:\`), or "disk-fat" (x86 only, a FAT disk needing the FAT-enabled
+# firmware rebuild). All POC-7. ppc `disk` uses the STOCK blob's native ext2
+# reader (no build). ppc is the track that
 # STOCK qemu-system-ppc firmware already wires the client interface, so our
 # cross-compiled client is loaded from a CD, entered via `boot`, and driven over
 # the console — every line a firmware read/write service call.
@@ -20,8 +21,8 @@ REPO="$(cd "$HERE/../.." && pwd)"
 WORKDIR="${OPENBIOS_CLIENTS_WORKDIR:-$HOME/openbios-clients-lab}"
 FLAVOR="${1:-ppc}"
 PROG="${2:-hello}"
-MEDIA="${3:-cd}"          # cd (default) | disk (ext2) | disk-fat — x86 can load a
-                          # client from a hard disk, not just a CD (POC-7); ppc is CD-only here.
+MEDIA="${3:-cd}"          # cd (default) | disk (ext2) | disk-fat (x86 only) —
+                          # load a client from a hard disk, not just a CD (POC-7).
 
 pass() { echo "PASS: $*"; exit 0; }
 fail() { echo "FAIL: $*"; exit 1; }
@@ -33,30 +34,48 @@ trap 'rc=$?; [[ $rc -eq 0 || $rc -eq 1 || $rc -eq 77 ]] || echo "FAIL: test exit
 
 case "$FLAVOR" in
   ppc)
-    [[ "$MEDIA" == cd ]] || skip "ppc disk boot is untested (mac99's device tree differs: /pci/mac-io/ata-.../disk@N, boot hd:…) — only x86 disk is wired up (POC-7)"
+    case "$MEDIA" in
+      cd)   command -v genisoimage >/dev/null || skip "genisoimage not installed" ;;
+      disk) if ! command -v mke2fs >/dev/null || ! command -v debugfs >/dev/null; then
+                skip "mke2fs/debugfs (e2fsprogs) not installed — needed to stage the ext2 disk"; fi ;;
+      disk-fat) skip "ppc has no FAT reader (its grubfs is empty; native readers are ext2/hfs/iso9660) — use 'disk' (ext2)" ;;
+      *)    fail "unknown media '$MEDIA' (want cd|disk)" ;;
+    esac
     command -v python3          >/dev/null || skip "python3 not installed"
     command -v qemu-system-ppc  >/dev/null || skip "qemu-system-ppc not installed"
-    command -v genisoimage      >/dev/null || skip "genisoimage not installed"
     [[ -f "$HERE/clib/$PROG.c" ]] || skip "no such client program: clib/$PROG.c"
 
-    CLIENT="$WORKDIR/$PROG-ppc"
-    if [[ ! -f "$CLIENT" ]]; then
-        note "no $CLIENT yet — building it"
-        ( cd "$HERE" && ./build-client.sh ppc "$PROG" ) >/dev/null 2>&1 \
-            || skip "could not build $PROG-ppc (need podman + the client build box)"
+    if [[ "$MEDIA" == disk ]]; then
+        # ext2 hard disk — the STOCK qemu-system-ppc reads it via its NATIVE ext2
+        # reader (CONFIG_EXT2, no firmware build); disk-label's whole-disk fallback
+        # finds the superfloppy fs. Load with `boot hd:\<prog>` — the `hd` devalias,
+        # BACKSLASH, and NO comma (the `hd:,\name` partition form fails). POC-7.
+        IMG="$WORKDIR/$PROG-ppc.ext2.img"
+        ( cd "$HERE" && ./stage-disk.sh "$PROG" ext2 ppc ) >/dev/null 2>&1 \
+            || skip "could not stage $PROG on an ext2 disk (need podman + e2fsprogs)"
+        [[ -f "$IMG" ]] || fail "$PROG ppc ext2 disk missing after staging"
+        BOOT="boot hd:\\\\$PROG\r"
+        MEDIA_ARGS=(-drive "file=$IMG,format=raw"); MEDIUM="an ext2 hard disk"
+    else
+        CLIENT="$WORKDIR/$PROG-ppc"
+        if [[ ! -f "$CLIENT" ]]; then
+            note "no $CLIENT yet — building it"
+            ( cd "$HERE" && ./build-client.sh ppc "$PROG" ) >/dev/null 2>&1 \
+                || skip "could not build $PROG-ppc (need podman + the client build box)"
+        fi
+        [[ -f "$CLIENT" ]] || fail "$PROG-ppc missing after build"
+        # Plain ISO9660 (NO RockRidge — it crashes OpenBIOS's dir); the ".;1"
+        # version suffix on the name is mandatory at the prompt.
+        NAME="$(echo "$PROG" | tr '[:lower:]' '[:upper:]')"
+        ISO="$WORKDIR/$PROG-ppc.iso"; STAGE="$WORKDIR/.isoroot-$PROG"
+        rm -rf "$STAGE" "$ISO"; mkdir -p "$STAGE"; cp "$CLIENT" "$STAGE/$NAME"
+        genisoimage -quiet -o "$ISO" -V CLIENT "$STAGE" || fail "genisoimage failed"
+        BOOT="boot cd:\\\\$NAME.;1\r"
+        MEDIA_ARGS=(-cdrom "$ISO"); MEDIUM="an ISO9660 CD"
     fi
-    [[ -f "$CLIENT" ]] || fail "$PROG-ppc missing after build"
-
-    # Plain ISO9660 (NO RockRidge — it crashes OpenBIOS's dir); the ".;1"
-    # version suffix on the name is mandatory at the prompt.
-    NAME="$(echo "$PROG" | tr '[:lower:]' '[:upper:]')"
-    ISO="$WORKDIR/$PROG-ppc.iso"; STAGE="$WORKDIR/.isoroot-$PROG"
-    rm -rf "$STAGE" "$ISO"; mkdir -p "$STAGE"; cp "$CLIENT" "$STAGE/$NAME"
-    genisoimage -quiet -o "$ISO" -V CLIENT "$STAGE" || fail "genisoimage failed"
 
     # Per-program: the success MARKER, the human phrase, a timeout, and the drive
     # steps between `boot` and the marker (interactive programs type keystrokes).
-    BOOT="boot cd:\\\\$NAME.;1\r"
     case "$PROG" in
       hello)
         MARKER="Hello world!";  WHAT="answered Hello world!"; TMO=90
@@ -86,12 +105,12 @@ case "$FLAVOR" in
         STEPS=(--send "$BOOT" --expect "$MARKER") ;;
     esac
 
-    LOG="$WORKDIR/smoke-client-ppc-$PROG.log"; rm -f "$LOG"
-    note "booting stock qemu-system-ppc + our $PROG CD, driving boot cd:\\$NAME.;1 → $LOG"
+    LOG="$WORKDIR/smoke-client-ppc-$PROG-$MEDIA.log"; rm -f "$LOG"
+    note "booting stock qemu-system-ppc + our $PROG on $MEDIUM, driving '${BOOT%\\r}' → $LOG"
     # ppc console input needs a real terminal, not a socket → the pty driver.
     python3 "$REPO/tools/drive-pty-repl.py" "$LOG" --timeout "$TMO" \
         --expect "0 > " "${STEPS[@]}" \
-        -- qemu-system-ppc -M mac99 -m 256 -cdrom "$ISO" -nographic -vga none
+        -- qemu-system-ppc -M mac99 -m 256 "${MEDIA_ARGS[@]}" -nographic -vga none
     RC=$?
     # A program that entered but reported its OWN failure (e.g. memtest: FAIL)
     # is a real, specific defect — surface it, don't just time out.
@@ -106,7 +125,7 @@ case "$FLAVOR" in
         grep -aqE '^\| MEOW[[:space:]]*$' "$LOG" || fail "REGRESSION: emacs buffer dump has no bare '| MEOW' line — the Enter line-split did not land (see $LOG)"
         grep -aq '| PURR'   "$LOG" || fail "REGRESSION: emacs buffer dump has no 'PURR' — typing on the split-off second line did not land (see $LOG)"
     fi
-    pass "OpenBIOS-ppc loaded our C client '$PROG' and it $WHAT over the IEEE 1275 client interface" ;;
+    pass "OpenBIOS-ppc loaded our C client '$PROG' from $MEDIUM and it $WHAT over the IEEE 1275 client interface" ;;
 
   x86)
     command -v python3             >/dev/null || skip "python3 not installed"
@@ -146,7 +165,7 @@ case "$FLAVOR" in
         # firmware as shipped; FAT needs the FAT-enabled rebuild (POC-7).
         FS=ext2; [[ "$MEDIA" == disk-fat ]] && FS=fat
         IMG="$WORKDIR/$PROG-x86.$FS.img"
-        ( cd "$HERE" && ./stage-disk.sh "$PROG" "$FS" ) >/dev/null 2>&1 \
+        ( cd "$HERE" && ./stage-disk.sh "$PROG" "$FS" x86 ) >/dev/null 2>&1 \
             || skip "could not stage $PROG on a $FS disk (need podman + the staging tools)"
         [[ -f "$IMG" ]] || fail "$PROG $FS disk missing after staging"
         if [[ "$FS" == ext2 ]]; then MEDIUM="an ext2 hard disk"; else MEDIUM="a FAT hard disk"; fi

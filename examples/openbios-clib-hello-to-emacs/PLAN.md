@@ -102,17 +102,19 @@ because a client is a more general thing than a kernel.
     the MicroEMACS core, **not** a line-for-line port of Lawrence's OS-coupled
     uEmacs (termios/files/signals/termcap have no meaning in a no-OS client).
 
-- **Extension — load a client from a hard disk, not a CD. ✅ DONE (green, x86).
-  POC-7.** The `load` path is medium-agnostic; the same `hello`/`emacs` boot off
-  a hard disk at `/ide@0/disk@0` — **ext2** on the firmware as shipped
-  (`smoke-client.sh x86 <prog> disk`) and **FAT** after `build-firmware-x86.sh`
-  flips `CONFIG_FSYS_FAT=true` (`… <prog> disk-fat`). Helpers: `stage-disk.sh
-  <prog> [ext2|fat]`, `run-client-qemu.sh … [disk|disk-fat]`. Three museum
-  gotchas: **FAT off in the stock config** (a FAT image fails *silently* until
-  the rebuild), modern `mke2fs` defaults break the **GRUB-0.97 ext2 driver**
-  (needs `-b 1024 -I 128` + a stripped feature set), and the `$load` arg needs a
-  **backslash** path (a `/` is eaten by the device-path parser). ppc disk is a
-  future spike (its stock blob's fs set isn't ours to recompile).
+- **Extension — load a client from a hard disk, not a CD. ✅ DONE (green, BOTH
+  arches). POC-7.** The `load` path is medium-agnostic; the same `hello`/`emacs`
+  boot off an ext2 hard disk on both arches — **x86** at `/ide@0/disk@0`
+  (`$load`+`go`; `disk` = ext2 as shipped, `disk-fat` = FAT after
+  `build-firmware-x86.sh` flips `CONFIG_FSYS_FAT`), and **ppc** via `boot
+  hd:\<prog>` on the **stock** blob's *native* ext2 reader (`CONFIG_EXT2`, no
+  build). Helpers: `stage-disk.sh <prog> [ext2|fat] [x86|ppc]`,
+  `run-client-qemu.sh {x86,ppc} <prog> disk`. Museum gotchas: **x86 FAT off in
+  the stock config** (silent fail until the rebuild), modern `mke2fs` breaks the
+  **GRUB-0.97 ext2 driver** (needs `-b 1024 -I 128` + stripped features), the x86
+  `$load` arg needs a **backslash** path (a `/` is eaten), and **ppc wants `boot
+  hd:\name` with NO comma** (`hd:,\name` fails). The x86/ppc split rhymes with
+  POC-2: x86 needed a revival, ppc needed nothing but the right path string.
   [POC-7](POC-7-DISK-BOOT.md).
 
 ## Justified deviations
