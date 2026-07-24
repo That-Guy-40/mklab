@@ -14,6 +14,8 @@
 #   $6  ipxe_ref     git branch/tag/SHA  e.g. master
 #   $7  tls_mode     "1" to compile with HTTPS support (DOWNLOAD_PROTO_HTTPS)
 #   $8  cert_path    DER cert to embed in trust store (empty = none)
+#   $9  imgverify    "1" to enable imgverify + emit a verify+A/B-rollback script
+#   $10 trust_path   DER code-signing root for imgverify (TRUST=; empty = none)
 #
 # Outputs written to /out/:
 #   boot.ipxe   embedded boot script (copy of what was compiled in)
@@ -41,6 +43,8 @@ arch="${5:?arg 5 (arch) is required}"
 ipxe_ref="${6:?arg 6 (ipxe_ref) is required}"
 tls_mode="${7:-}"
 cert_path="${8:-}"
+imgverify_mode="${9:-}"
+trust_path="${10:-}"
 
 log_info "ipxe-build-inner starting"
 log_info "  server_url  : $server_url"
@@ -120,6 +124,31 @@ IPXETRUST
     log_info "  embedded cert in trust store"
 fi
 
+# ─── Enable imgverify (payload signature verification) ───────────────────────
+# IMAGE_TRUST_CMD lives in config/general.h (there is NO config/commands.h) and
+# is off by default; enabling it pulls in the CMS/X.509/RSA/SHA validator too.
+if [[ -n "$imgverify_mode" ]]; then
+    log_info "enabling imgverify (IMAGE_TRUST_CMD)..."
+    mkdir -p /tmp/ipxe/src/config/local
+    # Create the local override if the HTTPS block didn't already.
+    [[ -f /tmp/ipxe/src/config/local/general.h ]] || \
+        printf '#include <config/general.h>\n' > /tmp/ipxe/src/config/local/general.h
+    cat >> /tmp/ipxe/src/config/local/general.h <<'IPXEVERIFY'
+#undef  IMAGE_TRUST_CMD
+#define IMAGE_TRUST_CMD   /* imgverify / imgtrust */
+IPXEVERIFY
+    # TRUST= REPLACES iPXE's built-in trusted roots with our code-signing root,
+    # so imgverify only accepts signatures chaining to it.
+    if [[ -n "$trust_path" && -f "$trust_path" ]]; then
+        cp "$trust_path" /tmp/ipxe/src/config/payload-ca.der
+        EXTRA_MAKE_FLAGS="${EXTRA_MAKE_FLAGS:-} TRUST=/tmp/ipxe/src/config/payload-ca.der"
+        log_info "  code-signing trust root: TRUST=config/payload-ca.der"
+    else
+        log_warn "  --imgverify without --payload-trust: no code-signing root baked in"
+        log_warn "  (imgverify will reject everything — supply --payload-trust <ca.der>)"
+    fi
+fi
+
 # ─── Write embedded boot script ─────────────────────────────────────────────
 # Collapse every run of whitespace in --append (incl. stray newlines/tabs that
 # sneak in when a long single-quoted --append is copy-pasted out of a wrapped
@@ -135,8 +164,48 @@ append_oneline="${append_oneline%"${append_oneline##*[![:space:]]}"}"   # rtrim
 # the whole script and drop back to the BIOS boot order ("No bootable device").
 # Looping re-attempts every 3s; once `boot` succeeds the kernel takes over and
 # the loop is never reached.
-log_info "writing embedded boot script to /tmp/ipxe/src/boot.ipxe"
-cat > /tmp/ipxe/src/boot.ipxe <<EOF
+if [[ -n "$imgverify_mode" ]]; then
+    # Verified A/B boot: fetch each payload, verify its detached CMS signature
+    # against the baked-in code-signing root, and boot only if BOTH verify.
+    # A slot that fails (fetch or verify) rolls back to `previous`; if that
+    # fails too, refuse to boot — a payload the fleet didn't sign never runs.
+    # ${slot}/${base} are iPXE runtime vars (escaped \$); the rest bash expands.
+    # Layout served under: ${server_url}/<slot>/<file>{,.sig}
+    kbase="$(basename "$kernel_path")"
+    ibase="$(basename "$initrd_path")"
+    log_info "writing VERIFIED A/B boot script (imgverify + rollback)"
+    cat > /tmp/ipxe/src/boot.ipxe <<EOF
+#!ipxe
+set slot current
+:boot_slot
+dhcp || goto neterr
+set base ${server_url}/\${slot}
+kernel \${base}${kernel_path} ${append_oneline} slot=\${slot} || goto slotfail
+imgverify ${kbase} \${base}${kernel_path}.sig || goto verifyfail
+initrd \${base}${initrd_path} || goto slotfail
+imgverify ${ibase} \${base}${initrd_path}.sig || goto verifyfail
+echo iPXE: slot \${slot} VERIFIED -- booting
+boot || goto slotfail
+:verifyfail
+echo iPXE: imgverify FAILED for slot \${slot}
+:slotfail
+iseq \${slot} previous && goto dead ||
+echo iPXE: rolling back current -> previous
+imgfree
+set slot previous
+goto boot_slot
+:neterr
+echo iPXE: network error -- retrying in 3s
+sleep 3
+goto boot_slot
+:dead
+echo iPXE: no verified image in either slot -- refusing to boot
+sleep 5
+reboot
+EOF
+else
+    log_info "writing embedded boot script to /tmp/ipxe/src/boot.ipxe"
+    cat > /tmp/ipxe/src/boot.ipxe <<EOF
 #!ipxe
 :start
 dhcp || goto retry
@@ -148,6 +217,7 @@ echo iPXE boot step failed -- retrying in 3s
 sleep 3
 goto start
 EOF
+fi
 
 # Rewrite the {MAC} placeholder (written literally by the caller via --append)
 # to the iPXE runtime variable ${mac:hexhyp}, which iPXE expands at boot to
