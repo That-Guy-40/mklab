@@ -1,0 +1,90 @@
+# package-mirror-ram — the RAM-resident mirror node image (author-run).
+#
+# A systemd Debian rootfs packed as an initramfs (the initramfs IS the root fs —
+# ../debian-http-boot/). The OS is EPHEMERAL (booted into RAM, verified per
+# mechanic ①); the multi-GB Debian **mirror tree is NETWORK storage** mounted at
+# boot from a separate server — over NFS or iSCSI — never baked into the image,
+# so the image stays tiny. nginx serves the mounted tree from RAM. Reboot
+# re-pulls the newest *verified* image; the mirror data is untouched on the
+# storage server.
+#
+# AUTHOR-RUN: needs `sudo debootstrap` AND a real storage server/target, and
+# (for iSCSI) an iscsi.ko for the image's kernel. The verify/rollback half is
+# proven in ../../netboot/MANUAL_TESTING.md §13; the ||-guarded state-mount logic
+# is unit-tested docker-free by tests/test-state-mount-guard.sh. The LIVE network
+# mount is author-run because it touches host-global kernel state (this dev host
+# is itself serving NFS) — see MANUAL_TESTING.md for the real tgt/ganesha recipes.
+#
+# ── Pipeline ────────────────────────────────────────────────────────────────
+#   # 0. ONE-TIME: stand up the mirror STORAGE (separate box), e.g.
+#   #    NFS:   export the apt-mirror tree (server:/srv/mirror)
+#   #    iSCSI: `tgtadm` a file/LVM LUN holding the mirror filesystem
+#   # 1. build the RAM rootfs, then drop in the guarded state-mount helper:
+#   sudo phase1-chroot/lab-chroot.sh create \
+#       --config examples/package-mirror-ram/package-mirror-chroot.toml
+#   sudo install -m0755 examples/package-mirror-ram/state-mount.sh \
+#       /var/chroots/package-mirror-ram/usr/local/sbin/state-mount.sh
+#   # 2. pack, SIGN, and build a VERIFYING iPXE (mechanic ①):
+#   sudo phase1-chroot/lab-chroot.sh export-initrd package-mirror-ram \
+#       --kernel ~/netboot/images/mirror/current/vmlinuz \
+#       --output ~/netboot/images/mirror/current/initrd.gz
+#   netboot/sign-payload.sh --gen-keys --out-trust ~/netboot/codesign/ca.der \
+#       ~/netboot/images/mirror/current/vmlinuz ~/netboot/images/mirror/current/initrd.gz
+#   netboot/build-ipxe.sh --server https://SERVER:8443/images/mirror \
+#       --kernel-path /vmlinuz --initrd-path /initrd.gz \
+#       --append "STATE_KIND=nfs STATE_SRC=10.0.0.9:/srv/mirror" \
+#       --imgverify --payload-trust ~/netboot/codesign/ca.der --tls --tls-cert ...
+#   # 3. serve + boot. /init runs state-mount.sh (GUARDED): mounts the mirror,
+#   #    nginx serves it; `apt` clients point at http://<node>/.
+
+[[chroot]]
+name    = "package-mirror-ram"
+backend = "debootstrap"
+distro  = "debian"
+suite   = "trixie"
+arch    = "x86_64"
+target  = "/var/chroots/package-mirror-ram"
+variant = "minbase"
+include = [
+    "linux-image-amd64",
+    "systemd", "systemd-sysv", "udev",
+    "nfs-common",           # NFS client (mount.nfs4) for the NFS state model
+    "open-iscsi",           # iSCSI initiator for the iSCSI state model
+    "nginx",                # serves the mounted mirror tree, from RAM
+    "ca-certificates",
+]
+manager = "none"
+
+# NOTE: the guarded helper /usr/local/sbin/state-mount.sh is installed by the
+# author-run recipe above (write_files takes inline content only, and we keep
+# state-mount.sh as a single unit-tested source rather than duplicating it here).
+
+# /init: mount virtual FS, attach the mirror from network storage (GUARDED — a
+# missing/unreachable store must NOT panic PID 1), then hand off to systemd.
+[[chroot.write_files]]
+path    = "/init"
+mode    = "0755"
+content = '''
+#!/bin/sh
+mount -t proc     -o nodev,noexec,nosuid proc  /proc
+mount -t sysfs    -o nodev,noexec,nosuid sysfs /sys
+mount -t devtmpfs -o mode=0755,nosuid    udev  /dev
+mkdir -p /run /srv/mirror
+mount -t tmpfs -o nosuid,size=10%,mode=0755 tmpfs /run
+# network-attached state — GUARDED (state-mount.sh always exits 0). STATE_KIND /
+# STATE_SRC (or ISCSI_*) come from the kernel cmdline or the image environment.
+/usr/local/sbin/state-mount.sh || true
+exec /sbin/init
+'''
+
+# nginx serves the mounted mirror tree.
+[[chroot.write_files]]
+path    = "/etc/nginx/sites-available/default"
+mode    = "0644"
+content = '''
+server {
+    listen 80 default_server;
+    root /srv/mirror;
+    location / { autoindex on; }
+}
+'''

@@ -197,12 +197,14 @@ mechanics are built + verified. Remaining roles/mechanics tracked in the plan.
       re-announce on recovery).
 - [x] Versioned / A-B images so a bad build rolls back by booting the prior one —
       **DONE** (the iPXE `imgverify` boot script's `current`→`previous` rollback).
-- [~] Stateless-OS + externalized-state split (`/init` mounts ZFS/iSCSI/NFS) —
-      flagship's zone data rides the signed image; **ZFS (cdn-edge) DONE &
-      verified** ([`examples/cdn-edge-ram/`](examples/cdn-edge-ram/) —
-      `demo-cdn-state.sh` PASS: a fresh OS imports a ZFS cache pool and serves the
-      survivor content over HTTP). **iSCSI/NFS (package-mirror) role still to
-      build.** See the plan.
+- [x] Stateless-OS + externalized-state split (`/init` mounts ZFS/iSCSI/NFS) —
+      **DONE.** **ZFS (cdn-edge)** verified ([`examples/cdn-edge-ram/`](examples/cdn-edge-ram/) —
+      `demo-cdn-state.sh` PASS: a fresh OS imports a ZFS cache pool + serves the
+      survivor content over HTTP). **network NFS/iSCSI (package-mirror)** —
+      [`examples/package-mirror-ram/`](examples/package-mirror-ram/): the
+      `||`-guarded `state-mount.sh` verified docker-free
+      (`test-state-mount-guard.sh` PASS); the live mount is author-run (touches
+      host-global kernel state; ready-to-run ganesha/tgt recipes shipped).
 - [x] Build on existing foundations — flagship image spec
       [`anycast-dns-chroot.toml`](examples/anycast-dns-ram/anycast-dns-chroot.toml)
       debootstraps the stack; `micro-linux --baked` used as the verify spike payload.

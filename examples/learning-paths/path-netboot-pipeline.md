@@ -24,6 +24,7 @@
 ### Optional side-quests
 
 - [`cdn-edge-ram`](../cdn-edge-ram/) — 🪶 the sibling RAM-resident role — same verified-boot spine, but the durable state is a local **ZFS cache pool** the ephemeral OS imports at boot: `demo-cdn-state.sh` warms a cache, then a *fresh* OS imports it and serves the survivor content over HTTP (the immutable-OS + externalized-state split, verified on the host's live ZFS).
+- [`package-mirror-ram`](../package-mirror-ram/) — 🪶 the third RAM-resident role — externalized state as **network** storage (NFS/iSCSI) instead of a local disk: the mirror tree is too big for the image, so it's mounted at boot. `test-state-mount-guard.sh` proves the load-bearing `||`-guard (a failing mount serves empty instead of panicking PID 1); the live NFS/iSCSI mount is author-run.
 - [`docker-examples/docker-netboot-server.toml`](../docker-examples/docker-netboot-server.toml) — the rootful Docker equivalent of the serve step.
 - [`podman-pxe-dhcp.toml`](../podman-pxe-dhcp.toml) — 🔑 real-hardware ProxyDHCP + TFTP responder (needs `--network=host` to hear DHCP broadcasts).
 
