@@ -164,22 +164,22 @@ See [`micro-linux/README.md`](micro-linux/README.md),
 LAB_CREATE_V2/
 ├── PLAN.md                    # full project plan
 ├── README.md                  # this file
+├── TODO.md · AUDIT.md · CLAUDE.md · LICENSE
 ├── examples/                  # ready-to-use TOML configs (see examples/00-INDEX.md)
-├── phase1-chroot/
-│   ├── lab-chroot.sh
+├── netboot/                   # iPXE build + payload signing (sign-payload.sh) + serve pipeline
+├── tools/                     # repo tooling: link_check.py, paths.py, drive-*-repl.py serial drivers
+├── micro-linux/               # from-source kernel+initramfs (compile → boot in RAM)
+├── phase1-chroot/             # each phase dir has the same shape:
+│   ├── lab-chroot.sh          #   the driver script
 │   ├── README.md
 │   ├── MANUAL_TESTING.md
 │   └── tests/
-├── phase2-qemu-vm/
-│   ├── lab-vm.sh
-│   ├── README.md
-│   ├── MANUAL_TESTING.md
-│   └── tests/
-└── phase3-docker/
-    ├── lab-docker.sh
-    ├── README.md
-    ├── MANUAL_TESTING.md
-    └── tests/
+├── phase2-qemu-vm/            # lab-vm.sh      (same layout)
+├── phase3-docker/             # lab-docker.sh  (same layout)
+├── phase4-podman/             # lab-podman.sh  (same layout)
+├── phase5-lxd/                # lab-lxd.sh     (same layout)
+├── phase6-tui/                # Textual TUI (Python) surfacing phases 1–5
+└── phase6b-web/               # FastAPI/HTMX web UI (Python)
 ```
 
 ## Conventions

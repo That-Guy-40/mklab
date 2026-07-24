@@ -63,9 +63,9 @@ LAB_CREATE_V2/
 │   ├── podman-netboot-server.toml , podman-pxe-dhcp.toml   # netboot infra — kept flat (reused)
 │   ├── vm-*.toml                  # standalone VM specs
 │   └── netboot-lab.toml , lab-unified-demo.toml            # cross-phase unified specs
-├── netboot/                 # shared netboot tooling (build-ipxe.sh, setup-*.sh, gen-*.sh)
+├── netboot/                 # shared netboot tooling (build-ipxe.sh, sign-payload.sh, setup-*.sh, gen-*.sh)
 ├── micro-linux/             # from-source micro-distro builder (mlbuild.sh + container, keys/)
-├── tools/                   # repo tooling (link_check.py)
+├── tools/                   # repo tooling (link_check.py, paths.py, drive-*-repl.py serial drivers)
 ├── phase1-chroot/           # lab-chroot.sh   + README/SHOWCASE/MANUAL_TESTING/START_HERE_*  + tests/
 ├── phase2-qemu-vm/          # lab-vm.sh       + README/SHOWCASE/MANUAL_TESTING/START_HERE_*  + tests/
 ├── phase3-docker/           # lab-docker.sh   + README/SHOWCASE/MANUAL_TESTING/START_HERE_*  + tests/
