@@ -315,4 +315,15 @@ HTTP (index text + 8 MiB asset sha match). Real host ZFS, no sudo (rootful
 gotchas documented. RAM edge image (`cdn-edge-chroot.toml`, `/init` imports the
 pool `||`-guarded) is author-run.
 
-**Remaining:** role 3 `package-mirror-ram` (iSCSI/NFS state — mechanic ③ variant).
+**Mechanic ③ variant (network state) + role 3 `package-mirror-ram`** — DONE
+(2026-07-23). The mirror tree is too big for the image → mounted from NFS/iSCSI
+at boot. `state-mount.sh` (the `||`-guarded network mount `/init` calls) is
+**verified** docker-free by `tests/test-state-mount-guard.sh` (a failing mount
+never panics PID 1; success mounts; idempotent). The **live** NFS (nfs-ganesha)
+/ iSCSI (tgt) mount is **author-run** — a real network mount touches host-global
+kernel state (this dev host is itself serving NFS) and can't be safely sandboxed
+here; ready-to-run recipes ship in the lab's MANUAL_TESTING.
+
+**All three roles delivered.** Family complete for the anycast-DNS / CDN-edge /
+package-mirror set; mechanics ①–④ all built (① verify, ② health-gated BGP,
+③ ZFS + network state, ④ A/B rollback).
