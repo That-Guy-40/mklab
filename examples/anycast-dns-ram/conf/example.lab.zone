@@ -1,0 +1,6 @@
+$ORIGIN example.lab.
+$TTL 3600
+@       SOA ns1.example.lab. admin.example.lab. ( 1 3600 900 604800 300 )
+@       NS  ns1.example.lab.
+ns1     A   10.89.7.100
+www     A   10.89.7.100

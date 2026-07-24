@@ -178,32 +178,39 @@ into *role-specific* infra images and the serving/state plumbing around them.
 - **Lightweight package mirror** — RAM OS, the mirror tree mounted over **iSCSI**,
   webserver served from RAM. Rebuild the image whenever; a reboot picks it up.
 
-**Sketch / sub-tasks:**
-- [ ] Boot path: iPXE (the [`EMBED=` script pattern](examples/debian-http-boot/upstream-tutorial/))
-      chainloading kernel + initramfs over **HTTP and HTTPS**; reuse the repo's
-      netboot pipeline ([`NETBOOT_LAB_PLAN.md`](NETBOOT_LAB_PLAN.md),
-      [`netboot/`](netboot/), [`examples/pxe-boot-mechanics/`](examples/pxe-boot-mechanics/)).
-- [ ] **Image integrity is non-negotiable here** — "reboot pulls newest" must mean
-      *newest **verified***, not "trust whatever the server returns." Sign the
-      kernel+initramfs (or pin a hash / TLS cert), in the spirit of the repo's
-      verified-download ethos (`micro-linux` gpgv + `versions.lock`). Booting
-      executable code over the internet is a supply-chain surface — treat it like one.
-- [ ] Stateless-OS + externalized-state split: the image is ephemeral; `/init` (or
-      a systemd unit) mounts ZFS / iSCSI / NFS for the *data* after boot. One
-      state model documented per role.
-- [ ] Health-gated service announce (anycast): bring the route up only when the
-      service answers; pull it on failure.
-- [ ] Versioned / A-B images so a bad build rolls back by booting the prior one.
-- [ ] Build the images on existing foundations — [`micro-linux/`](micro-linux/)
-      (from-source kernel+initramfs; the `--baked` single-file blob is ideal to
-      sign+serve) and/or [`phase1-chroot/`](phase1-chroot/) (debootstrap the rootfs)
-      → packed like `debian-http-boot`'s initramfs.
-- [ ] Per the conventions: **vendor** the Gandi post (CLAUDE.md › *Provenance*),
-      add **hand-walk** sandboxes (CLAUDE.md › *Hand-walk sandboxes*), and a
-      [`examples/00-INDEX.md`](examples/00-INDEX.md) entry for each lab.
+**GRADUATED to [`RAM_INFRA_LAB_PLAN.md`](RAM_INFRA_LAB_PLAN.md) (2026-07-23).**
+Flagship role **`examples/anycast-dns-ram/`** landed; two of the four new
+mechanics are built + verified. Remaining roles/mechanics tracked in the plan.
 
-Large — likely graduates to its own `*_LAB_PLAN.md` (cf.
-[`NETBOOT_LAB_PLAN.md`](NETBOOT_LAB_PLAN.md)), perhaps split per role.
+**Sketch / sub-tasks:**
+- [x] Boot path: iPXE chainloading kernel + initramfs over **HTTP and HTTPS** —
+      already provided by the mature netboot pipeline (`netboot/`,
+      `pxe-boot-mechanics/`); the RAM-infra labs reuse it.
+- [x] **Image integrity (non-negotiable) — DONE & verified.** Payload signing +
+      iPXE **`imgverify`** + A/B rollback: [`netboot/sign-payload.sh`](netboot/sign-payload.sh)
+      + `build-ipxe.sh --imgverify --payload-trust`; proven 3/3 headless (signed
+      boots, tampered rolls back, both-tampered refuses) in
+      [`netboot/MANUAL_TESTING.md`](netboot/MANUAL_TESTING.md) §13. Closes **F2**.
+- [x] Health-gated service announce (anycast) — **DONE & verified.** ExaBGP
+      health-gate + bird2 collector in [`examples/anycast-dns-ram/`](examples/anycast-dns-ram/)
+      (`demo-anycast.sh` → PASS: announce while healthy, withdraw on failure,
+      re-announce on recovery).
+- [x] Versioned / A-B images so a bad build rolls back by booting the prior one —
+      **DONE** (the iPXE `imgverify` boot script's `current`→`previous` rollback).
+- [~] Stateless-OS + externalized-state split (`/init` mounts ZFS/iSCSI/NFS) —
+      flagship's zone data rides the signed image; **ZFS (cdn-edge) / iSCSI
+      (package-mirror) roles still to build** (host ZFS is live). See the plan.
+- [x] Build on existing foundations — flagship image spec
+      [`anycast-dns-chroot.toml`](examples/anycast-dns-ram/anycast-dns-chroot.toml)
+      debootstraps the stack; `micro-linux --baked` used as the verify spike payload.
+- [x] Vendor the Gandi post + [`examples/00-INDEX.md`](examples/00-INDEX.md) entry —
+      done for the flagship. (Hand-walk N/A: the Gandi post is a design overview,
+      not a step recipe → cite+vendor, and `demo-anycast.sh`'s container already
+      reproduces the environment.)
+
+**Still open (follow-on passes):** the **cdn-edge-ram** (ZFS state) and
+**package-mirror-ram** (iSCSI/NFS state) roles — see
+[`RAM_INFRA_LAB_PLAN.md`](RAM_INFRA_LAB_PLAN.md) §4b/§4c.
 
 **References:**
 - Gandi, *Booting an anycast DNS network* (2019) —

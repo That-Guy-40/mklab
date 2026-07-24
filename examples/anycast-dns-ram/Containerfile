@@ -1,0 +1,21 @@
+# anycast-dns-ram — one image, two roles (chosen at run time by demo-anycast.sh):
+#   • gated node   = Knot DNS (the service) + ExaBGP (the health-gated speaker)
+#   • collector    = bird2 as a passive BGP looking-glass that OBSERVES the route
+#
+# Drive it with the phase-4 podman tool or demo-anycast.sh. In the RAM-resident
+# design the SAME Knot + ExaBGP stack rides inside the signed initramfs (part 2
+# of the lab); this container is the fast, sudo-free way to exercise the anycast
+# health-gate (part 1).
+FROM debian:trixie-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        knot \
+        exabgp \
+        bird2 \
+        dnsutils \
+        iproute2 procps \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /run/exabgp /etc/exabgp /run/bird
+
+CMD ["sleep", "infinity"]

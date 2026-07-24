@@ -19,6 +19,7 @@
 | 7 | [`podman-netboot-server.toml`](../podman-netboot-server.toml) 🪶 | serve the kernel + initrd over HTTP (:8181), rootless. | `curl http://localhost:8181/…` fetches the artifacts. |
 | 8 | [`vm-netboot-ipxe.toml`](../vm-netboot-ipxe.toml) | an iPXE disk fetches kernel + initrd over HTTP — simulates real PXE hardware. | iPXE chainloads and boots the served initrd. |
 | 9 | [`pxe-boot-mechanics`](../pxe-boot-mechanics/) | watch the transport (TFTP then HTTP), then UEFI Secure Boot enforcement. | `pxe-fetch.sh` records a TFTP then an HTTP fetch; Secure Boot rejects an unsigned iPXE binary. |
+| 10 | [`anycast-dns-ram`](../anycast-dns-ram/) 🪶 | the capstone: run a real stateless SERVICE on the pipeline. Sign the payload so iPXE `imgverify`s it before boot (A/B rollback on failure), and health-gate the node's anycast BGP announce so it attracts traffic only while DNS answers (models Gandi). | `demo-anycast.sh` → PASS: the anycast VIP appears at a bird2 collector while healthy, is WITHDRAWN when DNS is stopped, and re-announced on recovery; payload verify/rollback proven in netboot MANUAL_TESTING §13. |
 
 ### Optional side-quests
 

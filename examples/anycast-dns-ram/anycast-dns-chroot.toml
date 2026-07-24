@@ -1,0 +1,71 @@
+# anycast-dns-ram — the RAM-resident node image (part 2 of the lab).
+#
+# A full systemd Debian rootfs, packed as a gzip-cpio initramfs (the initramfs
+# IS the root fs — no disk), carrying the authoritative-DNS + health-gated-BGP
+# stack. A reboot re-pulls the newest *verified* image (mechanic ①); the OS is
+# ephemeral, only the zone data is state.
+#
+# This is Kenneth Finnegan's "whole distro in RAM" shape (see
+# ../debian-http-boot/) with the anycast stack added. Building it needs
+# `sudo debootstrap` — AUTHOR-RUN on this host (the agent Bash tool can't sudo).
+#
+# ── Author-run pipeline (verified-boot half proven in ../../netboot/MANUAL_TESTING.md §13) ──
+#   # 1. build the rootfs
+#   sudo phase1-chroot/lab-chroot.sh create \
+#       --config examples/anycast-dns-ram/anycast-dns-chroot.toml
+#   # 2. drop in YOUR site's zone + ExaBGP peer (conf/ here are sandbox templates
+#   #    with 10.89.7.x / AS65010→AS65020 — edit for your route reflector):
+#   sudo cp examples/anycast-dns-ram/conf/knot.conf        /var/chroots/anycast-dns-ram/etc/knot/knot.conf
+#   sudo cp examples/anycast-dns-ram/conf/example.lab.zone /var/chroots/anycast-dns-ram/etc/knot/
+#   sudo cp examples/anycast-dns-ram/conf/exabgp.conf      /var/chroots/anycast-dns-ram/etc/exabgp/
+#   sudo cp examples/anycast-dns-ram/conf/health.py        /var/chroots/anycast-dns-ram/etc/exabgp/
+#   # 3. pack kernel + initramfs
+#   sudo phase1-chroot/lab-chroot.sh export-initrd anycast-dns-ram \
+#       --kernel ~/netboot/images/dns/current/vmlinuz \
+#       --output ~/netboot/images/dns/current/initrd.gz
+#   # 4. SIGN the payload + build a VERIFYING iPXE (mechanic ①):
+#   netboot/sign-payload.sh --gen-keys --out-trust ~/netboot/codesign/ca.der \
+#       ~/netboot/images/dns/current/vmlinuz ~/netboot/images/dns/current/initrd.gz
+#   netboot/build-ipxe.sh --server https://SERVER:8443/images/dns \
+#       --kernel-path /vmlinuz --initrd-path /initrd.gz \
+#       --imgverify --payload-trust ~/netboot/codesign/ca.der --tls --tls-cert ...
+#   # 5. serve ~/netboot/images/dns/{current,previous}/ and boot the node.
+#   #    The node verifies the payload, boots knot+exabgp in RAM, and announces
+#   #    the anycast VIP while healthy — prove the gate with ../demo-anycast.sh.
+
+[[chroot]]
+name    = "anycast-dns-ram"
+backend = "debootstrap"
+distro  = "debian"
+suite   = "trixie"
+arch    = "x86_64"
+target  = "/var/chroots/anycast-dns-ram"
+variant = "minbase"
+include = [
+    "linux-image-amd64",        # kernel + modules (extracted by export-initrd)
+    "systemd", "systemd-sysv",  # PID 1 (the /init exec's it in place)
+    "udev", "iproute2",
+    "knot",                     # authoritative DNS — the service
+    "exabgp",                   # the health-gated BGP speaker
+    "dnsutils",                 # dig, for the health probe
+    "ca-certificates",
+]
+manager = "none"
+
+# systemd /init: mount the virtual filesystems, then hand PID 1 to systemd in
+# place (a debootstrap rootfs has no /etc/initrd-release, so systemd boots as a
+# normal system — the debian-http-boot trick). knot.service + a small
+# exabgp.service then start the anycast stack.
+[[chroot.write_files]]
+path    = "/init"
+mode    = "0755"
+content = '''
+#!/bin/sh
+mount -t proc     -o nodev,noexec,nosuid proc  /proc
+mount -t sysfs    -o nodev,noexec,nosuid sysfs /sys
+mount -t devtmpfs -o mode=0755,nosuid    udev  /dev
+mkdir -p /dev/pts /run
+mount -t devpts -o noexec,nosuid,gid=5,mode=0620 devpts /dev/pts || true
+mount -t tmpfs  -o nosuid,size=20%,mode=0755      tmpfs  /run
+exec /sbin/init
+'''

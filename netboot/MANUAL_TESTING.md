@@ -955,10 +955,106 @@ sbverify --cert /usr/share/ovmf/PkKek-1-snakeoil.pem \
 
 ---
 
+## 13. Verified A/B payload boot (`imgverify`) — ✅ verified end-to-end
+
+"Reboot pulls newest" must mean **newest *verified***, not "whatever the HTTP
+server returned" (closes `AUDIT.md` **F2**). This section signs the payload and
+has iPXE **cryptographically verify it before boot**, with **A/B rollback** when
+verification fails — so a payload the fleet operator did not sign can never run.
+Unlike §12 (which Secure-Boot-signs the iPXE *binary*) this signs the *payload*
+(kernel + initrd) iPXE downloads.
+
+> **How it works.** iPXE's `imgverify` checks a detached **CMS** signature
+> against a code-signing root **compiled into the iPXE binary** (`TRUST=`). The
+> signing leaf carries a `codeSigning` EKU (iPXE requires it), and the CA rides
+> *inside* the CMS (`-certfile`) so iPXE can build leaf→CA→trusted-root — omit
+> that and imgverify fails "No usable certificates" (`ipxe.org/err/0216eb3c`).
+> `imgverify` is independent of TLS: HTTPS (§10) gives confidentiality, imgverify
+> gives payload *authenticity*.
+>
+> **Honest trust framing.** `sign-payload.sh --gen-keys` mints a **snakeoil** CA
+> — fine to prove the mechanism, but *not* a real anchor. In production the
+> signing key is an offline/HSM-held fleet key; point `--keydir` at real material
+> and drop `--gen-keys`.
+
+### 13.1 Sign the payload and build a verifying iPXE
+
+```bash
+# Slotted layout the verified boot script expects: <base>/<slot>/<file>{,.sig}
+mkdir -p ~/netboot/images/dns/current ~/netboot/images/dns/previous
+# (populate each slot with a kernel `vmlinuz` + initrd `initrd.gz`; e.g. from
+#  export-initrd, or micro-linux/out/x86_64/{kernel,initramfs.cpio.gz})
+
+# Sign both slots; emit the DER trust root for the iPXE build:
+netboot/sign-payload.sh --gen-keys --out-trust ~/netboot/codesign/ca.der \
+    ~/netboot/images/dns/current/vmlinuz  ~/netboot/images/dns/current/initrd.gz \
+    ~/netboot/images/dns/previous/vmlinuz ~/netboot/images/dns/previous/initrd.gz
+# → writes <file>.sig beside each; self-verifies each signature.
+
+# Build iPXE that verifies before booting and rolls back on failure:
+netboot/build-ipxe.sh \
+    --server http://10.0.2.2:8181/images/dns \
+    --kernel-path /vmlinuz --initrd-path /initrd.gz --append "console=ttyS0" \
+    --imgverify --payload-trust ~/netboot/codesign/ca.der
+# The embedded boot.ipxe now does, per slot:
+#   kernel …/vmlinuz  → imgverify vmlinuz …/vmlinuz.sig  → initrd …  → imgverify … → boot
+#   on any failure: imgfree, current→previous; if previous fails too: refuse.
+```
+
+### 13.2 Verified results (KVM, 2026-07-23)
+
+Boot the verifying `ipxe.qcow2` while serving `~/netboot/images/dns/`. Payload =
+`micro-linux/out/x86_64/{kernel,initramfs.cpio.gz}` (small, boots to a shell).
+Three scenarios, real serial output:
+
+```
+# ── both slots valid ──────────────────────────────────────────────────────
+# → iPXE: slot current VERIFIED -- booting
+# → [    0.027676] Kernel command line: console=ttyS0 slot=current
+# → [    1.356256] Run /init as init process        ← verified image booted ✓
+
+# ── current tampered (1 byte flipped in initrd.gz; .sig left stale) ────────
+# → http://…/current/initrd.gz.sig... ok
+# → Could not verify: Permission denied (https://ipxe.org/0227e13c)   ← digest mismatch
+# → iPXE: imgverify FAILED for slot current
+# → iPXE: rolling back current -> previous
+# → iPXE: slot previous VERIFIED -- booting
+# → [    0.028343] Kernel command line: console=ttyS0 slot=previous    ← rolled back ✓
+# → [    1.357726] Run /init as init process
+
+# ── BOTH slots tampered ────────────────────────────────────────────────────
+# → iPXE: imgverify FAILED for slot current
+# → iPXE: rolling back current -> previous
+# → iPXE: imgverify FAILED for slot previous
+# → iPXE: no verified image in either slot -- refusing to boot   ← never boots unverified ✓
+#   (0 "Kernel command line" lines in the transcript — no kernel ran)
+```
+
+Note the two distinct iPXE error codes: **0216eb3c** = "No usable certificates"
+(a broken chain or a bad clock — cert not valid *now*), **0227e13c** = digest
+mismatch (the tamper was cryptographically caught). They are distinguishable in
+the log, which matters when diagnosing a real failure.
+
+### 13.3 The signing half in CI (no QEMU/Docker)
+
+```bash
+netboot/tests/test-sign-payload.sh
+# → PASS: sign-payload.sh: CMS-signs (codeSigning EKU), verifies, rejects tampering, fails closed
+```
+
+This is the load-bearing building block for the RAM-resident infrastructure lab
+family — see [`../RAM_INFRA_LAB_PLAN.md`](../RAM_INFRA_LAB_PLAN.md).
+
+---
+
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
+| `imgverify: command not found` | iPXE built without `IMAGE_TRUST_CMD` | Rebuild with `--imgverify` (it defines `IMAGE_TRUST_CMD` in `config/local/general.h`) |
+| `Could not verify: … (0216eb3c)` "No usable certificates" | CA not in the CMS, or bad clock | `sign-payload.sh` bundles the CA via `-certfile`; check host/RTC time is correct |
+| `Could not verify: … (0227e13c)` | Payload changed after signing (or genuine tamper) | Re-sign after any rebuild: `sign-payload.sh <file>` regenerates `<file>.sig` |
+| imgverify rejects everything | `--imgverify` without `--payload-trust` | Pass `--payload-trust <ca.der>` (from `sign-payload.sh --out-trust`) |
 | `Error: rootlessport … address already in use` | Port 8181 (or 8080) in use by another process | `ss -tlnp sport eq :8181` to find it; or change `ports = []` in the TOML and rebuild iPXE with matching `--server` |
 | `boot.ipxe` served as `text/plain`, iPXE refuses it | `ipxe-mime.conf` not mounted into container | Re-run `setup-netboot-dir.sh`; confirm `~/.config/lab-netboot/ipxe-mime.conf` exists |
 | iPXE HTTP fetch times out: `Connection timed out` | `10.0.2.2:8181` not reachable from guest | nginx not running, or port mismatch; `curl http://localhost:8181/kernel` from host |

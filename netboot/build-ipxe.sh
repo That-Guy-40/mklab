@@ -90,6 +90,13 @@ Options:
   --tls               compile iPXE with HTTPS download support (DOWNLOAD_PROTO_HTTPS)
   --tls-cert    PATH  DER-format cert to embed in iPXE trust store
                       (use the .der from setup-netboot-dir.sh --tls)
+  --imgverify         emit a VERIFIED A/B boot script: iPXE verifies each
+                      payload's detached CMS signature (imgverify) before boot
+                      and rolls back current->previous on failure.  Payloads are
+                      served slotted: <server>/<slot>/<file>{,.sig}.  Sign them
+                      with netboot/sign-payload.sh.
+  --payload-trust PATH  DER code-signing root to bake in for --imgverify
+                      (the ca.der emitted by sign-payload.sh --out-trust)
   --sign              sign the EFI output with netboot/sign-ipxe.sh after building
   --use-snakeoil      sign with the system snakeoil key (QEMU Secure Boot test; not for real hw)
   --sign-key    PATH  custom signing key (PEM) for --sign
@@ -120,6 +127,8 @@ arch="x86_64"
 ipxe_ref="master"
 tls_mode=""
 tls_cert=""
+imgverify_mode=""
+payload_trust=""
 sign_mode=""
 sign_snakeoil=""
 sign_key=""
@@ -137,6 +146,8 @@ while [[ $# -gt 0 ]]; do
         --ipxe-ref)    shift; ipxe_ref="${1:?--ipxe-ref requires a git ref}"; shift ;;
         --tls)         tls_mode=1; shift ;;
         --tls-cert)    shift; tls_cert="${1:?--tls-cert requires a DER file}"; shift ;;
+        --imgverify)   imgverify_mode=1; shift ;;
+        --payload-trust) shift; payload_trust="${1:?--payload-trust requires a DER file}"; shift ;;
         --sign)        sign_mode=1; shift ;;
         --use-snakeoil) sign_mode=1; sign_snakeoil=1; shift ;;
         --sign-key)    shift; sign_key="${1:?--sign-key requires a PEM file}"; shift ;;
@@ -153,6 +164,16 @@ case "$arch" in
 esac
 if [[ -n "$tls_cert" && ! -r "$tls_cert" ]]; then
     die "--tls-cert file not readable: $tls_cert"
+fi
+if [[ -n "$payload_trust" && ! -r "$payload_trust" ]]; then
+    die "--payload-trust file not readable: $payload_trust"
+fi
+if [[ -n "$payload_trust" && -z "$imgverify_mode" ]]; then
+    log_warn "--payload-trust given without --imgverify; enabling --imgverify"
+    imgverify_mode=1
+fi
+if [[ -n "$imgverify_mode" && -z "$payload_trust" ]]; then
+    die "--imgverify requires --payload-trust <ca.der> (from sign-payload.sh --out-trust)"
 fi
 
 # ─── Pre-flight checks ──────────────────────────────────────────────────────
@@ -172,21 +193,28 @@ log_info "starting Docker build (arch=$arch ref=$ipxe_ref) — this takes severa
 log_info "  output dir : $output_dir"
 log_info "  build ctx  : $SCRIPT_DIR"
 
-# Bind-mount the TLS cert into the container if specified.
-docker_tls_vol=""; inner_cert_path=""
+# Optional read-only bind-mounts (each as a proper two-token -v pair in an
+# array — a single "--volume host:ctr:ro" string would reach docker as ONE arg
+# and be rejected as an unknown flag).
+docker_vols=(); inner_cert_path=""; inner_trust_path=""
 if [[ -n "$tls_cert" ]]; then
     inner_cert_path="/tls-cert.der"
-    docker_tls_vol="--volume ${tls_cert}:${inner_cert_path}:ro"
+    docker_vols+=(-v "${tls_cert}:${inner_cert_path}:ro")
+fi
+if [[ -n "$payload_trust" ]]; then
+    inner_trust_path="/payload-trust.der"
+    docker_vols+=(-v "${payload_trust}:${inner_trust_path}:ro")
 fi
 
 docker run --rm \
     -v "$output_dir:/out" \
     -v "$SCRIPT_DIR:/build-ctx:ro" \
-    ${docker_tls_vol:+"$docker_tls_vol"} \
+    "${docker_vols[@]}" \
     debian:bookworm \
     bash /build-ctx/ipxe-build-inner.sh \
         "$server" "$kernel_path" "$initrd_path" "$append" "$arch" "$ipxe_ref" \
-        "${tls_mode:-}" "${inner_cert_path}"
+        "${tls_mode:-}" "${inner_cert_path}" \
+        "${imgverify_mode:-}" "${inner_trust_path}"
 
 # ─── Convert the BIOS disk image to qcow2 ────────────────────────────────────
 # Prefer ipxe.hd (hard-disk image) over ipxe.usb: SeaBIOS boots the .hd reliably
