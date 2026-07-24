@@ -11,6 +11,16 @@
 > the Phase 6 UIs (Textual TUI + FastAPI/HTMX web) followed the same day —
 > see [`REVIEW-phase6.md`](REVIEW-phase6.md).
 
+> **Remediation update (2026-07-24):** three findings below have since been
+> addressed (annotated inline in the table and their detail sections):
+> **F6 RESOLVED** — CI added: [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
+> runs shellcheck + `bash -n`, `link_check.py` + `paths.py --check`, the phase
+> shell suites, and phase6 pytest on push/PR. **F9 RESOLVED** — top-level MIT
+> [`LICENSE`](LICENSE) added. **F2 PARTIALLY RESOLVED** — cloud-image + Kali
+> downloads are now SHA256-verified (`verify_sha256` in
+> `phase2-qemu-vm/lab-vm.sh`); only the Alpine `--allow-untrusted` gap remains.
+> Everything else in this 2026-05-20 snapshot stands as written.
+
 ---
 
 ## 1. Executive summary
@@ -29,22 +39,24 @@ destructive ops), a clean architecture (TOML → JSON → `jq`; argv-list
 subprocess in Python), strong documentation, and an extensive test suite.
 There are **no critical or high-severity security defects.** The notable
 findings are inherent to its "throwaway lab" purpose — weak default
-credentials and unverified image downloads — and a process gap (no CI to run
-the otherwise-good tests).
+credentials and unverified image downloads — and (as of the 2026-05-20 snapshot)
+a process gap of no CI. *(That CI gap (F6) and the LICENSE gap (F9) have since
+been closed, and image-download verification (F2) largely so — see the
+Remediation update above.)*
 
 ### Findings at a glance
 
 | # | Severity | Area | Finding |
 |---|----------|------|---------|
 | F1 | Medium | Security | Weak, hardcoded default credentials for VMs (`lab`/`lab`, root password `lab`, `ssh_pwauth: true`, NOPASSWD sudo); blank-password dropbear fallback for microvms |
-| F2 | Medium | Security / Supply chain | Downloaded cloud images & Kali archives are not checksum/signature-verified (SHA256SUMS is fetched but used only for filename resolution); Alpine uses `--allow-untrusted` |
+| F2 | Medium | Security / Supply chain | ⚠️ **PARTLY RESOLVED (2026-07-24)** — cloud-image + Kali downloads are now SHA256-verified (`verify_sha256`, `phase2-qemu-vm/lab-vm.sh`); Alpine `--allow-untrusted` gap remains. *Original:* Downloaded cloud images & Kali archives are not checksum/signature-verified (SHA256SUMS is fetched but used only for filename resolution); Alpine uses `--allow-untrusted` |
 | F3 | Low | Security | TOML configs execute arbitrary commands as root (`post_commands`, `init_script`); trust boundary not called out as such |
 | F4 | Low | Security | Default port publishing binds `0.0.0.0` (all interfaces) for Docker/Podman labs |
 | F5 | Low | Supply chain / Reproducibility | iPXE built from moving `master` ref; `debian:bookworm` base image unpinned (no digest) |
-| F6 | Low | Process | Comprehensive test suites exist but there is no CI to run them automatically |
+| F6 | Low | Process | ✅ **RESOLVED (2026-07-24)** — CI (`.github/workflows/ci.yml`) now runs the suites on push/PR. *Original:* Comprehensive test suites exist but there is no CI to run them automatically |
 | F7 | Low | Robustness | `destroy` does `rm -rf -- "$target"` using the manifest's `target` value with no path-sanity guard |
 | F8 | Info | Robustness | `--user name:pass` truncates passwords containing `:` |
-| F9 | Info | Hygiene | `pyproject.toml` declares MIT but no top-level `LICENSE` file exists |
+| F9 | Info | Hygiene | ✅ **RESOLVED (2026-07-24)** — top-level MIT `LICENSE` added. *Original:* `pyproject.toml` declares MIT but no top-level `LICENSE` file exists |
 
 ---
 
@@ -136,6 +148,12 @@ without a key, or generate an ephemeral keypair instead; (c) add a one-line
 security notes.
 
 ### F2 — Downloaded images are not integrity-verified (Medium)
+
+> ⚠️ **PARTLY RESOLVED (2026-07-24):** cloud-image + Kali downloads are now
+> SHA256-verified — `verify_sha256()` in `phase2-qemu-vm/lab-vm.sh` is called for
+> cloud images and Kali, and the Kali path hard-fails if `SHA256SUMS` can't be
+> fetched. The Alpine `--allow-untrusted` gap described below still stands. The
+> original finding is preserved for the record.
 
 **Where:** `phase2-qemu-vm/lab-vm.sh:433-506` (`cache_image`),
 `:393-421` (`kali_resolve_suite`), `:752-767` & `:786` (Alpine apk).
@@ -248,9 +266,10 @@ are present and good, so this is documented friction rather than a defect.
     (`lab-chroot.sh:314`) truncates any password containing a `:`. TOML
     `[[users]]` avoids this; the CLI form should document the limitation or
     split on the first `:` only.
-- **F9 (Info):** `pyproject.toml` declares `license = { text = "MIT" }` but
-  there is no `LICENSE`/`COPYING` file at the repo root. Add one to make the
-  license enforceable and unambiguous.
+- **F9 (Info): ✅ RESOLVED 2026-07-24.** `pyproject.toml` declares
+  `license = { text = "MIT" }`; a top-level MIT [`LICENSE`](LICENSE) file has now
+  been added, so the license is enforceable and unambiguous. *(Original: no
+  `LICENSE`/`COPYING` at the repo root.)*
 
 ---
 
@@ -261,31 +280,32 @@ are present and good, so this is documented friction rather than a defect.
   (`asyncio_mode = "auto"`, pilot tests, backend fixtures). Coverage spans
   validation, lifecycle, naming, inspect-JSON contracts, and CLI-vs-config
   parity.
-- **CI: missing (F6, Low).** There is no `.github/workflows/`. The tests are
-  only as valuable as their cadence; nothing runs them on push/PR. Given the
-  repo is already structured for it (skippable tests degrade gracefully when
-  tooling is absent), adding a workflow that runs `pytest` + the
-  shell suites — plus `shellcheck` on the phase scripts — would be
-  high-value, low-effort.
+- **CI: ✅ RESOLVED 2026-07-24 (was F6, Low).** `.github/workflows/ci.yml` now
+  runs on push/PR: `shellcheck` + `bash -n` (lint), `link_check.py` +
+  `paths.py --check` (docs), the phase shell suites, and phase6/6b pytest —
+  exactly the workflow this section recommended. *(Original finding: "no
+  `.github/workflows/`; nothing runs the tests on push/PR.")*
 
-**Recommendation.** Add a CI workflow (lint + test). `shellcheck` in
-particular would be a natural fit and would lock in the existing discipline.
+**Recommendation (done).** ~~Add a CI workflow (lint + test).~~ Landed in
+`.github/workflows/ci.yml`; `shellcheck` is included, locking in the discipline.
 
 ---
 
 ## 8. Prioritized recommendations
 
-1. **(F2)** Verify downloaded images against published checksums — the Kali
-   `SHA256SUMS` is already in hand; use it. *(Medium)*
+1. **(F2 — ⚠️ mostly done)** Verify downloaded images against published
+   checksums. *Done for cloud images + Kali (`verify_sha256`); remaining: the
+   Alpine `--allow-untrusted` path.* *(Medium)*
 2. **(F1)** Make VM password auth opt-in; eliminate the blank-password
    dropbear fallback; add a network-exposure warning. *(Medium)*
-3. **(F6)** Add CI (pytest + shell suites + `shellcheck`). *(Low, high ROI)*
+3. **(F6 — ✅ done)** ~~Add CI (pytest + shell suites + `shellcheck`).~~ Landed:
+   `.github/workflows/ci.yml`. *(Low, high ROI)*
 4. **(F7)** Add a path-sanity guard before `rm -rf "$target"` in destroy.
    *(Low)*
 5. **(F4/F5)** Default published ports to loopback; pin iPXE ref and base
    image. *(Low)*
-6. **(F3/F9)** Document the config-as-root trust boundary; add a `LICENSE`
-   file. *(Info)*
+6. **(F3 / F9 — ✅ F9 done)** Document the config-as-root trust boundary;
+   ~~add a `LICENSE` file.~~ *(top-level MIT `LICENSE` added.)* *(Info)*
 
 ---
 
