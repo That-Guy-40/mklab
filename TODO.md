@@ -198,8 +198,11 @@ mechanics are built + verified. Remaining roles/mechanics tracked in the plan.
 - [x] Versioned / A-B images so a bad build rolls back by booting the prior one —
       **DONE** (the iPXE `imgverify` boot script's `current`→`previous` rollback).
 - [~] Stateless-OS + externalized-state split (`/init` mounts ZFS/iSCSI/NFS) —
-      flagship's zone data rides the signed image; **ZFS (cdn-edge) / iSCSI
-      (package-mirror) roles still to build** (host ZFS is live). See the plan.
+      flagship's zone data rides the signed image; **ZFS (cdn-edge) DONE &
+      verified** ([`examples/cdn-edge-ram/`](examples/cdn-edge-ram/) —
+      `demo-cdn-state.sh` PASS: a fresh OS imports a ZFS cache pool and serves the
+      survivor content over HTTP). **iSCSI/NFS (package-mirror) role still to
+      build.** See the plan.
 - [x] Build on existing foundations — flagship image spec
       [`anycast-dns-chroot.toml`](examples/anycast-dns-ram/anycast-dns-chroot.toml)
       debootstraps the stack; `micro-linux --baked` used as the verify spike payload.

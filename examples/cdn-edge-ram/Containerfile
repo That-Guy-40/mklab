@@ -1,0 +1,14 @@
+# cdn-edge-ram — the edge node image (demo form).
+# ubuntu:24.04 so zfsutils-linux matches the host's loaded ZFS module (2.2.2),
+# plus nginx to serve the cache that lives on the ZFS pool. In the RAM-resident
+# design the OS is ephemeral (booted into RAM, verified) and ONLY this ZFS-backed
+# cache persists across reboots — see cdn-edge-chroot.toml.
+FROM ubuntu:24.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        zfsutils-linux \
+        nginx \
+        curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+CMD ["sleep", "infinity"]

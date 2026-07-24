@@ -1,0 +1,90 @@
+# cdn-edge-ram — the RAM-resident edge node image (author-run).
+#
+# A systemd Debian rootfs packed as an initramfs (the initramfs IS the root fs —
+# ../debian-http-boot/). The OS is EPHEMERAL (booted into RAM, verified per
+# mechanic ①); the ONLY durable state is the ZFS cache pool on a local disk,
+# imported by an early boot step and served by nginx from RAM. Reboot re-pulls
+# the newest *verified* image; the cache survives untouched (proven by
+# ../cdn-edge-ram/demo-cdn-state.sh).
+#
+# AUTHOR-RUN: needs `sudo debootstrap` AND a real second disk for the pool, and
+# the image must carry a zfs.ko for its kernel (zfs-dkms builds it at chroot-
+# create time — Debian ships ZFS as DKMS, not in-kernel). The verify/rollback
+# half is proven in ../../netboot/MANUAL_TESTING.md §13; the state-survives-
+# reboot half in ../cdn-edge-ram/demo-cdn-state.sh.
+#
+# ── Pipeline ────────────────────────────────────────────────────────────────
+#   # 0. ONE-TIME on the edge host: create the state pool on its data disk
+#   #    (survives reboots; done once, not part of the image):
+#   sudo zpool create -m /srv/cache cdnedge /dev/<data-disk>
+#   sudo mkdir -p /srv/cache/cache
+#   # 1. build the RAM rootfs (zfs-dkms builds zfs.ko for the image's kernel):
+#   sudo phase1-chroot/lab-chroot.sh create \
+#       --config examples/cdn-edge-ram/cdn-edge-chroot.toml
+#   # 2. pack, SIGN, and build a VERIFYING iPXE (mechanic ①):
+#   sudo phase1-chroot/lab-chroot.sh export-initrd cdn-edge-ram \
+#       --kernel ~/netboot/images/cdn/current/vmlinuz \
+#       --output ~/netboot/images/cdn/current/initrd.gz
+#   netboot/sign-payload.sh --gen-keys --out-trust ~/netboot/codesign/ca.der \
+#       ~/netboot/images/cdn/current/vmlinuz ~/netboot/images/cdn/current/initrd.gz
+#   netboot/build-ipxe.sh --server https://SERVER:8443/images/cdn \
+#       --kernel-path /vmlinuz --initrd-path /initrd.gz \
+#       --imgverify --payload-trust ~/netboot/codesign/ca.der --tls --tls-cert ...
+#   # 3. serve + boot. The node imports `cdnedge`, nginx serves /srv/cache/cache;
+#   #    reboot into a NEW verified image and the cache is still there.
+
+[[chroot]]
+name    = "cdn-edge-ram"
+backend = "debootstrap"
+distro  = "debian"
+suite   = "trixie"
+arch    = "x86_64"
+target  = "/var/chroots/cdn-edge-ram"
+variant = "minbase"
+include = [
+    "linux-image-amd64", "linux-headers-amd64",  # kernel + headers (for dkms)
+    "systemd", "systemd-sysv", "udev",
+    "zfsutils-linux", "zfs-dkms",                 # ZFS userland + module (built at create)
+    "nginx",                                      # the cache/webserver, from RAM
+    "ca-certificates",
+]
+manager = "none"
+
+# Build the ZFS module into the image at create time (Debian ships ZFS as DKMS,
+# not in-kernel), so /init can modprobe it in the RAM environment.
+post_commands = [
+    "KVER=$(ls /lib/modules | head -1); dkms autoinstall -k \"$KVER\" || true",
+]
+
+# /init: mount virtual FS, load ZFS + import the state pool (||-GUARDED so a
+# missing/again-imported pool never panics PID 1 — CLAUDE.md 'set -e panics'),
+# then hand off to systemd (nginx.service serves /srv/cache/cache).
+[[chroot.write_files]]
+path    = "/init"
+mode    = "0755"
+content = '''
+#!/bin/sh
+mount -t proc     -o nodev,noexec,nosuid proc  /proc
+mount -t sysfs    -o nodev,noexec,nosuid sysfs /sys
+mount -t devtmpfs -o mode=0755,nosuid    udev  /dev
+mkdir -p /run /srv/cache
+mount -t tmpfs -o nosuid,size=20%,mode=0755 tmpfs /run
+# durable state: import the cache pool if its disk is present. GUARDED — a first
+# boot with no pool, or an already-imported pool, must NOT panic PID 1.
+modprobe zfs 2>/dev/null || true
+zpool import -a -N 2>/dev/null || true
+zfs mount -a 2>/dev/null || true
+exec /sbin/init
+'''
+
+# Point nginx at the ZFS-backed cache (served from the persistent pool).
+[[chroot.write_files]]
+path    = "/etc/nginx/sites-available/default"
+mode    = "0644"
+content = '''
+server {
+    listen 80 default_server;
+    root /srv/cache/cache;
+    location / { autoindex on; }
+}
+'''
