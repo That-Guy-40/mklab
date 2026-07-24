@@ -1,4 +1,4 @@
-# Metal-as-a-Service Lab — Design Plan v2
+# Metal-as-a-Service Lab — Design Plan v2.1
 
 > **Status**: Draft v2 — proposed 2026-07-24 (option **B** of the "what can we
 > compose?" survey). Anchors on `examples/virtualbmc-ipmi-lab/` (IPMI power +
@@ -22,6 +22,19 @@
 > - **Build order = spine first, converge later** — v1 builds the full state machine
 >   + `install` + `ramdisk` drivers; `image` follows closely (reuses systemd261
 >   Tier-B); `image+measured` and full region-wiring are the documented fast-follows.
+>
+> **v2.1 additions (this pass) — three refinements folded in so they aren't lost:**
+> - **Node-level A/B rollback + health-gated activation (v1).** `deploy` reaches
+>   `active` only through a **post-deploy health gate**; a node that fails it **rolls
+>   back to its `previous` image** (reuses RAM-INFRA ④) instead of dead-ending in
+>   `error`. The supply-chain story completes *inside* the control plane. See §4b.
+> - **Declarative `apply` / reconciliation (v1.5 stretch).** Beyond the imperative
+>   verbs, a `fleet.toml` **declares desired end-state** and `maas-lab.sh apply`
+>   **reconciles** to it — the control-loop real fleet managers (MAAS / Terraform /
+>   Kubernetes) are built on. Imperative spine lands first; `apply` sits on top. See §3a.
+> - **Boot-progress in the Phase-6 panel (polish).** Parse each node's serial console
+>   for milestones (`partitioning → installing → first-boot`) → **live progress bars**,
+>   so you *watch* a fleet install in parallel rather than read static states. See §5.
 >
 > Awaiting go-ahead to start v1; plan only — no lab files created yet.
 
@@ -125,6 +138,28 @@ missing state maps to a real ops/security lesson, reusing repo assets:
   `/proc/cpuinfo`+`/proc/meminfo`+NIC MAC and `curl`s them back to `:8181`, populating
   **schedulable facts** (Ironic introspection, in miniature).
 
+### 3a. Declarative `apply` — reconcile to a desired end-state (v1.5 stretch)
+
+The imperative verbs (`deploy`, `rescue`, …) are how you *drive* a node by hand; the
+concept every real fleet manager (MAAS, Terraform, Kubernetes) is actually built on is
+**reconciliation** — you *declare* the end-state and the tool computes the transitions.
+`maas-lab.sh apply <fleet.toml>` adds that loop on top of the same state machine:
+
+```toml
+# fleet.toml — desired end-state, not a script
+[[node]]  name = "edge1"  driver = "ramdisk"  image = "anycast-dns-ram"  count = 2
+[[node]]  name = "app"    driver = "image+measured"  image = "nixos-verity"  count = 1
+[pool]    available = 2        # keep this many wiped + ready
+```
+
+`apply` diffs desired-vs-actual (read from the registry) and issues exactly the
+missing transitions — `provide` a node from the pool, `deploy` it with the named
+driver, `release` a node that's no longer wanted (→ `cleaning` → back to pool). Run it
+again and it's a **no-op** (idempotent — the reconciliation invariant). It teaches the
+single most important idea in modern infra: *state is declared, drift is corrected, the
+same command is safe to run forever.* Sits cleanly atop v1's imperative spine, so it
+lands **after** the machine is proven, not entangled with it.
+
 ---
 
 ## 4. Crux ② — the pluggable deploy interface (the integration hub)
@@ -160,6 +195,31 @@ swtpm is *not* a trust anchor (anything reading its userspace forges PCRs). The 
 proves the *mechanism and the refusal path*, not a real chain (per the systemd261
 lab's load-bearing caveat, restated here).
 
+### 4b. Health-gated activation + node-level A/B rollback (v1)
+
+`deploying → active` is **not** "the boot command returned" — it's a **health gate**.
+Every driver declares a success signal (§4 table: service answers / login banner /
+attestation verifies); `deploy` polls it within a timeout, and only a *pass* advances
+the node to `active`. A **fail** doesn't dead-end in `error` — it triggers a
+**rollback to the node's `previous` image** (the RAM-INFRA ④ A/B mechanic, applied per
+node), and *that* image's health is gated too:
+
+```
+  deploy --driver X --image v2
+     └─ boot v2 ─► health gate ─PASS─► active (current=v2, previous=v1)
+                        └────────FAIL─► roll back ─► boot v1 ─► health gate
+                                                          ├─PASS─► active (degraded: on previous)
+                                                          └─FAIL─► error (both slots bad; operator)
+```
+
+So a bad image can **never** take down a node that had a good one — the worst case is
+"stayed on the previous good image," not "brick." This folds the supply-chain
+guarantee (a build that fails `imgverify` *or* fails its health check is refused)
+straight into the lifecycle, and it's cheap because A/B + rollback already exist and
+are proven. `current`/`previous` per node live in the registry; the tamper→rollback
+drill (flip one initrd byte → verify fails → node stays on `previous`) is a required
+MANUAL_TESTING signature, mirroring RAM-INFRA §13.
+
 ---
 
 ## 5. Surfacing it — Phase 6 as the control pane
@@ -173,6 +233,33 @@ lab's load-bearing caveat, restated here).
   (mirrors the existing `c` console-attach + topology `u`/`d`); Phase-6b/web parity as
   HTMX routes. If Phase 6 is deleted, `maas-lab.sh` still drives everything (invariant).
 
+- **5c. Watchable boot-progress with user-definable milestones.** Each node's serial
+  console is already captured; a small tailer matches lines against an **ordered,
+  user-editable milestone set** and renders a **live progress bar** per node — so you
+  *watch* three nodes install in parallel instead of reading static states. Crucially
+  the milestones are **not hardcoded** — they're declared in a `milestones.toml`,
+  keyed by driver (and optionally overridable per `--image`), so a user adds their own
+  markers for a new OS/image without touching Python:
+
+  ```toml
+  # milestones.toml — matched top-to-bottom against the console; first hit sets progress.
+  [[milestone.install]]  match = "Starting partitioner"        label = "partitioning"  at = 25
+  [[milestone.install]]  match = "Installing the base system"  label = "base system"   at = 55
+  [[milestone.install]]  match = "Running .*post-install"      label = "post-install"  at = 85
+  [[milestone.install]]  match = "login:"                      label = "first boot"    at = 100  terminal = true
+  [[milestone.ramdisk]]  match = "Welcome to (u-root|floppinux)"  label = "RAM login"  at = 100  terminal = true
+  ```
+
+  Rules that keep it honest: patterns are **plain regex over console text**
+  (documented, no eval); `at` is an explicit percent (no guessing between markers);
+  `terminal = true` marks the "done" line; an **unmatched** console still shows a
+  spinner + last line, never a fake 100%; and a milestone set with no hits within the
+  driver's timeout surfaces as **stalled**, feeding the `error`/`maintenance` path
+  (§3). The same `milestones.toml` is consumable headless (`maas-lab.sh watch <node>`
+  prints the milestone stream), so the feature isn't Phase-6-only. This is a natural
+  home for the deploy drivers' health-gate signals too (§4b): a driver's `terminal`
+  milestone *is* its "reached active" marker — one declaration, two consumers.
+
 ---
 
 ## 6. New components & files
@@ -180,16 +267,17 @@ lab's load-bearing caveat, restated here).
 | File | Type | Notes |
 |---|---|---|
 | `METAL_AS_A_SERVICE_LAB_PLAN.md` | **this doc** | roadmap |
-| `examples/metal-as-a-service/maas-lab.sh` | new | control plane: full state machine + verbs + the deploy-driver dispatch |
-| `examples/metal-as-a-service/drivers/{install,ramdisk,image,image-measured}.sh` | new | one file per deploy driver — each a thin router to the reused lab |
+| `examples/metal-as-a-service/maas-lab.sh` | new | control plane: full state machine + imperative verbs + deploy-driver dispatch + health-gated activation w/ A/B rollback (§4b) + `apply` reconcile (§3a) + `watch` |
+| `examples/metal-as-a-service/drivers/{install,ramdisk,image,image-measured}.sh` | new | one file per deploy driver — each a thin router to the reused lab; declares its health-gate/`terminal` signal |
 | `examples/metal-as-a-service/ramdisk-catalog.toml` | new | the `--image` registry (RAM-INFRA + micro-linux + floppinux + busybox), each with its `active`-signal marker |
+| `examples/metal-as-a-service/milestones.toml` | new | user-definable, per-driver console milestones (regex → label → `at%`/`terminal`) driving the watchable progress bars (§5c) |
 | `examples/metal-as-a-service/create-fleet.sh` | new | N libvirt domains + `vbmc add` each on 623X (wraps vbmc `create-node.sh`) |
-| `examples/metal-as-a-service/fleet.toml` | new | fleet spec (count, disk/RAM, PXE network) |
+| `examples/metal-as-a-service/fleet.toml` | new | the fleet: hardware spec (count, disk/RAM, PXE network) **and** the declarative desired end-state consumed by `apply` (§3a) |
 | `examples/metal-as-a-service/probe-init.sh` | new | inspection initramfs `/init`: POST CPU/RAM/MAC to `:8181`, power off |
 | `examples/metal-as-a-service/rescue-init.sh` | new | `rescue` recovery ramdisk (reuses root-password-reset recovery idioms), IPMI-driven |
 | `examples/metal-as-a-service/metadata-serve.sh` | new | per-node NoCloud user-data (hostname/SSH key) — DRY fleet from one image |
 | `examples/metal-as-a-service/tests/` | new | one-verdict smokes: state transitions (dry), `cleaning` no-op vs wipe, driver dispatch; EXIT-trap net, `REGRESSION:` on the wipe-happened guard |
-| `phase6-tui/lab_tui/sources/libvirt.py` + actions panel | new/edit | inventory source + node actions; 6b/web parity |
+| `phase6-tui/lab_tui/sources/libvirt.py` + actions panel | new/edit | inventory source + node actions + **live boot-progress bars** driven by `milestones.toml` (§5c); 6b/web parity |
 | `examples/metal-as-a-service/{README,RUNBOOK,MANUAL_TESTING}.md` | new | concept + Ironic-state mapping + "divergences from real Ironic/MAAS" table + verified transcripts |
 | `examples/00-INDEX.md` | edit | one row (Phase-2/libvirt section, near the VirtualBMC row) |
 | `examples/learning-paths.toml` | edit | route as a step **after `virtualbmc-ipmi-lab`** in a "bare-metal provisioning" journey; observable checkpoint = a node reaching `active` via each driver. Then `paths.py render && --check`. |
@@ -233,20 +321,32 @@ The four source-lab families stay **standalone and unchanged**; the drivers
    the state file, all transitions, `power`/`bootdev`, `cleaning` (guarded), `error`/
    `maintenance`, `rescue`. *State transitions fully headless-verifiable without an
    install.*
-2. **`inspect` probe + metadata service** — RAM probe fills schedulable facts; NoCloud
-   user-data. *Verifiable: `manageable → available` with real CPU/RAM facts.*
-3. **`install` driver** — sequence the existing PXE install into `deploy`. *End-to-end
-   verifiable (underlying install ✅); a full multi-node parallel install may be
+2. **`inspect` probe + metadata service + `milestones.toml`/`watch`** — RAM probe fills
+   schedulable facts; NoCloud user-data; the console-milestone parser lands here as the
+   headless `maas-lab.sh watch <node>` (the same file the Phase-6 bars consume later).
+   *Verifiable: `manageable → available` with real CPU/RAM facts; `watch` prints the
+   milestone stream.*
+3. **`install` driver + the health-gated activation loop (§4b)** — sequence the PXE
+   install into `deploy`, and build the **health-gate + A/B rollback** here (the first
+   driver to reach `active` needs it). *End-to-end verifiable (underlying install ✅);
+   the tamper→rollback drill is headless; a full multi-node parallel install may be
    author-run (host load).* 
 4. **`ramdisk` driver + catalog** — dispatch to RAM-INFRA / micro-linux / floppinux /
-   busybox, signed + `imgverify`-gated. *Fully verifiable in QEMU per catalog entry
-   (each has an existing boot signature).* 
-5. **`image` driver** — dd golden image (Tier-B reuse). *Verifiable in QEMU.*
-6. **Phase-6 surface** — libvirt inventory source + actions panel; 6b/web parity.
-   *TUI render verifiable; live drive shown in MANUAL_TESTING.*
+   busybox, signed + `imgverify`-gated, reusing step 3's health gate. *Fully verifiable
+   in QEMU per catalog entry (each has an existing boot signature).* 
+5. **`image` driver** — dd golden image (Tier-B reuse), same health gate. *Verifiable
+   in QEMU.*
+6. **`apply` reconcile (v1.5, §3a)** — the declarative loop atop the imperative spine;
+   diff desired-vs-actual, issue the missing transitions, prove idempotent (second run
+   = no-op). *Fully headless-verifiable (registry-level, no install needed to prove the
+   diff logic).* 
+7. **Phase-6 surface** — libvirt inventory source + actions panel + **live boot-progress
+   bars** (consume `milestones.toml`); 6b/web parity. *TUI render verifiable; live drive
+   shown in MANUAL_TESTING.*
 
 **Fast-follows (documented, not v1):** `image+measured` attested gate (folds option A);
-`ramdisk`→region wiring so a deployed node *joins* a resilient region (folds option C).
+`ramdisk`→region wiring so a deployed node *joins* a resilient region (folds option C);
+a flavor/tag **scheduler** on top of `apply` (pick an available node by inspected facts).
 
 Each step ends in a POC-style writeup with real transcripts; the lab ships one-verdict
 smokes + EXIT-trap net; both catalogs stay green; anything env-blocked is marked
@@ -263,13 +363,22 @@ author-run with the exact handed-over command.
 - **Convergence:** spine first; measured-attested gate and region-join are documented
   fast-follows. ✔
 
+**v2.1 (resolved 2026-07-24):**
+- **Health-gated activation + node-level A/B rollback** — in v1; `deploy` reaches
+  `active` only via a health gate, failure rolls back to `previous` (§4b). ✔
+- **Declarative `apply`/reconcile** — designed in, built as a v1.5 stretch atop the
+  imperative spine (§3a). ✔
+- **Watchable boot-progress with user-definable milestones** — `milestones.toml`
+  (regex → label → `at%`/`terminal`), consumed both by `watch` (headless) and the
+  Phase-6 bars; doubles as the drivers' health-gate signal source (§5c). ✔
+
 ## 11. Open items / decisions still to confirm
 
 - **Node count for the fleet** — recommend **3** (enough for pool/scheduling semantics,
   light on the host); one BMC port per node (6230…).
-- **Scheduler depth** — do we add flavor/tag matching ("deploy to a node with ≥4 GB")
-  on top of inspection facts, or keep node-selection manual in v1? Leaning: manual v1,
-  a `schedule` verb as a small stretch.
+- **Scheduler depth** — *settled as a fast-follow* (§9): node-selection is manual in v1
+  and v1.5's `apply`; a flavor/tag `schedule` verb (match inspected facts, e.g. "deploy
+  to a node with ≥4 GB") layers on later. Confirm that's the right deferral.
 - **Probe/rescue image** — reuse `micro-linux` or a plain busybox initramfs? Leaning
   busybox for the probe (tiny, no toolchain box), `root-password-reset` idioms for rescue.
 - **v1 UI** — land the Phase-6 panel in v1, or CLI-first with the panel as fast-follow?
