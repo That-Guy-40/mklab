@@ -23,6 +23,7 @@
 
 ### Optional side-quests
 
+- [`cdn-edge-ram`](../cdn-edge-ram/) — 🪶 the sibling RAM-resident role — same verified-boot spine, but the durable state is a local **ZFS cache pool** the ephemeral OS imports at boot: `demo-cdn-state.sh` warms a cache, then a *fresh* OS imports it and serves the survivor content over HTTP (the immutable-OS + externalized-state split, verified on the host's live ZFS).
 - [`docker-examples/docker-netboot-server.toml`](../docker-examples/docker-netboot-server.toml) — the rootful Docker equivalent of the serve step.
 - [`podman-pxe-dhcp.toml`](../podman-pxe-dhcp.toml) — 🔑 real-hardware ProxyDHCP + TFTP responder (needs `--network=host` to hear DHCP broadcasts).
 

@@ -340,6 +340,9 @@ goal       = "Turn a root filesystem into something a machine boots over the net
   learn      = "the capstone: run a real stateless SERVICE on the pipeline. Sign the payload so iPXE `imgverify`s it before boot (A/B rollback on failure), and health-gate the node's anycast BGP announce so it attracts traffic only while DNS answers (models Gandi)."
   checkpoint = "`demo-anycast.sh` → PASS: the anycast VIP appears at a bird2 collector while healthy, is WITHDRAWN when DNS is stopped, and re-announced on recovery; payload verify/rollback proven in netboot MANUAL_TESTING §13."
   [[path.branch]]
+  lab = "cdn-edge-ram/"
+  why = "🪶 the sibling RAM-resident role — same verified-boot spine, but the durable state is a local **ZFS cache pool** the ephemeral OS imports at boot: `demo-cdn-state.sh` warms a cache, then a *fresh* OS imports it and serves the survivor content over HTTP (the immutable-OS + externalized-state split, verified on the host's live ZFS)."
+  [[path.branch]]
   lab = "docker-examples/docker-netboot-server.toml"
   why = "the rootful Docker equivalent of the serve step."
   [[path.branch]]

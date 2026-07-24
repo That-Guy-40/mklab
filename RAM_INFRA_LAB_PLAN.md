@@ -303,4 +303,16 @@ A/B slots with `sign-payload.sh` directly (its payload comes from debootstrap +
 export-initrd, not a kernel+initrd VM), so the publish-netboot verb isn't on the
 critical path. Revisit if a VM-sourced A/B workflow needs it.
 
-**Mechanic ② (health-gated BGP) + flagship lab** — in progress.
+**Mechanic ② (health-gated BGP) + flagship `anycast-dns-ram`** — DONE & verified
+(merged, PR #40). `demo-anycast.sh` PASS: announce-while-healthy / withdraw-on-
+failure / re-announce, observed at a bird2 collector.
+
+**Mechanic ③ (externalized ZFS state) + role 2 `cdn-edge-ram`** — DONE & verified
+(2026-07-23). `demo-cdn-state.sh` PASS: an ephemeral OS (fresh container) imports
+a ZFS cache pool a prior "boot" left behind and serves the survivor content over
+HTTP (index text + 8 MiB asset sha match). Real host ZFS, no sudo (rootful
+`--privileged` docker + world-rw `/dev/zfs`); vdev-as-loop-device + import-by-label
+gotchas documented. RAM edge image (`cdn-edge-chroot.toml`, `/init` imports the
+pool `||`-guarded) is author-run.
+
+**Remaining:** role 3 `package-mirror-ram` (iSCSI/NFS state — mechanic ③ variant).
