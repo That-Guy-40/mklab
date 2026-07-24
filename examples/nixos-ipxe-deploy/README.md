@@ -58,7 +58,7 @@ deployer registers). See [`modules/`](modules/) for the exact contracts.
 | [`modules/installer.nix`](modules/installer.nix) | Tier A module — netboot installer, `nixos-install`s `targetSystem` (offline; closure baked in). |
 | [`modules/deployer.nix`](modules/deployer.nix) | Tier B module — netboot deployer, `dd`s `imageUrl`, registers an NVRAM entry, reboots. |
 | [`modules/ipxe.nix`](modules/ipxe.nix) | `lib.mkIpxeEfi` — a custom UEFI `ipxe.efi` (deploy script embedded) built **via Nix**, no docker. |
-| [`demo/`](demo/) | Self-contained minimal payloads (BIOS target + UEFI image) so the block builds/boots standalone. |
+| [`demo/`](demo/) — BIOS [`target.nix`](demo/target.nix) + UEFI [`image.nix`](demo/image.nix) | Self-contained minimal payloads (a `nixos-install` target + a whole-disk UEFI image) so the block builds/boots standalone. |
 | [`stage-deploy.sh`](stage-deploy.sh) · [`nixos-ipxe-install.toml`](nixos-ipxe-install.toml) · [`nixos-ipxe-deploy.toml`](nixos-ipxe-deploy.toml) | Build/stage the demo + run it through `pxe-install`. |
 | [`RUNBOOK.md`](RUNBOOK.md) · [`MANUAL_TESTING.md`](MANUAL_TESTING.md) | Step-by-step + the captured verification. |
 | [`WHY-NIX.md`](WHY-NIX.md) | Background primer on Nix (what/why/how/where + problems it solves), anchored to these Tier A/B modules. |

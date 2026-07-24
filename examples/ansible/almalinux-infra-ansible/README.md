@@ -40,9 +40,9 @@ so they're curated:
 
 | Recipe | Status | Notes |
 |---|---|---|
-| **common** | ✅ **verified** | Base host setup: hostname, EPEL + CRB, firewalld, base packages. The role every other playbook starts with. Green + idempotent; lab vars `ssh_authorized_keys`, `common_packages`. |
-| **gitea** | ✅ **verified** | Self-hosted Git. Lab runs it with **SQLite** (sidesteps the `geerlingguy.mysql` role — gated `when gitea_database in (mysql,mariadb)`) + **Valkey** cache + **Caddy** reverse proxy (all EL9 AppStream/EPEL); secret keys auto-generated. Serves its web UI on `:3000`. |
-| **matterbridge** | ✅ **verified** | Chat-bridge daemon (EPEL). Lab runs it with a local **REST-API gateway**, so the daemon starts + listens on `127.0.0.1:4242` without external chat-service tokens. |
+| **[common](control-files/lab-playbooks/common.yml)** | ✅ **verified** | Base host setup: hostname, EPEL + CRB, firewalld, base packages. The role every other playbook starts with. Green + idempotent; lab vars `ssh_authorized_keys`, `common_packages`. |
+| **[gitea](control-files/lab-playbooks/gitea.yml)** | ✅ **verified** | Self-hosted Git. Lab runs it with **SQLite** (sidesteps the `geerlingguy.mysql` role — gated `when gitea_database in (mysql,mariadb)`) + **Valkey** cache + **Caddy** reverse proxy (all EL9 AppStream/EPEL); secret keys auto-generated. Serves its web UI on `:3000`. |
+| **[matterbridge](control-files/lab-playbooks/matterbridge.yml)** | ✅ **verified** | Chat-bridge daemon (EPEL). Lab runs it with a local **REST-API gateway**, so the daemon starts + listens on `127.0.0.1:4242` without external chat-service tokens. |
 | mattermost, matrix_synapse, cachet, keycloak | ⏸ deferred | Service roles needing Postgres/MySQL + app secrets + TLS (heavier; matrix/keycloak also pull big collections). |
 | mqtt | ⏸ deferred | The mosquitto password is an **inline Vault lookup in the role itself** (not group_vars), so it can't be overridden without editing the role. |
 | hashivault | ⏸ deferred | Installs Vault, but the role also runs `certbot` (TLS) + wires LDAP→FreeIPA + inits Vault. |
