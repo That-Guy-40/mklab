@@ -421,6 +421,11 @@ goal       = "Go from 'boots the network' to 'installs an OS with no keystrokes'
   lab        = "almalinux-kickstart-gallery/"
   learn      = "the AlmaLinux Packer kickstarts — where the `sda`→`vda` rewrite is load-bearing."
   checkpoint = "`select-kickstart.sh gencloud` installs; the fetch fails closed if any `sda` survives the rewrite."
+  [[path.step]]
+  lab        = "control-pane/"
+  tags       = ["📊"]
+  learn      = "the capstone: stop reading static states — *watch* these installs happen. A headless-first progress engine turns a node's console into a live progress bar from a user-editable `milestones.toml` (regex→label→at%/terminal), no TUI."
+  checkpoint = "`control-pane watch --profile install <console>` fills the bar 25%→55%→85%→100% and prints `reached 'first boot' (100%)`; 14 engine/loader unit tests pass headless (`bash tests/run-all.sh`)."
 
 [[path]]
 id         = "chroot-to-system"

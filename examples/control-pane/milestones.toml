@@ -1,0 +1,54 @@
+# control-pane milestones — the user-editable progress contract.
+# Matched top-to-bottom against a node's console; a line's FIRST matching milestone sets
+# progress (monotonic — never regresses). `match` is a plain regex over text (NEVER eval),
+# `at` is an EXPLICIT percent, `terminal = true` marks the "reached active" line.
+# Add your own profile for a new OS/image by copying a block — no Python edits.
+
+# ---- install: a disk installer (Anaconda/debian-installer) ----
+[[milestone.install]]
+match = "Starting partitioner|partman|clearpart|autopart"
+label = "partitioning"
+at = 25
+[[milestone.install]]
+match = "Installing the base system|Running debootstrap|Installing .* packages|Preparing transaction"
+label = "base system"
+at = 55
+[[milestone.install]]
+match = "Running .*post-?install|firstboot|cloud-init|Generating .*initramfs|Installing bootloader"
+label = "post-install"
+at = 85
+[[milestone.install]]
+match = "login:"
+label = "first boot"
+at = 100
+terminal = true
+
+# ---- ramdisk: boot entirely into RAM (RAM-INFRA / micro-linux / floppinux / busybox) ----
+[[milestone.ramdisk]]
+match = "Freeing initrd memory|Unpacking initramfs|Loading .*initrd"
+label = "unpacking"
+at = 40
+[[milestone.ramdisk]]
+match = "Run /init|Welcome to (u-root|floppinux|Alpine)|Kernel command line"
+label = "RAM userspace"
+at = 80
+[[milestone.ramdisk]]
+match = "login:|/ #|~ #"
+label = "RAM login"
+at = 100
+terminal = true
+
+# ---- image: dd a golden whole-disk image, then boot it ----
+[[milestone.image]]
+match = "Writing image|dd: |bytes .*copied|Deploying image"
+label = "writing image"
+at = 50
+[[milestone.image]]
+match = "Rebooting|Restarting system|Powering off"
+label = "reboot into image"
+at = 80
+[[milestone.image]]
+match = "login:"
+label = "deployed OS up"
+at = 100
+terminal = true
