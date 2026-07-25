@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# control-pane — the headless control-surface CLI (no TUI). Thin wrapper that runs the
+# local, dependency-free control_pane package with the lab dir on sys.path.
+here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+exec python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); from control_pane.cli import main; sys.exit(main(sys.argv[2:]))' "$here" "$@"

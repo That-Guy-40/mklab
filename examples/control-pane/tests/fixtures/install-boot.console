@@ -1,0 +1,14 @@
+[    0.000000] Linux version 6.8.0 (builder@lab) #1 SMP
+[    0.42] Loading initial ramdisk ...
+Starting Anaconda installer
+Starting partitioner on /dev/vda
+Creating ext4 filesystem on /dev/vda2
+Installing the base system
+Preparing transaction
+Installing 412 packages
+Running post-install scripts
+Generating /boot/initramfs
+Installing bootloader (GRUB) to /dev/vda
+[  OK  ] Reached target Multi-User System.
+Powering off after install (bootdev flips to disk)
+almalinux login:
