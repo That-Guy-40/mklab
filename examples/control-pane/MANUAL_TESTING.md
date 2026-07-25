@@ -51,6 +51,43 @@ $ printf 'Freeing initrd memory\nRun /init as init process\nWelcome to u-root\n/
 control-pane: ramdisk reached 'RAM login' (100%) — done
 ```
 
-## Not yet (next slice)
-The Phase-6 Textual renderer + phase6b-web SSE feed (plan §4/§5) — those land in
-`phase6-tui`/`phase6b-web` and are gated by their pytest jobs.
+## Fleet enumeration (`control-pane list` / `inspect`)
+
+```
+$ LAB_STATE_DIR=$SD ./control-pane list        # $SD/control-pane/<node>/node.toml
+edge1          100%  install   first boot
+edge2            0%  install   waiting
+
+$ LAB_STATE_DIR=$SD ./control-pane inspect edge1
+node:    edge1
+profile: install
+now:     100%  first boot  [terminal]
+milestones:
+  *  25%  partitioning
+  *  55%  base system
+  *  85%  post-install
+  * 100%  first boot  (terminal)
+```
+
+`tests/test-list.sh` pins `list --json` (edge1 → 100% terminal), `inspect` (the timeline),
+and an unknown-node error.
+
+## Phase-6 integration (the read-only inventory source)
+
+The `control-pane` backend surfaces the fleet in **both** the Textual TUI and phase6b-web
+(shared backend layer). Verified via each package's pytest (CI-gated):
+
+```
+phase6-tui:   103 passed     # incl. tests/test_backends_control_pane.py (4)
+phase6b-web:   40 passed
+```
+
+`test_backends_control_pane.py` proves the end-to-end shell-out: a registered `node.toml`
++ a console → a `Resource` with `extra.percent`/`label` and a progress-mapped `status`
+(`built` at terminal, `stopped` before start), an empty fleet → `[]`, and an **inert**
+read-only `destroy_argv` (an `echo`, never a destructive verb).
+
+## Not yet (next increment)
+The progress-bar **rendering** — a Textual `ProgressBar` in the tree + a phase6b-web **SSE**
+progress feed (plan §4c/§5). The inventory + progress data are already flowing; what's left
+is drawing the bar.

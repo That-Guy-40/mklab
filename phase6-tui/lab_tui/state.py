@@ -20,10 +20,11 @@ from typing import Literal
 
 from watchfiles import Change, awatch
 
-BackendName = Literal["chroot", "vm", "docker", "podman", "lxd"]
+BackendName = Literal["chroot", "vm", "docker", "podman", "lxd", "control-pane"]
 
-# Which backends we tick on the timer (no filesystem trigger).
-_POLLED_BACKENDS: frozenset[BackendName] = frozenset({"docker"})
+# Which backends we tick on the timer (no filesystem trigger). control-pane progress is
+# time-based (re-run the engine over each node's console), so it polls like docker.
+_POLLED_BACKENDS: frozenset[BackendName] = frozenset({"docker", "control-pane"})
 
 # How often to fire the polling tick.  Matches the spec's 5-second cadence.
 POLL_INTERVAL_S: float = 5.0
@@ -55,6 +56,7 @@ def state_subdir(backend: BackendName) -> Path:
         case "vm":     return root / "vms"
         case "podman": return root / "podman"
         case "lxd":    return root / "lxd"
+        case "control-pane": return root / "control-pane"
         case "docker": return root  # docker has no on-disk state; placeholder
     raise ValueError(f"unknown backend: {backend}")
 

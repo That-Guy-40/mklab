@@ -40,7 +40,7 @@ ResourceStatus = Literal[
     "running", "stopped", "built", "missing", "error", "unknown",
 ]
 
-BackendName = Literal["chroot", "vm", "docker", "podman", "lxd"]
+BackendName = Literal["chroot", "vm", "docker", "podman", "lxd", "control-pane"]
 
 
 class Resource(BaseModel):

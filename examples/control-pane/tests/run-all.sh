@@ -16,5 +16,9 @@ echo "== integration: control-pane watch =="
 bash "$HERE/test-watch.sh"; rc=$?
 [[ $rc -eq 0 || $rc -eq 77 ]] || fail=1
 
+echo "== integration: control-pane list + inspect (fleet) =="
+bash "$HERE/test-list.sh"; rc=$?
+[[ $rc -eq 0 || $rc -eq 77 ]] || fail=1
+
 if [[ $fail -eq 0 ]]; then echo "==== control-pane: all green ===="; else echo "==== control-pane: FAILURES ===="; fi
 exit $fail

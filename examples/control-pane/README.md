@@ -18,13 +18,18 @@ Extracted from `METAL_AS_A_SERVICE_LAB_PLAN.md` §5; full design in
                       phase6b-web SSE feed          (next slice)
 ```
 
-## Status (this slice)
+## Status
 
 - ✅ **The engine** (`control_pane/engine.py`) — pure, unit-tested, no TUI/clock.
 - ✅ **The `milestones.toml` loader** (`control_pane/milestones.py`) — regex, never eval;
   malformed input errors at load time.
-- ✅ **`control-pane watch`** (`control_pane/cli.py`) — the headless renderer.
-- ⏳ **Phase-6 renderer + web SSE feed** — the next slice (plan §4/§5).
+- ✅ **`control-pane watch` / `list` / `inspect`** (`control_pane/cli.py`) — the headless
+  renderer + fleet enumeration with live progress.
+- ✅ **Phase-6 inventory source** — a read-only `control-pane` backend surfaces the fleet in
+  **both** the Textual TUI and the phase6b-web UI (shared backend layer), progress in
+  `Resource.extra` (see *Phase-6 integration* below).
+- ⏳ **The progress-bar *rendering*** (a Textual `ProgressBar` + a web **SSE** progress feed)
+  — the next increment (plan §4c/§5).
 
 ## Quick start
 
@@ -67,6 +72,32 @@ Honesty rules the engine enforces (the whole point):
 A lab provides: its **nodes**, each node's **console stream** (a file / socket / command),
 and a **`milestones.toml`** profile. It then gets `control-pane watch` today, and the
 Phase-6 live group + web feed once those renderers land — all over the one engine.
+
+## Phase-6 integration (the fleet contract)
+
+A lab registers a node by dropping a `node.toml` under the control-pane state dir; Phase 6
+(and the CLI) discover it there and compute live progress by running the engine over the
+node's console. **No Python import** crosses the boundary — the Phase-6 backend shells out
+to the `control-pane` CLI, exactly like the `vm`/`docker` backends shell out to their phase
+scripts.
+
+```toml
+# $LAB_STATE_DIR/control-pane/<node>/node.toml
+profile = "install"                 # a profile in milestones.toml
+console = "/path/to/<node>.console" # the log the engine tails for progress
+# milestones = "/path/to/custom.toml"   # optional; else the lab's milestones.toml
+```
+
+```bash
+control-pane list --json      # what Phase 6 calls: [{name,profile,percent,label,terminal,stalled,console}]
+control-pane inspect <node>   # the node's milestone timeline + where it is now
+```
+
+The node then appears in the Phase-6 browser tree and the phase6b-web inventory as a
+`control-pane` resource whose `status` reflects progress (`stopped`→not started,
+`running`→provisioning, `built`→terminal reached, `error`→stalled) and whose `extra`
+carries `percent`/`label` for the (next-increment) progress bar. It's a **read-only**
+source — it observes nodes it doesn't own, so `destroy` is inert.
 
 ## Files
 

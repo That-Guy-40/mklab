@@ -1,5 +1,6 @@
 from lab_tui.backends.base import BackendRunner, Resource
 from lab_tui.backends.chroot import ChrootBackend
+from lab_tui.backends.control_pane import ControlPaneBackend
 from lab_tui.backends.docker import DockerBackend
 from lab_tui.backends.lxd import LXDBackend
 from lab_tui.backends.podman import PodmanBackend
@@ -11,12 +12,14 @@ ALL_BACKENDS: list[type[BackendRunner]] = [
     DockerBackend,
     PodmanBackend,
     LXDBackend,
+    ControlPaneBackend,
 ]
 
 __all__ = [
     "ALL_BACKENDS",
     "BackendRunner",
     "ChrootBackend",
+    "ControlPaneBackend",
     "DockerBackend",
     "LXDBackend",
     "PodmanBackend",
