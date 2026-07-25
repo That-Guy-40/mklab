@@ -1,0 +1,25 @@
+# ipmi_sim LAN config for the SOL backend. Placeholders substituted by backends/ipmi_sim.sh:
+#   @@LAN_HOST@@ @@LAN_PORT@@  — the RMCP+ endpoint (loopback, high port; F1: lab-only)
+#   @@SOL_DEVICE@@             — the node's serial: a PTY path OR "tcp:host:port" (QEMU serial)
+#   @@USER@@ @@PASS@@          — throwaway BMC creds
+name "bmc-toolkit"
+
+set_working_mc 0x20
+
+  startlan 1
+    addr @@LAN_HOST@@ @@LAN_PORT@@
+    priv_limit admin
+    allowed_auths_callback none md2 md5 straight
+    allowed_auths_user      none md2 md5 straight
+    allowed_auths_operator  none md2 md5 straight
+    allowed_auths_admin     none md2 md5 straight
+    guid a123456789abcdefa123456789abcdef
+  endlan
+
+  # Serial-over-LAN: bridge the RMCP+ SOL payload to the node's real serial device.
+  # A "tcp:host:port" device is the QEMU/libvirt serial path (<serial type='tcp'>).
+  sol "@@SOL_DEVICE@@" 115200
+
+  # user num / enabled / name / password / max-priv / max-sessions / allowed-auths
+  user 1 true  ""       "@@PASS@@" user  10 none md2 md5 straight
+  user 2 true  "@@USER@@" "@@PASS@@" admin 10 none md2 md5 straight

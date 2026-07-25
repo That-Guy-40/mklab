@@ -1,0 +1,5 @@
+# Minimal IPMI BMC for the ipmi_sim backend (SOL). One BMC MC at 0x20.
+# mc_add IPMB DevID HasDeviceSDRs DevRev MajFW MinFW DevSupport MfgID ProductID [flags]
+mc_setbmc 0x20
+mc_add 0x20 0 no-device-sdrs 0x23 9 8 0x9f 0x1291 0xf02 persist_sdr
+mc_enable 0x20

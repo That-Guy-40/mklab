@@ -1,0 +1,44 @@
+# fleet-bmc.toml — the BMC toolkit's own per-node backend registry (independent of any
+# consumer's fleet spec, so the block is liftable standalone). One [[node]] per machine;
+# `bmc.sh <node> <verb>` looks up the backend and its endpoint here.
+#
+# SECURITY (AUDIT F1): every endpoint is loopback with throwaway creds — lab-only.
+# NEVER point a backend at a real or networked host.
+
+# --- node1: the proven IPMI baseline (power + boot-device) via OpenStack VirtualBMC.
+#     Live use is rootful (qemu:///system socket is root:libvirt) -> author-run.
+[[node]]
+name       = "node1"
+backend    = "vbmcd"
+domain     = "alpine-node"          # a libvirt domain (see examples/virtualbmc-ipmi-lab/)
+uri        = "qemu:///system"
+ipmi_host  = "127.0.0.1"
+ipmi_port  = 6230
+ipmi_user  = "admin"
+ipmi_pass  = "password"
+
+# --- node2: REAL IPMI Serial-over-LAN via OpenIPMI ipmi_sim (RMCP+/lanplus).
+#     Power/bootdev are delegated (ipmi_sim chassis-control is 0xCC in 1.0.13) — the
+#     "coexist" shape: real SOL here, real power on a vbmcd (plan §5). Runs rootless
+#     against a qemu:///session node whose serial is exposed on serial_tcp.
+[[node]]
+name       = "node2"
+backend    = "ipmi_sim"
+domain     = "bmc-sol-node"
+uri        = "qemu:///session"
+ipmi_host  = "127.0.0.1"
+ipmi_port  = 9001
+ipmi_user  = "ipmiusr"
+ipmi_pass  = "test"
+serial_tcp = 9101                   # QEMU serial <serial type='tcp'> 127.0.0.1:9101; SOL bridges it
+
+# --- node3: modern OOB via Redfish (sushy-tools). Power + boot-override + VIRTUAL MEDIA
+#     (InsertMedia -> boot an ISO, no PXE). Runs rootless against qemu:///session.
+[[node]]
+name        = "node3"
+backend     = "redfish"
+domain      = "bmc-vmedia-node"
+uri         = "qemu:///session"
+redfish_url = "http://127.0.0.1:8000"
+redfish_user = "admin"
+redfish_pass = "password"
