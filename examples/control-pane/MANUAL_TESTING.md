@@ -1,108 +1,57 @@
-# MANUAL_TESTING — control-pane (engine + watch slice)
+# MANUAL_TESTING — control-pane
 
-Headless, no deps (stdlib only). Reproduce with `bash tests/run-all.sh`.
+The reusable core is the repo tool [`tools/control-pane`](../../tools/control-pane); this
+lab is its demo + Phase-6 integration. All headless, stdlib-only.
 
-## Success signature
+## The tool's own tests
 
 ```
-== unit tests: engine + milestones (python3 -m unittest) ==
-Ran 14 tests in 0.001s
-OK
+$ bash tools/tests/test-control-pane.sh
+Ran 14 tests in 0.00s — OK                # engine + milestones (stdlib unittest)
 PASS: engine + milestones unit tests
-== integration: control-pane watch ==
 PASS: control-pane watch drove install -> 'first boot' (100%) from file + stdin; unknown profile refused
+PASS: control-pane list --json + inspect enumerate a fleet with live progress
 ==== control-pane: all green ====
 ```
 
-## What the 14 unit tests pin (the honesty rules)
+The 14 unit tests pin the honesty rules: monotonic progress, an unmatched line is never a
+fake 100%, `terminal` is the only "done", stall is time-based (deterministic via injected
+timestamps); the loader rejects a bad regex / an out-of-range `at` / a missing key.
 
-- **engine** — reaches the terminal milestone; **monotonic** (a later line matching an
-  earlier marker does not regress); an **unmatched** line is never a fake 100%; the
-  `advanced` flag; **stall** is time-based (deterministic via injected timestamps); a
-  **terminal** node is never stalled; no clock ⇒ no stall.
-- **milestones** — a valid file parses; a **bad regex**, an **`at` out of range/wrong
-  type** (incl. `bool`), a **missing key**, and a **non-bool `terminal`** each raise
-  `MilestoneError`; the shipped `milestones.toml` loads (`install`/`ramdisk`/`image`).
-
-## Live watch (file input)
+## The lab demo (`demo.sh`)
 
 ```
-$ ./control-pane watch --profile install tests/fixtures/install-boot.console
-[ 25%] [#####---------------] install: partitioning  | Starting partitioner on /dev/vda
-[ 55%] [###########---------] install: base system  | Installing the base system
-[ 85%] [#################---] install: post-install  | Running post-install scripts
-[100%] [####################] install: first boot (done)  | almalinux login:
-control-pane: install reached 'first boot' (100%) — done
-```
-
-## Live-stream path (the emitter feeds the watcher)
-
-```
-$ python3 ../../tools/serial-source.py --replay tests/fixtures/install-boot.console --once --interval 0.1 \
-    | ./control-pane watch --profile install -
-… (same bars) …
-control-pane: install reached 'first boot' (100%) — done
-
-$ printf 'Freeing initrd memory\nRun /init as init process\nWelcome to u-root\n/ # \n' \
-    | ./control-pane watch --profile ramdisk -
-[ 40%] [########------------] ramdisk: unpacking  | Freeing initrd memory
-[ 80%] [################----] ramdisk: RAM userspace  | Run /init as init process
-[100%] [####################] ramdisk: RAM login (done)  | / #
-control-pane: ramdisk reached 'RAM login' (100%) — done
-```
-
-## Fleet enumeration (`control-pane list` / `inspect`)
-
-```
-$ LAB_STATE_DIR=$SD ./control-pane list        # $SD/control-pane/<node>/node.toml
+$ bash examples/control-pane/demo.sh
+### the fleet, with live progress ###
 edge1          100%  install   first boot
-edge2            0%  install   waiting
+edge2           55%  install   base system
 
-$ LAB_STATE_DIR=$SD ./control-pane inspect edge1
-node:    edge1
-profile: install
-now:     100%  first boot  [terminal]
-milestones:
+### watch edge1 reach its terminal milestone ###
+[ 25%] [#####---------------] install: partitioning  | Starting partitioner
+[ 55%] [###########---------] install: base system   | Installing the base system
+[ 85%] [#################---] install: post-install  | Running post-install
+[100%] [####################] install: first boot (done)  | login:
+control-pane: install reached 'first boot' (100%) — done
+
+### inspect edge2 (still mid-install) ###
+now:     55%  base system
   *  25%  partitioning
   *  55%  base system
-  *  85%  post-install
-  * 100%  first boot  (terminal)
+     85%  post-install
+    100%  first boot  (terminal)
 ```
 
-`tests/test-list.sh` pins `list --json` (edge1 → 100% terminal), `inspect` (the timeline),
-and an unknown-node error.
-
-## Phase-6 integration (the read-only inventory source)
-
-The `control-pane` backend surfaces the fleet in **both** the Textual TUI and phase6b-web
-(shared backend layer). Verified via each package's pytest (CI-gated):
-
-```
-phase6-tui:   103 passed     # incl. tests/test_backends_control_pane.py (4)
-phase6b-web:   40 passed
-```
-
-`test_backends_control_pane.py` proves the end-to-end shell-out: a registered `node.toml`
-+ a console → a `Resource` with `extra.percent`/`label` and a progress-mapped `status`
-(`built` at terminal, `stopped` before start), an empty fleet → `[]`, and an **inert**
-read-only `destroy_argv` (an `echo`, never a destructive verb).
-
-## Progress-bar rendering (TUI + web + SSE)
+## Phase-6 integration (TUI + web + SSE)
 
 Verified via each package's pytest (CI-gated):
 
 ```
-phase6-tui:   109 passed   # + test_progress_bar.py (5) + test_control_pane_tree.py (1)
-phase6b-web:   44 passed   # + test_progress.py (4)
+phase6-tui:   109 passed   # incl. test_backends_control_pane.py, test_progress_bar.py,
+                           #       test_control_pane_tree.py (a node → a filled bar in the tree)
+phase6b-web:   44 passed   # incl. test_progress.py (inventory bar, SSE stream, detail-panel SSE, 404)
 ```
 
-- **TUI** — `test_control_pane_tree.py` boots the app with a registered node and asserts the
-  tree leaf renders the filled bar (`edge1 … 100% first boot █`); `test_progress_bar.py`
-  pins the widget (fill/empty cells, stalled flag, clamping).
-- **Web** — `test_progress.py` asserts the inventory partial renders a `progress-bar` with
-  `width: 85%` / `100% first boot` + the `done` class; the **SSE** feed
-  (`/stream/progress/control-pane/<node>`) streams a progress fragment and ends at terminal;
-  the detail panel wires `sse-connect`/`sse-swap` for a live server-pushed bar.
-
-The control-pane lab is now complete: engine → `watch`/`list`/`inspect` → Phase-6 inventory
-→ live progress bars (TUI + web + SSE).
+The `control-pane` backend shells out to `tools/control-pane`; a registered `node.toml` +
+a console → a `Resource` with `extra.percent`/`label` and a progress-mapped `status`, drawn
+as a live bar in **both** the Textual TUI and phase6b-web (the latter with a server-pushed
+SSE feed on the detail panel). `destroy` is inert (read-only source).

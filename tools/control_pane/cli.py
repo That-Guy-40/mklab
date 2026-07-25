@@ -18,7 +18,7 @@ import tomllib
 from .engine import Tracker
 from .milestones import load
 
-DEFAULT_MILESTONES = os.path.join(os.path.dirname(os.path.dirname(__file__)), "milestones.toml")
+DEFAULT_MILESTONES = os.path.join(os.path.dirname(__file__), "milestones.toml")
 
 
 def _fleet_dir(explicit):

@@ -36,7 +36,7 @@ def _status_for(percent: int, terminal: bool, stalled: bool) -> ResourceStatus:
 
 class ControlPaneBackend(BackendRunner):
     name: ClassVar = "control-pane"
-    script: ClassVar[Path] = phase_script("examples/control-pane/control-pane")
+    script: ClassVar[Path] = phase_script("tools/control-pane")
 
     @classmethod
     def state_paths(cls) -> list[Path]:

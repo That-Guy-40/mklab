@@ -46,7 +46,7 @@ class MilestoneTests(unittest.TestCase):
             parse(doc([{"match": "a", "label": "x", "at": 1, "terminal": "yes"}]))
 
     def test_shipped_file_loads(self):
-        profs = load(os.path.join(LAB, "milestones.toml"))
+        profs = load(os.path.join(LAB, "control_pane", "milestones.toml"))
         for want in ("install", "ramdisk", "image"):
             self.assertIn(want, profs)
         self.assertTrue(any(m.terminal for m in profs["install"]))
