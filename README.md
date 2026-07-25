@@ -167,7 +167,7 @@ LAB_CREATE_V2/
 ├── TODO.md · AUDIT.md · CLAUDE.md · LICENSE
 ├── examples/                  # ready-to-use TOML configs (see examples/00-INDEX.md)
 ├── netboot/                   # iPXE build + payload signing (sign-payload.sh) + serve pipeline
-├── tools/                     # repo tooling: link_check.py, paths.py, drive-*-repl.py serial drivers
+├── tools/                     # repo tooling: link_check.py, paths.py, drive-*-repl.py serial drivers, serial-source.py serial emitter
 ├── micro-linux/               # from-source kernel+initramfs (compile → boot in RAM)
 ├── phase1-chroot/             # each phase dir has the same shape:
 │   ├── lab-chroot.sh          #   the driver script

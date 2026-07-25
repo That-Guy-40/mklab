@@ -42,7 +42,7 @@ RMCP+/lanplus BMC that bridges the SOL payload to a serial device. The toolkit w
 ```bash
 # node2's serial lives on tcp:127.0.0.1:9101 (see fleet-bmc.toml serial_tcp). Give it
 # something to say — a real QEMU node (see §3) or, to see the bridge in isolation:
-python3 tests/serial-source.py 9101 HELLO-SOL &      # a stand-in 'node serial'
+python3 ../../tools/serial-source.py --tcp 9101 --marker HELLO-SOL &   # a stand-in 'node serial'
 
 ./bmc.sh node2 bmc-up                                 # starts ipmi_sim; SOL <- tcp:9101
 ipmitool -I lanplus -H 127.0.0.1 -p 9001 -U ipmiusr -P test -C 3 chassis status   # RMCP+ works
@@ -82,7 +82,7 @@ virsh -c qemu:///session destroy bmc-sol-node; virsh -c qemu:///session undefine
 ```
 
 > Start the SOL capture **before** booting: the kernel echoes its command-line marker once,
-> very early. (The automated smoke uses the deterministic `serial-source.py` to avoid this
+> very early. (The automated smoke uses the deterministic `tools/serial-source.py` to avoid this
 > race; this by-hand version shows the real thing.)
 
 ## 4. Redfish virtual media with `sushy-tools` (the centerpiece)
