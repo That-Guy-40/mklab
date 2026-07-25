@@ -1,0 +1,13 @@
+# Runtime/generated — never committed.
+# (Inline comments are NOT allowed in .gitignore; keep them on their own lines.)
+
+# per-node pidfiles, rendered lan.conf, storage pool, captured serial:
+state/
+
+# sushy-tools virtualenv (bootstrapped on first redfish bmc-up):
+.venv/
+
+# built by make-proof-iso.sh:
+proof.iso
+
+*.log
