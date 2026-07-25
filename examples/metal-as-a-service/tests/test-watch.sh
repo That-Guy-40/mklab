@@ -47,12 +47,15 @@ verdict="$( ( "$MAAS" watch node1 --profile probe --console "$console" ) 2>/dev/
 grep -q "reached 'facts posted'" <<<"$verdict" || fail "watch verdict wrong: $verdict"
 note "watch streams the probe console to terminal (facts posted, 100%) ✓"
 
-# ── profile auto-selects from the deploy driver when --profile is omitted ────
-( "$MAAS" manage node1 ) >/dev/null 2>&1
-( "$MAAS" provide node1 ) >/dev/null 2>&1
-( "$MAAS" deploy node1 --driver ramdisk --image busybox-netboot ) >/dev/null 2>&1 || fail "deploy node1"
+# ── profile auto-selects from the node's deploy driver when --profile omitted ─
+# (drive the derivation directly off the recorded driver field — the install
+# driver's real deploy is author-run; here we assert the ramdisk->ramdisk mapping)
+printf 'ramdisk\n' > "$MAAS_STATE/node1/driver"
 ( "$MAAS" watch node1 --register-only ) >/dev/null 2>&1 || fail "watch (driver-derived profile) failed"
 grep -q 'profile = "ramdisk"' "$nt" || fail "REGRESSION: watch did not derive profile 'ramdisk' from the deploy driver"
+printf 'install\n' > "$MAAS_STATE/node1/driver"
+( "$MAAS" watch node1 --register-only ) >/dev/null 2>&1 || fail "watch failed for install driver"
+grep -q 'profile = "install"' "$nt" || fail "REGRESSION: watch did not derive profile 'install' from the deploy driver"
 note "profile auto-derived from the deploy driver (ramdisk) ✓"
 
 pass "watch wires MAAS into tools/control-pane: milestones load, register for Phase-6, stream to terminal, driver-derived profile"

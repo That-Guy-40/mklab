@@ -56,17 +56,22 @@ grep -q 'cleaning' "$MAAS_STATE/$N/history.log" \
     || fail "provide did not pass through 'cleaning'"
 note "provide -> available (through cleaning) ✓"
 
-# ── deploy: available -> active (state-only in inc1) ─────────────────────────
-if ( "$MAAS" deploy "$N" --driver bogus ) >/dev/null 2>&1; then
+# ── deploy: driver-gated (verify + health), available -> active ──────────────
+maas_env_drivers                       # --driver mock -> tests/mock.sh; signed image store
+make_image busybox-netboot
+if ( "$MAAS" deploy "$N" --driver bogus --image busybox-netboot ) >/dev/null 2>&1; then
     fail "REGRESSION: deploy accepted an unknown driver 'bogus'"
 fi
 note "deploy refused unknown driver ✓"
-( "$MAAS" deploy "$N" --driver ramdisk --image busybox-netboot ) >/dev/null 2>&1 \
-    || fail "deploy $N --driver ramdisk failed"
+if ( "$MAAS" deploy "$N" --driver mock ) >/dev/null 2>&1; then
+    fail "REGRESSION: deploy accepted a missing --image"
+fi
+note "deploy requires --image ✓"
+( "$MAAS" deploy "$N" --driver mock --image busybox-netboot ) >/dev/null 2>&1 \
+    || fail "deploy $N via mock driver failed (signed image + health=pass should reach active)"
 assert_state "$N" active
-[[ "$("$MAAS" state "$N")" == active ]] || fail "node not active after deploy"
 grep -q 'deploying' "$MAAS_STATE/$N/history.log" || fail "deploy did not pass through 'deploying'"
-note "deploy -> active (driver+image recorded) ✓"
+note "deploy -> active via mock driver (F2 verify + health gate) ✓"
 
 # ── rescue / unrescue ────────────────────────────────────────────────────────
 ( "$MAAS" rescue "$N" ) >/dev/null 2>&1 || fail "rescue $N failed"

@@ -39,6 +39,30 @@ cleanup_sandboxes() { local s; for s in "${_SANDBOXES[@]:-}"; do [[ -n "$s" ]] &
 # Run maas-lab.sh; capture rc without tripping the EXIT trap (subshell contains any die).
 m() { ( "$MAAS" "$@" ); }
 
+# Deploy-driver test rig (increment 3): point --driver at tests/mock.sh, set up a
+# signed-image store with a real snakeoil trust root, and use a short health timeout.
+maas_env_drivers() {
+    export MAAS_DRIVER_DIR="$TEST_DIR"           # so `--driver mock` -> tests/mock.sh
+    export MAAS_IMAGES_DIR="$SANDBOX/images"
+    export MAAS_HEALTH_TIMEOUT=3
+    mkdir -p "$MAAS_IMAGES_DIR/trust"
+    "$LAB_DIR/drivers/verify-lib.sh" gen-keys --dir "$MAAS_IMAGES_DIR/trust" >/dev/null 2>&1 \
+        || skip "verify-lib gen-keys failed (openssl missing?)"
+}
+# make_image <name> [tamper] — a signed payload for <name>; `tamper` flips a byte
+# AFTER signing so verification must fail.
+make_image() {
+    local img="$1" dir; dir="$MAAS_IMAGES_DIR/$img"; mkdir -p "$dir"
+    printf 'PAYLOAD-%s-%s\n' "$img" "${2:-clean}" > "$dir/payload.img"
+    "$LAB_DIR/drivers/verify-lib.sh" sign "$dir/payload.img" --keydir "$MAAS_IMAGES_DIR/trust" >/dev/null 2>&1 \
+        || fail "signing image '$img' failed"
+    [[ "${2:-}" == tamper ]] && printf 'X' | dd of="$dir/payload.img" bs=1 seek=1 conv=notrunc >/dev/null 2>&1
+    return 0
+}
+
+# Read a node's registry field (image, driver, previous_image, …) from the sandbox.
+_show() { cat "$MAAS_STATE/$1/$2" 2>/dev/null; }
+
 # Assert a node is in an expected state.
 assert_state() {  # assert_state <node> <expected>
     local got; got="$("$MAAS" state "$1" 2>/dev/null)"

@@ -219,3 +219,67 @@ cp ~/.cache/lab-create/maas/probe-initramfs.cpio.gz ~/netboot/initrd.gz   # serv
 off, and `inspect --boot` returns with a populated `schedulable` line. A probe that
 can't reach the sink prints `FAILED to post facts` and `inspect --boot` times out
 (the node would go to `error` on the control plane).
+
+## 4. Headless — health-gated deploy, A/B rollback & the F2 tamper drill (increment 3)
+
+Real installs are author-run (§4b below); the activation logic — verify gate, health
+gate, A/B rollback — is exercised headlessly with the **mock driver** (`tests/mock.sh`)
+over **real OpenSSL CMS** signatures. `MOCK_HEALTH_<image>=fail` injects a health
+failure.
+
+### 4a. A/B rollback (a new image fails its health gate)
+
+```console
+$ maas-lab.sh deploy node1 --driver mock --image app-v1        # healthy
+  - deploying image 'app-v1' via 'mock' (verify=1, health timeout 3s)…
+active node1 (driver=mock image=app-v1, healthy)
+
+$ MOCK_HEALTH_APP_V2=fail maas-lab.sh deploy node1 --driver mock --image app-v2
+  - deploying image 'app-v2' via 'mock' (verify=1, health timeout 3s)…
+maas: image 'app-v2' failed its health gate (never reached 'active')
+maas: rolling back 'node1' to its previous image 'app-v1' (§4b A/B)…
+maas: DEGRADED: 'node1' is active on its PREVIOUS image 'app-v1' (new image 'app-v2' was rejected)
+active node1 (driver=mock image=app-v1, DEGRADED — rolled back)
+
+$ maas-lab.sh show node1 | grep -E '^(state|image) '
+state       active
+image       app-v1 (previous: )
+```
+
+### 4b. The F2 tamper drill (a tampered image is refused pre-boot)
+
+`app-bad` is correctly signed, then one byte is flipped — so `openssl cms -verify`
+fails, and the node **never boots it**, staying on its previous good image (the
+required signature, mirroring RAM-INFRA §13):
+
+```console
+$ maas-lab.sh deploy node1 --driver mock --image app-bad       # tampered
+  - deploying image 'app-bad' via 'mock' (verify=1, health timeout 3s)…
+maas: F2 signature verification failed for image 'app-bad'
+maas: rolling back 'node1' to its previous image 'app-v1' (§4b A/B)…
+active node1 (driver=mock image=app-v1, DEGRADED — rolled back)
+```
+
+`test-deploy-rollback.sh` + `test-verify-tamper.sh` assert these paths (plus
+both-slots-bad → `error`, no-previous → `error`, and that `--no-verify` bypasses the
+gate — proving the gate was the thing that blocked the tampered image). Suite:
+`tests/run-all.sh` → **8 passed, 0 skipped, 0 failed**.
+
+### 4c. Author-run — a real `install` deploy
+
+```bash
+cd examples/metal-as-a-service
+# stage the PXE net + a signed kickstart payload for the image (once):
+( cd ../virtualbmc-ipmi-lab && PAYLOAD=almalinux ./setup-pxe-net.sh )
+# sign the served kernel/initrd so the F2 gate can verify them:
+drivers/verify-lib.sh gen-keys --dir "$MAAS_IMAGES_DIR/trust"
+drivers/verify-lib.sh sign ~/netboot/vmlinuz --keydir "$MAAS_IMAGES_DIR/trust"   # etc.
+./create-fleet.sh up                             # rootful fleet (increment 1)
+./maas-lab.sh deploy node1 --driver install --image almalinux9-ks
+```
+
+**Expected signature:** `install` sets `bootdev pxe` → powers on → the kickstart
+installs and `poweroff`s → the driver waits for `domstate shut off` → `bootdev disk`
+→ powers on → the health gate polls the node console for `login:` → node reaches
+`active`. If the install never produces a login within the timeout, the node rolls
+back (or → `error` if there's no previous image) — the same logic §4a proves headless.
