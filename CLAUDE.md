@@ -198,6 +198,14 @@ cycles, all this one bug.)
   `tools/tests/test-echo-gate.sh` (fixture `tools/tests/lossy-console.py` = a
   FIFO with no flow control; plain 40 ms send delivers `load-base` as `ldbe`,
   the gate delivers it whole). Verified against real OpenBIOS-ppc.
+- **Testing the READER side (a SOL bridge, a boot-progress/milestone parser, the
+  expect side of a driver)?** `tools/serial-source.py` is the **emitter** fixture — a
+  fake serial device that streams a `--marker` or **`--replay`s a canned boot log** over
+  `--tcp` / `--pty` / stdout (the complement to `lossy-console.py`). It is a *program*,
+  not a shell loop, to dodge a real footgun: a shell `printf` loop over a socket/pipe
+  **block-buffers and silently delivers nothing** (found wiring ipmi_sim SOL in
+  [`examples/bmc-toolkit/`](examples/bmc-toolkit/README.md)) — the tool flushes every
+  line. Regression: `tools/tests/test-serial-source.sh`.
 - **Slow-send everything you "type":** when you can't gate on echo, one byte at a
   time with a **~40 ms** delay (`for ch in s: sock.sendall(bytes([ch]));
   sleep(0.04)`) — the floor, not a guarantee. Faster drops chars. Space out

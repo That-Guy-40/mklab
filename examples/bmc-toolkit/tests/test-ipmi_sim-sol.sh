@@ -21,8 +21,8 @@ cleanup() {
 }
 trap 'cleanup' EXIT
 
-note "start the node's serial source (TCP-LISTEN:$SERIAL_TCP -> repeating marker)"
-python3 "$TEST_DIR/serial-source.py" "$SERIAL_TCP" "$MARKER" >/dev/null 2>&1 &
+note "start the node's serial source (repo tool: tools/serial-source.py --tcp $SERIAL_TCP)"
+python3 "$LAB_DIR/../../tools/serial-source.py" --tcp "$SERIAL_TCP" --marker "$MARKER" >/dev/null 2>&1 &
 SRC_PID=$!
 sleep 1
 kill -0 "$SRC_PID" 2>/dev/null || fail "serial source failed to start on :$SERIAL_TCP"
