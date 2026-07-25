@@ -1,0 +1,42 @@
+# fleet.toml — the Metal-as-a-Service fleet.
+#
+# TWO roles in one file:
+#  1. Hardware spec consumed by create-fleet.sh (libvirt domain shape + BMC port).
+#  2. The DECLARED desired end-state consumed by `maas-lab.sh apply` — the
+#     reconciliation loop (build step 6, §3a). Increment 1 uses only the hardware
+#     fields + [defaults]; the driver/image/[pool] fields are declared now so the
+#     spec is stable when `apply` lands.
+#
+# Fleet = 3 nodes on loopback BMC ports 6230–6232 (F1: never point a BMC at a
+# networked host — IPMI-over-LAN is unauthenticated by default).
+
+[defaults]
+memory_mb = 4096          # RAM initrds panic under ~2G (virtualbmc-ipmi-lab finding)
+disk_size = "10G"
+firmware  = "bios"        # SeaBIOS/i440fx, matching the proven vbmc anchor
+network   = "vbmc-pxe"    # the PXE NAT net the install/ramdisk drivers use
+uri       = "qemu:///system"
+bmc_user  = "admin"
+bmc_pass  = "password"
+
+[[node]]
+name     = "node1"
+bmc_port = 6230
+# desired end-state (for `apply`, build step 6):
+driver   = "install"
+image    = "almalinux9-ks"
+
+[[node]]
+name     = "node2"
+bmc_port = 6231
+driver   = "ramdisk"
+image    = "busybox-netboot"
+
+[[node]]
+name     = "node3"
+bmc_port = 6232
+driver   = "ramdisk"
+image    = "anycast-dns-ram"
+
+[pool]
+available = 1             # keep this many wiped + ready (apply, build step 6)

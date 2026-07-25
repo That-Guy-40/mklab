@@ -395,6 +395,14 @@ goal       = "Go from 'boots the network' to 'installs an OS with no keystrokes'
   learn      = "now go deeper on the out-of-band protocols themselves: one verb surface (`bmc.sh`) over vbmcd (IPMI power) + ipmi_sim (REAL Serial-over-LAN, RMCP+) + redfish (virtual media — hand the node an ISO and boot it, no PXE), with a capability model a control plane routes on."
   checkpoint = "`ipmitool -I lanplus … sol activate` streams a node's serial (real SOL), and Redfish `InsertMedia` boots an ISO over virtual media — both headless & rootless (`bash tools/tests/test-control-pane.sh` → 3 passed, 1 skipped)."
   [[path.step]]
+  lab        = "metal-as-a-service/"
+  tags       = ["🏗️"]
+  learn      = "now COMPOSE the OOB layer + the installers into a control plane: each libvirt domain is a node with a full Ironic-faithful state machine (enroll→manage→inspect→provide→deploy→rescue/release), and `deploy` is a pluggable interface routing to the very installers in this path. maas-lab.sh never calls ipmitool — it shells out to bmc-toolkit through one injectable seam, so the whole machine drives headlessly."
+  checkpoint = "`bash examples/metal-as-a-service/tests/run-all.sh` → 3 passed: the state machine drives a node enrolled→available→active and REFUSES every illegal transition; `cleaning` hands the disk wipe to the operator (no auto-wipe); the generated fleet-bmc.toml parses via bmc-toolkit's registry.py."
+  verify_cmd = "bash examples/metal-as-a-service/tests/run-all.sh >/dev/null 2>&1 && echo MAAS-SPINE-OK"
+  verify_marker = "MAAS-SPINE-OK"
+  verify_host = true
+  [[path.step]]
   lab        = "FREEBSD-simple-templating-serving-RHEL-kickstart-files/"
   learn      = "a FreeBSD box `sed`-templates a kickstart and serves AlmaLinux via an OEMDRV ISO (no PXE at all)."
   checkpoint = "`ksvalidator` passes the rendered `ks.cfg`; the OEMDRV ISO builds on both GNU and BSD `sed`."
@@ -614,8 +622,8 @@ theme   = "Firmware, boot, and RAM-only systems — the lowest layers."
 members = ["linuxboot-uefi-kexec/", "open-firmware-forth-to-boot/",
            "openbios-the-rival-that-shipped/", "openbios-clib-hello-to-emacs/",
            "kdump-kexec-lab/", "virtualbmc-ipmi-lab/", "bmc-toolkit/",
-           "root-password-reset/", "tiny-linux-experiments/", "pxe-boot-mechanics/",
-           "chroot-netboot-minimal.toml"]
+           "metal-as-a-service/", "root-password-reset/", "tiny-linux-experiments/",
+           "pxe-boot-mechanics/", "chroot-netboot-minimal.toml"]
 
 [[collection]]
 id      = "multi-arch-tcg"
