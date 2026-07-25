@@ -8,8 +8,8 @@ This file tracks the **build increments** and records each one's outcome as it l
 | # | Increment | Status |
 |---|---|---|
 | **1** | **Fleet + registry + full state machine** (`create-fleet.sh` + `maas-lab.sh`: all transitions, `power`/`bootdev`, guarded `cleaning`, `error`/`maintenance`, `rescue`) | ✅ **DONE** — headless |
-| **2** | **`inspect` RAM probe + NoCloud metadata + `milestones.toml`/`watch`** (feeds `tools/control-pane`) | ✅ **DONE (this increment)** — headless |
-| 3 | `install` driver + **health-gated activation + A/B rollback** (§4b) | ▫ |
+| **2** | **`inspect` RAM probe + NoCloud metadata + `milestones.toml`/`watch`** (feeds `tools/control-pane`) | ✅ **DONE** — headless |
+| **3** | **`install` driver + health-gated activation + A/B rollback (§4b)** + F2 verify gate | ✅ **DONE (this increment)** — headless (real install author-run) |
 | 4 | `ramdisk` driver + catalog (RAM-INFRA / micro-linux / floppinux / busybox), signed + `imgverify` | ▫ |
 | 5 | `image` driver (dd golden whole-disk, Tier-B reuse) | ▫ |
 | 6 | `apply` declarative reconcile (§3a) — diff desired-vs-actual, idempotent | ▫ |
@@ -107,3 +107,50 @@ probe `/init`. Transcripts in MANUAL_TESTING.md §3.
 **Author-run (handed over):** the real `inspect <node> --boot` (PXE-boot the probe on
 a live fleet) — serve the initramfs + a kernel over `:8181`, run `metadata-serve.sh`,
 then `inspect --boot`. Steps in MANUAL_TESTING.md §3c.
+
+## Increment 3 — outcome (2026-07-25)
+
+**Built:** `deploy` stops being a state-only stub. It is now a **pluggable, health-
+gated, verify-gated activation** with **A/B rollback** — the crux of §4b.
+
+- **Driver interface.** A driver is `drivers/<name>.sh` implementing
+  `verify`/`deploy`/`health`/`describe`; `maas-lab.sh` dispatches to it (context via
+  env). `install.sh` is the real driver (PXE kickstart/preseed → boot from disk;
+  wraps the `virtualbmc-ipmi-lab` finale; **author-run**). `ramdisk`/`image` are
+  honest not-yet (deploy names the build step). `MAAS_DRIVER_DIR` lets tests inject
+  `tests/mock.sh`.
+- **The health gate.** `deploying → active` is **not** "the boot command returned" —
+  every driver declares a success signal and `deploy` polls it. For `install` the
+  signal is the installed OS's **`login:`** on the node console — the *same* line
+  `watch`'s terminal milestone renders (§5c: the terminal milestone doubles as the
+  health-gate marker). Only a pass advances to `active`.
+- **A/B rollback.** `current`/`previous` image slots per node. A new image that fails
+  **verify or health** rolls the node back to its previous good image (**degraded but
+  up**) instead of bricking; **both** slots bad → `error`; no previous → `error`.
+  `deploy` is allowed from `available` (fresh) *and* `active` (A/B upgrade-in-place).
+- **F2 verify gate.** `drivers/verify-lib.sh` signs/verifies payloads with **OpenSSL
+  CMS** (detached, DER, `-binary -noattr`, codeSigning EKU) — the exact format
+  `netboot/sign-payload.sh` produces for iPXE `imgverify`. Host-side verify is the
+  deploy-time gate; iPXE's in-firmware `imgverify` is the author-run boot complement.
+  A tampered image **fails verification and is never activated** (the required
+  tamper→rollback drill, mirroring RAM-INFRA §13).
+
+**Design decisions this increment:**
+1. **One `gate()` = verify → deploy → health**, reused for the new image *and* the
+   rollback image, so both slots are held to the same bar.
+2. **Verify-fail and health-fail both trigger rollback** (worst case = "stayed on the
+   previous good image", never "booted an untrusted/broken image over a working one").
+   A hard `--no-verify` escape hatch exists and the test proves the gate was load-bearing.
+3. **Own the F2 crypto, cite the tool.** A small self-contained `verify-lib.sh` (repo
+   self-containment) in the *same* CMS format as `netboot/sign-payload.sh`, which it
+   cites as the production/iPXE-side companion rather than duplicating.
+
+**Verified (headless, this host, 2026-07-25):** `tests/run-all.sh` → **8 passed, 0
+skipped, 0 failed** — added `test-deploy-rollback.sh` (healthy→active, fail→previous
+degraded, both-bad→error, no-prev→error, unimplemented-driver refusal) and
+`test-verify-tamper.sh` (**real OpenSSL CMS**: clean verifies, a flipped byte fails,
+tampered image never activated, `--no-verify` bypass). `test-state-machine.sh`'s
+deploy step now drives the real gate via the mock driver. shellcheck clean.
+
+**Author-run (handed over):** a real `install` deploy end-to-end (PXE kickstart on a
+live fleet, health = the OS `login:`). Steps + expected signature in MANUAL_TESTING §4.

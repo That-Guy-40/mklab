@@ -5,7 +5,8 @@ set -uo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")" || exit 2
 
 tests=(test-state-machine.sh test-cleaning-guard.sh test-registry.sh
-       test-inspect-metadata.sh test-watch.sh test-probe-build.sh)
+       test-inspect-metadata.sh test-watch.sh test-probe-build.sh
+       test-deploy-rollback.sh test-verify-tamper.sh)
 pass=0 skip=0 failn=0 rc=0
 for t in "${tests[@]}"; do
     printf '\n=== %s ===\n' "$t" >&2

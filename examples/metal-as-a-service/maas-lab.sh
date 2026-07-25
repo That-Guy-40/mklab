@@ -53,6 +53,14 @@ REG_BMC="$STATE_ROOT/fleet-bmc.toml"   # generated bmc-toolkit registry for bmc.
 CONTROL_PANE="${CONTROL_PANE:-$MAAS_DIR/../../tools/control-pane}"
 MAAS_MILESTONES="${MAAS_MILESTONES:-$MAAS_DIR/milestones.toml}"
 
+# Deploy drivers + signed-image store (increment 3). A driver is drivers/<name>.sh
+# implementing verify/deploy/health/describe; MAAS_DRIVER_DIR lets tests inject a
+# mock. Images (signed payloads) live under MAAS_IMAGES_DIR/<image>/, trust root at
+# MAAS_IMAGES_DIR/trust/ca.crt.
+MAAS_DRIVER_DIR="${MAAS_DRIVER_DIR:-$MAAS_DIR/drivers}"
+MAAS_IMAGES_DIR="${MAAS_IMAGES_DIR:-$STATE_ROOT/images}"
+MAAS_HEALTH_TIMEOUT="${MAAS_HEALTH_TIMEOUT:-120}"
+
 # Where a lab registers control-pane nodes — always the SIBLING of STATE_ROOT
 # (both are "<base>/<component>"), so Phase-6 (which reads $LAB_STATE_DIR/control-pane
 # via tools/control_pane/cli.py's _fleet_dir) and MAAS land under one base.
@@ -356,39 +364,102 @@ wipe_disk() {  # wipe_disk <node> <confirmed:0|1>
     return 2
 }
 
-# deploy — put an OS on the node (available -> active).
-# INCREMENT 1: this is a STATE-ONLY transition that records the chosen driver +
-# image and passes through `deploying`. The real deploy mechanisms (install/
-# ramdisk/image drivers) and the health-gated activation + A/B rollback are build
-# steps 3–5 — deploy here does NOT boot an OS, and says so.
+# run_driver — invoke a deploy driver verb with the node/image context in the env.
+# The driver (drivers/<name>.sh) implements verify/deploy/health/describe.
+run_driver() {  # run_driver <driver-script> <verb> <args...>
+    local drv="$1"; shift
+    MAAS_BMC="$MAAS_BMC" MAAS_STATE="$STATE_ROOT" MAAS_IMAGES_DIR="$MAAS_IMAGES_DIR" \
+    MAAS_HEALTH_TIMEOUT="$MAAS_HEALTH_TIMEOUT" MAAS_REG_BMC="$REG_BMC" \
+        "$drv" "$@"
+}
+
+# gate — the activation gate for one image: verify (F2, unless --no-verify) ->
+# deploy -> health. Sets GATE_REASON on failure. Returns 0 healthy, non-zero not.
+GATE_REASON=""
+gate() {  # gate <driver-script> <node> <image> <slot> <verify:0|1>
+    local drv="$1" node="$2" image="$3" slot="$4" do_verify="$5"
+    GATE_REASON=""
+    if [[ "$do_verify" == 1 ]]; then
+        if ! run_driver "$drv" verify "$image" >/dev/null 2>&1; then
+            GATE_REASON="F2 signature verification failed for image '$image'"
+            return 1
+        fi
+    fi
+    if ! run_driver "$drv" deploy "$node" "$image" "$slot"; then
+        GATE_REASON="driver could not deploy image '$image'"
+        return 1
+    fi
+    if ! run_driver "$drv" health "$node" "$image"; then
+        GATE_REASON="image '$image' failed its health gate (never reached 'active')"
+        return 1
+    fi
+    return 0
+}
+
+# deploy — put an OS on the node through a driver, gated on health, with A/B
+# rollback (§4b). deploying -> active only if the image VERIFIES (F2) and passes
+# its HEALTH gate; a failure rolls the node back to its previous good image
+# (staying degraded-but-up) instead of bricking; both slots bad -> error. Allowed
+# from `available` (fresh) and `active` (A/B upgrade-in-place).
 cmd_deploy() {
-    local node="" driver="" image=""
-    node="${1:?usage: deploy <node> --driver install|ramdisk|image [--image NAME]}"; shift
+    local node="" driver="" image="" do_verify=1
+    node="${1:?usage: deploy <node> --driver D --image I [--no-verify]}"; shift
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --driver) driver="$2"; shift 2 ;;
-            --image)  image="$2"; shift 2 ;;
+            --driver)    driver="$2"; shift 2 ;;
+            --image)     image="$2"; shift 2 ;;
+            --no-verify) do_verify=0; shift ;;
             *) die "deploy: unknown option '$1'" ;;
         esac
     done
     require_node "$node"
-    require_state "$node" deploy available
-    case "$driver" in
-        install|ramdisk|image|image+measured) : ;;
-        "") die "deploy: --driver is required (install|ramdisk|image|image+measured)" ;;
-        *)  die "deploy: unknown driver '$driver' (install|ramdisk|image|image+measured)" ;;
-    esac
-    set_state "$node" deploying deploy
+    require_state "$node" deploy available active
+    [[ -n "$driver" ]] || die "deploy: --driver is required (install|ramdisk|image|image+measured)"
+    [[ -n "$image" ]]  || die "deploy: --image is required (the payload to deploy)"
+
+    # Resolve the driver script. install is real (author-run); ramdisk/image are
+    # honest not-yet — name the build step rather than pretending.
+    local drv="$MAAS_DRIVER_DIR/$driver.sh"
+    if [[ ! -x "$drv" ]]; then
+        case "$driver" in
+            ramdisk) die "deploy: the 'ramdisk' driver lands in build step 4 (not yet implemented)" ;;
+            image)   die "deploy: the 'image' driver lands in build step 5 (not yet implemented)" ;;
+            image+measured) die "deploy: 'image+measured' is a documented fast-follow (not yet implemented)" ;;
+            *) die "deploy: no driver '$driver' at $drv" ;;
+        esac
+    fi
+
+    local prev; prev="$(_read "$node" image "")"     # current image -> rollback candidate
     _write "$node" driver "$driver"
-    [[ -n "$image" ]] && _write "$node" image "$image"
-    # A/B slots: today's image becomes 'previous' before the new one lands (the
-    # rollback mechanic; the health gate that USES it is build step 3).
-    local prev; prev="$(_read "$node" image "")"
-    [[ -n "$prev" && -n "$image" && "$prev" != "$image" ]] && _write "$node" previous_image "$prev"
-    info "driver=$driver image=${image:-<none>} — STATE-ONLY in increment 1"
-    info "real boot + health-gated activation (§4b) lands in build step 3"
-    set_state "$node" active deploy
-    printf 'active %s (driver=%s image=%s)\n' "$node" "$driver" "${image:-<none>}" >&2
+    set_state "$node" deploying deploy
+    info "deploying image '$image' via '$driver' (verify=$do_verify, health timeout ${MAAS_HEALTH_TIMEOUT}s)…"
+
+    if gate "$drv" "$node" "$image" current "$do_verify"; then
+        _write "$node" image "$image"
+        [[ -n "$prev" && "$prev" != "$image" ]] && _write "$node" previous_image "$prev"
+        set_state "$node" active deploy
+        printf 'active %s (driver=%s image=%s, healthy)\n' "$node" "$driver" "$image" >&2
+        return 0
+    fi
+
+    # New image failed (bad signature OR bad health) — A/B rollback to previous.
+    warn "$GATE_REASON"
+    if [[ -n "$prev" && "$prev" != "$image" ]]; then
+        warn "rolling back '$node' to its previous image '$prev' (§4b A/B)…"
+        set_state "$node" deploying deploy
+        if gate "$drv" "$node" "$prev" previous "$do_verify"; then
+            _write "$node" image "$prev"
+            _write "$node" previous_image ""
+            set_state "$node" active deploy
+            warn "DEGRADED: '$node' is active on its PREVIOUS image '$prev' (new image '$image' was rejected)"
+            printf 'active %s (driver=%s image=%s, DEGRADED — rolled back)\n' "$node" "$driver" "$prev" >&2
+            return 0
+        fi
+        set_state "$node" error deploy
+        die "both images failed for '$node' (new '$image' and previous '$prev') — node -> error (operator)"
+    fi
+    set_state "$node" error deploy
+    die "$GATE_REASON, and no previous image to roll back to — node '$node' -> error"
 }
 
 # rescue — boot a recovery ramdisk to fix a broken node (active -> rescue).

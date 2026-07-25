@@ -13,16 +13,17 @@ out-of-band layer is [`bmc-toolkit/`](../bmc-toolkit/README.md) (which generaliz
 PXE-install / RAM-boot / golden-image labs. Design roadmap:
 [`METAL_AS_A_SERVICE_LAB_PLAN.md`](../../METAL_AS_A_SERVICE_LAB_PLAN.md).
 
-> **Build status — increments 1–2 of the roadmap (§9 steps 1–2).** Shipped: the
-> fleet **registry** + the **full state machine** as pure transitions +
-> `power`/`bootdev` + guarded `cleaning` + `error`/`maintenance` + `rescue` (step 1);
-> and the **`inspect` RAM probe** (busybox initramfs → POSTs CPU/RAM/MAC facts) +
-> the **NoCloud metadata service** + **`watch`** wiring the fleet into
-> [`tools/control-pane`](../../tools/control-pane) for live progress bars (step 2) —
-> all **verifiable headlessly** (mock BMC, no libvirt/root; `tests/run-all.sh` → 6
-> passed). The remaining heavy actions — real `deploy` drivers + health-gated A/B
-> activation, `image` dd, `apply` reconcile — are steps 3–6; each verb that stands in
-> for one **says so** rather than pretending. See [PLAN.md](PLAN.md) for the ladder.
+> **Build status — increments 1–3 of the roadmap (§9 steps 1–3).** Shipped: the
+> fleet **registry** + **full state machine** + guarded `cleaning` + `rescue` (step 1);
+> the **`inspect` RAM probe** + **NoCloud metadata service** + **`watch`** wiring the
+> fleet into [`tools/control-pane`](../../tools/control-pane) for live progress bars
+> (step 2); and the **`install` deploy driver + health-gated activation + A/B rollback
+> + F2 signature gate** (step 3) — `deploy` now only reaches `active` when the image
+> **verifies** (OpenSSL CMS) and passes its **health gate**, and a failing image
+> **rolls back to the previous good one** instead of bricking. All **verifiable
+> headlessly** (mock BMC + mock driver, real crypto; `tests/run-all.sh` → 8 passed);
+> the real `install` and `inspect --boot` are author-run. Remaining: `ramdisk`/`image`
+> drivers + `apply` reconcile (steps 4–6). See [PLAN.md](PLAN.md) for the ladder.
 
 ## The state machine
 
@@ -57,7 +58,9 @@ export MAAS_STATE="$(mktemp -d)/maas"  MAAS_BMC="$PWD/tests/mock-bmc.sh"
 ./maas-lab.sh inspect node1 --facts /dev/stdin <<<'{"cpus":4,"mem_kb":8192000,"mac":"52:54:00:aa:bb:01"}'
 ./maas-lab.sh show    node1              # note the schedulable summary (cpus=4 mem_mb=8000 …)
 ./maas-lab.sh provide node1              # cleaning → available
-./maas-lab.sh deploy  node1 --driver ramdisk --image busybox-netboot   # → active
+# deploy is health-gated + F2-verify-gated (real install is author-run; the mock
+# driver + real-crypto rollback/tamper drills run headlessly in the test suite):
+./maas-lab.sh deploy  node1 --driver install --image almalinux9-ks   # author-run (real PXE)
 
 # watch a node's boot/install progress (delegates to tools/control-pane):
 printf 'Unpacking initramfs\nMAAS inspection probe up\ncollected facts cpus=4\nfacts posted\n' > /tmp/n1.console
@@ -124,6 +127,36 @@ lifecycle runs with no libvirt at all.
   live bar**, and delegates streaming to `control-pane watch`. MAAS ships the
   **profiles** (`milestones.toml`); the **engine** is `tools/control-pane`.
 
+## Deploy: pluggable drivers, health-gated activation & A/B rollback (increment 3)
+
+```
+  deploy <node> --driver X --image v2
+     └─ VERIFY (F2, openssl CMS) ─► DEPLOY (driver) ─► HEALTH gate ─PASS─► active (current=v2, previous=v1)
+                    │                                       └────FAIL─┐
+                    └───verify FAIL──────────────────────────────────┤
+                                                                      ▼ roll back to previous (v1)
+                                              VERIFY ─► DEPLOY ─► HEALTH ─PASS─► active (DEGRADED, on v1)
+                                                                      └────FAIL─► error (both slots bad)
+```
+
+- **`deploy` is a pluggable interface.** A driver is `drivers/<name>.sh` with
+  `verify`/`deploy`/`health`/`describe`. `install.sh` PXE-installs to disk (wraps
+  `virtualbmc-ipmi-lab`; **author-run**); `ramdisk`/`image` are honest not-yet
+  (`deploy` names the build step). Each driver is *mostly routing* to a lab that
+  already works — the abstraction is the value.
+- **The health gate.** `deploying → active` is **not** "the boot returned" — the
+  driver declares a success signal and `deploy` polls it. For `install` that's the
+  installed OS's **`login:`** on the node console — the *same* line `watch`'s terminal
+  milestone renders (§5c). Only a pass activates.
+- **A/B rollback (§4b).** A new image that fails **verify or health** rolls back to the
+  node's **previous good image** (degraded-but-up) — a bad image can never take down a
+  node that had a good one. Both slots bad → `error`.
+- **F2 signature gate.** `drivers/verify-lib.sh` verifies payloads with **OpenSSL CMS**
+  (detached DER, codeSigning EKU) — the same format
+  [`netboot/sign-payload.sh`](../../netboot/sign-payload.sh) produces for iPXE
+  `imgverify`. A tampered image **fails verification and is never activated** — flip one
+  byte and the node stays on its previous good image (the tamper→rollback drill).
+
 ## Where the toy diverges from real Ironic/MAAS (named, not hidden)
 
 | Real Ironic / MAAS | This lab | Why it's honest |
@@ -131,7 +164,8 @@ lifecycle runs with no libvirt at all.
 | Dedicated BMC hardware (iDRAC/iLO) | `vbmcd` fakes IPMI over loopback | the OOB *protocol* is real; the *hardware* is emulated (per bmc-toolkit) |
 | `cleaning` wipes a real disk automatically | wipe is **handed to the operator** (F7), node waits in `cleaning` | destructive ops are never auto-run here (repo rule) |
 | Introspection ramdisk reports real hardware | the busybox probe reads real `/proc`+`/sys`; `--boot` (real PXE) is author-run, `--from-metadata` proves the chain headlessly | the probe + sink + ingest are real; only the PXE boot needs the fleet |
-| `deploy` actually writes/boots an OS | increment 1 is a **state-only** transition | the drivers (steps 3–5) do the real boot; deploy says so |
+| `deploy` writes/boots an OS + gates on health | `install` driver is real (author-run); the gate + A/B rollback + F2 verify are headless via the mock driver + real crypto | the activation logic is real & tested; only the PXE install itself needs the fleet |
+| `image+measured` gates on TPM attestation | a documented fast-follow (swtpm ≠ trust anchor) | named, not faked (per the systemd261 caveat) |
 | A scheduler picks nodes by inspected facts | manual verbs; `apply` reconcile = step 6 | the imperative spine lands before the declarative loop |
 
 ## Security posture (AUDIT.md)
@@ -158,7 +192,9 @@ lifecycle runs with no libvirt at all.
 | [`build-probe-initramfs.sh`](build-probe-initramfs.sh) | package the probe into a bootable initramfs (rootless) |
 | [`metadata-serve.sh`](metadata-serve.sh) + [`lib/metadata.py`](lib/metadata.py) | NoCloud user-data + the introspection facts sink (:8282) |
 | [`milestones.toml`](milestones.toml) | MAAS's progress profiles (`probe`/`install`/`ramdisk`/`image`) for `watch` |
-| [`tests/`](tests/) | 6 headless smokes: state-machine, cleaning-guard, registry, inspect-metadata, watch, probe-build (+ `mock-bmc.sh`, `run-all.sh`) |
+| [`drivers/install.sh`](drivers/install.sh) | the `install` deploy driver (PXE kickstart/preseed → boot from disk; author-run) |
+| [`drivers/verify-lib.sh`](drivers/verify-lib.sh) | the F2 signature gate (OpenSSL CMS sign/verify, iPXE-`imgverify` format) |
+| [`tests/`](tests/) | 8 headless smokes: state-machine, cleaning-guard, registry, inspect-metadata, watch, probe-build, deploy-rollback, verify-tamper (+ `mock-bmc.sh`, `mock.sh` driver, `run-all.sh`) |
 | [`PLAN.md`](PLAN.md) | the increment ladder + increment-1 outcomes |
 | [`MANUAL_TESTING.md`](MANUAL_TESTING.md) | verified transcripts (headless) + the author-run bring-up handoff |
 
