@@ -22,6 +22,23 @@
 
   <div class="detail-body">
 
+    {# ── Live progress (control-pane) — server-pushed over SSE ─────────── #}
+    {% if 'percent' in resource.extra %}
+    <details open>
+      <summary>Progress (live)</summary>
+      <div hx-ext="sse"
+           sse-connect="/stream/progress/{{ resource.backend }}/{{ resource.name|urlencode }}"
+           sse-swap="message">
+        {% set pct = resource.extra.get('percent', 0) %}
+        <div class="progress" title="{{ resource.extra.get('label', '') }}">
+          <div class="progress-bar{% if resource.extra.get('stalled') %} stalled{% elif resource.extra.get('terminal') %} done{% endif %}"
+               style="width: {{ pct }}%"></div>
+          <span class="progress-label">{{ pct }}% {{ resource.extra.get('label', '') }}</span>
+        </div>
+      </div>
+    </details>
+    {% endif %}
+
     {# ── Inspect output ───────────────────────────────────────────────── #}
     <details open>
       <summary>Inspect</summary>

@@ -87,7 +87,22 @@ phase6b-web:   40 passed
 (`built` at terminal, `stopped` before start), an empty fleet → `[]`, and an **inert**
 read-only `destroy_argv` (an `echo`, never a destructive verb).
 
-## Not yet (next increment)
-The progress-bar **rendering** — a Textual `ProgressBar` in the tree + a phase6b-web **SSE**
-progress feed (plan §4c/§5). The inventory + progress data are already flowing; what's left
-is drawing the bar.
+## Progress-bar rendering (TUI + web + SSE)
+
+Verified via each package's pytest (CI-gated):
+
+```
+phase6-tui:   109 passed   # + test_progress_bar.py (5) + test_control_pane_tree.py (1)
+phase6b-web:   44 passed   # + test_progress.py (4)
+```
+
+- **TUI** — `test_control_pane_tree.py` boots the app with a registered node and asserts the
+  tree leaf renders the filled bar (`edge1 … 100% first boot █`); `test_progress_bar.py`
+  pins the widget (fill/empty cells, stalled flag, clamping).
+- **Web** — `test_progress.py` asserts the inventory partial renders a `progress-bar` with
+  `width: 85%` / `100% first boot` + the `done` class; the **SSE** feed
+  (`/stream/progress/control-pane/<node>`) streams a progress fragment and ends at terminal;
+  the detail panel wires `sse-connect`/`sse-swap` for a live server-pushed bar.
+
+The control-pane lab is now complete: engine → `watch`/`list`/`inspect` → Phase-6 inventory
+→ live progress bars (TUI + web + SSE).

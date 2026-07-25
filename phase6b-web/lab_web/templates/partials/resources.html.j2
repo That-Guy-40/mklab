@@ -22,7 +22,18 @@
           title="{{ r.display_name }}">
         <td class="name-cell">{{ r.svc or r.name }}</td>
         <td><span class="type-tag type-{{ r.type|replace(' ', '-') }}">{{ r.type }}</span></td>
-        <td><span class="pill pill-{{ r.status }}">{{ r.status }}</span></td>
+        <td>
+          {% if 'percent' in r.extra %}
+            {% set pct = r.extra.get('percent', 0) %}
+            <div class="progress" title="{{ r.status }} — {{ r.extra.get('label', '') }}">
+              <div class="progress-bar{% if r.extra.get('stalled') %} stalled{% elif r.extra.get('terminal') %} done{% endif %}"
+                   style="width: {{ pct }}%"></div>
+              <span class="progress-label">{{ pct }}% {{ r.extra.get('label', '') }}</span>
+            </div>
+          {% else %}
+            <span class="pill pill-{{ r.status }}">{{ r.status }}</span>
+          {% endif %}
+        </td>
       </tr>
     {% endfor %}
   {% endfor %}

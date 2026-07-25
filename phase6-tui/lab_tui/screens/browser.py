@@ -28,6 +28,7 @@ from textual.widgets import Footer, Header, Static, Tree
 from textual.widgets.tree import TreeNode
 
 from lab_tui.backends import ALL_BACKENDS, BackendRunner, Resource
+from lab_tui.widgets.progress_bar import progress_bar
 from lab_tui.widgets.status_pill import status_pill
 
 
@@ -220,11 +221,17 @@ class ResourceBrowserScreen(Screen):
                     expand=True,
                 )
                 for r in sorted(resources, key=lambda x: x.display_name):
-                    label = Text.assemble(
+                    parts: list = [
                         (f"{r.svc or r.name}  ", ""),
                         status_pill(r.status),
                         (f"  [{r.type}]", "dim"),
-                    )
+                    ]
+                    # A resource that carries a `percent` (the control-pane inventory
+                    # source) gets a live progress bar that fills on each poll-refresh.
+                    if "percent" in r.extra:
+                        parts.append(("  ", ""))
+                        parts.append(progress_bar(r.extra))
+                    label = Text.assemble(*parts)
                     leaf = backend_node.add_leaf(label)
                     self._resources_by_id[id(leaf)] = r
 
