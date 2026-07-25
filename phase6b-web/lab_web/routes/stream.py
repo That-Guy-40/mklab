@@ -70,3 +70,41 @@ async def stream_logs(backend: str, name: str, request: Request) -> Response:
 
     return StreamingResponse(generate(), media_type="text/event-stream",
                              headers=_SSE_HEADERS)
+
+
+@router.get("/progress/{backend}/{name:path}")
+async def stream_progress(backend: str, name: str, request: Request) -> Response:
+    """Server-push a resource's boot/install progress as SSE.
+
+    Re-reads the resource on a short cadence and emits an HTML progress-bar
+    fragment each time (the control-pane inventory source carries `percent` in
+    `extra`).  Ends when the node reaches its terminal milestone, goes stalled,
+    disappears, or the client disconnects — so a terminal node emits once.
+    """
+    name = unquote(name)
+    runner = _all_runners(request).get(backend)
+    if runner is None:
+        return Response(f"unknown backend: {backend}", status_code=404)
+
+    async def generate():
+        while True:
+            if await request.is_disconnected():
+                break
+            resource = await asyncio.to_thread(_find_resource, runner, name)
+            if resource is None or "percent" not in resource.extra:
+                yield "data: <span class='progress-gone'>no progress for this resource</span>\n\n"
+                break
+            e = resource.extra
+            pct = int(e.get("percent", 0))
+            label = html.escape(str(e.get("label", "")))
+            cls = "stalled" if e.get("stalled") else ("done" if e.get("terminal") else "")
+            frag = (f"<div class='progress'><div class='progress-bar {cls}' "
+                    f"style='width:{pct}%'></div>"
+                    f"<span class='progress-label'>{pct}% {label}</span></div>")
+            yield f"data: {frag}\n\n"
+            if e.get("terminal") or e.get("stalled"):
+                break
+            await asyncio.sleep(2.0)
+
+    return StreamingResponse(generate(), media_type="text/event-stream",
+                             headers=_SSE_HEADERS)

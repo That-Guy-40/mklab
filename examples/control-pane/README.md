@@ -28,8 +28,10 @@ Extracted from `METAL_AS_A_SERVICE_LAB_PLAN.md` §5; full design in
 - ✅ **Phase-6 inventory source** — a read-only `control-pane` backend surfaces the fleet in
   **both** the Textual TUI and the phase6b-web UI (shared backend layer), progress in
   `Resource.extra` (see *Phase-6 integration* below).
-- ⏳ **The progress-bar *rendering*** (a Textual `ProgressBar` + a web **SSE** progress feed)
-  — the next increment (plan §4c/§5).
+- ✅ **Progress-bar rendering** — a live bar fills in the **TUI tree** (poll-refreshed) and
+  the **web inventory**, plus a server-pushed **SSE** progress feed on the web detail panel
+  (`/stream/progress/…`). The bars fill as a node provisions; cyan → green at terminal,
+  red when stalled.
 
 ## Quick start
 

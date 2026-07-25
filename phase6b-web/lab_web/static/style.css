@@ -351,3 +351,32 @@ button.htmx-request { opacity: .5; cursor: wait; }
 
 .error { color: var(--red); }
 .dim   { color: var(--dim); }
+
+/* control-pane boot/install progress bar (inventory + SSE detail) */
+.progress {
+  position: relative;
+  min-width: 11rem;
+  height: 1.15rem;
+  background: #1b2027;
+  border: 1px solid #2b3340;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.progress-bar {
+  height: 100%;
+  background: #2f81f7;             /* provisioning (cyan/blue) */
+  transition: width 0.4s ease;
+}
+.progress-bar.done    { background: #2ea043; }   /* reached terminal milestone */
+.progress-bar.stalled { background: #cf222e; }   /* no progress within timeout */
+.progress-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.72rem;
+  color: #e6edf3;
+  text-shadow: 0 1px 1px rgba(0,0,0,0.6);
+  white-space: nowrap;
+}
