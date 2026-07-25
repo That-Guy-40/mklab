@@ -393,7 +393,7 @@ goal       = "Go from 'boots the network' to 'installs an OS with no keystrokes'
   lab        = "bmc-toolkit/"
   tags       = ["🎛️"]
   learn      = "now go deeper on the out-of-band protocols themselves: one verb surface (`bmc.sh`) over vbmcd (IPMI power) + ipmi_sim (REAL Serial-over-LAN, RMCP+) + redfish (virtual media — hand the node an ISO and boot it, no PXE), with a capability model a control plane routes on."
-  checkpoint = "`ipmitool -I lanplus … sol activate` streams a node's serial (real SOL), and Redfish `InsertMedia` boots an ISO over virtual media — both headless & rootless (`bash tests/run-all.sh` → 3 passed, 1 skipped)."
+  checkpoint = "`ipmitool -I lanplus … sol activate` streams a node's serial (real SOL), and Redfish `InsertMedia` boots an ISO over virtual media — both headless & rootless (`bash tools/tests/test-control-pane.sh` → 3 passed, 1 skipped)."
   [[path.step]]
   lab        = "FREEBSD-simple-templating-serving-RHEL-kickstart-files/"
   learn      = "a FreeBSD box `sed`-templates a kickstart and serves AlmaLinux via an OEMDRV ISO (no PXE at all)."
@@ -425,7 +425,7 @@ goal       = "Go from 'boots the network' to 'installs an OS with no keystrokes'
   lab        = "control-pane/"
   tags       = ["📊"]
   learn      = "the capstone: stop reading static states — *watch* these installs happen. A headless-first progress engine turns a node's console into a live progress bar from a user-editable `milestones.toml` (regex→label→at%/terminal), no TUI."
-  checkpoint = "`control-pane watch --profile install <console>` fills the bar 25%→55%→85%→100% and prints `reached 'first boot' (100%)`; 14 engine/loader unit tests pass headless (`bash tests/run-all.sh`)."
+  checkpoint = "`control-pane watch --profile install <console>` fills the bar 25%→55%→85%→100% and prints `reached 'first boot' (100%)`; 14 engine/loader unit tests pass headless (`bash tools/tests/test-control-pane.sh`)."
 
 [[path]]
 id         = "chroot-to-system"
