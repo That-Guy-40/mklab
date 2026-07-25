@@ -230,50 +230,33 @@ MANUAL_TESTING signature, mirroring RAM-INFRA §13.
 
 ---
 
-## 5. Surfacing it — Phase 6 as the control pane
+## 5. Surfacing it — the Control Pane (now its own reusable lab)
 
-- **5a. A `libvirt` inventory source** — lists `qemu:///system` domains ⋈ the
-  `maas-lab` registry, so the browser tree gains a `metal (N)` group showing each
-  node's **state + deploy driver** (`node2 ● active [image+measured]`). Read-only, in
-  the established Phase-6 style.
-- **5b. A node-actions panel** — key-bindings calling `maas-lab.sh
-  inspect/provide/deploy/rescue/release/console`, streaming the console into the lower
-  pane (mirrors the existing `c` console-attach + topology `u`/`d`); Phase-6b/web parity
-  as HTMX routes. If Phase 6 is deleted, `maas-lab.sh` still drives everything (invariant).
-  - **`console` / `sol`** attach to the node's **libvirt serial console** — the *honest
-    substitute* for IPMI SOL, since VirtualBMC has no `activate_payload` (the vbmc lab's
-    RUNBOOK §6 documents this). `sol` is a deliberate alias so the ergonomics match what
-    a user reaches for (`ipmitool … sol activate`), while the help text and README state
-    plainly it is **libvirt's console, not IPMI SOL**. The *faithful* IPMI-SOL path is a
-    deferred spike (§11). This is the same serial stream the health gate (§4b) and the
-    milestone parser (§5c) consume — one console, three consumers.
+This section was **extracted into `CONTROL_PANE_LAB_PLAN.md`** (`examples/control-pane/`) —
+a **live control surface any lab plugs into** (a live inventory source + a node-actions
+panel + a user-definable `milestones.toml` progress engine, with a headless-first core so
+it works with no TUI). **MAAS is its first consumer:** MAAS provides the inputs (its node
+registry, each node's console, a `milestones.toml`, its verb table) and gets the surface
+for free. The three pieces below now *live in the control-pane lab*; the anchors remain so
+this plan's cross-references resolve.
 
-- **5c. Watchable boot-progress with user-definable milestones.** Each node's serial
-  console is already captured; a small tailer matches lines against an **ordered,
-  user-editable milestone set** and renders a **live progress bar** per node — so you
-  *watch* three nodes install in parallel instead of reading static states. Crucially
-  the milestones are **not hardcoded** — they're declared in a `milestones.toml`,
-  keyed by driver (and optionally overridable per `--image`), so a user adds their own
-  markers for a new OS/image without touching Python:
-
-  ```toml
-  # milestones.toml — matched top-to-bottom against the console; first hit sets progress.
-  [[milestone.install]]  match = "Starting partitioner"        label = "partitioning"  at = 25
-  [[milestone.install]]  match = "Installing the base system"  label = "base system"   at = 55
-  [[milestone.install]]  match = "Running .*post-install"      label = "post-install"  at = 85
-  [[milestone.install]]  match = "login:"                      label = "first boot"    at = 100  terminal = true
-  [[milestone.ramdisk]]  match = "Welcome to (u-root|floppinux)"  label = "RAM login"  at = 100  terminal = true
-  ```
-
-  Rules that keep it honest: patterns are **plain regex over console text**
-  (documented, no eval); `at` is an explicit percent (no guessing between markers);
-  `terminal = true` marks the "done" line; an **unmatched** console still shows a
-  spinner + last line, never a fake 100%; and a milestone set with no hits within the
-  driver's timeout surfaces as **stalled**, feeding the `error`/`maintenance` path
-  (§3). The same `milestones.toml` is consumable headless (`maas-lab.sh watch <node>`
-  prints the milestone stream), so the feature isn't Phase-6-only. This is a natural
-  home for the deploy drivers' health-gate signals too (§4b): a driver's `terminal`
-  milestone *is* its "reached active" marker — one declaration, two consumers.
+- **5a. Live inventory source.** The control-pane `BackendRunner` lists MAAS nodes ⋈ their
+  **state + deploy driver** in the Phase-6 tree (`node2 ● active [image+measured]`).
+  Read-only, established Phase-6 style. (Provided by the control-pane lab.)
+- **5b. Node-actions panel + `console`/`sol`.** Key-bindings call MAAS's verbs
+  (`inspect/provide/deploy/rescue/release`), streaming output into the lower pane.
+  **`console`/`sol`** = the node's **libvirt serial console** — the honest SOL *substitute*;
+  the **faithful** `ipmitool -I lanplus … sol activate` now lives in the **bmc-toolkit lab**
+  (§11), which MAAS can target for real SOL. Invariant: if Phase 6 is deleted, `maas-lab.sh`
+  + `control-pane watch` still drive everything.
+- **5c. Watchable boot-progress via `milestones.toml`.** The user-definable
+  regex→label→`at%`/`terminal` engine (now the control-pane lab's crux): patterns are plain
+  regex (no eval), `at` is explicit (no interpolation), unmatched shows a spinner (never a
+  fake 100%), and a stalled set feeds the `error`/`maintenance` path (§3). A driver's
+  **`terminal` milestone doubles as its health-gate "reached active" marker (§4b)** — one
+  declaration, consumed by the health gate *and* the progress bars. MAAS ships
+  `install`/`ramdisk`/`image` milestone **profiles**; the engine + headless `watch` come
+  from the control-pane lab.
 
 ---
 
@@ -282,17 +265,17 @@ MANUAL_TESTING signature, mirroring RAM-INFRA §13.
 | File | Type | Notes |
 |---|---|---|
 | `METAL_AS_A_SERVICE_LAB_PLAN.md` | **this doc** | roadmap |
-| `examples/metal-as-a-service/maas-lab.sh` | new | control plane: full state machine + imperative verbs + deploy-driver dispatch + health-gated activation w/ A/B rollback (§4b) + `apply` reconcile (§3a) + `watch` + `console`/`sol` (libvirt serial; honest SOL substitute, §5b) |
+| `examples/metal-as-a-service/maas-lab.sh` | new | control plane: full state machine + imperative verbs + deploy-driver dispatch + health-gated activation w/ A/B rollback (§4b) + `apply` reconcile (§3a) + `console`/`sol` (libvirt serial; honest SOL substitute, §5b). `watch` delegates to `control-pane watch` (CONTROL_PANE_LAB_PLAN.md) |
 | `examples/metal-as-a-service/drivers/{install,ramdisk,image,image-measured}.sh` | new | one file per deploy driver — each a thin router to the reused lab; declares its health-gate/`terminal` signal |
 | `examples/metal-as-a-service/ramdisk-catalog.toml` | new | the `--image` registry (RAM-INFRA + micro-linux + floppinux + busybox), each with its `active`-signal marker |
-| `examples/metal-as-a-service/milestones.toml` | new | user-definable, per-driver console milestones (regex → label → `at%`/`terminal`) driving the watchable progress bars (§5c) |
+| `examples/metal-as-a-service/milestones.toml` | new | MAAS's milestone **profiles** (`install`/`ramdisk`/`image`; regex → label → `at%`/`terminal`) — *consumed by the control-pane lab's engine* (`CONTROL_PANE_LAB_PLAN.md`), not a MAAS-local parser |
 | `examples/metal-as-a-service/create-fleet.sh` | new | N libvirt domains + `vbmc add` each on 623X (wraps vbmc `create-node.sh`) |
 | `examples/metal-as-a-service/fleet.toml` | new | the fleet: hardware spec (count, disk/RAM, PXE network) **and** the declarative desired end-state consumed by `apply` (§3a) |
 | `examples/metal-as-a-service/probe-init.sh` | new | inspection initramfs `/init`: POST CPU/RAM/MAC to `:8181`, power off |
 | `examples/metal-as-a-service/rescue-init.sh` | new | `rescue` recovery ramdisk (reuses root-password-reset recovery idioms), IPMI-driven |
 | `examples/metal-as-a-service/metadata-serve.sh` | new | per-node NoCloud user-data (hostname/SSH key) — DRY fleet from one image |
 | `examples/metal-as-a-service/tests/` | new | one-verdict smokes: state transitions (dry), `cleaning` no-op vs wipe, driver dispatch; EXIT-trap net, `REGRESSION:` on the wipe-happened guard |
-| `phase6-tui/lab_tui/sources/libvirt.py` + actions panel | new/edit | inventory source + node actions + **live boot-progress bars** driven by `milestones.toml` (§5c); 6b/web parity |
+| *(Phase-6 surface)* | — | **provided by the control-pane lab** (`CONTROL_PANE_LAB_PLAN.md`): the live inventory source, actions panel, and progress bars. MAAS is a consumer — its nodes appear via the control-pane inventory source; no MAAS-local TUI code |
 | `examples/metal-as-a-service/{README,RUNBOOK,MANUAL_TESTING}.md` | new | concept + Ironic-state mapping + "divergences from real Ironic/MAAS" table + verified transcripts |
 | `examples/00-INDEX.md` | edit | one row (Phase-2/libvirt section, near the VirtualBMC row) |
 | `examples/learning-paths.toml` | edit | route as a step **after `virtualbmc-ipmi-lab`** in a "bare-metal provisioning" journey; observable checkpoint = a node reaching `active` via each driver. Then `paths.py render && --check`. |
@@ -355,9 +338,10 @@ The four source-lab families stay **standalone and unchanged**; the drivers
    diff desired-vs-actual, issue the missing transitions, prove idempotent (second run
    = no-op). *Fully headless-verifiable (registry-level, no install needed to prove the
    diff logic).* 
-7. **Phase-6 surface** — libvirt inventory source + actions panel + **live boot-progress
-   bars** (consume `milestones.toml`); 6b/web parity. *TUI render verifiable; live drive
-   shown in MANUAL_TESTING.*
+7. **Phase-6 surface** — **built in the control-pane lab** (`CONTROL_PANE_LAB_PLAN.md`):
+   the live inventory source + actions panel + boot-progress bars; MAAS wires in as its
+   first consumer (its nodes + `milestones.toml` profiles). *TUI render verifiable there;
+   MAAS's live drive shown in its MANUAL_TESTING.*
 
 **Fast-follows (documented, not v1):** `image+measured` attested gate (folds option A);
 `ramdisk`→region wiring so a deployed node *joins* a resilient region (folds option C);
