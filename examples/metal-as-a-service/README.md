@@ -13,14 +13,16 @@ out-of-band layer is [`bmc-toolkit/`](../bmc-toolkit/README.md) (which generaliz
 PXE-install / RAM-boot / golden-image labs. Design roadmap:
 [`METAL_AS_A_SERVICE_LAB_PLAN.md`](../../METAL_AS_A_SERVICE_LAB_PLAN.md).
 
-> **Build status — increment 1 of the roadmap (§9 step 1): the spine.** Shipped
-> here: the fleet **registry** + the **full state machine** as pure transitions +
-> `power`/`bootdev` passthrough + guarded `cleaning` + `error`/`maintenance` +
-> `rescue`, all **verifiable headlessly** (mock BMC, no libvirt/root). The heavy
-> actions — a real PXE install, the RAM inspection probe, dd-a-golden-image, the
-> health-gated activation + A/B rollback — are build steps 2–5; each verb that
-> stands in for one **says so** rather than pretending. See
-> [PLAN.md](PLAN.md) for the increment ladder.
+> **Build status — increments 1–2 of the roadmap (§9 steps 1–2).** Shipped: the
+> fleet **registry** + the **full state machine** as pure transitions +
+> `power`/`bootdev` + guarded `cleaning` + `error`/`maintenance` + `rescue` (step 1);
+> and the **`inspect` RAM probe** (busybox initramfs → POSTs CPU/RAM/MAC facts) +
+> the **NoCloud metadata service** + **`watch`** wiring the fleet into
+> [`tools/control-pane`](../../tools/control-pane) for live progress bars (step 2) —
+> all **verifiable headlessly** (mock BMC, no libvirt/root; `tests/run-all.sh` → 6
+> passed). The remaining heavy actions — real `deploy` drivers + health-gated A/B
+> activation, `image` dd, `apply` reconcile — are steps 3–6; each verb that stands in
+> for one **says so** rather than pretending. See [PLAN.md](PLAN.md) for the ladder.
 
 ## The state machine
 
@@ -52,12 +54,16 @@ export MAAS_STATE="$(mktemp -d)/maas"  MAAS_BMC="$PWD/tests/mock-bmc.sh"
 
 ./create-fleet.sh enroll                 # register the 3-node fleet from fleet.toml
 ./maas-lab.sh manage  node1              # verify the BMC → manageable
-./maas-lab.sh inspect node1              # record schedulable facts (real probe = step 2)
+./maas-lab.sh inspect node1 --facts /dev/stdin <<<'{"cpus":4,"mem_kb":8192000,"mac":"52:54:00:aa:bb:01"}'
+./maas-lab.sh show    node1              # note the schedulable summary (cpus=4 mem_mb=8000 …)
 ./maas-lab.sh provide node1              # cleaning → available
 ./maas-lab.sh deploy  node1 --driver ramdisk --image busybox-netboot   # → active
-./maas-lab.sh show    node1              # state + the full history saga
 
-bash tests/run-all.sh                    # 3 one-verdict smokes, all headless
+# watch a node's boot/install progress (delegates to tools/control-pane):
+printf 'Unpacking initramfs\nMAAS inspection probe up\ncollected facts cpus=4\nfacts posted\n' > /tmp/n1.console
+./maas-lab.sh watch   node1 --profile probe --console /tmp/n1.console   # live bar → terminal
+
+bash tests/run-all.sh                    # 6 one-verdict smokes, all headless
 ```
 
 ## Bring up the real fleet (author-run, rootful)
@@ -91,13 +97,40 @@ the registry on every `enroll`. That one seam is why the machine is headless: a
 test points `MAAS_BMC` at [`tests/mock-bmc.sh`](tests/mock-bmc.sh) and the entire
 lifecycle runs with no libvirt at all.
 
+## Inspection, metadata & watchable progress (increment 2)
+
+```
+  bootdev=pxe ─► PROBE initramfs (probe-init.sh /init) ─wget POST facts─► metadata service (:8282)
+     (kernel cmdline: maas.node=<n> maas.md=…)                                   │ writes facts.json
+                                                                                 ▼
+   maas-lab.sh inspect <n> --from-metadata  ──►  schedulable summary  (cpus=N mem_mb=M mac=…)
+
+  a node's console ──► maas-lab.sh watch <n> ──► tools/control-pane (engine + milestones.toml)
+                          └─ also registers $LAB_STATE_DIR/control-pane/<n>/node.toml ─► Phase-6 bar
+```
+
+- **The probe** (`probe-init.sh`, built by `build-probe-initramfs.sh`) reads
+  cpus/mem/MAC from `/proc`+`/sys` and POSTs them; `inspect` distils a **schedulable
+  summary** into the registry (Ironic introspection, in miniature). `inspect` has
+  three modes: `--facts F` (inject), `--from-metadata` (ingest the probe's POST),
+  `--boot` (real PXE probe over the BMC — author-run).
+- **The metadata service** (`metadata-serve.sh`) serves NoCloud `user-data`/`meta-data`
+  per node (DRY fleet from one image) and is the facts sink. It listens on **:8282** —
+  a *separate* port from the netboot HTTP server on **:8181** (which is read-only
+  static kernel/initrd delivery; `:8080` is SABnzbd on this host). Kernel/initrd off
+  `:8181`, facts to `:8282`.
+- **`watch`** picks a milestone profile from the node's deploy driver, registers the
+  node under the control-pane fleet dir so **Phase-6 (TUI + web) surfaces it with a
+  live bar**, and delegates streaming to `control-pane watch`. MAAS ships the
+  **profiles** (`milestones.toml`); the **engine** is `tools/control-pane`.
+
 ## Where the toy diverges from real Ironic/MAAS (named, not hidden)
 
 | Real Ironic / MAAS | This lab | Why it's honest |
 |---|---|---|
 | Dedicated BMC hardware (iDRAC/iLO) | `vbmcd` fakes IPMI over loopback | the OOB *protocol* is real; the *hardware* is emulated (per bmc-toolkit) |
 | `cleaning` wipes a real disk automatically | wipe is **handed to the operator** (F7), node waits in `cleaning` | destructive ops are never auto-run here (repo rule) |
-| Introspection ramdisk reports real hardware | `inspect` records injected/`pending` facts (real probe = step 2) | the transition is faithful; the probe lands next increment |
+| Introspection ramdisk reports real hardware | the busybox probe reads real `/proc`+`/sys`; `--boot` (real PXE) is author-run, `--from-metadata` proves the chain headlessly | the probe + sink + ingest are real; only the PXE boot needs the fleet |
 | `deploy` actually writes/boots an OS | increment 1 is a **state-only** transition | the drivers (steps 3–5) do the real boot; deploy says so |
 | A scheduler picks nodes by inspected facts | manual verbs; `apply` reconcile = step 6 | the imperative spine lands before the declarative loop |
 
@@ -117,11 +150,15 @@ lifecycle runs with no libvirt at all.
 
 | File | Role |
 |---|---|
-| [`maas-lab.sh`](maas-lab.sh) | the control plane — registry + state machine + verbs + BMC seam |
+| [`maas-lab.sh`](maas-lab.sh) | the control plane — registry + state machine + verbs + BMC seam + `inspect`/`watch` |
 | [`create-fleet.sh`](create-fleet.sh) | stand up (`up`, author-run) or `enroll` (headless) the fleet |
 | [`fleet.toml`](fleet.toml) | the 3-node fleet spec (hardware + declared end-state for `apply`) |
 | [`lib/fleet.py`](lib/fleet.py) | stdlib TOML reader projecting `fleet.toml` for bash |
-| [`tests/`](tests/) | 3 headless smokes: `test-state-machine.sh`, `test-cleaning-guard.sh`, `test-registry.sh` (+ `mock-bmc.sh`, `run-all.sh`) |
+| [`probe-init.sh`](probe-init.sh) | the inspection probe's busybox `/init` (gathers facts, POSTs, powers off) |
+| [`build-probe-initramfs.sh`](build-probe-initramfs.sh) | package the probe into a bootable initramfs (rootless) |
+| [`metadata-serve.sh`](metadata-serve.sh) + [`lib/metadata.py`](lib/metadata.py) | NoCloud user-data + the introspection facts sink (:8282) |
+| [`milestones.toml`](milestones.toml) | MAAS's progress profiles (`probe`/`install`/`ramdisk`/`image`) for `watch` |
+| [`tests/`](tests/) | 6 headless smokes: state-machine, cleaning-guard, registry, inspect-metadata, watch, probe-build (+ `mock-bmc.sh`, `run-all.sh`) |
 | [`PLAN.md`](PLAN.md) | the increment ladder + increment-1 outcomes |
 | [`MANUAL_TESTING.md`](MANUAL_TESTING.md) | verified transcripts (headless) + the author-run bring-up handoff |
 

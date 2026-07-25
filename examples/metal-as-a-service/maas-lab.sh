@@ -48,6 +48,16 @@ STATE_ROOT="$(maas_state_root)"
 readonly STATE_ROOT
 REG_BMC="$STATE_ROOT/fleet-bmc.toml"   # generated bmc-toolkit registry for bmc.sh
 
+# The surfacing layer: MAAS ships milestone PROFILES; the engine + `watch` are the
+# repo tool tools/control-pane (CONTROL_PANE_LAB_PLAN.md). `watch` delegates to it.
+CONTROL_PANE="${CONTROL_PANE:-$MAAS_DIR/../../tools/control-pane}"
+MAAS_MILESTONES="${MAAS_MILESTONES:-$MAAS_DIR/milestones.toml}"
+
+# Where a lab registers control-pane nodes — always the SIBLING of STATE_ROOT
+# (both are "<base>/<component>"), so Phase-6 (which reads $LAB_STATE_DIR/control-pane
+# via tools/control_pane/cli.py's _fleet_dir) and MAAS land under one base.
+control_pane_fleet_dir() { printf '%s/control-pane\n' "$(dirname "$STATE_ROOT")"; }
+
 node_dir()  { printf '%s/%s\n' "$STATE_ROOT" "$1"; }
 node_exists() { [[ -d "$(node_dir "$1")" ]]; }
 require_node() { node_exists "$1" || die "no such node '$1' (enroll it first: maas-lab.sh enroll $1 ...)"; }
@@ -125,7 +135,7 @@ regen_bmc_registry() {
 # enroll — register a node into the fleet (∅ -> enrolled).
 cmd_enroll() {
     local node="" domain="" bmc_port="" mac="" firmware="bios" uri="qemu:///system"
-    local bmc_user="admin" bmc_pass="password" bmc_host="127.0.0.1"
+    local bmc_user="admin" bmc_pass="password" bmc_host="127.0.0.1" console=""
     node="${1:?usage: enroll <node> --bmc-port P [--domain D --mac M --firmware bios|uefi]}"; shift
     while [[ $# -gt 0 ]]; do
         case "$1" in
@@ -137,6 +147,7 @@ cmd_enroll() {
             --mac)      mac="$2"; shift 2 ;;
             --firmware) firmware="$2"; shift 2 ;;
             --uri)      uri="$2"; shift 2 ;;
+            --console)  console="$2"; shift 2 ;;
             *) die "enroll: unknown option '$1'" ;;
         esac
     done
@@ -152,6 +163,7 @@ cmd_enroll() {
     _write "$node" bmc_pass "$bmc_pass"
     _write "$node" uri "$uri"
     [[ -n "$mac" ]] && _write "$node" mac "$mac"
+    [[ -n "$console" ]] && _write "$node" console "$console"
     _write "$node" firmware "$firmware"
     set_state "$node" enrolled enroll
     regen_bmc_registry
@@ -175,31 +187,124 @@ cmd_manage() {
     fi
 }
 
-# inspect — populate schedulable facts (manageable -> manageable, + facts).
-# INCREMENT 1: facts are injected via --facts for headless testing; the REAL RAM
-# inspection probe (busybox /init POSTs CPU/RAM/MAC to :8181) is build step 2.
+# summarize_facts — distil facts.json into a one-line schedulable summary (cpus/mem)
+# for `list`/`show`. Ironic populates "schedulable facts" from introspection; this is
+# the miniature of that.
+summarize_facts() {  # summarize_facts <node>
+    local node="$1" fj; fj="$(node_dir "$node")/facts.json"
+    [[ -f "$fj" ]] || return 0
+    python3 - "$fj" > "$(node_dir "$node")/schedulable" 2>/dev/null <<'PY' || true
+import json, sys
+try:
+    f = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(1)
+cpus = f.get("cpus") or f.get("cpu") or "?"
+mem = f.get("mem_mb")
+if mem is None and f.get("mem_kb"):
+    try: mem = int(f["mem_kb"]) // 1024
+    except Exception: mem = "?"
+mac = f.get("mac", "?")
+print(f"cpus={cpus} mem_mb={mem or '?'} mac={mac}")
+PY
+}
+
+# inspect — populate schedulable facts (manageable -> manageable, + facts). Three
+# modes: --facts injects a file (headless); --from-metadata records what the
+# inspection probe POSTed to the metadata service; --boot runs the REAL probe over
+# the BMC (author-run). The introspection ramdisk itself is `probe-init.sh`.
 cmd_inspect() {
-    local node="" facts=""
-    node="${1:?usage: inspect <node> [--facts facts.json]}"; shift
+    local node="" facts="" mode="" timeout=120
+    node="${1:?usage: inspect <node> --facts F | --from-metadata | --boot}"; shift
     while [[ $# -gt 0 ]]; do
         case "$1" in
-            --facts) facts="$2"; shift 2 ;;
+            --facts)         facts="$2"; mode="facts"; shift 2 ;;
+            --from-metadata) mode="metadata"; shift ;;
+            --boot)          mode="boot"; shift ;;
+            --timeout)       timeout="$2"; shift 2 ;;
             *) die "inspect: unknown option '$1'" ;;
         esac
     done
     require_node "$node"
     require_state "$node" inspect manageable
-    if [[ -n "$facts" ]]; then
-        [[ -f "$facts" ]] || die "inspect: --facts file not found: $facts"
-        cp -- "$facts" "$(node_dir "$node")/facts.json"
-        info "recorded schedulable facts from $facts"
-    else
-        printf '{"status":"pending","note":"real RAM probe lands in build step 2"}\n' \
-            > "$(node_dir "$node")/facts.json"
-        info "no --facts given; wrote a pending placeholder (real inspection probe = build step 2)"
-    fi
+    local nd; nd="$(node_dir "$node")"
+    case "$mode" in
+        facts)
+            [[ -f "$facts" ]] || die "inspect: --facts file not found: $facts"
+            cp -- "$facts" "$nd/facts.json"
+            info "recorded schedulable facts from $facts" ;;
+        metadata)
+            [[ -f "$nd/facts.received" ]] || die "inspect --from-metadata: node '$node' has not reported facts yet (no POST to the metadata service). Boot the probe (--boot) or run metadata-serve.sh + the probe."
+            info "recorded facts the probe POSTed to the metadata service" ;;
+        boot)
+            # REAL introspection: PXE-boot the probe; it POSTs facts to the metadata
+            # service and powers off. Needs a live BMC + metadata-serve.sh + the probe
+            # image on the PXE net → AUTHOR-RUN.
+            rm -f "$nd/facts.received"
+            bmc "$node" bootdev pxe >/dev/null 2>&1 || die "inspect --boot: could not set bootdev pxe (is the BMC up?)"
+            bmc "$node" power on    >/dev/null 2>&1 || die "inspect --boot: could not power on the node"
+            info "booted inspection probe on '$node'; awaiting facts (timeout ${timeout}s)…"
+            local waited=0
+            while [[ ! -f "$nd/facts.received" ]]; do
+                sleep 2; waited=$((waited+2))
+                [[ $waited -ge $timeout ]] && { bmc "$node" power off >/dev/null 2>&1 || true; die "inspect --boot: timed out after ${timeout}s with no facts from '$node' — check metadata-serve.sh + the probe console"; }
+            done
+            bmc "$node" power off >/dev/null 2>&1 || true
+            info "probe reported facts for '$node'" ;;
+        "")
+            die "inspect: choose a mode — --facts <file> (inject), --from-metadata (read the probe's POST), or --boot (real probe over the BMC)" ;;
+    esac
+    summarize_facts "$node"
     set_state "$node" manageable inspect   # re-affirm; records the inspect in history
-    printf 'inspected %s\n' "$node" >&2
+    printf 'inspected %s (%s)\n' "$node" "$(_read "$node" schedulable 'facts recorded')" >&2
+}
+
+# watch — render live boot/install progress for a node, via tools/control-pane.
+# MAAS ships the milestone PROFILES (milestones.toml); the engine + bars are the
+# repo tool. `watch` also REGISTERS the node under the control-pane fleet dir so
+# Phase-6 surfaces the same node with a live bar (the plan's "same file the Phase-6
+# bars consume"). Profile defaults from the node's deploy driver.
+cmd_watch() {
+    local node="" console="" profile="" register_only=0 stall=""
+    node="${1:?usage: watch <node> [--console F] [--profile P] [--register-only] [--stall SEC]}"; shift
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --console)       console="$2"; shift 2 ;;
+            --profile)       profile="$2"; shift 2 ;;
+            --register-only) register_only=1; shift ;;
+            --stall)         stall="$2"; shift 2 ;;
+            *) die "watch: unknown option '$1'" ;;
+        esac
+    done
+    require_node "$node"
+    [[ -x "$CONTROL_PANE" ]] || die "watch: tools/control-pane not found/executable at $CONTROL_PANE"
+    # profile: explicit, else map the deploy driver, else 'probe' (inspection) then 'install'
+    if [[ -z "$profile" ]]; then
+        local drv; drv="$(_read "$node" driver "")"
+        case "$drv" in
+            install) profile=install ;;
+            ramdisk) profile=ramdisk ;;
+            image|image+measured) profile=image ;;
+            *)       profile=install ;;
+        esac
+    fi
+    # console: explicit, else registered, else the conventional per-node log
+    [[ -z "$console" ]] && console="$(_read "$node" console "")"
+    [[ -z "$console" ]] && console="$(node_dir "$node")/console.log"
+
+    # Register into the control-pane fleet so Phase-6 (TUI + web) surfaces this node.
+    local fleet; fleet="$(control_pane_fleet_dir)"
+    mkdir -p "$fleet/$node"
+    { printf 'profile = "%s"\n' "$profile"
+      printf 'console = "%s"\n' "$console"
+      printf 'milestones = "%s"\n' "$MAAS_MILESTONES"; } > "$fleet/$node/node.toml"
+    info "registered '$node' under the control-pane fleet: $fleet/$node/node.toml (profile=$profile)"
+    [[ $register_only -eq 1 ]] && { printf 'registered %s for Phase-6 (profile=%s)\n' "$node" "$profile" >&2; return 0; }
+
+    [[ -f "$console" ]] || die "watch: console log not found: $console (the node must be booting/logging; pass --console, or --register-only to just surface it in Phase-6)"
+    info "watching $node (profile=$profile) via tools/control-pane…"
+    exec "$CONTROL_PANE" watch --profile "$profile" --milestones "$MAAS_MILESTONES" \
+        ${stall:+--stall "$stall"} "$console"
 }
 
 # provide — clean the node and make it schedulable (manageable -> available).
@@ -360,13 +465,13 @@ cmd_retry() {
 
 # power / bootdev / console — passthrough to the BMC (the seam).
 cmd_power() {
-    local node="${1:?usage: power <node> {on|off|cycle|status}}"; require_node "$node"
-    local sub="${2:?usage: power <node> {on|off|cycle|status}}"
+    local node="${1:?usage: power <node> on|off|cycle|status}"; require_node "$node"
+    local sub="${2:?usage: power <node> on|off|cycle|status}"
     bmc "$node" power "$sub"
 }
 cmd_bootdev() {
-    local node="${1:?usage: bootdev <node> {pxe|disk|cdrom}}"; require_node "$node"
-    local sub="${2:?usage: bootdev <node> {pxe|disk|cdrom}}"
+    local node="${1:?usage: bootdev <node> pxe|disk|cdrom}"; require_node "$node"
+    local sub="${2:?usage: bootdev <node> pxe|disk|cdrom}"
     bmc "$node" bootdev "$sub"
 }
 cmd_console() {  # honest SOL substitute = libvirt serial via bmc-toolkit's `sol`
@@ -388,6 +493,7 @@ cmd_show() {
     printf 'firmware    %s\n' "$(_read "$node" firmware -)"
     printf 'driver      %s\n' "$(_read "$node" driver -)"
     printf 'image       %s (previous: %s)\n' "$(_read "$node" image -)" "$(_read "$node" previous_image -)"
+    printf 'schedulable %s\n' "$(_read "$node" schedulable -)"
     [[ -f "$d/facts.json" ]] && printf 'facts       %s\n' "$(cat "$d/facts.json")"
     if [[ -f "$d/history.log" ]]; then
         printf 'history:\n'; sed 's/^/  /' "$d/history.log"
@@ -428,7 +534,7 @@ maas-lab.sh — miniature bare-metal control plane (increment 1: registry + stat
 Lifecycle verbs (Ironic-faithful state machine):
   enroll <node> --bmc-port P [--domain D --mac M --firmware bios|uefi]   (∅ -> enrolled)
   manage <node>                          enrolled|error -> manageable (verifies BMC)
-  inspect <node> [--facts f.json]        manageable -> manageable (+schedulable facts)
+  inspect <node> {--facts F|--from-metadata|--boot}   manageable (+schedulable facts)
   provide <node> [--wiped]               manageable -> available (via cleaning/wipe)
   deploy <node> --driver D [--image I]   available -> active (install|ramdisk|image|image+measured)
   rescue <node> / unrescue <node>        active <-> rescue
@@ -438,6 +544,9 @@ Lifecycle verbs (Ironic-faithful state machine):
 
 Out-of-band (passthrough to bmc-toolkit's bmc.sh via MAAS_BMC):
   power <node> {on|off|cycle|status}     bootdev <node> {pxe|disk|cdrom}     console <node>
+
+Watch live boot/install progress (delegates to tools/control-pane):
+  watch <node> [--console F] [--profile P] [--register-only] [--stall SEC]
 
 Inspect the registry:
   list [--json]     state <node>     show <node>
@@ -465,9 +574,11 @@ main() {
         power)         cmd_power "$@" ;;
         bootdev)       cmd_bootdev "$@" ;;
         console|sol)   cmd_console "$@" ;;
+        watch)         cmd_watch "$@" ;;
         state)         cmd_state "$@" ;;
         show)          cmd_show "$@" ;;
         list)          cmd_list "$@" ;;
+        _state-root)   printf '%s\n' "$STATE_ROOT" ;;   # internal: metadata-serve.sh
         ""|-h|--help|help) usage ;;
         *) die "unknown verb '$verb' (try: maas-lab.sh --help)" ;;
     esac

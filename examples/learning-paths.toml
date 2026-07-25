@@ -397,8 +397,8 @@ goal       = "Go from 'boots the network' to 'installs an OS with no keystrokes'
   [[path.step]]
   lab        = "metal-as-a-service/"
   tags       = ["🏗️"]
-  learn      = "now COMPOSE the OOB layer + the installers into a control plane: each libvirt domain is a node with a full Ironic-faithful state machine (enroll→manage→inspect→provide→deploy→rescue/release), and `deploy` is a pluggable interface routing to the very installers in this path. maas-lab.sh never calls ipmitool — it shells out to bmc-toolkit through one injectable seam, so the whole machine drives headlessly."
-  checkpoint = "`bash examples/metal-as-a-service/tests/run-all.sh` → 3 passed: the state machine drives a node enrolled→available→active and REFUSES every illegal transition; `cleaning` hands the disk wipe to the operator (no auto-wipe); the generated fleet-bmc.toml parses via bmc-toolkit's registry.py."
+  learn      = "now COMPOSE the OOB layer + the installers into a control plane: each libvirt domain is a node with a full Ironic-faithful state machine (enroll→manage→inspect→provide→deploy→rescue/release), `deploy` is a pluggable interface routing to the very installers in this path, an inspection RAM probe (busybox /init) POSTs schedulable facts to a NoCloud metadata service, and `watch` wires the fleet into tools/control-pane for live progress bars. maas-lab.sh never calls ipmitool — it shells out to bmc-toolkit through one injectable seam, so the whole machine drives headlessly."
+  checkpoint = "`bash examples/metal-as-a-service/tests/run-all.sh` → 6 passed: the state machine drives enrolled→available→active and REFUSES every illegal transition; `cleaning` hands the disk wipe to the operator (no auto-wipe); the probe's facts round-trip through the metadata service into a schedulable summary; `watch` drives MAAS's milestones.toml through the real control-pane engine to its terminal milestone."
   verify_cmd = "bash examples/metal-as-a-service/tests/run-all.sh >/dev/null 2>&1 && echo MAAS-SPINE-OK"
   verify_marker = "MAAS-SPINE-OK"
   verify_host = true
