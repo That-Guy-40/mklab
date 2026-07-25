@@ -1,0 +1,84 @@
+# metal-as-a-service milestone profiles — the progress contract for `maas-lab.sh watch`.
+#
+# MAAS ships the PROFILES; the ENGINE is tools/control-pane (CONTROL_PANE_LAB_PLAN.md).
+# `maas-lab.sh watch <node>` picks a profile from the node's deploy driver and runs
+#   control-pane watch --profile <p> --milestones THIS-FILE <node-console>
+# so the same declaration drives the headless stream AND the Phase-6 bars.
+#
+# Rules the engine enforces (honesty, unit-tested in the control-pane tool):
+#   - `match` is a plain regex over the console text — compiled at load, NEVER eval.
+#   - `at` is an EXPLICIT percent — never interpolated between markers.
+#   - progress is MONOTONIC — a stray earlier marker can't regress it.
+#   - an unmatched console keeps its last percent — never a fake 100%.
+#   - `terminal = true` is the only "done"/"reached active" signal.
+# Add a profile for a new driver/image by copying a block — no Python edits.
+
+# ---- probe: the inspection RAM boot (busybox /init POSTs facts, then powers off) ----
+# The terminal line is the probe confirming it posted its schedulable facts — that is
+# "inspection complete", the introspection analogue of "reached active".
+[[milestone.probe]]
+match = "Loading initrd|Unpacking initramfs|Freeing initrd memory"
+label = "loading probe"
+at = 30
+[[milestone.probe]]
+match = "MAAS inspection probe"
+label = "probe up"
+at = 60
+[[milestone.probe]]
+match = "collected facts|cpus=[0-9]"
+label = "facts collected"
+at = 80
+[[milestone.probe]]
+match = "facts posted|introspection complete"
+label = "facts posted"
+at = 100
+terminal = true
+
+# ---- install: a disk installer (AlmaLinux Anaconda / debian-installer + kickstart) ----
+[[milestone.install]]
+match = "Starting partitioner|partman|clearpart|autopart|Probing (disks|EDD)"
+label = "partitioning"
+at = 25
+[[milestone.install]]
+match = "Installing the base system|Running debootstrap|Installing .* packages|Preparing transaction|Running pre-installation"
+label = "base system"
+at = 55
+[[milestone.install]]
+match = "Running .*post-?install|firstboot|cloud-init|Generating .*initramfs|Installing bootloader|Performing post-installation"
+label = "post-install"
+at = 85
+[[milestone.install]]
+match = "login:"
+label = "first boot"
+at = 100
+terminal = true
+
+# ---- ramdisk: boot entirely into RAM (RAM-INFRA / micro-linux / floppinux / busybox) ----
+[[milestone.ramdisk]]
+match = "Freeing initrd memory|Unpacking initramfs|Loading .*initrd"
+label = "unpacking"
+at = 40
+[[milestone.ramdisk]]
+match = "Run /init|Welcome to (u-root|floppinux|Alpine)|Kernel command line"
+label = "RAM userspace"
+at = 80
+[[milestone.ramdisk]]
+match = "login:|/ #|~ #"
+label = "RAM login"
+at = 100
+terminal = true
+
+# ---- image: a golden whole-disk image dd'd on, then booted ----
+[[milestone.image]]
+match = "Writing image|dd: |bytes .* copied|Deploying image"
+label = "writing image"
+at = 45
+[[milestone.image]]
+match = "Rebooting|kexec|Starting systemd|Reached target"
+label = "first boot"
+at = 80
+[[milestone.image]]
+match = "login:"
+label = "up"
+at = 100
+terminal = true
