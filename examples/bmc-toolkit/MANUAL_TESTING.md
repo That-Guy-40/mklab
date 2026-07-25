@@ -84,12 +84,32 @@ $ virsh -c qemu:///session dumpxml bmc-vmedia-node | grep -A2 "device='cdrom'"
   [    0.000000] Command line: BOOT_IMAGE=/vmlinuz console=ttyS0,115200 BMC_TOOLKIT_VMEDIA_TEST_<pid>
 ```
 
-## 4. vbmcd power (`test-vbmcd.sh`) — author-run
+## 4. vbmcd power (`test-vbmcd.sh`) — author-run, **verified live 2026-07-25**
 
 SKIPs unless a rootful vbmc BMC is already up (it's `qemu:///system`, `root:libvirt`).
-To run it live: `cd ../virtualbmc-ipmi-lab && ./vbmc-lab.sh up && ./vbmc-lab.sh add`, then
-`bash tests/test-vbmcd.sh` asserts `bmc.sh node1 power status` round-trips
-`Chassis Power is …`.
+To run it live: `cd ../virtualbmc-ipmi-lab && ./vbmc-lab.sh build && ./vbmc-lab.sh up &&
+./vbmc-lab.sh add`, then `bash tests/test-vbmcd.sh`.
+
+Verified end-to-end on KVM — the BMC came up (`alpine-node` on `127.0.0.1:6230`) and the
+test flipped **SKIP → PASS**:
+
+```
+### bmc-toolkit test-vbmcd (with the BMC live) ###
+  - vbmc BMC is live on 127.0.0.1:6230 — exercising the vbmcd backend via bmc.sh
+  - power status: Chassis Power is off
+PASS: vbmcd backend round-trips IPMI power via bmc.sh (chassis power status)
+```
+
+Then a full power round-trip driven **through `bmc.sh`** (real IPMI-over-LAN → vbmcd →
+`virsh start`/`destroy` a `qemu:///system` domain):
+
+```
+$ ./bmc.sh node1 bootdev pxe     → Set Boot Device to pxe
+$ ./bmc.sh node1 power on        → Chassis Power Control: Up/On
+$ ./bmc.sh node1 power status    → Chassis Power is on
+$ ./bmc.sh node1 power off       → Chassis Power Control: Down/Off
+$ ./bmc.sh node1 power status    → Chassis Power is off
+```
 
 ## Teardown / clean state
 
