@@ -39,10 +39,12 @@
 > **Build-ready (2026-07-24).** Open items settled (§11 → §10): **3-node** fleet, a
 > **busybox** inspection probe + **`root-password-reset`-idiom** rescue ramdisk,
 > **CLI-first v1** (Phase-6 panel is step 7 / fast-follow — the headless `watch`
-> milestone stream already delivers the "watchable" value without the TUI). Deferred
-> vbmc/IPMI work — including a **faithful IPMI Serial-over-LAN spike** and a **Redfish
-> virtual-media track** — is captured in §11 so it isn't lost. Plan only; no lab files
-> created yet — ready to start v1 on the word.
+> milestone stream already delivers the "watchable" value without the TUI). The
+> deferred **out-of-band transport** work — a faithful IPMI **Serial-over-LAN** path,
+> a **Redfish virtual-media** driver, and the **richer IPMI surface** — has been
+> **lifted into its own reusable lab**, `BMC_TOOLKIT_LAB_PLAN.md`, which MAAS consumes
+> for its OOB layer (see §11). Plan only; no lab files created yet — ready to start v1
+> on the word.
 
 ---
 
@@ -396,57 +398,33 @@ author-run with the exact handed-over command.
 - **`console`/`sol` verb** = libvirt serial (honest SOL substitute); faithful IPMI-SOL
   deferred to §11. ✔
 
-## 11. Deferred work & explorations (vbmc · IPMI · SOL · Redfish)
+## 11. Out-of-band transport — now a reusable lab (`BMC_TOOLKIT_LAB_PLAN.md`)
 
-Captured so it isn't lost. None of this gates v1; each is an honest, bounded follow-on,
-and several inherit constraints straight from `examples/virtualbmc-ipmi-lab/`.
+The deferred vbmc/IPMI/SOL/Redfish explorations that used to live here have been
+**lifted into their own reusable infra lab** — `BMC_TOOLKIT_LAB_PLAN.md`
+(`examples/bmc-toolkit/`) — a protocol-agnostic OOB verb surface (`bmc.sh <node>
+power/bootdev/sol/insert-media/…`) over three interchangeable backends (`vbmcd`,
+`ipmi_sim`, `redfish`/`sushy-tools`). MAAS **consumes** it rather than embedding it:
 
-### 11a. A faithful IPMI Serial-over-LAN spike (the SOL exploration)
+- **Faithful IPMI Serial-over-LAN** — real `ipmitool -I lanplus … sol activate` over
+  RMCP+ via OpenIPMI `ipmi_sim`, superseding v1's honest libvirt-console substitute.
+  When the toolkit lands, MAAS's `console`/`sol` verb (§5b) simply targets an
+  `ipmi_sim`-backed node and gets *real* SOL for free.
+- **Redfish virtual media** — `InsertMedia` → boot an ISO with no PXE/DHCP; this is the
+  toolkit's centerpiece and drops in as MAAS's **5th deploy driver** (`--driver
+  virtual-media`) once available.
+- **Richer IPMI surface** — real sensors/FRU/`sel`/chassis-identify (ipmi_sim provides
+  them genuinely, so the old "stub SDR/FRU" idea is superseded).
 
-**Where v1 lands:** `console`/`sol` = libvirt's serial console (§5b) — the *honest
-substitute*, because VirtualBMC has **no** `activate_payload` and never speaks IPMI SOL.
-This is the ergonomically-right answer for the lab and it's what feeds the health gate +
-milestone parser. But it is **not** real Serial-over-LAN: the bytes ride libvirt, not an
-IPMI RMCP+ session on UDP 623.
+**Inherited constraints that remain MAAS's to honor** (carried, not solved):
+- **Rootful BMC backends** (the `qemu:///system` socket is `root:libvirt`) — the
+  container-vs-host trade-off, restated in this lab's RUNBOOK.
+- **One serial-console consumer at a time**, foreground, domain running (vbmc RUNBOOK
+  §6) — MAAS's milestone tailer (§5c) must therefore *own* the console or read a
+  captured log, never race a human `virsh console` or the toolkit's SOL bridge. A design
+  note for the `watch`/progress plumbing, now shared with the toolkit's serial-ownership
+  guard.
 
-**The faithful path (deferred spike):** OpenIPMI's **`lanserv` / `ipmi_sim`** BMC
-simulator *does* implement IPMI SOL and can bridge the SOL payload to a serial device or
-socket — so `ipmitool -I lanplus … sol activate` would stream the VM's *real* serial over
-a genuine IPMI session. The spike would run `ipmi_sim` as the node's BMC with its `sol`
-directive pointed at the QEMU/libvirt serial unix socket, and prove `sol activate` end to
-end. **The honest trade-off to resolve in the spike:** `ipmi_sim` is a *simulator*, so its
-chassis power/boot-device commands don't natively drive libvirt the way `vbmcd` does —
-so a faithful-SOL node either (a) **replaces** `vbmcd` with `ipmi_sim` + a small
-virsh-shim on its chassis-control script, or (b) runs `ipmi_sim` **alongside** `vbmcd`
-(power on 6230, SOL on another port) — clunky but isolates the change. Provenance:
-OpenIPMI docs → cite, don't mirror; verify `ipmi_sim` SOL actually bridges before
-claiming it. *Risk: MEDIUM (RMCP+/RAKP session + SOL framing are real protocol surface);
-a clean documented negative result is acceptable.*
-
-### 11b. A Redfish / `sushy-tools` track — virtual media (a whole extra deploy path)
-
-Modern out-of-band management is **Redfish**, not IPMI, and virtualbmc's Redfish sibling
-**`sushy-tools`** (same OpenStack lineage) adds the capability IPMI here lacks: **virtual
-media** — `InsertMedia` mounts an install ISO to the node and boots it, no PXE/DHCP at
-all. That's a *fifth* delivery model for the deploy interface (§4): `--driver
-virtual-media`. Deferred as its own track (a Redfish BMC container + a `redfishtool`/curl
-front end), and it also gives the fleet a **Redfish console** option to compare against
-the IPMI/libvirt one. Cite the Redfish + sushy-tools docs; reuse the repo's ISO assets.
-
-### 11c. Richer IPMI surface (low priority, mostly "toy vs. real" honesty)
-
-`vbmcd` implements **power + boot-device only**. A real BMC also exposes **sensors/SDR**,
-**FRU** inventory, **chassis identify** (the locate LED), and **`sel`** event logs — all
-absent here. Optional future polish: a stub SDR/FRU so `ipmitool sensor`/`fru` return
-plausible data for teaching, clearly flagged as fabricated. Also deferred: driving the
-BMC over a **real (non-loopback) network** with `lanplus` auth — kept on `127.0.0.1` by
-design (F1); any move off loopback needs the security framing tightened first.
-
-### 11d. Inherited vbmc/IPMI constraints (carried, not solved)
-
-- **`vbmcd` is rootful** (the `qemu:///system` socket is `root:libvirt`); the
-  container-vs-host trade-off is the vbmc lab's, restated in this lab's RUNBOOK.
-- **One console consumer at a time**, foreground, domain must be running (vbmc RUNBOOK
-  §6) — the milestone tailer must therefore *own* the console or read a captured log,
-  not race a human `virsh console`. A design note for the `watch`/progress plumbing.
-- **`sushy`/`ipmi_sim` and `vbmcd` may collide on port/backend** — see 11a's trade-off.
+Nothing here gates MAAS v1: MAAS v1 uses the ✅-proven `vbmcd` path (via the toolkit's
+`vbmcd` backend, or directly), and the toolkit + MAAS build independently — they wire
+together once both are green.
