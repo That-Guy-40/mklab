@@ -62,9 +62,10 @@ source for driver bytecode that arrived on a card.
 
 ```console
 $ ./stage-dsl.sh                            # put the vocabularies on media (~1 s)
-$ ./smoke-dsl.sh all                        # three verdicts, headless
+$ ./smoke-dsl.sh all                        # three verdicts, headless (emu)
+$ ./smoke-dsl.sh all coreboot               # ...and again on the coreboot payload
 $ ./showcase-diagnose-a-broken-boot.sh      # diagnose → repair live → verify
-$ ./run-ofw-debug.sh                        # interactive ok prompt (Ctrl-A X quits)
+$ ./run-ofw-debug.sh [emu|coreboot]         # interactive ok prompt (Ctrl-A X quits)
 $ ./build-fcode-rom.sh && ./run-ofw-debug.sh --card    # plug in the FCode card
 ```
 
@@ -114,6 +115,46 @@ That second one is why **every script here pins `-m 256`**, and why raising it
 "to be generous" will break the FCode track in a way that looks like nothing at
 all. It is the same family of era-gap the sister lab fought with `memmap=1023M@1M`.
 
+## Two flavors, and they disagree about more than the ROM
+
+`smoke-dsl.sh` takes a flavor; **all three vocabularies pass on both**
+(6 of 6 verdicts). The vocabularies themselves are byte-identical — the
+dictionaries match across flavors, which the audit proved before any of this was
+written. What differs is everything around them:
+
+| | emu | coreboot payload |
+|---|---|---|
+| media | ISO9660, ATAPI path | FAT16, legacy ISA-IDE path |
+| device | `/pci/pci-ide@1,1/ide@1/cdrom@0` | `/isa/ide@i1f0/disk@0` |
+| default `boot-device` | `disk net` | `a:\vmlinuz` — a **floppy** alias |
+| can it read a file? | yes | **not until you repair it** |
+
+That last row is the interesting one. On the coreboot payload `allocate-dma` is a
+defer aimed at `null-allocate-dma`, and **nothing on this path ever re-points
+it** — only the emu flavor's PCI parent chain supplies the `dma-alloc` it falls
+back from. So every `fload` dies with `Can't open deblocker package` until you
+type:
+
+```
+ok : my-dma h# 1000 mem-claim ;
+ok ' my-dma to allocate-dma
+```
+
+Note the bootstrap order that forces: **the repair that makes file loading work
+cannot itself be loaded from a file.** It has to be typed at the prompt — the one
+place this lab's own "never type a colon definition at a serial console" rule has
+to bend, which is why it is two short lines and why `--echo-gate` drives it.
+
+And `why-no-boot` earns its keep twice over, because the two flavors fail to boot
+for *different* reasons — the coreboot payload is chasing a floppy that isn't
+there:
+
+```
+OFDIAG: boot-device = a:\vmlinuz
+OFDIAG path:   /isa/fdc/disk@0:\vmlinuz
+OFDIAG-2: no such node in the device tree
+```
+
 ## Honesty about what's verified
 
 Everything in Quick start is **verified end-to-end on this host** (Ubuntu 24.04,
@@ -126,9 +167,6 @@ Not claimed:
   paging resets inside it, so scripted keystrokes answer pager prompts instead of
   stepping. It is documented in [RUNBOOK.md](RUNBOOK.md) **for humans** — the same
   call the sister lab made about GRUB's `e` menu-edit.
-- **The coreboot flavor's media is staged but its smokes are not run here.** The
-  dictionaries are identical across flavors (proven), so the vocabularies port;
-  only the media path differs.
 - **`map?` is not recovered.** It needs the assembler *and* a `${BP}` dep, and it
   walks page tables that don't exist in the physical-mode boot this lab uses.
   Declined on purpose, not overlooked.

@@ -9,6 +9,7 @@ The firmware ROM comes from the sister lab; the FCode tools from the rival lab.
 
 ```console
 $ cd ../open-firmware-forth-to-boot && ./build-ofw.sh     # -> ~/ofw-lab/.../emuofw.rom
+$ cd ../open-firmware-forth-to-boot && ./build-coreboot-ofw.sh   # -> coreboot flavor (optional)
 $ make -C ~/openbios-lab/fcode-utils                      # -> toke, detok, romheaders
 ```
 
@@ -50,6 +51,45 @@ $ ./smoke-dsl.sh fcode
 PASS: fcode: a PCI card's bytecode driver ran on the bare machine and named its own node
 
 $ ./smoke-dsl.sh all        # all three, then a summary line
+```
+
+### The coreboot flavor
+
+Same three verdicts, second flavor — **6 of 6 pass**:
+
+```console
+$ ./smoke-dsl.sh all coreboot
+PASS: ofdiag (coreboot): 4 distinct fault diagnoses + boot tracer installed and cleanly removed
+PASS: ofscope (coreboot): pci-map + mem-map + region-diff verified, both region-diff controls hold
+PASS: fcode (coreboot): a PCI card's bytecode driver ran on the bare machine and named its own node
+PASS: all vocabularies verified (coreboot)
+```
+
+It needs the sister lab's `./build-coreboot-ofw.sh` (ROM at
+`~/linuxboot-lab/coreboot/build-ofw/coreboot.rom`) and reads `dsl.img` (FAT16) on
+the legacy ISA-IDE path instead of the ISO on ATAPI. The smoke injects the
+`allocate-dma` repair automatically; by hand it is:
+
+```
+ok dir /isa/ide@i1f0/disk@0:\
+Can't open deblocker package                      ← before
+Can't open directory
+ok : my-dma h# 1000 mem-claim ;
+ok ' my-dma to allocate-dma
+ok dir /isa/ide@i1f0/disk@0:\
+fat-file-system                                   ← after
+--A-rwxrwxrwx      4959  ...  OFDIAG.FTH
+```
+
+**Signature: the same `dir` fails, then succeeds, across two typed lines.**
+
+`why-no-boot` reports a *different* failure here — the coreboot payload's default
+`boot-device` is `a:\vmlinuz`, a DOS-style floppy alias:
+
+```
+OFDIAG: boot-device = a:\vmlinuz
+OFDIAG path:   /isa/fdc/disk@0:\vmlinuz
+OFDIAG-2: no such node in the device tree
 ```
 
 Exit codes are the house convention: 0 PASS / 1 FAIL / 77 SKIP, one verdict line
@@ -183,12 +223,14 @@ what the firmware believes.
 | every `diag-open` answers `OFDIAG-1` | `expand-alias`'s flag misread — it means "an alias *was* expanded", not "success" | see the comment block in [`dsl/ofdiag.fth`](dsl/ofdiag.fth) |
 | driver exits 125 | the console dropped input despite `--echo-gate` | not expected here; check for a second client on the serial socket |
 | `setenv boot-device …` → "Out of NVRAM environment space" | the emu build has no working NVRAM | repair the **devalias** instead |
+| coreboot: `Can't open deblocker package` on any fload | `allocate-dma` is a defer nothing re-points on this flavor | type the two-line `my-dma` repair first |
 | a wall of `… isn't unique` during fload | redefinition **warnings**, not errors | ignore; the load succeeded |
 
 ## 8. Interactive
 
 ```console
 $ ./run-ofw-debug.sh            # prints a cheat-sheet, then the ok prompt
+$ ./run-ofw-debug.sh coreboot   # ...the coreboot payload (cheat-sheet includes the repair)
 $ ./run-ofw-debug.sh --card     # ...with the FCode option ROM plugged in
 ```
 

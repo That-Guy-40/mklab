@@ -6,6 +6,13 @@ You have run [`./stage-dsl.sh`](stage-dsl.sh). Start the machine:
 $ ./run-ofw-debug.sh          # ok prompt on this terminal; Ctrl-A X quits
 ```
 
+This tour uses the **emu** flavor. Everything here works on the coreboot payload
+too (`./run-ofw-debug.sh coreboot`) — same vocabularies, different media path,
+and one extra step before any `fload` works. The README's flavor table has the
+details; the short version is that coreboot needs
+`: my-dma h# 1000 mem-claim ;` / `' my-dma to allocate-dma` typed first, because
+its `allocate-dma` defer is never re-pointed and the filesystem stack needs it.
+
 Everything below is typed at the `ok` prompt. The prompt thinks in **hex** — see
 the sister lab's [RUNBOOK §1](../open-firmware-forth-to-boot/RUNBOOK.md) if that
 bites you.
