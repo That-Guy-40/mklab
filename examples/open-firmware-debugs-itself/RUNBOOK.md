@@ -267,11 +267,18 @@ a word, `U` returns, `G` runs to completion, `Q` abandons it.
 
 A source-level debugger, on bare metal, with no OS and no debug port.
 
-**This one is for humans only.** It is a full-screen ANSI application, and paging
-resets inside it, so scripted keystrokes end up answering `More` prompts instead
-of stepping. That is why there is no smoke for it — the same call the sister lab
-made about GRUB's `e` menu-edit: trivial for a person looking at the screen,
-miserable to automate.
+### …and under a script
+
+This was the last thing in the lab claimed to be human-only. It isn't. `debug`
+has a **second display mode**: set `true to scrolling-debug?` *before* entering it
+and you get a line-oriented view instead of the full-screen one — a stable
+`Inside <word>  ( <stack> )` frame per step, which a driver can synchronise on,
+one key per settled display. `smoke-dsl.sh stepper` does exactly that and asserts
+the stack duplicates across `2dup`.
+
+Two traps if you try it yourself: load [`nopage.fth`](dsl/nopage.fth) first, and
+do **not** use `--echo-gate` — the stepper reads raw keys and its echo of a space
+is indistinguishable from the whitespace already streaming past.
 
 ## 8. A driver that arrives on the card
 

@@ -141,6 +141,21 @@ only *waits*.
 ⚠️ These builds are isolated by construction (own tree clone, own output) and the
 script **fails** if the sister lab's `emuofw.rom` sha changes.
 
+## 2c. The single-step debugger
+
+```console
+$ ./smoke-dsl.sh stepper
+  - stepped 5 times, one key per settled display
+  - the displayed stack duplicates across 2dup, and steps follow the source
+  - stepping 'type' emitted the argument — execution, not just display
+  - 'G' ran it to completion and the diagnosis came out
+PASS: stepper: single-stepped a live word on bare metal, one key per settled display, and ran it out
+```
+
+**Signature:** `Inside diag-open  ( … )` frames, one per keystroke, with the stack
+visibly duplicating across `2dup`. Requires `true to scrolling-debug?` before
+`debug` (line-oriented mode), `nopage.fth` loaded, and **no `--echo-gate`**.
+
 ## 3. The showcase
 
 ```console

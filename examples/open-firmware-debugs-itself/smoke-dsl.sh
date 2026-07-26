@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# smoke-dsl.sh [stage|ofdiag|ofscope|fcode|dropin|autotrace|all] [emu|coreboot]
+# smoke-dsl.sh [stage|ofdiag|ofscope|fcode|stepper|dropin|autotrace|all] [emu|coreboot]
 #   — one verdict per vocabulary. `dropin`/`autotrace` need ./build-dropin-rom.sh.
 #
 # Every check runs headless over the serial socket. Exit: 0 PASS / 1 FAIL / 77 SKIP.
@@ -58,7 +58,7 @@ case "$FLAVOR" in
       PREFIX=( --send ': my-dma h# 1000 mem-claim ;\r' --expect "ok"
                --send "' my-dma to allocate-dma\r"     --expect "ok" )
       ;;
-  *)  fail "usage: $0 [stage|ofdiag|ofscope|fcode|dropin|autotrace|all] [emu|coreboot]" ;;
+  *)  fail "usage: $0 [stage|ofdiag|ofscope|fcode|stepper|dropin|autotrace|all] [emu|coreboot]" ;;
 esac
 
 command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
@@ -67,6 +67,7 @@ command -v python3 >/dev/null            || skip "python3 not installed"
 [ -f "$MEDIA" ] || skip "no $MEDIA — run ./stage-dsl.sh"
 
 ACCEL=$([ -w /dev/kvm ] && echo kvm || echo tcg)
+GATE="--echo-gate"
 QPID=""
 cleanup() { [ -n "$QPID" ] && kill "$QPID" 2>/dev/null; }   # by PID, never by pattern
 trap 'cleanup' INT TERM
@@ -84,7 +85,13 @@ boot_and_drive() {
     QPID=$!
     # The settle newline also absorbs the coreboot flavor's eaten-first-keystrokes
     # quirk; PREFIX (if any) applies the flavor's pre-fload repair.
-    python3 "$DRIVE" "$sock" "$log" --timeout 200 --echo-gate \
+    # GATE is --echo-gate by default (self-clocking, the house answer to dropped
+    # bytes). The stepper smoke clears it: that debugger reads RAW keys, and its
+    # echo of a space is indistinguishable from the whitespace already streaming
+    # past -- exactly the non-echoing-prompt case --echo-gate is documented as
+    # unsuitable for. Gating there silently stalls instead of stepping.
+    # shellcheck disable=SC2086
+    python3 "$DRIVE" "$sock" "$log" --timeout 200 $GATE \
         --expect "ok" --send '\r' --expect "ok" "${PREFIX[@]}" "$@"
     local rc=$?
     kill "$QPID" 2>/dev/null; wait "$QPID" 2>/dev/null; QPID=""
@@ -174,6 +181,56 @@ smoke_fcode() {
 # Regression guard: ./stage-dsl.sh shipped broken once, because a ROM-only
 # vocabulary (autotrace.fth, 9 chars) got picked up by the media stager and the
 # 8.3 check rightly refused it -- and nothing in the suite ever ran the stager.
+# The single-step debugger, genuinely driven.
+#
+# The trick is that `debug` has TWO display modes. With scrolling-debug? FALSE it
+# uses setup-2d-display -- `page`, cursor positioning, a full-screen app that
+# fights automation. With it TRUE it uses setup-scrolling-display, which is
+# LINE-ORIENTED: every step reprints "Inside <word>  ( <stack> )" followed by the
+# next word to execute. That line is the stable per-step anchor, so the driver can
+# send exactly one key per settled display.
+#
+# Two further wins from scrolling mode: the stepper ECHOES each key (`dup emit`),
+# and it never dumps the decompiled listing -- so a marker like OFDIAG-1 can only
+# come from EXECUTION, not from source text being paged past. (An --expect that
+# matched the listing gave a false PASS during development.)
+smoke_stepper() {
+    GATE=""          # raw-key reader: see the note in boot_and_drive
+    boot_and_drive smoke-stepper "" \
+        --send "fload $DEV:\\\\nopage.fth\r" --expect "nopage loaded" \
+        --send 'true to scrolling-debug?\r'      --expect "ok" \
+        --send "fload $DEV:\\\\ofdiag.fth\r" --expect "ofdiag loaded" \
+        --send 'debug diag-open\r'               --expect "ok" \
+        --send '" nosuchalias" diag-open\r'      --expect ": diag-open" \
+        --send ' ' --expect "Inside diag-open" \
+        --send ' ' --expect "Inside diag-open" \
+        --send ' ' --expect "Inside diag-open" \
+        --send ' ' --expect "Inside diag-open" \
+        --send ' ' --expect "Inside diag-open" \
+        --send 'G' --expect "OFDIAG-1"
+    local steps
+    steps=$(grep -c 'Inside diag-open' "$LOG")
+    [ "$steps" -ge 5 ] || fail "REGRESSION: the stepper advanced only $steps time(s) — one key per settled display is no longer landing (see $LOG)"
+    note "stepped $steps times, one key per settled display"
+    # It must walk the word's ACTUAL words, in source order (see dsl/ofdiag.fth).
+    grep -A1 'Inside diag-open' "$LOG" | grep -q '^2dup' \
+        || fail "REGRESSION: the stepper never showed '2dup' — it is not walking diag-open's real words (see $LOG)"
+    # Semantic proof, not just liveness: 2dup must DUPLICATE the visible stack,
+    # and `type` must emit the argument we passed in.
+    grep -q 'Inside diag-open .*( \([0-9a-f]*\) \([0-9a-f]*\) \1 \2 )' "$LOG" \
+        || fail "REGRESSION: no stack duplication visible after 2dup — the stack display is not tracking execution (see $LOG)"
+    note "the displayed stack duplicates across 2dup, and steps follow the source"
+    grep -q 'type  *nosuchalias' "$LOG" \
+        || fail "REGRESSION: stepping 'type' did not emit the argument 'nosuchalias' (see $LOG)"
+    note "stepping 'type' emitted the argument — execution, not just display"
+    # G runs to completion; OFDIAG-1 here can only be execution (scrolling mode
+    # never lists the source, so there is nothing to false-positive against).
+    grep -q 'OFDIAG-1: not a path' "$LOG" \
+        || fail "REGRESSION: 'G' did not run the word to completion (no diagnosis emitted) — see $LOG"
+    note "'G' ran it to completion and the diagnosis came out"
+    pass "stepper: single-stepped a live word on bare metal, one key per settled display, and ran it out"
+}
+
 smoke_stage() {
     bash "$HERE/stage-dsl.sh" >/dev/null 2>&1 \
         || fail "REGRESSION: ./stage-dsl.sh fails — a ROM-only or non-8.3 vocabulary reached the media stager"
@@ -216,6 +273,7 @@ smoke_autotrace() {
 
 case "$MODE" in
     stage)     smoke_stage ;;
+    stepper)   smoke_stepper ;;
     dropin)    smoke_dropin ;;
     autotrace) smoke_autotrace ;;
     ofdiag)  smoke_ofdiag ;;
@@ -223,7 +281,7 @@ case "$MODE" in
     fcode)   smoke_fcode ;;
     all)
         rc=0
-        for m in stage ofdiag ofscope fcode dropin autotrace; do
+        for m in stage ofdiag ofscope fcode stepper dropin autotrace; do
             printf '\n=== %s (%s) ===\n' "$m" "$FLAVOR"
             bash "$0" "$m" "$FLAVOR"; r=$?
             [ $r -eq 1 ] && rc=1
@@ -231,5 +289,5 @@ case "$MODE" in
         printf '\n'
         [ $rc -eq 0 ] && echo "PASS: all vocabularies verified ($FLAVOR)" || echo "FAIL: at least one vocabulary failed ($FLAVOR)"
         exit $rc ;;
-    *) fail "usage: $0 [stage|ofdiag|ofscope|fcode|dropin|autotrace|all] [emu|coreboot]" ;;
+    *) fail "usage: $0 [stage|ofdiag|ofscope|fcode|stepper|dropin|autotrace|all] [emu|coreboot]" ;;
 esac
