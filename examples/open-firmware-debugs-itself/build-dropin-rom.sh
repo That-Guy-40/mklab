@@ -19,9 +19,22 @@
 # output. The sister lab's emuofw.rom is sha-guarded before and after, because a
 # shared, already-verified artifact changing underneath another lab is exactly
 # the kind of silent cross-lab regression this repo has been bitten by before.
+#   --nvram        ALSO switch on the configuration-variable store (NVRAM-ON-X86.md),
+#                  which unlocks delivery mechanism 3: an `nvramrc` autoload line.
+#   --reboot-hook  ALSO add copy-reboot-info to emu's startup, making auto-boot's
+#                  warm-reboot branch reachable. Combined with --boot-hook this is
+#                  the COMBINED ROM: tracers armed by banner- AND a reachable warm
+#                  reboot, i.e. the only build that can trace a real warm reboot.
 set -euo pipefail
-BOOT_HOOK=""
-[ "${1:-}" = "--boot-hook" ] && BOOT_HOOK=yes
+BOOT_HOOK=""; NVRAM=""; REBOOT_HOOK=""
+for a in "$@"; do
+    case "$a" in
+        --boot-hook)   BOOT_HOOK=yes ;;
+        --nvram)       NVRAM=yes ;;
+        --reboot-hook) REBOOT_HOOK=yes; NVRAM=yes ;;   # reboot? is read from NVRAM
+        *) echo "usage: $0 [--boot-hook] [--nvram] [--reboot-hook]"; exit 1 ;;
+    esac
+done
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SISTER="$(cd "$HERE/../open-firmware-forth-to-boot" && pwd)"
@@ -30,7 +43,13 @@ SRC="$WORKDIR/openfirmware"                 # the sister lab's tree — READ ONL
 SRC2="$WORKDIR/openfirmware-dropin"         # ours
 IMG="localhost/ofw-build"
 CFLAGS='CFLAGS=-O -g -m32 -DTARGET_X86 -std=gnu89'
-OUT="$WORKDIR/$([ -n "$BOOT_HOOK" ] && echo autotrace || echo ofdiag)-emuofw.rom"
+# Build the name piecewise. Each suffix needs a `|| echo ""`: a bare
+# `$([ -n "$X" ] && echo -tag)` exits 1 when X is empty, that status becomes the
+# assignment's, and `set -e` then kills the script SILENTLY. (Cost one confusing
+# rc=1-with-no-output before the regression run caught it.)
+OUT="$WORKDIR/$([ -n "$BOOT_HOOK" ] && echo autotrace || echo ofdiag)"
+OUT+="$([ -n "$NVRAM" ] && echo -nvram || echo "")"
+OUT+="$([ -n "$REBOOT_HOOK" ] && echo -reboot || echo "")-emuofw.rom"
 STOCK="$SRC/cpu/x86/pc/emu/build/emuofw.rom"
 
 command -v podman >/dev/null || { echo "SKIP: podman not installed"; exit 77; }
@@ -49,12 +68,15 @@ if [ ! -d "$SRC2/.git" ]; then
     fi
 fi
 
-# --- the same two config flips the sister lab makes --------------------------
-# Serial console on (our harness is headless) and virtual-mode OFF (MMU on
-# triple-faults the 64-bit handoff). Identical to build-ofw.sh, so the ROM only
-# differs from the sister's by the dropins we add.
-sed -i 's/^\\ create serial-console$/create serial-console/' "$SRC2/cpu/x86/pc/emu/config.fth"
-sed -i 's/^create virtual-mode$/\\ create virtual-mode/'     "$SRC2/cpu/x86/pc/emu/config.fth"
+# --- source edits (shared with build-nvram-rom.sh, see lib-ofw-edits.sh) ------
+# Reset to a pristine tree first: the dropin injection is idempotent on its own,
+# but the reboot-hook awk is not, and re-running must never stack a second call.
+git -C "$SRC2" checkout -q -- . 2>/dev/null || true
+# shellcheck source=lib-ofw-edits.sh
+. "$HERE/lib-ofw-edits.sh"
+ofw_base_flips "$SRC2"
+if [ -n "$NVRAM" ];       then ofw_nvram_edits "$SRC2"; fi
+if [ -n "$REBOOT_HOOK" ]; then ofw_reboot_hook "$SRC2"; fi
 
 # --- stage the vocabularies inside the tree so ${BP} can reach them -----------
 mkdir -p "$SRC2/labdsl"

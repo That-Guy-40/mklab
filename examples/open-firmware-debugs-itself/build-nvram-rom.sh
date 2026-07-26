@@ -56,39 +56,13 @@ fi
 # pristine tree each run, so the sed edits below can never stack
 git -C "$SRC2" checkout -q -- . 2>/dev/null || true
 
-CFG="$SRC2/cpu/x86/pc/emu/config.fth"
-DEV="$SRC2/cpu/x86/pc/emu/devices.fth"
-
-# the sister lab's two flips, so this ROM differs from the stock one only by NVRAM
-sed -i 's/^\\ create serial-console$/create serial-console/' "$CFG"
-sed -i 's/^create virtual-mode$/\\ create virtual-mode/'     "$CFG"
-
-sed -i 's/^\\ create pseudo-nvram$/create pseudo-nvram/'     "$CFG"
-sed -i 's/^create use-null-nvram$/\\ create use-null-nvram/' "$CFG"
-# '.' matches the literal backslash in "c:\nvram.dat"; writing \n here would
-# become a newline in sed's pattern space and match nothing.
-sed -i 's|" c:.nvram.dat"|" a:\\nvram.dat"|'                 "$DEV"
-
-# VERIFY the edits landed. A sed that silently matches nothing is the classic way
-# to spend an hour debugging an unchanged binary — this repo has done it once.
-grep -q '^create pseudo-nvram$' "$CFG" || { echo "FAIL: pseudo-nvram not enabled in $CFG"; exit 1; }
-grep -q 'a:.nvram.dat' "$DEV"          || { echo "FAIL: nv-file not retargeted to a: in $DEV"; exit 1; }
-echo "==> config.fth:"; grep -n '^create pseudo-nvram$\|^\\ create use-null-nvram$' "$CFG" | sed 's/^/    /'
-echo "==> devices.fth:"; grep -n 'nv-file' "$DEV" | sed 's/^/    /'
-
-if [ -n "$REBOOT_HOOK" ]; then
-    FWB="$SRC2/cpu/x86/pc/emu/fw.bth"
-    awk '
-      /^: startup/ { instartup=1 }
-      { print }
-      instartup && /^   standalone\?  0=  if  exit  then$/ && !done {
-          print "   copy-reboot-info"; done=1; instartup=0
-      }
-    ' "$FWB" > "$FWB.new" && mv "$FWB.new" "$FWB"
-    grep -q '^   copy-reboot-info$' "$FWB" || { echo "FAIL: copy-reboot-info not injected into $FWB"; exit 1; }
-    echo "==> emu startup now calls copy-reboot-info:"
-    grep -n -A2 '^: startup' "$FWB" | sed 's/^/    /'
-fi
+# The edits themselves live in lib-ofw-edits.sh, shared with build-dropin-rom.sh
+# so the NVRAM edits exist in exactly one place. Each function verifies itself.
+# shellcheck source=lib-ofw-edits.sh
+. "$HERE/lib-ofw-edits.sh"
+ofw_base_flips  "$SRC2"
+ofw_nvram_edits "$SRC2"
+if [ -n "$REBOOT_HOOK" ]; then ofw_reboot_hook "$SRC2"; fi
 
 echo "==> building the build box ($IMG) — the sister lab's Containerfile"
 podman build -q -t ofw-build -f "$SISTER/Containerfile" "$SISTER" >/dev/null
