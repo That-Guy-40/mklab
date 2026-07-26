@@ -29,13 +29,27 @@
 ;
 ```
 
-and inside the boot path itself, `ofw/core/bootparm.fth:345`:
+Two dropin hooks are candidates, and the difference between them turned out to
+matter. `ofw/core/banner.fth:141`, the first act of `banner()`:
 
 ```forth
-   " boot-" do-drop-in        ← option B — fires IMMEDIATELY before the autoboot
+: banner  ( -- )
+   auto-banner?  if  " banner-" do-drop-in  then     ← option B — CHOSEN
+```
+
+and, nearer the boot, `ofw/core/bootparm.fth:345`:
+
+```forth
+: auto-boot  ( -- )
+   reboot?  if  ...  safe-evaluate  exit  then       ← ⚠ early exit on a REBOOT
+   " boot-" do-drop-in                               ← so this hook has a hole
    do-auto-boot
    " boot+" do-drop-in
 ```
+
+`boot-` fires closest to the boot, but `auto-boot`'s `reboot?` branch returns
+*before* reaching it, so a warm reboot slips past. `banner` is called from
+`startup` before `auto-boot` on **every** path, so `banner-` has no such hole.
 
 ## Option A — `nvramrc` · **DEAD ON THIS BUILD** (verified)
 
@@ -95,7 +109,7 @@ existing manifest (`cpu/x86/pc/emu/emuofw.bth:49-72`):
 
 ```forth
    " ${BP}/…/ofdiag.fth"     " ofdiag.fth"   $add-deflated-dropin   \ B1
-   " ${BP}/…/autotrace.fth"  " boot-"        $add-deflated-dropin   \ B2
+   " ${BP}/…/autotrace.fth"  " banner-"      $add-deflated-dropin   \ B2
 ```
 
 ### B1 — a *named* dropin (safe, no behaviour change)
@@ -110,10 +124,14 @@ delete the entire media-staging step for the emu flavor, and on the coreboot
 flavor it would sidestep the `allocate-dma` bootstrap problem entirely, because
 `/dropin-fs` is not a disk and needs no `deblocker`.
 
-### B2 — a `boot-` dropin (true autoboot tracing)
+### B2 — a `banner-` dropin (true autoboot tracing)
 
-Ship a tiny `autotrace.fth` as `boot-`. It fires immediately before
-`do-auto-boot`, so the autoboot itself is traced — the gap closes completely.
+Ship a tiny `autotrace.fth` as `banner-`. It fires before `auto-boot` on every
+path, so the autoboot itself is traced — the gap closes completely.
+
+(It was originally written as `boot-`, which is nearer the boot and reads better,
+until the `reboot?` early exit above showed that hook cannot see a warm reboot.
+`banner-` arms slightly earlier, which is only more coverage.)
 
 ⚠️ **This changes the ROM's behaviour for every consumer**, including the sister
 lab, whose smokes and showcase are verified against the current boot output.
@@ -141,7 +159,7 @@ $ ./build-dropin-rom.sh --boot-hook
 ==> dropin manifest now carries:
     76:   " ${BP}/labdsl/ofdiag.fth"    " ofdiag.fth"  $add-deflated-dropin
     77:   " ${BP}/labdsl/ofscope.fth"   " ofscope.fth" $add-deflated-dropin
-    79:   " ${BP}/labdsl/autotrace.fth" " boot-"       $add-deflated-dropin
+    80:   " ${BP}/labdsl/autotrace.fth" " banner-"     $add-deflated-dropin
 ==> /home/…/autotrace-emuofw.rom
 ==> guard OK: the sister lab's emuofw.rom is untouched
 ```
@@ -150,7 +168,7 @@ and, with nothing typed and no media attached:
 
 ```
 Install console
-#T autotrace armed (boot- dropin)
+#T autotrace armed (banner- dropin)
 Type any key to interrupt automatic startup
 6 5 4 3 2 1
 #T open disk
@@ -184,7 +202,7 @@ tree clone, its own output ROM, and a sha-guard on the sister lab's artifact.
 |---|---|---|
 | **A** nvramrc | **dead here** (no NVRAM), correct on real hardware | — |
 | **B1** named dropin | **do this** — media-free loading, zero behaviour change | 1 build line + a rebuild |
-| **B2** `boot-` dropin | **do this second** — closes the gap properly | 1 build line + **isolated ROM output** |
+| **B2** `banner-` dropin | **do this second** — closes the gap properly, reboot path included | 1 build line + **isolated ROM output** |
 | **C** bake into image | avoid | moves the audited dictionary |
 
 **B1 then B2**, with B2's build isolated. The honest scope note is that neither is
@@ -197,9 +215,25 @@ a shared, already-verified ROM does not change underneath another lab.
 stays `false`); `/dropin-fs` exists and lists its contents; `memtest.fth` ships as
 a Forth-source dropin; a `probe-` startup-hook dropin is present in the running
 ROM; `" boot-" do-drop-in` sits immediately before `do-auto-boot` in
-`bootparm.fth:345`; the build-time idiom is `$add-deflated-dropin` in the
-flavor's `.bth`.
+`bootparm.fth:345` (with a `reboot?` early exit ahead of it) while
+`" banner-" do-drop-in` is the first act of `banner()` in `banner.fth:141`; the
+build-time idiom is `$add-deflated-dropin` in the flavor's `.bth`.
 
 **Since built and verified:** both dropin variants, the isolated build, and the
 sha-guard. `smoke-dsl.sh dropin` and `smoke-dsl.sh autotrace` are the standing
-proofs. The remaining honest limit is the warm-reboot path above.
+proofs.
+
+**Still not demonstrable:** the warm-reboot path itself. `banner-` removes the
+blind spot *in the code*, but this firmware can never take that path — `reboot?`
+is set only from the NVRAM variable `reboot-command` (`ofw/core/reboot.fth`) and
+NVRAM writes are unimplemented here:
+
+```
+ok " testcmd" " reboot-command" $setenv
+Unimplemented package interface procedure
+ok " reboot-command" $getenv .
+ffffffff                                  \ OFW's true == failure
+```
+
+Correct by reading, unprovable by running. On hardware with working NVRAM it
+would be testable too. Counted as a limitation, not as a pass.

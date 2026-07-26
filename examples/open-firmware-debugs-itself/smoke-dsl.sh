@@ -228,7 +228,7 @@ smoke_stepper() {
     grep -q 'OFDIAG-1: not a path' "$LOG" \
         || fail "REGRESSION: 'G' did not run the word to completion (no diagnosis emitted) — see $LOG"
     note "'G' ran it to completion and the diagnosis came out"
-    pass "stepper: single-stepped a live word on bare metal, one key per settled display, and ran it out"
+    pass "stepper ($FLAVOR): single-stepped a live word on bare metal, one key per settled display, and ran it out"
 }
 
 # The stepper, driven HARD: not just <space> and G, but the introspection and
@@ -280,7 +280,7 @@ smoke_stepper_deep() {
     awk '/unbug/{f=1} f' "$LOG" | grep -q 'OFDIAG-' \
         && fail "REGRESSION: 'Q' was supposed to ABANDON execution, but the word ran to a diagnosis anyway — see $LOG"
     note "'Q' abandoned execution — no diagnosis followed, as it must not"
-    pass "stepper-deep: string/Down/Up/Quit all drive the live debugger, including the abandon path"
+    pass "stepper-deep ($FLAVOR): string/Down/Up/Quit all drive the live debugger, including the abandon path"
 }
 
 smoke_stage() {
@@ -290,6 +290,8 @@ smoke_stage() {
     pass "stage: the media stager accepts every vocabulary meant for media"
 }
 
+# NB: dropin/autotrace exercise ROMs this lab BUILDS, so they are
+# flavor-independent -- their verdicts carry no flavor tag.
 smoke_dropin() {
     ROM="$WORKDIR/ofdiag-emuofw.rom"; MEDIA_ARGS=""; PREFIX=()
     [ -f "$ROM" ] || skip "no $ROM — run ./build-dropin-rom.sh"

@@ -23,15 +23,19 @@ $ ./build-detok-vocab.sh
 wrote .../dsl/detok.fth (1495 lines spliced from 5 sources)
 
 $ ./stage-dsl.sh
-staged detok.fth ofdiag.fth ofscope.fth -> /home/sqs/ofw-lab/dsl.iso
+staged detok.fth nopage.fth ofdiag.fth ofscope.fth -> /home/sqs/ofw-lab/dsl.iso
 staged -> /home/sqs/ofw-lab/dsl.img (FAT16, for the coreboot flavor)
 ```
 
-**Signature:** both media created. The FAT16 step is fully checked — an
-unreadable image fails loudly rather than reporting success (it did the latter
-once, which is why `mdir` now gates it).
+**Signature:** both media created, and every staged name is 8.3. Two guards live
+here, both added after they failed: the FAT16 step is fully checked (it once
+reported success on an image `mkfs.vfat` had rejected, so `mdir` now gates it),
+and ROM-only vocabularies are excluded — `autotrace.fth` is 9 characters and the
+8.3 check rightly refused it, which broke this script until `smoke-dsl.sh stage`
+started running it as a guard. **A build step with no verdict attached is an
+untested step.**
 
-## 2. The three smoke verdicts
+## 2. The smoke verdicts
 
 ```console
 $ ./smoke-dsl.sh ofdiag
@@ -50,12 +54,17 @@ $ ./smoke-dsl.sh fcode
   - the firmware probed, validated and byte-loaded the card's FCode
 PASS: fcode: a PCI card's bytecode driver ran on the bare machine and named its own node
 
-$ ./smoke-dsl.sh all        # all three, then a summary line
+$ ./smoke-dsl.sh all        # every mode on this flavor, then a summary line
 ```
+
+The full mode list is
+`stage | ofdiag | ofscope | fcode | stepper | stepper-deep | dropin | autotrace | all`,
+and the second argument picks the flavor (`emu`, default, or `coreboot`).
 
 ### The coreboot flavor
 
-Same three verdicts, second flavor — **6 of 6 pass**:
+The three vocabulary verdicts again on the second flavor — the ROM-resident and
+debugger modes are emu-only, since they need the ROM this lab builds:
 
 ```console
 $ ./smoke-dsl.sh all coreboot
@@ -113,11 +122,11 @@ $ ./smoke-dsl.sh dropin
   - loaded and ran with NO cdrom, NO floppy, NO staged media
 PASS: dropin: the DSL ships inside the ROM and loads with no media at all
 
-$ ./build-dropin-rom.sh --boot-hook     # also ships autotrace.fth as `boot-`
+$ ./build-dropin-rom.sh --boot-hook     # also ships autotrace.fth as `banner-`
 $ ./smoke-dsl.sh autotrace
-  - the boot- dropin armed the tracers before do-auto-boot
+  - the banner- dropin armed the tracers before auto-boot
   - the POWER-ON autoboot traced itself — nothing typed, no media
-PASS: autotrace: the autoboot traces itself from a boot- dropin inside the ROM
+PASS: autotrace: the autoboot traces itself from a banner- dropin inside the ROM
 ```
 
 **Signature for `autotrace`:** `#T` lines appear *before the first `ok` prompt*,
@@ -125,7 +134,7 @@ with no media attached and nothing sent to the console:
 
 ```
 Install console
-#T autotrace armed (boot- dropin)
+#T autotrace armed (banner- dropin)
 Type any key to interrupt automatic startup
 6 5 4 3 2 1
 #T open disk
@@ -155,6 +164,37 @@ PASS: stepper: single-stepped a live word on bare metal, one key per settled dis
 **Signature:** `Inside diag-open  ( … )` frames, one per keystroke, with the stack
 visibly duplicating across `2dup`. Requires `true to scrolling-debug?` before
 `debug` (line-oriented mode), `nopage.fth` loaded, and **no `--echo-gate`**.
+
+And the same debugger driven harder — introspection, navigation, and the abandon
+path:
+
+```console
+$ ./smoke-dsl.sh stepper-deep
+  - the 'string' key displayed the stack argument before any of it executed
+  - 'D' descended into expand-alias and stepped its actual first token
+  - 'U' returned to the caller
+  - 'Q' abandoned execution — no diagnosis followed, as it must not
+PASS: stepper-deep: string/Down/Up/Quit all drive the live debugger, including the abandon path
+```
+
+```
+." OFDIAG target: "     $ nosuchalias          ← $ prints the stack's string
+...
+expand-alias            D
+: expand-alias            ( 1fff79c b 1fff79c b )   ← descended
+switch-alias-buf                                     ← its REAL first token
+Inside expand-alias       ( 1fff79c b 1fff79c b )
+2dup                    U
+[ Up to diag-open ]                                  ← the firmware announces it
+Inside diag-open          ( 1fff79c b 1fff79c b 0 )
+>r                      Q
+unbug                                                ← abandoned, no diagnosis
+```
+
+⚠️ **The frame shapes are the synchronisation contract.** `": <word>"` means the
+ip is at the first token **and** is repainted after any key that does not advance
+(`$`, `S`, `R`, `H`); `"Inside <word>"` means the ip moved. Expect the wrong one
+and the driver waits forever for a frame that never comes.
 
 ## 3. The showcase
 
@@ -272,7 +312,10 @@ what the firmware believes.
 |---|---|---|
 | `dev /pci ls` shows `ethernet@4`, not `fcode-card` | `-m` above 256; OFW's PCI window is anchored at ~`0x10000000`, so the ROM BAR is shadowed by DRAM. **No error is printed.** | keep `-m 256` |
 | `fload` → "cannot be opened" | filename is not 8.3; OFW's ISO9660 reader has no Rock Ridge | rename; check with `dir <cd>:\` |
-| a driven session hangs to a timeout | a listing hit the pager (` More [<space>,<cr>,q,c,p,i,d,h] ? `) | send `no-page` first |
+| a driven session hangs to a timeout | a listing hit the pager (` More [<space>,<cr>,q,c,p,i,d,h] ? `) | `fload …\nopage.fth` first — `no-page` alone is not enough |
+| keys vanish instead of reaching a full-screen app | `(exit?)` ends `key? if key ascii q = if … else suspend then` — **any key pressed while output streams is eaten by the pager** | send one key per *settled* display |
+| the debugger clears the screen and resists driving | `scrolling-debug?` is false → the 2D full-screen mode | `true to scrolling-debug?` **before** `debug` |
+| a driven stepper stalls with `--echo-gate` | the stepper reads **raw** keys; a space's echo is indistinguishable from streaming whitespace | drop `--echo-gate` for raw-key readers |
 | every `diag-open` answers `OFDIAG-1` | `expand-alias`'s flag misread — it means "an alias *was* expanded", not "success" | see the comment block in [`dsl/ofdiag.fth`](dsl/ofdiag.fth) |
 | driver exits 125 | the console dropped input despite `--echo-gate` | not expected here; check for a second client on the serial socket |
 | `setenv boot-device …` → "Out of NVRAM environment space" | the emu build has no working NVRAM | repair the **devalias** instead |
@@ -287,5 +330,7 @@ $ ./run-ofw-debug.sh coreboot   # ...the coreboot payload (cheat-sheet includes 
 $ ./run-ofw-debug.sh --card     # ...with the FCode option ROM plugged in
 ```
 
-Ctrl-A X quits QEMU. Follow [RUNBOOK.md](RUNBOOK.md) from there; §7's single-step
-debugger is the part that has to be driven by a human at a real terminal.
+Ctrl-A X quits QEMU. Follow [RUNBOOK.md](RUNBOOK.md) from there. §7's single-step
+debugger is worth meeting by hand — but it is **no longer human-only**:
+`smoke-dsl.sh stepper` and `stepper-deep` drive it headlessly, once you put it in
+line-oriented mode.

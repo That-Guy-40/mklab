@@ -17,7 +17,7 @@ Everything below is typed at the `ok` prompt. The prompt thinks in **hex** — s
 the sister lab's [RUNBOOK §1](../open-firmware-forth-to-boot/RUNBOOK.md) if that
 bites you.
 
-## 0. The first word: `no-page`
+## 0. The first thing you load: `nopage.fth`
 
 ```
 ok fload /pci/pci-ide@1,1/ide@1/cdrom@0:\nopage.fth
@@ -276,9 +276,25 @@ and you get a line-oriented view instead of the full-screen one — a stable
 one key per settled display. `smoke-dsl.sh stepper` does exactly that and asserts
 the stack duplicates across `2dup`.
 
-Two traps if you try it yourself: load [`nopage.fth`](dsl/nopage.fth) first, and
+`smoke-dsl.sh stepper-deep` drives it harder still, and those keys are worth
+knowing by hand:
+
+| key | does |
+|---|---|
+| `$` | print the top of stack **as a string** — try it at the first frame |
+| `D` | **descend** into the word about to execute |
+| `U` | come back out — the firmware prints `[ Up to <caller> ]` |
+| `S` | `see` the current word from inside the debugger |
+| `G` | run to completion · `Q` **abandon** it · `C` toggle stepping |
+
+Two traps if you drive it yourself: load [`nopage.fth`](dsl/nopage.fth) first, and
 do **not** use `--echo-gate` — the stepper reads raw keys and its echo of a space
 is indistinguishable from the whitespace already streaming past.
+
+One more, which cost real time: `": <word>"` is the frame both at the first token
+**and** after any key that does not advance (`$`/`S`/`R`/`H` repaint it), while
+`"Inside <word>"` means the ip moved. Synchronise on the wrong one and you wait
+forever.
 
 ## 8. A driver that arrives on the card
 
