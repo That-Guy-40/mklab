@@ -103,6 +103,44 @@ a single-case smoke would have passed it. `ofscope` requires an `fn=1` line
 dirty after a load — because a differ that always says "changed" is as useless as
 one that always says "clean".
 
+## 2b. The DSL inside the ROM
+
+```console
+$ ./build-dropin-rom.sh                 # ~2 min incl. the container build box
+==> guard OK: the sister lab's emuofw.rom is untouched
+$ ./smoke-dsl.sh dropin
+  - the vocabularies are inside the ROM, listed by /dropin-fs
+  - loaded and ran with NO cdrom, NO floppy, NO staged media
+PASS: dropin: the DSL ships inside the ROM and loads with no media at all
+
+$ ./build-dropin-rom.sh --boot-hook     # also ships autotrace.fth as `boot-`
+$ ./smoke-dsl.sh autotrace
+  - the boot- dropin armed the tracers before do-auto-boot
+  - the POWER-ON autoboot traced itself — nothing typed, no media
+PASS: autotrace: the autoboot traces itself from a boot- dropin inside the ROM
+```
+
+**Signature for `autotrace`:** `#T` lines appear *before the first `ok` prompt*,
+with no media attached and nothing sent to the console:
+
+```
+Install console
+#T autotrace armed (boot- dropin)
+Type any key to interrupt automatic startup
+6 5 4 3 2 1
+#T open disk
+Boot device: /pci/ethernet  Arguments:
+#T open /pci/ethernet
+Can't open boot device
+```
+
+⚠️ Do not send a keystroke before that prompt — **any key cancels the autoboot
+countdown**, and the autoboot is the whole point. The smoke's first drive step
+only *waits*.
+
+⚠️ These builds are isolated by construction (own tree clone, own output) and the
+script **fails** if the sister lab's `emuofw.rom` sha changes.
+
 ## 3. The showcase
 
 ```console
