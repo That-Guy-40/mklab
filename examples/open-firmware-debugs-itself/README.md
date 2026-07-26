@@ -229,21 +229,23 @@ No CD, no floppy, nothing staged. On the coreboot flavor this also sidesteps the
 ### …and the autoboot tracing itself
 
 `--boot-hook` additionally ships [`dsl/autotrace.fth`](dsl/autotrace.fth) as the
-**`boot-`** dropin, which `ofw/core/bootparm.fth` executes immediately before
-`do-auto-boot`. That closes the one thing `fload` can never reach: by the time you
-have a prompt, the machine has already tried to boot.
+**`banner-`** dropin, which `banner()` executes and which `startup` reaches before
+`auto-boot` on every path. That closes the one thing `fload` can never reach: by
+the time you have a prompt, the machine has already tried to boot.
+(`boot-` fires nearer the boot and was the first choice — until `auto-boot`'s
+`reboot?` early exit showed it cannot see a warm reboot.)
 
 ```console
 $ ./build-dropin-rom.sh --boot-hook
 $ ./smoke-dsl.sh autotrace
-PASS: autotrace: the autoboot traces itself from a boot- dropin inside the ROM
+PASS: autotrace: the autoboot traces itself from a banner- dropin inside the ROM
 ```
 
 Nothing typed, no media attached:
 
 ```
 Install console
-#T autotrace armed (boot- dropin)          ← the boot- hook fires
+#T autotrace armed (banner- dropin)        ← the banner- hook fires
 Type any key to interrupt automatic startup
 6 5 4 3 2 1
 #T open disk                               ← the boot-device list walk
@@ -262,9 +264,9 @@ regression this repo has been bitten by. The design note, including why NVRAM
 ## Honesty about what's verified
 
 Everything in Quick start is **verified end-to-end on this host** (Ubuntu 24.04,
-QEMU 8.2.2, KVM): **eleven smoke verdicts** — three vocabularies × two flavors,
-plus `stage`, `stepper`, `stepper-deep`, `dropin` and `autotrace` — and the showcase, all
-headless, all driven over serial with [`tools/drive-serial-repl.py`](../../tools/drive-serial-repl.py).
+QEMU 8.2.2, KVM): **every smoke mode green on both flavors** — `stage`,
+`ofdiag`, `ofscope`, `fcode`, `stepper`, `stepper-deep`, `dropin`, `autotrace` —
+and the showcase, all headless, all driven over serial with [`tools/drive-serial-repl.py`](../../tools/drive-serial-repl.py).
 
 Not claimed:
 

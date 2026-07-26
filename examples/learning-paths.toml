@@ -275,8 +275,8 @@ goal       = "Own every stage from firmware to a captured kernel panic: interrup
   [[path.step]]
   lab        = "open-firmware-debugs-itself/"
   tags       = ["🔬"]
-  learn      = "the same `ok` prompt, now as a forensics workbench: write a Forth DSL (a vocabulary, not a parser) that turns \"Can't open boot device\" into a per-entry diagnosis, traces the boot path through the firmware's OWN defer hooks, walks PCI config space and checks itself against QEMU, and runs a driver that arrived as bytecode on a card's option ROM — while the firmware decompiles itself with `see`."
-  checkpoint = "`smoke-dsl.sh all` PASSes all three vocabularies; `showcase-diagnose-a-broken-boot.sh` ends `PASS: diagnosed a boot failure the firmware only called \"Can't open boot device\", repaired the broken alias live, and verified the repair`; `dev /pci ls` shows a node named `fcode-card` that the CARD named itself."
+  learn      = "the same `ok` prompt, now as a forensics workbench: write a Forth DSL (a vocabulary, not a parser) that turns \"Can't open boot device\" into a per-entry diagnosis, traces the boot path through the firmware's OWN defer hooks, walks PCI config space and checks itself against QEMU, and runs a driver that arrived as bytecode on a card's option ROM. Then put the DSL INSIDE the ROM as a dropin so it needs no media, hook `banner-` so the power-on autoboot traces itself, and single-step the firmware's own debugger — while it decompiles itself with `see`."
+  checkpoint = "`smoke-dsl.sh all` PASSes every mode (and again with `coreboot`); `showcase-diagnose-a-broken-boot.sh` ends `PASS: diagnosed a boot failure the firmware only called \"Can't open boot device\", repaired the broken alias live, and verified the repair`; `dev /pci ls` shows a node named `fcode-card` that the CARD named itself; after `build-dropin-rom.sh --boot-hook`, a boot with NO media prints `#T open …` lines before the first `ok` prompt with nothing typed."
   verify_cmd    = "./smoke-dsl.sh all"
   verify_marker = "PASS: all vocabularies verified"
 

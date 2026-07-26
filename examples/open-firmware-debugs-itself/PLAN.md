@@ -735,6 +735,38 @@ Consequence: joins `close-to-the-metal`, not `provenance-vendored`.
   rung 1 (full option-ROM story), C alone could justify splitting into its own
   lab — decide at the spike-1 gate, not later.
 
+## After assembly — what the plan did not anticipate
+
+The lab shipped (PR #59) with four honest gaps. Closing them took six more PRs and
+changed several conclusions, so the record continues here:
+
+| # | Work | What it overturned |
+|---|---|---|
+| #60 | trace a **real `boot`**, not a stand-in `load` | the tracer claim rested on "the hooks are the same ones `boot` uses" — true, but unproven |
+| #61 | every vocabulary on the **coreboot flavor** (6/6) | the payload cannot read *any* file until `allocate-dma` is re-pointed — **the repair that enables file loading cannot itself be loaded from a file** |
+| #62 | research note on full autoboot tracing | nvramrc, the canonical answer, is **dead on this build** |
+| #63 | the DSL **inside the ROM**, and the autoboot tracing itself | `execute-buffer` sniffs byte 0, so a `.fth` **source** dropin is a first-class startup hook |
+| #64 | `nopage.fth`, a stage guard, an honest stepper reason | `./stage-dsl.sh` had been **failing on main** — a build step with no verdict is an untested step |
+| #65 | **genuinely smoke the single-step debugger** | "full-screen, human-only" was wrong: `debug` has a **line-oriented mode** (`scrolling-debug?`) |
+| #66 | drive the debugger harder; `boot-` → `banner-` | `boot-` has a hole: `auto-boot`'s `reboot?` branch exits before it |
+
+**Three plan-level assumptions turned out to be wrong**, all in the same
+direction — the firmware was more capable than assumed:
+
+1. *"`map?` needs the assembler, so tier 3 is out of reach."* The assembler is in
+   the ROM. The real reason `map?` is declined is semantic (physical mode), not
+   mechanical.
+2. *"The stepper is a full-screen app, so it cannot be smoked."* It has a
+   line-oriented mode, and is now smoked twice.
+3. *"Baking the DSL into the firmware means rebuilding and disturbing the sister
+   lab."* The dropin filesystem takes a one-line manifest change, and an isolated
+   tree clone plus a sha-guard removes the disturbance entirely.
+
+**Eight smoke modes, green on both flavors**, now stand where the plan projected three verdicts. The one remaining
+limitation — the warm-reboot path — is closed *by construction* and cannot be
+demonstrated here, because this firmware cannot write the NVRAM variable that
+would trigger it. See [FULL-BOOT-TRACING.md](FULL-BOOT-TRACING.md).
+
 ## Post-approval
 
 New project memory for the lab: state dir reuse (`~/ofw-lab/`), spike status,
