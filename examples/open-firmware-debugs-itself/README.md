@@ -286,9 +286,11 @@ Can't open boot device
 **The build never touches the sister lab's ROM.** It clones its own tree, writes
 its own output, and sha-guards `emuofw.rom` before and after — a shared, verified
 artifact changing underneath another lab is precisely the sort of silent
-regression this repo has been bitten by. The design note, including why NVRAM
-(the canonical answer) is dead on this build, is
-[FULL-BOOT-TRACING.md](FULL-BOOT-TRACING.md).
+regression this repo has been bitten by. The design note is
+[FULL-BOOT-TRACING.md](FULL-BOOT-TRACING.md) — which argued NVRAM (the canonical
+answer) was dead on this build, and was **wrong**: it is a disabled config switch,
+not a missing peripheral. [NVRAM-ON-X86.md](NVRAM-ON-X86.md) switches it on, and
+`build-dropin-rom.sh --boot-hook --reboot-hook` then traces a **real warm reboot**.
 
 ## Honesty about what's verified
 
@@ -296,27 +298,25 @@ Everything in Quick start is **verified end-to-end on this host** (Ubuntu 24.04,
 QEMU 8.2.2, KVM): **every smoke mode green on both flavors** — `stage`,
 `ofdiag`, `ofscope`, `fcode`, `stepper`, `stepper-deep`, `dropin`, `autotrace` —
 and the showcase, all headless, all driven over serial with [`tools/drive-serial-repl.py`](../../tools/drive-serial-repl.py).
+[`smoke-nvram.sh`](smoke-nvram.sh) adds nine more on the NVRAM ROMs — `persist`,
+`nvramrc`, `nvalias`, `selfcontained`, `reboot` (**both arms**), `autoload`,
+`warmtrace` — every one of them a **cold power cycle**.
 
 Not claimed:
 
 - **`map?` is not recovered.** It needs the assembler *and* a `${BP}` dep, and it
   walks page tables that don't exist in the physical-mode boot this lab uses.
   Declined on purpose, not overlooked.
-- **The warm-reboot path is closed by construction, but cannot be demonstrated
-  here.** The tracers hook `banner-` rather than `boot-` precisely because
-  `auto-boot`'s `reboot?` branch takes an early `exit` before `boot-` fires,
-  whereas `banner` runs before `auto-boot` on *every* path. That removes the
-  blind spot in the code — but this firmware can never take the reboot path at
-  all, because `reboot?` is set only from the NVRAM variable `reboot-command`
-  and NVRAM writes are unimplemented on the demo build:
+- **The `c:` hard-disk NVRAM store is nondeterministic.** emu's PCI-IDE probe
+  creates a primary-channel `disk@0` in only about **2 of 18 identical boots**, so
+  `smoke-nvram.sh diskstore` asserts nothing and exits SKIP. The floppy store is
+  the dependable one. See
+  [DELIVERY-MECHANISMS.md](DELIVERY-MECHANISMS.md), which also keeps the two wrong
+  conclusions reached before that was measured.
 
-  ```
-  ok " testcmd" " reboot-command" $setenv
-  Unimplemented package interface procedure
-  ```
-
-  So: correct by reading, unprovable by running. On hardware with working NVRAM
-  it would also be testable. Said plainly rather than counted as a pass.
+  Reported as a measured limit, not counted as a pass — and the *measuring* is the
+  point: two earlier conclusions here ("it works", then "it can't work") both came
+  from treating a single boot as evidence about a nondeterministic system.
 
 Blow-by-blow spike results, with transcripts and the wrong turns, are in
 [PLAN.md](PLAN.md). Exact commands and success signatures:

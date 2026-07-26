@@ -315,7 +315,7 @@ and tells you to re-read the finding before trusting it.
 | a driven stepper stalls with `--echo-gate` | the stepper reads **raw** keys; a space's echo is indistinguishable from streaming whitespace | drop `--echo-gate` for raw-key readers |
 | every `diag-open` answers `OFDIAG-1` | `expand-alias`'s flag misread — it means "an alias *was* expanded", not "success" | see the comment block in [`dsl/ofdiag.fth`](dsl/ofdiag.fth) |
 | driver exits 125 | the console dropped input despite `--echo-gate` | not expected here; check for a second client on the serial socket |
-| `setenv boot-device …` → "Out of NVRAM environment space" | the emu build has no working NVRAM | repair the **devalias** instead |
+| `setenv boot-device …` → "Out of NVRAM environment space" | no NVRAM store is bound on the **stock** ROM — `cv-area` is a zero-length region. Not a missing peripheral: a disabled config switch | repair the **devalias** instead, **or** build a ROM with the store switched on: [`build-nvram-rom.sh`](build-nvram-rom.sh) ([NVRAM-ON-X86.md](NVRAM-ON-X86.md)) |
 | coreboot: `Can't open deblocker package` on any fload | `allocate-dma` is a defer nothing re-points on this flavor | type the two-line `my-dma` repair first |
 | a wall of `… isn't unique` during fload | redefinition **warnings**, not errors | ignore; the load succeeded |
 
