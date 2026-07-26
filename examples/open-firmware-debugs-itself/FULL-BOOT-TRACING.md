@@ -51,7 +51,7 @@ and, nearer the boot, `ofw/core/bootparm.fth:345`:
 *before* reaching it, so a warm reboot slips past. `banner` is called from
 `startup` before `auto-boot` on **every** path, so `banner-` has no such hole.
 
-## Option A — `nvramrc` · **DEAD ON THIS BUILD** (verified)
+## Option A — `nvramrc` · dead on the **stock** ROM, since **REVIVED**
 
 The canonical Open Firmware answer: NVRAM holds a Forth script that `startup`
 evaluates before `auto-boot`. Per-machine, no rebuild, exactly what the mechanism
@@ -70,10 +70,45 @@ use-nvramrc? =        false          ← unchanged
 ```
 
 The emu demo build has no working NVRAM — the same wall the showcase hit when it
-tried `setenv boot-device` and had to repair a `devalias` instead. **Not a design
-flaw in the approach; a missing peripheral in this firmware build.** On real
-OFW hardware (Sun, OLPC, PowerPC Macs) this is the correct answer and needs no
-rebuild at all. Worth teaching for that reason, then discarding here.
+tried `setenv boot-device` and had to repair a `devalias` instead.
+
+**Correction (was: "a missing peripheral in this firmware build").** That reading
+was wrong, and source archaeology says so. Nothing is missing: it is a *disabled
+config switch*, and the driver ships in-tree.
+
+- The whole confvar stack **is compiled in** — `cpu/x86/basefw.bth:58` floads
+  `ofw/confvar/loadcv.fth`, which pulls `conftype`, `nvramrcg`, `nvalias`,
+  `nvcache` and `nameval`. Parser, cache, name=value encoder, persistent
+  devaliases: all present.
+- What is absent is only the **backing store**. `ofw/core/ofwcore.fth:236` declares
+  `defer nv-c@` / `defer nv-c!`, and the emu flavor assigns neither — it floads
+  neither `cpu/x86/pc/nullnv.fth` nor `cpu/x86/pc/biosload/filenv.fth`.
+- **The two error messages are one cause.** `nvram-node` stays 0, so
+  `" size" nvram-node $call-method` hits `no-proc` (`ofwcore.fth:2111`) →
+  *Unimplemented package interface procedure*; and `config-size`/`config-mem`
+  stay 0 (`nvcache.fth:18-19`), so `cv-area` is a **zero-length region** and
+  `add-ge-var` returns −1 → *Out of NVRAM environment space*
+  (`nameval.fth:158`). One unbound defer, reported by two layers.
+- **The enablement already ships**, commented out. `cpu/x86/pc/emu/config.fth`
+  carries `\ create pseudo-nvram`, and `cpu/x86/pc/emu/devices.fth:176` holds the
+  complete `[ifdef] pseudo-nvram` block — `filenv.fth`, a `/file-nvram` node, and
+  a `stand-init:` that opens it and calls `init-config-vars`.
+
+It is a deliberate platform judgment, in the author's own prose in `config.fth`:
+generic PCs *"have no good place to store those configuration variables, as the
+CMOS RAM is too small for typical string-valued variables"* — unlike SPARC (a
+dedicated NVRAM/TOD chip) or PPC (`/pci@80000000/mac-io@10/nvram@60000`). So
+`use-null-nvram` is the shipped default and `pseudo-nvram` — a file on a writable
+drive — is the emulator-only alternative.
+
+This is the same structure as UEFI: OVMF splits into `OVMF_CODE.fd` +
+**`OVMF_VARS.fd`** precisely so variables get a writable pflash store. EFI
+variables work on x86 not for architectural reasons but because *someone attached
+a writable device*. `pseudo-nvram` is the identical move.
+
+On real OFW hardware (Sun, OLPC, PowerPC Macs) `nvramrc` is the correct answer and
+needs no rebuild at all. See [`NVRAM-ON-X86.md`](NVRAM-ON-X86.md) for the
+experiment that enables it here.
 
 ## Option B — a **dropin** · CHOSEN, BUILT, VERIFIED
 
@@ -188,10 +223,12 @@ Two things confirmed only by building it:
   slip past it. The dropin therefore hooks **`banner-`** (`banner.fth:141`), and
   `startup` calls `banner` before `auto-boot` on every path. Arming happens a
   little earlier — strictly more coverage, no downside.
-- **The reboot path is unreachable on this build anyway.** `reboot?` comes only
-  from the NVRAM variable `reboot-command` (`ofw/core/reboot.fth`), and NVRAM
-  writes are unimplemented here (`$setenv` → *Unimplemented package interface
-  procedure*). Closed by construction; not demonstrable without working NVRAM.
+- **The reboot path is unreachable on the stock build.** `reboot?` comes only
+  from the NVRAM variable `reboot-command` (`ofw/core/reboot.fth`), and no NVRAM
+  store is bound here (`$setenv` → *Unimplemented package interface procedure*).
+  Closed by construction on the stock ROM — but *not* permanently: see
+  [`NVRAM-ON-X86.md`](NVRAM-ON-X86.md), which enables the in-tree `pseudo-nvram`
+  store and makes `reboot-command` settable.
 
 The isolation turned out to be the whole job, exactly as predicted: a separate
 tree clone, its own output ROM, and a sha-guard on the sister lab's artifact.
@@ -200,7 +237,7 @@ tree clone, its own output ROM, and a sha-guard on the sister lab's artifact.
 
 | | verdict | cost |
 |---|---|---|
-| **A** nvramrc | **dead here** (no NVRAM), correct on real hardware | — |
+| **A** nvramrc | dead on the **stock** ROM; **revived** by `build-nvram-rom.sh` | 3 edits + a rebuild |
 | **B1** named dropin | **do this** — media-free loading, zero behaviour change | 1 build line + a rebuild |
 | **B2** `banner-` dropin | **do this second** — closes the gap properly, reboot path included | 1 build line + **isolated ROM output** |
 | **C** bake into image | avoid | moves the audited dictionary |
@@ -211,8 +248,12 @@ a shared, already-verified ROM does not change underneath another lab.
 
 ## What is verified vs. designed
 
-**Verified on this host:** NVRAM is unwritable (`setenv` fails, `use-nvramrc?`
-stays `false`); `/dropin-fs` exists and lists its contents; `memtest.fth` ships as
+**Verified on this host:** NVRAM is unwritable **on the stock ROM** (`setenv`
+fails, `use-nvramrc?` stays `false`) because no store is bound to `nv-c@`/`nv-c!`,
+not because the machinery is absent — the confvar stack is fully compiled in
+(`cpu/x86/basefw.bth:58`) and the `pseudo-nvram` store ships commented out
+(`cpu/x86/pc/emu/config.fth`, `devices.fth:176`); `/dropin-fs` exists and lists
+its contents; `memtest.fth` ships as
 a Forth-source dropin; a `probe-` startup-hook dropin is present in the running
 ROM; `" boot-" do-drop-in` sits immediately before `do-auto-boot` in
 `bootparm.fth:345` (with a `reboot?` early exit ahead of it) while
@@ -223,10 +264,10 @@ build-time idiom is `$add-deflated-dropin` in the flavor's `.bth`.
 sha-guard. `smoke-dsl.sh dropin` and `smoke-dsl.sh autotrace` are the standing
 proofs.
 
-**Still not demonstrable:** the warm-reboot path itself. `banner-` removes the
-blind spot *in the code*, but this firmware can never take that path — `reboot?`
-is set only from the NVRAM variable `reboot-command` (`ofw/core/reboot.fth`) and
-NVRAM writes are unimplemented here:
+**Not demonstrable on the stock ROM:** the warm-reboot path itself. `banner-`
+removes the blind spot *in the code*, but the stock ROM can never take that path —
+`reboot?` is set only from the NVRAM variable `reboot-command`
+(`ofw/core/reboot.fth`) and no NVRAM store is bound, so the write fails:
 
 ```
 ok " testcmd" " reboot-command" $setenv
@@ -235,5 +276,28 @@ ok " reboot-command" $getenv .
 ffffffff                                  \ OFW's true == failure
 ```
 
-Correct by reading, unprovable by running. On hardware with working NVRAM it
-would be testable too. Counted as a limitation, not as a pass.
+**NOW DEMONSTRABLE — and the reason was not the one written above.**
+[`NVRAM-ON-X86.md`](NVRAM-ON-X86.md) closed it, and in doing so corrected this
+section twice over:
+
+1. NVRAM is enable-able (three edits, `build-nvram-rom.sh`), so `reboot-command`
+   persists across a cold power cycle.
+2. **That alone did not close the gap.** The emu flavor defines its *own* `startup`
+   (`cpu/x86/pc/emu/fw.bth:288`) which — unlike the generic
+   `ofw/core/startup.fth:16` — never calls `copy-reboot-info`, the only writer of
+   `reboot?`. So the branch was dead code here *independently of NVRAM*.
+
+With both (`build-nvram-rom.sh --reboot-hook`):
+
+```
+Rebooting with command: .( WARM-REBOOT-TAKEN ) cr
+WARM-REBOOT-TAKEN
+```
+
+and no countdown and no `Boot device:` — `auto-boot` took the early `exit` before
+`" boot-" do-drop-in`, exactly as `bootparm.fth:330` reads. `smoke-nvram.sh reboot`
+runs **both arms**, asserting the NVRAM-only ROM does *not* take the branch; that
+control is what proves the two causes independent.
+
+This retroactively confirms hooking **`banner-`** over `boot-`: the `reboot?` early
+exit is real, reachable, and now observable rather than merely argued from source.
