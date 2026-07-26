@@ -253,7 +253,7 @@ ok ' open-dev .calls
 hooks. The cross-referencer points straight at the instrumentation points — see
 the exercises.
 
-## 7. The single-stepper (bring your eyes)
+## 7. The single-stepper (by hand, then by script)
 
 ```
 ok debug diag-open
