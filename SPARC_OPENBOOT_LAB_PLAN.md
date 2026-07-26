@@ -7,6 +7,9 @@
 > production for two decades.
 >
 > **Decisions locked (this session):**
+> - **This is its OWN LAB — a sibling, not a track inside an existing one.** It
+>   gets its own `examples/` directory, README, smokes and catalog entries. See
+>   [§2b](#2b-why-its-own-lab-locked) for why, which spike 0 has since reinforced.
 > - **Spike 0 runs first, before any lab structure is committed.** That pattern
 >   has now paid for itself twice in this family — it retired the "2015 tree vs
 >   modern toolchain" terror in the OFW lab, and it overturned three of the
@@ -51,6 +54,53 @@ The family already teaches **OFW ≠ OpenBIOS**. This adds **OpenBIOS ≠ OpenBo
 
 The lab must be explicit that the `ok` prompt it shows is *standards-identical*
 to the one on a Sun box, and *not* Sun's code.
+
+## 2b. Why its own lab (LOCKED)
+
+**A fifth sibling in `examples/`, not a third flavor bolted onto
+[`open-firmware-debugs-itself/`](examples/open-firmware-debugs-itself/README.md).**
+
+The family grows by siblings and always has: the OFW lab spawned the rival lab,
+which spawned the clients lab, which spawned debugs-itself. Each time the reason
+was the same — a genuinely different thesis deserves its own front door rather
+than another flag on someone else's.
+
+Spike 0 turned that from a stylistic preference into a technical one. This is not
+"the same lab with `sparc` added to the flavor list":
+
+| | debugs-itself (emu / coreboot) | this lab |
+|---|---|---|
+| firmware | **OFW** (Bradley's, frozen 2015) | **OpenBIOS** (maintained, C-hosted Forth) |
+| console | serial **socket** works | **pty only** — `-serial unix:` gives *zero bytes* |
+| prompt | `ok` | `0 >` (stack depth) |
+| bus | PCI | **SBus** (sparc32) / PCI (sparc64) |
+| NVRAM | **dead** — `setenv` fails | **works** — `setenv` sticks |
+| vocabularies | native | **port as a design, not verbatim** — same names, different stack effects |
+
+Every one of those rows breaks an assumption baked into the sibling's scripts.
+`smoke-dsl.sh`'s `boot_and_drive` hardcodes a serial socket and `--expect "ok"`;
+its `PREFIX` mechanism assumes a flavor differs only by media path and one repair.
+Making it absorb a pty-driven, `0 >`-prompted, differently-implemented firmware
+would mean rewriting the harness around a case that shares almost nothing — and
+would blur a lab that already grew from three verdicts to eight modes across ten
+PRs.
+
+**Consequences of the lock:**
+- Its own `examples/<name>/` with README · RUNBOOK · MANUAL_TESTING · PLAN, its
+  own smoke script, its own vocabularies (adapted, not copied).
+- Its own 00-INDEX row and `learning-paths` step (see [§8](#8-routing-at-assembly-not-before)).
+- **Cross-links both ways**, the way this family always does: the debugs-itself
+  README gains a "the same DSL, on the architecture where it shipped →" pointer,
+  and this lab's README credits the vocabularies' origin and links back.
+- **Name candidate:** `openbios-sparc-native-habitat` (alternatives:
+  `openbios-where-it-shipped`, `sparc-the-native-habitat`) — settle at assembly,
+  exactly as `open-firmware-debugs-itself` was.
+
+What it explicitly does **not** mean: no forking of the sibling's scripts for the
+sake of it. Anything genuinely general — the smoke shape, the `--echo-gate`
+doctrine, `check-oracle.sh`'s inside-vs-outside pattern — gets *reused* or, if it
+proves reusable a third time, promoted to `tools/` the way
+[`drive-pty-repl.py`](tools/drive-pty-repl.py) was.
 
 ## 3. Verified feasibility (checked 2026-07-26, before writing this)
 
