@@ -26,9 +26,17 @@
 #
 # ISOLATION IS THE POINT. Builds in its OWN clone; the sister lab's emuofw.rom is
 # sha-guarded before and after. See NVRAM-ON-X86.md for the full result.
+#   --disk  put the store on a FAT16 HARD DISK (c:\nvram.dat, the shipped line)
+#           instead of a floppy. Needs the post-probe retry -- see lib-ofw-edits.sh.
 set -euo pipefail
-REBOOT_HOOK=""
-[ "${1:-}" = "--reboot-hook" ] && REBOOT_HOOK=yes
+REBOOT_HOOK=""; STORE=floppy
+for a in "$@"; do
+    case "$a" in
+        --reboot-hook) REBOOT_HOOK=yes ;;
+        --disk)        STORE=disk ;;
+        *) echo "usage: $0 [--reboot-hook] [--disk]"; exit 1 ;;
+    esac
+done
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SISTER="$(cd "$HERE/../open-firmware-forth-to-boot" && pwd)"
@@ -37,7 +45,14 @@ SRC="$WORKDIR/openfirmware"                 # the sister lab's tree — READ ONL
 SRC2="$WORKDIR/openfirmware-nvram"          # ours
 IMG="localhost/ofw-build"
 CFLAGS='CFLAGS=-O -g -m32 -DTARGET_X86 -std=gnu89'
-OUT="$WORKDIR/nvram$([ -n "$REBOOT_HOOK" ] && echo -reboot)-emuofw.rom"
+# Built with plain `if`, NOT `"$WORKDIR/nvram$([ -n "$X" ] && echo -tag)..."`.
+# That form exits 1 whenever X is empty, the status propagates to the assignment,
+# and `set -e` kills the script SILENTLY -- rc=1, no output. It shipped that way
+# once and no-argument runs were dead on arrival.
+OUT="$WORKDIR/nvram"
+if [ "$STORE" = disk ];   then OUT="$OUT-disk";   fi
+if [ -n "$REBOOT_HOOK" ]; then OUT="$OUT-reboot"; fi
+OUT="$OUT-emuofw.rom"
 STOCK="$SRC/cpu/x86/pc/emu/build/emuofw.rom"
 
 command -v podman >/dev/null || { echo "SKIP: podman not installed"; exit 77; }
@@ -61,7 +76,7 @@ git -C "$SRC2" checkout -q -- . 2>/dev/null || true
 # shellcheck source=lib-ofw-edits.sh
 . "$HERE/lib-ofw-edits.sh"
 ofw_base_flips  "$SRC2"
-ofw_nvram_edits "$SRC2"
+ofw_nvram_edits "$SRC2" "$STORE"
 if [ -n "$REBOOT_HOOK" ]; then ofw_reboot_hook "$SRC2"; fi
 
 echo "==> building the build box ($IMG) — the sister lab's Containerfile"

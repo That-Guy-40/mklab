@@ -22,21 +22,63 @@ ofw_base_flips() {   # $1 = tree
 # The emu build's "no NVRAM" is a disabled config switch, not a missing
 # peripheral: cpu/x86/basefw.bth:58 already floads the whole confvar stack and
 # only the backing store is unbound (defer nv-c@ / nv-c!, ofwcore.fth:236).
-ofw_nvram_edits() {   # $1 = tree
-    local cfg="$1/cpu/x86/pc/emu/config.fth" dev="$1/cpu/x86/pc/emu/devices.fth"
+#
+# $2 selects the BACKING STORE, and the two differ for a structural reason:
+#
+#   floppy (default) -- retarget nv-file to a:\nvram.dat. `devalias a
+#       /isa/fdc/disk@0` is declared STATICALLY at build time (devices.fth:127),
+#       so the node exists at stand-init time.
+#
+#   disk -- leave nv-file at the SHIPPED c:\nvram.dat and fix the ORDERING
+#       instead. The `c` alias is NOT missing: report-disk creates it
+#       (devices.fth:261) -- but report-disk runs inside probe-all, which startup
+#       calls LONG AFTER stand-init: Pseudo-NVRAM has already tried to open the
+#       store. And PCI itself is unprobed at stand-init, so no PCI-IDE path could
+#       resolve then even with an alias. Upstream hit this too: biosload's
+#       stand-init calls reread-config-vars (devices.fth:213), a config-valid?-
+#       guarded retry, precisely because it boots off USB/disk. emu calls
+#       init-config-vars once and gives up. So `disk` re-runs the read after
+#       probing -- see ofw_nvram_retry.
+ofw_nvram_edits() {   # $1 = tree, $2 = store: floppy (default) | disk
+    local tree="$1" store="${2:-floppy}"
+    local cfg="$tree/cpu/x86/pc/emu/config.fth" dev="$tree/cpu/x86/pc/emu/devices.fth"
     sed -i 's/^\\ create pseudo-nvram$/create pseudo-nvram/'     "$cfg"
     # vestigial in emu: nothing in emu's build chain tests [ifdef] use-null-nvram
     sed -i 's/^create use-null-nvram$/\\ create use-null-nvram/' "$cfg"
-    # LOAD-BEARING: emu's block says c:\nvram.dat but emu declares NO `c` devalias
-    # -- only `devalias a /isa/fdc/disk@0`. The c: line is copy-pasted from
-    # biosload/devices.fth; config.fth's own prose says "a fixed-name file on
-    # drive A". Left as shipped, the store opens nothing.
-    # '.' matches the literal backslash; writing \n here would become a newline
-    # in sed's pattern space and match nothing at all.
-    sed -i 's|" c:.nvram.dat"|" a:\\nvram.dat"|'                 "$dev"
     grep -q '^create pseudo-nvram$' "$cfg" || { echo "FAIL: pseudo-nvram not enabled in $cfg"; return 1; }
-    grep -q 'a:.nvram.dat' "$dev"          || { echo "FAIL: nv-file not retargeted to a: in $dev"; return 1; }
-    printf '==> NVRAM: pseudo-nvram ON, nv-file -> a:\\nvram.dat\n'
+    case "$store" in
+        floppy)
+            # '.' matches the literal backslash; writing \n here would become a
+            # newline in sed's pattern space and match nothing at all.
+            sed -i 's|" c:.nvram.dat"|" a:\\nvram.dat"|' "$dev"
+            grep -q 'a:.nvram.dat' "$dev" || { echo "FAIL: nv-file not retargeted to a: in $dev"; return 1; }
+            printf '==> NVRAM: pseudo-nvram ON, store = floppy a:\\nvram.dat\n'
+            ;;
+        disk)
+            grep -q 'c:.nvram.dat' "$dev" || { echo "FAIL: shipped c:\\nvram.dat line not found in $dev"; return 1; }
+            ofw_nvram_retry "$tree" || return 1
+            printf '==> NVRAM: pseudo-nvram ON, store = disk c:\\nvram.dat (shipped line, retry after probe)\n'
+            ;;
+        *)  echo "FAIL: unknown NVRAM store '$store' — use floppy or disk"; return 1 ;;
+    esac
+}
+
+# Re-read the config variables AFTER probe-all, which is when report-disk has
+# created the `c` devalias and the PCI IDE node actually exists. Guarded by
+# config-valid? so a store that already read cleanly is not re-initialised (that
+# would leak the earlier config-mem alloc-mem). This is upstream's own
+# reread-config-vars idiom, which emu is simply missing.
+ofw_nvram_retry() {   # $1 = tree
+    local fwb="$1/cpu/x86/pc/emu/fw.bth"
+    awk '
+      { print }
+      /^      " Probing" \?type  probe-all$/ && !done {
+          print "      config-valid?  0=  if  [\x27] init-config-vars catch drop  then"
+          done=1
+      }
+    ' "$fwb" > "$fwb.new" && mv "$fwb.new" "$fwb"
+    grep -q "config-valid?  0=  if" "$fwb" || { echo "FAIL: config-vars retry not injected into $fwb"; return 1; }
+    echo "==> NVRAM: re-read after probe-all (upstream's reread-config-vars idiom)"
 }
 
 # Give emu's OWN startup the copy-reboot-info call it lacks. The emu flavor

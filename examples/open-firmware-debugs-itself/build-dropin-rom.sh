@@ -43,13 +43,16 @@ SRC="$WORKDIR/openfirmware"                 # the sister lab's tree — READ ONL
 SRC2="$WORKDIR/openfirmware-dropin"         # ours
 IMG="localhost/ofw-build"
 CFLAGS='CFLAGS=-O -g -m32 -DTARGET_X86 -std=gnu89'
-# Build the name piecewise. Each suffix needs a `|| echo ""`: a bare
-# `$([ -n "$X" ] && echo -tag)` exits 1 when X is empty, that status becomes the
-# assignment's, and `set -e` then kills the script SILENTLY. (Cost one confusing
-# rc=1-with-no-output before the regression run caught it.)
-OUT="$WORKDIR/$([ -n "$BOOT_HOOK" ] && echo autotrace || echo ofdiag)"
-OUT+="$([ -n "$NVRAM" ] && echo -nvram || echo "")"
-OUT+="$([ -n "$REBOOT_HOOK" ] && echo -reboot || echo "")-emuofw.rom"
+# Built with plain `if`, NOT `"...$([ -n "$X" ] && echo -tag)..."`. That form
+# exits 1 whenever X is empty, the status propagates to the assignment, and
+# `set -e` kills the script SILENTLY -- rc=1, no output. Verified: `V="a$(false)b"`
+# under set -e aborts, in every form (concat, +=, bare). A `|| echo ""` patches
+# it, but `if` says what it means and cannot regress.
+OUT="$WORKDIR/ofdiag"
+if [ -n "$BOOT_HOOK" ];   then OUT="$WORKDIR/autotrace"; fi
+if [ -n "$NVRAM" ];       then OUT="$OUT-nvram";  fi
+if [ -n "$REBOOT_HOOK" ]; then OUT="$OUT-reboot"; fi
+OUT="$OUT-emuofw.rom"
 STOCK="$SRC/cpu/x86/pc/emu/build/emuofw.rom"
 
 command -v podman >/dev/null || { echo "SKIP: podman not installed"; exit 77; }
