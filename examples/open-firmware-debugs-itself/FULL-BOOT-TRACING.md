@@ -301,3 +301,25 @@ control is what proves the two causes independent.
 
 This retroactively confirms hooking **`banner-`** over `boot-`: the `reboot?` early
 exit is real, reachable, and now observable rather than merely argued from source.
+
+**And the warm reboot is now TRACED, not merely reached.** The *combined* ROM
+(`build-dropin-rom.sh --boot-hook --reboot-hook`) arms the `banner-` tracer **and**
+has a reachable warm-reboot branch:
+
+```
+boot 1 (normal)                     boot 2 (warm reboot)
+#T autotrace armed (banner- dropin) #T autotrace armed (banner- dropin)
+Type any key to interrupt …         Rebooting with command: boot
+6 5 4 3 2 1  #T open disk           #T open disk
+#T open /pci/ethernet               #T open /pci/ethernet
+```
+
+Boot 2 has **no countdown** — `do-auto-boot` never ran — yet the `#T` lines are
+there. On that path `" boot-" do-drop-in` is never reached, so a `boot-`-hooked
+tracer would have emitted **nothing**. `smoke-nvram.sh warmtrace` is the standing
+proof. The blind spot is now closed *and demonstrated*, not closed by construction.
+
+Both ROMs are kept: `autotrace-emuofw.rom` keeps stock NVRAM behaviour and remains
+what `smoke-dsl.sh autotrace` verifies. See
+[`DELIVERY-MECHANISMS.md`](DELIVERY-MECHANISMS.md) for all three delivery routes
+and which to prefer.

@@ -14,6 +14,7 @@ REPO="$(cd "$HERE/../.." && pwd)"
 WORKDIR="${OFW_WORKDIR:-$HOME/ofw-lab}"
 ROM="$WORKDIR/nvram-emuofw.rom"
 RROM="$WORKDIR/nvram-reboot-emuofw.rom"
+CROM="$WORKDIR/autotrace-nvram-reboot-emuofw.rom"   # the COMBINED ROM
 MODE="${1:-all}"
 
 pass() { echo "PASS: $*"; exit 0; }
@@ -111,14 +112,60 @@ do_reboot() {
     note "warm-reboot branch taken: command evaluated, do-auto-boot skipped"
 }
 
+# Delivery mechanism 3: nvramrc as an AUTOLOAD hook. NVRAM is 4096 bytes
+# (h# 1000 constant /nvram, filenv.fth:9) and ofdiag.fth is 4959, so nvramrc
+# cannot CARRY a vocabulary -- but it carries the one line that loads it. This
+# proves M3 bootstrapping M2: no media, no rebuild, nothing typed.
+do_autoload() {
+    [ -f "$CROM" ] || skip "no $CROM — run ./build-dropin-rom.sh --boot-hook --reboot-hook"
+    local fl="$WORKDIR/smn-autoload.img"; newfloppy "$fl"
+    local l; l=$(boot "$CROM" "$fl" g0 --expect "ok" --send '\r' --expect "ok" \
+        --send "' diag-open .\r" --expect "ok")
+    grep -a -A1 "diag-open \." "$l" | grep -aq 'diag-open ?' \
+        || fail "baseline wrong: diag-open is already defined before any autoload, so this proves nothing (see $l)"
+    boot "$CROM" "$fl" g1 --expect "ok" --send '\r' --expect "ok" \
+        --send '" fload /dropin-fs:\\ofdiag.fth" to nvramrc\r' --expect "ok" \
+        --send 'setenv use-nvramrc? true\r' --expect "ok" >/dev/null
+    l=$(boot "$CROM" "$fl" g2 --expect "ok" --send '\r' --expect "ok" \
+        --send "' diag-open .\r" --expect "ok")
+    grep -a -A1 "diag-open \." "$l" | grep -aq 'diag-open ?' \
+        && fail "nvramrc autoload did not run: diag-open is still undefined after a power cycle (see $l)"
+    note "nvramrc autoloaded the vocabulary from /dropin-fs — no media, nothing typed"
+}
+
+# The scenario banner- was CHOSEN for, and which nothing has ever observed: on the
+# warm-reboot path auto-boot early-exits BEFORE `" boot-" do-drop-in`, so a
+# boot--hooked tracer would emit nothing at all. banner- arms from banner(), which
+# startup calls on every path. Needs the COMBINED ROM (tracer + NVRAM + reboot).
+do_warmtrace() {
+    [ -f "$CROM" ] || skip "no $CROM — run ./build-dropin-rom.sh --boot-hook --reboot-hook"
+    local fl="$WORKDIR/smn-warmtrace.img"; newfloppy "$fl"
+    boot "$CROM" "$fl" w1 --expect "ok" --send '\r' --expect "ok" \
+        --send 'setenv reboot-command boot\r' --expect "ok" >/dev/null
+    local l; l=$(boot "$CROM" "$fl" w2 --expect "ok" --send '\r' --expect "ok")
+    grep -aq '#T autotrace armed' "$l" \
+        || fail "the banner- tracer did not arm on the warm-reboot path (see $l)"
+    grep -aq 'Rebooting with command' "$l" \
+        || fail "not a warm reboot: auto-boot never took the reboot? branch (see $l)"
+    grep -aq '#T open' "$l" \
+        || fail "REGRESSION: warm reboot was NOT traced — no #T open lines, which is exactly what a boot--hooked tracer would produce (see $l)"
+    grep -aq 'Type any key' "$l" \
+        && fail "the normal autoboot ran too — do-auto-boot was not skipped, so this is not the warm-reboot path (see $l)"
+    note "REAL warm reboot traced: tracer armed, #T open emitted, countdown skipped"
+}
+
 case "$MODE" in
     persist) do_persist; pass "config variables persist across a cold power cycle" ;;
+    autoload)  do_autoload;  pass "nvramrc autoloads the vocabulary from the ROM — delivery mechanism 3" ;;
+    warmtrace) do_warmtrace; pass "a REAL warm reboot is traced — the path a boot- dropin cannot see" ;;
     nvramrc) do_nvramrc; pass "nvramrc executes at startup" ;;
     nvalias) do_nvalias; pass "nvalias persists across a cold power cycle" ;;
     reboot)  do_reboot;  pass "auto-boot's warm-reboot branch is reachable, and needs copy-reboot-info as well as NVRAM" ;;
     all)     do_persist; do_nvramrc; do_nvalias
              if [ -f "$RROM" ]; then do_reboot
-             else note "warm-reboot SKIPPED — no $RROM (build with --reboot-hook)"; fi
-             pass "NVRAM works on x86: variables persist, nvramrc fires, nvalias persists$([ -f "$RROM" ] && echo ', warm-reboot branch reachable')" ;;
-    *)       fail "unknown mode '$MODE' — use persist|nvramrc|nvalias|reboot|all" ;;
+             else note "warm-reboot SKIPPED — no $RROM (build-nvram-rom.sh --reboot-hook)"; fi
+             if [ -f "$CROM" ]; then do_autoload; do_warmtrace
+             else note "autoload + warm-TRACE SKIPPED — no $CROM (build-dropin-rom.sh --boot-hook --reboot-hook)"; fi
+             pass "NVRAM works on x86: variables persist, nvramrc fires, nvalias persists$([ -f "$RROM" ] && echo ', warm-reboot branch reachable')$([ -f "$CROM" ] && echo ', nvramrc autoloads, real warm reboot traced')" ;;
+    *)       fail "unknown mode '$MODE' — use persist|nvramrc|nvalias|reboot|autoload|warmtrace|all" ;;
 esac
