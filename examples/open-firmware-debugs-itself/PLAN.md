@@ -602,6 +602,63 @@ the inventory step of the smoke suite.
 | [`spikes/spike1-card.fth`](spikes/spike1-card.fth) | 1 | the minimal **FCode driver** carried on a PCI option ROM; names its own node and sets a marker property |
 | [`spikes/build-fcode-rom.py`](spikes/build-fcode-rom.py) | 1 | wraps tokenized FCode in a PCI expansion ROM, built to the contract **read out of `dev/pcibus.fth`** rather than off a spec sheet |
 
+## Spike 4 — RESULT: **GREEN**; the stepper is a HUMAN tool, not a scriptable one
+
+**`see` decompiles the firmware itself.** `see open-dev` recovered source that
+matches `ofwcore.fth:2511` structurally, `catch` and all:
+
+```text
+: open-dev
+   0 package( current-device >r ['] (open-dev)
+   catch if  2drop  then
+   my-self r> push-device )package
+;
+```
+
+**And it decompiles the DSL we just floaded** — `see diag-open` returned the
+whole ladder. One discrepancy is the most instructive output of the spike:
+`ascii /` came back as **`h# 2f`**. Decompilation recovers *semantics*, not
+*notation*: how a constant was spelled existed only in the source text.
+Four characters that teach what reverse engineering actually gets you.
+
+**`.calls` is a real cross-reference** — and it names the tracer's own targets:
+
+```text
+Called from (boot-read)             at 1c3eed4
+Called from default-device          at 1c3f058
+Called from open-partition-map      at 1c57ee8      (13 callers total)
+```
+
+`(boot-read)` and `default-device` are **exactly** the words spike 2b hooked.
+The xref tool points straight at the instrumentation points — worth an exercise
+that has the reader *derive* the tracer's hook list with `.calls` rather than
+being handed it.
+
+### Pagination: `no-page` is the scripted-listing incantation
+
+`.calls` output blocks on the firmware's pager
+(` More [<space>,<cr>,q,c,p,i,d,h] ? `) and hung the first drive to a timeout.
+`c` at that prompt maps to `no-page` (`forth/lib/suspend.fth:43`), and **`no-page`
+is a word** — so scripted listings should call it *up front* instead of answering
+prompts. Any smoke that runs `see`, `.calls`, `words` or `devalias` needs it.
+
+### The stepper is interactive by construction — document it, don't smoke it
+
+`debug diag-open` engages and prints `Stepper keys: <space> Down Up Continue
+Forth Go Help ? See $tring Quit`, then a live view with `Callers:` / `Stack:` and
+the decompiled body. But it emits `\e[1;1H\e[J` — **it is a full-screen ANSI
+application**, and paging *resets* inside it, so scripted keystrokes answer
+`More` prompts rather than stepping.
+
+Verdict: `debug` belongs in the RUNBOOK **for humans**, not in a smoke. This is
+the same call the parent lab made about GRUB's `e` menu-edit — fragile to
+automate, trivial for a person looking at the screen — and the lab should cite
+that precedent rather than re-litigate it.
+
+⚠️ Tooling note: `--echo-gate` is wrong for the stepper (raw-key reads do not
+echo, so every byte would be resent to exit 125). The house char-delay floor is
+the right mode there. Both modes now have a documented use in this lab.
+
 ## Lab assembly (after spikes)
 
 `examples/open-firmware-debugs-itself/`:
