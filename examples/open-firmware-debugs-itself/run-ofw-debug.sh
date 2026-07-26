@@ -39,7 +39,7 @@ ACCEL=$([ -w /dev/kvm ] && echo kvm || echo tcg)
 
 echo "Once you reach the ok prompt ($FLAVOR flavor):"
 echo
-echo "  no-page                          FIRST -- else long listings block on the pager"
+echo "  fload $DEV:\\nopage.fth           FIRST -- or long listings block on the pager"
 if [ -n "$FIX" ]; then
 cat <<'EOF'
 

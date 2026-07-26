@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# smoke-dsl.sh [ofdiag|ofscope|fcode|dropin|autotrace|all] [emu|coreboot]
+# smoke-dsl.sh [stage|ofdiag|ofscope|fcode|dropin|autotrace|all] [emu|coreboot]
 #   — one verdict per vocabulary. `dropin`/`autotrace` need ./build-dropin-rom.sh.
 #
 # Every check runs headless over the serial socket. Exit: 0 PASS / 1 FAIL / 77 SKIP.
@@ -58,7 +58,7 @@ case "$FLAVOR" in
       PREFIX=( --send ': my-dma h# 1000 mem-claim ;\r' --expect "ok"
                --send "' my-dma to allocate-dma\r"     --expect "ok" )
       ;;
-  *)  fail "usage: $0 [ofdiag|ofscope|fcode|dropin|autotrace|all] [emu|coreboot]" ;;
+  *)  fail "usage: $0 [stage|ofdiag|ofscope|fcode|dropin|autotrace|all] [emu|coreboot]" ;;
 esac
 
 command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
@@ -171,6 +171,16 @@ smoke_fcode() {
 
 # ── the in-ROM variants (./build-dropin-rom.sh) ──────────────────────────────
 # These boot a ROM that CARRIES the vocabulary, so they attach NO media at all.
+# Regression guard: ./stage-dsl.sh shipped broken once, because a ROM-only
+# vocabulary (autotrace.fth, 9 chars) got picked up by the media stager and the
+# 8.3 check rightly refused it -- and nothing in the suite ever ran the stager.
+smoke_stage() {
+    bash "$HERE/stage-dsl.sh" >/dev/null 2>&1 \
+        || fail "REGRESSION: ./stage-dsl.sh fails — a ROM-only or non-8.3 vocabulary reached the media stager"
+    note "stage-dsl.sh builds both media cleanly"
+    pass "stage: the media stager accepts every vocabulary meant for media"
+}
+
 smoke_dropin() {
     ROM="$WORKDIR/ofdiag-emuofw.rom"; MEDIA_ARGS=""; PREFIX=()
     [ -f "$ROM" ] || skip "no $ROM — run ./build-dropin-rom.sh"
@@ -205,6 +215,7 @@ smoke_autotrace() {
 }
 
 case "$MODE" in
+    stage)     smoke_stage ;;
     dropin)    smoke_dropin ;;
     autotrace) smoke_autotrace ;;
     ofdiag)  smoke_ofdiag ;;
@@ -212,7 +223,7 @@ case "$MODE" in
     fcode)   smoke_fcode ;;
     all)
         rc=0
-        for m in ofdiag ofscope fcode dropin autotrace; do
+        for m in stage ofdiag ofscope fcode dropin autotrace; do
             printf '\n=== %s (%s) ===\n' "$m" "$FLAVOR"
             bash "$0" "$m" "$FLAVOR"; r=$?
             [ $r -eq 1 ] && rc=1
@@ -220,5 +231,5 @@ case "$MODE" in
         printf '\n'
         [ $rc -eq 0 ] && echo "PASS: all vocabularies verified ($FLAVOR)" || echo "FAIL: at least one vocabulary failed ($FLAVOR)"
         exit $rc ;;
-    *) fail "usage: $0 [ofdiag|ofscope|fcode|dropin|autotrace|all] [emu|coreboot]" ;;
+    *) fail "usage: $0 [stage|ofdiag|ofscope|fcode|dropin|autotrace|all] [emu|coreboot]" ;;
 esac

@@ -20,10 +20,11 @@ bites you.
 ## 0. The first word: `no-page`
 
 ```
-ok no-page
+ok fload /pci/pci-ide@1,1/ide@1/cdrom@0:\nopage.fth
+nopage loaded: the pager can no longer interrupt a listing
 ```
 
-Type it before anything else. `see`, `.calls`, `words` and `devalias` all page
+Do this before anything else. `see`, `.calls`, `words` and `devalias` all page
 their output and stop with:
 
 ```
@@ -31,8 +32,23 @@ their output and stop with:
 ```
 
 Fine for a human, fatal for a script — it hung this lab's first automated run
-until it timed out. `c` at that prompt means "stop paging", and it maps to a word
-called `no-page` you can just call up front. (It **resets** inside `debug`.)
+until it timed out. `c` at that prompt means "stop paging" and maps to a word
+called `no-page`, which you can call directly. But `no-page` is **not enough**,
+for two reasons, both in `forth/lib/suspend.fth`:
+
+1. `lines/page` is a **defer** (default 24). [`dsl/nopage.fth`](dsl/nopage.fth)
+   points it at 30000, so `#line` can never reach it — and unlike `no-page` that
+   survives `(reset-page)`, which only clears `#line`. Measured: `' open-dev
+   .calls` went from **4** pager prompts to **0**.
+2. `(exit?)` ends with `key? if key ascii q = if … else suspend then` — **any key
+   pressed while output is streaming is eaten by the pager.** Nothing you set can
+   turn that off; you simply must not type into a running listing. It is the
+   reason §7's stepper resists automation.
+
+(Don't reach for `' false to interactive?`. It does disable paging at the root —
+`(exit?)`'s first line — but `interactive?` means "is input coming from the
+keyboard?", so it also **silences the `ok` prompt**, leaving a driver with
+nothing to synchronise on. Verified the hard way.)
 
 ## 1. Load the language
 

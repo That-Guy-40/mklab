@@ -225,10 +225,17 @@ serial with [`tools/drive-serial-repl.py`](../../tools/drive-serial-repl.py).
 
 Not claimed:
 
-- **The `debug` stepper is not smoked.** It is a full-screen ANSI application and
-  paging resets inside it, so scripted keystrokes answer pager prompts instead of
-  stepping. It is documented in [RUNBOOK.md](RUNBOOK.md) **for humans** — the same
-  call the sister lab made about GRUB's `e` menu-edit.
+- **The `debug` stepper is not smoked.** The reason is sharper than "it's
+  full-screen": `(exit?)` in `forth/lib/suspend.fth` ends with
+  `key? if key ascii q = if … else suspend then`, so **any key pressed while
+  output is still streaming is swallowed by the pager** rather than reaching the
+  application. Driving the stepper therefore means sending each keystroke only
+  after the display has fully settled, and its per-step resting line varies, so
+  there is no stable anchor to synchronise on yet. It is documented in
+  [RUNBOOK.md](RUNBOOK.md) **for humans** — the same call the sister lab made
+  about GRUB's `e` menu-edit — but this is a *solvable synchronisation problem*,
+  not an inherent one. [`dsl/nopage.fth`](dsl/nopage.fth) removes the other half
+  of the obstacle.
 - **`map?` is not recovered.** It needs the assembler *and* a `${BP}` dep, and it
   walks page tables that don't exist in the physical-mode boot this lab uses.
   Declined on purpose, not overlooked.
