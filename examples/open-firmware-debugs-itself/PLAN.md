@@ -1,14 +1,12 @@
 # PLAN — `examples/open-firmware-debugs-itself/`: a Forth DSL for boot forensics, memory, and FCode reverse engineering
 
-> **Status: pre-assembly.** Spikes 0, 0c, 1, 2, 2b and 3 are GREEN — results are
-> recorded inline below with the real transcripts. The vocabularies proven so far
-> live in [`spikes/`](spikes/); they become the lab's `dsl/` at assembly.
+> **Status: ASSEMBLED.** Every spike below is GREEN and the lab is built, routed
+> and green in both catalogs. This file is kept as the blow-by-blow record — the
+> spike transcripts, the wrong turns, and the root causes — which is why there
+> are no separate POC-*.md files: the detail lives here.
 >
-> This directory deliberately has **no `README.md` yet**: `tools/paths.py` counts
-> an `examples/` subdir as a routable lab unit only once it has one, and routing
-> a lab whose checkpoint nobody can run yet would be dishonest. The 00-INDEX row
-> and the `learning-paths.toml` step land together with the README, the smokes,
-> and the POC write-ups.
+> Start at [README.md](README.md); the tour is [RUNBOOK.md](RUNBOOK.md) and the
+> exact commands are [MANUAL_TESTING.md](MANUAL_TESTING.md).
 
 ## Context — why
 
@@ -586,21 +584,19 @@ sentence the lab should teach, and vocabulary B is what produced it.
 
 `map?`/`.pages` remains the documented negative from spike 0c.
 
-## Artifacts proven so far — [`spikes/`](spikes/)
+## Artifacts proven so far — now the lab's `dsl/` and scripts
 
 Everything here has been **run on this host** (Ubuntu 24.04, QEMU 8.2.2, KVM) and
-produced the transcripts quoted above. At assembly the three `.fth` vocabularies
-become the lab's `dsl/`, and the two host tools become `build-fcode-rom.sh` +
-the inventory step of the smoke suite.
+produced the transcripts quoted above. They are now the lab's `dsl/` and its build scripts.
 
 | artifact | spike | what it does |
 |---|---|---|
-| [`spikes/spike0-word-inventory.sh`](spikes/spike0-word-inventory.sh) | 0 | tick-probes the dictionary over serial; `' <word> .` looks up **without executing**, syncs on the `ok` prompt so a missing word cannot stall the drive |
-| [`spikes/ofdiag.fth`](spikes/ofdiag.fth) | 2 | the boot-forensics **diagnosis ladder** — four distinct fault classes, no `catch` needed |
-| [`spikes/ofdiag2.fth`](spikes/ofdiag2.fth) | 2b | the **tracers** — `trace-boot`/`untrace` over the firmware's own `?show-device`/`load-started`/`load-done` defer hooks, emitting `#T` milestone lines |
-| [`spikes/ofscope.fth`](spikes/ofscope.fth) | 3 | `pci-map`, the config-space walker whose `#P` lines matched QMP `query-pci` **7/7** |
-| [`spikes/spike1-card.fth`](spikes/spike1-card.fth) | 1 | the minimal **FCode driver** carried on a PCI option ROM; names its own node and sets a marker property |
-| [`spikes/build-fcode-rom.py`](spikes/build-fcode-rom.py) | 1 | wraps tokenized FCode in a PCI expansion ROM, built to the contract **read out of `dev/pcibus.fth`** rather than off a spec sheet |
+| [`probe-dictionary.sh`](probe-dictionary.sh) | 0 | tick-probes the dictionary over serial; `' <word> .` looks up **without executing**, syncs on the `ok` prompt so a missing word cannot stall the drive |
+| [`dsl/ofdiag.fth`](dsl/ofdiag.fth) | 2 | the boot-forensics **diagnosis ladder** — four distinct fault classes, no `catch` needed |
+| [`dsl/ofdiag.fth`](dsl/ofdiag.fth) (merged) | 2b | the **tracers** — `trace-boot`/`untrace` over the firmware's own `?show-device`/`load-started`/`load-done` defer hooks, emitting `#T` milestone lines |
+| [`dsl/ofscope.fth`](dsl/ofscope.fth) | 3 | `pci-map`, the config-space walker whose `#P` lines matched QMP `query-pci` **7/7** |
+| [`dsl/fcode-card.fth`](dsl/fcode-card.fth) | 1 | the minimal **FCode driver** carried on a PCI option ROM; names its own node and sets a marker property |
+| [`build-fcode-rom.py`](build-fcode-rom.py) | 1 | wraps tokenized FCode in a PCI expansion ROM, built to the contract **read out of `dev/pcibus.fth`** rather than off a spec sheet |
 
 ## Spike 4 — RESULT: **GREEN**; the stepper is a HUMAN tool, not a scriptable one
 

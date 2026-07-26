@@ -14,7 +14,7 @@
 set -u
 FLAVOR="${1:-emu}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
-REPO="/media/sqs/COLD_STORAGE/LAB_CREATE_V2"
+REPO="$(cd "$HERE/../.." && pwd)"
 WORKDIR="${OFW_WORKDIR:-$HOME/ofw-lab}"
 CB="${COREBOOT_DIR:-$HOME/linuxboot-lab/coreboot}"
 
@@ -22,6 +22,7 @@ pass() { echo "PASS: $*"; exit 0; }
 fail() { echo "FAIL: $*"; exit 1; }
 skip() { echo "SKIP: $*"; exit 77; }
 note() { echo "  - $*"; }
+# shellcheck disable=SC2154  # rc is assigned inside the trap body
 trap 'rc=$?; [[ $rc -eq 0 || $rc -eq 1 || $rc -eq 77 ]] || echo "FAIL: spike exited early (rc=$rc)"' EXIT
 
 case "$FLAVOR" in

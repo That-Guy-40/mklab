@@ -253,7 +253,7 @@ difficulty = "🔴"
 est        = "⏱ half-day+"
 prereqs    = []
 audience   = "you can bring up a Debian VM; comfort with GRUB/serial helps"
-goal       = "Own every stage from firmware to a captured kernel panic: interrupt the boot loader, force and dissect a crash, meet the firmware that answers back at a Forth prompt (twice — two rival implementations of the same standard), then replace the firmware's boot logic with Linux itself."
+goal       = "Own every stage from firmware to a captured kernel panic: interrupt the boot loader, force and dissect a crash, meet the firmware that answers back at a Forth prompt (twice — two rival implementations of the same standard), turn that prompt into a forensics workbench of your own words, then replace the firmware's boot logic with Linux itself."
   [[path.step]]
   lab        = "vm-examples/vm-debian-amd64.toml"
   learn      = "a baseline KVM cloud VM to experiment on."
@@ -272,6 +272,14 @@ goal       = "Own every stage from firmware to a captured kernel panic: interrup
   tags       = ["📟"]
   learn      = "the rival answer to firmware modularity, live: IEEE 1275's `ok` prompt is a Forth REPL on the bare machine — walk the device tree, patch the running firmware, and make it boot Linux; also as a coreboot payload."
   checkpoint = "`3 4 + .` prints `7` at the `ok` prompt over serial (`smoke-ofw.sh` PASSes both flavors); `showcase-forth-to-boot.sh` ends `PASS: ... booted Linux to u-root` after hand-staging the initrd at the prompt."
+  [[path.step]]
+  lab        = "open-firmware-debugs-itself/"
+  tags       = ["🔬"]
+  learn      = "the same `ok` prompt, now as a forensics workbench: write a Forth DSL (a vocabulary, not a parser) that turns \"Can't open boot device\" into a per-entry diagnosis, traces the boot path through the firmware's OWN defer hooks, walks PCI config space and checks itself against QEMU, and runs a driver that arrived as bytecode on a card's option ROM — while the firmware decompiles itself with `see`."
+  checkpoint = "`smoke-dsl.sh all` PASSes all three vocabularies; `showcase-diagnose-a-broken-boot.sh` ends `PASS: diagnosed a boot failure the firmware only called \"Can't open boot device\", repaired the broken alias live, and verified the repair`; `dev /pci ls` shows a node named `fcode-card` that the CARD named itself."
+  verify_cmd    = "./smoke-dsl.sh all"
+  verify_marker = "PASS: all vocabularies verified"
+
   [[path.step]]
   lab        = "openbios-the-rival-that-shipped/"
   tags       = ["☎️"]
@@ -620,6 +628,7 @@ id      = "close-to-the-metal"
 title   = "Close to the metal"
 theme   = "Firmware, boot, and RAM-only systems — the lowest layers."
 members = ["linuxboot-uefi-kexec/", "open-firmware-forth-to-boot/",
+           "open-firmware-debugs-itself/",
            "openbios-the-rival-that-shipped/", "openbios-clib-hello-to-emacs/",
            "kdump-kexec-lab/", "virtualbmc-ipmi-lab/", "bmc-toolkit/",
            "metal-as-a-service/", "root-password-reset/", "tiny-linux-experiments/",
