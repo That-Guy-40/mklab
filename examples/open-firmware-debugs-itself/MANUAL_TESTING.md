@@ -258,53 +258,50 @@ physical-mode boot).
 `./probe-dictionary.sh coreboot` returns an **identical** 18/23 — the flavors
 differ in media paths, not dictionaries.
 
-## 5. Cross-checking `pci-map` against QEMU (the oracle)
+## 5. Cross-checking the firmware against QEMU (the oracle)
 
-Boot with a QMP socket alongside the serial one, run `pci-map` inside, then ask
-QEMU the same question from outside:
-
-```console
-$ qemu-system-x86_64 -machine pc,accel=kvm -m 256 -bios "$ROM" -cdrom ~/ofw-lab/dsl.iso \
-    -device e1000,romfile=$HOME/ofw-lab/fcode-card.rom \
-    -display none -serial unix:/tmp/s.sock,server=on \
-    -qmp unix:/tmp/q.sock,server=on,wait=off -no-reboot &
-$ python3 ../../tools/drive-serial-repl.py /tmp/s.sock /tmp/pci.log --timeout 200 --echo-gate \
-    --expect ok --send '\r' --expect ok \
-    --send 'fload /pci/pci-ide@1,1/ide@1/cdrom@0:\ofscope.fth\r' --expect ok \
-    --send 'dev /pci pci-map device-end\r' --expect '#P end'
-```
-
-Then diff the `#P` lines against QMP `query-pci`. Verified result:
-
-```
-  dev=0 fn=0  id=12378086 class=0x0600   MATCH
-  dev=1 fn=0  id=70008086 class=0x0601   MATCH
-  dev=1 fn=1  id=70108086 class=0x0101   MATCH
-  dev=1 fn=3  id=71138086 class=0x0680   MATCH
-  dev=2 fn=0  id=11111234 class=0x0300   MATCH
-  dev=3 fn=0  id=100e8086 class=0x0200   MATCH
-  dev=4 fn=0  id=100e8086 class=0x0200   MATCH
-  7 functions inside, 7 outside — FULL AGREEMENT
-```
-
-Two decoding notes, both learned by getting them wrong: the firmware prints the
-**raw** class register (`class_code(24) << 8 | revision(8)`), so QEMU's 16-bit
-class is `raw >> 16`; and the multifunction bit is bit 7 of the header-type byte
-at reg `0x0c`, bits 16–23.
-
-## 6. Known-good `mem-map` output (and the bug in it)
+This used to be a hand-typed command block here, with `$ROM` undefined, `/tmp`
+paths, and a "then diff the `#P` lines against `query-pci`" step whose command was
+never given — i.e. not actually runnable. It is a script now:
 
 ```console
-$ # -m 128 / 256 / 512, same firmware
-#M region start=2000000 size=8000000     ends 0xa000000   RAM ends 0x8000000
-#M region start=2000000 size=10000000    ends 0x12000000  RAM ends 0x10000000
-#M region start=2000000 size=20000000    ends 0x22000000  RAM ends 0x20000000
+$ ./check-oracle.sh
+  dev=0 fn=0  12378086 class=0x0600   MATCH
+  dev=1 fn=0  70008086 class=0x0601   MATCH
+  dev=1 fn=1  70108086 class=0x0101   MATCH
+  dev=1 fn=3  71138086 class=0x0680   MATCH
+  dev=2 fn=0  11111234 class=0x0300   MATCH
+  dev=3 fn=0  100e8086 class=0x0200   MATCH
+  dev=4 fn=0  100e8086 class=0x0200   MATCH
+  7 functions inside, 7 outside
+  - pci-map agrees with QMP query-pci on every function, id and class
+  - -m 128: available overruns the end of RAM by exactly 32 MB (the known defect)
+  - -m 256: available overruns the end of RAM by exactly 32 MB (the known defect)
+  - -m 512: available overruns the end of RAM by exactly 32 MB (the known defect)
+PASS: oracle: pci-map matches QEMU's view; mem-map still reproduces the 32 MB overrun at 128/256/512
 ```
 
-**Signature: it is wrong by exactly 32 MB every time.** The region starts at
-32 MB but its size is the full installed RAM rather than `installed − start`.
-This is a finding, not a defect in the tool — `mem-map` is reporting faithfully
-what the firmware believes.
+It runs one VM with **both** a serial socket and a QMP socket, asks the same
+question inside and out, and diffs. Two decoding notes, both learned by getting
+them wrong: the firmware prints the **raw** class register
+(`class_code(24) << 8 | revision(8)`), so QEMU's 16-bit class is `raw >> 16`; and
+the multifunction bit is bit 7 of the header-type byte at reg `0x0c`, bits 16–23.
+
+## 6. The memory map the firmware believes in
+
+`check-oracle.sh` also asserts the memory finding at three machine sizes, because
+it is a **known firmware defect** and a silent change to it would matter:
+
+```
+-m 128   #M region start=2000000 size=8000000     ends 0xa000000   RAM ends 0x8000000
+-m 256   #M region start=2000000 size=10000000    ends 0x12000000  RAM ends 0x10000000
+-m 512   #M region start=2000000 size=20000000    ends 0x22000000  RAM ends 0x20000000
+```
+
+**Signature: wrong by exactly 32 MB every time.** The region starts at 32 MB but
+its size is the full installed RAM rather than `installed − start`. The check
+asserts the *defect*, so if the firmware ever stopped doing this the script fails
+and tells you to re-read the finding before trusting it.
 
 ## 7. Failure signatures worth recognising
 

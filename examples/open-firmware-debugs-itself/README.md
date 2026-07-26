@@ -65,6 +65,7 @@ $ ./build-detok-vocab.sh                    # recover the in-firmware detokenize
 $ ./stage-dsl.sh                            # put the vocabularies on media (~1 s)
 $ ./smoke-dsl.sh all                        # every mode, headless (emu)
 $ ./smoke-dsl.sh all coreboot               # ...and again on the coreboot payload
+$ ./check-oracle.sh                         # believe nothing: diff against QEMU itself
 $ ./showcase-diagnose-a-broken-boot.sh      # diagnose → repair live → verify
 $ ./run-ofw-debug.sh [emu|coreboot]         # interactive ok prompt (Ctrl-A X quits)
 $ ./build-fcode-rom.sh && ./run-ofw-debug.sh --card    # plug in the FCode card
@@ -93,6 +94,7 @@ run its `./build-ofw.sh` first. `toke`/`detok` for the FCode track come from
 | [`build-fcode-rom.sh`](build-fcode-rom.sh) · [`.py`](build-fcode-rom.py) | `toke` the driver, wrap a PCI expansion ROM, validate it host-side |
 | [`build-dropin-rom.sh`](build-dropin-rom.sh) | a ROM that **carries** the DSL; `--boot-hook` adds the autoboot tracer |
 | [`probe-dictionary.sh`](probe-dictionary.sh) | the word audit — and a deliberate lesson in under-reporting |
+| [`check-oracle.sh`](check-oracle.sh) | the outside check: `pci-map` vs QMP `query-pci`, and the memory defect at three sizes |
 | [`smoke-dsl.sh`](smoke-dsl.sh) | one verdict per mode: `stage`/`ofdiag`/`ofscope`/`fcode`/`stepper`/`stepper-deep`/`dropin`/`autotrace` |
 | [`showcase-diagnose-a-broken-boot.sh`](showcase-diagnose-a-broken-boot.sh) | the finale, unattended: diagnose → repair live → verify |
 | [`run-ofw-debug.sh`](run-ofw-debug.sh) | interactive `ok` prompt, either flavor, with a cheat-sheet |
