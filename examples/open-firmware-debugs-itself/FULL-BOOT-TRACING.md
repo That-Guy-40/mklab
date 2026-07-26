@@ -69,8 +69,8 @@ ok printenv use-nvramrc?
 use-nvramrc? =        false          ← unchanged
 ```
 
-The emu demo build has no working NVRAM — the same wall the showcase hit when it
-tried `setenv boot-device` and had to repair a `devalias` instead.
+The **stock** emu ROM has no NVRAM store bound — the same wall the showcase hit
+when it tried `setenv boot-device` and had to repair a `devalias` instead.
 
 **Correction (was: "a missing peripheral in this firmware build").** That reading
 was wrong, and source archaeology says so. Nothing is missing: it is a *disabled

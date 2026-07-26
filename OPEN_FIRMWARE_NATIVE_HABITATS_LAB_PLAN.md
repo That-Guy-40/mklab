@@ -172,23 +172,51 @@ It is not; there is a whole `forth/debugging/` tree:
 **The emulator is packaged but not installed** — `qemu-system-sparc` /
 `qemu-system-sparc64`, candidate `1:8.2.2+ds-0ubuntu1.17`.
 
-### Why the NVRAM line is the interesting one
+### Why the NVRAM line is the interesting one — ⚠ REVISED, the original argument is dead
 
-The debugs-itself lab shipped with **two documented limitations, and both are
-NVRAM-shaped**:
+**This argument no longer holds, and the honest thing is to say so rather than
+quietly restate it.** The plan originally read:
 
-1. `nvramrc` — the *canonical* Open Firmware answer to running code before
-   autoboot — is **dead on the x86 emu build** (`setenv` → *Out of NVRAM
-   environment space*), which is why that lab had to reach for a `banner-` dropin
-   instead.
-2. The **warm-reboot path is unreachable** there, because `reboot?` is set only
-   from the NVRAM variable `reboot-command`, which cannot be written
-   (`$setenv` → *Unimplemented package interface procedure*). The lab closed that
-   hole *by construction* and stated honestly that it could not demonstrate it.
+> The debugs-itself lab shipped with two documented limitations, and both are
+> NVRAM-shaped: `nvramrc` is **dead on the x86 emu build**, and the **warm-reboot
+> path is unreachable** there. If NVRAM works on SPARC, a sibling lab can
+> demonstrate both — turning two "correct by reading, unprovable by running" notes
+> into runnable verdicts. *That is the single strongest argument for building this.*
 
-If NVRAM works on SPARC, **a sibling lab can demonstrate both** — turning two
-"correct by reading, unprovable by running" notes into runnable verdicts. That is
-the single strongest argument for building this.
+Both premises turned out to be **false**, and the x86 lab has since closed both
+itself (see
+[`NVRAM-ON-X86.md`](examples/open-firmware-debugs-itself/NVRAM-ON-X86.md)):
+
+- NVRAM was never missing. `cpu/x86/basefw.bth:58` floads the entire confvar
+  stack; only the backing store was unbound. `\ create pseudo-nvram` was
+  **commented out**, one line away, deliberately and with a written rationale.
+- `nvramrc` now **executes at startup** on x86, and a **real warm reboot is
+  traced**. Closing the second one also needed a *second, independent* fix —
+  emu's own `startup` never calls `copy-reboot-info` — which had nothing to do
+  with NVRAM at all.
+
+So "only a SPARC sibling can demonstrate these" is simply not true any more.
+
+**What survives, and it is a better argument.** The distinction is not *whether*
+these mechanisms can be demonstrated, but whether they are **native**:
+
+| | SPARC / PPC | x86 emu |
+|---|---|---|
+| NVRAM | a **real device** — SPARC NVRAM/TOD chip, PPC `nvram@60000` | a **file on an attached floppy** |
+| availability | present at power-on, always | opt-in build switch, upstream ships it **off** |
+| upstream's view | the normal case | *"not particularly useful for real hardware platforms"* — Bradley, `config.fth` |
+| cost to reach it | none | 3 source edits, a rebuild, an isolated ROM, `-fda` |
+
+That is the same shape as the EFI comparison the x86 lab landed on: UEFI keeps
+variables in an **SPI-flash region** (QEMU's `OVMF_VARS.fd` is *pflash*), the same
+species of device as SPARC's and PPC's. **OFW-on-x86 is the odd one out** — the
+only one of the four borrowing a filesystem because the platform gives firmware no
+NV region it can own.
+
+So the sibling lab's case rests on **native vs. bolted-on**, plus the topology and
+idiom differences already locked in §2b/§2c — not on a capability gap that no
+longer exists. Weaker than the original claim, and true, which the original was
+not.
 
 ## 4. The open decision — which thesis
 

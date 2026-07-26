@@ -749,13 +749,16 @@ changed several conclusions, so the record continues here:
 |---|---|---|
 | #60 | trace a **real `boot`**, not a stand-in `load` | the tracer claim rested on "the hooks are the same ones `boot` uses" — true, but unproven |
 | #61 | every vocabulary on the **coreboot flavor** (6/6) | the payload cannot read *any* file until `allocate-dma` is re-pointed — **the repair that enables file loading cannot itself be loaded from a file** |
-| #62 | research note on full autoboot tracing | nvramrc, the canonical answer, is **dead on this build** |
+| #62 | research note on full autoboot tracing | nvramrc, the canonical answer, is **dead on this build** — ⚠ *itself overturned by #75; it was a disabled config switch, not a missing peripheral* |
 | #63 | the DSL **inside the ROM**, and the autoboot tracing itself | `execute-buffer` sniffs byte 0, so a `.fth` **source** dropin is a first-class startup hook |
 | #64 | `nopage.fth`, a stage guard, an honest stepper reason | `./stage-dsl.sh` had been **failing on main** — a build step with no verdict is an untested step |
 | #65 | **genuinely smoke the single-step debugger** | "full-screen, human-only" was wrong: `debug` has a **line-oriented mode** (`scrolling-debug?`) |
 | #66 | drive the debugger harder; `boot-` → `banner-` | `boot-` has a hole: `auto-boot`'s `reboot?` branch exits before it |
+| #75 | **switch NVRAM on** (`\ create pseudo-nvram`) | "x86 has no NVRAM" was a **disabled config switch**, not a missing peripheral — and enabling it did **not** close the warm-reboot gap, which had a *second, independent* cause (emu's own `startup` omits `copy-reboot-info`) |
+| #76 | three delivery mechanisms; the **combined ROM** | `nvramrc` is a **4 KB autoload hook, not a payload carrier**; a **real warm reboot is traced**, so `banner-`-over-`boot-` is observed rather than argued |
+| #77 | M4 self-contained drive; the `c:` store | `nvramrc` runs **before `probe-all`**, so an autoload line may only name pre-probe devices; and the `c:` store is **nondeterministic** (~2/18) — two wrong conclusions came from treating one boot as evidence |
 
-**Three plan-level assumptions turned out to be wrong**, all in the same
+**Four plan-level assumptions turned out to be wrong**, all in the same
 direction — the firmware was more capable than assumed:
 
 1. *"`map?` needs the assembler, so tier 3 is out of reach."* The assembler is in
@@ -767,10 +770,23 @@ direction — the firmware was more capable than assumed:
    lab."* The dropin filesystem takes a one-line manifest change, and an isolated
    tree clone plus a sha-guard removes the disturbance entirely.
 
-**Eight smoke modes, green on both flavors**, now stand where the plan projected three verdicts. The one remaining
-limitation — the warm-reboot path — is closed *by construction* and cannot be
-demonstrated here, because this firmware cannot write the NVRAM variable that
-would trigger it. See [FULL-BOOT-TRACING.md](FULL-BOOT-TRACING.md).
+**Eight smoke modes, green on both flavors**, now stand where the plan projected three verdicts.
+
+4. *"The warm-reboot path is closed by construction and cannot be demonstrated
+   here, because this firmware cannot write the NVRAM variable that would trigger
+   it."* — **also wrong, and twice over.** NVRAM is not missing, it is a disabled
+   config switch (`\ create pseudo-nvram`), and switching it on still did not reach
+   the reboot path: emu defines its *own* `startup` (`fw.bth:288`) that never calls
+   `copy-reboot-info`, the only writer of `reboot?` — a **second, independent**
+   cause. With both, a real warm reboot is now **traced**: `Rebooting with
+   command:` and `#T open` lines with the countdown absent. See
+   [NVRAM-ON-X86.md](NVRAM-ON-X86.md) and
+   [DELIVERY-MECHANISMS.md](DELIVERY-MECHANISMS.md); the design note
+   [FULL-BOOT-TRACING.md](FULL-BOOT-TRACING.md) carries the correction inline.
+
+The remaining honest limitation is narrower: the **`c:` hard-disk store is
+nondeterministic** (a `disk@0` node is probed in ~2 of 18 boots), so the floppy is
+the dependable one.
 
 ## Post-approval
 
