@@ -57,6 +57,13 @@ Both labs then feed the track's capstone,
 [`../linuxboot-uefi-kexec/`](../linuxboot-uefi-kexec/README.md), which answers
 the same modularity question by giving up on firmware platforms entirely.
 
+This lab meets OpenBIOS as a **build** — the firmware you compiled is the one
+your emulator ships. [`../open-firmware-native-habitats/`](../open-firmware-native-habitats/README.md)
+meets the *same stock blob* as a **habitat**: the sun4m and g3beige machines
+where IEEE 1275 was a shipping product, where NVRAM is a real chip rather than a
+file, and where the debugging chapter of the standard turns out to be largely
+empty stubs (`see patch` → `: patch ;`).
+
 ## The revival patch (what "shipped" doesn't mean)
 
 "Actively maintained" means the ppc/sparc paths QEMU exercises daily. The

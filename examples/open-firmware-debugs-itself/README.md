@@ -58,6 +58,15 @@ under investigation is also the instrument.** No agent, no OS, no JTAG. `see`
 decompiles the firmware you are standing inside, and `detokenize` recovers
 source for driver bytecode that arrived on a card.
 
+**The same vocabulary, where the standard actually shipped →**
+[`../open-firmware-native-habitats/`](../open-firmware-native-habitats/README.md)
+ports `ofdiag` onto OpenBIOS on Sun SPARC and Apple PowerPC. The diagnosis
+ladder survives the port; the **tracers do not** — OpenBIOS declares no `defer`
+on its boot path, so the trick this lab leans on (the firmware ships its own
+tracepoints) has no counterpart there. And where this lab had to *build* four
+delivery mechanisms, each native habitat hands you exactly one — a different one
+each. A vocabulary is portable; an implementation is not.
+
 ## Quick start
 
 ```console
