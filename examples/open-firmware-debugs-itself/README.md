@@ -157,6 +157,45 @@ OFDIAG path:   /isa/fdc/disk@0:\vmlinuz
 OFDIAG-2: no such node in the device tree
 ```
 
+## Single-stepping the firmware, under a script
+
+The `debug` stepper is a **source-level single-step debugger running on bare
+metal**, and it is driven headlessly here — `smoke-dsl.sh stepper`:
+
+```
+ok debug diag-open
+ok " nosuchalias" diag-open
+: diag-open               ( 1fff79c b )
+." OFDIAG target: "      OFDIAG target:
+Inside diag-open          ( 1fff79c b )
+2dup
+Inside diag-open          ( 1fff79c b 1fff79c b )   ← 2dup duplicated the stack
+type                     nosuchalias                 ← the argument, flowing
+Inside diag-open          ( 1fff79c b )
+cr
+```
+
+Three things had to line up, and the first is the one that matters:
+
+1. **`debug` has two display modes.** With `scrolling-debug?` **false** it uses
+   `setup-2d-display` — `page`, cursor positioning, a genuine full-screen app
+   that fights automation. Set it **true** and you get `setup-scrolling-display`:
+   line-oriented, one `Inside <word>  ( <stack> )` frame per step. *That line is
+   the stable per-step anchor*, so the driver sends exactly one key per settled
+   display.
+2. **`dsl/nopage.fth`** raises the `lines/page` defer so a listing can never
+   trigger the pager mid-step.
+3. **No `--echo-gate`.** The stepper reads *raw* keys, and its echo of a space is
+   indistinguishable from whitespace already streaming past — the documented
+   non-echoing case where gating stalls instead of stepping.
+
+The assertions are semantic, not just liveness: the stack display must
+**duplicate** across `2dup`, stepping `type` must emit the argument we passed in,
+and `G` must run the word out to its diagnosis. Scrolling mode never lists the
+decompiled source, so a marker can only come from execution — which matters,
+because an `--expect` that matched the *listing* produced a false PASS during
+development.
+
 ## The DSL inside the ROM
 
 Staged media is convenient but it is not where firmware code belongs. OFW keeps a
@@ -219,23 +258,12 @@ regression this repo has been bitten by. The design note, including why NVRAM
 ## Honesty about what's verified
 
 Everything in Quick start is **verified end-to-end on this host** (Ubuntu 24.04,
-QEMU 8.2.2, KVM): **eight smoke verdicts** — three vocabularies × two flavors,
-plus `dropin` and `autotrace` — and the showcase, all headless, all driven over
-serial with [`tools/drive-serial-repl.py`](../../tools/drive-serial-repl.py).
+QEMU 8.2.2, KVM): **ten smoke verdicts** — three vocabularies × two flavors,
+plus `stage`, `stepper`, `dropin` and `autotrace` — and the showcase, all
+headless, all driven over serial with [`tools/drive-serial-repl.py`](../../tools/drive-serial-repl.py).
 
 Not claimed:
 
-- **The `debug` stepper is not smoked.** The reason is sharper than "it's
-  full-screen": `(exit?)` in `forth/lib/suspend.fth` ends with
-  `key? if key ascii q = if … else suspend then`, so **any key pressed while
-  output is still streaming is swallowed by the pager** rather than reaching the
-  application. Driving the stepper therefore means sending each keystroke only
-  after the display has fully settled, and its per-step resting line varies, so
-  there is no stable anchor to synchronise on yet. It is documented in
-  [RUNBOOK.md](RUNBOOK.md) **for humans** — the same call the sister lab made
-  about GRUB's `e` menu-edit — but this is a *solvable synchronisation problem*,
-  not an inherent one. [`dsl/nopage.fth`](dsl/nopage.fth) removes the other half
-  of the obstacle.
 - **`map?` is not recovered.** It needs the assembler *and* a `${BP}` dep, and it
   walks page tables that don't exist in the physical-mode boot this lab uses.
   Declined on purpose, not overlooked.
