@@ -31,9 +31,11 @@
 > the result that matters: the x86 lab's two open limitations become demonstrable
 > here, on either track.
 >
-> **✅ BUILT — increment 1 has landed** as
+> **✅ BUILT — increments 1 and 2 have landed** as
 > [`examples/open-firmware-native-habitats/`](examples/open-firmware-native-habitats/README.md)
-> (5 PASS on sparc32, 4 PASS + 1 justified SKIP on ppc). ⚠️ **Building it
+> (7 PASS on sparc32, 5 PASS + 2 justified SKIP on ppc). Increment 2 closed the
+> tracer gap §6 called unportable, by implementing IEEE 1275 §7.5.3.3 `patch` —
+> which OpenBIOS ships as `: patch ;`. ⚠️ **Building it
 > falsified four of this plan's own claims** — the NVRAM line immediately above
 > among them. Each is corrected in place below and listed together in the lab's
 > [PLAN.md](examples/open-firmware-native-habitats/PLAN.md#assumptions-this-labs-own-plan-got-wrong).
@@ -413,7 +415,7 @@ boot-policy** story, or it has no reason to exist. `mac99` (New World) is
 | from the debugs-itself lab | portability |
 |---|---|
 | `ofdiag` diagnosis ladder | ✅ **DONE** — contracts are OFW-identical, so no `catch` is needed here either, and the `expand-alias` flag trap ports verbatim. Needed **one new rung**: native `boot-device` entries carry device *arguments*, so alias lookup must split the head off first |
-| `ofdiag` tracers | ❌ **SETTLED: cannot port.** OpenBIOS declares **no `defer` on its boot path** at all — nothing in `$load`, `boot`, or around `open-dev`. There is nothing to re-point. The standard's own answer is `patch` (7.5.3.3), which is a stub, so the honest route is to *implement* it first |
+| `ofdiag` tracers | ❌ cannot port, ✅ **REBUILT in increment 2.** OpenBIOS declares **no `defer` on its boot path** at all — nothing in `$load`, `boot`, or around `open-dev`, so there is nothing to re-point. Took the standard's other route instead: **implemented `patch` (7.5.3.3)**, itself a stub, and rewrote the call sites. Arguably stronger than what it replaced — OFW's tracers work only where OFW's author put a hook; these work at any call site in any colon definition. See [PATCH.md](examples/open-firmware-native-habitats/PATCH.md) |
 | `ofscope` `pci-map` | **PPC track yes** (`pci@80000000`); SPARC track **sparc64 only** — sun4m is **SBus**, where `config-l@` has no meaning |
 | `ofscope` `mem-map`/`region-diff` | **likely** — `/memory` + `dump`/`c@` are standard |
 | `nopage.fth` | **needs rework** — `lines/page` is an OFW internal; find OpenBIOS's equivalent |

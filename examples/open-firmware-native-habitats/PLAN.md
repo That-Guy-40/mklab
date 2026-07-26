@@ -13,8 +13,12 @@ This file tracks what has actually been built.
 | 1 | the persistence asymmetry, both arms | `smoke-habitat.sh persist {sparc32,ppc}` |
 | 1 | the 80-column console wall | `smoke-habitat.sh console {sparc32,ppc}` |
 | 1 | `minify-fth.py`, `stage-dsl.sh`, `run-habitat.sh`, `lib-habitat.sh` | `stage-dsl.sh` |
+| 2 | `dsl/patch.fth` — **IEEE 1275 7.5.3.3 implemented**, which OpenBIOS ships as `: patch ;`. Walks a colon body item-by-item so inline data (branch targets, literals, counted strings) is stepped over rather than scanned | `smoke-habitat.sh patch sparc32` |
+| 2 | `dsl/tracers.fth` — boot tracers built on it, rewriting call sites the firmware provides no hook for; `untrace` is the same patch reversed | `smoke-habitat.sh autotrace {sparc32,ppc}` |
+| 2 | the power-on autoboot traces itself, armed from NVRAM pre-probe | `smoke-habitat.sh autotrace` |
 
-Increment 1 status: **5 PASS on sparc32, 4 PASS + 1 justified SKIP on ppc.**
+Status: **7 PASS on sparc32, 5 PASS + 2 justified SKIP on ppc.** ([PATCH.md](PATCH.md)
+is the increment-2 write-up.)
 
 ## Assumptions this lab's own plan got wrong
 
@@ -52,22 +56,20 @@ Listed so nobody mistakes absence for oversight. The sibling grew from three
 verdicts to eight modes across ten PRs; this one picks its next step
 deliberately.
 
-- **Tracers.** Blocked on there being no hook to re-point. Two candidate routes,
-  and they are *not* alternatives to the `ofscope` item below — that one is a
-  different vocabulary entirely and would land no tracer:
-  - **Implement `patch` (7.5.3.3).** OpenBIOS stubs it out, so the honest path is
-    to write it in Forth over the dictionary `see` already walks (~10 lines):
-    scan a colon definition's body for an xt and replace it. **Not
-    per-architecture** — OpenBIOS's dictionary format is the same across its
-    targets, so one implementation serves both tracks. This would be the first
-    thing in this family that is **upstream-contributable Forth** rather than a
-    lab-local vocabulary, and it belongs to its own increment.
-  - **Redefine `boot` — UNTESTED hypothesis.** `auto-boot?` runs
-    `boot-command evaluate` (`forth/system/main.fs`), and `evaluate` resolves the
-    word **by name at run time**. So a redefinition of `boot` may intercept the
-    power-on autoboot with no dictionary surgery at all. It would *not* catch
-    `$load`, which is called from inside an already-compiled body and holds the
-    old xt. Worth one boot to check before committing to the `patch` route.
+- ~~**Tracers.**~~ ✅ **DONE in increment 2** via the `patch` route — see
+  [PATCH.md](PATCH.md). It came in at ~90 lines rather than the ~10 estimated
+  above, because stepping over inline data is most of the work. The second
+  candidate route (**redefining `boot`**, on the theory that
+  `boot-command evaluate` resolves by name at run time) was never needed and
+  remains untested; it would in any case not have caught `$load`, which is
+  called from an already-compiled body.
+- **`.calls` (7.5.3.1), also a stub.** Now cheap: "which words' bodies mention
+  this xt" is `patch`'s dictionary walk run over every word instead of one. The
+  natural increment 3.
+- **Send `patch` upstream.** It is written to be sendable — no lab-specific
+  assumptions, no arch conditionals, and it shadows rather than replaces the
+  stub, so a real fix means editing `forth/debugging/firmware.fs`. Nobody has
+  filed it.
 - **`ofscope` port** (independent of the tracers above — the *other* vocabulary
   from the x86 lab: memory and device exploration).
   `pci-map` needs `config-l@`, which OpenBIOS does not have;

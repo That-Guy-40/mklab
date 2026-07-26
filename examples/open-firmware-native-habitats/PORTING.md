@@ -63,7 +63,7 @@ entry, arguments and all**, where the x86 version opened the resolved path. On
 x86 those were the same string. Here `:a`, `,\ppc\bootinfo.txt` and `%BOOT` are
 precisely what the open method acts on.
 
-## What could not port: the tracers
+## What could not port — and was rebuilt instead: the tracers
 
 The x86 `ofdiag` installs boot tracers by re-pointing hooks the firmware ships:
 
@@ -82,8 +82,25 @@ nothing around `open-dev`. There is nothing to re-point.
 That is a real divergence between two implementations of one standard, and it is
 worth stating plainly: **OFW ships its tracepoints; OpenBIOS does not.**
 
-The standard's own answer to this is `patch` (7.5.3.3) — which brings us to the
-finding that reframes the whole comparison.
+The standard's own answer to this is `patch` (7.5.3.3) — which OpenBIOS also
+ships empty, so [increment 2](PLAN.md) implemented it. See
+**[PATCH.md](PATCH.md)**: `dsl/patch.fth` rewrites the *call site* rather than
+re-pointing a hook, so `dsl/tracers.fth` can instrument **any** call in **any**
+colon definition — including two the firmware's author never anticipated:
+
+```text
+0 > trace-boot
+#T tracing ON, 2 call site(s) rewritten
+0 > boot cdrom:\OFDIAG.FTH
+#T load-begin
+#T open cdrom:\OFDIAG.FTH
+#T load-end
+0 > untrace
+#T tracing OFF, 2 call site(s) restored
+```
+
+Arguably this ends up *stronger* than what it failed to port: OFW's tracers work
+only where OFW's author placed a `defer`. These work anywhere.
 
 ## The debugging chapter is largely unimplemented
 

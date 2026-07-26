@@ -21,11 +21,15 @@ State lives in `$HABITAT_WORKDIR` (default `~/ofhabitat-lab/`), outside the repo
 ```
 
 ```text
-  - ofdiag.fth -> ofdiag.min.fth (784 bytes of 3072) + /home/sqs/ofhabitat-lab/dsl-stage/OFDIAG.FTH
-staged OFDIAG.FTH -> /home/sqs/ofhabitat-lab/dsl.iso
+  - ofdiag.fth -> ofdiag.min.fth (784 bytes of 3072) + .../dsl-stage/OFDIAG.FTH
+  - patch.fth -> patch.min.fth (1466 bytes of 3072) + .../dsl-stage/PATCH.FTH
+  - tracers.fth -> tracers.min.fth (767 bytes of 3072) + .../dsl-stage/TRACERS.FTH
+staged OFDIAG.FTH PATCH.FTH TRACERS.FTH -> /home/sqs/ofhabitat-lab/dsl.iso
+  - patch.fth + tracers.fth -> autotrace.min.fth (2232 bytes of 3072, arms itself at power-on)
 ```
 
-**Signature:** two artifacts, and a byte count *under* 3072. If the count ever
+**Signature:** the disc, a `.min.fth` per vocabulary, the combined
+`autotrace.min.fth`, and every byte count *under* 3072. If the count ever
 exceeds the budget the script fails rather than staging a truncated `nvramrc`
 (which would install half a vocabulary and still report `ok`).
 
@@ -43,6 +47,10 @@ PASS: nvramrc (sparc32): the diagnostic vocabulary is resident in NVRAM and self
 PASS: ladder (sparc32): the ported diagnosis ladder reports four distinct fault classes
 === media (sparc32) ===
 PASS: media (sparc32): the vocabulary loads off a disc the firmware mounts itself
+=== patch (sparc32) ===
+PASS: patch (sparc32): 7.5.3.3 implemented over the dictionary, and it steps over inline data instead of scanning memory
+=== autotrace (sparc32) ===
+PASS: autotrace (sparc32): tracers built on our own patch, delivered by NVRAM, catch the autoboot on a firmware that ships no tracepoints
 === persist (sparc32) ===
 PASS: persist (sparc32): setenv is session-only here — no update-nvram method exists to flush it (the honest negative)
 === console (sparc32) ===
@@ -51,7 +59,7 @@ PASS: console (sparc32): typed input dies at 80 columns, which is why the vocabu
 PASS: every claim verified (sparc32)
 ```
 
-On **ppc** the same five run, with `media` reporting
+On **ppc** the same seven run, with `media` reporting
 
 ```text
 SKIP: media (ppc): the firmware compiles NO filesystem — ppc_config.xml disables
@@ -59,8 +67,12 @@ every CONFIG_FSYS_*, leaving HFS/HFS+ only, so there is nothing to stage a .fth
 file on (see DELIVERY.md)
 ```
 
-That SKIP is the expected result, not an environment gap. 4 PASS + 1 SKIP on
-ppc, 5 PASS on sparc32.
+and `patch` likewise skipping, because it loads `patch.fth` interactively off
+the disc — ppc's coverage of it is the `autotrace` mode, which delivers the very
+same file through the NVRAM door.
+
+Both SKIPs are expected results, not environment gaps. **7 PASS on sparc32,
+5 PASS + 2 SKIP on ppc.**
 
 ## 2. The headline, by hand — a vocabulary living in NVRAM
 
@@ -203,7 +215,94 @@ ECHO-GATE: step 1 byte 80 (b'i') never echoed after 3 attempts — the console i
 the `\ ` prefix). Adding `-prom-env "screen-#columns=200"` changes nothing —
 worth running yourself, because it is the obvious explanation and it is wrong.
 
-## 7. The stubs, from the firmware's own mouth
+## 7. `patch` (7.5.3.3), which the firmware ships empty
+
+```bash
+./run-habitat.sh sparc32 --bare
+```
+
+```text
+0 > load cdrom:\PATCH.FTH  ok
+0 > load-base load-size evaluate
+patch loaded: patch (patch) patch-count inline-cells /body-item
+0 > : zap ." ZAP" cr ;  ok
+0 > : zip ." ZIP" cr ;  ok
+0 > : t4 zap 12345 drop zap ;  ok
+0 > ' zap true 12345 true ' t4 (patch)  ok      ← literal mode: arm the trap
+0 > see t4
+: t4
+  zap ( lit ) h# ffd3a788  drop zap
+  ;
+0 > patch zip zap t4
+patch: 2 occurrence(s) replaced                 ← ★ 2, NOT 3
+0 > see t4
+: t4
+  zip ( lit ) h# ffd3a788  drop zip             ← the literal survived
+  ;
+0 > ' zap u. cr
+ffd3a788                                        ← same bit pattern it was hunting
+```
+
+**Signature: `2 occurrence(s) replaced`.** A `3` means `patch` degenerated into a
+memory scanner and clobbered the literal. That is the whole assertion in
+`smoke-habitat.sh patch`.
+
+⚠️ **Do not name your test words `aa` and `bb`.** The base is hex, so those are
+the numbers 170 and 187, and `patch` will (correctly) go looking for literals.
+`dead`, `beef`, `face`, `add`, `cafe` are the same trap. See [PATCH.md](PATCH.md).
+
+## 8. Boot tracing on a firmware with no tracepoints
+
+```text
+0 > trace-boot
+#T tracing ON, 2 call site(s) rewritten
+0 > boot cdrom:\OFDIAG.FTH
+#T load-begin
+#T open cdrom:\OFDIAG.FTH
+#T load-end
+No valid state has been set by load or init-program
+0 > untrace
+#T tracing OFF, 2 call site(s) restored
+0 > boot cdrom:\OFDIAG.FTH
+No valid state has been set by load or init-program     ← silence: both hooks gone
+```
+
+**Signature:** `#T` lines while on, **and nothing at all after `untrace`**. The
+second half matters as much as the first — it is what distinguishes measuring
+the boot from changing it.
+
+## 9. The power-on autoboot tracing itself
+
+```bash
+qemu-system-ppc -nographic -m 128 \
+  -prom-env "use-nvramrc?=true" \
+  -prom-env "nvramrc=$(cat ~/ofhabitat-lab/autotrace.min.fth)"
+```
+
+```text
+>> CPU type PowerPC,750
+(patch) isn't unique.                        ← the firmware notices the shadowing
+patch isn't unique.
+patch loaded: patch (patch) patch-count inline-cells /body-item
+tracers loaded: trace-boot untrace t-open-dev t-load
+#T tracing ON, 2 call site(s) rewritten      ← ★ armed BEFORE probe-all
+Welcome to OpenBIOS v1.1 built on Apr 22 2026 09:24
+Trying hd:,\\:tbxi...
+Trying hd:,\ppc\bootinfo.txt...
+Trying hd:,%BOOT...
+#T load-begin                                ← ★ the autoboot, traced
+#T open
+#T load-end
+```
+
+**Signature:** `#T tracing ON` **above** `Welcome to OpenBIOS`, and `#T
+load-begin` **before the first `0 >` prompt** — i.e. during the power-on
+autoboot, with nothing typed. Byte-for-byte the same on `qemu-system-sparc`.
+
+The empty path after `#T open` is honest: `(find-bootdevice)` on a machine with
+no disk hands `$load` an empty string.
+
+## 10. The stubs, from the firmware's own mouth
 
 ```text
 0 > see patch

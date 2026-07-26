@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# smoke-habitat.sh [nvramrc|ladder|media|persist|console|all] [sparc32|ppc]
+# smoke-habitat.sh [nvramrc|ladder|media|patch|autotrace|persist|console|all] [sparc32|ppc]
 #   — one verdict per claim, on the architectures where Open Firmware shipped.
 #
 # Exit: 0 PASS / 1 FAIL / 77 SKIP.
@@ -36,7 +36,7 @@ trap 'rc=$?; [ $rc -eq 0 ] || [ $rc -eq 1 ] || [ $rc -eq 77 ] || echo "FAIL: smo
 # shellcheck source=lib-habitat.sh
 . "$HERE/lib-habitat.sh"
 habitat_track "$TRACK_ARG" \
-    || fail "usage: $0 [nvramrc|ladder|media|persist|console|all] [sparc32|ppc]"
+    || fail "usage: $0 [nvramrc|ladder|media|patch|autotrace|persist|console|all] [sparc32|ppc]"
 
 command -v "$QEMU" >/dev/null || skip "$QEMU not installed (apt install qemu-system-sparc qemu-system-ppc)"
 command -v python3 >/dev/null || skip "python3 not installed"
@@ -212,7 +212,82 @@ smoke_console() {
     pass "console ($TRACK): typed input dies at 80 columns, which is why the vocabulary arrives by NVRAM or disc instead"
 }
 
+# ── patch (7.5.3.3), which the firmware ships empty ──────────────────────────
+# The interesting assertion is the NEGATIVE one. A word's body is a run of xts
+# with inline data interleaved (branch targets, literals, counted strings), so a
+# naive "scan every cell for old-xt" would corrupt any literal that happens to
+# hold the same bit pattern. The test builds exactly that booby trap on purpose.
+smoke_patch() {
+    if [ "$HAS_FS" != yes ]; then
+        # patch.fth is 1466 B minified; it reaches ppc through the NVRAM door in
+        # the `autotrace` mode below, which is where ppc's coverage lives.
+        skip "patch ($TRACK): needs the media door to load patch.fth interactively; ppc has no filesystem — its coverage is the autotrace mode (see DELIVERY.md)"
+    fi
+    [ -f "$WORKDIR/dsl.iso" ] || skip "no $WORKDIR/dsl.iso — run ./stage-dsl.sh"
+    boot_and_drive patch "${MEDIA_ARGS[@]}" -- \
+        --expect "0 >" \
+        --send 'load cdrom:\PATCH.FTH\r' --expect "0 >" \
+        --send 'load-base load-size evaluate\r' --expect "patch loaded" \
+        --send ': zap ." ZAP" cr ;\r' --expect "0 >" \
+        --send ': zip ." ZIP" cr ;\r' --expect "0 >" \
+        --send ': t4 zap 12345 drop zap ;\r' --expect "0 >" \
+        --send "' zap true 12345 true ' t4 (patch)\r" --expect "0 >" \
+        --send 'patch-count u. cr\r' --expect "0 >" \
+        --send 'see t4\r' --expect "0 >" \
+        --send 'patch zip zap t4\r' --expect "0 >" \
+        --send 'see t4\r' --expect "0 >" \
+        --send 't4\r' --expect "0 >" \
+        || fail "the driver did not complete — see $LOG"
+    # 1. literal mode: the (patch) call replaced the literal 12345 with the
+    #    VALUE of ' zap, arming the trap.
+    clean "$LOG" | grep -q 'patch-count u\. cr *1' \
+        || fail "REGRESSION: (patch) in literal mode did not replace the literal 12345 — see $LOG"
+    clean "$LOG" | grep -q '( lit ) h# ' \
+        || fail "the decompiler shows no literal in t4 — the trap was never armed, so the negative control below proves nothing (see $LOG)"
+    note "literal mode: (patch) set t4's literal to the value of ' zap"
+    # 2. word mode: EXACTLY the two real call sites, not the literal.
+    clean "$LOG" | grep -q 'patch: 2 occurrence(s) replaced' \
+        || fail "REGRESSION: patch did not replace exactly 2 call sites. 3 means it clobbered the literal holding ' zap's bit pattern — /body-item is no longer stepping over inline data (see $LOG)"
+    note "word mode: exactly 2 call sites rewritten, the identical-looking literal untouched"
+    # 3. and it is real execution, not just a prettier decompile.
+    clean "$LOG" | awk '/patch: 2 occurrence/{f=1} f' | grep -q 'ZIP' \
+        || fail "the patched word still does not run the replacement — see $LOG"
+    clean "$LOG" | awk '/patch: 2 occurrence/{f=1} f' | grep -q 'ZAP' \
+        && fail "REGRESSION: the patched word still executes the ORIGINAL word — see $LOG"
+    note "the patched word executes the replacement and never the original"
+    pass "patch ($TRACK): 7.5.3.3 implemented over the dictionary, and it steps over inline data instead of scanning memory"
+}
+
+# ── the payoff: the power-on autoboot traces itself ──────────────────────────
+smoke_autotrace() {
+    AT="$WORKDIR/autotrace.min.fth"
+    [ -f "$AT" ] || skip "no $AT — run ./stage-dsl.sh"
+    # Send NOTHING before the prompt: the autoboot is the entire point, and the
+    # first step only waits.
+    boot_and_drive autotrace -prom-env "use-nvramrc?=true" -prom-env "nvramrc=$(cat "$AT")" -- \
+        --expect "0 >" \
+        --send 'trace-sites u. cr\r' --expect "0 >" \
+        || fail "the driver did not complete — see $LOG"
+    clean "$LOG" | grep -q '#T tracing ON, 2 call site(s) rewritten' \
+        || fail "the tracers were not armed from NVRAM — see $LOG"
+    # Armed BEFORE the firmware probed anything, which is what makes the
+    # autoboot traceable at all.
+    clean "$LOG" | awk '/#T tracing ON/{seen=1} /Welcome to OpenBIOS/{exit seen?0:1}' \
+        || fail "REGRESSION: the tracers were armed AFTER the banner — no longer in nvramrc's pre-probe window (see $LOG)"
+    note "patch + tracers arrived from NVRAM and rewrote 2 call sites before probe-all"
+    # The proof: #T lines between the banner and the FIRST prompt — i.e. during
+    # the power-on autoboot, with nothing typed.
+    clean "$LOG" | awk '/Welcome to OpenBIOS/{f=1} /^0 >/{exit} f' | grep -q '#T load-begin' \
+        || fail "REGRESSION: the POWER-ON autoboot was not traced (no #T load-begin before the first prompt) — see $LOG"
+    clean "$LOG" | awk '/Welcome to OpenBIOS/{f=1} /^0 >/{exit} f' | grep -q '#T open' \
+        || fail "REGRESSION: the autoboot's device open was not traced (no #T open before the first prompt) — see $LOG"
+    note "the power-on autoboot traced itself — nothing typed, no hook in the firmware"
+    pass "autotrace ($TRACK): tracers built on our own patch, delivered by NVRAM, catch the autoboot on a firmware that ships no tracepoints"
+}
+
 case "$MODE" in
+    patch)     smoke_patch ;;
+    autotrace) smoke_autotrace ;;
     nvramrc) smoke_nvramrc ;;
     ladder)  smoke_ladder ;;
     media)   smoke_media ;;
@@ -220,7 +295,7 @@ case "$MODE" in
     console) smoke_console ;;
     all)
         rc=0
-        for m in nvramrc ladder media persist console; do
+        for m in nvramrc ladder media patch autotrace persist console; do
             printf '\n=== %s (%s) ===\n' "$m" "$TRACK"
             bash "$0" "$m" "$TRACK"; r=$?
             [ $r -eq 1 ] && rc=1
@@ -228,5 +303,5 @@ case "$MODE" in
         printf '\n'
         [ $rc -eq 0 ] && echo "PASS: every claim verified ($TRACK)" || echo "FAIL: at least one claim failed ($TRACK)"
         exit $rc ;;
-    *) fail "usage: $0 [nvramrc|ladder|media|persist|console|all] [sparc32|ppc]" ;;
+    *) fail "usage: $0 [nvramrc|ladder|media|patch|autotrace|persist|console|all] [sparc32|ppc]" ;;
 esac
