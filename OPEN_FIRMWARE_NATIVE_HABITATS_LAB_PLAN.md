@@ -1,4 +1,9 @@
-# SPARC / OpenBoot Lab — Design Plan v1
+# Open Firmware's Native Habitats — Design Plan v2
+
+> **v2 (2026-07-26): merged.** This was the SPARC/OpenBoot plan. A spike 0 on
+> **PowerPC** then showed it is mechanically near-identical to SPARC, so the two
+> are **one lab with two tracks** — Sun and Apple — rather than two labs.
+> `PPC_OPENFIRMWARE_LAB_PLAN.md` is folded in here and removed.
 
 > **Status**: Draft v1 — proposed 2026-07-26, immediately after
 > [`examples/open-firmware-debugs-itself/`](examples/open-firmware-debugs-itself/README.md)
@@ -7,6 +12,10 @@
 > production for two decades.
 >
 > **Decisions locked (this session):**
+> - **TWO TRACKS, ONE LAB: Sun SPARC + Apple PowerPC.** Both are places Open
+>   Firmware actually shipped, both spiked green, and both share a mechanism
+>   (see [§2c](#2c-why-sparc-and-ppc-are-one-lab-locked)). The comparison between
+>   them is the lab's centrepiece, not an appendix.
 > - **This is its OWN LAB — a sibling, not a track inside an existing one.** It
 >   gets its own `examples/` directory, README, smokes and catalog entries. See
 >   [§2b](#2b-why-its-own-lab-locked) for why, which spike 0 has since reinforced.
@@ -17,10 +26,10 @@
 > - **The lab is OpenBIOS-on-SPARC, and says so plainly.** Sun's OpenBoot is
 >   proprietary and cannot be built or shipped; see the naming trap below.
 >
-> **✅ SPIKE 0 IS GREEN** (run 2026-07-26 — see [§5](#5-spike-0--result-green)).
-> The emulator is installed and all four gate questions are answered. **NVRAM is
-> writable**, which is the result that matters: thesis **A** is now evidence-backed
-> and the x86 lab's two open limitations become demonstrable here.
+> **✅ SPIKE 0 IS GREEN ON BOTH TRACKS** (2026-07-26 — SPARC [§5](#5-spike-0--result-green),
+> PPC [§5c](#5c-spike-0-ppc--result-green)). **NVRAM is writable on both**, which is
+> the result that matters: the x86 lab's two open limitations become demonstrable
+> here, on either track.
 
 ## 1. Why — and why now
 
@@ -33,9 +42,10 @@ The family currently has three labs, all on x86/ppc:
 | [`openbios-clib-hello-to-emacs/`](examples/openbios-clib-hello-to-emacs/README.md) | **client programs** — C binaries calling the firmware back |
 | [`open-firmware-debugs-itself/`](examples/open-firmware-debugs-itself/README.md) | a **Forth DSL** for boot forensics, memory, and FCode reverse engineering |
 
-All four run Open Firmware somewhere it was a curiosity. **SPARC is the native
-habitat** — `ok` prompts on Sun hardware were how a generation of people first
-met firmware that answers back. Device paths look like the real thing, `boot
+All four run Open Firmware somewhere it was a curiosity. **This lab goes where it
+shipped** — two places, in fact. **Sun** put an `ok` prompt on every SPARC box for
+two decades, and **Apple** shipped Open Firmware on every PowerMac from 1994 to
+the Intel transition, reachable by holding **Cmd-Opt-O-F** at the chime. Device paths look like the real thing, `boot
 disk:a` / `boot net` mean what the manuals say, and FCode option ROMs on SBus and
 PCI cards were a shipping product, not a lab exercise.
 
@@ -48,6 +58,10 @@ The family already teaches **OFW ≠ OpenBIOS**. This adds **OpenBIOS ≠ OpenBo
   only as ROM images off real machines. This lab does not use it.
 - **OpenBIOS** — the independent open reimplementation of the same standard, and
   **what `qemu-system-sparc` boots**. This is what the lab builds and drives.
+- **Apple's Open Firmware** — the ROM in a real PowerMac. Also proprietary, also
+  unobtainable. The PPC track runs OpenBIOS on Apple-modelled machines
+  (`g3beige`, `mac99`), which reproduces Apple's *device tree and boot policy*
+  without being Apple's code.
 - **OFW** — Bradley's original. **Has no SPARC support at all**: its `cpu/` tree
   is `arm i8051 mips ppc x86`. So this cannot be a port of the debugs-itself
   lab's firmware; it is a port of its *vocabularies*.
@@ -57,7 +71,8 @@ to the one on a Sun box, and *not* Sun's code.
 
 ## 2b. Why its own lab (LOCKED)
 
-**A fifth sibling in `examples/`, not a third flavor bolted onto
+**A fifth sibling in `examples/` — now covering two architectures — not a third
+flavor bolted onto
 [`open-firmware-debugs-itself/`](examples/open-firmware-debugs-itself/README.md).**
 
 The family grows by siblings and always has: the OFW lab spawned the rival lab,
@@ -92,15 +107,49 @@ PRs.
 - **Cross-links both ways**, the way this family always does: the debugs-itself
   README gains a "the same DSL, on the architecture where it shipped →" pointer,
   and this lab's README credits the vocabularies' origin and links back.
-- **Name candidate:** `openbios-sparc-native-habitat` (alternatives:
-  `openbios-where-it-shipped`, `sparc-the-native-habitat`) — settle at assembly,
-  exactly as `open-firmware-debugs-itself` was.
+- **Name candidate:** `openbios-the-native-habitats` (alternatives:
+  `openbios-where-it-shipped`, `open-firmware-native-habitats`) — plural, because
+  it is two tracks now. Settle at assembly, exactly as
+  `open-firmware-debugs-itself` was.
 
 What it explicitly does **not** mean: no forking of the sibling's scripts for the
 sake of it. Anything genuinely general — the smoke shape, the `--echo-gate`
 doctrine, `check-oracle.sh`'s inside-vs-outside pattern — gets *reused* or, if it
 proves reusable a third time, promoted to `tools/` the way
 [`drive-pty-repl.py`](tools/drive-pty-repl.py) was.
+
+## 2c. Why SPARC and PPC are one lab (LOCKED)
+
+§2b argues this lab is not a *flavor of the x86 one*, because every axis differs.
+Applying that same test to **SPARC vs PPC** gives the opposite answer, so they
+belong together:
+
+| | SPARC (sun4m) | PPC (g3beige) |
+|---|---|---|
+| firmware | OpenBIOS 1.1 **stock blob** | OpenBIOS 1.1 **stock blob** |
+| console | **pty only** | **pty only** |
+| prompt / base | `0 >` / hex | `0 >` / hex |
+| NVRAM `setenv` | **works** | **works** |
+| `boot-device` | **a list** | **a list** |
+| bus | SBus (no PCI) | PCI + mac-io |
+| idiom | Sun | Apple |
+
+They differ in **topology and idiom**, not in **mechanism**. Everything the
+harness cares about — how you drive the console, what the prompt looks like,
+whether NVRAM works — is identical. One harness, one set of adapted vocabularies,
+a `--track` argument, exactly the shape `smoke-dsl.sh` already uses for flavors.
+
+**And the comparison is the payoff.** The same `why-no-boot` question has three
+shapes across the family, and all three defaults are **lists** — precisely the
+structure that word walks:
+
+| | `boot-device` default | device idiom |
+|---|---|---|
+| **x86** (the sibling lab) | `disk net` | `/pci/pci-ide@1,1/ide@1/cdrom@0` |
+| **SPARC** | `disk:a disk` | SBus; `/iommu/sbus/…` |
+| **PPC** | `hd:,\\:tbxi hd:,\ppc\bootinfo.txt hd:,%BOOT` | `/pci@80000000/mac-io@10/…`, ADB, CUDA, ESCC |
+
+Splitting that across two labs would bury the best thing the evidence supports.
 
 ## 3. Verified feasibility (checked 2026-07-26, before writing this)
 
@@ -164,7 +213,7 @@ Lead with the Sun-era operator experience: OBP diagnostics (`test-all`,
 *Richest historically, but depends on OpenBIOS implementing those OBP extensions
 — entirely unverified, and the most likely to disappoint.*
 
-## 5. Spike 0 — RESULT: **GREEN**
+## 5. Spike 0 (SPARC) — RESULT: **GREEN**
 
 Run 2026-07-26 against the **stock** QEMU blob (`/usr/share/qemu/openbios-sparc32`,
 OpenBIOS v1.1 built Apr 22 2026) — no firmware build required. First contact:
@@ -252,13 +301,68 @@ an OpenBIOS blob), answering four questions:
 **Gate:** the answers pick the thesis and scope. A clean negative on NVRAM would
 retire thesis A and is itself worth writing down.
 
+## 5c. Spike 0 (PPC) — RESULT: **GREEN**
+
+Stock blob (`/usr/share/qemu/openbios-ppc`, OpenBIOS 1.1 built Apr 22 2026),
+default machine **g3beige** (Heathrow PowerMac, PowerPC,750). No build required.
+The boot sequence announces the lineage by itself:
+
+```text
+>> CPU type PowerPC,750
+Trying hd:,\\:tbxi...              ← Apple's BLESSED system file (HFS+ type 'tbxi')
+Trying hd:,\ppc\bootinfo.txt...    ← the CHRP boot script
+Trying hd:,%BOOT...
+0 >
+```
+
+**NVRAM — writable**, same as SPARC:
+
+```text
+0 > printenv boot-device
+boot-device   "hd:,\\:tbxi hd:,\ppc\bootinfo.txt hd:,%BOOT"
+0 > setenv boot-device hd:,\\:tbxi  ok
+boot-device   "hd:,\\:tbxi"                                    ← it STUCK
+0 > setenv use-nvramrc? true  ok
+```
+
+The reason is visible in the tree: **NVRAM is a real device node** —
+`nvram → /pci@80000000/mac-io@10/nvram@60000`.
+
+**Device pathing — authentically Apple.** `dev / ls` gives a CHRP tree
+(`pci@80000000`, `rom@ff800000`, `memory@0`); `/aliases` is PowerMac hardware:
+
+| alias | path |
+|---|---|
+| `via-cuda` | `/pci@80000000/mac-io@10/via-cuda` — the CUDA power/ADB controller |
+| `adb-keyboard` · `adb-mouse` | `…/via-cuda/adb/…` — **Apple Desktop Bus** |
+| `nvram` | `/pci@80000000/mac-io@10/nvram@60000` |
+| `ttya` · `scca` | `/pci@80000000/mac-io@10/escc/ch-a` — the Zilog **ESCC** |
+| `cd` · `cdrom` · `ide0` | `/pci@80000000/mac-io@10/ata-3@21000/cdrom@0` |
+| `mac-io` | `/pci@80000000/mac-io@10` — the Heathrow ASIC |
+
+**PCI exists here**, unlike sparc32's SBus — so `ofscope`'s `pci-map` has a real
+target on this track that the SPARC track cannot give it.
+
+Console **pty only**, prompt **`0 >`**, base **hex** — identical to SPARC.
+`' see .` and `' nvramrc .` both resolve. Curiosity for later: the firmware
+prints **`milliseconds isn't unique.`** during startup — a redefinition warning
+from its own boot.
+
+⚠️ **Thesis-overlap constraint for this track.** Two labs already use ppc — the
+[rival lab](examples/openbios-the-rival-that-shipped/README.md) as a **build**
+story (it compiles `openbios-ppc` and proves the running blob is *ours*) and the
+[clients lab](examples/openbios-clib-hello-to-emacs/README.md) as a
+**client-interface** story. This track must stay a **device-tree, NVRAM and
+boot-policy** story, or it has no reason to exist. `mac99` (New World) is
+**unprobed**; only `g3beige` has been driven.
+
 ## 6. What ports, and what does not
 
 | from the debugs-itself lab | portability |
 |---|---|
 | `ofdiag` diagnosis ladder | **likely** — `expand-alias`/`find-package`/`open-dev` are standard 1275. Verify the flag conventions; OFW's `expand-alias` flag means "an alias *was* expanded", not "success" |
 | `ofdiag` tracers | **unknown** — depends on OpenBIOS declaring equivalent `defer` hooks. OFW's `?show-device`/`load-started` are its own |
-| `ofscope` `pci-map` | **sparc64 only** — sun4m is **SBus**; `config-l@` has no meaning there |
+| `ofscope` `pci-map` | **PPC track yes** (`pci@80000000`); SPARC track **sparc64 only** — sun4m is **SBus**, where `config-l@` has no meaning |
 | `ofscope` `mem-map`/`region-diff` | **likely** — `/memory` + `dump`/`c@` are standard |
 | `nopage.fth` | **needs rework** — `lines/page` is an OFW internal; find OpenBIOS's equivalent |
 | the smoke harness shape | **fully** — one verdict, EXIT-trap net, `--echo-gate` discipline |
