@@ -132,8 +132,11 @@ Not claimed:
 - **`map?` is not recovered.** It needs the assembler *and* a `${BP}` dep, and it
   walks page tables that don't exist in the physical-mode boot this lab uses.
   Declined on purpose, not overlooked.
-- A **full autoboot trace** (as opposed to tracing an interactive `load`) is
-  still unproven; the hooks are the same ones `boot` uses.
+- **The power-on autoboot is still untraced.** `trace-boot` is now verified on a
+  real `boot` — it trips both `?show-device` sites, the boot-device list walk and
+  the call just before `open-dev` — but the tracers have to be `fload`ed first, so
+  the autoboot that runs *before* you reach the prompt cannot be caught without
+  baking them into the ROM or shipping them as a dropin.
 
 Blow-by-blow spike results, with transcripts and the wrong turns, are in
 [PLAN.md](PLAN.md). Exact commands and success signatures:

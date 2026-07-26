@@ -112,6 +112,11 @@ honest fix and the working one.)
 ```
 ok trace-boot
 OFDIAG: tracing ON
+ok boot
+#T open disk                       ← the boot-device LIST being walked
+Boot device: /pci/ethernet  Arguments:
+#T open /pci/ethernet              ← the device about to be opened
+Can't open boot device
 ok load /pci/pci-ide@1,1/ide@1/cdrom@0:\ofdiag.fth
 #T open /pci/pci-ide@1,1/ide@1/cdrom@0:\ofdiag.fth
 #T load-begin
@@ -119,6 +124,11 @@ ok load /pci/pci-ide@1,1/ide@1/cdrom@0:\ofdiag.fth
 ok untrace
 OFDIAG: tracing OFF
 ```
+
+Read the `boot` trace again: the firmware tries `disk`, says nothing about it,
+and moves on to `/pci/ethernet`. The failed entry is **silently discarded** — the
+tracer is what makes that visible, and `why-no-boot` from §2 is what tells you
+*why* it failed.
 
 No call-site patching was needed, because **the firmware ships its own
 tracepoints**: `bootparm.fth` declares `defer ?show-device ( adr len -- adr len )`,
