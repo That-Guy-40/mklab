@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# smoke-dsl.sh [ofdiag|ofscope|fcode|all] [emu|coreboot] — one verdict per vocabulary.
+# smoke-dsl.sh [ofdiag|ofscope|fcode|dropin|autotrace|all] [emu|coreboot]
+#   — one verdict per vocabulary. `dropin`/`autotrace` need ./build-dropin-rom.sh.
 #
 # Every check runs headless over the serial socket. Exit: 0 PASS / 1 FAIL / 77 SKIP.
 #
@@ -57,7 +58,7 @@ case "$FLAVOR" in
       PREFIX=( --send ': my-dma h# 1000 mem-claim ;\r' --expect "ok"
                --send "' my-dma to allocate-dma\r"     --expect "ok" )
       ;;
-  *)  fail "usage: $0 [ofdiag|ofscope|fcode|all] [emu|coreboot]" ;;
+  *)  fail "usage: $0 [ofdiag|ofscope|fcode|dropin|autotrace|all] [emu|coreboot]" ;;
 esac
 
 command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
@@ -168,13 +169,50 @@ smoke_fcode() {
     pass "fcode ($FLAVOR): a PCI card's bytecode driver ran on the bare machine and named its own node"
 }
 
+# ── the in-ROM variants (./build-dropin-rom.sh) ──────────────────────────────
+# These boot a ROM that CARRIES the vocabulary, so they attach NO media at all.
+smoke_dropin() {
+    ROM="$WORKDIR/ofdiag-emuofw.rom"; MEDIA_ARGS=""; PREFIX=()
+    [ -f "$ROM" ] || skip "no $ROM — run ./build-dropin-rom.sh"
+    boot_and_drive smoke-dropin "" \
+        --send 'no-page\r' --expect "ok" \
+        --send 'dir /dropin-fs:\\\r' --expect "ok" \
+        --send 'fload /dropin-fs:\\ofdiag.fth\r' --expect "ofdiag loaded" \
+        --send 'why-no-boot\r' --expect "ok"
+    grep -q 'ofdiag.fth' "$LOG" || fail "the ROM's /dropin-fs does not carry ofdiag.fth — see $LOG"
+    grep -q 'ofscope.fth' "$LOG" || fail "the ROM's /dropin-fs does not carry ofscope.fth — see $LOG"
+    note "the vocabularies are inside the ROM, listed by /dropin-fs"
+    grep -q 'OFDIAG-' "$LOG" || fail "the in-ROM vocabulary loaded but produced no diagnosis — see $LOG"
+    note "loaded and ran with NO cdrom, NO floppy, NO staged media"
+    pass "dropin: the DSL ships inside the ROM and loads with no media at all"
+}
+
+smoke_autotrace() {
+    ROM="$WORKDIR/autotrace-emuofw.rom"; MEDIA_ARGS=""; PREFIX=()
+    [ -f "$ROM" ] || skip "no $ROM — run ./build-dropin-rom.sh --boot-hook"
+    # Send NOTHING before the prompt: any keypress cancels the autoboot countdown,
+    # and the autoboot is the entire point. boot_and_drive's first step only waits.
+    boot_and_drive smoke-autotrace ""
+    grep -q '#T autotrace armed' "$LOG" \
+        || fail "the boot- dropin never ran — no arming line before the countdown (see $LOG)"
+    # The proof: #T lines BEFORE the first prompt, i.e. during the power-on
+    # autoboot, with nothing typed and no media present.
+    awk '/#T autotrace armed/{f=1} /^ok/{exit} f' "$LOG" | grep -q '#T open' \
+        || fail "REGRESSION: the autoboot itself was NOT traced (no #T open before the first prompt) — see $LOG"
+    note "the boot- dropin armed the tracers before do-auto-boot"
+    note "the POWER-ON autoboot traced itself — nothing typed, no media"
+    pass "autotrace: the autoboot traces itself from a boot- dropin inside the ROM"
+}
+
 case "$MODE" in
+    dropin)    smoke_dropin ;;
+    autotrace) smoke_autotrace ;;
     ofdiag)  smoke_ofdiag ;;
     ofscope) smoke_ofscope ;;
     fcode)   smoke_fcode ;;
     all)
         rc=0
-        for m in ofdiag ofscope fcode; do
+        for m in ofdiag ofscope fcode dropin autotrace; do
             printf '\n=== %s (%s) ===\n' "$m" "$FLAVOR"
             bash "$0" "$m" "$FLAVOR"; r=$?
             [ $r -eq 1 ] && rc=1
@@ -182,5 +220,5 @@ case "$MODE" in
         printf '\n'
         [ $rc -eq 0 ] && echo "PASS: all vocabularies verified ($FLAVOR)" || echo "FAIL: at least one vocabulary failed ($FLAVOR)"
         exit $rc ;;
-    *) fail "usage: $0 [ofdiag|ofscope|fcode|all] [emu|coreboot]" ;;
+    *) fail "usage: $0 [ofdiag|ofscope|fcode|dropin|autotrace|all] [emu|coreboot]" ;;
 esac

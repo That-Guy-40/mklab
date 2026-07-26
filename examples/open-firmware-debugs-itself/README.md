@@ -67,6 +67,8 @@ $ ./smoke-dsl.sh all coreboot               # ...and again on the coreboot paylo
 $ ./showcase-diagnose-a-broken-boot.sh      # diagnose → repair live → verify
 $ ./run-ofw-debug.sh [emu|coreboot]         # interactive ok prompt (Ctrl-A X quits)
 $ ./build-fcode-rom.sh && ./run-ofw-debug.sh --card    # plug in the FCode card
+$ ./build-dropin-rom.sh --boot-hook         # a ROM that CARRIES the DSL (~2 min)
+$ ./smoke-dsl.sh autotrace                  # the autoboot traces itself
 ```
 
 Prereqs: `qemu-system-x86_64`, `python3`, `genisoimage` (+ `mkfs.vfat`/`mcopy`
@@ -155,11 +157,71 @@ OFDIAG path:   /isa/fdc/disk@0:\vmlinuz
 OFDIAG-2: no such node in the device tree
 ```
 
+## The DSL inside the ROM
+
+Staged media is convenient but it is not where firmware code belongs. OFW keeps a
+small read-only filesystem *in the ROM* and exposes it as `/dropin-fs` — which is
+how the stock image already ships `memtest.fth`, a Forth source file, and
+`probe-`, a startup hook. [`./build-dropin-rom.sh`](build-dropin-rom.sh) puts the
+lab's vocabularies there too:
+
+```console
+$ ./build-dropin-rom.sh                     # vocabularies as named dropins
+$ ./smoke-dsl.sh dropin
+PASS: dropin: the DSL ships inside the ROM and loads with no media at all
+```
+
+```
+ok dir /dropin-fs:\
+----r--r--r--      4959  ...  ofdiag.fth
+----r--r--r--      3750  ...  ofscope.fth
+ok fload /dropin-fs:\ofdiag.fth
+ofdiag loaded: diag-open why-no-boot trace-boot untrace
+```
+
+No CD, no floppy, nothing staged. On the coreboot flavor this also sidesteps the
+`allocate-dma` bootstrap entirely, because `/dropin-fs` is not a disk and needs no
+`deblocker`.
+
+### …and the autoboot tracing itself
+
+`--boot-hook` additionally ships [`dsl/autotrace.fth`](dsl/autotrace.fth) as the
+**`boot-`** dropin, which `ofw/core/bootparm.fth` executes immediately before
+`do-auto-boot`. That closes the one thing `fload` can never reach: by the time you
+have a prompt, the machine has already tried to boot.
+
+```console
+$ ./build-dropin-rom.sh --boot-hook
+$ ./smoke-dsl.sh autotrace
+PASS: autotrace: the autoboot traces itself from a boot- dropin inside the ROM
+```
+
+Nothing typed, no media attached:
+
+```
+Install console
+#T autotrace armed (boot- dropin)          ← the boot- hook fires
+Type any key to interrupt automatic startup
+6 5 4 3 2 1
+#T open disk                               ← the boot-device list walk
+Boot device: /pci/ethernet  Arguments:
+#T open /pci/ethernet                       ← the open
+Can't open boot device
+```
+
+**The build never touches the sister lab's ROM.** It clones its own tree, writes
+its own output, and sha-guards `emuofw.rom` before and after — a shared, verified
+artifact changing underneath another lab is precisely the sort of silent
+regression this repo has been bitten by. The design note, including why NVRAM
+(the canonical answer) is dead on this build, is
+[FULL-BOOT-TRACING.md](FULL-BOOT-TRACING.md).
+
 ## Honesty about what's verified
 
 Everything in Quick start is **verified end-to-end on this host** (Ubuntu 24.04,
-QEMU 8.2.2, KVM): three smoke verdicts plus the showcase, all headless, all
-driven over serial with [`tools/drive-serial-repl.py`](../../tools/drive-serial-repl.py).
+QEMU 8.2.2, KVM): **eight smoke verdicts** — three vocabularies × two flavors,
+plus `dropin` and `autotrace` — and the showcase, all headless, all driven over
+serial with [`tools/drive-serial-repl.py`](../../tools/drive-serial-repl.py).
 
 Not claimed:
 
@@ -170,15 +232,10 @@ Not claimed:
 - **`map?` is not recovered.** It needs the assembler *and* a `${BP}` dep, and it
   walks page tables that don't exist in the physical-mode boot this lab uses.
   Declined on purpose, not overlooked.
-- **The power-on autoboot is still untraced.** `trace-boot` is verified on a real
-  `boot` — it trips both `?show-device` sites, the boot-device list walk and the
-  call just before `open-dev` — but the tracers have to be `fload`ed first, so the
-  autoboot that runs *before* you reach the prompt cannot be caught.
-  [FULL-BOOT-TRACING.md](FULL-BOOT-TRACING.md) is the researched way out: OFW has
-  a `boot-` **dropin** hook that fires immediately before `do-auto-boot`, and this
-  ROM already ships both a startup-hook dropin (`probe-`) and a Forth-source
-  dropin (`memtest.fth`), so the mechanism is proven live. NVRAM — the canonical
-  answer — is **dead on this build**. Designed, not built.
+- **A warm reboot is not traced.** `auto-boot`'s `reboot?` branch takes an early
+  `exit` *before* reaching `" boot-" do-drop-in`, so the `boot-` hook covers the
+  cold autoboot only. Straight from the source, and stated in
+  [`dsl/autotrace.fth`](dsl/autotrace.fth) where someone will actually hit it.
 
 Blow-by-blow spike results, with transcripts and the wrong turns, are in
 [PLAN.md](PLAN.md). Exact commands and success signatures:

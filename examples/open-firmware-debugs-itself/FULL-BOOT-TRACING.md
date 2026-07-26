@@ -4,8 +4,11 @@
 **cannot** catch is the **power-on autoboot**, because the tracers have to be
 `fload`ed first and that happens after the machine has already tried to boot.
 
-This note is the research into closing that, honestly separated into **what was
-verified on this host** and **what is designed but unbuilt**.
+> **RESOLVED.** This started as a research note; both options are now **built and
+> verified** by [`./build-dropin-rom.sh`](build-dropin-rom.sh), with
+> `smoke-dsl.sh dropin` and `smoke-dsl.sh autotrace` as the verdicts. The
+> reasoning below is kept because *why* the other two routes lose is the useful
+> part.
 
 ## The startup sequence, and where a hook could go
 
@@ -58,7 +61,7 @@ flaw in the approach; a missing peripheral in this firmware build.** On real
 OFW hardware (Sun, OLPC, PowerPC Macs) this is the correct answer and needs no
 rebuild at all. Worth teaching for that reason, then discarding here.
 
-## Option B — a **dropin** · recommended (mechanism verified, integration unbuilt)
+## Option B — a **dropin** · CHOSEN, BUILT, VERIFIED
 
 OFW keeps a small read-only filesystem *inside the ROM* and exposes it as
 `/dropin-fs`. It is real and browsable on the ROM we already have:
@@ -131,7 +134,45 @@ reports as 22-of-23. A lab whose audit is one of its teaching artifacts should
 not quietly move the baseline it audits. B1 gets the same media-free convenience
 without touching the dictionary.
 
-## Recommendation
+## Outcome
+
+```console
+$ ./build-dropin-rom.sh --boot-hook
+==> dropin manifest now carries:
+    76:   " ${BP}/labdsl/ofdiag.fth"    " ofdiag.fth"  $add-deflated-dropin
+    77:   " ${BP}/labdsl/ofscope.fth"   " ofscope.fth" $add-deflated-dropin
+    79:   " ${BP}/labdsl/autotrace.fth" " boot-"       $add-deflated-dropin
+==> /home/…/autotrace-emuofw.rom
+==> guard OK: the sister lab's emuofw.rom is untouched
+```
+
+and, with nothing typed and no media attached:
+
+```
+Install console
+#T autotrace armed (boot- dropin)
+Type any key to interrupt automatic startup
+6 5 4 3 2 1
+#T open disk
+Boot device: /pci/ethernet  Arguments:
+#T open /pci/ethernet
+Can't open boot device
+```
+
+Two things confirmed only by building it:
+
+- **`execute-buffer` sniffs the first byte** (`0xf0-0xf3`/`0xfd` = FCode) and
+  otherwise evaluates the buffer as **Forth text** — so a `.fth` source dropin is
+  a first-class startup hook, which is why the flavor's own `probe-` hook can be
+  `builton.fth`.
+- **A warm reboot is not traced.** `auto-boot`'s `reboot?` branch takes an early
+  `exit` *before* `" boot-" do-drop-in`, so the hook covers the **cold** autoboot
+  only. Noted in `dsl/autotrace.fth` where it will actually be read.
+
+The isolation turned out to be the whole job, exactly as predicted: a separate
+tree clone, its own output ROM, and a sha-guard on the sister lab's artifact.
+
+## Recommendation (as originally reasoned)
 
 | | verdict | cost |
 |---|---|---|
@@ -153,6 +194,6 @@ ROM; `" boot-" do-drop-in` sits immediately before `do-auto-boot` in
 `bootparm.fth:345`; the build-time idiom is `$add-deflated-dropin` in the
 flavor's `.bth`.
 
-**Designed, not built:** the actual `ofdiag.fth`/`boot-` dropins, the rebuild, and
-the isolated-output scheme for B2. Nothing here should be read as "autoboot
-tracing works" — it doesn't yet. The README's gap list still says so.
+**Since built and verified:** both dropin variants, the isolated build, and the
+sha-guard. `smoke-dsl.sh dropin` and `smoke-dsl.sh autotrace` are the standing
+proofs. The remaining honest limit is the warm-reboot path above.
