@@ -553,11 +553,38 @@ driver owes the firmware.
 Also reconfirmed independently: `dev=4 rom=10020000`, matching spike 1's BAR
 address exactly.
 
-### Still open for vocabulary B
+### Vocabulary B completed — and `mem-map` found a firmware bug on its first run
 
-`mem-map` (available/reg regions vs. the `-m` size) and `region-diff` (snapshot →
-act → diff) are **not yet built**. `map?`/`.pages` remains the documented
-negative from spike 0c.
+`region-diff` verified with **both** controls: snapshot → do nothing → diff
+reports `total-diffs=0`; snapshot → `load` a file → diff reports `total-diffs=400`
+with the changed bytes reading `5c 20 6f 66 73 63 6f 70` = `\ ofscope` — the
+loaded file's own first line, visible in RAM. This is the forensic primitive the
+parent lab needed *by hand* in POC-2 to prove an initrd was intact.
+
+`mem-map` decodes `/memory@0`'s `available` property — and it does not agree with
+the machine:
+
+| `-m` | region start | size | region ends | RAM ends | overshoot |
+|---|---|---|---|---|---|
+| 128 | `0x2000000` | `0x8000000` | `0xa000000` | `0x8000000` | **32 MB** |
+| 256 | `0x2000000` | `0x10000000` | `0x12000000` | `0x10000000` | **32 MB** |
+| 512 | `0x2000000` | `0x20000000` | `0x22000000` | `0x20000000` | **32 MB** |
+
+The big region starts at 32 MB but its size is the **full installed RAM** rather
+than `installed - start`, so `available` always claims exactly 32 MB past the end
+of physical memory. Systematic, reproducible at every size, and precisely the
+class of era-gap the parent lab fought with `memmap=1023M@1M` in POC-2.
+
+### Spike 1's root cause, properly named
+
+Combining spike 1 and spike 3 data: the ROM BAR sat at `0x10020000` at `-m 512`
+**and** at `-m 256`, with other BARs at `0x11020000`/`0x11040000` in both. So
+OFW's PCI memory window is **anchored at ~`0x10000000` (256 MB) regardless of
+installed RAM**. The rule is not the vague "guest RAM size matters" — it is a
+**hardcoded 256 MB window that only clears DRAM when `-m` <= 256**. That is the
+sentence the lab should teach, and vocabulary B is what produced it.
+
+`map?`/`.pages` remains the documented negative from spike 0c.
 
 ## Artifacts proven so far — [`spikes/`](spikes/)
 

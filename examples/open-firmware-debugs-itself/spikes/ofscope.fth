@@ -43,3 +43,64 @@ hex
    loop
    ." #P end" cr
 ;
+
+\ ────────────────────────────────────────────────────────────────────────────
+\ mem-map — the memory regions the firmware believes it has.
+\ /memory@0's "available" property is a list of (start,size) pairs. Cross-check
+\ the total against QEMU's -m from outside: the firmware's own arithmetic is not
+\ evidence about the machine, it is a claim about the machine.
+\ NB: OFW's get-package-property returns TRUE on FAILURE (error-flag convention).
+
+0 value memtotal
+
+: mem-map  ( -- )
+   0 to memtotal
+   ." #M begin" cr
+   " /memory@0" find-package  0=  if
+      ." #M no /memory@0 node" cr  exit
+   then                                       ( phandle )
+   " available" rot get-package-property  if
+      ." #M no available property" cr  exit
+   then                                       ( data$ )
+   begin  dup  while                          ( data$ )
+      decode-int  >r                          ( data$'   r: start )
+      decode-int                              ( data$'' size )
+      ." #M region start=" r> u.  ." size=" dup u.  cr
+      memtotal + to memtotal                  ( data$'' )
+   repeat
+   2drop
+   ." #M total=" memtotal u. cr
+   ." #M end" cr
+;
+
+\ ────────────────────────────────────────────────────────────────────────────
+\ region-diff — snapshot RAM, do a thing, show only what moved.
+\ The forensic primitive the parent lab needed by hand in POC-2 when it had to
+\ prove an initrd was intact and the corruption happened later.
+
+0 value snapadr
+0 value snaplen
+0 value snapbuf
+
+: region-snap  ( adr len -- )
+   to snaplen  to snapadr
+   snaplen alloc-mem to snapbuf
+   snapadr snapbuf snaplen move
+   ." #R snapped " snaplen u. ." bytes at " snapadr u. cr
+;
+
+: region-diff  ( -- )
+   snapbuf 0=  if  ." #R no snapshot taken" cr  exit  then
+   0                                          ( ndiff )
+   snaplen 0  do
+      snapadr i + c@   snapbuf i + c@   <>  if
+         1+
+         dup 9 <  if                          \ cap the listing, keep counting
+            ." #R diff +" i u.
+            ."  was " snapbuf i + c@ u.
+            ."  now " snapadr i + c@ u.  cr
+         then
+      then
+   loop
+   ." #R total-diffs=" u. cr
+;
