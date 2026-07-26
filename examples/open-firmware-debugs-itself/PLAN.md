@@ -1,9 +1,14 @@
 # PLAN — `examples/open-firmware-debugs-itself/`: a Forth DSL for boot forensics, memory, and FCode reverse engineering
 
-> **Status: ASSEMBLED.** Every spike below is GREEN and the lab is built, routed
-> and green in both catalogs. This file is kept as the blow-by-blow record — the
-> spike transcripts, the wrong turns, and the root causes — which is why there
-> are no separate POC-*.md files: the detail lives here.
+> **Status: ASSEMBLED, then extended six times.** Every spike below is GREEN and
+> the lab is built, routed and green in both catalogs. This file is the
+> blow-by-blow record — spike transcripts, wrong turns, root causes — which is why
+> there are no separate POC-*.md files: the detail lives here.
+>
+> ⚠️ **The spike log is not the last word.** Six follow-up PRs closed the gaps the
+> lab shipped with, and overturned three of this plan's own assumptions along the
+> way. Jump to [After assembly](#after-assembly--what-the-plan-did-not-anticipate)
+> before trusting anything below as current.
 >
 > Start at [README.md](README.md); the tour is [RUNBOOK.md](RUNBOOK.md) and the
 > exact commands are [MANUAL_TESTING.md](MANUAL_TESTING.md).

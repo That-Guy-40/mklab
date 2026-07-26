@@ -61,8 +61,9 @@ source for driver bytecode that arrived on a card.
 ## Quick start
 
 ```console
+$ ./build-detok-vocab.sh                    # recover the in-firmware detokenizer
 $ ./stage-dsl.sh                            # put the vocabularies on media (~1 s)
-$ ./smoke-dsl.sh all                        # three verdicts, headless (emu)
+$ ./smoke-dsl.sh all                        # every mode, headless (emu)
 $ ./smoke-dsl.sh all coreboot               # ...and again on the coreboot payload
 $ ./showcase-diagnose-a-broken-boot.sh      # diagnose → repair live → verify
 $ ./run-ofw-debug.sh [emu|coreboot]         # interactive ok prompt (Ctrl-A X quits)
@@ -76,6 +77,27 @@ for the coreboot flavor's FAT16 media). The ROM comes from the sister lab —
 run its `./build-ofw.sh` first. `toke`/`detok` for the FCode track come from
 [`../openbios-the-rival-that-shipped/`](../openbios-the-rival-that-shipped/README.md)'s
 `~/openbios-lab/fcode-utils` (plain `make`). No sudo anywhere.
+
+## What's here
+
+| file | role |
+|---|---|
+| [`dsl/ofdiag.fth`](dsl/ofdiag.fth) | boot forensics — the diagnosis ladder + the tracers |
+| [`dsl/ofscope.fth`](dsl/ofscope.fth) | memory & devices — `pci-map`, `mem-map`, `region-snap`/`region-diff` |
+| [`dsl/fcode-card.fth`](dsl/fcode-card.fth) | the FCode driver that rides a PCI option ROM |
+| [`dsl/autotrace.fth`](dsl/autotrace.fth) | the `banner-` dropin: arms the tracers before the autoboot |
+| [`dsl/nopage.fth`](dsl/nopage.fth) | raises the `lines/page` defer so listings can't hit the pager |
+| `dsl/detok.fth` | **generated** by `build-detok-vocab.sh` (a 5-file splice); gitignored |
+| [`stage-dsl.sh`](stage-dsl.sh) | build the ISO (emu) + FAT16 (coreboot) media; guards 8.3 names |
+| [`build-detok-vocab.sh`](build-detok-vocab.sh) | recover `detokenize` — the dependency-ordered splice |
+| [`build-fcode-rom.sh`](build-fcode-rom.sh) · [`.py`](build-fcode-rom.py) | `toke` the driver, wrap a PCI expansion ROM, validate it host-side |
+| [`build-dropin-rom.sh`](build-dropin-rom.sh) | a ROM that **carries** the DSL; `--boot-hook` adds the autoboot tracer |
+| [`probe-dictionary.sh`](probe-dictionary.sh) | the word audit — and a deliberate lesson in under-reporting |
+| [`smoke-dsl.sh`](smoke-dsl.sh) | one verdict per mode: `stage`/`ofdiag`/`ofscope`/`fcode`/`stepper`/`stepper-deep`/`dropin`/`autotrace` |
+| [`showcase-diagnose-a-broken-boot.sh`](showcase-diagnose-a-broken-boot.sh) | the finale, unattended: diagnose → repair live → verify |
+| [`run-ofw-debug.sh`](run-ofw-debug.sh) | interactive `ok` prompt, either flavor, with a cheat-sheet |
+| [`RUNBOOK.md`](RUNBOOK.md) · [`MANUAL_TESTING.md`](MANUAL_TESTING.md) | the guided tour · exact commands + real signatures |
+| [`PLAN.md`](PLAN.md) · [`FULL-BOOT-TRACING.md`](FULL-BOOT-TRACING.md) | the spike record + what it got wrong · the dropin-vs-NVRAM-vs-ROM design note |
 
 ## The three vocabularies
 
