@@ -30,6 +30,15 @@
 > PPC [§5c](#5c-spike-0-ppc--result-green)). **NVRAM is writable on both**, which is
 > the result that matters: the x86 lab's two open limitations become demonstrable
 > here, on either track.
+>
+> **✅ BUILT — increment 1 has landed** as
+> [`examples/open-firmware-native-habitats/`](examples/open-firmware-native-habitats/README.md)
+> (5 PASS on sparc32, 4 PASS + 1 justified SKIP on ppc). ⚠️ **Building it
+> falsified four of this plan's own claims** — the NVRAM line immediately above
+> among them. Each is corrected in place below and listed together in the lab's
+> [PLAN.md](examples/open-firmware-native-habitats/PLAN.md#assumptions-this-labs-own-plan-got-wrong).
+> Every one came from a check that confirmed a *name* or a *tree entry* rather
+> than a *behaviour*.
 
 ## 1. Why — and why now
 
@@ -129,7 +138,7 @@ belong together:
 | firmware | OpenBIOS 1.1 **stock blob** | OpenBIOS 1.1 **stock blob** |
 | console | **pty only** | **pty only** |
 | prompt / base | `0 >` / hex | `0 >` / hex |
-| NVRAM `setenv` | **works** | **works** |
+| NVRAM `setenv` | ⚠️ **in-session only** — see below | **works, and persists** |
 | `boot-device` | **a list** | **a list** |
 | bus | SBus (no PCI) | PCI + mac-io |
 | idiom | Sun | Apple |
@@ -165,9 +174,24 @@ It is not; there is a whole `forth/debugging/` tree:
 | `.calls` · `patch` · `ctrace` | `forth/util/util.fs` · `debugging/firmware.fs` · `debugging/client.fs` |
 | **`nvramrc`** | **`forth/admin/nvram.fs`** + `forth/system/main.fs` |
 
+> ⚠️ **This table over-reports, and the row above is the one that is wrong.**
+> It was built by grepping the tree. `.calls` and `patch` are **empty stubs** —
+> `: .calls ( xt -- ) ;` at `forth/debugging/firmware.fs:30`, confirmed from the
+> running firmware with `see`. So are `dl`, `$sift`, `sifting`, and all five
+> `nvedit`/`nvstore`/`nvquit`/`nvrecover`/`nvrun` script-editor words. `see`,
+> `words`, `dump`, `debug` and `nvramrc` are real. **Being in
+> `forth/debugging/` and being implemented are different things.**
+
 **NVRAM is implemented for both SPARC targets** (`arch/sparc32/openbios.c`,
 `arch/sparc64/openbios.c`), and `config/scripts/switch-arch` offers
 `sparc sparc32 sparc64`.
+
+> ⚠️ **Also wrong, in the sense that matters.** The *chip* is emulated and the
+> Forth side exists, but on sun4m nothing binds the two: `drivers/obio.c:168`
+> builds a bare `/obio/eeprom` node and never calls `nvram_init()`, so there is
+> no `update-nvram` method to flush a `setenv` with, and the write is lost at
+> reset. Apple gets the binding via `drivers/macio.c`. See the lab's
+> [DELIVERY.md](examples/open-firmware-native-habitats/DELIVERY.md).
 
 **The emulator is packaged but not installed** — `qemu-system-sparc` /
 `qemu-system-sparc64`, candidate `1:8.2.2+ds-0ubuntu1.17`.
@@ -257,8 +281,8 @@ Trying disk:a...
 
 | # | question | answer |
 |---|---|---|
-| 1 | word inventory | **11 of 11 present** — `see` `debug` `words` `dump` `.calls` `patch` `devalias` `find-package` `open-dev` `expand-alias` `nvramrc`; negative control clean (`bogusxyz: undefined word.`) |
-| 2 | **NVRAM writable?** | **YES.** `setenv use-nvramrc? true` → ` ok`, and `printenv` shows it **stuck**. `setenv boot-device disk:a` likewise. |
+| 1 | word inventory | ~~**11 of 11 present**~~ — ⚠️ **over-reported.** The tick probe (`' <word> .`) proves a *name resolves*; `see patch` shows `: patch ;`. `.calls` and `patch` are stubs. The x86 lab found this idiom **under**-reports at a root prompt; here it **over**-reports. Same idiom, opposite failure. |
+| 2 | **NVRAM writable?** | ~~**YES.**~~ ⚠️ **Half right.** `setenv` sticks *within the session* — but `printenv` reads back the in-memory `/options` property, so that is not evidence of non-volatility. Across a **reset**, sun4m loses it entirely; only Apple persists (and only via the `/nvram` package's `update-nvram` **method**). |
 | 3 | console | **pty only.** `-serial unix:` yields **zero bytes** — no output at all, worse than the ppc input-only quirk. Use `-nographic` + [`tools/drive-pty-repl.py`](tools/drive-pty-repl.py). |
 | 4 | prompt / base | prompt is **`0 >`** (stack depth); base is **hex** (`5 6 * .` → `1e`) — the same trap the OFW lab teaches. |
 
@@ -388,8 +412,8 @@ boot-policy** story, or it has no reason to exist. `mac99` (New World) is
 
 | from the debugs-itself lab | portability |
 |---|---|
-| `ofdiag` diagnosis ladder | **likely** — `expand-alias`/`find-package`/`open-dev` are standard 1275. Verify the flag conventions; OFW's `expand-alias` flag means "an alias *was* expanded", not "success" |
-| `ofdiag` tracers | **unknown** — depends on OpenBIOS declaring equivalent `defer` hooks. OFW's `?show-device`/`load-started` are its own |
+| `ofdiag` diagnosis ladder | ✅ **DONE** — contracts are OFW-identical, so no `catch` is needed here either, and the `expand-alias` flag trap ports verbatim. Needed **one new rung**: native `boot-device` entries carry device *arguments*, so alias lookup must split the head off first |
+| `ofdiag` tracers | ❌ **SETTLED: cannot port.** OpenBIOS declares **no `defer` on its boot path** at all — nothing in `$load`, `boot`, or around `open-dev`. There is nothing to re-point. The standard's own answer is `patch` (7.5.3.3), which is a stub, so the honest route is to *implement* it first |
 | `ofscope` `pci-map` | **PPC track yes** (`pci@80000000`); SPARC track **sparc64 only** — sun4m is **SBus**, where `config-l@` has no meaning |
 | `ofscope` `mem-map`/`region-diff` | **likely** — `/memory` + `dump`/`c@` are standard |
 | `nopage.fth` | **needs rework** — `lines/page` is an OFW internal; find OpenBIOS's equivalent |
@@ -409,6 +433,23 @@ boot-policy** story, or it has no reason to exist. `mac99` (New World) is
 - **Scope creep.** The sibling lab grew from three verdicts to eight modes across
   ten PRs. Pick one thesis, ship it, extend deliberately.
 
+## 7b. The risk nobody listed: getting the vocabulary IN
+
+Not anticipated anywhere above, and it became the built lab's spine. **OpenBIOS
+has no `fload`**, and its `dl` (7.5.2 serial download) is an empty stub — so
+before any vocabulary could be tested, the delivery had to be invented. The
+answer is asymmetric in a way that makes the two-track lab better than planned:
+
+| door | SPARC | PPC |
+|---|---|---|
+| `-prom-env nvramrc=…` (QEMU writes the chip at machine init) | ✅ | ✅ |
+| `setenv nvramrc` + flush + reset, from the prompt | ❌ no binding | ✅ |
+| media — `load cdrom:\FILE` + `load-base load-size evaluate` | ✅ | ❌ no filesystem compiled at all |
+| type it at the prompt | ❌ 80-column wall | ❌ same |
+
+**No single door works on both**, and the two machines fail on opposite ones.
+Full derivation in [DELIVERY.md](examples/open-firmware-native-habitats/DELIVERY.md).
+
 ## 8. Routing (at assembly, not before)
 
 New labs must land in **both** catalogs or CI fails. Per the lesson from the
@@ -427,3 +468,11 @@ unsmokeable (it has a line-oriented mode); baking the DSL into the ROM was thoug
 to require disturbing a sibling lab's artifact (one manifest line and an isolated
 clone). When this plan says "probably not supported", treat that as a hypothesis
 to test cheaply, not a conclusion.
+
+⚠️ **Update after building increment 1: in this lab the bias INVERTED, three
+times in one session.** Every over-estimate above came from a check that
+confirmed a *name* (`' patch`), a *tree entry* (`grep forth/debugging/`), or a
+*same-session read-back* (`setenv` then `printenv`) instead of a behaviour. The
+rule that covers both labs: **do not let the cheap check stand in for the real
+one.** `'` is not `see`. `printenv` in-session is not `reset-all`. A printed
+banner is not a dictionary entry.
