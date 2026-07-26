@@ -152,6 +152,18 @@ which fuels the eternal confusion:
   from its x86 prompt — where the era-gaps this lab fixed *at the prompt* are
   fixed *in C* instead.
 
+## 7. Next: make the prompt a forensics workbench
+
+Everything in §4 was a one-off incantation, typed once and never named. The
+sibling lab [`../open-firmware-debugs-itself/`](../open-firmware-debugs-itself/README.md)
+writes them down as a **language** — Forth vocabularies loaded off a CD that turn
+this firmware's five-word `Can't open boot device` into a per-entry diagnosis,
+trace the boot path through the firmware's own defer hooks, walk PCI config space
+and check the answer against QEMU, and run a driver that arrived as bytecode on a
+card's option ROM. It also opens the toolbox this tour never touched: `see`
+decompiles the firmware (and your own words), `.calls` cross-references the
+dictionary, and `debug` single-steps it on the bare machine.
+
 One QEMU quirk found while verifying this: OpenBIOS's console input works on
 the muxed stdio chardev (`-nographic`, as above) but a bare
 `-serial unix:…` socket delivers no input to it — drive it through a pty
