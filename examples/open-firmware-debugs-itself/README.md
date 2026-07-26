@@ -93,6 +93,8 @@ run its `./build-ofw.sh` first. `toke`/`detok` for the FCode track come from
 | [`build-detok-vocab.sh`](build-detok-vocab.sh) | recover `detokenize` — the dependency-ordered splice |
 | [`build-fcode-rom.sh`](build-fcode-rom.sh) · [`.py`](build-fcode-rom.py) | `toke` the driver, wrap a PCI expansion ROM, validate it host-side |
 | [`build-dropin-rom.sh`](build-dropin-rom.sh) | a ROM that **carries** the DSL; `--boot-hook` adds the autoboot tracer |
+| [`build-nvram-rom.sh`](build-nvram-rom.sh) | switch **on** OFW's config-variable store on x86; `--reboot-hook` also revives the warm-reboot branch |
+| [`smoke-nvram.sh`](smoke-nvram.sh) | one verdict: `persist`/`nvramrc`/`nvalias`/`reboot` — every check is a **cold power cycle** |
 | [`probe-dictionary.sh`](probe-dictionary.sh) | the word audit — and a deliberate lesson in under-reporting |
 | [`check-oracle.sh`](check-oracle.sh) | the outside check: `pci-map` vs QMP `query-pci`, and the memory defect at three sizes |
 | [`smoke-dsl.sh`](smoke-dsl.sh) | one verdict per mode: `stage`/`ofdiag`/`ofscope`/`fcode`/`stepper`/`stepper-deep`/`dropin`/`autotrace` |
@@ -100,6 +102,7 @@ run its `./build-ofw.sh` first. `toke`/`detok` for the FCode track come from
 | [`run-ofw-debug.sh`](run-ofw-debug.sh) | interactive `ok` prompt, either flavor, with a cheat-sheet |
 | [`RUNBOOK.md`](RUNBOOK.md) · [`MANUAL_TESTING.md`](MANUAL_TESTING.md) | the guided tour · exact commands + real signatures |
 | [`PLAN.md`](PLAN.md) · [`FULL-BOOT-TRACING.md`](FULL-BOOT-TRACING.md) | the spike record + what it got wrong · the dropin-vs-NVRAM-vs-ROM design note |
+| [`NVRAM-ON-X86.md`](NVRAM-ON-X86.md) | why x86 had no NVRAM (a disabled switch, not a missing peripheral) — and the two independent causes of the warm-reboot gap |
 
 ## The three vocabularies
 
