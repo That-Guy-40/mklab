@@ -94,8 +94,8 @@ run its `./build-ofw.sh` first. `toke`/`detok` for the FCode track come from
 | [`build-fcode-rom.sh`](build-fcode-rom.sh) · [`.py`](build-fcode-rom.py) | `toke` the driver, wrap a PCI expansion ROM, validate it host-side |
 | [`build-dropin-rom.sh`](build-dropin-rom.sh) | a ROM that **carries** the DSL; `--boot-hook` adds the autoboot tracer; `--reboot-hook` makes the **combined** ROM that can trace a *warm* reboot |
 | [`lib-ofw-edits.sh`](lib-ofw-edits.sh) | the source edits both builders make, in one place; each verifies itself |
-| [`build-nvram-rom.sh`](build-nvram-rom.sh) | switch **on** OFW's config-variable store on x86; `--reboot-hook` also revives the warm-reboot branch |
-| [`smoke-nvram.sh`](smoke-nvram.sh) | one verdict: `persist`/`nvramrc`/`nvalias`/`reboot`/`autoload`/`warmtrace` — every check is a **cold power cycle** |
+| [`build-nvram-rom.sh`](build-nvram-rom.sh) | switch **on** OFW's config-variable store on x86; `--reboot-hook` revives the warm-reboot branch; `--disk` reproduces the nondeterministic `c:` store |
+| [`smoke-nvram.sh`](smoke-nvram.sh) | one verdict: `persist`/`nvramrc`/`nvalias`/`reboot`/`autoload`/`warmtrace`/`selfcontained`/`diskstore` — every check is a **cold power cycle** |
 | [`probe-dictionary.sh`](probe-dictionary.sh) | the word audit — and a deliberate lesson in under-reporting |
 | [`check-oracle.sh`](check-oracle.sh) | the outside check: `pci-map` vs QMP `query-pci`, and the memory defect at three sizes |
 | [`smoke-dsl.sh`](smoke-dsl.sh) | one verdict per mode: `stage`/`ofdiag`/`ofscope`/`fcode`/`stepper`/`stepper-deep`/`dropin`/`autotrace` |
@@ -104,7 +104,7 @@ run its `./build-ofw.sh` first. `toke`/`detok` for the FCode track come from
 | [`RUNBOOK.md`](RUNBOOK.md) · [`MANUAL_TESTING.md`](MANUAL_TESTING.md) | the guided tour · exact commands + real signatures |
 | [`PLAN.md`](PLAN.md) · [`FULL-BOOT-TRACING.md`](FULL-BOOT-TRACING.md) | the spike record + what it got wrong · the dropin-vs-NVRAM-vs-ROM design note |
 | [`NVRAM-ON-X86.md`](NVRAM-ON-X86.md) | why x86 had no NVRAM (a disabled switch, not a missing peripheral) — and the two independent causes of the warm-reboot gap |
-| [`DELIVERY-MECHANISMS.md`](DELIVERY-MECHANISMS.md) | the **three** ways to get the vocabulary in — media / ROM dropin / `nvramrc` — which to prefer, and why EFI's variable store is a flash chip, not the ESP |
+| [`DELIVERY-MECHANISMS.md`](DELIVERY-MECHANISMS.md) | the **four** ways to get the vocabulary in — media / ROM dropin / `nvramrc` / a self-contained drive — which to prefer, the 4 KB cap, the pre-probe rule, and why EFI's variable store is a flash chip, not the ESP |
 
 ## The three vocabularies
 

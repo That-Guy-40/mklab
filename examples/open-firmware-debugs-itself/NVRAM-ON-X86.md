@@ -86,11 +86,30 @@ a sha-guard on the sister lab's `emuofw.rom`:
 | 2 | `cpu/x86/pc/emu/config.fth` | `create use-null-nvram` → commented (vestigial) |
 | 3 | `cpu/x86/pc/emu/devices.fth` | `nv-file` → `" a:\nvram.dat"` |
 
-**Edit 3 is the only non-obvious one.** Emu's block says `" c:\nvram.dat"`, but emu
-declares **no `c` devalias** — only `devalias a /isa/fdc/disk@0` (`devices.fth:127`).
-The `c:` line is copy-pasted from `biosload/devices.fth`, which defines `a:`/`c:`/`u:`
-variants. `config.fth`'s own prose says *"a fixed-name file on drive A"*, which
-matches emu's actual alias. Left as shipped, the store would open nothing.
+**Edit 3 is the only non-obvious one**, and the first explanation of it here was
+**wrong**. This page originally said emu *"declares no `c` devalias"*. It does:
+`report-disk` creates it (`devices.fth:261`, `" c" " /pci-ide/ide@0/disk@0"
+$devalias`). The real problem is **ordering**, which is a better answer:
+
+- `report-disk` runs inside **`probe-all`**, which `startup` calls *long after*
+  `stand-init: Pseudo-NVRAM` has already tried to open the store.
+- Worse, **PCI itself is unprobed** at stand-init, so no PCI-IDE path could resolve
+  then even if the alias existed.
+- `devalias a /isa/fdc/disk@0` (`devices.fth:127`) is different in kind: it is
+  declared **statically at build time**, and its ISA node exists immediately.
+
+So retargeting to `a:` is not a correction of upstream's `c:` — it is choosing a
+store that is reachable *at the moment stand-init runs*. `config.fth`'s own prose
+("a fixed-name file on drive A") reflects exactly that constraint.
+
+Upstream hit this too and solved it: `biosload`'s `stand-init` calls
+**`reread-config-vars`** (`biosload/devices.fth:213`), a `config-valid?`-guarded
+retry, precisely because it boots off USB/disk. emu calls `init-config-vars` once
+and gives up. `build-nvram-rom.sh --disk` adds that retry — but it is **not** the
+binding constraint: emu's PCI-IDE probe creates a primary-channel `disk@0` only
+intermittently (~2 boots in 18), so the `c:` store is **nondeterministic** and the
+floppy remains the dependable one. Full evidence, including two wrong conclusions
+reached along the way, in [`DELIVERY-MECHANISMS.md`](DELIVERY-MECHANISMS.md).
 
 ## Result — cold power cycle, `-fda` FAT12 floppy
 

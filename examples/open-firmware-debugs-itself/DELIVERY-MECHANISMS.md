@@ -11,8 +11,15 @@ store on.
 | **M1** | staged media — `fload <cd>:\ofdiag.fth` | no | **yes** | no | **yes** |
 | **M2** | ROM dropin — `fload /dropin-fs:\ofdiag.fth` | **yes** | no | only as `banner-` | **yes** |
 | **M3** | `nvramrc` autoload line | no | no | **yes** | **no — 4 KB, see below** |
+| **M4** | **self-contained drive** — one medium holds the hook *and* the payload | no | **yes (one)** | **yes** | **yes** |
 
-All three are built and smoked. None is deprecated.
+All four are built and smoked. None is deprecated.
+
+**M4 is a composition, not a new primitive** — it is M3's hook pointing at an M1
+payload, with both on the *same* writable medium. It earns its own row because it
+has a property none of M1–M3 has alone: **the vocabulary auto-loads with no ROM
+dropins at all**, so the firmware needs nothing but the NVRAM switch. Swap the
+disk, get a different machine. See below for the ordering rule that constrains it.
 
 ## M1 — staged media
 
@@ -62,6 +69,27 @@ bytes** total (`filenv.fth:9`), shared with every other config variable, while
 `ofdiag.fth` alone is **4959 bytes**. It cannot hold the vocabulary. What it holds
 is the one line that loads it.
 
+### The store is 4 KB, whatever the medium
+
+The 1.44 MB of the floppy is irrelevant, and so was the 64 MB of the hard disk.
+`filenv.fth` caps the store at `/nvram` in two independent places:
+
+```forth
+h# 1000 constant /nvram                                  \ filenv.fth:9
+: seek  ( d.offset -- status )
+   0<>  over /nvram u>  or  if  …  true exit  then       \ rejects past the cap
+: clip-size  ( adr len -- adr len' )
+   nvram-ptr +   /nvram min  nvram-ptr -                 \ truncates every r/w
+```
+
+`nvopen` also pre-creates the file at exactly that size (`/nvram alloc-mem`,
+`erase`, `fputs`) — which is why a working store shows `NVRAM.DAT` at precisely
+**4096** bytes on a `dir`. A bigger medium buys nothing; that was true of the disk
+route before it turned out not to be dependable anyway. So the budget for an
+`nvramrc` line is 4 KB *minus* whatever `boot-device`, `nvalias` entries and other
+variables already occupy — comfortable for a `fload` line, hopeless for a
+vocabulary.
+
 That makes M3 **complementary rather than competing**: it is the only mechanism
 that auto-runs *without a rebuild*. The strong combination is **M3 + M2** — the
 vocabulary lives in the ROM, and NVRAM decides per-machine whether to load it.
@@ -70,6 +98,59 @@ Change your mind, `setenv use-nvramrc? false`, no rebuild.
 **Prefer it when** you want per-machine behaviour on a fleet sharing one ROM.
 
 **Costs:** needs the NVRAM store (below), so it is not available on the stock ROM.
+
+### The rule that governs what an `nvramrc` line may reference
+
+`nvramrc` is evaluated **before probing**. From emu's `startup` (`fw.bth:288`):
+
+```forth
+use-nvramrc?  if  nvramrc safe-evaluate  then   \ ← nvramrc runs HERE
+auto-banner?  if
+   " Probing" ?type  probe-all                  \ ← report-disk creates `c` HERE
+```
+
+So an autoload line can only reach devices that exist **pre-probe**:
+
+| target | works? | why |
+|---|---|---|
+| `fload /dropin-fs:\…` | **✔** | ROM-resident pseudo-filesystem; no probing involved |
+| `fload a:\…` | **✔** | `devalias a /isa/fdc/disk@0` is declared **statically** at build time |
+| `fload c:\…` | **✘** | PCI IDE; the `c` alias is created by `report-disk` *during* `probe-all` |
+
+All three were tested, and the `c:` failure is real: `' diag-open .` still answers
+`diag-open ?` after a cold cycle.
+
+**This is not a defect.** `nvramrc` runs early *by design* — on a real SPARC that is
+the whole point, so it can install `nvalias` entries and patch device handling
+*before* the tree is built. The constraint is inherent to what the hook is for.
+
+## M4 — a self-contained drive
+
+One writable medium carries **both** `nvram.dat` (the hook) and `ofdiag.fth` (the
+payload), against a ROM with **no dropins**:
+
+```forth
+ok " fload a:\ofdiag.fth" to nvramrc
+ok setenv use-nvramrc? true
+═══ cold power cycle, nothing typed ═══
+ok ' diag-open .
+1c8d7a8                       \ loaded itself, from the same floppy
+```
+
+Per the rule above this works on the **floppy** and not on a PCI disk. That suits
+it: `-fda` needs no partition on the boot drive, no IDE controller, and nothing in
+the ROM beyond the NVRAM switch. It is the closest thing here to "hand someone a
+disk and their machine behaves differently" — which is how these boxes were
+actually administered.
+
+**Prefer it when** you want a *portable, per-machine* configuration with a stock
+ROM, or when the point is conceptual: the whole mechanism, on one medium you can
+inspect with `mdir`.
+
+**Costs:** the medium must be attached and writable, and it is subject to the
+pre-probe rule, so a hard-disk variant is not available.
+
+`smoke-nvram.sh selfcontained` is the standing proof.
 
 ## Which to prefer
 
@@ -80,6 +161,9 @@ Change your mind, `setenv use-nvramrc? false`, no rebuild.
    native-habitats tracks will use.
 4. **Want the autoboot itself traced** → M2 `--boot-hook`. Add `--reboot-hook` for
    the combined ROM, the only build that can trace a **warm** reboot.
+5. **Want a portable, per-machine setup with no dropins in the ROM** → **M4**, the
+   self-contained floppy. Also the best one for *teaching* the mechanism, since the
+   hook and the payload are both visible on one medium with `mdir`.
 
 **NVRAM is preferred when the emulator can carry a writable drive** — which under
 QEMU means `-fda`, and is essentially always true. Where it is not (no writable
@@ -93,9 +177,16 @@ the reason all three are kept: M3 is preferred, not required.
 |---|---|---|
 | `build-dropin-rom.sh` | `ofdiag-emuofw.rom` | M2, no behaviour change |
 | `build-dropin-rom.sh --boot-hook` | `autotrace-emuofw.rom` | autoboot tracing, **stock NVRAM behaviour** |
-| `build-nvram-rom.sh` | `nvram-emuofw.rom` | NVRAM only — the **control arm** |
+| `build-nvram-rom.sh` | `nvram-emuofw.rom` | NVRAM on a **floppy**, no dropins — the **M4 host**, and the **control arm** |
+| `build-nvram-rom.sh --disk` | `nvram-disk-emuofw.rom` | reproducer for a **nondeterministic** result — emu probes a primary-channel `disk@0` only ~2 boots in 18; see below |
 | `build-nvram-rom.sh --reboot-hook` | `nvram-reboot-emuofw.rom` | NVRAM + reachable warm reboot |
 | `build-dropin-rom.sh --boot-hook --reboot-hook` | `autotrace-nvram-reboot-emuofw.rom` | **combined** — tracers *and* a warm reboot |
+
+`nvram-emuofw.rom` is the one that needs **only `-fda`** — no partition on the boot
+drive, no IDE controller, nothing in the ROM but the NVRAM switch. That is both a
+hardware-availability answer and the clearest one to reason about, and since the
+disk route turned out to be nondeterministic (below), it is the only **dependable**
+store. `--disk` is kept solely as the reproducer for that result.
 
 `autotrace-emuofw.rom` is deliberately **kept alongside** the combined ROM rather
 than replaced. It is the artifact the existing `smoke-dsl.sh autotrace` verifies,
@@ -126,30 +217,104 @@ was argued from source for two increments; it is now observed.
 
 ---
 
-## Deferred work — a `c:` devalias and NVRAM on a FAT partition
+## The `c:` store — attempted, **NEGATIVE RESULT**, and the premise was wrong twice
 
-Today the store is a file on a **floppy** (`a:\nvram.dat`, `-fda`). That works and
-is fully smoked, but it is the weakest part of the design: it burns the floppy
-controller, caps the store at a 1.44 MB medium the lab otherwise has no use for,
-and means every NVRAM-dependent run needs `-fda`.
+This section used to be deferred work, on the theory that *"emu never declares the
+`c` alias."* **That was false.** `report-disk` declares it
+(`devices.fth:261`: `" c" " /pci-ide/ide@0/disk@0" $devalias`). No new alias was
+needed at all.
 
-**The improvement:** define a `c:` devalias pointing at a FAT partition on a hard
-disk and retarget `nv-file` to `c:\nvram.dat`. Upstream already anticipates this —
-`biosload/devices.fth` defines `fd-nv-file`/`hd-nv-file`/`usb-nv-file` for exactly
-`a:`/`c:`/`u:`, and emu's block *already says* `c:\nvram.dat`. Emu simply never
-declares the `c` alias (`devices.fth:127` declares only `a` and `b`, both floppies),
-which is why [`build-nvram-rom.sh`](build-nvram-rom.sh) retargets to `a:`.
+The real obstacle is **ordering**, and it is the same shape as the warm-reboot
+finding — a flavor-local `startup` doing less than the generic one:
 
-Sketch: `devalias c /pci/pci-ide@1,1/ide@0/disk@0:1` (partition 1), a FAT16 image
-attached with `-hda`, and `' hd-nv-file to nv-file`. OFW's FAT driver already has
-full write support and a partition package (`ofw/fs/fatfs/partition.fth`), so the
-pieces exist. Unknowns worth a spike: whether the partition package resolves `:1`
-the way the ISO path does, and whether `stand-init` runs early enough for the IDE
-node to be usable.
+- `report-disk` runs inside **`probe-all`**, which `startup` calls *long after*
+  `stand-init: Pseudo-NVRAM` has already tried to open the store.
+- **PCI is unprobed** at stand-init, so no PCI-IDE path could resolve then even
+  with an alias present.
+- The floppy escapes this only because `devalias a /isa/fdc/disk@0` is declared
+  **statically at build time** — its node exists immediately.
 
-**Why it is deferred, not done:** the floppy path is verified end-to-end and nothing
-depends on the improvement. Doing it would change every NVRAM smoke's fixture at
-once, so it deserves its own increment with its own control.
+Upstream already solved it: `biosload`'s `stand-init` calls **`reread-config-vars`**
+(`biosload/devices.fth:213`), a `config-valid?`-guarded retry, precisely because it
+boots off USB/disk. emu calls `init-config-vars` once and gives up.
+
+`build-nvram-rom.sh --disk` adds that retry after `probe-all`. **It is still not
+enough**, and the reason is a layer below everything above.
+
+### The actual blocker: the disk node is probed only *sometimes*
+
+Usually, at the `ok` prompt with a 64 MB drive on `-drive if=ide,index=0`:
+
+```
+ok dev /pci/pci-ide@1,1/ide@0 ls device-end
+ok                                   ← NO CHILDREN. disk@0 was not created.
+ok dir c:\
+Can't open directory
+```
+
+Occasionally, from an **identical** invocation:
+
+```
+ok dev /pci/pci-ide@1,1/ide@0 ls device-end
+91028 disk@0                         ← probed this time
+ok dir c:\
+fat-file-system
+--A-rwxrwxrwx      4096  ...  NVRAM.DAT      ← and the store opened, and works
+```
+
+The `c` alias resolves fine either way (`c → /pci-ide/ide@0/disk@0`) and `ide@0`
+always exists. What varies is whether emu's PCI-IDE probe creates a **child node
+for a primary-channel hard disk**. It creates `cdrom@0` under `ide@1` reliably —
+which is why [`check-oracle.sh`](check-oracle.sh) and every media smoke can read a
+CD without trouble. When `disk@0` is absent the config layer reports *"Can't read
+the configuration memory"* twice: once at stand-init, once at the retry.
+
+**Measured: about 2 successes in 18 identical boots** on this host — 0/13 in a
+controlled loop, plus two one-off successes. Not "broken", not "working":
+**nondeterministic**.
+
+Ruled out as the variable (each tried on both sides of the result):
+
+- plain FAT16 with no MBR (`mkfs.vfat -F16`, the `stage-dsl.sh` idiom)
+- a proper **MBR + type-06 FAT16 partition** (`sfdisk` + `mkfs.vfat --offset 2048`),
+  addressed as both `c:\` and `c:1\`
+- `media=disk` on the QEMU drive; `cache=writethrough`; fresh vs. reused image
+
+The remaining suspect is a **timing-dependent probe** — an IDENTIFY wait in the
+IDE driver that a hard disk sometimes loses and an ATAPI device does not. That is a
+firmware-driver question, not an NVRAM one, and it is left open.
+
+### Corrections I owe the record
+
+This page said two wrong things on the way here, both worth keeping visible:
+
+1. First it claimed the disk store **worked**, on the strength of a single run. It
+   did not reproduce.
+2. Then it claimed the store **could not work**, and shipped a smoke that
+   *asserted* the empty `ide@0`. That assertion promptly failed on a run where the
+   probe succeeded — the "regression" it reported was the real behaviour.
+
+Both errors have the same root: **treating one boot as evidence about a
+nondeterministic system.** The fix was to measure over many boots.
+
+Consequently `smoke-nvram.sh diskstore` **asserts nothing**. It observes one boot,
+reports which case it saw, and exits **SKIP (77)**. A test that fails at random is
+worse than no test, because a flaky red is indistinguishable from a real
+regression. It is also excluded from `smoke-nvram.sh all` so it cannot swallow the
+aggregate verdict. `--disk` is kept as the reproducer; its post-probe retry is
+upstream's own idiom, correctly implemented, and simply is not the binding
+constraint.
+
+Two things this does *not* change:
+
+- **No capacity gain was ever available.** `/nvram` is `h# 1000` (`filenv.fth:9`),
+  so a 64 MB disk would store exactly as many config variables as a 1.44 MB floppy.
+- **M4 was never going to extend to disk** regardless, because of the pre-probe
+  rule above. Self-contained delivery is a floppy mechanism by construction.
+
+Open, if anyone wants it: find why the IDE probe skips a primary-channel hard disk
+(FCode driver? `probe-pci` ordering? an IDENTIFY path that only handles ATAPI?).
+That is a firmware-driver question, not an NVRAM one.
 
 ### Does EFI do this? No — and the answer is worth getting right
 
