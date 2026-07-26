@@ -14,13 +14,10 @@
 > - **The lab is OpenBIOS-on-SPARC, and says so plainly.** Sun's OpenBoot is
 >   proprietary and cannot be built or shipped; see the naming trap below.
 >
-> **Open decision — the thesis is NOT chosen yet.** Three candidates are set out
-> in [§4](#4-the-open-decision--which-thesis); spike 0 is specifically designed to
-> produce the evidence that picks between them.
->
-> **Blocked on one author-run step:** `sudo apt install qemu-system-sparc`
-> (packaged at `1:8.2.2+ds-0ubuntu1.17`, the same QEMU as everything else here).
-> The agent's Bash tool cannot sudo.
+> **✅ SPIKE 0 IS GREEN** (run 2026-07-26 — see [§5](#5-spike-0--result-green)).
+> The emulator is installed and all four gate questions are answered. **NVRAM is
+> writable**, which is the result that matters: thesis **A** is now evidence-backed
+> and the x86 lab's two open limitations become demonstrable here.
 
 ## 1. Why — and why now
 
@@ -117,7 +114,67 @@ Lead with the Sun-era operator experience: OBP diagnostics (`test-all`,
 *Richest historically, but depends on OpenBIOS implementing those OBP extensions
 — entirely unverified, and the most likely to disappoint.*
 
-## 5. Spike 0 — the gate (first work, after the apt install)
+## 5. Spike 0 — RESULT: **GREEN**
+
+Run 2026-07-26 against the **stock** QEMU blob (`/usr/share/qemu/openbios-sparc32`,
+OpenBIOS v1.1 built Apr 22 2026) — no firmware build required. First contact:
+
+```text
+Probing SBus slot 4 offset 0
+Invalid FCode start byte              ← SBus FCode probing is LIVE
+CPUs: 1 x FMI,MB86904
+Welcome to OpenBIOS v1.1 built on Apr 22 2026 09:24
+Trying disk:a...
+0 >
+```
+
+| # | question | answer |
+|---|---|---|
+| 1 | word inventory | **11 of 11 present** — `see` `debug` `words` `dump` `.calls` `patch` `devalias` `find-package` `open-dev` `expand-alias` `nvramrc`; negative control clean (`bogusxyz: undefined word.`) |
+| 2 | **NVRAM writable?** | **YES.** `setenv use-nvramrc? true` → ` ok`, and `printenv` shows it **stuck**. `setenv boot-device disk:a` likewise. |
+| 3 | console | **pty only.** `-serial unix:` yields **zero bytes** — no output at all, worse than the ppc input-only quirk. Use `-nographic` + [`tools/drive-pty-repl.py`](tools/drive-pty-repl.py). |
+| 4 | prompt / base | prompt is **`0 >`** (stack depth); base is **hex** (`5 6 * .` → `1e`) — the same trap the OFW lab teaches. |
+
+### The decisive result
+
+```text
+0 > setenv use-nvramrc? true  ok
+0 > printenv use-nvramrc?
+use-nvramrc?              "true"          ← it STUCK
+0 > setenv boot-device disk:a  ok
+boot-device               "disk:a"        ← was "disk:a disk"
+```
+
+No *"Out of NVRAM environment space"*, no *"Unimplemented package interface
+procedure"* — the two failures that shaped the x86 lab. **Both of its documented
+limitations become demonstrable here**, and `main.fs:42` already evaluates
+`nvramrc` at startup, so pre-autoboot code needs no dropin at all.
+
+### Bonus findings
+
+- **The environment is authentically Sun.** `printenv` lists `boot-device
+  "disk:a disk"`, `ttya-mode "9600,8,n,1,-"`, `output-device "ttya"`,
+  `selftest-#megs`, `screen-#rows`, `tpe-link-test?` — the real OBP variable names.
+- **SBus FCode probing runs at boot** (*"Probing SBus slot 4… Invalid FCode start
+  byte"*), so the FCode track has a native home rather than a bolted-on PCI card.
+- **`see` decompiles**, though more roughly than OFW's — control-flow indentation
+  is mangled but the source is recoverable and readable.
+- ⚠️ **Same names, different implementations.** OpenBIOS's `expand-alias` is built
+  on `/aliases` + `find-dev` + `get-package-property` and has **different stack
+  effects** from OFW's. The vocabularies therefore port **as a design, not
+  verbatim** — which is a *better* lesson for the lab: a vocabulary is portable,
+  its implementation is not. Budget adaptation, not copying.
+
+### Gate decision → **thesis A, "the native habitat"**
+
+Evidence-backed rather than chosen on taste: NVRAM works (A's payoff is real),
+the introspection toolkit is complete (A's port is viable), and the environment
+is authentically Sun (A's framing is honest). **B** stays available as a later
+track once an SBus walker exists; **C** remains unverified — `secmode-config`
+exists in `forth/admin/nvram.fs`, so `security-mode` is at least *present*, but no
+OBP diagnostic (`test-all`/`probe-scsi`/`watch-net`) has been probed.
+
+## 5b. Spike 0's original definition (kept for the record)
 
 One or two boots of **stock** `qemu-system-sparc` (no build required — QEMU ships
 an OpenBIOS blob), answering four questions:
