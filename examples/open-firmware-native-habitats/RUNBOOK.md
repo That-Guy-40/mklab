@@ -163,6 +163,48 @@ write it — is the single most useful thing this lab found, and it is a genuine
 upstream gap, not a lab limitation. [DELIVERY.md](DELIVERY.md) has the code
 references.
 
+## Part 5b — the firmware ships no hook, so rewrite the call site
+
+`patch` is section 7.5.3.3 of the standard, and here it is `: patch ;`. The lab
+implements it (see [PATCH.md](PATCH.md)), and the tracers are built on top:
+
+```text
+0 > trace-boot
+#T tracing ON, 2 call site(s) rewritten
+0 > boot cdrom:\OFDIAG.FTH
+#T load-begin
+#T open cdrom:\OFDIAG.FTH
+#T load-end
+0 > untrace
+#T tracing OFF, 2 call site(s) restored
+```
+
+**Exercise — prove it is not a memory scanner.** Build a word containing a
+literal whose value *is* the xt you are about to replace, and count:
+
+```text
+0 > : zap ." ZAP" cr ;
+0 > : zip ." ZIP" cr ;
+0 > : t4 zap 12345 drop zap ;
+0 > ' zap true 12345 true ' t4 (patch)      \ set the literal to ' zap
+0 > patch zip zap t4
+patch: 2 occurrence(s) replaced             \ 2, not 3 — the literal is untouched
+```
+
+⚠️ **Do not name your test words `aa` and `bb`.** The base is hex: those are 170
+and 187, and `patch` will correctly hunt for literals instead. Same for `dead`,
+`beef`, `face`, `cafe`.
+
+**Then the payoff.** Boot with the combined script in NVRAM and type nothing:
+
+```bash
+./run-habitat.sh ppc --autotrace     # or sparc32
+```
+
+`#T tracing ON` appears *above* the banner, and `#T load-begin` before the first
+prompt — the power-on autoboot tracing itself on a firmware that provides no
+tracepoint at all.
+
 ## Part 6 — compare the rivals, side by side
 
 Open two terminals:

@@ -67,6 +67,40 @@ UEFI keeps its variables in an SPI-flash region — the same *species* of device
 these two. **OFW-on-x86 is the odd one out**, borrowing a filesystem because the
 platform gives firmware no NV region it can own.
 
+## When the firmware ships no hook, patch the call site
+
+The x86 sibling traces the boot path by re-pointing hooks OFW *ships*.
+**OpenBIOS declares no `defer` anywhere on its boot path**, so those tracers
+could not be ported. The standard's other answer is `patch` (7.5.3.3) — and
+OpenBIOS ships that empty too:
+
+```text
+0 > see patch
+: patch
+  ;
+```
+
+So the lab wrote it: **~90 lines of Forth, no C, no firmware build**, and
+because OpenBIOS's dictionary format is identical across its targets, the same
+file runs unmodified on both tracks. Then the tracers are built on top of it, and
+the payoff is delivered through the NVRAM door — with nothing typed:
+
+```text
+#T tracing ON, 2 call site(s) rewritten     ← armed from NVRAM, before probe-all
+Welcome to OpenBIOS v1.1
+Trying hd:,\\:tbxi...
+#T load-begin                               ← the POWER-ON autoboot, traced
+#T open
+#T load-end
+```
+
+The correctness question is not "does it replace the xt" but "does it know what
+*isn't* an xt". A word's body interleaves branch targets, literals and inline
+counted strings, so the smoke builds a booby trap: a literal whose value **is**
+the xt being replaced. `patch` must report **2 occurrences, not 3**. Full
+derivation, plus the hex-name trap that cost a debugging session, in
+**[PATCH.md](PATCH.md)**.
+
 ## Each habitat has exactly one door — and they are different doors
 
 This is the lab's central, and entirely unplanned, finding. A vocabulary has to
@@ -121,9 +155,9 @@ backwards.
 ## Run it
 
 ```bash
-./stage-dsl.sh                      # ISO9660 disc + the one-line NVRAM form
-./smoke-habitat.sh all sparc32      # 4 PASS + 1 SKIP
-./smoke-habitat.sh all ppc          # 4 PASS + 1 SKIP
+./stage-dsl.sh                      # ISO9660 disc + the one-line NVRAM forms
+./smoke-habitat.sh all sparc32      # 7 PASS
+./smoke-habitat.sh all ppc          # 5 PASS + 2 justified SKIP
 ./run-habitat.sh ppc                # interactive: land at 0 > with ofdiag resident
 ```
 
@@ -132,8 +166,10 @@ Everything is verified on this host (Ubuntu 24.04, QEMU 8.2.2) against the
 [`../openbios-the-rival-that-shipped/`](../openbios-the-rival-that-shipped/README.md)
 already owns the "compile it yourself" story, and this one is about the habitat.
 Exact commands and real transcripts: [MANUAL_TESTING.md](MANUAL_TESTING.md).
-What ported and what didn't: [PORTING.md](PORTING.md). Roadmap and what is
-deliberately not done yet: [PLAN.md](PLAN.md). Guided tour: [RUNBOOK.md](RUNBOOK.md).
+What ported and what didn't: [PORTING.md](PORTING.md). Implementing the missing
+`patch` and getting boot tracing out of it: [PATCH.md](PATCH.md). Roadmap and
+what is deliberately not done yet: [PLAN.md](PLAN.md). Guided tour:
+[RUNBOOK.md](RUNBOOK.md).
 
 ## Where this sits
 

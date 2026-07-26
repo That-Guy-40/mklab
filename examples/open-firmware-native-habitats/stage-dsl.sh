@@ -52,3 +52,17 @@ done
 
 genisoimage -quiet -o "$WORKDIR/dsl.iso" -V OFDSL "$STAGE" || { echo "FAIL: genisoimage"; exit 1; }
 echo "staged $(ls "$STAGE" | tr '\n' ' ')-> $WORKDIR/dsl.iso"
+
+# ── the autotrace script ─────────────────────────────────────────────────────
+# patch + tracers + `trace-boot`, as ONE nvramrc line. Because nvramrc runs
+# before probe-all, the call sites are rewritten before the firmware has probed
+# anything — so the POWER-ON autoboot traces itself, with nothing typed.
+AT="$WORKDIR/autotrace.min.fth"
+{ printf 'device-end '
+  python3 "$HERE/minify-fth.py" "$HERE/dsl/patch.fth" "$HERE/dsl/tracers.fth" || exit 1
+  printf ' trace-boot'
+} 2>/dev/null | tr -d '\n' > "$AT" || { echo "FAIL: building $AT"; exit 1; }
+sz=$(wc -c < "$AT")
+[ "$sz" -le "$NVRAM_BUDGET" ] \
+    || { echo "FAIL: autotrace.min.fth is $sz bytes, over the $NVRAM_BUDGET-byte NVRAM config partition"; exit 1; }
+echo "  - patch.fth + tracers.fth -> autotrace.min.fth ($sz bytes of $NVRAM_BUDGET, arms itself at power-on)"
