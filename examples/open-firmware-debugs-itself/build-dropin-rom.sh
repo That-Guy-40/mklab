@@ -6,10 +6,13 @@
 #                 vocabulary with no CD, no floppy, no staged media at all.
 #                 Behaviour is otherwise identical to the stock ROM.
 #
-#   --boot-hook   B2: ALSO ships dsl/autotrace.fth as the `boot-` dropin, which
-#                 OFW executes immediately before do-auto-boot
-#                 (ofw/core/bootparm.fth:345) -- so the POWER-ON AUTOBOOT itself
-#                 is traced, which no amount of fload-ing after the prompt can do.
+#   --boot-hook   B2: ALSO ships dsl/autotrace.fth as the `banner-` dropin, which
+#                 OFW executes from banner() -- and startup calls banner BEFORE
+#                 auto-boot on every path. So the POWER-ON AUTOBOOT itself is
+#                 traced, which no amount of fload-ing after the prompt can do.
+#                 (`boot-` fires nearer the boot, but auto-boot's reboot? branch
+#                 exits BEFORE it, so it would miss a warm reboot. banner- does
+#                 not have that hole.)
 #
 # ISOLATION IS THE POINT. This never touches the sister lab's tree or ROM: it
 # builds in its OWN clone at $WORKDIR/openfirmware-dropin and writes its own
@@ -67,7 +70,7 @@ sed -i '/labdsl\//d' "$BTH"                       # drop any previous injection
 INJECT='   " ${BP}/labdsl/ofdiag.fth"            " ofdiag.fth"      $add-deflated-dropin\n'
 INJECT+='   " ${BP}/labdsl/ofscope.fth"           " ofscope.fth"     $add-deflated-dropin\n'
 INJECT+='   " ${BP}/labdsl/nopage.fth"            " nopage.fth"      $add-deflated-dropin'
-[ -n "$BOOT_HOOK" ] && INJECT+='\n   " ${BP}/labdsl/autotrace.fth"         " boot-"           $add-deflated-dropin'
+[ -n "$BOOT_HOOK" ] && INJECT+='\n   " ${BP}/labdsl/autotrace.fth"         " banner-"         $add-deflated-dropin'
 awk -v ins="$INJECT" '
   /^   " builton.fth"/ && !done { gsub(/\\n/, "\n", ins); print ins; done=1 }
   { print }
