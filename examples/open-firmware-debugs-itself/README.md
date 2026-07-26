@@ -191,7 +191,11 @@ Three things had to line up, and the first is the one that matters:
 
 The assertions are semantic, not just liveness: the stack display must
 **duplicate** across `2dup`, stepping `type` must emit the argument we passed in,
-and `G` must run the word out to its diagnosis. Scrolling mode never lists the
+and `G` must run the word out to its diagnosis. `smoke-dsl.sh stepper-deep` drives
+it harder still — the `$`tring key must print the argument off the stack, `D` must
+**descend into `expand-alias`** and step its real first token (`switch-alias-buf`),
+`U` must come back (`[ Up to diag-open ]`), and `Q` must **abandon** execution so
+that no diagnosis follows at all — the negative control for `G`. Scrolling mode never lists the
 decompiled source, so a marker can only come from execution — which matters,
 because an `--expect` that matched the *listing* produced a false PASS during
 development.
@@ -258,8 +262,8 @@ regression this repo has been bitten by. The design note, including why NVRAM
 ## Honesty about what's verified
 
 Everything in Quick start is **verified end-to-end on this host** (Ubuntu 24.04,
-QEMU 8.2.2, KVM): **ten smoke verdicts** — three vocabularies × two flavors,
-plus `stage`, `stepper`, `dropin` and `autotrace` — and the showcase, all
+QEMU 8.2.2, KVM): **eleven smoke verdicts** — three vocabularies × two flavors,
+plus `stage`, `stepper`, `stepper-deep`, `dropin` and `autotrace` — and the showcase, all
 headless, all driven over serial with [`tools/drive-serial-repl.py`](../../tools/drive-serial-repl.py).
 
 Not claimed:
@@ -267,10 +271,21 @@ Not claimed:
 - **`map?` is not recovered.** It needs the assembler *and* a `${BP}` dep, and it
   walks page tables that don't exist in the physical-mode boot this lab uses.
   Declined on purpose, not overlooked.
-- **A warm reboot is not traced.** `auto-boot`'s `reboot?` branch takes an early
-  `exit` *before* reaching `" boot-" do-drop-in`, so the `boot-` hook covers the
-  cold autoboot only. Straight from the source, and stated in
-  [`dsl/autotrace.fth`](dsl/autotrace.fth) where someone will actually hit it.
+- **The warm-reboot path is closed by construction, but cannot be demonstrated
+  here.** The tracers hook `banner-` rather than `boot-` precisely because
+  `auto-boot`'s `reboot?` branch takes an early `exit` before `boot-` fires,
+  whereas `banner` runs before `auto-boot` on *every* path. That removes the
+  blind spot in the code — but this firmware can never take the reboot path at
+  all, because `reboot?` is set only from the NVRAM variable `reboot-command`
+  and NVRAM writes are unimplemented on the demo build:
+
+  ```
+  ok " testcmd" " reboot-command" $setenv
+  Unimplemented package interface procedure
+  ```
+
+  So: correct by reading, unprovable by running. On hardware with working NVRAM
+  it would also be testable. Said plainly rather than counted as a pass.
 
 Blow-by-blow spike results, with transcripts and the wrong turns, are in
 [PLAN.md](PLAN.md). Exact commands and success signatures:

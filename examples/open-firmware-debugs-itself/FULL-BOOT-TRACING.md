@@ -165,9 +165,15 @@ Two things confirmed only by building it:
   otherwise evaluates the buffer as **Forth text** — so a `.fth` source dropin is
   a first-class startup hook, which is why the flavor's own `probe-` hook can be
   `builton.fth`.
-- **A warm reboot is not traced.** `auto-boot`'s `reboot?` branch takes an early
-  `exit` *before* `" boot-" do-drop-in`, so the hook covers the **cold** autoboot
-  only. Noted in `dsl/autotrace.fth` where it will actually be read.
+- **`boot-` has a hole; `banner-` does not.** `auto-boot`'s `reboot?` branch
+  takes an early `exit` *before* `" boot-" do-drop-in`, so a warm reboot would
+  slip past it. The dropin therefore hooks **`banner-`** (`banner.fth:141`), and
+  `startup` calls `banner` before `auto-boot` on every path. Arming happens a
+  little earlier — strictly more coverage, no downside.
+- **The reboot path is unreachable on this build anyway.** `reboot?` comes only
+  from the NVRAM variable `reboot-command` (`ofw/core/reboot.fth`), and NVRAM
+  writes are unimplemented here (`$setenv` → *Unimplemented package interface
+  procedure*). Closed by construction; not demonstrable without working NVRAM.
 
 The isolation turned out to be the whole job, exactly as predicted: a separate
 tree clone, its own output ROM, and a sha-guard on the sister lab's artifact.

@@ -2,14 +2,17 @@
 \
 \ This is the one thing `fload` can never do. By the time you have a prompt to
 \ type at, the machine has already tried to boot; the tracers arrive too late to
-\ see it. OFW's answer is a startup-hook dropin: ofw/core/bootparm.fth runs
+\ see it. OFW's answer is a startup-hook dropin, and there are two candidates:
 \
-\     " boot-" do-drop-in
-\     do-auto-boot
-\     " boot+" do-drop-in
+\   `boot-`    ofw/core/bootparm.fth: " boot-" do-drop-in / do-auto-boot
+\              Fires nearest the boot -- but auto-boot's `reboot?` branch takes an
+\              early `exit` BEFORE reaching it, so a WARM REBOOT is never traced.
 \
-\ so a dropin named `boot-` is executed IMMEDIATELY BEFORE the autoboot, from
-\ inside the ROM, with no media and nothing typed.
+\   `banner-`  ofw/core/banner.fth:141, the first act of banner(), which startup
+\              calls before auto-boot on EVERY path. No such hole.  <-- we use this
+\
+\ So the tracers are armed from `banner-`: earlier than strictly necessary, which
+\ only means more coverage, and no blind spot on the reboot path.
 \
 \ Source, not FCode, on purpose: ofw/fcode/byteload.fth's execute-buffer sniffs
 \ the first byte (0xf0-0xf3/0xfd = FCode) and otherwise evaluates the buffer as
@@ -27,8 +30,12 @@
 ' t-load-started  to load-started
 ' t-load-done     to load-done
 
-." #T autotrace armed (boot- dropin)" cr
+." #T autotrace armed (banner- dropin)" cr
 
-\ CAVEAT, from the source: auto-boot's reboot? branch takes an early `exit`
-\ BEFORE reaching `" boot-" do-drop-in`, so a warm reboot-with-saved-command is
-\ NOT traced by this hook. Cold autoboot only.
+\ Reachability note: the warm-reboot path cannot be exercised on this firmware at
+\ all. `reboot?` is set only by copy-reboot-info from the NVRAM variable
+\ `reboot-command` (ofw/core/reboot.fth), and this demo build cannot write NVRAM:
+\   ok " testcmd" " reboot-command" $setenv
+\   Unimplemented package interface procedure
+\ so reboot? is always false here. Using `banner-` closes the hole BY
+\ CONSTRUCTION; on hardware with working NVRAM it would also be demonstrable.

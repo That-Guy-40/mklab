@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# smoke-dsl.sh [stage|ofdiag|ofscope|fcode|stepper|dropin|autotrace|all] [emu|coreboot]
+# smoke-dsl.sh [stage|ofdiag|ofscope|fcode|stepper|stepper-deep|dropin|autotrace|all] [emu|coreboot]
 #   — one verdict per vocabulary. `dropin`/`autotrace` need ./build-dropin-rom.sh.
 #
 # Every check runs headless over the serial socket. Exit: 0 PASS / 1 FAIL / 77 SKIP.
@@ -58,7 +58,7 @@ case "$FLAVOR" in
       PREFIX=( --send ': my-dma h# 1000 mem-claim ;\r' --expect "ok"
                --send "' my-dma to allocate-dma\r"     --expect "ok" )
       ;;
-  *)  fail "usage: $0 [stage|ofdiag|ofscope|fcode|stepper|dropin|autotrace|all] [emu|coreboot]" ;;
+  *)  fail "usage: $0 [stage|ofdiag|ofscope|fcode|stepper|stepper-deep|dropin|autotrace|all] [emu|coreboot]" ;;
 esac
 
 command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
@@ -231,6 +231,58 @@ smoke_stepper() {
     pass "stepper: single-stepped a live word on bare metal, one key per settled display, and ran it out"
 }
 
+# The stepper, driven HARD: not just <space> and G, but the introspection and
+# navigation keys -- $tring, Down, Up, Quit.
+#
+# Note the two frame shapes, which are the whole synchronisation contract:
+#   ": <word>"      the ip is at the word's first token (also after a key that
+#                   does NOT advance -- $ / S / R / H all repaint this frame)
+#   "Inside <word>" the ip has advanced into the body
+# Get that backwards and the driver waits forever for a frame that never comes.
+smoke_stepper_deep() {
+    GATE=""          # raw-key reader: see the note in boot_and_drive
+    boot_and_drive smoke-stepper-deep "" \
+        --send "fload $DEV:\\\\nopage.fth\r" --expect "nopage loaded" \
+        --send 'true to scrolling-debug?\r'      --expect "ok" \
+        --send "fload $DEV:\\\\ofdiag.fth\r" --expect "ofdiag loaded" \
+        --send 'debug diag-open\r'               --expect "ok" \
+        --send '" nosuchalias" diag-open\r'      --expect ": diag-open" \
+        --send '$' --expect "nosuchalias" \
+        --send ' ' --expect "Inside diag-open" \
+        --send ' ' --expect "Inside diag-open" \
+        --send ' ' --expect "Inside diag-open" \
+        --send ' ' --expect "Inside diag-open" \
+        --send ' ' --expect "Inside diag-open" \
+        --send 'D' --expect "expand-alias" \
+        --send ' ' --expect "Inside" \
+        --send 'U' --expect "diag-open" \
+        --send 'Q' --expect "unbug"
+    # $ : show the top of stack AS A STRING -- it must print the argument we
+    # passed, and it must do so BEFORE the word that prints the label runs.
+    awk '/: diag-open/{f=1} f' "$LOG" | grep -q '\$ nosuchalias' \
+        || fail "REGRESSION: the \$tring key did not display the string on the stack (see $LOG)"
+    note "the 'string' key displayed the stack argument before any of it executed"
+    # D : descend into a CALLED word. The frame must name a different word, and
+    # the body we start stepping must be that word's real one -- switch-alias-buf
+    # is expand-alias's first token (ofw/core/ofwcore.fth:1705).
+    grep -q ': expand-alias' "$LOG" \
+        || fail "REGRESSION: 'D' did not descend into expand-alias (no frame for it) — see $LOG"
+    grep -q 'switch-alias-buf' "$LOG" \
+        || fail "REGRESSION: descended, but not into expand-alias's REAL body (no switch-alias-buf) — see $LOG"
+    note "'D' descended into expand-alias and stepped its actual first token"
+    # U : come back out. The firmware announces it explicitly.
+    grep -q '\[ Up to diag-open \]' "$LOG" \
+        || fail "REGRESSION: 'U' did not return to the caller (no 'Up to diag-open') — see $LOG"
+    note "'U' returned to the caller"
+    # Q : ABANDON execution. The negative control -- the word must NOT complete,
+    # so no diagnosis may follow. (The `stepper` smoke proves G does complete it.)
+    grep -q 'unbug' "$LOG" || fail "REGRESSION: 'Q' did not abandon the debugged word (no 'unbug') — see $LOG"
+    awk '/unbug/{f=1} f' "$LOG" | grep -q 'OFDIAG-' \
+        && fail "REGRESSION: 'Q' was supposed to ABANDON execution, but the word ran to a diagnosis anyway — see $LOG"
+    note "'Q' abandoned execution — no diagnosis followed, as it must not"
+    pass "stepper-deep: string/Down/Up/Quit all drive the live debugger, including the abandon path"
+}
+
 smoke_stage() {
     bash "$HERE/stage-dsl.sh" >/dev/null 2>&1 \
         || fail "REGRESSION: ./stage-dsl.sh fails — a ROM-only or non-8.3 vocabulary reached the media stager"
@@ -261,19 +313,20 @@ smoke_autotrace() {
     # and the autoboot is the entire point. boot_and_drive's first step only waits.
     boot_and_drive smoke-autotrace ""
     grep -q '#T autotrace armed' "$LOG" \
-        || fail "the boot- dropin never ran — no arming line before the countdown (see $LOG)"
+        || fail "the banner- dropin never ran — no arming line before the countdown (see $LOG)"
     # The proof: #T lines BEFORE the first prompt, i.e. during the power-on
     # autoboot, with nothing typed and no media present.
     awk '/#T autotrace armed/{f=1} /^ok/{exit} f' "$LOG" | grep -q '#T open' \
         || fail "REGRESSION: the autoboot itself was NOT traced (no #T open before the first prompt) — see $LOG"
-    note "the boot- dropin armed the tracers before do-auto-boot"
+    note "the banner- dropin armed the tracers before auto-boot"
     note "the POWER-ON autoboot traced itself — nothing typed, no media"
-    pass "autotrace: the autoboot traces itself from a boot- dropin inside the ROM"
+    pass "autotrace: the autoboot traces itself from a banner- dropin inside the ROM"
 }
 
 case "$MODE" in
     stage)     smoke_stage ;;
     stepper)   smoke_stepper ;;
+    stepper-deep) smoke_stepper_deep ;;
     dropin)    smoke_dropin ;;
     autotrace) smoke_autotrace ;;
     ofdiag)  smoke_ofdiag ;;
@@ -281,7 +334,7 @@ case "$MODE" in
     fcode)   smoke_fcode ;;
     all)
         rc=0
-        for m in stage ofdiag ofscope fcode stepper dropin autotrace; do
+        for m in stage ofdiag ofscope fcode stepper stepper-deep dropin autotrace; do
             printf '\n=== %s (%s) ===\n' "$m" "$FLAVOR"
             bash "$0" "$m" "$FLAVOR"; r=$?
             [ $r -eq 1 ] && rc=1
@@ -289,5 +342,5 @@ case "$MODE" in
         printf '\n'
         [ $rc -eq 0 ] && echo "PASS: all vocabularies verified ($FLAVOR)" || echo "FAIL: at least one vocabulary failed ($FLAVOR)"
         exit $rc ;;
-    *) fail "usage: $0 [stage|ofdiag|ofscope|fcode|stepper|dropin|autotrace|all] [emu|coreboot]" ;;
+    *) fail "usage: $0 [stage|ofdiag|ofscope|fcode|stepper|stepper-deep|dropin|autotrace|all] [emu|coreboot]" ;;
 esac
