@@ -16,7 +16,10 @@ command -v genisoimage >/dev/null || { echo "SKIP: genisoimage not installed"; e
 rm -rf "$STAGE"; mkdir -p "$STAGE" "$WORKDIR"
 for f in "$HERE"/dsl/*.fth; do
     b="$(basename "$f")"
-    case "$b" in fcode-card.fth) continue ;; esac      # goes in a ROM, not on media
+    # ROM-only vocabularies never go on media: fcode-card.fth is tokenized into
+    # a PCI option ROM, autotrace.fth is baked in as the `boot-` dropin (and its
+    # name is not even 8.3, which the guard below would rightly reject).
+    case "$b" in fcode-card.fth|autotrace.fth) continue ;; esac
     n="${b%.fth}"
     [ "${#n}" -le 8 ] || { echo "FAIL: '$b' is not 8.3 — OFW's ISO9660 reader cannot open it"; exit 1; }
     cp "$f" "$STAGE/$b"

@@ -55,7 +55,7 @@ sed -i 's/^create virtual-mode$/\\ create virtual-mode/'     "$SRC2/cpu/x86/pc/e
 
 # --- stage the vocabularies inside the tree so ${BP} can reach them -----------
 mkdir -p "$SRC2/labdsl"
-cp "$HERE"/dsl/ofdiag.fth "$HERE"/dsl/ofscope.fth "$SRC2/labdsl/"
+cp "$HERE"/dsl/ofdiag.fth "$HERE"/dsl/ofscope.fth "$HERE"/dsl/nopage.fth "$SRC2/labdsl/"
 [ -n "$BOOT_HOOK" ] && cp "$HERE/dsl/autotrace.fth" "$SRC2/labdsl/"
 
 # --- inject into the dropin manifest -----------------------------------------
@@ -65,7 +65,8 @@ BTH="$SRC2/cpu/x86/pc/emu/emuofw.bth"
 grep -q '^   " builton.fth"' "$BTH" || { echo "FAIL: dropin manifest anchor not found in $BTH"; exit 1; }
 sed -i '/labdsl\//d' "$BTH"                       # drop any previous injection
 INJECT='   " ${BP}/labdsl/ofdiag.fth"            " ofdiag.fth"      $add-deflated-dropin\n'
-INJECT+='   " ${BP}/labdsl/ofscope.fth"           " ofscope.fth"     $add-deflated-dropin'
+INJECT+='   " ${BP}/labdsl/ofscope.fth"           " ofscope.fth"     $add-deflated-dropin\n'
+INJECT+='   " ${BP}/labdsl/nopage.fth"            " nopage.fth"      $add-deflated-dropin'
 [ -n "$BOOT_HOOK" ] && INJECT+='\n   " ${BP}/labdsl/autotrace.fth"         " boot-"           $add-deflated-dropin'
 awk -v ins="$INJECT" '
   /^   " builton.fth"/ && !done { gsub(/\\n/, "\n", ins); print ins; done=1 }
