@@ -61,8 +61,9 @@ smoke_ofdiag() {
         --send 'why-no-boot\r'                --expect "ok" \
         --send 'trace-boot\r'                 --expect "tracing ON" \
         --send "load $CD:\\\\ofdiag.fth\r"    --expect "ok" \
+        --send 'boot\r'                       --expect "ok" \
         --send 'untrace\r'                    --expect "tracing OFF" \
-        --send "load $CD:\\\\ofdiag.fth\r"    --expect "ok"
+        --send 'boot\r'                       --expect "ok"
     # The fault matrix: four DISTINCT diagnoses. A diagnostic that always says
     # the same thing is the failure mode this guards (v0 really did that).
     local n
@@ -73,11 +74,15 @@ smoke_ofdiag() {
     grep -q "OFDIAG: boot-device =" "$LOG" || fail "why-no-boot did not report boot-device"
     note "why-no-boot walked the boot-device list"
     # Tracer: #T lines while ON, silence after untrace.
-    awk '/tracing ON/,/tracing OFF/' "$LOG" | grep -q '#T open' \
-        || fail "REGRESSION: trace-boot installed no tracer (#T lines absent while tracing was ON)"
+    awk '/tracing ON/,/tracing OFF/' "$LOG" | grep -q '#T load-begin' \
+        || fail "REGRESSION: trace-boot did not hook the LOAD path (no #T load-begin while tracing was ON)"
+    # The real thing, not a stand-in: a `boot` must trip BOTH ?show-device sites --
+    # the boot-device list walk, and the call immediately before open-dev.
+    awk '/tracing ON/,/tracing OFF/' "$LOG" | grep -q '#T open /pci/ethernet' \
+        || fail "REGRESSION: trace-boot did not hook a real BOOT (no #T for the device open during \`boot\`)"
     awk '/tracing OFF/,0' "$LOG" | grep -q '#T ' \
         && fail "REGRESSION: untrace left a tracer installed (#T lines after tracing OFF)"
-    note "tracer emits #T milestones, and untrace restores the hooks cleanly"
+    note "tracer covers a real \`boot\` (list walk + device open) and a load; untrace restores cleanly"
     pass "ofdiag: 4 distinct fault diagnoses + boot tracer installed and cleanly removed"
 }
 

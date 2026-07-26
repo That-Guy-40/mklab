@@ -36,7 +36,7 @@ once, which is why `mdir` now gates it).
 $ ./smoke-dsl.sh ofdiag
   - four distinct fault classes reported (OFDIAG-0/1/2/3)
   - why-no-boot walked the boot-device list
-  - tracer emits #T milestones, and untrace restores the hooks cleanly
+  - tracer covers a real `boot` (list walk + device open) and a load; untrace restores cleanly
 PASS: ofdiag: 4 distinct fault diagnoses + boot tracer installed and cleanly removed
 
 $ ./smoke-dsl.sh ofscope
