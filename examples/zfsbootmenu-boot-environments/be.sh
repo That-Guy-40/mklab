@@ -89,9 +89,21 @@ resolve_pool() {
 }
 
 # The BE container dataset ($pool/ROOT unless ZBM_ROOT overrides).
+#
+# NOTE the explicit failure propagation, which a `printf '%s/ROOT' "$(resolve_pool)"`
+# one-liner quietly loses. `die` is `exit`, and resolve_pool runs inside a
+# command substitution, so its exit kills only THAT subshell; printf then
+# succeeds on the empty string and root_ds returns 0. The caller carried on with
+# an empty pool and issued `zpool set bootfs=/ROOT/<name>` against a pool named
+# "" — after printing an error, and then exiting 0. Found by
+# tests/test-be-guardrails.sh; it is the silent-exit trap CLAUDE.md documents,
+# in the tool rather than in a test.
 root_ds() {
     if [[ -n "${ZBM_ROOT:-}" ]]; then printf '%s' "$ZBM_ROOT"; return; fi
-    printf '%s/ROOT' "$(resolve_pool)"
+    local pool
+    pool="$(resolve_pool)" || exit 1
+    [[ -n "$pool" ]] || die "could not resolve a pool (set ZBM_POOL or pass --pool)"
+    printf '%s/ROOT' "$pool"
 }
 
 snap_tag() { printf '%s' "${BE_SNAPSHOT_TAG:-$(date +%Y%m%d-%H%M%S)}"; }
@@ -208,17 +220,24 @@ cmd_cmdline() {
     run "$ZFS" set "org.zfsbootmenu:commandline=$args" "$root/$name"
 }
 
+# Print the leading comment block as the usage text. Deliberately NOT a
+# hardcoded line range: `sed -n '2,45p'` was, and the header had already grown
+# past line 45, so --help silently truncated its own "Env knobs" section — six
+# documented controls a user could not discover. Caught by
+# tests/test-docs-drift.sh, which asserts --help against the whole block.
+usage() { awk 'NR==1 {next} /^#/ {print; next} {exit}' "$0"; }
+
 main() {
     while [[ "${1:-}" == --* ]]; do
         case "$1" in
             --pool)    ZBM_POOL="$2"; shift 2 ;;
             --dry-run) BE_DRYRUN=1; shift ;;
-            --help|-h) sed -n '2,45p' "$0"; exit 0 ;;
+            --help|-h) usage; exit 0 ;;
             --) shift; break ;;
             *)  die "unknown option $1" ;;
         esac
     done
-    local cmd="${1:-}"; [[ -n "$cmd" ]] || { sed -n '2,45p' "$0"; exit 1; }
+    local cmd="${1:-}"; [[ -n "$cmd" ]] || { usage; exit 1; }
     shift
     case "$cmd" in
         list)     cmd_list "$@" ;;

@@ -32,7 +32,8 @@ the old one in seconds if it breaks. A Phase-2 QEMU lab.
 ```bash
 # from this directory
 tests/run-all.sh
-# → 4 passed: be.sh command plan, config.yaml, shellcheck, the UEFI spec
+# → 7 passed: BE command plan, live-path guardrails, CLI contract,
+#             doc/code drift, config.yaml, shellcheck, the UEFI spec
 
 # see the exact ZFS/ZBM commands a boot-environment op would run:
 BE_DRYRUN=1 ZBM_POOL=rpool ./be.sh create testupgrade
