@@ -36,6 +36,10 @@ habitat_track() {
         T_OPENOK='cdrom'                         # OFDIAG-0 (with the ISO attached)
         T_OPENFAIL='/obio/eeprom'                # OFDIAG-3 (node exists, no open)
         BOOTDEV='disk:a disk'
+        # increment 3: the firmware built with patch REALLY implemented
+        # (build-firmware.sh), plus the stock blob to prove ours is not it.
+        STOCK_BLOB=/usr/share/qemu/openbios-sparc32
+        FW_ARTIFACT="$WORKDIR/openbios-sparc32-patched"
         ;;
       ppc)
         QEMU=qemu-system-ppc
@@ -55,6 +59,8 @@ habitat_track() {
         T_OPENOK='/memory@0'                     # OFDIAG-0
         T_OPENFAIL='cd'                          # OFDIAG-3 (no medium in the drive)
         BOOTDEV='hd:,\\:tbxi hd:,\ppc\bootinfo.txt hd:,%BOOT'
+        STOCK_BLOB=/usr/share/qemu/openbios-ppc
+        FW_ARTIFACT="$WORKDIR/openbios-ppc-patched"
         ;;
       *) return 1 ;;
     esac

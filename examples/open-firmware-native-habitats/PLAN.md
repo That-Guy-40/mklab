@@ -17,8 +17,11 @@ This file tracks what has actually been built.
 | 2 | `dsl/tracers.fth` — boot tracers built on it, rewriting call sites the firmware provides no hook for; `untrace` is the same patch reversed | `smoke-habitat.sh autotrace {sparc32,ppc}` |
 | 2 | the power-on autoboot traces itself, armed from NVRAM pre-probe | `smoke-habitat.sh autotrace` |
 
-Status: **7 PASS on sparc32, 5 PASS + 2 justified SKIP on ppc.** ([PATCH.md](PATCH.md)
-is the increment-2 write-up.)
+| 3 | `patches/01-implement-patch.patch` + `build-firmware.sh` — **the real fix**: `patch` implemented in `forth/debugging/firmware.fs` and the firmware rebuilt for both tracks, so nothing shadows anything. Cuts the autotrace nvramrc from 2232 to 777 bytes | `smoke-habitat.sh firmware {sparc32,ppc}` |
+| 3 | `dsl/calls.fth` — **7.5.3.1 `.calls`**, the other stub, reusing `patch`'s body walk; also in the firmware patch | `smoke-habitat.sh calls sparc32` |
+
+Status: **9 PASS on sparc32, 6 PASS + 3 justified SKIP on ppc.** ([PATCH.md](PATCH.md)
+covers increments 2 and 3.)
 
 ## Assumptions this lab's own plan got wrong
 
@@ -63,13 +66,18 @@ deliberately.
   `boot-command evaluate` resolves by name at run time) was never needed and
   remains untested; it would in any case not have caught `$load`, which is
   called from an already-compiled body.
-- **`.calls` (7.5.3.1), also a stub.** Now cheap: "which words' bodies mention
-  this xt" is `patch`'s dictionary walk run over every word instead of one. The
-  natural increment 3.
-- **Send `patch` upstream.** It is written to be sendable — no lab-specific
-  assumptions, no arch conditionals, and it shadows rather than replaces the
-  stub, so a real fix means editing `forth/debugging/firmware.fs`. Nobody has
-  filed it.
+- ~~**`.calls` (7.5.3.1), also a stub.**~~ ✅ **DONE in increment 3** — and it
+  cross-checks the tracers: with them armed, `' open-dev .calls` names
+  `t-open-dev` where `$load` used to be.
+- ~~**the shadowing limitation**~~ ✅ **DONE in increment 3** —
+  `patches/01-implement-patch.patch` + `build-firmware.sh`. This is the lab's
+  one exception to "no firmware build", and every other mode still runs the
+  stock blob.
+- **Upstream: NOT filed, and not to be filed from here.** The patch is written
+  to be sendable (one file, no arch conditionals, no lab-specific assumptions),
+  but whether openbios/openbios is accepting pull requests or is in
+  archive/maintenance mode is **unverified**. Establishing that comes first, and
+  the submission is the repo owner's call.
 - **`ofscope` port** (independent of the tracers above — the *other* vocabulary
   from the x86 lab: memory and device exploration).
   `pci-map` needs `config-l@`, which OpenBIOS does not have;

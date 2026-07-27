@@ -97,9 +97,21 @@ Trying hd:,\\:tbxi...
 The correctness question is not "does it replace the xt" but "does it know what
 *isn't* an xt". A word's body interleaves branch targets, literals and inline
 counted strings, so the smoke builds a booby trap: a literal whose value **is**
-the xt being replaced. `patch` must report **2 occurrences, not 3**. Full
-derivation, plus the hex-name trap that cost a debugging session, in
-**[PATCH.md](PATCH.md)**.
+the xt being replaced. `patch` must report **2 occurrences, not 3**.
+
+The same walk then yields **`.calls`** (7.5.3.1, also a stub) — and the two
+tools cross-check each other. With the tracers armed, `' open-dev .calls` names
+**`t-open-dev` where `$load` used to be**: an independently written word
+observing `patch`'s effect on the live dictionary.
+
+Loading these at runtime *shadows* the stubs, which is fine for tracing and
+wrong as a fix — so [`build-firmware.sh`](build-firmware.sh) applies
+[`patches/01-implement-patch.patch`](patches/01-implement-patch.patch) to
+`forth/debugging/firmware.fs` and rebuilds the firmware for both tracks. That
+is the lab's **one** exception to "no firmware build", and it pays for itself:
+the autotrace script shrinks from **2232 to 777 bytes** once `patch` lives in
+the ROM. Full derivation, plus the hex-name trap and the `last`-vs-`forth-last`
+trap that each cost a debugging session, in **[PATCH.md](PATCH.md)**.
 
 ## Each habitat has exactly one door — and they are different doors
 
@@ -156,8 +168,8 @@ backwards.
 
 ```bash
 ./stage-dsl.sh                      # ISO9660 disc + the one-line NVRAM forms
-./smoke-habitat.sh all sparc32      # 7 PASS
-./smoke-habitat.sh all ppc          # 5 PASS + 2 justified SKIP
+./smoke-habitat.sh all sparc32      # 9 PASS
+./smoke-habitat.sh all ppc          # 6 PASS + 3 justified SKIP
 ./run-habitat.sh ppc                # interactive: land at 0 > with ofdiag resident
 ```
 

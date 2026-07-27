@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# smoke-habitat.sh [nvramrc|ladder|media|patch|autotrace|persist|console|all] [sparc32|ppc]
+# smoke-habitat.sh [nvramrc|ladder|media|patch|calls|autotrace|firmware|persist|console|all] [sparc32|ppc]
 #   — one verdict per claim, on the architectures where Open Firmware shipped.
 #
 # Exit: 0 PASS / 1 FAIL / 77 SKIP.
@@ -36,7 +36,7 @@ trap 'rc=$?; [ $rc -eq 0 ] || [ $rc -eq 1 ] || [ $rc -eq 77 ] || echo "FAIL: smo
 # shellcheck source=lib-habitat.sh
 . "$HERE/lib-habitat.sh"
 habitat_track "$TRACK_ARG" \
-    || fail "usage: $0 [nvramrc|ladder|media|patch|autotrace|persist|console|all] [sparc32|ppc]"
+    || fail "usage: $0 [nvramrc|ladder|media|patch|calls|autotrace|firmware|persist|console|all] [sparc32|ppc]"
 
 command -v "$QEMU" >/dev/null || skip "$QEMU not installed (apt install qemu-system-sparc qemu-system-ppc)"
 command -v python3 >/dev/null || skip "python3 not installed"
@@ -285,8 +285,107 @@ smoke_autotrace() {
     pass "autotrace ($TRACK): tracers built on our own patch, delivered by NVRAM, catch the autoboot on a firmware that ships no tracepoints"
 }
 
+# ── .calls (7.5.3.1), the other stub — and a cross-check on our own tracers ──
+smoke_calls() {
+    if [ "$HAS_FS" != yes ]; then
+        skip "calls ($TRACK): needs the media door to load the vocabulary interactively; ppc has no filesystem — its coverage is the firmware mode, where .calls is in the ROM"
+    fi
+    [ -f "$WORKDIR/dsl.iso" ] || skip "no $WORKDIR/dsl.iso — run ./stage-dsl.sh"
+    boot_and_drive calls "${MEDIA_ARGS[@]}" -- \
+        --expect "0 >" \
+        --send 'load cdrom:\PATCH.FTH\r' --expect "0 >" \
+        --send 'load-base load-size evaluate\r' --expect "patch loaded" \
+        --send 'load cdrom:\CALLS.FTH\r' --expect "0 >" \
+        --send 'load-base load-size evaluate\r' --expect "calls loaded" \
+        --send "' open-dev .calls\r"  --expect "0 >" \
+        --send "' \$load .calls\r"    --expect "0 >" \
+        || fail "the driver did not complete — see $LOG"
+    # The walk must cover the whole Forth wordlist. Walking `last` instead of
+    # `forth-last` yields a chain of ONE and reports "0 caller(s)" — which looks
+    # exactly like a correct answer, so assert the scanned count is large.
+    local scanned
+    # NB: extract with one sed, not two greps. `grep -oE '[0-9a-f]+'` on
+    # "in 4d3 words" matches BOTH "4d3" and the "d" of "words", and the two
+    # lines then break $(( )) with an "unbound variable" that names neither.
+    scanned=$(clean "$LOG" | sed -nE 's/.*caller\(s\) in ([0-9a-f]+) words.*/\1/p' | head -1)
+    [ -n "$scanned" ] && [ "$((16#$scanned))" -gt 500 ] \
+        || fail "REGRESSION: .calls scanned only 0x$scanned words — it is walking \`last\` (a chain of one) instead of \`forth-last\`, and every answer it gives is a false negative (see $LOG)"
+    note "walked the whole Forth wordlist (0x$scanned words), not just the current one"
+    # It must name the real callers. These two are ground truth: the tracers
+    # patch exactly these call sites, so .calls and trace-boot cross-check.
+    clean "$LOG" | grep -A1 "' open-dev .calls" | grep -q '\$load' \
+        || fail "REGRESSION: .calls did not name \$load as a caller of open-dev — see $LOG"
+    clean "$LOG" | grep -A1 "' .load .calls" | grep -qw 'boot' \
+        || fail "REGRESSION: .calls did not name boot as a caller of \$load — see $LOG"
+    note "named \$load calling open-dev, and boot calling \$load — the exact sites trace-boot patches"
+    pass "calls ($TRACK): 7.5.3.1 implemented, and it independently confirms the tracers' call sites"
+}
+
+# ── the REAL fix: patch implemented IN the firmware, not shadowed over it ────
+# Everything else in this lab runs the stock blob. This mode is the exception,
+# and the distinction it guards is the honest one: loading patch.fth at runtime
+# SHADOWS the empty stub (the firmware announces it — "patch isn't unique."),
+# so anything already compiled against the stub still calls the stub. Here the
+# implementation is in forth/debugging/firmware.fs, where a fix belongs.
+smoke_firmware() {
+    [ -f "$FW_ARTIFACT" ] || skip "no $FW_ARTIFACT — run ./build-firmware.sh $TRACK (needs podman + ~5 min)"
+    [ -f "$WORKDIR/autotrace-fw.min.fth" ] || skip "no $WORKDIR/autotrace-fw.min.fth — run ./stage-dsl.sh"
+    boot_and_drive firmware -bios "$FW_ARTIFACT" \
+        -prom-env "use-nvramrc?=true" -prom-env "nvramrc=$(cat "$WORKDIR/autotrace-fw.min.fth")" -- \
+        --expect "0 >" \
+        --send 'see patch\r' --expect "0 >" \
+        --send ': zap ." ZAP" cr ;\r' --expect "0 >" \
+        --send ': zip ." ZIP" cr ;\r' --expect "0 >" \
+        --send ': t4 zap 12345 drop zap ;\r' --expect "0 >" \
+        --send "' zap true 12345 true ' t4 (patch)\r" --expect "0 >" \
+        --send 'patch zip zap t4\r' --expect "0 >" \
+        --send "' open-dev .calls\r" --expect "0 >" \
+        || fail "the driver did not complete — see $LOG"
+    # 1. It is OUR firmware, not the blob QEMU ships. The build date is the
+    #    discriminator the sibling rival lab uses for the same claim.
+    local stock_date ours_date
+    stock_date=$(strings "$STOCK_BLOB" 2>/dev/null | grep -oE '[A-Z][a-z]{2} [ 0-9][0-9] [0-9]{4}' | head -1)
+    ours_date=$(clean "$LOG" | grep -oE 'built on [A-Z][a-z]{2} [ 0-9][0-9] [0-9]{4}' | head -1 | sed 's/built on //')
+    [ -n "$ours_date" ] || fail "no build date in the banner — see $LOG"
+    [ "$ours_date" != "$stock_date" ] \
+        || fail "the running firmware's build date ($ours_date) matches the stock blob's — QEMU is booting $STOCK_BLOB, not $FW_ARTIFACT (see $LOG)"
+    note "running OUR build ($ours_date), not the stock blob ($stock_date)"
+    # 2. patch is IN the ROM: a real body, and no redefinition warning at all.
+    clean "$LOG" | grep -q '(patch-parse)' \
+        || fail "REGRESSION: 'see patch' shows no implementation — the ROM still carries the empty stub (see $LOG)"
+    clean "$LOG" | grep -q "patch isn't unique" \
+        && fail "REGRESSION: the firmware reported 'patch isn't unique.' — something is SHADOWING the in-ROM patch again, which is exactly what this build exists to stop (see $LOG)"
+    note "'see patch' decompiles a real body, and nothing shadows it"
+    # 3. It still behaves — same negative control as the runtime version.
+    clean "$LOG" | grep -q 'patch: 2 occurrence(s) replaced' \
+        || fail "REGRESSION: the in-ROM patch did not replace exactly 2 call sites (3 would mean it clobbered the literal) — see $LOG"
+    note "the in-ROM patch replaces exactly 2 call sites and leaves the identical-looking literal alone"
+    # 4. And the tracers still arm from NVRAM — now needing only themselves.
+    clean "$LOG" | awk '/Welcome to OpenBIOS/{f=1} /^0 >/{exit} f' | grep -q '#T load-begin' \
+        || fail "REGRESSION: the power-on autoboot was not traced with the patched firmware — see $LOG"
+    note "the autoboot still traces itself, from an nvramrc carrying ONLY the tracers"
+    # 5. and the OTHER stub is filled in too.
+    clean "$LOG" | grep -q '\.calls: [0-9]* caller(s) in' \
+        || fail "REGRESSION: .calls produced no cross-reference — 7.5.3.1 is stubbed again in this ROM (see $LOG)"
+    # The two tools cross-check each other here, and the expected answer is the
+    # INTERESTING one. The tracers are armed in this mode, so trace-boot has
+    # already rewritten $load's reference to open-dev — meaning $load must NOT
+    # appear as a caller any more, and t-open-dev must. .calls is reading the
+    # live, patched dictionary, so this is patch's effect observed by an
+    # independently written word. (Asserting $load here fails, correctly: that
+    # is how this check found its own first version wrong.)
+    clean "$LOG" | grep -A1 "' open-dev .calls" | grep -q 't-open-dev' \
+        || fail "REGRESSION: .calls does not name t-open-dev as a caller of open-dev — either the tracers did not arm, or .calls is not reading the live dictionary (see $LOG)"
+    clean "$LOG" | grep -A1 "' open-dev .calls" | grep -q '\$load' \
+        && fail "REGRESSION: .calls still names \$load as a caller of open-dev, but trace-boot should have rewritten that very call site — the patch did not take (see $LOG)"
+    note "the in-ROM .calls sees the PATCHED dictionary: t-open-dev now calls open-dev where \$load used to"
+    pass "firmware ($TRACK): patch is implemented in the ROM (forth/debugging/firmware.fs), not shadowed over the stub"
+}
+
 case "$MODE" in
+    firmware)  smoke_firmware ;;
     patch)     smoke_patch ;;
+    calls)     smoke_calls ;;
     autotrace) smoke_autotrace ;;
     nvramrc) smoke_nvramrc ;;
     ladder)  smoke_ladder ;;
@@ -295,7 +394,7 @@ case "$MODE" in
     console) smoke_console ;;
     all)
         rc=0
-        for m in nvramrc ladder media patch autotrace persist console; do
+        for m in nvramrc ladder media patch calls autotrace firmware persist console; do
             printf '\n=== %s (%s) ===\n' "$m" "$TRACK"
             bash "$0" "$m" "$TRACK"; r=$?
             [ $r -eq 1 ] && rc=1
@@ -303,5 +402,5 @@ case "$MODE" in
         printf '\n'
         [ $rc -eq 0 ] && echo "PASS: every claim verified ($TRACK)" || echo "FAIL: at least one claim failed ($TRACK)"
         exit $rc ;;
-    *) fail "usage: $0 [nvramrc|ladder|media|patch|autotrace|persist|console|all] [sparc32|ppc]" ;;
+    *) fail "usage: $0 [nvramrc|ladder|media|patch|calls|autotrace|firmware|persist|console|all] [sparc32|ppc]" ;;
 esac

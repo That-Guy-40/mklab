@@ -66,3 +66,14 @@ sz=$(wc -c < "$AT")
 [ "$sz" -le "$NVRAM_BUDGET" ] \
     || { echo "FAIL: autotrace.min.fth is $sz bytes, over the $NVRAM_BUDGET-byte NVRAM config partition"; exit 1; }
 echo "  - patch.fth + tracers.fth -> autotrace.min.fth ($sz bytes of $NVRAM_BUDGET, arms itself at power-on)"
+
+# The same thing for a firmware built by ./build-firmware.sh, where `patch` is
+# already in the ROM and only the tracers need to ride in NVRAM. Worth measuring
+# rather than asserting: it is the concrete cost of shadowing vs fixing.
+ATF="$WORKDIR/autotrace-fw.min.fth"
+{ printf 'device-end '
+  python3 "$HERE/minify-fth.py" "$HERE/dsl/tracers.fth" || exit 1
+  printf ' trace-boot'
+} 2>/dev/null | tr -d '\n' > "$ATF" || { echo "FAIL: building $ATF"; exit 1; }
+szf=$(wc -c < "$ATF")
+echo "  - tracers.fth alone   -> autotrace-fw.min.fth ($szf bytes; $((sz - szf)) fewer than above, because ./build-firmware.sh puts patch in the ROM)"
