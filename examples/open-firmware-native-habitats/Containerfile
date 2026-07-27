@@ -1,0 +1,43 @@
+# Build box for OpenBIOS on the NATIVE habitats: sparc32 (Sun) + qemu-ppc (Apple).
+#
+# The sibling ../openbios-the-rival-that-shipped/Containerfile builds the x86,
+# amd64 and ppc targets; this one differs in exactly one way that matters — it
+# adds the SPARC cross compiler, which that lab has no use for. Kept separate
+# rather than extending the sibling's image, because that image is what the
+# sibling's smokes are pinned to.
+FROM docker.io/debian:13
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        make \
+        gcc \
+        libc6-dev \
+        xsltproc \
+        gcc-sparc64-linux-gnu \
+        gcc-powerpc-linux-gnu \
+    && rm -rf /var/lib/apt/lists/*
+# make            — drives the Makefile that switch-arch generates
+# gcc + libc6-dev — the Forth kernel and libopenbios are plain C; also builds
+#                   fcode-utils below
+# xsltproc        — config/scripts/switch-arch generates the Makefile from the
+#                   build.xml/config XML via XSLT. A hard requirement: without
+#                   it switch-arch aborts before writing anything.
+# gcc-sparc64-linux-gnu — the sparc32 target. NOT a typo and NOT the wrong
+#                   width: switch-arch's `select_prefix sparc sparc64` tries a
+#                   sparc- prefix first and falls back to sparc64-, and the
+#                   sparc32 CFLAGS carry -m32 -Wa,-32 -mcpu=supersparc, so the
+#                   64-bit cross toolchain emits the 32-bit sun4m image.
+# gcc-powerpc-linux-gnu — the qemu-ppc target (g3beige/mac99).
+#
+# NB: no libc6-dev-i386 here. The sibling needs it for its 32-bit x86 target
+# and documents that it conflicts with native gcc-multilib; this lab builds no
+# x86 target at all, so the conflict never arises.
+
+# toke (FCode tokenizer) from source: switch-arch hard-aborts without it, and
+# the house rule forbids pulling prebuilt toolchains. The fcode-utils tree
+# (github.com/openbios/fcode-utils, plain C) is COPY'd in from the build
+# context and installs to /usr/local/bin.
+COPY fcode-utils /tmp/fcode-utils
+RUN make -C /tmp/fcode-utils \
+    && make -C /tmp/fcode-utils install \
+    && rm -rf /tmp/fcode-utils \
+    && command -v toke

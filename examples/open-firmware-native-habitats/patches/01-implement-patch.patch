@@ -1,0 +1,149 @@
+diff --git a/forth/debugging/firmware.fs b/forth/debugging/firmware.fs
+index 5e16a6c..4b8e2e6 100644
+--- a/forth/debugging/firmware.fs
++++ b/forth/debugging/firmware.fs
+@@ -27,8 +27,9 @@
+ \ 7.5.3    Dictionary
+ 
+ \ 7.5.3.1    Dictionary search
+-: .calls    ( xt -- )
+-  ;
++\ .calls is implemented further down, after the body-walking helpers that both
++\ it and `patch` share -- a cross-reference is that same walk run over every
++\ word instead of one.
+   
+ : $sift    ( text-addr text-len -- )
+   ;
+@@ -54,10 +55,131 @@
+   
+ \ 7.5.3.3    Patch
+ 
+-: patch ( "new-name< >old-name< >word-to-patch< >" -- )
++\ A colon definition's body is a run of cells, each an xt, terminated by
++\ (semis).  Some xts carry INLINE DATA in the cells that follow them, and
++\ stepping over it is the whole correctness problem: a plain "scan every cell
++\ for old-xt" would happily overwrite a branch target, or a literal that merely
++\ happens to hold the same value, and the damage would not surface until the
++\ patched word ran.  The layout below matches see.fs's decompiler arm for arm.
++
++: (patch-inline-cells) ( xt -- n )
++  dup ['] do?branch =  if  drop 1 exit  then
++  dup ['] dobranch  =  if  drop 1 exit  then
++  dup ['] (lit)     =  if  drop 1 exit  then
++  dup ['] (while)   =  if  drop 2 exit  then
++  dup ['] (repeat)  =  if  drop 2 exit  then
++  drop 0
++  ;
++
++\ (") is the awkward one: its length is in the following cell and the string is
++\ inline, so the next item starts at aligned(adr+len) + 2 cells.
++: (patch-next-item) ( adr -- adr' )
++  dup @  ['] (") =  if
++    dup cell+ @  over +  aligned  nip  2 cells +  exit
++  then
++  dup @ (patch-inline-cells)  1+ cells  +
++  ;
++
++0 value patch-count
++0 value (patch-new)
++0 value (patch-old)
++0 value (patch-newlit?)
++0 value (patch-oldlit?)
++
++: (patch-match?) ( adr -- adr flag )
++  (patch-oldlit?)  if
++    dup @ ['] (lit) =  if  dup cell+ @ (patch-old) =  else  false  then
++  else
++    dup @ (patch-old) =
++  then
++  ;
++
++: (patch-store) ( adr -- )
++  (patch-oldlit?)  if  cell+  then      \ aim past (lit), at the literal itself
++  (patch-new) swap !
++  patch-count 1+ to patch-count
+   ;
+ 
+ : (patch)    ( new-n1 num1? old-n2 num2? xt -- )
++  >r
++  to (patch-oldlit?)  to (patch-old)
++  to (patch-newlit?)  to (patch-new)
++  0 to patch-count
++  \ Exchanging a word for a literal changes how many cells the item occupies,
++  \ so it cannot be done in place.  Refuse rather than corrupt.
++  (patch-newlit?) (patch-oldlit?) <>  if
++    r> drop
++    ." patch: cannot exchange a word for a literal in place" cr  exit
++  then
++  r> dup @ 1 <>  if
++    drop  ." patch: not a colon definition" cr  exit
++  then
++  cell+
++  begin  dup @ ['] (semis) <>  while
++    (patch-match?)  if  dup (patch-store)  then
++    (patch-next-item)
++  repeat
++  drop
++  ;
++
++\ Each name is a WORD if one of that name exists, else a number.  Order matters:
++\ the default base is hex, so plausible names like aa, bb, dead, beef and face
++\ all parse as numbers -- looking the word up first is what keeps `patch bb aa
++\ foo` meaning what the user obviously intended.
++: (patch-parse) ( -- val num? )
++  parse-word
++  2dup $find  if
++    >r 2drop r>  false  exit
++  then
++  2drop
++  2dup $number  0=  if
++    >r 2drop r>  true  exit
++  then
++  type ." : not a word, and not a number" cr  -13 throw
++  ;
++
++\ 7.5.3.1  Dictionary search -- "who calls this word?"
++\
++\ Walk the Forth wordlist from `forth-last`, NOT from `last`: `last` tracks the
++\ most recent definition in the CURRENT wordlist, and with vocabularies enabled
++\ that is a chain of one at the ok prompt, so a walk from it silently reports
++\ "0 caller(s)".  forth-last is the wordlist $find itself falls back to.
++
++0 value (calls-target)
++0 value (calls-count)
++0 value (calls-scanned)
++
++: (calls-hit?) ( xt -- flag )
++  dup @ 1 <>  if  drop false exit  then   \ colon definitions only
++  cell+
++  begin  dup @ ['] (semis) <>  while
++    dup @ (calls-target) =  if  drop true exit  then
++    (patch-next-item)
++  repeat
++  drop false
++  ;
++
++: .calls    ( xt -- )
++  to (calls-target)
++  0 to (calls-count)  0 to (calls-scanned)
++  forth-last
++  begin  @  ?dup  while
++    (calls-scanned) 1+ to (calls-scanned)
++    dup cell+ (calls-hit?)  if
++      dup lfa2name  dup  if  type space  else  2drop ." <headerless> "  then
++      (calls-count) 1+ to (calls-count)
++    then
++  repeat
++  cr ." .calls: " (calls-count) . ." caller(s) in " (calls-scanned) . ." words" cr
++  ;
++
++: patch ( "new-name< >old-name< >word-to-patch< >" -- )
++  (patch-parse)  (patch-parse)
++  parse-word  $find  0=  if
++    type ." : undefined word" cr  -13 throw
++  then
++  (patch)
++  ." patch: " patch-count . ." occurrence(s) replaced" cr
+   ;
+ 
+ 

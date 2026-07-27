@@ -172,20 +172,113 @@ by rebuilding the ROM, reached here by writing a config variable.
 `#T open` has an empty path, incidentally, and that is honest: `(find-bootdevice)`
 on a machine with no disk hands `$load` an empty string.
 
+## The real fix: put it in the firmware
+
+Everything above **shadows** the stub. Our `patch` is a new dictionary entry
+that wins by search order, and the firmware announces exactly that:
+
+```text
+(patch) isn't unique.
+patch isn't unique.
+```
+
+That is fine for this lab's tracers — nothing on the boot path was compiled
+against the stub — and wrong as a fix. So
+[`patches/01-implement-patch.patch`](patches/01-implement-patch.patch) puts the
+implementation where it belongs, in `forth/debugging/firmware.fs`, and
+[`build-firmware.sh`](build-firmware.sh) builds the result for both tracks.
+
+```text
+0 > see patch
+: patch
+  (patch-parse) (patch-parse) parse-word $find 0= if
+  type " : undefined word" type cr ( lit ) h# ffffffed  throw (patch) …
+  ;
+```
+
+No `isn't unique.` line anywhere, and the banner proves whose firmware it is:
+
+| | build date |
+|---|---|
+| stock `/usr/share/qemu/openbios-{sparc32,ppc}` | Apr 22 2026 |
+| ours | Jul 27 2026 |
+
+**It is also measurably cheaper.** With `patch` in the ROM the autotrace script
+only has to carry the *tracers*:
+
+| nvramrc contents | bytes (of the 3072 budget) |
+|---|---|
+| patch + tracers (shadowing, stock blob) | **2232** |
+| tracers alone (patch in ROM) | **777** |
+
+This is the lab's one exception to "no firmware build" — deliberately, and only
+here. Every other mode still runs the stock blob, and `smoke-habitat.sh
+firmware` SKIPs cleanly when the build has not been run.
+
+## `.calls` (7.5.3.1), the other stub — nearly free
+
+A cross-reference is the same body walk run over **every** word instead of one,
+so `dsl/calls.fth` reuses `/body-item` rather than growing a second walker that
+could drift:
+
+```text
+0 > ' open-dev .calls
+output input select-dev dir $load (find-bootdevice)
+.calls: 6 caller(s) in 4d3 words
+0 > ' $load .calls
+boot load
+.calls: 2 caller(s) in 4d3 words
+```
+
+**One trap, and it fails silently.** The first version walked `last`, the way
+`words` does — and reported `0 caller(s)`, which looks exactly like a correct
+answer:
+
+```text
+0 > last cnt2          \ length of the chain from `last`
+1
+0 > forth-last cnt2    \ …and from forth-last
+4d3
+```
+
+`last` tracks the most recent definition in the *current* wordlist; with
+`vocabularies?` true the firmware's own words live in the Forth wordlist, which
+is what `$find` falls back to. The smoke therefore asserts the **scanned count**,
+not just the answer — a walk that visits one word can never be caught by
+checking its output alone.
+
+### The two tools cross-check each other
+
+`.calls` was written to find call sites; `patch` rewrites them. Pointing the
+first at the second's work is the best evidence either one is right — and the
+expected answer is the *interesting* one. With the tracers armed:
+
+```text
+0 > ' open-dev .calls
+t-open-dev output input select-dev dir (find-bootdevice)
+```
+
+**`$load` is gone from the list and `t-open-dev` has taken its place**, because
+`trace-boot` rewrote precisely that call site. `.calls` is reading the live,
+patched dictionary. That assertion caught its own first draft — which expected
+`$load` and failed, correctly.
+
+Habitat difference, surfaced by the tool itself: Apple's firmware has a **7th**
+caller of `open-dev` (`preopen`) that Sun's does not.
+
 ## Honest limits
 
-- **This shadows the stubs; it does not replace them.** Our `patch` is a new
-  dictionary entry that wins by search order — the firmware says so itself with
-  `patch isn't unique.` Anything already compiled against the stub still calls
-  the stub. Nothing on the boot path does, so the tracers work; but a real fix
-  belongs in `forth/debugging/firmware.fs`, which is where an upstream patch
-  would put it.
 - **`patch` refuses to exchange a word for a literal** (or the reverse). Those
   occupy different numbers of cells, so it cannot be done in place without
   rewriting the whole body. It reports and declines rather than corrupting.
-- **`.calls` is still a stub.** The dictionary walk `patch` now has is most of
-  what a cross-referencer needs — "which words' bodies mention this xt" is the
-  same scan run over every word instead of one. That is the obvious next thing
-  this file makes cheap.
-- **Not sent upstream.** It is written to be sendable — no lab-specific
-  assumptions, no arch conditionals — but nobody has filed it.
+- **`.calls` walks the Forth wordlist only.** Words you defined at the prompt in
+  another wordlist are not scanned. For "who in the firmware calls this", which
+  is the question it exists to answer, that is the right scope — but it is a
+  scope, not totality.
+- **Nothing has been sent upstream, and nothing should be read as a submission.**
+  The patch is *written* to be sendable — no lab-specific assumptions, no arch
+  conditionals, and it modifies one file — so filing it would be
+  straightforward. Whether the project wants it is **unverified**: nobody here
+  has checked whether openbios/openbios is accepting pull requests or is in
+  archive/maintenance mode. That check comes first, and it is the maintainer's
+  and the repo owner's call, not this lab's.

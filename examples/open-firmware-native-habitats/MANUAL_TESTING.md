@@ -302,7 +302,78 @@ autoboot, with nothing typed. Byte-for-byte the same on `qemu-system-sparc`.
 The empty path after `#T open` is honest: `(find-bootdevice)` on a machine with
 no disk hands `$load` an empty string.
 
-## 10. The stubs, from the firmware's own mouth
+## 10. `.calls` (7.5.3.1), and the two tools checking each other
+
+```text
+0 > load cdrom:\PATCH.FTH  ok
+0 > load-base load-size evaluate
+patch loaded: …
+0 > load cdrom:\CALLS.FTH  ok
+0 > load-base load-size evaluate
+calls loaded: .calls
+0 > ' open-dev .calls
+output input select-dev dir $load (find-bootdevice)
+.calls: 6 caller(s) in 4d3 words
+0 > ' $load .calls
+boot load
+.calls: 2 caller(s) in 4d3 words
+```
+
+**Signature:** a non-trivial **scanned** count (`in 4d3 words`), not just a
+plausible answer. A version that walks `last` instead of `forth-last` scans ONE
+word and reports `0 caller(s)`, which is indistinguishable from a real negative.
+Check it yourself:
+
+```text
+0 > : cnt2 0 swap begin @ ?dup while swap 1+ swap repeat . cr ;
+0 > last cnt2
+1
+0 > forth-last cnt2
+4d3
+```
+
+**Then the cross-check.** Arm the tracers first, and ask again:
+
+```text
+0 > trace-boot
+0 > ' open-dev .calls
+t-open-dev output input select-dev dir (find-bootdevice)
+```
+
+`$load` is **gone** and `t-open-dev` has replaced it — `.calls` reading the live
+dictionary that `patch` just rewrote.
+
+## 11. The real fix — patch in the ROM, not over it
+
+```bash
+./build-firmware.sh both        # podman, ~5 min for the pair
+./smoke-habitat.sh firmware sparc32
+./smoke-habitat.sh firmware ppc
+```
+
+```text
+  - running OUR build (Jul 27 2026), not the stock blob (Apr 22 2026)
+  - 'see patch' decompiles a real body, and nothing shadows it
+  - the in-ROM patch replaces exactly 2 call sites and leaves the identical-looking literal alone
+  - the autoboot still traces itself, from an nvramrc carrying ONLY the tracers
+  - the in-ROM .calls sees the PATCHED dictionary: t-open-dev now calls open-dev where $load used to
+PASS: firmware (sparc32): patch is implemented in the ROM (forth/debugging/firmware.fs), not shadowed over the stub
+```
+
+**Signatures:** the banner date differs from the stock blob's, and **no
+`patch isn't unique.` line appears anywhere** — that line is the tell that
+something is shadowing rather than replacing. `./stage-dsl.sh` also reports the
+payoff:
+
+```text
+  - patch.fth + tracers.fth -> autotrace.min.fth (2232 bytes of 3072, arms itself at power-on)
+  - tracers.fth alone   -> autotrace-fw.min.fth (777 bytes; 1455 fewer than above, because ./build-firmware.sh puts patch in the ROM)
+```
+
+The build uses its **own** clone and **own** image, and sha-guards the rival
+lab's artifacts — it fails loudly if any of them moves.
+
+## 12. The stubs, from the firmware's own mouth
 
 ```text
 0 > see patch
