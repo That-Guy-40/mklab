@@ -21,7 +21,7 @@ the old one in seconds if it breaks. A Phase-2 QEMU lab.
 |---|---|---|
 | Boot-environment manager (`bectl` for Linux) | [`be.sh`](be.sh) | ✅ logic verified on host |
 | The BE workflow — snapshot/clone/activate/boot/rollback | [`RUNBOOK-boot-environments.md`](RUNBOOK-boot-environments.md) | 🧑 author-run under KVM |
-| Root-on-ZFS + ZBM install | [`RUNBOOK-install.md`](RUNBOOK-install.md) · [`install-zfs-root.sh`](install-zfs-root.sh) | 🧑 author-run under KVM |
+| Root-on-ZFS + ZBM install | [`RUNBOOK-install.md`](RUNBOOK-install.md) · [`install-zfs-root.sh`](install-zfs-root.sh) | ✅ plan verified on host (`INSTALL_DRYRUN=1`) / 🧑 the install itself author-run under KVM |
 | `generate-zbm` config | [`config.yaml`](config.yaml) | ✅ validated on host |
 | Boot the image under OVMF | [`zbm-debian.toml`](zbm-debian.toml) | ✅ spec validated / ⏳ argv on KVM |
 
@@ -32,12 +32,17 @@ the old one in seconds if it breaks. A Phase-2 QEMU lab.
 ```bash
 # from this directory
 tests/run-all.sh
-# → 7 passed: BE command plan, live-path guardrails, CLI contract,
-#             doc/code drift, config.yaml, shellcheck, the UEFI spec
+# → 8 passed: BE command plan, live-path guardrails, CLI contract,
+#             doc/code drift, the install dry run, config.yaml,
+#             shellcheck, the UEFI spec
 
 # see the exact ZFS/ZBM commands a boot-environment op would run:
 BE_DRYRUN=1 ZBM_POOL=rpool ./be.sh create testupgrade
 BE_DRYRUN=1 ZBM_POOL=rpool ./be.sh activate testupgrade
+
+# and read the WHOLE root-on-ZFS install before pointing it at a disk —
+# no root, no ZFS, no UEFI, nothing written:
+INSTALL_DRYRUN=1 DISK=/dev/vdb ./install-zfs-root.sh
 ```
 
 **On a KVM-capable UEFI host** — do the real thing (see the RUNBOOKs):
