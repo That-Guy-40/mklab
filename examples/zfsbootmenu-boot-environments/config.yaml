@@ -1,0 +1,42 @@
+# /etc/zfsbootmenu/config.yaml — drives `generate-zbm`, the tool that builds the
+# ZFSBootMenu images.  On Debian, ZBM is built with dracut (Void/Arch use
+# mkinitcpio).  This example produces a single UEFI executable
+# (/boot/efi/EFI/zbm/vmlinuz.EFI): a Linux kernel + a ZFS-capable initramfs whose
+# init IS the boot menu.  The firmware launches it like any other EFI binary.
+#
+# Rebuild after editing:   generate-zbm
+# Reference: ZFSBootMenu docs → "Configuration" (see UPSTREAM.md for the cite).
+
+Global:
+  # generate-zbm owns the images under ImageDir and prunes old versions.
+  ManageImages: true
+  # The ESP, mounted here on Debian.  ZBM images are written beneath it.
+  BootMountPoint: /boot/efi
+  # dracut config fragments used when assembling the initramfs.
+  DracutConfDir: /etc/zfsbootmenu/dracut.conf.d
+  PreHooksDir: /etc/zfsbootmenu/generate-zbm.pre.d
+  PostHooksDir: /etc/zfsbootmenu/generate-zbm.post.d
+  # false → dracut (Debian). true → mkinitcpio (Arch/Void).
+  InitCPIO: false
+
+Components:
+  # The kernel+initramfs *pair* output (for syslinux/extlinux/rEFInd setups).
+  # Disabled here because we ship the unified EFI executable below instead.
+  Enabled: false
+  ImageDir: /boot/efi/EFI/zbm
+  Versions: 3
+
+EFI:
+  # The unified UEFI executable — this is what an efibootmgr entry points at.
+  Enabled: true
+  ImageDir: /boot/efi/EFI/zbm
+  # false → keep exactly one vmlinuz.EFI (simplest for a single-disk lab).
+  # An integer keeps that many older copies as a fallback.
+  Versions: false
+
+Kernel:
+  # The command line for ZFSBootMenu ITSELF (not the OS you boot into — that
+  # comes from each BE's org.zfsbootmenu:commandline property).  `ro` keeps the
+  # menu environment read-only; `loglevel=4` quiets it.  Add `zbm.show` to make
+  # the menu appear every boot instead of only when a key is held.
+  CommandLine: ro quiet loglevel=4

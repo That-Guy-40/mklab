@@ -21,6 +21,7 @@
 
 ### Optional side-quests
 
+- [`zfsbootmenu-boot-environments`](../zfsbootmenu-boot-environments/) — the other answer to "the update broke my machine": don't recover it, **reboot into the version before it**. FreeBSD-style boot environments on Linux — a ZFS clone of the whole OS (kernel, /usr, /etc, coupled) made instantly by copy-on-write, and **ZFSBootMenu** (a Linux kernel + ZFS initramfs packaged as an EFI executable) importing the pool, reading the kernel straight off ZFS and `kexec`ing it — the thing GRUB cannot reliably do. Where `root-password-reset` breaks IN to a broken system and `kdump` dissects the corpse, this one makes the breakage a 2-second reboot. Host-safe checks verified; the ZFS install and live BE workflow are author-run under KVM.
 - [`systemd261-nixos-measured-boot`](../systemd261-nixos-measured-boot/) — boot *integrity* rather than boot *recovery*: a Nix-built NixOS on **systemd 261** measured into a (soft)TPM, deployed on-disk over iPXE, with staged rollout by machine-ID (`ConditionFraction=`) and storage sealed to the measured state (TPM2 LUKS bound to PCR 7+11 + a PCR-quote attestation stub). Spikes A–G verified — measured-os MET on a dm-verity+UKI image, sealed LUKS unseals only on the expected PCRs; honest gap: `RestrictFileSystemAccess=` isn't in nixpkgs' systemd 261. See its PLAN.md.
 
 ---
