@@ -417,12 +417,11 @@ cmd_deploy() {
     [[ -n "$driver" ]] || die "deploy: --driver is required (install|ramdisk|image|image+measured)"
     [[ -n "$image" ]]  || die "deploy: --image is required (the payload to deploy)"
 
-    # Resolve the driver script. install is real (author-run); ramdisk/image are
-    # honest not-yet — name the build step rather than pretending.
+    # Resolve the driver script. install + ramdisk are real; image is an honest
+    # not-yet — it names its build step rather than pretending.
     local drv="$MAAS_DRIVER_DIR/$driver.sh"
     if [[ ! -x "$drv" ]]; then
         case "$driver" in
-            ramdisk) die "deploy: the 'ramdisk' driver lands in build step 4 (not yet implemented)" ;;
             image)   die "deploy: the 'image' driver lands in build step 5 (not yet implemented)" ;;
             image+measured) die "deploy: 'image+measured' is a documented fast-follow (not yet implemented)" ;;
             *) die "deploy: no driver '$driver' at $drv" ;;

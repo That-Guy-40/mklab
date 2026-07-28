@@ -1,0 +1,110 @@
+# ramdisk-catalog.toml — the `--image` registry for `deploy --driver ramdisk`.
+#
+# Each entry is a payload that boots ENTIRELY INTO RAM: a kernel + an initramfs,
+# fetched over the network and executed with nothing written to disk. This file is
+# what makes the control plane a single front door to every RAM-bootable artifact in
+# the repo — the drivers do not reimplement those labs, they route to them.
+#
+# THE CATALOG DOES NOT BUILD ANYTHING. Each entry names the lab that owns the
+# artifact and the exact command that produces it; `ramdisk.sh stage` copies what it
+# finds and refuses, with that command, when it is not there. Owning the build here
+# would fork six labs into a seventh copy.
+#
+# Fields
+#   name      the `--image` value
+#   summary   one line, for `describe`
+#   lab       the lab that owns it (repo-relative), for the docs and the refusal message
+#   build     the exact command that produces the artifacts (printed when they're missing)
+#   kernel    path to the kernel  (~ and $VARS expanded; relative = repo root)
+#   initrd    path to the initramfs
+#   cmdline   appended to the kernel command line
+#   health    how `active` is observed — "console" | "http" | "dns"
+#   marker    health=console: an ERE grepped from the node's console log
+#   url       health=http: fetched with curl -fsS; `marker` (optional) must appear in the body
+#   query     health=dns: "<name>@<server>" resolved with dig +short; must return an answer
+#
+# `health` is the driver's declaration of its §4b activation gate. It is the same EVENT
+# the `ramdisk` profile in milestones.toml renders as its terminal milestone (§5c) — two
+# declarations of one thing, deliberately kept side by side rather than merged, because
+# the gate needs a per-image answer and the progress bar needs a per-driver one. If you
+# change a console marker here, check that profile still matches it.
+
+[meta]
+version = 1
+
+# ── the RAM-INFRA trio: stateless service nodes (MAAS provisions a C-tier node) ──
+# These three are the reason the catalog exists: a node that holds no state at all,
+# whose "disk wipe" between tenants is a no-op because there was never anything on a
+# disk to wipe. Their artifacts come out of a phase1-chroot rootfs via `export-initrd`.
+
+[[image]]
+name    = "anycast-dns-ram"
+summary = "stateless anycast DNS node (Knot + ExaBGP/bird2) — announces its service route only while healthy"
+lab     = "examples/anycast-dns-ram/"
+build   = "sudo phase1-chroot/lab-chroot.sh create examples/anycast-dns-ram/anycast-dns-chroot.toml && sudo phase1-chroot/lab-chroot.sh export-initrd anycast-dns --kernel ~/netboot/vmlinuz --output ~/netboot/anycast-dns-ram.initrd.gz"
+kernel  = "~/netboot/vmlinuz"
+initrd  = "~/netboot/anycast-dns-ram.initrd.gz"
+cmdline = "console=ttyS0 ip=dhcp"
+health  = "dns"
+query   = "health.lab@10.0.2.53"
+
+[[image]]
+name    = "cdn-edge-ram"
+summary = "stateless CDN edge — fresh OS every boot, imports its content cache from an external ZFS pool"
+lab     = "examples/cdn-edge-ram/"
+build   = "sudo phase1-chroot/lab-chroot.sh create examples/cdn-edge-ram/cdn-edge-chroot.toml && sudo phase1-chroot/lab-chroot.sh export-initrd cdn-edge --kernel ~/netboot/vmlinuz --output ~/netboot/cdn-edge-ram.initrd.gz"
+kernel  = "~/netboot/vmlinuz"
+initrd  = "~/netboot/cdn-edge-ram.initrd.gz"
+cmdline = "console=ttyS0 ip=dhcp"
+health  = "http"
+url     = "http://10.0.2.80/healthz"
+marker  = "ok"
+
+[[image]]
+name    = "package-mirror-ram"
+summary = "stateless package mirror — RAM-resident OS, packages on network storage (NFS/iSCSI)"
+lab     = "examples/package-mirror-ram/"
+build   = "sudo phase1-chroot/lab-chroot.sh create examples/package-mirror-ram/package-mirror-chroot.toml && sudo phase1-chroot/lab-chroot.sh export-initrd package-mirror --kernel ~/netboot/vmlinuz --output ~/netboot/package-mirror-ram.initrd.gz"
+kernel  = "~/netboot/vmlinuz"
+initrd  = "~/netboot/package-mirror-ram.initrd.gz"
+cmdline = "console=ttyS0 ip=dhcp"
+health  = "http"
+url     = "http://10.0.2.81/debian/dists/trixie/Release"
+marker  = "Suite:"
+
+# ── the tiny-OS trio: not services, but proof that "an OS" can be 1.4 MB ─────────
+# These have no network service to probe, so their `active` signal is the console —
+# which is the honest one anyway: for these images, reaching a shell IS the payload.
+
+[[image]]
+name    = "micro-linux-x86_64"
+summary = "from-source kernel + BusyBox/u-root initramfs, built by micro-linux/mlbuild.sh"
+lab     = "micro-linux/"
+build   = "micro-linux/mlbuild.sh all --arch x86_64"
+kernel  = "micro-linux/out/x86_64/kernel"
+initrd  = "micro-linux/out/x86_64/initramfs.cpio.gz"
+cmdline = "console=ttyS0 quiet"
+health  = "console"
+marker  = "(login:|~ #)"
+
+[[image]]
+name    = "floppinux"
+summary = "the 1.44 MB floppy distro, netbooted instead of floppy-booted — the whole OS is the initramfs"
+lab     = "examples/tiny-linux-experiments/floppinux/"
+build   = "examples/tiny-linux-experiments/floppinux/build-floppinux.sh build"
+kernel  = "~/.cache/lab-create/floppinux/bzImage"
+initrd  = "~/.cache/lab-create/floppinux/rootfs.cpio.xz"
+cmdline = "console=ttyS0"
+health  = "console"
+marker  = "(floppinux login:|~ #|/ #)"
+
+[[image]]
+name    = "busybox-netboot"
+summary = "the repo's minimal static-busybox initramfs — the smallest thing that is still a login"
+lab     = "examples/tiny-linux-experiments/"
+build   = "examples/metal-as-a-service/build-probe-initramfs.sh --shell --out ~/netboot/busybox-netboot.initrd.gz"
+kernel  = "~/netboot/kernel"
+initrd  = "~/netboot/busybox-netboot.initrd.gz"
+cmdline = "console=ttyS0"
+health  = "console"
+marker  = "(~ #|/ #)"

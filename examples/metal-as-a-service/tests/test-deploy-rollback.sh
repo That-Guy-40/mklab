@@ -57,10 +57,11 @@ assert_state node3 error
 note "health fail + no previous -> error ✓"
 
 # ── an unimplemented driver is refused with an honest 'build step N' message ─
+# (`ramdisk` graduated in increment 4 — `image` is the remaining not-yet.)
 prep node1b 6233
-msg="$( ( "$MAAS" deploy node1b --driver ramdisk --image v1 ) 2>&1 || true )"
-grep -q 'build step 4' <<<"$msg" || fail "ramdisk driver should be refused as 'build step 4', got: $msg"
+msg="$( ( "$MAAS" deploy node1b --driver image --image v1 ) 2>&1 || true )"
+grep -q 'build step 5' <<<"$msg" || fail "image driver should be refused as 'build step 5', got: $msg"
 assert_state node1b available   # refused before deploying — stays schedulable
-note "unimplemented 'ramdisk' driver refused honestly (build step 4) ✓"
+note "unimplemented 'image' driver refused honestly (build step 5) ✓"
 
 pass "deploy is health-gated with A/B rollback: healthy->active, fail->previous(degraded), both-bad->error, no-prev->error"

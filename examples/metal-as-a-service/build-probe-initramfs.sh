@@ -5,7 +5,13 @@
 # `find | cpio -H newc | gzip` (no mknod/root — the /init mounts devtmpfs to get
 # /dev/console; the kernel's own console carries the early banners regardless).
 #
-#   build-probe-initramfs.sh [--out FILE] [--busybox PATH]
+#   build-probe-initramfs.sh [--out FILE] [--busybox PATH] [--shell]
+#
+# --shell packs the SAME rootfs with an /init that just gives you a shell instead of
+# the fact-poster. That is the `busybox-netboot` entry in ramdisk-catalog.toml — the
+# smallest thing in the repo that is still a login, and a payload for
+# `deploy --driver ramdisk`. Same packer, different /init: the alternative was a
+# second near-identical script.
 #
 # The image is diskless + stateless: it boots over PXE (bootdev=pxe), the probe
 # POSTs facts to the metadata service, and it powers off. Pair it with a kernel and
@@ -19,10 +25,12 @@ HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 OUT="${MAAS_ARTIFACTS:-$HOME/.cache/lab-create/maas}/probe-initramfs.cpio.gz"
 BUSYBOX="${MAAS_BUSYBOX:-}"
+MODE=probe
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --out)     OUT="$2"; shift 2 ;;
         --busybox) BUSYBOX="$2"; shift 2 ;;
+        --shell)   MODE=shell; shift ;;
         -h|--help) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "build-probe-initramfs: unknown option $1" >&2; exit 1 ;;
     esac
@@ -51,8 +59,20 @@ while IFS= read -r applet; do
     ln -sf /bin/busybox "$work/bin/$applet"
 done < <("$BUSYBOX" --list 2>/dev/null)
 
-# /init = the probe (kernel execs /init directly; no inittab needed)
-cp "$HERE/probe-init.sh" "$work/init"
+# /init (the kernel execs it directly; no inittab needed)
+if [[ "$MODE" == shell ]]; then
+    # the ramdisk-catalog `busybox-netboot` payload: boot straight to a shell. The
+    # prompt IS the health signal, so it must reach the console the driver watches.
+    cat > "$work/init" <<'EOS'
+#!/bin/busybox sh
+/bin/busybox mount -t proc     none /proc     2>/dev/null
+/bin/busybox mount -t sysfs    none /sys      2>/dev/null
+/bin/busybox mount -t devtmpfs none /dev      2>/dev/null
+exec /bin/busybox sh
+EOS
+else
+    cp "$HERE/probe-init.sh" "$work/init"
+fi
 chmod +x "$work/init"
 
 # udhcpc lease applier — reuse micro-linux's if present, else a minimal one
@@ -78,7 +98,7 @@ mkdir -p "$(dirname "$OUT")"
     || die "cpio/gzip failed"
 
 size="$(du -h "$OUT" | cut -f1)"
-echo "built probe initramfs: $OUT ($size)" >&2
+echo "built ${MODE} initramfs: $OUT ($size)" >&2
 echo "contents (should include ./init and ./bin/busybox):" >&2
 zcat "$OUT" | cpio -t --quiet 2>/dev/null | grep -E '^(init|bin/busybox)$' | sed 's/^/  /' >&2
 cat >&2 <<EOF

@@ -21,9 +21,11 @@ PXE-install / RAM-boot / golden-image labs. Design roadmap:
 > + F2 signature gate** (step 3) — `deploy` now only reaches `active` when the image
 > **verifies** (OpenSSL CMS) and passes its **health gate**, and a failing image
 > **rolls back to the previous good one** instead of bricking. All **verifiable
-> headlessly** (mock BMC + mock driver, real crypto; `tests/run-all.sh` → 9 passed);
-> the real `install` and `inspect --boot` are author-run. Remaining: `ramdisk`/`image`
-> drivers + `apply` reconcile (steps 4–6). See [PLAN.md](PLAN.md) for the ladder.
+> headlessly** (mock BMC + mock driver, real crypto; `tests/run-all.sh` → 10 passed);
+> the real `install` and `inspect --boot` are author-run. Step 4 adds the **`ramdisk`
+> driver + its catalog**, making the control plane a single front door to every
+> RAM-bootable payload in the repo. Remaining: the `image` driver + `apply` reconcile
+> (steps 5–6). See [PLAN.md](PLAN.md) for the ladder.
 
 ## The state machine
 
@@ -141,9 +143,17 @@ lifecycle runs with no libvirt at all.
 
 - **`deploy` is a pluggable interface.** A driver is `drivers/<name>.sh` with
   `verify`/`deploy`/`health`/`describe`. `install.sh` PXE-installs to disk (wraps
-  `virtualbmc-ipmi-lab`; **author-run**); `ramdisk`/`image` are honest not-yet
+  `virtualbmc-ipmi-lab`; **author-run**); `ramdisk.sh` netboots a payload into RAM
+  from [`ramdisk-catalog.toml`](ramdisk-catalog.toml); `image` is an honest not-yet
   (`deploy` names the build step). Each driver is *mostly routing* to a lab that
   already works — the abstraction is the value.
+- **The `ramdisk` driver is where the contrast lives.** It must **not** end with
+  `bootdev disk` (a RAM node netboots on *every* boot; pointed at its disk it would
+  silently boot whatever a previous tenant left there) and must **not** wait for the
+  node to power itself off (a RAM service never does — powering off *is* the failure).
+  Both are asserted, with the negative controls run. Its payloads are **signed** and
+  the generated per-node iPXE script carries **`imgverify`**, so F2 gates both before
+  the deploy and again in the firmware.
 - **The health gate.** `deploying → active` is **not** "the boot returned" — the
   driver declares a success signal and `deploy` polls it. For `install` that's the
   installed OS's **`login:`** on the node console — the *same* line `watch`'s terminal
@@ -193,9 +203,11 @@ lifecycle runs with no libvirt at all.
 | [`metadata-serve.sh`](metadata-serve.sh) + [`lib/metadata.py`](lib/metadata.py) | NoCloud user-data + the introspection facts sink (:8282) |
 | [`milestones.toml`](milestones.toml) | MAAS's progress profiles (`probe`/`install`/`ramdisk`/`image`) for `watch` |
 | [`drivers/install.sh`](drivers/install.sh) | the `install` deploy driver (PXE kickstart/preseed → boot from disk; author-run) |
+| [`drivers/ramdisk.sh`](drivers/ramdisk.sh) | the `ramdisk` deploy driver (netboot into RAM; `stage`/`verify`/`deploy`/`health`) |
+| [`ramdisk-catalog.toml`](ramdisk-catalog.toml) + [`lib/catalog.py`](lib/catalog.py) | the `--image` registry (RAM-INFRA trio · micro-linux · floppinux · busybox) and its validating reader |
 | [`drivers/verify-lib.sh`](drivers/verify-lib.sh) | the F2 signature gate (OpenSSL CMS sign/verify, iPXE-`imgverify` format) |
-| [`tests/`](tests/) | 8 headless smokes: state-machine, cleaning-guard, registry, inspect-metadata, watch, probe-build, deploy-rollback, verify-tamper (+ `mock-bmc.sh`, `mock.sh` driver, `run-all.sh`) |
-| [`PLAN.md`](PLAN.md) | the increment ladder + increment-1 outcomes |
+| [`tests/`](tests/) | 10 headless smokes: state-machine, cleaning-guard, registry, inspect-metadata, watch, probe-build, deploy-rollback, verify-tamper, install-driver, ramdisk-driver (+ `mock-bmc.sh`, `mock.sh` driver, `run-all.sh`) |
+| [`PLAN.md`](PLAN.md) | the increment ladder + each increment's outcome |
 | [`MANUAL_TESTING.md`](MANUAL_TESTING.md) | verified transcripts (headless) + the author-run bring-up handoff |
 
 ## Prereqs
