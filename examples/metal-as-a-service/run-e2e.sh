@@ -459,10 +459,20 @@ if [[ $DRY == 0 ]]; then
     # because "the fleet is converged" is the one claim in this run that a human reading
     # a wall of tables will nod along to without checking.
     n2="$(sed -nE 's/^ *applied: ([0-9]+) transition.*/\1/p' "$APPLY2" | tail -1)"
+    # HELD nodes matter as much as the transition count. `apply` deliberately does not
+    # touch a node in `error` — so a fleet with two thirds of it held reports ZERO
+    # transitions and satisfies "fixed point" while doing nothing at all. That is exactly
+    # what happened on the run this check was added for, and the ✓ printed anyway.
+    # Zero transitions is convergence only when there is nothing being ignored.
+    h2="$(sed -nE 's/^ *applied: .*, ([0-9]+) held for the operator.*/\1/p' "$APPLY2" | tail -1)"
     if [[ -z "$n2" ]]; then
         info "WARNING: could not parse the transition count out of pass 2 — the invariant was NOT checked"
+    elif [[ "$n2" == 0 && "${h2:-0}" != 0 ]]; then
+        info "WARNING: pass 2 issued 0 transitions, but ${h2} node(s) are HELD in 'error' and were"
+        info "not considered at all. That is not a fixed point — it is a fleet apply has given up"
+        info "on. Recover them ('maas-lab.sh retry <node>') and re-run to test convergence for real."
     elif [[ "$n2" == 0 ]]; then
-        info "pass 2 issued 0 transitions — the fleet is a fixed point ✓"
+        info "pass 2 issued 0 transitions and 0 nodes held — the whole fleet is a fixed point ✓"
     else
         info "WARNING: pass 2 issued $n2 transition(s). apply is not converging: either a node"
         info "keeps failing its gate and being retried, or fleet.toml declares an end-state the"

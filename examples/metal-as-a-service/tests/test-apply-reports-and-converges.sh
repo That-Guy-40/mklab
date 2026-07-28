@@ -161,4 +161,62 @@ for n in spec.get("node", []):
 ' "$FLEET")
 note "every ramdisk node in fleet.toml declares an image its driver owns  ✓"
 
+# ── 8. --dry-run must not WRITE, and must still plan against reality ───────
+# The pre-flight health re-check grounds the plan in what the machines are actually doing
+# — a plan computed from a registry that disagrees with reality is a fiction. It did that
+# by calling `recheck`, which DEMOTES active -> error. So `apply --dry-run`, announced as
+# "the plan, before anything is issued", issued a state transition. Caught live: a dry run
+# demoted two nodes and the operator watched it happen.
+#
+# Both halves have to hold, and they pull against each other:
+#   no write     the registry is byte-identical afterwards
+#   not a lie    the PLAN still reflects the unhealthy node, or the dry run reports
+#                "converged" for a machine it has just watched fail
+prep_active() {  # a node sitting in `active` with a driver that will fail its health
+    ( "$MAAS" enroll "$1" --bmc-port "$2" ) >/dev/null 2>&1 || fail "enroll $1"
+    ( "$MAAS" manage  "$1" ) >/dev/null 2>&1 || fail "manage $1"
+    ( "$MAAS" provide "$1" ) >/dev/null 2>&1 || fail "provide $1"
+    ( "$MAAS" deploy  "$1" --driver mock --image v1 ) >/dev/null 2>&1 || fail "deploy $1"
+    assert_state "$1" active
+}
+SPEC3="$SANDBOX/fleet3.toml"
+sed 's/"n1"/"n3"/; s/6230/6232/' "$SPEC" > "$SPEC3"
+prep_active n3 6232
+
+[[ -f "$MAAS_STATE/n3/history.log" ]] \
+    || fail "no history.log for n3 — the history assertion below would compare 0 to 0 and pass no matter what apply --dry-run wrote"
+before="$(cat "$MAAS_STATE/n3/state")"
+hist_before="$(wc -l < "$MAAS_STATE/n3/history.log" 2>/dev/null || echo 0)"
+dry="$(MOCK_HEALTH_V1=fail "$MAAS" apply "$SPEC3" --dry-run 2>&1)"
+after="$(cat "$MAAS_STATE/n3/state")"
+hist_after="$(wc -l < "$MAAS_STATE/n3/history.log" 2>/dev/null || echo 0)"
+
+[[ "$before" == "$after" ]] \
+    || fail "REGRESSION: 'apply --dry-run' CHANGED a node's state ($before -> $after). It is announced as the plan before anything is issued, and run-e2e.sh calls it the step that touches nothing — a dry run that writes is the same lie as a check that reports what it did not verify"
+[[ "$hist_before" == "$hist_after" ]] \
+    || fail "REGRESSION: 'apply --dry-run' appended to a node's transition history ($hist_before -> $hist_after lines). The history is the audit trail; a dry run must not appear in it"
+note "apply --dry-run leaves the registry and the history untouched  ✓"
+
+grep -qi 'would demote\|not healthy' <<<"$dry" \
+    || fail "the dry run did not report that an active node is unhealthy. Skipping the WRITE is only half the fix: it must still say what a real run would do, or the operator learns nothing from the dry run they were told to read first"
+grep -qE '^ *n3 +error' <<<"$dry" \
+    || fail "REGRESSION: the dry-run PLAN still shows 'n3' as active after observing it is not healthy. A dry run that skips the demotion and then plans from the stale registry reports 'converged' for a machine it just watched fail — worse than either honest alternative. Got: $(tr '\n' '|' <<<"$dry" | head -c 400)"
+note "…and still plans against what it OBSERVED, not what the registry says  ✓"
+
+# The positive control: a REAL apply must still demote. Without this, "never demote"
+# would satisfy everything above while removing the anti-STALE guard entirely.
+MOCK_HEALTH_V1=fail "$MAAS" apply "$SPEC3" >/dev/null 2>&1
+assert_state n3 error
+note "control: a REAL apply still demotes the unhealthy node — the guard is intact  ✓"
+
+# ── 9. the live driver does not call a held fleet a fixed point ────────────
+# `apply` deliberately does not touch a node in `error`. So a fleet with two thirds of it
+# held reports ZERO transitions and satisfies "pass 2 issued 0" while doing nothing at
+# all — which is what a live run printed a ✓ for. Zero transitions is convergence only
+# when nothing is being ignored.
+p9="$(sed -n '/\[9\/10\]/,/\[10\/10\]/p' "$E2E")"
+grep -q 'held for the operator' <<<"$p9" \
+    || fail "REGRESSION: phase 9 checks the transition count but not the HELD count. A fleet where apply has given up on most nodes issues zero transitions and passes the invariant — the ✓ then means 'nothing happened', which is the one thing it must not be able to mean"
+note "phase 9 requires zero held as well as zero transitions before claiming a fixed point  ✓"
+
 pass "apply announces each transition and reprints the tool's own words when one fails while staying quiet on success; the reconciliation invariant is tested real-then-real against a parsed transition count; and fleet.toml declares the end-state the run actually reaches"

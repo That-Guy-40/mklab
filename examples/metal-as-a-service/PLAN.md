@@ -1340,3 +1340,66 @@ control plane's acceptance of the unprovide edge, since two files carry one clai
 `tests/run-all.sh` → **23 passed, 0 failed**; `chaos-run.sh` → **19 scenarios, 0 critical**.
 Three negative controls run for real: restoring the permissive default, skipping `active`
 instead of releasing it, and dropping `available` from `manage` — each fails by name.
+
+## The eleventh run: it passed, and the ✓ was hollow (2026-07-28)
+
+The run reported `PASS`, and reading the log is what showed the verdict was worth less
+than it looked:
+
+```
+maas: apply: 'node2' claimed active but failed its health re-check — demoted before the diff
+maas: apply: 'node3' claimed active but failed its health re-check — demoted before the diff
+  node1  active (ramdisk/micro-linux-x86_64)  -   converged
+  node2  error   !  HELD in 'error' — apply does not touch it; the operator does
+  node3  error   !  HELD in 'error' — apply does not touch it; the operator does
+  applied: 0 transition(s) … 1 converged, 2 held
+   pass 2 issued 0 transitions — the fleet is a fixed point ✓
+```
+
+**Two defects, and the second one is mine.**
+
+### `apply --dry-run` was writing to the registry
+
+The pre-flight health re-check grounds the plan in what the machines are actually doing —
+right, and the reason it exists (a node that passes its activation gate and later dies
+while still recorded `active` is the STALE rung). It did that by calling `recheck`, which
+**demotes `active → error`**. So `apply --dry-run` — announced as *"the plan, before
+anything is issued"*, and called by `run-e2e.sh` the step that touches nothing — issued
+two state transitions and wrote them to the audit history. The operator watched it happen
+live.
+
+The fix has two halves that pull against each other, and both are asserted:
+
+| | |
+|---|---|
+| **no write** | the registry and `history.log` are byte-identical after a dry run |
+| **not a lie** | the PLAN still shows the node as `error`, because a dry run that skips the demotion and then plans from the stale registry reports **"converged" for a machine it has just watched fail** — worse than either honest alternative |
+
+`recheck_probe()` is the observation half with no write; the would-be demotions are held in
+memory (`DRY_DEMOTED`) and the planner consults them.
+
+### And "0 transitions" was never convergence on its own
+
+`apply` deliberately does not touch a node in `error`. So a fleet with two thirds of it
+**held** issues zero transitions and satisfies the invariant while doing nothing at all —
+and phase 9 printed its ✓ anyway. That check is mine, added three runs earlier, and I had
+even written down the concern when reading an earlier log ("not two nodes being held and
+ignored") and then failed to encode it. **A claim you have noticed but not asserted is a
+claim you do not have.** Phase 9 now requires zero transitions **and** zero held, and says
+plainly what a held fleet means when it finds one.
+
+### Named, not fixed: the guard demotes into a state the loop then refuses
+
+The pre-flight demotes a stale node to `error`; `apply` then holds `error` for the
+operator. So the reconcile loop **cannot self-heal a node it has itself demoted** — every
+stale node needs a manual `retry`. That is Ironic-faithful (an error state wants a human)
+and it is also why this run's fleet was two-thirds held: phase 3 rebuilt node2/node3's
+domains, which made their `active` records stale, which the guard then correctly caught.
+Whether a reconcile loop should auto-`retry` a node it demoted *itself* — as distinct from
+one that failed a deploy — is a real design question and is recorded in
+[`DEFERRED.md`](DEFERRED.md).
+
+**Verified headless:** `tests/run-all.sh` → **23 passed, 0 failed**; `chaos-run.sh` → **19
+scenarios, 0 critical**. Four negative controls run for real: restoring the dry-run write,
+skipping the write but planning from the stale registry, removing the re-check entirely,
+and dropping the held-count check from phase 9 — each fails by name.

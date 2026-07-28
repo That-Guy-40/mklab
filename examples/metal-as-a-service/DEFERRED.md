@@ -135,6 +135,34 @@ answered for the wrong machine", and `### Named, not yet covered`.
 
 ---
 
+## 4. Should `apply` self-heal a node its own guard demoted?
+
+**The tension.** `apply`'s pre-flight re-checks every node claiming `active` and demotes
+one that is no longer healthy to `error` — the anti-STALE guard, and it works. `apply` then
+**holds** `error` nodes for the operator, by design. The consequence: the reconcile loop
+cannot recover a node it demoted *itself*. Every stale node needs a manual `retry`, and a
+fleet drifts toward held-and-ignored one node at a time.
+
+**Why it is not obviously a bug.** An `error` state that wants a human is Ironic-faithful,
+and "the loop quietly redeployed the thing that just died" is its own failure mode — the
+second-order version of a crash loop.
+
+**Why it still deserves an answer.** The two paths into `error` are not the same thing. A
+node that **failed a deploy** has an unproven image and a human should look. A node
+**demoted by the pre-flight** was healthy at activation and stopped afterwards — which is
+often exactly what a reconcile loop exists to repair. Distinguishing them (a
+`demoted_by_recheck` marker, say, and a bounded number of self-heal attempts before it
+becomes a true hold) is the shape of the fix.
+
+**Careful:** whatever this becomes must not be able to mask a node that fails immediately
+and repeatedly. Bound it, record each attempt in the history, and make the bound visible in
+the `apply` table.
+
+**Evidence trail:** [`PLAN.md`](PLAN.md) — "The eleventh run", where a passing run reported
+a fixed point over a fleet that was two-thirds held for exactly this reason.
+
+---
+
 ## Smaller, still open
 
 - **`install.sh`'s ownership test is narrow on purpose.** `describe <image>` refuses a

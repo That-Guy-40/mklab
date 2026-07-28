@@ -693,6 +693,21 @@ cmd_abort() {
 # without this nothing ever asks it again, so a node that dies after activation keeps
 # reporting `active` and everything downstream believes it. Run it from cron, or by
 # hand after an incident; the continuous version is `apply` (§3a, increment 6).
+#
+# recheck_probe — the OBSERVATION half, with no write. `apply --dry-run` needs to know
+# whether an `active` node is still healthy (a plan computed from a registry that
+# disagrees with reality is a fiction) but must not CHANGE anything to find out — and it
+# used to: the pre-flight called cmd_recheck, which demotes active -> error. A dry run
+# that says "the plan, before anything is issued" and then issues a state transition is
+# the same lie as a check that reports what it did not verify.
+recheck_probe() {  # recheck_probe <node> -> 0 healthy, 1 not (never writes)
+    local node="$1" driver image drv
+    driver="$(_read "$node" driver "")"; image="$(_read "$node" image "")"
+    [[ -n "$driver" && -n "$image" ]] || return 1
+    drv="$MAAS_DRIVER_DIR/$driver.sh"
+    [[ -x "$drv" ]] || return 1
+    run_driver "$drv" health "$node" "$image" >/dev/null 2>&1
+}
 cmd_recheck() {
     local node="${1:?usage: recheck <node>}"; require_node "$node"
     local cur; cur="$(read_state "$node")"
@@ -741,13 +756,24 @@ cmd_apply() {
 
     # ── phase 1: ground the registry in reality ─────────────────────────────
     local demoted=0
+    local -A DRY_DEMOTED=()      # dry-run only: nodes a real run WOULD have demoted
     if [[ "$recheck" == 1 ]]; then
         local n
         while read -r n; do
             [[ -n "$n" ]] || continue
             node_exists "$n" || continue
             [[ "$(read_state "$n")" == active ]] || continue
-            if ! ( cmd_recheck "$n" ) >/dev/null 2>&1; then
+            if [[ "$dry" == 1 ]]; then
+                # Observe only. Record the would-be demotion in memory so the PLAN below
+                # reflects it — a dry run that skips the write but then plans from the
+                # stale registry would report "converged" for a node it has just observed
+                # to be dead, which is worse than either honest alternative.
+                if ! recheck_probe "$n"; then
+                    warn "apply: '$n' claims active but is NOT healthy — a real run would demote it to 'error' before the diff (dry run: registry not written)"
+                    DRY_DEMOTED[$n]=1
+                    demoted=$((demoted+1))
+                fi
+            elif ! ( cmd_recheck "$n" ) >/dev/null 2>&1; then
                 warn "apply: '$n' claimed active but failed its health re-check — demoted before the diff"
                 demoted=$((demoted+1))
             fi
@@ -800,6 +826,9 @@ _apply_pass() {
             cur="<not enrolled>"; act="enroll"; why="declared in the spec, absent from the registry"
         else
             cur="$(read_state "$name")"
+            # A dry run plans against what phase 1 OBSERVED, not what the registry still
+            # says — the whole point of the pre-flight re-check is that the two can differ.
+            [[ -n "${DRY_DEMOTED[$name]:-}" ]] && cur="error"
             local d i; d="$(_read "$name" driver "")"; i="$(_read "$name" image "")"
             [[ "$cur" == active ]] && cur="active ($d/$i)"
             case "${cur%% *}" in
