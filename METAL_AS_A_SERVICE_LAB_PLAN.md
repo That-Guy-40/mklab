@@ -1,6 +1,6 @@
 # Metal-as-a-Service Lab — Design Plan v2.1
 
-> **Status**: v2.1 — **in build, increments 1–3 of 7 shipped** (see the build-status box
+> **Status**: v2.1 — **in build, increments 1–4 of 7 shipped** (see the build-status box
 > below). Proposed 2026-07-24 as option **B** of the "what can we compose?" survey; the
 > design below is unchanged except where the build corrected it, and every such
 > correction is called out inline rather than quietly rewritten. Anchors on `examples/virtualbmc-ipmi-lab/` (IPMI power +
@@ -47,7 +47,7 @@
 > **lifted into its own reusable lab**, `BMC_TOOLKIT_LAB_PLAN.md`, which MAAS consumes
 > for its OOB layer (see §11).
 
-> ## 🏗️ Build status — **increments 1–3 of 7 shipped** (last updated 2026-07-27)
+> ## 🏗️ Build status — **increments 1–4 of 7 shipped** (last updated 2026-07-27)
 >
 > The lab exists: **[`examples/metal-as-a-service/`](examples/metal-as-a-service/)**, with
 > its own increment ledger in [`PLAN.md`](examples/metal-as-a-service/PLAN.md) (per-increment
@@ -59,15 +59,25 @@
 > | **1** | Fleet + registry + **full 12-state Ironic machine** (`create-fleet.sh`, `maas-lab.sh`, guarded `cleaning`, `error`/`maintenance`, `rescue`) | ✅ **merged** — PR #56 |
 > | **2** | `inspect` **RAM probe** + NoCloud **metadata service** + `milestones.toml`/`watch` | ✅ **merged** — PR #57 |
 > | **3** | **`install` driver + health-gated activation + A/B rollback (§4b)** + F2 verify gate | ✅ **merged** — PR #58 |
-> | 4 | **`ramdisk` driver + catalog** (RAM-INFRA / micro-linux / floppinux / busybox), signed + `imgverify` | ⬜ **next** |
-> | 5 | `image` driver (dd golden whole-disk, Tier-B reuse) | ⬜ |
+> | **4** | **`ramdisk` driver + catalog** (RAM-INFRA / micro-linux / floppinux / busybox), signed + `imgverify` | ✅ **merged** — PR #87 |
+> | 5 | `image` driver (dd golden whole-disk, Tier-B reuse) | ⬜ **next** |
 > | 6 | `apply` declarative reconcile (§3a) | ⬜ |
 > | 7 | Phase-6 surface — **already provided** by `tools/control-pane`; MAAS wires in per-increment | 🔶 partially live (see §5) |
 >
 > **Verified headless, re-run 2026-07-27:** `examples/metal-as-a-service/tests/run-all.sh`
-> → **8 passed, 0 skipped, 0 failed** — with a **mock BMC** and a **mock driver**, but
+> → **10 passed, 0 skipped, 0 failed** — with a **mock BMC** and a **mock driver**, but
 > **real** OpenSSL CMS crypto, the **real** control-pane engine, and the **real**
-> `bmc-toolkit` registry parser. No libvirt, no root, no install.
+> `bmc-toolkit` registry parser. No libvirt, no root, no install. Two of those tests
+> now drive the **real** `install` and `ramdisk` drivers rather than the mock one, and
+> the `ramdisk` test stages + signs + verifies every catalog payload this host has
+> actually built (`micro-linux-x86_64` does so here).
+>
+> **A seam leak was found and fixed on the way (PR #86).** `drivers/install.sh` asked
+> `virsh domstate` whether the installer had finished — reaching around the BMC into the
+> hypervisor, a capability no real control plane has, and the one call no seam could
+> intercept (which is exactly why that driver had never been tested). It now observes
+> the node powering *itself* off via `chassis power status`, and a refusing `virsh` stub
+> on `PATH` keeps the leak from returning.
 >
 > **The two dependencies MAAS was waiting on both landed first**, so nothing is blocked:
 > `tools/control-pane` (PR #54, the promoted repo tool — §5) and
@@ -143,7 +153,8 @@ separate labs. B is the *abstraction over them* + the lifecycle + the fleet.
 | **Phase-6 sees node state + live progress** | ✅ **built** (inc. 2) | not a MAAS-local source after all: `maas-lab.sh watch` registers the node under `tools/control-pane`'s fleet dir → TUI + web bars for free |
 | **Health-gated activation + A/B rollback (§4b)** | ✅ **built** (inc. 3) | one `gate()` = verify → deploy → health, applied to the new *and* the rollback slot |
 | **F2 supply-chain gate at deploy time** | ✅ **built** (inc. 3) | `drivers/verify-lib.sh` — OpenSSL CMS in the same format `netboot/sign-payload.sh` produces for iPXE `imgverify` |
-| **`ramdisk` catalog · `image` driver · `apply`** | ❌ **remaining** | increments 4–6 (§9) |
+| **`ramdisk` driver + payload catalog** | ✅ **built** (inc. 4) | `drivers/ramdisk.sh` + `ramdisk-catalog.toml` + `lib/catalog.py` — routes to the RAM-INFRA trio / micro-linux / floppinux / busybox; the catalog **builds nothing**, it names each owning lab's build command |
+| **`image` driver · `apply` reconcile** | ❌ **remaining** | increments 5–6 (§9) |
 
 Host reality: this is the repo's **only libvirt** family (Phase 2 is raw QEMU);
 `vbmcd` runs **rootful** (system socket is `root:libvirt`) — which is why every live
@@ -329,11 +340,12 @@ imagined — noted inline rather than silently dropped.
 | `examples/metal-as-a-service/PLAN.md` | ✅ | *(unplanned, added)* | the per-increment ledger — outcome + design decisions + what was verified vs. handed over, one section per increment |
 | `examples/metal-as-a-service/maas-lab.sh` | ✅ inc. 1–3 | new | control plane: full state machine + imperative verbs + deploy-driver dispatch + health-gated activation w/ A/B rollback (§4b) + `console`/`sol` (§5b) + `watch` (delegates to `tools/control-pane watch`). **`apply` is not in it yet** — increment 6 |
 | `examples/metal-as-a-service/drivers/install.sh` | ✅ inc. 3 | new | the real driver: PXE kickstart/preseed → boot from disk, wrapping `virtualbmc-ipmi-lab`; declares its health-gate signal (the OS `login:`). Author-run to *run*; its dispatch is headless-tested |
-| `…/drivers/{ramdisk,image,image-measured}.sh` | ⬜ inc. 4–5 | new | not stubs-that-lie: `deploy --driver ramdisk` today **refuses and names the build step** |
+| `examples/metal-as-a-service/drivers/ramdisk.sh` | ✅ inc. 4 | new | netboot a payload into RAM: `describe`/`stage`/`verify`/`deploy`/`health`. **No `bootdev disk` and no wait for a poweroff** — the two things that separate it from `install`, both asserted |
+| `…/drivers/{image,image-measured}.sh` | ⬜ inc. 5 | new | not stubs-that-lie: `deploy --driver image` today **refuses and names the build step** |
 | `examples/metal-as-a-service/drivers/verify-lib.sh` | ✅ inc. 3 | *(unplanned, added)* | the F2 gate — OpenSSL CMS sign/verify in `netboot/sign-payload.sh`'s exact format. Not foreseen as a separate file; it is shared by every driver |
 | `examples/metal-as-a-service/tests/mock{,-bmc}.sh` | ✅ inc. 1, 3 | *(unplanned, added)* | the two injectable seams made concrete — a mock BMC and a mock driver. **These are why the suite is headless**, and they are the reason `MAAS_BMC`/`MAAS_DRIVER_DIR` exist |
 | `examples/metal-as-a-service/lib/{fleet,metadata}.py` | ✅ inc. 1–2 | *(unplanned, added)* | stdlib TOML projector for `fleet.toml`; the NoCloud + facts-sink service. Bash reads TOML through these rather than parsing it |
-| `examples/metal-as-a-service/ramdisk-catalog.toml` | ⬜ inc. 4 | new | the `--image` registry (RAM-INFRA + micro-linux + floppinux + busybox), each with its `active`-signal marker |
+| `examples/metal-as-a-service/ramdisk-catalog.toml` | ✅ inc. 4 | new | the `--image` registry (RAM-INFRA + micro-linux + floppinux + busybox): owning lab, its build command, kernel/initrd, and the `active` signal (`console`/`http`/`dns`, validated by `lib/catalog.py check`) |
 | `examples/metal-as-a-service/milestones.toml` | ✅ inc. 2 | new | MAAS's milestone **profiles** (`probe`/`install`/`ramdisk`/`image`; regex → label → `at%`/`terminal`) — *consumed by `tools/control-pane`'s engine*, not a MAAS-local parser |
 | `examples/metal-as-a-service/create-fleet.sh` | ✅ inc. 1 | new | 3 libvirt domains + `vbmc add` each on 6230–6232 (wraps vbmc `create-node.sh`). `enroll` is headless; `up`/`down` are author-run (rootful) |
 | `examples/metal-as-a-service/fleet.toml` | ✅ inc. 1 | new | the fleet: hardware spec (count, disk/RAM, PXE network) **and** the declarative desired end-state — the latter is *declared* but not yet *consumed* (`apply`, inc. 6) |
@@ -402,10 +414,10 @@ dependency reasoning that produced this order stays readable.
    driver to reach `active` needs it). *End-to-end verifiable (underlying install ✅);
    the tamper→rollback drill is headless; a full multi-node parallel install may be
    author-run (host load).* 
-4. ⬜ **`ramdisk` driver + catalog** — dispatch to RAM-INFRA / micro-linux / floppinux /
+4. ✅ **`ramdisk` driver + catalog** — dispatch to RAM-INFRA / micro-linux / floppinux /
    busybox, signed + `imgverify`-gated, reusing step 3's health gate. *Fully verifiable
    in QEMU per catalog entry (each has an existing boot signature).* 
-5. ⬜ **`image` driver** — dd golden image (Tier-B reuse), same health gate. *Verifiable
+5. ⬜ **`image` driver** ← next — dd golden image (Tier-B reuse), same health gate. *Verifiable
    in QEMU.*
 6. ⬜ **`apply` reconcile (v1.5, §3a)** — the declarative loop atop the imperative spine;
    diff desired-vs-actual, issue the missing transitions, prove idempotent (second run
