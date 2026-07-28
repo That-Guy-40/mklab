@@ -821,6 +821,19 @@ of F2 skipped; the host-side gate still runs at `verify`:
 E2E_UNSIGNED=1 ./run-e2e.sh
 ```
 
+**Re-running is expected, and the registry is what carries over.** `--down` tears down
+the *fleet*; it does not forget the nodes. So a second run finds `node1` already at
+`manageable` (or further), and phase 4 skips `manage` rather than attempting a transition
+the control plane would refuse. That is correct — the state machine is being obeyed, not
+worked around. To genuinely start over, tear down **and** clear the registry:
+
+```bash
+./run-e2e.sh --down
+./maas-lab.sh show node1            # prints the state the next run will start from
+# then, to forget it entirely — run the delete yourself:
+#   rm -rf "${MAAS_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/lab-create/metal-as-a-service}"
+```
+
 **Success signature:**
 
 ```

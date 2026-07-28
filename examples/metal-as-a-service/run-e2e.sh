@@ -74,6 +74,26 @@ run_soft() {
     "$@" >>"$LOG" 2>&1 || info "(that step failed — continuing; the verdict below is what counts)"
 }
 
+# ensure_manageable — phase 4's decision, hoisted into a function so it can be exercised
+# without a fleet. The REGISTRY outlives the fleet: create-fleet.sh rebuilds the domains
+# but skips enrolling a node it already knows ("already enrolled (state=manageable) —
+# skipping"), so on a re-run the node arrives here already past `enrolled` and `manage`
+# correctly refuses — it is a transition from enrolled/error, not a re-check you can spam.
+# The state machine was right; the driver was wrong to assume a fresh registry.
+#
+# The empty case is NOT a third way of saying "nothing to do": no state at all means the
+# node was never enrolled, which means phase 3 did not finish, and every phase after this
+# would fail with its own confusing error. That one aborts.
+ensure_manageable() {
+    local st; st="$("$MAAS" state "$NODE" 2>/dev/null)"
+    case "$st" in
+        enrolled|error) run "$MAAS" manage "$NODE" ;;
+        "")  die "'$NODE' is not enrolled and create-fleet.sh did not enroll it — phase 3 did not finish" ;;
+        *)   info "'$NODE' is already '$st' (registry from an earlier run) — skipping 'manage', which is a transition from enrolled/error, not a re-check"
+             info "to start from scratch instead: ./run-e2e.sh --down and remove \$MAAS_STATE" ;;
+    esac
+}
+
 [[ $DRY == 1 ]] || : > "$LOG"
 
 # ── reap the one process this script starts ─────────────────────────────────
@@ -158,23 +178,13 @@ run "$HERE/create-fleet.sh" up
 
 # ── everything below is UNPRIVILEGED ────────────────────────────────────────
 step "[4/10] verify the BMC round-trip — the seam, against a real BMC"
-# The REGISTRY outlives the fleet. create-fleet.sh rebuilds the domains but skips
-# enrolling a node it already knows ("already enrolled (state=manageable) — skipping"),
-# so on a re-run node1 arrives here already past `enrolled` and `manage` correctly
-# refuses: it is a transition from enrolled/error, not a re-verification you can spam.
-# The state machine is right; the driver was wrong to assume a fresh registry. So ask
-# what state the node is in and drive it accordingly — and still exercise the seam
-# either way, because `power status` is the part that actually proves the BMC answers.
+# Drive the node to `manageable` only if it is not already past it (see ensure_manageable
+# above) — and then exercise the seam either way, because `power status` is the part that
+# actually proves the BMC answers.
 if [[ $DRY == 1 ]]; then
     printf '   $ %s\n' "$MAAS manage $NODE   # only when the node is in enrolled/error" >&2
 else
-    st="$("$MAAS" state "$NODE" 2>/dev/null)"
-    case "$st" in
-        enrolled|error) run "$MAAS" manage "$NODE" ;;
-        "")  die "'$NODE' is not enrolled and create-fleet.sh did not enroll it — phase 3 did not finish" ;;
-        *)   info "'$NODE' is already '$st' (registry from an earlier run) — skipping 'manage', which is a transition from enrolled/error, not a re-check"
-             info "to start from scratch instead: ./run-e2e.sh --down and remove \$MAAS_STATE" ;;
-    esac
+    ensure_manageable
 fi
 run "$MAAS" power "$NODE" status
 if [[ $DRY == 0 ]]; then

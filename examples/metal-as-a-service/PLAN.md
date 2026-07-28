@@ -912,3 +912,50 @@ else runs now.
 **Verified headless:** `tests/run-all.sh` → **19 passed, 0 failed**. `test-probe-nic.sh`
 is deliberately **not** in `run-all.sh`: it boots QEMU twice and takes ~2 minutes. Run it
 directly when touching the probe, the fleet's NIC, or the probe kernel.
+
+## The sixth run: the registry outlives the fleet (2026-07-28)
+
+Setup went further than any previous run. Phase 3 was **fully** green for the first time:
+`vbmc_check` passed all three nodes, all three consoles were recorded, and the DHCP
+reservations finally landed now that they carry an IP (`node1 @ 192.168.123.101`). Then
+phase 4 died:
+
+```
+maas: cannot 'manage' node 'node1' from state 'manageable' — needs one of: enrolled error
+FAIL: the step above failed (rc=1)
+```
+
+**Nothing was broken.** `create-fleet.sh` rebuilds the domains but skips enrolling a node
+the registry already knows (`node1 already enrolled (state=manageable) — skipping`), so
+on the second run node1 arrived at phase 4 already past `enrolled`. `manage` is a
+transition **from** `enrolled`/`error` — not a re-verification you can spam — and it
+refused, correctly.
+
+**This is the first finding of the six that touches the control plane at all, and it
+still isn't a control-plane bug.** The state machine behaved exactly as designed and the
+*harness* was wrong about it: `run-e2e.sh` assumed a fresh registry every run. The
+previous five were all in the plumbing the headless suite substitutes for — a baked
+`boot.ipxe`, a colliding BMC port, a self-symlinked busybox, a disk write lock, a kernel
+with no NIC driver. That the live path had to get this deep before the control plane's
+own logic came up at all is the most useful thing this run reported.
+
+Phase 4's decision is now `ensure_manageable()` — hoisted into a **function** precisely
+so it can be exercised without a fleet, since inlined in the phase body it could only
+ever be tested by running the real thing, which is how it shipped wrong. Three cases,
+which must stay distinct:
+
+| state | what phase 4 does | why |
+|---|---|---|
+| `enrolled` / `error` | run `manage` | the transition it exists for |
+| anything else | skip, say why, carry on | already past it; calling `manage` is an *illegal* transition, not a harmless retry |
+| **no state at all** | **abort** | the node was never enrolled ⇒ phase 3 did not finish. Folding this into the skip branch is the tempting wrong fix and turns phase 4 into a silent no-op |
+
+`power status` stays **outside** the conditional: it is the assertion that the BMC seam
+answers, and hiding it behind the state check would mean a re-run never tests the seam.
+
+**Verified headless:** [`tests/test-e2e-manage-idempotent.sh`](tests/test-e2e-manage-idempotent.sh)
+`sed`s the shipped `ensure_manageable()` out of `run-e2e.sh` and drives it against a stub
+control plane. `tests/run-all.sh` → **20 passed, 0 skipped, 0 failed**. Three negative
+controls, each run for real: restoring the unconditional `manage`, folding the
+un-enrolled case into the skip branch, and moving `power status` inside the conditional
+each make the test fail by name.
