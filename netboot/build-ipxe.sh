@@ -97,6 +97,29 @@ Options:
                       with netboot/sign-payload.sh.
   --payload-trust PATH  DER code-signing root to bake in for --imgverify
                       (the ca.der emitted by sign-payload.sh --out-trust)
+  --nic-rom     ID    also build a PCI option ROM for one NIC (x86_64 only),
+                      written as ipxe-<id>.rom.  ID is 8 hex digits
+                      (vendor+device, e.g. 8086100e) or an alias:
+                        e1000 -> 8086100e   virtio -> 1af41000   rtl8139 -> 10ec8139
+                      Attach it to a QEMU/libvirt NIC with <rom file='...'/> to
+                      replace the stock firmware ROM, which is built WITHOUT
+                      IMAGE_TRUST_CMD and therefore cannot imgverify anything.
+  --embed-script PATH use this file verbatim as the compiled-in boot script
+                      instead of the one this builder generates.  Needed when the
+                      firmware must ask a control plane what to boot rather than
+                      carry the answer (see examples/metal-as-a-service/).
+  --serial-console    compile in CONSOLE_SERIAL (COM1, 115200 8N1) so iPXE drives
+                      the serial port ITSELF, rather than relying on the platform
+                      to carry the BIOS console there.  Needed under libvirt:
+                      measured on a real domain, a <serial> console log starts at
+                      the Linux banner and contains no firmware output at all, so
+                      without this every iPXE-level failure is a silence.
+                      CAVEAT, also measured: `qemu -nographic` sets FW_CFG_NOGRAPHIC
+                      and SeaBIOS then mirrors the BIOS console to COM1 too — so in
+                      THAT invocation (only) the port has two writers and their
+                      bytes interleave ("iPXE" arrives as "iiPPXXEE").  Test a
+                      serial-console build with `-display none -serial ...`, which
+                      is what libvirt does; never with -nographic.
   --sign              sign the EFI output with netboot/sign-ipxe.sh after building
   --use-snakeoil      sign with the system snakeoil key (QEMU Secure Boot test; not for real hw)
   --sign-key    PATH  custom signing key (PEM) for --sign
@@ -129,6 +152,9 @@ tls_mode=""
 tls_cert=""
 imgverify_mode=""
 payload_trust=""
+nic_rom=""
+embed_script=""
+serial_console=""
 sign_mode=""
 sign_snakeoil=""
 sign_key=""
@@ -148,6 +174,9 @@ while [[ $# -gt 0 ]]; do
         --tls-cert)    shift; tls_cert="${1:?--tls-cert requires a DER file}"; shift ;;
         --imgverify)   imgverify_mode=1; shift ;;
         --payload-trust) shift; payload_trust="${1:?--payload-trust requires a DER file}"; shift ;;
+        --nic-rom)     shift; nic_rom="${1:?--nic-rom requires a PCI id or alias}";   shift ;;
+        --embed-script) shift; embed_script="${1:?--embed-script requires a file}";   shift ;;
+        --serial-console) serial_console=1; shift ;;
         --sign)        sign_mode=1; shift ;;
         --use-snakeoil) sign_mode=1; sign_snakeoil=1; shift ;;
         --sign-key)    shift; sign_key="${1:?--sign-key requires a PEM file}"; shift ;;
@@ -167,6 +196,29 @@ if [[ -n "$tls_cert" && ! -r "$tls_cert" ]]; then
 fi
 if [[ -n "$payload_trust" && ! -r "$payload_trust" ]]; then
     die "--payload-trust file not readable: $payload_trust"
+fi
+if [[ -n "$embed_script" && ! -r "$embed_script" ]]; then
+    die "--embed-script file not readable: $embed_script"
+fi
+# A compiled-in script that iPXE cannot recognise is a silent brick: iPXE runs it,
+# fails to parse the first line, and drops to the BIOS boot order.  Refuse here,
+# where the file is still in front of a human, rather than on the machine.
+if [[ -n "$embed_script" ]] && ! head -1 "$embed_script" | grep -q '^#!ipxe'; then
+    die "--embed-script '$embed_script' does not start with '#!ipxe' — iPXE would not run it as a script"
+fi
+# Resolve the NIC alias to the vendor+device the ROM must claim.  iPXE names the
+# target after the PCI ID it registers for; a ROM built for the wrong ID is loaded
+# by nothing and fails as "the machine ignored it", which is hard to read.
+if [[ -n "$nic_rom" ]]; then
+    case "$nic_rom" in
+        e1000|82540em) nic_rom=8086100e ;;
+        virtio|virtio-net) nic_rom=1af41000 ;;
+        rtl8139) nic_rom=10ec8139 ;;
+        [0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]) ;;
+        *) die "--nic-rom '$nic_rom': expected 8 hex digits (vendor+device) or one of e1000/virtio/rtl8139" ;;
+    esac
+    nic_rom="${nic_rom,,}"
+    [[ "$arch" == "x86_64" ]] || die "--nic-rom is a legacy BIOS PCI option ROM: x86_64 only (got '$arch')"
 fi
 if [[ -n "$payload_trust" && -z "$imgverify_mode" ]]; then
     log_warn "--payload-trust given without --imgverify; enabling --imgverify"
@@ -205,6 +257,11 @@ if [[ -n "$payload_trust" ]]; then
     inner_trust_path="/payload-trust.der"
     docker_vols+=(-v "${payload_trust}:${inner_trust_path}:ro")
 fi
+inner_embed_path=""
+if [[ -n "$embed_script" ]]; then
+    inner_embed_path="/embed.ipxe"
+    docker_vols+=(-v "$(readlink -f -- "$embed_script"):${inner_embed_path}:ro")
+fi
 
 docker run --rm \
     -v "$output_dir:/out" \
@@ -214,7 +271,8 @@ docker run --rm \
     bash /build-ctx/ipxe-build-inner.sh \
         "$server" "$kernel_path" "$initrd_path" "$append" "$arch" "$ipxe_ref" \
         "${tls_mode:-}" "${inner_cert_path}" \
-        "${imgverify_mode:-}" "${inner_trust_path}"
+        "${imgverify_mode:-}" "${inner_trust_path}" \
+        "${nic_rom}" "${inner_embed_path}" "${serial_console:-}"
 
 # ─── Convert the BIOS disk image to qcow2 ────────────────────────────────────
 # Prefer ipxe.hd (hard-disk image) over ipxe.usb: SeaBIOS boots the .hd reliably
@@ -258,7 +316,7 @@ fi
 
 # ─── Summary ────────────────────────────────────────────────────────────────
 log_info "build complete — outputs in $output_dir:"
-for f in boot.ipxe ipxe.usb ipxe.efi ipxe.qcow2; do
+for f in boot.ipxe ipxe.usb ipxe.efi ipxe.qcow2 ${nic_rom:+ipxe-$nic_rom.rom}; do
     fp="$output_dir/$f"
     if [[ -f "$fp" ]]; then
         size=$(du -sh "$fp" 2>/dev/null | cut -f1)

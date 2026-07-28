@@ -1403,3 +1403,75 @@ one that failed a deploy — is a real design question and is recorded in
 scenarios, 0 critical**. Four negative controls run for real: restoring the dry-run write,
 skipping the write but planning from the stale registry, removing the re-check entirely,
 and dropping the held-count check from phase 9 — each fails by name.
+
+---
+
+## The verifying ROM: the firmware half runs, and refuses our own signatures (2026-07-28)
+
+[`DEFERRED.md`](DEFERRED.md) item 1 said the on-node half of F2 had never executed, and
+was worth more than the other items together. It was picked up, and it paid on the first
+boot — not by confirming the design, but by rejecting it.
+
+### What was built
+
+`build-verifying-rom.sh` drives the repo's existing `netboot/build-ipxe.sh` (three new
+optional flags: `--nic-rom`, `--embed-script`, `--serial-console`) to produce an iPXE PCI
+option ROM for the fleet's e1000 NIC — 94,720 bytes — carrying `IMAGE_TRUST_CMD`, this
+fleet's CA as its **only** trust root, a serial console, and `netboot-chain.sh`'s per-node
+resolver compiled in, so the firmware asks the control plane what to boot rather than
+carrying an answer. `lib/rom_xml.py` + `give_verifying_rom()` attach it per NIC.
+
+### What it found: we were signing with a certificate no firmware would accept
+
+The first `imgverify` against a payload signed by this lab refused it — the *good* one:
+
+```
+http://…/good.img.sig... ok
+Could not verify: Permission denied (https://ipxe.org/022ae13c)     "Not a signing certificate"
+```
+
+`drivers/verify-lib.sh` minted its leaf with `extendedKeyUsage=codeSigning` and nothing
+else. iPXE also requires **`keyUsage=digitalSignature`**; `openssl cms -verify` does not
+look at key usage *at all*. So the host-side gate, every driver test and the entire green
+suite accepted a certificate that real verifying firmware rejects outright. **Every
+signature this lab has ever produced was unusable by the machine it was produced for**, and
+no host-side check could have said so — the two halves read the same `.sig` files, which is
+exactly why a profile that satisfies one and not the other is invisible.
+
+The fix aligns the profile with `netboot/sign-payload.sh` (the signer the RAM-infra lab
+proved against real iPXE) and adds `verify-lib.sh check-keys`, which `run-e2e.sh`'s
+preflight now runs. `tests/test-signing-cert-profile.sh` §4 pins the two signers together
+so they cannot drift apart again, and §5 records — as an executable fact — that the
+host-side gate accepts what the firmware refuses.
+
+### Two measurements, and a harness that nearly lied about both
+
+The claim "the stock ROM has no serial console" was very nearly *disproven* by a test I
+ran myself: under `qemu -nographic` the stock ROM's output appears on the serial port. It
+does — because `-nographic` sets `FW_CFG_NOGRAPHIC` and SeaBIOS then puts its own console
+on COM1. **libvirt does not do that.** The fleet's own `node1.log` settles it: it begins at
+`Linux version …` and contains not one firmware line. In libvirt's invocation
+(`-display none`), measured side by side:
+
+| ROM | bytes on the serial console |
+|---|---|
+| QEMU stock `pxe-e1000.rom` | **0** |
+| this one (`CONSOLE_SERIAL`) | **617** |
+
+The same artifact bites in reverse: a `CONSOLE_SERIAL` build tested under `-nographic` has
+*two* writers on COM1 and their bytes interleave (`iiPPXXEE`), so it looks broken while the
+stock ROM looks instrumented. Under one invocation each ROM reads as the opposite of what
+it is. **A harness that differs from production can invert the very result it is measuring**
+— the tests now use `-display none -serial …`, and say why in the file.
+
+### Verified headless
+
+`tests/run-all.sh` → **26 passed, 0 failed** (three new: the firmware itself, the
+certificate profile, the domain rewrite); `chaos-run.sh` → **19 scenarios, 0 critical**.
+Nine negative controls run for real, not reasoned: legacy leaf profile, neutered
+`check-keys`, diverged signers, the EXIT-trap net, an untampered "tampered" payload,
+signing with the legacy leaf (which reproduces `022ae1` exactly), appended-instead-of-
+replaced `<rom>`, a missing ROM file, and a NIC-less domain. Each failed by name.
+
+**Still not proven:** none of this has run on a live fleet — see
+[`DEFERRED.md`](DEFERRED.md) item 1, which now names the two commands that would.

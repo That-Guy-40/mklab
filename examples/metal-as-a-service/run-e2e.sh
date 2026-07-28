@@ -377,6 +377,27 @@ if [[ $DRY == 0 && ! -f "$MAAS_IMAGES_DIR/trust/ca.crt" ]]; then
     run mkdir -p "$MAAS_IMAGES_DIR/trust"
     run "$HERE/drivers/verify-lib.sh" gen-keys --dir "$MAAS_IMAGES_DIR/trust"
 fi
+# IS THE SIGNING CERTIFICATE ONE THE FIRMWARE WILL ACCEPT? The host-side gate never
+# asks — `openssl cms -verify` ignores key usage entirely — so a keydir minted before
+# this lab learned better signs payloads that iPXE refuses outright ("Not a signing
+# certificate", https://ipxe.org/022ae1). That is invisible until a node is asked to
+# boot one, which is far too late and looks like a payload problem.
+if [[ $DRY == 0 ]] && ! ( "$HERE/drivers/verify-lib.sh" check-keys --dir "$MAAS_IMAGES_DIR/trust" ) >/dev/null 2>&1; then
+    if [[ "${MAAS_IPXE_TRUSTS_CA:-0}" == 1 ]]; then
+        die "this fleet's signing leaf is one verifying firmware REFUSES, and MAAS_IPXE_TRUSTS_CA=1
+says the nodes will check. Re-mint and re-sign before running:
+      rm -rf $MAAS_IMAGES_DIR/trust        # then:
+      ./drivers/verify-lib.sh gen-keys --dir $MAAS_IMAGES_DIR/trust
+      ./drivers/ramdisk.sh stage $IMAGE    # re-sign every image with the new leaf
+      ./build-verifying-rom.sh build       # the ROM bakes the CA -- rebuild it too
+   Details: ./drivers/verify-lib.sh check-keys --dir $MAAS_IMAGES_DIR/trust"
+    else
+        info "NOTE: the signing leaf in $MAAS_IMAGES_DIR/trust lacks keyUsage=digitalSignature,"
+        info "so verifying firmware would refuse these payloads (https://ipxe.org/022ae1). This"
+        info "run does not exercise the on-node half, so it proceeds — but the F2 claim it makes"
+        info "is host-side only. ./drivers/verify-lib.sh check-keys --dir $MAAS_IMAGES_DIR/trust"
+    fi
+fi
 run "$HERE/drivers/ramdisk.sh" stage "$IMAGE"
 
 # ── 8. the deploy: F2 gate, netboot into RAM, health gate ───────────────────
@@ -414,9 +435,10 @@ if [[ $DRY == 0 ]]; then
 here has established that this fleet's firmware can honour it. QEMU's stock iPXE ROM has no
 IMAGE_TRUST_CMD and no serial console, so it fails the command and boots nothing, silently.
 Either:
-  * build an iPXE that verifies, with MAAS's CA baked in, and attach it to the NICs:
-        ../../netboot/build-ipxe.sh --imgverify --certfile $MAAS_IMAGES_DIR/trust/ca.crt
-    then add <rom file='<ipxe.rom>'/> to each domain's <interface>; then re-run with
+  * build the NIC firmware that CAN honour it — one command, ~10 minutes of docker:
+        ./build-verifying-rom.sh build && ./build-verifying-rom.sh install
+    then re-create the fleet so the domains carry it, and re-run:
+        FLEET_NIC_ROM=1 ./create-fleet.sh
         MAAS_IPXE_TRUSTS_CA=1 $0
   * or run the whole path with ONLY the in-firmware half skipped — the payload stays
     signed and the host-side F2 gate still gates the deploy:

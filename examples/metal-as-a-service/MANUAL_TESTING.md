@@ -897,3 +897,105 @@ AppArmor helper **does** grant qemu that path on this host — a real boot of `n
 produced 30 KB of kernel log within seconds. `FLEET_CONSOLE=pty ./create-fleet.sh up`
 still restores the old (unlogged) behaviour if you need an interactive `virsh console`,
 at the cost of every health gate that reads the log.
+
+---
+
+## 12. The verifying NIC ROM — the on-node half of F2, executed (2026-07-28)
+
+Everything above verifies payloads the way the **control plane** does. This section is the
+other half: the **machine** verifying, with the control plane out of the picture. It runs
+headlessly under QEMU — no fleet, no sudo, no libvirt.
+
+### 12.1 Build it
+
+```bash
+./build-verifying-rom.sh build      # docker, ~10 min
+# → /home/…/.cache/lab-create/maas/ipxe/ipxe-8086100e.rom (94720 bytes)
+./build-verifying-rom.sh install    # sudo: copies to /var/lib/libvirt/maas-rom/
+```
+
+`build-verifying-rom.sh show` prints what is built/installed and the XML that attaches it.
+The ROM carries `IMAGE_TRUST_CMD`, `TRUST=` this fleet's CA (converted to DER from
+`images/trust/ca.crt`), `CONSOLE_SERIAL`, and `netboot-chain.sh emit-chain` compiled in as
+its boot script — so the firmware resolves `maas/${hostname}.ipxe` itself.
+
+### 12.2 The instrument, measured both ways
+
+libvirt's own QEMU invocation is `-display none`, **not** `-nographic`. That distinction
+decides the answer, so both were measured:
+
+```bash
+qemu-system-x86_64 -m 512 -display none -device e1000,romfile=$ROM,netdev=n0 \
+    -netdev user,id=n0,net=10.9.9.0/24 -boot n -serial file:out.log
+```
+
+| ROM | bytes in `out.log` |
+|---|---|
+| `/usr/lib/ipxe/qemu/pxe-e1000.rom` (stock) | **0** |
+| `ipxe-8086100e.rom` (this one) | **617** |
+
+Corroborated by the live fleet: `/var/lib/libvirt/maas-console/node1.log` from a real
+passing run begins at `Linux version …` and contains **zero** SeaBIOS or iPXE lines.
+
+> ⚠️ **Do not measure this with `-nographic`.** QEMU sets `FW_CFG_NOGRAPHIC`, SeaBIOS moves
+> its console to COM1, and then the *stock* ROM appears to have a serial console while this
+> one appears corrupted — two writers on one port, bytes interleaved:
+> `PiXPEX Ei niintiitailailsiisnign g` is "iPXE initialising devices" twice, merged.
+
+### 12.3 The firmware's verdict (real transcript)
+
+```
+iPXE 2.0.0+ (g3ca79) -- Open Source Network Boot Firmware -- https://ipxe.org
+Configuring (net0 52:54:00:12:34:56)...... ok
+MAAS: resolving a boot script for  (52:54:00:12:34:56) from http://10.9.9.2:8181/maas
+http://10.9.9.2:8181/maas/.ipxe... Connection reset          ← nothing serving; falls to the shell
+iPXE> imgverify
+Usage:
+  imgverify [-s|--signer <signer>] [-k|--keep] … <uri|image> <signature uri|image>
+iPXE> nosuchcmd
+nosuchcmd: command not found                                 ← so the line above means it EXISTS
+iPXE> imgverify http://10.9.9.2:PORT/good.img http://10.9.9.2:PORT/good.img.sig
+http://10.9.9.2:PORT/good.img... ok
+http://10.9.9.2:PORT/good.img.sig... ok
+iPXE>                                                        ← ACCEPTED, silently
+iPXE> imgverify http://10.9.9.2:PORT/bad.img http://10.9.9.2:PORT/bad.img.sig
+http://10.9.9.2:PORT/bad.img... ok
+http://10.9.9.2:PORT/bad.img.sig... ok
+Could not verify: Permission denied (https://ipxe.org/0227e13c)   ← REFUSED: digest mismatch
+```
+
+The host serves the payloads on loopback; slirp's gateway (`net+2`) proxies the guest to
+it, so **no host port is opened**. Automated as
+[`tests/test-verifying-rom.sh`](tests/test-verifying-rom.sh) — it skips cleanly when the
+ROM has not been built, so CI is unaffected.
+
+### 12.4 What it found the first time it ran
+
+The good payload was refused too:
+
+```
+Could not verify: Permission denied (https://ipxe.org/022ae13c)     "Not a signing certificate"
+```
+
+`verify-lib.sh` minted its code-signing leaf with `extendedKeyUsage=codeSigning` only. iPXE
+also requires `keyUsage=digitalSignature`, and `openssl cms -verify` ignores key usage
+entirely — so the host-side gate and the whole green suite had been accepting a certificate
+that no verifying firmware would. Check any keydir with:
+
+```bash
+./drivers/verify-lib.sh check-keys --dir ~/.cache/lab-create/maas/images/trust
+# → verify-lib: …/codesign.crt is NOT a certificate verifying firmware will accept:
+#     keyUsage=digitalSignature is MISSING -> iPXE: 'Not a signing certificate' (https://ipxe.org/022ae1)
+```
+
+Re-minting is deliberately manual (`gen-keys` never overwrites an existing keydir): remove
+the trust dir, `gen-keys`, **re-sign every image**, and rebuild the ROM — it bakes the CA.
+
+### 12.5 On the fleet — not yet run
+
+```bash
+FLEET_NIC_ROM=1 ./create-fleet.sh      # attaches the ROM to every node's NICs
+MAAS_IPXE_TRUSTS_CA=1 ./run-e2e.sh     # no E2E_NO_IMGVERIFY
+```
+
+Author-run and **not yet performed** — see [`DEFERRED.md`](DEFERRED.md) item 1.
