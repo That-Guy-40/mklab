@@ -158,6 +158,19 @@ See [`micro-linux/README.md`](micro-linux/README.md),
 [`micro-linux/SHOWCASE.md`](micro-linux/SHOWCASE.md), and
 [`MICRO_LINUX_LAB_PLAN.md`](MICRO_LINUX_LAB_PLAN.md) for the full design.
 
+### Proposed: a single-host micro cloud (design doc only — not built yet)
+
+Every cloud is the same seven subsystems, and this repo already implements six of
+them across the phases: Phase 1 is the image service, Phases 2–5 are the compute
+drivers, the PXE/IPMI labs are bare-metal provisioning, `lab-ca/` is the PKI, and
+Phase 6/6b is the control plane. The missing pieces are a **microVM compute type**
+and an **ext4 image bridge** to feed it.
+
+See [`MICRO_CLOUD_LAB_PLAN.md`](MICRO_CLOUD_LAB_PLAN.md) — it maps each cloud
+subsystem onto the block that already exists here, and designs the two gaps:
+`phase7-firecracker/lab-fc.sh` (Firecracker microVMs) and
+`lab-chroot.sh export-rootfs`.
+
 ## Repo layout
 
 ```
