@@ -54,10 +54,25 @@ cp "$BUSYBOX" "$work/bin/busybox"
 chmod +x "$work/bin/busybox"
 # symlink every applet this busybox provides, so /init's tools (sh, mount, sed,
 # awk, wget, nc, udhcpc, ifconfig, poweroff, …) all resolve.
+#
+# SKIP `busybox` ITSELF. It appears in `--list` like any other applet, and linking it
+# makes /bin/busybox a symlink to /bin/busybox — a self-referential loop that REPLACES
+# the binary we just copied. Every applet then resolves to nothing, the kernel execs
+# /init, follows /bin/sh -> /bin/busybox -> itself, and panics with
+#   Failed to execute /init (error -40)      [-40 = ELOOP]
+#   Kernel panic - not syncing: No working init found.
+# This shipped: the probe had never once booted, and the build's own check passed
+# because it asked whether `bin/busybox` EXISTS in the cpio — which a symlink to
+# nowhere does.
 while IFS= read -r applet; do
-    [[ -n "$applet" ]] || continue
+    [[ -n "$applet" && "$applet" != busybox ]] || continue
     ln -sf /bin/busybox "$work/bin/$applet"
 done < <("$BUSYBOX" --list 2>/dev/null)
+# Prove it, here, before anything packs it: the binary must still be a binary.
+[[ -f "$work/bin/busybox" && ! -L "$work/bin/busybox" ]] \
+    || die "internal: bin/busybox is a symlink, not the binary — the applet loop clobbered it"
+"$work/bin/busybox" true 2>/dev/null \
+    || die "internal: the staged bin/busybox does not execute — the initramfs would panic at boot"
 
 # /init (the kernel execs it directly; no inittab needed)
 if [[ "$MODE" == shell ]]; then
@@ -97,10 +112,27 @@ mkdir -p "$(dirname "$OUT")"
 ( cd "$work" && find . -print0 | cpio --null -o -H newc --quiet | gzip -9 ) > "$OUT" \
     || die "cpio/gzip failed"
 
+# Unpack what we just packed and RUN the shell out of it. Listing the archive only
+# proves the paths are present, which is what let a self-symlinked busybox — an
+# initramfs that panics on every boot — pass this check and ship.
+verify="$work.verify"; mkdir -p "$verify"
+if zcat "$OUT" | ( cd "$verify" && cpio -idm --quiet 2>/dev/null ); then
+    [[ -f "$verify/init" ]] || die "the packed initramfs has no /init"
+    [[ -f "$verify/bin/busybox" && ! -L "$verify/bin/busybox" ]] \
+        || die "the packed /bin/busybox is not a real file — the initramfs would panic with 'No working init found'"
+    "$verify/bin/busybox" true 2>/dev/null \
+        || die "the packed /bin/busybox does not execute — this initramfs cannot boot"
+    [[ -L "$verify/bin/sh" ]] || die "the packed /bin/sh is missing — /init's shebang would not resolve"
+    "$verify/bin/sh" -c 'exit 0' 2>/dev/null \
+        || die "the packed /bin/sh does not resolve to a working shell (a symlink loop?)"
+else
+    die "could not unpack the initramfs we just wrote — refusing to call it built"
+fi
+rm -rf "$verify"
+
 size="$(du -h "$OUT" | cut -f1)"
 echo "built ${MODE} initramfs: $OUT ($size)" >&2
-echo "contents (should include ./init and ./bin/busybox):" >&2
-zcat "$OUT" | cpio -t --quiet 2>/dev/null | grep -E '^(init|bin/busybox)$' | sed 's/^/  /' >&2
+echo "verified: /init present, /bin/busybox is a real static binary that RUNS, /bin/sh resolves" >&2
 cat >&2 <<EOF
 
 Next (author-run): serve it + a kernel over the PXE HTTP endpoint and boot a node:

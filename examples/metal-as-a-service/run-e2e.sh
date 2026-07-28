@@ -165,6 +165,33 @@ fi
 run "$HERE/drivers/ramdisk.sh" stage "$IMAGE"
 
 # ── 8. the deploy: F2 gate, netboot into RAM, health gate ───────────────────
+#
+# THE FIRMWARE HAS TO BE ABLE TO HONOUR THE GATE. `ramdisk.sh` emits `imgverify` lines
+# whenever the image is signed — that is the on-node half of F2. QEMU's STOCK iPXE ROM
+# (what a libvirt virtio NIC boots by default) is built without IMAGE_TRUST_CMD, so
+# `imgverify` is an unknown command: the script aborts, nothing boots, and because that
+# ROM also has no serial console the failure leaves **zero bytes** on the node's console
+# log. A live run proved it by accident and by controlled experiment — the introspection
+# script (no imgverify) booted and printed a full kernel log on the same node, same
+# network, minutes earlier.
+#
+# So this is checked here, loudly, rather than discovered as a 120s silence.
+if [[ $DRY == 0 ]]; then
+    if [[ -f "$MAAS_IMAGES_DIR/$IMAGE/kernel.sig" && "${MAAS_IPXE_TRUSTS_CA:-0}" != 1 ]]; then
+        die "'$IMAGE' is signed, so the boot script will carry \`imgverify\` — and nothing
+here has established that this fleet's firmware can honour it. QEMU's stock iPXE ROM has no
+IMAGE_TRUST_CMD and no serial console, so it fails the command and boots nothing, silently.
+Either:
+  * build an iPXE that verifies, with MAAS's CA baked in, and attach it to the NICs:
+        ../../netboot/build-ipxe.sh --imgverify --certfile $MAAS_IMAGES_DIR/trust/ca.crt
+    then add <rom file='<ipxe.rom>'/> to each domain's <interface>; then re-run with
+        MAAS_IPXE_TRUSTS_CA=1 $0
+  * or deploy an UNSIGNED payload to exercise the rest of the path:
+        rm $MAAS_IMAGES_DIR/$IMAGE/kernel.sig $MAAS_IMAGES_DIR/$IMAGE/initrd.sig
+    (the host-side F2 gate still runs at \`verify\`; only the on-node half is skipped)
+Refusing rather than booting into a silence that looks like a dead payload."
+    fi
+fi
 step "[8/10] deploy: verify -> netboot into RAM -> health gate -> active"
 info "the node fetches a SIGNED kernel+initrd; the iPXE script carries imgverify"
 run "$MAAS" deploy "$NODE" --driver ramdisk --image "$IMAGE"

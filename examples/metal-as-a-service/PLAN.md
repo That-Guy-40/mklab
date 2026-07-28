@@ -732,3 +732,73 @@ Negative control on the new check: blinding it to other domains on the port make
 `test-bmc-binding-check.sh` fail. **Verified live:** the file-backed console writes
 (30 KB on a real boot), and the DHCP failure was reproduced by hand
 (`Missing IP address in static host definition`).
+
+## What the THIRD live run found (2026-07-28) — the probe had never booted
+
+`vbmc_check: all 3 nodes own their BMC port and are running`. The collision was gone,
+and node1 **netbooted our script** — the console proves it, with the cmdline the control
+plane wrote:
+
+```
+Command line: console=ttyS0 ip=dhcp maas.node=node1 maas.md=http://192.168.123.1:8282
+```
+
+The chain, the DHCP hostname, the per-node script, the file-backed console: all working.
+And then:
+
+```
+Run /init as init process
+Failed to execute /init (error -40)
+Starting init: /bin/sh exists but couldn't execute it (error -40)
+Kernel panic - not syncing: No working init found.
+```
+
+`-40` is `ELOOP`. `build-probe-initramfs.sh` symlinked **every** name in
+`busybox --list` to `/bin/busybox` — and `busybox` is itself in that list, so the last
+link replaced the binary with a symlink to itself. Every applet then resolved to
+nothing. **The probe had never once booted**, across every run of this lab.
+
+**Why the test said otherwise, twice over.** `test-probe-build.sh` asserted
+`[[ -f "$un/bin/busybox" ]]`. `-f` *follows* symlinks — and the link is **absolute**, so
+it escaped the unpack directory and resolved against the **host's** real
+`/usr/bin/busybox`. The test was validating a file that had never been in the archive.
+The size was a second tell nobody read: the broken artifact was **8.0K**, a real one is
+**1.1M**. Now: not-a-symlink, executes, >200 KB, and `/bin/sh` resolves — asserted both
+in the builder (before packing) and in the test (after unpacking). Negative control:
+restore the clobbering loop, strip the builder's guards, and the test fails by name.
+
+### …and the deploy failed for an unrelated reason the same run proved
+
+The deploy boot left **zero bytes** on the console. Not a slow boot — nothing at all.
+The run had already performed the controlled experiment: same node, same network,
+minutes apart,
+
+| script | `imgverify`? | result |
+|---|---|---|
+| `maas/node1.ipxe` (introspection) | no | booted, full kernel log on serial |
+| `maas/node1.ipxe` (deploy) | **yes** | nothing, no output whatsoever |
+
+A libvirt virtio NIC boots **QEMU's stock iPXE ROM**, which is built without
+`IMAGE_TRUST_CMD`. `imgverify` is an unknown command, the script aborts — and that ROM
+has no serial console either, so the abort message goes to VGA and the console log stays
+empty. The on-node half of F2 needs a firmware that can honour it.
+
+`run-e2e.sh` now **refuses** rather than booting into that silence, naming both ways
+out: build a verifying iPXE with MAAS's CA (`netboot/build-ipxe.sh --imgverify
+--certfile …`, attach via `<rom file=…/>`, then `MAAS_IPXE_TRUSTS_CA=1`), or drop the
+signatures to exercise the rest of the path with the host-side gate still running.
+
+### Named, not yet built
+
+- **A verifying iPXE ROM for the fleet.** The builder exists (`netboot/build-ipxe.sh
+  --imgverify`, proven in the RAM-infra lab); what is missing is attaching it to the
+  fleet's NICs and recording the capability per node. Until then the on-node half of F2
+  is **unexercised on this path** — the host-side `verify` still runs, and says so.
+- **iPXE with a serial console.** The same ROM would fix the debuggability hole this run
+  exposed: the chain's own `echo` lines never reach the console log, so every iPXE-level
+  failure is invisible to exactly the instrument built to see it.
+- **A chaos scenario for a BMC that answers for a different machine** (carried over).
+
+**Verified headless (this host, 2026-07-28):** `tests/run-all.sh` → **17 passed, 0
+skipped, 0 failed**. **Verified live:** the boot chain delivers the control plane's own
+script with the right cmdline, and the console records it.
