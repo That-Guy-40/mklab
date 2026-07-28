@@ -824,3 +824,46 @@ pkill footgun, which has already cost this repo a QEMU VM and a shell); an empty
 `MD_PID` reaps nothing; and the trap does not alter the exit status — an `EXIT` trap that
 swallows a failure would turn a failed live run into a passing one, the worst possible
 outcome for a script whose whole job is a verdict. Both negative controls run.
+
+## The fourth run: the driver walked past its own failure (2026-07-28)
+
+Phase 3 failed outright:
+
+```
+qemu-img: /var/lib/libvirt/images/node1.qcow2: error while converting qcow2: Failed to get "write" lock
+create-fleet: create-node node1 failed
+```
+
+`create-node.sh` rewrites the node's disk with `qemu-img convert` **before** it destroys
+the domain, and node1 was still running from the previous failed run — a fleet run that
+ends on a health-gate failure leaves its nodes powered on, so the *next* `up` hits this
+every time. `create-fleet.sh` now stops any running fleet domain first, by name and with
+the lifecycle verb, before create-node.sh touches a disk.
+
+**But the real defect was the driver's own.** `run()` invoked each phase and never looked
+at its exit status. So no domain was recreated, no console instrumented, no BMC verified,
+nothing enrolled — and phases 4 through 10 ran anyway. Phase 4 then failed too (`cannot
+'manage' from state 'manageable'`), was also ignored, and the run ended blaming a health
+gate **eight phases downstream of the actual defect**. Two of the four live runs were
+read wrong the first time because of this, including by me.
+
+The line now drawn, and pinned by
+[`tests/test-e2e-fails-fast.sh`](tests/test-e2e-fails-fast.sh):
+
+| | | |
+|---|---|---|
+| `run()` | **setup** — everything after depends on it | aborts, names the step, does not paraphrase the tool's own error |
+| `run_soft()` | the things **under test** (deploy, apply, watch) | continues *and says so* — their failure is the result, and aborting would throw away the state, the `apply` report and the verdict |
+
+Making `run_soft` fatal too would be the obvious "fix" and would be wrong, so the test
+asserts it stays non-fatal **and** stays visible.
+
+One more, found while reading the log: **`--dry-run` was writing to the real run log.**
+It skipped the truncation but still `tee -a`'d, so every dry run appended a ghost run to
+the last real one — and a log with two interleaved runs in it is worse than no log when
+you are trying to read a failure. (I did this to the user's log myself, twice, while
+verifying the previous fix.)
+
+**Verified headless:** `tests/run-all.sh` → **19 passed, 0 skipped, 0 failed**. Negative
+controls: restoring the status-blind `run()`, and restoring the log-writing `--dry-run`,
+each make the test fail by name.

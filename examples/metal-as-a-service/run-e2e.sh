@@ -39,13 +39,37 @@ export MAAS_NETBOOT_DIR="${MAAS_NETBOOT_DIR:-$HOME/netboot}"
 DRY=0; DOWN=0
 case "${1:-}" in --dry-run) DRY=1 ;; --down) DOWN=1 ;; -h|--help) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
 
-step() { printf '\n== %s ==\n' "$*" | tee -a "$LOG" >&2; }
-info() { printf '   %s\n' "$*" | tee -a "$LOG" >&2; }
-die()  { printf 'FAIL: %s\n' "$*" | tee -a "$LOG" >&2; exit 1; }
-run()  { # the one place that decides "print" vs "do"
+# --dry-run must not touch the real log. It used to `tee -a` into it while skipping the
+# truncation, so a dry run APPENDED a ghost run to the last real one — and a log with
+# two interleaved runs in it is worse than no log when you are trying to read a failure.
+_tee() { if [[ $DRY == 1 ]]; then cat >&2; else tee -a "$LOG" >&2; fi; }
+step() { printf '\n== %s ==\n' "$*" | _tee; }
+info() { printf '   %s\n' "$*" | _tee; }
+die()  { printf 'FAIL: %s\n' "$*" | _tee; exit 1; }
+
+# run — a phase that MUST succeed. Anything else is how a run marches past the actual
+# defect: phase 3 once failed outright (`create-node node1 failed`, no domains, no
+# consoles, no enroll) and phases 4-10 ran anyway, each producing its own confusing
+# error, and the verdict blamed a health gate. Every setup step here is load-bearing;
+# if one fails, the rest are noise.
+run()  {
     if [[ $DRY == 1 ]]; then printf '   $ %s\n' "$*" >&2; return 0; fi
     printf '   $ %s\n' "$*" | tee -a "$LOG" >&2
-    "$@" >>"$LOG" 2>&1
+    if ! "$@" >>"$LOG" 2>&1; then
+        printf '\n' | tee -a "$LOG" >&2
+        die "the step above failed (rc=$?): $*
+Everything after it depends on it, so continuing would report a different, misleading
+failure several phases later. The tool's own output is in $LOG — read it there; this
+script deliberately does not paraphrase what a tool it wraps already said."
+    fi
+}
+# run_soft — a phase whose failure IS the result, not an obstacle to it. The deploy and
+# the reconcile are the things under test: when they fail we want the state, the apply
+# report and the final verdict, not an abort.
+run_soft() {
+    if [[ $DRY == 1 ]]; then printf '   $ %s\n' "$*" >&2; return 0; fi
+    printf '   $ %s\n' "$*" | tee -a "$LOG" >&2
+    "$@" >>"$LOG" 2>&1 || info "(that step failed — continuing; the verdict below is what counts)"
 }
 
 [[ $DRY == 1 ]] || : > "$LOG"
@@ -232,19 +256,19 @@ Refusing rather than booting into a silence that looks like a dead payload."
 fi
 step "[8/10] deploy: verify -> netboot into RAM -> health gate -> active"
 info "the node fetches a SIGNED kernel+initrd; the iPXE script carries imgverify"
-run "$MAAS" deploy "$NODE" --driver ramdisk --image "$IMAGE"
-run "$MAAS" state "$NODE"
+run_soft "$MAAS" deploy "$NODE" --driver ramdisk --image "$IMAGE"
+run_soft "$MAAS" state "$NODE"
 
 # ── 9. the reconcile loop, twice — the invariant ────────────────────────────
 step "[9/10] apply: converge the fleet, then prove the second run is a no-op"
-run "$MAAS" apply "$HERE/fleet.toml" --dry-run
+run_soft "$MAAS" apply "$HERE/fleet.toml" --dry-run
 info "(the second run below must issue ZERO transitions — the reconciliation invariant)"
-run "$MAAS" apply "$HERE/fleet.toml"
+run_soft "$MAAS" apply "$HERE/fleet.toml"
 
 step "[10/10] the surface: register with the control pane + list the declared actions"
-run "$MAAS" watch "$NODE" --register-only
+run_soft "$MAAS" watch "$NODE" --register-only
 CP="$HERE/../../tools/control-pane"
-[[ -x "$CP" ]] && run "$CP" actions "$NODE"
+[[ -x "$CP" ]] && run_soft "$CP" actions "$NODE"
 
 # ── verdict ─────────────────────────────────────────────────────────────────
 if [[ $DRY == 1 ]]; then

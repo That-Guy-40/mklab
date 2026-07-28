@@ -175,6 +175,21 @@ do_up() {
     ( cd "$VBMC_LAB" && ./vbmc-lab.sh build ) || die "vbmc build failed"
 
     local name
+    # STOP ANY RUNNING FLEET DOMAIN FIRST. create-node.sh rewrites the node's disk with
+    # `qemu-img convert` BEFORE it destroys the domain, so a node still running from an
+    # earlier attempt holds a write lock and the convert fails:
+    #     qemu-img: ... error while converting qcow2: Failed to get "write" lock
+    # A fleet run that ends on a health-gate failure leaves its nodes powered on, so the
+    # NEXT `up` hits this every time. Use the lifecycle verb, and only on domains this
+    # fleet owns.
+    for name in $(fleet_names); do
+        if [[ "$($VIRSH domstate "$name" 2>/dev/null)" == running ]]; then
+            info "$name is still running from an earlier attempt — stopping it so its disk can be rewritten"
+            $VIRSH destroy "$name" >/dev/null 2>&1 \
+                || sudo $VIRSH destroy "$name" >/dev/null 2>&1 \
+                || die "'$name' is running and could not be stopped; its disk is write-locked and create-node.sh would fail. Stop it by hand: virsh -c qemu:///system destroy $name"
+        fi
+    done
     for name in $(fleet_names); do
         load_node "$name"
         step "creating libvirt domain '$name' (${NODE_MEMORY_MB}MiB, disk ${NODE_DISK_SIZE}, net ${NODE_NETWORK})"
