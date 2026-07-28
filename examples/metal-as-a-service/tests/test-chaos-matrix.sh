@@ -90,4 +90,33 @@ got="$("$MAAS" state c1 2>/dev/null)"
     || fail "unmaintenance took a mid-transition node out of maintenance into '$got'; expected 'error', where retry can pick it up"
 note "a node that was mid-transition comes out of maintenance as 'error', not stuck again  ✓"
 
-pass "every injected fault was absorbed, fell back, or halted honestly — zero critical outcomes, on a matrix that demonstrably exercises all three rungs"
+# ── 5. THE HOUSE RULE, enforced ─────────────────────────────────────────────
+# "Every discrete layer gets a fault-injection point, and every deploy driver gets a
+# test that drives the REAL driver through its failure paths." A rule that is only
+# written down decays the first time someone is in a hurry, so it is checked here:
+# add a layer or a driver without its coverage and this test names what is missing.
+mapfile -t COVERED < <("$LAB_DIR/chaos-run.sh" --layers 2>/dev/null | awk '$2+0>0 {print $1}')
+mapfile -t DECLARED < <("$LAB_DIR/chaos-run.sh" --layers 2>/dev/null | awk '{print $1}')
+[[ ${#DECLARED[@]} -ge 5 ]] \
+    || fail "chaos-run.sh --layers reported only ${#DECLARED[@]} layers — the layer taxonomy has gone missing"
+for L in "${DECLARED[@]}"; do
+    printf '%s\n' "${COVERED[@]}" | grep -qx -- "$L" \
+        || fail "REGRESSION: layer '$L' is declared but has NO chaos scenario. The house rule is that every discrete layer gets a fault-injection point — an uncovered layer is one nobody has watched fall over. Add a scenario for it in chaos-run.sh"
+done
+note "all ${#DECLARED[@]} declared layers have at least one fault scenario: ${DECLARED[*]}  ✓"
+
+# Every deploy driver must have a test that drives the REAL thing. The chaos driver
+# stands in at the driver LAYER; it does not stand in for a specific driver's contract
+# (install ends on bootdev disk, ramdisk must not, image must not do it early…).
+shopt -s nullglob
+missing=()
+for d in "$LAB_DIR"/drivers/*.sh; do
+    n="$(basename "$d" .sh)"
+    case "$n" in chaos|verify-lib) continue ;; esac       # the injector and the crypto lib
+    [[ -f "$TEST_DIR/test-$n-driver.sh" ]] || missing+=("$n")
+done
+[[ ${#missing[@]} -eq 0 ]] \
+    || fail "REGRESSION: deploy driver(s) with no real-driver test: ${missing[*]}. The house rule is that a driver ships with a test that drives IT, not the mock — the mock proves the control plane's logic, never the driver's own contract. Add tests/test-<name>-driver.sh"
+note "every deploy driver has a test that drives the real driver, not the mock  ✓"
+
+pass "every injected fault was absorbed, fell back, or halted honestly — zero criticals across all declared layers, and every layer and driver carries its own fault coverage"

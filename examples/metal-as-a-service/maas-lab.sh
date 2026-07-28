@@ -73,9 +73,16 @@ require_node() { node_exists "$1" || die "no such node '$1' (enroll it first: ma
 # ── registry primitives (atomic single-value files) ─────────────────────────
 # The registry is a directory tree: one dir per node, one small file per field.
 # Atomic writes (tmp + mv) keep `state` always readable and never half-written.
+# A FAILED WRITE MUST NOT BE SILENT. This used to be a bare `printf > tmp && mv`
+# whose exit status nobody read: with the state dir unwritable, `deploy` printed
+# "active <node> (image=v2, healthy)", exited 0, and left the registry saying v1 —
+# while the driver had really put v2 on the machine. Reality and the record diverged
+# with no error, so every later decision (the rollback target, `recheck`, `apply`'s
+# diff) was made against a lie. Found by chaos-run.sh's registry-layer scenario.
 _write() {  # _write <node> <field> <value>
-    local d; d="$(node_dir "$1")"; mkdir -p "$d"
-    printf '%s\n' "$3" > "$d/.$2.tmp" && mv "$d/.$2.tmp" "$d/$2"
+    local d; d="$(node_dir "$1")"; mkdir -p "$d" 2>/dev/null
+    { printf '%s\n' "$3" > "$d/.$2.tmp" && mv "$d/.$2.tmp" "$d/$2"; } 2>/dev/null \
+        || die "cannot write the registry ($d/$2) — the state store is unwritable (full disk? read-only mount?). Refusing to continue: an unrecorded change is worse than a refused one, because nothing downstream can tell they diverged"
 }
 _read() {   # _read <node> <field> [default]
     local f; f="$(node_dir "$1")/$2"
@@ -91,7 +98,8 @@ set_state() {  # set_state <node> <new-state> <verb>
     ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     _write "$node" state "$new"
     printf '%s  %-11s -> %-11s (%s)\n' "$ts" "$old" "$new" "$verb" \
-        >> "$(node_dir "$node")/history.log"
+        >> "$(node_dir "$node")/history.log" 2>/dev/null \
+        || die "recorded state '$new' for '$node' but could not append to its history.log — the state store is only partly writable; refusing to continue with a registry that cannot keep its own audit trail"
 }
 
 # Precondition guard: current state must be one of the allowed set, else refuse
@@ -417,12 +425,11 @@ cmd_deploy() {
     [[ -n "$driver" ]] || die "deploy: --driver is required (install|ramdisk|image|image+measured)"
     [[ -n "$image" ]]  || die "deploy: --image is required (the payload to deploy)"
 
-    # Resolve the driver script. install + ramdisk are real; image is an honest
-    # not-yet — it names its build step rather than pretending.
+    # Resolve the driver script. install/ramdisk/image are real; image+measured is
+    # an honest not-yet — it names itself as a fast-follow rather than pretending.
     local drv="$MAAS_DRIVER_DIR/$driver.sh"
     if [[ ! -x "$drv" ]]; then
         case "$driver" in
-            image)   die "deploy: the 'image' driver lands in build step 5 (not yet implemented)" ;;
             image+measured) die "deploy: 'image+measured' is a documented fast-follow (not yet implemented)" ;;
             *) die "deploy: no driver '$driver' at $drv" ;;
         esac

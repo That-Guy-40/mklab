@@ -73,9 +73,15 @@ verify)
         echo "chaos: signature verification refused '$image' (injected)" >&2
         exit 1
     fi
-    # Otherwise verify for REAL when there is something to verify — so a chaos run
-    # that is not testing the F2 gate still goes through it rather than around it.
-    if [[ -n "${MAAS_IMAGES_DIR:-}" && -d "${MAAS_IMAGES_DIR}/$image" ]]; then
+    # Otherwise verify for REAL — so a chaos run that is not testing the F2 gate still
+    # goes THROUGH it rather than around it.
+    #
+    # This deliberately does NOT skip when the image directory is missing. The first
+    # version did (`-d $dir || exit 0`) and the artifact-layer scenario immediately
+    # caught it: delete a staged payload and the deploy "succeeded". A verifier that
+    # passes when the artifact is absent is precisely the F2 hole this driver exists
+    # to hunt for — verify-lib.sh refuses a missing dir, so just let it.
+    if [[ -n "${MAAS_IMAGES_DIR:-}" ]]; then
         exec "$HERE/verify-lib.sh" verify-dir "${MAAS_IMAGES_DIR}/$image" \
             --ca "${MAAS_IMAGES_DIR}/trust/ca.crt"
     fi

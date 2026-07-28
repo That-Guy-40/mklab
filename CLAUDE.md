@@ -62,6 +62,59 @@ wrong guesses about direction. The full-repo grep + per-hit classification is
 what got it right. **Host-specific values (ports especially) are often
 intentional — verify what the host/configs actually use before changing them.**
 
+### Fault-inject every discrete layer, and grade how gracefully it falls
+
+For a lab with **layers that can fail independently** (a control plane, a driver
+interface, an out-of-band channel, a state store), a passing test suite only proves
+the happy path. The complementary question is **"when this breaks, how gracefully does
+it fall?"** — and it is asked with a **chaos harness that injects a fault at each
+layer** and grades the outcome on a ladder:
+
+| rung | meaning | |
+|---|---|---|
+| **ABSORBED** | the fault never reached the service — refused before it could do harm | ← **the goal** |
+| **DEGRADED** | still serving, on a fallback | acceptable *intermediate* |
+| **HALTED** | not serving, but it stopped **honestly**: a named error state, a recorded reason, and a verb that recovers it | acceptable *intermediate* |
+| **STRANDED** | stuck somewhere no verb accepts — nothing wrong with it, nothing to be done with it | **critical** |
+| **LIED / STALE** | the record and reality disagree, or agreed once and nobody re-checked | **critical** |
+
+**Fallback and graceful failure are the intermediate rungs, not the goal.** A run passes
+at **zero criticals**; the intermediate rungs are counted and reported, never punished.
+
+The rules that make it worth having:
+
+- **Every discrete layer gets an injection point.** A layer with no scenario is a layer
+  nobody has watched fall over. Enumerate them explicitly (each corresponds to a seam);
+  name the ones **not yet covered** rather than leaving the gap implicit.
+- **Grade AFTER attempting the recovery the system offers.** "Critical" must mean
+  *nothing can be done about it*, not *the first thing I looked at was still wrong*.
+- **The injector is a real implementation of the real interface**, so the fault runs
+  through the real gates and rollback — not a special-cased branch inside the system.
+- **Scope the fault to the subject under test.** A fault that breaks *everything* sends
+  every scenario to the same rung and the fallback path never runs — the harness then
+  reports a uniform, uninformative failure and looks like it is working.
+- **Include a no-fault control row.** Otherwise "the harness reported failures" is
+  indistinguishable from a system that never worked. (It earns its place: ours
+  immediately caught a *grading* bug — a successful deploy being read as a fallback.)
+- **Assert the rungs are OCCUPIED, not just that criticals are zero.** A matrix that
+  never broke anything is all-ABSORBED; one that breaks everything unrecoverably is
+  all-HALTED; one whose fallback path is dead never reaches DEGRADED. Zero criticals
+  alone proves none of that.
+- **Hold the harness to the standard it enforces.** Ours shipped a verifier that passed
+  when the artifact was *missing* — the exact bug class it exists to hunt.
+
+Exemplar: [`examples/metal-as-a-service/`](examples/metal-as-a-service/) —
+[`chaos-run.sh`](examples/metal-as-a-service/chaos-run.sh) +
+[`drivers/chaos.sh`](examples/metal-as-a-service/drivers/chaos.sh) over five layers
+(driver · out-of-band · artifact store · registry · the control-plane process), with
+[`tests/test-chaos-matrix.sh`](examples/metal-as-a-service/tests/test-chaos-matrix.sh)
+**failing when a layer or a driver ships without coverage**. It has found three real
+bugs so far, each invisible to the green suite: a node **stranded** in a transient state
+no verb accepted (and `unmaintenance` handing it straight back into it), a node that
+**passed its health gate and then died** while still reporting `active`, and a
+**silent registry write failure** — the tool printed success, exited 0, and left the
+record saying one image while the machine ran another.
+
 ### Doc/link integrity
 
 `tools/link_check.py` validates Markdown cross-links repo-wide and maps file

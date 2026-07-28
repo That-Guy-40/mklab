@@ -12,12 +12,31 @@ This file tracks the **build increments** and records each one's outcome as it l
 | **3** | **`install` driver + health-gated activation + A/B rollback (§4b)** + F2 verify gate | ✅ **DONE** — headless (real install author-run) |
 | **4** | **`ramdisk` driver + catalog** (RAM-INFRA / micro-linux / floppinux / busybox), signed + `imgverify` | ✅ **DONE (this increment)** — headless |
 | **4a** | **chaos driver + resilience matrix** (`drivers/chaos.sh`, `chaos-run.sh`) — and the `abort`/`recheck` verbs it found were missing | ✅ **DONE (this increment)** — headless |
-| 5 | `image` driver (dd golden whole-disk, Tier-B reuse) | ▫ |
+| **5** | **`image` driver** (dd golden whole-disk, Tier-B reuse) | ✅ **DONE (this increment)** — headless |
 | 6 | `apply` declarative reconcile (§3a) — diff desired-vs-actual, idempotent | ▫ |
 | 7 | Phase-6 surface — **provided by `tools/control-pane`**; MAAS is its first consumer | ▫ |
 
 Fast-follows (documented, not v1): `image+measured` attested gate; `ramdisk`→region
 wiring; a flavor/tag scheduler atop `apply`.
+
+## The house rule this lab is built under
+
+**Every discrete layer gets a fault-injection point, and every deploy driver gets a
+test that drives the REAL driver — not the mock.** Written up in the repo's
+[`CLAUDE.md`](../../CLAUDE.md) and *enforced* by
+[`tests/test-chaos-matrix.sh`](tests/test-chaos-matrix.sh), which fails by name when a
+declared layer has no scenario or a driver has no real-driver test. The layers:
+
+| layer | seam | injected with |
+|---|---|---|
+| `driver` | `MAAS_DRIVER_DIR` | `drivers/chaos.sh` (`CHAOS_FAULT`) |
+| `oob` | `MAAS_BMC` | `MOCK_BMC_FAIL` — the controller stops answering |
+| `artifact` | `MAAS_IMAGES_DIR` | the signed payload vanishes after staging |
+| `registry` | `MAAS_STATE` | the state store goes read-only mid-deploy |
+| `process` | — | `maas-lab.sh` killed mid-transition (by PID) |
+
+Named as **not yet covered**, rather than left implicit: the metadata/facts sink
+(:8282) and the console/milestone stream. Both land with increment 6.
 
 ## Increment 1 — outcome (2026-07-25)
 
@@ -336,3 +355,77 @@ A run passes at **zero criticals**. The intermediate rungs are counted, not puni
 skipped, 0 failed**; `chaos-run.sh` → **12 scenarios: 2 absorbed, 4 degraded, 6 halted,
 0 critical**. Both negative controls run: removing `abort` puts `control-plane-killed`
 back to **STRANDED**; removing `recheck` puts `health-flap` back to **STALE**.
+
+## Increment 5 — outcome (2026-07-27)
+
+**Built:** the `image` driver — lay a **golden whole-disk image** onto a node — and,
+under the house rule above, its chaos coverage at two more layers.
+
+- **`drivers/image.sh`** routes to [`nixos-ipxe-deploy`](../nixos-ipxe-deploy/)'s
+  proven **Tier B** mechanism (a deployer ramdisk netboots, `dd`s a raw whole-disk
+  image, registers a UEFI boot entry). `stage --from <raw>` copies + signs; `verify` is
+  the same F2 gate; `deploy` publishes the raw, netboots the deployer, **waits for the
+  write to complete**, then points the node at its own disk.
+
+**The three drivers now differ in exactly the ways their mechanisms differ**, and each
+difference is a way to break a machine silently — so each is asserted:
+
+| | `install` | `ramdisk` | `image` |
+|---|---|---|---|
+| completion signal | the node powers **itself** off | *never* — a RAM service stays up | a **console marker** from the deployer |
+| ends with | `bootdev disk` | **nothing** (netboots every boot) | `bootdev disk` |
+| persistence | full | **none** | full, and **destructive** |
+
+**Design decisions this increment:**
+
+1. **The completion signal is a console marker, not a power state.** A deployer ramdisk
+   reboots rather than powering off, so `install`'s "wait for the chassis to go off"
+   does not apply. The marker is the same line `watch` renders as the `image` profile's
+   *writing image* milestone (§5c: one event, two consumers).
+2. **Never point a node at a half-written disk.** If the write does not report
+   completion, the driver times out and leaves the node in `error` — because booting a
+   partially-written disk yields an unbootable machine **with nothing in the log to say
+   why**. This is the assertion the increment exists for; its negative control was run.
+3. **`persistence=full`, recorded.** This driver overwrites the whole disk, previous
+   tenant included. The registry has to say so, or nothing downstream can tell an imaged
+   node from a diskless one whose wipe is a no-op — the third point of §3's contrast
+   (`ramdisk`=none, `install`=full, `image`=full-and-destructive).
+
+### The bug the new chaos layers found
+
+Adding the **registry** layer (state store goes read-only mid-deploy) immediately turned
+up a critical one, and it was the worst shape yet — worse than the stranded node:
+
+```console
+$ deploy n1 --driver chaos --image bad-v2      # with $MAAS_STATE/n1 read-only
+./maas-lab.sh: line 78: …/.state.tmp: Permission denied
+active n1 (driver=chaos image=bad-v2, healthy)     ← printed success
+$ echo $?
+0                                                   ← exited 0
+$ cat $MAAS_STATE/n1/image
+good-v1                                             ← the registry never changed
+$ grep '^deploy n1' chaos-calls.log | tail -1
+deploy n1 bad-v2 current                            ← the machine really got bad-v2
+```
+
+`_write` was a bare `printf > tmp && mv` whose exit status nobody read. **The record and
+the machine diverged, silently, with an exit 0** — so every later decision (the rollback
+target, `recheck`, `apply`'s diff) would be made against a lie. Fixed: `_write` and
+`set_state` now `die` with a specific message when the store is unwritable, because an
+*unrecorded* change is worse than a *refused* one.
+
+The grader was fixed too — it had reported this as `DEGRADED` because it only ever read
+the registry. It now compares the registry against **what the driver actually deployed**,
+which is the only reality check available from outside.
+
+**Verified (headless, this host, 2026-07-27):** `tests/run-all.sh` → **12 passed, 0
+skipped, 0 failed**; `chaos-run.sh` → **14 scenarios across 5 layers: 4 absorbed, 4
+degraded, 6 halted, 0 critical**. Negative controls run for every new assertion:
+skipping the write-completion wait trips the half-written-disk guard; dropping
+`bootdev disk` trips the owns-its-disk guard; restoring the silent registry write puts
+`registry-readonly` back to **LIED**; declaring a layer with no scenario, or adding a
+driver with no real-driver test, each fail the house-rule guard **by name**.
+
+**Author-run (handed over):** a real image lay-down — build a golden raw with
+`nixos-ipxe-deploy/stage-deploy.sh --tier-b`, stage the deployer ramdisk under
+`$MAAS_NETBOOT_DIR/maas/deployer/`, then `deploy <node> --driver image --image <name>`.

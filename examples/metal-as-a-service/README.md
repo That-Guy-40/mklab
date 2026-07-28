@@ -21,11 +21,11 @@ PXE-install / RAM-boot / golden-image labs. Design roadmap:
 > + F2 signature gate** (step 3) — `deploy` now only reaches `active` when the image
 > **verifies** (OpenSSL CMS) and passes its **health gate**, and a failing image
 > **rolls back to the previous good one** instead of bricking. All **verifiable
-> headlessly** (mock BMC + mock driver, real crypto; `tests/run-all.sh` → 11 passed);
+> headlessly** (mock BMC + mock driver, real crypto; `tests/run-all.sh` → 12 passed);
 > the real `install` and `inspect --boot` are author-run. Step 4 adds the **`ramdisk`
 > driver + its catalog**, making the control plane a single front door to every
-> RAM-bootable payload in the repo. Remaining: the `image` driver + `apply` reconcile
-> (steps 5–6). See [PLAN.md](PLAN.md) for the ladder.
+> RAM-bootable payload in the repo. Remaining: `apply` reconcile (step 6) and
+> the Phase-6 actions panel (step 7). See [PLAN.md](PLAN.md) for the ladder.
 
 ## The state machine
 
@@ -213,10 +213,11 @@ lifecycle runs with no libvirt at all.
 | [`milestones.toml`](milestones.toml) | MAAS's progress profiles (`probe`/`install`/`ramdisk`/`image`) for `watch` |
 | [`drivers/install.sh`](drivers/install.sh) | the `install` deploy driver (PXE kickstart/preseed → boot from disk; author-run) |
 | [`drivers/ramdisk.sh`](drivers/ramdisk.sh) | the `ramdisk` deploy driver (netboot into RAM; `stage`/`verify`/`deploy`/`health`) |
-| [`drivers/chaos.sh`](drivers/chaos.sh) + [`chaos-run.sh`](chaos-run.sh) | a driver that fails on purpose, and the matrix that grades how the control plane falls |
+| [`drivers/image.sh`](drivers/image.sh) | the `image` deploy driver (a deployer ramdisk `dd`s a golden whole-disk image; **destructive**) |
+| [`drivers/chaos.sh`](drivers/chaos.sh) + [`chaos-run.sh`](chaos-run.sh) | a driver that fails on purpose, and the matrix that grades how the control plane falls across all five layers |
 | [`ramdisk-catalog.toml`](ramdisk-catalog.toml) + [`lib/catalog.py`](lib/catalog.py) | the `--image` registry (RAM-INFRA trio · micro-linux · floppinux · busybox) and its validating reader |
 | [`drivers/verify-lib.sh`](drivers/verify-lib.sh) | the F2 signature gate (OpenSSL CMS sign/verify, iPXE-`imgverify` format) |
-| [`tests/`](tests/) | 11 headless smokes: state-machine, cleaning-guard, registry, inspect-metadata, watch, probe-build, deploy-rollback, verify-tamper, install-driver, ramdisk-driver, chaos-matrix (+ `mock-bmc.sh`, `mock.sh` driver, `run-all.sh`) |
+| [`tests/`](tests/) | 12 headless smokes: state-machine, cleaning-guard, registry, inspect-metadata, watch, probe-build, deploy-rollback, verify-tamper, install-driver, ramdisk-driver, image-driver, chaos-matrix (+ `mock-bmc.sh`, `mock.sh` driver, `run-all.sh`) |
 | [`PLAN.md`](PLAN.md) | the increment ladder + each increment's outcome |
 | [`MANUAL_TESTING.md`](MANUAL_TESTING.md) | verified transcripts (headless) + the author-run bring-up handoff |
 
