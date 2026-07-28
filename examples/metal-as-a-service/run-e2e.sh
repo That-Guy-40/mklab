@@ -18,6 +18,11 @@
 #   sudo -v && ./run-e2e.sh    the real run (sudo primed; see below)
 #   ./run-e2e.sh --down        tear the fleet down
 #
+#   E2E_NO_IMGVERIFY=1 ./run-e2e.sh   payload stays SIGNED and the host-side F2 gate
+#                                     still runs; only the in-firmware `imgverify` is
+#                                     omitted, for a ROM without IMAGE_TRUST_CMD.
+#                                     (E2E_UNSIGNED is the old name, still accepted.)
+#
 # SUDO: rootful libvirt (qemu:///system) and rootful podman (vbmcd) are unavoidable —
 # the system libvirt socket is root:libvirt. All the sudo-needing work is FRONT-LOADED
 # in phases 1–3, exactly as run-finale.sh does it, so the long part runs unprivileged.
@@ -271,14 +276,25 @@ run "$HERE/drivers/ramdisk.sh" stage "$IMAGE"
 # network, minutes earlier.
 #
 # So this is checked here, loudly, rather than discovered as a 120s silence.
+#
+# HOW TO SKIP THE ON-NODE HALF, AND HOW NOT TO. The first attempt re-staged the image
+# --unsigned, on the reasoning that no signatures means no `imgverify` line. It does mean
+# that — and it also means the HOST-side gate refuses the image, because both halves read
+# the same .sig files. The live run got `F2 signature verification failed ... -> error`
+# and never reached the firmware at all. Worse, the message printed alongside it claimed
+# "the host-side gate still runs at 'verify'", which was the exact opposite of what had
+# just happened. Sign normally, and drop the on-node half at the line the firmware reads:
+# MAAS_NO_IMGVERIFY=1, honoured by the driver's boot-script writer.
+if [[ "${E2E_NO_IMGVERIFY:-${E2E_UNSIGNED:-0}}" == 1 ]]; then
+    export MAAS_NO_IMGVERIFY=1
+    info "MAAS_NO_IMGVERIFY=1: the payload is SIGNED and the host-side F2 gate runs for"
+    info "real at 'verify'; only the in-firmware 'imgverify' line is omitted, because this"
+    info "fleet's ROM cannot honour it. That is the honest half to skip, and the only one"
+    info "that can be skipped on its own."
+fi
 if [[ $DRY == 0 ]]; then
-    if [[ -f "$MAAS_IMAGES_DIR/$IMAGE/kernel.sig" && "${MAAS_IPXE_TRUSTS_CA:-0}" != 1 ]]; then
-      if [[ "${E2E_UNSIGNED:-0}" == 1 ]]; then
-        info "E2E_UNSIGNED=1: re-staging '$IMAGE' without signatures, so the boot script"
-        info "carries no imgverify. The ON-NODE half of F2 is SKIPPED for this run; the"
-        info "host-side gate still runs at 'verify'. Everything else is exercised."
-        run "$HERE/drivers/ramdisk.sh" stage "$IMAGE" --unsigned
-      else
+    if [[ -f "$MAAS_IMAGES_DIR/$IMAGE/kernel.sig" \
+          && "${MAAS_IPXE_TRUSTS_CA:-0}" != 1 && "${MAAS_NO_IMGVERIFY:-0}" != 1 ]]; then
         die "'$IMAGE' is signed, so the boot script will carry \`imgverify\` — and nothing
 here has established that this fleet's firmware can honour it. QEMU's stock iPXE ROM has no
 IMAGE_TRUST_CMD and no serial console, so it fails the command and boots nothing, silently.
@@ -287,17 +303,19 @@ Either:
         ../../netboot/build-ipxe.sh --imgverify --certfile $MAAS_IMAGES_DIR/trust/ca.crt
     then add <rom file='<ipxe.rom>'/> to each domain's <interface>; then re-run with
         MAAS_IPXE_TRUSTS_CA=1 $0
-  * or deploy an UNSIGNED payload to exercise the rest of the path:
-        rm $MAAS_IMAGES_DIR/$IMAGE/kernel.sig $MAAS_IMAGES_DIR/$IMAGE/initrd.sig
-    (the host-side F2 gate still runs at \`verify\`; only the on-node half is skipped)
-  * or run the whole path with the on-node half skipped, in one step:
-        E2E_UNSIGNED=1 $0
+  * or run the whole path with ONLY the in-firmware half skipped — the payload stays
+    signed and the host-side F2 gate still gates the deploy:
+        E2E_NO_IMGVERIFY=1 $0
 Refusing rather than booting into a silence that looks like a dead payload."
-      fi
     fi
 fi
 step "[8/10] deploy: verify -> netboot into RAM -> health gate -> active"
-info "the node fetches a SIGNED kernel+initrd; the iPXE script carries imgverify"
+if [[ "${MAAS_NO_IMGVERIFY:-0}" == 1 ]]; then
+    info "the node fetches a SIGNED kernel+initrd, gated host-side; the iPXE script omits"
+    info "imgverify because this fleet's ROM has no IMAGE_TRUST_CMD"
+else
+    info "the node fetches a SIGNED kernel+initrd; the iPXE script carries imgverify"
+fi
 run_soft "$MAAS" deploy "$NODE" --driver ramdisk --image "$IMAGE"
 run_soft "$MAAS" state "$NODE"
 

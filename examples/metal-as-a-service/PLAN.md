@@ -959,3 +959,70 @@ control plane. `tests/run-all.sh` → **20 passed, 0 skipped, 0 failed**. Three 
 controls, each run for real: restoring the unconditional `manage`, folding the
 un-enrolled case into the skip branch, and moving `power status` inside the conditional
 each make the test fail by name.
+
+## The seventh run: introspection worked, and the escape hatch was cut at the wrong seam (2026-07-28)
+
+**Phase 6 passed.** The whole introspection path ran against a real domain for the first
+time — PXE chain → the per-node script `inspect --boot` wrote → a kernel with a NIC
+driver built in → DHCP → facts POSTed to the sink → power off:
+
+```
+inspected node1 (cpus=1 mem_mb=3925 mac=52:54:00:22:86:a1)
+```
+
+Every previous run's fix is load-bearing in that one line: the chain (run 1), the right
+BMC (run 2), a probe initramfs that is not a symlink loop (run 3), a fleet that could be
+rebuilt at all (run 4), and a kernel that has a NIC (run 5).
+
+**Phase 8 failed, and it was my mechanism that was wrong.** F2 has two halves that read
+the *same artifacts*:
+
+| half | where | what it reads |
+|---|---|---|
+| host-side | `verify`, before the node is touched | `kernel.sig` / `initrd.sig` via OpenSSL CMS |
+| on-node | `imgverify` in the iPXE script | **the same two files**, fetched by the firmware |
+
+This fleet's ROM has no `IMAGE_TRUST_CMD`, so the on-node half must be skippable — and
+run 3's fix skipped it by re-staging the image `--unsigned`, on the reasoning that no
+signatures means no `imgverify` line. That is true, and it also disarms the half that
+was supposed to keep running:
+
+```
+maas: F2 signature verification failed for image 'micro-linux-x86_64'
+maas: ... and no previous image to roll back to — node 'node1' -> error
+```
+
+The deploy never reached the firmware at all. **And printed directly above it was my own
+message claiming "the host-side gate still runs at `verify`"** — an assertion contradicted
+by the very next line. A wrong knob is a bug; a wrong knob that narrates its own success
+is the rung this lab's own chaos ladder calls **LIED**, found in the harness rather than
+in anything the harness was pointed at.
+
+**The seam that separates them is the generated boot script, not the signing step.**
+`MAAS_NO_IMGVERIFY=1` omits the `imgverify` lines at the point the firmware reads them,
+leaves the payload signed, and writes a comment into the script saying the check was
+dropped deliberately — because a boot script that quietly lacks a line is
+indistinguishable from one written before signing existed. `run-e2e.sh` takes
+`E2E_NO_IMGVERIFY=1` (old name `E2E_UNSIGNED` still accepted).
+
+`stage --unsigned` stays, with its docs corrected to say what it actually does: it
+produces a genuinely unsigned image that the host-side gate **refuses**, which is how you
+exercise the gate failing closed.
+
+**Verified headless:** [`tests/test-imgverify-halves.sh`](tests/test-imgverify-halves.sh)
+drives the shipped boot-script writer and asserts both halves independently — the default
+arms `imgverify` for kernel *and* initrd; `MAAS_NO_IMGVERIFY=1` drops it while the
+signatures survive and `ramdisk.sh verify` still passes; and the unsigned image is still
+refused. `tests/run-all.sh` → **21 passed, 0 skipped, 0 failed**. Three negative controls,
+each run for real: restoring the unconditional emission, making the skip delete the
+signatures (the old mechanism), and putting `stage --unsigned` back into `run-e2e.sh`
+each fail the test by name.
+
+### Still not built
+
+The on-node half of F2 remains **unexercised on this fleet**, and this run does not
+change that — it makes the fact explicit rather than papering over it. Closing it needs
+a verifying ROM: `netboot/build-ipxe.sh --imgverify --certfile <ca.crt>`, attached with
+`<rom file=…/>` on each domain's `<interface>`, then `MAAS_IPXE_TRUSTS_CA=1`. That same
+ROM would also give iPXE a serial console and close the debuggability hole that made run
+3's failure a silence.

@@ -815,11 +815,25 @@ sudo -v && ./run-e2e.sh         # the real run — never stops to ask mid-boot
 **On firmware that cannot verify signatures** (QEMU's stock iPXE ROM — the default for
 a libvirt virtio NIC — has no `IMAGE_TRUST_CMD`), the run refuses before the deploy
 rather than booting into a silence. One flag runs everything with the **on-node** half
-of F2 skipped; the host-side gate still runs at `verify`:
+of F2 skipped:
 
 ```bash
-E2E_UNSIGNED=1 ./run-e2e.sh
+E2E_NO_IMGVERIFY=1 ./run-e2e.sh      # E2E_UNSIGNED is the old name, still accepted
 ```
+
+**Only that half is skipped.** The payload is still signed and the host-side F2 gate
+still gates the deploy — the boot script simply omits the `imgverify` line, and says in
+a comment that it did. **Do not try to skip it by removing the signatures** (an early
+version of this flag did): both halves read the same `.sig` files, so deleting them
+fails the *host-side* gate first and the node goes to `error` without ever booting:
+
+```
+maas: F2 signature verification failed for image 'micro-linux-x86_64'
+maas: ... and no previous image to roll back to — node 'node1' -> error
+```
+
+`drivers/ramdisk.sh stage <image> --unsigned` still exists and does exactly that, on
+purpose: it is how you exercise the gate **refusing** an unsigned payload.
 
 **Re-running is expected, and the registry is what carries over.** `--down` tears down
 the *fleet*; it does not forget the nodes. So a second run finds `node1` already at
