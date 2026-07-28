@@ -11,8 +11,18 @@
 # what maas-lab.sh's health gate + A/B rollback drive; the mock driver
 # (tests/mock-driver.sh) exercises that logic headlessly.
 #
+# EVERY out-of-band effect goes through the BMC seam — including "has the installer
+# finished?". An earlier version of this driver asked `virsh domstate` instead, which
+# was wrong twice over: it reached AROUND the BMC into the hypervisor (a capability no
+# real bare-metal control plane has — there is no `virsh` for a machine in a rack), and
+# it made the one un-mockable call in the lab, so this driver could not be tested at
+# all. The out-of-band truth about a powered-off machine is `chassis power status`.
+#
 # Context comes from the env maas-lab.sh exports: MAAS_BMC, MAAS_REG_BMC (the
 # generated bmc-toolkit registry), MAAS_STATE, MAAS_IMAGES_DIR, MAAS_HEALTH_TIMEOUT.
+# Timing knobs (injectable so the sequence is testable without a real 20-minute
+# install): MAAS_INSTALL_TIMEOUT (default 15x the health timeout — installs are slow),
+# MAAS_POLL_INTERVAL (default 5s between BMC polls).
 set -uo pipefail
 
 verb="${1:-}"; shift || true
@@ -22,8 +32,24 @@ nd() { printf '%s/%s\n' "$MAAS_STATE" "$1"; }
 node_field() { local f; f="$(nd "$1")/$2"; [[ -f "$f" ]] && cat "$f" || printf '%s' "${3:-}"; }
 # BMC passthrough via the same seam maas-lab.sh uses
 bmc() { BMC_REGISTRY="${MAAS_REG_BMC:-}" "${MAAS_BMC:?}" "$@"; }
-# the node's libvirt URI + domain (set at enroll)
-V() { virsh -c "$(node_field "$1" uri qemu:///system)" "${@:2}"; }
+
+POLL="${MAAS_POLL_INTERVAL:-5}"
+
+# await_power <node> <on|off> <timeout> <what> — poll the BMC until chassis power
+# reaches the wanted state. `ipmitool chassis power status` prints
+# "Chassis Power is on|off"; every backend in bmc-toolkit answers in that shape.
+await_power() {
+    local node="$1" want="$2" to="$3" what="$4" waited=0 st step
+    # a sub-second poll (tests) still advances the clock by 1, so the loop always ends
+    step="${POLL%%.*}"; [[ -z "$step" || "$step" -eq 0 ]] && step=1
+    while [[ $waited -lt $to ]]; do
+        st="$(bmc "$node" power status 2>/dev/null || printf 'unknown')"
+        [[ "$st" == *"is $want"* ]] && return 0
+        sleep "$POLL"; waited=$(( waited + step ))
+    done
+    echo "install: timed out after ${to}s waiting for $what (chassis power != $want; last: ${st:-<no answer>})" >&2
+    return 1
+}
 
 case "$verb" in
 describe)
@@ -46,17 +72,18 @@ deploy)
     # Netboot the installer:
     bmc "$node" bootdev pxe   || { echo "install: bootdev pxe failed" >&2; exit 1; }
     bmc "$node" power on      || { echo "install: power on failed" >&2; exit 1; }
-    # The kickstart/preseed ends in `poweroff`; wait for the domain to go 'shut off'
-    # (install complete), then boot from disk. Cap generously (installs are slow).
-    local_to=$(( ${MAAS_HEALTH_TIMEOUT:-120} * 15 ))   # installs take much longer than a boot
-    waited=0
-    while :; do
-        st="$(V "$node" domstate "$domain" 2>/dev/null || echo unknown)"
-        [[ "$st" == "shut off" ]] && break
-        sleep 5; waited=$((waited+5))
-        [[ $waited -ge $local_to ]] && { echo "install: timed out waiting for the installer to finish (domstate=$st)" >&2; exit 1; }
-    done
-    echo "install: installer finished (domain shut off); booting from disk" >&2
+    # Two distinct waits, because they fail for different reasons and the operator
+    # needs to be told which happened:
+    #   1. the node actually came up at all (BMC accepted `power on` but the machine
+    #      never powered — a dead PSU, a wedged BMC);
+    #   2. the installer ran to completion. The kickstart/preseed ends in `poweroff`,
+    #      so the node powering ITSELF off is the completion signal, observed
+    #      out-of-band. Cap generously: installs take far longer than a boot.
+    await_power "$node" on "${MAAS_POWERON_TIMEOUT:-60}" "'$node' to power on for the install" \
+        || exit 1
+    await_power "$node" off "${MAAS_INSTALL_TIMEOUT:-$(( ${MAAS_HEALTH_TIMEOUT:-120} * 15 ))}" \
+        "the installer on '$node' to finish (it ends in poweroff)" || exit 1
+    echo "install: installer finished ('$node' powered itself off); booting from disk" >&2
     bmc "$node" bootdev disk  || { echo "install: bootdev disk failed" >&2; exit 1; }
     bmc "$node" power on      || { echo "install: power-on-from-disk failed" >&2; exit 1; }
     exit 0
@@ -70,10 +97,11 @@ health)
     console="$(node_field "$node" console "")"
     [[ -n "$console" ]] || console="$(nd "$node")/console.log"
     to="${MAAS_HEALTH_TIMEOUT:-120}"; waited=0
+    step="${POLL%%.*}"; [[ -z "$step" || "$step" -eq 0 ]] && step=1
     echo "install: awaiting 'login:' on $console (timeout ${to}s)…" >&2
     while [[ $waited -lt $to ]]; do
         [[ -f "$console" ]] && grep -qE 'login:' "$console" && { echo "install: '$node' reached login (active)" >&2; exit 0; }
-        sleep 3; waited=$((waited+3))
+        sleep "$POLL"; waited=$((waited+step))
     done
     echo "install: '$node' did not reach a login prompt within ${to}s (health gate FAIL)" >&2
     exit 1

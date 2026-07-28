@@ -154,3 +154,58 @@ deploy step now drives the real gate via the mock driver. shellcheck clean.
 
 **Author-run (handed over):** a real `install` deploy end-to-end (PXE kickstart on a
 live fleet, health = the OS `login:`). Steps + expected signature in MANUAL_TESTING §4.
+
+## Increment 3a — the seam leak in `install.sh` (2026-07-27)
+
+**Found while auditing what the mock driver does *not* prove.** Every deploy test
+drove `tests/mock.sh`, so `drivers/install.sh` — the only shipped driver — had never
+executed a single verb under test. Reading it turned up why: to decide the installer
+had finished, it called **`virsh domstate`**.
+
+That is one bug wearing two hats:
+
+1. **It is not faithful.** There is no `virsh` for a machine in a rack. Reaching around
+   the BMC into the hypervisor is a capability a real control plane does not have, so
+   the driver was silently assuming its "nodes" were VMs on the same host as the
+   control plane. The lab's whole claim is *one injectable seam for every out-of-band
+   effect* (increment 1, decision 2) — this was a hole in it.
+2. **It is untestable.** It was the one call no seam could intercept. That is exactly
+   why nothing tested this driver: the honest test could not be written.
+
+**The fix — ask the BMC, because that is what the operator would have.** A
+kickstart/preseed ends in `poweroff`, so the node powering *itself* off is the
+completion signal, and `chassis power status` is how you observe it out-of-band. The
+driver now does two distinct waits, because they fail for different reasons and the
+operator needs to know which happened:
+
+- `await_power on` — did the machine actually come up? (BMC accepted `power on` but
+  nothing powered: a dead PSU, a wedged BMC.)
+- `await_power off` — did the installer run to completion?
+
+Timing is injectable (`MAAS_POLL_INTERVAL`, `MAAS_POWERON_TIMEOUT`,
+`MAAS_INSTALL_TIMEOUT`) so the real loops can be driven at test speed instead of an
+install's real 20 minutes.
+
+**`tests/mock-bmc.sh` gained real power state**, which the fix forced and which was
+worth doing anyway: `power status` used to answer a hardcoded `off`. Harmless while
+nothing polled it — but a driver waiting for a machine to power off would have
+"succeeded" instantly, and the wait it exists to perform would have gone untested.
+`MOCK_BMC_OFF_AFTER=N` makes the node power itself down on the Nth poll: the installer
+finishing, on a clock the test controls.
+
+**`tests/test-install-driver.sh`** now drives the **real** driver end to end. Its
+sharpest assertion is a **refusing `virsh` stub on `PATH`** — if the leak ever returns,
+the stub logs the call and the test names it. (The stub only logs and exits: a test
+guarding "we never call virsh" must not be able to call it.) It also pins the boot
+order (`bootdev pxe` before `bootdev disk`, and the power polls *between* them —
+getting this wrong does not error, it silently installs nothing), and proves both gates
+are load-bearing: an installer that never finishes must **not** be switched to
+boot-from-disk, and a node that installs but never reaches `login:` must **not** reach
+`active`.
+
+**Both negative controls verified** rather than assumed: re-introducing the `virsh`
+call trips the seam guard, and deleting the power-off wait trips the poll-count
+assertion.
+
+**Verified (headless, this host, 2026-07-27):** `tests/run-all.sh` → **9 passed, 0
+skipped, 0 failed**; shellcheck clean.

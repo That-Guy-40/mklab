@@ -263,7 +263,7 @@ active node1 (driver=mock image=app-v1, DEGRADED — rolled back)
 `test-deploy-rollback.sh` + `test-verify-tamper.sh` assert these paths (plus
 both-slots-bad → `error`, no-previous → `error`, and that `--no-verify` bypasses the
 gate — proving the gate was the thing that blocked the tampered image). Suite:
-`tests/run-all.sh` → **8 passed, 0 skipped, 0 failed**.
+`tests/run-all.sh` → **9 passed, 0 skipped, 0 failed**.
 
 ### 4c. Author-run — a real `install` deploy
 
@@ -279,7 +279,53 @@ drivers/verify-lib.sh sign ~/netboot/vmlinuz --keydir "$MAAS_IMAGES_DIR/trust"  
 ```
 
 **Expected signature:** `install` sets `bootdev pxe` → powers on → the kickstart
-installs and `poweroff`s → the driver waits for `domstate shut off` → `bootdev disk`
-→ powers on → the health gate polls the node console for `login:` → node reaches
-`active`. If the install never produces a login within the timeout, the node rolls
+installs and `poweroff`s → **the driver sees `Chassis Power is off` over IPMI** →
+`bootdev disk` → powers on → the health gate polls the node console for `login:` →
+node reaches `active`. If the install never produces a login within the timeout, the node rolls
 back (or → `error` if there's no previous image) — the same logic §4a proves headless.
+
+---
+
+## 5. The real `install` driver, headless (increment 3a)
+
+Until now the deploy tests all drove `tests/mock.sh`, so `drivers/install.sh` had never
+run under test — and hiding in it was a call to **`virsh domstate`** to decide whether
+the installer had finished. That is not something a control plane can do to a machine
+in a rack, and it was the one call no seam could intercept, which is precisely why the
+driver was untested. The installer finishing is now observed the way real metal reports
+it: the kickstart ends in `poweroff`, so the node powers **itself** down and
+`chassis power status` says so.
+
+```console
+$ ./tests/test-install-driver.sh
+  - the real drivers/install.sh reaches active: verify -> PXE -> wait -> disk -> login  ✓
+  - the driver never touched virsh: every effect went through the BMC seam  ✓
+  - sequence: bootdev pxe -> power on -> 3 power polls -> bootdev disk -> power on  ✓
+  - installer never finishes -> timeout, no boot-from-disk, node -> error  ✓
+  - install completes but no login: -> health gate FAILS -> error (not active)  ✓
+  - tampered image: install.sh's own verify refuses it before the BMC is touched at all  ✓
+PASS: drivers/install.sh drives real metal through the BMC seam only: no virsh, correct
+boot order, the power-off wait and the health gate both load-bearing
+```
+
+The test puts a **refusing `virsh` stub** on `PATH`, so the seam leak cannot come back
+silently. Both negative controls were run rather than assumed:
+
+```console
+# CONTROL A — re-introduce the virsh call
+  - LEAKED: virsh -c qemu:///system domstate node1
+FAIL: REGRESSION: the install driver called virsh (above). Every out-of-band effect must
+go through the MAAS_BMC seam — a driver that talks to the hypervisor cannot run against
+real metal, and cannot be tested at all
+
+# CONTROL B — delete the wait for the installer to power off
+FAIL: REGRESSION: the driver polled chassis power only 1 time(s) — it is not waiting for
+the installer, it is assuming it finished
+```
+
+Full suite after the fix:
+
+```console
+$ ./tests/run-all.sh
+=== summary: 9 passed, 0 skipped, 0 failed ===
+```
