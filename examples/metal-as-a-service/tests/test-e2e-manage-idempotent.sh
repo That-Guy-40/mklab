@@ -46,6 +46,8 @@ cat > "$SANDBOX/maas-stub.sh" <<'EOS'
 case "$1" in
     state)  [[ -n "${STUB_STATE:-}" ]] || exit 1; printf '%s\n' "$STUB_STATE" ;;
     manage) printf 'manage %s\n' "$2" >> "$STUB_CALLS" ;;
+    abort)  printf 'abort %s\n' "$2" >> "$STUB_CALLS" ;;
+    release) printf 'release %s\n' "$2" >> "$STUB_CALLS" ;;
     *)      printf 'stub: unexpected verb %s\n' "$1" >&2; exit 2 ;;
 esac
 EOS
@@ -60,6 +62,9 @@ harness() {
       printf 'die()  { printf "FAIL: %%s\\n" "$*" >&2; exit 1; }\n'
       printf 'info() { printf "   %%s\\n" "$*" >&2; }\n'
       printf 'run()  { "$@" || die "run failed"; }\n'
+      # The transient list lives just above the function; extract it too, from the same
+      # file, so the harness drives the shipped pair rather than a copy of one of them.
+      sed -nE '/^E2E_TRANSIENT=/p' "$E2E"
       sed -n '/^ensure_manageable() {/,/^}/p' "$E2E"
       printf 'ensure_manageable\n'
       printf 'printf "REACHED-PHASE-5\\n" >&2\n'
@@ -82,11 +87,47 @@ grep -q 'REACHED-PHASE-5' "$SANDBOX/out" \
     || fail "REGRESSION: the driver called 'manage' on a node in state 'manageable'. That is not a harmless retry — it is an illegal transition, the control plane refuses it, and the refusal aborts the run"
 note "a node already in 'manageable' is left alone, and the run continues  ✓"
 
-# Anything past `manage` behaves the same way — pick the far end of the lifecycle.
-rc="$(harness active)"
-[[ "$rc" == 0 && ! -s "$SANDBOX/calls" ]] \
-    || fail "REGRESSION: a node in 'active' was not skipped (rc=$rc). Re-running the driver against a fleet that already deployed must not try to walk it backwards"
-note "a node in 'active' is likewise skipped  ✓"
+# `active` is NOT "already past it, carry on" — that was the third and last outing of the
+# permissive default. Phase 6 needs `manageable`, and `active` has to be walked back:
+# release (-> available) then manage. Phase 3 has already rebuilt the domain and disk by
+# this point, so the `active` record is stale and nothing serving is being torn down.
+for st in active rescue; do
+    rc="$(harness "$st")"
+    [[ "$rc" == 0 ]] || fail "the driver failed on a node in '$st' (rc=$rc) instead of walking it back to manageable"
+    grep -q "^release node1$" "$SANDBOX/calls" \
+        || fail "REGRESSION: a node in '$st' was waved through instead of released. Nothing leads from '$st' to 'manageable', so phase 6's 'inspect' fails two phases later with a message about inspect — the third time this exact permissive branch caused that"
+    grep -q '^manage node1$' "$SANDBOX/calls" \
+        || fail "REGRESSION: '$st' was released but never managed. release lands the node in 'available'; without the follow-up 'manage' it is one edge short of the state inspect needs"
+    grep -n 'release node1' "$SANDBOX/calls" | grep -q '^1:' \
+        || fail "'manage' was issued before 'release' for a node in '$st' — manage cannot accept '$st', so the order is the fix"
+done
+note "a node in 'active'/'rescue' is released back to the pool and re-managed, in that order  ✓"
+
+# `available` reaches manageable in ONE step — Ironic's unprovide edge, which the state
+# machine was missing until a live run walked into it.
+rc="$(harness available)"
+[[ "$rc" == 0 ]] || fail "the driver failed on a node in 'available' (rc=$rc)"
+grep -q '^manage node1$' "$SANDBOX/calls" \
+    || fail "REGRESSION: a node in 'available' was not managed. 'available' was a one-way door — nothing led back to 'manageable' — until 'manage' gained it as an accepted state (as Ironic has it)"
+grep -q '^release node1$' "$SANDBOX/calls" \
+    && fail "a node already in 'available' was released again — it is already in the pool; releasing it is a pointless extra wipe"
+note "a node in 'available' goes straight to 'manage' — no needless release  ✓"
+
+# The control plane must actually ACCEPT that edge, or the driver above is issuing a verb
+# that refuses. Two files, one claim.
+grep -qE 'require_state "\$node" manage enrolled error available' "$LAB_DIR/maas-lab.sh" \
+    || fail "REGRESSION: 'manage' no longer accepts 'available'. run-e2e.sh drives available -> manage; without that edge 'available' is a one-way door and a node that has ever been provisioned can never be inspected again"
+note "the control plane accepts manage from 'available' (Ironic's unprovide edge)  ✓"
+
+# ── the permissive default is GONE ─────────────────────────────────────────
+# It was wrong three times: for a transient state, for `available`, and for `active`.
+# A state this function cannot drive to `manageable` must STOP here, not two phases later.
+rc="$(harness some-unknown-state)"
+[[ "$rc" != 0 ]] \
+    || fail "REGRESSION: the permissive default is back — an unrecognised state was waved through as 'already advanced'. Phase 6 needs 'manageable'; anything that cannot get there has to fail HERE, naming the state, instead of surfacing later as a confusing error about some other verb"
+grep -q 'some-unknown-state' "$SANDBOX/out" \
+    || fail "the refusal does not name the state it could not handle"
+note "an unhandled state stops the run here, naming itself — no permissive default  ✓"
 
 # ── 2. the positive control: a fresh node IS driven ────────────────────────
 # Without this, §1 would also pass on a function that never calls `manage` at all —
@@ -122,4 +163,33 @@ grep -qE '^run "\$MAAS" power "\$NODE" status' "$SANDBOX/phase4" \
     || fail "REGRESSION: 'power status' is no longer run unconditionally in phase 4. It is the assertion that the BMC seam answers at all; behind the state check, a re-run would never test the seam"
 note "'power status' runs unconditionally — the seam is tested on a re-run too  ✓"
 
-pass "phase 4 drives 'manage' only from enrolled/error, skips a node the registry already advanced, aborts on a node it has never heard of, and exercises the BMC seam either way"
+# ── 5. a node STRANDED mid-transition is aborted, then managed ─────────────
+# The fourth case, and the one the `*)` branch above originally swallowed. A run killed
+# mid-deploy leaves its node in `deploying`; no verb accepts it there, so waving it
+# through as "already advanced" makes the run fail two phases later at `inspect`, with a
+# message about inspect and nothing about the strand. (That is exactly how it failed.)
+for st in verifying deploying cleaning rescuing deleting; do
+    rc="$(harness "$st")"
+    [[ "$rc" == 0 ]] \
+        || fail "the driver aborted on a node stranded in '$st' (rc=$rc) instead of recovering it. The control plane has a verb for this and the run should use it"
+    grep -q "^abort node1$" "$SANDBOX/calls" \
+        || fail "REGRESSION: a node stranded in transient state '$st' was not aborted. Nothing accepts a node mid-transition, so it was waved through as 'already advanced' and the run died later somewhere unrelated — the strand is the cause and the message named something else"
+    grep -q '^manage node1$' "$SANDBOX/calls" \
+        || fail "REGRESSION: '$st' was aborted but never managed. abort lands the node in 'error'; without the follow-up 'manage' it is recoverable and not recovered, which fails the same way one phase later"
+    grep -n 'abort node1' "$SANDBOX/calls" | grep -q '^1:' \
+        || fail "'manage' was issued before 'abort' for a node in '$st' — manage cannot accept a transient state, so the order is the whole fix"
+done
+note "each transient state is aborted into 'error' and then managed, in that order  ✓"
+
+# The list this script drives must be the list the control plane defines. Two hand-kept
+# copies of one fact drift, and the drift is silent: a state added to the control plane
+# and not here goes straight back to being swallowed by the permissive branch.
+e2e_list="$(sed -nE 's/^E2E_TRANSIENT="([^"]+)".*/\1/p' "$E2E" | head -1)"
+maas_list="$(sed -nE 's/^TRANSIENT_STATES="([^"]+)".*/\1/p' "$LAB_DIR/maas-lab.sh" | head -1)"
+[[ -n "$e2e_list" && -n "$maas_list" ]] \
+    || fail "could not read both transient-state lists (run-e2e.sh: '$e2e_list', maas-lab.sh: '$maas_list')"
+[[ "$e2e_list" == "$maas_list" ]] \
+    || fail "REGRESSION: run-e2e.sh's transient-state list ('$e2e_list') no longer matches maas-lab.sh's ('$maas_list'). A state the control plane treats as transient but this script does not is a state that gets waved through as 'already advanced' — silently, and two phases from where it fails"
+note "the driver's transient-state list matches the control plane's  ✓"
+
+pass "phase 4 gets the node to 'manageable' from wherever the last run left it — managing enrolled/error/available, aborting a strand, releasing an active node whose domain phase 3 just rebuilt — and STOPS on anything it cannot drive there rather than waving it through"

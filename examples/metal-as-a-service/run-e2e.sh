@@ -18,6 +18,11 @@
 #   sudo -v && ./run-e2e.sh    the real run (sudo primed; see below)
 #   ./run-e2e.sh --down        tear the fleet down
 #
+#   E2E_NO_IMGVERIFY=1 ./run-e2e.sh   payload stays SIGNED and the host-side F2 gate
+#                                     still runs; only the in-firmware `imgverify` is
+#                                     omitted, for a ROM without IMAGE_TRUST_CMD.
+#                                     (E2E_UNSIGNED is the old name, still accepted.)
+#
 # SUDO: rootful libvirt (qemu:///system) and rootful podman (vbmcd) are unavoidable —
 # the system libvirt socket is root:libvirt. All the sudo-needing work is FRONT-LOADED
 # in phases 1–3, exactly as run-finale.sh does it, so the long part runs unprivileged.
@@ -84,17 +89,81 @@ run_soft() {
 # The empty case is NOT a third way of saying "nothing to do": no state at all means the
 # node was never enrolled, which means phase 3 did not finish, and every phase after this
 # would fail with its own confusing error. That one aborts.
+#
+# A TRANSIENT state is a third case, and lumping it in with "already past it" was wrong.
+# A run killed mid-deploy leaves its node in `deploying` — not broken, just unreachable
+# by every verb that owns it. The permissive `*)` branch below waved that through as
+# "already advanced", and the run then died two phases later at `inspect` with a message
+# about inspect, nowhere near the strand. (Same defect shape as the one this branch was
+# added to fix: a default that reads as success.)
+#
+# The control plane already has the way out — `abort` (transient -> error, with the reason
+# recorded), then `manage`. Drive it, and say so: a node stranded by the previous run is
+# information the operator wants, not something to quietly paper over.
+E2E_TRANSIENT="verifying deploying cleaning rescuing deleting"   # == maas-lab.sh's
 ensure_manageable() {
     local st; st="$("$MAAS" state "$NODE" 2>/dev/null)"
+    local t
+    for t in $E2E_TRANSIENT; do
+        [[ "$st" == "$t" ]] || continue
+        info "'$NODE' is STRANDED in transient state '$st' — a previous run died mid-transition."
+        info "No verb accepts a node there, so everything downstream would fail for reasons that"
+        info "look nothing like this. Aborting it into 'error' first, which is recoverable:"
+        run "$MAAS" abort "$NODE" --reason "stranded in '$st' by an earlier run; aborted by run-e2e.sh"
+        st=error
+        break
+    done
+    # `active` (or `rescue`) means the LAST run got there. Phase 3 has just rebuilt this
+    # node's domain and disk, so that record is already stale — the machine behind it is
+    # blank. Releasing is therefore reconciling the record with reality, not discarding a
+    # live workload, and for a ramdisk node the wipe is a documented no-op. Say it out
+    # loud anyway: a script that silently releases a node someone believes is serving
+    # would be a much worse thing to be.
     case "$st" in
-        enrolled|error) run "$MAAS" manage "$NODE" ;;
+        active|rescue)
+            info "'$NODE' is '$st' from a previous run. Phase 3 has already rebuilt its domain and"
+            info "disk, so that record is stale — the machine behind it is blank. Releasing it back"
+            info "to the pool so this run can inspect it again (for a ramdisk node the wipe is a"
+            info "no-op; nothing that is actually serving is being torn down):"
+            run "$MAAS" release "$NODE"
+            st=available ;;
+    esac
+    case "$st" in
+        enrolled|error|available) run "$MAAS" manage "$NODE" ;;
+        manageable) info "'$NODE' is already 'manageable' — nothing to drive" ;;
         "")  die "'$NODE' is not enrolled and create-fleet.sh did not enroll it — phase 3 did not finish" ;;
-        *)   info "'$NODE' is already '$st' (registry from an earlier run) — skipping 'manage', which is a transition from enrolled/error, not a re-check"
-             info "to start from scratch instead: ./run-e2e.sh --down and remove \$MAAS_STATE" ;;
+        # NO permissive default. This branch used to be `*) carry on`, and it was wrong
+        # three separate times — for a transient state, for `available`, and for `active`
+        # — each time producing a failure two phases downstream with a message about some
+        # other verb. Phase 6 needs `manageable`; anything this function cannot get there
+        # is a stop, here, naming the state.
+        *)   die "'$NODE' is in state '$st', and this run does not know how to get it to
+'manageable' from there — which is what phase 6's 'inspect' requires. Drive it by hand
+(see 'maas-lab.sh --help'), or start clean: ./run-e2e.sh --down and remove \$MAAS_STATE" ;;
     esac
 }
 
-[[ $DRY == 1 ]] || : > "$LOG"
+# THE LOG IS NOT TRUNCATED YET. It used to be replaced here, before preflight — so a run
+# that refused at the sudo gate, or at any preflight check, destroyed the log of the last
+# run that actually finished. (Done to a passing run's log, by me, while testing a
+# preflight check.) Same class as the --dry-run ghost-log bug: the record of a completed
+# run wrecked by a run that never started.
+#
+# Preflight writes to a scratch file instead; the real log is replaced only once the run
+# commits to doing work. Either way the reap trap removes the scratch.
+REAL_LOG="$LOG"
+if [[ $DRY == 0 ]]; then
+    LOG="$(mktemp "${TMPDIR:-/tmp}/maas-e2e-preflight.XXXXXX")" || LOG="$REAL_LOG"
+    SCRATCH_LOG="$LOG"
+fi
+# commit_log — preflight passed; this run owns the log now. Replaces it with what
+# preflight said, so the file still starts at the top of THIS run.
+commit_log() {
+    [[ $DRY == 1 || -z "${SCRATCH_LOG:-}" ]] && return 0
+    cp -f "$SCRATCH_LOG" "$REAL_LOG" 2>/dev/null || : > "$REAL_LOG"
+    rm -f "$SCRATCH_LOG"; SCRATCH_LOG=""
+    LOG="$REAL_LOG"
+}
 
 # ── reap the one process this script starts ─────────────────────────────────
 # The facts sink is backgrounded here and holds :8282 for the whole run. Three runs in
@@ -109,6 +178,7 @@ ensure_manageable() {
 MD_PID=""
 reap() {
     local rc=$?
+    [[ -n "${SCRATCH_LOG:-}" ]] && rm -f "$SCRATCH_LOG"
     if [[ -n "$MD_PID" ]] && kill -0 "$MD_PID" 2>/dev/null; then
         kill "$MD_PID" 2>/dev/null
         # Give it a moment to release :8282, then insist. A sink that ignores SIGTERM
@@ -143,17 +213,67 @@ info "payload      : $IMAGE"
 info "subject node : $NODE"
 info "images dir   : $MAAS_IMAGES_DIR"
 info "PXE docroot  : $MAAS_NETBOOT_DIR"
-if [[ $DRY == 0 ]]; then
-    sudo -n true 2>/dev/null \
-        || die "sudo is not primed. Run 'sudo -v' first — this script front-loads the
-privileged work and must not stop to ask for a password halfway through a boot."
-fi
 # The payload must already be built by the lab that owns it. This script does not
 # build other labs' artifacts; the driver's own refusal names the command.
 if [[ $DRY == 0 ]]; then
     "$HERE/drivers/ramdisk.sh" describe "$IMAGE" >/dev/null 2>&1 \
         || die "no catalog entry '$IMAGE' (see ramdisk-catalog.toml)"
+
+    # …AND SO MUST EVERY OTHER PAYLOAD fleet.toml DECLARES. Phase 9 converges the whole
+    # fleet, not just the subject node, so a sibling declared against an artifact this
+    # host has never built fails there — nine phases and several minutes after the fact
+    # was knowable. node2/node3 once declared `busybox-netboot` and `anycast-dns-ram`,
+    # neither built here: apply refused them by name (correctly), both landed in `error`,
+    # and the reconciliation invariant could not be reached at all.
+    #
+    # A missing artifact is a HOST condition, not a repo defect — which is why the
+    # headless suite only checks that the catalog owns the image, and the check for
+    # whether it exists lives here, where the host is.
+    REPO_ROOT="$(cd -- "$HERE/../.." && pwd)"
+    missing=""
+    while read -r nname nimg; do
+        [[ -n "$nname" && -n "$nimg" ]] || continue
+        d="$("$HERE/drivers/ramdisk.sh" describe "$nimg" 2>&1)" \
+            || die "fleet.toml declares '$nname' as ramdisk/'$nimg', which the catalog does not
+describe. Phase 9 converges the whole fleet, so this node would fail there. Fix the
+declaration, or add the image to ramdisk-catalog.toml."
+        eval "$(python3 "$HERE/lib/catalog.py" "$HERE/ramdisk-catalog.toml" get "$nimg" 2>/dev/null)"
+        # Catalog paths are absolute OR repo-relative (catalog.py expands ~ and $VARS but
+        # documents "relative = repo root"). Resolve them the same way drivers/ramdisk.sh
+        # does — testing them against $PWD instead reported every artifact missing,
+        # including the one this run had just staged.
+        for f in "${IMG_KERNEL:-}" "${IMG_INITRD:-}"; do
+            [[ -n "$f" ]] || continue
+            case "$f" in /*) : ;; *) f="$REPO_ROOT/$f" ;; esac
+            [[ -f "$f" ]] || missing+="  $nname -> $nimg: missing $f
+"
+        done
+    done < <(python3 -c '
+import sys, tomllib
+spec = tomllib.load(open(sys.argv[1], "rb"))
+for n in spec.get("node", []):
+    if n.get("driver") == "ramdisk":
+        print(n.get("name", "?"), n.get("image", ""))
+' "$HERE/fleet.toml")
+    if [[ -n "$missing" ]]; then
+        die "fleet.toml declares payloads this host has not built:
+$missing
+Phase 9 converges the WHOLE fleet, so those nodes would fail there — nine phases after
+this was knowable. Either build them (the catalog prints the command:
+'drivers/ramdisk.sh describe <image>') or declare those nodes on a payload that exists."
+    fi
 fi
+
+# Checked LAST of the preflight items, deliberately: everything above is a config
+# question the operator can answer without privilege, and demanding sudo before telling
+# them their spec is wrong wastes the trip.
+if [[ $DRY == 0 ]]; then
+    sudo -n true 2>/dev/null \
+        || die "sudo is not primed. Run 'sudo -v' first — this script front-loads the
+privileged work and must not stop to ask for a password halfway through a boot."
+fi
+
+commit_log      # preflight is done; from here the real log is this run's
 
 # ── 1. the PXE network + HTTP docroot (SUDO) ────────────────────────────────
 step "[1/10] PXE network + HTTP docroot (sudo)"
@@ -271,14 +391,25 @@ run "$HERE/drivers/ramdisk.sh" stage "$IMAGE"
 # network, minutes earlier.
 #
 # So this is checked here, loudly, rather than discovered as a 120s silence.
+#
+# HOW TO SKIP THE ON-NODE HALF, AND HOW NOT TO. The first attempt re-staged the image
+# --unsigned, on the reasoning that no signatures means no `imgverify` line. It does mean
+# that — and it also means the HOST-side gate refuses the image, because both halves read
+# the same .sig files. The live run got `F2 signature verification failed ... -> error`
+# and never reached the firmware at all. Worse, the message printed alongside it claimed
+# "the host-side gate still runs at 'verify'", which was the exact opposite of what had
+# just happened. Sign normally, and drop the on-node half at the line the firmware reads:
+# MAAS_NO_IMGVERIFY=1, honoured by the driver's boot-script writer.
+if [[ "${E2E_NO_IMGVERIFY:-${E2E_UNSIGNED:-0}}" == 1 ]]; then
+    export MAAS_NO_IMGVERIFY=1
+    info "MAAS_NO_IMGVERIFY=1: the payload is SIGNED and the host-side F2 gate runs for"
+    info "real at 'verify'; only the in-firmware 'imgverify' line is omitted, because this"
+    info "fleet's ROM cannot honour it. That is the honest half to skip, and the only one"
+    info "that can be skipped on its own."
+fi
 if [[ $DRY == 0 ]]; then
-    if [[ -f "$MAAS_IMAGES_DIR/$IMAGE/kernel.sig" && "${MAAS_IPXE_TRUSTS_CA:-0}" != 1 ]]; then
-      if [[ "${E2E_UNSIGNED:-0}" == 1 ]]; then
-        info "E2E_UNSIGNED=1: re-staging '$IMAGE' without signatures, so the boot script"
-        info "carries no imgverify. The ON-NODE half of F2 is SKIPPED for this run; the"
-        info "host-side gate still runs at 'verify'. Everything else is exercised."
-        run "$HERE/drivers/ramdisk.sh" stage "$IMAGE" --unsigned
-      else
+    if [[ -f "$MAAS_IMAGES_DIR/$IMAGE/kernel.sig" \
+          && "${MAAS_IPXE_TRUSTS_CA:-0}" != 1 && "${MAAS_NO_IMGVERIFY:-0}" != 1 ]]; then
         die "'$IMAGE' is signed, so the boot script will carry \`imgverify\` — and nothing
 here has established that this fleet's firmware can honour it. QEMU's stock iPXE ROM has no
 IMAGE_TRUST_CMD and no serial console, so it fails the command and boots nothing, silently.
@@ -287,25 +418,70 @@ Either:
         ../../netboot/build-ipxe.sh --imgverify --certfile $MAAS_IMAGES_DIR/trust/ca.crt
     then add <rom file='<ipxe.rom>'/> to each domain's <interface>; then re-run with
         MAAS_IPXE_TRUSTS_CA=1 $0
-  * or deploy an UNSIGNED payload to exercise the rest of the path:
-        rm $MAAS_IMAGES_DIR/$IMAGE/kernel.sig $MAAS_IMAGES_DIR/$IMAGE/initrd.sig
-    (the host-side F2 gate still runs at \`verify\`; only the on-node half is skipped)
-  * or run the whole path with the on-node half skipped, in one step:
-        E2E_UNSIGNED=1 $0
+  * or run the whole path with ONLY the in-firmware half skipped — the payload stays
+    signed and the host-side F2 gate still gates the deploy:
+        E2E_NO_IMGVERIFY=1 $0
 Refusing rather than booting into a silence that looks like a dead payload."
-      fi
     fi
 fi
 step "[8/10] deploy: verify -> netboot into RAM -> health gate -> active"
-info "the node fetches a SIGNED kernel+initrd; the iPXE script carries imgverify"
+if [[ "${MAAS_NO_IMGVERIFY:-0}" == 1 ]]; then
+    info "the node fetches a SIGNED kernel+initrd, gated host-side; the iPXE script omits"
+    info "imgverify because this fleet's ROM has no IMAGE_TRUST_CMD"
+else
+    info "the node fetches a SIGNED kernel+initrd; the iPXE script carries imgverify"
+fi
 run_soft "$MAAS" deploy "$NODE" --driver ramdisk --image "$IMAGE"
 run_soft "$MAAS" state "$NODE"
 
 # ── 9. the reconcile loop, twice — the invariant ────────────────────────────
-step "[9/10] apply: converge the fleet, then prove the second run is a no-op"
+#
+# THE INVARIANT NEEDS *REAL* THEN *REAL*. This was `--dry-run` then real, with the second
+# one labelled "must issue ZERO transitions". A dry run converges nothing, so the real run
+# after it issues exactly what the dry run just predicted — the label described a property
+# the sequence had not set up, and the check would have passed on any apply at all.
+#
+# Convergence is a fixed point: apply until nothing changes, then apply again and assert
+# nothing changed. The dry run stays, first, because seeing the plan before it is executed
+# is worth a line — it is just not one of the two runs the invariant is about.
+step "[9/10] apply: converge the fleet, then prove a SECOND real run is a no-op"
+info "the plan, before anything is issued:"
 run_soft "$MAAS" apply "$HERE/fleet.toml" --dry-run
-info "(the second run below must issue ZERO transitions — the reconciliation invariant)"
+info "pass 1 — converge (this one is expected to issue transitions):"
 run_soft "$MAAS" apply "$HERE/fleet.toml"
+info "pass 2 — the invariant: a converged fleet must issue ZERO transitions"
+if [[ $DRY == 0 ]]; then
+    APPLY2="$(mktemp "${TMPDIR:-/tmp}/maas-apply2.XXXXXX")"
+    printf '   $ %s\n' "$MAAS apply $HERE/fleet.toml" | tee -a "$LOG" >&2
+    "$MAAS" apply "$HERE/fleet.toml" >"$APPLY2" 2>&1 || true
+    cat "$APPLY2" >> "$LOG"
+    # `applied: N transition(s) over …` — N must be 0. Parsed rather than eyeballed,
+    # because "the fleet is converged" is the one claim in this run that a human reading
+    # a wall of tables will nod along to without checking.
+    n2="$(sed -nE 's/^ *applied: ([0-9]+) transition.*/\1/p' "$APPLY2" | tail -1)"
+    # HELD nodes matter as much as the transition count. `apply` deliberately does not
+    # touch a node in `error` — so a fleet with two thirds of it held reports ZERO
+    # transitions and satisfies "fixed point" while doing nothing at all. That is exactly
+    # what happened on the run this check was added for, and the ✓ printed anyway.
+    # Zero transitions is convergence only when there is nothing being ignored.
+    h2="$(sed -nE 's/^ *applied: .*, ([0-9]+) held for the operator.*/\1/p' "$APPLY2" | tail -1)"
+    if [[ -z "$n2" ]]; then
+        info "WARNING: could not parse the transition count out of pass 2 — the invariant was NOT checked"
+    elif [[ "$n2" == 0 && "${h2:-0}" != 0 ]]; then
+        info "WARNING: pass 2 issued 0 transitions, but ${h2} node(s) are HELD in 'error' and were"
+        info "not considered at all. That is not a fixed point — it is a fleet apply has given up"
+        info "on. Recover them ('maas-lab.sh retry <node>') and re-run to test convergence for real."
+    elif [[ "$n2" == 0 ]]; then
+        info "pass 2 issued 0 transitions and 0 nodes held — the whole fleet is a fixed point ✓"
+    else
+        info "WARNING: pass 2 issued $n2 transition(s). apply is not converging: either a node"
+        info "keeps failing its gate and being retried, or fleet.toml declares an end-state the"
+        info "fleet cannot reach. The verdict below reports the node's state either way."
+    fi
+    rm -f "$APPLY2"
+else
+    printf '   $ %s\n' "$MAAS apply $HERE/fleet.toml   # pass 2: must issue 0 transitions" >&2
+fi
 
 step "[10/10] the surface: register with the control pane + list the declared actions"
 run_soft "$MAAS" watch "$NODE" --register-only

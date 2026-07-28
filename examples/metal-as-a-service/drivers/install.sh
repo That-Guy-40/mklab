@@ -53,6 +53,35 @@ await_power() {
 
 case "$verb" in
 describe)
+    # WITH an image argument this is the contract's ownership question — "is this one
+    # yours?" — and answering "yes" unconditionally is how this driver came to netboot a
+    # RAM payload onto a live node and then block 30 minutes waiting for an installer
+    # that was never there. An installer payload is one with a kickstart or a preseed in
+    # it; a kernel+initrd is somebody else's image, however well signed.
+    if [[ -n "${1:-}" ]]; then
+        img="$1"; dir="${MAAS_IMAGES_DIR:?}/$img"
+        [[ -d "$dir" ]] \
+            || { echo "install: no image '$img' staged at $dir — nothing to install" >&2; exit 1; }
+        # A staged RAM payload is kernel + initrd + cmdline — that triple is written by
+        # `ramdisk.sh stage` and by nothing else here. An installer payload is also a
+        # kernel and an initrd, so the FILE LIST alone cannot tell them apart; the
+        # `cmdline` file is what makes the difference legible, because it exists only to
+        # tell a firmware what to append when booting the payload directly into RAM.
+        # This is a narrow test and it is deliberately narrow: it catches the case that
+        # actually happened (a rollback handing this driver the previous ramdisk image)
+        # without inventing a contract for install payloads that this lab does not yet
+        # have. The broader gap — an image no driver has staged, or a third driver's —
+        # is named in PLAN.md rather than half-covered here.
+        if [[ -f "$dir/kernel" && -f "$dir/initrd" && -f "$dir/cmdline" ]]; then
+            echo "install: '$img' is a RAM payload (kernel+initrd+cmdline staged by the ramdisk driver)," >&2
+            echo "install: not an installer image. This driver PXE-boots an installer and then waits for" >&2
+            echo "install: it to power the node off; handed a RAM image it waits until the timeout while" >&2
+            echo "install: the node sits happily at a login prompt. Deploy it with --driver ramdisk." >&2
+            exit 1
+        fi
+        echo "install/$img: PXE kickstart/preseed writes the OS to disk; active = installed OS 'login:' on serial"
+        exit 0
+    fi
     echo "install: PXE kickstart/preseed writes the OS to disk; active = installed OS 'login:' on serial"
     ;;
 

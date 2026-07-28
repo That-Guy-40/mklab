@@ -22,6 +22,13 @@ This file tracks the **build increments** and records each one's outcome as it l
 
 All three documented fast-follows are now built as well.
 
+**The ladder being all-✅ is not the same as "nothing left to prove."** The live path found
+thirteen defects that the green headless suite could not see, and three gaps remain that a
+*passing* run cannot reveal by construction — the on-node half of F2, the drivers that have
+never met a real machine, and a BMC that answers for the wrong one. They are catalogued,
+with the evidence trail and the first concrete step for each, in **[`DEFERRED.md`](DEFERRED.md)**.
+Read that before concluding this lab is finished.
+
 ## The house rule this lab is built under
 
 **Every discrete layer gets a fault-injection point, and every deploy driver gets a
@@ -959,3 +966,440 @@ control plane. `tests/run-all.sh` → **20 passed, 0 skipped, 0 failed**. Three 
 controls, each run for real: restoring the unconditional `manage`, folding the
 un-enrolled case into the skip branch, and moving `power status` inside the conditional
 each make the test fail by name.
+
+## The seventh run: introspection worked, and the escape hatch was cut at the wrong seam (2026-07-28)
+
+**Phase 6 passed.** The whole introspection path ran against a real domain for the first
+time — PXE chain → the per-node script `inspect --boot` wrote → a kernel with a NIC
+driver built in → DHCP → facts POSTed to the sink → power off:
+
+```
+inspected node1 (cpus=1 mem_mb=3925 mac=52:54:00:22:86:a1)
+```
+
+Every previous run's fix is load-bearing in that one line: the chain (run 1), the right
+BMC (run 2), a probe initramfs that is not a symlink loop (run 3), a fleet that could be
+rebuilt at all (run 4), and a kernel that has a NIC (run 5).
+
+**Phase 8 failed, and it was my mechanism that was wrong.** F2 has two halves that read
+the *same artifacts*:
+
+| half | where | what it reads |
+|---|---|---|
+| host-side | `verify`, before the node is touched | `kernel.sig` / `initrd.sig` via OpenSSL CMS |
+| on-node | `imgverify` in the iPXE script | **the same two files**, fetched by the firmware |
+
+This fleet's ROM has no `IMAGE_TRUST_CMD`, so the on-node half must be skippable — and
+run 3's fix skipped it by re-staging the image `--unsigned`, on the reasoning that no
+signatures means no `imgverify` line. That is true, and it also disarms the half that
+was supposed to keep running:
+
+```
+maas: F2 signature verification failed for image 'micro-linux-x86_64'
+maas: ... and no previous image to roll back to — node 'node1' -> error
+```
+
+The deploy never reached the firmware at all. **And printed directly above it was my own
+message claiming "the host-side gate still runs at `verify`"** — an assertion contradicted
+by the very next line. A wrong knob is a bug; a wrong knob that narrates its own success
+is the rung this lab's own chaos ladder calls **LIED**, found in the harness rather than
+in anything the harness was pointed at.
+
+**The seam that separates them is the generated boot script, not the signing step.**
+`MAAS_NO_IMGVERIFY=1` omits the `imgverify` lines at the point the firmware reads them,
+leaves the payload signed, and writes a comment into the script saying the check was
+dropped deliberately — because a boot script that quietly lacks a line is
+indistinguishable from one written before signing existed. `run-e2e.sh` takes
+`E2E_NO_IMGVERIFY=1` (old name `E2E_UNSIGNED` still accepted).
+
+`stage --unsigned` stays, with its docs corrected to say what it actually does: it
+produces a genuinely unsigned image that the host-side gate **refuses**, which is how you
+exercise the gate failing closed.
+
+**Verified headless:** [`tests/test-imgverify-halves.sh`](tests/test-imgverify-halves.sh)
+drives the shipped boot-script writer and asserts both halves independently — the default
+arms `imgverify` for kernel *and* initrd; `MAAS_NO_IMGVERIFY=1` drops it while the
+signatures survive and `ramdisk.sh verify` still passes; and the unsigned image is still
+refused. `tests/run-all.sh` → **21 passed, 0 skipped, 0 failed**. Three negative controls,
+each run for real: restoring the unconditional emission, making the skip delete the
+signatures (the old mechanism), and putting `stage --unsigned` back into `run-e2e.sh`
+each fail the test by name.
+
+### Still not built
+
+The on-node half of F2 remains **unexercised on this fleet**, and this run does not
+change that — it makes the fact explicit rather than papering over it. Closing it needs
+a verifying ROM: `netboot/build-ipxe.sh --imgverify --certfile <ca.crt>`, attached with
+`<rom file=…/>` on each domain's `<interface>`, then `MAAS_IPXE_TRUSTS_CA=1`. That same
+ROM would also give iPXE a serial console and close the debuggability hole that made run
+3's failure a silence.
+
+## The eighth run: the first defect in the control plane itself (2026-07-28)
+
+**Phase 8 passed.** The deploy path ran end to end on a real domain:
+
+```
+ramdisk: 'node1' matched its console marker (active)
+active node1 (driver=ramdisk image=micro-linux-x86_64, healthy)
+```
+
+Signed payload → host-side F2 gate → netbooted into RAM → health gate matched a real
+console marker → `active`. Nine phases of this script now do what they say.
+
+**Phase 9 then looked like a hang** — half an hour of no output — and was not one. Three
+findings, one of them the first real control-plane bug the live path has produced.
+
+### 1. A/B rollback rolled back the image but not the driver — CRITICAL
+
+`fleet.toml` declares node1 as `install/almalinux9-ks`; phase 8 had just put it on
+`ramdisk/micro-linux-x86_64`. So `apply` correctly issued a deploy. The install failed,
+§4b rolled back to the previous image — and reused the *new* driver, because `cmd_deploy`
+had already overwritten the node's driver field:
+
+```
+$ ps: drivers/install.sh deploy node1 micro-linux-x86_64 previous
+```
+
+A RAM payload handed to the installer. `install.sh` netbooted the live node and entered
+`await_power off`, waiting for an installer that did not exist to power off a machine
+sitting at a micro-linux login prompt — `MAAS_HEALTH_TIMEOUT × 15` = **1800s**. And the
+registry recorded the result as fact:
+
+```
+driver      install
+image       micro-linux-x86_64 (previous: -)
+```
+
+A pair that cannot exist, written down as though it did: the **LIED** rung of this lab's
+own chaos ladder, this time inside the control plane rather than the harness.
+
+**The rollback candidate is a PAIR, not an image.** `cmd_deploy` now captures the previous
+*driver* alongside the previous image, records `previous_driver`, rolls back through the
+driver that actually deployed the image, and moves the `driver` field back with it. When
+the previous driver cannot be resolved it **refuses to roll back at all** and errors,
+naming what is missing — a node left on a failed image is honestly broken and says so;
+one driven by a driver that does not own its image is a machine nobody can reason about.
+`show` now prints `driver/image` on both slots, because a view that shows only the images
+hides exactly this mismatch.
+
+**And `gate` now asks `describe <image>` before deploying.** `describe` is the contract's
+ownership question and nothing was asking it. F2 could not have caught this: the image
+was correctly signed — it was simply the wrong driver's image. `install.sh` answered
+"yes" to every image in existence; it now refuses a payload staged as kernel+initrd+
+cmdline, the triple only `ramdisk.sh stage` writes.
+
+**Why no test caught it.** Every rollback test deployed both images with the *same*
+driver, and the shared `make_image` fixture produces one generic payload with no notion
+of which driver owns it. The mock could not express the mismatch, so the mismatch could
+not fail — untestable and unfaithful being, as usual, the same code.
+[`tests/test-rollback-driver-pair.sh`](tests/test-rollback-driver-pair.sh) introduces two
+fixture drivers that each own their own images, which is the fixture that was missing.
+
+**Verified headless:** `tests/run-all.sh` → **22 passed, 0 skipped, 0 failed**. Four
+negative controls, each run for real: restoring the `$drv` reuse, dropping the driver-field
+restore, making `gate` stop asking `describe`, and making `install.sh` claim every image
+again — each fails the test by name.
+
+### 2. `apply` swallows every deploy's output — named, not yet fixed
+
+`( cmd_deploy … ) >/dev/null 2>&1`. That is why 22 minutes of a doomed 30-minute wait
+produced zero bytes and read as a hang. The reasoning behind the redirection (a
+per-node table, not a wall of driver logs) is sound; the fix is to tee it into the run
+log rather than discard it.
+
+### 3. The reconciliation invariant is not actually being tested — named, not yet fixed
+
+Phase 9 runs `apply --dry-run` and then `apply`. A dry run converges nothing, so the real
+run afterwards issues exactly what the dry run predicted — the "second run must issue
+ZERO transitions" claim is checking a property it has not set up. It needs *real* then
+*real*.
+
+### 4. `fleet.toml` declares a spec this script cannot finish — open decision
+
+node1 is declared `install/almalinux9-ks`: the ~30-minute Anaconda path that
+`run-e2e.sh`'s own header says it deliberately avoids, and which contradicts what phase 8
+deploys. Either the declaration should match the ramdisk deploy, or phase 9 should
+converge a spec it can actually finish. Left open deliberately — it is a decision about
+what the e2e is *for*, not a defect.
+
+### The three follow-ups, fixed (2026-07-28)
+
+All three came out of the same run and were named above before being fixed.
+
+**`apply` no longer swallows what its transitions said.** Every branch was
+`( cmd_x … ) >/dev/null 2>&1` followed by a paraphrase — "deploy 'node1' failed — see its
+state" — so a deploy that blocked for half an hour produced *zero bytes* and read as a
+hang, and when it finally failed the reason had already been discarded. One `apply_run`
+helper now announces each transition **before** running it (a long one is visibly in
+progress rather than indistinguishable from a wedge) and, on failure, reprints the tool's
+own words indented instead of a vaguer sentence about them. Success stays quiet — the
+per-node table is the deliverable. `MAAS_APPLY_LOG`, when set, additionally keeps every
+transition's output, which is what a live driver points at its run log.
+
+**The reconciliation invariant is now tested with a sequence that can fail.** Phase 9 ran
+`apply --dry-run` then `apply` and called the second one "must issue ZERO transitions". A
+dry run converges nothing, so the real run after it issues exactly what the dry run
+predicted — the label described a property the sequence had not set up, and the check
+would have passed for any `apply` at all, including one that never converges. It is now
+dry (for the plan) → **real** (converge) → **real** (assert zero), with the transition
+count *parsed* out of the summary rather than eyeballed, because "the fleet is converged"
+is the one claim in this run a reader will nod along to without checking.
+
+**`fleet.toml` declares what the run actually deploys.** node1 was `install/almalinux9-ks`
+while phase 8 deploys `ramdisk/micro-linux-x86_64`, so pass 1 always spent itself undoing
+the deploy that had just succeeded — onto the ~30-minute Anaconda install this script's
+own header says it avoids, which is how the rollback bug above got its chance. A spec that
+fights the run can never converge, so the invariant was unreachable regardless of the
+code. The AlmaLinux path stays proven where it belongs, in
+`../virtualbmc-ipmi-lab/run-finale.sh`; what `apply` is here to exercise is the reconcile
+loop.
+
+**Verified headless:** [`tests/test-apply-reports-and-converges.sh`](tests/test-apply-reports-and-converges.sh),
+`tests/run-all.sh` → **23 passed, 0 skipped, 0 failed**. Five negative controls run for
+real. Two of them **passed on the first attempt** and had to be fixed rather than
+accepted: the quiet-on-success assertion was written against the mock driver, which exits
+*silently* when it succeeds and so could not demonstrate the property either way; and the
+real-then-real assertion counted `apply` lines without excluding `--dry-run`, so the old
+dry-then-real sequence satisfied it. Both were assertions that would have passed forever
+without testing anything — the same defect class as the invariant they were written to
+protect, which is why the controls get run rather than reasoned about.
+
+## The ninth run: a node stranded by the run before it (2026-07-28)
+
+The eighth run was killed while `apply` was mid-deploy, which left node1 in `deploying` —
+a transient state, and by design no verb accepts one. Phase 4 waved it through:
+
+```
+'node1' is already 'deploying' (registry from an earlier run) — skipping 'manage'
+```
+
+and phase 6 then failed with a message about a completely different verb:
+
+```
+maas: cannot 'inspect' node 'node1' from state 'deploying' — needs one of: manageable
+```
+
+**The control plane was right again; `ensure_manageable`'s `*)` branch was too
+permissive.** "Anything that is not `enrolled`/`error`" quietly folded together two
+opposite situations: a node that has legitimately *advanced past* `manage`, and a node
+**stuck mid-flight** that nothing downstream can touch. Waving the second through pushes
+the failure two phases away from its cause — the same defect shape as the one this branch
+was originally added to fix, which is worth noticing: a permissive default that reads as
+success is a pattern, not an accident.
+
+`abort` already exists for exactly this (transient → `error`, with the reason recorded —
+it came out of `chaos-run.sh` killing the control plane mid-deploy). Phase 4 now drives
+`abort` → `manage`, and says loudly that it is doing so: a node stranded by the previous
+run is information the operator wants, not something to paper over silently.
+
+**The list is duplicated, so the duplication is pinned.** `run-e2e.sh` names the transient
+states itself; the test asserts its list is character-for-character `maas-lab.sh`'s
+`TRANSIENT_STATES`. Two hand-kept copies of one fact drift, and this drift would be
+silent: a state added to the control plane and not to the driver goes straight back to
+being swallowed by the permissive branch.
+
+**Verified headless:** [`tests/test-e2e-manage-idempotent.sh`](tests/test-e2e-manage-idempotent.sh)
+now covers all five transient states, asserting `abort` precedes `manage` (the order *is*
+the fix — `manage` cannot accept a transient state). `tests/run-all.sh` → **23 passed, 0
+skipped, 0 failed**. Three negative controls run for real: emptying the transient list,
+aborting without the follow-up `manage`, and letting the two lists drift by one state —
+each fails by name.
+
+### One payload for the whole fleet, and a preflight that says so (2026-07-28)
+
+node2 and node3 were cleared out of `error` with `retry` (a real BMC round-trip —
+`error → verifying → manageable`, creds verified), and that turned out not to be enough.
+They declared `busybox-netboot` and `anycast-dns-ram`, whose artifacts are built by *other*
+labs and are absent on a fresh host. `apply` refused them by name — correctly; the driver
+prints the build command — both nodes returned to `error`, and pass 2 could never issue
+zero transitions.
+
+**A spec the fleet cannot satisfy makes the reconciliation invariant unreachable however
+right the code is.** That is the same trap node1's `install/almalinux9-ks` set, in a
+quieter form: node1 converged onto something *slow*, node2/node3 converged onto *nothing
+at all*. All three nodes now declare `micro-linux-x86_64`. Payload variety is what
+`ramdisk-catalog.toml` and `drivers/ramdisk.sh describe` are for; neither needs a node
+declared against it to be worth reading, and the comment in `fleet.toml` says how to make
+the fleet heterogeneous again (build the artifacts first).
+
+**Two checks, at the two different levels, because they are two different questions.**
+"The catalog does not own this image" is a spec nobody can ever satisfy — a repo defect,
+so `tests/test-apply-reports-and-converges.sh` asks the *driver* about every ramdisk node
+in the spec. "The artifact is not built here" is a **host** condition, so `run-e2e.sh`'s
+preflight resolves each declared image's kernel and initrd and refuses up front, naming
+every missing file. Failing the headless suite for an unbuilt artifact would fail it for
+the wrong thing.
+
+The preflight also moved **above** the sudo gate: everything it checks is a config
+question the operator can answer without privilege, and demanding `sudo -v` before telling
+someone their spec is wrong wastes the trip.
+
+**Found by running it, not by reasoning about it.** The first version of the artifact check
+reported *every* payload missing, including one staged minutes earlier: `catalog.py`
+returns paths that are absolute **or repo-relative**, and the check resolved them against
+`$PWD`. It now resolves them exactly as `drivers/ramdisk.sh` does. Negative control:
+declaring node3 back onto `anycast-dns-ram` fails preflight in two seconds, naming the
+file.
+
+## PASS — the whole path, on real domains (2026-07-28)
+
+```
+PASS: end-to-end on real domains — BMC round-trip, probe-reported facts, a SIGNED
+payload netbooted into RAM, and apply converged. node1 is active.
+```
+
+Ten phases, nine live runs, thirteen defects. What the registry records for the passing
+run — worth reading, because each line is a fix from an earlier run doing its job:
+
+```
+deploying   -> error       (abort)      the strand recovery, firing live
+error       -> verifying   (manage)
+verifying   -> manageable  (manage)
+manageable  -> manageable  (inspect)    facts from a probe that booted and had a wire
+manageable  -> cleaning    (provide)
+cleaning    -> available   (provide)
+available   -> deploying   (deploy)
+deploying   -> active      (deploy)     signed payload, host-gated, into RAM
+```
+
+**All three nodes ended `active` on `ramdisk/micro-linux-x86_64`.** That matters more than
+the verdict line: phase 9's "pass 2 issued 0 transitions" is a genuine fixed point over
+the whole fleet, not two nodes being held in `error` and quietly ignored — which is what
+"zero transitions" would also have looked like.
+
+### The thirteenth defect, found by wrecking the evidence
+
+The log was truncated *before* preflight, so a run refused at the sudo gate — or at any
+preflight check — destroyed the log of the last run that **actually finished**. Found by
+doing it to the passing run's log while testing a preflight check.
+
+Same class as the `--dry-run` ghost log: the record of a completed run wrecked by a run
+that never started. Preflight now writes to a scratch file, and `commit_log` hands the
+real log over only once the run commits to doing work; the reap trap removes the scratch.
+Both halves are pinned in [`tests/test-e2e-fails-fast.sh`](tests/test-e2e-fails-fast.sh) —
+a refused run leaves the previous log byte-for-byte, **and** a committed run replaces it,
+because "never truncate" would satisfy the first assertion while quietly restoring the
+ghost-log bug by another route. Two negative controls, both run.
+
+### What a green run still does NOT prove
+
+- **The on-node half of F2 is unexercised.** This fleet's ROM has no `IMAGE_TRUST_CMD`, so
+  every passing run so far skipped `imgverify` (`E2E_NO_IMGVERIFY=1`). The host-side gate
+  is real; the firmware half has never run. Closing it needs
+  `netboot/build-ipxe.sh --imgverify --certfile <ca.crt>` attached via `<rom file=…/>`,
+  then `MAAS_IPXE_TRUSTS_CA=1`. That ROM would also give iPXE a serial console.
+- **The `install` and `image` drivers never touched a real node in this run** — only
+  `ramdisk` did. Their headless coverage is real but it is not this.
+- **A BMC that answers for a different machine** remains the highest-value chaos scenario
+  not yet written (the vbmc port collision found in run 2 was a *live* accident, not an
+  injected fault).
+
+### The tenth run: `available` was a one-way door (2026-07-28)
+
+Re-running over the fleet the passing run left behind failed at phase 6:
+
+```
+maas: cannot 'inspect' node 'node1' from state 'active' — needs one of: manageable
+```
+
+**Two defects, one in each layer.**
+
+**The state machine was missing an edge Ironic has.** `manage` accepted `enrolled|error`
+only, so nothing led from `available` back to `manageable`: a node that had ever been
+provisioned could never be inspected again. In Ironic that edge is `manage` itself — the
+**unprovide** transition, the way a node is pulled back out of the free pool. It is now
+accepted here too, which is the Ironic-faithful answer and not a workaround.
+
+**And `ensure_manageable` was, for the third time, too permissive.** Its `*)` branch meant
+"already advanced, carry on" — right for `manageable`, wrong for a transient state (run 9),
+wrong for `available`, and wrong for `active`. Each time the run failed two phases later
+with a message about a *different verb*, nowhere near the cause.
+
+The function is now named for what it does. It drives the node to `manageable` from
+wherever the last run left it — `manage` from `enrolled`/`error`/`available`, `abort` then
+`manage` from a strand, `release` then `manage` from `active`/`rescue` — and **there is no
+permissive default any more**: a state it cannot drive there stops the run *here*, naming
+the state.
+
+Releasing an `active` node deserves its own note, because a script that silently tears
+down something believed to be serving would be a worse thing than the bug. By phase 4,
+**phase 3 has already rebuilt that node's domain and disk** — so an `active` record is
+stale and the machine behind it is blank. The release reconciles the record with reality;
+for a ramdisk node the wipe is a documented no-op. The run says all of that out loud
+before doing it.
+
+**Three permissive-default failures in one file is a pattern, not three accidents.** The
+lesson recorded here for the next person: *a default branch that means "carry on" is a
+claim that every unlisted case is safe* — and in a state machine that claim is almost
+never true. Enumerate what you can handle; stop on the rest.
+
+**Verified headless:** [`tests/test-e2e-manage-idempotent.sh`](tests/test-e2e-manage-idempotent.sh)
+now covers `active`/`rescue` (release → manage, in that order), `available` (manage alone —
+no needless second wipe), and asserts the permissive default stays gone. It also pins the
+control plane's acceptance of the unprovide edge, since two files carry one claim.
+`tests/run-all.sh` → **23 passed, 0 failed**; `chaos-run.sh` → **19 scenarios, 0 critical**.
+Three negative controls run for real: restoring the permissive default, skipping `active`
+instead of releasing it, and dropping `available` from `manage` — each fails by name.
+
+## The eleventh run: it passed, and the ✓ was hollow (2026-07-28)
+
+The run reported `PASS`, and reading the log is what showed the verdict was worth less
+than it looked:
+
+```
+maas: apply: 'node2' claimed active but failed its health re-check — demoted before the diff
+maas: apply: 'node3' claimed active but failed its health re-check — demoted before the diff
+  node1  active (ramdisk/micro-linux-x86_64)  -   converged
+  node2  error   !  HELD in 'error' — apply does not touch it; the operator does
+  node3  error   !  HELD in 'error' — apply does not touch it; the operator does
+  applied: 0 transition(s) … 1 converged, 2 held
+   pass 2 issued 0 transitions — the fleet is a fixed point ✓
+```
+
+**Two defects, and the second one is mine.**
+
+### `apply --dry-run` was writing to the registry
+
+The pre-flight health re-check grounds the plan in what the machines are actually doing —
+right, and the reason it exists (a node that passes its activation gate and later dies
+while still recorded `active` is the STALE rung). It did that by calling `recheck`, which
+**demotes `active → error`**. So `apply --dry-run` — announced as *"the plan, before
+anything is issued"*, and called by `run-e2e.sh` the step that touches nothing — issued
+two state transitions and wrote them to the audit history. The operator watched it happen
+live.
+
+The fix has two halves that pull against each other, and both are asserted:
+
+| | |
+|---|---|
+| **no write** | the registry and `history.log` are byte-identical after a dry run |
+| **not a lie** | the PLAN still shows the node as `error`, because a dry run that skips the demotion and then plans from the stale registry reports **"converged" for a machine it has just watched fail** — worse than either honest alternative |
+
+`recheck_probe()` is the observation half with no write; the would-be demotions are held in
+memory (`DRY_DEMOTED`) and the planner consults them.
+
+### And "0 transitions" was never convergence on its own
+
+`apply` deliberately does not touch a node in `error`. So a fleet with two thirds of it
+**held** issues zero transitions and satisfies the invariant while doing nothing at all —
+and phase 9 printed its ✓ anyway. That check is mine, added three runs earlier, and I had
+even written down the concern when reading an earlier log ("not two nodes being held and
+ignored") and then failed to encode it. **A claim you have noticed but not asserted is a
+claim you do not have.** Phase 9 now requires zero transitions **and** zero held, and says
+plainly what a held fleet means when it finds one.
+
+### Named, not fixed: the guard demotes into a state the loop then refuses
+
+The pre-flight demotes a stale node to `error`; `apply` then holds `error` for the
+operator. So the reconcile loop **cannot self-heal a node it has itself demoted** — every
+stale node needs a manual `retry`. That is Ironic-faithful (an error state wants a human)
+and it is also why this run's fleet was two-thirds held: phase 3 rebuilt node2/node3's
+domains, which made their `active` records stale, which the guard then correctly caught.
+Whether a reconcile loop should auto-`retry` a node it demoted *itself* — as distinct from
+one that failed a deploy — is a real design question and is recorded in
+[`DEFERRED.md`](DEFERRED.md).
+
+**Verified headless:** `tests/run-all.sh` → **23 passed, 0 failed**; `chaos-run.sh` → **19
+scenarios, 0 critical**. Four negative controls run for real: restoring the dry-run write,
+skipping the write but planning from the stale registry, removing the re-check entirely,
+and dropping the held-count check from phase 9 — each fails by name.

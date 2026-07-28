@@ -189,12 +189,20 @@ cmd_enroll() {
         "$node" "$domain" "$bmc_host" "$bmc_port" "$firmware" >&2
 }
 
-# manage — verify BMC creds, make the node manageable (enrolled|error -> manageable).
-# The `verifying` state is passed THROUGH so the saga shows in history; a BMC that
-# doesn't answer sends the node to `error`, not a silent hang.
+# manage — verify BMC creds, make the node manageable
+# (enrolled | error | available -> manageable). The `verifying` state is passed THROUGH so
+# the saga shows in history; a BMC that doesn't answer sends the node to `error`, not a
+# silent hang.
+#
+# `available` is here because Ironic puts it here: `manage` is the **unprovide** edge, the
+# way a node in the free pool is pulled back out of it for re-inspection or maintenance.
+# Without it `available` was a one-way door — nothing led back to `manageable`, so a node
+# that had ever been provisioned could never be inspected again. (Found live: a second
+# run of run-e2e.sh over an already-`active` fleet had no route back, and `inspect`
+# refused. The state machine was missing an edge that Ironic's has.)
 cmd_manage() {
     local node="${1:?usage: manage <node>}"; require_node "$node"
-    require_state "$node" manage enrolled error
+    require_state "$node" manage enrolled error available
     set_state "$node" verifying manage
     if bmc "$node" power status >/dev/null 2>&1; then
         set_state "$node" manageable manage
@@ -451,6 +459,15 @@ GATE_REASON=""
 gate() {  # gate <driver-script> <node> <image> <slot> <verify:0|1>
     local drv="$1" node="$2" image="$3" slot="$4" do_verify="$5"
     GATE_REASON=""
+    # OWNERSHIP FIRST. `describe <image>` is the contract's question "is this image
+    # yours?", and until now nobody asked it — so an A/B rollback handed the INSTALL
+    # driver a RAM payload, which netbooted a live node and then waited 30 minutes for
+    # an installer that did not exist to power it off. F2 could not catch that: the
+    # image was correctly signed, it was simply the wrong driver's image.
+    if ! run_driver "$drv" describe "$image" >/dev/null 2>&1; then
+        GATE_REASON="driver '$(basename "$drv" .sh)' cannot describe image '$image' — it does not own it, so it must not deploy it"
+        return 1
+    fi
     if [[ "$do_verify" == 1 ]]; then
         if ! run_driver "$drv" verify "$image" >/dev/null 2>&1; then
             GATE_REASON="F2 signature verification failed for image '$image'"
@@ -500,7 +517,13 @@ cmd_deploy() {
         esac
     fi
 
-    local prev; prev="$(_read "$node" image "")"     # current image -> rollback candidate
+    # The rollback candidate is a PAIR, not an image. An image is only deployable by the
+    # driver that put it there, so capture BOTH before overwriting the driver field —
+    # rolling `micro-linux-x86_64` back through the `install` driver is not a rollback,
+    # it is a different (and much slower) way to break the node.
+    local prev prev_drv
+    prev="$(_read "$node" image "")"             # current image  -> rollback candidate
+    prev_drv="$(_read "$node" driver "")"        # the driver that PUT it there
     _write "$node" driver "$driver"
     # A node deployed INTO a region is not `active` until it has joined it (fast-follow:
     # ramdisk -> resilient region). Recorded before the gate so the driver can see it.
@@ -510,7 +533,10 @@ cmd_deploy() {
 
     if gate "$drv" "$node" "$image" current "$do_verify"; then
         _write "$node" image "$image"
-        [[ -n "$prev" && "$prev" != "$image" ]] && _write "$node" previous_image "$prev"
+        if [[ -n "$prev" && "$prev" != "$image" ]]; then
+            _write "$node" previous_image "$prev"
+            _write "$node" previous_driver "$prev_drv"   # the pair, or it is not a rollback
+        fi
         set_state "$node" active deploy
         printf 'active %s (driver=%s image=%s, healthy)\n' "$node" "$driver" "$image" >&2
         return 0
@@ -519,18 +545,36 @@ cmd_deploy() {
     # New image failed (bad signature OR bad health) — A/B rollback to previous.
     warn "$GATE_REASON"
     if [[ -n "$prev" && "$prev" != "$image" ]]; then
-        warn "rolling back '$node' to its previous image '$prev' (§4b A/B)…"
+        # Through the PREVIOUS driver. Reusing $drv here was a real bug: an `install`
+        # deploy that failed rolled its predecessor's RAM image back through the
+        # installer, which netbooted the node and blocked 30 minutes waiting for a
+        # non-existent installer to power it off — while the registry recorded the
+        # impossible pair `driver=install image=micro-linux-x86_64`.
+        local prev_drv_path=""
+        [[ -n "$prev_drv" ]] && prev_drv_path="$MAAS_DRIVER_DIR/$prev_drv.sh"
+        if [[ -z "$prev_drv" || ! -x "$prev_drv_path" ]]; then
+            # Refusing to roll back beats rolling back WRONG. A node left on the failed
+            # image is honestly broken and says so; one driven by a driver that does not
+            # own its image is a machine nobody can reason about.
+            set_state "$node" error deploy
+            die "'$image' failed on '$node', and its previous image '$prev' cannot be rolled
+back: ${prev_drv:+no driver '$prev_drv' at $MAAS_DRIVER_DIR/$prev_drv.sh}${prev_drv:-the driver that deployed it was never recorded}.
+Rolling back through '$driver' instead would hand it an image it does not own. Node -> error (operator)."
+        fi
+        warn "rolling back '$node' to its previous image '$prev' via its own driver '$prev_drv' (§4b A/B)…"
         set_state "$node" deploying deploy
-        if gate "$drv" "$node" "$prev" previous "$do_verify"; then
+        if gate "$prev_drv_path" "$node" "$prev" previous "$do_verify"; then
             _write "$node" image "$prev"
+            _write "$node" driver "$prev_drv"    # the record follows the machine back
             _write "$node" previous_image ""
+            _write "$node" previous_driver ""
             set_state "$node" active deploy
             warn "DEGRADED: '$node' is active on its PREVIOUS image '$prev' (new image '$image' was rejected)"
-            printf 'active %s (driver=%s image=%s, DEGRADED — rolled back)\n' "$node" "$driver" "$prev" >&2
+            printf 'active %s (driver=%s image=%s, DEGRADED — rolled back)\n' "$node" "$prev_drv" "$prev" >&2
             return 0
         fi
         set_state "$node" error deploy
-        die "both images failed for '$node' (new '$image' and previous '$prev') — node -> error (operator)"
+        die "both images failed for '$node' (new '$driver/$image' and previous '$prev_drv/$prev') — node -> error (operator)"
     fi
     set_state "$node" error deploy
     die "$GATE_REASON, and no previous image to roll back to — node '$node' -> error"
@@ -649,6 +693,21 @@ cmd_abort() {
 # without this nothing ever asks it again, so a node that dies after activation keeps
 # reporting `active` and everything downstream believes it. Run it from cron, or by
 # hand after an incident; the continuous version is `apply` (§3a, increment 6).
+#
+# recheck_probe — the OBSERVATION half, with no write. `apply --dry-run` needs to know
+# whether an `active` node is still healthy (a plan computed from a registry that
+# disagrees with reality is a fiction) but must not CHANGE anything to find out — and it
+# used to: the pre-flight called cmd_recheck, which demotes active -> error. A dry run
+# that says "the plan, before anything is issued" and then issues a state transition is
+# the same lie as a check that reports what it did not verify.
+recheck_probe() {  # recheck_probe <node> -> 0 healthy, 1 not (never writes)
+    local node="$1" driver image drv
+    driver="$(_read "$node" driver "")"; image="$(_read "$node" image "")"
+    [[ -n "$driver" && -n "$image" ]] || return 1
+    drv="$MAAS_DRIVER_DIR/$driver.sh"
+    [[ -x "$drv" ]] || return 1
+    run_driver "$drv" health "$node" "$image" >/dev/null 2>&1
+}
 cmd_recheck() {
     local node="${1:?usage: recheck <node>}"; require_node "$node"
     local cur; cur="$(read_state "$node")"
@@ -697,13 +756,24 @@ cmd_apply() {
 
     # ── phase 1: ground the registry in reality ─────────────────────────────
     local demoted=0
+    local -A DRY_DEMOTED=()      # dry-run only: nodes a real run WOULD have demoted
     if [[ "$recheck" == 1 ]]; then
         local n
         while read -r n; do
             [[ -n "$n" ]] || continue
             node_exists "$n" || continue
             [[ "$(read_state "$n")" == active ]] || continue
-            if ! ( cmd_recheck "$n" ) >/dev/null 2>&1; then
+            if [[ "$dry" == 1 ]]; then
+                # Observe only. Record the would-be demotion in memory so the PLAN below
+                # reflects it — a dry run that skips the write but then plans from the
+                # stale registry would report "converged" for a node it has just observed
+                # to be dead, which is worse than either honest alternative.
+                if ! recheck_probe "$n"; then
+                    warn "apply: '$n' claims active but is NOT healthy — a real run would demote it to 'error' before the diff (dry run: registry not written)"
+                    DRY_DEMOTED[$n]=1
+                    demoted=$((demoted+1))
+                fi
+            elif ! ( cmd_recheck "$n" ) >/dev/null 2>&1; then
                 warn "apply: '$n' claimed active but failed its health re-check — demoted before the diff"
                 demoted=$((demoted+1))
             fi
@@ -756,6 +826,9 @@ _apply_pass() {
             cur="<not enrolled>"; act="enroll"; why="declared in the spec, absent from the registry"
         else
             cur="$(read_state "$name")"
+            # A dry run plans against what phase 1 OBSERVED, not what the registry still
+            # says — the whole point of the pre-flight re-check is that the two can differ.
+            [[ -n "${DRY_DEMOTED[$name]:-}" ]] && cur="error"
             local d i; d="$(_read "$name" driver "")"; i="$(_read "$name" image "")"
             [[ "$cur" == active ]] && cur="active ($d/$i)"
             case "${cur%% *}" in
@@ -840,8 +913,10 @@ _apply_pass() {
             printf '  claim %-10s -> %s (cpus=%s mem_mb=%s) deploy %s/%s\n' "$cname" "$picked" \
                 "$(_read "$picked" cpus 0)" "$(_read "$picked" mem_mb 0)" "$CLAIM_DRIVER" "$CLAIM_IMAGE" >&2
             [[ "$dry" == 1 ]] && continue
-            if ( cmd_deploy "$picked" --driver "$CLAIM_DRIVER" --image "$CLAIM_IMAGE" \
-                     ${CLAIM_REGION:+--region "$CLAIM_REGION"} ) >"${MAAS_CLAIM_LOG:-/dev/null}" 2>&1; then
+            if MAAS_APPLY_LOG="${MAAS_CLAIM_LOG:-${MAAS_APPLY_LOG:-}}" \
+               apply_run "claim $cname -> deploy $picked ($CLAIM_DRIVER/$CLAIM_IMAGE)" \
+                     cmd_deploy "$picked" --driver "$CLAIM_DRIVER" --image "$CLAIM_IMAGE" \
+                     ${CLAIM_REGION:+--region "$CLAIM_REGION"}; then
                 _write "$picked" claim "$cname"      # this node now belongs to this claim
                 issued=$((issued+1))
             else
@@ -882,24 +957,53 @@ _apply_pass() {
         enroll)
             local NODE_BMC_PORT="" NODE_DRIVER="" NODE_IMAGE=""
             eval "$(python3 "$fleet_py" "$spec" get "$name")"
-            ( cmd_enroll "$name" --bmc-port "$NODE_BMC_PORT" ) >/dev/null 2>&1 \
+            apply_run "enroll $name" cmd_enroll "$name" --bmc-port "$NODE_BMC_PORT" \
                 && issued=$((issued+1)) || { warn "apply: enroll '$name' failed"; failed=$((failed+1)); } ;;
         manage)
-            ( cmd_manage "$name" ) >/dev/null 2>&1 \
+            apply_run "manage $name" cmd_manage "$name" \
                 && issued=$((issued+1)) || { warn "apply: manage '$name' failed (BMC not answering?)"; failed=$((failed+1)); } ;;
         provide)
-            if ( cmd_provide "$name" ) >/dev/null 2>&1; then issued=$((issued+1))
+            if apply_run "provide $name" cmd_provide "$name"; then issued=$((issued+1))
             else warn "apply: '$name' stays in cleaning until its disk wipe is done by hand (F7) — run: provide $name --wiped"; failed=$((failed+1)); fi ;;
         deploy)
             local NODE_DRIVER="" NODE_IMAGE=""
             eval "$(python3 "$fleet_py" "$spec" get "$name")"
-            ( cmd_deploy "$name" --driver "$NODE_DRIVER" --image "$NODE_IMAGE" ) >/dev/null 2>&1 \
-                && issued=$((issued+1)) || { warn "apply: deploy '$name' ($NODE_DRIVER/$NODE_IMAGE) failed — see its state"; failed=$((failed+1)); } ;;
+            apply_run "deploy $name ($NODE_DRIVER/$NODE_IMAGE)" \
+                cmd_deploy "$name" --driver "$NODE_DRIVER" --image "$NODE_IMAGE" \
+                && issued=$((issued+1)) || { warn "apply: deploy '$name' ($NODE_DRIVER/$NODE_IMAGE) failed"; failed=$((failed+1)); } ;;
         esac
     done
 
     APPLY_ISSUED=$issued; APPLY_FAILED=$failed
     return 0
+}
+
+# apply_run — issue ONE transition and never swallow what the tool said.
+#
+# Every branch below used to be `( cmd_x … ) >/dev/null 2>&1` and then paraphrase the
+# failure ("deploy 'node1' failed — see its state"). Two costs, both paid live: a deploy
+# that blocked for 30 minutes produced ZERO bytes and read as a hang, and when it finally
+# failed the reason was in the driver's output, which had been discarded.
+#
+# The per-node table is still the point, so success stays quiet. What changes: a line
+# announcing the transition BEFORE it runs (so a long one is visibly in progress, not
+# hung), and on failure the tool's own words, indented, instead of a paraphrase of them.
+# MAAS_APPLY_LOG, when set, additionally keeps every transition's output — the run log a
+# live driver can point at.
+apply_run() {  # apply_run <what> <cmd...>  -> 0 ok, 1 failed (output already reported)
+    local what="$1"; shift
+    local out; out="$(mktemp "${TMPDIR:-/tmp}/maas-apply.XXXXXX")" || return 1
+    printf '  -> %s…\n' "$what" >&2
+    local rc=0
+    ( "$@" ) >"$out" 2>&1 || rc=$?
+    [[ -n "${MAAS_APPLY_LOG:-}" ]] && cat "$out" >> "$MAAS_APPLY_LOG"
+    if [[ $rc -ne 0 ]]; then
+        # The tool already explained itself. Reprint that verbatim rather than inventing
+        # a shorter, vaguer sentence about it.
+        sed 's/^/       /' "$out" >&2
+    fi
+    rm -f "$out"
+    return $rc
 }
 
 # power / bootdev / console — passthrough to the BMC (the seam).
@@ -955,7 +1059,11 @@ cmd_show() {
         "$(_read "$node" bmc_user -)" "$(_read "$node" bmc_pass -)"
     printf 'firmware    %s\n' "$(_read "$node" firmware -)"
     printf 'driver      %s\n' "$(_read "$node" driver -)"
-    printf 'image       %s (previous: %s)\n' "$(_read "$node" image -)" "$(_read "$node" previous_image -)"
+    # driver AND image, on both slots: the rollback candidate is a PAIR, and a `show`
+    # that prints only the images hides exactly the mismatch that broke a live run.
+    printf 'image       %s/%s (previous: %s/%s)\n' \
+        "$(_read "$node" driver -)" "$(_read "$node" image -)" \
+        "$(_read "$node" previous_driver -)" "$(_read "$node" previous_image -)"
     printf 'schedulable %s\n' "$(_read "$node" schedulable -)"
     printf 'mac         %s\n' "$(_read "$node" mac -)"
     # The console is where every health gate looks, so show whether it is actually

@@ -272,6 +272,7 @@ lifecycle runs with no libvirt at all.
 | [`drivers/verify-lib.sh`](drivers/verify-lib.sh) | the F2 signature gate (OpenSSL CMS sign/verify, iPXE-`imgverify` format) |
 | [`tests/`](tests/) | 19 headless smokes: state-machine, cleaning-guard, registry, inspect-metadata, watch, probe-build, deploy-rollback, verify-tamper, install-driver, ramdisk-driver, image-driver, image-measured-driver, apply-reconcile, region-and-scheduler, probe-boot-script, bmc-binding-check, e2e-reaps-sink, e2e-fails-fast, chaos-matrix (+ `mock-bmc.sh`, `mock.sh` driver, `run-all.sh`) |
 | [`PLAN.md`](PLAN.md) | the increment ladder + each increment's outcome |
+| [`DEFERRED.md`](DEFERRED.md) | **what a green run still does not prove** — the three gaps a passing run cannot reveal, each with its evidence trail and first step |
 | [`MANUAL_TESTING.md`](MANUAL_TESTING.md) | verified transcripts (headless) + the author-run bring-up handoff |
 
 ## Prereqs
