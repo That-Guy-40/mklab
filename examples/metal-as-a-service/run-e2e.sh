@@ -128,8 +128,24 @@ if [[ $DRY == 1 ]]; then
 else
     "$HERE/metadata-serve.sh" --host "$GW" --port 8282 >>"$LOG" 2>&1 &
     MD_PID=$!
-    info "metadata-serve.sh running as PID $MD_PID — stop it with: kill $MD_PID"
     sleep 1
+    # Backgrounding a server hides its exit status, and this one WILL fail if a sink
+    # from a previous run still holds :8282 — which is the normal state of affairs after
+    # a run that ended in a timeout, because nothing reaps it. The first time that
+    # happened the script sailed on with a dead PID and blamed the probe two phases
+    # later. So: confirm it is alive AND answering before anything depends on it.
+    if ! kill -0 "$MD_PID" 2>/dev/null; then
+        holder="$(ss -ltnp 2>/dev/null | awk -v a="$GW:8282" '$4==a {print $NF}')"
+        die "the facts sink did not start on $GW:8282${holder:+ — still held by $holder}.
+A leftover metadata-serve.sh from an earlier run is the usual cause; nothing reaps it,
+because this script does not kill processes it did not start. Find it and kill it BY PID:
+    ss -ltnp | grep 8282
+    kill <pid>
+(never by pattern — see CLAUDE.md.) Then re-run."
+    fi
+    curl -fsS --max-time 5 -o /dev/null "http://$GW:8282/" 2>/dev/null \
+        || info "note: the sink is running but did not answer a probe GET — continuing"
+    info "metadata-serve.sh running as PID $MD_PID — stop it with: kill $MD_PID"
 fi
 
 step "[6/10] inspect: PXE-boot the probe, await its facts, power off"

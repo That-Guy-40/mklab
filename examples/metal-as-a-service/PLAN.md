@@ -660,3 +660,75 @@ skipped, 0 failed**; `chaos-run.sh` → **19 scenarios across 9 layers: 8 absorb
 degraded, 7 halted, 0 critical**; and the XML transform against a real `virsh dumpxml`
 of `node1`. Whether libvirt's AppArmor policy permits qemu to write the console file at
 `/var/lib/libvirt/maas-console/<node>.log` needs the rootful run to answer.
+
+## What the SECOND live run found (2026-07-28) — the seam answered for the wrong machine
+
+The chain and console fixes above all worked: `netboot-chain.sh` installed, the
+file-backed serial was accepted by libvirt **and by AppArmor** (30 KB of kernel log on
+the first real boot — the known unknown is now answered, positively), and `show`
+reported the console as `empty` exactly as designed. The run still failed, and the
+console being empty is what made the cause findable.
+
+Buried in `create-fleet.sh up`'s output:
+
+```
+| Domain name | Status  | Address | Port |
+| alpine-node | running | ::      | 6230 |     <-- the sibling lab's own node
+| node1       | error   | ::      | 6230 |     <-- ours, could not bind
+```
+
+**Two BMCs on port 6230.** VirtualBMC registers both; only one binds; the loser sits in
+`error`; and the winner answers IPMI **for both**. `alpine-node` — this lab's sibling,
+whose `vbmc-lab.sh add` defaults to 6230, which is also `node1`'s port — had been
+answering for `node1` all along:
+
+| command | result | truthfully about |
+|---|---|---|
+| `manage node1` | `manageable node1 (BMC creds verified)` | alpine-node |
+| `power node1 status` | `Chassis Power is on` | alpine-node |
+| `bootdev node1 pxe` | `Set Boot Device to pxe` | alpine-node |
+| `power on` | `Chassis Power Control: Up/On` | alpine-node |
+
+Four successes, all true, none of them about node1 — which never powered on, which is
+why its console stayed at zero bytes. On this lab's own ladder that is **LIED**: the
+record and reality disagreed and every check said healthy. It is strictly worse than an
+unreachable BMC, which fails at once and honestly.
+
+**This was also why the FIRST run failed.** The chain and console defects were real and
+had to be fixed — the console is what made this visible — but the node was never going
+to boot either time.
+
+**The control plane cannot catch this, by construction.** `MAAS_BMC` is the seam whose
+entire job is to hide which machine is on the other end; a control plane that could tell
+would not have a seam. So the check lives in the fleet plumbing, which still knows it is
+vbmcd: [`lib/vbmc_check.py`](lib/vbmc_check.py), run by `create-fleet.sh` **before
+enroll**, refusing by name — the node, the port, and the squatter.
+
+Two smaller defects the same run surfaced, both of the "kept going after a step failed"
+family:
+
+- **The facts sink never started.** A `metadata-serve.sh` left over from the previous
+  run still held `:8282`; the new one died with `OSError: Address already in use` into
+  the log, and `run-e2e.sh` — having backgrounded it — carried on with a dead PID and
+  blamed the probe two phases later. It now checks the process is alive and answering,
+  and names the leftover holder.
+- **No DHCP reservation was ever added.** `net-update add ip-dhcp-host` needs an IP
+  (`Missing IP address in static host definition`); a `mac`+`name` entry is rejected.
+  All three failed and the script said "already present or not addable — continuing".
+  Fixed by allocating above the dynamic range from the network's own subnet, and by
+  saying what was *lost* when it fails rather than "continuing".
+
+### Named, not yet covered
+
+`chaos-run.sh`'s `oob` layer covers a BMC that stops answering (`bmc-drop`). It does
+**not** yet cover a BMC that answers *for a different machine* — the shape above. That
+needs the mock BMC to actuate another node's power state on request, and it is the
+highest-value chaos scenario outstanding, because it is the only one so far that passed
+every gate on the way to failing.
+
+**Verified headless (this host, 2026-07-28):** `tests/run-all.sh` → **17 passed, 0
+skipped, 0 failed**; `chaos-run.sh` → **19 scenarios across 9 layers, 0 critical**.
+Negative control on the new check: blinding it to other domains on the port makes
+`test-bmc-binding-check.sh` fail. **Verified live:** the file-backed console writes
+(30 KB on a real boot), and the DHCP failure was reproduced by hand
+(`Missing IP address in static host definition`).

@@ -108,21 +108,63 @@ give_console() {
     info "$name: console recorded to $log"
 }
 
-# reserve_dhcp <node> — record the domain's MAC and give it a DHCP reservation on the
-# PXE network, so the node's own name reaches iPXE as ${hostname}.
+# reserve_dhcp <node> <net> <index> — record the domain's MAC and give it a DHCP
+# reservation, so the node's own name reaches iPXE as ${hostname} (DHCP option 12).
 reserve_dhcp() {
-    local name="$1" net="${2:-vbmc-pxe}" mac
+    local name="$1" net="${2:-vbmc-pxe}" idx="${3:-0}" mac gw prefix ip
     mac="$($VIRSH domiflist "$name" 2>/dev/null | awk '$3=="'"$net"'" {print $5; exit}')"
     [[ -n "$mac" ]] || mac="$($VIRSH domiflist "$name" 2>/dev/null | awk 'NR>2 && NF {print $5; exit}')"
     [[ -n "$mac" ]] || { info "$name: no MAC found on $net — skipping the DHCP reservation"; return 1; }
     "$MAAS" set-mac "$name" "$mac" >/dev/null 2>&1 || true
-    # --live --config so it applies to the running network AND persists. Adding a host
-    # that is already reserved is an error, not a no-op, so a re-run is tolerated.
+
+    # libvirt REQUIRES an IP in a static host definition ("Missing IP address in static
+    # host definition"), so a mac+name reservation is rejected — which is how the first
+    # attempt at this silently added nothing. Derive the subnet from the network itself
+    # rather than hardcoding it, and allocate ABOVE the dynamic range (which this lab's
+    # setup-pxe-net.sh puts at .10-.99) so a reservation can never collide with a lease.
+    gw="$($VIRSH net-dumpxml "$net" 2>/dev/null | sed -nE "s/.*<ip address='([^']+)'.*/\1/p" | head -1)"
+    [[ -n "$gw" ]] || { info "$name: could not read $net's gateway — skipping the reservation"; return 1; }
+    prefix="${gw%.*}"; ip="$prefix.$((101 + idx))"
+
+    # --live --config: apply to the running network AND persist. Re-adding an existing
+    # host is an error rather than a no-op, so a re-run falls through to modify.
     if sudo $VIRSH net-update "$net" add ip-dhcp-host \
-           "<host mac='$mac' name='$name'/>" --live --config >/dev/null 2>&1; then
-        info "$name: DHCP reservation on $net ($mac -> $name)"
+           "<host mac='$mac' name='$name' ip='$ip'/>" --live --config >/dev/null 2>&1; then
+        info "$name: DHCP reservation on $net ($mac -> $name @ $ip)"
+    elif sudo $VIRSH net-update "$net" modify ip-dhcp-host \
+           "<host mac='$mac' name='$name' ip='$ip'/>" --live --config >/dev/null 2>&1; then
+        info "$name: DHCP reservation updated on $net ($mac -> $name @ $ip)"
     else
-        info "$name: DHCP reservation already present or not addable ($mac) — continuing"
+        # Not fatal — the PXE chain falls back to the MAC-keyed script — but it is not
+        # nothing either, so say what was lost instead of "continuing".
+        info "$name: could NOT reserve $ip for $mac on $net. The node will not receive a"
+        info "  hostname over DHCP, so the boot chain falls through to maas/\${net0/mac}.ipxe."
+    fi
+}
+
+# verify_bmc_bindings — prove each node's BMC actuates THAT node before anything trusts it.
+#
+# The failure this catches cost two full end-to-end runs. VirtualBMC lets two domains
+# register on one port; only one binds, the loser sits in `error`, and the winner
+# answers IPMI for both. The sibling lab's own `alpine-node` defaults to 6230 — which is
+# also node1's port — so every command the control plane sent for node1 was served,
+# plausibly and successfully, by a different machine. `manage` verified creds, `power
+# status` said "on", `bootdev pxe` and `power on` were accepted, and node1 never booted.
+#
+# The control plane cannot catch this: the BMC seam is precisely the abstraction that
+# hides which machine is on the other end. So it is checked here, where we still know
+# this is vbmcd.
+verify_bmc_bindings() {
+    local name want=() out
+    for name in $(fleet_names); do
+        load_node "$name"
+        want+=("$name:${NODE_BMC_PORT}")
+    done
+    out="$( ( cd "$VBMC_LAB" && ./vbmc-lab.sh list ) 2>/dev/null )"
+    if ! printf '%s\n' "$out" | python3 "$HERE/lib/vbmc_check.py" "${want[@]}"; then
+        die "the fleet's BMCs are not wired to the fleet's nodes (see above). Refusing to
+continue: every verb from here on would be sent to a machine that answers correctly and
+is not the one you asked for — which passes every check and deploys nothing."
     fi
 }
 
@@ -153,16 +195,21 @@ do_up() {
             || die "vbmc add $name failed"
     done
 
+    step "verifying each node OWNS its BMC port (not a squatter's)"
+    verify_bmc_bindings
+
     step "enrolling the fleet into the control plane"
     do_enroll
 
     # AFTER enroll: both of these record something in the node's registry entry, which
     # does not exist until the node is enrolled.
     step "instrumenting the fleet: recorded consoles + DHCP reservations"
+    local i=0
     for name in $(fleet_names); do
         load_node "$name"
         give_console "$name"
-        reserve_dhcp "$name" "${NODE_NETWORK:-vbmc-pxe}"
+        reserve_dhcp "$name" "${NODE_NETWORK:-vbmc-pxe}" "$i"
+        i=$((i+1))
     done
 
     step "fleet up. Verify a BMC round-trip:  $MAAS manage node1 && $MAAS power node1 status"

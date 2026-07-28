@@ -92,10 +92,10 @@ Or drive the whole thing once, unattended: **[`run-e2e.sh`](run-e2e.sh)** — te
 from `setup-pxe-net.sh` to a converged `apply`, all sudo front-loaded, `--dry-run` to
 read the plan first.
 
-### Two things a FLEET needs that a single node does not
+### Three things a FLEET needs that a single node does not
 
-Both were missing from the first live end-to-end run, and both failed the same way:
-silently, as a timeout several minutes downstream of the actual defect.
+Three things, in fact — each missing from a live end-to-end run, each failing the
+same way: silently, as a timeout several minutes downstream of the actual defect.
 
 **1. The network must ASK which payload, per node.**
 [`setup-pxe-net.sh`](../virtualbmc-ipmi-lab/setup-pxe-net.sh) serves *one* `boot.ipxe`
@@ -109,7 +109,18 @@ reservation `create-fleet.sh` adds. The last link is deliberately a **dead end t
 explains itself** rather than a plausible fallback: a node quietly booting the wrong
 thing looks exactly like a successful deploy.
 
-**2. The console must be RECORDED, not attachable.**
+**2. Every node must OWN its BMC port.**
+VirtualBMC lets two domains register on one port: only one binds, the loser sits in
+`error`, and **the winner answers IPMI for both** — plausibly. The sibling lab's own
+`alpine-node` defaults to 6230, which is also `node1`'s, so `manage`, `power status`,
+`bootdev pxe` and `power on` all succeeded against the wrong machine while `node1`
+never powered on. `create-fleet.sh up` now runs
+[`lib/vbmc_check.py`](lib/vbmc_check.py) **before enroll** and refuses, naming the node,
+the port and the squatter. The control plane cannot catch this — the BMC seam is the
+abstraction that hides which machine is on the other end — so it is checked in the
+fleet plumbing that still knows it is talking to vbmcd.
+
+**3. The console must be RECORDED, not attachable.**
 Every health gate in this lab greps a node's console log. The sibling lab defines
 `--console pty` — a terminal, which keeps nothing when no one is attached — so the first
 real run was *blind*: a node that booted the wrong payload and a node that never booted
@@ -244,6 +255,7 @@ lifecycle runs with no libvirt at all.
 | [`create-fleet.sh`](create-fleet.sh) | stand up (`up`, author-run) or `enroll` (headless) the fleet — incl. file-backed consoles + DHCP reservations |
 | [`netboot-chain.sh`](netboot-chain.sh) | replace the PXE network's single baked payload with a per-node chain (author-run) |
 | [`lib/console_xml.py`](lib/console_xml.py) | rewrite a domain's serial console from a pty to a **recorded file** |
+| [`lib/vbmc_check.py`](lib/vbmc_check.py) | refuse a fleet whose BMC ports are answered by another machine |
 | [`run-e2e.sh`](run-e2e.sh) | the one-shot live driver: 10 phases, real domains, real BMCs, real netboot (author-run) |
 | [`fleet.toml`](fleet.toml) | the 3-node fleet spec (hardware + declared end-state for `apply`) |
 | [`lib/fleet.py`](lib/fleet.py) | stdlib TOML reader projecting `fleet.toml` for bash |
@@ -258,7 +270,7 @@ lifecycle runs with no libvirt at all.
 | [`drivers/chaos.sh`](drivers/chaos.sh) + [`chaos-run.sh`](chaos-run.sh) | a driver that fails on purpose, and the matrix that grades how the control plane falls across all five layers |
 | [`ramdisk-catalog.toml`](ramdisk-catalog.toml) + [`lib/catalog.py`](lib/catalog.py) | the `--image` registry (RAM-INFRA trio · micro-linux · floppinux · busybox) and its validating reader |
 | [`drivers/verify-lib.sh`](drivers/verify-lib.sh) | the F2 signature gate (OpenSSL CMS sign/verify, iPXE-`imgverify` format) |
-| [`tests/`](tests/) | 16 headless smokes: state-machine, cleaning-guard, registry, inspect-metadata, watch, probe-build, deploy-rollback, verify-tamper, install-driver, ramdisk-driver, image-driver, image-measured-driver, apply-reconcile, region-and-scheduler, probe-boot-script, chaos-matrix (+ `mock-bmc.sh`, `mock.sh` driver, `run-all.sh`) |
+| [`tests/`](tests/) | 17 headless smokes: state-machine, cleaning-guard, registry, inspect-metadata, watch, probe-build, deploy-rollback, verify-tamper, install-driver, ramdisk-driver, image-driver, image-measured-driver, apply-reconcile, region-and-scheduler, probe-boot-script, bmc-binding-check, chaos-matrix (+ `mock-bmc.sh`, `mock.sh` driver, `run-all.sh`) |
 | [`PLAN.md`](PLAN.md) | the increment ladder + each increment's outcome |
 | [`MANUAL_TESTING.md`](MANUAL_TESTING.md) | verified transcripts (headless) + the author-run bring-up handoff |
 

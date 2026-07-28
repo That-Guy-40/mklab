@@ -837,10 +837,27 @@ tail -40 /var/lib/libvirt/maas-console/node1.log
 | `console ... (ABSENT)` | no console was recorded for the node | `./maas-lab.sh set-console node1 <path>` |
 | the probe boots and prints `maas-probe` but no facts arrive | it cannot reach the sink | `metadata-serve.sh` must bind the **PXE gateway** address, not localhost |
 
-**A known unknown, honestly flagged:** the console file lives at
+**Before any of that, check the console is empty for the reason you think.** If the node
+never powered on at all, `create-fleet.sh up` will now have refused — but if you brought
+the fleet up some other way, look for a BMC port collision:
+
+```bash
+( cd ../virtualbmc-ipmi-lab && sudo ./vbmc-lab.sh list )
+```
+
+Two rows on one port (one `running`, one `error`) means the running one answers IPMI for
+both. The sibling lab's `alpine-node` defaults to **6230**, which is `node1`'s port:
+
+```bash
+( cd ../virtualbmc-ipmi-lab && sudo ./vbmc-lab.sh destroy )   # frees 6230
+```
+
+Every command against the wrong BMC *succeeds*, so nothing upstream will look wrong.
+
+**The console file: verified working (2026-07-28).** It lives at
 `/var/lib/libvirt/maas-console/<node>.log`, pre-created `0666` so qemu (running as
-`libvirt-qemu`) can write it and the unprivileged control plane can read it. Whether
-libvirt's AppArmor helper grants qemu that path has **not** been verified on this host —
-it needs the rootful run. If the domain fails to start with a `permission denied` on the
-console file, that is the answer, and `FLEET_CONSOLE=pty ./create-fleet.sh up` restores
-the old (unlogged) behaviour while it is sorted out.
+`libvirt-qemu`) can write it and the unprivileged control plane can read it. libvirt's
+AppArmor helper **does** grant qemu that path on this host — a real boot of `node1`
+produced 30 KB of kernel log within seconds. `FLEET_CONSOLE=pty ./create-fleet.sh up`
+still restores the old (unlogged) behaviour if you need an interactive `virsh console`,
+at the cost of every health gate that reads the log.
