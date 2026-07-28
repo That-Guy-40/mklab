@@ -158,7 +158,24 @@ run "$HERE/create-fleet.sh" up
 
 # ── everything below is UNPRIVILEGED ────────────────────────────────────────
 step "[4/10] verify the BMC round-trip — the seam, against a real BMC"
-run "$MAAS" manage "$NODE"
+# The REGISTRY outlives the fleet. create-fleet.sh rebuilds the domains but skips
+# enrolling a node it already knows ("already enrolled (state=manageable) — skipping"),
+# so on a re-run node1 arrives here already past `enrolled` and `manage` correctly
+# refuses: it is a transition from enrolled/error, not a re-verification you can spam.
+# The state machine is right; the driver was wrong to assume a fresh registry. So ask
+# what state the node is in and drive it accordingly — and still exercise the seam
+# either way, because `power status` is the part that actually proves the BMC answers.
+if [[ $DRY == 1 ]]; then
+    printf '   $ %s\n' "$MAAS manage $NODE   # only when the node is in enrolled/error" >&2
+else
+    st="$("$MAAS" state "$NODE" 2>/dev/null)"
+    case "$st" in
+        enrolled|error) run "$MAAS" manage "$NODE" ;;
+        "")  die "'$NODE' is not enrolled and create-fleet.sh did not enroll it — phase 3 did not finish" ;;
+        *)   info "'$NODE' is already '$st' (registry from an earlier run) — skipping 'manage', which is a transition from enrolled/error, not a re-check"
+             info "to start from scratch instead: ./run-e2e.sh --down and remove \$MAAS_STATE" ;;
+    esac
+fi
 run "$MAAS" power "$NODE" status
 if [[ $DRY == 0 ]]; then
     con="$("$MAAS" show "$NODE" 2>/dev/null | awk '$1=="console"{print $2; exit}')"
