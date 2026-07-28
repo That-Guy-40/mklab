@@ -37,17 +37,34 @@ bmc_port = 6230
 driver   = "ramdisk"
 image    = "micro-linux-x86_64"
 
+# ALL THREE NODES DECLARE ONE PAYLOAD, deliberately. node2/node3 asked for
+# `busybox-netboot` and `anycast-dns-ram`, which read well and neither of which has its
+# artifact on a fresh host — they are built by other labs (the anycast one wants a sudo
+# chroot build + export-initrd). So `apply` pass 1 refused them, correctly and by name,
+# both nodes went back to `error`, and pass 2 could never issue zero transitions.
+#
+# A spec the fleet cannot satisfy makes the reconciliation invariant UNREACHABLE no matter
+# how right the code is — which is the same trap node1's `install/almalinux9-ks` set, in a
+# quieter way: that one converged onto something slow, these two converged onto nothing at
+# all. `apply` is here to exercise the reconcile loop; payload variety is what
+# `ramdisk-catalog.toml` and `drivers/ramdisk.sh describe` are for, and neither needs a
+# node declared against it to be worth reading.
+#
+# To make this fleet heterogeneous again, build the artifacts first (the catalog prints
+# the exact command per image: `drivers/ramdisk.sh describe <image>`), then change these
+# two lines back. The refusal you get otherwise is the driver working, not failing.
+
 [[node]]
 name     = "node2"
 bmc_port = 6231
 driver   = "ramdisk"
-image    = "busybox-netboot"
+image    = "micro-linux-x86_64"
 
 [[node]]
 name     = "node3"
 bmc_port = 6232
 driver   = "ramdisk"
-image    = "anycast-dns-ram"
+image    = "micro-linux-x86_64"
 
 [pool]
 available = 1             # keep this many wiped + ready (apply, build step 6)

@@ -170,16 +170,64 @@ info "payload      : $IMAGE"
 info "subject node : $NODE"
 info "images dir   : $MAAS_IMAGES_DIR"
 info "PXE docroot  : $MAAS_NETBOOT_DIR"
-if [[ $DRY == 0 ]]; then
-    sudo -n true 2>/dev/null \
-        || die "sudo is not primed. Run 'sudo -v' first — this script front-loads the
-privileged work and must not stop to ask for a password halfway through a boot."
-fi
 # The payload must already be built by the lab that owns it. This script does not
 # build other labs' artifacts; the driver's own refusal names the command.
 if [[ $DRY == 0 ]]; then
     "$HERE/drivers/ramdisk.sh" describe "$IMAGE" >/dev/null 2>&1 \
         || die "no catalog entry '$IMAGE' (see ramdisk-catalog.toml)"
+
+    # …AND SO MUST EVERY OTHER PAYLOAD fleet.toml DECLARES. Phase 9 converges the whole
+    # fleet, not just the subject node, so a sibling declared against an artifact this
+    # host has never built fails there — nine phases and several minutes after the fact
+    # was knowable. node2/node3 once declared `busybox-netboot` and `anycast-dns-ram`,
+    # neither built here: apply refused them by name (correctly), both landed in `error`,
+    # and the reconciliation invariant could not be reached at all.
+    #
+    # A missing artifact is a HOST condition, not a repo defect — which is why the
+    # headless suite only checks that the catalog owns the image, and the check for
+    # whether it exists lives here, where the host is.
+    REPO_ROOT="$(cd -- "$HERE/../.." && pwd)"
+    missing=""
+    while read -r nname nimg; do
+        [[ -n "$nname" && -n "$nimg" ]] || continue
+        d="$("$HERE/drivers/ramdisk.sh" describe "$nimg" 2>&1)" \
+            || die "fleet.toml declares '$nname' as ramdisk/'$nimg', which the catalog does not
+describe. Phase 9 converges the whole fleet, so this node would fail there. Fix the
+declaration, or add the image to ramdisk-catalog.toml."
+        eval "$(python3 "$HERE/lib/catalog.py" "$HERE/ramdisk-catalog.toml" get "$nimg" 2>/dev/null)"
+        # Catalog paths are absolute OR repo-relative (catalog.py expands ~ and $VARS but
+        # documents "relative = repo root"). Resolve them the same way drivers/ramdisk.sh
+        # does — testing them against $PWD instead reported every artifact missing,
+        # including the one this run had just staged.
+        for f in "${IMG_KERNEL:-}" "${IMG_INITRD:-}"; do
+            [[ -n "$f" ]] || continue
+            case "$f" in /*) : ;; *) f="$REPO_ROOT/$f" ;; esac
+            [[ -f "$f" ]] || missing+="  $nname -> $nimg: missing $f
+"
+        done
+    done < <(python3 -c '
+import sys, tomllib
+spec = tomllib.load(open(sys.argv[1], "rb"))
+for n in spec.get("node", []):
+    if n.get("driver") == "ramdisk":
+        print(n.get("name", "?"), n.get("image", ""))
+' "$HERE/fleet.toml")
+    if [[ -n "$missing" ]]; then
+        die "fleet.toml declares payloads this host has not built:
+$missing
+Phase 9 converges the WHOLE fleet, so those nodes would fail there — nine phases after
+this was knowable. Either build them (the catalog prints the command:
+'drivers/ramdisk.sh describe <image>') or declare those nodes on a payload that exists."
+    fi
+fi
+
+# Checked LAST of the preflight items, deliberately: everything above is a config
+# question the operator can answer without privilege, and demanding sudo before telling
+# them their spec is wrong wastes the trip.
+if [[ $DRY == 0 ]]; then
+    sudo -n true 2>/dev/null \
+        || die "sudo is not primed. Run 'sudo -v' first — this script front-loads the
+privileged work and must not stop to ask for a password halfway through a boot."
 fi
 
 # ── 1. the PXE network + HTTP docroot (SUDO) ────────────────────────────────

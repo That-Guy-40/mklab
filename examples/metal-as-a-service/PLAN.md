@@ -1197,3 +1197,39 @@ the fix — `manage` cannot accept a transient state). `tests/run-all.sh` → **
 skipped, 0 failed**. Three negative controls run for real: emptying the transient list,
 aborting without the follow-up `manage`, and letting the two lists drift by one state —
 each fails by name.
+
+### One payload for the whole fleet, and a preflight that says so (2026-07-28)
+
+node2 and node3 were cleared out of `error` with `retry` (a real BMC round-trip —
+`error → verifying → manageable`, creds verified), and that turned out not to be enough.
+They declared `busybox-netboot` and `anycast-dns-ram`, whose artifacts are built by *other*
+labs and are absent on a fresh host. `apply` refused them by name — correctly; the driver
+prints the build command — both nodes returned to `error`, and pass 2 could never issue
+zero transitions.
+
+**A spec the fleet cannot satisfy makes the reconciliation invariant unreachable however
+right the code is.** That is the same trap node1's `install/almalinux9-ks` set, in a
+quieter form: node1 converged onto something *slow*, node2/node3 converged onto *nothing
+at all*. All three nodes now declare `micro-linux-x86_64`. Payload variety is what
+`ramdisk-catalog.toml` and `drivers/ramdisk.sh describe` are for; neither needs a node
+declared against it to be worth reading, and the comment in `fleet.toml` says how to make
+the fleet heterogeneous again (build the artifacts first).
+
+**Two checks, at the two different levels, because they are two different questions.**
+"The catalog does not own this image" is a spec nobody can ever satisfy — a repo defect,
+so `tests/test-apply-reports-and-converges.sh` asks the *driver* about every ramdisk node
+in the spec. "The artifact is not built here" is a **host** condition, so `run-e2e.sh`'s
+preflight resolves each declared image's kernel and initrd and refuses up front, naming
+every missing file. Failing the headless suite for an unbuilt artifact would fail it for
+the wrong thing.
+
+The preflight also moved **above** the sudo gate: everything it checks is a config
+question the operator can answer without privilege, and demanding `sudo -v` before telling
+someone their spec is wrong wastes the trip.
+
+**Found by running it, not by reasoning about it.** The first version of the artifact check
+reported *every* payload missing, including one staged minutes earlier: `catalog.py`
+returns paths that are absolute **or repo-relative**, and the check resolved them against
+`$PWD`. It now resolves them exactly as `drivers/ramdisk.sh` does. Negative control:
+declaring node3 back onto `anycast-dns-ram` fails preflight in two seconds, naming the
+file.

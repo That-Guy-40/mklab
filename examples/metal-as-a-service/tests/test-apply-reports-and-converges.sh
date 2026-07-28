@@ -134,4 +134,31 @@ PY
     || fail "REGRESSION: fleet.toml declares '$NODE' as '$decl' but run-e2e.sh deploys 'ramdisk/$IMAGE'. apply will spend pass 1 undoing the deploy phase 8 just made, so the fleet never converges and the invariant above can never hold. (It was 'install/almalinux9-ks': a ~30-minute Anaconda install the script's own header says it deliberately avoids.)"
 note "fleet.toml declares for '$NODE' exactly what run-e2e.sh deploys ($decl)  ✓"
 
+# ── 7. EVERY declared image is one its driver can actually describe ────────
+# The subject node is not a special case. node2/node3 declared `busybox-netboot` and
+# `anycast-dns-ram` — artifacts built by OTHER labs and absent on a fresh host. apply
+# refused them by name (correctly), both nodes went to `error`, and pass 2 could never
+# reach zero. A spec the fleet cannot satisfy makes the invariant unreachable however
+# right the code is: the same trap node1's `install/almalinux9-ks` set, quieter, because
+# these converge onto nothing at all rather than onto something slow.
+#
+# This asks the DRIVER, not the filesystem. "The catalog does not own this image" is a
+# spec nobody can ever satisfy; "the artifact is not built yet" is a host that has not
+# run a build command, and failing a test for that would be failing it for the wrong
+# thing.
+while read -r nname nimg; do
+    [[ -n "$nname" ]] || continue
+    "$LAB_DIR/drivers/ramdisk.sh" describe "$nimg" >/dev/null 2>&1 \
+        || fail "REGRESSION: fleet.toml declares '$nname' as ramdisk/'$nimg', an image the ramdisk driver cannot describe. A node cannot converge onto an image its driver does not own — it lands in 'error' and the reconciliation invariant becomes unreachable"
+    [[ "$nimg" == "$IMAGE" ]] \
+        || note "NOTE: '$nname' declares '$nimg' rather than the run's '$IMAGE' — fine PROVIDED its artifacts are built on this host; 'drivers/ramdisk.sh describe $nimg' prints the command that builds them"
+done < <(python3 -c '
+import sys, tomllib
+spec = tomllib.load(open(sys.argv[1], "rb"))
+for n in spec.get("node", []):
+    if n.get("driver") == "ramdisk":
+        print(n.get("name", "?"), n.get("image", ""))
+' "$FLEET")
+note "every ramdisk node in fleet.toml declares an image its driver owns  ✓"
+
 pass "apply announces each transition and reprints the tool's own words when one fails while staying quiet on success; the reconciliation invariant is tested real-then-real against a parsed transition count; and fleet.toml declares the end-state the run actually reaches"
