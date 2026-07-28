@@ -426,13 +426,14 @@ gate() {  # gate <driver-script> <node> <image> <slot> <verify:0|1>
 # (staying degraded-but-up) instead of bricking; both slots bad -> error. Allowed
 # from `available` (fresh) and `active` (A/B upgrade-in-place).
 cmd_deploy() {
-    local node="" driver="" image="" do_verify=1
-    node="${1:?usage: deploy <node> --driver D --image I [--no-verify]}"; shift
+    local node="" driver="" image="" do_verify=1 region=""
+    node="${1:?usage: deploy <node> --driver D --image I [--region R] [--no-verify]}"; shift
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --driver)    driver="$2"; shift 2 ;;
             --image)     image="$2"; shift 2 ;;
             --no-verify) do_verify=0; shift ;;
+            --region)    region="$2"; shift 2 ;;
             *) die "deploy: unknown option '$1'" ;;
         esac
     done
@@ -453,6 +454,9 @@ cmd_deploy() {
 
     local prev; prev="$(_read "$node" image "")"     # current image -> rollback candidate
     _write "$node" driver "$driver"
+    # A node deployed INTO a region is not `active` until it has joined it (fast-follow:
+    # ramdisk -> resilient region). Recorded before the gate so the driver can see it.
+    [[ -n "$region" ]] && _write "$node" region "$region"
     set_state "$node" deploying deploy
     info "deploying image '$image' via '$driver' (verify=$do_verify, health timeout ${MAAS_HEALTH_TIMEOUT}s)…"
 
@@ -739,6 +743,65 @@ _apply_pass() {
             "${PLAN_NODE[$k]}" "${PLAN_CUR[$k]}" "${PLAN_ACT[$k]}" "${PLAN_WHY[$k]}" >&2
     done
 
+    local issued=0 failed=0
+    # ── claims: schedule by inspected facts, not by name (fast-follow) ──────
+    # A [[claim]] declares WHAT is wanted — "2 nodes with >=2 cpus and >=2G" — and the
+    # scheduler picks `available` nodes whose INSPECTED facts satisfy it. That is the
+    # difference between a fleet spec and an inventory: nobody has to know which
+    # machine is which. Facts come from increment 2's probe; a node that was never
+    # inspected has none, and is therefore not schedulable — which is correct, not a
+    # bug: scheduling onto hardware you have never looked at is how you get surprises.
+    local cname
+    while read -r cname; do
+        [[ -n "$cname" ]] || continue
+        local CLAIM_COUNT=1 CLAIM_DRIVER="" CLAIM_IMAGE="" CLAIM_MIN_CPUS=0 CLAIM_MIN_MEM_MB=0 CLAIM_REGION=""
+        eval "$(python3 "$fleet_py" "$spec" claim "$cname")"
+        local want="${CLAIM_COUNT:-1}" got=0 cand=() nn
+        local nd2
+        for nd2 in "$STATE_ROOT"/*/; do
+            nn="$(basename "$nd2")"
+            node_exists "$nn" || continue
+            local st2; st2="$(read_state "$nn")"
+            # Already satisfying THIS claim? Ownership is recorded on the node, not
+            # inferred from driver+image: two claims can want the same image with
+            # different constraints, and counting a node deployed for one of them
+            # against the other would leave the second silently under-filled while
+            # both report satisfied.
+            if [[ "$st2" == active && "$(_read "$nn" claim "")" == "$cname" ]]; then
+                got=$((got+1)); continue
+            fi
+            [[ "$st2" == available ]] || continue
+            local cpus mem
+            cpus="$(_read "$nn" cpus 0)"; mem="$(_read "$nn" mem_mb 0)"
+            [[ "${cpus:-0}" -ge "${CLAIM_MIN_CPUS:-0}" ]] || continue
+            [[ "${mem:-0}"  -ge "${CLAIM_MIN_MEM_MB:-0}" ]] || continue
+            cand+=("$nn")
+        done
+        local short=$(( want - got ))
+        if [[ $short -le 0 ]]; then
+            printf '  claim %-10s satisfied (%d/%d)\n' "$cname" "$got" "$want" >&2
+            continue
+        fi
+        if [[ ${#cand[@]} -eq 0 ]]; then
+            printf '  claim %-10s UNSATISFIABLE: want %d more with cpus>=%s mem_mb>=%s, and no `available` node has facts that qualify (inspect one first)\n' \
+                "$cname" "$short" "${CLAIM_MIN_CPUS:-0}" "${CLAIM_MIN_MEM_MB:-0}" >&2
+            held=$((held+1)); continue
+        fi
+        local picked
+        for picked in "${cand[@]:0:$short}"; do
+            printf '  claim %-10s -> %s (cpus=%s mem_mb=%s) deploy %s/%s\n' "$cname" "$picked" \
+                "$(_read "$picked" cpus 0)" "$(_read "$picked" mem_mb 0)" "$CLAIM_DRIVER" "$CLAIM_IMAGE" >&2
+            [[ "$dry" == 1 ]] && continue
+            if ( cmd_deploy "$picked" --driver "$CLAIM_DRIVER" --image "$CLAIM_IMAGE" \
+                     ${CLAIM_REGION:+--region "$CLAIM_REGION"} ) >"${MAAS_CLAIM_LOG:-/dev/null}" 2>&1; then
+                _write "$picked" claim "$cname"      # this node now belongs to this claim
+                issued=$((issued+1))
+            else
+                warn "apply: claim '$cname' -> deploy '$picked' failed"; failed=$((failed+1))
+            fi
+        done
+    done < <(python3 "$fleet_py" "$spec" claims 2>/dev/null)
+
     # the pool: how many nodes are kept wiped + ready
     local POOL_AVAILABLE=""
     eval "$(python3 "$fleet_py" "$spec" pool 2>/dev/null)"
@@ -765,7 +828,6 @@ _apply_pass() {
     fi
 
     # issue exactly the missing transitions
-    local issued=0 failed=0
     for k in "${!PLAN_NODE[@]}"; do
         name="${PLAN_NODE[$k]}"
         case "${PLAN_ACT[$k]}" in
@@ -865,7 +927,7 @@ Lifecycle verbs (Ironic-faithful state machine):
   manage <node>                          enrolled|error -> manageable (verifies BMC)
   inspect <node> {--facts F|--from-metadata|--boot}   manageable (+schedulable facts)
   provide <node> [--wiped]               manageable -> available (via cleaning/wipe)
-  deploy <node> --driver D [--image I]   available -> active (install|ramdisk|image|image+measured)
+  deploy <node> --driver D [--image I] [--region R]   available -> active (install|ramdisk|image|image+measured)
   rescue <node> / unrescue <node>        active <-> rescue
   release <node> [--wiped]               active|rescue -> available (via cleaning)
   maintenance <node> / unmaintenance <node>   any <-> maintenance

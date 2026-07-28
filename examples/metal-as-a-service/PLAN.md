@@ -16,8 +16,11 @@ This file tracks the **build increments** and records each one's outcome as it l
 | **6** | **`apply` declarative reconcile (§3a)** — diff desired-vs-actual, idempotent | ✅ **DONE (this increment)** — headless |
 | **7** | **Phase-6 actions panel** — declared verbs, driven through `tools/control-pane` | ✅ **DONE (this increment)** — v1 COMPLETE |
 
-Fast-follows (documented, not v1): `image+measured` attested gate; `ramdisk`→region
-wiring; a flavor/tag scheduler atop `apply`.
+| **F1** | **`image+measured`** — the TPM-attested activation gate | ✅ **DONE** |
+| **F2** | **`ramdisk`→region wiring** — a RAM node must JOIN the region to count | ✅ **DONE** |
+| **F3** | **flavor/tag scheduler atop `apply`** — claims resolved by inspected facts | ✅ **DONE** |
+
+All three documented fast-follows are now built as well.
 
 ## The house rule this lab is built under
 
@@ -546,3 +549,59 @@ turns the `ui` row **LIED** and fails the matrix.
 **The ladder is complete.** All 7 increments of the v1 build order are done. Remaining
 work is the documented fast-follows: `image+measured` (the TPM-attested activation
 gate), `ramdisk`→region wiring, and a flavor/tag scheduler atop `apply`.
+
+## Fast-follows — outcome (2026-07-28)
+
+The three documented fast-follows, built together.
+
+### `image+measured` — the attested activation gate
+
+`drivers/image-measured.sh` delegates the lay-down to `image.sh` and adds the last
+question: *did the machine that came up measure into the state we expected?* A node
+reaches `active` only on a PCR quote that **verifies against the trusted attestation
+key** and **matches the image's expected PCR policy**. Five refusals, each by name: no
+quote, unsigned quote, quote signed by an untrusted key, a PCR mismatch, and a quote
+that simply omits a required register.
+
+**The refusal that matters most is at `verify`:** an image with **no** `pcrs.expected`
+policy is rejected outright. Silently skipping the gate for an image with nothing to
+attest against would be the worst possible failure — the node would activate unmeasured
+while the driver's own name promised otherwise.
+
+> **Honest framing, load-bearing.** The TPM here is **swtpm under QEMU**: faithful
+> plumbing, **not a trust anchor**. Anything that can read the emulator's userspace can
+> forge both the PCR state and the AK. This proves the *mechanism* and the *refusal
+> path*, not the integrity of a machine. On real hardware the anchor is a discrete TPM
+> whose EK is certified by the manufacturer, and the verifier must pin *that* chain —
+> the same caveat [`../systemd261-nixos-measured-boot/`](../systemd261-nixos-measured-boot/README.md)
+> states about its own spikes D/G, which is where these mechanics were proven.
+
+### `ramdisk` → region wiring
+
+`deploy --driver ramdisk --region R` is **not** satisfied by "the service answered". The
+catalog entry declares a `region_check` (console/http/dns) and the node must pass it
+*after* local health. The failure this exists to catch is the nastiest shape available:
+a RAM node that is **up but never announced** passes every local check while the region
+routes nothing to it — and every dashboard says healthy. An image that declares no
+`region_check` **cannot be deployed into a region at all**, because the control plane
+would be claiming a membership it has no way to verify.
+
+### Flavor/tag scheduler atop `apply`
+
+`fleet.toml` gains `[[claim]]`: declare *what* is wanted — `count`, `driver`, `image`,
+`min_cpus`, `min_mem_mb`, optional `region` — and `apply` picks `available` nodes whose
+**inspected facts** satisfy it. A node nobody ever inspected has no facts and is
+therefore **not schedulable**, which is correct rather than a limitation: scheduling
+onto hardware you have never looked at is exactly the surprise increment 2's probe
+exists to prevent. An unsatisfiable claim is **reported**, not silently under-filled.
+
+**A bug the test found, and it was a real one:** the first version counted any active
+node running the claim's driver+image as satisfying it. Two claims wanting the same
+image with different constraints would then collide — one would consume the other's
+nodes and both would report satisfied while one was under-filled. Ownership is now
+**recorded on the node** (`claim = <name>`), not inferred.
+
+**Verified (headless, this host, 2026-07-28):** `tests/run-all.sh` → **15 passed, 0
+skipped, 0 failed**; `chaos-run.sh` → 18 scenarios across 9 layers, **0 critical**.
+Negative control run: removing the attestation step from `image-measured`'s health lets
+a node with **no quote at all** activate, and the test says so.

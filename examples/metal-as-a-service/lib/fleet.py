@@ -7,6 +7,8 @@ Mirrors bmc-toolkit's lib/registry.py contract so create-fleet.sh can source it:
     fleet.py <fleet.toml> get <name>       -> NODE_<FIELD>=<shell-quoted> lines,
                                               [defaults] merged under per-node keys
     fleet.py <fleet.toml> pool             -> POOL_<FIELD>=<shell-quoted> lines
+    fleet.py <fleet.toml> claims           -> one claim name per line
+    fleet.py <fleet.toml> claim <name>     -> CLAIM_<FIELD>=<shell-quoted> lines
 
 Kept dependency-free and small on purpose — the fleet spec is the hand-edited
 source of truth; this only projects it for bash.
@@ -37,7 +39,7 @@ def nodes(doc):
 
 def main(argv):
     if len(argv) < 3:
-        sys.exit("usage: fleet.py <fleet.toml> {names|get <name>|pool}")
+        sys.exit("usage: fleet.py <fleet.toml> {names|get <name>|pool|claims|claim <name>}")
     path, cmd = argv[1], argv[2]
     doc = load(path)
     ns = nodes(doc)
@@ -45,6 +47,21 @@ def main(argv):
         for n in ns:
             print(n["name"])
         return
+    if cmd == "claims":
+        for c in doc.get("claim", []):
+            print(c.get("name", ""))
+        return
+
+    if cmd == "claim":
+        if len(argv) < 4:
+            sys.exit("usage: fleet.py <fleet.toml> claim <name>")
+        for c in doc.get("claim", []):
+            if c.get("name") == argv[3]:
+                for k, v in c.items():
+                    print(f"CLAIM_{k.upper()}={shlex.quote(str(v))}")
+                return
+        sys.exit(f"fleet.py: no claim '{argv[3]}'")
+
     if cmd == "pool":
         for k, v in doc.get("pool", {}).items():
             print(f"POOL_{k.upper()}={shlex.quote(str(v))}")

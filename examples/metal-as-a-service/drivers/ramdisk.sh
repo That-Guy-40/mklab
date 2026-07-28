@@ -70,6 +70,42 @@ await_power() {
     return 1
 }
 
+# region_check <image> — after health, prove the node actually JOINED the region it was
+# deployed into (fast-follow: ramdisk -> resilient region). A RAM node that is up but
+# not announcing is the failure this catches: the service answers locally and the
+# region never sees it, so traffic goes nowhere and every dashboard says "healthy".
+# The check is declared per image (`region_check_*`), like health — the driver invents
+# nothing about what membership means.
+region_check() {
+    local node="$1" region="$2" to="${MAAS_REGION_TIMEOUT:-${MAAS_HEALTH_TIMEOUT:-120}}"
+    local waited=0 step; step="${POLL%%.*}"; [[ -z "$step" || "$step" -eq 0 ]] && step=1
+    local kind="${IMG_REGION_CHECK:-}"
+    if [[ -z "$kind" ]]; then
+        echo "ramdisk: '$IMG_NAME' declares no region_check — cannot prove '$node' joined '$region'. Refusing to claim membership this driver cannot verify." >&2
+        return 1
+    fi
+    echo "ramdisk: verifying '$node' joined region '$region' ($kind)…" >&2
+    while [[ $waited -lt $to ]]; do
+        case "$kind" in
+        console)
+            local con; con="$(node_field "$node" console "")"
+            [[ -n "$con" ]] || con="$(nd "$node")/console.log"
+            [[ -f "$con" ]] && grep -qE -- "${IMG_REGION_MARKER:-.}" "$con" && return 0 ;;
+        http)
+            command -v curl >/dev/null || { echo "ramdisk: region_check=http needs curl" >&2; return 1; }
+            curl -fsS --max-time 5 "${IMG_REGION_URL:?}" >/dev/null 2>&1 && return 0 ;;
+        dns)
+            command -v dig >/dev/null || { echo "ramdisk: region_check=dns needs dig" >&2; return 1; }
+            local qn="${IMG_REGION_QUERY%@*}" qs="${IMG_REGION_QUERY#*@}"
+            [[ -n "$(dig +short +time=2 +tries=1 "@$qs" "$qn" 2>/dev/null)" ]] && return 0 ;;
+        *) echo "ramdisk: unknown region_check kind '$kind'" >&2; return 1 ;;
+        esac
+        sleep "$POLL"; waited=$((waited+step))
+    done
+    echo "ramdisk: '$node' is UP but never joined region '$region' within ${to}s — it is serving nothing the region can reach" >&2
+    return 1
+}
+
 case "$verb" in
 
 describe)
@@ -183,6 +219,8 @@ deploy)
 health)
     node="${1:?ramdisk health <node> <image>}"; image="${2:?}"
     cat_get "$image"
+    # a node deployed into a region is not healthy until it has JOINED it
+    REGION="$(node_field "$node" region "")"
     to="${MAAS_HEALTH_TIMEOUT:-120}"; waited=0
     step="${POLL%%.*}"; [[ -z "$step" || "$step" -eq 0 ]] && step=1
     case "$IMG_HEALTH" in
@@ -192,7 +230,8 @@ health)
         echo "ramdisk: awaiting /$IMG_MARKER/ on $console (timeout ${to}s)…" >&2
         while [[ $waited -lt $to ]]; do
             [[ -f "$console" ]] && grep -qE -- "$IMG_MARKER" "$console" \
-                && { echo "ramdisk: '$node' matched its console marker (active)" >&2; exit 0; }
+                && { [[ -z "$REGION" ]] || region_check "$node" "$REGION" || exit 1
+                     echo "ramdisk: '$node' matched its console marker (active)" >&2; exit 0; }
             sleep "$POLL"; waited=$((waited+step))
         done
         echo "ramdisk: '$node' never printed /$IMG_MARKER/ within ${to}s (health gate FAIL)" >&2
@@ -203,6 +242,7 @@ health)
         while [[ $waited -lt $to ]]; do
             body="$(curl -fsS --max-time 5 "$IMG_URL" 2>/dev/null)" && {
                 if [[ -z "${IMG_MARKER:-}" || "$body" == *"$IMG_MARKER"* ]]; then
+                    [[ -z "$REGION" ]] || region_check "$node" "$REGION" || exit 1
                     echo "ramdisk: '$node' is serving $IMG_URL (active)" >&2; exit 0
                 fi
             }
@@ -216,7 +256,8 @@ health)
         echo "ramdisk: resolving $qname against $qserver (timeout ${to}s)…" >&2
         while [[ $waited -lt $to ]]; do
             ans="$(dig +short +time=2 +tries=1 "@$qserver" "$qname" 2>/dev/null)"
-            [[ -n "$ans" ]] && { echo "ramdisk: '$node' answered DNS for $qname -> $ans (active)" >&2; exit 0; }
+            [[ -n "$ans" ]] && { [[ -z "$REGION" ]] || region_check "$node" "$REGION" || exit 1
+                                 echo "ramdisk: '$node' answered DNS for $qname -> $ans (active)" >&2; exit 0; }
             sleep "$POLL"; waited=$((waited+step))
         done
         echo "ramdisk: $qname did not resolve against $qserver within ${to}s (health gate FAIL)" >&2
