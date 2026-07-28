@@ -21,7 +21,7 @@ PXE-install / RAM-boot / golden-image labs. Design roadmap:
 > + F2 signature gate** (step 3) — `deploy` now only reaches `active` when the image
 > **verifies** (OpenSSL CMS) and passes its **health gate**, and a failing image
 > **rolls back to the previous good one** instead of bricking. All **verifiable
-> headlessly** (mock BMC + mock driver, real crypto; `tests/run-all.sh` → 8 passed);
+> headlessly** (mock BMC + mock driver, real crypto; `tests/run-all.sh` → 9 passed);
 > the real `install` and `inspect --boot` are author-run. Remaining: `ramdisk`/`image`
 > drivers + `apply` reconcile (steps 4–6). See [PLAN.md](PLAN.md) for the ladder.
 
