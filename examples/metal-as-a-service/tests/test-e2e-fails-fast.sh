@@ -102,4 +102,36 @@ after="$(wc -c < "$LAB_DIR/e2e-run.log" 2>/dev/null || echo 0)"
     || fail "REGRESSION: --dry-run wrote to the real run log ($before -> $after bytes). It appends a ghost run to the last real one, and the next person reading a failure reads two runs interleaved"
 note "--dry-run leaves the real run log byte-for-byte alone  ✓"
 
+# ── 7. a run that never STARTS must not destroy the last run's log ─────────
+# The log used to be truncated before preflight, so a run refused at the sudo gate — or
+# at any preflight check — wiped the record of the last run that actually finished. (Done
+# to a passing run's log while testing a preflight check, which is how it was found.)
+# Same class as §6: the record of a completed run wrecked by a run that never started.
+LOGF="$SANDBOX/keepme.log"
+printf 'A COMPLETED RUN LIVED HERE\n' > "$LOGF"
+sum_before="$(cksum < "$LOGF")"
+( cd "$LAB_DIR" && E2E_LOG="$LOGF" MAAS_IMAGES_DIR="$SANDBOX/nope" ./run-e2e.sh ) >/dev/null 2>&1
+[[ "$(cksum < "$LOGF")" == "$sum_before" ]] \
+    || fail "REGRESSION: a run that refused during preflight replaced the previous run's log. The last thing that actually finished is the thing you most want to read after a failed start — and the failed start had nothing of its own to say"
+note "a run refused in preflight leaves the previous log byte-for-byte alone  ✓"
+
+# The control: commit_log must actually replace it, or "never truncates" would pass §7
+# while leaving every run appended to the last one — the ghost-log bug by another route.
+cat > "$SANDBOX/commit.sh" <<EOS
+DRY=0
+REAL_LOG="$LOGF"
+SCRATCH_LOG="$SANDBOX/scratch.log"
+printf 'THIS RUN\n' > "\$SCRATCH_LOG"
+EOS
+sed -n '/^commit_log() {/,/^}/p' "$E2E" >> "$SANDBOX/commit.sh"
+printf 'commit_log
+' >> "$SANDBOX/commit.sh"
+[[ "$(grep -c . "$SANDBOX/commit.sh")" -gt 4 ]] || fail "could not extract commit_log() from run-e2e.sh — renamed?"
+bash "$SANDBOX/commit.sh" >/dev/null 2>&1
+grep -q 'THIS RUN' "$LOGF" \
+    || fail "commit_log did not replace the log with this run's output — a run that starts must own the log, or every run appends to the last one"
+grep -q 'A COMPLETED RUN LIVED HERE' "$LOGF" \
+    && fail "commit_log left the PREVIOUS run's content in place. Two runs interleaved in one file is the exact confusion §6 exists to prevent"
+note "control: once the run commits, the log is replaced with this run's own output  ✓"
+
 pass "a failed SETUP phase aborts the live driver with a verdict; the phases under test stay deliberately non-fatal but visible; and --dry-run never touches the run log"

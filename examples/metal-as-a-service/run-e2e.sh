@@ -121,7 +121,27 @@ ensure_manageable() {
     esac
 }
 
-[[ $DRY == 1 ]] || : > "$LOG"
+# THE LOG IS NOT TRUNCATED YET. It used to be replaced here, before preflight — so a run
+# that refused at the sudo gate, or at any preflight check, destroyed the log of the last
+# run that actually finished. (Done to a passing run's log, by me, while testing a
+# preflight check.) Same class as the --dry-run ghost-log bug: the record of a completed
+# run wrecked by a run that never started.
+#
+# Preflight writes to a scratch file instead; the real log is replaced only once the run
+# commits to doing work. Either way the reap trap removes the scratch.
+REAL_LOG="$LOG"
+if [[ $DRY == 0 ]]; then
+    LOG="$(mktemp "${TMPDIR:-/tmp}/maas-e2e-preflight.XXXXXX")" || LOG="$REAL_LOG"
+    SCRATCH_LOG="$LOG"
+fi
+# commit_log — preflight passed; this run owns the log now. Replaces it with what
+# preflight said, so the file still starts at the top of THIS run.
+commit_log() {
+    [[ $DRY == 1 || -z "${SCRATCH_LOG:-}" ]] && return 0
+    cp -f "$SCRATCH_LOG" "$REAL_LOG" 2>/dev/null || : > "$REAL_LOG"
+    rm -f "$SCRATCH_LOG"; SCRATCH_LOG=""
+    LOG="$REAL_LOG"
+}
 
 # ── reap the one process this script starts ─────────────────────────────────
 # The facts sink is backgrounded here and holds :8282 for the whole run. Three runs in
@@ -136,6 +156,7 @@ ensure_manageable() {
 MD_PID=""
 reap() {
     local rc=$?
+    [[ -n "${SCRATCH_LOG:-}" ]] && rm -f "$SCRATCH_LOG"
     if [[ -n "$MD_PID" ]] && kill -0 "$MD_PID" 2>/dev/null; then
         kill "$MD_PID" 2>/dev/null
         # Give it a moment to release :8282, then insist. A sink that ignores SIGTERM
@@ -229,6 +250,8 @@ if [[ $DRY == 0 ]]; then
         || die "sudo is not primed. Run 'sudo -v' first — this script front-loads the
 privileged work and must not stop to ask for a password halfway through a boot."
 fi
+
+commit_log      # preflight is done; from here the real log is this run's
 
 # ── 1. the PXE network + HTTP docroot (SUDO) ────────────────────────────────
 step "[1/10] PXE network + HTTP docroot (sudo)"

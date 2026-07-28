@@ -1233,3 +1233,56 @@ returns paths that are absolute **or repo-relative**, and the check resolved the
 `$PWD`. It now resolves them exactly as `drivers/ramdisk.sh` does. Negative control:
 declaring node3 back onto `anycast-dns-ram` fails preflight in two seconds, naming the
 file.
+
+## PASS — the whole path, on real domains (2026-07-28)
+
+```
+PASS: end-to-end on real domains — BMC round-trip, probe-reported facts, a SIGNED
+payload netbooted into RAM, and apply converged. node1 is active.
+```
+
+Ten phases, nine live runs, thirteen defects. What the registry records for the passing
+run — worth reading, because each line is a fix from an earlier run doing its job:
+
+```
+deploying   -> error       (abort)      the strand recovery, firing live
+error       -> verifying   (manage)
+verifying   -> manageable  (manage)
+manageable  -> manageable  (inspect)    facts from a probe that booted and had a wire
+manageable  -> cleaning    (provide)
+cleaning    -> available   (provide)
+available   -> deploying   (deploy)
+deploying   -> active      (deploy)     signed payload, host-gated, into RAM
+```
+
+**All three nodes ended `active` on `ramdisk/micro-linux-x86_64`.** That matters more than
+the verdict line: phase 9's "pass 2 issued 0 transitions" is a genuine fixed point over
+the whole fleet, not two nodes being held in `error` and quietly ignored — which is what
+"zero transitions" would also have looked like.
+
+### The thirteenth defect, found by wrecking the evidence
+
+The log was truncated *before* preflight, so a run refused at the sudo gate — or at any
+preflight check — destroyed the log of the last run that **actually finished**. Found by
+doing it to the passing run's log while testing a preflight check.
+
+Same class as the `--dry-run` ghost log: the record of a completed run wrecked by a run
+that never started. Preflight now writes to a scratch file, and `commit_log` hands the
+real log over only once the run commits to doing work; the reap trap removes the scratch.
+Both halves are pinned in [`tests/test-e2e-fails-fast.sh`](tests/test-e2e-fails-fast.sh) —
+a refused run leaves the previous log byte-for-byte, **and** a committed run replaces it,
+because "never truncate" would satisfy the first assertion while quietly restoring the
+ghost-log bug by another route. Two negative controls, both run.
+
+### What a green run still does NOT prove
+
+- **The on-node half of F2 is unexercised.** This fleet's ROM has no `IMAGE_TRUST_CMD`, so
+  every passing run so far skipped `imgverify` (`E2E_NO_IMGVERIFY=1`). The host-side gate
+  is real; the firmware half has never run. Closing it needs
+  `netboot/build-ipxe.sh --imgverify --certfile <ca.crt>` attached via `<rom file=…/>`,
+  then `MAAS_IPXE_TRUSTS_CA=1`. That ROM would also give iPXE a serial console.
+- **The `install` and `image` drivers never touched a real node in this run** — only
+  `ramdisk` did. Their headless coverage is real but it is not this.
+- **A BMC that answers for a different machine** remains the highest-value chaos scenario
+  not yet written (the vbmc port collision found in run 2 was a *live* accident, not an
+  injected fault).
