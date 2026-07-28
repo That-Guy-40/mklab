@@ -50,6 +50,7 @@ LAB_CREATE_V2/
 ├── MANUAL_TESTING.md        # top-level cross-phase test walkthrough
 ├── TODO.md , AUDIT.md       # backlog + audit notes
 ├── NETBOOT_LAB_PLAN.md , MICRO_LINUX_LAB_PLAN.md , KALI_LLM_LAB_PLAN.md   # per-lab design docs
+├── MICRO_CLOUD_LAB_PLAN.md  # proposed: the phases as one micro cloud + Firecracker (Phase 7)
 ├── examples/                # every lab spec — see examples/00-INDEX.md for the full catalog
 │   ├── 00-INDEX.md          # the catalog: every spec, grouped by phase/theme
 │   ├── chroot-examples/     # Phase-1 chroot specs   (grouped bucket)
