@@ -113,11 +113,33 @@ ensure_manageable() {
         st=error
         break
     done
+    # `active` (or `rescue`) means the LAST run got there. Phase 3 has just rebuilt this
+    # node's domain and disk, so that record is already stale — the machine behind it is
+    # blank. Releasing is therefore reconciling the record with reality, not discarding a
+    # live workload, and for a ramdisk node the wipe is a documented no-op. Say it out
+    # loud anyway: a script that silently releases a node someone believes is serving
+    # would be a much worse thing to be.
     case "$st" in
-        enrolled|error) run "$MAAS" manage "$NODE" ;;
+        active|rescue)
+            info "'$NODE' is '$st' from a previous run. Phase 3 has already rebuilt its domain and"
+            info "disk, so that record is stale — the machine behind it is blank. Releasing it back"
+            info "to the pool so this run can inspect it again (for a ramdisk node the wipe is a"
+            info "no-op; nothing that is actually serving is being torn down):"
+            run "$MAAS" release "$NODE"
+            st=available ;;
+    esac
+    case "$st" in
+        enrolled|error|available) run "$MAAS" manage "$NODE" ;;
+        manageable) info "'$NODE' is already 'manageable' — nothing to drive" ;;
         "")  die "'$NODE' is not enrolled and create-fleet.sh did not enroll it — phase 3 did not finish" ;;
-        *)   info "'$NODE' is already '$st' (registry from an earlier run) — skipping 'manage', which is a transition from enrolled/error, not a re-check"
-             info "to start from scratch instead: ./run-e2e.sh --down and remove \$MAAS_STATE" ;;
+        # NO permissive default. This branch used to be `*) carry on`, and it was wrong
+        # three separate times — for a transient state, for `available`, and for `active`
+        # — each time producing a failure two phases downstream with a message about some
+        # other verb. Phase 6 needs `manageable`; anything this function cannot get there
+        # is a stop, here, naming the state.
+        *)   die "'$NODE' is in state '$st', and this run does not know how to get it to
+'manageable' from there — which is what phase 6's 'inspect' requires. Drive it by hand
+(see 'maas-lab.sh --help'), or start clean: ./run-e2e.sh --down and remove \$MAAS_STATE" ;;
     esac
 }
 

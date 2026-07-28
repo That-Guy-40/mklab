@@ -1293,3 +1293,50 @@ ghost-log bug by another route. Two negative controls, both run.
 - **A BMC that answers for a different machine** remains the highest-value chaos scenario
   not yet written (the vbmc port collision found in run 2 was a *live* accident, not an
   injected fault).
+
+### The tenth run: `available` was a one-way door (2026-07-28)
+
+Re-running over the fleet the passing run left behind failed at phase 6:
+
+```
+maas: cannot 'inspect' node 'node1' from state 'active' — needs one of: manageable
+```
+
+**Two defects, one in each layer.**
+
+**The state machine was missing an edge Ironic has.** `manage` accepted `enrolled|error`
+only, so nothing led from `available` back to `manageable`: a node that had ever been
+provisioned could never be inspected again. In Ironic that edge is `manage` itself — the
+**unprovide** transition, the way a node is pulled back out of the free pool. It is now
+accepted here too, which is the Ironic-faithful answer and not a workaround.
+
+**And `ensure_manageable` was, for the third time, too permissive.** Its `*)` branch meant
+"already advanced, carry on" — right for `manageable`, wrong for a transient state (run 9),
+wrong for `available`, and wrong for `active`. Each time the run failed two phases later
+with a message about a *different verb*, nowhere near the cause.
+
+The function is now named for what it does. It drives the node to `manageable` from
+wherever the last run left it — `manage` from `enrolled`/`error`/`available`, `abort` then
+`manage` from a strand, `release` then `manage` from `active`/`rescue` — and **there is no
+permissive default any more**: a state it cannot drive there stops the run *here*, naming
+the state.
+
+Releasing an `active` node deserves its own note, because a script that silently tears
+down something believed to be serving would be a worse thing than the bug. By phase 4,
+**phase 3 has already rebuilt that node's domain and disk** — so an `active` record is
+stale and the machine behind it is blank. The release reconciles the record with reality;
+for a ramdisk node the wipe is a documented no-op. The run says all of that out loud
+before doing it.
+
+**Three permissive-default failures in one file is a pattern, not three accidents.** The
+lesson recorded here for the next person: *a default branch that means "carry on" is a
+claim that every unlisted case is safe* — and in a state machine that claim is almost
+never true. Enumerate what you can handle; stop on the rest.
+
+**Verified headless:** [`tests/test-e2e-manage-idempotent.sh`](tests/test-e2e-manage-idempotent.sh)
+now covers `active`/`rescue` (release → manage, in that order), `available` (manage alone —
+no needless second wipe), and asserts the permissive default stays gone. It also pins the
+control plane's acceptance of the unprovide edge, since two files carry one claim.
+`tests/run-all.sh` → **23 passed, 0 failed**; `chaos-run.sh` → **19 scenarios, 0 critical**.
+Three negative controls run for real: restoring the permissive default, skipping `active`
+instead of releasing it, and dropping `available` from `manage` — each fails by name.

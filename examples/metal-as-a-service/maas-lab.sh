@@ -189,12 +189,20 @@ cmd_enroll() {
         "$node" "$domain" "$bmc_host" "$bmc_port" "$firmware" >&2
 }
 
-# manage — verify BMC creds, make the node manageable (enrolled|error -> manageable).
-# The `verifying` state is passed THROUGH so the saga shows in history; a BMC that
-# doesn't answer sends the node to `error`, not a silent hang.
+# manage — verify BMC creds, make the node manageable
+# (enrolled | error | available -> manageable). The `verifying` state is passed THROUGH so
+# the saga shows in history; a BMC that doesn't answer sends the node to `error`, not a
+# silent hang.
+#
+# `available` is here because Ironic puts it here: `manage` is the **unprovide** edge, the
+# way a node in the free pool is pulled back out of it for re-inspection or maintenance.
+# Without it `available` was a one-way door — nothing led back to `manageable`, so a node
+# that had ever been provisioned could never be inspected again. (Found live: a second
+# run of run-e2e.sh over an already-`active` fleet had no route back, and `inspect`
+# refused. The state machine was missing an edge that Ironic's has.)
 cmd_manage() {
     local node="${1:?usage: manage <node>}"; require_node "$node"
-    require_state "$node" manage enrolled error
+    require_state "$node" manage enrolled error available
     set_state "$node" verifying manage
     if bmc "$node" power status >/dev/null 2>&1; then
         set_state "$node" manageable manage
