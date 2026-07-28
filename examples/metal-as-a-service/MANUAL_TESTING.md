@@ -433,3 +433,75 @@ drivers/ramdisk.sh stage micro-linux-x86_64      # copies + signs
 **stops there**. No `bootdev disk`, no wait for a power-off. The health gate then watches
 the console for the catalog entry's marker; each payload's boot signature is the one its
 own lab documents. `maas-lab.sh show node1` reports `persistence=none`.
+
+---
+
+## 7. Chaos — how gracefully does it fall? (increment 4a)
+
+`chaos-run.sh` injects a fault at each point a deploy can break and grades where the
+node lands. **Fallback and a graceful halt are the acceptable intermediate rungs; the
+goal is that a fault never becomes a failure at all.** A run passes at zero criticals.
+
+```console
+$ ./chaos-run.sh
+
+  VERDICT    SCENARIO                  OUTCOME
+  ---------  ------------------------  -------
+  ABSORBED   none (control)            deployed "good-v2" and it is healthy
+  ABSORBED   verify-fail (had good)    still active on "good-v1"; "bad-v2" was refused before it was deployed
+  HALTED     verify-fail (fresh)       stopped in "error" — retry/abort can pick it up
+  DEGRADED   deploy-fail (had good)    fell back to "good-v1" after "bad-v2" was deployed and failed
+  DEGRADED   deploy-crash (had good)   fell back to "good-v1" after "bad-v2" was deployed and failed
+  HALTED     deploy-crash (fresh)      stopped in "error" — retry/abort can pick it up
+  DEGRADED   partial (had good)        fell back to "good-v1" after "bad-v2" was deployed and failed
+  DEGRADED   health-fail (had good)    fell back to "good-v1" after "bad-v2" was deployed and failed
+  HALTED     health-fail (fresh)       stopped in "error" — retry/abort can pick it up
+  HALTED     health-flap (had good)    passed its gate then died; `recheck` caught it and demoted it to "error"
+  HALTED     bmc-drop (had good)       stopped in "error" — retry/abort can pick it up
+  HALTED     control-plane-killed      was stuck mid-deploying; `abort` recovered it to "error", then `retry`
+
+  12 scenarios: 2 absorbed (goal), 4 degraded, 6 halted honestly, 0 CRITICAL
+PASS: no injected fault became a critical failure — every one was absorbed, fell back to
+a good image, or halted honestly with a verb that can recover it
+```
+
+### 7a. What the first run actually looked like
+
+The matrix did **not** pass the first time. It found two critical outcomes, both real:
+
+```console
+  STALE      health-flap (had good)    active on "bad-v2" — true at the gate, unhealthy now, nothing re-checks
+  STRANDED   control-plane-killed      stuck in transient state "deploying"; no verb accepts it
+
+  11 scenarios: … 2 CRITICAL
+FAIL: 2 of 11 injected faults became a CRITICAL failure
+```
+
+- **STRANDED** — killing `maas-lab.sh` mid-deploy left the node in `deploying`, which no
+  verb accepted. `maintenance` accepted any state and looked like an escape, but
+  `unmaintenance` restored `prior_state` and handed the node **straight back into
+  `deploying`**. Fixed with **`abort`** (transient → `error`, with a reason, where
+  `retry` works) and by making `unmaintenance` refuse to restore a transient state.
+- **STALE** — a node that passed its activation gate and then died kept reporting
+  `active`, because the gate is a one-time question and nothing asked again. Fixed with
+  **`recheck`**, which re-runs the current driver's health against the current image and
+  demotes a node that no longer passes.
+
+### 7b. The negative controls
+
+Both fixes were removed and the matrix re-run, so the report is known to depend on them:
+
+```console
+# CONTROL A — remove `abort`
+  STRANDED   control-plane-killed      stuck in transient state "deploying"; no verb accepts it
+FAIL: 1 of 12 injected faults became a CRITICAL failure
+
+# CONTROL B — remove `recheck`
+  STALE      health-flap (had good)    active on "bad-v2" — true at the gate, unhealthy now, nothing re-checks
+FAIL: 1 of 12 injected faults became a CRITICAL failure
+```
+
+`tests/test-chaos-matrix.sh` additionally refuses to accept "zero criticals" on its own:
+it requires all three acceptable rungs to be **occupied**, because a matrix that never
+broke anything is all-ABSORBED, one that breaks everything unrecoverably is all-HALTED,
+and one where the A/B path is dead never reaches DEGRADED.
