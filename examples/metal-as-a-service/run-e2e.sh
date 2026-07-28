@@ -320,10 +320,43 @@ run_soft "$MAAS" deploy "$NODE" --driver ramdisk --image "$IMAGE"
 run_soft "$MAAS" state "$NODE"
 
 # ── 9. the reconcile loop, twice — the invariant ────────────────────────────
-step "[9/10] apply: converge the fleet, then prove the second run is a no-op"
+#
+# THE INVARIANT NEEDS *REAL* THEN *REAL*. This was `--dry-run` then real, with the second
+# one labelled "must issue ZERO transitions". A dry run converges nothing, so the real run
+# after it issues exactly what the dry run just predicted — the label described a property
+# the sequence had not set up, and the check would have passed on any apply at all.
+#
+# Convergence is a fixed point: apply until nothing changes, then apply again and assert
+# nothing changed. The dry run stays, first, because seeing the plan before it is executed
+# is worth a line — it is just not one of the two runs the invariant is about.
+step "[9/10] apply: converge the fleet, then prove a SECOND real run is a no-op"
+info "the plan, before anything is issued:"
 run_soft "$MAAS" apply "$HERE/fleet.toml" --dry-run
-info "(the second run below must issue ZERO transitions — the reconciliation invariant)"
+info "pass 1 — converge (this one is expected to issue transitions):"
 run_soft "$MAAS" apply "$HERE/fleet.toml"
+info "pass 2 — the invariant: a converged fleet must issue ZERO transitions"
+if [[ $DRY == 0 ]]; then
+    APPLY2="$(mktemp "${TMPDIR:-/tmp}/maas-apply2.XXXXXX")"
+    printf '   $ %s\n' "$MAAS apply $HERE/fleet.toml" | tee -a "$LOG" >&2
+    "$MAAS" apply "$HERE/fleet.toml" >"$APPLY2" 2>&1 || true
+    cat "$APPLY2" >> "$LOG"
+    # `applied: N transition(s) over …` — N must be 0. Parsed rather than eyeballed,
+    # because "the fleet is converged" is the one claim in this run that a human reading
+    # a wall of tables will nod along to without checking.
+    n2="$(sed -nE 's/^ *applied: ([0-9]+) transition.*/\1/p' "$APPLY2" | tail -1)"
+    if [[ -z "$n2" ]]; then
+        info "WARNING: could not parse the transition count out of pass 2 — the invariant was NOT checked"
+    elif [[ "$n2" == 0 ]]; then
+        info "pass 2 issued 0 transitions — the fleet is a fixed point ✓"
+    else
+        info "WARNING: pass 2 issued $n2 transition(s). apply is not converging: either a node"
+        info "keeps failing its gate and being retried, or fleet.toml declares an end-state the"
+        info "fleet cannot reach. The verdict below reports the node's state either way."
+    fi
+    rm -f "$APPLY2"
+else
+    printf '   $ %s\n' "$MAAS apply $HERE/fleet.toml   # pass 2: must issue 0 transitions" >&2
+fi
 
 step "[10/10] the surface: register with the control pane + list the declared actions"
 run_soft "$MAAS" watch "$NODE" --register-only

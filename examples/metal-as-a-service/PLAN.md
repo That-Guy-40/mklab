@@ -1114,3 +1114,45 @@ node1 is declared `install/almalinux9-ks`: the ~30-minute Anaconda path that
 deploys. Either the declaration should match the ramdisk deploy, or phase 9 should
 converge a spec it can actually finish. Left open deliberately — it is a decision about
 what the e2e is *for*, not a defect.
+
+### The three follow-ups, fixed (2026-07-28)
+
+All three came out of the same run and were named above before being fixed.
+
+**`apply` no longer swallows what its transitions said.** Every branch was
+`( cmd_x … ) >/dev/null 2>&1` followed by a paraphrase — "deploy 'node1' failed — see its
+state" — so a deploy that blocked for half an hour produced *zero bytes* and read as a
+hang, and when it finally failed the reason had already been discarded. One `apply_run`
+helper now announces each transition **before** running it (a long one is visibly in
+progress rather than indistinguishable from a wedge) and, on failure, reprints the tool's
+own words indented instead of a vaguer sentence about them. Success stays quiet — the
+per-node table is the deliverable. `MAAS_APPLY_LOG`, when set, additionally keeps every
+transition's output, which is what a live driver points at its run log.
+
+**The reconciliation invariant is now tested with a sequence that can fail.** Phase 9 ran
+`apply --dry-run` then `apply` and called the second one "must issue ZERO transitions". A
+dry run converges nothing, so the real run after it issues exactly what the dry run
+predicted — the label described a property the sequence had not set up, and the check
+would have passed for any `apply` at all, including one that never converges. It is now
+dry (for the plan) → **real** (converge) → **real** (assert zero), with the transition
+count *parsed* out of the summary rather than eyeballed, because "the fleet is converged"
+is the one claim in this run a reader will nod along to without checking.
+
+**`fleet.toml` declares what the run actually deploys.** node1 was `install/almalinux9-ks`
+while phase 8 deploys `ramdisk/micro-linux-x86_64`, so pass 1 always spent itself undoing
+the deploy that had just succeeded — onto the ~30-minute Anaconda install this script's
+own header says it avoids, which is how the rollback bug above got its chance. A spec that
+fights the run can never converge, so the invariant was unreachable regardless of the
+code. The AlmaLinux path stays proven where it belongs, in
+`../virtualbmc-ipmi-lab/run-finale.sh`; what `apply` is here to exercise is the reconcile
+loop.
+
+**Verified headless:** [`tests/test-apply-reports-and-converges.sh`](tests/test-apply-reports-and-converges.sh),
+`tests/run-all.sh` → **23 passed, 0 skipped, 0 failed**. Five negative controls run for
+real. Two of them **passed on the first attempt** and had to be fixed rather than
+accepted: the quiet-on-success assertion was written against the mock driver, which exits
+*silently* when it succeeds and so could not demonstrate the property either way; and the
+real-then-real assertion counted `apply` lines without excluding `--dry-run`, so the old
+dry-then-real sequence satisfied it. Both were assertions that would have passed forever
+without testing anything — the same defect class as the invariant they were written to
+protect, which is why the controls get run rather than reasoned about.

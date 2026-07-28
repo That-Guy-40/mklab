@@ -876,8 +876,10 @@ _apply_pass() {
             printf '  claim %-10s -> %s (cpus=%s mem_mb=%s) deploy %s/%s\n' "$cname" "$picked" \
                 "$(_read "$picked" cpus 0)" "$(_read "$picked" mem_mb 0)" "$CLAIM_DRIVER" "$CLAIM_IMAGE" >&2
             [[ "$dry" == 1 ]] && continue
-            if ( cmd_deploy "$picked" --driver "$CLAIM_DRIVER" --image "$CLAIM_IMAGE" \
-                     ${CLAIM_REGION:+--region "$CLAIM_REGION"} ) >"${MAAS_CLAIM_LOG:-/dev/null}" 2>&1; then
+            if MAAS_APPLY_LOG="${MAAS_CLAIM_LOG:-${MAAS_APPLY_LOG:-}}" \
+               apply_run "claim $cname -> deploy $picked ($CLAIM_DRIVER/$CLAIM_IMAGE)" \
+                     cmd_deploy "$picked" --driver "$CLAIM_DRIVER" --image "$CLAIM_IMAGE" \
+                     ${CLAIM_REGION:+--region "$CLAIM_REGION"}; then
                 _write "$picked" claim "$cname"      # this node now belongs to this claim
                 issued=$((issued+1))
             else
@@ -918,24 +920,53 @@ _apply_pass() {
         enroll)
             local NODE_BMC_PORT="" NODE_DRIVER="" NODE_IMAGE=""
             eval "$(python3 "$fleet_py" "$spec" get "$name")"
-            ( cmd_enroll "$name" --bmc-port "$NODE_BMC_PORT" ) >/dev/null 2>&1 \
+            apply_run "enroll $name" cmd_enroll "$name" --bmc-port "$NODE_BMC_PORT" \
                 && issued=$((issued+1)) || { warn "apply: enroll '$name' failed"; failed=$((failed+1)); } ;;
         manage)
-            ( cmd_manage "$name" ) >/dev/null 2>&1 \
+            apply_run "manage $name" cmd_manage "$name" \
                 && issued=$((issued+1)) || { warn "apply: manage '$name' failed (BMC not answering?)"; failed=$((failed+1)); } ;;
         provide)
-            if ( cmd_provide "$name" ) >/dev/null 2>&1; then issued=$((issued+1))
+            if apply_run "provide $name" cmd_provide "$name"; then issued=$((issued+1))
             else warn "apply: '$name' stays in cleaning until its disk wipe is done by hand (F7) — run: provide $name --wiped"; failed=$((failed+1)); fi ;;
         deploy)
             local NODE_DRIVER="" NODE_IMAGE=""
             eval "$(python3 "$fleet_py" "$spec" get "$name")"
-            ( cmd_deploy "$name" --driver "$NODE_DRIVER" --image "$NODE_IMAGE" ) >/dev/null 2>&1 \
-                && issued=$((issued+1)) || { warn "apply: deploy '$name' ($NODE_DRIVER/$NODE_IMAGE) failed — see its state"; failed=$((failed+1)); } ;;
+            apply_run "deploy $name ($NODE_DRIVER/$NODE_IMAGE)" \
+                cmd_deploy "$name" --driver "$NODE_DRIVER" --image "$NODE_IMAGE" \
+                && issued=$((issued+1)) || { warn "apply: deploy '$name' ($NODE_DRIVER/$NODE_IMAGE) failed"; failed=$((failed+1)); } ;;
         esac
     done
 
     APPLY_ISSUED=$issued; APPLY_FAILED=$failed
     return 0
+}
+
+# apply_run — issue ONE transition and never swallow what the tool said.
+#
+# Every branch below used to be `( cmd_x … ) >/dev/null 2>&1` and then paraphrase the
+# failure ("deploy 'node1' failed — see its state"). Two costs, both paid live: a deploy
+# that blocked for 30 minutes produced ZERO bytes and read as a hang, and when it finally
+# failed the reason was in the driver's output, which had been discarded.
+#
+# The per-node table is still the point, so success stays quiet. What changes: a line
+# announcing the transition BEFORE it runs (so a long one is visibly in progress, not
+# hung), and on failure the tool's own words, indented, instead of a paraphrase of them.
+# MAAS_APPLY_LOG, when set, additionally keeps every transition's output — the run log a
+# live driver can point at.
+apply_run() {  # apply_run <what> <cmd...>  -> 0 ok, 1 failed (output already reported)
+    local what="$1"; shift
+    local out; out="$(mktemp "${TMPDIR:-/tmp}/maas-apply.XXXXXX")" || return 1
+    printf '  -> %s…\n' "$what" >&2
+    local rc=0
+    ( "$@" ) >"$out" 2>&1 || rc=$?
+    [[ -n "${MAAS_APPLY_LOG:-}" ]] && cat "$out" >> "$MAAS_APPLY_LOG"
+    if [[ $rc -ne 0 ]]; then
+        # The tool already explained itself. Reprint that verbatim rather than inventing
+        # a shorter, vaguer sentence about it.
+        sed 's/^/       /' "$out" >&2
+    fi
+    rm -f "$out"
+    return $rc
 }
 
 # power / bootdev / console — passthrough to the BMC (the seam).

@@ -22,9 +22,20 @@ bmc_pass  = "password"
 [[node]]
 name     = "node1"
 bmc_port = 6230
-# desired end-state (for `apply`, build step 6):
-driver   = "install"
-image    = "almalinux9-ks"
+# Desired end-state (for `apply`, build step 6). This MUST be what the end-to-end run
+# actually deploys, or `apply` spends its first pass undoing the deploy that just
+# succeeded — and then the reconciliation invariant ("a second pass issues zero
+# transitions") is never reached, because the first pass never converges.
+#
+# It was `install/almalinux9-ks` and that is exactly what happened: run-e2e.sh phase 8
+# put node1 on ramdisk/micro-linux-x86_64, phase 9 read this line, and converged the node
+# onto a ~30-minute Anaconda install — the path run-e2e.sh's own header says it
+# deliberately avoids. The install then failed and the rollback found a real bug (see
+# PLAN.md, the eighth run). The AlmaLinux path is proven end-to-end by
+# ../virtualbmc-ipmi-lab/run-finale.sh; what `apply` is here to exercise is the
+# reconcile loop, not the installer.
+driver   = "ramdisk"
+image    = "micro-linux-x86_64"
 
 [[node]]
 name     = "node2"

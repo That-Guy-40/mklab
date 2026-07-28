@@ -12,6 +12,7 @@ tests=(test-state-machine.sh test-cleaning-guard.sh test-registry.sh
        test-probe-boot-script.sh test-bmc-binding-check.sh test-e2e-reaps-sink.sh
        test-e2e-fails-fast.sh test-e2e-manage-idempotent.sh
        test-imgverify-halves.sh test-rollback-driver-pair.sh
+       test-apply-reports-and-converges.sh
        test-chaos-matrix.sh)
 pass=0 skip=0 failn=0 rc=0
 for t in "${tests[@]}"; do
