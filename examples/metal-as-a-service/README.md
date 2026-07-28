@@ -24,8 +24,8 @@ PXE-install / RAM-boot / golden-image labs. Design roadmap:
 > headlessly** (mock BMC + mock driver, real crypto; `tests/run-all.sh` → 13 passed);
 > the real `install` and `inspect --boot` are author-run. Step 4 adds the **`ramdisk`
 > driver + its catalog**, making the control plane a single front door to every
-> RAM-bootable payload in the repo. Step 6 adds **`apply`** — the declarative reconcile loop. Remaining: the
-> Phase-6 actions panel (step 7). See [PLAN.md](PLAN.md) for the ladder.
+> RAM-bootable payload in the repo. Step 6 adds **`apply`** — the declarative reconcile loop — and step 7 the
+> **actions panel**, whose first key is `apply` itself. **All 7 increments are done.** See [PLAN.md](PLAN.md) for the ladder.
 
 ## The state machine
 

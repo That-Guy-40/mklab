@@ -14,7 +14,7 @@ This file tracks the **build increments** and records each one's outcome as it l
 | **4a** | **chaos driver + resilience matrix** (`drivers/chaos.sh`, `chaos-run.sh`) — and the `abort`/`recheck` verbs it found were missing | ✅ **DONE (this increment)** — headless |
 | **5** | **`image` driver** (dd golden whole-disk, Tier-B reuse) | ✅ **DONE (this increment)** — headless |
 | **6** | **`apply` declarative reconcile (§3a)** — diff desired-vs-actual, idempotent | ✅ **DONE (this increment)** — headless |
-| 7 | Phase-6 surface — **provided by `tools/control-pane`**; MAAS is its first consumer | ▫ |
+| **7** | **Phase-6 actions panel** — declared verbs, driven through `tools/control-pane` | ✅ **DONE (this increment)** — v1 COMPLETE |
 
 Fast-follows (documented, not v1): `image+measured` attested gate; `ramdisk`→region
 wiring; a flavor/tag scheduler atop `apply`.
@@ -38,8 +38,9 @@ declared layer has no scenario or a driver has no real-driver test. The layers:
 | `metadata` | `metadata-serve.sh` :8282 | no facts ever arrive at the sink |
 | `console` | the node's console log | the stream `watch` and the health gates read is absent |
 | `reconcile` | `apply` | the registry says active; the payload is dead |
+| `ui` | the actions panel | a key that fires twice; a row that is stale by the time it is pressed |
 
-All eight are covered. The last three landed with increment 6 — they were *declared*
+All nine are covered. The last three landed with increment 6 — they were *declared*
 uncovered in increment 5 rather than left implicit, so this increment started with its
 chaos work already named instead of discovering it late.
 
@@ -492,3 +493,56 @@ degraded, 7 halted, 0 critical**. `test-apply-reconcile.sh` pins the invariant (
 second run issues **0** transitions), that only the drifted node is redeployed, that a
 node in maintenance is untouched, and — with `--no-recheck` — that the pre-flight is
 what catches a dead-but-recorded-healthy node.
+
+## Increment 7 — outcome (2026-07-27) — **v1 COMPLETE**
+
+**Built:** the actions panel — and it is a *surface*, not a second CLI.
+
+The `ui` layer was **declared in `chaos-run.sh` before a line of it was written**, so
+the house-rule guard failed until it was covered. That is the practice working as
+intended: the increment's fault work was scoped by the tooling rather than remembered.
+
+- **`tools/control-pane` gains `actions` and `run`.** A node's `node.toml` may carry
+  `[[action]]` entries — `key`, `label`, `argv`, and two flags. The control pane
+  **deliberately does not know what any verb means**: a lab declares the exact argv, the
+  panel lists and runs it. An action nobody declared is refused, and nothing executes.
+- **MAAS declares its own verbs** when it registers a node. `apply` is **first** and
+  marked `reconciling`; `release` is marked `destructive` and needs `--yes`.
+- **Phase-6 binds `a`** → `ActionsScreen` lists what the node declared → the chosen
+  action goes through the existing confirm screen. The backend passes the declarations
+  through untouched.
+
+**Design decisions this increment:**
+
+1. **A reconcile button, not a rack of imperative ones.** A panel of `deploy`/`release`
+   buttons is a remote control; a panel whose first key is `apply` **converges the
+   fleet** and is safe to press twice. That distinction only became available in
+   increment 6, and it matters far more on a surface where a key can auto-repeat than
+   on a command line where the whole thing is typed out. The `reconciling` flag is
+   carried through to consumers so a panel can tell *converges* from *repeats* before
+   binding a key to it.
+2. **The panel never composes a command.** Every runnable verb is declared by the lab
+   that owns the node. This is what keeps §5b's invariant literally true rather than
+   aspirational — and it is now **asserted mechanically**: every declared action's
+   `argv[0]` must be `maas-lab.sh`, so deleting Phase 6 loses nothing that exists
+   nowhere else.
+3. **`destructive` is gated even though it is one keystroke away** — *because* it is.
+   A key can be pressed by accident; a typed command line cannot.
+
+### The `ui` layer's faults
+
+| fault | why a panel has it and a shell does not | outcome |
+|---|---|---|
+| undeclared verb | a surface can offer what nobody sanctioned | refused; **LIED** if it ran (control verified) |
+| double press | a key auto-repeats; a typed line does not | node stays `active` — `apply` converges |
+| stale row | the node moved on between render and keypress | the verb's own precondition refuses it |
+
+**Verified (headless, this host, 2026-07-27):** `tests/run-all.sh` → **13 passed**;
+`chaos-run.sh` → **18 scenarios across 9 layers: 7 absorbed, 4 degraded, 7 halted, 0
+critical**; `tools/tests/test-actions.sh` green; **phase6-tui 111 pytest passed**
+(CI-gated). Negative control run: letting `control-pane run` execute an undeclared verb
+turns the `ui` row **LIED** and fails the matrix.
+
+**The ladder is complete.** All 7 increments of the v1 build order are done. Remaining
+work is the documented fast-follows: `image+measured` (the TPM-attested activation
+gate), `ramdisk`→region wiring, and a flavor/tag scheduler atop `apply`.

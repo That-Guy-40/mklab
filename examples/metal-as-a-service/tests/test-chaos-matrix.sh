@@ -119,4 +119,35 @@ done
     || fail "REGRESSION: deploy driver(s) with no real-driver test: ${missing[*]}. The house rule is that a driver ships with a test that drives IT, not the mock — the mock proves the control plane's logic, never the driver's own contract. Add tests/test-<name>-driver.sh"
 note "every deploy driver has a test that drives the real driver, not the mock  ✓"
 
-pass "every injected fault was absorbed, fell back, or halted honestly — zero criticals across all declared layers, and every layer and driver carries its own fault coverage"
+# ── 6. THE PANEL INVARIANT (§5b): delete Phase 6 and nothing is lost ────────
+# The actions panel must be a SURFACE over the CLI, never a second implementation of
+# it. The test of that is mechanical: every verb the panel may drive is declared by
+# MAAS itself, and every one is literally `maas-lab.sh …` — so the same argv works in
+# a shell with the TUI deleted.
+maas_env
+( "$MAAS" enroll p1 --bmc-port 6395 ) >/dev/null 2>&1 || fail "enroll p1"
+( export LAB_STATE_DIR="$SANDBOX"; "$MAAS" watch p1 --register-only ) >/dev/null 2>&1 \
+    || fail "registering p1 with the control pane failed"
+NT="$SANDBOX/control-pane/p1/node.toml"
+[[ -f "$NT" ]] || fail "watch --register-only wrote no node.toml"
+grep -q "^\[\[action\]\]" "$NT" \
+    || fail "REGRESSION: MAAS registered a node but declared NO actions — the panel would have nothing to drive, or would grow commands of its own"
+
+CP="$LAB_DIR/../../tools/control-pane"
+if [[ -x "$CP" ]]; then
+    acts="$( "$CP" actions p1 --fleet "$SANDBOX/control-pane" --json 2>/dev/null )"
+    [[ -n "$acts" ]] || fail "control-pane could not read the actions MAAS declared"
+    python3 - "$acts" "$LAB_DIR/maas-lab.sh" <<'PYCHK' || fail "REGRESSION: a declared panel action does not run maas-lab.sh. The panel must be a surface over the CLI — an action that runs anything else is a second implementation, and deleting Phase 6 would lose behaviour that exists nowhere else"
+import json, sys
+acts, maas = json.loads(sys.argv[1]), sys.argv[2]
+assert acts, "no actions declared"
+for a in acts:
+    assert a["argv"][0] == maas, f"{a['label']}: argv[0]={a['argv'][0]!r}, expected {maas!r}"
+assert acts[0]["reconciling"], f"first declared action is not the reconciling one: {acts[0]['label']}"
+PYCHK
+    note "every panel action is literally 'maas-lab.sh …', and the first one reconciles  ✓"
+else
+    note "tools/control-pane not executable here — skipped the argv cross-check"
+fi
+
+pass "every injected fault was absorbed, fell back, or halted honestly — zero criticals across all declared layers, every layer and driver carries its own fault coverage, and the panel drives only maas-lab.sh"

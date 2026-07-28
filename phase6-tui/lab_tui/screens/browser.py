@@ -53,6 +53,7 @@ class ResourceBrowserScreen(Screen):
         Binding("t", "open_topology", "Topology"),
         Binding("l", "open_logs", "Logs"),
         Binding("c", "console", "Console"),
+        Binding("a", "actions", "Actions"),
         Binding("d", "destroy", "Destroy"),
         Binding("q", "app.quit", "Quit"),
     ]
@@ -165,6 +166,35 @@ class ResourceBrowserScreen(Screen):
         # terminal, yields, then reinstates Textual when the block exits.
         # Blocking inside the block is intentional and documented.
         _run_console(self.app, resource.console_command)
+
+    def action_actions(self) -> None:
+        """Run one of the verbs the selected node's OWNER declared.
+
+        The list comes from the resource itself (`extra["actions"]`), so this screen
+        works for any backend that grows declared actions — it has no idea what MAAS
+        or any other lab is.
+        """
+        resource = self._selected_resource()
+        if resource is None:
+            return
+        actions = (resource.extra or {}).get("actions") or []
+        from lab_tui.screens.actions import ActionsScreen
+
+        def _chosen(action: dict | None) -> None:
+            if not action:
+                return
+            from lab_tui.screens.confirm import ConfirmScreen
+            # A destructive action gets the confirm step even though it is one
+            # keystroke away — which is exactly why it needs one.
+            self.app.push_screen(
+                ConfirmScreen(
+                    title=f"{action.get('label', 'Run')} — {resource.display_name}?",
+                    argv=list(action.get("argv") or []),
+                ),
+                callback=lambda _confirmed: self.refresh_tree(),
+            )
+
+        self.app.push_screen(ActionsScreen(resource.name, actions), callback=_chosen)
 
     def action_destroy(self) -> None:
         resource = self._selected_resource()
