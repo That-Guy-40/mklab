@@ -746,3 +746,57 @@ FAIL: 1 of 18 injected faults became a CRITICAL failure
 
 Suites: `tests/run-all.sh` → **13 passed**; `tools/tests/test-actions.sh` → PASS;
 **phase6-tui 111 pytest passed** (CI-gated).
+
+---
+
+## 11. The three fast-follows (2026-07-28)
+
+```console
+$ ./tests/run-all.sh
+=== summary: 15 passed, 0 skipped, 0 failed ===
+```
+
+### 11a. `image+measured` — the attested activation gate
+
+```console
+$ ./tests/test-image-measured-driver.sh
+  - an image with no expected-PCR policy is refused at verify, not silently unmeasured  ✓
+  - signed quote matching the policy -> active  ✓
+  - booted but attested nothing -> refused (an unmeasured node never activates)  ✓
+  - unsigned quote refused, even with the right PCR values  ✓
+  - quote signed by an untrusted key refused (the AK is pinned to the trust root)  ✓
+  - valid signature, wrong PCR 11 -> refused, naming the divergent register  ✓
+  - a quote that omits a required PCR is refused — silence is not a measurement  ✓
+PASS: image+measured activates only on a signed, trusted, matching attestation
+```
+
+Negative control — drop the attestation step and keep only the plain image health:
+
+```console
+FAIL: REGRESSION: a node that produced NO attestation quote was activated — the gate is
+not running
+```
+
+⚠️ **swtpm is faithful plumbing, not a trust anchor.** This proves the mechanism and the
+refusal path, not the integrity of any machine.
+
+### 11b. Region wiring + the scheduler
+
+```console
+$ ./tests/test-region-and-scheduler.sh
+  - serving but never announced -> refused (region membership is not local health)  ✓
+  - serving AND announced -> active, region recorded  ✓
+  - no --region: local health is enough — the region gate is selective, not blanket  ✓
+  - an image with no region_check cannot be deployed into a region  ✓
+  - picks only nodes whose inspected facts satisfy the claim; skips the small one and
+    the uninspected one  ✓
+  - fills the claim with exactly 2, and the second run reports it satisfied  ✓
+  - a claim nothing can satisfy is reported, not silently ignored  ✓
+PASS: region membership is proven before a RAM node counts as active, and apply
+schedules claims by inspected facts — never onto a node nobody looked at
+```
+
+**The scheduler bug this test found:** the first version counted any active node running
+the claim's driver+image as satisfying it, so two claims wanting the same image with
+different constraints would consume each other's nodes while **both** reported
+satisfied. Ownership is now recorded on the node (`claim = <name>`), not inferred.

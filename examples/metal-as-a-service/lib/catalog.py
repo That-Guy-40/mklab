@@ -32,6 +32,15 @@ REQUIRED = {
     "dns": ("query",),
 }
 
+# A `region_check` says how to prove the node JOINED a region — the same three kinds,
+# with their own fields. Declaring the kind without its field would leave the driver
+# unable to verify membership it is about to claim, so it is a catalog error.
+REGION_REQUIRED = {
+    "console": ("region_marker",),
+    "http": ("region_url",),
+    "dns": ("region_query",),
+}
+
 
 def load(path):
     with open(path, "rb") as fh:
@@ -72,6 +81,18 @@ def problems(img):
                     f"{name}: health='{health}' needs '{field}' — without it the "
                     f"driver has no way to decide the node reached active"
                 )
+    rk = img.get("region_check")
+    if rk:
+        if rk not in REGION_REQUIRED:
+            out.append(f"{name}: region_check '{rk}' is not one of "
+                       f"{'/'.join(sorted(REGION_REQUIRED))}")
+        else:
+            for field in REGION_REQUIRED[rk]:
+                if not img.get(field):
+                    out.append(
+                        f"{name}: region_check='{rk}' needs '{field}' — without it the "
+                        f"driver would claim a region membership it cannot verify"
+                    )
     return out
 
 

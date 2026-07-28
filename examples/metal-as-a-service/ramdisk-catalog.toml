@@ -47,6 +47,11 @@ initrd  = "~/netboot/anycast-dns-ram.initrd.gz"
 cmdline = "console=ttyS0 ip=dhcp"
 health  = "dns"
 query   = "health.lab@10.0.2.53"
+# membership = the node is ANSWERING FOR THE ANYCAST ADDRESS, not merely alive. A DNS
+# node that resolves locally but never announced its route is exactly the failure the
+# region check exists to catch.
+region_check = "dns"
+region_query = "health.lab@10.0.2.53"
 
 [[image]]
 name    = "cdn-edge-ram"
@@ -59,6 +64,8 @@ cmdline = "console=ttyS0 ip=dhcp"
 health  = "http"
 url     = "http://10.0.2.80/healthz"
 marker  = "ok"
+region_check = "http"
+region_url   = "http://10.0.2.80/healthz"
 
 [[image]]
 name    = "package-mirror-ram"
@@ -71,6 +78,8 @@ cmdline = "console=ttyS0 ip=dhcp"
 health  = "http"
 url     = "http://10.0.2.81/debian/dists/trixie/Release"
 marker  = "Suite:"
+region_check = "http"
+region_url   = "http://10.0.2.81/debian/dists/trixie/Release"
 
 # ── the tiny-OS trio: not services, but proof that "an OS" can be 1.4 MB ─────────
 # These have no network service to probe, so their `active` signal is the console —
