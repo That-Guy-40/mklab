@@ -131,7 +131,11 @@ def main(argv):
                 print(f"catalog: {e}", file=sys.stderr)
             sys.exit(1)
         for k, v in img.items():
-            v = expand(str(v)) if k in ("kernel", "initrd") else str(v)
+            # Path fields get ~/$VAR expansion; `ks` is the install catalog's
+            # kickstart/preseed path. `cmdline` is NOT expanded — it may carry
+            # iPXE settings like ${next-server} that must reach the boot script
+            # verbatim, to be resolved on the node.
+            v = expand(str(v)) if k in ("kernel", "initrd", "ks") else str(v)
             print(f"IMG_{k.upper()}={shlex.quote(v)}")
         return
 

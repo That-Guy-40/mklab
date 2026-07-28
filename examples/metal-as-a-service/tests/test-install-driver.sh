@@ -25,7 +25,24 @@ trap 'cleanup_sandboxes' EXIT
 maas_env
 maas_env_drivers
 export MAAS_DRIVER_DIR="$LAB_DIR/drivers"     # the REAL install.sh, not tests/mock.sh
-make_image v1
+export MAAS_NETBOOT_DIR="$SANDBOX/netboot"    # deploy writes the per-node boot script here
+
+# An INSTALLER-shaped image: kernel + initrd + ks.cfg, all signed — the shape
+# `install.sh stage` writes, and the driver's ownership fingerprint (a `cmdline`
+# file would make it the ramdisk driver's).
+mk_install_image() {  # <name> [tamper]
+    local d="$MAAS_IMAGES_DIR/$1" f; mkdir -p "$d"
+    printf 'KERNEL-%s\n' "$1" > "$d/kernel"
+    printf 'INITRD-%s\n' "$1" > "$d/initrd"
+    printf '# lab kickstart\npoweroff\n' > "$d/ks.cfg"
+    for f in kernel initrd ks.cfg; do
+        "$LAB_DIR/drivers/verify-lib.sh" sign "$d/$f" --keydir "$MAAS_IMAGES_DIR/trust" >/dev/null 2>&1 \
+            || fail "signing $1/$f failed"
+    done
+    [[ "${2:-}" == tamper ]] && printf 'X' | dd of="$d/kernel" bs=1 seek=1 conv=notrunc >/dev/null 2>&1
+    return 0
+}
+mk_install_image v1
 
 # ── the seam guard: a virsh that refuses to be a hypervisor ──────────────────
 STUBS="$SANDBOX/stubs"; mkdir -p "$STUBS"
@@ -61,6 +78,21 @@ seed_login node1
     || fail "the real install driver could not take node1 to active (signed image, node powers off, console shows login:)"
 assert_state node1 active
 note "the real drivers/install.sh reaches active: verify -> PXE -> wait -> disk -> login  ✓"
+
+# ── 1b. the deploy answered the netboot CHAIN: a per-node script, verified boot ──
+# The fleet network resolves maas/<node>.ipxe per node; a driver that writes none
+# leaves its node at the dead-end script and the install never starts (that is how
+# the first two live runs of the RAMDISK path failed, and this driver had the same
+# hole until the chain landed).
+S="$MAAS_NETBOOT_DIR/maas/node1.ipxe"
+[[ -f "$S" ]] || fail "REGRESSION: deploy wrote no per-node boot script at $S — on the chain network this node falls through to the dead end and the installer never boots"
+grep -q '^kernel .*inst\.ks=' "$S" \
+    || fail "the boot script's kernel line carries no inst.ks= — Anaconda would boot with no kickstart and sit interactive forever (got: $(cat "$S" | tr '\n' '|'))"
+grep -q '^imgverify kernel' "$S" && grep -q '^imgverify initrd' "$S" \
+    || fail "REGRESSION: the payload is signed but the boot script carries no imgverify lines — the on-node half of F2 is silently dropped for the install path"
+[[ -f "$MAAS_NETBOOT_DIR/maas/v1/kernel" && -f "$MAAS_NETBOOT_DIR/maas/v1/ks.cfg" ]] \
+    || fail "deploy did not serve the installer payload (kernel/ks.cfg) into the docroot"
+note "deploy writes the per-node chain script: inst.ks + imgverify, payload served  ✓"
 
 # ── 2. THE SEAM GUARD ────────────────────────────────────────────────────────
 if [[ -s "$VIRSH_LOG" ]]; then
@@ -112,7 +144,7 @@ assert_state node3 error
 note "install completes but no login: -> health gate FAILS -> error (not active)  ✓"
 
 # ── 6. the real driver's F2 verify, not the mock's ───────────────────────────
-make_image bad tamper
+mk_install_image bad tamper
 prep node4 6233
 seed_login node4
 : > "$MOCK_BMC_LOG"
@@ -124,4 +156,54 @@ fi
 assert_state node4 error
 note "tampered image: install.sh's own verify refuses it before the BMC is touched at all  ✓"
 
-pass "drivers/install.sh drives real metal through the BMC seam only: no virsh, correct boot order, the power-off wait and the health gate both load-bearing"
+# ── 7. ownership: describe answers positively, and refuses both wrong shapes ──
+DRV="$LAB_DIR/drivers/install.sh"
+( "$DRV" describe v1 ) >/dev/null 2>&1 \
+    || fail "describe refused v1, an image staged in this driver's own shape (kernel+initrd+ks.cfg)"
+mkdir -p "$MAAS_IMAGES_DIR/ram-shaped"
+printf 'k\n' > "$MAAS_IMAGES_DIR/ram-shaped/kernel"; printf 'i\n' > "$MAAS_IMAGES_DIR/ram-shaped/initrd"
+printf 'console=ttyS0\n' > "$MAAS_IMAGES_DIR/ram-shaped/cmdline"
+out="$( ( "$DRV" describe ram-shaped ) 2>&1 )" \
+    && fail "REGRESSION: describe accepted a RAM payload (kernel+initrd+cmdline) — the rollback incident's exact shape"
+grep -q 'ramdisk' <<<"$out" || fail "describe refused the RAM shape but did not name the driver that owns it"
+mkdir -p "$MAAS_IMAGES_DIR/unclaimed"; printf 'blob\n' > "$MAAS_IMAGES_DIR/unclaimed/payload.img"
+( "$DRV" describe unclaimed ) >/dev/null 2>&1 \
+    && fail "REGRESSION: describe accepted an image NO driver has staged or cataloged — an unclaimed image must not be deployable by anyone"
+note "describe: accepts its own shape, refuses the ramdisk shape AND an unclaimed image  ✓"
+
+# ── 8. the stage verb: catalog-driven, signs all three, writes NO cmdline file ──
+CAT="$SANDBOX/install-catalog.toml"; SRC="$SANDBOX/src"; mkdir -p "$SRC"
+printf 'VMLINUZ\n' > "$SRC/vmlinuz"; printf 'INITRDIMG\n' > "$SRC/initrd.img"
+printf 'text\npoweroff\n' > "$SRC/lab.ks"
+cat > "$CAT" <<TOML
+[meta]
+version = 1
+[[image]]
+name = "tcat"
+summary = "test installer"
+lab = "tests"
+build = "echo build-it-yourself"
+kernel = "$SRC/vmlinuz"
+initrd = "$SRC/initrd.img"
+ks = "$SRC/lab.ks"
+cmdline = "inst.stage2=http://\${next-server}:8181/ inst.text"
+health = "console"
+marker = "login:"
+TOML
+( export MAAS_INSTALL_CATALOG="$CAT"; "$DRV" stage tcat ) >/dev/null 2>&1 \
+    || fail "install.sh stage failed for a cataloged image with all artifacts present"
+D="$MAAS_IMAGES_DIR/tcat"
+[[ -f "$D/kernel" && -f "$D/initrd" && -f "$D/ks.cfg" ]] || fail "stage did not write kernel+initrd+ks.cfg"
+[[ -f "$D/kernel.sig" && -f "$D/initrd.sig" && -f "$D/ks.cfg.sig" ]] \
+    || fail "REGRESSION: stage left artifacts unsigned — the kickstart drives what gets INSTALLED, and an unsigned one is a supply-chain hole the host-side gate cannot see"
+[[ -f "$D/cmdline" ]] \
+    && fail "REGRESSION: install.sh stage wrote a 'cmdline' file — that triple is the RAMDISK driver's ownership fingerprint, and this image is now claimable by the wrong driver"
+( "$DRV" verify tcat ) >/dev/null 2>&1 || fail "the staged image does not pass the driver's own F2 verify"
+rm -f "$SRC/initrd.img"
+out="$( ( export MAAS_INSTALL_CATALOG="$CAT"; "$DRV" stage tcat ) 2>&1 )" \
+    && fail "REGRESSION: stage succeeded with the installer initrd missing"
+grep -q 'build-it-yourself' <<<"$out" \
+    || fail "stage refused a missing artifact but did not print the catalog's build command (got: ${out//$'\n'/ })"
+note "stage: signs kernel+initrd+ks.cfg, no cmdline file, names the build when artifacts are missing  ✓"
+
+pass "drivers/install.sh drives real metal through the BMC seam only: no virsh, correct boot order, the power-off wait and the health gate both load-bearing; deploy answers the netboot chain with a signed per-node script, and describe/stage enforce the driver's ownership shape"

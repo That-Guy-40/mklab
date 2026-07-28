@@ -41,6 +41,9 @@
 #
 # CHAOS_USE_BMC=1 makes deploy go through the BMC seam (bootdev pxe + power on) like
 # every real driver, so an out-of-band failure can be injected at that layer too.
+# CHAOS_CONSOLE_DIR=<dir> (with CHAOS_USE_BMC=1) makes health require a non-empty
+# <dir>/<node>.log — the console-bound check every real driver's health gate has,
+# and the one thing a BMC bound to the wrong machine cannot fake.
 #
 # SAFETY: with CHAOS_USE_BMC unset this driver touches no hardware at all — it logs,
 # sleeps, and returns exit codes. With it set, it reaches hardware only as far as
@@ -115,6 +118,19 @@ deploy)
 health)
     node="${1:?chaos health <node> <image>}"; image="${2:?}"
     log "$node $image"
+    # THE CONSOLE CHECK, first, and for every image — targeted or not. The real
+    # drivers' health gates grep the node's console, and the console is bolted to
+    # the MACHINE, not to the BMC. That distinction is the whole defence against a
+    # BMC bound to the wrong machine: every through-the-seam power check succeeds
+    # and answers truthfully about the wrong node, but the subject's silent
+    # console cannot be faked from the seam. Opt-in via CHAOS_CONSOLE_DIR so the
+    # driver-layer scenarios (no BMC, no machine, nothing to boot) are unaffected.
+    if [[ "${CHAOS_USE_BMC:-0}" == 1 && -n "${CHAOS_CONSOLE_DIR:-}" ]]; then
+        if [[ ! -s "$CHAOS_CONSOLE_DIR/$node.log" ]]; then
+            echo "chaos: nothing on '$node's console — the machine this record points at never booted (a BMC bound to the wrong machine passes every power check and still cannot fake this)" >&2
+            exit 1
+        fi
+    fi
     targeted "$image" || exit 0
     n=0; [[ -f "$STATE/$node.healthchecks" ]] && n=$(wc -c < "$STATE/$node.healthchecks")
     printf 'x' >> "$STATE/$node.healthchecks"

@@ -532,6 +532,11 @@ cmd_deploy() {
     # A node deployed INTO a region is not `active` until it has joined it (fast-follow:
     # ramdisk -> resilient region). Recorded before the gate so the driver can see it.
     [[ -n "$region" ]] && _write "$node" region "$region"
+    # Entering a deploy consumes the demoted-by-recheck marker: if THIS deploy
+    # fails, the resulting `error` is a failed-deploy hold — an unproven image a
+    # human should look at — not a health demotion the reconcile loop may retry.
+    # Without this line a crash-looping image would be self-healed forever.
+    rm -f "$(node_dir "$node")/demoted_by_recheck" 2>/dev/null || true
     set_state "$node" deploying deploy
     info "deploying image '$image' via '$driver' (verify=$do_verify, health timeout ${MAAS_HEALTH_TIMEOUT}s)…"
 
@@ -664,6 +669,11 @@ cmd_unmaintenance() {
 cmd_retry() {
     local node="${1:?usage: retry <node>}"; require_node "$node"
     require_state "$node" retry error
+    # A retry is a human looking at the node: it clears the demoted-by-recheck
+    # marker and RESETS the self-heal budget. (apply's self-heal path calls this
+    # too and then re-writes the incremented counter — the reset here carries the
+    # operator's semantics, the rewrite there carries the loop's.)
+    rm -f "$(node_dir "$node")/demoted_by_recheck" "$(node_dir "$node")/selfheal_attempts" 2>/dev/null || true
     cmd_manage "$node"
 }
 
@@ -726,8 +736,14 @@ cmd_recheck() {
         return 0
     fi
     _write "$node" error_reason "health re-check failed for image '$image' (it passed at activation and has since stopped)"
+    # The marker that distinguishes the two roads into `error` (DEFERRED item 4): a
+    # node that FAILED A DEPLOY has an unproven image and waits for a human; one
+    # demoted HERE was healthy at activation and stopped later — which is the thing
+    # a reconcile loop exists to repair. `apply` self-heals only the marked kind,
+    # bounded; entering a deploy consumes the marker (see cmd_deploy).
+    _write "$node" demoted_by_recheck 1
     set_state "$node" error recheck
-    die "'$node' is NO LONGER healthy on '$image' — demoted active -> error (it passed its activation gate and has since stopped). Recover with: retry $node"
+    die "'$node' is NO LONGER healthy on '$image' — demoted active -> error (it passed its activation gate and has since stopped). Recover with: retry $node (or let 'apply' self-heal it, bounded)"
 }
 
 
@@ -846,8 +862,27 @@ _apply_pass() {
                 if [[ "$d" == "$NODE_DRIVER" && "$i" == "$NODE_IMAGE" ]]; then
                     act="-"; why="converged"
                 else act="deploy"; why="running $d/$i, declared $NODE_DRIVER/$NODE_IMAGE"; fi ;;
-            error|maintenance)
-                act="!"; why="HELD in '$cur' — apply does not touch it; the operator does (retry / unmaintenance)" ;;
+            error)
+                # Two roads lead here and they are not the same thing (DEFERRED item
+                # 4): a FAILED DEPLOY holds for the operator — the image is unproven
+                # and a human should look. A node DEMOTED BY THE RE-CHECK was healthy
+                # at activation and died afterwards, which is exactly what a
+                # reconcile loop exists to repair — so heal that kind, visibly and
+                # BOUNDED, or the loop can mask a node that dies after every heal.
+                # A human `retry` resets the budget; the loop's own attempts spend it.
+                if [[ -n "$(_read "$name" demoted_by_recheck "")" || -n "${DRY_DEMOTED[$name]:-}" ]]; then
+                    local sh_n sh_max
+                    sh_n="$(_read "$name" selfheal_attempts 0)"; sh_max="${MAAS_APPLY_SELFHEAL_MAX:-2}"
+                    if [[ "${sh_n:-0}" -lt "$sh_max" ]]; then
+                        act="retry"; why="demoted by the health re-check (healthy at activation, died after) — self-heal $((sh_n+1))/$sh_max"
+                    else
+                        act="!"; why="HELD in 'error' — self-heal budget spent ($sh_n/$sh_max); the operator does (retry $name — a human retry resets the budget)"
+                    fi
+                else
+                    act="!"; why="HELD in 'error' — apply does not touch a failed deploy; the operator does (retry $name)"
+                fi ;;
+            maintenance)
+                act="!"; why="HELD in 'maintenance' — apply does not touch it; the operator does (unmaintenance)" ;;
             *)
                 if is_transient "$cur"; then
                     act="!"; why="HELD mid-transition in '$cur' — a transition is in flight, or it is stranded (abort $name)"
@@ -975,6 +1010,22 @@ _apply_pass() {
             apply_run "deploy $name ($NODE_DRIVER/$NODE_IMAGE)" \
                 cmd_deploy "$name" --driver "$NODE_DRIVER" --image "$NODE_IMAGE" \
                 && issued=$((issued+1)) || { warn "apply: deploy '$name' ($NODE_DRIVER/$NODE_IMAGE) failed"; failed=$((failed+1)); } ;;
+        retry)
+            # Self-heal a node the pre-flight demoted. cmd_retry resets the budget
+            # (its operator semantics), so re-write the spent count AFTER it — each
+            # autonomous attempt is recorded in the history, where a fleet drifting
+            # into heal-loops is visible instead of quietly absorbed.
+            local sh_n2 sh_max2
+            sh_n2="$(_read "$name" selfheal_attempts 0)"; sh_max2="${MAAS_APPLY_SELFHEAL_MAX:-2}"
+            if apply_run "self-heal $name (retry, attempt $((sh_n2+1))/$sh_max2)" cmd_retry "$name"; then
+                _write "$name" selfheal_attempts "$((sh_n2+1))"
+                printf '%s  %-11s -> %-11s (%s)\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                    "error" "manageable" "apply self-heal $((sh_n2+1))/$sh_max2" \
+                    >> "$(node_dir "$name")/history.log" 2>/dev/null || true
+                issued=$((issued+1))
+            else
+                warn "apply: self-heal retry '$name' failed"; failed=$((failed+1))
+            fi ;;
         esac
     done
 

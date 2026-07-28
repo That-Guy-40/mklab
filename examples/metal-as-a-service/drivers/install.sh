@@ -24,14 +24,39 @@
 # install): MAAS_INSTALL_TIMEOUT (default 15x the health timeout — installs are slow),
 # MAAS_POLL_INTERVAL (default 5s between BMC polls).
 set -uo pipefail
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+LAB="$(cd -- "$HERE/.." && pwd)"
+CATALOG="${MAAS_INSTALL_CATALOG:-$LAB/install-catalog.toml}"
+CATPY="$LAB/lib/catalog.py"
+NETBOOT_DIR="${MAAS_NETBOOT_DIR:-$HOME/netboot}"
 
 verb="${1:-}"; shift || true
-: "${MAAS_STATE:?install driver: MAAS_STATE not set (run via maas-lab.sh)}"
 
-nd() { printf '%s/%s\n' "$MAAS_STATE" "$1"; }
+# MAAS_STATE is demanded LAZILY, where node context is actually read — not at the
+# top of the file. `stage`/`verify`/`describe` are operator verbs that touch only
+# the image store, and demanding registry context they never use broke the first
+# live run of run-e2e-install.sh at the staging step (found live, 2026-07-28).
+nd() { printf '%s/%s\n' "${MAAS_STATE:?install driver: MAAS_STATE not set (run via maas-lab.sh)}" "$1"; }
 node_field() { local f; f="$(nd "$1")/$2"; [[ -f "$f" ]] && cat "$f" || printf '%s' "${3:-}"; }
 # BMC passthrough via the same seam maas-lab.sh uses
 bmc() { BMC_REGISTRY="${MAAS_REG_BMC:-}" "${MAAS_BMC:?}" "$@"; }
+die() { echo "install: $*" >&2; exit 1; }
+
+# cat_get <image> — load the catalog entry into IMG_* vars (same machinery as the
+# ramdisk driver's; install-catalog.toml is the sibling registry it reads).
+cat_get() {
+    [[ -r "$CATALOG" ]] || return 1
+    local out
+    out="$(python3 "$CATPY" "$CATALOG" get "$1" 2>&1)" || return 1
+    eval "$out"
+}
+
+# is_staged_installer <dir> — the shape `stage` below writes: kernel + initrd +
+# ks.cfg. Distinct BY CONSTRUCTION from the ramdisk driver's kernel+initrd+cmdline
+# triple: the `cmdline` file exists only to boot a payload straight into RAM, and
+# a kickstart exists only to drive an installer. Each driver's staged shape is its
+# ownership fingerprint.
+is_staged_installer() { [[ -f "$1/kernel" && -f "$1/initrd" && -f "$1/ks.cfg" ]]; }
 
 POLL="${MAAS_POLL_INTERVAL:-5}"
 
@@ -60,8 +85,6 @@ describe)
     # it; a kernel+initrd is somebody else's image, however well signed.
     if [[ -n "${1:-}" ]]; then
         img="$1"; dir="${MAAS_IMAGES_DIR:?}/$img"
-        [[ -d "$dir" ]] \
-            || { echo "install: no image '$img' staged at $dir — nothing to install" >&2; exit 1; }
         # A staged RAM payload is kernel + initrd + cmdline — that triple is written by
         # `ramdisk.sh stage` and by nothing else here. An installer payload is also a
         # kernel and an initrd, so the FILE LIST alone cannot tell them apart; the
@@ -79,10 +102,68 @@ describe)
             echo "install: the node sits happily at a login prompt. Deploy it with --driver ramdisk." >&2
             exit 1
         fi
-        echo "install/$img: PXE kickstart/preseed writes the OS to disk; active = installed OS 'login:' on serial"
+        # The POSITIVE half of the ownership question (the refusal above only knew
+        # the one wrong shape that actually happened): an image is this driver's if
+        # install-catalog.toml declares it, or if it is staged in this driver's own
+        # shape (kernel+initrd+ks.cfg — what `stage` writes). Anything else is an
+        # image no driver has claimed, and deploying an unclaimed image is how the
+        # rollback incident happened for the ramdisk shape.
+        if cat_get "$img"; then
+            printf 'install/%s: %s\n' "$IMG_NAME" "$IMG_SUMMARY"
+            printf '  from   %s   (build: %s)\n' "$IMG_LAB" "$IMG_BUILD"
+            printf '  active = installed OS reaches /%s/ on the serial console\n' "${IMG_MARKER:-login:}"
+        elif is_staged_installer "$dir"; then
+            echo "install/$img: staged installer payload (kernel+initrd+ks.cfg); active = installed OS 'login:' on serial"
+        else
+            echo "install: '$img' is not in $CATALOG and is not staged in this driver's shape" >&2
+            echo "install: (kernel+initrd+ks.cfg) — no driver has claimed it, so this one must not deploy it." >&2
+            exit 1
+        fi
         exit 0
     fi
     echo "install: PXE kickstart/preseed writes the OS to disk; active = installed OS 'login:' on serial"
+    if [[ -r "$CATALOG" ]]; then
+        echo "images (--image NAME), from $CATALOG:"
+        while read -r n; do [[ -n "$n" ]] && printf '  %s\n' "$n"; done < <(python3 "$CATPY" "$CATALOG" names)
+    fi
+    ;;
+
+# stage <image> — OPERATOR verb (same contract as ramdisk.sh's): copy the catalog's
+# installer artifacts into the signed image store and sign them, so `verify` (F2)
+# has something to check. Stages kernel + initrd + ks.cfg — NO `cmdline` file:
+# that file is the ramdisk driver's ownership fingerprint, and writing one here
+# would make this image claimable by the wrong driver.
+stage)
+    image="${1:?install stage <image>}"; shift || true
+    cat_get "$image" || die "no catalog entry '$image' in $CATALOG — stage only stages images this driver owns"
+    : "${MAAS_IMAGES_DIR:?install stage: MAAS_IMAGES_DIR not set}"
+    missing=0
+    [[ -f "$IMG_KERNEL" ]] || { echo "install: installer kernel not found: $IMG_KERNEL" >&2; missing=1; }
+    [[ -f "$IMG_INITRD" ]] || { echo "install: installer initrd not found: $IMG_INITRD" >&2; missing=1; }
+    [[ -f "${IMG_KS:?catalog entry '$image' has no ks field}" ]] \
+        || { echo "install: kickstart/preseed not found: $IMG_KS" >&2; missing=1; }
+    if [[ $missing == 1 ]]; then
+        cat >&2 <<EOF
+install: '$image' is not staged on this host. This driver does not fetch it — ${IMG_LAB} owns it:
+    $IMG_BUILD
+Then re-run: drivers/install.sh stage $image
+EOF
+        exit 1
+    fi
+    dir="$MAAS_IMAGES_DIR/$image"; mkdir -p "$dir"
+    cp -f "$IMG_KERNEL" "$dir/kernel"  || die "could not stage the installer kernel"
+    cp -f "$IMG_INITRD" "$dir/initrd"  || die "could not stage the installer initrd"
+    cp -f "$IMG_KS"     "$dir/ks.cfg"  || die "could not stage the kickstart"
+    if [[ -d "$MAAS_IMAGES_DIR/trust" ]]; then
+        for f in kernel initrd ks.cfg; do
+            "$HERE/verify-lib.sh" sign "$dir/$f" --keydir "$MAAS_IMAGES_DIR/trust" >/dev/null \
+                || die "signing $f failed"
+        done
+        echo "install: staged + SIGNED '$image' into $dir (kernel, initrd, ks.cfg)" >&2
+    else
+        echo "install: staged '$image' into $dir — NOT SIGNED (no $MAAS_IMAGES_DIR/trust)." >&2
+        echo "install: run 'drivers/verify-lib.sh gen-keys --dir $MAAS_IMAGES_DIR/trust' and re-stage, or deploy --no-verify." >&2
+    fi
     ;;
 
 verify)
@@ -96,8 +177,47 @@ deploy)
     node="${1:?install deploy <node> <image> <slot>}"; image="${2:?}"; slot="${3:-current}"
     domain="$(node_field "$node" domain "$node")"
     echo "install: PXE-installing '$image' onto '$node' (domain=$domain, slot=$slot)" >&2
-    # Prereq (author-run, once): the PXE net + this image's kickstart/payload staged.
-    #   ( cd ../virtualbmc-ipmi-lab && PAYLOAD=<image> ./setup-pxe-net.sh )
+    dir="${MAAS_IMAGES_DIR:?}/$image"
+    is_staged_installer "$dir" || die "'$image' is not staged (run: drivers/install.sh stage $image)"
+
+    # The per-node iPXE script — what the fleet's netboot CHAIN resolves for this
+    # node. Without it the node falls through to maas/default.ipxe (the honest dead
+    # end) and the install never starts: the chain replaced the network-wide baked
+    # boot.ipxe this driver used to lean on, so the driver must now answer for its
+    # own node like the ramdisk driver does.
+    cmdline=""
+    cat_get "$image" && cmdline="${IMG_CMDLINE:-}"
+    mkdir -p "$NETBOOT_DIR/maas"
+    script="$NETBOOT_DIR/maas/$node.ipxe"
+    base="http://\${next-server}:8181/maas/$image"
+    {
+        printf '#!ipxe\n'
+        printf '# generated by maas-lab.sh install driver for node %s (slot=%s)\n' "$node" "$slot"
+        printf 'kernel %s/kernel %s inst.ks=%s/ks.cfg maas.node=%s maas.image=%s\n' \
+            "$base" "$cmdline" "$base" "$node" "$image"
+        printf 'initrd %s/initrd\n' "$base"
+        # The on-node half of F2 covers what the FIRMWARE fetches: kernel + initrd.
+        # The kickstart is fetched later by Anaconda itself, which has no imgverify —
+        # its .sig is staged and served, but only the host-side gate checks it. That
+        # gap is stated here rather than papered over: the firmware attests the
+        # installer it boots, not the recipe the installer then follows.
+        if [[ -f "$dir/kernel.sig" && "${MAAS_NO_IMGVERIFY:-0}" != 1 ]]; then
+            printf 'imgverify kernel %s/kernel.sig\n' "$base"
+            printf 'imgverify initrd %s/initrd.sig\n' "$base"
+        elif [[ -f "$dir/kernel.sig" ]]; then
+            printf '# MAAS_NO_IMGVERIFY=1: on-node imgverify omitted. The payload IS signed and\n'
+            printf '# the host-side F2 gate verified it before this script was written.\n'
+        fi
+        printf 'boot\n'
+    } > "$script" || die "could not write the node's iPXE script at $script"
+    echo "install: wrote $script (installer '$image', writes the node's disk)" >&2
+
+    # Serve the payload from the PXE docroot. Copy, don't symlink: the HTTP server
+    # may be a container that cannot follow a link out of its docroot.
+    mkdir -p "$NETBOOT_DIR/maas/$image"
+    cp -f "$dir"/kernel "$dir"/initrd "$dir"/ks.cfg "$NETBOOT_DIR/maas/$image/" 2>/dev/null
+    cp -f "$dir"/kernel.sig "$dir"/initrd.sig "$dir"/ks.cfg.sig "$NETBOOT_DIR/maas/$image/" 2>/dev/null || true
+
     # Netboot the installer:
     bmc "$node" bootdev pxe   || { echo "install: bootdev pxe failed" >&2; exit 1; }
     bmc "$node" power on      || { echo "install: power on failed" >&2; exit 1; }
@@ -121,20 +241,22 @@ deploy)
 health)
     # active = the installed OS's serial login is up. Poll the node's console log
     # (the SAME signal `maas-lab.sh watch` renders as the terminal milestone, §5c)
-    # for a `login:` prompt within the timeout.
+    # for the image's marker (catalog `marker`, default `login:`) within the timeout.
     node="${1:?install health <node> <image>}"; image="${2:-}"
+    marker="login:"
+    [[ -n "$image" ]] && cat_get "$image" && marker="${IMG_MARKER:-login:}"
     console="$(node_field "$node" console "")"
     [[ -n "$console" ]] || console="$(nd "$node")/console.log"
     to="${MAAS_HEALTH_TIMEOUT:-120}"; waited=0
     step="${POLL%%.*}"; [[ -z "$step" || "$step" -eq 0 ]] && step=1
-    echo "install: awaiting 'login:' on $console (timeout ${to}s)…" >&2
+    echo "install: awaiting /$marker/ on $console (timeout ${to}s)…" >&2
     while [[ $waited -lt $to ]]; do
-        [[ -f "$console" ]] && grep -qE 'login:' "$console" && { echo "install: '$node' reached login (active)" >&2; exit 0; }
+        [[ -f "$console" ]] && grep -qE -- "$marker" "$console" && { echo "install: '$node' reached its login marker (active)" >&2; exit 0; }
         sleep "$POLL"; waited=$((waited+step))
     done
-    echo "install: '$node' did not reach a login prompt within ${to}s (health gate FAIL)" >&2
+    echo "install: '$node' did not reach /$marker/ within ${to}s (health gate FAIL)" >&2
     exit 1
     ;;
 
-*) echo "install: unknown verb '$verb' (verify|deploy|health|describe)" >&2; exit 2 ;;
+*) echo "install: unknown verb '$verb' (verify|deploy|health|describe|stage)" >&2; exit 2 ;;
 esac
