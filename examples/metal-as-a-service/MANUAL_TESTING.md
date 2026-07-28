@@ -329,3 +329,107 @@ Full suite after the fix:
 $ ./tests/run-all.sh
 === summary: 9 passed, 0 skipped, 0 failed ===
 ```
+
+---
+
+## 6. The `ramdisk` driver — RAM-resident payloads (increment 4)
+
+`deploy --driver ramdisk --image <name>` netboots a kernel + initramfs and runs the
+machine entirely in RAM. The payload comes from [`ramdisk-catalog.toml`](ramdisk-catalog.toml),
+which routes to the lab that owns it.
+
+```console
+$ ./drivers/ramdisk.sh describe
+ramdisk: netboot a kernel+initramfs and run entirely in RAM; nothing is written to disk.
+images (--image NAME), from .../ramdisk-catalog.toml:
+  anycast-dns-ram
+  cdn-edge-ram
+  package-mirror-ram
+  micro-linux-x86_64
+  floppinux
+  busybox-netboot
+
+$ ./drivers/ramdisk.sh describe micro-linux-x86_64
+ramdisk/micro-linux-x86_64: from-source kernel + BusyBox/u-root initramfs, built by micro-linux/mlbuild.sh
+  from   micro-linux/   (build: micro-linux/mlbuild.sh all --arch x86_64)
+  active = console matches /(login:|~ #)/
+```
+
+### 6a. Staging a real payload (host-safe, verified here)
+
+The driver builds nothing. It stages what the owning lab produced, and signs it:
+
+```console
+$ ./drivers/ramdisk.sh stage micro-linux-x86_64
+verify-lib: signed …/images/micro-linux-x86_64/kernel -> …/kernel.sig
+verify-lib: signed …/images/micro-linux-x86_64/initrd -> …/initrd.sig
+ramdisk: staged + SIGNED 'micro-linux-x86_64' into …/images/micro-linux-x86_64
+
+$ ./drivers/ramdisk.sh verify micro-linux-x86_64 && echo OK
+OK
+```
+
+A payload the owning lab has **not** built is refused with that lab's build command —
+"file not found" is useless when the fix lives in a different lab:
+
+```console
+$ ./drivers/ramdisk.sh stage floppinux
+ramdisk: kernel not found: /home/sqs/.cache/lab-create/floppinux/bzImage
+ramdisk: initramfs not found: /home/sqs/.cache/lab-create/floppinux/rootfs.cpio.xz
+ramdisk: 'floppinux' has not been built. This driver does not build it — examples/tiny-linux-experiments/floppinux/ owns it:
+    examples/tiny-linux-experiments/floppinux/build-floppinux.sh build
+Then re-run: drivers/ramdisk.sh stage floppinux
+```
+
+### 6b. The headless proof
+
+```console
+$ ./tests/test-ramdisk-driver.sh
+  - the shipped catalog validates: 6 images, each with the fields its health kind needs  ✓
+  - an unbuilt payload is refused WITH the lab's own build command  ✓
+  - stage copies the lab's artifacts, signs both, and verify passes (real OpenSSL CMS)  ✓
+  - a byte flipped in the staged initramfs fails verification  ✓
+  - a signed RAM payload reaches active through the same gate install uses  ✓
+  - no 'bootdev disk': the node netboots every time, by design  ✓
+  - it confirms power-on and stops there (1 poll(s)) — no wait for a poweroff that never comes  ✓
+  - per-node iPXE script: staged kernel+initrd, the catalog's cmdline, and imgverify on both  ✓
+  - the node records persistence=none: nothing was written, so there is nothing to wipe  ✓
+  - payload boots but never prints its marker -> health gate FAILS -> error  ✓
+  - REAL: 'micro-linux-x86_64' staged + signed + verified (13M kernel, 1.2M initramfs)
+  - 1 of 6 catalog entries are built here and stage for real; not built: anycast-dns-ram …
+PASS: the ramdisk driver netboots a signed payload into RAM: no bootdev disk, no wait for
+a poweroff that never comes, persistence=none, and the same verify+health gate as install
+```
+
+The two assertions that carry the increment are the ones separating a RAM deploy from a
+disk install, and both negative controls were **run, not assumed**:
+
+```console
+# CONTROL A — make the driver switch to boot-from-disk at the end, like install does
+FAIL: REGRESSION: the ramdisk driver set 'bootdev disk'. A RAM node must netboot on EVERY
+boot — pointed at its disk it would silently boot whatever a previous tenant left there,
+with no error anywhere
+
+# CONTROL B — make it wait for a poweroff, like install does
+FAIL: REGRESSION: the ramdisk driver polled chassis power 7 times — it is waiting for a
+power-off that a RAM-resident node never performs; that wait would time out and roll back
+a healthy node
+```
+
+### 6c. Author-run — an actual RAM boot
+
+```bash
+cd examples/metal-as-a-service
+export MAAS_IMAGES_DIR=~/.cache/lab-create/maas/images
+drivers/verify-lib.sh gen-keys --dir "$MAAS_IMAGES_DIR/trust"
+drivers/ramdisk.sh stage micro-linux-x86_64      # copies + signs
+./create-fleet.sh up                             # rootful fleet
+# serve $MAAS_NETBOOT_DIR/maas/ from the PXE HTTP endpoint (:8181), then:
+./maas-lab.sh deploy node1 --driver ramdisk --image micro-linux-x86_64
+```
+
+**Expected signature:** the driver writes `~/netboot/maas/node1.ipxe` (kernel + initrd +
+`imgverify` on both), sets `bootdev pxe`, powers on, confirms the chassis is up — and
+**stops there**. No `bootdev disk`, no wait for a power-off. The health gate then watches
+the console for the catalog entry's marker; each payload's boot signature is the one its
+own lab documents. `maas-lab.sh show node1` reports `persistence=none`.

@@ -9,8 +9,8 @@ This file tracks the **build increments** and records each one's outcome as it l
 |---|---|---|
 | **1** | **Fleet + registry + full state machine** (`create-fleet.sh` + `maas-lab.sh`: all transitions, `power`/`bootdev`, guarded `cleaning`, `error`/`maintenance`, `rescue`) | ✅ **DONE** — headless |
 | **2** | **`inspect` RAM probe + NoCloud metadata + `milestones.toml`/`watch`** (feeds `tools/control-pane`) | ✅ **DONE** — headless |
-| **3** | **`install` driver + health-gated activation + A/B rollback (§4b)** + F2 verify gate | ✅ **DONE (this increment)** — headless (real install author-run) |
-| 4 | `ramdisk` driver + catalog (RAM-INFRA / micro-linux / floppinux / busybox), signed + `imgverify` | ▫ |
+| **3** | **`install` driver + health-gated activation + A/B rollback (§4b)** + F2 verify gate | ✅ **DONE** — headless (real install author-run) |
+| **4** | **`ramdisk` driver + catalog** (RAM-INFRA / micro-linux / floppinux / busybox), signed + `imgverify` | ✅ **DONE (this increment)** — headless |
 | 5 | `image` driver (dd golden whole-disk, Tier-B reuse) | ▫ |
 | 6 | `apply` declarative reconcile (§3a) — diff desired-vs-actual, idempotent | ▫ |
 | 7 | Phase-6 surface — **provided by `tools/control-pane`**; MAAS is its first consumer | ▫ |
@@ -209,3 +209,60 @@ assertion.
 
 **Verified (headless, this host, 2026-07-27):** `tests/run-all.sh` → **9 passed, 0
 skipped, 0 failed**; shellcheck clean.
+
+## Increment 4 — outcome (2026-07-27)
+
+**Built:** the `ramdisk` driver and its catalog — the control plane becomes a **single
+front door to every RAM-bootable artifact in the repo**.
+
+- **`ramdisk-catalog.toml`** — the `--image` registry: the RAM-INFRA trio
+  (`anycast-dns-ram`, `cdn-edge-ram`, `package-mirror-ram`), `micro-linux-x86_64`,
+  `floppinux`, and `busybox-netboot`. Each entry names the **lab that owns the
+  artifact**, the **exact command that builds it**, its kernel/initrd paths, and the
+  signal that means `active`. **The catalog builds nothing** — owning the builds here
+  would fork six labs into a seventh copy.
+- **`lib/catalog.py`** — sibling of `lib/fleet.py`: projects the catalog for bash, and
+  `check` validates it. Paths are expanded in Python, so bash never eval's a string out
+  of a config file. A catalog is data; the `build` field is only ever *printed*.
+- **`drivers/ramdisk.sh`** — `describe` / `stage` / `verify` / `deploy` / `health`.
+  `stage` is an **operator** verb (outside the 4-verb dispatch contract): it copies the
+  lab's artifacts into the signed image store and signs them, and when the payload has
+  not been built it refuses **with that lab's own build command**, because "file not
+  found" is useless when the fix is a different lab's build.
+- **`build-probe-initramfs.sh --shell`** — the same packer with an `/init` that gives
+  you a shell instead of the fact-poster. That is the `busybox-netboot` payload; the
+  alternative was a second near-identical script.
+
+**Design decisions this increment:**
+
+1. **The differences from `install` ARE the lesson, so they are the assertions.**
+   A RAM deploy must **not** end with `bootdev disk` (the node netboots on *every* boot;
+   pointed at its disk it would silently boot whatever a previous tenant left there),
+   and must **not** wait for the node to power itself off (a RAM service never does —
+   powering off *is* the failure). Both are `REGRESSION:`-guarded, and both negative
+   controls were run.
+2. **Health is per-image, declared in the catalog**, with three kinds: `console`
+   (an ERE grepped from the node's console), `http` (curl a URL, optionally match a
+   marker), `dns` (dig must return an answer). The tiny-OS payloads have no service to
+   probe, so reaching a shell *is* their payload; the RAM-INFRA nodes are services, so
+   answering *is* theirs. `catalog.py check` refuses an entry that declares a health
+   kind without the field that kind needs — otherwise the gap surfaces on a node that
+   is already booting.
+3. **F2 spans both halves of the chain.** Host-side `verify` gates *before* any
+   hardware is touched; the generated per-node iPXE script carries **`imgverify`** so
+   the firmware re-checks at boot. Either alone is not a chain.
+4. **`persistence=none` is recorded, but `cleaning` is not weakened.** The registry can
+   now say *why* a RAM node's wipe is a no-op (§3's teaching contrast) — while a node's
+   disk may still hold a **previous** tenant's data that this deploy simply never
+   touched, so the guard stays exactly as strict.
+
+**Verified (headless, this host, 2026-07-27):** `tests/run-all.sh` → **10 passed, 0
+skipped, 0 failed**. `test-ramdisk-driver.sh` drives the real driver on a fixture
+catalog (real OpenSSL CMS throughout), validates the **shipped** catalog, and then
+stages + signs + verifies **every catalog entry this host has actually built** —
+`micro-linux-x86_64` (13 MB kernel, 1.2 MB initramfs) does so here. Payloads this host
+has not built are **reported, not failed**: building them is each lab's job.
+
+**Author-run (handed over):** an actual RAM boot. Serve `$MAAS_NETBOOT_DIR/maas/` over
+the PXE HTTP endpoint (`:8181`), bring up the fleet, and deploy — each catalog entry's
+boot signature is the one its own lab documents. Steps in MANUAL_TESTING §6.
