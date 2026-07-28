@@ -802,3 +802,25 @@ signatures to exercise the rest of the path with the host-side gate still runnin
 **Verified headless (this host, 2026-07-28):** `tests/run-all.sh` → **17 passed, 0
 skipped, 0 failed**. **Verified live:** the boot chain delivers the control plane's own
 script with the right cmdline, and the console records it.
+
+## The leftover that cost three cycles (2026-07-28)
+
+`run-e2e.sh` backgrounds the facts sink, which holds `:8282` for the whole run. Three
+runs in a row ended on a timeout and left it behind, and the next run's sink then failed
+to bind. The **first** time that was silent — backgrounding a server hides its exit
+status — and the blame landed on the probe two phases later. The second time the new
+guard caught it, but the operator still had to go find a pid by hand.
+
+The script's own rule — *"does not kill processes it did not start"* — is right, and did
+not apply: **this one it did start, and it has the pid.** It now reaps it on `EXIT`
+(and on `INT`/`TERM`, which route through `EXIT`), by the recorded PID. Everything else
+— watchers, the fleet, vbmcd — is still the operator's, because the script did not start
+those.
+
+[`tests/test-e2e-reaps-sink.sh`](tests/test-e2e-reaps-sink.sh) extracts the **shipped**
+`reap()` out of `run-e2e.sh` with `sed` and exercises it, rather than re-implementing it:
+the recorded PID dies; an identical process that was *not* recorded **survives** (the
+pkill footgun, which has already cost this repo a QEMU VM and a shell); an empty
+`MD_PID` reaps nothing; and the trap does not alter the exit status — an `EXIT` trap that
+swallows a failure would turn a failed live run into a passing one, the worst possible
+outcome for a script whose whole job is a verdict. Both negative controls run.

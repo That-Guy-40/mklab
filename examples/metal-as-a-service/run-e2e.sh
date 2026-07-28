@@ -50,12 +50,40 @@ run()  { # the one place that decides "print" vs "do"
 
 [[ $DRY == 1 ]] || : > "$LOG"
 
+# ── reap the one process this script starts ─────────────────────────────────
+# The facts sink is backgrounded here and holds :8282 for the whole run. Three runs in
+# a row died on a timeout, left it behind, and the NEXT run's sink then failed to bind —
+# the first time silently, with the blame landing on the probe two phases later.
+#
+# The rule this script states elsewhere ("does not kill processes it did not start") is
+# right and does not apply: this one it DID start, and it has the pid. So reap it, BY
+# PID (never a pattern — CLAUDE.md, and the pattern here would be a path shared with
+# other tooling). Everything else — watchers, the fleet, vbmcd — is still the operator's,
+# because this script did not start those.
+MD_PID=""
+reap() {
+    local rc=$?
+    if [[ -n "$MD_PID" ]] && kill -0 "$MD_PID" 2>/dev/null; then
+        kill "$MD_PID" 2>/dev/null
+        # Give it a moment to release :8282, then insist. A sink that ignores SIGTERM
+        # and survives is exactly the leftover this trap exists to prevent.
+        for _ in 1 2 3 4 5; do kill -0 "$MD_PID" 2>/dev/null || break; sleep 0.2; done
+        kill -0 "$MD_PID" 2>/dev/null && kill -9 "$MD_PID" 2>/dev/null
+        printf '   reaped the facts sink (pid %s)\n' "$MD_PID" >&2
+    fi
+    return $rc
+}
+trap reap EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
 # ── teardown ────────────────────────────────────────────────────────────────
 if [[ $DOWN == 1 ]]; then
     step "tearing the fleet down (rootful)"
     run "$HERE/create-fleet.sh" down
-    info "the metadata service and any watchers are yours to stop — this script"
-    info "does not kill processes it did not start (and never by pattern; kill by PID)."
+    info "any watchers you started are yours to stop — this script does not kill"
+    info "processes it did not start (and never by pattern; kill by PID). Its own"
+    info "facts sink is reaped by the EXIT trap, so no run leaves one holding :8282."
     exit 0
 fi
 
@@ -135,17 +163,18 @@ else
     # happened the script sailed on with a dead PID and blamed the probe two phases
     # later. So: confirm it is alive AND answering before anything depends on it.
     if ! kill -0 "$MD_PID" 2>/dev/null; then
+        MD_PID=""      # nothing of ours to reap; do not let the trap fire on a dead pid
         holder="$(ss -ltnp 2>/dev/null | awk -v a="$GW:8282" '$4==a {print $NF}')"
         die "the facts sink did not start on $GW:8282${holder:+ — still held by $holder}.
-A leftover metadata-serve.sh from an earlier run is the usual cause; nothing reaps it,
-because this script does not kill processes it did not start. Find it and kill it BY PID:
+That is almost certainly a sink from a run of this script that predates the EXIT trap
+below (runs before 2026-07-28 left theirs behind). Kill it BY PID and re-run:
     ss -ltnp | grep 8282
     kill <pid>
-(never by pattern — see CLAUDE.md.) Then re-run."
+(never by pattern — see CLAUDE.md. Check the cmdline first: it should be lib/metadata.py.)"
     fi
     curl -fsS --max-time 5 -o /dev/null "http://$GW:8282/" 2>/dev/null \
         || info "note: the sink is running but did not answer a probe GET — continuing"
-    info "metadata-serve.sh running as PID $MD_PID — stop it with: kill $MD_PID"
+    info "metadata-serve.sh running as PID $MD_PID — reaped automatically when this exits"
 fi
 
 step "[6/10] inspect: PXE-boot the probe, await its facts, power off"
