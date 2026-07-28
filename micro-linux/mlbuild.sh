@@ -356,11 +356,41 @@ build_kernel() {
             set_kconfig "$src/.config" VIRTIO_MMIO_CMDLINE_DEVICES y
             ;;
     esac
+    # ── NETWORKING, BUILT IN ────────────────────────────────────────────────
+    # An initramfs carries NO MODULES, so every driver the guest needs must be =y.
+    # Nothing above asked for a network stack or a NIC: on x86_64 defconfig happens to
+    # supply both, on other arches it may not, and the failure is silent and horrible —
+    # the guest boots fine and simply has no interface. Not a down link, not a DHCP
+    # timeout: no eth0 at all. Found when metal-as-a-service netbooted its inspection
+    # probe with a Debian stock kernel (virtio_net and e1000 both modular) and got
+    #     MAAS inspection probe: DHCP failed (continuing)
+    #     MAAS inspection probe: FAILED to post facts to http://...
+    # after correctly measuring the machine. See ../examples/metal-as-a-service/PLAN.md.
+    #
+    # PACKET is not optional decoration: busybox udhcpc speaks raw AF_PACKET sockets, so
+    # without it there is a working interface and still no DHCP.
+    set_kconfig "$src/.config" NET    y
+    set_kconfig "$src/.config" INET   y
+    set_kconfig "$src/.config" PACKET y      # udhcpc's raw sockets
+    set_kconfig "$src/.config" VIRTIO_NET y  # the universal virtio NIC, every arch
+    case "$arch" in
+        # x86_64 also gets e1000: QEMU's other common NIC, and what a libvirt fleet
+        # falls back to when it cannot assume virtio. Cheap, and it means one kernel
+        # boots on either.
+        x86_64) set_kconfig "$src/.config" E1000 y ;;
+    esac
+
     kmake "$arch" "$src" olddefconfig >/dev/null
-    local -a want=(CONFIG_DEVTMPFS CONFIG_BLK_DEV_INITRD "$(kernel_cons "$arch")")
+    # A kernel with no way to talk to the network is as broken as one with no console,
+    # so these are gated exactly like the console and initrd options — assert, do not
+    # hope. (VIRTIO_NET can legitimately end up =m if something selects it that way;
+    # =m in an initramfs is the same as absent, which is why assert_kconfig wants =y.)
+    local -a want=(CONFIG_DEVTMPFS CONFIG_BLK_DEV_INITRD "$(kernel_cons "$arch")"
+                   CONFIG_NET CONFIG_INET CONFIG_PACKET CONFIG_VIRTIO_NET)
     case "$arch" in
         # busybox track gzips its cpio + auto-mounts devtmpfs.
-        x86_64|aarch64) want+=(CONFIG_DEVTMPFS_MOUNT CONFIG_RD_GZIP CONFIG_VIRTIO CONFIG_VIRTIO_MMIO CONFIG_VIRTIO_PCI) ;;
+        x86_64)  want+=(CONFIG_DEVTMPFS_MOUNT CONFIG_RD_GZIP CONFIG_VIRTIO CONFIG_VIRTIO_MMIO CONFIG_VIRTIO_PCI CONFIG_E1000) ;;
+        aarch64) want+=(CONFIG_DEVTMPFS_MOUNT CONFIG_RD_GZIP CONFIG_VIRTIO CONFIG_VIRTIO_MMIO CONFIG_VIRTIO_PCI) ;;
         # ppc64le pseries: VirtIO over the VIO bus + MMIO; HVC_DRIVER is the hvc0 prereq.
         ppc64le) want+=(CONFIG_DEVTMPFS_MOUNT CONFIG_RD_GZIP CONFIG_VIRTIO CONFIG_VIRTIO_MMIO CONFIG_HVC_DRIVER) ;;
         # s390x: VirtIO-CCW (channel subsystem) + SCLP for the console.
