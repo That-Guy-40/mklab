@@ -22,6 +22,37 @@ an item that is quietly done is as misleading as one quietly abandoned.
 
 ---
 
+## Where to start next (as of 2026-07-28, after PR #97)
+
+**1. The live run — the only thing item 1 still lacks, and everything for it is staged.**
+
+```bash
+./build-verifying-rom.sh install       # ← the one step outstanding; needs sudo
+FLEET_NIC_ROM=1 ./create-fleet.sh      # brings the fleet up WITH the verifying ROM attached
+MAAS_IPXE_TRUSTS_CA=1 ./run-e2e.sh     # no E2E_NO_IMGVERIFY
+```
+
+Already done and verified, so do **not** redo them: the trust root is re-minted with the
+firmware-acceptable profile (`check-keys` passes), `micro-linux-x86_64` is re-signed under
+it (the host-side gate passes), and the ROM is rebuilt against that CA
+(`tests/test-verifying-rom.sh` boots it and passes). The fleet itself is **down** — no
+libvirt domains, no `vbmcd` — so `create-fleet.sh` has to run first regardless.
+
+`build-verifying-rom.sh install` is the single remaining prerequisite: qemu runs as another
+user and cannot read `$HOME`, so the ROM must be copied under `/var/lib/libvirt`. Without
+it `give_verifying_rom()` refuses rather than half-applying — a fleet where some nodes
+verify and some do not proves less than one where none do.
+
+**2. Items 2–4 below** — the `install` driver on real hardware, the mis-bound-BMC chaos
+scenario, and whether `apply` should self-heal a node its own guard demoted.
+
+**3. Move the signing key out of `~/.cache`** (in "Smaller, still open"). A one-line default
+change plus a migration note. It moved up the list on 2026-07-28 for a concrete reason: the
+trust dir was deleted mid-session and the whole fleet's signing material went with it. It
+was recoverable in minutes — but only because the recovery path had just been written down.
+
+---
+
 ## 1. The on-node half of F2 — ✅ RUNS, and found a real defect; ⬜ not yet on the live fleet
 
 **Status changed 2026-07-28.** The firmware half now executes, headlessly, on every run of
