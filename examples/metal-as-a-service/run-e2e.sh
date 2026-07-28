@@ -89,8 +89,30 @@ run_soft() {
 # The empty case is NOT a third way of saying "nothing to do": no state at all means the
 # node was never enrolled, which means phase 3 did not finish, and every phase after this
 # would fail with its own confusing error. That one aborts.
+#
+# A TRANSIENT state is a third case, and lumping it in with "already past it" was wrong.
+# A run killed mid-deploy leaves its node in `deploying` — not broken, just unreachable
+# by every verb that owns it. The permissive `*)` branch below waved that through as
+# "already advanced", and the run then died two phases later at `inspect` with a message
+# about inspect, nowhere near the strand. (Same defect shape as the one this branch was
+# added to fix: a default that reads as success.)
+#
+# The control plane already has the way out — `abort` (transient -> error, with the reason
+# recorded), then `manage`. Drive it, and say so: a node stranded by the previous run is
+# information the operator wants, not something to quietly paper over.
+E2E_TRANSIENT="verifying deploying cleaning rescuing deleting"   # == maas-lab.sh's
 ensure_manageable() {
     local st; st="$("$MAAS" state "$NODE" 2>/dev/null)"
+    local t
+    for t in $E2E_TRANSIENT; do
+        [[ "$st" == "$t" ]] || continue
+        info "'$NODE' is STRANDED in transient state '$st' — a previous run died mid-transition."
+        info "No verb accepts a node there, so everything downstream would fail for reasons that"
+        info "look nothing like this. Aborting it into 'error' first, which is recoverable:"
+        run "$MAAS" abort "$NODE" --reason "stranded in '$st' by an earlier run; aborted by run-e2e.sh"
+        st=error
+        break
+    done
     case "$st" in
         enrolled|error) run "$MAAS" manage "$NODE" ;;
         "")  die "'$NODE' is not enrolled and create-fleet.sh did not enroll it — phase 3 did not finish" ;;

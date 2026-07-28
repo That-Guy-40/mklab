@@ -46,6 +46,7 @@ cat > "$SANDBOX/maas-stub.sh" <<'EOS'
 case "$1" in
     state)  [[ -n "${STUB_STATE:-}" ]] || exit 1; printf '%s\n' "$STUB_STATE" ;;
     manage) printf 'manage %s\n' "$2" >> "$STUB_CALLS" ;;
+    abort)  printf 'abort %s\n' "$2" >> "$STUB_CALLS" ;;
     *)      printf 'stub: unexpected verb %s\n' "$1" >&2; exit 2 ;;
 esac
 EOS
@@ -60,6 +61,9 @@ harness() {
       printf 'die()  { printf "FAIL: %%s\\n" "$*" >&2; exit 1; }\n'
       printf 'info() { printf "   %%s\\n" "$*" >&2; }\n'
       printf 'run()  { "$@" || die "run failed"; }\n'
+      # The transient list lives just above the function; extract it too, from the same
+      # file, so the harness drives the shipped pair rather than a copy of one of them.
+      sed -nE '/^E2E_TRANSIENT=/p' "$E2E"
       sed -n '/^ensure_manageable() {/,/^}/p' "$E2E"
       printf 'ensure_manageable\n'
       printf 'printf "REACHED-PHASE-5\\n" >&2\n'
@@ -121,5 +125,34 @@ sed -n '/\[4\/10\]/,/\[5\/10\]/p' "$E2E" > "$SANDBOX/phase4"
 grep -qE '^run "\$MAAS" power "\$NODE" status' "$SANDBOX/phase4" \
     || fail "REGRESSION: 'power status' is no longer run unconditionally in phase 4. It is the assertion that the BMC seam answers at all; behind the state check, a re-run would never test the seam"
 note "'power status' runs unconditionally — the seam is tested on a re-run too  ✓"
+
+# ── 5. a node STRANDED mid-transition is aborted, then managed ─────────────
+# The fourth case, and the one the `*)` branch above originally swallowed. A run killed
+# mid-deploy leaves its node in `deploying`; no verb accepts it there, so waving it
+# through as "already advanced" makes the run fail two phases later at `inspect`, with a
+# message about inspect and nothing about the strand. (That is exactly how it failed.)
+for st in verifying deploying cleaning rescuing deleting; do
+    rc="$(harness "$st")"
+    [[ "$rc" == 0 ]] \
+        || fail "the driver aborted on a node stranded in '$st' (rc=$rc) instead of recovering it. The control plane has a verb for this and the run should use it"
+    grep -q "^abort node1$" "$SANDBOX/calls" \
+        || fail "REGRESSION: a node stranded in transient state '$st' was not aborted. Nothing accepts a node mid-transition, so it was waved through as 'already advanced' and the run died later somewhere unrelated — the strand is the cause and the message named something else"
+    grep -q '^manage node1$' "$SANDBOX/calls" \
+        || fail "REGRESSION: '$st' was aborted but never managed. abort lands the node in 'error'; without the follow-up 'manage' it is recoverable and not recovered, which fails the same way one phase later"
+    grep -n 'abort node1' "$SANDBOX/calls" | grep -q '^1:' \
+        || fail "'manage' was issued before 'abort' for a node in '$st' — manage cannot accept a transient state, so the order is the whole fix"
+done
+note "each transient state is aborted into 'error' and then managed, in that order  ✓"
+
+# The list this script drives must be the list the control plane defines. Two hand-kept
+# copies of one fact drift, and the drift is silent: a state added to the control plane
+# and not here goes straight back to being swallowed by the permissive branch.
+e2e_list="$(sed -nE 's/^E2E_TRANSIENT="([^"]+)".*/\1/p' "$E2E" | head -1)"
+maas_list="$(sed -nE 's/^TRANSIENT_STATES="([^"]+)".*/\1/p' "$LAB_DIR/maas-lab.sh" | head -1)"
+[[ -n "$e2e_list" && -n "$maas_list" ]] \
+    || fail "could not read both transient-state lists (run-e2e.sh: '$e2e_list', maas-lab.sh: '$maas_list')"
+[[ "$e2e_list" == "$maas_list" ]] \
+    || fail "REGRESSION: run-e2e.sh's transient-state list ('$e2e_list') no longer matches maas-lab.sh's ('$maas_list'). A state the control plane treats as transient but this script does not is a state that gets waved through as 'already advanced' — silently, and two phases from where it fails"
+note "the driver's transient-state list matches the control plane's  ✓"
 
 pass "phase 4 drives 'manage' only from enrolled/error, skips a node the registry already advanced, aborts on a node it has never heard of, and exercises the BMC seam either way"

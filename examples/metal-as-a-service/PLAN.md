@@ -1156,3 +1156,44 @@ real-then-real assertion counted `apply` lines without excluding `--dry-run`, so
 dry-then-real sequence satisfied it. Both were assertions that would have passed forever
 without testing anything — the same defect class as the invariant they were written to
 protect, which is why the controls get run rather than reasoned about.
+
+## The ninth run: a node stranded by the run before it (2026-07-28)
+
+The eighth run was killed while `apply` was mid-deploy, which left node1 in `deploying` —
+a transient state, and by design no verb accepts one. Phase 4 waved it through:
+
+```
+'node1' is already 'deploying' (registry from an earlier run) — skipping 'manage'
+```
+
+and phase 6 then failed with a message about a completely different verb:
+
+```
+maas: cannot 'inspect' node 'node1' from state 'deploying' — needs one of: manageable
+```
+
+**The control plane was right again; `ensure_manageable`'s `*)` branch was too
+permissive.** "Anything that is not `enrolled`/`error`" quietly folded together two
+opposite situations: a node that has legitimately *advanced past* `manage`, and a node
+**stuck mid-flight** that nothing downstream can touch. Waving the second through pushes
+the failure two phases away from its cause — the same defect shape as the one this branch
+was originally added to fix, which is worth noticing: a permissive default that reads as
+success is a pattern, not an accident.
+
+`abort` already exists for exactly this (transient → `error`, with the reason recorded —
+it came out of `chaos-run.sh` killing the control plane mid-deploy). Phase 4 now drives
+`abort` → `manage`, and says loudly that it is doing so: a node stranded by the previous
+run is information the operator wants, not something to paper over silently.
+
+**The list is duplicated, so the duplication is pinned.** `run-e2e.sh` names the transient
+states itself; the test asserts its list is character-for-character `maas-lab.sh`'s
+`TRANSIENT_STATES`. Two hand-kept copies of one fact drift, and this drift would be
+silent: a state added to the control plane and not to the driver goes straight back to
+being swallowed by the permissive branch.
+
+**Verified headless:** [`tests/test-e2e-manage-idempotent.sh`](tests/test-e2e-manage-idempotent.sh)
+now covers all five transient states, asserting `abort` precedes `manage` (the order *is*
+the fix — `manage` cannot accept a transient state). `tests/run-all.sh` → **23 passed, 0
+skipped, 0 failed**. Three negative controls run for real: emptying the transient list,
+aborting without the follow-up `manage`, and letting the two lists drift by one state —
+each fails by name.
