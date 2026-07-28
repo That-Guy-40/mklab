@@ -800,3 +800,86 @@ schedules claims by inspected facts — never onto a node nobody looked at
 the claim's driver+image as satisfying it, so two claims wanting the same image with
 different constraints would consume each other's nodes while **both** reported
 satisfied. Ownership is now recorded on the node (`claim = <name>`), not inferred.
+
+## The one-shot live driver — `run-e2e.sh` (author-run)
+
+Ten phases, all sudo front-loaded. Read the plan first; it touches nothing:
+
+```bash
+cd examples/metal-as-a-service
+./run-e2e.sh --dry-run          # prints all 10 phases, needs no sudo
+sudo -v && ./run-e2e.sh         # the real run — never stops to ask mid-boot
+./run-e2e.sh --down             # tear the fleet down
+```
+
+**On firmware that cannot verify signatures** (QEMU's stock iPXE ROM — the default for
+a libvirt virtio NIC — has no `IMAGE_TRUST_CMD`), the run refuses before the deploy
+rather than booting into a silence. One flag runs everything with the **on-node** half
+of F2 skipped; the host-side gate still runs at `verify`:
+
+```bash
+E2E_UNSIGNED=1 ./run-e2e.sh
+```
+
+**Re-running is expected, and the registry is what carries over.** `--down` tears down
+the *fleet*; it does not forget the nodes. So a second run finds `node1` already at
+`manageable` (or further), and phase 4 skips `manage` rather than attempting a transition
+the control plane would refuse. That is correct — the state machine is being obeyed, not
+worked around. To genuinely start over, tear down **and** clear the registry:
+
+```bash
+./run-e2e.sh --down
+./maas-lab.sh show node1            # prints the state the next run will start from
+# then, to forget it entirely — run the delete yourself:
+#   rm -rf "${MAAS_STATE:-${XDG_STATE_HOME:-$HOME/.local/state}/lab-create/metal-as-a-service}"
+```
+
+**Success signature:**
+
+```
+PASS: end-to-end on real domains — BMC round-trip, probe-reported facts, a SIGNED
+payload netbooted into RAM, and apply converged. node1 is active.
+```
+
+### If it fails, look here first — in this order
+
+The failures this path produces all *look* like a timeout, and they are not the same
+thing. The log is `e2e-run.log`; the node's console is now recorded, so use it.
+
+```bash
+./maas-lab.sh show node1                       # console line: bytes, "empty", or "ABSENT"
+tail -40 /var/lib/libvirt/maas-console/node1.log
+```
+
+| what the console shows | what it means | fix |
+|---|---|---|
+| `MAAS: no boot script for this node` | the chain is installed and the control plane wrote nothing for this node | run the verb the message names (`inspect --boot` / `deploy`), then power-cycle |
+| a busybox shell, or an installer you did not ask for | the PXE network is still serving its single baked payload | `./netboot-chain.sh install` |
+| nothing at all (`empty`) | the domain's console is not being written | re-run `./create-fleet.sh up`; check `virsh dumpxml node1` shows `<serial type='file'>` |
+| `console ... (ABSENT)` | no console was recorded for the node | `./maas-lab.sh set-console node1 <path>` |
+| the probe boots and prints `maas-probe` but no facts arrive | it cannot reach the sink | `metadata-serve.sh` must bind the **PXE gateway** address, not localhost |
+
+**Before any of that, check the console is empty for the reason you think.** If the node
+never powered on at all, `create-fleet.sh up` will now have refused — but if you brought
+the fleet up some other way, look for a BMC port collision:
+
+```bash
+( cd ../virtualbmc-ipmi-lab && sudo ./vbmc-lab.sh list )
+```
+
+Two rows on one port (one `running`, one `error`) means the running one answers IPMI for
+both. The sibling lab's `alpine-node` defaults to **6230**, which is `node1`'s port:
+
+```bash
+( cd ../virtualbmc-ipmi-lab && sudo ./vbmc-lab.sh destroy )   # frees 6230
+```
+
+Every command against the wrong BMC *succeeds*, so nothing upstream will look wrong.
+
+**The console file: verified working (2026-07-28).** It lives at
+`/var/lib/libvirt/maas-console/<node>.log`, pre-created `0666` so qemu (running as
+`libvirt-qemu`) can write it and the unprivileged control plane can read it. libvirt's
+AppArmor helper **does** grant qemu that path on this host — a real boot of `node1`
+produced 30 KB of kernel log within seconds. `FLEET_CONSOLE=pty ./create-fleet.sh up`
+still restores the old (unlogged) behaviour if you need an interactive `virsh console`,
+at the cost of every health gate that reads the log.

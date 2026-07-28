@@ -82,10 +82,58 @@ Once up, the same `maas-lab.sh` verbs drive **real** IPMI:
 
 ```bash
 ./create-fleet.sh up                     # rootful: domains + vbmcd + BMCs, then enroll
+./netboot-chain.sh install               # rootful: point PXE at the per-node scripts
 ./maas-lab.sh manage node1               # real: ipmitool chassis power status via bmc.sh
 ./maas-lab.sh power  node1 status
 ./create-fleet.sh down                   # tear the fleet down
 ```
+
+Or drive the whole thing once, unattended: **[`run-e2e.sh`](run-e2e.sh)** — ten phases
+from `setup-pxe-net.sh` to a converged `apply`, all sudo front-loaded, `--dry-run` to
+read the plan first.
+
+### Three things a FLEET needs that a single node does not
+
+Three things, in fact — each missing from a live end-to-end run, each failing the
+same way: silently, as a timeout several minutes downstream of the actual defect.
+
+**1. The network must ASK which payload, per node.**
+[`setup-pxe-net.sh`](../virtualbmc-ipmi-lab/setup-pxe-net.sh) serves *one* `boot.ipxe`
+to the whole network with the payload baked in — right for its single node, fatal here:
+the per-node scripts the deploy drivers write at `<docroot>/maas/<node>.ipxe` are never
+fetched, so every node netboots the same default and every gate waits for a marker that
+will never appear. **[`netboot-chain.sh install`](netboot-chain.sh)** replaces the baked
+script with a chain — `maas/${hostname}.ipxe` → `maas/${net0/mac}.ipxe` →
+`maas/default.ipxe` — where `${hostname}` arrives via DHCP option 12 from the per-node
+reservation `create-fleet.sh` adds. The last link is deliberately a **dead end that
+explains itself** rather than a plausible fallback: a node quietly booting the wrong
+thing looks exactly like a successful deploy.
+
+**2. Every node must OWN its BMC port.**
+VirtualBMC lets two domains register on one port: only one binds, the loser sits in
+`error`, and **the winner answers IPMI for both** — plausibly. The sibling lab's own
+`alpine-node` defaults to 6230, which is also `node1`'s, so `manage`, `power status`,
+`bootdev pxe` and `power on` all succeeded against the wrong machine while `node1`
+never powered on. `create-fleet.sh up` now runs
+[`lib/vbmc_check.py`](lib/vbmc_check.py) **before enroll** and refuses, naming the node,
+the port and the squatter. The control plane cannot catch this — the BMC seam is the
+abstraction that hides which machine is on the other end — so it is checked in the
+fleet plumbing that still knows it is talking to vbmcd.
+
+**3. The console must be RECORDED, not attachable.**
+Every health gate in this lab greps a node's console log. The sibling lab defines
+`--console pty` — a terminal, which keeps nothing when no one is attached — so the first
+real run was *blind*: a node that booted the wrong payload and a node that never booted
+produced the identical symptom and no evidence either way. `create-fleet.sh up` now
+rewrites each domain's serial to a **file** ([`lib/console_xml.py`](lib/console_xml.py))
+and records the path in the registry, where the drivers already look for it.
+
+> **The trade, stated plainly:** serial0 on a fleet node is now a log file, so
+> `virsh console <node>` no longer gives you an interactive shell there. That is the
+> right trade — MAAS gives you a console *log*, a file survives the power cycles the
+> deploy path performs, and there is no second consumer to race (see CLAUDE.md on
+> serial consoles). `FLEET_CONSOLE=pty ./create-fleet.sh up` keeps the old behaviour
+> and loses every gate that reads the log.
 
 ## How the pieces connect
 
@@ -204,7 +252,11 @@ lifecycle runs with no libvirt at all.
 | File | Role |
 |---|---|
 | [`maas-lab.sh`](maas-lab.sh) | the control plane — registry + state machine + verbs + BMC seam + `inspect`/`watch` |
-| [`create-fleet.sh`](create-fleet.sh) | stand up (`up`, author-run) or `enroll` (headless) the fleet |
+| [`create-fleet.sh`](create-fleet.sh) | stand up (`up`, author-run) or `enroll` (headless) the fleet — incl. file-backed consoles + DHCP reservations |
+| [`netboot-chain.sh`](netboot-chain.sh) | replace the PXE network's single baked payload with a per-node chain (author-run) |
+| [`lib/console_xml.py`](lib/console_xml.py) | rewrite a domain's serial console from a pty to a **recorded file** |
+| [`lib/vbmc_check.py`](lib/vbmc_check.py) | refuse a fleet whose BMC ports are answered by another machine |
+| [`run-e2e.sh`](run-e2e.sh) | the one-shot live driver: 10 phases, real domains, real BMCs, real netboot (author-run) |
 | [`fleet.toml`](fleet.toml) | the 3-node fleet spec (hardware + declared end-state for `apply`) |
 | [`lib/fleet.py`](lib/fleet.py) | stdlib TOML reader projecting `fleet.toml` for bash |
 | [`probe-init.sh`](probe-init.sh) | the inspection probe's busybox `/init` (gathers facts, POSTs, powers off) |
@@ -218,7 +270,7 @@ lifecycle runs with no libvirt at all.
 | [`drivers/chaos.sh`](drivers/chaos.sh) + [`chaos-run.sh`](chaos-run.sh) | a driver that fails on purpose, and the matrix that grades how the control plane falls across all five layers |
 | [`ramdisk-catalog.toml`](ramdisk-catalog.toml) + [`lib/catalog.py`](lib/catalog.py) | the `--image` registry (RAM-INFRA trio · micro-linux · floppinux · busybox) and its validating reader |
 | [`drivers/verify-lib.sh`](drivers/verify-lib.sh) | the F2 signature gate (OpenSSL CMS sign/verify, iPXE-`imgverify` format) |
-| [`tests/`](tests/) | 15 headless smokes: state-machine, cleaning-guard, registry, inspect-metadata, watch, probe-build, deploy-rollback, verify-tamper, install-driver, ramdisk-driver, image-driver, image-measured-driver, apply-reconcile, region-and-scheduler, chaos-matrix (+ `mock-bmc.sh`, `mock.sh` driver, `run-all.sh`) |
+| [`tests/`](tests/) | 19 headless smokes: state-machine, cleaning-guard, registry, inspect-metadata, watch, probe-build, deploy-rollback, verify-tamper, install-driver, ramdisk-driver, image-driver, image-measured-driver, apply-reconcile, region-and-scheduler, probe-boot-script, bmc-binding-check, e2e-reaps-sink, e2e-fails-fast, chaos-matrix (+ `mock-bmc.sh`, `mock.sh` driver, `run-all.sh`) |
 | [`PLAN.md`](PLAN.md) | the increment ladder + each increment's outcome |
 | [`MANUAL_TESTING.md`](MANUAL_TESTING.md) | verified transcripts (headless) + the author-run bring-up handoff |
 

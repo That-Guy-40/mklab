@@ -19,11 +19,19 @@
 #   VCPUS       guest vCPUs           (default: 1)
 #   ROOT_PW     guest root password   (default: alpine) — throwaway lab cred
 #   NET         libvirt network       (default: default; use vbmc-pxe for step 3)
+#   NIC_MODEL   emulated NIC          (default: virtio; e1000 if the guest kernel lacks virtio_net)
 #   DISK_SIZE   grow the node disk to this (e.g. 10G) — room for a PXE OS install
 set -euo pipefail
 
 NODE="${NODE:-alpine-node}"
 NET="${NET:-default}"
+# NIC_MODEL: which emulated NIC the guest gets. virtio is the fast default and is right
+# when the guest kernel HAS virtio_net. It is not always: neither this repo's netboot
+# kernel (Debian stock, virtio_net=m with no modules in an initramfs) nor micro-linux's
+# defconfig kernel drives virtio-net, so a guest booting either sees NO network device
+# at all — no error, just no eth0, and anything that needs the network fails far away
+# from the cause. e1000 is built into both. See ../metal-as-a-service/PLAN.md.
+NIC_MODEL="${NIC_MODEL:-virtio}"
 DISK_DIR="${DISK_DIR:-/var/lib/libvirt/images}"
 DISK_SIZE="${DISK_SIZE:-}"
 ALPINE_URL="${ALPINE_URL:-https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/cloud}"
@@ -157,7 +165,7 @@ virt-install \
     --disk "path=$disk,format=qcow2,bus=virtio" \
     --disk "path=$seed,device=cdrom" \
     --osinfo detect=on,require=off \
-    --network network=$NET,model=virtio \
+    --network network=$NET,model=$NIC_MODEL \
     --graphics none \
     --console pty,target_type=serial \
     --noautoconsole \

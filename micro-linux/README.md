@@ -111,6 +111,18 @@ No second build is needed: `mlbuild.sh` bakes `CONFIG_VIRTIO_MMIO` into **every*
 micro-linux kernel, so one universal kernel boots on `q35`/`virt` *and* on microvm
 (whose virtio rides the mmio bus, not PCI). Two things worth knowing:
 
+> **Networking is built in, and asserted.** `CONFIG_NET`, `CONFIG_INET`,
+> `CONFIG_PACKET` and `CONFIG_VIRTIO_NET` (plus `CONFIG_E1000` on x86_64) are forced
+> `=y` and then checked, alongside the console and initrd symbols — an initramfs
+> carries **no modules**, so `=m` is the same as absent. This is gated rather than left
+> to `defconfig` because the failure is silent and awful: the guest boots perfectly and
+> simply has no interface — not a down link, not a DHCP timeout, no `eth0` at all.
+> `CONFIG_PACKET` is in the list for the same reason: busybox `udhcpc` speaks raw
+> `AF_PACKET` sockets, so without it you get a working NIC and still no DHCP. Found the
+> hard way when [`examples/metal-as-a-service/`](../examples/metal-as-a-service/) netbooted
+> its inspection probe with a distro kernel whose NIC drivers were all modular.
+
+
 - **QEMU's `microvm` machine is x86-only.** On aarch64, `microvm = true` gives you
   the equivalent — a stripped-down `virt` + virtio-mmio booted directly via
   `-kernel` with **no UEFI firmware** (so the arm microvm twin doesn't even need

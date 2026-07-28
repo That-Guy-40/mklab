@@ -39,7 +39,7 @@ declared layer has no scenario or a driver has no real-driver test. The layers:
 | `process` | — | `maas-lab.sh` killed mid-transition (by PID) |
 
 | `metadata` | `metadata-serve.sh` :8282 | no facts ever arrive at the sink |
-| `console` | the node's console log | the stream `watch` and the health gates read is absent |
+| `console` | the node's console log | the stream `watch` and the health gates read is absent — **or recorded and never written** |
 | `reconcile` | `apply` | the registry says active; the payload is dead |
 | `ui` | the actions panel | a key that fires twice; a row that is stale by the time it is pressed |
 
@@ -486,6 +486,13 @@ $ ./maas-lab.sh apply fleet.toml --dry-run
 - **`console`** — the console log is absent. `watch` refuses and names it; a progress
   bar invented from a stream that is not there is worse than no bar, because the
   operator watches it and believes it.
+  A **second** console scenario arrived from the field rather than from design (see
+  "What the first live run found", below): the console is *recorded* and nothing writes
+  to it. Strictly nastier than absent — absent fails loudly at the first `watch`, silent
+  looks fully instrumented and surfaces minutes later as a health-gate timeout, having
+  sent the operator after the wrong defect. `show` now flags a recorded console as
+  `ABSENT` or `empty`, which is what moves it to **ABSORBED**; remove that flag and the
+  scenario grades **STALE** and the run fails.
 - **`reconcile`** — the registry says active, the payload is dead. `apply`'s pre-flight
   catches it (**HALTED**). With `--no-recheck` the same scenario grades **STALE** — the
   control that proves the pre-flight is load-bearing.
@@ -605,3 +612,350 @@ nodes and both would report satisfied while one was under-filled. Ownership is n
 skipped, 0 failed**; `chaos-run.sh` → 18 scenarios across 9 layers, **0 critical**.
 Negative control run: removing the attestation step from `image-measured`'s health lets
 a node with **no quote at all** activate, and the test says so.
+
+## What the first live run found (2026-07-28)
+
+The first end-to-end run of [`run-e2e.sh`](run-e2e.sh) against real libvirt domains
+failed at phase 5 and again at phase 7, with two different-looking errors:
+
+```
+maas: inspect --boot: timed out after 120s with no facts from 'node1'
+ramdisk: 'node1' never printed /(login:|~ #)/ within 120s (health gate FAIL)
+```
+
+Both had **one cause**, and it was not in the control plane. `setup-pxe-net.sh` serves
+a single `<bootp file='boot.ipxe'/>` to the whole network with the payload baked in, so
+both times the node dutifully netbooted **busybox** — not the probe, not the signed RAM
+payload — reported nothing, and timed out. Everything upstream had worked: enroll, the
+BMC round-trip, `provide` through `cleaning`, the F2 signing, the per-node iPXE script.
+Nothing ever *fetched* that script.
+
+The second defect only became visible once the first was understood: **nothing was
+writing a console log.** In every headless test the test writes that file by hand; on a
+live fleet the domains had a `pty` console, which records nothing when no one is
+attached. So the run was blind, and the two failures above were indistinguishable from
+each other and from a node that never powered on.
+
+The fixes, and where each belongs:
+
+| defect | fix | whose job |
+|---|---|---|
+| the network serves one payload to everyone | [`netboot-chain.sh install`](netboot-chain.sh) — chain to `maas/${hostname}.ipxe`, then MAC, then a self-explaining dead end | the lab's PXE glue |
+| `${hostname}` needs a DHCP reservation | `create-fleet.sh` adds `<host mac= name=/>` per node and records the MAC | the fleet |
+| `inspect --boot` never said what to boot | `_write_probe_ipxe` — a per-node script carrying `maas.node=` and `maas.md=`, and a **refusal before the BMC is touched** when the URL, the initramfs or the kernel is missing | the **control plane** |
+| the console recorded nothing | file-backed serial ([`lib/console_xml.py`](lib/console_xml.py)) + `set-console` in the registry | the fleet |
+| a recorded-but-silent console is invisible | `show` flags a console as `ABSENT`/`empty`; new `console-silent` chaos scenario | the control plane |
+
+**The lesson, which is the same one increment 4a taught in a different key:** a green
+headless suite proves the control plane's *decisions*, and every one of these defects
+lived in a **seam the mocks stand in for** — the PXE network, the console device, the
+DHCP option. The suite could not have caught them; only running it for real could. What
+the suite *can* do is hold the line afterwards, which is why the probe boot script now
+has [`tests/test-probe-boot-script.sh`](tests/test-probe-boot-script.sh) (five checks,
+both negative controls run) and the silent console has a chaos row.
+
+**Still author-run, still unverified:** the fixed `run-e2e.sh` has not yet completed a
+live run. What is verified here is headless — `tests/run-all.sh` → **16 passed, 0
+skipped, 0 failed**; `chaos-run.sh` → **19 scenarios across 9 layers: 8 absorbed, 4
+degraded, 7 halted, 0 critical**; and the XML transform against a real `virsh dumpxml`
+of `node1`. Whether libvirt's AppArmor policy permits qemu to write the console file at
+`/var/lib/libvirt/maas-console/<node>.log` needs the rootful run to answer.
+
+## What the SECOND live run found (2026-07-28) — the seam answered for the wrong machine
+
+The chain and console fixes above all worked: `netboot-chain.sh` installed, the
+file-backed serial was accepted by libvirt **and by AppArmor** (30 KB of kernel log on
+the first real boot — the known unknown is now answered, positively), and `show`
+reported the console as `empty` exactly as designed. The run still failed, and the
+console being empty is what made the cause findable.
+
+Buried in `create-fleet.sh up`'s output:
+
+```
+| Domain name | Status  | Address | Port |
+| alpine-node | running | ::      | 6230 |     <-- the sibling lab's own node
+| node1       | error   | ::      | 6230 |     <-- ours, could not bind
+```
+
+**Two BMCs on port 6230.** VirtualBMC registers both; only one binds; the loser sits in
+`error`; and the winner answers IPMI **for both**. `alpine-node` — this lab's sibling,
+whose `vbmc-lab.sh add` defaults to 6230, which is also `node1`'s port — had been
+answering for `node1` all along:
+
+| command | result | truthfully about |
+|---|---|---|
+| `manage node1` | `manageable node1 (BMC creds verified)` | alpine-node |
+| `power node1 status` | `Chassis Power is on` | alpine-node |
+| `bootdev node1 pxe` | `Set Boot Device to pxe` | alpine-node |
+| `power on` | `Chassis Power Control: Up/On` | alpine-node |
+
+Four successes, all true, none of them about node1 — which never powered on, which is
+why its console stayed at zero bytes. On this lab's own ladder that is **LIED**: the
+record and reality disagreed and every check said healthy. It is strictly worse than an
+unreachable BMC, which fails at once and honestly.
+
+**This was also why the FIRST run failed.** The chain and console defects were real and
+had to be fixed — the console is what made this visible — but the node was never going
+to boot either time.
+
+**The control plane cannot catch this, by construction.** `MAAS_BMC` is the seam whose
+entire job is to hide which machine is on the other end; a control plane that could tell
+would not have a seam. So the check lives in the fleet plumbing, which still knows it is
+vbmcd: [`lib/vbmc_check.py`](lib/vbmc_check.py), run by `create-fleet.sh` **before
+enroll**, refusing by name — the node, the port, and the squatter.
+
+Two smaller defects the same run surfaced, both of the "kept going after a step failed"
+family:
+
+- **The facts sink never started.** A `metadata-serve.sh` left over from the previous
+  run still held `:8282`; the new one died with `OSError: Address already in use` into
+  the log, and `run-e2e.sh` — having backgrounded it — carried on with a dead PID and
+  blamed the probe two phases later. It now checks the process is alive and answering,
+  and names the leftover holder.
+- **No DHCP reservation was ever added.** `net-update add ip-dhcp-host` needs an IP
+  (`Missing IP address in static host definition`); a `mac`+`name` entry is rejected.
+  All three failed and the script said "already present or not addable — continuing".
+  Fixed by allocating above the dynamic range from the network's own subnet, and by
+  saying what was *lost* when it fails rather than "continuing".
+
+### Named, not yet covered
+
+`chaos-run.sh`'s `oob` layer covers a BMC that stops answering (`bmc-drop`). It does
+**not** yet cover a BMC that answers *for a different machine* — the shape above. That
+needs the mock BMC to actuate another node's power state on request, and it is the
+highest-value chaos scenario outstanding, because it is the only one so far that passed
+every gate on the way to failing.
+
+**Verified headless (this host, 2026-07-28):** `tests/run-all.sh` → **17 passed, 0
+skipped, 0 failed**; `chaos-run.sh` → **19 scenarios across 9 layers, 0 critical**.
+Negative control on the new check: blinding it to other domains on the port makes
+`test-bmc-binding-check.sh` fail. **Verified live:** the file-backed console writes
+(30 KB on a real boot), and the DHCP failure was reproduced by hand
+(`Missing IP address in static host definition`).
+
+## What the THIRD live run found (2026-07-28) — the probe had never booted
+
+`vbmc_check: all 3 nodes own their BMC port and are running`. The collision was gone,
+and node1 **netbooted our script** — the console proves it, with the cmdline the control
+plane wrote:
+
+```
+Command line: console=ttyS0 ip=dhcp maas.node=node1 maas.md=http://192.168.123.1:8282
+```
+
+The chain, the DHCP hostname, the per-node script, the file-backed console: all working.
+And then:
+
+```
+Run /init as init process
+Failed to execute /init (error -40)
+Starting init: /bin/sh exists but couldn't execute it (error -40)
+Kernel panic - not syncing: No working init found.
+```
+
+`-40` is `ELOOP`. `build-probe-initramfs.sh` symlinked **every** name in
+`busybox --list` to `/bin/busybox` — and `busybox` is itself in that list, so the last
+link replaced the binary with a symlink to itself. Every applet then resolved to
+nothing. **The probe had never once booted**, across every run of this lab.
+
+**Why the test said otherwise, twice over.** `test-probe-build.sh` asserted
+`[[ -f "$un/bin/busybox" ]]`. `-f` *follows* symlinks — and the link is **absolute**, so
+it escaped the unpack directory and resolved against the **host's** real
+`/usr/bin/busybox`. The test was validating a file that had never been in the archive.
+The size was a second tell nobody read: the broken artifact was **8.0K**, a real one is
+**1.1M**. Now: not-a-symlink, executes, >200 KB, and `/bin/sh` resolves — asserted both
+in the builder (before packing) and in the test (after unpacking). Negative control:
+restore the clobbering loop, strip the builder's guards, and the test fails by name.
+
+### …and the deploy failed for an unrelated reason the same run proved
+
+The deploy boot left **zero bytes** on the console. Not a slow boot — nothing at all.
+The run had already performed the controlled experiment: same node, same network,
+minutes apart,
+
+| script | `imgverify`? | result |
+|---|---|---|
+| `maas/node1.ipxe` (introspection) | no | booted, full kernel log on serial |
+| `maas/node1.ipxe` (deploy) | **yes** | nothing, no output whatsoever |
+
+A libvirt virtio NIC boots **QEMU's stock iPXE ROM**, which is built without
+`IMAGE_TRUST_CMD`. `imgverify` is an unknown command, the script aborts — and that ROM
+has no serial console either, so the abort message goes to VGA and the console log stays
+empty. The on-node half of F2 needs a firmware that can honour it.
+
+`run-e2e.sh` now **refuses** rather than booting into that silence, naming both ways
+out: build a verifying iPXE with MAAS's CA (`netboot/build-ipxe.sh --imgverify
+--certfile …`, attach via `<rom file=…/>`, then `MAAS_IPXE_TRUSTS_CA=1`), or drop the
+signatures to exercise the rest of the path with the host-side gate still running.
+
+### Named, not yet built
+
+- **A verifying iPXE ROM for the fleet.** The builder exists (`netboot/build-ipxe.sh
+  --imgverify`, proven in the RAM-infra lab); what is missing is attaching it to the
+  fleet's NICs and recording the capability per node. Until then the on-node half of F2
+  is **unexercised on this path** — the host-side `verify` still runs, and says so.
+- **iPXE with a serial console.** The same ROM would fix the debuggability hole this run
+  exposed: the chain's own `echo` lines never reach the console log, so every iPXE-level
+  failure is invisible to exactly the instrument built to see it.
+- **A chaos scenario for a BMC that answers for a different machine** (carried over).
+
+**Verified headless (this host, 2026-07-28):** `tests/run-all.sh` → **17 passed, 0
+skipped, 0 failed**. **Verified live:** the boot chain delivers the control plane's own
+script with the right cmdline, and the console records it.
+
+## The leftover that cost three cycles (2026-07-28)
+
+`run-e2e.sh` backgrounds the facts sink, which holds `:8282` for the whole run. Three
+runs in a row ended on a timeout and left it behind, and the next run's sink then failed
+to bind. The **first** time that was silent — backgrounding a server hides its exit
+status — and the blame landed on the probe two phases later. The second time the new
+guard caught it, but the operator still had to go find a pid by hand.
+
+The script's own rule — *"does not kill processes it did not start"* — is right, and did
+not apply: **this one it did start, and it has the pid.** It now reaps it on `EXIT`
+(and on `INT`/`TERM`, which route through `EXIT`), by the recorded PID. Everything else
+— watchers, the fleet, vbmcd — is still the operator's, because the script did not start
+those.
+
+[`tests/test-e2e-reaps-sink.sh`](tests/test-e2e-reaps-sink.sh) extracts the **shipped**
+`reap()` out of `run-e2e.sh` with `sed` and exercises it, rather than re-implementing it:
+the recorded PID dies; an identical process that was *not* recorded **survives** (the
+pkill footgun, which has already cost this repo a QEMU VM and a shell); an empty
+`MD_PID` reaps nothing; and the trap does not alter the exit status — an `EXIT` trap that
+swallows a failure would turn a failed live run into a passing one, the worst possible
+outcome for a script whose whole job is a verdict. Both negative controls run.
+
+## The fourth run: the driver walked past its own failure (2026-07-28)
+
+Phase 3 failed outright:
+
+```
+qemu-img: /var/lib/libvirt/images/node1.qcow2: error while converting qcow2: Failed to get "write" lock
+create-fleet: create-node node1 failed
+```
+
+`create-node.sh` rewrites the node's disk with `qemu-img convert` **before** it destroys
+the domain, and node1 was still running from the previous failed run — a fleet run that
+ends on a health-gate failure leaves its nodes powered on, so the *next* `up` hits this
+every time. `create-fleet.sh` now stops any running fleet domain first, by name and with
+the lifecycle verb, before create-node.sh touches a disk.
+
+**But the real defect was the driver's own.** `run()` invoked each phase and never looked
+at its exit status. So no domain was recreated, no console instrumented, no BMC verified,
+nothing enrolled — and phases 4 through 10 ran anyway. Phase 4 then failed too (`cannot
+'manage' from state 'manageable'`), was also ignored, and the run ended blaming a health
+gate **eight phases downstream of the actual defect**. Two of the four live runs were
+read wrong the first time because of this, including by me.
+
+The line now drawn, and pinned by
+[`tests/test-e2e-fails-fast.sh`](tests/test-e2e-fails-fast.sh):
+
+| | | |
+|---|---|---|
+| `run()` | **setup** — everything after depends on it | aborts, names the step, does not paraphrase the tool's own error |
+| `run_soft()` | the things **under test** (deploy, apply, watch) | continues *and says so* — their failure is the result, and aborting would throw away the state, the `apply` report and the verdict |
+
+Making `run_soft` fatal too would be the obvious "fix" and would be wrong, so the test
+asserts it stays non-fatal **and** stays visible.
+
+One more, found while reading the log: **`--dry-run` was writing to the real run log.**
+It skipped the truncation but still `tee -a`'d, so every dry run appended a ghost run to
+the last real one — and a log with two interleaved runs in it is worse than no log when
+you are trying to read a failure. (I did this to the user's log myself, twice, while
+verifying the previous fix.)
+
+**Verified headless:** `tests/run-all.sh` → **19 passed, 0 skipped, 0 failed**. Negative
+controls: restoring the status-blind `run()`, and restoring the log-writing `--dry-run`,
+each make the test fail by name.
+
+## The fifth run: the probe measured the machine and had no wire (2026-07-28)
+
+Setup finally held — phases 1–5 all green, the reap trap fired on the way out. Phase 6
+failed, and this time the console said exactly why:
+
+```
+MAAS inspection probe: DHCP failed (continuing)
+MAAS inspection probe: collected facts cpus=1 node=node1
+MAAS inspection probe: FAILED to post facts to http://192.168.123.1:8282
+```
+
+The probe booted, ran, and measured the machine correctly. It had **no network device at
+all** — not a down link, not a DHCP timeout: the kernel never registered an interface.
+
+```
+Unknown kernel command line parameters "ip=dhcp", will be passed to user space.
+```
+
+**The cause is the kernel, not the NIC.** The probe boots an *initramfs*, which carries
+no modules, so every driver it needs must be built in. `~/netboot/kernel` is Debian
+stock — `virtio_net` **and** `e1000` are both modules there. `run-e2e.sh` now stages
+micro-linux's defconfig kernel as `probe-kernel` and points `MAAS_PROBE_KERNEL` at it.
+
+Proven by booting the real probe initramfs under QEMU
+([`tests/test-probe-nic.sh`](tests/test-probe-nic.sh)), which is the only kind of check
+that could have caught this: a NIC model and a kernel are configured in two different
+files by two different tools, and every static check on either passes — `model=virtio`
+is a perfectly good NIC and the kernel is a perfectly good kernel. Only running them
+together shows there is no driver between them.
+
+**A correction, because the test's own control produced it.** The fleet now defaults to
+`e1000` (`FLEET_NIC_MODEL`), and that change is **belt-and-braces, not the fix**: the
+control run shows micro-linux's kernel drives virtio-net perfectly well. With the right
+kernel the original virtio NIC would have worked. `e1000` is kept because it is built
+into both kernels and so widens the margin, but the defect was the kernel and it would
+be wrong to let the NIC take the blame.
+
+Also fixed: `run()`'s abort message reported **`rc=0` every time** — `$?` was clobbered
+by the `printf` between the failing command and the message. Captured before anything
+else runs now.
+
+**Verified headless:** `tests/run-all.sh` → **19 passed, 0 failed**. `test-probe-nic.sh`
+is deliberately **not** in `run-all.sh`: it boots QEMU twice and takes ~2 minutes. Run it
+directly when touching the probe, the fleet's NIC, or the probe kernel.
+
+## The sixth run: the registry outlives the fleet (2026-07-28)
+
+Setup went further than any previous run. Phase 3 was **fully** green for the first time:
+`vbmc_check` passed all three nodes, all three consoles were recorded, and the DHCP
+reservations finally landed now that they carry an IP (`node1 @ 192.168.123.101`). Then
+phase 4 died:
+
+```
+maas: cannot 'manage' node 'node1' from state 'manageable' — needs one of: enrolled error
+FAIL: the step above failed (rc=1)
+```
+
+**Nothing was broken.** `create-fleet.sh` rebuilds the domains but skips enrolling a node
+the registry already knows (`node1 already enrolled (state=manageable) — skipping`), so
+on the second run node1 arrived at phase 4 already past `enrolled`. `manage` is a
+transition **from** `enrolled`/`error` — not a re-verification you can spam — and it
+refused, correctly.
+
+**This is the first finding of the six that touches the control plane at all, and it
+still isn't a control-plane bug.** The state machine behaved exactly as designed and the
+*harness* was wrong about it: `run-e2e.sh` assumed a fresh registry every run. The
+previous five were all in the plumbing the headless suite substitutes for — a baked
+`boot.ipxe`, a colliding BMC port, a self-symlinked busybox, a disk write lock, a kernel
+with no NIC driver. That the live path had to get this deep before the control plane's
+own logic came up at all is the most useful thing this run reported.
+
+Phase 4's decision is now `ensure_manageable()` — hoisted into a **function** precisely
+so it can be exercised without a fleet, since inlined in the phase body it could only
+ever be tested by running the real thing, which is how it shipped wrong. Three cases,
+which must stay distinct:
+
+| state | what phase 4 does | why |
+|---|---|---|
+| `enrolled` / `error` | run `manage` | the transition it exists for |
+| anything else | skip, say why, carry on | already past it; calling `manage` is an *illegal* transition, not a harmless retry |
+| **no state at all** | **abort** | the node was never enrolled ⇒ phase 3 did not finish. Folding this into the skip branch is the tempting wrong fix and turns phase 4 into a silent no-op |
+
+`power status` stays **outside** the conditional: it is the assertion that the BMC seam
+answers, and hiding it behind the state check would mean a re-run never tests the seam.
+
+**Verified headless:** [`tests/test-e2e-manage-idempotent.sh`](tests/test-e2e-manage-idempotent.sh)
+`sed`s the shipped `ensure_manageable()` out of `run-e2e.sh` and drives it against a stub
+control plane. `tests/run-all.sh` → **20 passed, 0 skipped, 0 failed**. Three negative
+controls, each run for real: restoring the unconditional `manage`, folding the
+un-enrolled case into the skip branch, and moving `power status` inside the conditional
+each make the test fail by name.

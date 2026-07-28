@@ -22,6 +22,13 @@
 #   ./vbmc-lab.sh node            # define the alpine-node domain (= create-node.sh)
 #   ./vbmc-lab.sh up              # run vbmcd (mounts libvirt socket, host net)
 #   ./vbmc-lab.sh add             # vbmc add + start alpine-node on port 6230
+#   ./vbmc-lab.sh list            # just the `vbmc list` table (parseable)
+#
+# PORT 6230 IS THIS LAB'S DEFAULT, and it is also the first port a fleet built on top
+# of this lab will want (../metal-as-a-service/fleet.toml). Two domains CAN be
+# registered on the same port: only one binds, the other sits in `error`, and the
+# winner answers IPMI for both — plausibly, so nothing looks wrong. If you are running
+# both labs, `vbmc delete alpine-node` first or move the fleet's ports.
 #   ./vbmc-lab.sh power <cmd>     # ipmitool chassis power status|on|off|reset|cycle
 #   ./vbmc-lab.sh bootdev <dev>   # ipmitool chassis bootdev pxe|disk|cdrom (+ show libvirt boot)
 #   ./vbmc-lab.sh status          # vbmc list + ipmitool power status + virsh domstate
@@ -90,6 +97,14 @@ add)
     vexec vbmc list
     echo
     echo "Try:  ./vbmc-lab.sh power status"
+    ;;
+
+list)
+    # Just the table, nothing else on stdout — so a caller can PARSE it. A fleet has to
+    # check that each node OWNS its BMC port: two domains can be registered on the same
+    # port, only one of them binds, and the winner then answers for both. See
+    # ../metal-as-a-service/lib/vbmc_check.py, which this feeds.
+    vexec vbmc list
     ;;
 
 power)
