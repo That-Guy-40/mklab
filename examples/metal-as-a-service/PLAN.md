@@ -1026,3 +1026,91 @@ a verifying ROM: `netboot/build-ipxe.sh --imgverify --certfile <ca.crt>`, attach
 `<rom file=…/>` on each domain's `<interface>`, then `MAAS_IPXE_TRUSTS_CA=1`. That same
 ROM would also give iPXE a serial console and close the debuggability hole that made run
 3's failure a silence.
+
+## The eighth run: the first defect in the control plane itself (2026-07-28)
+
+**Phase 8 passed.** The deploy path ran end to end on a real domain:
+
+```
+ramdisk: 'node1' matched its console marker (active)
+active node1 (driver=ramdisk image=micro-linux-x86_64, healthy)
+```
+
+Signed payload → host-side F2 gate → netbooted into RAM → health gate matched a real
+console marker → `active`. Nine phases of this script now do what they say.
+
+**Phase 9 then looked like a hang** — half an hour of no output — and was not one. Three
+findings, one of them the first real control-plane bug the live path has produced.
+
+### 1. A/B rollback rolled back the image but not the driver — CRITICAL
+
+`fleet.toml` declares node1 as `install/almalinux9-ks`; phase 8 had just put it on
+`ramdisk/micro-linux-x86_64`. So `apply` correctly issued a deploy. The install failed,
+§4b rolled back to the previous image — and reused the *new* driver, because `cmd_deploy`
+had already overwritten the node's driver field:
+
+```
+$ ps: drivers/install.sh deploy node1 micro-linux-x86_64 previous
+```
+
+A RAM payload handed to the installer. `install.sh` netbooted the live node and entered
+`await_power off`, waiting for an installer that did not exist to power off a machine
+sitting at a micro-linux login prompt — `MAAS_HEALTH_TIMEOUT × 15` = **1800s**. And the
+registry recorded the result as fact:
+
+```
+driver      install
+image       micro-linux-x86_64 (previous: -)
+```
+
+A pair that cannot exist, written down as though it did: the **LIED** rung of this lab's
+own chaos ladder, this time inside the control plane rather than the harness.
+
+**The rollback candidate is a PAIR, not an image.** `cmd_deploy` now captures the previous
+*driver* alongside the previous image, records `previous_driver`, rolls back through the
+driver that actually deployed the image, and moves the `driver` field back with it. When
+the previous driver cannot be resolved it **refuses to roll back at all** and errors,
+naming what is missing — a node left on a failed image is honestly broken and says so;
+one driven by a driver that does not own its image is a machine nobody can reason about.
+`show` now prints `driver/image` on both slots, because a view that shows only the images
+hides exactly this mismatch.
+
+**And `gate` now asks `describe <image>` before deploying.** `describe` is the contract's
+ownership question and nothing was asking it. F2 could not have caught this: the image
+was correctly signed — it was simply the wrong driver's image. `install.sh` answered
+"yes" to every image in existence; it now refuses a payload staged as kernel+initrd+
+cmdline, the triple only `ramdisk.sh stage` writes.
+
+**Why no test caught it.** Every rollback test deployed both images with the *same*
+driver, and the shared `make_image` fixture produces one generic payload with no notion
+of which driver owns it. The mock could not express the mismatch, so the mismatch could
+not fail — untestable and unfaithful being, as usual, the same code.
+[`tests/test-rollback-driver-pair.sh`](tests/test-rollback-driver-pair.sh) introduces two
+fixture drivers that each own their own images, which is the fixture that was missing.
+
+**Verified headless:** `tests/run-all.sh` → **22 passed, 0 skipped, 0 failed**. Four
+negative controls, each run for real: restoring the `$drv` reuse, dropping the driver-field
+restore, making `gate` stop asking `describe`, and making `install.sh` claim every image
+again — each fails the test by name.
+
+### 2. `apply` swallows every deploy's output — named, not yet fixed
+
+`( cmd_deploy … ) >/dev/null 2>&1`. That is why 22 minutes of a doomed 30-minute wait
+produced zero bytes and read as a hang. The reasoning behind the redirection (a
+per-node table, not a wall of driver logs) is sound; the fix is to tee it into the run
+log rather than discard it.
+
+### 3. The reconciliation invariant is not actually being tested — named, not yet fixed
+
+Phase 9 runs `apply --dry-run` and then `apply`. A dry run converges nothing, so the real
+run afterwards issues exactly what the dry run predicted — the "second run must issue
+ZERO transitions" claim is checking a property it has not set up. It needs *real* then
+*real*.
+
+### 4. `fleet.toml` declares a spec this script cannot finish — open decision
+
+node1 is declared `install/almalinux9-ks`: the ~30-minute Anaconda path that
+`run-e2e.sh`'s own header says it deliberately avoids, and which contradicts what phase 8
+deploys. Either the declaration should match the ramdisk deploy, or phase 9 should
+converge a spec it can actually finish. Left open deliberately — it is a decision about
+what the e2e is *for*, not a defect.
