@@ -6,7 +6,9 @@
 #
 # SEPARATE from run-e2e.sh on purpose: that is the fast reconcile-loop run (~2 min)
 # and a ~20–30 minute install inside it would stop anyone from running it. This
-# script assumes the fleet is ALREADY UP — run run-e2e.sh (or create-fleet.sh up)
+# script assumes the fleet is ALREADY UP — run run-e2e.sh (or
+# FLEET_NIC_ROM=1 ./create-fleet.sh up — NEVER bare: without the var the fleet
+# comes up without its verifying ROMs, silently)
 # first — and needs no sudo itself: the privileged pieces (PXE net, chain, domains)
 # were done by whatever brought the fleet up.
 #
@@ -45,9 +47,9 @@ step() { printf '\n== %s ==\n' "$*" >&2; }
 step "preflight"
 
 ( "$MAAS" show "$NODE" ) >/dev/null 2>&1 \
-    || die "node '$NODE' is not enrolled — bring the fleet up first: FLEET_NIC_ROM=1 MAAS_IPXE_TRUSTS_CA=1 ./run-e2e.sh (or ./create-fleet.sh up)"
+    || die "node '$NODE' is not enrolled — bring the fleet up first: FLEET_NIC_ROM=1 MAAS_IPXE_TRUSTS_CA=1 ./run-e2e.sh (or FLEET_NIC_ROM=1 ./create-fleet.sh up — never bare, or the ROMs drop)"
 ( "$MAAS" power "$NODE" status ) >/dev/null 2>&1 \
-    || die "the BMC for '$NODE' is not answering — is vbmcd up? (./create-fleet.sh up)"
+    || die "the BMC for '$NODE' is not answering — is vbmcd up? (FLEET_NIC_ROM=1 ./create-fleet.sh up)"
 info "fleet: '$NODE' enrolled, BMC answers"
 
 grep -q 'netboot-chain.sh' /var/lib/libvirt/tftp-vbmc/boot.ipxe 2>/dev/null \
@@ -62,6 +64,25 @@ curl -fsS --max-time 5 -o /dev/null "http://$GW:$PORT/vmlinuz" \
     || die "the payload server is not serving $NETBOOT_DIR on http://$GW:$PORT/ — start it:
 ( cd ../virtualbmc-ipmi-lab && ./setup-pxe-net.sh )   # sudo"
 info "payload server: http://$GW:$PORT/ serves the docroot"
+
+# MAAS_IPXE_TRUSTS_CA=1 promises the NODE will verify — which only its NIC ROM can
+# do. That attachment does not survive any create-fleet run made without
+# FLEET_NIC_ROM (it now defaults ON when the ROM is installed — this fleet lost
+# its ROMs to the old opt-in default three times, twice via this repo's own
+# printed instructions). A stock ROM meets `imgverify` as an
+# unknown command and cannot speak on the serial console, so without this check
+# the failure surfaces as the deploy burning its FULL timeout in silence.
+if [[ "${MAAS_IPXE_TRUSTS_CA:-0}" == 1 ]] && command -v virsh >/dev/null; then
+    dom="$("$MAAS" show "$NODE" 2>/dev/null | awk '$1=="domain"{print $2; exit}')"
+    virsh -c qemu:///system dumpxml --inactive "${dom:-$NODE}" 2>/dev/null | grep -q '<rom file=' \
+        || die "MAAS_IPXE_TRUSTS_CA=1, but domain '${dom:-$NODE}' carries NO <rom file=> — its stock
+ROM cannot honour imgverify and cannot even speak on the serial console, so the
+deploy would sit silent until the full install timeout. The fleet was re-created
+with the ROM dropped (FLEET_NIC_ROM=0, or an uninstalled ROM). Fix:
+    FLEET_NIC_ROM=1 ./create-fleet.sh up
+then re-run this script."
+    info "verifying ROM: attached to '${dom:-$NODE}'"
+fi
 
 ( "$HERE/drivers/verify-lib.sh" check-keys --dir "$MAAS_IMAGES_DIR/trust" ) >/dev/null 2>&1 || {
     [[ "${MAAS_IPXE_TRUSTS_CA:-0}" == 1 ]] \
@@ -88,6 +109,10 @@ if [[ ! -f "$S2" ]]; then
         got="$(sha256sum "$tmp" | awk '{print $1}')"
         [[ "$got" == "$want" ]] || { rm -f "$tmp"; die "downloaded stage2 sha256 mismatch (.treeinfo wants $want, got $got) —
 the local .treeinfo and the mirror disagree; re-sync the whole netboot tree, do not mix generations"; }
+        # mktemp creates 0600 and mv preserves it — the web server (another user)
+        # then serves 403 and dracut retry-loops on "failed to fetch stage2".
+        # Found live: the sha said perfect, the perms said nobody may look.
+        chmod 0644 "$tmp"
         mv -f "$tmp" "$S2"
     else
         die "the Anaconda stage2 is missing: $S2 (reclaimed in a disk cleanup).

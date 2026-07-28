@@ -24,23 +24,19 @@ an item that is quietly done is as misleading as one quietly abandoned.
 
 ---
 
-## Where to start next (as of 2026-07-28, late — items 1, 3 and 4 done; item 2 built, awaiting its live run)
+## Where to start next (as of 2026-07-28, night — items 1–4 ALL done)
 
-**The one thing outstanding is item 2's live run** — everything for it is staged and
-headlessly proven; only the ~20–30 minute Anaconda install itself has not run:
+**Every numbered item below is closed, live.** Item 2's live run landed last
+(2026-07-28, third attempt — the first two each paid out a fresh defect, all fixed
+and regression-tested; transcripts in [`MANUAL_TESTING.md`](MANUAL_TESTING.md) §13):
+`node1` reached `active` through the INSTALL driver, with the firmware verifying the
+installer payload (`imgverify` over the Anaconda kernel and its 223 MB initrd), the
+kickstart writing the disk, the self-poweroff observed out-of-band and confirmed
+stable, and the INSTALLED OS reaching `login:` from its own disk.
 
-```bash
-E2E_FETCH_STAGE2=1 MAAS_IPXE_TRUSTS_CA=1 ./run-e2e-install.sh
-```
-
-(`E2E_FETCH_STAGE2=1` because the Anaconda stage2 was reclaimed in a disk cleanup —
-the preflight re-fetches it sha-checked against `.treeinfo`, never resumed. The fleet
-must be up with the verifying ROM; the script's preflight refuses with the fix for
-anything else it finds missing.)
-
-Item 1 (firmware-verified boot, live, both directions), item 3 (the mis-bound-BMC
-chaos scenario) and item 4 (bounded `apply` self-heal) are **done** — each section
-below records what landed and where the tests are.
+What remains lives in "Smaller, still open" below — chiefly: the `image` and
+`image+measured` drivers have still never touched a real node, and a failed deploy
+corrupts the recorded rollback pair (see the new item).
 
 ---
 
@@ -79,7 +75,13 @@ the pattern holds):
    extension hook.
 2. **`FLEET_NIC_ROM` had to ride the e2e itself** — the documented two-command
    sequence (attach, then run) self-destructed, because phase 3 redefines the
-   domains and silently drops the ROM. Docs and the die-message now say so.
+   domains and silently dropped the ROM. It bit a THIRD time the same evening
+   (a bare `create-fleet.sh up`, prescribed by this repo's own messages, rebuilt
+   the fleet ROM-less minutes before an install run — 0-byte console, full
+   timeout ahead). Fixed structurally: the ROM now **defaults ON** whenever it
+   is installed on the host (`FLEET_NIC_ROM=0` opts out), and both e2e runners
+   refuse up front when `MAAS_IPXE_TRUSTS_CA=1` but the domain carries no
+   `<rom file=>`.
 3. **The images-dir default was split**: `run-e2e.sh` said `~/.cache/…`,
    `maas-lab.sh` said `$XDG_STATE_HOME/…` — so a bare `maas-lab.sh apply` read a
    store that did not exist and reported it as "F2 signature verification failed"
@@ -136,7 +138,7 @@ profile), [`tests/test-rom-xml.sh`](tests/test-rom-xml.sh) (the domain rewrite),
 
 ---
 
-## 2. Only the `ramdisk` driver has touched a real node — 🔨 BUILT, ⬜ live run pending
+## 2. Only the `ramdisk` driver has touched a real node — ✅ DONE: `install` ran live (2026-07-28)
 
 **Status changed 2026-07-28 (late).** The build half is done and headlessly proven:
 
@@ -171,11 +173,23 @@ payload served, `describe` accepts its own shape and refuses both the ramdisk sh
 and an unclaimed image, `stage` signs all three and names the build command when
 artifacts are missing.
 
-**What remains — the live run** (see "Where to start next"). `image` and
-`image+measured` on real hardware remain open beyond that.
+**The live run (2026-07-28, third attempt).** `MAAS_IPXE_TRUSTS_CA=1
+./run-e2e-install.sh` **PASSED**: chain → firmware-verified installer (`imgverify`
+over kernel + 223 MB initrd) → kickstart wrote vda → `reboot: Power down` observed
+out-of-band and confirmed stable → `bootdev disk` → AlmaLinux 9.8 booted from its
+own disk to `login:` → `active (driver=install image=almalinux9)`. The first two
+attempts each found a live-only defect (all fixed + regression-tested, see
+MANUAL_TESTING §13): a 0600 stage2 the web server 403'd (mktemp perms survived the
+sha check — the sha said perfect, the perms said nobody may look), virtlogd's 2 MiB
+rotation replacing the readable console with a 0600 root file (both console health
+gates now refuse loudly instead of timing out with "never reached login"), and an
+out-of-band power cycle racing the poweroff-wait (the driver now confirms the off
+STAYS off; `MOCK_BMC_BLIP` reproduces the incident headlessly).
 
-**Done when:** a live run reaches `active` through `install` on a real domain, with
-the installed OS's own `login:` on the console — not the ramdisk's.
+**Done when** (met): a live run reaches `active` through `install` on a real domain,
+with the installed OS's own `login:` on the console — not the ramdisk's ✅.
+
+`image` and `image+measured` on real hardware remain open (see below).
 
 ## 3. A chaos scenario for a BMC that answers for a *different machine* — ✅ DONE (2026-07-28)
 
@@ -249,6 +263,19 @@ nothing), and the negative control that a failed-deploy error is never touched.
   script under test*. Measured harmless today (the registry's history is byte-identical
   across a run); worth making structural.
 
+- **A failed deploy corrupts the recorded rollback pair.** `cmd_deploy` writes
+  `driver` before its gate runs; when the gate fails the field keeps the NEW driver
+  while `image` keeps the old one. Live evidence (2026-07-28): after two failed
+  install attempts, the successful deploy recorded
+  `previous: install/micro-linux-x86_64` — a pair that never existed (`micro-linux`
+  was the ramdisk driver's, on a domain that had since been rebuilt). The
+  describe-ownership guard would refuse that rollback, so the failure is contained —
+  but the record is wrong, and the fix shape (restore the driver field when a gate
+  fails, or write it only on success) needs care around the rollback branch's own
+  reads.
+- **`image` and `image+measured` have never touched a real node.** The install
+  driver's live run (item 2) proves the pattern; these two still have only their
+  headless real-driver tests. `image` needs a golden whole-disk raw staged first.
 - ~~**`install.sh`'s ownership test is narrow on purpose.**~~ **CLOSED 2026-07-28** by
   [`install-catalog.toml`](install-catalog.toml) — the per-driver catalog this item
   asked for. `describe` now answers positively (cataloged, or staged in the driver's

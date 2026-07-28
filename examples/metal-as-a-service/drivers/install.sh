@@ -232,6 +232,18 @@ deploy)
         || exit 1
     await_power "$node" off "${MAAS_INSTALL_TIMEOUT:-$(( ${MAAS_HEALTH_TIMEOUT:-120} * 15 ))}" \
         "the installer on '$node' to finish (it ends in poweroff)" || exit 1
+    # CONFIRM the off is the installer's, not a blip. A finished install STAYS off;
+    # an out-of-band power cycle (an operator "helping", a BMC hiccup) passes
+    # through off for a few seconds — and acting on that blip means bootdev disk
+    # on a half-written (or never-written) disk. Cost: one extra poll. (Found
+    # live: an operator power cycle raced this wait and the driver switched an
+    # EMPTY disk to be the boot device.)
+    sleep "$POLL"
+    st="$(bmc "$node" power status 2>/dev/null || printf 'unknown')"
+    if [[ "$st" != *"is off"* ]]; then
+        echo "install: '$node' powered off and came BACK ON — that was a power blip or an out-of-band cycle, not the installer finishing. Refusing to switch an unfinished disk to be the boot device." >&2
+        exit 1
+    fi
     echo "install: installer finished ('$node' powered itself off); booting from disk" >&2
     bmc "$node" bootdev disk  || { echo "install: bootdev disk failed" >&2; exit 1; }
     bmc "$node" power on      || { echo "install: power-on-from-disk failed" >&2; exit 1; }
@@ -249,6 +261,14 @@ health)
     [[ -n "$console" ]] || console="$(nd "$node")/console.log"
     to="${MAAS_HEALTH_TIMEOUT:-120}"; waited=0
     step="${POLL%%.*}"; [[ -z "$step" || "$step" -eq 0 ]] && step=1
+    # A console that EXISTS but cannot be read would otherwise time out as "never
+    # reached login" — a lie. virtlogd recreates rotated console logs 0600 root
+    # (found live: Anaconda's output tripped the 2 MiB rotation and the readable
+    # 0666 file the fleet set up was replaced under us).
+    if [[ -f "$console" && ! -r "$console" ]]; then
+        echo "install: console $console exists but is NOT readable by $(id -un) — virtlogd rotation recreates it 0600 root. chmod 0666 it (and raise virtlogd max_size) before the health gate can see anything." >&2
+        exit 1
+    fi
     echo "install: awaiting /$marker/ on $console (timeout ${to}s)…" >&2
     while [[ $waited -lt $to ]]; do
         [[ -f "$console" ]] && grep -qE -- "$marker" "$console" && { echo "install: '$node' reached its login marker (active)" >&2; exit 0; }
