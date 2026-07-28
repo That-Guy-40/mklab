@@ -16,9 +16,10 @@
 #   STRANDED   stuck in a transient state (deploying/cleaning/…) that no verb
 #              accepts. Nothing is wrong with the hardware and nothing can be done
 #              with it either.                                        ← CRITICAL
-#   LIED       the registry claims something reality does not support — `active` on
-#              an image that never deployed. Worse than being down, because
-#              everything downstream believes it.                     ← CRITICAL
+#   LIED       the registry and the machine DISAGREE — it says one image, the driver
+#              really put another one there (or one that never deployed at all).
+#              Worse than being down, because everything downstream believes it and
+#              nothing can tell they diverged.                        ← CRITICAL
 #   STALE      `active`, and it WAS true when the gate ran — but the node has since
 #              gone unhealthy and nothing re-checks. Also a lie, just a slower one.
 #                                                                     ← CRITICAL
@@ -32,13 +33,27 @@
 # it", not "the first thing I looked at was still wrong". Both verbs exist BECAUSE this
 # harness found the cases; see PLAN.md's increment-5 notes.
 #
+# HOUSE RULE (CLAUDE.md): every DISCRETE LAYER of this lab gets a fault-injection
+# point, and a layer with no scenario here is a layer nobody has tested falling over.
+# Each scenario declares the layer it injects at, `--layers` reports the coverage, and
+# tests/test-chaos-matrix.sh FAILS when a deploy driver ships without a scenario. The
+# layers, each with its own seam:
+#
+#   driver      the deploy interface   (drivers/chaos.sh, MAAS_DRIVER_DIR)
+#   oob         the BMC seam           (MOCK_BMC_FAIL — the controller stops answering)
+#   artifact    the signed payload store (MAAS_IMAGES_DIR — the payload is gone/corrupt)
+#   registry    the state store        (MAAS_STATE — it cannot be written)
+#   process     the control plane itself (killed mid-transition)
+#
+# Not yet covered, and named rather than left implicit: the metadata/facts sink
+# (:8282) and the console/milestone stream. Both land with increment 6.
+#
 # Headless: mock BMC, chaos driver, throwaway registry. No libvirt, no root, no boot.
-# Faults are injected at TWO layers, because they fail differently: the deploy driver
-# (drivers/chaos.sh) and the out-of-band seam (mock-bmc.sh's fault knobs).
 set -uo pipefail
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 MAAS="$HERE/maas-lab.sh"
-JSON=0; [[ "${1:-}" == "--json" ]] && JSON=1
+JSON=0; LAYERS_ONLY=0
+case "${1:-}" in --json) JSON=1 ;; --layers) LAYERS_ONLY=1 ;; esac
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -62,12 +77,17 @@ for img in good-v1 good-v2 bad-v2; do
 done
 
 TRANSIENT="verifying deploying cleaning rescuing deleting"
-crit=0; total=0; declare -a ROWS=()
+crit=0; total=0; declare -a ROWS=(); LAYERS_SEEN=""
+ALL_LAYERS="driver oob artifact registry process"
 
 state_of() { ( "$MAAS" state "$1" ) 2>/dev/null; }
 img_of()   { cat "$MAAS_STATE/$1/image" 2>/dev/null; }
 # did the bad image actually get deployed to this node, or was it refused first?
 was_deployed() { grep -q "^deploy $1 $2" "$CHAOS_LOG" 2>/dev/null; }
+# what the DRIVER last actually put on the machine — the only reality check available
+# from outside the registry. Comparing it against the registry is what catches a
+# control plane that believes writes it never made.
+really_running() { grep "^deploy $1 " "$CHAOS_LOG" 2>/dev/null | tail -1 | awk '{print $3}'; }
 # re-run the driver's OWN health check on what the registry says is current. This is
 # the question the control plane never asks again after activation.
 still_healthy() {
@@ -80,6 +100,13 @@ still_healthy() {
 grade() {
     local node="$1" had_prev="$2" fault="$3" subject="$4" st img
     st="$(state_of "$node")"; img="$(img_of "$node")"
+    # Before anything else: does the record match the machine? A node that reports a
+    # tidy state while running a different image is the worst outcome on the ladder.
+    local real; real="$(really_running "$node")"
+    if [[ -n "$real" && -n "$img" && "$real" != "$img" && "$st" == active ]]; then
+        printf 'LIED\tregistry says "%s" but the driver really deployed "%s"\n' "$img" "$real"
+        return
+    fi
     for t in $TRANSIENT; do
         if [[ "$st" == "$t" ]]; then
             # Is there a way out? `abort` is the verb that exists for exactly this.
@@ -122,9 +149,10 @@ grade() {
     esac
 }
 
-# scenario <name> <fault> <seed-good:0|1> <description>
+# scenario <layer> <name> <fault> <seed-good:0|1> <description>
 scenario() {
-    local name="$1" fault="$2" seed="$3" desc="$4"
+    local layer="$1" name="$2" fault="$3" seed="$4" desc="$5"
+    LAYERS_SEEN="$LAYERS_SEEN $layer"
     local node="n$((total+1))"
     # the no-fault control deploys an image that is MEANT to work; every other
     # scenario deploys the one the fault targets
@@ -149,6 +177,25 @@ scenario() {
         sleep 1
         kill "$pid" 2>/dev/null
         wait "$pid" 2>/dev/null
+    elif [[ "$fault" == artifact-gone ]]; then
+        # The ARTIFACT layer: the signed payload vanishes between staging and deploy
+        # (a cleaned cache, a half-finished rsync). verify should refuse; the node
+        # must not be powered on to boot something that is not there.
+        rm -rf "${MAAS_IMAGES_DIR:?}/$subject"
+        ( export CHAOS_FAULT=none CHAOS_USE_BMC=1
+          "$MAAS" deploy "$node" --driver chaos --image "$subject" ) >/dev/null 2>&1
+        mkdir -p "$MAAS_IMAGES_DIR/$subject"                     # restore for later scenarios
+        printf 'PAYLOAD-%s\n' "$subject" > "$MAAS_IMAGES_DIR/$subject/payload.img"
+        "$HERE/drivers/verify-lib.sh" sign "$MAAS_IMAGES_DIR/$subject/payload.img" \
+            --keydir "$MAAS_IMAGES_DIR/trust" >/dev/null 2>&1
+    elif [[ "$fault" == registry-readonly ]]; then
+        # The REGISTRY layer: the state store goes read-only mid-deploy (a full disk,
+        # a remounted volume). The question is whether the control plane notices, or
+        # carries on believing writes it never made.
+        chmod a-w "$MAAS_STATE/$node" 2>/dev/null
+        ( export CHAOS_FAULT=none CHAOS_USE_BMC=1
+          "$MAAS" deploy "$node" --driver chaos --image "$subject" ) >/dev/null 2>&1
+        chmod u+w "$MAAS_STATE/$node" 2>/dev/null
     elif [[ "$fault" == bmc-drop ]]; then
         # The out-of-band layer dies while the deploy is in flight. The fault is at the
         # BMC seam, not in the driver — so the driver runs clean and reaches for
@@ -163,24 +210,26 @@ scenario() {
     local verdict why
     IFS=$'\t' read -r verdict why < <(grade "$node" "$had_prev" "$fault" "$subject")
     case "$verdict" in STRANDED|LIED|STALE) crit=$((crit+1)) ;; esac
-    ROWS+=("$verdict|$name|$desc|$why")
+    ROWS+=("$verdict|$name|$desc|$why|$layer")
 }
 
 # ── the matrix ───────────────────────────────────────────────────────────────
 # Every scenario deploys `bad-v2`. Half start from a node already serving `good-v1`,
 # so the A/B fallback has somewhere to fall; half start fresh, where it does not.
-scenario "none (control)"           none                 1 "no fault at all — the positive control"
-scenario "verify-fail (had good)"   verify-fail          1 "F2 refuses the new image"
-scenario "verify-fail (fresh)"      verify-fail          0 "F2 refuses, nothing to fall back to"
-scenario "deploy-fail (had good)"   deploy-fail          1 "the deploy step fails cleanly"
-scenario "deploy-crash (had good)"  deploy-crash         1 "the driver dies with no message"
-scenario "deploy-crash (fresh)"     deploy-crash         0 "driver dies, nothing to fall back to"
-scenario "partial (had good)"       partial              1 "deploy reports success; the payload is broken"
-scenario "health-fail (had good)"   health-fail          1 "boots, never becomes healthy"
-scenario "health-fail (fresh)"      health-fail          0 "never healthy, nothing to fall back to"
-scenario "health-flap (had good)"   health-flap          1 "passes the gate, then dies"
-scenario "bmc-drop (had good)"      bmc-drop             1 "the BMC stops answering mid-deploy"
-scenario "control-plane-killed"     control-plane-killed 1 "maas-lab.sh is killed mid-deploy"
+scenario driver   "none (control)"           none                 1 "no fault at all — the positive control"
+scenario driver   "verify-fail (had good)"   verify-fail          1 "F2 refuses the new image"
+scenario driver   "verify-fail (fresh)"      verify-fail          0 "F2 refuses, nothing to fall back to"
+scenario driver   "deploy-fail (had good)"   deploy-fail          1 "the deploy step fails cleanly"
+scenario driver   "deploy-crash (had good)"  deploy-crash         1 "the driver dies with no message"
+scenario driver   "deploy-crash (fresh)"     deploy-crash         0 "driver dies, nothing to fall back to"
+scenario driver   "partial (had good)"       partial              1 "deploy reports success; the payload is broken"
+scenario driver   "health-fail (had good)"   health-fail          1 "boots, never becomes healthy"
+scenario driver   "health-fail (fresh)"      health-fail          0 "never healthy, nothing to fall back to"
+scenario driver   "health-flap (had good)"   health-flap          1 "passes the gate, then dies"
+scenario artifact "artifact-gone (had good)" artifact-gone        1 "the signed payload vanished after staging"
+scenario registry "registry-readonly"        registry-readonly    1 "the state store goes read-only mid-deploy"
+scenario oob      "bmc-drop (had good)"      bmc-drop             1 "the BMC stops answering mid-deploy"
+scenario process  "control-plane-killed"     control-plane-killed 1 "maas-lab.sh is killed mid-deploy"
 
 # ── the report ───────────────────────────────────────────────────────────────
 # JSON string escaping: the detail strings quote image names, so an unescaped
@@ -188,31 +237,44 @@ scenario "control-plane-killed"     control-plane-killed 1 "maas-lab.sh is kille
 jesc() { local x="${1//\\/\\\\}"; x="${x//\"/\\\"}"; printf '%s' "$x"; }
 
 if [[ $JSON == 1 ]]; then
-    printf '{"total":%d,"critical":%d,"rows":[' "$total" "$crit"
+    printf '{"total":%d,"critical":%d,"layers":"%s","rows":[' "$total" "$crit" "$ALL_LAYERS"
     sep=""
     for r in "${ROWS[@]}"; do
-        IFS='|' read -r v n d w <<<"$r"
-        printf '%s{"verdict":"%s","scenario":"%s","fault":"%s","detail":"%s"}' \
-            "$sep" "$(jesc "$v")" "$(jesc "$n")" "$(jesc "$d")" "$(jesc "$w")"
+        IFS='|' read -r v n d w l <<<"$r"
+        printf '%s{"verdict":"%s","scenario":"%s","fault":"%s","detail":"%s","layer":"%s"}' \
+            "$sep" "$(jesc "$v")" "$(jesc "$n")" "$(jesc "$d")" "$(jesc "$w")" "$(jesc "$l")"
         sep=","
     done
     printf ']}\n'
     exit $(( crit > 0 ))
 fi
 
-printf '\n  %-9s  %-24s  %s\n' VERDICT SCENARIO OUTCOME >&2
-printf '  %-9s  %-24s  %s\n' "---------" "------------------------" "-------" >&2
+printf '\n  %-9s  %-8s  %-24s  %s\n' VERDICT LAYER SCENARIO OUTCOME >&2
+printf '  %-9s  %-8s  %-24s  %s\n' "---------" "--------" "------------------------" "-------" >&2
 for r in "${ROWS[@]}"; do
-    IFS='|' read -r v n d w <<<"$r"
-    printf '  %-9s  %-24s  %s\n' "$v" "$n" "$w" >&2
+    IFS='|' read -r v n d w l <<<"$r"
+    printf '  %-9s  %-8s  %-24s  %s\n' "$v" "$l" "$n" "$w" >&2
 done
+
+uncovered=""
+for L in $ALL_LAYERS; do
+    case " $LAYERS_SEEN " in *" $L "*) : ;; *) uncovered="$uncovered $L" ;; esac
+done
+if [[ $LAYERS_ONLY == 1 ]]; then
+    for L in $ALL_LAYERS; do
+        n=0; for r in "${ROWS[@]}"; do [[ "${r##*|}" == "$L" ]] && n=$((n+1)); done
+        printf '%s %d\n' "$L" "$n"
+    done
+    exit 0
+fi
 
 absorbed=0; degraded=0; halted=0
 for r in "${ROWS[@]}"; do
     case "${r%%|*}" in ABSORBED) absorbed=$((absorbed+1)) ;; DEGRADED) degraded=$((degraded+1)) ;; HALTED) halted=$((halted+1)) ;; esac
 done
-printf '\n  %d scenarios: %d absorbed (goal), %d degraded, %d halted honestly, %d CRITICAL\n' \
-    "$total" "$absorbed" "$degraded" "$halted" "$crit" >&2
+printf '\n  %d scenarios across %d layers (%s): %d absorbed (goal), %d degraded, %d halted honestly, %d CRITICAL\n' \
+    "$total" "$(wc -w <<<"$ALL_LAYERS")" "$(tr -s " " <<<"$ALL_LAYERS")" "$absorbed" "$degraded" "$halted" "$crit" >&2
+[[ -n "$uncovered" ]] && printf '  NOTE: declared layers with no scenario:%s\n' "$uncovered" >&2
 
 if [[ $crit -gt 0 ]]; then
     printf 'FAIL: %d of %d injected faults became a CRITICAL failure — a node stranded in a transient state no verb accepts, or a registry claiming an image that never deployed or has since died\n' "$crit" "$total" >&2

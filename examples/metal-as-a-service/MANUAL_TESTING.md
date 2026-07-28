@@ -505,3 +505,93 @@ FAIL: 1 of 12 injected faults became a CRITICAL failure
 it requires all three acceptable rungs to be **occupied**, because a matrix that never
 broke anything is all-ABSORBED, one that breaks everything unrecoverably is all-HALTED,
 and one where the A/B path is dead never reaches DEGRADED.
+
+---
+
+## 8. The `image` driver + chaos as a house rule (increment 5)
+
+```console
+$ ./drivers/image.sh describe
+image: a deployer ramdisk dd's a golden whole-disk image onto the node, then it boots
+from disk; active = the deployed image's login. DESTRUCTIVE: the whole disk is overwritten
+
+$ ./tests/test-image-driver.sh
+  - an absent golden image is refused, naming the lab that produces one  ✓
+  - stage copies + signs the raw; verify passes (real OpenSSL CMS)  ✓
+  - the real drivers/image.sh reaches active: verify -> PXE -> write -> disk -> login  ✓
+  - the driver never touched virsh: every effect went through the BMC seam  ✓
+  - sequence: bootdev pxe -> power on -> write -> bootdev disk -> power cycle  ✓
+  - records persistence=full: the whole disk was overwritten, so cleaning is mandatory  ✓
+  - write never completes -> timeout, no boot-from-disk, node -> error  ✓
+  - image written but it never boots -> health gate FAILS -> error (not active)  ✓
+  - tampered golden image: refused before the BMC is touched at all  ✓
+PASS: the image driver lays a golden disk down safely: verified before any hardware,
+never points a node at a half-written disk, ends on bootdev disk, and records persistence=full
+```
+
+Negative controls, run:
+
+```console
+# skip the wait for the write to finish
+FAIL: REGRESSION: the driver pointed a node at a HALF-WRITTEN disk…
+# never point the node at its disk (behave like the ramdisk driver)
+FAIL: REGRESSION: the node was never pointed at its own disk. Unlike a ramdisk node, an
+imaged node OWNS its disk now — left on PXE it would re-image itself on every boot, forever
+```
+
+### 8a. Chaos across all five layers
+
+```console
+$ ./chaos-run.sh
+  VERDICT    LAYER     SCENARIO                  OUTCOME
+  ABSORBED   driver    none (control)            deployed "good-v2" and it is healthy
+  ABSORBED   driver    verify-fail (had good)    still active on "good-v1"; "bad-v2" was refused before it was deployed
+  HALTED     driver    verify-fail (fresh)       stopped in "error" — retry/abort can pick it up
+  DEGRADED   driver    deploy-fail (had good)    fell back to "good-v1" after "bad-v2" was deployed and failed
+  DEGRADED   driver    deploy-crash (had good)   fell back to "good-v1" after "bad-v2" was deployed and failed
+  HALTED     driver    deploy-crash (fresh)      stopped in "error" — retry/abort can pick it up
+  DEGRADED   driver    partial (had good)        fell back to "good-v1" after "bad-v2" was deployed and failed
+  DEGRADED   driver    health-fail (had good)    fell back to "good-v1" after "bad-v2" was deployed and failed
+  HALTED     driver    health-fail (fresh)       stopped in "error" — retry/abort can pick it up
+  HALTED     driver    health-flap (had good)    passed its gate then died; `recheck` caught it and demoted it to "error"
+  ABSORBED   artifact  artifact-gone (had good)  still active on "good-v1"; "bad-v2" was refused before it was deployed
+  ABSORBED   registry  registry-readonly         still active on "good-v1"; "bad-v2" was refused before it was deployed
+  HALTED     oob       bmc-drop (had good)       stopped in "error" — retry/abort can pick it up
+  HALTED     process   control-plane-killed      was stuck mid-deploying; `abort` recovered it to "error", then `retry`
+
+  14 scenarios across 5 layers (driver oob artifact registry process): 4 absorbed (goal),
+  4 degraded, 6 halted honestly, 0 CRITICAL
+PASS: no injected fault became a critical failure
+```
+
+### 8b. What the registry layer found
+
+The worst shape yet — worse than a stranded node, because it **reports success**:
+
+```console
+$ ./maas-lab.sh deploy n1 --driver chaos --image bad-v2   # $MAAS_STATE/n1 read-only
+./maas-lab.sh: line 78: …/.state.tmp: Permission denied
+active n1 (driver=chaos image=bad-v2, healthy)
+$ echo $?
+0
+$ cat $MAAS_STATE/n1/image
+good-v1                                     # the registry never changed
+$ grep '^deploy n1' chaos-calls.log | tail -1
+deploy n1 bad-v2 current                    # the machine really got bad-v2
+```
+
+`_write` was a bare `printf > tmp && mv` whose exit status nobody read. Fixed — it now
+`die`s with a specific message, because an *unrecorded* change is worse than a *refused*
+one. The grader was fixed too: it had graded this `DEGRADED` because it only read the
+registry, and now compares the registry against what the driver actually deployed.
+
+### 8c. The house rule, enforced
+
+`tests/test-chaos-matrix.sh` fails **by name** when coverage is missing:
+
+```console
+# declare a sixth layer with no scenario
+FAIL: REGRESSION: layer 'metadata' is declared but has NO chaos scenario…
+# add a driver with no real-driver test
+FAIL: REGRESSION: deploy driver(s) with no real-driver test: image…
+```
