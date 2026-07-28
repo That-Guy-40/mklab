@@ -70,7 +70,18 @@ case "$verb" in
                 if [[ "$st" == on && -n "${MOCK_BMC_OFF_AFTER:-}" && -n "$_cfile" ]]; then
                     printf 'x' >> "$_cfile"
                     if [[ $(wc -c < "$_cfile") -gt ${MOCK_BMC_OFF_AFTER} ]]; then
-                        _pset off; st=off
+                        if [[ "${MOCK_BMC_BLIP:-0}" == 1 && -n "$_pfile" ]]; then
+                            # a power BLIP, not a completion: report off exactly ONCE;
+                            # the machine is back on by the next poll (an out-of-band
+                            # power cycle racing the driver's poweroff-wait — the
+                            # observed incident the install driver's confirm poll
+                            # exists to refuse).
+                            if [[ ! -f "$_pfile.blipped" ]]; then
+                                : > "$_pfile.blipped"; st=off
+                            fi
+                        else
+                            _pset off; st=off
+                        fi
                     fi
                 fi
                 printf 'Chassis Power is %s\n' "$st" ;;

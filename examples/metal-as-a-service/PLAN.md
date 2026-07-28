@@ -1559,3 +1559,17 @@ fresh, never resumed) — and which rotates the append-only console before deplo
 (the RAM payload's stale `login:` would satisfy the health gate instantly) and
 powers the node off first (a deploy begins from rest; `power on` against a running
 RAM node never PXEs).
+
+**The live run landed the same night, on the third attempt** — each failed attempt a
+defect invisible to the 27/0 suite (the ledger now reads 13+3+3): the driver
+demanding `MAAS_STATE` for verbs that never read it (and the printed recovery advice
+rebuilding the fleet ROM-less — the third silent drop, which ended the opt-in era:
+the ROM now defaults ON when installed, and both runners verify `<rom file=>` before
+a trusting deploy); a 0600 stage2 the web server 403'd after a perfect sha check;
+virtlogd's rotation replacing the readable console with 0600 root (both console
+health gates now refuse loudly); and an operator power cycle racing the
+poweroff-wait (the driver now confirms the off stays off; `MOCK_BMC_BLIP` replays
+the race headlessly). Then: chain → `imgverify` over the Anaconda kernel + 223 MB
+initrd → kickstart writes vda → `reboot: Power down` → confirmed stable → `bootdev
+disk` → **AlmaLinux 9.8 to `login:` on its own disk** → `active`. DEFERRED items
+1–4 are all closed; transcripts in MANUAL_TESTING §13.

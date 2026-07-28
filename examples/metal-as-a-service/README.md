@@ -259,7 +259,7 @@ lifecycle runs with no libvirt at all.
 | [`lib/rom_xml.py`](lib/rom_xml.py) | attach that ROM to every `<interface>` of a domain (idempotent) |
 | [`lib/vbmc_check.py`](lib/vbmc_check.py) | refuse a fleet whose BMC ports are answered by another machine |
 | [`run-e2e.sh`](run-e2e.sh) | the one-shot live driver: 10 phases, real domains, real BMCs, real netboot (author-run) |
-| [`run-e2e-install.sh`](run-e2e-install.sh) | the INSTALL-driver live path (separate so the fast run stays fast): Anaconda via the chain → kickstart → poweroff → disk boot → login (author-run, ~25 min) |
+| [`run-e2e-install.sh`](run-e2e-install.sh) | the INSTALL-driver live path (separate so the fast run stays fast): Anaconda via the chain → kickstart → poweroff → disk boot → login (author-run, ~25 min; **verified live 2026-07-28**) |
 | [`fleet.toml`](fleet.toml) | the 3-node fleet spec (hardware + declared end-state for `apply`) |
 | [`lib/fleet.py`](lib/fleet.py) | stdlib TOML reader projecting `fleet.toml` for bash |
 | [`probe-init.sh`](probe-init.sh) | the inspection probe's busybox `/init` (gathers facts, POSTs, powers off) |

@@ -438,6 +438,21 @@ if [[ "${E2E_NO_IMGVERIFY:-${E2E_UNSIGNED:-0}}" == 1 ]]; then
     info "that can be skipped on its own."
 fi
 if [[ $DRY == 0 ]]; then
+    # If the firmware is claimed to verify, the domain must actually CARRY the
+    # verifying ROM. Phase 3 re-created the fleet with THIS run's env, and
+    # give_verifying_rom() used to attach nothing when the var was forgotten (it
+    # now defaults ON whenever the ROM is installed on the host) — this check
+    # stays as the belt: FLEET_NIC_ROM=0, a missing installed ROM, an old fleet —
+    # so MAAS_IPXE_TRUSTS_CA=1 without FLEET_NIC_ROM=1 would send a stock ROM
+    # (no imgverify, no serial console) into a script it aborts in silence.
+    if [[ "${MAAS_IPXE_TRUSTS_CA:-0}" == 1 ]] && command -v virsh >/dev/null; then
+        _dom="$("$MAAS" show "$NODE" 2>/dev/null | awk '$1=="domain"{print $2; exit}')"
+        virsh -c qemu:///system dumpxml --inactive "${_dom:-$NODE}" 2>/dev/null | grep -q '<rom file=' \
+            || die "MAAS_IPXE_TRUSTS_CA=1, but domain '${_dom:-$NODE}' carries NO <rom file=> — the
+stock ROM cannot honour imgverify and cannot speak on the serial console, so the
+deploy would time out in silence. Re-run with BOTH vars:
+    FLEET_NIC_ROM=1 MAAS_IPXE_TRUSTS_CA=1 $0"
+    fi
     if [[ -f "$MAAS_IMAGES_DIR/$IMAGE/kernel.sig" \
           && "${MAAS_IPXE_TRUSTS_CA:-0}" != 1 && "${MAAS_NO_IMGVERIFY:-0}" != 1 ]]; then
         die "'$IMAGE' is signed, so the boot script will carry \`imgverify\` — and nothing
@@ -448,8 +463,8 @@ Either:
         ./build-verifying-rom.sh build && ./build-verifying-rom.sh install
     then re-run with BOTH vars on the e2e itself:
         FLEET_NIC_ROM=1 MAAS_IPXE_TRUSTS_CA=1 $0
-    (phase 3 re-creates the fleet, and an unset FLEET_NIC_ROM silently drops the
-    ROM from the redefined domains — attaching it beforehand does not survive)
+    (phase 3 re-creates the fleet; the ROM now defaults ON when installed, but an
+    explicit FLEET_NIC_ROM=1 makes a missing ROM a loud failure instead of a plain fleet)
   * or run the whole path with ONLY the in-firmware half skipped — the payload stays
     signed and the host-side F2 gate still gates the deploy:
         E2E_NO_IMGVERIFY=1 $0

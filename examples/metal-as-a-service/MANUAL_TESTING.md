@@ -999,9 +999,11 @@ FLEET_NIC_ROM=1 MAAS_IPXE_TRUSTS_CA=1 ./run-e2e.sh     # no E2E_NO_IMGVERIFY
 ```
 
 Both vars ride the e2e itself: its phase 3 re-runs `create-fleet.sh up`, which
-redefines the domains, and with `FLEET_NIC_ROM` unset `give_verifying_rom()`
-attaches nothing — a ROM attached by an earlier `create-fleet.sh` run does not
-survive into the run that needs it.
+redefines the domains. (`give_verifying_rom()` originally attached nothing when
+`FLEET_NIC_ROM` was unset — after the third silent ROM-drop it now defaults ON
+whenever the ROM is installed on the host, `FLEET_NIC_ROM=0` to opt out, and
+both e2e runners verify the domain actually carries `<rom file=>` before a
+`MAAS_IPXE_TRUSTS_CA=1` deploy.)
 
 ⚠️ **The first attempt failed before any node booted**, and the failure is worth
 knowing on sight. `inspect --boot` reported `could not power on the node`; `virsh
@@ -1063,3 +1065,79 @@ signature — with the invariant pass issuing 0 transitions:
 ```
   applied: 0 transition(s) over 1 pass(es), 0 failed, 3 converged, 0 held for the operator
 ```
+
+## 13. The INSTALL driver, live — three attempts, three defects, then PASS (2026-07-28)
+
+The first live run of `run-e2e-install.sh` (DEFERRED item 2). Every attempt's
+failure was a defect the 27/0 headless suite could not see; each is now fixed and
+regression-tested.
+
+### 13.1 Attempt 1 — the driver demanded context it never uses
+
+```
+== stage + sign 'almalinux9' (host-side F2) ==
+drivers/install.sh: line 34: MAAS_STATE: install driver: MAAS_STATE not set (run via maas-lab.sh)
+FAIL: staging 'almalinux9' failed
+```
+
+`install.sh` guarded `MAAS_STATE` at the top of the file, but `stage`/`verify` touch
+only the image store. The guard is now lazy (inside `nd()`, where node context is
+actually read) — and the fallout was worse than the message: following the printed
+advice to "bring the fleet up" with a bare `create-fleet.sh up` rebuilt the fleet
+**without its verifying ROMs** (the third silent ROM-drop). That ended the opt-in
+era: the ROM now defaults ON whenever it is installed on the host, and both e2e
+runners refuse a `MAAS_IPXE_TRUSTS_CA=1` deploy when the domain carries no
+`<rom file=>`.
+
+### 13.2 Attempt 2 — the sha said perfect, the perms said nobody may look
+
+The firmware half worked on the first try — our ROM, the chain, `imgverify` over
+the Anaconda kernel AND its 223 MB initrd, kernel 5.14 el9 booting — and then:
+
+```
+[  238.9] dracut-initqueue[1133]: Warning: anaconda: failed to fetch stage2 from http://192.168.123.1:8181
+```
+
+`curl -o "$(mktemp …)"` + `mv` had staged `install.img` as **0600**, so the payload
+server (another user) answered 403 — after the sha256 check against `.treeinfo` had
+passed. Two follow-on defects surfaced while diagnosing: **virtlogd's 2 MiB
+rotation** replaced the fleet's readable 0666 console log with a fresh 0600 root
+file (both console-grepping health gates would have timed out claiming "never
+reached login:" — they now refuse loudly, naming the unreadable file), and an
+out-of-band **power cycle raced the driver's poweroff-wait**: a ~3 s off-window
+read as "installer finished" and the driver pointed the node at its EMPTY disk.
+The driver now confirms the off *stays* off for one extra poll
+(`MOCK_BMC_BLIP=1` in `tests/mock-bmc.sh` reproduces the race headlessly;
+`test-install-driver.sh` §4b asserts no `bootdev disk` follows a blip).
+
+### 13.3 Attempt 3 — PASS
+
+```
+   verifying ROM: attached to 'node1'
+   stage2: /home/sqs/netboot/images/install.img matches .treeinfo (539f423b…)
+…
+install: installer finished ('node1' powered itself off); booting from disk
+Set Boot Device to disk
+Chassis Power Control: Up/On
+install: awaiting /login:/ on /var/lib/libvirt/maas-console/node1.log (timeout 240s)…
+install: 'node1' reached its login marker (active)
+active node1 (driver=install image=almalinux9, healthy)
+PASS: node1 reached active through the INSTALL driver — Anaconda netbooted via the
+chain, the kickstart wrote the disk, the node powered itself off, and the INSTALLED
+OS reached login on its own disk
+```
+
+Ground truth beyond the runner's verdict: registry `state=active`,
+`driver=install image=almalinux9`; domain XML `<boot dev='hd'/>`; the console shows
+`Welcome to AlmaLinux 9.8 (Olive Jaguar)` and exactly one `login:` in the
+freshly-rotated log — the installed OS's own, not a stale one (the runner truncates
+the console before deploying for exactly that reason).
+
+Host prep this run needed (one-time): `virtlogd` rotation effectively disabled for
+the console contract (`max_size = 536870912` appended to `/etc/libvirt/virtlogd.conf`
++ restart), and the rotated 0600 logs chmod'd 0666.
+
+Known blemish, recorded in DEFERRED ("A failed deploy corrupts the recorded rollback
+pair"): the successful deploy recorded `previous: install/micro-linux-x86_64`, a
+pair that never existed, because the two failed attempts had overwritten the
+`driver` field before their gates refused.

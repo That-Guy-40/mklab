@@ -117,21 +117,38 @@ give_console() {
 }
 
 # give_verifying_rom <node> — attach the imgverify-capable iPXE ROM to the domain's
-# NICs, so the on-node half of F2 can actually run. Opt-in via FLEET_NIC_ROM:
-#   FLEET_NIC_ROM=1        use the installed default ($ROM_DIR/ipxe-<pciid>.rom)
-#   FLEET_NIC_ROM=<path>   use that ROM
-# Built and installed by ./build-verifying-rom.sh; without it the nodes boot QEMU's
-# stock ROM, which has no IMAGE_TRUST_CMD and refuses nothing.
+# NICs, so the on-node half of F2 can actually run. DEFAULT ON once the ROM is
+# installed on this host (./build-verifying-rom.sh install):
+#   FLEET_NIC_ROM unset    attach the installed default if present, else nothing
+#   FLEET_NIC_ROM=1        require the installed default (die if missing)
+#   FLEET_NIC_ROM=<path>   use that ROM (die if missing)
+#   FLEET_NIC_ROM=0        explicitly a plain fleet (also: none, off)
+# Without the ROM the nodes boot QEMU's stock one, which has no IMAGE_TRUST_CMD
+# and refuses nothing — and cannot speak on the serial console either.
 give_verifying_rom() {
     local name="$1" rom="${FLEET_NIC_ROM:-}"
-    [[ -n "$rom" ]] || return 0
-    if [[ "$rom" == 1 ]]; then
+    # Explicit opt-OUT. The ROM used to be pure opt-in (unset = silently none), and
+    # this fleet lost its ROMs to a create-fleet run that forgot the var THREE
+    # times — twice from this repo's own printed instructions. An opt-in security
+    # default is a trap: every re-create is a chance to forget it, and the failure
+    # mode is a stock ROM that cannot honour imgverify and says nothing on serial.
+    case "$rom" in 0|none|off) return 0 ;; esac
+    if [[ "$rom" == 1 || -z "$rom" ]]; then
+        local explicit="$rom"
         case "$FLEET_NIC_MODEL" in
             e1000)   rom="${MAAS_ROM_DIR:-/var/lib/libvirt/maas-rom}/ipxe-8086100e.rom" ;;
             virtio)  rom="${MAAS_ROM_DIR:-/var/lib/libvirt/maas-rom}/ipxe-1af41000.rom" ;;
             rtl8139) rom="${MAAS_ROM_DIR:-/var/lib/libvirt/maas-rom}/ipxe-10ec8139.rom" ;;
-            *) info "$name: no default ROM name for NIC model '$FLEET_NIC_MODEL' — set FLEET_NIC_ROM=<path>"; return 1 ;;
+            *) [[ -z "$explicit" ]] && return 0
+               info "$name: no default ROM name for NIC model '$FLEET_NIC_MODEL' — set FLEET_NIC_ROM=<path>"; return 1 ;;
         esac
+        # DEFAULT ON once installed: if this host has run `build-verifying-rom.sh
+        # install`, every new fleet carries the ROM unless told not to. Unset env +
+        # no installed ROM stays a plain fleet (nothing to attach, nothing implied).
+        if [[ -z "$explicit" ]]; then
+            [[ -f "$rom" ]] || return 0
+            info "$name: verifying ROM defaulted ON ($rom is installed on this host; FLEET_NIC_ROM=0 opts out)"
+        fi
     fi
     # Refuse rather than half-apply: a fleet where some nodes verify and some do not
     # is worse than one where none do, because a green run then proves neither.

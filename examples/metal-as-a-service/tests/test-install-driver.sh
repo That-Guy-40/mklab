@@ -131,6 +131,22 @@ grep -q "^node2 bootdev disk" "$MOCK_BMC_LOG" \
 assert_state node2 error
 note "installer never finishes -> timeout, no boot-from-disk, node -> error  ✓"
 
+# ── 4b. a power BLIP is not a completion (the operator-race incident) ─────────
+# A live run saw exactly this: an out-of-band power cycle passed through "off" for
+# a few seconds mid-install, the driver read it as the installer finishing, and
+# switched an EMPTY disk to be the boot device. The confirm poll must catch a node
+# that is back on and refuse — no bootdev disk, node -> error.
+prep node2b 6236
+seed_login node2b
+: > "$MOCK_BMC_LOG"
+if ( export MOCK_BMC_OFF_AFTER=2 MOCK_BMC_BLIP=1; "$MAAS" deploy node2b --driver install --image v1 ) >/dev/null 2>&1; then
+    fail "REGRESSION: a one-poll power blip was accepted as 'installer finished' — the driver would boot a half-written disk"
+fi
+grep -q "^node2b bootdev disk" "$MOCK_BMC_LOG" \
+    && fail "REGRESSION: the driver set bootdev disk after a power BLIP — the confirm poll is not confirming"
+assert_state node2b error
+note "a one-poll power blip is refused: no bootdev disk, node -> error  ✓"
+
 # ── 5. …and the health gate is still the thing that decides `active` ─────────
 # node3 powers off correctly (the install "completed") but never reaches a login
 # prompt. A control plane that called that success would hand out a broken machine.

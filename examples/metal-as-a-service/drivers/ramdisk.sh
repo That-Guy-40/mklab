@@ -262,6 +262,12 @@ health)
     console)
         console="$(node_field "$node" console "")"
         [[ -n "$console" ]] || console="$(nd "$node")/console.log"
+        # same virtlogd-rotation hazard as install.sh's health: an unreadable
+        # console must be named, not timed out as "never printed its marker"
+        if [[ -f "$console" && ! -r "$console" ]]; then
+            echo "ramdisk: console $console exists but is NOT readable by $(id -un) — virtlogd rotation recreates it 0600 root. chmod 0666 it (and raise virtlogd max_size)." >&2
+            exit 1
+        fi
         echo "ramdisk: awaiting /$IMG_MARKER/ on $console (timeout ${to}s)…" >&2
         while [[ $waited -lt $to ]]; do
             [[ -f "$console" ]] && grep -qE -- "$IMG_MARKER" "$console" \
