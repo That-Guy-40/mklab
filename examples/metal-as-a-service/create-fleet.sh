@@ -32,6 +32,14 @@ VBMC_LAB="${VBMC_LAB:-$HERE/../virtualbmc-ipmi-lab}"
 # unprivileged control plane can read them back. See lib/console_xml.py for why the
 # console is a file and not a pty.
 CONSOLE_DIR="${MAAS_CONSOLE_DIR:-/var/lib/libvirt/maas-console}"
+# The NIC the fleet's nodes present. NOT virtio, deliberately: the probe and the RAM
+# payloads boot kernels that do not drive virtio-net (Debian stock has it modular, and
+# an initramfs carries no modules; micro-linux's defconfig omits it), so a virtio NIC
+# gives the guest NO network device at all. It boots, runs, gathers its facts and has
+# nothing to send them over — which is how one live run reached "collected facts
+# cpus=1" and then "FAILED to post". e1000 is built into both kernels. Proven by
+# booting the probe under QEMU with each: e1000 registers eth0, virtio registers nothing.
+FLEET_NIC_MODEL="${FLEET_NIC_MODEL:-e1000}"
 FLEET_CONSOLE="${FLEET_CONSOLE:-file}"        # file | pty (pty = the old, unlogged behaviour)
 VIRSH="virsh -c qemu:///system"
 
@@ -195,7 +203,7 @@ do_up() {
         step "creating libvirt domain '$name' (${NODE_MEMORY_MB}MiB, disk ${NODE_DISK_SIZE}, net ${NODE_NETWORK})"
         ( cd "$VBMC_LAB" && \
           NODE="$name" MEMORY_MB="${NODE_MEMORY_MB:-4096}" DISK_SIZE="${NODE_DISK_SIZE:-10G}" \
-          NET="${NODE_NETWORK:-default}" ./create-node.sh ) \
+          NET="${NODE_NETWORK:-default}" NIC_MODEL="${NODE_NIC_MODEL:-$FLEET_NIC_MODEL}" ./create-node.sh ) \
             || die "create-node $name failed"
     done
 

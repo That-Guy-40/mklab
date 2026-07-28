@@ -867,3 +867,48 @@ verifying the previous fix.)
 **Verified headless:** `tests/run-all.sh` → **19 passed, 0 skipped, 0 failed**. Negative
 controls: restoring the status-blind `run()`, and restoring the log-writing `--dry-run`,
 each make the test fail by name.
+
+## The fifth run: the probe measured the machine and had no wire (2026-07-28)
+
+Setup finally held — phases 1–5 all green, the reap trap fired on the way out. Phase 6
+failed, and this time the console said exactly why:
+
+```
+MAAS inspection probe: DHCP failed (continuing)
+MAAS inspection probe: collected facts cpus=1 node=node1
+MAAS inspection probe: FAILED to post facts to http://192.168.123.1:8282
+```
+
+The probe booted, ran, and measured the machine correctly. It had **no network device at
+all** — not a down link, not a DHCP timeout: the kernel never registered an interface.
+
+```
+Unknown kernel command line parameters "ip=dhcp", will be passed to user space.
+```
+
+**The cause is the kernel, not the NIC.** The probe boots an *initramfs*, which carries
+no modules, so every driver it needs must be built in. `~/netboot/kernel` is Debian
+stock — `virtio_net` **and** `e1000` are both modules there. `run-e2e.sh` now stages
+micro-linux's defconfig kernel as `probe-kernel` and points `MAAS_PROBE_KERNEL` at it.
+
+Proven by booting the real probe initramfs under QEMU
+([`tests/test-probe-nic.sh`](tests/test-probe-nic.sh)), which is the only kind of check
+that could have caught this: a NIC model and a kernel are configured in two different
+files by two different tools, and every static check on either passes — `model=virtio`
+is a perfectly good NIC and the kernel is a perfectly good kernel. Only running them
+together shows there is no driver between them.
+
+**A correction, because the test's own control produced it.** The fleet now defaults to
+`e1000` (`FLEET_NIC_MODEL`), and that change is **belt-and-braces, not the fix**: the
+control run shows micro-linux's kernel drives virtio-net perfectly well. With the right
+kernel the original virtio NIC would have worked. `e1000` is kept because it is built
+into both kernels and so widens the margin, but the defect was the kernel and it would
+be wrong to let the NIC take the blame.
+
+Also fixed: `run()`'s abort message reported **`rc=0` every time** — `$?` was clobbered
+by the `printf` between the failing command and the message. Captured before anything
+else runs now.
+
+**Verified headless:** `tests/run-all.sh` → **19 passed, 0 failed**. `test-probe-nic.sh`
+is deliberately **not** in `run-all.sh`: it boots QEMU twice and takes ~2 minutes. Run it
+directly when touching the probe, the fleet's NIC, or the probe kernel.

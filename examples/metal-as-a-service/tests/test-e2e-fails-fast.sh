@@ -32,7 +32,9 @@ E2E="$LAB_DIR/run-e2e.sh"
 # ── 1. run() checks the exit status at all ─────────────────────────────────
 sed -n '/^run()  {/,/^}/p' "$E2E" > "$SANDBOX/run.sh"
 [[ -s "$SANDBOX/run.sh" ]] || fail "could not extract run() from run-e2e.sh — renamed?"
-grep -qE 'if ! "\$@"|"\$@".*\|\| *die|return 1' "$SANDBOX/run.sh" \
+# Syntactic smoke only — §2/§3 below prove the BEHAVIOUR. Kept because a run() that
+# never mentions $? at all is worth naming directly.
+grep -qE 'rc=\$\?|if ! "\$@"|"\$@".*\|\| *die|return 1' "$SANDBOX/run.sh" \
     || fail "REGRESSION: run() does not act on the phase's exit status. A setup phase that fails would be logged and stepped over, and the run would report a different failure many phases later — which is exactly how three live runs were misread"
 note "run() acts on the exit status of the phase it runs  ✓"
 

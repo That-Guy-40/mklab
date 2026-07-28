@@ -55,9 +55,11 @@ die()  { printf 'FAIL: %s\n' "$*" | _tee; exit 1; }
 run()  {
     if [[ $DRY == 1 ]]; then printf '   $ %s\n' "$*" >&2; return 0; fi
     printf '   $ %s\n' "$*" | tee -a "$LOG" >&2
-    if ! "$@" >>"$LOG" 2>&1; then
+    local rc=0
+    "$@" >>"$LOG" 2>&1 || rc=$?      # capture BEFORE anything else runs: the printf
+    if [[ $rc -ne 0 ]]; then          # below would otherwise clobber $? and report 0
         printf '\n' | tee -a "$LOG" >&2
-        die "the step above failed (rc=$?): $*
+        die "the step above failed (rc=$rc): $*
 Everything after it depends on it, so continuing would report a different, misleading
 failure several phases later. The tool's own output is in $LOG — read it there; this
 script deliberately does not paraphrase what a tool it wraps already said."
@@ -171,6 +173,19 @@ fi
 # ── 5. introspection: the probe really boots and reports ────────────────────
 step "[5/10] build the introspection initramfs + start the facts sink (:8282)"
 run "$HERE/build-probe-initramfs.sh" --out "$MAAS_NETBOOT_DIR/probe-initramfs.cpio.gz"
+# The probe needs a kernel with its NIC driver BUILT IN — it boots an initramfs, which
+# carries no modules. The repo's ~/netboot/kernel is Debian stock (virtio_net and e1000
+# both modular), so a probe booted with it comes up with NO network device at all: it
+# measures the machine correctly and has nothing to post the answer over. micro-linux's
+# defconfig kernel has e1000 built in; pair it with the fleet's e1000 NIC.
+PK="${MAAS_PROBE_KERNEL_SRC:-$HERE/../../micro-linux/out/x86_64/kernel}"
+if [[ $DRY == 0 ]]; then
+    [[ -f "$PK" ]] || die "no probe kernel at $PK. The probe boots an initramfs, so it needs
+a kernel with its NIC driver built in; ~/netboot/kernel is Debian stock and has none.
+Build it:  micro-linux/mlbuild.sh all --arch x86_64   (or set MAAS_PROBE_KERNEL_SRC)"
+    run cp -f "$PK" "$MAAS_NETBOOT_DIR/probe-kernel"
+fi
+export MAAS_PROBE_KERNEL=probe-kernel
 GW="$(virsh -c qemu:///system net-dumpxml vbmc-pxe 2>/dev/null \
       | sed -nE "s/.*<ip address='([^']+)'.*/\1/p" | head -1)"
 GW="${GW:-192.168.180.1}"
