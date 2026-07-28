@@ -29,6 +29,10 @@ NETBOOT_DIR="${MAAS_NETBOOT_DIR:-$HOME/netboot}"
 PORT="${MAAS_NETBOOT_PORT:-8181}"
 export MAAS_IMAGES_DIR="${MAAS_IMAGES_DIR:-$("$MAAS" _images-dir)}"
 [[ -n "$MAAS_IMAGES_DIR" ]] || { echo "run-e2e-install: maas-lab.sh _images-dir returned nothing" >&2; exit 1; }
+# The drivers read registry context from the env maas-lab.sh normally exports for
+# them; this script also calls a driver DIRECTLY (stage/verify), so it must export
+# the same context itself. The first live run died right here without it.
+export MAAS_STATE="${MAAS_STATE:-$("$MAAS" _state-root)}"
 export MAAS_INSTALL_TIMEOUT="${MAAS_INSTALL_TIMEOUT:-2400}"
 export MAAS_HEALTH_TIMEOUT="${MAAS_HEALTH_TIMEOUT:-240}"
 

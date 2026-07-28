@@ -31,9 +31,12 @@ CATPY="$LAB/lib/catalog.py"
 NETBOOT_DIR="${MAAS_NETBOOT_DIR:-$HOME/netboot}"
 
 verb="${1:-}"; shift || true
-: "${MAAS_STATE:?install driver: MAAS_STATE not set (run via maas-lab.sh)}"
 
-nd() { printf '%s/%s\n' "$MAAS_STATE" "$1"; }
+# MAAS_STATE is demanded LAZILY, where node context is actually read — not at the
+# top of the file. `stage`/`verify`/`describe` are operator verbs that touch only
+# the image store, and demanding registry context they never use broke the first
+# live run of run-e2e-install.sh at the staging step (found live, 2026-07-28).
+nd() { printf '%s/%s\n' "${MAAS_STATE:?install driver: MAAS_STATE not set (run via maas-lab.sh)}" "$1"; }
 node_field() { local f; f="$(nd "$1")/$2"; [[ -f "$f" ]] && cat "$f" || printf '%s' "${3:-}"; }
 # BMC passthrough via the same seam maas-lab.sh uses
 bmc() { BMC_REGISTRY="${MAAS_REG_BMC:-}" "${MAAS_BMC:?}" "$@"; }
