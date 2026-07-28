@@ -521,6 +521,17 @@ cmd_unmaintenance() {
     local node="${1:?usage: unmaintenance <node>}"; require_node "$node"
     require_state "$node" unmaintenance maintenance
     local prior; prior="$(_read "$node" prior_state manageable)"
+    # Restoring a node into a transient state would restore the strand it was in:
+    # maintenance was the only verb that accepted `deploying`, and putting it back
+    # leaves the node exactly as stuck as before, with one more hop in its history.
+    if is_transient "$prior"; then
+        _write "$node" error_reason "was in transient state '$prior' when placed in maintenance"
+        set_state "$node" error unmaintenance
+        printf 'error %s (was mid-%s before maintenance; not restored into it) — recover with: retry %s\n' \
+            "$node" "$prior" "$node" >&2
+        rm -f "$(node_dir "$node")/prior_state" 2>/dev/null || true
+        return 0
+    fi
     set_state "$node" "$prior" unmaintenance
     rm -f "$(node_dir "$node")/prior_state" 2>/dev/null || true
     printf '%s %s (out of maintenance)\n' "$prior" "$node" >&2
@@ -531,6 +542,54 @@ cmd_retry() {
     local node="${1:?usage: retry <node>}"; require_node "$node"
     require_state "$node" retry error
     cmd_manage "$node"
+}
+
+
+# TRANSIENT_STATES — the states a node passes THROUGH. If the control plane dies
+# mid-transition, a node is left in one of these with no verb that accepts it: not
+# broken, just unreachable by the tool that owns it. `abort` is the way out.
+# (Found by chaos-run.sh, which killed maas-lab.sh mid-deploy and then had nothing
+# it could do with the node. Real Ironic has the same hazard and solves it the same
+# way — an explicit abort, plus a conductor that reaps stranded nodes on takeover.)
+TRANSIENT_STATES="verifying deploying cleaning rescuing deleting"
+is_transient() { local t; for t in $TRANSIENT_STATES; do [[ "$1" == "$t" ]] && return 0; done; return 1; }
+
+# abort — take a node OUT of a transient state into `error`, where `retry` can pick
+# it up. Records why, because "error" with no reason is only marginally better than
+# stranded.
+cmd_abort() {
+    local node="${1:?usage: abort <node> [--reason TEXT]}"; require_node "$node"; shift || true
+    local reason="aborted by the operator (was stranded mid-transition)"
+    [[ "${1:-}" == --reason ]] && { reason="$2"; shift 2; }
+    local cur; cur="$(read_state "$node")"
+    is_transient "$cur" \
+        || die "cannot 'abort' node '$node' from state '${cur:-<none>}' — abort is for a node stuck mid-transition ($TRANSIENT_STATES)"
+    _write "$node" error_reason "$reason"
+    set_state "$node" error abort
+    printf 'error %s (aborted from %s: %s) — recover with: retry %s\n' "$node" "$cur" "$reason" "$node" >&2
+}
+
+# recheck — re-run the CURRENT driver's health check against the CURRENT image, and
+# demote a node that no longer passes it. The activation gate is a one-time question;
+# without this nothing ever asks it again, so a node that dies after activation keeps
+# reporting `active` and everything downstream believes it. Run it from cron, or by
+# hand after an incident; the continuous version is `apply` (§3a, increment 6).
+cmd_recheck() {
+    local node="${1:?usage: recheck <node>}"; require_node "$node"
+    local cur; cur="$(read_state "$node")"
+    [[ "$cur" == active ]] || die "cannot 'recheck' node '$node' from state '$cur' — recheck re-tests a node that claims to be active"
+    local driver image drv
+    driver="$(_read "$node" driver "")"; image="$(_read "$node" image "")"
+    [[ -n "$driver" && -n "$image" ]] || die "node '$node' is active but records no driver/image — nothing to re-check"
+    drv="$MAAS_DRIVER_DIR/$driver.sh"
+    [[ -x "$drv" ]] || die "recheck: no driver '$driver' at $drv"
+    if run_driver "$drv" health "$node" "$image"; then
+        printf 'active %s (driver=%s image=%s, health re-confirmed)\n' "$node" "$driver" "$image" >&2
+        return 0
+    fi
+    _write "$node" error_reason "health re-check failed for image '$image' (it passed at activation and has since stopped)"
+    set_state "$node" error recheck
+    die "'$node' is NO LONGER healthy on '$image' — demoted active -> error (it passed its activation gate and has since stopped). Recover with: retry $node"
 }
 
 # power / bootdev / console — passthrough to the BMC (the seam).
@@ -611,6 +670,8 @@ Lifecycle verbs (Ironic-faithful state machine):
   release <node> [--wiped]               active|rescue -> available (via cleaning)
   maintenance <node> / unmaintenance <node>   any <-> maintenance
   retry <node>                           error -> manageable
+  abort <node> [--reason TEXT]           <transient> -> error (unstick a node the control plane died mid-transition on)
+  recheck <node>                         active -> error if it is no longer healthy (the gate is one-time; this asks again)
 
 Out-of-band (passthrough to bmc-toolkit's bmc.sh via MAAS_BMC):
   power <node> {on|off|cycle|status}     bootdev <node> {pxe|disk|cdrom}     console <node>
@@ -641,6 +702,8 @@ main() {
         maintenance)   cmd_maintenance "$@" ;;
         unmaintenance) cmd_unmaintenance "$@" ;;
         retry)         cmd_retry "$@" ;;
+        abort)         cmd_abort "$@" ;;
+        recheck)       cmd_recheck "$@" ;;
         power)         cmd_power "$@" ;;
         bootdev)       cmd_bootdev "$@" ;;
         console|sol)   cmd_console "$@" ;;

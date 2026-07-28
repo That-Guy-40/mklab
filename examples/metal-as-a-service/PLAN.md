@@ -11,6 +11,7 @@ This file tracks the **build increments** and records each one's outcome as it l
 | **2** | **`inspect` RAM probe + NoCloud metadata + `milestones.toml`/`watch`** (feeds `tools/control-pane`) | ✅ **DONE** — headless |
 | **3** | **`install` driver + health-gated activation + A/B rollback (§4b)** + F2 verify gate | ✅ **DONE** — headless (real install author-run) |
 | **4** | **`ramdisk` driver + catalog** (RAM-INFRA / micro-linux / floppinux / busybox), signed + `imgverify` | ✅ **DONE (this increment)** — headless |
+| **4a** | **chaos driver + resilience matrix** (`drivers/chaos.sh`, `chaos-run.sh`) — and the `abort`/`recheck` verbs it found were missing | ✅ **DONE (this increment)** — headless |
 | 5 | `image` driver (dd golden whole-disk, Tier-B reuse) | ▫ |
 | 6 | `apply` declarative reconcile (§3a) — diff desired-vs-actual, idempotent | ▫ |
 | 7 | Phase-6 surface — **provided by `tools/control-pane`**; MAAS is its first consumer | ▫ |
@@ -266,3 +267,72 @@ has not built are **reported, not failed**: building them is each lab's job.
 **Author-run (handed over):** an actual RAM boot. Serve `$MAAS_NETBOOT_DIR/maas/` over
 the PXE HTTP endpoint (`:8181`), bring up the fleet, and deploy — each catalog entry's
 boot signature is the one its own lab documents. Steps in MANUAL_TESTING §6.
+
+## Increment 4a — the chaos driver, and the two gaps it found (2026-07-27)
+
+**Built:** a driver that fails on purpose, and a harness that grades how the control
+plane falls.
+
+**The ladder, which is the point.** Fallback and graceful failure are the acceptable
+*intermediate* rungs; the goal is that a fault never becomes a failure at all:
+
+| rung | meaning | |
+|---|---|---|
+| **ABSORBED** | the bad image was refused **before** it was deployed — the node never stopped serving | ← the goal |
+| **DEGRADED** | the bad image deployed, failed, and the node fell back to its previous one | acceptable |
+| **HALTED** | not serving, but it stopped **honestly** — `error`, a recorded reason, and a verb that recovers it | acceptable |
+| **STRANDED** | stuck in a transient state no verb accepts | **critical** |
+| **LIED / STALE** | the registry claims an image that never deployed, or that has since died with nothing re-checking | **critical** |
+
+A run passes at **zero criticals**. The intermediate rungs are counted, not punished.
+
+- **`drivers/chaos.sh`** — a real driver implementing the real contract, with the fault
+  injected at a chosen point: `verify-fail`, `deploy-fail`, `deploy-crash` (dies with no
+  message — not the same as a clean refusal), `deploy-slow`, `partial` (deploy reports
+  success, the payload is broken — the step that reports success is not the step that
+  would notice), `health-fail`, `health-flap` (healthy exactly once: it passes the gate
+  and then dies). Faults apply **only to the targeted image**, which is what makes the
+  A/B fallback observable — a fault that broke every image would send every scenario to
+  `error` and the rollback path would never run.
+- **Two layers, because they fail differently.** The deploy driver is one; the **BMC
+  seam** is the other (`MOCK_BMC_FAIL`) — an out-of-band controller that stops answering
+  mid-deploy is a different failure class from a payload that will not boot.
+- **`chaos-run.sh`** — the 12-scenario matrix and the report. It attempts the recovery
+  the control plane offers *before* grading, because "critical" should mean *nothing can
+  be done about it*, not *the first thing I looked at was still wrong*.
+
+### The two critical outcomes it found — and the fixes
+
+1. **STRANDED: kill the control plane mid-deploy and the node is stuck forever.** No
+   verb accepted `deploying`. `maintenance` accepted any state, so it looked like an
+   escape — but `unmaintenance` restored `prior_state`, handing the node **straight back
+   into `deploying`**. The strand survived a round trip through the only verb that could
+   touch it. → **`abort`** takes a node out of a transient state into `error` (with a
+   recorded reason) where `retry` can pick it up, and `unmaintenance` now refuses to
+   restore a transient prior state. Real Ironic has the same hazard and solves it the
+   same way: an explicit abort plus a conductor that reaps stranded nodes on takeover.
+2. **STALE: a node that passes its gate and then dies keeps reporting `active`.** The
+   activation gate is a **one-time** question, and nothing asked it again — so everything
+   downstream believed a dead node. → **`recheck`** re-runs the current driver's health
+   against the current image and demotes a node that no longer passes. Honest scope: this
+   is a manual/cron re-check, not a continuous monitor; the continuous version is
+   `apply` (§3a, increment 6), which will call it.
+
+**Design decisions this increment:**
+
+1. **The driver layer is the right place to inject.** Below it there is only "the command
+   failed"; above it only "the operator sees an error". Everything worth being graceful
+   about — does the node stay up, does the registry tell the truth, is there a verb that
+   recovers it — is decided between those two points.
+2. **Grade after attempting recovery.** Otherwise the harness measures how bad things
+   look at the moment of failure rather than whether they can be fixed.
+3. **The matrix must be provably non-vacuous.** `test-chaos-matrix.sh` asserts zero
+   criticals **and** that all three acceptable rungs are occupied — a matrix that never
+   broke anything is all-ABSORBED, one that breaks everything is all-HALTED, and one
+   where the A/B path is dead never reaches DEGRADED. Zero criticals alone proves none
+   of that.
+
+**Verified (headless, this host, 2026-07-27):** `tests/run-all.sh` → **11 passed, 0
+skipped, 0 failed**; `chaos-run.sh` → **12 scenarios: 2 absorbed, 4 degraded, 6 halted,
+0 critical**. Both negative controls run: removing `abort` puts `control-plane-killed`
+back to **STRANDED**; removing `recheck` puts `health-flap` back to **STALE**.
