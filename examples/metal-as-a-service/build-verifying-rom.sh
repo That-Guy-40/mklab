@@ -52,13 +52,19 @@ set -uo pipefail
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$HERE/../.." && pwd)"
 
-# The same state-dir logic maas-lab.sh uses, so both agree on one base.
-if   [[ -n "${MAAS_STATE:-}"     ]]; then STATE_ROOT="$MAAS_STATE"
-elif [[ -n "${LAB_STATE_DIR:-}"  ]]; then STATE_ROOT="$LAB_STATE_DIR/maas"
-else                                      STATE_ROOT="$HOME/.cache/lab-create/maas"
-fi
-IMAGES_DIR="${MAAS_IMAGES_DIR:-$STATE_ROOT/images}"
-BUILD_DIR="${MAAS_ROM_BUILD_DIR:-$STATE_ROOT/ipxe}"
+# WHERE THE CA IS. Not where you would guess: maas-lab.sh's registry lives under
+# $XDG_STATE_HOME/lab-create/metal-as-a-service, but the signed payloads and the trust
+# root do NOT — run-e2e.sh:42 exports MAAS_IMAGES_DIR=~/.cache/lab-create/maas/images and
+# that is what every driver has actually used. This mirrors THAT, because the CA baked
+# into the ROM must be the one the drivers sign with; guessing the registry's root
+# instead would bake a CA nothing signs with and every node would refuse every payload.
+IMAGES_DIR="${MAAS_IMAGES_DIR:-$HOME/.cache/lab-create/maas/images}"
+BUILD_DIR="${MAAS_ROM_BUILD_DIR:-$(dirname -- "$IMAGES_DIR")/ipxe}"
+
+# ⚠️ ~/.cache is, by its own contract, a directory anything may delete — a cleaner, a
+# `rm -rf ~/.cache`, an operator reclaiming disk. The fleet's SIGNING KEY lives there.
+# Losing it is recoverable (re-mint, re-sign, rebuild this ROM) but silent until a
+# deploy fails, so it is noted here and in DEFERRED.md rather than left to be discovered.
 
 # WHERE THE ROM MUST LIVE. qemu runs as its own user under qemu:///system and
 # reads romfile= itself. $HOME is 0750 and ~/.cache is 0700 here, so a ROM left in

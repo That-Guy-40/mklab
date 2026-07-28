@@ -110,7 +110,11 @@ note "--dry-run leaves the real run log byte-for-byte alone  ✓"
 LOGF="$SANDBOX/keepme.log"
 printf 'A COMPLETED RUN LIVED HERE\n' > "$LOGF"
 sum_before="$(cksum < "$LOGF")"
-( cd "$LAB_DIR" && E2E_LOG="$LOGF" MAAS_IMAGES_DIR="$SANDBOX/nope" ./run-e2e.sh ) >/dev/null 2>&1
+# MAAS_STATE is sandboxed too, and deliberately: this line runs the REAL run-e2e.sh.
+# It is safe only because the preflight refuses before phase 1 — measured, the operator's
+# registry is untouched — but that makes a test's hermeticity depend on the order of
+# checks in the script under test. If a check ever moves, this would drive the live fleet.
+( cd "$LAB_DIR" && E2E_LOG="$LOGF" MAAS_IMAGES_DIR="$SANDBOX/nope" MAAS_STATE="$SANDBOX/state" ./run-e2e.sh ) >/dev/null 2>&1
 [[ "$(cksum < "$LOGF")" == "$sum_before" ]] \
     || fail "REGRESSION: a run that refused during preflight replaced the previous run's log. The last thing that actually finished is the thing you most want to read after a failed start — and the failed start had nothing of its own to say"
 note "a run refused in preflight leaves the previous log byte-for-byte alone  ✓"

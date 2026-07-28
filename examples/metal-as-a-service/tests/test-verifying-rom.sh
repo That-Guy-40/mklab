@@ -29,15 +29,13 @@ set -uo pipefail
 
 need qemu-system-x86_64 python3 openssl
 
-# Same state-dir logic as maas-lab.sh / build-verifying-rom.sh.
-if   [[ -n "${MAAS_STATE:-}"    ]]; then STATE_ROOT="$MAAS_STATE"
-elif [[ -n "${LAB_STATE_DIR:-}" ]]; then STATE_ROOT="$LAB_STATE_DIR/maas"
-else                                     STATE_ROOT="$HOME/.cache/lab-create/maas"
-fi
-BUILD_DIR="${MAAS_ROM_BUILD_DIR:-$STATE_ROOT/ipxe}"
+# Mirrors build-verifying-rom.sh, which mirrors run-e2e.sh:42 — NOT maas-lab.sh's
+# registry root, which is somewhere else entirely (see the comment in that script).
+IMAGES_DIR="${MAAS_IMAGES_DIR:-$HOME/.cache/lab-create/maas/images}"
+BUILD_DIR="${MAAS_ROM_BUILD_DIR:-$(dirname -- "$IMAGES_DIR")/ipxe}"
 ROM="$BUILD_DIR/ipxe-8086100e.rom"
 ROM_CA="$BUILD_DIR/ca.der"
-TRUST="${MAAS_IMAGES_DIR:-$STATE_ROOT/images}/trust"
+TRUST="$IMAGES_DIR/trust"
 
 [[ -f "$ROM" ]] || skip "no verifying ROM built — run ./build-verifying-rom.sh build (needs docker, minutes)"
 [[ -f "$ROM_CA" ]] || skip "no ca.der beside the ROM — rebuild with ./build-verifying-rom.sh build"

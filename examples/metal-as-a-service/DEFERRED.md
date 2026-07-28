@@ -193,6 +193,19 @@ a fixed point over a fleet that was two-thirds held for exactly this reason.
 
 ## Smaller, still open
 
+- **The fleet's signing key lives in a cache directory.** `run-e2e.sh:42` puts
+  `MAAS_IMAGES_DIR` under `~/.cache/lab-create/maas/images`, so `trust/ca.key` — the thing
+  every payload signature chains to — sits in a directory whose entire contract is *safe to
+  delete*. The registry, by contrast, is under `$XDG_STATE_HOME/lab-create/`, which is where
+  this belongs. Losing it is recoverable (re-mint → re-sign every image → rebuild the ROM,
+  which bakes the CA) but silent until a deploy fails. Moving it is a one-line default
+  change plus a migration note for anyone with an existing fleet.
+- **`tests/test-e2e-fails-fast.sh` runs the real `run-e2e.sh`.** `MAAS_STATE` is now
+  sandboxed on that line, but the test is still only safe because the preflight refuses
+  before phase 1 — a test whose hermeticity depends on the order of checks *inside the
+  script under test*. Measured harmless today (the registry's history is byte-identical
+  across a run); worth making structural.
+
 - **`install.sh`'s ownership test is narrow on purpose.** `describe <image>` refuses a
   payload staged as kernel+initrd+cmdline (the triple only `ramdisk.sh stage` writes),
   which catches the rollback case that actually happened. It does **not** catch an image no
