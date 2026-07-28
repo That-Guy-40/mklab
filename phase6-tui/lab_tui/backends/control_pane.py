@@ -72,6 +72,10 @@ class ControlPaneBackend(BackendRunner):
                     "terminal": n.get("terminal", False),
                     "stalled": n.get("stalled", False),
                     "console": console,
+                    # the verbs this node's owner declared (see ActionsScreen). The
+                    # backend passes them through untouched — it does not know what
+                    # any of them do, which is the point.
+                    "actions": n.get("actions", []),
                 },
                 spec_path=fleet / name / "node.toml",
                 log_command=log_command,

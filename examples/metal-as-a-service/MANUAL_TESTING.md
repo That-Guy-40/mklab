@@ -674,3 +674,75 @@ $ ./chaos-run.sh
 
 The last three layers were **declared uncovered** in increment 5 rather than left
 implicit, so this increment began with its fault work already named.
+
+---
+
+## 10. The actions panel (increment 7) — **v1 complete**
+
+The `ui` layer was declared in `chaos-run.sh` **before the panel was written**, so the
+house-rule guard failed until it was covered:
+
+```console
+$ ./tests/test-chaos-matrix.sh
+FAIL: REGRESSION: layer 'ui' is declared but has NO chaos scenario. The house rule is
+that every discrete layer gets a fault-injection point — an uncovered layer is one
+nobody has watched fall over. Add a scenario for it in chaos-run.sh
+```
+
+### 10a. MAAS declares its verbs; the panel runs them
+
+```console
+$ ./maas-lab.sh watch n1 --register-only
+$ ../../tools/control-pane actions n1 --fleet "$LAB_STATE_DIR/control-pane"
+  a  R   Reconcile (apply)
+       …/maas-lab.sh apply
+  h      Re-check health
+       …/maas-lab.sh recheck n1
+  i      Show node
+       …/maas-lab.sh show n1
+  b      Abort (unstick a transition)
+       …/maas-lab.sh abort n1
+  R   !  Release (wipes + returns to the pool)
+       …/maas-lab.sh release n1
+```
+
+`R` = reconciling (safe to press twice), `!` = destructive (needs `--yes`). The control
+pane does not know what any of these mean — **MAAS owns the argv**.
+
+An undeclared verb is refused, and nothing runs:
+
+```console
+$ ../../tools/control-pane run n1 destroy-everything --fleet …
+control-pane: 'n1' declares no action 'destroy-everything' (has: a=Reconcile (apply), …)
+```
+
+### 10b. The invariant, asserted rather than promised
+
+```console
+  - every panel action is literally 'maas-lab.sh …', and the first one reconciles  ✓
+```
+
+Every declared action's `argv[0]` must be `maas-lab.sh`. Delete Phase 6 and every one
+of those commands still works in a shell, because they *are* the shell commands.
+
+### 10c. Nine layers
+
+```console
+$ ./chaos-run.sh
+  …
+  ABSORBED   ui         stale-row   declared verbs only, safe to repeat, and a stale
+                                    press hit the verb's own precondition
+
+  18 scenarios across 9 layers (driver oob artifact registry process metadata console
+  reconcile ui): 7 absorbed (goal), 4 degraded, 7 halted honestly, 0 CRITICAL
+```
+
+Negative control — let `control-pane run` execute a verb nobody declared:
+
+```console
+  LIED       ui         undeclared-verb   the panel ran a command its owner never declared
+FAIL: 1 of 18 injected faults became a CRITICAL failure
+```
+
+Suites: `tests/run-all.sh` → **13 passed**; `tools/tests/test-actions.sh` → PASS;
+**phase6-tui 111 pytest passed** (CI-gated).

@@ -35,10 +35,33 @@ def _fleet_dir(explicit):
     return os.path.join(xdg, "lab-create", "control-pane")
 
 
+def _node_actions(conf):
+    """The verbs a node's OWNER declared it can be driven with.
+
+    node.toml may carry:  [[action]] key="a" label="Reconcile" argv=["…","apply"]
+
+    The control pane deliberately does not know what those verbs mean. A lab declares
+    the exact argv, the panel runs it, and the panel is therefore never a second
+    implementation of the lab's CLI — which is what keeps the invariant true: delete
+    the TUI and the same argv still works in a shell.
+    """
+    out = []
+    for a in conf.get("action", []):
+        argv = a.get("argv") or []
+        if not argv or not isinstance(argv, list):
+            continue
+        out.append({"key": str(a.get("key", "")), "label": str(a.get("label", " ".join(argv))),
+                    "argv": [str(x) for x in argv],
+                    "reconciling": bool(a.get("reconciling", False)),
+                    "destructive": bool(a.get("destructive", False))})
+    return out
+
+
 def _node_progress(node_dir, default_milestones):
     """Read one node's `node.toml`, run the engine over its console, return a dict.
 
-    node.toml: profile = "<profile>"; console = "<path>"; [milestones = "<path>"].
+    node.toml: profile = "<profile>"; console = "<path>"; [milestones = "<path>"];
+    optional [[action]] entries (see _node_actions).
     """
     name = os.path.basename(node_dir.rstrip("/"))
     with open(os.path.join(node_dir, "node.toml"), "rb") as fh:
@@ -54,7 +77,8 @@ def _node_progress(node_dir, default_milestones):
                 p = tr.feed(line)
     return {"name": name, "profile": profile, "console": console,
             "percent": p.percent, "label": p.label,
-            "terminal": p.terminal, "stalled": p.stalled}
+            "terminal": p.terminal, "stalled": p.stalled,
+            "actions": _node_actions(conf)}
 
 
 def _fleet_nodes(fleet):
@@ -99,6 +123,52 @@ def cmd_inspect(args):
                      + ("  (terminal)" if m.terminal else ""))
     print("\n".join(lines))
     return 0
+
+
+def _load_node_conf(fleet, node):
+    nd = os.path.join(fleet, node)
+    path = os.path.join(nd, "node.toml")
+    if not os.path.isfile(path):
+        sys.exit(f"control-pane: no node '{node}' under {fleet}")
+    with open(path, "rb") as fh:
+        return tomllib.load(fh)
+
+
+def cmd_actions(args):
+    """List the verbs a node's owner declared. The panel binds keys to these."""
+    fleet = _fleet_dir(args.fleet)
+    acts = _node_actions(_load_node_conf(fleet, args.node))
+    if args.json:
+        print(json.dumps(acts))
+        return 0
+    if not acts:
+        print(f"control-pane: '{args.node}' declares no actions "
+              "(its owner did not put [[action]] entries in node.toml)")
+        return 0
+    for a in acts:
+        flags = "".join(["R" if a["reconciling"] else " ", "!" if a["destructive"] else " "])
+        print(f"  {a['key'] or '-'}  {flags}  {a['label']}\n       {' '.join(a['argv'])}")
+    return 0
+
+
+def cmd_run(args):
+    """Run ONE declared action, streaming its output. Never invents a command.
+
+    A destructive action requires --yes: the panel is a place where a key can be
+    pressed by accident, which is not true of a shell where the whole line is typed.
+    """
+    fleet = _fleet_dir(args.fleet)
+    acts = _node_actions(_load_node_conf(fleet, args.node))
+    match = [a for a in acts if args.action in (a["key"], a["label"])]
+    if not match:
+        have = ", ".join(f"{a['key']}={a['label']}" for a in acts) or "none"
+        sys.exit(f"control-pane: '{args.node}' declares no action '{args.action}' (has: {have})")
+    a = match[0]
+    if a["destructive"] and not args.yes:
+        sys.exit(f"control-pane: '{a['label']}' is declared destructive — re-run with --yes. "
+                 "A panel key can be pressed by accident; a typed command line cannot.")
+    proc = subprocess.run(a["argv"], text=True)
+    return proc.returncode
 
 
 def _lines(args):
@@ -177,6 +247,19 @@ def main(argv=None):
                     help="fleet dir (default: $LAB_STATE_DIR/control-pane)")
     ls.add_argument("--json", action="store_true", help="emit JSON (for Phase 6 / consumers)")
     ls.set_defaults(func=cmd_list)
+
+    ac = sub.add_parser("actions", help="list the verbs a node's owner declared")
+    ac.add_argument("node")
+    ac.add_argument("--fleet", default=None)
+    ac.add_argument("--json", action="store_true")
+    ac.set_defaults(func=cmd_actions)
+
+    rn = sub.add_parser("run", help="run ONE declared action for a node")
+    rn.add_argument("node")
+    rn.add_argument("action", help="the action's key or label")
+    rn.add_argument("--fleet", default=None)
+    rn.add_argument("--yes", action="store_true", help="confirm a destructive action")
+    rn.set_defaults(func=cmd_run)
 
     it = sub.add_parser("inspect", help="detail one node: config + milestones + where it is now")
     it.add_argument("node", help="node name")

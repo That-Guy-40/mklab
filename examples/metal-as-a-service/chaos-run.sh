@@ -48,6 +48,9 @@
 #   console     the console/milestone stream (the log `watch` and the health gates read)
 #   reconcile   the `apply` loop       (increment 6 — it computes from the REGISTRY,
 #               the one thing the registry-layer fault proved can diverge from reality)
+#   ui          the actions panel      (increment 7 — a surface that CALLS verbs fails
+#               in ways the CLI cannot: a keypress that fires twice, a row that is
+#               stale by the time it is acted on)
 #
 # Headless: mock BMC, chaos driver, throwaway registry. No libvirt, no root, no boot.
 set -uo pipefail
@@ -79,7 +82,7 @@ done
 
 TRANSIENT="verifying deploying cleaning rescuing deleting"
 crit=0; total=0; declare -a ROWS=(); LAYERS_SEEN=""
-ALL_LAYERS="driver oob artifact registry process metadata console reconcile"
+ALL_LAYERS="driver oob artifact registry process metadata console reconcile ui"
 
 state_of() { ( "$MAAS" state "$1" ) 2>/dev/null; }
 img_of()   { cat "$MAAS_STATE/$1/image" 2>/dev/null; }
@@ -283,6 +286,59 @@ scenario_reconcile() {
     fi
 }
 
+# UI layer: a panel that CALLS verbs fails in ways a shell does not. Two shapes, both
+# specific to a surface where a single key does something:
+#   1. the key fires TWICE (auto-repeat, a double tap, an impatient operator)
+#   2. the row acted on is STALE — the node moved on between the render and the press
+# The declared-action contract is what is under test: MAAS says which of its verbs the
+# panel may drive, and marks the one that is safe to repeat.
+scenario_ui() {
+    local node="u1" fleet="$WORK/cp" spec="$WORK/ui.toml"
+    printf '[[node]]\nname="%s"\nbmc_port=6363\ndriver="chaos"\nimage="good-v1"\n' "$node" > "$spec"
+    # env assignments belong INSIDE the subshell — `VAR=x ( … )` is a syntax error
+    ( export LAB_STATE_DIR="$WORK" CHAOS_FAULT=none; "$MAAS" apply "$spec" ) >/dev/null 2>&1
+    ( export LAB_STATE_DIR="$WORK"; "$MAAS" watch "$node" --register-only ) >/dev/null 2>&1
+    fleet="$WORK/control-pane"
+    local cp="$HERE/../../tools/control-pane"
+    if [[ ! -x "$cp" || ! -f "$fleet/$node/node.toml" ]]; then
+        push_row ui "double-press" "the panel key fires twice" \
+            HALTED "control-pane or the registration is unavailable here"
+        return
+    fi
+
+    # 1. the panel may only drive DECLARED verbs — never one it composed itself
+    if ( "$cp" run "$node" "destroy-everything" --fleet "$fleet" ) >/dev/null 2>&1; then
+        push_row ui "undeclared-verb" "the panel runs a verb the owner never declared" \
+            LIED "the panel ran a command its owner never declared"
+        return
+    fi
+
+    # 2. the reconcile key, pressed twice. It must converge, not repeat.
+    local before after
+    before="$(state_of "$node")"
+    ( export CHAOS_FAULT=none; "$cp" run "$node" a --fleet "$fleet" ) >/dev/null 2>&1
+    ( export CHAOS_FAULT=none; "$cp" run "$node" a --fleet "$fleet" ) >/dev/null 2>&1
+    after="$(state_of "$node")"
+    if [[ "$before" != active || "$after" != active ]]; then
+        push_row ui "double-press" "the reconcile key fires twice" \
+            HALTED "the node did not stay active across two presses (before=$before after=$after)"
+        return
+    fi
+
+    # 3. a STALE row: the panel was rendered while the node was active, the node has
+    #    since been pulled into maintenance, and the key is pressed against the old row.
+    ( "$MAAS" maintenance "$node" ) >/dev/null 2>&1
+    ( export CHAOS_FAULT=none; "$cp" run "$node" h --fleet "$fleet" ) >/dev/null 2>&1
+    if [[ "$(state_of "$node")" == maintenance ]]; then
+        push_row ui "stale-row" "a key pressed against a row that moved on" \
+            ABSORBED "declared verbs only, safe to repeat, and a stale press hit the verb's own precondition"
+    else
+        push_row ui "stale-row" "a key pressed against a row that moved on" \
+            LIED "a stale press moved a node out of maintenance behind the operator"
+    fi
+    ( "$MAAS" unmaintenance "$node" ) >/dev/null 2>&1
+}
+
 # ── the matrix ───────────────────────────────────────────────────────────────
 # Every scenario deploys `bad-v2`. Half start from a node already serving `good-v1`,
 # so the A/B fallback has somewhere to fall; half start fresh, where it does not.
@@ -303,6 +359,7 @@ scenario process  "control-plane-killed"     control-plane-killed 1 "maas-lab.sh
 scenario_metadata
 scenario_console
 scenario_reconcile
+scenario_ui
 
 # ── the report ───────────────────────────────────────────────────────────────
 # JSON string escaping: the detail strings quote image names, so an unescaped

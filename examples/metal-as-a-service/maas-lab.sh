@@ -58,6 +58,8 @@ MAAS_MILESTONES="${MAAS_MILESTONES:-$MAAS_DIR/milestones.toml}"
 # mock. Images (signed payloads) live under MAAS_IMAGES_DIR/<image>/, trust root at
 # MAAS_IMAGES_DIR/trust/ca.crt.
 MAAS_DRIVER_DIR="${MAAS_DRIVER_DIR:-$MAAS_DIR/drivers}"
+# absolute path to THIS script — the declared panel actions must run from any cwd
+MAAS_SELF="${MAAS_SELF:-$MAAS_DIR/maas-lab.sh}"
 MAAS_IMAGES_DIR="${MAAS_IMAGES_DIR:-$STATE_ROOT/images}"
 MAAS_HEALTH_TIMEOUT="${MAAS_HEALTH_TIMEOUT:-120}"
 
@@ -311,9 +313,23 @@ cmd_watch() {
     # Register into the control-pane fleet so Phase-6 (TUI + web) surfaces this node.
     local fleet; fleet="$(control_pane_fleet_dir)"
     mkdir -p "$fleet/$node"
+    # Declare the verbs the panel may drive this node with. The control pane does not
+    # know what any of them mean — MAAS owns the argv, the panel just runs it. That is
+    # what keeps §5b's invariant true: delete Phase 6 and these exact commands still
+    # work in a shell, because they ARE the shell commands.
+    #
+    # `apply` is deliberately FIRST and marked `reconciling`. A panel of imperative
+    # buttons is a remote control; a panel with a reconcile button converges the fleet
+    # and is safe to press twice — which matters far more on a surface where a key can
+    # repeat than on a command line where the whole thing is typed out.
     { printf 'profile = "%s"\n' "$profile"
       printf 'console = "%s"\n' "$console"
-      printf 'milestones = "%s"\n' "$MAAS_MILESTONES"; } > "$fleet/$node/node.toml"
+      printf 'milestones = "%s"\n' "$MAAS_MILESTONES"
+      printf '\n[[action]]\nkey = "a"\nlabel = "Reconcile (apply)"\nreconciling = true\nargv = ["%s", "apply"]\n' "$MAAS_SELF"
+      printf '\n[[action]]\nkey = "h"\nlabel = "Re-check health"\nargv = ["%s", "recheck", "%s"]\n' "$MAAS_SELF" "$node"
+      printf '\n[[action]]\nkey = "i"\nlabel = "Show node"\nargv = ["%s", "show", "%s"]\n' "$MAAS_SELF" "$node"
+      printf '\n[[action]]\nkey = "b"\nlabel = "Abort (unstick a transition)"\nargv = ["%s", "abort", "%s"]\n' "$MAAS_SELF" "$node"
+      printf '\n[[action]]\nkey = "R"\nlabel = "Release (wipes + returns to the pool)"\ndestructive = true\nargv = ["%s", "release", "%s"]\n' "$MAAS_SELF" "$node"; } > "$fleet/$node/node.toml"
     info "registered '$node' under the control-pane fleet: $fleet/$node/node.toml (profile=$profile)"
     [[ $register_only -eq 1 ]] && { printf 'registered %s for Phase-6 (profile=%s)\n' "$node" "$profile" >&2; return 0; }
 

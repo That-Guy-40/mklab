@@ -54,3 +54,39 @@ def test_inspect_shows_milestone_timeline(fake_state_dir: Path, tmp_path: Path) 
     text = ControlPaneBackend().inspect(r)
     assert "partitioning" in text
     assert "milestones:" in text
+
+
+def test_declared_actions_pass_through_untouched(
+    fake_state_dir: Path, tmp_path: Path
+) -> None:
+    """The backend carries a node's declared actions without interpreting them.
+
+    The panel is a surface over whatever CLI a lab declares — it must not know what
+    any verb means, and must not compose one of its own. So the contract here is
+    literally "what the owner wrote is what the consumer sees".
+    """
+    nd = fake_state_dir / "control-pane" / "n1"
+    nd.mkdir(parents=True, exist_ok=True)
+    (nd / "node.toml").write_text(
+        f'profile = "install"\nconsole = "{tmp_path / "c"}"\n'
+        '\n[[action]]\nkey = "a"\nlabel = "Reconcile"\nreconciling = true\n'
+        'argv = ["/x/maas-lab.sh", "apply"]\n'
+        '\n[[action]]\nkey = "R"\nlabel = "Release"\ndestructive = true\n'
+        'argv = ["/x/maas-lab.sh", "release", "n1"]\n'
+    )
+    r = ControlPaneBackend().list_resources()[0]
+    acts = r.extra["actions"]
+    assert [a["key"] for a in acts] == ["a", "R"]
+    assert acts[0]["argv"] == ["/x/maas-lab.sh", "apply"]
+    assert acts[0]["reconciling"] is True and acts[0]["destructive"] is False
+    assert acts[1]["destructive"] is True
+
+
+def test_node_without_declared_actions_gets_an_empty_list(
+    fake_state_dir: Path, tmp_path: Path
+) -> None:
+    """No declaration is an empty list, never a missing key — the panel shows an
+    honest 'nothing declared' instead of raising on a node it does not own."""
+    _register(fake_state_dir, "plain", "install", str(tmp_path / "c"))
+    r = ControlPaneBackend().list_resources()[0]
+    assert r.extra["actions"] == []
