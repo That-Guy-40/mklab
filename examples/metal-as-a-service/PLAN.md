@@ -1029,7 +1029,8 @@ each fail the test by name.
 
 The on-node half of F2 remains **unexercised on this fleet**, and this run does not
 change that — it makes the fact explicit rather than papering over it. Closing it needs
-a verifying ROM: `netboot/build-ipxe.sh --imgverify --certfile <ca.crt>`, attached with
+a verifying ROM: `netboot/build-ipxe.sh --imgverify --certfile <ca.crt>` *(later note:
+`--certfile` never existed — the flag is `--payload-trust`, see "The verifying ROM")*, attached with
 `<rom file=…/>` on each domain's `<interface>`, then `MAAS_IPXE_TRUSTS_CA=1`. That same
 ROM would also give iPXE a serial console and close the debuggability hole that made run
 3's failure a silence.
@@ -1475,3 +1476,47 @@ replaced `<rom>`, a missing ROM file, and a NIC-less domain. Each failed by name
 
 **Still not proven:** none of this has run on a live fleet — see
 [`DEFERRED.md`](DEFERRED.md) item 1, which now names the two commands that would.
+
+## The live run: firmware verifies the fleet, and three more host-side defects (2026-07-28, evening)
+
+`FLEET_NIC_ROM=1 MAAS_IPXE_TRUSTS_CA=1 ./run-e2e.sh` — no `E2E_NO_IMGVERIFY` — **PASSED
+end to end**, the first run in this lab's history where the *node's own firmware* checked
+every payload signature. Then the negative control on the same node: 6 bytes appended to
+the served kernel (signature intact), one IPMI power-cycle, and the firmware refused it
+on the console — `Could not verify: Permission denied (https://ipxe.org/0227e13c)` —
+stopped at the dead-end script, booted nothing. Restored, power-cycled, back to `login:`.
+Finally `apply` converged all three nodes to `active` through the verifying ROM and the
+invariant pass issued 0 transitions. Transcripts: [`MANUAL_TESTING.md`](MANUAL_TESTING.md)
+§12.5. DEFERRED item 1 is **done, both halves**.
+
+It took three attempts, and each failure was a real defect the headless suite could not
+see — the lab's founding pattern, now at thirteen-plus-three:
+
+1. **AppArmor, not DAC.** The first fleet boot died with `failed to find romfile` on a
+   file that existed, world-readable, sha-verified. `virt-aa-helper` generates each
+   domain's profile from its XML and simply does not parse `<rom file=>` (its dry-run
+   lists the disk, seed ISO and console log — no ROM), so qemu's read was denied — and
+   the denial was **silent**: profile-scoped denials of unlisted paths log nothing, and
+   QEMU's failed `access()` masquerades as "not found". `build-verifying-rom.sh install`
+   now writes the read rule into `/etc/apparmor.d/local/abstractions/libvirt-qemu`, the
+   abstraction's own `include if exists` hook; it binds at the next domain start.
+2. **The documented command sequence self-destructed.** "Attach the ROM with
+   `create-fleet.sh`, then run the e2e" — but the e2e's phase 3 re-runs `create-fleet.sh
+   up`, which redefines the domains, and `give_verifying_rom()` with `FLEET_NIC_ROM`
+   unset attaches nothing, silently. The ROM had to ride the e2e's own environment. The
+   die-message that prescribed the broken sequence now prescribes the working one.
+3. **Two entry points, two image stores.** A bare `maas-lab.sh apply` failed F2 for
+   node2/node3 minutes after node1 deployed cleanly with the same image: `run-e2e.sh`
+   defaulted `MAAS_IMAGES_DIR` to `~/.cache/lab-create/maas/images` while `maas-lab.sh`
+   defaulted to `$STATE_ROOT/images` — a dir that did not exist — and `gate()` swallowed
+   the driver's honest `no such image dir` into "F2 signature verification failed". Fixed
+   threefold: `maas-lab.sh _images-dir` is now the **only** owner of the answer
+   (`run-e2e.sh`, `build-verifying-rom.sh` and the ROM test all ask it), the store — the
+   signing key with it — moved under the state root where a key belongs, and `gate()` now
+   keeps the driver's own last line in `GATE_REASON`.
+
+One wording fix fell out of the negative control: the chain's `||` fall-through cannot
+distinguish "per-node script missing" from "per-node script aborted by a refusal", so the
+dead-end banner used to claim no script had been written even when the refusal sat two
+lines above it. It now tells the reader to scroll up (`netboot-chain.sh emit-default`
+refreshes the docroot copy without sudo).

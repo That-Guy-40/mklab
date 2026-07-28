@@ -29,10 +29,12 @@ set -uo pipefail
 
 need qemu-system-x86_64 python3 openssl
 
-# Mirrors build-verifying-rom.sh, which mirrors run-e2e.sh:42 — NOT maas-lab.sh's
-# registry root, which is somewhere else entirely (see the comment in that script).
-IMAGES_DIR="${MAAS_IMAGES_DIR:-$HOME/.cache/lab-create/maas/images}"
-BUILD_DIR="${MAAS_ROM_BUILD_DIR:-$(dirname -- "$IMAGES_DIR")/ipxe}"
+# Asked of maas-lab.sh, the one owner of the answer — the same call
+# build-verifying-rom.sh makes, so the ROM under test and the CA it is checked
+# against come from the same store the drivers sign into.
+IMAGES_DIR="${MAAS_IMAGES_DIR:-$("$(dirname -- "${BASH_SOURCE[0]}")/../maas-lab.sh" _images-dir)}"
+[[ -n "$IMAGES_DIR" ]] || fail "maas-lab.sh _images-dir returned nothing"
+BUILD_DIR="${MAAS_ROM_BUILD_DIR:-$HOME/.cache/lab-create/maas/ipxe}"
 ROM="$BUILD_DIR/ipxe-8086100e.rom"
 ROM_CA="$BUILD_DIR/ca.der"
 TRUST="$IMAGES_DIR/trust"

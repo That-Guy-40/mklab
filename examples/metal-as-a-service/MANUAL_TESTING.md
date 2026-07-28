@@ -420,7 +420,7 @@ a healthy node
 
 ```bash
 cd examples/metal-as-a-service
-export MAAS_IMAGES_DIR=~/.cache/lab-create/maas/images
+export MAAS_IMAGES_DIR="$(./maas-lab.sh _images-dir)"   # the store's one owner answers
 drivers/verify-lib.sh gen-keys --dir "$MAAS_IMAGES_DIR/trust"
 drivers/ramdisk.sh stage micro-linux-x86_64      # copies + signs
 ./create-fleet.sh up                             # rootful fleet
@@ -983,7 +983,7 @@ entirely — so the host-side gate and the whole green suite had been accepting 
 that no verifying firmware would. Check any keydir with:
 
 ```bash
-./drivers/verify-lib.sh check-keys --dir ~/.cache/lab-create/maas/images/trust
+./drivers/verify-lib.sh check-keys --dir "$(./maas-lab.sh _images-dir)/trust"
 # → verify-lib: …/codesign.crt is NOT a certificate verifying firmware will accept:
 #     keyUsage=digitalSignature is MISSING -> iPXE: 'Not a signing certificate' (https://ipxe.org/022ae1)
 ```
@@ -991,11 +991,75 @@ that no verifying firmware would. Check any keydir with:
 Re-minting is deliberately manual (`gen-keys` never overwrites an existing keydir): remove
 the trust dir, `gen-keys`, **re-sign every image**, and rebuild the ROM — it bakes the CA.
 
-### 12.5 On the fleet — not yet run
+### 12.5 On the fleet — RUN 2026-07-28, both directions (author-run)
 
 ```bash
-FLEET_NIC_ROM=1 ./create-fleet.sh      # attaches the ROM to every node's NICs
-MAAS_IPXE_TRUSTS_CA=1 ./run-e2e.sh     # no E2E_NO_IMGVERIFY
+./build-verifying-rom.sh install                       # sudo: ROM -> /var/lib/libvirt + the AppArmor rule
+FLEET_NIC_ROM=1 MAAS_IPXE_TRUSTS_CA=1 ./run-e2e.sh     # no E2E_NO_IMGVERIFY
 ```
 
-Author-run and **not yet performed** — see [`DEFERRED.md`](DEFERRED.md) item 1.
+Both vars ride the e2e itself: its phase 3 re-runs `create-fleet.sh up`, which
+redefines the domains, and with `FLEET_NIC_ROM` unset `give_verifying_rom()`
+attaches nothing — a ROM attached by an earlier `create-fleet.sh` run does not
+survive into the run that needs it.
+
+⚠️ **The first attempt failed before any node booted**, and the failure is worth
+knowing on sight. `inspect --boot` reported `could not power on the node`; `virsh
+start` gave the real error:
+
+```
+qemu-system-x86_64: -device {"driver":"e1000",…,"romfile":"/var/lib/libvirt/maas-rom/ipxe-8086100e.rom"}:
+failed to find romfile "/var/lib/libvirt/maas-rom/ipxe-8086100e.rom"
+```
+
+The file existed, world-readable, sha-verified. The gate was AppArmor, not DAC:
+**virt-aa-helper builds each domain's profile from its XML but does not parse
+`<rom file=>`** (a dry-run against node1's XML lists the disk, the seed ISO and
+the console log — no ROM), so qemu's read is denied — and profile-scoped denials
+of unlisted paths are **silent**, no `DENIED` line anywhere, while QEMU's failed
+`access()` reads as "not found". `build-verifying-rom.sh install` now writes the
+rule into `/etc/apparmor.d/local/abstractions/libvirt-qemu` (the abstraction's
+`include if exists` hook); it takes effect at the next domain start, no reload.
+
+**The run then PASSED end to end.** node1's console (`/var/lib/libvirt/maas-console/node1.log`),
+deploy boot — our ROM's banner, the chain, both `.sig` fetches, the payload:
+
+```
+iPXE 2.0.0+ (g3ca79) -- Open Source Network Boot Firmware -- https://ipxe.org
+MAAS: resolving a boot script for node1 (52:54:00:5b:86:1c) from http://192.168.123.1:8181/maas
+http://192.168.123.1:8181/maas/node1.ipxe... ok
+http://192.168.123.1:8181/maas/micro-linux-x86_64/kernel... ok
+http://192.168.123.1:8181/maas/micro-linux-x86_64/initrd... ok
+http://192.168.123.1:8181/maas/micro-linux-x86_64/kernel.sig... ok
+http://192.168.123.1:8181/maas/micro-linux-x86_64/initrd.sig... ok
+
+Welcome to micro-linux (Linux 6.12.30 x86_64)
+```
+
+**The negative control, same node.** 6 bytes appended to the served kernel (its
+`.sig` left intact), one IPMI power-cycle:
+
+```
+http://192.168.123.1:8181/maas/micro-linux-x86_64/kernel.sig... ok
+Could not verify: Permission denied (https://ipxe.org/0227e13c)
+Could not boot: Permission denied (https://ipxe.org/0227e13c)
+http://192.168.123.1:8181/maas/52:54:00:5b:86:1c.ipxe... Not found (https://ipxe.org/2d0c613b)
+http://192.168.123.1:8181/maas/default.ipxe... ok
+```
+
+The firmware refused the tampered kernel, **nothing booted**, and the node
+stopped at the dead-end script's iPXE shell with the refusal on its console —
+exactly the "done when" of DEFERRED item 1. (Note the fall-through: the chain's
+`||` cannot tell "script missing" from "script aborted by a refusal", so the
+dead-end banner appears *after* a refusal too — its wording now says to scroll
+up. The refusal lines are always right above.) Kernel restored, power-cycled:
+clean verify, `login:` again.
+
+**Fleet-wide.** node2 and node3 (held in `error` from an earlier session) were
+recovered with `retry` and `apply fleet.toml` converged the whole fleet through
+the verifying firmware — each console shows the same banner/sig-fetch/login
+signature — with the invariant pass issuing 0 transitions:
+
+```
+  applied: 0 transition(s) over 1 pass(es), 0 failed, 3 converged, 0 held for the operator
+```

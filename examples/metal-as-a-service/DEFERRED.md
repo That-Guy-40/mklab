@@ -1,8 +1,10 @@
 # DEFERRED — what a green run still does not prove
 
-**Status as of 2026-07-28:** `run-e2e.sh` **PASSES** end to end on real libvirt domains
-(ten phases; see [`PLAN.md`](PLAN.md), "PASS — the whole path"). `tests/run-all.sh` is
-**23 passed / 0 failed** and `chaos-run.sh` reports **0 criticals**.
+**Status as of 2026-07-28 (evening):** `run-e2e.sh` **PASSES** end to end on real libvirt
+domains **with the verifying firmware doing the checking** (`FLEET_NIC_ROM=1
+MAAS_IPXE_TRUSTS_CA=1`, no `E2E_NO_IMGVERIFY`; see [`PLAN.md`](PLAN.md), "PASS — the whole
+path"). `tests/run-all.sh` is **26 passed / 0 failed** and `chaos-run.sh` reports **0
+criticals**.
 
 This file exists because *that sentence is not the same as "the lab is finished,"* and the
 difference is easy to lose. Everything below is a gap that a passing run **cannot** reveal,
@@ -22,38 +24,29 @@ an item that is quietly done is as misleading as one quietly abandoned.
 
 ---
 
-## Where to start next (as of 2026-07-28, after PR #97)
+## Where to start next (as of 2026-07-28, evening — after the live run)
 
-**1. The live run — the only thing item 1 still lacks, and everything for it is staged.**
+**Item 1 is DONE, live, both halves** — see its section below for what the run proved
+and the three host-side defects it took to get there (an AppArmor gap, a var that had
+to ride the e2e, a split images-dir default). The signing-key move is done too: the
+store now lives under the state root, and every script asks `maas-lab.sh _images-dir`
+instead of re-deriving the path.
+
+**What remains is items 2–4 below**, in that order: the `install` driver on real
+hardware, the mis-bound-BMC chaos scenario, and whether `apply` should self-heal a
+node its own guard demoted.
+
+To re-run the full verified path — both vars on the **e2e itself**, because its
+phase 3 re-runs `create-fleet.sh up`, which redefines the domains, and
+`give_verifying_rom()` with `FLEET_NIC_ROM` unset silently attaches nothing:
 
 ```bash
-./build-verifying-rom.sh install       # ← the one step outstanding; needs sudo
-FLEET_NIC_ROM=1 ./create-fleet.sh      # brings the fleet up WITH the verifying ROM attached
-MAAS_IPXE_TRUSTS_CA=1 ./run-e2e.sh     # no E2E_NO_IMGVERIFY
+FLEET_NIC_ROM=1 MAAS_IPXE_TRUSTS_CA=1 ./run-e2e.sh     # no E2E_NO_IMGVERIFY
 ```
-
-Already done and verified, so do **not** redo them: the trust root is re-minted with the
-firmware-acceptable profile (`check-keys` passes), `micro-linux-x86_64` is re-signed under
-it (the host-side gate passes), and the ROM is rebuilt against that CA
-(`tests/test-verifying-rom.sh` boots it and passes). The fleet itself is **down** — no
-libvirt domains, no `vbmcd` — so `create-fleet.sh` has to run first regardless.
-
-`build-verifying-rom.sh install` is the single remaining prerequisite: qemu runs as another
-user and cannot read `$HOME`, so the ROM must be copied under `/var/lib/libvirt`. Without
-it `give_verifying_rom()` refuses rather than half-applying — a fleet where some nodes
-verify and some do not proves less than one where none do.
-
-**2. Items 2–4 below** — the `install` driver on real hardware, the mis-bound-BMC chaos
-scenario, and whether `apply` should self-heal a node its own guard demoted.
-
-**3. Move the signing key out of `~/.cache`** (in "Smaller, still open"). A one-line default
-change plus a migration note. It moved up the list on 2026-07-28 for a concrete reason: the
-trust dir was deleted mid-session and the whole fleet's signing material went with it. It
-was recoverable in minutes — but only because the recovery path had just been written down.
 
 ---
 
-## 1. The on-node half of F2 — ✅ RUNS, and found a real defect; ⬜ not yet on the live fleet
+## 1. The on-node half of F2 — ✅ DONE, live, both halves (2026-07-28)
 
 **Status changed 2026-07-28.** The firmware half now executes, headlessly, on every run of
 [`tests/test-verifying-rom.sh`](tests/test-verifying-rom.sh):
@@ -62,7 +55,40 @@ was recoverable in minutes — but only because the recovery path had just been 
 |---|---|---|
 | host-side | `verify` — OpenSSL CMS against the CA, before the node is touched | exercised every run |
 | on-node | `imgverify` in the iPXE script — the firmware re-checks as it fetches | **runs under QEMU** ✅ |
-| on-node, live | the same, on a libvirt fleet node | **still never run** ⬜ |
+| on-node, live | the same, on a libvirt fleet node | **✅ run 2026-07-28, both directions** |
+
+**The live run (2026-07-28, evening).** `FLEET_NIC_ROM=1 MAAS_IPXE_TRUSTS_CA=1
+./run-e2e.sh` **PASSED end to end** — node1's console shows OUR ROM's banner
+(`iPXE 2.0.0+ (g3ca79)`), the embedded chain resolving `maas/node1.ipxe`, both
+`.sig` fetches, and the payload's login banner. Then the negative control, on the
+same node: 6 bytes appended to the served kernel (signature left intact), one
+power-cycle, and the firmware refused it on the console — `Could not verify:
+Permission denied (https://ipxe.org/0227e13c)` — fell through to the dead-end
+script and stopped at the iPXE shell. Nothing booted. Kernel restored, node
+power-cycled back to `login:`. Afterwards node2 and node3 were recovered from
+their held `error` states and `apply` converged the **whole fleet** to `active`
+through the verifying firmware, with the invariant pass issuing 0 transitions.
+Full transcripts: [`MANUAL_TESTING.md`](MANUAL_TESTING.md) §12.5.
+
+**Three more defects the live run found first** (none visible to the green suite —
+the pattern holds):
+
+1. **virt-aa-helper does not parse `<rom file=>`**, so AppArmor denied qemu the ROM
+   and the domain died with `failed to find romfile` on a file that exists,
+   world-readable — and the denial was **silent** (no DENIED line anywhere).
+   `build-verifying-rom.sh install` now writes the rule into
+   `/etc/apparmor.d/local/abstractions/libvirt-qemu`, the abstraction's own
+   extension hook.
+2. **`FLEET_NIC_ROM` had to ride the e2e itself** — the documented two-command
+   sequence (attach, then run) self-destructed, because phase 3 redefines the
+   domains and silently drops the ROM. Docs and the die-message now say so.
+3. **The images-dir default was split**: `run-e2e.sh` said `~/.cache/…`,
+   `maas-lab.sh` said `$XDG_STATE_HOME/…` — so a bare `maas-lab.sh apply` read a
+   store that did not exist and reported it as "F2 signature verification failed"
+   (the gate swallowed the driver's honest "no such image dir"). Fixed by making
+   `maas-lab.sh _images-dir` the one owner of the answer, moving the store (and
+   the signing key) under the state root, and letting `gate()` keep the driver's
+   own last line in `GATE_REASON`.
 
 **What it cost to find out, and why it was worth it.** The very first time real verifying
 firmware was pointed at this lab's own signed payloads, it refused them — *all* of them,
@@ -100,22 +126,9 @@ instrumented and this one looks broken, which is exactly backwards.
 ./build-verifying-rom.sh install    # sudo: /var/lib/libvirt, because qemu cannot read $HOME
 ```
 
-**What remains — the live run.** Everything needed is now in place and untested only
-*together*:
-
-```bash
-FLEET_NIC_ROM=1 ./create-fleet.sh      # give_verifying_rom() attaches it per NIC
-MAAS_IPXE_TRUSTS_CA=1 ./run-e2e.sh     # no E2E_NO_IMGVERIFY
-```
-
-⚠️ The live trust dir (`~/.cache/lab-create/maas/images/trust`) still holds a **legacy
-leaf**: `verify-lib.sh gen-keys` never overwrites an existing keydir. Re-mint it, re-sign
-every image, and rebuild the ROM (it bakes the CA) before that run — `run-e2e.sh`'s preflight
-now refuses rather than letting it fail on the node.
-
-**Done when:** a live run with neither `E2E_NO_IMGVERIFY` nor `--no-verify` reaches
-`active`, **and** a deliberately tampered payload is refused by the firmware with the
-refusal visible in that node's console log.
+**Done when** (met 2026-07-28): a live run with neither `E2E_NO_IMGVERIFY` nor
+`--no-verify` reaches `active` ✅, **and** a deliberately tampered payload is refused
+by the firmware with the refusal visible in that node's console log ✅.
 
 **Evidence trail:** [`PLAN.md`](PLAN.md) — "The verifying ROM". Headless coverage:
 [`tests/test-verifying-rom.sh`](tests/test-verifying-rom.sh) (the firmware itself),
@@ -224,13 +237,18 @@ a fixed point over a fleet that was two-thirds held for exactly this reason.
 
 ## Smaller, still open
 
-- **The fleet's signing key lives in a cache directory.** `run-e2e.sh:42` puts
-  `MAAS_IMAGES_DIR` under `~/.cache/lab-create/maas/images`, so `trust/ca.key` — the thing
-  every payload signature chains to — sits in a directory whose entire contract is *safe to
-  delete*. The registry, by contrast, is under `$XDG_STATE_HOME/lab-create/`, which is where
-  this belongs. Losing it is recoverable (re-mint → re-sign every image → rebuild the ROM,
-  which bakes the CA) but silent until a deploy fails. Moving it is a one-line default
-  change plus a migration note for anyone with an existing fleet.
+- ~~**The fleet's signing key lives in a cache directory.**~~ **DONE 2026-07-28**, and it
+  turned out to be two defects, not one: beyond the deletable-`~/.cache` contract, the
+  default was **split** — `run-e2e.sh` said `~/.cache/lab-create/maas/images` while
+  `maas-lab.sh` said `$STATE_ROOT/images`, so a bare `maas-lab.sh apply` read a store that
+  did not exist (and misreported it as a signature failure; also fixed — `gate()` now keeps
+  the driver's own words). The store, key included, now lives under
+  `$XDG_STATE_HOME/lab-create/metal-as-a-service/images`, and `run-e2e.sh`,
+  `build-verifying-rom.sh` and `tests/test-verifying-rom.sh` all resolve it via
+  **`maas-lab.sh _images-dir`** instead of each keeping a copy of the path. Migration for
+  an existing fleet: `cp -a ~/.cache/lab-create/maas/images
+  "$(./maas-lab.sh _images-dir)"` (same CA, so the ROM does **not** need a rebuild), then
+  delete the cache copy.
 - **`tests/test-e2e-fails-fast.sh` runs the real `run-e2e.sh`.** `MAAS_STATE` is now
   sandboxed on that line, but the test is still only safe because the preflight refuses
   before phase 1 — a test whose hermeticity depends on the order of checks *inside the
