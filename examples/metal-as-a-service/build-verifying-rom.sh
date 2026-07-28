@@ -52,19 +52,19 @@ set -uo pipefail
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$HERE/../.." && pwd)"
 
-# WHERE THE CA IS. Not where you would guess: maas-lab.sh's registry lives under
-# $XDG_STATE_HOME/lab-create/metal-as-a-service, but the signed payloads and the trust
-# root do NOT — run-e2e.sh:42 exports MAAS_IMAGES_DIR=~/.cache/lab-create/maas/images and
-# that is what every driver has actually used. This mirrors THAT, because the CA baked
-# into the ROM must be the one the drivers sign with; guessing the registry's root
-# instead would bake a CA nothing signs with and every node would refuse every payload.
-IMAGES_DIR="${MAAS_IMAGES_DIR:-$HOME/.cache/lab-create/maas/images}"
-BUILD_DIR="${MAAS_ROM_BUILD_DIR:-$(dirname -- "$IMAGES_DIR")/ipxe}"
-
-# ⚠️ ~/.cache is, by its own contract, a directory anything may delete — a cleaner, a
-# `rm -rf ~/.cache`, an operator reclaiming disk. The fleet's SIGNING KEY lives there.
-# Losing it is recoverable (re-mint, re-sign, rebuild this ROM) but silent until a
-# deploy fails, so it is noted here and in DEFERRED.md rather than left to be discovered.
+# WHERE THE CA IS. Asked of maas-lab.sh (`_images-dir`), never re-derived: the CA
+# baked into this ROM must be the one the drivers sign with, and the only way to be
+# sure is to ask the script that owns the answer. This file used to mirror
+# run-e2e.sh's ~/.cache default instead — and that split (cache here, state root in
+# maas-lab.sh) let a bare `maas-lab.sh apply` read a store that did not exist.
+# The store now lives under the state root, where a signing key belongs (~/.cache
+# is by contract deletable — and WAS deleted mid-session once, taking the fleet's
+# whole signing chain with it).
+IMAGES_DIR="${MAAS_IMAGES_DIR:-$("$HERE/maas-lab.sh" _images-dir)}"
+[[ -n "$IMAGES_DIR" ]] || { echo "build-verifying-rom: maas-lab.sh _images-dir returned nothing" >&2; exit 1; }
+# The ROM build tree is a rebuildable artifact, so ~/.cache IS its right home —
+# unlike the keys, deleting it costs only a rebuild.
+BUILD_DIR="${MAAS_ROM_BUILD_DIR:-$HOME/.cache/lab-create/maas/ipxe}"
 
 # WHERE THE ROM MUST LIVE. qemu runs as its own user under qemu:///system and
 # reads romfile= itself. $HOME is 0750 and ~/.cache is 0700 here, so a ROM left in
@@ -153,6 +153,30 @@ install)
     # will not start, reported as a permission error on a path that exists.
     sudo chmod 0644 "$ROM_DIR/$ROM_NAME" || die "could not chmod the installed ROM"
     info "installed: $ROM_DIR/$ROM_NAME"
+    # AppArmor: virt-aa-helper builds each domain's profile from its XML but does NOT
+    # parse <rom file=>, so the ROM path is never whitelisted and qemu's read is denied.
+    # The failure is maximally misleading: the domain dies with "failed to find romfile"
+    # on a file that exists and is world-readable, and the deny is silent — no DENIED
+    # line in any log (found live, first fleet run with the ROM attached). The stock
+    # abstraction's last line is `include if exists <local/abstractions/libvirt-qemu>`,
+    # the supported host-level override; per-domain profiles are recompiled at every
+    # domain start, so the rule takes effect on the next boot with no daemon reload.
+    aa_abstraction=/etc/apparmor.d/abstractions/libvirt-qemu
+    aa_local=/etc/apparmor.d/local/abstractions/libvirt-qemu
+    aa_rule="\"$ROM_DIR/*.rom\" r,"
+    if [[ -f "$aa_abstraction" ]] && grep -q 'local/abstractions/libvirt-qemu' "$aa_abstraction"; then
+        if sudo grep -qsF "$aa_rule" "$aa_local"; then
+            info "AppArmor: $aa_local already allows $ROM_DIR/*.rom"
+        else
+            sudo mkdir -p "$(dirname "$aa_local")" \
+                && printf '  %s\n' "$aa_rule" | sudo tee -a "$aa_local" >/dev/null \
+                || die "could not write $aa_local — without it qemu is denied the ROM and
+the domain fails to start with 'failed to find romfile' (no denial is logged)"
+            info "AppArmor: allowed qemu to read $ROM_DIR/*.rom (rule in $aa_local;"
+            info "  virt-aa-helper does not parse <rom file=>, so the per-domain profile"
+            info "  never whitelists it — without this the domain cannot start)"
+        fi
+    fi
     info "attach it with FLEET_NIC_ROM=$ROM_DIR/$ROM_NAME ./create-fleet.sh, or by hand:"
     xml_snippet >&2
     ;;

@@ -469,8 +469,12 @@ gate() {  # gate <driver-script> <node> <image> <slot> <verify:0|1>
         return 1
     fi
     if [[ "$do_verify" == 1 ]]; then
-        if ! run_driver "$drv" verify "$image" >/dev/null 2>&1; then
-            GATE_REASON="F2 signature verification failed for image '$image'"
+        # Keep the driver's own last line: "no such image dir" and "signature did
+        # not verify" are different operator problems, and swallowing stderr here
+        # once reported a missing images dir as a signature failure.
+        local verr
+        if ! verr="$(run_driver "$drv" verify "$image" 2>&1 >/dev/null)"; then
+            GATE_REASON="F2 signature verification failed for image '$image'${verr:+ — ${verr##*$'\n'}}"
             return 1
         fi
     fi
@@ -1170,6 +1174,12 @@ main() {
         show)          cmd_show "$@" ;;
         list)          cmd_list "$@" ;;
         _state-root)   printf '%s\n' "$STATE_ROOT" ;;   # internal: metadata-serve.sh
+        # internal: run-e2e.sh, build-verifying-rom.sh, tests. THE one answer to
+        # "where is the signed-image store" — the wrappers used to each default
+        # this path themselves, run-e2e.sh picked ~/.cache, and the same deploy
+        # verb then read different stores depending on which script ran it (a
+        # live `apply` failed F2 against an images dir that did not exist).
+        _images-dir)   printf '%s\n' "$MAAS_IMAGES_DIR" ;;
         ""|-h|--help|help) usage ;;
         *) die "unknown verb '$verb' (try: maas-lab.sh --help)" ;;
     esac

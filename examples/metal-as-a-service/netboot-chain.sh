@@ -67,10 +67,15 @@ echo
 echo ================================================================
 echo  MAAS: no boot script for this node.
 echo
-echo  The node asked for maas/${hostname}.ipxe and maas/${net0/mac}.ipxe
-echo  and the control plane has written neither. Nothing will be booted:
-echo  quietly booting SOMETHING would look like a successful deploy of the
-echo  wrong thing, which is the failure this lab exists to make impossible.
+echo  The node asked for maas/${hostname}.ipxe and maas/${net0/mac}.ipxe.
+echo  Either the control plane has written neither -- or one WAS fetched and
+echo  then aborted. Scroll up: a script that fetched ok and then printed
+echo  'Could not verify ... (https://ipxe.org/0227e13c)' is not missing, it
+echo  REFUSED a payload whose signature did not match (imgverify).
+echo
+echo  Nothing will be booted either way: quietly booting SOMETHING would look
+echo  like a successful deploy of the wrong thing, which is the failure this
+echo  lab exists to make impossible.
 echo
 echo  On the control plane, one of:
 echo    maas-lab.sh inspect <node> --boot          (introspection probe)
@@ -130,6 +135,12 @@ emit-chain)
     chain_script | sed "s/@PORT@/$PORT/"
     ;;
 
+emit-default)
+    # The unclaimed-node script on stdout — the sudo-free half of `install`, for
+    # refreshing the docroot copy after this file's wording changes.
+    default_script
+    ;;
+
 show)
     printf '== %s/boot.ipxe ==\n' "$TFTP_DIR"
     sudo cat "$TFTP_DIR/boot.ipxe" 2>/dev/null || printf '(absent or unreadable)\n'
@@ -141,11 +152,13 @@ show)
     cat >&2 <<EOF
 netboot-chain.sh — point the PXE network at the control plane's per-node scripts
 
-  install     replace the network's baked boot.ipxe with a chain that resolves
-              maas/\${hostname}.ipxe -> maas/\${net0/mac}.ipxe -> maas/default.ipxe
-  emit-chain  print that chain script on stdout (what build-verifying-rom.sh
-              compiles into the firmware); no sudo, no writes
-  show        print what is installed
+  install       replace the network's baked boot.ipxe with a chain that resolves
+                maas/\${hostname}.ipxe -> maas/\${net0/mac}.ipxe -> maas/default.ipxe
+  emit-chain    print that chain script on stdout (what build-verifying-rom.sh
+                compiles into the firmware); no sudo, no writes
+  emit-default  print the unclaimed-node script on stdout (refresh the docroot
+                copy without sudo: emit-default > <docroot>/maas/default.ipxe)
+  show          print what is installed
 
 Without this, every node on $NET boots whatever single payload setup-pxe-net.sh
 baked in, and the per-node scripts the deploy drivers write are never fetched.

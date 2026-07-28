@@ -39,7 +39,16 @@ VBMC_LAB="${VBMC_LAB:-$HERE/../virtualbmc-ipmi-lab}"
 IMAGE="${E2E_IMAGE:-micro-linux-x86_64}"
 NODE="${E2E_NODE:-node1}"
 LOG="${E2E_LOG:-$HERE/e2e-run.log}"
-export MAAS_IMAGES_DIR="${MAAS_IMAGES_DIR:-$HOME/.cache/lab-create/maas/images}"
+# The signed-image store (and trust/ca.key inside it) — asked of maas-lab.sh, the
+# single owner of the answer, NOT re-derived here. This script used to default it
+# to ~/.cache while maas-lab.sh defaulted to $XDG_STATE_HOME/…: the same deploy
+# verb then read a different store depending on which script invoked it, and a
+# bare `maas-lab.sh apply` failed F2 against an images dir that did not exist.
+# (~/.cache was also the wrong contract for a signing key: that dir is by
+# definition safe to delete, and it WAS deleted mid-session once, taking the
+# fleet's whole signing chain with it.)
+export MAAS_IMAGES_DIR="${MAAS_IMAGES_DIR:-$("$MAAS" _images-dir)}"
+[[ -n "$MAAS_IMAGES_DIR" ]] || { echo "run-e2e: maas-lab.sh _images-dir returned nothing" >&2; exit 1; }
 export MAAS_NETBOOT_DIR="${MAAS_NETBOOT_DIR:-$HOME/netboot}"
 DRY=0; DOWN=0
 case "${1:-}" in --dry-run) DRY=1 ;; --down) DOWN=1 ;; -h|--help) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;; esac
@@ -437,9 +446,10 @@ IMAGE_TRUST_CMD and no serial console, so it fails the command and boots nothing
 Either:
   * build the NIC firmware that CAN honour it — one command, ~10 minutes of docker:
         ./build-verifying-rom.sh build && ./build-verifying-rom.sh install
-    then re-create the fleet so the domains carry it, and re-run:
-        FLEET_NIC_ROM=1 ./create-fleet.sh
-        MAAS_IPXE_TRUSTS_CA=1 $0
+    then re-run with BOTH vars on the e2e itself:
+        FLEET_NIC_ROM=1 MAAS_IPXE_TRUSTS_CA=1 $0
+    (phase 3 re-creates the fleet, and an unset FLEET_NIC_ROM silently drops the
+    ROM from the redefined domains — attaching it beforehand does not survive)
   * or run the whole path with ONLY the in-firmware half skipped — the payload stays
     signed and the host-side F2 gate still gates the deploy:
         E2E_NO_IMGVERIFY=1 $0
