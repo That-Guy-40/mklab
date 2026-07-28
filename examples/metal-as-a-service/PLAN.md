@@ -13,7 +13,7 @@ This file tracks the **build increments** and records each one's outcome as it l
 | **4** | **`ramdisk` driver + catalog** (RAM-INFRA / micro-linux / floppinux / busybox), signed + `imgverify` | ✅ **DONE (this increment)** — headless |
 | **4a** | **chaos driver + resilience matrix** (`drivers/chaos.sh`, `chaos-run.sh`) — and the `abort`/`recheck` verbs it found were missing | ✅ **DONE (this increment)** — headless |
 | **5** | **`image` driver** (dd golden whole-disk, Tier-B reuse) | ✅ **DONE (this increment)** — headless |
-| 6 | `apply` declarative reconcile (§3a) — diff desired-vs-actual, idempotent | ▫ |
+| **6** | **`apply` declarative reconcile (§3a)** — diff desired-vs-actual, idempotent | ✅ **DONE (this increment)** — headless |
 | 7 | Phase-6 surface — **provided by `tools/control-pane`**; MAAS is its first consumer | ▫ |
 
 Fast-follows (documented, not v1): `image+measured` attested gate; `ramdisk`→region
@@ -35,8 +35,13 @@ declared layer has no scenario or a driver has no real-driver test. The layers:
 | `registry` | `MAAS_STATE` | the state store goes read-only mid-deploy |
 | `process` | — | `maas-lab.sh` killed mid-transition (by PID) |
 
-Named as **not yet covered**, rather than left implicit: the metadata/facts sink
-(:8282) and the console/milestone stream. Both land with increment 6.
+| `metadata` | `metadata-serve.sh` :8282 | no facts ever arrive at the sink |
+| `console` | the node's console log | the stream `watch` and the health gates read is absent |
+| `reconcile` | `apply` | the registry says active; the payload is dead |
+
+All eight are covered. The last three landed with increment 6 — they were *declared*
+uncovered in increment 5 rather than left implicit, so this increment started with its
+chaos work already named instead of discovering it late.
 
 ## Increment 1 — outcome (2026-07-25)
 
@@ -429,3 +434,61 @@ driver with no real-driver test, each fail the house-rule guard **by name**.
 **Author-run (handed over):** a real image lay-down — build a golden raw with
 `nixos-ipxe-deploy/stage-deploy.sh --tier-b`, stage the deployer ramdisk under
 `$MAAS_NETBOOT_DIR/maas/deployer/`, then `deploy <node> --driver image --image <name>`.
+
+## Increment 6 — outcome (2026-07-27)
+
+**Built:** `maas-lab.sh apply` — the declarative reconcile loop (§3a), and the three
+chaos layers increment 5 had declared but not yet covered.
+
+`apply` reads the desired end-state from `fleet.toml`, diffs it against the registry,
+issues **exactly** the missing transitions, and loops to steady state. It is the
+control loop every real fleet manager is built on: *state is declared, drift is
+corrected, and the same command is safe to run forever.*
+
+```console
+$ ./maas-lab.sh apply fleet.toml --dry-run
+  pass 1
+  NODE      CURRENT                     ACTION   WHY
+  n1        active (mock/v1)            deploy   running mock/v1, declared mock/v2
+  n2        active (mock/v1)            -        converged
+  DRY RUN: 1 transition(s) would be issued, 1 converged, 0 held
+```
+
+**Design decisions this increment:**
+
+1. **IT DOES NOT TRUST THE REGISTRY — and that is the whole point.** A reconcile loop
+   computes its actions from the record, and increment 5's registry-layer fault proved
+   the record can diverge from the machine silently. A node recorded `active` whose
+   payload is dead would *satisfy* its declared state, so `apply` would converge on a
+   fleet that is not serving and report success. Every node claiming `active` is
+   therefore re-checked against its driver's own health signal **before the diff**
+   (reusing `recheck` from 4a). `--no-recheck` exists for the negative control and says
+   loudly what it is giving up.
+2. **Loop to steady state, not one step per run.** A pass moves each node one
+   transition (`enrolled → manageable → available → active`), so a single pass is not
+   convergence. `apply` repeats until a pass issues nothing, bounded by
+   `MAAS_APPLY_MAX_PASSES` — a loop that never terminates would hide the stall rather
+   than report it.
+3. **Held states are reported, never steamrollered.** `error`, `maintenance` and the
+   transient states are listed as `HELD` and left alone. A loop that runs on a timer
+   must not re-drive a machine an operator is in the middle of debugging.
+4. **`--dry-run` prints the plan and mutates nothing.** A plan that mutates is not a
+   plan, and nobody trusts the next one.
+
+### The three layers that came with it
+
+- **`metadata`** — no facts ever reach the sink. `inspect --from-metadata` refuses;
+  recording facts it never received would put invented hardware into the scheduler's view.
+- **`console`** — the console log is absent. `watch` refuses and names it; a progress
+  bar invented from a stream that is not there is worse than no bar, because the
+  operator watches it and believes it.
+- **`reconcile`** — the registry says active, the payload is dead. `apply`'s pre-flight
+  catches it (**HALTED**). With `--no-recheck` the same scenario grades **STALE** — the
+  control that proves the pre-flight is load-bearing.
+
+**Verified (headless, this host, 2026-07-27):** `tests/run-all.sh` → **13 passed, 0
+skipped, 0 failed**; `chaos-run.sh` → **17 scenarios across 8 layers: 6 absorbed, 4
+degraded, 7 halted, 0 critical**. `test-apply-reconcile.sh` pins the invariant (a
+second run issues **0** transitions), that only the drifted node is redeployed, that a
+node in maintenance is untouched, and — with `--no-recheck` — that the pre-flight is
+what catches a dead-but-recorded-healthy node.

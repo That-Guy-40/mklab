@@ -44,9 +44,10 @@
 #   artifact    the signed payload store (MAAS_IMAGES_DIR — the payload is gone/corrupt)
 #   registry    the state store        (MAAS_STATE — it cannot be written)
 #   process     the control plane itself (killed mid-transition)
-#
-# Not yet covered, and named rather than left implicit: the metadata/facts sink
-# (:8282) and the console/milestone stream. Both land with increment 6.
+#   metadata    the facts sink         (metadata-serve.sh :8282 — no facts arrive)
+#   console     the console/milestone stream (the log `watch` and the health gates read)
+#   reconcile   the `apply` loop       (increment 6 — it computes from the REGISTRY,
+#               the one thing the registry-layer fault proved can diverge from reality)
 #
 # Headless: mock BMC, chaos driver, throwaway registry. No libvirt, no root, no boot.
 set -uo pipefail
@@ -78,7 +79,7 @@ done
 
 TRANSIENT="verifying deploying cleaning rescuing deleting"
 crit=0; total=0; declare -a ROWS=(); LAYERS_SEEN=""
-ALL_LAYERS="driver oob artifact registry process"
+ALL_LAYERS="driver oob artifact registry process metadata console reconcile"
 
 state_of() { ( "$MAAS" state "$1" ) 2>/dev/null; }
 img_of()   { cat "$MAAS_STATE/$1/image" 2>/dev/null; }
@@ -213,6 +214,75 @@ scenario() {
     ROWS+=("$verdict|$name|$desc|$why|$layer")
 }
 
+# push_row <layer> <name> <desc> <verdict> <why> — for layers whose fault is not a
+# deploy at all. They still land on the same ladder.
+push_row() {
+    total=$((total+1)); LAYERS_SEEN="$LAYERS_SEEN $1"
+    case "$4" in STRANDED|LIED|STALE) crit=$((crit+1)) ;; esac
+    ROWS+=("$4|$2|$3|$5|$1")
+}
+
+# METADATA layer: the facts sink never received anything (the service was down, or the
+# probe never booted). `inspect --from-metadata` must refuse — recording facts it never
+# got would put invented hardware into the scheduler's view.
+scenario_metadata() {
+    local node="m1"
+    ( "$MAAS" enroll "$node" --bmc-port 6360 ) >/dev/null 2>&1
+    ( "$MAAS" manage "$node" ) >/dev/null 2>&1
+    if ( "$MAAS" inspect "$node" --from-metadata ) >/dev/null 2>&1; then
+        push_row metadata "facts-sink-empty" "no facts ever arrived at the sink" \
+            LIED "inspect recorded facts the sink never received"
+    elif [[ "$( ( "$MAAS" state "$node" ) 2>/dev/null )" == manageable ]]; then
+        push_row metadata "facts-sink-empty" "no facts ever arrived at the sink" \
+            ABSORBED "refused; node stayed manageable with no invented facts"
+    else
+        push_row metadata "facts-sink-empty" "no facts ever arrived at the sink" \
+            HALTED "refused and moved the node out of manageable"
+    fi
+}
+
+# CONSOLE layer: the console log a node's progress is read from is not there. `watch`
+# must say so — a progress bar invented from an absent stream is worse than none,
+# because the operator watches it and believes it.
+scenario_console() {
+    local node="c1" out
+    ( "$MAAS" enroll "$node" --bmc-port 6361 ) >/dev/null 2>&1
+    ( "$MAAS" manage "$node" ) >/dev/null 2>&1
+    out="$( ( "$MAAS" watch "$node" ) 2>&1 )"
+    if [[ $? -eq 0 ]]; then
+        push_row console "console-missing" "the console log does not exist" \
+            LIED "watch reported progress from a stream that is not there"
+    elif grep -qi "not found" <<<"$out"; then
+        push_row console "console-missing" "the console log does not exist" \
+            ABSORBED "watch refused and named the missing console"
+    else
+        push_row console "console-missing" "the console log does not exist" \
+            HALTED "watch failed, but without naming the missing console"
+    fi
+}
+
+# RECONCILE layer: the registry says a node is active; its payload is dead. `apply`
+# computes its actions from the registry, so without a reality check it would see the
+# desired state SATISFIED and converge on a fleet that is not serving.
+scenario_reconcile() {
+    local node="r1" spec="$WORK/reconcile.toml"
+    printf '[[node]]\nname="%s"\nbmc_port=6362\ndriver="chaos"\nimage="good-v1"\n' "$node" > "$spec"
+    ( export CHAOS_FAULT=none; "$MAAS" apply "$spec" ) >/dev/null 2>&1
+    [[ "$(state_of "$node")" == active ]] || {
+        push_row reconcile "apply-over-dead-node" "apply cannot even converge a healthy node" \
+            HALTED "apply did not reach active on a clean run"; return; }
+    # now the payload dies underneath it — the registry still says active
+    ( export CHAOS_FAULT=health-fail CHAOS_TARGET='good-*'
+      "$MAAS" apply "$spec" ) >/dev/null 2>&1
+    if [[ "$(state_of "$node")" == active ]]; then
+        push_row reconcile "apply-over-dead-node" "the node's payload died; the registry still says active" \
+            STALE "apply reported convergence over a node whose payload is dead"
+    else
+        push_row reconcile "apply-over-dead-node" "the node's payload died; the registry still says active" \
+            HALTED "apply's pre-flight health re-check caught it before diffing"
+    fi
+}
+
 # ── the matrix ───────────────────────────────────────────────────────────────
 # Every scenario deploys `bad-v2`. Half start from a node already serving `good-v1`,
 # so the A/B fallback has somewhere to fall; half start fresh, where it does not.
@@ -230,6 +300,9 @@ scenario artifact "artifact-gone (had good)" artifact-gone        1 "the signed 
 scenario registry "registry-readonly"        registry-readonly    1 "the state store goes read-only mid-deploy"
 scenario oob      "bmc-drop (had good)"      bmc-drop             1 "the BMC stops answering mid-deploy"
 scenario process  "control-plane-killed"     control-plane-killed 1 "maas-lab.sh is killed mid-deploy"
+scenario_metadata
+scenario_console
+scenario_reconcile
 
 # ── the report ───────────────────────────────────────────────────────────────
 # JSON string escaping: the detail strings quote image names, so an unescaped
@@ -249,11 +322,11 @@ if [[ $JSON == 1 ]]; then
     exit $(( crit > 0 ))
 fi
 
-printf '\n  %-9s  %-8s  %-24s  %s\n' VERDICT LAYER SCENARIO OUTCOME >&2
-printf '  %-9s  %-8s  %-24s  %s\n' "---------" "--------" "------------------------" "-------" >&2
+printf '\n  %-9s  %-9s  %-24s  %s\n' VERDICT LAYER SCENARIO OUTCOME >&2
+printf '  %-9s  %-9s  %-24s  %s\n' "---------" "---------" "------------------------" "-------" >&2
 for r in "${ROWS[@]}"; do
     IFS='|' read -r v n d w l <<<"$r"
-    printf '  %-9s  %-8s  %-24s  %s\n' "$v" "$l" "$n" "$w" >&2
+    printf '  %-9s  %-9s  %-24s  %s\n' "$v" "$l" "$n" "$w" >&2
 done
 
 uncovered=""

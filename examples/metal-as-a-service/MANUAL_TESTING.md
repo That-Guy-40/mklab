@@ -595,3 +595,82 @@ FAIL: REGRESSION: layer 'metadata' is declared but has NO chaos scenario…
 # add a driver with no real-driver test
 FAIL: REGRESSION: deploy driver(s) with no real-driver test: image…
 ```
+
+---
+
+## 9. `apply` — reconcile to a declared end-state (increment 6)
+
+```console
+$ ./maas-lab.sh apply fleet.toml --dry-run
+  pass 1
+  NODE      CURRENT                     ACTION   WHY
+  --------  --------------------------  -------- ---
+  n1        <not enrolled>              enroll   declared in the spec, absent from the registry
+  n2        <not enrolled>              enroll   declared in the spec, absent from the registry
+
+  DRY RUN: 2 transition(s) would be issued, 0 converged, 0 held
+
+$ ./maas-lab.sh apply fleet.toml
+  …
+  applied: 8 transition(s) over 5 pass(es), 0 failed, 2 converged, 0 held for the operator
+
+$ ./maas-lab.sh apply fleet.toml          # ← the invariant
+  pass 1
+  NODE      CURRENT                     ACTION   WHY
+  n1        active (mock/v1)            -        converged
+  n2        active (mock/v1)            -        converged
+
+  applied: 0 transition(s) over 1 pass(es), 0 failed, 2 converged, 0 held for the operator
+```
+
+A pass moves each node one transition, so `apply` loops until a pass issues nothing —
+bounded by `MAAS_APPLY_MAX_PASSES`, because a loop that never terminates hides a stall
+instead of reporting it.
+
+### 9a. It does not trust the registry
+
+This is the point of the increment. `apply` computes from the record, and §8b showed
+the record can diverge from the machine. So every node claiming `active` is re-checked
+against its driver's own health signal **before** the diff:
+
+```console
+$ MOCK_HEALTH_V2=fail ./maas-lab.sh apply fleet.toml
+maas: apply: 'n1' claimed active but failed its health re-check — demoted before the diff
+  …
+  n1        error                       !        HELD in 'error' — apply does not touch it
+```
+
+The control that proves the pre-flight is load-bearing:
+
+```console
+$ MOCK_HEALTH_V1=fail ./maas-lab.sh apply fleet.toml --no-recheck
+maas: apply: --no-recheck — the diff is computed from the REGISTRY ALONE. A node
+recorded as active but actually dead will satisfy its desired state and this run will
+report convergence over a fleet that is not serving.
+  n1        active (mock/v1)            -        converged      ← the fleet is dead
+```
+
+And the same thing seen from the chaos matrix, which now covers the reconcile loop as
+a layer of its own:
+
+```console
+  HALTED     reconcile  apply-over-dead-node  apply's pre-flight health re-check caught it before diffing
+# with --no-recheck:
+  STALE      reconcile  apply-over-dead-node  apply reported convergence over a node whose payload is dead
+```
+
+### 9b. All eight layers
+
+```console
+$ ./chaos-run.sh
+  …
+  ABSORBED   metadata   facts-sink-empty          refused; node stayed manageable with no invented facts
+  ABSORBED   console    console-missing           watch refused and named the missing console
+  HALTED     reconcile  apply-over-dead-node      apply's pre-flight health re-check caught it before diffing
+
+  17 scenarios across 8 layers (driver oob artifact registry process metadata console
+  reconcile): 6 absorbed (goal), 4 degraded, 7 halted honestly, 0 CRITICAL
+```
+
+The last three layers were **declared uncovered** in increment 5 rather than left
+implicit, so this increment began with its fault work already named.

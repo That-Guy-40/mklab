@@ -599,6 +599,183 @@ cmd_recheck() {
     die "'$node' is NO LONGER healthy on '$image' — demoted active -> error (it passed its activation gate and has since stopped). Recover with: retry $node"
 }
 
+
+# ── apply — reconcile the fleet to its DECLARED end-state (§3a) ─────────────
+# The imperative verbs drive one node by hand. `apply` is the loop every real fleet
+# manager is built on: declare the end-state, diff it against what is, issue exactly
+# the missing transitions, and be safe to run forever.
+#
+# IT DOES NOT TRUST THE REGISTRY. A reconcile loop computes its actions from the
+# record — and the registry-layer chaos scenario showed the record can diverge from
+# the machine silently. A node that says `active` while its payload is dead would
+# otherwise SATISFY the desired state, and `apply` would converge on a dead fleet and
+# report success. So the first thing it does is ground itself: every node claiming
+# `active` is re-checked against its driver's own health signal, and one that no
+# longer passes is demoted BEFORE the diff is computed. `--no-recheck` skips that,
+# and says so loudly, because the run then means much less.
+cmd_apply() {
+    local spec="$MAAS_DIR/fleet.toml" dry=0 recheck=1
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --dry-run)    dry=1; shift ;;
+            --no-recheck) recheck=0; shift ;;
+            -*) die "apply: unknown option '$1'" ;;
+            *)  spec="$1"; shift ;;
+        esac
+    done
+    [[ -r "$spec" ]] || die "apply: no fleet spec at $spec"
+    local fleet_py="$MAAS_DIR/lib/fleet.py"
+    [[ -r "$fleet_py" ]] || die "apply: missing $fleet_py"
+
+    # ── phase 1: ground the registry in reality ─────────────────────────────
+    local demoted=0
+    if [[ "$recheck" == 1 ]]; then
+        local n
+        while read -r n; do
+            [[ -n "$n" ]] || continue
+            node_exists "$n" || continue
+            [[ "$(read_state "$n")" == active ]] || continue
+            if ! ( cmd_recheck "$n" ) >/dev/null 2>&1; then
+                warn "apply: '$n' claimed active but failed its health re-check — demoted before the diff"
+                demoted=$((demoted+1))
+            fi
+        done < <(python3 "$fleet_py" "$spec" names)
+    else
+        warn "apply: --no-recheck — the diff is computed from the REGISTRY ALONE. A node recorded as active but actually dead will satisfy its desired state and this run will report convergence over a fleet that is not serving."
+    fi
+
+    # ── phase 2-4, repeated to STEADY STATE ─────────────────────────────────
+    # One pass moves each node one step (enrolled -> manageable -> available ->
+    # active), so a single pass is not convergence. Loop until a pass issues nothing,
+    # bounded: a pass that changes nothing twice is either done or stuck, and either
+    # way running forever would just hide it.
+    local pass=0 issued=0 failed=0 held=0 converged=0 total_issued=0
+    while :; do
+        pass=$((pass+1))
+        [[ $pass -gt ${MAAS_APPLY_MAX_PASSES:-6} ]] && {
+            warn "apply: stopped after $((pass-1)) passes without reaching steady state — something is refusing to progress; the table above shows where"
+            break
+        }
+    _apply_pass "$spec" "$fleet_py" "$dry" "$pass"
+    issued=$APPLY_ISSUED; failed=$APPLY_FAILED; held=$APPLY_HELD; converged=$APPLY_CONVERGED
+    total_issued=$(( total_issued + issued ))
+    [[ "$dry" == 1 ]] && break
+    [[ $issued -eq 0 ]] && break
+    done
+
+    printf '\n  applied: %d transition(s) over %d pass(es), %d failed, %d converged, %d held for the operator%s\n' \
+        "$total_issued" "$pass" "$failed" "$converged" "$held" \
+        "$( [[ $demoted -gt 0 ]] && printf ', %d demoted by the pre-flight health re-check' "$demoted" )" >&2
+    [[ $failed -eq 0 ]] || return 1
+    return 0
+}
+
+# _apply_pass — ONE reconcile pass: diff the declared end-state against the registry,
+# print the plan, and (unless dry) issue exactly the missing transitions. Sets
+# APPLY_ISSUED / APPLY_FAILED / APPLY_HELD / APPLY_CONVERGED.
+APPLY_ISSUED=0; APPLY_FAILED=0; APPLY_HELD=0; APPLY_CONVERGED=0
+_apply_pass() {
+    local spec="$1" fleet_py="$2" dry="$3" pass="$4"
+    local -a PLAN_NODE=() PLAN_CUR=() PLAN_ACT=() PLAN_WHY=()
+    local held=0 converged=0
+    local name
+    while read -r name; do
+        [[ -n "$name" ]] || continue
+        local NODE_DRIVER="" NODE_IMAGE="" NODE_BMC_PORT=""
+        eval "$(python3 "$fleet_py" "$spec" get "$name")"
+        local cur act why
+        if ! node_exists "$name"; then
+            cur="<not enrolled>"; act="enroll"; why="declared in the spec, absent from the registry"
+        else
+            cur="$(read_state "$name")"
+            local d i; d="$(_read "$name" driver "")"; i="$(_read "$name" image "")"
+            [[ "$cur" == active ]] && cur="active ($d/$i)"
+            case "${cur%% *}" in
+            enrolled)    act="manage";  why="BMC credentials not verified yet" ;;
+            manageable)  act="provide"; why="not schedulable until it has been cleaned" ;;
+            available)
+                if [[ -n "$NODE_DRIVER" && -n "$NODE_IMAGE" ]]; then
+                    act="deploy"; why="declared $NODE_DRIVER/$NODE_IMAGE, nothing deployed"
+                else act="-"; why="no driver/image declared — left in the pool"; fi ;;
+            active)
+                if [[ "$d" == "$NODE_DRIVER" && "$i" == "$NODE_IMAGE" ]]; then
+                    act="-"; why="converged"
+                else act="deploy"; why="running $d/$i, declared $NODE_DRIVER/$NODE_IMAGE"; fi ;;
+            error|maintenance)
+                act="!"; why="HELD in '$cur' — apply does not touch it; the operator does (retry / unmaintenance)" ;;
+            *)
+                if is_transient "$cur"; then
+                    act="!"; why="HELD mid-transition in '$cur' — a transition is in flight, or it is stranded (abort $name)"
+                else act="!"; why="HELD in unexpected state '$cur'"; fi ;;
+            esac
+        fi
+        [[ "$act" == "-" ]] && converged=$((converged+1))
+        [[ "$act" == "!" ]] && held=$((held+1))
+        PLAN_NODE+=("$name"); PLAN_CUR+=("$cur"); PLAN_ACT+=("$act"); PLAN_WHY+=("$why")
+    done < <(python3 "$fleet_py" "$spec" names)
+
+    # show the plan for this pass
+    printf '\n  pass %d\n  %-8s  %-26s  %-8s %s\n' "$pass" NODE CURRENT ACTION WHY >&2
+    printf '  %-8s  %-26s  %-8s %s\n' "--------" "--------------------------" "--------" "---" >&2
+    local k
+    for k in "${!PLAN_NODE[@]}"; do
+        printf '  %-8s  %-26s  %-8s %s\n' \
+            "${PLAN_NODE[$k]}" "${PLAN_CUR[$k]}" "${PLAN_ACT[$k]}" "${PLAN_WHY[$k]}" >&2
+    done
+
+    # the pool: how many nodes are kept wiped + ready
+    local POOL_AVAILABLE=""
+    eval "$(python3 "$fleet_py" "$spec" pool 2>/dev/null)"
+    if [[ -n "$POOL_AVAILABLE" ]]; then
+        local have=0 nn
+        for nn in "${PLAN_NODE[@]}"; do
+            node_exists "$nn" && [[ "$(read_state "$nn")" == available ]] && have=$((have+1))
+        done
+        if [[ $have -lt $POOL_AVAILABLE ]]; then
+            printf '  pool: want %s available, have %d — every node in this spec is claimed by a [[node]] entry, so the reserve cannot be filled from it\n' \
+                "$POOL_AVAILABLE" "$have" >&2
+        fi
+    fi
+
+    local todo=0
+    for k in "${!PLAN_ACT[@]}"; do [[ "${PLAN_ACT[$k]}" == "-" || "${PLAN_ACT[$k]}" == "!" ]] || todo=$((todo+1)); done
+
+    APPLY_HELD=$held; APPLY_CONVERGED=$converged
+    if [[ "$dry" == 1 ]]; then
+        printf '\n  DRY RUN: %d transition(s) would be issued, %d converged, %d held\n' \
+            "$todo" "$converged" "$held" >&2
+        APPLY_ISSUED=0; APPLY_FAILED=0
+        return 0
+    fi
+
+    # issue exactly the missing transitions
+    local issued=0 failed=0
+    for k in "${!PLAN_NODE[@]}"; do
+        name="${PLAN_NODE[$k]}"
+        case "${PLAN_ACT[$k]}" in
+        enroll)
+            local NODE_BMC_PORT="" NODE_DRIVER="" NODE_IMAGE=""
+            eval "$(python3 "$fleet_py" "$spec" get "$name")"
+            ( cmd_enroll "$name" --bmc-port "$NODE_BMC_PORT" ) >/dev/null 2>&1 \
+                && issued=$((issued+1)) || { warn "apply: enroll '$name' failed"; failed=$((failed+1)); } ;;
+        manage)
+            ( cmd_manage "$name" ) >/dev/null 2>&1 \
+                && issued=$((issued+1)) || { warn "apply: manage '$name' failed (BMC not answering?)"; failed=$((failed+1)); } ;;
+        provide)
+            if ( cmd_provide "$name" ) >/dev/null 2>&1; then issued=$((issued+1))
+            else warn "apply: '$name' stays in cleaning until its disk wipe is done by hand (F7) — run: provide $name --wiped"; failed=$((failed+1)); fi ;;
+        deploy)
+            local NODE_DRIVER="" NODE_IMAGE=""
+            eval "$(python3 "$fleet_py" "$spec" get "$name")"
+            ( cmd_deploy "$name" --driver "$NODE_DRIVER" --image "$NODE_IMAGE" ) >/dev/null 2>&1 \
+                && issued=$((issued+1)) || { warn "apply: deploy '$name' ($NODE_DRIVER/$NODE_IMAGE) failed — see its state"; failed=$((failed+1)); } ;;
+        esac
+    done
+
+    APPLY_ISSUED=$issued; APPLY_FAILED=$failed
+    return 0
+}
+
 # power / bootdev / console — passthrough to the BMC (the seam).
 cmd_power() {
     local node="${1:?usage: power <node> on|off|cycle|status}"; require_node "$node"
@@ -679,6 +856,7 @@ Lifecycle verbs (Ironic-faithful state machine):
   retry <node>                           error -> manageable
   abort <node> [--reason TEXT]           <transient> -> error (unstick a node the control plane died mid-transition on)
   recheck <node>                         active -> error if it is no longer healthy (the gate is one-time; this asks again)
+  apply [FLEET.toml] [--dry-run]         reconcile the fleet to its declared end-state (idempotent; re-checks health FIRST)
 
 Out-of-band (passthrough to bmc-toolkit's bmc.sh via MAAS_BMC):
   power <node> {on|off|cycle|status}     bootdev <node> {pxe|disk|cdrom}     console <node>
@@ -711,6 +889,7 @@ main() {
         retry)         cmd_retry "$@" ;;
         abort)         cmd_abort "$@" ;;
         recheck)       cmd_recheck "$@" ;;
+        apply)         cmd_apply "$@" ;;
         power)         cmd_power "$@" ;;
         bootdev)       cmd_bootdev "$@" ;;
         console|sol)   cmd_console "$@" ;;
