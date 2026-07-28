@@ -800,3 +800,47 @@ schedules claims by inspected facts — never onto a node nobody looked at
 the claim's driver+image as satisfying it, so two claims wanting the same image with
 different constraints would consume each other's nodes while **both** reported
 satisfied. Ownership is now recorded on the node (`claim = <name>`), not inferred.
+
+## The one-shot live driver — `run-e2e.sh` (author-run)
+
+Ten phases, all sudo front-loaded. Read the plan first; it touches nothing:
+
+```bash
+cd examples/metal-as-a-service
+./run-e2e.sh --dry-run          # prints all 10 phases, needs no sudo
+sudo -v && ./run-e2e.sh         # the real run — never stops to ask mid-boot
+./run-e2e.sh --down             # tear the fleet down
+```
+
+**Success signature:**
+
+```
+PASS: end-to-end on real domains — BMC round-trip, probe-reported facts, a SIGNED
+payload netbooted into RAM, and apply converged. node1 is active.
+```
+
+### If it fails, look here first — in this order
+
+The failures this path produces all *look* like a timeout, and they are not the same
+thing. The log is `e2e-run.log`; the node's console is now recorded, so use it.
+
+```bash
+./maas-lab.sh show node1                       # console line: bytes, "empty", or "ABSENT"
+tail -40 /var/lib/libvirt/maas-console/node1.log
+```
+
+| what the console shows | what it means | fix |
+|---|---|---|
+| `MAAS: no boot script for this node` | the chain is installed and the control plane wrote nothing for this node | run the verb the message names (`inspect --boot` / `deploy`), then power-cycle |
+| a busybox shell, or an installer you did not ask for | the PXE network is still serving its single baked payload | `./netboot-chain.sh install` |
+| nothing at all (`empty`) | the domain's console is not being written | re-run `./create-fleet.sh up`; check `virsh dumpxml node1` shows `<serial type='file'>` |
+| `console ... (ABSENT)` | no console was recorded for the node | `./maas-lab.sh set-console node1 <path>` |
+| the probe boots and prints `maas-probe` but no facts arrive | it cannot reach the sink | `metadata-serve.sh` must bind the **PXE gateway** address, not localhost |
+
+**A known unknown, honestly flagged:** the console file lives at
+`/var/lib/libvirt/maas-console/<node>.log`, pre-created `0666` so qemu (running as
+`libvirt-qemu`) can write it and the unprivileged control plane can read it. Whether
+libvirt's AppArmor helper grants qemu that path has **not** been verified on this host —
+it needs the rootful run. If the domain fails to start with a `permission denied` on the
+console file, that is the answer, and `FLEET_CONSOLE=pty ./create-fleet.sh up` restores
+the old (unlogged) behaviour while it is sorted out.

@@ -8,7 +8,8 @@
 #
 # THIS SCRIPT IS GLUE. Every step below is an existing tool — `create-fleet.sh` (which
 # itself wraps ../virtualbmc-ipmi-lab), `setup-pxe-net.sh`, `metadata-serve.sh`,
-# `build-probe-initramfs.sh`, `drivers/ramdisk.sh`, and `maas-lab.sh`. Nothing here
+# `build-probe-initramfs.sh`, `netboot-chain.sh`, `drivers/ramdisk.sh`, and `maas-lab.sh`.
+# Nothing here
 # implements control-plane behaviour; if a step fails, it fails in the tool that owns
 # it. Modelled on ../virtualbmc-ipmi-lab/run-finale.sh, which does the same thing for
 # the single-node PXE install.
@@ -19,7 +20,7 @@
 #
 # SUDO: rootful libvirt (qemu:///system) and rootful podman (vbmcd) are unavoidable —
 # the system libvirt socket is root:libvirt. All the sudo-needing work is FRONT-LOADED
-# in phases 1–2, exactly as run-finale.sh does it, so the long part runs unprivileged.
+# in phases 1–3, exactly as run-finale.sh does it, so the long part runs unprivileged.
 # Prime it with `sudo -v` first; this script never asks for a password mid-run.
 #
 # PAYLOAD: `micro-linux-x86_64` from ramdisk-catalog.toml — a from-source kernel +
@@ -81,22 +82,42 @@ if [[ $DRY == 0 ]]; then
 fi
 
 # ── 1. the PXE network + HTTP docroot (SUDO) ────────────────────────────────
-step "[1/9] PXE network + HTTP docroot (sudo)"
+step "[1/10] PXE network + HTTP docroot (sudo)"
 info "creates the vbmc-pxe libvirt network and points iPXE at the host's :8181 nginx"
 run env PAYLOAD=busybox "$VBMC_LAB/setup-pxe-net.sh"
 
-# ── 2. the fleet: 3 domains + 3 BMCs, enrolled (SUDO) ───────────────────────
-step "[2/9] fleet up: 3 libvirt domains + one vbmcd hosting BMCs on 6230-6232 (sudo)"
+# ── 1b. …and make it a FLEET network, not a one-payload network (SUDO) ──────
+# setup-pxe-net.sh bakes ONE payload into boot.ipxe for the whole network. That is
+# right for its single node and fatal here: the per-node scripts maas-lab.sh writes
+# would never be fetched, so every node would netboot busybox and every gate would
+# time out. (This is exactly how the first live run of this script failed — twice, in
+# two different phases, with two different-looking errors.)
+step "[2/10] replace the baked boot.ipxe with the per-node CHAIN (sudo)"
+run "$HERE/netboot-chain.sh" install
+
+# ── 3. the fleet: 3 domains + 3 BMCs, enrolled (SUDO) ───────────────────────
+step "[3/10] fleet up: 3 libvirt domains + one vbmcd hosting BMCs on 6230-6232 (sudo)"
 info "create-fleet.sh wraps ../virtualbmc-ipmi-lab and then enrolls into the registry"
+info "it also gives each domain a FILE-backed serial console — every health gate in"
+info "this lab greps a console log, and a pty console records nothing"
 run "$HERE/create-fleet.sh" up
 
 # ── everything below is UNPRIVILEGED ────────────────────────────────────────
-step "[3/9] verify the BMC round-trip — the seam, against a real BMC"
+step "[4/10] verify the BMC round-trip — the seam, against a real BMC"
 run "$MAAS" manage "$NODE"
 run "$MAAS" power "$NODE" status
+if [[ $DRY == 0 ]]; then
+    con="$("$MAAS" show "$NODE" 2>/dev/null | awk '$1=="console"{print $2; exit}')"
+    [[ -n "$con" && -f "$con" ]] \
+        || die "no console log is recorded for '$NODE'. Every health gate in this lab reads
+one, so the run would be blind: a node that boots the wrong payload and a node that never
+boots at all both look like a timeout. Check create-fleet.sh's 'instrumenting the fleet'
+step (FLEET_CONSOLE=file), or set one by hand: $MAAS set-console $NODE <path>"
+    info "console log: $con"
+fi
 
-# ── 4. introspection: the probe really boots and reports ────────────────────
-step "[4/9] build the introspection initramfs + start the facts sink (:8282)"
+# ── 5. introspection: the probe really boots and reports ────────────────────
+step "[5/10] build the introspection initramfs + start the facts sink (:8282)"
 run "$HERE/build-probe-initramfs.sh" --out "$MAAS_NETBOOT_DIR/probe-initramfs.cpio.gz"
 GW="$(virsh -c qemu:///system net-dumpxml vbmc-pxe 2>/dev/null \
       | sed -nE "s/.*<ip address='([^']+)'.*/\1/p" | head -1)"
@@ -111,13 +132,15 @@ else
     sleep 1
 fi
 
-step "[5/9] inspect: PXE-boot the probe, await its facts, power off"
+step "[6/10] inspect: PXE-boot the probe, await its facts, power off"
 info "this is the REAL introspection path — the node boots, POSTs cpus/mem/MAC, powers down"
-run "$MAAS" inspect "$NODE" --boot
+info "--md-url is not decoration: it becomes maas.md= on the probe's kernel cmdline,"
+info "and a probe without it measures the machine and has nowhere to send the answer"
+run "$MAAS" inspect "$NODE" --boot --md-url "http://$GW:8282"
 run "$MAAS" show "$NODE"
 
-# ── 6. provide + stage a signed payload ─────────────────────────────────────
-step "[6/9] provide (through cleaning) + stage and SIGN the payload"
+# ── 7. provide + stage a signed payload ─────────────────────────────────────
+step "[7/10] provide (through cleaning) + stage and SIGN the payload"
 run "$MAAS" provide "$NODE"
 if [[ $DRY == 0 && ! -f "$MAAS_IMAGES_DIR/trust/ca.crt" ]]; then
     run mkdir -p "$MAAS_IMAGES_DIR/trust"
@@ -125,19 +148,19 @@ if [[ $DRY == 0 && ! -f "$MAAS_IMAGES_DIR/trust/ca.crt" ]]; then
 fi
 run "$HERE/drivers/ramdisk.sh" stage "$IMAGE"
 
-# ── 7. the deploy: F2 gate, netboot into RAM, health gate ───────────────────
-step "[7/9] deploy: verify -> netboot into RAM -> health gate -> active"
+# ── 8. the deploy: F2 gate, netboot into RAM, health gate ───────────────────
+step "[8/10] deploy: verify -> netboot into RAM -> health gate -> active"
 info "the node fetches a SIGNED kernel+initrd; the iPXE script carries imgverify"
 run "$MAAS" deploy "$NODE" --driver ramdisk --image "$IMAGE"
 run "$MAAS" state "$NODE"
 
-# ── 8. the reconcile loop, twice — the invariant ────────────────────────────
-step "[8/9] apply: converge the fleet, then prove the second run is a no-op"
+# ── 9. the reconcile loop, twice — the invariant ────────────────────────────
+step "[9/10] apply: converge the fleet, then prove the second run is a no-op"
 run "$MAAS" apply "$HERE/fleet.toml" --dry-run
 info "(the second run below must issue ZERO transitions — the reconciliation invariant)"
 run "$MAAS" apply "$HERE/fleet.toml"
 
-step "[9/9] the surface: register with the control pane + list the declared actions"
+step "[10/10] the surface: register with the control pane + list the declared actions"
 run "$MAAS" watch "$NODE" --register-only
 CP="$HERE/../../tools/control-pane"
 [[ -x "$CP" ]] && run "$CP" actions "$NODE"

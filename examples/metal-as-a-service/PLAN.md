@@ -39,7 +39,7 @@ declared layer has no scenario or a driver has no real-driver test. The layers:
 | `process` | — | `maas-lab.sh` killed mid-transition (by PID) |
 
 | `metadata` | `metadata-serve.sh` :8282 | no facts ever arrive at the sink |
-| `console` | the node's console log | the stream `watch` and the health gates read is absent |
+| `console` | the node's console log | the stream `watch` and the health gates read is absent — **or recorded and never written** |
 | `reconcile` | `apply` | the registry says active; the payload is dead |
 | `ui` | the actions panel | a key that fires twice; a row that is stale by the time it is pressed |
 
@@ -486,6 +486,13 @@ $ ./maas-lab.sh apply fleet.toml --dry-run
 - **`console`** — the console log is absent. `watch` refuses and names it; a progress
   bar invented from a stream that is not there is worse than no bar, because the
   operator watches it and believes it.
+  A **second** console scenario arrived from the field rather than from design (see
+  "What the first live run found", below): the console is *recorded* and nothing writes
+  to it. Strictly nastier than absent — absent fails loudly at the first `watch`, silent
+  looks fully instrumented and surfaces minutes later as a health-gate timeout, having
+  sent the operator after the wrong defect. `show` now flags a recorded console as
+  `ABSENT` or `empty`, which is what moves it to **ABSORBED**; remove that flag and the
+  scenario grades **STALE** and the run fails.
 - **`reconcile`** — the registry says active, the payload is dead. `apply`'s pre-flight
   catches it (**HALTED**). With `--no-recheck` the same scenario grades **STALE** — the
   control that proves the pre-flight is load-bearing.
@@ -605,3 +612,51 @@ nodes and both would report satisfied while one was under-filled. Ownership is n
 skipped, 0 failed**; `chaos-run.sh` → 18 scenarios across 9 layers, **0 critical**.
 Negative control run: removing the attestation step from `image-measured`'s health lets
 a node with **no quote at all** activate, and the test says so.
+
+## What the first live run found (2026-07-28)
+
+The first end-to-end run of [`run-e2e.sh`](run-e2e.sh) against real libvirt domains
+failed at phase 5 and again at phase 7, with two different-looking errors:
+
+```
+maas: inspect --boot: timed out after 120s with no facts from 'node1'
+ramdisk: 'node1' never printed /(login:|~ #)/ within 120s (health gate FAIL)
+```
+
+Both had **one cause**, and it was not in the control plane. `setup-pxe-net.sh` serves
+a single `<bootp file='boot.ipxe'/>` to the whole network with the payload baked in, so
+both times the node dutifully netbooted **busybox** — not the probe, not the signed RAM
+payload — reported nothing, and timed out. Everything upstream had worked: enroll, the
+BMC round-trip, `provide` through `cleaning`, the F2 signing, the per-node iPXE script.
+Nothing ever *fetched* that script.
+
+The second defect only became visible once the first was understood: **nothing was
+writing a console log.** In every headless test the test writes that file by hand; on a
+live fleet the domains had a `pty` console, which records nothing when no one is
+attached. So the run was blind, and the two failures above were indistinguishable from
+each other and from a node that never powered on.
+
+The fixes, and where each belongs:
+
+| defect | fix | whose job |
+|---|---|---|
+| the network serves one payload to everyone | [`netboot-chain.sh install`](netboot-chain.sh) — chain to `maas/${hostname}.ipxe`, then MAC, then a self-explaining dead end | the lab's PXE glue |
+| `${hostname}` needs a DHCP reservation | `create-fleet.sh` adds `<host mac= name=/>` per node and records the MAC | the fleet |
+| `inspect --boot` never said what to boot | `_write_probe_ipxe` — a per-node script carrying `maas.node=` and `maas.md=`, and a **refusal before the BMC is touched** when the URL, the initramfs or the kernel is missing | the **control plane** |
+| the console recorded nothing | file-backed serial ([`lib/console_xml.py`](lib/console_xml.py)) + `set-console` in the registry | the fleet |
+| a recorded-but-silent console is invisible | `show` flags a console as `ABSENT`/`empty`; new `console-silent` chaos scenario | the control plane |
+
+**The lesson, which is the same one increment 4a taught in a different key:** a green
+headless suite proves the control plane's *decisions*, and every one of these defects
+lived in a **seam the mocks stand in for** — the PXE network, the console device, the
+DHCP option. The suite could not have caught them; only running it for real could. What
+the suite *can* do is hold the line afterwards, which is why the probe boot script now
+has [`tests/test-probe-boot-script.sh`](tests/test-probe-boot-script.sh) (five checks,
+both negative controls run) and the silent console has a chaos row.
+
+**Still author-run, still unverified:** the fixed `run-e2e.sh` has not yet completed a
+live run. What is verified here is headless — `tests/run-all.sh` → **16 passed, 0
+skipped, 0 failed**; `chaos-run.sh` → **19 scenarios across 9 layers: 8 absorbed, 4
+degraded, 7 halted, 0 critical**; and the XML transform against a real `virsh dumpxml`
+of `node1`. Whether libvirt's AppArmor policy permits qemu to write the console file at
+`/var/lib/libvirt/maas-console/<node>.log` needs the rootful run to answer.

@@ -264,6 +264,36 @@ scenario_console() {
     fi
 }
 
+# CONSOLE layer, the second shape: the console is RECORDED and nothing writes to it.
+#
+# This one is not hypothetical — it is what the first live end-to-end run actually hit.
+# The registry named a console, so every check that asks "is it configured?" said yes,
+# and the file stayed empty because no process and no device was attached to it. It is
+# strictly nastier than a missing console: absent fails loudly at the first `watch`,
+# whereas silent looks fully instrumented and only shows up as a health-gate timeout
+# several minutes and one wrong diagnosis later.
+#
+# The bar: the divergence must be VISIBLE where an operator looks (`show`), not
+# inferable from a downstream timeout.
+scenario_console_silent() {
+    local node="c2" con="$WORK/c2-console.log" out
+    ( "$MAAS" enroll "$node" --bmc-port 6363 ) >/dev/null 2>&1
+    ( "$MAAS" manage "$node" ) >/dev/null 2>&1
+    : > "$con"                                   # recorded, exists, and stays empty
+    ( "$MAAS" set-console "$node" "$con" ) >/dev/null 2>&1
+    out="$( ( "$MAAS" show "$node" ) 2>&1 )"
+    if grep -qiE 'console .*(empty|ABSENT)' <<<"$out"; then
+        push_row console "console-silent" "the console is recorded but nothing writes to it" \
+            ABSORBED "show flags the console as recorded-but-empty, before anything waits on it"
+    elif grep -q "$con" <<<"$out"; then
+        push_row console "console-silent" "the console is recorded but nothing writes to it" \
+            STALE "show reports the console as configured and never checks whether anything is writing it — the record and reality agreed once and nobody re-checked"
+    else
+        push_row console "console-silent" "the console is recorded but nothing writes to it" \
+            STALE "the recorded console is not surfaced at all, so a silent one cannot be noticed"
+    fi
+}
+
 # RECONCILE layer: the registry says a node is active; its payload is dead. `apply`
 # computes its actions from the registry, so without a reality check it would see the
 # desired state SATISFIED and converge on a fleet that is not serving.
@@ -358,6 +388,7 @@ scenario oob      "bmc-drop (had good)"      bmc-drop             1 "the BMC sto
 scenario process  "control-plane-killed"     control-plane-killed 1 "maas-lab.sh is killed mid-deploy"
 scenario_metadata
 scenario_console
+scenario_console_silent
 scenario_reconcile
 scenario_ui
 

@@ -27,6 +27,13 @@ MAAS="$HERE/maas-lab.sh"
 FLEET_PY="$HERE/lib/fleet.py"
 FLEET_TOML="${FLEET_TOML:-$HERE/fleet.toml}"
 VBMC_LAB="${VBMC_LAB:-$HERE/../virtualbmc-ipmi-lab}"
+# Where each node's serial console is RECORDED. Under /var/lib/libvirt so libvirt's
+# AppArmor helper grants qemu the path; the files are pre-created 0666 so the
+# unprivileged control plane can read them back. See lib/console_xml.py for why the
+# console is a file and not a pty.
+CONSOLE_DIR="${MAAS_CONSOLE_DIR:-/var/lib/libvirt/maas-console}"
+FLEET_CONSOLE="${FLEET_CONSOLE:-file}"        # file | pty (pty = the old, unlogged behaviour)
+VIRSH="virsh -c qemu:///system"
 
 die()  { printf 'create-fleet: %s\n' "$*" >&2; exit 1; }
 info() { printf '  - %s\n' "$*" >&2; }
@@ -65,6 +72,60 @@ do_enroll() {
     "$MAAS" list
 }
 
+# ── the two things a fleet needs that a single-node lab does not ─────────────
+#
+# Both were missing on the first live end-to-end run, and both failed the same way:
+# silently, with a timeout somewhere far downstream.
+#
+# 1. A CONSOLE THAT IS RECORDED. Every health gate greps <node>/console.log; a pty
+#    console keeps nothing when no one is attached, so the run was blind.
+# 2. A DHCP RESERVATION. The PXE chain (netboot-chain.sh) resolves the per-node boot
+#    script by ${hostname}, which the node learns from DHCP option 12 — dnsmasq only
+#    sends it for a host it has a reservation for. Without it every node falls through
+#    to the MAC-keyed name and then to default.ipxe.
+
+# give_console <node> — swap the domain's pty console for a file, and tell the
+# registry where it is (the `console` field the drivers already read).
+give_console() {
+    local name="$1" log="$CONSOLE_DIR/$name.log"
+    if [[ "$FLEET_CONSOLE" != file ]]; then
+        info "$name: FLEET_CONSOLE=$FLEET_CONSOLE — leaving the pty console (health gates that read a console log will time out)"
+        return 0
+    fi
+    # Pre-create it 0666: qemu (uid libvirt-qemu) writes, the unprivileged control
+    # plane reads. If qemu created it itself the mode would be 0600 and every gate
+    # would fail on a permission error instead of on the machine's behaviour.
+    sudo mkdir -p "$CONSOLE_DIR" && sudo chmod 0755 "$CONSOLE_DIR" \
+        || { info "$name: could not create $CONSOLE_DIR — leaving the pty console"; return 1; }
+    sudo install -m 0666 /dev/null "$log" \
+        || { info "$name: could not create $log — leaving the pty console"; return 1; }
+    $VIRSH dumpxml "$name" \
+        | python3 "$HERE/lib/console_xml.py" "$log" \
+        | sudo $VIRSH define /dev/stdin >/dev/null \
+        || { info "$name: could not redefine with a file console — leaving the pty console"; return 1; }
+    "$MAAS" set-console "$name" "$log" >/dev/null 2>&1 \
+        || info "$name: console file created but not recorded in the registry"
+    info "$name: console recorded to $log"
+}
+
+# reserve_dhcp <node> — record the domain's MAC and give it a DHCP reservation on the
+# PXE network, so the node's own name reaches iPXE as ${hostname}.
+reserve_dhcp() {
+    local name="$1" net="${2:-vbmc-pxe}" mac
+    mac="$($VIRSH domiflist "$name" 2>/dev/null | awk '$3=="'"$net"'" {print $5; exit}')"
+    [[ -n "$mac" ]] || mac="$($VIRSH domiflist "$name" 2>/dev/null | awk 'NR>2 && NF {print $5; exit}')"
+    [[ -n "$mac" ]] || { info "$name: no MAC found on $net — skipping the DHCP reservation"; return 1; }
+    "$MAAS" set-mac "$name" "$mac" >/dev/null 2>&1 || true
+    # --live --config so it applies to the running network AND persists. Adding a host
+    # that is already reserved is an error, not a no-op, so a re-run is tolerated.
+    if sudo $VIRSH net-update "$net" add ip-dhcp-host \
+           "<host mac='$mac' name='$name'/>" --live --config >/dev/null 2>&1; then
+        info "$name: DHCP reservation on $net ($mac -> $name)"
+    else
+        info "$name: DHCP reservation already present or not addable ($mac) — continuing"
+    fi
+}
+
 # ── up: author-run rootful bring-up ──────────────────────────────────────────
 do_up() {
     [[ -d "$VBMC_LAB" ]] || die "sibling lab not found: $VBMC_LAB (set VBMC_LAB=)"
@@ -84,6 +145,7 @@ do_up() {
     step "starting vbmcd"
     ( cd "$VBMC_LAB" && ./vbmc-lab.sh up ) || die "vbmc up failed"
 
+
     for name in $(fleet_names); do
         load_node "$name"
         step "registering BMC for '$name' on port ${NODE_BMC_PORT}"
@@ -93,7 +155,19 @@ do_up() {
 
     step "enrolling the fleet into the control plane"
     do_enroll
+
+    # AFTER enroll: both of these record something in the node's registry entry, which
+    # does not exist until the node is enrolled.
+    step "instrumenting the fleet: recorded consoles + DHCP reservations"
+    for name in $(fleet_names); do
+        load_node "$name"
+        give_console "$name"
+        reserve_dhcp "$name" "${NODE_NETWORK:-vbmc-pxe}"
+    done
+
     step "fleet up. Verify a BMC round-trip:  $MAAS manage node1 && $MAAS power node1 status"
+    info "next: ./netboot-chain.sh install — without it every node boots the network's"
+    info "baked payload and the per-node scripts the drivers write are never fetched."
 }
 
 # ── down: author-run teardown ────────────────────────────────────────────────
