@@ -10,59 +10,87 @@ each one already reached and understood — none of this is speculative future w
 none of it is blocked. They are in priority order, and the first one is worth more than
 the other two together.
 
+> **Item 1 has since been picked up, and it paid immediately.** The first time real
+> verifying firmware was pointed at this lab's payloads it refused them all, because the
+> signing certificate was missing `keyUsage=digitalSignature` — a defect no host-side check
+> could ever have seen. That is the case for this file in one sentence: the gaps a green
+> run cannot reveal are where the defects were.
+
 When you pick one up: the PLAN.md section named with each item is the evidence trail (the
 live run that exposed the gap, and what it printed). Update this file when an item lands —
 an item that is quietly done is as misleading as one quietly abandoned.
 
 ---
 
-## 1. The on-node half of F2 has never run  ⭐ highest value
+## 1. The on-node half of F2 — ✅ RUNS, and found a real defect; ⬜ not yet on the live fleet
 
-**What is unproven.** F2 (payload signing) has two halves, and only one of them has ever
-executed on this fleet:
+**Status changed 2026-07-28.** The firmware half now executes, headlessly, on every run of
+[`tests/test-verifying-rom.sh`](tests/test-verifying-rom.sh):
 
 | half | where | status |
 |---|---|---|
-| host-side | `verify` — OpenSSL CMS against the CA, before the node is touched | **exercised every run** |
-| on-node | `imgverify` in the iPXE script — the firmware re-checks as it fetches | **never executed** |
+| host-side | `verify` — OpenSSL CMS against the CA, before the node is touched | exercised every run |
+| on-node | `imgverify` in the iPXE script — the firmware re-checks as it fetches | **runs under QEMU** ✅ |
+| on-node, live | the same, on a libvirt fleet node | **still never run** ⬜ |
 
-Every passing run set `E2E_NO_IMGVERIFY=1`, because QEMU's stock iPXE ROM (what a libvirt
-NIC boots by default) is built without `IMAGE_TRUST_CMD`: an `imgverify` line is an unknown
-command, the script aborts, and nothing boots — with **zero bytes** on the console, because
-that ROM also has no serial console. So the run refuses up front rather than booting into a
-silence.
+**What it cost to find out, and why it was worth it.** The very first time real verifying
+firmware was pointed at this lab's own signed payloads, it refused them — *all* of them,
+including good ones:
 
-**Why it matters more than it looks.** The supply-chain claim this lab makes is a *chain*:
-the host verifies before it hands the payload over, and the machine verifies again before it
-executes. Half a chain is a different (and much weaker) claim, and the current arrangement
-is one flag away from reading as the strong one. The refusal keeps it honest today; a
-verifying ROM would make it *true*.
-
-**It also closes a second, unrelated hole.** The same ROM gives iPXE a **serial console**.
-Right now the boot chain's own `echo` lines never reach the console log, so every
-iPXE-level failure is invisible to precisely the instrument built to see it — that is what
-made the third live run's failure a 120-second silence rather than a message.
-
-**The concrete first step.** The builder already exists and is proven in the RAM-infra lab:
-
-```bash
-../../netboot/build-ipxe.sh --imgverify --certfile ~/.cache/lab-create/maas/images/trust/ca.crt
+```
+http://…/good.img... ok
+http://…/good.img.sig... ok
+Could not verify: Permission denied (https://ipxe.org/022ae13c)   ← "Not a signing certificate"
 ```
 
-⚠️ `--certfile` is the killer gotcha recorded in the RAM-infra work — without it the ROM
-verifies against nothing. Then attach it per NIC (`<rom file='…/ipxe.rom'/>` inside each
-domain's `<interface>`, so `create-fleet.sh` grows a `give_verifying_rom()` beside
-`give_console()`), record the capability per node in the registry, and run with
-`MAAS_IPXE_TRUSTS_CA=1` — which `run-e2e.sh` already understands.
+`drivers/verify-lib.sh` minted its code-signing leaf with `extendedKeyUsage=codeSigning`
+and nothing else. `openssl cms -verify` does not look at key usage, so every host-side
+gate, every driver test and the whole green suite accepted it — and iPXE requires
+**`keyUsage=digitalSignature`** as well. **This fleet had been signing payloads that no
+verifying firmware would ever accept**, and by construction nothing on the host could see
+it. Fixed in `verify-lib.sh` (the profile now matches `netboot/sign-payload.sh`, the signer
+the RAM-infra lab proved against real iPXE), guarded by `verify-lib.sh check-keys`, and
+pinned against re-divergence by
+[`tests/test-signing-cert-profile.sh`](tests/test-signing-cert-profile.sh) §4.
 
-**Done when:** a run with neither `E2E_NO_IMGVERIFY` nor `--no-verify` reaches `active`,
-**and** a deliberately tampered payload is refused *by the firmware* with a message on the
-node's console log. The negative control is the point — a ROM that verifies nothing also
-lets a good payload through.
+**The second hole is confirmed and closed too.** Measured on this fleet's own `node1.log`:
+it begins at `Linux version …` with **zero** SeaBIOS or iPXE lines. Side by side in
+libvirt's own QEMU invocation (`-display none`, *not* `-nographic`): **stock ROM 0 bytes on
+the serial console, the new ROM 617**. ⚠️ Do not test a `CONSOLE_SERIAL` build under
+`-nographic`: QEMU sets `FW_CFG_NOGRAPHIC`, SeaBIOS puts *its* console on COM1 too, and the
+two writers interleave byte-by-byte (`iiPPXXEE`) — under that invocation the stock ROM looks
+instrumented and this one looks broken, which is exactly backwards.
 
-**Evidence trail:** [`PLAN.md`](PLAN.md) — "The third live run", "The seventh run", and
-`### Named, not yet built`. Headless coverage of the seam itself:
-[`tests/test-imgverify-halves.sh`](tests/test-imgverify-halves.sh).
+**How to build it** (the earlier note here named `--certfile`, which is not a flag
+`build-ipxe.sh` has — that was OpenSSL's `-certfile`, from `verify-lib.sh`):
+
+```bash
+./build-verifying-rom.sh build      # docker, ~10 min: iPXE + IMAGE_TRUST_CMD + TRUST=<fleet CA>
+./build-verifying-rom.sh install    # sudo: /var/lib/libvirt, because qemu cannot read $HOME
+```
+
+**What remains — the live run.** Everything needed is now in place and untested only
+*together*:
+
+```bash
+FLEET_NIC_ROM=1 ./create-fleet.sh      # give_verifying_rom() attaches it per NIC
+MAAS_IPXE_TRUSTS_CA=1 ./run-e2e.sh     # no E2E_NO_IMGVERIFY
+```
+
+⚠️ The live trust dir (`~/.cache/lab-create/maas/images/trust`) still holds a **legacy
+leaf**: `verify-lib.sh gen-keys` never overwrites an existing keydir. Re-mint it, re-sign
+every image, and rebuild the ROM (it bakes the CA) before that run — `run-e2e.sh`'s preflight
+now refuses rather than letting it fail on the node.
+
+**Done when:** a live run with neither `E2E_NO_IMGVERIFY` nor `--no-verify` reaches
+`active`, **and** a deliberately tampered payload is refused by the firmware with the
+refusal visible in that node's console log.
+
+**Evidence trail:** [`PLAN.md`](PLAN.md) — "The verifying ROM". Headless coverage:
+[`tests/test-verifying-rom.sh`](tests/test-verifying-rom.sh) (the firmware itself),
+[`tests/test-signing-cert-profile.sh`](tests/test-signing-cert-profile.sh) (the certificate
+profile), [`tests/test-rom-xml.sh`](tests/test-rom-xml.sh) (the domain rewrite),
+[`tests/test-imgverify-halves.sh`](tests/test-imgverify-halves.sh) (the seam).
 
 ---
 

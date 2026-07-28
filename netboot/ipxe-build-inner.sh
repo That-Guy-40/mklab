@@ -16,6 +16,9 @@
 #   $8  cert_path    DER cert to embed in trust store (empty = none)
 #   $9  imgverify    "1" to enable imgverify + emit a verify+A/B-rollback script
 #   $10 trust_path   DER code-signing root for imgverify (TRUST=; empty = none)
+#   $11 nic_rom      8-hex-digit PCI id to build a NIC option ROM for (empty = none)
+#   $12 embed_path   boot script to compile in verbatim (empty = generate one)
+#   $13 serial       "1" to compile in CONSOLE_SERIAL (COM1 115200)
 #
 # Outputs written to /out/:
 #   boot.ipxe   embedded boot script (copy of what was compiled in)
@@ -45,6 +48,9 @@ tls_mode="${7:-}"
 cert_path="${8:-}"
 imgverify_mode="${9:-}"
 trust_path="${10:-}"
+nic_rom="${11:-}"
+embed_path="${12:-}"
+serial_console="${13:-}"
 
 log_info "ipxe-build-inner starting"
 log_info "  server_url  : $server_url"
@@ -149,6 +155,44 @@ IPXEVERIFY
     fi
 fi
 
+# ─── Serial console ─────────────────────────────────────────────────────────
+# CONSOLE_SERIAL makes iPXE drive COM1 DIRECTLY, in addition to CONSOLE_PCBIOS
+# (the BIOS console).  Whether that is redundant depends on the platform, and the
+# two answers here look identical from the outside — so both were measured:
+#
+#   libvirt domain (-display none, a <serial> log): the firmware's output NEVER
+#     reaches the log.  A real fleet console log from this repo's MAAS lab starts
+#     at "Linux version ..." with zero SeaBIOS or iPXE lines.  CONSOLE_SERIAL is
+#     the ONLY way an iPXE-level failure says anything at all.
+#   qemu -nographic: QEMU sets FW_CFG_NOGRAPHIC, SeaBIOS switches its own console
+#     to COM1, and the stock (non-CONSOLE_SERIAL) ROM's output shows up there.
+#     Compiling CONSOLE_SERIAL as well gives the port two writers, whose bytes
+#     interleave:  PiXPEX Ei niintiitailailsiisnign g...  <- twice, merged.
+#
+# So: enable it for libvirt/real targets; test such a build with `-display none
+# -serial ...`, NOT with -nographic, or the harness will read its own artifact.
+if [[ -n "$serial_console" ]]; then
+    log_info "enabling CONSOLE_SERIAL (COM1, 115200 8N1)..."
+    mkdir -p /tmp/ipxe/src/config/local
+    cat >> /tmp/ipxe/src/config/local/console.h <<'IPXESERIAL'
+/* local/console.h: compiled-in overrides for this lab build. */
+#include <config/console.h>
+#undef  CONSOLE_SERIAL
+#define CONSOLE_SERIAL
+IPXESERIAL
+    # serial.h carries the port/speed.  COM1 @ 115200 8N1 matches the console=
+    # the payload kernels are given and the <serial>/<console> a libvirt domain
+    # exposes, so firmware and kernel land in the SAME log.
+    cat >> /tmp/ipxe/src/config/local/serial.h <<'IPXESERIALCFG'
+/* local/serial.h: compiled-in overrides for this lab build. */
+#include <config/serial.h>
+#undef  COMCONSOLE
+#define COMCONSOLE  COM1
+#undef  COMSPEED
+#define COMSPEED    115200
+IPXESERIALCFG
+fi
+
 # ─── Write embedded boot script ─────────────────────────────────────────────
 # Collapse every run of whitespace in --append (incl. stray newlines/tabs that
 # sneak in when a long single-quoted --append is copy-pasted out of a wrapped
@@ -226,6 +270,15 @@ fi
 # write time if it appeared directly in an unquoted heredoc.
 sed -i 's/{MAC}/${mac:hexhyp}/g' /tmp/ipxe/src/boot.ipxe
 
+# ─── Caller-supplied embedded script (overrides everything above) ────────────
+# Used VERBATIM — no {MAC} rewrite, no server/append substitution.  A firmware
+# that must ASK a control plane what to boot cannot carry a generated answer, so
+# the caller owns the script outright; the generated one above is discarded.
+if [[ -n "$embed_path" && -f "$embed_path" ]]; then
+    log_info "using caller-supplied embedded script: $embed_path (generated script discarded)"
+    cp "$embed_path" /tmp/ipxe/src/boot.ipxe
+fi
+
 # ─── Build ──────────────────────────────────────────────────────────────────
 JOBS=$(nproc)
 log_info "building iPXE with -j${JOBS} (arch=$arch)..."
@@ -247,6 +300,19 @@ case "$arch" in
         make -j"${JOBS}" EMBED=boot.ipxe $EXTRA_MAKE_FLAGS \
             bin/ipxe.hd bin/ipxe.usb bin/ipxe.pxe bin-x86_64-efi/ipxe.efi \
             || die "iPXE make failed for x86_64"
+        # A PCI option ROM for one NIC.  iPXE names the target after the PCI id it
+        # claims, and only builds the driver that registers that id — so the ROM is
+        # much smaller than the general-purpose images above, which is what makes an
+        # imgverify-capable ROM (CMS + X.509 + RSA + SHA) fit in an option ROM at all.
+        if [[ -n "$nic_rom" ]]; then
+            log_info "building NIC option ROM bin/${nic_rom}.rom ..."
+            # shellcheck disable=SC2086
+            make -j"${JOBS}" EMBED=boot.ipxe $EXTRA_MAKE_FLAGS "bin/${nic_rom}.rom" \
+                || die "iPXE make failed for NIC ROM ${nic_rom}.rom
+  If this failed on size ('.rom too big' / 'Compressed image too large'), the
+  feature set does not fit a legacy option ROM.  Drop --tls, or chainload
+  bin/ipxe.pxe over TFTP instead of replacing the ROM."
+        fi
         ;;
     aarch64)
         # Cross-compile: set CROSS_COMPILE so iPXE's Makefile picks up the
@@ -286,6 +352,10 @@ case "$arch" in
         cp /tmp/ipxe/src/bin/ipxe.usb             /out/ipxe.usb
         cp /tmp/ipxe/src/bin/ipxe.pxe             /out/ipxe.pxe
         cp /tmp/ipxe/src/bin-x86_64-efi/ipxe.efi /out/ipxe.efi
+        if [[ -n "$nic_rom" ]]; then
+            cp "/tmp/ipxe/src/bin/${nic_rom}.rom" "/out/ipxe-${nic_rom}.rom"
+            log_info "  /out/ipxe-${nic_rom}.rom  ($(stat -c%s "/out/ipxe-${nic_rom}.rom") bytes)"
+        fi
         log_info "  /out/ipxe.hd"
         log_info "  /out/ipxe.usb"
         log_info "  /out/ipxe.pxe"

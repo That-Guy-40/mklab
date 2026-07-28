@@ -254,7 +254,9 @@ lifecycle runs with no libvirt at all.
 | [`maas-lab.sh`](maas-lab.sh) | the control plane — registry + state machine + verbs + BMC seam + `inspect`/`watch` |
 | [`create-fleet.sh`](create-fleet.sh) | stand up (`up`, author-run) or `enroll` (headless) the fleet — incl. file-backed consoles + DHCP reservations |
 | [`netboot-chain.sh`](netboot-chain.sh) | replace the PXE network's single baked payload with a per-node chain (author-run) |
+| [`build-verifying-rom.sh`](build-verifying-rom.sh) | build + install the iPXE NIC ROM that can enforce F2 **on the node** (`imgverify` + the fleet CA + a serial console) |
 | [`lib/console_xml.py`](lib/console_xml.py) | rewrite a domain's serial console from a pty to a **recorded file** |
+| [`lib/rom_xml.py`](lib/rom_xml.py) | attach that ROM to every `<interface>` of a domain (idempotent) |
 | [`lib/vbmc_check.py`](lib/vbmc_check.py) | refuse a fleet whose BMC ports are answered by another machine |
 | [`run-e2e.sh`](run-e2e.sh) | the one-shot live driver: 10 phases, real domains, real BMCs, real netboot (author-run) |
 | [`fleet.toml`](fleet.toml) | the 3-node fleet spec (hardware + declared end-state for `apply`) |

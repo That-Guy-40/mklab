@@ -116,6 +116,34 @@ give_console() {
     info "$name: console recorded to $log"
 }
 
+# give_verifying_rom <node> — attach the imgverify-capable iPXE ROM to the domain's
+# NICs, so the on-node half of F2 can actually run. Opt-in via FLEET_NIC_ROM:
+#   FLEET_NIC_ROM=1        use the installed default ($ROM_DIR/ipxe-<pciid>.rom)
+#   FLEET_NIC_ROM=<path>   use that ROM
+# Built and installed by ./build-verifying-rom.sh; without it the nodes boot QEMU's
+# stock ROM, which has no IMAGE_TRUST_CMD and refuses nothing.
+give_verifying_rom() {
+    local name="$1" rom="${FLEET_NIC_ROM:-}"
+    [[ -n "$rom" ]] || return 0
+    if [[ "$rom" == 1 ]]; then
+        case "$FLEET_NIC_MODEL" in
+            e1000)   rom="${MAAS_ROM_DIR:-/var/lib/libvirt/maas-rom}/ipxe-8086100e.rom" ;;
+            virtio)  rom="${MAAS_ROM_DIR:-/var/lib/libvirt/maas-rom}/ipxe-1af41000.rom" ;;
+            rtl8139) rom="${MAAS_ROM_DIR:-/var/lib/libvirt/maas-rom}/ipxe-10ec8139.rom" ;;
+            *) info "$name: no default ROM name for NIC model '$FLEET_NIC_MODEL' — set FLEET_NIC_ROM=<path>"; return 1 ;;
+        esac
+    fi
+    # Refuse rather than half-apply: a fleet where some nodes verify and some do not
+    # is worse than one where none do, because a green run then proves neither.
+    [[ -f "$rom" ]] || die "FLEET_NIC_ROM is set but $rom does not exist.
+  Build and install it first:  ./build-verifying-rom.sh build && ./build-verifying-rom.sh install"
+    $VIRSH dumpxml "$name" \
+        | python3 "$HERE/lib/rom_xml.py" "$rom" \
+        | sudo $VIRSH define /dev/stdin >/dev/null \
+        || die "$name: could not attach the verifying ROM $rom"
+    info "$name: verifying iPXE ROM attached ($rom)"
+}
+
 # reserve_dhcp <node> <net> <index> — record the domain's MAC and give it a DHCP
 # reservation, so the node's own name reaches iPXE as ${hostname} (DHCP option 12).
 reserve_dhcp() {
@@ -231,6 +259,7 @@ do_up() {
     for name in $(fleet_names); do
         load_node "$name"
         give_console "$name"
+        give_verifying_rom "$name"
         reserve_dhcp "$name" "${NODE_NETWORK:-vbmc-pxe}" "$i"
         i=$((i+1))
     done

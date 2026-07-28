@@ -1053,6 +1053,7 @@ family — see [`../RAM_INFRA_LAB_PLAN.md`](../RAM_INFRA_LAB_PLAN.md).
 |---|---|---|
 | `imgverify: command not found` | iPXE built without `IMAGE_TRUST_CMD` | Rebuild with `--imgverify` (it defines `IMAGE_TRUST_CMD` in `config/local/general.h`) |
 | `Could not verify: … (0216eb3c)` "No usable certificates" | CA not in the CMS, or bad clock | `sign-payload.sh` bundles the CA via `-certfile`; check host/RTC time is correct |
+| `Could not verify: … (022ae13c)` "Not a signing certificate" | The signing leaf lacks **`keyUsage=digitalSignature`**. `openssl cms -verify` does not check key usage, so a leaf with only `extendedKeyUsage=codeSigning` passes every host-side check and is refused by the firmware | Re-mint the leaf with `keyUsage=critical,digitalSignature` **and** `extendedKeyUsage=critical,codeSigning` (what `--gen-keys` does), then re-sign. Found the hard way in `examples/metal-as-a-service/` |
 | `Could not verify: … (0227e13c)` | Payload changed after signing (or genuine tamper) | Re-sign after any rebuild: `sign-payload.sh <file>` regenerates `<file>.sig` |
 | imgverify rejects everything | `--imgverify` without `--payload-trust` | Pass `--payload-trust <ca.der>` (from `sign-payload.sh --out-trust`) |
 | `Error: rootlessport … address already in use` | Port 8181 (or 8080) in use by another process | `ss -tlnp sport eq :8181` to find it; or change `ports = []` in the TOML and rebuild iPXE with matching `--server` |

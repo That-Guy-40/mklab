@@ -121,6 +121,15 @@ install)
     fi
     ;;
 
+emit-chain)
+    # The chain script on stdout, port already substituted, no sudo and no writes.
+    # build-verifying-rom.sh compiles this INTO the firmware, so the ROM resolves
+    # the per-node script itself instead of TFTP-fetching boot.ipxe first. Both
+    # paths must ask the same question of the control plane, so they read it from
+    # here rather than each keeping a copy that can drift.
+    chain_script | sed "s/@PORT@/$PORT/"
+    ;;
+
 show)
     printf '== %s/boot.ipxe ==\n' "$TFTP_DIR"
     sudo cat "$TFTP_DIR/boot.ipxe" 2>/dev/null || printf '(absent or unreadable)\n'
@@ -132,9 +141,11 @@ show)
     cat >&2 <<EOF
 netboot-chain.sh — point the PXE network at the control plane's per-node scripts
 
-  install   replace the network's baked boot.ipxe with a chain that resolves
-            maas/\${hostname}.ipxe -> maas/\${net0/mac}.ipxe -> maas/default.ipxe
-  show      print what is installed
+  install     replace the network's baked boot.ipxe with a chain that resolves
+              maas/\${hostname}.ipxe -> maas/\${net0/mac}.ipxe -> maas/default.ipxe
+  emit-chain  print that chain script on stdout (what build-verifying-rom.sh
+              compiles into the firmware); no sudo, no writes
+  show        print what is installed
 
 Without this, every node on $NET boots whatever single payload setup-pxe-net.sh
 baked in, and the per-node scripts the deploy drivers write are never fetched.
