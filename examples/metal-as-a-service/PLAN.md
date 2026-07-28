@@ -22,6 +22,13 @@ This file tracks the **build increments** and records each one's outcome as it l
 
 All three documented fast-follows are now built as well.
 
+**The ladder being all-✅ is not the same as "nothing left to prove."** The live path found
+thirteen defects that the green headless suite could not see, and three gaps remain that a
+*passing* run cannot reveal by construction — the on-node half of F2, the drivers that have
+never met a real machine, and a BMC that answers for the wrong one. They are catalogued,
+with the evidence trail and the first concrete step for each, in **[`DEFERRED.md`](DEFERRED.md)**.
+Read that before concluding this lab is finished.
+
 ## The house rule this lab is built under
 
 **Every discrete layer gets a fault-injection point, and every deploy driver gets a
