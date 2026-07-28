@@ -1,7 +1,9 @@
 # Metal-as-a-Service Lab — Design Plan v2.1
 
-> **Status**: Draft v2 — proposed 2026-07-24 (option **B** of the "what can we
-> compose?" survey). Anchors on `examples/virtualbmc-ipmi-lab/` (IPMI power +
+> **Status**: v2.1 — **in build, increments 1–3 of 7 shipped** (see the build-status box
+> below). Proposed 2026-07-24 as option **B** of the "what can we compose?" survey; the
+> design below is unchanged except where the build corrected it, and every such
+> correction is called out inline rather than quietly rewritten. Anchors on `examples/virtualbmc-ipmi-lab/` (IPMI power +
 > boot-device + PXE install, all ✅ verified), the netboot PXE-install pipeline
 > (`netboot/`, `examples/almalinux-pxe-lab/`, `examples/debian-pxe-lab/`), and the
 > Phase-6 TUI / Phase-6b web surface.
@@ -43,8 +45,41 @@
 > deferred **out-of-band transport** work — a faithful IPMI **Serial-over-LAN** path,
 > a **Redfish virtual-media** driver, and the **richer IPMI surface** — has been
 > **lifted into its own reusable lab**, `BMC_TOOLKIT_LAB_PLAN.md`, which MAAS consumes
-> for its OOB layer (see §11). Plan only; no lab files created yet — ready to start v1
-> on the word.
+> for its OOB layer (see §11).
+
+> ## 🏗️ Build status — **increments 1–3 of 7 shipped** (last updated 2026-07-27)
+>
+> The lab exists: **[`examples/metal-as-a-service/`](examples/metal-as-a-service/)**, with
+> its own increment ledger in [`PLAN.md`](examples/metal-as-a-service/PLAN.md) (per-increment
+> outcomes + design decisions) and transcripts in
+> [`MANUAL_TESTING.md`](examples/metal-as-a-service/MANUAL_TESTING.md).
+>
+> | # | Increment (§9 build order) | Status |
+> |---|---|---|
+> | **1** | Fleet + registry + **full 12-state Ironic machine** (`create-fleet.sh`, `maas-lab.sh`, guarded `cleaning`, `error`/`maintenance`, `rescue`) | ✅ **merged** — PR #56 |
+> | **2** | `inspect` **RAM probe** + NoCloud **metadata service** + `milestones.toml`/`watch` | ✅ **merged** — PR #57 |
+> | **3** | **`install` driver + health-gated activation + A/B rollback (§4b)** + F2 verify gate | ✅ **merged** — PR #58 |
+> | 4 | **`ramdisk` driver + catalog** (RAM-INFRA / micro-linux / floppinux / busybox), signed + `imgverify` | ⬜ **next** |
+> | 5 | `image` driver (dd golden whole-disk, Tier-B reuse) | ⬜ |
+> | 6 | `apply` declarative reconcile (§3a) | ⬜ |
+> | 7 | Phase-6 surface — **already provided** by `tools/control-pane`; MAAS wires in per-increment | 🔶 partially live (see §5) |
+>
+> **Verified headless, re-run 2026-07-27:** `examples/metal-as-a-service/tests/run-all.sh`
+> → **8 passed, 0 skipped, 0 failed** — with a **mock BMC** and a **mock driver**, but
+> **real** OpenSSL CMS crypto, the **real** control-pane engine, and the **real**
+> `bmc-toolkit` registry parser. No libvirt, no root, no install.
+>
+> **The two dependencies MAAS was waiting on both landed first**, so nothing is blocked:
+> `tools/control-pane` (PR #54, the promoted repo tool — §5) and
+> `examples/bmc-toolkit/` (PR #46 + spikes, all three backends — §11).
+>
+> **Still author-run (correctly, not skipped):** `create-fleet.sh up`/`down` (rootful
+> libvirt + `vbmcd`), `inspect --boot` (real PXE probe), and a real `install` deploy.
+> Each is handed over with the exact command in MANUAL_TESTING.
+>
+> **Routed:** `examples/00-INDEX.md` (Phase-2 row) + `learning-paths.toml`
+> (`zero-touch-provisioning` step with a `verify_host` checkpoint that runs the suite,
+> plus `close-to-the-metal`). Both catalog checkers green.
 
 ---
 
@@ -100,16 +135,26 @@ separate labs. B is the *abstraction over them* + the lifecycle + the fleet.
 | Signed payloads for `ramdisk`/`image` | ✅ verified | `netboot/sign-payload.sh` + `--imgverify` (RAM_INFRA ①) |
 | Recovery ramdisk for `rescue` | ✅ verified | `root-password-reset/` (init-shell recovery, now IPMI-driven) |
 | Read-only cross-phase inventory UI | ✅ landed | `phase6-tui/`, `phase6b-web/` |
-| **N-node libvirt fleet + BMC per node** | ❌ **GAP** | — invent: `create-fleet.sh` (ports 623X) |
-| **Node registry + full Ironic state machine** | ❌ **GAP (crux)** | — invent: `maas-lab.sh` state file + verbs |
-| **The pluggable DEPLOY INTERFACE** | ❌ **GAP (crux)** | — invent: a driver dispatch that routes to the labs above |
-| **Inspection probe + `cleaning` wipe** | ❌ **GAP** | — invent: RAM probe POSTs facts; guarded disk wipe |
-| **Per-node metadata / config-drive** | ❌ **GAP** | — invent: NoCloud user-data service (reuses cloud-init) |
-| **Phase-6 sees libvirt domains + node state** | ❌ **GAP** | — invent: a `libvirt`/`maas` inventory source |
+| **N-node libvirt fleet + BMC per node** | ✅ **built** (inc. 1) | `create-fleet.sh` — wraps `virtualbmc-ipmi-lab`; 3 domains + one `vbmcd` on 6230–6232 (`up`/`down` author-run) |
+| **Node registry + full Ironic state machine** | ✅ **built** (inc. 1) | `maas-lab.sh` — directory-tree registry (atomic single-value files + `history.log`) + 12 states as pure transitions |
+| **The pluggable DEPLOY INTERFACE** | ✅ **built** (inc. 3) | `drivers/<name>.sh` (`verify`/`deploy`/`health`/`describe`) dispatched by `maas-lab.sh`; `install.sh` real, `ramdisk`/`image` are honest not-yets |
+| **Inspection probe + `cleaning` wipe** | ✅ **built** (inc. 1–2) | `probe-init.sh` + `build-probe-initramfs.sh`; `cleaning` **hands the wipe to the operator** (F7) rather than running it |
+| **Per-node metadata / config-drive** | ✅ **built** (inc. 2) | `lib/metadata.py` + `metadata-serve.sh` — NoCloud user-data **and** the facts sink, on **:8282** |
+| **Phase-6 sees node state + live progress** | ✅ **built** (inc. 2) | not a MAAS-local source after all: `maas-lab.sh watch` registers the node under `tools/control-pane`'s fleet dir → TUI + web bars for free |
+| **Health-gated activation + A/B rollback (§4b)** | ✅ **built** (inc. 3) | one `gate()` = verify → deploy → health, applied to the new *and* the rollback slot |
+| **F2 supply-chain gate at deploy time** | ✅ **built** (inc. 3) | `drivers/verify-lib.sh` — OpenSSL CMS in the same format `netboot/sign-payload.sh` produces for iPXE `imgverify` |
+| **`ramdisk` catalog · `image` driver · `apply`** | ❌ **remaining** | increments 4–6 (§9) |
 
 Host reality: this is the repo's **only libvirt** family (Phase 2 is raw QEMU);
-`vbmcd` runs **rootful** (system socket is `root:libvirt`). Phase 6 has **no libvirt
-awareness today** — a new inventory source is required work, not a config tweak.
+`vbmcd` runs **rootful** (system socket is `root:libvirt`) — which is why every live
+fleet operation is author-run and every *logic* test drives a mock BMC.
+
+**How the last row was actually solved** (worth recording, because it inverted the
+plan): Phase 6 still has no libvirt awareness, and it no longer needs any. Rather than
+writing a `libvirt`/`maas` inventory source, `tools/control-pane` landed **first** as a
+generic source, and `maas-lab.sh watch` simply **registers a node into its fleet dir**.
+MAAS contributes a `node.toml` and a milestone profile; the TUI, the web UI, and the SSE
+progress bars come for free — and no MAAS-specific code lives in Phase 6.
 
 ---
 
@@ -248,6 +293,13 @@ remain so this plan's cross-references resolve.
   lists MAAS nodes ⋈ their **state + deploy driver** in the Phase-6 tree
   (`node2 ● active [image+measured]`). Read-only, established Phase-6 style.
   (Provided by `tools/control-pane`.)
+**Status (2026-07-27):** the tool shipped (PR #54) and MAAS consumes it. **5a** and **5c**
+are **live** — `maas-lab.sh watch <node>` picks a profile from the node's driver, writes
+the node's `node.toml` into the control-pane fleet dir, and delegates the stream; the
+node then appears with a live bar in the TUI *and* the web UI. **5b**'s `console`/`sol`
+verb exists and routes through the BMC seam. The remaining piece is the **actions panel**
+(key-bindings that *call* MAAS verbs) — step 7, and by design not a v1 blocker.
+
 - **5b. Node-actions panel + `console`/`sol`.** Key-bindings call MAAS's verbs
   (`inspect/provide/deploy/rescue/release`), streaming output into the lower pane.
   **`console`/`sol`** = the node's **libvirt serial console** — the honest SOL *substitute*;
@@ -267,23 +319,34 @@ remain so this plan's cross-references resolve.
 
 ## 6. New components & files
 
-| File | Type | Notes |
-|---|---|---|
-| `METAL_AS_A_SERVICE_LAB_PLAN.md` | **this doc** | roadmap |
-| `examples/metal-as-a-service/maas-lab.sh` | new | control plane: full state machine + imperative verbs + deploy-driver dispatch + health-gated activation w/ A/B rollback (§4b) + `apply` reconcile (§3a) + `console`/`sol` (libvirt serial; honest SOL substitute, §5b). `watch` delegates to `tools/control-pane watch` (the repo tool) |
-| `examples/metal-as-a-service/drivers/{install,ramdisk,image,image-measured}.sh` | new | one file per deploy driver — each a thin router to the reused lab; declares its health-gate/`terminal` signal |
-| `examples/metal-as-a-service/ramdisk-catalog.toml` | new | the `--image` registry (RAM-INFRA + micro-linux + floppinux + busybox), each with its `active`-signal marker |
-| `examples/metal-as-a-service/milestones.toml` | new | MAAS's milestone **profiles** (`install`/`ramdisk`/`image`; regex → label → `at%`/`terminal`) — *consumed by `tools/control-pane`'s engine*, not a MAAS-local parser |
-| `examples/metal-as-a-service/create-fleet.sh` | new | N libvirt domains + `vbmc add` each on 623X (wraps vbmc `create-node.sh`) |
-| `examples/metal-as-a-service/fleet.toml` | new | the fleet: hardware spec (count, disk/RAM, PXE network) **and** the declarative desired end-state consumed by `apply` (§3a) |
-| `examples/metal-as-a-service/probe-init.sh` | new | inspection initramfs `/init`: POST CPU/RAM/MAC to `:8181`, power off |
-| `examples/metal-as-a-service/rescue-init.sh` | new | `rescue` recovery ramdisk (reuses root-password-reset recovery idioms), IPMI-driven |
-| `examples/metal-as-a-service/metadata-serve.sh` | new | per-node NoCloud user-data (hostname/SSH key) — DRY fleet from one image |
-| `examples/metal-as-a-service/tests/` | new | one-verdict smokes: state transitions (dry), `cleaning` no-op vs wipe, driver dispatch; EXIT-trap net, `REGRESSION:` on the wipe-happened guard |
-| *(Phase-6 surface)* | — | **provided by `tools/control-pane`** (demoed in `examples/control-pane/`): the live inventory source, actions panel, and progress bars. MAAS is a consumer — its nodes appear via the control-pane inventory source; no MAAS-local TUI code |
-| `examples/metal-as-a-service/{README,RUNBOOK,MANUAL_TESTING}.md` | new | concept + Ironic-state mapping + "divergences from real Ironic/MAAS" table + verified transcripts |
-| `examples/00-INDEX.md` | edit | one row (Phase-2/libvirt section, near the VirtualBMC row) |
-| `examples/learning-paths.toml` | edit | route as a step **after `virtualbmc-ipmi-lab`** in a "bare-metal provisioning" journey; observable checkpoint = a node reaching `active` via each driver. Then `paths.py render && --check`. |
+The **Built** column is the ground truth as of 2026-07-27; `ls examples/metal-as-a-service/`
+is the check. Two planned files turned out **not** to be needed in the shape the plan
+imagined — noted inline rather than silently dropped.
+
+| File | Built | Type | Notes |
+|---|---|---|---|
+| `METAL_AS_A_SERVICE_LAB_PLAN.md` | ✅ | **this doc** | roadmap |
+| `examples/metal-as-a-service/PLAN.md` | ✅ | *(unplanned, added)* | the per-increment ledger — outcome + design decisions + what was verified vs. handed over, one section per increment |
+| `examples/metal-as-a-service/maas-lab.sh` | ✅ inc. 1–3 | new | control plane: full state machine + imperative verbs + deploy-driver dispatch + health-gated activation w/ A/B rollback (§4b) + `console`/`sol` (§5b) + `watch` (delegates to `tools/control-pane watch`). **`apply` is not in it yet** — increment 6 |
+| `examples/metal-as-a-service/drivers/install.sh` | ✅ inc. 3 | new | the real driver: PXE kickstart/preseed → boot from disk, wrapping `virtualbmc-ipmi-lab`; declares its health-gate signal (the OS `login:`). Author-run to *run*; its dispatch is headless-tested |
+| `…/drivers/{ramdisk,image,image-measured}.sh` | ⬜ inc. 4–5 | new | not stubs-that-lie: `deploy --driver ramdisk` today **refuses and names the build step** |
+| `examples/metal-as-a-service/drivers/verify-lib.sh` | ✅ inc. 3 | *(unplanned, added)* | the F2 gate — OpenSSL CMS sign/verify in `netboot/sign-payload.sh`'s exact format. Not foreseen as a separate file; it is shared by every driver |
+| `examples/metal-as-a-service/tests/mock{,-bmc}.sh` | ✅ inc. 1, 3 | *(unplanned, added)* | the two injectable seams made concrete — a mock BMC and a mock driver. **These are why the suite is headless**, and they are the reason `MAAS_BMC`/`MAAS_DRIVER_DIR` exist |
+| `examples/metal-as-a-service/lib/{fleet,metadata}.py` | ✅ inc. 1–2 | *(unplanned, added)* | stdlib TOML projector for `fleet.toml`; the NoCloud + facts-sink service. Bash reads TOML through these rather than parsing it |
+| `examples/metal-as-a-service/ramdisk-catalog.toml` | ⬜ inc. 4 | new | the `--image` registry (RAM-INFRA + micro-linux + floppinux + busybox), each with its `active`-signal marker |
+| `examples/metal-as-a-service/milestones.toml` | ✅ inc. 2 | new | MAAS's milestone **profiles** (`probe`/`install`/`ramdisk`/`image`; regex → label → `at%`/`terminal`) — *consumed by `tools/control-pane`'s engine*, not a MAAS-local parser |
+| `examples/metal-as-a-service/create-fleet.sh` | ✅ inc. 1 | new | 3 libvirt domains + `vbmc add` each on 6230–6232 (wraps vbmc `create-node.sh`). `enroll` is headless; `up`/`down` are author-run (rootful) |
+| `examples/metal-as-a-service/fleet.toml` | ✅ inc. 1 | new | the fleet: hardware spec (count, disk/RAM, PXE network) **and** the declarative desired end-state — the latter is *declared* but not yet *consumed* (`apply`, inc. 6) |
+| `examples/metal-as-a-service/probe-init.sh` | ✅ inc. 2 | new | inspection initramfs `/init`: POST CPU/RAM/MAC, power off. **Port corrected during the build: `:8282`, not `:8181`** — the netboot nginx on :8181 is read-only static delivery, so a POST sink must be a separate listener |
+| `examples/metal-as-a-service/build-probe-initramfs.sh` | ✅ inc. 2 | *(unplanned, added)* | packs the probe into a bootable initramfs, rootless (`find \| cpio \| gzip`, static busybox) |
+| `examples/metal-as-a-service/rescue-init.sh` | ⬜ deferred | new | `rescue` recovery ramdisk (root-password-reset idioms), IPMI-driven. **The `rescue`/`unrescue` *states* shipped in inc. 1**; the ramdisk that makes them do something real is still to build — the same honest-stand-in treatment `ramdisk`/`image` get |
+| `examples/metal-as-a-service/metadata-serve.sh` | ✅ inc. 2 | new | per-node NoCloud user-data (hostname/SSH key) — DRY fleet from one image — **and** the introspection facts sink |
+| `examples/metal-as-a-service/tests/` | ✅ inc. 1–3 | new | 8 one-verdict smokes + EXIT-trap net: registry, state machine, `cleaning` guard, inspect/metadata, probe build, `watch`, deploy A/B rollback, verify-tamper |
+| *(Phase-6 surface)* | 🔶 | — | **provided by `tools/control-pane`** (PR #54; demoed in `examples/control-pane/`). Inventory + live bars are wired (via `watch`); the **actions panel** is step 7 |
+| `examples/metal-as-a-service/{README,MANUAL_TESTING}.md` | ✅ | new | concept + Ironic-state mapping + "divergences from real Ironic/MAAS" + verified transcripts |
+| `examples/metal-as-a-service/RUNBOOK.md` | ⬜ | new | not yet written — README + MANUAL_TESTING carry the tour today; worth adding at v1 completion |
+| `examples/00-INDEX.md` | ✅ | edit | one row (Phase-2/libvirt section, near the VirtualBMC row) |
+| `examples/learning-paths.toml` | ✅ | edit | routed into `zero-touch-provisioning` (after `virtualbmc-ipmi-lab`) + `close-to-the-metal`; checkpoint is a `verify_host` marker that **runs the suite**. Per-driver `active` checkpoints follow the drivers |
 
 The four source-lab families stay **standalone and unchanged**; the drivers
 *reference* them (and their vendored provenance) — no duplication.
@@ -320,30 +383,35 @@ The four source-lab families stay **standalone and unchanged**; the drivers
 
 ## 9. Build order (dependency-aware) & verified-vs-author-run
 
-1. **Fleet + registry + full state machine** — `create-fleet.sh` + `maas-lab.sh` with
+Steps 1–3 are **done and merged** (PRs #56/#57/#58 — see the build-status box at the top
+and the per-increment outcomes in [`examples/metal-as-a-service/PLAN.md`](examples/metal-as-a-service/PLAN.md));
+**step 4 is next**. The ✅/⬜ marks below are the same ledger, kept in place so the
+dependency reasoning that produced this order stays readable.
+
+1. ✅ **Fleet + registry + full state machine** — `create-fleet.sh` + `maas-lab.sh` with
    the state file, all transitions, `power`/`bootdev`, `cleaning` (guarded), `error`/
    `maintenance`, `rescue`. *State transitions fully headless-verifiable without an
    install.*
-2. **`inspect` probe + metadata service + `milestones.toml`/`watch`** — RAM probe fills
+2. ✅ **`inspect` probe + metadata service + `milestones.toml`/`watch`** — RAM probe fills
    schedulable facts; NoCloud user-data; the console-milestone parser lands here as the
    headless `maas-lab.sh watch <node>` (the same file the Phase-6 bars consume later).
    *Verifiable: `manageable → available` with real CPU/RAM facts; `watch` prints the
    milestone stream.*
-3. **`install` driver + the health-gated activation loop (§4b)** — sequence the PXE
+3. ✅ **`install` driver + the health-gated activation loop (§4b)** — sequence the PXE
    install into `deploy`, and build the **health-gate + A/B rollback** here (the first
    driver to reach `active` needs it). *End-to-end verifiable (underlying install ✅);
    the tamper→rollback drill is headless; a full multi-node parallel install may be
    author-run (host load).* 
-4. **`ramdisk` driver + catalog** — dispatch to RAM-INFRA / micro-linux / floppinux /
+4. ⬜ **`ramdisk` driver + catalog** — dispatch to RAM-INFRA / micro-linux / floppinux /
    busybox, signed + `imgverify`-gated, reusing step 3's health gate. *Fully verifiable
    in QEMU per catalog entry (each has an existing boot signature).* 
-5. **`image` driver** — dd golden image (Tier-B reuse), same health gate. *Verifiable
+5. ⬜ **`image` driver** — dd golden image (Tier-B reuse), same health gate. *Verifiable
    in QEMU.*
-6. **`apply` reconcile (v1.5, §3a)** — the declarative loop atop the imperative spine;
+6. ⬜ **`apply` reconcile (v1.5, §3a)** — the declarative loop atop the imperative spine;
    diff desired-vs-actual, issue the missing transitions, prove idempotent (second run
    = no-op). *Fully headless-verifiable (registry-level, no install needed to prove the
    diff logic).* 
-7. **Phase-6 surface** — **provided by `tools/control-pane`** (the repo tool; demoed in
+7. 🔶 **Phase-6 surface** — **provided by `tools/control-pane`** (the repo tool; demoed in
    `examples/control-pane/`): the live inventory source + actions panel + boot-progress bars;
    MAAS wires in as its first consumer (its nodes + `milestones.toml` profiles). *TUI render
    verifiable there; MAAS's live drive shown in its MANUAL_TESTING.*
@@ -417,3 +485,25 @@ power/bootdev/sol/insert-media/…`) over three interchangeable backends (`vbmcd
 Nothing here gates MAAS v1: MAAS v1 uses the ✅-proven `vbmcd` path (via the toolkit's
 `vbmcd` backend, or directly), and the toolkit + MAAS build independently — they wire
 together once both are green.
+
+**Status (2026-07-27) — the toolkit shipped, and MAAS already consumes it.**
+`examples/bmc-toolkit/` is built with all three backends: `vbmcd` (power/bootdev,
+author-run rootful), **`ipmi_sim` with REAL SOL** over RMCP+ (POC-A, verified headless
+and rootless), and **`redfish`/sushy-tools virtual media** (POC-B, `InsertMedia` → boot
+an ISO with no PXE, verified headless and rootless). Two consequences for this plan:
+
+- **The seam is live.** `maas-lab.sh` reaches every out-of-band effect through
+  `MAAS_BMC` → `bmc.sh <node> <verb>`, using a `fleet-bmc.toml` it regenerates from its
+  own registry on `enroll` — and that file **round-trips through the toolkit's real
+  `registry.py`** as part of MAAS's headless suite. `console`/`sol` (§5b) is already
+  routed through it, so pointing a node at the `ipmi_sim` backend yields *real* SOL with
+  no MAAS change.
+- **The 5th driver is unblocked.** `--driver virtual-media` (§11, second bullet) can be
+  built whenever we want it — the mechanism it needs is proven in POC-B. It stays a
+  fast-follow behind increments 4–6 only because the `ramdisk` catalog is the bigger
+  teaching payload.
+
+One toolkit finding *changes* an assumption above: `ipmi_sim` 1.0.13 returns `0xCC` for
+chassis control, so power and SOL are split across two backends (`vbmcd` powers,
+`ipmi_sim` does SOL). The capability model (`bmc.sh inspect --json`) makes that split
+invisible to MAAS — which is exactly what the contract was for.
