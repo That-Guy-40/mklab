@@ -1520,3 +1520,42 @@ distinguish "per-node script missing" from "per-node script aborted by a refusal
 dead-end banner used to claim no script had been written even when the refusal sat two
 lines above it. It now tells the reader to scroll up (`netboot-chain.sh emit-default`
 refreshes the docroot copy without sudo).
+
+## Items 2–4, the same evening: the lie that passes every gate, the loop that may heal, the installer that answers the chain (2026-07-28, late)
+
+**Item 3 — `bmc-misbound`** (oob layer). `MOCK_BMC_ACTUATES=<victim>` makes the mock
+BMC a faithful replica of the live port-collision: every power verb, `status`
+included, succeeds and answers truthfully — about the victim machine. That forced the
+real finding: *no through-the-seam check can ever catch this fault*, so the defence
+has to live where the machine speaks for itself. The chaos driver's health gate
+gained the console-bound check the real drivers already have (`CHAOS_CONSOLE_DIR`),
+the mock BMC writes a boot line on the console of whichever machine actually powers
+on, and the scenario grades **HALTED**: health fails on the subject's silent console,
+the rollback runs through the same lying seam and honestly fails too. Two controls
+run for real in `test-chaos-matrix.sh`: defence off → the registry records `active`
+on a machine that never powered (the LIED shape, demonstrated); defence on → the same
+deploy halts. Removing the scenario fails the matrix test by name.
+
+**Item 4 — bounded self-heal.** The two roads into `error` now carry different
+consequences: a failed deploy still holds for the operator; a `demoted_by_recheck`
+node (healthy at activation, died after) is retried by `apply` — `self-heal N/MAX`
+in the plan table, `apply self-heal N/MAX` in the history, bounded at
+`MAAS_APPLY_SELFHEAL_MAX` (2). The budget is spent by the loop and reset only by a
+human `retry`; entering a deploy consumes the marker, so a crash-looping image
+becomes a failed-deploy hold instead of an eternal heal. `test-apply-selfheal.sh`
+runs the heal, the bound, the hold-with-reason, the human reset, dry-run honesty,
+and the never-touch-a-failed-deploy control.
+
+**Item 2 — built, awaiting its live run.** `install-catalog.toml` (the per-driver
+catalog DEFERRED's smaller-items list asked for) + `install.sh stage` (signs
+kernel+initrd+**ks.cfg**; deliberately no `cmdline` file — that triple is the
+ramdisk driver's fingerprint, and each driver's staged shape is now its ownership
+claim) + a deploy that **answers the netboot chain** with a per-node script
+(`imgverify` for what the firmware fetches; stated gap: Anaconda fetches the
+kickstart itself and cannot imgverify it) + `run-e2e-install.sh`, whose preflight
+names the fix for every way the install could otherwise die as a silent timeout —
+including a sha-mismatched Anaconda stage2 (checked against `.treeinfo`, fetched
+fresh, never resumed) — and which rotates the append-only console before deploying
+(the RAM payload's stale `login:` would satisfy the health gate instantly) and
+powers the node off first (a deploy begins from rest; `power on` against a running
+RAM node never PXEs).

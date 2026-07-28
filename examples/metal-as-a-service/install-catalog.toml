@@ -1,0 +1,38 @@
+# install-catalog.toml — the `--image` registry for `deploy --driver install`.
+#
+# Sibling of ramdisk-catalog.toml, same contract, same reason: each entry is a
+# payload the install driver may claim as ITS OWN — an OS installer (Anaconda
+# kickstart / debian-installer preseed) that writes a disk and then powers the
+# node off. The catalog is what lets `describe <image>` answer the ownership
+# question positively instead of only refusing the one wrong shape it knows
+# (see DEFERRED.md, "install.sh's ownership test is narrow on purpose" — this
+# file is the close it named).
+#
+# THE CATALOG DOES NOT BUILD ANYTHING. The artifacts here are host-staged netboot
+# files (fetched once by the sibling lab), not repo builds — `install.sh stage`
+# copies and SIGNS what it finds, and refuses with the `build` command when it is
+# not there.
+#
+# Fields (shared with ramdisk-catalog.toml, plus `ks`):
+#   kernel/initrd  the installer's netboot pair (~ and $VARS expanded)
+#   ks             the kickstart/preseed the installer follows; staged and signed
+#                  beside the pair, served as maas/<image>/ks.cfg
+#   cmdline        appended to the kernel line of the per-node boot script.
+#                  `${next-server}` is an iPXE setting resolved ON THE NODE —
+#                  never expanded host-side (catalog.py leaves cmdline verbatim).
+#   health/marker  the activation gate: the INSTALLED OS's login prompt
+
+[meta]
+version = 1
+
+[[image]]
+name = "almalinux9"
+summary = "AlmaLinux 9 Anaconda text-mode kickstart install to disk (clearpart+autopart on vda; ends in poweroff — the completion signal the driver waits for)"
+lab = "examples/virtualbmc-ipmi-lab"
+build = "( cd examples/virtualbmc-ipmi-lab && PAYLOAD=almalinux ./setup-pxe-net.sh )   # writes ~/netboot/vbmc-almalinux.ks; vmlinuz+initrd.img are the AlmaLinux 9 netboot pair in ~/netboot; the Anaconda stage2 (~/netboot/images/install.img) is fetched by run-e2e-install.sh's preflight, sha-checked against .treeinfo"
+kernel = "~/netboot/vmlinuz"
+initrd = "~/netboot/initrd.img"
+ks = "~/netboot/vbmc-almalinux.ks"
+cmdline = "inst.stage2=http://${next-server}:8181/ inst.text console=ttyS0 ip=dhcp"
+health = "console"
+marker = "login:"

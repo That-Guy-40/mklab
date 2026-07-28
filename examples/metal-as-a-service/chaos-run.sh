@@ -206,6 +206,26 @@ scenario() {
         # hardware that no longer answers.
         ( export CHAOS_FAULT=none CHAOS_USE_BMC=1 MOCK_BMC_FAIL=power
           "$MAAS" deploy "$node" --driver chaos --image "$subject" ) >/dev/null 2>&1
+    elif [[ "$fault" == bmc-misbound ]]; then
+        # The OOB layer's nastiest shape — the second live run hit it by accident, when
+        # two BMCs defaulted to one port and the winner served IPMI for both: every
+        # power command SUCCEEDED and every answer was TRUE, about the wrong machine.
+        # `bmc-drop` announces itself; this one passes every through-the-seam check by
+        # construction, so the defence under test is the health gate's CONSOLE check —
+        # the console is bolted to the machine, not the BMC, and the subject's silent
+        # console is the one witness the mis-binding cannot fake. (lib/vbmc_check.py
+        # prevents the original accident at enroll time; this scenario asks what
+        # happens when a mis-binding gets past it anyway.)
+        mkdir -p "$WORK/consoles"
+        ( export CHAOS_FAULT=none CHAOS_USE_BMC=1 \
+                 CHAOS_CONSOLE_DIR="$WORK/consoles" MOCK_BMC_CONSOLE_DIR="$WORK/consoles" \
+                 MOCK_BMC_ACTUATES="victim-of-$node"
+          "$MAAS" deploy "$node" --driver chaos --image "$subject" ) >/dev/null 2>&1
+        # Prove the fault FIRED: the victim machine must really have been powered on
+        # behind its owner's back — that collateral is what makes this failure class
+        # expensive, and a scenario whose fault never actuated grades nothing.
+        [[ "$(cat "$MOCK_BMC_POWER_DIR/victim-of-$node.power" 2>/dev/null)" == on ]] \
+            || { echo "chaos-run: bmc-misbound fault did not fire — the victim machine was never powered on" >&2; exit 1; }
     else
         ( export CHAOS_FAULT="$fault"
           "$MAAS" deploy "$node" --driver chaos --image "$subject" ) >/dev/null 2>&1
@@ -385,6 +405,7 @@ scenario driver   "health-flap (had good)"   health-flap          1 "passes the 
 scenario artifact "artifact-gone (had good)" artifact-gone        1 "the signed payload vanished after staging"
 scenario registry "registry-readonly"        registry-readonly    1 "the state store goes read-only mid-deploy"
 scenario oob      "bmc-drop (had good)"      bmc-drop             1 "the BMC stops answering mid-deploy"
+scenario oob      "bmc-misbound (had good)"  bmc-misbound         1 "the BMC answers, truthfully, about a DIFFERENT machine"
 scenario process  "control-plane-killed"     control-plane-killed 1 "maas-lab.sh is killed mid-deploy"
 scenario_metadata
 scenario_console

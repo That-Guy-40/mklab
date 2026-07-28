@@ -60,6 +60,84 @@ note "no injected fault became a critical failure  ✓"
     || fail "REGRESSION: not one fault halted a node — the matrix is not reaching the unrecoverable-image cases (a fresh node with nothing to fall back to)"
 note "the ladder's rungs are all occupied: absorbed, degraded AND halted each happened  ✓"
 
+# ── 2b. the mis-bound BMC — the failure that passed every gate (DEFERRED item 3) ──
+# The second live run hit it by accident: two BMCs on one port, and the winner served
+# IPMI for both — four commands succeeded, every answer true about the wrong machine.
+# The scenario must stay in the matrix, in the oob layer, and stay non-critical.
+python3 - "$OUT" <<'PY' || fail "REGRESSION: the bmc-misbound scenario is missing from the oob layer, or graded critical. It is the only failure class this lab has seen that passed every gate on the way to failing (the vbmc port collision) — chaos-run.sh must keep injecting it, and the console-bound health check is what keeps it at an honest HALT"
+import json, sys
+rows = json.load(open(sys.argv[1]))["rows"]
+mb = [r for r in rows if "bmc-misbound" in r["scenario"]]
+assert mb, "no bmc-misbound row in the matrix"
+assert all(r["layer"] == "oob" for r in mb), "bmc-misbound is not in the oob layer"
+assert all(r["verdict"] not in ("STRANDED", "LIED", "STALE") for r in mb), \
+    "bmc-misbound graded critical: " + repr(mb)
+PY
+note "the mis-bound-BMC scenario is present in the oob layer and non-critical  ✓"
+
+# The seam itself, both directions. A mis-bound `power on` must actuate ONLY the
+# victim, the victim's console (not the subject's) must show the boot, and `status`
+# must answer truthfully about the victim — that truthfulness is what made the live
+# incident invisible.
+PDIR="$(mktemp -d)"; CONS="$(mktemp -d)"; _SANDBOXES+=("$PDIR" "$CONS")
+( MOCK_BMC_POWER_DIR="$PDIR" MOCK_BMC_CONSOLE_DIR="$CONS" MOCK_BMC_ACTUATES=victim \
+  "$TEST_DIR/mock-bmc.sh" subj power on ) >/dev/null \
+    || fail "mock-bmc refused a mis-bound 'power on' — the fault must succeed to be the fault"
+[[ "$(cat "$PDIR/victim.power" 2>/dev/null)" == on ]] \
+    || fail "REGRESSION: MOCK_BMC_ACTUATES=victim did not power on the victim machine"
+[[ -f "$PDIR/subj.power" ]] \
+    && fail "REGRESSION: a mis-bound 'power on' also touched the subject's own machine — the mis-binding must be a redirection, not a broadcast"
+grep -q 'victim: powered on' "$CONS/victim.log" 2>/dev/null \
+    || fail "REGRESSION: the victim powered on but its console shows no boot line — console-bound health gates would have no ground truth to stand on"
+[[ -f "$CONS/subj.log" ]] \
+    && fail "REGRESSION: the subject's console shows boot output although its machine never powered on — that is the exact lie the console exists to not tell"
+out="$( ( MOCK_BMC_POWER_DIR="$PDIR" MOCK_BMC_ACTUATES=victim "$TEST_DIR/mock-bmc.sh" subj power status ) )"
+grep -q 'Chassis Power is on' <<<"$out" \
+    || fail "REGRESSION: a mis-bound 'power status' did not answer truthfully about the victim (got: $out) — a status that fails or answers about the subject would make the fault announce itself, which is bmc-drop, not this"
+( MOCK_BMC_POWER_DIR="$PDIR" "$TEST_DIR/mock-bmc.sh" subj2 power on ) >/dev/null
+[[ "$(cat "$PDIR/subj2.power" 2>/dev/null)" == on ]] \
+    || fail "mock-bmc without MOCK_BMC_ACTUATES no longer powers the machine it was addressed for"
+note "MOCK_BMC_ACTUATES redirects power, status and console to the victim — and only then  ✓"
+
+# The console check is LOAD-BEARING — run the lie, don't reason about it. With the
+# check OFF, a deploy through a mis-bound BMC records `active` on a machine that
+# never powered on (the LIED shape, for real); with it ON, the same deploy halts.
+maas_env
+export MAAS_DRIVER_DIR="$LAB_DIR/drivers" MAAS_IMAGES_DIR="$SANDBOX/images"
+export MAAS_HEALTH_TIMEOUT=2 MAAS_POLL_INTERVAL=0
+export CHAOS_STATE="$SANDBOX/chaos" CHAOS_LOG="$SANDBOX/chaos.log"
+export MOCK_BMC_POWER_DIR="$SANDBOX/mb-power"
+mkdir -p "$MAAS_IMAGES_DIR/trust" "$CHAOS_STATE"
+"$LAB_DIR/drivers/verify-lib.sh" gen-keys --dir "$MAAS_IMAGES_DIR/trust" >/dev/null 2>&1 \
+    || skip "verify-lib gen-keys failed (openssl missing?)"
+mkdir -p "$MAAS_IMAGES_DIR/good-mb"
+printf 'PAYLOAD-good-mb\n' > "$MAAS_IMAGES_DIR/good-mb/payload.img"
+"$LAB_DIR/drivers/verify-lib.sh" sign "$MAAS_IMAGES_DIR/good-mb/payload.img" \
+    --keydir "$MAAS_IMAGES_DIR/trust" >/dev/null 2>&1 || fail "signing good-mb failed"
+
+( "$MAAS" enroll mb1 --bmc-port 6391 ) >/dev/null 2>&1 || fail "enroll mb1"
+( "$MAAS" manage mb1 ) >/dev/null 2>&1 && ( "$MAAS" provide mb1 ) >/dev/null 2>&1 \
+    || fail "could not drive mb1 to available"
+( export CHAOS_FAULT=none CHAOS_USE_BMC=1 MOCK_BMC_ACTUATES=mb-victim \
+         MOCK_BMC_CONSOLE_DIR="$SANDBOX/mb-consoles"
+  "$MAAS" deploy mb1 --driver chaos --image good-mb ) >/dev/null 2>&1
+[[ "$( ( "$MAAS" state mb1 ) 2>/dev/null )" == active ]] \
+    || fail "control: with the console check OFF the mis-bound deploy was expected to (wrongly) reach active — something else refused it, so this test is no longer isolating the console check"
+[[ -f "$MOCK_BMC_POWER_DIR/mb1.power" ]] \
+    && fail "control: mb1's own machine was powered — the mis-binding did not redirect"
+note "defence off: registry says active, the machine never powered on — the lie is real  ✓"
+
+( "$MAAS" enroll mb2 --bmc-port 6392 ) >/dev/null 2>&1 || fail "enroll mb2"
+( "$MAAS" manage mb2 ) >/dev/null 2>&1 && ( "$MAAS" provide mb2 ) >/dev/null 2>&1 \
+    || fail "could not drive mb2 to available"
+( export CHAOS_FAULT=none CHAOS_USE_BMC=1 MOCK_BMC_ACTUATES=mb-victim2 \
+         MOCK_BMC_CONSOLE_DIR="$SANDBOX/mb-consoles" CHAOS_CONSOLE_DIR="$SANDBOX/mb-consoles"
+  "$MAAS" deploy mb2 --driver chaos --image good-mb ) >/dev/null 2>&1 \
+    && fail "REGRESSION: a deploy through a mis-bound BMC SUCCEEDED with the console check ON — the machine never booted and health passed anyway"
+[[ "$( ( "$MAAS" state mb2 ) 2>/dev/null )" == error ]] \
+    || fail "REGRESSION: the console check refused the mis-bound deploy but the node ended in '$( ( "$MAAS" state mb2 ) 2>/dev/null )' instead of 'error'"
+note "defence on: the same deploy halts in error — the console check is load-bearing  ✓"
+
 # ── 3. the recovery verbs are selective, not blanket ────────────────────────
 # `abort` and `recheck` exist because this harness found the cases. A verb that
 # accepted ANY state would make the matrix pass while hiding the same bugs.

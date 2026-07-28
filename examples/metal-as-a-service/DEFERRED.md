@@ -3,14 +3,14 @@
 **Status as of 2026-07-28 (evening):** `run-e2e.sh` **PASSES** end to end on real libvirt
 domains **with the verifying firmware doing the checking** (`FLEET_NIC_ROM=1
 MAAS_IPXE_TRUSTS_CA=1`, no `E2E_NO_IMGVERIFY`; see [`PLAN.md`](PLAN.md), "PASS — the whole
-path"). `tests/run-all.sh` is **26 passed / 0 failed** and `chaos-run.sh` reports **0
+path"). `tests/run-all.sh` is **27 passed / 0 failed** and `chaos-run.sh` reports **0
 criticals**.
 
 This file exists because *that sentence is not the same as "the lab is finished,"* and the
-difference is easy to lose. Everything below is a gap that a passing run **cannot** reveal,
-each one already reached and understood — none of this is speculative future work, and
-none of it is blocked. They are in priority order, and the first one is worth more than
-the other two together.
+difference is easy to lose. Each numbered section below was a gap that a passing run
+**cannot** reveal; most are now closed, and each closed one records what closing it found
+— because every single one paid out a defect the green suite could not see. What remains
+open is stated at the top of "Where to start next".
 
 > **Item 1 has since been picked up, and it paid immediately.** The first time real
 > verifying firmware was pointed at this lab's payloads it refused them all, because the
@@ -24,25 +24,23 @@ an item that is quietly done is as misleading as one quietly abandoned.
 
 ---
 
-## Where to start next (as of 2026-07-28, evening — after the live run)
+## Where to start next (as of 2026-07-28, late — items 1, 3 and 4 done; item 2 built, awaiting its live run)
 
-**Item 1 is DONE, live, both halves** — see its section below for what the run proved
-and the three host-side defects it took to get there (an AppArmor gap, a var that had
-to ride the e2e, a split images-dir default). The signing-key move is done too: the
-store now lives under the state root, and every script asks `maas-lab.sh _images-dir`
-instead of re-deriving the path.
-
-**What remains is items 2–4 below**, in that order: the `install` driver on real
-hardware, the mis-bound-BMC chaos scenario, and whether `apply` should self-heal a
-node its own guard demoted.
-
-To re-run the full verified path — both vars on the **e2e itself**, because its
-phase 3 re-runs `create-fleet.sh up`, which redefines the domains, and
-`give_verifying_rom()` with `FLEET_NIC_ROM` unset silently attaches nothing:
+**The one thing outstanding is item 2's live run** — everything for it is staged and
+headlessly proven; only the ~20–30 minute Anaconda install itself has not run:
 
 ```bash
-FLEET_NIC_ROM=1 MAAS_IPXE_TRUSTS_CA=1 ./run-e2e.sh     # no E2E_NO_IMGVERIFY
+E2E_FETCH_STAGE2=1 MAAS_IPXE_TRUSTS_CA=1 ./run-e2e-install.sh
 ```
+
+(`E2E_FETCH_STAGE2=1` because the Anaconda stage2 was reclaimed in a disk cleanup —
+the preflight re-fetches it sha-checked against `.treeinfo`, never resumed. The fleet
+must be up with the verifying ROM; the script's preflight refuses with the fix for
+anything else it finds missing.)
+
+Item 1 (firmware-verified boot, live, both directions), item 3 (the mis-bound-BMC
+chaos scenario) and item 4 (bounded `apply` self-heal) are **done** — each section
+below records what landed and where the tests are.
 
 ---
 
@@ -138,102 +136,98 @@ profile), [`tests/test-rom-xml.sh`](tests/test-rom-xml.sh) (the domain rewrite),
 
 ---
 
-## 2. Only the `ramdisk` driver has touched a real node
+## 2. Only the `ramdisk` driver has touched a real node — 🔨 BUILT, ⬜ live run pending
 
-**What is unproven.** `run-e2e.sh` deploys `ramdisk` and nothing else. The `install`,
-`image`, and `image+measured` drivers have real headless tests that drive the real driver
-scripts — [`tests/test-install-driver.sh`](tests/test-install-driver.sh),
-[`tests/test-image-driver.sh`](tests/test-image-driver.sh),
-[`tests/test-image-measured-driver.sh`](tests/test-image-measured-driver.sh) — and that is
-genuinely more than a mock. It is still not a machine.
+**Status changed 2026-07-28 (late).** The build half is done and headlessly proven:
 
-**Why it matters.** This lab's own record argues the case: of the thirteen defects the live
-path found, **not one** was visible to the green headless suite. They lived in the plumbing
-the mocks stand in for — a baked `boot.ipxe`, a colliding BMC port, a self-symlinked
-busybox, a disk write lock, a kernel with no NIC driver, a wrongly-cut escape hatch. There
-is no reason to think the other three drivers are the exception, and one live finding
-already points at them: `install.sh` claimed *every* image as its own until a rollback
-handed it a RAM payload (see item 3's sibling in `PLAN.md`, "the eighth run").
+- **`install-catalog.toml`** — the install driver's own image registry (the shape
+  `ramdisk-catalog.toml` established), with `almalinux9`: the Anaconda netboot pair,
+  the lab kickstart (`clearpart`+`autopart` on vda, ends in `poweroff` — the
+  completion signal the driver waits for), and the `inst.stage2=` cmdline.
+- **`install.sh stage`** — stages kernel+initrd+**ks.cfg** into the signed store and
+  signs all three. Deliberately no `cmdline` file: that triple is the ramdisk
+  driver's ownership fingerprint, and each driver's staged shape is now its claim.
+- **`install.sh deploy` answers the netboot CHAIN** — it writes the per-node
+  `maas/<node>.ipxe` (with `imgverify` for kernel+initrd and `inst.ks=` pointing at
+  the served kickstart) exactly as the ramdisk driver does. Before this, an install
+  on the fleet network would have fallen through to the dead-end script and timed
+  out — the same hole the first two live ramdisk runs paid for. Honest gap, stated
+  in the generated script: the firmware attests the installer it boots; the
+  kickstart is fetched later by Anaconda, which cannot `imgverify` (its `.sig` is
+  staged and served; only the host-side gate checks it).
+- **`run-e2e-install.sh`** — the separate runner (so `run-e2e.sh` stays fast). Its
+  preflight catches, with the fix named: fleet down, chain absent, payload server
+  dead, legacy trust leaf, and a missing or **sha-mismatched Anaconda stage2**
+  (checked against `.treeinfo`; fetched fresh with `E2E_FETCH_STAGE2=1`, never
+  resumed — the `curl -C -` trap this repo already paid for once). Before the
+  deploy it **rotates the node's console log** (append-only across boots, and the
+  RAM payload's old `login:` would satisfy the health gate instantly — the cheap
+  check standing in for the real one) and **powers the node off** (a deploy begins
+  from rest, as on real metal; `power on` against a running RAM node never PXEs).
 
-**The concrete first step.** `install` is the higher-value of the two and the more
-expensive: it is the ~30-minute Anaconda path, already proven single-node by
-`../virtualbmc-ipmi-lab/run-finale.sh`. Rather than lengthen `run-e2e.sh`, add a **separate**
-`run-e2e-install.sh` (or an `E2E_DRIVER=install` mode) so the fast reconcile-loop run stays
-fast. `image` is cheaper — it needs a golden whole-disk raw staged, and its deployer-ramdisk
-path has never met real hardware at all.
+Coverage: [`tests/test-install-driver.sh`](tests/test-install-driver.sh) — the real
+driver through the mock BMC: chain script written with `imgverify` + `inst.ks`,
+payload served, `describe` accepts its own shape and refuses both the ramdisk shape
+and an unclaimed image, `stage` signs all three and names the build command when
+artifacts are missing.
 
-**Careful:** `fleet.toml` deliberately declares one payload for all three nodes now
-(see the comment in it). Do **not** re-introduce a heterogeneous spec without building the
-artifacts first — that made phase 9's convergence invariant unreachable and cost two live
-runs.
+**What remains — the live run** (see "Where to start next"). `image` and
+`image+measured` on real hardware remain open beyond that.
 
-**Done when:** a live run reaches `active` through `install` on a real domain, with the
-installed OS's own `login:` on the console — not the ramdisk's.
+**Done when:** a live run reaches `active` through `install` on a real domain, with
+the installed OS's own `login:` on the console — not the ramdisk's.
 
----
+## 3. A chaos scenario for a BMC that answers for a *different machine* — ✅ DONE (2026-07-28)
 
-## 3. A chaos scenario for a BMC that answers for a *different machine*
+**Landed as the `bmc-misbound` scenario** (oob layer, `chaos-run.sh`), injected via
+`MOCK_BMC_ACTUATES=<victim>` in [`tests/mock-bmc.sh`](tests/mock-bmc.sh): every power
+verb — `status` included — succeeds and answers **truthfully about the victim
+machine**, which is exactly what made the live incident invisible (four IPMI commands,
+every answer true, none about the machine in the record).
 
-**What is unproven.** `chaos-run.sh`'s `oob` layer covers a BMC that **stops** answering
-(`bmc-drop`). It does not cover a BMC that answers **wrongly but plausibly** — the failure
-the second live run hit by accident, when `alpine-node` and `node1` both defaulted to port
-6230 and the winner served IPMI for both.
+**The finding the scenario forced:** every through-the-seam check passes *by
+construction*, so no power poll can ever catch this. The defence that works is the
+health gate's **console** check — the console is bolted to the machine, not the BMC,
+and the subject's silent console is the one witness the mis-binding cannot fake. The
+chaos driver's health now carries that check (`CHAOS_CONSOLE_DIR`, mirroring what the
+real drivers' console-grep health gates already do), and the mock BMC writes a boot
+line to the console of whichever machine **actually** powers on.
 
-**Why it is the highest-value scenario outstanding.** It is the only failure this lab has
-seen that **passed every gate on the way to failing**. Four IPMI commands succeeded and
-returned true answers — about the wrong machine. Nothing was down, nothing errored, and the
-control plane's record and reality diverged silently: the **LIED** rung, reached without a
-single thing appearing broken. Compare `bmc-drop`, which announces itself immediately.
+**Where it grades:** HALTED — the deploy's health fails on the silent console, the
+A/B rollback runs through the same lying seam and honestly fails too, and the node
+lands in `error` with the reason recorded. The victim machine really is powered on
+behind its owner's back (the scenario asserts the collateral fired). Not ABSORBED —
+prevention lives at enroll time in [`lib/vbmc_check.py`](lib/vbmc_check.py); this
+scenario is what happens when a mis-binding gets past it anyway.
 
-**The concrete first step.** Teach the mock BMC to actuate *another* node's power state on
-request — an env like `MOCK_BMC_ACTUATES=<other-node>` — then add a scenario that points
-node A's BMC at node B and grades what the control plane does. The interesting question is
-whether anything **notices**: a deploy that powers on the wrong machine, health-gates the
-wrong console, and records success is STRANDED-or-worse, and the honest grade may well be
-critical on the first attempt. That is a finding, not a failure of the exercise.
+**Done when** (met): the scenario exists in the oob layer ✅, is graded after the
+recovery the system offers ✅, and
+[`tests/test-chaos-matrix.sh`](tests/test-chaos-matrix.sh) fails when it is removed ✅
+— plus two run-not-reasoned controls: with the console check **off**, the registry
+records `active` on a machine that never powered on (the LIED shape, demonstrated
+live in the test); with it **on**, the same deploy halts.
 
-**A defence already exists and is not the same thing.**
-[`lib/vbmc_check.py`](lib/vbmc_check.py) catches the *collision* before enroll (and refuses
-an empty `vbmc list`, so a dead vbmcd cannot read as "no problems"). That prevents the
-specific accident. It does not answer "what does the control plane do when the seam lies
-to it," which is what the chaos matrix is for.
+## 4. Should `apply` self-heal a node its own guard demoted? — ✅ ANSWERED AND BUILT (2026-07-28)
 
-**Done when:** `chaos-run.sh` has an `oob` scenario injecting a mis-bound BMC, its rung is
-graded after attempting the recovery the system offers, and
-[`tests/test-chaos-matrix.sh`](tests/test-chaos-matrix.sh) fails if the scenario is removed.
+**The answer: yes — for that kind of error only, bounded, on the record.** The two
+roads into `error` are now distinguishable and treated differently:
 
-**Evidence trail:** [`PLAN.md`](PLAN.md) — "What the SECOND live run found: the seam
-answered for the wrong machine", and `### Named, not yet covered`.
+- **A failed deploy** holds for the operator, exactly as before: the image is
+  unproven and a human should look. `apply` never touches it.
+- **A recheck demotion** (`cmd_recheck` writes a `demoted_by_recheck` marker) was
+  healthy at activation and died afterwards — what a reconcile loop exists to
+  repair. `apply` plans a `retry` for it: visible in the table as
+  `self-heal N/MAX`, recorded in the node's history as `apply self-heal N/MAX`.
+- **The bound** (`MAAS_APPLY_SELFHEAL_MAX`, default 2) is the mask-guard: a node
+  that dies after every heal ends up HELD with `self-heal budget spent` in the
+  table, not absorbed by the loop forever. Only a **human** `retry` resets the
+  budget (the operator's semantics); the loop's own attempts spend it.
+- **Entering a deploy consumes the marker**, so a heal whose redeploy fails becomes
+  a failed-deploy hold — a crash-looping image cannot be self-healed repeatedly.
 
----
-
-## 4. Should `apply` self-heal a node its own guard demoted?
-
-**The tension.** `apply`'s pre-flight re-checks every node claiming `active` and demotes
-one that is no longer healthy to `error` — the anti-STALE guard, and it works. `apply` then
-**holds** `error` nodes for the operator, by design. The consequence: the reconcile loop
-cannot recover a node it demoted *itself*. Every stale node needs a manual `retry`, and a
-fleet drifts toward held-and-ignored one node at a time.
-
-**Why it is not obviously a bug.** An `error` state that wants a human is Ironic-faithful,
-and "the loop quietly redeployed the thing that just died" is its own failure mode — the
-second-order version of a crash loop.
-
-**Why it still deserves an answer.** The two paths into `error` are not the same thing. A
-node that **failed a deploy** has an unproven image and a human should look. A node
-**demoted by the pre-flight** was healthy at activation and stopped afterwards — which is
-often exactly what a reconcile loop exists to repair. Distinguishing them (a
-`demoted_by_recheck` marker, say, and a bounded number of self-heal attempts before it
-becomes a true hold) is the shape of the fix.
-
-**Careful:** whatever this becomes must not be able to mask a node that fails immediately
-and repeatedly. Bound it, record each attempt in the history, and make the bound visible in
-the `apply` table.
-
-**Evidence trail:** [`PLAN.md`](PLAN.md) — "The eleventh run", where a passing run reported
-a fixed point over a fleet that was two-thirds held for exactly this reason.
-
----
+Coverage: [`tests/test-apply-selfheal.sh`](tests/test-apply-selfheal.sh) — heal,
+bound, hold-with-reason, human reset, dry-run honesty (plans the heal, writes
+nothing), and the negative control that a failed-deploy error is never touched.
 
 ## Smaller, still open
 
@@ -255,10 +249,10 @@ a fixed point over a fleet that was two-thirds held for exactly this reason.
   script under test*. Measured harmless today (the registry's history is byte-identical
   across a run); worth making structural.
 
-- **`install.sh`'s ownership test is narrow on purpose.** `describe <image>` refuses a
-  payload staged as kernel+initrd+cmdline (the triple only `ramdisk.sh stage` writes),
-  which catches the rollback case that actually happened. It does **not** catch an image no
-  driver has staged, or a third driver's. A per-driver catalog — the shape
-  `ramdisk-catalog.toml` already establishes — would close it properly.
+- ~~**`install.sh`'s ownership test is narrow on purpose.**~~ **CLOSED 2026-07-28** by
+  [`install-catalog.toml`](install-catalog.toml) — the per-driver catalog this item
+  asked for. `describe` now answers positively (cataloged, or staged in the driver's
+  own kernel+initrd+ks.cfg shape) and refuses both the ramdisk triple **and** an
+  image no driver has claimed.
 - **`describe` is asked of every driver by `gate`, but only `ramdisk` and `install`
   answer meaningfully.** `image` and `image+measured` still accept any image name.

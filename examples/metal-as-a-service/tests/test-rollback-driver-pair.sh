@@ -162,8 +162,13 @@ fi
 note "the real install driver refuses a ramdisk-staged payload  ✓"
 
 # …and still accepts one that is not. Without this, §6 would pass on a driver that
-# refuses everything, which would break every real install.
-INST="$MAAS_IMAGES_DIR/instish"; mkdir -p "$INST"; printf 'payload\n' > "$INST/payload.img"
+# refuses everything, which would break every real install. "One that is not" now
+# means the install driver's OWN staged shape (kernel+initrd+ks.cfg — what its
+# `stage` verb writes): since install-catalog.toml landed, describe answers the
+# ownership question positively, and an image staged in NOBODY's shape is refused
+# too — that refusal has its own control in test-install-driver.sh §7.
+INST="$MAAS_IMAGES_DIR/instish"; mkdir -p "$INST"
+printf 'k\n' > "$INST/kernel"; printf 'i\n' > "$INST/initrd"; printf 'poweroff\n' > "$INST/ks.cfg"
 MAAS_IMAGES_DIR="$MAAS_IMAGES_DIR" MAAS_STATE="$MAAS_STATE" \
     "$LAB_DIR/drivers/install.sh" describe instish >/dev/null 2>&1 \
     || fail "control: the install driver now refuses an image that is NOT a RAM payload — it would refuse every real install"

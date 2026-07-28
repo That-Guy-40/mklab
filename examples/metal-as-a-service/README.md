@@ -259,6 +259,7 @@ lifecycle runs with no libvirt at all.
 | [`lib/rom_xml.py`](lib/rom_xml.py) | attach that ROM to every `<interface>` of a domain (idempotent) |
 | [`lib/vbmc_check.py`](lib/vbmc_check.py) | refuse a fleet whose BMC ports are answered by another machine |
 | [`run-e2e.sh`](run-e2e.sh) | the one-shot live driver: 10 phases, real domains, real BMCs, real netboot (author-run) |
+| [`run-e2e-install.sh`](run-e2e-install.sh) | the INSTALL-driver live path (separate so the fast run stays fast): Anaconda via the chain → kickstart → poweroff → disk boot → login (author-run, ~25 min) |
 | [`fleet.toml`](fleet.toml) | the 3-node fleet spec (hardware + declared end-state for `apply`) |
 | [`lib/fleet.py`](lib/fleet.py) | stdlib TOML reader projecting `fleet.toml` for bash |
 | [`probe-init.sh`](probe-init.sh) | the inspection probe's busybox `/init` (gathers facts, POSTs, powers off) |
@@ -271,10 +272,11 @@ lifecycle runs with no libvirt at all.
 | [`drivers/image-measured.sh`](drivers/image-measured.sh) | `image` + a **TPM attestation gate** — activates only on a signed quote matching the image's PCR policy (swtpm: mechanism, **not** a trust anchor) |
 | [`drivers/chaos.sh`](drivers/chaos.sh) + [`chaos-run.sh`](chaos-run.sh) | a driver that fails on purpose, and the matrix that grades how the control plane falls across all five layers |
 | [`ramdisk-catalog.toml`](ramdisk-catalog.toml) + [`lib/catalog.py`](lib/catalog.py) | the `--image` registry (RAM-INFRA trio · micro-linux · floppinux · busybox) and its validating reader |
+| [`install-catalog.toml`](install-catalog.toml) | the install driver's own image registry (AlmaLinux 9 Anaconda kickstart) — each driver's staged shape is its ownership claim |
 | [`drivers/verify-lib.sh`](drivers/verify-lib.sh) | the F2 signature gate (OpenSSL CMS sign/verify, iPXE-`imgverify` format) |
-| [`tests/`](tests/) | 19 headless smokes: state-machine, cleaning-guard, registry, inspect-metadata, watch, probe-build, deploy-rollback, verify-tamper, install-driver, ramdisk-driver, image-driver, image-measured-driver, apply-reconcile, region-and-scheduler, probe-boot-script, bmc-binding-check, e2e-reaps-sink, e2e-fails-fast, chaos-matrix (+ `mock-bmc.sh`, `mock.sh` driver, `run-all.sh`) |
+| [`tests/`](tests/) | 27 headless smokes: state-machine, cleaning-guard, registry, inspect-metadata, watch, probe-build, deploy-rollback, verify-tamper, install-driver, ramdisk-driver, image-driver, image-measured-driver, apply-reconcile, apply-selfheal, region-and-scheduler, probe-boot-script, bmc-binding-check, e2e-reaps-sink, e2e-fails-fast, chaos-matrix (+ `mock-bmc.sh`, `mock.sh` driver, `run-all.sh`) |
 | [`PLAN.md`](PLAN.md) | the increment ladder + each increment's outcome |
-| [`DEFERRED.md`](DEFERRED.md) | **what a green run still does not prove** — the three gaps a passing run cannot reveal, each with its evidence trail and first step |
+| [`DEFERRED.md`](DEFERRED.md) | **what a green run still does not prove** — the gaps a passing run cannot reveal; most now closed, each recording the defect closing it found |
 | [`MANUAL_TESTING.md`](MANUAL_TESTING.md) | verified transcripts (headless) + the author-run bring-up handoff |
 
 ## Prereqs
