@@ -812,6 +812,15 @@ sudo -v && ./run-e2e.sh         # the real run — never stops to ask mid-boot
 ./run-e2e.sh --down             # tear the fleet down
 ```
 
+**On firmware that cannot verify signatures** (QEMU's stock iPXE ROM — the default for
+a libvirt virtio NIC — has no `IMAGE_TRUST_CMD`), the run refuses before the deploy
+rather than booting into a silence. One flag runs everything with the **on-node** half
+of F2 skipped; the host-side gate still runs at `verify`:
+
+```bash
+E2E_UNSIGNED=1 ./run-e2e.sh
+```
+
 **Success signature:**
 
 ```

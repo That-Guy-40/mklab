@@ -178,6 +178,12 @@ run "$HERE/drivers/ramdisk.sh" stage "$IMAGE"
 # So this is checked here, loudly, rather than discovered as a 120s silence.
 if [[ $DRY == 0 ]]; then
     if [[ -f "$MAAS_IMAGES_DIR/$IMAGE/kernel.sig" && "${MAAS_IPXE_TRUSTS_CA:-0}" != 1 ]]; then
+      if [[ "${E2E_UNSIGNED:-0}" == 1 ]]; then
+        info "E2E_UNSIGNED=1: re-staging '$IMAGE' without signatures, so the boot script"
+        info "carries no imgverify. The ON-NODE half of F2 is SKIPPED for this run; the"
+        info "host-side gate still runs at 'verify'. Everything else is exercised."
+        run "$HERE/drivers/ramdisk.sh" stage "$IMAGE" --unsigned
+      else
         die "'$IMAGE' is signed, so the boot script will carry \`imgverify\` — and nothing
 here has established that this fleet's firmware can honour it. QEMU's stock iPXE ROM has no
 IMAGE_TRUST_CMD and no serial console, so it fails the command and boots nothing, silently.
@@ -189,7 +195,10 @@ Either:
   * or deploy an UNSIGNED payload to exercise the rest of the path:
         rm $MAAS_IMAGES_DIR/$IMAGE/kernel.sig $MAAS_IMAGES_DIR/$IMAGE/initrd.sig
     (the host-side F2 gate still runs at \`verify\`; only the on-node half is skipped)
+  * or run the whole path with the on-node half skipped, in one step:
+        E2E_UNSIGNED=1 $0
 Refusing rather than booting into a silence that looks like a dead payload."
+      fi
     fi
 fi
 step "[8/10] deploy: verify -> netboot into RAM -> health gate -> active"

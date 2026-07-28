@@ -130,7 +130,21 @@ describe)
 # something to check. Separate from `deploy` on purpose: staging touches no hardware
 # and is the step you re-run after rebuilding a payload.
 stage)
-    image="${1:?ramdisk stage <image>}"
+    image="${1:?ramdisk stage <image> [--unsigned]}"; shift
+    unsigned=0
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            # --unsigned: stage WITHOUT signing, and remove any stale signatures.
+            # Not a convenience — it is the only honest way to run the live path on
+            # firmware that cannot verify. QEMU's stock iPXE ROM has no
+            # IMAGE_TRUST_CMD, so an `imgverify` line makes it abort and boot nothing,
+            # with no output on serial. Deploying unsigned there exercises the whole
+            # path with the HOST-side F2 gate still running at `verify`; leaving stale
+            # .sig files behind would silently re-arm the on-node half.
+            --unsigned) unsigned=1; shift ;;
+            *) die "stage: unknown option '$1' (usage: stage <image> [--unsigned])" ;;
+        esac
+    done
     cat_get "$image"
     : "${MAAS_IMAGES_DIR:?ramdisk stage: MAAS_IMAGES_DIR not set}"
     k="$(abspath "$IMG_KERNEL")"; i="$(abspath "$IMG_INITRD")"
@@ -149,7 +163,13 @@ EOF
     cp -f "$k" "$dir/kernel" || die "could not stage the kernel"
     cp -f "$i" "$dir/initrd" || die "could not stage the initramfs"
     printf '%s\n' "$IMG_CMDLINE" > "$dir/cmdline"
-    if [[ -d "$MAAS_IMAGES_DIR/trust" ]]; then
+    if [[ $unsigned == 1 ]]; then
+        rm -f "$dir/kernel.sig" "$dir/initrd.sig"
+        echo "ramdisk: staged '$image' into $dir — DELIBERATELY UNSIGNED (--unsigned)." >&2
+        echo "ramdisk: the boot script will carry no 'imgverify', so the ON-NODE half of F2" >&2
+        echo "ramdisk: is skipped. The host-side gate still runs at 'verify'; deploy with" >&2
+        echo "ramdisk: --no-verify only if you also mean to skip that." >&2
+    elif [[ -d "$MAAS_IMAGES_DIR/trust" ]]; then
         "$HERE/verify-lib.sh" sign "$dir/kernel" --keydir "$MAAS_IMAGES_DIR/trust" >/dev/null \
             || die "signing the kernel failed"
         "$HERE/verify-lib.sh" sign "$dir/initrd" --keydir "$MAAS_IMAGES_DIR/trust" >/dev/null \
