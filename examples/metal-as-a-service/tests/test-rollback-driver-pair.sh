@@ -62,7 +62,7 @@ case "\$verb" in
   deploy)   log "deploy \$1 \$2 \$3"
             [[ "\${DEPLOY_FAIL:-}" == "\$2" ]] && exit 1; exit 0 ;;
   health)   log "health \$1 \$2"
-            [[ "\${HEALTH_FAIL:-}" == "\$2" ]] && exit 1; exit 0 ;;
+            case " \${HEALTH_FAIL:-} " in *" \$2 "*) exit 1 ;; esac; exit 0 ;;
   *) exit 2 ;;
 esac
 EOS
@@ -134,7 +134,12 @@ grep -qE '^drv[AB] deploy node2 a1 previous$' "$DRV_LOG" \
     && fail "REGRESSION: the node was rolled back through a driver that did not deploy its previous image, after the recorded one turned out to be missing. Guessing a driver is the bug, not the fix"
 grep -qi 'ghost' <<<"$out" \
     || fail "the refusal does not name the missing driver ('ghost'), so the operator cannot tell what is wrong or how to fix it"
-note "an unresolvable previous driver refuses the rollback and errors honestly, naming it  ✓"
+# …and the refusal must not corrupt the record on its way out: the (driver,image)
+# pair still names the LAST deployment, not the one that just failed.
+d="$(_show node2 driver)"
+[[ "$d" == ghost ]] \
+    || fail "REGRESSION: the FAILED deploy overwrote node2's driver field to '$d' — the registry now pairs it with image '$(_show node2 image)', a deployment that never happened. The pair must only ever be written when a gate passes"
+note "an unresolvable previous driver refuses the rollback and errors honestly, naming it — and leaves the recorded pair alone  ✓"
 
 # ── 5. gate asks 'describe' — a driver never sees an image it does not own ──
 # The backstop for everything above: even if the control plane picked wrong, the driver
@@ -174,4 +179,31 @@ MAAS_IMAGES_DIR="$MAAS_IMAGES_DIR" MAAS_STATE="$MAAS_STATE" \
     || fail "control: the install driver now refuses an image that is NOT a RAM payload — it would refuse every real install"
 note "control: it still accepts a non-RAM image, so the refusal is specific  ✓"
 
-pass "an A/B rollback restores the driver with the image and records the pair that is actually running; an unresolvable previous driver refuses the rollback instead of guessing; and every deploy asks the driver whether the image is its own before touching hardware"
+# ── 7. a failed deploy must not poison the NEXT deploy's rollback pair ──────
+# The live shape (2026-07-28, the install run): two deploys failed, each leaving
+# `driver` overwritten while `image` kept the old value; the eventual SUCCESS then
+# captured that mismatch as its rollback pair — the registry said
+# `previous: install/micro-linux-x86_64`, a pair that never existed.
+prep node4 6233
+( "$MAAS" deploy node4 --driver drvA --image a1 ) >/dev/null 2>&1 || fail "seed node4 on drvA/a1"
+# both slots bad: the new image fails AND the rollback to a1 fails — tonight's path
+: > "$DRV_LOG"
+HEALTH_FAIL="b1 a1" "$MAAS" deploy node4 --driver drvB --image b1 >/dev/null 2>&1
+assert_state node4 error
+d="$(_show node4 driver)"; i="$(_show node4 image)"
+[[ "$d" == drvA && "$i" == a1 ]] \
+    || fail "REGRESSION: after a both-slots-bad failure the registry pairs driver='$d' with image='$i' (want drvA/a1, the last deployment a gate actually passed). This mismatch is the seed of the impossible rollback pair"
+# recover and deploy successfully — the recorded PREVIOUS pair must be the real one
+( "$MAAS" retry node4 ) >/dev/null 2>&1 && ( "$MAAS" provide node4 ) >/dev/null 2>&1 \
+    || fail "could not recover node4 to available"
+( "$MAAS" deploy node4 --driver drvA --image a2 ) >/dev/null 2>&1 \
+    || fail "the recovery deploy of drvA/a2 failed"
+assert_state node4 active
+pd="$(_show node4 previous_driver)"; pi="$(_show node4 previous_image)"
+[[ "$pd" == drvA && "$pi" == a1 ]] \
+    || fail "REGRESSION: the successful deploy recorded previous='$pd/$pi' (want drvA/a1). The live run wrote 'previous: install/micro-linux-x86_64' — a rollback pair that never existed, and the next rollback would be refused (or worse, believed)"
+[[ -f "$MAAS_STATE/node4/deploying_driver" ]] \
+    && fail "the transient deploying_driver survived a finished deploy — watch would render a stale in-flight profile forever"
+note "a failed deploy leaves the pair alone; the next success records the REAL previous pair  ✓"
+
+pass "an A/B rollback restores the driver with the image and records the pair that is actually running; a FAILED deploy never rewrites the pair (so the next success records a rollback pair that really existed); an unresolvable previous driver refuses instead of guessing; and every deploy asks the driver whether the image is its own before touching hardware"

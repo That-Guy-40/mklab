@@ -263,16 +263,19 @@ nothing), and the negative control that a failed-deploy error is never touched.
   script under test*. Measured harmless today (the registry's history is byte-identical
   across a run); worth making structural.
 
-- **A failed deploy corrupts the recorded rollback pair.** `cmd_deploy` writes
-  `driver` before its gate runs; when the gate fails the field keeps the NEW driver
-  while `image` keeps the old one. Live evidence (2026-07-28): after two failed
-  install attempts, the successful deploy recorded
-  `previous: install/micro-linux-x86_64` — a pair that never existed (`micro-linux`
-  was the ramdisk driver's, on a domain that had since been rebuilt). The
-  describe-ownership guard would refuse that rollback, so the failure is contained —
-  but the record is wrong, and the fix shape (restore the driver field when a gate
-  fails, or write it only on success) needs care around the rollback branch's own
-  reads.
+- ~~**A failed deploy corrupts the recorded rollback pair.**~~ **DONE 2026-07-28
+  (night)**, made structural rather than patched per-branch: the `(driver, image)`
+  pair is now **only ever written when a gate passes** — a failed deploy leaves the
+  last verified pair untouched, so there is no pre-gate write for a future failure
+  branch to forget to undo. The in-flight driver lives in a transient
+  `deploying_driver` (written at deploy start, removed on every exit), which is
+  what `watch` renders while state is `deploying` — so mid-deploy progress still
+  shows what is actually booting. Regression-locked in
+  [`tests/test-rollback-driver-pair.sh`](tests/test-rollback-driver-pair.sh) §4+§7,
+  written red-first: §7 replays the live incident (both-slots-bad failure, then a
+  successful redeploy) and asserts the recorded previous pair is the real one. The
+  live registry's own lie (`previous: install/micro-linux-x86_64` on node1) was
+  cleared by hand, with the why appended to the node's history.
 - **`image` and `image+measured` have never touched a real node.** The install
   driver's live run (item 2) proves the pattern; these two still have only their
   headless real-driver tests. `image` needs a golden whole-disk raw staged first.
