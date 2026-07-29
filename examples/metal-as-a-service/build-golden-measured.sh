@@ -11,15 +11,28 @@
 # deploy on a payload that cannot read a PCR would be theatre.
 #
 # So this image is assembled from parts whose measurement is PROVEN, not assumed:
-#   kernel     the AlmaLinux 9 netboot vmlinuz (~/netboot/vmlinuz) — TPM support
-#              built IN (a busybox init read PCR0 straight out of
-#              /sys/class/tpm/tpm0/pcr-sha256/ under swtpm). NOTE this is NOT the
-#              kernel the deployer ramdisk uses: that one is micro-linux's, which
-#              has no TPM at all. They are different kernels with complementary
-#              gaps, and this comment used to claim they were the same one.
-#   NIC drvs   failover/net_failover/virtio_net, lifted from the matching AlmaLinux
-#              netboot initrd — this kernel keeps them modular and expects dracut,
-#              so without them the node measures perfectly and cannot report it
+#   kernel     micro-linux's own hand-built kernel (micro-linux/out/x86_64/kernel),
+#              which now has BOTH halves compiled in: TCG_TPM/TCG_TIS/TCG_CRB=y so
+#              it can read /sys/class/tpm/tpm0/pcr-sha256/, and VIRTIO_NET/E1000=y
+#              so it can say what it read. This is the SAME kernel the deployer
+#              ramdisk uses — one kernel, both jobs.
+#
+#              It was not always so. This image used to borrow AlmaLinux 9's netboot
+#              vmlinuz, because the two kernels available had complementary gaps:
+#              AlmaLinux had the TPM built in and its NIC drivers modular, while
+#              micro-linux had the NICs built in and no TPM at all. A node that
+#              measures perfectly and cannot report it is worth as little as one
+#              that cannot measure, so this script used to lift
+#              failover/net_failover/virtio_net out of the matching AlmaLinux initrd
+#              and carry them in — a bridge between two half-kernels, with a version
+#              guard because a module built for another kernel fails `insmod:
+#              invalid module format` and lands the node right back at "no network
+#              interface", one layer down and just as silent.
+#
+#              Building TCG_TPM=y into micro-linux (see micro-linux/mlbuild.sh, and
+#              note =y is not a preference: an initramfs loads no modules, so a
+#              modular TPM is indistinguishable from none) collapsed both halves
+#              into one kernel and deleted the bridge entirely.
 #   initramfs  measure-init.sh + busybox + a real openssl (busybox has no crypto,
 #              and the quote must be signed ON the node that measured it)
 #   boot       a UKI (kernel+initramfs+cmdline in ONE PE binary, via ukify) on an
@@ -51,7 +64,7 @@ HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 MAAS="$HERE/maas-lab.sh"
 
 OUT="${MAAS_ARTIFACTS:-$HOME/.cache/lab-create/maas}/golden-measured.raw"
-KERNEL="${MAAS_MEASURED_KERNEL:-$HOME/netboot/vmlinuz}"
+KERNEL="${MAAS_MEASURED_KERNEL:-$HERE/../../micro-linux/out/x86_64/kernel}"
 MD_URL="${MAAS_MD_URL:-}"
 TRUST=""
 SIZE_MB=64
@@ -99,81 +112,35 @@ SSL="$(command -v openssl)" || die "openssl not found on the host"
 mapfile -t LIBS < <(ldd "$SSL" 2>/dev/null | sed -nE 's@.*=> (/[^ ]+).*@\1@p'; ldd "$SSL" 2>/dev/null | sed -nE 's@^\s*(/lib64/ld-linux[^ ]*).*@\1@p')
 [[ ${#LIBS[@]} -gt 0 ]] || die "could not resolve openssl's libraries with ldd"
 
-# ── the NIC drivers, without which the quote never leaves the machine ───────
-# FOUND LIVE 2026-07-29. This image measured 10 real PCRs, signed the quote on the
+# ── the NIC drivers: built into the kernel, nothing to carry ────────────────
+# There is deliberately no module handling here any more, and the reason is worth
+# keeping. On 2026-07-29 this image measured 10 real PCRs, signed the quote on the
 # node, and then could not deliver it:
 #
 #     udhcpc: SIOCGIFINDEX: No such device
 #     MAAS-ATTEST: identity: mac= addr=none
 #
-# The kernel had no network interface at all — it registers every network protocol
-# family and not one NIC driver. AlmaLinux keeps them as MODULES for dracut to load,
-# and this initramfs is busybox with no modules in it. The two kernels available here
-# each have exactly half of what a measured node needs:
+# The kernel had no network interface at all. At that point the two kernels on hand
+# each had exactly half of what a measured node needs:
 #
-#     AlmaLinux 9.8 netboot   TPM built in   NIC drivers modular    <- this one
-#     micro-linux 6.12.30     no TPM at all  NIC drivers built in
+#     AlmaLinux 9.8 netboot   TPM built in    NIC drivers modular
+#     micro-linux 6.12.30     no TPM at all   NIC drivers built in
 #
-# So the TPM decides the kernel (a payload that cannot read a PCR measures nothing —
-# see the header), and the modules have to be carried in. They come out of the same
-# AlmaLinux netboot initrd the install driver already uses, which is where the
-# matching build of them lives.
+# so this script borrowed AlmaLinux's kernel and lifted failover/net_failover/
+# virtio_net out of the matching netboot initrd, guarded by a kernel-version check
+# (a module built for another kernel fails `insmod: invalid module format` and lands
+# the node right back at "no network interface", one layer down and just as silent).
 #
-# THE VERSION CHECK IS NOT OPTIONAL. A module built for a different kernel fails with
-# `insmod: invalid module format` inside a busybox initramfs, which lands the node
-# right back at "no network interface" — the same silent symptom, one layer down. So
-# the kernel's own version string is read out of the bzImage and compared.
-MODSRC="${MAAS_MEASURED_MODULES:-$HOME/netboot/initrd.img}"
-# failover <- net_failover <- virtio_net, per the initrd's own modules.dep. virtio_pci
-# and virtio are NOT modules here (they are built in, which is why virtio_blk works).
-NIC_MODULES=(kernel/net/core/failover.ko.xz
-             kernel/drivers/net/net_failover.ko.xz
-             kernel/drivers/net/virtio_net.ko.xz)
-MODDIR="$(dirname "$OUT")/nic-modules"
-rm -rf "$MODDIR"; mkdir -p "$MODDIR"
-
-kver="$(file -b "$KERNEL" 2>/dev/null | sed -nE 's/.*version ([^ ]+) .*/\1/p')"
-[[ -n "$kver" ]] || die "could not read a version string out of $KERNEL — refusing to guess
-which kernel modules belong with it (a mismatch fails as 'invalid module format' at boot,
-and the node then has no network with no useful message)."
-
-[[ -f "$MODSRC" ]] || die "no module source at $MODSRC.
-The measured image's kernel ($kver) needs virtio_net, which AlmaLinux ships as a module.
-Point MAAS_MEASURED_MODULES= at the matching netboot initrd, or stage it:
-  run-e2e-install.sh's preflight fetches the AlmaLinux netboot pair."
-
-modwork="$(mktemp -d)"
-trap 'rm -rf "$modwork"' EXIT
-( cd "$modwork" && { zstd -dc "$MODSRC" 2>/dev/null || xzcat "$MODSRC" 2>/dev/null \
-    || zcat "$MODSRC" 2>/dev/null || cat "$MODSRC"; } | cpio -idm --no-absolute-filenames 2>/dev/null )
-modroot="$(find "$modwork" -type d -name "$kver" -path '*modules*' 2>/dev/null | head -1)"
-[[ -n "$modroot" ]] || die "$MODSRC carries no modules for kernel $kver.
-Available: $(find "$modwork" -maxdepth 4 -type d -path '*lib/modules/*' -printf '%f ' 2>/dev/null || echo none)
-A module built for another kernel would fail 'insmod: invalid module format' and the node
-would have no network — the exact failure this check exists to prevent."
-
-mod_files=()
-for rel in "${NIC_MODULES[@]}"; do
-    src="$modroot/$rel"
-    [[ -f "$src" ]] || die "$MODSRC has no $rel for kernel $kver — the measured node could not bring up its NIC"
-    base="$(basename "$rel" .xz)"
-    if [[ "$rel" == *.xz ]]; then
-        xzcat "$src" > "$MODDIR/$base" || die "could not decompress $src"
-    else
-        cp "$src" "$MODDIR/$base"
-    fi
-    mod_files+=("$base")
-done
-echo "  - NIC modules for $kver: ${mod_files[*]} (from $MODSRC)" >&2
+# micro-linux now builds TCG_TPM/TCG_TIS/TCG_CRB=y alongside VIRTIO_NET/E1000=y, so
+# one kernel does both jobs and the bridge is gone: no MODSRC, no version guard, no
+# nic-load-order, no insmod. If a future kernel makes NICs modular again, the symptom
+# to recognise is the SIOCGIFINDEX line above — measure-init.sh still distinguishes
+# "no interface exists" from "an interface exists but got no lease", which is the
+# diagnosis that made this findable in the first place.
 
 # ── the initramfs ───────────────────────────────────────────────────────────
 INITRAMFS="$(dirname "$OUT")/measure-initramfs.cpio.gz"
 add_args=(--add "$SSL:/usr/bin/openssl")
-# Load order matters and is encoded in the filenames' order here; measure-init.sh
-# insmods /lib/modules/nic/* in the order listed in nic-load-order.
-for m in "${mod_files[@]}"; do add_args+=(--add "$MODDIR/$m:/lib/modules/nic/$m"); done
-printf '%s\n' "${mod_files[@]}" > "$MODDIR/nic-load-order"
-add_args+=(--add "$MODDIR/nic-load-order:/lib/modules/nic-load-order")
 for l in "${LIBS[@]}"; do add_args+=(--add "$l:$l"); done
 add_args+=(--add "$AKDIR/codesign.crt:/etc/attest/codesign.crt")
 add_args+=(--add "$AKDIR/codesign.key:/etc/attest/codesign.key")
@@ -215,15 +182,16 @@ mdir -i "$OUT" ::/EFI/BOOT/BOOTX64.EFI >/dev/null 2>&1 \
     || die "the built image has no /EFI/BOOT/BOOTX64.EFI — OVMF's removable-media path would find nothing to boot"
 # The UKI must be a PE binary, or the firmware loads nothing and measures nothing.
 head -c 2 "$UKI" | grep -q 'MZ' || die "the UKI is not a PE/COFF binary (no MZ header)"
-# ...and the NIC modules really are inside the initramfs. Listing what was passed to
-# the builder is not proof it landed (the same rule the builder itself learned), and
-# the failure mode is a node that measures correctly and cannot deliver a word of it.
-for m in "${mod_files[@]}"; do
-    zcat "$INITRAMFS" 2>/dev/null | cpio -t 2>/dev/null | grep -q "lib/modules/nic/$m" \
-        || die "the built initramfs does not contain lib/modules/nic/$m — the measured node
-would come up with no network interface and park with its quote undelivered"
-done
+# ...and openssl really is inside the initramfs. Listing what was passed to the
+# builder is not proof it landed — the rule this check was written for, when the
+# payload here was the NIC modules; the kernel now carries those, but the principle
+# outlives them and openssl is the remaining binary the node cannot do without.
+# busybox has no crypto, so an initramfs missing it produces a node that measures
+# 10 real PCRs and cannot sign a single one of them.
+zcat "$INITRAMFS" 2>/dev/null | cpio -t 2>/dev/null | grep -q 'usr/bin/openssl' \
+    || die "the built initramfs does not contain usr/bin/openssl — the measured node
+would read its PCRs and then have no way to sign the quote"
 
 echo "built measured golden image: $OUT ($(du -h "$OUT" | cut -f1))" >&2
-echo "verified: ESP filesystem + /EFI/BOOT/BOOTX64.EFI + PE header on the UKI + ${#mod_files[@]} NIC modules in the initramfs" >&2
+echo "verified: ESP filesystem + /EFI/BOOT/BOOTX64.EFI + PE header on the UKI + openssl in the initramfs" >&2
 echo "  attestation key: $AKDIR (baked into the image — NOT a trust anchor; see measure-init.sh)" >&2

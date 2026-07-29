@@ -819,8 +819,14 @@ inner_build() {
             bbsrc="$(prepare_busybox "$arch")"
             build_kernel  "$arch" "$ksrc"
             build_busybox "$arch" "$bbsrc"
-            [[ -n "${OPT_MUSL:-}"  ]] && build_busybox_musl "$arch" "$bbsrc"
-            [[ -n "${OPT_TINY:-}"  ]] && build_kernel_tiny  "$arch" "$ksrc"
+            # `if`, not `[[ … ]] && cmd`: under `set -e` a false test makes the whole
+            # && list return 1, and when that list is the last command in the loop it
+            # becomes the function's status — so an unset --tiny KILLED the script
+            # here, silently, right after build_busybox logged success. `all` then
+            # never reached inner_pack and produced no initramfs at all, with no error.
+            # (`|| true` would hide a real failure inside the variant builders.)
+            if [[ -n "${OPT_MUSL:-}" ]]; then build_busybox_musl "$arch" "$bbsrc"; fi
+            if [[ -n "${OPT_TINY:-}" ]]; then build_kernel_tiny  "$arch" "$ksrc"; fi
         fi
     done
 }
@@ -838,8 +844,11 @@ inner_pack() {
         fi
         local ksrc="$OUT_DIR/$arch/build/linux-${LINUX_VER}"
         pack_busybox        "$arch" "$ksrc"
-        [[ -n "${OPT_MUSL:-}"  ]] && pack_busybox_musl  "$arch" "$ksrc"
-        [[ -n "${OPT_BAKED:-}" ]] && pack_busybox_baked "$arch" "$ksrc"
+        # Same trap as inner_build (see there): a false trailing `[[ … ]] && cmd` is
+        # the loop's — and so the function's — exit status. `pack` did its whole job,
+        # printed "initramfs → …", and still exited 1 whenever --baked was unset.
+        if [[ -n "${OPT_MUSL:-}"  ]]; then pack_busybox_musl  "$arch" "$ksrc"; fi
+        if [[ -n "${OPT_BAKED:-}" ]]; then pack_busybox_baked "$arch" "$ksrc"; fi
     done
 }
 
@@ -934,7 +943,11 @@ summarize() {
         done
     done
     print_hashes
-    [[ -n "${OPT_COMPARE:-}" ]] && compare_sizes
+    # Terminal position again (see inner_build): without --compare this returned 1 as
+    # summarize's status, and `set -e` killed the run AFTER every artifact was built
+    # and hashed — so `pack` printed its full success report and still exited 1, and
+    # the "next:" hint below the call site never printed at all.
+    if [[ -n "${OPT_COMPARE:-}" ]]; then compare_sizes; fi
 }
 
 # Print sha256 of each built artifact — for reproducible-build attestation

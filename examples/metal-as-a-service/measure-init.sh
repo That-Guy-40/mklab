@@ -70,36 +70,24 @@ say "measured $(/bin/busybox wc -l < "$quote") PCRs from a real TPM 2.0"
 say "PCR4 (boot device, as measured by the firmware) = $(/bin/busybox grep '^4:' "$quote" | /bin/busybox cut -d: -f2)"
 
 # ── network ─────────────────────────────────────────────────────────────────
-# NIC drivers first, if any were bundled. A kernel chosen for its TPM may keep its
-# network drivers MODULAR and expect dracut to load them — this initramfs is busybox
-# and loads nothing by itself. Live, 2026-07-29: this image measured 10 real PCRs,
-# signed the quote, and then had no interface to send it from
-# (`udhcpc: SIOCGIFINDEX: No such device`, `mac=`), which reads like a delivery
-# problem and is actually a missing driver.
-if [ -f /lib/modules/nic-load-order ]; then
-    loaded=""
-    for m in $(/bin/busybox cat /lib/modules/nic-load-order); do
-        if /bin/busybox insmod "/lib/modules/nic/$m" 2>/dev/null; then
-            loaded="$loaded $m"
-        else
-            # Already-present is fine and indistinguishable here; a REAL failure
-            # (wrong kernel version -> 'invalid module format') is not, so say so.
-            /bin/busybox insmod "/lib/modules/nic/$m" 2>&1 | /bin/busybox grep -qi 'format\|symbol' \
-                && say "WARNING: $m did not load (built for a different kernel?)"
-        fi
-    done
-    [ -n "$loaded" ] && say "loaded NIC drivers:$loaded"
-fi
-
+# No module loading here: the image's kernel (micro-linux, see
+# build-golden-measured.sh) has VIRTIO_NET and E1000 built in, alongside the TPM.
+# This initramfs is busybox and loads nothing by itself, so a kernel whose NIC
+# drivers were MODULAR left the node with no interface at all — live on 2026-07-29
+# this image measured 10 real PCRs, signed the quote, and then had nowhere to send
+# it (`udhcpc: SIOCGIFINDEX: No such device`, `mac=`), which reads like a delivery
+# problem and is actually a missing driver. The insmod bridge that worked around it
+# is gone with the kernel that needed it; the DIAGNOSIS below is what survives, and
+# is what makes the same fault legible in one line if it ever returns.
 /bin/busybox ifconfig eth0 up 2>/dev/null
 # Diagnose the interface's ABSENCE distinctly from its failure to get a lease. These
 # are different faults with different fixes, and collapsing them cost a live run.
 if [ ! -e /sys/class/net/eth0 ]; then
     say "FAILED: this machine has NO network interface (no /sys/class/net/eth0)."
-    say "  The kernel has no built-in driver for this NIC and none was bundled with"
-    say "  the image. Nothing measured here can be reported, so nothing will be."
-    say "  Fix: build the image with NIC modules matching kernel $(/bin/busybox uname -r),"
-    say "  or use a kernel with the driver built in (build-golden-measured.sh)."
+    say "  The kernel has no built-in driver for this NIC. Nothing measured here can"
+    say "  be reported, so nothing will be."
+    say "  Fix: kernel $(/bin/busybox uname -r) needs VIRTIO_NET/E1000 built in (=y, not"
+    say "  =m — an initramfs loads no modules). See micro-linux/mlbuild.sh."
     say "parking: a node that cannot report its measurement must not look attested"
     exec /bin/busybox sh
 fi
