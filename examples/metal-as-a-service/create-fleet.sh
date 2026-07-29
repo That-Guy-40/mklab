@@ -66,10 +66,18 @@ do_enroll() {
             info "$name already enrolled (state=$("$MAAS" state "$name")) — skipping"
             continue
         fi
+        # A TPM-selected node is a UEFI node, and that is not a coincidence: lib/tpm_xml.py
+        # sets firmware='efi' because a BIOS firmware measures no payload, so a TPM on a
+        # BIOS domain would attest nothing. Recording `bios` here and converting the
+        # domain later is what left the registry describing a machine that no longer
+        # existed (see maas-lab.sh's set-firmware, and CLAUDE.md's "record that outlives
+        # the thing it describes"). Say what the node will actually be.
+        local fw="${NODE_FIRMWARE:-bios}"
+        if tpm_selects "$name"; then fw=uefi; fi
         "$MAAS" enroll "$name" \
             --bmc-port "${NODE_BMC_PORT}" \
             --domain "$name" \
-            --firmware "${NODE_FIRMWARE:-bios}" \
+            --firmware "$fw" \
             --uri "${NODE_URI:-qemu:///system}" \
             --bmc-user "${NODE_BMC_USER:-admin}" \
             --bmc-pass "${NODE_BMC_PASS:-password}" >/dev/null \
@@ -246,6 +254,64 @@ give_tpm() {
     info "$name: TPM 2.0 + UEFI attached (measured boot; swtpm is plumbing, not a trust anchor)"
 }
 
+# firmware_of_xml — domain XML on stdin -> `uefi` or `bios`.
+#
+# Split out from reconcile_firmware so the ANSWER is one implementation, addressable as
+# `_firmware-of-xml` and therefore testable against fixture XML with no libvirt, no
+# domains and no sudo (tests/test-fleet-firmware-record.sh). Same reason tpm_selects is
+# split from give_tpm.
+#
+# Two independent markers, because libvirt writes either depending on how the domain was
+# defined: the modern `<os firmware='efi'>` autoselect attribute, and the explicit
+# `<loader ... type='pflash'>` OVMF pair. Matching only one of them would read a
+# perfectly good UEFI domain as BIOS.
+# NOTE `python3 -c`, not `python3 - <<'PY'`: a heredoc feeds the SCRIPT on stdin, which
+# leaves nothing there for the XML, and the function then reports `bios` for every
+# domain — including a UEFI one. Caught by this function's own test on its first run.
+firmware_of_xml() {
+    python3 -c '
+import sys, xml.etree.ElementTree as ET
+try:
+    root = ET.fromstring(sys.stdin.read())
+except Exception:
+    print("bios"); sys.exit(0)
+os_el = root.find("os")
+if os_el is None:
+    print("bios"); sys.exit(0)
+if (os_el.get("firmware") or "").lower() == "efi":
+    print("uefi"); sys.exit(0)
+loader = os_el.find("loader")
+if loader is not None and (loader.get("type") or "").lower() == "pflash":
+    print("uefi"); sys.exit(0)
+print("bios")
+'
+}
+
+# reconcile_firmware <node> — make the registry agree with the machine.
+#
+# FOUND LIVE 2026-07-29: `maas-lab.sh show node3` reported `firmware bios` for a domain
+# whose XML said `<os firmware='efi'>` with an OVMF pflash loader and a TPM. `enroll
+# --firmware` defaults to bios, nothing revisited it, and give_tpm converted the domain
+# afterwards without telling the control plane. Nothing failed — the field is only read
+# by `show` — so it simply lied to whoever asked, and would mislead any future scheduler
+# that used it to pick a boot path.
+#
+# The registry is a CACHE of a fact the domain owns, so correct it from the source rather
+# than asking the operator to keep two places in step. Loud when it changes something:
+# a silent repair would hide a fleet built inconsistently.
+reconcile_firmware() {
+    local name="$1" actual recorded
+    actual="$($VIRSH dumpxml "$name" 2>/dev/null | firmware_of_xml)"
+    [[ -n "$actual" ]] || return 0
+    recorded="$("$MAAS" show "$name" 2>/dev/null | awk '$1=="firmware"{print $2; exit}')"
+    [[ -n "$recorded" ]] || return 0
+    if [[ "$recorded" != "$actual" ]]; then
+        info "$name: registry said firmware=$recorded, the domain is $actual — correcting the record"
+        "$MAAS" set-firmware "$name" "$actual" >/dev/null 2>&1 \
+            || info "$name: could not correct the firmware record (set-firmware failed)"
+    fi
+}
+
 # reserve_dhcp <node> <net> <index> — record the domain's MAC and give it a DHCP
 # reservation, so the node's own name reaches iPXE as ${hostname} (DHCP option 12).
 reserve_dhcp() {
@@ -365,6 +431,7 @@ do_up() {
         give_console "$name"
         give_verifying_rom "$name"
         give_tpm "$name"
+        reconcile_firmware "$name"   # AFTER give_tpm: it is what changes the answer
         reserve_dhcp "$name" "${NODE_NETWORK:-vbmc-pxe}" "$i"
         i=$((i+1))
     done
@@ -406,6 +473,7 @@ EOF
 
 case "${1:-}" in
     enroll)        do_enroll ;;
+    _firmware-of-xml) firmware_of_xml ;;   # stdin XML -> bios|uefi (testable, no libvirt)
     up)            do_up ;;
     down)          do_down ;;
     status|list)   "$MAAS" list ;;

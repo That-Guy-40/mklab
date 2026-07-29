@@ -1157,6 +1157,32 @@ cmd_set_mac() {
     printf 'mac for %s: %s\n' "$node" "$mac" >&2
 }
 
+# set-firmware — correct what `enroll` could only GUESS.
+#
+# FOUND LIVE 2026-07-29: the registry said `firmware bios` for a node whose domain XML
+# said `<os firmware='efi'>`. `enroll --firmware` defaults to bios and nothing ever
+# revisited it, while the fleet builder converted the node to UEFI+TPM AFTERWARDS (see
+# create-fleet.sh's give_tpm -> lib/tpm_xml.py) and had no way to say so. A record that
+# outlived the thing it described — the class CLAUDE.md names.
+#
+# The control plane cannot derive this itself and must not try: it reaches a node only
+# through the BMC and its console, never the hypervisor (install.sh's header), because a
+# machine in a rack has no `virsh`. So whoever CHANGES the machine's firmware reports it
+# here, the same way reserve_dhcp reports the MAC it found.
+cmd_set_firmware() {
+    local node="${1:?usage: set-firmware <node> bios|uefi}" fw="${2:?usage: set-firmware <node> bios|uefi}"
+    require_node "$node"
+    [[ "$fw" == bios || "$fw" == uefi ]] \
+        || die "set-firmware: '$fw' is not a firmware mode (bios|uefi)"
+    local was; was="$(_read "$node" firmware -)"
+    _write "$node" firmware "$fw"
+    if [[ "$was" != "$fw" ]]; then
+        printf 'firmware for %s: %s (was %s)\n' "$node" "$fw" "$was" >&2
+    else
+        printf 'firmware for %s: %s\n' "$node" "$fw" >&2
+    fi
+}
+
 cmd_show() {
     local node="${1:?usage: show <node>}"; require_node "$node"
     local d; d="$(node_dir "$node")"
@@ -1226,6 +1252,7 @@ Lifecycle verbs (Ironic-faithful state machine):
   inspect <node> {--facts F|--from-metadata|--boot [--md-url URL]}   manageable (+facts)
   set-console <node> <path>    record where this node's serial console is logged
   set-mac <node> <mac>         record the node's PXE MAC
+  set-firmware <node> bios|uefi  record the firmware the machine ACTUALLY has
   provide <node> [--wiped]               manageable -> available (via cleaning/wipe)
   deploy <node> --driver D [--image I] [--region R]   available -> active (install|ramdisk|image|image+measured)
   rescue <node> / unrescue <node>        active <-> rescue
@@ -1275,6 +1302,7 @@ main() {
         state)         cmd_state "$@" ;;
         set-console)   cmd_set_console "$@" ;;
         set-mac)       cmd_set_mac "$@" ;;
+        set-firmware)  cmd_set_firmware "$@" ;;
         show)          cmd_show "$@" ;;
         list)          cmd_list "$@" ;;
         _state-root)   printf '%s\n' "$STATE_ROOT" ;;   # internal: metadata-serve.sh
