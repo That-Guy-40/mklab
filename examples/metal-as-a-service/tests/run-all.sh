@@ -15,6 +15,11 @@ tests=(test-state-machine.sh test-cleaning-guard.sh test-registry.sh
        test-apply-reports-and-converges.sh test-apply-selfheal.sh
        test-signing-cert-profile.sh test-rom-xml.sh test-verifying-rom.sh
        test-measured-image.sh
+       # test-probe-nic.sh existed on disk for weeks and was in no list, so nothing ran
+       # it — a test with no runner is a test nobody runs, and it guards the exact fault
+       # this lab keeps rediscovering (a NIC model and a kernel configured in different
+       # files by different tools, both individually valid, with no driver between them).
+       test-probe-nic.sh
        test-uefi-netboot-dhcp.sh test-fleet-tpm-selection.sh test-tpm-xml.sh
        test-e2e-make-deployable.sh
        test-chaos-matrix.sh)

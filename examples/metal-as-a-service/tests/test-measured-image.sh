@@ -36,8 +36,15 @@ done
 [[ -n "$OVMF_CODE" ]] || skip "OVMF is not installed — UEFI measured boot cannot be exercised"
 OVMF_VARS="${OVMF_CODE/CODE/VARS}"
 [[ -f "$OVMF_VARS" ]] || skip "OVMF vars template not found beside $OVMF_CODE"
-KERNEL="${MAAS_MEASURED_KERNEL:-$HOME/netboot/vmlinuz}"
-[[ -f "$KERNEL" ]] || skip "no TPM-capable kernel at $KERNEL (run-e2e-install.sh's preflight stages it)"
+# The SAME default build-golden-measured.sh uses. It carried its own copy of the old
+# default ($HOME/netboot/vmlinuz) and passed it with --kernel, so when the script's
+# default moved to micro-linux this test kept silently building against AlmaLinux's
+# kernel — which, once the NIC-module bridge was deleted, has no network driver at
+# all. The node then measured 10 PCRs, parked before it could sign, and the failure
+# read "measured but did not SIGN", pointing at crypto rather than at the kernel.
+# A test that pins a value the code under test also defines must track it.
+KERNEL="${MAAS_MEASURED_KERNEL:-$LAB_DIR/../../micro-linux/out/x86_64/kernel}"
+[[ -f "$KERNEL" ]] || skip "no TPM-capable kernel at $KERNEL (build it: micro-linux/mlbuild.sh all --arch x86_64)"
 
 maas_env
 maas_env_drivers                      # gives us a lab CA at $MAAS_IMAGES_DIR/trust
@@ -119,22 +126,26 @@ A4b="$(pcr4_of "$LOG_A2")"
     || fail "REGRESSION: the SAME image measured differently across two boots ($A4 vs $A4b) — no PCR policy could ever be written, so the gate could never pass honestly"
 note "the same payload measures identically across boots — a policy can be pinned  ✓"
 
-# ── 4b. the bundled NIC drivers actually load, on a real kernel ─────────────
-# The image's kernel keeps its network drivers MODULAR (it was chosen for its TPM,
-# not its NICs), so build-golden-measured.sh lifts failover/net_failover/virtio_net
-# out of the matching netboot initrd. Live on 2026-07-29 without them, this image
-# measured 10 real PCRs, signed the quote, and had no interface to send it from —
-# `udhcpc: SIOCGIFINDEX: No such device`, `mac=`, quote undelivered.
+# ── 4b. the node can actually REPORT what it measured ──────────────────────
+# Live on 2026-07-29 this image measured 10 real PCRs, signed the quote, and had no
+# interface to send it from — `udhcpc: SIOCGIFINDEX: No such device`, `mac=`, quote
+# undelivered. Measured perfectly, reported never.
 #
-# The VM above is given a virtio NIC behind `restrict=on` slirp, so eth0 exists ONLY
-# if the bundled module loaded: this asserts the modules, not merely their presence
-# in the cpio.
-grep -qa 'MAAS-ATTEST: loaded NIC drivers' "$LOG_A" \
-    || fail "REGRESSION: the image loaded no NIC drivers. Its kernel keeps them modular, so the node comes up with no interface at all and parks with its measurement undelivered — measured perfectly, reported never. Console: $(grep -a 'MAAS-ATTEST' "$LOG_A" | tr '\n' '|')"
+# ASSERT THE OUTCOME, NOT THE MECHANISM. The first version of this section grepped
+# for "loaded NIC drivers", because the fix at the time was to bundle
+# failover/net_failover/virtio_net out of AlmaLinux's netboot initrd. That assertion
+# was wrong in both directions: it FAILED the moment the kernel gained the drivers
+# built in (a strictly better fix, and nothing was broken), and it would have PASSED
+# had the modules loaded and the NIC still not come up. What this lab needs is not
+# "modules were insmod'ed" but "this machine has an interface, a MAC and an address",
+# which is true of either kernel strategy and false in exactly the case that hurt.
+#
+# The VM is given a virtio NIC behind `restrict=on` slirp, so eth0 exists only if the
+# kernel can really drive it.
 grep -qa 'MAAS-ATTEST: identity: mac=..:..' "$LOG_A" \
-    || fail "REGRESSION: the node reported no MAC address, so the bundled virtio_net did not bind the NIC. The control plane keys a quote by MAC and would have nothing to key on. Console: $(grep -a 'MAAS-ATTEST: identity' "$LOG_A")"
+    || fail "REGRESSION: the node reported no MAC address, so nothing bound the NIC. The control plane keys a quote by MAC and would have nothing to key on. Console: $(grep -a 'MAAS-ATTEST: identity' "$LOG_A")"
 grep -qa 'NO network interface' "$LOG_A" \
-    && fail "REGRESSION: the image reported it has no network interface even though the VM has a virtio NIC — the bundled modules are not loading"
+    && fail "REGRESSION: the image reported it has no network interface even though the VM has a virtio NIC — this kernel cannot drive it (VIRTIO_NET must be =y, not =m: an initramfs loads no modules)"
 # ...and the lease must be APPLIED, not merely obtained. udhcpc configures nothing
 # itself: it execs a script, and if that script is not where THAT busybox build looks
 # for it, udhcpc takes the lease, prints "lease of X obtained", exits 0, and leaves the
@@ -143,7 +154,7 @@ grep -qa 'NO network interface' "$LOG_A" \
 # rather than the defect it was.
 grep -qa 'MAAS-ATTEST: identity: .*addr=[0-9]' "$LOG_A" \
     || fail "REGRESSION: the node has a NIC and no IPv4 address. If the console shows a lease being OBTAINED, then udhcpc's script did not run and the lease was silently dropped — interface up, control plane unreachable, no error anywhere. Console: $(grep -a 'udhcpc\|identity' "$LOG_A" | tr '\n' '|')"
-note "the bundled NIC modules load, bind the card, and the DHCP lease is APPLIED  ✓"
+note "the kernel drives the card, and the DHCP lease is APPLIED not merely obtained  ✓"
 
 # ── 5. it refuses to claim what it did not achieve ──────────────────────────
 # Image B carries a delivery URL that `restrict=on` makes unreachable, so delivery
