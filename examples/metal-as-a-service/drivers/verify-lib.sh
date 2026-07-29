@@ -23,6 +23,8 @@
 # instead of failing on the machine.
 #
 #   verify-lib.sh gen-keys --dir DIR         mint a snakeoil CA + codesign leaf (lab/tests)
+#   verify-lib.sh gen-ak --ca-dir D --out A  mint an ATTESTATION leaf from that CA
+#                                            (image+measured; baked into the image)
 #   verify-lib.sh check-keys --dir DIR       exit 0 if the leaf is one iPXE will accept
 #   verify-lib.sh sign  <file> --keydir DIR  write <file>.sig (CMS DER)
 #   verify-lib.sh verify <file> --ca CA [--sig S]   exit 0 if the signature is valid
@@ -110,6 +112,50 @@ check-keys)
     fi
     printf 'verify-lib: %s carries digitalSignature + codeSigning (iPXE imgverify will accept it)\n' "$leaf" >&2
     ;;
+gen-ak)
+    # Mint an ATTESTATION leaf from an existing lab CA, into its own keydir.
+    # Deliberately separate from the codesign leaf: this key is baked into every
+    # copy of a measured golden image, and a key that ships inside a payload
+    # must never be the key that signs what the fleet boots. Same CA, so the
+    # control plane verifies a quote with the trust root it already has.
+    akdir="" cadir=""
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --ca-dir) cadir="$2"; shift 2 ;;
+            --out)    akdir="$2"; shift 2 ;;
+            *) die "gen-ak: unknown $1" ;;
+        esac
+    done
+    [[ -n "$cadir" && -f "$cadir/ca.crt" && -f "$cadir/ca.key" ]] \
+        || die "gen-ak: --ca-dir with ca.crt/ca.key required (run gen-keys first)"
+    [[ -n "$akdir" ]] || die "gen-ak: --out <dir> required"
+    mkdir -p "$akdir" || die "gen-ak: could not create $akdir"
+    if [[ -f "$akdir/codesign.crt" ]]; then
+        printf 'verify-lib: attestation key already exists in %s (not overwriting)\n' "$akdir" >&2
+        exit 0
+    fi
+    openssl req -newkey rsa:2048 -nodes -keyout "$akdir/codesign.key" -out "$akdir/ak.csr" \
+        -subj '/CN=MAAS Lab Attestation Key (BAKED INTO IMAGE - not a trust anchor)' >/dev/null 2>&1 \
+        || die "gen-ak: could not create the attestation key"
+    # Same profile as the codesign leaf: digitalSignature is what makes a CMS
+    # signature checkable, and keeping the profiles aligned is what
+    # tests/test-signing-cert-profile.sh pins.
+    cat > "$akdir/ak.ext" <<'EXT'
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature
+extendedKeyUsage=critical,codeSigning
+EXT
+    openssl x509 -req -in "$akdir/ak.csr" -CA "$cadir/ca.crt" -CAkey "$cadir/ca.key" \
+        -CAcreateserial -out "$akdir/codesign.crt" -days 3650 -extfile "$akdir/ak.ext" >/dev/null 2>&1 \
+        || die "gen-ak: could not sign the attestation certificate"
+    cp -f "$cadir/ca.crt" "$akdir/ca.crt"
+    chmod 0600 "$akdir/codesign.key"
+    rm -f "$akdir/ak.csr" "$akdir/ak.ext"
+    printf 'verify-lib: minted an attestation key in %s (leaf signed by %s/ca.crt)\n' "$akdir" "$cadir" >&2
+    printf 'verify-lib: NOTE this key is baked into the measured golden image. A production AK is\n' >&2
+    printf 'verify-lib: generated INSIDE the TPM and certified via the endorsement key; this one is not.\n' >&2
+    ;;
+
 sign)
     file="${1:?usage: sign <file> --keydir DIR}"; shift
     keydir="" out=""

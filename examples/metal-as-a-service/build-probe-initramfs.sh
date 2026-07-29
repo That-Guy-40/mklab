@@ -27,6 +27,7 @@ OUT="${MAAS_ARTIFACTS:-$HOME/.cache/lab-create/maas}/probe-initramfs.cpio.gz"
 BUSYBOX="${MAAS_BUSYBOX:-}"
 MODE=probe
 INIT_SRC=""
+ADDS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --out)     OUT="$2"; shift 2 ;;
@@ -38,6 +39,11 @@ while [[ $# -gt 0 ]]; do
         # the unpack-and-RUN verification that caught the self-symlink panic.
         # Forking a second builder would have forked that verification too.
         --init)    MODE=custom; INIT_SRC="$2"; shift 2 ;;
+        # --add <src>[:<dst>]: stage an extra file into the initramfs (repeatable).
+        # The measuring ramdisk needs a real openssl + its libs to produce a CMS
+        # quote signature; busybox has no crypto. Staging them through THIS builder
+        # keeps them inside the unpack-and-run verification below.
+        --add)     ADDS+=("$2"); shift 2 ;;
         -h|--help) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "build-probe-initramfs: unknown option $1" >&2; exit 1 ;;
     esac
@@ -55,7 +61,10 @@ file "$BUSYBOX" | grep -q 'statically linked' || die "busybox at $BUSYBOX is not
 command -v cpio >/dev/null || die "cpio required"
 
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
-mkdir -p "$work"/{bin,sbin,proc,sys,dev,usr/share/udhcpc}
+# /tmp and /etc are not optional: an init that writes a working file (a quote, a
+# fact, a lease) dies without /tmp, and an init that dies IS a kernel panic
+# ("Attempted to kill init"). The measuring ramdisk found this the hard way.
+mkdir -p "$work"/{bin,sbin,proc,sys,dev,tmp,etc,usr/share/udhcpc}
 
 cp "$BUSYBOX" "$work/bin/busybox"
 chmod +x "$work/bin/busybox"
@@ -118,6 +127,16 @@ EOS
 fi
 chmod +x "$work/usr/share/udhcpc/default.script"
 
+# extra payloads (--add src[:dst]) — dst defaults to the same path inside the image
+for spec in ${ADDS+"${ADDS[@]}"}; do
+    src="${spec%%:*}"; dst="${spec#*:}"
+    [[ "$dst" == "$spec" ]] && dst="$src"
+    [[ -f "$src" ]] || die "--add: no such file: $src"
+    mkdir -p "$work/$(dirname "${dst#/}")"
+    cp -L "$src" "$work/${dst#/}" || die "--add: could not stage $src -> $dst"
+    [[ -x "$src" ]] && chmod +x "$work/${dst#/}"
+done
+
 mkdir -p "$(dirname "$OUT")"
 ( cd "$work" && find . -print0 | cpio --null -o -H newc --quiet | gzip -9 ) > "$OUT" \
     || die "cpio/gzip failed"
@@ -133,6 +152,8 @@ if zcat "$OUT" | ( cd "$verify" && cpio -idm --quiet 2>/dev/null ); then
     "$verify/bin/busybox" true 2>/dev/null \
         || die "the packed /bin/busybox does not execute — this initramfs cannot boot"
     [[ -L "$verify/bin/sh" ]] || die "the packed /bin/sh is missing — /init's shebang would not resolve"
+    [[ -d "$verify/tmp" ]] \
+        || die "the packed initramfs has no /tmp — an init that writes a working file dies there, and an init that dies is a kernel panic"
     "$verify/bin/sh" -c 'exit 0' 2>/dev/null \
         || die "the packed /bin/sh does not resolve to a working shell (a symlink loop?)"
 else

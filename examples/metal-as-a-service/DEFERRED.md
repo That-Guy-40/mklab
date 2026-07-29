@@ -315,9 +315,51 @@ nothing), and the negative control that a failed-deploy error is never touched.
   payload server — but anything that ever keys off the deploying node's address (a
   callback, an ACL, a metadata lookup) would be surprised. Fix shape: `udhcpc -x
   hostname:$node`, or drop the reservation requirement entirely.
-- **`image+measured` has never touched a real node.** It adds the TPM attestation
-  gate on top of the now-proven `image` path; swtpm under QEMU remains plumbing, not
-  a trust anchor.
+- **`image+measured`: the measuring payload is BUILT and proven; the live fleet run
+  is not done.** Picked up 2026-07-28 (night). What the investigation found is worth
+  more than the increment:
+
+  **The BIOS fleet cannot measure a payload at all.** Measured under swtpm:
+
+  | experiment | result |
+  |---|---|
+  | two different golden images (96 MB vs 160 MB) | **PCR4 identical** |
+  | same image, files swapped INSIDE the filesystem | **every PCR identical** |
+  | UEFI/UKI, one byte of kernel cmdline changed | **PCR4 and PCR9 both move** |
+
+  SeaBIOS measures the boot-sector code (PCR4) and the partition table (PCR5) and
+  nothing in the filesystem, so a PCR policy over a BIOS boot **blesses any
+  payload** — a gate that looks like measured boot and proves nothing about what
+  ran. Shipping that would have been the LIED rung inside the control plane. The
+  honest path is UEFI: the firmware measures the binary it loads, and a UKI makes
+  kernel+initramfs+cmdline one measured object.
+
+  **Built and proven headless** ([`tests/test-measured-image.sh`](tests/test-measured-image.sh),
+  5 sections incl. the anti-theatre and determinism checks):
+  [`build-golden-measured.sh`](build-golden-measured.sh) (UEFI ESP + UKI via
+  `ukify`, rootless and loop-free), [`measure-init.sh`](measure-init.sh) (reads real
+  PCRs from `/sys/class/tpm/tpm0/pcr-sha256/`, signs the quote **on the node** with a
+  bundled openssl, delivers by MAC, parks rather than claiming attestation it did not
+  achieve), `verify-lib.sh gen-ak` (a dedicated attestation leaf — a key baked into
+  every copy of an image must not be the key that signs what the fleet boots), and
+  `--add` on the initramfs builder.
+
+  **Also found:** neither existing payload can measure anything — Alpine's cloud
+  images ship the **`-virt` kernel flavour with no TPM drivers at all**, and
+  micro-linux's kernel has none either. The AlmaLinux 9 netboot vmlinuz (already
+  staged for the install driver) has TPM support built in, which is why the UKI uses
+  it. And an init that writes to `/tmp` when the initramfs has no `/tmp` **exits, and
+  an init that exits is a kernel panic** — the builder now creates it and verifies it.
+
+  **What remains for the live run**, in order: a `<tpm>` device and UEFI firmware on
+  the target domain (`create-fleet.sh`, mirroring `FLEET_NIC_ROM`); a **quote
+  delivery endpoint** in `metadata-serve.sh` (nothing in the lab writes
+  `quote.json` today — the driver's gate has no way to be fed, which is its own
+  finding); a `pcrs.expected` capture flow (first boot records, policy pinned,
+  second deploy verifies); and `run-e2e-measured.sh`. The honest framing stays
+  exactly as `drivers/image-measured.sh` states it: swtpm is faithful plumbing and
+  the AK is baked into the image, so this proves the MECHANISM and the REFUSAL
+  PATH, never the integrity of a machine.
 - ~~**`install.sh`'s ownership test is narrow on purpose.**~~ **CLOSED 2026-07-28** by
   [`install-catalog.toml`](install-catalog.toml) — the per-driver catalog this item
   asked for. `describe` now answers positively (cataloged, or staged in the driver's
