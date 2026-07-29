@@ -1,7 +1,15 @@
 # Metal-as-a-Service Lab — Design Plan v2.1
 
-> **Status**: v2.1 — **in build, increments 1–4 of 7 shipped** (see the build-status box
-> below). Proposed 2026-07-24 as option **B** of the "what can we compose?" survey; the
+> **Status**: v2.1 — **BUILT: all 7 increments shipped, plus the three fast-follows, and
+> all three live runs pass** (`run-e2e.sh`, `run-e2e-image.sh`, `run-e2e-measured.sh`, the
+> last landing 2026-07-29). `tests/run-all.sh` → **34 passed / 0 failed**; `chaos-run.sh`
+> → **0 criticals**. The lab is at
+> [`examples/metal-as-a-service/`](examples/metal-as-a-service/); what a green run still
+> does **not** prove — including a fifteen-defect ledger of faults only real hardware
+> surfaced — is in that lab's
+> [`DEFERRED.md`](examples/metal-as-a-service/DEFERRED.md), and the live transcripts are in
+> its [`MANUAL_TESTING.md`](examples/metal-as-a-service/MANUAL_TESTING.md).
+> Proposed 2026-07-24 as option **B** of the "what can we compose?" survey; the
 > design below is unchanged except where the build corrected it, and every such
 > correction is called out inline rather than quietly rewritten. Anchors on `examples/virtualbmc-ipmi-lab/` (IPMI power +
 > boot-device + PXE install, all ✅ verified), the netboot PXE-install pipeline
@@ -141,7 +149,7 @@ separate labs. B is the *abstraction over them* + the lifecycle + the fleet.
 | Deploy driver `install` (PXE+kickstart/preseed) | ✅ verified | vbmc PXE finale · `almalinux-pxe-lab` · `debian-pxe-lab` |
 | Deploy driver `ramdisk` (boot into RAM) | ✅ verified | RAM-INFRA trio · `micro-linux/ --baked` · `tiny-linux-experiments` (floppinux, busybox) |
 | Deploy driver `image` (dd golden whole-disk) | ✅ verified | `systemd261` Tier-B · `nixos-ipxe-deploy` |
-| Deploy driver `image+measured` (dd + attest) | ✅ verified (parts) | `systemd261` spikes D/G (dm-verity/UKI + TPM2 attest) |
+| Deploy driver `image+measured` (dd + attest) | ✅ verified **live** — node measures 10 PCRs on a TPM 2.0, signs its own quote, activates only against a policy captured from that boot, and is **refused** when the policy no longer matches (swtpm ≠ trust anchor) | `systemd261` spikes D/G (dm-verity/UKI + TPM2 attest) |
 | Signed payloads for `ramdisk`/`image` | ✅ verified | `netboot/sign-payload.sh` + `--imgverify` (RAM_INFRA ①) |
 | Recovery ramdisk for `rescue` | ✅ verified | `root-password-reset/` (init-shell recovery, now IPMI-driven) |
 | Read-only cross-phase inventory UI | ✅ landed | `phase6-tui/`, `phase6b-web/` |

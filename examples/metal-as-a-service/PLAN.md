@@ -16,11 +16,22 @@ This file tracks the **build increments** and records each one's outcome as it l
 | **6** | **`apply` declarative reconcile (§3a)** — diff desired-vs-actual, idempotent | ✅ **DONE (this increment)** — headless |
 | **7** | **Phase-6 actions panel** — declared verbs, driven through `tools/control-pane` | ✅ **DONE (this increment)** — v1 COMPLETE |
 
-| **F1** | **`image+measured`** — the TPM-attested activation gate | ✅ **DONE** |
+| **F1** | **`image+measured`** — the TPM-attested activation gate | ✅ **DONE — and LIVE** (2026-07-29) |
 | **F2** | **`ramdisk`→region wiring** — a RAM node must JOIN the region to count | ✅ **DONE** |
 | **F3** | **flavor/tag scheduler atop `apply`** — claims resolved by inspected facts | ✅ **DONE** |
 
 All three documented fast-follows are now built as well.
+
+**All three live end-to-end runs pass** (2026-07-29): `run-e2e.sh` (PXE install, with the
+verifying firmware doing the checking), `run-e2e-image.sh` (golden whole-disk lay-down),
+and `run-e2e-measured.sh` — the last one attesting a real TPM measurement, activating only
+against a policy captured from that boot, and being **refused** when the policy no longer
+matched. `tests/run-all.sh` → **34 passed / 0 failed**; `chaos-run.sh` → **0 criticals**.
+
+What a green run still does not prove — including the **fifteen-defect ledger** of faults
+only real hardware surfaced — is in [`DEFERRED.md`](DEFERRED.md); the live transcripts are
+in [`MANUAL_TESTING.md`](MANUAL_TESTING.md) §13 (install), §14 (UEFI netboot) and §15
+(measured).
 
 **The ladder being all-✅ is not the same as "nothing left to prove."** The live path found
 thirteen defects that the green headless suite could not see, and three gaps remain that a
