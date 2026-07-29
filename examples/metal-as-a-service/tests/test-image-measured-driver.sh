@@ -46,9 +46,12 @@ prep() {
     ( "$MAAS" enroll "$1" --bmc-port "$2" ) >/dev/null 2>&1 || fail "enroll $1"
     ( "$MAAS" manage "$1" )  >/dev/null 2>&1 || fail "manage $1"
     ( "$MAAS" provide "$1" ) >/dev/null 2>&1 || fail "provide $1"
-    # the console the plain image gate reads: write completed, then a login
-    printf 'Deploying image sealed\n1048576 bytes (1.0 MB) copied\n%s login: \n' "$1" \
-        > "$MAAS_STATE/$1/console.log"
+    # The console the plain image gate reads is produced BY the boot, never pre-written.
+    # image.sh now ignores console output that predates the deploy (a second deploy used
+    # to pass its health gate on the FIRST deploy's login banner), so a fixture written
+    # ahead of time sits behind the mark and is correctly invisible — it would prove only
+    # that the driver can grep a file it was handed. The mock speaks when powered on.
+    export MOCK_BMC_BOOT_SAYS="Deploying image sealed\n1048576 bytes (1.0 MB) copied\n$1 login: "
 }
 # quote <node> <pcr-file> [sign:0|1]
 quote() {
@@ -199,5 +202,39 @@ printf '0:1111\n7:D00DFEED\n' > "$MAAS_STATE/capnode/quote.json"     # no PCR4
 ( "$LAB_DIR/drivers/image-measured.sh" capture-policy cap-img capnode ) >/dev/null 2>&1 \
     && fail "REGRESSION: capture-policy wrote a policy from a quote missing PCR4 — a policy with a hole in it fails every future check, for a register the node never reports"
 note "capture-policy pins PCR4+PCR7 from a real quote, and refuses a quote that lacks one  ✓"
+
+# ── 9. A POLICY MUST DESCRIBE THE BUILD IT WAS CAPTURED FROM ────────────────
+# Found live 2026-07-29, and it is the third sidecar in one night to outlive the thing
+# it described (after disk.raw.sha256). PCR4 is the firmware's measurement of the UKI,
+# which is NOT byte-reproducible — every rebuild moves it. So a pcrs.expected left over
+# from a previous build does not merely go stale, it becomes wrong; and because the file
+# EXISTS, verify passed and the deploy went ahead. The node was wiped, re-imaged and
+# booted, and only then refused on the mismatch: the refusal arrived after the
+# destructive write instead of before the node was touched.
+BB="$MAAS_IMAGES_DIR/rebuilt"
+printf 'GOLDEN-BUILD-ONE\n' > "$SANDBOX/b1.raw"
+( "$DRV" stage rebuilt --from "$SANDBOX/b1.raw" ) >/dev/null 2>&1 || fail "staging build one failed"
+prep n9 6270
+# capture-policy requires both pinned registers in the quote (it refuses one with a
+# hole — §8), so the fixture carries PCR4 and PCR7.
+printf '0:1111\n4:CAFEBABE\n7:D00DFEED\n' > "$MAAS_STATE/n9/quote.json"
+( "$DRV" capture-policy rebuilt n9 ) >/dev/null 2>&1 || fail "capture-policy failed for build one"
+grep -q '^# image-sha256: ' "$BB/pcrs.expected" \
+    || fail "REGRESSION: capture-policy did not record WHICH BUILD the policy describes. Without it a policy captured from one build is silently enforced against the next, and since the UKI is not byte-reproducible that policy can only refuse — after the node has already been wiped and booted"
+( "$DRV" verify rebuilt ) >/dev/null 2>&1 \
+    || fail "a policy captured from the CURRENT build was refused — the binding is too strict to be usable"
+note "capture-policy records the build its policy describes, and that build verifies  ✓"
+
+# Now rebuild the image underneath the policy — exactly what run-e2e-measured.sh does
+# every run — and require verify to refuse BEFORE any hardware is touched.
+printf 'GOLDEN-BUILD-TWO-DIFFERENT\n' > "$SANDBOX/b2.raw"
+( "$DRV" stage rebuilt --from "$SANDBOX/b2.raw" ) >/dev/null 2>&1 || fail "re-staging build two failed"
+out="$( ( "$DRV" verify rebuilt ) 2>&1 )" \
+    && fail "REGRESSION: a PCR policy captured from a DIFFERENT build passed verify. It can only refuse later — after the node has been wiped, re-imaged and booted — so the gate's whole ordering guarantee ('refused before the node is touched') is lost"
+grep -qi 'different build' <<<"$out" \
+    || fail "the refusal does not say the policy is for another build, which is the one thing that tells the operator to re-capture: ${out//$'\n'/ }"
+grep -qi 'capture-policy' <<<"$out" \
+    || fail "the refusal does not name the command that fixes it: ${out//$'\n'/ }"
+note "rebuilding the image makes its old policy refuse at VERIFY, naming the fix  ✓"
 
 pass "image+measured activates only on a signed, trusted, matching attestation: no quote / unsigned / forged / mismatched / incomplete are each refused by name (mechanism proven on swtpm, which is NOT a trust anchor)"

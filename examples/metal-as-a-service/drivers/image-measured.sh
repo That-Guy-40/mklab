@@ -68,8 +68,17 @@ capture-policy)
     [[ -f "$q" ]] || die "no quote at $q — the node has not attested yet. Deploy it once
 (the gate will refuse activation, which is correct) and capture the policy from that boot."
     [[ -d "${MAAS_IMAGES_DIR}/$image" ]] || die "'$image' is not staged"
+    # WHICH BUILD this policy describes. PCR4 is the firmware's measurement of the UKI,
+    # and the UKI is not byte-reproducible (ukify bakes in timestamps), so EVERY rebuild
+    # of the golden image changes it. A policy is therefore a fact about one build, not
+    # about an image name — and without recording that, a policy captured from build N
+    # is silently enforced against build N+1.
+    img_sha=""
+    [[ -f "${MAAS_IMAGES_DIR}/$image/disk.raw" ]] && command -v sha256sum >/dev/null \
+        && img_sha="$(sha256sum "${MAAS_IMAGES_DIR}/$image/disk.raw" | cut -d' ' -f1)"
     : > "$pol"
     {
+        [[ -n "$img_sha" ]] && printf '# image-sha256: %s\n' "$img_sha"
         printf '# pcrs.expected for %s — CAPTURED from a measured boot of %s
 ' "$image" "$node"
         printf '# Trust-on-first-use: this boot DEFINED the expected state. It is only
@@ -107,6 +116,30 @@ verify)
         || die "'$image' declares no expected PCR policy ($pol). Refusing: this driver's
 whole purpose is the attestation gate, and an image with nothing to attest AGAINST would
 sail through it. Write the expected PCRs, or deploy it with --driver image instead."
+
+    # ...and the policy must describe THIS BUILD of the image.
+    #
+    # FOUND LIVE 2026-07-29, and it is the third sidecar tonight to outlive what it
+    # described. PCR4 is the firmware's measurement of the UKI, which is not
+    # byte-reproducible, so every rebuild changes it. A pcrs.expected left over from a
+    # previous run therefore does not merely go stale — it becomes WRONG, and because it
+    # exists at all, `verify` passed and the deploy went ahead: the node was wiped,
+    # re-imaged and booted, and only then refused on the PCR mismatch. The refusal
+    # arrived after the destructive write instead of before the node was touched.
+    #
+    # Refusing here restores the ordering the gate promises.
+    pol_sha="$(sed -n 's/^# image-sha256: //p' "$pol" | head -1)"
+    if [[ -n "$pol_sha" ]] && command -v sha256sum >/dev/null && [[ -f "${MAAS_IMAGES_DIR}/$image/disk.raw" ]]; then
+        cur_sha="$(sha256sum "${MAAS_IMAGES_DIR}/$image/disk.raw" | cut -d' ' -f1)"
+        [[ "$pol_sha" == "$cur_sha" ]] \
+            || die "'$image' has a PCR policy captured from a DIFFERENT build.
+  policy describes: ${pol_sha:0:16}…
+  staged image is:  ${cur_sha:0:16}…
+The UKI is not byte-reproducible, so a rebuild moves PCR4 and this policy can only
+refuse. Re-capture it from a boot of THIS build:
+  drivers/image-measured.sh capture-policy $image <node>
+(or delete $pol to start the trust-on-first-use cycle again)."
+    fi
     exec "$IMAGE_DRV" verify "$image"
     ;;
 

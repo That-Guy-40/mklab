@@ -186,6 +186,23 @@ esac
 
 # ── the refusal that comes FIRST, before any hardware ───────────────────────
 step "deploy #0 — image+measured must refuse an image with no PCR policy"
+# ESTABLISH THE PRECONDITION, do not assume it. This step asserts a property of an
+# image with NO policy, so the run has to create that state — and a previous run
+# leaves one behind.
+#
+# Live, 2026-07-29: a pcrs.expected survived from the last run, so `verify` PASSED,
+# deploy #0 went ahead for real, wiped and re-imaged the node, booted it, and only
+# then refused on a PCR mismatch. The step meant to prove "refused before any
+# hardware" performed a destructive deploy instead — and the assertion below caught
+# it exactly ("the refusal happened but the node still attested").
+#
+# Worse, the leftover policy could only ever refuse: PCR4 is the firmware's
+# measurement of the UKI, the UKI is not byte-reproducible (ukify bakes in
+# timestamps), and this script rebuilds the image every run. The policy for build N
+# is wrong for build N+1 by construction. The driver now records which build a
+# policy describes and refuses a mismatch at verify; this removes the stale file so
+# deploy #0 tests what it says it tests.
+rm -f "$MAAS_IMAGES_DIR/$IMAGE/pcrs.expected"
 # The driver refuses at VERIFY, before the node is touched at all: an image with
 # nothing to attest against would otherwise sail through the gate it is named for.
 # (The first version of this script assumed the refusal came AFTER a boot and then

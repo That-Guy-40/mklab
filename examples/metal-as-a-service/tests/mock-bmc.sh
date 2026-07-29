@@ -55,7 +55,18 @@ fi
 _pget() { [[ -n "$_pfile" && -f "$_pfile" ]] && cat "$_pfile" || printf 'off'; }
 _pset() { [[ -n "$_pfile" ]] && printf '%s' "$1" > "$_pfile"; : > "${_cfile:-/dev/null}"; }
 # the machine that really turned on speaks on ITS console (see MOCK_BMC_CONSOLE_DIR)
+#
+# MOCK_BMC_BOOT_SAYS — text this machine emits on its OWN console each time it really
+# powers on, appended to $MAAS_STATE/<node>/console.log. It exists because a console is
+# produced BY a boot: a test that pre-writes the success banner before deploying proves
+# only that the driver can grep a file it was handed, and would keep passing after the
+# driver started (correctly) ignoring output that predates the deploy. Real machines
+# speak when you turn them on; so does this one.
 _boot() {
+    if [[ -n "${MOCK_BMC_BOOT_SAYS:-}" && -n "${MAAS_STATE:-}" ]]; then
+        mkdir -p "$MAAS_STATE/$actuated" 2>/dev/null
+        printf '%b\n' "$MOCK_BMC_BOOT_SAYS" >> "$MAAS_STATE/$actuated/console.log"
+    fi
     [[ -n "${MOCK_BMC_CONSOLE_DIR:-}" ]] || return 0
     mkdir -p "$MOCK_BMC_CONSOLE_DIR" 2>/dev/null
     printf '[boot] %s: powered on, console alive\n' "$actuated" >> "$MOCK_BMC_CONSOLE_DIR/$actuated.log"

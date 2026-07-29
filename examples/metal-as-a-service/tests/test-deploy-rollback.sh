@@ -79,4 +79,22 @@ grep -qi 'fast-follow\|not yet implemented' <<<"$msg" \
 assert_state node1b available   # refused before deploying — stays schedulable
 note "an unknown driver is refused by name, listing the ones that exist ✓"
 
+# ── a failed deploy must record WHY, not inherit an older incident's reason ──
+# Live 2026-07-29: node3 sat in `error` from a refused measured deploy while `show`
+# reported "interrupted live run (recovered by run-e2e-measured.sh)" — the text of an
+# abort half an hour earlier. error_reason was written by maintenance, abort and
+# recheck, and never by deploy, so the field described whichever incident last
+# happened to write it. A stale reason is worse than none: it sends the operator to
+# the wrong incident with full confidence.
+prep node1c 6234
+printf 'STALE-REASON-FROM-AN-EARLIER-INCIDENT' > "$MAAS_STATE/node1c/error_reason"
+( "$MAAS" deploy node1c --driver mock --image bad ) >/dev/null 2>&1
+assert_state node1c error
+reason="$(cat "$MAAS_STATE/node1c/error_reason" 2>/dev/null)"
+grep -q 'STALE-REASON-FROM-AN-EARLIER-INCIDENT' <<<"$reason" \
+    && fail "REGRESSION: a failed deploy left an EARLIER incident's error_reason in place: '$reason'. The operator is told the node failed for a reason that belongs to a different event"
+grep -q 'bad' <<<"$reason" \
+    || fail "the recorded reason does not name the image that failed: '$reason'"
+note "a failed deploy records its own reason, overwriting an earlier incident's ✓"
+
 pass "deploy is health-gated with A/B rollback: healthy->active, fail->previous(degraded), both-bad->error, no-prev->error"

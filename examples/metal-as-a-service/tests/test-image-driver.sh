@@ -64,10 +64,15 @@ note "an absent golden image is refused, naming the lab that produces one  ✓"
 note "stage copies + signs the raw; verify passes (real OpenSSL CMS)  ✓"
 
 # ── 2. the happy path, and the ORDER that makes it bootable ──────────────────
+# The console is written BY THE BOOT, not staged before it. The driver now ignores
+# console output that predates the deploy (a login banner from a previous deploy used
+# to satisfy the gate in one second — see await_console's header), so a pre-written
+# fixture would prove only that grep works on a file we handed it. MOCK_BMC_BOOT_SAYS
+# makes the mock machine speak when it is actually powered on, which is both faithful
+# and the only way this can still pass.
 prep node1 6240
-# the deployer ramdisk's write-complete line, then the deployed OS's login
-printf 'Deploying image golden\n2147483648 bytes (2.1 GB) copied\nDebian GNU/Linux\nnode1 login: \n' \
-    > "$MAAS_STATE/node1/console.log"
+: > "$MAAS_STATE/node1/console.log"
+export MOCK_BMC_BOOT_SAYS='Deploying image golden\n2147483648 bytes (2.1 GB) copied\nDebian GNU/Linux\nnode1 login: '
 : > "$MOCK_BMC_LOG"
 ( "$MAAS" deploy node1 --driver image --image golden ) >/dev/null 2>&1 \
     || fail "the real image driver could not take node1 to active (signed image, write completed, login reached)"
@@ -96,8 +101,8 @@ note "sequence: bootdev pxe -> power on -> write -> bootdev disk -> power on  �
 grep -q "^node1 power cycle" "$MOCK_BMC_LOG" \
     && fail "REGRESSION: the image driver issued 'power cycle' — vbmcd (this lab's own BMC backend) refuses that verb, so the deploy would fail after the destructive write. Use off + on, which every backend implements"
 prep node1b 6245
-printf 'Deploying image golden\n2147483648 bytes (2.1 GB) copied\nnode1b login: \n' \
-    > "$MAAS_STATE/node1b/console.log"
+: > "$MAAS_STATE/node1b/console.log"
+export MOCK_BMC_BOOT_SAYS='Deploying image golden\n2147483648 bytes (2.1 GB) copied\nnode1b login: '
 : > "$MOCK_BMC_LOG"
 ( export MOCK_BMC_NO_CYCLE=1; "$MAAS" deploy node1b --driver image --image golden ) >/dev/null 2>&1 \
     || fail "REGRESSION: the image driver could not deploy against a BMC that does not implement 'power cycle' — which is exactly what this lab's vbmcd does"
@@ -137,7 +142,8 @@ note "records persistence=full: the whole disk was overwritten, so cleaning is m
 # If the write never completes, pointing the node at its disk produces an unbootable
 # machine and nothing in the log says why. The driver must time out instead.
 prep node2 6241
-printf 'Deploying image golden\n' > "$MAAS_STATE/node2/console.log"   # write never completes
+: > "$MAAS_STATE/node2/console.log"
+export MOCK_BMC_BOOT_SAYS='Deploying image golden'   # the write never completes
 : > "$MOCK_BMC_LOG"
 if ( "$MAAS" deploy node2 --driver image --image golden ) >/dev/null 2>&1; then
     fail "REGRESSION: deploy 'succeeded' for a node whose image write never completed"
@@ -149,7 +155,8 @@ note "write never completes -> timeout, no boot-from-disk, node -> error  ✓"
 
 # ── 5. …and the health gate still decides `active` ───────────────────────────
 prep node3 6242
-printf 'Deploying image golden\n2147483648 bytes (2.1 GB) copied\n' > "$MAAS_STATE/node3/console.log"
+: > "$MAAS_STATE/node3/console.log"
+export MOCK_BMC_BOOT_SAYS='Deploying image golden\n2147483648 bytes (2.1 GB) copied'   # no login, ever
 : > "$MOCK_BMC_LOG"
 if ( "$MAAS" deploy node3 --driver image --image golden ) >/dev/null 2>&1; then
     fail "REGRESSION: a node whose image was written but never booted to a login was marked active"
@@ -160,7 +167,8 @@ note "image written but it never boots -> health gate FAILS -> error (not active
 # ── 6. verify gates before any hardware is touched ───────────────────────────
 printf 'TAMPERED\n' > "$MAAS_IMAGES_DIR/golden/disk.raw"
 prep node4 6243
-printf 'node4 login: \n' > "$MAAS_STATE/node4/console.log"
+: > "$MAAS_STATE/node4/console.log"
+export MOCK_BMC_BOOT_SAYS='node4 login: '   # never emitted: the gate refuses first
 : > "$MOCK_BMC_LOG"
 if ( "$MAAS" deploy node4 --driver image --image golden ) >/dev/null 2>&1; then
     fail "REGRESSION: drivers/image.sh deployed a TAMPERED whole-disk image"
@@ -205,7 +213,8 @@ note "re-staging an image refreshes its recorded digest  ✓"
 printf '%s  disk.raw\n' "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef" \
     > "$STALE_DIR/disk.raw.sha256"
 prep node5 6244
-printf 'node5 login: \n' > "$MAAS_STATE/node5/console.log"
+: > "$MAAS_STATE/node5/console.log"
+export MOCK_BMC_BOOT_SAYS='Deploying image restaged\n35 bytes (35 B) copied\nnode5 login: '
 ( "$MAAS" deploy node5 --driver image --image restaged --no-verify ) >/dev/null 2>&1
 script="$(cat "$MAAS_NETBOOT_DIR/maas/node5.ipxe" 2>/dev/null)"
 grep -q "maas.sha256=$actual" <<<"$script" \
@@ -213,5 +222,34 @@ grep -q "maas.sha256=$actual" <<<"$script" \
 grep -q 'deadbeef' <<<"$script" \
     && fail "REGRESSION: the deploy published the corrupted cached digest verbatim — a node would be told to expect an image that does not exist"
 note "deploy computes the digest from the bytes, never from the cached sidecar  ✓"
+
+# ── 8. A SECOND DEPLOY MUST NOT PASS ON THE FIRST ONE'S CONSOLE ─────────────
+# Found live 2026-07-29. A libvirt console log is append-only across boots and this
+# driver's health gate is a grep for a login banner, so the SECOND deploy on a node
+# matched the FIRST deploy's banner instantly:
+#
+#     image: awaiting /login:/ on .../node3.log (timeout 240s)…
+#     image: 'node3' booted 'golden-measured' to a login (active)     <- 1 second
+#
+# One second against a 240s timeout, on a node that was still powering on. Nothing
+# errored: the control plane simply believed a machine was up because a previous
+# machine-state had once said so. That is the LIED rung, reachable by any operator who
+# deploys the same node twice — not just by this lab's runner.
+#
+# Here the node's console already carries a login from an earlier deploy, and the new
+# deploy's boot never produces one. The gate must TIME OUT rather than match history.
+# A FRESH image: §6 tampers `golden` permanently, so deploying it here would fail at
+# the signature gate and this section would prove nothing. (It did, on the first
+# attempt — the negative control below is what caught it.)
+( "$IMAGE" stage golden2 --from "$RAW" ) >/dev/null 2>&1 || fail "staging golden2 failed"
+prep node6 6246
+printf 'Deploying image golden2\n2147483648 bytes (2.1 GB) copied\nnode6 login: \n' \
+    > "$MAAS_STATE/node6/console.log"          # an EARLIER deploy's success, still on disk
+export MOCK_BMC_BOOT_SAYS='Deploying image golden2\n2147483648 bytes (2.1 GB) copied'  # writes, never logs in
+if ( "$MAAS" deploy node6 --driver image --image golden2 ) >/dev/null 2>&1; then
+    fail "REGRESSION: a deploy reported success by matching a login banner left on the console by an EARLIER deploy. The node never reached a login this time; the control plane would record 'active' for a machine that never came up"
+fi
+assert_state node6 error
+note "a stale login from a previous deploy no longer satisfies the health gate  ✓"
 
 pass "the image driver lays a golden disk down safely: verified before any hardware, never points a node at a half-written disk, ends on bootdev disk, records persistence=full, and publishes a read-back digest computed from the bytes it actually serves rather than from a cache that re-staging can leave stale"

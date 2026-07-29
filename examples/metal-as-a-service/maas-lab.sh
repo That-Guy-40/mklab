@@ -605,6 +605,7 @@ cmd_deploy() {
             # image is honestly broken and says so; one driven by a driver that does not
             # own its image is a machine nobody can reason about.
             rm -f "$(node_dir "$node")/deploying_driver" 2>/dev/null || true
+            _write "$node" error_reason "deploy of '$driver/$image' failed (${GATE_REASON:-no reason recorded}); previous image '$prev' is not rollable-back"
             set_state "$node" error deploy
             die "'$image' failed on '$node', and its previous image '$prev' cannot be rolled
 back: ${prev_drv:+no driver '$prev_drv' at $prev_drv_path}${prev_drv:-the driver that deployed it was never recorded}.
@@ -624,10 +625,19 @@ Rolling back through '$driver' instead would hand it an image it does not own. N
             return 0
         fi
         rm -f "$(node_dir "$node")/deploying_driver" 2>/dev/null || true
+        _write "$node" error_reason "deploy of '$driver/$image' failed AND the rollback to '$prev_drv/$prev' failed too"
         set_state "$node" error deploy
         die "both images failed for '$node' (new '$driver/$image' and previous '$prev_drv/$prev') — node -> error (operator)"
     fi
     rm -f "$(node_dir "$node")/deploying_driver" 2>/dev/null || true
+    # RECORD WHY, every time. error_reason used to be written only by maintenance,
+    # abort and recheck — never by a failed deploy — so a node that failed a deploy
+    # kept displaying the reason from whatever earlier incident last wrote the file.
+    # Live on 2026-07-29 node3 sat in `error` from a refused measured deploy while
+    # `show` reported "interrupted live run (recovered by run-e2e-measured.sh)", the
+    # text of an abort that had happened half an hour before. A stale reason is worse
+    # than none: it sends the operator to the wrong incident.
+    _write "$node" error_reason "deploy of '$driver/$image' failed: ${GATE_REASON:-no reason recorded}"
     set_state "$node" error deploy
     die "$GATE_REASON, and no previous image to roll back to — node '$node' -> error"
 }
