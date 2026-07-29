@@ -66,14 +66,51 @@ await_power() {
     echo "image: timed out after ${to}s waiting for $what (chassis power != $want; last: ${st:-<no answer>})" >&2
     return 1
 }
+# console_mark <node> — remember how long the console is NOW, so everything waited for
+# afterwards has to be NEW output.
+#
+# A libvirt console log is APPEND-ONLY across boots, and this driver's health gate is a
+# grep for a login banner. Without a mark, a second deploy matches the FIRST deploy's
+# banner instantly: the gate reports the node up while it is still powering on.
+#
+# Found live 2026-07-29, in the measured run's deploy #2:
+#
+#     image: awaiting /login:/ on .../node3.log (timeout 240s)…
+#     image: 'node3' booted 'golden-measured' to a login (active)     <- 1 second
+#     image-measured: 'node3' booted but produced NO attestation quote
+#
+# One second against a 240s timeout. The node had not booted; the console still held
+# deploy #1's `measured-node login: (attested)`. This is not only a harness problem —
+# any two consecutive deploys of this driver on one node hit it, and the second would
+# report `active` for a machine that never came up. That is the LIED rung.
+#
+# The repo had already paid for this once: run-e2e-install.sh rotates the console for
+# exactly this reason. Rotating is the harness's workaround; this is the fix.
+console_mark() {
+    local node="$1" con; con="$(console_of "$node")"
+    local n=0; [[ -f "$con" ]] && n="$(stat -c%s "$con" 2>/dev/null || printf 0)"
+    printf '%s' "$n" > "$(nd "$node")/console_mark" 2>/dev/null || true
+}
 await_console() {
     local node="$1" re="$2" to="$3" what="$4" waited=0 con; local step; step="$(_step)"
     con="$(console_of "$node")"
+    # Only output written since the mark counts. No mark (an older node record, or a
+    # verb that never set one) means start at 0 — the previous behaviour, so nothing
+    # regresses for callers that do not mark.
+    local mark=0
+    [[ -f "$(nd "$node")/console_mark" ]] && mark="$(cat "$(nd "$node")/console_mark" 2>/dev/null || printf 0)"
+    [[ "$mark" =~ ^[0-9]+$ ]] || mark=0
     while [[ $waited -lt $to ]]; do
-        [[ -f "$con" ]] && grep -qE -- "$re" "$con" && return 0
+        if [[ -f "$con" ]]; then
+            # If the file SHRANK below the mark it was rotated (virtlogd does this at
+            # 2 MiB); the mark is meaningless then, so fall back to the whole file.
+            local sz; sz="$(stat -c%s "$con" 2>/dev/null || printf 0)"
+            if [[ "$sz" -lt "$mark" ]]; then mark=0; fi
+            tail -c "+$((mark + 1))" "$con" 2>/dev/null | grep -qE -- "$re" && return 0
+        fi
         sleep "$POLL"; waited=$(( waited + step ))
     done
-    echo "image: timed out after ${to}s waiting for $what (/$re/ never appeared on $con)" >&2
+    echo "image: timed out after ${to}s waiting for $what (/$re/ never appeared on $con after byte $mark)" >&2
     return 1
 }
 
@@ -219,6 +256,9 @@ deploy)
     } > "$script" || die "could not write the node's iPXE script at $script"
     echo "image: wrote $script (golden image '$image' -> whole disk; DESTRUCTIVE)" >&2
 
+    # Mark the console BEFORE anything is powered on, so both gates below (the write
+    # marker and, later, the login) can only be satisfied by output from THIS deploy.
+    console_mark "$node"
     bmc "$node" bootdev pxe || die "bootdev pxe failed"
     bmc "$node" power on    || die "power on failed"
     await_power "$node" on "${MAAS_POWERON_TIMEOUT:-60}" "'$node' to power on for the image lay-down" \
@@ -239,6 +279,10 @@ deploy)
     # driver would have died at its LAST step, after the destructive write.
     # (MOCK_BMC_NO_CYCLE=1 reproduces the real BMC's refusal headlessly.)
     bmc "$node" power off   || die "power off before the disk boot failed"
+    # Re-mark: the health gate that follows greps for a login banner, and the deployer
+    # ramdisk has just been talking on this same console. Only the DEPLOYED image's
+    # output should be able to satisfy it.
+    console_mark "$node"
     bmc "$node" power on    || die "power on into the deployed image failed"
     printf 'full\n' > "$(nd "$node")/persistence" 2>/dev/null || true
     ;;

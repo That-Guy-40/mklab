@@ -494,6 +494,41 @@ nothing), and the negative control that a failed-deploy error is never touched.
   [`tests/test-measured-image.sh`](tests/test-measured-image.sh) §4b, whose VM gets a
   virtio NIC so `eth0` exists only if the module truly loaded.
 
+  **A sixth defect, immediately behind it.** With the modules loading, DHCP then
+  *succeeded* and the address was never applied: `lease of 192.168.123.103 obtained`
+  followed by `addr=none`. `udhcpc` configures nothing itself — it execs a script — and
+  the initramfs installed that script at micro-linux's path (`/usr/share/udhcpc/`) while
+  bundling the **host's** busybox, which Ubuntu compiles to look in `/etc/udhcpc/`. No
+  script, no error, lease discarded. It had been latent in `deployer-init.sh` all along,
+  masked because that kernel's built-in `virtio_net` lets the KERNEL's `ip=dhcp` do the
+  job before init runs. Now shipped at both paths, `-s` passed explicitly by both inits,
+  and named specifically by `measure-init.sh`. It had also fooled
+  `tests/test-measured-image.sh`, which recorded the missing address as a limitation of
+  `restrict=on` slirp — a caveat that was never checked and was simply wrong; §4b now
+  asserts a real address.
+
+  **A seventh and eighth defect, from the run after that** (2026-07-29). The node
+  measured, signed and **delivered** its quote, the policy was captured from that very
+  boot — and deploy #2 died at
+  `maas: deploy: 'image+measured' is a documented fast-follow (not yet implemented)`,
+  a sentence that had been false for weeks. `deploy` resolved a driver as
+  `$MAAS_DRIVER_DIR/$driver.sh`, so the documented name `image+measured` looked for
+  `drivers/image+measured.sh` (the file is `image-measured.sh`) and fell through to a
+  stale `case` arm. The mapping was open-coded in **four** places and three were wrong,
+  including the **rollback** path — a node deployed as `image+measured` could never have
+  been rolled back. One `driver_path()` helper now owns it.
+
+  **Why nothing caught it, which is the more useful half.**
+  `tests/test-image-measured-driver.sh` drives the driver as `image-measured` — the
+  *filename* — while README, DEFERRED, MANUAL_TESTING and `run-e2e-measured.sh` all say
+  `image+measured`. The suite was green for weeks on a name no operator would type. And
+  `tests/test-deploy-rollback.sh` **asserted the bug**: it required the refusal to say
+  "fast-follow", so fixing the driver turned the suite red — a test pinning a temporary
+  claim in place long after it stopped being true. Both are corrected: §2b now drives the
+  *documented* name against the same fixture, and the rollback test asserts the durable
+  behaviour (an unknown driver is refused by name, listing what exists) with a negative
+  control against ever calling an unknown name a not-yet-implemented roadmap item.
+
   **The durable fix is micro-linux + TPM**, and it is written but unbuilt:
   `micro-linux/mlbuild.sh` now sets and asserts `TCG_TPM`/`TCG_TIS`/`TCG_CRB` beside the
   `VIRTIO_NET`/`E1000` lines it already asserts — the same "an initramfs carries NO

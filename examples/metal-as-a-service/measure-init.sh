@@ -104,11 +104,27 @@ if [ ! -e /sys/class/net/eth0 ]; then
     exec /bin/busybox sh
 fi
 if ! /bin/busybox ip addr show eth0 2>/dev/null | /bin/busybox grep -q 'inet '; then
-    /bin/busybox udhcpc -i eth0 -t 8 -n -q 2>&1 | /bin/busybox grep -v '^$'
+    # -s explicitly: the compiled-in script path differs between busyboxes (Ubuntu
+    # says /etc/udhcpc, micro-linux says /usr/share/udhcpc), and a missing script
+    # means udhcpc takes the lease and applies NOTHING, with no error.
+    /bin/busybox udhcpc -i eth0 -t 8 -n -q -s /usr/share/udhcpc/default.script 2>&1 \
+        | /bin/busybox grep -v '^$'
 fi
 mac="$(/bin/busybox cat /sys/class/net/eth0/address 2>/dev/null)"
 addr="$(/bin/busybox ip addr show eth0 2>/dev/null | /bin/busybox sed -nE 's@.*inet ([0-9.]+)/.*@\1@p' | /bin/busybox head -1)"
 say "identity: mac=$mac addr=${addr:-none}"
+# A lease obtained but not APPLIED is its own distinct fault, and it looks like
+# success: udhcpc prints "lease of X obtained" and exits 0 whether or not its script
+# ran. Live on 2026-07-29 the console said exactly that and the interface had no
+# address, because the script sat at a path this busybox does not consult. Name it.
+if [ -z "$addr" ]; then
+    say "FAILED: eth0 has no IPv4 address."
+    say "  If a lease WAS obtained above, udhcpc's script did not apply it — udhcpc"
+    say "  configures nothing itself, so a missing/unfound default.script takes the"
+    say "  lease and silently drops it. Check /usr/share/udhcpc/ and /etc/udhcpc/."
+    say "parking: a node that cannot reach the control plane cannot report its measurement"
+    exec /bin/busybox sh
+fi
 # The node identifies itself by MAC; without one the sink has nothing to key on, so
 # refuse here rather than POST to /quote/ and have the control plane puzzle over it.
 if [ -z "$mac" ]; then

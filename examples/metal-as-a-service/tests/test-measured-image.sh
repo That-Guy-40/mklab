@@ -135,11 +135,15 @@ grep -qa 'MAAS-ATTEST: identity: mac=..:..' "$LOG_A" \
     || fail "REGRESSION: the node reported no MAC address, so the bundled virtio_net did not bind the NIC. The control plane keys a quote by MAC and would have nothing to key on. Console: $(grep -a 'MAAS-ATTEST: identity' "$LOG_A")"
 grep -qa 'NO network interface' "$LOG_A" \
     && fail "REGRESSION: the image reported it has no network interface even though the VM has a virtio NIC — the bundled modules are not loading"
-# What this does NOT prove: that DHCP completes. slirp under `restrict=on` hands out
-# no lease, so `addr=none` here is expected and is not evidence either way. DHCP on the
-# real fleet bridge is evidenced separately — the deployer ramdisk gets its reservation
-# on the same virtio NIC (MANUAL_TESTING §14).
-note "the bundled NIC modules load and bind the card (mac reported; DHCP is not exercised here)  ✓"
+# ...and the lease must be APPLIED, not merely obtained. udhcpc configures nothing
+# itself: it execs a script, and if that script is not where THAT busybox build looks
+# for it, udhcpc takes the lease, prints "lease of X obtained", exits 0, and leaves the
+# interface with no address. Live 2026-07-29 and again in an earlier version of this
+# very test, where the missing address was read as a limitation of restrict=on slirp
+# rather than the defect it was.
+grep -qa 'MAAS-ATTEST: identity: .*addr=[0-9]' "$LOG_A" \
+    || fail "REGRESSION: the node has a NIC and no IPv4 address. If the console shows a lease being OBTAINED, then udhcpc's script did not run and the lease was silently dropped — interface up, control plane unreachable, no error anywhere. Console: $(grep -a 'udhcpc\|identity' "$LOG_A" | tr '\n' '|')"
+note "the bundled NIC modules load, bind the card, and the DHCP lease is APPLIED  ✓"
 
 # ── 5. it refuses to claim what it did not achieve ──────────────────────────
 # Image B carries a delivery URL that `restrict=on` makes unreachable, so delivery
