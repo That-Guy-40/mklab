@@ -260,6 +260,32 @@ deploy)
     # marker and, later, the login) can only be satisfied by output from THIS deploy.
     console_mark "$node"
     bmc "$node" bootdev pxe || die "bootdev pxe failed"
+    # POWER IT OFF FIRST, or `bootdev pxe` never takes effect.
+    #
+    # FOUND LIVE 2026-07-29, on the first deploy that ever got this far. `bootdev` only
+    # applies at the NEXT boot, and a node that is already running ignores `power on`:
+    #
+    #   Set Boot Device to pxe
+    #   Chassis Power Control: Up/On          <- no-op, it was already on
+    #   image: awaiting /… copied/ … (timeout 4800s)
+    #
+    # A node that just finished a successful deploy is left powered on and `active`, so
+    # EVERY second deploy on the same node stalled here: the deployer ramdisk never
+    # booted, the write marker never appeared, and the node sat happily running its
+    # PREVIOUS image while the control plane waited 80 minutes for a disk write.
+    #
+    # This is the fault the stale-console bug was hiding. Before console_mark, the health
+    # gate matched the earlier deploy's login banner and reported `active` in one second
+    # — the node had not rebooted then either; the liar simply covered for it. Fixing the
+    # gate did not make the node boot, it made the silence visible.
+    #
+    # The disk boot below has always done off+on for exactly this reason. So does this.
+    if [[ "$(bmc "$node" power status 2>/dev/null || printf unknown)" == *"is on"* ]]; then
+        echo "image: '$node' is already running (a previous deploy left it up) — powering it off so 'bootdev pxe' can take effect" >&2
+        bmc "$node" power off || die "power off before the deployer boot failed"
+        await_power "$node" off "${MAAS_POWERON_TIMEOUT:-60}" "'$node' to power off before the deployer boot" \
+            || exit 1
+    fi
     bmc "$node" power on    || die "power on failed"
     await_power "$node" on "${MAAS_POWERON_TIMEOUT:-60}" "'$node' to power on for the image lay-down" \
         || exit 1

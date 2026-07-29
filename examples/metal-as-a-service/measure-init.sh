@@ -145,16 +145,35 @@ if [ -z "$mdurl" ]; then
     say "no maas.md= on the cmdline — nothing to report to; printing the quote instead"
     /bin/busybox cat "$quote"
 else
+    # BASE64 THE SIGNATURE. `busybox wget --post-file` treats the file as a C string:
+    # it sends Content-Length = strlen(), so a DER signature is cut at its first 0x00.
+    #
+    # FOUND LIVE 2026-07-29, on the first deploy whose signature was ever actually
+    # verified. Measured with this same busybox 1.36.1:
+    #
+    #     --post-file <2117-byte DER>     -> Content-Length: 107   (first NUL at 107)
+    #     --post-file <base64 of it>      -> Content-Length: 2869  (intact)
+    #
+    # Nothing errored. The node printed "delivered quote + signature", the sink stored
+    # 107 bytes, and the gate then reported the quote as FORGED — because a truncated
+    # signature is indistinguishable from a bad one. The transport broke and the node
+    # took the blame. There is no curl in this initramfs, so the wire format is base64
+    # and lib/metadata.py decodes it at /quote-sig-b64/.
+    if ! /usr/bin/openssl base64 -in /tmp/quote.sig -out /tmp/quote.sig.b64 2>/dev/null; then
+        say "FAILED: could not base64 the signature for transport"
+        say "parking: an unsigned quote is a claim, not evidence — the gate would refuse it"
+        exec /bin/busybox sh
+    fi
     ok=0
     for try in 1 2 3 4 5; do
         if /bin/busybox wget -q -O- --post-file="$quote" "$mdurl/quote/$mac" >/dev/null 2>&1 \
-           && /bin/busybox wget -q -O- --post-file=/tmp/quote.sig "$mdurl/quote-sig/$mac" >/dev/null 2>&1; then
+           && /bin/busybox wget -q -O- --post-file=/tmp/quote.sig.b64 "$mdurl/quote-sig-b64/$mac" >/dev/null 2>&1; then
             ok=1; break
         fi
         /bin/busybox sleep 2
     done
     if [ "$ok" = 1 ]; then
-        say "delivered quote + signature to $mdurl (mac=$mac)"
+        say "delivered quote + signature to $mdurl (mac=$mac, sig base64 — busybox wget truncates binary)"
     else
         say "FAILED: could not deliver the quote to $mdurl after 5 tries"
         say "parking: the control plane will refuse to activate an unmeasured node, which is correct"

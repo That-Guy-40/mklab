@@ -167,21 +167,59 @@ sleep 1
 kill -0 "$SINK" 2>/dev/null || fail "the metadata service did not start for the sink test"
 
 printf '4:AAAA\n7:BBBB\n' > "$SANDBOX/q.json"
-printf '\x30\x82BINARY\x00DER' > "$SANDBOX/q.sig"
+# A SELF-CONSISTENT DER: SEQUENCE, short-form length 8, eight content bytes, one of
+# them a NUL so binary-safety is still under test. (The old fixture was
+# '\x30\x82BINARY\x00DER' — 12 bytes declaring 0x4249 = 16969 of content. That is a
+# truncated DER, and the sink now refuses those on purpose; see the negative control
+# below. A fixture that the code under test must reject cannot also be its happy path.)
+printf '\x30\x08BIN\x00DER!' > "$SANDBOX/q.sig"
 curl -sS --data-binary "@$SANDBOX/q.json" "http://127.0.0.1:$PORT/quote/52:54:00:AB:CD:EF" >/dev/null \
     || { kill "$SINK" 2>/dev/null; fail "the sink rejected a quote from a MAC it knows (uppercase — MAC matching must be case-insensitive)"; }
 curl -sS --data-binary "@$SANDBOX/q.sig" "http://127.0.0.1:$PORT/quote-sig/52:54:00:ab:cd:ef" >/dev/null \
     || { kill "$SINK" 2>/dev/null; fail "the sink rejected the detached signature"; }
 code_unknown="$(curl -sS -o /dev/null -w '%{http_code}' --data-binary "@$SANDBOX/q.json" "http://127.0.0.1:$PORT/quote/aa:bb:cc:dd:ee:ff")"
 code_trav="$(curl -sS -o /dev/null -w '%{http_code}' --data-binary "@$SANDBOX/q.json" "http://127.0.0.1:$PORT/quote/..%2f..%2fetc")"
+
+# ── THE CLIENT THE NODE ACTUALLY USES ───────────────────────────────────────
+# This section tested the SINK with curl and never the node's own transport, which is
+# how the real defect survived: `busybox wget --post-file` sends
+# Content-Length = strlen(), so a DER signature is cut at its first 0x00 byte. Live on
+# 2026-07-29 a 2117-byte CMS signature arrived as 107 bytes — exactly the first NUL —
+# and the gate then reported the node's quote as FORGED. A truncated signature is
+# indistinguishable from a bad one, so the transport broke and the node took the blame.
+#
+# curl is binary-safe and proved nothing about the machine. The node has no curl. So:
+# drive the SAME busybox the initramfs carries, and require both halves —
+# the truncation is REFUSED, and the base64 path round-trips byte-identically.
+code_bb_raw="" code_bb_b64=""
+if command -v busybox >/dev/null 2>&1; then
+    # 1. the real client's raw POST must be refused, not stored
+    code_bb_raw="$(busybox wget -q -O- --post-file="$SANDBOX/q.sig" \
+        "http://127.0.0.1:$PORT/quote-sig/52:54:00:ab:cd:ef" >/dev/null 2>&1; echo $?)"
+    # 2. base64 through the same client must land intact
+    openssl base64 -in "$SANDBOX/q.sig" -out "$SANDBOX/q.sig.b64"
+    rm -f "$SINKST/nodeS/quote.json.sig"
+    busybox wget -q -O- --post-file="$SANDBOX/q.sig.b64" \
+        "http://127.0.0.1:$PORT/quote-sig-b64/52:54:00:ab:cd:ef" >/dev/null 2>&1
+    code_bb_b64=$?
+fi
 kill "$SINK" 2>/dev/null                     # by PID: never by pattern
 [[ -f "$SINKST/nodeS/quote.json" ]] || fail "the sink accepted a quote but wrote no quote.json"
-cmp -s "$SANDBOX/q.sig" "$SINKST/nodeS/quote.json.sig" \
-    || fail "REGRESSION: the stored signature is not byte-identical to what was POSTed. A CMS signature is DER, not text — one mangled byte and every quote fails to verify for a reason nobody will find"
 [[ "$code_unknown" == 404 ]] \
     || fail "REGRESSION: a quote from a MAC no enrolled node owns was accepted ($code_unknown). The registry is the only authority on which machine is which; anything else lets a stranger attest as a node"
 [[ "$code_trav" == 400 ]] \
     || fail "REGRESSION: a path-traversal MAC was not rejected ($code_trav) — the sink writes files under the state dir by that name"
+if [[ -n "$code_bb_raw" ]]; then
+    [[ "$code_bb_raw" != 0 ]] \
+        || fail "REGRESSION: the sink ACCEPTED a signature posted by busybox wget --post-file. That client sends Content-Length=strlen(), so the DER was cut at its first NUL; storing it turns a transport bug into a forgery accusation against the node"
+    [[ "$code_bb_b64" == 0 ]] \
+        || fail "REGRESSION: busybox wget could not deliver the base64 signature to /quote-sig-b64/ — that is the only transport the node has, so no measured node could ever attest"
+    cmp -s "$SANDBOX/q.sig" "$SINKST/nodeS/quote.json.sig" \
+        || fail "REGRESSION: the base64 round-trip did not reproduce the signature byte-for-byte. A CMS signature is DER; one mangled byte and every quote fails to verify for a reason nobody will find"
+    note "the node's OWN client (busybox wget) delivers the signature intact via base64, and its truncating raw POST is refused  ✓"
+else
+    note "busybox absent — the node-transport half of the delivery check was skipped"
+fi
 note "the sink records quotes keyed by MAC (case-insensitive, binary-safe), and refuses an unknown MAC and a traversal  ✓"
 
 # ── capture-policy: the policy must come FROM a measured boot ───────────────
