@@ -33,6 +33,8 @@ export MAAS_HEALTH_TIMEOUT="${MAAS_HEALTH_TIMEOUT:-240}"
 die()  { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 info() { printf '   %s\n' "$*" >&2; }
 step() { printf '\n== %s ==\n' "$*" >&2; }
+# shellcheck source=lib/e2e-common.sh
+source "$HERE/lib/e2e-common.sh"
 
 step "preflight"
 
@@ -120,14 +122,10 @@ info "console rotated (previous boot's log kept at e2e-image-console.prev.log)"
 ( "$MAAS" power "$NODE" off ) >/dev/null 2>&1 || true
 
 # The node must be deployable. `available` is the post-cleaning state the state
-# machine requires for a destructive lay-down.
-case "$st" in
-    active)     info "'$NODE' is active — releasing it back to available first"
-                ( "$MAAS" release "$NODE" --wiped ) >/dev/null 2>&1 || true ;;
-    error)      ( "$MAAS" retry "$NODE" ) >/dev/null 2>&1 || true
-                ( "$MAAS" provide "$NODE" ) >/dev/null 2>&1 || true ;;
-    manageable) ( "$MAAS" provide "$NODE" ) >/dev/null 2>&1 || true ;;
-esac
+# machine requires for a destructive lay-down. Shared with run-e2e-measured.sh
+# (lib/e2e-common.sh) because this block used to exist here in a less complete form:
+# it did not handle a node stranded in a TRANSIENT state by an interrupted run.
+make_deployable "$NODE"
 
 "$MAAS" deploy "$NODE" --driver image --image "$IMAGE" \
     || die "deploy did not reach active — state: $( ( "$MAAS" state "$NODE" ) 2>/dev/null ). Console tail:

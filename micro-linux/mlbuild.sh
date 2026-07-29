@@ -380,6 +380,24 @@ build_kernel() {
         x86_64) set_kconfig "$src/.config" E1000 y ;;
     esac
 
+    # A TPM, for the same reason and with the same trap. `=y` is not a preference: an
+    # initramfs loads no modules, so a modular TCG_TPM is indistinguishable from none —
+    # /sys/class/tpm/ is simply empty and the payload reports nothing measured.
+    #
+    # This is the counterpart of the NIC lesson above, learned in the same lab.
+    # metal-as-a-service needs a payload that can BOTH read a PCR and report it, and
+    # spent 2026-07-29 discovering that the two kernels it had each supplied exactly
+    # one half: AlmaLinux's netboot vmlinuz has TPM built in and its NIC drivers
+    # modular, micro-linux had the NICs built in and no TPM at all. A node that
+    # measures perfectly and cannot say so is worth as little as one that cannot
+    # measure. So: both, here, in one kernel.
+    #
+    # TCG_TIS is the interface QEMU's `-device tpm-tis` and libvirt's
+    # <tpm model='tpm-tis'> present; TCG_CRB covers the other common emulated model.
+    set_kconfig "$src/.config" TCG_TPM y
+    set_kconfig "$src/.config" TCG_TIS y
+    set_kconfig "$src/.config" TCG_CRB y
+
     kmake "$arch" "$src" olddefconfig >/dev/null
     # A kernel with no way to talk to the network is as broken as one with no console,
     # so these are gated exactly like the console and initrd options — assert, do not
@@ -389,7 +407,8 @@ build_kernel() {
                    CONFIG_NET CONFIG_INET CONFIG_PACKET CONFIG_VIRTIO_NET)
     case "$arch" in
         # busybox track gzips its cpio + auto-mounts devtmpfs.
-        x86_64)  want+=(CONFIG_DEVTMPFS_MOUNT CONFIG_RD_GZIP CONFIG_VIRTIO CONFIG_VIRTIO_MMIO CONFIG_VIRTIO_PCI CONFIG_E1000) ;;
+        x86_64)  want+=(CONFIG_DEVTMPFS_MOUNT CONFIG_RD_GZIP CONFIG_VIRTIO CONFIG_VIRTIO_MMIO CONFIG_VIRTIO_PCI CONFIG_E1000
+                        CONFIG_TCG_TPM CONFIG_TCG_TIS) ;;
         aarch64) want+=(CONFIG_DEVTMPFS_MOUNT CONFIG_RD_GZIP CONFIG_VIRTIO CONFIG_VIRTIO_MMIO CONFIG_VIRTIO_PCI) ;;
         # ppc64le pseries: VirtIO over the VIO bus + MMIO; HVC_DRIVER is the hvc0 prereq.
         ppc64le) want+=(CONFIG_DEVTMPFS_MOUNT CONFIG_RD_GZIP CONFIG_VIRTIO CONFIG_VIRTIO_MMIO CONFIG_HVC_DRIVER) ;;

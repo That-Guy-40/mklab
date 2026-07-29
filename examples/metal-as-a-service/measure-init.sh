@@ -70,13 +70,52 @@ say "measured $(/bin/busybox wc -l < "$quote") PCRs from a real TPM 2.0"
 say "PCR4 (boot device, as measured by the firmware) = $(/bin/busybox grep '^4:' "$quote" | /bin/busybox cut -d: -f2)"
 
 # ── network ─────────────────────────────────────────────────────────────────
+# NIC drivers first, if any were bundled. A kernel chosen for its TPM may keep its
+# network drivers MODULAR and expect dracut to load them — this initramfs is busybox
+# and loads nothing by itself. Live, 2026-07-29: this image measured 10 real PCRs,
+# signed the quote, and then had no interface to send it from
+# (`udhcpc: SIOCGIFINDEX: No such device`, `mac=`), which reads like a delivery
+# problem and is actually a missing driver.
+if [ -f /lib/modules/nic-load-order ]; then
+    loaded=""
+    for m in $(/bin/busybox cat /lib/modules/nic-load-order); do
+        if /bin/busybox insmod "/lib/modules/nic/$m" 2>/dev/null; then
+            loaded="$loaded $m"
+        else
+            # Already-present is fine and indistinguishable here; a REAL failure
+            # (wrong kernel version -> 'invalid module format') is not, so say so.
+            /bin/busybox insmod "/lib/modules/nic/$m" 2>&1 | /bin/busybox grep -qi 'format\|symbol' \
+                && say "WARNING: $m did not load (built for a different kernel?)"
+        fi
+    done
+    [ -n "$loaded" ] && say "loaded NIC drivers:$loaded"
+fi
+
 /bin/busybox ifconfig eth0 up 2>/dev/null
+# Diagnose the interface's ABSENCE distinctly from its failure to get a lease. These
+# are different faults with different fixes, and collapsing them cost a live run.
+if [ ! -e /sys/class/net/eth0 ]; then
+    say "FAILED: this machine has NO network interface (no /sys/class/net/eth0)."
+    say "  The kernel has no built-in driver for this NIC and none was bundled with"
+    say "  the image. Nothing measured here can be reported, so nothing will be."
+    say "  Fix: build the image with NIC modules matching kernel $(/bin/busybox uname -r),"
+    say "  or use a kernel with the driver built in (build-golden-measured.sh)."
+    say "parking: a node that cannot report its measurement must not look attested"
+    exec /bin/busybox sh
+fi
 if ! /bin/busybox ip addr show eth0 2>/dev/null | /bin/busybox grep -q 'inet '; then
     /bin/busybox udhcpc -i eth0 -t 8 -n -q 2>&1 | /bin/busybox grep -v '^$'
 fi
 mac="$(/bin/busybox cat /sys/class/net/eth0/address 2>/dev/null)"
 addr="$(/bin/busybox ip addr show eth0 2>/dev/null | /bin/busybox sed -nE 's@.*inet ([0-9.]+)/.*@\1@p' | /bin/busybox head -1)"
 say "identity: mac=$mac addr=${addr:-none}"
+# The node identifies itself by MAC; without one the sink has nothing to key on, so
+# refuse here rather than POST to /quote/ and have the control plane puzzle over it.
+if [ -z "$mac" ]; then
+    say "FAILED: eth0 exists but has no MAC address — the control plane keys a quote by MAC."
+    say "parking: an unidentifiable quote is not evidence about any particular machine"
+    exec /bin/busybox sh
+fi
 
 # ── sign it, HERE, on the machine that measured it ──────────────────────────
 # An unsigned quote is a claim, not evidence: anything on the network could POST

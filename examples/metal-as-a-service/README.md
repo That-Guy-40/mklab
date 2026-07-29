@@ -254,9 +254,10 @@ lifecycle runs with no libvirt at all.
 | [`maas-lab.sh`](maas-lab.sh) | the control plane — registry + state machine + verbs + BMC seam + `inspect`/`watch` |
 | [`create-fleet.sh`](create-fleet.sh) | stand up (`up`, author-run) or `enroll` (headless) the fleet — incl. file-backed consoles + DHCP reservations |
 | [`netboot-chain.sh`](netboot-chain.sh) | replace the PXE network's single baked payload with a per-node chain (author-run) |
-| [`build-verifying-rom.sh`](build-verifying-rom.sh) | build + install the iPXE NIC ROM that can enforce F2 **on the node** (`imgverify` + the fleet CA + a serial console) |
+| [`build-verifying-rom.sh`](build-verifying-rom.sh) | build + install the iPXE NIC ROM that can enforce F2 **on the node** (`imgverify` + the fleet CA + a serial console); `install-efi`/`check-efi` do the same for the UEFI binary, refusing one that verifies nothing |
 | [`lib/console_xml.py`](lib/console_xml.py) | rewrite a domain's serial console from a pty to a **recorded file** |
 | [`lib/rom_xml.py`](lib/rom_xml.py) | attach that ROM to every `<interface>` of a domain (idempotent) |
+| [`lib/dnsmasq_arch_xml.py`](lib/dnsmasq_arch_xml.py) | teach the PXE network to answer **UEFI** clients with `ipxe.efi` and everyone else with the iPXE script — including the `tag-if` line that stops a running iPXE being handed itself forever |
 | [`lib/vbmc_check.py`](lib/vbmc_check.py) | refuse a fleet whose BMC ports are answered by another machine |
 | [`run-e2e.sh`](run-e2e.sh) | the one-shot live driver: 10 phases, real domains, real BMCs, real netboot (author-run) |
 | [`run-e2e-install.sh`](run-e2e-install.sh) | the INSTALL-driver live path (separate so the fast run stays fast): Anaconda via the chain → kickstart → poweroff → disk boot → login (author-run, ~25 min; **verified live 2026-07-28**) |

@@ -16,10 +16,16 @@
 # THE NODE MUST BE UEFI + TPM. A TPM on a BIOS domain measures the boot sector and
 # the partition table and nothing in the filesystem — two completely different
 # kernels measure identically, so the gate would pass anything. create-fleet.sh's
-# FLEET_TPM=1 sets both, and lib/tpm_xml.py refuses to set one without the other.
+# FLEET_TPM sets both, and lib/tpm_xml.py refuses to set one without the other.
 #
-#   FLEET_TPM=1 ./create-fleet.sh up        # a fleet whose nodes can measure
-#   ./run-e2e-measured.sh                   # this script
+# Name the NODE, not the fleet: FLEET_TPM=1 switches every domain to UEFI, and a node
+# whose disk was installed under BIOS cannot boot it afterwards — which is exactly
+# what happened to node1 and node2 on the first attempt at this run.
+#
+#   ./build-verifying-rom.sh install-efi     # the VERIFYING ipxe.efi into the TFTP root
+#   ./netboot-chain.sh install-uefi          # offer it to UEFI clients only
+#   FLEET_TPM=node3 ./create-fleet.sh up     # one node that can measure
+#   ./run-e2e-measured.sh                    # this script
 #
 # Knobs: E2E_NODE (default node3 — its disk is DESTROYED), E2E_IMAGE, E2E_FORCE=1.
 set -uo pipefail
@@ -37,6 +43,8 @@ export MAAS_HEALTH_TIMEOUT="${MAAS_HEALTH_TIMEOUT:-240}"
 die()  { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 info() { printf '   %s\n' "$*" >&2; }
 step() { printf '\n== %s ==\n' "$*" >&2; }
+# shellcheck source=lib/e2e-common.sh
+source "$HERE/lib/e2e-common.sh"
 
 SINK_PID=""
 cleanup() { [[ -n "$SINK_PID" ]] && kill "$SINK_PID" 2>/dev/null; }
@@ -44,7 +52,7 @@ trap cleanup EXIT
 
 step "preflight"
 ( "$MAAS" show "$NODE" ) >/dev/null 2>&1 \
-    || die "node '$NODE' is not enrolled — FLEET_TPM=1 ./create-fleet.sh up"
+    || die "node '$NODE' is not enrolled — FLEET_TPM=$NODE ./create-fleet.sh up"
 ( "$MAAS" power "$NODE" status ) >/dev/null 2>&1 \
     || die "the BMC for '$NODE' is not answering — is vbmcd up?"
 
@@ -54,13 +62,40 @@ dom="$("$MAAS" show "$NODE" 2>/dev/null | awk '$1=="domain"{print $2; exit}')"
 xml="$(virsh -c qemu:///system dumpxml --inactive "${dom:-$NODE}" 2>/dev/null)"
 grep -q '<tpm' <<<"$xml" \
     || die "domain '${dom:-$NODE}' has NO <tpm> device — it cannot measure anything.
-    FLEET_TPM=1 ./create-fleet.sh up"
+    FLEET_TPM=$NODE ./create-fleet.sh up"
 grep -q "loader.*pflash\|<loader" <<<"$xml" \
     || die "domain '${dom:-$NODE}' has a TPM but is NOT UEFI. On a BIOS domain the firmware
 measures the boot sector and the partition table and nothing in the filesystem, so a
 PCR policy blesses ANY payload — the gate would pass and mean nothing. Re-create the
-fleet with FLEET_TPM=1 (lib/tpm_xml.py sets both, deliberately)."
+fleet with FLEET_TPM=$NODE (lib/tpm_xml.py sets both, deliberately)."
 info "domain '${dom:-$NODE}': TPM 2.0 + UEFI — it can measure the payload it boots"
+
+# ...and it must be able to NETBOOT, which UEFI makes a separate question. OVMF's
+# NetworkPkg gives it the PXE stack, but the driver for the card comes from the card's
+# UEFI option ROM — and this lab attaches a LEGACY-only verifying ROM. A UEFI domain
+# carrying that ROM finds no network device, builds no boot option, and drops to the
+# EFI internal shell ("map: No mapping found") with no PXE attempt and no error. It
+# cost a live run on 2026-07-29. A measured node therefore uses virtio (OVMF drives it
+# natively) with no option ROM at all; lib/tpm_xml.py sets that, and this checks it.
+if grep -q '<rom file=' <<<"$xml"; then
+    die "domain '${dom:-$NODE}' is UEFI but its NIC carries a legacy option ROM. That ROM
+REPLACES the only UEFI network driver OVMF would have had, so the firmware finds no NIC,
+never attempts PXE, and stops at the EFI shell — this run would time out against a
+console showing a firmware prompt. Re-create the node:
+  FLEET_TPM=$NODE ./create-fleet.sh up"
+fi
+if ! grep -q "type='virtio'" <<<"$(sed -n '/<interface/,/<\/interface>/p' <<<"$xml")"; then
+    die "domain '${dom:-$NODE}' is UEFI but its NIC is not virtio. OVMF has no built-in
+driver for it, so with the option ROM disabled there is nothing to netboot with.
+  FLEET_TPM=$NODE ./create-fleet.sh up"
+fi
+info "NIC: virtio with no option ROM — OVMF drives it and fetches the verifying ipxe.efi"
+
+# The node must be in a state `deploy` accepts, and this is checked HERE — before the
+# UKI build, the staging and the sink — because the alternative is finding out several
+# minutes in. An interrupted earlier run leaves the node in `deploying`, which is
+# exactly how this failed on 2026-07-29.
+make_deployable "$NODE"
 
 GW="$(virsh -c qemu:///system net-dumpxml vbmc-pxe 2>/dev/null \
       | sed -nE "s/.*<ip address='([^']+)'.*/\1/p" | head -1)"
@@ -70,33 +105,49 @@ curl -fsS --max-time 5 -o /dev/null "http://$GW:$PORT/maas/deployer/vmlinuz" \
 grep -q 'netboot-chain.sh' /var/lib/libvirt/tftp-vbmc/boot.ipxe 2>/dev/null \
     || die "the PXE network's boot.ipxe is not the per-node chain (./netboot-chain.sh install)"
 
-# THE UEFI NETBOOT GAP, checked here because it would otherwise be a silent
-# timeout. The network hands every client `boot.ipxe` — an iPXE *script*, which
-# only works because a BIOS node's iPXE option ROM chainloads it. This node is
-# UEFI (it has to be, or it measures nothing), and its firmware would TFTP that
-# script and try to execute it as a UEFI binary. The deployer would never load.
+# THE UEFI NETBOOT PATH, checked in three parts because each failure alone is a
+# silent timeout with an empty console. The network hands every client `boot.ipxe`
+# — an iPXE *script*, which works only because a BIOS node's option ROM chainloads
+# it. This node is UEFI (it has to be, or it measures nothing), so its firmware
+# would TFTP that script and try to execute it as a PE binary.
 #
-# The fix is arch-conditional DHCP: serve `ipxe.efi` to UEFI clients (option 93
-# = client arch 7/9) and keep `boot.ipxe` for BIOS. libvirt passes that through
-# to dnsmasq via the dnsmasq: namespace on the network XML:
-#
-#   <network xmlns:dnsmasq='http://libvirt.org/schemas/network/dnsmasq/1.0'>
-#     <dnsmasq:options>
-#       <dnsmasq:option value='dhcp-match=set:efi64,option:client-arch,7'/>
-#       <dnsmasq:option value='dhcp-boot=tag:efi64,ipxe.efi'/>
-#     </dnsmasq:options>
-#
-# plus ipxe.efi in the TFTP root. Until that lands this run cannot netboot its
-# deployer, so it says so now instead of timing out twice.
-if ! sudo -n test -f /var/lib/libvirt/tftp-vbmc/ipxe.efi 2>/dev/null \
-   && [[ ! -f /var/lib/libvirt/tftp-vbmc/ipxe.efi ]]; then
-    die "this node is UEFI, but the PXE network serves only 'boot.ipxe' (an iPXE SCRIPT)
-and the TFTP root has no ipxe.efi. A UEFI firmware cannot execute a script as a boot
-binary, so the deployer would never load and this run would time out with an empty
-console. Install a UEFI netboot path first — see the comment above this check in
-$0 for the exact dnsmasq passthrough, and copy ~/netboot/ipxe.efi into
-/var/lib/libvirt/tftp-vbmc/."
+# netboot-chain.sh install-uefi is what fixes it: arch-conditional DHCP through
+# libvirt's dnsmasq: namespace, plus the binary in the TFTP root.
+EFI_BIN=/var/lib/libvirt/tftp-vbmc/ipxe.efi
+if ! sudo -n test -f "$EFI_BIN" 2>/dev/null && [[ ! -f "$EFI_BIN" ]]; then
+    die "this node is UEFI, but the TFTP root has no ipxe.efi — a UEFI firmware cannot
+execute an iPXE script as a boot binary, so the deployer would never load and this run
+would time out against an empty console. Install it:
+  ./build-verifying-rom.sh install-efi && ./netboot-chain.sh install-uefi"
 fi
+
+# ...and it must be the VERIFYING binary. This is the trap this lab's own notes fell
+# into: DEFERRED.md said to copy ~/netboot/ipxe.efi, which is the RAM-infra lab's
+# generic build with no IMAGE_TRUST_CMD and no fleet CA. Everything downstream would
+# go green while the firmware half of F2 was switched off on the ONE node whose whole
+# purpose is proving a machine refuses what the fleet did not sign. Nothing but this
+# check can see the difference.
+if [[ -r "$EFI_BIN" ]] && ! ( "$HERE/build-verifying-rom.sh" check-efi "$EFI_BIN" ) >/dev/null 2>&1; then
+    die "$EFI_BIN does not enforce F2 (no imgverify, or not this fleet's CA). The node
+would boot, deploy and attest with NO firmware-side signature verification, and this
+run would pass. Reinstall the verifying build:
+  ./build-verifying-rom.sh install-efi
+  ( ./build-verifying-rom.sh check-efi $EFI_BIN   shows exactly what is missing )"
+fi
+
+# ...and the network must actually OFFER it. A binary sitting in the TFTP root that
+# nothing is ever told to fetch is the same empty console as no binary at all.
+missing_opts=()
+while read -r opt; do
+    virsh -c qemu:///system net-dumpxml vbmc-pxe 2>/dev/null | grep -qF "$opt" || missing_opts+=("$opt")
+done < <(python3 "$HERE/lib/dnsmasq_arch_xml.py" --emit-options)
+if [[ ${#missing_opts[@]} -gt 0 ]]; then
+    die "the vbmc-pxe network is not configured to offer ipxe.efi to UEFI clients
+(${#missing_opts[@]} dnsmasq option(s) missing, e.g. ${missing_opts[0]}).
+The node would be handed boot.ipxe and stop. Fix:
+  ./netboot-chain.sh install-uefi     (sudo; restarts the network, fleet must be down)"
+fi
+info "UEFI netboot path: verifying ipxe.efi served, and offered to UEFI clients only"
 
 step "build + stage the measured golden image"
 # The image carries the sink URL in its UKI — and therefore in its measurement.
@@ -148,18 +199,18 @@ fi
     || die "the refusal happened but the node still attested — verify must gate BEFORE any boot"
 info "refused at verify, before the node was touched: no pcrs.expected for '$IMAGE'"
 
-# ── the enrolment boot: lay the image down with the PLAIN image driver ──────
-step "deploy #1 — enrolment boot (plain 'image' driver) to learn what this image measures"
+# ── the enrollment boot: lay the image down with the PLAIN image driver ──────
+step "deploy #1 — enrollment boot (plain 'image' driver) to learn what this image measures"
 # Nobody can predict a firmware's measurements, so the policy has to come from a
 # real boot of this exact image. That boot cannot be a MEASURED deploy — the gate
 # would refuse it for having no policy, which is the point of deploy #0. So the
-# enrolment boot uses the plain `image` driver: identical lay-down, identical
+# enrollment boot uses the plain `image` driver: identical lay-down, identical
 # payload, no attestation gate. This is exactly how it works in life: image a
 # golden machine, observe what it measures, pin that, then enforce.
 st="$( ( "$MAAS" state "$NODE" ) 2>/dev/null )"
 [[ "$st" == error ]] && { ( "$MAAS" retry "$NODE" ) >/dev/null 2>&1; ( "$MAAS" provide "$NODE" ) >/dev/null 2>&1; }
 "$MAAS" deploy "$NODE" --driver image --image "$IMAGE" \
-    || die "the enrolment boot failed — the node could not even lay down and boot the measured
+    || die "the enrollment boot failed — the node could not even lay down and boot the measured
 image without the attestation gate. State: $( ( "$MAAS" state "$NODE" ) 2>/dev/null ). Console tail:
 $(tail -8 "$CON" 2>/dev/null | tr -d '\r')"
 info "the node booted the measured image (plain image driver, no gate)"

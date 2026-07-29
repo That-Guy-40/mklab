@@ -103,6 +103,21 @@ or point --from at any UEFI-bootable whole-disk raw."
     : "${MAAS_IMAGES_DIR:?stage: MAAS_IMAGES_DIR not set}"
     dir="$MAAS_IMAGES_DIR/$image"; mkdir -p "$dir"
     cp -f "$src" "$dir/disk.raw" || die "could not stage the image"
+    # Whoever writes disk.raw owns its digest. Re-staging used to overwrite the image
+    # and re-sign it while leaving a PREVIOUS build's disk.raw.sha256 in place, so the
+    # control plane then published a digest describing an image it no longer had — and
+    # the node dutifully reported a mismatch it had not caused (live, 2026-07-29).
+    # `deploy` recomputes from the bytes regardless; this keeps the file from ever
+    # being wrong in the first place.
+    if command -v sha256sum >/dev/null; then
+        sha256sum "$dir/disk.raw" | cut -d' ' -f1 \
+            | { read -r h; printf '%s  disk.raw\n' "$h" > "$dir/disk.raw.sha256"; } \
+            || die "could not record the staged image's sha256"
+    else
+        # No sha256sum: remove a sidecar rather than leave a stale one behind. An
+        # absent digest is a missing fact; a stale one is a false fact.
+        rm -f "$dir/disk.raw.sha256"
+    fi
     if [[ -d "$MAAS_IMAGES_DIR/trust" ]]; then
         "$HERE/verify-lib.sh" sign "$dir/disk.raw" --keydir "$MAAS_IMAGES_DIR/trust" >/dev/null \
             || die "signing the image failed"
@@ -127,11 +142,33 @@ deploy)
     # The digest the deployer re-reads from the disk after writing. Computed from
     # the staged copy (the one F2 verified host-side), so what the node checks is
     # what the control plane blessed.
+    #
+    # ALWAYS FROM THE BYTES, NEVER FROM THE SIDECAR. This used to read
+    # disk.raw.sha256 when it existed and only compute one otherwise — a cache with
+    # no invalidation. Re-staging an image overwrites disk.raw and re-signs it but
+    # left that file untouched, so the control plane published the PREVIOUS build's
+    # digest for the CURRENT image.
+    #
+    # Found live 2026-07-29, and the way it surfaced is the point: the node wrote
+    # the disk perfectly, read it back, and reported a mismatch — because the value
+    # it had been told to expect was three builds old. The deployer's read-back
+    # check was added to catch a bad WRITE and instead caught the control plane
+    # lying about what it had published. Had the sidecar been trusted one step
+    # further, this fleet would have been shipping "verified" deploys whose digest
+    # described a different image.
+    #
+    # sha256 over a couple of hundred MB is well under a second against a deploy
+    # measured in minutes, so the cache was never worth the risk it carried.
     raw_sha=""
-    if [[ -f "$dir/disk.raw.sha256" ]]; then
-        raw_sha="$(cut -d" " -f1 < "$dir/disk.raw.sha256")"
-    elif command -v sha256sum >/dev/null; then
+    if command -v sha256sum >/dev/null; then
         raw_sha="$(sha256sum "$dir/disk.raw" | cut -d" " -f1)"
+        if [[ -f "$dir/disk.raw.sha256" ]] \
+           && [[ "$(cut -d' ' -f1 < "$dir/disk.raw.sha256")" != "$raw_sha" ]]; then
+            # Say it out loud: a stale sidecar means something re-staged this image
+            # without refreshing it, and silence here is how that stayed hidden.
+            printf 'image: NOTE %s/disk.raw.sha256 was STALE (recorded %s, actual %s) — refreshing it.\n' \
+                "$dir" "$(cut -d' ' -f1 < "$dir/disk.raw.sha256" | cut -c1-16)…" "${raw_sha:0:16}…" >&2
+        fi
         printf '%s  disk.raw\n' "$raw_sha" > "$dir/disk.raw.sha256" 2>/dev/null || true
     fi
     # The EXACT byte count, handed to the deployer rather than inferred there.
