@@ -26,11 +26,18 @@ HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 OUT="${MAAS_ARTIFACTS:-$HOME/.cache/lab-create/maas}/probe-initramfs.cpio.gz"
 BUSYBOX="${MAAS_BUSYBOX:-}"
 MODE=probe
+INIT_SRC=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --out)     OUT="$2"; shift 2 ;;
         --busybox) BUSYBOX="$2"; shift 2 ;;
         --shell)   MODE=shell; shift ;;
+        # --init <file>: package an arbitrary /init instead of probe-init.sh.
+        # The deployer ramdisk (drivers/image.sh) is the second user of this
+        # exact machinery — static busybox, applet symlinks, udhcpc script, and
+        # the unpack-and-RUN verification that caught the self-symlink panic.
+        # Forking a second builder would have forked that verification too.
+        --init)    MODE=custom; INIT_SRC="$2"; shift 2 ;;
         -h|--help) grep '^#' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "build-probe-initramfs: unknown option $1" >&2; exit 1 ;;
     esac
@@ -85,6 +92,9 @@ if [[ "$MODE" == shell ]]; then
 /bin/busybox mount -t devtmpfs none /dev      2>/dev/null
 exec /bin/busybox sh
 EOS
+elif [[ "$MODE" == custom ]]; then
+    [[ -f "${INIT_SRC:-}" ]] || die "--init: no such file: ${INIT_SRC:-<unset>}"
+    cp "$INIT_SRC" "$work/init"
 else
     cp "$HERE/probe-init.sh" "$work/init"
 fi

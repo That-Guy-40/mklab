@@ -84,7 +84,49 @@ dsk=$(grep -n "^node1 bootdev disk" "$MOCK_BMC_LOG" | head -1 | cut -d: -f1)
 [[ -n "$dsk" ]] \
     || fail "REGRESSION: the node was never pointed at its own disk. Unlike a ramdisk node, an imaged node OWNS its disk now — left on PXE it would re-image itself on every boot, forever"
 [[ $pxe -lt $dsk ]] || fail "REGRESSION: 'bootdev disk' was set before 'bootdev pxe'"
-note "sequence: bootdev pxe -> power on -> write -> bootdev disk -> power cycle  ✓"
+note "sequence: bootdev pxe -> power on -> write -> bootdev disk -> power on  ✓"
+
+# ── 2b. the driver must not need a capability THIS fleet's BMC lacks ─────────
+# vbmcd — the backend the live fleet actually runs — answers `chassis power
+# cycle` with "Invalid data field in request": it implements on/off/status and
+# not cycle. The mock implemented cycle happily, so the green suite proved a
+# capability the real seam does not have, and the driver would have died at its
+# LAST step, AFTER overwriting the whole disk. Found before the live run by
+# asking the real BMC; locked here so the mock can no longer hide it.
+grep -q "^node1 power cycle" "$MOCK_BMC_LOG" \
+    && fail "REGRESSION: the image driver issued 'power cycle' — vbmcd (this lab's own BMC backend) refuses that verb, so the deploy would fail after the destructive write. Use off + on, which every backend implements"
+prep node1b 6245
+printf 'Deploying image golden\n2147483648 bytes (2.1 GB) copied\nnode1b login: \n' \
+    > "$MAAS_STATE/node1b/console.log"
+: > "$MOCK_BMC_LOG"
+( export MOCK_BMC_NO_CYCLE=1; "$MAAS" deploy node1b --driver image --image golden ) >/dev/null 2>&1 \
+    || fail "REGRESSION: the image driver could not deploy against a BMC that does not implement 'power cycle' — which is exactly what this lab's vbmcd does"
+assert_state node1b active
+note "deploys against a BMC with NO 'power cycle' (vbmcd's real limitation)  ✓"
+
+# ── 2c. the deployer's boot script must carry ip=dhcp ───────────────────────
+# The deployer fetches the image ITSELF, so the kernel has to bring eth0 up
+# before the ramdisk's udhcpc can do anything. Without it the first live run
+# hung on a down interface with NO output at all — indistinguishable from a
+# slow write, so the operator waits out the entire write timeout for nothing.
+S="$MAAS_NETBOOT_DIR/maas/node1.ipxe"
+[[ -f "$S" ]] || fail "the image deploy wrote no per-node boot script at $S"
+grep -q '^kernel .* ip=dhcp ' "$S" \
+    || fail "REGRESSION: the deployer's kernel line has no ip=dhcp — the kernel leaves eth0 down, the ramdisk cannot fetch the image, and it stalls with no output (got: $(grep '^kernel' "$S" | cut -c1-160))"
+grep -q 'imgverify disk ' "$S" \
+    && fail "REGRESSION: the script says 'imgverify disk' — iPXE never downloaded an image called 'disk' (the RAMDISK fetches the raw), so the firmware refuses an unknown image and boots nothing"
+grep -q 'maas.sha256=' "$S" \
+    || fail "REGRESSION: no maas.sha256= on the deployer cmdline — the node would write the image and never check what landed, and the firmware cannot check it either"
+# The EXACT size, from the control plane. Without it the ramdisk falls back to
+# parsing dd's status line — which busybox dd does not print ("0+3201 records
+# out", no byte total), so the read-back check skipped itself on the very first
+# live run and reported a warning instead of verifying.
+grep -qE 'maas.bytes=[0-9]+' "$S" \
+    || fail "REGRESSION: no maas.bytes= on the deployer cmdline. busybox dd prints no byte total, so the ramdisk cannot work out how much to read back, and the sha256 check silently degrades to a warning — the one gate that proves what LANDED"
+want_b="$(stat -c%s "$MAAS_IMAGES_DIR/golden/disk.raw")"
+grep -q "maas.bytes=$want_b" "$S" \
+    || fail "REGRESSION: maas.bytes does not match the staged image's real size ($want_b) — the node would hash the wrong number of bytes and fail a good image (or pass a truncated one)"
+note "the deployer cmdline carries ip=dhcp + maas.sha256, and no bogus 'imgverify disk'  ✓"
 
 # ── 3. persistence=full — the third point of the cleaning contrast (§3) ──────
 [[ "$(_show node1 persistence)" == full ]] \

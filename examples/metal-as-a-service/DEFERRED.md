@@ -276,9 +276,48 @@ nothing), and the negative control that a failed-deploy error is never touched.
   successful redeploy) and asserts the recorded previous pair is the real one. The
   live registry's own lie (`previous: install/micro-linux-x86_64` on node1) was
   cleared by hand, with the why appended to the node's history.
-- **`image` and `image+measured` have never touched a real node.** The install
-  driver's live run (item 2) proves the pattern; these two still have only their
-  headless real-driver tests. `image` needs a golden whole-disk raw staged first.
+- ~~**`image` has never touched a real node.**~~ **DONE 2026-07-28 (night)** — a
+  deployer ramdisk streamed a 200 MiB golden Alpine raw onto node2's disk and the
+  node booted it to `node2 login:` (`active (image/golden-alpine)`, `<boot dev='hd'/>`,
+  663 MB written to vda). New pieces: [`deployer-init.sh`](deployer-init.sh) (streams,
+  never buffers; parks on failure rather than rebooting into a re-imaging loop),
+  `--init` on [`build-probe-initramfs.sh`](build-probe-initramfs.sh) so the deployer
+  reuses the probe's hard-won verification, and
+  [`run-e2e-image.sh`](run-e2e-image.sh). **Four defects, none of which the green
+  suite could see** — three found by reading the real seam before the run, one by the
+  run itself:
+  1. the driver issued `power cycle`, which **vbmcd does not implement** ("Invalid
+     data field in request") — it would have died at its last step, *after* the
+     destructive write. The mock implemented `cycle` happily; `MOCK_BMC_NO_CYCLE=1`
+     now reproduces the real BMC's refusal.
+  2. `imgverify disk <sig>` named an image **iPXE never downloaded** (the ramdisk
+     fetches the raw with `wget`); the firmware would have refused an unknown image
+     and booted nothing. It now verifies what iPXE *does* fetch — the signed deployer
+     kernel+initrd — and the raw is verified where it can be: on the node, after the
+     write.
+  3. no `ip=dhcp` on the deployer's cmdline, so the kernel left `eth0` down and the
+     ramdisk **hung with no output at all** — indistinguishable from a slow write, so
+     the operator waits out the whole write timeout. (Diagnosed by `domblkstat`: zero
+     writes, no HTTP connection. The same `ip=dhcp` lesson this repo already learned
+     in the pxeboot lab.) The network step now proves it has an address or refuses.
+  4. the read-back sha256 check **silently downgraded itself to a warning** on the
+     first real run: it parsed the byte count from `dd`'s status line, which busybox
+     dd does not print. The driver now passes `maas.bytes=` and a missing byte count
+     is fatal — an unverified disk is not a successful deploy. **The harness caught
+     this one on itself**: every step of that run succeeded and the node reached
+     `active`, and `run-e2e-image.sh`'s verdict still reported FAIL, because the
+     console carried no proof of verification. The second run printed
+     `verified: the bytes on /dev/vda match the published sha256` and passed.
+- **The deployer ramdisk gets a POOL address, not the node's reservation.** Observed
+  live: `eth0 = 192.168.123.31` where node2's reservation is `.102`. dnsmasq keys the
+  reservation on the DHCP hostname/MAC pair and the ramdisk sends no hostname, so it
+  lands in the dynamic range. Harmless today — the deployer only needs to reach the
+  payload server — but anything that ever keys off the deploying node's address (a
+  callback, an ACL, a metadata lookup) would be surprised. Fix shape: `udhcpc -x
+  hostname:$node`, or drop the reservation requirement entirely.
+- **`image+measured` has never touched a real node.** It adds the TPM attestation
+  gate on top of the now-proven `image` path; swtpm under QEMU remains plumbing, not
+  a trust anchor.
 - ~~**`install.sh`'s ownership test is narrow on purpose.**~~ **CLOSED 2026-07-28** by
   [`install-catalog.toml`](install-catalog.toml) — the per-driver catalog this item
   asked for. `describe` now answers positively (cataloged, or staged in the driver's

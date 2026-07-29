@@ -268,7 +268,8 @@ lifecycle runs with no libvirt at all.
 | [`milestones.toml`](milestones.toml) | MAAS's progress profiles (`probe`/`install`/`ramdisk`/`image`) for `watch` |
 | [`drivers/install.sh`](drivers/install.sh) | the `install` deploy driver (PXE kickstart/preseed → boot from disk; author-run) |
 | [`drivers/ramdisk.sh`](drivers/ramdisk.sh) | the `ramdisk` deploy driver (netboot into RAM; `stage`/`verify`/`deploy`/`health`) |
-| [`drivers/image.sh`](drivers/image.sh) | the `image` deploy driver (a deployer ramdisk `dd`s a golden whole-disk image; **destructive**) |
+| [`drivers/image.sh`](drivers/image.sh) + [`deployer-init.sh`](deployer-init.sh) | the `image` deploy driver and its deployer ramdisk (streams a golden whole-disk image onto the node, reads it back and checks the sha256; **destructive**; verified live 2026-07-28) |
+| [`run-e2e-image.sh`](run-e2e-image.sh) | the IMAGE-driver live path: deployer ramdisk → stream to disk → verify what landed → boot it (author-run; targets node2, whose disk it destroys) |
 | [`drivers/image-measured.sh`](drivers/image-measured.sh) | `image` + a **TPM attestation gate** — activates only on a signed quote matching the image's PCR policy (swtpm: mechanism, **not** a trust anchor) |
 | [`drivers/chaos.sh`](drivers/chaos.sh) + [`chaos-run.sh`](chaos-run.sh) | a driver that fails on purpose, and the matrix that grades how the control plane falls across all five layers |
 | [`ramdisk-catalog.toml`](ramdisk-catalog.toml) + [`lib/catalog.py`](lib/catalog.py) | the `--image` registry (RAM-INFRA trio · micro-linux · floppinux · busybox) and its validating reader |
