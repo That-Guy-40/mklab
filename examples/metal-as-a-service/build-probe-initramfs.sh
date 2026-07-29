@@ -127,6 +127,25 @@ EOS
 fi
 chmod +x "$work/usr/share/udhcpc/default.script"
 
+# ...and again at the OTHER conventional path, because which one udhcpc looks at is a
+# property of how BUSYBOX WAS COMPILED, not of this initramfs.
+#
+# FOUND LIVE 2026-07-29, and it fails in the most misleading way available. This
+# builder installs the script at micro-linux's path (/usr/share/udhcpc/), because
+# micro-linux compiles its busybox with CONFIG_UDHCPC_DEFAULT_SCRIPT set there. But the
+# initramfs bundles the HOST's busybox, and Ubuntu's is built with
+# /etc/udhcpc/default.script. So udhcpc found no script, and — having no script — it
+# acquired the lease perfectly and applied none of it:
+#
+#     udhcpc: lease of 192.168.123.103 obtained from 192.168.123.1, lease time 3600
+#     MAAS-ATTEST: identity: mac=52:54:00:14:1a:88 addr=none
+#
+# A success line and no address. udhcpc does not configure anything itself; the script
+# IS the configuration step, and its absence is not an error to udhcpc.
+mkdir -p "$work/etc/udhcpc"
+cp "$work/usr/share/udhcpc/default.script" "$work/etc/udhcpc/default.script"
+chmod +x "$work/etc/udhcpc/default.script"
+
 # extra payloads (--add src[:dst]) — dst defaults to the same path inside the image
 for spec in ${ADDS+"${ADDS[@]}"}; do
     src="${spec%%:*}"; dst="${spec#*:}"

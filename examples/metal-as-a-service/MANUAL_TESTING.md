@@ -1475,6 +1475,61 @@ kernel with both halves and drop **two** dependencies on `~/netboot/` — the 15
 `vmlinuz` and the 223 MB `initrd.img`, both outside the repo and both in the periodic
 reclaim path — after which the module-extraction code comes out.
 
+### 14.8 The fourth UEFI boot: DHCP succeeded and the address was thrown away
+
+The NIC modules worked on real hardware — `mac=` went from empty to node3's actual
+address — and the run still could not deliver:
+
+```
+udhcpc: broadcasting select for 192.168.123.103, server 192.168.123.1
+udhcpc: lease of 192.168.123.103 obtained from 192.168.123.1, lease time 3600
+MAAS-ATTEST: identity: mac=52:54:00:14:1a:88 addr=none
+```
+
+**A success line and no address.** `udhcpc` configures nothing itself: it execs a
+script (`$1` = the action, the lease in the environment) and *that* is the step which
+applies the address. If the script is not where this particular busybox was compiled to
+look, udhcpc obtains the lease, exits 0, and drops it — no error, no warning.
+
+The initramfs installs the script at `/usr/share/udhcpc/default.script`, which is
+micro-linux's path because micro-linux compiles its own busybox that way. But the
+initramfs bundles the **host's** busybox, and Ubuntu's is built with:
+
+```console
+$ strings -a bin/busybox | grep default.script
+/etc/udhcpc/default.script
+```
+
+**Why this had been invisible.** The deployer ramdisk does the same DHCP with the same
+busybox and has always worked — because its kernel has `virtio_net` built in, so the
+*kernel's* `ip=dhcp` configures `eth0` before init runs at all (`device=eth0,
+ipaddr=192.168.123.103` in its boot log). udhcpc's fallback path was never taken.
+Making the driver a module moved that job into userspace and exposed a bug that had sat
+latent in `deployer-init.sh` the whole time, one kernel-config change from biting.
+
+Fixed three ways, because the failure is silent: the script now ships at **both**
+conventional paths, both inits pass `-s` explicitly so nothing depends on how busybox
+was compiled, and `measure-init.sh` names this exact state rather than reporting a
+generic delivery failure —
+
+> if a lease WAS obtained above, udhcpc's script did not apply it — udhcpc configures
+> nothing itself, so a missing/unfound `default.script` takes the lease and silently
+> drops it.
+
+Verified by boot:
+
+```
+udhcpc: eth0 bound to 10.0.2.15 (gw none, dns none)     <- the script's own line, absent before
+MAAS-ATTEST: identity: mac=52:54:00:12:34:56 addr=10.0.2.15
+```
+
+⚠️ **This also fooled the test, and then the test recorded the wrong reason.** An earlier
+version of §4b saw `addr=none` under `restrict=on` slirp and concluded DHCP simply is not
+exercised there — a comment stating a limitation that did not exist. slirp serves DHCP
+fine; the missing address was this defect, in the harness as well as on the metal. §4b now
+*asserts* `addr=` is a real address. A caveat is a claim like any other, and this one was
+never checked.
+
 **Success signature:** `tests/run-all.sh` reports **32 passed / 0 failed**;
 `./netboot-chain.sh show` ends with `network: arch-conditional DHCP present (5/5
 options ...)`; and `./build-verifying-rom.sh show` reports the UEFI binary as

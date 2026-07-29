@@ -63,7 +63,11 @@ fi
 /bin/busybox ifconfig eth0 up 2>&1 | /bin/busybox grep . && say "note: ifconfig eth0 up complained (above)"
 if ! /bin/busybox ip addr show eth0 2>/dev/null | /bin/busybox grep -q 'inet '; then
     say "no address on eth0 yet (kernel ip= did not configure it) — running udhcpc"
-    /bin/busybox udhcpc -i eth0 -t 8 -n -q 2>&1 | /bin/busybox grep -v '^$'
+    # -s explicitly: the compiled-in script path differs between busyboxes (Ubuntu
+    # says /etc/udhcpc, micro-linux says /usr/share/udhcpc), and a missing script
+    # means udhcpc takes the lease and applies NOTHING, with no error.
+    /bin/busybox udhcpc -i eth0 -t 8 -n -q -s /usr/share/udhcpc/default.script 2>&1 \
+        | /bin/busybox grep -v '^$'
 fi
 addr="$(/bin/busybox ip addr show eth0 2>/dev/null | /bin/busybox sed -nE 's@.*inet ([0-9.]+)/.*@\1@p' | /bin/busybox head -1)"
 if [ -z "$addr" ]; then

@@ -494,6 +494,19 @@ nothing), and the negative control that a failed-deploy error is never touched.
   [`tests/test-measured-image.sh`](tests/test-measured-image.sh) §4b, whose VM gets a
   virtio NIC so `eth0` exists only if the module truly loaded.
 
+  **A sixth defect, immediately behind it.** With the modules loading, DHCP then
+  *succeeded* and the address was never applied: `lease of 192.168.123.103 obtained`
+  followed by `addr=none`. `udhcpc` configures nothing itself — it execs a script — and
+  the initramfs installed that script at micro-linux's path (`/usr/share/udhcpc/`) while
+  bundling the **host's** busybox, which Ubuntu compiles to look in `/etc/udhcpc/`. No
+  script, no error, lease discarded. It had been latent in `deployer-init.sh` all along,
+  masked because that kernel's built-in `virtio_net` lets the KERNEL's `ip=dhcp` do the
+  job before init runs. Now shipped at both paths, `-s` passed explicitly by both inits,
+  and named specifically by `measure-init.sh`. It had also fooled
+  `tests/test-measured-image.sh`, which recorded the missing address as a limitation of
+  `restrict=on` slirp — a caveat that was never checked and was simply wrong; §4b now
+  asserts a real address.
+
   **The durable fix is micro-linux + TPM**, and it is written but unbuilt:
   `micro-linux/mlbuild.sh` now sets and asserts `TCG_TPM`/`TCG_TIS`/`TCG_CRB` beside the
   `VIRTIO_NET`/`E1000` lines it already asserts — the same "an initramfs carries NO
