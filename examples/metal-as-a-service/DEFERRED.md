@@ -34,9 +34,13 @@ installer payload (`imgverify` over the Anaconda kernel and its 223 MB initrd), 
 kickstart writing the disk, the self-poweroff observed out-of-band and confirmed
 stable, and the INSTALLED OS reaching `login:` from its own disk.
 
-What remains lives in "Smaller, still open" below — chiefly: the `image` and
-`image+measured` drivers have still never touched a real node, and a failed deploy
-corrupts the recorded rollback pair (see the new item).
+What remains lives in "Smaller, still open" below. As of **2026-07-29** that is
+chiefly the `image+measured` **live run**: everything it needs is now built and
+headlessly proven — including the UEFI netboot path that was blocking it, which on
+inspection turned out to need *neither* of the two things this file had prescribed
+for it (the binary it named verifies nothing, and the dnsmasq snippet it quoted
+chainloads forever). Both are written up below and both are now guarded. The run
+itself is three sudo-gated commands away.
 
 ---
 
@@ -371,28 +375,147 @@ nothing), and the negative control that a failed-deploy error is never touched.
   1. **`image+measured` refuses at `verify`, before any hardware.** Correct, and the
      runner assumed otherwise: it waited for a quote from a node that had never been
      powered on. The policy cannot come from a measured deploy (the gate refuses an
-     image with no policy — that is the point), so the **enrolment boot now uses the
+     image with no policy — that is the point), so the **enrollment boot now uses the
      plain `image` driver**: identical lay-down, identical payload, no gate. Observe
      what it measures, pin that, then enforce — which is how it works in life.
   2. **A UEFI node cannot netboot this fleet's deployer.** The network hands every
      client `boot.ipxe`, an iPXE *script*, which works only because a BIOS node's
      option ROM chainloads it; a UEFI firmware would TFTP the script and try to
      execute it as a binary. The measured node must be UEFI (or it measures
-     nothing), so the two requirements collide. The fix is arch-conditional DHCP —
-     `dhcp-match=set:efi64,option:client-arch,7` + `dhcp-boot=tag:efi64,ipxe.efi`
-     through libvirt's `dnsmasq:` namespace, plus `ipxe.efi` in the TFTP root
-     (already built, at `~/netboot/ipxe.efi`). `run-e2e-measured.sh` now **refuses
-     up front** when that is missing rather than timing out with an empty console.
+     nothing), so the two requirements collide.
 
-  Also worth knowing: `FLEET_TPM=1` applies to the **whole fleet**, so it switched
-  node1 and node2 to UEFI as well — which their BIOS-installed disks cannot boot.
-  Per-node firmware selection is the obvious follow-up.
+  **The UEFI netboot path is now BUILT** (2026-07-29), and writing it found that the
+  two-line fix this file previously prescribed was wrong in both lines:
 
-  **What remains is the live run itself**: the UEFI netboot path, then
-  `FLEET_TPM=1 ./create-fleet.sh up` and `./run-e2e-measured.sh` (author-run). The honest framing stays
-  exactly as `drivers/image-measured.sh` states it: swtpm is faithful plumbing and
-  the AK is baked into the image, so this proves the MECHANISM and the REFUSAL
-  PATH, never the integrity of a machine.
+  - **It pointed at the wrong binary.** This file said `ipxe.efi` was "already built,
+    at `~/netboot/ipxe.efi`" — that is the RAM-infra lab's *generic* build: no
+    `IMAGE_TRUST_CMD`, no fleet CA. TFTP it to the measured node and everything goes
+    green while the firmware half of F2 is silently switched off on the one node whose
+    entire purpose is proving a machine refuses what the fleet did not sign. The
+    **verifying** binary existed all along: `netboot/build-ipxe.sh` emits `ipxe.efi`
+    beside the option ROM from the *same* build, so the ROM build had already produced
+    one — `build-verifying-rom.sh` just never installed it.
+
+    | binary | `imgverify` | fleet CA |
+    |---|---|---|
+    | `~/netboot/ipxe.efi` | ✗ | ✗ |
+    | `~/.cache/lab-create/maas/ipxe/ipxe.efi` | ✓ | ✓ |
+
+    Guarded now by **`build-verifying-rom.sh check-efi`**, which refuses before the
+    copy. It looks for the CA's **SHA-256 fingerprint**, because that is how iPXE's
+    `TRUST=` actually embeds a root — not the certificate, which is why searching for
+    the subject or the DER finds nothing in a perfectly good binary. (EFI only: the
+    option ROM is compressed, so every such search comes up empty on a working ROM.)
+
+  - **The dnsmasq snippet chainloads forever.**
+    `dhcp-match=set:efi64,option:client-arch,7` + `dhcp-boot=tag:efi64,ipxe.efi` hands
+    `ipxe.efi` to a client that is *already running* `ipxe.efi`: it boots, does its own
+    DHCP, is still architecture 7, and loads itself again. The BIOS path never showed
+    this because a script is executed, not re-loaded. iPXE announces itself in DHCP
+    option 77, so the tag must mean "EFI firmware that is **not** already iPXE":
+
+    ```
+    dhcp-match=set:efi64,option:client-arch,7
+    dhcp-match=set:efi64,option:client-arch,9
+    dhcp-userclass=set:ipxe,iPXE
+    tag-if=set:efi-fw,tag:efi64,tag:!ipxe      ← the loop break
+    dhcp-boot=tag:efi-fw,ipxe.efi
+    ```
+
+    Both directions are proven against a **real dnsmasq answering real DHCP packets**
+    in [`tests/test-uefi-netboot-dhcp.sh`](tests/test-uefi-netboot-dhcp.sh) — including
+    §3, which runs the naive config and asserts the loop, so the guard is demonstrated
+    to be load-bearing rather than assumed. It is rootless and hermetic: dnsmasq needs
+    `NET_ADMIN`, so it runs inside an `unshare -rn --map-auto` namespace (`--map-auto`
+    matters — a plain `unshare -r` denies `setgroups()` and dnsmasq dies dropping
+    privileges). [`tests/dhcp-probe.py`](tests/dhcp-probe.py) is the client, because no
+    ordinary DHCP client will lie about its architecture on request.
+
+  New pieces: [`lib/dnsmasq_arch_xml.py`](lib/dnsmasq_arch_xml.py) (the rewrite, third
+  sibling of `rom_xml.py`/`tpm_xml.py`, and the **single source of truth** for the
+  option list — the test feeds dnsmasq the same lines the network gets),
+  `build-verifying-rom.sh install-efi` / `check-efi`, and
+  `netboot-chain.sh install-uefi`, which refuses a non-enforcing binary, refuses while
+  fleet domains are running (the network restart drops their links and does not
+  restore them), and afterwards **verifies the options are live in libvirt's rendered
+  dnsmasq config** rather than trusting that a definition libvirt accepted took effect.
+
+  **Per-node firmware, also fixed.** `FLEET_TPM=1` applied to the whole fleet, which is
+  how node1 and node2 ended up on UEFI their BIOS-installed disks cannot boot. It now
+  takes node names — `FLEET_TPM=node3`, `FLEET_TPM=node2,node3` — with `1`/`all` kept
+  (it is in existing scripts and notes) but warning. A name matching **no** node is
+  refused outright: it would equip nobody, say nothing, and surface an hour later as
+  "the node never delivered a quote", which reads as a payload bug and sends you
+  debugging the wrong half of the lab. Covered by
+  [`tests/test-fleet-tpm-selection.sh`](tests/test-fleet-tpm-selection.sh), including
+  the prefix trap (`node1` must not match `node10`).
+
+  **A third defect, found by the first run with all of the above in place**
+  (2026-07-29): node3 booted to the **EFI internal shell**, no PXE attempt at all,
+  despite `bootindex=1` on its NIC. OVMF's `NetworkPkg` has the PXE stack, but the
+  driver for the card comes from the card's UEFI option ROM — and this lab attaches a
+  **legacy-only** verifying ROM over QEMU's `efi-e1000.rom`, leaving a UEFI firmware
+  with no network device at all. Nothing errored; the run just waited for a quote from
+  a machine sitting at a firmware prompt. A measured node now uses **virtio with no
+  option ROM** (OVMF drives it natively), which is also what makes the loop break
+  matter: OVMF's PXE client sends no iPXE user-class, so it is handed the verifying
+  `ipxe.efi` rather than the script. Leaving the *stock* iPXE oprom would be worse
+  than either — it announces itself as iPXE, gets the script, and has no `imgverify`.
+  `lib/tpm_xml.py` had **no test at all** before this, which is the honest reason it
+  reached a live run; [`tests/test-tpm-xml.sh`](tests/test-tpm-xml.sh) is red against
+  the code that shipped it.
+
+  **A fourth defect, from the next run** (2026-07-29): with the NIC fixed, the run
+  reached deploy #1 and the state machine correctly refused —
+  `cannot 'deploy' node 'node3' from state 'deploying'`. The *previous*, interrupted
+  attempt had left the node stranded mid-transition, and **neither runner handled a
+  transient state**: `run-e2e-image.sh` covered `active`/`error`/`manageable`,
+  `run-e2e-measured.sh` covered nothing, two copies of one idea drifted apart. The
+  refusal was right; it just arrived after the fleet rebuild, the UKI build, staging,
+  signing and the sink. Now one shared [`lib/e2e-common.sh`](lib/e2e-common.sh)
+  `make_deployable`, called early in both preflights, recovering through the control
+  plane's own `abort` → `retry` → `provide` and **saying so** rather than quietly
+  tidying up after a run that did not finish. Guarded by
+  [`tests/test-e2e-make-deployable.sh`](tests/test-e2e-make-deployable.sh).
+
+  **A fifth defect, and the run that found it got furthest of all** (2026-07-29). With
+  the state recovered and the digest fixed, the node laid the image down, verified it,
+  rebooted, **measured 10 real PCRs on a TPM 2.0 and signed its own quote** — then had
+  no network interface to deliver it from (`udhcpc: SIOCGIFINDEX: No such device`,
+  `mac=`). The two kernels in this lab have exactly complementary gaps: AlmaLinux 9.8
+  (the UKI's, chosen for its built-in TPM) keeps its **NIC drivers modular** for dracut,
+  while micro-linux (the deployer's) has the NICs built in and **no TPM at all**. The
+  measuring initramfs is busybox and loads no modules. Interim fix: the build lifts
+  `failover`/`net_failover`/`virtio_net` out of the matching netboot initrd and
+  **refuses unless they match the kernel's own version string** (a mismatch is
+  `insmod: invalid module format`, i.e. the same silent no-network symptom one layer
+  down). `measure-init.sh` now separates "no interface exists" from "no lease", and
+  refuses to POST a quote with an empty MAC. Proven headless by
+  [`tests/test-measured-image.sh`](tests/test-measured-image.sh) §4b, whose VM gets a
+  virtio NIC so `eth0` exists only if the module truly loaded.
+
+  **The durable fix is micro-linux + TPM**, and it is written but unbuilt:
+  `micro-linux/mlbuild.sh` now sets and asserts `TCG_TPM`/`TCG_TIS`/`TCG_CRB` beside the
+  `VIRTIO_NET`/`E1000` lines it already asserts — the same "an initramfs carries NO
+  MODULES" rule that file already documents for NICs. Once that kernel is rebuilt and
+  proven to expose `/sys/class/tpm/tpm0/pcr-sha256/`, the golden image gains one kernel
+  with both halves and drops **two** `~/netboot/` dependencies (a 15 MB `vmlinuz` and a
+  223 MB `initrd.img`, both outside the repo and both in the periodic reclaim path), and
+  the module-extraction code comes out.
+
+  **What remains is the live run itself** — three sudo-gated steps and the run:
+
+  ```bash
+  ./build-verifying-rom.sh install-efi     # the VERIFYING ipxe.efi into the TFTP root
+  ./create-fleet.sh down                   # install-uefi restarts the network
+  ./netboot-chain.sh install-uefi          # arch-conditional DHCP
+  FLEET_TPM=node3 ./create-fleet.sh up
+  ./run-e2e-measured.sh
+  ```
+
+  The honest framing stays exactly as `drivers/image-measured.sh` states it: swtpm is
+  faithful plumbing and the AK is baked into the image, so this proves the MECHANISM
+  and the REFUSAL PATH, never the integrity of a machine.
 - ~~**`install.sh`'s ownership test is narrow on purpose.**~~ **CLOSED 2026-07-28** by
   [`install-catalog.toml`](install-catalog.toml) — the per-driver catalog this item
   asked for. `describe` now answers positively (cataloged, or staged in the driver's

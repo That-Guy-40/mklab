@@ -170,4 +170,48 @@ fi
 assert_state node4 error
 note "tampered golden image: refused before the BMC is touched at all  ✓"
 
-pass "the image driver lays a golden disk down safely: verified before any hardware, never points a node at a half-written disk, ends on bootdev disk, and records persistence=full"
+# ── 7. THE PUBLISHED DIGEST MUST DESCRIBE THE IMAGE ACTUALLY SERVED ─────────
+# Found live 2026-07-29, and it is the STALE rung of this lab's own ladder inside the
+# control plane. `deploy` used to read disk.raw.sha256 when present and only compute a
+# digest otherwise — a cache with no invalidation. `stage` overwrote disk.raw and
+# re-signed it while leaving the PREVIOUS build's sidecar in place, so the control
+# plane handed the node `maas.sha256=` for an image it no longer had.
+#
+# The node then wrote its disk perfectly, read it back, and reported a mismatch it had
+# not caused. The deployer's read-back check exists to catch a bad WRITE; what it
+# actually caught was the control plane misdescribing what it published. Nothing else
+# in the lab could see it: the signature was valid (it was re-signed), the served bytes
+# were correct, and every host-side gate passed.
+STALE_DIR="$MAAS_IMAGES_DIR/restaged"
+printf 'GOLDEN-BUILD-ONE' > "$SANDBOX/one.raw"
+printf 'GOLDEN-BUILD-TWO-ENTIRELY-DIFFERENT' > "$SANDBOX/two.raw"
+( "$LAB_DIR/drivers/image.sh" stage restaged --from "$SANDBOX/one.raw" ) >/dev/null 2>&1 \
+    || fail "staging the first build failed"
+first_sha="$(cut -d' ' -f1 < "$STALE_DIR/disk.raw.sha256" 2>/dev/null)"
+[[ -n "$first_sha" ]] || fail "stage did not record disk.raw.sha256 at all"
+
+( "$LAB_DIR/drivers/image.sh" stage restaged --from "$SANDBOX/two.raw" ) >/dev/null 2>&1 \
+    || fail "re-staging with a different build failed"
+actual="$(sha256sum "$STALE_DIR/disk.raw" | cut -d' ' -f1)"
+recorded="$(cut -d' ' -f1 < "$STALE_DIR/disk.raw.sha256" 2>/dev/null)"
+[[ "$actual" != "$first_sha" ]] || fail "the two builds hash the same — §7 would prove nothing"
+[[ "$recorded" == "$actual" ]] \
+    || fail "REGRESSION: re-staging left a STALE disk.raw.sha256 (records ${recorded:0:16}…, image is ${actual:0:16}…). The control plane would publish maas.sha256= for an image it no longer has, the node would write the right disk, read it back, and report a mismatch it did not cause — exactly the 2026-07-29 live failure"
+note "re-staging an image refreshes its recorded digest  ✓"
+
+# ...and deploy must not trust that file even so. Corrupt it and require the driver to
+# publish the digest of the BYTES, because "stage always refreshes it" is a promise
+# about one code path and this is the value a node is told to trust.
+printf '%s  disk.raw\n' "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef" \
+    > "$STALE_DIR/disk.raw.sha256"
+prep node5 6244
+printf 'node5 login: \n' > "$MAAS_STATE/node5/console.log"
+( "$MAAS" deploy node5 --driver image --image restaged --no-verify ) >/dev/null 2>&1
+script="$(cat "$MAAS_NETBOOT_DIR/maas/node5.ipxe" 2>/dev/null)"
+grep -q "maas.sha256=$actual" <<<"$script" \
+    || fail "REGRESSION: the deploy published a digest from the sidecar rather than from the image's bytes. Expected maas.sha256=${actual:0:16}…; the boot script says: $(grep -o 'maas.sha256=[a-f0-9]*' <<<"$script" | head -1)"
+grep -q 'deadbeef' <<<"$script" \
+    && fail "REGRESSION: the deploy published the corrupted cached digest verbatim — a node would be told to expect an image that does not exist"
+note "deploy computes the digest from the bytes, never from the cached sidecar  ✓"
+
+pass "the image driver lays a golden disk down safely: verified before any hardware, never points a node at a half-written disk, ends on bootdev disk, records persistence=full, and publishes a read-back digest computed from the bytes it actually serves rather than from a cache that re-staging can leave stale"

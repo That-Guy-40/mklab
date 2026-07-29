@@ -73,6 +73,13 @@ BUILD_DIR="${MAAS_ROM_BUILD_DIR:-$HOME/.cache/lab-create/maas/ipxe}"
 # same answer create-fleet.sh's give_console already reached for the console log.
 ROM_DIR="${MAAS_ROM_DIR:-/var/lib/libvirt/maas-rom}"
 
+# WHERE THE UEFI BINARY MUST LIVE. A UEFI node has no option ROM to attach: its
+# firmware TFTPs a PE binary from the network's TFTP root, so `ipxe.efi` goes there
+# rather than beside the .rom. Same default as netboot-chain.sh, which owns that
+# directory's other contents.
+TFTP_DIR="${TFTP_DIR:-/var/lib/libvirt/tftp-vbmc}"
+EFI_NAME="${MAAS_EFI_NAME:-ipxe.efi}"
+
 NIC_MODEL="${FLEET_NIC_MODEL:-e1000}"
 case "$NIC_MODEL" in
     e1000)   NIC_ID=8086100e ;;
@@ -94,6 +101,66 @@ xml_snippet() {
       <rom file='$ROM_DIR/$ROM_NAME'/>
     </interface>
 EOF
+}
+
+# check_efi <file> — is this UEFI binary one that ENFORCES, or just one that boots?
+#
+# THE MISTAKE THIS EXISTS TO CATCH, which was live in this lab's own notes.
+# DEFERRED.md said the UEFI binary was "already built, at ~/netboot/ipxe.efi". That
+# file is the RAM-infra lab's generic build: no IMAGE_TRUST_CMD, no fleet CA. TFTP it
+# to the measured node and everything goes green — the node boots, deploys, attests —
+# while the firmware half of F2 has silently been switched off on the one node whose
+# entire purpose is proving a machine refuses what the fleet did not sign. Nothing
+# downstream can see the difference; only this check can.
+#
+# It works by reading the binary, because a claim about provenance ("I built it with
+# the right flags") is not evidence about the bytes on disk.
+#
+# HOW THE CA IS ACTUALLY IN THERE — measured, because the first version of this
+# function guessed and was wrong. iPXE's TRUST= does NOT embed the certificate: it
+# embeds the SHA-256 **fingerprint** of it (crypto/rootcert.c). So searching for the
+# CA's subject, or for its DER, finds nothing in a perfectly good binary. The
+# fingerprint is better evidence anyway — 32 exact bytes rather than a string that
+# might appear for some unrelated reason. In this fleet's own binary it sits at
+# offset 976512; in ~/netboot/ipxe.efi it is absent, which is the whole point.
+#
+# EFI ONLY, and honestly so: the option ROM is compressed, so every one of these
+# searches comes up empty on a ROM that works perfectly. A negative there would mean
+# nothing at all, so this is never asked of the .rom.
+check_efi() {
+    local f="$1"
+    [[ -f "$f" ]] || { printf 'no such file: %s\n' "$f" >&2; return 1; }
+    python3 - "$f" "$IMAGES_DIR/trust/ca.crt" <<'PY'
+import base64, hashlib, sys
+
+blob = open(sys.argv[1], "rb").read()
+problems = []
+
+if b"imgverify" not in blob:
+    problems.append(
+        "imgverify is NOT compiled into this binary.\n"
+        "    A node booting it would treat every imgverify line as an unknown command,\n"
+        "    abort the boot script, and boot nothing — or boot a payload nobody checked.")
+
+try:
+    pem = open(sys.argv[2]).read()
+    b64 = "".join(l for l in pem.splitlines() if "-----" not in l)
+    der = base64.b64decode(b64)
+except Exception as e:                       # noqa: BLE001 - any failure is "cannot tell"
+    problems.append(f"could not read the fleet CA ({sys.argv[2]}): {e}")
+else:
+    fp = hashlib.sha256(der).digest()
+    if fp not in blob:
+        problems.append(
+            f"this fleet's CA fingerprint ({fp.hex()[:16]}...) is NOT in this binary.\n"
+            "    iPXE's TRUST= embeds the SHA-256 of each trusted root; its absence means\n"
+            "    the firmware trusts some other root, or none. This is exactly the\n"
+            "    ~/netboot/ipxe.efi mix-up: a binary that boots fine and verifies nothing.")
+
+for p in problems:
+    print(f"  - {p}", file=sys.stderr)
+sys.exit(1 if problems else 0)
+PY
 }
 
 case "${1:-}" in
@@ -179,6 +246,50 @@ the domain fails to start with 'failed to find romfile' (no denial is logged)"
     fi
     info "attach it with FLEET_NIC_ROM=$ROM_DIR/$ROM_NAME ./create-fleet.sh, or by hand:"
     xml_snippet >&2
+    info "for a UEFI node (image+measured), also: $0 install-efi"
+    ;;
+
+check-efi)
+    # Exposed as a verb so netboot-chain.sh can ask the question without duplicating
+    # the answer, and so an operator can interrogate any stray binary.
+    f="${2:-$BUILD_DIR/$EFI_NAME}"
+    if check_efi "$f"; then
+        info "$f: imgverify present, this fleet's CA embedded — it ENFORCES"
+    else
+        die "$f does not enforce F2 (see above). Build it: $0 build"
+    fi
+    ;;
+
+install-efi)
+    # The UEFI counterpart of `install`. Same build, different delivery: a UEFI node
+    # has no option ROM slot, so the firmware fetches this binary over TFTP instead.
+    src="$BUILD_DIR/$EFI_NAME"
+    [[ -f "$src" ]] || die "no UEFI binary at $src — run '$0 build' first.
+  (netboot/build-ipxe.sh emits ipxe.efi from the SAME build as the option ROM, so a
+  successful 'build' has already produced it.)"
+
+    # Refuse BEFORE the copy. Installing a non-enforcing binary is worse than
+    # installing nothing: nothing fails, and the firmware half of F2 is off.
+    if ! check_efi "$src"; then
+        # The escape hatch exists because the check reads the binary, and a future
+        # iPXE that compresses its EFI image would fail it while being perfectly
+        # good. It is deliberately loud: this is the one knob here that can turn the
+        # firmware half of F2 off without anything else noticing.
+        [[ "${MAAS_EFI_TRUST_UNCHECKED:-0}" == 1 ]] || die "refusing to install $src — it does not enforce F2 (above).
+  MAAS_EFI_TRUST_UNCHECKED=1 skips this check, but understand what it buys: the
+  measured node would boot, deploy and attest with NO firmware-side signature
+  verification at all, and every run would still be green."
+        printf 'build-verifying-rom: WARNING — installing %s with the enforcement check OVERRIDDEN.\n' "$src" >&2
+        printf '  The on-node half of F2 may be off on every UEFI node. Nothing downstream will say so.\n' >&2
+    fi
+    command -v sudo >/dev/null || die "sudo required to write $TFTP_DIR"
+    sudo mkdir -p "$TFTP_DIR" || die "could not create $TFTP_DIR"
+    sudo cp -f "$src" "$TFTP_DIR/$EFI_NAME" || die "could not install the UEFI binary"
+    # 0644: dnsmasq's TFTP server reads it as another user, exactly as qemu reads the ROM.
+    sudo chmod 0644 "$TFTP_DIR/$EFI_NAME" || die "could not chmod $TFTP_DIR/$EFI_NAME"
+    info "installed: $TFTP_DIR/$EFI_NAME ($(stat -c%s "$src") bytes) — imgverify + this fleet's CA"
+    info "next: ./netboot-chain.sh install-uefi   (teaches the network to offer it to"
+    info "  UEFI clients only; without that step nothing ever fetches this file)"
     ;;
 
 show)
@@ -194,6 +305,19 @@ show)
     else
         printf '(none — run %s install)\n' "$0"
     fi
+    printf '\n== UEFI (image+measured; TFTP, not an option ROM) ==\n'
+    if [[ -f "$BUILD_DIR/$EFI_NAME" ]]; then
+        printf 'built:     %s (%s bytes) — ' "$BUILD_DIR/$EFI_NAME" "$(stat -c%s "$BUILD_DIR/$EFI_NAME")"
+        if check_efi "$BUILD_DIR/$EFI_NAME" 2>/dev/null; then printf 'ENFORCES\n'; else printf 'does NOT enforce F2\n'; fi
+    else
+        printf 'built:     (none — run %s build)\n' "$0"
+    fi
+    if [[ -f "$TFTP_DIR/$EFI_NAME" ]]; then
+        printf 'installed: %s\n' "$TFTP_DIR/$EFI_NAME"
+    else
+        printf 'installed: (none — run %s install-efi)\n' "$0"
+    fi
+
     printf '\n== attaches as ==\n'
     xml_snippet
     ;;
@@ -206,6 +330,14 @@ build-verifying-rom.sh — build NIC firmware that can enforce F2 on the node
             this fleet's CA as its ONLY trust root, a serial console, and the
             netboot-chain script compiled in           (docker; minutes)
   install   copy it to $ROM_DIR, where qemu can read it   (sudo)
+
+  install-efi  copy the UEFI binary from the SAME build into the network's TFTP
+               root ($TFTP_DIR), for nodes that boot UEFI —
+               which the measured driver requires, because a BIOS firmware
+               measures no payload. Refuses a binary that does not enforce. (sudo)
+  check-efi [FILE]  does that binary carry imgverify AND this fleet's CA? Reads
+               the bytes; a build log's word for it is not evidence.
+
   show      print what is built/installed and the XML that attaches it
 
 Why: the stock ROM has no IMAGE_TRUST_CMD, so the on-node half of F2 has never

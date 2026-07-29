@@ -127,6 +127,18 @@ give_console() {
 # and refuses nothing — and cannot speak on the serial console either.
 give_verifying_rom() {
     local name="$1" rom="${FLEET_NIC_ROM:-}"
+    # A UEFI node must NOT get the legacy option ROM. This is not a nicety: attaching
+    # it replaces QEMU's efi-e1000.rom — the only UEFI NIC driver OVMF would have for
+    # that card — with a legacy-only image, so the firmware finds no network device,
+    # produces no boot option, and drops to the EFI shell with no PXE attempt at all.
+    # (Found live 2026-07-29, on the first run after per-node FLEET_TPM landed.)
+    # These nodes enforce F2 through the verifying ipxe.efi that OVMF's own PXE client
+    # fetches instead; lib/tpm_xml.py switches them to virtio with no ROM.
+    if tpm_selects "$name"; then
+        info "$name: no legacy option ROM — it is a UEFI node, and one would displace the"
+        info "  UEFI NIC driver OVMF needs. It enforces F2 via the TFTP'd ipxe.efi instead."
+        return 0
+    fi
     # Explicit opt-OUT. The ROM used to be pure opt-in (unset = silently none), and
     # this fleet lost its ROMs to a create-fleet run that forgot the var THREE
     # times — twice from this repo's own printed instructions. An opt-in security
@@ -162,20 +174,70 @@ give_verifying_rom() {
 }
 
 # give_tpm <node> — a TPM 2.0 device AND UEFI firmware, for `image+measured`.
-# Opt-in via FLEET_TPM=1: unlike the verifying ROM this is NOT default-on, because
-# it changes how the domain BOOTS (BIOS -> UEFI) and every payload the other three
+# Opt-in via FLEET_TPM: unlike the verifying ROM this is NOT default-on, because it
+# changes how the domain BOOTS (BIOS -> UEFI) and every payload the other three
 # drivers use is BIOS-booted. A fleet-wide default would break them.
+#
+#   FLEET_TPM=node3          just that node        <- what you almost always want
+#   FLEET_TPM=node2,node3    those nodes
+#   FLEET_TPM=1 (or `all`)   the whole fleet       <- rarely right; warns
+#
+# WHY PER-NODE, learned live. The first measured run set FLEET_TPM=1, which switched
+# node1 and node2 to UEFI as well — and their disks had been INSTALLED under BIOS, so
+# they could no longer boot what was on them. Measured boot is a property of one
+# node's job, not of the fleet, and the knob now says so.
 #
 # Both or neither, deliberately. A TPM on a BIOS domain produces quotes that
 # verify, match a policy, and mean nothing: SeaBIOS measures the boot sector and
 # the partition table, never the filesystem, so two completely different kernels
 # measure the same (proven under swtpm — see lib/tpm_xml.py and DEFERRED.md).
 # The refusal lives in tpm_xml.py, which will not emit a TPM without UEFI.
+# tpm_selects <node> — does FLEET_TPM name this node? Split out from give_tpm so the
+# answer is one implementation, addressable as `_selects-tpm` and therefore testable
+# without libvirt, swtpm or a fleet (tests/test-fleet-tpm-selection.sh).
+tpm_selects() {
+    local name="$1" want="${FLEET_TPM:-0}"
+    case "$want" in
+        0|""|no|off) return 1 ;;
+        1|all|yes)   return 0 ;;
+        # Comma-separated node list; the commas around BOTH sides are what stop
+        # node1 from matching node10, and an entry from matching a prefix of a name.
+        *) [[ ",$want," == *",$name,"* ]] ;;
+    esac
+}
+
+# validate_tpm_selection — refuse a FLEET_TPM naming a node that does not exist.
+# Without this the typo gives UEFI+TPM to NOBODY and says nothing; the measured run
+# then fails much later with an empty console and "the node never delivered a quote",
+# which reads as a payload bug. Checked where the fleet's names are in hand.
+validate_tpm_selection() {
+    local n known
+    case "${FLEET_TPM:-0}" in
+        0|""|no|off|1|all|yes) return 0 ;;
+    esac
+    known=" $(fleet_names | tr '\n' ' ')"
+    for n in ${FLEET_TPM//,/ }; do
+        [[ "$known" == *" $n "* ]] \
+            || die "FLEET_TPM names '$n', which is not a node in this fleet.
+  Known nodes:$known
+  A name that matches nothing would silently give UEFI+TPM to no one, and the
+  measured run would fail much later with an empty console."
+    done
+}
+
 give_tpm() {
-    local name="$1"
-    [[ "${FLEET_TPM:-0}" == 1 ]] || return 0
+    local name="$1" want="${FLEET_TPM:-0}"
+    tpm_selects "$name" || return 0
+    case "$want" in
+        1|all|yes)
+            # Kept working, because scripts and notes already say FLEET_TPM=1 — but it
+            # is the setting that broke two nodes, so it does not pass quietly.
+            info "FLEET_TPM=$want: giving UEFI+TPM to EVERY node. A node whose disk was"
+            info "  installed under BIOS will not boot it afterwards. Prefer FLEET_TPM=$name"
+            ;;
+    esac
     command -v swtpm >/dev/null \
-        || die "FLEET_TPM=1 but swtpm is not installed — libvirt cannot back an emulated TPM.
+        || die "FLEET_TPM=$want but swtpm is not installed — libvirt cannot back an emulated TPM.
   Install swtpm (and swtpm-tools), or leave FLEET_TPM unset for a plain BIOS fleet."
     $VIRSH dumpxml "$name" \
         | python3 "$HERE/lib/tpm_xml.py" \
@@ -247,6 +309,8 @@ is not the one you asked for — which passes every check and deploys nothing."
 # ── up: author-run rootful bring-up ──────────────────────────────────────────
 do_up() {
     [[ -d "$VBMC_LAB" ]] || die "sibling lab not found: $VBMC_LAB (set VBMC_LAB=)"
+
+    validate_tpm_selection
     step "building the vbmcd image (rootful podman) — one container hosts all BMCs"
     ( cd "$VBMC_LAB" && ./vbmc-lab.sh build ) || die "vbmc build failed"
 
@@ -345,6 +409,11 @@ case "${1:-}" in
     up)            do_up ;;
     down)          do_down ;;
     status|list)   "$MAAS" list ;;
+    # Internal, for tests and for asking "would this run give node X a TPM?" without
+    # building anything. Exits 0 when FLEET_TPM selects the node, 1 when it does not.
+    _selects-tpm)  [[ -n "${2:-}" ]] || die "_selects-tpm needs a node name"
+                   tpm_selects "$2" ;;
+    _check-tpm)    validate_tpm_selection && printf 'FLEET_TPM=%s is valid for this fleet\n' "${FLEET_TPM:-0}" ;;
     ""|-h|--help)  usage ;;
     *) die "unknown mode '$1' (enroll|up|down|status)" ;;
 esac

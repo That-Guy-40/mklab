@@ -63,7 +63,7 @@ boot_measured() {
         -drive "if=pflash,format=raw,file=$d/vars.fd" \
         -drive "file=$img,format=raw,if=virtio" \
         -chardev "socket,id=c,path=$d/s" -tpmdev emulator,id=t,chardev=c -device tpm-tis,tpmdev=t \
-        -net none >/dev/null 2>&1
+        -netdev user,id=n0,restrict=on -device virtio-net-pci,netdev=n0 >/dev/null 2>&1
     printf '%s' "$d/con.log"
 }
 # PCR4 from the console. The image prints a labelled PCR4 line ALWAYS, and dumps
@@ -119,8 +119,30 @@ A4b="$(pcr4_of "$LOG_A2")"
     || fail "REGRESSION: the SAME image measured differently across two boots ($A4 vs $A4b) — no PCR policy could ever be written, so the gate could never pass honestly"
 note "the same payload measures identically across boots — a policy can be pinned  ✓"
 
+# ── 4b. the bundled NIC drivers actually load, on a real kernel ─────────────
+# The image's kernel keeps its network drivers MODULAR (it was chosen for its TPM,
+# not its NICs), so build-golden-measured.sh lifts failover/net_failover/virtio_net
+# out of the matching netboot initrd. Live on 2026-07-29 without them, this image
+# measured 10 real PCRs, signed the quote, and had no interface to send it from —
+# `udhcpc: SIOCGIFINDEX: No such device`, `mac=`, quote undelivered.
+#
+# The VM above is given a virtio NIC behind `restrict=on` slirp, so eth0 exists ONLY
+# if the bundled module loaded: this asserts the modules, not merely their presence
+# in the cpio.
+grep -qa 'MAAS-ATTEST: loaded NIC drivers' "$LOG_A" \
+    || fail "REGRESSION: the image loaded no NIC drivers. Its kernel keeps them modular, so the node comes up with no interface at all and parks with its measurement undelivered — measured perfectly, reported never. Console: $(grep -a 'MAAS-ATTEST' "$LOG_A" | tr '\n' '|')"
+grep -qa 'MAAS-ATTEST: identity: mac=..:..' "$LOG_A" \
+    || fail "REGRESSION: the node reported no MAC address, so the bundled virtio_net did not bind the NIC. The control plane keys a quote by MAC and would have nothing to key on. Console: $(grep -a 'MAAS-ATTEST: identity' "$LOG_A")"
+grep -qa 'NO network interface' "$LOG_A" \
+    && fail "REGRESSION: the image reported it has no network interface even though the VM has a virtio NIC — the bundled modules are not loading"
+# What this does NOT prove: that DHCP completes. slirp under `restrict=on` hands out
+# no lease, so `addr=none` here is expected and is not evidence either way. DHCP on the
+# real fleet bridge is evidenced separately — the deployer ramdisk gets its reservation
+# on the same virtio NIC (MANUAL_TESTING §14).
+note "the bundled NIC modules load and bind the card (mac reported; DHCP is not exercised here)  ✓"
+
 # ── 5. it refuses to claim what it did not achieve ──────────────────────────
-# Image B carries a delivery URL and these boots have no network, so delivery
+# Image B carries a delivery URL that `restrict=on` makes unreachable, so delivery
 # CANNOT succeed. It must say so and park — not print its activation marker
 # anyway. (Image A has no URL at all: it prints the quote and finishes, which is
 # a different, honest path — so the assertion belongs on B.)

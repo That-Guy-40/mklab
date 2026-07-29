@@ -126,6 +126,83 @@ install)
     fi
     ;;
 
+install-uefi)
+    # THE COLLISION THIS RESOLVES. Every client on this network is handed the same
+    # filename — boot.ipxe, an iPXE *script*. That works only because a BIOS node's
+    # option ROM is already iPXE and executes it. A UEFI node's firmware TFTPs the
+    # same file, finds `#!ipxe` where a PE binary should be, and stops. So no UEFI
+    # node can netboot this fleet — and `image+measured` REQUIRES a UEFI node,
+    # because a BIOS firmware measures no payload at all (lib/tpm_xml.py).
+    #
+    # After this, the network answers by client architecture: UEFI firmware gets
+    # ipxe.efi, everything else gets the script exactly as before.
+    command -v sudo >/dev/null || die "sudo required to redefine the network"
+    command -v virsh >/dev/null || die "virsh is required"
+    VIRSH="virsh -c qemu:///system"
+
+    $VIRSH net-info "$NET" >/dev/null 2>&1 || die "no libvirt network '$NET' (set NET=)"
+
+    # 1. the binary must be there AND must enforce. build-verifying-rom.sh owns that
+    # question; asking it here rather than re-implementing keeps one answer.
+    if [[ ! -f "$TFTP_DIR/ipxe.efi" ]]; then
+        die "no $TFTP_DIR/ipxe.efi — a UEFI client would be told to fetch a file that
+  is not served, and would stop with a TFTP error and an empty console.
+  Install it first:  ./build-verifying-rom.sh install-efi"
+    fi
+    if ! "$HERE/build-verifying-rom.sh" check-efi "$TFTP_DIR/ipxe.efi" >/dev/null 2>&1; then
+        printf 'netboot-chain: %s does not enforce F2:\n' "$TFTP_DIR/ipxe.efi" >&2
+        "$HERE/build-verifying-rom.sh" check-efi "$TFTP_DIR/ipxe.efi" >&2 || true
+        die "refusing to point UEFI nodes at firmware that verifies nothing. Reinstall it:
+  ./build-verifying-rom.sh install-efi"
+    fi
+    info "$TFTP_DIR/ipxe.efi is present and enforces (imgverify + this fleet's CA)"
+
+    # 2. libvirt only re-renders dnsmasq's config when the network RESTARTS, and a
+    # restart tears down the bridge — every running domain loses its link and does
+    # not get it back. Refuse rather than silently stranding a fleet mid-run.
+    running=()
+    for d in $($VIRSH list --name 2>/dev/null); do
+        [[ -n "$d" ]] || continue
+        if $VIRSH domiflist "$d" 2>/dev/null | awk 'NR>2 && $3=="'"$NET"'" {found=1} END{exit !found}'; then
+            running+=("$d")
+        fi
+    done
+    if [[ ${#running[@]} -gt 0 ]]; then
+        die "these domains are running on '$NET': ${running[*]}
+  Restarting the network drops their link and does not restore it, so this refuses.
+  Stop them first:  ./create-fleet.sh down    (or virsh -c qemu:///system destroy <dom>)"
+    fi
+
+    # 3. rewrite, define, restart.
+    tmp="$(mktemp)" || die "mktemp failed"
+    trap 'rm -f "$tmp"' EXIT
+    $VIRSH net-dumpxml "$NET" | python3 "$HERE/lib/dnsmasq_arch_xml.py" > "$tmp" \
+        || die "could not rewrite '$NET' (see above)"
+    sudo $VIRSH net-define "$tmp" >/dev/null || die "libvirt rejected the rewritten network"
+    sudo $VIRSH net-destroy "$NET" >/dev/null 2>&1
+    sudo $VIRSH net-start "$NET" >/dev/null || die "'$NET' was redefined but would not start.
+  Its previous definition is gone; inspect with: $VIRSH net-dumpxml $NET"
+    info "'$NET' redefined and restarted"
+
+    # 4. PROVE it took. A definition libvirt accepted is not the same as options
+    # dnsmasq is running with — and the whole failure mode here is a change that
+    # looks applied. Read what libvirt actually rendered.
+    conf="/var/lib/libvirt/dnsmasq/$NET.conf"
+    missing=()
+    while read -r line; do
+        sudo grep -qxF "$line" "$conf" 2>/dev/null || missing+=("$line")
+    done < <(python3 "$HERE/lib/dnsmasq_arch_xml.py" --emit-options)
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        die "the network restarted but $conf is missing ${#missing[@]} of the options:
+    ${missing[*]}
+  UEFI clients would still be handed boot.ipxe and stop. Check the definition:
+  $VIRSH net-dumpxml $NET"
+    fi
+    info "verified: all $(python3 "$HERE/lib/dnsmasq_arch_xml.py" --emit-options | wc -l) options are live in $conf"
+    info "UEFI clients -> ipxe.efi   |   BIOS clients and running iPXE -> boot.ipxe"
+    info "next: FLEET_TPM=<node> ./create-fleet.sh up   (per-node UEFI+TPM), then ./run-e2e-measured.sh"
+    ;;
+
 emit-chain)
     # The chain script on stdout, port already substituted, no sudo and no writes.
     # build-verifying-rom.sh compiles this INTO the firmware, so the ROM resolves
@@ -146,6 +223,40 @@ show)
     sudo cat "$TFTP_DIR/boot.ipxe" 2>/dev/null || printf '(absent or unreadable)\n'
     printf '\n== %s/maas/ ==\n' "$DOCROOT"
     ls -1 "$DOCROOT/maas" 2>/dev/null || printf '(absent)\n'
+    printf '\n== UEFI path (%s) ==\n' "$NET"
+    if [[ -f "$TFTP_DIR/ipxe.efi" ]]; then
+        printf 'binary:  %s\n' "$(ls -l "$TFTP_DIR/ipxe.efi")"
+    else
+        printf 'binary:  (absent — ./build-verifying-rom.sh install-efi)\n'
+    fi
+    # Prefer what dnsmasq is RUNNING with; fall back to what libvirt has DEFINED when
+    # that file is not readable. Say which was used — "0 options" from an unreadable
+    # file and "0 options" from a network that lacks them are different facts, and
+    # reporting the first as the second is the kind of quiet lie this lab hunts.
+    conf="/var/lib/libvirt/dnsmasq/$NET.conf"
+    total="$(python3 "$HERE/lib/dnsmasq_arch_xml.py" --emit-options 2>/dev/null | wc -l)"
+    live=0
+    if sudo -n test -r "$conf" 2>/dev/null; then
+        src="$conf (what dnsmasq is running)"
+        while read -r line; do
+            sudo -n grep -qxF "$line" "$conf" 2>/dev/null && live=$((live+1))
+        done < <(python3 "$HERE/lib/dnsmasq_arch_xml.py" --emit-options 2>/dev/null)
+    else
+        src="the libvirt definition ($conf needs sudo)"
+        defn="$(virsh -c qemu:///system net-dumpxml "$NET" 2>/dev/null)"
+        # Match the option text alone, not value='...': libvirt writes single quotes
+        # and ElementTree writes double ones, and pinning either quote style silently
+        # reports a configured network as unconfigured.
+        while read -r line; do
+            printf '%s' "$defn" | grep -qF "$line" && live=$((live+1))
+        done < <(python3 "$HERE/lib/dnsmasq_arch_xml.py" --emit-options 2>/dev/null)
+    fi
+    if [[ "$live" == "$total" && "$total" -gt 0 ]]; then
+        printf 'network: arch-conditional DHCP present (%s/%s options, per %s)\n' "$live" "$total" "$src"
+    else
+        printf 'network: NOT configured for UEFI (%s/%s options, per %s)\n' "$live" "$total" "$src"
+        printf '         fix: ./netboot-chain.sh install-uefi\n'
+    fi
     ;;
 
 *)
@@ -158,6 +269,10 @@ netboot-chain.sh — point the PXE network at the control plane's per-node scrip
                 compiles into the firmware); no sudo, no writes
   emit-default  print the unclaimed-node script on stdout (refresh the docroot
                 copy without sudo: emit-default > <docroot>/maas/default.ipxe)
+  install-uefi  teach $NET to answer UEFI clients with ipxe.efi and everyone
+                else with the script (sudo; restarts the network, so the fleet
+                must be down). Needed by image+measured, which cannot use a BIOS
+                node: BIOS firmware measures no payload.
   show          print what is installed
 
 Without this, every node on $NET boots whatever single payload setup-pxe-net.sh
