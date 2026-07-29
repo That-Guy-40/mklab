@@ -351,12 +351,45 @@ nothing), and the negative control that a failed-deploy error is never touched.
   it. And an init that writes to `/tmp` when the initramfs has no `/tmp` **exits, and
   an init that exits is a kernel panic** — the builder now creates it and verifies it.
 
-  **What remains for the live run**, in order: a `<tpm>` device and UEFI firmware on
-  the target domain (`create-fleet.sh`, mirroring `FLEET_NIC_ROM`); a **quote
-  delivery endpoint** in `metadata-serve.sh` (nothing in the lab writes
-  `quote.json` today — the driver's gate has no way to be fed, which is its own
-  finding); a `pcrs.expected` capture flow (first boot records, policy pinned,
-  second deploy verifies); and `run-e2e-measured.sh`. The honest framing stays
+  **The fleet-side pieces are now built too** (2026-07-28, night): `FLEET_TPM=1`
+  on [`create-fleet.sh`](create-fleet.sh) via [`lib/tpm_xml.py`](lib/tpm_xml.py),
+  which sets a TPM **and** UEFI together and refuses to set one without the other
+  (a TPM on a BIOS domain yields quotes that verify, match, and mean nothing);
+  **quote delivery endpoints** in [`lib/metadata.py`](lib/metadata.py)
+  (`POST /quote/<mac>` + `/quote-sig/<mac>`, keyed by MAC because a measured image
+  is generic — until this landed nothing in the lab could write `quote.json`, so
+  the driver's gate was real and unfeedable); `image-measured.sh capture-policy`
+  (trust-on-first-use, pinning only PCR4+PCR7 and refusing a quote with a hole in
+  it); and [`run-e2e-measured.sh`](run-e2e-measured.sh), which drives three
+  deploys — refused with no policy, activated against a captured policy, and
+  **refused again** against a bent one, because zero refusals is also what a gate
+  that never refuses anything reports.
+
+  **The first live attempt (2026-07-28, night) got through preflight, build, stage
+  and the sink, and then found two more things** — neither visible headlessly:
+
+  1. **`image+measured` refuses at `verify`, before any hardware.** Correct, and the
+     runner assumed otherwise: it waited for a quote from a node that had never been
+     powered on. The policy cannot come from a measured deploy (the gate refuses an
+     image with no policy — that is the point), so the **enrolment boot now uses the
+     plain `image` driver**: identical lay-down, identical payload, no gate. Observe
+     what it measures, pin that, then enforce — which is how it works in life.
+  2. **A UEFI node cannot netboot this fleet's deployer.** The network hands every
+     client `boot.ipxe`, an iPXE *script*, which works only because a BIOS node's
+     option ROM chainloads it; a UEFI firmware would TFTP the script and try to
+     execute it as a binary. The measured node must be UEFI (or it measures
+     nothing), so the two requirements collide. The fix is arch-conditional DHCP —
+     `dhcp-match=set:efi64,option:client-arch,7` + `dhcp-boot=tag:efi64,ipxe.efi`
+     through libvirt's `dnsmasq:` namespace, plus `ipxe.efi` in the TFTP root
+     (already built, at `~/netboot/ipxe.efi`). `run-e2e-measured.sh` now **refuses
+     up front** when that is missing rather than timing out with an empty console.
+
+  Also worth knowing: `FLEET_TPM=1` applies to the **whole fleet**, so it switched
+  node1 and node2 to UEFI as well — which their BIOS-installed disks cannot boot.
+  Per-node firmware selection is the obvious follow-up.
+
+  **What remains is the live run itself**: the UEFI netboot path, then
+  `FLEET_TPM=1 ./create-fleet.sh up` and `./run-e2e-measured.sh` (author-run). The honest framing stays
   exactly as `drivers/image-measured.sh` states it: swtpm is faithful plumbing and
   the AK is baked into the image, so this proves the MECHANISM and the REFUSAL
   PATH, never the integrity of a machine.

@@ -6,6 +6,14 @@ own name from the kernel cmdline `maas.node=<name>`):
 
   GET  /<node>/meta-data   NoCloud meta-data  (instance-id + local-hostname)
   GET  /<node>/user-data   NoCloud user-data  (cloud-config: hostname + SSH key)
+  POST /quote/<mac>        attestation sink: the node's PCR quote, keyed by MAC
+  POST /quote-sig/<mac>    its detached CMS signature (DER, binary-safe)
+                           -> $STATE/<node>/quote.json{,.sig}, which
+                           drivers/image-measured.sh verifies and compares to the
+                           image's pcrs.expected. Keyed by MAC because a measured
+                           golden image is GENERIC — every node boots the same
+                           bytes, so identity must come from the machine, not from
+                           something the payload could name itself.
   POST /facts/<node>       introspection sink: JSON body -> $STATE/<node>/facts.json
                            (+ a facts.received marker so `maas-lab.sh inspect` can
                            tell the probe reported back)
@@ -90,7 +98,71 @@ class Handler(BaseHTTPRequestHandler):
             _atomic_write(os.path.join(nd, "facts.received"), "1\n")
             self._send(200, f"recorded facts for {node}\n")
             return
+
+        # POST /quote/<mac>  and  /quote-sig/<mac>  — the attestation sink.
+        #
+        # KEYED BY MAC, NOT BY NODE NAME, and that is the whole design. A measured
+        # golden image is GENERIC: every node boots the same bytes, so there is no
+        # per-node cmdline to carry an identity, and a node that could name itself
+        # could name itself as somebody else. The MAC is what the control plane
+        # already recorded per node at enroll time, and it is the one identifier a
+        # shared image cannot claim on another machine's behalf.
+        #
+        # This service does NOT judge the quote. It records what arrived, and
+        # `drivers/image-measured.sh` verifies the signature against the lab CA and
+        # compares the PCRs to the image's policy. A sink that decided what was
+        # trustworthy would be a second, weaker copy of the gate.
+        if len(parts) == 2 and parts[0] in ("quote", "quote-sig"):
+            mac = _safe_mac(parts[1])
+            if not mac:
+                self._send(400, "bad mac\n"); return
+            node = self._node_for_mac(mac)
+            if not node:
+                self._send(404, f"no enrolled node has mac {mac}\n"); return
+            length = int(self.headers.get("Content-Length", 0) or 0)
+            raw = self.rfile.read(length) if length else b""
+            if not raw:
+                self._send(400, "empty body\n"); return
+            nd = os.path.join(self.state_dir, node)
+            name = "quote.json" if parts[0] == "quote" else "quote.json.sig"
+            # Binary-safe: the signature is DER, not text.
+            tmp = os.path.join(nd, name + ".tmp")
+            with open(tmp, "wb") as fh:
+                fh.write(raw)
+            os.replace(tmp, os.path.join(nd, name))
+            self._send(200, f"recorded {name} for {node} ({mac})\n")
+            return
         self._send(404, "not found\n")
+
+    def _node_for_mac(self, mac):
+        """Which enrolled node owns this MAC? The registry is the only authority."""
+        try:
+            entries = sorted(os.listdir(self.state_dir))
+        except OSError:
+            return None
+        for n in entries:
+            f = os.path.join(self.state_dir, n, "mac")
+            try:
+                with open(f) as fh:
+                    if fh.read().strip().lower() == mac:
+                        return n
+            except OSError:
+                continue
+        return None
+
+
+def _safe_mac(mac):
+    """A MAC, or None. Rejects anything that could escape the state dir."""
+    mac = (mac or "").strip().lower()
+    if len(mac) != 17:
+        return None
+    parts = mac.split(":")
+    if len(parts) != 6:
+        return None
+    for p in parts:
+        if len(p) != 2 or any(c not in "0123456789abcdef" for c in p):
+            return None
+    return mac
 
 
 def _atomic_write(path, text):

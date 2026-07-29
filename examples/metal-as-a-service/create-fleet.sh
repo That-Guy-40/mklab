@@ -161,6 +161,29 @@ give_verifying_rom() {
     info "$name: verifying iPXE ROM attached ($rom)"
 }
 
+# give_tpm <node> — a TPM 2.0 device AND UEFI firmware, for `image+measured`.
+# Opt-in via FLEET_TPM=1: unlike the verifying ROM this is NOT default-on, because
+# it changes how the domain BOOTS (BIOS -> UEFI) and every payload the other three
+# drivers use is BIOS-booted. A fleet-wide default would break them.
+#
+# Both or neither, deliberately. A TPM on a BIOS domain produces quotes that
+# verify, match a policy, and mean nothing: SeaBIOS measures the boot sector and
+# the partition table, never the filesystem, so two completely different kernels
+# measure the same (proven under swtpm — see lib/tpm_xml.py and DEFERRED.md).
+# The refusal lives in tpm_xml.py, which will not emit a TPM without UEFI.
+give_tpm() {
+    local name="$1"
+    [[ "${FLEET_TPM:-0}" == 1 ]] || return 0
+    command -v swtpm >/dev/null \
+        || die "FLEET_TPM=1 but swtpm is not installed — libvirt cannot back an emulated TPM.
+  Install swtpm (and swtpm-tools), or leave FLEET_TPM unset for a plain BIOS fleet."
+    $VIRSH dumpxml "$name" \
+        | python3 "$HERE/lib/tpm_xml.py" \
+        | sudo $VIRSH define /dev/stdin >/dev/null \
+        || die "$name: could not attach the TPM + UEFI firmware"
+    info "$name: TPM 2.0 + UEFI attached (measured boot; swtpm is plumbing, not a trust anchor)"
+}
+
 # reserve_dhcp <node> <net> <index> — record the domain's MAC and give it a DHCP
 # reservation, so the node's own name reaches iPXE as ${hostname} (DHCP option 12).
 reserve_dhcp() {
@@ -277,6 +300,7 @@ do_up() {
         load_node "$name"
         give_console "$name"
         give_verifying_rom "$name"
+        give_tpm "$name"
         reserve_dhcp "$name" "${NODE_NETWORK:-vbmc-pxe}" "$i"
         i=$((i+1))
     done
