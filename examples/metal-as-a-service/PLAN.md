@@ -1605,3 +1605,47 @@ seam *before* booting anything, one by the run:
    succeeded, the node reached `active`, and the runner's verdict still said FAIL
    because nothing on the console proved verification had happened. That is the
    house rule — hold the harness to the standard it enforces — paying out.
+
+## image+measured: the measurement that proved itself theatre, and the one that did not (2026-07-28, night)
+
+Picked up the last driver never to touch hardware. The increment is unfinished — the
+live fleet run still needs a TPM+UEFI domain and a quote delivery endpoint — but the
+investigation produced the most useful result of the evening.
+
+**A BIOS fleet cannot measure a payload.** Built a measured golden image the obvious
+way first (syslinux on a partitioned disk, TPM-capable kernel, an init reading
+`/sys/class/tpm/tpm0/pcr-sha256/`), then asked the only question that matters: does
+the measurement follow the payload?
+
+| experiment | result |
+|---|---|
+| two different golden images (96 MB vs 160 MB) | **PCR4 identical** |
+| same image, files swapped inside the filesystem | **every PCR identical** |
+| UEFI + UKI, one byte of kernel cmdline changed | **PCR4 and PCR9 both move** |
+
+SeaBIOS measures the boot-sector code and the partition table — nothing in the
+filesystem. A `pcrs.expected` policy over those values would have passed a completely
+different kernel while the driver's name promised attestation: the LIED rung, in the
+control plane, shipped green. The fix is not a better policy but the right firmware:
+under OVMF the firmware measures the binary it loads, and a UKI makes
+kernel+initramfs+cmdline a single measured object.
+
+`tests/test-measured-image.sh` now pins both halves of that as executable facts — a
+payload change MUST move PCR4 (anti-theatre), and the same payload MUST measure
+identically across boots (or no policy could ever be pinned honestly).
+
+Three smaller findings on the way: **neither existing payload can measure anything**
+(Alpine's cloud images ship the `-virt` kernel flavour with no TPM drivers at all;
+micro-linux's kernel has none either — the AlmaLinux netboot vmlinuz does, which is
+what the UKI uses); **busybox has no crypto**, so the quote is signed by a real
+openssl bundled into the initramfs, because a quote signed anywhere but on the
+measuring machine is not evidence; and **an init that writes to a `/tmp` the
+initramfs does not have exits, and an init that exits is a kernel panic** — the
+builder creates `/tmp` and verifies it now.
+
+The attestation key is minted as a dedicated leaf (`verify-lib.sh gen-ak`), never the
+payload-signing key: a key baked into every copy of a golden image must not also be
+the key that signs what the fleet boots. It is still baked in, which is exactly the
+caveat `drivers/image-measured.sh` has always carried — swtpm is faithful plumbing,
+not a trust anchor, and this proves the mechanism and the refusal path, never the
+integrity of a machine.

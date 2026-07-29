@@ -14,6 +14,7 @@ tests=(test-state-machine.sh test-cleaning-guard.sh test-registry.sh
        test-imgverify-halves.sh test-rollback-driver-pair.sh
        test-apply-reports-and-converges.sh test-apply-selfheal.sh
        test-signing-cert-profile.sh test-rom-xml.sh test-verifying-rom.sh
+       test-measured-image.sh
        test-chaos-matrix.sh)
 pass=0 skip=0 failn=0 rc=0
 for t in "${tests[@]}"; do
