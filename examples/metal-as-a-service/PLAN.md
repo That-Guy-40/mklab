@@ -1573,3 +1573,35 @@ the race headlessly). Then: chain → `imgverify` over the Anaconda kernel + 223
 initrd → kickstart writes vda → `reboot: Power down` → confirmed stable → `bootdev
 disk` → **AlmaLinux 9.8 to `login:` on its own disk** → `active`. DEFERRED items
 1–4 are all closed; transcripts in MANUAL_TESTING §13.
+
+## The image driver, live: four defects, and a harness that failed itself honestly (2026-07-28, night)
+
+`run-e2e-image.sh` on node2: a deployer ramdisk netbooted (firmware-verified — iPXE
+checked the signed deployer kernel+initrd), streamed a 200 MiB golden Alpine raw
+straight onto `/dev/vda`, **read all of it back and matched the published sha256**,
+and the node rebooted into `Welcome to Alpine Linux 3.24` → `node2 login:` →
+`active (image/golden-alpine)`, `persistence=full`, 663 MB written to vda.
+
+Four defects, none visible to the green suite; three were found by reading the real
+seam *before* booting anything, one by the run:
+
+1. **`power cycle` is not implemented by vbmcd** ("Invalid data field in request") —
+   the driver's last step, *after* the destructive write. The mock implemented it
+   happily, so the suite proved a capability the real seam lacks.
+   `MOCK_BMC_NO_CYCLE=1` now reproduces the refusal; the driver uses off + on.
+2. **`imgverify disk <sig>` named an image iPXE never downloaded.** iPXE names images
+   by URI basename and only knows what *it* fetched; the raw is fetched by the
+   ramdisk with `wget`. The firmware would have refused an unknown image and booted
+   nothing. It now verifies the deployer it actually fetches, and the raw is verified
+   on the node, after the write — where the bytes that matter can be seen.
+3. **No `ip=dhcp` on the deployer's cmdline** — the kernel left `eth0` down and the
+   ramdisk hung with *no output at all*, indistinguishable from a slow write.
+   Diagnosed by `domblkstat` (zero writes) plus no HTTP connection, not by guessing.
+   The same lesson the pxeboot lab already paid for. The network step now proves it
+   has an address or refuses, and keeps `udhcpc`'s complaints on the console.
+4. **The read-back check skipped itself.** It parsed the byte count out of `dd`'s
+   status line; busybox `dd` prints none. The control plane now passes `maas.bytes=`
+   and a missing count is fatal. **The harness caught this on itself**: every step
+   succeeded, the node reached `active`, and the runner's verdict still said FAIL
+   because nothing on the console proved verification had happened. That is the
+   house rule — hold the harness to the standard it enforces — paying out.

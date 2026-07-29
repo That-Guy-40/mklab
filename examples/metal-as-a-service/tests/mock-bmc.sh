@@ -87,7 +87,17 @@ case "$verb" in
                 printf 'Chassis Power is %s\n' "$st" ;;
             on)     _pset on;  _boot; printf 'Chassis Power Control: Up/On\n' ;;
             off)    _pset off; printf 'Chassis Power Control: Down/Off\n' ;;
-            cycle)  _pset on;  _boot; printf 'Chassis Power Control: Cycle\n' ;;
+            cycle)
+                # MOCK_BMC_NO_CYCLE=1 — a BMC that does NOT implement chassis
+                # power cycle. This is not hypothetical: vbmcd, the backend this
+                # lab's own fleet runs on, answers exactly this way, while the
+                # mock's happy `cycle` let a driver depend on a capability the
+                # real seam lacks (found before the image driver's live run).
+                if [[ "${MOCK_BMC_NO_CYCLE:-0}" == 1 ]]; then
+                    printf 'Set Chassis Power Control to Cycle failed: Invalid data field in request\n' >&2
+                    exit 1
+                fi
+                _pset on;  _boot; printf 'Chassis Power Control: Cycle\n' ;;
             *)      printf 'mock-bmc: power: on|off|cycle|status\n' >&2; exit 1 ;;
         esac ;;
     bootdev) printf 'Set Boot Device to %s\n' "${1:-pxe}" ;;
