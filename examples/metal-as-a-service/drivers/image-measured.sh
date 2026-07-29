@@ -26,6 +26,7 @@
 #   $MAAS_IMAGES_DIR/<image>/pcrs.expected   the policy, same "<index>:<hex>" form
 #
 # Verbs: describe | stage | verify | deploy | health  (stage/deploy delegate to image.sh)
+#        + capture-policy <image> <node> — write pcrs.expected from a measured boot
 set -uo pipefail
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 IMAGE_DRV="$HERE/image.sh"
@@ -42,6 +43,59 @@ describe)
 
 stage|deploy)
     exec "$IMAGE_DRV" "$verb" "$@" ;;
+
+# capture-policy <image> <node> — turn the quote a node just produced into that
+# image's pcrs.expected. THE POLICY MUST COME FROM A MEASURED BOOT, not from a
+# human's idea of what the PCRs ought to be: nobody can predict a firmware's
+# measurements, and a policy written by hand is a policy that never matches.
+#
+# This is trust-on-first-use, and it is only honest if said out loud: the first
+# boot DEFINES the expected state, so it must be a boot you have reason to trust
+# (a freshly built image, on a node you just provisioned, before it serves
+# anything). Every later boot is then compared against it, which is where the
+# gate earns its keep — a node that measures differently afterwards is refused.
+#
+# Only the indices that are STABLE and payload-bearing go into the policy. PCR4
+# is the firmware's measurement of the binary it loaded (the UKI = the payload);
+# PCR7 is the secure-boot policy state. The rest are recorded in the quote and
+# deliberately not pinned: several move with unrelated platform detail, and a
+# policy that fails for reasons nobody can act on gets disabled, which is worse
+# than a narrow one that holds.
+capture-policy)
+    image="${1:?image-measured capture-policy <image> <node>}"; node="${2:?}"
+    q="$(nd "$node")/quote.json"
+    pol="${MAAS_IMAGES_DIR:?}/$image/pcrs.expected"
+    [[ -f "$q" ]] || die "no quote at $q — the node has not attested yet. Deploy it once
+(the gate will refuse activation, which is correct) and capture the policy from that boot."
+    [[ -d "${MAAS_IMAGES_DIR}/$image" ]] || die "'$image' is not staged"
+    : > "$pol"
+    {
+        printf '# pcrs.expected for %s — CAPTURED from a measured boot of %s
+' "$image" "$node"
+        printf '# Trust-on-first-use: this boot DEFINED the expected state. It is only
+'
+        printf '# meaningful if that boot was trustworthy (freshly built image, node just
+'
+        printf '# provisioned, serving nothing yet).
+'
+        printf '# PCR4 = the firmware measurement of the loaded binary (the UKI IS the
+'
+        printf '#        payload, so this is what a swapped kernel changes)
+'
+        printf '# PCR7 = secure-boot policy state
+'
+    } >> "$pol"
+    for idx in 4 7; do
+        line="$(grep -E "^${idx}:" "$q" | head -1)"
+        [[ -n "$line" ]] || die "the quote from '$node' has no PCR $idx — refusing to write a
+policy with a hole in it: an index the node never reports would fail every future check."
+        printf '%s
+' "$line" >> "$pol"
+    done
+    printf 'image-measured: captured %s from %s'"'"'s quote:
+' "$pol" "$node" >&2
+    grep -vE '^#' "$pol" | sed 's/^/  /' >&2
+    ;;
 
 verify)
     # F2 as usual, PLUS: an image with no expected-PCR policy cannot be attested, and
@@ -96,5 +150,5 @@ health)
     exit 0
     ;;
 
-*) echo "image-measured: unknown verb '$verb' (describe|stage|verify|deploy|health)" >&2; exit 2 ;;
+*) echo "image-measured: unknown verb '$verb' (describe|stage|verify|deploy|health|capture-policy)" >&2; exit 2 ;;
 esac

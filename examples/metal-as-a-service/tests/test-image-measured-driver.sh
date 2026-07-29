@@ -126,4 +126,55 @@ grep -Fq 'does not contain PCR 11' <<<"$out" \
 assert_state n6 error
 note "a quote that omits a required PCR is refused — silence is not a measurement  ✓"
 
+# ── the DELIVERY PATH: how a quote reaches the registry at all ──────────────
+# Until this landed, nothing in the lab wrote quote.json: the driver's gate was
+# real and unfeedable, so every "measured" deploy would have failed for want of a
+# quote nobody could deliver. The sink is keyed by MAC, not node name, because a
+# measured golden image is GENERIC — every node boots the same bytes, so identity
+# must come from the machine rather than from something the payload could claim.
+SINKST="$SANDBOX/sink-state"; mkdir -p "$SINKST/nodeS"
+printf '52:54:00:ab:cd:ef\n' > "$SINKST/nodeS/mac"
+PORT=18311
+python3 "$LAB_DIR/lib/metadata.py" serve --state "$SINKST" --port "$PORT" --host 127.0.0.1 >/dev/null 2>&1 &
+SINK=$!
+sleep 1
+kill -0 "$SINK" 2>/dev/null || fail "the metadata service did not start for the sink test"
+
+printf '4:AAAA\n7:BBBB\n' > "$SANDBOX/q.json"
+printf '\x30\x82BINARY\x00DER' > "$SANDBOX/q.sig"
+curl -sS --data-binary "@$SANDBOX/q.json" "http://127.0.0.1:$PORT/quote/52:54:00:AB:CD:EF" >/dev/null \
+    || { kill "$SINK" 2>/dev/null; fail "the sink rejected a quote from a MAC it knows (uppercase — MAC matching must be case-insensitive)"; }
+curl -sS --data-binary "@$SANDBOX/q.sig" "http://127.0.0.1:$PORT/quote-sig/52:54:00:ab:cd:ef" >/dev/null \
+    || { kill "$SINK" 2>/dev/null; fail "the sink rejected the detached signature"; }
+code_unknown="$(curl -sS -o /dev/null -w '%{http_code}' --data-binary "@$SANDBOX/q.json" "http://127.0.0.1:$PORT/quote/aa:bb:cc:dd:ee:ff")"
+code_trav="$(curl -sS -o /dev/null -w '%{http_code}' --data-binary "@$SANDBOX/q.json" "http://127.0.0.1:$PORT/quote/..%2f..%2fetc")"
+kill "$SINK" 2>/dev/null                     # by PID: never by pattern
+[[ -f "$SINKST/nodeS/quote.json" ]] || fail "the sink accepted a quote but wrote no quote.json"
+cmp -s "$SANDBOX/q.sig" "$SINKST/nodeS/quote.json.sig" \
+    || fail "REGRESSION: the stored signature is not byte-identical to what was POSTed. A CMS signature is DER, not text — one mangled byte and every quote fails to verify for a reason nobody will find"
+[[ "$code_unknown" == 404 ]] \
+    || fail "REGRESSION: a quote from a MAC no enrolled node owns was accepted ($code_unknown). The registry is the only authority on which machine is which; anything else lets a stranger attest as a node"
+[[ "$code_trav" == 400 ]] \
+    || fail "REGRESSION: a path-traversal MAC was not rejected ($code_trav) — the sink writes files under the state dir by that name"
+note "the sink records quotes keyed by MAC (case-insensitive, binary-safe), and refuses an unknown MAC and a traversal  ✓"
+
+# ── capture-policy: the policy must come FROM a measured boot ───────────────
+# Nobody can predict a firmware's measurements, so a hand-written pcrs.expected is
+# a policy that never matches. capture-policy turns a real quote into one — which
+# is trust-on-first-use, and only honest because the driver says so out loud.
+CPIMG="$MAAS_IMAGES_DIR/cap-img"; mkdir -p "$CPIMG"
+mkdir -p "$MAAS_STATE/capnode"
+printf '0:1111\n4:CAFEBABE\n7:D00DFEED\n' > "$MAAS_STATE/capnode/quote.json"
+( "$LAB_DIR/drivers/image-measured.sh" capture-policy cap-img capnode ) >/dev/null 2>&1 \
+    || fail "capture-policy failed on a quote that contains both required PCRs"
+grep -q '^4:CAFEBABE$' "$CPIMG/pcrs.expected" \
+    || fail "capture-policy did not record PCR4 — the register that actually tracks the payload"
+grep -q '^7:D00DFEED$' "$CPIMG/pcrs.expected" || fail "capture-policy did not record PCR7"
+grep -q '^0:' "$CPIMG/pcrs.expected" \
+    && fail "capture-policy pinned PCR0 as well. Only stable, payload-bearing registers belong in a policy: one that fails for reasons nobody can act on gets disabled, which is worse than a narrow one that holds"
+printf '0:1111\n7:D00DFEED\n' > "$MAAS_STATE/capnode/quote.json"     # no PCR4
+( "$LAB_DIR/drivers/image-measured.sh" capture-policy cap-img capnode ) >/dev/null 2>&1 \
+    && fail "REGRESSION: capture-policy wrote a policy from a quote missing PCR4 — a policy with a hole in it fails every future check, for a register the node never reports"
+note "capture-policy pins PCR4+PCR7 from a real quote, and refuses a quote that lacks one  ✓"
+
 pass "image+measured activates only on a signed, trusted, matching attestation: no quote / unsigned / forged / mismatched / incomplete are each refused by name (mechanism proven on swtpm, which is NOT a trust anchor)"
