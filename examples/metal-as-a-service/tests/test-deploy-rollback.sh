@@ -56,14 +56,27 @@ fi
 assert_state node3 error
 note "health fail + no previous -> error ✓"
 
-# ── an unimplemented driver is refused with an honest, NAMED message ─────────
-# (`ramdisk` graduated in increment 4, `image` in increment 5 — `image+measured` is
-# the remaining not-yet, and it must still say so rather than dying generically.)
+# ── an UNKNOWN driver is refused with an honest, NAMED message ───────────────
+# This assertion used to require the words "fast-follow", because `image+measured`
+# was a roadmap entry and its refusal said so. That driver has since been built —
+# and this test went on demanding the not-yet message, which is how a test stops
+# describing the system and starts pinning a stale claim in place. (The obsolete
+# expectation outlived the truth by weeks and was only noticed when the real
+# `image+measured` deploy was refused ON THE METAL, 2026-07-29.)
+#
+# What is durable is the BEHAVIOUR: a driver that does not exist must be refused
+# clearly, by name, listing what does exist — never generically, and never by
+# quietly deploying something else.
 prep node1b 6233
-msg="$( ( "$MAAS" deploy node1b --driver image+measured --image v1 ) 2>&1 || true )"
-grep -q 'fast-follow' <<<"$msg" \
-    || fail "the unimplemented 'image+measured' driver should be refused as a documented fast-follow, got: $msg"
+msg="$( ( "$MAAS" deploy node1b --driver no-such-driver --image v1 ) 2>&1 || true )"
+grep -q "no-such-driver" <<<"$msg" \
+    || fail "an unknown driver was refused without naming it, got: $msg"
+grep -qi 'available' <<<"$msg" \
+    || fail "the refusal does not list the drivers that DO exist, which is the one thing the operator needs: $msg"
+assert_state node1b available
+grep -qi 'fast-follow\|not yet implemented' <<<"$msg" \
+    && fail "REGRESSION: an unknown driver is being reported as a not-yet-implemented roadmap item. That message was written for image+measured, which now exists; repeating it for any unknown name tells the operator to wait for something that is already here (or was never planned)"
 assert_state node1b available   # refused before deploying — stays schedulable
-note "unimplemented 'image+measured' driver refused honestly (named as a fast-follow) ✓"
+note "an unknown driver is refused by name, listing the ones that exist ✓"
 
 pass "deploy is health-gated with A/B rollback: healthy->active, fail->previous(degraded), both-bad->error, no-prev->error"

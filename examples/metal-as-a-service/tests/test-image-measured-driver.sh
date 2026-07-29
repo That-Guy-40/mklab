@@ -68,12 +68,35 @@ grep -Fq 'no expected PCR policy' <<<"$out" || fail "the refusal did not name th
 note "an image with no expected-PCR policy is refused at verify, not silently unmeasured  ✓"
 
 # ── 2. the happy path: a signed, matching quote reaches active ──────────────
+# NOTE THE NAME. Every section below drives `image-measured`, the FILENAME. The name
+# this lab documents — in README.md, DEFERRED.md, MANUAL_TESTING.md and
+# run-e2e-measured.sh — is `image+measured`, and §2b exists because for weeks those
+# were not the same thing and only the filename was ever tested.
 prep n1 6250
 quote n1 "$POL"
 ( "$MAAS" deploy n1 --driver image-measured --image sealed ) >/dev/null 2>&1 \
     || fail "a node with a valid, matching attestation did not reach active"
 assert_state n1 active
 note "signed quote matching the policy -> active  ✓"
+
+# ── 2b. THE DOCUMENTED NAME MUST WORK ──────────────────────────────────────
+# Found on the metal, 2026-07-29. `maas-lab.sh deploy` resolved a driver as
+# "$MAAS_DRIVER_DIR/$driver.sh", so `--driver image+measured` looked for
+# drivers/image+measured.sh, missed, and died with "'image+measured' is a documented
+# fast-follow (not yet implemented)" — a sentence that had been false for weeks.
+#
+# It survived every green run because THIS FILE typed the filename instead. The node
+# had already measured 10 real PCRs, signed its quote and delivered it to the control
+# plane; the control plane then refused the deploy by NAME, before any gate ran.
+#
+# So: the same fixture, the same expectation, the name an operator actually types.
+prep n1b 6260
+quote n1b "$POL"
+out="$( ( "$MAAS" deploy n1b --driver image+measured --image sealed ) 2>&1 )"
+grep -Eqi 'no driver|not yet implemented|fast-follow' <<<"$out" \
+    && fail "REGRESSION: the DOCUMENTED driver name 'image+measured' does not resolve — every doc, and run-e2e-measured.sh, tell operators to type it. It said: ${out//$'\n'/ }"
+assert_state n1b active
+note "the documented name 'image+measured' resolves to the same driver as the filename  ✓"
 
 # ── 3. no quote at all -> refused ───────────────────────────────────────────
 prep n2 6251

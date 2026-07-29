@@ -58,6 +58,16 @@ MAAS_MILESTONES="${MAAS_MILESTONES:-$MAAS_DIR/milestones.toml}"
 # mock. Images (signed payloads) live under MAAS_IMAGES_DIR/<image>/, trust root at
 # MAAS_IMAGES_DIR/trust/ca.crt.
 MAAS_DRIVER_DIR="${MAAS_DRIVER_DIR:-$MAAS_DIR/drivers}"
+
+# driver_path <name> — the script implementing a driver.
+#
+# The CLI name and the filename differ: `image+measured` is what every doc and
+# run-e2e-measured.sh tell you to type, and the file is drivers/image-measured.sh
+# because `+` in a filename is a nuisance. One function owns that mapping, because
+# it was open-coded in FOUR places and three of them were wrong — including the
+# rollback path, where a node deployed as `image+measured` could never have been
+# rolled back at all. Found live 2026-07-29.
+driver_path() { printf '%s/%s.sh' "$MAAS_DRIVER_DIR" "${1//+/-}"; }
 # absolute path to THIS script — the declared panel actions must run from any cwd
 MAAS_SELF="${MAAS_SELF:-$MAAS_DIR/maas-lab.sh}"
 MAAS_IMAGES_DIR="${MAAS_IMAGES_DIR:-$STATE_ROOT/images}"
@@ -516,14 +526,29 @@ cmd_deploy() {
     [[ -n "$driver" ]] || die "deploy: --driver is required (install|ramdisk|image|image+measured)"
     [[ -n "$image" ]]  || die "deploy: --image is required (the payload to deploy)"
 
-    # Resolve the driver script. install/ramdisk/image are real; image+measured is
-    # an honest not-yet — it names itself as a fast-follow rather than pretending.
-    local drv="$MAAS_DRIVER_DIR/$driver.sh"
+    # Resolve the driver script. The CLI name and the FILENAME are not the same
+    # string: the documented driver is `image+measured` and the file is
+    # drivers/image-measured.sh, because `+` in a filename is a nuisance. So the
+    # lookup normalises `+` to `-`.
+    #
+    # THE BUG THIS FIXES, and how it hid. Without the normalisation, `--driver
+    # image+measured` resolved to drivers/image+measured.sh, which does not exist,
+    # and fell through to a `die` announcing the driver was "a documented fast-follow
+    # (not yet implemented)" — a sentence that stopped being true weeks earlier. It
+    # survived because tests/test-image-measured-driver.sh invokes the driver as
+    # `image-measured` (the filename), while run-e2e-measured.sh, README.md,
+    # DEFERRED.md and MANUAL_TESTING.md all say `image+measured`. The suite was green
+    # on a name no operator would ever type. Found on the metal, 2026-07-29, after
+    # the node had already measured, signed and delivered a quote — the control plane
+    # refused the deploy by NAME before any gate ran.
+    local drv; drv="$(driver_path "$driver")"
     if [[ ! -x "$drv" ]]; then
-        case "$driver" in
-            image+measured) die "deploy: 'image+measured' is a documented fast-follow (not yet implemented)" ;;
-            *) die "deploy: no driver '$driver' at $drv" ;;
-        esac
+        local avail
+        avail="$(cd "$MAAS_DRIVER_DIR" 2>/dev/null && ls -1 *.sh 2>/dev/null \
+                 | sed 's/\.sh$//' | grep -v '^verify-lib$' | tr '\n' ' ')"
+        die "deploy: no driver '$driver' (looked for $drv).
+  Available: ${avail:-none found in $MAAS_DRIVER_DIR}
+  Note '+' in a driver name maps to '-' in the filename (image+measured -> image-measured.sh)."
     fi
 
     # The rollback candidate is a PAIR, not an image. An image is only deployable by the
@@ -574,7 +599,7 @@ cmd_deploy() {
         # non-existent installer to power it off — while the registry recorded the
         # impossible pair `driver=install image=micro-linux-x86_64`.
         local prev_drv_path=""
-        [[ -n "$prev_drv" ]] && prev_drv_path="$MAAS_DRIVER_DIR/$prev_drv.sh"
+        [[ -n "$prev_drv" ]] && prev_drv_path="$(driver_path "$prev_drv")"
         if [[ -z "$prev_drv" || ! -x "$prev_drv_path" ]]; then
             # Refusing to roll back beats rolling back WRONG. A node left on the failed
             # image is honestly broken and says so; one driven by a driver that does not
@@ -582,7 +607,7 @@ cmd_deploy() {
             rm -f "$(node_dir "$node")/deploying_driver" 2>/dev/null || true
             set_state "$node" error deploy
             die "'$image' failed on '$node', and its previous image '$prev' cannot be rolled
-back: ${prev_drv:+no driver '$prev_drv' at $MAAS_DRIVER_DIR/$prev_drv.sh}${prev_drv:-the driver that deployed it was never recorded}.
+back: ${prev_drv:+no driver '$prev_drv' at $prev_drv_path}${prev_drv:-the driver that deployed it was never recorded}.
 Rolling back through '$driver' instead would hand it an image it does not own. Node -> error (operator)."
         fi
         warn "rolling back '$node' to its previous image '$prev' via its own driver '$prev_drv' (§4b A/B)…"
@@ -736,7 +761,7 @@ recheck_probe() {  # recheck_probe <node> -> 0 healthy, 1 not (never writes)
     local node="$1" driver image drv
     driver="$(_read "$node" driver "")"; image="$(_read "$node" image "")"
     [[ -n "$driver" && -n "$image" ]] || return 1
-    drv="$MAAS_DRIVER_DIR/$driver.sh"
+    drv="$(driver_path "$driver")"
     [[ -x "$drv" ]] || return 1
     run_driver "$drv" health "$node" "$image" >/dev/null 2>&1
 }
@@ -747,7 +772,7 @@ cmd_recheck() {
     local driver image drv
     driver="$(_read "$node" driver "")"; image="$(_read "$node" image "")"
     [[ -n "$driver" && -n "$image" ]] || die "node '$node' is active but records no driver/image — nothing to re-check"
-    drv="$MAAS_DRIVER_DIR/$driver.sh"
+    drv="$(driver_path "$driver")"
     [[ -x "$drv" ]] || die "recheck: no driver '$driver' at $drv"
     if run_driver "$drv" health "$node" "$image"; then
         printf 'active %s (driver=%s image=%s, health re-confirmed)\n' "$node" "$driver" "$image" >&2
