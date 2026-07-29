@@ -252,4 +252,43 @@ fi
 assert_state node6 error
 note "a stale login from a previous deploy no longer satisfies the health gate  ✓"
 
+# ── 9. A SECOND DEPLOY MUST ACTUALLY REBOOT THE NODE ───────────────────────
+# Found live 2026-07-29, on the first deploy that ever got this far — and it is the
+# fault §8's bug was hiding. `bootdev pxe` only applies at the NEXT boot, and a node
+# that is already running ignores `power on`:
+#
+#     Set Boot Device to pxe
+#     Chassis Power Control: Up/On          <- no-op, it was already on
+#     image: awaiting /… copied/ … (timeout 4800s)
+#
+# A successful deploy leaves the node powered ON and `active`, so every SECOND deploy
+# on the same node stalled at its first gate: the deployer never booted, no write
+# marker ever appeared, and the node sat running its PREVIOUS image while the control
+# plane waited 80 minutes. Before §8's fix this looked like instant success instead —
+# the health gate matched the earlier boot's banner in one second. The node had not
+# rebooted then either; fixing the liar is what made the silence visible.
+#
+# So: deploy once (leaving the node up), then deploy again and require a power OFF
+# before the deployer's power ON. The disk boot has always done off+on; this asserts
+# the deployer boot does too.
+( "$IMAGE" stage golden3 --from "$RAW" ) >/dev/null 2>&1 || fail "staging golden3 failed"
+prep node7 6247
+export MOCK_BMC_BOOT_SAYS='Deploying image golden3\n2147483648 bytes (2.1 GB) copied\nnode7 login: '
+( "$MAAS" deploy node7 --driver image --image golden3 ) >/dev/null 2>&1 \
+    || fail "the first deploy of golden3 onto node7 did not succeed, so §9 cannot test the second"
+assert_state node7 active
+[[ "$( "$MOCK_BMC" node7 power status 2>/dev/null )" == *"is on"* ]] \
+    || fail "§9 needs the node left POWERED ON after a successful deploy (that is the precondition the live fault depends on); it is not"
+# now the second deploy, on a node that is already up
+: > "$MOCK_BMC_LOG"
+( "$MAAS" deploy node7 --driver image --image golden3 ) >/dev/null 2>&1 \
+    || fail "REGRESSION: a SECOND deploy onto an already-running node failed. 'bootdev pxe' only takes effect at the next boot, so the driver must power the node OFF before powering it on — otherwise the deployer never boots and the deploy hangs until MAAS_WRITE_TIMEOUT"
+off=$(grep -n "^node7 power off" "$MOCK_BMC_LOG" | head -1 | cut -d: -f1)
+on=$( grep -n "^node7 power on"  "$MOCK_BMC_LOG" | head -1 | cut -d: -f1)
+[[ -n "$off" ]] \
+    || fail "REGRESSION: the second deploy never powered '$(printf node7)' off. A running node ignores 'power on', so it kept running its PREVIOUS image, the deployer never booted, and the write gate waited for output that could not come"
+[[ -n "$on" && $off -lt $on ]] \
+    || fail "REGRESSION: the second deploy powered the node ON (line $on) without powering it OFF first (line ${off:-none}) — 'bootdev pxe' applies only at the next boot, so nothing netbooted"
+note "a second deploy power-cycles an already-running node, so 'bootdev pxe' takes effect  ✓"
+
 pass "the image driver lays a golden disk down safely: verified before any hardware, never points a node at a half-written disk, ends on bootdev disk, records persistence=full, and publishes a read-back digest computed from the bytes it actually serves rather than from a cache that re-staging can leave stale"

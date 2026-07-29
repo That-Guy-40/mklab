@@ -28,10 +28,41 @@ PXE gateway). Writes are atomic (tmp + os.replace) and confined to $STATE/<node>
 a node name with a path separator is rejected.
 """
 import argparse
+import base64
 import json
 import os
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+
+def _der_truncated(blob):
+    """Does this DER blob declare more bytes than it carries? Returns why, or None.
+
+    A CMS signature starts with a SEQUENCE whose length is written in the header, so a
+    truncated one is detectable without parsing the whole structure. Worth checking at
+    the door: `busybox wget --post-file` sends Content-Length=strlen(), cutting a DER
+    signature at its first NUL, and a short signature fails verification exactly like a
+    forged one. Blaming the node for the network is the LIED rung.
+    """
+    if len(blob) < 2:
+        return f"only {len(blob)} bytes — not even a DER header"
+    if blob[0] != 0x30:
+        return f"does not start with a DER SEQUENCE tag (0x30), got 0x{blob[0]:02x}"
+    n = blob[1]
+    if n < 0x80:                      # short form: length is this byte
+        declared, header = n, 2
+    else:
+        count = n & 0x7F              # long form: this many length bytes follow
+        if count == 0 or count > 4 or len(blob) < 2 + count:
+            return "malformed DER length header"
+        declared = int.from_bytes(blob[2:2 + count], "big")
+        header = 2 + count
+    have = len(blob) - header
+    if have < declared:
+        return (f"DER header declares {declared} content bytes but only {have} arrived "
+                f"({len(blob)} total) — the body was cut in transit, most likely by a "
+                f"client that computed Content-Length with strlen()")
+    return None
 
 
 def _safe_node(name):
@@ -112,7 +143,26 @@ class Handler(BaseHTTPRequestHandler):
         # `drivers/image-measured.sh` verifies the signature against the lab CA and
         # compares the PCRs to the image's policy. A sink that decided what was
         # trustworthy would be a second, weaker copy of the gate.
-        if len(parts) == 2 and parts[0] in ("quote", "quote-sig"):
+        # /quote-sig-b64/<mac> exists because BUSYBOX WGET CANNOT POST BINARY.
+        #
+        # FOUND LIVE 2026-07-29. `busybox wget --post-file` treats the file as a C
+        # string: it sends Content-Length = strlen(), so a DER signature is truncated
+        # at its first 0x00 byte. Measured on the real 2117-byte CMS blob, with the
+        # same busybox 1.36.1 the initramfs carries:
+        #
+        #     busybox wget --post-file <2117-byte DER>  -> Content-Length: 107
+        #     curl --data-binary       <2117-byte DER>  -> Content-Length: 2117
+        #     busybox wget --post-file <base64 of it>   -> Content-Length: 2869
+        #
+        # 107 is exactly the offset of the first NUL. Nothing errored: the node said
+        # "delivered quote + signature", the sink recorded 107 bytes, and the quote
+        # then failed verification as FORGED — a truncated signature is indistinguishable
+        # from a bad one, so the honest gate blamed the node for the transport.
+        #
+        # The node has no curl (busybox + openssl only), so the wire format becomes
+        # base64 and the sink decodes. The raw /quote-sig/ endpoint stays for clients
+        # that can post binary.
+        if len(parts) == 2 and parts[0] in ("quote", "quote-sig", "quote-sig-b64"):
             mac = _safe_mac(parts[1])
             if not mac:
                 self._send(400, "bad mac\n"); return
@@ -123,14 +173,37 @@ class Handler(BaseHTTPRequestHandler):
             raw = self.rfile.read(length) if length else b""
             if not raw:
                 self._send(400, "empty body\n"); return
+            if parts[0] == "quote-sig-b64":
+                # STRIP WHITESPACE FIRST. `openssl base64` wraps at 64 columns, and
+                # b64decode(validate=True) rejects every newline in it — so the strict
+                # form refuses exactly the output the node produces. Drop ASCII
+                # whitespace, then validate what is left, which still catches a body
+                # that is not base64 at all.
+                compact = bytes(b for b in raw if b not in b" \t\r\n")
+                try:
+                    raw = base64.b64decode(compact, validate=True)
+                except Exception as exc:
+                    self._send(400, f"body is not valid base64: {exc}\n"); return
+                if not raw:
+                    self._send(400, "base64 decoded to nothing\n"); return
             nd = os.path.join(self.state_dir, node)
             name = "quote.json" if parts[0] == "quote" else "quote.json.sig"
+            # A SIGNATURE MUST NOT BE STORED TRUNCATED. The DER header declares its own
+            # length; if the body is shorter, something upstream cut it and storing it
+            # anyway turns a transport bug into a forgery accusation against the node.
+            # Refuse loudly instead — that is the difference between the HALTED rung and
+            # the LIED one.
+            if name == "quote.json.sig":
+                problem = _der_truncated(raw)
+                if problem:
+                    self._send(400, f"refusing a truncated signature for {node}: {problem}\n")
+                    return
             # Binary-safe: the signature is DER, not text.
             tmp = os.path.join(nd, name + ".tmp")
             with open(tmp, "wb") as fh:
                 fh.write(raw)
             os.replace(tmp, os.path.join(nd, name))
-            self._send(200, f"recorded {name} for {node} ({mac})\n")
+            self._send(200, f"recorded {name} for {node} ({mac}, {len(raw)} bytes)\n")
             return
         self._send(404, "not found\n")
 
