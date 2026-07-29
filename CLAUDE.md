@@ -115,6 +115,76 @@ no verb accepted (and `unmaintenance` handing it straight back into it), a node 
 **silent registry write failure** — the tool printed success, exited 0, and left the
 record saying one image while the machine ran another.
 
+### The two bug classes a green suite cannot see
+
+Fourteen defects came out of [`examples/metal-as-a-service/`](examples/metal-as-a-service/)
+on real hardware while its suite was green at every step. Nearly all were one of two
+shapes, and both are **authoring** mistakes rather than coding ones — which is why more
+tests of the same kind would not have found them.
+
+#### 1. A record that outlives the thing it describes
+
+A cached fact keeps being served after its subject changes. Nothing errors: the record is
+*readable*, merely false. So the failure surfaces far downstream wearing someone else's
+clothes. Every instance below is from one lab:
+
+| the record | what it outlived | how it presented |
+|---|---|---|
+| `disk.raw.sha256` | a re-staged image | a node told to expect bytes nobody had |
+| `pcrs.expected` | the build it was captured from | the node was wiped, re-imaged, booted — and *then* refused |
+| `error_reason` | the incident that wrote it | the operator sent to an abort half an hour stale |
+| the console log (append-only across boots) | the previous deploy | a second deploy reported `active` in one second |
+| a `~/.cache` golden image | the code that built it | a boot that "proved" a bug still present after the fix |
+| the served deployer `vmlinuz` | the kernel rebuilt over it | **`file -b` printed the identical version string; only the sha differed** |
+
+- **Derive the fact; don't cache it.** Compute the digest from the bytes as you publish
+  them. Read the firmware mode from the domain XML, not from an enroll-time default
+  nobody revisits.
+- **If it must be cached, bind it to its subject's identity and refuse a mismatch by
+  name.** `capture-policy` stamps `# image-sha256:` into `pcrs.expected`; `verify` refuses
+  a policy captured from a different build and prints both digests.
+- **Refuse BEFORE the irreversible step.** A gate that fires after the `dd` is not a gate,
+  it is a post-mortem.
+- **Write the reason on every path.** A field three verbs maintain and a fourth does not
+  is worse than absent: it is confidently wrong.
+- **A version string is not an identity.** Two builds of one kernel print the same
+  `file -b`. Compare hashes.
+- **Scope the append-only thing.** Record a byte offset before acting and read only past
+  it (`console_mark` in [`drivers/image.sh`](examples/metal-as-a-service/drivers/image.sh)),
+  falling back to the whole file if it shrank — rotation is real.
+
+#### 2. A test that asserts the mechanism instead of the outcome
+
+An assertion naming *how* the code works passes when that mechanism is present and broken,
+and fails when it is replaced by a better one. The second direction costs a day: nothing
+is broken and the suite insists otherwise.
+
+| the assertion | why it was wrong |
+|---|---|
+| `grep 'loaded NIC drivers'` | failed once the kernel had the drivers built in — a strictly better fix; would have *passed* had the modules loaded and the NIC still not come up |
+| console fixtures **pre-written** before the deploy | proved only that the driver can grep a file the test handed it; kept passing after the driver correctly began ignoring pre-deploy output |
+| delivery tested with `curl --data-binary` | binary-safe, so it proved the **sink** and nothing about the node — which has no curl, and whose `busybox wget` sends `Content-Length=strlen()`, truncating DER at the first NUL |
+
+- **Assert the state the system must end in**, not the steps taken: "this machine has an
+  interface, a MAC, and an *applied* lease", not "three modules were insmod'ed".
+- **Drive the client the machine actually has.** If the payload posts with `busybox wget`,
+  the test posts with `busybox wget`. A more capable tool is not a stand-in, it is a
+  different seam.
+- **Make effects follow causes in fixtures too.** A console exists *because* something
+  booted — hence `MOCK_BMC_BOOT_SAYS`, which speaks on power-on instead of letting the
+  test pre-write success.
+- **A fixture the code must reject cannot also be its happy path.** Ours was a 12-byte DER
+  declaring 16969 bytes of content; once the sink learned to refuse truncated DER, those
+  bytes had to become the negative control and the positive case a self-consistent blob.
+- **Run the negative control.** Break the thing under test and watch the assertion bite.
+  Three sections here passed for weeks while proving nothing.
+
+**Fix the liar first.** A second deploy never power-cycled the node, so it kept running
+the previous image — and that was *hidden* by the stale-console bug: the dishonest gate
+reported `active` in one second and survived every run, while the honest gate's nineteen
+minutes of silence diagnosed itself. This is why **LIED** outranks **HALTED** on the
+ladder above. An honest failure is debuggable; a false success is not.
+
 ### Doc/link integrity
 
 `tools/link_check.py` validates Markdown cross-links repo-wide and maps file
