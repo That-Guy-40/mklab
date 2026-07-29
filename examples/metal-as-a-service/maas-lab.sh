@@ -355,6 +355,11 @@ cmd_watch() {
     # profile: explicit, else map the deploy driver, else 'probe' (inspection) then 'install'
     if [[ -z "$profile" ]]; then
         local drv; drv="$(_read "$node" driver "")"
+        # Mid-deploy, the durable (driver,image) pair still names the PREVIOUS
+        # deployment — it is only written when a gate passes. The in-flight driver
+        # lives in the transient `deploying_driver`, so a watch during a deploy
+        # renders the profile of what is actually booting, not what last ran.
+        [[ "$(read_state "$node")" == deploying ]] && drv="$(_read "$node" deploying_driver "$drv")"
         case "$drv" in
             install) profile=install ;;
             ramdisk) profile=ramdisk ;;
@@ -528,7 +533,14 @@ cmd_deploy() {
     local prev prev_drv
     prev="$(_read "$node" image "")"             # current image  -> rollback candidate
     prev_drv="$(_read "$node" driver "")"        # the driver that PUT it there
-    _write "$node" driver "$driver"
+    # THE PAIR IS ONLY EVER WRITTEN WHEN A GATE PASSES. `driver` used to be
+    # overwritten here, pre-gate — so every FAILED deploy left it paired with the
+    # old `image`, and the next success captured that mismatch as its rollback
+    # pair (live: `previous: install/micro-linux-x86_64`, a pair that never
+    # existed). The in-flight driver lives in the transient `deploying_driver`,
+    # which is what `watch` renders while state is `deploying`; it is removed on
+    # every exit path below.
+    _write "$node" deploying_driver "$driver"
     # A node deployed INTO a region is not `active` until it has joined it (fast-follow:
     # ramdisk -> resilient region). Recorded before the gate so the driver can see it.
     [[ -n "$region" ]] && _write "$node" region "$region"
@@ -541,11 +553,13 @@ cmd_deploy() {
     info "deploying image '$image' via '$driver' (verify=$do_verify, health timeout ${MAAS_HEALTH_TIMEOUT}s)…"
 
     if gate "$drv" "$node" "$image" current "$do_verify"; then
+        _write "$node" driver "$driver"          # the pair, written together, gate passed
         _write "$node" image "$image"
         if [[ -n "$prev" && "$prev" != "$image" ]]; then
             _write "$node" previous_image "$prev"
             _write "$node" previous_driver "$prev_drv"   # the pair, or it is not a rollback
         fi
+        rm -f "$(node_dir "$node")/deploying_driver" 2>/dev/null || true
         set_state "$node" active deploy
         printf 'active %s (driver=%s image=%s, healthy)\n' "$node" "$driver" "$image" >&2
         return 0
@@ -565,6 +579,7 @@ cmd_deploy() {
             # Refusing to roll back beats rolling back WRONG. A node left on the failed
             # image is honestly broken and says so; one driven by a driver that does not
             # own its image is a machine nobody can reason about.
+            rm -f "$(node_dir "$node")/deploying_driver" 2>/dev/null || true
             set_state "$node" error deploy
             die "'$image' failed on '$node', and its previous image '$prev' cannot be rolled
 back: ${prev_drv:+no driver '$prev_drv' at $MAAS_DRIVER_DIR/$prev_drv.sh}${prev_drv:-the driver that deployed it was never recorded}.
@@ -577,14 +592,17 @@ Rolling back through '$driver' instead would hand it an image it does not own. N
             _write "$node" driver "$prev_drv"    # the record follows the machine back
             _write "$node" previous_image ""
             _write "$node" previous_driver ""
+            rm -f "$(node_dir "$node")/deploying_driver" 2>/dev/null || true
             set_state "$node" active deploy
             warn "DEGRADED: '$node' is active on its PREVIOUS image '$prev' (new image '$image' was rejected)"
             printf 'active %s (driver=%s image=%s, DEGRADED — rolled back)\n' "$node" "$prev_drv" "$prev" >&2
             return 0
         fi
+        rm -f "$(node_dir "$node")/deploying_driver" 2>/dev/null || true
         set_state "$node" error deploy
         die "both images failed for '$node' (new '$driver/$image' and previous '$prev_drv/$prev') — node -> error (operator)"
     fi
+    rm -f "$(node_dir "$node")/deploying_driver" 2>/dev/null || true
     set_state "$node" error deploy
     die "$GATE_REASON, and no previous image to roll back to — node '$node' -> error"
 }
