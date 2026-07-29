@@ -22,6 +22,7 @@ tests=(test-state-machine.sh test-cleaning-guard.sh test-registry.sh
        test-probe-nic.sh
        test-uefi-netboot-dhcp.sh test-fleet-tpm-selection.sh test-tpm-xml.sh
        test-e2e-make-deployable.sh
+       test-fleet-firmware-record.sh
        test-chaos-matrix.sh)
 pass=0 skip=0 failn=0 rc=0
 for t in "${tests[@]}"; do
