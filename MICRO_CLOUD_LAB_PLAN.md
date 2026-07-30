@@ -1071,6 +1071,125 @@ Still open:
 
 ---
 
+## 17. Deferred work — pick up here next session
+
+> Written 2026-07-29 at the end of the planning session that produced v2 and v3.
+> **This section moves to `examples/micro-cloud/DEFERRED.md` once that directory exists**
+> — it lives here only because creating a lab dir with nothing but a DEFERRED.md in it
+> would trip `paths.py --check`'s coverage gate (an unrouted lab unit fails CI).
+
+### 17.1 First thing: spike P2 — the privileged half (AUTHOR-RUN)
+
+P1 (Appendix A) checked everything reachable without privilege. **P2 resolves its three
+`UNKNOWN` rows and flips its two "expected gap" rows that are merely missing inputs.**
+It is sudo-gated and involves a fetch, so it is a hand-off, not an agent task — the
+agent's runner gates fetch-then-execute of prebuilt binaries.
+
+Four checks, in dependency order:
+
+| # | check | why it must be P2 | what it unblocks |
+|---|---|---|---|
+| 1 | **`nft list tables`** — who owns the firewall next to Calico | needs root | §7's "additive, separately named table" plan is currently an *intention*; this makes it a design against a known ruleset |
+| 2 | **`debootstrap` one small chroot** | needs root | P1's negative control (*no chroot exists*) is slice 1's missing input. Nothing in §2's matrix can be exercised without a tree |
+| 3 | **create + delete one tap on a throwaway bridge** | needs `CAP_NET_ADMIN` | proves the fabric's primitive **without building the fabric** — the cheapest possible de-risk of §7 |
+| 4 | **fetch `firecracker-v1.16.1-x86_64.tgz`, verify against upstream's `.sha256.txt`** | fetch+exec gate | slice 1 cannot start without the binary. P1 confirmed the asset **and** the published hash exist |
+
+Then, on the same run: **`firecracker --version`, and one no-op boot attempt**, because
+Firecracker's own testing skews Intel and this host is **AMD-V (`svm`)**. "It runs on this
+CPU" is an outcome nobody has observed yet.
+
+Deliverable: P1's table re-printed with 0 `UNKNOWN`, plus a one-line note per row that
+changed. The write-up belongs in Appendix A as a second dated column, **not** as an edit
+to the first — the point of a dated measurement is that it stays a record of what was true
+then.
+
+### 17.2 Then slice 1 — one microVM, by hand
+
+Per §14. What makes it the right next build step is not that it is first on a list, but
+that it **converts three arguments into observations**:
+
+- **Decision B** (§6.3c): does `extract-vmlinux` on a Debian `bzImage` actually boot under
+  FC? P1 could not even find the script — it ships inside the kernel source tree.
+- **Decision F**: Alpine vs Debian. Build both; the size and boot-time delta *is* the
+  answer, and it decides whether "spawn twelve" is real.
+- **§5.4's first hole**: drop `panic=1` and **watch the VM hang forever**. Until somebody
+  sees that, the config assertion guards a string rather than a behaviour.
+
+### 17.3 The one test I cannot run from this side
+
+**§16 question 5.** A real beginner walking one `START_HERE_*_WIZARD.md` end to end.
+
+I verified that all 18 verbs cited across phases 1/2/5 still exist in their tools. That is
+**verb existence, not walkthrough success** — the same mechanism-vs-outcome gap this plan
+is organised around, and I cannot close it by reading more carefully. It needs somebody who
+does not already know the answer.
+
+It is worth doing **before** slice 1 rather than at slice 9, for a reason that is easy to
+get backwards: the novice path is the part most likely to be quietly broken, because nobody
+who can fix it has needed it in a long time. Cost: a friend, an afternoon, and a
+willingness to hear that the docs lie.
+
+### 17.4 Open questions
+
+Carried from §16, unchanged:
+
+1. **Where to stop.** Slices 2, 4, 6, or 7 are all honest stopping points.
+2. **Decision E — the seam** (§8.3). Recommendation: defer to slice 5; slice 4 carries the
+   tripwire.
+3. **Decision G — MAAS registry reuse** (§8.4). Recommendation: invoke for deploy drivers,
+   separate registry initially, revisit at slice 6.
+4. **Decision B — `extract-vmlinux`** (§6.3c). An experiment for slice 1.
+5. **The beginner walkthrough** — §17.3.
+
+New, surfaced while writing v3 and not yet decided:
+
+6. **Does the P1 spike graduate, or stay a throwaway?** Its script is **untracked**, living
+   only in a session scratchpad — so today it is a measurement whose *instrument* will not
+   survive. Three options: (a) accept Appendix A as the only record; (b) commit it as
+   `examples/micro-cloud/tests/test-assumptions.sh` so drift is caught later; (c) let it
+   become the seed of `lab-fc.sh preflight` (§5.9), since most of its host-capability
+   checks are exactly that verb's gates. **(c) is tempting and probably right, but only at
+   slice 4** — before then there is no tool for it to be part of.
+7. **How does the fabric *record* what it changed?** §7.1 says teardown must revert only
+   what `up` set (because `ip_forward` was already `1` and a live Kubernetes depends on it).
+   That needs a mechanism — a statefile in the fabric's state dir naming each global it
+   touched and the prior value. Small, but it is load-bearing and currently unspecified.
+8. **`incus` or `lxc`?** Both are on `PATH` (P1). `phase5-lxd` drives whichever via
+   `$LXC_CMD`. Micro-cloud should state which it targets, especially since **LXD is hosting
+   the live Kubernetes on this host**.
+9. **Does `db` on LXD still make sense (§9.2)?** It is the natural system-container
+   example, and it is also the engine currently running someone else's cluster. Options:
+   keep it and treat coexistence as part of the lesson; move `db` to another engine; or run
+   it on `incus` while the k8s is on `lxc`, if those are genuinely separate installs —
+   which question 8 has to answer first.
+10. **How do the web wizards share code with the TUI's?** (§8.2's gap.) If the web port
+    reimplements `generate_toml()`, there are **two spec generators that can disagree** —
+    this repo's signature bug, in a place a novice would meet it first. The port should
+    share the generator and re-implement only the *view*. Needs confirming against
+    `wizards/base.py`'s actual split before any work starts.
+11. **Which Ubuntu release, and does autoinstall need a different netboot path?** (§11.1's
+    first gap.) `debian-pxe-lab`'s preseed chain may or may not carry over to subiquity's
+    `autoinstall.yaml` + cloud-init datasource model.
+12. **Clonezilla-style capture: `partclone`, `ddrescue`, or plain `dd`?** (§11.1's second
+    gap.) And where does it sit relative to §9.5's tier 1 — is whole-disk capture a third
+    preserve tier, or tier 1 for machines rather than instances?
+13. **`preserve` for a chroot itself.** A chroot is already a tree, so tier 2 is presumably
+    "tarball + `derivation.toml`" and tier 1 does not exist for it. Probably trivial; worth
+    one line so it is not an accidental gap.
+
+### 17.5 One loose thread that is not this plan's
+
+The **CI shell-suite failure** seen on `2018985` (2026-07-30). Proven environmental by the
+correct control — *same commit, no changes, re-run passed* (fail at 59s, pass at 2m13s) —
+but the cause is **unidentified**, because `gh run view --log` returned empty for the failed
+job and the output was never captured. It is the first such failure *after* #113's
+`crun` SKIP guard landed, where the three before it were the `crun` era.
+
+**Action if it recurs: capture the log while it is still retrievable**, before re-running.
+One data point is not a trend, and a re-run destroys the evidence that would make it one.
+
+---
+
 ## Appendix A — P1 assumption preflight, 2026-07-29
 
 Run unprivileged on the mklab host. **19 PASS · 2 FAIL · 6 XFAIL (expected gaps) · 3
