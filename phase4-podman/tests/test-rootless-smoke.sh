@@ -8,6 +8,7 @@ set -uo pipefail
 require_cmd jq
 require_podman
 require_rootless_ready
+require_oci_runtime          # environment vs lab: skip, don't fail, on a broken runtime
 
 LAB="smoke-$$"
 CONFIG="$(mktemp --suffix=.toml)"

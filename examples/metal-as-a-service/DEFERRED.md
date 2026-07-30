@@ -61,12 +61,20 @@ run:
   generated *inside* it. Stated the same way in
   [`drivers/image-measured.sh`](drivers/image-measured.sh) and
   [`measure-init.sh`](measure-init.sh), deliberately, in three places.
-- **CI note (2026-07-29):** the `shell test suites` job is red on `main` for an
-  environmental reason — the GitHub runner's `crun` cannot report its own version
-  (`crun: unknown version specified`), so three **phase4-podman** container tests
-  cannot start a container. Confirmed by re-running a commit that had passed earlier
-  the same evening and watching it fail: the machine changed, not the repo. Nothing in
-  this lab is implicated; every metal-as-a-service test in that job passes.
+- **CI note (2026-07-29), now handled:** the `shell test suites` job went red on `main`
+  for an environmental reason — on GitHub's hosted runners, container **start** fails
+  with `crun: unknown version specified: OCI runtime error`, which is crun **rejecting
+  the OCI spec version in the config podman generated for it** (a podman/crun mismatch
+  in the runner image), so three **phase4-podman** tests could not start a container.
+  Established rather than assumed: re-running a commit that had passed an hour earlier
+  failed identically, so the machine changed and the repo did not. Nothing in this lab
+  was implicated; every metal-as-a-service test in that job passed throughout.
+  `phase4-podman/tests/lib.sh` now carries **`require_oci_runtime`**, which probes with
+  **raw `podman`** — never `lab-podman.sh` — and turns that condition into
+  `SKIP: crun cannot start a container on this host — the environment, not this lab`.
+  Because the probe touches none of the code under test it cannot mask a regression in
+  it, which was verified both ways: with podman healthy and `lab-podman.sh` sabotaged the
+  test still **FAILS**.
 
 ---
 
