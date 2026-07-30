@@ -80,7 +80,17 @@ container with BMCs on 6230–6232**, then enrolls them. It needs `sudo` +
 **author-run** — see [MANUAL_TESTING.md](MANUAL_TESTING.md) for the exact handoff.
 Once up, the same `maas-lab.sh` verbs drive **real** IPMI:
 
+`up` step 4 rewrites **every node disk** (`create-node.sh` runs `qemu-img convert`
+unconditionally), so it opens with **`preflight`** — every gate that can refuse the run,
+fired before anything is created, plus the per-node firmware/TPM/ROM decisions it is about
+to apply. It is not a Terraform-style `plan`: there is no plan file, `up` does not consume
+one, and it cannot — instead `up` *calls* `do_preflight` as its first act, and every answer
+comes from the same helpers apply uses. A pre-flight that re-derived those decisions in a
+second code path would be one more record able to outlive its subject. Run it standalone
+any time; it needs no root and creates nothing.
+
 ```bash
+./create-fleet.sh preflight              # headless: refuse a doomed run + show the decisions
 ./create-fleet.sh up                     # rootful: domains + vbmcd + BMCs, then enroll
 ./netboot-chain.sh install               # rootful: point PXE at the per-node scripts
 ./maas-lab.sh manage node1               # real: ipmitool chassis power status via bmc.sh
@@ -252,7 +262,7 @@ lifecycle runs with no libvirt at all.
 | File | Role |
 |---|---|
 | [`maas-lab.sh`](maas-lab.sh) | the control plane — registry + state machine + verbs + BMC seam + `inspect`/`watch` |
-| [`create-fleet.sh`](create-fleet.sh) | stand up (`up`, author-run) or `enroll` (headless) the fleet — incl. file-backed consoles + DHCP reservations |
+| [`create-fleet.sh`](create-fleet.sh) | stand up (`up`, author-run) or `enroll` (headless) the fleet — incl. file-backed consoles + DHCP reservations. `preflight` refuses a doomed `up` before the first disk is rewritten, and prints the decisions it will apply |
 | [`netboot-chain.sh`](netboot-chain.sh) | replace the PXE network's single baked payload with a per-node chain (author-run) |
 | [`build-verifying-rom.sh`](build-verifying-rom.sh) | build + install the iPXE NIC ROM that can enforce F2 **on the node** (`imgverify` + the fleet CA + a serial console); `install-efi`/`check-efi` do the same for the UEFI binary, refusing one that verifies nothing |
 | [`lib/console_xml.py`](lib/console_xml.py) | rewrite a domain's serial console from a pty to a **recorded file** |

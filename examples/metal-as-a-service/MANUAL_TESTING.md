@@ -1530,7 +1530,7 @@ fine; the missing address was this defect, in the harness as well as on the meta
 *asserts* `addr=` is a real address. A caveat is a claim like any other, and this one was
 never checked.
 
-**Success signature:** `tests/run-all.sh` reports **34 passed / 0 failed**;
+**Success signature:** `tests/run-all.sh` reports **35 passed / 0 failed**;
 `./netboot-chain.sh show` ends with `network: arch-conditional DHCP present (5/5
 options ...)`; and `./build-verifying-rom.sh show` reports the UEFI binary as
 `ENFORCES` both built and installed.
@@ -1686,7 +1686,106 @@ script the instant the build succeeded, `all` never packed an initramfs, and pri
 nothing, because `set -e` exits silently. Live since 2026-05-27.
 
 **Success signature for this section:** `./run-e2e-measured.sh` ends on the `PASS:` line
-above with deploy #3 refused; `tests/run-all.sh` reports **34 passed / 0 failed**; and
+above with deploy #3 refused; `tests/run-all.sh` reports **35 passed / 0 failed**; and
 `./maas-lab.sh show node3` reports `firmware uefi`. Note that node3 legitimately ends in
 `error` — that is deploy #3's refusal, and the runner restores the real `pcrs.expected`
 afterwards.
+
+
+---
+
+## 16. `create-fleet.sh preflight` — refusing before the disks are gone (2026-07-29)
+
+**Why this exists.** `up` step 3 destroys any running fleet domain and step 4 runs
+`create-node.sh`, whose first act is unconditional:
+
+```
+sudo qemu-img convert -f qcow2 -O qcow2 "$base" "$disk"
+```
+
+Every node's disk is replaced. But the two gates that can *kill* the run — `swtpm`
+absent, a required verifying ROM absent — lived at step 9, inside `give_tpm` and
+`give_verifying_rom`. So on a host missing either, `up` rewrote three disks, built and
+started vbmcd, registered three BMCs and enrolled the whole fleet, and *then* died: half
+a fleet, and the previous disks gone. Both answers were available from `command -v` and
+`[[ -f ]]` before anything was touched. Defect **#16** — and this repo's own rule,
+broken: *"a gate that fires after the `dd` is not a gate, it is a post-mortem."*
+
+**Why it is not a Terraform `plan`.** There is no plan file and `up` does not consume
+one, so it could never promise that what you read is what runs. Instead `up` calls
+`do_preflight` as its **first act**, and every answer printed comes from the same helper
+apply uses (`tpm_selects`, `rom_plan`, `validate_tpm_selection`). A pre-flight that
+re-derived apply's decisions in a second code path would just be a new record able to
+outlive its subject — the exact bug class this lab keeps finding. The interesting half of
+the state is unplannable anyway: a MAC does not exist until the domain does, the firmware
+mode is a *consequence* of `give_tpm` (hence `reconcile_firmware`), and BMC port ownership
+can only be checked below the seam against a live vbmcd (hence `verify_bmc_bindings`). So:
+everything refusable is refused; everything else is reported, not predicted.
+
+```
+$ FLEET_TPM=node3 ./create-fleet.sh preflight
+==> preflight — checking everything that can refuse this run BEFORE any disk is rewritten
+  - swtpm present (/usr/bin/swtpm) — required by: node3
+
+  NODE    FIRM  TPM  MEMORY   DISK   NET:BMC        NIC / ROM
+  node1   bios  no   4096MiB  10G    vbmc-pxe:6230  e1000 / ipxe-8086100e.rom
+  node2   bios  no   4096MiB  10G    vbmc-pxe:6231  e1000 / ipxe-8086100e.rom
+  node3   uefi  yes  4096MiB  10G    vbmc-pxe:6232  e1000 / none (UEFI)
+
+==> preflight passed: 3 nodes, nothing refused. `up` will now DESTROY and rewrite every node disk.
+```
+
+`node3` reads `uefi`/`yes` with **no ROM** because a TPM implies UEFI (a BIOS firmware
+measures no payload) and a UEFI node must not take the legacy option ROM — it would
+displace the only UEFI NIC driver OVMF has for that card. All three facts come from the
+two helpers `up` applies, so the table cannot drift from the run.
+
+Ports are **reported, never gated**: on a re-run our own vbmcd already holds 6230–6232, so
+refusing on "in use" would refuse the normal case. Whether the listener is the right BMC
+for the right node is an identity question, and identity can only be settled below the
+seam against a live vbmcd — `verify_bmc_bindings`, step 7.
+
+### 16.1 The negative control — `tests/test-fleet-preflight.sh`
+
+The test does **not** grep `create-fleet.sh` for a call to `do_preflight`; that asserts
+the mechanism, would pass for a broken preflight, and would fail for a better one. It runs
+`up` against a stub sibling lab whose `create-node.sh` is a **tripwire**, and asserts the
+tripwire was never touched — the state the system must end in: *no disk rewritten*.
+
+But "the tripwire is absent" is also what a harness that never reached `create-node.sh`
+would report. So §6 runs the identical rig with the one refusal condition removed (a
+`swtpm` symlink appears on the stub `PATH`) and **requires the tripwire to fire**. Same
+rig, one variable, opposite verdict.
+
+Making `command -v swtpm` fail on a host that *has* swtpm needs a `PATH` containing only
+the binaries the script uses. That is deliberate: an env-var escape hatch in
+`create-fleet.sh` would be a test-only branch, and a gate you can switch off in tests is
+not the gate that ships.
+
+Both directions were run. With the fix reverted (`do_up` calling `validate_tpm_selection`
+instead of `do_preflight`), §5 fails naming the defect:
+
+```
+FAIL: REGRESSION: `up` reached create-node.sh (1 node(s)) before refusing — the swtpm
+gate fired AFTER the node disks were rewritten. A gate that fires after the convert is a
+post-mortem, not a gate. Output: ==> building the vbmcd image (rootful podman) ...
+==> creating libvirt domain 'n1' (1024MiB, disk 2G, net test-net)
+create-fleet: create-node n1 failed
+```
+
+That output *is* the defect: the old ordering announced it was creating a domain and died
+inside `create-node`, never having looked for `swtpm`.
+
+**Two smaller findings came out of the refactor.** `give_verifying_rom` read the
+fleet-wide `FLEET_NIC_MODEL` while `create-node.sh` was given
+`${NODE_NIC_MODEL:-$FLEET_NIC_MODEL}` — so a node with its own `nic_model` would have got
+a ROM built for a card it does not have. And `FLEET_NIC_ROM=1` with an unrecognised NIC
+model used to `return 1`, whose value nothing checked: you asked for a verifying ROM and
+silently got none, which is precisely the opt-in trap that paragraph of the script warns
+about. It is now fatal, in preflight, by name.
+
+**Success signature for this section:** `./tests/test-fleet-preflight.sh` ends on `PASS:`
+with seven `note` lines (§1–§6); `FLEET_TPM=node3 ./create-fleet.sh preflight` exits 0 and
+prints the table above; `FLEET_NIC_ROM=/nonexistent ./create-fleet.sh preflight` exits
+non-zero naming the path *and* the command that builds it, having created nothing; and
+`tests/run-all.sh` reports **35 passed / 0 failed**.
