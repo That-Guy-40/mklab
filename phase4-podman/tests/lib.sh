@@ -40,6 +40,38 @@ require_podman_quadlet() {
         || skip "podman $v too old for quadlet (need >= 4.4)"
 }
 
+# require_oci_runtime [image] — can podman's OCI runtime actually START a container here?
+#
+# FOUND 2026-07-29 on GitHub's hosted runners: three tests in this suite went red on
+# `main` with
+#
+#     time="..." level=error msg="\"crun: unknown version specified: OCI runtime error\""
+#     Error: starting some containers: internal libpod error
+#
+# That is crun REJECTING THE OCI SPEC VERSION in the config podman generated for it — a
+# podman/crun mismatch in the runner image, not anything in this repo. Established rather
+# than assumed: re-running a commit that had passed an hour earlier failed identically,
+# so the machine changed and the repository did not.
+#
+# WHY THIS PROBES WITH RAW `podman` AND NEVER `lab-podman.sh`. The point is to separate
+# "this host cannot run containers" from "this lab is broken". If plain `podman run true`
+# cannot start a container, nothing in this repo could either, and a FAIL would blame the
+# lab for the machine. Because the probe touches none of the code under test, it cannot
+# mask a regression in it — a bug in lab-podman.sh still fails, loudly, as it should.
+#
+# A red suite that means "the runner is broken" is indistinguishable from one that means
+# "the lab is broken", and a repo where red is normal stops carrying signal. So: say which.
+require_oci_runtime() {
+    local img="${1:-docker.io/library/alpine:latest}" out rc runtime
+    out="$(podman run --rm --pull=missing "$img" true 2>&1)"; rc=$?
+    (( rc == 0 )) && return 0
+    runtime="$(podman info --format '{{.Host.OCIRuntime.Name}}' 2>/dev/null)"
+    if grep -qiE 'OCI runtime|unknown version specified|internal libpod error|\bcrun\b|\brunc\b' <<<"$out"; then
+        skip "${runtime:-the OCI runtime} cannot start a container on this host — the environment, not this lab: ${out//$'\n'/ }"
+    fi
+    skip "podman cannot start a container here (rc=$rc), so nothing this lab does could either: ${out//$'\n'/ }"
+}
+
 require_rootless_ready() {
     [[ $EUID -eq 0 ]] && skip "test wants non-root (rootless podman); running as root"
     local user; user="$(id -un)"
