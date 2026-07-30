@@ -232,7 +232,7 @@ lifecycle runs with no libvirt at all.
 | `cleaning` wipes a real disk automatically | wipe is **handed to the operator** (F7), node waits in `cleaning` | destructive ops are never auto-run here (repo rule) |
 | Introspection ramdisk reports real hardware | the busybox probe reads real `/proc`+`/sys`; `--boot` (real PXE) is author-run, `--from-metadata` proves the chain headlessly | the probe + sink + ingest are real; only the PXE boot needs the fleet |
 | `deploy` writes/boots an OS + gates on health | `install` driver is real (author-run); the gate + A/B rollback + F2 verify are headless via the mock driver + real crypto | the activation logic is real & tested; only the PXE install itself needs the fleet |
-| `image+measured` gates on TPM attestation | a documented fast-follow (swtpm ≠ trust anchor) | named, not faked (per the systemd261 caveat) |
+| `image+measured` gates on TPM attestation | **built and proven live** — the node measures 10 PCRs on a TPM 2.0, signs its own quote, and is refused when the policy no longer matches. The TPM is **swtpm** and the attestation key is **baked into the image** | the MECHANISM and the REFUSAL PATH are real; machine integrity is not. Production needs a discrete TPM whose EK is manufacturer-certified, with the AK generated *inside* it (per the systemd261 caveat) |
 | A scheduler picks nodes by inspected facts | manual verbs; `apply` reconcile = step 6 | the imperative spine lands before the declarative loop |
 
 ## Security posture (AUDIT.md)

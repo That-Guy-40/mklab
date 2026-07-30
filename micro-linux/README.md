@@ -122,6 +122,32 @@ micro-linux kernel, so one universal kernel boots on `q35`/`virt` *and* on micro
 > hard way when [`examples/metal-as-a-service/`](../examples/metal-as-a-service/) netbooted
 > its inspection probe with a distro kernel whose NIC drivers were all modular.
 
+> **A TPM is built in too, for the same reason and with the same trap.** `CONFIG_TCG_TPM`,
+> `CONFIG_TCG_TIS` (the interface QEMU's `-device tpm-tis` and libvirt's
+> `<tpm model='tpm-tis'>` present) and `CONFIG_TCG_CRB` are forced `=y` and checked. `=y`
+> is not a preference here either: an initramfs loads no modules, so a **modular**
+> `TCG_TPM` is indistinguishable from none — `/sys/class/tpm/` is simply empty and a
+> payload reports nothing measured.
+>
+> This is the counterpart of the NIC lesson above, learned in the same lab on 2026-07-29.
+> `metal-as-a-service` needs a payload that can **both** read a PCR and report it, and the
+> two kernels it had each supplied exactly one half: AlmaLinux's netboot `vmlinuz` had the
+> TPM built in and its NIC drivers modular, micro-linux had the NICs built in and no TPM at
+> all. It bridged the gap by extracting `virtio_net` from a distro initrd, version-guarded,
+> because a module built for another kernel fails `insmod: invalid module format` — the same
+> silent no-network symptom one layer down. A node that measures perfectly and cannot say so
+> is worth as little as one that cannot measure. So: both, here, in one kernel — which
+> deleted that bridge and two out-of-tree `~/netboot/` dependencies with it.
+>
+> Verified by **boot**, not by config (`=y` says the code was compiled in; only a boot says
+> the driver bound to the emulated device):
+>
+> ```
+> tpm_tis MSFT0101:00: 2.0 TPM (device-id 0x1, rev-id 1)
+> $ ls /sys/class/tpm/tpm0/
+> pcr-sha1  pcr-sha256  pcr-sha384  pcr-sha512  ...
+> ```
+
 
 - **QEMU's `microvm` machine is x86-only.** On aarch64, `microvm = true` gives you
   the equivalent — a stripped-down `virt` + virtio-mmio booted directly via

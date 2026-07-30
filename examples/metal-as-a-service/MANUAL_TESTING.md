@@ -1530,7 +1530,163 @@ fine; the missing address was this defect, in the harness as well as on the meta
 *asserts* `addr=` is a real address. A caveat is a claim like any other, and this one was
 never checked.
 
-**Success signature:** `tests/run-all.sh` reports **32 passed / 0 failed**;
+**Success signature:** `tests/run-all.sh` reports **34 passed / 0 failed**;
 `./netboot-chain.sh show` ends with `network: arch-conditional DHCP present (5/5
 options ...)`; and `./build-verifying-rom.sh show` reports the UEFI binary as
 `ENFORCES` both built and installed.
+
+---
+
+## 15. The measured run, live and PASSING — and the four defects between here and there (2026-07-29)
+
+`./run-e2e-measured.sh` now passes end to end on real libvirt domains:
+
+```
+== deploy #0 — image+measured must refuse an image with no PCR policy ==
+   refused at verify, before the node was touched: no pcrs.expected for 'golden-measured'
+
+== deploy #1 — enrollment boot (plain 'image' driver) to learn what this image measures ==
+   the node delivered a signed quote: 10 PCRs
+image-measured: captured .../pcrs.expected from node3's quote:
+  4:B7F9477181694AE0DD0252BB133FFE577170CF5ED9D614C37FCB43CC10EE6A7D
+  7:B5710BF57D25623E4019027DA116821FA99F5C81E9E38B87671CC574F9281439
+
+== deploy #2 — the same image must now attest and activate ==
+image: 'node3' is already running (a previous deploy left it up) — powering it off so 'bootdev pxe' can take effect
+image-measured: 'node3' attested to the expected PCR state for 'golden-measured'
+active node3 (driver=image+measured image=golden-measured, healthy)
+
+== deploy #3 — a policy the node cannot satisfy MUST be refused ==
+   refused, correctly: the measured PCR4 did not match the policy
+
+PASS: node3 attested to a real TPM measurement of the image it booted, activated only
+      against a policy captured from that measurement, and was REFUSED when the policy
+      no longer matched. swtpm is plumbing, not a trust anchor: this proves the
+      mechanism and the refusal, not the integrity of a machine.
+```
+
+**Deploys #2 and #3 had never once been reached.** #2 is the whole point of the driver;
+#3 is the only thing that distinguishes a real gate from one that always says yes — the
+runner bends one digit of the expected PCR4 and requires the deploy to fail.
+
+Four defects stood between the previous section and this transcript. Each is in
+[`DEFERRED.md`](DEFERRED.md)'s ledger; what follows is what the metal actually printed.
+
+### The second deploy never rebooted the node (#13)
+
+```
+Set Boot Device to pxe
+Chassis Power Control: Up/On          <- no-op, the node was already on
+image: awaiting /… copied/ (timeout 4800s)
+```
+
+`bootdev pxe` applies only at the **next** boot, and a running node ignores `power on`.
+A successful deploy leaves the node powered on and `active`, so every second deploy on
+the same node stalled at its first gate — the deployer never booted, and the node sat
+happily running its **previous** image while the control plane waited eighty minutes for
+a disk write nothing had started. The disk-boot phase eleven lines below had always done
+`off`+`on`; the deployer boot never did.
+
+**This is the fault #11 was hiding.** Before `console_mark`, the health gate matched the
+earlier boot's login banner and reported `active` in *one second* — the node had not
+rebooted then either. Fixing the liar did not make the node boot; it made the silence
+visible, and nineteen minutes of silence diagnosed itself. Diagnosis, live:
+
+```
+$ stat -c%s /var/lib/libvirt/maas-console/node3.log   # 64593, mtime 17:35:09
+$ date +%H:%M:%S                                      # 17:54:12
+$ tail -c 3000 .../node3.log | tail -3
+measured-node login: (attested)                       # ← deploy #1's boot, still running
+~ #
+```
+
+### The attestation signature was truncated in flight (#14)
+
+The node measured, signed and delivered — and the gate called it **forged**:
+
+```
+image-measured: the quote from 'node3' does NOT verify against the trusted attestation key
+```
+
+Measured with the same busybox 1.36.1 the initramfs carries:
+
+| transport | `Content-Length` |
+|---|---|
+| `busybox wget --post-file` (2117-byte CMS DER) | **107** ← exactly the first NUL offset |
+| `curl --data-binary` (same file) | 2117 |
+| `busybox wget --post-file` (base64 of it) | 2869 |
+
+`busybox wget` computes `Content-Length` with `strlen()`. Nothing errored anywhere: the
+node printed *"delivered quote + signature"*, the sink stored 107 bytes, and a truncated
+signature is indistinguishable from a bad one — so the transport broke and the **node**
+took the blame. Diagnosis:
+
+```
+$ xxd -l 4 quote.json.sig
+00000000: 3082 0841        # SEQUENCE, declares 0x0841 = 2113 content bytes
+$ stat -c%s quote.json.sig
+107
+$ openssl asn1parse -inform DER -in quote.json.sig
+Error in encoding                # "too long" — the object claims more than exists
+```
+
+Fixed three ways, because fixing the transport alone leaves the trap armed for the next
+client: base64 on the wire to `/quote-sig-b64/`, a decoder tolerating the 64-column
+wrapping `openssl base64` emits, and `_der_truncated()` refusing any signature that
+declares more bytes than arrived — **HALTED instead of LIED**. Verified live:
+
+```
+size=2117  DER declares 2113 content bytes, 2113 arrived  -> INTACT
+```
+
+**Why the suite never caught it:** the delivery test posted with `curl --data-binary`,
+which is binary-safe and therefore evidence about the **sink** and nothing about the
+machine. The node has no curl. The seam under test was not the seam in production.
+
+### The registry claimed BIOS for a UEFI machine (#12)
+
+```
+$ ./maas-lab.sh show node3 | grep firmware
+firmware    bios
+$ virsh -c qemu:///system dumpxml node3 | grep -E '<os|loader'
+  <os firmware='efi'>
+    <loader readonly='yes' type='pflash'>/usr/share/OVMF/OVMF_CODE_4M.fd</loader>
+```
+
+`enroll --firmware` defaults to `bios`, nothing revisited it, and `give_tpm` converted
+the node afterwards with no way to say so. The fix is **not** "make `show` read the
+domain": the control plane reaches a node only through the BMC and its console, never
+the hypervisor. So whoever changes the firmware reports it, via a new
+`maas-lab.sh set-firmware` — and `create-fleet.sh` reconciles after `give_tpm`:
+
+```
+$ ./maas-lab.sh set-firmware node3 uefi
+firmware for node3: uefi (was bios)
+```
+
+### One kernel now does both jobs (and #15)
+
+The measured image used to borrow AlmaLinux's `vmlinuz` and carry
+`failover`/`net_failover`/`virtio_net` extracted from its initrd, because neither kernel
+could both read a PCR and report it. micro-linux now builds
+`TCG_TPM`/`TCG_TIS`/`TCG_CRB=y` beside `VIRTIO_NET`/`E1000=y`. Proven by **boot**, not by
+config:
+
+```
+$ # one-shot rdinit probe, OVMF-free, swtpm attached
+tpm_tis MSFT0101:00: 2.0 TPM (device-id 0x1, rev-id 1)
+--- PCR banks present ---
+dev device null_name pcr-sha1 pcr-sha256 pcr-sha384 pcr-sha512 power ppi subsystem ...
+```
+
+Rebuilding it surfaced **#15**: `mlbuild.sh` reported failure for successful builds in
+three places. Under `set -euo pipefail` a terminal `[[ … ]] && cmd` returns 1 when the
+test is false, and that becomes the function's exit status — so `inner_build` killed the
+script the instant the build succeeded, `all` never packed an initramfs, and printed
+nothing, because `set -e` exits silently. Live since 2026-05-27.
+
+**Success signature for this section:** `./run-e2e-measured.sh` ends on the `PASS:` line
+above with deploy #3 refused; `tests/run-all.sh` reports **34 passed / 0 failed**; and
+`./maas-lab.sh show node3` reports `firmware uefi`. Note that node3 legitimately ends in
+`error` — that is deploy #3's refusal, and the runner restores the real `pcrs.expected`
+afterwards.

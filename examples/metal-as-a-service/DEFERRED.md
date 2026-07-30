@@ -1,10 +1,24 @@
 # DEFERRED — what a green run still does not prove
 
-**Status as of 2026-07-28 (evening):** `run-e2e.sh` **PASSES** end to end on real libvirt
-domains **with the verifying firmware doing the checking** (`FLEET_NIC_ROM=1
-MAAS_IPXE_TRUSTS_CA=1`, no `E2E_NO_IMGVERIFY`; see [`PLAN.md`](PLAN.md), "PASS — the whole
-path"). `tests/run-all.sh` is **27 passed / 0 failed** and `chaos-run.sh` reports **0
-criticals**.
+**Status as of 2026-07-29 (night):** all three live runs pass end to end on real libvirt
+domains — `run-e2e.sh` (**with the verifying firmware doing the checking**:
+`FLEET_NIC_ROM=1 MAAS_IPXE_TRUSTS_CA=1`, no `E2E_NO_IMGVERIFY`; see [`PLAN.md`](PLAN.md),
+"PASS — the whole path"), `run-e2e-image.sh`, and now **`run-e2e-measured.sh`**:
+
+```
+PASS: node3 attested to a real TPM measurement of the image it booted, activated only
+      against a policy captured from that measurement, and was REFUSED when the policy
+      no longer matched.
+```
+
+`tests/run-all.sh` is **34 passed / 0 skipped / 0 failed** and `chaos-run.sh` reports
+**0 criticals**.
+
+That last run is the one this file spent two days pointing at, and it closed the two
+steps no run had ever reached: **deploy #2** (the same image must now attest and
+activate) and **deploy #3** (a policy the node cannot satisfy must be refused). #3 is
+the one that matters most — it is the only thing that distinguishes a real gate from
+one that always says yes.
 
 This file exists because *that sentence is not the same as "the lab is finished,"* and the
 difference is easy to lose. Each numbered section below was a gap that a passing run
@@ -24,23 +38,74 @@ an item that is quietly done is as misleading as one quietly abandoned.
 
 ---
 
-## Where to start next (as of 2026-07-28, night — items 1–4 ALL done)
+## Where to start next (as of 2026-07-29, night — every numbered item and every live run done)
 
-**Every numbered item below is closed, live.** Item 2's live run landed last
-(2026-07-28, third attempt — the first two each paid out a fresh defect, all fixed
-and regression-tested; transcripts in [`MANUAL_TESTING.md`](MANUAL_TESTING.md) §13):
-`node1` reached `active` through the INSTALL driver, with the firmware verifying the
-installer payload (`imgverify` over the Anaconda kernel and its 223 MB initrd), the
-kickstart writing the disk, the self-poweroff observed out-of-band and confirmed
-stable, and the INSTALLED OS reaching `login:` from its own disk.
+**Every numbered item below is closed, live, and so is the `image+measured` run this
+file spent two days pointing at.** Item 2's install run landed 2026-07-28 (third
+attempt — the first two each paid out a fresh defect; transcripts in
+[`MANUAL_TESTING.md`](MANUAL_TESTING.md) §13). The measured run landed 2026-07-29
+(§15), and the fifteen-defect ledger below is the reason it took that long.
 
-What remains lives in "Smaller, still open" below. As of **2026-07-29** that is
-chiefly the `image+measured` **live run**: everything it needs is now built and
-headlessly proven — including the UEFI netboot path that was blocking it, which on
-inspection turned out to need *neither* of the two things this file had prescribed
-for it (the binary it named verifies nothing, and the dnsmasq snippet it quoted
-chainloads forever). Both are written up below and both are now guarded. The run
-itself is three sudo-gated commands away.
+**What is genuinely left is smaller than it has ever been**, and none of it blocks a
+run:
+
+- **`describe` is meaningful for only two of four drivers** (`image` and
+  `image+measured` still accept any image name) — see "Smaller, still open".
+- **`tests/test-e2e-fails-fast.sh` runs the real `run-e2e.sh`**, and its hermeticity
+  depends on the order of checks inside the script under test. Measured harmless;
+  worth making structural.
+- **The honest gap that no amount of work here can close:** swtpm is faithful plumbing
+  and the attestation key is baked into the image, so the measured path proves the
+  MECHANISM and the REFUSAL PATH, never the integrity of a machine. Real hardware needs
+  a discrete TPM whose endorsement key is certified by the manufacturer, with the AK
+  generated *inside* it. Stated the same way in
+  [`drivers/image-measured.sh`](drivers/image-measured.sh) and
+  [`measure-init.sh`](measure-init.sh), deliberately, in three places.
+- **CI note (2026-07-29):** the `shell test suites` job is red on `main` for an
+  environmental reason — the GitHub runner's `crun` cannot report its own version
+  (`crun: unknown version specified`), so three **phase4-podman** container tests
+  cannot start a container. Confirmed by re-running a commit that had passed earlier
+  the same evening and watching it fail: the machine changed, not the repo. Nothing in
+  this lab is implicated; every metal-as-a-service test in that job passes.
+
+---
+
+## The defect ledger — 15 defects a green suite could not see
+
+Each was found by pointing real hardware at a suite that was green at every step. They
+are listed here because the *pattern* turned out to matter more than any individual fix,
+and it is now written up in the repo's [`CLAUDE.md`](../../CLAUDE.md) → "The two bug
+classes a green suite cannot see".
+
+| # | the defect | why the suite missed it |
+|---|---|---|
+| 1 | signing leaf had no `keyUsage=digitalSignature`; verifying firmware refused every payload | only a booted ROM can refuse a certificate the host-side gate accepts |
+| 2 | `install.sh` asked `virsh domstate` whether the installer had finished | a machine in a rack has no `virsh` — and the call no seam could intercept was the one nothing tested |
+| 3 | the PXE network served one baked payload to every node | the per-node scripts the drivers write were never fetched; the suite *is* the substitute |
+| 4 | domains had a `pty` console, so nothing wrote the log every health gate greps | every headless test writes that file by hand |
+| 5 | node stranded in a transient state no verb accepted | the runners covered `active`/`error`/`manageable` and not `deploying` |
+| 6 | the documented driver name `image+measured` never resolved | the test typed the *filename*, and `test-deploy-rollback.sh` **asserted the bug** |
+| 7 | measured kernel's NIC drivers were modular; the node measured perfectly and could not report it | an initramfs carries no modules, and no test booted that kernel with a NIC |
+| 8 | `udhcpc` obtained the lease and threw it away (script at a path that busybox does not consult) | the test recorded the missing address as a *limitation of slirp* — a caveat nobody checked |
+| 9 | `pcrs.expected` outlived the build it was captured from | so `verify` passed, the node was wiped and re-imaged, and the refusal arrived **after** the destructive write |
+| 10 | `error_reason` was never written by a failed deploy | three verbs maintained the field and the fourth did not, so it showed an older incident |
+| 11 | a second deploy passed its health gate on the **first** deploy's console banner | the console log is append-only across boots; fixtures were pre-written, proving only that `grep` works |
+| 12 | the registry said `firmware bios` for a domain whose XML said `<os firmware='efi'>` | an enroll-time default nobody revisited; only `show` reads the field, so nothing failed |
+| 13 | a second deploy **never rebooted the node** — `bootdev pxe` applies at the next boot, and a running node ignores `power on` | hidden by #11: the dishonest gate reported `active` in one second and survived every run |
+| 14 | the attestation signature was truncated at its first NUL — `busybox wget --post-file` sends `Content-Length=strlen()` | the delivery test used `curl --data-binary`, which is binary-safe; the node has no curl |
+| 15 | `mlbuild.sh` reported **failure for successful builds** (3 sites) — a terminal `[[ … ]] && cmd` under `set -e` | `all` silently never packed an initramfs, and printed nothing; `set -e` exits quietly |
+
+**The two shapes.** All but a couple are either *a record that outlived the thing it
+described* (#9, #10, #11, #12, and a stale `~/.cache` image plus a served kernel that
+`file -b` could not distinguish from its replacement) or *a test that asserted the
+mechanism instead of the outcome* (#6, #7, #8, #14). Both are authoring mistakes, which
+is why more tests of the same kind would not have found them.
+
+**And the ordering rule, learned the hard way twice.** #13 was *hidden* by #11: the
+dishonest gate reported success in one second and survived every run, while the honest
+gate's nineteen minutes of silence diagnosed itself. Fixing the liar does not fix the
+fault underneath — it makes the fault visible. That is why **LIED** outranks **HALTED**
+on the chaos ladder.
 
 ---
 
@@ -360,7 +425,11 @@ nothing), and the negative control that a failed-deploy error is never touched.
   which sets a TPM **and** UEFI together and refuses to set one without the other
   (a TPM on a BIOS domain yields quotes that verify, match, and mean nothing);
   **quote delivery endpoints** in [`lib/metadata.py`](lib/metadata.py)
-  (`POST /quote/<mac>` + `/quote-sig/<mac>`, keyed by MAC because a measured image
+  (`POST /quote/<mac>` + `/quote-sig-b64/<mac>` — base64 since 2026-07-29, because
+  `busybox wget --post-file` sends `Content-Length=strlen()` and truncated the DER
+  signature at its first NUL; the raw `/quote-sig/` endpoint remains for clients that
+  can post binary, and now refuses a DER blob shorter than its own header declares —
+  keyed by MAC because a measured image
   is generic — until this landed nothing in the lab could write `quote.json`, so
   the driver's gate was real and unfeedable); `image-measured.sh capture-policy`
   (trust-on-first-use, pinning only PCR4+PCR7 and refusing a quote with a hole in
@@ -482,10 +551,12 @@ nothing), and the negative control that a failed-deploy error is never touched.
   the state recovered and the digest fixed, the node laid the image down, verified it,
   rebooted, **measured 10 real PCRs on a TPM 2.0 and signed its own quote** — then had
   no network interface to deliver it from (`udhcpc: SIOCGIFINDEX: No such device`,
-  `mac=`). The two kernels in this lab have exactly complementary gaps: AlmaLinux 9.8
-  (the UKI's, chosen for its built-in TPM) keeps its **NIC drivers modular** for dracut,
-  while micro-linux (the deployer's) has the NICs built in and **no TPM at all**. The
-  measuring initramfs is busybox and loads no modules. Interim fix: the build lifts
+  `mac=`). The two kernels available *at the time* had exactly complementary gaps:
+  AlmaLinux 9.8 (the UKI's, chosen for its built-in TPM) kept its **NIC drivers modular**
+  for dracut, while micro-linux (the deployer's) had the NICs built in and **no TPM at
+  all**. (Both halves live in one micro-linux kernel since 2026-07-29 — see "The durable
+  fix" below; everything in this paragraph is the record of the interim, not the current
+  shape.) The measuring initramfs is busybox and loads no modules. Interim fix: the build lifts
   `failover`/`net_failover`/`virtio_net` out of the matching netboot initrd and
   **refuses unless they match the kernel's own version string** (a mismatch is
   `insmod: invalid module format`, i.e. the same silent no-network symptom one layer
@@ -529,16 +600,34 @@ nothing), and the negative control that a failed-deploy error is never touched.
   behaviour (an unknown driver is refused by name, listing what exists) with a negative
   control against ever calling an unknown name a not-yet-implemented roadmap item.
 
-  **The durable fix is micro-linux + TPM**, and it is written but unbuilt:
-  `micro-linux/mlbuild.sh` now sets and asserts `TCG_TPM`/`TCG_TIS`/`TCG_CRB` beside the
-  `VIRTIO_NET`/`E1000` lines it already asserts — the same "an initramfs carries NO
-  MODULES" rule that file already documents for NICs. Once that kernel is rebuilt and
-  proven to expose `/sys/class/tpm/tpm0/pcr-sha256/`, the golden image gains one kernel
-  with both halves and drops **two** `~/netboot/` dependencies (a 15 MB `vmlinuz` and a
-  223 MB `initrd.img`, both outside the repo and both in the periodic reclaim path), and
-  the module-extraction code comes out.
+  **The durable fix was micro-linux + TPM — ✅ BUILT 2026-07-29.**
+  `micro-linux/mlbuild.sh` sets and asserts `TCG_TPM`/`TCG_TIS`/`TCG_CRB` beside the
+  `VIRTIO_NET`/`E1000` lines it already asserted — the same "an initramfs carries NO
+  MODULES" rule that file already documented for NICs, applied to the TPM (`=y` is not a
+  preference: a modular TPM is indistinguishable from none). The kernel was rebuilt and
+  **proven by boot, not by config**: `tpm_tis MSFT0101:00: 2.0 TPM (device-id 0x1,
+  rev-id 1)` with all four PCR banks readable under swtpm.
 
-  **What remains is the live run itself** — three sudo-gated steps and the run:
+  So the golden image now uses **one kernel with both halves** — the same one the
+  deployer, the inspection probe and the ramdisk catalog already used, for the first time.
+  Deleted with it: `MAAS_MEASURED_MODULES`, the kernel-version guard, `nic-load-order`,
+  the `insmod` loop, and **two** `~/netboot/` dependencies (a 15 MB `vmlinuz` and a 223 MB
+  `initrd.img`, both outside the repo and both in the periodic reclaim path). Net **−15
+  lines** while adding capability.
+
+  Kept deliberately: [`measure-init.sh`](measure-init.sh) still separates "no interface
+  exists" from "an interface exists but got no lease" (different faults, different fixes,
+  and collapsing them cost a live run), now pointing at `VIRTIO_NET=y` rather than at
+  bundled modules.
+
+  Two defects fell out of the rebuild — `mlbuild.sh` reporting failure for successful
+  builds (#15), and `tests/test-probe-nic.sh` sitting on disk **in no list**, so nothing
+  ran it. It guards the exact fault class this lab keeps rediscovering and now runs in
+  the suite; a test with no runner is a test nobody runs.
+
+  **The live run itself — ✅ PASSED 2026-07-29** (§15 of
+  [`MANUAL_TESTING.md`](MANUAL_TESTING.md)). For a fleet that is already up, it is just
+  `./run-e2e-measured.sh`; from cold, the sudo-gated prerequisites are:
 
   ```bash
   ./build-verifying-rom.sh install-efi     # the VERIFYING ipxe.efi into the TFTP root
