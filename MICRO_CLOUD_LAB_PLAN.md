@@ -1143,13 +1143,18 @@ Carried from §16, unchanged:
 
 New, surfaced while writing v3 and not yet decided:
 
-6. **Does the P1 spike graduate, or stay a throwaway?** Its script is **untracked**, living
-   only in a session scratchpad — so today it is a measurement whose *instrument* will not
-   survive. Three options: (a) accept Appendix A as the only record; (b) commit it as
-   `examples/micro-cloud/tests/test-assumptions.sh` so drift is caught later; (c) let it
-   become the seed of `lab-fc.sh preflight` (§5.9), since most of its host-capability
-   checks are exactly that verb's gates. **(c) is tempting and probably right, but only at
-   slice 4** — before then there is no tool for it to be part of.
+6. **Where does the P1 spike finally live?** It is now kept at
+   [`tools/micro-cloud-preflight.sh`](tools/micro-cloud-preflight.sh) — a **provisional**
+   home, chosen so the instrument that produced Appendix A survives the session that wrote
+   it. *A measurement whose harness is gone cannot be re-run, and an un-re-runnable
+   measurement quietly becomes a belief again.* Re-run it any time with
+   `tools/micro-cloud-preflight.sh` (exit 0 = no unexpected slice-1 blockers; exit 1 = a
+   blocker **or** no `XFAIL` fired). Still to decide: (a) leave it in `tools/`;
+   (b) move it to `examples/micro-cloud/tests/test-assumptions.sh` so drift is caught by
+   the suite; (c) let it seed `lab-fc.sh preflight` (§5.9), whose host-capability gates are
+   mostly these checks. **(c) is probably right, but only at slice 4** — before then there
+   is no tool for it to be part of. Until then it is a spike that was kept, not shipped
+   tooling, and its header says so.
 7. **How does the fabric *record* what it changed?** §7.1 says teardown must revert only
    what `up` set (because `ip_forward` was already `1` and a live Kubernetes depends on it).
    That needs a mechanism — a statefile in the fabric's state dir naming each global it
@@ -1191,6 +1196,10 @@ One data point is not a trend, and a re-run destroys the evidence that would mak
 ---
 
 ## Appendix A — P1 assumption preflight, 2026-07-29
+
+**Instrument:** [`tools/micro-cloud-preflight.sh`](tools/micro-cloud-preflight.sh) — kept so
+this table can be *re-derived* rather than merely believed. Re-run it with
+`tools/micro-cloud-preflight.sh`; its final home is §17.4 question 6.
 
 Run unprivileged on the mklab host. **19 PASS · 2 FAIL · 6 XFAIL (expected gaps) · 3
 UNKNOWN**, rc=0, no unexpected slice-1 blockers. `XFAIL` rows are the harness's own negative
