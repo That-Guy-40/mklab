@@ -133,8 +133,28 @@ give_console() {
 #   FLEET_NIC_ROM=0        explicitly a plain fleet (also: none, off)
 # Without the ROM the nodes boot QEMU's stock one, which has no IMAGE_TRUST_CMD
 # and refuses nothing — and cannot speak on the serial console either.
-give_verifying_rom() {
-    local name="$1" rom="${FLEET_NIC_ROM:-}"
+# rom_plan <node> [nic-model] — resolve the verifying-ROM decision for one node WITHOUT
+# acting on it. Prints exactly one verdict on stdout:
+#
+#   attach:<path>                 attach this ROM
+#   none:uefi-node                a UEFI node takes no legacy ROM (see give_verifying_rom)
+#   none:opted-out                FLEET_NIC_ROM=0|none|off — deliberately a plain fleet
+#   none:not-installed            unset + no ROM installed on this host -> a plain fleet
+#   none:no-default-for-model     unset + no default ROM name for this NIC model
+#   missing:<path>                REQUIRED but absent             <- FATAL
+#   missing:no-default-for-model  FLEET_NIC_ROM=1, unknown model  <- FATAL
+#
+# Split out for the same reason as tpm_selects and firmware_of_xml: so do_preflight and
+# give_verifying_rom reach ONE implementation of the answer, rather than two that agree
+# until someone edits one of them. A pre-flight that RE-DERIVES what apply decides is a
+# record that can outlive its subject (CLAUDE.md, "a record that outlives the thing it
+# describes"); this one cannot, because it is the same code.
+#
+# Takes the model as an ARGUMENT rather than reading NODE_NIC_MODEL: load_node `eval`s
+# only the keys a node declares, so an undeclared nic_model still holds the PREVIOUS
+# node's value. The caller resolves it once, explicitly.
+rom_plan() {
+    local name="$1" model="${2:-$FLEET_NIC_MODEL}" rom="${FLEET_NIC_ROM:-}" explicit path
     # A UEFI node must NOT get the legacy option ROM. This is not a nicety: attaching
     # it replaces QEMU's efi-e1000.rom — the only UEFI NIC driver OVMF would have for
     # that card — with a legacy-only image, so the firmware finds no network device,
@@ -142,38 +162,60 @@ give_verifying_rom() {
     # (Found live 2026-07-29, on the first run after per-node FLEET_TPM landed.)
     # These nodes enforce F2 through the verifying ipxe.efi that OVMF's own PXE client
     # fetches instead; lib/tpm_xml.py switches them to virtio with no ROM.
-    if tpm_selects "$name"; then
-        info "$name: no legacy option ROM — it is a UEFI node, and one would displace the"
-        info "  UEFI NIC driver OVMF needs. It enforces F2 via the TFTP'd ipxe.efi instead."
-        return 0
-    fi
+    if tpm_selects "$name"; then printf 'none:uefi-node\n'; return 0; fi
     # Explicit opt-OUT. The ROM used to be pure opt-in (unset = silently none), and
     # this fleet lost its ROMs to a create-fleet run that forgot the var THREE
     # times — twice from this repo's own printed instructions. An opt-in security
     # default is a trap: every re-create is a chance to forget it, and the failure
     # mode is a stock ROM that cannot honour imgverify and says nothing on serial.
-    case "$rom" in 0|none|off) return 0 ;; esac
+    case "$rom" in 0|none|off) printf 'none:opted-out\n'; return 0 ;; esac
     if [[ "$rom" == 1 || -z "$rom" ]]; then
-        local explicit="$rom"
-        case "$FLEET_NIC_MODEL" in
-            e1000)   rom="${MAAS_ROM_DIR:-/var/lib/libvirt/maas-rom}/ipxe-8086100e.rom" ;;
-            virtio)  rom="${MAAS_ROM_DIR:-/var/lib/libvirt/maas-rom}/ipxe-1af41000.rom" ;;
-            rtl8139) rom="${MAAS_ROM_DIR:-/var/lib/libvirt/maas-rom}/ipxe-10ec8139.rom" ;;
-            *) [[ -z "$explicit" ]] && return 0
-               info "$name: no default ROM name for NIC model '$FLEET_NIC_MODEL' — set FLEET_NIC_ROM=<path>"; return 1 ;;
+        explicit="$rom"
+        case "$model" in
+            e1000)   path="${MAAS_ROM_DIR:-/var/lib/libvirt/maas-rom}/ipxe-8086100e.rom" ;;
+            virtio)  path="${MAAS_ROM_DIR:-/var/lib/libvirt/maas-rom}/ipxe-1af41000.rom" ;;
+            rtl8139) path="${MAAS_ROM_DIR:-/var/lib/libvirt/maas-rom}/ipxe-10ec8139.rom" ;;
+            # FLEET_NIC_ROM=1 means "I require the ROM". No default name for this model
+            # is then FATAL, not a shrug: silently shipping no ROM is precisely the
+            # opt-in trap the paragraph above is about.
+            *) if [[ -z "$explicit" ]]; then printf 'none:no-default-for-model\n'
+               else                          printf 'missing:no-default-for-model\n'; fi
+               return 0 ;;
         esac
         # DEFAULT ON once installed: if this host has run `build-verifying-rom.sh
         # install`, every new fleet carries the ROM unless told not to. Unset env +
         # no installed ROM stays a plain fleet (nothing to attach, nothing implied).
-        if [[ -z "$explicit" ]]; then
-            [[ -f "$rom" ]] || return 0
-            info "$name: verifying ROM defaulted ON ($rom is installed on this host; FLEET_NIC_ROM=0 opts out)"
-        fi
+        if [[ -z "$explicit" && ! -f "$path" ]]; then printf 'none:not-installed\n'; return 0; fi
+    else
+        path="$rom"
     fi
-    # Refuse rather than half-apply: a fleet where some nodes verify and some do not
-    # is worse than one where none do, because a green run then proves neither.
-    [[ -f "$rom" ]] || die "FLEET_NIC_ROM is set but $rom does not exist.
-  Build and install it first:  ./build-verifying-rom.sh build && ./build-verifying-rom.sh install"
+    if [[ -f "$path" ]]; then printf 'attach:%s\n' "$path"; else printf 'missing:%s\n' "$path"; fi
+}
+
+give_verifying_rom() {
+    local name="$1" model="${2:-$FLEET_NIC_MODEL}" plan rom
+    plan="$(rom_plan "$name" "$model")"
+    case "$plan" in
+        none:uefi-node)
+            info "$name: no legacy option ROM — it is a UEFI node, and one would displace the"
+            info "  UEFI NIC driver OVMF needs. It enforces F2 via the TFTP'd ipxe.efi instead."
+            return 0 ;;
+        none:*) return 0 ;;
+        # Refuse rather than half-apply: a fleet where some nodes verify and some do not
+        # is worse than one where none do, because a green run then proves neither.
+        # do_preflight normally catches these before anything is built; reaching them
+        # here means preflight was bypassed.
+        missing:no-default-for-model)
+            die "FLEET_NIC_ROM=1 but there is no default ROM name for NIC model '$model'.
+  Give the path explicitly:  FLEET_NIC_ROM=<path>" ;;
+        missing:*)
+            die "FLEET_NIC_ROM is set but ${plan#missing:} does not exist.
+  Build and install it first:  ./build-verifying-rom.sh build && ./build-verifying-rom.sh install" ;;
+    esac
+    rom="${plan#attach:}"
+    if [[ -z "${FLEET_NIC_ROM:-}" ]]; then
+        info "$name: verifying ROM defaulted ON ($rom is installed on this host; FLEET_NIC_ROM=0 opts out)"
+    fi
     $VIRSH dumpxml "$name" \
         | python3 "$HERE/lib/rom_xml.py" "$rom" \
         | sudo $VIRSH define /dev/stdin >/dev/null \
@@ -233,20 +275,38 @@ validate_tpm_selection() {
     done
 }
 
-give_tpm() {
-    local name="$1" want="${FLEET_TPM:-0}"
-    tpm_selects "$name" || return 0
-    case "$want" in
+# require_swtpm <what-it-selects> — the ONE swtpm check.
+#
+# It used to live inside give_tpm, which do_up reaches at step 9 — AFTER every node disk
+# has been rewritten by `create-node.sh`'s unconditional `qemu-img convert`, after vbmcd
+# is built and started, after three BMCs are registered and the whole fleet is enrolled.
+# On a host without swtpm that is a half-built fleet and the previous disks gone, for an
+# answer `command -v` had at step 0. do_preflight calls this before anything is touched;
+# give_tpm keeps calling it as a backstop for any caller that skipped preflight.
+require_swtpm() {
+    command -v swtpm >/dev/null && return 0
+    die "FLEET_TPM=${FLEET_TPM:-0} selects $1, but swtpm is not installed — libvirt cannot
+  back an emulated TPM. Install swtpm (and swtpm-tools), or leave FLEET_TPM unset for a
+  plain BIOS fleet."
+}
+
+# warn_blanket_tpm — FLEET_TPM=1/all/yes converts EVERY node to UEFI. Kept working,
+# because scripts and notes already say FLEET_TPM=1, but it is the setting that broke two
+# nodes, so it does not pass quietly. Said once, in preflight, where the operator can
+# still change their mind — not once per node at step 9.
+warn_blanket_tpm() {
+    case "${FLEET_TPM:-0}" in
         1|all|yes)
-            # Kept working, because scripts and notes already say FLEET_TPM=1 — but it
-            # is the setting that broke two nodes, so it does not pass quietly.
-            info "FLEET_TPM=$want: giving UEFI+TPM to EVERY node. A node whose disk was"
-            info "  installed under BIOS will not boot it afterwards. Prefer FLEET_TPM=$name"
-            ;;
+            info "FLEET_TPM=${FLEET_TPM}: giving UEFI+TPM to EVERY node in this fleet. A node whose"
+            info "  disk was installed under BIOS will not boot it afterwards. Measured boot is a"
+            info "  property of one node's job, not the fleet's — prefer FLEET_TPM=<node>[,<node>]" ;;
     esac
-    command -v swtpm >/dev/null \
-        || die "FLEET_TPM=$want but swtpm is not installed — libvirt cannot back an emulated TPM.
-  Install swtpm (and swtpm-tools), or leave FLEET_TPM unset for a plain BIOS fleet."
+}
+
+give_tpm() {
+    local name="$1"
+    tpm_selects "$name" || return 0
+    require_swtpm "$name"
     $VIRSH dumpxml "$name" \
         | python3 "$HERE/lib/tpm_xml.py" \
         | sudo $VIRSH define /dev/stdin >/dev/null \
@@ -372,11 +432,120 @@ is not the one you asked for — which passes every check and deploys nothing."
     fi
 }
 
+# ── preflight: refuse BEFORE the irreversible step ───────────────────────────
+#
+# `up` step 3 destroys running domains and step 4 runs create-node.sh, whose
+#     sudo qemu-img convert -f qcow2 -O qcow2 "$base" "$disk"
+# is unconditional: every node's disk is replaced. Until 2026-07-29 the two gates that
+# can KILL a run — swtpm absent, a required ROM file absent — did not fire until step 9,
+# so a host missing either rewrote three disks, built and started a container, registered
+# three BMCs and enrolled the whole fleet, and THEN died. Both answers were available
+# before anything was touched. CLAUDE.md: "Refuse BEFORE the irreversible step. A gate
+# that fires after the dd is not a gate, it is a post-mortem."
+#
+# This is deliberately NOT a Terraform-style `plan`:
+#   * there is no plan FILE and `up` does not consume one, so it cannot promise that what
+#     you read is what will run;
+#   * instead `up` calls this function as its FIRST act, and every answer it prints comes
+#     from the same helper apply uses (tpm_selects, rom_plan, validate_tpm_selection).
+#     A pre-flight that re-derives apply's decisions in a second code path is just a new
+#     record able to outlive its subject — the bug class this lab keeps finding.
+#   * the interesting half of the state is unplannable by construction anyway: a MAC does
+#     not exist until the domain does, the firmware mode is a CONSEQUENCE of give_tpm
+#     (hence reconcile_firmware), and BMC port ownership can only be checked against a
+#     live vbmcd below the seam (hence verify_bmc_bindings).
+#
+# So: everything refusable, refused; everything else reported, not predicted.
+do_preflight() {
+    local name fatal=0 tpm_nodes=() plan rows=() model fw tpm romcol port
+
+    step "preflight — checking everything that can refuse this run BEFORE any disk is rewritten"
+
+    # ---- 1. config gates (no host, no libvirt: a typo is reported first) ----
+    validate_tpm_selection
+    for name in $(fleet_names); do
+        tpm_selects "$name" && tpm_nodes+=("$name")
+    done
+    warn_blanket_tpm
+
+    # ---- 2. host capability gates, in the order they would have killed the run ----
+    if (( ${#tpm_nodes[@]} > 0 )); then
+        require_swtpm "$(IFS=,; printf '%s' "${tpm_nodes[*]}")"
+        info "swtpm present ($(command -v swtpm)) — required by: ${tpm_nodes[*]}"
+    fi
+
+    for name in $(fleet_names); do
+        load_node "$name"
+        model="${NODE_NIC_MODEL:-$FLEET_NIC_MODEL}"
+        plan="$(rom_plan "$name" "$model")"
+        case "$plan" in
+            missing:no-default-for-model)
+                info "$name: FLEET_NIC_ROM=1 but no default ROM name for NIC model '$model' — give FLEET_NIC_ROM=<path>"
+                fatal=1; romcol="MISSING" ;;
+            missing:*)
+                info "$name: the verifying ROM ${plan#missing:} does not exist. Build and install it:"
+                info "    ./build-verifying-rom.sh build && ./build-verifying-rom.sh install"
+                fatal=1; romcol="MISSING" ;;
+            attach:*)             romcol="$(basename "${plan#attach:}")" ;;
+            none:uefi-node)       romcol="none (UEFI)" ;;
+            none:opted-out)       romcol="none (opted out)" ;;
+            none:not-installed)   romcol="none (not installed)" ;;
+            *)                    romcol="none" ;;
+        esac
+        fw=bios; tpm=no
+        if tpm_selects "$name"; then fw=uefi; tpm=yes; fi
+        rows+=("$(printf '%-7s %-5s %-4s %-8s %-6s %-14s %s' \
+            "$name" "$fw" "$tpm" "${NODE_MEMORY_MB}MiB" "${NODE_DISK_SIZE}" \
+            "${NODE_NETWORK}:${NODE_BMC_PORT}" "$model / $romcol")")
+    done
+
+    # A fleet where some nodes verify and some do not is worse than one where none do,
+    # because a green run then proves neither. Report every offender, then refuse once.
+    (( fatal == 0 )) || die "preflight refused this run — nothing was created and no disk was touched.
+  Fix the item(s) above and re-run. This is the whole point of the check: the same
+  failure at step 9 would have cost you every node's disk first."
+
+    [[ -d "$VBMC_LAB" ]] || die "sibling lab not found: $VBMC_LAB (set VBMC_LAB=)"
+    $VIRSH version >/dev/null 2>&1 \
+        || die "cannot reach libvirt at qemu:///system ($VIRSH version failed). \`up\` needs it
+  to define every domain; without it nothing below step 2 can work."
+
+    # ---- 3. reports, NOT gates ----
+    # Console: give_console degrades to the pty on failure rather than dying, but a pty
+    # console keeps nothing when no one is attached and every health gate greps the log,
+    # so a run with no recorded console is blind rather than broken. Worth saying early.
+    if [[ "$FLEET_CONSOLE" != file ]]; then
+        info "FLEET_CONSOLE=$FLEET_CONSOLE — consoles stay ptys and are NOT recorded; every"
+        info "  health gate that greps a console log will time out. Unset it for file consoles."
+    elif [[ ! -d "$CONSOLE_DIR" ]]; then
+        info "$CONSOLE_DIR does not exist yet — give_console will create it with sudo"
+    fi
+    # Ports are reported and never gated: on a re-run OUR OWN vbmcd already holds
+    # 6230–6232, so refusing on "in use" would refuse the normal case. Whether the
+    # listener is the right BMC for the right node is an identity question that can only
+    # be answered below the seam, against a live vbmcd — verify_bmc_bindings, step 7.
+    for name in $(fleet_names); do
+        load_node "$name"; port="${NODE_BMC_PORT}"
+        if [[ -n "$(ss -lntH "sport = :$port" 2>/dev/null)" ]]; then
+            info "port $port ($name) is already listening — expected if a fleet is up; identity is"
+            info "  checked after vbmcd starts (verify_bmc_bindings), not guessed here"
+        fi
+    done
+
+    # ---- 4. the decisions this run will apply ----
+    printf '\n  %-7s %-5s %-4s %-8s %-6s %-14s %s\n' \
+        NODE FIRM TPM MEMORY DISK NET:BMC 'NIC / ROM' >&2
+    printf '  %s\n' "${rows[@]}" >&2
+    printf '\n' >&2
+    step "preflight passed: ${#rows[@]} nodes, nothing refused. \`up\` will now DESTROY and rewrite every node disk."
+}
+
 # ── up: author-run rootful bring-up ──────────────────────────────────────────
 do_up() {
-    [[ -d "$VBMC_LAB" ]] || die "sibling lab not found: $VBMC_LAB (set VBMC_LAB=)"
+    # Step 0, deliberately: every gate that can refuse this run fires here, before the
+    # first `qemu-img convert`. do_preflight is the same code, not a second opinion.
+    do_preflight
 
-    validate_tpm_selection
     step "building the vbmcd image (rootful podman) — one container hosts all BMCs"
     ( cd "$VBMC_LAB" && ./vbmc-lab.sh build ) || die "vbmc build failed"
 
@@ -429,7 +598,9 @@ do_up() {
     for name in $(fleet_names); do
         load_node "$name"
         give_console "$name"
-        give_verifying_rom "$name"
+        # Resolve the model HERE, not inside rom_plan: load_node evals only the keys a
+        # node declares, so an undeclared nic_model still holds the previous node's value.
+        give_verifying_rom "$name" "${NODE_NIC_MODEL:-$FLEET_NIC_MODEL}"
         give_tpm "$name"
         reconcile_firmware "$name"   # AFTER give_tpm: it is what changes the answer
         reserve_dhcp "$name" "${NODE_NETWORK:-vbmc-pxe}" "$i"
@@ -463,6 +634,9 @@ usage() {
 create-fleet.sh — stand up / enroll the MAAS fleet from fleet.toml ($FLEET_TOML)
 
   enroll     HEADLESS: register the fleet into maas-lab.sh (no libvirt/root) — increment-1 path
+  preflight  check everything that can refuse an \`up\` and print the decisions it will
+             apply, WITHOUT creating anything. \`up\` runs this as its first step, so what
+             you read here is what runs — it is not a second implementation of it.
   up         AUTHOR-RUN (rootful): create 3 libvirt domains + vbmcd + BMCs on 6230–6232, then enroll
   down       AUTHOR-RUN: tear the fleet down
   status     show the fleet (maas-lab.sh list)
@@ -473,7 +647,12 @@ EOF
 
 case "${1:-}" in
     enroll)        do_enroll ;;
+    preflight)     do_preflight ;;
     _firmware-of-xml) firmware_of_xml ;;   # stdin XML -> bios|uefi (testable, no libvirt)
+    # Internal: the ROM decision for one node, without acting on it. Same seam as
+    # _selects-tpm — lets a test assert what `up` would attach with no libvirt and no root.
+    _rom-plan)     [[ -n "${2:-}" ]] || die "_rom-plan needs a node name"
+                   rom_plan "$2" "${3:-$FLEET_NIC_MODEL}" ;;
     up)            do_up ;;
     down)          do_down ;;
     status|list)   "$MAAS" list ;;
@@ -483,5 +662,5 @@ case "${1:-}" in
                    tpm_selects "$2" ;;
     _check-tpm)    validate_tpm_selection && printf 'FLEET_TPM=%s is valid for this fleet\n' "${FLEET_TPM:-0}" ;;
     ""|-h|--help)  usage ;;
-    *) die "unknown mode '$1' (enroll|up|down|status)" ;;
+    *) die "unknown mode '$1' (enroll|preflight|up|down|status)" ;;
 esac

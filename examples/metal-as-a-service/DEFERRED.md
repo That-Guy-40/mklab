@@ -78,7 +78,7 @@ run:
 
 ---
 
-## The defect ledger — 15 defects a green suite could not see
+## The defect ledger — 16 defects a green suite could not see
 
 Each was found by pointing real hardware at a suite that was green at every step. They
 are listed here because the *pattern* turned out to matter more than any individual fix,
@@ -102,12 +102,21 @@ classes a green suite cannot see".
 | 13 | a second deploy **never rebooted the node** — `bootdev pxe` applies at the next boot, and a running node ignores `power on` | hidden by #11: the dishonest gate reported `active` in one second and survived every run |
 | 14 | the attestation signature was truncated at its first NUL — `busybox wget --post-file` sends `Content-Length=strlen()` | the delivery test used `curl --data-binary`, which is binary-safe; the node has no curl |
 | 15 | `mlbuild.sh` reported **failure for successful builds** (3 sites) — a terminal `[[ … ]] && cmd` under `set -e` | `all` silently never packed an initramfs, and printed nothing; `set -e` exits quietly |
+| 16 | `create-fleet.sh up` checked for **swtpm** and for the verifying **ROM file** at step 9 — *after* `create-node.sh` had already `qemu-img convert`ed every node disk | both hosts that could fail it have swtpm and the ROM installed, so the late gate never fired here; a fresh host would rewrite three disks, start vbmcd, enrol the fleet, and *then* die half-built |
 
 **The two shapes.** All but a couple are either *a record that outlived the thing it
 described* (#9, #10, #11, #12, and a stale `~/.cache` image plus a served kernel that
 `file -b` could not distinguish from its replacement) or *a test that asserted the
 mechanism instead of the outcome* (#6, #7, #8, #14). Both are authoring mistakes, which
 is why more tests of the same kind would not have found them.
+
+**A third, smaller shape: a gate on the wrong side of the irreversible step.** #9 and #16
+are the same mistake at different layers — a check whose *answer* was available before
+anything was destroyed, asked afterwards. #9 refused a stale policy after the `dd`; #16
+refused a missing `swtpm` after the `qemu-img convert`. Both were reachable at step 0 with
+no privilege at all. This is the rule the [`preflight`](create-fleet.sh) verb now enforces
+for the fleet builder, and it is why the gate lives in the *same function* apply calls
+first rather than in a `plan` that predicts what apply will do.
 
 **And the ordering rule, learned the hard way twice.** #13 was *hidden* by #11: the
 dishonest gate reported success in one second and survived every run, while the honest
