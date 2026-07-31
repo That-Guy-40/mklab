@@ -1312,6 +1312,12 @@ netns. So the dataplane it programs is somewhere P2 could not see: not nftables,
 eBPF either — the `cali*` veths carry `qdisc noqueue`, with no `clsact` and no tc-BPF
 filters, which a Calico eBPF dataplane requires. `/sys/fs/bpf` is `Permission denied`.
 
+> **RESOLVED the same evening — see [B.2](#b2-the-second-firewall-and-the-bug-p2-committed-while-hunting-it).**
+> The dataplane was in **legacy xtables** the whole time. The paragraph above is kept
+> exactly as written because the *reasoning* is the instructive part: it is this repo's
+> "the cheap check is not the real check" lesson, caught in the act, by the harness whose
+> job is to catch it.
+
 **This is a new UNKNOWN that P2 created by measuring, and it is more useful than the one it
 resolved.** Three design consequences:
 
@@ -1325,3 +1331,52 @@ resolved.** Three design consequences:
    A Felix restart could program a dataplane between now and `up`. So the fabric **re-reads
    the ruleset at `up` time and refuses on a `mklab-mc` collision**; it never caches this
    appendix.
+
+### B.2 The second firewall — and the bug P2 committed while hunting it
+
+**Measured 2026-07-30, same evening.** B.1's UNKNOWN had a third answer neither of its two
+candidates covered:
+
+```console
+$ sudo iptables-legacy-save | grep -cE 'cali|felix'
+140
+$ sudo iptables-legacy-save | grep -E '^:cali'
+:cali-OUTPUT   :cali-PREROUTING   :cali-from-host-endpoint   :cali-rpf-skip
+:cali-to-host-endpoint   :cali-POSTROUTING   :cali-fip-dnat   :cali-fip-snat   …
+```
+
+Felix is in its ordinary iptables dataplane — **140 rules across raw, nat, filter and
+mangle** — in the **legacy xtables** backend. Corroborated by the module table:
+`ip_tables` is loaded with **refcount 4**, holding `iptable_filter`, `iptable_nat`,
+`iptable_mangle` and `iptable_raw`, none of which load unless something has actually
+created a legacy table.
+
+**Why P2 could not see them, which is the part worth keeping.** `/usr/sbin/iptables` is an
+alternatives symlink to `xtables-nft-multi` on this host, so **both** of P2's probes —
+`nft list ruleset` *and* `iptables-save` — read the **nf_tables** backend. Legacy xtables
+is a structurally separate kernel subsystem; nothing on the nft side can see into it. P2
+read one of two live firewalls and reported it as "the ruleset".
+
+That is precisely the failure this plan is organised around, committed by its own
+instrument: **the check asserted a mechanism** (*"`nft list ruleset` succeeded"*) **and let
+it stand for the outcome** (*"these are the rules the kernel will evaluate at these
+hooks"*). It reported `PASS`, and the `PASS` was worse than a `FAIL` would have been,
+because it retired a question that was still open. The harness is fixed: check 1 now reads
+**both** backends, names the owners it finds in legacy, and treats `ip_tables` being loaded
+with no way to enumerate it as `UNKNOWN` rather than silence.
+
+**What this changes for §7 — and it is not "pick the other backend".** Both backends
+register at the same netfilter hooks. Two `filter`/`forward` hooks at equal priority are
+ordered by *registration order*, which is a boot-time accident, not a design. So a fabric
+that depends on running before or after Calico's rules would be depending on luck.
+
+The rule that removes the dependency entirely: **scope every rule we install to our own
+interface by name** — `iifname "br-mc0"` / `oifname "br-mc0"` — exactly as `inet lxd` does
+for `lxdbr0`. A rule that can only match our own bridge cannot shadow Calico's pod rules
+and cannot be shadowed by them, whichever backend either lives in and whichever registered
+first. This is why LXD and Calico have coexisted on this host without incident despite
+sitting in different backends at the same hooks, and it is the property §7 should copy.
+
+B.1's three consequences all stand; consequence 3 gains a sharper form: **`up` must read
+both backends before claiming `mklab-mc` is free**, because "I checked the firewall" is a
+claim about a host, not about a command.
