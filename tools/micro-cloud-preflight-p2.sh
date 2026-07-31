@@ -127,12 +127,41 @@ if nft list tables > "$OUT/nft-tables.txt" 2>>"$LOG"; then
         row PASS "§7.1" no "the name 'mklab-mc' is free for OUR table" "no table by that name in any family"
     fi
 
-    # Not graded — recorded. Calico may drive iptables-nft, legacy iptables, or raw nft,
-    # and which one it is changes what "additive" has to mean.
+    # ── THE SECOND FIREWALL ──────────────────────────────────────────────────────
+    # A defect this script shipped on 2026-07-30: it read `nft list ruleset`, called
+    # that "who owns the firewall", and concluded Calico had no rules anywhere. It
+    # does — 140 of them — in LEGACY xtables, a separate kernel subsystem that
+    # neither `nft` nor `iptables-nft-save` can see into. Both backends are live at
+    # the same netfilter hooks simultaneously. Reading one and reporting "the
+    # ruleset" is the mechanism-vs-outcome bug, committed by the harness that exists
+    # to catch it. So: read BOTH, and grade on having read both.
     ipt_ver="$(iptables --version 2>/dev/null | head -1)"
     ipt_n="$(iptables-save 2>/dev/null | grep -c '^-A' || true)"
-    note "iptables: ${ipt_ver:-absent}; ${ipt_n} -A rules"
-    { printf '\n== iptables-save ==\n'; iptables-save 2>&1; } >> "$LOG"
+    { printf '\n== iptables-save (nf_tables backend) ==\n'; iptables-save 2>&1; } >> "$LOG"
+    note "iptables (default backend): ${ipt_ver:-absent}; ${ipt_n} -A rules"
+
+    if command -v iptables-legacy-save >/dev/null 2>&1; then
+        iptables-legacy-save > "$OUT/iptables-legacy.txt" 2>>"$LOG"
+        leg_n="$(grep -c '^-A' "$OUT/iptables-legacy.txt" 2>/dev/null || true)"
+        leg_chains="$(grep -cE '^:' "$OUT/iptables-legacy.txt" 2>/dev/null || true)"
+        # Whose are they? Name the owner rather than counting anonymously.
+        leg_owner=""
+        grep -qiE '^:cali|^-A cali' "$OUT/iptables-legacy.txt" && leg_owner+="Calico "
+        grep -qiE '^:KUBE-|^-A KUBE-' "$OUT/iptables-legacy.txt" && leg_owner+="kube-proxy "
+        grep -qiE '^:DOCKER'          "$OUT/iptables-legacy.txt" && leg_owner+="Docker "
+        note "legacy xtables: ${leg_n:-0} -A rules in ${leg_chains:-0} chains → $OUT/iptables-legacy.txt"
+        note "legacy owners: ${leg_owner:-<none identified>}"
+        if [[ "${leg_n:-0}" -gt 0 ]]; then
+            row PASS "§7.1" no "BOTH netfilter backends were read, not just nft" "legacy holds ${leg_n} rules (${leg_owner:-owner unidentified}) that nft CANNOT see"
+        else
+            row PASS "§7.1" no "BOTH netfilter backends were read, not just nft" "legacy backend present but empty — nft is the whole picture here"
+        fi
+    elif lsmod 2>/dev/null | grep -q '^ip_tables'; then
+        # The module is loaded, so legacy tables EXIST — we just cannot enumerate them.
+        row UNKNOWN "§7.1" no "BOTH netfilter backends were read, not just nft" "ip_tables module loaded (legacy rules exist) but iptables-legacy-save is absent"
+    else
+        row PASS "§7.1" no "BOTH netfilter backends were read, not just nft" "no legacy backend installed and ip_tables not loaded"
+    fi
 else
     row UNKNOWN "§7.1" no "the nftables ruleset is readable and recorded" "nft list tables failed even as root — see transcript"
     row UNKNOWN "§7.1" no "the name 'mklab-mc' is free for OUR table" "could not enumerate tables"
