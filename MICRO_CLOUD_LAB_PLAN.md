@@ -657,9 +657,14 @@ networking. It does not:
    that a **running Kubernetes depends on**. The rule is now: **record what you changed and
    revert only that.** This is the same shape as MAAS's `error_reason` defect — a path that
    changes state without recording that it did.
-2. **Calico owns firewall rules** we cannot even read unprivileged (P1: nft ownership
-   **UNKNOWN**, needs root — P2). Our table must be **additive and separately named**, and
-   teardown must delete only `mklab-mc`.
+2. ~~**Calico owns firewall rules** we cannot even read unprivileged~~ — **corrected
+   2026-07-30 by P2, see [B.1](#b1-the-correction--71-consequence-2-was-wrong-about-where-calicos-rules-are).**
+   The host ruleset has **no `cali-*` chains at all**; its owners are Docker, libvirt and
+   LXD. Calico leaves only `vxlan.calico`, `cali*` veths, and two pod-CIDR accepts in
+   `FORWARD`. The conclusion survives its own premise being wrong — our table must still be
+   **additive and separately named**, teardown must delete only `mklab-mc` — but the model
+   to copy is now specific: **`inet lxd`'s per-bridge chain layout**, and the ruleset is
+   **re-read at `up`**, never cached.
 3. **§9.2 puts `db` on LXD** — the same LXD hosting the Kubernetes. Not fatal, but LXD is
    not an idle phase tool on this host.
 
@@ -1078,7 +1083,14 @@ Still open:
 > — it lives here only because creating a lab dir with nothing but a DEFERRED.md in it
 > would trip `paths.py --check`'s coverage gate (an unrouted lab unit fails CI).
 
-### 17.1 First thing: spike P2 — the privileged half (AUTHOR-RUN)
+### 17.1 First thing: spike P2 — the privileged half (AUTHOR-RUN) — **DONE 2026-07-30**
+
+> **Result: [Appendix B](#appendix-b--p2-assumption-preflight-2026-07-30).** 11 PASS ·
+> 0 FAIL · 1 XFAIL · 0 UNKNOWN, rc=0 — all four checks green, all three of P1's `UNKNOWN`
+> rows resolved, and both missing inputs now on disk (`mc-p2-trixie`, 215 MB;
+> `firecracker v1.16.1` + `jailer`). It also **falsified §7.1 consequence 2** and produced
+> one honest new `UNKNOWN` — where Calico's dataplane actually lives. **Slice 1 is
+> unblocked.** The rest of this subsection is the original brief, kept as written.
 
 P1 (Appendix A) checked everything reachable without privilege. **P2 resolves its three
 `UNKNOWN` rows and flips its two "expected gap" rows that are merely missing inputs.**
@@ -1236,4 +1248,80 @@ so the script **exits non-zero if no XFAIL fires.**
 | **XFAIL** | §6 | a chroot exists to export | **NEGATIVE CONTROL — none; slice 1 must debootstrap first** |
 
 **P2 (author-run, sudo + fetch) resolves the three UNKNOWNs** and flips the chroot and
-firecracker rows.
+firecracker rows. → **[Appendix B](#appendix-b--p2-assumption-preflight-2026-07-30)**, run
+the following day. The table above is left exactly as measured on 07-29.
+
+---
+
+## Appendix B — P2 assumption preflight, 2026-07-30
+
+**Instrument:** [`tools/micro-cloud-preflight-p2.sh`](tools/micro-cloud-preflight-p2.sh) —
+`sudo tools/micro-cloud-preflight-p2.sh`. The privileged half of Appendix A: it resolves
+P1's three `UNKNOWN` rows and flips the two `XFAIL` rows that were merely missing inputs.
+
+Run as root on the mklab host, 22:38 local. **11 PASS · 0 FAIL · 1 XFAIL · 0 UNKNOWN**,
+rc=0, no slice-1 blockers.
+
+| verdict | § | assumption | evidence |
+|---|---|---|---|
+| PASS | §7.1 | the nftables ruleset is readable and recorded | 8 tables, 226 lines — **owners are Docker, libvirt, LXD**; see the correction below |
+| PASS | §7.1 | `mklab-mc` is a free table name | no table by that name in any family |
+| PASS | §7 | a tap can be created and enslaved to a bridge | `mcp2tap0 master mcp2br0`, both up |
+| PASS | §7 | the **unprivileged** user can `TUNSETIFF` that tap | `TUNSETIFF-ok` as `sqs` — the ioctl Firecracker itself issues |
+| PASS | §7.2 | teardown **actually** removed both devices | neither device resolves after `ip link del` |
+| PASS | §6 | a chroot exists **and executes** | `mc-p2-trixie`, **215 MB** — decision F's Debian datapoint |
+| PASS | §4A | the FC tarball matches its **published** sha256 | `382a02a869e4d6d5…` == upstream `.sha256.txt` |
+| **XFAIL** | §4A | **CONTROL** — sha verification rejects a wrong digest | **expected mismatch; the verifier bites, so the row above means something** |
+| PASS | §13 | the `firecracker` binary runs as `sqs` | `Firecracker v1.16.1`; **`jailer` present too** (§5.6) |
+| PASS | §13 | Firecracker reaches the kernel loader **on AMD-V** | `ConfigureSystem(KernelLoader(Elf(InvalidElfMagicNumber)))` — see the caveat below |
+| PASS | §6.3c | `extract-vmlinux` turns a distro `bzImage` into ELF | **64 MB ELF** from `/boot/vmlinuz-6.8.0-136-generic`, `unzstd` at offset 21197 |
+| PASS | §6.3a | the FC CI kernel URL, **enumerated not guessed** | `…/firecracker-ci/v1.15/x86_64/vmlinux-6.1.155` (newest prefix is **v1.15**, not v1.16 — the bucket lags the binary) |
+
+**The AMD-V row proves less than "Firecracker works here", and says so.** Booting a
+megabyte of zeros gets through config parse, `KVM_CREATE_VM` and guest-memory setup, then
+fails *at the ELF loader* — which is exactly the diagnosis wanted. `KVM_CREATE_VCPU` and
+`KVM_RUN` come after the kernel loads, so this run never reached them.
+
+**But they are not in doubt, and it would be wrong to imply they are.** `phase2-qemu-vm`
+selects `accel=kvm` whenever host arch == guest arch and `/dev/kvm` is r+w
+([`lab-vm.sh:155`](phase2-qemu-vm/lab-vm.sh)), and every phase-2 VM and every
+Metal-as-a-Service node on this box has been executing guest code through `kvm_amd` for
+months. **Guest execution under AMD-V is thoroughly observed. The residual is narrower:**
+Firecracker does its own vCPU setup — CPUID normalization, MSR handling, CPU templates —
+and upstream's AMD support targets **EPYC Milan/Genoa**, while this host is a desktop
+**Zen 5 (Ryzen 9 9950X3D)**. So what slice 1 observes for the first time is not "does KVM
+work on AMD" but *"does Firecracker's CPUID/MSR setup work on a part upstream does not
+test"*. Different question, much smaller, and still worth watching for on the first boot.
+
+### B.1 The correction — §7.1 consequence 2 was wrong about *where* Calico's rules are
+
+v3 said Calico owns firewall rules we could not read unprivileged. Measured with root:
+**the host nftables ruleset contains zero `cali-*` or `felix-*` chains.** Every chain
+belongs to Docker (`DOCKER-USER`, `DOCKER-FORWARD`, …), libvirt (`LIBVIRT_FW*`,
+`LIBVIRT_PRT`), or LXD (`inet lxd`). Calico's footprint in the host netns is three things
+and no rules: `vxlan.calico`, per-pod `cali*` veths with `/32` routes, and **two bare
+accepts for the pod CIDR** in `FORWARD`:
+
+```text
+ip saddr 10.1.0.0/16  counter accept
+ip daddr 10.1.0.0/16  counter accept
+```
+
+Felix **is** running (`calico-node -felix`, 5 processes) and this **is** the k8s node's
+netns. So the dataplane it programs is somewhere P2 could not see: not nftables, and not
+eBPF either — the `cali*` veths carry `qdisc noqueue`, with no `clsact` and no tc-BPF
+filters, which a Calico eBPF dataplane requires. `/sys/fs/bpf` is `Permission denied`.
+
+**This is a new UNKNOWN that P2 created by measuring, and it is more useful than the one it
+resolved.** Three design consequences:
+
+1. **Copy LXD's shape, not iptables'.** `inet lxd` is a separate family+table with per-bridge
+   chains named `pstrt.lxdbr0` / `fwd.lxdbr0` / `in.lxdbr0` / `out.lxdbr0` — precisely the
+   additive pattern §7 wants. Ours becomes **`inet mklab-mc`** with `pstrt.br-mc0`,
+   `fwd.br-mc0`, `in.br-mc0`, and teardown deletes that table and nothing else.
+2. **Do not shadow the pod-CIDR accepts.** Our masquerade excludes `10.1.0.0/16` the same
+   way LXD's excludes its own subnet.
+3. **This table list is a record that can outlive its subject** — the repo's bug class #1.
+   A Felix restart could program a dataplane between now and `up`. So the fabric **re-reads
+   the ruleset at `up` time and refuses on a `mklab-mc` collision**; it never caches this
+   appendix.
