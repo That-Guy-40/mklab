@@ -729,6 +729,13 @@ a novice reads *before* touching the TUI. Sampled check: all 18 verbs cited acro
 1/2/5 still exist in their tools — but that verifies verb *existence*, not that each
 walkthrough succeeds end to end. The latter is a slice-0 exercise for a real beginner.
 
+> **Superseded 2026-08-01 — and the sampled check was reassuring about the wrong thing.**
+> Every verb did exist (36/36 across all five phases, not just 18 across three). What the
+> verb check could not see was that **Option A — the *recommended* path, the first command
+> in all five documents — had never worked**, and that wizard 3's quickstart returned
+> HTTP 200 from an unrelated service while the container it claimed to test failed to
+> start. Four defects, measured and fixed; see **Appendix C**.
+
 ### 8.3 The unsolved half — one seam, or four?
 
 MAAS has **one** seam because every rack machine answers the same five IPMI verbs.
@@ -1127,7 +1134,7 @@ that it **converts three arguments into observations**:
 - **§5.4's first hole**: drop `panic=1` and **watch the VM hang forever**. Until somebody
   sees that, the config assertion guards a string rather than a behaviour.
 
-### 17.3 The one test I cannot run from this side
+### 17.3 The one test I cannot run from this side — **HALF DONE 2026-08-01**
 
 **§16 question 5.** A real beginner walking one `START_HERE_*_WIZARD.md` end to end.
 
@@ -1140,6 +1147,21 @@ It is worth doing **before** slice 1 rather than at slice 9, for a reason that i
 get backwards: the novice path is the part most likely to be quietly broken, because nobody
 who can fix it has needed it in a long time. Cost: a friend, an afternoon, and a
 willingness to hear that the docs lie.
+
+> **The machine-checkable half is now done, and the prediction was right.**
+> [`tools/wizard-walkthrough.sh`](tools/wizard-walkthrough.sh) executes every instruction
+> the five wizards give instead of reading them. First run: **8 PASS · 4 FAIL · 1 XFAIL ·
+> 1 UNKNOWN**, two of the failures blocking a beginner outright — including a launch
+> command that **had never worked in the entire history of the repository**. Full table
+> and fixes in **Appendix C**.
+>
+> **This does not close §17.3, and the harness says so on every run.** It carries a
+> standing `UNKNOWN` row — *"a beginner who does not know the answer got through it"* —
+> that is structurally incapable of becoming `PASS`. A script can prove a command exits
+> non-zero. It cannot notice that step 3 assumes knowledge the reader does not have, that
+> the prose says "the wizard writes a TOML" without saying where, or that a novice who
+> hits `EADDRINUSE` has no idea what to do next. **Do not let a green run retire this
+> item.** The friend and the afternoon are still owed.
 
 ### 17.4 Open questions
 
@@ -1380,3 +1402,95 @@ sitting in different backends at the same hooks, and it is the property §7 shou
 B.1's three consequences all stand; consequence 3 gains a sharper form: **`up` must read
 both backends before claiming `mklab-mc` is free**, because "I checked the firewall" is a
 claim about a host, not about a command.
+
+---
+
+## Appendix C — the novice on-ramp, walked by machine, 2026-08-01
+
+**Instrument:** [`tools/wizard-walkthrough.sh`](tools/wizard-walkthrough.sh) — the same
+`row`/verdict contract as Appendices A and B, pointed at a completely different subject.
+That reuse is the point: what was worth keeping from the P1/P2 spikes was never the
+scripts, it was the **contract** — `UNKNOWN` as a verdict distinct from `PASS`, assertions
+on outcomes rather than mechanisms, and *exit non-zero if no `XFAIL` fired*.
+
+§8.2 had recorded a sampled check of the five `START_HERE_*_WIZARD.md` documents: the
+verbs they cite still exist. That is a **mechanism** assertion — the exact failure shape
+this plan is organised around — made about the one document set written for readers who
+cannot debug it when it is wrong. §17.3 named the real test and could not schedule it.
+
+This is the half a machine can do: execute every instruction, literally, and report where
+the document and the host disagree.
+
+### C.1 First run — 8 PASS · 4 FAIL · 1 XFAIL · 1 UNKNOWN (rc=1)
+
+| verdict | wizard | blocks? | the instruction under test | evidence |
+|---|---|---|---|---|
+| **FAIL** | all 5 | **YES** | Option A: `python3 -m lab_tui` from the repo root | `ModuleNotFoundError` — the package is `phase6-tui/lab_tui`, *and* bare `python3` has no `textual` |
+| **FAIL** | all 5 | **YES** | Option A fallback: `python3 phase6-tui/main.py` | no such file — **0 commits in all of `git log --all` ever touched that path** |
+| **FAIL** | 3 | **YES** | wizard 3's quickstart port (8080) is bindable | `EADDRINUSE`, **and its own check `curl localhost:8080` returned HTTP 303 from another service** |
+| **FAIL** | 4 | no | `lab-podman.sh --help` exits 0 | rc=1 on all five tools; only the bare `help` verb worked |
+| XFAIL | web | no | `phase6b-web` has a START_HERE wizard | absent, as §8.2 records — extension work, not a regression |
+| UNKNOWN | all 5 | no | a beginner who does not know the answer got through it | not observable from here — §17.3 stays open |
+| PASS ×8 | — | — | 26/26 example TOMLs · 36/36 verbs · 15/15 apt package names · 10/10 quoted names/ports/users · phase 4 Option B end to end | — |
+
+### C.2 What the failures actually were
+
+**Option A had never worked.** All five wizards opened with `cd <the author's absolute
+path>` then `python3 -m lab_tui  # or: python3 phase6-tui/main.py`. Three independent
+defects in two lines: the wrong directory (the package is under `phase6-tui/`), the wrong
+interpreter (`phase6-tui` is a `uv` project — bare `python3` has no `textual`), and a
+fallback file that **never existed at any commit**. Meanwhile `phase6-tui/README.md`,
+`SHOWCASE.md` and `MANUAL_TESTING.md` had all been printing the correct three lines the
+entire time. The wizards did not go stale against the code; they **drifted from a sibling
+document that stayed right** — which is why no test caught it. Fixed to the README's own
+form, which also removes the hard-coded author path from five files.
+
+**Wizard 3's quickstart was a false success, not a failure.** `--ports 8080:80` cannot
+bind on this host (SABnzbd owns 8080), so the container never starts — and then the
+document's own verification, `curl http://localhost:8080/`, returns **HTTP 303 from
+SABnzbd**. The check passes while nothing the reader launched is running. This is the
+**LIED** rung on §0's ladder, sitting in the first document a newcomer opens, and the repo
+already knew the fact: `CLAUDE.md` records netboot using 8181 *because* 8080 is occupied,
+and the phase-4 quickstart uses 18080 and works. Fixed to **18080** (matching phase 4) in
+both places the recipe appears — the wizard and `phase3-docker/README.md` — plus a note
+explaining why, since the reasoning is the transferable part.
+
+**`--help` was documented and broken on all five tools.** Each already handled `-h|--help`
+in its *per-verb* option loop, but the top-level dispatch had only a bare `help)` arm, so
+`lab-chroot.sh --help` printed usage and *then* died with `unknown subcommand: --help`,
+rc=1. One-line fix per tool (`help|-h|--help)`), with the unknown-subcommand arm
+re-verified so a typo still fails loudly.
+
+### C.3 Two suspicions that died on contact with evidence
+
+Worth recording, because they are the reason the checks were run rather than reasoned:
+
+- `psql -U lab` looked like a lie — the anatomy snippet shows only `POSTGRES_PASSWORD`.
+  The real TOML sets `POSTGRES_USER = "lab"`. **The doc was right.**
+- `apt-get install yq` looked like the classic wrong-`yq` trap: Debian ships *kislyuk's*,
+  and the tools reject it by name (`grep -qi mikefarah`). But that package also installs
+  `/usr/bin/tomlq`, which is `toml_to_json()`'s **first** choice. **The instruction works**,
+  by a path the document never explains.
+
+### C.4 After the fixes — 12 PASS · 0 FAIL · 1 XFAIL · 1 UNKNOWN (rc=0)
+
+Then the control, because a harness that stops complaining has proved nothing: both
+defects were **re-injected** and the run re-checked. All three assertions bit — the drift
+check reported two distinct Option A variants, the path check named `phase6-tui/main.py`
+with its zero-commit history, and the port check reported `8080` **read out of the
+document**, not from a literal in the script. Restored, green again.
+
+That last detail is the harness holding itself to the standard it enforces: its checks
+parse the port and the launch block *from the wizard*, so they cannot pass by matching a
+string the author happened to write today, and cannot fail when someone improves the doc.
+
+### C.5 Side findings, for §17.4
+
+- **Question 8 (`incus` or `lxc`?)** now has a measurement. `incus` has a `default` zfs
+  pool and **zero instances**; LXD has **3 instances across 8 projects, one RUNNING**.
+  `lab-lxd.sh` prefers `incus` when both are present — so **the tool defaults to the empty
+  daemon while the live workload is on LXD.** This also bears directly on question 9.
+- Wizard 5 step 1 tells a beginner to run `sudo incus admin init --auto` on a host where
+  incus is **already initialised**. Not executed here (sudo, and mutating). It needs either
+  a verified "it refuses harmlessly" line or a skip-if-initialised note — currently the
+  document asks a novice to re-initialise a live daemon and says nothing about it.

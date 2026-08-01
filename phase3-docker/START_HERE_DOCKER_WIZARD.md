@@ -12,8 +12,9 @@ file — ownership is tracked via Docker labels.
 If you have the Phase 6 TUI running:
 
 ```bash
-cd /media/sqs/COLD_STORAGE/LAB_CREATE_V2
-python3 -m lab_tui          # or: python3 phase6-tui/main.py
+cd phase6-tui               # from the repo root
+uv sync                     # first time only — builds the venv from uv.lock
+uv run python -m lab_tui
 ```
 
 Press **`n`** → select **Phase 3 — Docker svc** → fill in the form → press **Save**.
@@ -38,11 +39,20 @@ docker info                        # should succeed without sudo
 phase3-docker/lab-docker.sh run \
     --name web1 \
     --image nginx:alpine \
-    --ports 8080:80 \
+    --ports 18080:80 \
     --detach
 
-curl http://localhost:8080/
+curl http://127.0.0.1:18080/
 ```
+
+> **Why 18080 and not 8080?** 8080 is the most contended port on a developer
+> machine — a proxy, a dev server, or (on this repo's own host) SABnzbd is
+> usually already on it. The container then fails to start with `EADDRINUSE`,
+> **and `curl http://localhost:8080/` still returns 200 — from the other
+> service.** The check passes while nothing you launched is running, which is
+> worse than an error. A high port makes the verification mean what it says.
+> The Phase-4 quickstart uses the same 18080, so tear one down before starting
+> the other.
 
 ### 3. Inspect, exec, and destroy
 

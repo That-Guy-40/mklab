@@ -2103,7 +2103,7 @@ main() {
         destroy)  cmd_destroy  ;;
         export)   cmd_export   ;;
         generate) cmd_generate ;;
-        help)     usage        ;;
+        help|-h|--help)     usage        ;;
         version)  printf '%s %s\n' "$LAB_PROG" "$LAB_VERSION" ;;
         *)        usage; die "unknown subcommand: $SUBCMD" ;;
     esac

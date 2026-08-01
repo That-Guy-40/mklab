@@ -3549,7 +3549,7 @@ main() {
         inspect)  cmd_inspect  ;;
         snapshot)        cmd_snapshot        ;;
         publish-netboot) cmd_publish_netboot ;;
-        help)     usage        ;;
+        help|-h|--help)     usage        ;;
         version)  printf '%s %s\n' "$LAB_PROG" "$LAB_VERSION" ;;
         *)        usage; die "unknown subcommand: $SUBCMD" ;;
     esac

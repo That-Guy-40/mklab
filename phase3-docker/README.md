@@ -76,8 +76,8 @@ lab-docker.sh destroy  <name|lab/service> [--force]
 ### Run nginx in detached mode
 
 ```bash
-lab-docker.sh run --name web1 --image nginx:alpine --ports 8080:80 --detach
-curl http://localhost:8080/
+lab-docker.sh run --name web1 --image nginx:alpine --ports 18080:80 --detach
+curl http://127.0.0.1:18080/
 lab-docker.sh logs web1
 lab-docker.sh exec web1 -- nginx -t
 lab-docker.sh destroy web1 --force
