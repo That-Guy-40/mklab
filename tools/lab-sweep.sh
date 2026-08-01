@@ -3,8 +3,8 @@
 #
 #   usage:  tools/lab-sweep.sh            # DRY RUN — inventory + what it would remove
 #           tools/lab-sweep.sh --apply    # actually remove it
-#   exits:  0 = nothing left to sweep (or dry run completed) · 1 = a precondition blocks
-#           removal · 2 = debris found (dry run) — useful as a post-suite leak gate
+#   exits:  0 = clean · 1 = something could not be removed (the engine's reason is
+#           printed) · 2 = debris found on a dry run — usable as a post-suite leak gate
 #
 # WHY THIS EXISTS. Test suites leave debris for two reasons, and only one of them is a
 # bug you can fix in the test:
@@ -12,15 +12,24 @@
 #   1. The run was killed with SIGKILL. An EXIT trap never fires. Every phase-5 test HAS
 #      a correct trap; ~17 empty projects and 3 instances accumulated anyway. No amount of
 #      trap discipline fixes this — it needs a sweep.
-#   2. The ENGINE refused to clean up. On this host `docker rm -f` and `docker kill`
-#      return "permission denied" once the daemon degrades under container churn, leaving
-#      unreapable zombies. The tests detect it and skip honestly; they simply cannot
-#      remove what the daemon will not kill.
+#   2. The ENGINE refused. On this host, delivering a SIGNAL to a container fails
+#      ("could not kill container: permission denied" — AppArmor is enforcing and the
+#      runtime is runc/docker-default). That is real, and it is why phase 3 reports 4
+#      skips.
 #
-# So this checks the PRECONDITION before emitting removals. A sweep that confidently
-# prints `docker rm -f x` when the daemon cannot kill anything is a list of commands that
-# will all fail — which is how you learn that "generated a delete list" is not the same
-# claim as "these deletes work".
+# USE THE VERB THE OBJECT'S STATE CALLS FOR. `docker rm -f` KILLS FIRST, unconditionally
+# — so on an already-EXITED container it fails on a kill that did not need to happen,
+# while plain `docker rm` succeeds instantly. An earlier version of this script ran
+# `rm -f` on everything, watched it fail, and concluded "the daemon cannot reap anything,
+# restart it." Both halves were wrong: a restart changed nothing (verified — the daemon
+# came up 3 minutes before the retest and `rm -f` failed identically), and every one of
+# the 13 "unreapable zombies" removed cleanly with `docker rm`.
+#
+# The check that produced that wrong conclusion tested `rm -f` on a RUNNING container and
+# generalised to "reaping is broken" — asserting a mechanism (can it kill?) in place of
+# the outcome that mattered (can this specific object be removed?). So there is no global
+# precondition gate here any more. Each object is removed with the verb its state calls
+# for, and a failure reports the engine's own words.
 #
 # SAFETY. Dry run by default. It removes ONLY objects matching this repo's own test-debris
 # name patterns, and carries an explicit KEEP list of things that look like debris and are
@@ -43,11 +52,10 @@ readonly PAT_DOCKER_C='^(probe-(topo|rad|inspect)-preflight-[0-9]+|lab-xp[0-9]+-
 readonly PAT_DOCKER_N='^lab-[a-z]+[0-9]+-'
 readonly PAT_PROFILE='^prof-[0-9]+$'
 
-found_n=0 removed_n=0 blocked_n=0
-declare -a PLAN=() BLOCKED=() FAILED=()
+found_n=0 removed_n=0
+declare -a PLAN=() FAILED=()
 
 plan() { PLAN+=("$1"); found_n=$((found_n+1)); }
-blocked() { BLOCKED+=("$1"); blocked_n=$((blocked_n+1)); }
 
 run() {   # run <description> <cmd...>
     local desc="$1"; shift
@@ -68,25 +76,6 @@ run() {   # run <description> <cmd...>
 }
 
 hr() { printf '%s\n' "──────────────────────────────────────────────────────────────────────────────"; }
-
-# ══ PRECONDITION: is the docker daemon able to reap anything at all? ══
-# Asked with a real container, because `docker info` succeeding proves nothing about
-# whether the daemon can deliver a signal.
-DOCKER_REAPS=unknown
-if command -v docker >/dev/null 2>&1 && timeout 60 docker info >/dev/null 2>&1; then
-    _t="lab-sweep-precheck-$$"
-    if timeout 60 docker run -d --name "$_t" alpine:latest sleep 30 >/dev/null 2>&1; then
-        sleep 1
-        if timeout 60 docker rm -f "$_t" >/dev/null 2>&1; then
-            DOCKER_REAPS=yes
-        else
-            DOCKER_REAPS=no
-            timeout 60 docker rm "$_t" >/dev/null 2>&1 || true   # may also fail; it joins the debris
-        fi
-    else
-        DOCKER_REAPS=norun
-    fi
-fi
 
 # ══ 1. LXD / Incus — instances, then projects, then the inherited profile ══
 for engine in lxc incus; do
@@ -136,23 +125,23 @@ except Exception: pass" 2>/dev/null)
     done < <(timeout 60 "$engine" profile list --project default --format csv 2>/dev/null | cut -d, -f1)
 done
 
-# ══ 2. Docker — gated on the precondition ══
+# ══ 2. Docker ══
 if command -v docker >/dev/null 2>&1 && timeout 60 docker info >/dev/null 2>&1; then
-    mapfile -t _dc < <(timeout 60 docker ps -a --format '{{.Names}}' 2>/dev/null | grep -E "$PAT_DOCKER_C" || true)
-    if [[ "${#_dc[@]}" -gt 0 && "$DOCKER_REAPS" != yes ]]; then
-        for c in "${_dc[@]}"; do found_n=$((found_n+1)); done
-        blocked "${#_dc[@]} docker container(s) — the daemon cannot reap them
-     'docker rm -f' and 'docker kill' return \"permission denied\": the known
-     degradation under container churn. These are unreapable zombies, and every
-     'docker rm -f' below would fail.
-     FIX FIRST, then re-run:  sudo systemctl restart docker
-     leaked: ${_dc[*]}"
-    else
-        for c in "${_dc[@]}"; do
-            plan "docker rm -f $c"
-            run "docker: container $c" docker rm -f "$c"
-        done
-    fi
+    # State-aware: `rm -f` kills first, so it FAILS on an exited container wherever
+    # signal delivery is blocked — a kill that never needed to happen. Plain `rm` is
+    # both correct and sufficient for anything not running.
+    while IFS=$'\t' read -r cname cstate; do
+        [[ -z "$cname" ]] && continue
+        [[ "$cname" =~ $PAT_DOCKER_C ]] || continue
+        if [[ "$cstate" == running || "$cstate" == restarting || "$cstate" == paused ]]; then
+            plan "docker stop + rm $cname (state=$cstate)"
+            if [[ "$APPLY" -eq 1 ]]; then timeout 60 docker stop -t 5 "$cname" >/dev/null 2>&1 || true; fi
+            run "docker: container $cname (was $cstate)" docker rm -f "$cname"
+        else
+            plan "docker rm $cname (state=$cstate)"
+            run "docker: container $cname ($cstate)" docker rm "$cname"
+        fi
+    done < <(timeout 60 docker ps -a --format '{{.Names}}\t{{.State}}' 2>/dev/null)
 
     while read -r net; do
         [[ -z "$net" ]] && continue
@@ -187,28 +176,21 @@ cat <<'KEEP'
   docker buildx_buildkit_lab-builder0           the reusable multi-arch builder
 KEEP
 hr
-if [[ "$blocked_n" -gt 0 ]]; then
-    printf 'BLOCKED:\n'
-    for b in "${BLOCKED[@]}"; do printf '  ! %s\n' "$b"; done
-    hr
-fi
 
 if [[ "$APPLY" -eq 0 ]]; then
-    printf 'DRY RUN: %d object(s) would be swept, %d blocked. Re-run with --apply.\n' \
-        "$found_n" "$blocked_n"
-    [[ "$blocked_n" -gt 0 ]] && exit 1
+    printf 'DRY RUN: %d object(s) would be swept. Re-run with --apply.\n' "$found_n"
     [[ "$found_n"   -gt 0 ]] && exit 2
     printf 'PASS: no test debris found\n'; exit 0
 fi
 
-printf 'SWEPT: %d removed, %d failed, %d blocked (of %d found)\n' \
-    "$removed_n" "${#FAILED[@]}" "$blocked_n" "$found_n"
+printf 'SWEPT: %d removed, %d failed (of %d found)\n' \
+    "$removed_n" "${#FAILED[@]}" "$found_n"
 if [[ "${#FAILED[@]}" -gt 0 ]]; then
     printf 'FAILED, with the reason each engine gave:\n'
     for f in "${FAILED[@]}"; do printf '  ✗ %s\n' "$f"; done
 fi
-[[ "$blocked_n" -gt 0 || "${#FAILED[@]}" -gt 0 ]] && {
-    printf 'FAIL: %d blocked, %d failed — nothing was left in an unknown state, but the sweep is incomplete\n' \
-        "$blocked_n" "${#FAILED[@]}"; exit 1; }
+[[ "${#FAILED[@]}" -gt 0 ]] && {
+    printf 'FAIL: %d object(s) could not be removed — the engine'"'"'s reason is printed above\n' \
+        "${#FAILED[@]}"; exit 1; }
 printf 'PASS: sweep complete\n'
 exit 0
