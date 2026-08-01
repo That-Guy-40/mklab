@@ -318,6 +318,26 @@ else
     fi
 fi
 
+# ══ E3. The unstated-prerequisite class — what the command checks structurally miss ══
+#
+# Every check above runs from $REPO, so every command "works". A novice reading
+# phase1-chroot/START_HERE_CHROOT_WIZARD.md is most naturally sitting in phase1-chroot/,
+# where `phase1-chroot/lab-chroot.sh …` fails with "No such file or directory". The
+# commands were never wrong; the missing thing was a sentence. This is the machine-checkable
+# slice of §17.3 — not "did a beginner succeed", but "does the document state what it
+# assumes". Found 2026-08-01; all five were silent about it.
+wd_missing=""
+for w in "${ALL_WIZ[@]}"; do
+    grep -q 'from the repository root' "$w" || wd_missing+="$(basename "$w") "
+done
+if [[ -z "$wd_missing" ]]; then
+    row PASS "all 5" no "each wizard states the directory its commands assume" \
+        "all five say 'from the repository root'; verified a phase-dir cwd otherwise fails"
+else
+    row FAIL "all 5" YES "each wizard states the directory its commands assume" \
+        "silent about cwd, so a reader in the phase dir hits 'No such file or directory': $wd_missing"
+fi
+
 # ══ F. Known gaps (the control) and the one thing this cannot prove ══
 
 # F1. §8.2's recorded gap: the web phase has no wizard at all. Expected-absent.
