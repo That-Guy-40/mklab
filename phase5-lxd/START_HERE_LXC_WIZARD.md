@@ -15,6 +15,12 @@ difference.
 
 ---
 
+> **Run every command below from the repository root**, not from this directory.
+> Paths like `phase1-chroot/lab-chroot.sh` are relative to the root, so typing them
+> while sitting in the phase directory you are reading this from fails with
+> `No such file or directory`. `cd` to the root first — `git rev-parse --show-toplevel`
+> prints it.
+
 ## Option A — use the wizard (recommended)
 
 If you have the Phase 6 TUI running:

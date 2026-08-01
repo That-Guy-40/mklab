@@ -13,7 +13,30 @@ prof="prof-$$"
 cfg="$(mktemp --suffix=.toml)"
 lab="$proj-lab"
 
-trap 'rm -f "$cfg"; cleanup_lab "$lab"; "$LXC_CMD" profile delete "$prof" --project "$proj" >/dev/null 2>&1 || true; "$LXC_CMD" project delete "$proj" >/dev/null 2>&1 || true' EXIT
+# Teardown order matters, and the old trap got it wrong for a whole class of runs.
+# Launching an instance CACHES ITS IMAGE INTO THE PROJECT, and that copy outlives the
+# instance -- so deleting the instances does not empty the project. `project delete` then
+# fails with "Only empty projects can be removed", and because the call was written
+# `>/dev/null 2>&1 || true` the failure was silent: the suite reported a clean teardown
+# and leaked one project + one cached image on EVERY run. (Found 2026-08-01 by
+# tools/lab-sweep.sh, which had committed the identical bug itself.)
+#
+# So: instances -> images -> profile -> project. Same shape as tools/lab-sweep.sh.
+cleanup_project() {
+    cleanup_lab "$lab"
+    while read -r fp; do
+        [[ -n "$fp" ]] || continue
+        "$LXC_CMD" image delete "$fp" --project "$proj" >/dev/null 2>&1 || true
+    done < <("$LXC_CMD" image list --project "$proj" --format csv 2>/dev/null | cut -d, -f2)
+    "$LXC_CMD" profile delete "$prof" --project "$proj" >/dev/null 2>&1 || true
+    "$LXC_CMD" project delete "$proj" >/dev/null 2>&1 || true
+    # Assert the OUTCOME, not the attempt: a project still standing here means the
+    # teardown silently failed again, and saying so is the whole point.
+    if "$LXC_CMD" project list --format csv 2>/dev/null | cut -d, -f1 | grep -qx "$proj"; then
+        printf '  - WARNING: project %s survived teardown (sweep with tools/lab-sweep.sh)\n' "$proj" >&2
+    fi
+}
+trap 'rm -f "$cfg"; cleanup_project' EXIT
 
 cat > "$cfg" <<EOF
 [lab]
