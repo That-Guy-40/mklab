@@ -415,6 +415,14 @@ spelling for shared fields (`name`, `lab`, `memory`, `kernel`) so Phase-6 backen
 either without special-casing. The v2 draft is preserved in git history as a starting point,
 not a commitment.
 
+**First derived constraint, from slice 1 — the schema must not expose `root=`.** Firecracker
+appends its own `root=/dev/vda` after whatever `boot_args` we supply, and the kernel honours
+the last one, so a user-set `root=` is silently ignored whenever `is_root_device: true`
+(§5.4 hole 3, [E.4](#e4-two-findings-the-plan-did-not-anticipate)). A field that appears to
+work and does nothing is worse than no field. This is what "derived from what the slices
+needed" is *for*: a schema authored up front would have offered `root=` because the
+Firecracker docs describe `boot_args` as free-form.
+
 ### 5.3 State directory
 
 `$LAB_STATE_DIR/fc/<name>/`, mirroring `$LAB_STATE_DIR/vms/<name>/`:
@@ -458,16 +466,40 @@ snapshots/<tag>/{snapshot.bin,memory.bin,config.json}
 `tests/test-fc-config-json.sh` asserts: exactly one root drive; `reboot=k panic=1` present;
 `ip=` octets match; `host_dev_name` matches the planned tap; MMDS block iff `mmds` set.
 
-**Two holes v2 did not name, and both are the mechanism-vs-outcome trap:**
+**Four holes v2 did not name — holes 1–2 are the mechanism-vs-outcome trap; 3–4 were found
+by slice 1 doing it by hand ([Appendix E](#appendix-e--slice-1-one-microvm-by-hand-2026-08-01)):**
 
-1. **`panic=1` being *present* is not evidence that a panic *exits*.** Without it a guest
-   panic **hangs the VM forever** — the single most confusing Firecracker failure mode.
-   Slice 1 must **watch the hang** so this assertion guards a behaviour somebody observed.
+1. ~~**`panic=1` being *present* is not evidence that a panic *exits*.**~~ — **OBSERVED
+   2026-08-01, [E.3](#e3-the-panic1-hole-closed-by-watching-it).** Same induced panic, one
+   variable: with `panic=1` Firecracker exited on its own in **1.63 s**; without it the VM
+   **hung until killed at 20 s**. The assertion now guards a behaviour somebody watched.
 2. **A config is not a pure function of the spec — it is a function of the spec *and the
    files it points at*.** A generator test passes happily with a nonexistent kernel, or a
    `bzImage` where an ELF is required, validating a document about an imaginary machine. So
    the generator tests must also assert the referenced paths **exist and are the right
-   kind** (`file` says ELF, not `bzImage`).
+   kind** (`file` says ELF, not `bzImage`). Confirmed in slice 1: Firecracker's loader is
+   ELF-only and answers a `vmlinuz` with `Elf(InvalidElfMagicNumber)`. **`vmlinuz` is the
+   compressed bzImage a bootloader loads; `vmlinux` is the uncompressed ELF Firecracker
+   requires** — `extract-vmlinux` converts the former to the latter, which is decision B.
+3. **Firecracker APPENDS its own boot args, and the kernel honours the LAST `root=`.**
+   Measured ([E.4](#e4-two-findings-the-plan-did-not-anticipate)) — the guest actually saw:
+
+   ```
+   console=ttyS0 … root=/dev/vdb rw   pci=off root=/dev/vda rw virtio_mmio.device=…
+   ^ ours                             ^ Firecracker's, appended, and it wins
+   ```
+
+   So **a `root=` in `boot_args` is silently ignored whenever `is_root_device: true`.**
+   §5.2's derived schema **must not expose `root=` as a knob**, because it is not ours to
+   set; and any test that induces a root-mount failure must set `is_root_device: false`,
+   or Firecracker will quietly repair the fault and the test will pass for the wrong
+   reason. That is exactly how slice 1's first `panic=1` run reported "no difference".
+4. **A stray `ip=` with no NIC costs ~12 s and says nothing.** Measured: identical rootfs
+   and kernel, one added `ip=…` with no `network-interfaces` entry, and userspace start
+   went **0.55 s → 12.84 s** — a 23× regression spent in the kernel's IP autoconfiguration
+   waiting for a device that never appears, entirely *before* the root mount, with **no
+   `IP-Config` line and no error anywhere in dmesg**. Slice 2 owns the guard: **assert
+   `ip=` is present in `boot_args` if and only if a `network-interfaces` entry exists.**
 
 ### 5.5 API mode is the lesson, config mode is the default
 
@@ -1015,8 +1047,8 @@ exercise · break**, and the break pass writes into `LEDGER.md`.
 | # | Slice | Build | Exercise | Break it |
 |---|---|---|---|---|
 | **0** | **Preflight** | **P1 done** (Appendix A). **P2**: `nft list tables`, debootstrap a chroot, tap create/delete, fetch+verify FC `v1.16.1` | the assumption table is filled in; 3 UNKNOWNs resolved | a beginner walks one `START_HERE_*_WIZARD.md` end to end and reports where it lies |
-| **1** | **One microVM, by hand** | ext4 from a chroot (Alpine **and** Debian); a `vmlinux`; boot with `--no-api --config-file`; boot again over the REST API with `curl` | login prompt in <1s; both rootfs sizes + boot times side by side | drop `panic=1` → **watch it hang forever**; flip `is_root_device`; bend `ip=`; try `extract-vmlinux` (decision B, answered) |
-| **2** | **The microVM gets an identity** | one tap, no bridge; MMDS `PUT` from the host | read `instance-id` from `169.254.169.254` *inside* the guest; V2 token by hand | V1 vs V2 and why V1 + SSRF leaks credentials; ask MMDS for a key never `PUT` |
+| **1** ✅ | **One microVM, by hand** — **DONE 2026-08-01, [Appendix E](#appendix-e--slice-1-one-microvm-by-hand-2026-08-01)** | ext4 from a chroot (Alpine **and** Debian); a `vmlinux`; boot with `--no-api --config-file`; boot again over the REST API with `curl` | **login prompt at 0.55 s**, zero variance over 4 runs; Alpine 8.2 MB tree / 64 MB image and Debian 215 MB / 363 MB — **26× the size, identical boot time** | all four run: `panic=1` dropped → **hung until killed (1.63 s vs 20 s+)**; `is_root_device` flipped → **found FC's arg append**; `ip=` bent → **23× silent regression**; `extract-vmlinux` → **decision B = yes** |
+| **2** | **The microVM gets an identity** | one tap, no bridge; MMDS `PUT` from the host. **Carries slice 1's `ip=` guard: assert `ip=` appears in `boot_args` iff a `network-interfaces` entry exists** (§5.4 hole 4) | read `instance-id` from `169.254.169.254` *inside* the guest; V2 token by hand. **Boot time stays ≈0.55 s — a jump to ~12 s means `ip=` is waiting on a NIC that isn't there** | V1 vs V2 and why V1 + SSRF leaks credentials; ask MMDS for a key never `PUT`; **drop the NIC but keep `ip=` and watch the 23× stall with no error printed** |
 | **3** | **Two microVMs that reach each other** | `fabric.sh up/down/status` — additive nft, recorded `ip_forward`, dnsmasq as DHCP **and** DNS | `api1` pings `api2` **by name**; `down` asserts absence of *our* objects only | delete the bridge under a running VM; exhaust the DHCP pool; leave a stale tap; **confirm Calico still works** |
 | **4** | **The tool, and what it hides** | `lab-fc.sh` + `preflight`; **derive** §5.2's schema from slices 1–3 | one command, same boot; `--dry-run` diffed against slice 1's hand-written `config.json` | the preflight tripwire; **name what the tool silently started doing for you** — that list is the deliverable. Watch for the §8.3 verb tripwire |
 | **5** | **A second engine on one fabric** | add the QEMU `edge` (Phase 2 already does bridge mode) | two engines, one L2, one `--lab` view | kill one engine's daemon, see what the other reports. **Answer decision E** |
@@ -1128,7 +1160,7 @@ changed. The write-up belongs in Appendix A as a second dated column, **not** as
 to the first — the point of a dated measurement is that it stays a record of what was true
 then.
 
-### 17.2 Then slice 1 — one microVM, by hand
+### 17.2 Then slice 1 — one microVM, by hand — **DONE 2026-08-01**
 
 Per §14. What makes it the right next build step is not that it is first on a list, but
 that it **converts three arguments into observations**:
@@ -1139,6 +1171,20 @@ that it **converts three arguments into observations**:
   answer, and it decides whether "spawn twelve" is real.
 - **§5.4's first hole**: drop `panic=1` and **watch the VM hang forever**. Until somebody
   sees that, the config assertion guards a string rather than a behaviour.
+
+> **All three converted, and the slice paid for itself twice over — see
+> [Appendix E](#appendix-e--slice-1-one-microvm-by-hand-2026-08-01).**
+>
+> - **B = yes.** The host's own kernel, extracted, boots FC in 0.62 s against the
+>   purpose-built CI kernel's 0.55 s. Micro-cloud need not ship or fetch a kernel.
+> - **F = the question was mis-framed.** 26× the size, *identical* boot time (0.55 s, zero
+>   variance, 4 runs each). Alpine-vs-Debian is a **footprint** decision, not a speed one.
+> - **§5.4 hole 1 = observed.** 1.63 s clean exit with `panic=1`; hung until killed without.
+>
+> And **two holes nobody had named** (§5.4 holes 3–4): Firecracker appends its own boot args
+> so a user `root=` is silently ignored, and a stray `ip=` costs 12.3 s in total silence.
+> The first was found *because* the `panic=1` experiment showed no difference and the fault
+> was checked rather than the result believed.
 
 ### 17.3 The one test I cannot run from this side — **HALF DONE 2026-08-01**
 
@@ -1348,7 +1394,7 @@ netns. So the dataplane it programs is somewhere P2 could not see: not nftables,
 eBPF either — the `cali*` veths carry `qdisc noqueue`, with no `clsact` and no tc-BPF
 filters, which a Calico eBPF dataplane requires. `/sys/fs/bpf` is `Permission denied`.
 
-> **RESOLVED the same evening — see [B.2](#b2-the-second-firewall-and-the-bug-p2-committed-while-hunting-it).**
+> **RESOLVED the same evening — see [B.2](#b2-the-second-firewall--and-the-bug-p2-committed-while-hunting-it).**
 > The dataplane was in **legacy xtables** the whole time. The paragraph above is kept
 > exactly as written because the *reasoning* is the instructive part: it is this repo's
 > "the cheap check is not the real check" lesson, caught in the act, by the harness whose
@@ -1579,3 +1625,114 @@ behind across both daemons: ~17 empty projects, 3 instances, and one **running**
 container. Harmless, but it is noise in exactly the place slice 3 will be reading, and the
 running one holds the only veth on `lxdbr0`. Worth a deliberate sweep before slice 1 —
 listed here rather than done, because deleting instances is the operator's call.
+
+---
+
+## Appendix E — slice 1, one microVM by hand, 2026-08-01
+
+**Workdir:** `~/.local/state/lab-create/micro-cloud-s1/` — every config, boot log and both
+images are still there, so each number below can be re-derived rather than believed.
+**Binary:** Firecracker v1.16.1, fetched and sha-verified by P2. **Nothing here needed root
+except reading P2's root-owned Debian tree** (see E.2).
+
+### E.1 What booted
+
+| run | kernel | rootfs | to userspace |
+|---|---|---|---|
+| control | FC CI `vmlinux-6.1.155` (44 MB ELF) | Alpine 3.21.7 | **0.55 s** |
+| **decision B** | `extract-vmlinux` on this host's own bzImage (66 MB ELF) | Alpine 3.21.7 | **0.62 s** |
+| REST API | CI kernel, 4× `curl PUT` → `204` | Alpine 3.21.7 | 0.55 s |
+| decision F | CI kernel | Debian 13 trixie | **0.55 s** |
+
+Boot time is the **guest's own** `/proc/uptime` at first userspace line, printed by an
+inittab marker, so it excludes host-side Firecracker startup and is comparable across runs.
+
+### E.2 Decision B — yes, with one condition worth stating
+
+`extract-vmlinux` output boots Firecracker. The guest reported
+`Kernel 6.8.0-136-generic on an x86_64` — **this host's own distro kernel, running inside
+the microVM** — for a 0.07 s penalty over the purpose-built CI kernel.
+
+**The condition, checked before booting rather than discovered after:** the host kernel
+must have `CONFIG_VIRTIO_MMIO`, `CONFIG_VIRTIO_BLK`, `CONFIG_EXT4_FS` and
+`CONFIG_SERIAL_8250_CONSOLE` built **`=y`**, not `=m` — Firecracker boots with no initramfs,
+so a modular driver is a driver that will never load. Ubuntu 6.8.0-136 has all four built
+in. A distro that ships them modular fails, and the failure would look like a hang.
+
+**Naming, because it is the whole point of this decision:** `vmlinuz` is the *compressed*
+bzImage a bootloader loads; `vmlinux` is the *uncompressed ELF* Firecracker requires. FC's
+loader answers anything else with `Elf(InvalidElfMagicNumber)`. `extract-vmlinux` converts
+one to the other.
+
+**Root was needed once, and not where expected.** `mkfs.ext4 -d` populates an image with no
+mount and no loop device, so the Alpine rootfs was built **entirely unprivileged** — and
+booted fine despite every file being owned by uid 1000, because the kernel runs init as
+root regardless of file ownership. The Debian image needed `sudo` only for the **read**
+side: 10 of P2's 4492 files (`/etc/shadow`, `/etc/gshadow`, `/etc/.pwd.lock`, `/root`, …)
+are unreadable to a normal user, and `mke2fs` aborts on the first one.
+
+### E.3 The `panic=1` hole, closed by watching it
+
+Same induced panic in both runs — `root=` pointed at a device that does not exist — with
+`panic=1` as the only variable:
+
+| `panic=1` | fc rc | wall | outcome |
+|---|---|---|---|
+| present | 0 | **1.63 s** | rebooted; Firecracker exited on its own |
+| absent | 124 | 20.03 s | **hung until killed** |
+
+Both logged `Kernel panic - not syncing: VFS: Unable to mount root fs on unknown-block(0,0)`,
+so the fault is identical and the difference is attributable. §5.4's assertion now guards a
+behaviour somebody watched.
+
+### E.4 Two findings the plan did not anticipate
+
+**Firecracker appends its own boot args, and the kernel honours the last `root=`.** The
+guest actually received:
+
+```
+console=ttyS0 reboot=k pci=off root=/dev/vdb rw  pci=off root=/dev/vda rw virtio_mmio.device=4K@0xc0001000:5
+                                ^ ours                   ^ Firecracker's, appended, and it wins
+```
+
+So a `root=` in `boot_args` is **silently ignored** whenever `is_root_device: true`. Two
+consequences, both now recorded in §5.2 and §5.4 hole 3: the derived schema must not offer
+`root=` as a knob, and any test inducing a root-mount failure must set
+`is_root_device: false` or Firecracker repairs the fault and the test passes for the wrong
+reason.
+
+**How it was found is the point.** The first `panic=1` run showed *no difference* — both
+variants booted normally. Reporting that would have published "panic=1 changes nothing,"
+which is false and would have removed a real guard. Checking whether the fault had actually
+landed — reading the cmdline the kernel received — showed it never had. **The negative
+control is not a formality; here it was the entire result.**
+
+**A stray `ip=` costs 12.3 seconds and says nothing.** Identical kernel and rootfs, one
+added `ip=192.168.99.50::…:eth0:off` with no `network-interfaces` entry:
+
+```
+[    0.563361] input: AT Raw Set 2 keyboard …
+[   12.851075] clk: Disabling unused clocks          <-- +12.29 s, nothing in between
+[   12.852597] VFS: Mounted root (ext4 filesystem)
+```
+
+Userspace start moved **0.55 s → 12.84 s**, a 23× regression, spent in the kernel's IP
+autoconfiguration waiting for a device that never appears — entirely *before* the root
+mount, with **no `IP-Config` line and no error anywhere in dmesg**. It does not fail; it is
+just slow, silently. Slice 2 carries the guard: assert `ip=` appears **iff** a
+`network-interfaces` entry exists.
+
+### E.5 Decision F — the question was mis-framed
+
+| | tree | ext4 image | to userspace |
+|---|---|---|---|
+| Alpine 3.21.7 minirootfs | 8.2 MB | 64 MB | 0.55 s |
+| Debian 13 trixie (P2's) | 215 MB | 363 MB | 0.55 s |
+
+**26× the size; identical boot time; zero variance across four runs each.** So the choice is
+about **footprint — disk and page cache — not latency**, and "spawn twelve" is bounded by
+memory and storage rather than by how fast a guest reaches userspace.
+
+**Scope limit, stated rather than implied:** both images run **busybox init**, which is what
+makes the comparison fair — same init, different userspace size. A systemd Debian would not
+look like this, and this measurement says nothing about that case.
