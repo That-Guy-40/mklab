@@ -12,8 +12,9 @@ import one as a container image, Phase 5 can turn one into an LXD instance.
 If you have the Phase 6 TUI running:
 
 ```bash
-cd /media/sqs/COLD_STORAGE/LAB_CREATE_V2
-python3 -m lab_tui          # or: python3 phase6-tui/main.py
+cd phase6-tui               # from the repo root
+uv sync                     # first time only — builds the venv from uv.lock
+uv run python -m lab_tui
 ```
 
 Press **`n`** → select **Phase 1 — Chroot** → fill in the form → press **Save**.
