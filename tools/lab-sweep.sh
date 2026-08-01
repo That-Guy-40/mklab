@@ -12,20 +12,34 @@
 #   1. The run was killed with SIGKILL. An EXIT trap never fires. Every phase-5 test HAS
 #      a correct trap; ~17 empty projects and 3 instances accumulated anyway. No amount of
 #      trap discipline fixes this — it needs a sweep.
-#   2. The ENGINE refused. On this host, delivering a SIGNAL to a container fails
-#      ("could not kill container: permission denied" — AppArmor is enforcing and the
-#      runtime is runc/docker-default). That is real, and it is why phase 3 reports 4
-#      skips.
+#   2. The ENGINE refused to deliver a SIGNAL. AppArmor mediates signals at BOTH ends:
+#      a container runs under `docker-default`, whose stock template has no rule
+#      admitting a *confined* sender. So a dockerd that is itself confined — snap
+#      docker runs as `snap.docker.dockerd` — cannot kill its own containers:
+#
+#        apparmor="DENIED" operation="signal" class="signal" profile="docker-default"
+#          requested_mask="receive" signal=kill peer="snap.docker.dockerd"
+#
+#      Confirm anywhere with: journalctl -k | grep 'class="signal"'. RESOLVED on this
+#      host by moving to the unconfined deb docker-ce daemon (an unconfined sender is
+#      not mediated); phase 3 went 12 passed/4 skipped -> 15 passed/1 skipped, and the
+#      per-run probe leak stopped. Kept here because the condition recurs on any host
+#      running a confined dockerd.
 #
 # USE THE VERB THE OBJECT'S STATE CALLS FOR. `docker rm -f` KILLS FIRST, unconditionally
 # — so on an already-EXITED container it fails on a kill that did not need to happen,
-# while plain `docker rm` succeeds instantly. An earlier version of this script ran
-# `rm -f` on everything, watched it fail, and concluded "the daemon cannot reap anything,
-# restart it." Both halves were wrong: a restart changed nothing (verified — the daemon
-# came up 3 minutes before the retest and `rm -f` failed identically), and every one of
-# the 13 "unreapable zombies" removed cleanly with `docker rm`.
+# while plain `docker rm` succeeds instantly.
 #
-# The check that produced that wrong conclusion tested `rm -f` on a RUNNING container and
+# THREE THEORIES, TWO WRONG, each killed by a measurement rather than an argument:
+#   "the daemon degrades under churn; restart it"  -> restart, identical denial. Worse:
+#       `systemctl restart docker` starts the *deb* service, so it was never a no-op.
+#   "two daemons fight over the `docker-default` name" -> deb stopped, snap restarted,
+#       denial byte-identical.
+#   "the SENDER is confined and the profile admits no confined peer" -> unconfined deb
+#       dockerd, `docker kill` rc=0, zero denials. Also isolated to AppArmor and not
+#       seccomp: `seccomp=unconfined` still denied, `apparmor=unconfined` worked.
+#
+# The check that produced the first two tested `rm -f` on a RUNNING container and
 # generalised to "reaping is broken" — asserting a mechanism (can it kill?) in place of
 # the outcome that mattered (can this specific object be removed?). So there is no global
 # precondition gate here any more. Each object is removed with the verb its state calls

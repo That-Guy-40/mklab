@@ -15,17 +15,33 @@ source "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
 require_docker
 require_cmd jq
 
-# Preflight: confirm docker stop works on this host.  Some setups (AppArmor
-# profiles that don't allow kill, containerd-snapshotter misconfigurations)
-# let containers start but refuse signal delivery — the second half of this
-# test explicitly stops a container and can't meaningfully skip just that part.
+# Preflight: confirm the daemon can actually SIGNAL a container.  Some hosts let
+# containers start but refuse signal delivery, and the second half of this test
+# explicitly stops one, so it cannot meaningfully skip just that part.
+#
+# MEASURED CAUSE (2026-08-01): AppArmor mediates signals at BOTH ends.  The container
+# runs under `docker-default`, whose stock template has no rule admitting a *confined*
+# sender — so when dockerd is itself confined (snap docker runs as
+# `snap.docker.dockerd`) the kernel denies it:
+#
+#   apparmor="DENIED" operation="signal" class="signal" profile="docker-default" \
+#     requested_mask="receive" signal=kill peer="snap.docker.dockerd"
+#
+# Confirm on any host with:  journalctl -k | grep 'class="signal"'
+# It is NOT seccomp (`--security-opt seccomp=unconfined` is still denied;
+# `--security-opt apparmor=unconfined` succeeds).  An UNCONFINED dockerd — the deb
+# docker-ce package — is not mediated, so switching daemons resolves it.
+#
+# The probe is left behind when this fires: it is still running and cannot be
+# signalled, so no form of `docker rm` can remove it.  tools/lab-sweep.sh clears it
+# once the host is fixed.
 _probe="probe-inspect-preflight-$$"
 docker run -d --name "$_probe" alpine:latest sleep 60 >/dev/null 2>&1 \
     || skip "cannot start containers (docker run failed)"
 sleep 1  # Ensure the container process is fully running before testing signals.
 if ! docker stop "$_probe" >/dev/null 2>&1; then
     docker rm -f "$_probe" >/dev/null 2>&1 || true
-    skip "docker stop not functional on this host (AppArmor / seccomp restriction)"
+    skip "docker stop blocked: AppArmor denies docker-default receiving signals from a confined dockerd (journalctl -k | grep 'class=\"signal\"')"
 fi
 docker rm -f "$_probe" >/dev/null 2>&1 || true
 

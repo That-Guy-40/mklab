@@ -6,16 +6,32 @@ set -euo pipefail
 
 require_docker
 
-# Preflight: confirm docker rm -f works on this host.  Hosts with AppArmor
-# profiles that block SIGKILL delivery (permission denied) can run + exec
-# fine but can never pass the destroy step.
+# Preflight: confirm the daemon can actually SIGNAL a container.  Such a host can
+# run + exec fine but can never pass the destroy step.
+#
+# MEASURED CAUSE (2026-08-01): AppArmor mediates signals at BOTH ends.  The container
+# runs under `docker-default`, whose stock template has no rule admitting a *confined*
+# sender — so when dockerd is itself confined (snap docker runs as
+# `snap.docker.dockerd`) the kernel denies the kill:
+#
+#   apparmor="DENIED" operation="signal" class="signal" profile="docker-default" \
+#     requested_mask="receive" signal=kill peer="snap.docker.dockerd"
+#
+# Confirm on any host with:  journalctl -k | grep 'class="signal"'
+# It is NOT seccomp: `--security-opt seccomp=unconfined` is still denied, while
+# `--security-opt apparmor=unconfined` succeeds.  An UNCONFINED dockerd (the deb
+# docker-ce package) is not mediated at all, so switching daemons resolves it.
+#
+# When this fires the probe is left behind on purpose — it is running and cannot be
+# signalled, so neither `docker rm` nor `docker rm -f` can remove it.  Sweep it after
+# fixing the host with tools/lab-sweep.sh.
 _probe="probe-rad-preflight-$$"
 docker run -d --name "$_probe" alpine:latest sleep 60 >/dev/null 2>&1 \
     || skip "cannot start containers (docker run failed)"
 sleep 1  # Ensure the container process is fully running before testing kill.
 if ! docker rm -f "$_probe" >/dev/null 2>&1; then
     docker rm "$_probe" >/dev/null 2>&1 || true
-    skip "docker rm -f not functional on this host (AppArmor / seccomp restriction)"
+    skip "docker rm -f blocked: AppArmor denies docker-default receiving SIGKILL from a confined dockerd (journalctl -k | grep 'class=\"signal\"')"
 fi
 
 name="t-run-$$"
