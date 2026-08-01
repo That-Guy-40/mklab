@@ -717,6 +717,17 @@ networking. It does not:
    safe placement, and the engine `lab-lxd.sh` reaches for by default — Incus — is the
    one to be careful with.
 
+> ⚠️ **FALSIFIED 2026-08-01 by slice 2 — see
+> [F.6](#f6-additive-was-not-safe--the-tap-captured-a-live-clusters-tunnel).** Creating one
+> tap, with one address, setting no global, still caused the live cluster's VXLAN tunnel
+> endpoint to migrate onto it; deleting the tap removed `vxlan.calico`, restarted
+> `kubelite`/`calico-node`, and recreated the pods. It self-healed in under a minute, and it
+> was still an outage we caused. **Additive is not the same as inert** — a new interface is
+> an event a live CNI reacts to. Slice 3 creates a *bridge*, a larger surface than one tap;
+> it must record Calico's tunnel binding at pre-flight and compare it at teardown (which is
+> the only reason this was caught at all), and it must either use an address Calico will not
+> adopt or have the operator pin `IP_AUTODETECTION_METHOD`.
+
 **And the upside is larger than the risk.** There is already a real cloud control plane with
 a real CNI on this box. Comparing your fabric to Calico's overlay, side by side, on one
 host, is a far better capstone than "five instances ping each other" — and it partially
@@ -1763,9 +1774,13 @@ an ordinary user — the outcome P2 measured rather than assumed (Appendix B).
 
 Built to §7.1 because that constraint is live on this host: it **refuses before the
 irreversible step** (exits if `mc-tap0` exists, or if anything already routes
-`10.71.0.0/24`), creates exactly one interface with one address, touches **no global**, and
-*records* `ip_forward=1` instead of setting it. Teardown asserts absence and re-checks
-Calico, per §7.2.
+`10.71.0.0/24`), creates exactly one interface with one address, sets **no global**, and
+*records* `ip_forward=1` instead. Teardown asserts absence and re-checks Calico, per §7.2.
+
+> ⚠️ **And "sets no global" turned out not to mean "is harmless" — see
+> [F.6](#f6-additive-was-not-safe--the-tap-captured-a-live-clusters-tunnel).** Creating the
+> interface was itself an event the live Calico reacted to. §7.1's central assumption did
+> not survive slice 2.
 
 **Unplanned negative control:** the operator ran `up` twice. The second run refused —
 `SKIP: mc-tap0 already exists` — instead of clobbering a device it had not created.
@@ -1854,3 +1869,68 @@ done
 
 It is the same lesson as every other appendix here, pointed at the tool instead of the
 subject: **the cheap check answers a different question than the one being asked.**
+
+### F.6 "Additive" was not safe — the tap captured a live cluster's tunnel
+
+**This is the most important result in slice 2, and it falsifies §7.1's central assumption.**
+
+`up` recorded, at creation time:
+
+```
+  calico: local 10.45.178.1 dev incusbr0
+```
+
+`down`, run later, recorded **before** deleting anything:
+
+```
+  FAIL: calico moved: 'local 10.71.0.1 dev mc' -> ''
+```
+
+`10.71.0.1 dev mc-tap0` **is our tap** (the evidence string is truncated by a regex bug,
+below). So between `up` and `down`, **the live cluster's VXLAN tunnel endpoint migrated off
+`incusbr0` and onto the interface we had just created** — and deleting that interface took
+`vxlan.calico` with it, because removing a VXLAN's underlay device removes the VXLAN.
+
+**Measured impact, on someone else's running Kubernetes:**
+
+| | |
+|---|---|
+| `kubelite` restarted | 18:31:59 |
+| `calico-node` restarted | 18:32:05 |
+| pod addresses | `10.1.24.161`/`.179` → `10.1.24.169`/`.173` — **the pods were recreated** |
+| recovery | self-healed; `vxlan.calico` rebound to `incusbr0`, stable on resample |
+
+It recovered on its own inside a minute. It was still an outage we caused.
+
+**What this does to §7.1.** The rule was *"be additive, touch no global, revert only what you
+set."* We obeyed all three — one interface, one address, `ip_forward` recorded and never
+written — and still disrupted the cluster, because **creating an interface is itself an
+event a live CNI reacts to.** Calico re-detects its node IP, and a new interface is a
+candidate. Additive is not the same as inert.
+
+**Established vs inferred, kept apart.** *Established:* the tunnel was on `mc-tap0` before
+teardown, it vanished with the tap, and the control plane restarted. *Not established:* why
+Calico selected `mc-tap0` — its default `first-found` autodetection should prefer the
+lower-index `incusbr0`, so either the method here is not the default or a re-detection was
+triggered by something we have not identified. The mechanism is proven; the selection rule
+is not, and slice 3 must not assume it.
+
+**Consequences for slice 3, which is the fabric slice:**
+
+1. **The pre-flight must record Calico's tunnel binding, and teardown must compare it** —
+   which this script already did, and it is the only reason we know any of this.
+2. **A new interface needs an address Calico will not adopt**, or Calico's
+   `IP_AUTODETECTION_METHOD` must be pinned. Pinning is changing someone else's config, so
+   it is a decision for the operator, not a default the fabric takes.
+3. **§7.2 is vindicated exactly as written.** "Teardown asserts absence afterwards and fails
+   loudly otherwise" caught a live-system incident that a cleanup returning 0 would have
+   hidden completely. The assertion was worth more than the feature.
+4. **Do this work on a host without a live cluster, or accept it will bite again.** The plan
+   called coexistence "the upside" (§7.1). It is also the risk, and slice 3 creates a
+   *bridge*, which is a larger surface than one tap.
+
+**A real bug in the instrument, too.** `calico_state()` matched `dev [a-z0-9]*`, which
+cannot match the `-` in `mc-tap0`, so the evidence printed `dev mc`. The *comparison* was
+sound — before ≠ after — so the assertion fired correctly, but the string it showed the
+operator was wrong. Fixed to `[a-z0-9.-]*`. A truncated fact in a failure message is how a
+correct alarm gets dismissed as a glitch.
