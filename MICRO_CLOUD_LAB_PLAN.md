@@ -547,7 +547,18 @@ curl -s -H "X-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/in
 ```
 
 The same magic IP you have hit on every EC2 box, on your laptop, served by a process you
-started, with contents you can read on disk. It also grounds the security lesson: MMDS V2's
+started, with contents you can read on disk.
+
+> **Observed 2026-08-01, slice 2 ([Appendix F](#appendix-f--slice-2-the-microvm-gets-an-identity-2026-08-01)).**
+> Token `len=48`; `instance-id` read inside the guest matched the host's `PUT`; the same GET
+> **without** a token returned **`401`**, and a key nobody `PUT` returned **`404`**. The whole
+> probe cost 0.01 s.
+>
+> **One prerequisite the section did not name:** MMDS V2 needs an HTTP **`PUT`**, and busybox
+> wget has only `--post-data`/`--post-file`. A stock Alpine minirootfs therefore **cannot do
+> the V2 handshake at all**. Running it from the host instead would test a different seam and
+> prove nothing about the guest, so the guest image needs a real client — a constraint for
+> §5.2's schema at slice 4, not a detail of one spike. It also grounds the security lesson: MMDS V2's
 token exists because V1 plus an SSRF bug is how cloud credentials get stolen.
 
 **Three ways to do metadata, all present here** — config-drive (NoCloud seed, QEMU), IMDS
@@ -1048,7 +1059,7 @@ exercise · break**, and the break pass writes into `LEDGER.md`.
 |---|---|---|---|---|
 | **0** | **Preflight** | **P1 done** (Appendix A). **P2**: `nft list tables`, debootstrap a chroot, tap create/delete, fetch+verify FC `v1.16.1` | the assumption table is filled in; 3 UNKNOWNs resolved | a beginner walks one `START_HERE_*_WIZARD.md` end to end and reports where it lies |
 | **1** ✅ | **One microVM, by hand** — **DONE 2026-08-01, [Appendix E](#appendix-e--slice-1-one-microvm-by-hand-2026-08-01)** | ext4 from a chroot (Alpine **and** Debian); a `vmlinux`; boot with `--no-api --config-file`; boot again over the REST API with `curl` | **login prompt at 0.55 s**, zero variance over 4 runs; Alpine 8.2 MB tree / 64 MB image and Debian 215 MB / 363 MB — **26× the size, identical boot time** | all four run: `panic=1` dropped → **hung until killed (1.63 s vs 20 s+)**; `is_root_device` flipped → **found FC's arg append**; `ip=` bent → **23× silent regression**; `extract-vmlinux` → **decision B = yes** |
-| **2** | **The microVM gets an identity** | one tap, no bridge; MMDS `PUT` from the host. **Carries slice 1's `ip=` guard: assert `ip=` appears in `boot_args` iff a `network-interfaces` entry exists** (§5.4 hole 4) | read `instance-id` from `169.254.169.254` *inside* the guest; V2 token by hand. **Boot time stays ≈0.55 s — a jump to ~12 s means `ip=` is waiting on a NIC that isn't there** | V1 vs V2 and why V1 + SSRF leaks credentials; ask MMDS for a key never `PUT`; **drop the NIC but keep `ip=` and watch the 23× stall with no error printed** |
+| **2** ✅ | **The microVM gets an identity** — **DONE 2026-08-01, [Appendix F](#appendix-f--slice-2-the-microvm-gets-an-identity-2026-08-01)** | one tap, no bridge (root only for `ip tuntap add`; FC opened it unprivileged); MMDS `PUT` over the API socket | **V2 token handshake by hand from inside the guest** (`len=48`), `instance-id` read at `169.254.169.254` matching the host's `PUT`; boot **0.57 s** with the NIC | **no-token GET → `401`** (the SSRF lesson, observed); never-`PUT` key → `404`; **NIC dropped with `ip=` kept → 12.84 s, 22.5×**, the guard's tripwire reproduced on a second rootfs |
 | **3** | **Two microVMs that reach each other** | `fabric.sh up/down/status` — additive nft, recorded `ip_forward`, dnsmasq as DHCP **and** DNS | `api1` pings `api2` **by name**; `down` asserts absence of *our* objects only | delete the bridge under a running VM; exhaust the DHCP pool; leave a stale tap; **confirm Calico still works** |
 | **4** | **The tool, and what it hides** | `lab-fc.sh` + `preflight`; **derive** §5.2's schema from slices 1–3 | one command, same boot; `--dry-run` diffed against slice 1's hand-written `config.json` | the preflight tripwire; **name what the tool silently started doing for you** — that list is the deliverable. Watch for the §8.3 verb tripwire |
 | **5** | **A second engine on one fabric** | add the QEMU `edge` (Phase 2 already does bridge mode) | two engines, one L2, one `--lab` view | kill one engine's daemon, see what the other reports. **Answer decision E** |
@@ -1736,3 +1747,110 @@ memory and storage rather than by how fast a guest reaches userspace.
 **Scope limit, stated rather than implied:** both images run **busybox init**, which is what
 makes the comparison fair — same init, different userspace size. A systemd Debian would not
 look like this, and this measurement says nothing about that case.
+
+---
+
+## Appendix F — slice 2, the microVM gets an identity, 2026-08-01
+
+**Workdir:** `~/.local/state/lab-create/micro-cloud-s2/`. **One privileged step in the whole
+slice** — creating the tap. Everything else, including opening that tap, ran unprivileged.
+
+### F.1 The tap, and why only this needed root
+
+`ip tuntap add dev mc-tap0 mode tap user sqs` + one address + `link set up`. Creating a tap
+is `CAP_NET_ADMIN`; **owning** it is not, so Firecracker then opened it via `TUNSETIFF` as
+an ordinary user — the outcome P2 measured rather than assumed (Appendix B).
+
+Built to §7.1 because that constraint is live on this host: it **refuses before the
+irreversible step** (exits if `mc-tap0` exists, or if anything already routes
+`10.71.0.0/24`), creates exactly one interface with one address, touches **no global**, and
+*records* `ip_forward=1` instead of setting it. Teardown asserts absence and re-checks
+Calico, per §7.2.
+
+**Unplanned negative control:** the operator ran `up` twice. The second run refused —
+`SKIP: mc-tap0 already exists` — instead of clobbering a device it had not created.
+
+### F.2 MMDS V2, by hand, from inside the guest
+
+Host `PUT`s over the API socket, guest reads `169.254.169.254`:
+
+```
+MICROVM-UP uptime=0.57s
+  addr: 10.71.0.11/24
+  V2 token: len=48
+  V2 instance-id: [api1]
+  V1-style no-token HTTP: 401
+  never-PUT key HTTP: 404
+MMDS-PROBE-END uptime=0.58s
+```
+
+Every §5.7 claim, observed: the token handshake works by hand; `instance-id` read inside the
+guest matches what the host `PUT`; **the same GET without a token is refused `401`** — that
+is the V1-plus-SSRF lesson made concrete rather than described; and a key nobody `PUT`
+returns `404` rather than something invented. The whole probe cost **0.01 s**.
+
+### F.3 The guest could not speak V2 — and the fix was not a better host-side tool
+
+**Measured before building anything:** MMDS V2 requires `PUT /latest/api/token`, and
+busybox wget offers only `--post-data`/`--post-file`. **No PUT.** The Alpine minirootfs has
+no other client, so the stock guest *cannot* do the V2 handshake at all.
+
+The tempting fix — run the handshake from the host with the host's curl — tests **a
+different seam** and proves nothing about the guest (CLAUDE.md: *drive the client the
+machine actually has*). So the client went **into the guest**: `podman run alpine → apk add
+curl → podman export`, i.e. Phase 4's engine at reuse-ladder rung 1, rootless, producing a
+96 MB image with curl 8.14.1. **A microVM guest image needs a real HTTP client if metadata
+is part of its contract**, and that belongs in the §5.2 schema discussion at slice 4.
+
+### F.4 The `ip=` guard now has a tripwire, observed twice
+
+Same config, the only difference being whether a `network-interfaces` entry exists:
+
+| | with NIC | without NIC, `ip=` kept |
+|---|---|---|
+| to userspace | **0.57 s** | **12.84 s** |
+| stall | — | `+12.29 s` after `t=0.5647 s` |
+| `addr:` | `10.71.0.11/24` | *(empty)* |
+| MMDS token | `len=48` | `len=0` |
+
+22.5×, and the stall sits at the identical point slice 1 found it (§5.4 hole 4) — now
+reproduced on a **different rootfs**, so it is a property of the kernel's IP
+autoconfiguration and not of one image. `ip=` **with** a NIC costs ~0.02 s, so the guard is
+correctly stated as *iff a `network-interfaces` entry exists*.
+
+**A guest CAN tell the difference, if it checks the status code:**
+
+| condition | HTTP |
+|---|---|
+| MMDS reachable, no token | `401` |
+| MMDS reachable, key never `PUT` | `404` |
+| **MMDS unreachable (no NIC)** | **`000`** (curl could not connect) |
+
+So "metadata is missing" and "metadata is empty" are distinguishable — but only by reading
+the code. A consumer that takes the body and ignores the status sees an empty string in all
+three cases, which is the stale-record failure in miniature.
+
+### F.5 The instrument killed its own shell
+
+Cleaning up, `pgrep -f 'firecracker-v1.16.1'` was run from a shell whose own command text
+contained that literal string. **pgrep matched the searcher**, reported it as a stray, and
+killing that PID terminated the session's shell — **exit 144, the second time in this
+repo's history**, and in the same session that promoted "kill by PID, never by pattern" to
+the global rules.
+
+There were **zero** real Firecracker processes. The recorded `$!` PIDs had reaped correctly
+all along; the "strays" were an artifact of the measurement.
+
+The sharper rule, now recorded: **`pgrep -f` is unsafe for a name you are also typing** —
+the match set always includes the process doing the search. Use the executable, not a
+substring of a command line:
+
+```bash
+for p in /proc/[0-9]*; do
+  exe="$(readlink "$p/exe" 2>/dev/null)" || continue
+  case "$exe" in *firecracker*) echo "${p#/proc/} $exe";; esac
+done
+```
+
+It is the same lesson as every other appendix here, pointed at the tool instead of the
+subject: **the cheap check answers a different question than the one being asked.**
