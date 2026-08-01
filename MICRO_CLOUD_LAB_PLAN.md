@@ -727,6 +727,15 @@ networking. It does not:
 > it must record Calico's tunnel binding at pre-flight and compare it at teardown (which is
 > the only reason this was caught at all), and it must either use an address Calico will not
 > adopt or have the operator pin `IP_AUTODETECTION_METHOD`.
+>
+> **RESOLVED 2026-08-01 — the rule was derived from the running binary, and §7's existing
+> naming already satisfies it. See
+> [F.7](#f7-the-selection-rule-derived--and-7-already-satisfied-it).** Two constraints, now
+> explicit rather than lucky: **the fabric bridge must be named `br-*`** (Calico v3.28.1
+> excludes `^br-.*`, and §7 already calls it `br-mc0`), and **taps must carry no IPv4
+> address** — an interface without one is never a `first-found` candidate. Slice 2 violated
+> the second only because it had no bridge to hold the address. **No operator change to the
+> cluster is required.**
 
 **And the upside is larger than the risk.** There is already a real cloud control plane with
 a real CNI on this box. Comparing your fabric to Calico's overlay, side by side, on one
@@ -1071,7 +1080,7 @@ exercise · break**, and the break pass writes into `LEDGER.md`.
 | **0** | **Preflight** | **P1 done** (Appendix A). **P2**: `nft list tables`, debootstrap a chroot, tap create/delete, fetch+verify FC `v1.16.1` | the assumption table is filled in; 3 UNKNOWNs resolved | a beginner walks one `START_HERE_*_WIZARD.md` end to end and reports where it lies |
 | **1** ✅ | **One microVM, by hand** — **DONE 2026-08-01, [Appendix E](#appendix-e--slice-1-one-microvm-by-hand-2026-08-01)** | ext4 from a chroot (Alpine **and** Debian); a `vmlinux`; boot with `--no-api --config-file`; boot again over the REST API with `curl` | **login prompt at 0.55 s**, zero variance over 4 runs; Alpine 8.2 MB tree / 64 MB image and Debian 215 MB / 363 MB — **26× the size, identical boot time** | all four run: `panic=1` dropped → **hung until killed (1.63 s vs 20 s+)**; `is_root_device` flipped → **found FC's arg append**; `ip=` bent → **23× silent regression**; `extract-vmlinux` → **decision B = yes** |
 | **2** ✅ | **The microVM gets an identity** — **DONE 2026-08-01, [Appendix F](#appendix-f--slice-2-the-microvm-gets-an-identity-2026-08-01)** | one tap, no bridge (root only for `ip tuntap add`; FC opened it unprivileged); MMDS `PUT` over the API socket | **V2 token handshake by hand from inside the guest** (`len=48`), `instance-id` read at `169.254.169.254` matching the host's `PUT`; boot **0.57 s** with the NIC | **no-token GET → `401`** (the SSRF lesson, observed); never-`PUT` key → `404`; **NIC dropped with `ip=` kept → 12.84 s, 22.5×**, the guard's tripwire reproduced on a second rootfs |
-| **3** | **Two microVMs that reach each other** | `fabric.sh up/down/status` — additive nft, recorded `ip_forward`, dnsmasq as DHCP **and** DNS | `api1` pings `api2` **by name**; `down` asserts absence of *our* objects only | delete the bridge under a running VM; exhaust the DHCP pool; leave a stale tap; **confirm Calico still works** |
+| **3** | **Two microVMs that reach each other** | `fabric.sh up/down/status` — additive nft scoped by `iifname`, recorded `ip_forward`, dnsmasq as DHCP **and** DNS. **Bridge MUST be named `br-mc0`** (Calico v3.28.1 excludes `^br-.*`) and **taps MUST carry no IPv4 address** — [F.7](#f7-the-selection-rule-derived--and-7-already-satisfied-it) | `api1` pings `api2` **by name**; `down` asserts absence of *our* objects only; **pre-flight records Calico's tunnel binding and teardown compares it** — the assertion that caught [F.6](#f6-additive-was-not-safe--the-tap-captured-a-live-clusters-tunnel) | delete the bridge under a running VM; exhaust the DHCP pool; leave a stale tap; **confirm Calico still works** — and give a tap an address on purpose to watch it become an autodetection candidate |
 | **4** | **The tool, and what it hides** | `lab-fc.sh` + `preflight`; **derive** §5.2's schema from slices 1–3 | one command, same boot; `--dry-run` diffed against slice 1's hand-written `config.json` | the preflight tripwire; **name what the tool silently started doing for you** — that list is the deliverable. Watch for the §8.3 verb tripwire |
 | **5** | **A second engine on one fabric** | add the QEMU `edge` (Phase 2 already does bridge mode) | two engines, one L2, one `--lab` view | kill one engine's daemon, see what the other reports. **Answer decision E** |
 | **6** | **The control plane** | whichever §8.3 shape slice 5 argued for; `fc.py` backend + topology slot; revisit decision G | all instances in one tree; `apply` a no-op on pass two, if the seam supports it | make the registry disagree with reality — MAAS's registry-layer fault, ported |
@@ -1934,3 +1943,71 @@ cannot match the `-` in `mc-tap0`, so the evidence printed `dev mc`. The *compar
 sound — before ≠ after — so the assertion fired correctly, but the string it showed the
 operator was wrong. Fixed to `[a-z0-9.-]*`. A truncated fact in a failure message is how a
 correct alarm gets dismissed as a glitch.
+
+### F.7 The selection rule, derived — and §7 already satisfied it
+
+[F.6](#f6-additive-was-not-safe--the-tap-captured-a-live-clusters-tunnel) left the mechanism
+proven and the **selection rule** unknown, and warned slice 3 not to assume it. It is now
+derived, from the deployment rather than from documentation — which matters, because the
+documented default is what the observation appeared to contradict.
+
+**The setting (read from the DaemonSet):** `IP_AUTODETECTION_METHOD = first-found`,
+`IP = autodetect`, image `docker.io/calico/node:v3.28.1`. Calico's own node annotation reads
+`projectcalico.org/IPv4Address: 10.45.178.1/24` — `incusbr0`.
+
+**The exclusion list, extracted from that exact binary** (`podman cp` out of
+`calico/node:v3.28.1`; `kubectl exec` was blocked by a pre-existing kubelet cert mismatch —
+the serving cert is valid for `192.168.1.177` while the node is `192.168.1.106`):
+
+```
+^br-.*   ^cali.*   ^cbr.*   ^cni.*   ^docker.*   ^dummy.*   ^flannel.*
+^kube-ipvs.*   ^lxcbr.*   ^nodelocaldns.*   ^podman.*   ^tunl.*   ^veth.*   ^virbr.*
+```
+
+Two entries are worth pausing on: `^br-.*` and `^podman.*` (a newer addition), and — a trap
+for a host like this one — **`^lxcbr.*` does not match `lxdbr0`**, so LXD's bridge is a
+candidate while libvirt's `virbr0` is not.
+
+**The host, scored against it:**
+
+| idx | iface | state | address | candidate? |
+|---|---|---|---|---|
+| 1 | `lo` | — | 127.0.0.1/8 | no (loopback) |
+| **2** | `enx00051b8eb138` | **UP** | 192.168.1.106/24 | **yes** |
+| 5 | `docker0` | UP | 172.17.0.1/16 | no — `^docker.*` |
+| 6, 7 | `virbr0`, `virbr-vbmc` | DOWN | … | no — `^virbr.*` |
+| 9 | `lxdbr0` | **DOWN** | 10.216.67.1/24 | no — not UP |
+| 17 | `incusbr0` | **UP** | 10.45.178.1/24 | **yes** ← chosen |
+
+**Rule:** lowest-index interface that is **UP**, carries an **IPv4 address**, and matches
+**no** exclusion pattern.
+
+**What is still not explained, and is left as such:** `enx00051b8eb138` is index 2, UP, and
+not excluded, so it should have won and did not. The most likely reading is that the
+candidate set on this host is **volatile** — it is a *USB* NIC, and both bridges drop to
+`DOWN` whenever they have no members — so the node IP is settled by whichever candidates
+happened to be UP at the last detection, and Calico does not re-detect until it restarts.
+That also explains `mc-tap0` (index 207) winning in F.6: it may have been the only UP
+candidate at that moment. **Inference, not measurement** — and independently of this lab it
+means the cluster's node IP can migrate with nobody touching the host.
+
+### F.7.1 The constraint slice 3 actually needs
+
+Two rules, and §7 already satisfies both — by luck, which is precisely why they are being
+written down:
+
+1. **The fabric bridge must be named `br-*`.** §7 already calls it **`br-mc0`**, which
+   matches `^br-.*` and is therefore *structurally* invisible to autodetection. Docker's own
+   `br-a7bf99683c8d` is excluded by the same rule.
+2. **Taps must carry no IPv4 address.** An interface without one is never a candidate,
+   whatever it is called. Slice 2's `mc-tap0` was a candidate **only because slice 2 has no
+   bridge** — the tap had to hold `10.71.0.1` itself. That configuration is the exception,
+   and it is the one that bit us.
+
+**No change to the operator's cluster is required.** Pinning `IP_AUTODETECTION_METHOD` was
+the fallback in F.6; it is not needed, which is the better outcome — a lab that has to
+reconfigure someone else's CNI to be safe is not a lab you can hand to anyone else.
+
+**And the pre-flight/teardown comparison stays**, regardless. The rule above is derived from
+one host at one version; the assertion that caught F.6 costs nothing and does not depend on
+the rule being right.
