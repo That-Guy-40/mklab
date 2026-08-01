@@ -35,15 +35,32 @@ Then bring it up with the command in Option C.
 
 ### 1. Install and initialise (one-time)
 
+**Check first — `init` is only for a daemon that has never been set up.**
+
+```bash
+incus admin init --dump      # read-only: prints the CURRENT config, changes nothing
+```
+
+- **Errors, or prints nothing useful** → the daemon is uninitialised. Run the setup below.
+- **Prints `storage_pools:` / `networks:` with real entries** → **it is already set up.
+  Skip the `init` line entirely** and go to step 2.
+
+> **Why this check exists.** `init --auto` creates a default storage pool *and a bridge
+> network*. On a host where the daemon is already in use, that bridge may be carrying
+> something you did not put there — on this repo's own host, `incusbr0` holds the VXLAN
+> tunnel endpoint of a live Kubernetes cluster that nothing in Incus is running (see
+> [`MICRO_CLOUD_LAB_PLAN.md`](../MICRO_CLOUD_LAB_PLAN.md) Appendix D). Re-initialising is
+> not a harmless no-op to *find out* about.
+
 ```bash
 # Incus (recommended — actively maintained fork):
 sudo apt-get install -y incus jq yq
 sudo usermod -aG incus-admin "$USER" && newgrp incus-admin
-sudo incus admin init --auto   # creates default storage pool + bridge network
+sudo incus admin init --auto   # ONLY if --dump above showed an uninitialised daemon
 
 # OR LXD (Canonical's original):
 # sudo snap install lxd
-# sudo lxd init --auto
+# sudo lxd init --auto         # same caveat: only on a fresh daemon
 # sudo usermod -aG lxd "$USER" && newgrp lxd
 ```
 

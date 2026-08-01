@@ -647,8 +647,9 @@ networking. It does not:
 | `virbr0` | 192.168.122.0/24 | libvirt `default` | leave |
 | `docker0` | 172.17.0.0/16 | docker (**two** daemons: system + snap) | leave |
 | `br-a7bf99683c8d` | 172.18.0.0/16 | docker net `lab-ttd122729-front` | leave |
-| `lxdbr0` | **10.216.67.0/24** | LXD — **and the k8s VXLAN underlay** | leave, load-bearing |
-| `vxlan.calico` | 10.1.24.128/32 (+ blackhole /26) | **live Calico CNI** | leave, load-bearing |
+| ~~`lxdbr0`~~ | **10.216.67.0/24** | ~~LXD — **and the k8s VXLAN underlay**~~ — **wrong, corrected 2026-08-01, see [D.1](#d1-the-correction--the-vxlan-underlay-is-incusbr0-and-the-empty-daemon-is-the-load-bearing-one)**. Carries one veth: mklab's own leftover test container | leave |
+| `incusbr0` | **10.45.178.0/24** | Incus — **and Calico's VXLAN tunnel endpoint** (`local 10.45.178.1 dev incusbr0`). **Zero enslaved members** | leave, **load-bearing** |
+| `vxlan.calico` | 10.1.24.128/32 (+ blackhole /26) | **live Calico CNI** — microk8s v1.32.13, on the **host** | leave, load-bearing |
 
 **`10.71.0.0/24` is genuinely free** — verified, not guessed. Three consequences it did
 *not* survive:
@@ -665,8 +666,13 @@ networking. It does not:
    **additive and separately named**, teardown must delete only `mklab-mc` — but the model
    to copy is now specific: **`inet lxd`'s per-bridge chain layout**, and the ruleset is
    **re-read at `up`**, never cached.
-3. **§9.2 puts `db` on LXD** — the same LXD hosting the Kubernetes. Not fatal, but LXD is
-   not an idle phase tool on this host.
+3. ~~**§9.2 puts `db` on LXD** — the same LXD hosting the Kubernetes.~~ — **corrected
+   2026-08-01, see [D.1](#d1-the-correction--the-vxlan-underlay-is-incusbr0-and-the-empty-daemon-is-the-load-bearing-one).**
+   LXD hosts **no** Kubernetes; microk8s runs on the host. The real constraint points the
+   **other way**: it is **`incusbr0`** that carries Calico's tunnel endpoint, while
+   `lxdbr0` carries nothing but this repo's own test debris. So `db` on **LXD** is the
+   safe placement, and the engine `lab-lxd.sh` reaches for by default — Incus — is the
+   one to be careful with.
 
 **And the upside is larger than the risk.** There is already a real cloud control plane with
 a real CNI on this box. Comparing your fabric to Calico's overlay, side by side, on one
@@ -810,7 +816,7 @@ examples/micro-cloud/
 |---|---|---|---|
 | `edge` | QEMU VM | TLS reverse proxy, cert from [`lab-ca`](examples/lab-ca/README.md) | full network stack + cloud-init; the fidelity case |
 | `api1`, `api2` | **Firecracker** | two identical app microVMs behind `edge` | the density case; MMDS gives each its own identity from one image |
-| `db` | LXD/Incus | stateful "pet" with its own init | the system-container case ⚠️ §7.1: LXD also hosts the k8s here |
+| `db` | **LXD (`lxc`), pinned** | stateful "pet" with its own init | the system-container case. **Not Incus** — `incusbr0` carries Calico's VXLAN endpoint ([D.1](#d1-the-correction--the-vxlan-underlay-is-incusbr0-and-the-empty-daemon-is-the-load-bearing-one)); `lab-lxd.sh` prefers Incus, so this must be pinned, not probed |
 | `metrics` | podman | rootless sidecar | the OCI case, rootless |
 
 ### 9.3 The capstone question — isolation, not ping
@@ -986,7 +992,7 @@ environment, with a RUNBOOK that says **why** at each step.
 
 | Risk | Reality | Mitigation |
 |---|---|---|
-| **A live Kubernetes + Calico shares this host** | 5 `calico-node` procs; `vxlan.calico` up over `lxdbr0`; `ip_forward` already `1`; nft ownership unreadable unprivileged | §7.1/§7.2: additive nft table, revert only what we set, teardown asserts absence of *our* objects only. **New top risk in v3** |
+| **A live Kubernetes + Calico shares this host** | **microk8s v1.32.13 on the host** (`kubelite`, `k8s-dqlite`, `calico-node`/`felix`); `vxlan.calico` up over **`incusbr0`**, ~~`lxdbr0`~~ ([D.1](#d1-the-correction--the-vxlan-underlay-is-incusbr0-and-the-empty-daemon-is-the-load-bearing-one)); `ip_forward` already `1`; 140 Calico rules in **legacy xtables** ([B.2](#b2-the-second-firewall--and-the-bug-p2-committed-while-hunting-it)) | §7.1/§7.2: additive nft table scoped by `iifname`, revert only what we set, teardown asserts absence of *our* objects only. **Do not reconfigure `incusbr0`.** **New top risk in v3** |
 | ~~No KVM~~ / ~~egress blocked~~ | **Void** — P1: `KVM_CREATE_VM` ok; releases API 200 | pin upstream's `.sha256.txt`; the *fetch* stays author-run |
 | **Scope creep into mini-OpenStack** | Very real, and a learning goal makes it **worse** — every subsystem is interesting on purpose | §0.1's slice rule; §15 demoted; one fabric, no scheduler, no multi-tenancy, no HA |
 | **Understanding the config instead of the machine** | The likeliest way this feels done while not being understood | §10 splits generator from behaviour tests and names what each does *not* prove; a break-it pass per slice |
@@ -1193,14 +1199,22 @@ New, surfaced while writing v3 and not yet decided:
    what `up` set (because `ip_forward` was already `1` and a live Kubernetes depends on it).
    That needs a mechanism — a statefile in the fabric's state dir naming each global it
    touched and the prior value. Small, but it is load-bearing and currently unspecified.
-8. **`incus` or `lxc`?** Both are on `PATH` (P1). `phase5-lxd` drives whichever via
-   `$LXC_CMD`. Micro-cloud should state which it targets, especially since **LXD is hosting
-   the live Kubernetes on this host**.
-9. **Does `db` on LXD still make sense (§9.2)?** It is the natural system-container
-   example, and it is also the engine currently running someone else's cluster. Options:
-   keep it and treat coexistence as part of the lesson; move `db` to another engine; or run
-   it on `incus` while the k8s is on `lxc`, if those are genuinely separate installs —
-   which question 8 has to answer first.
+8. ~~**`incus` or `lxc`?**~~ — **SETTLED 2026-08-01: `lxc` (LXD), pinned explicitly.**
+   See [D.1](#d1-the-correction--the-vxlan-underlay-is-incusbr0-and-the-empty-daemon-is-the-load-bearing-one).
+   They are genuinely separate installs (snap LXD 5.21.5 vs deb Incus 7.2), and the
+   premise in the original question — that LXD hosts the Kubernetes — was **false**.
+   The decisive fact is the opposite one: **Calico's VXLAN tunnel endpoint lives on
+   `incusbr0`** (`local 10.45.178.1 dev incusbr0`), while `lxdbr0` carries nothing but
+   this repo's own leftover test container. **Pin it**, do not let `probe_engine` choose:
+   `lab-lxd.sh` prefers Incus whenever its daemon answers, so the default is the engine
+   we least want to disturb.
+9. ~~**Does `db` on LXD still make sense (§9.2)?**~~ — **DISSOLVED 2026-08-01.** The
+   question existed only because LXD was believed to be "running someone else's cluster."
+   It is not. `db` on LXD is the *safe* placement, and it is now pinned in §9.2. The
+   coexistence lesson the question was reaching for is still real — it just lives
+   somewhere else: **microk8s on the host**, whose Calico dataplane is 140 rules in legacy
+   xtables ([B.2](#b2-the-second-firewall--and-the-bug-p2-committed-while-hunting-it)) and
+   whose tunnel endpoint is on a container-engine bridge nobody put it on deliberately.
 10. **How do the web wizards share code with the TUI's?** (§8.2's gap.) If the web port
     reimplements `generate_toml()`, there are **two spec generators that can disagree** —
     this repo's signature bug, in a place a novice would meet it first. The port should
@@ -1261,7 +1275,7 @@ so the script **exits non-zero if no XFAIL fires.**
 | UNKNOWN | §6.3a | FC CI **kernel** artifact URL | **NOT PINNED — I will not guess a bucket path and report a verdict on it** |
 | PASS | §7 | `10.71.0.0/24` unclaimed | no route, no bridge |
 | **FAIL** | §7 | `ip_forward` is ours to set **and revert** | **already `1`** — teardown must not revert what it did not set |
-| **FAIL** | §7,§13 | the forwarding path has no other owner | **5 live `calico-node`; `vxlan.calico` over `lxdbr0`** |
+| **FAIL** | §7,§13 | the forwarding path has no other owner | **5 live `calico-node`; `vxlan.calico` over `lxdbr0`** — the *verdict* stands; the underlay device is **wrong**, it is `incusbr0` ([D.1](#d1-the-correction--the-vxlan-underlay-is-incusbr0-and-the-empty-daemon-is-the-load-bearing-one)) |
 | UNKNOWN | §7,§13 | who owns the nftables ruleset | `nft list tables` needs root — P2 |
 | PASS | §9.2 | engines reachable | `qemu-system-x86_64`, `podman`, `docker`, `incus`, `lxc` |
 | PASS | §8.1 | the phase1–5 wizards still pass | **28 passed** |
@@ -1494,3 +1508,74 @@ string the author happened to write today, and cannot fail when someone improves
   incus is **already initialised**. Not executed here (sudo, and mutating). It needs either
   a verified "it refuses harmlessly" line or a skip-if-initialised note — currently the
   document asks a novice to re-initialise a live daemon and says nothing about it.
+
+---
+
+## Appendix D — where the Kubernetes actually is, 2026-08-01
+
+Appendix C's side findings (§C.5) reported that `lab-lxd.sh` prefers Incus, which had a
+storage pool and **zero instances**, while LXD carried three instances with one running —
+and concluded the tool "reaches for the empty daemon." That framing was about to settle
+§17.4 questions 8 and 9 in exactly the wrong direction.
+
+**Instance count is a mechanism reading.** It says nothing about what a daemon's *bridge*
+carries. Measuring that inverted the answer.
+
+### D.1 The correction — the VXLAN underlay is `incusbr0`, and the empty daemon is the load-bearing one
+
+Three separate beliefs were wrong, each of them a cached fact nobody had re-derived:
+
+| the belief | the measurement |
+|---|---|
+| "LXD is hosting the live Kubernetes on this host" | **No Kubernetes in LXD at all.** It is **microk8s v1.32.13** (snap, classic) running **directly on the host**: `kubelite`, `k8s-dqlite`, `kube-controllers`, `calico-node`/`felix`. There is no `kubelet` process because microk8s bundles the control plane into one binary — which is why a `pgrep kubelet` says "no cluster here" |
+| "`vxlan.calico` rides over `lxdbr0`" (§7.1, §13, Appendix A) | **It rides over `incusbr0`.** `ip -d link show vxlan.calico` → `vxlan id 4096 local 10.45.178.1 dev incusbr0`, and `incusbr0` is `10.45.178.1/24`. Two independent facts agreeing |
+| "LXD carries a third-party workload" | **Every instance and project on both daemons is this repo's own test debris.** `test-profiles-projects.sh` names its project `ppp$$` and `test-vm-lifecycle.sh` names its lab `vlc$$` — `$$` being the shell PID, which is exactly the shape of `ppp292988` / `vlc280967`. The one RUNNING instance is an **Alpine 3.21** container on the `default` profile; its `volatile.eth0.host_name` is `veth7b329ffe`, the single veth enslaved to `lxdbr0` |
+
+So the live picture is the reverse of the plan's:
+
+| bridge | address | enslaved members | what depends on it |
+|---|---|---|---|
+| **`incusbr0`** | 10.45.178.1/24 | **none** | **Calico's VXLAN tunnel endpoint** — the running cluster |
+| `lxdbr0` | 10.216.67.1/24 | `veth7b329ffe` — mklab's leftover Alpine | nothing |
+
+**Why this happened, and why it is a latent hazard beyond this plan.** Calico
+auto-detects its node IP, and it picked a *container-engine bridge* — `incusbr0`'s
+address — with no container on it and no human intent behind the choice. That binding is
+current, not architectural: Calico would re-detect after a restart and might land
+somewhere else. But right now, live, deleting or renumbering `incusbr0` breaks pod-to-pod
+VXLAN, and **an Incus daemon restart flaps the cluster's tunnel endpoint.**
+
+### D.2 What it settles
+
+- **Question 8 — `lxc` (LXD), pinned explicitly.** Not because LXD is better, but because
+  `lxdbr0` is the bridge with nothing riding on it. `lab-lxd.sh`'s `probe_engine` prefers
+  Incus whenever its daemon answers, so **the default is the engine we least want to
+  disturb** — micro-cloud must set the engine, not probe for it.
+- **Question 9 — dissolved.** Its premise ("the engine currently running someone else's
+  cluster") was false. `db` on LXD is the safe placement.
+- **§7's design rule is untouched and better justified.** The thing not to collide with is
+  on the *host* — microk8s + Calico, 140 rules in legacy xtables ([B.2](#b2-the-second-firewall--and-the-bug-p2-committed-while-hunting-it)) —
+  not inside a container engine. Interface-scoped rules on our own `br-mc0` remain the
+  answer, and **`incusbr0` gains an explicit do-not-reconfigure.**
+
+### D.3 The pattern, for the third time
+
+P2 asserted *"`nft list ruleset` succeeded"* and let it stand for *"these are the rules
+the kernel evaluates"* ([B.2](#b2-the-second-firewall--and-the-bug-p2-committed-while-hunting-it)).
+Appendix C found five wizards asserting *"the verbs exist"* as *"the walkthrough works."*
+This is the same move a third time: **"zero instances" asserted as "nothing depends on
+it."** In all three the check was true and the conclusion drawn from it was false, and in
+all three the fix was to measure the thing actually being claimed — the rules the kernel
+evaluates, the command a reader types, the traffic a bridge carries.
+
+The cheap reading is not a weaker version of the real one. It is a different question that
+happens to be easier to ask.
+
+### D.4 Housekeeping, not this plan's
+
+Both leaking tests **do** have `EXIT` traps that delete their project/lab, so the debris is
+from runs killed hard (a trap does not fire on `SIGKILL`), not a missing-cleanup bug. Left
+behind across both daemons: ~17 empty projects, 3 instances, and one **running** Alpine
+container. Harmless, but it is noise in exactly the place slice 3 will be reading, and the
+running one holds the only veth on `lxdbr0`. Worth a deliberate sweep before slice 1 —
+listed here rather than done, because deleting instances is the operator's call.
