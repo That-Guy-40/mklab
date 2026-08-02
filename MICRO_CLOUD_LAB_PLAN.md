@@ -1080,7 +1080,7 @@ exercise · break**, and the break pass writes into `LEDGER.md`.
 | **0** | **Preflight** | **P1 done** (Appendix A). **P2**: `nft list tables`, debootstrap a chroot, tap create/delete, fetch+verify FC `v1.16.1` | the assumption table is filled in; 3 UNKNOWNs resolved | a beginner walks one `START_HERE_*_WIZARD.md` end to end and reports where it lies |
 | **1** ✅ | **One microVM, by hand** — **DONE 2026-08-01, [Appendix E](#appendix-e--slice-1-one-microvm-by-hand-2026-08-01)** | ext4 from a chroot (Alpine **and** Debian); a `vmlinux`; boot with `--no-api --config-file`; boot again over the REST API with `curl` | **login prompt at 0.55 s**, zero variance over 4 runs; Alpine 8.2 MB tree / 64 MB image and Debian 215 MB / 363 MB — **26× the size, identical boot time** | all four run: `panic=1` dropped → **hung until killed (1.63 s vs 20 s+)**; `is_root_device` flipped → **found FC's arg append**; `ip=` bent → **23× silent regression**; `extract-vmlinux` → **decision B = yes** |
 | **2** ✅ | **The microVM gets an identity** — **DONE 2026-08-01, [Appendix F](#appendix-f--slice-2-the-microvm-gets-an-identity-2026-08-01)** | one tap, no bridge (root only for `ip tuntap add`; FC opened it unprivileged); MMDS `PUT` over the API socket | **V2 token handshake by hand from inside the guest** (`len=48`), `instance-id` read at `169.254.169.254` matching the host's `PUT`; boot **0.57 s** with the NIC | **no-token GET → `401`** (the SSRF lesson, observed); never-`PUT` key → `404`; **NIC dropped with `ip=` kept → 12.84 s, 22.5×**, the guard's tripwire reproduced on a second rootfs |
-| **3** ✅🔶 | **Two microVMs that reach each other** — **build + exercise + teardown GREEN 2026-08-02, [Appendix G](#appendix-g--slice-3-the-fabric-2026-08-02); break pass 2 of 5, the rest named in [G.8](#g8-not-run--recorded-as-unknown-not-as-pass)** | `fabric.sh up/down/retap/status` — additive nft scoped by `iifname`, recorded `ip_forward`, dnsmasq as DHCP **and** DNS. **Bridge MUST be named `br-mc0`** (Calico v3.28.1 excludes `^br-.*`) and **taps MUST carry no IPv4 address** — [F.7](#f7-the-selection-rule-derived--and-7-already-satisfied-it) | `api1` pings `api2` **by name**; `down` asserts absence of *our* objects only; **pre-flight records Calico's tunnel binding and teardown compares it** — the assertion that caught [F.6](#f6-additive-was-not-safe--the-tap-captured-a-live-clusters-tunnel) | delete the bridge under a running VM; exhaust the DHCP pool; leave a stale tap; **confirm Calico still works** — and give a tap an address on purpose to watch it become an autodetection candidate |
+| **3** ✅ | **Two microVMs that reach each other** — **DONE 2026-08-02, [Appendix G](#appendix-g--slice-3-the-fabric-2026-08-02)**; build + exercise + teardown green, break pass **3 of 5** (the two deferred are named in [G.9](#g9-not-run--recorded-as-unknown-not-as-pass), both requiring a host without a live cluster or a config change) | `fabric.sh up/down/retap/status` — additive nft scoped by `iifname`, recorded `ip_forward`, dnsmasq as DHCP **and** DNS. **Bridge MUST be named `br-mc0`** (Calico v3.28.1 excludes `^br-.*`) and **taps MUST carry no IPv4 address** — [F.7](#f7-the-selection-rule-derived--and-7-already-satisfied-it) | `api1` pings `api2` **by name**; `down` asserts absence of *our* objects only; **pre-flight records Calico's tunnel binding and teardown compares it** — the assertion that caught [F.6](#f6-additive-was-not-safe--the-tap-captured-a-live-clusters-tunnel) | delete the bridge under a running VM; exhaust the DHCP pool; leave a stale tap; **confirm Calico still works** — and give a tap an address on purpose to watch it become an autodetection candidate |
 | **4** | **The tool, and what it hides** | `lab-fc.sh` + `preflight`; **derive** §5.2's schema from slices 1–3 | one command, same boot; `--dry-run` diffed against slice 1's hand-written `config.json` | the preflight tripwire; **name what the tool silently started doing for you** — that list is the deliverable. Watch for the §8.3 verb tripwire |
 | **5** | **A second engine on one fabric** | add the QEMU `edge` (Phase 2 already does bridge mode) | two engines, one L2, one `--lab` view | kill one engine's daemon, see what the other reports. **Answer decision E** |
 | **6** | **The control plane** | whichever §8.3 shape slice 5 argued for; `fc.py` backend + topology slot; revisit decision G | all instances in one tree; `apply` a no-op on pass two, if the seam supports it | make the registry disagree with reality — MAAS's registry-layer fault, ported |
@@ -2402,7 +2402,53 @@ Note also what the FAIL column shows about scope: the orphan tripped the asserti
 **every Calico row stayed green**. A teardown that failed loudly without distinguishing ours
 from theirs would have been indistinguishable from the F.6 incident it exists to detect.
 
-### G.8 Not run — recorded as UNKNOWN, not as PASS
+### G.8 Deleting the bridge under a running microVM — **HALTED (honest)**, and one surprise
+
+`br-mc0` was deleted with `api1` running and demonstrably reachable. The guest's own
+timeline, read only past a console byte offset recorded at injection:
+
+```
+WATCH t=0s gw=OK   addr=10.71.0.101/24 link=up carrier=1     <- before
+── br-mc0 deleted ──
+WATCH t=2s gw=DOWN addr=10.71.0.101/24 link=up carrier=1
+WATCH t=4s gw=DOWN addr=10.71.0.101/24 link=up carrier=1
+```
+
+| | after the fault |
+|---|---|
+| `br-mc0` | absent |
+| **`mc-api1`** | **PRESENT, `master=none`** — orphaned, not destroyed |
+| firecracker | **alive** |
+| nft `mklab-mc` | PRESENT (correct — only the bridge was deleted) |
+| `10.71.0.0/24` route | gone with the bridge |
+| **calico tunnel / veths** | **`local 10.45.178.1 dev incusbr0` / 2 → 2 — untouched** |
+
+**RUNG: HALTED, honestly.** The guest lost the gateway and *said so*; the VM stayed up; the
+neighbours were undisturbed; and the state is recoverable by ordinary verbs. Not STRANDED
+(every object still accepted `down`), and not LIED.
+
+**The surprise, and it is the finding worth keeping: `link=up carrier=1` for the entire
+outage.** The guest's interface never noticed. A tap's carrier reflects whether a process
+holds the device open — Firecracker did — **not whether the bridge it was enslaved to still
+exists**. So a guest watching `operstate`/`carrier` to decide "am I connected?" would have
+reported perfect health throughout a total loss of connectivity, and this fault class is
+invisible to link-state monitoring. **Only attempted traffic revealed it.** That is
+[the mechanism-vs-outcome rule](#g31-the-pattern-named--a-conclusion-that-outlived-its-own-argument)
+in one line: `carrier=1` is a mechanism; reaching the gateway is the outcome, and here they
+disagreed for the whole run.
+
+Second, smaller: **deleting a bridge does not delete its ports.** `mc-api1` survived,
+unenslaved (`master=none`). The residue of this fault is a leaked tap, not a vanished one —
+which is exactly what a search-based teardown catches and a record-replay teardown would
+also have caught here, since this tap *was* in the record.
+
+**And teardown was run from the broken state, which is the second test in this scenario.**
+`fabric.sh down` against a fabric whose bridge was *already gone* found and removed the
+orphaned tap, removed the nft table, and passed every assertion including all three Calico
+comparisons. **A teardown that only works from the happy path is not a teardown**; this one
+was never exercised from a damaged state until now.
+
+### G.9 Not run — recorded as UNKNOWN, not as PASS
 
 - **Give a tap an address on purpose and watch it become a candidate.** This is re-running
   F.6 — an outage on a live cluster — and per [G.3](#g3-f7s-ordering-rule-does-not-explain-f6--the-correction)
@@ -2411,16 +2457,10 @@ from theirs would have been indistinguishable from the F.6 incident it exists to
   causing deliberately. **Deferred to a host without a live cluster.**
 - **DHCP pool exhaustion** (`.100–.200` = 101 leases) — needs a shrinkable range for a
   tractable test.
-- **Delete the bridge under a running VM** — **written, not yet run.** The harness boots one
-  microVM in *watch mode* (a `gw=OK/DOWN` line every 2 s) and records a console byte offset
-  before injecting, reading only past it — the `console_mark` discipline from
-  [MAAS's image driver](examples/metal-as-a-service/drivers/image.sh), because a pre-fault
-  `gw=OK` in an append-only log is exactly how a fault gets graded as absorbed. It grades on
-  the house ladder, and its cleanup is a second test: `fabric.sh down` runs against a fabric
-  whose bridge is *already gone* and must still find the orphaned tap and pass.
-
-**Break coverage so far: 2 of 5.** Done: *leave a stale tap* ([G.7](#g7-the-teardown-assertion-proven-in-both-directions))
-and *confirm Calico still works* (green in both directions there, and across the two-VM
-exercise). The three above are named rather than left implicit — a layer with no scenario is
-a layer nobody has watched fall over.
+**Break coverage: 3 of 5.** Done: *leave a stale tap*
+([G.7](#g7-the-teardown-assertion-proven-in-both-directions)), *delete the bridge under a
+running VM* ([G.8](#g8-deleting-the-bridge-under-a-running-microvm--halted-honest-and-one-surprise)),
+and *confirm Calico still works* — green in all three, across five independent samples. The
+two above are named rather than left implicit: a layer with no scenario is a layer nobody
+has watched fall over.
 
