@@ -6,6 +6,7 @@
 # of the generated config.json carries a provenance tag, so "the tool started doing this for
 # you silently" cannot happen quietly. See `create --dry-run`.
 #
+# ── USAGE ──
 #   lab-fc.sh preflight --config <f.toml> | --name N --kernel K --rootfs R
 #   lab-fc.sh create    ... [--dry-run]      # --dry-run prints config + PROVENANCE, writes nothing
 #   lab-fc.sh start     <name>
@@ -13,6 +14,7 @@
 #   lab-fc.sh destroy   <name> [--force]
 #   lab-fc.sh list      [--lab L] [--json]
 #   lab-fc.sh inspect   <name> [--json]
+# ── END USAGE ──
 #
 # ── WHAT THIS TOOL DELIBERATELY DOES NOT DO ─────────────────────────────────
 #
@@ -419,18 +421,43 @@ cmd_create() {
     fi
 
     local d; d="$(fc_dir "$name")"
+    [[ -e "$d" ]] && die "instance '$name' already exists at $d — destroy it first (create does not overwrite)"
     mkdir -p "$d"
-    gen_config "$rec" "$(fc_config "$name")"
-    cp -n "$(field "$rec" rootfs)" "$(fc_rootfs "$name")" 2>/dev/null || true
+
+    # COPY FIRST, THEN GENERATE THE CONFIG AGAINST THE COPY.
+    #
+    # The first version of this generated config.json from the SOURCE record and then copied
+    # the rootfs, so the manifest named `$d/rootfs.ext4` while config.json still pointed at
+    # the original: the 128 MB copy was dead weight, the manifest described a file the VM
+    # never touched, and two instances created from one source image would both have booted
+    # it read-write and corrupted each other. A record that misdescribes its subject, in the
+    # foundation everything else stacks on.
+    local src; src="$(field "$rec" rootfs)"
+    cp -- "$src" "$(fc_rootfs "$name")" || { rm -rf "$d"; die "could not copy rootfs $src -> $(fc_rootfs "$name")"; }
+
+    # Re-point the record at the copy, then generate. The config and the manifest now name
+    # the same file BY CONSTRUCTION rather than by both being edited in step.
+    local rec_installed="${rec//rootfs=$src;/rootfs=$(fc_rootfs "$name");}"
+    gen_config "$rec_installed" "$(fc_config "$name")"
+
+    # Prove it, rather than trusting the substitution above: the path the VM will boot must
+    # be the path we just wrote. This is cheap and it is the assertion the bug slipped past.
+    local cfg_path; cfg_path="$(grep -o '"path_on_host": "[^"]*"' "$(fc_config "$name")" | head -1 | cut -d'"' -f4)"
+    [[ "$cfg_path" == "$(fc_rootfs "$name")" ]] \
+        || { rm -rf "$d"; die "REGRESSION: config.json points at '$cfg_path', not the per-instance copy '$(fc_rootfs "$name")'"; }
+
     {
         printf 'name = "%s"\n' "$name"
         printf 'lab = "%s"\n'  "$(field "$rec" lab micro-cloud)"
         printf 'kernel = "%s"\n' "$(field "$rec" kernel)"
         printf 'rootfs = "%s"\n' "$(fc_rootfs "$name")"
+        printf 'rootfs_source = "%s"\n' "$src"
+        printf 'rootfs_source_sha256 = "%s"\n' "$(sha256sum "$src" | cut -d' ' -f1)"
         printf 'tap = "%s"\n'    "$(field "$rec" tap)"
         printf 'created = "%s"\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     } > "$(fc_manifest "$name")"
     printf '\nPASS: created %s\n' "$d"
+    printf '      rootfs is a per-instance copy of %s (source sha recorded)\n' "$src"
 }
 
 cmd_start() {
@@ -460,13 +487,26 @@ _kill_recorded() {
 }
 
 cmd_stop() {
-    local name="$1" p
-    if p="$(_kill_recorded "$name" TERM)"; then
-        printf 'PASS: signalled %s (pid %s) by recorded PID\n' "$name" "$p"
-    else
+    local name="$1" p i
+    if ! p="$(_kill_recorded "$name" TERM)"; then
         printf 'PASS: %s was not running (nothing to signal)\n' "$name"
+        rm -f "$(fc_pidfile "$name")"
+        return 0
+    fi
+    # ASSERT THE OUTCOME. Sending a signal is not stopping a VM; the first version of this
+    # printed PASS on the strength of kill(2) returning 0, which says only that the signal
+    # was delivered. Firecracker with --no-api has no SendCtrlAltDel path, so whether TERM
+    # is honoured is a fact about the guest, not about us.
+    for i in $(seq 1 20); do
+        [[ -d "/proc/$p" ]] || break
+        sleep 0.25
+    done
+    if [[ -d "/proc/$p" ]]; then
+        printf 'FAIL: %s (pid %s) ignored SIGTERM after 5s — still running. Use --force.\n' "$name" "$p" >&2
+        return 1
     fi
     rm -f "$(fc_pidfile "$name")"
+    printf 'PASS: %s (pid %s) stopped — process confirmed gone, not merely signalled\n' "$name" "$p"
 }
 
 cmd_destroy() {
@@ -507,7 +547,8 @@ cmd_inspect() {
 }
 
 # ── argument handling ───────────────────────────────────────────────────────
-usage() { sed -n '3,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0; }
+# Marker-delimited so edits to the header cannot silently shift what --help prints.
+usage() { sed -n '/^# ── USAGE ──/,/^# ── END USAGE ──/p' "$0" | sed '1d;$d; s/^# \{0,1\}//'; exit 0; }
 
 main() {
     local verb="${1:-}"; shift || true
@@ -551,7 +592,16 @@ main() {
 
     local -a records=()
     if [[ -n "$cfg" ]]; then
-        mapfile -t records < <(toml_microvms "$cfg")
+        # NOT `mapfile < <(toml_microvms ...)`: a process substitution DISCARDS the
+        # producer's exit status, so the parser's "unknown key" refusal (exit 3) printed a
+        # message and the run carried on with a partial record -- a refusal that refuses
+        # nothing. Capture to a file so the status is testable.
+        local _recs; _recs="$(mktemp)"
+        if ! toml_microvms "$cfg" > "$_recs"; then
+            rm -f "$_recs"
+            die "refusing $cfg — see the parser error above (nothing was created)"
+        fi
+        mapfile -t records < "$_recs"; rm -f "$_recs"
         (( ${#records[@]} )) || die "no [[microvm]] blocks in $cfg"
     else
         [[ -n "$name" ]] || die "need --config <file> or --name <n> --kernel <k> --rootfs <r>"

@@ -7,9 +7,12 @@ TEST_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly TEST_DIR
 readonly LAB_FC="${TEST_DIR}/../lab-fc.sh"
 
-skip()  { printf 'SKIP: %s\n' "$*" >&2; exit 77; }
-fail()  { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
-pass()  { printf 'PASS: %s\n' "$*" >&2; exit 0; }
+# _VERDICT guards the EXIT net below: a test that already said FAIL must not also be told
+# "no verdict was printed", or the net becomes noise a reader learns to skip past.
+_VERDICT=0
+skip()  { _VERDICT=1; printf 'SKIP: %s\n' "$*" >&2; exit 77; }
+fail()  { _VERDICT=1; printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+pass()  { _VERDICT=1; printf 'PASS: %s\n' "$*" >&2; exit 0; }
 note()  { printf '  - %s\n' "$*" >&2; }
 
 require_cmd() {
@@ -32,7 +35,7 @@ TMPDIRS=()
 _on_exit() {
     local rc=$?
     local d; for d in ${TMPDIRS+"${TMPDIRS[@]}"}; do [[ -n "$d" ]] && rm -rf "$d"; done
-    if (( rc != 0 && rc != 77 )); then
+    if (( rc != 0 && rc != 77 )) && (( _VERDICT == 0 )); then
         printf 'FAIL: test exited early (rc=%d) — no verdict was printed by the test itself\n' "$rc" >&2
     fi
 }

@@ -2580,6 +2580,46 @@ The tap gates are slice 3's findings ported into a tool: ownership is read back 
 `/sys/class/net/<dev>/owner`, because `ip tuntap add` exiting 0 says nothing about the
 `TUNSETIFF` the VMM will issue.
 
+### H.7 A second pass over slice 4 — three defects the green suite did not see
+
+Slice 4 is the foundation slices 5–10 stack on, so it was reviewed again after it went
+green. **Four defects, three of them real, and the suite was passing throughout.**
+
+| defect | what it did | severity |
+|---|---|---|
+| `config.json` named the **source** rootfs while the manifest named the per-instance **copy** | the 128 MB copy was dead weight, the manifest described a file the VM never touched, and two instances from one source image would both boot it read-write | **critical** |
+| an unknown schema key printed a refusal and **carried on** | `awk`'s `exit 3` was inside a process substitution feeding `mapfile`, which **discards the producer's status** | real |
+| `stop` reported `PASS` having only *sent* a signal | `kill(2)` returning 0 means the signal was delivered, not that the VM stopped | mechanism-not-outcome |
+| `--help` printed a drifting line range | `sed -n '3,25p'` no longer aligned with the header | cosmetic |
+
+**The first is the plan's own headline bug class, in the plan's own tool** — a record that
+misdescribes its subject, readable and false, with the failure surfacing far downstream as
+mysterious cross-instance corruption. `create` now copies **first**, re-points the record at
+the copy, generates from that, and then **asserts** that the path in `config.json` is the
+copy before writing the manifest. The manifest also records `rootfs_source` and
+`rootfs_source_sha256`, so a re-staged source image is detectable instead of silent.
+
+**And the second was passed by a test written to catch it.**
+`test-derived-guards.sh` asserted that a refusal was *printed*, not that the run was
+*refused* — a mechanism assertion, in the guard against exactly that mistake. It now asserts
+the outcome: non-zero exit **and** no gate lines after the refusal. Re-injecting the process
+substitution makes it fail with `REGRESSION: gates ran AFTER the unknown-key refusal`.
+
+**Two flaws in the harness itself**, both found while checking that the new guards bite:
+
+- The rootfs guard first failed with *"create refused a spec built from the caller's own good
+  artifacts"* while `lab-fc.sh` was shouting the precise path mismatch. A failure message
+  that misattributes its cause is how a correct alarm gets dismissed as a glitch — the same
+  defect [F.6](#f6-additive-was-not-safe--the-tap-captured-a-live-clusters-tunnel) found in
+  its own instrument. It now surfaces the tool's own `REGRESSION:` line.
+- The EXIT net fired *in addition to* a verdict the test had already printed, training a
+  reader to skip it. It is now gated on `_VERDICT`, and **both directions were re-checked**:
+  a test that exits silently still gets the net; a test that says `FAIL` does not get a
+  second line.
+
+Suite is now **5 PASS** locally, **2 PASS / 3 SKIP** headless, and every guard has been
+observed failing on the real defect it names.
+
 ### H.6 Not done in this slice
 
 `console`, `ssh`, `snapshot`, `restore`, `preserve`, `mmds` and the jailer tier (§5.6) are

@@ -39,9 +39,17 @@ note "negative control: neither ip= nor tap does not trip it"
 
 # --- 3. an unknown schema key must be REFUSED, not ignored ----------------
 mkspec "$tmp/bad.toml" 'rootdevice = "/dev/vdb"'
-run_fc "$tmp/bad.out" preflight --config "$tmp/bad.toml" || true
+if run_fc "$tmp/bad.out" preflight --config "$tmp/bad.toml"; then
+    fail "REGRESSION: an unknown schema key did not make the run fail — a dropped key is a field that appears to work and does nothing"
+fi
 grep -q 'unknown \[\[microvm\]\] key rootdevice' "$tmp/bad.out" \
-    || fail "an unknown schema key was silently ignored — a dropped key is a field that appears to work and does nothing"
-note "unknown schema key refused by name"
+    || fail "the unknown key was rejected but not NAMED — the operator cannot tell which key"
+# ASSERT THE OUTCOME, NOT THE MESSAGE. The first version of this checked only that a
+# refusal was PRINTED. It was: awk exited 3 inside a process substitution, the status was
+# discarded, and the tool carried on running gates against a partial record. A refusal that
+# refuses nothing passed a test written to catch exactly that.
+grep -qE '^  (ok|FAIL|UNKNOWN) ' "$tmp/bad.out" \
+    && fail "REGRESSION: gates ran AFTER the unknown-key refusal — the refusal did not stop the run"
+note "unknown schema key refused by name AND the run stopped before any gate ran"
 
 pass "derived schema guards refuse root=, orphan ip=, and unknown keys — each with a negative control"
