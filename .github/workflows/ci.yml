@@ -36,7 +36,8 @@ jobs:
             phase2-qemu-vm/lab-vm.sh \
             phase3-docker/lab-docker.sh \
             phase4-podman/lab-podman.sh \
-            phase5-lxd/lab-lxd.sh
+            phase5-lxd/lab-lxd.sh \
+            phase7-firecracker/lab-fc.sh
 
   docs:
     name: link + learning-path integrity
@@ -66,7 +67,7 @@ jobs:
         # fails the job on a real FAIL, so the pure-logic tests are the gate here.
         run: |
           rc=0
-          for d in phase1-chroot phase2-qemu-vm phase3-docker phase4-podman phase5-lxd; do
+          for d in phase1-chroot phase2-qemu-vm phase3-docker phase4-podman phase5-lxd phase7-firecracker; do
             echo "::group::$d"
             bash "$d/tests/run-all.sh" || rc=1
             echo "::endgroup::"
