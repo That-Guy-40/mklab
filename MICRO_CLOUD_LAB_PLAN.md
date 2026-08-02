@@ -1996,14 +1996,27 @@ candidate while libvirt's `virbr0` is not.
 **Rule:** lowest-index interface that is **UP**, carries an **IPv4 address**, and matches
 **no** exclusion pattern.
 
+**Confirmed from Calico's own log, 2026-08-01** — readable only after the kubelet cert was
+repaired ([F.9](#f9-an-environmental-fault-this-work-surfaced-not-ours-worth-fixing)), which
+is why F.7 originally had to infer this:
+
+```
+2026-08-01 22:32:05.662 [INFO][9] startup/autodetection_methods.go 103:
+  Using autodetected IPv4 address on interface incusbr0: 10.45.178.1/24
+```
+
+**22:32:05 is the F.6 incident to the second** — Calico logging its re-detection at the
+moment `calico-node` restarted after the tap was deleted, and landing back on `incusbr0`.
+So the mechanism is now the vendor's own record rather than our reconstruction: this *is*
+`first-found`, in `autodetection_methods.go`, re-running exactly when F.6 said it did.
+
 **What is still not explained, and is left as such:** `enx00051b8eb138` is index 2, UP, and
-not excluded, so it should have won and did not. The most likely reading is that the
-candidate set on this host is **volatile** — it is a *USB* NIC, and both bridges drop to
-`DOWN` whenever they have no members — so the node IP is settled by whichever candidates
-happened to be UP at the last detection, and Calico does not re-detect until it restarts.
-That also explains `mc-tap0` (index 207) winning in F.6: it may have been the only UP
-candidate at that moment. **Inference, not measurement** — and independently of this lab it
-means the cluster's node IP can migrate with nobody touching the host.
+not excluded, so it should have won and did not — and the log records only the *winner*, not
+the rejected candidates. The most likely reading remains that the candidate set here is
+**volatile** (a *USB* NIC; both bridges drop to `DOWN` when memberless), so the node IP is
+settled by whichever candidates were UP at the last detection. **Still inference** — the
+measurement that would close it is a `calico-node` restart with every candidate's state
+recorded at that instant, which is not worth causing deliberately on a live cluster.
 
 ### F.7.1 The constraint slice 3 actually needs
 
@@ -2055,6 +2068,22 @@ Tested against the actual patterns rather than eyeballed:
 at index 9 — ahead of `incusbr0` at 17.** On the next `calico-node` restart the node IP can
 migrate to `10.216.67.1`, which is F.6 again with a different interface.
 
+**The trigger is narrower than first written, and that is measured now.** Repairing the
+kubelet cert ([F.9](#f9-an-environmental-fault-this-work-surfaced-not-ours-worth-fixing))
+restarted `snap.microk8s.daemon-kubelite` on a live cluster, and Calico did **not** move:
+
+| | before | after a `kubelite` restart |
+|---|---|---|
+| tunnel | `local 10.45.178.1 dev incusbr0` | **unchanged** |
+| pod addresses | `10.1.24.169`, `10.1.24.173` | **unchanged — pods not recreated** |
+
+So **a control-plane restart alone does not re-run autodetection.** It is a `calico-node`
+restart that does, and in F.6 that restart was itself caused by the interface disappearing.
+The hazard therefore needs *both*: a lower-index candidate present **and** something that
+restarts `calico-node`. That is a smaller window than "any LXD container is dangerous" — but
+it is not a safe one, because deleting the interface is exactly what causes the restart, so
+the two conditions arrive together.
+
 **This repo's own phase-5 suite can create that condition.** `lab-lxd.sh`'s `probe_engine`
 prefers Incus, so today's runs land on `incusbr0` and change nothing — but the fallback
 path (Incus unreachable → LXD) brings `lxdbr0` up. The hazard is one daemon outage away,
@@ -2092,7 +2121,36 @@ regenerated.** Workloads, networking and Calico are unaffected; everything that 
 node through the kubelet's `:10250` is not — `logs`, `exec`, `port-forward`, node proxy
 (`ServiceUnavailable`), and `top node` (`Metrics API not available`).
 
-Fix is targeted and reversible: `microk8s refresh-certs -e server.crt` (`--undo` reverts).
+**`refresh-certs` cannot fix it.** `-e` accepts only `ca.crt`, `server.crt` and
+`front-proxy-client.crt`; `kubelet.crt` is not on that list. Running
+`refresh-certs -e server.crt` reissued the *apiserver's* cert (subject `CN=127.0.0.1`,
+`notBefore` moved to 2026-08-01) and left `kubelet.crt` at its 2025 date — the error after
+it was byte-identical. **No invocation of `refresh-certs` would ever have worked**, which is
+worth stating because it was my first recommendation and it was wrong.
+
+**FIXED 2026-08-01.** The kubelet runs `--cert-dir=$SNAP_DATA/certs` with no
+`--tls-cert-file`, so it serves `certs/kubelet.crt`. That was reissued against the cluster
+CA **reusing the existing key**, with SANs taken from microk8s's own `csr.conf` — which
+already carried `IP.3 = 192.168.1.106` plus every bridge, so nothing was invented:
+
+```
+notBefore=Aug 2 00:15:47 2026
+SAN: DNS:badass-box, …, IP:192.168.1.106, IP:172.17.0.1, IP:192.168.122.1,
+     IP:192.168.123.1, IP:10.216.67.1, IP:10.45.178.1, + 5 IPv6
+kubectl logs : WORKS
+```
+
+Verified in the order that matters: the artifact chained to the CA and matched the existing
+public key *before* installation; the served cert was re-read *off the wire* after the
+restart; and finally `kubectl logs` was run, because a certificate that verifies is not the
+same claim as a cluster you can debug. Backup at
+`certs/certs-backup-kubelet/20260801-201547/`.
+
+**Sixteen months.** The cert dated 2025-03-23 and the address moved at some point after;
+`logs`, `exec`, `port-forward` and `top` were dead the whole time and nothing reported it.
+The new cert covers every current address including both container bridges, so it survives
+the node IP moving *between* them — which, per [F.7](#f7-the-selection-rule-derived--and-7-already-satisfied-it),
+is a thing that happens here.
 
 **Two reasons it belongs in this appendix rather than a footnote.** It is corroboration for
 F.7's volatile-candidate reading — this host's address *has* moved before, on a USB NIC. And
