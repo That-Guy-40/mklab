@@ -1080,7 +1080,7 @@ exercise · break**, and the break pass writes into `LEDGER.md`.
 | **0** | **Preflight** | **P1 done** (Appendix A). **P2**: `nft list tables`, debootstrap a chroot, tap create/delete, fetch+verify FC `v1.16.1` | the assumption table is filled in; 3 UNKNOWNs resolved | a beginner walks one `START_HERE_*_WIZARD.md` end to end and reports where it lies |
 | **1** ✅ | **One microVM, by hand** — **DONE 2026-08-01, [Appendix E](#appendix-e--slice-1-one-microvm-by-hand-2026-08-01)** | ext4 from a chroot (Alpine **and** Debian); a `vmlinux`; boot with `--no-api --config-file`; boot again over the REST API with `curl` | **login prompt at 0.55 s**, zero variance over 4 runs; Alpine 8.2 MB tree / 64 MB image and Debian 215 MB / 363 MB — **26× the size, identical boot time** | all four run: `panic=1` dropped → **hung until killed (1.63 s vs 20 s+)**; `is_root_device` flipped → **found FC's arg append**; `ip=` bent → **23× silent regression**; `extract-vmlinux` → **decision B = yes** |
 | **2** ✅ | **The microVM gets an identity** — **DONE 2026-08-01, [Appendix F](#appendix-f--slice-2-the-microvm-gets-an-identity-2026-08-01)** | one tap, no bridge (root only for `ip tuntap add`; FC opened it unprivileged); MMDS `PUT` over the API socket | **V2 token handshake by hand from inside the guest** (`len=48`), `instance-id` read at `169.254.169.254` matching the host's `PUT`; boot **0.57 s** with the NIC | **no-token GET → `401`** (the SSRF lesson, observed); never-`PUT` key → `404`; **NIC dropped with `ip=` kept → 12.84 s, 22.5×**, the guard's tripwire reproduced on a second rootfs |
-| **3** 🔶 | **Two microVMs that reach each other** — **exercise GREEN 2026-08-02, [Appendix G](#appendix-g--slice-3-the-fabric-2026-08-02); teardown assertion NOT YET EXERCISED** | `fabric.sh up/down/retap/status` — additive nft scoped by `iifname`, recorded `ip_forward`, dnsmasq as DHCP **and** DNS. **Bridge MUST be named `br-mc0`** (Calico v3.28.1 excludes `^br-.*`) and **taps MUST carry no IPv4 address** — [F.7](#f7-the-selection-rule-derived--and-7-already-satisfied-it) | `api1` pings `api2` **by name**; `down` asserts absence of *our* objects only; **pre-flight records Calico's tunnel binding and teardown compares it** — the assertion that caught [F.6](#f6-additive-was-not-safe--the-tap-captured-a-live-clusters-tunnel) | delete the bridge under a running VM; exhaust the DHCP pool; leave a stale tap; **confirm Calico still works** — and give a tap an address on purpose to watch it become an autodetection candidate |
+| **3** ✅🔶 | **Two microVMs that reach each other** — **build + exercise + teardown GREEN 2026-08-02, [Appendix G](#appendix-g--slice-3-the-fabric-2026-08-02); break pass 2 of 5, the rest named in [G.8](#g8-not-run--recorded-as-unknown-not-as-pass)** | `fabric.sh up/down/retap/status` — additive nft scoped by `iifname`, recorded `ip_forward`, dnsmasq as DHCP **and** DNS. **Bridge MUST be named `br-mc0`** (Calico v3.28.1 excludes `^br-.*`) and **taps MUST carry no IPv4 address** — [F.7](#f7-the-selection-rule-derived--and-7-already-satisfied-it) | `api1` pings `api2` **by name**; `down` asserts absence of *our* objects only; **pre-flight records Calico's tunnel binding and teardown compares it** — the assertion that caught [F.6](#f6-additive-was-not-safe--the-tap-captured-a-live-clusters-tunnel) | delete the bridge under a running VM; exhaust the DHCP pool; leave a stale tap; **confirm Calico still works** — and give a tap an address on purpose to watch it become an autodetection candidate |
 | **4** | **The tool, and what it hides** | `lab-fc.sh` + `preflight`; **derive** §5.2's schema from slices 1–3 | one command, same boot; `--dry-run` diffed against slice 1's hand-written `config.json` | the preflight tripwire; **name what the tool silently started doing for you** — that list is the deliverable. Watch for the §8.3 verb tripwire |
 | **5** | **A second engine on one fabric** | add the QEMU `edge` (Phase 2 already does bridge mode) | two engines, one L2, one `--lab` view | kill one engine's daemon, see what the other reports. **Answer decision E** |
 | **6** | **The control plane** | whichever §8.3 shape slice 5 argued for; `fc.py` backend + topology slot; revisit decision G | all instances in one tree; `apply` a no-op on pass two, if the seam supports it | make the registry disagree with reality — MAAS's registry-layer fault, ported |
@@ -2273,6 +2273,39 @@ slice 3's clean Calico comparison is consistent with that. **The pre-flight/tear
 comparison remains non-negotiable precisely because the rule is incomplete** — it is the
 only instrument that does not depend on understanding the selection at all.
 
+#### G.3.1 The pattern, named — a conclusion that outlived its own argument
+
+The specific error above is worth generalising, because it is the shape of nearly every
+correction in these appendices and it is **not** a coding mistake:
+
+> **A rule derived from an incident, never checked back against that incident.**
+
+F.7 did the hard part — pulled the exclusion list out of the running v3.28.1 binary — and
+then wrote an ordering rule that it never re-ran against F.6. It even noticed *one*
+observation the rule could not explain (`enx00051b8eb138`) and filed it as a curiosity,
+rather than reading it as evidence against the rule itself. One anomaly looks like an
+exception; two, one of them the origin, is a refutation.
+
+**The conclusion survived and the argument for it did not**, which is the dangerous
+combination — a right answer resting on a wrong reason keeps being right only for as long as
+conditions happen to hold, and nothing announces the moment they stop. F.7.1's "§7 already
+satisfies the rule — by luck, which is precisely why they are being written down" was
+closer to correct than the rule it appealed to.
+
+It is the same shape as the rest of this document, restated once so it is findable:
+
+| appendix | the conclusion | the argument that turned out to be wrong |
+|---|---|---|
+| [B.1](#b1-the-correction--71-consequence-2-was-wrong-about-where-calicos-rules-are) | the nft table must be additive and separately named | *"because Calico owns rules we cannot read"* — it has no `cali-*` chains on the host at all |
+| [D.1](#d1-the-correction--the-vxlan-underlay-is-incusbr0-and-the-empty-daemon-is-the-load-bearing-one) | keep the fabric away from the k8s underlay | *"the underlay is `lxdbr0`"* — it is `incusbr0`, and the daemon with zero instances is the load-bearing one |
+| [E.5](#e5-decision-f--the-question-was-mis-framed) | Alpine is the right default rootfs | the question as posed (size) was not the deciding property; boot time was identical |
+| **G.3** | `br-mc0`, addressless taps | *"because §7 satisfies first-found's ordering"* — the ordering rule does not even explain F.6 |
+
+**The check this implies, and it is cheap:** after deriving any rule from an observation,
+**re-run the rule against that observation before writing it down.** If it does not predict
+the thing it came from, it is a hypothesis, not a rule — and everything downstream must be
+justified on grounds that do not depend on it.
+
 ### G.4 Four defects, three of them inside the safety checks
 
 | defect | how it presented | fix |
@@ -2340,7 +2373,36 @@ time it is cheap:
 ⚠ NOTE, not caused by us: Calico is bound to 'incusbr0', which is currently 'down'.
 ```
 
-### G.7 Not run — recorded as UNKNOWN, not as PASS
+### G.7 The teardown assertion, proven in both directions
+
+The constraint this slice was granted on was that pre-flight records Calico's binding and
+teardown compares it. Writing that assertion is not the same as knowing it works: **an
+assertion never observed failing may be matching a string that is always present.** So a tap
+the recorded state knows nothing about was injected, and `down` was required to fail on it —
+then the fault was removed and the *identical* command required to pass.
+
+| | injected `mc-orphan` | fault removed |
+|---|---|---|
+| `br-mc0` absent | ok | ok |
+| **`mc-*` taps** | **FAIL: mc-* taps survived: mc-orphan** | ok: no mc-* taps left |
+| nft `mklab-mc` absent | ok | ok |
+| no `10.71.0.0/24` route | ok | ok |
+| our dnsmasq gone | ok | ok |
+| calico tunnel | ok — unchanged | ok — unchanged |
+| cali\* veth count | ok — 2, pods not recreated | ok — 2 |
+| **verdict** | **FAIL (rc=1), `preflight` KEPT** | **PASS** |
+
+Both directions observed on the real thing, which is what makes the PASS worth anything: the
+failure was **the fault**, not a harness that always fails. Two details earn their place —
+teardown finds leftovers by **searching** rather than only deleting what it recorded (a
+record-only teardown would have reported a clean PASS here), and it **keeps `preflight` on
+failure** so the diagnosis survives the run.
+
+Note also what the FAIL column shows about scope: the orphan tripped the assertion while
+**every Calico row stayed green**. A teardown that failed loudly without distinguishing ours
+from theirs would have been indistinguishable from the F.6 incident it exists to detect.
+
+### G.8 Not run — recorded as UNKNOWN, not as PASS
 
 - **Give a tap an address on purpose and watch it become a candidate.** This is re-running
   F.6 — an outage on a live cluster — and per [G.3](#g3-f7s-ordering-rule-does-not-explain-f6--the-correction)
@@ -2349,5 +2411,16 @@ time it is cheap:
   causing deliberately. **Deferred to a host without a live cluster.**
 - **DHCP pool exhaustion** (`.100–.200` = 101 leases) — needs a shrinkable range for a
   tractable test.
-- **Delete the bridge under a running VM** — not yet run.
+- **Delete the bridge under a running VM** — **written, not yet run.** The harness boots one
+  microVM in *watch mode* (a `gw=OK/DOWN` line every 2 s) and records a console byte offset
+  before injecting, reading only past it — the `console_mark` discipline from
+  [MAAS's image driver](examples/metal-as-a-service/drivers/image.sh), because a pre-fault
+  `gw=OK` in an append-only log is exactly how a fault gets graded as absorbed. It grades on
+  the house ladder, and its cleanup is a second test: `fabric.sh down` runs against a fabric
+  whose bridge is *already gone* and must still find the orphaned tap and pass.
+
+**Break coverage so far: 2 of 5.** Done: *leave a stale tap* ([G.7](#g7-the-teardown-assertion-proven-in-both-directions))
+and *confirm Calico still works* (green in both directions there, and across the two-VM
+exercise). The three above are named rather than left implicit — a layer with no scenario is
+a layer nobody has watched fall over.
 
