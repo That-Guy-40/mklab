@@ -398,6 +398,11 @@ lab-fc.sh preserve api1 --tier portable   # §9.5
 lab-fc.sh mmds     api1 --set '{"instance-id":"api1"}' | --get
 ```
 
+> ⚠️ **`destroy` does NOT delete the tap — corrected 2026-08-02, see
+> [H.5](#h5-the-83-tripwire-held--and-51-needs-a-correction).** Slice 3 gave tap lifecycle to
+> the fabric, and two owners for one resource is this plan's most-repeated bug. In
+> `lab-fc.sh` the tap is an **input**: validated, never manufactured or destroyed.
+
 `stop`/`destroy` **resolve to a PID and `kill` it** — never `pkill -f`. The per-VM socket
 paths appear in the `firecracker` argv, so a pattern kill would match the very process it
 names plus any sibling tooling. This is the footgun that once killed a QEMU VM *and the
@@ -414,6 +419,10 @@ The schema will be **derived from what slices 1–3 actually needed**, and will 
 spelling for shared fields (`name`, `lab`, `memory`, `kernel`) so Phase-6 backends read
 either without special-casing. The v2 draft is preserved in git history as a starting point,
 not a commitment.
+
+**DERIVED AND IMPLEMENTED 2026-08-02 — see [H.2](#h2-the-schema-derived--and-the-two-fields-that-are-refusals).**
+The schema is now real, and two of its constraints are enforced as *refusals* rather than
+offered as options.
 
 **First derived constraint, from slice 1 — the schema must not expose `root=`.** Firecracker
 appends its own `root=/dev/vda` after whatever `boot_args` we supply, and the kernel honours
@@ -1081,7 +1090,7 @@ exercise · break**, and the break pass writes into `LEDGER.md`.
 | **1** ✅ | **One microVM, by hand** — **DONE 2026-08-01, [Appendix E](#appendix-e--slice-1-one-microvm-by-hand-2026-08-01)** | ext4 from a chroot (Alpine **and** Debian); a `vmlinux`; boot with `--no-api --config-file`; boot again over the REST API with `curl` | **login prompt at 0.55 s**, zero variance over 4 runs; Alpine 8.2 MB tree / 64 MB image and Debian 215 MB / 363 MB — **26× the size, identical boot time** | all four run: `panic=1` dropped → **hung until killed (1.63 s vs 20 s+)**; `is_root_device` flipped → **found FC's arg append**; `ip=` bent → **23× silent regression**; `extract-vmlinux` → **decision B = yes** |
 | **2** ✅ | **The microVM gets an identity** — **DONE 2026-08-01, [Appendix F](#appendix-f--slice-2-the-microvm-gets-an-identity-2026-08-01)** | one tap, no bridge (root only for `ip tuntap add`; FC opened it unprivileged); MMDS `PUT` over the API socket | **V2 token handshake by hand from inside the guest** (`len=48`), `instance-id` read at `169.254.169.254` matching the host's `PUT`; boot **0.57 s** with the NIC | **no-token GET → `401`** (the SSRF lesson, observed); never-`PUT` key → `404`; **NIC dropped with `ip=` kept → 12.84 s, 22.5×**, the guard's tripwire reproduced on a second rootfs |
 | **3** ✅ | **Two microVMs that reach each other** — **DONE 2026-08-02, [Appendix G](#appendix-g--slice-3-the-fabric-2026-08-02)**; build + exercise + teardown green, break pass **3 of 5** (the two deferred are named in [G.9](#g9-not-run--recorded-as-unknown-not-as-pass), both requiring a host without a live cluster or a config change) | `fabric.sh up/down/retap/status` — additive nft scoped by `iifname`, recorded `ip_forward`, dnsmasq as DHCP **and** DNS. **Bridge MUST be named `br-mc0`** (Calico v3.28.1 excludes `^br-.*`) and **taps MUST carry no IPv4 address** — [F.7](#f7-the-selection-rule-derived--and-7-already-satisfied-it) | `api1` pings `api2` **by name**; `down` asserts absence of *our* objects only; **pre-flight records Calico's tunnel binding and teardown compares it** — the assertion that caught [F.6](#f6-additive-was-not-safe--the-tap-captured-a-live-clusters-tunnel) | delete the bridge under a running VM; exhaust the DHCP pool; leave a stale tap; **confirm Calico still works** — and give a tap an address on purpose to watch it become an autodetection candidate |
-| **4** | **The tool, and what it hides** | `lab-fc.sh` + `preflight`; **derive** §5.2's schema from slices 1–3 | one command, same boot; `--dry-run` diffed against slice 1's hand-written `config.json` | the preflight tripwire; **name what the tool silently started doing for you** — that list is the deliverable. Watch for the §8.3 verb tripwire |
+| **4** ✅ | **The tool, and what it hides** — **DONE 2026-08-02, [Appendix H](#appendix-h--slice-4-the-tool-and-what-it-hides-2026-08-02)** | `lab-fc.sh` + `preflight`; **derive** §5.2's schema from slices 1–3 | one command, same boot; `--dry-run` diffed against slice 1's hand-written `config.json` | the preflight tripwire; **name what the tool silently started doing for you** — that list is the deliverable. Watch for the §8.3 verb tripwire |
 | **5** | **A second engine on one fabric** | add the QEMU `edge` (Phase 2 already does bridge mode) | two engines, one L2, one `--lab` view | kill one engine's daemon, see what the other reports. **Answer decision E** |
 | **6** | **The control plane** | whichever §8.3 shape slice 5 argued for; `fc.py` backend + topology slot; revisit decision G | all instances in one tree; `apply` a no-op on pass two, if the seam supports it | make the registry disagree with reality — MAAS's registry-layer fault, ported |
 | **7** | **Preserve** | `preserve.sh`, both tiers, `derivation.toml`; **`lab-vm.sh export`** (the §9.5 gap) | back up a lab, destroy it, restore it, prove it is the same | restore with a **changed** artifact hash and confirm it refuses **by name** |
@@ -2464,3 +2473,116 @@ and *confirm Calico still works* — green in all three, across five independent
 two above are named rather than left implicit: a layer with no scenario is a layer nobody
 has watched fall over.
 
+
+## Appendix H — slice 4, the tool and what it hides, 2026-08-02
+
+`phase7-firecracker/lab-fc.sh` + `preflight`, with §5.2's schema **derived** from what
+slices 1–3 actually needed. The slice's stated deliverable is *"name what the tool silently
+started doing for you"* — so the tool produces that list itself, rather than an author
+remembering to write one.
+
+### H.1 The deliverable, generated rather than recalled
+
+`create --dry-run` prints the config **and** a provenance row for every field, tagged
+`YOURS` / `DEFAULT` / `DERIVED` / `APPENDED` / `REFUSED`. For the minimal slice-1 spec
+(`--name --kernel --rootfs --memory`), **nine fields came from somewhere other than the
+spec**:
+
+| where from | field | why |
+|---|---|---|
+| DEFAULT | `boot_args: console=ttyS0` | without it the guest boots silently and nothing is debuggable |
+| DEFAULT | `boot_args: reboot=k` | a microVM has no ACPI; without this a reboot hangs |
+| DEFAULT | `boot_args: panic=1` | **measured** ([E.3](#e3-the-panic1-hole-closed-by-watching-it)): exits in 1.63 s vs hanging until killed at 20 s |
+| DEFAULT | `boot_args: pci=off` | there is no PCI bus to probe |
+| DEFAULT | `smt = false` | whole cores, no hyperthread siblings |
+| DEFAULT | `vcpu_count`, `mem_size_mib` | supplied when you don't say; FC's own default is 128 MiB |
+| DERIVED | `is_root_device = true` | and *this* is what makes Firecracker append its `root=` |
+| **APPENDED** | **`root=/dev/vda rw`** | **Firecracker adds it after ours; the kernel honours the LAST one** |
+| **REFUSED** | `root=<yours>` | not offered as a knob — it would be silently overridden ([E.4](#e4-two-findings-the-plan-did-not-anticipate)) |
+
+The last two are the point. A tool that merely *worked* would show neither.
+
+### H.2 The schema, derived — and the two fields that are refusals
+
+`[[microvm]]`: `name`, `kernel`, `rootfs`, `memory`, `vcpus`, `tap`, `mac`, `ip`, `gateway`,
+`netmask`, `mmds`, `append`, `lab`. Keys the parser does not know are **refused by name**,
+not ignored — a silently dropped key is a field that appears to work and does nothing.
+
+Two constraints are enforced as refusals rather than offered as options, each traceable to a
+measurement:
+
+1. **`root=` in `append` is refused** ([E.4](#e4-two-findings-the-plan-did-not-anticipate)).
+2. **`ip=` without a tap is refused** ([F.4](#f4-the-ip-guard-now-has-a-tripwire-observed-twice)) — the
+   silent 23× boot regression, with no `IP-Config` line and no error anywhere in dmesg.
+
+`preflight` is **the same function `create` runs first**, not a second implementation.
+[`test-preflight-is-one-function.sh`](phase7-firecracker/tests/test-preflight-is-one-function.sh)
+asserts that structurally: the gate lines both verbs print must be **byte-identical** (8 rows
+today), and `create` must refuse *before* copying a multi-hundred-megabyte rootfs.
+
+### H.3 The diff against slice 1's hand-written config
+
+Normalised to basenames, `lab-fc.sh` vs the config typed by hand in slice 1:
+
+```diff
+-    "boot_args": "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw",
++    "boot_args": "console=ttyS0 reboot=k panic=1 pci=off",
+     "mem_size_mib": 128,
++    "smt": false,
+```
+
+**Slice 1's hand-written config carried `root=/dev/vda rw` redundantly.** Firecracker was
+appending an identical `root=/dev/vda rw` after it the entire time; it was harmless only
+because the two happened to agree. E.4 is what that looks like when they don't. The tool
+drops it and *says why* — one line of the provenance table replaces a fact nobody knew.
+
+Boot verified through the tool: `create` → `start` → `Run /sbin/init as init process`,
+kernel done at **0.564930 s** — the same 0.55 s as slices 1–3. One command, same boot.
+
+### H.4 Two defects, both in the safety machinery
+
+**The `/sbin/init` gate lied on first contact.** It grepped `debugfs` output for `Inode:`
+and read its absence as "the file is missing". Run against a **dirty** image — one a guest
+had booted `rw` and been SIGKILLed on, so the bitmap checksums were stale — `debugfs` never
+opened the filesystem at all, and the tool reported *"rootfs has no /sbin/init"* about an
+image that had booted minutes earlier. **"I could not look" is not "I looked and it is
+missing."** The gate now has three outcomes, and
+[`test-unknown-is-not-pass.sh`](phase7-firecracker/tests/test-unknown-is-not-pass.sh) asserts
+all three, including that it does not invent a specific defect. This is the *mirror* of the
+usual error — UNKNOWN rendered as FAIL rather than as PASS — and still a liar.
+
+**The EXIT-trap safety net was present and inert.** Every test opened with
+`trap 'rm -rf "$tmp"' EXIT`, and bash keeps **one** EXIT trap per shell, so each test
+silently replaced `lib.sh`'s "print FAIL if the test exits without a verdict" net. Proven by
+fault injection: an injected generator defect produced a Python traceback, `rc=1`, and **no
+`FAIL:` line**. Cleanup now registers into `TMPDIRS` and the shared trap does both jobs;
+re-injecting the same defect now prints the traceback *and* `FAIL: test exited early`.
+
+**All four tests were fault-injected and all four bit**, each naming its own defect — the
+suite's own negative control, since an all-PASS run is otherwise indistinguishable from one
+that checks nothing. Headless (no `firecracker`, no `debugfs`) the suite is 2 PASS / 2 SKIP
+/ 0 FAIL, which is the CI path; `phase7-firecracker` is now in both CI lists.
+
+### H.5 The §8.3 tripwire held — and §5.1 needs a correction
+
+No verb was added because "the other engines will need this too." Provenance did **not**
+become an `explain` verb: it belongs to the thing that generates the config, so it is a flag
+on `create`.
+
+**§5.1 says `destroy` = "stop + delete tap + delete state dir". That is now wrong.** Slice 3
+gave tap lifecycle to the fabric (`fabric.sh tap` / `retap`), and **two owners for one
+resource is this plan's most-repeated bug**: whichever deletes it first leaves the other's
+record describing something gone. So in `lab-fc.sh` the tap is an **input** — validated
+(exists, owned by the caller's uid, carries no IPv4) and never manufactured or destroyed.
+`destroy` says so explicitly rather than silently not doing it.
+
+The tap gates are slice 3's findings ported into a tool: ownership is read back from
+`/sys/class/net/<dev>/owner`, because `ip tuntap add` exiting 0 says nothing about the
+`TUNSETIFF` the VMM will issue.
+
+### H.6 Not done in this slice
+
+`console`, `ssh`, `snapshot`, `restore`, `preserve`, `mmds` and the jailer tier (§5.6) are
+**not implemented** — they belong to slices 7–8 and to decision E, and adding them now would
+be the §8.3 drift wearing a schedule as a disguise. `lab-fc.sh --help` lists only what
+exists.
