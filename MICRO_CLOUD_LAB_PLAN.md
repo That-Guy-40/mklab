@@ -1285,6 +1285,20 @@ New, surfaced while writing v3 and not yet decided:
    this repo's own leftover test container. **Pin it**, do not let `probe_engine` choose:
    `lab-lxd.sh` prefers Incus whenever its daemon answers, so the default is the engine
    we least want to disturb.
+
+   > ⚠️ **REVERSED 2026-08-01, later the same day —
+   > [F.8](#f8-lxdbr0-is-a-candidate-and-it-outranks-the-one-calico-chose).** This answer
+   > was reasoned from *what rides on each bridge*, which was right as far as it went and
+   > was not the deciding factor. **`lxdbr0` is an autodetection candidate at index 9;
+   > `incusbr0` is one at index 17.** `^lxcbr.*` does not match `lxdbr0`. So bringing
+   > `lxdbr0` **up** — which is exactly what targeting LXD does — inserts a *lower-index*
+   > candidate ahead of the interface Calico currently uses, and the next `calico-node`
+   > restart can migrate the cluster's node IP to `10.216.67.1`.
+   >
+   > **Revised answer: target `incus`, pinned.** Not because Incus is better, but because
+   > `incusbr0` is *already* the chosen interface, so using it changes nothing. The rule
+   > generalises past this host: **prefer the engine whose bridge the CNI has already
+   > selected, because that is the one choice guaranteed not to move it.**
 9. ~~**Does `db` on LXD still make sense (§9.2)?**~~ — **DISSOLVED 2026-08-01.** The
    question existed only because LXD was believed to be "running someone else's cluster."
    It is not. `db` on LXD is the *safe* placement, and it is now pinned in §9.2. The
@@ -2011,3 +2025,79 @@ reconfigure someone else's CNI to be safe is not a lab you can hand to anyone el
 **And the pre-flight/teardown comparison stays**, regardless. The rule above is derived from
 one host at one version; the assertion that caught F.6 costs nothing and does not depend on
 the rule being right.
+
+### F.8 `lxdbr0` is a candidate, and it outranks the one Calico chose
+
+[F.7](#f7-the-selection-rule-derived--and-7-already-satisfied-it) listed `^lxcbr.*` among
+the exclusions. It is easy to read that as "LXD's bridge is covered". **It is not.**
+`^lxcbr.*` matches `lxcbr0` — the *old LXC* bridge — and does **not** match `lxdbr0`.
+Tested against the actual patterns rather than eyeballed:
+
+| interface | verdict |
+|---|---|
+| `lxcbr0` | EXCLUDED by `^lxcbr.*` |
+| **`lxdbr0`** | **CANDIDATE — no pattern matches** |
+| `incusbr0` | **CANDIDATE — no pattern matches** |
+| `virbr0` | EXCLUDED by `^virbr.*` |
+| `docker0` | EXCLUDED by `^docker.*` |
+| `br-a7bf99683c8d` | EXCLUDED by `^br-.*` |
+| `mc-tap0` | **CANDIDATE** — which is why F.6 happened |
+
+**And the index order is the problem:**
+
+| candidate | idx | state |
+|---|---|---|
+| `enx00051b8eb138` | 2 | UP |
+| **`lxdbr0`** | **9** | **DOWN — memberless** |
+| `incusbr0` | 17 | UP ← currently chosen |
+
+`lxdbr0` is DOWN only because it has no members. **Start one LXD container and it comes up
+at index 9 — ahead of `incusbr0` at 17.** On the next `calico-node` restart the node IP can
+migrate to `10.216.67.1`, which is F.6 again with a different interface.
+
+**This repo's own phase-5 suite can create that condition.** `lab-lxd.sh`'s `probe_engine`
+prefers Incus, so today's runs land on `incusbr0` and change nothing — but the fallback
+path (Incus unreachable → LXD) brings `lxdbr0` up. The hazard is one daemon outage away,
+and nothing in the suite would report it.
+
+**It also reverses §17.4 question 8.** That answer picked LXD by asking *what rides on each
+bridge* — true, and not the deciding factor. The deciding factor is *index order among
+candidates*, and by that measure LXD is the riskier choice on this host. **Target `incus`,
+pinned** — not because Incus is better, but because `incusbr0` is already the selected
+interface, so using it moves nothing.
+
+The general rule, worth more than either engine: **prefer the engine whose bridge the CNI
+has already chosen.** It is the only option guaranteed not to relocate the node IP.
+
+### F.9 An environmental fault this work surfaced (not ours, worth fixing)
+
+`kubectl exec` and `kubectl logs` both fail against this cluster:
+
+```
+tls: failed to verify certificate: x509: certificate is valid for 192.168.1.177,
+172.17.0.1, …, not 192.168.1.106
+```
+
+The kubelet's serving cert, read off the wire:
+
+| | |
+|---|---|
+| subject | `CN=system:node:badass-box` |
+| issued | **2025-03-23 02:46:25 UTC** — the cluster's own creation timestamp |
+| SANs | `badass-box`, **`192.168.1.177`**, `172.17.0.1`, 3× IPv6 |
+| node InternalIP today | **`192.168.1.106`** |
+
+**The host's address changed since the cluster was built and the cert was never
+regenerated.** Workloads, networking and Calico are unaffected; everything that reaches the
+node through the kubelet's `:10250` is not — `logs`, `exec`, `port-forward`, node proxy
+(`ServiceUnavailable`), and `top node` (`Metrics API not available`).
+
+Fix is targeted and reversible: `microk8s refresh-certs -e server.crt` (`--undo` reverts).
+
+**Two reasons it belongs in this appendix rather than a footnote.** It is corroboration for
+F.7's volatile-candidate reading — this host's address *has* moved before, on a USB NIC. And
+it caused a **wrong conclusion of mine earlier in this session**: `kubectl logs … | grep
+autodetect` printed nothing, and I read that as "the log has no autodetection line." The
+command had *failed*; the error went to stderr and `grep` only saw an empty stdout. A silent
+failure read as a negative result — the same class of error every other appendix here is
+about, committed by the person writing them.
