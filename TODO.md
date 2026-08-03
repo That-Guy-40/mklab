@@ -368,6 +368,62 @@ Exemplars: the *Provenance* + *Hand-walk sandboxes* conventions in
 [`examples/almalinux-kickstart-gallery/`](examples/almalinux-kickstart-gallery/))
 as the d-i/kickstart counterparts to these Packer builders.
 
+## 8. Repo health review (2026-08-03): one real defect + deferred follow-ups
+
+A full health pass run on a **minimal container (root, no
+podman/qemu/incus/debootstrap, no docker daemon)** — deliberately hostile
+conditions, and a good stress test of the "no silent exits, honest SKIPs"
+discipline. The record, so the next reviewer knows what was already checked:
+
+- **Green:** `tools/link_check.py` (368 docs, 0 broken, 0 orphans);
+  `tools/paths.py --check`; `bash -n` over all 363 tracked scripts; all
+  `tools/tests/` suites; phases 1, 2, 3, 5, 7 + micro-linux (runnable tests
+  pass, the rest SKIP with named reasons); phase6-tui + phase6b-web pytest
+  (154 passed, 1 skipped); `netboot/tests/test-sign-payload.sh`; the
+  [`examples/metal-as-a-service/`](examples/metal-as-a-service/) chaos suite
+  (28 passed, 7 skipped, 0 failed — zero criticals, all 9 layers covered).
+- **Provenance verified beyond what CI checks:** all **204** recorded `sha256`s
+  across the 32 `upstream-tutorial/` archives re-hashed against the archived
+  bytes — 204 match, 0 mismatches. The one archive-less dir
+  ([`examples/linuxboot-uefi-kexec/upstream-tutorial/`](examples/linuxboot-uefi-kexec/upstream-tutorial/))
+  is the *cite, don't mirror* tier correctly applied.
+
+**The defect: phase4's `export` path gates before it validates — and its two
+tests FAIL where they should SKIP.**
+[`test-validation.sh`](phase4-podman/tests/test-validation.sh)'s
+"export bogus format" assertion and
+[`test-compose-export.sh`](phase4-podman/tests/test-compose-export.sh) both
+**FAIL** on a host without podman (and fail *differently* as root: the
+rootless-first refusal fires instead). Two distinct problems:
+
+1. [`lab-podman.sh`](phase4-podman/lab-podman.sh)'s export path runs the
+   root-gate / podman-presence check **before argument validation**, unlike
+   every other subcommand — 13 sibling usage-validation checks pass fine in
+   the same podman-less run. Usage errors should not require a working podman
+   to be diagnosable.
+2. The two tests carry no skip guard, violating the contract
+   [`ci.yml`](.github/workflows/ci.yml) itself states ("daemon/root tests
+   self-skip"). CI masks both (GitHub runners are non-root and ship podman) —
+   this only bites on a minimal or root box, exactly the case the SKIP
+   discipline exists for. Credit where due:
+   [`run-all.sh`](phase4-podman/tests/run-all.sh) honestly exited 1.
+
+- [ ] Reorder `lab-podman.sh` `export` to validate its arguments (unknown
+      format, missing lab) *before* the rootless gate and podman-presence
+      check, matching the other subcommands.
+- [ ] Give the "export bogus format" assertion and `test-compose-export.sh`
+      a skip guard (`SKIP: missing required command: podman`, exit 77) so a
+      podman-less host reports SKIP, not FAIL.
+- [ ] Negative control per house rules: after the fix, rerun both tests on a
+      podman-less box (and as root) and watch them SKIP; rerun with podman and
+      watch them PASS.
+
+**Known-open items re-confirmed, not new** (tracked elsewhere, listed for
+completeness): the Alpine `--allow-untrusted` gap — the residue of
+[`AUDIT.md`](AUDIT.md) F2 — plus backlog items #4/#5 follow-on passes and #7
+(Packer vendoring, blocked on its prerequisite question).
+
 ---
 
-*Created 2026-06-06; #5–#6 added 2026-06-11; #7 added 2026-06-11.*
+*Created 2026-06-06; #5–#6 added 2026-06-11; #7 added 2026-06-11; #8 added
+2026-08-03.*
