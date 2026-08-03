@@ -210,6 +210,18 @@ chroot first, then point the target phase at the same artifact.
 | [`offsec-awae-vm/`](offsec-awae-vm/) | 🔒 End-to-end **automated** chroot→VM: a Kali `kali-rolling` chroot carrying the **OffSec AWAE (WEB-300)** toolset, made self-bootable (kernel + init + SSH) and packaged into a headless BIOS VM by `from-chroot`. `build-vm.sh` chains both phases + boots it (serial/SSH); `--smoke` proves the pipeline first. Chroot-level take on Kali's `offsec-awae-live.sh` live-build recipe. ⚠️ offensive tooling — authorized targets only. |
 | [`rhel-bootc-minimal/`](rhel-bootc-minimal/) | 🥾 **Build a custom *minimal* bootc base image, then boot it** — a faithful walk of Red Hat's *[Creating bootc images from scratch](rhel-bootc-minimal/upstream-tutorial/)* (RHEL 9 image mode). Use the base image's `bootc-base-imagectl build-rootfs --manifest=minimal` to compose a *bootc + systemd + kernel + dnf* rootfs, `COPY` it into `FROM scratch`, add only `NetworkManager`/`openssh-server`, and get a bootable image **~59% smaller** than the stock base — then `bootc install to-disk` it to a qcow2 and boot it as a real OS in Phase 2. Keeps the byte-faithful `Containerfile.rhel` (`registry.redhat.io`, subscription) **and** a verified `Containerfile.centos` (CentOS Stream 9, RHEL's upstream) side by side. **VERIFIED end-to-end on podman 4.9.3 + KVM** (1.98 GB → 812 MB; `bootc container lint` ✓; serial login shows a real `ostree=` boot of the image's own kernel). `RUNBOOK.md` reproduces §9.1–§9.5; `MANUAL_TESTING.md` captures the §9.3 build-privilege ladder, the heredoc/EPEL gotchas, and the **four boot gotchas** (`--rootfs`, the missing `bubblewrap`, root locked, the rootless→root storage trap). ⚠️ build needs `--cap-add=all … --device /dev/fuse`; boot install needs `sudo`. |
 
+## ☁️ Micro cloud — under construction
+
+Assemble the phases into one single-host **micro cloud** — a Phase-1 chroot as
+the universal userspace every compute type imports, with Firecracker microVMs
+(`phase7-firecracker/lab-fc.sh`) as the fourth compute type beside QEMU VMs,
+containers, and LXD. Build slices 0–4 are done; the design document and its
+measurement record are [`MICRO_CLOUD_LAB_PLAN.md`](../MICRO_CLOUD_LAB_PLAN.md).
+
+| File | What you get |
+|---|---|
+| [`micro-cloud/`](micro-cloud/) | ☁️ 🔑 **The lab directory, being staged.** Today: the README mapping which artifacts exist where, and [`DEFERRED.md`](micro-cloud/DEFERRED.md) — the work queue (moved from the plan's §17), whose top item is committing slice 3's `fabric.sh` from the host workdir. The spec, fabric, runbooks and tests land here as the remaining slices do. |
+
 ## 🌐 Netboot & PXE — build → serve → boot
 
 The repo's richest pipeline: build a RAM-bootable rootfs (Phase 1), serve the
