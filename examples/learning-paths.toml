@@ -18,6 +18,7 @@ time_buckets      = ["⏱ <30m", "⏱ ~1–2h", "⏱ half-day+"]
 # Lab units intentionally NOT routed into any journey (kept honest, with a why).
 [meta.coverage_exempt]
 "learning-paths.toml" = "the source of truth itself, not a lab"
+"micro-cloud" = "under construction — build slices 0-4 done; routed as its own path at slices 9-10 per MICRO_CLOUD_LAB_PLAN.md §11, with the slices as the path's steps"
 
 
 # ════════════════════════════════════════════════════════════════════════════
