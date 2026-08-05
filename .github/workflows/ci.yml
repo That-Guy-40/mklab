@@ -49,8 +49,10 @@ jobs:
             tools/micro-cloud-preflight-p2.sh \
             tools/micro-cloud-fabric-probe.sh \
             examples/micro-cloud/fabric.sh \
+            examples/micro-cloud/bench-boot.sh \
             examples/micro-cloud/tests/lib.sh \
             examples/micro-cloud/tests/run-all.sh \
+            examples/micro-cloud/tests/test-bench-boot.sh \
             examples/micro-cloud/tests/test-fabric-round-trip.sh
 
       - name: no cached host facts in the micro-cloud instruments

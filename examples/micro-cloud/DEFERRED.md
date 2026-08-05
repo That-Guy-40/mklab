@@ -8,7 +8,21 @@
 > the planning session that produced v2 and v3; the DONE markers were added as
 > the slices landed.
 
-## NEXT — slice 5a: a second engine on one fabric
+## NEXT — slice 5a **(b)**: the fabric half
+
+> ✅ **Half (a) landed 2026-08-05** — the unprivileged boot comparison, four arms,
+> [Appendix J](../../MICRO_CLOUD_LAB_PLAN.md#appendix-j--slice-5a-a-the-second-engine-the-number-nobody-had-and-the-number-everybody-had-was-wrong-2026-08-05). It answered §18.3's *"nobody has the other number"* and
+> **corrected the number everybody did have**: 0.512 s of Firecracker's 0.567 s is a
+> kernel **i8042 probe** ([J.3](../../MICRO_CLOUD_LAB_PLAN.md#j3-the-headline-that-was-false)), so the honest tuned figure is **0.055 s**
+> and Firecracker — not QEMU — is the faster of the two once both are on equal footing
+> ([J.5](../../MICRO_CLOUD_LAB_PLAN.md#j5-the-answer-once-both-engines-are-on-equal-footing)).
+>
+> **What (b) still owes, unchanged and named rather than implied:** no tap, no
+> `br-mc0`, no DHCP, no name resolution — and therefore **no evidence yet for the
+> network-attachment row** of §18.4's seam table. `retap` is still uncalled and the
+> slice-3 exercise still un-re-run ([J.7](../../MICRO_CLOUD_LAB_PLAN.md#j7-not-run--the-fabric-half-is-still-owed)).
+
+## The original brief — slice 5a: a second engine on one fabric
 
 *Added 2026-08-05, when §18.6 items 1–5 landed and this became the front of the
 queue. Numbered outside the §17.x sequence on purpose: that numbering is cited by
@@ -28,7 +42,7 @@ Firecracker boots, on a `fabric.sh`-made tap, so the only variable is the VMM
 | input | where | state |
 |---|---|---|
 | `fabric.sh` (`up`/`tap`/`status`/`down`) | [`fabric.sh`](fabric.sh) | committed; round trip re-verified 2026-08-04 ([I.7](../../MICRO_CLOUD_LAB_PLAN.md#i7-the-recovered-fabric-re-verified-against-the-moved-binding--pass)), now a **repeatable test** — [`tests/test-fabric-round-trip.sh`](tests/run-all.sh) — whose privileged path was **executed 2026-08-05 and passed with 0 skips** ([I.9](../../MICRO_CLOUD_LAB_PLAN.md#i9-the-one-shot-became-a-test-and-the-tests-root-path-ran--pass)) |
-| `lab-fc.sh` + preflight | [`phase7-firecracker/`](../../phase7-firecracker/lab-fc.sh) | slice 4; baseline **0.564930 s** |
+| `lab-fc.sh` + preflight | [`phase7-firecracker/`](../../phase7-firecracker/lab-fc.sh) | slice 4; baseline **0.564930 s** — reproduced as 0.567145 on 2026-08-05, and then explained: **90.3% of it is an i8042 probe** ([J.3](../../MICRO_CLOUD_LAB_PLAN.md#j3-the-headline-that-was-false)) |
 | `-M microvm`, virtio-mmio, qboot | [`phase2-qemu-vm/`](../../phase2-qemu-vm/lab-vm.sh) | pre-existing; `test-microvm-argv.sh` |
 | `--network-mode tap` | same | takes a **pre-made tap by name** — what `fabric.sh tap` produces and how FC consumes one. Unprivileged in both |
 | `--disk-format raw` | same | PR #137; attaches a **per-instance copy**, not a CoW overlay, so the storage stack matches FC's |

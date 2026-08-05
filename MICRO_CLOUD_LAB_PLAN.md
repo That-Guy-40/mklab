@@ -1177,7 +1177,7 @@ exercise · break**, and the break pass writes into `LEDGER.md`.
 | **2** ✅ | **The microVM gets an identity** — **DONE 2026-08-01, [Appendix F](#appendix-f--slice-2-the-microvm-gets-an-identity-2026-08-01)** | one tap, no bridge (root only for `ip tuntap add`; FC opened it unprivileged); MMDS `PUT` over the API socket | **V2 token handshake by hand from inside the guest** (`len=48`), `instance-id` read at `169.254.169.254` matching the host's `PUT`; boot **0.57 s** with the NIC | **no-token GET → `401`** (the SSRF lesson, observed); never-`PUT` key → `404`; **NIC dropped with `ip=` kept → 12.84 s, 22.5×**, the guard's tripwire reproduced on a second rootfs |
 | **3** ⚠️ | **Two microVMs that reach each other** — **EXERCISED 2026-08-02, [Appendix G](#appendix-g--slice-3-the-fabric-2026-08-02), but the deliverable was never landed — see [§18.1](#181-the-precursor-nobody-recorded--fabricsh-is-not-in-the-repo)**; build + exercise + teardown green, break pass **3 of 5** (the two deferred are named in [G.9](#g9-not-run--recorded-as-unknown-not-as-pass), both requiring a host without a live cluster or a config change) | `fabric.sh up/down/retap/status` — additive nft scoped by `iifname`, recorded `ip_forward`, dnsmasq as DHCP **and** DNS. **Bridge MUST be named `br-mc0`** (Calico v3.28.1 excludes `^br-.*`) and **taps MUST carry no IPv4 address** — [F.7](#f7-the-selection-rule-derived--and-7-already-satisfied-it) | `api1` pings `api2` **by name**; `down` asserts absence of *our* objects only; **pre-flight records Calico's tunnel binding and teardown compares it** — the assertion that caught [F.6](#f6-additive-was-not-safe--the-tap-captured-a-live-clusters-tunnel) | delete the bridge under a running VM; exhaust the DHCP pool; leave a stale tap; **confirm Calico still works** — and give a tap an address on purpose to watch it become an autodetection candidate |
 | **4** ✅ | **The tool, and what it hides** — **DONE 2026-08-02, [Appendix H](#appendix-h--slice-4-the-tool-and-what-it-hides-2026-08-02)** | `lab-fc.sh` + `preflight`; **derive** §5.2's schema from slices 1–3 | one command, same boot; `--dry-run` diffed against slice 1's hand-written `config.json` | the preflight tripwire; **name what the tool silently started doing for you** — that list is the deliverable. Watch for the §8.3 verb tripwire |
-| **5a** | **A second engine on one fabric — the controlled comparison** ([§18](#18-slice-5--the-brief)) | QEMU **`-M microvm`** (Phase 2 already has virtio-mmio + qboot) consuming **the same `vmlinux` and the same `.ext4`** Firecracker boots, on a `fabric.sh`-made tap. ~~"Phase 2 already does bridge mode"~~ — **`--network-mode tap`, not `bridge`**: [§18.3](#183-two-corrections-to-14s-one-line-brief) | two engines, one L2, one `--lab` view — **and a boot-time number where the only variable is the VMM** | kill one engine's process and see what the other reports; kill the **fabric** under both. **Answer decision E** |
+| **5a** ⚙️ | **A second engine on one fabric — the controlled comparison** ([§18](#18-slice-5--the-brief)). **Half (a) DONE 2026-08-05, [Appendix J](#appendix-j--slice-5a-a-the-second-engine-the-number-nobody-had-and-the-number-everybody-had-was-wrong-2026-08-05)** — the unprivileged boot comparison; **(b), the fabric half, is still owed** ([J.7](#j7-not-run--the-fabric-half-is-still-owed)) | QEMU **`-M microvm`** (Phase 2 already has virtio-mmio + qboot) consuming **the same `vmlinux` and the same `.ext4`** Firecracker boots, on a `fabric.sh`-made tap. ~~"Phase 2 already does bridge mode"~~ — **`--network-mode tap`, not `bridge`**: [§18.3](#183-two-corrections-to-14s-one-line-brief) | two engines, one L2, one `--lab` view — **and a boot-time number where the only variable is the VMM** | kill one engine's process and see what the other reports; kill the **fabric** under both. **Answer decision E** |
 | **5b** | **…and the fidelity case** | the §9.2 `edge`: cloud image + `cloud-localds` seed on `-M q35` | cloud-init runs; `edge` reaches `api1` by name | the same break pass against a guest that takes DHCP rather than `ip=` |
 | **6** | **The control plane** | whichever §8.3 shape slice 5 argued for; `fc.py` backend + topology slot; revisit decision G | all instances in one tree; `apply` a no-op on pass two, if the seam supports it | make the registry disagree with reality — MAAS's registry-layer fault, ported |
 | **7** | **Preserve** | `preserve.sh`, both tiers, `derivation.toml`; **`lab-vm.sh export`** (the §9.5 gap) | back up a lab, destroy it, restore it, prove it is the same | restore with a **changed** artifact hash and confirm it refuses **by name** |
@@ -1438,6 +1438,13 @@ full cloud VM. It can hold everything else fixed:
 Slices 1–4 established 0.55 s to userspace, with zero variance across four runs and across a
 26× rootfs size difference. **Nobody has the other number.** The density argument the whole
 plan rests on is currently one measurement wide.
+
+> **Answered 2026-08-05 — and the number above turned out to be mostly an artefact.**
+> [Appendix J](#appendix-j--slice-5a-a-the-second-engine-the-number-nobody-had-and-the-number-everybody-had-was-wrong-2026-08-05): **0.512 s of Firecracker's 0.567 s is a kernel i8042 probe**, waiting out
+> a PS/2 controller QEMU's `microvm` does not emulate at all. At their defaults QEMU looks
+> **8× faster**; on equal footing **Firecracker is 1.29× faster in the guest and 1.49×
+> faster wall-clock**. Both readings come from the same two engines — which is exactly why
+> one engine could never have produced either. The figure to quote now is **0.055 s**.
 
 **Known cost, and it is a §4.1 ladder decision, not a footnote:** `build_qemu_argv` hardcodes
 `format=qcow2` on the data disk, so booting the same **raw** ext4 needs a `disk_format` field.
@@ -3243,3 +3250,145 @@ still never called, **no microVM boots** (dnsmasq serves nobody), and the teardo
 comparison's negative direction is still the 2026-08-02 proof in
 [G.7](#g7-the-teardown-assertion-proven-in-both-directions), not a re-run. Slice 5a is where
 those get exercised.
+
+## Appendix J — slice 5a (a), the second engine: the number nobody had, and the number everybody had was wrong, 2026-08-05
+
+Slice 5a's **unprivileged half** — no fabric, no tap, no network, no root. One kernel
+(`vmlinux`, `e20e46d0…`), one rootfs (`api1.ext4`, `2e308e0b…`, copied per run), two VMMs,
+5 runs per arm. Harness: [`bench-boot.sh`](examples/micro-cloud/bench-boot.sh); regression
+guard: [`tests/test-bench-boot.sh`](examples/micro-cloud/tests/test-bench-boot.sh).
+
+### J.1 The ELF-kernel risk, and the one that mattered instead
+
+[§18.9](#189-the-assumption-most-likely-to-sink-5a-retired-before-it-was-scheduled) retired
+the assumption most likely to sink the slice — QEMU loading Firecracker's ELF `vmlinux` —
+and left one thing unverified: *the guest finding its root disk on the **mmio** bus.* It
+finds it, first try:
+
+```text
+[    0.066516] EXT4-fs (vda): recovery complete
+[    0.067479] VFS: Mounted root (ext4 filesystem) on device 254:0.
+[    0.069558] Run /sbin/init as init process
+SLICE3-BEGIN name= peer= uptime=0.05s
+```
+
+Same kernel, same bytes, `-M microvm` + `virtio-blk-device`, and slice 3's init script runs.
+The comparison is real, and the interesting problem was somewhere else entirely.
+
+### J.2 The measurement
+
+`K` = the guest kernel's own timestamp on `Run /sbin/init as init process` — the marker
+slices 1–4 timed, so these are comparable to Appendices E–H. It **excludes** VMM startup and
+firmware. `W` = host wall clock from `exec` to that line; it **includes** both.
+
+| arm | K min | **K median** | K max | W median | K spread |
+|---|---|---|---|---|---|
+| `fc-default` | 0.567032 | **0.567145** | 0.567488 | 0.6183 | 0.46 ms |
+| `fc-noi8042` | 0.054149 | **0.054905** | 0.055454 | 0.1041 | 1.31 ms |
+| `qemu-default` | 0.069474 | **0.070918** | 0.072158 | 0.1554 | 2.68 ms |
+| `qemu-noi8042` | 0.070696 | **0.072407** | 0.073372 | 0.1552 | 2.68 ms |
+
+`fc-default` **reproduces the historical figure to four decimal places** — 0.567145 against
+[H.3](#h3-the-diff-against-slice-1s-hand-written-config)'s 0.564930 and
+[G](#appendix-g--slice-3-the-fabric-2026-08-02)'s 0.571730, measured three days and one host
+reboot apart. Slice 1's "zero variance" claim also survives contact: every arm's spread is
+under 3 ms.
+
+### J.3 The headline that was false
+
+The first QEMU boot came back at **0.070 s against Firecracker's 0.567 s** and the obvious
+conclusion — *QEMU `-M microvm` reaches userspace 8× faster than Firecracker* — is **wrong**.
+The gap is not the hypervisor. It is **one device probe**, and it is visible as a single
+stall in the boot log:
+
+```text
+[    0.051399] clk: Disabling unused clocks           ← the same instant in both engines
+[    0.563440] input: AT Raw Set 2 keyboard as …/i8042/serio0/input/input0   ← FC, 0.512 s later
+[    0.052645] EXT4-fs (vda): recovery complete       ← same kernel, i8042 probing off
+```
+
+Firecracker emulates an **i8042 PS/2 controller** — it is how `SendCtrlAltDel` reaches the
+guest, i.e. it exists to serve the `stop` verb in [§18.4](#184-what-slice-5-must-answer)'s
+table. QEMU's `microvm` machine emulates none. The kernel waits out a probe on hardware that
+never answers, and on this kernel that wait is **0.512 s of Firecracker's 0.567 s — 90.3% of
+the number this plan's density argument has rested on since slice 1.**
+
+**Four `i8042.*` flags are the folk remedy; two of them do nothing.** Measured one at a time,
+because "add these four flags" is advice nobody can check:
+
+| flag | K | |
+|---|---|---|
+| `i8042.nopnp` | **0.0598** | ← the stall is the **PnP** probe |
+| `i8042.dumbkbd` | **0.0562** | ← skips the keyboard command handshake |
+| `i8042.noaux` | 0.5681 | no effect |
+| `i8042.nomux` | 0.5672 | no effect |
+| `i8042.notimeout` | 0.5670 | no effect — note the name; it is not the timeout being waited on |
+
+### J.4 The control, and why the finding would be worthless without it
+
+`qemu-default` vs `qemu-noi8042` is the **negative control**: `microvm` has no i8042, so the
+flags must be **inert** there. They are — 0.070918 vs 0.072407, a 1.5 ms difference inside a
+2.7 ms spread. Had that arm moved, the flags would be doing something other than what J.3
+claims and the Firecracker attribution would be unsupported. `test-bench-boot.sh` asserts it
+every run and **fails by name** if the two ever diverge.
+
+This is the fault-injection rule applied to a benchmark: a four-arm matrix where one arm is
+*expected not to move* is the only version of this measurement that can tell "the flags
+disabled the probe" from "the flags changed the boot."
+
+### J.5 The answer, once both engines are on equal footing
+
+| | Firecracker | QEMU `-M microvm` | |
+|---|---|---|---|
+| kernel → userspace (`K`) | **0.054905** | 0.070918 | FC **1.29× faster** |
+| wall clock (`W`) | **0.1041** | 0.1554 | FC **1.49× faster** |
+| VMM + firmware (`W − K`) | **0.049** | 0.085 | FC ~36 ms leaner |
+
+**The direction is the opposite of the naive reading, and the magnitude is a third of it.**
+Firecracker is faster on both measures — modestly in the guest, more clearly in its own
+startup, where QEMU also pays for qboot. What Firecracker is *not* is 8× slower, and nothing
+in slices 1–4 could have told you that, because there was only ever one engine in the room.
+
+### J.6 What this changes, and what it does not
+
+- **The density argument stands, and its number moves.** "0.55 s to userspace" is real and
+  reproducible, but ~0.51 s of it is a probe that four kernel-cmdline characters remove.
+  The honest figure for a *tuned* Firecracker microVM on this kernel is **0.055 s**, and the
+  comparison to QEMU should be made there, not at the defaults.
+- **A default is not a property.** Slices 1–4 measured Firecracker's *default device model*
+  and the plan wrote it down as Firecracker's *speed*. One engine cannot tell those apart —
+  which is the entire argument for slice 5 existing.
+- **It is decision-E evidence, unexpectedly.** The i8042 is present *because of the `stop`
+  seam*: it is FC's Ctrl-Alt-Del path. So the one place the two engines' device models
+  genuinely diverge is downstream of the one row in
+  [§18.4](#184-what-slice-5-must-answer)'s table marked *"same intent, different channel"*.
+  The seams are not independent of the performance story.
+- **Unchanged:** [E](#appendix-e--slice-1-one-microvm-by-hand-2026-08-01),
+  [G](#appendix-g--slice-3-the-fabric-2026-08-02) and
+  [H](#appendix-h--slice-4-the-tool-and-what-it-hides-2026-08-02) are dated records of what
+  was measured then and are **not** rewritten. J is what those numbers mean now.
+
+### J.7 Not run — the fabric half is still owed
+
+This is **(a)** only. Neither engine touched a network: no tap, no `br-mc0`, no DHCP, no
+name resolution, and therefore **no evidence yet for the network-attachment row** of
+[§18.4](#184-what-slice-5-must-answer)'s seam table. `retap` remains uncalled and the
+slice-3 exercise remains un-re-run, exactly as
+[I.7](#i7-the-recovered-fabric-re-verified-against-the-moved-binding--pass) and
+[I.9](#i9-the-one-shot-became-a-test-and-the-tests-root-path-ran--pass) said. Slice 5a **(b)**
+is the author-run half that pays that debt.
+
+### J.8 Two defects in the harness, both found by its own honesty
+
+**The parser lied about the boot.** The first version read the timestamp with
+`sed "s/…$MARKER…/\1/p"` — and the marker is `Run /sbin/init as init process`, whose slashes
+terminate the substitution. All 20 boots failed to parse, and all 20 were reported as
+**"never reached userspace within 20s"**, which was false: every guest had booted and printed
+the line. A parse failure wearing a boot failure's error message is precisely the liar this
+repo fixes first, so `boot_once` now distinguishes the two **by name** and
+`test-bench-boot.sh` guards the parser with a log that contains the real marker.
+
+**It wrote its evidence into the repo.** The same run dropped 20 `*-FAILED.log` files into
+the working checkout. Scratch now stays in `mktemp -d`, and is **kept rather than deleted**
+when a run fails — a benchmark that discards the boot that did not work is one you cannot
+debug — with the path printed.
