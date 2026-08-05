@@ -179,7 +179,18 @@ fi
 
 calico="$(pgrep -c -x calico-node 2>/dev/null || echo 0)"
 if [[ "$calico" -gt 0 ]]; then
-    row FAIL "§7,§13" no "this host's forwarding path has no other owner" "$calico live calico-node procs; vxlan.calico over lxdbr0"
+    # DERIVE the binding; never name an interface in a string here. The original evidence
+    # read "vxlan.calico over lxdbr0" — a literal beside a derived process count. It was
+    # already wrong on 2026-08-01 (the underlay was incusbr0, plan D.1) and wrong again on
+    # 2026-08-04 (the daemons did not come back after a reboot, so Calico re-selected the
+    # physical uplink, plan Appendix I). An instrument that RUNS today and prints a fact
+    # from 2026-07-29 is not a dated record, it is a liar with a fresh timestamp.
+    #
+    # The dated RESULTS stay immutable — Appendix A is the record of what was true then.
+    # The instrument is code, and code has to be true when it runs.
+    cal_bind="$(ip -d link show vxlan.calico 2>/dev/null | grep -oE 'local [0-9.]+ dev [a-zA-Z0-9._-]+' || true)"
+    row FAIL "§7,§13" no "this host's forwarding path has no other owner" \
+        "$calico live calico-node procs; ${cal_bind:-no vxlan.calico device}"
 else
     row PASS "§7,§13" no "this host's forwarding path has no other owner" "no calico"
 fi

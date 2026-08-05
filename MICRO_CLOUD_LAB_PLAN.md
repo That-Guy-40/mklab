@@ -1495,10 +1495,77 @@ reboot caused.
 | 1 | ~~recover `fabric.sh`~~ ~~**re-run it**~~ → **DONE 2026-08-04** ([I.7](#i7-the-recovered-fabric-re-verified-against-the-moved-binding--pass)) | slice 5 has nothing to attach to; §18.1 | ✅ `up`/`tap`/`status`/`down` all green, and the teardown comparison matched the **new** binding it derived at pre-flight. **Not** proven: `retap`, any microVM, the comparison's negative direction — 5a re-runs the exercise |
 | 2 | Appendix I's markers | a reader must not act on the stale `incusbr0` claims | this section |
 | 3 | ~~`lab-chroot.sh export-rootfs`~~ → **DONE 2026-08-05** ([§6.4](#64-what-the-implementation-changed--and-the-ext4-vs-xfs-question-measured), [§6.5](#65-four-silent-exits-in-one-function-and-what-the-negative-controls-actually-proved)) | the one written-up component with a real downstream (decision 18); makes the slice-5 images reproducible instead of hand-built | `test-export-rootfs.sh` — valid ext4, `/sbin/init` read back with `debugfs`, **and the UNKNOWN case** [H.4](#h4-two-defects-both-in-the-safety-machinery) found |
-| 4 | fold the preflight instruments ([§17.4 q6](examples/micro-cloud/DEFERRED.md#174-open-questions), answer **(c)**) | four instruments that can disagree about host capability is [§0.1](#01-how-this-lab-is-built-differs-from-the-others)'s bug class waiting to happen | the gate lines are identical to `lab-fc.sh preflight`'s, asserted structurally as [H.2](#h2-the-schema-derived--and-the-two-fields-that-are-refusals) does |
+| 4 | ~~fold the preflight instruments~~ → **DONE 2026-08-05, and the answer was not a fold** ([§18.7](#187-item-4s-premise-tested-the-four-instruments-agree--and-one-of-them-was-lying)) | four instruments that can disagree about host capability is [§0.1](#01-how-this-lab-is-built-differs-from-the-others)'s bug class waiting to happen | the gate lines are identical to `lab-fc.sh preflight`'s, asserted structurally as [H.2](#h2-the-schema-derived--and-the-two-fields-that-are-refusals) does |
 | 5 | `disk_format` in `lab-vm.sh` (rung 3) | 5a cannot boot the same bytes without it | `test-microvm-argv.sh` extended |
 | 6 | **slice 5a** — build · exercise · break | §18.3, §18.4 | the boot-time number; decision E argued from the table in §18.4 |
 | 7 | **slice 5b** — the §9.2 `edge` | fidelity case, feeds §9.3's capstone | cloud-init runs; `edge` resolves `api1` by name |
+
+
+### 18.7 Item 4's premise, tested: the four instruments agree — and one of them was lying
+
+[§17.4 q6](examples/micro-cloud/DEFERRED.md#174-open-questions) worried that four
+instruments could **disagree about the same host**, and scheduled a fold. The premise was
+measured first, because a refactor justified by an untested worry is how an interface gets
+shaped by whichever failure was imagined most vividly.
+
+**Where they genuinely overlap is three capabilities, not everything:**
+
+| capability | P1 | P2 | fabric-probe | fabric.sh | lab-fc.sh |
+|---|---|---|---|---|---|
+| `/dev/kvm` | ✓ | ✓ | · | · | ✓ |
+| `firecracker` presence + pinned version | ✓ | ✓ | · | · | ✓ |
+| ext4 read-back via `debugfs` | ✓ | · | · | · | ✓ (+ `export-rootfs` = a 4th) |
+
+**Run side by side, they agree.** `/dev/kvm`: P1 `PASS` (a real `KVM_CREATE_VM` ioctl),
+lab-fc `ok`. Firecracker: P1 `XFAIL` *"author-run fetch"*, lab-fc `FAIL not on PATH` — the
+same fact — and with the binary on `PATH`, `ok firecracker v1.16.1 (pinned)`. The ext4 gate
+even disagrees *correctly*: P1 passes on an image it just built, lab-fc returns **UNKNOWN**
+on slice 3's `api1.ext4` because a guest booted it `rw` and was SIGKILLed, so `debugfs`
+cannot open it — [H.4](#h4-two-defects-both-in-the-safety-machinery)'s fix working exactly
+as designed.
+
+**Exactly one disagreement was real, and it was not a divergent implementation.** It was a
+cached string, in the oldest instrument:
+
+```text
+tools/micro-cloud-preflight.sh, printed live on 2026-08-05:
+  FAIL  §7,§13  this host's forwarding path has no other owner
+                5 live calico-node procs; vxlan.calico over lxdbr0
+```
+
+The process count is derived. **The interface name is a literal** — already wrong on
+2026-08-01 ([D.1](#d1-the-correction--the-vxlan-underlay-is-incusbr0-and-the-empty-daemon-is-the-load-bearing-one):
+it was `incusbr0`) and wrong again on 2026-08-04
+([I.1](#i1-the-measurement): it is the physical uplink). **An instrument that runs today and
+prints a fact from 2026-07-29 is not a dated record — it is a liar with a fresh timestamp**,
+and by this plan's own ladder that outranks an honest failure.
+
+**So the answer to q6 is not a fold.** q6 itself requires the dated spikes stay *runnable*,
+and merging them would destroy the harness that produced Appendices A and B. The distinction
+that resolves it:
+
+> **The appendix is the record and is immutable. The instrument is code, and code has to be
+> true when it runs.**
+
+Two instruments were corrected to *derive* rather than name — P1's Calico row, and the
+fabric probe's `for b in virbr0 lxdbr0 incusbr0 docker0`, which was accurate on 2026-08-02
+and by 2026-08-04 was printing *"0 nft rules"* for two interfaces that **no longer existed**.
+That is the quiet failure mode of a hard-coded list: it does not error, it reports the
+absent thing as unused. It now enumerates `/sys/class/net/*/bridge`.
+
+And the rule is enforced rather than remembered:
+[`tools/tests/test-no-cached-host-facts.sh`](tools/tests/test-no-cached-host-facts.sh) fails
+when any instrument names one of this host's volatile interfaces or addresses outside a
+comment — comments are exempt on purpose, because *"[2026-08-02] Calico was bound to
+`incusbr0`"* is precisely the record worth keeping. It carries its own negative control (the
+detector is proven to fire on the incident's exact line, and to exempt a dated comment
+mentioning the same name) and it was re-injected against the real defect in P1, where it
+failed with the file and line. `br-mc0` and `10.71.0.0/24` are deliberately **not** banned —
+those are ours, chosen by the fabric, and constant by design.
+
+**What this cost, and what a fold would have cost.** Two derivation fixes and a 90-line
+guard, versus a refactor of two frozen spikes to solve a disagreement that measurement says
+does not exist.
 
 **Explicitly not in this slice:** `CLONES.md` (slice 5 makes no rung-4 move, so the ledger has
 nothing to record yet — building it now would be enforcement in search of a violation);
