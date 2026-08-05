@@ -8,6 +8,90 @@
 > the planning session that produced v2 and v3; the DONE markers were added as
 > the slices landed.
 
+## NEXT — slice 5a: a second engine on one fabric
+
+*Added 2026-08-05, when §18.6 items 1–5 landed and this became the front of the
+queue. Numbered outside the §17.x sequence on purpose: that numbering is cited by
+the plan's appendices (§17.3, §17.4) and must not shift.*
+
+**The question.** Plan [decision E](../../MICRO_CLOUD_LAB_PLAN.md#83-the-unsolved-half--one-seam-or-four):
+is the control-plane seam one vocabulary or four? It is answered with two engines
+actually running, not with two imagined ones — and the evidence table is
+[§18.4](../../MICRO_CLOUD_LAB_PLAN.md#184-what-slice-5-must-answer).
+
+**The shape.** QEMU `-M microvm` boots **the same `vmlinux` and the same `.ext4`**
+Firecracker boots, on a `fabric.sh`-made tap, so the only variable is the VMM
+([§18.3](../../MICRO_CLOUD_LAB_PLAN.md#183-two-corrections-to-14s-one-line-brief)).
+
+### Everything it consumes exists and is verified
+
+| input | where | state |
+|---|---|---|
+| `fabric.sh` (`up`/`tap`/`status`/`down`) | [`fabric.sh`](fabric.sh) | committed; round trip re-verified 2026-08-04 ([I.7](../../MICRO_CLOUD_LAB_PLAN.md#i7-the-recovered-fabric-re-verified-against-the-moved-binding--pass)) |
+| `lab-fc.sh` + preflight | [`phase7-firecracker/`](../../phase7-firecracker/lab-fc.sh) | slice 4; baseline **0.564930 s** |
+| `-M microvm`, virtio-mmio, qboot | [`phase2-qemu-vm/`](../../phase2-qemu-vm/lab-vm.sh) | pre-existing; `test-microvm-argv.sh` |
+| `--network-mode tap` | same | takes a **pre-made tap by name** — what `fabric.sh tap` produces and how FC consumes one. Unprivileged in both |
+| `--disk-format raw` | same | PR #137; attaches a **per-instance copy**, not a CoW overlay, so the storage stack matches FC's |
+| `vmlinux`, `api1.ext4` | `~/.local/state/lab-create/micro-cloud-s3/` | survived the /tmp reap |
+
+**De-risked 2026-08-05, and it was the assumption most likely to sink the slice:**
+QEMU's `-kernel` normally wants a bzImage, while Firecracker is ELF-only. Measured —
+`-M microvm` **does** load the same ELF `vmlinux`, reaching `VFS: Cannot open root
+device` at **0.048 s** and rebooting, which is `panic=1` behaving exactly as
+[E.3](../../MICRO_CLOUD_LAB_PLAN.md#e3-the-panic1-hole-closed-by-watching-it)
+measured for FC. The kernel half of "the same kernel" is therefore real, not hoped
+for. What remains unverified is the guest finding its root disk on the **mmio** bus.
+
+### Split by privilege — the headline half needs nothing from the operator
+
+**(a) Unprivileged: the number nobody has.** No fabric, no tap, no network — boot
+QEMU `-M microvm` on the same kernel and a per-instance copy of the same rootfs and
+time it against FC's 0.564930 s. `/dev/kvm` is already r+w for uid 1000 (P1). This
+is the measurement the plan's density argument has been *one sample wide* on since
+slice 1.
+
+**(b) Author-run: the fabric half.** `fabric.sh up`, one tap per engine, both VMMs
+on `br-mc0` at once, name resolution across engines, then `down` with its Calico
+comparison. Needs `CAP_NET_ADMIN`, so it ships as a one-shot script the way
+[I.7](../../MICRO_CLOUD_LAB_PLAN.md#i7-the-recovered-fabric-re-verified-against-the-moved-binding--pass)'s
+re-run did.
+
+### Confounds to control, or the comparison proves nothing
+
+- **`root=` is not symmetric.** [E.4](../../MICRO_CLOUD_LAB_PLAN.md#e4-two-findings-the-plan-did-not-anticipate)
+  found Firecracker *appends* `root=/dev/vda rw` after the user's `boot_args`; QEMU
+  appends nothing, so slice 5a must **supply** it. The same spec cannot serve both
+  verbatim — and that asymmetry is itself decision-E evidence, not an annoyance.
+- **Same bytes, not "a similar Alpine."** Both engines get a per-instance copy of
+  one `.ext4`; that is why `--disk-format raw` copies rather than overlays.
+- **Same accel.** KVM on both, or the comparison measures TCG.
+- **Report the spread, not one run.** Slice 1 established FC's 0.55 s with *zero
+  variance over four runs*; a single QEMU sample is not comparable to that.
+- **State what is NOT held constant** — device model, firmware (qboot vs none),
+  and the VMM's own startup are all inside "the VMM", which is the point, but the
+  number means nothing if the reader thinks it isolates one of them.
+
+### Break pass
+
+Kill one engine's process and see what the other reports; delete the bridge under
+both (slice 3 graded this **HALTED (honest)** with one VMM —
+[G.8](../../MICRO_CLOUD_LAB_PLAN.md#g8-deleting-the-bridge-under-a-running-microvm--halted-honest-and-one-surprise));
+and the §7.2 teardown comparison, which now matters more than it did: the tunnel
+sits on the **physical uplink** and autodetection re-runs every **60 seconds**
+([I.3](../../MICRO_CLOUD_LAB_PLAN.md#i3-the-hazard-did-not-go-away--it-got-worse),
+[I.4](../../MICRO_CLOUD_LAB_PLAN.md#i4-the-finding-that-outlives-the-migration--autodetection-is-a-60-second-poll)),
+so a two-VMM run is exposed for its whole duration.
+
+### Done looks like
+
+A boot-time number with its spread beside FC's 0.564930 s; both engines on
+`br-mc0` resolving each other by name; `down` reporting Calico unchanged; the
+§18.4 seam table filled in from what the two lifecycles actually needed; and a
+dated appendix. **`retap`, and the slice-3 exercise itself, are still unre-run** —
+5a is where that debt is paid.
+
+---
+
 ## 17.0 First thing now: commit the slice artifacts — `fabric.sh` above all
 
 *Added 2026-08-03, when this file was created.*
