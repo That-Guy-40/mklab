@@ -1269,9 +1269,14 @@ own header.*
 The guest artifacts all survived under `~/.local/state/lab-create/micro-cloud-s{1,2,3}/`
 (`firecracker`, `vmlinux`, `api1.ext4`, `api2.ext4`); only the scripts were lost.
 
-**Still outstanding: the privileged round trip.** `up`/`tap`/`down` need `CAP_NET_ADMIN`, so
-they are author-run. Until that runs, this tool is **recovered and statically checked, not
-re-verified** — [UNKNOWN, not PASS](#186-order-of-work).
+**The privileged round trip — RUN 2026-08-04 23:39, and it PASSES.** `up` → `tap api1` →
+`tap api2` → `status` → `down`, author-run because it needs `CAP_NET_ADMIN`. Teardown's
+comparison matched against the **new** binding, which it had recorded at pre-flight by
+deriving it. Full result and its limits in
+[I.7](#i7-the-recovered-fabric-re-verified-against-the-moved-binding--pass); the run also
+turned up [I.8](#i8-a-bridge-with-members-can-be-down--and-it-sharpens-f7s-volatility-guess).
+**The UNKNOWN this section carried is now closed for the fabric — and explicitly not for the
+slice-3 exercise**, which booted no microVM here and stays unre-run.
 
 **Independently found on 2026-08-03, by a session that could not fix it.** PR #131 staged
 [`examples/micro-cloud/`](examples/micro-cloud/) and made this
@@ -1403,7 +1408,7 @@ reboot caused.
 
 | # | item | why here | gate |
 |---|---|---|---|
-| 1 | ~~recover `fabric.sh`~~ → **DONE**: [`examples/micro-cloud/fabric.sh`](examples/micro-cloud/fabric.sh). **Re-run still owed** (author-run) | slice 5 has nothing to attach to; §18.1 | recovered + shellcheck-clean + `status` green ✅; `up`/`tap`/`down` and the teardown comparison against the **new** binding = **UNKNOWN until the sudo round trip runs** |
+| 1 | ~~recover `fabric.sh`~~ ~~**re-run it**~~ → **DONE 2026-08-04** ([I.7](#i7-the-recovered-fabric-re-verified-against-the-moved-binding--pass)) | slice 5 has nothing to attach to; §18.1 | ✅ `up`/`tap`/`status`/`down` all green, and the teardown comparison matched the **new** binding it derived at pre-flight. **Not** proven: `retap`, any microVM, the comparison's negative direction — 5a re-runs the exercise |
 | 2 | Appendix I's markers | a reader must not act on the stale `incusbr0` claims | this section |
 | 3 | `lab-chroot.sh export-rootfs` (§6) | the one written-up component with a real downstream (decision 18); makes the slice-5 images reproducible instead of hand-built | `test-export-rootfs.sh` — valid ext4, `/sbin/init` read back with `debugfs`, **and the UNKNOWN case** [H.4](#h4-two-defects-both-in-the-safety-machinery) found |
 | 4 | fold the preflight instruments ([§17.4 q6](examples/micro-cloud/DEFERRED.md#174-open-questions), answer **(c)**) | four instruments that can disagree about host capability is [§0.1](#01-how-this-lab-is-built-differs-from-the-others)'s bug class waiting to happen | the gate lines are identical to `lab-fc.sh preflight`'s, asserted structurally as [H.2](#h2-the-schema-derived--and-the-two-fields-that-are-refusals) does |
@@ -2885,3 +2890,74 @@ binding at run time rather than comparing against a constant.** Had slice 3 hard
 `incusbr0` as the expected value — which was the obvious, correct-looking thing to do on
 2026-08-02 — the very next run on this host would have reported a migration the fabric did
 not cause, and the instrument would have become the liar.
+
+### I.7 The recovered fabric, re-verified against the moved binding — **PASS**
+
+Run 2026-08-04 23:39, the round trip `up` → `tap api1` → `tap api2` → `status` → `down`.
+Nothing was booted; this is the fabric alone. The question it exists to answer is narrow:
+**does the instrument still work now that its subject moved?**
+
+```text
+1. PRE-FLIGHT  calico tunnel : local 192.168.1.106 dev enx00051b8eb138
+               candidate set : 2 enx00051b8eb138 192.168.1.106/24 CANDIDATE
+   …
+3. COMPARISON  ok: calico tunnel unchanged (local 192.168.1.106 dev enx00051b8eb138)
+               ok: cali* veth count unchanged (2) — pods were not recreated
+               ok: ip_forward back at 1
+   PASS: teardown left nothing of ours and nothing of theirs
+```
+
+**Yes.** The pre-flight recorded the *new* binding because it derives it; teardown compared
+against what pre-flight recorded, not against a constant, and matched. A version of this
+script with `incusbr0` written into it would have failed here on a host where nothing was
+wrong. That is [I.6](#i6-the-methodological-point-for-the-third-time-in-this-plan) shown
+rather than argued — and it is the **third** independent derivation of I.1's binding, after
+the `status` verb and the node annotation.
+
+Also green: `ip_forward` recorded as pre-existing and therefore never reverted; both taps
+**addressless and owned by uid 1000**, read back from `/sys/class/net/*/owner` rather than
+believed; the five absence assertions; dnsmasq killed by a PID verified against its own
+cmdline.
+
+**Scope — what this run did NOT prove.** It is a fabric test, not slice 3:
+
+| not exercised | why it matters |
+|---|---|
+| **`retap`** | the verb that exists because of the root-owned-tap defect was never called |
+| **any microVM** | no lease was requested, no name resolved, no packet crossed the bridge. **dnsmasq started and re-read its files; it never served anybody.** |
+| **the teardown comparison's negative direction** | [G.7](#g7-the-teardown-assertion-proven-in-both-directions) proved it bites on 2026-08-02; that was not re-run |
+
+So: **the fabric is re-verified; the slice-3 exercise is not.** The artifacts to re-run the
+full exercise survive in `micro-cloud-s3/`, and slice 5a will do it anyway with a second
+engine attached.
+
+### I.8 A bridge with members can be "DOWN" — and it sharpens F.7's volatility guess
+
+Two lines from the same run, twenty seconds apart:
+
+```text
+# step 2, bridge just created, NO members:
+35: br-mc0: <BROADCAST,MULTICAST,UP,LOWER_UP> … state UNKNOWN
+# `status`, TWO taps enslaved, no VMM running:
+35: br-mc0: <NO-CARRIER,BROADCAST,MULTICAST,UP> … state DOWN
+```
+
+**Enslaving two working taps made the bridge go DOWN.** A bridge's carrier follows its
+ports; a tap has no carrier until a VMM opens it (the
+[`carrier=1` gotcha](#g8-deleting-the-bridge-under-a-running-microvm--halted-honest-and-one-surprise)
+from the other direction), so a fabric with members and no guests reports worse health than
+an empty one. Nothing is wrong — but a reader who greps `state DOWN` will think so, and
+slice 5 doubles the number of taps sitting idle between runs.
+
+**It also corrects a detail in F.7.** F.7 guessed the candidate set is volatile because
+*"both bridges drop to `DOWN` when memberless"*. The mechanism is the opposite of
+memberlessness: **an empty bridge is `LOWER_UP`; it drops when it gains a port with no
+carrier.** `candidate_set()` filters on `operstate == up`, so candidacy is not a property of
+a bridge — it is a property of **whether a VMM happens to be running at the instant
+autodetection polls**, which per
+[I.4](#i4-the-finding-that-outlives-the-migration--autodetection-is-a-60-second-poll) is
+every 60 seconds. F.7's hypothesis was right and its stated reason was not.
+
+Harmless here — `br-mc0` is excluded by name at any operstate, which is exactly why rule 1
+is the safety property and rule 2's addresslessness is the backstop. Recorded because the
+next person to build a fabric on this host may not name it `br-*`.
