@@ -1826,6 +1826,233 @@ cmd_export_tarball() {
     printf '%s\n' "$out"
 }
 
+# ─── Subcommand: export-rootfs ──────────────────────────────────────────────
+# Emit a populated raw ext4 image from a chroot tree — the block-device sibling of
+# export-initrd (cpio.gz) and export-tarball (OCI). This is what a Firecracker microVM
+# or a QEMU `-drive format=raw` boots as /dev/vda.
+#
+# WHY THERE IS NO LOOP MOUNT. `mke2fs -d <dir>` populates the filesystem from a DIRECTORY
+# as it creates it — no loop device, no mount, no CAP_SYS_ADMIN. So this works rootlessly
+# wherever the tree is readable, and inside an unprivileged container where losetup is
+# denied. Verification uses `debugfs -R`, which reads straight out of the image file for
+# the same reason. (MICRO_CLOUD_LAB_PLAN.md §6.2; the technique was re-verified by P1 on
+# 2026-07-29 rather than inherited as a belief.)
+#
+# OWNERSHIP IS CARRIED VERBATIM from the source tree — mke2fs writes the uid/gid it reads
+# into the image's metadata, which it can do without privilege because it is writing a
+# file, not creating one. A tree built by `sudo lab-chroot create` therefore yields a
+# root-owned rootfs even when this verb runs unprivileged; a rootless-built tree yields one
+# owned by the builder, which boots but whose /etc is owned by uid 1000. Said out loud
+# below rather than left to be discovered in a guest.
+_size_to_bytes() {  # accept 1G / 512M / 65536K / raw bytes
+    local s="${1:-}" n u
+    [[ "$s" =~ ^([0-9]+)([KkMmGgTt]?)[Bb]?$ ]] || return 1
+    n="${BASH_REMATCH[1]}"; u="${BASH_REMATCH[2]}"
+    case "$u" in
+        K|k) printf '%s' $(( n * 1024 )) ;;
+        M|m) printf '%s' $(( n * 1024 * 1024 )) ;;
+        G|g) printf '%s' $(( n * 1024 * 1024 * 1024 )) ;;
+        T|t) printf '%s' $(( n * 1024 * 1024 * 1024 * 1024 )) ;;
+        *)   printf '%s' "$n" ;;
+    esac
+}
+
+cmd_export_rootfs() {
+    local arg="${POS_ARGS[0]:-}"
+    [[ -n "$arg" ]] || die "usage: $LAB_PROG export-rootfs <name|path> [--output PATH] [--size 1G] [--label NAME] [--strip-modules]"
+
+    local name target manager
+    IFS=$'\t' read -r name target manager < <(resolve_target_and_manager "$arg")
+    [[ -d "$target" ]] || die "target is not a directory: $target"
+
+    # ── Refuse BEFORE the irreversible step. `truncate` can create a multi-gigabyte
+    #    file in a millisecond, so every gate that can fire early must fire here — the
+    #    MAAS lesson: a check that runs after the allocation is a post-mortem.
+    local fstype="${OPT_FSTYPE:-ext4}"
+    if [[ "$fstype" != ext4 ]]; then
+        die "--fstype '$fstype' is not implemented, and is refused rather than silently ignored.
+  Only ext4 is supported, and for XFS the reason is a hard capability gap rather than a
+  preference (all three measured on this host, 2026-08-04, xfsprogs 6.6.0 / e2fsprogs 1.47.0):
+
+    1. XFS CANNOT BE POPULATED WITHOUT A MOUNT. mke2fs has '-d root-directory'; mkfs.xfs's
+       '-d' is data-subvolume options (agcount, agsize, su/sw). Its only populate path is
+       '-p protofile', an IRIX-era manifest, not a directory tree. So XFS would need a loop
+       mount and CAP_SYS_ADMIN -- exactly what this verb exists to avoid.
+    2. XFS REFUSES TO BE SMALL. Measured: refused at 64M/128M/256M, ok at 300M. ext4 built
+       all of them. Slice 1's Alpine rootfs is a 64 MB image; XFS could not hold it at all.
+    3. THE OFFLINE INSPECTION CHAIN IS ext4's. Verification here, lab-fc.sh's /sbin/init
+       gate and the tests all read images with 'debugfs -R' -- no mount, no privilege.
+       XFS's xfs_db is a different tool with a different language.
+
+  Journaling is a wash for this consumer: both journal METADATA ONLY by default, and a
+  microVM rootfs that gets SIGKILLed is left dirty either way (that dirt is what made
+  debugfs refuse an image lab-fc.sh then wrongly called empty). XFS's real advantages --
+  allocation-group parallelism, large-file streaming -- appear at sizes and concurrency a
+  64-512 MB single-writer boot volume never reaches.
+
+  squashfs is refused for a different reason: it is READ-ONLY, so it needs an overlay no
+  caller builds yet, and no slice has booted one. When either is actually needed it arrives
+  with a test that boots it, not as an untested branch that appears to work."
+    fi
+    require_cmd mkfs.ext4 truncate du
+    # mke2fs -d landed in e2fsprogs 1.43 (2016). Assert the CAPABILITY, not the version
+    # string: distributions backport, and a version comparison would refuse working tools
+    # and accept broken ones.
+    #
+    # CAPTURE FIRST, TEST SECOND — never `mke2fs -h | grep -q`. `grep -q` exits on its
+    # first match and closes the pipe, mke2fs dies on SIGPIPE, and under `set -o pipefail`
+    # the PIPELINE reports failure — so the check reports "no -d support" on a tool that
+    # demonstrably has it. Written that way here first and caught by this verb's own test;
+    # it is the third instance of this inversion in this repo (see the fabric probe's
+    # br_netfilter check and lab-fc.sh). The shape is always the same and always silent.
+    # `|| true` is load-bearing: mke2fs has no -h, so it prints its usage to stderr and
+    # exits 1. Without this, `set -e` kills the verb HERE — after the capability was
+    # correctly detected — with rc=1 and not one word of output. Found by this verb's test.
+    local _mke2fs_help; _mke2fs_help="$(mke2fs -h 2>&1 || true)"
+    [[ "$_mke2fs_help" == *"-d root-directory"* ]] \
+        || die "this e2fsprogs cannot populate from a directory (mke2fs has no -d).
+  export-rootfs needs e2fsprogs >= 1.43; without -d the only alternative is a loop mount,
+  which needs CAP_SYS_ADMIN and is exactly what this verb exists to avoid."
+
+    local out="${OPT_OUTPUT:-/tmp/${name:-chroot}.ext4}"
+    local label="${OPT_LABEL:-rootfs}"
+    [[ ${#label} -le 16 ]] || die "--label '$label' is ${#label} chars; ext4 labels are limited to 16"
+    if [[ -e "$out" && -z "${OPT_FORCE:-}" ]]; then
+        die "$out already exists — refusing to overwrite an image something may be booting. Use --force, or pick another --output."
+    fi
+    local outdir; outdir="$(dirname "$out")"
+    [[ -d "$outdir" ]] || die "output directory does not exist: $outdir"
+
+    # ── Size. The plan's original sketch said du x 1.4; slice 1's own measurements say
+    #    that is too thin. Alpine was an 8.2 MB tree in a 64 MB image (x7.8) and Debian a
+    #    215 MB tree in a 363 MB image (x1.69) — because ext4's overhead is not a flat
+    #    percentage: inode tables are sized from the byte count while a tree's inode NEED
+    #    comes from its file count, and journal + superblock backups are close to fixed.
+    #    So: x1.5 plus a flat 32 MiB, floored at 64 MiB. Generous on purpose — an image
+    #    that is too small fails loudly at mkfs (handled below), while one that is too
+    #    large costs sparse bytes nobody pays for until they are written.
+    # ── Can we actually READ the tree? mke2fs -d is honest about this — measured: it exits
+    #    1, names the file ("Permission denied while opening \"shadow\" to copy") and leaves
+    #    an unusable image rather than a quietly incomplete one. But it discovers that only
+    #    AFTER the image has been allocated and partly populated, so the same refusal is
+    #    made here, before anything is written. A chroot built by `sudo lab-chroot create`
+    #    has root-only files (/etc/shadow, /root, /var/spool/cron); reading them needs root,
+    #    and this is the message that says so instead of a mid-mkfs surprise.
+    local unreadable
+    # `|| true`: find exits non-zero when it cannot read a directory, and head can close
+    # the pipe early — either one kills a bare assignment under `set -e` + `pipefail`.
+    unreadable="$(find "$target" ! -readable -print 2>/dev/null | head -20 || true)"
+    if [[ -n "$unreadable" ]]; then
+        local n; n="$(printf '%s\n' "$unreadable" | wc -l)"
+        die "cannot read $n or more files in $target as uid $(id -u) — mkfs would abort partway through.
+  First few:
+$(printf '%s\n' "$unreadable" | head -5 | sed 's/^/    /')
+  This tree was built by root, so export it as root too:
+    sudo $LAB_PROG export-rootfs ${POS_ARGS[0]:-<name>} --output $out
+  (the image is then chown'd back to the invoking user, as export-tarball does)"
+    fi
+
+    local bytes
+    if [[ -n "${OPT_SIZE:-}" ]]; then
+        bytes="$(_size_to_bytes "$OPT_SIZE")" \
+            || die "--size '$OPT_SIZE' is not a size (expected forms: 512M, 1G, 2048K, or raw bytes)"
+    else
+        # `|| true`: du exits non-zero if ANY entry was unreadable, and a bare assignment
+        # from it dies under `set -e` with rc=1 and no output. This WAS the silent failure
+        # on the first real tree — and is now defensive rather than load-bearing, because
+        # the readability gate above refuses that tree before du runs. Kept for the case
+        # the gate cannot see: a file that becomes unreadable between the two walks.
+        local used; used="$(du -sb "$target" 2>/dev/null | awk '{print $1}' || true)"
+        [[ -n "$used" ]] || die "could not measure $target with du"
+        bytes=$(( used * 3 / 2 + 32 * 1024 * 1024 ))
+        # `if` rather than `(( a < b )) && x=y`. MEASURED, because the first version of
+        # this comment asserted a bug that is not one: in a NON-final position the `&&`
+        # form is safe — errexit exempts the left-hand side of an `&&` list. It bites in
+        # two other positions: `(( false ))` alone exits 1, and as a function's FINAL
+        # statement it makes the function return 1. The `if` is immune in all three, so
+        # it survives a later reordering that would silently arm the trap.
+        if (( bytes < 64 * 1024 * 1024 )); then bytes=$(( 64 * 1024 * 1024 )); fi
+        log_info "size: derived $(( bytes / 1024 / 1024 ))M from a $(( used / 1024 / 1024 ))M tree (override with --size)"
+    fi
+    (( bytes >= 1024 * 1024 )) || die "--size must be at least 1M"
+
+    local invoker_uid invoker_gid
+    invoker_uid="${SUDO_UID:-$(id -u)}"
+    invoker_gid="${SUDO_GID:-$(id -g)}"
+
+    # ── --strip-modules. mke2fs -d has no exclude, so the tree is presented through a
+    #    HARDLINK FARM: cp -al costs no data copy, and deleting a subtree from the farm
+    #    cannot touch the original because only the link count drops. Worth having for
+    #    exactly this consumer — a Firecracker guest kernel has its drivers built in, so
+    #    /lib/modules is 100-300 MB of bytes it will never open.
+    local src="$target" farm=""
+    if [[ -n "${OPT_STRIP_MODULES:-}" ]]; then
+        farm="$(mktemp -d "${outdir}/.export-rootfs-farm.XXXXXX")" \
+            || die "could not create a staging dir beside $out"
+        if cp -al "$target/." "$farm/" 2>/dev/null; then
+            log_info "strip-modules: hardlink farm at $farm (no data copied)"
+        else
+            log_warn "cp -al failed (farm and tree are probably on different filesystems); falling back to a full copy"
+            cp -a "$target/." "$farm/" || { rm -rf -- "$farm"; die "could not stage a copy of $target"; }
+        fi
+        # Guarded delete: the path MUST be inside the farm we just made. A prefix check,
+        # not a trusting one -- this is the only rm in the verb.
+        local modpath="$farm/lib/modules"
+        if [[ -d "$modpath" && "$modpath" == "$farm/"* ]]; then
+            rm -rf -- "$modpath" && log_info "strip-modules: removed /lib/modules from the staged tree"
+        else
+            log_info "strip-modules: no /lib/modules in this tree — nothing to strip"
+        fi
+        src="$farm"
+    fi
+
+    log_info "building $fstype image: $src → $out ($(( bytes / 1024 / 1024 ))M, label=$label)"
+    truncate -s "$bytes" "$out" || { [[ -n "$farm" ]] && rm -rf -- "$farm"; die "could not allocate $out"; }
+
+    # mkfs's own failure is the real "is it big enough" gate, so translate it into
+    # something actionable instead of letting the raw e2fsprogs text stand alone.
+    local mkfs_log; mkfs_log="$(mktemp)" || die "could not create a temp file for the mkfs log"
+    if ! mkfs.ext4 -F -q -L "$label" -d "$src" "$out" > "$mkfs_log" 2>&1; then
+        local detail; detail="$(tail -3 "$mkfs_log")"
+        rm -f "$mkfs_log"; rm -f "$out"; [[ -n "$farm" ]] && rm -rf -- "$farm"
+        die "mkfs.ext4 failed and the partial image was removed:
+$detail
+  If this says the filesystem is full or a copy failed, the image is too small for the tree.
+  Re-run with an explicit --size (the tree measures $(du -sh --apparent-size "$target" 2>/dev/null | awk '{print $1}'))."
+    fi
+    rm -f "$mkfs_log"
+    [[ -n "$farm" ]] && rm -rf -- "$farm"
+
+    chown "${invoker_uid}:${invoker_gid}" "$out" 2>/dev/null || true
+    chmod 0644 "$out" 2>/dev/null || true
+
+    # ── Verify by reading the image back, with THREE outcomes. "I could not look" is not
+    #    "I looked and it is missing" — that conflation shipped once already in this repo
+    #    (lab-fc.sh's /sbin/init gate reported a missing init for an image that had booted
+    #    minutes earlier, because debugfs had refused to open a dirty filesystem).
+    if command -v debugfs >/dev/null 2>&1; then
+        local dbg rc=0
+        dbg="$(debugfs -R "stat /sbin/init" "$out" 2>&1)" || rc=$?
+        if (( rc != 0 )) || [[ "$dbg" == *"Bad magic number"* || "$dbg" == *"couldn't find valid filesystem"* ]]; then
+            log_warn "UNKNOWN: debugfs could not read $out, so /sbin/init was NOT checked (this is not a pass)"
+        elif [[ "$dbg" == *Inode:* ]]; then
+            log_info "verified: /sbin/init is present in the image"
+        else
+            die "the image was built but has no /sbin/init — a guest kernel will panic on it.
+  Tree: $target
+  If this chroot is meant to be an initrd rather than a rootfs, use export-initrd instead."
+        fi
+    else
+        log_warn "UNKNOWN: debugfs not installed, so the image contents were NOT verified (this is not a pass)"
+    fi
+
+    local sz; sz="$(du -h --apparent-size "$out" 2>/dev/null | awk '{print $1}' || true)"
+    log_info "wrote $out (${sz:-?} apparent)"
+    [[ ${EUID:-$(id -u)} -ne 0 ]] && log_warn "built unprivileged: file ownership was copied from $target verbatim, so the image's / is owned by whoever owns that tree"
+    log_info "boot it: lab-fc.sh create --name vm1 --kernel <vmlinux> --rootfs $out"
+    printf '%s\n' "$out"
+}
+
 # ─── Subcommand: verify ─────────────────────────────────────────────────────
 cmd_verify() {
     local arg="${POS_ARGS[0]:-}"
@@ -2121,6 +2348,7 @@ USAGE
   $LAB_PROG inspect  <name|path> [--json]
   $LAB_PROG export-tarball <name|path> [--output /tmp/x.tar.gz]
   $LAB_PROG export-initrd <name|path> --kernel PATH --output PATH [--init-script FLAVOR|PATH] [--strip-modules]
+  $LAB_PROG export-rootfs <name|path> [--output /tmp/x.ext4] [--size 1G] [--label rootfs] [--strip-modules]
   $LAB_PROG version | help
 
 CREATE OPTIONS
@@ -2154,6 +2382,14 @@ EXPORT-INITRD OPTIONS
   --init-script FLAVOR|PATH  write /init: 'busybox', 'systemd', or /host/path
   --strip-modules    exclude /lib/modules/ from the initrd (reduces size ~100-300 MB)
 
+EXPORT-ROOTFS OPTIONS
+  --output   PATH    destination .ext4 image (default: /tmp/<name>.ext4)
+  --size     SIZE    image size, e.g. 512M | 1G (default: tree x1.5 + 32M, min 64M)
+  --label    NAME    ext4 label, <=16 chars (default: rootfs)
+  --strip-modules    drop /lib/modules/ (a Firecracker guest kernel has its drivers built in)
+  --force            overwrite an existing --output
+  (no loop mount, no CAP_SYS_ADMIN: mke2fs -d populates from the directory)
+
 ENVIRONMENT
   LAB_LOG_LEVEL  debug|info|warn|error  (default: info)
 
@@ -2186,6 +2422,7 @@ parse_args() {
     OPT_LAB_SET=""   # distinguishes "--lab omitted" (show all) from "--lab ''" (ungrouped only)
     OPT_INIT_SCRIPT="" OPT_INIT_FLAVOR="" OPT_STRIP_MODULES=""
     OPT_KERNEL_OUT=""
+    OPT_SIZE="" OPT_LABEL="" OPT_FSTYPE=""
     OPT_POST_COMMANDS=()
     OPT_USERS=()
 
@@ -2226,6 +2463,9 @@ parse_args() {
             --init-flavor)   OPT_INIT_FLAVOR="$2"; shift 2 ;;
             --strip-modules) OPT_STRIP_MODULES=1; shift ;;
             --kernel)        OPT_KERNEL_OUT="$2"; shift 2 ;;
+            --size)          OPT_SIZE="$2"; shift 2 ;;
+            --label)         OPT_LABEL="$2"; shift 2 ;;
+            --fstype)        OPT_FSTYPE="$2"; shift 2 ;;
             --post-command)  OPT_POST_COMMANDS+=("${2:?--post-command requires a shell command}"); shift 2 ;;
             --user)          OPT_USERS+=("${2:?--user requires name:password}"); shift 2 ;;
             -h|--help)       usage; exit 0 ;;
@@ -2252,6 +2492,7 @@ main() {
         inspect) cmd_inspect ;;
         export-tarball) cmd_export_tarball ;;
         export-initrd)  cmd_export_initrd ;;
+        export-rootfs)  cmd_export_rootfs ;;
         help|-h|--help)    usage       ;;
         version) printf '%s %s\n' "$LAB_PROG" "$LAB_VERSION" ;;
         *)       usage; die "unknown subcommand: $SUBCMD" ;;

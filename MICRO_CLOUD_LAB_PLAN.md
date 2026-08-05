@@ -614,6 +614,12 @@ Precedent and negative-control shape:
 
 ## 6. New component B — `lab-chroot.sh export-rootfs`
 
+> ✅ **BUILT 2026-08-05** ([§18.6](#186-order-of-work) item 3), with
+> [`tests/test-export-rootfs.sh`](phase1-chroot/tests/test-export-rootfs.sh) — one positive
+> case and **five negative controls**, every one of them observed failing on the defect it
+> names. Four things below changed on contact with the implementation; see
+> [§6.4](#64-what-the-implementation-changed--and-the-ext4-vs-xfs-question-measured).
+
 The one missing matrix cell. Exact analogue of `export-initrd` (cpio.gz) and
 `export-tarball` (OCI) — **both P1-verified present**.
 
@@ -660,6 +666,79 @@ PE-format `Image` on aarch64.
 | a | Upstream FC CI kernel artifacts, pinned + `sha256` | **Fast path.** ⚠️ P1 marked the bucket URL **UNKNOWN** rather than guess one — slice 1 pins it |
 | b | [`mlbuild.sh`](micro-linux/mlbuild.sh) + an FC-minimal `.config` | **The good path.** It already builds pinned, PGP-verified kernels per arch, and `kernel_image()` **already returns bare `vmlinux` for ppc64le** (`mlbuild.sh:238`) — so x86_64-for-FC is small and well-precedented. P1 confirms x86_64 returns `bzImage` today, naming the exact work. Needs virtio-mmio/blk/net + 8250 + KVM guest, can drop nearly all of PCI — an instructive kconfig exercise |
 | c | `scripts/extract-vmlinux` on a distro `bzImage` | **Unverified** (decision B). P1 could not find the script — it ships in the kernel source tree. An experiment for slice 1, not a documented path |
+
+
+### 6.4 What the implementation changed — and the ext4-vs-XFS question, measured
+
+**1. The size rule was wrong, and slice 1's own numbers said so.** §6.2 specified
+`du × 1.4`. Slice 1 built an 8.2 MB Alpine tree into a **64 MB** image (×7.8) and a 215 MB
+Debian tree into a **363 MB** one (×1.69) — because ext4's overhead is not a flat
+percentage. Inode tables are sized from the *byte* count while a tree's inode *need* comes
+from its file count, and the journal plus superblock backups are near-fixed. Implemented as
+**`du × 1.5 + 32 MiB`, floored at 64 MiB**, with mkfs's own "no space" failure translated
+into an actionable message and the partial image removed.
+
+**2. Two options became refusals, in the [H.2](#h2-the-schema-derived--and-the-two-fields-that-are-refusals) pattern.**
+`--fstype squashfs|xfs` is refused **by name with its reason** rather than silently
+ignored. For XFS the reason is a capability gap, not a preference — all three measured on
+this host (xfsprogs 6.6.0, e2fsprogs 1.47.0):
+
+| | ext4 | XFS |
+|---|---|---|
+| **populate from a directory, no mount** | `mke2fs -d root-directory` | **none.** `mkfs.xfs -d` is *data-subvolume* options (agcount, agsize, su/sw); its only populate path is `-p protofile`, an IRIX-era manifest, not a tree |
+| **minimum size** | built 64M / 128M / 256M / 300M | **refused below 300M** — slice 1's Alpine rootfs is a **64 MB** image |
+| **offline inspection** | `debugfs -R`, which this repo's verify chain, `lab-fc.sh`'s init gate and the tests all speak | `xfs_db`, a different tool and language |
+| **journalling** | metadata (`data=ordered`); *can* do `data=journal` | metadata only, always |
+
+So XFS would require a loop mount and `CAP_SYS_ADMIN` — precisely what §6.2 exists to avoid
+— and could not hold the smallest image the plan actually uses. Journalling is a wash: both
+journal metadata only by default, and a microVM rootfs that gets SIGKILLed is left dirty
+either way (that dirt is what made `debugfs` refuse an image
+[H.4](#h4-two-defects-both-in-the-safety-machinery) then wrongly reported as empty). XFS's
+real strengths — allocation-group parallelism, large-file streaming — appear at sizes and
+concurrency a 64–512 MB single-writer boot volume never reaches.
+
+> **Where XFS *would* pay, and it is not this verb.** Per-instance rootfs copies
+> ([H.7](#h7-a-second-pass-over-slice-4--three-defects-the-green-suite-did-not-see)) are a
+> full 128 MB `cp` each; on a **host** filesystem with reflink they would be O(1) and free.
+> ext4 has no `FICLONE`. Measured on this host: `/` is ext4 on LVM and
+> `cp --reflink=always` returns `Operation not supported`. That makes it a **slice 8**
+> question (five warm clones), about the *host* filesystem, not the guest image format.
+
+**3. A readability gate was added, before the allocation.** `mke2fs -d` is honest about
+unreadable sources — measured: it exits 1 naming the file — but only *after* allocating and
+partly populating. A chroot built by `sudo lab-chroot create` has root-only files, so the
+verb now refuses up front, names them, and prints the `sudo` form. *A gate after the `dd`
+is a post-mortem.*
+
+**4. Verification has three outcomes, not two.** `debugfs` absent or unable to open the
+image reports **UNKNOWN**, never a pass — the mirror of H.4's defect, where "I could not
+look" was rendered as "I looked and it is missing."
+
+### 6.5 Four silent exits in one function, and what the negative controls actually proved
+
+The verb was written, passed its test, and then failed against the **real** 202 MB Debian
+tree with `rc=1` and **not one byte of output** — the failure mode CLAUDE.md exists to
+forbid. Four candidate causes were found by reading; **re-injecting each one** sorted them
+into what they really were:
+
+| suspect | re-injected → | verdict |
+|---|---|---|
+| `mke2fs -h \| grep -q -- '-d root-directory'` | reported "no `-d` support" on a tool that has it | **real** — `grep -q` closes the pipe, `mke2fs` dies on SIGPIPE, `pipefail` reports the *pipeline* as failed. **Third instance of this exact inversion in this repo** |
+| `mke2fs -h` has no `-h` (exits 1) | silent death *after* the capability was correctly detected | **real** |
+| `find … \| head -20` unguarded | **silent, 0 bytes of output** | **real** — `find` exits non-zero on an unreadable *directory* |
+| `(( bytes < 64M )) && bytes=…` | **test still passed** | **NOT a bug here.** Errexit exempts the left side of an `&&` list in a non-final position. It bites when the arithmetic stands alone, or is a function's last statement |
+
+The fourth is the one worth keeping. It was asserted from *reading* the code, written into a
+comment as fact, and was false — the same mechanism-not-outcome error this plan is organised
+around, committed in a comment justifying a fix. The comment now states the measured rule.
+
+**And the test was blind to the bug that mattered.** Its synthetic tree was 3 MB, so the
+64 MiB floor always applied and the size branch under suspicion never ran; its unreadable
+fixture was a `chmod 000` *file*, which does not make `find` exit non-zero. Both were
+corrected — a 24 MB tree and an unreadable *directory* — and only then did the suite bite on
+the guard that was genuinely load-bearing. *A negative control that cannot construct the
+condition is not a negative control.*
 
 ---
 
@@ -1306,14 +1385,19 @@ open question and the missing file were the same fact wearing two hats.
 
 | component | plan says | reality |
 |---|---|---|
-| **`lab-chroot.sh export-rootfs`** (§6, "new component B") | full CLI, internals, P1-verified `mkfs.ext4 -d` technique | **the verb does not exist.** `export-initrd` and `export-tarball` do; slices 1–3 built ext4 by hand |
+| **`lab-chroot.sh export-rootfs`** (§6, "new component B") | full CLI, internals, P1-verified `mkfs.ext4 -d` technique | ~~the verb does not exist~~ → **BUILT 2026-08-05**, and four of §6's specifics changed on contact ([§6.4](#64-what-the-implementation-changed--and-the-ext4-vs-xfs-question-measured)) |
 | **`CLONES.md` + `test-clones-ledgered.sh`** (§4.1) | the enforcement that stops decision 16 decaying "into a comment nobody checks" | **neither exists.** The ladder is currently a comment nobody checks |
 
-The first has a scheduling consequence nobody noticed: **decision 18's precondition is
+The first had a scheduling consequence nobody noticed: **decision 18's precondition was
 unmet.** The two install-gap labs (§11.1) were scheduled *after slice 4* specifically so each
-would *consume* `export-rootfs` rather than invent its own image plumbing. There is nothing
-to consume, so starting them now would produce exactly the outcome decision 18 exists to
-prevent.
+would *consume* `export-rootfs` rather than invent its own image plumbing. There was nothing
+to consume, so starting them then would have produced exactly the outcome decision 18 exists
+to prevent.
+
+> ✅ **Met 2026-08-05.** `export-rootfs` is built and tested
+> ([§6.4](#64-what-the-implementation-changed--and-the-ext4-vs-xfs-question-measured)), so
+> the two install-gap labs now have the image plumbing decision 18 wanted them to consume.
+> They remain **out of scope for slice 5** — they are separate labs, not a step in it.
 
 ### 18.3 Two corrections to §14's one-line brief
 
@@ -1410,7 +1494,7 @@ reboot caused.
 |---|---|---|---|
 | 1 | ~~recover `fabric.sh`~~ ~~**re-run it**~~ → **DONE 2026-08-04** ([I.7](#i7-the-recovered-fabric-re-verified-against-the-moved-binding--pass)) | slice 5 has nothing to attach to; §18.1 | ✅ `up`/`tap`/`status`/`down` all green, and the teardown comparison matched the **new** binding it derived at pre-flight. **Not** proven: `retap`, any microVM, the comparison's negative direction — 5a re-runs the exercise |
 | 2 | Appendix I's markers | a reader must not act on the stale `incusbr0` claims | this section |
-| 3 | `lab-chroot.sh export-rootfs` (§6) | the one written-up component with a real downstream (decision 18); makes the slice-5 images reproducible instead of hand-built | `test-export-rootfs.sh` — valid ext4, `/sbin/init` read back with `debugfs`, **and the UNKNOWN case** [H.4](#h4-two-defects-both-in-the-safety-machinery) found |
+| 3 | ~~`lab-chroot.sh export-rootfs`~~ → **DONE 2026-08-05** ([§6.4](#64-what-the-implementation-changed--and-the-ext4-vs-xfs-question-measured), [§6.5](#65-four-silent-exits-in-one-function-and-what-the-negative-controls-actually-proved)) | the one written-up component with a real downstream (decision 18); makes the slice-5 images reproducible instead of hand-built | `test-export-rootfs.sh` — valid ext4, `/sbin/init` read back with `debugfs`, **and the UNKNOWN case** [H.4](#h4-two-defects-both-in-the-safety-machinery) found |
 | 4 | fold the preflight instruments ([§17.4 q6](examples/micro-cloud/DEFERRED.md#174-open-questions), answer **(c)**) | four instruments that can disagree about host capability is [§0.1](#01-how-this-lab-is-built-differs-from-the-others)'s bug class waiting to happen | the gate lines are identical to `lab-fc.sh preflight`'s, asserted structurally as [H.2](#h2-the-schema-derived--and-the-two-fields-that-are-refusals) does |
 | 5 | `disk_format` in `lab-vm.sh` (rung 3) | 5a cannot boot the same bytes without it | `test-microvm-argv.sh` extended |
 | 6 | **slice 5a** — build · exercise · break | §18.3, §18.4 | the boot-time number; decision E argued from the table in §18.4 |
