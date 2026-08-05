@@ -347,6 +347,7 @@ write_vm_manifest() {
     local _pxebf;  _pxebf="$(_mf_clean "${MF_PXE_BOOTFILE:-ipxe.efi}")"
     local _bridge; _bridge="$(_mf_clean "${MF_BRIDGE:-}")"
     local _tap;    _tap="$(_mf_clean "${MF_TAP:-}")"
+    local _dfmt;   _dfmt="$(_mf_clean "${MF_DISK_FORMAT:-qcow2}")"
     cat > "$mp" <<EOF
 # lab-vm manifest — do not edit by hand
 name        = "${name}"
@@ -379,6 +380,7 @@ cpu_pin     = "${_cpupin}"
 network_mode = "${MF_NETWORK_MODE:-user}"
 bridge      = "${_bridge}"
 tap         = "${_tap}"
+disk_format = "${_dfmt}"
 created_at  = "${now}"
 version     = "${LAB_VERSION}"
 EOF
@@ -1638,6 +1640,7 @@ spec_from_cli() {
         --arg network_mode "${OPT_NETWORK_MODE:-user}" \
         --arg bridge       "${OPT_BRIDGE:-}" \
         --arg tap          "${OPT_TAP:-}" \
+        --arg disk_format  "${OPT_DISK_FORMAT:-}" \
         --arg name     "${OPT_NAME:-}" \
         --arg backend  "${OPT_BACKEND:-disk-image}" \
         --arg distro   "${OPT_DISTRO:-}" \
@@ -1675,6 +1678,7 @@ spec_from_cli() {
           pxe_bootfile:$pxe_bootfile,
           cores:($cores|tonumber), threads:($threads|tonumber), cpu_pin:$cpu_pin,
           network_mode:$network_mode, bridge:$bridge, tap:$tap,
+          disk_format:$disk_format,
           packages:$packages, runcmd:$runcmd, user_data:$user_data}'
 }
 
@@ -1726,6 +1730,7 @@ specs_from_config() {
             network_mode: (.network_mode // "user"),
             bridge:    (.bridge    // ""),
             tap:       (.tap       // ""),
+            disk_format: (.disk_format // ""),
             packages:  (.packages  // []),
             runcmd:    (.runcmd     // []),
             user_data: (.user_data // ""),
@@ -1735,6 +1740,49 @@ specs_from_config() {
 }
 
 spec_get() { jq -r --arg k "$2" '.[$k] // ""' <<<"$1"; }
+
+# ─── Disk format: derive it, and refuse a declaration that disagrees ───────
+# Added for MICRO_CLOUD_LAB_PLAN.md slice 5a, which boots the SAME raw ext4 image
+# Firecracker boots so that the only variable between the two engines is the VMM.
+#
+# Two things were wrong before this. `-drive format=qcow2` was hardcoded, so a raw image
+# could not be attached at all; and the overlay builders passed `-F qcow2` for the BACKING
+# file, so `--image <raw>` died with "Image is not in qcow2 format" — a loud failure, but
+# one that closed the path entirely.
+#
+# The backing format is DERIVED rather than turned into a second knob: qemu-img already
+# knows, and a knob that can disagree with the file is a record that outlives its subject.
+disk_format_of() {  # disk_format_of <file> -> qcow2|raw|... ; empty if undeterminable
+    local f="$1"
+    [[ -r "$f" ]] || return 0
+    have qemu-img || return 0
+    # `jq .format`, NOT a grep for the first "format" in the JSON. qemu-img nests a
+    # per-child block that carries its OWN "format" — for a raw file the first match is
+    # "file" (the protocol driver), not "raw". The first version of this grabbed that and
+    # the gate below then refused a correctly-declared raw image, naming a format QEMU has
+    # no such concept of. Caught by running it against the real slice-3 ext4 rather than a
+    # fixture. Falls back to the human output, which has exactly one `file format:` line.
+    local out
+    if have jq; then
+        out="$(qemu-img info --output=json -- "$f" 2>/dev/null | jq -r '.format // empty' 2>/dev/null || true)"
+    else
+        out="$(qemu-img info -- "$f" 2>/dev/null | sed -n 's/^file format: //p' | head -1 || true)"
+    fi
+    printf '%s' "$out"
+}
+
+# Refuse a declared format that the file contradicts — BEFORE the VM is created, not at
+# boot. QEMU does catch it ("Image is not in qcow2 format"), but only when `start` runs,
+# by which time `create` has already reported success and written a manifest.
+assert_disk_format() {  # assert_disk_format <file> <declared>
+    local f="$1" want="$2" got
+    got="$(disk_format_of "$f")"
+    [[ -z "$got" ]] && return 0        # UNKNOWN is not a failure; qemu-img may be absent
+    [[ "$got" == "$want" ]] && return 0
+    die "disk_format is \"$want\" but $f is actually \"$got\".
+  QEMU would refuse this at boot with 'Image is not in <fmt> format', after create had
+  already reported success. Set disk_format = \"$got\" (or --disk-format $got)."
+}
 
 # ─── Backend: from-chroot (bootable qcow2 from a Phase-1 chroot) ───────────
 # Turn an arbitrary chroot tree into a bootable VM disk.  Approach:
@@ -2284,8 +2332,11 @@ build_qemu_argv() {
             )
         fi
     elif [[ -n "$disk" ]]; then
+        # format is DECLARED, never probed by QEMU: probing a raw image whose contents
+        # happen to look like another format is a known hardening hole. `disk_format`
+        # defaults to qcow2, so every pre-existing VM emits exactly what it did before.
         QEMU_ARGV+=(
-            -drive  "file=${disk},if=none,id=disk0,format=qcow2,cache=writeback,discard=unmap"
+            -drive  "file=${disk},if=none,id=disk0,format=${disk_format:-qcow2},cache=writeback,discard=unmap"
             -device "virtio-blk-${virtio_suffix},drive=disk0"
         )
     fi
@@ -2434,7 +2485,7 @@ create_one() {
     ssh_user="lab"  # default for cloud-init VMs
 
     # v0.2 knobs: cpu topology/pinning, network mode, image refresh.
-    local cores threads cpu_pin network_mode bridge tap refresh_image secure_boot fw_mode pxe_dir pxe_bootfile tpm
+    local cores threads cpu_pin network_mode bridge tap refresh_image secure_boot fw_mode pxe_dir pxe_bootfile tpm disk_format
     cores="$(spec_get "$spec" cores)";     [[ -z "$cores"   ]] && cores=0
     tpm="$(spec_get "$spec" tpm)";         [[ -z "$tpm"     ]] && tpm=false
     threads="$(spec_get "$spec" threads)"; [[ -z "$threads" ]] && threads=0
@@ -2442,6 +2493,11 @@ create_one() {
     network_mode="$(spec_get "$spec" network_mode)"; [[ -z "$network_mode" ]] && network_mode=user
     bridge="$(spec_get "$spec" bridge)"
     tap="$(spec_get "$spec" tap)"
+    # disk_format: qcow2 (default, and what every existing VM emits) or raw. Refused by
+    # name rather than ignored — a silently dropped format field boots the wrong bytes.
+    disk_format="$(spec_get "$spec" disk_format)"; [[ -z "$disk_format" ]] && disk_format=qcow2
+    [[ "$disk_format" == qcow2 || "$disk_format" == raw ]] \
+        || die "disk_format = \"$disk_format\" is not supported (use \"qcow2\" or \"raw\")"
     refresh_image="$(spec_get "$spec" refresh_image)"
     secure_boot="$(spec_get "$spec" secure_boot)"
     fw_mode="$(spec_get "$spec" firmware)"; [[ -z "$fw_mode" ]] && fw_mode=uefi
@@ -2477,8 +2533,9 @@ create_one() {
             else
                 base="$(cache_image "$distro" "$suite" "$arch" "$refresh_image")"
             fi
-            log_info "creating overlay qcow2: $disk (backed by $base)"
-            qemu-img create -f qcow2 -F qcow2 -b "$base" "$disk" >/dev/null
+            local base_fmt; base_fmt="$(disk_format_of "$base")"; [[ -z "$base_fmt" ]] && base_fmt=qcow2
+            log_info "creating overlay qcow2: $disk (backed by $base, format $base_fmt)"
+            qemu-img create -f qcow2 -F "$base_fmt" -b "$base" "$disk" >/dev/null
             # install_target: create a blank target disk for Anaconda to install onto.
             if [[ -n "$install_target_size" ]]; then
                 install_target="$(vm_target "$name")"
@@ -2574,7 +2631,19 @@ create_one() {
             #   - else: no disk
             if [[ -n "$image" ]]; then
                 require_cmd qemu-img
-                qemu-img create -f qcow2 -F qcow2 -b "$image" "$disk" >/dev/null
+                if [[ "$disk_format" == raw ]]; then
+                    # PER-INSTANCE COPY, not an overlay — deliberately the same semantics
+                    # lab-fc.sh uses (§5.3): the guest writes to its own bytes and the
+                    # source image is never mutated. An overlay would add a CoW layer
+                    # Firecracker does not have, which is a confound when the whole point
+                    # of slice 5a is that the VMM is the only variable.
+                    assert_disk_format "$image" raw
+                    log_info "copying raw image to a per-instance disk: $image -> $disk"
+                    cp -- "$image" "$disk" || die "could not copy $image to $disk"
+                else
+                    local img_fmt; img_fmt="$(disk_format_of "$image")"; [[ -z "$img_fmt" ]] && img_fmt=qcow2
+                    qemu-img create -f qcow2 -F "$img_fmt" -b "$image" "$disk" >/dev/null
+                fi
             elif [[ -n "$persist_size" ]]; then
                 require_cmd qemu-img
                 log_info "creating persist disk: $disk ($persist_size)"
@@ -2602,6 +2671,7 @@ create_one() {
     MF_SSH_USER="$ssh_user" MF_LAB="$lab_name" \
     MF_CORES="$cores" MF_THREADS="$threads" MF_CPU_PIN="$cpu_pin" \
     MF_NETWORK_MODE="$network_mode" MF_BRIDGE="$bridge" MF_TAP="$tap" \
+    MF_DISK_FORMAT="$disk_format" \
     MF_SECURE_BOOT="$secure_boot" MF_FIRMWARE="$fw_mode" MF_TPM="$tpm" \
     MF_PXE_DIR="$pxe_dir" MF_PXE_BOOTFILE="$pxe_bootfile" \
     write_vm_manifest "$name"
@@ -2674,7 +2744,7 @@ cmd_start() {
     # Reload manifest into globals expected by build_qemu_argv.
     local arch microvm accel memory cpus ssh_port disk seed kernel initrd append firmware
     local install_target mac
-    local cores threads cpu_pin network_mode bridge tap secure_boot fw_mode pxe_dir pxe_bootfile tpm
+    local cores threads cpu_pin network_mode bridge tap secure_boot fw_mode pxe_dir pxe_bootfile tpm disk_format
     arch="$(read_manifest_field "$name" arch)"
     microvm="$(read_manifest_field "$name" microvm)"
     accel="$(read_manifest_field "$name" accel)"
@@ -2703,6 +2773,10 @@ cmd_start() {
     [[ -z "$network_mode" ]] && network_mode=user
     bridge="$(read_manifest_field "$name" bridge 2>/dev/null || true)"
     tap="$(read_manifest_field "$name" tap 2>/dev/null || true)"
+    # Manifests written before this field existed have no disk_format; they were all
+    # qcow2, so the default reproduces their old argv byte for byte.
+    disk_format="$(read_manifest_field "$name" disk_format 2>/dev/null || true)"
+    [[ -z "$disk_format" ]] && disk_format=qcow2
     firmware="$(firmware_for "$arch" "$microvm" "${secure_boot:-false}" "${fw_mode:-uefi}")"
 
     # Clean up any stale unix sockets from a previous run.
@@ -3324,6 +3398,8 @@ CREATE OPTIONS
   --network-mode {user|bridge|tap}       (default user = slirp+hostfwd; bridge/tap need root)
   --bridge    <name>                     (bridge to attach for --network-mode bridge; default virbr0)
   --tap       <ifname>                   (tap device for --network-mode tap)
+  --disk-format {qcow2|raw}              (default qcow2; raw attaches a PER-INSTANCE COPY
+                                          of --image instead of a CoW overlay)
   --packages  "p1,p2,..."                (cloud-init: extra packages to install at first boot)
   --runcmd    "<cmd>"                    (cloud-init: first-boot command; repeatable)
   --user-data /path/to/user-data         (cloud-init: use this file verbatim — full override)
@@ -3364,7 +3440,7 @@ parse_args() {
     OPT_JSON=""
     OPT_CLOUD_INIT="true"
     OPT_REFRESH_IMAGE="" OPT_CORES="" OPT_THREADS="" OPT_CPU_PIN=""
-    OPT_NETWORK_MODE="" OPT_BRIDGE="" OPT_TAP=""
+    OPT_NETWORK_MODE="" OPT_BRIDGE="" OPT_TAP="" OPT_DISK_FORMAT=""
     OPT_PACKAGES="" OPT_USER_DATA="" OPT_RUNCMD=()
     OPT_NETBOOT_DIR="" OPT_KERNEL_NAME="" OPT_INITRD_NAME="" OPT_GENERATE_SCRIPT="" OPT_SERVER=""
     OPT_PXE_DIR="" OPT_PXE_BOOTFILE="" OPT_SECURE_BOOT="" OPT_FIRMWARE=""
@@ -3407,6 +3483,7 @@ parse_args() {
             --network-mode) OPT_NETWORK_MODE="$2"; shift 2 ;;
             --bridge)       OPT_BRIDGE="$2"; shift 2 ;;
             --tap)          OPT_TAP="$2"; shift 2 ;;
+            --disk-format)  OPT_DISK_FORMAT="$2"; shift 2 ;;
             --packages)     OPT_PACKAGES="$2"; shift 2 ;;
             --runcmd)       OPT_RUNCMD+=("$2"); shift 2 ;;
             --user-data)    [[ -r "$2" ]] || die "user-data file not readable: $2"; OPT_USER_DATA="$2"; shift 2 ;;
