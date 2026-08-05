@@ -26,11 +26,18 @@
 > — 420 lines, shellcheck-clean, now committed as [`fabric.sh`](fabric.sh).
 > Full account: [plan §18.1](../../MICRO_CLOUD_LAB_PLAN.md#181-the-precursor-nobody-recorded--fabricsh-is-not-in-the-repo).
 >
-> **Still owed:** the privileged round trip (`up` / `tap` / `down`) needs
-> `CAP_NET_ADMIN`, so it is author-run. Until it runs, the committed file is
-> **recovered and statically checked, not re-verified** — UNKNOWN, not PASS.
-> The unprivileged `status` verb *is* verified, and independently re-derives
-> [Appendix I](../../MICRO_CLOUD_LAB_PLAN.md#appendix-i--calico-moved-no-lab-caused-it-and-the-trigger-is-a-60-second-poll-2026-08-04).
+> ✅ **Re-verified 2026-08-04 23:39 — the privileged round trip PASSES.**
+> `up` → `tap api1` → `tap api2` → `status` → `down`, author-run. Teardown's
+> Calico comparison matched the **new** binding, which pre-flight had recorded
+> by deriving it — a copy with `incusbr0` written in would have failed on a
+> host where nothing was wrong. See
+> [I.7](../../MICRO_CLOUD_LAB_PLAN.md#i7-the-recovered-fabric-re-verified-against-the-moved-binding--pass).
+>
+> **Still not proven, and named rather than left implicit:** `retap` was never
+> called, **no microVM booted** (dnsmasq started and re-read its files but
+> served nobody), and the comparison's negative direction was not re-run. The
+> fabric is re-verified; **the slice-3 exercise is not.** Slice 5a re-runs it
+> with a second engine attached.
 >
 > **Item 2 (the slice 1/2 artifacts) stands** — those files really are in the
 > workdirs, verified 2026-08-04.
