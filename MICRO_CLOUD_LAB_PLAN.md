@@ -1496,7 +1496,7 @@ reboot caused.
 | 2 | Appendix I's markers | a reader must not act on the stale `incusbr0` claims | this section |
 | 3 | ~~`lab-chroot.sh export-rootfs`~~ → **DONE 2026-08-05** ([§6.4](#64-what-the-implementation-changed--and-the-ext4-vs-xfs-question-measured), [§6.5](#65-four-silent-exits-in-one-function-and-what-the-negative-controls-actually-proved)) | the one written-up component with a real downstream (decision 18); makes the slice-5 images reproducible instead of hand-built | `test-export-rootfs.sh` — valid ext4, `/sbin/init` read back with `debugfs`, **and the UNKNOWN case** [H.4](#h4-two-defects-both-in-the-safety-machinery) found |
 | 4 | ~~fold the preflight instruments~~ → **DONE 2026-08-05, and the answer was not a fold** ([§18.7](#187-item-4s-premise-tested-the-four-instruments-agree--and-one-of-them-was-lying)) | four instruments that can disagree about host capability is [§0.1](#01-how-this-lab-is-built-differs-from-the-others)'s bug class waiting to happen | the gate lines are identical to `lab-fc.sh preflight`'s, asserted structurally as [H.2](#h2-the-schema-derived--and-the-two-fields-that-are-refusals) does |
-| 5 | `disk_format` in `lab-vm.sh` (rung 3) | 5a cannot boot the same bytes without it | `test-microvm-argv.sh` extended |
+| 5 | ~~`disk_format` in `lab-vm.sh`~~ → **DONE 2026-08-05**, and it was two changes ([§18.8](#188-item-5-was-two-changes--and-the-gate-had-the-bug-it-exists-to-catch)) | 5a cannot boot the same bytes without it | `test-microvm-argv.sh` extended **+** [`test-disk-format.sh`](phase2-qemu-vm/tests/test-disk-format.sh) |
 | 6 | **slice 5a** — build · exercise · break | §18.3, §18.4 | the boot-time number; decision E argued from the table in §18.4 |
 | 7 | **slice 5b** — the §9.2 `edge` | fidelity case, feeds §9.3's capstone | cloud-init runs; `edge` resolves `api1` by name |
 
@@ -1566,6 +1566,49 @@ those are ours, chosen by the fabric, and constant by design.
 **What this cost, and what a fold would have cost.** Two derivation fixes and a 90-line
 guard, versus a refactor of two frozen spikes to solve a disagreement that measurement says
 does not exist.
+
+
+### 18.8 Item 5 was two changes — and the gate had the bug it exists to catch
+
+§18.3 costed this as *"`build_qemu_argv` hardcodes `format=qcow2`, so booting the same raw
+ext4 needs a `disk_format` field"*. Measuring first found a **second** blocker on the same
+path, and it was the harder one.
+
+**`--image <raw>` could not reach QEMU at all.** Both overlay builders passed `-F qcow2` for
+the *backing* file, so pointing `kernel+initrd` at slice 3's `api1.ext4` died at
+`qemu-img create` with `Image is not in qcow2 format` — a loud failure, but one that closed
+the path before the drive line was ever reached. The backing format is now **derived**
+(`qemu-img` already knows) rather than turned into a second knob that could disagree with
+the file.
+
+**And `disk_format = "raw"` copies rather than overlays.** An overlay was the obvious
+implementation and would have been a confound: Firecracker gives each instance a full
+per-instance copy ([§5.3](#53-state-directory)), so a QEMU guest on a CoW overlay is not
+running the same storage stack, and slice 5a's entire claim is that **the VMM is the only
+variable**. `raw` therefore copies the image to the per-instance disk — the same semantics
+`lab-fc.sh` uses, and the source is never mutated.
+
+**The gate shipped with the exact defect it exists to catch.** `disk_format` is *declared*
+rather than probed (QEMU probing a raw image whose contents resemble another format is a
+known hardening hole), so a declaration that disagrees with the file is a record that
+misdescribes its subject — and QEMU only catches it at `start`, long after `create` reported
+success and wrote a manifest. The gate binds the two. Its first implementation read the
+first `"format"` out of `qemu-img info --output=json`, which for a raw file is the nested
+child block's **`"file"`** — the protocol driver — not the top-level `"raw"`. So the gate
+refused a correctly-declared raw image, naming a format QEMU has no such concept of.
+
+It passed every fixture. It failed instantly against slice 3's real `api1.ext4`. *A test
+that builds its own subject can only find the bugs its author already imagined.*
+
+Both guards were then re-injected and both bit:
+[`test-microvm-argv.sh`](phase2-qemu-vm/tests/test-microvm-argv.sh) fails when the drive
+line's format is hardcoded again, and asserts that **explicit `qcow2` is byte-identical to
+the default** — the negative control for the whole change, since the one thing this must not
+do is alter what a pre-existing VM emits.
+[`test-disk-format.sh`](phase2-qemu-vm/tests/test-disk-format.sh) fails with
+`a raw image derived as 'file', not 'raw'` when the JSON parse regresses, and asserts that an
+unreadable file yields **UNKNOWN** — the gate must decline to refuse rather than invent a
+mismatch.
 
 **Explicitly not in this slice:** `CLONES.md` (slice 5 makes no rung-4 move, so the ledger has
 nothing to record yet — building it now would be enforcement in search of a violation);
