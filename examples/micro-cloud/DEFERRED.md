@@ -27,7 +27,7 @@ Firecracker boots, on a `fabric.sh`-made tap, so the only variable is the VMM
 
 | input | where | state |
 |---|---|---|
-| `fabric.sh` (`up`/`tap`/`status`/`down`) | [`fabric.sh`](fabric.sh) | committed; round trip re-verified 2026-08-04 ([I.7](../../MICRO_CLOUD_LAB_PLAN.md#i7-the-recovered-fabric-re-verified-against-the-moved-binding--pass)), and that run is now a **repeatable test** — [`tests/test-fabric-round-trip.sh`](tests/run-all.sh) |
+| `fabric.sh` (`up`/`tap`/`status`/`down`) | [`fabric.sh`](fabric.sh) | committed; round trip re-verified 2026-08-04 ([I.7](../../MICRO_CLOUD_LAB_PLAN.md#i7-the-recovered-fabric-re-verified-against-the-moved-binding--pass)), now a **repeatable test** — [`tests/test-fabric-round-trip.sh`](tests/run-all.sh) — whose privileged path was **executed 2026-08-05 and passed with 0 skips** ([I.9](../../MICRO_CLOUD_LAB_PLAN.md#i9-the-one-shot-became-a-test-and-the-tests-root-path-ran--pass)) |
 | `lab-fc.sh` + preflight | [`phase7-firecracker/`](../../phase7-firecracker/lab-fc.sh) | slice 4; baseline **0.564930 s** |
 | `-M microvm`, virtio-mmio, qboot | [`phase2-qemu-vm/`](../../phase2-qemu-vm/lab-vm.sh) | pre-existing; `test-microvm-argv.sh` |
 | `--network-mode tap` | same | takes a **pre-made tap by name** — what `fabric.sh tap` produces and how FC consumes one. Unprivileged in both |
@@ -116,6 +116,12 @@ dated appendix. **`retap`, and the slice-3 exercise itself, are still unre-run**
 > by deriving it — a copy with `incusbr0` written in would have failed on a
 > host where nothing was wrong. See
 > [I.7](../../MICRO_CLOUD_LAB_PLAN.md#i7-the-recovered-fabric-re-verified-against-the-moved-binding--pass).
+>
+> ✅ **And re-run 2026-08-05 from the committed test, not the one-shot** —
+> `sudo bash tests/run-all.sh` → `1 passed, 0 skipped, 0 failed`. The zero
+> matters as much as the one: the test has three SKIP guards, so an all-skip
+> run would look green while asserting nothing
+> ([I.9](../../MICRO_CLOUD_LAB_PLAN.md#i9-the-one-shot-became-a-test-and-the-tests-root-path-ran--pass)).
 >
 > **Still not proven, and named rather than left implicit:** `retap` was never
 > called, **no microVM booted** (dnsmasq started and re-read its files but

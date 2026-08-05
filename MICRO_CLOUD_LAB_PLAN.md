@@ -2982,6 +2982,11 @@ appendix was caused by this repo. It is here because **three sessions of this pl
 on a fact that has since stopped being true**, and because re-deriving it turned up the
 mechanism [F.7](#f7-the-selection-rule-derived--and-7-already-satisfied-it) left unexplained.
 
+> **Addendum, 2026-08-05:** [I.9](#i9-the-one-shot-became-a-test-and-the-tests-root-path-ran--pass)
+> is one day later than the rest of this appendix — the run that turned
+> [I.7](#i7-the-recovered-fabric-re-verified-against-the-moved-binding--pass)'s one-shot into
+> a committed test and then *executed that test's privileged path*.
+
 ### I.1 The measurement
 
 ```text
@@ -3193,3 +3198,48 @@ every 60 seconds. F.7's hypothesis was right and its stated reason was not.
 Harmless here — `br-mc0` is excluded by name at any operstate, which is exactly why rule 1
 is the safety property and rule 2's addresslessness is the backstop. Recorded because the
 next person to build a fabric on this host may not name it `br-*`.
+
+### I.9 The one-shot became a test, and the test's root path ran — **PASS**
+
+[I.7](#i7-the-recovered-fabric-re-verified-against-the-moved-binding--pass) was a one-shot.
+Landing it as
+[`tests/test-fabric-round-trip.sh`](examples/micro-cloud/tests/test-fabric-round-trip.sh)
+made it re-runnable, and added three guards a one-shot did not need (not-root → SKIP; a
+fabric already up → SKIP and touch nothing; a root-owned checkout → SKIP). But **a landed
+test is not an executed one**, and every guard it gained is a *new* way for it to exit 77
+without asserting anything. CI runs unprivileged and can therefore only ever exercise the
+first skip. So the state on the day it merged was: one PASS, and an **UNKNOWN** about
+whether the file in the repo still reproduced it.
+
+Author-run 2026-08-05, `sudo bash examples/micro-cloud/tests/run-all.sh`:
+
+```text
+=== test-fabric-round-trip.sh ===
+  - before: calico=local 192.168.1.106 dev enx00051b8eb138 veths=2 ip_forward=1
+  - up: br-mc0 + 10.71.0.1/24 + nft mklab-mc + dnsmasq 55429
+  - taps: 2 created, both addressless, both owned by uid 1000, both on br-mc0
+  - down: bridge, taps, nft table, route and dnsmasq all absent
+  - calico binding, pod veth count and ip_forward all unchanged across the round trip
+PASS: fabric round trip: up/tap/status/down green, and the live cluster was untouched
+
+=== summary: 1 passed, 0 skipped, 0 failed ===
+```
+
+**`1 passed, 0 skipped`** is the line that closes the UNKNOWN: none of the three guards
+fired, so the assertions between them actually ran. An all-SKIP run would have printed the
+same `PASS`-free green-looking summary with `0 passed` — which is why `run-all.sh` says so
+out loud rather than exiting 0 in silence.
+
+What it independently re-derives, one day and one process later: **I.1's binding is still
+`enx00051b8eb138`** (a fourth derivation, and the first from a committed artifact rather
+than a scratch one), the veth count and `ip_forward` are unchanged, and the taps are
+**addressless and uid-1000-owned** read back from `/sys/class/net/*/owner`. The bridge
+carrier oddity in [I.8](#i8-a-bridge-with-members-can-be-down--and-it-sharpens-f7s-volatility-guess)
+is invisible here because the test asserts *membership* (`ip -o link show master br-mc0`),
+not operstate — assert the outcome, not the mechanism.
+
+**Scope is unchanged from I.7 and is not quietly widened by having a test file:** `retap` is
+still never called, **no microVM boots** (dnsmasq serves nobody), and the teardown
+comparison's negative direction is still the 2026-08-02 proof in
+[G.7](#g7-the-teardown-assertion-proven-in-both-directions), not a re-run. Slice 5a is where
+those get exercised.
