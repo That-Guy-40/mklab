@@ -8,8 +8,20 @@ under examples/) without leaving dangling references behind:
      whose target doesn't exist on disk.  Catches the classic "renamed a file,
      forgot a link in the README/INDEX" rot.  Handles inline links
      `[text](path)` and reference definitions `[id]: path`.  External URLs
-     (http/https/mailto/…) and pure `#anchor` links are skipped.  (`[[ ]]` is
-     NOT treated as a link — here it's TOML/bash/regex syntax, not a wiki link.)
+     (http/https/mailto/…) are skipped.  (`[[ ]]` is NOT treated as a link —
+     here it's TOML/bash/regex syntax, not a wiki link.)
+
+  1b. ANCHOR VALIDATION — and the *fragment* too: `doc.md#some-heading` and a
+     same-file `#some-heading` are checked against the heading anchors GitHub
+     will actually generate for the destination.  This exists because for a
+     long time it did NOT: the checker split the fragment off and threw it
+     away, so a run could report "0 broken links" over a doc whose every
+     in-page link was dead.  That is the repo's own bug class — a cheap check
+     standing in for the real one — and a green result from it meant only
+     "the FILE exists", never "the SECTION does".  A missing anchor is a
+     *silent* failure in a browser (you land at the top of the page), which is
+     exactly why a machine has to be the one looking.  See `github_slug()` for
+     the rule and the em-dash trap that motivated it.
 
   2. REFERENCE / IMPACT MAP — for every file under a tracked dir (default:
      examples/), grep the WHOLE repo for textual references to its *basename*
@@ -30,6 +42,8 @@ Usage:
   tools/link_check.py --impact micro-linux # substring: every micro-linux* file's refs
   tools/link_check.py --links-only         # just validate Markdown links (CI gate)
   tools/link_check.py --orphans-only       # just list unreferenced tracked files
+  tools/link_check.py --no-anchors         # paths only — the pre-2026-08-05 behaviour
+  tools/link_check.py --anchors-of DOC     # print every anchor a doc generates
   tools/link_check.py --json               # machine-readable
 
 Exit status: non-zero if broken links are found (so it can gate CI / a commit).
@@ -39,11 +53,13 @@ Defaults: --root = the git repo (parent of this script's tools/ dir),
 from __future__ import annotations
 
 import argparse
+import difflib
 import json
 import re
 import subprocess
 import sys
 from pathlib import Path
+from urllib.parse import unquote
 
 # ── What counts as a doc / a scannable text file ────────────────────────────
 DOC_SUFFIXES = {".md", ".markdown"}
@@ -119,12 +135,108 @@ def read_text(p: Path) -> str | None:
     return data.decode("utf-8", errors="replace")
 
 
-def strip_anchor(target: str) -> str:
-    """Drop a #fragment and surrounding <> from a link target."""
+def split_anchor(target: str) -> tuple[str, str]:
+    """Split a link target into (path, fragment); either part may be ''.
+
+    `<>`-wrapping is removed and the fragment is percent-decoded, because a
+    heading with a non-ASCII character is written `#caf%C3%A9` by some editors
+    and `#café` by others — the same anchor, and neither may be reported broken.
+    """
     target = target.strip()
     if target.startswith("<") and target.endswith(">"):
         target = target[1:-1]
-    return target.split("#", 1)[0]
+    path, _, frag = target.partition("#")
+    return path, unquote(frag)
+
+
+def strip_anchor(target: str) -> str:
+    """Drop a #fragment and surrounding <> from a link target."""
+    return split_anchor(target)[0]
+
+
+# ── Heading anchors ─────────────────────────────────────────────────────────
+# GitHub gives every heading an id by slugifying its RENDERED text:
+#   lowercase → delete everything that is not a word char / space / hyphen →
+#   spaces become hyphens → a repeated slug gets -1, -2, … in document order.
+#
+# Two consequences cause almost every hand-written anchor to be wrong:
+#
+#   * an em dash is deleted, not replaced, so a heading's " — " (space, dash,
+#     space) becomes TWO hyphens: `### I.7 The fabric — PASS` → `i7-the-fabric--pass`.
+#     Writing the obvious single hyphen produces a link that silently lands the
+#     reader at the top of the page.
+#   * `_` is a word character and SURVIVES, while `.`, `'`, `’`, `(`, `)` and
+#     `/` are all deleted with no separator: `test's` → `tests`, `F.7` → `f7`.
+#
+# We slug the *rendered* text, so a heading containing a link, an image, code
+# spans or `**bold**` slugs the way the browser will see it — `[x](y)` is `x`,
+# not `xy`.
+MD_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\([^)]*\)")
+MD_LINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+MD_REFLINK_RE = re.compile(r"\[([^\]]*)\]\[[^\]]*\]")
+HTML_TAG_RE = re.compile(r"<[^>]+>")
+ATX_RE = re.compile(r"^\s{0,3}(#{1,6})\s+(.*?)(?:\s+#+)?\s*$")
+# An explicit `<a id="x">` / `<a name="x">` (or any tag carrying an id) is a real
+# anchor too, and several docs use one to pin a name a heading would not produce.
+HTML_ID_RE = re.compile(r"""<[a-z][^>]*?\b(?:name|id)\s*=\s*["']([^"']+)["']""", re.I)
+EMPHASIS_RES = (
+    (re.compile(r"\*\*(.+?)\*\*"), r"\1"),
+    (re.compile(r"__(.+?)__"), r"\1"),
+    (re.compile(r"\*(.+?)\*"), r"\1"),
+    (re.compile(r"~~(.+?)~~"), r"\1"),
+    (re.compile(r"(?<![\w`])_(.+?)_(?![\w`])"), r"\1"),
+)
+# `file.sh#L42` / `#L10-L20` are GitHub's line anchors on a code blob, not
+# headings — never resolvable from a Markdown doc's headings.
+LINE_ANCHOR_RE = re.compile(r"^L\d+(?:-L\d+)?$")
+
+
+def heading_render(raw: str) -> str:
+    """Approximate the rendered text of a heading (strip inline markdown)."""
+    s = MD_IMAGE_RE.sub(r"\1", raw)
+    s = MD_LINK_RE.sub(r"\1", s)
+    s = MD_REFLINK_RE.sub(r"\1", s)
+    for rx, rep in EMPHASIS_RES:
+        s = rx.sub(rep, s)
+    s = s.replace("`", "")
+    return HTML_TAG_RE.sub("", s)
+
+
+def github_slug(raw: str) -> str:
+    """The id GitHub will generate for a heading (before duplicate numbering)."""
+    s = heading_render(raw).strip().lower()
+    s = re.sub(r"[^\w\s-]", "", s, flags=re.UNICODE)
+    return re.sub(r"\s", "-", s)
+
+
+def collect_anchors(text: str) -> list[str]:
+    """Every anchor a Markdown doc offers, in document order.
+
+    Headings inside fenced code are NOT headings — a shell comment `# foo` in a
+    ```bash block would otherwise mint an anchor nothing links to and, worse,
+    consume the `-1` suffix a real duplicate heading needed.
+    """
+    anchors: list[str] = []
+    seen: dict[str, int] = {}
+    in_fence = False
+    for line in text.splitlines():
+        if FENCE_RE.match(line):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        for m in HTML_ID_RE.finditer(line):
+            anchors.append(m.group(1))
+        m = ATX_RE.match(line)
+        if not m:
+            continue
+        base = github_slug(m.group(2))
+        if not base:
+            continue
+        n = seen.get(base, 0)
+        seen[base] = n + 1
+        anchors.append(base if n == 0 else f"{base}-{n}")
+    return anchors
 
 
 def extract_links(text: str):
@@ -146,28 +258,70 @@ def extract_links(text: str):
             yield lineno, md.group(1), "refdef"
 
 
-def validate_links(root: Path, docs: list[Path]):
-    """Return a list of broken-link dicts."""
+def validate_links(root: Path, docs: list[Path], check_anchors: bool = True):
+    """Return (broken, stats): missing files AND missing anchors, plus how much
+    was actually looked at.
+
+    `stats` exists because an all-green report is otherwise indistinguishable
+    from one that checked nothing — if a regex stopped matching, or every
+    fragment were skipped as "not checkable", the output would still read
+    `✓ no broken links`.  Printing the counts makes the difference visible.
+    """
     broken = []
+    stats = {"links": 0, "fragments": 0, "anchors_checked": 0, "anchors_skipped": 0}
+    anchor_cache: dict[Path, list[str] | None] = {}
+
+    def anchors_of(p: Path):
+        if p not in anchor_cache:
+            t = read_text(p)
+            anchor_cache[p] = None if t is None else collect_anchors(t)
+        return anchor_cache[p]
+
     for doc in docs:
         text = read_text(doc)
         if text is None:
             continue
         for lineno, raw, kind in extract_links(text):
-            target = strip_anchor(raw)
-            if not target or EXTERNAL_RE.match(target):
-                continue  # external URL / pure anchor
-            # Resolve relative to the doc's directory.
-            resolved = (doc.parent / target).resolve()
-            # Allow trailing-slash dir links.
-            if resolved.exists():
+            target, frag = split_anchor(raw)
+            if target and EXTERNAL_RE.match(target):
+                continue  # external URL
+            stats["links"] += 1
+            if frag:
+                stats["fragments"] += 1
+            if not target:
+                dest = doc  # same-document anchor: #section
+            else:
+                # Resolve relative to the doc's directory; allow trailing-slash dirs.
+                dest = (doc.parent / target).resolve()
+                if not dest.exists():
+                    # Some links are written repo-root-relative; try that too.
+                    alt = (root / target).resolve()
+                    if not alt.exists():
+                        broken.append(_b(root, doc, lineno, target, kind, "target not found"))
+                        continue
+                    dest = alt
+            if not (check_anchors and frag):
                 continue
-            # Some links are written repo-root-relative; try that too.
-            alt = (root / target).resolve()
-            if alt.exists():
+            # Anchors are only checkable in Markdown. `foo.sh#L42` is GitHub's
+            # line anchor on a blob and a directory has no headings at all —
+            # report neither, rather than inventing a failure we cannot judge.
+            if dest.is_dir() or dest.suffix.lower() not in DOC_SUFFIXES or LINE_ANCHOR_RE.match(frag):
+                stats["anchors_skipped"] += 1
                 continue
-            broken.append(_b(root, doc, lineno, target, kind, "target not found"))
-    return broken
+            have = anchors_of(dest)
+            if have is None:
+                stats["anchors_skipped"] += 1
+                continue
+            stats["anchors_checked"] += 1
+            if frag in have:
+                continue
+            where = "this doc" if dest == doc else str(dest.relative_to(root)) if root in dest.parents else dest.name
+            near = difflib.get_close_matches(frag, have, n=1, cutoff=0.55)
+            why = f"anchor not found in {where}"
+            if near:
+                why += f" — closest: #{near[0]}"
+            broken.append(_b(root, doc, lineno, f"{target}#{frag}", kind, why))
+    return broken, stats
 
 
 def _b(root, doc, lineno, target, kind, why):
@@ -222,6 +376,8 @@ def main(argv=None):
     ap.add_argument("--impact", metavar="SUBSTR", help="show inbound references for tracked files whose path contains SUBSTR")
     ap.add_argument("--links-only", action="store_true", help="only validate Markdown links")
     ap.add_argument("--orphans-only", action="store_true", help="only list unreferenced tracked files")
+    ap.add_argument("--no-anchors", action="store_true", help="validate paths only, not #fragments (the pre-2026-08-05 behaviour)")
+    ap.add_argument("--anchors-of", metavar="DOC", help="print every anchor DOC generates, in document order, and exit")
     ap.add_argument("--json", action="store_true", help="machine-readable output")
     args = ap.parse_args(argv)
 
@@ -229,12 +385,29 @@ def main(argv=None):
     root = (args.root or find_repo_root(script_dir)).resolve()
     track_dir = (root / args.track).resolve()
 
+    # ── Anchor listing (the "what SHOULD I have written?" mode) ─────────────
+    if args.anchors_of:
+        p = Path(args.anchors_of)
+        if not p.exists():
+            p = root / args.anchors_of
+        text = read_text(p) if p.exists() else None
+        if text is None:
+            print(f"cannot read: {args.anchors_of}", file=sys.stderr)
+            return 2
+        found = collect_anchors(text)
+        if args.json:
+            print(json.dumps(found, indent=2))
+        else:
+            for a in found:
+                print(f"#{a}")
+        return 0
+
     all_files = list_files(root)
     docs = [f for f in all_files if f.suffix.lower() in DOC_SUFFIXES]
     tracked = sorted(f for f in all_files if track_dir in f.parents or f.parent == track_dir)
 
     # ── Link validation ─────────────────────────────────────────────────────
-    broken = validate_links(root, docs)
+    broken, stats = validate_links(root, docs, check_anchors=not args.no_anchors)
 
     # ── Reference / impact index ─────────────────────────────────────────────
     index = build_reference_index(root, tracked, all_files)
@@ -258,19 +431,24 @@ def main(argv=None):
 
     # ── Full / focused report ────────────────────────────────────────────────
     if args.json:
-        out = {"broken_links": broken, "orphans": orphans}
+        out = {"broken_links": broken, "orphans": orphans, "stats": stats}
         if not args.links_only and not args.orphans_only:
             out["impact_counts"] = {rel: len(h) for rel, h in index.items()}
         print(json.dumps(out, indent=2))
         return 1 if broken else 0
 
     if not args.orphans_only:
-        print(f"== Markdown link validation ({len(docs)} docs) ==")
+        scope = "paths only (--no-anchors)" if args.no_anchors else "paths + #anchors"
+        print(f"== Markdown link validation ({len(docs)} docs, {scope}) ==")
+        print(f"  {stats['links']} local links, {stats['fragments']} carrying a #fragment "
+              f"→ {stats['anchors_checked']} anchors verified, "
+              f"{stats['anchors_skipped']} not checkable (dir / non-Markdown / #L42)")
         if not broken:
             print("  ✓ no broken links")
         else:
             for b in broken:
                 print(f"  ✗ {b['doc']}:{b['line']}  →  {b['target']}  ({b['why']}, {b['kind']})")
+            print("\n  Tip: `--anchors-of <doc>` prints the anchors that doc actually generates.")
         print()
 
     if not args.links_only:

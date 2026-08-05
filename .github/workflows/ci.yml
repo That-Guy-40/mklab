@@ -66,8 +66,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
-      - name: Markdown link check (0 broken links)
+      - name: Markdown link check (0 broken links — paths AND #anchors)
         run: python3 tools/link_check.py
+      - name: the link checker's own negative control
+        # 0 broken links is indistinguishable from a checker that looks at nothing. This
+        # builds a fixture with 4 deliberate anchor breaks and asserts all 4 are caught,
+        # that the 8 legitimate anchors beside them are NOT, and that --no-anchors (the
+        # pre-2026-08-05 blindness) reports zero on the same fixture.
+        run: bash tools/tests/test-link-check-anchors.sh
       - name: Learning-path routing + freshness gate
         run: python3 tools/paths.py --check
 

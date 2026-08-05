@@ -154,7 +154,7 @@ article's recipe against his own puzzle's data destroys the answer:
 ```
 
 Proof for each erratum — commands and captured output — is in
-[`../MANUAL_TESTING.md`](../MANUAL_TESTING.md#documented-errata-seven-published-commands-that-dont-do-what-they-say).
+[`../MANUAL_TESTING.md`](../MANUAL_TESTING.md#documented-errata-eight-published-commands-that-dont-do-what-they-say).
 
 ## License / attribution
 

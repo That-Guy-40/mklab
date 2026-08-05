@@ -26,7 +26,7 @@
 > - **The lab is OpenBIOS-on-SPARC, and says so plainly.** Sun's OpenBoot is
 >   proprietary and cannot be built or shipped; see the naming trap below.
 >
-> **✅ SPIKE 0 IS GREEN ON BOTH TRACKS** (2026-07-26 — SPARC [§5](#5-spike-0--result-green),
+> **✅ SPIKE 0 IS GREEN ON BOTH TRACKS** (2026-07-26 — SPARC [§5](#5-spike-0-sparc--result-green),
 > PPC [§5c](#5c-spike-0-ppc--result-green)). **NVRAM is writable on both**, which is
 > the result that matters: the x86 lab's two open limitations become demonstrable
 > here, on either track.

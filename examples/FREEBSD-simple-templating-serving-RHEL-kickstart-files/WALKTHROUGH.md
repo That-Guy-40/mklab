@@ -373,7 +373,7 @@ The client boots the AlmaLinux **boot ISO** (CD0) with the **OEMDRV ISO** (CD1).
 Anaconda finds `OEMDRV`/`ks.cfg` automatically (no `inst.ks=`), brings up the NIC
 per the kickstart's `network` line (10.0.10.199 on the socket LAN), and pulls
 packages from `http://10.0.10.210/almalinux/9/...` on the FreeBSD box. See
-[RUNBOOK.md](RUNBOOK.md#part-6) for the exact steps and the headless-console note,
+[RUNBOOK.md](RUNBOOK.md#part-6--boot-the-client-anaconda-installs-unattended-author-run) for the exact steps and the headless-console note,
 and [MANUAL_TESTING.md](MANUAL_TESTING.md) for what is machine-verified vs
 author-run.
 
