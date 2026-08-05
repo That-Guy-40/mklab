@@ -69,10 +69,20 @@ hr; echo "4. nft filter FORWARD in detail — the chain a new bridge must surviv
 nft -a list chain ip filter FORWARD 2>/dev/null | sed 's/^/  /' || echo "  (no ip filter FORWARD chain)"
 
 hr; echo "5. THE MODEL TO COPY — how the bridges that already work got permission"
-for b in virbr0 lxdbr0 incusbr0 docker0; do
-    hits="$(nft list ruleset 2>/dev/null | grep -c "\"$b\"" || true)"
-    printf '  %-10s referenced in %s nft rule(s)\n' "$b" "$hits"
-done
+# DERIVE the bridge list; do not name this host's bridges. The original read
+# `for b in virbr0 lxdbr0 incusbr0 docker0` — accurate on 2026-08-02 and false by
+# 2026-08-04, when a reboot left both container-engine daemons down and two of those four
+# ceased to exist (plan Appendix I). A hard-coded list does not fail loudly when it goes
+# stale; it prints "0 rules" for an interface that is absent and reads as "unused".
+bridges="$(for d in /sys/class/net/*/bridge; do [[ -d "$d" ]] && basename "$(dirname "$d")"; done 2>/dev/null | sort || true)"
+if [[ -z "$bridges" ]]; then
+    echo "  (no bridges on this host)"
+else
+    for b in $bridges; do
+        hits="$(nft list ruleset 2>/dev/null | grep -c "\"$b\"" || true)"
+        printf '  %-18s referenced in %s nft rule(s)\n' "$b" "$hits"
+    done
+fi
 echo
 echo "  libvirt's rules for virbr0 (the clearest exemplar of an additive, per-bridge grant):"
 nft list ruleset 2>/dev/null | grep -nE '"virbr0"' | head -8 | sed 's/^/    /' || echo "    (none)"

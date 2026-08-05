@@ -207,6 +207,22 @@ New, surfaced while writing v3 and not yet decided:
    > already does for `create` vs `preflight`. The **dated spikes stay
    > runnable** — a measurement whose harness is gone becomes a belief again,
    > which is this entry's own original argument.
+   >
+   > ✅ **CLOSED 2026-08-05 — and the fold was the wrong fix.** The premise was
+   > measured before acting on it: run side by side, the instruments **agree**
+   > about `/dev/kvm`, about firecracker's pinned version, and about ext4
+   > read-back (lab-fc's `UNKNOWN` on a dirty image is H.4's fix working, not a
+   > disagreement). Exactly one disagreement was real and it was a **cached
+   > string**, not a divergent implementation: P1 printed `vxlan.calico over
+   > lxdbr0` — a literal beside a derived process count, wrong since 2026-08-01
+   > and doubly wrong since Appendix I. The fabric probe had the same defect in
+   > a hard-coded bridge list that was reporting *"0 nft rules"* for two
+   > interfaces that no longer existed. Both now derive. The rule — *the
+   > appendix is the record and is immutable; the instrument is code and must be
+   > true when it runs* — is enforced by
+   > [`tools/tests/test-no-cached-host-facts.sh`](../../tools/tests/test-no-cached-host-facts.sh),
+   > which carries its own negative control and is gated in CI. Full account:
+   > [plan §18.7](../../MICRO_CLOUD_LAB_PLAN.md#187-item-4s-premise-tested-the-four-instruments-agree--and-one-of-them-was-lying).
 7. **How does the fabric *record* what it changed?** §7.1 says teardown must
    revert only what `up` set (because `ip_forward` was already `1` and a live
    Kubernetes depends on it). That needs a mechanism — a statefile in the

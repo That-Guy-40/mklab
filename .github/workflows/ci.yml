@@ -50,6 +50,12 @@ jobs:
             tools/micro-cloud-fabric-probe.sh \
             examples/micro-cloud/fabric.sh
 
+      - name: no cached host facts in the micro-cloud instruments
+        # Pure text analysis, no host state — safe on a runner that has none of these
+        # interfaces. Guards the defect class that made one instrument print a fact from
+        # 2026-07-29 while running in August: plan §17.4 q6.
+        run: bash tools/tests/test-no-cached-host-facts.sh
+
   docs:
     name: link + learning-path integrity
     runs-on: ubuntu-latest
