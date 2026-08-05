@@ -27,7 +27,7 @@ Firecracker boots, on a `fabric.sh`-made tap, so the only variable is the VMM
 
 | input | where | state |
 |---|---|---|
-| `fabric.sh` (`up`/`tap`/`status`/`down`) | [`fabric.sh`](fabric.sh) | committed; round trip re-verified 2026-08-04 ([I.7](../../MICRO_CLOUD_LAB_PLAN.md#i7-the-recovered-fabric-re-verified-against-the-moved-binding--pass)) |
+| `fabric.sh` (`up`/`tap`/`status`/`down`) | [`fabric.sh`](fabric.sh) | committed; round trip re-verified 2026-08-04 ([I.7](../../MICRO_CLOUD_LAB_PLAN.md#i7-the-recovered-fabric-re-verified-against-the-moved-binding--pass)), and that run is now a **repeatable test** — [`tests/test-fabric-round-trip.sh`](tests/run-all.sh) |
 | `lab-fc.sh` + preflight | [`phase7-firecracker/`](../../phase7-firecracker/lab-fc.sh) | slice 4; baseline **0.564930 s** |
 | `-M microvm`, virtio-mmio, qboot | [`phase2-qemu-vm/`](../../phase2-qemu-vm/lab-vm.sh) | pre-existing; `test-microvm-argv.sh` |
 | `--network-mode tap` | same | takes a **pre-made tap by name** — what `fabric.sh tap` produces and how FC consumes one. Unprivileged in both |
