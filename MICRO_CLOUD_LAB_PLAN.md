@@ -1497,7 +1497,7 @@ reboot caused.
 | 3 | ~~`lab-chroot.sh export-rootfs`~~ → **DONE 2026-08-05** ([§6.4](#64-what-the-implementation-changed--and-the-ext4-vs-xfs-question-measured), [§6.5](#65-four-silent-exits-in-one-function-and-what-the-negative-controls-actually-proved)) | the one written-up component with a real downstream (decision 18); makes the slice-5 images reproducible instead of hand-built | `test-export-rootfs.sh` — valid ext4, `/sbin/init` read back with `debugfs`, **and the UNKNOWN case** [H.4](#h4-two-defects-both-in-the-safety-machinery) found |
 | 4 | ~~fold the preflight instruments~~ → **DONE 2026-08-05, and the answer was not a fold** ([§18.7](#187-item-4s-premise-tested-the-four-instruments-agree--and-one-of-them-was-lying)) | four instruments that can disagree about host capability is [§0.1](#01-how-this-lab-is-built-differs-from-the-others)'s bug class waiting to happen | the gate lines are identical to `lab-fc.sh preflight`'s, asserted structurally as [H.2](#h2-the-schema-derived--and-the-two-fields-that-are-refusals) does |
 | 5 | ~~`disk_format` in `lab-vm.sh`~~ → **DONE 2026-08-05**, and it was two changes ([§18.8](#188-item-5-was-two-changes--and-the-gate-had-the-bug-it-exists-to-catch)) | 5a cannot boot the same bytes without it | `test-microvm-argv.sh` extended **+** [`test-disk-format.sh`](phase2-qemu-vm/tests/test-disk-format.sh) |
-| 6 | **slice 5a** — build · exercise · break | §18.3, §18.4 | the boot-time number; decision E argued from the table in §18.4 |
+| 6 | **slice 5a** — build · exercise · break ← **NEXT**, queued in [`DEFERRED.md`](examples/micro-cloud/DEFERRED.md) with its confounds, privilege split and break pass | §18.3, §18.4, and the ELF-kernel risk now **retired** ([§18.9](#189-the-assumption-most-likely-to-sink-5a-retired-before-it-was-scheduled)) | the boot-time number **with its spread**; decision E argued from the table in §18.4 |
 | 7 | **slice 5b** — the §9.2 `edge` | fidelity case, feeds §9.3's capstone | cloud-init runs; `edge` resolves `api1` by name |
 
 
@@ -1609,6 +1609,44 @@ do is alter what a pre-existing VM emits.
 `a raw image derived as 'file', not 'raw'` when the JSON parse regresses, and asserts that an
 unreadable file yields **UNKNOWN** — the gate must decline to refuse rather than invent a
 mismatch.
+
+
+### 18.9 The assumption most likely to sink 5a, retired before it was scheduled
+
+5a's whole claim is *"the same kernel, the same rootfs, the VMM is the only
+variable."* One thing could have made the first half impossible: **Firecracker is
+ELF-only** ([§6.3](#63-the-kernel)) and answers a `vmlinuz` with
+`Elf(InvalidElfMagicNumber)`, while QEMU's x86 `-kernel` is built around the bzImage
+boot protocol. If QEMU could not load the ELF `vmlinux`, "the same kernel" would have
+had to become "the same *build*, two formats" — a materially weaker comparison, and one
+that should be discovered before the slice is scheduled rather than during it.
+
+Measured 2026-08-05, `-M microvm` + KVM, no disk:
+
+```text
+[    0.000000] Linux version 6.1.155+ … Command line: console=ttyS0 reboot=k panic=1
+[    0.048xxx] VFS: Cannot open root device …
+[    0.048690] Rebooting in 1 seconds..
+```
+
+**It loads.** The same ELF binary Firecracker boots, reaching root-mount in ~48 ms and
+then rebooting — `panic=1` doing exactly what
+[E.3](#e3-the-panic1-hole-closed-by-watching-it) measured on the other engine. The
+kernel half is real.
+
+**What this does NOT establish**, and the distinction is the whole point of §10: that a
+guest finds its root disk on the **virtio-mmio** bus. No disk was attached, so the run
+above proves the loader and nothing about storage. That is 5a's first real gate, not a
+detail — and it is the reason `--disk-format raw` attaches a per-instance copy rather
+than a CoW overlay ([§18.8](#188-item-5-was-two-changes--and-the-gate-had-the-bug-it-exists-to-catch)).
+
+**And one asymmetry the slice must handle rather than paper over.**
+[E.4](#e4-two-findings-the-plan-did-not-anticipate) found Firecracker *appends*
+`root=/dev/vda rw` after the user's `boot_args`, which is why `lab-fc.sh` refuses a
+user-supplied `root=`. QEMU appends nothing, so 5a must **supply** it. One spec cannot
+serve both engines verbatim — and that is not friction to be smoothed away, it is
+**decision-E evidence arriving early**: two engines whose network attachment is
+genuinely identical and whose boot contract is genuinely not.
 
 **Explicitly not in this slice:** `CLONES.md` (slice 5 makes no rung-4 move, so the ledger has
 nothing to record yet — building it now would be enforcement in search of a violation);

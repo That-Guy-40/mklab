@@ -1,10 +1,18 @@
 # Micro-Cloud Lab — ☁️ under construction
 
-> **Status (2026-08-03):** slices 0–4 of the build are **done**; this directory
-> is being staged. The design document — and the dated measurement record that
-> now makes up half of it — is
+> **Status (2026-08-05):** slices 0–4 of the build are **done** and
+> **slice 5a is the front of the queue** — a second engine (QEMU `-M microvm`)
+> on the same fabric, booting the same kernel and the same rootfs so that the
+> only variable is the VMM. Its brief, confounds, privilege split and break pass
+> are in [`DEFERRED.md`](DEFERRED.md); the design document — and the dated
+> measurement record that now makes up half of it — is
 > [`MICRO_CLOUD_LAB_PLAN.md`](../../MICRO_CLOUD_LAB_PLAN.md). Start there.
-> The work queue lives here, in [`DEFERRED.md`](DEFERRED.md).
+>
+> Everything 5a consumes now exists and is verified: the fabric, `lab-fc.sh`,
+> `-M microvm`, `--network-mode tap`, and `--disk-format raw`. The assumption
+> most likely to have sunk it — QEMU loading Firecracker's **ELF** `vmlinux` —
+> was measured and holds
+> ([§18.9](../../MICRO_CLOUD_LAB_PLAN.md#189-the-assumption-most-likely-to-sink-5a-retired-before-it-was-scheduled)).
 
 Strip the marketing and a cloud is **one image format, several things that can
 run it, a network they share, a service that tells each one who it is, and a
