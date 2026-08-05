@@ -12,6 +12,29 @@
 
 *Added 2026-08-03, when this file was created.*
 
+> ✅ **Item 1 DONE 2026-08-04 — and this section's own premise was wrong.**
+> `fabric.sh` was **not** in `micro-cloud-s3/`. That workdir holds `api1.ext4`,
+> `api2.ext4`, `vmlinux`, `firecracker`, the boot logs and the `config-*.json`
+> variants — **and no `.sh` files at all**. The scripts lived in a `/tmp`
+> session scratchpad that had already been reaped, so the "operator action"
+> below could never have succeeded as written: it named a location nobody
+> re-checked between writing the instruction and following it.
+>
+> The only surviving copy was the session transcript. Recovered from it by
+> replaying one `Write` and eleven `Edit`s, each operation's `tool_result`
+> checked for `is_error` and each `old_string` asserted unique before replacing
+> — 420 lines, shellcheck-clean, now committed as [`fabric.sh`](fabric.sh).
+> Full account: [plan §18.1](../../MICRO_CLOUD_LAB_PLAN.md#181-the-precursor-nobody-recorded--fabricsh-is-not-in-the-repo).
+>
+> **Still owed:** the privileged round trip (`up` / `tap` / `down`) needs
+> `CAP_NET_ADMIN`, so it is author-run. Until it runs, the committed file is
+> **recovered and statically checked, not re-verified** — UNKNOWN, not PASS.
+> The unprivileged `status` verb *is* verified, and independently re-derives
+> [Appendix I](../../MICRO_CLOUD_LAB_PLAN.md#appendix-i--calico-moved-no-lab-caused-it-and-the-trigger-is-a-60-second-poll-2026-08-04).
+>
+> **Item 2 (the slice 1/2 artifacts) stands** — those files really are in the
+> workdirs, verified 2026-08-04.
+
 Slice 3's deliverable — `fabric.sh` (`up` / `tap` / `retap` / `status` /
 `down`) — and the slice 1/2 workdir artifacts (configs, boot logs, inittab
 markers) exist **only** under `~/.local/state/lab-create/micro-cloud-s{1,2,3}/`
@@ -163,11 +186,35 @@ New, surfaced while writing v3 and not yet decided:
    gates are mostly these checks. **(c) is probably right, but only at slice
    4** — before then there is no tool for it to be part of. Until then it is a
    spike that was kept, not shipped tooling, and its header says so.
+
+   > **DUE NOW — slice 4 is done, and the count has grown to four.** `tools/`
+   > holds `micro-cloud-preflight.sh` (P1), `-p2.sh` (P2) and
+   > `-fabric-probe.sh` (slice 3), and `lab-fc.sh preflight` is a fourth
+   > implementation of overlapping host-capability gates. **Four instruments
+   > that can disagree about the same host is this plan's own bug class**, and
+   > the disagreement would surface as a slice refusing for a reason another
+   > tool says is fine. Answer **(c)**, scheduled at
+   > [plan §18.6](../../MICRO_CLOUD_LAB_PLAN.md#186-order-of-work) item 4: one
+   > gate implementation, the others reduced to callers, asserted structurally
+   > the way `phase7-firecracker/tests/test-preflight-is-one-function.sh`
+   > already does for `create` vs `preflight`. The **dated spikes stay
+   > runnable** — a measurement whose harness is gone becomes a belief again,
+   > which is this entry's own original argument.
 7. **How does the fabric *record* what it changed?** §7.1 says teardown must
    revert only what `up` set (because `ip_forward` was already `1` and a live
    Kubernetes depends on it). That needs a mechanism — a statefile in the
    fabric's state dir naming each global it touched and the prior value.
    Small, but it is load-bearing and currently unspecified.
+
+   > **CLOSED 2026-08-04.** It was answered in code on 2026-08-02 and the
+   > document did not know, because the code was not in the repository —
+   > §17.0's subject exactly. [`fabric.sh`](fabric.sh) writes
+   > `/run/mklab-mc/preflight`: the recorded `ip_forward` (and whether *we* set
+   > it), the uplink, Calico's binding, the pod veth count, the whole
+   > autodetection candidate set, and the pre-change FORWARD surface from
+   > **both** netfilter backends. `down` reverts only what that file says we
+   > created and compares the rest. See
+   > [G.7](../../MICRO_CLOUD_LAB_PLAN.md#g7-the-teardown-assertion-proven-in-both-directions).
 8. ~~**`incus` or `lxc`?**~~ — **SETTLED 2026-08-01: `lxc` (LXD), pinned
    explicitly.** See
    [D.1](../../MICRO_CLOUD_LAB_PLAN.md#d1-the-correction--the-vxlan-underlay-is-incusbr0-and-the-empty-daemon-is-the-load-bearing-one).
