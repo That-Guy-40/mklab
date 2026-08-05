@@ -23,8 +23,8 @@ beside QEMU VMs, containers, and LXD system containers.
 | FORWARD-surface probe | 3 | [`tools/micro-cloud-fabric-probe.sh`](../../tools/micro-cloud-fabric-probe.sh) — committed |
 | wizard walkthrough harness | 0 | [`tools/wizard-walkthrough.sh`](../../tools/wizard-walkthrough.sh) — committed |
 | the measurements (Appendices A–H) | 0–4 | [`MICRO_CLOUD_LAB_PLAN.md`](../../MICRO_CLOUD_LAB_PLAN.md) — committed |
-| **`fabric.sh`** (`up`/`tap`/`retap`/`status`/`down`) | 3 | ⛔ **NOT committed** — exists only in `~/.local/state/lab-create/micro-cloud-s3/` on the mklab host. Landing it here is [`DEFERRED.md`](DEFERRED.md)'s top item |
-| slice 1/2 configs, boot logs, images | 1–2 | ⛔ host workdirs `micro-cloud-s1/`, `micro-cloud-s2/` — same item |
+| **`fabric.sh`** (`up`/`tap`/`retap`/`status`/`down`) | 3 | ✅ **committed 2026-08-04** — [`fabric.sh`](fabric.sh). It was **not** in the host workdir this table originally named; recovered from the session transcript instead ([plan §18.1](../../MICRO_CLOUD_LAB_PLAN.md#181-the-precursor-nobody-recorded--fabricsh-is-not-in-the-repo)). `status` verified against the live host; the privileged round trip is **author-run and still owed** |
+| slice 1/2 configs, boot logs, images | 1–2 | ⛔ host workdirs `micro-cloud-s1/`, `micro-cloud-s2/` — [`DEFERRED.md`](DEFERRED.md) §17.0 item 2. **These really are there** (verified 2026-08-04); it was only the *scripts* that were not |
 
 > ⚠️ **Do not reimplement `fabric.sh` from Appendix G's description.** The
 > appendix records measurements of *that* script — the teardown assertion that

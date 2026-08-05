@@ -700,8 +700,15 @@ networking. It does not:
 | `docker0` | 172.17.0.0/16 | docker (**two** daemons: system + snap) | leave |
 | `br-a7bf99683c8d` | 172.18.0.0/16 | docker net `lab-ttd122729-front` | leave |
 | ~~`lxdbr0`~~ | **10.216.67.0/24** | ~~LXD — **and the k8s VXLAN underlay**~~ — **wrong, corrected 2026-08-01, see [D.1](#d1-the-correction--the-vxlan-underlay-is-incusbr0-and-the-empty-daemon-is-the-load-bearing-one)**. Carries one veth: mklab's own leftover test container | leave |
-| `incusbr0` | **10.45.178.0/24** | Incus — **and Calico's VXLAN tunnel endpoint** (`local 10.45.178.1 dev incusbr0`). **Zero enslaved members** | leave, **load-bearing** |
+| ~~`incusbr0`~~ | ~~10.45.178.0/24~~ | ~~Incus — **and Calico's VXLAN tunnel endpoint**~~ | ⚠️ **GONE 2026-08-04 — [I.1](#i1-the-measurement)**. Interface absent, daemon inactive since a reboot; **Calico moved to `enx00051b8eb138`** |
 | `vxlan.calico` | 10.1.24.128/32 (+ blackhole /26) | **live Calico CNI** — microk8s v1.32.13, on the **host** | leave, load-bearing |
+
+> ⚠️ **This table is a dated measurement (2026-07-29) and one row has since expired.** As of
+> **2026-08-04** the Calico tunnel endpoint is `local 192.168.1.106 dev enx00051b8eb138` —
+> **the physical uplink, the same interface this fabric masquerades out of** — and both
+> `incusbr0` and `lxdbr0` are absent. See
+> [Appendix I](#appendix-i--calico-moved-no-lab-caused-it-and-the-trigger-is-a-60-second-poll-2026-08-04).
+> **Re-derive the binding at pre-flight; never read it from this table.**
 
 **`10.71.0.0/24` is genuinely free** — verified, not guessed. Three consequences it did
 *not* survive:
@@ -888,7 +895,7 @@ examples/micro-cloud/
 |---|---|---|---|
 | `edge` | QEMU VM | TLS reverse proxy, cert from [`lab-ca`](examples/lab-ca/README.md) | full network stack + cloud-init; the fidelity case |
 | `api1`, `api2` | **Firecracker** | two identical app microVMs behind `edge` | the density case; MMDS gives each its own identity from one image |
-| `db` | **LXD (`lxc`), pinned** | stateful "pet" with its own init | the system-container case. **Not Incus** — `incusbr0` carries Calico's VXLAN endpoint ([D.1](#d1-the-correction--the-vxlan-underlay-is-incusbr0-and-the-empty-daemon-is-the-load-bearing-one)); `lab-lxd.sh` prefers Incus, so this must be pinned, not probed |
+| `db` | **LXD (`lxc`), pinned** | stateful "pet" with its own init | the system-container case. **Still pinned, but the reason has expired** — the original was that `incusbr0` carried Calico's VXLAN endpoint ([D.1](#d1-the-correction--the-vxlan-underlay-is-incusbr0-and-the-empty-daemon-is-the-load-bearing-one)); as of 2026-08-04 **both daemons are inactive and both bridges are gone** ([I.2](#i2-what-this-invalidates)), so starting *either* manufactures a fresh autodetection candidate under a live cluster. Pinning still matters (`lab-lxd.sh` probes); **which** engine must be re-derived when this instance is actually built |
 | `metrics` | podman | rootless sidecar | the OCI case, rootless |
 
 ### 9.3 The capstone question — isolation, not ping
@@ -1064,7 +1071,7 @@ environment, with a RUNBOOK that says **why** at each step.
 
 | Risk | Reality | Mitigation |
 |---|---|---|
-| **A live Kubernetes + Calico shares this host** | **microk8s v1.32.13 on the host** (`kubelite`, `k8s-dqlite`, `calico-node`/`felix`); `vxlan.calico` up over **`incusbr0`**, ~~`lxdbr0`~~ ([D.1](#d1-the-correction--the-vxlan-underlay-is-incusbr0-and-the-empty-daemon-is-the-load-bearing-one)); `ip_forward` already `1`; 140 Calico rules in **legacy xtables** ([B.2](#b2-the-second-firewall--and-the-bug-p2-committed-while-hunting-it)) | §7.1/§7.2: additive nft table scoped by `iifname`, revert only what we set, teardown asserts absence of *our* objects only. **Do not reconfigure `incusbr0`.** **New top risk in v3** |
+| **A live Kubernetes + Calico shares this host** | **microk8s v1.32.13 on the host** (`kubelite`, `k8s-dqlite`, `calico-node`/`felix`); `vxlan.calico` up over ~~`incusbr0`~~ ~~`lxdbr0`~~ → **`enx00051b8eb138`, the physical uplink** since 2026-08-04 ([I.1](#i1-the-measurement)); `ip_forward` already `1`; 140 Calico rules in **legacy xtables** ([B.2](#b2-the-second-firewall--and-the-bug-p2-committed-while-hunting-it)) | §7.1/§7.2: additive nft table scoped by `iifname`, revert only what we set, teardown asserts absence of *our* objects only. **Never name the CNI's interface in a doc or a constant — re-derive it at pre-flight** ([I.6](#i6-the-methodological-point-for-the-third-time-in-this-plan)). **New top risk in v3, and worse since [I.3](#i3-the-hazard-did-not-go-away--it-got-worse)** |
 | ~~No KVM~~ / ~~egress blocked~~ | **Void** — P1: `KVM_CREATE_VM` ok; releases API 200 | pin upstream's `.sha256.txt`; the *fetch* stays author-run |
 | **Scope creep into mini-OpenStack** | Very real, and a learning goal makes it **worse** — every subsystem is interesting on purpose | §0.1's slice rule; §15 demoted; one fabric, no scheduler, no multi-tenancy, no HA |
 | **Understanding the config instead of the machine** | The likeliest way this feels done while not being understood | §10 splits generator from behaviour tests and names what each does *not* prove; a break-it pass per slice |
@@ -1089,9 +1096,10 @@ exercise · break**, and the break pass writes into `LEDGER.md`.
 | **0** | **Preflight** | **P1 done** (Appendix A). **P2**: `nft list tables`, debootstrap a chroot, tap create/delete, fetch+verify FC `v1.16.1` | the assumption table is filled in; 3 UNKNOWNs resolved | a beginner walks one `START_HERE_*_WIZARD.md` end to end and reports where it lies |
 | **1** ✅ | **One microVM, by hand** — **DONE 2026-08-01, [Appendix E](#appendix-e--slice-1-one-microvm-by-hand-2026-08-01)** | ext4 from a chroot (Alpine **and** Debian); a `vmlinux`; boot with `--no-api --config-file`; boot again over the REST API with `curl` | **login prompt at 0.55 s**, zero variance over 4 runs; Alpine 8.2 MB tree / 64 MB image and Debian 215 MB / 363 MB — **26× the size, identical boot time** | all four run: `panic=1` dropped → **hung until killed (1.63 s vs 20 s+)**; `is_root_device` flipped → **found FC's arg append**; `ip=` bent → **23× silent regression**; `extract-vmlinux` → **decision B = yes** |
 | **2** ✅ | **The microVM gets an identity** — **DONE 2026-08-01, [Appendix F](#appendix-f--slice-2-the-microvm-gets-an-identity-2026-08-01)** | one tap, no bridge (root only for `ip tuntap add`; FC opened it unprivileged); MMDS `PUT` over the API socket | **V2 token handshake by hand from inside the guest** (`len=48`), `instance-id` read at `169.254.169.254` matching the host's `PUT`; boot **0.57 s** with the NIC | **no-token GET → `401`** (the SSRF lesson, observed); never-`PUT` key → `404`; **NIC dropped with `ip=` kept → 12.84 s, 22.5×**, the guard's tripwire reproduced on a second rootfs |
-| **3** ✅ | **Two microVMs that reach each other** — **DONE 2026-08-02, [Appendix G](#appendix-g--slice-3-the-fabric-2026-08-02)**; build + exercise + teardown green, break pass **3 of 5** (the two deferred are named in [G.9](#g9-not-run--recorded-as-unknown-not-as-pass), both requiring a host without a live cluster or a config change) | `fabric.sh up/down/retap/status` — additive nft scoped by `iifname`, recorded `ip_forward`, dnsmasq as DHCP **and** DNS. **Bridge MUST be named `br-mc0`** (Calico v3.28.1 excludes `^br-.*`) and **taps MUST carry no IPv4 address** — [F.7](#f7-the-selection-rule-derived--and-7-already-satisfied-it) | `api1` pings `api2` **by name**; `down` asserts absence of *our* objects only; **pre-flight records Calico's tunnel binding and teardown compares it** — the assertion that caught [F.6](#f6-additive-was-not-safe--the-tap-captured-a-live-clusters-tunnel) | delete the bridge under a running VM; exhaust the DHCP pool; leave a stale tap; **confirm Calico still works** — and give a tap an address on purpose to watch it become an autodetection candidate |
+| **3** ⚠️ | **Two microVMs that reach each other** — **EXERCISED 2026-08-02, [Appendix G](#appendix-g--slice-3-the-fabric-2026-08-02), but the deliverable was never landed — see [§18.1](#181-the-precursor-nobody-recorded--fabricsh-is-not-in-the-repo)**; build + exercise + teardown green, break pass **3 of 5** (the two deferred are named in [G.9](#g9-not-run--recorded-as-unknown-not-as-pass), both requiring a host without a live cluster or a config change) | `fabric.sh up/down/retap/status` — additive nft scoped by `iifname`, recorded `ip_forward`, dnsmasq as DHCP **and** DNS. **Bridge MUST be named `br-mc0`** (Calico v3.28.1 excludes `^br-.*`) and **taps MUST carry no IPv4 address** — [F.7](#f7-the-selection-rule-derived--and-7-already-satisfied-it) | `api1` pings `api2` **by name**; `down` asserts absence of *our* objects only; **pre-flight records Calico's tunnel binding and teardown compares it** — the assertion that caught [F.6](#f6-additive-was-not-safe--the-tap-captured-a-live-clusters-tunnel) | delete the bridge under a running VM; exhaust the DHCP pool; leave a stale tap; **confirm Calico still works** — and give a tap an address on purpose to watch it become an autodetection candidate |
 | **4** ✅ | **The tool, and what it hides** — **DONE 2026-08-02, [Appendix H](#appendix-h--slice-4-the-tool-and-what-it-hides-2026-08-02)** | `lab-fc.sh` + `preflight`; **derive** §5.2's schema from slices 1–3 | one command, same boot; `--dry-run` diffed against slice 1's hand-written `config.json` | the preflight tripwire; **name what the tool silently started doing for you** — that list is the deliverable. Watch for the §8.3 verb tripwire |
-| **5** | **A second engine on one fabric** | add the QEMU `edge` (Phase 2 already does bridge mode) | two engines, one L2, one `--lab` view | kill one engine's daemon, see what the other reports. **Answer decision E** |
+| **5a** | **A second engine on one fabric — the controlled comparison** ([§18](#18-slice-5--the-brief)) | QEMU **`-M microvm`** (Phase 2 already has virtio-mmio + qboot) consuming **the same `vmlinux` and the same `.ext4`** Firecracker boots, on a `fabric.sh`-made tap. ~~"Phase 2 already does bridge mode"~~ — **`--network-mode tap`, not `bridge`**: [§18.3](#183-two-corrections-to-14s-one-line-brief) | two engines, one L2, one `--lab` view — **and a boot-time number where the only variable is the VMM** | kill one engine's process and see what the other reports; kill the **fabric** under both. **Answer decision E** |
+| **5b** | **…and the fidelity case** | the §9.2 `edge`: cloud image + `cloud-localds` seed on `-M q35` | cloud-init runs; `edge` reaches `api1` by name | the same break pass against a guest that takes DHCP rather than `ip=` |
 | **6** | **The control plane** | whichever §8.3 shape slice 5 argued for; `fc.py` backend + topology slot; revisit decision G | all instances in one tree; `apply` a no-op on pass two, if the seam supports it | make the registry disagree with reality — MAAS's registry-layer fault, ported |
 | **7** | **Preserve** | `preserve.sh`, both tiers, `derivation.toml`; **`lab-vm.sh export`** (the §9.5 gap) | back up a lab, destroy it, restore it, prove it is the same | restore with a **changed** artifact hash and confirm it refuses **by name** |
 | **8** | **The fleet** | snapshot/restore; the jailer tier | five warm clones from one memory image | clone-entropy hazard then re-seeding; diff `/proc/<pid>/root`, `ns/net`, `Seccomp` plain vs jailed |
@@ -1150,14 +1158,24 @@ hash, vsock availability, and the subnet.
 Still open:
 
 1. **Where to stop.** Slices 2, 4, 6, or 7 are all honest stopping points (§14).
-2. **Decision E — the seam** (§8.3). Recommendation: defer to slice 5, with slice 4's
-   tripwire.
+2. **Decision E — the seam** (§8.3). ~~defer to slice 5~~ → **being answered in slice 5a**;
+   the evidence table is [§18.4](#184-what-slice-5-must-answer) and the slice-4 tripwire
+   stays armed.
 3. **Decision G — MAAS registry reuse** (§8.4). Recommendation: invoke for deploy drivers,
    separate registry initially, revisit at slice 6.
-4. **Decision B — `extract-vmlinux`** (§6.3c). An experiment for slice 1, not a decision.
+4. ~~**Decision B — `extract-vmlinux`**~~ — **ANSWERED 2026-08-01: yes.** The host's own
+   kernel, extracted, booted FC in 0.62 s against the CI kernel's 0.55 s
+   ([Appendix E](#appendix-e--slice-1-one-microvm-by-hand-2026-08-01)). Listed as open here
+   through v3 by oversight.
 5. **Should slice 0's break-it pass — a real beginner walking a `START_HERE` doc — happen
    before slice 1?** It is the only test of the novice path that cannot be faked, and it
-   costs a friend an afternoon.
+   costs a friend an afternoon. **Still owed** ([§17.3](examples/micro-cloud/DEFERRED.md#173-the-one-test-i-cannot-run-from-this-side--half-done-2026-08-01)).
+6. **NEW, and it is not a design question:** *what else in this document describes something
+   that does not exist?* [§18.1](#181-the-precursor-nobody-recorded--fabricsh-is-not-in-the-repo)
+   and [§18.2](#182-two-more-components-that-are-written-up-and-do-not-exist) found three by
+   looking — a merged slice deliverable, `export-rootfs`, and `CLONES.md`. Nothing in CI can
+   see this class of gap, so it needs a periodic **derive-don't-cache pass** over §§5–9
+   against `git ls-files`.
 
 ---
 
@@ -1172,6 +1190,234 @@ Still open:
 > preserved there, so the appendices' citations of §17.3 and §17.4 resolve
 > unchanged — and it gains a §17.0: committing slice 3's `fabric.sh`, which
 > still exists only in a host workdir.
+>
+> **And the live pick-up point is now [§18](#18-slice-5--the-brief)** (added 2026-08-04),
+> which carries slice 5's brief plus the precursor work it depends on. `DEFERRED.md` remains
+> the work queue; §18 is the brief for the item at the front of it.
+
+---
+
+## 18. Slice 5 — the brief
+
+> Written 2026-08-04, planning the next slice. Two things had to be established first: what
+> the host is doing now ([Appendix I](#appendix-i--calico-moved-no-lab-caused-it-and-the-trigger-is-a-60-second-poll-2026-08-04))
+> and what the repo actually contains (§18.1). Both turned out to disagree with the plan.
+
+### 18.1 The precursor nobody recorded — `fabric.sh` is not in the repo
+
+§14 row 3 said ✅. [Appendix G](#appendix-g--slice-3-the-fabric-2026-08-02) describes the
+tool's behaviour across nine subsections. §9.1's layout lists it. And:
+
+```console
+$ git ls-files | grep micro-cloud
+tools/micro-cloud-preflight.sh
+tools/micro-cloud-preflight-p2.sh
+tools/micro-cloud-fabric-probe.sh
+```
+
+**PR #129 landed 307 lines of appendix and the read-only probe. It did not land
+`fabric.sh`.** The tool — `up` / `tap` / `retap` / `status` / `down`, the addressless-tap
+assertions, the Calico pre-flight record, the `ip_forward` change-log — was written to a
+session scratchpad under `/tmp` and was never added to git. That directory is gone.
+
+Slice 5 is *"a second engine on one fabric."* **There is no fabric.**
+
+This is the plan's own headline bug class — *a record that outlives the thing it describes* —
+committed by this plan against itself, and it is worth being precise about how it hid:
+
+- **Nothing errored.** The appendix is readable, accurate about what happened, and false only
+  about what survived.
+- **Both catalog gates were green**, because neither has any opinion about a tool that isn't
+  there. `link_check.py` validates links between files that exist; `paths.py --check` gates
+  lab units under `examples/`. A deliverable that exists in prose and nowhere else is
+  invisible to both.
+- **The verification that would have caught it is the one this plan keeps recommending**:
+  assert the outcome (*the tool is in the tree and runs*), not the mechanism (*the PR is
+  merged and CI is green*).
+
+**Recovery — done 2026-08-04, and the first count of it was wrong.** The transcript holds a
+17,564-byte `Write` and **eleven** `Edit`s, not the three first reported here: the initial
+count came from a `grep` for `make_tap|mklab-mc`, which only matched the edits whose *text*
+happened to contain those strings. **A search that finds some of a thing is not a census of
+it** — and the error was in the safe direction only by luck; recovering 3 of 12 operations
+would have produced a file that was syntactically valid and quietly missing the ownership
+assertions. Replayed with the two checks that make it a recovery rather than a guess:
+
+- **every operation's `tool_result` was checked for `is_error`** — a `tool_use` block in a
+  transcript records that a call was *attempted*, not that it *succeeded*, and replaying a
+  failed edit corrupts the file;
+- **every `old_string` was asserted to occur exactly once** before replacing, so a replay
+  cannot silently apply to the wrong site.
+
+12 operations, 0 failed, all unique → **22,467 bytes / 420 lines** (28% larger than the
+initial `Write`). Installed at `examples/micro-cloud/fabric.sh`; `bash -n` and the CI
+shellcheck invocation both clean.
+
+**It re-derives Appendix I on its own.** The unprivileged `status` verb, run against today's
+host, reports `local 192.168.1.106 dev enx00051b8eb138` and a candidate set of exactly one
+(index 2) — computed live from Calico's own exclusion list by code written on 2026-08-02
+that knew nothing of the reboot. A second, independent derivation of I.1 from a different
+instrument.
+
+**Two cached facts were corrected in its header before install** — it asserted in the present
+tense that Calico *is* bound to `incusbr0`, and it repeated F.8's restart-only trigger. Both
+are now dated observations with [I.4](#i4-the-finding-that-outlives-the-migration--autodetection-is-a-60-second-poll)'s
+correction attached, and the operator-facing hazard note printed by `up` says "every 60s"
+rather than "the next restart". *The tool that exists to defeat stale records had two in its
+own header.*
+
+The guest artifacts all survived under `~/.local/state/lab-create/micro-cloud-s{1,2,3}/`
+(`firecracker`, `vmlinux`, `api1.ext4`, `api2.ext4`); only the scripts were lost.
+
+**Still outstanding: the privileged round trip.** `up`/`tap`/`down` need `CAP_NET_ADMIN`, so
+they are author-run. Until that runs, this tool is **recovered and statically checked, not
+re-verified** — [UNKNOWN, not PASS](#186-order-of-work).
+
+**Independently found on 2026-08-03, by a session that could not fix it.** PR #131 staged
+[`examples/micro-cloud/`](examples/micro-cloud/) and made this
+[`DEFERRED.md`](examples/micro-cloud/DEFERRED.md) §17.0's top item, with the right
+instruction attached — *do not reimplement it from Appendix G's description; a rewrite would
+leave the record describing an artifact it never measured.* **Its one wrong detail is the
+instructive part:** it said the file was in `~/.local/state/lab-create/micro-cloud-s3/`. That
+workdir holds the images, boot logs and configs — **and no `.sh` files at all**. So the
+operator action as written could never have succeeded. *A recovery plan that names a location
+nobody re-checked is itself a stale record*, and it is the third one this document has found
+in a week.
+
+**Home:** `examples/micro-cloud/fabric.sh` — the target layout's own slot, reachable now
+that #131 staged the directory with a README and a `coverage_exempt` entry, so
+`paths.py --check` stays green. (An earlier draft of this section proposed
+`tools/micro-cloud-fabric.sh` on the grounds that `examples/` would trip the coverage gate —
+true on 2026-08-02, false since 2026-08-03. Recorded because it is the same class of error
+the section is about, made while writing the section about it.)
+
+**Free consequence:** committing it closes
+[§17.4 q7](examples/micro-cloud/DEFERRED.md#174-open-questions) — *"how does the fabric record
+what it changed?"* — which slice 3 answered in code (`/run/mklab-mc/preflight`) while the
+document still called it unspecified, **because the code was not in the repository.** The
+open question and the missing file were the same fact wearing two hats.
+
+### 18.2 Two more components that are written up and do not exist
+
+| component | plan says | reality |
+|---|---|---|
+| **`lab-chroot.sh export-rootfs`** (§6, "new component B") | full CLI, internals, P1-verified `mkfs.ext4 -d` technique | **the verb does not exist.** `export-initrd` and `export-tarball` do; slices 1–3 built ext4 by hand |
+| **`CLONES.md` + `test-clones-ledgered.sh`** (§4.1) | the enforcement that stops decision 16 decaying "into a comment nobody checks" | **neither exists.** The ladder is currently a comment nobody checks |
+
+The first has a scheduling consequence nobody noticed: **decision 18's precondition is
+unmet.** The two install-gap labs (§11.1) were scheduled *after slice 4* specifically so each
+would *consume* `export-rootfs` rather than invent its own image plumbing. There is nothing
+to consume, so starting them now would produce exactly the outcome decision 18 exists to
+prevent.
+
+### 18.3 Two corrections to §14's one-line brief
+
+§14 row 5 read: *"add the QEMU `edge` (Phase 2 already does bridge mode)"*.
+
+**1. Bridge mode is the wrong door.** `lab-vm.sh --network-mode bridge` emits
+`-netdev bridge,br=…`, which runs the setuid `qemu-bridge-helper` and requires
+`/etc/qemu/bridge.conf` to grant the bridge by name. Measured on this host: the helper exists
+at `/usr/lib/qemu/qemu-bridge-helper`, **`/etc/qemu/bridge.conf` does not** — so bridge mode
+needs a host configuration change, applied globally, to run a lab.
+
+`--network-mode tap` takes a **pre-created tap by name** (`-netdev tap,ifname=…,script=no`).
+That is:
+
+- exactly what `fabric.sh tap` produces,
+- exactly how Firecracker consumes one,
+- exactly the rule [H.5](#h5-the-83-tripwire-held--and-51-needs-a-correction) established —
+  *the tap is an input, validated but never manufactured or destroyed* — arrived at because
+  two owners for one resource is this plan's most-repeated bug,
+- and needs **no root** in either engine.
+
+**One fabric verb serves both engines and neither is privileged.** That is not a convenience;
+it is the first real evidence for decision E, because it says the engines' *network* seam
+genuinely is common while their *lifecycle* seam is not.
+
+**2. Phase 2 already has `-M microvm`** — virtio-mmio, qboot, transport-aware
+`virtio-*-device` selection (`lab-vm.sh` `arch_map … microvm-supported`), an Alpine microvm
+builder, and `test-microvm-argv.sh`. So slice 5 does not have to compare a microVM against a
+full cloud VM. It can hold everything else fixed:
+
+| | Firecracker | QEMU `-M microvm` |
+|---|---|---|
+| kernel | `vmlinux` (slice 3's) | **the same file** |
+| rootfs | `api1.ext4` | **the same bytes** |
+| network | tap on `br-mc0`, addressless, owner-checked | **identical** |
+| **variable** | — | **the VMM, and nothing else** |
+
+Slices 1–4 established 0.55 s to userspace, with zero variance across four runs and across a
+26× rootfs size difference. **Nobody has the other number.** The density argument the whole
+plan rests on is currently one measurement wide.
+
+**Known cost, and it is a §4.1 ladder decision, not a footnote:** `build_qemu_argv` hardcodes
+`format=qcow2` on the data disk, so booting the same **raw** ext4 needs a `disk_format` field.
+That is **rung 3 — extend upstream** (both labs benefit; `lab-vm.sh` gains the ability to boot
+a raw image, which `export-rootfs` will produce for everyone). It is not a wrap and not a
+clone, so it does not trip §4.1 — but it is the first time the ladder has been walked
+deliberately in this plan, and it should be recorded as such.
+
+### 18.4 What slice 5 must answer
+
+**Decision E** (§8.3), with two engines actually running rather than one imagined vividly:
+
+| seam | Firecracker | QEMU | shape it argues for |
+|---|---|---|---|
+| **network attachment** | pre-made tap, by name | pre-made tap, by name | **common** |
+| **create** | `config.json` + `--no-api` | argv + manifest | common *contract*, different artifact |
+| **start** | spawn VMM, watch serial | spawn VMM, watch serial | common |
+| **stop** | `SendCtrlAltDel` over a unix REST socket, else SIGKILL by pid | ACPI via monitor socket, else SIGKILL by pid | **same intent, different channel** |
+| **console** | one client per `console.sock` | one client per serial socket | common, and the same footgun |
+| **`exec`** | **does not exist** | does not exist | the intersection's edge |
+
+If the intersection is `create`/`start`/`stop`/`status`/`destroy` and the *differences* are
+all in the channel rather than the meaning, §8.3 shape **(b)** is right and the plan should
+say so with the table above as evidence. If the differences turn out to be semantic —
+"stop" meaning genuinely different things — then **(c)**, and `micro-cloud.sh` orchestrates
+without unifying. **The tripwire from slice 4 stays armed**: no verb may be added to either
+tool justified by *"the other engine will need this too."*
+
+### 18.5 The pre-flight this slice inherits, and why it is not optional
+
+Appendix I changed the stakes rather than the design:
+
+- Calico's node IP is on the **physical uplink**, not a memberless bridge. F.6 self-healed in
+  under a minute because it moved between two memberless bridges; there is no equivalent
+  cheap failure mode now.
+- Autodetection re-runs **every 60 seconds** ([I.4](#i4-the-finding-that-outlives-the-migration--autodetection-is-a-60-second-poll)),
+  so a run is exposed for its whole duration, not at its boundaries. Slice 5 creates **two**
+  taps and runs **two** VMMs, so it is the longest-running slice so far.
+- The fabric masquerades `oifname enx00051b8eb138` — now the **same interface** Calico's
+  tunnel binds to. The rules do not overlap (ours matches `ip saddr 10.71.0.0/24` only), but
+  it is the first slice where our rule set and the CNI's endpoint share an interface, and
+  that should be *stated and checked* rather than assumed benign.
+
+So the non-negotiable from slice 3 is inherited verbatim and **strengthened**: the pre-flight
+records Calico's binding *by derivation* and the teardown compares it. It must remain a
+derived value — [I.6](#i6-the-methodological-point-for-the-third-time-in-this-plan) is the
+argument, and it is not hypothetical: had slice 3 hard-coded `incusbr0` as the expected value
+on 2026-08-02, the very next run on this host would have blamed the fabric for a migration a
+reboot caused.
+
+### 18.6 Order of work
+
+| # | item | why here | gate |
+|---|---|---|---|
+| 1 | ~~recover `fabric.sh`~~ → **DONE**: [`examples/micro-cloud/fabric.sh`](examples/micro-cloud/fabric.sh). **Re-run still owed** (author-run) | slice 5 has nothing to attach to; §18.1 | recovered + shellcheck-clean + `status` green ✅; `up`/`tap`/`down` and the teardown comparison against the **new** binding = **UNKNOWN until the sudo round trip runs** |
+| 2 | Appendix I's markers | a reader must not act on the stale `incusbr0` claims | this section |
+| 3 | `lab-chroot.sh export-rootfs` (§6) | the one written-up component with a real downstream (decision 18); makes the slice-5 images reproducible instead of hand-built | `test-export-rootfs.sh` — valid ext4, `/sbin/init` read back with `debugfs`, **and the UNKNOWN case** [H.4](#h4-two-defects-both-in-the-safety-machinery) found |
+| 4 | fold the preflight instruments ([§17.4 q6](examples/micro-cloud/DEFERRED.md#174-open-questions), answer **(c)**) | four instruments that can disagree about host capability is [§0.1](#01-how-this-lab-is-built-differs-from-the-others)'s bug class waiting to happen | the gate lines are identical to `lab-fc.sh preflight`'s, asserted structurally as [H.2](#h2-the-schema-derived--and-the-two-fields-that-are-refusals) does |
+| 5 | `disk_format` in `lab-vm.sh` (rung 3) | 5a cannot boot the same bytes without it | `test-microvm-argv.sh` extended |
+| 6 | **slice 5a** — build · exercise · break | §18.3, §18.4 | the boot-time number; decision E argued from the table in §18.4 |
+| 7 | **slice 5b** — the §9.2 `edge` | fidelity case, feeds §9.3's capstone | cloud-init runs; `edge` resolves `api1` by name |
+
+**Explicitly not in this slice:** `CLONES.md` (slice 5 makes no rung-4 move, so the ledger has
+nothing to record yet — building it now would be enforcement in search of a violation);
+`backends/fc.py` (§8.1 — complementary, and it is *better* written after decision E rather
+than before, since a read-only pane is itself shape (c)); the two install-gap labs (§18.2 —
+precondition unmet until item 3 lands); [G.9](#g9-not-run--recorded-as-unknown-not-as-pass)'s
+tap-with-an-address experiment (still UNKNOWN, and [I.3](#i3-the-hazard-did-not-go-away--it-got-worse)
+made it **more** expensive here, not less).
 
 ---
 
@@ -1903,6 +2149,13 @@ the rule being right.
 
 ### F.8 `lxdbr0` is a candidate, and it outranks the one Calico chose
 
+> ⚠️ **The specific hazard here is VOID as of 2026-08-04, and what replaced it is worse —
+> [I.3](#i3-the-hazard-did-not-go-away--it-got-worse).** `lxdbr0` and `incusbr0` are both
+> **absent**; the node IP now sits on the **physical uplink**. The *class* of hazard is
+> unchanged and the reasoning below is still the right reasoning — only its subject moved.
+> Also note the trigger correction in [I.4](#i4-the-finding-that-outlives-the-migration--autodetection-is-a-60-second-poll):
+> autodetection is **not** restart-only, it re-runs every **60 seconds**.
+
 [F.7](#f7-the-selection-rule-derived--and-7-already-satisfied-it) listed `^lxcbr.*` among
 the exclusions. It is easy to read that as "LXD's bridge is covered". **It is not.**
 `^lxcbr.*` matches `lxcbr0` — the *old LXC* bridge — and does **not** match `lxdbr0`.
@@ -1927,8 +2180,9 @@ Tested against the actual patterns rather than eyeballed:
 | `incusbr0` | 17 | UP ← currently chosen |
 
 `lxdbr0` is DOWN only because it has no members. **Start one LXD container and it comes up
-at index 9 — ahead of `incusbr0` at 17.** On the next `calico-node` restart the node IP can
-migrate to `10.216.67.1`, which is F.6 again with a different interface.
+at index 9 — ahead of `incusbr0` at 17.** On the next `calico-node` restart — **or within 60
+seconds, [I.4](#i4-the-finding-that-outlives-the-migration--autodetection-is-a-60-second-poll)** —
+the node IP can migrate to `10.216.67.1`, which is F.6 again with a different interface.
 
 **The trigger is narrower than first written, and that is measured now.** Repairing the
 kubelet cert ([F.9](#f9-an-environmental-fault-this-work-surfaced-not-ours-worth-fixing))
@@ -1941,6 +2195,18 @@ restarted `snap.microk8s.daemon-kubelite` on a live cluster, and Calico did **no
 
 So **a control-plane restart alone does not re-run autodetection.** It is a `calico-node`
 restart that does, and in F.6 that restart was itself caused by the interface disappearing.
+
+> ⚠️ **The second sentence is FALSIFIED 2026-08-04 —
+> [I.4](#i4-the-finding-that-outlives-the-migration--autodetection-is-a-60-second-poll).**
+> Autodetection re-runs **every 60 seconds** from `monitor-addresses/`, not only from
+> `startup/`. The *observation* above survives untouched — a `kubelite` restart moved
+> nothing — but it never discriminated: the candidate set did not change during it, so a
+> poll of any frequency would have returned the same answer. **"Nothing moved" was read as
+> "nothing looked."** The hazard therefore does **not** need something to restart
+> `calico-node`; a lower-index candidate appearing is sufficient on its own, within a
+> minute. That is also the most likely explanation for the half of
+> [F.6](#f6-additive-was-not-safe--the-tap-captured-a-live-clusters-tunnel) that has no log
+> line: the *adoption* of the tap.
 The hazard therefore needs *both*: a lower-index candidate present **and** something that
 restarts `calico-node`. That is a smaller window than "any LXD container is dangerous" — but
 it is not a safe one, because deleting the interface is exactly what causes the restart, so
@@ -2469,3 +2735,153 @@ observed failing on the real defect it names.
 **not implemented** — they belong to slices 7–8 and to decision E, and adding them now would
 be the §8.3 drift wearing a schedule as a disguise. `lab-fc.sh --help` lists only what
 exists.
+
+---
+
+## Appendix I — Calico moved, no lab caused it, and the trigger is a 60-second poll, 2026-08-04
+
+Measured at the start of the slice-5 planning session, before any work. Nothing in this
+appendix was caused by this repo. It is here because **three sessions of this plan are built
+on a fact that has since stopped being true**, and because re-deriving it turned up the
+mechanism [F.7](#f7-the-selection-rule-derived--and-7-already-satisfied-it) left unexplained.
+
+### I.1 The measurement
+
+```text
+date            2026-08-04T22:15:45-04:00
+uptime since    2026-08-04 21:31:05          ← the host rebooted
+calico-node     5 procs, all started 21:31:44
+snap.lxd.daemon inactive
+incus           inactive
+```
+
+| # | interface | state | IPv4 | v3.28.1 exclusion | candidate? |
+|---|---|---|---|---|---|
+| 2 | `enx00051b8eb138` | **up** | 192.168.1.106/24 | none matches | **YES ← chosen** |
+| 3 | `wlp15s0` | down | — | none matches | no (down, no v4) |
+| 4 | `virbr-vbmc` | down | 192.168.123.1/24 | `^virbr` | no |
+| 5 | `virbr0` | down | 192.168.122.1/24 | `^virbr` | no |
+| 6 | `docker0` | up | 172.17.0.1/16 | `^docker` | no |
+| 7 | `veth21f6335` | up | — | `^veth` | no |
+| 11 | `vxlan.calico` | unknown | 10.1.24.128/32 | **none matches** — see I.4 | (Calico's own) |
+| 13, 14 | `cali*` | up | — | `^cali` | no |
+| — | `incusbr0` | **ABSENT** | — | — | — |
+| — | `lxdbr0` | **ABSENT** | — | — | — |
+
+Three independent records agree, and none of them is ours:
+
+```text
+node annotation   projectcalico.org/IPv4Address: 192.168.1.106/24     (was 10.45.178.1/24)
+tunnel binding    local 192.168.1.106 dev enx00051b8eb138             (was … dev incusbr0)
+calico-node log   Using autodetected IPv4 address on interface enx00051b8eb138: 192.168.1.106/24
+```
+
+**Cause, and it is mundane:** the host rebooted; neither LXD nor Incus came back up; neither
+bridge was created; `calico-node` started 39 s later and found **exactly one** eligible
+candidate. No ordering inference is needed or possible — the candidate set has size 1.
+
+### I.2 What this invalidates
+
+`incusbr0` appears **37 times** in this document. Every occurrence inside a dated appendix
+stays as written — a measurement is a record of what was true then, and rewriting it would
+destroy the only thing it is for. What must be marked is every place the document tells a
+**future reader to act** on it:
+
+| location | claim | status |
+|---|---|---|
+| §7.1 interface table | `incusbr0` — "leave, **load-bearing**" | **stale**: the interface does not exist |
+| §13 risk table | "`vxlan.calico` up over `incusbr0`" | **stale** |
+| §9.2 | `db` on LXD, *"not Incus — `incusbr0` carries Calico's VXLAN endpoint"* | **premise gone**; the placement may still be right, the reason is not |
+| §17.4 q8 revised answer | *"target `incus`, pinned, because `incusbr0` is already the chosen interface"* | **inoperative** — it names a bridge that does not exist, and starting either daemon now **creates a new candidate on a live cluster** |
+| [F.8](#f8-lxdbr0-is-a-candidate-and-it-outranks-the-one-calico-chose) | `lxdbr0` outranks the chosen interface | **void** — and replaced by something worse, I.3 |
+
+**The generalised rule from q8 survives, restated:** *prefer the engine whose bridge the CNI
+has already selected, because that is the one choice guaranteed not to move it.* When the CNI
+has selected **no** bridge — as now — the rule says the opposite of what it said in July:
+**start neither daemon**, because each would manufacture a fresh candidate under a running
+cluster. The rule did not change. Its answer did, and nothing in the repo noticed.
+
+### I.3 The hazard did not go away — it got worse
+
+F.8's concern was that `lxdbr0` could pull the node IP off `incusbr0`: a **memberless bridge
+to a memberless bridge**, which is why F.6 self-healed in under a minute. The node IP now
+lives on the **physical uplink**. A migration off `enx00051b8eb138` moves the cluster's node
+address off the box's actual NIC.
+
+Both [F.7.1](#f71-the-constraint-slice-3-actually-needs) constraints still hold and are still
+ordering-independent — `br-mc0` matches `^br-.*`, and an addressless tap can never supply an
+address. Nothing about the fabric design needs to change. What changes is the **cost of being
+wrong**, and therefore the standing of the pre-flight/teardown comparison: it stops being
+prudent and becomes the only thing standing between a slice and a real outage.
+
+### I.4 The finding that outlives the migration — autodetection is a 60-second poll
+
+Eight consecutive log lines, 60.001 s apart:
+
+```text
+02:08:45.238 [INFO][61] monitor-addresses/autodetection_methods.go 103: Using autodetected …
+02:09:45.239 [INFO][61] monitor-addresses/autodetection_methods.go 103: Using autodetected …
+…
+02:15:45.243 [INFO][61] monitor-addresses/autodetection_methods.go 103: Using autodetected …
+```
+
+F.7's log line — the one that replaced its inference — came from **`startup/`**
+`autodetection_methods.go:103`. Today's come from **`monitor-addresses/`**, same file, same
+line. **The same detection function has (at least) two callers: once at startup, and again
+every 60 seconds for the lifetime of the process.**
+
+This document has consistently written the trigger as a restart:
+
+> *"On the next `calico-node` restart the node IP can migrate to `10.216.67.1`"* — F.8
+> *"a control-plane restart alone does not re-run autodetection. **It is a `calico-node`
+> restart that does**"* — F.8
+> *"The hazard therefore needs **both**: a lower-index candidate present **and** something
+> that restarts `calico-node`"* — F.8
+
+**That understates the exposure by an unbounded factor**, and the middle claim is now
+falsified outright: `monitor-addresses` re-runs the same function on a one-minute timer
+whether or not anything restarts. F.8's supporting *observation* — a `kubelite` restart moved
+nothing — is intact and was never evidence for the inference drawn from it: **the candidate
+set did not change during that experiment, so a poll at any frequency would have returned the
+same answer.** "Nothing moved" was read as "nothing looked". It is the mechanism-not-outcome
+trap, in a paragraph whose subject is a mechanism. If `monitor-addresses` acts on what
+it detects, the window is not "whenever somebody restarts `calico-node`" — it is **sixty
+seconds, continuously, forever**. A lab that creates an interface is exposed for its entire
+run, not at its boundaries.
+
+It is also the best available explanation for **the half of F.6 that was never explained**.
+F.6 has a log line for the *recovery* (a `startup/` detection landing back on `incusbr0` when
+`calico-node` restarted after the tap was deleted) and **no log line for the adoption** — the
+moment a freshly created tap captured the tunnel. A 60-second monitor is exactly the shape of
+thing that would do that silently, with no restart in the story at all.
+
+**Recorded as a lead, not a conclusion.** What is measured: two distinct callers, and a
+60.00 s cadence. What is *not* measured: that `monitor-addresses` writes the node resource
+when the address changes, rather than only logging it. The measurement that would close it is
+the F.6 experiment — create an addressed interface and watch — which
+[G.9](#g9-not-run--recorded-as-unknown-not-as-pass) already defers to a host without a live
+cluster, and I.3 has just made *more* expensive here, not less.
+
+**Free correction available now, and it should be taken:** every place this plan says
+"restart" as the trigger should say "**startup, or the 60-second monitor**", because the
+narrower wording invites a reader to believe a lab is safe between restarts.
+
+### I.5 What did not resolve
+
+`enx00051b8eb138` won today, which confirms it is **eligible** — the half of the F.7 puzzle
+that was genuinely in doubt. It does **not** resolve the ordering puzzle: with a candidate
+set of one, today's boot cannot discriminate between any two orderings. F.7's question stands
+exactly as written — index 2, UP, unexcluded, and it lost to `incusbr0` in July.
+
+### I.6 The methodological point, for the third time in this plan
+
+This was found by running `ip -o link` before planning, not by reading the plan. Every
+statement it invalidated was true when written, sourced, and dated. The plan's own rule —
+*derive the fact, don't cache it; a fact asserted three sessions ago is a cache entry* — was
+written **about MAAS**, and this document was its next victim.
+
+The part that generalises: the **teardown assertion caught F.6 because it re-derives Calico's
+binding at run time rather than comparing against a constant.** Had slice 3 hard-coded
+`incusbr0` as the expected value — which was the obvious, correct-looking thing to do on
+2026-08-02 — the very next run on this host would have reported a migration the fabric did
+not cause, and the instrument would have become the liar.

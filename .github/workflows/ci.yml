@@ -39,6 +39,17 @@ jobs:
             phase5-lxd/lab-lxd.sh \
             phase7-firecracker/lab-fc.sh
 
+      - name: shellcheck the micro-cloud instruments
+        # Same invocation, separate step so the one above keeps its accurate name.
+        # These are root-run and CAP_NET_ADMIN-bearing, so a typo here costs more than
+        # in a phase driver, not less -- and until now none of them was gated at all.
+        run: |
+          shellcheck -x --severity=warning -e SC2064,SC2155,SC2034 \
+            tools/micro-cloud-preflight.sh \
+            tools/micro-cloud-preflight-p2.sh \
+            tools/micro-cloud-fabric-probe.sh \
+            examples/micro-cloud/fabric.sh
+
   docs:
     name: link + learning-path integrity
     runs-on: ubuntu-latest
