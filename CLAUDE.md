@@ -193,6 +193,26 @@ list before a rename/move/delete). Run it before/after any such change; it must
 report **0 broken links** (it also exits non-zero on broken links, for CI/commit
 gating).
 
+**It checks the `#anchor`, not just the file** (since 2026-08-05 — before that it
+split the fragment off and threw it away, so `0 broken links` meant only *the file
+exists*). A missing anchor fails **silently** in a browser — you land at the top of
+the page and nothing says the link was wrong — so a machine has to be the one
+looking. Switching it on found three live breaks, all the same shape: **a heading
+was edited and its inbound anchors were not** (`§5 Spike 0` gained "(SPARC)"; a
+heading was never bare `Part 6`; "errata: **seven** commands" became "eight").
+
+- **Don't hand-write a slug — print it.** `tools/link_check.py --anchors-of <doc>`
+  lists every anchor a doc actually generates, in document order.
+- **The em-dash trap** is the one that catches everyone: GitHub *deletes*
+  punctuation rather than replacing it, so a heading's ` — ` (space, dash, space)
+  becomes **two** hyphens. `## 5. Spike 0 (SPARC) — RESULT: **GREEN**` is
+  `#5-spike-0-sparc--result-green`. Likewise `test's` → `tests`, `F.7` → `f7`, and
+  a repeated heading gets `-1`, `-2` in document order.
+- Regression + negative control: `tools/tests/test-link-check-anchors.sh` builds a
+  fixture with **four deliberate breaks and eight legitimate anchors**, and re-runs
+  the same fixture with `--no-anchors` — which must report **zero**, proving the
+  failures come from the anchor logic and not from a path check.
+
 ### Route every new example into the learning-paths catalog
 
 The labs are indexed **two** ways, and a new example must land in **both** or CI
