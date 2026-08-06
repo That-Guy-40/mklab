@@ -193,3 +193,37 @@ ssh -p 2222 vagrant@127.0.0.1        # password: vagrant  (passwordless sudo ins
 - **This is the retired path.** Kali no longer ships Vagrant boxes from these
   scripts (debos does the images now). You're building a historical artifact —
   which is the point.
+
+## Hand-walk sandbox — verified 2026-08-06
+
+```bash
+podman build -t kali-packer-handwalk examples/kali-packer-vagrant/hand-walk
+examples/kali-packer-vagrant/fetch-kali-packer.sh
+podman run --rm -v "$PWD":/repo:Z -w /repo localhost/kali-packer-handwalk \
+  bash -c '/repo/examples/kali-packer-vagrant/build-kali-box.sh --validate-only --workdir /tmp/kb'
+```
+
+Verified end to end in that container:
+
+```
+[fetch] archive verified: 17 files match
+[fetch] source: vendored archive (offline) @ b8c9b34efc55
+[build] compat: config.pkr.hcl disk_cache → "writeback"
+[build] compat: scripts/vagrant.sh 'mkdir' → 'mkdir -p /home/vagrant/.ssh'
+[build] packer: /usr/bin/packer (Packer v1.16.0)
+[build] ISO: https://kali.download/base-images/current/kali-linux-2026.2-installer-amd64.iso
+The configuration is valid.
+[build] validate: OK
+```
+
+**This is the first proof that the vendored bytes are a valid Packer config** — parsed by
+packer 1.16.0, with both compat patches applied and every builder/provisioner/post-processor
+schema checked. Offline for the archive; the ISO *resolution* still needs network (the ISO
+itself is not downloaded by `--validate-only`).
+
+**Gotcha found while building the sandbox:** the HashiCorp apt line everybody writes,
+`$(lsb_release -cs)`, expands to `kali-rolling` on Kali and 404s — HashiCorp publishes no
+such suite. The `Containerfile` pins `bookworm` and says why.
+
+⛔ **Still author-run:** the full `packer build` (~4 GB ISO, full unattended install, ~30 min,
+`/dev/kvm`). The `--validate-only` gate above is what a reader can reproduce in a minute.

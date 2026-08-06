@@ -1,0 +1,66 @@
+# Hand-walk sandbox — Kali's retired Packer build scripts, by hand.
+#
+# Reproduces the environment upstream's own README.packer.md assumes, so a human
+# can type the recipe step by step — distinct from the automated build-kali-box.sh.
+#
+# BASE = KALI ROLLING, per CLAUDE.md's "the author's distro where the tutorial is
+# distro-specific". It is distro-specific here in a way that is easy to miss: the
+# scripts build a KALI image, the preseed pulls from Kali's mirrors, and
+# README.packer.md's install instructions are written for Kali/Debian apt. Using
+# a neutral Debian base would work and would quietly stop being the author's box.
+FROM docker.io/kalilinux/kali-rolling
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ── upstream README.packer.md step 1: packer, from HashiCorp's own apt repo ───
+# NOT a curl|sh: this is a signed apt repository, so the key and the packages are
+# verifiable, which is the whole reason upstream documents this route first.
+#
+# ⚠️ THE SUITE IS HARD-CODED TO `bookworm`, AND THAT IS A FINDING, NOT A SHORTCUT.
+# The obvious line — the one this lab's own README and half the internet give —
+# is `$(lsb_release -cs)`. On Kali that expands to **kali-rolling**, and
+# HashiCorp publishes no such suite:
+#
+#   Err:3 https://apt.releases.hashicorp.com kali-rolling Release
+#     404  Not Found
+#   E: The repository '… kali-rolling Release' does not have a Release file.
+#
+# Measured 2026-08-06, building this very file. Kali rolling tracks Debian
+# testing/sid, so a Debian suite is the correct substitution; `bookworm` is
+# pinned because it is the newest HashiCorp actually ships. This is precisely
+# what a hand-walk is for: the environment-as-code refuses to build until the
+# instruction is true, where prose can go on being wrong for years.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl gnupg \
+ && curl -fsSL https://apt.releases.hashicorp.com/gpg \
+      | gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg \
+ && echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] \
+https://apt.releases.hashicorp.com bookworm main" \
+      > /etc/apt/sources.list.d/hashicorp.list \
+ && apt-get update && apt-get install -y --no-install-recommends packer
+
+# ── the tool the post RUNS IN: the qemu builder needs a real QEMU + KVM ───────
+# Build AND boot happen in this one box, so the produced .box can be checked here.
+RUN apt-get install -y --no-install-recommends \
+        qemu-system-x86 qemu-utils ovmf
+
+# ── ordinary prereqs the recipe assumes ──────────────────────────────────────
+# `vagrant` is NOT installed: the lab builds a .box with the qemu builder and
+# never uploads or `vagrant up`s it. Adding it would imply a step this lab skips.
+RUN apt-get install -y --no-install-recommends \
+        git make xz-utils file jq openssh-client \
+ && rm -rf /var/lib/apt/lists/*
+
+# The factory is NOT baked in — mount the staged copy, so the container has no
+# opinion about which pin you are walking:
+#
+#   examples/kali-packer-vagrant/fetch-kali-packer.sh          # verifies + stages
+#   podman run --rm -it --device /dev/kvm \
+#     -v "$HOME/kali-packer-build/kali-packer":/work:Z \
+#     -w /work localhost/kali-packer-handwalk
+#
+# --device /dev/kvm is not optional in practice: without it Packer falls back to
+# TCG and the unattended install goes from ~30 minutes to hours. RUNBOOK.md says
+# so rather than letting you find out at minute forty.
+WORKDIR /work
+CMD ["/bin/bash"]

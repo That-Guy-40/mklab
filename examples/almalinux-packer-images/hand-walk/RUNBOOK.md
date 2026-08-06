@@ -16,8 +16,9 @@ build end to end and a wrapper would imply otherwise.
 | step | who |
 |---|---|
 | stage + verify the pinned factory (563 files) | ✅ automated, CI-gated |
-| build the container image below | **you** — it `dnf install`s from HashiCorp's repo |
-| `packer init` (downloads plugins) | **you** — network |
+| build the container image below | ✅ **verified 2026-08-06** (`podman build`, clean) |
+| `packer init` (downloads plugins) | ✅ **verified** — ansible, qemu, hyperv plugins install |
+| `packer validate -only='qemu.almalinux-9-gencloud-x86_64'` | ✅ **verified — `The configuration is valid.`** |
 | `packer build` (downloads a ~1 GB ISO, runs Anaconda, needs `/dev/kvm`) | **you** — tens of minutes |
 
 The agent sandbox cannot run the last three: `/dev/kvm` and a multi-GB fetch-and-execute are
@@ -67,6 +68,31 @@ sed -n '1,40p' http/almalinux-9-gencloud-x86_64.ks
 The `gencloud` targets are the qcow2 ones and the right first walk. Note the ISO URL **and
 its checksum** are pinned in `variables.pkr.hcl` — the factory refuses an ISO that does not
 match, which is the same discipline this repo applies to its own downloads (AUDIT F2).
+
+### ⚠️ On RHEL-family, `packer` is ambiguous — and the WRONG one wins
+
+`cracklib-dicts` ships **`/usr/sbin/packer`** (a symlink to `cracklib-packer`); HashiCorp's
+lands at `/usr/bin/packer`. Root's PATH puts `/usr/sbin` **first**, so a plain
+`packer version` runs cracklib's, which prints
+
+```
+0 0
+```
+
+and **exits 0**. Not an error — a different program, answering confidently, with a success
+code. Measured here 2026-08-06: `packer validate` on the vendored templates "succeeded"
+twice while validating nothing at all.
+
+That is a false success, which this repo ranks above an honest failure as a thing to fix.
+The `Containerfile` puts `/usr/bin` first **and** carries a build-time assertion that
+`packer version` starts with `Packer v` — so the image cannot exist if the name resolves
+wrongly. A PATH tweak is a mechanism; the assertion checks the outcome.
+
+If you are on a RHEL-family host rather than this container, check first:
+
+```bash
+command -v packer && packer version | head -1     # must say "Packer v…"
+```
 
 ## 5. Initialise and validate — cheap, and it catches most mistakes
 

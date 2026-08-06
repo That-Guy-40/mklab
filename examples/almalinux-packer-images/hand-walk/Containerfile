@@ -23,9 +23,32 @@ RUN dnf -y install epel-release && dnf -y update
 RUN dnf -y install qemu-kvm qemu-img
 
 # ── Packer itself, from HashiCorp's own RHEL repo (upstream README step 1) ────
+#
+# ⚠️ ON RHEL-FAMILY, `packer` IS AMBIGUOUS, AND THE WRONG ONE WINS BY DEFAULT.
+# `cracklib-dicts` — pulled in by basically anything that touches passwords —
+# ships /usr/sbin/packer, a symlink to cracklib-packer. HashiCorp's lands at
+# /usr/bin/packer. Root's PATH puts /usr/sbin FIRST, so a plain `packer version`
+# runs cracklib's, which prints
+#
+#     0 0
+#
+# and EXITS 0. Not an error: a different program, answering confidently, with a
+# success code. Measured 2026-08-06 in this container — `packer validate` on the
+# vendored templates "succeeded" twice while validating nothing at all.
+#
+# That is the repo's own bug class: a false success outranks an honest failure.
+# So two defences, and the second is the one that matters:
+ENV PATH="/usr/bin:${PATH}"
 RUN dnf -y install dnf-plugins-core \
  && dnf config-manager --add-repo https://rpm.releases.hashicorp.com/RHEL/hashicorp.repo \
- && dnf -y install packer
+ && dnf -y install packer \
+ # BUILD-TIME ASSERTION: the image must not exist if `packer` resolves to the
+ # wrong binary. A PATH tweak alone is a mechanism; this checks the outcome.
+ && { packer version | grep -q '^Packer v' \
+      || { echo "FATAL: 'packer' resolves to $(command -v packer), which is not HashiCorp Packer:"; \
+           packer version; echo "cracklib-dicts ships /usr/sbin/packer and shadows /usr/bin/packer."; \
+           exit 1; }; } \
+ && echo "packer OK: $(command -v packer) -> $(packer version)"
 
 # ── the provisioner half: upstream runs Ansible roles over SSH after install ──
 RUN dnf -y install ansible-core
