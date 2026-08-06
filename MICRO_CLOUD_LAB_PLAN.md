@@ -1175,7 +1175,7 @@ exercise · break**, and the break pass writes into `LEDGER.md`.
 | **0** | **Preflight** | **P1 done** (Appendix A). **P2**: `nft list tables`, debootstrap a chroot, tap create/delete, fetch+verify FC `v1.16.1` | the assumption table is filled in; 3 UNKNOWNs resolved | a beginner walks one `START_HERE_*_WIZARD.md` end to end and reports where it lies |
 | **1** ✅ | **One microVM, by hand** — **DONE 2026-08-01, [Appendix E](#appendix-e--slice-1-one-microvm-by-hand-2026-08-01)** | ext4 from a chroot (Alpine **and** Debian); a `vmlinux`; boot with `--no-api --config-file`; boot again over the REST API with `curl` | **login prompt at 0.55 s**, zero variance over 4 runs; Alpine 8.2 MB tree / 64 MB image and Debian 215 MB / 363 MB — **26× the size, identical boot time** | all four run: `panic=1` dropped → **hung until killed (1.63 s vs 20 s+)**; `is_root_device` flipped → **found FC's arg append**; `ip=` bent → **23× silent regression**; `extract-vmlinux` → **decision B = yes** |
 | **2** ✅ | **The microVM gets an identity** — **DONE 2026-08-01, [Appendix F](#appendix-f--slice-2-the-microvm-gets-an-identity-2026-08-01)** | one tap, no bridge (root only for `ip tuntap add`; FC opened it unprivileged); MMDS `PUT` over the API socket | **V2 token handshake by hand from inside the guest** (`len=48`), `instance-id` read at `169.254.169.254` matching the host's `PUT`; boot **0.57 s** with the NIC | **no-token GET → `401`** (the SSRF lesson, observed); never-`PUT` key → `404`; **NIC dropped with `ip=` kept → 12.84 s, 22.5×**, the guard's tripwire reproduced on a second rootfs |
-| **3** ⚠️ | **Two microVMs that reach each other** — **EXERCISED 2026-08-02, [Appendix G](#appendix-g--slice-3-the-fabric-2026-08-02), but the deliverable was never landed — see [§18.1](#181-the-precursor-nobody-recorded--fabricsh-is-not-in-the-repo)**; build + exercise + teardown green, break pass **3 of 5** (the two deferred are named in [G.9](#g9-not-run--recorded-as-unknown-not-as-pass), both requiring a host without a live cluster or a config change) | `fabric.sh up/down/retap/status` — additive nft scoped by `iifname`, recorded `ip_forward`, dnsmasq as DHCP **and** DNS. **Bridge MUST be named `br-mc0`** (Calico v3.28.1 excludes `^br-.*`) and **taps MUST carry no IPv4 address** — [F.7](#f7-the-selection-rule-derived--and-7-already-satisfied-it) | `api1` pings `api2` **by name**; `down` asserts absence of *our* objects only; **pre-flight records Calico's tunnel binding and teardown compares it** — the assertion that caught [F.6](#f6-additive-was-not-safe--the-tap-captured-a-live-clusters-tunnel) | delete the bridge under a running VM; exhaust the DHCP pool; leave a stale tap; **confirm Calico still works** — and give a tap an address on purpose to watch it become an autodetection candidate |
+| **3** ⚠️ | **Two microVMs that reach each other** — **EXERCISED 2026-08-02, [Appendix G](#appendix-g--slice-3-the-fabric-2026-08-02), but the deliverable was never landed — see [§18.1](#181-the-precursor-nobody-recorded--fabricsh-is-not-in-the-repo)**; build + exercise + teardown green, break pass **3 of 5** (the two deferred are named in [G.9](#g9-not-run--recorded-as-unknown-not-as-pass), and they do **not** share a blocker: the tap-address one wants a live Calico that may be broken — a **nested QEMU guest with a disposable microk8s is one**, per G.9's 2026-08-03 addendum — while DHCP exhaustion needs only a shrinkable range and could run here today. See [M.7](#m7-a-correction-this-appendix-inherited-the-g9-blocker-was-lifted-three-days-before-it-was-restated)) | `fabric.sh up/down/retap/status` — additive nft scoped by `iifname`, recorded `ip_forward`, dnsmasq as DHCP **and** DNS. **Bridge MUST be named `br-mc0`** (Calico v3.28.1 excludes `^br-.*`) and **taps MUST carry no IPv4 address** — [F.7](#f7-the-selection-rule-derived--and-7-already-satisfied-it) | `api1` pings `api2` **by name**; `down` asserts absence of *our* objects only; **pre-flight records Calico's tunnel binding and teardown compares it** — the assertion that caught [F.6](#f6-additive-was-not-safe--the-tap-captured-a-live-clusters-tunnel) | delete the bridge under a running VM; exhaust the DHCP pool; leave a stale tap; **confirm Calico still works** — and give a tap an address on purpose to watch it become an autodetection candidate |
 | **4** ✅ | **The tool, and what it hides** — **DONE 2026-08-02, [Appendix H](#appendix-h--slice-4-the-tool-and-what-it-hides-2026-08-02)** | `lab-fc.sh` + `preflight`; **derive** §5.2's schema from slices 1–3 | one command, same boot; `--dry-run` diffed against slice 1's hand-written `config.json` | the preflight tripwire; **name what the tool silently started doing for you** — that list is the deliverable. Watch for the §8.3 verb tripwire |
 | **5a** ✅ | **A second engine on one fabric — the controlled comparison** ([§18](#18-slice-5--the-brief)). **DONE 2026-08-05** — (a) the boot comparison, [Appendix J](#appendix-j--slice-5a-a-the-second-engine-the-number-nobody-had-and-the-number-everybody-had-was-wrong-2026-08-05); (b) two engines on one fabric, [Appendix K](#appendix-k--slice-5a-b-two-engines-on-one-fabric-and-decision-e-answered-from-what-the-lifecycles-actually-needed-2026-08-05) | QEMU `-M microvm` and Firecracker on the same `vmlinux` + the same `.ext4`, taps from **one** fabric verb, both VMMs at uid 1000 | 0.055 s vs 0.071 s once the i8042 probe is out of the way ([J.3](#j3-the-headline-that-was-false)); distinct DHCP leases from one dnsmasq; **each engine's guest resolved the other's BY NAME**; Calico unmoved throughout | **§18.4's seam table filled in — §8.3 shape (b)** ([K.2](#k2-decision-e-answered--184s-table-filled-in-from-what-the-two-lifecycles-needed)), and the `stop` seam turns out to be what costs 90% of the boot ([K.3](#k3-the-seams-are-not-independent-of-the-performance-story)) | QEMU **`-M microvm`** (Phase 2 already has virtio-mmio + qboot) consuming **the same `vmlinux` and the same `.ext4`** Firecracker boots, on a `fabric.sh`-made tap. ~~"Phase 2 already does bridge mode"~~ — **`--network-mode tap`, not `bridge`**: [§18.3](#183-two-corrections-to-14s-one-line-brief) | two engines, one L2, one `--lab` view — **and a boot-time number where the only variable is the VMM** | kill one engine's process and see what the other reports; kill the **fabric** under both. **Answer decision E** |
 | **5b** ✅ | **…and the fidelity case** — **DONE 2026-08-06, [Appendix M](#appendix-m--slice-5b-the-fidelity-case-joins-the-fabric-2026-08-06)** | the §9.2 `edge`: a stock Debian 12 cloud image on `-M q35`, from [`edge.toml`](examples/micro-cloud/edge.toml), on a `fabric.sh` tap **beside a Firecracker microVM** | cloud-init ran; `edge` took the lease the fabric **RESERVED** (`10.71.0.102`, not merely an address from the pool) and reached `api1` **by name** | seven defects on the way, **all in the harness or the phase tools, none in the lab** — including `inspect` exiting 1 silently on any running VM, and a `: ` in a `runcmd` cancelling every `runcmd` |
@@ -3495,7 +3495,10 @@ debt paid; and the slice-3 exercise re-run — with a second engine attached, as
 
 **Still open:** `retap` itself is *still* never called (it needs a deliberately root-owned tap
 to recover from); [G.9](#g9-not-run--recorded-as-unknown-not-as-pass)'s two break-pass
-scenarios still want a host without a live cluster; and **slice 5b** — the fidelity case, a
+scenarios are unrun — ⚠️ **"still want a host without a live cluster" was already wrong when
+this was written**, and the two do not share a blocker; see
+[M.7](#m7-a-correction-this-appendix-inherited-the-g9-blocker-was-lifted-three-days-before-it-was-restated)
+— and **slice 5b** — the fidelity case, a
 cloud image on `-M q35` with cloud-init — has not started.
 
 ## Appendix L — slice 5b's first finding, before a line of it was built: the two tools could never agree, 2026-08-05
@@ -3687,6 +3690,67 @@ Appendix L's MAC agreement demonstrated on a booted guest.
 
 **Still open:** `retap` is *still* never called — it needs a deliberately root-owned tap to
 recover from; [G.9](#g9-not-run--recorded-as-unknown-not-as-pass)'s two break-pass scenarios
-still want a host without a live cluster; and **slice 5c (vsock)** is scoped but not started,
+are unrun — ⚠️ **but not for the reason this line gave.** It said they "want a host without a
+live cluster", which [G.9's own addendum](#g9-not-run--recorded-as-unknown-not-as-pass) had
+already retired on 2026-08-03: a nested QEMU guest with a disposable microk8s **is** such a
+host. And the two scenarios do not share a blocker at all — see
+[M.7](#m7-a-correction-this-appendix-inherited-the-g9-blocker-was-lifted-three-days-before-it-was-restated);
+and **slice 5c (vsock)** is scoped but not started,
 with its own assumption already retired (the lab's kernel has `CONFIG_VSOCKETS=y`) and its
 real work identified as a **guest agent**, not plumbing.
+
+### M.7 A correction this appendix inherited: the G.9 blocker was lifted three days before it was restated
+
+*Added 2026-08-06, prompted by the question "could this not be done via a throwaway microk8s
+nested inside QEMU?" — which is what [G.9](#g9-not-run--recorded-as-unknown-not-as-pass)
+already says, in an addendum dated **2026-08-03**.*
+
+The answer is **yes**, and it has been yes for three days. G.9's bullet *"deferred to a host
+without a live cluster"* is followed immediately by a paragraph retiring exactly that
+constraint: *"the host without a live cluster need not be another machine — a nested QEMU VM
+from phase 2 can BE it."* Every downstream restatement dropped the paragraph and kept the
+bullet: [§14](#14-build-order--vertical-slices) row 3,
+[K.5](#k5-what-slice-5a-leaves-closed-and-what-it-does-not), M.6 above, and
+[`DEFERRED.md`](examples/micro-cloud/DEFERRED.md) all said the scenarios *"want a host without
+a live cluster"* flatly, and this appendix — written 2026-08-06 — copied it forward again.
+
+**This is the plan's own bug class #1, committed against a document instead of a host.** A
+summary is a cached copy of a fact, and none of the four re-checked their subject. It is also
+the sharper variant: the cache was not *stale*, it was **wrong on the day it was written**,
+because nothing links a summary back to what it summarises. No tool catches this —
+`link_check.py` verifies the link to G.9 resolves, not that the sentence around it is still
+true.
+
+**And the restatement hid a second error: the two scenarios never shared a blocker.**
+
+| scenario | what it actually needs | can it run on this host today? |
+|---|---|---|
+| give a tap an address on purpose and watch it become a candidate | a live Calico that may be broken + `CAP_NET_ADMIN` | **no** — this one is the nested-VM job |
+| DHCP pool exhaustion (`.100–.200` = 101 leases) | a **shrinkable range** | **yes** — it needs no cluster at all |
+
+`DHCP_LO`/`DHCP_HI` are bare assignments in [`fabric.sh`](examples/micro-cloud/fabric.sh)
+(lines 87–88), not `${VAR:-default}`, so shrinking the pool means editing the file — that is
+the *"or a config change"* §14's row 3 mentions and every later summary dropped. Exhausting a
+three-address pool on `br-mc0` touches only our own dnsmasq and our own guests; it reaches
+nothing Calico owns. **The cheaper of the two deferred scenarios has been runnable here all
+along, behind a two-line change.**
+
+**What the nested run can and cannot claim.** It proves the *mechanism* — does an addressed
+tap enter Calico's candidate list and win? — which is precisely what
+[G.3](#g3-f7s-ordering-rule-does-not-explain-f6--the-correction) says is unexplained. It does
+**not** predict what *this* host's Calico would do, because candidate ordering depends on
+which interface names exist (`lxdbr0` at index 9 vs `incusbr0` at index 17 —
+[F.8](#f8-lxdbr0-is-a-candidate-and-it-outranks-the-one-calico-chose)), and a guest has
+neither. So the nested experiment must enumerate **its own** candidate set rather than reuse
+the host's, and it must record the Calico version it observed: the `^br-.*` exclusion and the
+index ordering are v3.28.1 facts, and microk8s bundles whatever its channel ships. A result
+transferred from a different Calico version would be the same cached-fact mistake one layer
+down.
+
+Three further practicalities, none blocking: autodetection re-runs on a **60-second poll**
+([I.4](#i4-the-finding-that-outlives-the-migration--autodetection-is-a-60-second-poll)), so
+the experiment waits rather than only restarting `calico-node`; snapd + Kubernetes + Calico
+wants roughly 4 GiB and ~10 GiB of disk; and neither scenario needs a microVM, so **nested KVM
+does not have to be enabled** — the guest's own dummy interfaces and DHCP clients suffice.
+The harness shape already exists: a cloud image driven by cloud-init on a `fabric.sh` tap is
+what [`edge.toml`](examples/micro-cloud/edge.toml) and slice 5b just built and proved.
