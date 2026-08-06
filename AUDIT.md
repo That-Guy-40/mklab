@@ -11,15 +11,27 @@
 > the Phase 6 UIs (Textual TUI + FastAPI/HTMX web) followed the same day —
 > see [`REVIEW-phase6.md`](REVIEW-phase6.md).
 
-> **Remediation update (2026-07-24):** three findings below have since been
-> addressed (annotated inline in the table and their detail sections):
-> **F6 RESOLVED** — CI added: [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
-> runs shellcheck + `bash -n`, `link_check.py` + `paths.py --check`, the phase
-> shell suites, and phase6 pytest on push/PR. **F9 RESOLVED** — top-level MIT
-> [`LICENSE`](LICENSE) added. **F2 PARTIALLY RESOLVED** — cloud-image + Kali
-> downloads are now SHA256-verified (`verify_sha256` in
-> `phase2-qemu-vm/lab-vm.sh`); only the Alpine `--allow-untrusted` gap remains.
-> Everything else in this 2026-05-20 snapshot stands as written.
+> **Remediation update (2026-07-24):** **F6 RESOLVED** — CI added:
+> [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs shellcheck + `bash -n`,
+> `link_check.py` + `paths.py --check`, the phase shell suites, and phase6 pytest on
+> push/PR. **F9 RESOLVED** — top-level MIT [`LICENSE`](LICENSE) added.
+>
+> **Re-derivation (2026-08-06): two open findings and two open halves of findings
+> were already fixed, and this file was the last thing still saying otherwise.**
+> **F2** is now RESOLVED in full — the Alpine half closed when `alpine_apk_add` gained
+> `--keys-dir` and dropped `--allow-untrusted` (and the function's own header comment
+> still described the removed behaviour; corrected). **F4** is RESOLVED — both container
+> drivers default a published port to `127.0.0.1` via `_pub_host`, with regression tests
+> in both. **F3** was documented and **F7** had been fixed before the list that asks for
+> it was written; **F8** was never a defect.
+>
+> **What is genuinely open: F1** (weak default VM credentials, Medium) and **F5**
+> (unpinned iPXE ref + base image, Low). Everything else in this 2026-05-20 snapshot
+> stands as written.
+>
+> The pattern is worth more than any of the fixes: **an audit finding is a cached fact
+> about the code, and nothing re-checks it.** Every correction here was made by reading
+> the code at the cited line and finding something else there.
 
 ---
 
@@ -49,9 +61,9 @@ Remediation update above.)*
 | # | Severity | Area | Finding |
 |---|----------|------|---------|
 | F1 | Medium | Security | Weak, hardcoded default credentials for VMs (`lab`/`lab`, root password `lab`, `ssh_pwauth: true`, NOPASSWD sudo); blank-password dropbear fallback for microvms |
-| F2 | Medium | Security / Supply chain | ⚠️ **PARTLY RESOLVED (2026-07-24)** — cloud-image + Kali downloads are now SHA256-verified (`verify_sha256`, `phase2-qemu-vm/lab-vm.sh`); Alpine `--allow-untrusted` gap remains. *Original:* Downloaded cloud images & Kali archives are not checksum/signature-verified (SHA256SUMS is fetched but used only for filename resolution); Alpine uses `--allow-untrusted` |
+| F2 | Medium | Security / Supply chain | ✅ **RESOLVED — verified 2026-08-06.** Cloud-image + Kali downloads are SHA256-verified (`verify_sha256`), and the Alpine gap is closed too: `alpine_apk_add` passes `--keys-dir "$root/etc/apk/keys"` and **no** `--allow-untrusted`, so package RSA signatures are checked against Alpine's own bundled keys (Finding 14). The function's header comment still claimed the opposite and was corrected with this row. *Original:* Downloaded cloud images & Kali archives are not checksum/signature-verified (SHA256SUMS is fetched but used only for filename resolution); Alpine uses `--allow-untrusted` |
 | F3 | Low | Security | ✅ **RESOLVED 2026-08-06** — documented in [`phase1-chroot/README.md`](phase1-chroot/README.md#-trust-boundary--a-toml-config-is-a-root-shell-script) (*a TOML config is a root shell script*), plus a contrasting note in [`phase2-qemu-vm`](phase2-qemu-vm/README.md), whose `runcmd` is root **inside a VM**. A repo-wide check found only those two phases execute config-supplied strings at all; 3/4/5/7 do not. *Original:* TOML configs execute arbitrary commands as root (`post_commands`, `init_script`); trust boundary not called out as such |
-| F4 | Low | Security | Default port publishing binds `0.0.0.0` (all interfaces) for Docker/Podman labs |
+| F4 | Low | Security | ✅ **RESOLVED — verified 2026-08-06.** Both drivers default a published port to `127.0.0.1` via `_pub_host` (`phase3-docker/lab-docker.sh:93`, `phase4-podman/lab-podman.sh:108`), with `LAB_PUBLISH_HOST` as the opt-in to a wider bind, and **every** publish site routes through it. Regression-tested in both labs. *Original:* Default port publishing binds `0.0.0.0` (all interfaces) for Docker/Podman labs |
 | F5 | Low | Supply chain / Reproducibility | iPXE built from moving `master` ref; `debian:bookworm` base image unpinned (no digest) |
 | F6 | Low | Process | ✅ **RESOLVED (2026-07-24)** — CI (`.github/workflows/ci.yml`) now runs the suites on push/PR. *Original:* Comprehensive test suites exist but there is no CI to run them automatically |
 | F7 | Low | Robustness | ✅ **RESOLVED — verified 2026-08-06.** The guard was implemented as `_safe_rm_rf` (credited to "Finding 14") and wired into all three destroy paths; this row had simply never been updated. Its four path-sanity refusals had also never been *observed* firing — now covered by [`test-destroy-path-guards.sh`](phase1-chroot/tests/test-destroy-path-guards.sh), with a positive control. *Original:* `destroy` does `rm -rf -- "$target"` using the manifest's `target` value with no path-sanity guard |
@@ -149,11 +161,23 @@ security notes.
 
 ### F2 — Downloaded images are not integrity-verified (Medium)
 
-> ⚠️ **PARTLY RESOLVED (2026-07-24):** cloud-image + Kali downloads are now
-> SHA256-verified — `verify_sha256()` in `phase2-qemu-vm/lab-vm.sh` is called for
-> cloud images and Kali, and the Kali path hard-fails if `SHA256SUMS` can't be
-> fetched. The Alpine `--allow-untrusted` gap described below still stands. The
-> original finding is preserved for the record.
+> ✅ **RESOLVED — both halves, verified 2026-08-06.** Cloud-image + Kali downloads are
+> SHA256-verified: `verify_sha256()` in `phase2-qemu-vm/lab-vm.sh` is called for cloud
+> images and Kali, and the Kali path hard-fails if `SHA256SUMS` can't be fetched
+> (2026-07-24).
+>
+> **The Alpine half was closed too, and this note did not notice.** `alpine_apk_add`
+> passes `--keys-dir "$root/etc/apk/keys"` and no longer passes `--allow-untrusted`, so
+> apk verifies package RSA signatures against the official Alpine keys shipped inside
+> the minirootfs. The removal is credited in-line to "Finding 14".
+>
+> **The function's own header comment still described the removed behaviour** — *"Uses
+> --allow-untrusted since we're not threading Alpine's signing keys through; … HTTPS …
+> is our trust boundary here"* — four lines above the `--keys-dir` that contradicts it.
+> A reader checking this property would have taken the comment's word for it. Corrected
+> 2026-08-06. A stale comment about a security property is worse than none.
+>
+> The original finding is preserved below for the record.
 
 **Where:** `phase2-qemu-vm/lab-vm.sh:433-506` (`cache_image`),
 `:393-421` (`kali_resolve_suite`), `:752-767` & `:786` (Alpine apk).
@@ -206,17 +230,44 @@ This is a docs fix, not a code change.
 > escape anything because it is already outside. Phase 2's `runcmd` is also root, but
 > **inside a VM**, which is a real boundary. The two READMEs now say so and link each other.
 
-### F4 — Default port publishing binds all interfaces (Low)
+### F4 — Default port publishing binds all interfaces (Low) — ✅ **RESOLVED, verified 2026-08-06**
 
-**Where:** `phase3-docker/lab-docker.sh:901`,
-`phase4-podman/lab-podman.sh:1493` (both default `host_ip` to `0.0.0.0`).
+The recommendation below was implemented, and this row went on saying otherwise —
+the same stale-record shape as F7. The two lines the finding cites no longer hold the
+code it describes (`lab-docker.sh:901` is now a healthcheck branch;
+`lab-podman.sh:1493` is a comment).
 
-Published lab ports default to `0.0.0.0`, exposing services on every host
-interface. This is standard Docker/Podman behavior, but combined with lab
-workloads it widens exposure more than a "throwaway local lab" implies.
+**What is there now.** Both drivers pass every published port through `_pub_host`
+([`phase3-docker/lab-docker.sh:93`](phase3-docker/lab-docker.sh),
+[`phase4-podman/lab-podman.sh:108`](phase4-podman/lab-podman.sh)):
 
-**Recommendation.** Consider defaulting to `127.0.0.1` and making
-all-interfaces an explicit opt-in, or at least note it in docs.
+```bash
+_pub_host() {
+    local spec="$1" host="${LAB_PUBLISH_HOST-127.0.0.1}"
+```
+
+A bare `8080:80` becomes `127.0.0.1:8080:80`; a spec that already names a bind IP
+(`ip:host:container`, or `[ipv6]:…`) is left alone — that is the explicit opt-in to a
+wider bind — and `LAB_PUBLISH_HOST=0.0.0.0` restores all-interfaces. Verified that
+**no publish site bypasses it**: every `-p` / `PublishPort=` in either driver is
+`_pub_host`-wrapped (the remaining raw matches are `yq -p toml` and
+`loginctl -p Linger`).
+
+Two `0.0.0.0` literals survive in each driver and are **not** defaults: they are
+`status`/`inspect` *display* code rendering what the engine reports for a port with no
+recorded bind IP (`lab-docker.sh:1274`, `lab-podman.sh:1745`). Asserting the mechanism
+here would have mis-read them as the defect.
+
+**Regression coverage in both labs** — this is what makes the fix durable rather than
+incidental:
+
+- [`phase3-docker/tests/test-publish-loopback.sh`](phase3-docker/tests/test-publish-loopback.sh)
+  unit-tests `_pub_host` directly: bare specs get the loopback default, an explicit bind
+  IP is preserved, the proto suffix survives, `LAB_PUBLISH_HOST` overrides, and an
+  *empty* override restores the engine's own default.
+- [`phase4-podman/tests/test-quadlet-generate.sh:49`](phase4-podman/tests/test-quadlet-generate.sh)
+  asserts the generated unit carries `PublishPort=127.0.0.1:19999:80`, so the quadlet
+  path — which does not go through `podman run` — is covered too.
 
 ### F5 — Non-reproducible / unpinned build inputs (Low)
 
@@ -322,16 +373,21 @@ are present and good, so this is documented friction rather than a defect.
 ## 8. Prioritized recommendations
 
 1. **(F2 — ⚠️ mostly done)** Verify downloaded images against published
-   checksums. *Done for cloud images + Kali (`verify_sha256`); remaining: the
-   Alpine `--allow-untrusted` path.* *(Medium)*
+   checksums. ~~*Done for cloud images + Kali (`verify_sha256`); remaining: the
+   Alpine `--allow-untrusted` path.*~~ ✅ **Both halves done** — the Alpine path
+   verifies with `--keys-dir` and drops `--allow-untrusted`; verified 2026-08-06. *(Medium)*
 2. **(F1)** Make VM password auth opt-in; eliminate the blank-password
    dropbear fallback; add a network-exposure warning. *(Medium)*
 3. **(F6 — ✅ done)** ~~Add CI (pytest + shell suites + `shellcheck`).~~ Landed:
    `.github/workflows/ci.yml`. *(Low, high ROI)*
 4. ~~**(F7)** Add a path-sanity guard before `rm -rf "$target"` in destroy.~~ ✅ **Already done** — `_safe_rm_rf`, verified 2026-08-06; the guard predated this list and the list was never updated.
    *(Low)*
-5. **(F4/F5)** Default published ports to loopback; pin iPXE ref and base
-   image. *(Low)*
+5. ~~**(F4)** Default published ports to loopback~~ ✅ **Already done** — `_pub_host`
+   in both container drivers, regression-tested in both; verified 2026-08-06, and like
+   F7 the list had never been updated. **(F5)** Pin the iPXE ref and the base image:
+   still open — `--ipxe-ref` defaults to `master`
+   ([`netboot/build-ipxe.sh:89`](netboot/build-ipxe.sh)) and `debian:bookworm` carries
+   no digest (`:270`). *(Low)*
 6. **(F3 / F9 — ✅ F9 done)** Document the config-as-root trust boundary;
    ~~add a `LICENSE` file.~~ *(top-level MIT `LICENSE` added.)* *(Info)*
 
