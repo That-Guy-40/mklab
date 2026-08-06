@@ -62,7 +62,7 @@
 
 ## DONE — the DHCP-exhaustion half of G.9's break pass
 
-> 🔨 **2026-08-06** — [M.8](../../MICRO_CLOUD_LAB_PLAN.md#m8-the-cheaper-half-of-g9-built--and-the-defect-the-knob-uncovered-2026-08-06).
+> ✅ **2026-08-06** — [M.8](../../MICRO_CLOUD_LAB_PLAN.md#m8-the-cheaper-half-of-g9-built--and-the-defect-the-knob-uncovered-2026-08-06).
 > The pool is `MC_DHCP_LO`/`MC_DHCP_HI`, and
 > [`tests/test-dhcp-exhaustion.sh`](tests/run-all.sh) fills a five-address one in seconds.
 > ✅ **GREEN at root 2026-08-06, on the second run. Slice 3's break coverage is now 4 of 5.**
@@ -670,3 +670,40 @@ guard landed, where the three before it were the `crun` era.
 **Action if it recurs: capture the log while it is still retrievable**, before
 re-running. One data point is not a trend, and a re-run destroys the evidence
 that would make it one.
+
+> ✅ **IT RECURRED, TWICE, ON 2026-08-06 — and the reason the 2026-07-30 log was
+> "never captured" is now known and fixable.**
+>
+> **`gh run view --log` returns ZERO lines for a failed job**, silently (rc=0,
+> empty output). So does `--log-failed`, and so does `gh run view --job <id>
+> --log`. That is not "the output was never captured" — it is the tool answering
+> emptily. **The API endpoint works:**
+>
+> ```sh
+> gh api "repos/<owner>/<repo>/actions/jobs/<job_id>/logs" > job.log   # ~850 lines
+> ```
+>
+> `<job_id>` comes from the URL in `gh pr checks` output
+> (`…/actions/runs/<run_id>/job/<job_id>`). **Capture before re-running.**
+>
+> With the log in hand, the two 2026-08-06 failures split cleanly — which is the
+> whole point of the control, and why "flaky" must never be the *default*
+> diagnosis:
+>
+> | PR | failing test | verdict |
+> |---|---|---|
+> | #155 | `test-inspect-json.sh` — `jq: … Cannot index array with string "Labels"` | **a real bug.** The runner image moved to **podman 5**, where `podman pod inspect` returns an ARRAY, not an object. `lab-podman.sh` had `.[0] as $c` for containers and `. as $p` for pods. Fixed in #156 |
+> | #157 | `test-pod-lifecycle.sh` — *container not running* | **flaky.** Passed on a re-run of the same commit |
+>
+> **Red on a machine nobody changed, green on the machine that runs the tests** is
+> the signature of an environment-shaped bug. Check the runner's tool versions
+> before reading the diff.
+>
+> ⚠️ **A second, unrelated Actions failure mode, same day:** GitHub silently
+> created **no run at all** for two PRs (#163, #164) — `statusCheckRollup: []`,
+> nothing in `gh run list` for the branch — and a manually dispatched run
+> (`gh workflow run CI --ref <branch>`) then sat **queued for 25+ minutes**. That
+> is an Actions-side outage, not a repo problem, and it matters because *"no
+> checks reported"* is easy to misread as *"checks passed"*. **Never merge on an
+> absent run**: for a docs-only diff the honest substitute is running CI's jobs
+> locally and saying so.

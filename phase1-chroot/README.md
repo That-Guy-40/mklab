@@ -215,6 +215,41 @@ manager = "schroot"
 
 `destroy` removes whatever it created, in reverse order, including the manifest and the chroot tree.
 
+## ⚠️ Trust boundary — a TOML config is a root shell script
+
+**A `--config` file executes as root on your host. Treat it exactly as you would treat a
+shell script you are about to `sudo bash`.** Two fields do this, by design:
+
+| field | what it does | runs as |
+|---|---|---|
+| `post_commands` | each string is executed verbatim via `bash -c` inside the chroot | **root** |
+| `init_script` | an arbitrary **host** path is copied in as `/init` | **root** |
+
+This is not a defect — it is the feature. A chroot builder that could not run commands
+inside the tree it just built would be useless, and every quick-start in this README says
+`sudo lab-chroot.sh create --config …`. What was missing was anyone *saying so*
+([`AUDIT.md`](../AUDIT.md) F3).
+
+**The part that is easy to get wrong:** a chroot is **not** a security boundary here. The
+commands run on your host's kernel, as uid 0, against a directory tree on your filesystem,
+with whatever bind mounts the tool set up. A malicious `post_commands` does not need to
+"escape" anything — it is already outside. Compare
+[`phase2-qemu-vm`](../phase2-qemu-vm/README.md), whose `runcmd` also runs as root but does
+so **inside a VM**, which is a real boundary.
+
+So:
+
+- **Read a config before running it**, the way you would read any script — especially
+  `post_commands`, `init_script`, and any `include`/`extras` pulling packages from a mirror
+  you do not control.
+- **Do not run configs from untrusted sources under `sudo`.** A `.toml` looks like data.
+  These two fields make it code.
+- The `examples/` configs in this repo are ours and are reviewed like code; anything you
+  are handed is not.
+- `--rootless` narrows the blast radius substantially (no uid 0 on the host at all) — see
+  [Rootless mode](#rootless-mode---rootless) — but it is a different mode with different
+  capabilities, not a sandbox for hostile input.
+
 ## Idempotency and safety
 
 - `create` refuses to write into a non-empty target directory.
