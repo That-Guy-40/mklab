@@ -153,6 +153,17 @@ A single inline `[vm]` table is also accepted.
 
 Cloud images are cached; subsequent VMs of the same `distro+suite+arch` reuse the base via qcow2 backing-file overlays (no extra download, ~200 KB on disk per VM until you start writing).
 
+## Trust boundary — `runcmd` is root, but inside the VM
+
+A `--config` TOML's `runcmd` entries are handed to cloud-init and run **as root in the
+guest**. That makes a config code rather than data, so read one before running it — but
+note the difference from [`phase1-chroot`](../phase1-chroot/README.md#-trust-boundary--a-toml-config-is-a-root-shell-script),
+where the equivalent field runs as root **on your host**: here a VM stands between the
+config and your machine, and there nothing does.
+
+The usual caveats still apply — the guest can reach your network, and anything you mount or
+forward into it is inside the boundary, not outside.
+
 ## Default credentials
 
 The cloud-init seed creates a `lab` user with password `lab` and `sudo NOPASSWD`, plus your invoking user's first SSH public key (`~/.ssh/id_ed25519.pub`, `id_rsa.pub`, or `authorized_keys` — whichever exists first). Root login is enabled with password `lab` for emergency console access.

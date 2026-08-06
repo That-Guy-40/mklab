@@ -50,7 +50,7 @@ Remediation update above.)*
 |---|----------|------|---------|
 | F1 | Medium | Security | Weak, hardcoded default credentials for VMs (`lab`/`lab`, root password `lab`, `ssh_pwauth: true`, NOPASSWD sudo); blank-password dropbear fallback for microvms |
 | F2 | Medium | Security / Supply chain | ⚠️ **PARTLY RESOLVED (2026-07-24)** — cloud-image + Kali downloads are now SHA256-verified (`verify_sha256`, `phase2-qemu-vm/lab-vm.sh`); Alpine `--allow-untrusted` gap remains. *Original:* Downloaded cloud images & Kali archives are not checksum/signature-verified (SHA256SUMS is fetched but used only for filename resolution); Alpine uses `--allow-untrusted` |
-| F3 | Low | Security | TOML configs execute arbitrary commands as root (`post_commands`, `init_script`); trust boundary not called out as such |
+| F3 | Low | Security | ✅ **RESOLVED 2026-08-06** — documented in [`phase1-chroot/README.md`](phase1-chroot/README.md#-trust-boundary--a-toml-config-is-a-root-shell-script) (*a TOML config is a root shell script*), plus a contrasting note in [`phase2-qemu-vm`](phase2-qemu-vm/README.md), whose `runcmd` is root **inside a VM**. A repo-wide check found only those two phases execute config-supplied strings at all; 3/4/5/7 do not. *Original:* TOML configs execute arbitrary commands as root (`post_commands`, `init_script`); trust boundary not called out as such |
 | F4 | Low | Security | Default port publishing binds `0.0.0.0` (all interfaces) for Docker/Podman labs |
 | F5 | Low | Supply chain / Reproducibility | iPXE built from moving `master` ref; `debian:bookworm` base image unpinned (no digest) |
 | F6 | Low | Process | ✅ **RESOLVED (2026-07-24)** — CI (`.github/workflows/ci.yml`) now runs the suites on push/PR. *Original:* Comprehensive test suites exist but there is no CI to run them automatically |
@@ -190,6 +190,21 @@ tool's purpose, but the trust boundary is implicit.
 **Recommendation.** Document explicitly that config files are
 trust-sensitive and must not be run from untrusted sources under `sudo`.
 This is a docs fix, not a code change.
+
+> ✅ **DONE 2026-08-06.** [`phase1-chroot/README.md`](phase1-chroot/README.md#-trust-boundary--a-toml-config-is-a-root-shell-script)
+> now carries a *Trust boundary* section stating plainly that **a `--config` file executes
+> as root on your host** — treat it as a script you are about to `sudo bash`.
+>
+> **Mapping the blast radius first made the answer better than the recommendation.** Only
+> **two** phases execute config-supplied command strings: phase 1 (`post_commands` via
+> `bash -c`, `init_script`) and phase 2 (`runcmd` via cloud-init). Phases 3, 4, 5 and 7 do
+> not, so a blanket warning across all of them would have been noise.
+>
+> And the two are **not equivalent**, which is the part worth writing down: phase 1's
+> commands run as uid 0 **on your host's kernel, against a directory tree on your
+> filesystem** — a chroot is not a security boundary, and hostile input does not need to
+> escape anything because it is already outside. Phase 2's `runcmd` is also root, but
+> **inside a VM**, which is a real boundary. The two READMEs now say so and link each other.
 
 ### F4 — Default port publishing binds all interfaces (Low)
 
