@@ -408,15 +408,51 @@ rootless-first refusal fires instead). Two distinct problems:
    discipline exists for. Credit where due:
    [`run-all.sh`](phase4-podman/tests/run-all.sh) honestly exited 1.
 
-- [ ] Reorder `lab-podman.sh` `export` to validate its arguments (unknown
+- [x] Reorder `lab-podman.sh` `export` to validate its arguments (unknown
       format, missing lab) *before* the rootless gate and podman-presence
       check, matching the other subcommands.
-- [ ] Give the "export bogus format" assertion and `test-compose-export.sh`
-      a skip guard (`SKIP: missing required command: podman`, exit 77) so a
-      podman-less host reports SKIP, not FAIL.
-- [ ] Negative control per house rules: after the fix, rerun both tests on a
-      podman-less box (and as root) and watch them SKIP; rerun with podman and
-      watch them PASS.
+- [x] ~~Give the "export bogus format" assertion and `test-compose-export.sh`
+      a skip guard~~ — **this was the wrong fix, and doing it would have
+      cemented the defect.** See below.
+- [x] Negative control per house rules: after the fix, rerun both tests on a
+      podman-less box and watch them PASS; re-inject the defect and watch all
+      three assertions bite.
+
+**✅ Done 2026-08-06.** The gates moved *inside* the `case` arms rather than
+above it, so each format consults exactly what it uses. But investigating first
+found the diagnosis above was **half the defect**: `--format compose` **never
+calls podman at all** — it reads the stored `spec.toml` and prints YAML — so it
+was a pure text transformation gated on a container engine *and* on being
+non-root. `test-compose-export.sh` has carried "no live podman needed" in its
+header since the day it was written; the code disagreed, and nothing noticed
+because CI's runners ship podman.
+
+**That is why sub-task 2 was the wrong fix.** A skip guard would have made a
+podman-less host report `SKIP` for a test that needs no podman — retiring the
+question while it was still open, which is exactly what the *UNKNOWN is not
+PASS* rule forbids in the other direction. Neither test needs a guard now:
+both pass on a podman-less `PATH`, as does `export bogus format`.
+
+**The regression guard is new, because the existing assertion is inert where CI
+runs it.** `expect_error "export bogus format"` only distinguishes fixed from
+broken on a host with **no** podman, so it passed identically before and after
+and would never catch this coming back.
+[`tests/test-export-needs-no-podman.sh`](phase4-podman/tests/test-export-needs-no-podman.sh)
+makes podman-presence *observable* instead of environmental: it runs a copy of
+the tool with both gate functions replaced by tripwires that exit 9 by name, so
+"did this path consult podman?" has a recorded answer on every host. Two
+controls, because a one-sided test would also pass if the fix simply deleted the
+gates: `logs` **must** trip the tripwire (proving it is wired), and
+`--format kube` **must** trip it (proving the path that really does run
+`podman kube generate` kept its gate).
+
+Verified: full phase4 suite with real podman **11 passed · 1 skipped · 0
+failed**; all three tests green on a `PATH` mirroring the host minus podman; and
+with the defect re-injected all three fail — the new guard *with podman
+installed*, which the other two cannot do. The root half of the original report
+("fails differently as root — the rootless-first refusal fires") is fixed
+structurally: neither surviving path reaches `require_rootless` at all, which is
+what the `kube`-must-trip control measures.
 
 **Known-open items re-confirmed, not new** (tracked elsewhere, listed for
 completeness): the Alpine `--allow-untrusted` gap — the residue of
