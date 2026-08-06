@@ -3497,3 +3497,94 @@ debt paid; and the slice-3 exercise re-run — with a second engine attached, as
 to recover from); [G.9](#g9-not-run--recorded-as-unknown-not-as-pass)'s two break-pass
 scenarios still want a host without a live cluster; and **slice 5b** — the fidelity case, a
 cloud image on `-M q35` with cloud-init — has not started.
+
+## Appendix L — slice 5b's first finding, before a line of it was built: the two tools could never agree, 2026-08-05
+
+Slice 5b adds a **third named instance** (`edge`) and, for the first time, a **static spec
+file** that has to name its own MAC. Deriving what that spec needs — rather than writing it
+and finding out — turned up a defect in two committed tools that three slices had walked past.
+
+### L.1 The comment said one thing; the code did another
+
+`fabric.sh tap <name>` carried this, verbatim:
+
+```bash
+# Deterministic MAC + address, derived from the name so reruns are stable.
+n=0; [[ -r "$STATE/dhcp-hosts" ]] && n="$(wc -l < "$STATE/dhcp-hosts")"
+IDX=$(( n + 1 ))
+MAC="$(printf '06:00:ac:47:00:%02x' "$IDX")"
+```
+
+**Nothing in that block reads `$NAME`.** The MAC came from the *line count* — from the order
+taps happen to be created. `api1` was `06:00:ac:47:00:01` only because it was always made
+first. Bring up a subset, or add an instance ahead of it, and every name shifts.
+
+### L.2 The half that actually bites
+
+`lab-fc.sh` — slice 4's tool, the one that is *supposed to consume these taps* — has hashed
+the instance name since the day it was written:
+
+| name | `fabric.sh` reserved | `lab-fc.sh` would set |
+|---|---|---|
+| `api1` | `06:00:ac:47:00:01` → 10.71.0.101 | `06:00:ac:47:f1:f7` |
+| `api2` | `06:00:ac:47:00:02` → 10.71.0.102 | `06:00:ac:47:e9:b6` |
+
+**The two committed tools could never agree**, and the failure is silent by construction: the
+fabric reserves a lease *against a MAC*, the VMM *sets* the MAC, and when they differ nothing
+errors. The guest takes a dynamic lease from the pool while dnsmasq goes on answering `api1`
+with `10.71.0.101` — an address nothing holds. A record that outlives its subject, invisible
+from either tool alone, and only observable by booting a guest and asking a **third party**
+what its name resolves to.
+
+**Why three slices missed it.** Slices 1, 2, 3 and 5a all hand-wrote the microVM's
+`config.json` with the positional MAC. `lab-fc.sh` had **never been pointed at a `fabric.sh`
+tap** — Appendix H booted it with no network at all. Every run was green, and the seam
+between the two tools had simply never been crossed.
+
+### L.3 The fix, and which half of it is the contract
+
+- **MAC ← hash(name)**, the same formula `lab-fc.sh` already used, so the two agree by
+  construction and order stops mattering.
+- **Address stays first-come.** A hash into a /24 collides, and a collision here is two
+  guests fighting over one lease. It is recorded in `dhcp-hosts` and served by DHCP, so
+  nothing needs to predict it — **the NAME is the contract, never the address.** Anything
+  that hard-codes `10.71.0.10x` is asserting something this fabric does not promise.
+- **Both tools gained a read-only `mac <name>` verb** — no tap, no root. Consumers *ask*
+  instead of guessing, and the cross-tool invariant becomes checkable in CI. An invariant
+  only verifiable on a host that can create taps is an invariant that drifts.
+- `tap` now **refuses a name that already holds a reservation** and points at `retap`, rather
+  than appending a second, contradictory entry.
+
+### L.4 The test, and why it is not a string comparison
+
+[`tests/test-fabric-mac-derivation.sh`](examples/micro-cloud/tests/test-fabric-mac-derivation.sh)
+drives **both real tools' `mac` verb** over eight names. It does not re-implement the formula
+and it does not grep the sources: a test that transcribes the algorithm passes when both
+copies are wrong the same way, and a test that greps for `md5sum` fails when someone improves
+it. Ask each tool what it would *do*; compare the answers.
+
+Four assertions, each observed failing:
+
+| injected defect | which assertion bit |
+|---|---|
+| `fabric.sh` back to positional (**the original defect, re-injected**) | agreement |
+| `lab-fc.sh` drifts by one hex offset | agreement |
+| one tool returns a constant | agreement |
+| **both tools return the same constant** | **collision** — agreement and order-independence both passed happily |
+
+That last row is why the test has four assertions instead of one. Two tools that agree can
+still both be wrong, and only the collision check and the explicit control (`api1` and `api2`
+must derive *different* MACs) can see it.
+
+### L.5 The blast radius, mapped before the edit and not after
+
+`git grep` for the addresses and the MAC prefix first, then classify — five files, of which
+**one was a live landmine**: [`test-two-engines-one-fabric.sh`](examples/micro-cloud/tests/test-two-engines-one-fabric.sh)
+hand-wrote `06:00:ac:47:00:01` and `:02`, the fabric's *old positional* values. They stopped
+being right the instant the derivation changed, and the test would have gone on passing its
+DHCP assertion on dynamic leases while its name-resolution assertion failed for a reason
+nobody would have connected to this change. It now **asks the fabric** — the consumer pattern
+the new verb exists for.
+
+The addresses did not move (`api1` first still gets `.101`), so the dated appendices remain
+accurate records. Only the MACs changed.

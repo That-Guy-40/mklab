@@ -14,6 +14,9 @@
 #   lab-fc.sh destroy   <name> [--force]
 #   lab-fc.sh list      [--lab L] [--json]
 #   lab-fc.sh inspect   <name> [--json]
+#   lab-fc.sh mac       <name>               # the guest MAC this tool would set — read-only,
+#                                            # no tap, no root. Must equal `fabric.sh mac <name>`;
+#                                            # tests/test-fabric-mac-derivation.sh asserts it.
 # ── END USAGE ──
 #
 # ── WHAT THIS TOOL DELIBERATELY DOES NOT DO ─────────────────────────────────
@@ -329,9 +332,7 @@ gen_config() {  # gen_config <record> <outfile|-> ; fills PROV[]
     if [[ -n "$tap" ]]; then
         if [[ -z "$mac" ]]; then
             # Deterministic from the name, so reruns are stable and two instances never collide.
-            mac="$(printf '06:00:ac:47:%02x:%02x' \
-                   $(( 0x$(printf '%s' "$name" | md5sum | cut -c1-2) )) \
-                   $(( 0x$(printf '%s' "$name" | md5sum | cut -c3-4) )) )"
+            mac="$(mac_for_name "$name")"
             prov DERIVED "guest_mac = $mac" "hashed from the instance name so it is stable across reruns"
         else
             prov YOURS "guest_mac = $mac" "as given"
@@ -548,6 +549,26 @@ cmd_inspect() {
 
 # ── argument handling ───────────────────────────────────────────────────────
 # Marker-delimited so edits to the header cannot silently shift what --help prints.
+# The guest MAC for an instance name.
+#
+# THIS FORMULA IS SHARED WITH `examples/micro-cloud/fabric.sh` AND MUST NOT DRIFT. The fabric
+# reserves a DHCP lease against a MAC; this tool sets the MAC on the guest. Derive them
+# differently and the microVM misses its reservation, takes a dynamic lease, and dnsmasq goes
+# on answering the name with an address nothing holds — invisible from either tool alone.
+# That is not hypothetical: until 2026-08-05 the fabric derived its MAC from the ORDER taps
+# were created (`api1` -> 06:00:ac:47:00:01) while this tool hashed the name
+# (`api1` -> 06:00:ac:47:f1:f7), so the two could never agree. It went unnoticed because no
+# run had ever pointed this tool at a fabric tap.
+#
+# The two live in different phases and cannot share code, so the agreement is asserted by
+# `examples/micro-cloud/tests/test-fabric-mac-derivation.sh`, which drives BOTH tools' `mac`
+# verb rather than re-implementing either formula.
+mac_for_name() {
+    local n="$1" h
+    h="$(printf '%s' "$n" | md5sum)" || return 1
+    printf '06:00:ac:47:%02x:%02x' $(( 0x${h:0:2} )) $(( 0x${h:2:2} ))
+}
+
 usage() { sed -n '/^# ── USAGE ──/,/^# ── END USAGE ──/p' "$0" | sed '1d;$d; s/^# \{0,1\}//'; exit 0; }
 
 main() {
@@ -586,6 +607,13 @@ main() {
         stop)    cmd_stop    "${positional[0]:?instance name required}"; return ;;
         destroy) cmd_destroy "${positional[0]:?instance name required}"; return ;;
         inspect) cmd_inspect "${positional[0]:?instance name required}"; return ;;
+        mac)     # read-only, no tap, no root: the MAC this tool WOULD set for a name.
+                 # Exists so the fabric/VMM agreement can be asserted in CI instead of only
+                 # on a host that can create taps — an invariant only checkable under root
+                 # is an invariant that drifts.
+                 mac_for_name "${positional[0]:?instance name required}" \
+                     || die "could not derive a MAC (is md5sum present?)"
+                 printf '\n'; return ;;
         preflight|create) ;;
         *) die "unknown verb: $verb (try --help)" ;;
     esac

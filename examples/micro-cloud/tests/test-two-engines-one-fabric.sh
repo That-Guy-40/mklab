@@ -119,6 +119,18 @@ done
 note "fabric: br-mc0 + two taps from ONE verb, for two different VMMs"
 
 # ── two engines, same kernel, same rootfs bytes ─────────────────────────────
+# ASK THE FABRIC for each guest's MAC; never write one down. The fabric reserves the DHCP
+# lease against this value, so a hand-written MAC that drifts from the reservation does not
+# error — the guest just takes a dynamic lease while dnsmasq keeps answering the name with
+# the reserved address. This test used to carry 06:00:ac:47:00:01 and :02 literally, which
+# were the fabric's OLD positional MACs; they stopped being right the moment the derivation
+# became name-based, and nothing but this line would have noticed.
+MAC1="$(bash "$FABRIC" mac api1)" || fail "could not ask the fabric for api1's MAC"
+MAC2="$(bash "$FABRIC" mac api2)" || fail "could not ask the fabric for api2's MAC"
+[[ "$MAC1" =~ ^06:00: && "$MAC2" =~ ^06:00: && "$MAC1" != "$MAC2" ]] \
+    || fail "the fabric returned unusable MACs for api1/api2: '$MAC1' / '$MAC2'"
+note "MACs asked of the fabric, not hard-coded: api1=$MAC1 api2=$MAC2"
+
 cp -- "$ROOTFS" "$WORK/api1.ext4" || fail "could not copy the rootfs for api1"
 cp -- "$ROOTFS" "$WORK/api2.ext4" || fail "could not copy the rootfs for api2"
 chown "$OWNER" "$WORK/api1.ext4" "$WORK/api2.ext4" || fail "could not hand the rootfs copies to $OWNER"
@@ -133,7 +145,7 @@ cat > "$WORK/api1.json" <<JSON
   "drives": [ { "drive_id": "rootfs", "path_on_host": "$WORK/api1.ext4",
                 "is_root_device": true, "is_read_only": false } ],
   "network-interfaces": [ { "iface_id": "eth0", "host_dev_name": "mc-api1",
-                            "guest_mac": "06:00:ac:47:00:01" } ],
+                            "guest_mac": "$MAC1" } ],
   "machine-config": { "vcpu_count": 1, "mem_size_mib": 256 }
 }
 JSON
@@ -157,7 +169,7 @@ runuser -u "$OWNER" -- "$QEMU_BIN" \
     -drive "file=$WORK/api2.ext4,if=none,id=disk0,format=raw" \
     -device "virtio-blk-device,drive=disk0" \
     -netdev "tap,id=net0,ifname=mc-api2,script=no,downscript=no" \
-    -device "virtio-net-device,netdev=net0,mac=06:00:ac:47:00:02" \
+    -device "virtio-net-device,netdev=net0,mac=$MAC2" \
     -serial "file:$WORK/api2.console" >"$WORK/api2.qemu.err" 2>&1 &
 QEMU_PID=$!
 
