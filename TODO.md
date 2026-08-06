@@ -432,9 +432,25 @@ through the existing phases.
       order *and* a build-time assertion — a PATH tweak is a mechanism, the assertion is
       the outcome.
 
-**Still open on item 7:** a full `packer build` producing an actual image on either side.
-It needs `/dev/kvm`, a multi-GB ISO and tens of minutes, so it stays **author-run** — and
-the `--validate-only` gate above is the part a reader can reproduce in a minute.
+- [x] **A full `packer build` producing an actual image** — **DONE 2026-08-06, author-run.**
+      `build-kali-box.sh --install-packer` on the host: **`packer_kalirolling_libvirt_amd64.box`,
+      5.7 GB, built in 11 min 12 s** on QEMU 8.2.2 + KVM with the pinned packer 1.13.1 —
+      **from the VENDORED archive, offline** (`archive verified: 17 files match`), both compat
+      patches applied, the 4.47 GB ISO checksum-verified by packer.
+      **The whole chain is now proven end to end**: vendored bytes → verified → staged →
+      patched → `packer init` → live ISO resolution → unattended d-i install → Ansible-free
+      shell provisioning → `vagrant` post-processor → a bootable box.
+
+      ⚠️ **The first attempt failed and it was NOT a defect.** It died at
+      `Error running boot command: … use of closed network connection` — the VNC socket
+      closing mid-type. I predicted "bitrot #3" and was **wrong**: an identical re-run, same
+      host, no changes, succeeded. That is the §17.5 control (*same commit, re-run*)
+      distinguishing flaky from real, and the honest label is **flaky**, recorded in the
+      README beside the two genuine bitrots rather than promoted to one.
+
+**Item 7 is complete.** Both builders vendored in full, both runnable offline with verified
+archives, both hand-walks built, both configs `packer validate`-clean, and one of the two
+built into a real bootable image.
 
 Per-lab, both halves: a `README.md` + `MANUAL_TESTING.md`, a 00-INDEX entry, and
 `tools/link_check.py` green (0 broken, no orphans).
