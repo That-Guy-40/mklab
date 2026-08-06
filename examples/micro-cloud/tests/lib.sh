@@ -29,3 +29,29 @@ calico_binding() {
         | grep -oE 'local [0-9.]+ dev [a-zA-Z0-9._-]+' || true
 }
 calico_veths() { ip -o link show 2>/dev/null | grep -cE ': cali[0-9a-f]+@' || true; }
+
+# ── where the lab's artifacts live, when the test may be running under sudo ──
+# `$HOME` is ROOT's home under sudo, but every micro-cloud artifact belongs to the invoking
+# user — so a default built from `$HOME` sends a root-run test to
+# /root/.local/state/lab-create/… and it SKIPs on a host that has the files.
+#
+# Found 2026-08-05 by exactly that: `sudo bash tests/run-all.sh` skipped both boot tests with
+# "slice 3's kernel/rootfs are not in /root/.local/state/…". The skip was honest and the
+# default was wrong; had those tests reported a pass-shaped verdict instead, the two engines
+# would have been "verified" without booting.
+#
+# `${SUDO_USER}` alone is not enough — it is literally `root` when sudo runs from a root
+# shell, which is the same trap that produced the unopenable root-owned tap (plan G.4). So
+# fall back to the checkout's owner, and read the home directory out of passwd rather than
+# assuming /home/<user>.
+mc_user_home() {
+    local u h
+    u="${SUDO_USER:-}"
+    [[ -z "$u" || "$u" == root ]] && u="$(stat -c %U "$REPO_DIR" 2>/dev/null || true)"
+    if [[ -n "$u" && "$u" != root ]]; then
+        h="$(getent passwd "$u" 2>/dev/null | cut -d: -f6)"
+        [[ -n "$h" && -d "$h" ]] && { printf '%s\n' "$h"; return 0; }
+    fi
+    printf '%s\n' "$HOME"
+}
+mc_workdir() { printf '%s/.local/state/lab-create/micro-cloud-s3\n' "$(mc_user_home)"; }

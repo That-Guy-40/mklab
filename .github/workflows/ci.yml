@@ -53,7 +53,8 @@ jobs:
             examples/micro-cloud/tests/lib.sh \
             examples/micro-cloud/tests/run-all.sh \
             examples/micro-cloud/tests/test-bench-boot.sh \
-            examples/micro-cloud/tests/test-fabric-round-trip.sh
+            examples/micro-cloud/tests/test-fabric-round-trip.sh \
+            examples/micro-cloud/tests/test-two-engines-one-fabric.sh
 
       - name: no cached host facts in the micro-cloud instruments
         # Pure text analysis, no host state — safe on a runner that has none of these

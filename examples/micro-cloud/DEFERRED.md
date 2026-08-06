@@ -8,19 +8,34 @@
 > the planning session that produced v2 and v3; the DONE markers were added as
 > the slices landed.
 
-## NEXT — slice 5a **(b)**: the fabric half
+## DONE — slice 5a, both halves
 
-> ✅ **Half (a) landed 2026-08-05** — the unprivileged boot comparison, four arms,
-> [Appendix J](../../MICRO_CLOUD_LAB_PLAN.md#appendix-j--slice-5a-a-the-second-engine-the-number-nobody-had-and-the-number-everybody-had-was-wrong-2026-08-05). It answered §18.3's *"nobody has the other number"* and
-> **corrected the number everybody did have**: 0.512 s of Firecracker's 0.567 s is a
-> kernel **i8042 probe** ([J.3](../../MICRO_CLOUD_LAB_PLAN.md#j3-the-headline-that-was-false)), so the honest tuned figure is **0.055 s**
-> and Firecracker — not QEMU — is the faster of the two once both are on equal footing
-> ([J.5](../../MICRO_CLOUD_LAB_PLAN.md#j5-the-answer-once-both-engines-are-on-equal-footing)).
+> ✅ **(b) landed 2026-08-05, the same day as (a)** — [Appendix K](../../MICRO_CLOUD_LAB_PLAN.md#appendix-k--slice-5a-b-two-engines-on-one-fabric-and-decision-e-answered-from-what-the-lifecycles-actually-needed-2026-08-05).
+> `sudo bash tests/run-all.sh` → **3 passed · 0 skipped · 0 failed**. Firecracker and
+> QEMU `-M microvm` on two `fabric.sh` taps, **both dropped to uid 1000**, distinct
+> DHCP leases from one dnsmasq (`10.71.0.101` / `10.71.0.102`), and **each engine's
+> guest resolved the other's by name**. Calico's binding, pod veth count and
+> `ip_forward` unchanged throughout.
 >
-> **What (b) still owes, unchanged and named rather than implied:** no tap, no
-> `br-mc0`, no DHCP, no name resolution — and therefore **no evidence yet for the
-> network-attachment row** of §18.4's seam table. `retap` is still uncalled and the
-> slice-3 exercise still un-re-run ([J.7](../../MICRO_CLOUD_LAB_PLAN.md#j7-not-run--the-fabric-half-is-still-owed)).
+> **Decision E is answered: §8.3 shape (b)** ([K.2](../../MICRO_CLOUD_LAB_PLAN.md#k2-decision-e-answered--184s-table-filled-in-from-what-the-two-lifecycles-needed)). The intersection is
+> `create`/`start`/`stop`/`status`/`destroy`; every difference is in the **channel or
+> the artifact**, with one exception — Firecracker owns `root=` and QEMU does not.
+>
+> **Still open** ([K.5](../../MICRO_CLOUD_LAB_PLAN.md#k5-what-slice-5a-leaves-closed-and-what-it-does-not)): `retap` is *still* never called (it needs a
+> deliberately root-owned tap to recover from), G.9's two break-pass scenarios still
+> want a host without a live cluster, and **slice 5b** — the fidelity case — has not
+> started.
+>
+> ---
+>
+> ✅ **(a), earlier the same day** — the unprivileged boot comparison, four arms,
+> [Appendix J](../../MICRO_CLOUD_LAB_PLAN.md#appendix-j--slice-5a-a-the-second-engine-the-number-nobody-had-and-the-number-everybody-had-was-wrong-2026-08-05).
+> It answered §18.3's *"nobody has the other number"* and **corrected the number
+> everybody did have**: 0.512 s of Firecracker's 0.567 s is a kernel **i8042 probe**
+> ([J.3](../../MICRO_CLOUD_LAB_PLAN.md#j3-the-headline-that-was-false)), so the honest tuned figure is **0.055 s** — and Firecracker, not
+> QEMU, is the faster of the two once both are on equal footing
+> ([J.5](../../MICRO_CLOUD_LAB_PLAN.md#j5-the-answer-once-both-engines-are-on-equal-footing)). (b) re-derived it from the guests' own clocks
+> ([K.3](../../MICRO_CLOUD_LAB_PLAN.md#k3-the-seams-are-not-independent-of-the-performance-story)).
 
 ## The original brief — slice 5a: a second engine on one fabric
 

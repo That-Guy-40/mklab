@@ -73,7 +73,7 @@ fi
 note "refusals: missing kernel, --runs 0 and an unknown engine each exit non-zero, naming the input"
 
 # ── 4. the boot half — real numbers, or an honest skip ──────────────────────
-WORKDIR="${MC_WORKDIR:-$HOME/.local/state/lab-create/micro-cloud-s3}"
+WORKDIR="${MC_WORKDIR:-$(mc_workdir)}"
 [[ -r /dev/kvm && -w /dev/kvm ]] || skip "no read-write /dev/kvm: the refusals above passed, but nothing was booted"
 [[ -r "$WORKDIR/vmlinux" && -r "$WORKDIR/api1.ext4" ]] \
     || skip "slice 3's kernel/rootfs are not in $WORKDIR: the refusals above passed, but nothing was booted"
@@ -82,7 +82,18 @@ command -v qemu-system-x86_64 >/dev/null 2>&1 || skip "no qemu-system-x86_64: no
 qemu-system-x86_64 -machine help 2>/dev/null | grep -q '^microvm ' || skip "this QEMU has no microvm machine: nothing was booted"
 
 JSON="$WORK/out.json"
-bash "$BENCH" --runs 2 --json >"$JSON" 2>"$WORK/run.err" || {
+# Run the benchmark AS THE UNPRIVILEGED OWNER when this test is root (run-all.sh under sudo).
+# bench-boot.sh is slice 5a's *unprivileged* half — the whole claim is that neither VMM needs
+# privilege — so measuring it as root would be measuring something else and calling it that.
+BENCH_CMD=(bash "$BENCH" --runs 2 --json)
+if (( EUID == 0 )); then
+    OWNER="$(stat -c %U "$REPO_DIR")"
+    [[ -n "$OWNER" && "$OWNER" != root ]] || skip "root-owned checkout: cannot run the unprivileged half unprivileged"
+    command -v runuser >/dev/null 2>&1 || skip "no runuser: cannot drop privilege for the unprivileged half"
+    chmod 0755 "$WORK" && BENCH_CMD=(runuser -u "$OWNER" -- "${BENCH_CMD[@]}")
+    note "root: dropping to '$OWNER' — bench-boot is the unprivileged half and must be measured as one"
+fi
+"${BENCH_CMD[@]}" >"$JSON" 2>"$WORK/run.err" || {
     cat "$WORK/run.err" >&2; fail "a full four-arm run failed — see the output above"
 }
 

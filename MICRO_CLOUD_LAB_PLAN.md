@@ -1177,7 +1177,7 @@ exercise · break**, and the break pass writes into `LEDGER.md`.
 | **2** ✅ | **The microVM gets an identity** — **DONE 2026-08-01, [Appendix F](#appendix-f--slice-2-the-microvm-gets-an-identity-2026-08-01)** | one tap, no bridge (root only for `ip tuntap add`; FC opened it unprivileged); MMDS `PUT` over the API socket | **V2 token handshake by hand from inside the guest** (`len=48`), `instance-id` read at `169.254.169.254` matching the host's `PUT`; boot **0.57 s** with the NIC | **no-token GET → `401`** (the SSRF lesson, observed); never-`PUT` key → `404`; **NIC dropped with `ip=` kept → 12.84 s, 22.5×**, the guard's tripwire reproduced on a second rootfs |
 | **3** ⚠️ | **Two microVMs that reach each other** — **EXERCISED 2026-08-02, [Appendix G](#appendix-g--slice-3-the-fabric-2026-08-02), but the deliverable was never landed — see [§18.1](#181-the-precursor-nobody-recorded--fabricsh-is-not-in-the-repo)**; build + exercise + teardown green, break pass **3 of 5** (the two deferred are named in [G.9](#g9-not-run--recorded-as-unknown-not-as-pass), both requiring a host without a live cluster or a config change) | `fabric.sh up/down/retap/status` — additive nft scoped by `iifname`, recorded `ip_forward`, dnsmasq as DHCP **and** DNS. **Bridge MUST be named `br-mc0`** (Calico v3.28.1 excludes `^br-.*`) and **taps MUST carry no IPv4 address** — [F.7](#f7-the-selection-rule-derived--and-7-already-satisfied-it) | `api1` pings `api2` **by name**; `down` asserts absence of *our* objects only; **pre-flight records Calico's tunnel binding and teardown compares it** — the assertion that caught [F.6](#f6-additive-was-not-safe--the-tap-captured-a-live-clusters-tunnel) | delete the bridge under a running VM; exhaust the DHCP pool; leave a stale tap; **confirm Calico still works** — and give a tap an address on purpose to watch it become an autodetection candidate |
 | **4** ✅ | **The tool, and what it hides** — **DONE 2026-08-02, [Appendix H](#appendix-h--slice-4-the-tool-and-what-it-hides-2026-08-02)** | `lab-fc.sh` + `preflight`; **derive** §5.2's schema from slices 1–3 | one command, same boot; `--dry-run` diffed against slice 1's hand-written `config.json` | the preflight tripwire; **name what the tool silently started doing for you** — that list is the deliverable. Watch for the §8.3 verb tripwire |
-| **5a** ⚙️ | **A second engine on one fabric — the controlled comparison** ([§18](#18-slice-5--the-brief)). **Half (a) DONE 2026-08-05, [Appendix J](#appendix-j--slice-5a-a-the-second-engine-the-number-nobody-had-and-the-number-everybody-had-was-wrong-2026-08-05)** — the unprivileged boot comparison; **(b), the fabric half, is still owed** ([J.7](#j7-not-run--the-fabric-half-is-still-owed)) | QEMU **`-M microvm`** (Phase 2 already has virtio-mmio + qboot) consuming **the same `vmlinux` and the same `.ext4`** Firecracker boots, on a `fabric.sh`-made tap. ~~"Phase 2 already does bridge mode"~~ — **`--network-mode tap`, not `bridge`**: [§18.3](#183-two-corrections-to-14s-one-line-brief) | two engines, one L2, one `--lab` view — **and a boot-time number where the only variable is the VMM** | kill one engine's process and see what the other reports; kill the **fabric** under both. **Answer decision E** |
+| **5a** ✅ | **A second engine on one fabric — the controlled comparison** ([§18](#18-slice-5--the-brief)). **DONE 2026-08-05** — (a) the boot comparison, [Appendix J](#appendix-j--slice-5a-a-the-second-engine-the-number-nobody-had-and-the-number-everybody-had-was-wrong-2026-08-05); (b) two engines on one fabric, [Appendix K](#appendix-k--slice-5a-b-two-engines-on-one-fabric-and-decision-e-answered-from-what-the-lifecycles-actually-needed-2026-08-05) | QEMU `-M microvm` and Firecracker on the same `vmlinux` + the same `.ext4`, taps from **one** fabric verb, both VMMs at uid 1000 | 0.055 s vs 0.071 s once the i8042 probe is out of the way ([J.3](#j3-the-headline-that-was-false)); distinct DHCP leases from one dnsmasq; **each engine's guest resolved the other's BY NAME**; Calico unmoved throughout | **§18.4's seam table filled in — §8.3 shape (b)** ([K.2](#k2-decision-e-answered--184s-table-filled-in-from-what-the-two-lifecycles-needed)), and the `stop` seam turns out to be what costs 90% of the boot ([K.3](#k3-the-seams-are-not-independent-of-the-performance-story)) | QEMU **`-M microvm`** (Phase 2 already has virtio-mmio + qboot) consuming **the same `vmlinux` and the same `.ext4`** Firecracker boots, on a `fabric.sh`-made tap. ~~"Phase 2 already does bridge mode"~~ — **`--network-mode tap`, not `bridge`**: [§18.3](#183-two-corrections-to-14s-one-line-brief) | two engines, one L2, one `--lab` view — **and a boot-time number where the only variable is the VMM** | kill one engine's process and see what the other reports; kill the **fabric** under both. **Answer decision E** |
 | **5b** | **…and the fidelity case** | the §9.2 `edge`: cloud image + `cloud-localds` seed on `-M q35` | cloud-init runs; `edge` reaches `api1` by name | the same break pass against a guest that takes DHCP rather than `ip=` |
 | **6** | **The control plane** | whichever §8.3 shape slice 5 argued for; `fc.py` backend + topology slot; revisit decision G | all instances in one tree; `apply` a no-op on pass two, if the seam supports it | make the registry disagree with reality — MAAS's registry-layer fault, ported |
 | **7** | **Preserve** | `preserve.sh`, both tiers, `derivation.toml`; **`lab-vm.sh export`** (the §9.5 gap) | back up a lab, destroy it, restore it, prove it is the same | restore with a **changed** artifact hash and confirm it refuses **by name** |
@@ -3378,6 +3378,10 @@ slice-3 exercise remains un-re-run, exactly as
 [I.9](#i9-the-one-shot-became-a-test-and-the-tests-root-path-ran--pass) said. Slice 5a **(b)**
 is the author-run half that pays that debt.
 
+> ✅ **Paid, same day — [Appendix K](#appendix-k--slice-5a-b-two-engines-on-one-fabric-and-decision-e-answered-from-what-the-lifecycles-actually-needed-2026-08-05).** Both engines on `br-mc0`, distinct DHCP leases from
+> one dnsmasq, and each engine's guest resolving the other's **by name**. `retap` is still
+> uncalled ([K.5](#k5-what-slice-5a-leaves-closed-and-what-it-does-not)).
+
 ### J.8 Two defects in the harness, both found by its own honesty
 
 **The parser lied about the boot.** The first version read the timestamp with
@@ -3392,3 +3396,104 @@ repo fixes first, so `boot_once` now distinguishes the two **by name** and
 the working checkout. Scratch now stays in `mktemp -d`, and is **kept rather than deleted**
 when a run fails — a benchmark that discards the boot that did not work is one you cannot
 debug — with the path printed.
+
+## Appendix K — slice 5a (b), two engines on one fabric, and decision E answered from what the lifecycles actually needed, 2026-08-05
+
+The **author-run half**. Firecracker and QEMU `-M microvm` boot the same `vmlinux` and the
+same `.ext4` bytes on two `fabric.sh`-made taps on `br-mc0`, take DHCP leases from one
+dnsmasq, and **resolve each other by name across the engine boundary**. Then teardown, with
+the [§7.2](#72-teardown-is-a-test-not-a-cleanup) comparison.
+[`tests/test-two-engines-one-fabric.sh`](examples/micro-cloud/tests/test-two-engines-one-fabric.sh),
+`sudo bash tests/run-all.sh`, **3 passed · 0 skipped · 0 failed**.
+
+### K.1 The run
+
+```text
+  - before: calico=local 192.168.1.106 dev enx00051b8eb138 veths=2 ip_forward=1
+  - fabric: br-mc0 + two taps from ONE verb, for two different VMMs
+  - both guests reached userspace: api1 under Firecracker, api2 under QEMU -M microvm
+  - with both engines up: taps addressless, uid-1000 owned, Calico's binding unmoved
+  - DHCP: api1=10.71.0.101 (Firecracker) api2=10.71.0.102 (QEMU) — one dnsmasq, two engines
+  - name resolution: api1->api2 (Firecracker→QEMU) and api2->api1 (QEMU→Firecracker), by name
+  - teardown: ours all gone; calico binding, pod veth count and ip_forward unchanged
+PASS
+```
+
+**Both VMMs run as uid 1000**, dropped with `runuser` even though the test itself must be
+root for `CAP_NET_ADMIN`. That is not tidiness: a root VMM can open *any* tap, so the
+uid-1000 tap ownership [G.4](#g4-four-defects-three-of-them-inside-the-safety-checks)
+exists to protect would have gone untested and the run would have passed just as happily with
+it broken. Dropping privilege is what makes the `owner` assertion mean anything.
+
+### K.2 Decision E, answered — §18.4's table, filled in from what the two lifecycles needed
+
+| seam | Firecracker | QEMU `-M microvm` | verdict |
+|---|---|---|---|
+| **network attachment** | `host_dev_name: "mc-api1"` | `-netdev tap,ifname=mc-api2,script=no` | **COMMON, and proven.** A pre-made tap *by name*; neither engine creates or destroys it ([H.5](#h5-the-83-tripwire-held--and-51-needs-a-correction)); neither needs privilege. **One fabric verb served both.** |
+| **create** | a `config.json` file | argv | common *contract* (kernel · rootfs · tap · vcpu/mem), different artifact |
+| **create — `root=`** | **appends `root=/dev/vda rw` itself** and refuses to be told otherwise | appends nothing; must be supplied | **the one genuinely semantic difference.** One spec cannot serve both verbatim ([E.4](#e4-two-findings-the-plan-did-not-anticipate)) |
+| **start** | spawn, watch a serial stream | spawn, watch a serial stream | common |
+| **stop** | Ctrl-Alt-Del over the emulated **i8042**, else SIGKILL by pid | ACPI via monitor, else SIGKILL by pid | same intent, different channel — **and the channel now has a measured price**, [K.3](#k3-the-seams-are-not-independent-of-the-performance-story) |
+| **console** | one client per stream | one client per stream | common, and the same footgun |
+| **`exec`** | does not exist | does not exist | the intersection's edge |
+
+**§8.3 shape (b) is right.** The intersection is `create`/`start`/`stop`/`status`/`destroy`,
+and every difference above is in the **channel or the artifact** rather than in the meaning —
+with exactly one exception, `root=`, which is a difference about *who owns a field* and not
+about what "create" means. The slice-4 tripwire stays armed and was not tripped: no verb was
+added to either tool for the other engine's benefit.
+
+### K.3 The seams are not independent of the performance story
+
+[Appendix J](#appendix-j--slice-5a-a-the-second-engine-the-number-nobody-had-and-the-number-everybody-had-was-wrong-2026-08-05)
+found that 0.512 s of Firecracker's 0.567 s boot is the kernel probing an i8042 that never
+answers. **The i8042 is there because of the `stop` seam** — it is Firecracker's
+`SendCtrlAltDel` path. So the single row of the table marked *"same intent, different
+channel"* is also the row that costs 90% of the boot time. A design conversation about
+unifying `stop` is therefore also a conversation about boot latency, which neither slice 4
+nor any amount of reading the two APIs would have revealed.
+
+This run re-derived J's finding **from a different direction**, with network devices attached,
+measured by the guests themselves rather than by the harness:
+
+```text
+SLICE3-BEGIN name=api2 peer=api1 uptime=0.04s      ← QEMU -M microvm
+SLICE3-BEGIN name=api1 peer=api2 uptime=0.55s      ← Firecracker, 0.51 s behind
+```
+
+J measured no-network boots. Two independent derivations, one from the host's clock and one
+from the guests', agreeing to the centisecond.
+
+### K.4 Three defects, all in the test, all found by running it
+
+The lab was right every time; the harness was wrong three times. Worth recording because
+**each one would have produced a passing or plausible-looking result** in a slightly different
+world:
+
+| # | defect | why it mattered |
+|---|---|---|
+| 1 | `$HOME` under `sudo` is `/root`, so the workdir default pointed at artifacts that were never there | it **SKIPped honestly** — and that is the only reason it was found. A pass-shaped verdict here would have "verified" two engines without booting either |
+| 2 | fixed in the two tests, **missed in `bench-boot.sh`** | two of three call sites is not a fix; the blast-radius rule (`CLAUDE.md`) exists for exactly this |
+| 3 | the DHCP assertion **sampled** the console instead of waiting | it failed with `api1 took no DHCP lease`, which was **false** — api1 was still inside `udhcpc`. A stopwatch race against a 0.5 s device probe, which will always fail on whichever engine is behind |
+
+Defect 3 is the interesting one: **it is J's finding turning up as a bug in the test written to
+confirm it.** The engines do not arrive together and never will, so any instant-sampled
+assertion about two VMMs is a race by construction. `wait_for` a state with a timeout that
+reports honestly; never `grep` at an arbitrary instant.
+
+Defect 2 also cost the *"unprivileged half"* its meaning for one run: `test-bench-boot.sh` was
+invoking the benchmark as root. It now drops to the checkout's owner, or skips and says why —
+measuring the unprivileged claim under privilege would have been the wrong number reported
+under the right name.
+
+### K.5 What slice 5a leaves closed, and what it does not
+
+**Closed:** both halves of 5a; §18.4's seam table; the network-attachment row's evidence;
+`retap`'s sibling verbs exercised under two engines; [J.7](#j7-not-run--the-fabric-half-is-still-owed)'s
+debt paid; and the slice-3 exercise re-run — with a second engine attached, as
+[I.7](#i7-the-recovered-fabric-re-verified-against-the-moved-binding--pass) said it would be.
+
+**Still open:** `retap` itself is *still* never called (it needs a deliberately root-owned tap
+to recover from); [G.9](#g9-not-run--recorded-as-unknown-not-as-pass)'s two break-pass
+scenarios still want a host without a live cluster; and **slice 5b** — the fidelity case, a
+cloud image on `-M q35` with cloud-init — has not started.

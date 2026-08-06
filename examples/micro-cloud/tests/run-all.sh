@@ -8,7 +8,7 @@
 set -uo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")" || exit 2
 
-tests=(test-bench-boot.sh test-fabric-round-trip.sh)
+tests=(test-bench-boot.sh test-fabric-round-trip.sh test-two-engines-one-fabric.sh)
 
 pass=0 skip=0 failn=0 rc=0
 for t in "${tests[@]}"; do
