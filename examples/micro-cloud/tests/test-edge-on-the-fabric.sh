@@ -44,6 +44,9 @@ VM_TOOL="$REPO_DIR/phase2-qemu-vm/lab-vm.sh"
 SPEC="$LAB_DIR/edge.toml"
 EDGE_TIMEOUT="${MC_EDGE_TIMEOUT:-240}"   # a cloud image + cloud-init, not a microVM
 FC_BIN="${MC_FIRECRACKER:-$WORKDIR/firecracker}"
+# Defined up here, not beside the launch, because the EXIT trap needs it too — the trap runs
+# on paths that never reach the launch.
+FC_PATH="$(dirname -- "$FC_BIN"):$PATH"
 
 [[ ${EUID:-$(id -u)} -eq 0 ]] || skip "needs root: the fabric creates a bridge, taps and an nft table (CAP_NET_ADMIN)"
 need ip nft dnsmasq runuser socat jq
@@ -56,6 +59,7 @@ need ip nft dnsmasq runuser socat jq
 command -v qemu-system-x86_64 >/dev/null 2>&1 || skip "no qemu-system-x86_64"
 [[ -r /dev/kvm && -w /dev/kvm ]] || skip "/dev/kvm not read-write — a cloud image under TCG would take many minutes"
 
+
 [[ -e /run/mklab-mc/preflight ]] \
     && skip "a fabric is already up — refusing to tear down a lab this test did not create"
 ip link show br-mc0 >/dev/null 2>&1 \
@@ -67,10 +71,17 @@ OWNER="$(stat -c %U "$REPO_DIR")"
 OWNER_UID="$(id -u "$OWNER")" || skip "cannot resolve uid for '$OWNER'"
 export MC_OWNER="$OWNER"
 
+# The same refusal the fabric guards make, for the OTHER kind of leftover. `lab-fc.sh
+# create` does not overwrite, so a stale instance stops this test dead — and silently
+# destroying one would be adopting state we did not create. Name the cleanup instead.
+if runuser -u "$OWNER" -- env "PATH=$FC_PATH" "$FC_TOOL" inspect api1 >/dev/null 2>&1; then
+    skip "a firecracker instance 'api1' already exists — refusing to destroy one this test did not create. Clear it with:  PATH=$(dirname -- "$FC_BIN"):\$PATH $FC_TOOL destroy api1 --force"
+fi
+
 WORK="$(mktemp -d)" || fail "could not create a scratch dir"
 chmod 0755 "$WORK"
 LOG="$WORK/fabric.log"
-FABRIC_UP=0 FC_PID="" CAT_PID="" EDGE_CREATED=0 KEEP=0
+FABRIC_UP=0 FC_PID="" CAT_PID="" EDGE_CREATED=0 API1_CREATED=0 KEEP=0
 
 _on_exit() {
     local rc=$?
@@ -78,12 +89,30 @@ _on_exit() {
     # they all carry the same workdir path — and once killed a live QEMU and the agent's
     # own shell (exit 144).
     [[ -n "$CAT_PID" ]] && kill "$CAT_PID" 2>/dev/null
+    # KILLING THE WRAPPER IS NOT KILLING THE VM. $FC_PID is the `lab-fc.sh start` process;
+    # firecracker outlives it. The first version of this trap killed only the wrapper and
+    # left a live microVM behind — measured: PID 3292583 still running hours later, its tap
+    # torn down under it, holding a 128 MiB rootfs copy. Use the tool's own lifecycle verb,
+    # which resolves the PID from its own record (repo rule: prefer the verb over a signal;
+    # and never `pkill -f`, whose pattern would match every process carrying this workdir
+    # path, the QEMU guest included).
+    if (( API1_CREATED )); then
+        runuser -u "$OWNER" -- env "PATH=$FC_PATH" "$FC_TOOL" stop api1 --force >/dev/null 2>&1
+    fi
     [[ -n "$FC_PID"  ]] && { kill "$FC_PID" 2>/dev/null; wait "$FC_PID" 2>/dev/null; }
     # The VM gets its own lifecycle verb, not a signal — it has a monitor socket, a pidfile
     # and state the tool owns (repo rule: prefer the tool's verb over a raw kill).
     if (( EDGE_CREATED )); then
         runuser -u "$OWNER" -- "$VM_TOOL" stop    edge --force >/dev/null 2>&1
         runuser -u "$OWNER" -- "$VM_TOOL" destroy edge --force >/dev/null 2>&1
+    fi
+    # And api1 — which the first version of this trap did NOT do, destroying only the edge
+    # and the fabric. `lab-fc.sh create` refuses to overwrite, so one failed run left an
+    # instance behind and the NEXT run died on "instance 'api1' already exists": a failure
+    # whose real cause was two runs earlier and in a different verb. Everything a test
+    # creates gets reaped from the trap, or the trap is only a partial one.
+    if (( API1_CREATED )); then
+        runuser -u "$OWNER" -- env "PATH=$FC_PATH" "$FC_TOOL" destroy api1 --force >/dev/null 2>&1
     fi
     if (( FABRIC_UP )); then bash "$FABRIC" down >>"$LOG" 2>&1 || true; fi
     if (( KEEP )); then
@@ -147,11 +176,11 @@ note "fabric reserved: api1=$RES_API1  edge=$RES_EDGE  (both from ONE verb)"
 # dir, never on PATH, so the tool is run with that dir PREPENDED rather than worked around.
 # (First run of this harness failed exactly here: "FAIL firecracker not on PATH" — the tool
 # refusing correctly, and the harness never having told it where to look.)
-FC_PATH="$(dirname -- "$FC_BIN"):$PATH"
 runuser -u "$OWNER" -- env "PATH=$FC_PATH" "$FC_TOOL" create --name api1 \
         --kernel "$KERNEL" --rootfs "$ROOTFS" --tap mc-api1 --lab micro-cloud \
         >"$WORK/fc-create.log" 2>&1 \
     || { KEEP=1; cat "$WORK/fc-create.log" >&2; fail "lab-fc.sh create failed — see above"; }
+API1_CREATED=1
 runuser -u "$OWNER" -- env "PATH=$FC_PATH" "$FC_TOOL" start api1 >"$WORK/fc-start.log" 2>&1 &
 FC_PID=$!
 note "api1: created and started through lab-fc.sh, not a hand-written config"
@@ -223,8 +252,10 @@ note "edge resolved api1 -> $RES_API1 and reached it BY NAME, across the fidelit
 [[ -n "$CAT_PID" ]] && { kill "$CAT_PID" 2>/dev/null; CAT_PID=""; }
 runuser -u "$OWNER" -- "$VM_TOOL" stop edge --force >/dev/null 2>&1
 runuser -u "$OWNER" -- "$VM_TOOL" destroy edge --force >/dev/null 2>&1; EDGE_CREATED=0
+runuser -u "$OWNER" -- env "PATH=$FC_PATH" "$FC_TOOL" stop api1 --force >/dev/null 2>&1
 [[ -n "$FC_PID" ]] && { kill "$FC_PID" 2>/dev/null; wait "$FC_PID" 2>/dev/null; FC_PID=""; }
 runuser -u "$OWNER" -- env "PATH=$FC_PATH" "$FC_TOOL" destroy api1 --force >/dev/null 2>&1
+API1_CREATED=0
 
 fab down || { KEEP=1; cat "$LOG" >&2; fail "fabric down failed: $(tail -1 "$LOG")"; }
 FABRIC_UP=0
