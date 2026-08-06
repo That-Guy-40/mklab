@@ -41,7 +41,7 @@ if command -v incus >/dev/null 2>&1 || command -v lxc >/dev/null 2>&1; then
     if "$LXC_CMD" info >/dev/null 2>&1; then
         cfg="$(mktemp --suffix=.toml)"
         lab="efd$$"
-        trap 'rm -f "$cfg"; cleanup_lab "$lab"' EXIT
+        on_exit 'rm -f "$cfg"; cleanup_lab "$lab"'
         cat > "$cfg" <<EOF
 [lab]
 name = "${lab}"

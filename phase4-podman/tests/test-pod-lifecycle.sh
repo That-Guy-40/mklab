@@ -11,7 +11,7 @@ require_oci_runtime          # environment vs lab: skip, don't fail, on a broken
 
 LAB="pod-lifecycle-$$"
 CONFIG="$(mktemp --suffix=.toml)"
-trap 'rm -f "$CONFIG"; cleanup_lab "$LAB"' EXIT
+on_exit 'rm -f "$CONFIG"; cleanup_lab "$LAB"'
 
 cat > "$CONFIG" <<EOF
 [lab]

@@ -29,17 +29,7 @@
 require_cmd jq python3
 
 tmp="$(mktemp -d)"
-_verdict_printed=0
-fail() { _verdict_printed=1; printf 'FAIL: %s\n' "$*" >&2; exit 1; }
-skip() { _verdict_printed=1; printf 'SKIP: %s\n' "$*" >&2; exit 77; }
-_on_exit() {
-    local rc=$?
-    rm -rf "$tmp"
-    if (( rc != 0 && rc != 77 )) && (( _verdict_printed == 0 )); then
-        printf 'FAIL: test exited early (rc=%d) — no verdict was printed by the test itself\n' "$rc" >&2
-    fi
-}
-trap _on_exit EXIT
+on_exit 'rm -rf "$tmp"'
 
 # ── lift the shipped query out of lab-podman.sh ────────────────────────────
 python3 - "$LAB_PODMAN" "$tmp/pod.jq" <<'PY'

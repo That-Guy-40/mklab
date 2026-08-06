@@ -25,7 +25,7 @@ esac
 
 target="$(mktest_target dnf-rocky9)"
 name="rocky9-$$"
-trap 'cleanup_target "$target" "$name"' EXIT
+on_exit 'cleanup_target "$target" "$name"'
 
 note "dnf install (this takes a few minutes)"
 "$LAB_CHROOT" create \

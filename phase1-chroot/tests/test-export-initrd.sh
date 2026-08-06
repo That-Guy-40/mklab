@@ -11,7 +11,7 @@ require_cmd cpio gzip find
 
 WORK="$(mktemp -d)"
 # shellcheck disable=SC2064
-trap "rm -rf '$WORK'" EXIT
+on_exit "rm -rf '$WORK'"
 
 # ─── helper: build a fresh fakeroot ─────────────────────────────────────────
 mk_fakeroot() {

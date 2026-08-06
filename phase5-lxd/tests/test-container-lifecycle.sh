@@ -9,7 +9,7 @@ require_cmd jq
 
 lab="clc$$"
 cfg="$(mktemp --suffix=.toml)"
-trap 'rm -f "$cfg"; cleanup_lab "$lab"' EXIT
+on_exit 'rm -f "$cfg"; cleanup_lab "$lab"'
 
 cat > "$cfg" <<EOF
 [lab]

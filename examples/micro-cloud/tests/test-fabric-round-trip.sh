@@ -47,18 +47,14 @@ export MC_OWNER="$OWNER"
 
 LOG="$(mktemp)"
 FABRIC_UP=0
-_on_exit() {
-    local rc=$?
+_cleanup() {
     # Teardown ALWAYS, and before the verdict net, so a failed assertion cannot leak a
     # bridge onto a live host. Best-effort: its own assertions already ran if we got here
     # through the happy path.
     if (( FABRIC_UP )); then bash "$FABRIC" down >>"$LOG" 2>&1 || true; fi
     rm -f "$LOG"
-    if (( rc != 0 && rc != 77 )) && (( _VERDICT == 0 )); then
-        printf 'FAIL: test exited early (rc=%d) — no verdict was printed by the test itself\n' "$rc" >&2
-    fi
 }
-trap _on_exit EXIT
+on_exit '_cleanup'
 
 # Run a fabric verb without letting a pipe decide the exit status (house rule).
 fab() { local v="$1"; shift; bash "$FABRIC" "$v" "$@" >>"$LOG" 2>&1; }

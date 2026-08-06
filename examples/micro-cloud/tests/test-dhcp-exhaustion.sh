@@ -124,22 +124,20 @@ reap_clients() {
     done < <(ip netns list 2>/dev/null | grep -oE '^mcns[0-9]+' | sort -u)
 }
 
-_on_exit() {
-    local rc=$?
+_cleanup() {
     reap_clients
     if (( FABRIC_UP )); then bash "$FABRIC" down >>"$LOG" 2>&1 || true; fi
     # KEEP the scratch dir on ANY failure, not only a verdict-less one. The first run
     # printed `FAIL: ... see /tmp/tmp.XXXX/log` and then deleted that very directory on
     # the way out — a failure message naming a file the trap had just removed. The reader
     # is sent to diagnose a run whose evidence the harness destroyed.
-    if (( rc != 0 && rc != 77 )); then
-        (( _VERDICT == 0 )) && printf 'FAIL: test exited early (rc=%d) — no verdict was printed by the test itself\n' "$rc" >&2
+    if (( _EXIT_RC != 0 && _EXIT_RC != 77 )); then
         printf '  (evidence kept: %s)\n' "$LOG" >&2
         return
     fi
     rm -rf "$WORK"
 }
-trap _on_exit EXIT
+on_exit '_cleanup'
 
 fab() { local v="$1"; shift; bash "$FABRIC" "$v" "$@" >>"$LOG" 2>&1; }
 

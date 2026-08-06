@@ -17,17 +17,15 @@ require_root                      # bind mount needs CAP_SYS_ADMIN
 require_cmd mountpoint realpath
 
 work="$(mktemp -d)"
-# EXIT trap: unmount any stragglers, remove the workdir, and — the readability
-# safety net — always print a clear FAIL if the test exits early (an uncaught
-# `die`/`set -e`) instead of leaving the terminal silent.
-_finish() {
-    local rc=$?
+# Unmount any stragglers before removing the workdir. lib.sh's net prints the FAIL
+# verdict if this test exits early (an uncaught `die`/`set -e`); it must not be
+# re-implemented here, because a second `trap … EXIT` would REPLACE it.
+_unmount_stragglers() {
     awk -v t="$work" 'index($2, t)==1 {print $2}' /proc/mounts 2>/dev/null \
         | sort -r | while IFS= read -r m; do umount -l "$m" 2>/dev/null || true; done
     rm -rf -- "$work"
-    (( rc == 0 || rc == 77 )) || printf 'FAIL: test exited early (rc=%s) — see messages above\n' "$rc" >&2
 }
-trap _finish EXIT
+on_exit '_unmount_stragglers'
 
 target="$work/chroot"
 src="$work/host-dev-standin"

@@ -31,9 +31,18 @@ require_cmd() {
 # an injected fault produced a python traceback, rc=1, and no FAIL: line — the safety net
 # was present and inert. Register scratch dirs instead:
 #     tmp="$(mktemp -d)"; TMPDIRS+=("$tmp")
+# TMPDIRS covers scratch directories; on_exit covers any other teardown, which is what
+# a test would otherwise reach for a second `trap … EXIT` to do.
 TMPDIRS=()
+_CLEANUPS=()
+on_exit() { _CLEANUPS+=("$*"); }
 _on_exit() {
-    local rc=$?
+    local rc=$? i
+    # Registered cleanup can READ the exit status as $_EXIT_RC. Without it a teardown
+    # that needs to know whether the run failed — keep the evidence, skip the tidy-up —
+    # has to write its own `trap … EXIT`, which is the defect this block exists to stop.
+    _EXIT_RC=$rc
+    for (( i=${#_CLEANUPS[@]}-1; i>=0; i-- )); do eval "${_CLEANUPS[i]}" || true; done
     local d; for d in ${TMPDIRS+"${TMPDIRS[@]}"}; do [[ -n "$d" ]] && rm -rf "$d"; done
     if (( rc != 0 && rc != 77 )) && (( _VERDICT == 0 )); then
         printf 'FAIL: test exited early (rc=%d) — no verdict was printed by the test itself\n' "$rc" >&2

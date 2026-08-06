@@ -36,7 +36,7 @@ cleanup_project() {
         printf '  - WARNING: project %s survived teardown (sweep with tools/lab-sweep.sh)\n' "$proj" >&2
     fi
 }
-trap 'rm -f "$cfg"; cleanup_project' EXIT
+on_exit 'rm -f "$cfg"; cleanup_project'
 
 cat > "$cfg" <<EOF
 [lab]

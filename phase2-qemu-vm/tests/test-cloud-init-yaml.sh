@@ -30,17 +30,7 @@ require_cmd jq
 python3 -c 'import yaml' 2>/dev/null || skip "python3 yaml module not available — cannot parse the generated cloud-config"
 
 tmp="$(mktemp -d)"
-_verdict_printed=0
-fail() { _verdict_printed=1; printf 'FAIL: %s\n' "$*" >&2; exit 1; }
-skip() { _verdict_printed=1; printf 'SKIP: %s\n' "$*" >&2; exit 77; }
-_on_exit() {
-    local rc=$?
-    rm -rf "$tmp"
-    if (( rc != 0 && rc != 77 )) && (( _verdict_printed == 0 )); then
-        printf 'FAIL: test exited early (rc=%d) — no verdict was printed by the test itself\n' "$rc" >&2
-    fi
-}
-trap _on_exit EXIT
+on_exit 'rm -rf "$tmp"'
 
 export LAB_STATE_DIR="$tmp/state" LAB_CACHE_DIR="$tmp/cache"
 

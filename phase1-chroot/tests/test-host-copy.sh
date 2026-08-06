@@ -16,7 +16,7 @@ done
 
 target="$(mktest_target host-copy)"
 name="hc-test-$$"
-trap 'cleanup_target "$target" "$name"' EXIT
+on_exit 'cleanup_target "$target" "$name"'
 
 note "creating host-copy chroot at $target with $probe_bin"
 "$LAB_CHROOT" create \

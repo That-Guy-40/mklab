@@ -61,7 +61,7 @@ HOST_PORT=$(( 40000 + ($$ % 20000) ))
 # A trap installed before `docker run` covers the case where `run` fails
 # partway through (image pull error, name collision, etc).
 # shellcheck disable=SC2064
-trap "docker stop '$CNAME' >/dev/null 2>&1 || true; docker rm -f '$CNAME' >/dev/null 2>&1 || true" EXIT
+on_exit "docker stop '$CNAME' >/dev/null 2>&1 || true; docker rm -f '$CNAME' >/dev/null 2>&1 || true"
 
 note "launching ephemeral container: $CNAME (host port $HOST_PORT → 80)"
 # Use busybox httpd (ships in the base image, ~5MB, no extra apt/apk roundtrip).

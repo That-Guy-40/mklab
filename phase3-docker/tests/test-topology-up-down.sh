@@ -47,7 +47,7 @@ fi
 # being present at exactly the right relative path.
 cfg="$(mktemp --suffix=.toml)"
 lab="ttd$$"
-trap 'rm -f "$cfg"; cleanup_lab "$lab"' EXIT
+on_exit 'rm -f "$cfg"; cleanup_lab "$lab"'
 
 cat > "$cfg" <<EOF
 [lab]

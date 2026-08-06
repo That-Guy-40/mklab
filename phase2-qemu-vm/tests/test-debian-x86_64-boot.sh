@@ -29,7 +29,7 @@ cleanup() {
     cleanup_vm "$name"
     rm -rf "$keydir"
 }
-trap cleanup EXIT
+on_exit cleanup
 
 note "generating throwaway ed25519 keypair → $key"
 ssh-keygen -t ed25519 -N '' -C "lab-vm-test-$$" -f "$key" >/dev/null

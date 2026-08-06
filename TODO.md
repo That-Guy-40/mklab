@@ -604,47 +604,39 @@ Needs ~4 GiB RAM and ~10 GiB disk; **nested KVM is not required**.
 
 ---
 
-## 10. Extend the EXIT-trap safety net to phases 1–5 and micro-linux
+## 10. ~~Extend the EXIT-trap safety net to phases 1–5 and micro-linux~~ — **DONE 2026-08-06**
 
-`examples/metal-as-a-service/`, `examples/bmc-toolkit/` and
-`examples/zfsbootmenu-boot-environments/` were fixed on 2026-08-06 (see
-[`examples/metal-as-a-service/MANUAL_TESTING.md`](examples/metal-as-a-service/MANUAL_TESTING.md)
-§18): `lib.sh` owns the one EXIT trap, tests register teardown with `on_exit`, a
-`_VERDICT` flag stops the net firing on top of a verdict, and
-`tests/test-harness-net.sh` proves the net works *and* fails if any test installs a
-trap of its own.
+Closed the same day it was filed. The scope grew once the shared checker existed: every
+`tests/` directory in the repo now has the same shape, so the rule needs no exemption
+list.
 
-The same sweep measured the rest of the repo. These `lib.sh` files provide **no net at
-all**, so a test that dies without calling `fail` — `set -e` tripping, a `die` inside
-the phase driver leaking past an assertion — ends with a bare rc and a blank terminal.
-That is the incident [`REVIEW-phases-1-5.md`](REVIEW-phases-1-5.md) already records
-happening twice:
+| tests dir | before | now |
+|---|---|---|
+| `phase1-chroot/` | 17 of 21 tests with **no net** | lib owns the trap; 22 traps → `on_exit` |
+| `phase2-qemu-vm/` | 13 of 17 with no net | 7 traps → `on_exit` |
+| `phase3-docker/` | 15 of 16 with no net | 8 traps → `on_exit` |
+| `phase4-podman/` | 11 of 13 with no net | 6 traps → `on_exit` |
+| `phase5-lxd/` | 10 of 10 with no net | 7 traps → `on_exit` |
+| `micro-linux/` | 10 of 10 with no net | 1 trap → `on_exit` |
+| `phase7-firecracker/` | net fine, no `on_exit` | gained the registry |
+| `examples/micro-cloud/` | net per test (6 copies) | lib owns it; 6 traps → `on_exit` |
+| `examples/bmc-toolkit/`, `examples/zfsbootmenu-boot-environments/`, `examples/metal-as-a-service/` | fixed earlier the same day | now on the shared checker too |
 
-| tests dir | tests with **no** early-exit net |
-|---|---|
-| `phase1-chroot/tests/` | 17 of 21 |
-| `phase2-qemu-vm/tests/` | 13 of 17 |
-| `phase3-docker/tests/` | 15 of 16 |
-| `phase4-podman/tests/` | 11 of 13 |
-| `phase5-lxd/tests/` | 10 of 10 |
-| `micro-linux/tests/` | 10 of 10 |
+- [x] `_VERDICT` + `on_exit` + `_on_exit` in every `lib.sh`, with the trap installed there.
+- [x] Every test that installed its own EXIT trap converted (~50 sites).
+- [x] **One** implementation of the check — [`tools/check-harness-net.sh`](tools/check-harness-net.sh)
+      — with a five-line `tests/test-harness-net.sh` per directory so it runs inside that
+      suite's `run-all.sh`, and therefore CI. The bespoke copy written for
+      metal-as-a-service hours earlier was replaced by a wrapper.
+- [x] All eleven suites run, and the six converted ones diffed **per-test verdict against
+      a baseline captured before the change**: all 87 identical. A green summary would
+      not have shown a test flipping PASS→SKIP.
 
-(`examples/micro-cloud/tests/` is already clean by a different route — every test
-installs the `_VERDICT`-guarded net itself. Either design is fine; what is not fine is
-a net that is present and inert.)
-
-- [ ] Give each of those six `lib.sh` files the `_VERDICT` + `on_exit` + `_on_exit`
-      shape, and install the trap there.
-- [ ] Convert the tests that install their own EXIT trap to `on_exit`, so lib.sh's net
-      is not replaced.
-- [ ] Add a `test-harness-net.sh` per phase (or one shared runner check) so the rule is
-      enforced rather than advised.
-- [ ] Run all six suites; several are root/daemon-gated and will SKIP, so **check that
-      the skips are the expected ones** rather than reading a green summary.
-
-Not urgent — it changes nothing about whether the code under test is correct — but it
-is the difference between a failing test that names its defect and one that prints
-nothing at all. Do it as its own PR: six suites is six verification runs.
+**What the work added beyond the brief:** registered cleanup can read the exit status as
+`$_EXIT_RC`. Without it, a teardown that branches on failure — micro-cloud's
+DHCP-exhaustion test keeps its log directory when the run fails — has no choice but to
+write its own `trap … EXIT`, which is the very defect being removed. A rule people cannot
+follow is a rule that gets broken.
 
 ---
 

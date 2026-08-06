@@ -31,13 +31,6 @@ FC_TOOL="$REPO_DIR/phase7-firecracker/lab-fc.sh"
 [[ -x "$FC_TOOL" ]] || skip "lab-fc.sh not executable at $FC_TOOL"
 need md5sum
 
-_on_exit() {
-    local rc=$?
-    if (( rc != 0 && rc != 77 )) && (( _VERDICT == 0 )); then
-        printf 'FAIL: test exited early (rc=%d) — no verdict was printed by the test itself\n' "$rc" >&2
-    fi
-}
-trap _on_exit EXIT
 
 # ── 1. the two tools agree, across a spread of names ────────────────────────
 NAMES=(api1 api2 edge db metrics a z9 web-1)

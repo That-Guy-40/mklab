@@ -20,7 +20,7 @@ require_cmd jq
 
 WORK="$(mktemp -d)"
 # shellcheck disable=SC2064
-trap "rm -rf '$WORK'" EXIT
+on_exit "rm -rf '$WORK'"
 
 # Pin the script's state dir directly via LAB_STATE_DIR — matches the
 # pattern used by the Phase 4/5 test suites.

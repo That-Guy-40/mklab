@@ -9,7 +9,7 @@ require_root
 require_cmd jq
 
 target="$(mktest_target rocky-armv7l)"
-trap 'cleanup_target "$target" ""' EXIT
+on_exit 'cleanup_target "$target" ""'
 
 note "expecting failure with helpful error"
 if "$LAB_CHROOT" create \

@@ -38,22 +38,7 @@
 require_cmd sed jq
 
 tmp="$(mktemp -d)"
-_verdict_printed=0
-# Wrap lib.sh's verdict helpers so the EXIT net below can tell "this test printed a
-# verdict" from "this test died somewhere without one".
-_lib_fail=$(declare -f fail); _lib_skip=$(declare -f skip); _lib_pass=$(declare -f pass)
-eval "_orig_fail() ${_lib_fail#*()}"; eval "_orig_skip() ${_lib_skip#*()}"; eval "_orig_pass() ${_lib_pass#*()}"
-fail() { _verdict_printed=1; _orig_fail "$@"; }
-skip() { _verdict_printed=1; _orig_skip "$@"; }
-pass() { _verdict_printed=1; _orig_pass "$@"; }
-_on_exit() {
-    local rc=$?
-    rm -rf "$tmp"
-    if (( rc != 0 && rc != 77 )) && (( _verdict_printed == 0 )); then
-        printf 'FAIL: test exited early (rc=%d) — no verdict was printed by the test itself\n' "$rc" >&2
-    fi
-}
-trap _on_exit EXIT
+on_exit 'rm -rf "$tmp"'
 
 # ── the instrumented copy: same code, gates that announce themselves ────────
 TW="$tmp/lab-podman-tripwire.sh"

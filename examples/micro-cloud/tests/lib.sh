@@ -21,6 +21,26 @@ note() { printf '  - %s\n' "$*" >&2; }
 have() { command -v "$1" >/dev/null 2>&1; }
 need() { local c; for c in "$@"; do have "$c" || skip "missing required command: $c"; done; }
 
+# ── the ONE EXIT trap, and the only place cleanup belongs ────────────────────────────
+# Each test here used to define this block itself. Bash keeps ONE EXIT trap per shell,
+# so six copies were six chances to drop the net while looking like it was there — the
+# shape that left 23 of metal-as-a-service's tests with none (2026-08-06). Register
+# cleanup instead:  on_exit 'rm -rf -- "$WORK"'   (evaluated at exit)
+_CLEANUPS=()
+on_exit() { _CLEANUPS+=("$*"); }
+_on_exit() {
+    local rc=$? i
+    # Registered cleanup can READ the exit status as $_EXIT_RC. Without it a teardown
+    # that needs to know whether the run failed — keep the evidence, skip the tidy-up —
+    # has to write its own `trap … EXIT`, which is the defect this block exists to stop.
+    _EXIT_RC=$rc
+    for (( i=${#_CLEANUPS[@]}-1; i>=0; i-- )); do eval "${_CLEANUPS[i]}" || true; done
+    if (( rc != 0 && rc != 77 )) && (( _VERDICT == 0 )); then
+        printf 'FAIL: test exited early (rc=%d) — no verdict was printed by the test itself\n' "$rc" >&2
+    fi
+}
+trap _on_exit EXIT
+
 # ── the two observations every micro-cloud test must be able to make ────────
 # DERIVED, never named. This host's CNI binding has moved twice (plan D.1, Appendix I);
 # a test that hard-codes an interface reports a migration the lab did not cause.

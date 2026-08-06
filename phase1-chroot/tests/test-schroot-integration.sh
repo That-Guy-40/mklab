@@ -9,7 +9,7 @@ require_cmd jq schroot ldd
 
 target="$(mktest_target schroot)"
 name="sc-test-$$"
-trap 'cleanup_target "$target" "$name"' EXIT
+on_exit 'cleanup_target "$target" "$name"'
 
 probe="/bin/busybox"; [[ -x "$probe" ]] || probe="/bin/ls"
 

@@ -21,7 +21,7 @@ cleanup() {
     docker rmi "$tag" >/dev/null 2>&1 || true
     rm -rf "$chroot_dir"
 }
-trap cleanup EXIT
+on_exit cleanup
 
 note "building minimal chroot at $chroot_dir"
 # Resolve the binary + libs via ldd; mirror the Phase-1 host-copy logic.

@@ -13,7 +13,7 @@ require_cmd jq debootstrap
 
 target="$(mktest_target debootstrap-amd64)"
 name="ds-amd64-$$"
-trap 'cleanup_target "$target" "$name"' EXIT
+on_exit 'cleanup_target "$target" "$name"'
 
 note "running debootstrap (this takes a minute)"
 "$LAB_CHROOT" create \

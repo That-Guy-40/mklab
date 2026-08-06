@@ -1924,9 +1924,9 @@ already spoke — the `_VERDICT` flag, matching `phase7-firecracker` and `micro-
 
 ### 18.2 It is now a tested thing rather than a present thing
 
-[`tests/test-harness-net.sh`](tests/test-harness-net.sh) — five sections, and §1 makes
-the structural rule enforceable instead of advisory: **no test may install its own EXIT
-trap.** All four defects were re-injected and watched to bite:
+[`tests/test-harness-net.sh`](tests/test-harness-net.sh) — and §1 makes the structural
+rule enforceable instead of advisory: **no test may install its own EXIT trap.** All
+four defects were re-injected and watched to bite:
 
 | injected | what fired |
 |---|---|
@@ -1937,6 +1937,22 @@ trap.** All four defects were re-injected and watched to bite:
 
 The second control is self-demonstrating: with `_VERDICT` broken, the meta-test's own
 failure also printed twice.
+
+> **The same day, this file became a five-line wrapper.** Phases 1–5 and micro-linux
+> turned out to need exactly these checks (76 more tests with no net —
+> [`TODO.md`](../../TODO.md) #10), and a copy per directory is one more place for the
+> check to drift. The implementation moved to
+> [`tools/check-harness-net.sh`](../../tools/check-harness-net.sh); every `tests/`
+> directory in the repo now `exec`s it with its own path, which keeps the check inside
+> that suite's `run-all.sh` and therefore inside CI. It provides its own verdict helpers
+> rather than sourcing the lib it is testing — a subject that supplies its own harness
+> can report whatever it likes.
+>
+> It also gained a sixth section there. Registered cleanup can read the exit status as
+> **`$_EXIT_RC`**, because without it a teardown that branches on failure — micro-cloud's
+> DHCP-exhaustion test keeps its log directory when the run fails — has no choice but to
+> install its own `trap … EXIT`, which is the defect this whole shape removes. **A rule
+> people cannot follow is a rule that gets broken.**
 
 ### 18.3 And the count nobody could maintain
 

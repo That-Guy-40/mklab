@@ -63,6 +63,21 @@ jobs:
             examples/almalinux-packer-images/fetch-cloud-images.sh \
             examples/almalinux-packer-images/tests/test-offline-archive.sh
 
+      - name: the EXIT-trap safety net, in every tests/ directory
+        # Each phase's run-all.sh already runs its own tests/test-harness-net.sh, but the
+        # example labs' suites are not in CI at all -- so without this loop the rule would
+        # be enforced only where a suite happens to run. Rootless, seconds, no daemons.
+        run: |
+          rc=0
+          for lib in $(git ls-files '*/tests/lib.sh'); do
+            d="$(dirname "$lib")"
+            echo "::group::$d"
+            bash tools/check-harness-net.sh "$d"; r=$?
+            [ "$r" -eq 0 ] || [ "$r" -eq 77 ] || rc=1
+            echo "::endgroup::"
+          done
+          exit $rc
+
       - name: no cached host facts in the micro-cloud instruments
         # Pure text analysis, no host state — safe on a runner that has none of these
         # interfaces. Guards the defect class that made one instrument print a fact from

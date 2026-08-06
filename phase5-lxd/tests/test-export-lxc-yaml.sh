@@ -12,7 +12,7 @@ require_cmd jq
 lab="xp$$"
 cfg="$(mktemp --suffix=.toml)"
 out="$(mktemp --suffix=.yaml)"
-trap 'rm -f "$cfg" "$out"; cleanup_lab "$lab"' EXIT
+on_exit 'rm -f "$cfg" "$out"; cleanup_lab "$lab"'
 
 cat > "$cfg" <<EOF
 [lab]

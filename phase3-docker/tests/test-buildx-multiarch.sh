@@ -27,7 +27,7 @@ cleanup() {
     docker rmi "$tag" >/dev/null 2>&1 || true
     rm -rf "$ctx"
 }
-trap cleanup EXIT
+on_exit cleanup
 
 cat > "$ctx/Dockerfile" <<'EOF'
 FROM alpine:latest

@@ -21,7 +21,7 @@ cleanup() {
     rmdir "${HOME}/.local/state/lab-create/podman/${LAB}/quadlet-links" 2>/dev/null || true
     rm -rf "${HOME}/.local/state/lab-create/podman/${LAB}" 2>/dev/null || true
 }
-trap cleanup EXIT
+on_exit cleanup
 
 cat > "$CONFIG" <<EOF
 [lab]
