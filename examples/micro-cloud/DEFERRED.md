@@ -60,6 +60,36 @@
 > instead of a command, so a perfectly-booted VM silently ignored every instruction it
 > was given.
 
+## BUILT, ROOT PATH UNRUN — the DHCP-exhaustion half of G.9's break pass
+
+> 🔨 **2026-08-06** — [M.8](../../MICRO_CLOUD_LAB_PLAN.md#m8-the-cheaper-half-of-g9-built--and-the-defect-the-knob-uncovered-2026-08-06).
+> The pool is `MC_DHCP_LO`/`MC_DHCP_HI`, and
+> [`tests/test-dhcp-exhaustion.sh`](tests/run-all.sh) fills a five-address one in seconds.
+> ⚠️ **Run once at root 2026-08-06: 8 of 9 assertions passed, and the 9th failure was the
+> fabric being right about the harness.** `down` refused to call teardown clean while three
+> of this test's own veths were still on the bridge — and chasing that found the worse bug:
+> `dhcp_ask` was called in a command substitution, so its `CLIENTS+=` bookkeeping went to a
+> subshell and the EXIT trap reaped nothing. Both fixed; **the confirming re-run is
+> pending**, so this is not yet PASS. Slice 3's break coverage moves 3 of 5 → 4 of 5 once it
+> lands.
+>
+> **The knob uncovered a latent defect**, which is the part worth keeping: reservations
+> were computed as `10.71.0.$((100 + IDX))` with the base hard-coded, so any pool not
+> starting at `.100` would have marched them **outside the range** — addresses dnsmasq is
+> never told to serve — while `tap` created the tap anyway. Harmless while one constant
+> matched another; armed the moment anyone used the new knob. It now derives from
+> `DHCP_LO`, and overflow is refused **by name, before the tap exists**.
+>
+> The load-bearing assertion is the **inverse of slice 5b's**: with the dynamic pool empty,
+> a **reserved** instance must still get **its own** address (ABSORBED), while an
+> unreserved client at the same instant gets nothing (HALTED). The second is the first's
+> negative control, from the same exhausted state — without it, "the reserved client got an
+> address" cannot be told apart from "the pool was never full."
+>
+> Fake guests are veth pairs whose far end lives in its own netns, so the leased IPv4 never
+> appears on a host interface and Calico's 60-second autodetection poll cannot see it —
+> F.7.1 rule 2 satisfied *by construction*, and asserted afterwards rather than assumed.
+
 ## The original brief — slice 5b: the fidelity case
 
 *The §9.2 `edge`: a full cloud image on `-M q35` with cloud-init, on the same fabric,
@@ -182,6 +212,77 @@ An agent in the image answering over vsock from **both** engines; a §18.4 row f
 what the two host APIs actually needed; the console demoted from *sole witness* to *one
 witness*; and a chaos scenario for a layer that can fail on its own. **Explicitly out of
 scope:** replacing SSH (decision C says start with SSH), and MMDS.
+
+## QUEUED — `nested-calico-sandbox/`: a disposable cluster to break on purpose
+
+*Scoped 2026-08-06. Unblocked and independent of the slice queue — nothing in slices 5c+
+depends on it, and it depends on nothing later than slice 3.*
+
+**The question it exists to make askable.** Three pieces of this lab's most expensive
+knowledge are **unfalsifiable on this host**, because testing them means breaking a live
+cluster:
+
+| the belief | where it came from | why it is untested |
+|---|---|---|
+| the `^br-.*` exclusion makes `br-mc0` invisible to Calico (rule 1) | [F.7.1](../../MICRO_CLOUD_LAB_PLAN.md#f7-the-selection-rule-derived--and-7-already-satisfied-it), read out of the v3.28.1 binary | never verified by *naming a bridge the other way* and watching it get picked |
+| an addressed interface becomes a first-found candidate (rule 2) | [F.6](../../MICRO_CLOUD_LAB_PLAN.md#f6-additive-was-not-safe--the-tap-captured-a-live-clusters-tunnel), observed **once**, as an outage | re-running it means causing a second outage |
+| the ordering that decided F.6 | **nothing** — [G.3](../../MICRO_CLOUD_LAB_PLAN.md#g3-f7s-ordering-rule-does-not-explain-f6--the-correction) retracted the explanation | we cannot even *predict* the outcome, so the experiment is the only way |
+
+`fabric.sh`'s whole safety design rests on the first two, and constraint 3 exists precisely
+because they are *"derived from ONE host at ONE Calico version"*. A guest we are allowed to
+destroy turns all three from beliefs into measurements.
+
+**Why a lab unit and not a one-off script.** It is not only the F.6 re-run. A disposable
+cluster is a **safe host for the entire slice-3 break pass**, which is the largest unpaid
+debt in this queue:
+
+- **`retap` is still never called** — it needs a deliberately root-owned tap to recover
+  from, and deliberately breaking tap ownership on the machine running the fabric is
+  exactly the kind of thing you do somewhere disposable.
+- [G.9](../../MICRO_CLOUD_LAB_PLAN.md#g9-not-run--recorded-as-unknown-not-as-pass)'s
+  tap-address scenario, the last unrun row of §14's break pass now that DHCP exhaustion
+  is covered.
+- **A chaos scenario for the CNI layer**, which micro-cloud does not have at all —
+  `CLAUDE.md`'s ladder wants an injection point per independently-failing layer, and the
+  CNI is one nobody has watched fall over here.
+
+**What it must be, per the conventions.** A cohesive own-subdir lab:
+`examples/nested-calico-sandbox/` with a phase-2 `.toml` (a cloud image + cloud-init that
+installs microk8s), `README.md` + `MANUAL_TESTING.md`, a 00-INDEX row, a
+`learning-paths.toml` route, and its harness under `tests/`.
+
+### The five constraints, derived rather than discovered later
+
+1. **It must enumerate its OWN candidate set.** Candidate ordering depends on which
+   interfaces exist, and the guest has neither `lxdbr0` (index 9) nor `incusbr0` (index 17)
+   — the two that decided [F.8](../../MICRO_CLOUD_LAB_PLAN.md#f8-lxdbr0-is-a-candidate-and-it-outranks-the-one-calico-chose).
+   Reusing the host's list would be the cached-fact bug one layer down.
+2. **It must record the Calico version it observed, and refuse to generalise across a
+   mismatch.** microk8s bundles whatever its channel ships; the `^br-.*` exclusion and the
+   index ordering are **v3.28.1** facts. Bind the finding to its subject's identity and
+   name a mismatch, exactly as `capture-policy` does for PCRs.
+3. **Wait, do not merely restart.** Autodetection re-runs on a **60-second poll**
+   ([I.4](../../MICRO_CLOUD_LAB_PLAN.md#i4-the-finding-that-outlives-the-migration--autodetection-is-a-60-second-poll)),
+   so an experiment that restarts `calico-node` and reads immediately is measuring the
+   startup path only — half the mechanism, and the half that is already understood.
+4. **It answers about *a* Calico, not *the* Calico.** The result transfers as a statement
+   about the selection algorithm at a named version. It is **not** a prediction about this
+   host, and the write-up must say so or it becomes one.
+5. **No nested KVM required.** Neither scenario needs a microVM inside the guest — dummy
+   interfaces and the guest's own DHCP clients suffice (G.9), so this does not wait on
+   `kvm_amd nested=1`.
+
+**Cost, measured where it can be:** microk8s + Calico wants roughly **4 GiB RAM and ~10 GiB
+disk**. The harness shape already exists — [`edge.toml`](edge.toml) plus
+[`tests/test-edge-on-the-fabric.sh`](tests/run-all.sh) is a cloud image driven by cloud-init
+on a `fabric.sh` tap, which is precisely what this needs.
+
+**Done looks like:** rules 1 and 2 promoted from *derived* to *measured*, with the Calico
+version stamped on the result; G.3's ordering either explained or explicitly recorded as
+still unexplained after a real experiment; `retap` called for the first time; and a CNI-layer
+row in a micro-cloud chaos matrix. **Explicitly out of scope:** touching the host's cluster
+in any way, and pinning `IP_AUTODETECTION_METHOD` here — [§7.1](../../MICRO_CLOUD_LAB_PLAN.md#71-this-host-is-not-empty--and-one-v2-line-was-a-real-defect)
+is clear that changing someone else's config is the operator's decision, not the fabric's.
 
 ## The original brief — slice 5a: a second engine on one fabric
 

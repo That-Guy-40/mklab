@@ -84,8 +84,21 @@ set -uo pipefail
 BR=br-mc0                       # rule 1 — the name is load-bearing
 NET=10.71.0.0/24
 GW=10.71.0.1
-DHCP_LO=10.71.0.100
-DHCP_HI=10.71.0.200
+# THE POOL IS OVERRIDABLE **SO IT CAN BE EXHAUSTED ON PURPOSE**, and for no other reason.
+#
+# §14's break pass for slice 3 lists "exhaust the DHCP pool" and G.9 deferred it because
+# `.100–.200` is 101 leases — untractable to fill, so nobody ever watched this fabric run
+# out. That deferral was then restated four times as "needs a host without a live cluster",
+# which was never true of THIS scenario: exhausting our own dnsmasq's pool on our own bridge
+# reaches nothing Calico owns. The only thing in the way was that these two lines were bare
+# assignments (plan M.7). Now they are not, and `tests/test-dhcp-exhaustion.sh` fills a
+# four-address pool in seconds.
+#
+# Keep the default. A narrow pool is a TEST fixture: shrink it for an experiment, never for
+# a lab you intend to use, or the fourth instance you create will be refused by the guard in
+# `tap` below — honestly, but refused.
+DHCP_LO="${MC_DHCP_LO:-10.71.0.100}"
+DHCP_HI="${MC_DHCP_HI:-10.71.0.200}"
 DOMAIN=mc.lab
 NFT_TABLE=mklab-mc              # OUR table. Teardown deletes this and nothing else.
 STATE=/run/mklab-mc
@@ -100,6 +113,28 @@ ACTION="${1:-status}"
 hr(){ printf '%s\n' "──────────────────────────────────────────────────────────────────────"; }
 die(){ printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 note(){ printf '  - %s\n' "$*"; }
+
+# Validate the pool HERE — before any verb, so a malformed override is refused by this
+# script rather than by dnsmasq halfway through `up`, with a bridge and an nft table
+# already created. (A gate after the act is a post-mortem — the MAAS lesson, applied to
+# our own new knob.) Both ends must sit in the same /24 as the gateway, because `tap`
+# derives reservations by last octet and the fabric serves exactly one subnet.
+#
+# This block sits BELOW `die` on purpose. Written above it, every refusal printed
+# `die: command not found` and then CARRIED ON — the bad range sailed past four gates
+# into the rest of the script. A validator that cannot fail is worse than no validator,
+# and it took one run to find out, which is why it was run rather than reasoned about.
+GW_PREFIX="${GW%.*}"
+for _v in DHCP_LO DHCP_HI; do
+    _a="${!_v}"
+    [[ "$_a" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "$_v='$_a' is not an IPv4 address"
+    [[ "${_a%.*}" == "$GW_PREFIX" ]] || die "$_v='$_a' is not in $GW_PREFIX.0/24 — the fabric serves one subnet, and 'tap' derives reservations inside it"
+    (( ${_a##*.} >= 1 && ${_a##*.} <= 254 )) || die "$_v='$_a' has an unusable host octet"
+done
+(( ${DHCP_LO##*.} < ${DHCP_HI##*.} )) || die "MC_DHCP_LO ($DHCP_LO) must be below MC_DHCP_HI ($DHCP_HI)"
+(( ${GW##*.} < ${DHCP_LO##*.} || ${GW##*.} > ${DHCP_HI##*.} )) \
+    || die "the pool $DHCP_LO-$DHCP_HI contains the gateway $GW — dnsmasq would hand out the bridge's own address"
+unset _v _a
 
 # ── the observations pre-flight records and teardown compares ────────────────
 calico_binding(){ ip -d link show vxlan.calico 2>/dev/null | grep -oE 'local [0-9.]+ dev [a-z0-9.-]+'; }
@@ -389,8 +424,20 @@ tap)
     fi
     n=0; [[ -r "$STATE/dhcp-hosts" ]] && n="$(wc -l < "$STATE/dhcp-hosts")"
     IDX=$(( n + 1 ))
-    (( IDX <= 99 )) || die "too many instances for this simple derivation"
-    IP="10.71.0.$((100 + IDX))"
+    # DERIVED from DHCP_LO, not from the constant 100 it used to be. The old line read
+    # `IP="10.71.0.$((100 + IDX))"` — correct only while the pool started at .100, and
+    # silently wrong the moment it did not: reservations would march out of the range and
+    # dnsmasq would serve addresses it had not been told to manage. The first offset stays
+    # +1, so the bottom of the pool (DHCP_LO itself) remains dynamic exactly as before.
+    LO_OCT="${DHCP_LO##*.}"; HI_OCT="${DHCP_HI##*.}"
+    OCT=$(( LO_OCT + IDX ))
+    # Pool exhaustion at RESERVATION time — refused BEFORE the tap exists, so there is no
+    # half-made instance to clean up. This is the honest end of §14's break-pass scenario:
+    # the fabric runs out and SAYS SO, naming the pool, rather than handing out an address
+    # outside the range that dnsmasq will never answer for.
+    (( OCT <= HI_OCT )) \
+        || die "DHCP pool exhausted: $((HI_OCT - LO_OCT)) reservable addresses in $DHCP_LO-$DHCP_HI, and $n are already taken. '$NAME' cannot be given one. Widen the pool (MC_DHCP_LO/MC_DHCP_HI) or 'down' the fabric."
+    IP="${DHCP_LO%.*}.$OCT"
 
     make_tap "$TAP"
 
