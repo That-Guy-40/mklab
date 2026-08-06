@@ -5,9 +5,19 @@ until the 2025.2 release, when it switched to [debos](https://github.com/go-debo
 (the same engine `kali-vm` wraps — see [`../kali-vm-builder/`](../kali-vm-builder/)).
 The Packer scripts still live at
 [`kalilinux/build-scripts/kali-packer`](https://gitlab.com/kalilinux/build-scripts/kali-packer),
-now archived — *"no longer in production"*. This lab **fetches them (pinned),
-drives a real Packer build, and boots the result** — so you can watch the *other*
-image-factory mechanism work.
+now archived — *"no longer in production"*. This lab **drives a real Packer build
+from them and boots the result** — so you can watch the *other* image-factory
+mechanism work.
+
+> 📦 **The upstream repository is vendored here in full, byte-exact:**
+> [`upstream-repo/`](upstream-repo/) — all 17 tracked files at pinned commit
+> `b8c9b34e`, with a per-file `sha256` table and upstream's `LICENSE` preserved.
+> The repo's default for upstream *code* is *cite, don't mirror*; this is the
+> documented exception ([`TODO.md`](../../TODO.md) item 7), because the
+> requirement is that the builder be runnable **in whole, per its own
+> instructions**, which a build-time `git clone` cannot do offline. It matters
+> more than usual here: **the upstream project is retired**, and a URL is a poor
+> custodian of a repository nobody maintains.
 
 > ⚠️ **Authorized use only.** This builds a full Kali system (offensive
 > tooling). Keep it on an isolated network and only target hosts you own or are

@@ -1,0 +1,154 @@
+{
+  "variables": {
+    "iso_url": "",
+    "iso_checksum": "",
+    "cloud_token": "",
+    "cloud_box": "",
+    "cloud_version": ""
+  },
+  "builders": [
+    {
+      "type": "virtualbox-iso",
+      "guest_os_type": "Debian_64",
+      "iso_url": "{{user `iso_url`}}",
+      "iso_checksum": "sha256:{{user `iso_checksum`}}",
+      "ssh_username": "vagrant",
+      "ssh_password": "vagrant",
+      "ssh_timeout": "60m",
+      "cpus": "2",
+      "memory": "2048",
+      "shutdown_command": "echo 'packer' | sudo -S shutdown -P now",
+      "http_directory": "http",
+      "virtualbox_version_file": "",
+      "guest_additions_mode": "disable",
+      "boot_command": [
+        "<esc><wait>",
+        "install <wait>",
+        "preseed/url=http://{{ .HTTPIP }}:{{ .HTTPPort }}/preseed.cfg ",
+        "locale=en_US ",
+        "keymap=us ",
+        "hostname=kali ",
+        "domain='' ",
+        "<enter>"
+      ],
+      "vboxmanage": [
+        ["modifyvm", "{{.Name}}", "--clipboard-mode", "bidirectional"],
+        ["modifyvm", "{{.Name}}", "--draganddrop", "bidirectional"],
+        ["modifyvm", "{{.Name}}", "--nat-localhostreachable1", "on"]
+      ]
+    },
+    {
+      "type": "vmware-iso",
+      "guest_os_type": "debian10-64",
+      "iso_url": "{{user `iso_url`}}",
+      "iso_checksum": "sha256:{{user `iso_checksum`}}",
+      "ssh_username": "vagrant",
+      "ssh_password": "vagrant",
+      "ssh_timeout": "60m",
+      "cpus": "2",
+      "memory": "2048",
+      "shutdown_command": "echo 'packer' | sudo -S shutdown -P now",
+      "http_directory": "http",
+      "network": "nat",
+      "network_adapter_type": "vmxnet3",
+      "vmx_data_post": {
+        "ide0:0.startConnected": "FALSE",
+        "ide0:0.deviceType": "cdrom-raw",
+        "ide0:0.clientDevice": "TRUE",
+        "ide0:0.present": "FALSE",
+        "ide0:0.fileName": "emptyBackingString"
+      },
+      "boot_command": [
+        "<esc><wait>",
+        "install <wait>",
+        "preseed/url=http://{{ .HTTPIP }}:{{ .HTTPPort }}/preseed.cfg ",
+        "locale=en_US ",
+        "keymap=us ",
+        "hostname=kali ",
+        "domain='' ",
+        "<enter>"
+      ]
+    },
+    {
+      "type": "qemu",
+      "iso_url": "{{user `iso_url`}}",
+      "iso_checksum": "sha256:{{user `iso_checksum`}}",
+      "ssh_username": "vagrant",
+      "ssh_password": "vagrant",
+      "ssh_timeout": "60m",
+      "cpus": "2",
+      "memory": "2048",
+      "shutdown_command": "echo 'packer' | sudo -S shutdown -P now",
+      "http_directory": "http",
+      "net_device": "virtio-net",
+      "format": "qcow2",
+      "accelerator": "kvm",
+      "disk_interface": "virtio-scsi",
+      "disk_discard": "unmap",
+      "disk_detect_zeroes": "unmap",
+      "disk_cache": "unsafe",
+      "disk_image": false,
+      "disk_compression": true,
+      "boot_command": [
+        "<esc><wait>",
+        "install <wait>",
+        "preseed/url=http://{{ .HTTPIP }}:{{ .HTTPPort }}/preseed.cfg ",
+        "locale=en_US ",
+        "keymap=us ",
+        "hostname=kali ",
+        "domain='' ",
+        "<enter>"
+      ]
+    },
+    {
+      "type": "hyperv-iso",
+      "iso_url": "{{user `iso_url`}}",
+      "iso_checksum": "sha256:{{user `iso_checksum`}}",
+      "ssh_username": "vagrant",
+      "ssh_password": "vagrant",
+      "ssh_timeout": "240m",
+      "cpus": "2",
+      "memory": "2048",
+      "shutdown_command": "echo 'packer' | sudo -S shutdown -P now",
+      "http_directory": "http",
+      "generation": "2",
+      "switch_name": "Default Switch",
+      "boot_command": [
+        "e <wait>",
+        "<leftShiftOn><down><down><down><leftShiftOff>",
+        "<leftShiftOn><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><right><leftShiftOff>",
+        "<bs><bs><bs><bs><bs><bs><bs><bs><bs><bs><bs><bs><bs><bs><bs><bs><bs><bs><bs><bs><bs><bs><bs><bs><bs><bs><bs><bs><bs><bs><bs><bs><bs><bs><bs><bs><bs><bs><bs><bs><bs><bs><bs><bs><bs><bs>",
+        "locale=en_US ",
+        "keymap=us ",
+        "hostname=kali ",
+        "domain='' ",
+        "preseed/url=http://{{ .HTTPIP }}:{{ .HTTPPort }}/preseed.cfg ",
+        "<leftCtrlOn>x<leftCtrlOff>"
+      ]
+    }
+  ],
+  "provisioners": [
+    {
+      "type": "shell",
+      "execute_command": "echo 'vagrant' | {{.Vars}} sudo -S bash -euxo pipefail '{{.Path}}'",
+      "scripts": [
+        "scripts/vagrant.sh",
+        "scripts/minimize.sh"
+      ]
+    }
+  ],
+  "post-processors": [
+    [
+      {
+        "type": "vagrant",
+        "vagrantfile_template": "Vagrantfile.tpl"
+      },
+      {
+        "type": "vagrant-cloud",
+        "box_tag": "{{user `cloud_box`}}",
+        "access_token": "{{user `cloud_token`}}",
+        "version": "{{user `cloud_version`}}"
+      }
+    ]
+  ]
+}

@@ -340,15 +340,42 @@ through the existing phases.
 > a flattened copy is more self-contained (matches the repo's offline ethos).
 
 **Prerequisite — do this FIRST, before any work:**
-- [ ] **Ask the user for the Kali Packer image-builder repo URL.** Requested
-      explicitly; do **not** guess the repo or begin until it's confirmed.
+- [x] **Ask the user for the Kali Packer image-builder repo URL.** Supplied
+      2026-08-06: <https://gitlab.com/kalilinux/build-scripts/kali-packer>.
+
+> ⚠️ **And the answer reframed the Kali half: most of it already existed.**
+> [`examples/kali-packer-vagrant/`](examples/kali-packer-vagrant/) has operationalized
+> **that exact repository** since 2026-07-03 — same URL, and
+> [`UPSTREAM.md`](examples/kali-packer-vagrant/UPSTREAM.md) already pinned the same
+> commit `b8c9b34e…`, which a fresh clone on 2026-08-06 confirmed is *still* HEAD.
+> The lab has a driver (`build-kali-box.sh`), a pinned fetcher, a README, a
+> MANUAL_TESTING, a 00-INDEX row, and it was **built and booted end-to-end** with two
+> documented bitrot fixes. Writing this item's "vendor it under its own `examples/`
+> subdir" as specified would have produced a **second lab for the same upstream** —
+> the duplication this repo's own blast-radius rule exists to prevent. What was
+> genuinely missing was narrower: the **bytes**, and the hand-walk.
 
 **Kali first:**
-- [ ] Vendor the Kali Packer builder **in full** (pinned commit + provenance +
-      LICENSE) under its own `examples/` subdir, runnable per upstream's README.
-- [ ] **mklab automation wrapper** — a build script + a hand-walk `Containerfile`
-      (Packer + QEMU baked in, per the *Hand-walk sandboxes* convention) so the build
-      runs through the phases; partition what the agent can run vs. an explicit
+- [x] Vendor the Kali Packer builder **in full** (pinned commit + provenance +
+      LICENSE), runnable per upstream's README. **Done 2026-08-06** —
+      [`examples/kali-packer-vagrant/upstream-repo/`](examples/kali-packer-vagrant/upstream-repo/):
+      all **17** tracked files byte-exact (verified against the source checkout,
+      0 mismatches), a per-file `sha256` table, a `SHA256SUMS` for
+      `sha256sum -c`, upstream's `LICENSE` preserved, and the posture change
+      recorded in `UPSTREAM.md`. The retirement is what makes it worth doing: a
+      pinned URL is a poor custodian of a repository nobody maintains.
+      *(One trap worth naming: upstream ships a `.gitignore`, and vendoring it
+      verbatim silently applies those rules to our subtree. Checked rather than
+      assumed — `git status --ignored` shows nothing hidden, and all 17 stage.)*
+- [x] ~~mklab automation wrapper — a build script~~ **already existed**:
+      [`build-kali-box.sh`](examples/kali-packer-vagrant/build-kali-box.sh) +
+      [`fetch-kali-packer.sh`](examples/kali-packer-vagrant/fetch-kali-packer.sh).
+- [ ] **Point the driver at the vendored copy** so the lab builds **offline** by
+      default, with a flag to clone upstream live instead. Vendoring the bytes and
+      then still requiring the network at build time would leave the archive
+      decorative — the whole point of item 7 is a builder runnable in whole.
+- [ ] **Hand-walk `Containerfile`** (Packer + QEMU baked in, per the *Hand-walk
+      sandboxes* convention); partition what the agent can run vs. an explicit
       "you run this" marker (Packer needs KVM/`/dev/kvm`; flag if blocked here).
 
 **AlmaLinux second:**
