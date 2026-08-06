@@ -370,10 +370,18 @@ through the existing phases.
 - [x] ~~mklab automation wrapper — a build script~~ **already existed**:
       [`build-kali-box.sh`](examples/kali-packer-vagrant/build-kali-box.sh) +
       [`fetch-kali-packer.sh`](examples/kali-packer-vagrant/fetch-kali-packer.sh).
-- [ ] **Point the driver at the vendored copy** so the lab builds **offline** by
-      default, with a flag to clone upstream live instead. Vendoring the bytes and
-      then still requiring the network at build time would leave the archive
-      decorative — the whole point of item 7 is a builder runnable in whole.
+- [x] **Point the driver at the vendored copy** so the lab builds **offline** by
+      default, with a flag to clone upstream live instead. **Done 2026-08-06.**
+      `fetch-kali-packer.sh` stages the archive after verifying it against
+      `SHA256SUMS` (**refuses** a mismatch, naming the file — a vendored tree is a
+      cached copy, and one nobody re-checks is bug class #1); `--upstream` restores
+      the clone. *It nearly stayed decorative:* `build-kali-box.sh` passed
+      `--ref "$REF"` **unconditionally** with `REF=main`, and `--ref` implies
+      `--upstream`, so every build would still have cloned and the offline path
+      would have existed and never run — one defaulted flag. Guarded by
+      [`tests/test-offline-archive.sh`](examples/kali-packer-vagrant/tests/test-offline-archive.sh),
+      which asserts the property against **`build-kali-box.sh`** and not only the
+      fetcher, because that is where the defect was.
 - [ ] **Hand-walk `Containerfile`** (Packer + QEMU baked in, per the *Hand-walk
       sandboxes* convention); partition what the agent can run vs. an explicit
       "you run this" marker (Packer needs KVM/`/dev/kvm`; flag if blocked here).

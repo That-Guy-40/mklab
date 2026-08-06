@@ -4,7 +4,11 @@ This lab is a **driver** around Kali's own (now-retired) Packer build scripts.
 
 > 📦 **Posture changed 2026-08-06: the upstream repo is now VENDORED IN FULL**,
 > byte-exact, at [`upstream-repo/`](upstream-repo/) — 17 files, per-file `sha256`,
-> upstream's `LICENSE` preserved.
+> upstream's `LICENSE` preserved — **and the lab builds from it offline by default.**
+> The archive is *verified* against `SHA256SUMS` at every fetch, not trusted: a
+> vendored tree is a cached copy, and a mismatch means the compat patches, the pin
+> below and this whole table are describing something else. It refuses rather than
+> warns. Regression: [`tests/test-offline-archive.sh`](tests/test-offline-archive.sh).
 >
 > It previously followed the repo's *cite-don't-mirror* rule for upstream code
 > (clone a pinned checkout at build time, as
