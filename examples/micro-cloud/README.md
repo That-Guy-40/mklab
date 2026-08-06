@@ -42,6 +42,7 @@ beside QEMU VMs, containers, and LXD system containers.
 | **`tests/test-fabric-round-trip.sh`** | 3 | ✅ **committed 2026-08-05** — [`tests/`](tests/run-all.sh). `up` → `tap` ×2 → `status` → `down`, asserting the taps are addressless and owner-checked and that **Calico's binding, pod veth count and `ip_forward` are unchanged across the run** — derived independently of `fabric.sh`'s own comparison, so a regression in that comparison cannot hide behind it. **Needs root; SKIPs without it** — and its privileged path was **run 2026-08-05: `1 passed, 0 skipped, 0 failed`**, so none of the three skip guards fired and the assertions in between actually executed ([I.9](../../MICRO_CLOUD_LAB_PLAN.md#i9-the-one-shot-became-a-test-and-the-tests-root-path-ran--pass)) |
 | **`bench-boot.sh`** + `tests/test-bench-boot.sh` | 5a(a) | ✅ **committed 2026-08-05** — [`bench-boot.sh`](bench-boot.sh). Four arms (each engine × i8042 probe on/off), N runs each, reporting the **spread** and both a guest-kernel and a wall-clock number. The `qemu-*` pair is the **negative control** — `microvm` has no i8042, so those two arms must agree, and the test fails by name if they ever diverge. Unprivileged; SKIPs without KVM/firecracker/QEMU |
 | **`tests/test-two-engines-one-fabric.sh`** | 5a(b) | ✅ **committed 2026-08-05** — Firecracker + QEMU `-M microvm` on two `fabric.sh` taps, **both dropped to uid 1000 with `runuser`** so the tap-ownership assertion means something (a root VMM can open any tap). Asserts the guests' own `SLICE3-PING-BY-NAME OK` marker, not scraped ping text. **Needs root; SKIPs without it** — run 2026-08-05: **3 passed, 0 skipped** |
+| **`edge.toml`** + `tests/test-edge-on-the-fabric.sh` | 5b | ⚙️ **committed 2026-08-05, NOT YET RUN.** The fidelity case: a stock Debian cloud image on `-M q35` with cloud-init, on a `fabric.sh` tap beside a Firecracker microVM, asserting it takes the lease the fabric **reserved** (not merely *an* address from the pool) and reaches `api1` by name. `api1` is booted **through `lab-fc.sh`**, which no previous slice did — that is the seam [Appendix L](../../MICRO_CLOUD_LAB_PLAN.md#appendix-l--slice-5bs-first-finding-before-a-line-of-it-was-built-the-two-tools-could-never-agree-2026-08-05) fixed. **Needs root; SKIPs without it** |
 | slice 1/2 configs, boot logs, images | 1–2 | ⛔ host workdirs `micro-cloud-s1/`, `micro-cloud-s2/` — [`DEFERRED.md`](DEFERRED.md) §17.0 item 2. **These really are there** (verified 2026-08-04); it was only the *scripts* that were not |
 
 > ⚠️ **Do not reimplement `fabric.sh` from Appendix G's description.** The
@@ -63,6 +64,7 @@ examples/micro-cloud/
 ├── micro-cloud.toml          ONE spec: chroot + microvms + vm + containers
 ├── fabric.sh                 bridge/tap/NAT/dnsmasq (slice 3) — EXISTS
 ├── bench-boot.sh             time-to-userspace, 2 VMMs x i8042 on/off (5a) — EXISTS
+├── edge.toml                 the §9.2 `edge`: cloud image on q35, one spec (5b) — EXISTS
 ├── micro-cloud.sh            up | down | status — orders the phase tools
 ├── preserve.sh               two tiers + derivation manifest
 ├── install-catalog.toml      names the lab that owns each install method

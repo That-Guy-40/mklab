@@ -1,0 +1,70 @@
+## edge.toml — slice 5b, the FIDELITY case.
+##
+## The counterpart to the density case. `api1`/`api2` are Firecracker microVMs: an ELF
+## kernel, a raw ext4, no firmware, no init system worth the name, userspace at 0.055 s.
+## `edge` is the opposite end of the same fabric — a stock cloud image on `-M q35` with
+## real firmware, cloud-init, systemd and a full network stack — and the point of slice 5b
+## is that BOTH attach to the fabric the same way.
+##
+## ── THE MAC IS A CACHED VALUE, AND IT IS BOUND TO ITS SUBJECT ───────────────────────────
+##
+## `06:00:ac:47:09:03` is not a magic number and must not be treated as one. It is what
+## `examples/micro-cloud/fabric.sh mac edge` derives — md5("edge") — and the fabric reserves
+## this instance's DHCP lease against exactly that value. Get it wrong and NOTHING ERRORS:
+## the guest takes a dynamic lease while dnsmasq goes on answering `edge` with the reserved
+## address, which nothing holds (plan Appendix L; it is why `--mac` exists at all).
+##
+## A value copied out of another tool is a record that can outlive its subject, so this one
+## is CHECKED rather than trusted: `tests/test-edge-on-the-fabric.sh` asks the fabric for
+## `edge`'s MAC and refuses to boot if this file disagrees, naming both values. Caching is
+## fine; caching without a gate is how the plan's bug class #1 gets in.
+##
+## ── WHY A TOML AND NOT A COMMAND LINE ───────────────────────────────────────────────────
+##
+## §9.1 wants one declarative spec per lab, and this is the first instance that has enough
+## knobs to need it. `lab-vm.sh --mac` now exists too (both paths reach the same manifest,
+## asserted by phase2-qemu-vm/tests/test-mac-cli.sh) — the file is the lab's record of WHAT
+## `edge` is, which a shell invocation in a runbook is not.
+
+[[vm]]
+name  = "edge"
+lab   = "micro-cloud"
+
+# A stock cloud image, unmodified: the fidelity claim is that this is the SAME artifact a
+# real deployment would use, not a lab-special rootfs. Left as distro+suite so the phase
+# tool fetches and caches it; point `image` at a local qcow2 to work offline.
+backend = "disk-image"
+distro  = "debian"
+suite   = "bookworm"
+arch    = "x86_64"
+
+# NOT microvm. That is the whole experiment: q35 + real firmware, beside microVMs that have
+# neither, on one bridge. 1 GiB because cloud-init and systemd will not fit in the 256 MiB
+# the microVMs run in — itself part of the fidelity/density contrast slice 5b exists to show.
+microvm = false
+memory  = "1G"
+cpus    = 1
+
+# ── the fabric attachment: identical in shape to what Firecracker consumes ──────────────
+# A pre-made tap, BY NAME. `lab-vm.sh` neither creates nor destroys it, exactly as
+# `lab-fc.sh` does not (plan H.5, and §18.4's network-attachment row). Create it first with:
+#     sudo ./fabric.sh tap edge
+network_mode = "tap"
+tap          = "mc-edge"
+mac          = "06:00:ac:47:09:03"   # == `fabric.sh mac edge`; the test refuses a mismatch
+
+# ── what the guest is asked to prove, on its own console ────────────────────────────────
+# Printed to /dev/console because that is the only channel that needs no working network —
+# so a guest that FAILS to get a lease still tells us so, instead of going silent and
+# leaving "no output" to mean either "broken" or "still booting".
+#
+# `ip -4 -o addr show scope global` rather than a hard-coded interface: a cloud image's NIC
+# is enp0s2/ens3/eth0 depending on firmware and udev, and naming one is a mechanism
+# assertion that breaks on a different QEMU.
+runcmd = [
+  "sh -c 'echo EDGE-BEGIN name=$(hostname) > /dev/console'",
+  "sh -c 'echo \"  addr  : $(ip -4 -o addr show scope global | awk \"{print \\$4}\" | tr \\\\n \" \")\" > /dev/console'",
+  "sh -c 'echo \"  resolv: $(getent hosts api1 | tr \\\\n \" \")\" > /dev/console'",
+  "sh -c 'ping -c2 -W3 api1 >/dev/null 2>&1 && echo \"EDGE-PING-BY-NAME OK peer=api1\" > /dev/console || echo \"EDGE-PING-BY-NAME FAIL peer=api1\" > /dev/console'",
+  "sh -c 'echo EDGE-END > /dev/console'",
+]
