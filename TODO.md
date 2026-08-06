@@ -459,7 +459,45 @@ completeness): the Alpine `--allow-untrusted` gap — the residue of
 [`AUDIT.md`](AUDIT.md) F2 — plus backlog items #4/#5 follow-on passes and #7
 (Packer vendoring, blocked on its prerequisite question).
 
+## 9. `nested-calico-sandbox/` — a disposable cluster, so the CNI beliefs can be tested
+
+This host runs **microk8s with Calico on the metal**, and that single fact has shaped
+several labs and cost one real outage
+([`MICRO_CLOUD_LAB_PLAN.md`](MICRO_CLOUD_LAB_PLAN.md) F.6: a lab's tap captured the live
+cluster's VXLAN tunnel endpoint). The mitigations that came out of it —
+[`examples/micro-cloud/fabric.sh`](examples/micro-cloud/fabric.sh)'s bridge-naming rule and
+its addressless-tap rule — are **derived from one host at one Calico version and have never
+been falsified**, because falsifying them means breaking the cluster the machine is using.
+
+A **throwaway microk8s inside a phase-2 VM** removes that constraint. It is listed here as
+well as in the micro-cloud queue because its value is not confined to that lab: it is the
+repo's only way to ask "what does the CNI actually do when I provoke it?" without the answer
+costing an outage, and the same box is a safe host for the **whole** slice-3 break pass —
+including `retap`, which no test has ever called.
+
+- [ ] `examples/nested-calico-sandbox/`: a phase-2 `.toml` (cloud image + cloud-init
+      installing microk8s), `README.md`, `MANUAL_TESTING.md`, a 00-INDEX row and a
+      `learning-paths.toml` route — the cohesive-lab shape.
+- [ ] Re-run **F.6** on purpose: give an interface an address and watch the node IP
+      migrate. Currently not even *predictable* — G.3 retracted the ordering explanation.
+- [ ] Verify **rule 1** by naming a bridge both ways and watching only one get picked.
+- [ ] Exercise `retap` against a deliberately root-owned tap.
+- [ ] A **CNI-layer chaos scenario**, which micro-cloud does not have — per
+      [`CLAUDE.md`](CLAUDE.md)'s "every discrete layer gets an injection point".
+
+**Two constraints that must be honoured or the results are worthless**, both instances of
+this repo's bug class #1: the sandbox must enumerate **its own** candidate set (ordering
+depends on which interfaces exist, and the guest has neither `lxdbr0` nor `incusbr0`), and
+it must **record the Calico version it observed** and refuse to generalise across a
+mismatch — microk8s bundles whatever its channel ships, while every fact we hold is
+**v3.28.1**. The finding transfers as a statement about a named version's selection
+algorithm, **not** as a prediction about this host.
+
+Full brief, with the five derived constraints and what "done" looks like:
+[`examples/micro-cloud/DEFERRED.md`](examples/micro-cloud/DEFERRED.md#queued--nested-calico-sandbox-a-disposable-cluster-to-break-on-purpose).
+Needs ~4 GiB RAM and ~10 GiB disk; **nested KVM is not required**.
+
 ---
 
 *Created 2026-06-06; #5–#6 added 2026-06-11; #7 added 2026-06-11; #8 added
-2026-08-03.*
+2026-08-03; #9 added 2026-08-06.*

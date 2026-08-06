@@ -33,6 +33,7 @@ beside QEMU VMs, containers, and LXD system containers.
 
 | artifact | slice | where it lives |
 |---|---|---|
+| **`tests/test-dhcp-exhaustion.sh`** | 3 (break pass) | 🔨 **built 2026-08-06, root path UNRUN** — §14's *"exhaust the DHCP pool"*, deferred since slice 3 because `.100–.200` is 101 leases. The pool is now `MC_DHCP_LO`/`MC_DHCP_HI` and a five-address one fills in seconds. Grades **both** layers that can run out — reservation time (our code refuses by name **before** the tap exists) and lease time (dnsmasq) — and asserts the inverse of 5b's property: with the dynamic pool empty a **reserved** instance still gets **its own** address, with an unreserved client at the same instant getting nothing as the control. Fake guests are veth pairs whose far end lives in a netns, so no leased address is ever visible to Calico ([M.8](../../MICRO_CLOUD_LAB_PLAN.md#m8-the-cheaper-half-of-g9-built--and-the-defect-the-knob-uncovered-2026-08-06)). **Needs root; SKIPs without it.** ⚠️ Run once 2026-08-06 — **8 of 9 assertions passed**, and the 9th was `fabric.sh down` correctly refusing to call teardown clean while the test's own fake clients were still on the bridge. Two harness defects fixed (the second: `dhcp_ask` in a command substitution, so its cleanup bookkeeping went to a subshell); **re-run pending**, so not yet green |
 | `lab-fc.sh` + its 5-test suite | 4 | [`phase7-firecracker/`](../../phase7-firecracker/lab-fc.sh) — **committed** |
 | P1 / P2 assumption preflights | 0 | [`tools/micro-cloud-preflight.sh`](../../tools/micro-cloud-preflight.sh), [`tools/micro-cloud-preflight-p2.sh`](../../tools/micro-cloud-preflight-p2.sh) — committed |
 | FORWARD-surface probe | 3 | [`tools/micro-cloud-fabric-probe.sh`](../../tools/micro-cloud-fabric-probe.sh) — committed |
@@ -51,6 +52,13 @@ beside QEMU VMs, containers, and LXD system containers.
 > the four defects found inside its own safety checks. A rewrite would leave the
 > record describing an artifact it never measured — this repo's bug class #1
 > (a record that outlives the thing it describes). Commit the measured file.
+
+> 📋 **Queued as its own lab unit: [`nested-calico-sandbox/`](DEFERRED.md#queued--nested-calico-sandbox-a-disposable-cluster-to-break-on-purpose)**
+> — a throwaway microk8s inside a phase-2 VM. `fabric.sh`'s two safety rules (the `^br-.*`
+> exclusion; an addressed interface becomes a candidate) are **derived from one host at one
+> Calico version** and cannot be falsified here without breaking a live cluster. A cluster
+> we may destroy turns them into measurements — and is a safe host for the **whole**
+> slice-3 break pass, including `retap`, which is still never called.
 
 ## Target layout
 

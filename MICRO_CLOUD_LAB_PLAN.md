@@ -2809,6 +2809,26 @@ was never exercised from a damaged state until now.
 - **DHCP pool exhaustion** (`.100–.200` = 101 leases) — needs a shrinkable range for a
   tractable test.
 
+  > 🔨 **BUILT 2026-08-06; the root path is UNRUN, so this row is UNKNOWN, not PASS.**
+  > The range is now `MC_DHCP_LO`/`MC_DHCP_HI`, and
+  > [`tests/test-dhcp-exhaustion.sh`](examples/micro-cloud/tests/run-all.sh) fills a
+  > five-address pool in seconds. It grades **both** layers that can run out — reservation
+  > time (our code) and lease time (dnsmasq) — and its load-bearing assertion is the
+  > inverse of slice 5b's: with the dynamic pool empty, a **reserved** instance must still
+  > receive **its own** address, with an unreserved client at the same instant receiving
+  > nothing as the built-in control. Fixing the knob also exposed a latent defect: the
+  > reservation address was computed as `10.71.0.$((100 + IDX))` with the base hard-coded,
+  > so any pool not starting at `.100` would have marched reservations **outside the
+  > range** — addresses dnsmasq was never told to serve — while creating the tap anyway.
+  > It now derives from `DHCP_LO`, and `tap` refuses the overflowing reservation by name
+  > *before* the tap exists. See [M.8](#m8-the-cheaper-half-of-g9-built--and-the-defect-the-knob-uncovered-2026-08-06).
+
+**And the nested host is now a queued lab unit in its own right** *(added 2026-08-06)*:
+[`nested-calico-sandbox/`](examples/micro-cloud/DEFERRED.md#queued--nested-calico-sandbox-a-disposable-cluster-to-break-on-purpose).
+It is worth more than this one scenario — a cluster we may destroy is a safe host for the
+**whole** slice-3 break pass, including `retap`, which is still never called because it
+needs a deliberately root-owned tap to recover from.
+
 **The host without a live cluster need not be another machine** *(added 2026-08-03)*: a
 nested QEMU VM from phase 2 (`lab-vm.sh`) can *be* it. Boot a throwaway VM, install a
 disposable microk8s + Calico inside it, and re-run F.6 there on purpose — the tap-address
@@ -3728,12 +3748,12 @@ true.
 | give a tap an address on purpose and watch it become a candidate | a live Calico that may be broken + `CAP_NET_ADMIN` | **no** — this one is the nested-VM job |
 | DHCP pool exhaustion (`.100–.200` = 101 leases) | a **shrinkable range** | **yes** — it needs no cluster at all |
 
-`DHCP_LO`/`DHCP_HI` are bare assignments in [`fabric.sh`](examples/micro-cloud/fabric.sh)
-(lines 87–88), not `${VAR:-default}`, so shrinking the pool means editing the file — that is
-the *"or a config change"* §14's row 3 mentions and every later summary dropped. Exhausting a
-three-address pool on `br-mc0` touches only our own dnsmasq and our own guests; it reaches
-nothing Calico owns. **The cheaper of the two deferred scenarios has been runnable here all
-along, behind a two-line change.**
+`DHCP_LO`/`DHCP_HI` were bare assignments in [`fabric.sh`](examples/micro-cloud/fabric.sh),
+not `${VAR:-default}`, so shrinking the pool meant editing the file — that is the *"or a
+config change"* §14's row 3 mentions and every later summary dropped. Exhausting a small pool
+on `br-mc0` touches only our own dnsmasq and our own guests; it reaches nothing Calico owns.
+**The cheaper of the two deferred scenarios had been runnable here all along, behind a
+two-line change.** *(Made, and the scenario run, the same day — [M.8](#m8-the-cheaper-half-of-g9-built--and-the-defect-the-knob-uncovered-2026-08-06).)*
 
 **What the nested run can and cannot claim.** It proves the *mechanism* — does an addressed
 tap enter Calico's candidate list and win? — which is precisely what
@@ -3754,3 +3774,140 @@ wants roughly 4 GiB and ~10 GiB of disk; and neither scenario needs a microVM, s
 does not have to be enabled** — the guest's own dummy interfaces and DHCP clients suffice.
 The harness shape already exists: a cloud image driven by cloud-init on a `fabric.sh` tap is
 what [`edge.toml`](examples/micro-cloud/edge.toml) and slice 5b just built and proved.
+
+### M.8 The cheaper half of G.9, built — and the defect the knob uncovered, 2026-08-06
+
+> ⚠️ **STATUS: run once at root (2026-08-06). Eight of nine assertions passed; the ninth
+> failed, and the fabric was right.** Both defects were in the harness, are fixed, and the
+> confirming re-run is pending — so this row is **not yet PASS**. See
+> [M.8.5](#m85-the-first-root-run-the-teardown-assertion-caught-its-own-author).
+> Everything the test measures about the *fabric* held: layer 1 ABSORBED, layer 2 HALTED
+> honestly, and the reserved instance received its reserved address from an exhausted pool.
+
+[M.7](#m7-a-correction-this-appendix-inherited-the-g9-blocker-was-lifted-three-days-before-it-was-restated)
+established that DHCP exhaustion never needed a cluster-free host, only a shrinkable range.
+Making the range shrinkable took two lines. What it *uncovered* took more, and is the part
+worth keeping.
+
+#### M.8.1 The knob, and a latent defect sitting behind it
+
+`DHCP_LO`/`DHCP_HI` became `MC_DHCP_LO`/`MC_DHCP_HI`. That alone would have been a silent
+trap, because the reservation address was computed one line at a time from a **constant**:
+
+```sh
+IP="10.71.0.$((100 + IDX))"          # correct only while the pool starts at .100
+```
+
+Shrink or move the pool and reservations march straight **out of the range** — dnsmasq is
+never told to serve them, so it never answers for them — and `tap` creates the tap anyway.
+Nothing errors. The instance boots, fails to get the address its name resolves to, and the
+fault surfaces somewhere else entirely. That is bug class #1 with a fuse on it: harmless
+while one constant happened to match another, armed the moment anybody used the new knob.
+
+The base now derives from `DHCP_LO`, and exhaustion is **refused before the tap exists**,
+naming the pool and the count. A gate after the act is a post-mortem.
+
+The knob also gained validation — malformed address, wrong subnet, inverted ends, a pool
+containing the gateway — and that validation had its own instructive failure: written above
+`die()`, every refusal printed **`die: command not found` and carried on**, sailing the bad
+range past four gates. A validator that cannot fail is worse than none. It was found by
+running it, not by reading it, which is the only way that class is ever found.
+
+#### M.8.2 What the test asks, and why the obvious version proves nothing
+
+Running out of addresses is arithmetic, not a bug. The question the ladder asks is *how* it
+runs out, and this fabric can run out at **two independent layers**: reservation time (our
+code) and lease time (dnsmasq). They fail differently and both are graded.
+
+The load-bearing assertion is the **inverse of slice 5b's**. 5b established that holding
+*an* address in the right subnet proves nothing — the property is holding the address the
+fabric **reserved**. So: with the dynamic pool completely empty, does a reserved instance
+still get *its* address?
+
+| client | expected | rung |
+|---|---|---|
+| unreserved MAC, pool exhausted | **nothing at all** | HALTED (honest) |
+| reserved MAC, same instant | **exactly its reserved address** | ABSORBED |
+
+The first is the **negative control for the second**, taken from the same exhausted state.
+Without it, "the reserved client got an address" is indistinguishable from "the pool was
+never actually full" — the all-PASS matrix that checks nothing. The test also confirms the
+override reached **dnsmasq's own cmdline**, because a run against the default 101-address
+pool would exhaust nothing while looking equally busy.
+
+#### M.8.3 The clients are namespaces, and that is the safety property
+
+No VMs. Each fake guest is a veth pair: the host end is enslaved to `br-mc0` and stays
+**addressless**, the far end is moved into its own netns, given a MAC, and runs a real
+`busybox udhcpc`. The leased IPv4 therefore lands **inside a namespace**, where Calico's
+first-found autodetection — a 60-second poll ([I.4](#i4-the-finding-that-outlives-the-migration--autodetection-is-a-60-second-poll)),
+not merely a restart-time scan — cannot see it. F.7.1 rule 2 is satisfied *by construction*
+rather than by naming discipline, and the test asserts it afterwards rather than assuming
+it. A real client also matters: a hand-rolled DISCOVER would test the harness's idea of
+DHCP, while `udhcpc` is what a busybox guest actually runs.
+
+#### M.8.4 What it does not close
+
+The **other** G.9 scenario — give an interface an address on purpose and watch it become a
+candidate — is untouched, and is now queued as its own lab unit,
+[`nested-calico-sandbox/`](examples/micro-cloud/DEFERRED.md#queued--nested-calico-sandbox-a-disposable-cluster-to-break-on-purpose):
+a disposable cluster is a safe host for the **whole** slice-3 break pass, including `retap`,
+which is still never called. Break coverage for slice 3 moves **3 of 5 → 4 of 5**.
+
+#### M.8.5 The first root run: the teardown assertion caught its own author
+
+The run produced eight `note` lines and one `FAIL`, and every line about the **fabric** was
+what M.8.2 predicted:
+
+```text
+  - layer 1 ABSORBED: the 5th reservation is refused by name, before the tap exists
+  - layer 2: the single dynamic address 10.71.0.100 went to the first unreserved client
+  - layer 2 HALTED (honest): the second unreserved client got no lease at all
+  - layer 2 ABSORBED: with the dynamic pool empty, r1 still received its RESERVED 10.71.0.101
+  - safety: every leased address stayed inside its namespace
+FAIL: fabric.sh down reported failure
+```
+
+**`down` was correct and the test was wrong**, which is the most useful outcome available.
+`down` asserts that no `mc-*` interface survives teardown; the fake clients are named
+`mc-cli1..3`; and the trap that reaped them ran *after* the explicit `down` in the test
+body. So `down` reported three interfaces this test had leaked onto the bridge.
+
+That naming was deliberate — putting the clients inside the `mc-*` namespace `down` polices
+was chosen *so* a leak would be caught. It was, on the first real exercise, against its
+author. [§7.2](#72-teardown-is-a-test-not-a-cleanup)'s *"teardown is a test, not a cleanup"*
+has now caught a live-cluster incident ([F.6](#f6-additive-was-not-safe--the-tap-captured-a-live-clusters-tunnel))
+and a harness bug; a `down` that merely returned 0 would have hidden both.
+
+**Then the leftovers pointed at a second, worse defect.** After the failure the interfaces
+were *still there* — so the EXIT trap had reaped nothing. The cause:
+
+```sh
+got1="$(dhcp_ask 1 …)"      # command substitution == subshell
+```
+
+`dhcp_ask` recorded each client with `CLIENTS+=("$id")`, and a command substitution runs in
+a **subshell** — so every append went to a copy that died with it. The parent's array was
+empty for the whole run, the trap iterated over nothing, and three veths plus three network
+namespaces survived on a live host. The bookkeeping had been perfect and invisible.
+
+Both fixes are structural rather than patches:
+
+- `dhcp_ask` sets a global instead of printing, so no subshell stands between it and its
+  own records;
+- `reap_clients` **derives** the list from the kernel (`ip -o link show`, `ip netns list`)
+  after walking its own — an in-memory list of what we created is a cached fact, and a run
+  that dies early leaves no bookkeeping at all. This second pass would have caught the
+  subshell bug on its own, and it cleans up after a crash;
+- it is called from the **body before `down`**, not only from the trap.
+
+And a third, smaller: the `FAIL` said *"see /tmp/tmp.XXXX/log"* and the trap then **deleted
+that directory on the way out** — sending the reader to diagnose a run whose evidence the
+harness had destroyed. The scratch dir is now kept on any non-zero exit, not only on a
+verdict-less one.
+
+**None of the three was findable without running it.** Static gates were green — shellcheck
+clean, `bash -n` clean, the unprivileged path SKIPping correctly — and the sandbox denies
+both `sudo` and `unshare -r`'s `uid_map` write, so no rehearsal was possible either. This is
+the plain case for handing the privileged run to the operator rather than reasoning about
+what it would have done.
