@@ -9,18 +9,46 @@ MAAS="$LAB_DIR/maas-lab.sh"
 MOCK_BMC="$TEST_DIR/mock-bmc.sh"
 readonly TEST_DIR LAB_DIR MAAS MOCK_BMC
 
-skip() { printf 'SKIP: %s\n' "$*" >&2; exit 77; }
-fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
-pass() { printf 'PASS: %s\n' "$*" >&2; exit 0; }
+# _VERDICT guards the EXIT net below: a test that already printed FAIL must not also be
+# told "no verdict was printed", or the net becomes noise a reader learns to skip past.
+_VERDICT=0
+skip() { _VERDICT=1; printf 'SKIP: %s\n' "$*" >&2; exit 77; }
+fail() { _VERDICT=1; printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+pass() { _VERDICT=1; printf 'PASS: %s\n' "$*" >&2; exit 0; }
 note() { printf '  - %s\n' "$*" >&2; }
 
 have() { command -v "$1" >/dev/null 2>&1; }
 need() { local c; for c in "$@"; do have "$c" || skip "missing required command: $c"; done; }
 
-# Belt-and-suspenders (CLAUDE.md): if a test dies early (a die/exit slips past the
-# assertions), the EXIT trap prints a FAIL verdict so output is never silently blank.
-# shellcheck disable=SC2154  # _rc is assigned inside the trap body below
-trap '_rc=$?; if [[ $_rc -ne 0 && $_rc -ne 77 ]]; then printf "FAIL: test exited early (rc=%s)\n" "$_rc" >&2; fi' EXIT
+# ── the ONE EXIT trap, and the only place cleanup belongs ───────────────────────────
+#
+# Belt-and-suspenders (CLAUDE.md): if a test dies early — a `die` inside maas-lab.sh
+# slipping past the assertions — this prints a FAIL verdict, so output is never
+# silently blank with a bare rc.
+#
+# CLEANUP GOES THROUGH THIS TRAP, NEVER A SECOND `trap … EXIT`. Bash keeps ONE EXIT
+# trap per shell, so a test writing `trap 'cleanup_sandboxes' EXIT` silently REPLACES
+# this net and the verdict line disappears. That is not hypothetical: on 2026-08-06,
+# 23 of this lab's 36 tests did exactly that and had no net at all, while 11 more
+# re-inlined it and printed the FAIL line twice on a genuine failure. Register
+# cleanup instead:
+#
+#     on_exit 'rm -rf "$SANDBOX"'      # evaluated at exit, so it may name a later var
+#
+# `tests/test-harness-net.sh` fails if any test installs its own EXIT trap, and proves
+# the net fires when a test dies and stays quiet when it does not.
+_CLEANUPS=()
+on_exit() { _CLEANUPS+=("$*"); }
+
+_on_exit() {
+    local rc=$? i
+    for (( i=${#_CLEANUPS[@]}-1; i>=0; i-- )); do eval "${_CLEANUPS[i]}" || true; done
+    cleanup_sandboxes
+    if (( rc != 0 && rc != 77 )) && (( _VERDICT == 0 )); then
+        printf 'FAIL: test exited early (rc=%d) — no verdict was printed by the test itself\n' "$rc" >&2
+    fi
+}
+trap _on_exit EXIT
 
 # Every test runs against a throwaway state dir and the mock BMC, so the whole
 # state machine drives with zero libvirt / vbmcd / root. Call once per test.

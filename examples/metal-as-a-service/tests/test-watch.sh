@@ -5,7 +5,6 @@
 # node under the control-pane fleet dir so Phase-6 surfaces it. Headless.
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 need python3
-trap 'cleanup_sandboxes' EXIT
 maas_env
 
 CP="$LAB_DIR/../../tools/control-pane"

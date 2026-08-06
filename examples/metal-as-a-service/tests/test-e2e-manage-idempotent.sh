@@ -32,7 +32,6 @@
 #
 # SAFETY: pure text and a stub shell script. No fleet, no libvirt, no BMC, no registry.
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
-trap 'cleanup_sandboxes' EXIT
 maas_env
 E2E="$LAB_DIR/run-e2e.sh"
 [[ -f "$E2E" ]] || fail "run-e2e.sh is missing"

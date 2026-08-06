@@ -21,7 +21,6 @@
 #
 # SAFETY: mock BMC, throwaway registry, fixture artifacts. Nothing boots, no PXE.
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
-trap 'cleanup_sandboxes' EXIT
 maas_env
 export MOCK_BMC_POWER_DIR="$SANDBOX/power"
 export MAAS_NETBOOT_DIR="$SANDBOX/netboot"

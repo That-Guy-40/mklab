@@ -52,8 +52,7 @@ maas_env_drivers                      # gives us a lab CA at $MAAS_IMAGES_DIR/tr
 # swtpm's control socket path has a hard length limit, so the TPM state lives in a
 # short /tmp dir rather than the sandbox (which carries the test's long name).
 TPMROOT="$(mktemp -d /tmp/mmi.XXXX)"
-# shellcheck disable=SC2154
-trap '_rc=$?; rm -rf "$TPMROOT"; cleanup_sandboxes; [[ $_rc == 0 || $_rc == 77 ]] || printf "FAIL: test exited early (rc=%s)\n" "$_rc" >&2' EXIT
+on_exit 'rm -rf "$TPMROOT"'
 
 # boot_measured <image> <tag> -> prints the console log path
 boot_measured() {

@@ -26,7 +26,7 @@ INSTALL="$LAB_DIR/install-zfs-root.sh"
 
 WORK="$(mktemp -d)"
 # shellcheck disable=SC2154
-trap 'rc=$?; rm -rf "$WORK"; [[ $rc == 0 || $rc == 77 ]] || printf "FAIL: test exited early (rc=%s)\n" "$rc" >&2' EXIT
+on_exit 'rm -rf "$WORK"'
 
 STUBS="$WORK/stubs"; mkdir -p "$STUBS"
 MARKER="$WORK/executed.log"; : >"$MARKER"

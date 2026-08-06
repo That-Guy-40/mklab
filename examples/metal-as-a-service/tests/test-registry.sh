@@ -4,7 +4,6 @@
 # bmc-toolkit registry that resolves MAAS's nodes, and `list --json` valid output.
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 need python3
-trap 'cleanup_sandboxes' EXIT
 maas_env
 
 ( "$MAAS" enroll node1 --bmc-port 6230 --domain maas-node1 ) >/dev/null 2>&1 || fail "enroll node1"

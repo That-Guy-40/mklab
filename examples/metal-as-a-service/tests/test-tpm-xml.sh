@@ -35,8 +35,7 @@ done
 [[ -n "$OVMF" ]] || skip "OVMF is not installed — tpm_xml.py refuses without it, by design"
 
 SANDBOX="$(mktemp -d)"
-# shellcheck disable=SC2154
-trap '_rc=$?; rm -rf "$SANDBOX"; [[ $_rc == 0 || $_rc == 77 ]] || printf "FAIL: test exited early (rc=%s)\n" "$_rc" >&2' EXIT
+on_exit 'rm -rf "$SANDBOX"'
 
 # A BIOS domain shaped like this fleet's: e1000 NIC carrying the verifying legacy ROM,
 # which is what create-fleet.sh produces before give_tpm runs.

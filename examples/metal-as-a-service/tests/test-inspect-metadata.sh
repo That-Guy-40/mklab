@@ -6,7 +6,7 @@
 # the real PXE boot is stubbed by POSTing exactly what the probe's wget would.
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 need python3
-trap 'cleanup_sandboxes; [[ -n "${MDPID:-}" ]] && kill "$MDPID" 2>/dev/null' EXIT
+on_exit '[[ -n "${MDPID:-}" ]] && kill "$MDPID" 2>/dev/null'
 maas_env
 
 PROBE="$LAB_DIR/probe-init.sh"

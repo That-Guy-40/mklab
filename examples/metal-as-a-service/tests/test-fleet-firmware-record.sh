@@ -28,7 +28,6 @@
 # SAFETY: no libvirt, no domains, no sudo, no root. The XML is fixture text on stdin and
 # the registry is a throwaway state dir.
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
-trap 'cleanup_sandboxes' EXIT
 maas_env
 FLEET="$LAB_DIR/create-fleet.sh"
 

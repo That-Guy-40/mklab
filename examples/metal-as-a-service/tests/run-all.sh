@@ -24,7 +24,7 @@ tests=(test-state-machine.sh test-cleaning-guard.sh test-registry.sh
        test-fleet-tpm-selection.sh test-tpm-xml.sh
        test-e2e-make-deployable.sh
        test-fleet-firmware-record.sh test-fleet-preflight.sh
-       test-chaos-matrix.sh)
+       test-chaos-matrix.sh test-harness-net.sh)
 
 # The comment above records that a test sat on disk for weeks in no list. A comment is
 # not a check: it explains a fault to whoever is already reading, which is nobody at the
@@ -50,5 +50,21 @@ for t in "${tests[@]}"; do
         *)  failn=$((failn+1)); rc=1 ;;
     esac
 done
-printf '\n=== summary: %d passed, %d skipped, %d failed ===\n' "$pass" "$skip" "$failn" >&2
+# Report the count as a RATIO against the list, and refuse a run where they disagree.
+#
+# The bare "N passed" this used to print was copied into five documents by hand, drifted
+# in one of them, and told a reader nothing about coverage anyway: a runner that quietly
+# stopped after three tests also prints a clean "3 passed, 0 failed". The number worth
+# stating is `ran/listed`, and with the disk-vs-list check above that chains back to the
+# files on disk — so the docs can say "every test passes" and be checkable, instead of
+# carrying an integer that has to be maintained by hand.
+ran=$((pass + skip + failn))
+ondisk=(test-*.sh)
+printf '\n=== summary: %d/%d listed tests ran (matching the %d test files on disk) — %d passed, %d skipped, %d failed ===\n' \
+    "$ran" "${#tests[@]}" "${#ondisk[@]}" "$pass" "$skip" "$failn" >&2
+if (( ran != ${#tests[@]} )); then
+    printf 'FAIL: %d of %d listed tests never ran — the loop above exited early, so "%d passed" describes a partial run\n' \
+        "$((${#tests[@]} - ran))" "${#tests[@]}" "$pass" >&2
+    exit 1
+fi
 exit $rc

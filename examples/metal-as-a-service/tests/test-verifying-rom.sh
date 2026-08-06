@@ -52,9 +52,10 @@ cleanup() {
     [[ -n "$HTTPD" ]] && kill "$HTTPD" 2>/dev/null
     rm -rf "$WORK"
 }
-# Capture the exit status BEFORE cleanup runs: `cleanup; _rc=$?` would record what
-# the teardown returned (nearly always 0) and the safety net would report nothing.
-trap '_rc=$?; cleanup; if [[ $_rc -ne 0 && $_rc -ne 77 ]]; then printf "FAIL: test exited early (rc=%s)\n" "$_rc" >&2; fi' EXIT
+# lib.sh's _on_exit captures the exit status BEFORE running anything registered here —
+# `cleanup; _rc=$?` would record what the teardown returned (nearly always 0) and the
+# safety net would report nothing.
+on_exit 'cleanup'
 
 # The ROM trusts exactly one root, compiled in. If the fleet re-minted its CA after
 # the ROM was built, every verification would fail for a reason that is not a

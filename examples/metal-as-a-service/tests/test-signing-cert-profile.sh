@@ -21,7 +21,7 @@ VERIFY_LIB="$LAB_DIR/drivers/verify-lib.sh"
 SIGN_PAYLOAD="$LAB_DIR/../../netboot/sign-payload.sh"
 
 WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"; _rc=$?; if [[ $_rc -ne 0 && $_rc -ne 77 ]]; then printf "FAIL: test exited early (rc=%s)\n" "$_rc" >&2; fi' EXIT
+on_exit 'rm -rf "$WORK"'
 
 # exts <crt> — the extension set that matters here, one per line, normalised.
 exts() {

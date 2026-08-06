@@ -19,7 +19,7 @@ cleanup() {
   [[ -n "$SRC_PID" ]] && kill "$SRC_PID" 2>/dev/null || true       # kill by recorded PID
   rm -f "$OUT"
 }
-trap 'cleanup' EXIT
+on_exit 'cleanup'
 
 note "start the node's serial source (repo tool: tools/serial-source.py --tcp $SERIAL_TCP)"
 python3 "$LAB_DIR/../../tools/serial-source.py" --tcp "$SERIAL_TCP" --marker "$MARKER" >/dev/null 2>&1 &
