@@ -22,9 +22,16 @@
 > the artifact**, with one exception — Firecracker owns `root=` and QEMU does not.
 >
 > **Still open** ([K.5](../../MICRO_CLOUD_LAB_PLAN.md#k5-what-slice-5a-leaves-closed-and-what-it-does-not)): `retap` is *still* never called (it needs a
-> deliberately root-owned tap to recover from), G.9's two break-pass scenarios still
-> want a host without a live cluster, and **slice 5b** — the fidelity case — has not
-> started.
+> deliberately root-owned tap to recover from), G.9's two break-pass scenarios are unrun,
+> and **slice 5b** — the fidelity case — has not started.
+>
+> ⚠️ **Correction 2026-08-06** — this line said G.9's scenarios "want a host without a
+> live cluster". That was **already wrong when it was written**: G.9's own addendum
+> (2026-08-03) says a **nested QEMU guest running a disposable microk8s is** such a host.
+> And the two scenarios never shared a blocker — **DHCP exhaustion needs no cluster at
+> all**, only a shrinkable range, and could run on this host today behind a two-line
+> change to `fabric.sh`. Full account:
+> [M.7](../../MICRO_CLOUD_LAB_PLAN.md#m7-a-correction-this-appendix-inherited-the-g9-blocker-was-lifted-three-days-before-it-was-restated).
 >
 > ---
 >
