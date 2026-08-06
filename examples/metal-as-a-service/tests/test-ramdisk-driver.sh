@@ -21,7 +21,6 @@
 # tampered with, which is all the driver's logic actually cares about.
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 need openssl
-trap 'cleanup_sandboxes' EXIT
 maas_env
 maas_env_drivers
 export MAAS_DRIVER_DIR="$LAB_DIR/drivers"          # the REAL ramdisk.sh

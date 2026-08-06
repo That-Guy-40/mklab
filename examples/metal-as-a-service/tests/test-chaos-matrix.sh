@@ -22,8 +22,7 @@ need openssl python3
 
 # lib.sh arms the verdict trap at source time; re-arm it so it also cleans up.
 OUT="$(mktemp)"
-# shellcheck disable=SC2154
-trap '_rc=$?; rm -f "$OUT"; cleanup_sandboxes; [[ $_rc == 0 || $_rc == 77 ]] || printf "FAIL: test exited early (rc=%s)\n" "$_rc" >&2' EXIT
+on_exit 'rm -f "$OUT"'
 ( "$LAB_DIR/chaos-run.sh" --json ) > "$OUT" 2>/dev/null
 rc=$?
 [[ -s "$OUT" ]] || fail "chaos-run.sh --json produced no report (rc=$rc)"

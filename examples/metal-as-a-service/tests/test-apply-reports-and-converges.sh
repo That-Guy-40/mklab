@@ -28,7 +28,6 @@
 # SAFETY: mock driver + mock BMC in a sandbox; the run-e2e.sh assertions are pure text.
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 need openssl
-trap 'cleanup_sandboxes' EXIT
 maas_env
 maas_env_drivers
 export MOCK_DEPLOY_LOG="$SANDBOX/deploys.log"; : > "$MOCK_DEPLOY_LOG"

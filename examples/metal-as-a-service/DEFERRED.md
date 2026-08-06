@@ -11,8 +11,11 @@ PASS: node3 attested to a real TPM measurement of the image it booted, activated
       no longer matched.
 ```
 
-`tests/run-all.sh` is **36 passed / 0 skipped / 0 failed** and `chaos-run.sh` reports
-**0 criticals**.
+`tests/run-all.sh` reports **every listed test ran, 0 skipped, 0 failed** and
+`chaos-run.sh` reports **0 criticals**. (The runner states a *ratio* rather than a
+count — it refuses a run in which a listed test never ran, and refuses to leave a test
+file on disk unlisted — so no integer has to be maintained by hand here. The one that
+used to be had already drifted.)
 
 That last run is the one this file spent two days pointing at, and it closed the two
 steps no run had ever reached: **deploy #2** (the same image must now attest and

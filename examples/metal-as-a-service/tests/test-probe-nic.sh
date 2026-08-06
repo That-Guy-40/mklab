@@ -23,7 +23,6 @@
 # -no-reboot, booting an initramfs that powers itself off. Nothing touches the fleet.
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 need qemu-system-x86_64
-trap 'cleanup_sandboxes' EXIT
 maas_env
 
 # The model the fleet gives its nodes — read from create-fleet.sh, so this test tracks

@@ -13,7 +13,6 @@
 # SAFETY: mock BMC, mock driver, throwaway registry and spec. Nothing boots.
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 need openssl python3
-trap '_rc=$?; cleanup_sandboxes; [[ $_rc == 0 || $_rc == 77 ]] || printf "FAIL: test exited early (rc=%s)\n" "$_rc" >&2' EXIT
 maas_env
 maas_env_drivers                       # MAAS_DRIVER_DIR=tests/ -> tests/mock.sh
 export MOCK_BMC_POWER_DIR="$SANDBOX/power"

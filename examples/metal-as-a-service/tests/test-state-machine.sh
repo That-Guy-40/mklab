@@ -6,7 +6,6 @@
 # the unhappy path (verify fails -> error -> retry).
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 need python3
-trap 'cleanup_sandboxes' EXIT
 maas_env
 
 N=node1

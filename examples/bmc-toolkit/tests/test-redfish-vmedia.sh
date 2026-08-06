@@ -20,7 +20,7 @@ cleanup() {
   V pool-destroy default >/dev/null 2>&1 || true
   V pool-undefine default >/dev/null 2>&1 || true
 }
-trap 'cleanup' EXIT
+on_exit 'cleanup'
 
 note "build a bootable proof ISO (marker in kernel cmdline)"
 "$LAB_DIR/make-proof-iso.sh" --marker "$MARKER" --out "$ISO" >/dev/null || fail "could not build proof ISO"

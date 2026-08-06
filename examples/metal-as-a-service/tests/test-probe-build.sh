@@ -5,7 +5,6 @@
 # busybox.
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 need cpio gzip
-trap 'cleanup_sandboxes' EXIT
 maas_env
 
 # find a static busybox the same way the builder does

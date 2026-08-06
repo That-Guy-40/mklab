@@ -40,6 +40,41 @@ bug, not a result — the reader can't tell a real failure from a broken harness
   can never again produce silent output. (Real incident: two root-gated tests
   did exactly this — see [`REVIEW-phases-1-5.md`](REVIEW-phases-1-5.md).)
 
+- **The net belongs in `lib.sh`, and a test must NEVER install its own `trap …
+  EXIT`.** Bash keeps **one** EXIT trap per shell, so a test writing
+  `trap 'cleanup' EXIT` silently **replaces** the net — which is invisible,
+  because a safety net is only observable when something goes wrong. Measured
+  2026-08-06: of metal-as-a-service's 36 tests, **23 had disarmed it this way**
+  (a `die` ended them with a bare rc and no verdict at all) and 11 more had
+  re-inlined it and printed `FAIL` **twice** for one failure. Two other labs had
+  the same shape. So: `lib.sh` owns the trap, tests register teardown with
+  `on_exit '<cmd>'` (evaluated at exit, so it may name a variable set later),
+  `_on_exit` captures `$?` **before** running any of it — a teardown returns 0
+  and would otherwise erase the status that triggered it — and a `_VERDICT` flag
+  set by `pass`/`fail`/`skip` keeps the net quiet when a verdict was already
+  given. Exemplars:
+  [`examples/metal-as-a-service/tests/lib.sh`](examples/metal-as-a-service/tests/lib.sh),
+  [`phase7-firecracker/tests/lib.sh`](phase7-firecracker/tests/lib.sh).
+
+- **Test the net, and enforce the rule.** A net nobody has watched fire is not
+  known to work.
+  [`examples/metal-as-a-service/tests/test-harness-net.sh`](examples/metal-as-a-service/tests/test-harness-net.sh)
+  proves it fires with the right rc when a test dies silently, stays quiet on
+  pass/skip, prints **exactly one** `FAIL` when the test already spoke, still
+  runs registered cleanup in reverse — and **fails if any test in the directory
+  installs an EXIT trap of its own**, which turns the rule above from advice
+  into a check. All four defects were re-injected and watched to bite.
+
+- **Don't write the test count in prose.** `run-all.sh` used to end on
+  `N passed, 0 failed`; that integer got copied by hand into five documents and
+  drifted in one. It also says nothing about coverage — a runner that quietly
+  stopped after three tests prints a clean `3 passed, 0 failed`. Print a
+  **ratio** instead (`ran/listed`, plus the count of test files on disk), fail
+  when a listed test never ran, and fail when a test file is in no list — then
+  docs can say *"every listed test ran, 0 skipped, 0 failed"*, which stays true
+  as tests are added. (A test with no runner is a test nobody runs: one sat on
+  disk here for weeks, guarded only by a comment.)
+
 ### "Fix a value everywhere" tasks: map the full blast radius BEFORE the first edit
 
 When changing a value, path, or name that recurs across the repo (a **port**, a

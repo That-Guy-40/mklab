@@ -21,7 +21,6 @@
 # its argv and exit — a test guarding "we never call virsh" must not be able to call it.
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 need openssl
-trap 'cleanup_sandboxes' EXIT
 maas_env
 maas_env_drivers
 export MAAS_DRIVER_DIR="$LAB_DIR/drivers"     # the REAL install.sh, not tests/mock.sh

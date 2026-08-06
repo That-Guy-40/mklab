@@ -604,5 +604,49 @@ Needs ~4 GiB RAM and ~10 GiB disk; **nested KVM is not required**.
 
 ---
 
+## 10. Extend the EXIT-trap safety net to phases 1–5 and micro-linux
+
+`examples/metal-as-a-service/`, `examples/bmc-toolkit/` and
+`examples/zfsbootmenu-boot-environments/` were fixed on 2026-08-06 (see
+[`examples/metal-as-a-service/MANUAL_TESTING.md`](examples/metal-as-a-service/MANUAL_TESTING.md)
+§18): `lib.sh` owns the one EXIT trap, tests register teardown with `on_exit`, a
+`_VERDICT` flag stops the net firing on top of a verdict, and
+`tests/test-harness-net.sh` proves the net works *and* fails if any test installs a
+trap of its own.
+
+The same sweep measured the rest of the repo. These `lib.sh` files provide **no net at
+all**, so a test that dies without calling `fail` — `set -e` tripping, a `die` inside
+the phase driver leaking past an assertion — ends with a bare rc and a blank terminal.
+That is the incident [`REVIEW-phases-1-5.md`](REVIEW-phases-1-5.md) already records
+happening twice:
+
+| tests dir | tests with **no** early-exit net |
+|---|---|
+| `phase1-chroot/tests/` | 17 of 21 |
+| `phase2-qemu-vm/tests/` | 13 of 17 |
+| `phase3-docker/tests/` | 15 of 16 |
+| `phase4-podman/tests/` | 11 of 13 |
+| `phase5-lxd/tests/` | 10 of 10 |
+| `micro-linux/tests/` | 10 of 10 |
+
+(`examples/micro-cloud/tests/` is already clean by a different route — every test
+installs the `_VERDICT`-guarded net itself. Either design is fine; what is not fine is
+a net that is present and inert.)
+
+- [ ] Give each of those six `lib.sh` files the `_VERDICT` + `on_exit` + `_on_exit`
+      shape, and install the trap there.
+- [ ] Convert the tests that install their own EXIT trap to `on_exit`, so lib.sh's net
+      is not replaced.
+- [ ] Add a `test-harness-net.sh` per phase (or one shared runner check) so the rule is
+      enforced rather than advised.
+- [ ] Run all six suites; several are root/daemon-gated and will SKIP, so **check that
+      the skips are the expected ones** rather than reading a green summary.
+
+Not urgent — it changes nothing about whether the code under test is correct — but it
+is the difference between a failing test that names its defect and one that prints
+nothing at all. Do it as its own PR: six suites is six verification runs.
+
+---
+
 *Created 2026-06-06; #5–#6 added 2026-06-11; #7 added 2026-06-11; #8 added
-2026-08-03; #9 added 2026-08-06.*
+2026-08-03; #9 added 2026-08-06; #10 added 2026-08-06.*

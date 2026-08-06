@@ -39,7 +39,6 @@
 # SAFETY: two mock drivers in the sandbox, a mock BMC, no libvirt, no netboot, no power.
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 need openssl
-trap 'cleanup_sandboxes' EXIT
 maas_env
 maas_env_drivers
 

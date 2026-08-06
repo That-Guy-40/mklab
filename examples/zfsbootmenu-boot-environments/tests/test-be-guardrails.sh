@@ -36,7 +36,7 @@ cleanup() { rm -rf "$STUB_DIR"; }
 
 # Re-arm the verdict trap so it also cleans up.
 # shellcheck disable=SC2154
-trap 'rc=$?; cleanup; [[ $rc == 0 || $rc == 77 ]] || printf "FAIL: test exited early (rc=%s)\n" "$rc" >&2' EXIT
+on_exit 'cleanup'
 
 cat >"$STUB_DIR/zpool" <<'STUB'
 #!/usr/bin/env bash

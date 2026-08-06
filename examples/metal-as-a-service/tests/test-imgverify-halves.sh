@@ -29,7 +29,6 @@
 # SAFETY: the driver's `deploy` verb is never invoked — the boot-script writer is
 # exercised through it with a stub BMC, no domain, no netboot, no power.
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
-trap 'cleanup_sandboxes' EXIT
 maas_env
 need openssl
 

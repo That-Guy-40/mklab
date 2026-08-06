@@ -28,10 +28,8 @@ need python3 mktemp
 CF="$LAB_DIR/create-fleet.sh"
 [[ -x "$CF" ]] || fail "create-fleet.sh not executable at $CF"
 
-WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
-# NOTE: this replaces lib.sh's EXIT trap, so re-arm the early-exit net by hand.
-# shellcheck disable=SC2154  # _rc is assigned inside the trap body below
-trap '_rc=$?; rm -rf "$WORK"; if [[ $_rc -ne 0 && $_rc -ne 77 ]]; then printf "FAIL: test exited early (rc=%s)\n" "$_rc" >&2; fi' EXIT
+WORK="$(mktemp -d)"
+on_exit 'rm -rf "$WORK"'
 
 # ── a two-node fleet spec of our own, so the real one is never touched ────────
 FT="$WORK/fleet.toml"

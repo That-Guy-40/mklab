@@ -35,8 +35,7 @@ command -v "$DNSMASQ" >/dev/null || skip "dnsmasq is not installed — the DHCP 
 command -v unshare >/dev/null || skip "unshare is not available — no rootless network namespace"
 
 SANDBOX="$(mktemp -d)"
-# shellcheck disable=SC2154
-trap '_rc=$?; rm -rf "$SANDBOX"; [[ $_rc == 0 || $_rc == 77 ]] || printf "FAIL: test exited early (rc=%s)\n" "$_rc" >&2' EXIT
+on_exit 'rm -rf "$SANDBOX"'
 
 XMLTOOL="$LAB_DIR/lib/dnsmasq_arch_xml.py"
 PROBE="$TEST_DIR/dhcp-probe.py"

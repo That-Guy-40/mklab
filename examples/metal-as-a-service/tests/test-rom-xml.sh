@@ -13,7 +13,7 @@ ROM_XML="$LAB_DIR/lib/rom_xml.py"
 [[ -f "$ROM_XML" ]] || fail "lib/rom_xml.py is missing — create-fleet.sh's give_verifying_rom calls it"
 
 WORK="$(mktemp -d)"
-trap '_rc=$?; rm -rf "$WORK"; if [[ $_rc -ne 0 && $_rc -ne 77 ]]; then printf "FAIL: test exited early (rc=%s)\n" "$_rc" >&2; fi' EXIT
+on_exit 'rm -rf "$WORK"'
 
 ROM="$WORK/ipxe-8086100e.rom"
 printf 'not-really-a-rom\n' > "$ROM"

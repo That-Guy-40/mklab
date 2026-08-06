@@ -22,11 +22,9 @@
 # passing if that recovery path broke.
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 need python3
-# Keep lib.sh's EXIT-trap safety net (CLAUDE.md): a bare `trap 'cleanup_sandboxes' EXIT`
-# REPLACES it, so a die() slipping past the assertions exits silently with no verdict —
-# which is exactly what happened while writing this file.
-# shellcheck disable=SC2154
-trap '_rc=$?; cleanup_sandboxes; [[ $_rc == 0 || $_rc == 77 ]] || printf "FAIL: test exited early (rc=%s)\n" "$_rc" >&2' EXIT
+# A die() slipping past the assertions used to exit this file silently with no verdict,
+# because its own `trap 'cleanup_sandboxes' EXIT` had replaced lib.sh's net. Cleanup now
+# goes through `on_exit`, and lib.sh owns the one EXIT trap.
 maas_env
 
 # shellcheck source=../lib/e2e-common.sh

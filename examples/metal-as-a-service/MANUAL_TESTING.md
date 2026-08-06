@@ -1385,8 +1385,14 @@ runner **stop**, or every other section would pass even if the helper did nothin
 ⚠️ Writing that test reproduced one of this repo's own documented traps. A bare
 `trap 'cleanup_sandboxes' EXIT` **replaces** `lib.sh`'s belt-and-suspenders net, so the
 first negative-control run exited `rc=9` with no `FAIL:` line at all — a silent test
-death, the exact thing CLAUDE.md forbids. The trap now does both. Several older tests
-in this directory use the same bare form and have the same gap.
+death, the exact thing CLAUDE.md forbids.
+
+> **Closed 2026-08-06 — and this paragraph is why it took a fortnight.** It ended, as
+> written, on *"several older tests in this directory use the same bare form and have
+> the same gap"* — a known defect, counted in prose and left there. It was **23 of 36**,
+> and prose does not fail a build. Cleanup now goes through `on_exit` and
+> [`tests/test-harness-net.sh`](tests/test-harness-net.sh) refuses a test that installs
+> its own EXIT trap: [§18](#18-the-safety-net-that-23-of-36-tests-had-silently-disarmed-2026-08-06).
 
 ### 14.7 The third UEFI boot: it measured, signed — and had no NIC to say it with
 
@@ -1530,7 +1536,7 @@ fine; the missing address was this defect, in the harness as well as on the meta
 *asserts* `addr=` is a real address. A caveat is a claim like any other, and this one was
 never checked.
 
-**Success signature:** `tests/run-all.sh` reports **36 passed / 0 failed**;
+**Success signature:** `tests/run-all.sh` reports **every listed test ran, 0 skipped, 0 failed**;
 `./netboot-chain.sh show` ends with `network: arch-conditional DHCP present (5/5
 options ...)`; and `./build-verifying-rom.sh show` reports the UEFI binary as
 `ENFORCES` both built and installed.
@@ -1686,7 +1692,7 @@ script the instant the build succeeded, `all` never packed an initramfs, and pri
 nothing, because `set -e` exits silently. Live since 2026-05-27.
 
 **Success signature for this section:** `./run-e2e-measured.sh` ends on the `PASS:` line
-above with deploy #3 refused; `tests/run-all.sh` reports **36 passed / 0 failed**; and
+above with deploy #3 refused; `tests/run-all.sh` reports **every listed test ran, 0 skipped, 0 failed**; and
 `./maas-lab.sh show node3` reports `firmware uefi`. Note that node3 legitimately ends in
 `error` — that is deploy #3's refusal, and the runner restores the real `pcrs.expected`
 afterwards.
@@ -1788,7 +1794,7 @@ about. It is now fatal, in preflight, by name.
 with seven `note` lines (§1–§6); `FLEET_TPM=node3 ./create-fleet.sh preflight` exits 0 and
 prints the table above; `FLEET_NIC_ROM=/nonexistent ./create-fleet.sh preflight` exits
 non-zero naming the path *and* the command that builds it, having created nothing; and
-`tests/run-all.sh` reports **36 passed / 0 failed**.
+`tests/run-all.sh` reports **every listed test ran, 0 skipped, 0 failed**.
 
 ---
 
@@ -1873,6 +1879,83 @@ un-listing this section's test: `FAIL: 1 test(s) exist on disk but are in no lis
 nothing runs them: test-dhcp-reservation-identity.sh`.
 
 **Success signature for this section:** `./tests/test-dhcp-reservation-identity.sh`
-ends on `PASS:` with four `note` lines, and `tests/run-all.sh` reports **36 passed /
-0 failed**. (That count is hand-maintained in five places across this lab's docs and
-had already drifted to `34` in one of them — derive it from a run, not from a doc.)
+ends on `PASS:` with four `note` lines, and `tests/run-all.sh` reports **every listed test ran, 0 skipped, 0 failed**. (That used to be a
+hand-maintained count in five documents, one of which had drifted; §18 replaces it
+with a ratio the runner derives.)
+
+---
+
+## 18. The safety net that 23 of 36 tests had silently disarmed (2026-08-06)
+
+This started as a cosmetic complaint: a genuine `fail` printed **two** lines — its own
+specific message, then the EXIT trap's generic *"test exited early (rc=1)"*. Mapping
+where that came from found the other half, which is not cosmetic.
+
+`tests/lib.sh` has installed the belt-and-suspenders net CLAUDE.md asks for since the
+lab was written. **Bash keeps one EXIT trap per shell.** Of 36 tests:
+
+| tests | what they did | what it cost |
+|---|---|---|
+| **23** | `trap 'cleanup_sandboxes' EXIT` | **replaced lib.sh's net** — a `die` inside `maas-lab.sh` slipping past the assertions ended the test with a bare rc and **no verdict line at all** |
+| 11 | re-inlined the net in their own trap | the double FAIL line |
+| 2 | installed no trap | correct, by accident |
+
+The 23 are the serious ones, and they are the exact failure the rule exists to prevent
+— present, and inert. `phase7-firecracker/tests/lib.sh` records finding this in its own
+tests on 2026-08-02; nobody checked whether the older lab had it too.
+
+**Neither shape was visible from any run.** A safety net is only observable when
+something goes wrong, so nothing ever exercised it — the definition of an assertion
+that is not known to work.
+
+### 18.1 The fix is structural, not per-test
+
+`lib.sh` now owns the one EXIT trap and tests register cleanup with it:
+
+```bash
+WORK="$(mktemp -d)"
+on_exit 'rm -rf "$WORK"'        # evaluated at exit, so it may name a variable set later
+```
+
+`_on_exit` captures `$?` **before** running anything registered (a teardown returns 0
+and would otherwise erase the status that triggered it), runs registrations in reverse,
+and prints the net's line only when the rc is not 0/77 **and** no `pass`/`fail`/`skip`
+already spoke — the `_VERDICT` flag, matching `phase7-firecracker` and `micro-cloud`.
+
+### 18.2 It is now a tested thing rather than a present thing
+
+[`tests/test-harness-net.sh`](tests/test-harness-net.sh) — five sections, and §1 makes
+the structural rule enforceable instead of advisory: **no test may install its own EXIT
+trap.** All four defects were re-injected and watched to bite:
+
+| injected | what fired |
+|---|---|
+| a test installs `trap 'true' EXIT` | `FAIL: these tests install their own EXIT trap, which REPLACES lib.sh's safety net …: test-watch.sh` |
+| `fail()` stops setting `_VERDICT` | `FAIL: REGRESSION: one failure printed 2 FAIL lines, not 1 …` |
+| the net's condition removed | `FAIL: REGRESSION: a test that exited 3 with no verdict printed NO FAIL line …` |
+| cleanup runs in registration order | `FAIL: cleanup ran in registration order, not reverse …` |
+
+The second control is self-demonstrating: with `_VERDICT` broken, the meta-test's own
+failure also printed twice.
+
+### 18.3 And the count nobody could maintain
+
+`run-all.sh` used to end on `N passed, 0 skipped, 0 failed`, which was copied by hand
+into five documents and had drifted in one of them. Worse, the number said nothing
+about coverage: **a runner that quietly stopped after three tests also prints a clean
+`3 passed, 0 failed`.**
+
+It now states a *ratio* and refuses the two ways it can be a lie — a listed test that
+never ran, and a test file on disk that is in no list:
+
+```console
+=== summary: 37/37 listed tests ran (matching the 37 test files on disk) — 37 passed, 0 skipped, 0 failed ===
+```
+
+So the docs say *every listed test ran, 0 skipped, 0 failed* — a claim that stays true
+across additions and is checkable, instead of an integer maintained in five places.
+Derive the fact; don't cache it.
+
+**Success signature for this section:** `./tests/test-harness-net.sh` ends on `PASS:`
+with five `note` lines; `grep -l '^[[:space:]]*trap .*EXIT' tests/test-*.sh` prints
+nothing; and `tests/run-all.sh` reports **every listed test ran, 0 skipped, 0 failed**.

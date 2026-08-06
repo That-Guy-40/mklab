@@ -26,7 +26,8 @@ All three documented fast-follows are now built as well.
 verifying firmware doing the checking), `run-e2e-image.sh` (golden whole-disk lay-down),
 and `run-e2e-measured.sh` — the last one attesting a real TPM measurement, activating only
 against a policy captured from that boot, and being **refused** when the policy no longer
-matched. `tests/run-all.sh` → **36 passed / 0 failed**; `chaos-run.sh` → **0 criticals**.
+matched. `tests/run-all.sh` → **every listed test ran, 0 skipped, 0 failed**; `chaos-run.sh` →
+**0 criticals**.
 
 What a green run still does not prove — including the **fifteen-defect ledger** of faults
 only real hardware surfaced — is in [`DEFERRED.md`](DEFERRED.md); the live transcripts are

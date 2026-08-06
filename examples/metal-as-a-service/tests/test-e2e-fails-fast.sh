@@ -24,7 +24,6 @@
 # SAFETY: pure text plus one throwaway bash subprocess whose "failing tool" is
 # `false`. Nothing here names a destructive command, and nothing touches the fleet.
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
-trap 'cleanup_sandboxes' EXIT
 maas_env
 E2E="$LAB_DIR/run-e2e.sh"
 [[ -f "$E2E" ]] || fail "run-e2e.sh is missing"

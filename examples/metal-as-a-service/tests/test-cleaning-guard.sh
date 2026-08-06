@@ -4,7 +4,6 @@
 # destructive command to the operator and stays in 'cleaning' until --wiped; and
 # it REFUSES a disk outside the lab-owned allow-list. Guards F7 (destructive-op).
 source "$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
-trap 'cleanup_sandboxes' EXIT
 maas_env
 
 N=disknode
