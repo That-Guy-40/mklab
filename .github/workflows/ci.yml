@@ -57,7 +57,11 @@ jobs:
             examples/micro-cloud/tests/test-fabric-round-trip.sh \
             examples/micro-cloud/tests/test-edge-on-the-fabric.sh \
             examples/micro-cloud/tests/test-two-engines-one-fabric.sh \
-            examples/micro-cloud/tests/test-dhcp-exhaustion.sh
+            examples/micro-cloud/tests/test-dhcp-exhaustion.sh \
+            examples/kali-packer-vagrant/fetch-kali-packer.sh \
+            examples/kali-packer-vagrant/tests/test-offline-archive.sh \
+            examples/almalinux-packer-images/fetch-cloud-images.sh \
+            examples/almalinux-packer-images/tests/test-offline-archive.sh
 
       - name: no cached host facts in the micro-cloud instruments
         # Pure text analysis, no host state — safe on a runner that has none of these
@@ -102,6 +106,17 @@ jobs:
           for d in phase1-chroot phase2-qemu-vm phase3-docker phase4-podman phase5-lxd phase7-firecracker; do
             echo "::group::$d"
             bash "$d/tests/run-all.sh" || rc=1
+            echo "::endgroup::"
+          done
+          # Example-lab guards that are headless (no root, no network, no KVM).
+          # These were NOT gated before: the loop above only covers phase*/tests, so the
+          # vendored-archive verification could have rotted unnoticed -- which is exactly
+          # the class of thing it exists to catch.
+          for t in examples/kali-packer-vagrant/tests/test-offline-archive.sh \
+                   examples/almalinux-packer-images/tests/test-offline-archive.sh; do
+            echo "::group::$t"
+            bash "$t"; r=$?
+            [ "$r" -eq 0 ] || [ "$r" -eq 77 ] || rc=1
             echo "::endgroup::"
           done
           exit $rc

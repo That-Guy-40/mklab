@@ -1,0 +1,77 @@
+---
+- name: Set default kernel package type to kernel
+  ansible.builtin.replace:
+    path: /etc/sysconfig/kernel
+    regexp: "^(DEFAULTKERNEL=).*$"
+    replace: "\\1kernel"
+
+# linux-firmware is pulled in by kernel-core's hard `Requires:` even though
+# the ppc64le kickstart excludes -iwl*-firmware. The package ships ~1.5 GiB
+# of firmware that is irrelevant on POWER guests. The other GenericCloud
+# arches keep it for now; only ppc64le pays the size penalty.
+- name: Remove linux-firmware on ppc64le
+  when: ansible_facts['architecture'] == 'ppc64le'
+  ansible.builtin.dnf:
+    name: linux-firmware
+    state: absent
+
+# https://bugzilla.redhat.com/show_bug.cgi?id=1849082#c7
+- name: Enabled Xen Project PVHVM drivers only on x86_64
+  when: ansible_facts['architecture'] == 'x86_64'
+  block:
+    - name: Create a configuration for dracut
+      ansible.builtin.lineinfile:
+        path: /etc/dracut.conf.d/xen_pvhvm.conf
+        line: 'add_drivers+=" xen-netfront xen-blkfront "'
+        create: true
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Regenerate all initramfs images
+      ansible.builtin.command:
+        cmd: dracut -f --regenerate-all
+      changed_when: true
+
+# Optimizations
+- name: Install additional packages
+  ansible.builtin.dnf:
+    install_weak_deps: "{{ false if ansible_facts['distribution_major_version'] | int >= 9 else omit }}"
+    name:
+      - qemu-guest-agent
+      - nfs-utils
+      - rsync
+      - jq
+      - tcpdump
+      - tuned
+    state: present
+
+- name: Enable TuneD service
+  ansible.builtin.systemd_service:
+    name: tuned.service
+    enabled: true
+    state: started
+
+- name: Get current TuneD profile
+  ansible.builtin.command:
+    cmd: tuned-adm active
+  register: tuned_adm_active
+  changed_when: false
+
+- name: Test if TuneD profile is active
+  ansible.builtin.assert:
+    that: "tuned_adm_active.stdout == 'Current active profile: virtual-guest'"
+    fail_msg: Configured active profile is not same as current one
+    success_msg: The configured TuneD profile is current
+
+
+- name: Regenerate all initramfs images
+  when: ansible_facts['architecture'] != 'x86_64'
+  ansible.builtin.command:
+    cmd: dracut -f --regenerate-all
+  changed_when: true
+
+- name: Disable root login
+  ansible.builtin.user:
+    name: root
+    password: "*"

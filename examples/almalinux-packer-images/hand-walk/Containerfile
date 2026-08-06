@@ -1,0 +1,47 @@
+# Hand-walk sandbox — AlmaLinux's official Packer image factory, by hand.
+#
+# Reproduces the environment upstream's own README assumes, so a human can type
+# AlmaLinux/cloud-images' build steps step by step — distinct from the automated
+# fetch-cloud-images.sh + a packer invocation.
+#
+# BASE = ROCKY 9, and that is a deliberate choice with a caveat.
+# CLAUDE.md's rule is "the author's distro where the tutorial is distro-specific".
+# The author's distro here is AlmaLinux 9 itself, and `almalinux:9` is the honest
+# base — but the build runs QEMU/KVM and Ansible against a RHEL-family target, and
+# Rocky 9 is the RHEL-9 rebuild this repo already uses for its RHEL-family
+# hand-walk (examples/rocky-pxe-lab/hand-walk). Either is faithful; if you want
+# the literal author environment, change the FROM to `almalinux:9` — everything
+# below is package-for-package identical between the two.
+FROM docker.io/library/rockylinux:9
+
+# EPEL first: qemu-kvm's tooling and a few build helpers live there on RHEL 9.
+RUN dnf -y install epel-release && dnf -y update
+
+# ── the tool the factory RUNS IN: Packer's qemu builder needs a real QEMU ─────
+# Upstream's qemu source sets `qemu_binary`, boots the netinstall ISO, and drives
+# Anaconda over VNC — so build AND boot happen in this one box.
+RUN dnf -y install qemu-kvm qemu-img
+
+# ── Packer itself, from HashiCorp's own RHEL repo (upstream README step 1) ────
+RUN dnf -y install dnf-plugins-core \
+ && dnf config-manager --add-repo https://rpm.releases.hashicorp.com/RHEL/hashicorp.repo \
+ && dnf -y install packer
+
+# ── the provisioner half: upstream runs Ansible roles over SSH after install ──
+RUN dnf -y install ansible-core
+
+# ── ordinary prereqs the recipe assumes ──────────────────────────────────────
+RUN dnf -y install git make python3-pip openssh-clients rsync which xz \
+ && dnf clean all
+
+# The factory itself is NOT baked in: mount the staged copy so the container has
+# no opinion about which pin you are walking.
+#   podman run --rm -it --device /dev/kvm \
+#     -v "$HOME/almalinux-cloud-images-build/cloud-images":/work:Z \
+#     -w /work localhost/alma-packer-handwalk
+#
+# /dev/kvm is REQUIRED for a tractable build. Without it Packer falls back to TCG
+# and a full Anaconda install takes hours rather than tens of minutes — see
+# RUNBOOK.md, which says so rather than letting you discover it at minute forty.
+WORKDIR /work
+CMD ["/bin/bash"]
