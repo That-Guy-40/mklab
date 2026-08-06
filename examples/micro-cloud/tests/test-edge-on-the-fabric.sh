@@ -167,8 +167,23 @@ runuser -u "$OWNER" -- "$VM_TOOL" start edge >"$WORK/vm-start.log" 2>&1 \
 # ASK the tool where its socket is; do not reconstruct the path. `LAB_STATE_DIR` is
 # overridable and the layout is the phase tool's business, not this test's — a path built
 # here is a second source of truth that goes stale silently the day the layout moves.
-SER="$(runuser -u "$OWNER" -- "$VM_TOOL" inspect edge --json 2>/dev/null | jq -r '.sockets.serial.path // empty')"
-[[ -n "$SER" ]] || { KEEP=1; fail "lab-vm.sh inspect did not report a serial socket path for edge"; }
+# Capture stdout and stderr SEPARATELY and never discard either. The first version wrote
+# `inspect … 2>/dev/null | jq …`, so when it returned nothing the failure message could only
+# say "did not report a serial socket path" — true, useless, and unfixable without another
+# root run. A harness that hides the reason is the liar this repo fixes first, and the rule
+# it broke is the house one: never pipe a command whose exit status is the gate.
+_insp_out="$WORK/inspect.json"; _insp_err="$WORK/inspect.err"
+runuser -u "$OWNER" -- "$VM_TOOL" inspect edge --json >"$_insp_out" 2>"$_insp_err"; _insp_rc=$?
+SER="$(jq -r '.sockets.serial.path // empty' <"$_insp_out" 2>/dev/null)"
+if [[ -z "$SER" ]]; then
+    KEEP=1
+    printf '  lab-vm.sh inspect edge --json  -> rc=%d\n' "$_insp_rc" >&2
+    printf '  --- stderr ---\n' >&2; head -20 "$_insp_err" >&2
+    printf '  --- stdout (first 20 lines) ---\n' >&2; head -20 "$_insp_out" >&2
+    printf '  --- what the tool thinks exists ---\n' >&2
+    runuser -u "$OWNER" -- "$VM_TOOL" list >&2 2>&1 || true
+    fail "lab-vm.sh inspect reported no serial socket path for edge (rc=$_insp_rc) — see the three sections above"
+fi
 for _ in $(seq 1 100); do [[ -S "$SER" ]] && break; sleep 0.1; done
 [[ -S "$SER" ]] || { KEEP=1; fail "edge's serial socket never appeared at $SER"; }
 runuser -u "$OWNER" -- socat -u "UNIX-CONNECT:$SER" "CREATE:$WORK/edge.console" &
