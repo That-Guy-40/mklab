@@ -20,10 +20,26 @@ tests=(test-state-machine.sh test-cleaning-guard.sh test-registry.sh
        # this lab keeps rediscovering (a NIC model and a kernel configured in different
        # files by different tools, both individually valid, with no driver between them).
        test-probe-nic.sh
-       test-uefi-netboot-dhcp.sh test-fleet-tpm-selection.sh test-tpm-xml.sh
+       test-uefi-netboot-dhcp.sh test-dhcp-reservation-identity.sh
+       test-fleet-tpm-selection.sh test-tpm-xml.sh
        test-e2e-make-deployable.sh
        test-fleet-firmware-record.sh test-fleet-preflight.sh
        test-chaos-matrix.sh)
+
+# The comment above records that a test sat on disk for weeks in no list. A comment is
+# not a check: it explains a fault to whoever is already reading, which is nobody at the
+# moment the next test is added. So the list is compared against the disk, here, and an
+# unlisted test is a failure of THIS runner rather than a silence.
+unlisted=()
+for f in test-*.sh; do
+    [[ " ${tests[*]} " == *" $f "* ]] || unlisted+=("$f")
+done
+if (( ${#unlisted[@]} )); then
+    printf 'FAIL: %d test(s) exist on disk but are in no list, so nothing runs them: %s\n' \
+        "${#unlisted[@]}" "${unlisted[*]}" >&2
+    exit 1
+fi
+
 pass=0 skip=0 failn=0 rc=0
 for t in "${tests[@]}"; do
     printf '\n=== %s ===\n' "$t" >&2

@@ -1530,7 +1530,7 @@ fine; the missing address was this defect, in the harness as well as on the meta
 *asserts* `addr=` is a real address. A caveat is a claim like any other, and this one was
 never checked.
 
-**Success signature:** `tests/run-all.sh` reports **35 passed / 0 failed**;
+**Success signature:** `tests/run-all.sh` reports **36 passed / 0 failed**;
 `./netboot-chain.sh show` ends with `network: arch-conditional DHCP present (5/5
 options ...)`; and `./build-verifying-rom.sh show` reports the UEFI binary as
 `ENFORCES` both built and installed.
@@ -1686,7 +1686,7 @@ script the instant the build succeeded, `all` never packed an initramfs, and pri
 nothing, because `set -e` exits silently. Live since 2026-05-27.
 
 **Success signature for this section:** `./run-e2e-measured.sh` ends on the `PASS:` line
-above with deploy #3 refused; `tests/run-all.sh` reports **35 passed / 0 failed**; and
+above with deploy #3 refused; `tests/run-all.sh` reports **36 passed / 0 failed**; and
 `./maas-lab.sh show node3` reports `firmware uefi`. Note that node3 legitimately ends in
 `error` — that is deploy #3's refusal, and the runner restores the real `pcrs.expected`
 afterwards.
@@ -1788,4 +1788,91 @@ about. It is now fatal, in preflight, by name.
 with seven `note` lines (§1–§6); `FLEET_TPM=node3 ./create-fleet.sh preflight` exits 0 and
 prints the table above; `FLEET_NIC_ROM=/nonexistent ./create-fleet.sh preflight` exits
 non-zero naming the path *and* the command that builds it, having created nothing; and
-`tests/run-all.sh` reports **35 passed / 0 failed**.
+`tests/run-all.sh` reports **36 passed / 0 failed**.
+
+---
+
+## 17. Re-deriving a diagnosis nobody had measured — the deployer's pool address (2026-08-06)
+
+[`DEFERRED.md`](DEFERRED.md) carried this, from a live `run-e2e-image.sh` on 2026-07-28:
+
+> The deployer ramdisk gets a POOL address, not the node's reservation. Observed live:
+> `eth0 = 192.168.123.31` where node2's reservation is `.102`. **dnsmasq keys the
+> reservation on the DHCP hostname/MAC pair and the ramdisk sends no hostname**, so it
+> lands in the dynamic range. […] Fix shape: `udhcpc -x hostname:$node`.
+
+The observation is real. The sentence in bold is an *explanation*, and it was never
+measured — which makes it the worse of the two things it could be. An open question
+invites work; a wrong answer retires it.
+
+### 17.1 What a real dnsmasq actually does
+
+Rootless, in a throwaway namespace, against dnsmasq 2.90, with libvirt's own
+`dhcp-hostsfile` format (`mac,ip,name` — the shape
+`/var/lib/libvirt/dnsmasq/vbmc-pxe.hostsfile` carries on the live fleet):
+[`tests/test-dhcp-reservation-identity.sh`](tests/test-dhcp-reservation-identity.sh).
+Its client is [`tests/dhcp-id-probe.py`](tests/dhcp-id-probe.py) — the sibling of
+[`tests/dhcp-probe.py`](tests/dhcp-probe.py) (§14.2), which asks the *filename*
+question; this one asks the *address* one, because no ordinary DHCP client will omit
+its own client-id or claim someone else's hostname on request.
+
+| the client presents | it is given |
+|---|---|
+| the reserved MAC, **no option 12 at all** | its reservation |
+| the reserved MAC + its own hostname | its reservation |
+| the reserved MAC + **somebody else's** hostname | its reservation |
+| the reserved MAC + a client-id (option 61 — busybox `udhcpc`'s default) | its reservation |
+| either identity, after the *other* already committed the lease | its reservation |
+| **a MAC the reservation does not name** | **a pool address** |
+
+The reservation is keyed on the MAC and nothing else. The recorded fix would have
+changed nothing — and it addresses a code path that does not run here anyway: the
+deployer's address comes from the kernel's `ip=dhcp`, with
+[`deployer-init.sh`](deployer-init.sh)'s `udhcpc` only as a fallback. §14.8 above
+records the same kernel path handing node3 `ipaddr=192.168.123.103` — **its
+reservation** — a day after the note was written.
+
+### 17.2 The two controls
+
+An all-PASS matrix is indistinguishable from one that checks nothing, so the last row
+above is *inside* the test: if an unreserved MAC ever answered with the reservation,
+every row above it would be vacuous and the test says so by name. Both directions were
+then broken deliberately and watched to bite:
+
+| control | what fired |
+|---|---|
+| reservation names a MAC the node does not have | `FAIL: a client sending NO hostname was given 127.0.0.91, not its reservation 127.0.0.102` |
+| every MAC reserved, so the pool is unreachable | `FAIL: … Either the pool is unreachable — in which case sections 2 and 3 proved nothing …` |
+
+The first control is the interesting one: it is the **only** input that reproduces the
+live symptom, and it reproduced it exactly — a pool address, silently.
+
+### 17.3 So what is left is a different bug
+
+`reserve_dhcp` reads a domain's MAC once, at fleet-creation time, and libvirt mints a
+new MAC every time a domain is recreated. Nothing re-checks the pair afterwards. That
+drift is not hypothetical: on this host libvirt's own `virbr-vbmc.macs` still names
+node1 `52:54:00:2b:a7:7e` while `virsh domiflist node1` reports `52:54:00:09:7c:86`.
+Bug class #1 — a record that outlives its subject — one layer below the note that
+misdiagnosed it.
+
+### 17.4 Two things found on the way
+
+**dnsmasq does not refuse an unreadable `dhcp-hostsfile`.** It logs
+`cannot read …: Permission denied`, starts anyway, and serves the pool to every
+client — which reads exactly as "reservations do not work". It cost this test one
+debugging round (dnsmasq drops privileges to `nobody`, which cannot traverse a `0700`
+`mktemp -d`). §2 now fails by name on that log line, so a broken harness can never
+present as a finding about dnsmasq.
+
+**A comment is not a check.** `tests/run-all.sh` carried a note explaining that
+`test-probe-nic.sh` had sat on disk in no list for weeks — addressed to whoever is
+already reading, which is nobody at the moment the next test is added. The runner now
+compares its list against the disk and fails naming any unlisted file. Verified by
+un-listing this section's test: `FAIL: 1 test(s) exist on disk but are in no list, so
+nothing runs them: test-dhcp-reservation-identity.sh`.
+
+**Success signature for this section:** `./tests/test-dhcp-reservation-identity.sh`
+ends on `PASS:` with four `note` lines, and `tests/run-all.sh` reports **36 passed /
+0 failed**. (That count is hand-maintained in five places across this lab's docs and
+had already drifted to `34` in one of them — derive it from a run, not from a doc.)
