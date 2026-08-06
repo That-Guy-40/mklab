@@ -30,20 +30,11 @@
 . "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
 require_cmd jq
 
-_verdict=0
-_fail() { _verdict=1; printf 'FAIL: %s\n' "$*" >&2; exit 1; }
-_on_exit() {
-    local rc=$?
-    if (( rc != 0 && rc != 77 )) && (( _verdict == 0 )); then
-        printf 'FAIL: test exited early (rc=%d) — no verdict was printed by the test itself\n' "$rc" >&2
-    fi
-}
-trap _on_exit EXIT
 
 # shellcheck disable=SC1090
 source "$LAB_CHROOT" >/dev/null 2>&1 || true
 declare -F spec_from_cli >/dev/null \
-    || _fail "spec_from_cli is not defined after sourcing $LAB_CHROOT — the CLI spec builder was renamed, so this test no longer exercises the shipped parse and must be repaired rather than deleted"
+    || fail "spec_from_cli is not defined after sourcing $LAB_CHROOT — the CLI spec builder was renamed, so this test no longer exercises the shipped parse and must be repaired rather than deleted"
 
 # users_json_for <user-arg>... — run the SHIPPED parse and return the users array.
 users_json_for() {
@@ -54,12 +45,12 @@ users_json_for() {
 }
 
 # ── 1. a password full of colons survives whole ────────────────────────────
-u="$(users_json_for 'alice:pa:ss:word')" || _fail "spec_from_cli failed on a colon-bearing password"
+u="$(users_json_for 'alice:pa:ss:word')" || fail "spec_from_cli failed on a colon-bearing password"
 name="$(jq -r '.[0].name' <<<"$u")"; pass_="$(jq -r '.[0].password' <<<"$u")"
 [[ "$name" == "alice" ]] \
-    || _fail "the username was parsed as '$name', expected 'alice' — the split must take everything BEFORE the first colon as the name"
+    || fail "the username was parsed as '$name', expected 'alice' — the split must take everything BEFORE the first colon as the name"
 [[ "$pass_" == "pa:ss:word" ]] \
-    || _fail "REGRESSION: --user 'alice:pa:ss:word' produced password '$pass_', expected 'pa:ss:word'. The password is truncated at a colon — this is AUDIT F8's imagined defect made real, and it fails SILENTLY: the chroot is created with a password the operator never chose, and the mismatch only shows up at a login prompt"
+    || fail "REGRESSION: --user 'alice:pa:ss:word' produced password '$pass_', expected 'pa:ss:word'. The password is truncated at a colon — this is AUDIT F8's imagined defect made real, and it fails SILENTLY: the chroot is created with a password the operator never chose, and the mismatch only shows up at a login prompt"
 note "'alice:pa:ss:word' -> name=alice password=pa:ss:word (nothing lost)"
 
 # ── 2. the ordinary case still works — the control for assertion 1 ─────────
@@ -67,23 +58,23 @@ note "'alice:pa:ss:word' -> name=alice password=pa:ss:word (nothing lost)"
 # its own; this pins the split point from the other side.
 u="$(users_json_for 'bob:simple')"
 [[ "$(jq -r '.[0].name' <<<"$u")" == "bob" && "$(jq -r '.[0].password' <<<"$u")" == "simple" ]] \
-    || _fail "the ordinary 'bob:simple' form broke: $(jq -c '.[0]' <<<"$u")"
+    || fail "the ordinary 'bob:simple' form broke: $(jq -c '.[0]' <<<"$u")"
 note "'bob:simple' -> name=bob password=simple"
 
 # ── 3. edge shapes that must not crash or silently mangle ──────────────────
 u="$(users_json_for 'carol:')"
 [[ "$(jq -r '.[0].name' <<<"$u")" == "carol" && "$(jq -r '.[0].password' <<<"$u")" == "" ]] \
-    || _fail "'carol:' (empty password) mis-parsed: $(jq -c '.[0]' <<<"$u")"
+    || fail "'carol:' (empty password) mis-parsed: $(jq -c '.[0]' <<<"$u")"
 u="$(users_json_for 'dave')"
 [[ "$(jq -r '.[0].name' <<<"$u")" == "dave" && "$(jq -r '.[0].password' <<<"$u")" == "" ]] \
-    || _fail "'dave' (no colon at all) mis-parsed: $(jq -c '.[0]' <<<"$u")"
+    || fail "'dave' (no colon at all) mis-parsed: $(jq -c '.[0]' <<<"$u")"
 note "edge shapes: 'carol:' and bare 'dave' both give an empty password, not a crash"
 
 # ── 4. several users at once, one of them colon-laden ──────────────────────
 u="$(users_json_for 'alice:a:b' 'bob:simple')"
-[[ "$(jq -r 'length' <<<"$u")" == "2" ]] || _fail "two --user flags did not produce two users: $u"
+[[ "$(jq -r 'length' <<<"$u")" == "2" ]] || fail "two --user flags did not produce two users: $u"
 [[ "$(jq -r '.[0].password' <<<"$u")" == "a:b" ]] \
-    || _fail "the colon-bearing password was mangled when a second --user was present: $u"
+    || fail "the colon-bearing password was mangled when a second --user was present: $u"
 note "two users, the colon-bearing one unaffected by the other"
 
 # ── 5. a shell metacharacter must reach the spec as DATA, not be evaluated ──
@@ -93,7 +84,7 @@ note "two users, the colon-bearing one unaffected by the other"
 lit='p$(echo INJECTED)w'
 u="$(users_json_for "eve:$lit")"
 [[ "$(jq -r '.[0].password' <<<"$u")" == "$lit" ]] \
-    || _fail "REGRESSION: a '\$(...)' in a password was not carried through verbatim — got '$(jq -r '.[0].password' <<<"$u")', expected '$lit'. The parse is expanding what it should be quoting"
+    || fail "REGRESSION: a '\$(...)' in a password was not carried through verbatim — got '$(jq -r '.[0].password' <<<"$u")', expected '$lit'. The parse is expanding what it should be quoting"
 note "a \$(...) in a password reaches the spec verbatim, unevaluated"
 
 pass "--user carries colon-bearing passwords through to the spec intact (AUDIT F8's claimed truncation does not exist; this pins the correct behaviour so a refactor cannot introduce it)"

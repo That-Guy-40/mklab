@@ -13,7 +13,7 @@ require_cmd jq tar
 
 scratch="$(mktemp -d)"
 alias_tag="lab-phase5test-$$"
-trap 'rm -rf "$scratch"; cleanup_image_alias "$alias_tag"' EXIT
+on_exit 'rm -rf "$scratch"; cleanup_image_alias "$alias_tag"'
 
 note "building a minimal chroot under $scratch"
 install -d "$scratch/bin" "$scratch/etc" "$scratch/dev" "$scratch/proc" "$scratch/sys" "$scratch/tmp" "$scratch/root"

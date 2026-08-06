@@ -24,22 +24,13 @@
 . "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
 
 tmp="$(mktemp -d)"
-_verdict=0
-_fail() { _verdict=1; printf 'FAIL: %s\n' "$*" >&2; exit 1; }
-_on_exit() {
-    local rc=$?
-    rm -rf "$tmp"
-    if (( rc != 0 && rc != 77 )) && (( _verdict == 0 )); then
-        printf 'FAIL: test exited early (rc=%d) — no verdict was printed by the test itself\n' "$rc" >&2
-    fi
-}
-trap _on_exit EXIT
+on_exit 'rm -rf "$tmp"'
 
 # Source the tool for its functions. It must not run its CLI when sourced.
 # shellcheck disable=SC1090
 source "$LAB_CHROOT" >/dev/null 2>&1 || true
 declare -F _safe_rm_rf >/dev/null \
-    || _fail "_safe_rm_rf is not defined after sourcing $LAB_CHROOT — the destroy guard AUDIT F7 asks for is absent or was renamed; three destroy paths call it, so this is not a test-only problem"
+    || fail "_safe_rm_rf is not defined after sourcing $LAB_CHROOT — the destroy guard AUDIT F7 asks for is absent or was renamed; three destroy paths call it, so this is not a test-only problem"
 note "_safe_rm_rf is defined and reachable"
 
 # refuses <label> <path> — the call MUST die. `die` is an exit, so it goes in a subshell
@@ -47,9 +38,9 @@ note "_safe_rm_rf is defined and reachable"
 refuses() {
     local label="$1" path="$2" out
     out="$( ( _safe_rm_rf "$path" ) 2>&1 )" && \
-        _fail "REGRESSION: _safe_rm_rf ACCEPTED $label ('$path') — it would have run 'rm -rf -- $path'"
+        fail "REGRESSION: _safe_rm_rf ACCEPTED $label ('$path') — it would have run 'rm -rf -- $path'"
     grep -qi 'refus\|too shallow\|not absolute\|is empty' <<<"$out" \
-        || _fail "_safe_rm_rf refused $label ('$path') but without saying why: ${out//$'\n'/ }"
+        || fail "_safe_rm_rf refused $label ('$path') but without saying why: ${out//$'\n'/ }"
     note "refuses $label — $(head -1 <<<"$out" | cut -c1-88)"
 }
 
@@ -68,11 +59,11 @@ refuses "a two-component path" "/var"
 # everything — a guard that never permits anything is not a guard, it is a broken destroy.
 victim="$tmp/deep/enough/tree"
 mkdir -p "$victim/sub" && : > "$victim/sub/file"
-[[ -d "$victim" ]] || _fail "could not build the positive-control tree"
+[[ -d "$victim" ]] || fail "could not build the positive-control tree"
 ( _safe_rm_rf "$victim" ) >/dev/null 2>&1 \
-    || _fail "_safe_rm_rf REFUSED a legitimate deep, unmounted, absolute path ('$victim') — it now refuses everything, so destroy is broken and the refusals above prove nothing"
+    || fail "_safe_rm_rf REFUSED a legitimate deep, unmounted, absolute path ('$victim') — it now refuses everything, so destroy is broken and the refusals above prove nothing"
 [[ ! -e "$victim" ]] \
-    || _fail "_safe_rm_rf exited 0 on '$victim' but the tree is still there — it reported success without deleting"
+    || fail "_safe_rm_rf exited 0 on '$victim' but the tree is still there — it reported success without deleting"
 note "positive control: a legitimate deep unmounted tree IS removed"
 
 pass "_safe_rm_rf refuses empty, relative, '/', and too-shallow paths by name — and still deletes a legitimate tree (AUDIT F7's guard, with its four never-exercised refusals now observed firing)"

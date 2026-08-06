@@ -42,6 +42,10 @@ on_exit() { _CLEANUPS+=("$*"); }
 
 _on_exit() {
     local rc=$? i
+    # Registered cleanup can READ the exit status as $_EXIT_RC. Without it a teardown
+    # that needs to know whether the run failed — keep the evidence, skip the tidy-up —
+    # has to write its own `trap … EXIT`, which is the defect this block exists to stop.
+    _EXIT_RC=$rc
     for (( i=${#_CLEANUPS[@]}-1; i>=0; i-- )); do eval "${_CLEANUPS[i]}" || true; done
     cleanup_sandboxes
     if (( rc != 0 && rc != 77 )) && (( _VERDICT == 0 )); then

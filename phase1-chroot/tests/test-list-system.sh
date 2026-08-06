@@ -13,7 +13,7 @@ require_cmd jq
 
 USER_DIR="$(mktemp -d)"; SYS_DIR="$(mktemp -d)"
 # shellcheck disable=SC2064
-trap "rm -rf '$USER_DIR' '$SYS_DIR'" EXIT
+on_exit "rm -rf '$USER_DIR' '$SYS_DIR'"
 mkdir -p "$USER_DIR/chroots" "$SYS_DIR/chroots"
 
 # Active (user) registry: one rootless chroot.

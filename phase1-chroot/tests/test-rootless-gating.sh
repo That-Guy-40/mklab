@@ -9,7 +9,7 @@ require_cmd jq
 
 export LAB_STATE_DIR; LAB_STATE_DIR="$(mktemp -d)"
 # shellcheck disable=SC2064
-trap "rm -rf '$LAB_STATE_DIR'" EXIT
+on_exit "rm -rf '$LAB_STATE_DIR'"
 host_arch="$(uname -m)"
 
 run() { "$LAB_CHROOT" create --rootless "$@" 2>&1 || true; }

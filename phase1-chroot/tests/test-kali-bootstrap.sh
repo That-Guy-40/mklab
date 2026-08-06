@@ -18,7 +18,7 @@ require_cmd jq debootstrap
 
 target="$(mktest_target kali-bootstrap)"
 name="kali-$$"
-trap 'cleanup_target "$target" "$name"' EXIT
+on_exit 'cleanup_target "$target" "$name"'
 
 note "running debootstrap kali-rolling (this takes 1–3 min)"
 "$LAB_CHROOT" create \

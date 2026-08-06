@@ -18,18 +18,10 @@ fail()  { _VERDICT=1; printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 pass()  { _VERDICT=1; printf 'PASS: %s\n' "$*" >&2; exit 0; }
 
 tmp="$(mktemp -d)"
-_on_exit() {
-    local rc=$?
-    # Restore permissions BEFORE removing: negative control 5 creates a chmod-000 directory,
-    # and if the test fails before its own restore line, rm cannot descend into it and the
-    # temp dir leaks. Found by running that control's own negative control.
-    chmod -R u+rwX -- "$tmp" 2>/dev/null || true
-    rm -rf -- "$tmp"
-    if (( rc != 0 && rc != 77 )) && (( _VERDICT == 0 )); then
-        printf 'FAIL: test exited early (rc=%d) — no verdict was printed by the test itself\n' "$rc" >&2
-    fi
-}
-trap _on_exit EXIT
+# Restore permissions BEFORE removing: negative control 5 creates a chmod-000 directory,
+# and if the test fails before its own restore line, rm cannot descend into it and the
+# temp dir leaks. Found by running that control's own negative control.
+on_exit 'chmod -R u+rwX -- "$tmp" 2>/dev/null || true; rm -rf -- "$tmp"'
 
 # Run lab-chroot.sh WITHOUT letting a pipe decide the exit status (house rule: `cmd | tail`
 # reports tail's status, and that once merged a red PR).

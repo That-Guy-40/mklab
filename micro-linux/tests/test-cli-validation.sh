@@ -24,7 +24,7 @@ expect "no args shows usage" 0 "Usage:"              --
 # isolates it.  Pre-create the dir so we exercise the real safe_rm path, not the
 # "nothing to clean" branch — the bug a live build first exposed.)
 tmp_out="$(mktemp -d)"
-trap 'rm -rf -- "$tmp_out"' EXIT
+on_exit 'rm -rf -- "$tmp_out"'
 mkdir -p "$tmp_out/x86_64/build"
 out="$(MLBUILD_OUT_DIR="$tmp_out" "$MLBUILD" clean --arch x86_64 2>&1)" \
     || fail "clean rc=$? ; out: $out"

@@ -36,7 +36,7 @@ fi
 
 name="t-run-$$"
 cname="lab-${name}"
-trap 'cleanup_container "$cname"' EXIT
+on_exit 'cleanup_container "$cname"'
 
 note "run alpine sleeping in detach mode"
 "$LAB_DOCKER" run --name "$name" --image alpine:latest --detach \

@@ -15,7 +15,7 @@ if ! command -v tomlq >/dev/null 2>&1 \
 fi
 
 cfg="$(mktemp --suffix=.toml)"
-trap 'rm -f "$cfg"' EXIT
+on_exit 'rm -f "$cfg"'
 
 cat > "$cfg" <<'TOML'
 [lab]

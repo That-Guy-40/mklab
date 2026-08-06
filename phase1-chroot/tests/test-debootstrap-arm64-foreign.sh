@@ -19,7 +19,7 @@ fi
 
 target="$(mktest_target deboot-arm64)"
 name="ds-arm64-$$"
-trap 'cleanup_target "$target" "$name"' EXIT
+on_exit 'cleanup_target "$target" "$name"'
 
 note "running 2-stage debootstrap aarch64 (this takes several minutes)"
 "$LAB_CHROOT" create \

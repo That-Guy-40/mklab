@@ -11,7 +11,7 @@ require_cmd jq
 
 WORK="$(mktemp -d)"
 # shellcheck disable=SC2064
-trap "rm -rf '$WORK'" EXIT
+on_exit "rm -rf '$WORK'"
 
 # --- build a fake chroot tree ---
 ROOT="$WORK/fake-chroot"

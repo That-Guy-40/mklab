@@ -70,8 +70,7 @@ FABRIC_UP=0
 FC_PID="" QEMU_PID=""
 KEEP=0
 
-_on_exit() {
-    local rc=$?
+_cleanup() {
     # Guests first, BY PID. Never by pattern: both command lines carry the shared workdir
     # path and `pkill -f` on it has, in this repo, killed a live QEMU and the agent's own
     # shell (exit 144). $FC_PID/$QEMU_PID were recorded from $! — there is no guessing.
@@ -85,11 +84,8 @@ _on_exit() {
     else
         [[ -n "${WORK:-}" && -d "$WORK" ]] && rm -rf -- "$WORK"
     fi
-    if (( rc != 0 && rc != 77 )) && (( _VERDICT == 0 )); then
-        printf 'FAIL: test exited early (rc=%d) — no verdict was printed by the test itself\n' "$rc" >&2
-    fi
 }
-trap _on_exit EXIT
+on_exit '_cleanup'
 
 fab() { local v="$1"; shift; bash "$FABRIC" "$v" "$@" >>"$LOG" 2>&1; }
 die_with_log() { KEEP=1; cat "$LOG" >&2; fail "$1"; }

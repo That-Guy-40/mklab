@@ -26,7 +26,7 @@ int main(void) { return 0; }
 EOF
         if cc -static -o "$static_bin" "$tmp_src" 2>/dev/null; then
             chmod +x "$static_bin"
-            trap 'rm -f "$tmp_src" "$static_bin"' EXIT
+            on_exit 'rm -f "$tmp_src" "$static_bin"'
         else
             rm -f "$tmp_src" "$static_bin"
             skip "no static binary available and static compile failed"
@@ -38,12 +38,9 @@ fi
 
 target="$(mktest_target host-copy-static)"
 name="hc-static-$$"
-# Append cleanup to existing trap if one was set by the fallback block above.
-if [[ -n "${tmp_src:-}" ]]; then
-    trap 'rm -f "$tmp_src" "$static_bin"; cleanup_target "$target" "$name"' EXIT
-else
-    trap 'cleanup_target "$target" "$name"' EXIT
-fi
+# No need to re-state the fallback's cleanup: registrations ACCUMULATE, where a second
+# `trap … EXIT` would have replaced the first (which is why that branch existed).
+on_exit 'cleanup_target "$target" "$name"'
 
 note "host-copy with static binary: $static_bin"
 "$LAB_CHROOT" create \

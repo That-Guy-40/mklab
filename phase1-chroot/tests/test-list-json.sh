@@ -8,7 +8,7 @@ require_cmd jq
 
 export LAB_STATE_DIR; LAB_STATE_DIR="$(mktemp -d)"
 # shellcheck disable=SC2064
-trap "rm -rf '$LAB_STATE_DIR'" EXIT
+on_exit "rm -rf '$LAB_STATE_DIR'"
 mkdir -p "$LAB_STATE_DIR/chroots"
 
 cat > "$LAB_STATE_DIR/chroots/alpha.toml" <<'EOF'

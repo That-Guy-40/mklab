@@ -56,14 +56,24 @@ bug, not a result — the reader can't tell a real failure from a broken harness
   [`examples/metal-as-a-service/tests/lib.sh`](examples/metal-as-a-service/tests/lib.sh),
   [`phase7-firecracker/tests/lib.sh`](phase7-firecracker/tests/lib.sh).
 
+- **Cleanup that needs the exit status reads `$_EXIT_RC`.** `_on_exit` publishes
+  it before running registrations. Without it, a teardown that must know whether
+  the run failed — keep the evidence, skip the tidy-up — has to write its own
+  `trap … EXIT`, which is exactly the defect the shape removes. (Real case:
+  micro-cloud's DHCP-exhaustion test preserves its log directory on failure.)
+
 - **Test the net, and enforce the rule.** A net nobody has watched fire is not
-  known to work.
-  [`examples/metal-as-a-service/tests/test-harness-net.sh`](examples/metal-as-a-service/tests/test-harness-net.sh)
-  proves it fires with the right rc when a test dies silently, stays quiet on
-  pass/skip, prints **exactly one** `FAIL` when the test already spoke, still
-  runs registered cleanup in reverse — and **fails if any test in the directory
-  installs an EXIT trap of its own**, which turns the rule above from advice
-  into a check. All four defects were re-injected and watched to bite.
+  known to work. [`tools/check-harness-net.sh`](tools/check-harness-net.sh) is
+  the single implementation — it proves the net fires with the right rc when a
+  test dies silently, stays quiet on pass/skip, prints **exactly one** `FAIL`
+  when the test already spoke, runs registered cleanup in reverse, exposes
+  `$_EXIT_RC` — and **fails if any test in the directory installs an EXIT trap
+  of its own**, which turns the rule above from advice into a check. It provides
+  its own verdict helpers on purpose: it must not source the lib under test, or
+  the subject would be supplying its own harness. Every `tests/` directory ships
+  a five-line `tests/test-harness-net.sh` that `exec`s it, so the check runs
+  inside that suite's `run-all.sh` (and therefore CI) rather than only in
+  `tools/`. All five defects were re-injected and watched to bite.
 
 - **Don't write the test count in prose.** `run-all.sh` used to end on
   `N passed, 0 failed`; that integer got copied by hand into five documents and

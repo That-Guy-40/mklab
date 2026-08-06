@@ -11,7 +11,7 @@ require_cmd jq systemd-nspawn machinectl
 
 target="$(mktest_target nspawn)"
 name="ns-test-$$"
-trap 'cleanup_target "$target" "$name"' EXIT
+on_exit 'cleanup_target "$target" "$name"'
 
 probe="/bin/busybox"; [[ -x "$probe" ]] || probe="/bin/ls"
 

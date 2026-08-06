@@ -19,20 +19,8 @@
 . "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
 require_cmd qemu-img qemu-system-x86_64
 
-_VERDICT=0
-skip()  { _VERDICT=1; printf 'SKIP: %s\n' "$*" >&2; exit 77; }
-fail()  { _VERDICT=1; printf 'FAIL: %s\n' "$*" >&2; exit 1; }
-pass()  { _VERDICT=1; printf 'PASS: %s\n' "$*" >&2; exit 0; }
-
 tmp="$(mktemp -d)"
-_on_exit() {
-    local rc=$?
-    rm -rf -- "$tmp"
-    if (( rc != 0 && rc != 77 )) && (( _VERDICT == 0 )); then
-        printf 'FAIL: test exited early (rc=%d) — no verdict was printed by the test itself\n' "$rc" >&2
-    fi
-}
-trap _on_exit EXIT
+on_exit 'rm -rf -- "$tmp"'
 export LAB_STATE_DIR="$tmp/state" LAB_CACHE_DIR="$tmp/cache"
 
 # shellcheck disable=SC1090

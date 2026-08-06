@@ -26,7 +26,7 @@ expect_error "export unknown format"   "unknown export format" -- export --confi
 # ─── export: valid compose on a multi-service TOML ─────────────────────────
 cfg="$(mktemp --suffix=.toml)"
 lab="xp$$"
-trap 'rm -f "$cfg" "${out:-}"; cleanup_lab "$lab"' EXIT
+on_exit 'rm -f "$cfg" "${out:-}"; cleanup_lab "$lab"'
 
 cat > "$cfg" <<EOF
 [lab]

@@ -8,7 +8,20 @@
 set -uo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")" || exit 2
 
-tests=(test-fabric-mac-derivation.sh test-bench-boot.sh test-fabric-round-trip.sh test-dhcp-exhaustion.sh test-two-engines-one-fabric.sh test-edge-on-the-fabric.sh)
+tests=(test-fabric-mac-derivation.sh test-bench-boot.sh test-fabric-round-trip.sh test-dhcp-exhaustion.sh test-two-engines-one-fabric.sh test-edge-on-the-fabric.sh
+       test-harness-net.sh)
+
+# The list is compared against the disk: a test with no runner is a test nobody runs,
+# and a comment saying so does not fail a build (metal-as-a-service kept one for weeks).
+unlisted=()
+for f in test-*.sh; do
+    [[ " ${tests[*]} " == *" $f "* ]] || unlisted+=("$f")
+done
+if (( ${#unlisted[@]} )); then
+    printf 'FAIL: %d test(s) exist on disk but are in no list, so nothing runs them: %s\n' \
+        "${#unlisted[@]}" "${unlisted[*]}" >&2
+    exit 1
+fi
 
 pass=0 skip=0 failn=0 rc=0
 for t in "${tests[@]}"; do

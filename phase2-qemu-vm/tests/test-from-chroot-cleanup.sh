@@ -40,7 +40,7 @@ cleanup() {
     rm -rf -- "$work"
     (( rc == 0 || rc == 77 )) || printf 'FAIL: test exited early (rc=%s) — see messages above\n' "$rc" >&2
 }
-trap cleanup EXIT
+on_exit cleanup
 
 # A fake chroot under the required LAB_STATE_DIR/chroots location, with the
 # kernel + initrd the backend expects to find.

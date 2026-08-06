@@ -13,7 +13,7 @@ if [[ -r /usr/share/keyrings/kali-archive-keyring.gpg ]]; then
 fi
 
 target="$(mktest_target kali-no-keyring)"
-trap 'cleanup_target "$target" ""' EXIT
+on_exit 'cleanup_target "$target" ""'
 
 note "expecting failure with helpful error"
 if "$LAB_CHROOT" create \

@@ -18,7 +18,7 @@ require_cmd qemu-system-x86_64 qemu-system-aarch64
 
 # Isolate all state under a tmpdir (LAB_STATE_DIR is consumed at source time).
 tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
+on_exit 'rm -rf "$tmp"'
 export LAB_STATE_DIR="$tmp/state" LAB_CACHE_DIR="$tmp/cache"
 
 # shellcheck disable=SC1090

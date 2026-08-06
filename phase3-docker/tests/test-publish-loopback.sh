@@ -8,8 +8,7 @@
 . "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
 source "$LAB_DOCKER"
 
-_done=""
-trap '[[ -n "$_done" ]] || printf "FAIL: test exited early (rc=%s)\n" "$?" >&2' EXIT
+# (lib.sh's EXIT net covers an early death; this file used to carry a `_done` sentinel.)
 
 eq() { [[ "$2" == "$3" ]] || fail "$1: got '$2', want '$3'"; note "$1"; }
 
@@ -28,5 +27,4 @@ eq "override to all-interfaces"  "$(LAB_PUBLISH_HOST=0.0.0.0 _pub_host '8080:80'
 # ...and an empty override restores the engine's own default (no rewrite).
 eq "empty override = no rewrite" "$(LAB_PUBLISH_HOST= _pub_host '8080:80')"        '8080:80'
 
-_done=1
 pass "published ports default to loopback; explicit binds + LAB_PUBLISH_HOST honored"

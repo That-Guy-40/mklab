@@ -23,14 +23,10 @@ BENCH="$(dirname -- "${BASH_SOURCE[0]}")/../bench-boot.sh"
 [[ -x "$BENCH" ]] || skip "bench-boot.sh not executable at $BENCH"
 
 WORK="$(mktemp -d)" || fail "could not create a temp dir"
-_on_exit() {
-    local rc=$?
+_cleanup() {
     [[ -n "${WORK:-}" && -d "$WORK" ]] && rm -rf -- "$WORK"
-    if (( rc != 0 && rc != 77 )) && (( _VERDICT == 0 )); then
-        printf 'FAIL: test exited early (rc=%d) — no verdict was printed by the test itself\n' "$rc" >&2
-    fi
 }
-trap _on_exit EXIT
+on_exit '_cleanup'
 
 # ── 1. the parser, positive: a real boot log line, slashes and all ──────────
 cat > "$WORK/good.log" <<'LOG'
