@@ -49,8 +49,16 @@ trap _on_exit EXIT
 export LAB_STATE_DIR="$tmp/state" LAB_CACHE_DIR="$tmp/cache"
 
 VM=lockedvm
-"$LAB_VM" create --name "$VM" --backend kernel+initrd --kernel /dev/null --initrd /dev/null \
-    >"$tmp/create.log" 2>&1 || { cat "$tmp/create.log" >&2; fail "could not create the fixture VM"; }
+# `--no-cloud-init` because this fixture needs a manifest and a disk, NOT a seed — and
+# building one needs genisoimage/xorriso/mkisofs, which a bare CI runner does not have. The
+# first version omitted it and passed here while failing in CI with "no ISO maker": my host
+# happened to have xorriso, so the dependency was invisible locally. Ask for the least the
+# test actually needs, or the environment becomes an unstated assumption.
+if ! "$LAB_VM" create --name "$VM" --backend kernel+initrd --kernel /dev/null --initrd /dev/null \
+        --no-cloud-init >"$tmp/create.log" 2>&1; then
+    cat "$tmp/create.log" >&2
+    fail "could not create the fixture VM — see the tool's output above"
+fi
 
 # A disk the manifest points at, so the virtual-size branch is actually entered.
 d="$LAB_STATE_DIR/vms/$VM"
