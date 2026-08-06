@@ -1,14 +1,16 @@
 # Micro-Cloud Lab — ☁️ under construction
 
-> **Status (2026-08-05):** slices 0–4 are **done**, and **slice 5a half (a) is done**
+> **Status (2026-08-05):** slices 0–4 are **done**, and **slice 5a is done — both halves**
 > — a second engine (QEMU `-M microvm`) booting the same kernel and the same rootfs,
 > so the only variable is the VMM. It produced the number nobody had **and corrected
 > the one everybody had**: `0.512 s` of Firecracker's canonical `0.567 s` is a kernel
 > **i8042 probe** waiting out a PS/2 controller QEMU's `microvm` does not emulate. At
 > their defaults QEMU looks 8× faster; on equal footing Firecracker is **1.29× faster
 > in the guest and 1.49× faster wall-clock**
-> ([Appendix J](../../MICRO_CLOUD_LAB_PLAN.md#j3-the-headline-that-was-false)). Half **(b)**, the fabric half, is **still owed**
-> ([J.7](../../MICRO_CLOUD_LAB_PLAN.md#j7-not-run--the-fabric-half-is-still-owed)). Its brief, confounds, privilege split and break pass
+> ([Appendix J](../../MICRO_CLOUD_LAB_PLAN.md#j3-the-headline-that-was-false)). And half **(b)**: both engines on `br-mc0` at once, distinct DHCP
+> leases from one dnsmasq, **each engine's guest resolving the other's by name**, and the
+> live cluster untouched — which fills in §18.4's seam table and settles **decision E as
+> §8.3 shape (b)** ([Appendix K](../../MICRO_CLOUD_LAB_PLAN.md#k2-decision-e-answered--184s-table-filled-in-from-what-the-two-lifecycles-needed)). Its brief, confounds, privilege split and break pass
 > are in [`DEFERRED.md`](DEFERRED.md); the design document — and the dated
 > measurement record that now makes up half of it — is
 > [`MICRO_CLOUD_LAB_PLAN.md`](../../MICRO_CLOUD_LAB_PLAN.md). Start there.
@@ -39,6 +41,7 @@ beside QEMU VMs, containers, and LXD system containers.
 | **`fabric.sh`** (`up`/`tap`/`retap`/`status`/`down`) | 3 | ✅ **committed 2026-08-04** — [`fabric.sh`](fabric.sh). It was **not** in the host workdir this table originally named; recovered from the session transcript instead ([plan §18.1](../../MICRO_CLOUD_LAB_PLAN.md#181-the-precursor-nobody-recorded--fabricsh-is-not-in-the-repo)). **re-verified 2026-08-04**: `up`/`tap`/`status`/`down` all green against the live host, teardown's Calico comparison matching the moved binding ([I.7](../../MICRO_CLOUD_LAB_PLAN.md#i7-the-recovered-fabric-re-verified-against-the-moved-binding--pass)). The **slice-3 exercise** — two microVMs, DHCP, name resolution — is **not** re-run |
 | **`tests/test-fabric-round-trip.sh`** | 3 | ✅ **committed 2026-08-05** — [`tests/`](tests/run-all.sh). `up` → `tap` ×2 → `status` → `down`, asserting the taps are addressless and owner-checked and that **Calico's binding, pod veth count and `ip_forward` are unchanged across the run** — derived independently of `fabric.sh`'s own comparison, so a regression in that comparison cannot hide behind it. **Needs root; SKIPs without it** — and its privileged path was **run 2026-08-05: `1 passed, 0 skipped, 0 failed`**, so none of the three skip guards fired and the assertions in between actually executed ([I.9](../../MICRO_CLOUD_LAB_PLAN.md#i9-the-one-shot-became-a-test-and-the-tests-root-path-ran--pass)) |
 | **`bench-boot.sh`** + `tests/test-bench-boot.sh` | 5a(a) | ✅ **committed 2026-08-05** — [`bench-boot.sh`](bench-boot.sh). Four arms (each engine × i8042 probe on/off), N runs each, reporting the **spread** and both a guest-kernel and a wall-clock number. The `qemu-*` pair is the **negative control** — `microvm` has no i8042, so those two arms must agree, and the test fails by name if they ever diverge. Unprivileged; SKIPs without KVM/firecracker/QEMU |
+| **`tests/test-two-engines-one-fabric.sh`** | 5a(b) | ✅ **committed 2026-08-05** — Firecracker + QEMU `-M microvm` on two `fabric.sh` taps, **both dropped to uid 1000 with `runuser`** so the tap-ownership assertion means something (a root VMM can open any tap). Asserts the guests' own `SLICE3-PING-BY-NAME OK` marker, not scraped ping text. **Needs root; SKIPs without it** — run 2026-08-05: **3 passed, 0 skipped** |
 | slice 1/2 configs, boot logs, images | 1–2 | ⛔ host workdirs `micro-cloud-s1/`, `micro-cloud-s2/` — [`DEFERRED.md`](DEFERRED.md) §17.0 item 2. **These really are there** (verified 2026-08-04); it was only the *scripts* that were not |
 
 > ⚠️ **Do not reimplement `fabric.sh` from Appendix G's description.** The

@@ -57,7 +57,25 @@ set -uo pipefail
 PROG="${0##*/}"
 
 # Defaults point at slice 3's workdir — the artifacts Appendices E–G measured.
-WORKDIR="${MC_WORKDIR:-$HOME/.local/state/lab-create/micro-cloud-s3}"
+#
+# NOT `$HOME`: under sudo that is ROOT's home, and every micro-cloud artifact belongs to the
+# invoking user, so a root-run benchmark would look in /root/.local/state/… and refuse on a
+# host that has the files. `${SUDO_USER}` alone is not enough either — it is literally `root`
+# when sudo runs from a root shell (the same trap as the root-owned tap, plan G.4) — so fall
+# back to this script's own owner and read the home directory out of passwd rather than
+# assuming /home/<user>. Found 2026-08-05: the sibling tests were fixed and THIS was missed,
+# which is the blast-radius rule earning its place — two of three call sites is not a fix.
+_invoking_user_home() {
+    local u h
+    u="${SUDO_USER:-}"
+    [[ -z "$u" || "$u" == root ]] && u="$(stat -c %U "${BASH_SOURCE[0]}" 2>/dev/null || true)"
+    if [[ -n "$u" && "$u" != root ]]; then
+        h="$(getent passwd "$u" 2>/dev/null | cut -d: -f6)"
+        [[ -n "$h" && -d "$h" ]] && { printf '%s\n' "$h"; return 0; }
+    fi
+    printf '%s\n' "$HOME"
+}
+WORKDIR="${MC_WORKDIR:-$(_invoking_user_home)/.local/state/lab-create/micro-cloud-s3}"
 KERNEL="${MC_KERNEL:-$WORKDIR/vmlinux}"
 ROOTFS="${MC_ROOTFS:-$WORKDIR/api1.ext4}"
 FC_BIN="${MC_FIRECRACKER:-$WORKDIR/firecracker}"
