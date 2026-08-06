@@ -60,18 +60,18 @@
 > instead of a command, so a perfectly-booted VM silently ignored every instruction it
 > was given.
 
-## BUILT, ROOT PATH UNRUN — the DHCP-exhaustion half of G.9's break pass
+## DONE — the DHCP-exhaustion half of G.9's break pass
 
 > 🔨 **2026-08-06** — [M.8](../../MICRO_CLOUD_LAB_PLAN.md#m8-the-cheaper-half-of-g9-built--and-the-defect-the-knob-uncovered-2026-08-06).
 > The pool is `MC_DHCP_LO`/`MC_DHCP_HI`, and
 > [`tests/test-dhcp-exhaustion.sh`](tests/run-all.sh) fills a five-address one in seconds.
-> ⚠️ **Run once at root 2026-08-06: 8 of 9 assertions passed, and the 9th failure was the
-> fabric being right about the harness.** `down` refused to call teardown clean while three
-> of this test's own veths were still on the bridge — and chasing that found the worse bug:
-> `dhcp_ask` was called in a command substitution, so its `CLIENTS+=` bookkeeping went to a
-> subshell and the EXIT trap reaped nothing. Both fixed; **the confirming re-run is
-> pending**, so this is not yet PASS. Slice 3's break coverage moves 3 of 5 → 4 of 5 once it
-> lands.
+> ✅ **GREEN at root 2026-08-06, on the second run. Slice 3's break coverage is now 4 of 5.**
+> The first run passed 8 of 9, and the 9th failure was **the fabric being right about the
+> harness**: `down` refused to call teardown clean while three of this test's own veths were
+> still on the bridge. Chasing that found the worse bug — `dhcp_ask` was called in a command
+> substitution, so its `CLIENTS+=` bookkeeping went to a subshell and the EXIT trap reaped
+> nothing. Both fixed, and the re-run passed every assertion including the new
+> `clients reaped before teardown` guard that the failure paid for.
 >
 > **The knob uncovered a latent defect**, which is the part worth keeping: reservations
 > were computed as `10.71.0.$((100 + IDX))` with the base hard-coded, so any pool not
