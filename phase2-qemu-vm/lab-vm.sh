@@ -1570,9 +1570,14 @@ EOF
             log_warn "no SSH pubkey found — VM will use password auth (lab/lab). Add ~/.ssh/id_*.pub to suppress this."
             printf 'ssh_pwauth: true\n'
         fi
+        # `chpasswd: {list: ...}` is DEPRECATED since cloud-init 22.3 and makes the whole
+        # cloud-config schema-invalid: the guest logs "Use of a multiline string for this
+        # field is DEPRECATED and will result in an error in a future version" plus
+        # "Invalid cloud-config provided". Observed on Debian 12 / cloud-init 22.4.2.
+        # `users:` is the supported form and is not a multiline string.
         printf 'chpasswd:\n'
-        printf "  list: |\n"
-        printf "    root:lab\n"
+        printf "  users:\n"
+        printf "    - {name: root, password: lab, type: text}\n"
         printf "  expire: false\n"
         # On Alpine, drop in a doas rule granting lab passwordless root.
         # Stock Alpine cloud images already have doas installed and read
@@ -1593,9 +1598,20 @@ EOF
         fi
         if [[ "$(jq 'length' <<<"$runcmd_json")" -gt 0 ]]; then
             printf 'runcmd:\n'
-            # Finding 21: strip embedded newlines from each runcmd entry so a TOML
-            # string containing \n does not silently split into two YAML list items.
-            jq -r '.[]' <<<"$runcmd_json" | while IFS= read -r _c; do
+            # Finding 21: strip embedded newlines so a TOML string containing \n does not
+            # silently split into two YAML list items.
+            #
+            # AND EMIT EACH ENTRY JSON-ENCODED (`jq -c .`), not bare. YAML is a superset of
+            # JSON, so a JSON string is always a valid, unambiguous YAML scalar — whereas a
+            # BARE entry is a PLAIN scalar, in which `: ` is the key/value separator. So
+            #     - sh -c 'echo "addr: $(...)" > /dev/console'
+            # parsed as a MAPPING, cc_runcmd got a dict where it wanted a string, the module
+            # failed, cloud-config.service failed, and NONE of the runcmd ever ran. Measured
+            # 2026-08-06 on a Debian 12 guest: the VM booted perfectly and simply never
+            # executed a single command anyone had asked for. A colon-space is ordinary in
+            # shell (`echo "x: $y"`, `sed 's/a: b/'`), so this was a trap laid for the
+            # common case, and it fails SILENTLY from the caller's side.
+            jq -c '.[]' <<<"$runcmd_json" | while IFS= read -r _c; do
                 _c="${_c//$'\n'/ }"
                 printf '  - %s\n' "$_c"
             done
