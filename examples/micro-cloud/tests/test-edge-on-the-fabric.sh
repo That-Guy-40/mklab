@@ -215,9 +215,30 @@ if [[ -z "$SER" ]]; then
 fi
 for _ in $(seq 1 100); do [[ -S "$SER" ]] && break; sleep 0.1; done
 [[ -S "$SER" ]] || { KEEP=1; fail "edge's serial socket never appeared at $SER"; }
-runuser -u "$OWNER" -- socat -u "UNIX-CONNECT:$SER" "CREATE:$WORK/edge.console" &
+# The console file must be created BY ROOT AND HANDED to $OWNER before socat runs as
+# $OWNER. $WORK is a root-owned mktemp -d at 0755: traversable and readable by the owner,
+# but NOT writable — so `socat … CREATE:` died with
+#     E creat("…/edge.console", 0666): Permission denied
+# and the reader was never attached. The sibling two-engine test got this right with
+# `install -o`; this one did not.
+install -o "$OWNER" -m 0644 /dev/null "$WORK/edge.console" \
+    || { KEEP=1; fail "could not create the console file for $OWNER"; }
+runuser -u "$OWNER" -- socat -u "UNIX-CONNECT:$SER" "OPEN:$WORK/edge.console,append" &
 CAT_PID=$!
-note "edge: created from edge.toml and started; one serial reader attached"
+
+# AND PROVE THE READER IS ALIVE, because its death is indistinguishable downstream from a
+# guest that never booted. Without this the run waits out the full boot timeout and then
+# reports "edge never reached cloud-init's runcmd within 240s" — which would be FALSE, and
+# a false explanation is worse than a slow failure. Measured: that is exactly what the
+# permission bug above produced.
+sleep 1
+if ! kill -0 "$CAT_PID" 2>/dev/null; then
+    KEEP=1
+    fail "the serial reader (socat) died immediately — nothing is capturing edge's console, so any later 'the guest never printed X' would be about the READER, not the guest. Socket: $SER"
+fi
+[[ -e "$WORK/edge.console" ]] \
+    || { KEEP=1; fail "the console file $WORK/edge.console does not exist after attaching the reader"; }
+note "edge: created from edge.toml and started; one serial reader attached and confirmed alive"
 
 # ── the safety property, while a full VM and a microVM are both running ────
 for t in mc-api1 mc-edge; do
@@ -230,8 +251,19 @@ done
 note "taps: addressless and uid-$OWNER_UID owned, with a q35 cloud VM and a microVM attached"
 
 # ── the guest's own report ─────────────────────────────────────────────────
-wait_for "$WORK/edge.console" 'EDGE-BEGIN' "$EDGE_TIMEOUT" \
-    || { KEEP=1; fail "edge never reached cloud-init's runcmd within ${EDGE_TIMEOUT}s — console: $WORK/edge.console"; }
+if ! wait_for "$WORK/edge.console" 'EDGE-BEGIN' "$EDGE_TIMEOUT"; then
+    KEEP=1
+    # Say WHICH silence this is. An empty console means the reader or the VM never produced
+    # anything; a full one means the guest booted and cloud-init did not run our runcmd.
+    # Those need opposite fixes, and "the guest never reached X" describes only the second.
+    _bytes="$(wc -c <"$WORK/edge.console" 2>/dev/null || echo 0)"
+    printf '  console captured %s bytes; last 15 lines:\n' "$_bytes" >&2
+    tail -15 "$WORK/edge.console" >&2 2>/dev/null || true
+    if (( _bytes == 0 )); then
+        fail "NOTHING was captured from edge's serial console in ${EDGE_TIMEOUT}s — this is about the READER or the VM starting, not about cloud-init. Socket: $SER"
+    fi
+    fail "edge's console produced $_bytes bytes but never printed EDGE-BEGIN within ${EDGE_TIMEOUT}s — it booted; cloud-init did not reach our runcmd (see the tail above)"
+fi
 wait_for "$WORK/edge.console" 'EDGE-END' 120 \
     || { KEEP=1; fail "edge printed EDGE-BEGIN but never EDGE-END — cloud-init stalled mid-runcmd; console: $WORK/edge.console"; }
 
