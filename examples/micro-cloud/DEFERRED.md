@@ -58,9 +58,88 @@ reaching `api1` by name — the counterpart to 5a's density case.*
 > spec builder's jq object, so only a `--config` TOML can set it. 5b uses a TOML spec
 > anyway (§9.1 wants one), so this is recorded rather than fixed.
 >
-> **Not yet done:** the edge has not been booted. Nothing has verified that a cloud
+> **Built 2026-08-05:** [`edge.toml`](edge.toml) + [`tests/test-edge-on-the-fabric.sh`](tests/run-all.sh).
+> The spec's MAC is a **cached value with a gate**: the harness asks `fabric.sh mac edge`
+> and refuses to boot on a mismatch. The load-bearing assertion is that each guest holds
+> the address the fabric **RESERVED** — a guest that misses its reservation still gets a
+> `10.71.0.x`, so a subnet regex would pass while the point failed. `api1` boots **through
+> `lab-fc.sh`**, which no earlier slice did.
+>
+> **First root run refused, correctly:** `FAIL firecracker not on PATH`. `lab-fc.sh` finds
+> the binary with `command -v` and offers no flag and no env override — deliberately,
+> because its gate is *"the pinned version is installed"* and a path you can point anywhere
+> is not that gate. The lab's pinned v1.16.1 lives in slice 3's state dir, so the harness
+> now prepends that dir rather than working around the refusal. Re-verified unprivileged:
+> `ok firecracker v1.16.1 at …/micro-cloud-s3/firecracker (pinned)`.
+>
+> **Still not done:** the edge has **not been booted**. Nothing has verified that a cloud
 > image takes a lease from the fabric's dnsmasq, that cloud-init runs without slirp, or
-> that the edge resolves `api1`.
+> that the edge resolves `api1`. The harness's root path has never reached past its own
+> preflight.
+
+## QUEUED — slice 5c: vsock, the first channel that is not the fabric
+
+*Scoped 2026-08-05, at the user's request, after 5b's spec and harness landed. Sits AFTER
+5b because 5b's harness is written and unrun; 5c does not depend on it.*
+
+**The question.** Every row of §18.4's seam table so far is network-attached, and the
+fabric is the common seam that made shape **(b)** defensible. vsock is the first channel
+that is **not the fabric**: a host↔guest pipe with no bridge, no lease, no name, no DNS.
+Does the seam story survive a channel where the **guest** contract is byte-identical and
+the **host** API differs in kind?
+
+The plan has wanted this since v1 — decision **C** (*"the vsock agent is the cleanest
+counter-example to MAAS's console-only habit"*) and §246: MAAS reads a serial log **because
+a rack machine offers nothing else**; a microVM you own can be *asked*. Keeping the console
+habit would cargo-cult a constraint that no longer applies.
+
+### Measured 2026-08-05, before scoping — not assumed
+
+| | state |
+|---|---|
+| `/dev/vhost-vsock` | present, `root:kvm 0660`, and uid 1000 is in `kvm` → **usable unprivileged**, like `/dev/kvm` |
+| host modules | `vhost_vsock`, `vsock`, `vmw_vsock_virtio_transport_common` all loaded |
+| QEMU | has **`vhost-vsock-device`** on the *virtio-bus* — so it works on `-M microvm`, not only q35 — plus `vhost-vsock-pci` |
+| **the lab's kernel** | **`CONFIG_VSOCKETS=y` and `CONFIG_VIRTIO_VSOCK=y`** — `__initcall__kmod_vsock…` / `…kmod_vmw_vsock_virtio_transport…` symbols are present in `vmlinux`, and an initcall symbol only exists for **built-in** code. This is the assumption most likely to have sunk 5c, and it is retired: Firecracker boots with **no initramfs**, so a modular driver is a driver that would never load ([E.2](../../MICRO_CLOUD_LAB_PLAN.md#e2-decision-b--yes-with-one-condition-worth-stating)'s condition, applied to a different subsystem) |
+| host `socat` | built `WITH_VSOCK 1` — so the host end needs no new tool |
+| **the guest rootfs** | ⛔ **zero vsock-capable userspace.** `strings api1.ext4 \| grep -ci vsock` = **0**; it is busybox+musl, and busybox `nc` has no `AF_VSOCK`. **The kernel can, and nothing in the image can ask it to.** |
+| Firecracker's own support | **NOT measured.** v1.16.1 documents a `vsock` block (`guest_cid` + `uds_path`); this repo has never exercised it |
+
+### So the real work is a guest agent, not plumbing
+
+The gap is **userspace**, which is the opposite of what "is vsock available?" suggests. 5c
+therefore needs a tiny static agent in the image — and that is a **`export-rootfs` +
+Phase-1 chroot** job, i.e. it consumes the [§18.6 item 3](../../MICRO_CLOUD_LAB_PLAN.md#186-order-of-work)
+work already landed rather than inventing a new path.
+
+### The asymmetry to measure, stated as a hypothesis so it can be wrong
+
+| | Firecracker | QEMU |
+|---|---|---|
+| guest | `AF_VSOCK`, CID + port | `AF_VSOCK`, CID + port — **expected identical** |
+| host | a **unix socket** carrying a text handshake (`CONNECT <port>\n`), `uds_path` in the config | **real `AF_VSOCK`** sockets on the host |
+
+**This is documentation, not measurement.** If it holds, vsock is a *sharper* row than
+`stop`: there the intent matched and the channel differed; here the guest-side contract is
+byte-identical while the host-side API differs in kind — a harder case for shape (b) than
+anything 5a or 5b produced. If it does not hold, that is the finding.
+
+### Break pass, and the reason 5c is worth more than a seam row
+
+vsock is a layer that **fails independently of the fabric**, which is exactly what
+`CLAUDE.md`'s chaos ladder wants and what this lab does not yet have: tear down `br-mc0`
+with the agent connected (network gone, is the guest still *reachable*?); kill the host
+listener under a live guest; exhaust CIDs; and — the interesting one — **give two guests the
+same `guest_cid`** and find out whether the second is refused or silently answers for the
+first ([the seam-answers-for-the-wrong-instance](../../MICRO_CLOUD_LAB_PLAN.md#appendix-d--where-the-kubernetes-actually-is-2026-08-01)
+class, which has bitten this repo before with a vbmc port collision).
+
+### Done looks like
+
+An agent in the image answering over vsock from **both** engines; a §18.4 row filled in from
+what the two host APIs actually needed; the console demoted from *sole witness* to *one
+witness*; and a chaos scenario for a layer that can fail on its own. **Explicitly out of
+scope:** replacing SSH (decision C says start with SSH), and MMDS.
 
 ## The original brief — slice 5a: a second engine on one fabric
 

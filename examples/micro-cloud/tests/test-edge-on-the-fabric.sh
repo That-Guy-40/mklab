@@ -43,6 +43,7 @@ FC_TOOL="$REPO_DIR/phase7-firecracker/lab-fc.sh"
 VM_TOOL="$REPO_DIR/phase2-qemu-vm/lab-vm.sh"
 SPEC="$LAB_DIR/edge.toml"
 EDGE_TIMEOUT="${MC_EDGE_TIMEOUT:-240}"   # a cloud image + cloud-init, not a microVM
+FC_BIN="${MC_FIRECRACKER:-$WORKDIR/firecracker}"
 
 [[ ${EUID:-$(id -u)} -eq 0 ]] || skip "needs root: the fabric creates a bridge, taps and an nft table (CAP_NET_ADMIN)"
 need ip nft dnsmasq runuser socat jq
@@ -51,6 +52,7 @@ need ip nft dnsmasq runuser socat jq
 [[ -x "$VM_TOOL" ]] || skip "lab-vm.sh not executable at $VM_TOOL"
 [[ -r "$SPEC"    ]] || skip "edge.toml not readable at $SPEC"
 [[ -r "$KERNEL" && -r "$ROOTFS" ]] || skip "slice 3's kernel/rootfs are not in $WORKDIR"
+[[ -x "$FC_BIN" ]] || skip "no firecracker binary at $FC_BIN (set \$MC_FIRECRACKER)"
 command -v qemu-system-x86_64 >/dev/null 2>&1 || skip "no qemu-system-x86_64"
 [[ -r /dev/kvm && -w /dev/kvm ]] || skip "/dev/kvm not read-write — a cloud image under TCG would take many minutes"
 
@@ -139,10 +141,18 @@ RES_EDGE="$(sed -n "s/^.*,\\(10\\.71\\.0\\.[0-9]*\\),edge$/\\1/p" /run/mklab-mc/
 note "fabric reserved: api1=$RES_API1  edge=$RES_EDGE  (both from ONE verb)"
 
 # ── api1, booted BY THE TOOL — the seam Appendix L fixed ───────────────────
-runuser -u "$OWNER" -- "$FC_TOOL" create --name api1 --kernel "$KERNEL" --rootfs "$ROOTFS" \
-        --tap mc-api1 --lab micro-cloud >"$WORK/fc-create.log" 2>&1 \
+# `lab-fc.sh` locates the binary with `command -v firecracker` and offers no flag and no env
+# override — deliberately, because its gate is "the PINNED version is installed", and a path
+# you can point anywhere is not that gate. The lab's pinned v1.16.1 lives in slice 3's state
+# dir, never on PATH, so the tool is run with that dir PREPENDED rather than worked around.
+# (First run of this harness failed exactly here: "FAIL firecracker not on PATH" — the tool
+# refusing correctly, and the harness never having told it where to look.)
+FC_PATH="$(dirname -- "$FC_BIN"):$PATH"
+runuser -u "$OWNER" -- env "PATH=$FC_PATH" "$FC_TOOL" create --name api1 \
+        --kernel "$KERNEL" --rootfs "$ROOTFS" --tap mc-api1 --lab micro-cloud \
+        >"$WORK/fc-create.log" 2>&1 \
     || { KEEP=1; cat "$WORK/fc-create.log" >&2; fail "lab-fc.sh create failed — see above"; }
-runuser -u "$OWNER" -- "$FC_TOOL" start api1 >"$WORK/fc-start.log" 2>&1 &
+runuser -u "$OWNER" -- env "PATH=$FC_PATH" "$FC_TOOL" start api1 >"$WORK/fc-start.log" 2>&1 &
 FC_PID=$!
 note "api1: created and started through lab-fc.sh, not a hand-written config"
 
@@ -199,7 +209,7 @@ note "edge resolved api1 -> $RES_API1 and reached it BY NAME, across the fidelit
 runuser -u "$OWNER" -- "$VM_TOOL" stop edge --force >/dev/null 2>&1
 runuser -u "$OWNER" -- "$VM_TOOL" destroy edge --force >/dev/null 2>&1; EDGE_CREATED=0
 [[ -n "$FC_PID" ]] && { kill "$FC_PID" 2>/dev/null; wait "$FC_PID" 2>/dev/null; FC_PID=""; }
-runuser -u "$OWNER" -- "$FC_TOOL" destroy api1 --force >/dev/null 2>&1
+runuser -u "$OWNER" -- env "PATH=$FC_PATH" "$FC_TOOL" destroy api1 --force >/dev/null 2>&1
 
 fab down || { KEEP=1; cat "$LOG" >&2; fail "fabric down failed: $(tail -1 "$LOG")"; }
 FABRIC_UP=0
