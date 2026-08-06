@@ -1178,7 +1178,7 @@ exercise · break**, and the break pass writes into `LEDGER.md`.
 | **3** ⚠️ | **Two microVMs that reach each other** — **EXERCISED 2026-08-02, [Appendix G](#appendix-g--slice-3-the-fabric-2026-08-02), but the deliverable was never landed — see [§18.1](#181-the-precursor-nobody-recorded--fabricsh-is-not-in-the-repo)**; build + exercise + teardown green, break pass **3 of 5** (the two deferred are named in [G.9](#g9-not-run--recorded-as-unknown-not-as-pass), both requiring a host without a live cluster or a config change) | `fabric.sh up/down/retap/status` — additive nft scoped by `iifname`, recorded `ip_forward`, dnsmasq as DHCP **and** DNS. **Bridge MUST be named `br-mc0`** (Calico v3.28.1 excludes `^br-.*`) and **taps MUST carry no IPv4 address** — [F.7](#f7-the-selection-rule-derived--and-7-already-satisfied-it) | `api1` pings `api2` **by name**; `down` asserts absence of *our* objects only; **pre-flight records Calico's tunnel binding and teardown compares it** — the assertion that caught [F.6](#f6-additive-was-not-safe--the-tap-captured-a-live-clusters-tunnel) | delete the bridge under a running VM; exhaust the DHCP pool; leave a stale tap; **confirm Calico still works** — and give a tap an address on purpose to watch it become an autodetection candidate |
 | **4** ✅ | **The tool, and what it hides** — **DONE 2026-08-02, [Appendix H](#appendix-h--slice-4-the-tool-and-what-it-hides-2026-08-02)** | `lab-fc.sh` + `preflight`; **derive** §5.2's schema from slices 1–3 | one command, same boot; `--dry-run` diffed against slice 1's hand-written `config.json` | the preflight tripwire; **name what the tool silently started doing for you** — that list is the deliverable. Watch for the §8.3 verb tripwire |
 | **5a** ✅ | **A second engine on one fabric — the controlled comparison** ([§18](#18-slice-5--the-brief)). **DONE 2026-08-05** — (a) the boot comparison, [Appendix J](#appendix-j--slice-5a-a-the-second-engine-the-number-nobody-had-and-the-number-everybody-had-was-wrong-2026-08-05); (b) two engines on one fabric, [Appendix K](#appendix-k--slice-5a-b-two-engines-on-one-fabric-and-decision-e-answered-from-what-the-lifecycles-actually-needed-2026-08-05) | QEMU `-M microvm` and Firecracker on the same `vmlinux` + the same `.ext4`, taps from **one** fabric verb, both VMMs at uid 1000 | 0.055 s vs 0.071 s once the i8042 probe is out of the way ([J.3](#j3-the-headline-that-was-false)); distinct DHCP leases from one dnsmasq; **each engine's guest resolved the other's BY NAME**; Calico unmoved throughout | **§18.4's seam table filled in — §8.3 shape (b)** ([K.2](#k2-decision-e-answered--184s-table-filled-in-from-what-the-two-lifecycles-needed)), and the `stop` seam turns out to be what costs 90% of the boot ([K.3](#k3-the-seams-are-not-independent-of-the-performance-story)) | QEMU **`-M microvm`** (Phase 2 already has virtio-mmio + qboot) consuming **the same `vmlinux` and the same `.ext4`** Firecracker boots, on a `fabric.sh`-made tap. ~~"Phase 2 already does bridge mode"~~ — **`--network-mode tap`, not `bridge`**: [§18.3](#183-two-corrections-to-14s-one-line-brief) | two engines, one L2, one `--lab` view — **and a boot-time number where the only variable is the VMM** | kill one engine's process and see what the other reports; kill the **fabric** under both. **Answer decision E** |
-| **5b** | **…and the fidelity case** | the §9.2 `edge`: cloud image + `cloud-localds` seed on `-M q35` | cloud-init runs; `edge` reaches `api1` by name | the same break pass against a guest that takes DHCP rather than `ip=` |
+| **5b** ✅ | **…and the fidelity case** — **DONE 2026-08-06, [Appendix M](#appendix-m--slice-5b-the-fidelity-case-joins-the-fabric-2026-08-06)** | the §9.2 `edge`: a stock Debian 12 cloud image on `-M q35`, from [`edge.toml`](examples/micro-cloud/edge.toml), on a `fabric.sh` tap **beside a Firecracker microVM** | cloud-init ran; `edge` took the lease the fabric **RESERVED** (`10.71.0.102`, not merely an address from the pool) and reached `api1` **by name** | seven defects on the way, **all in the harness or the phase tools, none in the lab** — including `inspect` exiting 1 silently on any running VM, and a `: ` in a `runcmd` cancelling every `runcmd` |
 | **6** | **The control plane** | whichever §8.3 shape slice 5 argued for; `fc.py` backend + topology slot; revisit decision G | all instances in one tree; `apply` a no-op on pass two, if the seam supports it | make the registry disagree with reality — MAAS's registry-layer fault, ported |
 | **7** | **Preserve** | `preserve.sh`, both tiers, `derivation.toml`; **`lab-vm.sh export`** (the §9.5 gap) | back up a lab, destroy it, restore it, prove it is the same | restore with a **changed** artifact hash and confirm it refuses **by name** |
 | **8** | **The fleet** | snapshot/restore; the jailer tier | five warm clones from one memory image | clone-entropy hazard then re-seeding; diff `/proc/<pid>/root`, `ns/net`, `Seccomp` plain vs jailed |
@@ -3588,3 +3588,105 @@ the new verb exists for.
 
 The addresses did not move (`api1` first still gets `.101`), so the dated appendices remain
 accurate records. Only the MACs changed.
+
+## Appendix M — slice 5b, the fidelity case joins the fabric, 2026-08-06
+
+A stock Debian 12 cloud image on QEMU `-M q35` — real firmware, cloud-init, systemd, a full
+network stack — booted on a `fabric.sh` tap **beside a Firecracker microVM**, took the lease
+the fabric had **reserved** for it, and reached that microVM **by name**. `sudo bash
+tests/run-all.sh` → **5 passed · 0 skipped · 0 failed**.
+
+### M.1 The run
+
+```text
+  - cached MAC checked against its subject: edge.toml == fabric.sh mac edge == 06:00:ac:47:09:03
+  - fabric reserved: api1=10.71.0.101  edge=10.71.0.102  (both from ONE verb)
+  - api1: created and started through lab-fc.sh, not a hand-written config
+  - edge: created from edge.toml and started; one serial reader attached and confirmed alive
+  - taps: addressless and uid-1000 owned, with a q35 cloud VM and a microVM attached
+  - edge holds its RESERVED lease 10.71.0.102 — the MAC in edge.toml reached the guest
+  - edge resolved api1 -> 10.71.0.101 and reached it BY NAME, across the fidelity gap
+  - teardown: ours all gone; calico binding, pod veth count and ip_forward unchanged
+PASS
+```
+
+### M.2 What it establishes that 5a could not
+
+5a compared two engines chosen to be **alike**: same ELF kernel, same raw ext4, no firmware,
+no init system. It could not distinguish *"the fabric works"* from *"the fabric works for
+stripped guests"*. Here the guest shares **nothing** with the microVMs but the bridge —
+different image format, different firmware, different init, 4× the memory, a boot three
+orders of magnitude slower — and the attachment is still
+`-netdev tap,ifname=…,script=no`: a pre-made tap, by name, from the same fabric verb, with
+neither VMM privileged. **§18.4's network-attachment row holds at the far end of the
+fidelity axis**, which is the strongest form of the claim available on one host.
+
+**The reserved lease is the load-bearing assertion**, and it is the one that is easy to fake:
+a guest that *misses* its reservation still gets a `10.71.0.x` from the same pool, so a
+subnet regex would have passed while the point failed. `edge` holds **`10.71.0.102`, the
+address `fabric.sh` recorded for it** — which means the MAC written in a static spec file
+reached the guest and matched the reservation. That is
+[Appendix L](#appendix-l--slice-5bs-first-finding-before-a-line-of-it-was-built-the-two-tools-could-never-agree-2026-08-05)'s
+fix demonstrated end to end rather than in a unit test, and `api1` was booted **through
+`lab-fc.sh`** — the first time any slice has pointed that tool at a fabric tap.
+
+### M.3 Seven defects between the harness landing and the harness passing — none in the lab
+
+The fabric, the taps, dnsmasq, Calico coexistence and both VMMs were right the whole way.
+Every failure was in the **test harness** or in a **phase tool**, and each is recorded
+because the shapes recur:
+
+| # | defect | shape |
+|---|---|---|
+| 1 | the harness never told `lab-fc.sh` where the pinned firecracker lived | the tool refused correctly; the caller was wrong |
+| 2 | the EXIT trap reaped the fabric and the edge VM but **not `api1`** | a partial trap leaks; the *next* run then died two failures downstream |
+| 3 | the trap killed `lab-fc.sh start`, not the VM — **firecracker outlived it** | killing the wrapper is not killing the VM; use the lifecycle verb |
+| 4 | the console file could not be created by the unprivileged reader | and the boot timeout would then have blamed **the guest** |
+| 5 | **`lab-vm.sh inspect` exited 1 with no output for every running VM** | a running QEMU locks its disk; `qemu-img` fails; a bare assignment from a pipeline under `set -e` dies silently |
+| 6 | **a `: ` in a `runcmd` cancelled every `runcmd`** | a bare YAML scalar is a *plain* scalar; `cc_runcmd` got a mapping and refused, on a VM that booted perfectly |
+| 7 | `chpasswd: {list: \|}` deprecated since cloud-init 22.3 | the whole document reads as schema-invalid |
+
+**#5 and #6 are real tool bugs that no green suite could see.** `inspect` is the verb anyone
+would reach for on a running VM, and it failed with *no message at all*. A colon-space is
+ordinary shell (`echo "x: $y"`, `awk -F': '`), and its consequence was a machine that booted
+and silently ignored every command it had been given. Both are now guarded by tests that
+**parse or execute rather than grep** — a `grep '- sh -c'` passes happily on the broken
+user-data, because the bytes look perfect and only the *parse* is wrong.
+
+### M.4 The harness had to be made honest before it could be made to work
+
+Three of the seven produced *true sentences about the wrong subject*, which cost more than
+the failures themselves:
+
+- *"edge never reached cloud-init's runcmd within 240s"* — false; the **reader** had died.
+- *"api1 took no DHCP lease"* — false; api1 was still inside `udhcpc`, 0.5 s behind because
+  of [J.3](#j3-the-headline-that-was-false)'s i8042 probe. The engines never arrive together,
+  so any instant-sampled assertion about two VMMs is a race by construction.
+- *"lab-vm.sh inspect did not report a serial socket path"* — true, useless, and unfixable
+  without another root run, because the line that produced it discarded stderr **and** piped
+  a command whose status was the gate.
+
+The messages now **measure which silence they are in**: zero bytes captured means the reader
+or the VM produced nothing; N bytes with no marker means it booted and cloud-init did not
+reach the `runcmd`. Opposite fixes; the old message only ever described the second.
+
+### M.5 One false alarm, and the cheap guard that ends it
+
+A run that reproduced the *fixed* cloud-init failure turned out to predate the fix by
+**14 minutes** — the guest's own console still printed `chpasswd.list: DEPRECATED`, a string
+the fix had removed. The evidence was in the artifact, not in anyone's memory of what was
+merged. Checking `git log --oneline -1` before a four-minute boot costs one line and settles
+it; the working tree is a cache like any other.
+
+### M.6 What slice 5 leaves closed, and what it does not
+
+**Closed:** both halves of 5a and 5b; §18.4's seam table with the network-attachment row
+proven at both ends of the fidelity axis; decision E as §8.3 shape **(b)**
+([K.2](#k2-decision-e-answered--184s-table-filled-in-from-what-the-two-lifecycles-needed));
+Appendix L's MAC agreement demonstrated on a booted guest.
+
+**Still open:** `retap` is *still* never called — it needs a deliberately root-owned tap to
+recover from; [G.9](#g9-not-run--recorded-as-unknown-not-as-pass)'s two break-pass scenarios
+still want a host without a live cluster; and **slice 5c (vsock)** is scoped but not started,
+with its own assumption already retired (the lab's kernel has `CONFIG_VSOCKETS=y`) and its
+real work identified as a **guest agent**, not plumbing.

@@ -37,7 +37,23 @@
 > ([J.5](../../MICRO_CLOUD_LAB_PLAN.md#j5-the-answer-once-both-engines-are-on-equal-footing)). (b) re-derived it from the guests' own clocks
 > ([K.3](../../MICRO_CLOUD_LAB_PLAN.md#k3-the-seams-are-not-independent-of-the-performance-story)).
 
-## NEXT — slice 5b: the fidelity case
+## DONE — slice 5b: the fidelity case
+
+> ✅ **2026-08-06 — the whole micro-cloud suite is green at root: 5 passed, 0 skipped,
+> 0 failed** ([Appendix M](../../MICRO_CLOUD_LAB_PLAN.md#appendix-m--slice-5b-the-fidelity-case-joins-the-fabric-2026-08-06)). A stock Debian 12 cloud image on `-M q35` booted on a
+> `fabric.sh` tap beside a Firecracker microVM, took its **RESERVED** lease
+> `10.71.0.102` — the MAC from a static spec file reached the guest — and reached
+> `api1` **by name** across the fidelity gap. Calico's binding, pod veth count and
+> `ip_forward` unchanged throughout.
+>
+> **Seven defects on the way, every one in the harness or a phase tool, none in the
+> lab.** Two were real tool bugs a green suite could never have seen: `lab-vm.sh
+> inspect` exited 1 with **no output at all** for every running VM (a running QEMU
+> locks its own disk), and a `: ` in a `runcmd` made cloud-init parse a **mapping**
+> instead of a command, so a perfectly-booted VM silently ignored every instruction it
+> was given.
+
+## The original brief — slice 5b: the fidelity case
 
 *The §9.2 `edge`: a full cloud image on `-M q35` with cloud-init, on the same fabric,
 reaching `api1` by name — the counterpart to 5a's density case.*
