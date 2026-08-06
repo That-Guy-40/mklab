@@ -1796,11 +1796,24 @@ cmd_export() {
     local lab="${OPT_LAB:-${POS_ARGS[0]:-}}"
     local fmt="${OPT_FORMAT:-kube}"
     [[ -n "$lab" ]] || die "usage: $LAB_PROG export <lab> --format {kube|compose}"
-    require_rootless
-    require_podman
 
+    # The host gates live INSIDE the branches that need them, not above the
+    # case.  Two things follow, and both were bugs when the gates sat here:
+    #
+    #  1. A usage error must be diagnosable without a working podman.  Every
+    #     other subcommand validates its arguments first; `export` alone
+    #     answered `--format bogus` with "podman not found", so on a
+    #     podman-less box the tool blamed the host for the operator's typo.
+    #  2. `--format compose` never calls podman at all — it reads the stored
+    #     spec.toml and prints YAML.  Gating a pure text transformation on a
+    #     container engine (and on being non-root) made a check that cannot
+    #     fail for a real reason.  test-compose-export.sh has claimed "no live
+    #     podman needed" in its header since the day it was written; that is
+    #     now true of the code as well.
     case "$fmt" in
         kube)
+            require_rootless
+            require_podman
             # Prefer generating from a pod if one exists; fall back to
             # running containers.
             local pod; pod="$(podman pod ls --filter "label=${LAB_LABEL_LAB}=${lab}" --filter "label=${LAB_LABEL_TOOL}" --format '{{.Name}}' | head -1)"
