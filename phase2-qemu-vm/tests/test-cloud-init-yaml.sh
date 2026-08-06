@@ -71,24 +71,42 @@ JSON
 jq -e . >/dev/null 2>&1 <<<"$RUNCMD_JSON" || fail "the test's own runcmd fixture is not valid JSON"
 
 ud="$tmp/user-data"
-# make_seed_iso builds user-data in its own scratch dir and packs it; run it and keep the
-# packed copy. If no ISO maker exists we cannot get the file back, which is an environment
-# gap rather than a defect — say so.
 seed="$tmp/seed.iso"
-if ! make_seed_iso yamlcheck "$seed" "" debian '[]' "$RUNCMD_JSON" >"$tmp/seed.log" 2>&1; then
-    grep -qi 'iso' "$tmp/seed.log" && skip "no ISO maker on this host — cannot pack a seed to inspect ($(head -1 "$tmp/seed.log"))"
+
+# ── intercept the PACKER, so this needs no ISO tooling at all ──────────────
+# make_seed_iso writes user-data and then packs it with genisoimage/xorrisofs/mkisofs. A
+# bare CI runner has none of the three, so the honest outcome there was SKIP — and a guard
+# that only ever skips on CI guards nothing. But the ISO is not what is under test: the
+# BYTES of user-data are. So shadow the packer with a stub that captures the file instead of
+# packing it. Same emitter, same output, no ISO9660 anywhere.
+mkdir -p "$tmp/bin"
+cat > "$tmp/bin/genisoimage" <<'STUB'
+#!/usr/bin/env bash
+# Stand-in for the ISO packer: copy the user-data it was handed, and create the output file
+# so the caller's own existence check passes.
+out=""; prev=""
+for a in "$@"; do
+    [[ "$prev" == "-output" ]] && out="$a"
+    case "$a" in */user-data) cp -- "$a" "$UD_CAPTURE" ;; esac
+    prev="$a"
+done
+[[ -n "$out" ]] && : > "$out"
+exit 0
+STUB
+chmod +x "$tmp/bin/genisoimage"
+export UD_CAPTURE="$ud"
+export PATH="$tmp/bin:$PATH"
+
+# A die-ing call goes in a SUBSHELL: make_seed_iso reports refusal with `die`, which is
+# `exit`, not `return`, and this file SOURCES lab-vm.sh — so an unwrapped call takes the
+# whole test with it. With stderr redirected to a log it exits printing NOTHING, which is
+# precisely what CI saw: not one byte of output, counted as a failure.
+if ! ( make_seed_iso yamlcheck "$seed" "" debian '[]' "$RUNCMD_JSON" ) >"$tmp/seed.log" 2>&1; then
     cat "$tmp/seed.log" >&2
     fail "make_seed_iso failed — see above"
 fi
-[[ -r "$seed" ]] || fail "make_seed_iso reported success but wrote no $seed"
-
-if command -v xorriso >/dev/null 2>&1; then
-    xorriso -osirrox on -indev "$seed" -extract /user-data "$ud" >/dev/null 2>&1 || true
-fi
-if [[ ! -s "$ud" ]] && command -v 7z >/dev/null 2>&1; then
-    7z x -so "$seed" user-data > "$ud" 2>/dev/null || true
-fi
-[[ -s "$ud" ]] || skip "cannot extract user-data from the seed ISO on this host (need xorriso or 7z)"
+[[ -s "$ud" ]] \
+    || fail "the packer stub captured no user-data — make_seed_iso did not hand it one, so nothing was generated to check"
 
 # ── the parse, and the types cloud-init will see ────────────────────────────
 out="$(python3 - "$ud" <<'PY'
