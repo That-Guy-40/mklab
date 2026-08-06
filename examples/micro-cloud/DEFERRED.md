@@ -72,7 +72,26 @@ reaching `api1` by name — the counterpart to 5a's density case.*
 > now prepends that dir rather than working around the refusal. Re-verified unprivileged:
 > `ok firecracker v1.16.1 at …/micro-cloud-s3/firecracker (pinned)`.
 >
-> **Still not done:** the edge has **not been booted**. Nothing has verified that a cloud
+> ✅ **The edge BOOTS** (2026-08-06): Debian 12, cloud-init 22.4.2 finished in
+> **3.48 s**, `edge login:` on the serial console — on a `fabric.sh` tap, beside a
+> Firecracker microVM, with both VMMs at uid 1000. Getting there cost four defects,
+> every one of them in the harness or the phase tool rather than the lab: a missing
+> `PATH` for the pinned firecracker; an EXIT trap that reaped the fabric and the edge
+> but not `api1` (leaking a live microVM, which the next run then refused); a console
+> file the unprivileged reader could not create; and **`lab-vm.sh inspect` exiting 1
+> with no output for every running VM** (a locked qcow2 — fixed in #149).
+>
+> **Two cloud-config defects, both in `lab-vm.sh`, both silent from the caller's side:**
+> `runcmd` entries were emitted as BARE YAML scalars, so any command containing `: `
+> parsed as a **mapping**; `cc_runcmd` then failed and **none** of the runcmd ran, on a
+> VM that booted perfectly. And `chpasswd: {list: |}` is deprecated since cloud-init
+> 22.3 and makes the whole document schema-invalid. Both fixed, both guarded by
+> `phase2-qemu-vm/tests/test-cloud-init-yaml.sh`, which parses the generated user-data
+> and asserts the TYPES cloud-init will see — a grep would have passed on the broken
+> output, because the bytes looked perfect and only the parse was wrong.
+>
+> **Still not done:** the edge has not yet run its `runcmd`, so nothing has confirmed
+> the reserved lease or cross-fidelity name resolution. Nothing has verified that a cloud
 > image takes a lease from the fabric's dnsmasq, that cloud-init runs without slirp, or
 > that the edge resolves `api1`. The harness's root path has never reached past its own
 > preflight.
