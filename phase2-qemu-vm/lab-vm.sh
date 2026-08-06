@@ -1640,6 +1640,7 @@ spec_from_cli() {
         --arg network_mode "${OPT_NETWORK_MODE:-user}" \
         --arg bridge       "${OPT_BRIDGE:-}" \
         --arg tap          "${OPT_TAP:-}" \
+        --arg mac          "${OPT_MAC:-}" \
         --arg disk_format  "${OPT_DISK_FORMAT:-}" \
         --arg name     "${OPT_NAME:-}" \
         --arg backend  "${OPT_BACKEND:-disk-image}" \
@@ -1677,7 +1678,7 @@ spec_from_cli() {
           pxe_dir:$pxe_dir,
           pxe_bootfile:$pxe_bootfile,
           cores:($cores|tonumber), threads:($threads|tonumber), cpu_pin:$cpu_pin,
-          network_mode:$network_mode, bridge:$bridge, tap:$tap,
+          network_mode:$network_mode, bridge:$bridge, tap:$tap, mac:$mac,
           disk_format:$disk_format,
           packages:$packages, runcmd:$runcmd, user_data:$user_data}'
 }
@@ -2036,6 +2037,17 @@ validate_spec() {
         pxe-install) ;;   # validated in create_one
         *) die "spec ($name) unknown backend: $backend" ;;
     esac
+
+    # A malformed MAC used to be caught only in build_qemu_argv -- i.e. at START, after
+    # `create` had already written a manifest and, for a disk-image backend, copied a
+    # multi-hundred-megabyte image. A gate that fires after the copy is a post-mortem, not a
+    # gate (the rule lab-fc.sh's preflight follows: refuse BEFORE the expensive step). The
+    # check stays in build_qemu_argv too -- a spec can also arrive via --config.
+    local _mac; _mac="$(spec_get "$spec" mac)"
+    if [[ -n "$_mac" ]]; then
+        [[ "$_mac" =~ ^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$ ]] \
+            || die "spec ($name) invalid MAC address '$_mac': expected xx:xx:xx:xx:xx:xx"
+    fi
 
     if [[ "$(spec_get "$spec" microvm)" == "true" ]]; then
         local sup; sup="$(arch_map "$arch" microvm-supported)"
@@ -3398,6 +3410,12 @@ CREATE OPTIONS
   --network-mode {user|bridge|tap}       (default user = slirp+hostfwd; bridge/tap need root)
   --bridge    <name>                     (bridge to attach for --network-mode bridge; default virbr0)
   --tap       <ifname>                   (tap device for --network-mode tap)
+  --mac       xx:xx:xx:xx:xx:xx          (guest NIC MAC; default = QEMU's. Set this when a
+                                          DHCP server holds a RESERVATION for the guest --
+                                          a reservation is keyed on the MAC, so a mismatch
+                                          fails SILENTLY as a dynamic lease. Ask whoever owns
+                                          the address plan; the micro-cloud fabric answers
+                                          it with:  fabric.sh mac NAME)
   --disk-format {qcow2|raw}              (default qcow2; raw attaches a PER-INSTANCE COPY
                                           of --image instead of a CoW overlay)
   --packages  "p1,p2,..."                (cloud-init: extra packages to install at first boot)
@@ -3441,6 +3459,7 @@ parse_args() {
     OPT_CLOUD_INIT="true"
     OPT_REFRESH_IMAGE="" OPT_CORES="" OPT_THREADS="" OPT_CPU_PIN=""
     OPT_NETWORK_MODE="" OPT_BRIDGE="" OPT_TAP="" OPT_DISK_FORMAT=""
+    OPT_MAC=""
     OPT_PACKAGES="" OPT_USER_DATA="" OPT_RUNCMD=()
     OPT_NETBOOT_DIR="" OPT_KERNEL_NAME="" OPT_INITRD_NAME="" OPT_GENERATE_SCRIPT="" OPT_SERVER=""
     OPT_PXE_DIR="" OPT_PXE_BOOTFILE="" OPT_SECURE_BOOT="" OPT_FIRMWARE=""
@@ -3483,6 +3502,7 @@ parse_args() {
             --network-mode) OPT_NETWORK_MODE="$2"; shift 2 ;;
             --bridge)       OPT_BRIDGE="$2"; shift 2 ;;
             --tap)          OPT_TAP="$2"; shift 2 ;;
+            --mac)          OPT_MAC="$2"; shift 2 ;;
             --disk-format)  OPT_DISK_FORMAT="$2"; shift 2 ;;
             --packages)     OPT_PACKAGES="$2"; shift 2 ;;
             --runcmd)       OPT_RUNCMD+=("$2"); shift 2 ;;
