@@ -1,0 +1,181 @@
+## REF: https://gitlab.com/gitlab-org/gitlab/-/blob/master/lib/gitlab/ci/templates/Packer.gitlab-ci.yml
+#
+## QEMU
+##   - GitLab SaaS hosted runners are on GCP, without KVM module loaded
+##   - QEMU is able to work, without KVM to speed it up
+##   - Otherwise, means setting up own GitLab runner, with KVM loaded
+## VitualBox
+##   - Alpine doesn't have VirtualBox packaged up
+##   - Unable to compile VirtualBox due to Alpine using "musl" rather than "glibc" (Like Debian)
+##   - In Debian, VirtualBox is not in "stable" release, nor "main" branch, but is in repos and packaged up with some tweaking
+##   - VirtualBox can be installed without issues, but running needs "/dev/vboxdrv", which can only be done by loading in a kernel module
+##   - To create the VirtualBox kernel module, we need the Linux headers for the host OS kernel
+##     - $ uname -r: 5.15.154+
+##   - GitLab SaaS Linux hosted runners use a custom OS for the host, "runners-cos-stable", which hints its based on "Google Container-Optimized OS (COS)"
+##     - As of 2025-06-26: runners-cos-stable-v20230612-01-1: $ curl -L -H 'Metadata-Flavor: Google' http://metadata.google.internal/computeMetadata/v1/instance/image
+##     - `cos-[MILESTONE]-lts` != `cos-stable`
+##       - REF: https://cloud.google.com/container-optimized-os/docs/concepts/versioning#lts_refresh_releases
+##   - This kernel version is different to Debian Stable, to Debian Stable which is what container is using, so would need to manually compile
+##     - Can't find a public image or source for GitLab's runners-cos-stable, either to use as the container or to manually compile
+##     - COS: https://console.cloud.google.com/storage/browser/cos-tools // https://gcr.io/cos-cloud/
+##     - Found this on the web about GitLab infra: https://gitlab.com/gitlab-org/ci-cd/shared-runners/infrastructure/-/work_items/60
+##   - Feels like this is now a dead end, so would need setting up own GitLab runner, using an OS has the host which has is headers available (such as Debian)
+##     - These wouldn't be an exact match anyway, so could run into issues compiling anyway...
+##     - Looking up release notes (https://cloud.google.com/container-optimized-os/docs/release-notes/#Archived) managed to match the date, v20230612 (June 12, 2023)
+##       - https://cloud.google.com/container-optimized-os/docs/release-notes/m93#June_12_2023   - cos-93-16623-402-27 - COS-5.10.177 (2023-06-12)
+##       - https://cloud.google.com/container-optimized-os/docs/release-notes/m97#June_12_2023   - cos-97-16919-294-35 - COS-5.10.176 (2023-06-12)
+##     - Looking up release notes (https://cloud.google.com/container-optimized-os/docs/release-notes/#Archived) for trying to find kernel version, 5.15.154, milestone 101 came close
+##       - https://cloud.google.com/container-optimized-os/docs/release-notes/m101#April_30_2024 - cos-101-17162-463-8 - COS-5.15.155 (2024-04-30)
+##  VMware (Desktop)
+##   - With Broadcom requiring signup, isn't any "public stable" download links
+##   - Not really wanting to host a binary setup file in this repo or use 3rd party links
+##   - Means setting up own GitLab runner/image, with VMware pre-installed
+##  Hyper-V
+##   - As packer is a "wrapper", it requires Hyper-V to be installed in order to interactive with the software nativity (So using Linux becomes more difficult)
+##   - GitLab SaaS has Windows based hosted runners, but Hyper-V is not pre-installed
+##   - Installing Hyper-V requires a reboot (never tested)
+##   - Means setting up own GitLab runner/image, using Windows, with Hyper-V pre-installed
+##
+## ...As a result, switching from packer to something else, which can generate each platform without having the hypervisor installed on the host.
+
+
+stages:
+  - validate
+  - build
+  #- test
+  #- upload
+
+
+.parse_filename: &parse_filename
+  - installer=$( curl --silent https://kali.download/base-images/current/SHA256SUMS | grep "kali-linux-.*-installer-amd64.iso$" )
+  - filename=$( echo "${installer}" | awk '{print $2}' )
+  - checksum=$( echo "${installer}" | awk '{print $1}' )
+  - version=$( echo "${filename}" | sed -En 's/.*-([0-9]{4}\.[0-9][a-z]?)-.*/\1/p' )
+
+
+default:
+  image:
+    ## REF: https://hub.docker.com/r/hashicorp/packer
+    name: docker.io/hashicorp/packer:latest
+    entrypoint:
+      - '/usr/bin/env'
+      - 'PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+  before_script:
+    - cat /etc/alpine-release
+    - packer --version
+    ## Metadata
+    - apk add curl
+    - *parse_filename
+
+
+validate:
+  stage: validate
+  script:
+    #- find . -maxdepth 1 -name '*.pkr.*' -print0 | xargs -t0n1 packer validate
+    - packer init .
+    - set -x
+    - >
+        packer validate \
+          -var "build_iso_url=https://kali.download/base-images/current/${filename}" \
+          -var "build_iso_checksum=sha256:${checksum}" \
+          -var "cloud_box_version=${version}" \
+          -var "cloud_token=MISSING_FROM_HERE" \
+          -except vagrant-cloud \
+          config.pkr.hcl
+
+
+fmt:
+  stage: validate
+  before_script: []
+  script:
+    - >
+        packer fmt \
+          -check \
+          -diff \
+          config.pkr.hcl
+
+
+build-qemu:
+  stage: build
+  environment: production
+  variables:
+    ## GitLab SaaS hosted runners do NOT have /dev/kvm - "tcg"
+    ## GitLab self-hosted runners may have /dev/kvm    - "kvm"
+    build_qemu_accelerator: "tcg"
+  script:
+    ## qemu-system-x86_64: > Failed creating Qemu driver: exec: "qemu-system-x86_64": executable file not found in $PATH
+    ## qemu-img          : > Failed creating Qemu driver: exec: "qemu-img": executable file not found in $PATH
+    - apk add qemu-system-x86_64 qemu-img
+    ## Packer time
+    - packer init .
+    #- export PACKER_LOG=1
+    - set -x
+    - >
+        packer build \
+          -force \
+          -var "build_iso_url=https://kali.download/base-images/current/${filename}" \
+          -var "build_iso_checksum=sha256:${checksum}" \
+          -var "build_qemu_accelerator=${build_qemu_accelerator}" \
+          -only qemu.kalirolling \
+          -except vagrant-cloud \
+          . 2>&1
+  after_script:
+    - ls -lah *.box
+  tags:
+    ## GitLab SaaS hosted runner
+    - saas-linux-medium-amd64
+    ## Self-Hosted runner, with KVM enabled
+    #- kvm
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual
+
+
+build-virtualbox:
+  stage: build
+  environment: production
+  image:
+    ## REF: https://hub.docker.com/_/debian
+    ##   Can't use Alpine due to using `musl` rather than `glibc`
+    ##   Could use "unstable" rather than "stable" as VirtualBox is in it, and pull the VirtualBox package from Debian's repo rather than upstream
+    ##     https://tracker.debian.org/pkg/virtualbox
+    ##     ...or could use FastTrack: https://fasttrack.debian.net/debian-fasttrack/pool/contrib/v/virtualbox/
+    name: docker.io/debian:stable
+  before_script:
+    - apt-get --quiet update
+    - apt-get --quiet --yes --no-install-recommends install curl ca-certificates
+    - *parse_filename
+  script:
+    ## Packer
+    - apt-get --quiet --yes --no-install-recommends install curl ca-certificates unzip gpg
+    - curl https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+    - echo "deb [arch=$( dpkg --print-architecture ) signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $( grep -oP '(?<=VERSION_CODENAME=).*' /etc/os-release ) main" | tee /etc/apt/sources.list.d/hashicorp.list
+    ## VirtualBox
+    ## If pulling from Debian
+    #- sed -i 's/main$/main contrib non-free non-free-firmware/' /etc/apt/sources.list.d/debian.sources
+    - curl https://www.virtualbox.org/download/oracle_vbox_2016.asc | gpg --yes --output /usr/share/keyrings/oracle-virtualbox-2016.gpg --dearmor
+    - echo "deb [arch=$( dpkg --print-architecture ) signed-by=/usr/share/keyrings/oracle-virtualbox-2016.gpg] https://download.virtualbox.org/virtualbox/debian $( grep -oP '(?<=VERSION_CODENAME=).*' /etc/os-release ) contrib" | tee /etc/apt/sources.list.d/virtualbox.list
+    ## Packages
+    - apt-get --quiet update
+    - apt-get --quiet --yes --no-install-recommends install packer virtualbox-7.1 linux-headers-$( uname -r )   #linux-headers-amd64   #virtualbox virtualbox-dkms  Pull from Debian
+    #- ls -lah /dev/vboxdrv || true
+    ## Packer time
+    - packer init .
+    #- export PACKER_LOG=1
+    - set -x
+    - >
+        packer build \
+          -force \
+          -var "build_iso_url=https://kali.download/base-images/current/${filename}" \
+          -var "build_iso_checksum=sha256:${checksum}" \
+          -only virtualbox-iso.kalirolling \
+          -except vagrant-cloud \
+          . 2>&1
+  after_script:
+    - ls -lah *.box
+  tags:
+    ## Self-Hosted runner, not GitLab SaaS hosted runner (using Debian)
+    - kvm
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      when: manual

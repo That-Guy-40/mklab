@@ -1,0 +1,46 @@
+#
+## Building VM/Base Box
+#
+
+## The Kali image to install from
+##   E.g.:  "https://cdimage.kali.org/current/kali-linux-2025.2-installer-amd64.iso"
+build_iso_url = "https://cdimage.kali.org/current/kali-linux-YYYY.X-installer-amd64.iso"
+
+## Checksum hash for the Kali image
+##   E.g.:  "sha256:5723d46414b45575aa8e199740bbfde49e5b2501715ea999f0573e94d61e39d3"
+##          "file:https://kali.download/base-images/current/SHA256SUMS"      # Can't do cdimages.kali.org (doesn't follow redirect)
+build_iso_checksum = "file:https://kali.download/base-images/current/SHA256SUMS"
+
+## If using QEMU hypervisor, use hardware acceleration support to speed up?
+##   REF: https://developer.hashicorp.com/packer/integrations/hashicorp/qemu/latest/components/builder/qemu#optional:
+##     - none: No hardware acceleration, use software (tcg)
+##     - tcg : Cross-platform                                 (slow - may want to increase build_ssh_timeout)
+##     - kvm : Linux only & needs /dev/kvm                    (fast)
+##     - hvf : macOS only                                     (fast but experimental - https://wiki.qemu.org/ChangeLog/2.12#Host_support)
+##     - whpx: Windows 10+/2016+ only & needs Hyper-V enabled (fast but experimental - https://wiki.qemu.org/ChangeLog/2.12#Host_support // https://wiki.qemu.org/Support_Tiers)
+build_qemu_accelerator = "kvm"
+
+## Enable headless mode so no GUI window shown
+build_headless = "false"
+
+## How long to wait before installation failed
+##   May want to increase if using "tcg" for QEMU accelerator
+build_ssh_timeout = "60m"
+
+# - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+#
+## HashiCorp's Cloud
+#
+
+## The name to be listed on HashiCorp's Vagrant Registry
+cloud_box_name = "kalilinux/rolling"
+
+## The version to be listed on HashiCorp's Vagrant Registry
+##   e.g.: 2025.2.0
+cloud_box_version = "YYYY.X.Z"
+
+## The API token to authenticate with
+##   Organization -> Project -> Access control (IAM)
+##   REF: https://developer.hashicorp.com/vagrant/vagrant-cloud/users/authentication#authentication-tokens
+#cloud_token = ""

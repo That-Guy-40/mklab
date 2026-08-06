@@ -1,0 +1,16 @@
+## Legacy HCL
+kali-vars.json
+
+## Packer
+./packer_cache/
+./*.box
+./packer*.exe
+./log
+*.log
+
+## macOS/OSX
+.DS_Store
+
+## IDEs/Text Editors
+*.swp
+.idea

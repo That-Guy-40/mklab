@@ -1,10 +1,26 @@
 # Upstream & provenance — kali-packer-vagrant
 
-This lab is a **driver** around Kali's own (now-retired) Packer build scripts. It
-follows the repo's *cite-don't-mirror* rule for upstream code: we **clone a
-pinned checkout** at build time rather than vendoring a copy (the same posture as
-[`../kali-vm-builder/`](../kali-vm-builder/) and
-[`../debian-hands-off-install/`](../debian-hands-off-install/README.md)).
+This lab is a **driver** around Kali's own (now-retired) Packer build scripts.
+
+> 📦 **Posture changed 2026-08-06: the upstream repo is now VENDORED IN FULL**,
+> byte-exact, at [`upstream-repo/`](upstream-repo/) — 17 files, per-file `sha256`,
+> upstream's `LICENSE` preserved.
+>
+> It previously followed the repo's *cite-don't-mirror* rule for upstream code
+> (clone a pinned checkout at build time, as
+> [`../kali-vm-builder/`](../kali-vm-builder/) and
+> [`../debian-hands-off-install/`](../debian-hands-off-install/README.md) still
+> do). [`TODO.md`](../../TODO.md) item 7 documents the exception: the requirement
+> is a builder **available in whole and runnable per its own instructions**, which
+> a build-time clone cannot satisfy without the network.
+>
+> The argument is strongest precisely here. **Upstream is retired** — last commit
+> 2026-03-25 — so the pin below names bytes on a server nobody is maintaining. A
+> recorded commit hash is only as good as the repository still being there.
+>
+> **The pin was re-derived, not trusted:** a fresh clone on 2026-08-06 returned
+> the same `b8c9b34e…` recorded on 2026-07-03, so the archive and this table
+> describe the same object. *(A hash nobody re-checks is a cached fact.)*
 
 | | |
 |---|---|
