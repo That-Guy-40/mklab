@@ -9,9 +9,13 @@ now archived — *"no longer in production"*. This lab **drives a real Packer bu
 from them and boots the result** — so you can watch the *other* image-factory
 mechanism work.
 
-> 📦 **The upstream repository is vendored here in full, byte-exact:**
-> [`upstream-repo/`](upstream-repo/) — all 17 tracked files at pinned commit
-> `b8c9b34e`, with a per-file `sha256` table and upstream's `LICENSE` preserved.
+> 📦 **The upstream repository is vendored here in full, byte-exact, and the lab
+> builds from it OFFLINE by default:** [`upstream-repo/`](upstream-repo/) — all 17
+> tracked files at pinned commit `b8c9b34e`, with a per-file `sha256` table and
+> upstream's `LICENSE` preserved. `fetch-kali-packer.sh` verifies the archive against
+> its own `SHA256SUMS` on every run and **refuses a mismatch**, then stages a copy
+> into the workdir (the compat patches are applied there, never to the repo).
+> `--upstream` clones from GitLab instead, for checking whether upstream moved.
 > The repo's default for upstream *code* is *cite, don't mirror*; this is the
 > documented exception ([`TODO.md`](../../TODO.md) item 7), because the
 > requirement is that the builder be runnable **in whole, per its own

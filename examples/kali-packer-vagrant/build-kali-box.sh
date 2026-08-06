@@ -86,6 +86,7 @@ SSH_TIMEOUT=""      # auto below
 PACKER_BIN=""
 INSTALL_PACKER=0
 REF="main"
+REF_EXPLICIT=0     # --ref was given, so the fetcher must go to the network
 VALIDATE_ONLY=0
 FORCE=0
 ON_ERROR="cleanup"
@@ -111,7 +112,7 @@ while [ $# -gt 0 ]; do
         --workdir)   WORKDIR="${2:?}"; shift 2 ;;
         --packer)    PACKER_BIN="${2:?}"; shift 2 ;;
         --install-packer) INSTALL_PACKER=1; shift ;;
-        --ref)       REF="${2:?}"; shift 2 ;;
+        --ref)       REF="${2:?}"; REF_EXPLICIT=1; shift 2 ;;
         --force)     FORCE=1; shift ;;
         --on-error)  ON_ERROR="${2:?}"; shift 2 ;;
         --verbatim)  VERBATIM=1; shift ;;
@@ -138,8 +139,18 @@ mkdir -p "$WORKDIR"
 # ── Ensure the pinned upstream checkout exists ───────────────────────────────
 CHECKOUT="$WORKDIR/kali-packer"
 if [ ! -e "$CHECKOUT/config.pkr.hcl" ]; then
-    log "no checkout yet — fetching upstream kali-packer"
-    "$SCRIPT_DIR/fetch-kali-packer.sh" --workdir "$WORKDIR" --ref "$REF" >/dev/null
+    # Pass --ref ONLY when the user actually asked for one. fetch-kali-packer.sh is
+    # offline-by-default (it stages the verified vendored archive), and --ref implies
+    # --upstream there — so passing it unconditionally, as this line used to, would have
+    # sent every build to GitLab and left the vendored archive decorative. That is the
+    # whole point of TODO item 7's remaining half, undone by one defaulted flag.
+    if [ "$REF_EXPLICIT" -eq 1 ]; then
+        log "no checkout yet — fetching kali-packer from upstream (--ref $REF)"
+        "$SCRIPT_DIR/fetch-kali-packer.sh" --workdir "$WORKDIR" --ref "$REF" >/dev/null
+    else
+        log "no checkout yet — staging the vendored kali-packer archive (offline)"
+        "$SCRIPT_DIR/fetch-kali-packer.sh" --workdir "$WORKDIR" >/dev/null
+    fi
 fi
 [ -e "$CHECKOUT/config.pkr.hcl" ] || die "checkout missing config.pkr.hcl at $CHECKOUT"
 
