@@ -1,0 +1,310 @@
+name: "AWS: Build AMI"
+run-name: >-
+  AWS: AlmaLinux ${{ inputs.version_major == 'kitten_10' && 'Kitten 10' || inputs.version_major }} Build AMI
+
+on:
+  workflow_dispatch:
+      inputs:
+
+        version_major:
+          description: 'AlmaLinux major version'
+          required: true
+          default: '10'
+          type: choice
+          options:
+            - kitten_10
+            - 10
+            - 9
+            - 8
+
+        test_ami:
+          description: "Test built AMI"
+          required: true
+          type: boolean
+          default: true
+
+        notify_mattermost:
+          description: "Send notification to Mattermost"
+          required: true
+          type: boolean
+          default: true
+
+env:
+  ALMALINUX_AWS_ACCOUNT_ID: 764336703387
+  ALMALINUX_AWS_INFRA_ACCOUNT_ID: 383541928683
+  PACKER_GITHUB_API_TOKEN: ${{ secrets.GIT_HUB_TOKEN }}
+
+jobs:
+  build-ami:
+    name: Build ${{ matrix.variant }} ${{ matrix.arch }} AMI
+    runs-on: ubuntu-24.04
+    outputs:
+      ami_x86_64: ${{ steps.get-ami-id.outputs.ami_x86_64 }}
+      ami_aarch64: ${{ steps.get-ami-id.outputs.ami_aarch64 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: ${{ fromJSON(format('["{0}"]', inputs.version_major )) }}
+        arch:
+          - x86_64
+          - aarch64
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v6
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ vars.AWS_REGION }}
+
+    - name: Prepare staff
+      run: |
+        packer_template=amazon-ebssurrogate.almalinux_${{ matrix.variant }}_ami_${{ matrix.arch }}
+        echo "PACKER_TEMPLATE=${packer_template}" >> $GITHUB_ENV
+
+        variant="${{ matrix.variant }}"
+        variant="${variant^}"
+        variant="${variant//_/ }"
+        SOURCE_AMI_ID=$(aws ec2 describe-images --owners ${{ env.ALMALINUX_AWS_ACCOUNT_ID }} --query "Images | max_by(@, &CreationDate) | ImageId" --filters "Name=name,Values=AlmaLinux OS ${variant}*${{ matrix.arch }}" --region ${{ vars.AWS_REGION }} --output text)
+        if [[ "${SOURCE_AMI_ID}" == "" || "${SOURCE_AMI_ID}" == "None" ]]; then
+          echo "[Error] Failed to get AMI ID for AlmaLinux ${variant} ${{ matrix.arch }}."
+          exit 1
+        else
+          echo "[Debug] Source AMI ID: '${SOURCE_AMI_ID}'"
+        fi
+        echo "SOURCE_AMI_ID=${SOURCE_AMI_ID}" >> $GITHUB_ENV
+
+    - name: Update system
+      run: |
+        sudo apt-get -y update
+
+    - name: Add Hashicorp repository
+      run: |
+        wget -O - https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+        sudo apt-get -y update
+
+    - name: Install packer
+      run: |
+        sudo apt-get -y install packer
+
+    - name: Install ansible
+      run: sudo apt-get -y install ansible
+
+    - name: Initialize packer
+      run: packer init -upgrade .
+
+    - name: Build ${{ matrix.variant }} ${{ matrix.arch }} AMI
+      run: |
+        packer build \
+          -var='aws_source_ami_${{ matrix.variant }}_${{ matrix.arch }}=${{ env.SOURCE_AMI_ID }}' \
+          -var='aws_ami_region=${{ vars.AWS_REGION }}' \
+          -only=${{ env.PACKER_TEMPLATE }} . |& tee ${{ matrix.variant }}_${{ matrix.arch }}_build.log
+
+        exit_code=${PIPESTATUS[0]}
+        if [[ "${exit_code}" != "0" ]]; then
+          exit 1
+        fi
+
+    - uses: actions/upload-artifact@v7
+      name: Store build log as artifact
+      if: always()
+      with:
+        compression-level: 6
+        name: ${{ matrix.variant }}_${{ matrix.arch }}_build.log
+        path: ${{ matrix.variant }}_${{ matrix.arch }}_build.log
+
+    - name: Get AMI ID
+      id: get-ami-id
+      run: |
+        AMI_ID=$(grep -E '${{ vars.AWS_REGION }}: ami-' ${{ matrix.variant }}_${{ matrix.arch }}_build.log | awk '{print $2}')
+        if [[ "${AMI_ID}" == "" ]]; then
+          exit 1
+        else
+          echo "[Debug] AMI ID found in the build log: '${AMI_ID}'"
+        fi
+        echo "AMI_ID=${AMI_ID}" >> $GITHUB_ENV
+        echo "ami_${{ matrix.arch }}=${AMI_ID}" >> $GITHUB_OUTPUT
+
+    - name: Get AMI Name
+      run: |
+        AMI_NAME=$(aws ec2 describe-images --filters "Name=image-id,Values=${{ env.AMI_ID }}" --query 'Images[0].Name' --output text)
+        if [[ "${AMI_NAME}" == "" || "${AMI_NAME}" == "None" ]]; then
+          exit 1
+        else
+          echo "[Debug] AMI Name: '${AMI_NAME}'"
+        fi
+        echo "AMI_NAME=${AMI_NAME}" >> $GITHUB_ENV
+
+    - name: Launch permission for the AMI to Infra account
+      run: |
+        aws ec2 modify-image-attribute --image-id ${{ env.AMI_ID }} --launch-permission "Add=[{UserId=${{ env.ALMALINUX_AWS_INFRA_ACCOUNT_ID }}}]"
+
+    - name: Print AMI summary
+      uses: actions/github-script@v8
+      with:
+        result-encoding: string
+        script: |
+          core.summary
+              .addHeading('${{ env.AMI_NAME }}', '4')
+              .addHeading('AMI ID: ${{ env.AMI_ID }}', '5')
+              .write()
+
+    - name: Send notification to Mattermost
+      uses: mattermost/action-mattermost-notify@master
+      if: inputs.notify_mattermost
+      with:
+        MATTERMOST_WEBHOOK_URL: ${{ secrets.MATTERMOST_WEBHOOK_URL }}
+        MATTERMOST_CHANNEL: ${{ vars.MATTERMOST_CHANNEL }}
+        MATTERMOST_USERNAME: ${{ github.triggering_actor }}
+        TEXT: |
+          :almalinux: **${{ env.AMI_NAME }}** AWS AMI, built by the GitHub [Action](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+          **AMI ID**: `${{ env.AMI_ID }}`
+
+  test-ami:
+    name: Test ${{ inputs.version_major }} ${{ matrix.arch }} AMI
+    if: inputs.test_ami
+    needs: [build-ami]
+    runs-on: ${{ format('runs-on={0}/family={1}/ami={2}/region={3}', github.run_id, contains(matrix.arch, 'aarch64') && 't4g.medium' || 't3.medium', contains(matrix.arch, 'aarch64') && needs.build-ami.outputs.ami_aarch64 || needs.build-ami.outputs.ami_x86_64, vars.AWS_REGION )}}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - aarch64
+          - x86_64
+
+    steps:
+      - name: Get list of installed packages
+        run: rpm -qa --queryformat '%{NAME}\n' | sort > pkgs.list
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Install aws CLI and necessary packages
+        run: |
+          sudo dnf install -y -q unzip jq
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o "awscliv2.zip"
+          unzip -qq awscliv2.zip
+          sudo ./aws/install
+
+      - name: Get AMI ID
+        run: |
+          AMI_ID=${{ matrix.arch == 'x86_64' && needs.build-ami.outputs.ami_x86_64 || needs.build-ami.outputs.ami_aarch64 }}
+          echo "AMI_ID=${AMI_ID}" >> $GITHUB_ENV
+
+      - name: Get AMI architecture
+        run: |
+          AMI_ARCH=$(aws ec2 describe-images --image-ids ${{ env.AMI_ID }} --query 'Images[0].Tags' | jq -r '.[] | select(.Key == "Architecture") | .Value')
+          if [[ "${AMI_ARCH}" == "" || "${AMI_ARCH}" == "None" ]]; then
+            exit 1
+          else
+            echo "[Debug] AMI Arch: '${AMI_ARCH}'"
+          fi
+          echo "AMI_ARCH=${AMI_ARCH}" >> $GITHUB_ENV
+
+      - name: Get AlmaLinux versions
+        id: ami-version
+        run: |
+          AMI_VERSION=$(aws ec2 describe-images --image-ids ${{ env.AMI_ID }} --query 'Images[0].Tags' | jq -r '.[] | select(.Key == "Version") | .Value')
+          if [[ "${AMI_VERSION}" == "" || "${AMI_VERSION}" == "None" ]]; then
+            exit 1
+          else
+            echo "[Debug] AMI Version: '${AMI_VERSION}'"
+          fi
+          echo "AMI_VERSION=${AMI_VERSION}" >> $GITHUB_ENV
+          echo "OS_VERSION=$(echo $AMI_VERSION | sed 's/\.[0-9]\{8\}.*$//g')" >> $GITHUB_ENV
+
+      - name: Test AMI
+        run: |
+          case "${{ env.OS_VERSION }}" in
+            10)
+              OS_RELEASE="AlmaLinux Kitten release ${{ env.OS_VERSION }}"
+              PKGS_LIST_FILE="AlmaLinux_OS_Kitten_${{ env.AMI_VERSION }}_${{ env.AMI_ARCH }}.ami.txt"
+              ;;
+            *)
+              OS_RELEASE="AlmaLinux release ${{ env.OS_VERSION }}"
+              PKGS_LIST_FILE="AlmaLinux_OS_${{ env.AMI_VERSION }}_${{ env.AMI_ARCH }}.ami.txt"
+              ;;
+          esac
+
+          # Prepare packages list file
+          mv pkgs.list ${PKGS_LIST_FILE}
+          echo "PKGS_LIST_FILE=${PKGS_LIST_FILE}" >> $GITHUB_ENV
+
+          echo "[Debug] AlmaLinux release:"
+          grep "${OS_RELEASE}" /etc/almalinux-release || exit 1
+          # Capture the full /etc/almalinux-release line (including code name)
+          # so the job-summary / Mattermost-notification steps below can show
+          # the same string the user sees from `cat /etc/almalinux-release`.
+          ALMA_RELEASE=$(head -n1 /etc/almalinux-release)
+          echo "ALMA_RELEASE=${ALMA_RELEASE}" >> "$GITHUB_ENV"
+
+          echo "[Debug] System architecture:"
+          SYSTEM_ARCH=$(rpm -q --qf='%{ARCH}' $(rpm -qf /etc/almalinux-release))
+          echo "  ${SYSTEM_ARCH}"
+          echo "${SYSTEM_ARCH}" | grep '${{ env.AMI_ARCH }}' || exit 1
+          echo "SYSTEM_ARCH=${SYSTEM_ARCH}" >> "$GITHUB_ENV"
+
+          echo "[Debug] Check for updates:"
+          dnf check-update || exit 1
+
+      - uses: actions/upload-artifact@v7
+        name: Store packages list as artifact
+        with:
+          compression-level: 1
+          name: ${{ env.PKGS_LIST_FILE }}
+          path: ${{ env.PKGS_LIST_FILE }}
+
+      - name: Get AMI Name
+        if: always() && env.AMI_ID != ''
+        run: |
+          AMI_NAME=$(aws ec2 describe-images --image-ids ${{ env.AMI_ID }} --query 'Images[0].Name' --output text)
+          if [[ "${AMI_NAME}" == "" || "${AMI_NAME}" == "None" ]]; then
+            AMI_NAME="${{ env.AMI_ID }}"
+          fi
+          echo "[Debug] AMI Name: '${AMI_NAME}'"
+          echo "AMI_NAME=${AMI_NAME}" >> $GITHUB_ENV
+
+      - name: Job summary
+        if: always() && env.AMI_ID != ''
+        env:
+          INSTANCE_TYPE: ${{ contains(matrix.arch, 'aarch64') && 't4g.medium' || 't3.medium' }}
+        run: |
+          {
+            echo "## AMI Image Test"
+            echo ""
+            echo "- **AMI Name**: \`${AMI_NAME:-${AMI_ID}}\`"
+            echo "- **AMI ID**: \`${AMI_ID}\`"
+            echo "- **Instance Type**: \`${INSTANCE_TYPE}\`"
+            if [ -n "${ALMA_RELEASE:-}" ]; then
+              echo "- **AlmaLinux release**: \`${ALMA_RELEASE}\`"
+            fi
+            if [ -n "${SYSTEM_ARCH:-}" ]; then
+              echo "- **System architecture**: \`${SYSTEM_ARCH}\`"
+            fi
+            echo "- **Test**: ${{ job.status == 'success' && 'passed ✅' || 'failed ❌' }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Send notification to Mattermost
+        uses: mattermost/action-mattermost-notify@master
+        if: always() && inputs.notify_mattermost && env.AMI_ID != ''
+        with:
+          MATTERMOST_WEBHOOK_URL: ${{ secrets.MATTERMOST_WEBHOOK_URL }}
+          MATTERMOST_CHANNEL: ${{ vars.MATTERMOST_CHANNEL }}
+          MATTERMOST_USERNAME: ${{ github.triggering_actor }}
+          TEXT: |
+            :almalinux: **${{ env.AMI_NAME }}**, AMI image test, by the GitHub [Action](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+            **AMI Name**: `${{ env.AMI_NAME }}`
+            **AMI ID**: `${{ env.AMI_ID }}`
+            **Instance Type**: `${{ contains(matrix.arch, 'aarch64') && 't4g.medium' || 't3.medium' }}`
+            ${{ env.ALMA_RELEASE && format('**AlmaLinux release**: `{0}`', env.ALMA_RELEASE) || '' }}
+            ${{ env.SYSTEM_ARCH && format('**System architecture**: `{0}`', env.SYSTEM_ARCH) || '' }}
+            **Test**: ${{ job.status == 'success' && 'passed ✅' || 'failed ❌' }}

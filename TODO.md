@@ -387,10 +387,34 @@ through the existing phases.
       "you run this" marker (Packer needs KVM/`/dev/kvm`; flag if blocked here).
 
 **AlmaLinux second:**
-- [ ] Vendor [`AlmaLinux/cloud-images`](https://github.com/AlmaLinux/cloud-images)
+- [x] Vendor [`AlmaLinux/cloud-images`](https://github.com/AlmaLinux/cloud-images)
       **in full** (same provenance discipline), and cross-link it with the
       kickstart gallery (which already consumes a slice of this repo).
-- [ ] Same automation wrapper + hand-walk `Containerfile` shape as the Kali half.
+      **Done 2026-08-06** — [`examples/almalinux-packer-images/`](examples/almalinux-packer-images/):
+      563 files byte-exact at pinned `6d808bf7`, `SHA256SUMS`, upstream `LICENSE`
+      preserved, cross-linked both ways with the gallery.
+      ⚠️ **The argument is INVERTED versus Kali and the lab says so:** that upstream
+      is *retired*, this one is *actively maintained*, so the archive is a **dated
+      snapshot, not a mirror** — its pin records *which* factory the lab documents,
+      and `--upstream` shows what moved.
+      **The `.gitignore` trap fired here.** Upstream's `.gitignore` lists
+      `*.pkrvars.hcl` *and* upstream tracks `tests/test-values.pkrvars.hcl`, so a
+      plain `git add` silently dropped it. Force-added, and the test asserts
+      **on disk == in SHA256SUMS == tracked by git** so a future re-vendor cannot
+      lose a file quietly. *(Checked for Kali too, where it did not fire.)*
+- [x] Same automation wrapper + hand-walk `Containerfile` shape as the Kali half.
+      **Done** — `fetch-cloud-images.sh` (offline by default, verifies 563 files,
+      **refuses** a tamper by name; `--upstream` to clone live) +
+      [`hand-walk/`](examples/almalinux-packer-images/hand-walk/RUNBOOK.md) (RHEL-9
+      box with QEMU/KVM, Packer from HashiCorp's RPM repo, `ansible-core`).
+      ⛔ **Deliberately NO `build-alma-image.sh`.** Unlike the Kali lab, no image has
+      been built here — a wrapper would imply a path somebody walked. The build is
+      **author-run and marked as such** (`/dev/kvm`, a ~1 GB ISO, tens of minutes);
+      what is CI-gated is the archive, the offline staging and the tamper refusal.
+
+**Still open on item 7:** the **Kali hand-walk `Containerfile`** (the AlmaLinux one
+landed first because its build was always going to be author-run, so the sandbox *is*
+the deliverable there), and an actual verified `packer build` on either side.
 
 Per-lab, both halves: a `README.md` + `MANUAL_TESTING.md`, a 00-INDEX entry, and
 `tools/link_check.py` green (0 broken, no orphans).

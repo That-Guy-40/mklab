@@ -1,0 +1,7 @@
+---
+# https://docs.oracle.com/en-us/iaas/Content/Compute/Tasks/manage-plugins.htm#install-agent__manual-linux
+# Click on "Oracle Linux" >> "Oracle Linux 8.x, Oracle Linux Cloud Developer 8.x"
+# The public download links of Oracle Cloud Agent are not available anymore
+# ol8_gpg_key_url: ""
+# oracle_cloud_agent_url_x86_64: ""
+# oracle_cloud_agent_url_aarch64: ""

@@ -68,7 +68,7 @@ These are orthogonal to 00-INDEX's *run-cost* tags, which are carried through un
 
 *🔒 Kali across every substrate — authorized targets only.*
 
-[`vm-kali-amd64.toml`](../vm-kali-amd64.toml) · [`kali-nonroot-chroot`](../kali-nonroot-chroot/) · [`kali-vm-builder`](../kali-vm-builder/) · [`kali-packer-vagrant`](../kali-packer-vagrant/) · [`kali-pxe-lab`](../kali-pxe-lab/) · [`kali-preseed-gallery`](../kali-preseed-gallery/) · [`offsec-awae-vm`](../offsec-awae-vm/) · [`kali-llm-lab`](../kali-llm-lab/) · [`kali-llm-desktop-lab`](../kali-llm-desktop-lab/)
+[`vm-kali-amd64.toml`](../vm-kali-amd64.toml) · [`kali-nonroot-chroot`](../kali-nonroot-chroot/) · [`kali-vm-builder`](../kali-vm-builder/) · [`kali-packer-vagrant`](../kali-packer-vagrant/) · [`kali-pxe-lab`](../kali-pxe-lab/) · [`kali-preseed-gallery`](../kali-preseed-gallery/) · [`almalinux-packer-images`](../almalinux-packer-images/) · [`offsec-awae-vm`](../offsec-awae-vm/) · [`kali-llm-lab`](../kali-llm-lab/) · [`kali-llm-desktop-lab`](../kali-llm-desktop-lab/)
 
 ### libvirt-native labs
 

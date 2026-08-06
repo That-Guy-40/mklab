@@ -1,0 +1,640 @@
+name: "Cloud Image build, upload and notify"
+description: "Builds AlmaLinux cloud images using Packer, runs tests, uploads to S3, and sends notifications"
+
+inputs:
+  type:
+    description: 'Image type to build (e.g., azure, gencloud, vagrant_libvirt, etc.)'
+    required: true
+  variant:
+    description: 'AlmaLinux variant to build (e.g., 9, 10, kitten)'
+    required: true
+  arch:
+    description: 'Target architecture (x86_64 or aarch64)'
+    required: true
+  S3_ACCESS_KEY_ID:
+    description: 'AWS S3 access key ID for uploading images'
+    required: true
+  S3_SECRET_ACCESS_KEY:
+    description: 'AWS S3 secret access key for uploading images'
+    required: true
+  AWS_REGION:
+    description: 'AWS region for S3 bucket'
+    required: true
+  AWS_S3_BUCKET:
+    description: 'S3 bucket name for storing built images'
+    required: true
+  MATTERMOST_WEBHOOK_URL:
+    description: 'Mattermost webhook URL for notifications'
+    required: true
+  MATTERMOST_CHANNEL:
+    description: 'Mattermost channel for notifications'
+    required: true
+  store_as_artifact:
+    description: 'Whether to store the built image as a GitHub artifact (true/false)'
+    required: true
+  upload_to_s3:
+    description: 'Whether to upload the built image to S3 (true/false)'
+    required: true
+  notify_mattermost:
+    description: 'Whether to send notifications to Mattermost (true/false)'
+    required: true
+  run_test:
+    description: 'Whether to run tests on the built image (true/false)'
+    required: true
+  runner:
+    description: 'Type of runner to use for the build process'
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - uses: runs-on/action@v2.1.0
+      # only when in runs-on environment and not AlmaLinux AMI
+      if: env.RUNS_ON_VERSION != '' && ! contains(env.RUNS_ON_AMI_NAME, 'AlmaLinux')
+      with:
+        metrics: cpu,network,memory,disk,io
+
+    - name: Runner OS, install extra packages
+      shell: bash
+      run: |
+        # Runner OS
+        if [ -e /etc/redhat-release ]; then
+          runner_os=rhel
+          sudo dnf -y -q install unzip wget epel-release
+        elif lsb_release -cs > /dev/null 2>&1; then
+          runner_os=ubuntu
+          sudo apt-get -y update
+          sudo apt-get -y install ovmf rpm unzip
+
+          echo "UBUNTU_CODENAME=$(lsb_release -cs)" >> $GITHUB_ENV
+        else
+          echo "[Debug] Unknown OS"
+          exit 1
+        fi
+        echo "runner_os=${runner_os}" >> $GITHUB_ENV
+
+    - name: Set major version and arch
+      shell: bash
+      run: |
+        # Set major version and arch.
+        # alma_arch is the full arch identifier including the microarch
+        # level suffix (e.g. x86_64_v2 for the v2 variant). It is used for
+        # the almalinux-release RPM URL, the RPM %{ARCH} grep, and the
+        # user-visible summary / Mattermost text -- the v2 release RPM
+        # really does carry %{ARCH}=x86_64_v2.
+        # The pure CPU arch (for composing base Packer source names) stays
+        # as ${{ inputs.arch }}; resolve-image-config.sh appends '_v2'
+        # itself based on ${{ inputs.variant }}.
+        version_major=${{ inputs.variant }}
+        alma_arch=${{ inputs.arch }}
+        [[ ${version_major} == *'v2'* ]] && alma_arch=${alma_arch}_v2
+        version_major=${version_major%-64k}
+        version_major=${version_major%-v2}
+        echo "version_major=${version_major}" >> $GITHUB_ENV
+        echo "alma_arch=${alma_arch}" >> $GITHUB_ENV
+
+    - name: Prepare stuff
+      shell: bash
+      run: |
+        # Prepare stuff
+        packer_opts=
+        case ${{ env.runner_os }} in
+          ubuntu)
+            packer_opts="-var qemu_binary=/usr/bin/qemu-system-${{ inputs.arch }} -var ovmf_code=/usr/share/OVMF/OVMF_CODE_4M.fd -var ovmf_vars=/usr/share/OVMF/OVMF_VARS_4M.fd"
+            ;;
+          rhel)
+            packer_opts="-var qemu_binary=/usr/libexec/qemu-kvm"
+            ;;
+        esac
+
+        # Image type e.g. Azure, Vagrant Libvirt, ...
+        image_type=$(echo ${{ inputs.type }} | sed -E 's/_/ /g;s/\b(.)/\u\1/g')
+
+        # Release string and version
+        if [[ ${{ env.version_major }} != *'kitten'* ]]; then
+          almalinux_release=https://repo.almalinux.org/almalinux/almalinux-release-latest-${{ env.version_major }}.${{ env.alma_arch }}.rpm
+          release=$(rpm -q --qf="%{VERSION}\n" ${almalinux_release} 2>/dev/null)
+          release_string="AlmaLinux release ${release}"
+          release_package="almalinux-release"
+        else
+          release=10
+          release_string="AlmaLinux Kitten release ${release}"
+          release_package="almalinux-kitten-release"
+        fi
+
+        # Resolve packer_source, output_mask, AWS_S3_PATH, packer_builder
+        eval "$(${{ github.workspace }}/.github/scripts/resolve-image-config.sh \
+          "${{ inputs.type }}" "${{ env.version_major }}" "${{ inputs.arch }}" \
+          "${{ inputs.variant }}" "${release}" "${{ env.TIME_STAMP }}")"
+
+        # Non-qemu builders (virtualbox-iso, vmware-iso) don't use qemu packer_opts
+        [[ "${packer_builder}" != "qemu" ]] && packer_opts=
+
+        # TODO: tell packer we can use more cpu/ram if we're using runs-on
+        # which means we're using runs-on with metal instances
+        # [[ "${{ env.RUNS_ON_VERSION }}" != "" ]] && packer_opts="${packer_opts} -var cpus=$(($(nproc)-4)) -var memory_${{ env.alma_arch }}=32768"
+
+        # digitalocean-specific side effects
+        if [[ "${{ inputs.type }}" == digitalocean* ]]; then
+          # TODO: Exclude digitalocean-import post-processor because of lack of DigitalOcean API token
+          # Operating System Version test fails for almaLinux 8.10. Need to refresh from the official repository
+          # https://github.com/digitalocean/marketplace-partners/blob/master/scripts/99-img-check.sh
+          packer_opts="${packer_opts} -except=digitalocean-import"
+          # TODO: Remove pvgrub_config role from ansible playbook as it is not implemented ???
+          sed -i '/role: pvgrub_config/d' ansible/roles/digitalocean_guest/meta/main.yml
+        fi
+
+        echo "PACKER_OPTS=${packer_opts}" >> $GITHUB_ENV
+
+        echo "IMAGE_TYPE=${image_type}${{ contains(inputs.variant, '64k') && ' 64k' || '' }}" >> $GITHUB_ENV
+        echo "RELEASE=${release}" >> "$GITHUB_ENV"
+        echo "packer_source=${packer_source}" >> $GITHUB_ENV
+        echo "output_mask=${output_mask}" >> $GITHUB_ENV
+        echo "AWS_S3_PATH=${AWS_S3_PATH}" >> $GITHUB_ENV
+        echo "RELEASE_STRING=${release_string}" >> $GITHUB_ENV
+        echo "RELEASE_PACKAGE=${release_package}" >> $GITHUB_ENV
+
+    - name: Install KVM
+      if: inputs.type != 'vagrant_virtualbox' && inputs.type != 'vagrant_vmware'
+      shell: bash
+      run: |
+        # Install KVM
+        case ${{ env.runner_os }} in
+          ubuntu)
+            sudo apt-get -y install qemu-kvm
+            sudo adduser "$(id -un)" kvm
+            ;;
+          rhel)
+            sudo dnf -y -q install qemu-kvm
+            sudo usermod --append -G kvm "$(id -un)"
+            ;;
+        esac
+
+    - name: Check nested virtualization support
+      if: inputs.arch == 'x86_64' && inputs.type != 'vagrant_virtualbox' && inputs.type != 'vagrant_vmware' && inputs.runner != 'aws-ec2'
+      shell: bash
+      run: |
+        # Check nested virtualization support
+        echo "[Debug] vmx|svm CPU flags:"
+        egrep -c '(vmx|svm)' /proc/cpuinfo
+        echo "[Debug] KVM modules:"
+        sudo lsmod | grep kvm
+        echo "[Debug] Nested virtualization support:"
+        sudo cat /sys/module/kvm_*/parameters/nested
+
+    - name: Enable KVM group perms
+      if: inputs.type != 'vagrant_virtualbox' && inputs.type != 'vagrant_vmware'
+      shell: bash
+      run: |
+        # Enable KVM group perms
+        echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+        sudo udevadm control --reload-rules
+        sudo udevadm trigger --name-match=kvm
+
+    - name: Unload KVM modules
+      if: inputs.type == 'vagrant_virtualbox' || inputs.type == 'vagrant_vmware'
+      shell: bash
+      run: |
+        # Unload KVM modules
+        sudo lsmod | grep kvm || true
+        sudo modprobe -r kvm_intel kvm || sudo modprobe -r kvm_amd kvm || true
+
+    - name: Install VirtualBox from its repository
+      if: inputs.type == 'vagrant_virtualbox'
+      uses: myci-actions/add-deb-repo@11
+      with:
+        repo: deb [arch=amd64] https://download.virtualbox.org/virtualbox/debian ${{ env.UBUNTU_CODENAME }} contrib
+        repo-name: virtualbox
+        keys-asc: https://download.virtualbox.org/virtualbox/debian/oracle_vbox_2016.asc
+        update: true
+        install: virtualbox-7.1
+
+    - name: Install VMware
+      if: inputs.type == 'vagrant_vmware'
+      shell: bash
+      run: |
+        # Install VMware
+        export ws_version=17.6.3
+        export ws_build=24583834
+        export ws_bundle_path=/actions-runner/_work/cloud-images/
+
+        if ! sudo vmware -v 2>/dev/null; then
+          # Find VMware installation bundle at /actions-runner/_work/cloud-images path as its direct download is not available anymore
+          # Assume the AMI includes it
+          [ ! -f ${ws_bundle_path}/VMware-Workstation-Full-${ws_version}-${ws_build}.x86_64.bundle.tar ] \
+            && wget https://softwareupdate-prod.broadcom.com/cds/vmw-desktop/ws/${ws_version}/${ws_build}/linux/core/VMware-Workstation-Full-${ws_version}-${ws_build}.x86_64.bundle.tar \
+            || cp -av ${ws_bundle_path}/VMware-Workstation-Full-${ws_version}-${ws_build}.x86_64.bundle.tar .
+          tar xf VMware-Workstation-Full-${ws_version}-${ws_build}.x86_64.bundle.tar && rm -f VMware-Workstation-Full-${ws_version}-${ws_build}.x86_64.bundle.tar
+          chmod +x VMware-Workstation-Full-${ws_version}-${ws_build}.x86_64.bundle
+
+          case ${{ env.runner_os }} in
+            ubuntu)
+              sudo apt-get -y install build-essential linux-headers-generic
+              sudo apt-get -y install libpcsclite1 libxcb-render0 libxcb-shm0 libxi6 libxinerama1 libxcursor1 libxtst6 libxml2-dev libc6-dev pcscd libpulse0 libasound2t64
+              ;;
+            rhel)
+              sudo sh -c "systemctl stop firewalld || true"
+
+              sudo dnf -y install "kernel-headers-$(uname -r)" "kernel-devel-$(uname -r)" automake autoconf gcc-c++ patchutils
+              sudo dnf -y install pcsc-lite pcsc-lite-libs libxcb libxcb-devel libXi libXi-devel libXinerama libXinerama-devel libXcursor libXcursor-devel libXtst libXtst-devel libxml2 libxml2-devel glibc-devel pcsc-lite pcsc-lite-libs pulseaudio-libs pulseaudio-libs-devel alsa-lib GConf2 GConf2-devel
+              ;;
+          esac
+
+          sudo ./VMware-Workstation-Full-${ws_version}-${ws_build}.x86_64.bundle --console --eulas-agreed --required
+        else
+          true
+        fi
+
+    - name: Add Hashicorp repository
+      shell: bash
+      run: |
+        # Add Hashicorp repository
+        case ${{ env.runner_os }} in
+          ubuntu)
+            sudo rm -f /usr/share/keyrings/hashicorp-archive-keyring.gpg
+            wget -O - https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com ${{ env.UBUNTU_CODENAME }} main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+            sudo apt-get -y update
+            ;;
+          rhel)
+            sudo dnf -y -q install dnf-utils
+            sudo yum-config-manager --add-repo https://rpm.releases.hashicorp.com/RHEL/hashicorp.repo
+            ;;
+        esac
+
+    - name: Install packer
+      shell: bash
+      run: |
+        # Install packer
+        sudo ${{ env.runner_os == 'ubuntu' && 'apt-get' || 'dnf -q' }} -y install packer
+
+    - name: Install ansible
+      shell: bash
+      run: |
+        # Install ansible
+        sudo ${{ env.runner_os == 'ubuntu' && 'apt-get' || 'dnf -q' }} -y install ansible
+
+    - name: Initialize packer
+      shell: bash
+      run: sudo /usr/bin/packer init -upgrade .
+
+    - name: Build ${{ inputs.type }} image
+      shell: bash
+      run: |
+        # Build ${{ inputs.type }} image
+        # PACKER_LOG=1
+        sudo sh -c "/usr/bin/packer build ${{ env.PACKER_OPTS }} -only=${{ env.packer_source }} ."
+
+    - name: Locate image file, generate checksum
+      shell: bash
+      run: |
+        # Locate image file, generate checksum, rename repo metadata file
+        ls -la $(dirname '${{ env.output_mask }}')
+        image_file=$(ls -1 ${{ env.output_mask }} | head -n 1)
+        [ "x${image_file}" = "x" ] && false
+        cd $(dirname ${image_file})
+        sudo sh -c "sha256sum $(basename ${image_file}) > $(basename ${image_file}).sha256sum"
+
+        echo "IMAGE_FILE=${image_file}" >> $GITHUB_ENV
+        echo "IMAGE_NAME=$(basename ${image_file})" >> $GITHUB_ENV
+
+        # don't fail if this doesn't exist, we may not always generate it
+        sudo mv sbom-data-*.json $(basename ${image_file}).sbom-data.json || true
+
+    - name: Test/check release and architecture, list installed packages in ${{ env.IMAGE_FILE }} cloud image
+      if: ${{ ! contains(inputs.type, 'vagrant') }}
+      shell: bash
+      run: |
+        # List installed packages in ${{ env.IMAGE_FILE }} image
+
+        # Partition number with root file-system
+        case ${{ inputs.arch }} in
+          x86_64*) partition=4 ;;
+          aarch64*) partition=3 ;;
+          *) false ;;
+        esac
+
+        # Image file format: raw or qcow2
+        # Image file name is redefined for the Hyper-V, as it is build using Qemu and converted to .box file
+        case ${{ inputs.type }} in
+          oci|gencloud|gencloud_ext4|opennebula)
+            format=qcow2
+            image_file=${{ env.IMAGE_FILE }}
+            ;;
+          hyperv)
+            format=raw
+            image_file=$(echo ${{ env.IMAGE_FILE }} | sed 's/\.box$/.raw/')
+            ;;
+          azure)
+            format=raw
+            image_file=${{ env.IMAGE_FILE }}
+            ;;
+          *) false ;;
+        esac
+        rootfs_path=/mnt/rootfs
+        sudo mkdir -p ${rootfs_path}
+
+        # Install qemu-utils
+        sudo ${{ env.runner_os == 'ubuntu' && 'apt-get' || 'dnf -q' }} \
+          -y install \
+          ${{ env.runner_os == 'ubuntu' && 'qemu-utils' || 'qemu-img' }}
+
+        # Load nbd kernel module
+        sudo modprobe nbd max_part=8
+
+        # Make a copy of the image file
+        sudo cp ${image_file} $(dirname ${rootfs_path})
+
+        # Attach the image file to the nbd device
+        sudo qemu-nbd \
+          --read-only \
+          --format=${format} \
+          --connect=/dev/nbd0 \
+          $(dirname ${rootfs_path})/$(basename ${image_file}) \
+          && sleep 10 || false
+
+        # Mount need partition
+        sudo fdisk -l /dev/nbd0
+        sudo mount /dev/nbd0p${partition} ${rootfs_path} \
+          && sleep 10 || false
+
+        echo "[Debug] AlmaLinux release:"
+        grep '${{ env.RELEASE_STRING }}' ${rootfs_path}/etc/almalinux-release
+
+        echo "[Debug] System architecture:"
+        rpm --dbpath=${rootfs_path}/var/lib/rpm -q --qf='%{ARCH}\n' ${{ env.RELEASE_PACKAGE }} | grep '${{ env.alma_arch }}'
+
+        # Get installed packages list
+        sudo sh -c "rpm --dbpath=${rootfs_path}/var/lib/rpm -qa --queryformat '%{NAME}\n' | sort > ${{ env.IMAGE_FILE }}.txt"
+
+        [ -f ${{ env.IMAGE_FILE }}.txt ] \
+          && echo "got_pkgs_list=true" >> $GITHUB_ENV \
+          || echo "got_pkgs_list=false" >> $GITHUB_ENV
+
+    - name: Test ${{ inputs.type }} ${{ inputs.variant }} image
+      if: inputs.run_test == 'true' && contains(inputs.type, 'vagrant')
+      shell: bash
+      run: |
+        # Test ${{ inputs.type }} ${{ inputs.variant }} image
+        sudo ${{ env.runner_os == 'ubuntu' && 'apt-get' || 'dnf -q' }} -y install vagrant >/dev/null
+        sudo vagrant plugin install vagrant-scp
+
+        sudo vagrant box add ${{ inputs.type }}-${{ inputs.variant }} ${{ env.IMAGE_FILE }} --force
+        # sudo vagrant init ${{ inputs.type }}-${{ inputs.variant }}
+        cat <<'EOF'>Vagrantfile
+        Vagrant.configure("2") do |config|
+          config.vm.box = "${{ inputs.type }}-${{ inputs.variant }}"
+          config.vm.disk :disk, size: "100GB", primary: true
+          config.vm.provider "libvirt" do |libvirt|
+            libvirt.memory = 2048
+            libvirt.cpus = 2
+            libvirt.machine_virtual_size = 100
+          end
+          config.vm.provider "virtualbox" do |vb|
+            vb.memory = 2048
+            vb.cpus = 2
+          end
+          config.vm.provider "vmware_desktop" do |v|
+            v.memory = 2048
+            v.cpus = 2
+            v.linked_clone = false
+          end
+        end
+        EOF
+        # Run 'vagrant up' with specific provider
+        box_up=true
+        case ${{ inputs.type }} in
+          vagrant_virtualbox*)
+            sudo vagrant up --provider=virtualbox || box_up=false
+            ;;
+          vagrant_vmware*)
+            vagrant_vmware_utility_version=1.0.23
+            vagrant_vmware_utility_release=1
+            vagrant_vmware_utility_url=https://releases.hashicorp.com/vagrant-vmware-utility/${vagrant_vmware_utility_version}
+            case ${{ env.runner_os }} in
+              ubuntu)
+                wget ${vagrant_vmware_utility_url}/vagrant-vmware-utility_${vagrant_vmware_utility_version}-${vagrant_vmware_utility_release}_amd64.deb
+                sudo dpkg -i vagrant-vmware-utility_${vagrant_vmware_utility_version}-${vagrant_vmware_utility_release}_amd64.deb
+                vagrant_vmware_utility_service=/usr/lib/systemd/system/vagrant-vmware-utility.service
+                ;;
+              rhel)
+                sudo dnf -q -y install ${vagrant_vmware_utility_url}/vagrant-vmware-utility-${vagrant_vmware_utility_version}-${vagrant_vmware_utility_release}.x86_64.rpm
+                [ ! -f /etc/systemd/system/vagrant-vmware-utility.service ] && \
+                  sudo /opt/vagrant-vmware-desktop/bin/vagrant-vmware-utility service install
+                vagrant_vmware_utility_service=/etc/systemd/system/vagrant-vmware-utility.service
+            esac
+            # To solve https://github.com/hashicorp/vagrant-vmware-desktop/issues/91
+            sudo sed -i \
+              's/ExecStart=.*$/ExecStart=\/opt\/vagrant-vmware-desktop\/bin\/vagrant-vmware-utility api -config-file=\/opt\/vagrant-vmware-desktop\/config\/service.hcl -license-override professional/g' \
+              ${vagrant_vmware_utility_service}
+            sudo systemctl daemon-reload
+            sudo systemctl restart vagrant-vmware-utility.service
+
+            sudo vagrant plugin install vagrant-vmware-desktop
+            sudo vagrant up --provider=vmware_desktop || box_up=false
+            ;;
+          vagrant_libvirt*)
+            [[ "${{ inputs.runner }}" = "aws-ec2" ]] && sudo systemctl restart libvirtd
+            [ "${{ env.runner_os }}" = "ubuntu" ] && \
+              sudo apt-get -y install libvirt-daemon-system libvirt-dev ebtables libguestfs-tools >/dev/null
+            sudo vagrant plugin install vagrant-libvirt
+            # TODO: 'vagrant up' may fail to connect to the newly created VM via ssh. The error is:
+            # kex_exchange_identification: read: Connection reset by peer
+            sudo vagrant up --provider=libvirt || box_up=false
+            ;;
+        esac
+
+        if [ "${box_up}" = "true" ]; then
+          echo "[Debug] AlmaLinux release:"
+          sudo vagrant ssh default -c "grep '${{ env.RELEASE_STRING }}' /etc/almalinux-release"
+          echo "[Debug] System architecture:"
+          sudo vagrant ssh default -c "rpm -q --qf='%{ARCH}\n' ${{ env.RELEASE_PACKAGE }} | grep '${{ env.alma_arch }}'"
+          echo "[Debug] Disk and filesystems:"
+          sudo vagrant ssh default -c "sudo lsblk"
+          sudo vagrant ssh default -c "ROOT_SIZE_BYTES=\$(df -B1 --output=size / | tail -n 1 | tr -d ' '); MIN_SIZE_BYTES=\$((98*1024*1024*1024)); [ \"\${ROOT_SIZE_BYTES}\" -gt \"\${MIN_SIZE_BYTES}\" ] || { echo \"[Error] Root filesystem resize check failed: \${ROOT_SIZE_BYTES} bytes (expected > \${MIN_SIZE_BYTES} bytes)\"; exit 1; }"
+          echo "[Debug] Check for updates:"
+          sudo vagrant ssh default -c "sudo dnf check-update"
+          echo "[Debug] Vagrant-specific RPM packages:"
+          # Packages installed by the 'vagrant_guest' Ansible role (common to
+          # every Vagrant box), plus the provider-specific guest role.
+          vagrant_pkgs="cloud-init cloud-utils-growpart cifs-utils jq nfs-utils rsync tcpdump tuned"
+          case ${{ inputs.type }} in
+            vagrant_libvirt*) vagrant_pkgs="${vagrant_pkgs} qemu-guest-agent" ;;
+            vagrant_vmware*)  vagrant_pkgs="${vagrant_pkgs} open-vm-tools" ;;
+          esac
+          sudo vagrant ssh default -c "rpm -q ${vagrant_pkgs}"
+          # Get installed packages list
+          sudo vagrant ssh default -c "rpm -qa --queryformat '%{NAME}\n' | sort > ${{ env.IMAGE_FILE }}.txt"
+          sudo vagrant scp default:${{ env.IMAGE_FILE }}.txt ./${{ env.IMAGE_FILE }}.txt
+          # Cleanup Vagrant VM and box
+          sudo vagrant destroy $(vagrant global-status | grep default | awk '{print $1}') --force || true
+          sudo vagrant box remove ${{ inputs.type }}-${{ inputs.variant }} --force || true
+          sudo rm -f Vagrantfile || true
+        fi
+
+        [ -f ${{ env.IMAGE_FILE }}.txt ] \
+          && echo "got_pkgs_list=true" >> $GITHUB_ENV \
+          || echo "got_pkgs_list=false" >> $GITHUB_ENV
+
+    - uses: actions/upload-artifact@v7
+      name: Store image as artifact
+      id: image-artifact
+      if: inputs.store_as_artifact == 'true'
+      with:
+        compression-level: 1
+        name: ${{ env.IMAGE_NAME }}
+        path: ${{ env.IMAGE_FILE }}
+
+    - uses: actions/upload-artifact@v7
+      name: Store checksum as artifact
+      id: checksum-artifact
+      if: inputs.store_as_artifact  == 'true'
+      with:
+        compression-level: 1
+        name: ${{ env.IMAGE_NAME }}.sha256sum
+        path: ${{ env.IMAGE_FILE }}.sha256sum
+
+    - uses: actions/upload-artifact@v7
+      name: Store packages list as artifact
+      id: pkglist-artifact
+      # The packages list is ~2 KB and always useful (e.g. comparing PUNGI vs
+      # GA image content), so unlike the image/checksum artifacts it is NOT
+      # gated on store_as_artifact - the azure/vagrant unified workflows
+      # hardcode store_as_artifact='false' (input dropped for the 10-input
+      # workflow_dispatch limit) and would otherwise never store it.
+      if: env.got_pkgs_list == 'true'
+      with:
+        compression-level: 9
+        name: ${{ env.IMAGE_NAME }}.txt
+        path: ${{ env.IMAGE_FILE }}.txt
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v6
+      if: inputs.upload_to_s3  == 'true'
+      with:
+        aws-access-key-id: ${{ inputs.S3_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ inputs.S3_SECRET_ACCESS_KEY }}
+        aws-region: ${{ inputs.AWS_REGION }}
+
+    - name: Install aws CLI
+      if: inputs.upload_to_s3 == 'true'
+      shell: bash
+      run: |
+        # Install aws CLI
+        if ! aws --version 2>/dev/null; then
+          curl "https://awscli.amazonaws.com/awscli-exe-linux-${{ inputs.arch }}.zip" -o "awscliv2.zip"
+          unzip -qq awscliv2.zip
+          sudo ./aws/install
+        else
+          true
+        fi
+
+    - name: Publish to S3 Bucket and put object tagging with aws CLI
+      if: inputs.upload_to_s3 == 'true'
+      shell: bash
+      run: |
+        # Publish to S3 Bucket and put object tagging with aws CLI
+        cd $(dirname ${{ env.IMAGE_FILE }})
+        for object in ${{ env.IMAGE_NAME }} ${{ env.IMAGE_NAME }}.sha256sum  ${{ env.IMAGE_NAME }}.txt; do
+          [ ! -f ${object} ] && continue
+          aws s3 cp ${object} s3://${{ inputs.AWS_S3_BUCKET }}/${{ env.AWS_S3_PATH }}/
+          aws s3api put-object-tagging --bucket ${{ inputs.AWS_S3_BUCKET }} --key ${{ env.AWS_S3_PATH }}/${object} --tagging 'TagSet={Key=public,Value=yes}'
+        done
+
+    - name: Compute test status string
+      id: test_status
+      shell: bash
+      env:
+        IS_VAGRANT: ${{ contains(inputs.type, 'vagrant') && 'true' || 'false' }}
+        RUN_TEST: ${{ inputs.run_test }}
+        GOT_PKGS_LIST: ${{ env.got_pkgs_list || 'false' }}
+      run: |
+        # Pick the right "Tests ..." label for the workflow summary and the
+        # Mattermost notification.
+        #
+        # Vagrant builds run a real `vagrant up` smoke test inside the build
+        # runner - that runs only when `inputs.run_test == 'true'`. When it's
+        # off, there is genuinely no test to report.
+        #
+        # All other build types (oci / gencloud / gencloud_ext4 / opennebula
+        # / azure / hyperv) run the OFFLINE test step earlier in this action
+        # unconditionally (mount the image via qemu-nbd, grep release + arch
+        # via rpm --dbpath). `got_pkgs_list=true` means the offline test
+        # reached the end and produced the packages list - i.e., it passed.
+        # `got_pkgs_list=false` means it failed somewhere. `inputs.run_test`
+        # has no bearing on whether the offline test ran.
+        if [ "${IS_VAGRANT}" = "true" ]; then
+          if [ "${RUN_TEST}" = "true" ]; then
+            if [ "${GOT_PKGS_LIST}" = "true" ]; then
+              status="Tests passed ✅"
+            else
+              status="Tests failed ❌"
+            fi
+          else
+            status="Tests N/A ⚠️"
+          fi
+        else
+          if [ "${GOT_PKGS_LIST}" = "true" ]; then
+            status="Tests (offline) passed ✅"
+          else
+            status="Tests (offline) failed ❌"
+          fi
+        fi
+        echo "test_status=${status}" >> "$GITHUB_OUTPUT"
+        echo "[Debug] Resolved test status: ${status}"
+
+    - name: Print workflow summary
+      uses: actions/github-script@v8
+      env:
+        got_pkgs_list: ${{ env.got_pkgs_list || 'false' }}
+        upload_to_s3: ${{ inputs.upload_to_s3 || 'false' }}
+      with:
+        result-encoding: string
+        script: |
+          const summary = core.summary
+            .addRaw('**${{ env.RELEASE_STRING }} ${{ env.alma_arch }}** ${{ env.IMAGE_TYPE }} Image build `${{ env.TIME_STAMP }}`\n');;
+          if (process.env.upload_to_s3 === 'true') {
+            summary
+              .addRaw('S3 Bucket download URLs:\n')
+              .addLink('${{ env.IMAGE_NAME }}', 'https://${{ inputs.AWS_S3_BUCKET }}.s3-accelerate.dualstack.amazonaws.com/${{ env.AWS_S3_PATH }}/${{ env.IMAGE_NAME }}')
+              .addLink('${{ env.IMAGE_NAME }}.sha256sum', 'https://${{ inputs.AWS_S3_BUCKET }}.s3-accelerate.dualstack.amazonaws.com/${{ env.AWS_S3_PATH }}/${{ env.IMAGE_NAME }}.sha256sum');
+          }
+          if (process.env.got_pkgs_list === 'true' && process.env.upload_to_s3 === 'true') {
+            summary
+              .addLink('${{ env.IMAGE_NAME }}.txt', 'https://${{ inputs.AWS_S3_BUCKET }}.s3-accelerate.dualstack.amazonaws.com/${{ env.AWS_S3_PATH }}/${{ env.IMAGE_NAME }}.txt');
+          }
+          summary
+            .addRaw('${{ steps.test_status.outputs.test_status }}');
+          summary.write();
+
+    - name: Prepare Mattermost notification message
+      if: ${{ inputs.notify_mattermost == 'true' }}
+      shell: bash
+      run: |
+        {
+          echo 'MATTERMOST_NOTIFICATION_MESSAGE<<EOF'
+
+          echo ":almalinux: **${{ env.RELEASE_STRING }} ${{ env.alma_arch }}** ${{ env.IMAGE_TYPE }} Image build \`${{ env.TIME_STAMP }}\`, by the GitHub [Action](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+          if [ "${{ inputs.store_as_artifact }}" = "true" -a "${{ inputs.upload_to_s3 }}" = "false" ]; then
+            echo "- CHECKSUM(SHA256) [zipped]: [${{ env.IMAGE_NAME }}.sha256sum](${{ steps.checksum-artifact.outputs.artifact-url }})"
+            echo "- Image [zipped]: [${{ env.IMAGE_NAME }}](${{ steps.image-artifact.outputs.artifact-url }})"
+            echo "${{ env.got_pkgs_list == 'true' && format('- Packages list [zipped]: [{0}.txt]({1})', env.IMAGE_NAME, steps.pkglist-artifact.outputs.artifact-url) || ''}}"
+          fi
+          if [ "${{ inputs.upload_to_s3 }}" = "true" ]; then
+            echo "- CHECKSUM(SHA256): [${{ env.IMAGE_NAME }}.sha256sum](https://${{ inputs.AWS_S3_BUCKET }}.s3-accelerate.dualstack.amazonaws.com/${{ env.AWS_S3_PATH }}/${{ env.IMAGE_NAME }}.sha256sum)"
+            echo "- Image: [${{ env.IMAGE_NAME }}](https://${{ inputs.AWS_S3_BUCKET }}.s3-accelerate.dualstack.amazonaws.com/${{ env.AWS_S3_PATH }}/${{ env.IMAGE_NAME }})"
+            echo "${{ env.got_pkgs_list == 'true' && format('- Packages list: [{0}.txt](https://{1}.s3-accelerate.dualstack.amazonaws.com/{2}/{3}.txt)', env.IMAGE_NAME, inputs.AWS_S3_BUCKET, env.AWS_S3_PATH, env.IMAGE_NAME) || ''}}"
+          fi
+          echo "- ${{ steps.test_status.outputs.test_status }}"
+
+          echo EOF
+        } >> "$GITHUB_ENV"
+
+    - name: Send notification to Mattermost
+      uses: mattermost/action-mattermost-notify@master
+      if: ${{ inputs.notify_mattermost == 'true' }}
+      with:
+        MATTERMOST_WEBHOOK_URL: ${{ inputs.MATTERMOST_WEBHOOK_URL }}
+        MATTERMOST_CHANNEL: ${{ inputs.MATTERMOST_CHANNEL }}
+        MATTERMOST_USERNAME: ${{ github.triggering_actor }}
+        TEXT: ${{ env.MATTERMOST_NOTIFICATION_MESSAGE }}

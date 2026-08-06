@@ -1,0 +1,11 @@
+# An Ansible playbook that configures a Oracle Cloud Infrastructure image
+---
+- name: AlmaLinux Oracle Cloud Infrastructure
+  hosts: all
+  become: true
+
+  roles:
+    - role: unified_boot
+      when: is_unified_boot is defined
+    - oci_guest
+    - cleanup_vm

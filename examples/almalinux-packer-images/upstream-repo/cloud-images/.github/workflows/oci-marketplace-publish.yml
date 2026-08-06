@@ -1,0 +1,1275 @@
+name: "OCI: Release Image to Marketplace"
+
+on:
+  workflow_dispatch:
+      inputs:
+
+        image_source_type:
+          description: "Type of image source"
+          required: true
+          type: choice
+          options:
+            - 'QCOW2 file URL'
+            - 'Compute Image OCID'
+            - 'Artifact OCID'
+
+        image_source_data:
+          description: "URL or OCID"
+          required: true
+          type: string
+          default: ''
+
+        release_to_marketplace:
+          description: "Release the image to Marketplace listing"
+          required: true
+          type: boolean
+          default: false
+
+        notify_mattermost:
+          description: "Send notification to Mattermost"
+          required: true
+          type: boolean
+          default: true
+
+env:
+  OCI_PUBLISHER_BASE_URL: https://cloud.oracle.com/publisher
+  OCI_COMPUTE_BASE_URL: https://cloud.oracle.com/compute
+
+jobs:
+  release-image-to-marketplace:
+    name: "Release image to OCI Marketplace"
+    runs-on: ubuntu-24.04
+    env:
+      OCI_CLI_USER: ${{ secrets.OCI_CLI_USER }}
+      OCI_CLI_TENANCY: ${{ secrets.OCI_CLI_TENANCY }}
+      OCI_CLI_FINGERPRINT: ${{ secrets.OCI_CLI_FINGERPRINT }}
+      OCI_CLI_KEY_CONTENT: ${{ secrets.OCI_CLI_KEY_CONTENT }}
+      OCI_CLI_REGION: ${{ vars.OCI_CLI_REGION }}
+      # Suppress urllib3 FutureWarning so `oci ... 2>&1` captures clean JSON for jq
+      PYTHONWARNINGS: ignore
+
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Validate inputs
+      run: |
+        SOURCE_TYPE="${{ inputs.image_source_type }}"
+        SOURCE_DATA="${{ inputs.image_source_data }}"
+
+        if [ -z "${SOURCE_DATA}" ]; then
+          echo "[Error] image_source_data is empty"
+          exit 1
+        fi
+
+        case "${SOURCE_TYPE}" in
+          "QCOW2 file URL")
+            if [[ ! "${SOURCE_DATA}" =~ ^https?://.+\.qcow2$ ]]; then
+              echo "[Error] Invalid URL: '${SOURCE_DATA}'"
+              echo "Expected: a URL starting with http(s):// and ending with .qcow2"
+              exit 1
+            fi
+            ;;
+          "Compute Image OCID")
+            if [[ ! "${SOURCE_DATA}" =~ ^ocid1\.image\. ]]; then
+              echo "[Error] Invalid Compute Image OCID: '${SOURCE_DATA}'"
+              echo "Expected format: ocid1.image.oc1..<unique_id>"
+              exit 1
+            fi
+            ;;
+          "Artifact OCID")
+            if [[ ! "${SOURCE_DATA}" =~ ^ocid1\..+artifact ]]; then
+              echo "[Error] Invalid Artifact OCID: '${SOURCE_DATA}'"
+              echo "Expected format: ocid1.marketplacepublisherartifact.oc1..<unique_id>"
+              exit 1
+            fi
+            ;;
+        esac
+
+        echo "✅ Input validation passed: ${SOURCE_TYPE} = ${SOURCE_DATA:0:40}..."
+
+    - name: Install OCI CLI and dependencies
+      run: |
+        # Install jq for JSON parsing
+        sudo apt-get update && sudo apt-get install -y jq
+
+        # Install OCI CLI
+        curl -L -O https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh
+        chmod +x install.sh
+        ./install.sh --accept-all-defaults
+        echo "$HOME/bin" >> $GITHUB_PATH
+
+    - name: Configure OCI CLI
+      run: |
+        # Configure OCI CLI using environment variables
+        mkdir -p ~/.oci
+        echo "${{ secrets.OCI_CLI_KEY_CONTENT }}" > ~/.oci/key.pem
+        chmod 600 ~/.oci/key.pem
+
+        # Verify OCI CLI is working
+        oci --version
+
+    - name: Get data of Artifact
+      if: inputs.image_source_type == 'Artifact OCID'
+      run: |
+        # When source is an Artifact OCID, fetch the artifact data
+        # and extract the source Compute Image OCID
+        ARTIFACT_OCID="${{ inputs.image_source_data }}"
+        echo "ARTIFACT_ID=${ARTIFACT_OCID}" >> $GITHUB_ENV
+        echo "[Debug] Artifact OCID: ${ARTIFACT_OCID}"
+
+        # Get artifact details
+        set +e
+        ARTIFACT_DATA=$(oci marketplace-publisher artifact get \
+          --artifact-id "${ARTIFACT_OCID}" 2>&1)
+        GET_EXIT=$?
+        set -e
+
+        if [ ${GET_EXIT} -ne 0 ]; then
+          echo "[Error] Failed to get artifact data"
+          echo "${ARTIFACT_DATA}"
+          exit 1
+        fi
+
+        # Verify artifact is AVAILABLE
+        ARTIFACT_STATUS=$(echo "${ARTIFACT_DATA}" | jq -r '.data.status')
+        if [ "${ARTIFACT_STATUS}" != "AVAILABLE" ]; then
+          echo "[Error] Artifact is not AVAILABLE (status: ${ARTIFACT_STATUS})"
+          exit 1
+        fi
+
+        # Extract source Compute Image OCID from machine-image details
+        IMAGE_OCID=$(echo "${ARTIFACT_DATA}" | jq -r '.data."machine-image"."source-image-id" // empty')
+        if [ -z "${IMAGE_OCID}" ]; then
+          echo "[Error] Failed to extract source image ID from artifact"
+          echo "[Debug] Artifact data:"
+          echo "${ARTIFACT_DATA}" | jq '.data'
+          exit 1
+        fi
+
+        echo "IMAGE_OCID=${IMAGE_OCID}" >> $GITHUB_ENV
+        echo "[Debug] Source Compute Image OCID: ${IMAGE_OCID}"
+
+    - name: Get data of Compute Image
+      if: inputs.image_source_type == 'Compute Image OCID' || inputs.image_source_type == 'Artifact OCID'
+      run: |
+        # When source is a Compute Image OCID (or derived from Artifact),
+        # fetch the image data and derive the filename for Object Storage lookup
+        if [[ "${{ inputs.image_source_type }}" == "Artifact OCID" ]]; then
+          IMAGE_OCID="${{ env.IMAGE_OCID }}"
+        else
+          IMAGE_OCID="${{ inputs.image_source_data }}"
+        fi
+        echo "IMAGE_OCID=${IMAGE_OCID}" >> $GITHUB_ENV
+        echo "[Debug] Compute Image OCID: ${IMAGE_OCID}"
+
+        # Get image details
+        set +e
+        IMAGE_DATA=$(oci compute image get --image-id "${IMAGE_OCID}" 2>&1)
+        GET_EXIT=$?
+        set -e
+
+        if [ ${GET_EXIT} -ne 0 ]; then
+          echo "[Error] Failed to get compute image data"
+          echo "${IMAGE_DATA}"
+          exit 1
+        fi
+
+        # Verify image is AVAILABLE
+        IMAGE_STATE=$(echo "${IMAGE_DATA}" | jq -r '.data."lifecycle-state"')
+        if [ "${IMAGE_STATE}" != "AVAILABLE" ]; then
+          echo "[Error] Image is not AVAILABLE (state: ${IMAGE_STATE})"
+          exit 1
+        fi
+
+        # Extract display name (this is the CUSTOM_IMAGE_NAME set during import)
+        CUSTOM_IMAGE_NAME=$(echo "${IMAGE_DATA}" | jq -r '.data."display-name"')
+        IMAGE_FILENAME="${CUSTOM_IMAGE_NAME}.qcow2"
+
+        echo "[Debug] Display Name: ${CUSTOM_IMAGE_NAME}"
+        echo "[Debug] Derived Filename: ${IMAGE_FILENAME}"
+
+        echo "CUSTOM_IMAGE_NAME=${CUSTOM_IMAGE_NAME}" >> $GITHUB_ENV
+        echo "IMAGE_FILENAME=${IMAGE_FILENAME}" >> $GITHUB_ENV
+
+    - name: Get Object data from Storage
+      if: inputs.image_source_type == 'Compute Image OCID' || inputs.image_source_type == 'Artifact OCID'
+      run: |
+        # Find the corresponding object in OCI Object Storage
+        # Object path pattern: images/{major}/{version}/oci/{release}/{filename}.qcow2
+        BUCKET_NAME="${{ vars.OCI_OBJECT_STORAGE_BUCKET }}"
+        NAMESPACE="${{ secrets.OCI_OBJECT_STORAGE_NAMESPACE }}"
+
+        # Derive search prefix from CUSTOM_IMAGE_NAME (AlmaLinux-{major}-OCI-{version}-...)
+        SEARCH_MAJOR=$(echo "${{ env.CUSTOM_IMAGE_NAME }}" | cut -d'-' -f2)
+        SEARCH_VERSION=$(echo "${{ env.CUSTOM_IMAGE_NAME }}" | sed -n 's/AlmaLinux-[0-9]*-OCI-\([0-9.]*\)-.*/\1/p')
+        SEARCH_PREFIX="images/${SEARCH_MAJOR}/${SEARCH_VERSION}/oci/"
+
+        echo "[Debug] Searching Object Storage for: ${SEARCH_PREFIX}*/${{ env.IMAGE_FILENAME }}"
+        echo "[Debug] Namespace: ${NAMESPACE}"
+        echo "[Debug] Bucket: ${BUCKET_NAME}"
+
+        set +e
+        OBJECT_LIST=$(oci os object list \
+          --bucket-name "${BUCKET_NAME}" \
+          --namespace "${NAMESPACE}" \
+          --prefix "${SEARCH_PREFIX}" \
+          --all \
+          2>&1)
+        LIST_EXIT=$?
+        set -e
+
+        if [ ${LIST_EXIT} -ne 0 ]; then
+          echo "[Error] Failed to list objects in Object Storage"
+          echo "${OBJECT_LIST}"
+          exit 1
+        fi
+
+        # Find the object whose name ends with our image filename
+        OBJECT_NAME=$(echo "${OBJECT_LIST}" | jq -r \
+          --arg fn "${{ env.IMAGE_FILENAME }}" \
+          '[.data[] | select(.name | endswith($fn))] | sort_by(.name) | reverse | .[0].name // empty')
+
+        if [ -z "${OBJECT_NAME}" ]; then
+          echo "[Error] Object not found in Object Storage matching: ${{ env.IMAGE_FILENAME }}"
+          echo "[Error] Search prefix was: ${SEARCH_PREFIX}"
+          exit 1
+        fi
+
+        echo "[Debug] Found object: ${OBJECT_NAME}"
+        echo "OBJECT_NAME=${OBJECT_NAME}" >> $GITHUB_ENV
+
+        # Construct the full Object Storage URL (used by "Parse image URL and filename")
+        OBJECT_URL="https://objectstorage.${{ vars.OCI_CLI_REGION }}.oraclecloud.com/n/${NAMESPACE}/b/${BUCKET_NAME}/o/${OBJECT_NAME}"
+        echo "[Debug] Object URL: ${OBJECT_URL}"
+        echo "OBJECT_URL=${OBJECT_URL}" >> $GITHUB_ENV
+
+    - name: Parse image URL and filename
+      run: |
+        # Determine IMAGE_URL based on source type:
+        #   'QCOW2 file URL'                      → use the input URL directly
+        #   'Compute Image OCID' / 'Artifact OCID' → use the Object Storage URL resolved earlier
+        if [[ "${{ inputs.image_source_type }}" == "QCOW2 file URL" ]]; then
+          IMAGE_URL="${{ inputs.image_source_data }}"
+        else
+          IMAGE_URL="${{ env.OBJECT_URL }}"
+        fi
+
+        # Extract filename and path from URL
+        IMAGE_FILENAME=$(basename "${IMAGE_URL}")
+        IMAGE_PATH=$(dirname "${IMAGE_URL}")
+        echo "IMAGE_FILENAME=${IMAGE_FILENAME}" >> $GITHUB_ENV
+
+        # Parse filename: AlmaLinux-8-OCI-8.10-20260202.x86_64.qcow2
+        #             or: AlmaLinux-10-OCI-10.1-20260216.0.aarch64.qcow2
+        # Pattern: AlmaLinux-{major}-OCI-{version}-{date}[.{index}].{arch}.qcow2
+
+        if [[ ! "${IMAGE_FILENAME}" =~ AlmaLinux-([0-9]+)-OCI-([0-9.]+)-([0-9]+)((\.[0-9]+)?)\.(x86_64|aarch64)\.qcow2 ]]; then
+          echo "[Error] Invalid image filename format: '${IMAGE_FILENAME}'"
+          echo "Expected format: AlmaLinux-{major}-OCI-{version}-{date}[.{index}].{arch}.qcow2"
+          echo "Example: AlmaLinux-8-OCI-8.10-20260202.x86_64.qcow2"
+          echo "Example: AlmaLinux-10-OCI-10.1-20260216.0.aarch64.qcow2"
+          exit 1
+        fi
+
+        ALMA_MAJOR="${BASH_REMATCH[1]}"
+        ALMA_VERSION="${BASH_REMATCH[2]}"
+        ALMA_DATE="${BASH_REMATCH[3]}${BASH_REMATCH[4]}"
+        ALMA_ARCH="${BASH_REMATCH[6]}"
+
+        # Extract ALMA_RELEASE from URL path
+        # URL structure: .../images/{major}/{version}/oci/{release}/{filename}
+        # Example: .../images/8/8.10/oci/20260202092731/AlmaLinux-8-OCI-8.10-20260202.x86_64.qcow2
+
+        if [[ "${IMAGE_PATH}" =~ /oci/([0-9]+)$ ]]; then
+          ALMA_RELEASE="${BASH_REMATCH[1]}"
+        else
+          echo "[Error] Could not extract release timestamp from URL path: '${IMAGE_PATH}'"
+          echo "Expected URL format: .../images/{major}/{version}/oci/{release}/{filename}"
+          exit 1
+        fi
+
+        # AlmaLinux code name
+        case "${ALMA_VERSION}" in
+          8.10) ALMA_CODE_NAME="Cerulean Leopard" ;;
+          9.8) ALMA_CODE_NAME="Olive Jaguar" ;;
+          10.2) ALMA_CODE_NAME="Lavender Lion" ;;
+          *) echo "[Error] Unsupported AlmaLinux version: '${ALMA_VERSION}'"; exit 1 ;;
+        esac
+
+        echo "[Debug] Parsed metadata:"
+        echo "  Source Type: ${{ inputs.image_source_type }}"
+        echo "  IMAGE_URL: ${IMAGE_URL}"
+        echo "  Major Version: ${ALMA_MAJOR}"
+        echo "  Version: ${ALMA_VERSION}"
+        echo "  Code Name: ${ALMA_CODE_NAME}"
+        echo "  Release: ${ALMA_RELEASE}"
+        echo "  Date: ${ALMA_DATE}"
+        echo "  Architecture: ${ALMA_ARCH}"
+
+        # Convert aarch64 to AArch64 for display
+        DISPLAY_ARCH="${ALMA_ARCH}"
+        [[ "${ALMA_ARCH}" == "aarch64" ]] && DISPLAY_ARCH="AArch64"
+
+        echo "ALMA_MAJOR=${ALMA_MAJOR}" >> $GITHUB_ENV
+        echo "ALMA_VERSION=${ALMA_VERSION}" >> $GITHUB_ENV
+        echo "ALMA_CODE_NAME=${ALMA_CODE_NAME}" >> $GITHUB_ENV
+        echo "ALMA_RELEASE=${ALMA_RELEASE}" >> $GITHUB_ENV
+        echo "ALMA_DATE=${ALMA_DATE}" >> $GITHUB_ENV
+        echo "ALMA_ARCH=${ALMA_ARCH}" >> $GITHUB_ENV
+        echo "DISPLAY_ARCH=${DISPLAY_ARCH}" >> $GITHUB_ENV
+        echo "IMAGE_DISPLAY_NAME=AlmaLinux OS ${ALMA_VERSION} ${ALMA_ARCH} \`${ALMA_RELEASE}\`" >> $GITHUB_ENV
+        # Only set CUSTOM_IMAGE_NAME if not already set (Compute Image / Artifact paths set it earlier)
+        if [ -z "${{ env.CUSTOM_IMAGE_NAME }}" ]; then
+          echo "CUSTOM_IMAGE_NAME=${IMAGE_FILENAME%.*}" >> $GITHUB_ENV
+        fi
+
+    - name: Download qcow2 image
+      if: inputs.image_source_type == 'QCOW2 file URL'
+      run: |
+        # Download the qcow2 file from provided URL
+        echo "[Debug] Downloading image from: ${{ inputs.image_source_data }}"
+        curl --fail -s "${{ inputs.image_source_data }}" -o "${{ env.IMAGE_FILENAME }}"
+
+        # Verify download
+        if [[ ! -f "${{ env.IMAGE_FILENAME }}" ]]; then
+          echo "[Error] Failed to download image"
+          exit 1
+        fi
+
+        # Check the image is QCOW format
+        if ! file "${{ env.IMAGE_FILENAME }}" | grep -q -i "qcow"; then
+          echo "[Error] Image is not in QCOW format"
+          exit 1
+        fi
+
+    - name: Upload to OCI Object Storage
+      if: inputs.image_source_type == 'QCOW2 file URL'
+      run: |
+        # Upload qcow2 to OCI Object Storage
+        BUCKET_NAME="${{ vars.OCI_OBJECT_STORAGE_BUCKET }}"
+        NAMESPACE="${{ secrets.OCI_OBJECT_STORAGE_NAMESPACE }}"
+        OBJECT_NAME="images/${{ env.ALMA_MAJOR }}/${{ env.ALMA_VERSION }}/oci/${{ env.ALMA_RELEASE }}/${{ env.IMAGE_FILENAME }}"
+
+        echo "[Debug] Uploading to Object Storage:"
+        echo "  Namespace: ${NAMESPACE}"
+        echo "  Bucket: ${BUCKET_NAME}"
+        echo "  Object: ${OBJECT_NAME}"
+
+        oci os object put \
+          --bucket-name "${BUCKET_NAME}" \
+          --namespace "${NAMESPACE}" \
+          --file "${{ env.IMAGE_FILENAME }}" \
+          --name "${OBJECT_NAME}" \
+          --force
+
+        echo "OBJECT_NAME=${OBJECT_NAME}" >> $GITHUB_ENV
+        echo "[Debug] Upload completed successfully"
+
+    - name: Import as OCI Compute Image
+      if: inputs.image_source_type == 'QCOW2 file URL'
+      run: |
+        # Import qcow2 from Object Storage as OCI Compute custom image
+        COMPARTMENT_ID="${{ secrets.OCI_COMPARTMENT_ID }}"
+        BUCKET_NAME="${{ vars.OCI_OBJECT_STORAGE_BUCKET }}"
+        NAMESPACE="${{ secrets.OCI_OBJECT_STORAGE_NAMESPACE }}"
+
+        echo "[Debug] Importing compute image:"
+        echo "  Custom Image Name: ${{ env.CUSTOM_IMAGE_NAME }}"
+        echo "  Compartment: ${COMPARTMENT_ID:0:20}..."
+        echo "  Bucket: ${BUCKET_NAME}"
+        echo "  Namespace: ${NAMESPACE}"
+
+        # Verify object exists in Object Storage before import
+        echo "[Debug] Verifying object in Object Storage..."
+        oci os object head \
+          --bucket-name "${BUCKET_NAME}" \
+          --namespace "${NAMESPACE}" \
+          --name "${{ env.OBJECT_NAME }}" || {
+          echo "[Error] Object not found in Object Storage"
+          exit 1
+        }
+
+        # Start image import (launch options will be set after import)
+        echo "[Debug] Starting image import..."
+        set +e  # Don't exit on error, capture it
+        IMPORT_OUTPUT=$(oci compute image import from-object \
+          --compartment-id "${COMPARTMENT_ID}" \
+          --display-name "${{ env.CUSTOM_IMAGE_NAME }}" \
+          --namespace "${NAMESPACE}" \
+          --bucket-name "${BUCKET_NAME}" \
+          --name "${{ env.OBJECT_NAME }}" \
+          --source-image-type QCOW2 \
+          --launch-mode PARAVIRTUALIZED \
+          --operating-system "AlmaLinux" \
+          --operating-system-version "${{ env.ALMA_VERSION }}" \
+          2>&1)
+        IMPORT_EXIT_CODE=$?
+        set -e  # Re-enable exit on error
+
+        echo "[Debug] Import command exit code: ${IMPORT_EXIT_CODE}"
+        echo "[Debug] Import response:"
+        echo "${IMPORT_OUTPUT}"
+
+        if [ ${IMPORT_EXIT_CODE} -ne 0 ]; then
+          echo "[Error] ❌ Image import failed with exit code ${IMPORT_EXIT_CODE}"
+          echo "[Error] Error details:"
+          echo "${IMPORT_OUTPUT}"
+          echo ""
+          echo "[Debug] Troubleshooting information:"
+          echo "  - Compartment ID: ${COMPARTMENT_ID}"
+          echo "  - Display Name: ${{ env.CUSTOM_IMAGE_NAME }}"
+          echo "  - Namespace: ${NAMESPACE}"
+          echo "  - Bucket: ${BUCKET_NAME}"
+          echo "  - Object: ${{ env.OBJECT_NAME }}"
+          exit 1
+        fi
+
+        # Extract image OCID from JSON output using jq (more reliable than grep)
+        IMAGE_OCID=$(echo "${IMPORT_OUTPUT}" | jq -r '.data.id // empty')
+
+        if [[ -z "${IMAGE_OCID}" ]]; then
+          echo "[Error] Failed to extract image OCID from import output"
+          echo "[Error] Full output was:"
+          echo "${IMPORT_OUTPUT}"
+          exit 1
+        fi
+
+        echo "IMAGE_OCID=${IMAGE_OCID}" >> $GITHUB_ENV
+        echo "[Debug] Image OCID: ${IMAGE_OCID}"
+
+        # Wait for image to become AVAILABLE (manual polling)
+        echo "[Debug] Waiting for image to become AVAILABLE..."
+        MAX_WAIT_SECONDS=1800  # 30 minutes
+        POLL_INTERVAL=30       # Check every 30 seconds
+        ELAPSED=0
+
+        while [ $ELAPSED -lt $MAX_WAIT_SECONDS ]; do
+          IMAGE_STATE=$(oci compute image get \
+            --image-id "${IMAGE_OCID}" \
+            --query 'data."lifecycle-state"' \
+            --raw-output 2>/dev/null || echo "ERROR")
+
+          echo "[Debug] Current state: ${IMAGE_STATE} (elapsed: ${ELAPSED}s)"
+
+          if [ "${IMAGE_STATE}" = "AVAILABLE" ]; then
+            echo "[Debug] ✅ Image is now AVAILABLE"
+            break
+          elif [ "${IMAGE_STATE}" = "ERROR" ] || [ "${IMAGE_STATE}" = "DELETED" ]; then
+            echo "[Error] ❌ Image import failed with state: ${IMAGE_STATE}"
+            exit 1
+          fi
+
+          sleep $POLL_INTERVAL
+          ELAPSED=$((ELAPSED + POLL_INTERVAL))
+        done
+
+        if [ $ELAPSED -ge $MAX_WAIT_SECONDS ]; then
+          echo "[Error] ⏱️ Timeout waiting for image to become AVAILABLE after ${MAX_WAIT_SECONDS}s"
+          exit 1
+        fi
+
+    - name: Configure Image Capabilities Schema
+      if: inputs.image_source_type == 'QCOW2 file URL'
+      run: |
+        # Create/update image capability schema for the custom image
+        # Reference: https://docs.oracle.com/en-us/iaas/Content/Compute/Tasks/configuringimagecapabilities.htm
+
+        echo "[Debug] Configuring image capability schema..."
+
+        # Prepare image capabilities JSON based on global schema
+        # Must match the descriptor format including values arrays for enums
+        cat > /tmp/image_capabilities.json <<'EOF'
+        {
+          "Compute.Firmware": {
+            "descriptorType": "enumstring",
+            "source": "IMAGE",
+            "values": ["BIOS", "UEFI_64"],
+            "defaultValue": "UEFI_64"
+          },
+          "Compute.SecureBoot": {
+            "descriptorType": "boolean",
+            "source": "IMAGE",
+            "defaultValue": true
+          },
+          "Compute.LaunchMode": {
+            "descriptorType": "enumstring",
+            "source": "IMAGE",
+            "values": ["NATIVE", "EMULATED", "PARAVIRTUALIZED", "CUSTOM"],
+            "defaultValue": "PARAVIRTUALIZED"
+          },
+          "Network.AttachmentType": {
+            "descriptorType": "enumstring",
+            "source": "IMAGE",
+            "values": ["E1000", "VFIO", "PARAVIRTUALIZED"],
+            "defaultValue": "PARAVIRTUALIZED"
+          },
+          "Storage.BootVolumeType": {
+            "descriptorType": "enumstring",
+            "source": "IMAGE",
+            "values": ["ISCSI", "SCSI", "IDE", "PARAVIRTUALIZED"],
+            "defaultValue": "PARAVIRTUALIZED"
+          },
+          "Storage.LocalDataVolumeType": {
+            "descriptorType": "enumstring",
+            "source": "IMAGE",
+            "values": ["ISCSI", "SCSI", "IDE", "PARAVIRTUALIZED"],
+            "defaultValue": "PARAVIRTUALIZED"
+          },
+          "Storage.RemoteDataVolumeType": {
+            "descriptorType": "enumstring",
+            "source": "IMAGE",
+            "values": ["ISCSI", "SCSI", "IDE", "PARAVIRTUALIZED"],
+            "defaultValue": "PARAVIRTUALIZED"
+          },
+          "Storage.ConsistentVolumeNaming": {
+            "descriptorType": "boolean",
+            "source": "IMAGE",
+            "defaultValue": true
+          },
+          "Storage.ParaVirtualization.EncryptionInTransit": {
+            "descriptorType": "boolean",
+            "source": "IMAGE",
+            "defaultValue": true
+          },
+          "Storage.ParaVirtualization.AttachmentVersion": {
+            "descriptorType": "enuminteger",
+            "source": "IMAGE",
+            "values": [1, 2],
+            "defaultValue": 2
+          },
+          "Storage.Iscsi.MultipathDeviceSupported": {
+            "descriptorType": "boolean",
+            "source": "IMAGE",
+            "defaultValue": true
+          },
+          "Network.IPv6Only": {
+            "defaultValue": true,
+            "descriptorType": "boolean",
+            "source": "IMAGE"
+          }
+        }
+        EOF
+
+        echo "[Debug] Image capabilities to configure:"
+        cat /tmp/image_capabilities.json | jq '.'
+
+        # Create a unique schema name for this image
+        SCHEMA_NAME="almalinux-${ALMA_MAJOR}-${ALMA_ARCH}-schema"
+        COMPARTMENT_ID="${{ secrets.OCI_COMPARTMENT_ID }}"
+
+        echo "[Debug] Schema name: ${SCHEMA_NAME}"
+
+        # Get the available global image capability schema versions
+        echo "[Debug] Discovering global image capability schema versions..."
+        GLOBAL_CAP_ID=$(
+            oci compute global-image-capability-schema list --all | jq -r '.data[0].id')
+        GLOBAL_CAP_VERSION_NAME=$(
+            oci compute global-image-capability-schema-version list --all \
+            --global-image-capability-schema-id $GLOBAL_CAP_ID \
+            | jq -r '.data | sort_by(."time-created") | reverse | .[0].name')
+
+        # Try to create the image capability schema
+        # Note: If schema exists, this will fail - we'll then update it
+        set +e
+        CREATE_OUTPUT=$(oci compute image-capability-schema create \
+          --compartment-id "${COMPARTMENT_ID}" \
+          --global-image-capability-schema-version-name $GLOBAL_CAP_VERSION_NAME \
+          --image-id "${{ env.IMAGE_OCID }}" \
+          --schema-data file:///tmp/image_capabilities.json \
+          --display-name "${SCHEMA_NAME}" \
+          2>&1)
+        CREATE_EXIT=$?
+        set -e
+
+        if [ ${CREATE_EXIT} -eq 0 ]; then
+          echo "[Debug] ✅ Image capability schema created successfully"
+          echo "${CREATE_OUTPUT}" | jq -r '.data.id' > /tmp/schema_id.txt
+        else
+          echo "[Debug] Schema creation failed (may already exist), attempting to update..."
+
+          # List schemas for this image to find the existing one
+          SCHEMA_ID=$(oci compute image-capability-schema list \
+            --compartment-id "${COMPARTMENT_ID}" \
+            --image-id "${{ env.IMAGE_OCID }}" \
+            --query 'data[0].id' \
+            --raw-output 2>/dev/null || echo "")
+
+          if [ -n "${SCHEMA_ID}" ]; then
+            echo "[Debug] Found existing schema: ${SCHEMA_ID}"
+
+            # Update the existing schema
+            oci compute image-capability-schema update \
+              --image-capability-schema-id "${SCHEMA_ID}" \
+              --schema-data file:///tmp/image_capabilities.json \
+              --force
+
+            echo "[Debug] ✅ Image capability schema updated successfully"
+          else
+            echo "[Warning] Could not create or update image capability schema"
+            echo "[Warning] Error: ${CREATE_OUTPUT}"
+          fi
+        fi
+
+        echo ""
+        echo "[Debug] Configured Image Capabilities:"
+        echo "  Firmware: UEFI_64"
+        echo "  Secure Boot: Enabled"
+        echo "  Launch Mode: PARAVIRTUALIZED"
+        echo "  Paravirtualization Version: 2"
+        echo "  Consistent Volume Naming: Enabled"
+        echo "  In-transit Encryption: Enabled"
+        echo "  Multipath Device Support: Enabled"
+        echo "  IPv6 Only: Enabled"
+
+    - name: Configure Image Shape Compatibility
+      if: inputs.image_source_type == 'QCOW2 file URL'
+      run: |
+        # Configure the correct shape compatibility entries on the Compute Image
+        # using the Marketplace-supported shapes list (not oci compute shape list)
+        # to ensure all Marketplace-supported shapes are included (e.g. E5, E6).
+        #
+        # Reference: https://docs.oracle.com/en-us/iaas/Content/Compute/References/computeshapes.htm
+        #
+        # For x86_64:  add all supported non-ARM shapes.
+        # For aarch64: add only Ampere ARM shapes (A1, A2, A4).
+        ARCH="${{ env.ALMA_ARCH }}"
+        IMAGE_OCID="${{ env.IMAGE_OCID }}"
+        COMPARTMENT_ID="${{ secrets.OCI_COMPARTMENT_ID }}"
+        echo "[Debug] Configuring shape compatibility for ${ARCH} image ${IMAGE_OCID}"
+
+        # Remove all current shapes from the image — we'll re-add the correct
+        # ones from the Marketplace supported shapes list.
+        oci compute image-shape-compatibility-entry list \
+          --image-id ${IMAGE_OCID} \
+          --all \
+          --query 'data[*].shape' \
+          --raw-output | jq -r '.[]' > /tmp/current_shapes.txt
+
+        echo "[Debug] Current shapes on image:"
+        cat /tmp/current_shapes.txt
+
+        echo "[Debug] Removing all current shapes from image..."
+        while read -r shape; do
+          echo "  Removing: ${shape}"
+          oci compute image-shape-compatibility-entry remove \
+            --image-id ${IMAGE_OCID} \
+            --shape-name "${shape}" \
+            --force 2>/dev/null || true
+        done < /tmp/current_shapes.txt
+
+        # Get Marketplace-supported shapes (includes E5, E6, etc. that
+        # oci compute shape list may miss).
+        echo "[Debug] Fetching Marketplace-supported shapes..."
+        ALL_SHAPES=$(oci marketplace-publisher supported-shape-collection list-supported-shapes \
+          --compartment-id ${COMPARTMENT_ID} \
+          --all 2>/dev/null)
+
+        # Filter shapes by architecture, exclude *.Generic aliases (OCI adds
+        # them automatically but the Marketplace API does not accept them),
+        # and deduplicate.
+        if [ "$ARCH" = "aarch64" ]; then
+          # ARM shapes: match .A1., .A2., .A4. in shape name
+          SHAPES_JSON=$(echo "${ALL_SHAPES}" | jq '[.data.items[] | select(.shape | test("\\.(A1|A2|A4)\\.")) | select(.shape | endswith(".Generic") | not)] | unique_by(.shape)')
+        else
+          # x86_64 shapes: everything except ARM shapes and *.Generic aliases
+          SHAPES_JSON=$(echo "${ALL_SHAPES}" | jq '[.data.items[] | select(.shape | test("\\.(A1|A2|A4)\\.") | not) | select(.shape | endswith(".Generic") | not)] | unique_by(.shape)')
+        fi
+
+        SHAPE_COUNT=$(echo "${SHAPES_JSON}" | jq 'length')
+        echo "[Debug] Adding ${SHAPE_COUNT} ${ARCH} shapes..."
+
+        # Add each shape — with OCPU/memory constraints for flexible shapes.
+        echo "${SHAPES_JSON}" | jq -c '.[]' | while read -r entry; do
+          shape=$(echo "${entry}" | jq -r '.shape')
+          is_flexible=$(echo "${entry}" | jq -r '."is-flexible"')
+
+          if [ "${is_flexible}" = "true" ]; then
+            OCPU_MIN=$(echo "${entry}" | jq -r '."ocpu-options".min // empty')
+            OCPU_MAX=$(echo "${entry}" | jq -r '."ocpu-options".max // empty')
+            MEM_MIN=$(echo "${entry}" | jq -r '."memory-options"."min-in-gbs" // empty')
+            MEM_MAX=$(echo "${entry}" | jq -r '."memory-options"."max-in-gbs" // empty')
+            if [ -z "${OCPU_MAX}" ] || [ -z "${MEM_MAX}" ]; then
+              echo "  Skipping (no constraint data): ${shape}"
+              continue
+            fi
+            echo "  Adding: ${shape} — OCPU: ${OCPU_MIN}-${OCPU_MAX}, Memory: ${MEM_MIN}-${MEM_MAX} GB"
+            oci compute image-shape-compatibility-entry add \
+              --image-id ${IMAGE_OCID} \
+              --shape-name "${shape}" \
+              --memory-constraints "{\"minInGBs\": ${MEM_MIN}, \"maxInGBs\": ${MEM_MAX}}" \
+              --ocpu-constraints "{\"min\": ${OCPU_MIN}, \"max\": ${OCPU_MAX}}" \
+              --force 2>/dev/null || true
+          else
+            echo "  Adding: ${shape}"
+            oci compute image-shape-compatibility-entry add \
+              --image-id ${IMAGE_OCID} \
+              --shape-name "${shape}" 2>/dev/null || true
+          fi
+        done
+
+        # Show final shapes
+        echo ""
+        echo "[Debug] Final shapes on image:"
+        oci compute image-shape-compatibility-entry list \
+          --image-id ${IMAGE_OCID} \
+          --all \
+          --query 'data[*].shape' \
+          --raw-output | jq -r '.[]'
+
+    - name: Create the new Artifact
+      if: inputs.release_to_marketplace && inputs.image_source_type != 'Artifact OCID'
+      run: |
+        # Get the image shape compatibility entries (already configured correctly above).
+        # Include memory and OCPU constraints — required for Flex shapes.
+        oci compute image-shape-compatibility-entry list \
+          --image-id ${{ env.IMAGE_OCID }} \
+          --all \
+        | jq --arg img "${{ env.IMAGE_OCID }}" '{
+            sourceImageId: $img,
+            isSnapshotAllowed: true,
+            username: "opc",
+            imageShapeCompatibilityEntries: [
+              .data[] |
+              # Skip *.Generic aliases (e.g. VM.Standard.Ampere.Generic,
+              # VM.Standard.AMD.Generic) — OCI adds them automatically but the
+              # Marketplace API does not recognize them.
+              select(.shape | endswith(".Generic") | not) |
+              {shape: .shape} +
+              (if ."memory-constraints" then {
+                memoryConstraints: {
+                  minInGBs: ."memory-constraints"."min-in-gbs",
+                  maxInGBs: ."memory-constraints"."max-in-gbs"
+                }
+              } else {} end) +
+              (if ."ocpu-constraints" then {
+                ocpuConstraints: {
+                  min: ."ocpu-constraints".min,
+                  max: ."ocpu-constraints".max
+                }
+              } else {} end)
+            ]
+          }' > /tmp/artifact_payload.json
+
+        echo "[Debug] Artifact payload:"
+        jq '.' /tmp/artifact_payload.json
+
+        # Wrap OCI Custom Image into a Marketplace Artifact (request)
+        COMPARTMENT_ID="${{ secrets.OCI_COMPARTMENT_ID }}"
+        REQUEST_ID=$(oci marketplace-publisher artifact \
+          create-artifact-create-machine-image-artifact-details \
+          --compartment-id ${COMPARTMENT_ID} \
+          --display-name '${{ env.CUSTOM_IMAGE_NAME }}' \
+          --machine-image file:///tmp/artifact_payload.json \
+          --query '"opc-work-request-id"' \
+          --raw-output)
+        echo "[Debug] Request ID: ${REQUEST_ID}"
+
+        ARTIFACT_ID=$(oci marketplace-publisher work-request get \
+          --work-request-id ${REQUEST_ID} \
+          | jq -r '.data.resources[0].identifier' 2>/dev/null || echo "ERROR")
+
+        if [ -z "${ARTIFACT_ID}" ] || [ "${ARTIFACT_ID}" = "null" ] || [ "${ARTIFACT_ID}" = "ERROR" ]; then
+          echo "[Error] Failed to extract Artifact ID from work request"
+          exit 1
+        fi
+
+        echo "ARTIFACT_ID=${ARTIFACT_ID}" >> $GITHUB_ENV
+        echo "[Debug] Artifact ID: ${ARTIFACT_ID}"
+
+        # Wait for artifact to become AVAILABLE (manual polling)
+        echo "[Debug] Waiting for artifact to become AVAILABLE..."
+        MAX_WAIT_SECONDS=2700  # 45 minutes
+        POLL_INTERVAL=30       # Check every 30 seconds
+        ELAPSED=0
+
+        while [ $ELAPSED -lt $MAX_WAIT_SECONDS ]; do
+          ARTIFACT_STATE=$(oci marketplace-publisher artifact get \
+          --artifact-id ${ARTIFACT_ID} | jq -r '.data.status' 2>/dev/null || echo "ERROR")
+
+          echo "[Debug] Current state: ${ARTIFACT_STATE} (elapsed: ${ELAPSED}s)"
+
+          if [ "${ARTIFACT_STATE}" = "AVAILABLE" ]; then
+            echo "[Debug] ✅ Artifact is now AVAILABLE"
+            break
+          elif [ "${ARTIFACT_STATE}" = "ERROR" ] || [ "${ARTIFACT_STATE}" = "DELETED" ]; then
+            echo "[Error] ❌ Artifact import failed with state: ${ARTIFACT_STATE}"
+            exit 1
+          fi
+
+          sleep $POLL_INTERVAL
+          ELAPSED=$((ELAPSED + POLL_INTERVAL))
+        done
+
+        if [ $ELAPSED -ge $MAX_WAIT_SECONDS ]; then
+          echo "[Error] ⏱️ Timeout waiting for artifact to become AVAILABLE after ${MAX_WAIT_SECONDS}s"
+          exit 1
+        fi
+
+    - name: Get latest version of Terms Collection
+      run: |
+        # Get the most recent, ACTIVE Term Collection
+        TERMS_COLLECTION_DATA=$(oci marketplace-publisher term-collection list-terms \
+          --all \
+          --compartment-id ${{ secrets.OCI_COMPARTMENT_ID }})
+        TERMS_COLLECTION_ID=$(echo "${TERMS_COLLECTION_DATA}" \
+          | jq -r '.data.items | map(select(.["lifecycle-state"] == "ACTIVE")) | sort_by(.["time-created"]) | reverse | .[0].id' 2>/dev/null \
+          || echo "ERROR")
+        TERMS_COLLECTION_NAME=$(echo "${TERMS_COLLECTION_DATA}" \
+          | jq -r '.data.items | map(select(.["lifecycle-state"] == "ACTIVE")) | sort_by(.["time-created"]) | reverse | .[0].name' 2>/dev/null \
+          || echo "ERROR")
+
+        if [ -z "${TERMS_COLLECTION_ID}" ] || [ "${TERMS_COLLECTION_ID}" = "ERROR" ] || [ "${TERMS_COLLECTION_ID}" = "null" ]; then
+          echo "[Error] Failed to get latest ACTIVE version of Terms Collection"
+          exit 1
+        fi
+
+        echo "TERMS_COLLECTION_ID=${TERMS_COLLECTION_ID}" >> $GITHUB_ENV
+        echo "TERMS_COLLECTION_NAME=${TERMS_COLLECTION_NAME}" >> $GITHUB_ENV
+        echo "[Debug] Terms Collection ID: ${TERMS_COLLECTION_ID}"
+        echo "[Debug] Terms Collection Name: ${TERMS_COLLECTION_NAME}"
+
+        # From the Terms Collection, get the most recent and ACTIVE version
+        TERM_VERSION_DATA=$(oci marketplace-publisher term-version-collection list-term-versions \
+          --all \
+          --term-id ${TERMS_COLLECTION_ID} \
+          --compartment-id ${{ secrets.OCI_COMPARTMENT_ID }})
+        TERM_VERSION_ID=$(echo "${TERM_VERSION_DATA}" \
+          | jq -r '.data.items | map(select(.["lifecycle-state"] == "ACTIVE")) | sort_by(.["time-created"]) | reverse | .[0].id' 2>/dev/null \
+          || echo "ERROR")
+        TERM_VERSION_NAME=$(echo "${TERM_VERSION_DATA}" \
+          | jq -r '.data.items | map(select(.["lifecycle-state"] == "ACTIVE")) | sort_by(.["time-created"]) | reverse | .[0]."display-name"' 2>/dev/null \
+          || echo "ERROR")
+
+        if [ -z "${TERM_VERSION_ID}" ] || [ "${TERM_VERSION_ID}" = "ERROR" ] || [ "${TERM_VERSION_ID}" = "null" ]; then
+          echo "[Error] Failed to get latest ACTIVE version of Term Version"
+          exit 1
+        fi
+
+        echo "TERM_VERSION_ID=${TERM_VERSION_ID}" >> $GITHUB_ENV
+        echo "TERM_VERSION_NAME=${TERM_VERSION_NAME}" >> $GITHUB_ENV
+        echo "[Debug] Term Version ID: ${TERM_VERSION_ID}"
+        echo "[Debug] Term Version Name: ${TERM_VERSION_NAME}"
+
+    - name: Get latest Revision of need Listing
+      run: |
+        # Get the most recent, ACTIVE, OCI_APPLICATION type Listing matching name pattern "AlmaLinux OS ${{ env.ALMA_VERSION }} (${{ env.ALMA_ARCH }})"
+        ARCH_STRING="${{ env.DISPLAY_ARCH }}"
+        [ "${{ env.ALMA_ARCH }}" = "aarch64" -a "${{ env.ALMA_MAJOR }}" = "10" ] \
+          && ARCH_STRING="${{ env.DISPLAY_ARCH }}/ARM64"
+        LISTING_NAME="AlmaLinux OS ${{ env.ALMA_MAJOR }} (${ARCH_STRING})"
+        LISTING_OCID=$(oci marketplace-publisher listing-collection list-listings \
+          --all \
+          --compartment-id ${{ secrets.OCI_COMPARTMENT_ID }} \
+          --query "data.items[? \"lifecycle-state\"=='ACTIVE' && \"listing-type\"=='OCI_APPLICATION' && contains(name, '${LISTING_NAME}')] | sort_by(@, &\"time-updated\") | [-1].id" \
+          --raw-output)
+        if [ -z "${LISTING_OCID}" ] || [ "${LISTING_OCID}" = "ERROR" ] || [ "${LISTING_OCID}" = "null" ]; then
+          echo "[Error] Failed to get latest ACTIVE, OCI_APPLICATION type Listing matching name pattern '${LISTING_NAME}'"
+          exit 1
+        fi
+
+        echo "LISTING_OCID=${LISTING_OCID}" >> $GITHUB_ENV
+        echo "LISTING_NAME=${LISTING_NAME}" >> $GITHUB_ENV
+        echo "[Debug] Listing OCID: ${LISTING_OCID}"
+        echo "[Debug] Listing Name: ${LISTING_NAME}"
+
+        # Get the most recent, ACTIVE, PUBLISHED Revision of the Listing
+        LISTING_REVISION_DATA=$(oci marketplace-publisher listing-revision-collection list-listing-revisions \
+          --all \
+          --listing-id ${LISTING_OCID} \
+          --compartment-id ${{ secrets.OCI_COMPARTMENT_ID }})
+        LISTING_REVISION_ID=$(echo "${LISTING_REVISION_DATA}" \
+          | jq -r '.data.items | map(select(.["lifecycle-state"] == "ACTIVE" and .status == "PUBLISHED")) | sort_by(.["time-created"]) | reverse | .[0].id' 2>/dev/null \
+          || echo "ERROR")
+        LISTING_REVISION_NAME=$(echo "${LISTING_REVISION_DATA}" \
+          | jq -r '.data.items | map(select(.["lifecycle-state"] == "ACTIVE" and .status == "PUBLISHED")) | sort_by(.["time-created"]) | reverse | .[0]."display-name"' 2>/dev/null \
+          || echo "ERROR")
+
+        if [ -z "${LISTING_REVISION_ID}" ] || [ "${LISTING_REVISION_ID}" = "ERROR" ] || [ "${LISTING_REVISION_ID}" = "null" ]; then
+          echo "[Error] Failed to get latest ACTIVE, PUBLISHED Revision of the Listing"
+          exit 1
+        fi
+
+        echo "LISTING_REVISION_ID=${LISTING_REVISION_ID}" >> $GITHUB_ENV
+        echo "LISTING_REVISION_NAME=${LISTING_REVISION_NAME}" >> $GITHUB_ENV
+        echo "[Debug] Listing Revision ID: ${LISTING_REVISION_ID}"
+        echo "[Debug] Listing Revision Name: ${LISTING_REVISION_NAME}"
+
+    - name: Clone Listing Revision (create a new Draft)
+      if: inputs.release_to_marketplace
+      run: |
+        # Clone the ACTIVE listing revision to create a new DRAFT revision
+        # that we can modify (add packages to) without affecting the live listing
+        echo "[Debug] Cloning listing revision: ${{ env.LISTING_REVISION_ID }}"
+        echo "[Debug] Listing: ${{ env.LISTING_NAME }}"
+
+        set +e
+        CLONE_OUTPUT=$(oci marketplace-publisher listing-revision clone \
+          --listing-revision-id ${{ env.LISTING_REVISION_ID }} \
+          2>&1)
+        CLONE_EXIT=$?
+        set -e
+
+        echo "[Debug] Clone exit code: ${CLONE_EXIT}"
+        echo "[Debug] Clone output:"
+        echo "${CLONE_OUTPUT}"
+
+        if [ ${CLONE_EXIT} -ne 0 ]; then
+          echo "[Error] Failed to clone listing revision"
+          exit 1
+        fi
+
+        # Clone returns a work request ID - extract it
+        WORK_REQUEST_ID=$(echo "${CLONE_OUTPUT}" | jq -r '."opc-work-request-id" // empty')
+
+        if [ -z "${WORK_REQUEST_ID}" ]; then
+          echo "[Error] Failed to extract work request ID from clone output"
+          exit 1
+        fi
+
+        echo "[Debug] Work Request ID: ${WORK_REQUEST_ID}"
+
+        # Poll the work request until it completes
+        echo "[Debug] Waiting for clone work request to complete..."
+        MAX_WAIT_SECONDS=300  # 5 minutes
+        POLL_INTERVAL=10      # Check every 10 seconds
+        ELAPSED=0
+
+        while [ $ELAPSED -lt $MAX_WAIT_SECONDS ]; do
+          set +e
+          WR_JSON=$(oci marketplace-publisher work-request get \
+            --work-request-id "${WORK_REQUEST_ID}" \
+            2>&1)
+          WR_EXIT=$?
+          set -e
+
+          if [ ${WR_EXIT} -ne 0 ]; then
+            echo "[Warning] Failed to get work request status (elapsed: ${ELAPSED}s): ${WR_JSON}"
+            sleep $POLL_INTERVAL
+            ELAPSED=$((ELAPSED + POLL_INTERVAL))
+            continue
+          fi
+
+          WR_STATUS=$(echo "${WR_JSON}" | jq -r '.data.status' 2>/dev/null || echo "UNKNOWN")
+          WR_PERCENT=$(echo "${WR_JSON}" | jq -r '.data."percent-complete" // "?"' 2>/dev/null)
+          echo "[Debug] Work Request status: ${WR_STATUS} (${WR_PERCENT}%) (elapsed: ${ELAPSED}s)"
+
+          if [ "${WR_STATUS}" = "SUCCEEDED" ]; then
+            echo "[Debug] ✅ Clone work request succeeded"
+            break
+          elif [ "${WR_STATUS}" = "FAILED" ] || [ "${WR_STATUS}" = "CANCELED" ]; then
+            echo "[Error] ❌ Clone work request ${WR_STATUS}"
+            echo "${WR_JSON}" | jq '.data' 2>/dev/null || true
+            exit 1
+          fi
+
+          sleep $POLL_INTERVAL
+          ELAPSED=$((ELAPSED + POLL_INTERVAL))
+        done
+
+        if [ $ELAPSED -ge $MAX_WAIT_SECONDS ]; then
+          echo "[Error] ⏱️ Timeout waiting for clone work request after ${MAX_WAIT_SECONDS}s"
+          exit 1
+        fi
+
+        # Find the newly created draft revision (status=NEW, lifecycle-state=ACTIVE)
+        echo "[Debug] Looking for the new draft revision..."
+        REVISIONS_JSON=$(oci marketplace-publisher listing-revision-collection list-listing-revisions \
+          --all \
+          --listing-id ${{ env.LISTING_OCID }} \
+          --compartment-id ${{ secrets.OCI_COMPARTMENT_ID }})
+
+        DRAFT_REVISION_ID=$(echo "${REVISIONS_JSON}" \
+          | jq -r '.data.items | map(select(.["lifecycle-state"] == "ACTIVE" and .status == "NEW")) | sort_by(.["time-created"]) | reverse | .[0].id' 2>/dev/null \
+          || echo "ERROR")
+
+        if [ -z "${DRAFT_REVISION_ID}" ] || [ "${DRAFT_REVISION_ID}" = "null" ] || [ "${DRAFT_REVISION_ID}" = "ERROR" ]; then
+          echo "[Error] Failed to find the new draft revision"
+          echo "[Debug] Available revisions:"
+          echo "${REVISIONS_JSON}" | jq '.data.items[] | {id, status, "lifecycle-state", "time-created"}' 2>/dev/null || true
+          exit 1
+        fi
+
+        echo "DRAFT_REVISION_ID=${DRAFT_REVISION_ID}" >> $GITHUB_ENV
+        echo "[Debug] Draft Revision ID: ${DRAFT_REVISION_ID}"
+
+    - name: Update Draft Revision Details
+      if: inputs.release_to_marketplace
+      run: |
+        # Update the cloned revision's version details, headline, and tagline
+        # to reflect the new version being published
+        PACKAGE_VERSION="${{ env.ALMA_VERSION }}.${{ env.ALMA_DATE }}"
+
+        # Extract release date from ALMA_DATE (first 8 digits: YYYYMMDD → "EEE MMM dd yyyy")
+        DATE_DIGITS=$(echo "${{ env.ALMA_DATE }}" | grep -oP '^\d{8}')
+        RELEASE_DATE=$(date -d "${DATE_DIGITS:0:4}-${DATE_DIGITS:4:2}-${DATE_DIGITS:6:2}" '+%a %b %d %Y')
+
+        RELEASE_NOTES_URL="https://wiki.almalinux.org/release-notes/${{ env.ALMA_VERSION }}.html"
+
+        echo "[Debug] Updating draft revision details:"
+        echo "  Package Version: ${PACKAGE_VERSION}"
+        echo "  Release Date: ${RELEASE_DATE}"
+        echo "  Headline: AlmaLinux OS ${{ env.ALMA_VERSION }}"
+        echo "  Tagline: AlmaLinux OS ${{ env.ALMA_VERSION }}"
+        echo "  Code Name: ${{ env.ALMA_CODE_NAME }}"
+        echo "  Release Notes: ${RELEASE_NOTES_URL}"
+
+        # Build version-details JSON
+        VERSION_DETAILS=$(jq -n \
+          --arg desc "<ul><li><strong>${PACKAGE_VERSION}</strong> - <a href=\"${RELEASE_NOTES_URL}\" rel=\"nofollow\">AlmaLinux OS ${{ env.ALMA_VERSION }} (${{ env.ALMA_CODE_NAME }})</a></li></ul>" \
+          --arg number "${PACKAGE_VERSION}" \
+          --arg date "${RELEASE_DATE}" \
+          '{description: $desc, number: $number, releaseDate: $date}')
+
+        echo "[Debug] Version details JSON:"
+        echo "${VERSION_DETAILS}"
+
+        set +e
+        UPDATE_OUTPUT=$(oci marketplace-publisher listing-revision \
+          update-listing-revision-update-oci-listing-revision-details \
+          --listing-revision-id ${{ env.DRAFT_REVISION_ID }} \
+          --version-details "${VERSION_DETAILS}" \
+          --headline "AlmaLinux OS ${{ env.ALMA_VERSION }}" \
+          --tagline "AlmaLinux OS ${{ env.ALMA_VERSION }}" \
+          --force \
+          2>&1)
+        UPDATE_EXIT=$?
+        set -e
+
+        echo "[Debug] Update exit code: ${UPDATE_EXIT}"
+        echo "[Debug] Update output:"
+        echo "${UPDATE_OUTPUT}"
+
+        if [ ${UPDATE_EXIT} -ne 0 ]; then
+          echo "[Error] Failed to update draft revision details"
+          exit 1
+        fi
+
+        echo "[Debug] ✅ Draft revision details updated successfully"
+        echo "PACKAGE_VERSION=${PACKAGE_VERSION}" >> $GITHUB_ENV
+
+    - name: Unset Current Default Package(s)
+      if: inputs.release_to_marketplace
+      run: |
+        # Find the current default package(s) in the draft revision and unset it,
+        # so the new package we create can become the default
+        echo "[Debug] Looking for current default package in draft revision: ${{ env.DRAFT_REVISION_ID }}"
+
+        # List all packages in the draft revision
+        set +e
+        PACKAGES_JSON=$(oci marketplace-publisher listing-revision-package-collection \
+          list-listing-revision-packages \
+          --listing-revision-id ${{ env.DRAFT_REVISION_ID }} \
+          --compartment-id ${{ secrets.OCI_COMPARTMENT_ID }} \
+          --all \
+          2>&1)
+        LIST_EXIT=$?
+        set -e
+
+        echo "[Debug] List packages exit code: ${LIST_EXIT}"
+
+        if [ ${LIST_EXIT} -ne 0 ]; then
+          echo "[Error] Failed to list packages in draft revision"
+          echo "${PACKAGES_JSON}"
+          exit 1
+        fi
+
+        # Extract all package IDs from the list response
+        ALL_PKG_IDS=$(echo "${PACKAGES_JSON}" | jq -r '.data.items[].id // empty')
+
+        if [ -z "${ALL_PKG_IDS}" ]; then
+          echo "[Debug] No packages found in draft revision, skipping"
+        else
+          PKG_COUNT=$(echo "${ALL_PKG_IDS}" | wc -l | tr -d ' ')
+          echo "[Debug] Found ${PKG_COUNT} package(s), checking each for is-default..."
+
+          # Get full details of each package to check is-default
+          # (the list endpoint does not return is-default)
+          while IFS= read -r PKG_ID; do
+            echo "[Debug] Getting details for package: ${PKG_ID}"
+
+            set +e
+            PKG_DETAIL=$(oci marketplace-publisher listing-revision-package get \
+              --listing-revision-package-id "${PKG_ID}" \
+              2>&1)
+            GET_EXIT=$?
+            set -e
+
+            if [ ${GET_EXIT} -ne 0 ]; then
+              echo "[Warning] Failed to get package details for ${PKG_ID}: ${PKG_DETAIL}"
+              continue
+            fi
+
+            IS_DEFAULT=$(echo "${PKG_DETAIL}" | jq -r '.data."is-default" // false')
+            PKG_NAME=$(echo "${PKG_DETAIL}" | jq -r '.data."display-name" // "unknown"')
+            echo "[Debug] Package '${PKG_NAME}' (${PKG_ID}) is-default: ${IS_DEFAULT}"
+
+            if [ "${IS_DEFAULT}" = "true" ]; then
+              echo "[Debug] Unsetting default on package: ${PKG_NAME} (${PKG_ID})"
+
+              set +e
+              UNSET_OUTPUT=$(oci marketplace-publisher listing-revision-package update \
+                --listing-revision-package-id "${PKG_ID}" \
+                --is-default false \
+                --are-security-upgrades-provided false \
+                --force \
+                2>&1)
+              UNSET_EXIT=$?
+              set -e
+
+              echo "[Debug] Unset default exit code: ${UNSET_EXIT}"
+              echo "[Debug] Unset default output:"
+              echo "${UNSET_OUTPUT}"
+
+              if [ ${UNSET_EXIT} -ne 0 ]; then
+                echo "[Error] Failed to unset default on package '${PKG_NAME}'"
+                exit 1
+              fi
+
+              echo "[Debug] ✅ Unset default on package '${PKG_NAME}'"
+            fi
+          done <<< "${ALL_PKG_IDS}"
+        fi
+
+    - name: Create Package in Draft Revision
+      if: inputs.release_to_marketplace
+      run: |
+        # Create a new Package under the draft listing revision
+        # A Package ties together: Artifact (image) + Terms + Version info
+        echo "[Debug] Creating package in draft revision: ${{ env.DRAFT_REVISION_ID }}"
+        echo "[Debug] Artifact ID: ${{ env.ARTIFACT_ID }}"
+        echo "[Debug] Terms Collection ID: ${{ env.TERMS_COLLECTION_ID }}"
+
+        PACKAGE_VERSION="${{ env.PACKAGE_VERSION }}"
+        echo "[Debug] Package version: ${PACKAGE_VERSION}"
+
+        set +e
+        PACKAGE_OUTPUT=$(oci marketplace-publisher listing-revision-package create \
+          --listing-revision-id ${{ env.DRAFT_REVISION_ID }} \
+          --artifact-id ${{ env.ARTIFACT_ID }} \
+          --term-id ${{ env.TERMS_COLLECTION_ID }} \
+          --package-version "${PACKAGE_VERSION}" \
+          --description "AlmaLinux OS ${{ env.ALMA_VERSION }} (${{ env.ALMA_CODE_NAME }})" \
+          --display-name "${PACKAGE_VERSION}" \
+          --are-security-upgrades-provided true \
+          --is-default true \
+          2>&1)
+        PACKAGE_EXIT=$?
+        set -e
+
+        echo "[Debug] Package creation exit code: ${PACKAGE_EXIT}"
+        echo "[Debug] Package output:"
+        echo "${PACKAGE_OUTPUT}"
+
+        if [ ${PACKAGE_EXIT} -ne 0 ]; then
+          echo "[Error] Failed to create package"
+          exit 1
+        fi
+
+        # Extract the Package ID
+        PACKAGE_ID=$(echo "${PACKAGE_OUTPUT}" | jq -r '.data.id // empty')
+
+        if [ -z "${PACKAGE_ID}" ]; then
+          echo "[Error] Failed to extract package ID from output"
+          exit 1
+        fi
+
+        echo "PACKAGE_ID=${PACKAGE_ID}" >> $GITHUB_ENV
+        echo "[Debug] Package ID: ${PACKAGE_ID}"
+
+    - name: Submit Draft Revision for Review
+      if: inputs.release_to_marketplace
+      run: |
+        # Submit the draft listing revision for Oracle review/approval
+        # After review, it will be published to the Marketplace
+        echo "[Debug] Submitting draft revision for review: ${{ env.DRAFT_REVISION_ID }}"
+
+        set +e
+        SUBMIT_OUTPUT=$(oci marketplace-publisher listing-revision \
+          submit-listing-revision-for-review \
+          --listing-revision-id ${{ env.DRAFT_REVISION_ID }} \
+          2>&1)
+        SUBMIT_EXIT=$?
+        set -e
+
+        echo "[Debug] Submit exit code: ${SUBMIT_EXIT}"
+        echo "[Debug] Submit output:"
+        echo "${SUBMIT_OUTPUT}"
+
+        if [ ${SUBMIT_EXIT} -ne 0 ]; then
+          echo "[Warning] Failed to submit draft revision for review (exit code: ${SUBMIT_EXIT})"
+          echo "[Warning] You may need to submit it manually from the Oracle Cloud Console"
+          echo "[Warning] Draft Revision: ${{ env.OCI_PUBLISHER_BASE_URL }}/listing/${{ env.LISTING_OCID }}/${{ env.DRAFT_REVISION_ID }}?region=${{ vars.OCI_CLI_REGION }}"
+        else
+          echo "[Debug] ✅ Draft revision submitted for review successfully"
+        fi
+
+    - name: Print job summary
+      run: |
+        {
+          echo "## Oracle Cloud Marketplace Image Publish"
+          echo "- **Image Source Type**: ${{ inputs.image_source_type }}"
+          echo ""
+          echo "### Image Details"
+          echo '- **Name**: ${{ env.IMAGE_DISPLAY_NAME }}'
+          echo "- **Filename**: \`${{ env.IMAGE_FILENAME }}\`"
+          echo "- **Release Version**: \`${{ env.ALMA_VERSION }}.${{ env.ALMA_RELEASE || env.ALMA_DATE }}\`"
+          echo ""
+          echo "### OCI Resources"
+          if [[ -n "${{ env.OBJECT_NAME }}" ]]; then
+            echo "- **Object Storage Path**: \`${{ env.OBJECT_NAME }}\`"
+          fi
+          echo "- **Compute Custom Image**: [${{ env.CUSTOM_IMAGE_NAME }}](${{ env.OCI_COMPUTE_BASE_URL }}/images/${{ env.IMAGE_OCID }}?region=${{ vars.OCI_CLI_REGION }})"
+          echo "- **Compute Image OCID**: \`${{ env.IMAGE_OCID }}\`"
+          echo "- **Marketplace Terms**: [${{ env.TERMS_COLLECTION_NAME }}](${{ env.OCI_PUBLISHER_BASE_URL }}/terms/${{ env.TERMS_COLLECTION_ID }}?region=${{ vars.OCI_CLI_REGION }}) / [${{ env.TERM_VERSION_NAME }}](${{ env.OCI_PUBLISHER_BASE_URL }}/terms/${{ env.TERMS_COLLECTION_ID }}/${{ env.TERM_VERSION_ID }}?region=${{ vars.OCI_CLI_REGION }})"
+          echo "- **Marketplace Listing**: [${{ env.LISTING_NAME }}](${{ env.OCI_PUBLISHER_BASE_URL }}/listing/${{ env.LISTING_OCID }}/listingRevisions?region=${{ vars.OCI_CLI_REGION }})"
+          echo "- **Source Listing Revision**: [${{ env.LISTING_REVISION_NAME }}](${{ env.OCI_PUBLISHER_BASE_URL }}/listing/${{ env.LISTING_OCID }}/${{ env.LISTING_REVISION_ID }}?region=${{ vars.OCI_CLI_REGION }})"
+          if [[ "${{ inputs.release_to_marketplace }}" == "true" ]] || [[ "${{ inputs.image_source_type }}" == "Artifact OCID" ]]; then
+            echo "- **Marketplace Artifact**: [${{ env.CUSTOM_IMAGE_NAME }}](${{ env.OCI_PUBLISHER_BASE_URL }}/artifact/${{ env.ARTIFACT_ID }}?region=${{ vars.OCI_CLI_REGION }})"
+          fi
+          if [[ "${{ inputs.release_to_marketplace }}" == "true" ]]; then
+            echo "- **Draft Listing Revision**: [${{ env.LISTING_REVISION_NAME }}](${{ env.OCI_PUBLISHER_BASE_URL }}/listing/${{ env.LISTING_OCID }}/${{ env.DRAFT_REVISION_ID }}?region=${{ vars.OCI_CLI_REGION }})"
+            echo "- **Revision Package**: \`${{ env.PACKAGE_VERSION }}\` (\`${{ env.PACKAGE_ID }}\`)"
+          fi
+          echo ""
+          echo "### Status"
+          if [[ "${{ inputs.release_to_marketplace }}" == "true" ]]; then
+            echo "✅ Draft revision created, package added, and submitted for review."
+            echo ""
+            echo "Check it on the [Oracle Cloud Console](${{ env.OCI_PUBLISHER_BASE_URL }}/listing/${{ env.LISTING_OCID }}/${{ env.DRAFT_REVISION_ID }}?region=${{ vars.OCI_CLI_REGION }})"
+            echo "Publish it from there manually once it is approved"
+          else
+            if [[ "${{ inputs.image_source_type }}" == "QCOW2 file URL" ]]; then
+              echo "❌ **Marketplace release was not requested** (only Compute Image import and Object Storage upload performed)"
+            elif [[ "${{ inputs.image_source_type }}" == "Compute Image OCID" ]]; then
+              echo "❌ **Marketplace release was not requested** (only image data resolution performed)"
+            else
+              echo "❌ **Marketplace release was not requested** (only Artifact data resolution performed)"
+            fi
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Send notification to Mattermost
+      uses: mattermost/action-mattermost-notify@master
+      if: inputs.notify_mattermost
+      with:
+        MATTERMOST_WEBHOOK_URL: ${{ secrets.MATTERMOST_WEBHOOK_URL }}
+        MATTERMOST_CHANNEL: ${{ vars.MATTERMOST_CHANNEL }}
+        MATTERMOST_USERNAME: ${{ github.triggering_actor }}
+        TEXT: |
+          :almalinux: **${{ env.IMAGE_DISPLAY_NAME }}**, publish to Oracle Cloud Marketplace, by the GitHub [Action](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+          **Object Storage Path**: `${{ env.OBJECT_NAME }}`
+          **Compute Custom Image**: [${{ env.CUSTOM_IMAGE_NAME }}](${{ env.OCI_COMPUTE_BASE_URL }}/images/${{ env.IMAGE_OCID }}?region=${{ vars.OCI_CLI_REGION }})
+          **Compute Image OCID**: `${{ env.IMAGE_OCID }}`
+          **Marketplace Listing**: [${{ env.LISTING_NAME }}](${{ env.OCI_PUBLISHER_BASE_URL }}/listing/${{ env.LISTING_OCID }}/listingRevisions?region=${{ vars.OCI_CLI_REGION }})
+          ${{ ( inputs.release_to_marketplace || inputs.image_source_type == 'Artifact OCID' ) && format('**Marketplace Artifact**: [{0}]({1}/artifact/{2}?region={3})', env.CUSTOM_IMAGE_NAME, env.OCI_PUBLISHER_BASE_URL, env.ARTIFACT_ID, vars.OCI_CLI_REGION) || '' }}
+          ${{ inputs.release_to_marketplace && format('**Draft Revision**: [{0}]({1}/listing/{2}/{3}?region={4})', env.LISTING_REVISION_NAME, env.OCI_PUBLISHER_BASE_URL, env.LISTING_OCID, env.DRAFT_REVISION_ID, vars.OCI_CLI_REGION) || '' }}
+          ${{ inputs.release_to_marketplace && format('**Revision Package**: `{0}` (`{1}`)', env.PACKAGE_VERSION, env.PACKAGE_ID) || '' }}
+
+          ${{ inputs.release_to_marketplace && '✅ Draft revision created, package added, and submitted for review.' || '' }}
+          ${{ inputs.release_to_marketplace && format('Check it on the [Oracle Cloud Console]({0}/listing/{1}/{2}?region={3})', env.OCI_PUBLISHER_BASE_URL, env.LISTING_OCID, env.DRAFT_REVISION_ID, vars.OCI_CLI_REGION) || '' }}
+          ${{ inputs.release_to_marketplace && 'Publish it from there manually once it is approved' || '' }}
+
+          ${{ ( ! inputs.release_to_marketplace && inputs.image_source_type == 'QCOW2 file URL' ) && '❌ **Marketplace release was not requested** (only Compute Image import and Object Storage upload performed)' || '' }}
+          ${{ ( ! inputs.release_to_marketplace && inputs.image_source_type == 'Compute Image OCID' ) && '❌ **Marketplace release was not requested** (only image data resolution performed)' || '' }}
+          ${{ ( ! inputs.release_to_marketplace && inputs.image_source_type == 'Artifact OCID' ) && '❌ **Marketplace release was not requested** (only Artifact data resolution performed)' || '' }}

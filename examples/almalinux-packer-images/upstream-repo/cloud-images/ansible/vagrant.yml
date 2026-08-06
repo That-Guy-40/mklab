@@ -1,0 +1,24 @@
+# An Ansible playbook that configures a Vagrant box
+---
+- name: "AlmaLinux Vagrant Box"
+  hosts: default
+  become: true
+  collections:
+    - almalinux.ci
+
+  roles:
+    - role: unified_boot
+      when: is_unified_boot is defined
+    - vagrant_guest
+    - role: ezamriy.vbox_guest
+      when: packer_provider == 'virtualbox-iso'
+    - role: vmware_guest
+      when: packer_provider == 'vmware-iso'
+    - role: parallels_guest
+      when: packer_provider == 'parallels-iso'
+    - role: qemu_guest
+      when: packer_provider == 'qemu'
+    - role: hyperv_guest
+      when: packer_provider == 'hyperv-iso'
+    - role: cleanup_vm
+      cleanup_ssh_host_keys: "{{ packer_provider != 'hyperv-iso' }}"

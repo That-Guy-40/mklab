@@ -1,0 +1,24 @@
+# Packer
+*.auto.pkrvars.hcl
+*.auto.pkrvars.json
+*.pkrvars.hcl
+*.pkrvars.json
+packer_cache
+output-*
+*.box
+
+# Ansible
+ansible/collections
+ansible/roles/ezamriy*
+
+# Tools and Tests
+.venv
+venv
+**/.pytest_cache
+**/__pycache__
+**/aws_amis*.csv
+**/AWS_AMIS*.md
+
+# Editors
+.idea
+.vscode
