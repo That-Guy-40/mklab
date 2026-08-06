@@ -76,11 +76,21 @@ ls "$HOME/almalinux-cloud-images-build/cloud-images"/*.pkr.hcl
 
 ## Running an actual build — author-run, and honestly marked
 
-**This lab does not claim to have built an image.** A `gencloud` build downloads a ~1 GB
-netinstall ISO, wants `/dev/kvm`, runs a full Anaconda install plus the Ansible roles, and
-takes tens of minutes. That is a *you run this* step, exactly as
-[`CLAUDE.md`](../../CLAUDE.md)'s hand-walk convention requires for anything the agent
-sandbox cannot execute.
+✅ **An image WAS built and booted, 2026-08-06** —
+`AlmaLinux-9-GenericCloud-9.8-20260806.x86_64.qcow2`, 567 MB, in **5 min 55 s**, from the
+vendored archive in the hand-walk container, then booted to `localhost login:`. Ansible
+finished `ok=36 changed=23 failed=0`. Full command, timings and the boot proof are in
+[`MANUAL_TESTING.md`](MANUAL_TESTING.md).
+
+⚠️ **It needs two host-specific knobs, and both are easy to misread as a broken build:**
+`-var qemu_binary=/usr/libexec/qemu-kvm` (upstream's default is `null` → packer looks for
+`qemu-system-x86_64`, a name **RHEL-family does not ship** — upstream's own default fails on
+upstream's own distro), and `-cpu host` when booting (AlmaLinux 9 needs **x86-64-v2**;
+QEMU's default `qemu64` panics init with `Fatal glibc error: CPU does not support
+x86-64-v2`). Both are documented in `MANUAL_TESTING.md`.
+
+There is still no `build-alma-image.sh` wrapper: the build is two commands, and a wrapper
+would hide exactly those two knobs, which are the interesting part.
 
 What **is** verified here, on every CI run and by
 [`tests/test-offline-archive.sh`](tests/test-offline-archive.sh):

@@ -448,9 +448,19 @@ through the existing phases.
       distinguishing flaky from real, and the honest label is **flaky**, recorded in the
       README beside the two genuine bitrots rather than promoted to one.
 
-**Item 7 is complete.** Both builders vendored in full, both runnable offline with verified
-archives, both hand-walks built, both configs `packer validate`-clean, and one of the two
-built into a real bootable image.
+- [x] **AlmaLinux image built, for symmetry** — **DONE 2026-08-06**:
+      `AlmaLinux-9-GenericCloud-9.8-20260806.x86_64.qcow2`, 567 MB, **5 min 55 s**, from the
+      vendored archive in the hand-walk container (Ansible `ok=36 changed=23 failed=0`),
+      then **booted to `localhost login:`**. Two host-specific findings, both of which look
+      like a broken build: upstream's `qemu_binary` default is `null` so packer seeks
+      `qemu-system-x86_64` — **a name RHEL-family does not ship**, so *upstream's own default
+      fails on upstream's own distro* (their CI runs Debian-family runners); and booting
+      needs `-cpu host` because AlmaLinux 9 requires **x86-64-v2** while QEMU's default
+      `qemu64` panics init with `Fatal glibc error: CPU does not support x86-64-v2`.
+
+**Item 7 is COMPLETE.** Both builders vendored in full, both runnable offline against
+verified archives, both hand-walks built, both configs `packer validate`-clean, and **both
+built into real, booted images**.
 
 Per-lab, both halves: a `README.md` + `MANUAL_TESTING.md`, a 00-INDEX entry, and
 `tools/link_check.py` green (0 broken, no orphans).

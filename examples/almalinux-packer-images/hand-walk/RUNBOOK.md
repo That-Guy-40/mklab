@@ -19,7 +19,8 @@ build end to end and a wrapper would imply otherwise.
 | build the container image below | ✅ **verified 2026-08-06** (`podman build`, clean) |
 | `packer init` (downloads plugins) | ✅ **verified** — ansible, qemu, hyperv plugins install |
 | `packer validate -only='qemu.almalinux-9-gencloud-x86_64'` | ✅ **verified — `The configuration is valid.`** |
-| `packer build` (downloads a ~1 GB ISO, runs Anaconda, needs `/dev/kvm`) | **you** — tens of minutes |
+| `packer build` (~1 GB ISO, Anaconda, needs `/dev/kvm`) | ✅ **verified 2026-08-06 — 5 min 55 s → a 567 MB qcow2** |
+| booting the result | ✅ **verified — `localhost login:`** |
 
 The agent sandbox cannot run the last three: `/dev/kvm` and a multi-GB fetch-and-execute are
 author-only. They are marked rather than claimed, per
@@ -107,8 +108,25 @@ publishers). `validate` parses everything without booting anything.
 ## 6. Build one target
 
 ```bash
-packer build -only='qemu.almalinux-9-gencloud-x86_64' .
+packer build -only='qemu.almalinux-9-gencloud-x86_64' -var qemu_binary=/usr/libexec/qemu-kvm .
 ```
+
+### ⚠️ `-var qemu_binary=...` is REQUIRED here, and the reason is worth a minute
+
+Upstream's `qemu_binary` variable defaults to `null`, so packer falls back to
+`qemu-system-x86_64` — **a binary name RHEL, AlmaLinux and Rocky do not ship.** They ship
+`/usr/libexec/qemu-kvm`. Without the override the build dies in under a millisecond:
+
+```
+Build errored after 819 microseconds: Failed creating Qemu driver:
+  exec: "qemu-system-x86_64": executable file not found in $PATH
+```
+
+**Upstream's own default does not work on upstream's own distro** — their CI runs on
+Debian-family runners, where that name exists. The variable exists precisely for this, so
+passing it is the supported fix rather than a workaround. It is also a neat illustration of
+why a hand-walk on *the author's distro* finds things a build on a convenient distro does
+not.
 
 Watch it: boot the netinstall ISO → type the `inst.ks=http://…` boot command → Anaconda
 installs unattended from `http/*.ks` → Packer SSHes in → the `ansible/` roles run → a qcow2
@@ -125,9 +143,26 @@ The output qcow2 can be booted straight through this repo's phase 2:
 
 ```bash
 phase2-qemu-vm/lab-vm.sh create --name almapacker --backend disk-image \
-    --image <path-to>/almalinux-9-gencloud-x86_64.qcow2 --firmware bios
+    --image <path-to>/AlmaLinux-9-GenericCloud-9.8-*.x86_64.qcow2 --firmware uefi
 phase2-qemu-vm/lab-vm.sh start almapacker
 ```
+
+The image is **UEFI** (packer leaves an `efivars.fd` beside it), so `--firmware uefi`.
+
+### ⚠️ And booting needs a v2-capable CPU
+
+AlmaLinux 9 targets the **x86-64-v2** microarchitecture level; QEMU's default `qemu64` CPU
+does not advertise it. The kernel boots normally and then init dies instantly:
+
+```
+Run /init as init process
+Fatal glibc error: CPU does not support x86-64-v2
+Kernel panic - not syncing: Attempted to kill init! exitcode=0x00007f00
+```
+
+`0x7f00` is exit status **127** — glibc refusing before anything ran. Pass `-cpu host`
+(or `-cpu Nehalem` / `x86-64-v2`). This is a *harness* mistake and not an image defect, but
+it reads exactly like a failed build, which is why it is written down here.
 
 ## Where this differs from the sibling labs
 
