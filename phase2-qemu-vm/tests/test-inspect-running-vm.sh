@@ -49,23 +49,37 @@ trap _on_exit EXIT
 export LAB_STATE_DIR="$tmp/state" LAB_CACHE_DIR="$tmp/cache"
 
 VM=lockedvm
-# `--no-cloud-init` because this fixture needs a manifest and a disk, NOT a seed — and
-# building one needs genisoimage/xorriso/mkisofs, which a bare CI runner does not have. The
-# first version omitted it and passed here while failing in CI with "no ISO maker": my host
-# happened to have xorriso, so the dependency was invisible locally. Ask for the least the
-# test actually needs, or the environment becomes an unstated assumption.
-if ! "$LAB_VM" create --name "$VM" --backend kernel+initrd --kernel /dev/null --initrd /dev/null \
-        --no-cloud-init >"$tmp/create.log" 2>&1; then
-    cat "$tmp/create.log" >&2
-    fail "could not create the fixture VM — see the tool's output above"
-fi
-
-# A disk the manifest points at, so the virtual-size branch is actually entered.
 d="$LAB_STATE_DIR/vms/$VM"
+
+# ── the fixture is BUILT BY HAND, and that is deliberate ───────────────────
+# `lab-vm.sh create` cannot run on a bare CI runner: it wants an ISO maker for the seed, and
+# firmware (OVMF) it will not find, and qemu-system-x86_64 which is not installed. Two
+# rounds of CI said so, each naming a different missing dependency. A regression guard that
+# always SKIPs is not a guard — and `cmd_inspect` needs none of those things. It needs a
+# readable manifest (that is all `vm_exists` checks), a disk to stat, and a pid to call
+# running. So the fixture is exactly that and nothing more, and the test runs everywhere.
+#
+# The risk of hand-writing a manifest is drift from the real schema. It is bounded here:
+# assertion 1 fails if inspect cannot parse this, and assertion 2 fails by name if the
+# `virtual_size_bytes` key ever moves — so a schema change breaks this loudly rather than
+# quietly passing.
+mkdir -p "$d"
+cat > "$d/manifest.toml" <<MANIFEST
+name        = "$VM"
+backend     = "kernel+initrd"
+arch        = "x86_64"
+memory      = "512M"
+cpus        = 1
+microvm     = false
+accel       = "tcg"
+ssh_port    = 2222
+disk        = "$d/disk.qcow2"
+created_at  = "2026-08-06T00:00:00Z"
+version     = "test"
+MANIFEST
 printf 'not-a-real-qcow2' > "$d/disk.qcow2"
-printf 'disk = "%s/disk.qcow2"\n' "$d" >> "$d/manifest.toml"
-# Make vm_running true the way the sibling test does — the status field is not what is under
-# test here, the qemu-img failure is.
+# vm_running reads this pid and checks /proc/<pid>; our own PID makes it true without a VM.
+# The status field is not what is under test — the qemu-img failure is.
 echo $$ > "$d/qemu.pid"
 
 # ── the stub: qemu-img exists and FAILS, exactly like a locked image ────────
