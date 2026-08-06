@@ -3081,13 +3081,28 @@ cmd_inspect() {
     local f_disk_path; f_disk_path="$(vm_disk "$name")"
     local f_disk_exists f_disk_size
     IFS=$'\t' read -r f_disk_exists f_disk_size <<<"$(_file_stats "$f_disk_path")"
-    # Virtual size is meaningful only if qemu-img is around AND the file
-    # is a qcow2; report null otherwise.
+    # Virtual size is meaningful only if qemu-img is around AND can actually open the file;
+    # report null otherwise.
+    #
+    # `|| true` IS THE FIX, and its absence broke `inspect` for every RUNNING VM with a
+    # qcow2 disk -- both the JSON and the human form, with rc=1 and NOT ONE BYTE on stdout
+    # or stderr. Two house gotchas stacked in one statement:
+    #
+    #   1. a running QEMU holds a write lock on its own disk, so `qemu-img info` exits 1
+    #      with "Failed to get shared \"write\" lock" -- this is the NORMAL state of a
+    #      started VM, not an error;
+    #   2. under `set -euo pipefail` a bare assignment from a pipeline inherits that
+    #      non-zero status and kills the script SILENTLY, mid-function, before any output.
+    #
+    # The guard above anticipated qemu-img being ABSENT and not qemu-img FAILING, which is
+    # why `have qemu-img` did not save it. A locked image is an honest UNKNOWN, and `null`
+    # is how this schema already spells that -- so failing softly is also the correct
+    # answer, not merely a safer one.
     local f_disk_vsize="null"
     if [[ "$f_disk_exists" == "true" ]] && have qemu-img; then
         local vsz
         vsz="$(qemu-img info --output=json "$f_disk_path" 2>/dev/null \
-             | jq -r '."virtual-size" // empty' 2>/dev/null)"
+             | jq -r '."virtual-size" // empty' 2>/dev/null || true)"
         [[ -n "$vsz" ]] && f_disk_vsize="$vsz"
     fi
 
