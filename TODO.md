@@ -412,9 +412,29 @@ through the existing phases.
       **author-run and marked as such** (`/dev/kvm`, a ~1 GB ISO, tens of minutes);
       what is CI-gated is the archive, the offline staging and the tamper refusal.
 
-**Still open on item 7:** the **Kali hand-walk `Containerfile`** (the AlmaLinux one
-landed first because its build was always going to be author-run, so the sandbox *is*
-the deliverable there), and an actual verified `packer build` on either side.
+- [x] **Kali hand-walk `Containerfile`** — **done 2026-08-06**, and it surfaced a live
+      doc defect: the HashiCorp apt line this lab's own README gives,
+      `$(lsb_release -cs)`, expands to `kali-rolling` on Kali and **404s** (HashiCorp
+      publishes no such suite). Pinned to `bookworm`, with the 404 recorded next to it.
+- [x] **A real `packer` run against BOTH vendored archives** — `init` + `validate`,
+      **verified 2026-08-06**:
+      - Kali: `build-kali-box.sh --validate-only` inside the sandbox → **`The
+        configuration is valid.`** — archive verified offline, both compat patches
+        applied, 5 plugins installed, live ISO resolved, every schema checked.
+      - AlmaLinux: `packer validate -only='qemu.almalinux-9-gencloud-x86_64'` on the
+        vendored 563 files → **`The configuration is valid.`**
+
+      This is the first proof either vendored archive is a *valid Packer config* rather
+      than merely a byte-exact pile of files. ⚠️ **And the AlmaLinux run found a false
+      success:** on RHEL-family, `cracklib-dicts` ships `/usr/sbin/packer`, which
+      **shadows** HashiCorp's `/usr/bin/packer`; a bare `packer version` prints `0 0` and
+      **exits 0**, so `validate` "passed" twice while checking nothing. Fixed with a PATH
+      order *and* a build-time assertion — a PATH tweak is a mechanism, the assertion is
+      the outcome.
+
+**Still open on item 7:** a full `packer build` producing an actual image on either side.
+It needs `/dev/kvm`, a multi-GB ISO and tens of minutes, so it stays **author-run** — and
+the `--validate-only` gate above is the part a reader can reproduce in a minute.
 
 Per-lab, both halves: a `README.md` + `MANUAL_TESTING.md`, a 00-INDEX entry, and
 `tools/link_check.py` green (0 broken, no orphans).

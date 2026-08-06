@@ -8,7 +8,9 @@
 | offline staging: byte-identical tree, no clone | ✅ **verified** ([`tests/test-offline-archive.sh`](tests/test-offline-archive.sh)) |
 | a tampered archive is refused by name, nothing staged | ✅ **verified** (negative control run) |
 | the `.gitignore` trap is not hiding a file | ✅ **verified** (563 on disk == in manifest == tracked) |
-| `packer init` / `validate` | ⛔ **NOT RUN** — needs packer + network |
+| the hand-walk container builds | ✅ **verified 2026-08-06** |
+| `packer init` (ansible/qemu/hyperv plugins) | ✅ **verified** |
+| `packer validate -only='qemu.almalinux-9-gencloud-x86_64'` | ✅ **verified — `The configuration is valid.`** — the vendored 563 files parse as a valid Packer config at packer 1.16.0 |
 | a real `packer build` producing a qcow2 | ⛔ **NOT RUN** — needs `/dev/kvm`, a ~1 GB ISO, tens of minutes |
 | booting the produced image | ⛔ **NOT RUN** |
 
