@@ -227,3 +227,44 @@ such suite. The `Containerfile` pins `bookworm` and says why.
 
 ⛔ **Still author-run:** the full `packer build` (~4 GB ISO, full unattended install, ~30 min,
 `/dev/kvm`). The `--validate-only` gate above is what a reader can reproduce in a minute.
+
+## Full build from the VENDORED archive — verified 2026-08-06
+
+```bash
+examples/kali-packer-vagrant/build-kali-box.sh --install-packer
+```
+
+| | |
+|---|---|
+| source | **the vendored archive, offline** — `archive verified: 17 files match` |
+| packer | 1.13.1 (pinned, SHA256-verified by `--install-packer`) |
+| host | QEMU 8.2.2, `accel=kvm`, headless |
+| ISO | `kali-linux-2026.2-installer-amd64.iso`, 4.47 GB, checksum-verified by packer |
+| wall clock | **11 min 12 s** |
+| artifact | `packer_kalirolling_libvirt_amd64.box`, **5.7 GB** |
+
+**This proves the whole chain end to end:** vendored bytes → `SHA256SUMS` verified → staged
+out of the repo → both compat patches applied → `packer init` → live ISO resolved and
+checksum-verified → unattended d-i install driven over VNC → shell provisioning
+(`vagrant.sh` + `minimize.sh`) → `vagrant` post-processor → a bootable `.box`. Nothing
+about the archive was taken on trust, and no step reached GitLab.
+
+⚠️ **The first attempt failed and it was a FLAKE, not a defect** — see the README's *Known
+issues* section. An identical re-run succeeded. Do not "fix" it without reproducing it
+first.
+
+### Reading the log: `ui error` lines are not errors
+
+`minimize.sh` runs under `set -x`, and Packer routes a shell provisioner's **stderr** to
+its error UI. So a successful build prints dozens of `ui error: + dd if=/dev/zero …` trace
+lines, including:
+
+```
+dd: error writing '/dev/sda5': No space left on device
+```
+
+That is the zero-fill **working** — it fills the device until it cannot, and the script
+says so itself (`echo 'dd exit code 1 is suppressed'`). Likewise
+`Remote command exited without exit status or exit signal` at the end is the guest
+shutting down under Packer's `shutdown_command`. **Check `rc` and the artifact line, not
+the colour of the output.**

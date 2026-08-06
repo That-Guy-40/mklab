@@ -196,6 +196,33 @@ examples/kali-packer-vagrant/run-graphical.sh --snapshot         # throwaway ses
 
 ## Known issues (retired-script bitrot)
 
+### A flake, deliberately NOT filed as a third bitrot
+
+The first full build on this host (2026-08-06, QEMU 8.2.2 + KVM) died 74 seconds in:
+
+```
+==> qemu.kalirolling: Typing the boot commands over VNC...
+==> qemu.kalirolling: Error running boot command: write tcp 127.0.0.1:40704->127.0.0.1:5915:
+                      use of closed network connection
+```
+
+The VNC socket closed while Packer was typing the boot command. It *looks* exactly like
+the two genuine bitrots below — a retired script meeting a host newer than anything it was
+tested against — and the working hypothesis was a third one (QEMU 8.2 rejecting
+`disk_detect_zeroes`/`disk_discard`, or a packer-plugin-qemu VNC mismatch).
+
+**It was none of those. An identical re-run, same host, no changes, succeeded** — 11 min
+12 s to a 5.7 GB box. So the honest label is **flaky**, not broken, and it is recorded here
+rather than promoted into the list below.
+
+That distinction is the whole reason this section is worth reading: *same input, re-run,
+different result* is the control that separates a defect from a flake, and skipping it
+would have added a fix for a bug that does not exist — and a fix for a non-bug is a change
+nobody can ever verify. If you hit it, **re-run**; the ISO is cached, so the retry costs
+~90 seconds to fail or ~11 minutes to succeed. If it recurs *reproducibly*, capture
+`PACKER_LOG=1 PACKER_LOG_PATH=…` before re-running, because a re-run destroys the evidence.
+
+
 The upstream is **archived / "no longer in production"**, and it has **bit-rotted
 against 2026 Kali** in two independent spots — each aborts the build. Both are
 patched by default (opt out with `--verbatim` to watch them fail); each is one
