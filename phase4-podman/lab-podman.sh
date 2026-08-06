@@ -1624,7 +1624,17 @@ cmd_inspect() {
     else
         # Pod schema: no per-container state; aggregate container list.
         rendered="$(podman pod inspect "$engine_name" 2>/dev/null | jq -r --arg qm "$quadlet_managed" --arg qs "$quadlet_symlink" --arg qu "$quadlet_unit" '
-            . as $p |
+            # podman 4.x returns an OBJECT from `pod inspect`; podman 5.x returns a
+            # one-element ARRAY (matching `container inspect`, which has always been an
+            # array — see the sibling query above, which reads `.[0]`). Accept both:
+            # on 5.x the old `. as $p` made every field null, and `$p.Labels` raised
+            # `jq: error: Cannot index array with string "Labels"`. Found when the GitHub
+            # runner image moved to podman 5 — CI red on a branch that touched no phase-4
+            # file, while podman 4.9.3 locally went on passing.
+            # (NOTE: no apostrophes in this comment. It lives inside a single-quoted jq
+            # program, so one would close the string and break the whole script — which is
+            # exactly what the first draft of this comment did.)
+            (if type == "array" then .[0] else . end) as $p |
             ($p.Labels // {}) as $L |
             {
                 schema_version: 1,
