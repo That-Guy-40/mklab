@@ -125,6 +125,22 @@ candidate_set(){
 
 record(){ printf '%s\n' "$*" >> "$STATE/preflight"; }
 
+# The guest MAC for an instance name.
+#
+# THIS FORMULA IS SHARED WITH `phase7-firecracker/lab-fc.sh` AND MUST NOT DRIFT. The fabric
+# reserves a DHCP lease against a MAC; the VMM sets the MAC. If the two derive it differently
+# the guest silently misses its reservation, takes a dynamic lease, and dnsmasq goes on
+# answering the name with an address nothing holds — a record that outlives its subject, and
+# invisible from either tool alone. They live in different phases and cannot share code, so
+# `tests/test-fabric-mac-derivation.sh` asserts the two implementations still agree.
+#
+# 06:00:.. is a locally-administered unicast prefix; ac:47 is this lab's tag.
+mac_for_name() {
+    local n="$1" h
+    h="$(printf '%s' "$n" | md5sum)" || return 1
+    printf '06:00:ac:47:%02x:%02x' $(( 0x${h:0:2} )) $(( 0x${h:2:2} ))
+}
+
 # Create ONE tap and prove it is USABLE, or leave nothing behind. Both properties are read
 # back from the kernel afterwards, because `ip tuntap add` exiting 0 establishes neither:
 #   - the outcome that matters is the TUNSETIFF ioctl the VMM will later issue (P2 /
@@ -173,8 +189,18 @@ status)
     echo "  candidate set :"; candidate_set | sed 's/^/    /'
     hr
     exit 0 ;;
+mac)
+    # Read-only, unprivileged, machine-readable: the ONE question a consumer has to ask
+    # before it can boot a guest onto this fabric. Without it, a spec file has to guess the
+    # MAC — and a guess that is wrong fails silently, as a dynamic lease.
+    NAME="${2:-}"
+    [[ -n "$NAME" ]] || die "usage: $0 mac <name>"
+    [[ "$NAME" =~ ^[a-z][a-z0-9-]{0,10}$ ]] || die "name must be lowercase alnum/dash, <=11 chars"
+    mac_for_name "$NAME" || die "could not derive a MAC for '$NAME' (is md5sum present?)"
+    printf '\n'
+    exit 0 ;;
 up|down|tap|retap) [[ $EUID -eq 0 ]] || die "must run as root (bridge/nft/dnsmasq are CAP_NET_ADMIN)" ;;
-*) die "usage: $0 [up|tap <name>|retap <name>|status|down]" ;;
+*) die "usage: $0 [up|tap <name>|retap <name>|mac <name>|status|down]" ;;
 esac
 
 # Gate the owner ONCE, for every verb that creates a tap. A tap owned by root cannot be
@@ -327,13 +353,43 @@ tap)
     TAP="mc-$NAME"
     ip link show "$TAP" >/dev/null 2>&1 && die "$TAP already exists"
 
-    # Deterministic MAC + address, derived from the name so reruns are stable.
+    # ── the MAC is derived FROM THE NAME, and that is load-bearing ──────────
+    # It used to be derived from the LINE COUNT of dhcp-hosts — i.e. from the order taps
+    # happen to be created — while the comment right here claimed it came from the name.
+    # Two things were wrong with that, and the second is worse:
+    #
+    #   1. `api1` was 10.71.0.101 only because it was always created first. Bring up a
+    #      subset, or add an instance ahead of it, and every name shifts. Anything that
+    #      wrote an address down became a record that outlives its subject.
+    #   2. `lab-fc.sh` — the slice-4 tool that is supposed to CONSUME these taps — already
+    #      derives its guest MAC as md5(name), and has done since slice 4. For `api1` that
+    #      is 06:00:ac:47:f1:f7, against the 06:00:ac:47:00:01 reserved here. THE TWO
+    #      COMMITTED TOOLS COULD NEVER AGREE: a microVM created by `lab-fc.sh` on a tap made
+    #      here would miss its reservation, take a dynamic lease, and leave dnsmasq still
+    #      answering `api1` with an address nothing holds. Slices 1-3 and 5a never hit it
+    #      because they hand-wrote the config with the positional MAC; lab-fc.sh had never
+    #      been pointed at a fabric tap.
+    #
+    # So: same formula as lab-fc.sh, keyed on the name, order-independent by construction.
+    # `tests/test-fabric-mac-derivation.sh` asserts the two implementations still agree —
+    # they live in different phases and cannot share code, so the agreement is a TEST, not
+    # a hope.
+    MAC="$(mac_for_name "$NAME")"
+
+    # The ADDRESS stays first-come, and is deliberately not derived from the name: a hash
+    # into a /24 collides, and a collision here is two guests fighting over one lease. It is
+    # recorded in dhcp-hosts and served by DHCP, so nothing needs to predict it —
+    # **the NAME is the contract, never the address.** If a spec, doc or test hard-codes
+    # 10.71.0.10x it is asserting something this fabric does not promise.
+    #
     # NOT `$(grep -c . f || echo 0)` — on an empty file grep prints 0 AND exits 1, so the
     # fallback appends a second 0 and the arithmetic below dies. House gotcha, cost real time.
+    if grep -q ",$NAME\$" "$STATE/dhcp-hosts" 2>/dev/null; then
+        die "$NAME already has a reservation: $(grep ",$NAME\$" "$STATE/dhcp-hosts") — use 'retap' to rebuild its tap"
+    fi
     n=0; [[ -r "$STATE/dhcp-hosts" ]] && n="$(wc -l < "$STATE/dhcp-hosts")"
     IDX=$(( n + 1 ))
     (( IDX <= 99 )) || die "too many instances for this simple derivation"
-    MAC="$(printf '06:00:ac:47:00:%02x' "$IDX")"
     IP="10.71.0.$((100 + IDX))"
 
     make_tap "$TAP"

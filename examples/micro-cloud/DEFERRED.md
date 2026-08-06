@@ -37,6 +37,31 @@
 > ([J.5](../../MICRO_CLOUD_LAB_PLAN.md#j5-the-answer-once-both-engines-are-on-equal-footing)). (b) re-derived it from the guests' own clocks
 > ([K.3](../../MICRO_CLOUD_LAB_PLAN.md#k3-the-seams-are-not-independent-of-the-performance-story)).
 
+## NEXT — slice 5b: the fidelity case
+
+*The §9.2 `edge`: a full cloud image on `-M q35` with cloud-init, on the same fabric,
+reaching `api1` by name — the counterpart to 5a's density case.*
+
+> ⚠️ **Its first finding landed before any of it was built** — [Appendix L](../../MICRO_CLOUD_LAB_PLAN.md#appendix-l--slice-5bs-first-finding-before-a-line-of-it-was-built-the-two-tools-could-never-agree-2026-08-05).
+> Deriving what 5b's spec needs showed that `fabric.sh` reserved DHCP leases against a
+> MAC derived from **creation order** while `lab-fc.sh` derived one from the **name**:
+> the two committed tools could never agree, and the failure is silent (a dynamic lease
+> while dnsmasq keeps answering the name with the reserved address). Fixed; both tools
+> now answer `mac <name>` and a test drives both.
+>
+> **Consumed and verified for 5b so far:** `lab-vm.sh --network-mode tap --tap <name>`
+> takes a pre-made tap and creates nothing (same contract as Firecracker); a TOML spec
+> carrying `mac = "..."` reaches the manifest and the argv; `cloud-localds` is present;
+> a Debian bookworm cloud image is cached.
+>
+> **Known gap:** `lab-vm.sh` has **no `--mac` CLI flag** — `mac` is absent from the CLI
+> spec builder's jq object, so only a `--config` TOML can set it. 5b uses a TOML spec
+> anyway (§9.1 wants one), so this is recorded rather than fixed.
+>
+> **Not yet done:** the edge has not been booted. Nothing has verified that a cloud
+> image takes a lease from the fabric's dnsmasq, that cloud-init runs without slirp, or
+> that the edge resolves `api1`.
+
 ## The original brief — slice 5a: a second engine on one fabric
 
 *Added 2026-08-05, when §18.6 items 1–5 landed and this became the front of the
