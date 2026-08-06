@@ -2809,8 +2809,7 @@ was never exercised from a damaged state until now.
 - **DHCP pool exhaustion** (`.100–.200` = 101 leases) — needs a shrinkable range for a
   tractable test.
 
-  > 🔨 **BUILT 2026-08-06; the root path is UNRUN, so this row is UNKNOWN, not PASS.**
-  > The range is now `MC_DHCP_LO`/`MC_DHCP_HI`, and
+  > ✅ **DONE 2026-08-06 — GREEN at root, all ten assertions.** The range is now `MC_DHCP_LO`/`MC_DHCP_HI`, and
   > [`tests/test-dhcp-exhaustion.sh`](examples/micro-cloud/tests/run-all.sh) fills a
   > five-address pool in seconds. It grades **both** layers that can run out — reservation
   > time (our code) and lease time (dnsmasq) — and its load-bearing assertion is the
@@ -3777,12 +3776,24 @@ what [`edge.toml`](examples/micro-cloud/edge.toml) and slice 5b just built and p
 
 ### M.8 The cheaper half of G.9, built — and the defect the knob uncovered, 2026-08-06
 
-> ⚠️ **STATUS: run once at root (2026-08-06). Eight of nine assertions passed; the ninth
-> failed, and the fabric was right.** Both defects were in the harness, are fixed, and the
-> confirming re-run is pending — so this row is **not yet PASS**. See
-> [M.8.5](#m85-the-first-root-run-the-teardown-assertion-caught-its-own-author).
-> Everything the test measures about the *fabric* held: layer 1 ABSORBED, layer 2 HALTED
-> honestly, and the reserved instance received its reserved address from an exhausted pool.
+> ✅ **STATUS: GREEN at root, 2026-08-06.** Two runs. The first failed its ninth assertion
+> and *the fabric was right* ([M.8.5](#m85-the-first-root-run-the-teardown-assertion-caught-its-own-author));
+> both defects were in the harness. The second, after the fixes, passed every assertion:
+>
+> ```text
+>   - layer 1 ABSORBED: the 5th reservation is refused by name, before the tap exists
+>   - layer 2: the single dynamic address 10.71.0.100 went to the first unreserved client
+>   - layer 2 HALTED (honest): the second unreserved client got no lease at all
+>   - layer 2 ABSORBED: with the dynamic pool empty, r1 still received its RESERVED 10.71.0.101
+>   - safety: every leased address stayed inside its namespace
+>   - clients reaped before teardown — nothing of this test's left in the mc-* namespace
+>   - teardown: calico binding and pod veth count unchanged
+> PASS: the DHCP pool exhausts honestly at both layers …
+> ```
+>
+> The sixth line is the one the first run bought: an assertion that did not exist until
+> `fabric.sh down` refused to call teardown clean while the harness's own veths were on the
+> bridge.
 
 [M.7](#m7-a-correction-this-appendix-inherited-the-g9-blocker-was-lifted-three-days-before-it-was-restated)
 established that DHCP exhaustion never needed a cluster-free host, only a shrinkable range.
@@ -3852,7 +3863,7 @@ The **other** G.9 scenario — give an interface an address on purpose and watch
 candidate — is untouched, and is now queued as its own lab unit,
 [`nested-calico-sandbox/`](examples/micro-cloud/DEFERRED.md#queued--nested-calico-sandbox-a-disposable-cluster-to-break-on-purpose):
 a disposable cluster is a safe host for the **whole** slice-3 break pass, including `retap`,
-which is still never called. Break coverage for slice 3 moves **3 of 5 → 4 of 5**.
+which is still never called. Break coverage for slice 3 is now **4 of 5**.
 
 #### M.8.5 The first root run: the teardown assertion caught its own author
 
@@ -3911,3 +3922,9 @@ clean, `bash -n` clean, the unprivileged path SKIPping correctly — and the san
 both `sudo` and `unshare -r`'s `uid_map` write, so no rehearsal was possible either. This is
 the plain case for handing the privileged run to the operator rather than reasoning about
 what it would have done.
+
+**The re-run passed every assertion**, including one that did not exist before this failure:
+`clients reaped before teardown — nothing of this test's left in the mc-* namespace`. The
+first run did not merely find bugs; it bought an assertion. That is the difference between a
+failure that is debugged and a failure that is *learned from* — and it is why §7.2's
+teardown-is-a-test is worth more than a cleanup that returns 0.
