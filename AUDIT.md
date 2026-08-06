@@ -54,8 +54,8 @@ Remediation update above.)*
 | F4 | Low | Security | Default port publishing binds `0.0.0.0` (all interfaces) for Docker/Podman labs |
 | F5 | Low | Supply chain / Reproducibility | iPXE built from moving `master` ref; `debian:bookworm` base image unpinned (no digest) |
 | F6 | Low | Process | ✅ **RESOLVED (2026-07-24)** — CI (`.github/workflows/ci.yml`) now runs the suites on push/PR. *Original:* Comprehensive test suites exist but there is no CI to run them automatically |
-| F7 | Low | Robustness | `destroy` does `rm -rf -- "$target"` using the manifest's `target` value with no path-sanity guard |
-| F8 | Info | Robustness | `--user name:pass` truncates passwords containing `:` |
+| F7 | Low | Robustness | ✅ **RESOLVED — verified 2026-08-06.** The guard was implemented as `_safe_rm_rf` (credited to "Finding 14") and wired into all three destroy paths; this row had simply never been updated. Its four path-sanity refusals had also never been *observed* firing — now covered by [`test-destroy-path-guards.sh`](phase1-chroot/tests/test-destroy-path-guards.sh), with a positive control. *Original:* `destroy` does `rm -rf -- "$target"` using the manifest's `target` value with no path-sanity guard |
+| F8 | Info | Robustness | ❌ **NOT A DEFECT — measured 2026-08-06, this finding was wrong.** `read` assigns the remaining fields *including their delimiters* to the last variable, so `IFS=: read -r uname upass` already splits on the **first** colon only: `alice:pa:ss:word` → password `pa:ss:word`, intact. F8 named a mechanism that looks lossy and inferred an outcome without measuring it. Pinned by [`test-user-password-colons.sh`](phase1-chroot/tests/test-user-password-colons.sh) so a refactor cannot make it true. *Original claim:* `--user name:pass` truncates passwords containing `:` |
 | F9 | Info | Hygiene | ✅ **RESOLVED (2026-07-24)** — top-level MIT `LICENSE` added. *Original:* `pyproject.toml` declares MIT but no top-level `LICENSE` file exists |
 
 ---
@@ -255,17 +255,30 @@ are present and good, so this is documented friction rather than a defect.
   args, and targeted preflight diagnostics (e.g. the rpmkeys-missing message
   in `lab-chroot.sh:557-567`).
 - **Minor robustness gaps:**
-  - **F7 (Low):** `manager_none_destroy` / `destroy` run
-    `rm -rf -- "$target"` using `target` read back from the manifest
-    (`lab-chroot.sh:842-845`, `:896`, `:950`). The manifest is tool-written
-    and marked "do not edit by hand," but there is no guard that `target` is
-    non-empty / lives under an expected state root. A hand-corrupted manifest
-    with `target = "/"` would be catastrophic. Cheap defense-in-depth: refuse
-    to destroy paths that are empty, `/`, or outside the configured lab root.
-  - **F8 (Info):** `IFS=: read -r uname upass` for `--user name:pass`
-    (`lab-chroot.sh:314`) truncates any password containing a `:`. TOML
-    `[[users]]` avoids this; the CLI form should document the limitation or
-    split on the first `:` only.
+  - **F7 (Low) — ✅ RESOLVED, verified 2026-08-06.** The recommendation below was
+    implemented as `_safe_rm_rf` and wired into all three destroy paths; only this
+    record lagged. It refuses an empty path, a relative path, `/`, and anything
+    shallower than `/a/b`, and additionally fails closed if *anything* is still
+    mounted under the tree. Four of those five refusals had never been observed
+    firing — [`test-destroy-path-guards.sh`](phase1-chroot/tests/test-destroy-path-guards.sh)
+    now watches each one bite, with a positive control so a guard that refuses
+    *everything* cannot pass. *(Original:* `manager_none_destroy` / `destroy` run
+    `rm -rf -- "$target"` using `target` read back from the manifest; no guard that
+    `target` is non-empty or lives under an expected state root, so a hand-corrupted
+    manifest with `target = "/"` would be catastrophic.*)*
+  - **F8 (Info) — ❌ NOT A DEFECT. Measured 2026-08-06; the finding was wrong.**
+    `read` assigns the remaining fields **including the delimiters between them** to
+    the last variable, so `IFS=: read -r uname upass` already does exactly what the
+    recommendation asked for — split on the first `:` only: `alice:pa:ss:word` yields
+    name `alice` and password `pa:ss:word`, intact. F8 named a *mechanism* that looks
+    lossy and inferred an *outcome* without measuring it — this repo's bug class #2,
+    committed in a document rather than a test. Nothing needed fixing, and a
+    well-meant patch here could easily have **introduced** the truncation. Since no
+    test touched `--user` at all, the correct behaviour was one refactor away from
+    becoming wrong; [`test-user-password-colons.sh`](phase1-chroot/tests/test-user-password-colons.sh)
+    pins it, with a negative control (inject a third `read` field and the assertion
+    fires). *(Original claim:* `--user name:pass` truncates any password containing a
+    `:`.*)*
 - **F9 (Info): ✅ RESOLVED 2026-07-24.** `pyproject.toml` declares
   `license = { text = "MIT" }`; a top-level MIT [`LICENSE`](LICENSE) file has now
   been added, so the license is enforceable and unambiguous. *(Original: no
@@ -300,7 +313,7 @@ are present and good, so this is documented friction rather than a defect.
    dropbear fallback; add a network-exposure warning. *(Medium)*
 3. **(F6 — ✅ done)** ~~Add CI (pytest + shell suites + `shellcheck`).~~ Landed:
    `.github/workflows/ci.yml`. *(Low, high ROI)*
-4. **(F7)** Add a path-sanity guard before `rm -rf "$target"` in destroy.
+4. ~~**(F7)** Add a path-sanity guard before `rm -rf "$target"` in destroy.~~ ✅ **Already done** — `_safe_rm_rf`, verified 2026-08-06; the guard predated this list and the list was never updated.
    *(Low)*
 5. **(F4/F5)** Default published ports to loopback; pin iPXE ref and base
    image. *(Low)*
