@@ -11,7 +11,7 @@ PASS: node3 attested to a real TPM measurement of the image it booted, activated
       no longer matched.
 ```
 
-`tests/run-all.sh` is **34 passed / 0 skipped / 0 failed** and `chaos-run.sh` reports
+`tests/run-all.sh` is **36 passed / 0 skipped / 0 failed** and `chaos-run.sh` reports
 **0 criticals**.
 
 That last run is the one this file spent two days pointing at, and it closed the two
@@ -394,13 +394,59 @@ nothing), and the negative control that a failed-deploy error is never touched.
      `active`, and `run-e2e-image.sh`'s verdict still reported FAIL, because the
      console carried no proof of verification. The second run printed
      `verified: the bytes on /dev/vda match the published sha256` and passed.
-- **The deployer ramdisk gets a POOL address, not the node's reservation.** Observed
-  live: `eth0 = 192.168.123.31` where node2's reservation is `.102`. dnsmasq keys the
-  reservation on the DHCP hostname/MAC pair and the ramdisk sends no hostname, so it
-  lands in the dynamic range. Harmless today — the deployer only needs to reach the
-  payload server — but anything that ever keys off the deploying node's address (a
-  callback, an ACL, a metadata lookup) would be surprised. Fix shape: `udhcpc -x
-  hostname:$node`, or drop the reservation requirement entirely.
+- **The deployer ramdisk once got a POOL address, and the reason recorded here was
+  wrong.** Observed live 2026-07-28: `eth0 = 192.168.123.31` where node2's reservation
+  is `.102`. The explanation written down beside it — *dnsmasq keys the reservation on
+  the hostname/MAC pair, the ramdisk sends no hostname, so it lands in the dynamic
+  range* — was never measured. **It is false**, and a wrong diagnosis is worse than an
+  open question because it retires the question. Re-derived 2026-08-06 against a real
+  dnsmasq 2.90 ([`tests/test-dhcp-reservation-identity.sh`](tests/test-dhcp-reservation-identity.sh)):
+
+  | the client presents | it is given |
+  |---|---|
+  | the reserved MAC, **no option 12 at all** | its reservation |
+  | the reserved MAC + its own hostname | its reservation |
+  | the reserved MAC + **somebody else's** hostname | its reservation |
+  | the reserved MAC + a client-id (option 61, busybox `udhcpc`'s default) | its reservation |
+  | either identity above, after the *other* one already committed the lease | its reservation |
+  | **a MAC the reservation does not name** | **a pool address** ← the only row that reproduces the symptom |
+
+  So the reservation is keyed on the MAC and **nothing else**, and the recorded fix
+  shape (`udhcpc -x hostname:$node`) would have changed nothing — twice over, because
+  the deployer's address does not come from `udhcpc` at all in the observed case: the
+  kernel's `ip=dhcp` configures `eth0` before init runs, and
+  [`deployer-init.sh`](deployer-init.sh) only reaches `udhcpc` as a fallback.
+
+  **The lab's own later run contradicts the finding as stated.** On 2026-07-29 a
+  deployer ramdisk on node3 came up as `device=eth0, ipaddr=192.168.123.103` — node3's
+  *reservation* — through that same kernel path
+  ([`MANUAL_TESTING.md`](MANUAL_TESTING.md)). Whatever happened on node2 was not
+  inherent to the deployer.
+
+  **What is left, and it is a different bug.** The only input that produces a pool
+  address is a MAC the reservation does not name — i.e. the `<host mac=…>`
+  `reserve_dhcp` wrote and the MAC the domain now boots with have drifted apart.
+  `reserve_dhcp` reads the MAC once, at fleet-creation time, and libvirt mints a new
+  one every time a domain is recreated; nothing re-checks the pair afterwards. That
+  drift is not hypothetical — on this host libvirt's own `virbr-vbmc.macs` still
+  records node1 as `52:54:00:2b:a7:7e` while `domiflist` shows `52:54:00:09:7c:86`.
+  This is bug class #1 again (a record that outlives its subject), one layer down from
+  the note you are reading.
+
+  Still low severity — the deployer only needs to reach the payload server — but
+  anything that keys off the deploying node's address (a callback, an ACL, a metadata
+  lookup) would be surprised. **Fix shape:** have `create-fleet.sh` (or a preflight)
+  compare each `<host mac=>` against `virsh domiflist` and refuse a mismatch **by
+  name**, rather than sending a hostname that changes nothing. **What would settle
+  the original observation:** re-run the image driver on a node whose reservation was
+  confirmed against `domiflist` immediately beforehand, and read the address out of
+  the deployer's boot log.
+
+  One thing found on the way, worth knowing before it costs someone a debugging
+  round: when dnsmasq cannot read its `dhcp-hostsfile` it **does not refuse**. It logs
+  `cannot read …: Permission denied`, starts, and serves the pool to every client —
+  indistinguishable from "reservations do not work". The test fails by name on that
+  log line so a broken harness can never present as a finding about dnsmasq.
 - **`image+measured`: the measuring payload is BUILT and proven; the live fleet run
   is not done.** Picked up 2026-07-28 (night). What the investigation found is worth
   more than the increment:
