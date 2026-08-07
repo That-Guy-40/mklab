@@ -117,6 +117,52 @@ await_console() {
 case "$verb" in
 
 describe)
+    # WITHOUT an argument this is "what does this driver do?".
+    #
+    # WITH one it is the contract's OWNERSHIP question — "is this image yours?" — which
+    # the control plane asks before anything destructive happens (`gate()` in
+    # maas-lab.sh: describe -> verify -> deploy -> health). This driver answered "yes"
+    # to every name until 2026-08-06, which made that gate a formality: a gate that
+    # cannot refuse cannot protect. `install.sh` had the same hole and it cost a live
+    # node — an A/B rollback handed it a RAM payload, which it netbooted and then waited
+    # 30 minutes for an installer that was never there.
+    #
+    # This driver's payload is `disk.raw` and nothing else: it dd's a whole disk onto the
+    # node. A kernel+initrd+cmdline is the RAM payload `ramdisk.sh stage` writes; a
+    # kernel+initrd+ks.cfg is `install.sh`'s. Both are correctly signed images belonging
+    # to somebody else, which is exactly why F2 cannot catch this.
+    if [[ -n "${1:-}" ]]; then
+        img="$1"; dir="${MAAS_IMAGES_DIR:?describe: MAAS_IMAGES_DIR not set}/$img"
+        [[ -d "$dir" ]] \
+            || die "no image '$img' in $MAAS_IMAGES_DIR — nothing is staged under that name.
+Stage one with:  drivers/image.sh stage $img --from <whole-disk.raw>"
+        if [[ ! -f "$dir/disk.raw" ]]; then
+            # Name what it IS wherever that is knowable: "not mine, and here is whose"
+            # beats "not mine", because the operator's next question is always "then
+            # whose?". These two shapes are the ones this lab actually stages.
+            if [[ -f "$dir/kernel" && -f "$dir/initrd" && -f "$dir/cmdline" ]]; then
+                # The FIRST line carries the action, because that is the line the
+                # control plane forwards to the operator (gate() in maas-lab.sh).
+                die "'$img' is a RAM payload, not a whole-disk image — deploy it with --driver ramdisk.
+It is kernel+initrd+cmdline, the shape 'ramdisk.sh stage' writes. This driver dd's
+disk.raw onto the node's disk and would have nothing to write."
+            fi
+            if [[ -f "$dir/kernel" && -f "$dir/initrd" && -f "$dir/ks.cfg" ]]; then
+                die "'$img' is an installer payload, not a whole-disk image — deploy it with --driver install.
+It is kernel+initrd+ks.cfg, the shape 'install.sh stage' writes."
+            fi
+            die "'$img' has no disk.raw — it is not a whole-disk image this driver can lay down.
+Contents: $(ls -A "$dir" 2>/dev/null | tr '\n' ' ' | sed 's/ $//')"
+        fi
+        printf 'image/%s: whole-disk image, %s\n' "$img" "$(du -h "$dir/disk.raw" 2>/dev/null | cut -f1)"
+        printf "  deploy = a deployer ramdisk dd's disk.raw onto the node, then it boots from disk\n"
+        printf "  active = the node's own console says it booted\n"
+        [[ -f "$dir/disk.raw.sha256" ]] \
+            && printf '  sha256 = %s\n' "$(cut -d' ' -f1 < "$dir/disk.raw.sha256")"
+        [[ -f "$dir/disk.raw.sig" ]] \
+            && printf '  signed = yes (F2 verification will check it)\n'
+        exit 0
+    fi
     echo "image: a deployer ramdisk dd's a golden whole-disk image onto the node, then it boots from disk; active = the deployed image's login. DESTRUCTIVE: the whole disk is overwritten"
     ;;
 

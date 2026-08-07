@@ -479,8 +479,14 @@ gate() {  # gate <driver-script> <node> <image> <slot> <verify:0|1>
     # driver a RAM payload, which netbooted a live node and then waited 30 minutes for
     # an installer that did not exist to power it off. F2 could not catch that: the
     # image was correctly signed, it was simply the wrong driver's image.
-    if ! run_driver "$drv" describe "$image" >/dev/null 2>&1; then
-        GATE_REASON="driver '$(basename "$drv" .sh)' cannot describe image '$image' — it does not own it, so it must not deploy it"
+    # Keep the driver's own FIRST line, for the same reason the verify branch below
+    # keeps its last: "no disk.raw", "that is the ramdisk driver's RAM payload" and "no
+    # expected PCR policy" are three different operator problems, and collapsing them
+    # into "it does not own it" throws away the sentence that says what to do next.
+    # (The drivers put the action on line one precisely because this forwards it.)
+    local derr
+    if ! derr="$(run_driver "$drv" describe "$image" 2>&1 >/dev/null)"; then
+        GATE_REASON="driver '$(basename "$drv" .sh)' will not claim image '$image' — it does not own it, so it must not deploy it${derr:+ — ${derr%%$'\n'*}}"
         return 1
     fi
     if [[ "$do_verify" == 1 ]]; then

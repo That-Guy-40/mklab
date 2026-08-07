@@ -1975,3 +1975,95 @@ Derive the fact; don't cache it.
 **Success signature for this section:** `./tests/test-harness-net.sh` ends on `PASS:`
 with five `note` lines; `grep -l '^[[:space:]]*trap .*EXIT' tests/test-*.sh` prints
 nothing; and `tests/run-all.sh` reports **every listed test ran, 0 skipped, 0 failed**.
+
+---
+
+## 19. The ownership gate that could not refuse — and the attestation that could not fail (2026-08-06)
+
+`gate()` asks a driver `describe <image>` — *"is this image yours?"* — before anything
+destructive happens. It exists because an A/B rollback once handed the **install** driver
+a RAM payload: it netbooted a live node and then waited 30 minutes for an installer that
+was never there. F2 could not catch that; the image was correctly signed, it was simply
+the wrong driver's image.
+
+`ramdisk` and `install` answered the question. `image` and `image+measured` printed a
+generic sentence and **exited 0 for any name at all**. For half the drivers the gate was
+a formality — and *a gate that cannot refuse cannot protect*.
+
+### 19.1 What the two drivers claim now
+
+| handed | `image` | `image+measured` |
+|---|---|---|
+| a `disk.raw` image | ✅ claims it | ✅ if it also has `pcrs.expected` |
+| kernel+initrd+**cmdline** | ❌ *"deploy it with `--driver ramdisk`"* | ❌ same |
+| kernel+initrd+**ks.cfg** | ❌ *"deploy it with `--driver install`"* | ❌ same |
+| a name nothing staged | ❌ *"nothing is staged under that name"* | ❌ same |
+| a disk image with **no PCR policy** | ✅ (correctly — that is its job) | ❌ *"capture one, or deploy it with `--driver image`"* |
+
+The refusals put the action on the **first** line, because that is the line `gate()`
+forwards to the operator. It used to collapse every refusal into *"it does not own it"*,
+which is true of all of them and tells you nothing; it now carries the driver's own
+sentence, the way the `verify` branch beside it always did.
+
+This does not break trust-on-first-use: the enrollment boot that *defines* a policy is
+deployed with `--driver image` (§15's deploy #1), and deploy #0 exists precisely to
+assert that a measured deploy without a policy is refused.
+
+### 19.2 The find that mattered more than the feature
+
+Reading `health` while implementing the above turned up a **false success in the
+attestation gate itself**. Reproduced against the shipped driver:
+
+```console
+$ image-measured.sh health nX unsealed          # 'unsealed' has NO pcrs.expected
+image: 'nX' booted 'unsealed' to a login (active)
+…/drivers/image-measured.sh: line 38: …/images/unsealed/pcrs.expected: No such file or directory
+image-measured: 'nX' attested to the expected PCR state for 'unsealed'
+$ echo $?
+0
+```
+
+`done < "$pol"` failed to **open** the file, so the comparison loop never ran, the
+failure counter stayed `0`, and the driver reported attestation. The only trace was a
+bash redirect error in the middle of the output — **the LIED rung, in the driver whose
+entire purpose is the attestation gate.**
+
+It stayed hidden because `verify` refuses a missing policy. The way in is
+`deploy --no-verify`, which skips verify entirely and leaves `health` as the last gate
+standing.
+
+Fixed **two** ways, because *"the file exists"* is the mechanism and *"something was
+actually compared"* is the outcome — an all-comments policy exists while comparing
+nothing:
+
+```bash
+[[ -f "$pol" ]] || { echo "…no expected-PCR policy…"; exit 1; }
+…
+(( compared > 0 )) || { echo "…names NO PCR index…nothing was compared…"; exit 1; }
+```
+
+### 19.3 Controls
+
+Every assertion was watched to bite, and each names its own defect:
+
+| injected | what fired |
+|---|---|
+| `image describe` reverts to "yes to every name" | `REGRESSION: … describe exited 0, so gate() would let this deploy proceed` |
+| `image+measured` stops requiring a policy | `… refused, but without saying no expected PCR policy` |
+| `gate()` stops forwarding the driver's words | `… the reason reaching the operator did not carry the driver's own sentence` |
+| the `health` guard reverted | `REGRESSION: health reported success for an image with NO pcrs.expected` |
+
+And §5 of [`tests/test-describe-ownership.sh`](tests/test-describe-ownership.sh) is the
+control in the other direction: each driver must still **claim its own** image, or a
+driver that refuses everything would satisfy every refusal above it.
+
+> **The runner caught its author.** `test-describe-ownership.sh` existed on disk for
+> several minutes in no list — and `run-all.sh` failed with
+> `FAIL: 1 test(s) exist on disk but are in no list, so nothing runs them:
+> test-describe-ownership.sh`. That guard was added hours earlier ([§18.3](#183-and-the-count-nobody-could-maintain))
+> because a test had previously sat unlisted for weeks behind nothing but a comment.
+
+**Success signature for this section:** `./tests/test-describe-ownership.sh` ends on
+`PASS:` with five `note` lines; `./tests/test-image-measured-driver.sh` ends on `PASS:`
+including *"health refuses to call a node attested with no policy"*; and
+`tests/run-all.sh` reports **every listed test ran, 0 skipped, 0 failed**.

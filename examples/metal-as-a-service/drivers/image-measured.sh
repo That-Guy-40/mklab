@@ -38,6 +38,40 @@ die() { echo "image-measured: $*" >&2; exit 1; }
 case "$verb" in
 
 describe)
+    # The ownership question, in two halves — this driver owns an image only if BOTH
+    # hold. Until 2026-08-06 it answered "yes" to every name, so `gate()`'s first check
+    # could not refuse anything.
+    #
+    #   1. it is a whole-disk image  — delegated to image.sh, which stage/deploy also
+    #      delegate to, so there is one definition of that half and not two.
+    #   2. it has an expected-PCR policy — because THIS driver's whole purpose is the
+    #      attestation gate, and an image with nothing to attest against sails through
+    #      it. `verify` already refuses that, but `deploy --no-verify` skips verify
+    #      entirely; describe is then the only gate standing between the operator and a
+    #      destructive write. Refuse BEFORE the irreversible step, not after.
+    #
+    # This does not break trust-on-first-use: the enrollment boot that DEFINES a policy
+    # is deployed with `--driver image` (run-e2e-measured.sh deploy #1), and deploy #0
+    # exists precisely to assert that a measured deploy without a policy is refused.
+    if [[ -n "${1:-}" ]]; then
+        img="$1"
+        "$IMAGE_DRV" describe "$img" || exit 1
+        pol="${MAAS_IMAGES_DIR:?}/$img/pcrs.expected"
+        [[ -f "$pol" ]] \
+            || die "'$img' declares no expected PCR policy — capture one, or deploy it with --driver image.
+Refusing to claim it: this driver's whole purpose is the attestation gate, and an image
+with nothing to attest AGAINST would sail through it ($pol).
+Capture one from a measured boot of THIS build:
+  drivers/image-measured.sh capture-policy $img <node>
+or deploy it with --driver image instead."
+        printf '  measured = %s PCR index(es) must match on every boot: %s\n' \
+            "$(grep -cE '^[0-9]+:' "$pol")" \
+            "$(grep -oE '^[0-9]+' "$pol" | tr '\n' ' ' | sed 's/ $//')"
+        pol_sha="$(sed -n 's/^# image-sha256: //p' "$pol" | head -1)"
+        [[ -n "$pol_sha" ]] \
+            && printf '  policy captured from build %s\n' "${pol_sha:0:16}…"
+        exit 0
+    fi
     echo "image+measured: as 'image', but the node only reaches active if it attests to the expected PCR state. swtpm here is faithful plumbing, NOT a trust anchor"
     ;;
 
@@ -164,10 +198,25 @@ health)
     # 3. compare the measured PCRs against the policy, naming the first divergence.
     # A quote that verifies but measures something else is the interesting case: the
     # machine is honest and is running something you did not expect.
-    local_fail=0
+    #
+    # THE POLICY MUST EXIST, AND IT MUST ACTUALLY COMPARE SOMETHING. Reproduced live
+    # 2026-08-06: with no pcrs.expected on disk, `done < "$pol"` failed to open the
+    # file, the loop body never ran, local_fail stayed 0, and this driver printed
+    # "'nX' attested to the expected PCR state" and exited 0. The only trace was a bash
+    # redirect error in the middle of the output. That is a false success in the one
+    # gate this driver exists to provide — the LIED rung — and `verify` only hid it
+    # because `deploy --no-verify` skips verify entirely.
+    #
+    # Counting what was compared, rather than only checking the file exists, is the
+    # difference between asserting the mechanism and asserting the outcome: an empty
+    # policy, or one that is all comments, also compares nothing while existing.
+    [[ -f "$pol" ]] \
+        || { echo "image-measured: '$image' has no expected-PCR policy ($pol) — refusing to call '$node' attested when there is nothing to attest against" >&2; exit 1; }
+    local_fail=0 compared=0
     while IFS= read -r line; do
         [[ -z "$line" || "$line" == \#* ]] && continue
         idx="${line%%:*}"; want="${line#*:}"
+        compared=$((compared + 1))
         got="$(grep -E "^${idx}:" "$q" | head -1 | cut -d: -f2-)"
         if [[ -z "$got" ]]; then
             echo "image-measured: the quote from '$node' does not contain PCR $idx, which the policy requires" >&2
@@ -177,6 +226,8 @@ health)
             local_fail=1
         fi
     done < "$pol"
+    (( compared > 0 )) \
+        || { echo "image-measured: '$image' has an expected-PCR policy that names NO PCR index ($pol) — nothing was compared, so '$node' is not attested" >&2; exit 1; }
     [[ $local_fail -eq 0 ]] || exit 1
 
     echo "image-measured: '$node' attested to the expected PCR state for '$image' (swtpm: mechanism proven, not a trust anchor)" >&2

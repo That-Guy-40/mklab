@@ -52,8 +52,9 @@ attempt — the first two each paid out a fresh defect; transcripts in
 **What is genuinely left is smaller than it has ever been**, and none of it blocks a
 run:
 
-- **`describe` is meaningful for only two of four drivers** (`image` and
-  `image+measured` still accept any image name) — see "Smaller, still open".
+- ~~**`describe` is meaningful for only two of four drivers**~~ ✅ **DONE 2026-08-06** —
+  and implementing it uncovered a **false success in the attestation gate itself**; see
+  "Smaller, still open".
 - **`tests/test-e2e-fails-fast.sh` runs the real `run-e2e.sh`**, and its hermeticity
   depends on the order of checks inside the script under test. Measured harmless;
   worth making structural.
@@ -397,6 +398,48 @@ nothing), and the negative control that a failed-deploy error is never touched.
      `active`, and `run-e2e-image.sh`'s verdict still reported FAIL, because the
      console carried no proof of verification. The second run printed
      `verified: the bytes on /dev/vda match the published sha256` and passed.
+- ~~**`describe` is meaningful for only two of four drivers.**~~ **DONE 2026-08-06.**
+  `gate()` asks `describe <image>` — "is this image yours?" — before anything
+  destructive happens, because an A/B rollback once handed the INSTALL driver a RAM
+  payload, which it netbooted onto a live node and then waited 30 minutes for an
+  installer that was never there. `ramdisk` and `install` answered that question;
+  `image` and `image+measured` printed a generic sentence and exited **0 for any name**.
+  For half the drivers the gate could not refuse anything, and **a gate that cannot
+  refuse cannot protect**.
+
+  Now: `image` claims an image only if it has a `disk.raw`, and names the owner of what
+  it refuses (a kernel+initrd+cmdline is the ramdisk driver's; +`ks.cfg` is install's).
+  `image+measured` requires both halves — a whole-disk image **and** a `pcrs.expected`.
+  The refusals put the action on the **first** line, because that is the line `gate()`
+  forwards to the operator; it used to collapse every refusal into "it does not own it",
+  which is true of all of them and tells you nothing.
+  [`tests/test-describe-ownership.sh`](tests/test-describe-ownership.sh) pins all four
+  drivers, with §5 as the control — each driver must still *claim its own* image, or a
+  driver that refuses everything would satisfy every assertion above it.
+
+- **The find that mattered more than the feature: `health` called a node attested when
+  there was nothing to compare.** Reproduced live 2026-08-06 against the shipped driver.
+  With no `pcrs.expected` on disk, `done < "$pol"` failed to **open** the file, the
+  comparison loop never ran, the failure counter stayed 0 — and `image-measured health`
+  printed
+
+  ```
+  image-measured: 'nX' attested to the expected PCR state for 'unsealed'
+  ```
+
+  and exited **0**. The only trace was a bash redirect error in the middle of the
+  output. That is a false success in the one gate this driver exists to provide — the
+  **LIED** rung, in the attestation driver.
+
+  It stayed hidden because `verify` refuses a missing policy, so the only way in is
+  `deploy --no-verify` — which skips verify entirely and leaves `health` as the last
+  gate standing. Fixed two ways, because "the file exists" is the *mechanism* and
+  "something was actually compared" is the *outcome*: `health` refuses a missing policy
+  by name, and refuses a policy that names **no PCR index** (an all-comments file exists
+  while comparing nothing). Both pinned in
+  [`tests/test-image-measured-driver.sh`](tests/test-image-measured-driver.sh), and both
+  re-injected and watched to bite.
+
 - **The deployer ramdisk once got a POOL address, and the reason recorded here was
   wrong.** Observed live 2026-07-28: `eth0 = 192.168.123.31` where node2's reservation
   is `.102`. The explanation written down beside it — *dnsmasq keys the reservation on
@@ -450,9 +493,22 @@ nothing), and the negative control that a failed-deploy error is never touched.
   `cannot read …: Permission denied`, starts, and serves the pool to every client —
   indistinguishable from "reservations do not work". The test fails by name on that
   log line so a broken harness can never present as a finding about dnsmasq.
-- **`image+measured`: the measuring payload is BUILT and proven; the live fleet run
-  is not done.** Picked up 2026-07-28 (night). What the investigation found is worth
-  more than the increment:
+- ~~**`image+measured`: the measuring payload is BUILT and proven; the live fleet run
+  is not done.**~~ ✅ **THE LIVE FLEET RUN LANDED 2026-07-29** — and this bullet went on
+  asking for it. `run-e2e-measured.sh` passes end to end on real libvirt domains, with
+  the whole transcript in [`MANUAL_TESTING.md`](MANUAL_TESTING.md) §15: deploy #0
+  refused for having no policy *before the node was touched*, deploy #1 captured
+  `4:B7F94771…` / `7:B5710BF5…` from node3's own signed quote, deploy #2 attested and
+  activated, and deploy #3 — one digit of PCR4 changed — was refused. That last one is
+  the only thing separating a real gate from one that always says yes.
+
+  **Two lines above this one already said so** (*"every numbered item below is closed,
+  live, and so is the `image+measured` run this file spent two days pointing at"*, and
+  *"the measured run landed 2026-07-29"*). A file can contradict itself and stay
+  readable, which is how a closed question gets re-asked — this one was, on 2026-08-06.
+
+  Picked up 2026-07-28 (night). What the investigation found is still worth more than
+  the increment:
 
   **The BIOS fleet cannot measure a payload at all.** Measured under swtpm:
 

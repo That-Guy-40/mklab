@@ -274,4 +274,34 @@ grep -qi 'capture-policy' <<<"$out" \
     || fail "the refusal does not name the command that fixes it: ${out//$'\n'/ }"
 note "rebuilding the image makes its old policy refuse at VERIFY, naming the fix  ✓"
 
+# ── N. health must not call a node attested when there is NOTHING to compare ──
+# Reproduced live 2026-08-06 against the shipped driver: with no pcrs.expected on disk,
+# `done < "$pol"` failed to OPEN the file, so the comparison loop never ran, the failure
+# counter stayed 0, and this driver printed "'nX' attested to the expected PCR state"
+# and exited 0. The only trace was a bash redirect error in the middle of the output.
+#
+# `verify` refuses a missing policy, which is why this stayed hidden — but
+# `deploy --no-verify` skips verify entirely, and then health is the only gate left. A
+# false success in the one gate this driver exists to provide is the LIED rung.
+#
+# Two shapes, because "the file exists" is the mechanism and "something was compared" is
+# the outcome: an all-comments policy also compares nothing while existing.
+( "$DRV" stage nopol --from "$GOLD" ) >/dev/null 2>&1 || fail "staging 'nopol' failed"
+prep nZ 6510
+( "$MAAS" deploy nZ --driver image --image nopol --no-verify ) >/dev/null 2>&1 || true
+quote nZ "$POL" 1                       # a quote that VERIFIES, so only §3 is left
+[[ -f "$MAAS_IMAGES_DIR/nopol/pcrs.expected" ]] \
+    && fail "fixture wrong: 'nopol' has a policy, so this section tests nothing"
+out="$( ( "$DRV" health nZ nopol ) 2>&1 )" \
+    && fail "REGRESSION: health reported success for an image with NO pcrs.expected — nothing was compared and the node was called attested. This is the false success the driver exists to prevent. Got: ${out//$'\n'/ }"
+grep -Fq 'no expected-PCR policy' <<<"$out" \
+    || fail "health refused, but did not name the missing policy as the reason: ${out//$'\n'/ }"
+
+printf '# a policy that names no PCR at all\n# 7:aaaa\n' > "$MAAS_IMAGES_DIR/nopol/pcrs.expected"
+out="$( ( "$DRV" health nZ nopol ) 2>&1 )" \
+    && fail "REGRESSION: health reported success against a policy that names NO PCR index — the file exists, so an existence check passes while zero comparisons happen. Got: ${out//$'\n'/ }"
+grep -Fq 'names NO PCR index' <<<"$out" \
+    || fail "health refused an empty policy without saying why: ${out//$'\n'/ }"
+note "health refuses to call a node attested with no policy, and with a policy that compares nothing  ✓"
+
 pass "image+measured activates only on a signed, trusted, matching attestation: no quote / unsigned / forged / mismatched / incomplete are each refused by name (mechanism proven on swtpm, which is NOT a trust anchor)"
