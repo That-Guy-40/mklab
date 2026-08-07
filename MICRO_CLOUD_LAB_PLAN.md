@@ -4266,3 +4266,71 @@ The measurements above are the *hard* part and they are done. The **lab unit** i
 delete-`mc-decoy` control included, a 00-INDEX row and a `learning-paths.toml` route. The
 **CNI-layer chaos scenario** depends on that harness and has not been started. Recorded as
 **not done**, not as pending-and-basically-fine.
+
+---
+
+## Appendix P — `retap`'s first privileged run: the test failed, and that is the finding, 2026-08-07
+
+[`tests/test-retap-recovers-a-root-owned-tap.sh`](examples/micro-cloud/tests/test-retap-recovers-a-root-owned-tap.sh)
+was written on 2026-08-06 and recorded as **UNKNOWN, not PASS**, because it needs root and
+had never executed an assertion. It was run. It **failed** — at §3, its own fixture — and
+the failure is worth more than the pass would have been.
+
+### P.1 The first privileged run failed on its own fixture, and that is the result
+
+```
+  - baseline: 'sqs' can attach to the fabric's own tap — TUNSETIFF-OK mc-rt1 uid=1000  ✓
+  - (the broken tap is operstate=down, which at least hints at trouble)
+FAIL: REGRESSION: 'sqs' could attach to a ROOT-OWNED tap (TUNSETIFF-OK mc-rt1 uid=1000) —
+      the defect retap exists to repair cannot be staged on this kernel, so §4 would pass
+      without proving anything
+```
+
+§3 staged the break with a bare `ip tuntap add dev mc-rt1 mode tap`, on the theory that a
+`sudo` from a root shell produces a tap "owned by nobody". **uid 1000 attached to it
+without difficulty.** The kernel says why — `drivers/net/tun.c`, `tun_not_capable()`:
+
+```c
+return ((uid_valid(tun->owner) && !uid_eq(cred->euid, tun->owner)) ||
+        (gid_valid(tun->group) && !in_egroup_p(tun->group))) &&
+       !ns_capable(net->user_ns, CAP_NET_ADMIN);
+```
+
+With **no** owner and **no** group, both halves of the first clause are false, so the
+expression is false and **any** user may attach. An **owner-less** tap is therefore *more*
+permissive than a normal one, not less.
+
+> **"Root-owned" and "owner-less" are indistinguishable in `ip link show` and behave in
+> opposite directions.** Only one of them is G.4. The real defect is
+> [§2675](#g4-four-defects-three-of-them-inside-the-safety-checks)'s: `SUDO_USER=root`
+> made `fabric.sh tap` run `ip tuntap add … user root`, so the owner is uid **0** — a
+> *valid* uid that is not the caller's — which is precisely the state `fabric.sh:246`
+> refuses to create.
+
+**The guard is what caught it**, and it is the one the test was built around: §3 exists to
+assert that the broken state was actually staged, so that §4's repair means something. Had
+it not been there, `retap` would have "recovered" a tap that uid 1000 could open before and
+after, and the run would have printed PASS. *An assertion never observed failing is not
+known to work* — this one was observed, on its first opportunity, and it fired.
+
+Two corrections, both in the harness rather than in `fabric.sh`:
+
+- §3 now stages `ip tuntap add … user root`, faithful to how G.4's tap was actually made.
+- §3 **reads `/sys/class/net/<tap>/owner` back and requires `0` before asking the ioctl.**
+  The fixture is checked, then the outcome is measured. That ordering is the whole lesson:
+  the test had been asserting an outcome against a fixture it never verified.
+
+Also corrected: two documents described the defect as "a tap created with no `user`", which
+this run shows is a different state with the opposite behaviour.
+
+### P.2 What is still UNKNOWN
+
+**`retap`'s own verdict.** The corrected test has not been re-run, so nothing here says the
+verb works — only that the harness now stages the state it claims to. §4–§6 (the repair,
+the byte-identical reservation, the addressless tap on `br-mc0`, the two mutual refusals,
+Calico unmoved) have still never executed. Recorded as **UNKNOWN, not PASS**.
+
+Two things the failed run *did* establish, incidentally: the baseline attach works
+(`TUNSETIFF-OK … uid=1000` against a `fabric.sh`-made tap, so the fabric's own ownership
+handling is sound), and the EXIT trap tore the fabric and the tap down cleanly on the
+failure path — `br-mc0` and `mc-rt1` were both absent afterwards.

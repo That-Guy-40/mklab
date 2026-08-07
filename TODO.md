@@ -591,7 +591,7 @@ including `retap`, which no test has ever called.
 - [ ] Re-run **F.6** on purpose: give an interface an address and watch the node IP
       migrate. Currently not even *predictable* — G.3 retracted the ordering explanation.
 - [ ] Verify **rule 1** by naming a bridge both ways and watching only one get picked.
-- [~] Exercise `retap` against a deliberately root-owned tap. **Test written 2026-08-06**
+- [~] Exercise `retap` against a deliberately root-owned tap. **Test written 2026-08-06; RUN 2026-08-07 and it FAILED on its own fixture** — §3 staged the break with a bare `ip tuntap add` and uid 1000 attached to it fine, because an owner-**less** tap is attachable by anyone (`tun_not_capable()`); only a tap with owner uid **0** is G.4. Staging corrected to `user root` + the fixture is now read back before the ioctl is asked. **`retap`'s own verdict is still UNKNOWN — the corrected test has not been re-run.** See [Appendix P](MICRO_CLOUD_LAB_PLAN.md#appendix-p--retaps-first-privileged-run-the-test-failed-and-that-is-the-finding-2026-08-07).
       ([`test-retap-recovers-a-root-owned-tap.sh`](examples/micro-cloud/tests/test-retap-recovers-a-root-owned-tap.sh));
       it stages the real defect and asserts the **`TUNSETIFF` outcome**, not the owner
       file. Root-gated, so it SKIPs unprivileged — **the privileged run is still owed**,

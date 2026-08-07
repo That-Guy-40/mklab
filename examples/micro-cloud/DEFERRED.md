@@ -330,7 +330,7 @@ debt in this queue:
 
 - **`retap`: the test is written, the privileged run is owed.** 2026-08-06 —
   [`tests/test-retap-recovers-a-root-owned-tap.sh`](tests/test-retap-recovers-a-root-owned-tap.sh)
-  stages the real defect (a tap created with no `user`, enslaved and up — it *looks*
+  stages the real defect (a tap created `user root` — owner uid **0** — enslaved and up, so it *looks*
   fine), proves the owner cannot attach, runs `retap`, and proves they can again. The
   assertion is the **`TUNSETIFF` ioctl**, attempted as the unprivileged owner via
   [`tests/tun-open.py`](tests/tun-open.py), not `/sys/class/net/<tap>/owner`: the owner
