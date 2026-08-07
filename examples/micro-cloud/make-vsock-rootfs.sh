@@ -115,10 +115,20 @@ esac
 # console instead of being a silence. The console ordering is asserted in the test, not
 # assumed here — this comment is a claim about busybox's behaviour and the LISTENING line
 # arriving before SLICE3-BEGIN is the measurement of it.
+#
+# The second background line is a LINK TIMELINE, opt-in with `mc_link=1` on the kernel
+# command line. The chaos matrix needs to prove that severing the guest's network actually
+# LANDED, and mc-probe.sh's own WATCH mode cannot serve: it runs only after a 40-iteration
+# peer-ping loop, so the first WATCH line arrives ~80 s in. Worse, depending on it would
+# couple the matrix to mc-probe.sh's internals — a mechanism dependency, when what is wanted
+# is the outcome (did the guest lose carrier?). Measured: without such a timeline the
+# network row graded ABSORBED even when the injector was replaced by a no-op, because vsock
+# answers either way. It was passing without its own fault.
 cat > "$WORK/inittab" <<INITTAB
 ::sysinit:/bin/mount -t proc proc /proc
 ::sysinit:/bin/mount -t sysfs sysfs /sys
 ::sysinit:/bin/sh -c 'while :; do /sbin/mc-vsock-agent $PORT; echo "MC-VSOCK-AGENT EXITED rc=\$? — restarting"; sleep 1; done &'
+::sysinit:/bin/sh -c 'case " \$(cat /proc/cmdline) " in *" mc_link=1 "*) while :; do echo "MC-LINK carrier=\$(cat /sys/class/net/eth0/carrier 2>/dev/null || echo NA) operstate=\$(cat /sys/class/net/eth0/operstate 2>/dev/null || echo NA)"; sleep 2; done & ;; esac'
 ::sysinit:/mc-probe.sh
 ttyS0::respawn:/sbin/getty -L ttyS0 115200 vt100
 ::ctrlaltdel:/sbin/reboot

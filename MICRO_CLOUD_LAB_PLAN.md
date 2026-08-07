@@ -4090,9 +4090,83 @@ witness* to *one witness*; and slice 5c's break pass has its most interesting sc
 (shared CID) answered with a ladder rung per engine.
 
 **Not closed, and deliberately out of scope** (decision C says start with SSH): replacing
-SSH, and MMDS. **Not yet done from 5c's break list:** tearing down `br-mc0` with the agent
-connected, killing the host listener under a live guest, and CID exhaustion — three more
-injection points for a micro-cloud chaos matrix that still does not exist as a harness.
+SSH, and MMDS. **5c's break list is now covered** — see [N.8](#n8-the-break-pass-micro-clouds-first-chaos-matrix-and-a-critical-that-is-not-ours).
+
+### N.8 The break pass: micro-cloud's first chaos matrix, and a critical that is not ours
+
+[`tests/test-vsock-chaos.sh`](examples/micro-cloud/tests/test-vsock-chaos.sh) — five rows,
+unprivileged, graded on `CLAUDE.md`'s ladder. It is the first chaos harness this lab has
+had at all.
+
+| row | fault | rung | evidence |
+|---|---|---|---|
+| **control** | none | ABSORBED | the unbroken channel answers. Without it, "the harness reported failures" is indistinguishable from a system that never worked |
+| guest network | `set_link down` under a live agent | **ABSORBED** | the guest held `10.0.2.15/24`, the link was cut, **vsock kept answering** |
+| host channel (FC) | `rm` the `uds_path` under a live guest | **STRANDED** | guest still RUNNING and healthy; host gets a clean `ENOENT`; the API **refuses** to rebuild it |
+| the VMM | killed with the channel in use | **HALTED** | both engines fail in **0 s** with a named errno — neither hangs |
+| CID namespace | a guest asks for CID 0/1/2 | **ABSORBED** | refused at device creation: `guest-cid property must be greater than 2` |
+
+**The matrix is a regression guard, not a pass/fail on criticals.** One row *is* critical
+and it is **not our defect** — it is how Firecracker's vsock behaves. Failing forever on an
+upstream property trains the reader to ignore the file, so every row declares the rung it
+was measured at and the test fails when a rung **moves**, in either direction.
+
+**The critical, graded after attempting the recovery the system offers** (which is what
+makes "critical" mean *nothing can be done* rather than *the first thing I looked at was
+still wrong*): with the socket unlinked, `PUT /vsock` on Firecracker's live API answers
+
+> `{"fault_message":"The requested operation is not supported after starting the microVM."}`
+
+So **one `rm` permanently severs a healthy, running guest.** And the other half of the row
+is why it belongs in this appendix rather than a bug tracker: **QEMU cannot suffer this
+fault at all.** Its host end is a kernel object with no name in the filesystem — there is
+nothing to delete. [N.4](#n4-the-seam-measured-in-both-directions)'s asymmetry does not
+stop at the API's shape; it extends to *what can go wrong*, and a seam that unified the two
+would be unifying two different failure domains.
+
+**The fabric row, honestly scoped.** DEFERRED asked for "tear down `br-mc0` with the agent
+connected". `set_link down` tests that *property* more severely and without root — it
+removes the link from the guest's view entirely, a superset of losing the bridge beneath a
+tap — so the property is measured. What is **not** exercised is the fabric's own teardown
+*code*, and the matrix says so rather than letting the stronger fault imply the weaker one.
+
+**Named as not covered**, because a layer with no scenario is a layer nobody has watched
+fall over: CID **exhaustion** (the space is 2³² and cannot be exhausted the way a DHCP pool
+can — there is no analogous failure to grade, which is itself the answer); the fabric's
+teardown path; and a partitioned/slow channel, for which there is no injector yet.
+
+**Three harness defects, each found by breaking something on purpose.**
+
+The first is the one worth reading. The network row graded **ABSORBED even when its
+injector was replaced by a no-op** — because vsock answers whether or not the network went
+away, so the verdict never depended on the fault. `{"return":{}}` from QMP says only that
+*QEMU accepted the command*; the outcome is *the guest losing carrier*, and those are
+different claims. The fix is a **link timeline in the image** (`mc_link=1`, an MC-LINK line
+every 2 s from boot), and the row now requires `carrier=1` **before** and `carrier=0`
+**after**. mc-probe.sh's own WATCH mode could not serve: it runs behind a 40-iteration peer
+loop, so its first line lands ~80 s in — and depending on it would couple the matrix to
+mc-probe.sh's internals, which is a mechanism dependency where an outcome was wanted.
+
+The second is [this repo's own documented bug shape, recurring](#appendix-m--slice-5b-the-fidelity-case-joins-the-fabric-2026-08-06):
+`boot_qemu` was called in a **command substitution**, so `PIDS+=` updated a subshell's copy
+and the EXIT trap reaped nothing — exactly the `dhcp_ask` defect in the DHCP-exhaustion
+test. It was found because a leaked guest kept holding a CID, which then blocked the **next**
+run's control guest. Two fixes: the PID is published in a variable rather than echoed, and
+the CIDs are **derived from the shell's PID** instead of written down — a harness that
+hard-codes a CID is vulnerable to the very collision [N.5](#n5-the-consequence-nothing-reports-guest_cid-is-not-one-thing)
+documents.
+
+**And two more caught by assertions that demand a failure name its reason:**
+the reserved-CID row first ran QEMU without `-enable-kvm`, so it died on *"CPU model 'host'
+requires KVM"* **before** ever validating `guest-cid` — the row graded **LIED** and refused
+to call an uninjected fault absorbed. And the row now carries a control: a *legal* CID must
+**not** produce the refusal, or it would pass on a QEMU that rejects every `guest-cid` for
+an unrelated reason.
+
+**§6 asserts the rungs are OCCUPIED**, because zero criticals proves none of this: a
+harness that breaks nothing is all-ABSORBED and one that breaks everything is
+all-STRANDED, and both survive a criticals-only check. The run reports **3 absorbed, 2
+not**.
 
 ---
 

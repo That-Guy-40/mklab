@@ -12,7 +12,9 @@ tests=(test-fabric-mac-derivation.sh test-bench-boot.sh test-fabric-round-trip.s
        test-harness-net.sh test-retap-recovers-a-root-owned-tap.sh
        # Slice 5c. The only boot test here that needs NO root and NO fabric — which is its
        # thesis, not a convenience: vsock is the first channel that is not the fabric.
-       test-vsock-both-engines.sh)
+       test-vsock-both-engines.sh
+       # 5c's break pass: a chaos matrix over the layers vsock can lose. Also unprivileged.
+       test-vsock-chaos.sh)
 
 # The list is compared against the disk: a test with no runner is a test nobody runs,
 # and a comment saying so does not fail a build (metal-as-a-service kept one for weeks).

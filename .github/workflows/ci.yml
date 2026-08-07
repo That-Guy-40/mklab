@@ -59,6 +59,7 @@ jobs:
             examples/micro-cloud/tests/test-two-engines-one-fabric.sh \
             examples/micro-cloud/tests/test-dhcp-exhaustion.sh \
             examples/micro-cloud/tests/test-vsock-both-engines.sh \
+            examples/micro-cloud/tests/test-vsock-chaos.sh \
             examples/micro-cloud/make-vsock-rootfs.sh \
             examples/kali-packer-vagrant/fetch-kali-packer.sh \
             examples/kali-packer-vagrant/tests/test-offline-archive.sh \

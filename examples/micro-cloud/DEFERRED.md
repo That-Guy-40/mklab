@@ -185,9 +185,33 @@ by `SUN_LEN` (~108 bytes, and a long `TMPDIR` trips it); and the first CID-colli
 "passed" because the second QEMU was refused for a *disk lock* rather than the CID — caught
 only because the assertion demands the refusal name its reason.
 
-**Still open from 5c's break list:** tearing down `br-mc0` with the agent connected,
-killing the host listener under a live guest, and CID exhaustion. Explicitly out of scope
-and unchanged: replacing SSH (decision C says start with SSH), and MMDS.
+**The break list is covered** by [`tests/test-vsock-chaos.sh`](tests/test-vsock-chaos.sh)
+(2026-08-07) — micro-cloud's **first chaos matrix**, five rows, unprivileged, graded on the
+ladder and written as a **regression guard**: each row records the rung it was measured at
+and the test fails when a rung *moves*, in either direction.
+
+| row | rung |
+|---|---|
+| control, no fault | ABSORBED |
+| the guest's **entire network** severed under a live agent (`set_link down`) | **ABSORBED** — vsock really is not the fabric |
+| Firecracker's host socket `rm`'d under a live guest | **STRANDED** ⚠️ |
+| the VMM killed with the channel in use | **HALTED** — 0 s, named errno, no hang |
+| a guest asks for a reserved CID (0/1/2) | **ABSORBED** — refused at device creation |
+
+**The critical is not ours.** With the socket unlinked the guest is still *running and
+healthy*, and Firecracker's live API refuses to rebuild the channel —
+`{"fault_message":"The requested operation is not supported after starting the microVM."}`
+— so one `rm` severs a healthy guest permanently. And **QEMU cannot suffer the fault at
+all**: its host end is a kernel object with no name in the filesystem. The 5c asymmetry
+does not stop at the API's shape, it extends to *what can go wrong*.
+
+**Named as not covered**, rather than left implicit: CID **exhaustion** (2³² — there is no
+analogous failure to grade, which is the answer); the fabric's own *teardown code* (the
+property is tested more severely by `set_link`, but that code path needs root); and a
+partitioned/slow channel, for which there is no injector yet.
+
+Explicitly out of scope and unchanged: replacing SSH (decision C says start with SSH), and
+MMDS.
 
 <details>
 <summary>The original brief, as scoped 2026-08-05 — kept because it is the record of what
