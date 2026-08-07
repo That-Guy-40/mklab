@@ -34,6 +34,24 @@ It is not — an experiment nobody can re-run is a story.
 - [ ] **0.3** add a chaos row that tears the fabric down beneath a live vsock agent, so the
       teardown *code* is exercised and not merely implied.
 
+**0.4 — the flaky-CI shape, partly fixed** *(added 2026-08-07, after main went red twice)*.
+`producer | grep -q PATTERN || fail` is wrong in two independent ways when the thing being
+asserted is a **container's** state: the state is *eventual* (a tool returning is not the
+container having done the thing), and `grep -q` exits on first match, closes the pipe, and
+the producer can die on SIGPIPE — which under `pipefail` reports the **pipeline** as failed
+though the match was found. That inversion is now on its **fifth** recorded instance here.
+
+`await_line` / `await_match` in `phase3-docker/tests/lib.sh` and
+`phase4-podman/tests/lib.sh` capture first and test second, with a deadline, and were
+watched to fail on a needle that never arrives.
+
+- [ ] **0.4** the two demonstrated sites are converted; **13 more share the shape** across
+      `phase3-docker/tests/` and `phase4-podman/tests/`. Most read static config (labels,
+      inspect output) where nothing is eventual and the SIGPIPE half is only *latent* — so
+      this is a sweep to do deliberately, classifying each site as racy / latent /
+      negative-assertion, **not** a blanket replace. A negative assertion must NOT gain a
+      retry: it would wait out the deadline every time and prove the same thing slower.
+
 ## 1. Crack the FLOPPINUX login hash (educational security exercise)
 
 Demonstrate, **on our own throwaway lab artifact**, how weak a classic `$1$`

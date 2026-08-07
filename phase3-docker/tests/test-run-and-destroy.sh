@@ -49,15 +49,18 @@ docker inspect -f '{{.Config.Labels}}' "$cname" | grep -q 'lab-create.lab:adhoc'
     || fail "adhoc label missing"
 
 note "logs"
-"$LAB_DOCKER" logs "$name" | grep -q READY \
-    || fail "logs did not include the READY marker"
+# EVENTUAL: `run --detach` returns once the container is created, so the entrypoint's
+# first line may not have been collected by the log driver yet.  This is the assertion that
+# went red on main, 2026-08-07.
+await_match 20 READY -- "$LAB_DOCKER" logs "$name" \
+    || fail "logs did not include the READY marker within 20s"
 
 note "exec"
 got="$("$LAB_DOCKER" exec "$name" -- /bin/sh -c 'echo HELLO')"
 [[ "$got" == HELLO ]] || fail "exec did not return HELLO; got: $got"
 
 note "list shows our container"
-"$LAB_DOCKER" list 2>/dev/null | grep -q "$cname" \
+await_match 20 "$cname" -- "$LAB_DOCKER" list \
     || fail "list did not show our container"
 
 note "destroy --force"

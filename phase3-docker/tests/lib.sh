@@ -80,3 +80,45 @@ cleanup_lab() {
     local lab="$1"
     "$LAB_DOCKER" down --lab "$lab" >/dev/null 2>&1 || true
 }
+
+# ── awaiting an EVENTUAL state, without the two traps that shape has ────────────────────
+# `producer | grep -q PATTERN || fail` is wrong here in two independent ways, and CI on
+# main has now gone red twice from it (2026-08-07: a container's logs, and a pod's members).
+#
+#   1. THE STATE IS EVENTUAL.  A tool returning is not the container having done the thing:
+#      `run --detach` returns once the container is CREATED, so its first line of output may
+#      not exist yet, and `up` returning is not every service `running`.  An instant assert
+#      is a race that passes on an idle laptop and fails on a loaded runner.
+#   2. `grep -q` EXITS ON FIRST MATCH and closes the pipe.  The producer can then die on
+#      SIGPIPE, and with `pipefail` set (this lib does) the PIPELINE reports failure — so a
+#      match that WAS found is reported as absent.  This repo has documented that inversion
+#      three times (fabric.sh's `ip … | grep -q inet`, plan §6's `mke2fs -h`); these were the
+#      fourth and fifth instances.
+#
+# Both vanish if you CAPTURE FIRST AND TEST SECOND, with a deadline.  No pipe, so no
+# SIGPIPE and no pipefail inversion; a retry loop, so eventual state is allowed to arrive.
+# On timeout the captured output is echoed, because "not found" is far more debuggable with
+# the haystack than without it.
+#
+#   await_line  <secs> <exact-line> -- <cmd…>     # whole-line match (was `grep -qx`)
+#   await_match <secs> <substring>  -- <cmd…>     # substring match  (was `grep -q`)
+#
+# NOT for negative assertions.  A "must NOT appear" check must not retry — it would simply
+# wait out the deadline every time and turn a fast test slow while proving the same thing.
+_await() {   # _await <mode: line|match> <secs> <needle> -- <cmd…>
+    local mode="$1" secs="$2" needle="$3"; shift 3
+    [[ "${1:-}" == -- ]] && shift
+    local deadline=$(( SECONDS + secs )) out
+    while :; do
+        out="$("$@" 2>/dev/null)" || true
+        if [[ "$mode" == line ]]; then
+            grep -qxF -- "$needle" <<<"$out" && return 0
+        else
+            grep -qF -- "$needle" <<<"$out" && return 0
+        fi
+        (( SECONDS >= deadline )) && { printf '%s' "$out"; return 1; }
+        sleep 0.3
+    done
+}
+await_line()  { _await line  "$@"; }
+await_match() { _await match "$@"; }
