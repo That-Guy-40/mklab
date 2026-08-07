@@ -109,11 +109,54 @@ note "--dry-run leaves the real run log byte-for-byte alone  ✓"
 LOGF="$SANDBOX/keepme.log"
 printf 'A COMPLETED RUN LIVED HERE\n' > "$LOGF"
 sum_before="$(cksum < "$LOGF")"
-# MAAS_STATE is sandboxed too, and deliberately: this line runs the REAL run-e2e.sh.
-# It is safe only because the preflight refuses before phase 1 — measured, the operator's
-# registry is untouched — but that makes a test's hermeticity depend on the order of
-# checks in the script under test. If a check ever moves, this would drive the live fleet.
-( cd "$LAB_DIR" && E2E_LOG="$LOGF" MAAS_IMAGES_DIR="$SANDBOX/nope" MAAS_STATE="$SANDBOX/state" ./run-e2e.sh ) >/dev/null 2>&1
+# THIS LINE RUNS THE REAL run-e2e.sh, and that used to be safe only because the preflight
+# happens to refuse before phase 1 — a test whose hermeticity depended on the order of
+# checks *inside the script under test*. Measured harmless, but "harmless today" is a
+# cached fact: move one check above the images-dir gate and this test would `sudo` its
+# way through phase 1 and rebuild the operator's fleet.
+#
+# Made structural 2026-08-06. Every tool that can touch the host is replaced on PATH by
+# a shim that records the attempt and refuses, so the run CANNOT reach the fleet however
+# the checks are ordered. The shim log then becomes the assertion: preflight only ever
+# invokes `sudo -n true` (its last gate), so anything else in that log means a check
+# moved — reported here, by name, instead of discovered on a wrecked fleet.
+#
+# `command -v virsh` in preflight is satisfied by the shim, so the run still reaches the
+# refusal this section is about rather than dying earlier for a different reason.
+#
+# AND THE ORIGINAL BELIEF WAS WRONG, which is why this mattered. The note said the run
+# was stopped by `MAAS_IMAGES_DIR=$SANDBOX/nope`. It is not: preflight's payload gate
+# resolves catalog paths against $REPO_ROOT, never against MAAS_IMAGES_DIR, so a bogus
+# images dir does not trip it at all. The run reached preflight's LAST item — `sudo -n
+# true` — and was stopped only by sudo being unprimed. run-e2e.sh's own refusal tells
+# the operator to fix exactly that ("Run 'sudo -v' first"), so anyone who followed that
+# advice and then ran the suite would have had this test rebuild their fleet. Measured
+# 2026-08-06 by watching which gate actually fired.
+SHIM="$SANDBOX/shim"; mkdir -p "$SHIM"
+: > "$SANDBOX/shim.log"
+for _c in virsh vbmc ipmitool qemu-img virt-install sudo; do
+    { printf '#!/usr/bin/env bash\n'
+      printf 'printf "%%s %%s\\n" "%s" "$*" >> "%s/shim.log"\n' "$_c" "$SANDBOX"
+      printf 'exit 1\n'
+    } > "$SHIM/$_c"
+    chmod +x "$SHIM/$_c"
+done
+e2e_out="$( cd "$LAB_DIR" \
+    && PATH="$SHIM:$PATH" E2E_LOG="$LOGF" MAAS_IMAGES_DIR="$SANDBOX/nope" MAAS_STATE="$SANDBOX/state" \
+       ./run-e2e.sh 2>&1 )" && e2e_rc=0 || e2e_rc=$?
+
+(( e2e_rc != 0 )) \
+    || fail "REGRESSION: the real run-e2e.sh SUCCEEDED with a nonexistent images dir — it no longer refuses in preflight, and this section's whole premise (that it stops before touching anything) is gone"
+# Only preflight's own sudo gate may appear. Anything else means a check moved and the
+# run got as far as trying to change the host; the shims made that attempt inert.
+_stray="$(grep -vE '^sudo -n true ?$' "$SANDBOX/shim.log" 2>/dev/null || true)"
+[[ -z "$_stray" ]] \
+    || fail "REGRESSION: run-e2e.sh tried to touch the host before refusing — a preflight check moved, and only the PATH shims stopped this test from rebuilding the operator's fleet. Attempted: ${_stray//$'\n'/ | }"
+grep -q '== preflight ==' <<<"$e2e_out" \
+    || fail "the run did not even reach preflight, so its refusal proves nothing about the preflight ordering this section pins. Output: ${e2e_out//$'\n'/ | }"
+grep -q '== \[1/10\]' <<<"$e2e_out" \
+    && fail "REGRESSION: the run entered phase 1 before refusing. Phase 1 is 'PXE network + HTTP docroot (sudo)' — on a host without these shims it would have reconfigured libvirt networking"
+note "the real run-e2e.sh refuses inside preflight, and cannot reach the host: only 'sudo -n true' was attempted  ✓"
 [[ "$(cksum < "$LOGF")" == "$sum_before" ]] \
     || fail "REGRESSION: a run that refused during preflight replaced the previous run's log. The last thing that actually finished is the thing you most want to read after a failed start — and the failed start had nothing of its own to say"
 note "a run refused in preflight leaves the previous log byte-for-byte alone  ✓"

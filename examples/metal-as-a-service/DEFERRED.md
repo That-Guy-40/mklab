@@ -55,9 +55,9 @@ run:
 - ~~**`describe` is meaningful for only two of four drivers**~~ ✅ **DONE 2026-08-06** —
   and implementing it uncovered a **false success in the attestation gate itself**; see
   "Smaller, still open".
-- **`tests/test-e2e-fails-fast.sh` runs the real `run-e2e.sh`**, and its hermeticity
-  depends on the order of checks inside the script under test. Measured harmless;
-  worth making structural.
+- ~~**`tests/test-e2e-fails-fast.sh` runs the real `run-e2e.sh`**, and its hermeticity
+  depends on the order of checks inside the script under test.~~ ✅ **DONE 2026-08-06 —
+  and "measured harmless" had measured the wrong thing;** see "Smaller, still open".
 - **The honest gap that no amount of work here can close:** swtpm is faithful plumbing
   and the attestation key is baked into the image, so the measured path proves the
   MECHANISM and the REFUSAL PATH, never the integrity of a machine. Real hardware needs
@@ -347,11 +347,30 @@ nothing), and the negative control that a failed-deploy error is never touched.
   an existing fleet: `cp -a ~/.cache/lab-create/maas/images
   "$(./maas-lab.sh _images-dir)"` (same CA, so the ROM does **not** need a rebuild), then
   delete the cache copy.
-- **`tests/test-e2e-fails-fast.sh` runs the real `run-e2e.sh`.** `MAAS_STATE` is now
-  sandboxed on that line, but the test is still only safe because the preflight refuses
-  before phase 1 — a test whose hermeticity depends on the order of checks *inside the
-  script under test*. Measured harmless today (the registry's history is byte-identical
-  across a run); worth making structural.
+- ~~**`tests/test-e2e-fails-fast.sh` runs the real `run-e2e.sh`.**~~ **DONE 2026-08-06,
+  and the reassurance in this entry was wrong.**
+
+  The claim was that the run is stopped by the sandboxed `MAAS_IMAGES_DIR` before phase
+  1, "measured harmless (the registry's history is byte-identical across a run)". That
+  measured an *outcome on this host* and inferred a *cause*. Watching which gate actually
+  fires shows the images dir has nothing to do with it: preflight's payload gate resolves
+  catalog paths against `$REPO_ROOT`, **never** against `MAAS_IMAGES_DIR`, so a bogus
+  images dir does not trip it at all. The run sailed through every preflight item and was
+  stopped only by the **last** one — `sudo -n true` — i.e. by sudo being unprimed.
+
+  **run-e2e.sh's own refusal tells the operator to fix exactly that** ("Run `sudo -v`
+  first — this script front-loads the privileged work"). Anyone who followed that advice
+  and then ran the suite would have had this test walk into phase 1: `setup-pxe-net.sh`
+  under sudo, then `create-fleet.sh up` rebuilding three domains and their disks. Not a
+  theoretical ordering risk — one `sudo -v` away, on the author's own machine.
+
+  **Now structural.** Every host-touching tool (`virsh`, `vbmc`, `ipmitool`, `qemu-img`,
+  `virt-install`, `sudo`) is replaced on `PATH` by a shim that records the attempt and
+  refuses, so the run *cannot* reach the fleet however the checks are ordered. The shim
+  log is then the assertion: preflight legitimately calls `sudo -n true` and nothing
+  else, so any other entry means a check moved — reported by name, from a run that
+  changed nothing. Plus a direct assertion that phase 1 was never entered. Both controls
+  were injected and fired.
 
 - ~~**A failed deploy corrupts the recorded rollback pair.**~~ **DONE 2026-07-28
   (night)**, made structural rather than patched per-branch: the `(driver, image)`
