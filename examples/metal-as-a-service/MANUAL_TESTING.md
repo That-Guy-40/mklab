@@ -2067,3 +2067,72 @@ driver that refuses everything would satisfy every refusal above it.
 `PASS:` with five `note` lines; `./tests/test-image-measured-driver.sh` ends on `PASS:`
 including *"health refuses to call a node attested with no policy"*; and
 `tests/run-all.sh` reports **every listed test ran, 0 skipped, 0 failed**.
+
+---
+
+## 20. A test that was one `sudo -v` away from rebuilding the fleet (2026-08-06)
+
+`tests/test-e2e-fails-fast.sh` §7 runs the **real** `run-e2e.sh` — not `--dry-run` —
+to prove that a run refused during preflight leaves the previous run's log alone.
+DEFERRED.md carried a reassurance beside it:
+
+> `MAAS_STATE` is now sandboxed on that line, but the test is still only safe because the
+> preflight refuses before phase 1 … **Measured harmless today** (the registry's history
+> is byte-identical across a run); worth making structural.
+
+That measured an **outcome on this host** and inferred a **cause**. Watching which gate
+actually fires says otherwise.
+
+### 20.1 The images dir had nothing to do with it
+
+The line sets `MAAS_IMAGES_DIR=$SANDBOX/nope`, and the belief was that preflight's
+payload gate refuses because of it. It does not: that gate resolves catalog paths
+against **`$REPO_ROOT`**, never against `MAAS_IMAGES_DIR`, so a bogus images dir does
+not trip it at all.
+
+The run passed every preflight item and was stopped by the **last** one:
+
+```bash
+sudo -n true 2>/dev/null \
+    || die "sudo is not primed. Run 'sudo -v' first — this script front-loads the
+privileged work and must not stop to ask for a password halfway through a boot."
+```
+
+**Sudo being unprimed was the only thing standing between this test and phase 1** —
+`setup-pxe-net.sh` under sudo, then `create-fleet.sh up` rebuilding three domains and
+their disks. And the refusal the operator sees tells them to run `sudo -v`. Anyone who
+followed that advice and then ran the suite would have had a *unit test* rebuild their
+fleet. One command away, on the author's own machine.
+
+### 20.2 Hermeticity by construction
+
+Every host-touching tool is replaced on `PATH` by a shim that records the attempt and
+refuses:
+
+```bash
+for _c in virsh vbmc ipmitool qemu-img virt-install sudo; do …; done
+```
+
+The run now *cannot* reach the fleet however the checks are ordered — and the shim log
+becomes the assertion. Preflight legitimately invokes `sudo -n true` and nothing else,
+so **any other entry means a check moved**, reported by name from a run that changed
+nothing. A second assertion fails if the output ever shows `== [1/10] ==`.
+
+`command -v virsh` in preflight is satisfied by the shim, so the run still reaches the
+refusal the section is about rather than dying earlier for an unrelated reason.
+
+### 20.3 Controls
+
+| injected | what fired |
+|---|---|
+| a `virsh net-define` line appears in the shim log | `REGRESSION: run-e2e.sh tried to touch the host before refusing — a preflight check moved, and only the PATH shims stopped this test from rebuilding the operator's fleet` |
+| the output shows phase 1 | `REGRESSION: the run entered phase 1 before refusing … on a host without these shims it would have reconfigured libvirt networking` |
+
+**The lesson is the one this lab keeps relearning:** "measured harmless" is only as good
+as *what* was measured. An unchanged registry is consistent with "the gate held" and with
+"the gate was never reached because of something incidental" — and here it was the
+second. Measure the mechanism you are relying on, not a downstream symptom of it.
+
+**Success signature for this section:** `./tests/test-e2e-fails-fast.sh` ends on `PASS:`
+with a note reading *"the real run-e2e.sh refuses inside preflight, and cannot reach the
+host: only 'sudo -n true' was attempted"*.
