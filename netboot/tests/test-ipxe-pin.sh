@@ -98,6 +98,21 @@ note "overridden ref: not verified, and the build announces that it is unpinned 
 command -v unshare >/dev/null 2>&1 \
     || skip "no unshare(1): §3/§4 need a private /tmp to run the real inner script without touching the host's. The pin file and the forwarding above are verified; the refusal is NOT — recorded as unknown, not as pass"
 
+# Ask FIRST whether this kernel will give an unprivileged user a mount namespace with a
+# tmpfs in it, because a sandbox is not the thing under test and its absence must produce a
+# SKIP with a reason rather than a failure.
+#
+# It must also be asked in a form `set -e` cannot turn into a silent death. lib.sh here runs
+# `set -euo pipefail`, so `out="$(ns_probe …)"` on a non-zero ns_probe ends the whole test
+# with a bare rc and no verdict — which is exactly what happened on a GitHub runner
+# (2026-08-07), where user namespaces are restricted: the EXIT net printed "test exited
+# early (rc=1)" and the NS-NO-TMPFS branch below never got to speak. Every call is
+# `|| true`-guarded from here down, and the output is what is judged.
+ns_ok="$(unshare -rm --propagation private sh -c \
+            'mount -t tmpfs tmpfs /tmp 2>/dev/null && echo NS-OK' 2>/dev/null || true)"
+[[ "$ns_ok" == NS-OK ]] \
+    || skip "this kernel will not give an unprivileged user a mount namespace with a tmpfs (common on CI runners), so the real inner script cannot be run without writing to the host's /tmp. §1 and §2 PASSED — the pin file is well-formed and the builder forwards the commit — but the refusal itself is UNVERIFIED here, which is an unknown and not a pass. netboot/MANUAL_TESTING.md §4.1 records the live run"
+
 # The inner script travels in as TEXT, not as a path. /tmp is about to be shadowed by a
 # tmpfs, and a repo checked out under /tmp (a scratch copy, a CI runner that uses it)
 # would vanish along with it — the probe would then fail for a reason that has nothing to
@@ -136,7 +151,7 @@ NSEOF
 }
 
 WRONG=deadbeefdeadbeefdeadbeefdeadbeefdeadbeef
-out="$(ns_probe "$WRONG" "$P_COMMIT")"
+out="$(ns_probe "$WRONG" "$P_COMMIT" || true)"
 if grep -q NS-NO-TMPFS <<<"$out"; then
     skip "this kernel would not let an unprivileged user namespace mount a tmpfs, so the real inner script cannot be run without writing to the host's /tmp. §1 and §2 passed; the refusal is UNVERIFIED here — run netboot/MANUAL_TESTING.md's pin section instead"
 fi
@@ -150,7 +165,7 @@ note "wrong commit: refused, both hashes named, make never invoked  ✓"
 
 # THE CONTROL. Without it, an inner script broken enough to die on any input would
 # satisfy every assertion above.
-out="$(ns_probe "$P_COMMIT" "$P_COMMIT")"
+out="$(ns_probe "$P_COMMIT" "$P_COMMIT" || true)"
 grep -qE 'MAKE-CALLS=[1-9]' <<<"$out" \
     || fail "the MATCHING commit did not get past the pin check either — make was never invoked. §3 therefore proved nothing: the inner script refuses everything, and the pin is not what stopped the wrong one. Got: ${out//$'\n'/ }"
 note "matching commit: passes the gate and proceeds to build  ✓"
