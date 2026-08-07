@@ -40,15 +40,15 @@ note "up (pod with 2 services)"
 
 # Pod should exist with the expected name.
 pod_name="lab-${LAB}-pod-p"
-podman pod ls --format '{{.Name}}' | grep -qx "$pod_name" \
-    || fail "expected pod '$pod_name' not found"
+await_line 20 "$pod_name" -- podman pod ls --format '{{.Name}}' \
+    || fail "expected pod '$pod_name' not found within 20s"
 note "pod exists: $pod_name"
 
 # Both services should be in it.
 for svc in a b; do
     cname="lab-${LAB}-${svc}"
-    podman ps --format '{{.Names}}' | grep -qx "$cname" \
-        || fail "service '$svc' container '$cname' not running"
+    await_line 20 "$cname" -- podman ps --format '{{.Names}}' \
+        || fail "service '$svc' container '$cname' not running within 20s"
 done
 note "both services running"
 
