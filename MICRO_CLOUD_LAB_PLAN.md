@@ -4093,3 +4093,102 @@ witness* to *one witness*; and slice 5c's break pass has its most interesting sc
 SSH, and MMDS. **Not yet done from 5c's break list:** tearing down `br-mc0` with the agent
 connected, killing the host listener under a live guest, and CID exhaustion — three more
 injection points for a micro-cloud chaos matrix that still does not exist as a harness.
+
+---
+
+## Appendix O — the nested-Calico experiment, run: two derived rules become measurements, 2026-08-07
+
+`fabric.sh`'s whole safety design rests on two rules that had never been tested by
+*experiment*, because testing them on this host means breaking a live cluster
+([DEFERRED.md](examples/micro-cloud/DEFERRED.md)). A disposable microk8s in a phase-2 VM
+removes that objection. **The lab unit `examples/nested-calico-sandbox/` is still to be
+built** — what follows is the experiment run by hand, recorded so the build starts from a
+measurement instead of a plan.
+
+### O.1 The assumption most likely to sink it, retired first
+
+Nothing here needed nested KVM (constraint 5 held). What it needed was microk8s to install
+and Calico to come up in a `lab-vm.sh` guest, and that was measured before anything was
+designed around it:
+
+| | |
+|---|---|
+| image | the cached `debian-bookworm-x86_64.qcow2`, `qemu-img resize`d to 16 G (3 G virtual is not enough; cloud-init's `growpart` handles the rest) |
+| VM | `--memory 4G --cpus 2 --network-mode user` — slirp, **no root** |
+| microk8s | **v1.35.6**, installed by snap from cloud-init |
+| CNI | **`docker.io/calico/node:v3.29.3`**, `IP_AUTODETECTION_METHOD=first-found` |
+| guest interfaces | `lo enp0s3 vxlan.calico cali*` — genuinely its **own** set (constraint 1), with none of the host's `lxdbr0`/`incusbr0`/`docker0` |
+
+**Two of the spike's own markers were false, and both in the safe direction.** `SPIKE-NET
+FAIL` came from `ping` — slirp drops ICMP for an unprivileged user, so the *mechanism*
+check said no network while the *outcome* check (`apt-get`, which is TCP) said yes; the
+outcome was right. And `SPIKE-K8S-NOTREADY` plus an empty `SPIKE-CALICO-VER=` were both
+`/snap/bin` not being on `sudo`'s `secure_path`: the cluster was running the whole time.
+A spike that had only printed the happy-path marker would have been read as "microk8s does
+not work here" and the lab abandoned on a PATH bug.
+
+### O.2 The experiment, and the control that makes it mean something
+
+Two dummy interfaces, both addressed and up, differing **only in name**:
+
+| interface | index | address | matches `^br-.*` |
+|---|---|---|---|
+| `enp0s3` | 2 | 10.0.2.15/24 | no (the incumbent) |
+| `br-decoy` | 8 | 10.99.1.1/24 | **yes** |
+| `mc-decoy` | 9 | 10.99.2.1/24 | no |
+
+Then **waited for the poll** rather than restarting `calico-node` (constraint 3 — a restart
+measures the startup path only, which is the half already understood):
+
+| t | binding |
+|---|---|
+| before | `local 10.0.2.15 dev enp0s3` |
+| ~100 s | `local 10.0.2.15 dev enp0s3` — *still*, so one poll interval is not enough |
+| ~3 min | **`local 10.99.2.1 dev mc-decoy`** — and the node annotation moved with it |
+
+**Rule 2 is now measured.** An addressed interface became a first-found candidate and
+Calico *migrated to it on its own*, with nothing restarted. That is F.6's mechanism
+reproduced **on purpose**, in a guest we may destroy, instead of observed once as an outage.
+
+But "it took the highest index" would explain that result just as well, and `br-decoy` was
+also addressed. So `mc-decoy` was deleted and the binding read again:
+
+> **fell back to `local 10.0.2.15 dev enp0s3`** — index 2 — while `br-decoy` (index 8) was
+> still up and still addressed `10.99.1.1/24`.
+
+**Rule 1 is now measured.** If ordering alone decided this, `br-decoy` would have won: it
+outranks `enp0s3` on every axis the earlier round appeared to use. It was skipped, twice,
+for its **name**. The `^br-.*` exclusion had until now been read out of a binary
+([F.7.1](#f7-the-selection-rule-derived--and-7-already-satisfied-it)); it has now been
+watched to bite, by naming a bridge the other way and watching the other one get picked.
+
+### O.3 What this does and does not say
+
+**Bound to its subject** (constraint 2): this is **Calico v3.29.3**. The host runs
+**v3.28.1**. It is a statement about the selection algorithm at a named version, **not** a
+prediction about this host — and the write-up must keep saying so, or it becomes one.
+
+On the ordering that [G.3](#g3-f7s-ordering-rule-does-not-explain-f6--the-correction)
+retracted an explanation for, there is now data rather than a story: among **non-excluded**
+candidates the **later/higher index won** (`mc-decoy` 9 over `enp0s3` 2). That is consistent
+with what this host is doing *right now* — and the host is a third data point nobody
+recorded:
+
+> ⚠️ **This plan says Calico's tunnel is on `enx00051b8eb138`, the physical uplink, "since
+> 2026-08-04". Measured 2026-08-07: it is `local 10.216.67.1 dev lxdbr0`.** Index **47**,
+> chosen over an addressed physical uplink at index **2**. So the binding has now moved
+> **three** times (`incusbr0` → the uplink → `lxdbr0`), and
+> [F.8](#f8-lxdbr0-is-a-candidate-and-it-outranks-the-one-calico-chose)'s prediction — that
+> `lxdbr0` is a candidate which outranks the one Calico chose — came true **on its own,
+> with no lab involved**. Every doc naming the uplink was a cached fact, which is exactly
+> why [I.6](#i6-the-methodological-point-for-the-third-time-in-this-plan) says to re-derive
+> it at pre-flight and never write it down.
+
+### O.4 What is still owed
+
+The measurements above are the *hard* part and they are done. The **lab unit** is not:
+`examples/nested-calico-sandbox/` still needs its `.toml`, `README.md`,
+`MANUAL_TESTING.md`, a `tests/` harness that asserts the two rungs above with the
+delete-`mc-decoy` control included, a 00-INDEX row and a `learning-paths.toml` route. The
+**CNI-layer chaos scenario** depends on that harness and has not been started. Recorded as
+**not done**, not as pending-and-basically-fine.

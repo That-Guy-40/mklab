@@ -259,6 +259,30 @@ scope:** replacing SSH (decision C says start with SSH), and MMDS.
 
 ## QUEUED — `nested-calico-sandbox/`: a disposable cluster to break on purpose
 
+> ✅ **The experiment has been RUN (2026-08-07) — the lab unit has not been BUILT.**
+> [Appendix O](../../MICRO_CLOUD_LAB_PLAN.md#appendix-o--the-nested-calico-experiment-run-two-derived-rules-become-measurements-2026-08-07).
+> A disposable microk8s (**v1.35.6**, Calico **v3.29.3**) in an unprivileged `lab-vm.sh`
+> guest turned the two beliefs below into measurements:
+>
+> - **Rule 2** — an addressed interface became a first-found candidate and Calico
+>   **migrated to it on the poll**, nothing restarted. F.6's mechanism reproduced on
+>   purpose instead of observed once as an outage. (One poll interval was *not* enough:
+>   still on the incumbent at ~100 s, moved by ~3 min.)
+> - **Rule 1** — deleting the winner made it fall back to the **incumbent at index 2**,
+>   skipping an addressed, higher-index `br-decoy`. Index ordering cannot explain that, so
+>   the `^br-.*` exclusion is real. It had only ever been read out of a binary.
+>
+> Bound to its subject: **v3.29.3**, and the host runs **v3.28.1** — a statement about the
+> algorithm at a named version, not a prediction about this host.
+>
+> ⚠️ **And a cached fact fell out of it:** every doc here says Calico's tunnel is on the
+> physical uplink "since 2026-08-04". It is on **`lxdbr0`** as of 2026-08-07 — the third
+> migration, and F.8's prediction coming true with no lab involved.
+>
+> **Still owed:** the `.toml`, `README.md`, `MANUAL_TESTING.md`, the `tests/` harness (with
+> the delete-the-winner control), a 00-INDEX row and a learning-path route — **and the
+> CNI-layer chaos scenario, which depends on that harness and has not been started.**
+
 *Scoped 2026-08-06. Unblocked and independent of the slice queue — nothing in slices 5c+
 depends on it, and it depends on nothing later than slice 3.*
 
