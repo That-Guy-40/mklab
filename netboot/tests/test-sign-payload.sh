@@ -12,22 +12,17 @@
 #   2. the signing leaf carries the codeSigning EKU iPXE requires,
 #   3. a one-byte tamper is REJECTED (the whole point — regression guard),
 #   4. signing refuses when no keys exist and --gen-keys was not given.
-set -uo pipefail
+# Verdict helpers, the scratch-dir sweep and the EXIT net all come from lib.sh. This test
+# used to carry its own inline `trap … EXIT`, which is the shape CLAUDE.md now forbids:
+# bash keeps ONE EXIT trap per shell, so an inlined one silently REPLACES the shared net.
+# Its version also treated rc=1 as an acceptable silent exit, so a `die` inside the tool
+# under test would have ended the run with no verdict at all.
+. "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
 
-HERE="$(cd "$(dirname "$0")" && pwd)"
-SIGNER="$HERE/../sign-payload.sh"
-TMP="$(mktemp -d "${TMPDIR:-/tmp}/sign-payload-test.XXXXXX")"
+SIGNER="$NETBOOT_DIR/sign-payload.sh"
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/sign-payload-test.XXXXXX")"; TMPDIRS+=("$TMP")
 
-skip() { printf 'SKIP: %s\n' "$*" >&2; exit 77; }
-fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
-pass() { printf 'PASS: %s\n' "$*" >&2; exit 0; }
-note() { printf '  - %s\n' "$*" >&2; }
-
-# Safety net: no silent exits (house rule).
-trap 'rc=$?; rm -rf -- "$TMP"; [[ $rc == 0 || $rc == 77 || $rc == 1 ]] || \
-      printf "FAIL: test exited early (rc=%s)\n" "$rc" >&2' EXIT
-
-command -v openssl >/dev/null 2>&1 || skip "openssl not available"
+require_cmd openssl
 [[ -f "$SIGNER" ]] || fail "missing tool: $SIGNER"
 
 keydir="$TMP/codesign"

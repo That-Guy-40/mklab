@@ -61,7 +61,12 @@ jobs:
             examples/kali-packer-vagrant/fetch-kali-packer.sh \
             examples/kali-packer-vagrant/tests/test-offline-archive.sh \
             examples/almalinux-packer-images/fetch-cloud-images.sh \
-            examples/almalinux-packer-images/tests/test-offline-archive.sh
+            examples/almalinux-packer-images/tests/test-offline-archive.sh \
+            netboot/build-ipxe.sh \
+            netboot/ipxe-build-inner.sh \
+            netboot/tests/lib.sh \
+            netboot/tests/run-all.sh \
+            netboot/tests/test-ipxe-pin.sh
 
       - name: the EXIT-trap safety net, in every tests/ directory
         # Each phase's run-all.sh already runs its own tests/test-harness-net.sh, but the
@@ -118,7 +123,10 @@ jobs:
         # fails the job on a real FAIL, so the pure-logic tests are the gate here.
         run: |
           rc=0
-          for d in phase1-chroot phase2-qemu-vm phase3-docker phase4-podman phase5-lxd phase7-firecracker; do
+          # netboot is not a phase, but it now has a run-all.sh and its tests are
+          # headless (openssl + a PATH-shimmed docker). Until 2026-08-07 the directory
+          # held exactly one test and no runner, so CI ran none of it.
+          for d in phase1-chroot phase2-qemu-vm phase3-docker phase4-podman phase5-lxd phase7-firecracker netboot; do
             echo "::group::$d"
             bash "$d/tests/run-all.sh" || rc=1
             echo "::endgroup::"

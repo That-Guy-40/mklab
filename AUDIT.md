@@ -25,9 +25,16 @@
 > in both. **F3** was documented and **F7** had been fixed before the list that asks for
 > it was written; **F8** was never a defect.
 >
-> **What is genuinely open: F1** (weak default VM credentials, Medium) and **F5**
-> (unpinned iPXE ref + base image, Low). Everything else in this 2026-05-20 snapshot
-> stands as written.
+> **F5 is now RESOLVED too (2026-08-07)** — the iPXE ref, its commit, and the base image
+> digest are pinned in [`netboot/versions.env`](netboot/versions.env), and a moved tag is
+> refused by name instead of silently building different source. Worth noting *why* it
+> stayed open: a tagged release did not exist until iPXE cut **v2.0.0 on 2026-03-06**;
+> the newest tag before that was from 2020. One third of the finding — the
+> `tonistiigi/binfmt` citation — does not hold: that image appears only inside an error
+> message as advice, and is not a build input.
+>
+> **What is genuinely open: F1** (weak default VM credentials, Medium). Everything else
+> in this 2026-05-20 snapshot stands as written.
 >
 > The pattern is worth more than any of the fixes: **an audit finding is a cached fact
 > about the code, and nothing re-checks it.** Every correction here was made by reading
@@ -64,7 +71,7 @@ Remediation update above.)*
 | F2 | Medium | Security / Supply chain | ✅ **RESOLVED — verified 2026-08-06.** Cloud-image + Kali downloads are SHA256-verified (`verify_sha256`), and the Alpine gap is closed too: `alpine_apk_add` passes `--keys-dir "$root/etc/apk/keys"` and **no** `--allow-untrusted`, so package RSA signatures are checked against Alpine's own bundled keys (Finding 14). The function's header comment still claimed the opposite and was corrected with this row. *Original:* Downloaded cloud images & Kali archives are not checksum/signature-verified (SHA256SUMS is fetched but used only for filename resolution); Alpine uses `--allow-untrusted` |
 | F3 | Low | Security | ✅ **RESOLVED 2026-08-06** — documented in [`phase1-chroot/README.md`](phase1-chroot/README.md#-trust-boundary--a-toml-config-is-a-root-shell-script) (*a TOML config is a root shell script*), plus a contrasting note in [`phase2-qemu-vm`](phase2-qemu-vm/README.md), whose `runcmd` is root **inside a VM**. A repo-wide check found only those two phases execute config-supplied strings at all; 3/4/5/7 do not. *Original:* TOML configs execute arbitrary commands as root (`post_commands`, `init_script`); trust boundary not called out as such |
 | F4 | Low | Security | ✅ **RESOLVED — verified 2026-08-06.** Both drivers default a published port to `127.0.0.1` via `_pub_host` (`phase3-docker/lab-docker.sh:93`, `phase4-podman/lab-podman.sh:108`), with `LAB_PUBLISH_HOST` as the opt-in to a wider bind, and **every** publish site routes through it. Regression-tested in both labs. *Original:* Default port publishing binds `0.0.0.0` (all interfaces) for Docker/Podman labs |
-| F5 | Low | Supply chain / Reproducibility | iPXE built from moving `master` ref; `debian:bookworm` base image unpinned (no digest) |
+| F5 | Low | Supply chain / Reproducibility | ✅ **RESOLVED 2026-08-07.** [`netboot/versions.env`](netboot/versions.env) pins the iPXE release, **the commit that release must resolve to**, and the base image by digest; the builder compares hashes after cloning and refuses a moved tag **by name** rather than building different source under an unchanged ref. Verified live (v2.0.0 built clean with `--imgverify --serial-console --nic-rom` together) and guarded headlessly by [`test-ipxe-pin.sh`](netboot/tests/test-ipxe-pin.sh). *Original:* iPXE built from moving `master` ref; `debian:bookworm` base image unpinned (no digest) |
 | F6 | Low | Process | ✅ **RESOLVED (2026-07-24)** — CI (`.github/workflows/ci.yml`) now runs the suites on push/PR. *Original:* Comprehensive test suites exist but there is no CI to run them automatically |
 | F7 | Low | Robustness | ✅ **RESOLVED — verified 2026-08-06.** The guard was implemented as `_safe_rm_rf` (credited to "Finding 14") and wired into all three destroy paths; this row had simply never been updated. Its four path-sanity refusals had also never been *observed* firing — now covered by [`test-destroy-path-guards.sh`](phase1-chroot/tests/test-destroy-path-guards.sh), with a positive control. *Original:* `destroy` does `rm -rf -- "$target"` using the manifest's `target` value with no path-sanity guard |
 | F8 | Info | Robustness | ❌ **NOT A DEFECT — measured 2026-08-06, this finding was wrong.** `read` assigns the remaining fields *including their delimiters* to the last variable, so `IFS=: read -r uname upass` already splits on the **first** colon only: `alice:pa:ss:word` → password `pa:ss:word`, intact. F8 named a mechanism that looks lossy and inferred an outcome without measuring it. Pinned by [`test-user-password-colons.sh`](phase1-chroot/tests/test-user-password-colons.sh) so a refactor cannot make it true. *Original claim:* `--user name:pass` truncates passwords containing `:` |
@@ -269,7 +276,7 @@ incidental:
   asserts the generated unit carries `PublishPort=127.0.0.1:19999:80`, so the quadlet
   path — which does not go through `podman run` — is covered too.
 
-### F5 — Non-reproducible / unpinned build inputs (Low)
+### F5 — Non-reproducible / unpinned build inputs (Low) — ✅ RESOLVED 2026-08-07
 
 **Where:** `netboot/build-ipxe.sh:148` (`debian:bookworm`, no digest),
 `netboot/ipxe-build-inner.sh:72` (iPXE default ref `master`),
@@ -282,6 +289,52 @@ so artifacts are not reproducible and silently track upstream drift.
 **Recommendation.** Default `--ipxe-ref` to a tagged release; pin the base
 image by tag+digest. The Python side is fine here — `pyproject.toml` uses
 `>=` floors but `uv.lock` pins exact versions with hashes.
+
+**What was done — and the one place the recommendation was not followed.**
+
+[`netboot/versions.env`](netboot/versions.env) now carries the pin, sourced by
+`build-ipxe.sh`:
+
+```
+IPXE_REF=v2.0.0
+IPXE_COMMIT=12798ec29aa8a64d8675c4378b99f5fe28447afb
+IPXE_BUILD_IMAGE="debian:bookworm@sha256:813017f3…"
+```
+
+**A tagged release alone would not have been a fix.** When this finding was
+written, upstream's newest tag was **v1.21.1 (2020-12)** — five years stale, and
+missing things this pipeline compiles in. Defaulting to it would have traded a
+moving ref for a broken one. iPXE cut **v2.0.0 on 2026-03-06**, which is what
+made the recommendation actionable; the ref stayed `master` in the interim
+because there was nothing better to point at, and nothing recorded that.
+
+**The tag is pinned WITH its commit, which the recommendation did not ask for.**
+A git tag is a mutable pointer: a re-tagged `v2.0.0` clones cleanly, reports the
+ref it was asked for, and hands the build different source. That is this repo's
+own [stale-record class](CLAUDE.md) — *a version string is not an identity;
+compare hashes* — so `ipxe-build-inner.sh` re-reads `git rev-parse HEAD` after
+cloning and refuses a mismatch, naming both hashes, **before `make` runs**.
+An explicit `--ipxe-ref <other>` is not checked (it is a deliberate override) but
+the build announces itself as unpinned rather than looking identical to a pinned
+one.
+
+**`tonistiigi/binfmt` was deliberately left alone.** Re-reading
+`phase3-docker/lab-docker.sh:173-196`, the script never runs that image: it
+appears inside a `die` message as the *second* of two suggested install paths,
+after `apt-get install qemu-user-static`. It is advice in an error string, not a
+build input to any artifact this repo produces, and pinning a tag there would
+enshrine a version nobody had verified. F5 cited it alongside two real inputs;
+that part of the finding does not hold.
+
+**Coverage.** [`netboot/tests/test-ipxe-pin.sh`](netboot/tests/test-ipxe-pin.sh)
+asserts the pin file names a fixed ref + a 40-hex commit + a digest, that the
+builder forwards the commit for the pinned ref and *not* for an override, and —
+by running the real inner script against shimmed git/make in a private mount
+namespace — that a wrong commit stops the build before `make`, while the right
+one does not. All seven of those assertions were watched to fire against
+injected defects. The directory also gained the `lib.sh` / `run-all.sh` /
+`test-harness-net.sh` shape and is now in CI; before this it had one test, no
+runner, and CI ran none of it.
 
 ---
 
@@ -384,10 +437,10 @@ are present and good, so this is documented friction rather than a defect.
    *(Low)*
 5. ~~**(F4)** Default published ports to loopback~~ ✅ **Already done** — `_pub_host`
    in both container drivers, regression-tested in both; verified 2026-08-06, and like
-   F7 the list had never been updated. **(F5)** Pin the iPXE ref and the base image:
-   still open — `--ipxe-ref` defaults to `master`
-   ([`netboot/build-ipxe.sh:89`](netboot/build-ipxe.sh)) and `debian:bookworm` carries
-   no digest (`:270`). *(Low)*
+   F7 the list had never been updated. ~~**(F5)** Pin the iPXE ref and the base image~~
+   ✅ **Done 2026-08-07** — [`netboot/versions.env`](netboot/versions.env) pins
+   `v2.0.0` **with its commit** and the base image by digest, and a moved tag is
+   refused rather than built. *(Low)*
 6. **(F3 / F9 — ✅ F9 done)** Document the config-as-root trust boundary;
    ~~add a `LICENSE` file.~~ *(top-level MIT `LICENSE` added.)* *(Info)*
 

@@ -41,6 +41,17 @@ readonly LAB_PROG="${0##*/}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 readonly SCRIPT_DIR
 
+# ─── Pinned build inputs (AUDIT F5) ─────────────────────────────────────────
+# versions.env carries the iPXE ref + the commit it must resolve to, and the
+# base image digest.  Sourced, not parsed: it is code, like micro-linux's.
+if [[ -r "$SCRIPT_DIR/versions.env" ]]; then
+    # shellcheck source=/dev/null
+    . "$SCRIPT_DIR/versions.env"
+fi
+: "${IPXE_REF:=master}"
+: "${IPXE_COMMIT:=}"
+: "${IPXE_BUILD_IMAGE:=debian:bookworm}"
+
 # ─── Logging ────────────────────────────────────────────────────────────────
 _log() {
     local level="$1"; shift
@@ -86,7 +97,11 @@ Options:
                         --append 'inst.ks=http://10.0.2.2:8181/ks/{MAC}.ks'
   --output-dir  PATH  where to write outputs   (default: /srv/netboot)
   --arch        ARCH  x86_64, aarch64, or riscv64  (default: x86_64)
-  --ipxe-ref    REF   git branch/tag/SHA to build from (default: master)
+  --ipxe-ref    REF   git branch/tag/SHA to build from.  Default is the release
+                      pinned in netboot/versions.env (IPXE_REF + IPXE_COMMIT),
+                      and building that ref VERIFIES the clone resolved to that
+                      commit — a moved tag is refused, not built.  Pass anything
+                      else and the build is unpinned: it still works, and says so.
   --tls               compile iPXE with HTTPS download support (DOWNLOAD_PROTO_HTTPS)
   --tls-cert    PATH  DER-format cert to embed in iPXE trust store
                       (use the .der from setup-netboot-dir.sh --tls)
@@ -147,7 +162,7 @@ initrd_path="/initrd.gz"
 append="console=ttyS0 root=/dev/ram0 rw"
 output_dir="${LAB_NETBOOT_DIR:-$HOME/netboot}"
 arch="x86_64"
-ipxe_ref="master"
+ipxe_ref="$IPXE_REF"
 tls_mode=""
 tls_cert=""
 imgverify_mode=""
@@ -263,16 +278,31 @@ if [[ -n "$embed_script" ]]; then
     docker_vols+=(-v "$(readlink -f -- "$embed_script"):${inner_embed_path}:ro")
 fi
 
+# The expected commit is forwarded ONLY when the ref being built is the pinned
+# one — asking for a different ref is a deliberate override, and checking it
+# against this pin's SHA would refuse every legitimate override.  Silence is not
+# an option either way: an unpinned build is reported as such, because the whole
+# point of F5 is that "which bytes did this artifact come from" has an answer.
+inner_expect_sha=""
+if [[ "$ipxe_ref" == "$IPXE_REF" && -n "$IPXE_COMMIT" ]]; then
+    inner_expect_sha="$IPXE_COMMIT"
+    log_info "  iPXE       : $ipxe_ref pinned to ${IPXE_COMMIT:0:12} (versions.env)"
+else
+    log_warn "iPXE ref '$ipxe_ref' is NOT the pin in versions.env ($IPXE_REF) — this build is not reproducible and its commit will not be verified"
+fi
+log_info "  base image : $IPXE_BUILD_IMAGE"
+
 docker run --rm \
     -v "$output_dir:/out" \
     -v "$SCRIPT_DIR:/build-ctx:ro" \
     "${docker_vols[@]}" \
-    debian:bookworm \
+    "$IPXE_BUILD_IMAGE" \
     bash /build-ctx/ipxe-build-inner.sh \
         "$server" "$kernel_path" "$initrd_path" "$append" "$arch" "$ipxe_ref" \
         "${tls_mode:-}" "${inner_cert_path}" \
         "${imgverify_mode:-}" "${inner_trust_path}" \
-        "${nic_rom}" "${inner_embed_path}" "${serial_console:-}"
+        "${nic_rom}" "${inner_embed_path}" "${serial_console:-}" \
+        "${inner_expect_sha}"
 
 # ─── Convert the BIOS disk image to qcow2 ────────────────────────────────────
 # Prefer ipxe.hd (hard-disk image) over ipxe.usb: SeaBIOS boots the .hd reliably
