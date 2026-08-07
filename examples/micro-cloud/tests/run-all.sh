@@ -9,7 +9,10 @@ set -uo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")" || exit 2
 
 tests=(test-fabric-mac-derivation.sh test-bench-boot.sh test-fabric-round-trip.sh test-dhcp-exhaustion.sh test-two-engines-one-fabric.sh test-edge-on-the-fabric.sh
-       test-harness-net.sh test-retap-recovers-a-root-owned-tap.sh)
+       test-harness-net.sh test-retap-recovers-a-root-owned-tap.sh
+       # Slice 5c. The only boot test here that needs NO root and NO fabric — which is its
+       # thesis, not a convenience: vsock is the first channel that is not the fabric.
+       test-vsock-both-engines.sh)
 
 # The list is compared against the disk: a test with no runner is a test nobody runs,
 # and a comment saying so does not fail a build (metal-as-a-service kept one for weeks).
@@ -33,7 +36,18 @@ for t in "${tests[@]}"; do
         *)  failn=$((failn+1)); rc=1 ;;
     esac
 done
-printf '\n=== summary: %d passed, %d skipped, %d failed ===\n' "$pass" "$skip" "$failn" >&2
+# A RATIO, not a bare count. "4 passed, 5 skipped" is also what a runner that quietly
+# stopped after nine of twenty tests prints; ran/listed chains back to the disk check above,
+# so a doc can say "every listed test ran" and stay true as tests are added.
+ran=$((pass + skip + failn))
+ondisk=(test-*.sh)
+printf '\n=== summary: %d/%d listed tests ran (matching the %d test files on disk) — %d passed, %d skipped, %d failed ===\n' \
+    "$ran" "${#tests[@]}" "${#ondisk[@]}" "$pass" "$skip" "$failn" >&2
+if (( ran != ${#tests[@]} )); then
+    printf 'FAIL: %d of %d listed tests never ran — the loop above exited early, so "%d passed" describes a partial run\n' \
+        "$((${#tests[@]} - ran))" "${#tests[@]}" "$pass" >&2
+    exit 1
+fi
 (( pass == 0 && failn == 0 )) && printf '%s\n' \
     'NOTE: everything skipped — this suite proves nothing without root. Re-run with sudo.' >&2
 exit $rc

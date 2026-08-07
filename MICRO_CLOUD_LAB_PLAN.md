@@ -1465,6 +1465,15 @@ deliberately in this plan, and it should be recorded as such.
 | **stop** | `SendCtrlAltDel` over a unix REST socket, else SIGKILL by pid | ACPI via monitor socket, else SIGKILL by pid | **same intent, different channel** |
 | **console** | one client per `console.sock` | one client per serial socket | common, and the same footgun |
 | **`exec`** | **does not exist** | does not exist | the intersection's edge |
+| **vsock** ✅ 5c | unix socket + a `CONNECT <port>` handshake; addressed by `uds_path` | raw `AF_VSOCK`; addressed by `guest-cid=` | **identical guest contract, host APIs different in kind** — [Appendix N](#appendix-n--slice-5c-vsock-the-first-channel-that-is-not-the-fabric-2026-08-07) |
+
+> The vsock row was added 2026-08-07 and is the **sharpest** one here: every other row
+> compares two host-side lifecycles, while this one holds the *guest* side byte-identical
+> (one static binary, no engine `#ifdef`) and lets only the host differ. It also carries the
+> row's first finding with a consequence: `guest_cid` is a **host-kernel allocation** under
+> QEMU (a duplicate is refused at device creation) and an **advisory label** under
+> Firecracker (three guests ran as CID 43 at once). One field name, two meanings, and
+> nothing reports the difference — see [N.5](#n5-the-consequence-nothing-reports-guest_cid-is-not-one-thing).
 
 If the intersection is `create`/`start`/`stop`/`status`/`destroy` and the *differences* are
 all in the channel rather than the meaning, §8.3 shape **(b)** is right and the plan should
@@ -3928,3 +3937,159 @@ what it would have done.
 first run did not merely find bugs; it bought an assertion. That is the difference between a
 failure that is debugged and a failure that is *learned from* — and it is why §7.2's
 teardown-is-a-test is worth more than a cleanup that returns 0.
+
+---
+
+## Appendix N — slice 5c, vsock: the first channel that is not the fabric, 2026-08-07
+
+Every seam row before this one is network-attached, and the fabric is the common seam that
+made §8.3 shape **(b)** defensible. vsock has no bridge, no lease, no name, no DNS. The
+question ([DEFERRED.md](examples/micro-cloud/DEFERRED.md)) was whether the seam story
+survives a channel where the **guest** contract is byte-identical and the **host** API
+differs in kind. It does — and the differences turned out to be sharper, and to have one
+consequence nothing reports.
+
+Harness: [`tests/test-vsock-both-engines.sh`](examples/micro-cloud/tests/test-vsock-both-engines.sh).
+**Unprivileged, and with no fabric up** — the test asserts `br-mc0`'s *absence* before it
+measures anything, because a result obtained beside a live fabric would say nothing about
+independence from it.
+
+### N.1 The gap was userspace, which is the opposite of what "is vsock available?" suggests
+
+Everything that sounds like it would block this was already fine, re-derived on 2026-08-07
+rather than read from the 2026-08-05 scoping note:
+
+| | state |
+|---|---|
+| `/dev/vhost-vsock` | `root:kvm 0660`, uid 1000 is in `kvm` → usable unprivileged, like `/dev/kvm` |
+| host modules | `vhost_vsock`, `vsock`, `vmw_vsock_virtio_transport_common` loaded |
+| QEMU | `vhost-vsock-device` on the **virtio-bus** — so it works on `-M microvm`, not only q35 |
+| the lab's kernel | `__initcall__kmod_vsock__` + `__initcall__kmod_vmw_vsock_virtio_transport__` — an initcall symbol exists only for **built-in** code, and Firecracker boots with no initramfs, so a modular driver would be one that never loads |
+| **the guest rootfs** | ⛔ `strings api1.ext4 \| grep -ci vsock` = **0**. busybox+musl, and busybox `nc` has no `AF_VSOCK` |
+
+So the work was a **static agent** ([`vsock-agent.c`](examples/micro-cloud/vsock-agent.c),
+musl, 43080 bytes) and a way to get it into an image.
+
+### N.2 Getting a binary into an ext4 with no loop mount and no sudo
+
+`mount -o loop` and `mknod` are unavailable here (blocked even `--privileged`), and putting
+"add one file" behind root would gate this slice like every other.
+[`make-vsock-rootfs.sh`](examples/micro-cloud/make-vsock-rootfs.sh) uses **`debugfs -w`**,
+which writes into an ext4 without mounting it — the same family of trick as `mke2fs -d` in
+`export-rootfs`, and the reason that path was chosen (§6).
+
+Three things it does that are not decoration:
+
+- **It copies first and `e2fsck`s the copy.** Every break-pass image ends with a guest
+  killed mid-run, which leaves a dirty bitmap that debugfs refuses to open. Repairing the
+  *original* would silently rewrite the artifact other tests boot.
+- **It reads the agent back out and compares bytes.** `debugfs` printing `Allocated inode`
+  is the mechanism; *the image contains the binary I built* is the outcome, and a wrong
+  path, a truncated write or a failed `chmod` all leave the first one true.
+- **It compiles the agent twice and requires the results to be identical.** The agent has a
+  `MC_VSOCK_NO_UAPI` fallback that restates `struct sockaddr_vm` for hosts without
+  `linux-libc-dev`. A hand-written ABI that had drifted would still compile, still run, and
+  bind the wrong address *inside the guest*. So when the real header is present, both are
+  built and `cmp`'d. (Measured: byte-identical.)
+
+### N.3 The launcher, and a comment that turned out to be a measurement
+
+The agent must **not** be a busybox `respawn` entry. `init` runs every `sysinit` action to
+completion before starting any `respawn` one, and `mc-probe.sh` is a sysinit action that
+blocks for up to ~60 s — its *slowest* path, because slice 5c gives the guest no NIC at all.
+
+That was written first as a comment. Then it was run:
+
+| inittab | console |
+|---|---|
+| `::sysinit:… mc-vsock-agent &` (shipped) | `MC-VSOCK-AGENT LISTENING` at line **260**, `SLICE3-BEGIN` at **261** |
+| `::respawn:/sbin/mc-vsock-agent` (control) | `SLICE3-BEGIN` at 260, `SLICE3-END … uptime=40.59s` at 270, `LISTENING` at **271** |
+
+At t=12 s the control guest answered `nothing in the guest is listening on port 1234`. **The
+channel that exists to be independent of the fabric would have spent its first 41 seconds
+waiting on the network stack.** The test now asserts the console ordering, so the claim is
+checked rather than explained.
+
+### N.4 The seam, measured in both directions
+
+| | Firecracker | QEMU `-M microvm` |
+|---|---|---|
+| **guest** | `AF_VSOCK`, CID + port | `AF_VSOCK`, CID + port |
+| guest binary | the same 43080 static bytes, no engine `#ifdef` anywhere | ← identical |
+| guest reply | `MC-VSOCK-AGENT name=vs-fc cid=42 peer=2:1073741824 …` | `MC-VSOCK-AGENT name=vs-qemu cid=43 peer=2:741291667 …` |
+| **host** | a **unix socket** + a text handshake: `CONNECT <port>\n` → `OK <n>\n` | a **real `AF_VSOCK`** socket: `connect((cid, port))` |
+| host names the guest by | **which socket file it opened** | **a CID** |
+
+The record *shape* is identical — asserted as a shape, not as equal strings, since uptime
+and the ephemeral peer port cannot match and demanding it would be asserting a coincidence.
+Both guests see the host as **cid 2** (`VMADDR_CID_HOST`), the one number that is the same
+on both sides of the seam.
+
+So the hypothesis holds, and vsock **is** a sharper row than `stop`: there the intent
+matched and the channel differed; here the guest-side contract is byte-identical while the
+host-side API differs in kind. Two host implementations, one guest implementation — which
+is what shape (b) predicts, arrived at from a channel that has nothing to do with the fabric.
+
+| seam | Firecracker | QEMU | shape it argues for |
+|---|---|---|---|
+| **vsock** | unix socket + `CONNECT` handshake; `uds_path` | raw `AF_VSOCK`; `guest-cid=` | **identical guest contract, host APIs different in kind** |
+
+### N.5 The consequence nothing reports: `guest_cid` is not one thing
+
+DEFERRED asked the sharpest version — give two guests the same CID and find out whether the
+second is refused or silently answers for the first (the
+[seam-answers-for-the-wrong-instance](#appendix-d--where-the-kubernetes-actually-is-2026-08-01)
+class, which has bitten this repo through a vbmc port collision). The answer **depends on
+the engine**:
+
+| experiment | result | rung |
+|---|---|---|
+| two QEMU guests, same `guest-cid=43` | the second **never starts**: `vhost-vsock: unable to set guest cid: Address already in use`, refused at device creation | **ABSORBED** |
+| a Firecracker guest with `guest_cid: 43` **beside** the live QEMU guest on 43 | **both run.** Each host API still reaches the guest it addressed | — |
+| a third guest, also 43, under Firecracker | also runs; three guests believe they are CID 43 at once | — |
+
+QEMU's `guest-cid` is an allocation in the **host kernel's** vhost-vsock namespace, and the
+kernel protects it. Firecracker is a *userspace* vsock device: `guest_cid` is a number it
+hands the guest, with no presence in that namespace at all — "which guest?" is answered by
+which unix socket you opened. **The same field name means a host-global resource in one
+engine and an advisory label in the other, and nothing anywhere says so.**
+
+A seam abstraction that treated `guest_cid` as one field would therefore be wrong in a way
+that produces no error: it would inherit QEMU's collision safety on paper while Firecracker
+silently provides none. Recorded here rather than discovered later.
+
+The only reason the cross-engine case is checkable at all is that the agent reports its own
+`mc_name`. Without it, "cid=43 answered" is indistinguishable between three machines —
+which is precisely how a wrong-instance answer hides.
+
+### N.6 Three smaller findings — one of them in the harness, found by breaking it
+
+- **An assertion that could never fire.** The CID-collision check backgrounded the second
+  QEMU and called `wait`. A guest that is *refused* exits immediately, so the happy path
+  looked right — but a guest that successfully takes the CID keeps running, `wait` blocks
+  forever, and the assertion written for exactly that case is unreachable. Injecting a free
+  CID (44) proved it: the run **timed out at 300 s with no verdict at all** instead of
+  failing. It is now foreground under `timeout 20`, and rc=124 *is* the regression. "An
+  assertion never observed failing is not known to work" — this one had been green twice.
+
+- **Firecracker's `uds_path` is capped by `SUN_LEN` (~108 bytes).** A scratch dir under the
+  agent's own `TMPDIR` was too long and Firecracker refused with `path must be shorter than
+  SUN_LEN` — immediate and honest, but it reads as a vsock problem when it is a path-length
+  problem. The test uses a deliberately short `/tmp/mcvs.XXXX`, and says why.
+- **A refusal has to be checked for its REASON.** The first draft of the CID-collision test
+  pointed the second QEMU at the *live* guest's disk image. QEMU refused it — `Failed to get
+  "write" lock` — so the process did exit non-zero and the collision test "passed" without
+  ever reaching the vsock device. The assertion that demands the refusal name the CID caught
+  it. Exit status alone would have shipped a green test that proved nothing.
+
+### N.7 What is closed, and what is not
+
+**Closed:** §18.4 gains a vsock row from what the two host APIs actually needed; the guest
+rootfs has vsock-capable userspace for the first time; the console is demoted from *sole
+witness* to *one witness*; and slice 5c's break pass has its most interesting scenario
+(shared CID) answered with a ladder rung per engine.
+
+**Not closed, and deliberately out of scope** (decision C says start with SSH): replacing
+SSH, and MMDS. **Not yet done from 5c's break list:** tearing down `br-mc0` with the agent
+connected, killing the host listener under a live guest, and CID exhaustion — three more
+injection points for a micro-cloud chaos matrix that still does not exist as a harness.

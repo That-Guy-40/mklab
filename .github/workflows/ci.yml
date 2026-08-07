@@ -58,6 +58,8 @@ jobs:
             examples/micro-cloud/tests/test-edge-on-the-fabric.sh \
             examples/micro-cloud/tests/test-two-engines-one-fabric.sh \
             examples/micro-cloud/tests/test-dhcp-exhaustion.sh \
+            examples/micro-cloud/tests/test-vsock-both-engines.sh \
+            examples/micro-cloud/make-vsock-rootfs.sh \
             examples/kali-packer-vagrant/fetch-kali-packer.sh \
             examples/kali-packer-vagrant/tests/test-offline-archive.sh \
             examples/almalinux-packer-images/fetch-cloud-images.sh \

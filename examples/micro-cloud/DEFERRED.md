@@ -155,7 +155,43 @@ reaching `api1` by name — the counterpart to 5a's density case.*
 > record of what was true when it was written — but it read as current status, which is
 > how a closed question gets re-asked.
 
-## QUEUED — slice 5c: vsock, the first channel that is not the fabric
+## DONE — slice 5c: vsock, the first channel that is not the fabric
+
+**Built and green 2026-08-07, unprivileged and with no fabric up.** Full write-up:
+[Appendix N](../../MICRO_CLOUD_LAB_PLAN.md#appendix-n--slice-5c-vsock-the-first-channel-that-is-not-the-fabric-2026-08-07).
+
+| what | where |
+|---|---|
+| the static guest agent (musl, 43080 bytes, no engine `#ifdef`) | [`vsock-agent.c`](vsock-agent.c) |
+| injecting it into slice 3's ext4 — **no loop mount, no sudo** (`debugfs -w`) | [`make-vsock-rootfs.sh`](make-vsock-rootfs.sh) |
+| the two host APIs, written as two implementations on purpose | [`vsock-probe.py`](vsock-probe.py) |
+| the harness | [`tests/test-vsock-both-engines.sh`](tests/test-vsock-both-engines.sh) |
+
+**The hypothesis below held**, and sharper than stated: the guest-side contract is
+byte-identical (one binary, both engines, same record shape, both seeing the host as
+`cid 2`) while the host side is a unix socket plus a `CONNECT <port>` handshake under
+Firecracker versus a raw `AF_VSOCK` address under QEMU. §18.4 has the row.
+
+**The finding worth more than the row:** `guest_cid` is not one thing. Under QEMU it is an
+allocation in the host kernel's namespace and a duplicate is refused at device creation
+(**ABSORBED**); under Firecracker it is advisory, so a guest configured with the *same*
+number booted happily beside the live QEMU guest, and a third joined them. Three machines
+believed they were CID 43 at once, told apart only by which channel was opened. A seam
+abstraction treating `guest_cid` as one field would inherit QEMU's collision safety on
+paper while Firecracker provides none — with no error anywhere.
+
+Two smaller ones, both from something failing honestly: Firecracker's `uds_path` is capped
+by `SUN_LEN` (~108 bytes, and a long `TMPDIR` trips it); and the first CID-collision draft
+"passed" because the second QEMU was refused for a *disk lock* rather than the CID — caught
+only because the assertion demands the refusal name its reason.
+
+**Still open from 5c's break list:** tearing down `br-mc0` with the agent connected,
+killing the host listener under a live guest, and CID exhaustion. Explicitly out of scope
+and unchanged: replacing SSH (decision C says start with SSH), and MMDS.
+
+<details>
+<summary>The original brief, as scoped 2026-08-05 — kept because it is the record of what
+was believed before the measurement, not current status</summary>
 
 *Scoped 2026-08-05, at the user's request, after 5b's spec and harness landed. Sits AFTER
 5b because 5b's harness is written and unrun; 5c does not depend on it.*
@@ -218,6 +254,8 @@ An agent in the image answering over vsock from **both** engines; a §18.4 row f
 what the two host APIs actually needed; the console demoted from *sole witness* to *one
 witness*; and a chaos scenario for a layer that can fail on its own. **Explicitly out of
 scope:** replacing SSH (decision C says start with SSH), and MMDS.
+
+</details>
 
 ## QUEUED — `nested-calico-sandbox/`: a disposable cluster to break on purpose
 
