@@ -9,6 +9,31 @@ For per-lab status see the phase `SHOWCASE.md`s and
 
 ---
 
+## 0. Next up — the three things nearest the front of the queue
+
+*Added 2026-08-07.* The list below is otherwise **in the order raised, not priority**, so
+this section exists to say what is actually next. All three are micro-cloud debts, all
+three are small-to-medium, and each is **blocked on packaging or on a host, never on a
+question nobody has answered**.
+
+They are deliberately stated as what is **NOT** done, because two of them are the shape
+this repo keeps getting caught by: *the experiment is finished, so the item feels finished.*
+It is not — an experiment nobody can re-run is a story.
+
+| # | what | state |
+|---|---|---|
+| **0.1** | **`examples/nested-calico-sandbox/` — the lab unit** | ⚠️ **the experiment is DONE; the packaging is not.** [Appendix O](MICRO_CLOUD_LAB_PLAN.md#appendix-o--the-nested-calico-experiment-run-two-derived-rules-become-measurements-2026-08-07) has the whole recipe and it reproduces **unprivileged in ~15 minutes**. What is missing is the cohesive-lab shape: a phase-2 `.toml`, `README.md`, `MANUAL_TESTING.md`, a `tests/` harness **carrying the delete-the-winner control**, a 00-INDEX row and a `learning-paths.toml` route. Detail in [§9](#9-nested-calico-sandbox--a-disposable-cluster-so-the-cni-beliefs-can-be-tested) |
+| **0.2** | **G.9's remaining break-pass scenario** | **partly answered, not closed.** DHCP exhaustion is green; `retap` is green. What remains is *give a **`fabric.sh` tap** an address on purpose and watch it become a candidate* — [G.9](MICRO_CLOUD_LAB_PLAN.md#g9-not-run--recorded-as-unknown-not-as-pass). Appendix O measured the **property** with a dummy interface in a guest at Calico v3.29.3; **a dummy in a guest and a tap on `br-mc0` are not the same subject**, and this host runs v3.28.1. Needs 0.1 |
+| **0.3** | **the fabric's own teardown code, under a live agent** | **named as not covered** by [`test-vsock-chaos.sh`](examples/micro-cloud/tests/test-vsock-chaos.sh). Its network row severs the guest's link with `set_link down`, which is a *superset* of losing the bridge — so the **property** is measured — but `fabric.sh down`'s teardown path is never exercised with a guest attached. **A stronger fault does not imply the weaker one ran**; that is why the matrix says so instead of letting it pass quietly. Root-gated |
+
+- [ ] **0.1** package `nested-calico-sandbox/` from Appendix O — and have its harness stamp
+      the **Calico version it observed** and refuse to generalise across a mismatch, the way
+      `capture-policy` binds a PCR set to its image.
+- [ ] **0.2** run G.9's tap-address scenario **inside** 0.1's sandbox, where an outage costs
+      nothing, and record it against the version measured rather than against this host.
+- [ ] **0.3** add a chaos row that tears the fabric down beneath a live vsock agent, so the
+      teardown *code* is exercised and not merely implied.
+
 ## 1. Crack the FLOPPINUX login hash (educational security exercise)
 
 Demonstrate, **on our own throwaway lab artifact**, how weak a classic `$1$`
@@ -585,18 +610,41 @@ repo's only way to ask "what does the CNI actually do when I provoke it?" withou
 costing an outage, and the same box is a safe host for the **whole** slice-3 break pass —
 including `retap`, which no test has ever called.
 
-- [ ] `examples/nested-calico-sandbox/`: a phase-2 `.toml` (cloud image + cloud-init
-      installing microk8s), `README.md`, `MANUAL_TESTING.md`, a 00-INDEX row and a
-      `learning-paths.toml` route — the cohesive-lab shape.
-- [ ] Re-run **F.6** on purpose: give an interface an address and watch the node IP
-      migrate. Currently not even *predictable* — G.3 retracted the ordering explanation.
-- [ ] Verify **rule 1** by naming a bridge both ways and watching only one get picked.
+> ⚠️ **Read the boxes carefully: the EXPERIMENT is done and the LAB is not.** On
+> 2026-08-07 a disposable microk8s (v1.35.6, Calico **v3.29.3**) was stood up by hand in a
+> `lab-vm.sh` guest and both rules were measured —
+> [Appendix O](MICRO_CLOUD_LAB_PLAN.md#appendix-o--the-nested-calico-experiment-run-two-derived-rules-become-measurements-2026-08-07).
+> That closes the *questions*. It does not close this item: a measurement nobody can re-run
+> is a story, and the recipe currently lives only in an appendix. This is
+> [§0.1](#0-next-up--the-three-things-nearest-the-front-of-the-queue).
+
+- [ ] **`examples/nested-calico-sandbox/`: a phase-2 `.toml` (cloud image + cloud-init
+      installing microk8s), `README.md`, `MANUAL_TESTING.md`, a `tests/` harness, a
+      00-INDEX row and a `learning-paths.toml` route — the cohesive-lab shape.** ← the
+      open one. Reproduces unprivileged in ~15 min from Appendix O.
+- [x] Re-run **F.6** on purpose: give an interface an address and watch the node IP
+      migrate. ✅ **measured 2026-08-07** — Calico migrated to the decoy **on its own
+      60-second poll**, nothing restarted. (One interval was not enough: still on the
+      incumbent at ~100 s, moved by ~3 min.) **Caveat kept:** this was a *dummy interface
+      in a guest*, not a **`fabric.sh` tap** beside a cluster whose loss would matter —
+      [§0.2](#0-next-up--the-three-things-nearest-the-front-of-the-queue) is that gap.
+- [x] Verify **rule 1** by naming a bridge both ways and watching only one get picked.
+      ✅ **measured 2026-08-07, and only because of the control**: deleting the winner made
+      Calico fall back to the incumbent at index **2**, *skipping* an addressed `br-decoy`
+      at index **8**. Index ordering cannot explain that, so the `^br-.*` exclusion is real
+      — it had until then only ever been *read out of a binary*. Bound to **v3.29.3**; this
+      host runs **v3.28.1**, and the finding is about the algorithm at a named version, not
+      about this machine.
 - [x] Exercise `retap` against a deliberately root-owned tap. ✅ **GREEN 2026-08-07** — `TUNSETIFF-FAILED errno=1` on a tap with owner uid 0 → `retap` → `TUNSETIFF-OK`, reservation byte-identical and still single, tap addressless on `br-mc0`, both verbs refusing the other's case, Calico unmoved. **Three privileged runs, two harness defects, zero defects in `fabric.sh`** — the test caught itself twice (an owner-**less** tap is attachable by anyone; and §5 asserted a *message* where the tool was right). [Appendix P](MICRO_CLOUD_LAB_PLAN.md#appendix-p--retaps-first-privileged-run-the-test-failed-and-that-is-the-finding-2026-08-07)
       ([`test-retap-recovers-a-root-owned-tap.sh`](examples/micro-cloud/tests/test-retap-recovers-a-root-owned-tap.sh));
       it stages the real defect and asserts the **`TUNSETIFF` outcome**, not the owner
       file. Root-gated, so it SKIPs unprivileged — **the privileged run is still owed**,
       and the box stays unticked until it has actually executed its assertions.
-- [ ] A **CNI-layer chaos scenario**, which micro-cloud does not have — per
+- [ ] A **CNI-layer chaos scenario**. ⚠️ **Partly overtaken**: micro-cloud *does* now have a
+      chaos matrix ([`test-vsock-chaos.sh`](examples/micro-cloud/tests/test-vsock-chaos.sh),
+      five rows, 2026-08-07), but **the CNI is not one of its layers** and the fabric's own
+      teardown code is explicitly named as uncovered —
+      [§0.3](#0-next-up--the-three-things-nearest-the-front-of-the-queue). Per
       [`CLAUDE.md`](CLAUDE.md)'s "every discrete layer gets an injection point".
 
 **Two constraints that must be honoured or the results are worthless**, both instances of

@@ -2835,9 +2835,18 @@ was never exercised from a damaged state until now.
 [`nested-calico-sandbox/`](examples/micro-cloud/DEFERRED.md#queued--nested-calico-sandbox-a-disposable-cluster-to-break-on-purpose).
 It is worth more than this one scenario — a cluster we may destroy is a safe host for the
 **whole** slice-3 break pass. (`retap` itself is no longer part of that debt — it was
-**proven 2026-08-07**, [Appendix P](#appendix-p--retaps-first-privileged-run-the-test-failed-and-that-is-the-finding-2026-08-07).
-What remains is the rest of the pass, which
-needs a deliberately root-owned tap to recover from.
+**proven 2026-08-07** against a deliberately root-owned tap,
+[Appendix P](#appendix-p--retaps-first-privileged-run-the-test-failed-and-that-is-the-finding-2026-08-07).)
+
+> **Partly answered, and the distinction matters** *(2026-08-07,
+> [Appendix O](#appendix-o--the-nested-calico-experiment-run-two-derived-rules-become-measurements-2026-08-07))*.
+> The *property* above — an addressed interface becomes a first-found candidate and Calico
+> migrates to it on the poll — **was measured**, in a disposable microk8s, at Calico
+> **v3.29.3**. What was **not** run is this scenario as written: a **`fabric.sh` tap** given
+> an address beside a cluster whose loss would matter. A dummy interface in a guest and a
+> tap on `br-mc0` are not the same subject, and the sandbox result is a statement about the
+> selection algorithm at a named version rather than about this host. Recorded as
+> **partly** closed, not closed.
 
 **The host without a live cluster need not be another machine** *(added 2026-08-03)*: a
 nested QEMU VM from phase 2 (`lab-vm.sh`) can *be* it. Boot a throwaway VM, install a

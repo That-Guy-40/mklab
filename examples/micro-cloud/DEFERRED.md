@@ -8,6 +8,54 @@
 > the planning session that produced v2 and v3; the DONE markers were added as
 > the slices landed.
 
+## NEXT — the three at the front of this queue *(2026-08-07)*
+
+Slices 0–5c are done, `retap` is green, and the break pass has a chaos matrix. What is left
+at the front is **three debts that are blocked on packaging or on a host — none on a
+question nobody has answered.** They are written as what is *not* done, because two of them
+are the shape this lab keeps getting caught by: *the experiment finished, so the item feels
+finished.* It is not. A measurement nobody can re-run is a story.
+
+### 1. `examples/nested-calico-sandbox/` — the lab unit (the experiment is DONE)
+
+[Appendix O](../../MICRO_CLOUD_LAB_PLAN.md#appendix-o--the-nested-calico-experiment-run-two-derived-rules-become-measurements-2026-08-07)
+carries the whole recipe and it reproduces **unprivileged in ~15 minutes**: a
+`qemu-img resize`d Debian cloud image, microk8s **v1.35.6** via cloud-init, Calico
+**v3.29.3** with `IP_AUTODETECTION_METHOD=first-found`. Both of `fabric.sh`'s safety rules
+were measured there, rule 1 only because of the delete-the-winner control.
+
+**Still owed — the cohesive-lab shape** (see the [full brief below](#queued--nested-calico-sandbox-a-disposable-cluster-to-break-on-purpose)):
+a phase-2 `.toml`, `README.md`, `MANUAL_TESTING.md`, a `tests/` harness **that carries the
+control**, a 00-INDEX row, a `learning-paths.toml` route. Its harness must **stamp the
+Calico version it observed and refuse to generalise across a mismatch** — constraint 2,
+the same discipline `capture-policy` uses to bind a PCR set to its image.
+
+### 2. G.9's last break-pass scenario — *partly* answered, not closed
+
+[G.9](../../MICRO_CLOUD_LAB_PLAN.md#g9-not-run--recorded-as-unknown-not-as-pass) had two
+rows. DHCP exhaustion is **green**; what remains is *give a **`fabric.sh` tap** an address
+on purpose and watch it become a candidate.*
+
+Appendix O measured the **property** — an addressed interface becomes first-found and
+Calico migrates on the poll. It did so with a **dummy interface in a guest**, and **a dummy
+in a guest is not a tap on `br-mc0`**. The sandbox answers *about the algorithm at Calico
+v3.29.3*; this host runs **v3.28.1**. Recorded as partly closed so the distinction does not
+quietly evaporate. **Needs item 1**, where causing the migration costs nothing.
+
+### 3. The fabric's own teardown code, under a live agent
+
+[`tests/test-vsock-chaos.sh`](tests/test-vsock-chaos.sh) names this as **not covered**,
+deliberately. Its network row severs the guest's link with `set_link down`, which is a
+*superset* of losing the bridge — so the **property** (vsock survives) is measured — but
+`fabric.sh down`'s teardown path is **never exercised with a guest attached**.
+
+**A stronger fault does not prove the weaker one ran.** The matrix says so rather than
+letting `set_link` imply a code path it never touched, which is the same reason `retap`'s
+test refused to grade a repair whose break had not been staged. Root-gated, so it will need
+the same self-skipping shape as the other privileged tests here.
+
+---
+
 ## DONE — slice 5a, both halves
 
 > ✅ **(b) landed 2026-08-05, the same day as (a)** — [Appendix K](../../MICRO_CLOUD_LAB_PLAN.md#appendix-k--slice-5a-b-two-engines-on-one-fabric-and-decision-e-answered-from-what-the-lifecycles-actually-needed-2026-08-05).
@@ -359,7 +407,11 @@ debt in this queue:
 - [G.9](../../MICRO_CLOUD_LAB_PLAN.md#g9-not-run--recorded-as-unknown-not-as-pass)'s
   tap-address scenario, the last unrun row of §14's break pass now that DHCP exhaustion
   is covered.
-- **A chaos scenario for the CNI layer**, which micro-cloud does not have at all —
+- **A chaos scenario for the CNI layer.** ⚠️ *Partly overtaken 2026-08-07*: micro-cloud now
+  **has** a chaos matrix ([`tests/test-vsock-chaos.sh`](tests/test-vsock-chaos.sh), five
+  rows), but **the CNI is not one of its layers** and the fabric's own teardown code is
+  named as uncovered — item 3 of [NEXT](#next--the-three-at-the-front-of-this-queue-2026-08-07).
+  The original point stands for the CNI specifically —
   `CLAUDE.md`'s ladder wants an injection point per independently-failing layer, and the
   CNI is one nobody has watched fall over here.
 
