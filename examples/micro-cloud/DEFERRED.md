@@ -143,11 +143,17 @@ reaching `api1` by name — the counterpart to 5a's density case.*
 > and asserts the TYPES cloud-init will see — a grep would have passed on the broken
 > output, because the bytes looked perfect and only the parse was wrong.
 >
-> **Still not done:** the edge has not yet run its `runcmd`, so nothing has confirmed
+> ~~**Still not done:** the edge has not yet run its `runcmd`, so nothing has confirmed
 > the reserved lease or cross-fidelity name resolution. Nothing has verified that a cloud
 > image takes a lease from the fabric's dnsmasq, that cloud-init runs without slirp, or
 > that the edge resolves `api1`. The harness's root path has never reached past its own
-> preflight.
+> preflight.~~
+>
+> ✅ **All of it done 2026-08-06** — see [the DONE section above](#done--slice-5b-the-fidelity-case):
+> the edge took its **reserved** lease `10.71.0.102` and reached `api1` by name at root.
+> This paragraph is left struck through rather than deleted because the brief is the
+> record of what was true when it was written — but it read as current status, which is
+> how a closed question gets re-asked.
 
 ## QUEUED — slice 5c: vsock, the first channel that is not the fabric
 

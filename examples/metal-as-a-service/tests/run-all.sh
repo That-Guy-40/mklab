@@ -24,7 +24,7 @@ tests=(test-state-machine.sh test-cleaning-guard.sh test-registry.sh
        test-fleet-tpm-selection.sh test-tpm-xml.sh
        test-e2e-make-deployable.sh
        test-fleet-firmware-record.sh test-fleet-preflight.sh
-       test-chaos-matrix.sh test-harness-net.sh)
+       test-chaos-matrix.sh test-harness-net.sh test-describe-ownership.sh)
 
 # The comment above records that a test sat on disk for weeks in no list. A comment is
 # not a check: it explains a fault to whoever is already reading, which is nobody at the

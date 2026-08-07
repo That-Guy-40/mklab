@@ -1029,10 +1029,13 @@ cache_alpine_apk_static() {
     printf '%s' "$out"
 }
 
-# Install packages into a staging root using apk.static.  Uses
-# --allow-untrusted since we're not threading Alpine's signing keys
-# through; the apk downloads come from dl-cdn.alpinelinux.org over
-# HTTPS, which is our trust boundary here.
+# Install packages into a staging root using apk.static.  Package RSA
+# signatures ARE verified, against Alpine's official signing keys bundled
+# in the minirootfs (--keys-dir, below).  This comment used to say the
+# opposite -- that we skipped verification and treated the HTTPS CDN as the
+# trust boundary -- and it went on saying it after Finding 14 removed
+# --allow-untrusted four lines below.  A stale comment about a security
+# property is worse than none: it is the answer a reader takes away.
 alpine_apk_add() {
     local suite="$1" arch="$2" root="$3"; shift 3
     local apk_static; apk_static="$(cache_alpine_apk_static "$suite" "$arch")"

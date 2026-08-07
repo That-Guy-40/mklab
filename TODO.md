@@ -382,9 +382,14 @@ through the existing phases.
       [`tests/test-offline-archive.sh`](examples/kali-packer-vagrant/tests/test-offline-archive.sh),
       which asserts the property against **`build-kali-box.sh`** and not only the
       fetcher, because that is where the defect was.
-- [ ] **Hand-walk `Containerfile`** (Packer + QEMU baked in, per the *Hand-walk
+- [x] **Hand-walk `Containerfile`** (Packer + QEMU baked in, per the *Hand-walk
       sandboxes* convention); partition what the agent can run vs. an explicit
       "you run this" marker (Packer needs KVM/`/dev/kvm`; flag if blocked here).
+      **Done 2026-08-06** — [`examples/kali-packer-vagrant/hand-walk/`](examples/kali-packer-vagrant/hand-walk/)
+      (`Containerfile` + `RUNBOOK.md`); see the follow-up entry below, which
+      records what building it surfaced. *This box stayed unticked while the very
+      next subsection said the work was done and the section ended on "Item 7 is
+      COMPLETE" — the same stale-record shape the audit findings had.*
 
 **AlmaLinux second:**
 - [x] Vendor [`AlmaLinux/cloud-images`](https://github.com/AlmaLinux/cloud-images)
