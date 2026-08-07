@@ -343,8 +343,14 @@ debt in this queue:
   **byte-identical**, because the guest's MAC is set by the VMM and a re-appended entry
   would hand it a second address under the same name.
 
-  **Status is UNKNOWN, not PASS.** It needs root, so it SKIPs unprivileged and has never
-  executed its assertions. Running it is a one-liner and it tears down from its EXIT
+  **`retap` is PROVEN as of 2026-08-07** — `TUNSETIFF-FAILED errno=1 (Operation not
+  permitted)` on a tap with owner uid 0, then `retap`, then `TUNSETIFF-OK`, with the
+  reservation byte-identical and still single. It took **two failed runs, both correct**:
+  run 1 caught its own fixture (a bare `ip tuntap add` leaves the owner UNSET, and an
+  owner-less tap is attachable by **anyone** — only uid 0 is G.4), and run 2 caught the
+  test asserting a *message* where `fabric.sh` was right. **§5 and §6 remain UNKNOWN**: the
+  corrected test has not been re-run. See
+  [Appendix P](../../MICRO_CLOUD_LAB_PLAN.md#appendix-p--retaps-first-privileged-run-the-test-failed-and-that-is-the-finding-2026-08-07). Running it is a one-liner and it tears down from its EXIT
   trap, but it does delete and recreate a tap on the machine running the fabric — so it
   carries the same three guards as the round-trip test and refuses to adopt a fabric it
   did not create.

@@ -4334,3 +4334,48 @@ Two things the failed run *did* establish, incidentally: the baseline attach wor
 (`TUNSETIFF-OK … uid=1000` against a `fabric.sh`-made tap, so the fabric's own ownership
 handling is sound), and the EXIT trap tore the fabric and the tap down cleanly on the
 failure path — `br-mc0` and `mc-rt1` were both absent afterwards.
+
+### P.3 The corrected run: `retap` works, and §5 failed on a fabric that was right
+
+Second privileged run, same day, with §3 staging `user root`:
+
+```
+  - baseline: 'sqs' can attach to the fabric's own tap — TUNSETIFF-OK mc-rt1 uid=1000  ✓
+  - broken: the tap exists, is enslaved, is up, owner uid is 0, and 'sqs' still cannot
+            attach — TUNSETIFF-FAILED errno=1 (Operation not permitted)  ✓
+  - repaired: 'sqs' can attach again — TUNSETIFF-OK mc-rt1 uid=1000  ✓
+  - the reservation is byte-identical and still single: 06:00:ac:47:5e:b6,10.71.0.101,rt1  ✓
+  - the repaired tap is addressless and on br-mc0  ✓
+```
+
+**`retap` does what it was written to do**, and it is now measured rather than read: the
+defect is staged for real (EPERM from the ioctl an unprivileged Firecracker would issue),
+the repair restores the one property that matters, and the DHCP reservation comes out
+**byte-identical and still single** — which is the entire reason it is a separate verb from
+`tap`. Three of the four assertions in [G.4](#g4-four-defects-three-of-them-inside-the-safety-checks)'s
+repair story have now executed.
+
+Then §5 failed — **and `fabric.sh` was right.** `tap` has *two* guards, and they fire in
+different states:
+
+```bash
+ip link show "$TAP" … && die "$TAP already exists"                  # cheap, checked FIRST
+grep -q ",$NAME\$" dhcp-hosts && die "… already has a reservation … use 'retap' to rebuild"
+```
+
+§5 asserted the **second** message while standing in the **first** one's state: after §4's
+repair the tap exists, so the interface guard legitimately wins and the operator sees
+`mc-rt1 already exists`. The reservation-aware message that points at `retap` is only
+reachable when the reservation survives and the interface does not.
+
+The fix is in the harness, and it is the same lesson as P.1 one level up: **the test was
+asserting a message where it should have asserted an outcome.** §5 now stages *both* states
+— tap-present, and reservation-without-interface (which is where an operator actually lands
+when something eats a tap) — asserts each guard in the state that reaches it, and after
+each one checks the property that actually matters: `grep -c ",$NAME$" dhcp-hosts` is still
+**1**. Which of the two sentences the operator reads is the mechanism; not appending a
+second reservation is the outcome.
+
+**Still UNKNOWN:** §5's two refusals and §6 (Calico's binding and pod-veth count unchanged
+across the break and repair, and `down` leaving no tap behind) have not executed. The
+corrected test has not been re-run.

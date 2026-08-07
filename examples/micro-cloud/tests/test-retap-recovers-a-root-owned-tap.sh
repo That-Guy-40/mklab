@@ -165,11 +165,43 @@ if ( fab retap nosuchname ); then
 fi
 grep -qi "no dhcp-hosts entry" "$LOG" \
     || fail "'retap' refused an unknown name without naming the reason or pointing at 'tap': $(tail -2 "$LOG")"
+# `tap` has TWO guards and they fire in different states. The first privileged run asserted
+# the second one's message while standing in the first one's state, and failed on a
+# fabric.sh that was behaving correctly:
+#
+#     ip link show "$TAP" … && die "$TAP already exists"            <- cheap, checked FIRST
+#     grep -q ",$NAME\$" dhcp-hosts && die "… already has a reservation … use 'retap'"
+#
+# After §4 the tap exists, so the interface guard legitimately wins. Both are asserted here,
+# each in the state that reaches it — and the PROPERTY that matters (no second reservation
+# is ever appended) is checked after each, because that is the outcome; which of the two
+# messages the operator sees is the mechanism.
+res_count() { grep -c ",$NAME\$" /run/mklab-mc/dhcp-hosts 2>/dev/null || true; }
+
 if ( fab tap "$NAME" ); then
-    fail "REGRESSION: 'tap' accepted a name that already holds a reservation — it would append a SECOND entry and the guest would get a different address under the same name"
+    fail "REGRESSION: 'tap' accepted a name whose tap ALREADY EXISTS — it would append a second dhcp-hosts entry and the guest would get a different address under the same name"
+fi
+grep -qi "already exists" "$LOG" \
+    || fail "'tap' refused an existing tap without saying so: $(tail -2 "$LOG")"
+[[ "$(res_count)" == 1 ]] \
+    || fail "REGRESSION: the refused 'tap' still changed dhcp-hosts — $NAME now has $(res_count) reservations, not 1"
+
+# Now the OTHER state, staged deliberately: the reservation survives, the interface does
+# not. This is where an operator actually lands when something ate the tap, and it is the
+# only state in which `tap` can reach its reservation guard — the one that points at
+# `retap`. Asserting that message without staging this was the defect in the first run.
+ip link del "$TAP" || fail "the harness could not delete $TAP to stage the reservation-without-interface state"
+if ( fab tap "$NAME" ); then
+    fail "REGRESSION: with its tap gone but its reservation intact, 'tap' ACCEPTED $NAME — this is the state that appends a second entry, and the guest would then answer to a name pointing at an address nothing holds"
 fi
 grep -qi "already has a reservation" "$LOG" \
-    || fail "'tap' refused a duplicate without naming the reservation or pointing at 'retap': $(tail -2 "$LOG")"
+    || fail "'tap' refused, but without naming the reservation or pointing at 'retap' — and this IS the state where it should, since the interface is gone: $(tail -2 "$LOG")"
+[[ "$(res_count)" == 1 ]] \
+    || fail "REGRESSION: $NAME now has $(res_count) reservations after a refused 'tap' — the refusal happened after the append, which is a post-mortem, not a gate"
+note "tap refuses an existing tap by name, AND refuses a live reservation by pointing at retap — neither appending a second entry  ✓"
+
+# Put the tap back so §6 tears down the state the fabric actually manages.
+fab retap "$NAME" || { cat "$LOG" >&2; fail "retap could not restore the tap after the reservation-guard check"; }
 note "retap refuses an unreserved name, and tap refuses a reserved one — each pointing at the other  ✓"
 
 # ── 6. and the live cluster is where we found it ──────────────────────────
