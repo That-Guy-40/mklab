@@ -9,7 +9,7 @@ set -uo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")" || exit 2
 
 tests=(test-fabric-mac-derivation.sh test-bench-boot.sh test-fabric-round-trip.sh test-dhcp-exhaustion.sh test-two-engines-one-fabric.sh test-edge-on-the-fabric.sh
-       test-harness-net.sh)
+       test-harness-net.sh test-retap-recovers-a-root-owned-tap.sh)
 
 # The list is compared against the disk: a test with no runner is a test nobody runs,
 # and a comment saying so does not fail a build (metal-as-a-service kept one for weeks).

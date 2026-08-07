@@ -242,9 +242,26 @@ destroy turns all three from beliefs into measurements.
 cluster is a **safe host for the entire slice-3 break pass**, which is the largest unpaid
 debt in this queue:
 
-- **`retap` is still never called** — it needs a deliberately root-owned tap to recover
-  from, and deliberately breaking tap ownership on the machine running the fabric is
-  exactly the kind of thing you do somewhere disposable.
+- **`retap`: the test is written, the privileged run is owed.** 2026-08-06 —
+  [`tests/test-retap-recovers-a-root-owned-tap.sh`](tests/test-retap-recovers-a-root-owned-tap.sh)
+  stages the real defect (a tap created with no `user`, enslaved and up — it *looks*
+  fine), proves the owner cannot attach, runs `retap`, and proves they can again. The
+  assertion is the **`TUNSETIFF` ioctl**, attempted as the unprivileged owner via
+  [`tests/tun-open.py`](tests/tun-open.py), not `/sys/class/net/<tap>/owner`: the owner
+  file is the mechanism, whether the VMM can open the device is the outcome, and this
+  repo has been caught by that gap before. The healthy-tap attach in §2 is what gives
+  the broken-tap refusal in §3 its meaning — if both failed the harness would have
+  proven nothing, and it says so by name.
+
+  It also pins the reason `retap` is a separate verb: the DHCP reservation must come out
+  **byte-identical**, because the guest's MAC is set by the VMM and a re-appended entry
+  would hand it a second address under the same name.
+
+  **Status is UNKNOWN, not PASS.** It needs root, so it SKIPs unprivileged and has never
+  executed its assertions. Running it is a one-liner and it tears down from its EXIT
+  trap, but it does delete and recreate a tap on the machine running the fabric — so it
+  carries the same three guards as the round-trip test and refuses to adopt a fabric it
+  did not create.
 - [G.9](../../MICRO_CLOUD_LAB_PLAN.md#g9-not-run--recorded-as-unknown-not-as-pass)'s
   tap-address scenario, the last unrun row of §14's break pass now that DHCP exhaustion
   is covered.

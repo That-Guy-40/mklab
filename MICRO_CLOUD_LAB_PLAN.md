@@ -3186,7 +3186,7 @@ cmdline.
 
 | not exercised | why it matters |
 |---|---|
-| **`retap`** | the verb that exists because of the root-owned-tap defect was never called |
+| **`retap`** | the verb that exists because of the root-owned-tap defect was never called. **A test for it exists since 2026-08-06** (`tests/test-retap-recovers-a-root-owned-tap.sh`, asserting the `TUNSETIFF` outcome rather than the owner file) — but it is root-gated and has not been run, so this row stays UNKNOWN rather than becoming PASS |
 | **any microVM** | no lease was requested, no name resolved, no packet crossed the bridge. **dnsmasq started and re-read its files; it never served anybody.** |
 | **the teardown comparison's negative direction** | [G.7](#g7-the-teardown-assertion-proven-in-both-directions) proved it bites on 2026-08-02; that was not re-run |
 

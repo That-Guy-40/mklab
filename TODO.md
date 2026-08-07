@@ -591,7 +591,11 @@ including `retap`, which no test has ever called.
 - [ ] Re-run **F.6** on purpose: give an interface an address and watch the node IP
       migrate. Currently not even *predictable* — G.3 retracted the ordering explanation.
 - [ ] Verify **rule 1** by naming a bridge both ways and watching only one get picked.
-- [ ] Exercise `retap` against a deliberately root-owned tap.
+- [~] Exercise `retap` against a deliberately root-owned tap. **Test written 2026-08-06**
+      ([`test-retap-recovers-a-root-owned-tap.sh`](examples/micro-cloud/tests/test-retap-recovers-a-root-owned-tap.sh));
+      it stages the real defect and asserts the **`TUNSETIFF` outcome**, not the owner
+      file. Root-gated, so it SKIPs unprivileged — **the privileged run is still owed**,
+      and the box stays unticked until it has actually executed its assertions.
 - [ ] A **CNI-layer chaos scenario**, which micro-cloud does not have — per
       [`CLAUDE.md`](CLAUDE.md)'s "every discrete layer gets an injection point".
 
