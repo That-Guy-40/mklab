@@ -21,9 +21,11 @@
 > `create`/`start`/`stop`/`status`/`destroy`; every difference is in the **channel or
 > the artifact**, with one exception — Firecracker owns `root=` and QEMU does not.
 >
-> **Still open** ([K.5](../../MICRO_CLOUD_LAB_PLAN.md#k5-what-slice-5a-leaves-closed-and-what-it-does-not)): `retap` is *still* never called (it needs a
-> deliberately root-owned tap to recover from), G.9's two break-pass scenarios are unrun,
-> and **slice 5b** — the fidelity case — has not started.
+> **Still open** ([K.5](../../MICRO_CLOUD_LAB_PLAN.md#k5-what-slice-5a-leaves-closed-and-what-it-does-not)): ~~`retap` is *still* never called (it needs a
+> deliberately root-owned tap to recover from)~~ ✅ **green 2026-08-07**
+> ([Appendix P](../../MICRO_CLOUD_LAB_PLAN.md#appendix-p--retaps-first-privileged-run-the-test-failed-and-that-is-the-finding-2026-08-07));
+> G.9's two break-pass scenarios are unrun, and ~~**slice 5b** — the fidelity case — has not
+> started~~ ✅ **5b, and 5c, are done**.
 >
 > ⚠️ **Correction 2026-08-06** — this line said G.9's scenarios "want a host without a
 > live cluster". That was **already wrong when it was written**: G.9's own addendum
@@ -328,7 +330,7 @@ destroy turns all three from beliefs into measurements.
 cluster is a **safe host for the entire slice-3 break pass**, which is the largest unpaid
 debt in this queue:
 
-- **`retap`: the test is written, the privileged run is owed.** 2026-08-06 —
+- **`retap`: ✅ done — the privileged run is in.** Test written 2026-08-06, **green 2026-08-07** —
   [`tests/test-retap-recovers-a-root-owned-tap.sh`](tests/test-retap-recovers-a-root-owned-tap.sh)
   stages the real defect (a tap created `user root` — owner uid **0** — enslaved and up, so it *looks*
   fine), proves the owner cannot attach, runs `retap`, and proves they can again. The

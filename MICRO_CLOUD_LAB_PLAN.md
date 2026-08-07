@@ -2834,7 +2834,9 @@ was never exercised from a damaged state until now.
 **And the nested host is now a queued lab unit in its own right** *(added 2026-08-06)*:
 [`nested-calico-sandbox/`](examples/micro-cloud/DEFERRED.md#queued--nested-calico-sandbox-a-disposable-cluster-to-break-on-purpose).
 It is worth more than this one scenario — a cluster we may destroy is a safe host for the
-**whole** slice-3 break pass, including `retap`, which is still never called because it
+**whole** slice-3 break pass. (`retap` itself is no longer part of that debt — it was
+**proven 2026-08-07**, [Appendix P](#appendix-p--retaps-first-privileged-run-the-test-failed-and-that-is-the-finding-2026-08-07).
+What remains is the rest of the pass, which
 needs a deliberately root-owned tap to recover from.
 
 **The host without a live cluster need not be another machine** *(added 2026-08-03)*: a
@@ -3195,7 +3197,7 @@ cmdline.
 
 | not exercised | why it matters |
 |---|---|
-| **`retap`** | the verb that exists because of the root-owned-tap defect was never called. **A test for it exists since 2026-08-06** (`tests/test-retap-recovers-a-root-owned-tap.sh`, asserting the `TUNSETIFF` outcome rather than the owner file) — but it is root-gated and has not been run, so this row stays UNKNOWN rather than becoming PASS |
+| **`retap`** | ✅ **PROVEN 2026-08-07** — [Appendix P](#appendix-p--retaps-first-privileged-run-the-test-failed-and-that-is-the-finding-2026-08-07). `TUNSETIFF-FAILED errno=1` on a tap with owner uid 0 → `retap` → `TUNSETIFF-OK`, reservation byte-identical and still single, tap addressless on `br-mc0`, both verbs refusing the other's case, Calico unmoved. It took **three privileged runs and two harness defects**, both of which the test caught itself: an owner-**less** tap is attachable by anyone (so the first break was never a break), and §5 asserted a *message* where `fabric.sh` was right. |
 | **any microVM** | no lease was requested, no name resolved, no packet crossed the bridge. **dnsmasq started and re-read its files; it never served anybody.** |
 | **the teardown comparison's negative direction** | [G.7](#g7-the-teardown-assertion-proven-in-both-directions) proved it bites on 2026-08-02; that was not re-run |
 
@@ -3521,7 +3523,10 @@ under the right name.
 debt paid; and the slice-3 exercise re-run — with a second engine attached, as
 [I.7](#i7-the-recovered-fabric-re-verified-against-the-moved-binding--pass) said it would be.
 
-**Still open:** `retap` itself is *still* never called (it needs a deliberately root-owned tap
+> ✅ **Closed 2026-08-07** — `retap` was run and passed; see [Appendix P](#appendix-p--retaps-first-privileged-run-the-test-failed-and-that-is-the-finding-2026-08-07).
+> The paragraph below is left as written because it is the record of what was true then.
+
+**Still open (as of this appendix):** `retap` itself is *still* never called (it needs a deliberately root-owned tap
 to recover from); [G.9](#g9-not-run--recorded-as-unknown-not-as-pass)'s two break-pass
 scenarios are unrun — ⚠️ **"still want a host without a live cluster" was already wrong when
 this was written**, and the two do not share a blocker; see
@@ -3716,7 +3721,10 @@ proven at both ends of the fidelity axis; decision E as §8.3 shape **(b)**
 ([K.2](#k2-decision-e-answered--184s-table-filled-in-from-what-the-two-lifecycles-needed));
 Appendix L's MAC agreement demonstrated on a booted guest.
 
-**Still open:** `retap` is *still* never called — it needs a deliberately root-owned tap to
+> ✅ **Closed 2026-08-07** — see [Appendix P](#appendix-p--retaps-first-privileged-run-the-test-failed-and-that-is-the-finding-2026-08-07).
+> Left as written: an appendix records what was true when it was written.
+
+**Still open (as of this appendix):** `retap` is *still* never called — it needs a deliberately root-owned tap to
 recover from; [G.9](#g9-not-run--recorded-as-unknown-not-as-pass)'s two break-pass scenarios
 are unrun — ⚠️ **but not for the reason this line gave.** It said they "want a host without a
 live cluster", which [G.9's own addendum](#g9-not-run--recorded-as-unknown-not-as-pass) had
@@ -4323,12 +4331,10 @@ Two corrections, both in the harness rather than in `fabric.sh`:
 Also corrected: two documents described the defect as "a tap created with no `user`", which
 this run shows is a different state with the opposite behaviour.
 
-### P.2 What is still UNKNOWN
+### P.2 What this run left UNKNOWN (closed in P.4)
 
-**`retap`'s own verdict.** The corrected test has not been re-run, so nothing here says the
-verb works — only that the harness now stages the state it claims to. §4–§6 (the repair,
-the byte-identical reservation, the addressless tap on `br-mc0`, the two mutual refusals,
-Calico unmoved) have still never executed. Recorded as **UNKNOWN, not PASS**.
+At the time: **`retap`'s own verdict.** Nothing here said the verb worked — only that the
+harness now staged the state it claimed to. §4–§6 had never executed.
 
 Two things the failed run *did* establish, incidentally: the baseline attach works
 (`TUNSETIFF-OK … uid=1000` against a `fabric.sh`-made tap, so the fabric's own ownership
@@ -4376,6 +4382,48 @@ each one checks the property that actually matters: `grep -c ",$NAME$" dhcp-host
 **1**. Which of the two sentences the operator reads is the mechanism; not appending a
 second reservation is the outcome.
 
-**Still UNKNOWN:** §5's two refusals and §6 (Calico's binding and pod-veth count unchanged
-across the break and repair, and `down` leaving no tap behind) have not executed. The
-corrected test has not been re-run.
+**Still UNKNOWN at this point:** §5's two refusals and §6. Closed by the next run.
+
+### P.4 The third run: green, every assertion executed
+
+```
+  - baseline: 'sqs' can attach to the fabric's own tap — TUNSETIFF-OK mc-rt1 uid=1000  ✓
+  - broken: … owner uid is 0, and 'sqs' still cannot attach
+            — TUNSETIFF-FAILED errno=1 (Operation not permitted)  ✓
+  - repaired: 'sqs' can attach again — TUNSETIFF-OK mc-rt1 uid=1000  ✓
+  - the reservation is byte-identical and still single: 06:00:ac:47:5e:b6,10.71.0.101,rt1  ✓
+  - the repaired tap is addressless and on br-mc0  ✓
+  - tap refuses an existing tap by name, AND refuses a live reservation by pointing at
+    retap — neither appending a second entry  ✓
+  - retap refuses an unreserved name, and tap refuses a reserved one — each pointing at
+    the other  ✓
+  - calico binding and pod veth count unchanged across break and repair  ✓
+PASS
+```
+
+**`retap` is closed.** The verb added for [G.4](#g4-four-defects-three-of-them-inside-the-safety-checks)
+on 2026-08-02, uncalled by anything for five days, is measured: the defect staged for real,
+the repair proven by the ioctl an unprivileged Firecracker actually issues, the reservation
+byte-identical, both verbs refusing the other's case in the state that reaches each guard,
+and the live cluster's binding and pod-veth count unmoved across the whole run.
+
+### P.5 The thing worth keeping from this
+
+**Three privileged runs, two harness defects, zero defects in `fabric.sh`.** The tool was
+right every time; the test was wrong twice, and caught itself both times:
+
+| run | verdict | what it caught |
+|---|---|---|
+| 1 | FAIL | its **own fixture** — a bare `ip tuntap add` leaves the owner unset, and an owner-less tap is attachable by **anyone**, so the "break" was never a break |
+| 2 | FAIL | itself asserting a **message** where `fabric.sh` was right: `tap`'s two guards fire in different states, and §5 stood in the wrong one |
+| 3 | **PASS** | — |
+
+A looser test would have printed PASS on run 1 and reported that a verb works when nothing
+had exercised it. Both failures came from assertions written to make the *next* assertion
+mean something — §3 exists so §4's repair is not vacuous — which is the whole argument for
+writing the negative control first and running it rather than reasoning about it.
+
+The second defect is the more instructive: asserting a refusal's **wording** couples a test
+to which of several correct guards happens to fire. The outcome — `grep -c ",$NAME$"
+dhcp-hosts` is still **1** — is true whichever message the operator sees, and is what the
+guard exists to protect.
