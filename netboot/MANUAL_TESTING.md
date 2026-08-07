@@ -136,8 +136,9 @@ zcat ~/netboot/initrd.gz | cpio -i --to-stdout init 2>/dev/null | head -3
 
 ## 4. Build iPXE (inside Docker, ~15 min first run)
 
-Downloads iPXE source from GitHub, compiles inside a `debian:bookworm`
-Docker container, and produces USB/EFI/qcow2 images plus `boot.ipxe`.
+Downloads iPXE source from GitHub, compiles inside a digest-pinned
+`debian:bookworm` Docker container, and produces USB/EFI/qcow2 images plus
+`boot.ipxe`.
 
 ```bash
 netboot/build-ipxe.sh --server http://10.0.2.2:8181
@@ -148,11 +149,53 @@ netboot/build-ipxe.sh --server http://10.0.2.2:8181
 > will re-clone and re-build (iPXE compilation cannot be cached across
 > Docker runs with the current inner script design).
 
+**Both inputs are pinned** in [`netboot/versions.env`](versions.env) (AUDIT F5):
+the iPXE ref, **the commit that ref must resolve to**, and the base image by
+digest. The commit matters because a git tag is a mutable pointer — a re-tagged
+`v2.0.0` would clone cleanly, report the ref it was asked for, and build
+different source. So the builder compares hashes and refuses a mismatch by name:
+
+```
+[error] iPXE ref 'v2.0.0' does not point at the pinned commit — REFUSING to build.
+  expected: deadbeef…   (netboot/versions.env: IPXE_COMMIT)
+  got:      12798ec29aa8a64d8675c4378b99f5fe28447afb
+```
+
+Passing `--ipxe-ref <anything else>` still works and is not checked — that is a
+deliberate override — but the build says so: `iPXE ref 'master' is NOT the pin …
+this build is not reproducible`.
+
+### 4.1 The pin, verified live (2026-08-07)
+
+`tests/test-ipxe-pin.sh` covers the pin logic headlessly. What it cannot ask is
+whether the pinned release *compiles* with every feature this pipeline switches
+on, so that was measured directly — one build with `--imgverify`,
+`--serial-console` and `--nic-rom e1000` together:
+
+| | result |
+|---|---|
+| `iPXE v2.0.0` (`12798ec2…`, released 2026-03-06) | built clean, rc=0 |
+| `[info] pin verified: 'v2.0.0' is 12798ec29aa8…` | the hash comparison ran |
+| `ipxe.efi` | 1.2 MB, `strings` shows `imgverify` — `IMAGE_TRUST_CMD` is in |
+| `ipxe-8086100e.rom` | 92160 bytes — the crypto stack still **fits** a legacy option ROM, which was the real risk |
+| `ipxe.hd` / `.usb` / `.pxe` / `.qcow2` | all produced |
+| negative control: `IPXE_COMMIT` set to `deadbeef…` | refused, both hashes printed, **output dir empty** |
+
+> ⚠️ `strings` finds `imgverify` in `ipxe.efi` only. That is **not** a finding
+> about the BIOS images: `.pxe`, `.usb` and `.rom` carry a compressed payload, so
+> `strings` cannot see any command name in them — `ifopen`, present in every
+> build, is equally absent. Whether the *ROM* verifies a signature at boot is a
+> QEMU-level question, answered in §11, not by this table.
+>
+> Until v2.0.0 (2026-03-06) upstream's newest tag was v1.21.1 (2020-12), which is
+> why this default was `master` for so long: there was no release recent enough to
+> carry `IMAGE_TRUST_CMD`, `CONSOLE_SERIAL` and the riscv64 EFI target together.
+
 **Expect (truncated):**
 
 ```
 [info] Docker OK
-[info] starting Docker build (arch=x86_64 ref=master) ...
+[info] starting Docker build (arch=x86_64 ref=v2.0.0) ...
 [info] ipxe-build-inner starting
 [info] installing build dependencies...
 ...

@@ -102,7 +102,10 @@ exists — it checks for `/bin/busybox` vs `/sbin/init`.
 ### `build-ipxe.sh` — iPXE from source, in Docker
 
 Compiles iPXE inside a `debian:bookworm` container so the host is not
-polluted with compiler toolchains. Produces four artifacts in
+polluted with compiler toolchains. Both inputs are pinned in
+[`versions.env`](versions.env) — the iPXE release **and the commit it must
+resolve to**, plus the base image by digest — and a moved tag is refused rather
+than built (AUDIT F5). Produces four artifacts in
 `~/netboot/`:
 
 | File | Use |

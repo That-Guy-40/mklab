@@ -19,6 +19,7 @@
 #   $11 nic_rom      8-hex-digit PCI id to build a NIC option ROM for (empty = none)
 #   $12 embed_path   boot script to compile in verbatim (empty = generate one)
 #   $13 serial       "1" to compile in CONSOLE_SERIAL (COM1 115200)
+#   $14 expect_sha   commit the clone MUST resolve to (empty = unpinned build)
 #
 # Outputs written to /out/:
 #   boot.ipxe   embedded boot script (copy of what was compiled in)
@@ -51,6 +52,7 @@ trust_path="${10:-}"
 nic_rom="${11:-}"
 embed_path="${12:-}"
 serial_console="${13:-}"
+expect_sha="${14:-}"
 
 log_info "ipxe-build-inner starting"
 log_info "  server_url  : $server_url"
@@ -99,6 +101,28 @@ else
     git -C /tmp/ipxe checkout "$ipxe_ref" \
         || die "git checkout '$ipxe_ref' failed — is '$ipxe_ref' a valid iPXE ref?"
     log_info "checked out ref '$ipxe_ref'"
+fi
+
+# ─── The pin bites here, BEFORE a single object is compiled ─────────────────
+# A tag is a mutable pointer.  If upstream moves v2.0.0, the clone above still
+# succeeds, still reports the ref it was asked for, and quietly hands the build
+# different source — the artifact would carry a version string that is no longer
+# an identity.  So compare the hash, and refuse by name.
+got_sha="$(git -C /tmp/ipxe rev-parse HEAD)" || die "could not read the cloned iPXE commit"
+if [[ -n "$expect_sha" ]]; then
+    if [[ "$got_sha" != "$expect_sha" ]]; then
+        die "iPXE ref '$ipxe_ref' does not point at the pinned commit — REFUSING to build.
+  expected: $expect_sha   (netboot/versions.env: IPXE_COMMIT)
+  got:      $got_sha
+A moved tag is the whole reason this check exists: the ref name is unchanged, so
+nothing else here would have noticed the source changed underneath it.  Either
+upstream re-tagged '$ipxe_ref', or versions.env is stale.  Verify which, then
+update IPXE_REF *and* IPXE_COMMIT together — or pass --ipxe-ref $got_sha to
+build these exact bytes deliberately."
+    fi
+    log_info "pin verified: '$ipxe_ref' is $got_sha"
+else
+    log_warn "UNPINNED build: '$ipxe_ref' resolved to $got_sha, which nothing verified. Record that SHA if this artifact matters."
 fi
 
 # ─── Patch iPXE config for HTTPS (if requested) ─────────────────────────────
