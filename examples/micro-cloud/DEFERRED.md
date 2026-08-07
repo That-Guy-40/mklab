@@ -21,9 +21,11 @@
 > `create`/`start`/`stop`/`status`/`destroy`; every difference is in the **channel or
 > the artifact**, with one exception — Firecracker owns `root=` and QEMU does not.
 >
-> **Still open** ([K.5](../../MICRO_CLOUD_LAB_PLAN.md#k5-what-slice-5a-leaves-closed-and-what-it-does-not)): `retap` is *still* never called (it needs a
-> deliberately root-owned tap to recover from), G.9's two break-pass scenarios are unrun,
-> and **slice 5b** — the fidelity case — has not started.
+> **Still open** ([K.5](../../MICRO_CLOUD_LAB_PLAN.md#k5-what-slice-5a-leaves-closed-and-what-it-does-not)): ~~`retap` is *still* never called (it needs a
+> deliberately root-owned tap to recover from)~~ ✅ **green 2026-08-07**
+> ([Appendix P](../../MICRO_CLOUD_LAB_PLAN.md#appendix-p--retaps-first-privileged-run-the-test-failed-and-that-is-the-finding-2026-08-07));
+> G.9's two break-pass scenarios are unrun, and ~~**slice 5b** — the fidelity case — has not
+> started~~ ✅ **5b, and 5c, are done**.
 >
 > ⚠️ **Correction 2026-08-06** — this line said G.9's scenarios "want a host without a
 > live cluster". That was **already wrong when it was written**: G.9's own addendum
@@ -328,9 +330,9 @@ destroy turns all three from beliefs into measurements.
 cluster is a **safe host for the entire slice-3 break pass**, which is the largest unpaid
 debt in this queue:
 
-- **`retap`: the test is written, the privileged run is owed.** 2026-08-06 —
+- **`retap`: ✅ done — the privileged run is in.** Test written 2026-08-06, **green 2026-08-07** —
   [`tests/test-retap-recovers-a-root-owned-tap.sh`](tests/test-retap-recovers-a-root-owned-tap.sh)
-  stages the real defect (a tap created with no `user`, enslaved and up — it *looks*
+  stages the real defect (a tap created `user root` — owner uid **0** — enslaved and up, so it *looks*
   fine), proves the owner cannot attach, runs `retap`, and proves they can again. The
   assertion is the **`TUNSETIFF` ioctl**, attempted as the unprivileged owner via
   [`tests/tun-open.py`](tests/tun-open.py), not `/sys/class/net/<tap>/owner`: the owner
@@ -343,8 +345,14 @@ debt in this queue:
   **byte-identical**, because the guest's MAC is set by the VMM and a re-appended entry
   would hand it a second address under the same name.
 
-  **Status is UNKNOWN, not PASS.** It needs root, so it SKIPs unprivileged and has never
-  executed its assertions. Running it is a one-liner and it tears down from its EXIT
+  **`retap` is PROVEN as of 2026-08-07** — `TUNSETIFF-FAILED errno=1 (Operation not
+  permitted)` on a tap with owner uid 0, then `retap`, then `TUNSETIFF-OK`, with the
+  reservation byte-identical and still single. It took **two failed runs, both correct**:
+  run 1 caught its own fixture (a bare `ip tuntap add` leaves the owner UNSET, and an
+  owner-less tap is attachable by **anyone** — only uid 0 is G.4), and run 2 caught the
+  test asserting a *message* where `fabric.sh` was right. **§5 and §6 remain UNKNOWN**: the
+  corrected test has not been re-run. See
+  [Appendix P](../../MICRO_CLOUD_LAB_PLAN.md#appendix-p--retaps-first-privileged-run-the-test-failed-and-that-is-the-finding-2026-08-07). Running it is a one-liner and it tears down from its EXIT
   trap, but it does delete and recreate a tap on the machine running the fabric — so it
   carries the same three guards as the round-trip test and refuses to adopt a fabric it
   did not create.

@@ -18,6 +18,12 @@
 # run that must FAIL its meaning**: if the ioctl failed in both states the harness would
 # have proven nothing, and §3 says so by name.
 #
+# THAT GUARD EARNED ITS KEEP ON THE FIRST PRIVILEGED RUN (2026-08-07). §3 staged the broken
+# tap with a bare `ip tuntap add` — and uid 1000 attached to it without trouble, so the test
+# FAILED rather than "proving" a repair of something that was never broken. An owner-LESS
+# tap and a root-OWNED one look identical in `ip link show` and behave in opposite
+# directions; only the second is G.4. See §3.
+#
 # ⚠️ TOUCHES REAL HOST NETWORKING beside a live microk8s/Calico, so it carries the same
 # three guards as test-fabric-round-trip.sh, and tears down from the EXIT trap.
 . "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
@@ -81,20 +87,42 @@ out="$(can_open)" \
     || fail "the harness cannot attach to a HEALTHY fabric tap as '$OWNER' ($out). Nothing below is testable: a failure in §3 would prove the harness broken, not the tap. If this says NO-TUN-DEVICE, /dev/net/tun is missing"
 note "baseline: '$OWNER' can attach to the fabric's own tap — $out  ✓"
 
-# ── 3. break it exactly the way the defect did: a root-owned tap ──────────
-# Not a simulation of the symptom — the real thing. `ip tuntap add` with no `user` makes
-# a tap owned by nobody, which is what `sudo` from a root shell produced in G.4.
+# ── 3. break it exactly the way the defect did: owner uid 0 ───────────────
+# `user root`, NOT a bare `ip tuntap add`. The first draft of this test used the bare form
+# on the theory that "no owner" is what a root shell produces, and the first privileged run
+# (2026-08-07) refused it: uid 1000 attached to that tap perfectly well. The kernel is
+# explicit about why — drivers/net/tun.c, tun_not_capable():
+#
+#     return ((uid_valid(tun->owner) && !uid_eq(cred->euid, tun->owner)) ||
+#             (gid_valid(tun->group) && !in_egroup_p(tun->group))) &&
+#            !ns_capable(net->user_ns, CAP_NET_ADMIN);
+#
+# With NO owner and NO group both halves of the first clause are false, so the tap is
+# attachable by ANYONE. "Root-owned" and "owner-less" look identical in `ip link show` and
+# behave in OPPOSITE directions, and only one of them is G.4.
+#
+# G.4's tap came from `fabric.sh tap` with MC_OWNER/SUDO_USER resolving to `root` — i.e.
+# `ip tuntap add … user root`, owner uid 0, a VALID uid that is not the caller's. That is
+# what fabric.sh:246 refuses to create, and it is what gets staged here.
 ip link del "$TAP" || fail "the harness could not delete $TAP to stage the broken state"
-ip tuntap add dev "$TAP" mode tap || fail "the harness could not create a root-owned $TAP"
+ip tuntap add dev "$TAP" mode tap user root \
+    || fail "the harness could not create a root-owned $TAP (ip tuntap add … user root)"
 ip link set "$TAP" master br-mc0 || fail "the harness could not enslave the broken $TAP"
 ip link set "$TAP" up || fail "the harness could not bring the broken $TAP up"
+
+# CHECK THE FIXTURE BEFORE ASKING THE QUESTION. The ioctl below is the outcome, but if the
+# staging silently produced some other state the refusal would be about the wrong thing —
+# which is exactly how the first run went wrong. So read the owner back first.
+staged="$(cat "/sys/class/net/$TAP/owner" 2>/dev/null)"
+[[ "$staged" == 0 ]] \
+    || fail "the harness meant to stage owner uid 0 and got '${staged:-<unset>}'. An UNSET owner is not a weaker version of a root-owned one — with neither owner nor group set the kernel lets ANY user attach, so §4 would then be repairing a tap that was never broken"
 
 # It LOOKS fine. This is the point of the defect.
 [[ "$(cat "/sys/class/net/$TAP/operstate" 2>/dev/null)" != down ]] \
     || note "(the broken tap is operstate=down, which at least hints at trouble)"
 out="$(can_open)" \
-    && fail "REGRESSION: '$OWNER' could attach to a ROOT-OWNED tap ($out) — the defect retap exists to repair cannot be staged on this kernel, so §4 would pass without proving anything"
-note "broken: the tap exists, is enslaved and is up, and '$OWNER' still cannot attach — ${out##*$'\n'}  ✓"
+    && fail "REGRESSION: '$OWNER' could attach to a tap owned by uid 0 ($out) — the defect retap exists to repair cannot be staged on this kernel, so §4 would pass without proving anything"
+note "broken: the tap exists, is enslaved, is up, owner uid is 0, and '$OWNER' still cannot attach — ${out##*$'\n'}  ✓"
 
 # ── 4. retap repairs it, and the reservation survives ─────────────────────
 fab retap "$NAME" || { cat "$LOG" >&2; fail "fabric retap $NAME failed on a tap it is meant to repair: $(tail -1 "$LOG")"; }
@@ -137,11 +165,43 @@ if ( fab retap nosuchname ); then
 fi
 grep -qi "no dhcp-hosts entry" "$LOG" \
     || fail "'retap' refused an unknown name without naming the reason or pointing at 'tap': $(tail -2 "$LOG")"
+# `tap` has TWO guards and they fire in different states. The first privileged run asserted
+# the second one's message while standing in the first one's state, and failed on a
+# fabric.sh that was behaving correctly:
+#
+#     ip link show "$TAP" … && die "$TAP already exists"            <- cheap, checked FIRST
+#     grep -q ",$NAME\$" dhcp-hosts && die "… already has a reservation … use 'retap'"
+#
+# After §4 the tap exists, so the interface guard legitimately wins. Both are asserted here,
+# each in the state that reaches it — and the PROPERTY that matters (no second reservation
+# is ever appended) is checked after each, because that is the outcome; which of the two
+# messages the operator sees is the mechanism.
+res_count() { grep -c ",$NAME\$" /run/mklab-mc/dhcp-hosts 2>/dev/null || true; }
+
 if ( fab tap "$NAME" ); then
-    fail "REGRESSION: 'tap' accepted a name that already holds a reservation — it would append a SECOND entry and the guest would get a different address under the same name"
+    fail "REGRESSION: 'tap' accepted a name whose tap ALREADY EXISTS — it would append a second dhcp-hosts entry and the guest would get a different address under the same name"
+fi
+grep -qi "already exists" "$LOG" \
+    || fail "'tap' refused an existing tap without saying so: $(tail -2 "$LOG")"
+[[ "$(res_count)" == 1 ]] \
+    || fail "REGRESSION: the refused 'tap' still changed dhcp-hosts — $NAME now has $(res_count) reservations, not 1"
+
+# Now the OTHER state, staged deliberately: the reservation survives, the interface does
+# not. This is where an operator actually lands when something ate the tap, and it is the
+# only state in which `tap` can reach its reservation guard — the one that points at
+# `retap`. Asserting that message without staging this was the defect in the first run.
+ip link del "$TAP" || fail "the harness could not delete $TAP to stage the reservation-without-interface state"
+if ( fab tap "$NAME" ); then
+    fail "REGRESSION: with its tap gone but its reservation intact, 'tap' ACCEPTED $NAME — this is the state that appends a second entry, and the guest would then answer to a name pointing at an address nothing holds"
 fi
 grep -qi "already has a reservation" "$LOG" \
-    || fail "'tap' refused a duplicate without naming the reservation or pointing at 'retap': $(tail -2 "$LOG")"
+    || fail "'tap' refused, but without naming the reservation or pointing at 'retap' — and this IS the state where it should, since the interface is gone: $(tail -2 "$LOG")"
+[[ "$(res_count)" == 1 ]] \
+    || fail "REGRESSION: $NAME now has $(res_count) reservations after a refused 'tap' — the refusal happened after the append, which is a post-mortem, not a gate"
+note "tap refuses an existing tap by name, AND refuses a live reservation by pointing at retap — neither appending a second entry  ✓"
+
+# Put the tap back so §6 tears down the state the fabric actually manages.
+fab retap "$NAME" || { cat "$LOG" >&2; fail "retap could not restore the tap after the reservation-guard check"; }
 note "retap refuses an unreserved name, and tap refuses a reserved one — each pointing at the other  ✓"
 
 # ── 6. and the live cluster is where we found it ──────────────────────────
