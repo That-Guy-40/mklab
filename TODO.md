@@ -81,7 +81,9 @@ which can be picked up tonight and which cannot be picked up at all here.
       *faults* that need it are not written — deleting the tunnel under a live peer, and
       **F.6 with a witness** (move a node's chosen address while another node is routing to
       it). The one-node matrix's `vxlan-deleted` row is graded on rebuild alone precisely
-      because it could not ask this.
+      because it could not ask this. Both rows are named individually, with why each needs a
+      peer, in the lab's own deferred-work section:
+      [`examples/nested-calico-sandbox/README.md`](examples/nested-calico-sandbox/README.md#what-it-does-not-yet-do--the-deferred-work).
 - [ ] **A.2 — the k8s-dqlite row**, the datastore beneath Calico. See the decision recorded
       with it: it is buildable only if the dataplane observable stops being `kubectl exec`.
 
