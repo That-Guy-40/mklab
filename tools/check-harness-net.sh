@@ -47,13 +47,36 @@ NAME="$(basename "$(dirname "$DIR")")"
 WORK="$(mktemp -d)"
 
 # ── 1. no test may install its own EXIT trap ───────────────────────────────
-# Anchored to the start of a line, so a test that WRITES a trap into a fixture and greps
-# for it (metal-as-a-service's test-e2e-reaps-sink.sh does exactly that) is not caught.
-mapfile -t OFFENDERS < <(grep -ln '^[[:space:]]*trap .*EXIT' "$DIR"/test-*.sh 2>/dev/null | xargs -r -n1 basename)
+#
+# ⚠️ THIS CHECK WAS ANCHORED TO THE START OF A LINE, AND THAT MADE IT A LIAR. Measured
+# 2026-08-08: it printed "no test overrides lib.sh's EXIT trap" across six suites while
+# **twenty** tests did, because every one of them writes
+#
+#     tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+#
+# — the trap after a semicolon, on a line beginning with an assignment. `^[[:space:]]*trap`
+# cannot see that, and the idiom is not exotic: it is the single most common way to open a
+# test in this repo. The anchor was chosen to avoid a FALSE POSITIVE (a test that writes a
+# trap into a fixture and greps for it, as metal-as-a-service's test-e2e-reaps-sink.sh does)
+# and bought it with a false negative twenty times its size. The cheap check answered an
+# easier question — "does a line START with trap" — and was read as the real one.
+#
+# The real property is "is `trap … EXIT` executed as a COMMAND here", so that is what is
+# matched: a `trap` at a command position — start of line, or after `; && || | ( ) { }`.
+# A `trap` inside quotes is preceded by a quote or a `^`, neither of which is a command
+# separator, so the two fixture-writing lines stay unmatched without needing an anchor. Whole
+# comment lines are skipped, because prose about the rule is not an installation of one.
+mapfile -t OFFENDERS < <(
+    awk '
+      /^[[:space:]]*#/ { next }
+      /(^|[;&|(){}])[[:space:]]*trap[[:space:]]+.*[[:space:]]EXIT([[:space:]]|;|$)/ {
+          if (!(FILENAME in seen)) { seen[FILENAME]=1; print FILENAME }
+      }
+    ' "$DIR"/test-*.sh 2>/dev/null | xargs -r -n1 basename)
 (( ${#OFFENDERS[@]} == 0 )) \
     || fail "$NAME: these tests install their own EXIT trap, which REPLACES lib.sh's safety net and leaves them able to die with no verdict line: ${OFFENDERS[*]}. Register cleanup with on_exit '<cmd>' instead"
 _all=("$DIR"/test-*.sh)
-note "$NAME: no test overrides lib.sh's EXIT trap (${#_all[@]} files checked)  ✓"
+note "$NAME: no test overrides lib.sh's EXIT trap at any command position, mid-line included (${#_all[@]} files checked)  ✓"
 
 # fixture <name> <body> — a throwaway test that sources the REAL lib.sh, so what is
 # exercised is the shipped net and not a copy of it. Prints `rc:<n>` then the output.

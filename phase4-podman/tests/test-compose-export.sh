@@ -13,7 +13,7 @@ set -euo pipefail
 
 require_cmd jq
 
-tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+tmp="$(mktemp -d)"; on_exit 'rm -rf "$tmp"'
 lab="xptest$$"
 
 # Build a fake LAB_STATE_DIR with a spec.toml that exercises every field.

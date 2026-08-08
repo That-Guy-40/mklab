@@ -9,7 +9,7 @@
 . "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
 require_cmd qemu-img jq
 
-tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+tmp="$(mktemp -d)"; on_exit 'rm -rf "$tmp"'
 export LAB_STATE_DIR="$tmp/state" LAB_CACHE_DIR="$tmp/cache"
 source "$LAB_VM"
 

@@ -11,7 +11,7 @@
 
 require_cmd qemu-system-x86_64
 
-tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+tmp="$(mktemp -d)"; on_exit 'rm -rf "$tmp"'
 export LAB_STATE_DIR="$tmp/state" LAB_CACHE_DIR="$tmp/cache"
 
 # shellcheck disable=SC1090

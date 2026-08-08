@@ -18,7 +18,7 @@ export LAB_LOG_LEVEL=error
 # shellcheck disable=SC1090
 . "$LAB_DOCKER" 2>/dev/null || true
 
-tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+tmp="$(mktemp -d)"; on_exit 'rm -rf "$tmp"'
 
 # ── Minimal compose YAML → internal schema ──────────────────────────────────
 cat > "$tmp/compose.yml" <<'YAML'

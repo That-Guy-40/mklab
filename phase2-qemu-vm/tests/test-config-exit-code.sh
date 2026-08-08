@@ -14,7 +14,7 @@ command -v tomlq >/dev/null 2>&1 \
     || { command -v yq >/dev/null 2>&1 && yq --version 2>&1 | grep -qi mikefarah; } \
     || skip "no TOML parser (tomlq/dasel/mikefarah-yq)"
 
-work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+work="$(mktemp -d)"; on_exit 'rm -rf "$work"'
 export LAB_STATE_DIR="$work/state" LAB_CACHE_DIR="$work/cache"
 
 printf 'this is not = valid TOML [[[\n' > "$work/bad.toml"

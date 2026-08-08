@@ -10,7 +10,7 @@
 # shellcheck disable=SC1090,SC2317
 . "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
 
-work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+work="$(mktemp -d)"; on_exit 'rm -rf "$work"'
 reg="$work/reg"; mkdir -p "$reg"
 
 docker() {

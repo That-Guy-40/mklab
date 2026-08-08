@@ -45,7 +45,7 @@ note "zbm-debian.toml: UEFI disk-image spec is well-formed  ✓"
 
 # (b) argv wiring — only when qemu is installed.
 if command -v qemu-system-x86_64 >/dev/null 2>&1; then
-    tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+    tmp="$(mktemp -d)"; on_exit 'rm -rf "$tmp"'
     export LAB_STATE_DIR="$tmp/state" LAB_CACHE_DIR="$tmp/cache"
     LAB_VM="$(cd -- "$LAB_DIR/../../phase2-qemu-vm" && pwd)/lab-vm.sh"
     [[ -r "$LAB_VM" ]] || fail "cannot locate phase2-qemu-vm/lab-vm.sh at $LAB_VM"

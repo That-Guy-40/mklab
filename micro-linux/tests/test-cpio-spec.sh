@@ -8,7 +8,7 @@ need find readlink sort
 source "$MLBUILD"
 set +e
 
-tree="$(mktemp -d)"; etc="$(mktemp -d)"; trap 'rm -rf "$tree" "$etc"' EXIT
+tree="$(mktemp -d)"; etc="$(mktemp -d)"; on_exit 'rm -rf "$tree" "$etc"'
 mkdir -p "$tree/bin" "$tree/usr/bin" "$tree/sbin"
 : > "$tree/bin/busybox"; chmod 0755 "$tree/bin/busybox"
 ln -s busybox            "$tree/bin/ls"        # applet symlink (relative)

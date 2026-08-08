@@ -12,7 +12,7 @@
 
 . "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
 
-tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+tmp="$(mktemp -d)"; on_exit 'rm -rf "$tmp"'
 export MLBUILD_OUT_DIR="$tmp/out"
 export MLBUILD_LOCK_FILE="$tmp/versions.lock"
 # shellcheck disable=SC1090

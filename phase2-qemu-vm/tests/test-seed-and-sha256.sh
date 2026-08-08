@@ -13,7 +13,7 @@ if ! command -v genisoimage >/dev/null 2>&1 \
     skip "no ISO maker (genisoimage/xorrisofs/mkisofs)"
 fi
 
-tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+tmp="$(mktemp -d)"; on_exit 'rm -rf "$tmp"'
 export LAB_STATE_DIR="$tmp/state" LAB_CACHE_DIR="$tmp/cache"
 source "$LAB_VM"
 

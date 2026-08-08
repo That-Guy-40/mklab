@@ -12,7 +12,7 @@
 require_cmd jq
 command -v tomlq >/dev/null 2>&1 || skip "no tomlq (TOML parser) for load_config"
 
-work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+work="$(mktemp -d)"; on_exit 'rm -rf "$work"'
 ran="$work/ran"; : > "$ran"
 
 docker() {
