@@ -62,7 +62,9 @@ note "pod networking OK"
 note "down"
 "$LAB_PODMAN" down --lab "$LAB" >/dev/null || fail "down failed"
 
-podman pod ls --format '{{.Name}}' | grep -qx "$pod_name" \
-    && fail "pod '$pod_name' still present after down"
+# EVENTUAL ABSENCE — see await_absent's note in lib.sh: the old `&& fail` form turned a
+# SIGPIPE into a PASS with the pod still running.
+await_absent 20 "$pod_name" -- podman pod ls --format '{{.Name}}' \
+    || fail "pod '$pod_name' still present 20s after down"
 
 pass "pod lifecycle OK"

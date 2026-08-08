@@ -40,7 +40,7 @@ note "down"
 
 # Verify teardown.
 cname="lab-${LAB}-alpine"
-podman ps -a --format '{{.Names}}' | grep -qx "$cname" \
-    && fail "$cname still present after down"
+await_absent 20 "$cname" -- podman ps -a --format '{{.Names}}' \
+    || fail "$cname still present 20s after down"
 
 pass "rootless plain-mode end-to-end OK"

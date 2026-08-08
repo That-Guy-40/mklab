@@ -93,6 +93,13 @@ jobs:
           done
           exit $rc
 
+      - name: no verdict gated on a SIGPIPE-prone pipe into grep -q
+        # `producer | grep -q X && fail` skips the assertion entirely when the producer is
+        # SIGPIPE'd and `pipefail` is set -- a missed failure reported as a pass. It was live
+        # in three teardown assertions ("container still present after destroy") and is the
+        # fifth recorded instance of this inversion here. Text analysis, no daemons.
+        run: bash tools/tests/test-no-pipe-gates.sh
+
       - name: no cached host facts in the micro-cloud instruments
         # Pure text analysis, no host state — safe on a runner that has none of these
         # interfaces. Guards the defect class that made one instrument print a fact from

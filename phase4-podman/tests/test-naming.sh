@@ -32,8 +32,8 @@ note "bringing up lab '$LAB'"
 
 # Container name format.
 expected_name="lab-${LAB}-only"
-podman ps --format '{{.Names}}' | grep -qx "$expected_name" \
-    || fail "expected container '$expected_name' not found"
+await_line 20 "$expected_name" -- podman ps --format '{{.Names}}' \
+    || fail "expected container '$expected_name' not found within 20s"
 note "container name OK: $expected_name"
 
 # Label scoping: container has lab-podman tool label, not lab-docker.
