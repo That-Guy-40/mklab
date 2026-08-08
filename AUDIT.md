@@ -33,8 +33,16 @@
 > `tonistiigi/binfmt` citation — does not hold: that image appears only inside an error
 > message as advice, and is not a build input.
 >
-> **What is genuinely open: F1** (weak default VM credentials, Medium). Everything else
-> in this 2026-05-20 snapshot stands as written.
+> **F1 is WON'T FIX, by decision (2026-08-07).** Weak default VM credentials are a
+> deliberate trade in a toolkit whose entire premise is *disposable* lab environments: every
+> VM here is created to be destroyed, none is exposed beyond the host, and the guests exist
+> to be broken on purpose. Hardening them would add friction to the common path to guard
+> something that is not a real exposure here. Recorded so the question stops being re-asked
+> — an open finding nobody intends to act on is a queue entry that never drains.
+>
+> **That leaves nothing open in this audit.** Everything else in the 2026-05-20 snapshot
+> stands as written, and the six findings that were live have been resolved or shown not to
+> be defects.
 >
 > The pattern is worth more than any of the fixes: **an audit finding is a cached fact
 > about the code, and nothing re-checks it.** Every correction here was made by reading
@@ -67,7 +75,7 @@ Remediation update above.)*
 
 | # | Severity | Area | Finding |
 |---|----------|------|---------|
-| F1 | Medium | Security | Weak, hardcoded default credentials for VMs (`lab`/`lab`, root password `lab`, `ssh_pwauth: true`, NOPASSWD sudo); blank-password dropbear fallback for microvms |
+| F1 | Medium | Security | 🚫 **WON'T FIX — decided 2026-08-07.** The premise of this toolkit is *disposable* labs: every VM is created to be destroyed, none is exposed beyond the host, and several exist specifically to be broken. Hardening the default adds friction to the common path to guard something that is not an exposure here. Recorded as a decision so it stops being re-raised — an open finding nobody intends to act on is a queue entry that never drains. *Original:* Weak, hardcoded default credentials for VMs (`lab`/`lab`, root password `lab`, `ssh_pwauth: true`, NOPASSWD sudo); blank-password dropbear fallback for microvms |
 | F2 | Medium | Security / Supply chain | ✅ **RESOLVED — verified 2026-08-06.** Cloud-image + Kali downloads are SHA256-verified (`verify_sha256`), and the Alpine gap is closed too: `alpine_apk_add` passes `--keys-dir "$root/etc/apk/keys"` and **no** `--allow-untrusted`, so package RSA signatures are checked against Alpine's own bundled keys (Finding 14). The function's header comment still claimed the opposite and was corrected with this row. *Original:* Downloaded cloud images & Kali archives are not checksum/signature-verified (SHA256SUMS is fetched but used only for filename resolution); Alpine uses `--allow-untrusted` |
 | F3 | Low | Security | ✅ **RESOLVED 2026-08-06** — documented in [`phase1-chroot/README.md`](phase1-chroot/README.md#-trust-boundary--a-toml-config-is-a-root-shell-script) (*a TOML config is a root shell script*), plus a contrasting note in [`phase2-qemu-vm`](phase2-qemu-vm/README.md), whose `runcmd` is root **inside a VM**. A repo-wide check found only those two phases execute config-supplied strings at all; 3/4/5/7 do not. *Original:* TOML configs execute arbitrary commands as root (`post_commands`, `init_script`); trust boundary not called out as such |
 | F4 | Low | Security | ✅ **RESOLVED — verified 2026-08-06.** Both drivers default a published port to `127.0.0.1` via `_pub_host` (`phase3-docker/lab-docker.sh:93`, `phase4-podman/lab-podman.sh:108`), with `LAB_PUBLISH_HOST` as the opt-in to a wider bind, and **every** publish site routes through it. Regression-tested in both labs. *Original:* Default port publishing binds `0.0.0.0` (all interfaces) for Docker/Podman labs |

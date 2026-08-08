@@ -649,10 +649,10 @@ including `retap`, which no test has ever called.
 > is a story, and the recipe currently lives only in an appendix. This is
 > [§0.1](#0-next-up--the-three-things-nearest-the-front-of-the-queue).
 
-- [ ] **`examples/nested-calico-sandbox/`: a phase-2 `.toml` (cloud image + cloud-init
-      installing microk8s), `README.md`, `MANUAL_TESTING.md`, a `tests/` harness, a
-      00-INDEX row and a `learning-paths.toml` route — the cohesive-lab shape.** ← the
-      open one. Reproduces unprivileged in ~15 min from Appendix O.
+- [x] `examples/nested-calico-sandbox/`: the cohesive-lab shape — ✅ **BUILT 2026-08-07**:
+      spec, `sandbox.sh`, `guest-experiment.sh`, stamped `findings.env`, four tests,
+      00-INDEX row, `learning-paths` route. Reproduces unprivileged in ~15 min.
+      [Appendix Q](MICRO_CLOUD_LAB_PLAN.md#appendix-q--the-sandbox-packaged-g9-closed-on-the-real-artifact-2026-08-07)
 - [x] Re-run **F.6** on purpose: give an interface an address and watch the node IP
       migrate. ✅ **measured 2026-08-07** — Calico migrated to the decoy **on its own
       60-second poll**, nothing restarted. (One interval was not enough: still on the
@@ -669,14 +669,17 @@ including `retap`, which no test has ever called.
 - [x] Exercise `retap` against a deliberately root-owned tap. ✅ **GREEN 2026-08-07** — `TUNSETIFF-FAILED errno=1` on a tap with owner uid 0 → `retap` → `TUNSETIFF-OK`, reservation byte-identical and still single, tap addressless on `br-mc0`, both verbs refusing the other's case, Calico unmoved. **Three privileged runs, two harness defects, zero defects in `fabric.sh`** — the test caught itself twice (an owner-**less** tap is attachable by anyone; and §5 asserted a *message* where the tool was right). [Appendix P](MICRO_CLOUD_LAB_PLAN.md#appendix-p--retaps-first-privileged-run-the-test-failed-and-that-is-the-finding-2026-08-07)
       ([`test-retap-recovers-a-root-owned-tap.sh`](examples/micro-cloud/tests/test-retap-recovers-a-root-owned-tap.sh));
       it stages the real defect and asserts the **`TUNSETIFF` outcome**, not the owner
-      file. Root-gated, so it SKIPs unprivileged — **the privileged run is still owed**,
-      and the box stays unticked until it has actually executed its assertions.
+      file. Root-gated, so it SKIPs unprivileged. **The privileged run is in** — it took
+      three of them and two harness defects, both of which the test caught itself
+      ([Appendix P](MICRO_CLOUD_LAB_PLAN.md#appendix-p--retaps-first-privileged-run-the-test-failed-and-that-is-the-finding-2026-08-07)).
 - [ ] A **CNI-layer chaos scenario**. ⚠️ **Partly overtaken**: micro-cloud *does* now have a
       chaos matrix ([`test-vsock-chaos.sh`](examples/micro-cloud/tests/test-vsock-chaos.sh),
-      five rows, 2026-08-07), but **the CNI is not one of its layers** and the fabric's own
-      teardown code is explicitly named as uncovered —
-      [§0.3](#0-next-up--the-three-things-nearest-the-front-of-the-queue). Per
-      [`CLAUDE.md`](CLAUDE.md)'s "every discrete layer gets an injection point".
+      six rows, 2026-08-07) and the fabric's own teardown code is now one of them (§0.3).
+      What is **still missing is the CNI itself** as an injection point — per
+      [`CLAUDE.md`](CLAUDE.md)'s "every discrete layer gets an injection point", and the
+      CNI is the layer nobody here has watched fall over.
+      **Now unblocked:** [`nested-calico-sandbox/`](examples/nested-calico-sandbox/) is a
+      Calico that may be broken, which is the thing this always needed.
 
 **Two constraints that must be honoured or the results are worthless**, both instances of
 this repo's bug class #1: the sandbox must enumerate **its own** candidate set (ordering
