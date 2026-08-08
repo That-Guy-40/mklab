@@ -164,11 +164,33 @@ grade that file again in a second, with no cluster:
 CNI_CHAOS_RECORD=/tmp/tmp.XXXX examples/nested-calico-sandbox/tests/test-cni-chaos.sh
 ```
 
-The same switch is how the grader's own branches are checked: hand-edit one field of a good
-record — flip `LIED=no`, blank the refusal's `REASON=`, leave a pool disabled — and watch the
-matching assertion fire. A branch nobody has watched fire is not known to work. It says
-loudly that nothing was injected, and skips the host-binding check, because grading a record
-is reading a **cached fact** about some cluster at some past moment, not a run.
+The same switch is how the grader's own branches are checked — and that is no longer a manual
+exercise:
+
+```bash
+examples/nested-calico-sandbox/tests/test-cni-chaos-grader.sh    # ~2s, no cluster, no root
+```
+
+It carries a clean record, grades it (which must PASS — a negative-control suite whose clean
+case fails is grading a broken fixture), then injects **one defect at a time** and requires
+each to be refused *by its own message*: a refused pod reporting `Running`, a pod nothing
+recovers, a refusal that names no pool, an allocator that returns nothing, a run that left
+the cluster's pools disabled, an injector that landed no fault, a record that stops before
+`CNI-END`. Matching the specific text is the point — a syntax error in the grader would fail
+all seventeen and look like seventeen working controls.
+
+It also runs three *healthy-but-unusual* records that must still pass (a row reporting
+`UNCOVERED`, an allocator that gave everything back, a row that recovered but left
+collateral), and it **names the branches it cannot reach** rather than implying full
+coverage.
+
+> The fixture is itself a record that could outlive its subject, so §1 checks every key it
+> speaks against cni-chaos.sh's `say` lines. It greps the **emissions, not the file** —
+> the first version greped the file, and a renamed field stayed "present" because the old
+> name survived in a comment describing a past measurement.
+
+Grading a record says loudly that nothing was injected, and skips the host-binding check,
+because it is reading a **cached fact** about some cluster at some past moment, not a run.
 
 ## 7. Tear down, and check the host
 
