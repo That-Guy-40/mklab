@@ -113,7 +113,9 @@ exclusion is unproven. **If `BINDING-AFTER-CONTROL` is `br-decoy`, that is a rea
 examples/nested-calico-sandbox/tests/run-all.sh
 ```
 
-**With a sandbox up:** `3/3 listed tests ran … 3 passed, 0 skipped, 0 failed`.
+**With a sandbox up:** *every listed test ran, 0 skipped, 0 failed* — `run-all.sh` prints the
+ratio (`ran/listed`, plus the count of files on disk) rather than a number for a doc to copy
+and then get wrong. Budget **~45 minutes**: two of these tests drive a live cluster.
 
 **Without one:** `test-selection-rules.sh` **SKIPs** with a reason and tells you the command
 to bring one up. That is the correct result, not a weak pass — an unmet precondition is an
@@ -132,7 +134,43 @@ deferred in 2026-08-02 as "an outage on a live cluster" — here it costs nothin
 The distinction it closes: §3 uses **dummy** interfaces, and a dummy in a guest is not a tap
 on `br-mc0`. Same property, different subject.
 
-## 6. Tear down, and check the host
+## 6. The CNI's break pass (~20 min)
+
+```bash
+examples/nested-calico-sandbox/sandbox.sh cni-chaos      # the record
+examples/nested-calico-sandbox/tests/test-cni-chaos.sh   # the record, graded
+```
+
+Six layers, each broken on purpose, each graded on `CLAUDE.md`'s ladder against a real
+`pod-a → pod-b` dataplane rather than a readiness field. **Expect `0 critical`**, and expect
+the rungs to be *occupied* — a matrix that absorbs everything has injected nothing, and one
+that strands everything is uniformly broken; the test fails on either.
+
+Two rows come from one injection, because exhausting the allocator asks two different
+questions: `ipam-exhausted-incumbent` (pods that already hold an address — **ABSORBED**) and
+`ipam-exhausted` (a pod admitted with nothing left to give — **HALTED**, refused by name and
+released by freeing one address). The run also asserts it **put the cluster back**: it is the
+only row that edits a cluster-wide API object, and a run that left the IP pools disabled
+would poison every later one with a fault nobody injected.
+
+> **A row may report `UNCOVERED`.** That is a named gap, not a pass — `pod-veth-deleted`
+> skips itself if it cannot resolve the pod's own veth, rather than deleting the first one it
+> finds (which is usually CoreDNS's, and would grade the row ABSORBED while testing nothing).
+
+**If it fails, don't re-run it — re-read it.** The test keeps its record and prints the path;
+grade that file again in a second, with no cluster:
+
+```bash
+CNI_CHAOS_RECORD=/tmp/tmp.XXXX examples/nested-calico-sandbox/tests/test-cni-chaos.sh
+```
+
+The same switch is how the grader's own branches are checked: hand-edit one field of a good
+record — flip `LIED=no`, blank the refusal's `REASON=`, leave a pool disabled — and watch the
+matching assertion fire. A branch nobody has watched fire is not known to work. It says
+loudly that nothing was injected, and skips the host-binding check, because grading a record
+is reading a **cached fact** about some cluster at some past moment, not a run.
+
+## 7. Tear down, and check the host
 
 ```bash
 examples/nested-calico-sandbox/sandbox.sh down
@@ -146,5 +184,7 @@ assuming this lab caused it — on this host it has moved on its own four times.
 - `NCS-BINDING-AFTER-DECOYS=mc-decoy` — rule 2 measured
 - `NCS-BINDING-AFTER-CONTROL` is **not** `br-decoy` while `br-decoy` is still addressed —
   rule 1 measured, with the control that makes it mean something
-- the host's Calico binding identical at step 0 and step 6
-- `3/3 listed tests ran … 0 failed`
+- the break pass ends on `ladder occupied: … 0 critical`, and the allocator row's refusal
+  names the exhausted pool by CIDR
+- the host's Calico binding identical at step 0 and step 7
+- every listed test ran, 0 skipped, 0 failed

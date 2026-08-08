@@ -46,9 +46,44 @@ K="$MK kubectl"
 # reported as an absent behaviour. A deadline shorter than the measured spread manufactures
 # negative results.
 RECOVER_WAIT="${CNI_RECOVER_WAIT:-240}"
+# The IPAM row gets its OWN, longer deadline for the same reason the 240 above is not 150:
+# its recovery is not Calico's poll but KUBELET's retry of a failed sandbox, which backs off
+# exponentially to five minutes. A 240 s deadline there would manufacture a STRANDED out of a
+# pod that was going to start at 300 s — a timeout reported as an absent behaviour, which this
+# file has already been caught doing once.
+IPAM_RECOVER_WAIT="${CNI_IPAM_RECOVER_WAIT:-420}"
+# How long to WATCH the allocator give addresses back. Deliberately not a deadline anything
+# is failed on — see the note at the leak check, where three different values were each
+# mistaken for one.
+IPAM_LEAK_WAIT="${CNI_IPAM_LEAK_WAIT:-240}"
 NS=cnichaos
 
 say() { printf 'CNI-%s\n' "$*"; }
+
+# ── the one fault that edits CLUSTER-WIDE config, and therefore the one that must be
+# ── undone even if this script is killed ────────────────────────────────────────────────
+# Row 6 disables the cluster's IP pools to run the allocator dry. Every other fault here is
+# local and self-healing; that one is a persisted API object, and a script that dies between
+# "disable" and "restore" would leave a cluster that can never schedule a pod again — with
+# nothing in the record saying why. So the undo is registered before the edit, not after it.
+IPAM_TINY_POOL=mc-ipam-tiny
+# ONE definition of the tiny pool, because the value recurs in five places — the IPPool
+# manifest, two address-prefix greps, the leak check's block filter, and the assertion that
+# the CNI's refusal named it. A second copy is a second thing to forget.
+IPAM_TINY_CIDR=10.99.9.0/29
+IPAM_TINY_PREFIX=10.99.9.
+IPAM_DISABLED_POOLS=""
+restore_ipam() {
+    [[ -z "$IPAM_DISABLED_POOLS" ]] && return 0
+    local p
+    for p in $IPAM_DISABLED_POOLS; do
+        $K patch ippools.crd.projectcalico.org "$p" --type=merge \
+            -p '{"spec":{"disabled":false}}' >/dev/null 2>&1
+    done
+    $K delete ippools.crd.projectcalico.org "$IPAM_TINY_POOL" >/dev/null 2>&1
+    IPAM_DISABLED_POOLS=""
+}
+trap restore_ipam EXIT
 
 # ── observables ────────────────────────────────────────────────────────────
 o_ready()  { $K get ds -n kube-system calico-node -o jsonpath='{.status.numberReady}' 2>/dev/null || echo "?"; }
@@ -118,8 +153,23 @@ if ! $K -n "$NS" get configmap kube-root-ca.crt >/dev/null 2>&1; then
 fi
 say "NAMESPACE-READY after=$((SECONDS - t0))s"
 
+# REUSE A POD ONLY IF IT IS USABLE, NOT MERELY PRESENT.
+#
+# The first version skipped creation when `get pod` succeeded — i.e. it asked whether the API
+# still holds an OBJECT called pod-a, when what the matrix needs is a pod with an address that
+# can reach its neighbour. Those come apart exactly when this script has been run before:
+# earlier rows delete veths and move the node's address, and a pod can be left as a live
+# record of a dataplane that is gone. Measured 2026-08-08, running the suite end to end: the
+# preceding G.9 test disturbed the guest's networking, these two pods survived as objects, the
+# setup declined to recreate them, and the run then waited out its full 240 s for pods that
+# were never going to come up. The no-fault control caught it and refused to grade — which is
+# the control doing its job, but the harness should not have needed saving.
 for p in pod-a pod-b; do
-    $K -n "$NS" get pod "$p" >/dev/null 2>&1 && continue
+    if $K -n "$NS" get pod "$p" >/dev/null 2>&1; then
+        [[ "$($K -n "$NS" get pod "$p" -o jsonpath='{.status.phase}' 2>/dev/null)" == Running \
+        && -n "$($K -n "$NS" get pod "$p" -o jsonpath='{.status.podIP}' 2>/dev/null)" ]] && continue
+        $K -n "$NS" delete pod "$p" --grace-period=0 --force >/dev/null 2>&1
+    fi
     $K -n "$NS" run "$p" --image=busybox:1.36 --restart=Never -- sleep 3600 >/dev/null 2>&1
 done
 say "WORKLOAD-WAITING"
@@ -154,6 +204,13 @@ ensure_workload() {
 
 # ── 0. THE NO-FAULT CONTROL ────────────────────────────────────────────────
 # Without it, "the harness reported failures" cannot be told from a CNI that never worked.
+#
+# It gets `ensure_workload` like every other row, and the asymmetry is worth naming: the
+# control was the ONE row that did not, so it alone had to be handed a healthy dataplane by
+# the setup above rather than being able to establish one. When the setup was fooled by a
+# leftover pod, this row failed for a reason that had nothing to do with the CNI — the row
+# whose entire job is to tell those two apart.
+ensure_workload
 say "ROW=control-no-fault BEFORE[$(snapshot)]"
 say "ROW=control-no-fault AFTER[$(snapshot)] RECOVERED=n/a SECS=0"
 
@@ -315,6 +372,275 @@ if [[ "$took" == yes ]]; then
 else
     ip link del mc-cnidecoy 2>/dev/null
     say "ROW=chosen-address-removed SKIPPED reason=calico-never-took-the-decoy-in-${RECOVER_WAIT}s"
+fi
+
+# ── 6. the ADDRESS ALLOCATOR, run dry ──────────────────────────────────────
+# The analogue of micro-cloud's DHCP-pool row, one layer up: there, a dnsmasq pool of four
+# addresses; here, Calico's IPAM.
+#
+# ── THE POINT IS NOT "IT RUNS OUT". IT IS *HOW* IT RUNS OUT ─────────────────────────────
+#
+# Running out of addresses is arithmetic, not a bug. What the ladder asks is what the CNI
+# does at the moment it has none left, and — exactly as in the DHCP row — the answer differs
+# for two subjects that this one fault hits at the same instant:
+#
+#   INCUMBENT   pods that already hold an address. They should not notice at all. A
+#               dataplane that breaks because the *allocator* ran dry would mean allocation
+#               and forwarding are coupled when they must not be.        → expect ABSORBED
+#
+#   NEW POD     admitted at the same instant, with nothing left to give. HALTED is the good
+#               answer — refused, by a name a human can act on, and recoverable by the verb
+#               the system offers (free an address). The bad answers are LIED (Running with
+#               no address, or handed one already in use) and STRANDED (still refused after
+#               capacity comes back).                                    → measured below
+#
+# The two are emitted as separate rows because they are separate subjects, and because the
+# incumbent row is the negative control for the new-pod row: without it, "new pods were
+# refused" cannot be told from "the whole CNI fell over".
+#
+# ── HOW THE POOL IS MADE SMALL ENOUGH TO FILL ───────────────────────────────────────────
+#
+# The cluster's pool is a /16 — 65k addresses, which nobody is going to fill with pods. So
+# the pools in use are DISABLED and a deliberately tiny one (/29, eight addresses) is offered
+# in their place, then filled with real pods that make real CNI ADD calls. Same trick as the
+# DHCP row's four-address pool, and for the same reason: the interesting behaviour is at the
+# boundary, and the boundary has to be reachable.
+#
+# ⚠️ THE FILL IS ASSERTED TO HAVE LANDED, and that assertion is load-bearing rather than
+# decorative: it is the one that checks the assumption this whole row rests on — that
+# `disabled: true` really does stop Calico allocating from a pool it already holds an affine
+# block in. If it does not, the fillers come up with 10.1.x.x addresses out of the ORIGINAL
+# pool, the pool never runs dry, nothing is ever refused, and the row would grade ABSORBED
+# while having injected nothing whatsoever. So the fillers' addresses are checked to be
+# inside the tiny pool BY PREFIX before anything is graded.
+ensure_workload
+say "ROW=ipam-exhausted BEFORE[$(snapshot)]"
+
+# PRECONDITION, derived rather than assumed. Everything below manipulates IPPool CRDs, which
+# are decoration unless the CNI is actually using calico-ipam — with host-local IPAM the
+# addresses come from the node's podCIDR and not one line of this row would mean anything. An
+# unmet precondition is UNKNOWN, and UNKNOWN is never a pass.
+if ! grep -rqs 'calico-ipam' /var/snap/microk8s/current/args/cni-network/ 2>/dev/null; then
+    say "ROW=ipam-exhausted SKIPPED reason=cni-is-not-using-calico-ipam-so-the-ippool-crds-are-decoration"
+    say "ROW=ipam-exhausted-incumbent SKIPPED reason=cni-is-not-using-calico-ipam"
+else
+    # allocations still live in the tiny pool's block, by prefix. 0 = nothing left behind.
+    tiny_allocated() {
+        $K get ipamblocks.crd.projectcalico.org -o json 2>/dev/null | python3 -c '
+import json,sys
+pfx = sys.argv[1]
+try: d = json.load(sys.stdin)
+except Exception: print("?"); sys.exit(0)
+n = 0
+for b in d.get("items", []):
+    if not str(b.get("spec", {}).get("cidr", "")).startswith(pfx): continue
+    n += sum(1 for a in b.get("spec", {}).get("allocations", []) if a is not None)
+print(n)' "$IPAM_TINY_PREFIX" 2>/dev/null || printf '?'
+    }
+    fill_ips()  { $K -n "$NS" get pods -o jsonpath='{range .items[*]}{.metadata.name}{"="}{.status.podIP}{"\n"}{end}' 2>/dev/null | grep '^fill-' || true; }
+    n_filled()  { fill_ips | grep -cF "=$IPAM_TINY_PREFIX" || true; }
+    n_noip()    { fill_ips | grep -c '=$' || true; }
+
+    # disable every pool currently in use, remembering which, so the undo is exact
+    PREEXISTING_DISABLED=0
+    for p in $($K get ippools.crd.projectcalico.org -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null); do
+        [[ -z "$p" ]] && continue
+        if [[ "$($K get ippools.crd.projectcalico.org "$p" -o jsonpath='{.spec.disabled}' 2>/dev/null)" == true ]]; then
+            PREEXISTING_DISABLED=$((PREEXISTING_DISABLED+1)); continue
+        fi
+        IPAM_DISABLED_POOLS="$IPAM_DISABLED_POOLS $p"
+    done
+    # match the incumbent's encapsulation: a pool with the wrong one is a different fault.
+    vxmode="$($K get ippools.crd.projectcalico.org -o jsonpath='{.items[0].spec.vxlanMode}' 2>/dev/null)"
+    [[ -z "$vxmode" ]] && vxmode=Never
+    $K apply -f - >/dev/null 2>&1 <<EOF
+apiVersion: crd.projectcalico.org/v1
+kind: IPPool
+metadata:
+  name: $IPAM_TINY_POOL
+spec:
+  cidr: $IPAM_TINY_CIDR
+  blockSize: 29
+  ipipMode: Never
+  vxlanMode: $vxmode
+  natOutgoing: true
+  disabled: false
+  nodeSelector: all()
+EOF
+    for p in $IPAM_DISABLED_POOLS; do
+        $K patch ippools.crd.projectcalico.org "$p" --type=merge -p '{"spec":{"disabled":true}}' >/dev/null 2>&1
+    done
+
+    # FILL IT. Twelve pods against eight addresses: the surplus is what gets refused, and
+    # asking for more than the pool can hold is the whole point.
+    for i in $(seq 1 12); do
+        $K -n "$NS" run "fill-$i" --image=busybox:1.36 --restart=Never -- sleep 3600 >/dev/null 2>&1
+    done
+    t0=$SECONDS; prev=-1; stable=0
+    while (( SECONDS - t0 < 180 )); do
+        cur="$(n_filled)"
+        if [[ "$cur" == "$prev" ]]; then stable=$((stable+1)); (( stable >= 3 )) && break
+        else stable=0; fi
+        prev="$cur"; sleep 10
+    done
+    filled="$(n_filled)"; denied="$(n_noip)"
+    say "ROW=ipam-exhausted FILL filled=$filled denied=$denied after=$((SECONDS - t0))s"
+
+    if (( filled == 0 )); then
+        # The assumption failed, and it says so instead of grading. Either `disabled` does not
+        # stop allocation from an already-affine block (in which case the fillers are sitting
+        # on 10.1.x.x and the pool never ran dry), or no pod could start at all.
+        say "ROW=ipam-exhausted INJECTOR-FAILED no pod took an address from $IPAM_TINY_POOL — the allocator was never run dry. Observed: $(fill_ips | tr '\n' ' ')"
+        say "ROW=ipam-exhausted-incumbent SKIPPED reason=the-injector-did-not-land"
+    elif (( denied == 0 )); then
+        say "ROW=ipam-exhausted INJECTOR-FAILED all 12 pods got addresses from an eight-address pool — nothing was ever refused, so there is no exhaustion to grade"
+        say "ROW=ipam-exhausted-incumbent SKIPPED reason=the-injector-did-not-land"
+    else
+        mid="$(snapshot)"
+        # WHAT THE REFUSAL SAID. HALTED requires a NAMED error state; a pod sitting silently
+        # in Pending with no reason recorded is a worse answer than the same pod with
+        # "failed to assign an IP address" against it, and the ladder distinguishes them.
+        #
+        # ⚠️ THE TEST FOR "NAMED" IS A VALUE *THIS SCRIPT* CHOSE, NOT A PHRASE CALICO MIGHT
+        # USE. The first draft classified the message by grepping for `assign an IP`,
+        # `no IP addresses available` and `IPAM` — three strings invented at the desk. The
+        # real message says:
+        #
+        #   plugin type="calico" failed (add): failed to request IPv4 addresses:
+        #   Assigned 0 out of 1 requested IPv4 addresses; No IPs available in pools:
+        #   [10.99.9.0/29]
+        #
+        # …which is about as honest a refusal as a CNI can produce, and ALL THREE guesses
+        # missed it ("Assigned", not "assign an IP"; "No IPs", not "no IP addresses"; no
+        # "IPAM" anywhere). The row would have been failed for dishonesty by an assertion
+        # that was itself asserting a mechanism it had made up. Measured 2026-08-08.
+        #
+        # So the question asked is the one that actually matters to an operator and cannot
+        # drift with upstream's wording: DID IT NAME THE POOL THAT RAN OUT? The CIDR is ours,
+        # so matching it is not a guess about anyone else's strings.
+        reason=none; denial_text=""
+        stuck="$(fill_ips | grep '=$' | head -1 | cut -d= -f1)"
+        if [[ -n "$stuck" ]]; then
+            ev="$($K -n "$NS" describe pod "$stuck" 2>/dev/null | tr '\n' ' ')"
+            # `describe` was flattened with tr, so the next event's table columns follow the
+            # message on the same line; they are cut at the column gap (3+ spaces) so the
+            # record shows the message and not the layout around it.
+            denial_text="$(printf '%s' "$ev" | grep -o 'Failed to create pod sandbox.*' | head -1 | sed 's/   \+.*$//' | cut -c1-400)"
+            case "$denial_text" in
+                *"$IPAM_TINY_CIDR"*) reason=named-the-exhausted-pool ;;
+                *IPv4*|*"IP address"*|*IPs*) reason=named-an-address-failure-but-not-which-pool ;;
+                "") reason=silent ;;
+                *) reason=sandbox-failed-without-naming-addresses ;;
+            esac
+        fi
+        # The verbatim text, on its own line, because a classification is a lossy summary of
+        # it and the reader should be able to see what the CNI actually said.
+        say "ROW=ipam-exhausted DENIAL-TEXT ${denial_text:-<no event recorded against $stuck>}"
+        # A REFUSED POD MUST NOT CLAIM TO BE RUNNING. That combination is the LIED rung: the
+        # record and reality disagree, and on a real cluster it is a workload the scheduler
+        # believes is serving traffic and which has no address to serve it on.
+        lied=no
+        for p in $(fill_ips | grep '=$' | cut -d= -f1); do
+            [[ "$($K -n "$NS" get pod "$p" -o jsonpath='{.status.phase}' 2>/dev/null)" == Running ]] && lied=yes
+        done
+        say "ROW=ipam-exhausted DENIAL stuck=${stuck:-none} reason=$reason lied=$lied"
+
+        # THE INCUMBENT'S OWN ROW: the fault landed, and the question is whether the pods
+        # that already had addresses noticed. Graded by the generic dataplane rule.
+        say "ROW=ipam-exhausted-incumbent MID[$mid] AFTER[$(snapshot)] RECOVERED=n/a SECS=0 LANDED=filled-${filled}-denied-${denied}"
+
+        # RECOVERY, and the arithmetic control inside it. Free exactly ONE address by
+        # deleting one filler GRACEFULLY (so the CNI's DEL actually runs), and exactly one of
+        # the refused pods should then start. If none does, the refusal was not arithmetic and
+        # the row is STRANDED; if the count jumps by more than one, something else changed
+        # underneath and the measurement is not clean.
+        victim="$(fill_ips | grep '=10\.99\.9\.' | head -1 | cut -d= -f1)"
+        before_free="$filled"
+        $K -n "$NS" delete pod "$victim" --grace-period=1 >/dev/null 2>&1
+        t0=$SECONDS; recovered=no
+        while (( SECONDS - t0 < IPAM_RECOVER_WAIT )); do
+            (( $(n_filled) >= before_free )) && { recovered=yes; break; }
+            sleep 5
+        done
+        say "ROW=ipam-exhausted MID[$mid] AFTER[$(snapshot)] RECOVERED=$recovered SECS=$((SECONDS - t0)) LANDED=filled-${filled}-denied-${denied} REASON=$reason LIED=$lied REFILLED=$(n_filled)/$before_free"
+
+        # ── THE LEAK CHECK: does the allocation outlive the pod? ────────────────────────
+        # This repo's bug class #1, asked of the allocator. Calico's IPAM records live in
+        # `ipamblocks`, and an address whose pod is gone but whose allocation is not is a
+        # record that outlived its subject — invisible until the pool runs dry for real, at
+        # which point it presents as capacity that exists on paper and not in fact.
+        for p in $(fill_ips | cut -d= -f1); do
+            $K -n "$NS" delete pod "$p" --grace-period=1 >/dev/null 2>&1
+        done
+        t0=$SECONDS
+        while (( SECONDS - t0 < 120 )); do
+            [[ -z "$(fill_ips)" ]] && break
+            sleep 5
+        done
+        # WAIT FOR THE RELEASE; DO NOT SAMPLE ONCE. Measured 2026-08-08: sampling ten seconds
+        # after the last pod left the API reported `allocations_left=1` — and the block was
+        # completely free minutes later. The address was never leaked; the CHECK was early.
+        #
+        # That direction of error matters as much as the other. A leak detector that cries
+        # leak on a healthy cluster fails CI for a defect that is not there, and the fix a
+        # reader reaches for first is to stop believing the detector. The IPAM release is
+        # asynchronous to the pod's removal from the API, so the honest measurement is
+        # "how long until it came back", with a generous deadline, and a leak declared only
+        # if it never does.
+        # ── RECLAMATION HAS TWO SPEEDS, AND ONLY ONE OF THEM IS TESTABLE ────────────────
+        #
+        # Three runs, one shape every time: of seven addresses, SIX are back the moment the
+        # last pod leaves the API, and exactly ONE lingers and is reclaimed by something much
+        # slower. That tail has now outrun three separate deadlines:
+        #
+        #   10 s  (sample once)  → reported a leak; free when looked at ~4 min later
+        #   180 s                → reported a leak; free ~80 s after the script gave up
+        #   600 s                → reported a leak; free by the next manual check
+        #
+        # Each time the harness rendered "I stopped watching" as "it never happened" — UNKNOWN
+        # printed as a verdict, and each time it would have failed a healthy cluster. Picking a
+        # bigger number is the same mistake with more patience, so the QUESTION changed instead.
+        #
+        # "Did it leak?" means "is it NEVER reclaimed", and no test can establish never. What
+        # IS answerable, and is asserted by the grader:
+        #
+        #   - the prompt path must work: most addresses come back at delete time. If NONE do
+        #     (`first` == `filled`), the allocator is not returning addresses at all, and that
+        #     is a real defect with a real failure mode.
+        #   - the tail is OBSERVED and REPORTED, never failed on. `first` distinguishes one
+        #     lingering allocation from seven released while nobody was looking — without it,
+        #     the two are the same number at the end.
+        #
+        # So the window below is for taking a reading, not for passing judgement.
+        t0=$SECONDS; leak_first="$(tiny_allocated)"; leak="$leak_first"
+        while (( SECONDS - t0 < IPAM_LEAK_WAIT )); do
+            leak="$(tiny_allocated)"
+            [[ "$leak" == 0 ]] && break
+            sleep 10
+        done
+        say "ROW=ipam-exhausted LEAK of_filled=$filled first=$leak_first allocations_left=$leak released_after=$((SECONDS - t0))s pods_left=$(fill_ips | wc -l)"
+    fi
+
+    # RESTORE, and PROVE it. Leaving the cluster's pools disabled would poison every later
+    # run with a fault nobody injected — and it would look like Calico had broken itself.
+    #
+    # The filler pods are swept here rather than only on the success path: the two
+    # INJECTOR-FAILED branches above exit without deleting them, and litter left by a run
+    # that already went wrong is the litter most likely to confuse the next one.
+    for p in $(fill_ips | cut -d= -f1); do
+        $K -n "$NS" delete pod "$p" --grace-period=1 >/dev/null 2>&1
+    done
+    restore_ipam
+    sleep 5
+    # COMPARED AGAINST WHAT WAS DISABLED BEFORE, not against zero: a cluster that already had
+    # a pool switched off for its own reasons is not this row's litter, and failing the run
+    # for it would be the harness blaming Calico for a state it found.
+    still_off=0
+    for p in $($K get ippools.crd.projectcalico.org -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null); do
+        [[ "$($K get ippools.crd.projectcalico.org "$p" -o jsonpath='{.spec.disabled}' 2>/dev/null)" == true ]] && still_off=$((still_off+1))
+    done
+    still_off=$(( still_off - PREEXISTING_DISABLED ))
+    say "ROW=ipam-exhausted RESTORED disabled_pools_remaining=$still_off tiny_pool_present=$($K get ippools.crd.projectcalico.org "$IPAM_TINY_POOL" >/dev/null 2>&1 && echo yes || echo no)"
 fi
 
 say "END"

@@ -91,7 +91,7 @@ examples/nested-calico-sandbox/sandbox.sh down
 when no sandbox is up — an unmet precondition is an UNKNOWN, never a pass.
 
 > ⚠️ **This suite is a LOCAL gate, not a continuous one, and a green CI does not cover it.**
-> Three of its five tests need a VM that takes ~15 minutes to build and ~25 minutes to
+> Three of its five tests need a VM that takes ~15 minutes to build and ~45 minutes to
 > exercise, so CI sees them SKIP. That is the correct result — an unmet precondition is an
 > unknown — but it means the selection rules, G.9 and the CNI matrix are only measured when
 > a human runs them here. Stated plainly so a green badge is not read as coverage it does
@@ -125,7 +125,7 @@ move the host's tunnel then it is not a sandbox and the guarantee above is false
 A passing cluster only proves the happy path. `CLAUDE.md`'s ladder asks for an injection
 point at **every layer that can fail on its own**, and the CNI had none — because breaking
 one meant breaking the cluster this machine uses. That is exactly the objection this lab
-removes, so [`cni-chaos.sh`](cni-chaos.sh) injects at five of them and
+removes, so [`cni-chaos.sh`](cni-chaos.sh) injects at six of them and
 [`tests/test-cni-chaos.sh`](tests/test-cni-chaos.sh) grades the outcome:
 
 | layer | fault |
@@ -136,6 +136,7 @@ removes, so [`cni-chaos.sh`](cni-chaos.sh) injects at five of them and
 | one pod's **veth** | delete it underneath a running pod |
 | the **overlay device** | delete `vxlan.calico` |
 | the **chosen address** | let Calico bind a decoy, then delete the decoy out from under it |
+| the **address allocator** | disable the cluster's pools, offer a /29, and fill it with real pods |
 
 **Graded against a real dataplane**, not a readiness field: every row's headline observable
 is `pod-a → pod-b`. Four more are collected alongside it (`ready`, `nodeip`, `tunnel`,
@@ -152,9 +153,73 @@ Every fault is **scoped**: nothing touches `enp0s3`, which carries ssh. A fault 
 the guest's own management path would send every remaining row to the same rung and the
 harness would report a uniform, uninformative failure while looking like it worked.
 
+### One fault, two subjects: the allocator row
+
+Exhausting the address allocator is the analogue of micro-cloud's DHCP-pool row, one layer
+up — and like that row, **the point is not that it runs out. It is *how*.** Running out of
+addresses is arithmetic. The interesting part is what the CNI does at the moment it has
+none left, and the answer differs for two subjects the same fault hits at once:
+
+| subject | question | measured |
+|---|---|---|
+| pods that **already hold** an address | do they notice the allocator is dry? | **ABSORBED** — `pod-a → pod-b` never broke |
+| a pod admitted **at that instant** | is it refused honestly, and recoverably? | **HALTED** — refused by name; freeing one address let exactly one waiter through in **7 s** |
+
+The cluster's pool is a `/16`, which nobody is filling with pods, so the pools in use are
+disabled and a deliberately tiny `/29` is offered in their place — then filled with real
+pods making real CNI `ADD` calls. Seven of its eight addresses were taken and five pods were
+refused, with this against them:
+
+> `plugin type="calico" failed (add): failed to request IPv4 addresses: Assigned 0 out of 1`
+> `requested IPv4 addresses; No IPs available in pools: [10.99.9.0/29]`
+
+That is about as honest as a refusal gets — it names the operation, the count and the pool
+that ran dry. The test asserts the message contains **the CIDR this harness chose**, which
+is not a guess about upstream's wording; [see below](#two-defects-the-first-run-found-in-its-own-harness)
+for what happened when it was.
+
+Two further questions the rung cannot answer are asked separately. First, whether the
+allocator **gives addresses back** — bug class #1, aimed at the allocator. It does, at *two
+speeds*: six of the seven return the instant their pod leaves the API, and exactly one
+lingers for a tail that has outrun every deadline picked for it. So the test asserts the
+prompt path (which has a real failure mode: if *nothing* comes back, every pod that ever ran
+permanently consumes an address) and merely **reports** the tail. Second, whether the run
+**put the cluster back** — this is the only row that edits a cluster-wide API object, and
+leaving a pool disabled would poison every later run with a fault nobody injected.
+
 ```bash
-examples/nested-calico-sandbox/sandbox.sh cni-chaos     # ~10 min
+examples/nested-calico-sandbox/sandbox.sh cni-chaos     # ~20 min
 ```
+
+### Two defects the first run found in its own harness
+
+Both were in the assertions written to judge Calico, and **both would have failed a cluster
+that was behaving correctly** — the expensive direction, because nothing is broken and the
+suite insists otherwise.
+
+- **A guessed error string.** The check for "did the refusal name itself" grepped for
+  `assign an IP`, `no IP addresses available` and `IPAM`. All three were invented at the
+  desk, and all three missed the real message quoted above (`Assigned`, not `assign an IP`;
+  `No IPs`, not `no IP addresses`; no `IPAM` anywhere). An exemplary refusal would have been
+  graded dishonest by an assertion that was itself asserting a made-up mechanism. It now
+  matches on the pool CIDR **this harness chose**.
+- **A leak check that was a deadline in disguise — three times.** It read the allocator's
+  records ten seconds after the last pod left and reported one address still held. Raised to
+  180 s: same answer, and an independent poll found the address free ~80 s later. Raised to
+  600 s: same answer again, free on the next look. Three false leak reports against a healthy
+  cluster, each one *"I stopped watching"* printed as *"it never happened"*.
+
+The second is worth stating in both directions. A detector that cries leak on a healthy
+cluster is not being "cautious": it fails CI for a defect that is not there, and the first
+thing a reader learns is to stop believing it.
+
+The fix was not a bigger number — that is the same mistake with more patience. **"Did it
+leak" means "is it never reclaimed", and no test establishes never.** So the question
+changed: assert the prompt path, which is answerable and has a real failure mode, and report
+the tail as an observation. The grader's branches were then each made to bite against
+hand-written records — the whole matrix can be re-graded without a cluster via
+`CNI_CHAOS_RECORD=<file>`, which is also how a failed run's kept record is re-read without
+spending another 20 minutes.
 
 ## What it does not yet do
 
@@ -163,8 +228,6 @@ examples/nested-calico-sandbox/sandbox.sh cni-chaos     # ~10 min
   [`tests/test-fabric-tap-becomes-candidate.sh`](tests/test-fabric-tap-becomes-candidate.sh).
 - **Cross-node consequences.** One node cannot observe them; a second would be a different
   lab.
-- **IPAM exhaustion** — fill the pod CIDR and watch scheduling fail. The analogue of the
-  DHCP-pool row micro-cloud already has; no injector yet.
 - **The datastore beneath Calico** (`k8s-dqlite`) — a layer below this one, and breaking it
   breaks the API the harness talks to.
 

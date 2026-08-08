@@ -134,9 +134,9 @@ experiment)
 
 cni-chaos)
     # Same shape as `experiment`: the script travels in and runs as root there. It is a
-    # separate verb rather than a flag because it takes ~10 minutes, deletes things, and
+    # separate verb rather than a flag because it takes ~20 minutes, deletes things, and
     # nobody should reach it by accident.
-    info "copying cni-chaos.sh into the guest and running it as root (~10 min: it waits out"
+    info "copying cni-chaos.sh into the guest and running it as root (~20 min: it waits out"
     info "  each layer's recovery rather than sampling once)"
     bash "$LAB_VM" ssh "$VM" -- 'cat > /tmp/cni-chaos.sh' < "$HERE/cni-chaos.sh" \
         || die "could not copy the chaos script into the guest"
