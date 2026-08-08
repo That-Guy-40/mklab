@@ -3,7 +3,7 @@
 # CLAUDE.md's ladder, against a real pod-to-pod dataplane.
 #
 # WHY THIS IS THE LAST LAYER. `CLAUDE.md` asks for an injection point per
-# independently-failing layer, and micro-cloud's matrix has six rows with the CNI in none of
+# independently-failing layer, and micro-cloud's one chaos matrix has the CNI in none of
 # them — because breaking a CNI meant breaking the one this machine uses. The sandbox is
 # what removes that objection, so this is the row that was blocked on a lab rather than on
 # an idea.

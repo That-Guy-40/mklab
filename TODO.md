@@ -718,6 +718,10 @@ including `retap`, which no test has ever called.
 - [x] A **CNI-layer chaos scenario** — ✅ **DONE 2026-08-07.** Five layers injected inside a
       Calico we may destroy: the CNI process, felix's netfilter programming, one pod's veth,
       the overlay device, and the chosen node address. **2 absorbed, 3 not, 0 critical.**
+      *(Left as the record of that day. It has since grown to **8 rows over 7 layers —
+      4 absorbed, 4 not, 0 critical** — the address allocator on 2026-08-08 and the
+      k8s-dqlite datastore the same day. Current state lives in the lab's README, not here:
+      a count in prose is a cached fact, and this one is now three revisions old.)*
       Two findings worth more than the rungs: Calico **never self-heals a deleted pod veth**
       (244 s with the dataplane down, recovered only by recreating the pod), and moving the
       node's advertised IP **heals the control plane while abandoning the workload** — F.6's

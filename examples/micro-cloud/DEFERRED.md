@@ -249,7 +249,8 @@ by `SUN_LEN` (~108 bytes, and a long `TMPDIR` trips it); and the first CID-colli
 only because the assertion demands the refusal name its reason.
 
 **The break list is covered** by [`tests/test-vsock-chaos.sh`](tests/test-vsock-chaos.sh)
-(2026-08-07) — micro-cloud's **first chaos matrix**, five rows, unprivileged, graded on the
+(2026-08-07) — micro-cloud's **first chaos matrix**, **six rows** (five at first writing;
+the stalled-client row landed 2026-08-08), unprivileged, graded on the
 ladder and written as a **regression guard**: each row records the rung it was measured at
 and the test fails when a rung *moves*, in either direction.
 
@@ -260,6 +261,7 @@ and the test fails when a rung *moves*, in either direction.
 | Firecracker's host socket `rm`'d under a live guest | **STRANDED** ⚠️ |
 | the VMM killed with the channel in use | **HALTED** — 0 s, named errno, no hang |
 | a guest asks for a reserved CID (0/1/2) | **ABSORBED** — refused at device creation |
+| a **stalled client** holds the agent's port (half a request, no newline) | **ABSORBED** — a second client was served while the first sat mid-request |
 
 **The critical is not ours.** With the socket unlinked the guest is still *running and
 healthy*, and Firecracker's live API refuses to rebuild the channel —
@@ -271,7 +273,9 @@ does not stop at the API's shape, it extends to *what can go wrong*.
 **Named as not covered**, rather than left implicit: CID **exhaustion** (2³² — there is no
 analogous failure to grade, which is the answer); the fabric's own *teardown code* (the
 property is tested more severely by `set_link`, but that code path needs root); and a
-partitioned/slow channel, for which there is no injector yet.
+channel that is **slow rather than stalled** — vsock has no shaper the way a NIC does. *(The
+**stalled** end was covered 2026-08-08; the original wording, "the host reads but never
+replies", pointed the wrong way — the guest agent listens and the host is the client.)*
 
 Explicitly out of scope and unchanged: replacing SSH (decision C says start with SSH), and
 MMDS.
@@ -421,7 +425,7 @@ debt in this queue:
   tap-address scenario, the last unrun row of §14's break pass now that DHCP exhaustion
   is covered.
 - **A chaos scenario for the CNI layer.** ✅ **DONE 2026-08-07** —
-  [`nested-calico-sandbox/cni-chaos.sh`](../nested-calico-sandbox/cni-chaos.sh), five layers,
+  [`nested-calico-sandbox/cni-chaos.sh`](../nested-calico-sandbox/cni-chaos.sh), seven layers,
   2 absorbed / 3 not / 0 critical
   ([Appendix R](../../MICRO_CLOUD_LAB_PLAN.md#appendix-r--the-cnis-break-pass-the-last-layer-gets-an-injection-point-2026-08-07)).
   *Original note:* micro-cloud now
