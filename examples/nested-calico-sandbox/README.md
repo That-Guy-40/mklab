@@ -149,7 +149,8 @@ address it describes, and none of them failing at the step that caused them:**
 | the reissue's success marker was a **mechanism** claim | it printed because a command exited 0; `server.crt` gained the address and `kubelet.crt` did not |
 
 > **Not yet written, and not implied:** the cross-node *chaos rows*. The capability is proven;
-> the faults that need it are the next increment. `findings-two-node.env` says so by name.
+> the faults that need it are the next increment, named individually under
+> [What it does not yet do](#what-it-does-not-yet-do--the-deferred-work).
 
 ## Three traps this lab hit, so you do not have to
 
@@ -273,18 +274,40 @@ hand-written records — the whole matrix can be re-graded without a cluster via
 `CNI_CHAOS_RECORD=<file>`, which is also how a failed run's kept record is re-read without
 spending another 20 minutes.
 
-## What it does not yet do
+## What it does not yet do — the deferred work
 
-- **G.9's remaining scenario** — give a real **`fabric.sh` tap** an address and watch it
-  become a candidate. A dummy interface in a guest is *not* a tap on `br-mc0`; see
-  [`tests/test-fabric-tap-becomes-candidate.sh`](tests/test-fabric-tap-becomes-candidate.sh).
-- **Cross-node consequences.** One node cannot observe them; a second would be a different
-  lab.
-~~- **The datastore beneath Calico** (`k8s-dqlite`)~~ — **covered since 2026-08-08.** It was
-  listed here because breaking it breaks the API the harness observes through. The blocker
-  was specific rather than fundamental: a CNI does not need the API to *forward a packet*,
-  so that row alone is graded on the pod address pinged **from the node**, captured before
-  the fault. Measured **ABSORBED**.
+**One item remains, and it is not blocked.**
+
+### The cross-node chaos rows
+
+The [two-node pair](#the-second-node--a-private-wire-between-two-vms-and-no-host-networking-at-all)
+exists, is proven, and carries real traffic. What is **not written** are the faults that need
+a peer to mean anything:
+
+| the row | why one node cannot ask it |
+|---|---|
+| **delete the tunnel under a live peer** | with no peers the tunnel carries no traffic, so `vxlan-deleted` is graded on whether Calico *rebuilds the device* — a proxy. With a peer, the dataplane consequence is directly observable |
+| **F.6 with a witness** — move a node's chosen address while another node is routing to it | this is the original incident the whole lab family exists because of. One node can reproduce the *mechanism* (an interface becomes a candidate, the tunnel migrates) but nobody is on the other end to notice the outage |
+
+Both are **buildable now**: `sandbox.sh up2 && sandbox.sh join2` gives a live two-node Calico
+in ~20 minutes, unprivileged, on a wire that touches nothing on the host. Tracked as
+[TODO §0.5 A.1](../../TODO.md) and recorded in
+[`findings-two-node.env`](findings-two-node.env) as
+`NCS2_CROSS_NODE_CHAOS_ROWS=not-yet-written`, which is a **named gap and not a pass**.
+
+> The chaos matrix's own §4 prints the same thing on every run, so a reader who never opens
+> this file still learns that cross-node is uncovered.
+
+### What used to be on this list, and when it left
+
+Recorded rather than silently deleted — a shrinking list of gaps says nothing about *why* it
+shrank, and this section had gone stale twice before anyone re-read it.
+
+| item | left | how |
+|---|---|---|
+| **G.9's `fabric.sh` tap scenario** | 2026-08-07 | closed on the REAL artifact — a genuine tap, given an address on purpose, captured the guest cluster's tunnel. [`tests/test-fabric-tap-becomes-candidate.sh`](tests/test-fabric-tap-becomes-candidate.sh) |
+| **the datastore beneath Calico** (`k8s-dqlite`) | 2026-08-08 | the blocker was specific, not fundamental: a CNI does not need the API to *forward a packet*, so the row is graded on the pod address pinged from the node. Measured **ABSORBED** |
+| **"a second node would be a different lab"** | 2026-08-08 | it is `sandbox.sh up2` in *this* lab. The claim was really *"needs root"* — `tap`/`bridge` were the only ways two VMs could share a network until phase-2 gained `peer_link` |
 
 ## See also
 

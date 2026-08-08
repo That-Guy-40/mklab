@@ -4805,4 +4805,6 @@ a performance problem's clothes.
 The capability is proven; the **cross-node chaos rows are not written**, and nothing here
 claims otherwise. The two worth having: deleting the tunnel under a live peer, and **F.6 with
 a witness** — moving a node's chosen address while another node is routing to it. TODO §0.5
-tracks them as the front of the queue.
+tracks them as the front of the queue, and the lab's own
+[deferred-work section](examples/nested-calico-sandbox/README.md#what-it-does-not-yet-do--the-deferred-work)
+states each row with why one node cannot ask it.
