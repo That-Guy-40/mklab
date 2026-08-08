@@ -6,7 +6,7 @@
 # ── THE LAYER NOBODY HAD WATCHED FALL OVER ──────────────────────────────────────────────
 #
 # `CLAUDE.md` asks for an injection point per independently-failing layer. micro-cloud's
-# matrix has six rows and the CNI is none of them — because breaking a CNI meant breaking
+# one chaos matrix covers several layers and the CNI is none of them — because breaking a CNI meant breaking
 # the one this machine uses. That objection is what the sandbox removes.
 #
 # ── WHAT A SINGLE NODE CAN AND CANNOT OBSERVE, STATED UP FRONT ──────────────────────────

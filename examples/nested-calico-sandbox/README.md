@@ -280,8 +280,11 @@ spending another 20 minutes.
   [`tests/test-fabric-tap-becomes-candidate.sh`](tests/test-fabric-tap-becomes-candidate.sh).
 - **Cross-node consequences.** One node cannot observe them; a second would be a different
   lab.
-- **The datastore beneath Calico** (`k8s-dqlite`) — a layer below this one, and breaking it
-  breaks the API the harness talks to.
+~~- **The datastore beneath Calico** (`k8s-dqlite`)~~ — **covered since 2026-08-08.** It was
+  listed here because breaking it breaks the API the harness observes through. The blocker
+  was specific rather than fundamental: a CNI does not need the API to *forward a packet*,
+  so that row alone is graded on the pod address pinged **from the node**, captured before
+  the fault. Measured **ABSORBED**.
 
 ## See also
 

@@ -4111,8 +4111,9 @@ SSH, and MMDS. **5c's break list is now covered** — see [N.8](#n8-the-break-pa
 
 ### N.8 The break pass: micro-cloud's first chaos matrix, and a critical that is not ours
 
-[`tests/test-vsock-chaos.sh`](examples/micro-cloud/tests/test-vsock-chaos.sh) — five rows,
-unprivileged, graded on `CLAUDE.md`'s ladder. It is the first chaos harness this lab has
+[`tests/test-vsock-chaos.sh`](examples/micro-cloud/tests/test-vsock-chaos.sh) — **six rows**
+(five at first writing; the stalled-client row landed 2026-08-08), unprivileged, graded on
+`CLAUDE.md`'s ladder. It is the first chaos harness this lab has
 had at all.
 
 | row | fault | rung | evidence |
@@ -4150,7 +4151,11 @@ tap — so the property is measured. What is **not** exercised is the fabric's o
 **Named as not covered**, because a layer with no scenario is a layer nobody has watched
 fall over: CID **exhaustion** (the space is 2³² and cannot be exhausted the way a DHCP pool
 can — there is no analogous failure to grade, which is itself the answer); the fabric's
-teardown path; and a partitioned/slow channel, for which there is no injector yet.
+teardown path; and a channel that is **slow rather than stalled** — vsock has no shaper the
+way a NIC does. *(The **stalled** end of that spectrum was covered 2026-08-08. The gap's
+original wording — "the host reads but never replies" — pointed the wrong way: the GUEST
+agent listens and the host is the client, so an injector built to that sentence would have
+looked injected and measured nothing.)*
 
 **Three harness defects, each found by breaking something on purpose.**
 
@@ -4516,8 +4521,12 @@ red twice this morning, in a test written hours after that fix. It now waits.
 ## Appendix R — the CNI's break pass: the last layer gets an injection point, 2026-08-07
 
 `CLAUDE.md`'s ladder asks for an injection point at **every layer that can fail on its
-own**. micro-cloud's matrix had six rows and the CNI was none of them — not an oversight,
-a blocker: breaking a CNI meant breaking the one this machine uses.
+own**. micro-cloud's one chaos matrix (vsock) covered several layers and the CNI was none of
+them — not an oversight, a blocker: breaking a CNI meant breaking the one this machine uses.
+*(This sentence read "six rows" until 2026-08-08. The matrix had **five** graded rows when it
+was written — the sixth was the conditional `fabric.sh` row that reports UNCOVERED. The count
+was never load-bearing, and it had since become accidentally true, which is the worst state
+for a wrong number to be in: the count is dropped rather than corrected.)*
 [`nested-calico-sandbox/`](examples/nested-calico-sandbox/) removed that objection, so
 this is the row that was waiting on a lab rather than on an idea.
 
@@ -4601,11 +4610,12 @@ not to its three siblings — which is how a defect class survives its own disco
 
 ### R.5 Named as not covered
 
-Cross-node consequences (one node has no peers), and the datastore beneath Calico, which is
-a layer below this one and breaks the API the harness talks to.
+Cross-node consequences — one node has no peers. **That is now the only entry**, and it is
+no longer blocked either: **Appendix S** built the second node (R.9 is the datastore row).
 
 *(**IPAM exhaustion** was listed here on 2026-08-07 as "the most obvious next injector". It
-is R.6.)*
+is R.6. **The datastore beneath Calico** was listed here until 2026-08-08 and is now R.9's
+row 7 — the fix was changing the OBSERVABLE, not writing a cleverer injector.)*
 
 ### R.6 The allocator, run dry — 2026-08-08
 
@@ -4707,3 +4717,92 @@ false. Prose is not an emission; it now greps the `say` lines, and it fails if t
 moves. Five negative controls were run on the meta-test — a neutered grader assertion, a
 mutation whose `sed` matched nothing, a renamed emission, a moved emission seam, and a
 grader failing for the wrong reason — and the third of those is the one that found this.
+
+### R.9 The datastore beneath Calico — the last named gap, closed by changing the OBSERVABLE — 2026-08-08
+
+`k8s-dqlite` sat in R.5 from the day the matrix was written, for a real reason: it is a layer
+*below* the CNI, and stopping it breaks the API this harness observes through. Every row
+would grade STRANDED for harness reasons and the matrix would be reporting on itself.
+
+**The blocker was specific, not fundamental — and the fix was not a cleverer injector.** A
+CNI does not need the API to *forward a packet*: once a pod is running, its connectivity is
+felix's netfilter rules, Calico's per-pod host route and the pod's veth, all of which are
+kernel state. So this row alone is graded on the pod's address **pinged from the node**,
+captured while the API was still up, and nothing consults the API after the fault.
+
+**Measured: ABSORBED.** With the unit stopped and `/readyz` refusing, the pod was still
+reachable; restarting brought the API back in 21 s. **A datastore outage costs every API
+call and not every workload** — a property operators assume and rarely verify.
+
+Two refusals keep it honest: the injector asserts it landed **on the API** (`/readyz`
+refusing) rather than on the unit's own status — a stopped unit whose API still answers means
+something else is serving it — and it **SKIPs by name** on a cluster with no separate
+`k8s-dqlite` unit rather than stopping nothing and collecting a free ABSORBED.
+
+⚠️ The observable crosses **one veth, not two**. That is a weaker subject than `pod-a →
+pod-b` and is recorded as such in the script, the grader and `findings.env` rather than
+presented as the same measurement.
+
+The matrix is now **8 rows over seven layers: 4 absorbed, 4 not, 0 critical.**
+
+---
+
+## Appendix S — the second node: a private two-VM wire, and what it makes askable — 2026-08-08
+
+**Every "needs a second node" deferral in this plan was really a "needs root" deferral.**
+`network_mode = tap|bridge` are the only ways two of this repo's VMs could share a network,
+and both are root-gated and both change the **host's** networking — disqualifying for a lab
+whose entire premise is that breaking a CNI costs nothing. So F.6's mechanism could be
+reproduced but never *witnessed*: the `vxlan-deleted` row is graded on whether Calico rebuilds
+the device precisely because, with no peers, the tunnel carries no traffic and the dataplane
+observable cannot move. **That rung was an UNKNOWN wearing a DEGRADED.**
+
+### S.1 `peer_link` — phase-2 gains an unprivileged inter-VM wire
+
+QEMU's `socket` netdev joins exactly two VMs into one L2 segment over a TCP connection on
+`127.0.0.1`. No bridge, no tap, no host interface created or touched, **no root**.
+
+```toml
+peer_link = "listen:12801"   # node1, started FIRST
+peer_mac  = "52:54:00:ca:11:01"
+```
+
+Two refusals in `lab-vm.sh` that are measurements rather than style:
+
+- **`peer_mac` is mandatory.** QEMU numbers default MACs per NIC index *within a process*, so
+  two VMs given none arrive on the same segment holding the **same address**. Nothing errors:
+  ARP resolves to whichever end answered last, and it presents as intermittent loss on a link
+  every tool reports UP.
+- **An address cannot be spelled into the field at all.** `listen=` with a bare port binds
+  every interface in QEMU, so the key takes `role:port` and nothing else — and
+  `listen:0.0.0.0:9999` is *refused* rather than silently rewritten to loopback, because an
+  operator who writes an exposed bind and reads back no error will trust the field next time.
+
+### S.2 What it measured
+
+Two `calico-node` pods, two distinct VXLAN tunnel addresses, two distinct IPAM blocks, and
+**3 packets transmitted, 3 received, 0% loss** between pods on two different kernels —
+traffic that can only arrive through the tunnel. Host binding identical throughout.
+
+### S.3 Three defects, all one shape
+
+A record that outlives the address it describes — and **none of them failed at the step that
+caused it**:
+
+| what | how it presented |
+|---|---|
+| every slirp guest is `10.0.2.15`, so the leader advertised an endpoint that **is the worker** | `microk8s join` printed *"Successfully joined the cluster"* while kubelet looped on `Unable to register node … EOF` |
+| the kubelet serving cert is a **separate certificate** from the API server's; `--node-ip` does not reissue it | nothing failed at join or readiness — it failed at the first `kubectl exec`, the chaos harness's *only* dataplane observable |
+| the reissue's success marker was a **mechanism** claim | it printed because a command exited 0; `server.crt` gained the address and `kubelet.crt` did not |
+
+…plus one in the harness's own gate: it counted `=True` where the field separator is `;`, so
+**it could never pass on any cluster**. It timed out against a healthy two-node cluster, and
+the natural reading was *"the join is slow, raise the timeout"* — a broken assertion wearing
+a performance problem's clothes.
+
+### S.4 What is now askable, and is NOT yet written
+
+The capability is proven; the **cross-node chaos rows are not written**, and nothing here
+claims otherwise. The two worth having: deleting the tunnel under a live peer, and **F.6 with
+a witness** — moving a node's chosen address while another node is routing to it. TODO §0.5
+tracks them as the front of the queue.
