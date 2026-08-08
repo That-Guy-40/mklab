@@ -672,14 +672,15 @@ including `retap`, which no test has ever called.
       file. Root-gated, so it SKIPs unprivileged. **The privileged run is in** — it took
       three of them and two harness defects, both of which the test caught itself
       ([Appendix P](MICRO_CLOUD_LAB_PLAN.md#appendix-p--retaps-first-privileged-run-the-test-failed-and-that-is-the-finding-2026-08-07)).
-- [ ] A **CNI-layer chaos scenario**. ⚠️ **Partly overtaken**: micro-cloud *does* now have a
-      chaos matrix ([`test-vsock-chaos.sh`](examples/micro-cloud/tests/test-vsock-chaos.sh),
-      six rows, 2026-08-07) and the fabric's own teardown code is now one of them (§0.3).
-      What is **still missing is the CNI itself** as an injection point — per
-      [`CLAUDE.md`](CLAUDE.md)'s "every discrete layer gets an injection point", and the
-      CNI is the layer nobody here has watched fall over.
-      **Now unblocked:** [`nested-calico-sandbox/`](examples/nested-calico-sandbox/) is a
-      Calico that may be broken, which is the thing this always needed.
+- [x] A **CNI-layer chaos scenario** — ✅ **DONE 2026-08-07.** Five layers injected inside a
+      Calico we may destroy: the CNI process, felix's netfilter programming, one pod's veth,
+      the overlay device, and the chosen node address. **2 absorbed, 3 not, 0 critical.**
+      Two findings worth more than the rungs: Calico **never self-heals a deleted pod veth**
+      (244 s with the dataplane down, recovered only by recreating the pod), and moving the
+      node's advertised IP **heals the control plane while abandoning the workload** — F.6's
+      consequence, watched for the first time. A third came free: `^cni.*` is ALSO in the
+      first-found exclusion list, discovered by naming a decoy into it.
+      [Appendix R](MICRO_CLOUD_LAB_PLAN.md#appendix-r--the-cnis-break-pass-the-last-layer-gets-an-injection-point-2026-08-07)
 
 **Two constraints that must be honoured or the results are worthless**, both instances of
 this repo's bug class #1: the sandbox must enumerate **its own** candidate set (ordering

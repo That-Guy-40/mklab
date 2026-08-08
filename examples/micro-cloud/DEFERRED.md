@@ -420,7 +420,11 @@ debt in this queue:
 - [G.9](../../MICRO_CLOUD_LAB_PLAN.md#g9-not-run--recorded-as-unknown-not-as-pass)'s
   tap-address scenario, the last unrun row of §14's break pass now that DHCP exhaustion
   is covered.
-- **A chaos scenario for the CNI layer.** ⚠️ *Partly overtaken 2026-08-07*: micro-cloud now
+- **A chaos scenario for the CNI layer.** ✅ **DONE 2026-08-07** —
+  [`nested-calico-sandbox/cni-chaos.sh`](../nested-calico-sandbox/cni-chaos.sh), five layers,
+  2 absorbed / 3 not / 0 critical
+  ([Appendix R](../../MICRO_CLOUD_LAB_PLAN.md#appendix-r--the-cnis-break-pass-the-last-layer-gets-an-injection-point-2026-08-07)).
+  *Original note:* micro-cloud now
   **has** a chaos matrix ([`tests/test-vsock-chaos.sh`](tests/test-vsock-chaos.sh), five
   rows), but **the CNI is not one of its layers** and the fabric's own teardown code is
   named as uncovered — item 3 of [NEXT](#the-three-at-the-front-of-this-queue-2026-08-07-now-closed).
