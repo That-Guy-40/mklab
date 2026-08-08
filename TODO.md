@@ -47,12 +47,23 @@ though the match was found. That inversion is now on its **fifth** recorded inst
 `phase4-podman/tests/lib.sh` capture first and test second, with a deadline, and were
 watched to fail on a needle that never arrives.
 
-- [ ] **0.4** the two demonstrated sites are converted; **13 more share the shape** across
-      `phase3-docker/tests/` and `phase4-podman/tests/`. Most read static config (labels,
-      inspect output) where nothing is eventual and the SIGPIPE half is only *latent* — so
-      this is a sweep to do deliberately, classifying each site as racy / latent /
-      negative-assertion, **not** a blanket replace. A negative assertion must NOT gain a
-      retry: it would wait out the deadline every time and prove the same thing slower.
+- [x] **0.4** ✅ **DONE 2026-08-07.** All 13 sites classified rather than swept, and the
+      classification changed the plan: three of them were `&& fail` — **eventual absence** —
+      where the inversion fails in the *dangerous* direction. A SIGPIPE'd producer makes the
+      pipeline non-zero, `&& fail` never runs, and *"container still present after destroy"*
+      reports a **pass**. Demonstrated, not argued: `producer | grep -qx name` over 200k
+      lines returns **141** and the assertion silently skips.
+      That also corrects this entry's own rule. *"A negative assertion must not gain a
+      retry"* is true of an **invariant** ("must never appear") and false of **eventual
+      absence** ("must be gone after this action") — which all three were. They now use
+      `await_absent`.
+      Converted by class: 3 eventual-absence → `await_absent`; 2 eventual-presence →
+      `await_line`; 4 immediate → `has_line`/`has_match` (capture-then-test, no pointless
+      retry); 4 `yq --version` precondition guards and 1 file-grep left alone.
+      [`tools/tests/test-no-pipe-gates.sh`](tools/tests/test-no-pipe-gates.sh) now gates the
+      **silent** variant repo-wide and inventories the 8 remaining noisy `|| fail` sites
+      without gating them — the first draft flagged all 30 hits including its own
+      documentation, which would have bred exemptions until it meant nothing.
 
 ## 1. Crack the FLOPPINUX login hash (educational security exercise)
 

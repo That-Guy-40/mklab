@@ -44,7 +44,7 @@ mkdir -p "$chroot_dir"/{proc,sys,dev,tmp,run,etc}
 note "import → $tag"
 "$LAB_DOCKER" build --tag "$tag" --backend from-chroot --chroot "$chroot_dir"
 
-docker images "$tag" --format '{{.Repository}}:{{.Tag}}' | grep -qx "$tag" \
+has_line "$tag" -- docker images "$tag" --format '{{.Repository}}:{{.Tag}}' \
     || fail "image $tag not present after import"
 
 note "run + verify exec"

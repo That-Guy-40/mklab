@@ -43,9 +43,11 @@ note "run alpine sleeping in detach mode"
     -- /bin/sh -c 'echo READY; sleep 60'
 
 note "verify container exists with our labels"
-docker inspect -f '{{.Config.Labels}}' "$cname" | grep -q 'lab-create.tool:lab-docker' \
+# IMMEDIATE, not eventual: labels are fixed at creation and the container is already
+# verified to exist. Capture-then-test only removes the SIGPIPE inversion.
+has_match 'lab-create.tool:lab-docker' -- docker inspect -f '{{.Config.Labels}}' "$cname" \
     || fail "tool label missing"
-docker inspect -f '{{.Config.Labels}}' "$cname" | grep -q 'lab-create.lab:adhoc' \
+has_match 'lab-create.lab:adhoc' -- docker inspect -f '{{.Config.Labels}}' "$cname" \
     || fail "adhoc label missing"
 
 note "logs"
@@ -66,7 +68,10 @@ await_match 20 "$cname" -- "$LAB_DOCKER" list \
 note "destroy --force"
 "$LAB_DOCKER" destroy "$name" --force
 
-docker ps -a --format '{{.Names}}' | grep -qx "$cname" \
-    && fail "container still present after destroy"
+# EVENTUAL ABSENCE, and the old form failed in the dangerous direction: `&& fail` does not
+# fire when the pipeline is non-zero, so a SIGPIPE'd `docker ps` turned "still present" into
+# a PASS. `destroy` returning is also not the container being reaped.
+await_absent 20 "$cname" -- docker ps -a --format '{{.Names}}' \
+    || fail "container still present 20s after destroy"
 
 pass "run + destroy round-trip OK"

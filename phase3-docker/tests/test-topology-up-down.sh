@@ -79,8 +79,12 @@ note "up"
 "$LAB_DOCKER" up --config "$cfg"
 
 note "verify network"
-docker network ls --filter "label=lab-create.lab=${lab}" -q | grep -q . \
-    || fail "topology network not created"
+# EVENTUAL: `up` returning is not every network being created. Asserted by counting
+# non-empty output rather than matching a name, so a retry needs its own tiny loop.
+_net_present() { local out; out="$(docker network ls --filter "label=lab-create.lab=${lab}" -q 2>/dev/null)" || true
+                 [[ -n "$out" ]]; }
+_deadline=$(( SECONDS + 20 )); while ! _net_present && (( SECONDS < _deadline )); do sleep 0.3; done
+_net_present || fail "topology network not created within 20s"
 
 note "verify 3 containers"
 n="$(docker ps -aq --filter "label=lab-create.lab=${lab}" | wc -l)"
@@ -99,7 +103,7 @@ done
 grep -qi 'nginx' <<<"$got" || fail "web service did not respond with an nginx page"
 
 note "exec into client"
-"$LAB_DOCKER" exec "${lab}/client" -- /bin/sh -c 'echo HELLO' | grep -qx HELLO \
+has_line HELLO -- "$LAB_DOCKER" exec "${lab}/client" -- /bin/sh -c 'echo HELLO' \
     || fail "exec into client did not return HELLO"
 
 note "down"

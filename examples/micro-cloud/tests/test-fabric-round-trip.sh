@@ -113,7 +113,14 @@ ip link show br-mc0 >/dev/null 2>&1 && fail "REGRESSION: br-mc0 survived teardow
 leftover="$(ip -o link show 2>/dev/null | grep -oE 'mc-[a-z0-9-]+' | sort -u | tr '\n' ' ')"
 [[ -z "$leftover" ]] || fail "REGRESSION: mc-* taps survived teardown: $leftover"
 nft list table ip mklab-mc >/dev/null 2>&1 && fail "REGRESSION: the nft table mklab-mc survived teardown"
-ip -4 route show | grep -q '10\.71\.0\.' && fail "REGRESSION: a 10.71.0.0/24 route survived teardown"
+# CAPTURED, then tested. `producer | grep -q X && fail` is the SILENT variant of this
+# repo's pipefail inversion: grep -q exits on first match, the producer can die on SIGPIPE,
+# `pipefail` makes the pipeline non-zero — and `&& fail` then does NOT fire, so a route that
+# HAD survived teardown would be reported as clean. Demonstrated on 2026-08-07 (rc=141, the
+# assertion silently skipped). `ip route`'s output is small enough that it was unlikely to
+# bite here, but "unlikely" is not the standard for a teardown assertion.
+_routes="$(ip -4 route show 2>/dev/null)" || true
+grep -q '10\.71\.0\.' <<<"$_routes" && fail "REGRESSION: a 10.71.0.0/24 route survived teardown"
 [[ -d "/proc/$DPID" ]] && fail "REGRESSION: our dnsmasq ($DPID) is still running after teardown"
 note "down: bridge, taps, nft table, route and dnsmasq all absent"
 

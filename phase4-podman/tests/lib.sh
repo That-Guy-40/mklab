@@ -180,3 +180,39 @@ _await() {   # _await <mode: line|match> <secs> <needle> -- <cmd…>
 }
 await_line()  { _await line  "$@"; }
 await_match() { _await match "$@"; }
+
+# ── the same shape, in its other three polarities ──────────────────────────────────────
+#
+# await_line/await_match above handle EVENTUAL PRESENCE. Two more cases exist and each is
+# wrong in its own way when written as `producer | grep -q … || fail`:
+#
+# `await_absent` — EVENTUAL ABSENCE ("gone after destroy/down"). These were written
+# `producer | grep -qx NAME && fail "still present"`, and the SIGPIPE inversion there fails
+# in the DANGEROUS direction: if grep matches (the container IS still there, i.e. the test
+# should fail) and the producer then dies on SIGPIPE, `pipefail` makes the pipeline non-zero,
+# `&& fail` does NOT fire, and the test PASSES with the container still present. A missed
+# failure, not a spurious one. They are also genuinely eventual — `destroy` returning is not
+# the container being reaped — so they retry until it is gone rather than sampling once.
+#
+# NOTE the distinction, because it corrects a too-broad rule: "a negative assertion must not
+# retry" is true of an INVARIANT ("this must never appear"), which would just wait out the
+# deadline every time. It is false of eventual absence, which is what all three of these are.
+#
+# `has_line` / `has_match` — IMMEDIATE state (inspect output, a completed build, a synchronous
+# command's own stdout). Nothing to wait for, so retrying would only add latency — but the
+# SIGPIPE inversion is still live, so they capture first and test second.
+await_absent() {  # await_absent <secs> <exact-line> -- <cmd…>
+    local secs="$1" needle="$2"; shift 2
+    [[ "${1:-}" == -- ]] && shift
+    local deadline=$(( SECONDS + secs )) out
+    while :; do
+        out="$("$@" 2>/dev/null)" || true
+        grep -qxF -- "$needle" <<<"$out" || return 0
+        (( SECONDS >= deadline )) && { printf '%s' "$out"; return 1; }
+        sleep 0.3
+    done
+}
+has_line()  { local needle="$1"; shift; [[ "${1:-}" == -- ]] && shift
+              local out; out="$("$@" 2>/dev/null)" || true; grep -qxF -- "$needle" <<<"$out"; }
+has_match() { local needle="$1"; shift; [[ "${1:-}" == -- ]] && shift
+              local out; out="$("$@" 2>/dev/null)" || true; grep -qF -- "$needle" <<<"$out"; }

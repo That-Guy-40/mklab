@@ -85,7 +85,7 @@ fi
 
 # ─── status: usage / no-arg / bogus-target ─────────────────────────────────
 note "status (no arg) dumps daemon summary"
-"$LAB_DOCKER" status 2>&1 | grep -q '^── docker info' \
+has_match '── docker info' -- "$LAB_DOCKER" status \
     || fail "bare 'status' did not print daemon summary"
 
 expect_error "status on nonexistent target" "no lab or container" -- status not-a-real-lab-xyz
