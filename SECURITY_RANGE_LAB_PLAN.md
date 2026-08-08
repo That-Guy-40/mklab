@@ -1,15 +1,15 @@
 # Defensive Security Range Lab — Design Plan v1
 
-> **Status**: Draft v1 — proposed 2026-07-24 (option **E** of the "what can we
-> compose?" survey). Anchors on `examples/root-password-reset/` (init-shell / GRUB
+> **Status**: **v1.1 — BUILD-READY** (decisions resolved 2026-08-08; proposed
+> 2026-07-24 as option **E** of the "what can we compose?" survey). Anchors on `examples/root-password-reset/` (init-shell / GRUB
 > recovery, ✅ Debian BIOS + UEFI variants), `examples/tiny-linux-experiments/floppinux/`
 > `HASH_CRACKING.md` + `crack.py` (crack our **own** `$1$` login hash, ✅),
 > `examples/chroot-breakout/` (the `breakout.c` chroot escape, ✅), and the
 > container-internals labs `examples/exploring-containers/` + `examples/linux-proc-vfs-internals/`.
 > Scope: bind these individually-built exercises into **one guided range** — stations
 > that each attack *your own throwaway lab credential*, every one paired with the
-> cryptographic/kernel **why**, all boxed in disposable targets. Awaiting user
-> go-ahead; nothing built or committed yet.
+> cryptographic/kernel **why**, all boxed in disposable targets. **Nothing built yet
+> — the four §9 questions are now answered, so assembly is unblocked.**
 
 ---
 
@@ -189,16 +189,50 @@ green; anything env-blocked is marked author-run with the exact handed-over comm
 
 ---
 
-## 9. Open items / decisions to confirm
+## 9. Decisions — resolved 2026-08-08
 
-- **First increment scope** (needs a nod): recommend **(1) the spine + S2** — smallest,
-  fully headless, and it sets the objective→why→fix template every other station
-  follows — then add S3/S4 (container-boxed) and finally S1 (VM/serial).
-- **Phase-6 `demo-ctf` wiring** — land it as part of v1 (the SHOWCASE already promises
-  the tree) or as a fast-follow? Leaning fast-follow; the CLI range stands alone.
-- **How much red-team surface is in-charter to add later** — e.g. a *defensive* SSH
-  brute-force-lockout demo (fail2ban proving the control) would fit; anything toward
-  evasion/persistence/third-party is explicitly out. Confirm the boundary before
-  growing past the four stations.
-- **Naming** — `security-range` vs. `blue-team-range` vs. `break-your-own-box`; the
-  dir name affects routing, so pick before assembly.
+Recorded as **decisions with reasons**, not deleted: an open item nobody intends to
+revisit is a queue entry that never drains, and a resolved one with no reason gets
+re-litigated by the next reader.
+
+| # | question | decision |
+|---|---|---|
+| 9.1 | first increment scope | **the spine + S2** |
+| 9.2 | Phase-6 `demo-ctf` wiring | **fast-follow**, not v1 |
+| 9.3 | the red-team boundary | **written below as a charter**, before any station is added |
+| 9.4 | directory name | **`examples/security-range/`** |
+
+**9.1 — spine + S2 first.** As recommended: it is the smallest slice that is fully
+headless, and it fixes the objective→why→fix template every later station copies.
+Getting that template right once is worth more than getting one more station built.
+Then S3/S4 (container-boxed), then S1 (VM/serial, the slowest to verify).
+
+**9.2 — `demo-ctf` is a fast-follow.** The CLI range stands alone and is what the
+checks assert against. The SHOWCASE tree promising it is a reason to build it, not a
+reason to build it *first*: a demo wired to a spine that is still moving has to be
+rewired every time the spine moves.
+
+**9.3 — the boundary, stated before it is needed.** This is a **defensive** range,
+and the line is drawn by *who owns the target* and *what the exercise teaches*:
+
+- **In charter.** Attacking a credential, image, or box **this repo created to be
+  destroyed**, where the lesson is the mechanism and the fix — the four stations as
+  scoped. A control **proving itself** is also in (the fail2ban brute-force-lockout
+  demo named in the original item): the deliverable there is evidence the control
+  fires, not a working attack.
+- **Out of charter, permanently.** Anything whose subject is a machine this repo did
+  not create; anything about **evasion** (defeating detection), **persistence**, or
+  **mass/automated targeting**; and any technique whose write-up is more useful to an
+  attacker than to a defender. These are out regardless of how the lab is framed —
+  "for testing" does not move the line.
+- **The test to apply to a proposed station:** *could the finished artifact be
+  pointed at someone else's machine with no modification?* If yes, it is not a
+  station here.
+
+**9.4 — `examples/security-range/`.** It matches this plan's filename, it is what
+the routing and 00-INDEX rows will say, and it is the least misleading of the three:
+`blue-team-range` claims a defensive-only posture that the stations (which do attack
+things) would undercut, and `break-your-own-box` reads as an invitation to break
+something that is not a lab. Picked now because the directory name is load-bearing
+for `learning-paths.toml` and `link_check.py`, and renaming it later is the
+repo-wide-grep task this project has a working practice about.

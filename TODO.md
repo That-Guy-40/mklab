@@ -65,6 +65,49 @@ watched to fail on a needle that never arrives.
       without gating them — the first draft flagged all 30 hits including its own
       documentation, which would have bred exemptions until it meant nothing.
 
+## 0.5 The queue after §0 drained — what is actually next (2026-08-08)
+
+§0.1–0.4 are all closed, so this section replaces them as the front of the queue. It is
+grouped by **what each item is blocked on**, because that is the only thing that decides
+which can be picked up tonight and which cannot be picked up at all here.
+
+### Not blocked — buildable now
+
+- [ ] **A.1 — the cross-node CHAOS ROWS** for
+      [`examples/nested-calico-sandbox/`](examples/nested-calico-sandbox/README.md). The
+      capability landed 2026-08-08: two VMs on a private QEMU socket wire, a real two-node
+      Calico, and `3/3 packets` between pods on different kernels
+      (recorded in that lab's `findings-two-node.env`, which lands with PR #186). The
+      *faults* that need it are not written — deleting the tunnel under a live peer, and
+      **F.6 with a witness** (move a node's chosen address while another node is routing to
+      it). The one-node matrix's `vxlan-deleted` row is graded on rebuild alone precisely
+      because it could not ask this.
+- [ ] **A.2 — the k8s-dqlite row**, the datastore beneath Calico. See the decision recorded
+      with it: it is buildable only if the dataplane observable stops being `kubectl exec`.
+
+### Blocked on hardware — recorded so it stops being re-raised as if it were schedulable
+
+- [ ] **C.1 — metal-as-a-service `image` / `image+measured` drivers on REAL hardware.**
+      Detail in [`examples/metal-as-a-service/DEFERRED.md`](examples/metal-as-a-service/DEFERRED.md).
+      Everything that can be proven under emulation has been; what remains needs a machine
+      with a real BMC, and no amount of local work advances it.
+- [ ] **C.2 — the rollback-pair corruption case**, same lab, same blocker.
+
+**Why these two are listed as blocked rather than left in the general list.** A hardware
+item sitting in a queue of software items reads as "not done yet" and gets re-picked,
+re-scoped, and re-deferred. It is not undone work; it is work this host cannot do. Naming
+the blocker is the difference between a queue that drains and one that accumulates.
+
+### Not blocked, but deliberately deferred
+
+- [ ] **B.1 — build [`RESILIENT_REGION_LAB_PLAN.md`](RESILIENT_REGION_LAB_PLAN.md)** — v1.1
+      **BUILD-READY** as of 2026-08-08, all four §9 decisions resolved. First increment:
+      `region.sh` + the two host-safe chaos drills.
+- [ ] **B.2 — build [`SECURITY_RANGE_LAB_PLAN.md`](SECURITY_RANGE_LAB_PLAN.md)** — v1.1
+      **BUILD-READY** as of 2026-08-08, all four §9 decisions resolved including the
+      charter boundary and the directory name (`examples/security-range/`). First
+      increment: the spine + S2.
+
 ## 1. Crack the FLOPPINUX login hash (educational security exercise)
 
 Demonstrate, **on our own throwaway lab artifact**, how weak a classic `$1$`
