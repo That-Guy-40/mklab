@@ -1,14 +1,15 @@
 # Resilient RAM Region Lab — Design Plan v1
 
-> **Status**: Draft v1 — proposed 2026-07-24 (option **C** of the "what can we
-> compose?" survey). Anchors on the completed **RAM-INFRA trio**
+> **Status**: **v1.1 — BUILD-READY** (decisions resolved 2026-08-08; proposed
+> 2026-07-24 as option **C** of the "what can we compose?" survey). Anchors on the completed **RAM-INFRA trio**
 > (`examples/anycast-dns-ram/`, `cdn-edge-ram/`, `package-mirror-ram/` — all ✅) plus
 > `examples/tiny-internet-project/` (six Debian services, ✅ verified), the netboot
 > `imgverify` + A/B mechanic (`RAM_INFRA_LAB_PLAN.md` ①/④), and
 > `examples/kdump-kexec-lab/`. Scope: compose the individually-proven stateless
 > nodes into **one "region" topology** with a two-tier edge/origin split, then add
 > the piece none of them has alone — a **chaos harness** that induces failure and
-> shows the region *heal*. Awaiting user go-ahead; nothing built or committed yet.
+> shows the region *heal*. **Nothing built yet — the four §9 questions are now
+> answered, so assembly is unblocked.**
 
 ---
 
@@ -175,16 +176,48 @@ author-run with the handed-over command.
 
 ---
 
-## 9. Open items / decisions to confirm
+## 9. Decisions — resolved 2026-08-08
 
-- **First increment scope** (needs a nod): recommend **(1) `region.sh` + the two
-  host-safe chaos drills (node-down, tamper-rollback)** — the highest-signal, fully
-  headless-verifiable slice — then add the edge-caches-origin graft and the heavier
-  kdump/state-detach drills.
-- **Origin footprint** — full 6-node tiny-internet, or a trimmed origin (just
-  `web01` + `dns01`) to keep the region light? Leaning trimmed for v1.
-- **Whether the region gets a Phase-6 view** — a "region health" panel is a natural
-  fast-follow (shares the option-B libvirt/inventory work), but the CLI `status` has
-  standalone value and lands first.
-- **Anycast realism** — stays container-collector/looking-glass (honest); a
-  two-VM bridged variant is a documented stretch, not v1 (needs tap/bridge, not slirp).
+All four §9 questions are answered below. They are recorded as **decisions with
+reasons** rather than deleted, because an open item nobody intends to revisit is a
+queue entry that never drains, and a resolved one with no reason gets re-litigated
+by the next reader.
+
+| # | question | decision |
+|---|---|---|
+| 9.1 | first increment scope | **`region.sh` + the two host-safe chaos drills** (node-down, tamper-rollback) |
+| 9.2 | origin footprint | **trimmed** — `web01` + `dns01` only |
+| 9.3 | a Phase-6 region view | **fast-follow**, not v1 |
+| 9.4 | anycast realism | **container-collector for v1 — and the two-VM variant is no longer a stretch** (see below) |
+
+**9.1 — first increment: `region.sh` + the two host-safe drills.** As recommended.
+It is the only slice that is fully headless-verifiable, which matters more here than
+usual: this lab's *deliverable* is a chaos harness, and a harness whose first
+increment cannot be run in CI is one whose assertions nobody watches fire. The
+edge-caches-origin graft and the kdump/state-detach drills follow.
+
+**9.2 — trimmed origin (`web01` + `dns01`).** The region's subject is the
+edge/origin *split* and its recovery, not the origin's service count. Four more
+containers add boot time and RAM to every drill and change no answer. The full
+six-node origin stays available as a documented swap for anyone who wants it.
+
+**9.3 — Phase-6 view is a fast-follow.** The CLI `status` is what the chaos drills
+assert against, so it is load-bearing; a panel is a second renderer of the same
+facts. Building the renderer first is how a display becomes the source of truth.
+
+**9.4 — anycast: container-collector in v1, and the two-VM variant is now
+*unprivileged*.** This item said a two-VM bridged variant "needs tap/bridge, not
+slirp". **That stopped being true on 2026-08-08**: phase-2 gained
+[`peer_link`](phase2-qemu-vm/lab-vm.sh), a private L2 segment between exactly two
+VMs over a QEMU socket netdev on loopback — no bridge, no tap, no host interface,
+no root. It was built for
+[`examples/nested-calico-sandbox/`](examples/nested-calico-sandbox/README.md)'s
+second node and is generic.
+
+So the honest v1 remains the container-collector/looking-glass — it is what the
+drills are written against and it is not dishonest about what it models — but the
+two-VM variant is **reclassified from "documented stretch, needs root" to "a
+follow-on increment that needs no privilege"**. Anyone picking this up should read
+that as an invitation rather than a warning. *(This is exactly the cached-fact
+shape this repo keeps meeting: the constraint was real when written and quietly
+stopped being real. It is corrected here rather than left to mislead.)*
