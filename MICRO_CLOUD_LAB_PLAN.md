@@ -4534,8 +4534,10 @@ this is the row that was waiting on a lab rather than on an idea.
 | one pod's **veth** | delete it under a running pod | **HALTED** | `pods=FAIL`; **no self-heal in 244 s**; recovered only by recreating the pod |
 | the **overlay device** | delete `vxlan.calico` | **DEGRADED** | `tunnel=absent` confirmed, rebuilt in 2 s |
 | the **chosen address** | let Calico take a decoy, then delete it | **DEGRADED** | node IP re-detected in 0 s — **and the workload did not come back** |
+| the **allocator**, for pods that already hold an address | disable the pools, offer a `/29`, fill it | **ABSORBED** | `pod-a → pod-b` never dipped while the allocator was dry |
+| the **allocator**, for a pod admitted at that instant | *(same injection)* | **HALTED** | refused by name; freeing one address let exactly one waiter through in **6 s** |
 
-**2 absorbed, 3 not, 0 critical**, and the host's own cluster never moved.
+**0 critical**, and the host's own cluster never moved.
 
 ### R.2 The two results worth more than the rungs
 
@@ -4599,6 +4601,81 @@ not to its three siblings — which is how a defect class survives its own disco
 
 ### R.5 Named as not covered
 
-Cross-node consequences (one node has no peers); **IPAM exhaustion** — the analogue of the
-DHCP-pool row micro-cloud already has, and the most obvious next injector; and the datastore
-beneath Calico, which is a layer below this one and breaks the API the harness talks to.
+Cross-node consequences (one node has no peers), and the datastore beneath Calico, which is
+a layer below this one and breaks the API the harness talks to.
+
+*(**IPAM exhaustion** was listed here on 2026-08-07 as "the most obvious next injector". It
+is R.6.)*
+
+### R.6 The allocator, run dry — 2026-08-08
+
+The analogue of micro-cloud's DHCP-pool row, one layer up, and the same thesis: **the point
+is not that it runs out, it is *how*.** Running out of addresses is arithmetic. What the
+ladder asks is what the CNI does at that moment — and, exactly as in the DHCP row, the answer
+differs for two subjects the one fault hits at the same instant. They get two rows, because
+averaging them into one rung would hide both.
+
+The cluster's pool is a `/16`, so the pools in use are **disabled** and a deliberately tiny
+`/29` offered in their place, then filled with real pods making real CNI `ADD` calls. Seven
+of its eight addresses were taken; five pods were refused, with this against them:
+
+> `plugin type="calico" failed (add): failed to request IPv4 addresses: Assigned 0 out of 1`
+> `requested IPv4 addresses; No IPs available in pools: [10.99.9.0/29]`
+
+Then one filler was deleted — freeing **exactly one** address — and exactly one waiter
+started, in six seconds. That is the arithmetic control: it distinguishes "refused because
+there was nothing left" from "refused because the allocator broke".
+
+**Three findings beyond the rungs:**
+
+- **`disabled: true` really does stop allocation from an already-affine block.** The row
+  rests on this and it had never been measured here. Had it been false, the fillers would
+  have come up on `10.1.x.x`, nothing would ever have been refused, and the row would have
+  graded ABSORBED having injected nothing.
+- **The refusal is exemplary** — it names the operation, the count *and* the pool that ran
+  dry. That is the difference between HALTED and a pod sitting in Pending with nothing an
+  operator can act on.
+- **Reclamation has two speeds.** Six of the seven addresses are back the instant the last
+  pod leaves the API; exactly one lingers, and that tail has outrun every deadline picked for
+  it (sample-once, 180 s, 600 s — free on the next manual look each time).
+
+### R.7 Two harness defects, both of which would have failed a healthy cluster
+
+Both were in the assertions written to judge Calico, and both fail in the expensive
+direction: nothing is broken and the suite insists otherwise.
+
+**A guessed error string.** The check for "did the refusal name itself" grepped for
+`assign an IP`, `no IP addresses available`, and `IPAM`. All three were invented at the desk;
+all three miss the message quoted above (`Assigned`, not `assign an IP`; `No IPs`, not
+`no IP addresses`; no `IPAM` anywhere). An exemplary refusal would have been graded dishonest
+by an assertion that was itself asserting a made-up mechanism — [`CLAUDE.md`](CLAUDE.md)'s
+bug class #2, committed inside the check written to detect bug class #1. It now matches on
+the pool CIDR **the harness itself chose**, which is not a guess about anyone's wording.
+
+**A deadline mistaken for a measurement — three times, in one check.** The leak check sampled
+the allocator's records 10 s after the last pod left and reported an address still held. It
+had not leaked; the check was early. Raised to 180 s: same answer, and an independent poll
+found the address free ~80 s after the script gave up. Raised to 600 s: same answer again,
+free on the next look. Three false leak reports against a healthy cluster — the same shape as
+the 150 s decoy deadline in R.3, **"I stopped watching" rendered as "it never happened"**,
+which is UNKNOWN printed as a verdict.
+
+A leak detector that cries leak on a healthy cluster is not being cautious. It fails CI for a
+defect that is not there, and what a reader learns from it is to stop believing it.
+
+**The fix was not a bigger number.** A fourth deadline is the third mistake with more
+patience. *"Did it leak"* means *"is it never reclaimed"*, and **no test establishes never** —
+so the question changed. What is answerable is the **prompt** path, and it has a real failure
+mode: if not one address returns when its pod is deleted, every pod that ever ran permanently
+consumes one, and the pool's free count becomes a record that stopped describing its subject.
+That is asserted. The slow tail is recorded and reported, never failed on.
+
+Then every branch of the grader was made to **bite**: `CNI_CHAOS_RECORD=<file>` grades a
+supplied record instead of injecting, so a hand-written record with one defect in it exercises
+each branch in seconds with no cluster at all. Seven were run — dead prompt-release, a refused
+pod claiming Running, a pod that never recovers, an unnamed refusal, a dead incumbent
+dataplane, pools left disabled, and an injector that did not land — and all seven fired with
+their own specific message, against a healthy record that passes. The same switch is how a
+failed 25-minute run's kept record gets re-read without spending another 25 minutes; it
+announces itself loudly and skips the host-binding check, because a supplied record is a
+cached fact and grading one is not a run.
