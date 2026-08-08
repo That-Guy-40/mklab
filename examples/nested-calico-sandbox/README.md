@@ -112,6 +112,45 @@ when no sandbox is up — an unmet precondition is an UNKNOWN, never a pass.
 > half) — said this way round because "6 passed" is a number nobody has measured, and a
 > count that outruns its run is this repo's bug class #1 written into a README.
 
+## The second node — a private wire between two VMs, and no host networking at all
+
+The one-node sandbox grades its `vxlan-deleted` row on whether Calico rebuilds the device,
+and says so in the open: with no peers the tunnel carries no traffic, so the dataplane
+observable cannot move. That rung was an **UNKNOWN wearing a DEGRADED**, and everything
+genuinely cross-node — including plan F.6, the incident this lab family exists because of —
+could not be asked at all.
+
+```bash
+examples/nested-calico-sandbox/sandbox.sh up2     # two VMs, ~15 min
+examples/nested-calico-sandbox/sandbox.sh join2   # make them one cluster
+examples/nested-calico-sandbox/sandbox.sh down2
+```
+
+**How they talk.** `network_mode = tap|bridge` are the only other ways two of this repo's
+VMs can share a network, and both are root-gated and both change the *host's* networking —
+disqualifying here. So [`nested-calico-two-node.toml`](nested-calico-two-node.toml) uses
+phase-2's `peer_link`: QEMU's `socket` netdev, a private L2 segment between exactly those two
+processes on `127.0.0.1`. No bridge, no tap, no host interface, no root. The spec key takes a
+role and a port and there is deliberately **no way to spell an address**, so no configuration
+of it can widen the host's exposure.
+
+**Measured** ([`findings-two-node.env`](findings-two-node.env)): two `calico-node` pods, two
+distinct VXLAN tunnel addresses, and `3 packets transmitted, 3 received, 0% loss` between
+pods on two different kernels — traffic that can only arrive through the tunnel. The host's
+binding was identical before, during and after.
+
+**Three defects came out of building it, all the same shape — a record that outlives the
+address it describes, and none of them failing at the step that caused them:**
+
+| what | how it presented |
+|---|---|
+| every slirp guest is `10.0.2.15`, so the leader advertised an endpoint that *is the worker* | `microk8s join` printed **"Successfully joined the cluster"** while kubelet looped on `Unable to register node … EOF` |
+| the kubelet serving cert is a **separate certificate** from the API server's, and `--node-ip` does not reissue it | nothing failed at join or readiness; it failed at the first `kubectl exec` — the chaos harness's only dataplane observable |
+| the reissue's success marker was a **mechanism** claim | it printed because a command exited 0; `server.crt` gained the address and `kubelet.crt` did not |
+
+> **Not yet written, and not implied:** the cross-node *chaos rows*. The capability is proven;
+> the faults that need it are the next increment. `findings-two-node.env` says so by name.
+
 ## Three traps this lab hit, so you do not have to
 
 - **`ping` is not connectivity here.** slirp drops ICMP for an unprivileged user, so a ping

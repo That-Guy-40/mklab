@@ -348,6 +348,8 @@ write_vm_manifest() {
     local _bridge; _bridge="$(_mf_clean "${MF_BRIDGE:-}")"
     local _tap;    _tap="$(_mf_clean "${MF_TAP:-}")"
     local _dfmt;   _dfmt="$(_mf_clean "${MF_DISK_FORMAT:-qcow2}")"
+    local _plink;  _plink="$(_mf_clean "${MF_PEER_LINK:-}")"
+    local _pmac;   _pmac="$(_mf_clean "${MF_PEER_MAC:-}")"
     cat > "$mp" <<EOF
 # lab-vm manifest — do not edit by hand
 name        = "${name}"
@@ -381,6 +383,8 @@ network_mode = "${MF_NETWORK_MODE:-user}"
 bridge      = "${_bridge}"
 tap         = "${_tap}"
 disk_format = "${_dfmt}"
+peer_link   = "${_plink}"
+peer_mac    = "${_pmac}"
 created_at  = "${now}"
 version     = "${LAB_VERSION}"
 EOF
@@ -1661,6 +1665,8 @@ spec_from_cli() {
         --arg tap          "${OPT_TAP:-}" \
         --arg mac          "${OPT_MAC:-}" \
         --arg disk_format  "${OPT_DISK_FORMAT:-}" \
+        --arg peer_link    "${OPT_PEER_LINK:-}" \
+        --arg peer_mac     "${OPT_PEER_MAC:-}" \
         --arg name     "${OPT_NAME:-}" \
         --arg backend  "${OPT_BACKEND:-disk-image}" \
         --arg distro   "${OPT_DISTRO:-}" \
@@ -1699,6 +1705,7 @@ spec_from_cli() {
           cores:($cores|tonumber), threads:($threads|tonumber), cpu_pin:$cpu_pin,
           network_mode:$network_mode, bridge:$bridge, tap:$tap, mac:$mac,
           disk_format:$disk_format,
+          peer_link:$peer_link, peer_mac:$peer_mac,
           packages:$packages, runcmd:$runcmd, user_data:$user_data}'
 }
 
@@ -1751,6 +1758,8 @@ specs_from_config() {
             bridge:    (.bridge    // ""),
             tap:       (.tap       // ""),
             disk_format: (.disk_format // ""),
+            peer_link: (.peer_link // ""),
+            peer_mac:  (.peer_mac  // ""),
             packages:  (.packages  // []),
             runcmd:    (.runcmd     // []),
             user_data: (.user_data // ""),
@@ -2403,6 +2412,48 @@ build_qemu_argv() {
         die "pxe_dir must not contain commas (QEMU option string injection): ${pxe_dir}"
     fi
 
+    # ── peer_link: a PRIVATE WIRE BETWEEN TWO VMs, with no host networking at all ────────
+    #
+    # QEMU's `socket` netdev joins two VMs into one L2 segment over a TCP connection. No
+    # bridge, no tap, no host interface is created or touched, and it needs no root — which
+    # is the whole reason it exists here. `network_mode = tap|bridge` can build a multi-VM
+    # network, but both are root-gated and both alter the HOST's networking, so a lab whose
+    # premise is "safe to wreck" could not use them to get a second node.
+    #
+    # ⚠️ THE PORT IS ALWAYS ON 127.0.0.1, AND THAT IS NOT A DEFAULT — IT IS THE WHOLE VALUE.
+    # QEMU's `listen=` binds every interface when given a bare port, which would put a raw
+    # unauthenticated L2 injection point on the network. The spec key therefore takes a PORT
+    # and nothing else: there is no way to spell an address here, so no configuration of this
+    # feature can turn it into a change to the host's exposure.
+    local PEER_ARGV=()
+    if [[ -n "${peer_link:-}" ]]; then
+        # MATCHED WHOLE, not split and hoped for. `listen:0.0.0.0:9999` splits into a valid
+        # role and a valid port with the address silently discarded — so the operator writes
+        # an exposed bind, reads it back in no error, and gets a loopback one. Refusing the
+        # whole string is the difference between "you cannot spell an address here" and "an
+        # address you spell is ignored".
+        [[ "$peer_link" =~ ^(listen|connect):[0-9]+$ ]] \
+            || die "invalid peer_link '${peer_link}': expected exactly 'listen:PORT' or 'connect:PORT'. There is deliberately no way to name an address — this wire is always on 127.0.0.1, so no configuration of it can widen the host's exposure."
+        local _pl_role="${peer_link%%:*}" _pl_port="${peer_link##*:}"
+        (( _pl_port > 0 && _pl_port < 65536 )) \
+            || die "invalid peer_link port '${_pl_port}': expected 1-65535"
+        # A MAC IS MANDATORY ON THIS NIC, and refusing to guess one is the point. QEMU
+        # assigns default MACs per NIC index within a process, so two VMs given a peer_link
+        # and no MAC arrive on the same segment holding the SAME address. That does not
+        # error — it produces a segment where ARP resolves to whichever host replied last,
+        # and the symptom is intermittent loss on a link that `ip link` calls UP. Naming it
+        # here costs one line; diagnosing it costs an afternoon.
+        [[ -n "${peer_mac:-}" ]] \
+            || die "peer_link is set but peer_mac is not. Both ends of this wire would take QEMU's default MAC for NIC index 1 — the same address on the same segment, which presents as intermittent loss rather than an error. Give each VM its own peer_mac."
+        [[ "${peer_mac}" =~ ^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$ ]] \
+            || die "invalid peer_mac '${peer_mac}': expected xx:xx:xx:xx:xx:xx"
+        # Assembled here, APPENDED BELOW — after net0. Guest interface names come from PCI
+        # slot order, so adding this device first would rename the primary NIC out from under
+        # every cloud-init network config in the repo, for every VM that opts in.
+        PEER_ARGV=(-netdev "socket,id=net1,${_pl_role}=127.0.0.1:${_pl_port}"
+                   -device "virtio-net-${virtio_suffix},netdev=net1,mac=${peer_mac}")
+    fi
+
     local net_device="virtio-net-${virtio_suffix},netdev=net0"
     [[ -n "${mac:-}" ]] && net_device="${net_device},mac=${mac}"
     local netdev
@@ -2425,6 +2476,7 @@ build_qemu_argv() {
             ;;
     esac
     QEMU_ARGV+=(-netdev "$netdev" -device "${net_device}")
+    (( ${#PEER_ARGV[@]} )) && QEMU_ARGV+=("${PEER_ARGV[@]}")
     # Force network-first boot order when PXE TFTP is configured.
     [[ -n "${pxe_dir:-}" ]] && QEMU_ARGV+=(-boot "order=n,menu=on")
 
@@ -2516,7 +2568,7 @@ create_one() {
     ssh_user="lab"  # default for cloud-init VMs
 
     # v0.2 knobs: cpu topology/pinning, network mode, image refresh.
-    local cores threads cpu_pin network_mode bridge tap refresh_image secure_boot fw_mode pxe_dir pxe_bootfile tpm disk_format
+    local cores threads cpu_pin network_mode bridge tap refresh_image secure_boot fw_mode pxe_dir pxe_bootfile tpm disk_format peer_link peer_mac
     cores="$(spec_get "$spec" cores)";     [[ -z "$cores"   ]] && cores=0
     tpm="$(spec_get "$spec" tpm)";         [[ -z "$tpm"     ]] && tpm=false
     threads="$(spec_get "$spec" threads)"; [[ -z "$threads" ]] && threads=0
@@ -2526,6 +2578,8 @@ create_one() {
     tap="$(spec_get "$spec" tap)"
     # disk_format: qcow2 (default, and what every existing VM emits) or raw. Refused by
     # name rather than ignored — a silently dropped format field boots the wrong bytes.
+    peer_link="$(spec_get "$spec" peer_link)"
+    peer_mac="$(spec_get "$spec" peer_mac)"
     disk_format="$(spec_get "$spec" disk_format)"; [[ -z "$disk_format" ]] && disk_format=qcow2
     [[ "$disk_format" == qcow2 || "$disk_format" == raw ]] \
         || die "disk_format = \"$disk_format\" is not supported (use \"qcow2\" or \"raw\")"
@@ -2702,6 +2756,7 @@ create_one() {
     MF_SSH_USER="$ssh_user" MF_LAB="$lab_name" \
     MF_CORES="$cores" MF_THREADS="$threads" MF_CPU_PIN="$cpu_pin" \
     MF_NETWORK_MODE="$network_mode" MF_BRIDGE="$bridge" MF_TAP="$tap" \
+    MF_PEER_LINK="${peer_link:-}" MF_PEER_MAC="${peer_mac:-}" \
     MF_DISK_FORMAT="$disk_format" \
     MF_SECURE_BOOT="$secure_boot" MF_FIRMWARE="$fw_mode" MF_TPM="$tpm" \
     MF_PXE_DIR="$pxe_dir" MF_PXE_BOOTFILE="$pxe_bootfile" \
@@ -2775,7 +2830,7 @@ cmd_start() {
     # Reload manifest into globals expected by build_qemu_argv.
     local arch microvm accel memory cpus ssh_port disk seed kernel initrd append firmware
     local install_target mac
-    local cores threads cpu_pin network_mode bridge tap secure_boot fw_mode pxe_dir pxe_bootfile tpm disk_format
+    local cores threads cpu_pin network_mode bridge tap secure_boot fw_mode pxe_dir pxe_bootfile tpm disk_format peer_link peer_mac
     arch="$(read_manifest_field "$name" arch)"
     microvm="$(read_manifest_field "$name" microvm)"
     accel="$(read_manifest_field "$name" accel)"
@@ -2808,6 +2863,10 @@ cmd_start() {
     # qcow2, so the default reproduces their old argv byte for byte.
     disk_format="$(read_manifest_field "$name" disk_format 2>/dev/null || true)"
     [[ -z "$disk_format" ]] && disk_format=qcow2
+    # Absent on every manifest written before this field existed -> empty -> no second NIC,
+    # so an old VM's argv is reproduced byte for byte.
+    peer_link="$(read_manifest_field "$name" peer_link 2>/dev/null || true)"
+    peer_mac="$(read_manifest_field "$name" peer_mac 2>/dev/null || true)"
     firmware="$(firmware_for "$arch" "$microvm" "${secure_boot:-false}" "${fw_mode:-uefi}")"
 
     # Clean up any stale unix sockets from a previous run.
@@ -3450,6 +3509,13 @@ CREATE OPTIONS
                                           fails SILENTLY as a dynamic lease. Ask whoever owns
                                           the address plan; the micro-cloud fabric answers
                                           it with:  fabric.sh mac NAME)
+  --peer-link {listen|connect}:PORT      (a PRIVATE L2 WIRE to one other VM, over a QEMU
+                                          socket netdev on 127.0.0.1 -- no bridge, no tap,
+                                          no host interface, NO ROOT. Start the `listen` VM
+                                          first. Requires --peer-mac: both ends would
+                                          otherwise take QEMU's default MAC for NIC 1 and
+                                          collide silently on the segment)
+  --peer-mac  xx:xx:xx:xx:xx:xx          (MAC for the --peer-link NIC; mandatory with it)
   --disk-format {qcow2|raw}              (default qcow2; raw attaches a PER-INSTANCE COPY
                                           of --image instead of a CoW overlay)
   --packages  "p1,p2,..."                (cloud-init: extra packages to install at first boot)
@@ -3493,7 +3559,7 @@ parse_args() {
     OPT_CLOUD_INIT="true"
     OPT_REFRESH_IMAGE="" OPT_CORES="" OPT_THREADS="" OPT_CPU_PIN=""
     OPT_NETWORK_MODE="" OPT_BRIDGE="" OPT_TAP="" OPT_DISK_FORMAT=""
-    OPT_MAC=""
+    OPT_MAC=""; OPT_PEER_LINK=""; OPT_PEER_MAC=""
     OPT_PACKAGES="" OPT_USER_DATA="" OPT_RUNCMD=()
     OPT_NETBOOT_DIR="" OPT_KERNEL_NAME="" OPT_INITRD_NAME="" OPT_GENERATE_SCRIPT="" OPT_SERVER=""
     OPT_PXE_DIR="" OPT_PXE_BOOTFILE="" OPT_SECURE_BOOT="" OPT_FIRMWARE=""
@@ -3537,6 +3603,8 @@ parse_args() {
             --bridge)       OPT_BRIDGE="$2"; shift 2 ;;
             --tap)          OPT_TAP="$2"; shift 2 ;;
             --mac)          OPT_MAC="$2"; shift 2 ;;
+            --peer-link)    OPT_PEER_LINK="$2"; shift 2 ;;
+            --peer-mac)     OPT_PEER_MAC="$2"; shift 2 ;;
             --disk-format)  OPT_DISK_FORMAT="$2"; shift 2 ;;
             --packages)     OPT_PACKAGES="$2"; shift 2 ;;
             --runcmd)       OPT_RUNCMD+=("$2"); shift 2 ;;
