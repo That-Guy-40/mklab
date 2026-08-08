@@ -68,6 +68,8 @@ jobs:
             examples/nested-calico-sandbox/tests/test-findings-are-bound.sh \
             examples/nested-calico-sandbox/tests/test-selection-rules.sh \
             examples/nested-calico-sandbox/tests/test-fabric-tap-becomes-candidate.sh \
+            examples/nested-calico-sandbox/tests/test-cni-chaos.sh \
+            examples/nested-calico-sandbox/cni-chaos.sh \
             examples/kali-packer-vagrant/fetch-kali-packer.sh \
             examples/kali-packer-vagrant/tests/test-offline-archive.sh \
             examples/almalinux-packer-images/fetch-cloud-images.sh \

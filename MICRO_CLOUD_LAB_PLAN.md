@@ -4510,3 +4510,95 @@ Wiring it up cost one more instance of the day's recurring shape: the control ro
 *"did the guest have an address?"* check **grepped the console once** instead of waiting, and
 went red under the load of a second VM — the same eventual-state race that turned main's CI
 red twice this morning, in a test written hours after that fix. It now waits.
+
+---
+
+## Appendix R — the CNI's break pass: the last layer gets an injection point, 2026-08-07
+
+`CLAUDE.md`'s ladder asks for an injection point at **every layer that can fail on its
+own**. micro-cloud's matrix had six rows and the CNI was none of them — not an oversight,
+a blocker: breaking a CNI meant breaking the one this machine uses.
+[`nested-calico-sandbox/`](examples/nested-calico-sandbox/) removed that objection, so
+this is the row that was waiting on a lab rather than on an idea.
+
+[`cni-chaos.sh`](examples/nested-calico-sandbox/cni-chaos.sh) +
+[`tests/test-cni-chaos.sh`](examples/nested-calico-sandbox/tests/test-cni-chaos.sh).
+
+### R.1 The matrix
+
+| layer | fault | rung | evidence |
+|---|---|---|---|
+| *(control)* | none | — | `pods=OK` before anything is broken |
+| the CNI **process** | delete `calico-node`'s pod | **ABSORBED** | dataplane never dipped; new pod uid asserted |
+| felix's **programming** | flush the netfilter rules | **ABSORBED** | rules gone, restored inside 5 s, `pods=OK` throughout |
+| one pod's **veth** | delete it under a running pod | **HALTED** | `pods=FAIL`; **no self-heal in 244 s**; recovered only by recreating the pod |
+| the **overlay device** | delete `vxlan.calico` | **DEGRADED** | `tunnel=absent` confirmed, rebuilt in 2 s |
+| the **chosen address** | let Calico take a decoy, then delete it | **DEGRADED** | node IP re-detected in 0 s — **and the workload did not come back** |
+
+**2 absorbed, 3 not, 0 critical**, and the host's own cluster never moved.
+
+### R.2 The two results worth more than the rungs
+
+**Calico never self-heals a deleted pod veth.** It sat with the dataplane down for the full
+244-second deadline and recovered only when the harness deleted and rescheduled the pod.
+That is a clean HALTED — broken, honest about it, and a verb the system offers fixes it —
+but nothing automatic, which is not what "the CNI manages pod networking" suggests.
+
+**Moving the node's advertised IP heals the control plane and abandons the workload.** The
+decoy took the node IP in 15 s; removing it, Calico re-detected in **0 s** while
+`pods=no-podb-ip, rules=142` persisted. The CNI recovered *itself* and left the pods broken.
+**On a multi-node cluster that is [F.6](#f6-additive-was-not-safe--the-tap-captured-a-live-clusters-tunnel)** — and it is the first time this repo has watched F.6's
+*consequence* rather than its mechanism. The row is graded on its own subject (the node IP)
+with the collateral reported explicitly, because a row graded on one observable must not
+quietly imply the others were fine.
+
+### R.3 A second exclusion pattern, found by naming a decoy badly
+
+Two runs SKIPPED the last row: *"calico never took the decoy"* at 150 s, then at 240 s. The
+cause was not the timeout. It was the **name**: `^cni.*` is in Calico's first-found
+exclusion list alongside the `^br-.*` this lab was built to measure, so `cni-decoy` was
+excluded by the very mechanism under study.
+
+Proven the way rule 1 was, with the control free: `mc-probe` — identical in every other
+respect — was taken in **20 seconds**. Recorded as `NCS_RULE1B_CNI_EXCLUSION`.
+
+**`br-mc0` is therefore safe for two reasons, only one of which anyone knew**, and the list
+plainly does not stop at two.
+
+### R.4 Four rounds of harness defects before one honest rung
+
+The CNI behaved impeccably throughout. Every defect was in the harness, and the first run
+looked perfect:
+
+```
+calico-node-killed   pods=OK  RECOVERED=yes  SECS=2
+netfilter-flushed    pods=OK  RECOVERED=yes  SECS=1
+pod-veth-deleted     pods=OK  RECOVERED=yes  SECS=1
+vxlan-deleted        pods=OK  RECOVERED=yes  SECS=1
+```
+
+Four rows recovering in about a second — which is exactly what
+[`test-cni-chaos.sh`](examples/nested-calico-sandbox/tests/test-cni-chaos.sh)'s own
+occupancy check says a matrix looks like **when the faults are not landing**. Three
+injectors were silently no-ops:
+
+| injector | why it did nothing |
+|---|---|
+| netfilter | Calico's 200 rules are in **legacy xtables**; `nft` sees zero, and `-F` spares the custom `cali-*` chains. The [two-backends trap](#b2-the-second-firewall--and-the-bug-p2-committed-while-hunting-it), in the guest this time |
+| pod veth | deleted the *first* `cali*` veth — usually CoreDNS's, not pod-a's. Now resolved from the pod's own host route |
+| vxlan | checked 5 s later, which cannot tell "deleted and rebuilt fast" from "never deleted". Now asserted immediately |
+
+Plus a **manufactured negative** (a 150 s deadline against convergence this lab had already
+measured at up to 200 s), a **namespace race** (`create namespace` returning is not the
+namespace being usable — pods died on a serviceaccount mount), and **non-independent rows**
+(the workload evaporated by row 5, which then graded STRANDED for somebody else's damage).
+
+Every injector now asserts its fault landed and reports `INJECTOR-FAILED` if not. That rule
+existed before any of this; it was applied to the one row whose failure had been noticed and
+not to its three siblings — which is how a defect class survives its own discovery.
+
+### R.5 Named as not covered
+
+Cross-node consequences (one node has no peers); **IPAM exhaustion** — the analogue of the
+DHCP-pool row micro-cloud already has, and the most obvious next injector; and the datastore
+beneath Calico, which is a layer below this one and breaks the API the harness talks to.

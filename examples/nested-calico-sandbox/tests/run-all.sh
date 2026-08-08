@@ -11,6 +11,8 @@ cd -- "$(dirname -- "${BASH_SOURCE[0]}")" || exit 2
 tests=(test-findings-are-bound.sh test-selection-rules.sh
        # G.9's deferred scenario, on the REAL fabric.sh rather than a dummy interface.
        test-fabric-tap-becomes-candidate.sh
+       # The CNI's own break pass — the layer CLAUDE.md's ladder had no injection point for.
+       test-cni-chaos.sh
        test-harness-net.sh)
 
 # A test on disk that is in no list is a test nobody runs — one sat unlisted in another

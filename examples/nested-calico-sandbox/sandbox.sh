@@ -3,6 +3,7 @@
 #
 #   sandbox.sh up          create + resize + boot, and wait for the cluster
 #   sandbox.sh experiment  copy guest-experiment.sh in and run it, printing NCS-* lines
+#   sandbox.sh cni-chaos   inject a fault at each CNI layer and print the CNI-* record
 #   sandbox.sh status      where the guest's tunnel is right now
 #   sandbox.sh down        destroy the VM
 #
@@ -104,7 +105,10 @@ a snap error with nothing pointing back here."
     c="$(console)"; t0=$SECONDS
     while (( SECONDS - t0 < READY_TIMEOUT )); do
         if [[ -f "$c" ]] && grep -q 'NCS-READY-FOR-EXPERIMENT' "$c" 2>/dev/null; then
-            grep -oE 'NCS-[A-Z0-9=./:_-]+' "$c" | sort -u | sed 's/^/  /' >&2
+            # The character class needs LOWERCASE: without it `NCS-CALICO=docker.io/...`
+            # printed as a bare `NCS-CALICO=` and read as an empty marker twice — the
+            # display truncating a value that was there all along.
+            grep -oE 'NCS-[A-Za-z0-9=./:_-]+' "$c" | sort -u | sed 's/^/  /' >&2
             grep -q 'NCS-K8S-READY' "$c" \
                 || die "the guest booted but the cluster never became ready — see $c"
             info "cluster ready after $((SECONDS - t0))s"
@@ -126,6 +130,19 @@ experiment)
     rc=0
     bash "$LAB_VM" ssh "$VM" -- 'sudo NCS_POLL_WAIT='"${NCS_POLL_WAIT:-240}"' bash /tmp/guest-experiment.sh' || rc=$?
     info "host Calico binding AFTER the experiment: $(host_binding)"
+    exit $rc ;;
+
+cni-chaos)
+    # Same shape as `experiment`: the script travels in and runs as root there. It is a
+    # separate verb rather than a flag because it takes ~10 minutes, deletes things, and
+    # nobody should reach it by accident.
+    info "copying cni-chaos.sh into the guest and running it as root (~10 min: it waits out"
+    info "  each layer's recovery rather than sampling once)"
+    bash "$LAB_VM" ssh "$VM" -- 'cat > /tmp/cni-chaos.sh' < "$HERE/cni-chaos.sh" \
+        || die "could not copy the chaos script into the guest"
+    rc=0
+    bash "$LAB_VM" ssh "$VM" -- 'sudo CNI_RECOVER_WAIT='"${CNI_RECOVER_WAIT:-240}"' bash /tmp/cni-chaos.sh' || rc=$?
+    info "host Calico binding AFTER the chaos run: $(host_binding)"
     exit $rc ;;
 
 status)

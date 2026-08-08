@@ -90,6 +90,16 @@ examples/nested-calico-sandbox/sandbox.sh down
 `tests/run-all.sh` runs the headless half anywhere and **SKIPs** the live half with a reason
 when no sandbox is up — an unmet precondition is an UNKNOWN, never a pass.
 
+> ⚠️ **This suite is a LOCAL gate, not a continuous one, and a green CI does not cover it.**
+> Three of its five tests need a VM that takes ~15 minutes to build and ~25 minutes to
+> exercise, so CI sees them SKIP. That is the correct result — an unmet precondition is an
+> unknown — but it means the selection rules, G.9 and the CNI matrix are only measured when
+> a human runs them here. Stated plainly so a green badge is not read as coverage it does
+> not have.
+>
+> Full local run: `4 measured tests, ~45 minutes`. Last green **2026-08-07**:
+> `5/5 listed tests ran — 5 passed, 0 skipped, 0 failed`.
+
 ## Three traps this lab hit, so you do not have to
 
 - **`ping` is not connectivity here.** slirp drops ICMP for an unprivileged user, so a ping
@@ -110,13 +120,53 @@ side.** `sandbox.sh` prints the host's Calico binding before and after, and
 `tests/test-selection-rules.sh` **fails** if it moved during a run — because if this lab can
 move the host's tunnel then it is not a sandbox and the guarantee above is false.
 
+## The CNI's break pass
+
+A passing cluster only proves the happy path. `CLAUDE.md`'s ladder asks for an injection
+point at **every layer that can fail on its own**, and the CNI had none — because breaking
+one meant breaking the cluster this machine uses. That is exactly the objection this lab
+removes, so [`cni-chaos.sh`](cni-chaos.sh) injects at five of them and
+[`tests/test-cni-chaos.sh`](tests/test-cni-chaos.sh) grades the outcome:
+
+| layer | fault |
+|---|---|
+| *(control)* | none — the dataplane must work before anything is broken |
+| the CNI **process** | delete `calico-node`'s pod |
+| felix's **programming** | flush Calico's netfilter rules |
+| one pod's **veth** | delete it underneath a running pod |
+| the **overlay device** | delete `vxlan.calico` |
+| the **chosen address** | let Calico bind a decoy, then delete the decoy out from under it |
+
+**Graded against a real dataplane**, not a readiness field: every row's headline observable
+is `pod-a → pod-b`. Four more are collected alongside it (`ready`, `nodeip`, `tunnel`,
+`rules`) because when the dataplane *does* break they say which layer broke.
+
+### What one node cannot see, said out loud
+
+There are no peers here, so **the VXLAN tunnel carries no traffic**. A fault whose only real
+consequence is cross-node cannot move the dataplane observable — and grading it ABSORBED
+would mean *"the fault never mattered"*, not *"the CNI absorbed it"*. The `vxlan-deleted`
+row is therefore graded **only** on whether Calico rebuilds the device, and says so by name.
+
+Every fault is **scoped**: nothing touches `enp0s3`, which carries ssh. A fault that kills
+the guest's own management path would send every remaining row to the same rung and the
+harness would report a uniform, uninformative failure while looking like it worked.
+
+```bash
+examples/nested-calico-sandbox/sandbox.sh cni-chaos     # ~10 min
+```
+
 ## What it does not yet do
 
 - **G.9's remaining scenario** — give a real **`fabric.sh` tap** an address and watch it
   become a candidate. A dummy interface in a guest is *not* a tap on `br-mc0`; see
   [`tests/test-fabric-tap-becomes-candidate.sh`](tests/test-fabric-tap-becomes-candidate.sh).
-- **A CNI-layer chaos scenario.** micro-cloud's chaos matrix has five rows and the CNI is
-  not one of them.
+- **Cross-node consequences.** One node cannot observe them; a second would be a different
+  lab.
+- **IPAM exhaustion** — fill the pod CIDR and watch scheduling fail. The analogue of the
+  DHCP-pool row micro-cloud already has; no injector yet.
+- **The datastore beneath Calico** (`k8s-dqlite`) — a layer below this one, and breaking it
+  breaks the API the harness talks to.
 
 ## See also
 
