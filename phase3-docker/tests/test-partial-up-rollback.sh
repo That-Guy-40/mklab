@@ -16,7 +16,7 @@
 . "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
 require_cmd jq tomlq
 
-work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+work="$(mktemp -d)"; on_exit 'rm -rf "$work"'
 reg="$work/reg"; mkdir -p "$reg"   # one file per "container", named by id(=name)
 
 # --- docker stub: a tiny name-keyed container registry ---------------------

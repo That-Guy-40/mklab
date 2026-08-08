@@ -7,7 +7,7 @@ set -uo pipefail
 . "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
 need python3
 
-out="$(mktemp -d)"; trap 'rm -rf "$out"' EXIT
+out="$(mktemp -d)"; on_exit 'rm -rf "$out"'
 export MLBUILD_OUT_DIR="$out"
 # shellcheck source=/dev/null
 source "$MLBUILD"

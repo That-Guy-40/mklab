@@ -12,7 +12,7 @@
 # Network-free.
 . "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
 
-tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+tmp="$(mktemp -d)"; on_exit 'rm -rf "$tmp"'
 export MLBUILD_OUT_DIR="$tmp/out"        # keep any destructive op off the real tree
 # shellcheck disable=SC1090
 source "$MLBUILD"                        # mlbuild.sh is source-safe (see its header)

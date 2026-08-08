@@ -68,7 +68,18 @@ bug, not a result — the reader can't tell a real failure from a broken harness
   test dies silently, stays quiet on pass/skip, prints **exactly one** `FAIL`
   when the test already spoke, runs registered cleanup in reverse, exposes
   `$_EXIT_RC` — and **fails if any test in the directory installs an EXIT trap
-  of its own**, which turns the rule above from advice into a check. It provides
+  of its own**, which turns the rule above from advice into a check.
+  **That last check was itself a liar until 2026-08-08:** it matched
+  `^[[:space:]]*trap`, so it never saw `tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"'
+  EXIT` — the trap after a semicolon, which is the most common way to open a test
+  in this repo. It printed *"no test overrides lib.sh's EXIT trap"* across six
+  suites while **twenty tests did**. The anchor had been chosen to dodge one false
+  positive (a test that *writes* a trap into a fixture and greps for it) and
+  bought it with a false negative twenty times the size — the cheap question
+  *"does a line START with trap"* standing in for *"is a trap installed here"*.
+  It now matches `trap` at a **command position** (start of line, or after
+  `; && || | ( ) { }`), which leaves quoted occurrences unmatched without needing
+  an anchor at all. It provides
   its own verdict helpers on purpose: it must not source the lib under test, or
   the subject would be supplying its own harness. Every `tests/` directory ships
   a five-line `tests/test-harness-net.sh` that `exec`s it, so the check runs

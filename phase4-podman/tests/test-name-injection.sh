@@ -12,7 +12,7 @@
 require_cmd jq
 command -v tomlq >/dev/null 2>&1 || skip "no tomlq (TOML parser) for toml_to_json"
 
-work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+work="$(mktemp -d)"; on_exit 'rm -rf "$work"'
 export LAB_POD_STATE_DIR="$work/state"
 
 source "$LAB_PODMAN"

@@ -18,7 +18,7 @@
 . "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
 require_cmd tar gzip
 
-work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
+work="$(mktemp -d)"; on_exit 'rm -rf "$work"'
 
 # A chroot with the two dangerous symlink shapes.
 chroot="$work/chroot"
