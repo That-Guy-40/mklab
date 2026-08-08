@@ -156,6 +156,91 @@ grep -q 'name=ctl ' <<<"$out" \
     || { KEEP=1; fail "the NO-FAULT control did not answer ($out). Nothing below is measurable: a matrix whose control fails is reporting on its own harness"; }
 row "control (no fault injected)" ABSORBED ABSORBED "the unbroken channel answers: ${out##*name=}"
 
+# ── 0b. A STALLED CLIENT HOLDS THE PORT ────────────────────────────────────
+# The layer DEFERRED.md named as uncovered — "a partitioned/slow channel" — asked as the
+# question this topology can actually pose.
+#
+# ⚠️ THE ONE-LINE DESCRIPTION OF THE GAP WAS POINTING THE WRONG WAY. It said "the host reads
+# but never replies", which describes a host that answers requests. It does not: the GUEST
+# agent listens and the host is the client. So "the host never replies" is not a fault this
+# channel can suffer, and an injector built to that sentence would have produced a row that
+# looked injected and measured nothing.
+#
+# What this topology CAN suffer is the mirror of it, and it is the classic one for any
+# listening service: a client that connects, speaks HALF a request, and then stops. If the
+# agent reads a line with a blocking read and serves one connection at a time, that single
+# stalled peer wedges it for everybody — head-of-line blocking, which presents as "vsock is
+# down" while the guest, the VMM, the device and the channel are all perfectly healthy. It
+# is the failure mode most likely to be mistaken for one of the other rows here.
+#
+# SCOPED TO ONE CONNECTION, on purpose. A fault that breaks the whole channel would send this
+# row to the same rung as the socket-unlink row and the fallback path would never run —
+# CLAUDE.md's rule about scoping the fault to the subject under test.
+#
+# The injector is a REAL client on the REAL interface (an AF_VSOCK connect to the same CID
+# and port the probe uses), not a special case inside the agent. A partial write with no
+# newline is what a slow or partitioned peer actually looks like on the wire.
+#
+# ⚠️ THE RECORDED RUNG IS DECLARED ONCE, HERE, AND NOT PER BRANCH. The first draft passed
+# `want` and `got` as the same value inside each branch — `row … ABSORBED ABSORBED` in one,
+# `row … HALTED HALTED` in the next — which is a row that can never fail: whatever it
+# measures, it "expected". In a matrix whose entire design is "each row records the rung it
+# was measured at and fails when a rung MOVES", that is the row quietly opting out of the
+# only check there is. Measured ABSORBED on 2026-08-08; if that becomes HALTED the run must
+# stop and say so.
+STALL_RECORDED=ABSORBED
+stall_py="$WORK/stall.py"
+cat > "$stall_py" <<'PY'
+import socket, sys, time
+cid, port = int(sys.argv[1]), int(sys.argv[2])
+s = socket.socket(socket.AF_VSOCK, socket.SOCK_STREAM)
+s.connect((cid, port))
+# HALF a request: no trailing newline, so a line-oriented reader blocks here forever.
+s.sendall(b"na")
+sys.stderr.write("STALLED\n"); sys.stderr.flush()
+while True:
+    time.sleep(3600)
+PY
+python3 "$stall_py" "$CID_A" "$PORT" 2>"$WORK/stall.err" &
+STALL_PID=$!
+PIDS+=("$STALL_PID")
+# ASSERT THE INJECTOR LANDED before grading anything. A stall client that never connected
+# grades the row ABSORBED and means "nothing was broken" — the no-op-injector defect this
+# matrix already caught once.
+stalled=no
+for _ in $(seq 1 20); do
+    grep -q STALLED "$WORK/stall.err" 2>/dev/null && { stalled=yes; break; }
+    kill -0 "$STALL_PID" 2>/dev/null || break
+    sleep 0.5
+done
+if [[ "$stalled" != yes ]]; then
+    note "UNCOVERED: the stalled-client injector could not connect to the agent, so the row did not run: $(head -2 "$WORK/stall.err" 2>/dev/null)"
+else
+    # A DEADLINE, because the whole question is whether this hangs. `probe --retries` would
+    # sit inside the same blocked read and the test would look like an infrastructure hang
+    # rather than a measured HALTED.
+    stall_out="$(timeout 25 python3 "$PROBE" --engine qemu --cid "$CID_A" --port "$PORT" --retries 3 2>&1)"; stall_rc=$?
+    if grep -q 'name=ctl ' <<<"$stall_out"; then
+        row "a stalled client holds the agent's port" "$STALL_RECORDED" ABSORBED \
+            "a second client was served while the first sat mid-request: ${stall_out##*name=}"
+    else
+        # GRADE AFTER ATTEMPTING THE RECOVERY THE SYSTEM OFFERS. "Critical" must mean nothing
+        # can be done, not that the first look was still wrong. The verb available here is
+        # "drop the stuck client" — by PID, never by pattern.
+        kill "$STALL_PID" 2>/dev/null || true
+        wait "$STALL_PID" 2>/dev/null || true
+        after="$(timeout 25 python3 "$PROBE" --engine qemu --cid "$CID_A" --port "$PORT" --retries 5 2>&1)"
+        if grep -q 'name=ctl ' <<<"$after"; then
+            row "a stalled client holds the agent's port" "$STALL_RECORDED" HALTED \
+                "one half-spoken request wedged the agent for every other client (rc=$stall_rc, ${stall_out:0:60}); dropping that client restored it"
+        else
+            row "a stalled client holds the agent's port" "$STALL_RECORDED" STRANDED \
+                "the agent did not answer with the stalled client connected AND did not recover when it was dropped: ${after:0:80}"
+        fi
+    fi
+    kill "$STALL_PID" 2>/dev/null || true
+fi
+
 # ── 1. the guest's ENTIRE network, pulled under a live agent ───────────────
 # The fault DEFERRED.md asked for is "tear down br-mc0 with the agent connected". This is
 # that property, injected more severely and without root: `set_link down` removes the link
@@ -350,7 +435,7 @@ fi
 # uncovered ones must be named. UNKNOWN is a verdict, distinct from PASS.
 note "NOT covered, deliberately:"
 note "  · CID exhaustion — the space is 2^32 and cannot be exhausted the way a DHCP pool can. There is no analogous failure to grade, which is itself the answer"
-note "  · a partitioned/slow channel (the host reads but never replies) — no injector yet"
+note "  · a channel that is SLOW rather than stalled (bytes arriving under a rate limit) — vsock has no shaper the way a NIC does, and nothing here can impose one without becoming a different subject. Row 0b covers the stalled end of that spectrum, which is the end that wedges a listener"
 
 # ── 6. THE MATRIX MUST BE OCCUPIED ─────────────────────────────────────────
 # Zero criticals proves none of this. A harness that breaks nothing is all-ABSORBED; one
