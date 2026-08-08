@@ -13,6 +13,11 @@ tests=(test-findings-are-bound.sh test-selection-rules.sh
        test-fabric-tap-becomes-candidate.sh
        # The CNI's own break pass — the layer CLAUDE.md's ladder had no injection point for.
        test-cni-chaos.sh
+       # …and that grader's own branches, watched biting against hand-injected records. It is
+       # the headless half of the pair: the matrix above needs a live Calico and twenty
+       # minutes, so on an ordinary run it SKIPs and every assertion inside it goes
+       # unexercised. This one runs in two seconds, everywhere, and fails if they stop biting.
+       test-cni-chaos-grader.sh
        test-harness-net.sh)
 
 # A test on disk that is in no list is a test nobody runs — one sat unlisted in another

@@ -91,14 +91,26 @@ examples/nested-calico-sandbox/sandbox.sh down
 when no sandbox is up — an unmet precondition is an UNKNOWN, never a pass.
 
 > ⚠️ **This suite is a LOCAL gate, not a continuous one, and a green CI does not cover it.**
-> Three of its five tests need a VM that takes ~15 minutes to build and ~45 minutes to
+> Three of its six tests need a VM that takes ~15 minutes to build and ~45 minutes to
 > exercise, so CI sees them SKIP. That is the correct result — an unmet precondition is an
 > unknown — but it means the selection rules, G.9 and the CNI matrix are only measured when
 > a human runs them here. Stated plainly so a green badge is not read as coverage it does
 > not have.
 >
-> Full local run: `4 measured tests, ~45 minutes`. Last green **2026-08-07**:
-> `5/5 listed tests ran — 5 passed, 0 skipped, 0 failed`.
+> What CI *does* cover of the matrix is [`tests/test-cni-chaos-grader.sh`](tests/test-cni-chaos-grader.sh):
+> the grader's assertions are a set of claims about what it would do if the CNI misbehaved,
+> and the only cluster it has ever graded behaved well, so every one of those branches had
+> run zero times. It hands the grader **hand-injected records** — a refused pod reporting
+> `Running`, an allocator that returns nothing, a run that left the IP pools disabled, an
+> injector that landed no fault — and requires each to be refused **by its own message**.
+> Two seconds, no cluster, no root.
+>
+> Full local run: `4 measured tests, ~45 minutes`. Last green **with a sandbox up**,
+> 2026-08-07: `5/5 listed tests ran — 5 passed, 0 skipped, 0 failed`. The grader test was
+> added on 2026-08-08 and has only been run **headless** since
+> (`6/6 listed tests ran — 3 passed, 3 skipped, 0 failed`, the three skips being the live
+> half) — said this way round because "6 passed" is a number nobody has measured, and a
+> count that outruns its run is this repo's bug class #1 written into a README.
 
 ## Three traps this lab hit, so you do not have to
 

@@ -4672,10 +4672,38 @@ That is asserted. The slow tail is recorded and reported, never failed on.
 
 Then every branch of the grader was made to **bite**: `CNI_CHAOS_RECORD=<file>` grades a
 supplied record instead of injecting, so a hand-written record with one defect in it exercises
-each branch in seconds with no cluster at all. Seven were run — dead prompt-release, a refused
-pod claiming Running, a pod that never recovers, an unnamed refusal, a dead incumbent
+each branch in seconds with no cluster at all. Seven were run by hand — dead prompt-release, a
+refused pod claiming Running, a pod that never recovers, an unnamed refusal, a dead incumbent
 dataplane, pools left disabled, and an injector that did not land — and all seven fired with
 their own specific message, against a healthy record that passes. The same switch is how a
 failed 25-minute run's kept record gets re-read without spending another 25 minutes; it
 announces itself loudly and skips the host-binding check, because a supplied record is a
 cached fact and grading one is not a run.
+
+### R.8 The controls that were run by hand are now the controls that run — 2026-08-08
+
+Those seven lived in a scratch directory and were deleted with it. What remained in the repo
+was a grader whose branches nobody would exercise again: **a test with no runner is a test
+nobody runs**, and the branches in question are the ones that only matter on the day the CNI
+misbehaves. [`tests/test-cni-chaos-grader.sh`](examples/nested-calico-sandbox/tests/test-cni-chaos-grader.sh)
+makes them permanent — same shape as
+[`tools/tests/test-link-check-anchors.sh`](tools/tests/test-link-check-anchors.sh), which
+builds a fixture with four deliberate breaks.
+
+It grades a clean record (which must pass, or every control below it fires for the fixture's
+reasons), then injects **seventeen** defects one at a time and requires each to be refused
+*by its own message* — matching the specific text, because a syntax error in the grader would
+fail all seventeen and read as seventeen working controls. It adds three *healthy-but-unusual*
+records that must still be accepted, and it **names the branches a record cannot reach** (§5's
+occupancy guards, §6's host-binding comparison) instead of implying full coverage. Two
+seconds, no cluster, no root — so it runs in CI, where the twenty-minute matrix only SKIPs.
+
+**And one defect came out of it, in the section written to prevent exactly that defect.** The
+fixture is a record that can outlive its subject, so §1 checks every key it speaks against
+`cni-chaos.sh`. Written first as a grep of **the file**, it passed when the emitted
+`allocations_left=` was renamed — because the old name survived in a *comment* three lines
+above, describing a past measurement. The check was green while the property it stands for was
+false. Prose is not an emission; it now greps the `say` lines, and it fails if that seam itself
+moves. Five negative controls were run on the meta-test — a neutered grader assertion, a
+mutation whose `sed` matched nothing, a renamed emission, a moved emission seam, and a
+grader failing for the wrong reason — and the third of those is the one that found this.
