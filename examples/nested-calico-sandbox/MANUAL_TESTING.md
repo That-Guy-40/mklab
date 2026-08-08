@@ -141,7 +141,7 @@ examples/nested-calico-sandbox/sandbox.sh cni-chaos      # the record
 examples/nested-calico-sandbox/tests/test-cni-chaos.sh   # the record, graded
 ```
 
-Six layers, each broken on purpose, each graded on `CLAUDE.md`'s ladder against a real
+Seven layers, each broken on purpose, each graded on `CLAUDE.md`'s ladder against a real
 `pod-a → pod-b` dataplane rather than a readiness field. **Expect `0 critical`**, and expect
 the rungs to be *occupied* — a matrix that absorbs everything has injected nothing, and one
 that strands everything is uniformly broken; the test fails on either.
@@ -152,6 +152,19 @@ questions: `ipam-exhausted-incumbent` (pods that already hold an address — **A
 released by freeing one address). The run also asserts it **put the cluster back**: it is the
 only row that edits a cluster-wide API object, and a run that left the IP pools disabled
 would poison every later one with a fault nobody injected.
+
+The **datastore row** is the one that needed a decision rather than an injector. `k8s-dqlite`
+sits *below* the CNI, and stopping it breaks the API this harness observes through — so every
+row would grade STRANDED for harness reasons and the matrix would be reporting on itself.
+The resolution: the CNI does not need the API to forward a packet. Once a pod is running, its
+connectivity lives in the kernel — felix's rules, Calico's per-pod host route, the veth. So
+this row alone is graded on the pod's address **pinged from the node**, captured while the API
+was still up. Measured **ABSORBED**: forwarding survived the control plane going away, and the
+API came back 21 s after the unit was restarted.
+
+> That observable crosses **one** veth, not two. It is a weaker subject than `pod-a → pod-b`
+> and the record says so — what it proves is the part that matters here, that forwarding is
+> not coupled to the datastore.
 
 > **A row may report `UNCOVERED`.** That is a named gap, not a pass — `pod-veth-deleted`
 > skips itself if it cannot resolve the pod's own veth, rather than deleting the first one it

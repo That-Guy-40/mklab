@@ -99,6 +99,29 @@ o_pods()   { # THE OUTCOME: can one pod reach another?
              [[ -z "$ip" ]] && { printf 'no-podb-ip'; return; }
              if $K exec -n "$NS" pod-a -- ping -c 2 -W 2 "$ip" >/dev/null 2>&1; then printf 'OK'; else printf 'FAIL'; fi; }
 
+# ── AN OBSERVABLE THAT DOES NOT GO THROUGH THE API ──────────────────────────────────────
+#
+# `o_pods` runs `kubectl exec`, which needs the API server, which needs the datastore. That
+# is fine for every row above — none of them touch it — and it is exactly why the datastore
+# row was recorded as blocked rather than written: breaking k8s-dqlite blinds the harness,
+# every row grades STRANDED for harness reasons, and the matrix reports on itself.
+#
+# THE DECISION (2026-08-08): the row is buildable, and the blocker was specific rather than
+# fundamental. The CNI dataplane does not need the API to forward a packet — once a pod is
+# running, its connectivity is enforced by felix's netfilter rules, Calico's per-pod host
+# route and the pod's veth, all of which live in the kernel. So for this row the observable
+# is the pod's address pinged FROM THE NODE, and the pod's IP is captured while the API is
+# still up. No API is consulted after the fault.
+#
+# ⚠️ NAMED LIMITATION: this crosses ONE veth, not two. It is a weaker subject than
+# pod-a → pod-b and is recorded as such rather than presented as the same measurement. What
+# it does prove is the part that matters here — that forwarding survives the control plane.
+NOAPI_TARGET=""
+o_pods_noapi() {
+    [[ -z "$NOAPI_TARGET" ]] && { printf 'no-target-captured'; return; }
+    if ping -c 2 -W 2 "$NOAPI_TARGET" >/dev/null 2>&1; then printf 'OK'; else printf 'FAIL'; fi
+}
+
 snapshot() { printf 'ready=%s nodeip=%s tunnel=%s pods=%s rules=%s' \
                     "$(o_ready)" "$(o_nodeip)" "$(o_tunnel)" "$(o_pods)" "$(o_rules)"; }
 
@@ -641,6 +664,55 @@ EOF
     done
     still_off=$(( still_off - PREEXISTING_DISABLED ))
     say "ROW=ipam-exhausted RESTORED disabled_pools_remaining=$still_off tiny_pool_present=$($K get ippools.crd.projectcalico.org "$IPAM_TINY_POOL" >/dev/null 2>&1 && echo yes || echo no)"
+fi
+
+# ── 7. the DATASTORE beneath Calico, stopped ───────────────────────────────
+# The layer §4 of the grader has been naming as "not covered" since the matrix was written:
+# k8s-dqlite, which is a layer BELOW the CNI and which breaks the API this harness talks to.
+#
+# THE QUESTION IS THE ONE OPERATORS ASSUME AND RARELY VERIFY: when the control plane is
+# gone, do the pods that are already running keep forwarding? A CNI whose dataplane needs a
+# reachable datastore to move a packet has coupled two things that must not be coupled, and
+# the blast radius of a datastore outage becomes every workload rather than every API call.
+#
+# It is graded on `o_pods_noapi` — see the long note at its definition. The target address is
+# captured HERE, while the API still works, because after the fault there is nothing to ask.
+ensure_workload
+NOAPI_TARGET="$($K get pod -n "$NS" pod-b -o jsonpath='{.status.podIP}' 2>/dev/null)"
+if [[ -z "$NOAPI_TARGET" ]]; then
+    say "ROW=datastore-stopped SKIPPED reason=could-not-capture-pod-b-address-before-the-fault"
+elif ! systemctl list-unit-files 'snap.microk8s.daemon-k8s-dqlite.service' >/dev/null 2>&1 \
+     || ! systemctl cat snap.microk8s.daemon-k8s-dqlite.service >/dev/null 2>&1; then
+    # DERIVED, not assumed. A microk8s built on a different datastore (etcd, or dqlite folded
+    # into kubelite) has no such unit, and stopping nothing would grade this row ABSORBED
+    # while injecting nothing at all.
+    say "ROW=datastore-stopped SKIPPED reason=no-k8s-dqlite-unit-on-this-cluster-so-there-is-no-separate-datastore-to-stop"
+else
+    say "ROW=datastore-stopped BEFORE[$(snapshot)] noapi_target=$NOAPI_TARGET"
+    before_noapi="$(o_pods_noapi)"
+    systemctl stop snap.microk8s.daemon-k8s-dqlite.service 2>/dev/null
+    sleep 10
+    # ASSERT THE FAULT LANDED — and assert it on the API, not on the unit's own status. A
+    # stopped unit whose API still answers means something else is serving it, and this row
+    # would then be grading a control plane that never went away.
+    api_down=no
+    $K get --raw /readyz >/dev/null 2>&1 || api_down=yes
+    if [[ "$api_down" == no ]]; then
+        systemctl start snap.microk8s.daemon-k8s-dqlite.service 2>/dev/null
+        say "ROW=datastore-stopped INJECTOR-FAILED the API still answers /readyz with k8s-dqlite stopped — the datastore was never actually removed from the path"
+    else
+        mid_noapi="$(o_pods_noapi)"
+        say "ROW=datastore-stopped API-DOWN mid_noapi=$mid_noapi"
+        # RECOVERY, then grade. HALTED means "a verb the system offers brings it back".
+        systemctl start snap.microk8s.daemon-k8s-dqlite.service 2>/dev/null
+        t0=$SECONDS; api_back=no
+        while (( SECONDS - t0 < RECOVER_WAIT )); do
+            $K get --raw /readyz >/dev/null 2>&1 && { api_back=yes; break; }
+            sleep 5
+        done
+        after_noapi="$(o_pods_noapi)"
+        say "ROW=datastore-stopped MID[pods_noapi=$mid_noapi] AFTER[$(snapshot)] RECOVERED=$api_back SECS=$((SECONDS - t0)) LANDED=api-readyz-refused BEFORE_NOAPI=$before_noapi MID_NOAPI=$mid_noapi AFTER_NOAPI=$after_noapi"
+    fi
 fi
 
 say "END"

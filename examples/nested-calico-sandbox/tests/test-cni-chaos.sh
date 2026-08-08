@@ -144,6 +144,19 @@ otherwise report ABSORBED, which reads as resilience and means 'nothing was brok
         elif [[ "$rec" == yes ]];               then got=HALTED
         else                                         got=STRANDED
         fi
+    elif [[ "$name" == datastore-stopped ]]; then
+        # Subject: does the CNI keep FORWARDING when the control plane is gone. Graded on the
+        # API-INDEPENDENT observable, because `pods` in the snapshot goes through `kubectl
+        # exec` and is therefore a measurement of the fault rather than of its consequence.
+        # Grading this row on `pods` would report STRANDED every time and mean only "we broke
+        # the thing we were looking through".
+        local mid_na after_na
+        mid_na="$(kv "$line" MID_NOAPI)"; after_na="$(kv "$line" AFTER_NOAPI)"
+        if   [[ "$mid_na" == OK && "$after_na" == OK ]]; then got=ABSORBED
+        elif [[ "$after_na" == OK && "$rec" == yes ]];  then got=DEGRADED
+        elif [[ "$after_na" == OK ]];                   then got=HALTED
+        else                                                 got=STRANDED
+        fi
     elif [[ "$name" == vxlan-deleted ]]; then
         # Graded ONLY on whether Calico rebuilt the device. Its dataplane consequence needs
         # a second node, and pretending otherwise would hand it an unearned rung.
@@ -194,6 +207,7 @@ grade vxlan-deleted            DEGRADED
 grade chosen-address-removed   DEGRADED
 grade ipam-exhausted-incumbent ABSORBED
 grade ipam-exhausted           HALTED
+grade datastore-stopped        ABSORBED
 
 # ── 3b. THE ALLOCATOR ROW'S OWN QUESTIONS ──────────────────────────────────
 # Its rung above answers "was the new pod refused, and did freeing capacity let it through".
@@ -259,7 +273,7 @@ fi
 # ── 4. the layers NOT covered, named rather than left implicit ─────────────
 note "NOT covered, deliberately:"
 note "  · anything whose consequence is CROSS-NODE — this is one node, so the tunnel carries no traffic. The vxlan row is graded on rebuild alone for exactly that reason"
-note "  · the datastore (k8s-dqlite) beneath Calico — a layer below this one, and breaking it breaks the API this harness talks to"
+note "  · nothing else. The datastore (k8s-dqlite) was the last named gap and is now row 7, graded on an API-INDEPENDENT observable — the pod address pinged from the node, captured before the fault — because the harness cannot ask an API it just switched off. That crosses ONE veth rather than two, which is a weaker subject than pod-a -> pod-b and is recorded as such"
 
 # ── 5. THE MATRIX MUST BE OCCUPIED ─────────────────────────────────────────
 # Zero criticals proves none of this. A harness that breaks nothing is all-ABSORBED; one
@@ -283,4 +297,4 @@ HOST_AFTER="$(host_binding)"
     || fail "REGRESSION: the HOST's Calico binding moved during this run: '${HOST_BEFORE:-<absent>}' -> '${HOST_AFTER:-<absent>}'. This lab exists so that breaking a CNI costs nothing; if it can reach the host's, it is not a sandbox"
 note "host binding unchanged across the whole break pass: ${HOST_AFTER:-<absent>}  ✓"
 
-pass "the CNI's break pass — $ROWS rows over six layers injected inside a Calico we may destroy, every one at the rung it was recorded at, graded against a real pod-to-pod dataplane rather than a readiness field. $ABSORBED absorbed, $NOTABSORBED not, $CRITICAL critical. The layer CLAUDE.md's ladder has been asking about since it was written now has an injection point, and the rows a single node cannot observe are named as such instead of collecting rungs they did not earn"
+pass "the CNI's break pass — $ROWS rows over seven layers injected inside a Calico we may destroy, every one at the rung it was recorded at, graded against a real pod-to-pod dataplane rather than a readiness field. $ABSORBED absorbed, $NOTABSORBED not, $CRITICAL critical. The layer CLAUDE.md's ladder has been asking about since it was written now has an injection point, and the rows a single node cannot observe are named as such instead of collecting rungs they did not earn"

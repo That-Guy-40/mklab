@@ -74,6 +74,9 @@ CNI-ROW=ipam-exhausted-incumbent MID[ready=1 nodeip=10.0.2.15 tunnel=local_10.0.
 CNI-ROW=ipam-exhausted MID[ready=1 nodeip=10.0.2.15 tunnel=local_10.0.2.15_dev_enp0s3 pods=OK rules=200] AFTER[ready=1 nodeip=10.0.2.15 tunnel=local_10.0.2.15_dev_enp0s3 pods=OK rules=200] RECOVERED=yes SECS=7 LANDED=filled-7-denied-5 REASON=named-the-exhausted-pool LIED=no REFILLED=7/7
 CNI-ROW=ipam-exhausted LEAK of_filled=7 first=1 allocations_left=1 released_after=245s pods_left=0
 CNI-ROW=ipam-exhausted RESTORED disabled_pools_remaining=0 tiny_pool_present=no
+CNI-ROW=datastore-stopped BEFORE[ready=1 nodeip=10.0.2.15 tunnel=local_10.0.2.15_dev_enp0s3 pods=OK rules=200] noapi_target=10.1.243.3
+CNI-ROW=datastore-stopped API-DOWN mid_noapi=OK
+CNI-ROW=datastore-stopped MID[pods_noapi=OK] AFTER[ready=1 nodeip=10.0.2.15 tunnel=local_10.0.2.15_dev_enp0s3 pods=OK rules=200] RECOVERED=yes SECS=31 LANDED=api-readyz-refused BEFORE_NOAPI=OK MID_NOAPI=OK AFTER_NOAPI=OK
 CNI-END
 EOF
 
@@ -107,6 +110,7 @@ missing=()
 for k in 'WORKLOAD-READY' 'ROW=control-no-fault' 'ROW=calico-node-killed' \
          'ROW=netfilter-flushed' 'ROW=pod-veth-deleted' 'ROW=vxlan-deleted' \
          'ROW=chosen-address-removed' 'ROW=ipam-exhausted ' 'ROW=ipam-exhausted-incumbent' \
+         'ROW=datastore-stopped' 'MID_NOAPI=' 'AFTER_NOAPI=' \
          'INJECTOR-FAILED' 'SKIPPED reason=' 'DENIAL-TEXT' 'RECOVERED=' 'SECS=' 'LANDED=' \
          'REASON=' 'LIED=' 'of_filled=' 'first=' 'allocations_left=' 'released_after=' \
          'disabled_pools_remaining=' 'tiny_pool_present='; do
@@ -118,17 +122,17 @@ This is exactly the drift this section exists to catch: the grader would read th
 empty, render empty as UNKNOWN, and every negative control here would keep passing while
 testing a record format nothing produces. Update the fixture in the same commit that renamed
 the field."
-note "fixture bound: all 23 record keys it uses are still emitted by cni-chaos.sh  ✓ (this checks the NAMES; only a live run checks the values)"
+note "fixture bound: all 26 record keys it uses are still emitted by cni-chaos.sh  ✓ (this checks the NAMES; only a live run checks the values)"
 
 # ── 2. THE POSITIVE CASE ────────────────────────────────────────────────────────────────
 run_grader "$GOOD"
 (( G_RC == 0 )) || { cat "$G_OUT" >&2; fail "the CLEAN record does not grade clean (rc=$G_RC). Every negative control below is an edit of this file, so if it fails for reasons of its own then all sixteen of them fire for that reason and none of them proves anything"; }
-for want in 'the supplied record grades clean' '7 rows' '3 absorbed, 4 not, 0 critical' \
+for want in 'the supplied record grades clean' '8 rows' '4 absorbed, 4 not, 0 critical' \
             'NOTHING WAS INJECTED IN THIS RUN'; do
     grep -qF -- "$want" "$G_OUT" \
         || { cat "$G_OUT" >&2; fail "the clean record passed but the verdict never said '$want' — a PASS that does not report the matrix it graded is not evidence the matrix was read"; }
 done
-note "clean record: PASS, 7 rows, 3 absorbed / 4 not / 0 critical, and it announced that nothing was injected  ✓"
+note "clean record: PASS, 8 rows, 4 absorbed / 4 not / 0 critical, and it announced that nothing was injected  ✓"
 
 # ── 3. THE NEGATIVE CONTROLS ────────────────────────────────────────────────────────────
 # One defect each, and each must be refused BY ITS OWN MESSAGE. Matching the specific text is
@@ -194,6 +198,15 @@ control tiny-pool-left-behind \
     '/^CNI-ROW=ipam-exhausted RESTORED/s/tiny_pool_present=no/tiny_pool_present=yes/' \
     'did not put the cluster back'
 
+# (b2) the datastore row — graded on the API-INDEPENDENT observable, so its controls have to
+# move THAT field and not the snapshot's `pods=`.
+control forwarding-died-with-the-control-plane \
+    '/^CNI-ROW=datastore-stopped MID/s/MID_NOAPI=OK/MID_NOAPI=FAIL/' \
+    'recorded ABSORBED, measured DEGRADED'
+control forwarding-never-came-back \
+    '/^CNI-ROW=datastore-stopped MID/s/AFTER_NOAPI=OK/AFTER_NOAPI=FAIL/' \
+    'recorded ABSORBED, measured STRANDED'
+
 # (c) the harness's own honesty — the rows that are ABOUT the record rather than the CNI
 control injector-did-not-land \
     's/^CNI-ROW=netfilter-flushed MID.*/CNI-ROW=netfilter-flushed INJECTOR-FAILED before=200 after=200 — the rules were NOT removed, so this row would grade a fault that never happened/' \
@@ -210,8 +223,12 @@ control workload-never-existed \
 control record-is-partial \
     '/^CNI-END/d' \
     'does not reach CNI-END'
+# FOUR rows skipped, not three. §5 refuses a matrix of fewer than 5 graded rows, so this
+# mutation has to scale with the matrix: when row 7 (datastore-stopped) was added, skipping
+# three still left five and this control silently stopped biting — a negative control that
+# quietly became a positive one. Caught by running it, which is the only way it could be.
 control too-few-rows-to-be-a-matrix \
-    '/^CNI-ROW=\(vxlan-deleted\|chosen-address-removed\|pod-veth-deleted\) MID/s/ MID.*/ SKIPPED reason=synthetic-for-the-negative-control/' \
+    '/^CNI-ROW=\(vxlan-deleted\|chosen-address-removed\|pod-veth-deleted\|datastore-stopped\) MID/s/ MID.*/ SKIPPED reason=synthetic-for-the-negative-control/' \
     'too few to call this a matrix'
 
 # ── 4. THE ALTERNATE PASSING BRANCHES ───────────────────────────────────────────────────

@@ -137,7 +137,7 @@ move the host's tunnel then it is not a sandbox and the guarantee above is false
 A passing cluster only proves the happy path. `CLAUDE.md`'s ladder asks for an injection
 point at **every layer that can fail on its own**, and the CNI had none — because breaking
 one meant breaking the cluster this machine uses. That is exactly the objection this lab
-removes, so [`cni-chaos.sh`](cni-chaos.sh) injects at six of them and
+removes, so [`cni-chaos.sh`](cni-chaos.sh) injects at seven of them and
 [`tests/test-cni-chaos.sh`](tests/test-cni-chaos.sh) grades the outcome:
 
 | layer | fault |
@@ -149,6 +149,7 @@ removes, so [`cni-chaos.sh`](cni-chaos.sh) injects at six of them and
 | the **overlay device** | delete `vxlan.calico` |
 | the **chosen address** | let Calico bind a decoy, then delete the decoy out from under it |
 | the **address allocator** | disable the cluster's pools, offer a /29, and fill it with real pods |
+| the **datastore beneath it** | stop `k8s-dqlite` — the layer *below* the CNI, and the one that breaks the API this harness talks through |
 
 **Graded against a real dataplane**, not a readiness field: every row's headline observable
 is `pod-a → pod-b`. Four more are collected alongside it (`ready`, `nodeip`, `tunnel`,
