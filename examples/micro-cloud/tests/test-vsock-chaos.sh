@@ -162,8 +162,12 @@ row "control (no fault injected)" ABSORBED ABSORBED "the unbroken channel answer
 # from the guest's point of view altogether, which is a superset of losing the bridge
 # underneath a tap. The guest reported an address before the cut, so "the network is gone"
 # is a transition rather than a state that might always have been true.
-grep -qE 'addr *: *[0-9]' "$WORK/ctl.console" \
-    || { KEEP=1; fail "the control guest never had a network address, so pulling its link proves nothing — without a before, 'the network is gone' and 'it never had one' are the same observation"; }
+# WAIT for the address, do not sample for it. mc-probe.sh runs udhcpc as a sysinit action
+# and the lease takes seconds; grepping once, the instant the control probe returned, is the
+# same eventual-state race that turned main's CI red twice (phase3/phase4, fixed the same
+# day). It bit here under load from a second VM — proving the point rather than refuting it.
+wait_for "$WORK/ctl.console" 'addr *: *[0-9]' 60 \
+    || { KEEP=1; fail "the control guest never took a network address within 60s, so pulling its link proves nothing — without a before, 'the network is gone' and 'it never had one' are the same observation. Console: $WORK/ctl.console"; }
 addr_before="$(grep -oE 'addr *: *[0-9./]+' "$WORK/ctl.console" | head -1)"
 # THE GUEST MUST HAVE SEEN CARRIER FIRST, or "carrier is gone" is not a transition.
 wait_for "$WORK/ctl.console" 'MC-LINK carrier=1' 30 \
@@ -282,12 +286,70 @@ else
     row "a guest asks for a reserved CID (0/1/2)" ABSORBED LIED "a reserved CID was accepted:$bad"
 fi
 
-# ── 5. layers named as NOT covered, rather than left implicit ──────────────
+# ── 5. the fabric's own TEARDOWN CODE, beneath a live agent ────────────────
+# Row 1 severs the guest's link with `set_link down`, which is a SUPERSET of losing the
+# bridge — so the PROPERTY (vsock survives the network going away) is measured there. What
+# that does not do is run `fabric.sh down` while a guest is attached, and **a stronger fault
+# does not prove the weaker one ran**. This row exercises the code path.
+#
+# Root-gated, so it self-skips — and a skip is reported as UNCOVERED rather than quietly
+# folded into the pass, because the whole point of naming uncovered layers is that an
+# unmeasured one must never read as measured.
+FABRIC="$REPO_DIR/examples/micro-cloud/fabric.sh"
+if [[ ${EUID:-$(id -u)} -eq 0 ]] && [[ -x "$FABRIC" ]] && ! ip link show br-mc0 >/dev/null 2>&1 \
+   && [[ ! -e /run/mklab-mc/preflight ]] && command -v dnsmasq >/dev/null 2>&1; then
+    OWNER="$(stat -c %U "$REPO_DIR")"
+    if [[ -n "$OWNER" && "$OWNER" != root ]]; then
+        flog="$WORK/fabric.log"
+        if MC_OWNER="$OWNER" bash "$FABRIC" up >"$flog" 2>&1 \
+           && MC_OWNER="$OWNER" bash "$FABRIC" tap chaos >>"$flog" 2>&1; then
+            # A guest on a REAL fabric tap, with vsock alongside — then the fabric is torn
+            # down underneath it by its own verb.
+            cp "$WORK/vsock.ext4" "$WORK/fab.ext4"
+            fmac="$(bash "$FABRIC" mac chaos 2>/dev/null)"
+            "$QEMU_BIN" -M microvm,rtc=on -cpu host -enable-kvm -m 256 -smp 1 \
+                -no-user-config -nodefaults -no-reboot -display none \
+                -bios "$QBOOT" -kernel "$KERNEL" \
+                -append "console=ttyS0 reboot=k panic=1 pci=off root=/dev/vda rw mc_name=fab mc_link=1" \
+                -drive "file=$WORK/fab.ext4,if=none,id=disk0,format=raw" \
+                -device virtio-blk-device,drive=disk0 \
+                -netdev "tap,id=net0,ifname=mc-chaos,script=no,downscript=no" \
+                -device "virtio-net-device,netdev=net0,mac=$fmac" \
+                -device "vhost-vsock-device,guest-cid=$((CID_A + 2))" \
+                -serial "file:$WORK/fab.console" >"$WORK/fab.err" 2>&1 &
+            PIDS+=($!)
+            if wait_for "$WORK/fab.console" 'MC-VSOCK-AGENT LISTENING' "$BOOT_TIMEOUT" \
+               && probe --engine qemu --cid "$((CID_A + 2))" --port "$PORT" --retries 20 | grep -q 'name=fab '; then
+                # THE FAULT: the fabric's own teardown verb, with a guest still on its tap.
+                down_out="$(MC_OWNER="$OWNER" bash "$FABRIC" down 2>&1)"; down_rc=$?
+                sleep 3
+                after="$(probe --engine qemu --cid "$((CID_A + 2))" --port "$PORT" --retries 5)"
+                if grep -q 'name=fab ' <<<"$after"; then
+                    row "fabric.sh down beneath a live agent" ABSORBED ABSORBED \
+                        "the fabric tore its own bridge, taps and nft table down (rc=$down_rc) with a guest attached, and vsock still answers"
+                else
+                    row "fabric.sh down beneath a live agent" ABSORBED HALTED \
+                        "vsock stopped answering when the fabric was torn down: ${after:0:80}"
+                fi
+            else
+                MC_OWNER="$OWNER" bash "$FABRIC" down >>"$flog" 2>&1 || true
+                note "UNCOVERED: the fabric-tap guest never came up, so the teardown row did not run (see $flog)"
+            fi
+        else
+            note "UNCOVERED: 'fabric.sh up/tap' failed here, so the teardown row did not run: $(tail -1 "$flog" 2>/dev/null)"
+        fi
+    else
+        note "UNCOVERED: the checkout is root-owned, so a fabric tap would be unopenable by an unprivileged VMM (plan G.4) and the row cannot be staged"
+    fi
+else
+    note "UNCOVERED: fabric.sh down beneath a live agent — needs root, a free br-mc0 and dnsmasq. Row 1 measures the PROPERTY more severely (set_link removes the link entirely), but the fabric's teardown CODE is not exercised without this"
+fi
+
+# ── 5b. layers named as NOT covered, rather than left implicit ─────────────
 # CLAUDE.md: a layer with no scenario is a layer nobody has watched fall over, and the
 # uncovered ones must be named. UNKNOWN is a verdict, distinct from PASS.
 note "NOT covered, deliberately:"
 note "  · CID exhaustion — the space is 2^32 and cannot be exhausted the way a DHCP pool can. There is no analogous failure to grade, which is itself the answer"
-note "  · the fabric's own teardown path (br-mc0 under a live agent) — row 1 severs the guest's link entirely, a superset of losing the bridge, but the fabric's teardown CODE is not exercised here. Needs root"
 note "  · a partitioned/slow channel (the host reads but never replies) — no injector yet"
 
 # ── 6. THE MATRIX MUST BE OCCUPIED ─────────────────────────────────────────

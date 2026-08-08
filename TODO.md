@@ -26,13 +26,15 @@ It is not — an experiment nobody can re-run is a story.
 | **0.2** | **G.9's remaining break-pass scenario** | **partly answered, not closed.** DHCP exhaustion is green; `retap` is green. What remains is *give a **`fabric.sh` tap** an address on purpose and watch it become a candidate* — [G.9](MICRO_CLOUD_LAB_PLAN.md#g9-not-run--recorded-as-unknown-not-as-pass). Appendix O measured the **property** with a dummy interface in a guest at Calico v3.29.3; **a dummy in a guest and a tap on `br-mc0` are not the same subject**, and this host runs v3.28.1. Needs 0.1 |
 | **0.3** | **the fabric's own teardown code, under a live agent** | **named as not covered** by [`test-vsock-chaos.sh`](examples/micro-cloud/tests/test-vsock-chaos.sh). Its network row severs the guest's link with `set_link down`, which is a *superset* of losing the bridge — so the **property** is measured — but `fabric.sh down`'s teardown path is never exercised with a guest attached. **A stronger fault does not imply the weaker one ran**; that is why the matrix says so instead of letting it pass quietly. Root-gated |
 
-- [ ] **0.1** package `nested-calico-sandbox/` from Appendix O — and have its harness stamp
-      the **Calico version it observed** and refuse to generalise across a mismatch, the way
-      `capture-policy` binds a PCR set to its image.
-- [ ] **0.2** run G.9's tap-address scenario **inside** 0.1's sandbox, where an outage costs
-      nothing, and record it against the version measured rather than against this host.
-- [ ] **0.3** add a chaos row that tears the fabric down beneath a live vsock agent, so the
-      teardown *code* is exercised and not merely implied.
+- [x] **0.1** ✅ **DONE 2026-08-07** — [`examples/nested-calico-sandbox/`](examples/nested-calico-sandbox/):
+      spec, driver, guest experiment, stamped `findings.env`, four tests, 00-INDEX row,
+      `learning-paths` route. The harness refuses to compare across a Calico mismatch,
+      naming both versions. [Appendix Q](MICRO_CLOUD_LAB_PLAN.md#appendix-q--the-sandbox-packaged-g9-closed-on-the-real-artifact-2026-08-07)
+- [x] **0.2** ✅ **DONE 2026-08-07** — G.9 closed **on the real artifact**: a genuine
+      `fabric.sh` tap, given an address on purpose, captured the guest cluster's tunnel.
+      F.6 reproduced deliberately, at Calico v3.29.3.
+- [x] **0.3** ✅ **DONE 2026-08-07** — the vsock chaos matrix has a `fabric.sh down beneath a
+      live agent` row. Root-gated; a skip reports **UNCOVERED** rather than folding into the pass.
 
 **0.4 — the flaky-CI shape, partly fixed** *(added 2026-08-07, after main went red twice)*.
 `producer | grep -q PATTERN || fail` is wrong in two independent ways when the thing being

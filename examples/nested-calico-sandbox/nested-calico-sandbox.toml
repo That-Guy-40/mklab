@@ -1,0 +1,96 @@
+## nested-calico-sandbox.toml — a Calico we are allowed to break.
+##
+## ── WHY THIS EXISTS ─────────────────────────────────────────────────────────────────────
+##
+## `examples/micro-cloud/fabric.sh`'s entire safety design rests on two rules:
+##
+##   rule 1  Calico's first-found autodetection EXCLUDES interfaces matching `^br-.*`,
+##          which is why the fabric's bridge is named `br-mc0`.
+##   rule 2  an interface with an IPv4 address BECOMES a first-found candidate, which is
+##          why the fabric's taps are addressless.
+##
+## Rule 1 was read out of a v3.28.1 binary. Rule 2 was observed ONCE — as an outage, when a
+## lab's tap captured a live cluster's VXLAN tunnel endpoint (plan F.6). Neither had ever
+## been tested by experiment, because on the host that runs this repo, testing them means
+## breaking the Kubernetes the machine is actually using.
+##
+## A microk8s we may destroy removes that objection. That is all this lab is.
+##
+## ── WHAT IT DELIBERATELY IS NOT ─────────────────────────────────────────────────────────
+##
+## It is NOT a claim about the host. Its answers are bound to the Calico version that
+## happens to be inside it, and `findings.env` records that version so a future run refuses
+## to compare across a mismatch instead of quietly generalising. See README.md §"A finding
+## is bound to its subject".
+##
+## ── SIZING, MEASURED ────────────────────────────────────────────────────────────────────
+##
+## 4 GiB / 2 vCPU is what microk8s needs to reach `status --wait-ready`; it does NOT come up
+## in the 2 GiB a default `lab-vm.sh` VM gets. The disk is the other trap: the cached Debian
+## cloud image is **3 GiB virtual**, and microk8s wants ~10 — so `sandbox.sh` resizes the
+## qcow2 OVERLAY after `create` and lets cloud-init's `growpart` do the rest. The resize is
+## in the script rather than here because `disk_size` in a spec only reaches the
+## `from-chroot` backend (measured 2026-08-07, lab-vm.sh:2612).
+##
+## ── NESTED KVM IS NOT REQUIRED ──────────────────────────────────────────────────────────
+##
+## Nothing here boots a VM inside the VM. The experiment uses dummy interfaces and — for
+## the fabric-tap scenario — a real `fabric.sh` tap, neither of which needs virtualisation.
+## (This host happens to have `kvm_amd nested=1`; the lab must not depend on that.)
+
+[[vm]]
+name = "calico-sandbox"
+lab  = "nested-calico"
+
+# A stock cloud image, unmodified. The fidelity that matters here is the CNI, not the
+# distro — but a stock image is also the one whose cloud-init `growpart` is known to grow
+# the root filesystem into the space `sandbox.sh` adds.
+backend = "disk-image"
+distro  = "debian"
+suite   = "bookworm"
+arch    = "x86_64"
+
+memory = "4G"
+cpus   = 2
+
+# `user` = slirp. NO tap, NO bridge, NO fabric on the HOST — this lab must never touch the
+# host's networking, and the whole point is that the cluster under test is inside the guest.
+#
+# ⚠️ slirp DROPS ICMP for an unprivileged user. A `ping` from inside the guest fails while
+# TCP works perfectly; the first spike read that as "no network" and nearly abandoned the
+# lab (plan O.1). Never diagnose this guest's connectivity with ping.
+network_mode = "user"
+
+# snapd is not in the base image, and microk8s ships as a snap. Installed as a package so
+# cloud-init's own retry/ordering handles it rather than a hand-rolled loop in runcmd.
+#
+# dnsmasq-base + nftables are `fabric.sh`'s UNDECLARED dependencies, and they are here
+# because of a finding this lab produced on its first real use: `fabric.sh up` had never run
+# on any machine but this repo's host, and inside the sandbox it died immediately with
+# "dnsmasq not installed". Five days of exercising it had never revealed that, because the
+# one host it ran on happened to have both.
+#
+# `dnsmasq-base`, NOT `dnsmasq`: the latter also installs a system service that binds :53
+# and would fight the instance the fabric starts with its own config. The base package is
+# just the binary.
+packages = ["snapd", "dnsmasq-base", "nftables"]
+
+# Everything below prints to /dev/console, because that is the only channel that works
+# before the network does — and because a guest that FAILS to install must say so rather
+# than going silent and leaving "no output" to mean either "broken" or "still booting".
+#
+# `/snap/bin` is NOT on sudo's secure_path. The first spike's `microk8s status` therefore
+# returned "command not found", which its runcmd faithfully reported as SPIKE-K8S-NOTREADY
+# while the cluster was running perfectly (plan O.1). Every microk8s call here uses the
+# absolute path for that reason.
+runcmd = [
+  "sh -c 'echo NCS-BOOT root=$(df -h / | awk \"NR==2{print \\$2}\") > /dev/console'",
+  "sh -c 'snap install microk8s --classic >/var/log/ncs-install.log 2>&1 && echo NCS-MICROK8S-INSTALLED > /dev/console || { echo NCS-MICROK8S-FAILED > /dev/console; tail -3 /var/log/ncs-install.log > /dev/console; }'",
+  "sh -c '/snap/bin/microk8s status --wait-ready --timeout 600 >/var/log/ncs-ready.log 2>&1 && echo NCS-K8S-READY > /dev/console || { echo NCS-K8S-NOTREADY > /dev/console; tail -3 /var/log/ncs-ready.log > /dev/console; }'",
+  # RETRIED, because `status --wait-ready` returning is not `calico-node` being registered.
+  # The first packaged run printed an empty NCS-CALICO= for exactly that reason: the
+  # DaemonSet was 84 seconds old by the time anyone looked, and the runcmd had asked before
+  # it existed. A marker that is sometimes empty is worse than one that waits.
+  "sh -c 'for i in $(seq 1 30); do v=$(/snap/bin/microk8s kubectl get ds -n kube-system calico-node -o jsonpath={.spec.template.spec.containers[0].image} 2>/dev/null); [ -n \"$v\" ] && break; sleep 5; done; echo NCS-CALICO=${v:-UNRESOLVED} > /dev/console'",
+  "sh -c 'echo NCS-READY-FOR-EXPERIMENT > /dev/console'",
+]

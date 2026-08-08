@@ -8,7 +8,20 @@
 > the planning session that produced v2 and v3; the DONE markers were added as
 > the slices landed.
 
-## NEXT — the three at the front of this queue *(2026-08-07)*
+## NEXT — one left of the three *(updated 2026-08-07)*
+
+> ✅ **Items 1, 2 and 3 are DONE.** [`examples/nested-calico-sandbox/`](../nested-calico-sandbox/)
+> is packaged; **G.9 is closed on the real artifact** (a genuine `fabric.sh` tap captured the
+> guest cluster's tunnel once addressed — F.6 reproduced on purpose); and the vsock chaos
+> matrix has its `fabric.sh down beneath a live agent` row.
+> [Appendix Q](../../MICRO_CLOUD_LAB_PLAN.md#appendix-q--the-sandbox-packaged-g9-closed-on-the-real-artifact-2026-08-07).
+>
+> **What remains from this list is TODO 0.4** — the 13 container assertions still sharing the
+> flaky `producer | grep -q` shape, to be swept by classification rather than blanket replace.
+>
+> The three briefs below are kept as written: they are the record of what was owed.
+
+## The three at the front of this queue *(2026-08-07, now closed)*
 
 Slices 0–5c are done, `retap` is green, and the break pass has a chaos matrix. What is left
 at the front is **three debts that are blocked on packaging or on a host — none on a
@@ -410,7 +423,7 @@ debt in this queue:
 - **A chaos scenario for the CNI layer.** ⚠️ *Partly overtaken 2026-08-07*: micro-cloud now
   **has** a chaos matrix ([`tests/test-vsock-chaos.sh`](tests/test-vsock-chaos.sh), five
   rows), but **the CNI is not one of its layers** and the fabric's own teardown code is
-  named as uncovered — item 3 of [NEXT](#next--the-three-at-the-front-of-this-queue-2026-08-07).
+  named as uncovered — item 3 of [NEXT](#the-three-at-the-front-of-this-queue-2026-08-07-now-closed).
   The original point stands for the CNI specifically —
   `CLAUDE.md`'s ladder wants an injection point per independently-failing layer, and the
   CNI is one nobody has watched fall over here.

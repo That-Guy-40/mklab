@@ -621,6 +621,12 @@ members = ["vm-kali-amd64.toml", "kali-nonroot-chroot/", "kali-vm-builder/",
            "offsec-awae-vm/", "kali-llm-lab/", "kali-llm-desktop-lab/"]
 
 [[collection]]
+id      = "break-it-on-purpose"
+title   = "Break it on purpose"
+theme   = "Labs whose point is a DELIBERATE fault: a disposable cluster you provoke to turn a belief into a measurement, and a fleet you injure at each layer to grade how gracefully it falls. Both exist because a passing suite only proves the happy path — the complementary question is what happens when it breaks, and answering that needs something you are allowed to wreck."
+members = ["nested-calico-sandbox/", "metal-as-a-service/"]
+
+[[collection]]
 id      = "libvirt-labs"
 title   = "libvirt-native labs"
 theme   = "Talk to qemu:///system / libvirt directly, not through the phase tools."
