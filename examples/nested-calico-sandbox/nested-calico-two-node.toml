@@ -1,0 +1,98 @@
+## nested-calico-two-node.toml — the SECOND NODE, and the faults that need one.
+##
+## ── WHY A SECOND NODE IS NOT A LUXURY HERE ──────────────────────────────────────────────
+##
+## The one-node sandbox grades its `vxlan-deleted` row on whether Calico REBUILDS the
+## device, and says so in the open, because on a single node the tunnel carries no traffic:
+## there are no peers, so the dataplane observable cannot move no matter what happens to the
+## overlay. That is an UNKNOWN wearing a rung. Everything genuinely cross-node — a tunnel
+## endpoint that changes under a live peer, which is plan F.6 and the incident this whole lab
+## family exists because of — could not be asked at all.
+##
+## ── HOW TWO VMs TALK WITHOUT TOUCHING THE HOST ──────────────────────────────────────────
+##
+## `network_mode = tap|bridge` would do it and both are root-gated and both alter the HOST's
+## networking — disqualifying, for a lab whose premise is that breaking a CNI must cost
+## nothing. So these two VMs are joined by `peer_link`: QEMU's `socket` netdev, a private L2
+## segment between exactly these two processes over a TCP connection on 127.0.0.1. No bridge,
+## no tap, no host interface is created or touched, and it needs no root.
+##
+## node1 LISTENS and must be started first; node2 CONNECTS. `sandbox.sh up2` enforces that
+## order — a connect against nothing does not fail loudly, it just produces a link that never
+## carries a frame.
+##
+## ⚠️ THE MACs ARE MANDATORY AND NOT DECORATION. QEMU numbers default MACs per NIC index
+## WITHIN a process, so two VMs given a peer_link and no MAC arrive on the same segment
+## holding the SAME address. Nothing errors: ARP resolves to whichever end answered last, and
+## the symptom is intermittent loss on a link every tool reports as UP. `lab-vm.sh` refuses
+## the combination by name for that reason.
+##
+## ── THIS IS A DIFFERENT SUBJECT FROM THE ONE-NODE LAB, ON PURPOSE ───────────────────────
+##
+## The one-node sandbox exists to measure Calico's `first-found` autodetection, so it must
+## not be told which interface to use. These nodes ARE told (`cidr=10.77.0.0/24`), because
+## both of their slirp NICs hold the identical address 10.0.2.15 — slirp gives every guest
+## the same private NAT — and a two-node cluster whose nodes advertise the same IP is not a
+## cluster. Their findings are therefore recorded separately and never merged with
+## `findings.env`'s first-found results: same lab, different question.
+
+[[vm]]
+name = "calico-n1"
+lab  = "nested-calico-two-node"
+
+backend = "disk-image"
+distro  = "debian"
+suite   = "bookworm"
+arch    = "x86_64"
+
+memory = "4G"
+cpus   = 2
+
+# slirp for ssh and the snap download. The CLUSTER does not run over this: every node IP
+# below is on the peer wire, because all slirp guests share 10.0.2.15.
+network_mode = "user"
+
+# The private wire. node1 listens; node2 connects to the same port. Loopback only — the spec
+# key takes a role and a port and there is deliberately no way to spell an address, so no
+# configuration of this lab can widen the host's exposure.
+peer_link = "listen:12801"
+peer_mac  = "52:54:00:ca:11:01"
+
+packages = ["snapd", "dnsmasq-base", "nftables"]
+
+runcmd = [
+  "sh -c 'echo NCS2-BOOT node=n1 root=$(df -h / | awk \"NR==2{print \\$2}\") > /dev/console'",
+  "sh -c 'snap install microk8s --classic >/var/log/ncs-install.log 2>&1 && echo NCS2-MICROK8S-INSTALLED > /dev/console || { echo NCS2-MICROK8S-FAILED > /dev/console; tail -3 /var/log/ncs-install.log > /dev/console; }'",
+  "sh -c '/snap/bin/microk8s status --wait-ready --timeout 600 >/var/log/ncs-ready.log 2>&1 && echo NCS2-K8S-READY > /dev/console || { echo NCS2-K8S-NOTREADY > /dev/console; tail -3 /var/log/ncs-ready.log > /dev/console; }'",
+  "sh -c 'echo NCS2-NODE-READY node=n1 > /dev/console'",
+]
+
+[[vm]]
+name = "calico-n2"
+lab  = "nested-calico-two-node"
+
+backend = "disk-image"
+distro  = "debian"
+suite   = "bookworm"
+arch    = "x86_64"
+
+memory = "4G"
+cpus   = 2
+
+network_mode = "user"
+
+peer_link = "connect:12801"
+peer_mac  = "52:54:00:ca:11:02"
+
+packages = ["snapd", "dnsmasq-base", "nftables"]
+
+# node2 installs microk8s and STOPS. It does not join itself: the join needs a token that
+# only node1 can mint, and a guest that tries to coordinate with another guest through
+# cloud-init has no way to report which half went wrong. `sandbox.sh up2` drives the join
+# over ssh, where each step has a visible result.
+runcmd = [
+  "sh -c 'echo NCS2-BOOT node=n2 root=$(df -h / | awk \"NR==2{print \\$2}\") > /dev/console'",
+  "sh -c 'snap install microk8s --classic >/var/log/ncs-install.log 2>&1 && echo NCS2-MICROK8S-INSTALLED > /dev/console || { echo NCS2-MICROK8S-FAILED > /dev/console; tail -3 /var/log/ncs-install.log > /dev/console; }'",
+  "sh -c '/snap/bin/microk8s status --wait-ready --timeout 600 >/var/log/ncs-ready.log 2>&1 && echo NCS2-K8S-READY > /dev/console || { echo NCS2-K8S-NOTREADY > /dev/console; tail -3 /var/log/ncs-ready.log > /dev/console; }'",
+  "sh -c 'echo NCS2-NODE-READY node=n2 > /dev/console'",
+]
