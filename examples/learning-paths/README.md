@@ -70,6 +70,12 @@ These are orthogonal to 00-INDEX's *run-cost* tags, which are carried through un
 
 [`vm-kali-amd64.toml`](../vm-kali-amd64.toml) · [`kali-nonroot-chroot`](../kali-nonroot-chroot/) · [`kali-vm-builder`](../kali-vm-builder/) · [`kali-packer-vagrant`](../kali-packer-vagrant/) · [`kali-pxe-lab`](../kali-pxe-lab/) · [`kali-preseed-gallery`](../kali-preseed-gallery/) · [`almalinux-packer-images`](../almalinux-packer-images/) · [`offsec-awae-vm`](../offsec-awae-vm/) · [`kali-llm-lab`](../kali-llm-lab/) · [`kali-llm-desktop-lab`](../kali-llm-desktop-lab/)
 
+### Break it on purpose
+
+*Labs whose point is a DELIBERATE fault: a disposable cluster you provoke to turn a belief into a measurement, and a fleet you injure at each layer to grade how gracefully it falls. Both exist because a passing suite only proves the happy path — the complementary question is what happens when it breaks, and answering that needs something you are allowed to wreck.*
+
+[`nested-calico-sandbox`](../nested-calico-sandbox/) · [`metal-as-a-service`](../metal-as-a-service/)
+
 ### libvirt-native labs
 
 *Talk to qemu:///system / libvirt directly, not through the phase tools.*

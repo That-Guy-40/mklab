@@ -4436,3 +4436,77 @@ The second defect is the more instructive: asserting a refusal's **wording** cou
 to which of several correct guards happens to fire. The outcome — `grep -c ",$NAME$"
 dhcp-hosts` is still **1** — is true whichever message the operator sees, and is what the
 guard exists to protect.
+
+---
+
+## Appendix Q — the sandbox packaged, G.9 closed on the real artifact, 2026-08-07
+
+[Appendix O](#appendix-o--the-nested-calico-experiment-run-two-derived-rules-become-measurements-2026-08-07)
+ran the experiment by hand and said plainly that the **lab unit was not built**. It is now:
+[`examples/nested-calico-sandbox/`](examples/nested-calico-sandbox/) — spec, driver, guest
+experiment, stamped findings, four tests, an 00-INDEX row and a `learning-paths` route.
+
+### Q.1 What packaging actually bought
+
+Not tidiness. **Three independent reproductions, and each one corrected something.**
+
+| | |
+|---|---|
+| the spec's own guard | `sandbox.sh`'s resize check reported `0M -> 0M` **and passed** — it was reading the qcow2 **file's** size out of a nested JSON block instead of the disk's `virtual-size`, and writing metadata makes the file marginally bigger. A guard that could not detect the failure it existed for |
+| the migration time | recorded as **180 s** from the hand-run; the first packaged reproduction converged in **15 s**, the second in **10 s**. Same image, same Calico, an order of magnitude apart |
+| an `rm -rf /tmp/.` | the live test registered `dirname` of a `mktemp` **file** for recursive deletion. `coreutils` refused it — the only reason it was harmless |
+
+The middle one is the finding. `findings.env` exists to stop a record outliving its subject,
+and its **first version contained exactly that defect**: a single number that stopped being
+true on the first re-run. It is now a **range**, and the tests *report* convergence time
+rather than asserting a bound — because three runs of identical inputs disagreed by 18×.
+
+### Q.2 G.9, closed on the real artifact
+
+[G.9](#g9-not-run--recorded-as-unknown-not-as-pass) deferred one scenario on 2026-08-02:
+*give a tap an address on purpose and watch it become a candidate* — refused then because
+re-running F.6 meant an outage on a live cluster.
+[`tests/test-fabric-tap-becomes-candidate.sh`](examples/nested-calico-sandbox/tests/test-fabric-tap-becomes-candidate.sh)
+ran it, and **on the real `fabric.sh`** rather than a stand-in:
+
+```
+  - the real fabric.sh is up inside the sandbox — first time it has run on any host but this one  ✓
+  - the fabric's tap is addressless, as its own rule requires  ✓
+  - before: guest tunnel on 'enp0s3', fabric tap present and addressless  ✓
+  - gave mc-g9 10.77.0.1/24 — deliberately violating the fabric's own addressless rule
+  - G.9 MEASURED: Calico's tunnel moved onto the fabric's own tap mc-g9 once it had an address  ✓
+  - host binding unchanged: local 192.168.1.106 dev enx00051b8eb138  ✓
+```
+
+**F.6's outage, caused on purpose, on the actual subject.** [O.3](#o3-what-this-does-and-does-not-say)
+recorded the dummy-interface result as *partly* answering G.9 precisely because a dummy in a
+guest is not a tap on `br-mc0`; that gap is now closed rather than argued away.
+
+### Q.3 The finding only a second host could produce
+
+`fabric.sh` died instantly inside the sandbox:
+
+> `FAIL: dnsmasq not installed`
+
+**It has undeclared dependencies** — `dnsmasq` and `nft` — and five days of exercising it
+never revealed them, because the one machine it had ever run on happened to have both. The
+sandbox spec installs `dnsmasq-base` (the binary without the service that would bind :53 and
+fight the fabric's own instance) and `nftables`.
+
+That is the argument for a second host, stated better than any reasoning could: a
+portability claim nobody had tested was false, and the only way to find out was to run it
+somewhere else.
+
+### Q.4 The chaos matrix's uncovered row, closed
+
+[N.8](#n8-the-break-pass-micro-clouds-first-chaos-matrix-and-a-critical-that-is-not-ours)
+named *the fabric's own teardown code beneath a live agent* as **not covered**, on the
+grounds that `set_link down` tests the property more severely but **a stronger fault does not
+prove the weaker one ran**. The matrix now has that row: a guest on a real `fabric.sh` tap,
+with vsock alongside, and `fabric.sh down` invoked underneath it. Root-gated, and a skip is
+reported as **UNCOVERED** rather than folded into the pass.
+
+Wiring it up cost one more instance of the day's recurring shape: the control row's
+*"did the guest have an address?"* check **grepped the console once** instead of waiting, and
+went red under the load of a second VM — the same eventual-state race that turned main's CI
+red twice this morning, in a test written hours after that fix. It now waits.
