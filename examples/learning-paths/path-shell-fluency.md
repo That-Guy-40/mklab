@@ -23,6 +23,7 @@
 
 - [`shell-novice-workshop`](../shell-novice-workshop/) — the Carpentries (CC-BY) full-day equivalent of steps 1–2, by different authors.
 - [`shell-intermediate-workshop`](../shell-intermediate-workshop/) — Robbins' 'Bash by example' — the Carpentries track's programming follow-on.
+- [`RPM-dependency-hell-in-the-yum-shell`](../RPM-dependency-hell-in-the-yum-shell/) — the ops-land coda, by a working sysadmin: Urdahl's 2018 'bat out of dependency hell' war story — a one-package install refused by an RPM conflict, a naive remove that would cascade through six production packages, and the day saved by *another* shell: `yum shell`, where remove+install ride ONE transaction. Bottled on Rocky 9 (where `yum` IS dnf, so his commands run verbatim) and escaped three ways.
 
 ---
 

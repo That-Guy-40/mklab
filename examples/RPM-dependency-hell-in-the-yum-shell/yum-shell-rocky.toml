@@ -1,0 +1,37 @@
+# Sigurd Urdahl's "yum shell - bat out of dependency hell" (Redpill Linpro
+# techblog, 2018) replayed on Rocky Linux 9 — where `yum` IS dnf, so his
+# commands run verbatim.
+#
+# A throwaway system container with a local repo of ten tiny metadata-only RPMs
+# that recreate his Percona conflict topology (bat-shared-56 vs
+# bat-shared-compat-57, both providing libbat.so.18, plus six innocent
+# bystanders), a sudo-capable non-root `learner`, and a ~/dependency-hell/
+# sandbox whose demo.sh enters the hell and escapes it three ways — his 2018
+# `yum shell`, `dnf swap`, and `dnf install --allowerasing` — proving each is
+# ONE transaction with zero bystanders harmed. Driven through
+# phase5-lxd/lab-lxd.sh, which speaks LXD or Incus identically.
+#
+#   # 1) launch the container
+#   phase5-lxd/lab-lxd.sh up   --config examples/RPM-dependency-hell-in-the-yum-shell/yum-shell-rocky.toml
+#
+#   # 2) provision it (build the bat-hell repo + baseline + learner + sandbox)
+#   examples/RPM-dependency-hell-in-the-yum-shell/setup-workshop.sh yum-shell-rocky/shell
+#
+#   # 3) descend — log in as the learner and follow the article
+#   phase5-lxd/lab-lxd.sh exec yum-shell-rocky/shell -- su - learner
+#
+#   # 4) tear down
+#   phase5-lxd/lab-lxd.sh down --lab yum-shell-rocky
+#
+# The by-hand walkthrough (what setup-workshop.sh automates, and why) is RUNBOOK.md.
+
+[lab]
+name        = "yum-shell-rocky"
+description = "Urdahl's 'yum shell - bat out of dependency hell' (2018) replayed and escaped three ways on Rocky Linux 9"
+tags        = ["yum-shell", "dependency-hell", "rpm", "dnf", "transactions", "redpill-linpro", "rocky", "el9"]
+
+[[instance]]
+name  = "shell"
+type  = "container"
+# Rocky Linux 9 container, from the linuxcontainers `images:` remote.
+image = "images:rockylinux/9"
