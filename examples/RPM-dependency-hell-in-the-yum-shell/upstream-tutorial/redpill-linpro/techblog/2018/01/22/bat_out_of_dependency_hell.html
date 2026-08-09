@@ -1,0 +1,450 @@
+<!doctype html>
+<!--[if lt IE 7]><html class="no-js lt-ie9 lt-ie8 lt-ie7" lang="en"> <![endif]-->
+<!--[if (IE 7)&!(IEMobile)]><html class="no-js lt-ie9 lt-ie8" lang="en"><![endif]-->
+<!--[if (IE 8)&!(IEMobile)]><html class="no-js lt-ie9" lang="en"><![endif]-->
+<!--[if gt IE 8]><!--> <html class="no-js" lang="en"><!--<![endif]-->
+<head>
+<meta charset="utf-8">
+<title>yum shell - bat out of dependency hell &#8211; /techblog</title>
+<meta name="description" content="Redpill Linpro Tech Blog">
+
+
+
+<!-- Open Graph -->
+<meta property="og:locale" content="en_US">
+<meta property="og:type" content="article">
+<meta property="og:title" content="yum shell - bat out of dependency hell">
+<meta property="og:description" content="Redpill Linpro Tech Blog">
+<meta property="og:url" content="/techblog/2018/01/22/bat_out_of_dependency_hell.html">
+<meta property="og:site_name" content="/techblog">
+
+
+
+
+
+<link rel="canonical" href="/techblog/2018/01/22/bat_out_of_dependency_hell.html">
+<link href="/techblog/feed.xml" type="application/atom+xml" rel="alternate" title="/techblog Feed">
+
+<!-- http://t.co/dKP3o1e -->
+<meta name="HandheldFriendly" content="True">
+<meta name="MobileOptimized" content="320">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<!-- For all browsers -->
+<link rel="stylesheet" href="/techblog/assets/css/main.css">
+<!-- Webfonts -->
+<link href="//fonts.googleapis.com/css?family=Lato:300,400,700,300italic,400italic" rel="stylesheet" type="text/css">
+
+
+
+<meta http-equiv="cleartype" content="on">
+
+<!-- Load Modernizr -->
+<script src="/techblog/assets/js/vendor/modernizr-2.6.2.custom.min.js"></script>
+
+<!-- Icons -->
+<link rel="shortcut icon" href="/techblog/favicon.ico">
+
+<!-- Matomo tracking -->
+<script>
+    var _paq = window._paq = window._paq || [];
+    _paq.push(['trackPageView']);
+    _paq.push(['enableLinkTracking']);
+    (function() {
+      var u="https://matomo.redpill-linpro.com/";
+      _paq.push(['setTrackerUrl', u+'matomo.php']);
+      _paq.push(['setSiteId', '1']);
+      var d=document, g=d.createElement('script'), s=d.getElementsByTagName('script')[0];
+      g.async=true; g.src=u+'matomo.js'; s.parentNode.insertBefore(g,s);
+      })();
+</script>
+
+
+
+</head>
+
+<body id="post" class="feature">
+
+<!--[if lt IE 9]><div class="upgrade"><strong><a href="http://whatbrowser.org/">Your browser is quite old!</strong> Why not upgrade to a different browser to better enjoy this site?</a></div><![endif]-->
+
+
+<div class="nav-header">
+  <nav id="dl-menu" class="dl-menuwrapper" role="navigation">
+    <button class="dl-trigger">Open Menu</button>
+    <ul class="dl-menu">
+      <li><a href="/techblog/">Home</a></li>
+      <li><a href="/techblog/about/">About</a></li>
+      <li><a href="/techblog/feed.xml">RSS Feed</a></li>
+      <li><a href="/techblog/posts/">Show all Posts</a></li>
+      <li><a href="/techblog/tags/">Show all Tags</a></li>
+    </ul>
+  </nav>
+
+  <div class="logo">
+    <a href="https://redpill-linpro.com/"><img src="/techblog/images/Redpill-Linpro-logo-red-200px.png" alt="Logo"></a>
+  </div>
+</div>
+
+
+
+<div class="entry-header">
+  
+
+
+
+
+<div class="image-credit">
+  <a target="_blank" href="https://commons.wikimedia.org/wiki/File:Meat_Loaf_Last_at_Bat_Newcastle_2013_Bat_Out_of_Hell.JPG">
+    By TubularWorld (Own work) CC BY-SA 3.0, via Wikimedia Commons
+  </a>
+  | CC BY-SA 3.0
+  
+  
+</div>
+
+
+  <div class="entry-image">
+    <img src="/techblog/images/features/Meat_Loaf_Last_at_Bat_Newcastle_2013_Bat_Out_of_Hell.JPG" alt="yum shell - bat out of dependency hell">
+  </div><!-- /.entry-image -->
+</div><!-- /.entry-header -->
+
+
+<div id="main" role="main">
+  <article class="hentry">
+    <header class="header-title">
+      <div class="header-title-wrap">
+        
+          <h1 class="entry-title"><a href="/techblog/2018/01/22/bat_out_of_dependency_hell.html" rel="bookmark" title="yum shell - bat out of dependency hell">yum shell - bat out of dependency hell</a></h1>
+        
+        <h2><span class="entry-date date published"><time datetime="2018-01-22T00:00:00+00:00">January 22, 2018</time></span></h2>
+        
+      </div><!-- /.header-title-wrap -->
+    </header>
+    <div class="entry-content">
+      <blockquote>
+  <p>There’s evil in the air and there’s thunder in sky</p>
+
+  <p>– Meatloaf “Bat out of hell”</p>
+</blockquote>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span>yum <span class="nb">install </span>foo
+<span class="o">[</span>..]
+Error: foo conflicts with bar
+</code></pre></div></div>
+
+<p>Again I have had the dubious pleasure of having dependencies between
+RPM-packages ending my attempt to install a single package because of
+a deep-rooted fear of removing core packages from production
+systems.</p>
+
+<p>I think this most often happen with MySQL or Percona packages, but I
+am sure MariaDB and a few other will be able to get you into the same
+situation too. It’s not the first time I have been here.. (If I am not
+mistaken the problem shows up when you have several major versions of
+a program available, all providing some of the same functionality to
+other packages, all being mutually exclusive.)</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span>yum <span class="nb">install </span>Percona-Server-client-57
+Loaded plugins: fastestmirror, priorities
+Loading mirror speeds from cached hostfile
+
+Resolving Dependencies
+<span class="nt">--</span><span class="o">&gt;</span> Running transaction check
+<span class="nt">---</span><span class="o">&gt;</span> Package Percona-Server-client-57.x86_64 0:5.7.20-19.1.el7 will be installed
+<span class="nt">--</span><span class="o">&gt;</span> Processing Dependency: Percona-Server-shared-57 <span class="k">for </span>package: Percona-Server-client-57-5.7.20-19.1.el7.x86_64
+<span class="nt">--</span><span class="o">&gt;</span> Running transaction check
+<span class="nt">---</span><span class="o">&gt;</span> Package Percona-Server-shared-57.x86_64 0:5.7.20-19.1.el7 will be installed
+<span class="nt">--</span><span class="o">&gt;</span> Processing Dependency: Percona-Server-shared-compat-57 <span class="k">for </span>package: Percona-Server-shared-57-5.7.20-19.1.el7.x86_64
+<span class="nt">--</span><span class="o">&gt;</span> Running transaction check
+<span class="nt">---</span><span class="o">&gt;</span> Package Percona-Server-shared-compat-57.x86_64 0:5.7.20-19.1.el7 will be installed
+<span class="nt">--</span><span class="o">&gt;</span> Processing Conflict: Percona-Server-shared-compat-57-5.7.20-19.1.el7.x86_64 conflicts Percona-Server-shared-56
+<span class="nt">--</span><span class="o">&gt;</span> Finished Dependency Resolution
+
+Error: Percona-Server-shared-compat-57 conflicts with Percona-Server-shared-56-5.6.38-rel83.0.el7.x86_64
+You could try using <span class="nt">--skip-broken</span> to work around the problem
+You could try running: rpm <span class="nt">-Va</span> <span class="nt">--nofiles</span> <span class="nt">--nodigest</span>
+</code></pre></div></div>
+
+<p>So if I want to install <code class="language-plaintext highlighter-rouge">Percona-Server-client-57</code> I have to install
+<code class="language-plaintext highlighter-rouge">Percona-Server-shared-compat-57</code> too, and that I can’t because of the
+already installed <code class="language-plaintext highlighter-rouge">Percona-Server-shared-56</code>. OK, so I will just remove
+<code class="language-plaintext highlighter-rouge">Percona-Server-shared-56</code> and then install
+<code class="language-plaintext highlighter-rouge">Percona-Server-shared-compat-57</code> before doing the install I first tried
+to do:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span>yum remove Percona-Server-shared-56
+<span class="o">[</span>..]
+Dependencies Resolved
+
+<span class="o">================================================================================================================</span>
+ Package                           Arch            Version                      Repository                 Size
+<span class="o">================================================================================================================</span>
+Removing:
+ Percona-Server-shared-56          x86_64          5.6.38-rel83.0.el7           @percona-release          3.4 M
+
+Removing <span class="k">for </span>dependencies:
+ MySQL-python                      x86_64          1.2.5-1.el7                  @centos_os                284 k
+ fail2ban                          noarch          0.9.7-1.el7                  @epel                     0.0
+ fail2ban-sendmail                 noarch          0.9.7-1.el7                  @epel                      11 k
+ perl-DBD-MySQL                    x86_64          4.023-5.el7                  @centos_os                323 k
+ postfix                           x86_64          2:2.10.1-6.el7               @centos_os                 12 M
+ redhat-lsb-core                   x86_64          4.1-27.el7.centos.1          @anaconda                  45 k
+
+Transaction Summary
+<span class="o">================================================================================================================</span>
+Remove  1 Package <span class="o">(</span>+6 Dependent packages<span class="o">)</span>
+
+Installed size: 16 M
+Is this ok <span class="o">[</span>y/N]:
+</code></pre></div></div>
+
+<p>Very much not OK. I can live with temporarily removing <code class="language-plaintext highlighter-rouge">MySQL-python</code>,
+but I’d like to at least keep things with descriptions like this</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code>Description : The Linux Standard Base <span class="o">(</span>LSB<span class="o">)</span> Core module support
+: provides the fundamental system interfaces, libraries,
+: and runtime environment upon which all conforming
+: applications and libraries depend.
+</code></pre></div></div>
+
+<p>The problem seems to be that Postfix needs <code class="language-plaintext highlighter-rouge">libmysqlclient.so.18</code>
+which is provided by both <code class="language-plaintext highlighter-rouge">Percona-Server-shared-56</code> and
+<code class="language-plaintext highlighter-rouge">Percona-Server-shared-compat-57</code>. So I just need to swap the former
+for the latter, and then I can run my original install.</p>
+
+<p>OK, so I both want to remove a package and install a package. And I
+want to do it at the same time, so that I don’t have to remove things
+like redhat-lsb-core. Did you notice the use of the word transaction
+in <em>Transaction Summary</em> from yum? A transaction is actually what I
+want. Luckily yum provides a way of doing this, and have probably done
+since forever, but I didn’t learn about it till today. And as so many
+times before, it is a shell that solves our problems:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span>yum shell
+Loaded plugins: fastestmirror, priorities
+<span class="o">&gt;</span> remove Percona-Server-shared-56
+<span class="o">&gt;</span> <span class="nb">install </span>Percona-Server-shared-compat-57
+Loading mirror speeds from cached hostfile
+<span class="o">&gt;</span> run
+<span class="nt">--</span><span class="o">&gt;</span> Running transaction check
+<span class="nt">---</span><span class="o">&gt;</span> Package Percona-Server-shared-56.x86_64 0:5.6.38-rel83.0.el7 will be erased
+<span class="nt">---</span><span class="o">&gt;</span> Package Percona-Server-shared-compat-57.x86_64 0:5.7.20-19.1.el7 will be installed
+<span class="nt">--</span><span class="o">&gt;</span> Finished Dependency Resolution
+
+<span class="o">==================================================================================================</span>
+ Package                             Arch       Version                Repository            Size
+<span class="o">==================================================================================================</span>
+
+Installing:
+ Percona-Server-shared-compat-57     x86_64     5.7.20-19.1.el7        percona-release      1.2 M
+Removing:
+ Percona-Server-shared-56            x86_64     5.6.38-rel83.0.el7     @percona-release     3.4 M
+
+Transaction Summary
+<span class="o">==================================================================================================</span>
+Install  1 Package
+Remove   1 Package
+
+Total download size: 1.2 M
+Is this ok <span class="o">[</span>y/d/N]:
+</code></pre></div></div>
+
+<p>Yes, very much thank you! And then finally:</p>
+
+<div class="language-bash highlighter-rouge"><div class="highlight"><pre class="highlight"><code><span class="nv">$ </span>yum <span class="nb">install </span>Percona-Server-client-57
+<span class="o">[</span>..]
+Dependencies Resolved
+
+<span class="o">==================================================================================================</span>
+ Package                        Arch         Version                  Repository             Size
+<span class="o">==================================================================================================</span>
+Installing:
+ Percona-Server-client-57       x86_64       5.7.20-19.1.el7          percona-release       7.2 M
+Installing <span class="k">for </span>dependencies:
+ Percona-Server-shared-57       x86_64       5.7.20-19.1.el7          percona-release       747 k
+
+Transaction Summary
+<span class="o">==================================================================================================</span>
+Install  1 Package <span class="o">(</span>+1 Dependent package<span class="o">)</span>
+
+Total download size: 7.9 M
+Installed size: 41 M
+Is this ok <span class="o">[</span>y/d/N]:y
+<span class="o">[</span>..]
+Complete!
+</code></pre></div></div>
+
+<p>Done and done :-)</p>
+
+<p><em><a href="https://grandtidbits.blogspot.no/">This post first appeared on my private blog  - the version here has some minor tweaks</a></em></p>
+
+<hr />
+
+<p>Update</p>
+
+<ul>
+  <li>2025-09-03: Format</li>
+</ul>
+
+      <footer class="entry-meta">
+        <span class="entry-tags"><a href="/techblog/tags/#yum" title="Pages tagged yum" class="tag"><span class="term">yum</span></a><a href="/techblog/tags/#sysadmin" title="Pages tagged sysadmin" class="tag"><span class="term">sysadmin</span></a></span>
+        
+        
+<div class="social-share">
+
+  <ul class="socialcount socialcount-small inline-list">
+
+  </ul>
+  <ul class="socialcount socialcount-small inline-list">
+
+
+
+  
+
+    
+    
+    <li class="twitter">
+      <a href="//twitter.com/share?text=yum+shell+-+bat+out+of+dependency+hell&url=https://redpill-linpro.com/techblog/2018/01/22/bat_out_of_dependency_hell.html&via=redpilllinpro" onclick="window.open(this.href, 'twitter-share', 'width=550,height=255');return false;" title="Share on Twitter">
+        <span class="count"><i class="fa fa-twitter-square"></i> Tweet</span></a></li>
+    
+    
+    
+
+  
+
+
+
+  
+
+    
+    <li class="facebook">
+      <a href="//www.facebook.com/sharer.php?t=yum+shell+-+bat+out+of+dependency+hell&u=https://redpill-linpro.com/techblog/2018/01/22/bat_out_of_dependency_hell.html" onclick="window.open(this.href, 'facebook-share', 'width=550,height=255');return false;" title="Share on Facebook">
+        <span class="count"><i class="fa fa-facebook-square"></i> Like</span></a></li>
+    
+    
+    
+    
+
+  
+
+
+
+  
+
+    
+    
+    
+    
+
+  
+
+
+
+  
+
+
+
+  
+
+    
+    
+    
+    
+    <li class="linkedin">
+      <a href="//www.linkedin.com/shareArticle?mini=true&url=https://redpill-linpro.com/techblog/2018/01/22/bat_out_of_dependency_hell.html" onclick="window.open(this.href, '-share', 'width=550,height=255');return false;" title="Share on LinkedIn">
+        <span class="count"><i class="fa fa-linkedin-square"></i> Share</span></a></li>
+    
+
+  
+
+
+
+  
+
+
+
+  
+
+
+
+  
+
+
+  </ul>
+</div><!-- /.social-share -->
+
+      </footer>
+    </div><!-- /.entry-content -->
+    
+
+
+  
+  
+<div class="author-box">
+  
+  <div>
+    <div class="author-image">
+      <img src="/techblog/images/authors/sigurdur.jpg">
+    </div>
+    <div class="author-text">
+      <h2 class="author-name">Sigurd Urdahl</h2>
+      <p><span class="author-title">Senior Systems Consultant at Redpill&nbsp;Linpro</span></p>
+      <p><span class="author-desc">Sigurd has been working at Redpill Linpro longer than most of us can remember. He has seen countless computer systems stumble into trouble, and this has given him ample opportunity to hone his skills on finding faults and getting things back on track.
+</span></p>
+    </div>
+  </div>
+  
+  
+</div>
+
+
+    <div class="read-more">
+  
+  
+  
+  
+
+    <div class="read-more-header">
+      <a href="/techblog/2017/12/24/ansible-system-updates.html" class="read-more-btn">More Posts</a>
+    </div><!-- /.read-more-header -->
+    <div class="read-more-content">
+      <h3><a href="/techblog/2026/06/25/el9s-grubby-sorting.html" title="EL9's grubby sorting">EL9's grubby sorting</a></h3>
+      <p><p>So I had this el9 machine that had been sitting quietly waiting for updates for a bit too long. Blinded by courage, I went in and did a</p> <p><code class="language-plaintext highlighter-rouge">dnf update</code>, rebooted, and lo and behold, it worked without a hitch afterwards. Except just one small one: It did not automatically boot the newest kernel. I tried the standard things. Look at <code class="language-plaintext highlighter-rouge">/etc/default/grub</code>, look at the output of various grubby commands. To no avail. It simply would <a href="/techblog/2026/06/25/el9s-grubby-sorting.html">... [continue reading]</a></p>
+    </div><!-- /.read-more-content -->
+  
+  <div class="read-more-list">
+    
+      <div class="list-item">
+        <h4><a href="/techblog/2026/03/20/from-luddite-to-vibe-coder.html" title="From a Luddite to a Vibe-Coder">From a Luddite to a Vibe-Coder</a></h4>
+        <span>Published on March 20, 2026</span>
+      </div><!-- /.list-item -->
+    
+      <div class="list-item">
+        <h4><a href="/techblog/2026/02/27/Ontology-Guide.html" title="Ontology: A Guide to Understanding and Structuring Data">Ontology: A Guide to Understanding and Structuring Data</a></h4>
+        <span>Published on February 27, 2026</span>
+      </div><!-- /.list-item -->
+    
+  </div><!-- /.read-more-list -->
+</div><!-- /.read-more -->
+
+  </article>
+</div><!-- /#main -->
+
+<div class="footer-wrapper">
+  <footer role="contentinfo">
+    <span><a href="https://www.redpill-linpro.com">&copy; 2026 Redpill Linpro</a></span>
+
+  </footer>
+</div><!-- /.footer-wrapper -->
+
+<script src="//ajax.googleapis.com/ajax/libs/jquery/1.9.1/jquery.min.js"></script>
+<script>window.jQuery || document.write('<script src="/techblog/assets/js/vendor/jquery-1.9.1.min.js"><\/script>')</script>
+<script src="/techblog/assets/js/scripts.min.js"></script>
+
+
+
+
+
+
+</body>
+</html>
