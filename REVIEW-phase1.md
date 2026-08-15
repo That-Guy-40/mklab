@@ -26,8 +26,16 @@ guardrails are well tested (12 pass / 10 self-skip here, 0 fail).
 The residue is **three real defects**, none an open barn door, but two of them
 reopen guarantees the repo already believes it closed:
 
-- **P1-1 (MED)** — path-mode verbs bind to the wrong chroot by basename
-  collision; `destroy` on an unrelated path silently **orphans** a managed
+> **Status 2026-08-15: all three are FIXED**, each with a regression test that runs
+> **unprivileged** — deliberately, since Phase 1's pre-existing mount test is root-gated and
+> therefore skips on every CI run, which is how this class of guard rots unwatched. Each test
+> carries a **negative control** that re-injects the original defect and watches the
+> assertion bite, and each fix was additionally verified by reverting it in the driver.
+> The `tests/` count went 10 → **12 passing** (12 skipped, 0 failed). §3's two minor items
+> are still open; the export-basename one is the same collision class as P1-1.
+
+- **P1-1 (MED)** — ✅ **FIXED 2026-08-15.** Path-mode verbs bind to the wrong chroot by
+  basename collision; `destroy` on an unrelated path silently **orphans** a managed
   chroot (tree survives, manifest deleted, invisible to `list`).
 - **P1-2 (MED, conditionally HIGH)** — ✅ **FIXED 2026-08-15.** The H1 fail-closed `rm -rf`
   mount guard is **blind to any chroot path containing a space**, reopening the exact
@@ -44,7 +52,37 @@ negative control — recorded in §4 so it is not re-raised.
 
 ## 2. Findings
 
-### P1-1 — MED — path-mode name synthesis collides with real manifests
+### P1-1 — MED — path-mode name synthesis collides with real manifests — ✅ FIXED 2026-08-15
+
+> **Fixed**, via this section's option (a). A path-mode chroot with no matching manifest now
+> gets the sentinel name `(unmanaged)` — parentheses are outside `validate_spec`'s
+> `[a-zA-Z0-9_.-]+`, so it **cannot be the key of a manifest that exists** — and
+> `read_manifest_field`/`remove_manifest` refuse that name by name.
+>
+> Guarding the two **accessors** rather than each of the ~10 call sites was deliberate: it
+> makes a call site added later safe by *default*, whereas a per-site fix silently reopens
+> the hole the first time someone forgets one. Anything that wants something to *print*
+> (the destroy prompt, `inspect`'s name row and `.name`, the default `/tmp/<x>.tar.gz` /
+> `.ext4` / `-initrd.gz` / `-vmlinuz` outputs, the `enter …` hints) calls the new
+> `chroot_label NAME TARGET`, which falls back to the target's basename — so user-visible
+> output and the `inspect --json` contract are **unchanged**.
+>
+> **Correction to this finding as written:** `verify` does *not* leak. It reads no manifest
+> fields at all — only `target`, `/etc/os-release` and `uname`. `inspect` was the only
+> leaking verb, and it is fixed.
+>
+> Regression: [`phase1-chroot/tests/test-path-mode-name-collision.sh`](phase1-chroot/tests/test-path-mode-name-collision.sh),
+> which runs **unprivileged and builds no chroot** — the defect is entirely in name
+> resolution, so the fixture is one manifest (written by the driver's own `write_manifest`,
+> not hand-rolled, so it cannot drift from the schema) plus two empty directories. It covers
+> all three symptoms, and the privilege-gate one is *sharpest* as an ordinary user, since
+> that is exactly who the flipped gate would have let through. Five sections: the leak, the
+> gate, the orphaning, a **control** that lookups by a real name still resolve (without it,
+> a guard that broke `read_manifest_field` for *every* name would pass everything above),
+> and a **negative control** that re-injects the basename synthesis and watches it orphan
+> the managed chroot. Reverting the fix in the driver was also run, and the test failed on
+> the leak assertion.
+
 
 `resolve_target_and_manager()` (line ~1273), given an absolute path with **no
 manifest whose `target` matches**, synthesizes the chroot name from the path's

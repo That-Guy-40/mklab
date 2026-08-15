@@ -245,6 +245,40 @@ manifest_path() {
     printf '%s/%s.toml' "$LAB_CHROOT_STATE_DIR" "$1"
 }
 
+# ── the name a PATH-MODE chroot with NO manifest gets (REVIEW-phase1.md, P1-1) ──────────
+#
+# It has to be non-empty: callers parse three tab-separated fields, and `IFS=$'\t' read`
+# strips a LEADING tab (tab is IFS whitespace), so an empty first field would silently shift
+# `target` into the `name` slot and break every one of them.
+#
+# It used to be the path's BASENAME — and that was the defect. A basename is exactly the
+# shape of a real manifest key, and `manifest_path` maps a bare NAME, not a path, so every
+# `read_manifest_field "$name"` / `remove_manifest "$name"` silently bound to an UNRELATED
+# managed chroot that happened to share it:
+#
+#     lab-chroot.sh destroy /somewhere/else/shared --force
+#       → tears down /somewhere/else/shared   (correct)
+#       → then deletes the managed `shared`'s manifest   (wrong)
+#       → leaving that chroot's tree on disk with no record, invisible to `list`
+#
+# It also let a colliding manifest's `rootless=true` flip destroy's `EUID==0` gate for a path
+# that is not that rootless tree, and made `inspect <unrelated-dir>` print a foreign chroot's
+# backend and lab.
+#
+# The sentinel contains parentheses, which validate_spec's name regex `[a-zA-Z0-9_.-]+`
+# forbids — so it can never be the key of a manifest that exists. Guarding the two manifest
+# accessors below (rather than each of the ~10 call sites) is deliberate: it makes a call
+# site added later safe by DEFAULT, where a per-site fix would silently reopen this the first
+# time someone forgot one.
+UNMANAGED_NAME='(unmanaged)'
+
+# chroot_label NAME TARGET — a human label for messages and default output filenames.
+# NEVER a manifest key. Falls back to the target's basename, which is exactly what the
+# unmanaged path displayed before the sentinel existed, so user-visible output is unchanged.
+chroot_label() {
+    if [[ "$1" == "$UNMANAGED_NAME" ]]; then printf '%s' "${2##*/}"; else printf '%s' "$1"; fi
+}
+
 write_manifest() {
     # write_manifest NAME TARGET BACKEND DISTRO SUITE ARCH MANAGER [LAB]
     # LAB is the optional cross-phase grouping name (from TOML [lab].name
@@ -292,10 +326,17 @@ read_manifest_field_at() {
 
 read_manifest_field() {
     # read_manifest_field NAME FIELD
+    # A path-mode chroot with no manifest HAS no fields. Answering from a manifest that
+    # merely shares its basename is P1-1 — see UNMANAGED_NAME above.
+    if [[ "$1" == "$UNMANAGED_NAME" ]]; then return 1; fi
     read_manifest_field_at "$(manifest_path "$1")" "$2"
 }
 
 remove_manifest() {
+    # There is no manifest to remove for an unmanaged path — and removing the one that
+    # happens to share its basename is exactly how `destroy <unrelated-path>` used to orphan
+    # a managed chroot (P1-1). Refusing by name, not by luck.
+    if [[ "$1" == "$UNMANAGED_NAME" ]]; then return 0; fi
     rm -f "$(manifest_path "$1")"
 }
 
@@ -1317,13 +1358,12 @@ resolve_target_and_manager() {
                 return 0
             fi
         done
-        # No manifest — assume bare chroot, manager=none.  Synthesize a
-        # name from the target's basename so callers always have a
-        # non-empty leading field; if we left it empty, `IFS=$'\t' read`
-        # would silently strip the leading tab (tab is whitespace) and
-        # shift target into the name slot, breaking all callers.
+        # No manifest — assume bare chroot, manager=none.  The leading field must be
+        # non-empty (see UNMANAGED_NAME for why), but it must NOT be the basename: that
+        # made it collide with real manifest keys (P1-1).  Callers that want something to
+        # PRINT use `chroot_label "$name" "$target"`.
         [[ -d "$arg" ]] || die "no such chroot path: $arg"
-        printf '%s\t%s\t%s\n' "${arg##*/}" "$arg" "none"
+        printf '%s\t%s\t%s\n' "$UNMANAGED_NAME" "$arg" "none"
     else
         local target manager
         target="$(read_manifest_field "$arg" target)" \
@@ -1369,7 +1409,7 @@ cmd_destroy() {
 
     if [[ -z "${OPT_FORCE:-}" ]]; then
         printf 'About to destroy:\n  name:    %s\n  target:  %s\n  manager: %s\nProceed? [y/N] ' \
-            "${name:-<unmanaged>}" "$target" "$manager" >&2
+            "$(chroot_label "$name" "$target")" "$target" "$manager" >&2
         read -r ans </dev/tty || true
         case "$ans" in y|Y|yes|YES) ;; *) die "aborted" ;; esac
     fi
@@ -1381,7 +1421,7 @@ cmd_destroy() {
         *) die "unknown manager: $manager" ;;
     esac
     [[ -n "$name" ]] && remove_manifest "$name"
-    log_info "destroyed: ${name:-$target}"
+    log_info "destroyed: $(chroot_label "$name" "$target")"
 }
 
 # ─── Subcommand: list ───────────────────────────────────────────────────────
@@ -1741,16 +1781,16 @@ cmd_export_initrd() {
     IFS=$'\t' read -r name target manager < <(resolve_target_and_manager "$arg")
     [[ -d "$target" ]] || die "target is not a directory: $target"
 
-    local out="${OPT_OUTPUT:-/tmp/${name:-chroot}-initrd.gz}"
-    local kernel_out="${OPT_KERNEL_OUT:-/tmp/${name:-chroot}-vmlinuz}"
+    local out="${OPT_OUTPUT:-/tmp/$(chroot_label "$name" "$target")-initrd.gz}"
+    local kernel_out="${OPT_KERNEL_OUT:-/tmp/$(chroot_label "$name" "$target")-vmlinuz}"
 
     # Find the kernel binary in the chroot's /boot/
     local kernel_src
     kernel_src="$(find "$target/boot" -maxdepth 1 -name 'vmlinuz-*' \
         -not -name '*.old' -not -name '*.bak' 2>/dev/null | sort -V | tail -1)"
     [[ -n "$kernel_src" ]] || die "no /boot/vmlinuz-* found in $target — install a kernel first:
-  sudo lab-chroot.sh enter $name -- apt-get install -y linux-image-amd64   # Debian
-  sudo lab-chroot.sh enter $name -- dnf install -y kernel                  # Rocky/Fedora"
+  sudo lab-chroot.sh enter $(chroot_label "$name" "$target") -- apt-get install -y linux-image-amd64   # Debian
+  sudo lab-chroot.sh enter $(chroot_label "$name" "$target") -- dnf install -y kernel                  # Rocky/Fedora"
 
     # Ensure /init exists, writing a default if needed
     if [[ -f "$target/init" ]]; then
@@ -1828,7 +1868,7 @@ cmd_export_tarball() {
     IFS=$'\t' read -r name target manager < <(resolve_target_and_manager "$arg")
     [[ -d "$target" ]] || die "target is not a directory: $target"
 
-    local out="${OPT_OUTPUT:-/tmp/${name:-chroot}.tar.gz}"
+    local out="${OPT_OUTPUT:-/tmp/$(chroot_label "$name" "$target").tar.gz}"
     # If the user didn't pass --output but the target is interesting,
     # suggest the name we chose.
     log_info "exporting $target → $out"
@@ -1947,7 +1987,7 @@ cmd_export_rootfs() {
   export-rootfs needs e2fsprogs >= 1.43; without -d the only alternative is a loop mount,
   which needs CAP_SYS_ADMIN and is exactly what this verb exists to avoid."
 
-    local out="${OPT_OUTPUT:-/tmp/${name:-chroot}.ext4}"
+    local out="${OPT_OUTPUT:-/tmp/$(chroot_label "$name" "$target").ext4}"
     local label="${OPT_LABEL:-rootfs}"
     [[ ${#label} -le 16 ]] || die "--label '$label' is ${#label} chars; ext4 labels are limited to 16"
     if [[ -e "$out" && -z "${OPT_FORCE:-}" ]]; then
@@ -2262,7 +2302,7 @@ cmd_inspect() {
     if [[ -n "${OPT_JSON:-}" ]]; then
         require_cmd jq
         jq -n \
-            --arg name        "$name" \
+            --arg name        "$(chroot_label "$name" "$target")" \
             --arg target      "$target" \
             --arg backend     "$m_backend" \
             --arg distro      "$m_distro" \
@@ -2329,7 +2369,7 @@ cmd_inspect() {
 
     # Human-readable rendering — same data, indented two-section layout.
     printf '[manifest]\n'
-    printf '  name        %s\n' "${name:-(no manifest)}"
+    printf '  name        %s\n' "$(chroot_label "$name" "$target")"
     printf '  target      %s\n' "$target"
     [[ -n "$m_backend" ]]  && printf '  backend     %s\n' "$m_backend"
     [[ -n "$m_distro" ]]   && printf '  distro      %s\n' "$m_distro"
