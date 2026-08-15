@@ -13,8 +13,28 @@
 #
 # shellcheck disable=SC1090
 . "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
-require_root                      # bind mount needs CAP_SYS_ADMIN
-require_cmd mountpoint realpath
+require_cmd mountpoint realpath unshare
+
+# ── THIS USED TO BE `require_root`, AND THAT MADE IT A TEST NOBODY RAN ───────────────────
+# A bind mount needs CAP_SYS_ADMIN — but only in the namespace doing the mounting, so the
+# test re-execs itself inside `unshare -rm` and runs on an ordinary CI machine. Before this
+# (2026-08-15) it SKIPped on every unprivileged run, which means the H1 guard it exists to
+# protect went unwatched: exactly the shape of "an assertion never observed failing is not
+# known to work". Its sibling test-mount-guard-escaped-paths.sh was written this way from
+# the start; this brings the older one up to it.
+#
+# The mount namespace also means the binds below vanish with the process, so a crashed run
+# cannot leave a live bind pointing into this test's scratch tree.
+if [[ -z "${P1_MOUNT_GUARD_NS:-}" ]]; then
+    if unshare -rm true 2>/dev/null; then
+        export P1_MOUNT_GUARD_NS=1
+        exec unshare -rm bash "$(realpath "${BASH_SOURCE[0]}")"
+    elif [[ ${EUID:-$(id -u)} -eq 0 ]]; then
+        export P1_MOUNT_GUARD_NS=1      # already root: mount directly
+    else
+        skip "needs unprivileged user namespaces (unshare -rm) or root to create a bind mount"
+    fi
+fi
 
 work="$(mktemp -d)"
 # Unmount any stragglers before removing the workdir. lib.sh's net prints the FAIL
@@ -44,7 +64,24 @@ rm -f "$target/.lab-chroot-mounts"
 export LAB_STATE_DIR="$work/state" LAB_CACHE_DIR="$work/cache"
 source "$LAB_CHROOT"
 
-manager_none_destroy "$target"
+# IN A SUBSHELL, AND THE FAILURE IS NAMED. `manager_none_destroy` reaches `_safe_rm_rf`,
+# which refuses via `die` (= exit) — called bare, that exit blows straight past every
+# assertion below and the run ends on a bare rc with no verdict. Measured 2026-08-15 by
+# re-injecting the H1 defect: the test died at exactly this line and printed only the
+# harness net's generic "test exited early (rc=1)". A net firing is not a diagnosis.
+#
+# The two ways this can go wrong say different things, so they get different messages:
+#   refused   → _force_unmount_tree left the bind live and _safe_rm_rf's assertion (the
+#               SECOND guard) caught it. Defense in depth held, but the first guard is broken.
+#   succeeded → the tree was removed; whether that recursed through the bind is what the
+#               sentinel assertion below decides.
+d_out="$( ( manager_none_destroy "$target" ) 2>&1 )" && d_rc=0 || d_rc=$?
+if (( d_rc != 0 )); then
+    if grep -q 'refusing rm -rf' <<<"$d_out"; then
+        fail "REGRESSION: _force_unmount_tree did not unmount the live bind — destroy was stopped only by _safe_rm_rf's fail-closed assertion (the second guard). The tracking file was deliberately removed, so this is the H1 case: /proc/mounts ground truth is not being consulted. Got: $(tr '\n' ' ' <<<"$d_out")"
+    fi
+    fail "destroy failed for an unexpected reason (rc=$d_rc): $(tr '\n' ' ' <<<"$d_out")"
+fi
 
 # Assertions: the tree is gone, the mount is gone, and — the crux — the bind
 # source and its sentinel are untouched (rm did NOT recurse through the bind).
