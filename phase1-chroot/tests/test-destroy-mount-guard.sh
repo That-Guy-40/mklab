@@ -17,7 +17,7 @@ require_cmd mountpoint realpath unshare
 
 # ── THIS USED TO BE `require_root`, AND THAT MADE IT A TEST NOBODY RAN ───────────────────
 # A bind mount needs CAP_SYS_ADMIN — but only in the namespace doing the mounting, so the
-# test re-execs itself inside `unshare -rm` and runs on an ordinary CI machine. Before this
+# test re-execs itself inside `unshare -rm` instead of being root-gated. Before this
 # (2026-08-15) it SKIPped on every unprivileged run, which means the H1 guard it exists to
 # protect went unwatched: exactly the shape of "an assertion never observed failing is not
 # known to work". Its sibling test-mount-guard-escaped-paths.sh was written this way from

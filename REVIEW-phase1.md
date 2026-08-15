@@ -27,8 +27,8 @@ The residue is **three real defects**, none an open barn door, but two of them
 reopen guarantees the repo already believes it closed:
 
 > **Status 2026-08-15: all three are FIXED**, each with a regression test that runs
-> **unprivileged** — deliberately, since Phase 1's pre-existing mount test is root-gated and
-> therefore skips on every CI run, which is how this class of guard rots unwatched. Each test
+> **unprivileged** — deliberately, since Phase 1's pre-existing mount test was root-gated and
+> therefore skipped on every CI run, which is how this class of guard rots unwatched. Each test
 > carries a **negative control** that re-injects the original defect and watches the
 > assertion bite, and each fix was additionally verified by reverting it in the driver.
 > **§3's two minor items are now fixed too** (see §3), along with a root-gated test that had
@@ -144,7 +144,10 @@ not "look one up by basename."
 > Regression: [`phase1-chroot/tests/test-mount-guard-escaped-paths.sh`](phase1-chroot/tests/test-mount-guard-escaped-paths.sh).
 > It runs **unprivileged** — it re-execs itself inside `unshare -rm`, so a bind mount needs
 > CAP_SYS_ADMIN only in its own namespace. That was deliberate: Phase 1's other mount test is
-> root-gated and therefore skips on every CI run, which is how a guard rots unwatched.
+> root-gated and therefore skipped on every CI run, which is how a guard rots unwatched.
+> **Unprivileged is not automatically CI-wide**, though: Ubuntu 24.04 sets
+> `kernel.apparmor_restrict_unprivileged_userns=1`, so on a stock runner this skipped too
+> (measured on PR #199) — CI now relaxes that sysctl and warns in the log if it cannot.
 > Three assertions, two of them controls: the positive (guard sees the mount, `_safe_rm_rf`
 > refuses, bind source intact); a **space-free tree with no mounts is still removed**, so the
 > positive cannot be passing because the guard began refusing everything; and a **negative
@@ -303,8 +306,8 @@ trap to watch the check bite.
 [`tests/test-destroy-mount-guard.sh`](phase1-chroot/tests/test-destroy-mount-guard.sh) — the
 H1 regression test — opened with `require_root`, so on any unprivileged run it **SKIPped**,
 and the guard it exists to protect went unwatched. A bind mount needs `CAP_SYS_ADMIN` only in
-the namespace doing the mounting, so it now re-execs itself into `unshare -rm` and runs
-everywhere (same shape as the two tests written for P1-2 and P1-1).
+the namespace doing the mounting, so it now re-execs itself into `unshare -rm` (same shape as
+the two tests written for P1-2 and P1-1) and CI enables the sysctl that permits it.
 
 Un-gating it immediately paid for itself. Re-injecting the H1 defect showed the test **dying
 with no verdict** — `manager_none_destroy` was called bare, so `_safe_rm_rf`'s `die` blew past

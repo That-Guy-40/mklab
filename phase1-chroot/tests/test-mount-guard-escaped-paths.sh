@@ -16,8 +16,15 @@
 #
 # WHY THIS RUNS WITHOUT ROOT. A bind mount needs CAP_SYS_ADMIN — but only in the namespace
 # doing the mounting, so the whole test re-execs itself inside `unshare -rm`. That matters:
-# phase 1's other mount test is root-gated and therefore SKIPS on every CI run, which is how
-# a guard rots unwatched. This one runs everywhere the kernel allows user namespaces.
+# phase 1's other mount test was root-gated and therefore SKIPPED on every CI run, which is
+# how a guard rots unwatched. This one needs only a user namespace.
+#
+# ⚠️ THAT IS NOT AUTOMATICALLY BROADER. Ubuntu 24.04 ships
+# kernel.apparmor_restrict_unprivileged_userns=1, which denies unprivileged userns to
+# unconfined binaries — so on a stock GitHub runner this SKIPped too (measured on PR #199),
+# swapping one unwatched guard for another. CI now relaxes that sysctl explicitly and logs
+# a ::warning:: if it could not, so a future runner-image change is visible rather than
+# quietly turning this back into a skip.
 #
 # THREE ASSERTIONS, AND TWO OF THEM ARE CONTROLS:
 #   1. positive — with the shipped guard, `_safe_rm_rf` REFUSES the space-bearing tree and
