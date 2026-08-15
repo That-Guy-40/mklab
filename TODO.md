@@ -73,17 +73,25 @@ which can be picked up tonight and which cannot be picked up at all here.
 
 ### Not blocked — buildable now
 
-- [ ] **A.1 — the cross-node CHAOS ROWS** for
-      [`examples/nested-calico-sandbox/`](examples/nested-calico-sandbox/README.md). The
-      capability landed 2026-08-08: two VMs on a private QEMU socket wire, a real two-node
-      Calico, and `3/3 packets` between pods on different kernels
-      (recorded in that lab's `findings-two-node.env`, which lands with PR #186). The
-      *faults* that need it are not written — deleting the tunnel under a live peer, and
-      **F.6 with a witness** (move a node's chosen address while another node is routing to
-      it). The one-node matrix's `vxlan-deleted` row is graded on rebuild alone precisely
-      because it could not ask this. Both rows are named individually, with why each needs a
-      peer, in the lab's own deferred-work section:
-      [`examples/nested-calico-sandbox/README.md`](examples/nested-calico-sandbox/README.md#what-it-does-not-yet-do--the-deferred-work).
+- [x] **A.1** ✅ **DONE 2026-08-15** — the cross-node CHAOS ROWS for
+      [`examples/nested-calico-sandbox/`](examples/nested-calico-sandbox/README.md#the-cross-node-rows--f6-with-a-witness):
+      `cross-node-chaos.sh` + `guest-xprobe.sh`, graded by `tests/test-cross-node-chaos.sh`,
+      with `tests/test-cross-node-grader.sh` making all 18 of its branches bite against a real
+      record in ~2 s with no cluster. Both rows measured **DEGRADED**, and the witness saw
+      three things one node could not: the overlay **falls through to the default route** when
+      its device is deleted; the F.6 row's outage (**17–55 s** across seven runs — Calico
+      re-detects on a timer, so the duration is a spread and is recorded as one) was spent
+      **essentially entirely with the cluster reporting both nodes `Ready`**; and the cluster
+      keeps **two** records of a node's address, of which only Calico's tracked — kubelet's
+      `InternalIP`, the one `kubectl get nodes -o wide` prints, kept naming an address that no
+      longer existed.
+      The rung is decided by **packets lost** rather than by a post-injection sample: that
+      sample races the CNI's recovery (a 1 s rebuild against a 3–4 s probe) and losing the race
+      would have scored ABSORBED. The 1-per-second witness caught an outage the sampler missed
+      entirely — `LIEWINDOW=0` beside `LOSS=4/90` in one run.
+      The row had to be designed twice: **`cidr=` does not prefer a higher ifindex the way
+      `first-found` does**, so the decoy injector that works in the one-node matrix never
+      lands here (205 s, and a full `calico-node` restart, with the decoy ignored).
 - [ ] **A.2 — the k8s-dqlite row**, the datastore beneath Calico. See the decision recorded
       with it: it is buildable only if the dataplane observable stops being `kubectl exec`.
 

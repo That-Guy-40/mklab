@@ -111,6 +111,14 @@ leader)
     # nodes are told, because first-found would pick the slirp NIC whose address both guests
     # share. Recorded as a deliberate divergence, not smuggled in: the two-node findings are
     # about cross-node behaviour, never about autodetection.
+    #
+    # ⚠️ `cidr=` DOES NOT ORDER ITS CANDIDATES THE WAY `first-found` DOES, and the cross-node
+    # chaos row was designed twice because of it. Measured 2026-08-15 on this pair: with a
+    # /16 handed in and a dummy interface holding 10.77.99.1 — a higher ifindex, a matching
+    # address, the same shape of decoy `first-found` took in 20 s in the one-node lab —
+    # Calico kept the wire address for 205 s, and kept it through a full calico-node restart
+    # as well. Extrapolating one method's ordering to the other would have produced a row
+    # whose injector never lands.
     $K set env daemonset/calico-node -n kube-system "IP_AUTODETECTION_METHOD=cidr=$CIDR" >/dev/null 2>&1 \
         || { say "FATAL could not set IP_AUTODETECTION_METHOD"; exit 2; }
     say "CALICO-AUTODETECT cidr=$CIDR"
