@@ -491,6 +491,55 @@ specs_from_config() {
 }
 
 spec_get() { jq -r --arg k "$2" '.[$k] // ""' <<<"$1"; }
+
+# refuse_existing_output PATH WHAT — refuse to clobber an export output (REVIEW-phase1.md §3).
+#
+# The default output names are keyed on the chroot's BASENAME (/tmp/<label>.tar.gz), so two
+# chroots that share one silently overwrote each other's artifacts. `export-rootfs` already
+# refused; `export-tarball` and `export-initrd` did not, which made the fleet inconsistent
+# and the quiet one the dangerous one.
+#
+# ⚠️ AND `-e` ALONE IS NOT THE TEST. `-e` FOLLOWS the symlink, so a DANGLING symlink at the
+# output path reads as "does not exist", the guard stays quiet, and the write lands on the
+# symlink's target instead. `/tmp/<basename>.ext4` is a predictable name in a world-writable
+# directory and `export-rootfs` runs as ROOT, so that is an arbitrary-file-write primitive,
+# not just a clobber. `-L` catches it whether or not the link resolves.
+refuse_existing_output() {
+    local path="$1" what="${2:-output}"
+    if [[ -L "$path" ]]; then
+        die "$path is a symlink — refusing to write $what through it (a dangling symlink in a world-writable directory redirects this write, and \`-e\` alone cannot see one). Pick another --output."
+    fi
+    if [[ -e "$path" && -z "${OPT_FORCE:-}" ]]; then
+        die "$path already exists — refusing to overwrite $what. Use --force, or pick another --output."
+    fi
+}
+
+# spec_absolutize_target SPEC — SPEC with `.target` resolved to an absolute path.
+#
+# WHY THIS EXISTS (REVIEW-phase1.md §3). The rest of the driver ASSUMES target is absolute:
+# `_safe_rm_rf` refuses a non-absolute path outright, the manifest records it for later
+# path-mode lookups, and `apply_write_files` jails each entry with
+#
+#     dest="$(realpath -m "$target/$path")"; [[ "$dest" == "$target/"* ]]
+#
+# — an ABSOLUTE `realpath` result compared against a RELATIVE prefix, which can never match.
+# So a perfectly legal `target = "rel/tree"` refused every write_files entry with
+# "escapes chroot root", i.e. a jail check firing on the thing it exists to permit. It failed
+# closed, so it was a rejected valid config rather than a hole — but the assumption was
+# undocumented and unenforced, which is how it survived.
+#
+# Normalized ONCE, at the single chokepoint every spec passes through (create_one, right
+# after validate_spec), rather than at the seven `spec_get "$spec" target` call sites. Same
+# reasoning as UNMANAGED_NAME: fixing the accessor makes a call site added later correct by
+# default, where fixing seven call sites silently reopens the hole the first time one is
+# missed.
+spec_absolutize_target() {
+    local spec="$1" t abs
+    t="$(spec_get "$spec" target)"
+    [[ -n "$t" ]] || { printf '%s' "$spec"; return 0; }
+    abs="$(realpath -m -- "$t" 2>/dev/null)" || abs="$t"
+    jq -c --arg t "$abs" '.target = $t' <<<"$spec"
+}
 spec_get_arr() { jq -r --arg k "$2" '.[$k][]?' <<<"$1"; }
 spec_get_obj() { jq -c --arg k "$2" '.[$k] // {}' <<<"$1"; }
 
@@ -1251,6 +1300,9 @@ manager_nspawn_destroy() {
 create_one() {
     local spec="$1"
     validate_spec "$spec"
+    # Every consumer below — the manifest, _safe_rm_rf, apply_write_files' jail check —
+    # assumes an absolute target. Make that true once, here, instead of assuming it.
+    spec="$(spec_absolutize_target "$spec")"
 
     local name backend target manager
     name="$(spec_get "$spec" name)"
@@ -1783,6 +1835,10 @@ cmd_export_initrd() {
 
     local out="${OPT_OUTPUT:-/tmp/$(chroot_label "$name" "$target")-initrd.gz}"
     local kernel_out="${OPT_KERNEL_OUT:-/tmp/$(chroot_label "$name" "$target")-vmlinuz}"
+    # Both outputs, refused BEFORE the build — a gate that fires after the work is a
+    # post-mortem, and this verb writes two files, either of which may be the collision.
+    refuse_existing_output "$out"        "the initrd"
+    refuse_existing_output "$kernel_out" "the extracted kernel"
 
     # Find the kernel binary in the chroot's /boot/
     local kernel_src
@@ -1869,6 +1925,7 @@ cmd_export_tarball() {
     [[ -d "$target" ]] || die "target is not a directory: $target"
 
     local out="${OPT_OUTPUT:-/tmp/$(chroot_label "$name" "$target").tar.gz}"
+    refuse_existing_output "$out" "the tarball"
     # If the user didn't pass --output but the target is interesting,
     # suggest the name we chose.
     log_info "exporting $target → $out"
@@ -1990,9 +2047,7 @@ cmd_export_rootfs() {
     local out="${OPT_OUTPUT:-/tmp/$(chroot_label "$name" "$target").ext4}"
     local label="${OPT_LABEL:-rootfs}"
     [[ ${#label} -le 16 ]] || die "--label '$label' is ${#label} chars; ext4 labels are limited to 16"
-    if [[ -e "$out" && -z "${OPT_FORCE:-}" ]]; then
-        die "$out already exists — refusing to overwrite an image something may be booting. Use --force, or pick another --output."
-    fi
+    refuse_existing_output "$out" "an image something may be booting"
     local outdir; outdir="$(dirname "$out")"
     [[ -d "$outdir" ]] || die "output directory does not exist: $outdir"
 

@@ -137,6 +137,30 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y jq
           pip install yq            # provides tomlq (needs jq)
+      - name: Allow unprivileged user namespaces (so the mount tests RUN, not SKIP)
+        # Two phase-1 tests create a bind mount to exercise the H1 rm -rf guard. A bind
+        # needs CAP_SYS_ADMIN only in the namespace doing the mounting, so they re-exec
+        # into `unshare -rm` rather than being root-gated — a root-gated test SKIPs on
+        # every CI run, which is how the guard it protects goes unwatched.
+        #
+        # But Ubuntu 24.04 ships kernel.apparmor_restrict_unprivileged_userns=1, which
+        # denies unprivileged userns to unconfined binaries — so on the runner they
+        # SKIPped anyway, silently swapping one unwatched guard for another. Measured on
+        # PR #199: both printed "needs unprivileged user namespaces (unshare -rm) or root"
+        # while passing locally.
+        #
+        # `|| true`: the knob is Ubuntu/AppArmor-specific and absent elsewhere; if it
+        # cannot be relaxed the tests still self-skip with a named reason rather than
+        # failing the job. The verify line below prints which way it went, so a future
+        # runner-image change that re-blocks this is visible in the log instead of
+        # quietly turning two tests back into skips.
+        run: |
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 2>/dev/null || true
+          if unshare -rm true 2>/dev/null; then
+            echo "unprivileged user namespaces: AVAILABLE — the mount-guard tests will run"
+          else
+            echo "::warning::unprivileged user namespaces unavailable — phase-1 mount-guard tests will SKIP, so the H1 rm -rf guard is NOT exercised by this run"
+          fi
       - name: Run every phase's run-all.sh
         # Tests needing docker/podman/incus/root exit 77 (skip); run-all.sh only
         # fails the job on a real FAIL, so the pure-logic tests are the gate here.

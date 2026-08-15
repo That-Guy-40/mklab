@@ -27,12 +27,16 @@ The residue is **three real defects**, none an open barn door, but two of them
 reopen guarantees the repo already believes it closed:
 
 > **Status 2026-08-15: all three are FIXED**, each with a regression test that runs
-> **unprivileged** — deliberately, since Phase 1's pre-existing mount test is root-gated and
-> therefore skips on every CI run, which is how this class of guard rots unwatched. Each test
+> **unprivileged** — deliberately, since Phase 1's pre-existing mount test was root-gated and
+> therefore skipped on every CI run, which is how this class of guard rots unwatched. Each test
 > carries a **negative control** that re-injects the original defect and watches the
 > assertion bite, and each fix was additionally verified by reverting it in the driver.
-> The `tests/` count went 10 → **12 passing** (12 skipped, 0 failed). §3's two minor items
-> are still open; the export-basename one is the same collision class as P1-1.
+> **§3's two minor items are now fixed too** (see §3), along with a root-gated test that had
+> been skipping on every CI run (§3b) — and un-gating it found a further defect in the test
+> itself. The `tests/` count went 10 passed / 12 skipped → **15 passed / 11 skipped, 0 failed**.
+> Fixing §3's export item also turned up something the review had filed as "mild": the
+> existing `-e` guard is defeated by a **dangling symlink**, in a root-run verb writing to a
+> predictable name in a world-writable directory.
 
 - **P1-1 (MED)** — ✅ **FIXED 2026-08-15.** Path-mode verbs bind to the wrong chroot by
   basename collision; `destroy` on an unrelated path silently **orphans** a managed
@@ -140,7 +144,10 @@ not "look one up by basename."
 > Regression: [`phase1-chroot/tests/test-mount-guard-escaped-paths.sh`](phase1-chroot/tests/test-mount-guard-escaped-paths.sh).
 > It runs **unprivileged** — it re-execs itself inside `unshare -rm`, so a bind mount needs
 > CAP_SYS_ADMIN only in its own namespace. That was deliberate: Phase 1's other mount test is
-> root-gated and therefore skips on every CI run, which is how a guard rots unwatched.
+> root-gated and therefore skipped on every CI run, which is how a guard rots unwatched.
+> **Unprivileged is not automatically CI-wide**, though: Ubuntu 24.04 sets
+> `kernel.apparmor_restrict_unprivileged_userns=1`, so on a stock runner this skipped too
+> (measured on PR #199) — CI now relaxes that sysctl and warns in the log if it cannot.
 > Three assertions, two of them controls: the positive (guard sees the mount, `_safe_rm_rf`
 > refuses, bind source intact); a **space-free tree with no mounts is still removed**, so the
 > positive cannot be passing because the guard began refusing everything; and a **negative
@@ -247,7 +254,7 @@ trap to watch the check bite.
 
 ---
 
-## 3. Minor / robustness (not security)
+## 3. Minor / robustness (not security) — ✅ BOTH FIXED 2026-08-15
 
 - **Relative `--target` breaks every `write_files` entry.** The jail check
   compares an absolute `realpath -m` result against a *relative* `$target/`
@@ -256,12 +263,62 @@ trap to watch the check bite.
   Fail-closed, so not a hole — but it rejects a valid config. Normalize `target`
   to absolute once, early (it is already assumed absolute by `_safe_rm_rf` and
   the manifest). 
+
+  > **Fixed** by `spec_absolutize_target`, applied once in `create_one` right after
+  > `validate_spec` — one chokepoint rather than the **seven** `spec_get "$spec" target`
+  > call sites, for the same reason as P1-1's accessor guard: a call site added later is
+  > then correct by default. Regression:
+  > [`tests/test-relative-target.sh`](phase1-chroot/tests/test-relative-target.sh), which
+  > runs unprivileged. Its most important section is not the fix but the **security
+  > control**: normalizing the target changes what a traversal jail compares against, so it
+  > re-runs `path = "/../escapee.txt"` against *both* relative and absolute targets, asserts
+  > both are refused, and greps the whole scratch tree to confirm nothing escaped. A "fix"
+  > that let traversal out would have been far worse than the bug.
+
 - **Default export outputs collide on basename.** `export-tarball` /
   `export-initrd` default to `/tmp/<name>-…` keyed on basename and overwrite
   without `--force` (only `export-rootfs` refuses an existing file). Two chroots
   sharing a basename silently clobber each other's artifacts, and a predictable
   `/tmp` name is a mild clobber/symlink vector. Consider `mktemp`-style suffixes
   or the `--force` gate `export-rootfs` already has.
+
+  > **Fixed** with the `--force` gate, hoisted into one shared `refuse_existing_output`
+  > called by all **four** output paths (tarball, initrd, extracted kernel, rootfs), before
+  > any work is done rather than after.
+  >
+  > **And the symlink half turned out to be more than "mild".** The pre-existing
+  > `export-rootfs` guard tested `[[ -e "$out" ]]` — and **`-e` follows the symlink**, so a
+  > *dangling* symlink at the output path reads as "does not exist", the guard stays quiet,
+  > and the write lands on the link's target. `/tmp/<basename>.ext4` is a predictable name
+  > in a world-writable directory and **`export-rootfs` runs as root**, which makes that an
+  > arbitrary-file-write primitive, not a clobber. The shared guard tests `-L` first, and
+  > **`--force` does not override it** — `--force` means "I accept losing the file at this
+  > path", not "follow a link somewhere else".
+  >
+  > Regression: [`tests/test-export-output-guards.sh`](phase1-chroot/tests/test-export-output-guards.sh),
+  > unprivileged. Both defects were re-injected and watched to bite (removing the tarball
+  > guard → the clobber assertion fired; restoring the `-e`-only check → the dangling-symlink
+  > assertion fired). §4 asserts all four paths call the *one* guard, so the evidence carries
+  > to root-only `export-rootfs`, which the test cannot execute.
+
+## 3b. Also fixed in the same pass — a test that skipped on every CI run
+
+[`tests/test-destroy-mount-guard.sh`](phase1-chroot/tests/test-destroy-mount-guard.sh) — the
+H1 regression test — opened with `require_root`, so on any unprivileged run it **SKIPped**,
+and the guard it exists to protect went unwatched. A bind mount needs `CAP_SYS_ADMIN` only in
+the namespace doing the mounting, so it now re-execs itself into `unshare -rm` (same shape as
+the two tests written for P1-2 and P1-1) and CI enables the sysctl that permits it.
+
+Un-gating it immediately paid for itself. Re-injecting the H1 defect showed the test **dying
+with no verdict** — `manager_none_destroy` was called bare, so `_safe_rm_rf`'s `die` blew past
+every assertion and the run ended on the harness net's generic *"test exited early (rc=1)"*.
+A net firing is not a diagnosis. The call is now subshelled and the two failure modes are
+told apart by name: *"the first guard is broken and only `_safe_rm_rf`'s fail-closed
+assertion stopped it"* versus *"the rm recursed through the bind"*. Verified: zero generic
+net-only failures, one specific `REGRESSION:` line.
+
+**Phase 1 tests: 15 passed, 11 skipped, 0 failed** — from 10 passed / 12 skipped when this
+review was written.
 
 ## 4. Investigated and cleared (so it is not re-raised)
 
