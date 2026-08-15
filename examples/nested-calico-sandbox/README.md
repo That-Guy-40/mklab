@@ -91,26 +91,27 @@ examples/nested-calico-sandbox/sandbox.sh down
 when no sandbox is up — an unmet precondition is an UNKNOWN, never a pass.
 
 > ⚠️ **This suite is a LOCAL gate, not a continuous one, and a green CI does not cover it.**
-> Three of its six tests need a VM that takes ~15 minutes to build and ~45 minutes to
+> The tests that measure a live Calico need a VM that takes ~15 minutes to build and ~45 to
 > exercise, so CI sees them SKIP. That is the correct result — an unmet precondition is an
 > unknown — but it means the selection rules, G.9 and the CNI matrix are only measured when
 > a human runs them here. Stated plainly so a green badge is not read as coverage it does
-> not have.
+> not have. (`run-all.sh` prints a `ran/listed` **ratio** and fails when a listed test never
+> runs, so the counts live there rather than in this paragraph, where they would go stale —
+> and did, twice.)
 >
-> What CI *does* cover of the matrix is [`tests/test-cni-chaos-grader.sh`](tests/test-cni-chaos-grader.sh):
-> the grader's assertions are a set of claims about what it would do if the CNI misbehaved,
-> and the only cluster it has ever graded behaved well, so every one of those branches had
-> run zero times. It hands the grader **hand-injected records** — a refused pod reporting
-> `Running`, an allocator that returns nothing, a run that left the IP pools disabled, an
-> injector that landed no fault — and requires each to be refused **by its own message**.
-> Two seconds, no cluster, no root.
+> What CI *does* cover is each matrix's **grader**, via its headless twin:
+> [`tests/test-cni-chaos-grader.sh`](tests/test-cni-chaos-grader.sh) and
+> [`tests/test-cross-node-grader.sh`](tests/test-cross-node-grader.sh). A grader's assertions
+> are claims about what it would do if the CNI misbehaved, and the only clusters they have
+> ever graded behaved well — so every one of those branches had run zero times. Each twin
+> hands its grader **records with one defect injected** — a refused pod reporting `Running`,
+> an allocator that returns nothing, a run that left the IP pools disabled, an injector that
+> landed no fault, a witness ping that never ran — and requires each to be refused **by its
+> own message**. Two seconds, no cluster, no root.
 >
-> Full local run: `4 measured tests, ~45 minutes`. Last green **with a sandbox up**,
-> 2026-08-07: `5/5 listed tests ran — 5 passed, 0 skipped, 0 failed`. The grader test was
-> added on 2026-08-08 and has only been run **headless** since
-> (`6/6 listed tests ran — 3 passed, 3 skipped, 0 failed`, the three skips being the live
-> half) — said this way round because "6 passed" is a number nobody has measured, and a
-> count that outruns its run is this repo's bug class #1 written into a README.
+> **Last green with the two-node pair up, 2026-08-15:** every listed test ran, 0 failed, the
+> skips being the three that need the *one-node* VM. Both live matrices and both headless
+> twins passed.
 
 ## The second node — a private wire between two VMs, and no host networking at all
 
@@ -148,8 +149,9 @@ address it describes, and none of them failing at the step that caused them:**
 | the kubelet serving cert is a **separate certificate** from the API server's, and `--node-ip` does not reissue it | nothing failed at join or readiness; it failed at the first `kubectl exec` — the chaos harness's only dataplane observable |
 | the reissue's success marker was a **mechanism** claim | it printed because a command exited 0; `server.crt` gained the address and `kubelet.crt` did not |
 
-> **Not yet written, and not implied:** the cross-node *chaos rows*. The capability is proven;
-> the faults that need it are the next increment, named individually under
+> **What the pair is FOR:** the two chaos rows a single node can only grade on a proxy —
+> [the cross-node rows](#the-cross-node-rows--f6-with-a-witness), measured 2026-08-15. What
+> remains uncovered is named under
 > [What it does not yet do](#what-it-does-not-yet-do--the-deferred-work).
 
 ## Three traps this lab hit, so you do not have to
@@ -274,29 +276,71 @@ hand-written records — the whole matrix can be re-graded without a cluster via
 `CNI_CHAOS_RECORD=<file>`, which is also how a failed run's kept record is re-read without
 spending another 20 minutes.
 
+## The cross-node rows — F.6 with a witness
+
+`sandbox.sh cross-chaos` injects the two faults that need a **peer** to mean anything, and
+[`tests/test-cross-node-chaos.sh`](tests/test-cross-node-chaos.sh) grades them on the same
+ladder. They exist because the one-node matrix says, in the open, that two of its rows are
+graded on a proxy: with no peers the tunnel carries no traffic, so the dataplane observable
+cannot move whatever happens to it.
+
+| row | measured 2026-08-15 | what one node could not have seen |
+|---|---|---|
+| **the tunnel deleted while it carried traffic** | **DEGRADED** — a few seconds of dead cross-node traffic, rebuilt by Calico unaided | with `vxlan.calico` gone, the leader's route to the peer's pods fell through to **`enp0s3`, the slirp NIC**. A dead overlay does not fail closed; it hands its packets to the default route |
+| **the peer's chosen address moved under it** (F.6) | **DEGRADED** — tens of seconds of dead traffic, re-detected and recovered unaided | **essentially all of that time was spent with the cluster reporting BOTH nodes `Ready`**, and the peer's Calico annotation still naming an address that had ceased to exist |
+
+**Neither outage has a single number, and the lab says so rather than quoting one.** Calico
+re-detects on a timer, so where the fault lands in that cycle decides the duration: across seven
+runs the tunnel row spanned **1–9 s** (1–6 packets) and the F.6 row **17–55 s** (12–50). What is stable is the
+*shape* — both self-heal, and the cluster admits neither while it is happening.
+
+That last clause is the whole point. F.6 on the host was never *a node that broke* — it was an
+outage that looked like a healthy cluster, and a matrix that records only the dataplane can
+say the traffic stopped without being able to say that nothing admitted it. So the injector
+samples readiness alongside the traffic and the record carries a `LIEWINDOW`, which is what
+makes the ladder's **LIED** rung a measurement rather than a flourish.
+
+> **The rung is decided by packets lost, not by a sample.** The first version graded on one
+> probe taken as fast as possible after the injection — which is a race it can lose: the
+> tunnel rebuild has been measured at 1 s against a probe that takes 3–4 s, and a rebuild that
+> outran the probe would have scored **ABSORBED**, reading as *"the CNI shrugged off having
+> its overlay deleted"*. A 1-per-second ping now runs for the whole fault window and one lost
+> packet is one second of dead traffic. It caught an outage the sampler missed **entirely**:
+> in the same run, `LIEWINDOW=0` and `LOSS=4/90`.
+
+**A cluster keeps two records of a node's address, and they disagreed.** Calico's
+`projectcalico.org/IPv4Address` annotation followed the move to `10.77.0.22`. The node's
+`InternalIP` — published by kubelet from the `--node-ip` it was given at join time — kept
+reading `10.77.0.12` indefinitely. The stale one is the one `kubectl get nodes -o wide`
+prints, which is the first place anybody looks.
+
+**The row moves the address rather than offering a competing one, and that was measured
+twice.** [Appendix O](../../MICRO_CLOUD_LAB_PLAN.md) recorded `first-found` taking a
+freshly-created dummy interface — higher ifindex wins — in 20 s. Under `cidr=` a dummy holding
+a matching address at a higher ifindex was ignored for **205 s and across a full `calico-node`
+restart**, because the incumbent still matched. Extrapolating one method's ordering to the
+other would have produced a row whose injector never lands.
+
+> Numbers in [`findings-two-node.env`](findings-two-node.env). The pair costs
+> `sandbox.sh up2 && sandbox.sh join2` (~20 min, unprivileged, a wire that touches nothing on
+> the host); the matrix itself is ~10 minutes.
+
 ## What it does not yet do — the deferred work
 
-**One item remains, and it is not blocked.**
+Three rows, all cheap, none of them run — which is different from having been run and found
+uninteresting. [`tests/test-cross-node-chaos.sh`](tests/test-cross-node-chaos.sh) §4 prints
+this same list on every run, so a reader who never opens this file still learns what is
+uncovered.
 
-### The cross-node chaos rows
-
-The [two-node pair](#the-second-node--a-private-wire-between-two-vms-and-no-host-networking-at-all)
-exists, is proven, and carries real traffic. What is **not written** are the faults that need
-a peer to mean anything:
-
-| the row | why one node cannot ask it |
+| the row | why it is not just more of the same |
 |---|---|
-| **delete the tunnel under a live peer** | with no peers the tunnel carries no traffic, so `vxlan-deleted` is graded on whether Calico *rebuilds the device* — a proxy. With a peer, the dataplane consequence is directly observable |
-| **F.6 with a witness** — move a node's chosen address while another node is routing to it | this is the original incident the whole lab family exists because of. One node can reproduce the *mechanism* (an interface becomes a candidate, the tunnel migrates) but nobody is on the other end to notice the outage |
+| **the tunnel deleted on the PEER** rather than the leader | the overlay is symmetric, so this probably answers identically — but "probably" is not a measurement, and the asymmetric case is where a CNI's recovery paths usually differ |
+| **a partition of the wire itself** | a fault in the fabric rather than in the CNI. Its dataplane consequence is arithmetic; the interesting question is the **cluster's honesty** about it, which is a different observable |
+| **three or more nodes** | everything here is one peer watching one peer, so nothing can observe a *partial* outage — the shape where half a fleet is fine and says so |
 
-Both are **buildable now**: `sandbox.sh up2 && sandbox.sh join2` gives a live two-node Calico
-in ~20 minutes, unprivileged, on a wire that touches nothing on the host. Tracked as
-[TODO §0.5 A.1](../../TODO.md) and recorded in
-[`findings-two-node.env`](findings-two-node.env) as
-`NCS2_CROSS_NODE_CHAOS_ROWS=not-yet-written`, which is a **named gap and not a pass**.
-
-> The chaos matrix's own §4 prints the same thing on every run, so a reader who never opens
-> this file still learns that cross-node is uncovered.
+One thing is recorded as **not askable here** rather than not yet asked: an address that moves
+somewhere the peer can *never* reach. Under `cidr=` autodetection that would mean changing the
+CNI's configuration mid-run, which is changing the subject rather than injecting a fault.
 
 ### What used to be on this list, and when it left
 
@@ -308,6 +352,7 @@ shrank, and this section had gone stale twice before anyone re-read it.
 | **G.9's `fabric.sh` tap scenario** | 2026-08-07 | closed on the REAL artifact — a genuine tap, given an address on purpose, captured the guest cluster's tunnel. [`tests/test-fabric-tap-becomes-candidate.sh`](tests/test-fabric-tap-becomes-candidate.sh) |
 | **the datastore beneath Calico** (`k8s-dqlite`) | 2026-08-08 | the blocker was specific, not fundamental: a CNI does not need the API to *forward a packet*, so the row is graded on the pod address pinged from the node. Measured **ABSORBED** |
 | **"a second node would be a different lab"** | 2026-08-08 | it is `sandbox.sh up2` in *this* lab. The claim was really *"needs root"* — `tap`/`bridge` were the only ways two VMs could share a network until phase-2 gained `peer_link` |
+| **the cross-node chaos rows** | 2026-08-15 | both written and measured — see the section above. The F.6 row was designed twice: the decoy injector that works under `first-found` does not land under `cidr=` |
 
 ## See also
 

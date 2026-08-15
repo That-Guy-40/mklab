@@ -4,6 +4,7 @@
 #   sandbox.sh up          create + resize + boot, and wait for the cluster
 #   sandbox.sh up2         the TWO-NODE pair, joined by a private QEMU socket wire
 #   sandbox.sh join2       make those two one cluster (leader + worker)
+#   sandbox.sh cross-chaos the two faults that need a PEER, graded on the same ladder
 #   sandbox.sh down2       destroy the two-node pair
 #   sandbox.sh experiment  copy guest-experiment.sh in and run it, printing NCS-* lines
 #   sandbox.sh cni-chaos   inject a fault at each CNI layer and print the CNI-* record
@@ -37,6 +38,10 @@ N2_MAC=52:54:00:ca:11:02
 N1_IP=10.77.0.11
 N2_IP=10.77.0.12
 WIRE_CIDR=10.77.0.0/24
+# Where `cross-chaos` moves node 2's address to. Same wire, same subnet, so the peer can still
+# route to it once Calico notices — see that script's row 2 for why the fault is a MOVE and
+# not the addition of a competing interface.
+N2_ALT_IP=10.77.0.22
 
 info() { printf '[info] %s\n' "$*" >&2; }
 die()  { printf '[error] %s\n' "$*" >&2; exit 1; }
@@ -259,6 +264,22 @@ join2)
     printf '  NCS2-CLUSTER-READY nodes=2 after=%ss\n' "$((SECONDS - t0))" >&2
     info "host Calico binding AFTER join: $(host_binding)" ;;
 
+cross-chaos)
+    # ── THE ONE VERB THAT DRIVES FROM THE HOST, AND WHY ─────────────────────────────────
+    # Every other guest script travels IN and runs there. This one cannot: its second row
+    # moves an address on the wire, and a driver living on node1 would reach node2 over that
+    # same wire — losing its remote hand at the exact instant the fault lands. The record
+    # would go quiet at the interesting moment and the run would look like a crash. Driving
+    # over each guest's own slirp NIC keeps the management path orthogonal to the fault
+    # domain, which is the "scope the fault" rule one level up.
+    [[ -r "$HERE/cross-node-chaos.sh" ]] || die "cross-node-chaos.sh is missing"
+    info "injecting the two CROSS-NODE faults (~5-10 min: each row waits out its own recovery)"
+    rc=0
+    X_RECOVER_WAIT="${X_RECOVER_WAIT:-240}" X_SELFHEAL_WAIT="${X_SELFHEAL_WAIT:-90}" \
+        bash "$HERE/cross-node-chaos.sh" || rc=$?
+    info "host Calico binding AFTER the cross-node chaos run: $(host_binding)"
+    exit $rc ;;
+
 down2)
     for n in "$N2" "$N1"; do
         bash "$LAB_VM" destroy "$n" --force || info "destroy $n failed (may not exist)"
@@ -302,5 +323,7 @@ down)
     info "host Calico binding after teardown: $(host_binding)" ;;
 
 *)
-    sed -n '3,10p' "$0" >&2; exit 1 ;;
+    # 3,12 — the WHOLE usage block. It said 3,10 while the block ran to 11, so `down`, the
+    # one verb that destroys something, was the one an unknown verb never told you about.
+    sed -n '3,12p' "$0" >&2; exit 1 ;;
 esac

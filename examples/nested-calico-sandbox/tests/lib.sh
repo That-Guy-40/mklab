@@ -56,9 +56,14 @@ load_findings() {
 # Is the sandbox VM up and answering? Every live test gates on this and SKIPs otherwise —
 # a 15-minute VM build is not a precondition CI can meet, and an unmet precondition is an
 # UNKNOWN, never a pass.
-sandbox_running() {
-    local vm_dir="$HOME/.local/state/lab-create/vms/calico-sandbox"
+vm_running() {
+    local vm_dir="$HOME/.local/state/lab-create/vms/$1"
     [[ -f "$vm_dir/qemu.pid" ]] || return 1
     local p; p="$(cat "$vm_dir/qemu.pid" 2>/dev/null)" || return 1
     [[ -n "$p" ]] && kill -0 "$p" 2>/dev/null
 }
+sandbox_running() { vm_running calico-sandbox; }
+
+# The two-node pair is a SEPARATE subject from the one-node sandbox and lives in its own VMs;
+# a test that needs a peer must not be satisfied by the single node being up. Both, or neither.
+two_node_running() { vm_running calico-n1 && vm_running calico-n2; }

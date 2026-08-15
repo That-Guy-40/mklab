@@ -205,6 +205,65 @@ coverage.
 Grading a record says loudly that nothing was injected, and skips the host-binding check,
 because it is reading a **cached fact** about some cluster at some past moment, not a run.
 
+## 6b. The cross-node rows — the two faults that need a peer
+
+Needs the **two-node pair**, not the single sandbox. ~20 minutes to build it, ~10 to run.
+
+```bash
+examples/nested-calico-sandbox/sandbox.sh up2      # two VMs on a private QEMU socket wire
+examples/nested-calico-sandbox/sandbox.sh join2    # make them one cluster
+examples/nested-calico-sandbox/sandbox.sh cross-chaos          # the CNI2-* record
+examples/nested-calico-sandbox/tests/test-cross-node-chaos.sh  # the record, graded
+```
+
+**Expect** `CNI2-END`, and a verdict reporting **2 rows, 0 absorbed, 2 not, 0 critical**. The
+two rows are the ones the one-node matrix can only grade on a proxy, and each carries a number
+that needs a witness — one run looked like this:
+
+```
+tunnel-deleted-under-peer — DEGRADED  (4 packets lost of 90; recovered=yes in 2s; 0s of it with the cluster reporting every node Ready)
+peer-address-moved        — DEGRADED  (31 packets lost of 90; recovered=yes in 32s; 30s of it with the cluster reporting every node Ready)
+```
+
+⚠️ **Do not expect those seconds back.** Calico re-detects on a timer, so where the fault lands
+in that cycle decides the duration: across seven runs the tunnel row spanned **1–9 s** and the
+F.6 row **17–55 s**. The **rungs** are what this test asserts, and they were stable in every
+run. The one number worth reading closely is the third: `LIEWINDOW` is a *sampled lower bound*
+on how much of the outage went unadmitted — in the run above it reported `0s` for the tunnel
+row while the packet witness counted four lost seconds.
+
+Two lines in the middle of that output are the finding, not decoration:
+
+- `MID[... path=enp0s3 tunnel=absent ...]` — with `vxlan.calico` deleted, the leader's route
+  to the peer's pods **fell through to the slirp NIC**. A dead overlay hands its packets to
+  the default route rather than failing closed.
+- `the peer's InternalIP still reads '10.77.0.12' … while Calico's annotation correctly reads
+  '10.77.0.22/24'` — the cluster keeps **two** records of one address and only one tracked.
+  The stale one is what `kubectl get nodes -o wide` shows.
+
+**Watch it happen, if you want to see it rather than read it.** While the second row is in
+flight (~1 minute), from another terminal:
+
+```bash
+phase2-qemu-vm/lab-vm.sh ssh calico-n2 -- 'ip -o -4 addr show enp0s4'          # 10.77.0.22
+phase2-qemu-vm/lab-vm.sh ssh calico-n1 -- 'sudo microk8s kubectl get nodes -o wide'  # 10.77.0.12
+```
+
+The headless half needs no cluster at all and runs in ~2 s:
+
+```bash
+examples/nested-calico-sandbox/tests/test-cross-node-grader.sh
+```
+
+**Expect** `16 defects each refused BY ITS OWN MESSAGE` plus 2 healthy-but-unusual records
+still accepted. One of those 16 is worth knowing about: a *skipped* row fails this matrix,
+unlike the one-node one where a skip is a legitimate `UNCOVERED`. That file grades eight rows
+and can lose one; this one exists to cover exactly two, so covering one and passing would make
+an UNKNOWN indistinguishable from a result.
+
+Tear the pair down with `sandbox.sh down2` — and note the host binding it prints, for the same
+reason as step 7.
+
 ## 7. Tear down, and check the host
 
 ```bash
@@ -221,5 +280,8 @@ assuming this lab caused it — on this host it has moved on its own four times.
   rule 1 measured, with the control that makes it mean something
 - the break pass ends on `ladder occupied: … 0 critical`, and the allocator row's refusal
   names the exhausted pool by CIDR
+- the cross-node pass ends on `2 cross-node rows, 0 absorbed, 2 not, 0 critical`, with
+  `35s broken while the cluster reported every node Ready` on the F.6 row — the number that
+  needed a witness
 - the host's Calico binding identical at step 0 and step 7
 - every listed test ran, 0 skipped, 0 failed

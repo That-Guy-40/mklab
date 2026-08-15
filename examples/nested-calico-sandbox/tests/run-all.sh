@@ -18,6 +18,12 @@ tests=(test-findings-are-bound.sh test-selection-rules.sh
        # minutes, so on an ordinary run it SKIPs and every assertion inside it goes
        # unexercised. This one runs in two seconds, everywhere, and fails if they stop biting.
        test-cni-chaos-grader.sh
+       # The two rows the one-node matrix could only grade on a proxy, asked with a peer —
+       # and, as above, that grader's own branches watched biting against hand-written
+       # records. Same pairing, same reason: the live half needs two VMs, the headless half
+       # runs everywhere in seconds.
+       test-cross-node-chaos.sh
+       test-cross-node-grader.sh
        test-harness-net.sh)
 
 # A test on disk that is in no list is a test nobody runs — one sat unlisted in another

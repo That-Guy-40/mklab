@@ -4800,11 +4800,36 @@ caused it**:
 the natural reading was *"the join is slow, raise the timeout"* — a broken assertion wearing
 a performance problem's clothes.
 
-### S.4 What is now askable, and is NOT yet written
+### S.4 What the capability was for — the cross-node rows, measured 2026-08-15
 
-The capability is proven; the **cross-node chaos rows are not written**, and nothing here
-claims otherwise. The two worth having: deleting the tunnel under a live peer, and **F.6 with
-a witness** — moving a node's chosen address while another node is routing to it. TODO §0.5
-tracks them as the front of the queue, and the lab's own
+Both rows are written and run: `cross-node-chaos.sh` injects them, `test-cross-node-chaos.sh`
+grades them, and `test-cross-node-grader.sh` makes each of its branches bite against a real
+record with no cluster at all. Both came out **DEGRADED** — the CNI recovered from each fault
+unaided — and the value is in what the *witness* could see that one node could not:
+
+| row | the number |
+|---|---|
+| the tunnel deleted while carrying traffic | **1–9 s** of dead cross-node traffic across seven runs — and with `vxlan.calico` gone the leader's route to the peer's pods **fell through to the slirp NIC**. A dead overlay does not fail closed; it hands its packets to the default route |
+| **F.6 with a witness** — the peer's address moved under it | **17–55 s** of dead traffic, essentially all of it spent with the cluster reporting both nodes `Ready` and the peer's Calico annotation naming an address that had ceased to exist |
+
+Neither is a single number and the lab records the spread rather than the last sample: Calico
+re-detects on a timer, so where the fault lands in that cycle decides the duration. What is
+stable is the shape — both self-heal, and nothing in the cluster admits either while it is
+happening. That second row is the incident this whole lab family exists because of, stated as
+a measurement for the first time: F.6 was never *a node that broke*, it was an outage that
+looked like a healthy cluster.
+
+The rung is decided by **packets lost**, not by a post-injection sample: that sample is a race
+against the CNI's recovery (a 1 s rebuild against a 3–4 s probe), and losing it would score
+ABSORBED and read as resilience. A 1-per-second ping runs for the whole fault window instead,
+and it caught an outage the sampler missed entirely — `LIEWINDOW=0` beside `LOSS=4/90` in the
+same run. Two further findings came out of it — that the cluster keeps
+**two** records of a node's address and only Calico's tracked (kubelet's `InternalIP`, the one
+`kubectl get nodes -o wide` prints, did not), and that **`cidr=` does not order its candidates
+the way `first-found` does**, which invalidated the obvious injector and is why the row moves
+an address rather than offering a competing one.
+
+What remains uncovered — the peer-side tunnel delete, a wire partition, three-node scenarios —
+is named in the lab's own
 [deferred-work section](examples/nested-calico-sandbox/README.md#what-it-does-not-yet-do--the-deferred-work)
-states each row with why one node cannot ask it.
+and printed by the grader's §4 on every run.
