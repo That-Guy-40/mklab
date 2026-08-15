@@ -48,35 +48,174 @@ WORK="$(mktemp -d)"
 
 # ── 1. no test may install its own EXIT trap ───────────────────────────────
 #
-# ⚠️ THIS CHECK WAS ANCHORED TO THE START OF A LINE, AND THAT MADE IT A LIAR. Measured
-# 2026-08-08: it printed "no test overrides lib.sh's EXIT trap" across six suites while
-# **twenty** tests did, because every one of them writes
+# ⚠️ THIS CHECK HAS NOW BEEN A LIAR TWICE, THE SAME WAY BOTH TIMES: a regex over a
+# PHYSICAL LINE standing in for a question about a COMMAND.
 #
-#     tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+#   2026-08-08 — anchored at `^[[:space:]]*trap`, so it never saw the repo's single most
+#   common test opener, `tmp="$(mktemp -d)"; trap 'echo x' EXIT` — the trap after a
+#   semicolon, on a line that begins with an assignment. It printed "no test overrides
+#   lib.sh's EXIT trap" across six suites while **twenty** tests did.
 #
-# — the trap after a semicolon, on a line beginning with an assignment. `^[[:space:]]*trap`
-# cannot see that, and the idiom is not exotic: it is the single most common way to open a
-# test in this repo. The anchor was chosen to avoid a FALSE POSITIVE (a test that writes a
-# trap into a fixture and greps for it, as metal-as-a-service's test-e2e-reaps-sink.sh does)
-# and bought it with a false negative twenty times its size. The cheap check answered an
-# easier question — "does a line START with trap" — and was read as the real one.
+#   2026-08-15 (REVIEW-phase1.md, P1-3) — the replacement matched `trap` and `EXIT` on ONE
+#   line, and the fix's own comment advertised "mid-line included". But a trap whose body
+#   spans lines puts them on different lines:
 #
-# The real property is "is `trap … EXIT` executed as a COMMAND here", so that is what is
-# matched: a `trap` at a command position — start of line, or after `; && || | ( ) { }`.
-# A `trap` inside quotes is preceded by a quote or a `^`, neither of which is a command
-# separator, so the two fixture-writing lines stay unmatched without needing an anchor. Whole
-# comment lines are skipped, because prose about the rule is not an installation of one.
-mapfile -t OFFENDERS < <(
+#       trap '
+#           cleanup_target "$t_cli" "$n_cli"
+#       ' EXIT
+#
+#   so it passed over phase1's test-cli-vs-config-parity.sh and phase4's and phase5's
+#   test-inspect-json.sh — three tests with the net taken down — and printed a green ✓.
+#
+# Each rewrite widened the regex by one shape and was read as having answered the real
+# question. The real question is not textual at all: **is `trap` run as a command here,
+# with `EXIT` among its arguments?** So this is now a scanner over the shell's own
+# lexical structure — quotes (which is what spans the lines), comments, heredocs and
+# backslash-continuations — rather than a pattern over what a line looks like. A `trap`
+# inside quotes is a string, a `trap` in a heredoc is data being written to a fixture,
+# and neither is an installation.
+#
+# It is a bounded lexer, not a shell parser: it tracks quoting and command position, which
+# is all that "is this token a command" needs. §1a below holds it to that by running it
+# over both shapes it must catch and shapes it must not — see there for why.
+_exit_trap_offenders() {   # FILE… → the name of each file that installs a `trap … EXIT`
     awk '
-      /^[[:space:]]*#/ { next }
-      /(^|[;&|(){}])[[:space:]]*trap[[:space:]]+.*[[:space:]]EXIT([[:space:]]|;|$)/ {
-          if (!(FILENAME in seen)) { seen[FILENAME]=1; print FILENAME }
+      # ── word boundary: decide what the completed word means ──────────────
+      function endword(   w) {
+          if (!inword) return
+          w = word; word = ""; inword = 0
+          if (intrap) {                       # we are inside a trap command argument list
+              if (w == "EXIT" && !hit) { hit = 1; print FILENAME }
+              if (w == "EXIT") intrap = 0
+              return
+          }
+          if (cmdpos && w == "trap") { intrap = 1; cmdpos = 0; return }
+          # Reserved words that introduce another command, so the NEXT word is again in
+          # command position (`if x; then trap … EXIT; fi`).
+          cmdpos = (w=="then"||w=="do"||w=="else"||w=="elif"||w=="{"||w=="}"||w=="!")
       }
-    ' "$DIR"/test-*.sh 2>/dev/null | xargs -r -n1 basename)
+      # ── end of line: ends the command, and opens any heredoc queued on it ─
+      function nl() {
+          endword(); intrap = 0; cmdpos = 1
+          if (hd == "" && hqh < hqt) { hd = hq[hqh]; hdstrip = hqs[hqh]; hqh++ }
+      }
+      FNR == 1 { q=0; cmdpos=1; inword=0; word=""; intrap=0; hd=""; hqh=0; hqt=0; hit=0 }
+      hit { next }                            # one report per file is enough
+      {
+          # Inside a heredoc body every line is data, not code, until the delimiter.
+          if (hd != "") {
+              t = $0; if (hdstrip) sub(/^\t+/, "", t)
+              if (t == hd) { hd = ""; if (hqh < hqt) { hd=hq[hqh]; hdstrip=hqs[hqh]; hqh++ } }
+              next
+          }
+          L = $0 "\n"; n = length(L); i = 1
+          while (i <= n) {
+              c = substr(L, i, 1)
+              # Single quotes: everything is literal, INCLUDING the newline. This is the
+              # state that carries a trap body across lines, and missing it is P1-3.
+              if (q == 1) { if (c == "\047") q = 0; else word = word c; i++; continue }
+              if (q == 2) {                   # double quotes: same, but backslash escapes
+                  if (c == "\\") { i++; if (substr(L,i,1) != "\n") word = word substr(L,i,1); i++; continue }
+                  if (c == "\"") q = 0; else word = word c
+                  i++; continue
+              }
+              if (c == "\\") {                # a backslash-newline continues the command
+                  i++
+                  if (substr(L,i,1) != "\n") { word = word substr(L,i,1); inword = 1 }
+                  i++; continue
+              }
+              if (c == "\047") { q = 1; inword = 1; i++; continue }
+              if (c == "\"")   { q = 2; inword = 1; i++; continue }
+              # `#` opens a comment only at the START of a word — `${x#y}` is not a comment.
+              if (c == "#" && !inword) { nl(); break }
+              if (c == " " || c == "\t") { endword(); i++; continue }
+              if (c == "\n") { nl(); i++; continue }
+              if (c == ";" || c == "&" || c == "|") { endword(); intrap = 0; cmdpos = 1; i++; continue }
+              if (c == "(" || c == ")") { endword(); cmdpos = 1; i++; continue }
+              # Heredoc: remember the delimiter now, skip its body from the next newline.
+              if (c == "<" && substr(L,i+1,1) == "<" && substr(L,i+2,1) != "<") {
+                  endword(); i += 2; hdstrip = 0
+                  if (substr(L,i,1) == "-") { hdstrip = 1; i++ }
+                  while (substr(L,i,1) == " " || substr(L,i,1) == "\t") i++
+                  d = ""
+                  while (i <= n) {
+                      cc = substr(L, i, 1)
+                      if (cc=="\n"||cc==" "||cc=="\t"||cc==";"||cc=="&"||cc=="|"||cc==")") break
+                      if (cc=="\047"||cc=="\""||cc=="\\") { i++; continue }
+                      d = d cc; i++
+                  }
+                  hq[hqt] = d; hqs[hqt] = hdstrip; hqt++; cmdpos = 0
+                  continue
+              }
+              word = word c; inword = 1; i++
+          }
+      }
+    ' "$@" 2>/dev/null
+}
+
+# ── 1a. THE SCANNER'S OWN CONTROLS — the part §1 never had ─────────────────
+#
+# Sections 2-6 below each prove themselves against a fixture. Section 1 did not, and
+# section 1 is the one that has been wrong twice: a scan that matches nothing and a scan
+# that is broken are the same green ✓. So the shapes it MUST catch and the shapes it MUST
+# NOT are written out here and run on every invocation, in every suite, before it is
+# pointed at real tests. Both directions matter — the 2026-08-08 anchor existed to dodge a
+# false positive and bought a false negative twenty times its size, so widening this
+# scanner must never again be a silent trade.
+#
+# Fixture bodies are inert (`echo …`) on purpose: this is test DATA that a scanner reads,
+# and test data that names a destructive verb is one careless `source` away from being a
+# live command.
+mkdir -p "$WORK/scan"
+_mk() { printf '%s\n' "$2" > "$WORK/scan/$1"; }
+
+# MUST be caught — each is a real `trap … EXIT`, and each has been seen in this repo.
+_mk caught-plain.sh      "trap 'echo bye' EXIT"
+_mk caught-midline.sh    "tmp=\"\$(mktemp -d)\"; trap 'echo bye' EXIT"     # the 2026-08-08 miss
+_mk caught-multiline.sh  "trap '
+    echo one
+    echo two
+' EXIT"                                                                    # the 2026-08-15 miss
+_mk caught-multi-dq.sh   "trap \"
+    echo one
+\" EXIT"
+_mk caught-continued.sh  "trap cleanup \\
+     EXIT"
+_mk caught-disarm.sh     "trap - EXIT"                                     # clearing it also disarms
+_mk caught-nested.sh     "if true; then trap 'echo bye' EXIT; fi"
+_mk caught-signals.sh    "trap 'echo bye' INT TERM EXIT"
+# MUST NOT be caught — every one of these is present in the repo today and is legitimate.
+_mk clean-comment.sh     "# trap 'echo bye' EXIT   <- prose about the rule, not the rule"
+_mk clean-grepped.sh     "grep -q '^trap reap EXIT' \"\$F\" || fail 'no trap'"
+_mk clean-printfed.sh    "printf 'trap reap EXIT\\nexit 3\\n' >> \"\$F\""
+_mk clean-heredoc.sh     "cat > \"\$F\" <<'SH'
+trap 'echo bye' EXIT
+SH"
+_mk clean-return.sh      "trap 'echo bye' RETURN 2>/dev/null || true"      # RETURN is not EXIT
+_mk clean-on-exit.sh     "on_exit 'echo bye'"
+_mk clean-exit-in-body.sh "trap 'echo EXIT-was-here' INT"                  # EXIT inside the body
+_mk clean-varname.sh     "EXIT_TRAP_INSTALLED=no; echo \"trap ... EXIT\""
+
+mapfile -t _got < <(_exit_trap_offenders "$WORK"/scan/*.sh | xargs -r -n1 basename | sort)
+mapfile -t _want < <(cd "$WORK/scan" && ls caught-*.sh | sort)
+_missed=() _falsepos=()
+for f in "${_want[@]}";  do [[ " ${_got[*]} "  == *" $f "*  ]] || _missed+=("$f");   done
+for f in "${_got[@]}";   do [[ " ${_want[*]} " == *" $f "*  ]] || _falsepos+=("$f"); done
+(( ${#_missed[@]} == 0 )) \
+    || fail "$NAME: the EXIT-trap scanner is BLIND to ${#_missed[@]} shape(s) it must catch: ${_missed[*]}. A suite it is pointed at can take lib.sh's net down and still get a green ✓ from this check — which is what happened on 2026-08-08 and again on 2026-08-15"
+(( ${#_falsepos[@]} == 0 )) \
+    || fail "$NAME: the EXIT-trap scanner reports ${#_falsepos[@]} FALSE POSITIVE(s): ${_falsepos[*]}. These shapes are legitimate (a trap in a comment, in a quoted string, in a heredoc, or on a non-EXIT signal) and flagging them makes the rule unfollowable"
+(( ${#_want[@]} >= 8 )) \
+    || fail "$NAME: only ${#_want[@]} positive control(s) exist for the EXIT-trap scanner — an all-clear from a scan with nothing to find proves nothing"
+mapfile -t _clean < <(cd "$WORK/scan" && ls clean-*.sh)
+note "$NAME: the EXIT-trap scanner catches all ${#_want[@]} shapes that install one (mid-line, multi-line, continued, nested, \`trap - EXIT\`) and none of the ${#_clean[@]} that only mention one (comment, quoted, heredoc, RETURN)  ✓"
+
+# ── 1b. …now point it at the real tests ────────────────────────────────────
+mapfile -t OFFENDERS < <(_exit_trap_offenders "$DIR"/test-*.sh | xargs -r -n1 basename)
 (( ${#OFFENDERS[@]} == 0 )) \
     || fail "$NAME: these tests install their own EXIT trap, which REPLACES lib.sh's safety net and leaves them able to die with no verdict line: ${OFFENDERS[*]}. Register cleanup with on_exit '<cmd>' instead"
 _all=("$DIR"/test-*.sh)
-note "$NAME: no test overrides lib.sh's EXIT trap at any command position, mid-line included (${#_all[@]} files checked)  ✓"
+note "$NAME: no test installs its own \`trap … EXIT\` — checked as a command, not as a line, so a trap whose body spans lines is seen too (${#_all[@]} files checked)  ✓"
 
 # fixture <name> <body> — a throwaway test that sources the REAL lib.sh, so what is
 # exercised is the shipped net and not a copy of it. Prints `rc:<n>` then the output.

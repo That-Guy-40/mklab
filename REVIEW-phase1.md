@@ -32,8 +32,8 @@ reopen guarantees the repo already believes it closed:
 - **P1-2 (MED, conditionally HIGH)** — the H1 fail-closed `rm -rf` mount guard
   is **blind to any chroot path containing a space**, reopening the exact
   host-`/dev`-deletion class H1 exists to prevent.
-- **P1-3 (LOW/process)** — `tools/check-harness-net.sh` still can't see a
-  **multi-line** `trap … EXIT`; one Phase 1 test disarms the safety net and the
+- **P1-3 (LOW/process)** — ✅ **FIXED 2026-08-15.** `tools/check-harness-net.sh` still can't
+  see a **multi-line** `trap … EXIT`; one Phase 1 test disarms the safety net and the
   checker passes anyway. A liar-checker of the class CLAUDE.md itself documents.
 
 All three were reproduced. A fourth suspicion (a stdin-reading `post_command`
@@ -126,7 +126,29 @@ string. Alternatively (defense in depth) reject whitespace in `--target` at
 `validate_spec` the way the *name* is already regex-gated — but the decode is the
 real fix, since `enter <path>` never goes through `validate_spec`.
 
-### P1-3 — LOW / process — the harness-net checker misses multi-line EXIT traps
+### P1-3 — LOW / process — the harness-net checker misses multi-line EXIT traps — ✅ FIXED 2026-08-15
+
+> **Fixed.** `tools/check-harness-net.sh`'s §1 is no longer a regex over a physical line:
+> it is a bounded lexer (`_exit_trap_offenders`) that tracks quoting, comments, heredocs
+> and backslash-continuations and asks *"is `trap` run as a command here, with `EXIT`
+> among its arguments?"* — the property, not its usual textual shape. The three tests it
+> had been passing over (`phase1-chroot/tests/test-cli-vs-config-parity.sh`,
+> `phase4-podman/` and `phase5-lxd/tests/test-inspect-json.sh`) now register teardown with
+> `on_exit` instead; the phase-4 and phase-5 ones were re-run live and their cleanup
+> verified by the absence of leftover containers/instances, not by the call alone.
+>
+> **The durable part is §1a.** Sections 2–6 of that checker each prove themselves against a
+> fixture; §1 never did, which is precisely why §1 is the section that has now been wrong
+> twice — *a scan that matches nothing and a scan that is broken print the same green ✓*.
+> §1 now runs the scanner over **8 shapes it must catch and 8 it must not** before it is
+> pointed at any real test, in every suite, on every invocation. Both historical
+> regressions were re-injected and watched to bite (the 2026-08-08 line anchor: blind to 5;
+> the 2026-08-12 single-line match: blind to 4), as was an over-firing scanner (6 false
+> positives). The controls also found a **third** blind spot neither audit named:
+> `if true; then trap 'x' EXIT; fi` — `then` is not one of the `; && || | ( ) { }`
+> separators, so the 2026-08-12 pattern missed it as well.
+
+
 
 `tools/check-harness-net.sh` enforces the CLAUDE.md rule that no test may install
 its own `trap … EXIT` (which silently replaces `lib.sh`'s verdict net). Its awk

@@ -16,11 +16,18 @@ n_cli="parity-cli-$$"
 n_cfg="parity-cfg-$$"
 cfg="$(mktemp --suffix=.toml)"
 
-trap '
+# Teardown registers with lib.sh's on_exit rather than installing a second `trap … EXIT`.
+# Bash keeps ONE EXIT trap per shell, so a second one silently REPLACES the verdict net and
+# lets this test die with a bare rc and no PASS/FAIL line — and this test is `set -e` with
+# root-only `create` calls, so dying early is the likely failure, not the exotic one.
+# It did exactly that until 2026-08-15 (REVIEW-phase1.md, P1-3), unseen because the checker
+# meant to forbid it matched `trap` and `EXIT` on one physical line and this body spans four.
+# Single-quoted on purpose: on_exit evaluates the body AT EXIT, so it reads the values then.
+on_exit '
     cleanup_target "$t_cli" "$n_cli"
     cleanup_target "$t_cfg" "$n_cfg"
     rm -f "$cfg"
-' EXIT
+'
 
 cat > "$cfg" <<EOF
 [[chroot]]

@@ -69,17 +69,36 @@ bug, not a result — the reader can't tell a real failure from a broken harness
   when the test already spoke, runs registered cleanup in reverse, exposes
   `$_EXIT_RC` — and **fails if any test in the directory installs an EXIT trap
   of its own**, which turns the rule above from advice into a check.
-  **That last check was itself a liar until 2026-08-08:** it matched
-  `^[[:space:]]*trap`, so it never saw `tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"'
-  EXIT` — the trap after a semicolon, which is the most common way to open a test
-  in this repo. It printed *"no test overrides lib.sh's EXIT trap"* across six
-  suites while **twenty tests did**. The anchor had been chosen to dodge one false
-  positive (a test that *writes* a trap into a fixture and greps for it) and
-  bought it with a false negative twenty times the size — the cheap question
-  *"does a line START with trap"* standing in for *"is a trap installed here"*.
-  It now matches `trap` at a **command position** (start of line, or after
-  `; && || | ( ) { }`), which leaves quoted occurrences unmatched without needing
-  an anchor at all. It provides
+  **That last check was itself a liar twice, the same way both times** — a regex
+  over a *physical line* standing in for a question about a *command*:
+  - **2026-08-08:** it matched `^[[:space:]]*trap`, so it never saw
+    `tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT` — the trap after a semicolon,
+    which is the most common way to open a test in this repo. It printed *"no test
+    overrides lib.sh's EXIT trap"* across six suites while **twenty tests did**.
+  - **2026-08-15** (found by [`REVIEW-phase1.md`](REVIEW-phase1.md) P1-3): the
+    replacement matched `trap` and `EXIT` **on one line**, and its own comment
+    advertised *"mid-line included"* — but a trap whose **body spans lines** puts
+    them on different lines, so it passed over **three** tests that had taken the
+    net down (`phase1-chroot/tests/test-cli-vs-config-parity.sh`, `phase4-podman/`
+    and `phase5-lxd/tests/test-inspect-json.sh`).
+
+  Each rewrite widened the pattern by one shape and was read as having answered the
+  real question. **The real question is not textual**: *is `trap` run as a command
+  here, with `EXIT` among its arguments?* So §1 is now a bounded **lexer** over
+  quoting, comments, heredocs and backslash-continuations — a `trap` inside quotes
+  is a string, one in a heredoc is data being written to a fixture, and neither is
+  an installation.
+  **The durable fix is §1a, not the lexer.** Sections 2–6 each prove themselves
+  against a fixture; §1 never did, which is exactly why §1 is the section that was
+  wrong twice — *a scan that matches nothing and a scan that is broken print the
+  same green ✓*. §1 now runs the scanner over **8 shapes it must catch and 8 it
+  must not** before it is aimed at any real test, in every suite, on every run.
+  Both historical regressions were re-injected and watched to bite (blind to 5 and
+  to 4 respectively), as was an over-firing scanner (6 false positives) — and the
+  controls found a **third** blind spot neither audit named:
+  `if true; then trap 'x' EXIT; fi`, since `then` is not one of the separators.
+
+  It provides
   its own verdict helpers on purpose: it must not source the lib under test, or
   the subject would be supplying its own harness. Every `tests/` directory ships
   a five-line `tests/test-harness-net.sh` that `exec`s it, so the check runs
