@@ -971,13 +971,46 @@ manager_none_enter() {
 }
 
 # _mounts_under PATH — print every /proc/mounts mountpoint at or under PATH,
-# deepest first.  Ground truth for the two functions below.  NOTE: mount points
-# in /proc/mounts are octal-escaped (space → \040); lab targets live under the
-# state dir and don't contain such characters, so a literal compare is safe here.
+# deepest first.  Ground truth for the two functions below.
+#
+# ⚠️ /proc/mounts OCTAL-ESCAPES WHITESPACE, and the literal compare that used to be here was
+# blind to it (REVIEW-phase1.md, P1-2).  A bind under `/x/spacey dir/tree` is written by the
+# kernel as `/x/spacey\040dir/tree`, so `$2==t` never matched: such a mount was neither
+# force-unmounted by _force_unmount_tree NOR caught by _safe_rm_rf's fail-closed assertion,
+# and `rm -rf` then recursed straight through the live bind into the host's real /dev — the
+# exact H1 incident that assertion exists to prevent.
+#
+# The comment that used to sit here waved it away — "lab targets live under the state dir and
+# don't contain such characters" — which is true of the AUTO-DERIVED state path and false of
+# the arbitrary absolute path that `enter <path>` and `destroy <path>` accept from the user
+# and that bind_essentials will happily mount /dev under.  Nothing rejects a space.  The
+# guarantee was asserted, not enforced; this is the enforcement.
+#
+# Decoded before BOTH the compare and the output (\040 space, \011 tab, \012 newline,
+# \134 backslash) — the caller feeds each line straight to `umount -l "$mp"`, which would
+# choke on a literal backslash-zero-four-zero.  The `length \t path` framing survives an
+# embedded tab because `cut -f2-` takes fields 2..end and rejoins them.  A mountpoint
+# containing a NEWLINE still cannot be force-unmounted through this line-oriented interface,
+# but it is now DETECTED, so `_safe_rm_rf` refuses rather than recursing — the failure moves
+# from "silently deletes the host's /dev" to "refuses and says why", which is the direction
+# a guard is allowed to fail in.
 _mounts_under() {
     local real; real="$(realpath -m "$1" 2>/dev/null || printf '%s' "$1")"
     awk -v t="$real" '
-        $2==t || index($2, t "/")==1 { print length($2) "\t" $2 }
+        function unesc(s,   out, n, i, c) {
+            if (index(s, "\\") == 0) return s        # the overwhelmingly common case
+            out = ""; n = length(s); i = 1
+            while (i <= n) {
+                c = substr(s, i, 1)
+                if (c == "\\" && substr(s, i+1, 3) ~ /^[0-7][0-7][0-7]$/) {
+                    out = out sprintf("%c", substr(s,i+1,1)*64 + substr(s,i+2,1)*8 + substr(s,i+3,1))
+                    i += 4
+                } else { out = out c; i++ }
+            }
+            return out
+        }
+        { mp = unesc($2)
+          if (mp == t || index(mp, t "/") == 1) print length(mp) "\t" mp }
     ' /proc/mounts 2>/dev/null | sort -rn | cut -f2-
 }
 
