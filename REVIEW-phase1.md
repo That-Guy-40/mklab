@@ -29,8 +29,8 @@ reopen guarantees the repo already believes it closed:
 - **P1-1 (MED)** — path-mode verbs bind to the wrong chroot by basename
   collision; `destroy` on an unrelated path silently **orphans** a managed
   chroot (tree survives, manifest deleted, invisible to `list`).
-- **P1-2 (MED, conditionally HIGH)** — the H1 fail-closed `rm -rf` mount guard
-  is **blind to any chroot path containing a space**, reopening the exact
+- **P1-2 (MED, conditionally HIGH)** — ✅ **FIXED 2026-08-15.** The H1 fail-closed `rm -rf`
+  mount guard is **blind to any chroot path containing a space**, reopening the exact
   host-`/dev`-deletion class H1 exists to prevent.
 - **P1-3 (LOW/process)** — ✅ **FIXED 2026-08-15.** `tools/check-harness-net.sh` still can't
   see a **multi-line** `trap … EXIT`; one Phase 1 test disarms the safety net and the
@@ -90,7 +90,26 @@ the scan loop (track a `matched` flag), never by basename. `enter`/`inspect`/
 `export-*` should likewise treat "path had no manifest" as "no manifest fields",
 not "look one up by basename."
 
-### P1-2 — MED (conditionally HIGH) — the H1 mount guard is blind to spaces in the target path
+### P1-2 — MED (conditionally HIGH) — the H1 mount guard is blind to spaces in the target path — ✅ FIXED 2026-08-15
+
+> **Fixed.** `_mounts_under` now decodes `/proc/mounts`' octal escapes (`\040` `\011` `\012`
+> `\134`) before **both** the comparison and the output — the output too, because the caller
+> feeds each line straight to `umount -l "$mp"`, which would choke on a literal `\040`. A
+> mountpoint containing a *newline* still cannot be unmounted through this line-oriented
+> interface, but it is now **detected**, so `_safe_rm_rf` refuses instead of recursing: the
+> failure moves from "silently deletes the host's `/dev`" to "refuses and says why".
+>
+> Regression: [`phase1-chroot/tests/test-mount-guard-escaped-paths.sh`](phase1-chroot/tests/test-mount-guard-escaped-paths.sh).
+> It runs **unprivileged** — it re-execs itself inside `unshare -rm`, so a bind mount needs
+> CAP_SYS_ADMIN only in its own namespace. That was deliberate: Phase 1's other mount test is
+> root-gated and therefore skips on every CI run, which is how a guard rots unwatched.
+> Three assertions, two of them controls: the positive (guard sees the mount, `_safe_rm_rf`
+> refuses, bind source intact); a **space-free tree with no mounts is still removed**, so the
+> positive cannot be passing because the guard began refusing everything; and a **negative
+> control that re-injects the pre-fix parser and watches it delete the bind source through
+> the live mount**. Reverting the fix in the driver was also run, and assertion 1 bit with
+> its named `REGRESSION:` message.
+
 
 `_mounts_under()` (line ~977) is the ground truth behind both
 `_force_unmount_tree` and the fail-closed assertion in `_safe_rm_rf` that H1
