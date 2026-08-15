@@ -49,17 +49,22 @@ HOST_PORT=$((  40000 + (SUFFIX % 20000) ))
 POD_PORT=$((  HOST_PORT + 1 ))
 
 # --- guarantee cleanup BEFORE we touch podman ------------------------------
-# A trap installed before any `podman run`/`podman pod create` covers the
-# case where launch fails partway through (pull error, port collision,
-# stale name, etc).  Pod removal cascades to its members.
-# shellcheck disable=SC2064
-trap "
-    podman stop  '$CNAME'          >/dev/null 2>&1 || true
-    podman rm -f '$CNAME'          >/dev/null 2>&1 || true
-    podman stop  '$ATTACKER_CNAME' >/dev/null 2>&1 || true
-    podman rm -f '$ATTACKER_CNAME' >/dev/null 2>&1 || true
-    podman pod rm -f '$POD_NAME'   >/dev/null 2>&1 || true
-" EXIT
+# Registered before any `podman run`/`podman pod create` so it covers a launch that fails
+# partway through (pull error, port collision, stale name).  Pod removal cascades to members.
+#
+# It is `on_exit`, NOT `trap … EXIT`: bash keeps one EXIT trap per shell, so installing a
+# second one silently REPLACES lib.sh's verdict net and lets this test exit with a bare rc
+# and no PASS/FAIL line.  It did exactly that until 2026-08-15 (REVIEW-phase1.md, P1-3) —
+# invisible because the checker that forbids it matched `trap` and `EXIT` on one physical
+# line, and this body spanned six.  Single quotes now, because on_exit evaluates the body at
+# exit rather than at install time: same values, and no SC2064 hazard left to disable.
+on_exit '
+    podman stop  "$CNAME"          >/dev/null 2>&1 || true
+    podman rm -f "$CNAME"          >/dev/null 2>&1 || true
+    podman stop  "$ATTACKER_CNAME" >/dev/null 2>&1 || true
+    podman rm -f "$ATTACKER_CNAME" >/dev/null 2>&1 || true
+    podman pod rm -f "$POD_NAME"   >/dev/null 2>&1 || true
+'
 
 # --- helper: poll until `podman inspect <name>` succeeds -------------------
 # `podman run -d` returns once the container is created, but State.Running

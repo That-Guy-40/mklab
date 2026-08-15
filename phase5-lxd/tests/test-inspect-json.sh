@@ -49,14 +49,23 @@ image = "images:alpine/latest"
 EOF
 
 # --- guarantee cleanup BEFORE we even try `up` ----------------------------
-# A trap installed before `up` covers the case where launch fails partway
-# through (image fetch error, stale name collision, etc).  `down --force`
-# is idempotent — it returns 0 even if the lab doesn't exist yet.
-# shellcheck disable=SC2064
-trap "
-    '$LAB_LXD' down --lab '$LAB_NAME' --force >/dev/null 2>&1 || true
-    rm -rf '$WORK'
-" EXIT
+# Registered before `up` so it covers a launch that fails partway through (image fetch
+# error, stale name collision).  `down --force` is idempotent — it returns 0 even if the
+# lab doesn't exist yet.
+#
+# It is `on_exit`, NOT `trap … EXIT`: bash keeps one EXIT trap per shell, so installing a
+# second one silently REPLACES lib.sh's verdict net and lets this test exit with a bare rc
+# and no PASS/FAIL line.  It did exactly that until 2026-08-15 (REVIEW-phase1.md, P1-3) —
+# invisible because the checker that forbids it matched `trap` and `EXIT` on one physical
+# line, and this body spanned three.  Single quotes now, because on_exit evaluates the body
+# at exit rather than at install time: same values, and no SC2064 hazard left to disable.
+#
+# One registration, not two: on_exit runs cleanups in REVERSE, so splitting these would
+# invert them and delete $WORK — which holds the lab spec — before `down` had run.
+on_exit '
+    "$LAB_LXD" down --lab "$LAB_NAME" --force >/dev/null 2>&1 || true
+    rm -rf "$WORK"
+'
 
 # ===========================================================================
 # Bring the lab up.
