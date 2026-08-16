@@ -456,11 +456,43 @@ That matters for this fix specifically: the re-query introduces a way to report 
 mode a stand-in cannot detect. It is not: a real instance created and destroyed live
 reports `torn down`, rc=0.
 
-**Still UNKNOWN:** `test-profiles-projects.sh` was **not run** (profile writes; the one
-irreversible-without-sudo action here). It exercises `[[profile]]`/`[[project]]` support,
-not this fix, and `_instances_in_lab` is already `--all-projects`, so a survivor in a
-non-default project is still seen — but that is a reading, not a measurement, and is
-recorded as one.
+**Closed the same day — 13 of 13 now run live.** `test-profiles-projects.sh` was the
+last holdout, deferred because incus **profile writes** are recorded in this agent's notes
+as wedging the daemon, with recovery needing a `sudo systemctl restart` it cannot perform.
+The user ran it unprivileged; it **passed**, and the daemon did not wedge — nor on a second
+run afterwards. That cached fact is now doubtful and has been demoted to "not reproduced
+on incus 7.3 for `project create` / `profile create` / `profile set`".
+
+It also supplied the measurement this section had recorded as a *reading*: the fix's
+project path. `down` deleted an instance living in a **non-default project**
+(`stop+delete lab-…-m (project=ppp…)`) and then reported `torn down`, rc=0 — so the
+re-query does not raise a **false partial teardown** for a successfully-removed
+project-scoped instance, which is the one way this fix could have made things worse and
+the one a stand-in cannot see.
+
+### And the run surfaced a defect nothing in the suite could see
+
+Passing is not the same as clean. The run printed, twice, into the operator's terminal:
+
+```
+Warning: the "<key> <value>" syntax is deprecated; please switch to the "<key>=<value>" syntax
+```
+
+`ensure_project` and `ensure_profile` used the positional `set <target> <key> <value>`
+form, which incus' own help keeps only "for backward compatibility" — a path that works
+today, warns today, and stops working on a future release. **No existing test could catch
+it, and no better test of the usual kind would have:** every assertion here is about the
+lab that got built, and the lab is byte-identical either way. The defect lives only in the
+argv.
+
+So the regression is asserted at the argv seam with a recording shim
+([`tests/test-config-set-syntax.sh`](phase5-lxd/tests/test-config-set-syntax.sh)) — the
+rare case where the mechanism *is* the property, because the two spellings differ in
+nothing except which one is scheduled for removal. It needs no daemon, carries a control
+that plants both deprecated shapes and requires the same parser to reject them **and**
+accept two correct ones (so it cannot pass by over-firing), and covers a value containing
+`=` (splitting is on the first `=`). Verified live: the same test that emitted two
+warnings now emits **zero**.
 
 ### Found on the way: a flaky test, and a premise that was never measured
 
