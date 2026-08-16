@@ -47,7 +47,7 @@ retries  = 3
 name        = "web"
 image       = "nginx:alpine"
 networks    = ["front"]
-ports       = ["18097:80"]
+ports       = ["18097:80", "0.0.0.0:18096:81"]
 volumes     = ["/host/static:/usr/share/nginx/html:ro"]
 depends_on  = ["db"]
 TOML
@@ -77,8 +77,19 @@ grep -q "container_name: lab-${lab}-web" <<<"$out" || fail "web: container_name 
 note "container_name fields present"
 
 # ── ports ──────────────────────────────────────────────────────────────────
-grep -q '"18097:80"'        <<<"$out" || fail "web: port 18097:80 missing"
-note "ports present"
+# Review F4 (REOPENED 2026-08-16 by REVIEW-phase3.md P3-1): the exported compose
+# file is a publish site — it exists to be run — so a BARE host:container spec must
+# carry the loopback default, exactly as the quadlet's PublishPort= and every `run`
+# path do.  Before this, the same spec bound 127.0.0.1 through `up` and 0.0.0.0
+# (plus [::]) through the artifact, and AUDIT.md's F4 row claimed "every publish
+# site routes through it".
+grep -q '"127\.0\.0\.1:18097:80"' <<<"$out" \
+    || fail "REGRESSION: web: a bare published port was exported without the F4 loopback default; got: $(grep -A1 'ports:' <<<"$out")"
+# Control: an explicitly-bound port is the opt-in to a wider bind and must be left
+# alone — the fix must not rewrite what the author already decided.
+grep -q '"0\.0\.0\.0:18096:81"' <<<"$out" \
+    || fail "an explicit 0.0.0.0 bind was rewritten; explicit binds are the opt-in and must round-trip unchanged"
+note "ports present, with the F4 loopback default applied only to the bare form"
 
 # ── environment ────────────────────────────────────────────────────────────
 grep -q 'POSTGRES_PASSWORD' <<<"$out" || fail "db: environment missing"
@@ -126,12 +137,20 @@ note "top-level volumes declaration correct (named only, no bind mounts)"
 # Compose v2 warns on top-level 'version:' — we still emit it for compat.
 # Just verify the format is valid YAML structure (docker compose config accepts it).
 # (docker compose may not be present; skip validation if absent)
+# This block used to end in `|| note "(soft-failed — inspect manually)"`, which made
+# it an assertion that could not fail: a compose file the parser REJECTED printed a
+# friendly note and the test passed.  An all-PASS result is indistinguishable from one
+# that checks nothing.  Either compose validates the artifact, or the test says why it
+# could not check — never "checked and shrugged".
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
     tmp_yml="$tmp/out.yml"
-    "$LAB_PODMAN" export "$lab" --format compose > "$tmp_yml" 2>/dev/null || true
-    docker compose -f "$tmp_yml" config --quiet \
-        && note "docker compose config validated" \
-        || note "(compose config validation soft-failed — inspect manually)"
+    "$LAB_PODMAN" export "$lab" --format compose > "$tmp_yml" \
+        || fail "export --format compose failed when re-run for schema validation"
+    cfg_err="$(docker compose -f "$tmp_yml" config --quiet 2>&1)" \
+        || fail "the exported compose file is not valid compose: $cfg_err"
+    note "docker compose config validated the exported file"
+else
+    note "UNKNOWN: docker compose not present — the exported file was NOT schema-validated"
 fi
 
 pass "compose export OK (image, container_name, ports, env, volumes, command, healthcheck, depends_on)"

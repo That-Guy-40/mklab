@@ -33,7 +33,9 @@ The script never auto-runs `docker run --privileged` on your behalf — if the b
 sudo apt-get install -y \
     jq tar docker.io docker-buildx \
     qemu-user-static binfmt-support \
-    yq                    # mikefarah/yq for TOML
+    yq                    # optional: mikefarah/yq reads TOML and YAML directly.
+                          # Any one of tomlq / yq / dasel / python3 >= 3.11 will do
+                          # for TOML; yq or python3+PyYAML for compose .yml input.
 sudo usermod -aG docker "$USER"
 # log out and back in (or: newgrp docker)
 docker info               # should succeed without sudo
@@ -221,7 +223,7 @@ Resource naming:
 
 - **`depends_on` / startup order** — topology services are started in topological (dependency-first) order. Add `depends_on = ["db"]` to a `[[service]]` and the dependency starts first. Cycles are detected and die loudly.
 - **Healthchecks** — `[service.healthcheck]` TOML table (`test`, `interval`, `timeout`, `retries`, `start_period`) wires directly into `docker run --health-*` flags. When a service has a healthcheck, `up` waits for it to become healthy before starting dependents. `export` emits `healthcheck:` blocks in compose output.
-- **Compose YAML interop** — `--config` now accepts `.yml` / `.yaml` files (docker-compose v2 format) in addition to `.toml`. Requires mikefarah/yq. The `up`, `down`, and `export` subcommands all honour the extension.
+- **Compose YAML interop** — `--config` now accepts `.yml` / `.yaml` files (docker-compose v2 format) in addition to `.toml`. Needs any YAML reader: mikefarah/yq (>= 4.18) **or** `python3` + PyYAML, probed by capability rather than by version banner. The `up`, `down`, and `export` subcommands all honour the extension.
 
 ## Known gaps in v0.2
 

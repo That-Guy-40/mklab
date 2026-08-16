@@ -161,6 +161,27 @@ docker network ls --filter label=lab-create.lab=demo   # → empty
 
 If you keep the named pgdata volume around between runs you can re-`up` and the database persists. To wipe it: `docker volume rm lab-demo-pgdata`.
 
+**`down` now ground-truths itself** (changed 2026-08-16 — [`REVIEW-phase3.md`](../REVIEW-phase3.md)
+P3-3). It used to print `── lab 'demo' torn down ──` and exit **0** even when a
+network it failed to remove was still there — which happens for an ordinary reason,
+since the lab network is a normal Docker network anything can join. It now re-queries
+after removing, and if something survived it names it and exits non-zero:
+
+```bash
+ld up --config examples/docker-examples/docker-3svc-topology.toml
+docker run -d --name squatter --network lab-demo-frontend alpine sleep 300
+ld down --lab demo; echo "rc=$?"
+# [warn] ── lab 'demo' only PARTIALLY torn down ──
+# [warn]   network remains:   lab-demo-frontend  (in use by a container this lab does not own? …)
+# rc=1
+docker rm -f squatter
+ld down --lab demo; echo "rc=$?"      # → rc=0, "── lab 'demo' torn down ──"
+```
+
+If you script `down` in a cleanup path where a leftover is acceptable, add `|| true`
+— but note that the non-zero exit is the honest answer, and each leaked network holds
+a subnet from Docker's finite address pool.
+
 ## 6. Idempotency
 
 ```bash
@@ -228,6 +249,26 @@ ld export --config /tmp/lab-a.toml --format compose \  # same, explicit --format
 docker compose -f /tmp/alpha-compose.yml config       # validates round-trip
 docker compose -f /tmp/alpha-compose.yml up -d        # hands it off to vanilla compose
 ```
+
+**The exported file is a second way to RUN the lab, so it carries the same guards
+as `up`** (changed 2026-08-16 — see [`REVIEW-phase3.md`](../REVIEW-phase3.md) P3-1/P3-2).
+Concretely:
+
+```bash
+printf '[lab]\nname = "pb"\n\n[[service]]\nname = "web"\nimage = "nginx:alpine"\nports = ["18099:80"]\n' \
+    > /tmp/pb.toml
+ld export --config /tmp/pb.toml | grep -A1 ports:
+#       ports:
+#         - "127.0.0.1:18099:80"      ← the F4 loopback default, not a bare 18099:80
+```
+
+Before this, the same TOML bound `127.0.0.1` through `ld up` and `0.0.0.0` **and
+`[::]`** through `docker compose -f … up -d` — the very handoff this section
+recommends. An explicit bind IP in the spec is still the opt-in to a wider bind and
+round-trips untouched, and `LAB_PUBLISH_HOST` steers the export exactly as it steers
+`up`. Names are validated before anything is emitted, and every scalar is quoted, so
+a value containing `: `, a leading `*`, or a newline can no longer produce a file
+compose refuses (or, worse, one it accepts with an attribute you did not write).
 
 Cross-phase hygiene: any `[[service]] engine = "podman"` block is
 skipped — the exported YAML contains only the docker-engine services,
@@ -618,17 +659,24 @@ docker-compose v2 schema, with no conversion step required.  Under the hood,
 that `toml_to_json()` produces, so `up`, `down`, `export`, and `list` all
 work identically.
 
-**Prerequisite:** mikefarah/yq must be installed.  Verify:
+**Prerequisite:** *any* YAML reader — since 2026-08-16 this is no longer tied to one
+vendor's binary.  The driver tries mikefarah/yq first and falls back to `python3` +
+PyYAML, which most hosts already have.  Verify whichever you have:
 
 ```bash
-yq --version | grep -i mikefarah   # must match; kislyuk/yq is a different tool
-# If missing:
-sudo apt-get install -y yq          # Ubuntu 22.04+ ships the mikefarah variant
-# or: sudo snap install yq
-# or: pip3 install yq               # kislyuk — works for YAML but not for --p toml
+printf 'a: 1\n' | yq -p yaml -o json -   # mikefarah/yq >= 4.18: prints {"a":1}
+python3 -c 'import yaml; print(yaml.__version__)'   # or PyYAML
 ```
 
-If yq is absent, the script dies early with an actionable error.
+Note the shape of that first check: it asks whether the tool **can do the job**, not
+who wrote it.  The old instruction here was `yq --version | grep -i mikefarah`, and
+yq 4.2.0 prints `yq version 4.2.0` — no vendor name — so a perfectly capable build
+could fail the grep while an incapable one passed it.  A version string is not an
+identity.  (The driver made the same mistake in the same place; see
+[`REVIEW-phase3.md`](../REVIEW-phase3.md) §3.)
+
+If no YAML reader is present at all, the script dies early with an actionable error
+naming both options.
 
 ### 11.2 Minimal compose file → `up` and `down`
 
@@ -804,17 +852,22 @@ ld down --config /tmp/compose-lab.yaml
 The `down --lab NAME` form (no `--config`) always works regardless of which
 format was used for `up`.
 
-### 11.8 Error: yq absent or wrong variant
+### 11.8 Error: no YAML reader at all
 
-If kislyuk/yq is installed instead of mikefarah/yq (the two tools share the
-binary name but have different interfaces):
+Having kislyuk/yq instead of mikefarah/yq is **no longer an error** — the driver
+probes the capability and falls through to `python3` + PyYAML, so the common case
+where the two tools share a binary name now just works.
+
+The error survives only for a host with neither reader.  To see it, hide both:
 
 ```bash
-ld up --config /tmp/compose-lab.yml 2>&1 || true
+env -i PATH=/nonexistent HOME="$HOME" bash -c \
+  '/path/to/lab-docker.sh up --config /tmp/compose-lab.yml' 2>&1 || true
 ```
 
-**Expect:** `[error] Compose YAML interop requires mikefarah/yq` and a
-non-zero exit.  TOML files still work; only `.yml`/`.yaml` needs mikefarah/yq.
+**Expect:** an error naming **both** options (`mikefarah/yq >= 4.18` or
+`python3 + PyYAML`) and a non-zero exit.  TOML files are unaffected — they have
+their own fallback chain (`tomlq` → yq → `dasel` → `python3 -c tomllib`).
 
 ### 11.9 Cleanup
 
@@ -847,7 +900,8 @@ Expect (on a docker-equipped host):
 - `test-push-validation.sh` — pass (~1 s); validates CLI guards for `push`
 - `test-depends-on-order.sh` — pass (~1 s); unit-tests the topo-sort helper
 - `test-healthcheck-export.sh` — pass (~1 s); validates healthcheck + depends_on in `export`
-- `test-compose-interop.sh` — pass; skips if mikefarah/yq is absent
+- `test-compose-interop.sh` — pass (~2 s); needs any YAML reader (mikefarah/yq or
+  python3+PyYAML), so it no longer skips on hosts with an older yq
 
 ## 13. Troubleshooting
 
@@ -861,7 +915,7 @@ Expect (on a docker-equipped host):
 | `ld exec demo/db` "no such container" | Lab/service name mismatch — service short name in topology, not container name | Use `ld list --lab demo` to see the mapping |
 | `depends_on cycle detected at service 'X'` | Circular `depends_on` chain | Draw the dependency graph; break the cycle |
 | `timed out waiting for 'X' to become healthy` | Healthcheck probe failing or too slow | Check `docker inspect --format '{{.State.Health}}' lab-<lab>-<svc>`; widen `retries` / `start_period`; fix the probe command |
-| `Compose YAML interop requires mikefarah/yq` | Only `.yml`/`.yaml` files need mikefarah/yq; `.toml` files don't | `sudo apt-get install -y yq` (Ubuntu 22.04+) or `sudo snap install yq` |
+| `Compose YAML interop needs a YAML reader` | The host has neither a `-p yaml`-capable yq nor python3+PyYAML. Only `.yml`/`.yaml` needs one; `.toml` has its own fallback chain | `sudo apt-get install -y python3-yaml` — or `yq` (Ubuntu 22.04+) / `sudo snap install yq` |
 | `ld up --config compose.yml` fails with yq parsing errors | File is valid Compose YAML but uses unsupported features (object-form volumes, `build.context:`, etc.) | Consult README §v0.2 Known gaps; consider using TOML config instead |
 
 `LAB_LOG_LEVEL=debug` shows the underlying `docker run` argv:

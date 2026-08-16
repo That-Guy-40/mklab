@@ -1646,7 +1646,13 @@ cmd_inspect() {
 # accepts a YAML config blob on stdin via --yaml mode).
 # _yaml_str VALUE — emit VALUE as a double-quoted YAML string with internal
 # double-quotes escaped (M-6, I-5).
-_yaml_str() { printf '"%s"' "${1//\"/\\\"}"; }
+#
+# Review L1 (applied here 2026-08-16, REVIEW-phase5.md P5-2): escape the BACKSLASH
+# FIRST, then the double-quote.  Phases 3 and 4 have had this ordering for months;
+# this copy did not, so a value ending in `\` emitted `"…\"` — the backslash escaped
+# the CLOSING quote, the scalar swallowed the next line, and the document malformed.
+# Escaping in the other order would double-escape what the first pass just wrote.
+_yaml_str() { local s="${1//\\/\\\\}"; printf '"%s"' "${s//\"/\\\"}"; }
 
 cmd_export() {
     local lab="${OPT_LAB:-${POS_ARGS[0]:-}}"
