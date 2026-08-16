@@ -77,6 +77,16 @@ validate_name() {
 
 # _in_set VALUE [MEMBER...] — true if VALUE equals one of the MEMBERs.  Used by
 # the partial-'up' rollback to skip pre-existing resources (Review H4).
+# _name_exists CNAME — does a container of exactly this name exist?
+# The one implementation of the capture-then-test shape (Review L2), so the three
+# call sites that used `docker ps … | grep -qx` cannot drift apart again.  See the
+# comment at cmd_run's call site for why the pipe form is wrong.
+_name_exists() {
+    local names
+    names="$(docker ps -a --format '{{.Names}}' 2>/dev/null || true)"
+    grep -Fxq -- "$1" <<<"$names"
+}
+
 _in_set() {
     local v="$1"; shift
     local x
@@ -103,6 +113,48 @@ _pub_host() {
         printf '%s:%s%s' "$host" "$body" "$proto"
     else
         printf '%s::%s%s' "$host" "$body" "$proto"
+    fi
+}
+
+# ─── Sensitive-mount advisory (Finding 11) ─────────────────────────────────
+# These used to be literal string matches on the volume SOURCE, which asks
+# "is this string /var/run/docker.sock?" when the question is "is this the
+# daemon socket?".  On any systemd host /var/run is a symlink to /run, so the
+# canonical spelling /run/docker.sock is the SAME device and inode and got no
+# warning at all — the advisory was silent for the spelling most hosts use.
+# `/` had the same shape: `//`, `/.`, and any symlink to `/` all evaded it.
+#
+# The guard is advisory, not access control, so over-warning is cheap and
+# under-warning is the defect.  Resolve, then compare.
+_same_file() {   # true only if both paths exist and are the same inode
+    local a b
+    a="$(stat -Lc '%d:%i' -- "$1" 2>/dev/null)" || return 1
+    b="$(stat -Lc '%d:%i' -- "$2" 2>/dev/null)" || return 1
+    [[ -n "$a" && "$a" == "$b" ]]
+}
+
+_is_docker_sock() {
+    local p="$1"
+    # Any spelling that NAMES a docker socket — including a rootless
+    # $XDG_RUNTIME_DIR/docker.sock, which is just as much daemon access.
+    case "$p" in */docker.sock|docker.sock) return 0 ;; esac
+    # ...and any path that RESOLVES to one, whatever it is called.
+    _same_file "$p" /run/docker.sock || _same_file "$p" /var/run/docker.sock
+}
+
+_is_root_path() {
+    local r
+    r="$(readlink -f -- "$1" 2>/dev/null)" || return 1
+    [[ "$r" == "/" ]]
+}
+
+# _warn_sensitive_mount SOURCE CONTEXT — one implementation, both call sites.
+_warn_sensitive_mount() {
+    local src="$1" ctx="$2"
+    if _is_docker_sock "$src"; then
+        log_warn "${ctx}docker.sock mount ('$src') gives the container full Docker daemon access (container escape)"
+    elif _is_root_path "$src"; then
+        log_warn "${ctx}volume mount of '$src' resolves to '/' and exposes the entire host filesystem"
     fi
 }
 
@@ -214,20 +266,51 @@ ensure_buildx_builder() {
 }
 
 # ─── TOML parser abstraction ────────────────────────────────────────────────
+#
+# _yq_can FORMAT — can the `yq` on PATH read FORMAT and write JSON?
+#
+# This used to be `yq --version | grep -qi mikefarah`, which tests the BANNER and
+# not the capability.  yq 4.2.0 prints "yq version 4.2.0" — no vendor name, no URL
+# — so it was rejected as "not mikefarah".  On this host that verdict is right by
+# ACCIDENT: 4.2.0 genuinely lacks `-p`, which arrived later.  But the check cannot
+# tell those two facts apart, and mikefarah builds between the two format changes
+# support `-p` while failing the grep.  A version string is not an identity — ask
+# the tool to do the thing, on a one-line fixture, and see whether it can.
+# (It also correctly rejects kislyuk/yq, a different tool with the same name.)
+_yq_can() {
+    have yq || return 1
+    local probe
+    case "$1" in
+        toml) probe='a = 1' ;;
+        yaml) probe='a: 1'  ;;
+        *) return 1 ;;
+    esac
+    printf '%s\n' "$probe" | yq -p "$1" -o json - >/dev/null 2>&1
+}
+
 toml_to_json() {
     local file="$1"
     [[ -r "$file" ]] || die "config file not readable: $file"
     if have tomlq; then
         tomlq -c '.' "$file"
-    elif have yq && yq --version 2>&1 | grep -qi 'mikefarah'; then
+    elif _yq_can toml; then
         yq -p toml -o json "$file"
     elif have dasel; then
         dasel -f "$file" -r toml -w json
+    elif python3 -c 'import tomllib' >/dev/null 2>&1; then
+        # Python 3.11+ carries a TOML parser in the standard library, so a host
+        # with python3 needs no third-party tool at all.
+        python3 -c '
+import json, sys, tomllib
+with open(sys.argv[1], "rb") as fh:
+    json.dump(tomllib.load(fh), sys.stdout)
+' "$file"
     else
         die "no TOML parser found.  Install one of:
         $(install_hint yq)        # mikefarah/yq, supports -p toml
    or   pipx install yq           # kislyuk/yq → tomlq
-   or   install dasel from https://github.com/tomwright/dasel"
+   or   install dasel from https://github.com/tomwright/dasel
+   or   use python3 >= 3.11       # tomllib is in the standard library"
     fi
 }
 
@@ -237,12 +320,32 @@ toml_to_json() {
 # Supported subset: services (image, ports, environment, volumes, networks,
 # command, depends_on, healthcheck), top-level networks, and `name`.
 # Volumes in object form {source, target} are not supported — use string form.
+#
+# _yaml_to_json FILE — YAML → JSON, by whichever converter this host has.
+# `yaml.safe_load` deliberately, never `yaml.load`: the full loader constructs
+# arbitrary Python objects from `!!python/object` tags, which would make reading
+# an untrusted compose file a code-execution seam.
+_yaml_to_json() {
+    local file="$1"
+    if _yq_can yaml; then
+        yq -p yaml -o json "$file"
+    elif python3 -c 'import yaml' >/dev/null 2>&1; then
+        python3 -c '
+import json, sys, yaml
+with open(sys.argv[1]) as fh:
+    json.dump(yaml.safe_load(fh), sys.stdout)
+' "$file"
+    else
+        die "Compose YAML interop needs a YAML reader.  Install one of:
+        $(install_hint yq)              # mikefarah/yq >= 4.18, supports -p yaml
+   or   $(install_hint python3-yaml)    # python3 + PyYAML"
+    fi
+}
+
 compose_to_json() {
     local file="$1"
     [[ -r "$file" ]] || die "config file not readable: $file"
-    have yq && yq --version 2>&1 | grep -qi 'mikefarah' \
-        || die "Compose YAML interop requires mikefarah/yq.  Install with:  $(install_hint yq)"
-    yq -p yaml -o json "$file" | jq -c '
+    _yaml_to_json "$file" | jq -c '
         . as $c |
         # Compose environment can be a {k:v} map or a ["K=V"] list; normalise
         # to a map so the rest of the code can use to_entries.
@@ -267,9 +370,17 @@ compose_to_json() {
           elif (d | type) == "object" then [d | keys[]]
           else [] end;
         # healthcheck.test: ["CMD-SHELL","cmd"] -> "cmd"; "none" -> ""
+        #
+        # The internal schema carries a SHELL STRING (docker run --health-cmd runs it
+        # through a shell), so an exec-form test has to be rendered into one.  Joining
+        # on spaces is right for CMD-SHELL, whose tail is already a shell string, but
+        # WRONG for CMD, whose tail is an argv: ["CMD","a b","c"] joined is "a b c",
+        # which the shell re-splits into three words.  @sh quotes each argument, so an
+        # argument containing a space stays one argument.  (REVIEW-phase3.md §3b.)
         def hc_test(t):
           if (t | type) == "array" then
-            if t[0] == "CMD-SHELL" or t[0] == "CMD" then t[1:] | join(" ")
+            if   t[0] == "CMD-SHELL" then t[1:] | join(" ")
+            elif t[0] == "CMD"       then t[1:] | @sh
             else "" end
           elif (t | type) == "string" and t != "none" then t
           else "" end;
@@ -471,9 +582,18 @@ _topo_visit() {
     while IFS= read -r dep; do
         [[ -z "$dep" ]] && continue
         # Soft-check: warn if dep not in list (may be a cross-engine service).
+        #
+        # P3-4: this used to recurse into the unknown name anyway, which queued a
+        # PHANTOM service into _TOPO_SORTED — and because it is a dependency it
+        # sorts FIRST, so `up` reached it before any real service and died on
+        # "specify one of image | from_tarball | …" naming a service the user never
+        # wrote.  The warning promised a tolerance the code did not implement.  An
+        # unknown name contributes no ordering (it has no edges), so skipping it
+        # loses nothing.
         if ! jq -e --arg d "$dep" 'map(select(.name==$d)) | length > 0' \
                <<<"$svc_json" >/dev/null 2>&1; then
-            log_warn "service '$name' depends_on '$dep' which is not in this topology"
+            log_warn "service '$name' depends_on '$dep' which is not in this topology — not started by this 'up'"
+            continue
         fi
         _topo_visit "$dep" "$svc_json"
     done < <(jq -r --arg n "$name" \
@@ -596,7 +716,14 @@ cmd_run() {
     local cname; cname="lab-${name}"
 
     # Detect existing container with the same name and refuse (idempotency).
-    if docker ps -a --format '{{.Names}}' | grep -qx "$cname"; then
+    # Review L2 / §3: capture first, test second.  `producer | grep -qx` puts the
+    # verdict downstream of a pipe — `grep -q` exits on the first match, the
+    # producer takes SIGPIPE, and under `set -o pipefail` the pipeline reports
+    # failure, so a name that WAS found reads as absent.  Measured: harmless until
+    # the producer's output exceeds the 64 KiB pipe buffer (~4,000 containers),
+    # which makes it latent rather than never.  `grep -Fxq` also keeps a '.' in a
+    # container name literal instead of a regex wildcard.
+    if _name_exists "$cname"; then
         die "container '$cname' already exists.  Destroy it first:  $LAB_PROG destroy $name"
     fi
 
@@ -631,11 +758,7 @@ cmd_run() {
         IFS=',' read -ra _vols <<<"$OPT_VOLUMES"
         for v in "${_vols[@]}"; do
             # Finding 11: warn on sensitive volume mounts.
-            local _vsrc="${v%%:*}"
-            case "$_vsrc" in
-                /var/run/docker.sock) log_warn "volume mount of docker.sock gives container full Docker daemon access (container escape)" ;;
-                /) log_warn "volume mount of '/' exposes the entire host filesystem to the container" ;;
-            esac
+            _warn_sensitive_mount "${v%%:*}" ""
             args+=(-v "$v")
         done
     fi
@@ -835,21 +958,24 @@ cmd_up() {
             [[ -n "$pp" ]] && args+=(-p "$(_pub_host "$pp")")
         done < <(jq -r '.ports[]?' <<<"$svc")
 
-        # Env — skip null-value entries (inherit-from-host semantics, Finding 32)
+        # Env — skip null-value entries (inherit-from-host semantics, Finding 32).
+        #
+        # The `select` belongs in jq, NOT in a bash test on the rendered text: `jq -r`
+        # prints a JSON null and the STRING "null" identically, so `[[ "$vv" != "null" ]]`
+        # could not tell them apart and silently dropped a literal env value of "null".
+        # Same shape as the jq `//` trap above — a sentinel that collides with a legal
+        # value.  Discriminate where the type is still known.
         local kk vv
         while IFS=$'\t' read -r kk vv; do
-            [[ -n "$kk" && "$vv" != "null" ]] && args+=(-e "${kk}=${vv}")
-        done < <(jq -r '.environment // {} | to_entries[]? | "\(.key)\t\(.value)"' <<<"$svc")
+            [[ -n "$kk" ]] && args+=(-e "${kk}=${vv}")
+        done < <(jq -r '.environment // {} | to_entries[]? | select(.value != null)
+                        | "\(.key)\t\(.value)"' <<<"$svc")
 
         # Volumes — Finding 11: warn on sensitive host path mounts.
         local vv2
         while IFS= read -r vv2; do
             [[ -z "$vv2" ]] && continue
-            local _vsrc="${vv2%%:*}"
-            case "$_vsrc" in
-                /var/run/docker.sock) log_warn "service '$sname': docker.sock mount gives container full daemon access (container escape)" ;;
-                /) log_warn "service '$sname': volume mount of '/' exposes the entire host filesystem" ;;
-            esac
+            _warn_sensitive_mount "${vv2%%:*}" "service '$sname': "
             args+=(-v "$vv2")
         done < <(jq -r '.volumes[]?' <<<"$svc")
 
@@ -891,7 +1017,7 @@ cmd_up() {
         if ! _run_err="$(docker run "${args[@]}" "$simage" "${cmd[@]}" 2>&1)"; then
             # "already in use" means idempotency: another 'up' beat us to it.
             if [[ "$_run_err" == *"already in use by container"* ]] \
-               || docker ps -a --format '{{.Names}}' | grep -qx "$cname"; then
+               || _name_exists "$cname"; then
                 log_warn "service '$sname' container already exists ($cname); leaving as-is"
             else
                 die "failed to start container '$cname': $_run_err"
@@ -966,6 +1092,37 @@ cmd_down() {
     if (( ${#nids[@]} > 0 )); then
         log_info "removing ${#nids[@]} network(s)"
         docker network rm "${nids[@]}" >/dev/null 2>&1 || true
+    fi
+
+    # P3-3: GROUND-TRUTH the teardown instead of announcing it.  Both removals above
+    # discard their exit status (deliberately — the fallback path needs to try), so
+    # nothing between them and the banner ever asked whether anything actually went
+    # away.  A network still holding a foreign container is the ordinary way this
+    # happens: it is a normal Docker network a student can join, `network rm` then
+    # fails, and the operator was told the lab was gone while each leaked network
+    # kept a subnet from Docker's finite address pool.  That is the record-and-reality
+    # rung, reported as success — the class CLAUDE.md ranks above an honest failure.
+    #
+    # Re-query rather than trust our own bookkeeping, and name what survived.
+    local -a left_c=() left_n=()
+    mapfile -t left_c < <(docker ps -a --format '{{.Names}}' \
+        --filter "label=${LAB_LABEL_LAB}=${lab_name}" \
+        --filter "label=${LAB_LABEL_TOOL}" 2>/dev/null)
+    mapfile -t left_n < <(docker network ls --format '{{.Name}}' \
+        --filter "label=${LAB_LABEL_LAB}=${lab_name}" \
+        --filter "label=${LAB_LABEL_TOOL}" 2>/dev/null)
+
+    if (( ${#left_c[@]} > 0 || ${#left_n[@]} > 0 )); then
+        local x
+        log_warn "── lab '$lab_name' only PARTIALLY torn down ──"
+        for x in "${left_c[@]}"; do
+            log_warn "  container remains: $x"
+        done
+        for x in "${left_n[@]}"; do
+            log_warn "  network remains:   $x  (in use by a container this lab does not own? 'docker network inspect $x')"
+        done
+        log_warn "re-run '$LAB_PROG down --lab $lab_name' once the holder is gone"
+        return 1
     fi
 
     log_info "── lab '$lab_name' torn down ──"
@@ -1120,7 +1277,7 @@ cmd_status() {
     # Container-scoped: does a container of this name (possibly `lab-<arg>`) exist?
     local cname; cname="$(_resolve_container_name "$target")"
     local container_hit=0
-    docker ps -a --format '{{.Names}}' | grep -qx "$cname" && container_hit=1
+    _name_exists "$cname" && container_hit=1
 
     if [[ -n "$lab_hits" || -n "$net_hits" ]] && (( ! container_hit )); then
         printf '── lab: %s ──\n' "$target"
@@ -1310,11 +1467,27 @@ cmd_inspect() {
 # which Phase 3's TOML doesn't carry; those services are emitted with the
 # image tag that `up` would synthesize (`lab-<lab>-<svc>-img`), plus a
 # commented hint so the reader knows it won't build standalone.
-# _yaml_str VALUE  — emit VALUE as a double-quoted YAML string with
-# internal double-quotes and backslashes escaped (Findings 20, 21, 22).
+# _yaml_str VALUE  — emit VALUE as a double-quoted YAML scalar (Findings 20, 21, 22).
 # Review L1: escape backslash FIRST, then double-quote, so a value ending in `\`
 # (or containing `"`) can't break out of / malform the quoted YAML scalar.
-_yaml_str() { local s="${1//\\/\\\\}"; printf '"%s"' "${s//\"/\\\"}"; }
+#
+# P3-2: a CONTROL CHARACTER needs the same treatment and used not to get it.  A
+# newline ends the scalar and turns the next line into a sibling key of the service
+# — which is how a `command = "…"` string injected a resolved `privileged: true`
+# into an exported topology that declared no such thing.  Escaping it as `\n` is
+# strictly better than refusing it: the artifact stays valid AND the value survives.
+#
+# The slow path hands the whole value to jq, whose output is a JSON string — every
+# control character emitted as \uXXXX, and a JSON string IS a valid YAML 1.2
+# double-quoted scalar, so it needs no post-processing.  It runs only when a control
+# character is actually present, which for real configs is never.
+_yaml_str() {
+    local s="$1"
+    if [[ "$s" != *[$'\x01'-$'\x1f'$'\x7f']* ]]; then
+        s="${s//\\/\\\\}"; printf '"%s"' "${s//\"/\\\"}"; return
+    fi
+    jq -n --arg s "$s" '$s'
+}
 
 cmd_export() {
     [[ -n "${OPT_CONFIG:-}" ]] || die "usage: $LAB_PROG export --config topology.toml [--format compose]"
@@ -1325,6 +1498,11 @@ cmd_export() {
     local cfg; cfg="$(load_config "$OPT_CONFIG")"
     local lab; lab="$(jq -r '.lab.name // ""' <<<"$cfg")"
     [[ -n "$lab" ]] || die "config missing [lab].name"
+    # P3-2c: `up` refuses an invalid name at its first line; `export` used to emit
+    # it into `container_name:` and a YAML key.  The exported file is a second way
+    # to RUN the lab (SHOWCASE.md pipes it into `docker compose up -d`), so it gets
+    # the same gate — and refusing here is refusing BEFORE the artifact exists.
+    validate_name "$lab" "lab name"
 
     # If a POS_ARG was supplied, require it to match [lab].name.  Catches the
     # "exported the wrong lab" class of mistake cheaply.
@@ -1354,6 +1532,7 @@ cmd_export() {
         svc="$(jq -c --argjson i "$i" '.service[$i]' <<<"$cfg")"
         sname="$(spec_get "$svc" name)"
         [[ -n "$sname" ]] || die "service[$i] missing name"
+        validate_name "$sname" "service name"   # P3-2c: parity with cmd_up
 
         engine="$(spec_get "$svc" engine)"
         if [[ -n "$engine" && "$engine" != "docker" ]]; then
@@ -1369,27 +1548,30 @@ cmd_export() {
         # Finding 21: quote service name as YAML key (names with ':' '#' etc.
         # would break YAML parsing if unquoted).
         printf '  %s:\n' "$(_yaml_str "$sname")"
-        printf '    container_name: lab-%s-%s\n' "$lab" "$sname"
+        printf '    container_name: %s\n' "$(_yaml_str "lab-${lab}-${sname}")"
         if [[ -n "$simage" ]]; then
-            printf '    image: %s\n' "$simage"
+            printf '    image: %s\n' "$(_yaml_str "$simage")"
         elif [[ -n "$tarball" ]]; then
-            printf '    image: lab-%s-%s-img   # source: from_tarball (not rebuildable via compose)\n' "$lab" "$sname"
+            printf '    image: %s   # source: from_tarball (not rebuildable via compose)\n' "$(_yaml_str "lab-${lab}-${sname}-img")"
         elif [[ -n "$chroot" ]]; then
-            printf '    image: lab-%s-%s-img   # source: from_chroot (not rebuildable via compose)\n' "$lab" "$sname"
+            printf '    image: %s   # source: from_chroot (not rebuildable via compose)\n' "$(_yaml_str "lab-${lab}-${sname}-img")"
         elif [[ -n "$ctx" ]]; then
             # Finding 22: quote build context path (may contain '#' or '"').
             printf '    build: %s\n' "$(_yaml_str "$ctx")"
         else
             printf '    image: scratch   # WARNING: service had no image source in the TOML\n'
         fi
-        printf '    hostname: %s\n' "$sname"
+        printf '    hostname: %s\n' "$(_yaml_str "$sname")"
 
         local p first
         first=1
         while IFS= read -r p; do
             [[ -z "$p" ]] && continue
             if (( first )); then printf '    ports:\n'; first=0; fi
-            printf '      - %s\n' "$(_yaml_str "$p")"
+            # P3-1: the exported file is a publish site, so it gets the F4 loopback
+            # default too.  Without this, the same TOML binds 127.0.0.1 through `up`
+            # and 0.0.0.0 (plus [::]) through `docker compose up -d`.
+            printf '      - %s\n' "$(_yaml_str "$(_pub_host "$p")")"
         done < <(jq -r '.ports[]?' <<<"$svc")
 
         first=1
@@ -1397,8 +1579,16 @@ cmd_export() {
         while IFS=$'\t' read -r kk vv; do
             [[ -z "$kk" ]] && continue
             if (( first )); then printf '    environment:\n'; first=0; fi
-            printf '      %s: %s\n' "$kk" "$(_yaml_str "$vv")"
-        done < <(jq -r '.environment // {} | to_entries[]? | "\(.key)\t\(.value)"' <<<"$svc")
+            # `\(.value|tojson)` below already emitted a JSON scalar, which is a valid
+            # YAML one — so `vv` is written through, not re-quoted.  It also makes the
+            # inherit-from-host sentinel (Finding 32) distinguishable from the literal
+            # string "null": null renders as a bare `null`, the string as `"null"`.
+            if [[ "$vv" == "null" ]]; then
+                printf '      %s:\n' "$(_yaml_str "$kk")"      # inherit from host env
+            else
+                printf '      %s: %s\n' "$(_yaml_str "$kk")" "$vv"
+            fi
+        done < <(jq -r '.environment // {} | to_entries[]? | "\(.key)\t\(.value|tojson)"' <<<"$svc")
 
         first=1
         local vol vol_src
@@ -1418,12 +1608,16 @@ cmd_export() {
         while IFS= read -r svc_net; do
             [[ -z "$svc_net" ]] && continue
             if (( first )); then printf '    networks:\n'; first=0; fi
-            printf '      - %s\n' "$svc_net"
+            printf '      - %s\n' "$(_yaml_str "$svc_net")"
         done < <(jq -r '.networks[]?' <<<"$svc")
 
         local cmdline; cmdline="$(jq -r '.command // empty' <<<"$svc")"
         if [[ -n "$cmdline" ]]; then
-            printf '    command: %s\n' "$cmdline"
+            # P3-2: quoted, so `true` stays a string rather than becoming a YAML
+            # boolean, `*.sh` is not read as an alias, and `sh -c echo hi: there`
+            # is not read as a mapping.  Four of five ordinary commands used to
+            # produce a file compose refuses.
+            printf '    command: %s\n' "$(_yaml_str "$cmdline")"
         else
             local cmdcount; cmdcount="$(jq -r '.cmd // [] | length' <<<"$svc")"
             if (( cmdcount > 0 )); then
@@ -1475,11 +1669,16 @@ cmd_export() {
             printf '    healthcheck:\n'
             # Finding 20: use jq to produce a properly JSON-escaped array so
             # a healthcheck containing '"' does not break the Compose YAML.
-            printf '      test: %s\n' "$(jq -n --arg t "$xhc_test" '["CMD-SHELL",$t]')"
-            [[ -n "$xhc_interval" ]] && printf '      interval: %s\n'     "$xhc_interval"
-            [[ -n "$xhc_timeout"  ]] && printf '      timeout: %s\n'      "$xhc_timeout"
-            [[ -n "$xhc_retries"  ]] && printf '      retries: %s\n'      "$xhc_retries"
-            [[ -n "$xhc_start"    ]] && printf '      start_period: %s\n' "$xhc_start"
+            # `-c`: without it jq pretty-prints, so the value spanned four lines at
+            # column 2 inside a block indented to 6 — valid only because YAML flow
+            # context ignores indentation, which is luck, not a design.
+            printf '      test: %s\n' "$(jq -nc --arg t "$xhc_test" '["CMD-SHELL",$t]')"
+            # P3-2: quoted like every other scalar.  Compose coerces "3" back to the
+            # number 3 for `retries`, and durations were strings already.
+            [[ -n "$xhc_interval" ]] && printf '      interval: %s\n'     "$(_yaml_str "$xhc_interval")"
+            [[ -n "$xhc_timeout"  ]] && printf '      timeout: %s\n'      "$(_yaml_str "$xhc_timeout")"
+            [[ -n "$xhc_retries"  ]] && printf '      retries: %s\n'      "$(_yaml_str "$xhc_retries")"
+            [[ -n "$xhc_start"    ]] && printf '      start_period: %s\n' "$(_yaml_str "$xhc_start")"
         fi
     done
 
@@ -1494,7 +1693,7 @@ cmd_export() {
         local net
         for net in "${exp_nets[@]}"; do
             local d; d="$(jq -r --arg n "$net" '.network[$n].driver // "bridge"' <<<"$cfg")"
-            printf '  %s:\n    driver: %s\n' "$(_yaml_str "$net")" "$d"
+            printf '  %s:\n    driver: %s\n' "$(_yaml_str "$net")" "$(_yaml_str "$d")"
         done
     fi
 
@@ -1503,7 +1702,7 @@ cmd_export() {
         printf 'volumes:\n'
         local vn
         for vn in "${!named_volumes[@]}"; do
-            printf '  %s:\n' "$vn"
+            printf '  %s:\n' "$(_yaml_str "$vn")"
         done
     fi
 }
@@ -1600,7 +1799,17 @@ parse_args() {
             --tarball)      OPT_TARBALL="$2"; shift 2 ;;
             --name)         OPT_NAME="$2"; shift 2 ;;
             --image)        OPT_IMAGE="$2"; shift 2 ;;
-            --arch)         OPT_ARCH="$2"; shift 2 ;;
+            # Validated HERE rather than per-subcommand: `build` called is_known_arch
+            # and `run` did not, so `run --arch bogus` reached
+            # `args+=(--platform "$(docker_platform "$OPT_ARCH")")`, whose failed
+            # command substitution made the array assignment non-zero — and as the
+            # LAST command of an `&&` list under `set -e` that killed the script with
+            # rc=1 and no message at all.  One gate at the parser covers run, build,
+            # push and up, and it is the only place that cannot be forgotten.
+            --arch)         OPT_ARCH="$2"
+                            is_known_arch "$OPT_ARCH" \
+                                || die "unknown arch: $OPT_ARCH (known: x86_64 aarch64 armv7l ppc64le riscv64 s390x)"
+                            shift 2 ;;
             --network)      OPT_NETWORK="$2"; shift 2 ;;
             --hostname)     OPT_HOSTNAME="$2"; shift 2 ;;
             --ports)        OPT_PORTS="$2"; shift 2 ;;

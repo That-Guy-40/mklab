@@ -12,12 +12,7 @@ set -euo pipefail
 require_docker
 require_cmd jq
 
-# Need a TOML parser.
-if ! command -v tomlq >/dev/null 2>&1 \
-   && ! command -v dasel >/dev/null 2>&1 \
-   && ! ( command -v yq >/dev/null 2>&1 && yq --version 2>&1 | grep -qi mikefarah ); then
-    skip "no TOML parser (need yq/tomlq/dasel)"
-fi
+require_toml_parser
 
 # ─── export: usage / format guards ─────────────────────────────────────────
 expect_error "export without --config" "config topology.toml" -- export
@@ -59,18 +54,24 @@ out="$(mktemp --suffix=.yml)"
 note "export → compose YAML"
 "$LAB_DOCKER" export --config "$cfg" --format compose > "$out"
 
-grep -q '^services:'               "$out" || fail "missing 'services:' key"
-grep -q '^  "web":'                "$out" || fail "missing service 'web'"
-grep -q '^  "db":'                 "$out" || fail "missing service 'db'"
-grep -q '"scanner":'               "$out" && fail "podman-engine service leaked into docker compose export"
-grep -q '^networks:'               "$out" || fail "missing 'networks:' key"
-grep -q '"front":'                 "$out" || fail "missing network 'front'"
-grep -q '^volumes:'                "$out" || fail "missing top-level 'volumes:' for named volume"
-grep -q '^  webdata:'              "$out" || fail "named volume 'webdata' not declared"
-grep -q 'container_name: lab-'     "$out" || fail "container_name not prefixed with lab-"
+# Assert on the PARSED document rather than on the text that encodes it — the
+# emitter quotes every scalar now (P3-2), and a `grep '^  webdata:'` was asserting
+# the rendering, not the presence of the volume.
+j="$(yaml_json "$out")" || skip "no YAML reader (python3+PyYAML or a yq that supports -p yaml)"
+
+jq -e '.services'          >/dev/null <<<"$j" || fail "missing 'services:' key"
+jq -e '.services.web'      >/dev/null <<<"$j" || fail "missing service 'web'"
+jq -e '.services.db'       >/dev/null <<<"$j" || fail "missing service 'db'"
+jq -e '.services.scanner'  >/dev/null <<<"$j" && fail "podman-engine service leaked into docker compose export"
+jq -e '.networks'          >/dev/null <<<"$j" || fail "missing 'networks:' key"
+jq -e '.networks.front'    >/dev/null <<<"$j" || fail "missing network 'front'"
+jq -e '.volumes'           >/dev/null <<<"$j" || fail "missing top-level 'volumes:' for named volume"
+jq -e '.volumes | has("webdata")' >/dev/null <<<"$j" || fail "named volume 'webdata' not declared"
+[[ "$(jq -r '.services.web.container_name' <<<"$j")" == "lab-${lab}-web" ]] \
+    || fail "container_name not prefixed with lab-<lab>-"
 
 # Compose v2 obsoletes top-level version:, so it should NOT be present.
-grep -q '^version:' "$out" && fail "compose YAML carries obsolete 'version:' key"
+jq -e 'has("version")' >/dev/null <<<"$j" && fail "compose YAML carries obsolete 'version:' key"
 note "export shape OK"
 
 # If docker compose is on hand, verify the generated file actually parses.

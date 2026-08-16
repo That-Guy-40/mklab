@@ -8,10 +8,12 @@ set -euo pipefail
 
 require_cmd jq
 
-# Compose YAML interop requires mikefarah/yq.
-if ! ( command -v yq >/dev/null 2>&1 && yq --version 2>&1 | grep -qi mikefarah ); then
-    skip "Compose YAML interop requires mikefarah/yq"
-fi
+# Compose YAML interop needs a YAML reader — asked as a capability, not a banner.
+# This test SKIPPED on the audit host for two years' worth of yq releases (4.2.0
+# fails the vendor grep), and the skip was hiding a stale assertion: the round-trip
+# checks at the bottom still grepped for the UNQUOTED `^  web:` that `export` stopped
+# emitting when Finding 21 quoted YAML keys.  An unrun test rots silently.
+require_yaml_reader
 
 # Source load_config and compose_to_json without running main().
 export LAB_LOG_LEVEL=error
@@ -97,13 +99,77 @@ name2="$(jq -r '.lab.name' <<<"$json2")"
 [[ "$name2" == "mylab" ]] || fail ".yaml extension: .lab.name mismatch: '$name2'"
 note ".yaml extension dispatched correctly"
 
-# ── export round-trip: compose YAML in → compose YAML out ──────────────────
-exported="$("$LAB_DOCKER" export --config "$tmp/compose.yml")"
-grep -q '^services:'    <<<"$exported" || fail "round-trip export: missing services:"
-grep -q '^  web:'       <<<"$exported" || fail "round-trip export: missing web:"
-grep -q '^  db:'        <<<"$exported" || fail "round-trip export: missing db:"
-grep -q 'healthcheck:'  <<<"$exported" || fail "round-trip export: healthcheck missing from db"
-grep -q 'depends_on:'   <<<"$exported" || fail "round-trip export: depends_on missing from web"
-note "round-trip compose → export OK"
+# ── healthcheck exec form: CMD carries an ARGV, not a shell string ─────────
+# The internal schema holds a shell string (docker run --health-cmd runs it through
+# a shell), so an exec-form test has to be RENDERED into one.  Joining on spaces is
+# right for CMD-SHELL and wrong for CMD: ["CMD","a b","c"] joined is "a b c", which
+# the shell re-splits into three words — a two-argument check silently becomes a
+# three-argument one.  (REVIEW-phase3.md §3b flagged this as a reading; with a YAML
+# reader on hand it is now a measurement.)
+cat > "$tmp/exec.yml" <<'YAML'
+name: execlab
+services:
+  probe:
+    image: busybox
+    healthcheck:
+      test: ["CMD", "/bin/check", "one arg with spaces", "second"]
+YAML
+exec_hc="$(jq -r '.service[] | select(.name=="probe") | .healthcheck.test' <<<"$(load_config "$tmp/exec.yml")")"
+[[ "$exec_hc" != "/bin/check one arg with spaces second" ]] \
+    || fail "REGRESSION: an exec-form CMD healthcheck was joined on spaces, so 'one arg with spaces' re-splits into four words when the shell runs it"
+# The rendering must survive a round trip through the shell's own word splitting.
+# `t[1:]` drops the "CMD" marker, so three argv elements must survive as three
+# shell words — the joined-on-spaces rendering yields six.
+mapfile -t words < <(eval "printf '%s\n' $exec_hc")
+(( ${#words[@]} == 3 )) \
+    || fail "REGRESSION: exec-form healthcheck rendered to ${#words[@]} shell words, expected 3: ${words[*]}"
+[[ "${words[1]}" == "one arg with spaces" ]] \
+    || fail "REGRESSION: exec-form healthcheck lost an argument boundary: got '${words[1]}'"
+note "CMD exec-form healthcheck keeps its argument boundaries (@sh)"
 
-pass "compose YAML interop OK"
+# ── inherit-from-host env: a null value is NOT the string "null" (Finding 32) ──
+cat > "$tmp/inherit.yml" <<'YAML'
+name: envlab
+services:
+  app:
+    image: busybox
+    environment:
+      - INHERITED
+      - EXPLICIT=set
+      - LITERAL=null
+YAML
+ij="$(load_config "$tmp/inherit.yml")"
+[[ "$(jq -r '.service[0].environment.INHERITED' <<<"$ij")" == "null" ]] \
+    || fail "an environment entry with no '=' should become a JSON null (inherit from host)"
+[[ "$(jq -r '.service[0].environment | .INHERITED == null' <<<"$ij")" == "true" ]] \
+    || fail "INHERITED should be a JSON null, not the string \"null\""
+[[ "$(jq -r '.service[0].environment | .LITERAL == "null"' <<<"$ij")" == "true" ]] \
+    || fail "REGRESSION: a literal value of \"null\" collided with the inherit sentinel"
+note "inherit-from-host env is a JSON null, distinct from the literal string"
+
+# ...and export must render the two differently: a bare key for inherit, a quoted
+# scalar for the literal.  This is the seam where the sentinel used to collide.
+"$LAB_DOCKER" export --config "$tmp/inherit.yml" > "$tmp/inherit-out.yml" \
+    || fail "export of the inherit fixture failed"
+ej="$(yaml_json "$tmp/inherit-out.yml")" || skip "no YAML reader for the export round-trip"
+[[ "$(jq -r '.services.app.environment.INHERITED == null' <<<"$ej")" == "true" ]] \
+    || fail "REGRESSION: an inherit-from-host env var was exported with a value"
+[[ "$(jq -r '.services.app.environment.LITERAL' <<<"$ej")" == "null" ]] \
+    || fail "REGRESSION: a literal env value of \"null\" was dropped by export"
+note "export renders inherit-from-host and the literal \"null\" differently"
+
+# ── export round-trip: compose YAML in → compose YAML out ──────────────────
+"$LAB_DOCKER" export --config "$tmp/compose.yml" > "$tmp/rt.yml" || fail "round-trip export failed"
+rt="$(yaml_json "$tmp/rt.yml")" || skip "no YAML reader for the round-trip assertions"
+jq -e '.services.web' >/dev/null <<<"$rt" || fail "round-trip export: missing web"
+jq -e '.services.db'  >/dev/null <<<"$rt" || fail "round-trip export: missing db"
+jq -e '.services.db.healthcheck' >/dev/null <<<"$rt" || fail "round-trip export: healthcheck missing from db"
+jq -e '.services.web.depends_on' >/dev/null <<<"$rt" || fail "round-trip export: depends_on missing from web"
+# The port came in bare ("8080:80"), so the export must apply the F4 loopback
+# default to it exactly as `up` would (P3-1) — the compose-YAML input path is a
+# publish site too.
+[[ "$(jq -r '.services.web.ports[0]' <<<"$rt")" == "127.0.0.1:8080:80" ]] \
+    || fail "REGRESSION: a bare port read from compose YAML was exported without the F4 loopback default"
+note "round-trip compose → export OK, including the loopback default"
+
+pass "compose YAML interop OK (schema, exec-form healthcheck, inherit-env, export round-trip)"

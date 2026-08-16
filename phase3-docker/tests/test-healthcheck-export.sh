@@ -7,12 +7,7 @@ set -euo pipefail
 
 require_cmd jq
 
-# Need a TOML parser.
-if ! command -v tomlq >/dev/null 2>&1 \
-   && ! command -v dasel >/dev/null 2>&1 \
-   && ! ( command -v yq >/dev/null 2>&1 && yq --version 2>&1 | grep -qi mikefarah ); then
-    skip "no TOML parser (need yq/tomlq/dasel)"
-fi
+require_toml_parser
 
 cfg="$(mktemp --suffix=.toml)"
 on_exit 'rm -f "$cfg"'
@@ -38,30 +33,43 @@ image       = "nginx:alpine"
 depends_on  = ["db"]
 TOML
 
-out="$("$LAB_DOCKER" export --config "$cfg")"
+yml="$(mktemp --suffix=.yml)"
+on_exit 'rm -f "$yml"'
+"$LAB_DOCKER" export --config "$cfg" >"$yml" || fail "export failed"
+
+# Assert on the PARSED values, not on the text that encodes them: the emitter now
+# quotes every scalar (P3-2), so `grep -q 'interval: 10s'` would be testing the
+# rendering rather than the artifact.
+j="$(yaml_json "$yml")" || skip "no YAML reader (python3+PyYAML or a yq that supports -p yaml)"
 
 # ── healthcheck block ───────────────────────────────────────────────────────
-grep -q '    healthcheck:'          <<<"$out" || fail "healthcheck: block missing"
-grep -q 'CMD-SHELL'                 <<<"$out" || fail "CMD-SHELL prefix missing"
-grep -q 'pg_isready'                <<<"$out" || fail "healthcheck test command missing"
-grep -q 'interval: 10s'             <<<"$out" || fail "interval missing"
-grep -q 'timeout: 5s'               <<<"$out" || fail "timeout missing"
-grep -q 'retries: 5'                <<<"$out" || fail "retries missing"
-grep -q 'start_period: 30s'         <<<"$out" || fail "start_period missing"
+jq -e '.services.db.healthcheck' >/dev/null <<<"$j" || fail "healthcheck block missing"
+[[ "$(jq -r '.services.db.healthcheck.test[0]' <<<"$j")" == "CMD-SHELL" ]] \
+    || fail "healthcheck test is not in CMD-SHELL form"
+[[ "$(jq -r '.services.db.healthcheck.test[1]' <<<"$j")" == "pg_isready -U postgres" ]] \
+    || fail "healthcheck test command missing or mangled"
+[[ "$(jq -r '.services.db.healthcheck.test | length' <<<"$j")" == "2" ]] \
+    || fail "healthcheck test should be a 2-element flow sequence"
+[[ "$(jq -r '.services.db.healthcheck.interval'     <<<"$j")" == "10s" ]] || fail "interval missing/wrong"
+[[ "$(jq -r '.services.db.healthcheck.timeout'      <<<"$j")" == "5s"  ]] || fail "timeout missing/wrong"
+[[ "$(jq -r '.services.db.healthcheck.retries'      <<<"$j")" == "5"   ]] || fail "retries missing/wrong"
+[[ "$(jq -r '.services.db.healthcheck.start_period' <<<"$j")" == "30s" ]] || fail "start_period missing/wrong"
 note "healthcheck block emitted correctly"
 
 # ── depends_on block with condition ────────────────────────────────────────
-grep -q '    depends_on:'            <<<"$out" || fail "depends_on: block missing"
-grep -q '"db":'                     <<<"$out" || fail "depends_on: db entry missing (service names now quoted as YAML keys)"
-grep -q 'condition: service_healthy' <<<"$out" || fail "condition should be service_healthy (db has healthcheck)"
+[[ "$(jq -r '.services.web.depends_on.db.condition' <<<"$j")" == "service_healthy" ]] \
+    || fail "web should depend_on db with condition service_healthy (db has a healthcheck)"
 note "depends_on with service_healthy emitted correctly"
 
 # ── no depends_on emitted for db (it has none) ─────────────────────────────
-# Service names are now quoted, so match '"db":'
-db_section="$(awk '/^  "db":/{p=1} p && /^  "[a-z]/ && !/^  "db":/{p=0} p' <<<"$out")"
-if grep -q 'depends_on' <<<"$db_section"; then
-    fail "db should have no depends_on block; got:\n$db_section"
-fi
+[[ "$(jq -r '.services.db.depends_on // "none"' <<<"$j")" == "none" ]] \
+    || fail "db should have no depends_on block"
 note "db has no spurious depends_on"
+
+# The container_name must carry the lab prefix `up` would use — the exported file
+# is a second way to run the same lab, so the names have to agree.
+[[ "$(jq -r '.services.db.container_name' <<<"$j")" == "lab-hctest-db" ]] \
+    || fail "exported container_name diverges from the name 'up' would create"
+note "container_name matches what 'up' would create"
 
 pass "healthcheck + depends_on export OK"

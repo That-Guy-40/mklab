@@ -1894,7 +1894,13 @@ cmd_export() {
                 while IFS= read -r p; do
                     [[ -z "$p" ]] && continue
                     if (( first )); then printf '    ports:\n'; first=0; fi
-                    printf '      - %s\n' "$(_yaml_str "$p")"
+                    # Review F4 (REOPENED 2026-08-16, REVIEW-phase3.md P3-1): the
+                    # exported compose file is a PUBLISH SITE — it is meant to be run
+                    # with `docker compose up -d` — so it takes the loopback default
+                    # exactly as the quadlet's PublishPort= and every `run` path do.
+                    # Without it the same spec binds 127.0.0.1 through `up` and
+                    # 0.0.0.0 (plus [::]) through the artifact.
+                    printf '      - %s\n' "$(_yaml_str "$(_pub_host "$p")")"
                 done < <(jq -r '.ports[]?' <<<"$svc")
                 first=1
                 local kk vv

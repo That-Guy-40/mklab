@@ -42,21 +42,43 @@ cause, and it is the finding that matters:
 > its `PublishPort=` routes through `_pub_host` — so the fix shape is in-tree,
 > one phase over.
 
-- **P3-1 (MED)** — `export` drops the F4 loopback default: the same TOML that
-  `up` binds to `127.0.0.1` binds `0.0.0.0` **and `[::]`** when run through the
-  exported compose file. AUDIT.md records F4 as resolved with *"**every** publish
-  site routes through it."*
-- **P3-2 (MED)** — `export` emits unescaped, unvalidated scalars. **3 of 14**
-  config-reachable fields inject a *resolved* compose attribute (demonstrated:
-  `privileged: true` plus a bind mount of `/`), **9 corrupt** the artifact, and
-  only **2 round-trip** — the two that happen to be escaped. Ordinary values
-  break it: 4 of 5 realistic `command` strings produce a file compose refuses.
-- **P3-3 (LOW/MED)** — `down` reports `── lab 'x' torn down ──` and exits **0**
-  while a network it failed to remove is still present. A false success, the
-  class CLAUDE.md ranks above an honest failure.
-- **P3-4 (LOW)** — the `depends_on` **"soft-check"** is fatal: a dependency not
-  in the topology is warned about as tolerable (*"may be a cross-engine
-  service"*), then queued as a service to start, and kills the whole `up`.
+> **Status 2026-08-16: all four findings are FIXED**, together with **every §3 item**
+> and the §3b gap, each carrying a regression test whose assertion was **watched to
+> fail against the pre-fix driver** before it was kept. The suite is now **23/23 ran,
+> 23 passed, 0 skipped, 0 failed** — the skip is gone because `test-compose-interop.sh`
+> no longer needs one specific vendor's `yq` (§3b). Two fixes turned out to be
+> cross-phase and were applied in the sibling drivers too: **F4** in Phase 4's compose
+> export, **Review L1** in Phase 5's `_yaml_str`. See [§7](#7-resolution-2026-08-16)
+> for the inventory and the negative-control evidence.
+>
+> The headline above was right about the shape but understated it in one way worth
+> recording: the guarded path and the unguarded one are not merely inconsistent —
+> `export` was the path a reader is *told* to use, so the artifact with no guards was
+> the recommended one. That is the sibling-docs drift pattern, in code.
+
+- **P3-1 (MED)** — ✅ **FIXED 2026-08-16.** `export` drops the F4 loopback default:
+  the same TOML that `up` binds to `127.0.0.1` binds `0.0.0.0` **and `[::]`** when
+  run through the exported compose file. AUDIT.md records F4 as resolved with
+  *"**every** publish site routes through it."* The port now routes through
+  `_pub_host` at the emit site, and **Phase 4's compose export got the same fix** —
+  it had the identical gap. Regression: `tests/test-export-hardening.sh`,
+  `phase4-podman/tests/test-compose-export.sh`.
+- **P3-2 (MED)** — ✅ **FIXED 2026-08-16.** `export` emits unescaped, unvalidated
+  scalars. **3 of 14** config-reachable fields inject a *resolved* compose attribute
+  (demonstrated: `privileged: true` plus a bind mount of `/`), **9 corrupt** the
+  artifact, and only **2 round-trip** — the two that happen to be escaped. Ordinary
+  values break it: 4 of 5 realistic `command` strings produce a file compose
+  refuses. Fixed with all three layers from the fix direction below, and the
+  escaper now handles control characters by **escaping** rather than refusing, so
+  the value survives as well as the artifact.
+- **P3-3 (LOW/MED)** — ✅ **FIXED 2026-08-16.** `down` reports
+  `── lab 'x' torn down ──` and exits **0** while a network it failed to remove is
+  still present. A false success, the class CLAUDE.md ranks above an honest failure.
+  It now re-queries after removal, names each survivor, and exits non-zero.
+- **P3-4 (LOW)** — ✅ **FIXED 2026-08-16.** The `depends_on` **"soft-check"** is
+  fatal: a dependency not in the topology is warned about as tolerable (*"may be a
+  cross-engine service"*), then queued as a service to start, and kills the whole
+  `up`. An unknown name is now skipped, which is what the warning always claimed.
 
 One suspicion — that the three `docker ps … | grep -qx` gates fail open under
 SIGPIPE at realistic scale — was **investigated and largely cleared** (§4); the
@@ -71,7 +93,7 @@ so neither the Phase 1 **P1-1** basename-collision class nor the Phase 2
 
 ## 2. Findings
 
-### P3-1 — MED — `export` drops the F4 loopback default; the artifact binds `0.0.0.0`
+### P3-1 — MED — `export` drops the F4 loopback default; the artifact binds `0.0.0.0` — ✅ FIXED 2026-08-16
 
 `_pub_host` (line 93) is the Review-F4 fix: a bare `8080:80` binds every host
 interface, so the driver prepends `127.0.0.1` unless the spec already names a
@@ -122,7 +144,7 @@ treats its generated artifact as a publish site, and this one does not. AUDIT.md
 F4 row should then be re-verified rather than assumed: its claim of *"every
 publish site"* was true of the two live sites and missed the artifact.
 
-### P3-2 — MED — `export` emits unescaped, unvalidated scalars → injected compose attributes, and routine corruption
+### P3-2 — MED — `export` emits unescaped, unvalidated scalars → injected compose attributes, and routine corruption — ✅ FIXED 2026-08-16
 
 `cmd_export` escapes **some** scalars with `_yaml_str` and emits others raw. The
 split is not by risk; it is by which ones someone got to. Twelve raw
@@ -216,7 +238,7 @@ Note `_yaml_str` is sufficient for facet (a) but not (b): a newline inside a
 double-quoted YAML scalar still yields a file compose rejects — loud rather than
 dangerous. That is why layer 2 belongs in the fix and not just layer 3.
 
-### P3-3 — LOW/MED — `down` reports success while leaving a network behind
+### P3-3 — LOW/MED — `down` reports success while leaving a network behind — ✅ FIXED 2026-08-16
 
 `cmd_down` swallows the outcome of both removals (lines 956–958, 968):
 
@@ -253,7 +275,7 @@ way Phase 1's `_safe_rm_rf` ground-truths `/proc/mounts` rather than trusting it
 own bookkeeping. `down` need not fail hard — a network held by a foreign
 container is a legitimate state — but it must not call it *torn down*.
 
-### P3-4 — LOW — the `depends_on` "soft-check" is fatal
+### P3-4 — LOW — the `depends_on` "soft-check" is fatal — ✅ FIXED 2026-08-16
 
 `_topo_visit` warns when a dependency is not in the topology, explicitly
 anticipating a legitimate reason, then recurses into it anyway (lines 473–480):
@@ -297,7 +319,7 @@ edges — so nothing is lost.
 
 ---
 
-## 3. Minor / robustness (not standalone findings)
+## 3. Minor / robustness (not standalone findings) — ✅ ALL SIX FIXED 2026-08-16
 
 - **`run --arch <unknown>` exits 1 with no message**, where `build` names the
   problem:
@@ -375,7 +397,7 @@ edges — so nothing is lost.
   one-line fixture) instead of parsing a version banner — a version string is not
   an identity.
 
-## 3b. Not verified by this pass — UNKNOWN, not PASS
+## 3b. Not verified by this pass — UNKNOWN, not PASS — ✅ CLOSED 2026-08-16
 
 - **The Compose-YAML interop path (`compose_to_json`, ~80 lines of jq) was not
   exercised.** `tests/test-compose-interop.sh` **skipped** on this host for the
@@ -388,6 +410,28 @@ edges — so nothing is lost.
   shell string, which re-splits an argument containing a space — but that is a
   reading, not a measurement, and is recorded here as such rather than as a
   finding.
+
+  **Closed 2026-08-16.** The precondition was the defect, not the host: `compose_to_json`
+  hard-required one vendor's binary for a job the standard library can do. It now falls
+  back to `python3` + `PyYAML` (`yaml.safe_load`, never `load` — the full loader
+  constructs arbitrary Python objects from `!!python/object` tags, which would make
+  reading an untrusted compose file a code-execution seam), and `toml_to_json` likewise
+  falls back to `tomllib`. The interop test **runs** on this host now, so the branch,
+  its environment normalisation, its `depends_on` handling and its `hc_test` are
+  measured rather than reasoned about.
+
+  The `CMD`-vs-`CMD-SHELL` reading was **right, and is now a measurement**: `hc_test`
+  joined an exec-form `["CMD","a b","c"]` into `a b c`, which the shell re-splits into
+  three words — a two-argument check silently becoming a three-argument one. Fixed with
+  `@sh`, which quotes each element, and asserted by *running the rendering through the
+  shell's own word splitting* and counting the words, rather than by comparing strings.
+
+  **The skip was also hiding a stale test.** `test-compose-interop.sh` still grepped for
+  the **unquoted** `^  web:` that `export` stopped emitting when Finding 21 quoted YAML
+  keys. It would have failed the moment it ran. An unrun test rots silently, which is the
+  strongest argument here for closing a skip rather than annotating it — and it is why the
+  three `yq --version | grep mikefarah` preconditions in the *tests* were replaced with
+  capability probes too, not just the one in the driver.
 
 ## 4. Investigated and cleared (so it is not re-raised)
 
@@ -462,3 +506,107 @@ step *and* telling the user the exact alternative command. And
 `docker compose config --quiet` — the outcome, not the text — which is why P3-2
 had to be found with hostile inputs rather than by reading: the assertion is
 right, and every value in its fixture is a plain token.
+
+---
+
+## 7. Resolution (2026-08-16)
+
+Everything above is now fixed — the four findings, all six §3 items, and the §3b
+gap — plus the two cross-phase instances the findings implicated. Diagnosis and
+repair are in the same document on purpose: the fix direction each finding proposed
+is where the work started, and where it *diverged* is recorded below rather than
+quietly rewritten.
+
+### 7.1 What changed
+
+| item | change | regression test |
+|---|---|---|
+| **P3-1** | `export` routes each port through `_pub_host` before emitting | `test-export-hardening.sh`, `test-compose-interop.sh` |
+| **P3-1 (Phase 4)** | same fix at `lab-podman.sh:1897` — its compose export had the identical gap | `phase4-podman/tests/test-compose-export.sh` |
+| **P3-2** | `validate_name` on lab + service names; **every** scalar through `_yaml_str`; `_yaml_str` grew a control-character path | `test-export-hardening.sh` |
+| **P3-3** | `down` re-queries after removal, names each survivor, exits non-zero | `test-down-reports-survivors.sh` |
+| **P3-4** | an unknown `depends_on` target is skipped, not queued | `test-depends-on-phantom.sh` |
+| **§3** arch | `--arch` validated **once at the parser**, covering `run`/`build`/`push`/`up` | `test-arch-and-mount-guards.sh` |
+| **§3** mounts | `_warn_sensitive_mount` resolves the path and compares device:inode | `test-arch-and-mount-guards.sh` |
+| **§3** env `"null"` | the `select` moved into `jq`, where the type is still known | `test-env-literal-null.sh` |
+| **§3** pipe gates | one `_name_exists` helper; all three call sites use it | `test-name-gate-at-scale.sh` |
+| **§3** healthcheck | `jq -nc` | `test-export-hardening.sh` |
+| **§3** yq probe | `_yq_can FORMAT` runs the tool on a one-line fixture | `test-compose-interop.sh` (it now runs) |
+| **§3b** interop | `python3`/`PyYAML` + `tomllib` fallbacks; `hc_test` uses `@sh` for exec form | `test-compose-interop.sh` |
+| **Review L1 (Phase 5)** | `_yaml_str` escapes backslash **before** double-quote, as Phases 3/4 already did | `phase5-lxd/tests/test-yaml-escaping.sh` |
+
+### 7.2 Where the fix diverged from the fix direction
+
+- **P3-2 proposed *rejecting* control characters** (layer 2, the `sanitize_unit_value`
+  shape from Phase 4). The implementation **escapes** them instead: a newline becomes
+  `\n` inside the quoted scalar, so the artifact stays valid *and* the value survives.
+  Rejecting would have been correct-but-lossy, and "the export refuses a config `up`
+  accepts" is its own kind of divergence between the two paths. The fast path is pure
+  bash; only a value that actually contains a control character pays for `jq`.
+- **`command:` was left a quoted string, not split into a list.** Making the export
+  mirror `cmd_up`'s naive `read -ra` whitespace split would have been *more* faithful to
+  `up` and *less* correct: compose's own shlex handles quoting properly, and `up`'s
+  splitter is the weaker of the two. Mimicking the weaker one would be regressing toward
+  the mechanism. The measured consequence is recorded honestly instead: compose's shlex
+  legitimately drops `;` and `}` from a string command, so `test-export-hardening.sh`
+  asserts the **YAML scalar** the parser reads back, not compose's resolved argv.
+
+### 7.3 Two assertions that had to be corrected before they could be trusted
+
+Both were caught by running the new tests against the **pre-fix** driver, which is the
+only way either could have surfaced:
+
+1. **`grep -c '^      test: '` returned `1` for the pretty-printed form too** — only the
+   *first* line of a multi-line jq array carries the prefix. The check looked like it
+   measured single-line-ness and could never fail. Replaced with an assertion that the
+   emitted line *ends in `]`*, i.e. that the value is complete on it. This is the §3
+   "cheap check standing in for the real one" pattern, committed by a test written to
+   catch that very pattern.
+2. **A `command` ending in a bare backslash** was in the ordinary-values list, and
+   compose refused it. That refusal is **correct** — it is not a well-formed shell
+   command line — so the case was moved to a field nothing shell-splits (an env value),
+   where backslash fidelity is genuinely the exporter's problem. A fixture the code
+   ought to reject cannot also be its happy path.
+
+### 7.4 Negative controls
+
+No assertion was kept without being observed to fail. The pre-fix driver was restored
+and every new test re-run against it:
+
+| test | verdict against the pre-fix driver |
+|---|---|
+| `test-export-hardening.sh` | FAIL — exported port `19003:80` bound `0.0.0.0`, not `127.0.0.1` |
+| `test-down-reports-survivors.sh` | FAIL — `down` exited 0 with the network still present |
+| `test-depends-on-phantom.sh` | FAIL — sort order was `cache web db`; the phantom was queued first |
+| `test-arch-and-mount-guards.sh` | FAIL — `run --arch bogus-arch` produced `rc=1` and **empty** output |
+| `test-name-gate-at-scale.sh` | FAIL — the name was not found in a 144 KB list |
+| `test-env-literal-null.sh` | FAIL — the container got `A=<unset>` |
+| `test-compose-interop.sh` | FAIL — died in `load_config` (the vendor gate) with no verdict |
+| `phase4-podman/tests/test-compose-export.sh` | FAIL — bare port exported without the loopback default |
+| `phase5-lxd/tests/test-yaml-escaping.sh` | FAIL — `a\` emitted `"a\"` |
+
+Three assertions were **shadowed** in that run — an earlier one in the same file failed
+first, so they were never observed biting — and were measured separately against the
+pre-fix driver: healthcheck compactness (`test: [` incomplete → complete), export name
+validation (`ACCEPTED rc=0` → refused), and the mount advisory for `/run/docker.sock`
+and `//` (both `silent` → both `WARNED`). `test-name-gate-at-scale.sh` additionally
+carries its **own** control inline: it re-implements the old `| grep -qx` shape and
+fails if that shape does *not* break on the fixture, so the test cannot pass for the
+uninteresting reason that its fixture was too small.
+
+### 7.5 Not verified by the fix pass — UNKNOWN, not PASS
+
+- **Phase 5's live LXD paths were not run.** The change there is confined to
+  `_yaml_str`, whose only consumers are the two `cmd_export` call sites, and it has a
+  pure unit test. But `phase5-lxd/tests/run-all.sh` includes `test-profiles-projects.sh`,
+  and profile **writes** are documented to wedge `incus` on this host with recovery
+  requiring a `sudo systemctl restart incus` this agent cannot perform. Four pure tests
+  ran (`test-yaml-escaping`, `test-validation`, `test-naming`, `test-harness-net`); the
+  instance-lifecycle tests did **not**.
+- **No IPv6-only host was tested.** P3-1's original reproduction observed `[::]:19099`
+  from a dual-stack daemon; the fix is asserted through `docker compose config`'s
+  resolved `host_ip`, which reports the bind address rather than the sockets finally
+  opened.
+- **The 64 KiB threshold was re-derived on this kernel only.** `test-name-gate-at-scale.sh`
+  asserts its fixture exceeds the pipe buffer and fails loudly if it does not, so a
+  kernel with a different buffer produces an honest failure rather than a silent pass.
