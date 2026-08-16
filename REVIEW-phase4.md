@@ -391,7 +391,7 @@ that *torn down*, and it must not discard the record while the subject lives.
   do not silently drop the variable; recorded only so the difference between the
   two phases is deliberate rather than accidental.
 
-## 3b. Not verified by this pass — UNKNOWN, not PASS — ONE CLOSED, ONE STILL OPEN
+## 3b. Not verified by this pass — UNKNOWN, not PASS — ✅ BOTH CLOSED 2026-08-16
 
 - **The rootful (`--allow-root`) path was not exercised.**
   `tests/test-allow-root.sh` skipped: *"sudo -n not available; can't simulate root
@@ -519,6 +519,7 @@ the evidence are below; §7.2 records a repair that looked right and was measure
 | **§3** `install -d` | `mkdir -p` everywhere — `install -d` re-chmods an **existing** directory | (covered by the P4-3 control) |
 | **§3** env `"null"` | no change, deliberately — Phase 4's consumers never test for it, so nothing is dropped | — |
 | **§3b** SELinux | the relabel path is now exercised with a `getenforce` stub | `test-selinux-relabel.sh` |
+| **§3b** rootful | a real rootful `up` on hardware; all four `$EUID -eq 0` early-returns observed | `test-rootful-up.sh` |
 
 ### 7.2 The fix that did not work, and had to be measured
 
@@ -580,30 +581,48 @@ Two of this pass's own mistakes are recorded because they are the interesting pa
    trap [`REVIEW-phase3.md`](REVIEW-phase3.md) §3 recorded in `cmd_run`, committed while
    writing a test for its sibling. The EXIT net caught it, which is what the net is for.
 
-### 7.4 The rootful path — closed in CI, and narrower than it looked
+### 7.4 The rootful path — CLOSED 2026-08-16, on real hardware
 
-The audit recorded this as UNKNOWN because `tests/test-allow-root.sh` **skips on the
-audit host**: it needs `sudo -n`, which this agent does not have. The skip is real, and
-it is *this host's* skip.
+This was recorded as UNKNOWN because `tests/test-allow-root.sh` skips on the audit host
+(no `sudo -n`). Two things were wrong with leaving it there.
 
-**In CI it runs, and passes** — GitHub's runner has passwordless sudo, so on every push
-`phase4-podman` reports **21/21 ran, 21 passed, 0 skipped** and the rootless gate is
-measured: `refusing to run as root` fires without `--allow-root`, and `--allow-root`
-bypasses it. Recorded here because "unmeasured here" had been quietly doing duty as
-"unmeasured", which is a different and much stronger claim.
+First, **"unmeasured here" is not "unmeasured"**: CI's runner has passwordless sudo, so
+that test runs on every push and `phase4-podman` reports 21/21 with 0 skips there. The
+gate — `refusing to run as root`, and `--allow-root` bypassing it — was already measured.
 
-What that test proves is deliberately narrow, and its own comment says so: it checks the
-**gate**, not the rootful *behaviour* behind it. It runs `list` and `help`. So these
-remain unmeasured anywhere:
+Second, that test proves the **gate** and not the path behind it: its own comment says so,
+and it only runs `list` and `help`. So the four `[[ $EUID -eq 0 ]]` early-returns really
+were unmeasured, because nothing performed a rootful `up`.
 
-- the `[[ $EUID -eq 0 ]]` early-returns inside `check_subuid_subgid`,
-  `check_linger_if_quadlet`, `check_ip_unprivileged_port_start` and
-  `detect_rootless_network` — reached only by a rootful `up`, which no test performs;
-- whether a rootful `up` produces a working lab at all.
+[`tests/test-rootful-up.sh`](phase4-podman/tests/test-rootful-up.sh) now does, and the
+user ran it under `sudo` on this host. All four executed, and two of them **observably**:
 
-For **P4-1** this stopped mattering: the reasoning that "rootless confines a
-`--privileged` container" was the mitigation, and it was asserted from the code rather
-than measured. The guard now refuses a `-`-leading image *before* `podman run` is
-invoked, on every path, so there is no escalation left for rootlessness to bound — the
-mitigation is no longer load-bearing.
+| preflight | how its root branch was observed |
+|---|---|
+| `detect_rootless_network` | `up` printed `rootless network backend: rootful` — a string only that branch produces |
+| `check_ip_unprivileged_port_start` | silent for host port **1013**, below this host's `ip_unprivileged_port_start=1024` |
+| `check_subuid_subgid` | no subuid demand — root has no `/etc/subuid` entry, so the rootless body would have **died** |
+| `check_linger_if_quadlet` | no linger warning |
 
+It also confirmed the lab was genuinely rootful rather than a rootless one wearing the
+name: the container appears in **root podman's** storage, and host port **1013** — a
+privileged port rootless podman cannot bind — was actually listening.
+
+And it closes P4-1 where the mitigation used to be load-bearing. The review's reasoning
+was that rootless *bounds* a `--privileged` escalation; `--allow-root` removes that bound
+entirely. Measured: a `-`-leading image is refused under `--allow-root` too, so there is
+no escalation left to bound.
+
+**The test's first version was wrong, and the run is what showed it.** Its control ran a
+whole *rootless* `up`, which meant it was skipped in the documented invocation
+(`sudo <script>` is root from the test's first line onward) — so the control silently did
+not happen in the case that actually occurs, while the next line still asserted *"no
+warning as root, where rootless warned for the same port"*. A note claiming evidence it
+did not have. The preflight only reads `/proc`, so it is now driven as the invoking user
+via `SUDO_USER`/`runuser` and the comparison happens in both modes; it also checks a port
+**above** the threshold, since a warning that fired unconditionally would make its absence
+as root meaningless too.
+
+**Still not measured:** whether a rootful `up` is *correct* beyond this — one plain
+service with one published port was exercised, not pods, quadlets or the build backends.
+The four early-returns, which is what §3b named, are done.
