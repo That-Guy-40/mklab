@@ -10,7 +10,10 @@ All captured on the dev host (AlmaLinux kernel for the proof ISO, `ipmi_sim` 1.0
 === test-ipmi_sim-sol.sh ===    PASS: real IPMI SOL over RMCP+ streamed the node serial … (8 marker lines)
 === test-redfish-vmedia.sh ===  PASS: Redfish InsertMedia attached the ISO and the node BOOTED it … — no PXE/DHCP/TFTP
 === test-vbmcd.sh ===           SKIP: no vbmc BMC on 127.0.0.1:6230 … (rootful; author-run)
-==== summary: 3 passed, 1 skipped, 0 failed ====
+==== summary: 5/5 listed tests ran (matching the 5 test files on disk) — 4 passed, 1 skipped, 0 failed ====
+
+skipped — these did NOT run (see each SKIP line above for why):
+  test-vbmcd.sh
 ```
 
 ## 1. Dispatch + capability model (`test-dispatch.sh`)

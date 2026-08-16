@@ -44,7 +44,7 @@ PASS: all lab shell scripts pass shellcheck
   - qemu-system-x86_64 absent — argv-wiring assertion deferred to a KVM-capable host
 PASS: zbm-debian.toml is a well-formed UEFI disk-image spec (argv wiring deferred: no qemu here)
 
-== 8 passed, 0 skipped, 0 failed ==
+summary: 9/9 discovered tests ran (9 test files on disk) — 9 passed, 0 skipped, 0 failed
 ```
 
 Spot-check of the actual command plan `be.sh` emits (this is what the logic test

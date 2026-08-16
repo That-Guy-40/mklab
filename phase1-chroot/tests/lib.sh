@@ -76,3 +76,58 @@ cleanup_target() {
         rm -rf -- "$target"
     fi
 }
+
+# ── user-namespace probe, which KEEPS the reason it failed ──────────────────────────────
+#
+# `require_userns_or_root` decides whether a test that needs a bind mount can run here. A
+# bind needs CAP_SYS_ADMIN only in the namespace doing the mounting, so `unshare -rm` is
+# enough and these tests need no root — which matters, because a root-gated test SKIPs on
+# every CI run and the guard it protects goes unwatched.
+#
+# ⚠️ IT USED TO BE `if unshare -rm true 2>/dev/null`, AND THAT REDIRECT IS WHY A REAL
+# INCIDENT BECAME AN UNKNOWN. On 2026-08-15 both mount-guard tests skipped inside one
+# phase-1 run — the suite printed a healthy-looking `13 passed, 13 skipped, 0 failed` — and
+# the only thing recoverable afterwards was the generic message "needs unprivileged user
+# namespaces". The errno that would have named the cause had been thrown away by the very
+# line testing for it. It was never reproduced (0 failures in 440 later attempts, the
+# AppArmor sysctl unchanged at 0, no matching denial in the journal), so the cause is STILL
+# unknown. What is fixed is that the next occurrence reports itself.
+#
+# The retry is deliberate, and so is announcing it. A silent retry would erase exactly the
+# signal that went missing; a bare first-failure costs a safety guard for what may be a
+# blip. So it recovers AND says that it had to.
+USERNS_ERR=""
+_userns_ok() {
+    local err rc
+    err="$(unshare -rm true 2>&1)"; rc=$?
+    (( rc == 0 )) && return 0
+    printf '  - unshare -rm failed (rc=%d): %s — retrying once\n' "$rc" "${err:-no message}" >&2
+    err="$(unshare -rm true 2>&1)"; rc=$?
+    if (( rc == 0 )); then
+        printf '  - retry succeeded, so the first failure was transient — recording it here because an unannounced retry is how this stopped being diagnosable in the first place\n' >&2
+        return 0
+    fi
+    USERNS_ERR="rc=$rc: ${err:-no message}"
+    return 1
+}
+
+# require_userns_or_root VAR — re-exec into `unshare -rm`, or run directly when already
+# root, or skip with a message that says WHY rather than only WHAT.
+# VAR is the guard variable that marks "already inside the namespace".
+require_userns_or_root() {
+    local var="$1" self
+    [[ -n "${!var:-}" ]] && return 0
+    self="$(realpath "${BASH_SOURCE[1]}")"
+    if _userns_ok; then
+        export "$var=1"
+        exec unshare -rm bash "$self"
+    fi
+    if [[ ${EUID:-$(id -u)} -eq 0 ]]; then
+        export "$var=1"          # already root: mount directly, no namespace needed
+        return 0
+    fi
+    # Everything a reader needs to tell "policy forbids this" from "something transient":
+    # the errno, the AppArmor knob Ubuntu 24.04 gates userns with, and who we are.
+    local knob=/proc/sys/kernel/apparmor_restrict_unprivileged_userns
+    skip "needs unprivileged user namespaces or root to create a bind mount — unshare -rm $USERNS_ERR; $(basename "$knob")=$(cat "$knob" 2>/dev/null || printf 'n/a'), EUID=${EUID:-?}"
+}

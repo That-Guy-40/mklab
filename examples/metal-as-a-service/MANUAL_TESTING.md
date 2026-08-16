@@ -1965,11 +1965,21 @@ It now states a *ratio* and refuses the two ways it can be a lie — a listed te
 never ran, and a test file on disk that is in no list:
 
 ```console
-=== summary: 37/37 listed tests ran (matching the 37 test files on disk) — 37 passed, 0 skipped, 0 failed ===
+=== summary: 38/38 listed tests ran (matching the 38 test files on disk) — 38 passed, 0 skipped, 0 failed ===
 ```
 
 So the docs say *every listed test ran, 0 skipped, 0 failed* — a claim that stays true
 across additions and is checkable, instead of an integer maintained in five places.
+(The integers in the sample above are illustrative; the sentence above them is the claim.
+This very paragraph shipped saying `37/37` and was one test stale within a fortnight —
+which is the argument, not a counter-example to it.)
+
+**Extended 2026-08-15: the summary also NAMES what skipped.** A count cannot say *which*
+guard did not run. Two mount-guard tests skipped in a phase-1 run on a transient
+`unshare -rm` failure and the suite still looked healthy; nothing distinguished that run
+from one where both executed. Every runner now lists the skipped and failed files by name,
+and [`tools/tests/test-run-all-reports-a-ratio.sh`](../../tools/tests/test-run-all-reports-a-ratio.sh)
+drives all thirteen of them against synthetic tests to keep it that way.
 Derive the fact; don't cache it.
 
 **Success signature for this section:** `./tests/test-harness-net.sh` ends on `PASS:`

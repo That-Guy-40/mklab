@@ -25,16 +25,7 @@ require_cmd mountpoint realpath unshare
 #
 # The mount namespace also means the binds below vanish with the process, so a crashed run
 # cannot leave a live bind pointing into this test's scratch tree.
-if [[ -z "${P1_MOUNT_GUARD_NS:-}" ]]; then
-    if unshare -rm true 2>/dev/null; then
-        export P1_MOUNT_GUARD_NS=1
-        exec unshare -rm bash "$(realpath "${BASH_SOURCE[0]}")"
-    elif [[ ${EUID:-$(id -u)} -eq 0 ]]; then
-        export P1_MOUNT_GUARD_NS=1      # already root: mount directly
-    else
-        skip "needs unprivileged user namespaces (unshare -rm) or root to create a bind mount"
-    fi
-fi
+require_userns_or_root P1_MOUNT_GUARD_NS
 
 work="$(mktemp -d)"
 # Unmount any stragglers before removing the workdir. lib.sh's net prints the FAIL
