@@ -738,7 +738,12 @@ ensure_project() {
         -c features.profiles=false \
         -c features.storage.volumes=false \
         >/dev/null
-    "$LXC_CMD" project set "$proj" "$LAB_LABEL_TOOL_KEY" "$LAB_LABEL_TOOL_VAL" >/dev/null
+    # `<key>=<value>`, not the positional `<key> <value>` — the latter is kept only
+    # "for backward compatibility" (incus' own help says so) and already emits a
+    # deprecation warning that leaked into the operator's terminal on every `up`
+    # that created a project.  A warning nobody can act on trains people to skim
+    # warnings, and this one is on a path that will eventually stop working.
+    "$LXC_CMD" project set "$proj" "${LAB_LABEL_TOOL_KEY}=${LAB_LABEL_TOOL_VAL}" >/dev/null
 }
 
 # args: profile_spec_json   (full [[profile]] table as a JSON object)
@@ -763,7 +768,9 @@ ensure_profile() {
     local kk vv
     while IFS=$'\t' read -r kk vv; do
         [[ -z "$kk" ]] && continue
-        "$LXC_CMD" profile set "${scope[@]}" "$pname" "$kk" "$vv" >/dev/null
+        # `<key>=<value>` for the same reason as ensure_project above.  Splitting is
+        # on the FIRST '=', so a value that itself contains '=' round-trips.
+        "$LXC_CMD" profile set "${scope[@]}" "$pname" "${kk}=${vv}" >/dev/null
     done < <(jq -r '.config // {} | to_entries[]? | "\(.key)\t\(.value)"' <<<"$prof_json")
 
     # Apply devices.  dconf is a JSON object {type:..., key:val, …}.
