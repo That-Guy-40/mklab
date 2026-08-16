@@ -1,8 +1,8 @@
 # CLAUDE.md — mklab
 
-A multi-phase lab-building toolkit: `phase1-chroot` → `phase2-qemu-vm` →
-`phase3-docker` → `phase4-podman` → `phase5-lxd` → `phase6-tui`/`phase6b-web`.
-Ready-to-run `.toml` lab specs live in `examples/`, catalogued in
+A multi-phase lab-building toolkit: one `phaseN-*/` directory per compute
+type, each a self-contained driver plus its own `tests/`. Ready-to-run
+`.toml` lab specs live in `examples/`, catalogued in
 [`examples/00-INDEX.md`](examples/00-INDEX.md). Cohesive multi-file labs get
 their own subdir under `examples/` (e.g. `tiny-linux-experiments/`,
 `almalinux-pxe-lab/`, `pxe-boot-mechanics/`).
