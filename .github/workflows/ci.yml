@@ -188,6 +188,29 @@ jobs:
           else
             echo "::warning::unprivileged user namespaces unavailable — phase-1 mount-guard tests will SKIP, so the H1 rm -rf guard is NOT exercised by this run"
           fi
+      - name: Make /dev/kvm usable if this runner has one
+        # Same shape, same reason, for Phase 7. `lab-fc.sh create` gates on /dev/kvm being
+        # read-write — a real gate about the host, correctly refusing to build an instance
+        # the host cannot boot. The consequence is that seven phase-7 tests need it, none
+        # of which boots anything: they exercise the CONFIG GENERATOR, the record, and the
+        # lifecycle verbs against a stand-in VMM.
+        #
+        # Measured on PR #216: this runner's /dev/kvm is not read-write for the runner uid,
+        # so those seven SKIPped and the escaping, record and lifecycle guards were not
+        # exercised by CI at all — while the job printed a clean 0 failed. The warning below
+        # exists so that state is visible in the log instead of being invisible in a count.
+        run: |
+          if [[ -e /dev/kvm ]]; then
+            sudo chmod 0666 /dev/kvm 2>/dev/null || true
+            sudo setfacl -m "u:$(id -u):rw" /dev/kvm 2>/dev/null || true
+          fi
+          if [[ -c /dev/kvm && -r /dev/kvm && -w /dev/kvm ]]; then
+            echo "/dev/kvm: read-write for uid $(id -u) — the phase-7 create-path tests will run"
+          elif [[ -e /dev/kvm ]]; then
+            echo "::warning::/dev/kvm exists but is not read-write for uid $(id -u) — 7 phase-7 tests will SKIP, so the config-generator escaping, record-encoding and lifecycle guards are NOT exercised by this run"
+          else
+            echo "::warning::/dev/kvm is absent on this runner — 7 phase-7 tests will SKIP, so the config-generator escaping, record-encoding and lifecycle guards are NOT exercised by this run"
+          fi
       - name: Run every phase's run-all.sh
         # Tests needing docker/podman/incus/root exit 77 (skip); run-all.sh only
         # fails the job on a real FAIL, so the pure-logic tests are the gate here.
