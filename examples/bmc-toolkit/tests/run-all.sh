@@ -20,10 +20,38 @@ if (( ${#unlisted[@]} )); then
     exit 1
 fi
 
+skipped_names=() failed_names=()
 for t in "${tests[@]}"; do
   printf '\n=== %s ===\n' "$t"
   bash "$TEST_DIR/$t"; rc=$?
-  case $rc in 0) ((pass++));; 77) ((skip++));; *) ((fail++));; esac
+  case $rc in
+    0)  ((pass++)) ;;
+    77) ((skip++)); skipped_names+=("$t") ;;
+    *)  ((fail++)); failed_names+=("$t") ;;
+  esac
 done
-printf '\n==== summary: %d passed, %d skipped, %d failed ====\n' "$pass" "$skip" "$fail"
+
+# A RATIO, and the NAMES of anything that did not run.  The bare "N passed, N skipped"
+# this used to print said nothing about coverage — a loop that exited early prints a clean
+# one too — and a SKIP is invisible in a count.  On 2026-08-15 two mount-guard tests
+# skipped in phase 1 and that suite still looked healthy; nothing distinguished it from a
+# run where both guards executed.  The disk-vs-list check above already chains list → disk,
+# so stating ran/listed here makes the whole chain checkable.
+ran=$((pass + skip + fail))
+ondisk=("$TEST_DIR"/test-*.sh)
+printf '\n==== summary: %d/%d listed tests ran (matching the %d test files on disk) — %d passed, %d skipped, %d failed ====\n' \
+    "$ran" "${#tests[@]}" "${#ondisk[@]}" "$pass" "$skip" "$fail"
+if (( skip > 0 )); then
+    printf '\nskipped — these did NOT run (see each SKIP line above for why):\n'
+    printf '  %s\n' "${skipped_names[@]}"
+fi
+if (( fail > 0 )); then
+    printf '\nfailed:\n'
+    printf '  %s\n' "${failed_names[@]}"
+fi
+if (( ran != ${#tests[@]} )); then
+    printf 'FAIL: %d of %d listed tests never ran — the loop exited early, so the summary above describes a partial run\n' \
+        "$(( ${#tests[@]} - ran ))" "${#tests[@]}" >&2
+    exit 1
+fi
 [[ $fail -eq 0 ]]

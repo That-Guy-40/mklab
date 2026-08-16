@@ -115,6 +115,25 @@ bug, not a result — the reader can't tell a real failure from a broken harness
   as tests are added. (A test with no runner is a test nobody runs: one sat on
   disk here for weeks, guarded only by a comment.)
 
+  **And NAME what skipped.** A count cannot say *which* guard did not run. Measured
+  2026-08-15: two mount-guard tests skipped in phase 1 on a transient `unshare -rm`
+  failure — never reproduced in 440 later attempts — and the suite printed a
+  healthy-looking `13 passed, 13 skipped, 0 failed`. Nothing distinguished that run
+  from one where both safety guards executed. An unmet precondition is an **UNKNOWN**,
+  and it has to be legible as one, so the summary lists the skipped and failed files
+  by name; the reason for each is already on its own `SKIP:` line above.
+
+  **This is a check, not advice.** [`tools/tests/test-run-all-reports-a-ratio.sh`](tools/tests/test-run-all-reports-a-ratio.sh)
+  drives **every** `*/tests/run-all.sh` against synthetic pass/fail/skip tests and
+  asserts what it *prints* — deliberately behavioural, because a regex over a runner's
+  source is the mistake the EXIT-trap checker made twice. Runners with a hand-maintained
+  list are driven with fixtures named **from their own list**, so none is excluded. It
+  carries its own control (the bare-count shape must fail the same assertions), and an
+  early version of it passed all 13 runners *for the wrong reason* — the per-test
+  `=== name ===` headers meant the skipped file appeared in the output whether or not the
+  **summary** named it. Scoping the assertion to the summary section found four runners
+  that only counted.
+
 ### "Fix a value everywhere" tasks: map the full blast radius BEFORE the first edit
 
 When changing a value, path, or name that recurs across the repo (a **port**, a

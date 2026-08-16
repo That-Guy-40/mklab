@@ -41,13 +41,14 @@ if (( ${#unlisted[@]} )); then
 fi
 
 pass=0 skip=0 failn=0 rc=0
+skipped_names=() failed_names=()
 for t in "${tests[@]}"; do
     printf '\n=== %s ===\n' "$t" >&2
     bash "$t"; r=$?
     case $r in
         0)  pass=$((pass+1)) ;;
-        77) skip=$((skip+1)) ;;
-        *)  failn=$((failn+1)); rc=1 ;;
+        77) skip=$((skip+1)); skipped_names+=("$t") ;;
+        *)  failn=$((failn+1)); failed_names+=("$t"); rc=1 ;;
     esac
 done
 # Report the count as a RATIO against the list, and refuse a run where they disagree.
@@ -62,6 +63,19 @@ ran=$((pass + skip + failn))
 ondisk=(test-*.sh)
 printf '\n=== summary: %d/%d listed tests ran (matching the %d test files on disk) — %d passed, %d skipped, %d failed ===\n' \
     "$ran" "${#tests[@]}" "${#ondisk[@]}" "$pass" "$skip" "$failn" >&2
+# …and NAME them. A count cannot say WHICH guard did not run: on 2026-08-15 two mount-guard
+# tests skipped in phase 1 (a transient `unshare -rm` failure, never reproduced) and that
+# suite still printed a healthy-looking summary. The reason for each skip is already on its
+# own SKIP line above; naming the files here is what lets a reader notice that a guard they
+# expected to run did not.
+if (( skip > 0 )); then
+    printf '\nskipped — these did NOT run (see each SKIP line above for why):\n' >&2
+    printf '  %s\n' "${skipped_names[@]}" >&2
+fi
+if (( failn > 0 )); then
+    printf '\nfailed:\n' >&2
+    printf '  %s\n' "${failed_names[@]}" >&2
+fi
 if (( ran != ${#tests[@]} )); then
     printf 'FAIL: %d of %d listed tests never ran — the loop above exited early, so "%d passed" describes a partial run\n' \
         "$((${#tests[@]} - ran))" "${#tests[@]}" "$pass" >&2
