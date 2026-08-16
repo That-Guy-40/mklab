@@ -36,7 +36,7 @@ async def cp_client():
         _cp("edge1", 85, "post-install"),
         _cp("edge2", 100, "first boot", terminal=True, status="built"),
     ])}
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://127.0.0.1") as ac:  # P6-1: loopback Host, as the app now requires
         yield ac
 
 

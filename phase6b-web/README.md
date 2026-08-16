@@ -187,5 +187,7 @@ proxy (nginx / Caddy / Authelia / Traefik) with stronger auth instead.
 
 Other hardening already in place: HTMX-only CSRF guard on POST routes, CSP +
 X-Frame-Options + X-Content-Type-Options on every response, Jinja2 autoescape
-for all templates, vendored htmx/sse.js (no CDN supply-chain dependency), and
+for all templates, vendored htmx/sse.js (no CDN supply-chain dependency — with
+version, source URL and enforced sha256 recorded in
+[`lab_web/static/PROVENANCE.md`](lab_web/static/PROVENANCE.md)), and
 constant-time password comparison via `hmac.compare_digest`.

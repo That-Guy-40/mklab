@@ -34,15 +34,15 @@ intact and undefeated, and backend-controlled `inspect_text` lands in
 What the unread surface does contain is **three defects**, none of them an
 injection, and all three about consistency rather than about a missing idea:
 
-- **P6B-1 (MED)** — `index` calls `is_available()` **unguarded** while
+- **P6B-1 (MED)** — ✅ **FIXED 2026-08-16.** `index` calls `is_available()` **unguarded** while
   `_gather_resources`, twenty lines above, wraps the identical call in
   `try/except`. One backend raising takes down the whole page while the polling
   partial keeps serving normally.
-- **P6B-2 (LOW/MED)** — `htmx.min.js` and `sse.js` are vendored with **no
+- **P6B-2 (LOW/MED)** — ✅ **FIXED 2026-08-16.** `htmx.min.js` and `sse.js` are vendored with **no
   version, no upstream URL, no retrieved-date, and no `sha256`**, while the
   README presents vendoring as the supply-chain mitigation. `sse.js`'s version is
   not recoverable from the file at all.
-- **P6B-3 (LOW)** — `actions.py:72` `html.escape()`s a value and then hands it to
+- **P6B-3 (LOW)** — ✅ **FIXED 2026-08-16.** `actions.py:72` `html.escape()`s a value and then hands it to
   a template that autoescapes it again. A resource named `lab-a&b-web` renders as
   `lab-a&amp;b-web`. This is an artifact of the F-1 autoescape fix changing the
   contract without revisiting the one caller that feeds a template.
@@ -51,7 +51,7 @@ injection, and all three about consistency rather than about a missing idea:
 
 ## 2. Findings
 
-### P6B-1 — MED — `index` trusts `is_available()`; `_gather_resources` does not
+### P6B-1 — MED — `index` trusts `is_available()`; `_gather_resources` does not — ✅ FIXED 2026-08-16
 
 `routes/resources.py` calls `is_available()` in two places, twenty lines apart,
 with opposite assumptions about whether it can fail:
@@ -108,7 +108,7 @@ alongside `grouped`. That removes the second call entirely — which also fixes 
 double-probe in §3 — and leaves exactly one place where the trust decision is
 made.
 
-### P6B-2 — LOW/MED — the vendored JS has no provenance, and the README calls vendoring the mitigation
+### P6B-2 — LOW/MED — the vendored JS has no provenance, and the README calls vendoring the mitigation — ✅ FIXED 2026-08-16
 
 `lab_web/static/` ships two third-party files:
 
@@ -156,7 +156,7 @@ c07c53b007c0898bc70493e55479019684dcfb9e21ab5368534f6b36ada7502b  sse.js        
 Establishing `sse.js`'s provenance requires going back to upstream — which is the
 cost of not recording it at vendor time, and the reason the convention exists.
 
-### P6B-3 — LOW — one value is escaped twice
+### P6B-3 — LOW — one value is escaped twice — ✅ FIXED 2026-08-16
 
 `actions.py` escapes URL-derived values before reflecting them (finding F-3), and
 for the two bare-`HTMLResponse` paths that is exactly right:

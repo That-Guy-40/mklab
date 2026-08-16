@@ -310,7 +310,7 @@ async def auth_client(sample_resources):
     try:
         async with AsyncClient(
             transport=ASGITransport(app=app),
-            base_url="http://test",
+            base_url="http://127.0.0.1",  # P6-1: loopback Host
         ) as ac:
             yield ac
     finally:
@@ -435,3 +435,236 @@ def test_cli_refuses_empty_user_or_password(monkeypatch, capsys) -> None:
     assert rc == 2
     err = capsys.readouterr().err
     assert "non-empty" in err
+
+
+# ── P6-1: Host validation (anti-DNS-rebinding) ────────────────────────────────
+#
+# The whole suite used base_url="http://test" — a foreign Host on every one of the
+# 44 requests — which is precisely why a full review pass did not notice that no
+# Host validation existed. These tests send the foreign Host deliberately.
+#
+# The attack the guard closes: the user visits evil.example, whose DNS flips to
+# 127.0.0.1. The browser then sends requests here with `Host: evil.example` while
+# treating the responses as SAME-ORIGIN — so the page can read the per-process CSRF
+# token out of `<body hx-headers>` and echo it back. The CSRF guard is not bypassed;
+# it is SATISFIED. What that reaches is `runner.destroy(...)`, which for two backends
+# is a `sudo …/lab-chroot.sh destroy -- <name> --force`.
+
+@pytest.mark.asyncio
+async def test_foreign_host_is_refused(client) -> None:
+    resp = await client.get("/", headers={"Host": "evil.example"})
+    assert resp.status_code == 400, (
+        "REGRESSION: a request carrying a foreign Host was served. DNS rebinding makes "
+        "an attacker same-origin, which defeats BOTH the loopback default and the CSRF "
+        "token — the token is readable by a same-origin page and simply echoed back."
+    )
+    assert "Host" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_foreign_host_cannot_read_the_csrf_token(client) -> None:
+    """The rebinding chain, cut at its first step."""
+    resp = await client.get("/", headers={"Host": "evil.example"})
+    assert resp.status_code == 400
+    from lab_web.app import CSRF_TOKEN
+    assert CSRF_TOKEN not in resp.text, (
+        "REGRESSION: the per-process CSRF token was served to a foreign-Host request; "
+        "a rebound page could read it and then satisfy the CSRF check"
+    )
+
+
+@pytest.mark.asyncio
+async def test_foreign_host_is_refused_before_auth(client, monkeypatch) -> None:
+    """Ordering matters: the Host gate must run BEFORE the credential comparison.
+
+    Starlette inserts each `@app.middleware` at the head of the stack, so the LAST
+    registered runs FIRST — which is why `trusted_host` is defined after `basic_auth`
+    in app.py. If that order ever inverts, an unauthenticated foreign-Host probe
+    reaches the credential compare and this test goes red.
+    """
+    monkeypatch.setenv("LAB_WEB_AUTH_USER", "alice")
+    monkeypatch.setenv("LAB_WEB_AUTH_PASSWORD", "s3cr3t")
+    resp = await client.get("/", headers={"Host": "evil.example"})
+    assert resp.status_code == 400, (
+        f"expected the Host gate to refuse first, got {resp.status_code} "
+        "(401 means auth ran first — the middleware order inverted)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_loopback_hosts_are_accepted(client) -> None:
+    """Control: the guard must not refuse the names the UI is actually reached by.
+
+    A gate that rejected everything would pass the assertions above while breaking
+    the product.
+    """
+    for host in ("127.0.0.1", "127.0.0.1:8080", "localhost", "localhost:8080", "[::1]", "[::1]:8080"):
+        resp = await client.get("/", headers={"Host": host})
+        assert resp.status_code == 200, f"loopback Host {host!r} was refused ({resp.status_code})"
+
+
+@pytest.mark.asyncio
+async def test_allowed_hosts_env_extends_the_list(client, monkeypatch) -> None:
+    """An operator behind a proxy can name their host, and only that host."""
+    monkeypatch.setenv("LAB_WEB_ALLOWED_HOSTS", "lab.internal")
+    assert (await client.get("/", headers={"Host": "lab.internal"})).status_code == 200
+    assert (await client.get("/", headers={"Host": "lab.internal:8080"})).status_code == 200
+    assert (await client.get("/", headers={"Host": "evil.example"})).status_code == 400
+    # loopback still works — the env var extends, it does not replace
+    assert (await client.get("/", headers={"Host": "127.0.0.1"})).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_allowed_hosts_star_disables_the_gate(client, monkeypatch) -> None:
+    """`--allow-network` sets `*`, because --auth is mandatory on that path.
+
+    Asserted so the escape hatch is a deliberate, tested behaviour rather than an
+    accident of parsing.
+    """
+    monkeypatch.setenv("LAB_WEB_ALLOWED_HOSTS", "*")
+    assert (await client.get("/", headers={"Host": "anything.example"})).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_destroy_is_unreachable_from_a_foreign_host(client, monkeypatch) -> None:
+    """The outcome, not the status code: the subprocess must never be invoked."""
+    called: list = []
+    from lab_web import app as app_mod
+
+    class _Spy:
+        name = "chroot"
+
+        def destroy(self, *a, **kw):
+            called.append((a, kw))
+            return "destroyed"
+
+    monkeypatch.setitem(app_mod.app.state.runners, "chroot", _Spy())
+    resp = await client.post(
+        "/actions/destroy",
+        headers={"Host": "evil.example", "HX-Request": "true",
+                 "X-CSRF-Token": app_mod.CSRF_TOKEN},
+        data={"backend": "chroot", "name": "demo"},
+    )
+    assert resp.status_code == 400
+    assert called == [], (
+        "REGRESSION: a foreign-Host request reached runner.destroy() — for the chroot "
+        "and vm backends that argv is a `sudo … destroy -- <name> --force`"
+    )
+
+
+# ── P6B-1: `index` must survive a raising backend, as /partials/resources does ──
+
+class _RaisingRunner:
+    """A backend whose availability probe raises — a daemon hiccup."""
+    name = "chroot"
+
+    def is_available(self):
+        raise OSError("daemon socket went away")
+
+    def list_resources(self):
+        raise OSError("daemon socket went away")
+
+
+@pytest.mark.asyncio
+async def test_index_survives_a_backend_whose_probe_raises(client, monkeypatch) -> None:
+    from lab_web import app as app_mod
+    monkeypatch.setitem(app_mod.app.state.runners, "chroot", _RaisingRunner())
+    resp = await client.get("/")
+    assert resp.status_code == 200, (
+        "REGRESSION: one backend raising in is_available() took down the WHOLE page. "
+        "_gather_resources guards the identical call twenty lines above; `index` did not."
+    )
+
+
+@pytest.mark.asyncio
+async def test_partial_and_index_agree_when_a_backend_raises(client, monkeypatch) -> None:
+    """The asymmetry the finding was about: same runners, same probe, different outcome."""
+    from lab_web import app as app_mod
+    monkeypatch.setitem(app_mod.app.state.runners, "chroot", _RaisingRunner())
+    partial = await client.get("/partials/resources")
+    index = await client.get("/")
+    assert partial.status_code == index.status_code == 200, (
+        f"/partials/resources={partial.status_code} but /={index.status_code} — "
+        "the two paths still disagree about a raising backend"
+    )
+
+
+@pytest.mark.asyncio
+async def test_is_available_is_probed_once_per_backend(client, monkeypatch) -> None:
+    """It used to be called twice per backend per page load."""
+    calls: list[str] = []
+
+    class _Counting:
+        name = "chroot"
+
+        def is_available(self):
+            calls.append("probe")
+            return True
+
+        def list_resources(self):
+            return []
+
+    from lab_web import app as app_mod
+    monkeypatch.setitem(app_mod.app.state.runners, "chroot", _Counting())
+    await client.get("/")
+    assert calls.count("probe") == 1, (
+        f"is_available() was called {calls.count('probe')}× for one backend on one page "
+        "load; `index` re-probed what _gather_resources had already learned"
+    )
+
+
+# ── P6B-3: escaped once, at the sink ───────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_destroy_message_is_escaped_exactly_once(client) -> None:
+    """`&` must survive as `&amp;` in the markup — not `&amp;amp;`.
+
+    The F-1 fix turned autoescaping ON for .html.j2, so the template escapes every
+    variable; escaping in the route as well double-encoded it. Exactly one site did
+    both — lines 51/56 return a bare HTMLResponse (no template) and correctly escape
+    there. The rule is per-SINK, not per-value: escape once, where the value meets
+    the markup.
+
+    NOTE the resource has to EXIST for this to reach the success branch. An earlier
+    version of this test used a name the stub did not know, so it took the
+    not-found path — which reflects the name escaped exactly once whatever the bug
+    is doing — and passed against the double-escaping driver. The finding lives on
+    line 72, and only a successful destroy gets there.
+    """
+    from lab_web import app as app_mod
+    from lab_tui.backends.base import Resource
+    runner = app_mod.app.state.runners["stub-backend"]
+    runner.list_resources.return_value = [
+        Resource(backend="vm", name="lab-a&b-web", lab="t", svc=None,
+                 type="vm", status="running"),
+    ]
+    resp = await client.post("/actions/destroy/stub-backend/lab-a%26b-web", headers=_HX)
+    assert resp.status_code == 200, f"destroy failed: {resp.status_code} {resp.text[:200]}"
+    assert "destroyed" in resp.text.lower(), (
+        f"did not reach the success branch, so line 72 was never rendered: {resp.text[:200]}"
+    )
+    assert "&amp;amp;" not in resp.text, (
+        "REGRESSION: double-escaped — html.escape() in the route plus the template's "
+        "autoescape renders `lab-a&b-web` as `lab-a&amp;amp;b-web`"
+    )
+    assert "lab-a&amp;b-web" in resp.text, (
+        f"the name is not escaped exactly once; got: {resp.text[:300]}"
+    )
+
+
+# ── P6-3: W1's escaping, in the third route file ───────────────────────────────
+
+@pytest.mark.asyncio
+async def test_stream_unknown_backend_is_escaped_and_typed(client) -> None:
+    """`stream.py` reflected the URL-derived backend raw, with NO Content-Type."""
+    resp = await client.get("/stream/logs/%3Cimg%20src=x%20onerror=1%3E/demo")
+    assert resp.status_code == 404
+    assert "<img" not in resp.text, (
+        "REGRESSION: stream.py reflects a URL-derived value RAW. actions.py and "
+        "resources.py both escape the identical strings; this file is the one W1's "
+        "fix did not reach."
+    )
+    assert "content-type" in {k.lower() for k in resp.headers}, (
+        "the response declares no Content-Type at all, leaving the browser to guess — "
+        "the condition nosniff exists to make survivable, and not one to rely on"
+    )

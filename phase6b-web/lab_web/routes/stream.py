@@ -35,7 +35,17 @@ async def stream_logs(backend: str, name: str, request: Request) -> Response:
     name = unquote(name)
     runner = _all_runners(request).get(backend)
     if runner is None:
-        return Response(f"unknown backend: {backend}", status_code=404)
+        # P6-3 (W1, third file): escape the URL-derived value, and declare a
+        # media type. A bare Response with no media_type sends NO Content-Type at
+        # all, so the browser is left to guess — which is exactly the condition
+        # `X-Content-Type-Options: nosniff` exists to make safe, and exactly the
+        # condition not to rely on. `actions.py` and `resources.py` both escape
+        # the identical strings; this file was the one W1's fix did not reach.
+        return Response(
+            f"unknown backend: {html.escape(backend)}",
+            status_code=404,
+            media_type="text/plain",
+        )
     resource = await asyncio.to_thread(_find_resource, runner, name)
     if resource is None or not resource.log_command:
         return Response("no log available for this resource", status_code=404)
@@ -84,7 +94,17 @@ async def stream_progress(backend: str, name: str, request: Request) -> Response
     name = unquote(name)
     runner = _all_runners(request).get(backend)
     if runner is None:
-        return Response(f"unknown backend: {backend}", status_code=404)
+        # P6-3 (W1, third file): escape the URL-derived value, and declare a
+        # media type. A bare Response with no media_type sends NO Content-Type at
+        # all, so the browser is left to guess — which is exactly the condition
+        # `X-Content-Type-Options: nosniff` exists to make safe, and exactly the
+        # condition not to rely on. `actions.py` and `resources.py` both escape
+        # the identical strings; this file was the one W1's fix did not reach.
+        return Response(
+            f"unknown backend: {html.escape(backend)}",
+            status_code=404,
+            media_type="text/plain",
+        )
 
     async def generate():
         while True:

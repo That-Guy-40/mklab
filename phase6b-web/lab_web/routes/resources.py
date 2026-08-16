@@ -27,21 +27,29 @@ def _all_runners(request: Request) -> dict[str, BackendRunner]:
 async def _gather_resources(
     runners: dict[str, BackendRunner],
 ) -> dict[str, dict[str, list[Resource]]]:
-    """Run list_resources() on every available backend (in a thread pool)."""
+    """Run list_resources() on every available backend (in a thread pool).
+
+    Returns (grouped_resources, available_backend_names).  The second value exists
+    so `index` does not have to probe every backend a second time — P6B-1: it used
+    to, unguarded, which both doubled the daemon round-trips per page load and made
+    one raising backend take down the whole page.
+    """
     grouped: dict[str, dict[str, list[Resource]]] = defaultdict(
         lambda: defaultdict(list)
     )
+    available_names: set[str] = set()
     for backend_name, runner in runners.items():
         try:
             available = await asyncio.to_thread(runner.is_available)
             if not available:
                 continue
+            available_names.add(backend_name)
             resources = await asyncio.to_thread(runner.list_resources)
         except Exception:  # noqa: BLE001
             continue
         for r in resources:
             grouped[r.lab or _UNLABELLED][r.backend].append(r)
-    return grouped
+    return grouped, available_names
 
 
 def _find_resource(runner: BackendRunner, name: str) -> Resource | None:
@@ -59,11 +67,16 @@ def _find_resource(runner: BackendRunner, name: str) -> Resource | None:
 @router.get("/", response_class=HTMLResponse)
 async def index(request: Request) -> HTMLResponse:
     runners = _all_runners(request)
-    grouped = await _gather_resources(runners)
-    unavailable = [
-        n for n, runner in runners.items()
-        if not await asyncio.to_thread(runner.is_available)
-    ]
+    grouped, available_names = await _gather_resources(runners)
+    # P6B-1: guarded, exactly as `_gather_resources` guards the identical call
+    # twenty lines above. `is_available()` reaches a daemon — a docker socket, a
+    # podman connection, an incus endpoint — so it raises on a hiccup. Unguarded
+    # here, one flaky backend took down the WHOLE PAGE, while `/partials/resources`
+    # kept returning 200 with the other backends listed.
+    #
+    # It also called it a SECOND time per backend per page load; `_gather_resources`
+    # now returns what it already learned, so each backend is probed once.
+    unavailable = sorted(n for n in runners if n not in available_names)
     return templates.TemplateResponse(
         request=request,
         name="base.html.j2",
@@ -75,7 +88,7 @@ async def index(request: Request) -> HTMLResponse:
 
 @router.get("/partials/resources", response_class=HTMLResponse)
 async def partial_resources(request: Request) -> HTMLResponse:
-    grouped = await _gather_resources(_all_runners(request))
+    grouped, _ = await _gather_resources(_all_runners(request))
     return templates.TemplateResponse(
         request=request,
         name="partials/resources.html.j2",

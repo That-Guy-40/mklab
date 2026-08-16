@@ -100,7 +100,13 @@ class DockerServiceWizard(WizardModal):
                              + ", ".join(f'{k} = "{_toml_str(v)}"' for k, v in pairs.items())
                              + " }")
         if vols:
-            vol_list = ", ".join(f'"{v.strip()}"' for v in vols.split(",") if v.strip())
+            # P6-2: `_toml_str`, like its four siblings (ports on 89, env values on
+            # 100, phase-4 volumes, phase-5 profiles). This one emitter interpolated
+            # raw, so a hostile volume string closed the quote and injected a spec
+            # KEY into the generated TOML. A multi-line paste into a single-line
+            # field is an acknowledged, reachable input — it is what the escaper's
+            # own docstring was written about.
+            vol_list = ", ".join(f'"{_toml_str(v.strip())}"' for v in vols.split(",") if v.strip())
             lines.append(f"volumes  = [{vol_list}]")
 
         # Optional second service

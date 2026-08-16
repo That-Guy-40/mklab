@@ -137,6 +137,83 @@ async def basic_auth(request: Request, call_next) -> Response:
     )
 
 
+# ── P6-1: Host validation — the anti-DNS-rebinding gate ───────────────────────
+#
+# The security model rested on two pillars: "loopback only, no auth needed — the
+# SSH tunnel is the auth layer", and a per-process CSRF token whose docstring
+# reasons that "a cross-origin page cannot read it".  Both are true of a
+# GENUINELY cross-origin attacker.  Neither survives DNS REBINDING, which makes
+# the attacker SAME-ORIGIN: the user visits evil.example, whose DNS record flips
+# to 127.0.0.1, and the browser then sends requests here carrying
+# `Host: evil.example` while treating the responses as same-origin — so the page
+# can READ the token out of <body hx-headers> and echo it back.
+#
+# The CSRF guard is not broken and not bypassed by that; it is SATISFIED.  It
+# defends the threat it was built for and is inert against this one.  What the
+# attack reaches is `runner.destroy(resource, True)`, which for two backends is a
+# `sudo …/lab-chroot.sh destroy -- <name> --force`.
+#
+# The suite was unwitting evidence: conftest.py used base_url="http://test", so
+# every web test already sent a foreign Host and nothing noticed.  That base_url
+# is now a loopback one, and a test asserts the foreign Host is refused.
+#
+# Registered AFTER basic_auth in this file on purpose: Starlette inserts each
+# `@app.middleware` at the head of the stack, so the LAST registered runs FIRST.
+# This must run before auth, so an unauthenticated foreign-Host probe cannot even
+# reach the credential comparison.
+_DEFAULT_ALLOWED_HOSTS = frozenset({"localhost", "127.0.0.1", "[::1]", "::1"})
+
+
+def _allowed_hosts() -> frozenset[str] | None:
+    """Allowed Host values, or None meaning "any" (see __main__.py).
+
+    Read per request rather than cached at import, matching the auth middleware
+    above and for the same reason: __main__.py sets the env var in this process
+    before uvicorn.run(), and the tests mutate it between requests.
+    """
+    raw = os.environ.get("LAB_WEB_ALLOWED_HOSTS", "")
+    if raw.strip() == "*":
+        return None
+    extra = {h.strip().lower() for h in raw.split(",") if h.strip()}
+    return frozenset(_DEFAULT_ALLOWED_HOSTS | extra)
+
+
+def _host_ok(host_header: str | None) -> bool:
+    allowed = _allowed_hosts()
+    if allowed is None:
+        return True
+    if not host_header:
+        return False  # HTTP/1.1 requires Host; a missing one is not a loopback client
+    host = host_header.split(",")[0].strip().lower()
+    if host.startswith("["):  # [::1] or [::1]:8080
+        close = host.find("]")
+        name = host[: close + 1] if close != -1 else host
+    elif host.count(":") == 1:  # name:port  (a bare IPv6 has more colons)
+        name = host.rsplit(":", 1)[0]
+    else:
+        name = host
+    return name in allowed
+
+
+@app.middleware("http")
+async def trusted_host(request: Request, call_next) -> Response:
+    if _host_ok(request.headers.get("host")):
+        return await call_next(request)
+    return Response(
+        status_code=400,
+        content=(
+            "Invalid Host header.\n\n"
+            "This UI is bound to loopback and only answers requests addressed to it "
+            "by a loopback name. A request carrying a different Host is either "
+            "misrouted or a DNS-rebinding attempt.\n"
+            "If you are reaching it through a proxy or a custom name, set "
+            "LAB_WEB_ALLOWED_HOSTS to that name (comma-separated), or run with "
+            "--allow-network --auth USER:PASS.\n"
+        ),
+        media_type="text/plain",
+    )
+
+
 # F-15 / W5: security response headers on EVERY response.  Registered *after*
 # basic_auth so it is the OUTER middleware — it therefore also decorates the
 # 401 that basic_auth short-circuits (previously the 401 escaped bare).

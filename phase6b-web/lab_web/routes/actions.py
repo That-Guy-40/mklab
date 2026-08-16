@@ -69,7 +69,13 @@ async def destroy(backend: str, name: str, request: Request) -> HTMLResponse:
             name="partials/detail_panel.html.j2",
             context={
                 "resource": None,
-                "inspect_text": f"✓ {html.escape(name)} destroyed.",
+                # P6B-3: NOT html.escape()d. The F-1 fix turned autoescaping ON for
+                # .html.j2, so the template escapes every variable — escaping here
+                # too rendered `lab-a&b-web` as `lab-a&amp;amp;b-web`. Exactly one
+                # site did this; lines 51/56 return a bare HTMLResponse (no template)
+                # and correctly escape there. The rule is per-sink, not per-value:
+                # escape where the value MEETS the markup, once.
+                "inspect_text": f"✓ {name} destroyed.",
                 "message_class": "success",
             },
         )
