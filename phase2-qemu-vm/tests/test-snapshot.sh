@@ -40,8 +40,10 @@ dk="$(vm_dir ki)"; mkdir -p "$dk"
 printf 'name = "ki"\nbackend = "kernel+initrd"\ndisk = ""\n' > "$(vm_manifest ki)"
 ( snap list ki ) >/dev/null 2>&1 && fail "no-disk VM should be refused" || note "no-disk VM rejected"
 
-# running VM → create refused (simulate by writing a live pidfile)
-echo $$ > "$(vm_pidfile snaptest)"   # $$ is alive → vm_running true
+# running VM → create refused.  The stand-in must be accepted as THIS VM's qemu, not just
+# be a live PID: vm_running checks identity now (REVIEW-phase2.md P2-2), so `echo $$` — a
+# shell that was never a plausible QEMU — no longer fabricates "running".
+fake_qemu_for "$(dirname "$(vm_pidfile snaptest)")"
 ( snap create snaptest s3 ) >/dev/null 2>&1 && fail "running VM snapshot should be refused" || note "running VM rejected"
 rm -f "$(vm_pidfile snaptest)"
 

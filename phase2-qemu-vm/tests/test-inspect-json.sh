@@ -8,9 +8,13 @@
 # satellite files, and assert against the resulting output.
 #
 # Works under root or non-root: lab-vm.sh now honors $LAB_STATE_DIR
-# (matching Phases 4/5).  No real qemu, no network.  We use $$ (the
-# test's own PID) in qemu.pid so vm_running's `[[ -d /proc/$pid ]]`
-# check succeeds without any actual qemu process.
+# (matching Phases 4/5).  No real qemu, no network.  The "running" state comes from
+# lib.sh's `fake_qemu_for`, a stand-in whose ARGV looks like this VM's QEMU.
+#
+# It used to write $$ (the test's own PID) into qemu.pid, because vm_running only asked
+# `[[ -d /proc/$pid ]]`. That was the P2-2 defect as a fixture — asserting the mechanism
+# ("some live pid is recorded") instead of the outcome ("this VM's QEMU is running") — and
+# it kept passing for a shell that was never a plausible QEMU.
 
 set -euo pipefail
 # shellcheck disable=SC1091
@@ -73,10 +77,11 @@ created_at  = "2026-04-22T00:00:00Z"
 version     = "0.1.0"
 EOF
 
-# --- drop a qemu.pid pointing at THIS shell so vm_running ⇒ true ---------
-# vm_running reads the pid file then checks `[[ -d /proc/$pid ]]`.  Using $$
-# (the test's PID) guarantees /proc/$$ exists for the duration of the test.
-printf '%s\n' "$$" > "$VM_DIR/qemu.pid"
+# --- stand up something the driver accepts as THIS VM's qemu -------------
+# vm_running now reads /proc/PID/cmdline and requires both `qemu-system` and this VM's own
+# pidfile path (REVIEW-phase2.md P2-2), so a bare live PID is no longer enough — and must
+# not be, or a recycled number would let `stop` kill an unrelated process.
+fake_qemu_for "$VM_DIR"
 
 # --- a small qemu.log so files.log.size_bytes > 0 ------------------------
 printf 'fake log line\n' > "$VM_DIR/qemu.log"
@@ -132,8 +137,8 @@ note "schema spot-checks (manifest)"
 note "schema spot-checks (process — running)"
 [[ "$(jq -r '.process.running' <<<"$json")" == "true" ]] \
     || fail "json: .process.running != true"
-[[ "$(jq -r '.process.pid' <<<"$json")" == "$$" ]] \
-    || fail "json: .process.pid != \$\$ ($$)"
+[[ "$(jq -r '.process.pid' <<<"$json")" == "$FAKE_QEMU_PID" ]] \
+    || fail "json: .process.pid is $(jq -r '.process.pid' <<<"$json"), expected the VM's qemu pid $FAKE_QEMU_PID"
 [[ "$(jq -r '.process.pid | type' <<<"$json")" == "number" ]] \
     || fail "json: .process.pid is not a number when running"
 

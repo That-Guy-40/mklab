@@ -70,3 +70,37 @@ wait_for_ssh() {
     done
     return 1
 }
+
+# fake_qemu_for <vmdir> — stand up a live process the driver will accept as THIS VM's
+# QEMU, write its pid into <vmdir>/qemu.pid, and register its reaping.  Sets $FAKE_QEMU_PID.
+#
+# WHY THIS EXISTS. Tests used to fabricate "running" by writing the TEST'S OWN PID (`$$`)
+# into qemu.pid, because `vm_running` only asked `[[ -d /proc/$pid ]]`. That shortcut was
+# the P2-2 defect restated as a fixture: it asserted the MECHANISM ("some live pid is
+# recorded") rather than the outcome ("this VM's QEMU is running"), so it kept passing for
+# a shell that was never a plausible QEMU — and it stopped passing the moment the driver
+# started checking identity, which is the direction CLAUDE.md warns costs a day.
+#
+# The driver now derives identity from /proc/PID/cmdline, so a faithful fixture is one
+# whose argv looks like this VM's QEMU: `exec -a` sets argv[0] to a string carrying
+# `qemu-system` and the VM's own pidfile path, which is exactly what `_pid_owns` reads.
+#
+# HONEST LABEL: this is a stand-in for QEMU's argv, not QEMU. It is what lets these tests
+# run with no qemu, no KVM and no network. The real-QEMU evidence — that a genuinely
+# daemonized qemu-system-x86_64 is accepted, listed and stopped — lives in
+# tests/test-pidfile-identity.sh §2, which uses the real binary whenever it is installed.
+fake_qemu_for() {
+    local d="${1%/}" pf i
+    pf="$d/qemu.pid"
+    bash -c 'exec -a "qemu-system-x86_64 -pidfile '"$pf"'" sleep 900' >/dev/null 2>&1 &
+    FAKE_QEMU_PID=$!
+    # Registered immediately, and by PID: if an assertion below fails, the stand-in must
+    # still be reaped (CLAUDE.md: kill by PID, never by pattern — a pattern carrying this
+    # path would also match a real QEMU serving a real VM).
+    on_exit "kill $FAKE_QEMU_PID 2>/dev/null"
+    for i in $(seq 1 15); do
+        [[ "$(tr '\0' ' ' < "/proc/$FAKE_QEMU_PID/cmdline" 2>/dev/null)" == qemu-system* ]] && break
+        sleep 0.2
+    done
+    printf '%s\n' "$FAKE_QEMU_PID" > "$pf"
+}

@@ -401,15 +401,59 @@ _mf_field_at() {  # _mf_field_at <vmdir> <key>
         $1 == k { sub(/^[^=]*=[[:space:]]*/, ""); gsub(/^"|"$/, ""); print; exit }
     ' "$mp"
 }
+# _pid_owns PID PROGRAM MARKER — 0 iff the LIVE process at PID is a PROGRAM whose argv
+# carries MARKER.  The identity check behind every "is it still running" question here.
+#
+# ⚠️ WHY A BARE `[[ -d /proc/$pid ]]` IS NOT ENOUGH (REVIEW-phase2.md, P2-2).  A PID is not
+# an identity, it is a *lease* the kernel recycles.  `qemu.pid` outlives the QEMU it names
+# whenever that QEMU did not exit cleanly — SIGKILLed (which `cmd_stop` itself sends after
+# its 30s timeout), OOM-killed, or lost to a host crash — because `-pidfile -daemonize`
+# only removes the file on a clean exit.  Once the kernel hands that number to something
+# else, "is /proc/$pid a directory" answers *yes* about a completely different process, and
+# `stop`/`destroy` send it SIGTERM→SIGKILL.  For a from-chroot/tap VM those verbs run under
+# sudo, so the unrelated victim is killed AS ROOT.  Measured 2026-08-15: a plain
+# `sleep 600` whose PID was written into a VM's qemu.pid was reported running by
+# `vm_running` and then reaped by `lab-vm.sh stop <vm> --force`.
+#
+# This is CLAUDE.md's bug class #1 — a record that outlives the thing it describes — and
+# the fix is that file's rule: DERIVE the fact instead of trusting the cache.  Identity is
+# read back off the live process, not stored anywhere:
+#   • argv contains PROGRAM  → it is that kind of process at all;
+#   • argv contains MARKER   → it is *this VM's* instance, MARKER being a path unique to
+#     this VM that the launcher already puts on the command line.
+# Nothing is cached, so there is no second record to go stale in turn.
+#
+# An EMPTY cmdline can never match, which is deliberate: kernel threads and zombies both
+# read empty, and neither is a running VM.
+_pid_owns() {  # _pid_owns <pid> <program> <marker>
+    local pid="$1" prog="$2" marker="$3" cl
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+    # /proc/PID/cmdline is world-readable (unlike environ), so this stays correct when an
+    # unprivileged `list` inspects a VM that was started under sudo.  Verified on this host.
+    cl="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)" || return 1
+    [[ -n "$cl" ]]             || return 1
+    [[ "$cl" == *"$prog"*   ]] || return 1
+    [[ "$cl" == *"$marker"* ]] || return 1
+}
+
 _running_at() {  # _running_at <vmdir>  → 0 iff a live qemu pid is recorded there
-    local pf="$1/qemu.pid" pid
+    # `cmd_list` iterates `"$store"/*/`, so its argument arrives WITH a trailing slash.
+    # Left in, the marker below would be built as `…/name//qemu.pid` and never match the
+    # single-slash path in QEMU's argv — every listed VM would read "stopped".
+    local dir="${1%/}"
+    local pf="$dir/qemu.pid" pid
     [[ -r "$pf" ]] || return 1
     pid="$(cat "$pf" 2>/dev/null || true)"
     # Validate PID is a positive integer before using it in /proc and kill
     # (Finding 16: a non-numeric or path-like PID file entry would make
     # /proc/$pid resolve to an unexpected directory and silently report "running").
     [[ "$pid" =~ ^[0-9]+$ ]] || return 1
-    [[ -d "/proc/$pid" ]]
+    [[ -d "/proc/$pid" ]] || return 1
+    # …and it must still be THIS VM's QEMU.  `build_qemu_argv` always passes
+    # `-pidfile <vmdir>/qemu.pid`, so that path is both unique per VM and guaranteed
+    # present.  A stale pidfile now reads "not running" instead of aiming a kill at
+    # whatever inherited the number.
+    _pid_owns "$pid" "qemu-system" "$pf"
 }
 
 # Current-store wrappers — the rest of the script addresses VMs by name.
@@ -2146,7 +2190,14 @@ start_swtpm() {
     local sock;  sock="$(vm_swtpm_sock "$name")"
     local pidf;  pidf="$(vm_swtpm_pid "$name")"
     # Already alive?  Reuse it (idempotent start).
-    if [[ -r "$pidf" ]] && kill -0 "$(cat "$pidf" 2>/dev/null)" 2>/dev/null; then
+    #
+    # Identity-checked, not just `kill -0` (REVIEW-phase2.md P2-2 — the audit named the
+    # reaper below; this site has the same defect pointing the other way).  With a bare
+    # `kill -0`, a stale swtpm.pid whose number has been recycled reads as "already
+    # running", so this returns success WITHOUT starting a TPM — and QEMU then launches
+    # against a control socket nothing is serving.  A false success is worse than a
+    # failure to start: the VM comes up with a vTPM that silently is not there.
+    if [[ -r "$pidf" ]] && _pid_owns "$(cat "$pidf" 2>/dev/null || true)" "swtpm" "$pidf"; then
         log_debug "swtpm already running for $name"
         return 0
     fi
@@ -2177,9 +2228,15 @@ stop_swtpm() {
     local pidf; pidf="$(vm_swtpm_pid "$name")"
     if [[ -r "$pidf" ]]; then
         local pid; pid="$(cat "$pidf" 2>/dev/null || true)"
-        if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+        # `kill -0` proves the PID is ALIVE and says nothing about WHOSE it is — the same
+        # gap as _running_at's `-d /proc/$pid` (REVIEW-phase2.md P2-2).  swtpm's argv
+        # carries `--pid file=<vmdir>/swtpm.pid`, so that path identifies this VM's
+        # sidecar; anything else inheriting the number is left alone instead of SIGTERMed.
+        if _pid_owns "$pid" "swtpm" "$pidf"; then
             log_info "reaping swtpm (pid $pid) for $name"
             kill -TERM "$pid" 2>/dev/null || true
+        elif [[ -n "$pid" ]]; then
+            log_debug "swtpm.pid for $name holds $pid, which is not this VM's swtpm — not signalling it"
         fi
     fi
     rm -f "$pidf" "$(vm_swtpm_sock "$name")"

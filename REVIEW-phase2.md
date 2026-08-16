@@ -35,7 +35,7 @@ CLAUDE.md and both reproduced:
   lines** that flip `network_mode`/`tap`/`disk` on re-read (the M4 class,
   reopened); a comma injects **`-smp` / `hostfwd` sub-options** (the Finding-8
   class, applied to the other comma-fields but missed on these).
-- **P2-2 (MED)** — `stop`/`destroy`/the swtpm reaper trust `qemu.pid` as an
+- **P2-2 (MED)** — ✅ **FIXED 2026-08-15.** `stop`/`destroy`/the swtpm reaper trust `qemu.pid` as an
   **identity**. A stale pidfile (QEMU was SIGKILLed or the host crashed) plus a
   recycled PID makes `vm_running` report a false positive and `stop`/`destroy`
   **SIGKILL an unrelated process** — as root for sudo-run VMs. The "record that
@@ -110,7 +110,46 @@ integers (and `microvm` as a bool) in `validate_spec`, before `create` writes
 anything — the same "refuse before the expensive step" rule the MAC check
 already follows there. That closes both facets at once.
 
-### P2-2 — MED — `stop`/`destroy` trust the pidfile as identity → can SIGKILL an unrelated process
+### P2-2 — MED — `stop`/`destroy` trust the pidfile as identity → can SIGKILL an unrelated process — ✅ FIXED 2026-08-15
+
+> **Fixed** by deriving identity instead of trusting the number. `_pid_owns PID PROGRAM
+> MARKER` reads `/proc/PID/cmdline` and requires both `qemu-system` and **this VM's own
+> pidfile path** — a path that is unique per VM and that `build_qemu_argv` already puts on
+> the command line unconditionally (`-pidfile "$(vm_pidfile "$name")"`). Nothing new is
+> cached, so there is no second record to go stale in turn; verified against a **real
+> daemonized** `qemu-system-x86_64` that `/proc/PID/cmdline` survives `-daemonize`, and
+> that it is world-readable, so an unprivileged `list` still sees a sudo-started VM.
+>
+> Applied at **three** sites — `_running_at`, `stop_swtpm` (both named in this finding), and
+> **`start_swtpm`'s "already alive?" check**, which the finding did not name and which fails
+> the *other* way: with a bare `kill -0`, a recycled swtpm PID reads as "already running", so
+> the verb returns success **without starting a TPM** and QEMU launches against a control
+> socket nothing is serving. A false success is worse than a failure to start.
+>
+> **A trap introduced by the fix, and caught by its own control:** `cmd_list` iterates
+> `"$store"/*/`, so `_running_at` receives its argument **with a trailing slash**. Left in, the
+> marker became `…/name//qemu.pid`, matched nothing, and every genuinely-running VM read
+> `stopped`. Measured both ways — the guard is load-bearing, and §2 of the test asserts
+> through `list` specifically so it stays that way.
+>
+> Regression: [`phase2-qemu-vm/tests/test-pidfile-identity.sh`](phase2-qemu-vm/tests/test-pidfile-identity.sh) —
+> six sections, three of them controls: the impostor is not killed; a **real** QEMU is still
+> listed running and stopped normally (falling back to an argv-shaped stand-in, labelled as
+> one, where qemu is not installed); the launcher still emits the marker the check matches;
+> the swtpm reaper likewise; and a **negative control** that re-injects the pre-fix check and
+> watches it reap the unrelated process.
+>
+> **The fix broke two existing tests, and they deserved it.** `test-inspect-json.sh` and
+> `test-snapshot.sh` fabricated "running" by writing **the test's own PID** (`$$`) into
+> `qemu.pid` — the P2-2 defect restated as a fixture, asserting the *mechanism* ("some live
+> pid is recorded") rather than the outcome ("this VM's QEMU is running"). They kept passing
+> for a shell that was never a plausible QEMU and failed the moment the driver got stricter:
+> CLAUDE.md's bug class #2, in the direction it warns costs a day. Both now use
+> `fake_qemu_for` in `tests/lib.sh`, a stand-in whose **argv** looks like the VM's QEMU —
+> honestly labelled as a stand-in, with the real-binary evidence kept in the new test.
+>
+> Phase 2 suite: **19 passed, 1 skipped, 0 failed** (20 files, 20 ran; the skip is the
+> loop-mount test, which needs real root — `unshare -rm` grants no loop devices).
 
 `_running_at` (lines 404–413) is the single source of truth for "is this VM
 running", used by `stop`, `destroy`, `inspect`, and `list`:
