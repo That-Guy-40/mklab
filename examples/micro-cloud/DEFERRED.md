@@ -8,7 +8,7 @@
 > the planning session that produced v2 and v3; the DONE markers were added as
 > the slices landed.
 
-## NEXT — one left of the three *(updated 2026-08-07)*
+## NEXT — nothing left of the three *(closed 2026-08-07; re-checked 2026-08-16)*
 
 > ✅ **Items 1, 2 and 3 are DONE.** [`examples/nested-calico-sandbox/`](../nested-calico-sandbox/)
 > is packaged; **G.9 is closed on the real artifact** (a genuine `fabric.sh` tap captured the
@@ -16,8 +16,18 @@
 > matrix has its `fabric.sh down beneath a live agent` row.
 > [Appendix Q](../../MICRO_CLOUD_LAB_PLAN.md#appendix-q--the-sandbox-packaged-g9-closed-on-the-real-artifact-2026-08-07).
 >
-> **What remains from this list is TODO 0.4** — the 13 container assertions still sharing the
-> flaky `producer | grep -q` shape, to be swept by classification rather than blanket replace.
+> ~~**What remains from this list is TODO 0.4**~~ — ✅ **0.4 is DONE too (2026-08-07,
+> the same day this line was written).** All 13 sites were classified rather than swept,
+> and the classification changed the plan: three were `&& fail` — **eventual absence** —
+> where a SIGPIPE'd producer makes the pipeline non-zero, `&& fail` never runs, and
+> *"container still present after destroy"* reports a **pass**. Demonstrated rather than
+> argued: `producer | grep -qx name` over 200k lines returned **141**.
+> [`tools/tests/test-no-pipe-gates.sh`](../../tools/tests/test-no-pipe-gates.sh) now gates
+> the silent variant repo-wide.
+>
+> **So nothing remains from this list.** This pointer is left struck through rather than
+> deleted because it is the record of what was owed on 2026-08-07 — but a "what remains"
+> line is read as current status, and this one outlived its subject by hours.
 >
 > The three briefs below are kept as written: they are the record of what was owed.
 

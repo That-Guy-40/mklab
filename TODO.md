@@ -101,12 +101,34 @@ which can be picked up tonight and which cannot be picked up at all here.
       Detail in [`examples/metal-as-a-service/DEFERRED.md`](examples/metal-as-a-service/DEFERRED.md).
       Everything that can be proven under emulation has been; what remains needs a machine
       with a real BMC, and no amount of local work advances it.
-- [ ] **C.2 — the rollback-pair corruption case**, same lab, same blocker.
+- [x] **C.2 — the rollback-pair corruption case** — ✅ **DONE 2026-07-28 (night)**, and it
+      was **never blocked on hardware**: it is a registry-write ordering defect, fixed
+      headlessly and regression-locked headlessly. The `(driver, image)` pair is now only
+      ever written **when a gate passes**, so a failed deploy leaves the last verified pair
+      untouched and there is no pre-gate write for a future failure branch to forget to
+      undo; the in-flight driver lives in a transient `deploying_driver`. Guarded by
+      [`tests/test-rollback-driver-pair.sh`](examples/metal-as-a-service/tests/test-rollback-driver-pair.sh)
+      §4+§7, written red-first — §7 **replays the live incident** (both slots bad, then a
+      successful redeploy) and asserts the recorded previous pair is the real one.
 
-**Why these two are listed as blocked rather than left in the general list.** A hardware
-item sitting in a queue of software items reads as "not done yet" and gets re-picked,
+      **This entry was stale the day it was filed.** §0.5 is dated 2026-08-08; the fix
+      landed eleven days earlier and
+      [`examples/metal-as-a-service/DEFERRED.md`](examples/metal-as-a-service/DEFERRED.md)
+      had struck it through. Worse than merely stale: *"same blocker"* attached a hardware
+      excuse to work that needed none, which is the one framing guaranteed to stop anyone
+      looking. Only **C.1** is hardware-blocked.
+
+**Why C.1 is listed as blocked rather than left in the general list.** A hardware item
+sitting in a queue of software items reads as "not done yet" and gets re-picked,
 re-scoped, and re-deferred. It is not undone work; it is work this host cannot do. Naming
 the blocker is the difference between a queue that drains and one that accumulates.
+
+**And the converse, which C.2 just demonstrated:** naming a blocker that is not real is
+worse than naming none. A wrong blocker does not merely fail to help — it *actively*
+stops the next reader from looking, because "blocked on hardware" is a reason to skip an
+entry without opening it. C.2 sat behind that excuse for eight days having been finished
+for eleven. Check that a blocker still holds before restating it, exactly as this repo
+requires of any other cached fact.
 
 ### Not blocked, but deliberately deferred
 
@@ -322,9 +344,18 @@ mechanics are built + verified. Remaining roles/mechanics tracked in the plan.
       not a step recipe → cite+vendor, and `demo-anycast.sh`'s container already
       reproduces the environment.)
 
-**Still open (follow-on passes):** the **cdn-edge-ram** (ZFS state) and
-**package-mirror-ram** (iSCSI/NFS state) roles — see
-[`RAM_INFRA_LAB_PLAN.md`](RAM_INFRA_LAB_PLAN.md) §4b/§4c.
+~~**Still open (follow-on passes):** the **cdn-edge-ram** (ZFS state) and
+**package-mirror-ram** (iSCSI/NFS state) roles~~ — ✅ **BOTH DONE 2026-07-23**, per
+[`RAM_INFRA_LAB_PLAN.md`](RAM_INFRA_LAB_PLAN.md) §4b/§4c: `cdn-edge-ram` **DONE &
+verified** (`demo-cdn-state.sh` PASS — a fresh OS imports a ZFS pool a prior boot left
+behind and serves the survivor content), `package-mirror-ram` **DONE** with
+`state-mount.sh` verified docker-free by `tests/test-state-mount-guard.sh`.
+
+*This line was already contradicted by its own section* — the two sub-bullets a dozen
+lines above record both roles as done, and the plan it points at says so in bold. What
+genuinely remains is **narrower and different**: the **live** NFS/iSCSI mount is
+author-run, because a real network mount touches host-global kernel state on a dev box
+that is itself serving NFS. That is a run, not a role.
 
 **References:**
 - Gandi, *Booting an anycast DNS network* (2019) —
@@ -674,9 +705,23 @@ structurally: neither surviving path reaches `require_rootless` at all, which is
 what the `kube`-must-trip control measures.
 
 **Known-open items re-confirmed, not new** (tracked elsewhere, listed for
-completeness): the Alpine `--allow-untrusted` gap — the residue of
-[`AUDIT.md`](AUDIT.md) F2 — plus backlog items #4/#5 follow-on passes and #7
-(Packer vendoring, blocked on its prerequisite question).
+completeness): ~~the Alpine `--allow-untrusted` gap — the residue of
+[`AUDIT.md`](AUDIT.md) F2~~ — ✅ **CLOSED 2026-08-06**, three days after this section
+was written: [`AUDIT.md`](AUDIT.md) F2 is **RESOLVED**, and it closed the Alpine half by
+name — `alpine_apk_add` passes `--keys-dir "$root/etc/apk/keys"` and **no**
+`--allow-untrusted`, so package RSA signatures are checked against Alpine's own bundled
+keys. (The function's header comment still claimed the opposite and was corrected with
+that row — the same defect as this line, one layer down.) ~~plus backlog items #4/#5
+follow-on passes~~ — **#4's roles are done** (see §4, where that claim was stale too) and
+**#5 is complete**, all four boxes ticked including the AlmaLinux `rd.break` reset
+verified end-to-end on KVM. ~~and #7 (Packer vendoring, blocked on its prerequisite
+question)~~ — **#7's prerequisite was answered 2026-08-06 and the item is COMPLETE**: both
+builders vendored in full, both `packer validate`-clean, both built into real booted
+images.
+
+**Nothing on this line is still open.** It is kept struck through rather than deleted
+because it is the record of what was believed on 2026-08-03 — but it *read as current
+status*, which is how a closed question gets re-asked.
 
 ## 9. `nested-calico-sandbox/` — a disposable cluster, so the CNI beliefs can be tested
 
