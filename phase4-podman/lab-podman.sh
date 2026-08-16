@@ -499,7 +499,25 @@ backend_build() {
 }
 
 # ─── Spec construction ─────────────────────────────────────────────────────
-spec_get() { jq -r --arg k "$2" '.[$k] // ""' <<<"$1"; }
+# spec_get SPEC KEY — one field of a JSON-encoded spec, as text ("" when absent).
+#
+# ⚠️ `.[$k] // ""` CANNOT TELL `false` FROM ABSENT.  jq's `//` yields its right-hand side
+# when the left is null OR FALSE, so a JSON boolean `false` came back as "" — the same
+# answer as "the key isn't there".  (`0` is unaffected: jq's `//` only treats null and
+# false as empty.)  Found 2026-08-15 while typing the manifest fields: `microvm` is emitted
+# as a JSON boolean by both spec builders, so every non-microvm VM wrote a bare
+# `microvm = ` into its manifest — invalid TOML that nobody noticed, because the reader
+# returned "" for the broken line and the consumer read "" as "not microvm".
+#
+# Today every boolean consumer in this file tests `== "true"`, where "" and "false" are
+# equally not-true, so THIS CHANGE ALTERS NO CURRENT BEHAVIOUR — verified against all five
+# phase suites.  It is here because the next consumer to write `[[ -z "$x" ]]` on a boolean
+# field would get a silently wrong answer, and because "false" and "absent" genuinely are
+# different facts.  Removing the trap beats writing a rule that the trap exists.
+#
+# Deliberately surgical: only `false` changes.  null/absent still yield "", and arrays,
+# objects, numbers and strings keep byte-identical output, so no other reader is touched.
+spec_get() { jq -r --arg k "$2" 'if .[$k] == false then "false" else (.[$k] // "") end' <<<"$1"; }
 
 # Resolve userns field to its podman-run flag form, or empty if keep-id is
 # the effective default for this image source.  Prints:

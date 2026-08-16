@@ -80,6 +80,25 @@ jobs:
             netboot/tests/run-all.sh \
             netboot/tests/test-ipxe-pin.sh
 
+      - name: shellcheck EVERY tracked test script (errors only)
+        # The steps above name individual files, so the ~219 scripts under */tests/ were
+        # linted by nobody. That is how two of them carried
+        #     # shellcheck disable=SC2034  (reason in a parenthetical)
+        # for months: shellcheck parses a directive as key=value pairs, so the trailing
+        # text made it emit SC1125 -- an ERROR -- and no gate was looking. (The disable
+        # itself still applied, so the suppression worked; the error did not.)
+        #
+        # ERROR severity, not warning, and that is a deliberate limit rather than an
+        # oversight: at --severity=warning the tests currently produce 14 findings
+        # (SC2164/SC2154/SC2222/...) which are a separate cleanup, and a gate that starts
+        # red is a gate someone disables. At error severity the corpus is at ZERO today,
+        # so this fails only on something genuinely new -- and it would have caught the
+        # SC1125 above, which is the case that motivated it.
+        run: |
+          mapfile -t files < <(git ls-files '*/tests/*.sh')
+          echo "linting ${#files[@]} test scripts at error severity"
+          shellcheck -x --severity=error -f gcc "${files[@]}"
+
       - name: the EXIT-trap safety net, in every tests/ directory
         # Each phase's run-all.sh already runs its own tests/test-harness-net.sh, but the
         # example labs' suites are not in CI at all -- so without this loop the rule would

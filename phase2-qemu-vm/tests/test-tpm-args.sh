@@ -7,7 +7,11 @@
 #   - tpm unset → same as false.
 # No QEMU boot, no swtpm process; sources lab-vm.sh and inspects QEMU_ARGV.
 
-# shellcheck disable=SC2034  (globals consumed by sourced build_qemu_argv via dynamic scope)
+# Globals consumed by the sourced build_qemu_argv via dynamic scope — hence SC2034 off.
+# The reason lives on its own line: shellcheck parses a directive as key=value pairs, so a
+# trailing parenthetical makes it discard the rest of the line and emit SC1125 (an ERROR).
+# The disable itself still applied, so this was invisible until the tests were linted.
+# shellcheck disable=SC2034
 . "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
 
 require_cmd qemu-system-x86_64
