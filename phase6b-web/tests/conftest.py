@@ -58,6 +58,10 @@ async def client(sample_resources):
     app.state.runners = _stub_runners(sample_resources)
     async with AsyncClient(
         transport=ASGITransport(app=app),
-        base_url="http://test",
+        # P6-1: was "http://test" — a FOREIGN Host, sent by all 44 tests, which is
+        # why nothing noticed that no Host validation existed. A loopback base_url
+        # makes the suite exercise the configuration the app actually ships with;
+        # test_routes.py asserts the foreign Host is refused.
+        base_url="http://127.0.0.1",
     ) as ac:
         yield ac

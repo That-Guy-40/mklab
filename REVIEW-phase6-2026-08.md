@@ -38,17 +38,17 @@ escaper in Phases 1–5. Both suites are green: **TUI 111 passed, web 44 passed*
 The residue is **three defects**, all reproduced, and the interesting one is not
 in the code that was hardened — it is in an assumption *underneath* the hardening:
 
-- **P6-1 (MED)** — nothing validates the `Host` header, so **DNS rebinding**
+- **P6-1 (MED)** — ✅ **FIXED 2026-08-16.** Nothing validates the `Host` header, so **DNS rebinding**
   collapses both of the web UI's defences at once: the "loopback only, no auth"
   default *and* the per-process CSRF token, which the attacker can simply read.
   Demonstrated end-to-end in-process, and the destroy it reaches runs under
   **`sudo`** for chroot and VM resources.
-- **P6-2 (MED)** — of the ~30 TOML values the five create-wizards emit, **exactly
+- **P6-2 (MED)** — ✅ **FIXED 2026-08-16.** Of the ~30 TOML values the five create-wizards emit, **exactly
   one** skips `_toml_str`: the Phase-3 wizard's `volumes` list. A multi-line paste
   there makes the wizard write a **valid** spec containing a top-level key the
   user never typed — and the key it injects is `command`, which is the field
   [`REVIEW-phase3.md`](REVIEW-phase3.md) P3-2 showed injects a compose attribute.
-- **P6-3 (LOW)** — the previous review's **W1** (escape URL-derived values before
+- **P6-3 (LOW)** — ✅ **FIXED 2026-08-16.** The previous review's **W1** (escape URL-derived values before
   reflecting them) was applied to `actions.py` and `resources.py` and never
   reached `stream.py`. Measured: it reflects raw, and is non-exploitable today
   only because the response carries **no `Content-Type`** and `nosniff` is set.
@@ -61,7 +61,7 @@ is one emitter of thirty; P6-3 is one file of three.
 
 ## 2. Findings
 
-### P6-1 — MED — no `Host` validation: DNS rebinding defeats the loopback default *and* the CSRF token
+### P6-1 — MED — no `Host` validation: DNS rebinding defeats the loopback default *and* the CSRF token — ✅ FIXED 2026-08-16
 
 The web UI's security model rests on two documented pillars, both stated in
 `__main__.py`'s own docstring:
@@ -126,7 +126,7 @@ would have caught this: assert a foreign `Host` gets 421/400 — noting that suc
 test requires *changing* `conftest.py`'s `base_url`, which is exactly why the gap
 survived a full review pass.
 
-### P6-2 — MED — one wizard emitter skips `_toml_str`, and it injects a spec key
+### P6-2 — MED — one wizard emitter skips `_toml_str`, and it injects a spec key — ✅ FIXED 2026-08-16
 
 `screens/wizards/base.py:_toml_str` is the strictest escaper in the repo: the
 named TOML escapes (`\\ \" \b \t \n \f \r`) plus `\u`-escaping of every other
@@ -186,7 +186,7 @@ The durable version is a test that asserts the **outcome** rather than the
 mechanism — see §3, because `test_toml_str_escaping.py` already tests the helper
 thoroughly and cannot see this class of bug by construction.
 
-### P6-3 — LOW — W1's escaping fix reached two of three route files
+### P6-3 — LOW — W1's escaping fix reached two of three route files — ✅ FIXED 2026-08-16
 
 The previous review's **W1** was *"reflected-XSS inconsistency — `detail_panel`
 interpolated `{backend}`/`{name}` raw while `actions.py` wraps the identical
@@ -331,3 +331,63 @@ reason in the comment. And `test_docs_reflect_shipped_features.py` is a genuinel
 unusual test — it fails if the README's "deferred to v0.2" claim returns while the
 wizard modules exist, which is a doc-drift guard of the kind the Bash phases
 achieve only through `link_check.py`.
+
+---
+
+## 7. Resolution (2026-08-16)
+
+All three findings fixed, plus the three in [`REVIEW-phase6b.md`](REVIEW-phase6b.md).
+Suites: **62 web / 113 TUI, 0 failed.**
+
+### 7.1 What changed
+
+| item | change | regression test |
+|---|---|---|
+| **P6-1** | a `trusted_host` middleware: loopback-only Host allowlist, extensible via `LAB_WEB_ALLOWED_HOSTS`, disabled by `--allow-network` (where `--auth` is already mandatory) | `test_routes.py` ×7 |
+| **P6-2** | phase3's `volumes` emitter routes through `_toml_str`, like its four siblings | `test_toml_str_escaping.py` ×2 |
+| **P6-3** | `stream.py`'s two reflections are `html.escape`d **and** given a `media_type` | `test_routes.py` |
+| **P6B-1** | `_gather_resources` returns the availability it already learned; `index` stops re-probing | `test_routes.py` ×3 |
+| **P6B-2** | `static/PROVENANCE.md` with version, URL, date and **enforced** sha256 | `test_vendored_provenance.py` ×6 |
+| **P6B-3** | the route stops escaping a value the template already escapes | `test_routes.py` |
+
+### 7.2 P6-1: the fix is ordering as much as code
+
+The middleware is registered **after** `basic_auth` in `app.py`, which reads backwards
+until you know that Starlette inserts each `@app.middleware` at the *head* of the stack —
+so the last registered runs first. That is required: an unauthenticated foreign-Host probe
+must not reach the credential comparison. `test_foreign_host_is_refused_before_auth`
+asserts it, so the ordering cannot silently invert.
+
+`--allow-network` sets the allowlist to `*` rather than guessing a hostname. That is not a
+hole: `--auth` is already **mandatory** on that path, so credentials are the control there,
+and the Host allowlist exists to protect the configuration that has no credentials — the
+loopback default the docs recommend.
+
+**The conftest change is the finding.** The suite used `base_url="http://test"`, so all 44
+requests already carried a foreign Host and nothing noticed — which is exactly why a full
+review pass missed it. Three files needed the change, not one; the two beyond `conftest.py`
+were found by the suite going red, not by grepping.
+
+### 7.3 Two of this pass's own tests passed for the wrong reason
+
+Both were caught by running the negative control, not by reading:
+
+1. **The double-escape test never reached the code it was about.** It posted a name the
+   stub did not know, so the route took the *not-found* branch — which reflects the name
+   escaped exactly once whatever the bug is doing — and went green against the
+   double-escaping driver. The finding lives on the success branch; the test now stubs a
+   resource that exists, and was watched failing.
+2. **A stray `X-CSRF-Token` header** (the app expects `X-CSRFToken`) made a manual probe
+   return 403, which briefly looked like a routing problem rather than a typo of mine.
+
+### 7.4 Not verified
+
+- **No CVE research on htmx 1.9.12.** P6B-2 was about unrecorded provenance, and the
+  record says so explicitly rather than implying the pin is known-good.
+- **`sse.js`'s version is still unknown** and is recorded as unknown. It carries no
+  version string, so the pairing with htmx 1.9.12 is an inference from file mtime, not a
+  fact read from the bytes — writing the guess down would have made it a "fact" three
+  sessions later.
+- **No browser-level test of the rebinding scenario.** The guard is asserted in-process at
+  the seam that implements it; an actual rebinding harness (DNS TTL games plus a real
+  browser) was out of scope.

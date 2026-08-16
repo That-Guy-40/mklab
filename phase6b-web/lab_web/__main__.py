@@ -106,6 +106,21 @@ def main() -> int:
         os.environ.pop("LAB_WEB_AUTH_USER", None)
         os.environ.pop("LAB_WEB_AUTH_PASSWORD", None)
 
+    # ── P6-1: Host allowlist ──────────────────────────────────────────────────
+    # Loopback default: only loopback names are accepted, which is what closes the
+    # DNS-rebinding hole in the no-auth configuration.  With --allow-network the
+    # UI is reached by a name this process cannot predict (--host may be 0.0.0.0),
+    # and --auth is already MANDATORY on that path — so credentials, not the Host
+    # header, are the control there.  Operators fronting the UI with a proxy or a
+    # custom name can name it explicitly instead.
+    if network_exposed and args.allow_network:
+        os.environ.setdefault("LAB_WEB_ALLOWED_HOSTS", "*")
+        print(
+            "lab-web: Host allowlist disabled (--allow-network); Basic Auth is the control.\n"
+            "  To keep an allowlist as well, set LAB_WEB_ALLOWED_HOSTS=name1,name2.",
+            file=sys.stderr,
+        )
+
     # ── Warn on network exposure ───────────────────────────────────────────────
     if network_exposed:
         print(
