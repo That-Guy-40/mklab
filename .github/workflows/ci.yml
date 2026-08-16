@@ -121,6 +121,14 @@ jobs:
         # fifth recorded instance of this inversion here. Text analysis, no daemons.
         run: bash tools/tests/test-no-pipe-gates.sh
 
+      - name: every suite runner reports a ratio and names what did not run
+        # CLAUDE.md's rule is "print ran/listed, not a bare count". Eight runners printed
+        # bare counts anyway, and a comment is not a check. This drives each runner against
+        # synthetic pass/fail/skip tests and asserts what it PRINTS -- not what its source
+        # looks like, which is the mistake the EXIT-trap checker made twice. It carries its
+        # own control: the bare-count shape it replaced must fail the same assertions.
+        run: bash tools/tests/test-run-all-reports-a-ratio.sh
+
       - name: no cached host facts in the micro-cloud instruments
         # Pure text analysis, no host state — safe on a runner that has none of these
         # interfaces. Guards the defect class that made one instrument print a fact from
