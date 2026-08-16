@@ -319,13 +319,50 @@ vm_swtpm_state() { printf '%s/tpm'         "$(vm_dir "$1")"; }
 # `--append $'a\nnetwork_mode = tap'` or a multi-line TOML string) injected extra
 # manifest lines that the start-time reader honored, silently flipping
 # network_mode/tap/bridge/disk.  Then escape embedded `"` (Finding 2) so the TOML
-# stays well-formed.  Enum/numeric fields can't carry these, so they're not run
-# through this.
+# stays well-formed.
+#
+# ⚠️ THE SENTENCE THAT USED TO END THIS COMMENT — "Enum/numeric fields can't carry these,
+# so they're not run through this" — WAS THE WHOLE OF P2-1 (REVIEW-phase2.md).  It was an
+# assumption about the *callers*, written into the *callee*, and nothing enforced it: no
+# integer check existed anywhere between `spec_get` and the manifest write, and a TOML
+# config supplies these as strings, so a newline rode straight through.  Measured
+# 2026-08-15 at this seam: **all 15** un-cleaned fields injected manifest lines — not just
+# the five the audit named.  Quoting does not help, because a newline ends the line
+# whatever is around it:
+#
+#     cpus = 2                       ← MF_CPUS=$'2\nnetwork_mode = "tap"'
+#     network_mode = "tap"           ← injected, and read_manifest_field takes the FIRST
+#     …                                 match, so it beats the legitimate line below
+#
+# So the assumption is gone rather than re-stated more carefully: EVERY field in the
+# manifest now goes through one of the three helpers here.  That is deliberate — M4 fixed
+# the fields it could see and left a rule for future ones, and the rule was not kept.  A
+# writer that cannot emit a broken manifest needs no rule.
 _mf_clean() {
     local s="$1"
     s="${s//$'\n'/ }"; s="${s//$'\r'/ }"
     s="${s//\"/\\\"}"
     printf '%s' "$s"
+}
+
+# _mf_uint VALUE FIELD — VALUE if it is a bare non-negative integer, else refuse.
+#
+# These are written UNQUOTED (`cpus = 2`), so cleaning is not enough: the value must be a
+# number or the line is not valid TOML at all.  Refusing here is defence in depth —
+# `validate_spec` rejects the same values earlier, with a friendlier message, before
+# `create` has downloaded an image or built a disk.  This is the backstop for any path
+# that reaches the writer without passing through it.
+_mf_uint() {
+    [[ "$1" =~ ^[0-9]+$ ]] \
+        || die "manifest field '$2' must be a non-negative integer, got: $(printf '%q' "$1")"
+    printf '%s' "$1"
+}
+
+# _mf_bool VALUE FIELD — VALUE if it is exactly true or false, else refuse.
+_mf_bool() {
+    [[ "$1" == "true" || "$1" == "false" ]] \
+        || die "manifest field '$2' must be true or false, got: $(printf '%q' "$1")"
+    printf '%s' "$1"
 }
 
 write_vm_manifest() {
@@ -350,19 +387,44 @@ write_vm_manifest() {
     local _dfmt;   _dfmt="$(_mf_clean "${MF_DISK_FORMAT:-qcow2}")"
     local _plink;  _plink="$(_mf_clean "${MF_PEER_LINK:-}")"
     local _pmac;   _pmac="$(_mf_clean "${MF_PEER_MAC:-}")"
+    # P2-1: these were written raw on the assumption that an enum or a number cannot carry
+    # a newline. Nothing enforced that, and all of them injected. Cleaned/typed like the
+    # rest, so the writer has no unguarded field left.
+    local _backend; _backend="$(_mf_clean "${MF_BACKEND}")"
+    local _distro;  _distro="$(_mf_clean  "${MF_DISTRO}")"
+    local _suite;   _suite="$(_mf_clean   "${MF_SUITE}")"
+    local _arch;    _arch="$(_mf_clean    "${MF_ARCH}")"
+    local _memory;  _memory="$(_mf_clean  "${MF_MEMORY}")"
+    local _accel;   _accel="$(_mf_clean   "${MF_ACCEL}")"
+    local _sboot;   _sboot="$(_mf_clean   "${MF_SECURE_BOOT:-false}")"
+    local _fw;      _fw="$(_mf_clean      "${MF_FIRMWARE:-uefi}")"
+    local _tpm;     _tpm="$(_mf_clean     "${MF_TPM:-false}")"
+    local _nmode;   _nmode="$(_mf_clean   "${MF_NETWORK_MODE:-user}")"
+    local _cpus;    _cpus="$(_mf_uint     "${MF_CPUS}"        cpus)"
+    local _sshport; _sshport="$(_mf_uint  "${MF_SSH_PORT}"    ssh_port)"
+    local _cores;   _cores="$(_mf_uint    "${MF_CORES:-0}"    cores)"
+    local _threads; _threads="$(_mf_uint  "${MF_THREADS:-0}"  threads)"
+    # `:-false` is load-bearing, not decoration. `spec_from_cli` emits microvm as a JSON
+    # BOOLEAN, and `spec_get` reads it with `jq -r '.[$k] // ""'` — and jq's `//` treats
+    # `false` as empty, so a false boolean arrives here as "". Before this, that wrote a
+    # bare `microvm = ` into the manifest: invalid TOML, for every non-microvm VM ever
+    # created. It went unnoticed because the reader returns "" for the broken line and the
+    # consumer treats "" as "not microvm" — the malformed value and the intended value
+    # happened to mean the same thing. secure_boot/tpm are defaulted the same way below.
+    local _microvm; _microvm="$(_mf_bool  "${MF_MICROVM:-false}" microvm)"
     cat > "$mp" <<EOF
 # lab-vm manifest — do not edit by hand
 name        = "${name}"
 lab         = "${_lab}"
-backend     = "${MF_BACKEND}"
-distro      = "${MF_DISTRO}"
-suite       = "${MF_SUITE}"
-arch        = "${MF_ARCH}"
-memory      = "${MF_MEMORY}"
-cpus        = ${MF_CPUS}
-microvm     = ${MF_MICROVM}
-accel       = "${MF_ACCEL}"
-ssh_port    = ${MF_SSH_PORT}
+backend     = "${_backend}"
+distro      = "${_distro}"
+suite       = "${_suite}"
+arch        = "${_arch}"
+memory      = "${_memory}"
+cpus        = ${_cpus}
+microvm     = ${_microvm}
+accel       = "${_accel}"
+ssh_port    = ${_sshport}
 disk        = "${_disk}"
 install_target = "${_itgt}"
 mac         = "${_mac}"
@@ -371,15 +433,15 @@ kernel      = "${_kernel}"
 initrd      = "${_initrd}"
 append      = "${_append}"
 ssh_user    = "${_suser}"
-cores       = ${MF_CORES:-0}
-secure_boot = "${MF_SECURE_BOOT:-false}"
-firmware    = "${MF_FIRMWARE:-uefi}"
-tpm         = "${MF_TPM:-false}"
+cores       = ${_cores}
+secure_boot = "${_sboot}"
+firmware    = "${_fw}"
+tpm         = "${_tpm}"
 pxe_dir     = "${_pxedir}"
 pxe_bootfile = "${_pxebf}"
-threads     = ${MF_THREADS:-0}
+threads     = ${_threads}
 cpu_pin     = "${_cpupin}"
-network_mode = "${MF_NETWORK_MODE:-user}"
+network_mode = "${_nmode}"
 bridge      = "${_bridge}"
 tap         = "${_tap}"
 disk_format = "${_dfmt}"
@@ -2120,6 +2182,52 @@ validate_spec() {
         [[ "$_mac" =~ ^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$ ]] \
             || die "spec ($name) invalid MAC address '$_mac': expected xx:xx:xx:xx:xx:xx"
     fi
+
+    # ── numeric / boolean fields — refused BEFORE anything is written or downloaded ──────
+    #
+    # P2-1 (REVIEW-phase2.md).  Nothing validated these, and they reach two places that
+    # cannot survive a surprise:
+    #
+    #   • THE MANIFEST, where a NEWLINE injects extra lines that the start-time reader
+    #     honours.  `read_manifest_field`'s awk takes the FIRST match and exits, so an
+    #     injected `network_mode`/`tap` beats the legitimate line written below it — a
+    #     field that looks like a CPU count silently reconfigures the VM's networking on
+    #     every later start/inspect.  (The M4 class, reopened: M4 cleaned the free-text
+    #     fields and left a comment asserting these could not carry a newline.)
+    #
+    #   • QEMU'S COMMA-SEPARATED STRINGS, where a COMMA adds sub-options —
+    #     `-smp ${cpus},cores=…,threads=…` and
+    #     `hostfwd=tcp:127.0.0.1:${ssh_port}-:22`.  That is the Finding-8 class the
+    #     mac/bridge/tap/pxe_dir fields right beside them already guard against, and these
+    #     were simply missed.
+    #
+    # An integer can express neither, so one check closes both facets.  It is HERE, before
+    # `create` downloads a cloud image or builds a disk, per the repo's refuse-before-the-
+    # expensive-step rule — `write_vm_manifest` re-checks as a backstop for any path that
+    # reaches the writer without coming through here.
+    #
+    # Empty is allowed throughout: these are optional and defaulted downstream
+    # (`ssh_port = 0` legitimately means "auto-allocate").  The enum-ish fields (accel,
+    # network_mode, firmware) are deliberately NOT enumerated here — the corpus uses more
+    # spellings than this function should hard-code, and `_mf_clean` in the writer already
+    # makes them un-injectable.  Refusing them by list would be a new way to break a
+    # working lab for no safety gain.
+    local _f _v
+    for _f in cpus cores threads ssh_port; do
+        _v="$(spec_get "$spec" "$_f")"
+        [[ -z "$_v" || "$_v" =~ ^[0-9]+$ ]] \
+            || die "spec ($name) $_f must be a non-negative integer, got: $(printf '%q' "$_v")"
+    done
+    # memory keeps its suffix: the corpus uses 128M / 1536M / 2G / 4096M as well as bare
+    # numbers, and QEMU takes all of them.  It still may not contain a newline or a comma.
+    _v="$(spec_get "$spec" memory)"
+    [[ -z "$_v" || "$_v" =~ ^[0-9]+[KkMmGg]?$ ]] \
+        || die "spec ($name) memory must be a number with an optional K/M/G suffix (e.g. 2048, 2048M, 2G), got: $(printf '%q' "$_v")"
+    for _f in microvm secure_boot tpm; do
+        _v="$(spec_get "$spec" "$_f")"
+        [[ -z "$_v" || "$_v" == "true" || "$_v" == "false" ]] \
+            || die "spec ($name) $_f must be true or false, got: $(printf '%q' "$_v")"
+    done
 
     if [[ "$(spec_get "$spec" microvm)" == "true" ]]; then
         local sup; sup="$(arch_map "$arch" microvm-supported)"

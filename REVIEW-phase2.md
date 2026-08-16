@@ -29,7 +29,16 @@ qemu/qemu-img/ISO tools / 0 fail).
 The residue is **two real defects**, both of a shape the repo already names in
 CLAUDE.md and both reproduced:
 
-- **P2-1 (MED)** — the numeric/enum manifest fields (`cpus`, `cores`,
+> **Status 2026-08-15: both are FIXED**, each with an unprivileged regression test carrying
+> its own negative control. Two things turned up that this review did not name: P2-1's blast
+> radius is **15 fields, not five** (quoting does not stop a newline), and P2-2's identity gap
+> also exists in `start_swtpm`, where it fails the *other* way — a recycled PID reads as
+> "already running", so the verb reports success **without starting a TPM**. Fixing P2-1 also
+> surfaced a latent bug: `microvm = ` (invalid TOML) had been written for every non-microvm VM,
+> because jq's `//` turns a `false` boolean into `""`. Phase 2 suite: **20 passed, 1 skipped,
+> 0 failed** (21 files, up from 19).
+
+- **P2-1 (MED)** — ✅ **FIXED 2026-08-15.** The numeric/enum manifest fields (`cpus`, `cores`,
   `threads`, `ssh_port`, `memory`, `microvm`) are **never validated numeric**.
   Written unquoted and un-`_mf_clean`'d, a newline in one **injects manifest
   lines** that flip `network_mode`/`tap`/`disk` on re-read (the M4 class,
@@ -51,7 +60,52 @@ Phase 1 **P1-1** basename-collision class does **not** exist here.
 
 ## 2. Findings
 
-### P2-1 — MED — unvalidated numeric/enum fields inject manifest lines and QEMU sub-options
+### P2-1 — MED — unvalidated numeric/enum fields inject manifest lines and QEMU sub-options — ✅ FIXED 2026-08-15
+
+> **Fixed in two layers, because either alone would rot.**
+>
+> 1. **`validate_spec` refuses early** — non-integer `cpus`/`cores`/`threads`/`ssh_port`,
+>    non-size `memory`, non-bool `microvm`/`secure_boot`/`tpm` — *before* `create`
+>    downloads a cloud image or builds a disk, per the repo's refuse-before-the-expensive-
+>    step rule. An integer can express neither a newline nor a comma, so **one check closes
+>    both facets**. `memory` keeps its `K/M/G` suffix (the corpus uses `128M`…`4G`) and
+>    `ssh_port = 0` still means auto-allocate.
+> 2. **`write_vm_manifest` can no longer emit a broken manifest at all** — every field now
+>    goes through `_mf_clean`, `_mf_uint` or `_mf_bool`.
+>
+> Layer 2 is the durable half. The reason this finding exists is that M4 fixed the fields
+> it could see and left a *rule* on `_mf_clean` for the rest — *"Enum/numeric fields can't
+> carry these"* — an assumption about the **callers** written into the **callee**, which
+> nothing enforced. Re-stating that rule more carefully would have left the same shape in
+> place; a writer that cannot emit a broken manifest needs no rule.
+>
+> **The blast radius was twice what this finding names.** Measured at the seam: **all 15**
+> un-cleaned fields injected, not the five listed here. Quoting does not help — a newline
+> ends the line whatever surrounds it — so `backend`, `distro`, `suite`, `arch`, `memory`,
+> `accel`, `secure_boot`, `firmware`, `tpm` and `network_mode` were injectable too. After
+> the fix: **0 of 15**.
+>
+> **A latent bug surfaced by the new type check.** `spec_from_cli` emits `microvm` as a JSON
+> **boolean**, and `spec_get` reads fields with `jq -r '.[$k] // ""'` — and jq's `//` treats
+> `false` as empty. So a false boolean arrived as `""` and the manifest got a bare
+> `microvm = `: **invalid TOML, for every non-microvm VM ever created**. It went unnoticed
+> because the reader returns `""` for the broken line and the consumer treats `""` as "not
+> microvm" — the malformed value and the intended value happened to mean the same thing.
+> Now written as `microvm = false`. (Worth noting more broadly: with that `//`, **`false`
+> and "absent" are indistinguishable** for every boolean spec field. Not pursued here.)
+>
+> Regression: [`phase2-qemu-vm/tests/test-numeric-field-injection.sh`](phase2-qemu-vm/tests/test-numeric-field-injection.sh) —
+> unprivileged, builds no VM. Eight sections: facet (a) at `validate_spec` **and**
+> end-to-end through `create --config` (asserting no VM directory is written); facet (b) for
+> `-smp` and `hostfwd`; a sweep proving all 15 fields are un-injectable **at the writer**,
+> driven directly so it bypasses `validate_spec` entirely; controls that every
+> `memory`/`cpus`/`ssh_port` value used in `examples/` still validates and that a legitimate
+> manifest reads back unchanged; and **two negative controls** — one restoring the pre-fix
+> `cpus` assignment verbatim (the writer injects again), one disabling the numeric check
+> (the hostile spec validates cleanly). All 40 VM specs in the repo were re-validated: **0
+> rejected**.
+>
+> Phase 2 suite: **20 passed, 1 skipped, 0 failed**.
 
 `write_vm_manifest` writes the numeric/enum fields **unquoted and without
 `_mf_clean`** (lines ~362–380):
