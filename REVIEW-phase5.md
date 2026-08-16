@@ -37,10 +37,10 @@ The residue is **five defects**, all reproduced. The largest is not an injection
 at all — it is that Phase 5's two descriptions of a lab have almost nothing in
 common:
 
-- **P5-1 (MED)** — `export --format compose` and `up` describe **disjoint labs**.
+- **P5-1 (MED)** — ✅ **FIXED 2026-08-16.** `export --format compose` and `up` describe **disjoint labs**.
   The exporter emits four instance fields `up` **silently ignores**, drops nine
   that decide what the instance actually is, and overlaps on three.
-- **P5-2 (MED)** — `_yaml_str` here never received the **Review L1** fix that
+- **P5-2 (MED)** — ✅ **FIXED 2026-08-16** (the L1 half in #209, the exporter in this pass). `_yaml_str` here never received the **Review L1** fix that
   Phases 3 and 4 both carry, and the exporter hand-rolls `"%s"` instead of calling
   even its own helper. Measured: **0 of 8** config fields round-trip; 2 inject a
   resolved compose attribute, 6 produce a file compose refuses.
@@ -51,9 +51,9 @@ common:
   an instance remains**, and exits non-zero. Regression:
   [`tests/test-down-reports-refusal.sh`](phase5-lxd/tests/test-down-reports-refusal.sh).
   See [§7](#7-resolution-of-p5-3-2026-08-16).
-- **P5-4 (LOW/MED)** — `[[project]]` and `[[profile]]` names are never validated,
+- **P5-4 (LOW/MED)** — ✅ **FIXED 2026-08-16.** `[[project]]` and `[[profile]]` names are never validated,
   while `[lab]` and `[[instance]]` names are; they reach the engine as **flags**.
-- **P5-5 (LOW)** — the `image` positional has no `-`-leading guard (Review M1 is
+- **P5-5 (LOW)** — ✅ **FIXED 2026-08-16.** The `image` positional has no `-`-leading guard (Review M1 is
   in Phase 3 only). It reaches the engine's flag parser; the reason it does not
   bite is an accident of argument order, not a guard.
 
@@ -64,7 +64,7 @@ neither Phase 1's **P1-1** nor Phase 2's **P2-2** class exists here.
 
 ## 2. Findings
 
-### P5-1 — MED — `export --format compose` and `up` describe disjoint labs
+### P5-1 — MED — `export --format compose` and `up` describe disjoint labs — ✅ FIXED 2026-08-16
 
 Phase 5's TOML is read by two consumers that were written against different
 mental models of the schema, and nothing reconciles them. Enumerating the
@@ -125,7 +125,7 @@ worth asking whether a compose export belongs in Phase 5 at all — the `lxc-yam
 format is the faithful one, and it is derived from the *engine*, not from a spec
 file that may no longer describe reality.
 
-### P5-2 — MED — `_yaml_str` never got Review L1, and the exporter mostly bypasses it
+### P5-2 — MED — `_yaml_str` never got Review L1, and the exporter mostly bypasses it — ✅ FIXED 2026-08-16
 
 The repo's self-containment rule duplicates helpers into every phase. `_yaml_str`
 exists three times, and the Review L1 fix — *escape backslash **first**, then the
@@ -212,7 +212,7 @@ shape (P3-3, P4-6), which makes it a house pattern rather than an oversight.
 survived; make the state-dir removal conditional on that list being empty. `down`
 need not fail hard, but it must not call a refused teardown *torn down*.
 
-### P5-4 — LOW/MED — `[[project]]` and `[[profile]]` names are never validated
+### P5-4 — LOW/MED — `[[project]]` and `[[profile]]` names are never validated — ✅ FIXED 2026-08-16
 
 `cmd_up` validates the lab name (line 900) and every instance name (line 962),
 with the comment *"L-2: validate before using in instance names, labels, and
@@ -246,7 +246,7 @@ proven exploit.
 the same up-front loop that already validates instance names, so all four name
 kinds are checked in one place before any write.
 
-### P5-5 — LOW — the `image` positional has no `-`-leading guard
+### P5-5 — LOW — the `image` positional has no `-`-leading guard — ✅ FIXED 2026-08-16
 
 Review M1 — *"the image is the first POSITIONAL, so an `image = "--privileged"` in
 a TOML would inject flags"* — is implemented in Phase 3's `run` **and** `up`,
@@ -281,7 +281,7 @@ where the CLI supports `--`, so the positional cannot be re-read as an option.
 
 ---
 
-## 3. Minor / robustness (not standalone findings)
+## 3. Minor / robustness (not standalone findings) — ✅ ALL FOUR FIXED 2026-08-16
 
 - **`cmd_run` does not validate `--name`.** Phase 3 calls
   `validate_name "$name" "container name"`; Phases 4 and 5 call nothing.
@@ -524,3 +524,94 @@ All **8** remaining sites repo-wide were converted to capture-then-test, and the
 now **gates** the noisy form instead of counting it — and re-derives the premise on every
 run against a streaming fixture, failing loudly if the inversion ever stops reproducing,
 so the gate can never quietly become a defence against nothing.
+
+---
+
+## 8. Resolution of P5-1, P5-2, P5-4, P5-5 and §3 (2026-08-16)
+
+With P5-3 closed earlier the same day, this completes REVIEW-phase5. Suite:
+**16/16 ran, 16 passed, 0 skipped, 0 failed** — every test live against the real Incus,
+including container and VM lifecycle.
+
+### 8.1 What changed
+
+| item | change | regression test |
+|---|---|---|
+| **P5-1a** | `validate_instance_keys` refuses any `[[instance]]` key `up` does not consume, naming LXD's real equivalent | `test-argv-injection-guards.sh` |
+| **P5-1b** | the exporter emits only representable fields and prints a per-instance `# dropped:` line **derived from the spec** | `test-export-hardening.sh` |
+| **P5-2** | every scalar through `_yaml_str`, which gained the control-character path its siblings have | `test-export-hardening.sh` |
+| **P5-4** | `validate_name` on project and profile names, in the same up-front pass as lab and instance names | `test-argv-injection-guards.sh` |
+| **P5-5** | `validate_image_ref` + `launch -- "$image" "$iname"` on both launch paths | `test-argv-injection-guards.sh` |
+| **§3** `--name` | `cmd_run` validates its instance name (the third phase to need it) | — |
+| **§3** dotted keys | `config` tables are flattened recursively, so the quoted and unquoted spellings agree | `test-argv-injection-guards.sh` |
+| **§3** attribution | the comment crediting `validate_name` in `cmd_inspect` now credits the explicit check that actually guards it | — |
+| **§3** pipe gate | the device-list verdict captures first, tests second | — |
+| *(also)* | the engine gate moved into the `lxc-yaml` branch, so `--format compose` needs no daemon | `test-export-hardening.sh` |
+
+### 8.2 P5-1 was a schema question, and the blast radius decided it
+
+The review offered *"refuse or warn"*. Refusing is the stronger answer and it was safe to
+choose, but only because that was **checked before editing**: every `[[instance]]` key in
+all **40** shipped specs was enumerated first, and not one uses `ports`, `environment`,
+`volumes` or `command`. Nothing in the repo changes behaviour; the four fields were
+accepted-and-ignored by `up` and emitted-as-if-real by `export`, and nobody had ever
+written one.
+
+Keying the gate off a **known-good list** rather than a blacklist of those four is what
+makes it worth having: a typo like `imagee` is now refused too, where before it was
+silently dropped.
+
+The exporter's counterpart is the honest half. It used to carry a fixed header naming
+*"profiles, project, storage"* — three of the nine fields it actually dropped. It now
+derives the list per instance:
+
+```yaml
+  "web":
+    image: "images:alpine/3.21"
+    container_name: "lab-demo-web"
+    # dropped: config, profiles, project, storage  (no compose equivalent — see --format lxc-yaml)
+```
+
+The review asked whether a compose export belongs in Phase 5 at all. It is kept, because
+removing a shipped feature is the user's call and not a reviewer's — but the file now
+states plainly what it is not, and points at `--format lxc-yaml`, which is read from the
+**engine** rather than from a spec file that may no longer describe reality.
+
+### 8.3 Negative controls
+
+Both new tests were watched failing against the pre-fix driver:
+
+| test | verdict against the pre-fix driver |
+|---|---|
+| `test-argv-injection-guards.sh` | FAIL — `up` accepted a flag-shaped `[[project]]` name |
+| `test-export-hardening.sh` | FAIL — a newline in `image` injected a resolved `privileged: true` |
+
+**Three of this pass's own assertions were wrong before they were right**, and each was
+caught by running rather than reading. They are recorded because the pattern is the point:
+
+1. **The stand-in answered `info <instance>` with success**, so the driver believed the
+   instance already existed, logged *"leaving as-is"*, and never reached the launch — the
+   image assertion then failed while **blaming the driver for the fixture's defect**. The
+   test now guards its own fixture: if that message appears, it says so instead of
+   reporting a regression.
+2. **The `# dropped:` control matched the file header.** The header explains what a
+   `dropped:` line *is*, so an unanchored `grep 'dropped:'` matched every export — the
+   control failed against a correct driver. Anchored to the emitted line.
+3. **`device add` takes the device type POSITIONALLY** (`data disk source=…`), not as
+   `type=disk`. The assertion was wrong; the driver was right.
+
+Each is the same shape the reviews keep finding in the code — a check that reads as
+evidence while measuring something adjacent — committed while writing checks for it.
+
+### 8.4 Still UNKNOWN
+
+§3b's boundaries mostly stand, and are narrower than they were:
+
+- **The VM image backends** (`backend_from_chroot_vm`, `backend_from_tarball_vm`) still
+  require `EUID=0` for loop mounts, `mkfs` and `extlinux`, so the partitioning, the MBR
+  `dd` and the raw→qcow2 conversion are unmeasured. `test-vm-lifecycle.sh` covers a VM's
+  **launch**, not these builds.
+- **What the engine does with a flag-shaped name** was never the question this driver
+  owns, and remains untested by choice: the guards now refuse those values before argv,
+  so the engine never sees them.
+- No longer unknown: the live paths. All 16 tests run against the real daemon.

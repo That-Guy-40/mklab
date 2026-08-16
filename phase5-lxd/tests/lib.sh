@@ -100,6 +100,57 @@ expect_error() {
     note "$label OK"
 }
 
+# ── preconditions, asked as CAPABILITIES rather than as banners ─────────────────────────
+#
+# These used to be `yq --version | grep -qi mikefarah`, which asks who wrote the tool
+# when the question is whether it can do the job.  yq 4.2.0 prints "yq version 4.2.0"
+# with no vendor name and was rejected as "not mikefarah" — right here by accident,
+# since 4.2.0 also lacks `-p`, but the check could not tell those two facts apart.
+# They were also STRICTER than the driver, which now accepts python3's tomllib/PyYAML:
+# a test that skips while the driver would have worked reports UNKNOWN for no reason.
+require_toml_parser() {
+    command -v tomlq >/dev/null 2>&1 && return 0
+    command -v dasel >/dev/null 2>&1 && return 0
+    if command -v yq >/dev/null 2>&1 && printf 'a = 1\n' | yq -p toml -o json - >/dev/null 2>&1; then
+        return 0
+    fi
+    python3 -c 'import tomllib' >/dev/null 2>&1 && return 0
+    skip "no TOML parser (need tomlq, dasel, a yq supporting -p toml, or python3 >= 3.11)"
+}
+
+require_yaml_reader() {
+    if command -v yq >/dev/null 2>&1 && printf 'a: 1\n' | yq -p yaml -o json - >/dev/null 2>&1; then
+        return 0
+    fi
+    python3 -c 'import yaml' >/dev/null 2>&1 && return 0
+    skip "no YAML reader (need a yq supporting -p yaml, or python3 + PyYAML)"
+}
+
+# ── reading an emitted artifact by VALUE, not by the text that encodes it ───────────────
+#
+# `grep -q 'interval: 30s'` asserts a RENDERING, so it fails the moment the emitter
+# starts quoting its scalars — which it now must, because an unquoted `command: true`
+# is a YAML boolean and an unquoted newline is an injected sibling key (P3-2).  Nothing
+# was broken when those greps went red; the assertion was simply naming the mechanism.
+#
+# So: parse the artifact and assert on the value.  Returns non-zero when the host has no
+# YAML reader at all, which callers should turn into a SKIP — an unmet precondition is an
+# UNKNOWN, not a pass.  `safe_load`, never `load`: the full loader builds arbitrary Python
+# objects from `!!python/object` tags.
+yaml_json() {  # yaml_json FILE  → JSON on stdout
+    if python3 -c 'import yaml' >/dev/null 2>&1; then
+        python3 -c '
+import json, sys, yaml
+with open(sys.argv[1]) as fh:
+    json.dump(yaml.safe_load(fh), sys.stdout)
+' "$1"
+    elif command -v yq >/dev/null 2>&1 && printf 'a: 1\n' | yq -p yaml -o json - >/dev/null 2>&1; then
+        yq -p yaml -o json "$1"
+    else
+        return 1
+    fi
+}
+
 cleanup_lab() {
     local lab="$1"
     "$LAB_LXD" down --lab "$lab" >/dev/null 2>&1 || true

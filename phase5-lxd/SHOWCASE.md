@@ -244,12 +244,20 @@ phase5-lxd/lab-lxd.sh export demo-mixed --format compose > demo-mixed-compose.ym
 docker compose -f demo-mixed-compose.yml config --quiet   # validates
 ```
 
-Synthesises Compose v3.9 YAML from the stored `spec.toml`: containers
-become services with `image`, `container_name`, `ports`, `environment`,
-`volumes`, `command`; named volumes get a top-level `volumes:` block.
-VMs are skipped (Compose has no VM concept).  LXD-specific fields
-(profiles, project, storage) are noted as omitted.  Matches the compose
-export surface in Phases 3 and 4.
+Synthesises Compose YAML from the stored `spec.toml`: containers become
+services with `image` and `container_name`; named volumes get a top-level
+`volumes:` block.  VMs are skipped (Compose has no VM concept).
+
+**It is deliberately thin, and says so** (changed 2026-08-16 —
+[`REVIEW-phase5.md`](../REVIEW-phase5.md) P5-1).  It used to emit `ports`,
+`environment`, `volumes` and `command` — four fields **`up` never reads** — so
+the exported file asserted a port mapping the lab did not have.  `up` now
+refuses those keys outright and names LXD's real equivalent (a `proxy` device
+for ports, a `disk` device for volumes, `config` keys for environment), and the
+export emits a per-instance `# dropped:` line naming **exactly** which
+LXD-specific fields were lost, derived from the spec rather than a fixed list of
+three.  `--format lxc-yaml` remains the faithful export — and it reads from the
+**engine**, not from a spec file that may no longer describe reality.
 
 ### `inspect --json` — instances, profiles, and projects
 
