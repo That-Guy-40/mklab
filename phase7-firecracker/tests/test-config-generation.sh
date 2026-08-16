@@ -1,13 +1,20 @@
 #!/usr/bin/env bash
-# §5.4's generator assertions -- run only where a real boot could happen, because the
-# generator refuses to emit a config for a spec whose gates fail (which is the point).
+# §5.4's generator assertions.
+#
+# This test never boots anything — it runs `create --dry-run` and parses stdout — but it
+# used to demand a real Firecracker and two caller-supplied artifacts, so it SKIPPED on
+# every run, here and in CI, since the phase was written. `fc_fixtures` builds what it
+# actually needs; see lib.sh for what the stand-in does and does not prove.
+#
+# To be exact about what its absence cost: this file's `json.load` would NOT have caught
+# P7-2, because the spec here is benign and a benign spec produces valid JSON with or
+# without escaping. What its absence meant is that no test in the phase had ever parsed a
+# generated config at all — which is why nobody looked at how one was built. The escaping
+# itself is asserted by test-config-json-escaping.sh, on hostile scalars.
 . "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
-require_cmd firecracker file python3
-[[ -r /dev/kvm && -w /dev/kvm ]] || skip "/dev/kvm not read-write for uid $EUID"
 
 tmp="$(mktemp -d)"; TMPDIRS+=("$tmp")   # NOT a second EXIT trap — see lib.sh
-K="${FC_TEST_KERNEL:-}"; R="${FC_TEST_ROOTFS:-}"
-[[ -r "$K" && -r "$R" ]] || skip "set FC_TEST_KERNEL and FC_TEST_ROOTFS to an ELF vmlinux and an ext4 image"
+fc_fixtures; K="$FC_K"; R="$FC_R"
 
 run_fc "$tmp/out" create --dry-run --name t1 --kernel "$K" --rootfs "$R" --memory 128M \
     || { cat "$tmp/out" >&2; fail "create --dry-run refused a spec built from the caller's own good artifacts"; }

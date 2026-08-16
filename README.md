@@ -22,10 +22,12 @@ See [`PLAN.md`](PLAN.md) for the full design and rationale, and
 | 5 | [`phase5-lxd/lab-lxd.sh`](phase5-lxd/) | **v0.1 landed** — LXD/Incus containers + VMs, projects, profiles, `from_qcow2` bridge from Phase 2, `--format lxc-yaml` export | [SHOWCASE](phase5-lxd/SHOWCASE.md) |
 | 6 | [`phase6-tui/`](phase6-tui/) (Textual) | **v0.1 landed** — read-only inventory across all 5 phases + cross-phase topology bring-up / tear-down, five per-phase **create wizards** (`n`), **console attach** (`c`), and `--serve` (browser access via `textual serve`) | [SHOWCASE](phase6-tui/SHOWCASE.md) |
 | 6b | [`phase6b-web/`](phase6b-web/) (FastAPI + HTMX) | **landed** — the same read-only inventory + topology surface as Phase 6, lifted into FastAPI + HTMX routes for SSH-forward browser use | [README](phase6b-web/README.md) |
+| 7 | [`phase7-firecracker/lab-fc.sh`](phase7-firecracker/) | **landed** — Firecracker microVMs: a config generator that reports the **provenance of every field it added**, a preflight that IS the function `create` runs, and a rootfs bridge from Phase 1 | [README](phase7-firecracker/README.md) |
 
-**New here?** Each `SHOWCASE.md` above is a 5-minute "what this phase
-gets you" tour with copy-pasteable demos and integration notes. Phase 6
-is the capstone — it surfaces all five underlying phases in one TUI.
+**New here?** Each `SHOWCASE.md` above (phases 1–6) is a 5-minute "what
+this phase gets you" tour with copy-pasteable demos and integration notes;
+phases 6b and 7 have a `README.md` instead. Phase 6 is the capstone — it
+surfaces all five underlying phases in one TUI.
 
 Each phase is a self-contained script (or, for the Python phases, a
 self-contained package). Deleting later-phase directories does not break
@@ -158,18 +160,19 @@ See [`micro-linux/README.md`](micro-linux/README.md),
 [`micro-linux/SHOWCASE.md`](micro-linux/SHOWCASE.md), and
 [`MICRO_LINUX_LAB_PLAN.md`](MICRO_LINUX_LAB_PLAN.md) for the full design.
 
-### Proposed: a single-host micro cloud (design doc only — not built yet)
+### A single-host micro cloud
 
 Every cloud is the same seven subsystems, and this repo already implements six of
 them across the phases: Phase 1 is the image service, Phases 2–5 are the compute
 drivers, the PXE/IPMI labs are bare-metal provisioning, `lab-ca/` is the PKI, and
-Phase 6/6b is the control plane. The missing pieces are a **microVM compute type**
-and an **ext4 image bridge** to feed it.
+Phase 6/6b is the control plane. The two gaps it named — a **microVM compute type**
+and an **ext4 image bridge** to feed it — are now **built**:
+[`phase7-firecracker/lab-fc.sh`](phase7-firecracker/README.md) and
+`lab-chroot.sh export-rootfs`, wired together by
+[`examples/micro-cloud/`](examples/micro-cloud/).
 
-See [`MICRO_CLOUD_LAB_PLAN.md`](MICRO_CLOUD_LAB_PLAN.md) — it maps each cloud
-subsystem onto the block that already exists here, and designs the two gaps:
-`phase7-firecracker/lab-fc.sh` (Firecracker microVMs) and
-`lab-chroot.sh export-rootfs`.
+See [`MICRO_CLOUD_LAB_PLAN.md`](MICRO_CLOUD_LAB_PLAN.md) for the design, which maps each
+cloud subsystem onto the block that implements it.
 
 ## Repo layout
 
@@ -192,7 +195,8 @@ LAB_CREATE_V2/
 ├── phase4-podman/             # lab-podman.sh  (same layout)
 ├── phase5-lxd/                # lab-lxd.sh     (same layout)
 ├── phase6-tui/                # Textual TUI (Python) surfacing phases 1–5
-└── phase6b-web/               # FastAPI/HTMX web UI (Python)
+├── phase6b-web/               # FastAPI/HTMX web UI (Python)
+└── phase7-firecracker/        # lab-fc.sh      (same layout) — Firecracker microVMs
 ```
 
 ## Conventions

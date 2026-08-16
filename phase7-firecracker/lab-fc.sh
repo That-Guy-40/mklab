@@ -7,16 +7,21 @@
 # you silently" cannot happen quietly. See `create --dry-run`.
 #
 # ── USAGE ──
-#   lab-fc.sh preflight --config <f.toml> | --name N --kernel K --rootfs R
+#   lab-fc.sh preflight --config <f.toml> | <spec flags>
 #   lab-fc.sh create    ... [--dry-run]      # --dry-run prints config + PROVENANCE, writes nothing
-#   lab-fc.sh start     <name>
-#   lab-fc.sh stop      <name> [--force]
-#   lab-fc.sh destroy   <name> [--force]
-#   lab-fc.sh list      [--lab L] [--json]
-#   lab-fc.sh inspect   <name> [--json]
+#   lab-fc.sh start     <name> [--force]     # --force: start despite a changed/missing kernel
+#   lab-fc.sh stop      <name> [--force]     # --force: escalate to SIGKILL if SIGTERM is ignored
+#   lab-fc.sh destroy   <name> [--force]     # --force: kill it first if it is running
+#   lab-fc.sh list      [--json]
+#   lab-fc.sh inspect   <name>
 #   lab-fc.sh mac       <name>               # the guest MAC this tool would set — read-only,
 #                                            # no tap, no root. Must equal `fabric.sh mac <name>`;
 #                                            # tests/test-fabric-mac-derivation.sh asserts it.
+#
+#   spec flags (one per [[microvm]] key — tests/test-cli-vs-config-parity.sh proves the
+#   two entry points stay in step, and that every flag reaches the record):
+#     --name --kernel --rootfs --memory --vcpus --tap --mac --ip --gateway --netmask
+#     --append --lab --mmds
 # ── END USAGE ──
 #
 # ── WHAT THIS TOOL DELIBERATELY DOES NOT DO ─────────────────────────────────
@@ -49,7 +54,24 @@ readonly DEF_VCPUS=1
 die()  { printf 'lab-fc.sh: %s\n' "$*" >&2; exit 1; }
 note() { printf '  - %s\n' "$*" >&2; }
 
-fc_dir()      { printf '%s/%s' "$LAB_FC_STATE_DIR" "$1"; }
+# ── the instance name is a PATH COMPONENT, so it is gated at the accessor ────
+# REVIEW-phase7.md P7-3: `preflight_checks` has always regex-gated the name, but only
+# `preflight` and `create` run it. `start`/`stop`/`destroy`/`inspect` took the name as a
+# bare positional and pasted it into a path, so `destroy ../../<anything>` reached
+# `rm -rf` on a directory outside the state dir and printed `PASS: destroyed`.
+#
+# The guard lives in `fc_dir` — the ONE chokepoint every path helper goes through — rather
+# than being restated in each verb, for the reason Phase 1's P1-1 fix records: a call site
+# added later is then safe by DEFAULT, whereas a per-verb guard reopens the hole the first
+# time someone forgets one.
+readonly FC_NAME_RE='^[a-z][a-z0-9-]{0,30}$'
+valid_name() { [[ "$1" =~ $FC_NAME_RE ]]; }
+
+fc_dir() {
+    valid_name "$1" \
+        || die "invalid instance name '$1' — must match ${FC_NAME_RE} (it is used as a directory name under $LAB_FC_STATE_DIR, so a path is not a name)"
+    printf '%s/%s' "$LAB_FC_STATE_DIR" "$1"
+}
 fc_config()   { printf '%s/config.json'   "$(fc_dir "$1")"; }
 fc_manifest() { printf '%s/manifest.toml' "$(fc_dir "$1")"; }
 fc_pidfile()  { printf '%s/fc.pid'        "$(fc_dir "$1")"; }
@@ -63,15 +85,23 @@ fc_rootfs()   { printf '%s/rootfs.ext4'   "$(fc_dir "$1")"; }
 #   DERIVED    the tool computed it from something you did type
 #   APPENDED   Firecracker adds it AFTER ours and the kernel honours the last one
 #   REFUSED    you asked for something the tool will not do, and why
+#
+# The three columns are joined on US (0x1f), NOT on '|'. REVIEW-phase7.md §3: with '|' as
+# the separator, `append = "mc_name=a|b"` — an ordinary boot arg — split as
+# field="boot_args: mc_name=a" / why="b|your append…", so the table whose entire job is to
+# report what the tool did to your value misreported that value. US cannot appear here
+# because `record_value_ok` refuses control characters in a config value, which is what
+# makes this separator a guarantee rather than a hope.
+readonly PROV_SEP=$'\x1f'
 PROV=()
-prov() { PROV+=("$1|$2|$3"); }   # tag | field | explanation
+prov() { PROV+=("$1${PROV_SEP}$2${PROV_SEP}$3"); }   # tag | field | explanation
 
 prov_table() {
     printf '\n  %-9s %-28s %s\n' "WHERE FROM" "FIELD = VALUE" "WHY"
     printf '  %-9s %-28s %s\n' "---------" "----------------------------" "---"
     local e tag field why
     for e in "${PROV[@]}"; do
-        IFS='|' read -r tag field why <<<"$e"
+        IFS="$PROV_SEP" read -r tag field why <<<"$e"
         printf '  %-9s %-28s %s\n' "$tag" "$field" "$why"
     done
     printf '\n'
@@ -82,6 +112,29 @@ prov_table() {
 # and refuses anything it does not understand rather than ignoring it -- a config key that
 # is silently dropped is a field that "appears to work and does nothing".
 readonly KNOWN_KEYS="name kernel rootfs memory vcpus tap mac ip gateway netmask mmds append lab"
+
+# A record is `k=v;k=v;…`, split back apart on ';'. So a ';' INSIDE a value is not a
+# quoting nuisance, it is a second key — REVIEW-phase7.md P7-6, measured:
+#
+#     append = "quiet;mmds=true"      -> MMDS switched on, which the operator never wrote
+#     append = "quiet;name=HIJACKED"  -> the instance name changed
+#
+# ...and the `known` gate above never sees those keys, because they are not keys in the
+# FILE. A parser whose stated purpose is "refuse what you do not understand rather than
+# ignoring it" could be handed keys it never looked at, through any value.
+#
+# Control characters are refused for the same reason one level up: US (0x1f) is the
+# provenance table's column separator, and NUL/newline would corrupt the line-oriented
+# record stream. Refusing at the parser — by name, like the unknown-key refusal beside it
+# — keeps both guarantees true by construction instead of by hope.
+record_value_ok() {  # record_value_ok <key> <value>  -> 0, or die naming the key
+    case "$2" in
+        *';'*) die "[[microvm]] $1: value contains ';', which is the record separator — it would be read as a second key (see REVIEW-phase7.md P7-6): $2" ;;
+    esac
+    [[ "$2" == *[$'\x01'-$'\x1f'$'\x7f']* ]] \
+        && die "[[microvm]] $1: value contains a control character, which cannot survive the record or the provenance table"
+    return 0
+}
 
 toml_microvms() {  # toml_microvms <file> -> one line per microvm: k=v;k=v;...
     local f="$1"
@@ -94,9 +147,30 @@ toml_microvms() {  # toml_microvms <file> -> one line per microvm: k=v;k=v;...
         n && /=/ {
             key=$0; sub(/[[:space:]]*=.*/,"",key); gsub(/^[[:space:]]+|[[:space:]]+$/,"",key)
             val=$0; sub(/^[^=]*=[[:space:]]*/,"",val)
-            gsub(/^"|"$/,"",val); gsub(/[[:space:]]+$/,"",val)
+            # An INLINE COMMENT is legal TOML and used to land inside the value:
+            # `name = "t1"   # the api node` was read as the name `t1"   # the api node`,
+            # and the tool then complained about the NAME. A quoted value keeps its own
+            # `#`; a bare one ends at the first `#`.
+            if (substr(val,1,1) == "\"") {
+                q = index(substr(val,2), "\"")
+                if (q > 0) val = substr(val, 2, q-1)
+                else       val = substr(val, 2)
+            } else {
+                sub(/[[:space:]]*#.*/, "", val)
+                gsub(/[[:space:]]+$/, "", val)
+            }
             if (index(known, " " key " ") == 0) {
                 printf("lab-fc.sh: unknown [[microvm]] key %s in %s\n", key, FILENAME) > "/dev/stderr"
+                exit 3
+            }
+            # The record separator cannot be smuggled through a value. awk refuses here
+            # rather than at the shell, so the refusal happens before the record exists.
+            if (index(val, ";") > 0) {
+                printf("lab-fc.sh: [[microvm]] %s in %s: value contains \";\", which is the record separator — it would be read as a second key (REVIEW-phase7.md P7-6): %s\n", key, FILENAME, val) > "/dev/stderr"
+                exit 3
+            }
+            if (val ~ /[\001-\037\177]/) {
+                printf("lab-fc.sh: [[microvm]] %s in %s: value contains a control character\n", key, FILENAME) > "/dev/stderr"
                 exit 3
             }
             rec = rec key "=" val ";"
@@ -111,13 +185,63 @@ field() {  # field <record> <key> [default]
     printf '%s' "${v:-$def}"
 }
 
+# ── mem_to_mib: a config value must never reach $(( )) ──────────────────────
+# REVIEW-phase7.md P7-1. This used to be `printf '%s' $(( ${m%[Gg]} * 1024 ))`, and bash
+# arithmetic evaluates ARRAY SUBSCRIPTS with full expansion — so a value shaped like
+# `BASH_VERSINFO[$(…)]G` ran the command substitution. Measured: the command ran and the
+# gate printed `ok  memory 5120 MiB`, during `preflight` — the one verb whose entire
+# promise is that nothing has happened yet.
+#
+# `set -u` was not the guard it looked like: it stops the `a[$(…)]` form (unset name) but
+# not `EUID[$(…)]` or `BASH_VERSINFO[$(…)]`, which name variables that exist.
+#
+# So the shape is checked FIRST and the arithmetic only ever sees digits. Anything else is
+# returned unchanged, so the `memory must be an integer >= 64` gate below reports it — a
+# refusal by the gate that exists, rather than a second, silent one here.
 mem_to_mib() {  # accepts 256, 256M, 1G  (Phase-2 spelling)
-    local m="$1"
+    local m="$1" n
     case "$m" in
-        *G|*g) printf '%s' $(( ${m%[Gg]} * 1024 )) ;;
+        *G|*g) n="${m%[Gg]}"; [[ "$n" =~ ^[0-9]+$ ]] || { printf '%s' "$m"; return 0; }
+               printf '%s' $(( 10#$n * 1024 )) ;;   # 10# so `08G` is 8, not an octal error
         *M|*m) printf '%s' "${m%[Mm]}" ;;
         *)     printf '%s' "$m" ;;
     esac
+}
+
+# ── json_str: the config is JSON, so it is emitted as JSON ──────────────────
+# REVIEW-phase7.md P7-2. Every scalar used to be interpolated raw into config.json, so a
+# value could close its string and add siblings. Measured, and valid JSON at the end of it:
+# an `append =` value injected a top-level `"vsock": {"guest_cid": 3, "uds_path": …}` — a
+# host socket the guest can reach — and the provenance table reported nothing, because as
+# far as the table is concerned that text is just your boot arg.
+#
+# Phases 3, 4 and 5 all grew this escaping (P3 export hardening, P4-5, P5-2). Phase 7 was
+# the fourth emitter and the only one still raw. Pure bash on purpose: this driver's only
+# hard dependencies are awk/sed/file, and a config generator that needs jq to be safe is
+# not safe on a host without jq.
+json_str() {  # json_str <value> -> a quoted, escaped JSON string
+    local s="$1"
+    s="${s//\\/\\\\}"          # backslash FIRST, or it re-escapes the escapes below
+    s="${s//\"/\\\"}"
+    s="${s//$'\n'/\\n}"
+    s="${s//$'\r'/\\r}"
+    s="${s//$'\t'/\\t}"
+    s="${s//$'\b'/\\b}"
+    s="${s//$'\f'/\\f}"
+    # Any C0 control left over has no short escape; \u00XX it rather than emitting a raw
+    # byte that makes the file un-parseable. (record_value_ok already refuses these on the
+    # config path — this is the belt to that suspenders, for values built by `main`.)
+    local c out=""
+    if [[ "$s" == *[$'\x01'-$'\x1f'$'\x7f']* ]]; then
+        while IFS= read -r -d '' -n1 c; do
+            if [[ "$c" == [$'\x01'-$'\x1f'$'\x7f'] ]]; then
+                printf -v c '\\u%04x' "'$c"
+            fi
+            out+="$c"
+        done < <(printf '%s' "$s")
+        s="$out"
+    fi
+    printf '"%s"' "$s"
 }
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -149,9 +273,11 @@ preflight_checks() {  # preflight_checks <record>
     vcpus="$(field "$rec" vcpus "$DEF_VCPUS")"
 
     # -- identity ---------------------------------------------------------
-    [[ "$name" =~ ^[a-z][a-z0-9-]{0,30}$ ]] \
+    # ONE regex, shared with the `fc_dir` accessor guard — a second copy here is a second
+    # thing to forget to update, and the name is a path component (P7-3).
+    valid_name "$name" \
         && pf_ok "name '$name' is a usable instance name" \
-        || pf_fail "name '$name' must be lowercase alnum/dash starting with a letter"
+        || pf_fail "name '$name' must be lowercase alnum/dash starting with a letter (it becomes a directory name)"
 
     # -- the host can run a microVM at all --------------------------------
     if [[ -c /dev/kvm && -r /dev/kvm && -w /dev/kvm ]]; then
@@ -341,7 +467,7 @@ gen_config() {  # gen_config <record> <outfile|-> ; fills PROV[]
         netblock=$(cat <<EOF
 
   "network-interfaces": [
-    { "iface_id": "eth0", "host_dev_name": "$tap", "guest_mac": "$mac" }
+    { "iface_id": "eth0", "host_dev_name": $(json_str "$tap"), "guest_mac": $(json_str "$mac") }
   ],
 EOF
 )
@@ -360,11 +486,11 @@ EOF
     json=$(cat <<EOF
 {
   "boot-source": {
-    "kernel_image_path": "$kernel",
-    "boot_args": "$args"
+    "kernel_image_path": $(json_str "$kernel"),
+    "boot_args": $(json_str "$args")
   },
   "drives": [
-    { "drive_id": "rootfs", "path_on_host": "$rootfs",
+    { "drive_id": "rootfs", "path_on_host": $(json_str "$rootfs"),
       "is_root_device": true, "is_read_only": false }
   ],${netblock}${mmdsblock}
   "machine-config": { "vcpu_count": $vcpus, "mem_size_mib": $mem, "smt": false }
@@ -447,10 +573,21 @@ cmd_create() {
     [[ "$cfg_path" == "$(fc_rootfs "$name")" ]] \
         || { rm -rf "$d"; die "REGRESSION: config.json points at '$cfg_path', not the per-instance copy '$(fc_rootfs "$name")'"; }
 
+    # THE KERNEL IS NOT COPIED, SO ITS DIGEST IS THE ONLY THING BINDING THE RECORD TO IT.
+    # REVIEW-phase7.md §3: the manifest recorded `rootfs_source_sha256` — and nothing, in
+    # any verb, ever read it back, so "a re-staged source image is detectable" was a claim
+    # with no reader. Meanwhile the KERNEL, which config.json points at by path and which
+    # this repo actually does rebuild (micro-cloud rebuilds vmlinux between runs), had no
+    # digest at all. That is the metal-as-a-service row verbatim: *the served vmlinuz vs
+    # the kernel rebuilt over it — `file -b` printed the identical version string, only the
+    # sha differed.* `start` now compares this one and refuses by name (see
+    # `verify_recorded_artifacts`); `inspect` reports the rootfs source in three outcomes.
+    local ksrc; ksrc="$(field "$rec" kernel)"
     {
         printf 'name = "%s"\n' "$name"
         printf 'lab = "%s"\n'  "$(field "$rec" lab micro-cloud)"
-        printf 'kernel = "%s"\n' "$(field "$rec" kernel)"
+        printf 'kernel = "%s"\n' "$ksrc"
+        printf 'kernel_sha256 = "%s"\n' "$(sha256sum "$ksrc" | cut -d' ' -f1)"
         printf 'rootfs = "%s"\n' "$(fc_rootfs "$name")"
         printf 'rootfs_source = "%s"\n' "$src"
         printf 'rootfs_source_sha256 = "%s"\n' "$(sha256sum "$src" | cut -d' ' -f1)"
@@ -459,36 +596,123 @@ cmd_create() {
     } > "$(fc_manifest "$name")"
     printf '\nPASS: created %s\n' "$d"
     printf '      rootfs is a per-instance copy of %s (source sha recorded)\n' "$src"
+    printf '      kernel stays where it is, bound to this instance by sha256 — `start` refuses a swapped one\n'
+}
+
+# ── the recorded digest is COMPARED, or it is decoration ────────────────────
+# Only the kernel is checked, and deliberately only the kernel:
+#   * it is read-only to the guest, so a mismatch means someone changed it — never the VM;
+#   * it is the half the config points at by PATH rather than copying, so it is the half
+#     that can change under a created instance;
+#   * the rootfs COPY is booted read-write, so its digest is EXPECTED to differ after the
+#     first boot. Gating `start` on that would be a gate that fires on correct behaviour,
+#     which is how a real check gets switched off. `inspect` reports it instead.
+# Refuse BEFORE the irreversible step: this runs before firecracker is spawned.
+verify_recorded_artifacts() {  # verify_recorded_artifacts <name> <force>
+    local name="$1" force="$2" man kpath kwant kgot
+    man="$(fc_manifest "$name")"
+    [[ -r "$man" ]] || return 0
+    kwant="$(sed -n 's/^kernel_sha256 = "\(.*\)"$/\1/p' "$man")"
+    kpath="$(sed -n 's/^kernel = "\(.*\)"$/\1/p' "$man")"
+    # An instance created before this field existed has no digest. That is UNKNOWN, and
+    # UNKNOWN is not a pass — say so rather than letting a missing record read as a match.
+    if [[ -z "$kwant" ]]; then
+        note "UNKNOWN: this instance's manifest records no kernel_sha256 (created by an older lab-fc.sh) — the kernel was NOT verified"
+        return 0
+    fi
+    if [[ ! -r "$kpath" ]]; then
+        (( force )) && { note "kernel '$kpath' is gone — starting anyway (--force)"; return 0; }
+        die "the kernel this instance was created against is gone: $kpath (pass --force to start anyway; Firecracker will fail its own open)"
+    fi
+    kgot="$(sha256sum "$kpath" | cut -d' ' -f1)"
+    if [[ "$kgot" != "$kwant" ]]; then
+        (( force )) && { note "kernel sha256 mismatch on '$kpath' — starting anyway (--force)"; return 0; }
+        die "REFUSING to start '$name': the kernel at $kpath is not the one it was created against.
+       recorded: $kwant
+       on disk:  $kgot
+       A version string is not an identity — rebuild the instance (destroy + create) or pass --force."
+    fi
+    note "kernel sha256 matches the one recorded at create"
+}
+
+# ── ONE reader of the pidfile, and it asks about IDENTITY ───────────────────
+# REVIEW-phase7.md P7-5. The identity check (`is the process at that pid actually ours?`)
+# existed only inside `_kill_recorded`; `start` and `list` read the pidfile with a bare
+# `-d /proc/$p`. Measured, with an unrelated `sleep 600`'s pid in fc.pid:
+#
+#     list  -> `k1  running`          start -> refused, "already running (pid …)"
+#     stop  -> "was not running"
+#
+# One pidfile, three answers, in the same instant. And `_kill_recorded`'s own check was
+# `grep -qa firecracker`, which cannot tell THIS instance's VMM from another one that
+# happened to be recycled onto the pid — so it is now bound to the instance by its own
+# config path, which is in firecracker's argv and unique per instance.
+_running_pid() {  # _running_pid <name> -> prints the pid iff OUR firecracker is alive there
+    local name="$1" pf p cfg
+    pf="$(fc_pidfile "$name")"; [[ -r "$pf" ]] || return 1
+    p="$(cat "$pf" 2>/dev/null || true)"
+    [[ "$p" =~ ^[0-9]+$ ]] || return 1
+    [[ -d "/proc/$p" ]] || return 1
+    cfg="$(fc_config "$name")"
+    grep -qa firecracker "/proc/$p/cmdline" 2>/dev/null || return 1
+    grep -qaF -- "$cfg" "/proc/$p/cmdline" 2>/dev/null || return 1
+    printf '%s' "$p"
 }
 
 cmd_start() {
-    local name="$1" d; d="$(fc_dir "$name")"
+    local name="$1" force="${2:-0}" d p i
+    d="$(fc_dir "$name")"
     [[ -r "$(fc_config "$name")" ]] || die "no config for '$name' — run create first"
-    if [[ -r "$(fc_pidfile "$name")" ]]; then
-        local p; p="$(cat "$(fc_pidfile "$name")")"
-        [[ "$p" =~ ^[0-9]+$ && -d "/proc/$p" ]] && die "'$name' is already running (pid $p)"
+    if p="$(_running_pid "$name")"; then
+        die "'$name' is already running (pid $p)"
     fi
+
+    verify_recorded_artifacts "$name" "$force"
+
     setsid firecracker --no-api --config-file "$(fc_config "$name")" \
         > "$(fc_log "$name")" 2>&1 < /dev/null &
-    printf '%s\n' "$!" > "$(fc_pidfile "$name")"
-    printf 'PASS: started %s (pid %s), console -> %s\n' "$name" "$!" "$(fc_log "$name")"
+    p=$!
+    printf '%s\n' "$p" > "$(fc_pidfile "$name")"
+
+    # ASSERT THE OUTCOME. This used to print PASS on the strength of the fork returning —
+    # which says only that bash created a process, not that a microVM exists. Measured
+    # (P7-4): against a config Firecracker refuses, it printed `PASS: started k1 (pid …)`,
+    # exited 0, and fc.log said `Error: Invalid JSON`. `stop` twenty lines below carries an
+    # in-code comment about this exact mistake; the lesson was learned there and never
+    # carried across.
+    #
+    # The wait is a POLL for the outcome, not a sleep long enough to "probably be fine":
+    # it returns the moment the process is recognisably ours, and gives up the moment it is
+    # gone. `setsid` may still be exec'ing when we first look, hence the loop.
+    for i in $(seq 1 40); do
+        _running_pid "$name" >/dev/null && break
+        [[ -d "/proc/$p" ]] || break
+        sleep 0.05
+    done
+    if ! _running_pid "$name" >/dev/null; then
+        rm -f "$(fc_pidfile "$name")"
+        printf 'FAIL: %s did not start — firecracker is not running. Console log (%s):\n' \
+            "$name" "$(fc_log "$name")" >&2
+        # `|| true` because `pipefail` is on and this is diagnostics, not a gate.
+        [[ -r "$(fc_log "$name")" ]] \
+            && { tail -10 "$(fc_log "$name")" | sed -e 's/^/      /' >&2 || true; }
+        return 1
+    fi
+    printf 'PASS: started %s (pid %s) — process confirmed running, not merely forked; console -> %s\n' \
+        "$name" "$p" "$(fc_log "$name")"
 }
 
 # stop/destroy resolve to a PID and kill THAT. Never a pattern: the per-VM paths appear in
 # firecracker's argv, so `pkill -f` matches the process it names AND any tooling whose
 # command line mentions it -- which once killed a QEMU VM and the agent's own shell.
 _kill_recorded() {
-    local name="$1" sig="$2" pf p
-    pf="$(fc_pidfile "$name")"; [[ -r "$pf" ]] || return 1
-    p="$(cat "$pf" 2>/dev/null || true)"
-    [[ "$p" =~ ^[0-9]+$ ]] || return 1
-    [[ -d "/proc/$p" ]] || return 1
-    grep -qa firecracker "/proc/$p/cmdline" 2>/dev/null || return 1   # identity, not just liveness
+    local name="$1" sig="$2" p
+    p="$(_running_pid "$name")" || return 1
     kill "-$sig" "$p" && printf '%s' "$p"
 }
 
 cmd_stop() {
-    local name="$1" p i
+    local name="$1" force="${2:-0}" p i
     if ! p="$(_kill_recorded "$name" TERM)"; then
         printf 'PASS: %s was not running (nothing to signal)\n' "$name"
         rm -f "$(fc_pidfile "$name")"
@@ -503,18 +727,37 @@ cmd_stop() {
         sleep 0.25
     done
     if [[ -d "/proc/$p" ]]; then
-        printf 'FAIL: %s (pid %s) ignored SIGTERM after 5s — still running. Use --force.\n' "$name" "$p" >&2
-        return 1
+        # --force NOW DOES SOMETHING. It was parsed, discarded with `: "$force"`, listed in
+        # USAGE for both stop and destroy, recommended by THIS message, and passed by the
+        # repo's only consumer (micro-cloud's cleanup calls `stop api1 --force`). A knob
+        # that does nothing is the defect this tool's own header names — and it was in the
+        # advice printed at the moment the operator most needs it to be true.
+        if (( force )); then
+            printf '  - %s (pid %s) ignored SIGTERM after 5s — escalating to SIGKILL (--force)\n' "$name" "$p" >&2
+            kill -KILL "$p" 2>/dev/null || true
+            for i in $(seq 1 20); do [[ -d "/proc/$p" ]] || break; sleep 0.25; done
+        fi
+        if [[ -d "/proc/$p" ]]; then
+            printf 'FAIL: %s (pid %s) is still running after %s.\n' "$name" "$p" \
+                "$( (( force )) && printf 'SIGTERM and SIGKILL' || printf 'SIGTERM for 5s — retry with --force')" >&2
+            return 1
+        fi
     fi
     rm -f "$(fc_pidfile "$name")"
     printf 'PASS: %s (pid %s) stopped — process confirmed gone, not merely signalled\n' "$name" "$p"
 }
 
 cmd_destroy() {
-    local name="$1" d; d="$(fc_dir "$name")"
+    local name="$1" force="${2:-0}" d p; d="$(fc_dir "$name")"
     [[ -d "$d" ]] || die "no such instance: $name"
-    _kill_recorded "$name" KILL >/dev/null || true
-    rm -rf "$d"
+    # Same meaning for --force as `stop`: without it, a RUNNING instance is not silently
+    # killed out from under you. `create` already refuses to overwrite; `destroy` refusing
+    # to reap a live VM completes the pair.
+    if p="$(_running_pid "$name")"; then
+        (( force )) || die "'$name' is running (pid $p) — stop it first, or pass --force to kill and destroy it"
+        _kill_recorded "$name" KILL >/dev/null || true
+    fi
+    rm -rf -- "$d"
     # The tap is NOT deleted here -- the fabric owns it (see the header).
     printf 'PASS: destroyed %s (its tap, if any, belongs to the fabric and was left alone)\n' "$name"
 }
@@ -526,12 +769,15 @@ cmd_list() {
     for d in "$LAB_FC_STATE_DIR"/*/; do
         [[ -d "$d" && -r "$d/manifest.toml" ]] || continue
         name="$(basename "$d")"
+        # A directory whose name is not a valid instance name was not made by `create`, and
+        # `_running_pid`/`fc_dir` would refuse it anyway. Skipping it here also keeps the
+        # --json output from carrying a name nothing validated.
+        valid_name "$name" || continue
         run=stopped
-        local p pf="$d/fc.pid"
-        if [[ -r "$pf" ]]; then p="$(cat "$pf")"; [[ "$p" =~ ^[0-9]+$ && -d "/proc/$p" ]] && run=running; fi
+        _running_pid "$name" >/dev/null && run=running   # IDENTITY, not just liveness (P7-5)
         if [[ "$json" == 1 ]]; then
             [[ "$first" == 1 ]] || printf ','; first=0
-            printf '{"name":"%s","state":"%s"}' "$name" "$run"
+            printf '{"name":%s,"state":"%s"}' "$(json_str "$name")" "$run"
         else
             printf '%-16s %s\n' "$name" "$run"
         fi
@@ -545,6 +791,26 @@ cmd_inspect() {
     [[ -d "$d" ]] || die "no such instance: $name"
     cat "$(fc_manifest "$name")"
     printf 'config = "%s"\n' "$(fc_config "$name")"
+    local p; p="$(_running_pid "$name")" && printf 'state = "running"\npid = %s\n' "$p" \
+        || printf 'state = "stopped"\n'
+    # THREE outcomes for each recorded digest, never two. "I could not look" is not "it
+    # matches" and it is not "it changed" either — the same rule the /sbin/init gate learned
+    # the hard way (test-unknown-is-not-pass.sh).
+    _digest_row() {   # _digest_row <label> <path> <recorded>
+        local label="$1" path="$2" want="$3"
+        [[ -n "$want" ]] || { printf '%s_check = "UNKNOWN: no digest recorded at create"\n' "$label"; return; }
+        [[ -r "$path" ]] || { printf '%s_check = "UNKNOWN: %s is gone"\n' "$label" "$path"; return; }
+        if [[ "$(sha256sum "$path" | cut -d' ' -f1)" == "$want" ]]; then
+            printf '%s_check = "match"\n' "$label"
+        else
+            printf '%s_check = "CHANGED since create"\n' "$label"
+        fi
+    }
+    local man; man="$(fc_manifest "$name")"
+    _digest_row kernel "$(sed -n 's/^kernel = "\(.*\)"$/\1/p' "$man")" \
+                       "$(sed -n 's/^kernel_sha256 = "\(.*\)"$/\1/p' "$man")"
+    _digest_row rootfs_source "$(sed -n 's/^rootfs_source = "\(.*\)"$/\1/p' "$man")" \
+                              "$(sed -n 's/^rootfs_source_sha256 = "\(.*\)"$/\1/p' "$man")"
 }
 
 # ── argument handling ───────────────────────────────────────────────────────
@@ -576,7 +842,7 @@ main() {
     [[ -n "$verb" ]] || usage
     case "$verb" in help|-h|--help) usage ;; esac
 
-    local cfg="" name="" kernel="" rootfs="" memory="" vcpus="" tap="" ipaddr="" gw="" mmds="" append="" dry=0 json=0 lab="" force=0
+    local cfg="" name="" kernel="" rootfs="" memory="" vcpus="" tap="" mac="" ipaddr="" gw="" mask="" mmds="" append="" dry=0 json=0 lab="" force=0
     local positional=()
     while (( $# )); do
         case "$1" in
@@ -587,8 +853,10 @@ main() {
             --memory)  memory="$2"; shift 2 ;;
             --vcpus)   vcpus="$2"; shift 2 ;;
             --tap)     tap="$2"; shift 2 ;;
+            --mac)     mac="$2"; shift 2 ;;
             --ip)      ipaddr="$2"; shift 2 ;;
             --gateway) gw="$2"; shift 2 ;;
+            --netmask) mask="$2"; shift 2 ;;
             --append)  append="$2"; shift 2 ;;
             --lab)     lab="$2"; shift 2 ;;
             --mmds)    mmds=true; shift ;;
@@ -599,14 +867,31 @@ main() {
             *)         positional+=("$1"); shift ;;
         esac
     done
-    : "$force" "$lab"
 
+    # THE NAME IS VALIDATED WHERE IT IS SELECTED, not inside each verb (P7-3). The `fc_dir`
+    # accessor guard is the backstop, but a `die` inside `$( … )` exits only the command
+    # substitution — measured here: `cmd_stop` reaches `fc_dir` through
+    # `p="$(_kill_recorded …)"`, so the refusal died in the subshell and the caller went on
+    # to print `PASS: … was not running`. The repo has this exact gotcha written down; it
+    # still cost a run. Both guards are kept: this one because it is in the caller's own
+    # shell, the accessor one because it is what makes a verb added later safe by default.
+    # It SETS a variable rather than printing one, for the same reason: `n="$(_name_arg)"`
+    # would put the `die` back inside a command substitution and lose it again.
+    _name_arg() {
+        local n="${positional[0]:-}"
+        [[ -n "$n" ]] || die "instance name required: $verb <name>"
+        valid_name "$n" || die "invalid instance name '$n' — must match ${FC_NAME_RE} (it is used as a directory name under $LAB_FC_STATE_DIR, so a path is not a name)"
+        name="$n"
+    }
     case "$verb" in
         list)    cmd_list "$json"; return ;;
-        start)   cmd_start   "${positional[0]:?instance name required}"; return ;;
-        stop)    cmd_stop    "${positional[0]:?instance name required}"; return ;;
-        destroy) cmd_destroy "${positional[0]:?instance name required}"; return ;;
-        inspect) cmd_inspect "${positional[0]:?instance name required}"; return ;;
+        start|stop|destroy|inspect) _name_arg ;;
+    esac
+    case "$verb" in
+        start)   cmd_start   "$name" "$force"; return ;;
+        stop)    cmd_stop    "$name" "$force"; return ;;
+        destroy) cmd_destroy "$name" "$force"; return ;;
+        inspect) cmd_inspect "$name"; return ;;
         mac)     # read-only, no tap, no root: the MAC this tool WOULD set for a name.
                  # Exists so the fabric/VMM agreement can be asserted in CI instead of only
                  # on a host that can create taps — an invariant only checkable under root
@@ -633,14 +918,30 @@ main() {
         (( ${#records[@]} )) || die "no [[microvm]] blocks in $cfg"
     else
         [[ -n "$name" ]] || die "need --config <file> or --name <n> --kernel <k> --rootfs <r>"
-        local r="name=$name;kernel=$kernel;rootfs=$rootfs;"
-        [[ -n "$memory" ]] && r+="memory=$memory;"
-        [[ -n "$vcpus"  ]] && r+="vcpus=$vcpus;"
-        [[ -n "$tap"    ]] && r+="tap=$tap;"
-        [[ -n "$ipaddr" ]] && r+="ip=$ipaddr;"
-        [[ -n "$gw"     ]] && r+="gateway=$gw;"
-        [[ -n "$append" ]] && r+="append=$append;"
-        [[ -n "$mmds"   ]] && r+="mmds=$mmds;"
+        # EVERY KNOWN KEY IS REACHABLE FROM THE CLI, AND EVERY FLAG REACHES THE RECORD.
+        # REVIEW-phase7.md §3: `--lab` was parsed into a variable and then thrown away by
+        # `: "$force" "$lab"`, so `--lab MY-OWN-LAB` wrote `lab = "micro-cloud"` into the
+        # manifest and said nothing; `--mac` and `--netmask` were `KNOWN_KEYS` with no flag
+        # at all. Both halves are the tool's own tripwire — "a config key that is silently
+        # dropped is a field that appears to work and does nothing" — turned on itself.
+        # tests/test-cli-vs-config-parity.sh now derives this list from KNOWN_KEYS, so a
+        # key added later without a flag fails rather than being noticed by someone.
+        local r="" k v
+        for k in name kernel rootfs memory vcpus tap mac ip gateway netmask append lab mmds; do
+            case "$k" in
+                name) v="$name" ;; kernel) v="$kernel" ;; rootfs) v="$rootfs" ;;
+                memory) v="$memory" ;; vcpus) v="$vcpus" ;; tap) v="$tap" ;;
+                mac) v="$mac" ;; ip) v="$ipaddr" ;; gateway) v="$gw" ;;
+                netmask) v="$mask" ;; append) v="$append" ;; lab) v="$lab" ;;
+                mmds) v="$mmds" ;;
+            esac
+            [[ -n "$v" ]] || continue
+            # The same refusal the config parser makes, at the other entry point — the
+            # record separator does not become smugglable just because the value arrived
+            # through argv (P7-6).
+            record_value_ok "$k" "$v"
+            r+="$k=$v;"
+        done
         records=("$r")
     fi
 

@@ -25,7 +25,7 @@ need() { local c; for c in "$@"; do have "$c" || skip "missing required command:
 # CLEANUP GOES THROUGH THIS TRAP, NEVER A SECOND `trap … EXIT`. Bash keeps ONE EXIT trap
 # per shell, so a test writing `trap 'cleanup' EXIT` silently REPLACES this net and the
 # verdict line disappears. Both SOL tests here did exactly that until 2026-08-06 (the
-# same defect found in metal-as-a-service's 23 tests and phase7-firecracker's 4).
+# same defect found in metal-as-a-service's 23 tests and in every test phase 7 then had).
 # Register cleanup instead:  on_exit 'cleanup'
 _CLEANUPS=()
 on_exit() { _CLEANUPS+=("$*"); }

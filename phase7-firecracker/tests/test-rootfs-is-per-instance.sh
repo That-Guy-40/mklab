@@ -7,13 +7,14 @@
 # $d/rootfs.ext4 while config.json still pointed at the original. The copy was dead weight,
 # the manifest described a file the VM never touched, and two instances created from one
 # source image would both have booted it read-write and corrupted each other.
+#
+# Like its sibling, this never boots anything — `create` copies a file and writes two —
+# yet it demanded a VMM and two caller-supplied artifacts, and so had never run anywhere.
+# See lib.sh's `fc_fixtures`.
 . "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
-require_cmd firecracker file sha256sum
-[[ -r /dev/kvm && -w /dev/kvm ]] || skip "/dev/kvm not read-write for uid $EUID"
-K="${FC_TEST_KERNEL:-}"; R="${FC_TEST_ROOTFS:-}"
-[[ -r "$K" && -r "$R" ]] || skip "set FC_TEST_KERNEL and FC_TEST_ROOTFS"
 
 tmp="$(mktemp -d)"; TMPDIRS+=("$tmp")
+fc_fixtures; K="$FC_K"; R="$FC_R"
 export LAB_STATE_DIR="$tmp/state"       # never touch the caller's real instances
 n="rgt$$"
 
