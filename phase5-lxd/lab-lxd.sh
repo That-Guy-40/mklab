@@ -1796,15 +1796,36 @@ cmd_inspect() {
 # this copy did not, so a value ending in `\` emitted `"…\"` — the backslash escaped
 # the CLOSING quote, the scalar swallowed the next line, and the document malformed.
 # Escaping in the other order would double-escape what the first pass just wrote.
-_yaml_str() { local s="${1//\\/\\\\}"; printf '"%s"' "${s//\"/\\\"}"; }
+#
+# P5-2: a CONTROL CHARACTER needs the same treatment, and used not to get it.  A raw
+# newline inside a double-quoted YAML scalar does not inject a sibling key — YAML FOLDS
+# it into the value — so the failure here is not injection but SILENT CORRUPTION: the
+# value comes back with its newlines and indentation replaced by single spaces.  (That
+# folding is also why a test asserting only "no injection" passes over this.)  jq's
+# output is a JSON string, every control char as \uXXXX, and a JSON string IS a valid
+# YAML 1.2 double-quoted scalar — so the value survives byte-for-byte.  The slow path
+# runs only when a control character is actually present.
+_yaml_str() {
+    local s="$1"
+    if [[ "$s" != *[$'\x01'-$'\x1f'$'\x7f']* ]]; then
+        s="${s//\\/\\\\}"; printf '"%s"' "${s//\"/\\\"}"; return
+    fi
+    jq -n --arg s "$s" '$s'
+}
 
 cmd_export() {
     local lab="${OPT_LAB:-${POS_ARGS[0]:-}}"
     local fmt="${OPT_FORMAT:-lxc-yaml}"
     [[ -n "$lab" ]] || die "usage: $LAB_PROG export <lab> --format {lxc-yaml|compose}"
     case "$fmt" in lxc-yaml|compose) ;; *) die "unknown export format: $fmt (phase 5 supports: lxc-yaml|compose)" ;; esac
-    require_lxd_or_incus
 
+    # The engine gate lives INSIDE the branch that needs it, as Phase 4's does.  Two
+    # things follow: a usage error stays diagnosable on a host with no LXD/Incus, and
+    # `--format compose` — which only reads the stored spec.toml and prints YAML — is not
+    # gated on a container engine it never calls.  Gating a pure text transformation on a
+    # daemon makes a check that cannot fail for a real reason, and it is what made this
+    # path untestable without one (CI has a broken `lxc` snap wrapper and no daemon).
+    #
     # --- compose format: synthesize from spec.toml (same approach as Phase 3/4)
     if [[ "$fmt" == "compose" ]]; then
         require_cmd jq

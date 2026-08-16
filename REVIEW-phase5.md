@@ -603,6 +603,33 @@ caught by running rather than reading. They are recorded because the pattern is 
 Each is the same shape the reviews keep finding in the code — a check that reads as
 evidence while measuring something adjacent — committed while writing checks for it.
 
+### 8.3b The fix that CI caught, and my local check that could not have
+
+Two of this pass's edits were written by a script that hit an assertion **before** its
+`write_text` — so they silently never landed, while every later step reported success:
+
+- `_yaml_str` never got the control-character path.
+- The old top-level `require_lxd_or_incus` was never removed, so `--format compose` still
+  demanded a daemon.
+
+Both survived the local suite, for instructive reasons.
+
+**The gate**: my "no engine on PATH" check ran with `PATH="$T/bin:/usr/bin:/bin"`, and
+`/usr/bin` holds a working `incus`. The check could not have failed. CI — which has a
+**broken `lxc` snap wrapper and no daemon** — is what found it. Re-verified afterwards
+against a genuinely engine-free `PATH`.
+
+**The escaping**: a raw newline inside a double-quoted YAML scalar does **not** inject a
+sibling key — YAML *folds* it. So the real failure was not injection but silent
+**corruption**: the value returned with its newlines and indentation flattened to single
+spaces. The test asserted "no injection" and two substrings, both of which survive
+folding, so it went green over an unescaped emitter. The assertion now demands the value
+come back **byte-identical**, and was watched failing against the one-line `_yaml_str`
+before being kept.
+
+That is the same defect as §8.3's three, one layer up: a check that measured something
+adjacent to the property and read as evidence for it.
+
 ### 8.4 Still UNKNOWN
 
 §3b's boundaries mostly stand, and are narrower than they were:

@@ -61,10 +61,17 @@ note "P5-2: a newline in a scalar injects no compose attribute"
 
 # ...and the value must SURVIVE. Escaping that loses data is a different bug wearing the
 # same green tick.
+# BYTE-IDENTICAL, not merely "contains the words". A raw newline inside a double-quoted
+# YAML scalar does not inject a sibling key — YAML FOLDS it — so the real failure mode
+# here is silent CORRUPTION, with newlines and indentation replaced by single spaces. An
+# assertion that only checked for "no injection" and for the substrings passed happily
+# over exactly that, which is how this test first went green against an unescaped
+# emitter. The value has to come back the way it went in.
+want="$(printf 'images:alpine/3.21\n    privileged: true\n    volumes:\n      - /:/host')"
 back="$(python3 -c 'import sys,yaml; d=yaml.safe_load(open(sys.argv[1])); sys.stdout.write(d["services"]["web"]["image"])' "$tmp/inj.yml")"
-[[ "$back" == *"privileged: true"* && "$back" == "images:alpine/3.21"* ]] \
-    || fail "the image value did not round-trip intact; got: $back"
-note "P5-2: ...and the value round-trips intact"
+[[ "$back" == "$want" ]] \
+    || fail "REGRESSION: the image value did not round-trip byte-identically — YAML folded the raw newlines instead of the emitter escaping them. want=[$want] got=[$back]"
+note "P5-2: ...and the value round-trips BYTE-IDENTICALLY (newlines escaped, not folded)"
 
 # The whole set of scalars the exporter still emits, with values that broke it before.
 for v in 'images:alpine/3.21' 'a "quoted" ref' 'trailing backslash \' 'has: colon space' '*star' '#hash'; do
