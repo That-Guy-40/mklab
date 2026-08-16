@@ -447,6 +447,34 @@ reason to look at how one was built.
 **Phase 7 tests: 13 passed, 0 skipped, 0 failed** — from 4 passed / 2 skipped of 6 when this
 review was written.
 
+### …and the same mistake, one layer up, caught by CI on this PR
+
+The paragraph above was true on this workstation and **not in CI**, and it took reading the
+job log to find that out. The first run of these fixes printed:
+
+```
+phase7-firecracker  summary: 13/13 discovered tests ran — 6 passed, 7 skipped, 0 failed
+```
+
+`/dev/kvm` existed on the runner but was not read-write for uid 1001, so **seven** tests
+skipped — including the P7-2 escaping test, the P7-6 record-encoding test and the
+P7-4/P7-5 lifecycle test. The job was green. Every one of the fixes above was, in CI,
+guarded by nothing.
+
+That is the same defect as §3b at a different altitude: *"unmeasured **here** is not
+unmeasured"* has an exact converse, *"measured here is not measured **there**"*, and a
+count of skips cannot tell you which guard did not run. What made it visible at all was the
+runner naming the files it skipped and each `SKIP:` line naming its reason — the repo's own
+rule, doing the job it was written for.
+
+None of the seven boots a virtual machine; they need `/dev/kvm` only because `create` gates
+on it, which is a real gate about the host correctly refusing to build an instance the host
+cannot boot. So the fix belongs in the runner, not in the gate or the tests: CI now makes
+`/dev/kvm` read-write, in the same shape as the AppArmor step beside it — including the
+`::warning::` when it cannot, so a runner-image change that re-blocks it appears in the log
+instead of quietly turning seven tests back into skips. Verified on the next run:
+**13 passed, 0 skipped, 0 failed, in CI.**
+
 ## 4. Investigated and cleared (so it is not re-raised)
 
 - **`set -e` and a trailing `A && B` inside an `if` body.** `cmd_list` and `cmd_start` both
