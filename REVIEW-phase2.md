@@ -91,8 +91,25 @@ Phase 1 **P1-1** basename-collision class does **not** exist here.
 > `microvm = `: **invalid TOML, for every non-microvm VM ever created**. It went unnoticed
 > because the reader returns `""` for the broken line and the consumer treats `""` as "not
 > microvm" — the malformed value and the intended value happened to mean the same thing.
-> Now written as `microvm = false`. (Worth noting more broadly: with that `//`, **`false`
-> and "absent" are indistinguishable** for every boolean spec field. Not pursued here.)
+> Now written as `microvm = false`.
+>
+> **Follow-up, fixed 2026-08-15:** the broader trap — with that `//`, **`false` and "absent"
+> are indistinguishable** for every boolean spec field — was pursued afterwards. `spec_get`
+> in all **five** phase drivers now reads
+> `if .[$k] == false then "false" else (.[$k] // "") end`. Deliberately surgical: measured
+> input-by-input, **only `false` changes**; `true`/`0`/`null`/`""`/strings/arrays/objects
+> are byte-identical, so no other reader is touched. It alters **no current behaviour** —
+> every boolean consumer here tests `== "true"`, where `""` and `"false"` are equally
+> not-true — and all five phase suites were run to confirm that (73 passed, 16 skipped, 0
+> failed). It is a latent-trap removal, not a live-bug fix: the next consumer to write
+> `[[ -z "$x" ]]` on a boolean would have got a silently wrong answer. Guarded by
+> [`tests/test-spec-get-false.sh`](phase2-qemu-vm/tests/test-spec-get-false.sh), which pins
+> the whole semantics table, carries a negative control against the old form, and **fails if
+> any of the five drivers drifts back** — fixing one and leaving four is the exact shape
+> that produced P2-1.
+>
+> One correction while checking this: `cloud_init` is **not** affected. Both spec builders
+> emit it as a *string*, so `cloud_init = false` has always worked.
 >
 > Regression: [`phase2-qemu-vm/tests/test-numeric-field-injection.sh`](phase2-qemu-vm/tests/test-numeric-field-injection.sh) —
 > unprivileged, builds no VM. Eight sections: facet (a) at `validate_spec` **and**
