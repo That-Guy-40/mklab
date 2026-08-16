@@ -68,8 +68,18 @@ if tar xzf "$captured" -O rootfs/etc/hostlink/leak.txt 2>/dev/null | grep -q TOP
     fail "REGRESSION: host file leaked into the image via a dereferenced symlink"
 fi
 # resolv.conf and hostlink must be present AS symlinks, not as files/dirs.
-tar tzvf "$captured" | grep -q 'rootfs/etc/resolv.conf ->' || fail "resolv.conf not preserved as a symlink"
-tar tzvf "$captured" | grep -q 'rootfs/etc/hostlink ->'    || fail "hostlink not preserved as a symlink"
+#
+# CAPTURE FIRST, THEN TEST.  These two lines were `tar tzvf … | grep -q … || fail`,
+# and that shape made this test FLAKE: `grep -q` exits on its first match and closes
+# the pipe, `tar` — which writes the listing incrementally — dies on SIGPIPE, and with
+# `pipefail` set the PIPELINE reports 141, so a symlink that WAS present reported as
+# absent.  Measured 2026-08-16 on a 13 KB listing: 140 spurious failures in 200 runs,
+# and 0 in 200 with the capture form.  Note the size — the repo previously reasoned
+# that this form "only bites with a producer big enough to fill a pipe buffer", which
+# is true of a producer that writes ONCE (`docker ps`) and false of one that streams.
+verbose_members="$(tar tzvf "$captured" 2>/dev/null)"
+grep -q 'rootfs/etc/resolv.conf ->' <<<"$verbose_members" || fail "resolv.conf not preserved as a symlink"
+grep -q 'rootfs/etc/hostlink ->'    <<<"$verbose_members" || fail "hostlink not preserved as a symlink"
 note "inner symlinks preserved as symlinks; no host content baked in"
 
 # Excludes still apply (on the new chroot-relative paths).

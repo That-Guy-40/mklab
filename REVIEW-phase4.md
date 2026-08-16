@@ -62,9 +62,14 @@ it is an idea applied to the path someone was looking at:
   default **and** emits `image`/`command` raw, injecting resolved compose
   attributes (`privileged: true`, a bind mount of `/`). The same pair as Phase 3's
   P3-1/P3-2.
-- **P4-6 (LOW/MED, soundness)** — `down` reports `torn down` and exits 0 with a
-  network still live, and deletes the lab's `spec.toml` on the way out — so
-  `export` for that lab becomes impossible while the lab is still running.
+- **P4-6 (LOW/MED, soundness)** — ✅ **FIXED 2026-08-16.** `down` reports `torn down`
+  and exits 0 with a network still live, and deletes the lab's `spec.toml` on the way
+  out — so `export` for that lab becomes impossible while the lab is still running.
+  It now re-queries pods, containers and networks after removal, names each survivor,
+  **keeps the state dir while anything remains**, and exits non-zero. Regression:
+  [`tests/test-down-reports-survivors.sh`](phase4-podman/tests/test-down-reports-survivors.sh),
+  which asserts the consequence this finding named — a partially-torn-down lab is
+  still exportable. See [§7](#7-resolution-of-p4-6-2026-08-16).
 
 Phase 4 addresses containers by validated name and label, never by path or PID,
 so neither Phase 1's **P1-1** nor Phase 2's **P2-2** class exists here.
@@ -311,7 +316,7 @@ the right primitive for the last part in `sanitize_unit_value`; the exporter
 simply does not call it. Also drop the obsolete `version: "3.9"` key (line 1879),
 which current Compose warns about and Phase 3 already omits deliberately.
 
-### P4-6 — LOW/MED — `down` reports success while a network survives, and deletes the spec on the way out
+### P4-6 — LOW/MED — `down` reports success while a network survives, and deletes the spec on the way out — ✅ FIXED 2026-08-16
 
 Every removal in `cmd_down` is `|| true` (lines 1338–1361), and nothing between
 them and the banner asks what actually happened:
@@ -440,3 +445,42 @@ the format branches on the reasoning that a usage error must be diagnosable
 without a working podman, and that a pure text transformation must not require a
 container engine — which is exactly right, and is why P4-5's compose path is
 reachable on a podman-less host and worth fixing there.
+
+---
+
+## 7. Resolution of P4-6 (2026-08-16)
+
+`cmd_down` now ground-truths its own teardown: after the removals it re-queries pods,
+containers and networks by label, and if anything survived it names each one, **keeps
+the lab's state dir**, and returns non-zero instead of printing the success banner.
+
+**The state-dir half is the part worth dwelling on.** The false success is a lie about
+the world; deleting `spec.toml` while the lab is still up is a lie *plus* a loss. It is
+the mirror image of the bug class this repo tracks most carefully — a record that
+outlives its subject — and it has the same root: nobody asked whether the record and
+the world still agreed. The rule that falls out is symmetric, and now holds in Phases 3,
+4 and 5: **a record must not outlive its subject, and must not predecease it either.**
+
+The regression test asserts the *consequence* the finding named rather than the log
+line — after a partial `down`, `export --format compose` must still work on the still-
+running lab:
+
+```
+[warn] ── lab 'p4dwn' only PARTIALLY torn down ──
+[warn]   network remains:   lab-p4dwn-net  (in use by a container this lab does not own? …)
+[warn] keeping …/podman/p4dwn — the lab is still partly up, and its spec is still needed
+rc=1
+$ lab-podman.sh export p4dwn --format compose   → services: …   (rc=0)
+```
+
+**Negative control.** Against the pre-fix driver the test fails at the first assertion —
+`'down' exited 0 while network 'lab-…-net' was still present`. The premise is checked
+too: podman refuses to remove a network that still has containers
+(`has associated containers with it`, rc=2), and the test **skips rather than passes**
+if a future podman force-removes instead, so it can never go green by losing its own
+trigger. The clean-teardown control runs first and asserts the opposite outcome —
+rc=0, network gone, **state dir cleared** — so "reports a partial teardown" cannot be
+true of every run.
+
+**Verified:** phase4 suite 15/15 ran, 14 passed, 1 skipped (the pre-existing `sudo -n`
+gate), 0 failed.

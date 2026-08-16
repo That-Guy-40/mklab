@@ -51,14 +51,19 @@ sys.stdout.write(r.read().decode())
 get() { python3 -c 'import urllib.request,sys; sys.stdout.write(urllib.request.urlopen(sys.argv[1],timeout=5).read().decode())' "http://127.0.0.1:$PORT/$1"; }
 
 # ── the probe POSTs facts; the service records them ──────────────────────────
-post node1 "$json" | grep -q 'recorded facts for node1' || fail "metadata service did not record the POST"
+# Capture, then test: `post … | grep -q … || fail` puts the verdict downstream of a
+# pipe, and the producer here is a python3 subprocess that can still be writing when
+# grep exits on its first match — SIGPIPE + pipefail then invert a match into a miss.
+post_out="$(post node1 "$json")"
+grep -q 'recorded facts for node1' <<<"$post_out" || fail "metadata service did not record the POST"
 [[ -f "$STATE/node1/facts.json" ]] || fail "facts.json not written by the service"
 [[ -f "$STATE/node1/facts.received" ]] || fail "facts.received marker not written"
 note "probe POST recorded (facts.json + facts.received) ✓"
 
 # ── NoCloud user-data is served per node ─────────────────────────────────────
-get node1/user-data | grep -q 'hostname: node1' || fail "user-data missing hostname"
-get node1/meta-data | grep -q 'instance-id: node1' || fail "meta-data missing instance-id"
+ud_out="$(get node1/user-data)"; md_out="$(get node1/meta-data)"
+grep -q 'hostname: node1'    <<<"$ud_out" || fail "user-data missing hostname"
+grep -q 'instance-id: node1' <<<"$md_out" || fail "meta-data missing instance-id"
 note "NoCloud meta-data + user-data served per node ✓"
 
 # a POST for an un-enrolled node is refused (404), never silently written

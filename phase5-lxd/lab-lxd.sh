@@ -1133,8 +1133,32 @@ cmd_down() {
         done <<<"$matching"
     fi
 
-    # Clean cached spec.toml; profiles/projects are intentionally left in
-    # place (other labs may share them).
+    # P5-3: GROUND-TRUTH the teardown instead of announcing it.  Both operations above
+    # are `|| true`, which throws away the engine's exit status — the strongest failure
+    # signal there is — so `down` reported success even when every stop and delete had
+    # been REFUSED.  Re-query and let the engine's own view of the world settle it.
+    local survivors; survivors="$(_instances_in_lab "$lab_name")"
+    if [[ -n "$survivors" ]]; then
+        local sproj siname
+        log_warn "── lab '$lab_name' only PARTIALLY torn down ──"
+        while IFS=$'\t' read -r sproj siname; do
+            [[ -z "$siname" ]] && continue
+            local stag=""
+            [[ -n "$sproj" && "$sproj" != "default" ]] && stag=" (project=$sproj)"
+            log_warn "  instance remains:  ${siname}${stag}"
+        done <<<"$survivors"
+        # ...and KEEP the cached spec.  Deleting it here is the half of this bug that
+        # costs the user something: `export --format compose` reads it, so a lab that is
+        # STILL RUNNING became un-exportable, with an error blaming the operator for not
+        # using `up --config` — which is exactly what they did.  A record must not
+        # predecease its subject any more than it may outlive it.
+        log_warn "keeping $(lab_dir "$lab_name") — the lab is still partly up, and its spec is still needed"
+        log_warn "re-run '$LAB_PROG down --lab $lab_name' once the engine will release them"
+        return 1
+    fi
+
+    # Clean cached spec.toml — only now that the instances really are gone.
+    # Profiles/projects are intentionally left in place (other labs may share them).
     # H-2: sanity-check the resolved path stays inside LAB_LXD_STATE_DIR
     # before rm -rf (a traversal in lab_name like ../../home could otherwise
     # delete an arbitrary directory).

@@ -63,10 +63,29 @@ DIRS=(phase1-chroot/tests phase2-qemu-vm/tests phase3-docker/tests phase4-podman
 #     producer | grep -q X && fail "…"
 #
 # When the producer is SIGPIPE'd, `pipefail` makes the pipeline non-zero and `&& fail` never
-# runs — a missed failure, reported as a pass. The `|| fail` direction is wrong for the same
-# reason but fails NOISILY (a spurious FAIL on a match that was found), which announces
-# itself and only bites with a producer large enough to fill a pipe buffer. Those are
-# counted and reported below, not gated.
+# runs — a missed failure, reported as a pass.
+#
+# ── 2026-08-16: THE NOISY FORM IS NOW GATED TOO, AND THE REASON IT WASN'T WAS WRONG ─────
+#
+# This file used to inventory `producer | grep -q X || fail` without failing on it, on the
+# stated grounds that it "only bites with a producer large enough to fill a pipe buffer".
+# That premise is false, and it was reasoning rather than measurement.
+#
+# The 64 KiB threshold applies to a producer that writes its output in ONE write(2) — real
+# `docker ps` does, which is why the driver-side gates were latent. A producer that STREAMS
+# is still writing after grep exits no matter how little it ends up producing. Measured on
+# `tar tzvf` over a **13 KB** listing (a fifth of the pipe buffer):
+#
+#     tar tzvf f.tgz | grep -q 'x ->'      → 140 spurious failures in 200 runs
+#     out="$(tar tzvf f.tgz)"; grep -q …   →   0 failures in 200 runs
+#
+# It was found the way these always are: `phase5-lxd/tests/test-from-chroot-symlink.sh`
+# failed once in five runs and passed on every re-run — the flake nobody can reproduce.
+# "Self-announcing" was also doing more work than it deserved: a test that goes red one run
+# in three announces itself as UNRELIABLE, which is how a real failure gets waved through.
+#
+# All 8 sites were converted to capture-then-test, so this gate starts at zero. It is one
+# check now, not a check plus a TODO.
 gate_hits() {
     grep -rnE '\| *grep -q[a-zA-Z]* .*&& *(fail|die)' --include='*.sh' \
         "${DIRS[@]}" 2>/dev/null | grep -v '/lib\.sh:' | grep -vE '^[^:]+:[0-9]+: *#'
@@ -84,9 +103,18 @@ grep -q exits on first match and closes the pipe; the producer can die on SIGPIP
 with \`pipefail\` set the PIPELINE is non-zero — so \`&& fail\` never runs and a condition that
 WAS present is reported as absent. Capture first, then test."
 fi
-noisy=$(noisy_hits | wc -l)
 note "no test gates a verdict on the SILENT shape (\`| grep -q … && fail\`)  ✓"
-note "$noisy sites still use the noisy \`| grep -q … || fail\` form — wrong for the same reason but self-announcing, and only reachable with a producer big enough to fill a pipe buffer. Inventoried, not gated (TODO 0.4)"
+
+noisy="$(noisy_hits)"
+if [[ -n "$noisy" ]]; then
+    printf '%s\n' "$noisy" | sed 's/^/  /' >&2
+    fail "the above use the NOISY variant: \`producer | grep -q … || fail\`.
+Same inversion: grep -q closes the pipe, a STREAMING producer takes SIGPIPE, pipefail makes
+the pipeline non-zero, and a match that WAS found is reported as absent. This is not gated
+on size — measured at 140 spurious failures in 200 runs over a 13 KB \`tar tzvf\` listing,
+one fifth of the pipe buffer. Capture first, then test."
+fi
+note "no test gates a verdict on the NOISY shape (\`| grep -q … || fail\`) either  ✓"
 
 # ── THE NEGATIVE CONTROL ───────────────────────────────────────────────────
 # An all-clear is indistinguishable from a scanner that matches nothing. Plant each of the
@@ -104,7 +132,36 @@ caught="$(grep -cE '\| *grep -q[a-zA-Z]* .*&& *(fail|die)' "$TMP/tests/planted.s
     || fail "the scanner found $caught of the 1 planted SILENT violation. A scanner that misses its own shape reports a clean repo it never examined"
 noisy_caught="$(grep -cE '\| *grep -q[a-zA-Z]* .*\|\| *(fail|die)' "$TMP/tests/planted.sh")"
 (( noisy_caught >= 1 )) \
-    || fail "the inventory pattern matched none of the planted noisy forms, so its count is meaningless"
-note "negative control: the planted \`&& fail\` was caught, and the noisy form counted separately  ✓"
+    || fail "the scanner matched none of the planted NOISY forms, so gating on it means nothing"
+note "negative control: both planted shapes were caught by their scanners  ✓"
 
-pass "no test in ${#DIRS[@]} directories uses the SILENT \`| grep -q … && fail\` shape — the variant where a SIGPIPE'd producer makes the assertion skip entirely — and the scanner was watched catching a planted one. The $noisy remaining \`|| fail\` sites are inventoried rather than gated: same defect, but it announces itself"
+# ── AND THE PREMISE ITSELF, because the premise is what was wrong before ────────────────
+# This file spent months asserting the noisy form "only bites with a producer big enough to
+# fill a pipe buffer". That was never measured. So measure it here, every run: a STREAMING
+# producer with a tiny total output must invert at least once, or the gate above is
+# defending against something that does not happen and will eventually be deleted as noise.
+#
+# `yes | head` is not usable (head exits deliberately); this uses a shell loop writing line
+# by line — the same profile as `tar tzvf`, and nothing like `docker ps`'s single write.
+stream_fixture() { local i; for i in $(seq 1 400); do printf 'line-%s\n' "$i"; done; }
+inversions=0
+for _ in $(seq 1 60); do
+    ( set -o pipefail; stream_fixture | grep -q 'line-1$' ) || inversions=$((inversions+1))
+done
+bytes="$(stream_fixture | wc -c)"
+(( inversions > 0 )) || fail "the SIGPIPE inversion did not reproduce in 60 runs over a ${bytes}-byte
+streaming producer. Either this kernel behaves differently or the fixture stopped streaming —
+investigate before trusting the gate above, because its whole justification is that this happens."
+note "premise re-derived: ${inversions}/60 runs inverted over a ${bytes}-byte STREAMING producer (pipe buffer 65536) — the size threshold applies only to single-write producers  ✓"
+
+# ...and the capture-then-test form must NOT invert, or the recommended fix is no fix.
+cap_inversions=0
+for _ in $(seq 1 60); do
+    out="$(stream_fixture)"
+    grep -q 'line-1$' <<<"$out" || cap_inversions=$((cap_inversions+1))
+done
+(( cap_inversions == 0 )) \
+    || fail "capture-then-test inverted $cap_inversions/60 times — the fix this check recommends does not hold"
+note "control: the recommended capture-then-test form inverted 0/60 times  ✓"
+
+pass "no test in ${#DIRS[@]} directories pipes a producer into \`grep -q\` to reach a verdict — neither the SILENT \`&& fail\` variant (a SIGPIPE'd producer makes the assertion skip entirely) nor the NOISY \`|| fail\` one (it inverts a found match into a miss). Both scanners were watched catching a planted instance, and the inversion itself was re-derived on a streaming producer far smaller than a pipe buffer — the premise that had kept the noisy form ungated"
