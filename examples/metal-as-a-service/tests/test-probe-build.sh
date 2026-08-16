@@ -24,7 +24,8 @@ note "initramfs built ($(du -h "$out" | cut -f1)) ✓"
 un="$SANDBOX/unpacked"; mkdir -p "$un"
 ( cd "$un" && zcat "$out" | cpio -idm --quiet ) || fail "could not unpack the initramfs"
 [[ -f "$un/init" ]] || fail "REGRESSION: no /init in the initramfs (kernel would panic)"
-head -1 "$un/init" | grep -q '^#!/bin/sh' || fail "/init is not a shell script"
+init_shebang="$(head -1 "$un/init")"   # capture, then test (no pipe to SIGPIPE)
+grep -q '^#!/bin/sh' <<<"$init_shebang" || fail "/init is not a shell script"
 grep -q 'MAAS inspection probe' "$un/init" || fail "/init is not the MAAS probe"
 # NOT `[[ -f ]]`, which was the bug. The applet loop used to link EVERY name in
 # `busybox --list` — including `busybox` itself — so /bin/busybox became a symlink to

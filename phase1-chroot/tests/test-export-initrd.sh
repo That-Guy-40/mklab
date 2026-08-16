@@ -39,7 +39,7 @@ chmod 0755 "$ROOT/bin/busybox"
 KOUT="$WORK/t1-vmlinuz"
 IOUT="$WORK/t1-initrd.gz"
 T1_OUT="$("$LAB_CHROOT" export-initrd "$ROOT" --kernel "$KOUT" --output "$IOUT" 2>&1)"
-printf '%s\n' "$T1_OUT" | grep -q 'busybox' || fail "test1: expected 'busybox' in log output"
+grep -q 'busybox' <<<"$T1_OUT" || fail "test1: expected 'busybox' in log output"
 [[ -f "$IOUT" ]] || fail "test1: initrd.gz not created"
 [[ -f "$KOUT" ]] || fail "test1: vmlinuz not created"
 # /init must contain busybox shebang
@@ -53,7 +53,7 @@ ROOT="$(mk_fakeroot)"   # no busybox this time
 KOUT="$WORK/t2-vmlinuz"
 IOUT="$WORK/t2-initrd.gz"
 T2_OUT="$("$LAB_CHROOT" export-initrd "$ROOT" --kernel "$KOUT" --output "$IOUT" 2>&1)"
-printf '%s\n' "$T2_OUT" | grep -q 'systemd' || fail "test2: expected 'systemd' in log output"
+grep -q 'systemd' <<<"$T2_OUT" || fail "test2: expected 'systemd' in log output"
 [[ -f "$ROOT/init" ]] || fail "test2: /init not written into fakeroot"
 grep -q 'sbin/init' "$ROOT/init" || fail "test2: /init doesn't look like systemd preset"
 

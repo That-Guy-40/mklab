@@ -1361,7 +1361,44 @@ cmd_down() {
         podman network rm -- "${nids[@]}" >/dev/null 2>&1 || true
     fi
 
-    # State dir — Finding 4: sanity-check path before rm -rf.
+    # P4-6: GROUND-TRUTH the teardown instead of announcing it.  Every removal above
+    # is `|| true` — deliberately, since the fallback paths need to try — so nothing
+    # between them and the banner ever asked whether anything actually went away.
+    # A network still holding a foreign container is the ordinary way this happens:
+    # it is a normal podman network anything can join, and `network rm` then refuses
+    # with "has associated containers with it".
+    local -a left_p=() left_c=() left_n=()
+    mapfile -t left_p < <(podman pod ls --format '{{.Name}}' \
+        --filter "label=${LAB_LABEL_LAB}=${lab_name}" \
+        --filter "label=${LAB_LABEL_TOOL}" 2>/dev/null)
+    mapfile -t left_c < <(podman ps -a --format '{{.Names}}' \
+        --filter "label=${LAB_LABEL_LAB}=${lab_name}" \
+        --filter "label=${LAB_LABEL_TOOL}" 2>/dev/null)
+    mapfile -t left_n < <(podman network ls -q \
+        --filter "label=${LAB_LABEL_LAB}=${lab_name}" \
+        --filter "label=${LAB_LABEL_TOOL}" 2>/dev/null)
+
+    if (( ${#left_p[@]} > 0 || ${#left_c[@]} > 0 || ${#left_n[@]} > 0 )); then
+        local x
+        log_warn "── lab '$lab_name' only PARTIALLY torn down ──"
+        for x in "${left_p[@]}"; do log_warn "  pod remains:       $x"; done
+        for x in "${left_c[@]}"; do log_warn "  container remains: $x"; done
+        for x in "${left_n[@]}"; do
+            log_warn "  network remains:   $x  (in use by a container this lab does not own? 'podman network inspect $x')"
+        done
+        # ...and KEEP the state dir.  Deleting it here is the half of this bug that
+        # costs the user something: it holds the spec.toml copy that
+        # `export --format compose` reads, so a lab that is STILL RUNNING became
+        # un-exportable, with an error blaming the operator for not using
+        # `up --config` — which is exactly what they did.  A record must not
+        # predecease its subject any more than it may outlive it.
+        log_warn "keeping $(lab_dir "$lab_name") — the lab is still partly up, and its spec is still needed"
+        log_warn "re-run '$LAB_PROG down --lab $lab_name' once the holder is gone"
+        return 1
+    fi
+
+    # State dir — removed only now that the lab really is gone.
+    # Finding 4: sanity-check path before rm -rf.
     local _lab_dir; _lab_dir="$(lab_dir "$lab_name")"
     if [[ -d "$_lab_dir" ]]; then
         local _expected_prefix="$LAB_POD_STATE_DIR"

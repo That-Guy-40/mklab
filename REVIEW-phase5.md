@@ -44,9 +44,13 @@ common:
   Phases 3 and 4 both carry, and the exporter hand-rolls `"%s"` instead of calling
   even its own helper. Measured: **0 of 8** config fields round-trip; 2 inject a
   resolved compose attribute, 6 produce a file compose refuses.
-- **P5-3 (LOW/MED)** — `down` reports `── lab 'x' torn down ──` and exits **0**
-  when the engine refused **every** stop and delete, and removes the cached spec
-  anyway.
+- **P5-3 (LOW/MED)** — ✅ **FIXED 2026-08-16.** `down` reports
+  `── lab 'x' torn down ──` and exits **0** when the engine refused **every** stop and
+  delete, and removes the cached spec anyway. It now re-queries `_instances_in_lab`
+  after the loop, names each survivor with its project, **keeps the cached spec while
+  an instance remains**, and exits non-zero. Regression:
+  [`tests/test-down-reports-refusal.sh`](phase5-lxd/tests/test-down-reports-refusal.sh).
+  See [§7](#7-resolution-of-p5-3-2026-08-16).
 - **P5-4 (LOW/MED)** — `[[project]]` and `[[profile]]` names are never validated,
   while `[lab]` and `[[instance]]` names are; they reach the engine as **flags**.
 - **P5-5 (LOW)** — the `image` positional has no `-`-leading guard (Review M1 is
@@ -173,7 +177,7 @@ three copies, applied twice. Phase 4 owns the right primitive for the last part 
 at the cost of the self-containment rule — a trade worth stating explicitly rather
 than rediscovering per phase.
 
-### P5-3 — LOW/MED — `down` reports success when the engine refused every removal
+### P5-3 — LOW/MED — `down` reports success when the engine refused every removal — ✅ FIXED 2026-08-16
 
 `cmd_down` discards the outcome of both operations (lines 1131–1132) and then
 announces success unconditionally:
@@ -399,3 +403,92 @@ through absolute symlinks *and* abort on a dangling `/etc/resolv.conf`. And the
 suite is the repo's best: eleven tests, zero skips, real instances and a real VM
 created and destroyed — which is why this review had to go looking with hostile
 inputs and a shim to find anything at all.
+
+---
+
+## 7. Resolution of P5-3 (2026-08-16)
+
+`cmd_down` now re-queries `_instances_in_lab` after the stop/delete loop. If anything
+survived it names each instance (with its project, where that is not `default`), keeps
+the cached `spec.toml`, and returns non-zero rather than announcing success.
+
+This was the third phase with the identical shape (P3-3, P4-6, P5-3), and all three now
+carry the same rule: **a record must not outlive its subject, and must not predecease it
+either.** Deleting the cached spec while the instance is still running is the second
+half of the bug — the lab becomes un-exportable, with an error blaming the operator for
+not using `up --config`, which is exactly what they did.
+
+### Why the test drives a stand-in engine, and why that is the right seam
+
+The question is *"what does `down` do when the engine refuses?"*, and a real daemon
+cannot be made to refuse on demand. A stand-in is not a weaker substitute here; it is
+the only way to ask the question deterministically. It is a real implementation of the
+real interface (`info`, `list --all-projects --format=json`, `stop`, `delete`), so the
+driver runs its real code path through it — no special-casing inside `lab-lxd.sh` — and
+`delete` removes a name from the stand-in's world only when it *succeeds*, so "what
+survived" is a consequence of what the engine did rather than something the test asserts
+into place.
+
+It also keeps this test off the real daemon, which matters: **an untestable path is how
+P5-3 stayed open in the first place.**
+
+**Negative control.** Against the pre-fix driver the test reproduces the finding's
+transcript exactly — `stop+delete lab-p5dwn-web`, then `── lab 'p5dwn' torn down ──`,
+rc=0, spec deleted. The test also guards its own fixture: `down` exits 0 both when the
+engine refuses (the bug) and when it simply found nothing to do (a stand-in that was
+never consulted) — opposite facts with the same rc — so it asserts the driver actually
+reached the instance before reading anything into the exit status. A final control runs
+an *empty* lab and requires a clean teardown, so "reports a partial teardown" cannot be
+true of every run.
+
+### The live half of §3b is now closed too
+
+This review's live coverage was previously limited on the audit host because
+`test-profiles-projects.sh` performs incus **profile writes**, which are recorded as
+wedging the daemon here with recovery needing a `sudo systemctl restart` the agent
+cannot perform. Re-derived 2026-08-16: incus is reachable, with a `zfs` storage pool and
+a `default` profile carrying root+eth0 — so the *rest* of the suite runs live. **12 of
+13 tests now pass against the real daemon**, including `test-container-lifecycle.sh` and
+`test-vm-lifecycle.sh`, which create and destroy a real container and a real VM.
+
+That matters for this fix specifically: the re-query introduces a way to report a
+**false partial teardown** if `incus delete --force` were asynchronous — the failure
+mode a stand-in cannot detect. It is not: a real instance created and destroyed live
+reports `torn down`, rc=0.
+
+**Still UNKNOWN:** `test-profiles-projects.sh` was **not run** (profile writes; the one
+irreversible-without-sudo action here). It exercises `[[profile]]`/`[[project]]` support,
+not this fix, and `_instances_in_lab` is already `--all-projects`, so a survivor in a
+non-default project is still seen — but that is a reading, not a measurement, and is
+recorded as one.
+
+### Found on the way: a flaky test, and a premise that was never measured
+
+Running the live suite surfaced `test-from-chroot-symlink.sh` failing once in five runs
+and passing on every re-run — the flake nobody can reproduce. It was not this change:
+lines 71–72 read
+
+```sh
+tar tzvf "$captured" | grep -q 'rootfs/etc/hostlink ->' || fail "…"
+```
+
+which is the SIGPIPE inversion this repo has recorded five times, in the *noisy*
+direction. `tools/tests/test-no-pipe-gates.sh` **saw** these sites and deliberately did
+not gate them, on the stated grounds that the form "only bites with a producer big
+enough to fill a pipe buffer."
+
+**That premise is false, and it was reasoning rather than measurement.** The 64 KiB
+threshold applies to a producer that writes once (real `docker ps` does — which is why
+the Phase 3 driver gates were genuinely latent). A producer that *streams* is still
+writing after `grep` exits, however little it produces in total. Measured on a **13 KB**
+`tar tzvf` listing — one fifth of the pipe buffer:
+
+| shape | spurious failures |
+|---|---|
+| `tar tzvf f.tgz \| grep -q 'x ->'` | **140 / 200** |
+| `out="$(tar tzvf f.tgz)"; grep -q …` | 0 / 200 |
+
+All **8** remaining sites repo-wide were converted to capture-then-test, and the checker
+now **gates** the noisy form instead of counting it — and re-derives the premise on every
+run against a streaming fixture, failing loudly if the inversion ever stops reproducing,
+so the gate can never quietly become a defence against nothing.
