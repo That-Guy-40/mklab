@@ -580,18 +580,30 @@ Two of this pass's own mistakes are recorded because they are the interesting pa
    trap [`REVIEW-phase3.md`](REVIEW-phase3.md) §3 recorded in `cmd_run`, committed while
    writing a test for its sibling. The EXIT net caught it, which is what the net is for.
 
-### 7.4 Still UNKNOWN — the rootful path
+### 7.4 The rootful path — closed in CI, and narrower than it looked
 
-`tests/test-allow-root.sh` still **skips**: *"sudo -n not available; can't simulate root
-invocation"*, and this agent cannot sudo. So `require_rootless`'s refusal, the
-`--allow-root` warning, and every `[[ $EUID -eq 0 ]]` early-return in the preflights
-remain unmeasured.
+The audit recorded this as UNKNOWN because `tests/test-allow-root.sh` **skips on the
+audit host**: it needs `sudo -n`, which this agent does not have. The skip is real, and
+it is *this host's* skip.
 
-It matters most for **P4-1**, and the fix does not depend on it: the guard now refuses a
-`-`-leading image *before* `podman run` is invoked at all, so the rootless/rootful
-distinction no longer bounds the damage — there is no damage to bound. But the claim
-"rootless confined it" was always asserted from the code rather than measured, and it
-stays that way.
+**In CI it runs, and passes** — GitHub's runner has passwordless sudo, so on every push
+`phase4-podman` reports **21/21 ran, 21 passed, 0 skipped** and the rootless gate is
+measured: `refusing to run as root` fires without `--allow-root`, and `--allow-root`
+bypasses it. Recorded here because "unmeasured here" had been quietly doing duty as
+"unmeasured", which is a different and much stronger claim.
 
-To close it: `sudo -n true` must succeed, then
-`phase4-podman/tests/test-allow-root.sh` runs the whole rootful branch.
+What that test proves is deliberately narrow, and its own comment says so: it checks the
+**gate**, not the rootful *behaviour* behind it. It runs `list` and `help`. So these
+remain unmeasured anywhere:
+
+- the `[[ $EUID -eq 0 ]]` early-returns inside `check_subuid_subgid`,
+  `check_linger_if_quadlet`, `check_ip_unprivileged_port_start` and
+  `detect_rootless_network` — reached only by a rootful `up`, which no test performs;
+- whether a rootful `up` produces a working lab at all.
+
+For **P4-1** this stopped mattering: the reasoning that "rootless confines a
+`--privileged` container" was the mitigation, and it was asserted from the code rather
+than measured. The guard now refuses a `-`-leading image *before* `podman run` is
+invoked, on every path, so there is no escalation left for rootlessness to bound — the
+mitigation is no longer load-bearing.
+
