@@ -111,7 +111,11 @@ fi
 # And it must have actually rendered, not merely exited 0 quietly.
 grep -q '^services:' <<<"$TW_OUT" \
     || fail "'export --format compose' exited 0 but emitted no 'services:' block — a silent success is not a success: ${TW_OUT//$'\n'/ }"
-grep -q "container_name: lab-${LAB}-web" <<<"$TW_OUT" \
+# Parsed, not grepped: the emitter quotes container_name now (P4-5), and this
+# assertion is about WHICH service was rendered, not how the value is spelled.
+printf '%s\n' "$TW_OUT" > "$tmp/tw.yml"
+twj="$(yaml_json "$tmp/tw.yml")" || skip "no YAML reader to verify the rendered export"
+[[ "$(jq -r '.services.web.container_name' <<<"$twj")" == "lab-${LAB}-web" ]] \
     || fail "'export --format compose' emitted YAML without the expected service — it did not read the spec.toml it was given"
 note "compose: renders the full spec with no podman and no rootless gate"
 

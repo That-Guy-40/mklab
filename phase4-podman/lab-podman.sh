@@ -90,6 +90,86 @@ validate_name() {
         || die "invalid $ctx '$n': use only [a-zA-Z0-9._-], start with alphanumeric, max 63 chars"
 }
 
+# validate_image_ref IMAGE [CTX] — Review M1, ported from Phase 3 (P4-1).
+#
+# The image is the first POSITIONAL to `podman run`, so a value beginning with `-` is
+# parsed as a FLAG.  `image = "--privileged"` alone merely errors — podman is then left
+# with no image — which is why this looked harmless; supplying the real image through
+# `command` completes it and yields a RUNNING privileged container from a config whose
+# only mention of "privileged" is the image field.  Any flag works, not just that one.
+#
+# Rootless bounds the damage but does not remove it (`--privileged` still drops seccomp
+# and the LSM confinement *within* the user namespace, and exposes host devices), and
+# `--allow-root` removes the bound entirely.
+validate_image_ref() {
+    local img="$1" ctx="${2:-image}"
+    [[ "$img" != -* ]] \
+        || die "invalid $ctx '$img': must not start with '-' — it is the first positional to \`podman run\` and would be parsed as a flag"
+}
+
+# validate_topology_names CFG_JSON — lab, service AND pod names, in one place (P4-2).
+#
+# `cmd_up` did this inline and `cmd_generate` did not, while performing the same writes:
+# a `../`-bearing lab name made `generate` create a directory two levels ABOVE the state
+# dir and copy the spec into it — outside the tree `cmd_down`'s `rm -rf` prefix assertion
+# exists to protect, and unreachable by `down`, which refuses that name.
+#
+# Hoisted rather than restated at each call site so the NEXT entry point is correct by
+# default: the guard belongs to the topology, not to one verb that happens to read it.
+validate_topology_names() {
+    local cfg="$1"
+    local lab; lab="$(jq -r '.lab.name // ""' <<<"$cfg")"
+    [[ -n "$lab" ]] || die "config missing [lab].name"
+    validate_name "$lab" "lab name"
+    local _n
+    while IFS= read -r _n; do
+        [[ -n "$_n" ]] && validate_name "$_n" "service name"
+    done < <(jq -r '.service // [] | .[].name // empty' <<<"$cfg")
+    while IFS= read -r _n; do
+        [[ -n "$_n" ]] && validate_name "$_n" "pod name"
+    done < <(jq -r '.pod // [] | .[].name // empty' <<<"$cfg")
+    return 0
+}
+
+# select_owned_services CFG_JSON — drop services another engine owns (P4-4).
+#
+# Cross-phase `engine =` routing was honoured by ONE of THREE execution paths: the plain
+# loop read it, the pod and quadlet loops never did, so a `engine = "docker"` service was
+# started twice — once by each tool — with the podman copy on the wrong network.
+#
+# The filter belongs where the service is SELECTED, not inside one consumer, so a fourth
+# path cannot reintroduce the gap.  Absent `engine` means podman (this phase owns it).
+select_owned_services() {
+    jq -c '.service = ((.service // []) | map(select((.engine // "podman") == "podman")))' <<<"$1"
+}
+
+# count_foreign_services CFG_JSON — how many the filter above would drop, so the skip can
+# be REPORTED.  A service quietly vanishing from a topology is its own defect: the
+# operator cannot tell "Phase 3 owns it" from "the tool lost it".
+count_foreign_services() {
+    jq -r '[(.service // [])[] | select((.engine // "podman") != "podman")] | length' <<<"$1"
+}
+
+# _name_exists CNAME — does a container of exactly this name exist?
+#
+# Review L2 / §3: capture first, test second.  `podman … | grep -qx` puts the verdict
+# downstream of a pipe: grep exits on first match, the producer can take SIGPIPE, and
+# under `pipefail` the PIPELINE reports failure — so a name that WAS found reads as
+# absent and the idempotency guard fails OPEN.  `grep -Fxq` also keeps a '.' in a name
+# literal instead of a regex wildcard.
+_name_exists() {
+    local names
+    names="$(podman ps -a --format '{{.Names}}' 2>/dev/null || true)"
+    grep -Fxq -- "$1" <<<"$names"
+}
+
+# _network_exists NAME — same shape, for the network gate.
+_network_exists() {
+    local nets
+    nets="$(podman network ls --format '{{.Name}}' 2>/dev/null || true)"
+    grep -Fxq -- "$1" <<<"$nets"
+}
+
 # _in_set VALUE [MEMBER...] — true if VALUE equals one of the MEMBERs.  Used by
 # the partial-'up' rollback to skip pre-existing resources (Review H4).
 _in_set() {
@@ -382,7 +462,11 @@ _resolve_container_name() {
 
 # ─── State dir ─────────────────────────────────────────────────────────────
 state_init() {
-    install -d -m 0755 "$LAB_STATE_DIR" "$LAB_POD_STATE_DIR"
+    # `mkdir -p`, not `install -d -m 0755`: install RESETS THE MODE OF AN EXISTING
+    # DIRECTORY, so the tool quietly widened permissions on paths it did not create —
+    # noticed when an attempt to make QUADLET_USER_DIR read-only for a test was silently
+    # undone by the emitter's own `install -d` on the next call (REVIEW-phase4.md §3).
+    mkdir -p "$LAB_STATE_DIR" "$LAB_POD_STATE_DIR"
 }
 
 lab_dir() { printf '%s/%s' "$LAB_POD_STATE_DIR" "$1"; }
@@ -393,7 +477,7 @@ track_quadlet_link() {
     # track_quadlet_link LAB_NAME UNIT_FILE_ABSPATH
     local lab="$1" unit="$2"
     local d; d="$(lab_dir "$lab")/quadlet-links"
-    install -d -m 0755 "$d"
+    mkdir -p "$d"
     ln -sfn "$unit" "$d/$(basename -- "$unit")"
 }
 
@@ -556,11 +640,52 @@ resolve_userns_flags() {
 # Write a .container (or .pod) unit to QUADLET_USER_DIR and symlink it into
 # the lab's state dir so destroy knows to reverse it.
 
+# Quadlet unit writing, in two halves so that a failure is IMPOSSIBLE to swallow (P4-3).
+#
+# The emitters used `{ … } > "$unit"` followed by `track_quadlet_link` and a `printf`.
+# A failed redirect left the group's non-zero status to be discarded by those two
+# succeeding commands, so the function returned 0 and its caller recorded a unit that was
+# never written: `[info] wrote <path>`, zero files on disk, and a DANGLING SYMLINK in
+# `quadlet-links/` — the directory whose whole job is to record what `down` must reverse.
+# A record with no subject, and a false success, which CLAUDE.md ranks above an honest
+# failure.
+#
+# ⚠️ THE OBVIOUS FIX DOES NOT WORK, AND WAS MEASURED FAILING. Piping the body into a
+# checking function — `{ … } | _write_unit "$unit"` — puts the `die` inside the
+# pipeline's own SUBSHELL. It prints, exits that subshell, and the enclosing function
+# CARRIES ON to `track_quadlet_link` exactly as before: measured 2026-08-16, the caller
+# still received the unit path and rc=0. That is the silent-exit trap this repo's test
+# conventions warn about, reproduced while fixing the bug it causes.
+#
+# So the redirect stays in the emitter's OWN shell, where `|| die` is reached directly.
+# Written to a temp file and renamed: a reader never sees a half-written unit, and a
+# failure leaves nothing behind. `mv -T` (no-target-directory) matters — a plain `mv`
+# onto an existing DIRECTORY moves the temp file *into* it and reports success, which is
+# precisely the shape the reproduction used.
+_unit_guard() {   # _unit_guard UNIT — refuse an unusable target before writing anything
+    local unit="$1"
+    [[ ! -d "$unit" ]] \
+        || die "cannot write quadlet unit '$unit': a directory already occupies that path"
+    mkdir -p "$(dirname -- "$unit")"
+}
+
+_unit_commit() {  # _unit_commit TMP UNIT — install the temp file, or die naming the path
+    local tmp="$1" unit="$2"
+    if ! mv -f -T -- "$tmp" "$unit"; then
+        rm -f -- "$tmp"
+        die "failed to install quadlet unit '$unit'"
+    fi
+    [[ -f "$unit" ]] \
+        || die "quadlet unit '$unit' is missing after a write that reported success"
+}
+
 emit_pod_unit() {
     # emit_pod_unit LAB_NAME POD_NAME PUBLISH_LINES_JSONARRAY
     local lab="$1" pod_name="$2" publish_arr="$3"
-    install -d -m 0755 "$QUADLET_USER_DIR"
+    mkdir -p "$QUADLET_USER_DIR"
     local unit="${QUADLET_USER_DIR}/$(pod_name_for "$lab" "$pod_name").pod"
+    _unit_guard "$unit"
+    local _unit_tmp="${unit}.tmp.$$"
     {
         printf '# Generated by %s %s for lab=%s pod=%s — do not edit by hand.\n' \
             "$LAB_PROG" "$LAB_VERSION" "$lab" "$pod_name"
@@ -574,7 +699,9 @@ emit_pod_unit() {
             printf 'PublishPort=%s\n' "$(sanitize_unit_value "$(_pub_host "$line")" "PublishPort")"
         done < <(jq -r '.[]?' <<<"$publish_arr")
         printf '\n[Install]\nWantedBy=default.target\n'
-    } > "$unit"
+    } > "$_unit_tmp" || { rm -f -- "$_unit_tmp"; die "failed to write quadlet unit '$unit'"; }
+    _unit_commit "$_unit_tmp" "$unit"
+    # Only NOW record it: a unit that failed to write must not be tracked as one that did.
     track_quadlet_link "$lab" "$unit"
     printf '%s' "$unit"
 }
@@ -589,8 +716,10 @@ emit_container_unit() {
     [[ -n "$sname" ]] || die "quadlet: service missing name"
     [[ -n "$simage" ]] || die "quadlet: service '$sname' missing image (quadlet mode does not auto-build)"
 
-    install -d -m 0755 "$QUADLET_USER_DIR"
+    mkdir -p "$QUADLET_USER_DIR"
     local unit="${QUADLET_USER_DIR}/$(container_name_for "$lab" "$sname").container"
+    _unit_guard "$unit"
+    local _unit_tmp="${unit}.tmp.$$"
     local selinux_suffix; selinux_suffix="$(check_selinux_label)"
 
     {
@@ -650,7 +779,9 @@ emit_container_unit() {
         fi
         printf '\n[Service]\nRestart=on-failure\n\n'
         printf '[Install]\nWantedBy=default.target\n'
-    } > "$unit"
+    } > "$_unit_tmp" || { rm -f -- "$_unit_tmp"; die "failed to write quadlet unit '$unit'"; }
+    _unit_commit "$_unit_tmp" "$unit"
+    # Only NOW record it: a unit that failed to write must not be tracked as one that did.
     track_quadlet_link "$lab" "$unit"
     printf '%s' "$unit"
 }
@@ -665,7 +796,7 @@ start_service_plain() {
     local cname; cname="$(container_name_for "$lab" "$sname")"
 
     # Idempotency: if the container already exists, leave it.
-    if podman ps -a --format '{{.Names}}' | grep -qx "$cname"; then
+    if _name_exists "$cname"; then
         log_warn "service '$sname' container exists ($cname); leaving as-is"
         printf '%s' "$cname"
         return 0
@@ -777,9 +908,12 @@ start_service_plain() {
     log_debug "argv: podman run [${#args[@]} flags, env vars redacted] $simage ${cmd[*]:-}"
     # Finding 13: try-and-handle instead of pre-check to close the TOCTOU race.
     local _run_err
-    if ! _run_err="$(podman run "${args[@]}" "$simage" "${cmd[@]}" 2>&1)"; then
+    validate_image_ref "$simage" "service '$sname' image"
+    # `--` ends option parsing, so even a future gap in the guard above cannot let a
+    # positional be re-read as a flag.  Belt and braces, and podman supports it.
+    if ! _run_err="$(podman run "${args[@]}" -- "$simage" "${cmd[@]}" 2>&1)"; then
         if [[ "$_run_err" == *"already in use"* ]] \
-           || podman ps -a --format '{{.Names}}' | grep -qx "$cname"; then
+           || _name_exists "$cname"; then
             log_warn "service '$sname' container already exists ($cname); leaving as-is"
         else
             die "failed to start container '$cname': $_run_err"
@@ -837,7 +971,7 @@ start_services_in_pod() {
         [[ "$svc_pod" != "$pname" ]] && continue
         sname="$(spec_get "$svc" name)"
         cname="$(container_name_for "$lab" "$sname")"
-        if podman ps -a --format '{{.Names}}' | grep -qx "$cname"; then
+        if _name_exists "$cname"; then
             log_warn "pod service '$sname' exists ($cname); leaving as-is"
             continue
         fi
@@ -908,7 +1042,8 @@ start_services_in_pod() {
         [[ -n "$cmdline" ]] && read -ra cmd <<<"$cmdline"
 
         log_info "starting (pod=$pname) service '$sname' as $cname (image=$simage)"
-        podman run "${args[@]}" "$simage" "${cmd[@]}" >/dev/null
+        validate_image_ref "$simage" "pod service '$sname' image"
+        podman run "${args[@]}" -- "$simage" "${cmd[@]}" >/dev/null
     done
 }
 
@@ -1047,6 +1182,12 @@ cmd_run() {
     local name="${OPT_NAME:-}"
     local manager="${OPT_MANAGER:-plain}"
     [[ -n "$name" ]] || die "usage: $LAB_PROG run --name N [--image IMG | --chroot PATH | --tarball FILE | --context DIR] [--manager plain] [opts...]"
+    # §3: Phase 3's `run` validates its name; this one did not, and builds `lab-<name>`
+    # plus label values from it.  podman rejects most malformed names itself, so this is
+    # defence-in-depth — and it is the fourth instance of the same asymmetry.
+    validate_name "$name" "container name"
+    # P4-1: refuse a flag-shaped image BEFORE any build/import work happens.
+    [[ -n "$image" ]] && validate_image_ref "$image"
     if [[ -z "$image" && -z "${OPT_CHROOT:-}" && -z "${OPT_TARBALL:-}" && -z "${OPT_CONTEXT:-}" ]]; then
         die "need one of: --image IMG | --chroot PATH | --tarball FILE | --context DIR"
     fi
@@ -1076,7 +1217,7 @@ cmd_run() {
 
     local cname; cname="lab-${name}"
 
-    if podman ps -a --format '{{.Names}}' | grep -qx "$cname"; then
+    if _name_exists "$cname"; then
         die "container '$cname' already exists.  Destroy it first:  $LAB_PROG destroy $name"
     fi
 
@@ -1144,9 +1285,9 @@ cmd_run() {
     log_info "podman run $cname (image=$image)"
     log_debug "argv: podman run ${args[*]} $image ${EXTRA_ARGS[*]:-}"
     if (( ${#EXTRA_ARGS[@]} > 0 )); then
-        podman run "${args[@]}" "$image" "${EXTRA_ARGS[@]}"
+        podman run "${args[@]}" -- "$image" "${EXTRA_ARGS[@]}"
     else
-        podman run "${args[@]}" "$image"
+        podman run "${args[@]}" -- "$image"
     fi
 }
 
@@ -1164,24 +1305,25 @@ cmd_up() {
     local lab_name
     lab_name="$(jq -r '.lab.name // ""' <<<"$cfg_json")"
     [[ -n "$lab_name" ]] || die "config missing [lab].name"
-    # Finding 1, 4, 16: validate before trap/paths/labels to prevent injection.
-    validate_name "$lab_name" "lab name"
-    # Review (name validation): the lab name was validated but service/pod names
-    # were not — yet they become quadlet unit *paths*, `--name`/`--hostname`,
-    # label values, and `grep` patterns.  Validate them ALL up front, before any
-    # state dir or unit file is written, so a bad name fails fast and cleanly.
-    local _n
-    while IFS= read -r _n; do
-        [[ -n "$_n" ]] && validate_name "$_n" "service name"
-    done < <(jq -r '.service // [] | .[].name // empty' <<<"$cfg_json")
-    while IFS= read -r _n; do
-        [[ -n "$_n" ]] && validate_name "$_n" "pod name"
-    done < <(jq -r '.pod // [] | .[].name // empty' <<<"$cfg_json")
+    # Finding 1, 4, 16 + P4-2: lab, service AND pod names — they become quadlet unit
+    # *paths*, `--name`/`--hostname`, label values and `grep` patterns, so they are all
+    # validated up front, before any state dir or unit file is written.  Shared with
+    # `cmd_generate`, which used to perform the same writes with no validation at all.
+    validate_topology_names "$cfg_json"
+
+    # P4-4: filter by engine ONCE, here, where the services are selected — the plain,
+    # pod and quadlet paths then all receive an already-filtered topology and cannot
+    # disagree about who owns a service.
+    local _foreign; _foreign="$(count_foreign_services "$cfg_json")"
+    if (( _foreign > 0 )); then
+        log_info "skipping $_foreign service(s) with engine != podman (owned by another phase)"
+        cfg_json="$(select_owned_services "$cfg_json")"
+    fi
 
     log_info "── bringing up lab '$lab_name' from $OPT_CONFIG ──"
     log_info "rootless network backend: $(detect_rootless_network)"
 
-    install -d -m 0755 "$(lab_dir "$lab_name")"
+    mkdir -p "$(lab_dir "$lab_name")"
 
     # Keep a canonicalized copy of the TOML for export / destroy / status.
     cp -f "$OPT_CONFIG" "$(lab_dir "$lab_name")/spec.toml"
@@ -1243,7 +1385,7 @@ cmd_up() {
     for net in "${nets[@]}"; do
         driver="$(jq -r --arg n "$net" '.network[$n].driver // "bridge"' <<<"$cfg_json")"
         netname="lab-${lab_name}-${net}"
-        if podman network ls --format '{{.Name}}' | grep -qx "$netname"; then
+        if _network_exists "$netname"; then
             log_debug "network exists: $netname"
         else
             log_info "creating network: $netname (driver=$driver)"
@@ -1283,24 +1425,17 @@ cmd_up() {
 
         # --- Plain services (no pod=) ---
         local svc_count; svc_count="$(jq -r '.service // [] | length' <<<"$cfg_json")"
-        local i svc svc_pod svc_engine svc_name skipped=0
+        # P4-4: no engine check here any more.  `cfg_json` was filtered once in this
+        # function, where the services are selected, so this loop, the pod loop and the
+        # quadlet loop all see the same already-owned set.  The check used to live only
+        # here, which is exactly why the other two paths disagreed with it.
+        local i svc svc_pod
         for ((i=0; i<svc_count; i++)); do
             svc="$(jq -c --argjson i "$i" '.service[$i]' <<<"$cfg_json")"
             svc_pod="$(spec_get "$svc" pod)"
             [[ -n "$svc_pod" ]] && continue   # handled in pod loop above
-
-            # Cross-phase routing: skip services claimed by Phase 3.
-            svc_engine="$(spec_get "$svc" engine)"
-            if [[ -n "$svc_engine" && "$svc_engine" != "podman" ]]; then
-                svc_name="$(spec_get "$svc" name)"
-                log_debug "skipping service '$svc_name' (engine=$svc_engine, not podman)"
-                skipped=$((skipped+1))
-                continue
-            fi
-
             start_service_plain "$lab_name" "$svc" >/dev/null
         done
-        (( skipped > 0 )) && log_info "skipped $skipped service(s) with engine != podman"
     fi
 
     trap - EXIT
@@ -1855,7 +1990,20 @@ cmd_destroy() {
 # internal double-quotes escaped (Finding 8).
 # Review L1: escape backslash FIRST, then double-quote, so a value ending in `\`
 # (or containing `"`) can't break out of / malform the quoted YAML scalar.
-_yaml_str() { local s="${1//\\/\\\\}"; printf '"%s"' "${s//\"/\\\"}"; }
+# P4-5: a CONTROL CHARACTER needs the same treatment and used not to get it.  A newline
+# ends the scalar and turns the next line into a sibling key of the service — which is how
+# a `command`/`image` string injected a resolved `privileged: true` into an exported
+# topology that declared no such thing.  Escaping it as `\n` beats refusing it: the
+# artifact stays valid AND the value survives.  The slow path hands the value to jq, whose
+# output is a JSON string — every control char as \uXXXX — and a JSON string IS a valid
+# YAML 1.2 double-quoted scalar.  It runs only when a control char is actually present.
+_yaml_str() {
+    local s="$1"
+    if [[ "$s" != *[$'\x01'-$'\x1f'$'\x7f']* ]]; then
+        s="${s//\\/\\\\}"; printf '"%s"' "${s//\"/\\\"}"; return
+    fi
+    jq -n --arg s "$s" '$s'
+}
 
 cmd_export() {
     local lab="${OPT_LAB:-${POS_ARGS[0]:-}}"
@@ -1913,7 +2061,8 @@ cmd_export() {
                     case "$vol_src" in /*|./*|../*) : ;; *) named_volumes["$vol_src"]=1 ;; esac
                 done < <(jq -r '.volumes[]? | split(":")[0]' <<<"$svc")
             done
-            printf 'version: "3.9"\n'
+            # No top-level `version:` — Compose v2 treats it as obsolete and warns.
+            # Phase 3 already omits it; this exporter kept emitting it.
             printf 'services:\n'
             local simage
             for ((i=0; i<svc_count; i++)); do
@@ -1925,8 +2074,11 @@ cmd_export() {
                 # or `\` can't inject sibling keys / malform the doc.  Image and
                 # command keep their original format (engine-validated / plain).
                 printf '  %s:\n' "$(_yaml_str "$sname")"
-                [[ -n "$simage" ]] && printf '    image: %s\n' "$simage"
-                printf '    container_name: %s\n' "$(container_name_for "$lab" "$sname")"
+                # P4-5: "engine-validated" cannot apply to a file the engine never sees.
+                # `--format compose` is a pure text transformation over spec.toml, so the
+                # image and command are escaped like every other scalar.
+                [[ -n "$simage" ]] && printf '    image: %s\n' "$(_yaml_str "$simage")"
+                printf '    container_name: %s\n' "$(_yaml_str "$(container_name_for "$lab" "$sname")")"
                 local p first=1
                 while IFS= read -r p; do
                     [[ -z "$p" ]] && continue
@@ -1944,7 +2096,7 @@ cmd_export() {
                 while IFS=$'\t' read -r kk vv; do
                     [[ -z "$kk" ]] && continue
                     if (( first )); then printf '    environment:\n'; first=0; fi
-                    printf '      %s: %s\n' "$kk" "$(_yaml_str "$vv")"
+                    printf '      %s: %s\n' "$(_yaml_str "$kk")" "$(_yaml_str "$vv")"
                 done < <(jq -r '.environment // {} | to_entries[]? | "\(.key)\t\(.value)"' <<<"$svc")
                 first=1
                 local vol
@@ -1954,19 +2106,20 @@ cmd_export() {
                     printf '      - %s\n' "$(_yaml_str "$vol")"
                 done < <(jq -r '.volumes[]?' <<<"$svc")
                 local cmdline; cmdline="$(jq -r '.command // empty' <<<"$svc")"
-                [[ -n "$cmdline" ]] && printf '    command: %s\n' "$cmdline"
+                [[ -n "$cmdline" ]] && printf '    command: %s\n' "$(_yaml_str "$cmdline")"
                 # healthcheck — emitted when .healthcheck.cmd is set.
                 local hc_cmd; hc_cmd="$(jq -r '.healthcheck.cmd // ""' <<<"$svc")"
                 if [[ -n "$hc_cmd" ]]; then
                     printf '    healthcheck:\n'
                     # Use jq to JSON-escape the healthcheck string (Finding 8).
-                    printf '      test: %s\n' "$(jq -n --arg t "$hc_cmd" '["CMD-SHELL",$t]')"
+                    # `-c`: without it jq pretty-prints and the value spans four lines.
+                    printf '      test: %s\n' "$(jq -nc --arg t "$hc_cmd" '["CMD-SHELL",$t]')"
                     local hc_interval; hc_interval="$(jq -r '.healthcheck.interval // ""' <<<"$svc")"
                     local hc_timeout;  hc_timeout="$(jq -r  '.healthcheck.timeout  // ""' <<<"$svc")"
                     local hc_retries;  hc_retries="$(jq -r  '.healthcheck.retries  // ""' <<<"$svc")"
-                    [[ -n "$hc_interval" ]] && printf '      interval: %s\n' "$hc_interval"
-                    [[ -n "$hc_timeout"  ]] && printf '      timeout: %s\n'  "$hc_timeout"
-                    [[ -n "$hc_retries"  ]] && printf '      retries: %s\n'  "$hc_retries"
+                    [[ -n "$hc_interval" ]] && printf '      interval: %s\n' "$(_yaml_str "$hc_interval")"
+                    [[ -n "$hc_timeout"  ]] && printf '      timeout: %s\n'  "$(_yaml_str "$hc_timeout")"
+                    [[ -n "$hc_retries"  ]] && printf '      retries: %s\n'  "$(_yaml_str "$hc_retries")"
                 fi
                 # depends_on — condition: service_healthy when dep has healthcheck.
                 first=1
@@ -1992,14 +2145,14 @@ cmd_export() {
                 local net
                 for net in "${exp_nets[@]}"; do
                     local d; d="$(jq -r --arg n "$net" '.network[$n].driver // "bridge"' <<<"$cfg")"
-                    printf '  %s:\n    driver: %s\n' "$(_yaml_str "$net")" "$d"
+                    printf '  %s:\n    driver: %s\n' "$(_yaml_str "$net")" "$(_yaml_str "$d")"
                 done
             fi
             # Declare named volumes referenced by any service.
             if (( ${#named_volumes[@]} > 0 )); then
                 printf 'volumes:\n'
                 local vn
-                for vn in "${!named_volumes[@]}"; do printf '  %s:\n' "$vn"; done
+                for vn in "${!named_volumes[@]}"; do printf '  %s:\n' "$(_yaml_str "$vn")"; done
             fi
             ;;
         *)
@@ -2019,8 +2172,18 @@ cmd_generate() {
     local cfg; cfg="$(toml_to_json "$OPT_CONFIG")"
     local lab; lab="$(jq -r '.lab.name // ""' <<<"$cfg")"
     [[ -n "$lab" ]] || die "config missing [lab].name"
+    # P4-2: the same validation `cmd_up` performs — this verb writes the same paths
+    # (state dir, spec.toml copy, unit files) and used to validate nothing at all.
+    validate_topology_names "$cfg"
+    # P4-4: and the same engine filter, so `generate` cannot write a unit for a service
+    # another phase owns.
+    local _foreign; _foreign="$(count_foreign_services "$cfg")"
+    if (( _foreign > 0 )); then
+        log_info "skipping $_foreign service(s) with engine != podman (owned by another phase)"
+        cfg="$(select_owned_services "$cfg")"
+    fi
 
-    install -d -m 0755 "$(lab_dir "$lab")"
+    mkdir -p "$(lab_dir "$lab")"
     cp -f "$OPT_CONFIG" "$(lab_dir "$lab")/spec.toml"
 
     # Emit pods + container units (same as start_lab_quadlet minus the

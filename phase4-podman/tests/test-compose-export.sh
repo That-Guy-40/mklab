@@ -66,14 +66,18 @@ grep -q '^  "web":'         <<<"$out" || fail "missing service 'web'"
 note "services section present"
 
 # ── image ──────────────────────────────────────────────────────────────────
-grep -q 'image: postgres'   <<<"$out" || fail "db: image missing"
-grep -q 'image: nginx'      <<<"$out" || fail "web: image missing"
+# Asserted on the PARSED value, not the text: the emitter quotes every scalar now
+# (P4-5), so `grep 'image: postgres'` was testing the rendering rather than the image.
+printf '%s\n' "$out" > "$tmp/exported.yml"
+xj="$(yaml_json "$tmp/exported.yml")" || skip "no YAML reader to check the exported values"
+[[ "$(jq -r '.services.db.image'  <<<"$xj")" == "postgres:16-alpine" ]] || fail "db: image missing/wrong"
+[[ "$(jq -r '.services.web.image' <<<"$xj")" == "nginx:alpine" ]]      || fail "web: image missing/wrong"
 note "image fields present"
 
 # ── container_name ─────────────────────────────────────────────────────────
 # container_name_for yields  lab-<lab>-<svc>
-grep -q "container_name: lab-${lab}-db"  <<<"$out" || fail "db: container_name missing"
-grep -q "container_name: lab-${lab}-web" <<<"$out" || fail "web: container_name missing"
+[[ "$(jq -r '.services.db.container_name'  <<<"$xj")" == "lab-${lab}-db"  ]] || fail "db: container_name missing"
+[[ "$(jq -r '.services.web.container_name' <<<"$xj")" == "lab-${lab}-web" ]] || fail "web: container_name missing"
 note "container_name fields present"
 
 # ── ports ──────────────────────────────────────────────────────────────────
@@ -96,37 +100,37 @@ grep -q 'POSTGRES_PASSWORD' <<<"$out" || fail "db: environment missing"
 note "environment present"
 
 # ── volumes (service-level) ────────────────────────────────────────────────
-grep -q '"pgdata:/var/lib/postgresql/data"'  <<<"$out" || fail "db: named volume ref missing"
-grep -q '"/host/static:/usr/share'           <<<"$out" || fail "web: bind mount missing"
+[[ "$(jq -r '.services.db.volumes[0]'  <<<"$xj")" == "pgdata:/var/lib/postgresql/data" ]] || fail "db: named volume ref missing"
+[[ "$(jq -r '.services.web.volumes[0]' <<<"$xj")" == "/host/static:"* ]] || fail "web: bind mount missing"
 note "service volumes present"
 
 # ── command ────────────────────────────────────────────────────────────────
-grep -q 'command:.*postgres' <<<"$out" || fail "db: command missing"
+[[ "$(jq -r '.services.db.command' <<<"$xj")" == *postgres* ]] || fail "db: command missing"
 note "command present"
 
 # ── healthcheck ────────────────────────────────────────────────────────────
-grep -q '    healthcheck:'          <<<"$out" || fail "db: healthcheck block missing"
-grep -q 'CMD-SHELL'                 <<<"$out" || fail "db: CMD-SHELL prefix missing"
-grep -q 'pg_isready'                <<<"$out" || fail "db: healthcheck cmd missing"
-grep -q 'interval: 10s'             <<<"$out" || fail "db: healthcheck interval missing"
-grep -q 'timeout: 5s'               <<<"$out" || fail "db: healthcheck timeout missing"
-grep -q 'retries: 3'                <<<"$out" || fail "db: healthcheck retries missing"
+jq -e '.services.db.healthcheck' >/dev/null <<<"$xj" || fail "db: healthcheck block missing"
+[[ "$(jq -r '.services.db.healthcheck.test[0]' <<<"$xj")" == "CMD-SHELL" ]] || fail "db: CMD-SHELL prefix missing"
+[[ "$(jq -r '.services.db.healthcheck.test[1]' <<<"$xj")" == *pg_isready* ]] || fail "db: healthcheck cmd missing"
+[[ "$(jq -r '.services.db.healthcheck.interval' <<<"$xj")" == "10s" ]] || fail "db: healthcheck interval missing"
+[[ "$(jq -r '.services.db.healthcheck.timeout'  <<<"$xj")" == "5s"  ]] || fail "db: healthcheck timeout missing"
+[[ "$(jq -r '.services.db.healthcheck.retries'  <<<"$xj")" == "3"   ]] || fail "db: healthcheck retries missing"
 note "healthcheck block present"
 
 # ── depends_on with correct condition ──────────────────────────────────────
 # db has a healthcheck → web should get condition: service_healthy
-grep -q '    depends_on:'              <<<"$out" || fail "web: depends_on missing"
-grep -q 'condition: service_healthy'   <<<"$out" || fail "web: condition should be service_healthy (db has healthcheck)"
+[[ "$(jq -r '.services.web.depends_on.db.condition' <<<"$xj")" == "service_healthy" ]] \
+    || fail "web: depends_on db should carry condition service_healthy (db has a healthcheck)"
 note "depends_on with service_healthy condition"
 
 # ── networks section ───────────────────────────────────────────────────────
-grep -q '^networks:'        <<<"$out" || fail "missing 'networks:'"
-grep -q '"front":'          <<<"$out" || fail "missing network 'front' (network names now quoted as YAML keys)"
+jq -e '.networks'       >/dev/null <<<"$xj" || fail "missing 'networks:'"
+jq -e '.networks.front' >/dev/null <<<"$xj" || fail "missing network 'front'"
 note "networks section present"
 
 # ── top-level volumes declaration (named volumes only, not bind mounts) ────
-grep -q '^volumes:'         <<<"$out" || fail "missing top-level 'volumes:'"
-grep -q '^  pgdata:'        <<<"$out" || fail "pgdata not declared in top-level volumes"
+jq -e '.volumes' >/dev/null <<<"$xj" || fail "missing top-level 'volumes:'"
+jq -e '.volumes | has("pgdata")' >/dev/null <<<"$xj" || fail "pgdata not declared in top-level volumes"
 # /host/static is a bind mount — must NOT appear in top-level volumes:
 if grep -q 'host' <<<"$(grep -A100 '^volumes:' <<<"$out" | tail -n+2)"; then
     fail "bind mount source appeared in top-level volumes declaration"
