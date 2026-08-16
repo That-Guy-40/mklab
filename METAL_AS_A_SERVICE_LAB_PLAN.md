@@ -2,7 +2,7 @@
 
 > **Status**: v2.1 — **BUILT: all 7 increments shipped, plus the three fast-follows, and
 > all three live runs pass** (`run-e2e.sh`, `run-e2e-image.sh`, `run-e2e-measured.sh`, the
-> last landing 2026-07-29). `tests/run-all.sh` → **34 passed / 0 failed**; `chaos-run.sh`
+> last landing 2026-07-29). `tests/run-all.sh` → **every listed test ran, 0 skipped, 0 failed**; `chaos-run.sh`
 > → **0 criticals**. The lab is at
 > [`examples/metal-as-a-service/`](examples/metal-as-a-service/); what a green run still
 > does **not** prove — including a fifteen-defect ledger of faults only real hardware

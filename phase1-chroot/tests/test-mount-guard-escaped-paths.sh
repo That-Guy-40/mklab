@@ -41,16 +41,7 @@
 require_cmd unshare mountpoint realpath awk
 
 # ── re-exec inside a user+mount namespace ───────────────────────────────────────────────
-if [[ -z "${P1_ESCAPED_MOUNT_NS:-}" ]]; then
-    if unshare -rm true 2>/dev/null; then
-        export P1_ESCAPED_MOUNT_NS=1
-        exec unshare -rm bash "$(realpath "${BASH_SOURCE[0]}")"
-    elif [[ ${EUID:-$(id -u)} -eq 0 ]]; then
-        export P1_ESCAPED_MOUNT_NS=1        # already root: mount directly, no namespace needed
-    else
-        skip "needs unprivileged user namespaces (unshare -rm) or root to create a bind mount"
-    fi
-fi
+require_userns_or_root P1_ESCAPED_MOUNT_NS
 
 work="$(mktemp -d)"
 export LAB_STATE_DIR="$work/state" LAB_CACHE_DIR="$work/cache"
