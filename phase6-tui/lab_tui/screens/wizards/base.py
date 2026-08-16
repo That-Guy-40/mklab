@@ -22,6 +22,25 @@ The base class wires:
        → self._refresh_preview()   (updates the right pane)
   "Save to file" → prompts for a path, writes the TOML, notifies
   "Close"        → dismiss(None)
+
+BEFORE PORTING THESE WIZARDS TO THE WEB (phase 6b), READ THIS.
+--------------------------------------------------------------
+`generate_toml()` is pure logic behind an impure interface: it reads every field
+through `self._val(...)` → `screen.query_one("#f-name", Input).value`, so calling it
+requires a live Textual widget tree.  A web port therefore *cannot* import and reuse
+it as written — it would be forced to write a second spec generator, which is this
+repo's signature bug in the place a novice meets it first.
+
+The decision is recorded in `examples/micro-cloud/DEFERRED.md` §17.4 question 10:
+**share the generator, re-implement only the view** — which means splitting each
+`generate_toml()` into a module-level `build_toml(fields: dict) -> str` with no
+Textual import, plus a thin `generate_toml(self)` that harvests widget values into
+that dict.  Lock it with a test asserting the pure module imports without `textual`
+and that both paths produce BYTE-IDENTICAL output.
+
+`tests/test_wizards.py` is the standing evidence of the coupling: to call what its
+own docstring calls "pure logic" it must do `object.__new__(cls)` and monkey-patch
+three static helpers.
 """
 
 from __future__ import annotations

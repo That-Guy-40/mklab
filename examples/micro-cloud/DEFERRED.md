@@ -734,6 +734,14 @@ friend, an afternoon, and a willingness to hear that the docs lie.
 
 ### 17.4 Open questions
 
+> **Status 2026-08-16: questions 10–13 are ANSWERED**, each inline below. They were the
+> last four of this file's open questions that nobody had taken a position on, and three
+> of the four were decidable from the repo itself — only 11 needed knowledge from outside
+> it, and it is marked as *derived, verify first* rather than asserted. Two of the answers
+> found something the question had not asked about: 10's advice was **unfollowable as
+> written**, and 13's "probably trivial" guess was right about tier 1 and wrong about
+> tier 2 being finished.
+
 Carried from §16, unchanged:
 
 1. **Where to stop.** Slices 2, 4, 6, or 7 are all honest stopping points.
@@ -744,7 +752,8 @@ Carried from §16, unchanged:
 4. **Decision B — `extract-vmlinux`** (§6.3c). An experiment for slice 1.
 5. **The beginner walkthrough** — §17.3.
 
-New, surfaced while writing v3 and not yet decided:
+New, surfaced while writing v3 — 6–9 were decided as they arose; **10–13 were answered
+2026-08-16**:
 
 6. **Where does the P1 spike finally live?** It is now kept at
    [`tools/micro-cloud-preflight.sh`](../../tools/micro-cloud-preflight.sh) — a
@@ -846,17 +855,159 @@ New, surfaced while writing v3 and not yet decided:
     meet it first. The port should share the generator and re-implement only
     the *view*. Needs confirming against `wizards/base.py`'s actual split
     before any work starts.
+
+    > ✅ **ANSWERED 2026-08-16 — and it is neither branch the question offered.**
+    >
+    > **There is no second generator, because there are no web wizards.**
+    > `git grep -i wizard -- phase6b-web/` returns **nothing**: phase 6b ships nine
+    > routes, all read-only inventory plus `destroy`. So the disagreement the
+    > question feared has not happened.
+    >
+    > **But the risk is structural, not disciplinary, and the advice as written
+    > cannot be followed.** `generate_toml()` is a method on
+    > `WizardModal(ModalScreen)` — a Textual class — and it reads every field
+    > through `self._val("f-name", self)` → `screen.query_one("#f-name", Input).value`.
+    > The *logic* is pure; the *interface* is a live widget tree. A web port cannot
+    > import and call it; it would be forced to reimplement, by construction rather
+    > than by carelessness.
+    >
+    > **The evidence is already in the repo and it costs today.**
+    > [`phase6-tui/tests/test_wizards.py`](../../phase6-tui/tests/test_wizards.py)
+    > opens by calling `generate_toml()` "pure logic" — and to reach it must do
+    > `object.__new__(cls)` and monkey-patch **three** static helpers. A function
+    > that needs a bypassed constructor and three patched accessors to be called is
+    > telling you where its seam is.
+    >
+    > **Decision: share, and the prerequisite is one refactor, named here so it is
+    > not re-derived.** Split each `generate_toml()` in two —
+    > `build_toml(fields: dict[str, str | bool]) -> str` as a module-level pure
+    > function with **no Textual import**, and `generate_toml(self)` reduced to
+    > harvesting widget values into that dict and calling it. A web port then POSTs
+    > a form, builds the same dict, and calls the same function. Lock it with a test
+    > asserting the pure module imports with `textual` absent from `sys.modules`,
+    > and that the TUI path and the dict path produce **byte-identical** output —
+    > byte-identical, not "both parse", because two generators that merely agree on
+    > semantics are still two generators.
+    >
+    > **Deliberately NOT done now.** There is no web wizard to serve, and
+    > refactoring for a hypothetical consumer is how speculative complexity gets in.
+    > The cost of waiting is bounded — five `generate_toml()`s, 60–90 lines each,
+    > all with existing tests that would carry over — and the cost of *not recording
+    > this* was a question that read as "confirm the split" when the honest answer
+    > is "the split does not exist yet, and here is the one that must."
 11. **Which Ubuntu release, and does autoinstall need a different netboot
     path?** (§11.1's first gap.) `debian-pxe-lab`'s preseed chain may or may
     not carry over to subiquity's `autoinstall.yaml` + cloud-init datasource
     model.
+
+    > ✅ **ANSWERED 2026-08-16 — yes, a different path, and the preseed chain does
+    > not carry over at all.** Recorded as a *derived* answer with the one thing the
+    > lab must measure, not as a fact: this is knowledge about Ubuntu, and this repo
+    > requires the lab to observe it.
+    >
+    > **Release: 24.04 LTS** — current LTS, `subiquity` mature, and the release the
+    > repo's other galleries would be compared against. Not 20.04, which is the last
+    > one where the question could have been answered "the chain carries over".
+    >
+    > **Three things change at once, which is why it is a separate lab and not a
+    > template of `debian-pxe-lab`:**
+    >
+    > | | Debian preseed (what we have) | Ubuntu autoinstall |
+    > |---|---|---|
+    > | initrd | `debian-installer` netboot | **casper**, from the live-server ISO — Ubuntu server ships **no `netboot.tar.gz`** after 20.04 |
+    > | config delivery | `preseed/url=` on the cmdline, fetched by d-i | **cloud-init NoCloud**: `autoinstall ds=nocloud-net;s=http://host/path/` naming a *directory* holding `user-data` + `meta-data` |
+    > | payload | packages from a mirror | the **squashfs / ISO** itself, over HTTP |
+    >
+    > **So the reusable block is the wrong one.** The natural parent is not
+    > `debian-pxe-lab` (preseed) but the **iPXE-over-HTTP** pipeline —
+    > [`debian-http-boot`](../debian-http-boot/) and `netboot/` — because what
+    > Ubuntu needs served is a kernel, an initrd, and a large blob over HTTP, which
+    > is exactly what that pipeline already does.
+    >
+    > **The one thing to measure first, before writing any of it:** the exact
+    > cmdline quoting. `s=` takes a URL containing `;`-adjacent syntax, and the
+    > escaping differs between an iPXE `imgargs` line, a GRUB `linux` line, and a
+    > `lab-vm.sh --append` string — the repo has already been bitten by a
+    > cmdline-quoting difference it assumed was portable. **The trailing slash on
+    > the NoCloud URL is load-bearing** and its absence fails silently by fetching
+    > nothing. Boot once, read `/proc/cmdline` in the installer, and confirm
+    > cloud-init found the datasource **before** building the lab around it.
 12. **Clonezilla-style capture: `partclone`, `ddrescue`, or plain `dd`?**
     (§11.1's second gap.) And where does it sit relative to §9.5's tier 1 — is
     whole-disk capture a third preserve tier, or tier 1 for machines rather
     than instances?
+
+    > ✅ **ANSWERED 2026-08-16 — `partclone` with a `dd` fallback; `ddrescue` is out
+    > of scope. And it is tier 1 for machines, not a third tier.**
+    >
+    > **The tool.** The three are not three answers to one question:
+    >
+    > | | what it is for | verdict |
+    > |---|---|---|
+    > | `partclone` | **filesystem-aware** — copies used blocks only, skips free space | ✅ **the capture path.** It is what Clonezilla itself uses, and the reason a 500 GB disk holding 12 GB captures as 12 GB |
+    > | `dd` | block-for-block, no filesystem knowledge | ✅ **the fallback**, for a filesystem `partclone` has no module for, or an unrecognised one. Universal, and the only honest option when the layout is unknown |
+    > | `ddrescue` | recovering a **failing** disk — retries, bad-sector log, resumable | ❌ **not this.** It answers "the media is dying, salvage what you can", which is a different question with a different success criterion. Naming it here would blur capture with recovery |
+    >
+    > **Not a beauty contest: `partclone` and `dd` sit on one axis** (does the tool
+    > understand the filesystem?) and the lab needs both ends of it, with the choice
+    > made **by probing the filesystem**, not by a flag the operator guesses at. The
+    > fallback must be reported, loudly — a capture that silently degraded to
+    > whole-disk `dd` and produced a 500 GB artifact is a surprise, not a default.
+    >
+    > **The tier.** [§9.5](../../MICRO_CLOUD_LAB_PLAN.md#95-preserve--two-tiers-and-a-derivation)'s
+    > axis is *fast + engine-native + non-portable* versus *portable + reproducible
+    > + carries a `derivation.toml`*. Whole-disk capture is unambiguously the first:
+    > fast, restores the exact thing, and portable nowhere (it carries a bootloader,
+    > a partition table, and machine-specific state). **What changes is the subject,
+    > not the tier** — tier 1 for a *machine* instead of an instance. A third tier
+    > would imply a third set of tradeoffs, and there isn't one.
+    >
+    > **The half that actually matters is the same half as everywhere else:** the
+    > `derivation.toml` beside the image. §9.5's own rule — *"a backup that cannot
+    > tell you what built it is a record that will outlive its subject"* — binds
+    > harder here than for a container, because a disk image carries no package
+    > manager, no labels, and no `inspect` verb to interrogate afterwards.
+    >
+    > **The seam already exists and this is its inverse.**
+    > [`examples/metal-as-a-service/drivers/image.sh`](../metal-as-a-service/drivers/image.sh)
+    > streams a golden raw *onto* a node's disk and verifies the written bytes
+    > against a published sha256. Capture is that path reversed, and it should reuse
+    > the same verification discipline — including the lesson that cost that driver
+    > a defect: **an unverified disk is not a successful deploy**, so an unverified
+    > capture is not a backup.
 13. **`preserve` for a chroot itself.** A chroot is already a tree, so tier 2
     is presumably "tarball + `derivation.toml`" and tier 1 does not exist for
     it. Probably trivial; worth one line so it is not an accidental gap.
+
+    > ✅ **ANSWERED 2026-08-16 — the guess was right, and checking it found the gap
+    > it was trying to prevent.**
+    >
+    > **Tier 1 does not exist for a chroot, by nature rather than by omission.**
+    > Tier 1 preserves *running state*, and a chroot has none of its own: the
+    > processes inside it are host processes in the host's namespaces, so there is
+    > nothing to snapshot that is not either the tree (tier 2) or the host. Nothing
+    > is missing here and nothing should be built. That is the one line this
+    > question asked for.
+    >
+    > **Tier 2 is half built, which the question did not anticipate.**
+    > `lab-chroot.sh export-tarball` produces the tree — and **only** the tree. It
+    > writes no sha256 and no manifest beside the tarball; it prints the path and
+    > exits. The chroot's own record (`write_manifest`: name, target, backend,
+    > distro, suite, arch, manager, lab) is real and sufficient, but it lives in the
+    > **state directory**, so a tarball copied to another machine arrives anonymous
+    > — the exact failure §9.5 names: *"a backup that cannot tell you what built it
+    > is a record that will outlive its subject."*
+    >
+    > **So the owed work is one thing, and it is small:** have `export-tarball`
+    > emit `<output>.derivation.toml` alongside the archive — the manifest fields it
+    > already has, plus the archive's `sha256`, the tool version, and the date. The
+    > digest is what binds the record to *that* tarball rather than to a name; this
+    > repo has now been caught four separate times by a record whose subject moved
+    > underneath it.
+    >
+    > **Not filed as a new backlog item on purpose.** It belongs to whoever builds
+    > `preserve`, and it is written here so that person finds it in the section that
+    > sent them looking, rather than discovering it after shipping the easy half.
 
 ### 17.5 One loose thread that is not this plan's
 
