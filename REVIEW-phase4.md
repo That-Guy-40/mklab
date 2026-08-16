@@ -43,25 +43,40 @@ it is an idea applied to the path someone was looking at:
 | `engine =` cross-phase routing | the plain path | the pod **and** quadlet paths → **P4-4** |
 | `_pub_host` loopback default (F4) | quadlet `PublishPort=`, all `run` paths | `export --format compose` → **P4-5** |
 
-- **P4-1 (MED, security)** — a TOML `image` value beginning with `-` is passed as
-  the first positional to `podman run`, so it is parsed as a **flag**.
-  Demonstrated live: a config that never says "privileged" produced a running
-  container with `Privileged=true`.
-- **P4-2 (MED, security)** — `generate` performs **no** name validation, while
-  `up` validates lab, service *and* pod names precisely because they "become
-  quadlet unit *paths*". A `../`-bearing lab name made `generate` create a
-  directory **two levels above** the state dir and copy the spec into it.
-- **P4-3 (MED, soundness)** — the quadlet emitters **report success on a failed
-  write**: `rc=0`, `[info] wrote <path>`, zero files on disk, and a **dangling
-  symlink** recorded as a tracked unit. Reproduced with entirely valid names, so
-  it is independent of P4-2.
-- **P4-4 (MED, soundness)** — cross-phase `engine =` routing is honoured by **one
-  of three** execution paths. The pod path starts a `engine = "docker"` service
-  anyway; the quadlet path writes it a unit.
-- **P4-5 (MED, security)** — `export --format compose` drops the F4 loopback
-  default **and** emits `image`/`command` raw, injecting resolved compose
+> **All six are now fixed** (2026-08-16), each with a regression test watched failing
+> against the pre-fix driver. Every row above closed the same way: the guard was moved to
+> where the thing it guards is *selected* or *constructed*, not restated at another call
+> site — `validate_topology_names`, `select_owned_services`, `validate_image_ref` and
+> `_name_exists` are each one implementation with several callers. Suite: **21/21 ran, 20
+> passed, 1 skipped, 0 failed**. See [§7](#7-resolution-2026-08-16).
+
+- **P4-1 (MED, security)** — ✅ **FIXED 2026-08-16.** A TOML `image` value beginning
+  with `-` is passed as the first positional to `podman run`, so it is parsed as a
+  **flag**. Demonstrated live: a config that never says "privileged" produced a running
+  container with `Privileged=true`. `validate_image_ref` now guards the plain path, the
+  pod path and `cmd_run`, **and** every `podman run` passes `--` before the image, so a
+  positional cannot be re-read as an option even if a future path forgets the guard.
+- **P4-2 (MED, security)** — ✅ **FIXED 2026-08-16.** `generate` performs **no** name
+  validation, while `up` validates lab, service *and* pod names precisely because they
+  "become quadlet unit *paths*". A `../`-bearing lab name made `generate` create a
+  directory **two levels above** the state dir and copy the spec into it. Both entry
+  points now call one `validate_topology_names`, so the next one is correct by default.
+- **P4-3 (MED, soundness)** — ✅ **FIXED 2026-08-16.** The quadlet emitters **report
+  success on a failed write**: `rc=0`, `[info] wrote <path>`, zero files on disk, and a
+  **dangling symlink** recorded as a tracked unit. Reproduced with entirely valid names,
+  so it is independent of P4-2. Units are now written to a temp file and `mv -T`'d into
+  place, with the link recorded only after the file demonstrably exists. **The obvious
+  fix for this does not work and was measured failing — see [§7.2](#72-the-fix-that-did-not-work-and-had-to-be-measured).**
+- **P4-4 (MED, soundness)** — ✅ **FIXED 2026-08-16.** Cross-phase `engine =` routing is
+  honoured by **one of three** execution paths. The pod path starts a `engine = "docker"`
+  service anyway; the quadlet path writes it a unit. The filter now runs **once, where
+  the services are selected**, so all three paths receive an already-owned set.
+- **P4-5 (MED, security)** — ✅ **FIXED 2026-08-16.** `export --format compose` drops the
+  F4 loopback default **and** emits `image`/`command` raw, injecting resolved compose
   attributes (`privileged: true`, a bind mount of `/`). The same pair as Phase 3's
-  P3-1/P3-2.
+  P3-1/P3-2, fixed the same way: `_pub_host` on the port (done in #210), every scalar
+  through `_yaml_str`, a control-character path that escapes rather than refuses, and the
+  obsolete `version: "3.9"` key dropped.
 - **P4-6 (LOW/MED, soundness)** — ✅ **FIXED 2026-08-16.** `down` reports `torn down`
   and exits 0 with a network still live, and deletes the lab's `spec.toml` on the way
   out — so `export` for that lab becomes impossible while the lab is still running.
@@ -69,7 +84,7 @@ it is an idea applied to the path someone was looking at:
   **keeps the state dir while anything remains**, and exits non-zero. Regression:
   [`tests/test-down-reports-survivors.sh`](phase4-podman/tests/test-down-reports-survivors.sh),
   which asserts the consequence this finding named — a partially-torn-down lab is
-  still exportable. See [§7](#7-resolution-of-p4-6-2026-08-16).
+  still exportable. See [§7](#76-p4-6--down-and-the-state-dir).
 
 Phase 4 addresses containers by validated name and label, never by path or PID,
 so neither Phase 1's **P1-1** nor Phase 2's **P2-2** class exists here.
@@ -78,7 +93,7 @@ so neither Phase 1's **P1-1** nor Phase 2's **P2-2** class exists here.
 
 ## 2. Findings
 
-### P4-1 — MED — a `-`-leading `image` injects `podman run` flags → a live privileged container
+### P4-1 — MED — a `-`-leading `image` injects `podman run` flags → a live privileged container — ✅ FIXED 2026-08-16
 
 `start_service_plain` (line 780) and the pod path (line 911) pass the image as the
 first positional:
@@ -130,7 +145,7 @@ one-line change.
 path, and `cmd_run`'s `--image` — and prefer `podman run … -- "$simage"` where the
 subcommand supports `--`, so the positional cannot be re-read as an option at all.
 
-### P4-2 — MED — `generate` skips the name validation `up` performs, and writes paths from the result
+### P4-2 — MED — `generate` skips the name validation `up` performs, and writes paths from the result — ✅ FIXED 2026-08-16
 
 `cmd_up` validates every name up front, and the comment states the reason exactly
 (lines 1169–1179):
@@ -186,7 +201,7 @@ hoist them into a `validate_topology_names CFG_JSON` helper that both entry poin
 call, so the next entry point is correct by default — the accessor-guard reasoning
 from P1-1 rather than a rule restated at each call site.
 
-### P4-3 — MED — the quadlet emitters report success on a failed write
+### P4-3 — MED — the quadlet emitters report success on a failed write — ✅ FIXED 2026-08-16
 
 `emit_container_unit` (line 582) writes the unit with a group redirect:
 
@@ -231,7 +246,7 @@ place, or capture the group's status and `die` on failure — and only
 `track_quadlet_link` after the file demonstrably exists. A unit that failed to
 write must not be recorded as one that did.
 
-### P4-4 — MED — cross-phase `engine =` routing is honoured by one of three paths
+### P4-4 — MED — cross-phase `engine =` routing is honoured by one of three paths — ✅ FIXED 2026-08-16
 
 Phase 4's headline cross-phase feature is that one topology can span engines: a
 service carrying `engine = "docker"` belongs to Phase 3 and Phase 4 must leave it
@@ -258,7 +273,7 @@ in one consumer. Filter `.service[]` by engine once in `cmd_up` (and
 `cmd_generate`) and hand the three paths an already-filtered list, so a fourth
 path cannot reintroduce this.
 
-### P4-5 — MED — `export --format compose` drops the F4 default and injects compose attributes
+### P4-5 — MED — `export --format compose` drops the F4 default and injects compose attributes — ✅ FIXED 2026-08-16
 
 This is Phase 3's P3-1 **and** P3-2 recurring in Phase 4's compose exporter, which
 is a separate implementation of the same idea.
@@ -347,7 +362,7 @@ that *torn down*, and it must not discard the record while the subject lives.
 
 ---
 
-## 3. Minor / robustness (not standalone findings)
+## 3. Minor / robustness (not standalone findings) — ✅ ALL FOUR ADDRESSED 2026-08-16
 
 - **`cmd_run` does not validate `--name`.** Phase 3 calls
   `validate_name "$name" "container name"`; Phase 4's `cmd_run` (line 1045) calls
@@ -376,7 +391,7 @@ that *torn down*, and it must not discard the record while the subject lives.
   do not silently drop the variable; recorded only so the difference between the
   two phases is deliberate rather than accidental.
 
-## 3b. Not verified by this pass — UNKNOWN, not PASS
+## 3b. Not verified by this pass — UNKNOWN, not PASS — ONE CLOSED, ONE STILL OPEN
 
 - **The rootful (`--allow-root`) path was not exercised.**
   `tests/test-allow-root.sh` skipped: *"sudo -n not available; can't simulate root
@@ -448,7 +463,7 @@ reachable on a podman-less host and worth fixing there.
 
 ---
 
-## 7. Resolution of P4-6 (2026-08-16)
+### 7.6 P4-6 — `down` and the state dir
 
 `cmd_down` now ground-truths its own teardown: after the removals it re-queries pods,
 containers and networks by label, and if anything survived it names each one, **keeps
@@ -484,3 +499,99 @@ true of every run.
 
 **Verified:** phase4 suite 15/15 ran, 14 passed, 1 skipped (the pre-existing `sudo -n`
 gate), 0 failed.
+
+## 7. Resolution (2026-08-16)
+
+All six findings, the four §3 items and one of the two §3b gaps are closed. The fixes and
+the evidence are below; §7.2 records a repair that looked right and was measured wrong.
+
+### 7.1 What changed
+
+| item | change | regression test |
+|---|---|---|
+| **P4-1** | `validate_image_ref` on the plain path, the pod path and `cmd_run`; `podman run … -- "$image"` everywhere | `test-image-flag-injection.sh` |
+| **P4-2** | one `validate_topology_names CFG_JSON`, called by `cmd_up` **and** `cmd_generate` | `test-generate-validates-names.sh` |
+| **P4-3** | `_unit_guard` + temp file + `mv -T` + `_unit_commit`; the link is recorded only after the file exists | `test-generate-validates-names.sh` |
+| **P4-4** | `select_owned_services` filters once at selection; the three paths receive an already-owned set | `test-engine-routing-all-paths.sh` |
+| **P4-5** | every scalar through `_yaml_str` (now control-character aware), `jq -nc`, obsolete `version:` dropped | `test-export-hardening.sh` |
+| **§3** `--name` | `cmd_run` validates its container name, as Phase 3's does | `test-image-flag-injection.sh` |
+| **§3** pipe gates | five sites → one `_name_exists` / `_network_exists` | `test-name-gate-at-scale.sh` |
+| **§3** `install -d` | `mkdir -p` everywhere — `install -d` re-chmods an **existing** directory | (covered by the P4-3 control) |
+| **§3** env `"null"` | no change, deliberately — Phase 4's consumers never test for it, so nothing is dropped | — |
+| **§3b** SELinux | the relabel path is now exercised with a `getenforce` stub | `test-selinux-relabel.sh` |
+
+### 7.2 The fix that did not work, and had to be measured
+
+P4-3's obvious repair is to pipe the unit body into a checking function:
+
+```sh
+{ …unit body… } | _write_unit "$unit"      # ← WRONG, and silently so
+```
+
+That was written, and it **reintroduced the exact bug it was fixing**. The `die` inside
+`_write_unit` runs in the *pipeline's own subshell*: it prints its message, exits that
+subshell, and the enclosing function carries straight on to `track_quadlet_link`. Measured
+with a reduced fixture — the caller still received the unit path and **rc=0**, with the
+error text on stderr:
+
+```
+[error] boom for /tmp/x
+TRACKED                       ← control reached the line that must not run
+  caller continued, u=[/tmp/x]
+  subshell rc=0
+```
+
+The same shape with the redirect left in the function's own shell (`… > "$tmp" || die …`)
+propagates correctly and stops the run. So the emitters keep the redirect and call
+`_unit_commit` as a plain function.
+
+This is the silent-exit trap the repo's test conventions warn about — *"a `die` is an
+`exit`, not a `return`"* — met from the other side: here the `exit` was too **weak**, not
+too strong, because it happened one subshell too deep. It was caught only because the
+regression test asserts `rc != 0` rather than asserting the error message appeared; a test
+that grepped for the message would have gone green over a driver that still exits 0.
+
+`mv -T` matters for the same reason the reproduction did: a plain `mv` onto an existing
+**directory** moves the temp file *into* it and reports success.
+
+### 7.3 Negative controls
+
+Each test was run against the pre-fix driver first:
+
+| test | verdict against the pre-fix driver |
+|---|---|
+| `test-image-flag-injection.sh` | FAIL — `lab-p4img…-web` was **running with `Privileged=true`** |
+| `test-generate-validates-names.sh` | FAIL — `generate` accepted `../../ESCAPED` and wrote outside the state dir |
+| `test-engine-routing-all-paths.sh` | FAIL — the pod path started the `engine = "docker"` service |
+| `test-export-hardening.sh` | FAIL — a newline in `command` injected a resolved `privileged: true` |
+| `test-name-gate-at-scale.sh` | carries its own inline control: the old `\| grep -qx` shape must fail on the 144 KB fixture |
+
+`test-selinux-relabel.sh` has no pre-fix failure to show — it closes a **gap in coverage**,
+not a defect — so it carries controls in both directions instead: the non-enforcing host
+must add **no** suffix, `Permissive`/`Disabled` must behave like off, and an explicit
+`:Z`/`:z`/`:O` must be honoured verbatim rather than doubled.
+
+Two of this pass's own mistakes are recorded because they are the interesting part:
+
+1. **The pipeline fix above**, which looked correct and was measured wrong.
+2. **`write_cfg` in the engine-routing test** ended on `[[ -n "$pod" ]] && printf …`,
+   which returns 1 when the topology has no pod — killing the test under `set -e` before
+   a single assertion ran, with a blank terminal and a bare rc. That is the same `&&`-list
+   trap [`REVIEW-phase3.md`](REVIEW-phase3.md) §3 recorded in `cmd_run`, committed while
+   writing a test for its sibling. The EXIT net caught it, which is what the net is for.
+
+### 7.4 Still UNKNOWN — the rootful path
+
+`tests/test-allow-root.sh` still **skips**: *"sudo -n not available; can't simulate root
+invocation"*, and this agent cannot sudo. So `require_rootless`'s refusal, the
+`--allow-root` warning, and every `[[ $EUID -eq 0 ]]` early-return in the preflights
+remain unmeasured.
+
+It matters most for **P4-1**, and the fix does not depend on it: the guard now refuses a
+`-`-leading image *before* `podman run` is invoked at all, so the rootless/rootful
+distinction no longer bounds the damage — there is no damage to bound. But the claim
+"rootless confined it" was always asserted from the code rather than measured, and it
+stays that way.
+
+To close it: `sudo -n true` must succeed, then
+`phase4-podman/tests/test-allow-root.sh` runs the whole rootful branch.
