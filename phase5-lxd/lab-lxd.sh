@@ -290,6 +290,84 @@ _resolve_instance_name() {
 #
 # `images:alpine` (no slash) is also rewritten to the same target.
 #
+# The [[instance]] keys `cmd_up` actually consumes.  Derived from the reads in that
+# function, not from memory — `spec_get "$inst" X` and `jq '.X' <<<"$inst"` both counted.
+readonly _INSTANCE_KEYS_KNOWN="name engine type image from_chroot from_tarball from_qcow2 project storage profiles config devices"
+
+# validate_instance_keys INST_JSON NAME — refuse a key `up` will not act on (P5-1).
+#
+# Phase 5's TOML had two consumers written against different mental models of the schema,
+# and nothing reconciled them: `export --format compose` emitted four fields — ports,
+# environment, volumes, command — that `up` NEVER READS. A user who wrote
+# `ports = ["8080:80"]` got no port mapping, no proxy device and NO WARNING, and then an
+# exported compose file asserting the mapping exists.
+#
+# Silence is the wrong answer to a topology expressing an intent the tool cannot honour,
+# so this refuses rather than warns, and names LXD's actual equivalent. Checked against
+# every shipped spec first: none of the 40 uses any of the four, so nothing in the repo
+# changes behaviour. A typo like `imagee` is now caught by the same gate, which is the
+# reason to key off a known-good list rather than a blacklist of the four.
+validate_instance_keys() {
+    local inst="$1" sname="$2" k hint
+    while IFS= read -r k; do
+        [[ -n "$k" ]] || continue
+        case " $_INSTANCE_KEYS_KNOWN " in *" $k "*) continue ;; esac
+        case "$k" in
+            ports)
+                hint="LXD publishes ports with a PROXY DEVICE, not a ports list:
+      devices = { web = { type = \"proxy\", listen = \"tcp:0.0.0.0:8080\", connect = \"tcp:127.0.0.1:80\" } }" ;;
+            environment)
+                hint="set environment through instance config keys:
+      config = { \"environment.GREETING\" = \"hello\" }" ;;
+            volumes)
+                hint="mount a host path with a DISK DEVICE:
+      devices = { data = { type = \"disk\", source = \"/srv\", path = \"/mnt\" } }" ;;
+            command)
+                hint="Phase 5 instances run the image's own init; there is no command field.
+      Use 'exec' after the lab is up, or bake it into the image." ;;
+            *)
+                hint="known [[instance]] keys: $_INSTANCE_KEYS_KNOWN" ;;
+        esac
+        die "instance '$sname': unknown key '$k' — 'up' would silently ignore it.
+  $hint"
+    done < <(jq -r 'keys[]?' <<<"$inst")
+}
+
+# _JQ_FLAT_CONFIG — flatten a `config` table into dotted keys (§3).
+#
+# TOML nests an UNQUOTED dotted key: `limits.memory = "512MiB"` inside [instance.config]
+# parses as {"limits":{"memory":"512MiB"}}, while the quoted form
+# `"limits.memory" = "512MiB"` parses flat.  `to_entries` is flat, so the nested spelling
+# produced `-c limits={"memory":"512MiB"}` — an argument the engine rejects with a
+# message about the value, never about the spelling.
+#
+# Every example and doc in this repo uses the quoted form, so nothing was broken; the gap
+# was between the documented spelling and the NATURAL one.  Flattening closes it, and is
+# safe because LXD/Incus config keys are always flat strings — there is no legitimate
+# object-valued config key.  (`devices` is genuinely nested and is NOT flattened.)
+readonly _JQ_FLAT_CONFIG='
+  def flat($p):
+    to_entries[]?
+    | .key as $k | .value as $v
+    | if ($v | type) == "object" then ($v | flat($p + $k + "."))
+      else "\($p)\($k)\t\($v)" end;
+  (.config // {}) | flat("")'
+
+# validate_image_ref IMAGE [CTX] — Review M1 (P5-5).
+#
+# The image is the first POSITIONAL to `incus launch`, which accepts `-d, --device`
+# among others, so a value beginning with `-` arrives in argv as a FLAG.  Phase 5's
+# impact stopped short of Phase 4's only because `launch <image> [<name>]` means the
+# injected flag consumes the image slot and the launch fails — a mitigation by argument
+# ORDER, not by design.  It would evaporate the day a `command` field joins the schema.
+# So: refuse it here, and pass `--` at the call site so the positional cannot be re-read
+# as an option even if this guard is ever bypassed.
+validate_image_ref() {
+    local img="$1" ctx="${2:-image}"
+    [[ "$img" != -* ]] \
+        || die "invalid $ctx '$img': must not start with '-' — it is the first positional to \`$LXC_CMD launch\` and would be parsed as a flag"
+}
+
 # resolve_image SRC → echoes the resolved image string; returns SRC unchanged
 # if no resolution is needed.
 resolve_image() {
@@ -771,7 +849,7 @@ ensure_profile() {
         # `<key>=<value>` for the same reason as ensure_project above.  Splitting is
         # on the FIRST '=', so a value that itself contains '=' round-trips.
         "$LXC_CMD" profile set "${scope[@]}" "$pname" "${kk}=${vv}" >/dev/null
-    done < <(jq -r '.config // {} | to_entries[]? | "\(.key)\t\(.value)"' <<<"$prof_json")
+    done < <(jq -r "$_JQ_FLAT_CONFIG" <<<"$prof_json")
 
     # Apply devices.  dconf is a JSON object {type:..., key:val, …}.
     # `device add` takes the device TYPE positionally; the remaining keys are
@@ -873,6 +951,10 @@ cmd_run() {
         image="$(resolve_image "$image")"
     fi
 
+    # §3: Phase 3's `run` validates its name; Phases 4 and 5 did not, while building
+    # `instance_name_for` and three label values from it.  Third instance of the same
+    # asymmetry across the container phases, and the cheapest to close.
+    validate_name "$name" "instance name"
     local -a launch_args=()
     [[ "$type" == "vm" ]] && launch_args+=(--vm)
     [[ -n "${OPT_PROJECT:-}" ]] && launch_args+=(--project "$OPT_PROJECT")
@@ -885,7 +967,9 @@ cmd_run() {
     launch_args+=(-c "${LAB_LABEL_SVC_KEY}=${name}")
 
     log_info "launching $type '$iname' (image=$image)"
-    "$LXC_CMD" launch "${launch_args[@]}" "$image" "$iname" >/dev/null
+    validate_image_ref "$image"
+    # `--` ends option parsing, so the image positional cannot be re-read as a flag.
+    "$LXC_CMD" launch "${launch_args[@]}" -- "$image" "$iname" >/dev/null
 
     log_info "started: $iname"
 }
@@ -939,9 +1023,23 @@ cmd_up() {
     }
     trap "_partial_up_cleanup_5 '${lab_name}'" EXIT
 
+    # P5-4: validate the OTHER two name kinds before anything is written.  The lab name
+    # (above) and instance names (below) were validated with the comment "L-2: validate
+    # before using in instance names, labels, and device specs" — but project and profile
+    # names are used identically, as positionals to engine subcommands that also take
+    # flags, and got no such treatment.  All four kinds are now checked up front, so a
+    # bad name fails before the first `project create`.
+    local i _n
+    while IFS= read -r _n; do
+        [[ -n "$_n" ]] && validate_name "$_n" "project name"
+    done < <(jq -r '.project // [] | .[].name // empty' <<<"$cfg")
+    while IFS= read -r _n; do
+        [[ -n "$_n" ]] && validate_name "$_n" "profile name"
+    done < <(jq -r '.profile // [] | .[].name // empty' <<<"$cfg")
+
     # --- Projects ---
     local proj_count; proj_count="$(jq -r '.project // [] | length' <<<"$cfg")"
-    local i pname
+    local pname
     for ((i=0; i<proj_count; i++)); do
         pname="$(jq -r --argjson i "$i" '.project[$i].name // ""' <<<"$cfg")"
         [[ -n "$pname" ]] && ensure_project "$pname"
@@ -967,6 +1065,8 @@ cmd_up() {
         [[ -n "$sname" ]] || die "instance[$i] missing name"
         # L-2: validate before using in instance names, labels, and device specs.
         validate_name "$sname" "instance name"
+        # P5-1: and refuse any key this verb will not act on, before anything is written.
+        validate_instance_keys "$inst" "$sname"
 
         # Engine filter (cross-phase).
         local sengine; sengine="$(spec_get "$inst" engine)"
@@ -1057,7 +1157,7 @@ cmd_up() {
         while IFS=$'\t' read -r kk vv; do
             [[ -z "$kk" ]] && continue
             launch_args+=(-c "${kk}=${vv}")
-        done < <(jq -r '.config // {} | to_entries[]? | "\(.key)\t\(.value)"' <<<"$inst")
+        done < <(jq -r "$_JQ_FLAT_CONFIG" <<<"$inst")
 
         # NOTE: devices are attached AFTER launch (below), not via `launch -d`.
         # LXD/Incus `launch -d` only *overrides* a device inherited from a
@@ -1068,7 +1168,8 @@ cmd_up() {
         # L-4: try-and-handle instead of pre-check to close the TOCTOU race
         # between the earlier `lxc info` idempotency check and the launch.
         local _launch_err
-        if ! _launch_err="$("$LXC_CMD" launch "${launch_args[@]}" "$image" "$iname" 2>&1)"; then
+        validate_image_ref "$image" "instance '$sname' image"
+        if ! _launch_err="$("$LXC_CMD" launch "${launch_args[@]}" -- "$image" "$iname" 2>&1)"; then
             if "$LXC_CMD" info "$iname" >/dev/null 2>&1; then
                 log_warn "instance '$iname' appeared concurrently; skipping"
             else
@@ -1085,7 +1186,16 @@ cmd_up() {
         local dname dconf
         while IFS=$'\t' read -r dname dconf; do
             [[ -z "$dname" ]] && continue
-            if "$LXC_CMD" config device list "${pscope[@]}" "$iname" 2>/dev/null | grep -qx "$dname"; then
+            # Capture first, test second.  `producer | grep -q` puts the verdict
+            # downstream of a pipe: grep exits on the first match, the producer can take
+            # SIGPIPE, and under `pipefail` the PIPELINE reports failure — so a device
+            # that IS present reads as absent.  Far less reachable here than in Phases
+            # 3/4 (the producer is one instance's device list), but it is the same shape
+            # and the fix is two lines.  `grep -Fxq` also keeps a '.' in a device name
+            # literal rather than a regex wildcard.
+            local _devs
+            _devs="$("$LXC_CMD" config device list "${pscope[@]}" "$iname" 2>/dev/null || true)"
+            if grep -Fxq -- "$dname" <<<"$_devs"; then
                 log_debug "instance '$sname': device '$dname' already present; leaving as-is"
                 continue
             fi
@@ -1396,9 +1506,12 @@ cmd_inspect() {
     require_cmd jq
 
     # --- name resolution: try the literal first, then the rewrite.
-    # M-1: validate_name above rejects targets starting with '-'; lxc list
-    # does not support '--' before mixed positional+flag arguments so we
-    # rely on the earlier validation rather than adding '--' here.
+    # M-1: the explicit `[[ "$target" != -* ]]` check a few lines above is what rejects
+    # a flag-shaped target — NOT validate_name, which this function never calls.  The
+    # attribution used to say otherwise, and a future edit that "removed the redundant
+    # check because validate_name handles it" would have silently reopened M-1.  `lxc
+    # list` does not accept '--' before mixed positional+flag arguments, so that explicit
+    # check is the whole protection here; do not remove it.
     local iname=""
     local raw=""
     raw="$("$LXC_CMD" list "$target" --all-projects --format=json 2>/dev/null)"
@@ -1683,15 +1796,36 @@ cmd_inspect() {
 # this copy did not, so a value ending in `\` emitted `"…\"` — the backslash escaped
 # the CLOSING quote, the scalar swallowed the next line, and the document malformed.
 # Escaping in the other order would double-escape what the first pass just wrote.
-_yaml_str() { local s="${1//\\/\\\\}"; printf '"%s"' "${s//\"/\\\"}"; }
+#
+# P5-2: a CONTROL CHARACTER needs the same treatment, and used not to get it.  A raw
+# newline inside a double-quoted YAML scalar does not inject a sibling key — YAML FOLDS
+# it into the value — so the failure here is not injection but SILENT CORRUPTION: the
+# value comes back with its newlines and indentation replaced by single spaces.  (That
+# folding is also why a test asserting only "no injection" passes over this.)  jq's
+# output is a JSON string, every control char as \uXXXX, and a JSON string IS a valid
+# YAML 1.2 double-quoted scalar — so the value survives byte-for-byte.  The slow path
+# runs only when a control character is actually present.
+_yaml_str() {
+    local s="$1"
+    if [[ "$s" != *[$'\x01'-$'\x1f'$'\x7f']* ]]; then
+        s="${s//\\/\\\\}"; printf '"%s"' "${s//\"/\\\"}"; return
+    fi
+    jq -n --arg s "$s" '$s'
+}
 
 cmd_export() {
     local lab="${OPT_LAB:-${POS_ARGS[0]:-}}"
     local fmt="${OPT_FORMAT:-lxc-yaml}"
     [[ -n "$lab" ]] || die "usage: $LAB_PROG export <lab> --format {lxc-yaml|compose}"
     case "$fmt" in lxc-yaml|compose) ;; *) die "unknown export format: $fmt (phase 5 supports: lxc-yaml|compose)" ;; esac
-    require_lxd_or_incus
 
+    # The engine gate lives INSIDE the branch that needs it, as Phase 4's does.  Two
+    # things follow: a usage error stays diagnosable on a host with no LXD/Incus, and
+    # `--format compose` — which only reads the stored spec.toml and prints YAML — is not
+    # gated on a container engine it never calls.  Gating a pure text transformation on a
+    # daemon makes a check that cannot fail for a real reason, and it is what made this
+    # path untestable without one (CI has a broken `lxc` snap wrapper and no daemon).
+    #
     # --- compose format: synthesize from spec.toml (same approach as Phase 3/4)
     if [[ "$fmt" == "compose" ]]; then
         require_cmd jq
@@ -1711,10 +1845,17 @@ cmd_export() {
                 case "$vol_src" in /*|./*|../*) : ;; *) named_volumes["$vol_src"]=1 ;; esac
             done < <(jq -r '.volumes[]? | split(":")[0]' <<<"$inst")
         done
-        printf 'version: "3.9"\n'
+        # No obsolete top-level `version:` — Compose v2 warns about it, and Phases 3
+        # and 4 already omit it.
         printf '# Generated by %s export --format compose from lab %s\n' "$LAB_PROG" "$lab"
-        printf '# Note: LXD-specific fields (profiles, project, storage) are not representable\n'
-        printf '# in compose YAML and are omitted.  VMs are skipped entirely.\n'
+        printf '#\n'
+        printf '# WHAT THIS FILE IS NOT: a faithful copy of the lab.  Phase 5 instances are\n'
+        printf '# LXD/Incus instances, and most of what defines them (profiles, projects,\n'
+        printf '# storage pools, config keys, devices) has no compose equivalent.  The\n'
+        printf '# per-instance "dropped:" lines below name exactly what was lost, derived\n'
+        printf '# from this spec rather than from a fixed list.  `--format lxc-yaml` is the\n'
+        printf '# faithful export, and it is read from the ENGINE rather than from a spec\n'
+        printf '# file that may no longer describe reality.\n'
         printf 'services:\n'
         local sname simage
         for ((i=0; i<inst_count; i++)); do
@@ -1725,30 +1866,23 @@ cmd_export() {
             simage="$(spec_get "$inst" image)"
             # M-6, I-5: quote service names as YAML keys to prevent injection.
             printf '  %s:\n' "$(_yaml_str "$sname")"
-            [[ -n "$simage" ]] && printf '    image: %s\n' "$simage"
-            printf '    container_name: %s\n' "$(instance_name_for "$lab" "$sname")"
-            local p first=1
-            while IFS= read -r p; do
-                [[ -z "$p" ]] && continue
-                if (( first )); then printf '    ports:\n'; first=0; fi
-                printf '      - "%s"\n' "$p"
-            done < <(jq -r '.ports[]?' <<<"$inst")
-            first=1
-            local kk vv
-            while IFS=$'\t' read -r kk vv; do
-                [[ -z "$kk" ]] && continue
-                if (( first )); then printf '    environment:\n'; first=0; fi
-                printf '      %s: "%s"\n' "$kk" "$vv"
-            done < <(jq -r '.environment // {} | to_entries[]? | "\(.key)\t\(.value)"' <<<"$inst")
-            first=1
-            local vol
-            while IFS= read -r vol; do
-                [[ -z "$vol" ]] && continue
-                if (( first )); then printf '    volumes:\n'; first=0; fi
-                printf '      - "%s"\n' "$vol"
-            done < <(jq -r '.volumes[]?' <<<"$inst")
-            local cmdline; cmdline="$(jq -r '.command // empty' <<<"$inst")"
-            [[ -n "$cmdline" ]] && printf '    command: %s\n' "$cmdline"
+            # P5-2: every scalar through _yaml_str.  These were hand-quoted with a bare
+            # `"%s"` format string, which escapes NOTHING — 0 of 8 config-reachable fields
+            # round-tripped, and 2 injected a resolved compose attribute.
+            [[ -n "$simage" ]] && printf '    image: %s\n' "$(_yaml_str "$simage")"
+            printf '    container_name: %s\n' "$(_yaml_str "$(instance_name_for "$lab" "$sname")")"
+            # P5-1: ports / environment / volumes / command are NOT emitted any more.
+            # `cmd_up` never read them, so emitting them asserted a mapping that was never
+            # applied — the export and the lab described different things.  `up` now
+            # refuses those keys outright (validate_instance_keys), so a spec it accepted
+            # cannot contain them.
+            local dropped
+            dropped="$(jq -r --arg keep 'name image type' '
+                ($keep | split(" ")) as $k
+                | [keys[] | select(. as $x | ($k | index($x)) | not)]
+                | join(", ")' <<<"$inst")"
+            [[ -n "$dropped" ]] \
+                && printf '    # dropped: %s  (no compose equivalent — see --format lxc-yaml)\n' "$dropped"
         done
         printf 'networks:\n'
         # L-1: mapfile array prevents word-split/glob on network names.
@@ -1761,15 +1895,17 @@ cmd_export() {
             local net
             for net in "${exp_nets[@]}"; do
                 local d; d="$(jq -r --arg n "$net" '.network[$n].driver // "bridge"' <<<"$cfg")"
-                printf '  %s:\n    driver: %s\n' "$(_yaml_str "$net")" "$d"
+                printf '  %s:\n    driver: %s\n' "$(_yaml_str "$net")" "$(_yaml_str "$d")"
             done
         fi
         if (( ${#named_volumes[@]} > 0 )); then
             printf 'volumes:\n'
-            local vn; for vn in "${!named_volumes[@]}"; do printf '  %s:\n' "$vn"; done
+            local vn; for vn in "${!named_volumes[@]}"; do printf '  %s:\n' "$(_yaml_str "$vn")"; done
         fi
         return 0
     fi
+
+    require_lxd_or_incus
 
     # --- lxc-yaml format (original) ---
     local matching; matching="$(_instances_in_lab "$lab")"
