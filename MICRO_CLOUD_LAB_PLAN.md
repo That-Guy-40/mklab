@@ -5,8 +5,10 @@
 > and 5c are done**, each with a dated appendix ([E](#appendix-e--slice-1-one-microvm-by-hand-2026-08-01)
 > … [R](#appendix-r--the-cnis-break-pass-the-last-layer-gets-an-injection-point-2026-08-07)),
 > and every precursor §18.6 listed has landed. **Slice 6, the control plane, opened
-> 2026-08-16**: the `fc` backend and the topology slot are in, `apply` and decision **G**
-> are what remain (see §14). Decision **E** was answered by slice 5a
+> 2026-08-16**: the `fc` backend, the topology slot and decision **G** are in
+> ([§8.4a](#84a-decision-g--settled-2026-08-16-derive-the-facts-record-only-the-intent) —
+> no registry of facts); **`apply` is what remains** (see §14). Decision **E** was answered
+> by slice 5a
 > ([§8.3](#83-the-unsolved-half--one-seam-or-four) shape **(b)**) — and the topology slot
 > is the first place that answer had to be *paid for*: Phase 7 has no `up` verb, so the
 > slot speaks `create`/`start` instead of pretending the other five drivers' vocabulary is
@@ -381,7 +383,7 @@ genuinely hard reuse call.
 | B | Does `extract-vmlinux` on a Debian `bzImage` boot under FC? | Still unverified — P1 could not even find the script (it ships in the kernel source tree). Slice 1 can *try it and watch*, so this stops being a decision and becomes an experiment |
 | **E** | **What is the control-plane seam?** | **Defer to after slice 5** — §8.3. Deciding now yields an interface shaped by whichever engine was imagined most vividly |
 | F | Guest distro | **both**; Alpine default (a 40 MB rootfs makes "spawn twelve" real). Slice 1 builds both and the size/boot-time delta *is* the observation |
-| **G** | **How to reuse MAAS's registry/`apply` core?** | **§8.4** — three options, and I recommend not extracting a shared library yet |
+| **G** | **How to reuse MAAS's registry/`apply` core?** | ~~**§8.4** — three options, and I recommend not extracting a shared library yet~~ → **SETTLED 2026-08-16 ([§8.4a](#84a-decision-g--settled-2026-08-16-derive-the-facts-record-only-the-intent)): no registry of facts.** The field-by-field enumeration split cleanly — every fact is derivable from an engine, and everything that is not derivable is intent or history. `apply` reads reality on every pass; the residue that gets persisted must name itself as a human decision |
 
 ---
 
@@ -955,7 +957,60 @@ options, judged by the §4.1 ladder:
 | 3 | **two registries**, sharing the *pattern* not the code | — | duplicates a discipline, not a codebase |
 
 **Recommendation: 1 for the deploy drivers, 3 initially for the registry, 2 as a later
-refactor once micro-cloud's schema has stopped moving.** Revisit at slice 6.
+refactor once micro-cloud's schema has stopped moving.** ~~Revisit at slice 6.~~ →
+**settled below, 2026-08-16.**
+
+### 8.4a Decision G — SETTLED 2026-08-16: derive the facts, record only the intent
+
+The question as posed — *how much of MAAS's registry do we reuse* — assumes the answer is a
+quantity. It is not. It came out of enumerating what that registry actually holds and asking,
+field by field, whether micro-cloud can **ask** for the same thing instead of recording it.
+The left column is every field [`maas-lab.sh`](examples/metal-as-a-service/maas-lab.sh)
+reads or writes:
+
+| MAAS registry field | micro-cloud counterpart | derivable? |
+|---|---|---|
+| `state` — enrolled / manageable / available / active / error | existence = the state dir; running = `_running_pid`, bound to **this** instance's `config.json` | **yes** — and phase 7 already refuses the weaker liveness check ([P7-5](REVIEW-phase7.md): one pidfile, three answers) |
+| `driver`, `image` | the kernel and the rootfs | **yes**, and already bound by digest — `kernel_sha256` in the manifest, `start` refusing a swapped kernel **by name**, `inspect` reporting match / CHANGED / UNKNOWN |
+| `mac` | `lab-fc.sh mac <name>` — md5 of the name | **yes, and deliberately never stored.** Slice 3's bug was two tools deriving it *differently*; the fix was one formula, not one record ([`test-fabric-mac-derivation.sh`](examples/micro-cloud/tests/test-fabric-mac-derivation.sh)) |
+| `firmware`, `console`, `region` | no analogue, or a computed path | n/a |
+| `bmc_host`, `bmc_port`, `bmc_user`, `bmc_pass`, `uri`, `domain` | **no analogue at all** — §2.3: a rack machine has no hypervisor to ask, but Firecracker's socket *is* the instance | n/a |
+| `previous_driver`, `previous_image` | — | **no** |
+| `deploying_driver` (the in-flight marker) | — | **no** |
+| `error_reason`, `prior_state`, `demoted_by_recheck`, `selfheal_attempts` | — | **no** |
+
+**Every row that is a fact about the instance is derivable. Every row that is not derivable
+is intent or history** — what someone meant, what happened, what has already been tried.
+That split is the decision:
+
+> **Micro-cloud keeps no registry of facts.** `apply` derives current state from the engines
+> on every pass. The only thing it may persist is what has no observable counterpart —
+> intent (*held*, *deliberately stopped*), and history (*what failed, and why*) — and each
+> such field must say in its own name that it is a claim about a human decision, not a
+> reading.
+
+**This is option 3 reduced almost to nothing, and option 2 refused for a new reason.** Not
+merely *"too early"*: the two registries have almost no fields in common. One is fourteen
+recorded facts about hardware nobody can interrogate; the other is three fields of intent.
+An abstraction extracted from those two yields the fourteen-field shape with a second user
+that needs three of them — which is the decision-E trap wearing a data model.
+
+**What it buys.** MAAS's `apply` opens with a phase whose entire job is *"ground the registry
+in reality"* — a health re-check before the diff, because the registry can lie, plus a
+`--no-recheck` flag that prints a warning about exactly that. Here that phase does not exist,
+because it is not a phase: it is what reading the state *is*. The failure mode it defends
+against cannot occur, rather than being defended against on every pass.
+
+**And it sharpens the break-it row.** §14 slice 6 says *"make the registry disagree with
+reality"*. With no cached facts there is nothing to make disagree — so the ported fault is
+not retired, it **moves**: make the **derivation** answer for the wrong subject. That is a
+harder fault and a better one, and this repo has already been bitten by it twice — a seam
+answering for the wrong instance, and a pidfile that three verbs read three ways. The chaos
+scenario becomes *point the derivation at a recycled pid / a second instance's config and
+confirm the control plane still names the right machine*.
+
+**What did NOT change:** option 1 stands for the deploy drivers (§2.3) — invoking
+`maas-lab.sh`'s drivers where they fit was never the registry question.
 
 ---
 
@@ -1197,7 +1252,7 @@ exercise · break**, and the break pass writes into `LEDGER.md`.
 | **5a** ✅ | **A second engine on one fabric — the controlled comparison** ([§18](#18-slice-5--the-brief)). **DONE 2026-08-05** — (a) the boot comparison, [Appendix J](#appendix-j--slice-5a-a-the-second-engine-the-number-nobody-had-and-the-number-everybody-had-was-wrong-2026-08-05); (b) two engines on one fabric, [Appendix K](#appendix-k--slice-5a-b-two-engines-on-one-fabric-and-decision-e-answered-from-what-the-lifecycles-actually-needed-2026-08-05) | QEMU `-M microvm` and Firecracker on the same `vmlinux` + the same `.ext4`, taps from **one** fabric verb, both VMMs at uid 1000 | 0.055 s vs 0.071 s once the i8042 probe is out of the way ([J.3](#j3-the-headline-that-was-false)); distinct DHCP leases from one dnsmasq; **each engine's guest resolved the other's BY NAME**; Calico unmoved throughout | **§18.4's seam table filled in — §8.3 shape (b)** ([K.2](#k2-decision-e-answered--184s-table-filled-in-from-what-the-two-lifecycles-needed)), and the `stop` seam turns out to be what costs 90% of the boot ([K.3](#k3-the-seams-are-not-independent-of-the-performance-story)) | QEMU **`-M microvm`** (Phase 2 already has virtio-mmio + qboot) consuming **the same `vmlinux` and the same `.ext4`** Firecracker boots, on a `fabric.sh`-made tap. ~~"Phase 2 already does bridge mode"~~ — **`--network-mode tap`, not `bridge`**: [§18.3](#183-two-corrections-to-14s-one-line-brief) | two engines, one L2, one `--lab` view — **and a boot-time number where the only variable is the VMM** | kill one engine's process and see what the other reports; kill the **fabric** under both. **Answer decision E** |
 | **5b** ✅ | **…and the fidelity case** — **DONE 2026-08-06, [Appendix M](#appendix-m--slice-5b-the-fidelity-case-joins-the-fabric-2026-08-06)** | the §9.2 `edge`: a stock Debian 12 cloud image on `-M q35`, from [`edge.toml`](examples/micro-cloud/edge.toml), on a `fabric.sh` tap **beside a Firecracker microVM** | cloud-init ran; `edge` took the lease the fabric **RESERVED** (`10.71.0.102`, not merely an address from the pool) and reached `api1` **by name** | seven defects on the way, **all in the harness or the phase tools, none in the lab** — including `inspect` exiting 1 silently on any running VM, and a `: ` in a `runcmd` cancelling every `runcmd` |
 | **5c** ✅ | **vsock — the first channel that is not the fabric** — **DONE 2026-08-07, [Appendix N](#appendix-n--slice-5c-vsock-the-first-channel-that-is-not-the-fabric-2026-08-07)** | one static guest agent (musl, no engine `#ifdef`) answering over vsock from **both** engines, injected into slice 3's ext4 with `debugfs -w` — no loop mount, no sudo; the §18.4 row filled in from what the two host APIs needed (a unix socket + `CONNECT <port>` handshake under Firecracker, a raw `AF_VSOCK` address under QEMU) | the guest contract is byte-identical while the host API differs in kind — a harder case for shape (b) than 5a or 5b produced, and it held | six-row chaos matrix ([`tests/test-vsock-chaos.sh`](examples/micro-cloud/tests/test-vsock-chaos.sh)), unprivileged, graded on the ladder and written as a regression guard: **`guest_cid` is advisory under Firecracker and allocated under QEMU**, so three machines believed they were CID 43 at once |
-| **6** ◑ | **The control plane** — **IN PROGRESS 2026-08-16**: ~~`fc.py` backend~~ **done** (it refuses `vm.py`'s bare-liveness check — [P7-5](REVIEW-phase7.md) measured one pidfile giving three answers), ~~topology slot~~ **done**. Remaining: decision G, and `apply` | whichever §8.3 shape slice 5 argued for; `fc.py` backend + topology slot; revisit decision G | all instances in one tree; `apply` a no-op on pass two, if the seam supports it. **The slot is shape (b) in practice**: `lab-fc.sh` has no `up`, so the `fc` slot emits `create --config` + `start <name>` — the intersection, spoken in the driver's own verbs, rather than a fifth slot pretending to be the other four | make the registry disagree with reality — MAAS's registry-layer fault, ported |
+| **6** ◑ | **The control plane** — **IN PROGRESS 2026-08-16**: ~~`fc.py` backend~~ **done** (it refuses `vm.py`'s bare-liveness check — [P7-5](REVIEW-phase7.md) measured one pidfile giving three answers), ~~topology slot~~ **done**, ~~decision G~~ **settled 2026-08-16 ([§8.4a](#84a-decision-g--settled-2026-08-16-derive-the-facts-record-only-the-intent)): no registry of facts**. Remaining: `apply` | whichever §8.3 shape slice 5 argued for; `fc.py` backend + topology slot; revisit decision G | all instances in one tree; `apply` a no-op on pass two, if the seam supports it. **The slot is shape (b) in practice**: `lab-fc.sh` has no `up`, so the `fc` slot emits `create --config` + `start <name>` — the intersection, spoken in the driver's own verbs, rather than a fifth slot pretending to be the other four | make the registry disagree with reality — MAAS's registry-layer fault, ported |
 | **7** | **Preserve** | `preserve.sh`, both tiers, `derivation.toml`; **`lab-vm.sh export`** (the §9.5 gap) | back up a lab, destroy it, restore it, prove it is the same | restore with a **changed** artifact hash and confirm it refuses **by name** |
 | **8** | **The fleet** | snapshot/restore; the jailer tier | five warm clones from one memory image | clone-entropy hazard then re-seeding; diff `/proc/<pid>/root`, `ns/net`, `Seccomp` plain vs jailed |
 | **9** | **Two paths, finished** | web wizards (§8.2 gap); a `microvm` wizard; the learning path | a beginner reaches a booted microVM guided-only; you reach one raw-only | `test-guided-path-is-a-view.sh` bites when a guided step does something the CLI cannot |
@@ -1534,7 +1589,7 @@ reboot caused.
 | 6 | ~~**slice 5a** — build · exercise · break ← **NEXT**~~ → **DONE 2026-08-05**, both halves ([Appendix J](#appendix-j--slice-5a-a-the-second-engine-the-number-nobody-had-and-the-number-everybody-had-was-wrong-2026-08-05), [Appendix K](#appendix-k--slice-5a-b-two-engines-on-one-fabric-and-decision-e-answered-from-what-the-lifecycles-actually-needed-2026-08-05)); the `← NEXT` marker outlived its subject by eleven days | §18.3, §18.4, and the ELF-kernel risk now **retired** ([§18.9](#189-the-assumption-most-likely-to-sink-5a-retired-before-it-was-scheduled)) | the boot-time number **with its spread**; decision E argued from the table in §18.4 |
 | 7 | ~~**slice 5b** — the §9.2 `edge`~~ → **DONE 2026-08-06** ([Appendix M](#appendix-m--slice-5b-the-fidelity-case-joins-the-fabric-2026-08-06)) | fidelity case, feeds §9.3's capstone | cloud-init runs; `edge` resolves `api1` by name — both observed |
 | 8 | ~~slice 5c — vsock~~ → **DONE 2026-08-07** ([Appendix N](#appendix-n--slice-5c-vsock-the-first-channel-that-is-not-the-fabric-2026-08-07)) | the first channel that is not the fabric | one guest binary, both engines; six-row chaos matrix |
-| 9 | **slice 6 — the control plane** ← **IN PROGRESS** (opened 2026-08-16) | decision E is settled, so the seam it needs is no longer an open question | ~~an `fc` backend~~ ✅ 2026-08-16 ([`phase6-tui/lab_tui/backends/fc.py`](phase6-tui/lab_tui/backends/fc.py), 13 tests; `phase6b-web` inherited it with no second implementation) · ~~and topology slot~~ ✅ 2026-08-16 ([`topology.py`](phase6-tui/lab_tui/topology.py) — `create --config` + `start <name>`, since Phase 7 has no `up`) · **`apply` a no-op on pass two** — open |
+| 9 | **slice 6 — the control plane** ← **IN PROGRESS** (opened 2026-08-16) | decision E is settled, so the seam it needs is no longer an open question | ~~an `fc` backend~~ ✅ 2026-08-16 ([`phase6-tui/lab_tui/backends/fc.py`](phase6-tui/lab_tui/backends/fc.py), 13 tests; `phase6b-web` inherited it with no second implementation) · ~~and topology slot~~ ✅ 2026-08-16 ([`topology.py`](phase6-tui/lab_tui/topology.py) — `create --config` + `start <name>`, since Phase 7 has no `up`) · ~~decision **G**~~ ✅ 2026-08-16 ([§8.4a](#84a-decision-g--settled-2026-08-16-derive-the-facts-record-only-the-intent) — no registry of facts; the enumeration split cleanly into derivable facts and un-derivable intent) · **`apply` a no-op on pass two** — open |
 
 
 ### 18.7 Item 4's premise, tested: the four instruments agree — and one of them was lying
