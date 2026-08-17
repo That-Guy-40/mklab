@@ -45,6 +45,11 @@ uv run python -m lab_tui --topology ../examples/lab-unified-demo.toml
   driver's own verbs (`create --config`, then `start <name>` per
   `[[microvm]]`), because `lab-fc.sh` has no `up` — see the module
   docstring for why that is a decision rather than an omission.
+- `lab_tui/reconcile.py` — `apply`'s **read-only half**: what the spec
+  declares vs what the engines actually report, issuing nothing.
+  `uv run python -m lab_tui.reconcile <lab.toml>` — exit **0** converged,
+  **2** differences, **3** incomplete (something could not be checked, and
+  an unchecked row is not a converged one).
 
 ## Tests
 

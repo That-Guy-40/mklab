@@ -160,6 +160,54 @@ uv run python -m lab_tui.topology down ../examples/lab-unified-demo.toml
 Prints the per-phase argv lines the TUI would execute — one comment
 line + one shell command per phase — without launching Textual.
 
+### The reconcile diff — declared vs actual, issuing nothing
+
+```bash
+uv run python -m lab_tui.reconcile ../examples/lab-unified-demo.toml
+```
+
+```
+  converged  chroot  base  present and built
+  stopped    fc      api1  present but stopped        → would start
+  absent     docker  web   declared, not present      → would create
+  undeclared podman  old   running under lab 'mc' but not in this spec — reported, never removed
+  unknown    lxd     c1    the lxd engine could not be queried — this row was not
+                           checked, and an unchecked row is not a converged one
+```
+
+Exit **0** converged · **2** differences · **3** incomplete. `apply`'s
+read-only half, built first on purpose: a reconcile loop's one hard rule
+is that it must not trust its own view of the world, and that cannot be
+honoured until the *"what is actually true"* half is correct alone.
+
+**Three properties do the work, and each has a negative control in
+[`tests/test_reconcile.py`](tests/test_reconcile.py):**
+
+- **`unknown` is not `absent`.** Every backend returns `[]` when it cannot
+  reach its engine (`docker.py`: `if cp.returncode != 0: return []`).
+  Harmless for the browser pane; for a diff it is a lie in the most
+  expensive direction — a stopped daemon reads as *"every declared service
+  is missing"*, and the `apply` built on it would create duplicates of what
+  is already running. So an empty list means absence **only** when
+  `is_available()` confirmed the engine could be asked. An engine that
+  could not be asked also does not get to report that there are no strays.
+- **The declared identity is the `lab-create.svc` label, not the engine's
+  name.** Phases 3/4/5 rename what they create (`lab-<lab>-<svc>`), so
+  matching on the engine name yields the classic double fault: every
+  declaration `absent` *and* every live container `undeclared` — two wrong
+  rows that read like a real finding.
+- **Strays are reported and never actioned.** Deleting what nobody declared
+  is the half of a reconcile loop that destroys work.
+
+There is **no registry** — that is [decision G](../MICRO_CLOUD_LAB_PLAN.md#84a-decision-g--settled-2026-08-16-derive-the-facts-record-only-the-intent)
+in code. MAAS's `apply` opens by *grounding the registry in reality*; here
+that phase is absent because it is not a phase, it is what reading the
+state is.
+
+`converged` means **exists and is up** — not that contents match the spec.
+The one comparison beyond existence is `drifted`, covering the two fc
+fields the manifest binds to the built instance (`tap`, `kernel`).
+
 ## How the integration actually works
 
 ### Backend wrappers — one per phase, all label/state-driven

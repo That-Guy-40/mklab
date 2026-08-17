@@ -91,6 +91,28 @@ def parse_topology(toml_path: Path) -> dict:
     return raw
 
 
+LAB_NAME_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
+
+
+def validated_lab_name(parsed: dict) -> str:
+    """`[lab].name`, refused unless it is safe to hand to a phase script.
+
+    F-05: a name starting with `--` or containing a space would confuse the bash
+    `--lab` parser.  It matters a second time in `reconcile.py`, where an invalid
+    name reaches `docker ps --filter label=lab-create.lab=<name>` — and *that*
+    failure is silent in the worse direction: the engine matches nothing, the
+    query returns cleanly, and every declared resource reads as MISSING.  One
+    definition, called from both, rather than a copy that drifts.
+    """
+    name = parsed["lab"]["name"]
+    if not isinstance(name, str) or not LAB_NAME_RE.match(name):
+        raise ValueError(
+            f"lab name {name!r} contains characters not safe for --lab; "
+            "use only [a-zA-Z0-9_-]"
+        )
+    return name
+
+
 def phases_present(parsed: dict) -> set[PhaseSlot]:
     """Which phase scripts the TOML actually invokes.
 
@@ -222,15 +244,7 @@ def plan_up(toml_path: Path) -> list[PhasePlan]:
 def plan_down(toml_path: Path) -> list[PhasePlan]:
     parsed = parse_topology(toml_path)
     present = phases_present(parsed)
-    lab_name = parsed["lab"]["name"]
-    # F-05: validate before embedding in --lab argument so a name starting
-    # with '--' or containing spaces cannot confuse the bash script's parser.
-    import re as _re
-    if not _re.match(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$", lab_name):
-        raise ValueError(
-            f"lab name {lab_name!r} contains characters not safe for --lab; "
-            "use only [a-zA-Z0-9_-]"
-        )
+    lab_name = validated_lab_name(parsed)
 
     plans: list[PhasePlan] = []
     for slot in _DOWN_ORDER:
