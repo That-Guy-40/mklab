@@ -8,7 +8,7 @@ keyboard-driven Textual UI, **plus** a topology screen that drives a
 unified `lab.toml` through all five phase scripts in dependency order.
 No new provisioning logic; every mutation shells out to the existing
 `lab-*.sh` script via `subprocess`, every read pulls from the state
-surfaces (`$LAB_STATE_DIR/{chroots,vms,podman,lxd}/` plus engine label
+surfaces (`$LAB_STATE_DIR/{chroots,vms,podman,lxd,fc}/` plus engine label
 queries) the bash phases already maintain. **If Phase 6 is deleted,
 nothing in Phases 1–5 breaks.**
 
@@ -76,8 +76,8 @@ so older Phase deployments still render.
 ### Live updates — watchfiles + a 5s tick
 
 `lab_tui/state.py` combines two sources: **`watchfiles.awatch`**
-subscribes to the four filesystem-backed state dirs (`chroots/`,
-`vms/`, `podman/`, `lxd/`) under `$LAB_STATE_DIR` — when `lab-lxd up`
+subscribes to the five filesystem-backed state dirs (`chroots/`,
+`vms/`, `podman/`, `lxd/`, `fc/`) under `$LAB_STATE_DIR` — when `lab-lxd up`
 writes in another terminal, the inotify event reaches the TUI within
 ~10 ms; and **a 5 s asyncio tick** yields `"docker"` on every fire,
 because Docker is label-only and has no filesystem signal to watch.
@@ -159,11 +159,16 @@ line + one shell command per phase — without launching Textual.
 
 ### Backend wrappers — one per phase, all label/state-driven
 
-`lab_tui/backends/{chroot,vm,docker,podman,lxd}.py` each define one
+`lab_tui/backends/{chroot,vm,docker,podman,lxd,fc}.py` each define one
 `BackendRunner` subclass. They wrap their phase script via
 `subprocess` for mutations and read inventory from the same place the
-script does — `$LAB_STATE_DIR/<backend>/` files for Phase 1/2/4/5,
+script does — `$LAB_STATE_DIR/<backend>/` files for Phase 1/2/4/5/7,
 label-filtered `docker ps … --format=json` for Phase 3.
+
+`fc.py` (Phase 7 microVMs, added 2026-08-16 as slice 6's first increment) is the
+one that does **not** copy `vm.py`'s liveness check: it requires `firecracker`
+**and this instance's `config.json`** in the process's argv, because REVIEW-phase7
+P7-5 measured a bare `os.kill(pid, 0)` reporting a recycled pid as running.
 **Framework-agnostic — no `textual` imports anywhere in `backends/`** —
 so Phase 6b can reuse the surface verbatim by lifting it into HTTP
 handlers.

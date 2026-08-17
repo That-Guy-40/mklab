@@ -40,7 +40,13 @@ ResourceStatus = Literal[
     "running", "stopped", "built", "missing", "error", "unknown",
 ]
 
-BackendName = Literal["chroot", "vm", "docker", "podman", "lxd", "control-pane"]
+# ONE definition, imported rather than restated.  This literal used to be declared
+# independently here AND in lab_tui/state.py — two enumerations of the same set, which
+# is this repo's signature bug: adding a backend to one and forgetting the other type-
+# checks fine and diverges silently.  Noticed while adding "fc" (slice 6), which would
+# have been the first entry to land in one copy only.  state.py imports nothing from
+# backends/, so this direction is acyclic; the reverse would not be.
+from lab_tui.state import BackendName  # noqa: E402  (re-exported below)
 
 
 class Resource(BaseModel):
