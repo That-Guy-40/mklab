@@ -22,6 +22,7 @@ description = "Quadlet-managed nginx, survives reboot with linger"
 tags        = ["quadlet", "systemd"]
 
 [[service]]
+engine  = "podman"   # explicit: phase 6 refuses an unset engine (both drivers claim it)
 name    = "web"
 image   = "docker.io/library/nginx:alpine"
 manager = "quadlet"

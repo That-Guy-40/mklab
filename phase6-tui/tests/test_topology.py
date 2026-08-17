@@ -65,14 +65,47 @@ def test_phases_present_lxd_only(tmp_path: Path) -> None:
     assert phases_present(parse_topology(p)) == {"lxd"}
 
 
-def test_phases_present_service_unset_engine_runs_both(tmp_path: Path) -> None:
-    """A [[service]] without `engine` set runs both Phase 3 and Phase 4 —
-    each script's own filter routes it correctly (or skips it)."""
+def test_a_service_with_no_engine_is_refused_not_routed(tmp_path: Path) -> None:
+    """This test used to assert the opposite, and the opposite was wrong.
+
+    It read: *"a [[service]] without `engine` runs both Phase 3 and Phase 4 — each
+    script's own filter routes it correctly."*  Measured in the two drivers, neither
+    filter routes anything: `lab-docker.sh` skips a service only when `engine` is SET
+    and is not docker, and `lab-podman.sh` selects on `(.engine // "podman")`.  Both
+    defaults CLAIM it, so a cross-phase bring-up created the service twice — one
+    container per engine, under a single declared identity — and `apply` would have
+    created both and then reported both converged.
+
+    Phase 6 cannot pick a winner without contradicting whichever driver it overrules,
+    so it refuses and names the two candidates.  A spec run through ONE driver
+    directly is unaffected: the ambiguity exists only because phase 6 runs both.
+    """
     p = tmp_path / "ambiguous.toml"
     p.write_text('[lab]\nname = "x"\n\n[[service]]\nname = "a"\n')
-    present = phases_present(parse_topology(p))
-    assert "docker" in present
-    assert "podman" in present
+    with pytest.raises(ValueError, match="has no `engine`") as e:
+        phases_present(parse_topology(p))
+    # The refusal has to be actionable at the point it is read.
+    assert "docker" in str(e.value) and "podman" in str(e.value)
+    for op in (plan_up, plan_down):
+        with pytest.raises(ValueError, match="has no `engine`"):
+            op(p)
+
+
+def test_an_engine_this_dispatcher_does_not_know_is_refused(tmp_path: Path) -> None:
+    p = tmp_path / "weird.toml"
+    p.write_text('[lab]\nname = "x"\n\n[[service]]\nname = "a"\nengine = "containerd"\n')
+    with pytest.raises(ValueError, match="not one this dispatcher knows"):
+        phases_present(parse_topology(p))
+
+
+def test_an_explicit_engine_still_routes_to_exactly_one(tmp_path: Path) -> None:
+    """The control: the refusal must not have swallowed the normal case."""
+    p = tmp_path / "explicit.toml"
+    p.write_text(
+        '[lab]\nname = "x"\n\n[[service]]\nname = "a"\nengine = "docker"\n'
+        '\n[[service]]\nname = "b"\nengine = "podman"\n'
+    )
+    assert phases_present(parse_topology(p)) == {"docker", "podman"}
 
 
 def test_plan_up_orders_chroot_first(sample_toml: Path) -> None:

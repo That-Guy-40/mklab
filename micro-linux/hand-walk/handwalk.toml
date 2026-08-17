@@ -18,6 +18,7 @@ description = "Hand-walk Uros Popovic's 'Making a micro Linux distro' (riscv64):
 tags        = ["tutorial", "hand-walk", "micro-linux", "riscv64"]
 
 [[service]]
+engine  = "podman"   # explicit: phase 6 refuses an unset engine (both drivers claim it)
 name    = "sandbox"
 build   = "./micro-linux/hand-walk"
 # Idle PID 1 so the box stays up; you `exec ... bash` in and type the recipe.

@@ -59,6 +59,7 @@ from lab_tui.topology import (
     microvm_names,
     parse_topology,
     phases_present,
+    services_by_engine,
     validated_lab_name,
 )
 
@@ -113,12 +114,12 @@ class Delta:
 def declared(parsed: dict, toml_path: Path) -> dict[PhaseSlot, list[str]]:
     """The names the spec asks for, per slot, in file order.
 
-    A `[[service]]` with **no** `engine` is listed under BOTH docker and podman,
-    and that is measured rather than assumed: `lab-docker.sh` skips a service only
-    when `engine` is set and is not `docker`, while `lab-podman.sh` filters on
-    `(.engine // "podman") == "podman"`.  Both defaults CLAIM an unset service, so
-    running both scripts really does produce two containers — the diff reports what
-    the tools do, not what the routing comment wishes they did.
+    Service routing comes from `topology.services_by_engine`, which REFUSES a
+    `[[service]]` with no `engine` rather than listing it under both — see that
+    function for the measurement (both drivers claim it, so a cross-phase run made
+    two containers under one declared name).  This module must not grow a second
+    answer to that question: an `apply` that routed differently from the planner
+    would create one thing and then reconcile against another.
     """
     out: dict[PhaseSlot, list[str]] = {}
     if parsed.get("chroot"):
@@ -127,13 +128,7 @@ def declared(parsed: dict, toml_path: Path) -> dict[PhaseSlot, list[str]]:
         out["vm"] = [v["name"] for v in parsed["vm"] if v.get("name")]
     if parsed.get("microvm"):
         out["fc"] = microvm_names(parsed, toml_path)
-    for svc_slot, owned in (("docker", "docker"), ("podman", "podman")):
-        names = [
-            s["name"] for s in parsed.get("service", [])
-            if s.get("name") and (s.get("engine") or owned).lower() == owned
-        ]
-        if names:
-            out[svc_slot] = names
+    out.update(services_by_engine(parsed))
     # Projects and profiles are LXD objects but not instances; they have no run
     # state and no `svc` label, so they are outside this diff rather than silently
     # counted as converged.  Named here so the omission is visible.

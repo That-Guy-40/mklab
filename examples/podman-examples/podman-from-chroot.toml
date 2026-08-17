@@ -27,6 +27,7 @@ description = "Phase-1 Kali chroot imported rootless"
 tags        = ["cross-phase", "kali"]
 
 [[service]]
+engine  = "podman"   # explicit: phase 6 refuses an unset engine (both drivers claim it)
 name        = "payload-builder"
 manager     = "plain"
 from_chroot = "/var/chroots/kali-amd64"
