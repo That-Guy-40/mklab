@@ -73,14 +73,54 @@ class PhasePlan:
     description: str
 
 
-def _has_engine(items: list[dict], engines: set[str]) -> bool:
-    """True if any item has `engine` matching one of `engines`,
-    OR if `engine` is omitted (the script's default-engine semantics)."""
-    for it in items:
-        engine = (it.get("engine") or "").lower()
-        if engine in engines or engine == "":
-            return True
-    return False
+SERVICE_ENGINES: tuple[PhaseSlot, ...] = ("docker", "podman")
+
+
+def services_by_engine(parsed: dict) -> dict[PhaseSlot, list[str]]:
+    """`[[service]]` names grouped by the engine that owns them, in file order.
+
+    AN UNSET `engine` IS REFUSED HERE, NOT ROUTED — and that is a correction.
+
+    This function used to answer "does any service want docker / podman?" and
+    counted an omitted `engine` as a yes for BOTH, on the stated theory that each
+    script's own filter would do the routing.  Measured in the two drivers, it does
+    not:
+
+        lab-docker.sh   skips a service only when `engine` is SET and is not docker
+        lab-podman.sh   selects on `(.engine // "podman") == "podman"`
+
+    Both defaults CLAIM an unset service.  So a cross-phase bring-up ran both
+    scripts and created the service twice — one container per engine, under a
+    single declared identity — and the `apply` now being built on top of this would
+    have created both and then reported both converged.
+
+    Phase 6 cannot pick a winner without contradicting whichever driver it
+    overrules, so it refuses and says which two candidates disagree.  A file run
+    through ONE driver directly is unaffected: this is phase 6's ambiguity, and
+    it exists only because phase 6 is the thing that runs both.
+    """
+    out: dict[PhaseSlot, list[str]] = {}
+    for i, svc in enumerate(parsed.get("service", []), start=1):
+        if not isinstance(svc, dict):
+            raise ValueError("service must be an array of tables — write [[service]]")
+        name = svc.get("name") or f"#{i}"
+        engine = (svc.get("engine") or "").lower()
+        if not engine:
+            raise ValueError(
+                f"[[service]] {name!r} has no `engine`. Phase 3 and Phase 4 BOTH claim "
+                "a service that does not name one (lab-docker.sh skips only when engine "
+                "is set and is not docker; lab-podman.sh selects on "
+                '`(.engine // "podman")`), so a cross-phase run would create it twice '
+                'under one name. Set engine = "docker" or engine = "podman" — a spec run '
+                "through a single phase script directly does not need this."
+            )
+        if engine not in SERVICE_ENGINES:
+            raise ValueError(
+                f"[[service]] {name!r}: engine {engine!r} is not one this dispatcher "
+                f"knows — expected one of {', '.join(SERVICE_ENGINES)}"
+            )
+        out.setdefault(engine, []).append(svc.get("name") or name)
+    return out
 
 
 def parse_topology(toml_path: Path) -> dict:
@@ -126,11 +166,7 @@ def phases_present(parsed: dict) -> set[PhaseSlot]:
         out.add("chroot")
     if parsed.get("vm"):
         out.add("vm")
-    services = parsed.get("service", [])
-    if services and _has_engine(services, {"docker"}):
-        out.add("docker")
-    if services and _has_engine(services, {"podman"}):
-        out.add("podman")
+    out.update(services_by_engine(parsed).keys())
     if parsed.get("instance") or parsed.get("project") or parsed.get("profile"):
         out.add("lxd")
     if parsed.get("microvm"):

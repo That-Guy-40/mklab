@@ -20,18 +20,21 @@ name    = "frontend"
 publish = ["8080:80"]
 
 [[service]]
+engine  = "podman"   # explicit: phase 6 refuses an unset engine (both drivers claim it)
 name    = "web"
 image   = "docker.io/library/nginx:alpine"
 manager = "pod"
 pod     = "frontend"
 
 [[service]]
+engine  = "podman"   # explicit: phase 6 refuses an unset engine (both drivers claim it)
 name    = "cache"
 image   = "docker.io/library/redis:alpine"
 manager = "pod"
 pod     = "frontend"
 
 [[service]]
+engine  = "podman"   # explicit: phase 6 refuses an unset engine (both drivers claim it)
 name    = "ping"
 image   = "docker.io/library/alpine:latest"
 manager = "pod"

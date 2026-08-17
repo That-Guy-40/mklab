@@ -108,9 +108,21 @@ The screen parses any `lab.toml` and renders a dispatch plan:
 halting on the first non-zero exit. `d` routes through the confirm
 modal and runs the tear-down.
 
-The cross-phase routing relies entirely on **each phase's existing
-`engine` filter** — the TUI runs all relevant scripts against the same
-TOML and lets each claim its own rows.
+The cross-phase routing relies on **each phase's existing `engine`
+filter** — the TUI runs all relevant scripts against the same TOML and
+lets each claim its own rows.
+
+**With one exception, found by measuring the filters instead of trusting
+them.** A `[[service]]` that names no `engine` is not routed by them: it
+is claimed by *both*. `lab-docker.sh` skips a service only when `engine`
+is **set** and is not `docker`; `lab-podman.sh` selects on
+`(.engine // "podman")`. So a cross-phase bring-up created that service
+**twice** — one container per engine, under a single declared identity —
+and the reconcile diff below would then have found both converged. Phase
+6 cannot pick a winner without contradicting whichever driver it
+overrules, so it **refuses at plan time** and names the two candidates.
+A spec run through one driver directly is unaffected; the ambiguity
+exists only because phase 6 is the thing that runs both.
 
 ### The confirm modal — every destructive action shows the literal argv
 

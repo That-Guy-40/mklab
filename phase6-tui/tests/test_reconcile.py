@@ -251,19 +251,23 @@ def test_an_unreachable_engine_does_not_get_to_say_there_are_no_strays(spec: Pat
 
 # ── the declaration side ─────────────────────────────────────────────────────
 
-def test_a_service_with_no_engine_is_declared_for_both(tmp_path: Path) -> None:
-    """Measured from both drivers, not inferred from the routing comment.
+def test_the_diff_does_not_answer_the_routing_question_a_second_time(
+    tmp_path: Path,
+) -> None:
+    """Service routing has ONE definition, and this keeps it that way.
 
-    `lab-docker.sh` skips a service only when `engine` is SET and is not `docker`;
-    `lab-podman.sh` filters on `(.engine // "podman") == "podman"`.  Both defaults
-    claim an unset service, so running both really does produce two containers.
-    The diff reports what the tools do.
+    An earlier version of `declared()` re-derived it here — and matched the drivers'
+    (wrong) both-claim-it behaviour, so an unset `engine` produced a row under docker
+    AND podman.  If this module and the planner ever answer differently, `apply`
+    creates one thing and then reconciles against another.
     """
     p = tmp_path / "amb.toml"
     p.write_text('[lab]\nname = "mc"\n\n[[service]]\nname = "web"\n')
     import tomllib
-    want = declared(tomllib.loads(p.read_text()), p)
-    assert want["docker"] == ["web"] and want["podman"] == ["web"]
+    with pytest.raises(ValueError, match="has no `engine`"):
+        declared(tomllib.loads(p.read_text()), p)
+    with pytest.raises(ValueError, match="has no `engine`"):
+        diff(p, backend_for=_fixed({}))
 
 
 def test_converged_everywhere_is_exit_zero(tmp_path: Path) -> None:
