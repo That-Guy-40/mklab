@@ -146,13 +146,20 @@ build() {   # build <fn> <src> <logfile> [IMPORT_MODE] [BREAK_MIDSTEP]
 # ══ 0. the root gate, measured as the NON-ROOT user it exists for ═════════════════════
 # Asserted before anything is built: as root this refusal cannot fire, so a test that only
 # ran as root could never tell "the gate is correct" from "the gate is gone".
+# The driver path is passed as a POSITIONAL, not as a `VAR=x cmd` prefix. `LAB_LXD` is
+# `readonly` in lib.sh, and a prefix assignment to a readonly name is a hard bash error —
+# `LAB_LXD: readonly variable` — which then left the child sourcing the empty string and
+# reporting `backend_from_chroot_vm: command not found`. That bug lived in the `$EUID -ne 0`
+# branch, which the documented invocation (`sudo <this script>`) never takes: it only fires
+# where the script runs UNPRIVILEGED with passwordless sudo available, i.e. on CI's runner.
+# Found there, on the first run that reached it.
 _as_user() {   # _as_user <fn> <src>  → the refusal text a non-root process gets
-    local snippet='source "$LAB_LXD"; "$1" "$2" vmimg-test'
+    local snippet='source "$1"; "$2" "$3" vmimg-test'
     if [[ $EUID -ne 0 ]]; then
-        LAB_LXD="$LAB_LXD" bash -c "$snippet" _ "$1" "$2" 2>&1
+        bash -c "$snippet" _ "$LAB_LXD" "$1" "$2" 2>&1
     elif [[ -n "${SUDO_USER:-}" ]] && command -v runuser >/dev/null 2>&1; then
-        runuser -u "$SUDO_USER" -- env LAB_LXD="$LAB_LXD" LAB_STATE_DIR="$tmp/state-u" \
-            bash -c "$snippet" _ "$1" "$2" 2>&1
+        runuser -u "$SUDO_USER" -- env LAB_STATE_DIR="$tmp/state-u" \
+            bash -c "$snippet" _ "$LAB_LXD" "$1" "$2" 2>&1
     else
         return 1
     fi
