@@ -92,8 +92,37 @@ which can be picked up tonight and which cannot be picked up at all here.
       The row had to be designed twice: **`cidr=` does not prefer a higher ifindex the way
       `first-found` does**, so the decoy injector that works in the one-node matrix never
       lands here (205 s, and a full `calico-node` restart, with the decoy ignored).
-- [ ] **A.2 — the k8s-dqlite row**, the datastore beneath Calico. See the decision recorded
-      with it: it is buildable only if the dataplane observable stops being `kubectl exec`.
+- [x] **A.2 — the k8s-dqlite row** — ✅ **DONE 2026-08-08**, *the same day this section was
+      written*, and this entry named the fix as its own precondition: *"buildable only if the
+      dataplane observable stops being `kubectl exec`"* is exactly what was done.
+
+      It is **row 7 of 9** in [`cni-chaos.sh`](examples/nested-calico-sandbox/cni-chaos.sh)
+      (`ROW=datastore-stopped`). The blocker was specific rather than fundamental: a CNI does
+      not need the API to *forward a packet* — once a pod is running its connectivity is
+      felix's netfilter rules, Calico's per-pod host route and the pod's veth, all kernel
+      state — so the row is graded on the pod's address pinged **from the node**, captured
+      while the API was still up, and no API is consulted after the fault.
+
+      **Measured ABSORBED:** with `snap.microk8s.daemon-k8s-dqlite` stopped and `/readyz`
+      refusing, the pod stayed reachable; restarting the unit brought the API back in **21 s**.
+      *A datastore outage costs you every API call and not every workload* — a property
+      operators assume and rarely verify.
+
+      Guarded without a cluster: `tests/test-cni-chaos-grader.sh` carries the row's own
+      negative controls (mutating `MID_NOAPI`/`AFTER_NOAPI` must be caught), so its grading is
+      checked on every run in ~2 s rather than on the day someone spends 20 minutes on a live
+      matrix.
+
+      **Weaker, not missing, and stamped as such:** the observable crosses **one** veth
+      (node → pod) rather than two (pod → pod), recorded in
+      [`findings.env`](examples/nested-calico-sandbox/findings.env) as
+      `NCS_DATASTORE_OBSERVABLE_IS_NODE_TO_POD=one-veth-not-two` rather than presented as the
+      same measurement as the other rows.
+
+> **§0.5's "buildable now" list is now empty** — A.1 landed 2026-08-15, A.2 on 2026-08-08.
+> A.2 is the **fifth** entry found this week whose subject had closed underneath it (see the
+> four in §4, §8, §0.5 C.2 and micro-cloud's `DEFERRED.md`), and it shares their shape
+> exactly: written the same day the work landed, describing the solution, never ticked.
 
 ### Blocked on hardware — recorded so it stops being re-raised as if it were schedulable
 
