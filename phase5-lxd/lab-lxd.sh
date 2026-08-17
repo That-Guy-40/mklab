@@ -582,10 +582,18 @@ backend_from_tarball() {
 
         log_info "extracting Phase 1 tarball into staging rootfs/"
         install -d "$workdir/rootfs"
-        # H-3: --no-absolute-names prevents absolute-path members from writing
-        # outside the target directory; without it a crafted tarball entry like
-        # /etc/cron.d/evil would write to the host /etc/cron.d/evil.
-        tar -C "$workdir/rootfs" -xpf "$tarball" --numeric-owner --no-absolute-names
+        # H-3 REVISITED 2026-08-16. This line carried `--no-absolute-names`, which GNU tar
+        # does not have — it is a bsdtar/libarchive spelling, and GNU tar 1.35 answers
+        # `unrecognized option` and exits 64. So the container tarball import was broken on
+        # every GNU-tar host, exactly like its VM sibling; nothing had run it either.
+        #
+        # The property H-3 wanted is real and is GNU tar's DEFAULT, measured rather than
+        # assumed: an absolute member is stripped ("Removing leading `/'") and a `../`
+        # member is refused ("Member name contains '..'"), so the crafted
+        # `/etc/cron.d/evil` entry this comment used to describe lands under
+        # `$workdir/rootfs/etc/cron.d/evil` and cannot reach the host.
+        tar -C "$workdir/rootfs" -xpf "$tarball" --numeric-owner \
+            || die "from-tarball: extracting $tarball failed"
 
         local arch; arch="$(detect_host_arch)"
         local distro; distro="$(_detect_chroot_distro "$workdir/rootfs")"
@@ -663,33 +671,56 @@ backend_from_chroot_vm() {
             [[ -n "$workdir" ]] && rm -rf "$workdir"
         ' EXIT
 
-        workdir="$(mktemp -d)"
+        # EVERY COMMAND BELOW CARRIES ITS OWN `|| die`, and that is not belt-and-braces —
+        # it is the only thing that works. `set -euo pipefail` is at the top of this file,
+        # but a subshell written `( … ) || die` is the left operand of a `||` list, and
+        # bash SUPPRESSES errexit for it — the suppression propagates inside. Measured
+        # 2026-08-16: `( false; echo LEAKED-PAST; true ) || echo DIED` prints LEAKED-PAST
+        # and never DIED. `set -e` re-issued inside, an ERR trap inside, and `if ! ( … )`
+        # were all measured too; NONE of them re-arm it.
+        #
+        # This was not theoretical. The first privileged run of
+        # tests/test-vm-image-build.sh caught `tar` failing in the sibling function below
+        # and the build carrying on regardless, so the operator was told "no /boot/vmlinuz-*
+        # found" about a tarball that had one — the true cause reported as somebody else's
+        # fault, three steps downstream. Phase 2's equivalent subshell has always guarded
+        # each command this way; this one never did.
+        workdir="$(mktemp -d)" || die "from-chroot (VM): mktemp failed"
         mnt="$workdir/mnt"
         local raw_img="$workdir/disk.raw"
         log_info "creating 20G raw disk image for VM"
-        qemu-img create -f raw "$raw_img" 20G >/dev/null
+        qemu-img create -f raw "$raw_img" 20G >/dev/null \
+            || die "from-chroot (VM): qemu-img create failed"
 
         log_info "partitioning (MBR + single bootable ext4 partition)"
-        parted -s "$raw_img" mklabel msdos mkpart primary ext4 1MiB 100% set 1 boot on
+        parted -s "$raw_img" mklabel msdos mkpart primary ext4 1MiB 100% set 1 boot on \
+            || die "from-chroot (VM): parted failed to partition $raw_img"
 
-        lodev="$(losetup --find --partscan --show "$raw_img")"
-        mkfs.ext4 -q "${lodev}p1"
-        install -d "$mnt"
-        mount "${lodev}p1" "$mnt"
+        lodev="$(losetup --find --partscan --show "$raw_img")" \
+            || die "from-chroot (VM): losetup could not attach $raw_img"
+        [[ -n "$lodev" ]] || die "from-chroot (VM): losetup returned no device"
+        mkfs.ext4 -q "${lodev}p1" || die "from-chroot (VM): mkfs.ext4 failed on ${lodev}p1"
+        install -d "$mnt" || die "from-chroot (VM): could not create the mountpoint"
+        mount "${lodev}p1" "$mnt" || die "from-chroot (VM): could not mount ${lodev}p1"
 
         log_info "copying chroot → disk (rsync, preserving perms)"
         rsync -aHAX \
             --exclude=/proc --exclude=/sys --exclude=/dev \
             --exclude=/run  --exclude=/tmp --exclude='.lab-chroot-mounts' \
-            "$chroot_path/" "$mnt/"
+            "$chroot_path/" "$mnt/" \
+            || die "from-chroot (VM): rsync of the chroot into the image failed"
 
         # Write /etc/fstab with the root partition UUID.
-        local uuid; uuid="$(blkid -s UUID -o value "${lodev}p1")"
-        printf 'UUID=%s / ext4 defaults 0 1\n' "$uuid" > "$mnt/etc/fstab"
+        local uuid; uuid="$(blkid -s UUID -o value "${lodev}p1")" \
+            || die "from-chroot (VM): blkid could not read the new filesystem's UUID"
+        [[ -n "$uuid" ]] || die "from-chroot (VM): the new filesystem has no UUID"
+        printf 'UUID=%s / ext4 defaults 0 1\n' "$uuid" > "$mnt/etc/fstab" \
+            || die "from-chroot (VM): could not write /etc/fstab"
 
         # Install extlinux into /boot/extlinux/.
-        install -d "$mnt/boot/extlinux"
-        extlinux --install "$mnt/boot/extlinux" 2>/dev/null
+        install -d "$mnt/boot/extlinux" || die "from-chroot (VM): could not create /boot/extlinux"
+        extlinux --install "$mnt/boot/extlinux" 2>/dev/null \
+            || die "from-chroot (VM): extlinux --install failed — the image would not boot"
         cat > "$mnt/boot/extlinux/extlinux.conf" <<EXTCFG
 DEFAULT linux
 LABEL linux
@@ -698,13 +729,16 @@ LABEL linux
   INITRD /boot/${iname_r}
 EXTCFG
 
-        umount "$mnt"
-        dd if="$mbr_bin" of="$lodev" bs=440 count=1 conv=notrunc 2>/dev/null
+        umount "$mnt" || die "from-chroot (VM): could not unmount $mnt"
+        mnt=""
+        dd if="$mbr_bin" of="$lodev" bs=440 count=1 conv=notrunc 2>/dev/null \
+            || die "from-chroot (VM): writing the MBR bootstrap from $mbr_bin failed"
         losetup -d "$lodev" 2>/dev/null || true; lodev=""
 
         local qcow2="$workdir/disk.qcow2"
         log_info "converting raw → qcow2"
-        qemu-img convert -f raw -O qcow2 "$raw_img" "$qcow2" >/dev/null
+        qemu-img convert -f raw -O qcow2 "$raw_img" "$qcow2" >/dev/null \
+            || die "from-chroot (VM): raw → qcow2 conversion failed"
 
         log_info "importing as LXD VM image alias '$image_alias'"
         backend_from_qcow2 "$qcow2" "$image_alias"
@@ -725,9 +759,18 @@ backend_from_tarball_vm() {
         trap 'rm -rf "$workdir"' EXIT
         install -d "$workdir/rootfs"
         log_info "extracting tarball for VM build"
-        # --no-absolute-names refuses absolute-path members (host-write vector),
-        # matching the container from_tarball path (H-3).
-        tar -C "$workdir/rootfs" -xpf "$tarball" --numeric-owner --no-absolute-names
+        # `--no-absolute-names` USED TO BE HERE, and GNU tar has no such option — it is a
+        # bsdtar/libarchive spelling. GNU tar 1.35 answers `unrecognized option` and exits
+        # 64, so every tarball VM build failed outright; the errexit suppression above then
+        # hid the cause and reported "no /boot/vmlinuz-* found" instead. Two reviews had
+        # credited this flag as hardening (H-3) and neither had ever executed it.
+        #
+        # Nothing is lost by removing it. Measured on GNU tar 1.35: an absolute member is
+        # stripped by default ("Removing leading `/'"), and a `../` member is REFUSED by
+        # default ("Member name contains '..'"). The protection is the default; the flag was
+        # only ever a way to break the command.
+        tar -C "$workdir/rootfs" -xpf "$tarball" --numeric-owner \
+            || die "from-tarball (VM): extracting $tarball failed"
         backend_from_chroot_vm "$workdir/rootfs" "$image_alias"
     ) || die "from-tarball (VM): build/import failed"
 }
