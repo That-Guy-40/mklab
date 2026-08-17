@@ -220,6 +220,55 @@ state is.
 The one comparison beyond existence is `drifted`, covering the two fc
 fields the manifest binds to the built instance (`tap`, `kernel`).
 
+### `apply` — the half that issues
+
+```bash
+uv run python -m lab_tui.apply --dry-run ../examples/lab-unified-demo.toml
+uv run python -m lab_tui.apply           ../examples/lab-unified-demo.toml
+```
+
+```
+would issue:
+  $ phase1-chroot/lab-chroot.sh   up --config mc.toml
+  $ phase7-firecracker/lab-fc.sh  create --name api1 --kernel /srv/vmlinux \
+                                         --rootfs /srv/api.ext4 --tap mc-api1 --lab mc
+  $ phase7-firecracker/lab-fc.sh  start api1
+  $ phase3-docker/lab-docker.sh   up --config mc.toml
+```
+
+A **separate module** from the diff on purpose: the read-only guarantee is
+worth something only if you can see, from the import list, which file could
+have broken it.
+
+**It acts on two of the diff's six kinds and holds the rest** — and each
+refusal is a decision, not an unimplemented feature:
+
+| kind | | why |
+|---|---|---|
+| `absent` | **issue** | create |
+| `stopped` | **issue** | start — never re-create, which would copy a rootfs the driver refuses to overwrite |
+| `undeclared` | **held, and no flag changes it** | deleting what nobody declared is the half of a reconcile loop that destroys work. On this repo's ladder a stray is at worst DEGRADED; a wrong deletion is unrecoverable |
+| `unknown` | **held** | issuing `create` against a row nobody could read is exactly the duplicate-creation bug the unknown/absent distinction exists to prevent — and it would do it while reporting progress |
+| `drifted` | **held** | the repair is destroy-and-recreate, which deletes a per-instance rootfs copy |
+
+**Minimum transitions, per engine.** Five drivers are declarative, so one
+`up --config` converges every row they own. Phase 7 is not — it has no
+`up`, and `create --config` refuses the whole file the moment one instance
+exists, which is precisely the mixed state a reconcile loop is *for*. So fc
+is issued **per instance**, with flags built from its block; the flag table
+is checked against `lab-fc.sh`'s own `KNOWN_KEYS` by a test, because a key
+added there without a line here would be silently dropped from every
+`create` — the driver's own stated bug class, committed against it.
+
+**And it is honest when it does not converge.** A pass that produces the
+identical diff to the one before it stops and says *something is refusing
+to progress*, rather than burning its remaining passes; a failing command
+is reported with its `rc` and not re-issued as a retry; an `unknown` row
+makes the whole run `INCOMPLETE` no matter how much else succeeded. The
+negative control for all of that is a runner that returns 0 and changes
+nothing — the shape of a driver that exits cleanly having done nothing at
+all. It must report **NOT converged**, and it does.
+
 ## How the integration actually works
 
 ### Backend wrappers — one per phase, all label/state-driven

@@ -50,6 +50,14 @@ uv run python -m lab_tui --topology ../examples/lab-unified-demo.toml
   `uv run python -m lab_tui.reconcile <lab.toml>` — exit **0** converged,
   **2** differences, **3** incomplete (something could not be checked, and
   an unchecked row is not a converged one).
+- `lab_tui/apply.py` — the half that **issues**, kept in a separate file so
+  the import list shows which module could have broken the read-only
+  guarantee. `uv run python -m lab_tui.apply [--dry-run] <lab.toml>`.
+  It acts on exactly two of the diff's six kinds (`absent`, `stopped`) and
+  holds the rest: `undeclared` (deleting what nobody declared is the half
+  of a reconcile loop that destroys work), `unknown` (issuing against a row
+  nobody could read is the duplicate-creation bug the diff exists to
+  prevent), and `drifted` (the repair deletes a rootfs copy).
 
 ## Tests
 
