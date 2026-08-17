@@ -634,10 +634,55 @@ adjacent to the property and read as evidence for it.
 
 §3b's boundaries mostly stand, and are narrower than they were:
 
-- **The VM image backends** (`backend_from_chroot_vm`, `backend_from_tarball_vm`) still
+- ~~**The VM image backends** (`backend_from_chroot_vm`, `backend_from_tarball_vm`) still
   require `EUID=0` for loop mounts, `mkfs` and `extlinux`, so the partitioning, the MBR
   `dd` and the raw→qcow2 conversion are unmeasured. `test-vm-lifecycle.sh` covers a VM's
-  **launch**, not these builds.
+  **launch**, not these builds.~~
+
+  > ✅ **CLOSED 2026-08-16 — measured on hardware, and running the code found two real
+  > defects the audit could not have read.**
+  > [`tests/test-vm-image-build.sh`](phase5-lxd/tests/test-vm-image-build.sh) builds real
+  > images and asserts the **artifact**, never the steps. It intercepts at
+  > `backend_from_qcow2` — an existing function boundary, and the only step needing a live
+  > engine — so everything this bullet named runs for real without a daemon. Root-gated;
+  > self-skips otherwise, and CI's runner has passwordless sudo (phase 4's root tests run
+  > there), so it runs in CI too.
+  >
+  > **The driver was correct on all four things this bullet listed.** The first 440 bytes
+  > are byte-identical to `mbr.bin`; the label is msdos with exactly one bootable primary;
+  > `qemu-img info` confirms a real qcow2; and the **UUID chain holds** — `/etc/fstab` and
+  > `extlinux.conf`'s `root=UUID=` both name the filesystem that is actually on the image.
+  > That last one had never been compared by anything, and its failure mode is a kernel
+  > panic on someone else's machine.
+  >
+  > **What the run found instead was in the paths around it, and both were invisible to
+  > reading:**
+  >
+  > 1. **`--no-absolute-names` is not a GNU tar option.** It is a bsdtar/libarchive
+  >    spelling; GNU tar 1.35 answers `unrecognized option` and exits 64. It was on **both**
+  >    tarball paths — the VM one and the **container** one — so `from_tarball` was broken
+  >    on every GNU-tar host. Two reviews, this one included, had credited the flag as
+  >    hardening (H-3) and neither had ever executed it. Removing it loses nothing:
+  >    measured, GNU tar strips a leading `/` and **refuses** a `../` member by default. The
+  >    property was already the default; the flag was only a way to break the command.
+  > 2. **`( … ) || die` silently disables `set -e` inside the subshell** — bash suppresses
+  >    errexit for the left operand of a `||` list and the suppression propagates in. So the
+  >    failing `tar` did not stop the build: it continued and reported *"no `/boot/vmlinuz-*`
+  >    found"* about a tarball that had one, blaming a step three later. Every remedy was
+  >    **measured, and the obvious ones do not work** — re-issuing `set -e` inside, an `ERR`
+  >    trap inside, and `if ! ( … )` all still leak past. Per-command `|| die` is the guard,
+  >    which is what **Phase 2's equivalent subshell has always had**; Phase 5's VM path had
+  >    none. Guarded now by §7b, with the fault injected at `extlinux --install` —
+  >    deliberately *not* the last command, since the last one propagates anyway and a test
+  >    that broke only that would pass against the defect.
+  >
+  > **Two of the test's own assertions were wrong first, both caught by running it.** A
+  > leaked-workdir scan used `find "$tmp" -maxdepth 1`, which yields the start directory —
+  > and `$tmp` is itself a `mktemp -d`, so it matched every time and could never pass; it
+  > reported a leak against a driver that had cleaned up correctly. And a drafted
+  > absolute-path-tar assertion **could not fail in either direction**, because GNU tar
+  > strips the leading `/` by default; it was deleted rather than shipped as coverage, with
+  > the reason recorded in the file.
 - **What the engine does with a flag-shaped name** was never the question this driver
   owns, and remains untested by choice: the guards now refuse those values before argv,
   so the engine never sees them.
