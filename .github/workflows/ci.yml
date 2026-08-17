@@ -164,6 +164,30 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y jq
           pip install yq            # provides tomlq (needs jq)
+      - name: Install the disk-image toolchain (so phase 5's VM-backend test RUNS, not SKIPs)
+        # `phase5-lxd/tests/test-vm-image-build.sh` builds a real MBR/extlinux disk image
+        # and is the ONLY coverage of `backend_from_chroot_vm` / `backend_from_tarball_vm`
+        # — code that had never executed anywhere until 2026-08-16, and that turned out to
+        # carry two defects (a GNU-tar option that does not exist, and errexit suppressed
+        # inside `( … ) || die`).
+        #
+        # Measured on PR #220: without these it reported `SKIP: missing required command:
+        # qemu-img` and the job printed a clean 0 failed. `syslinux-common` supplies the
+        # mbr.bin the test compares byte-for-byte; `extlinux` supplies the installer.
+        # The verify line below names what is missing rather than letting the skip be
+        # discovered by reading a log later.
+        run: |
+          sudo apt-get install -y qemu-utils parted extlinux syslinux-common rsync e2fsprogs \
+            || echo "::warning::disk-image toolchain install failed — phase 5's VM-backend test will SKIP"
+          missing=""
+          for c in qemu-img parted mkfs.ext4 losetup extlinux rsync blkid; do
+            command -v "$c" >/dev/null 2>&1 || missing="$missing $c"
+          done
+          if [ -n "$missing" ]; then
+            echo "::warning::still missing:$missing — phase 5's VM-backend test will SKIP, so the disk-image build is NOT exercised by this run"
+          else
+            echo "disk-image toolchain present — phase 5's VM-backend test will run"
+          fi
       - name: Allow unprivileged user namespaces (so the mount tests RUN, not SKIP)
         # Two phase-1 tests create a bind mount to exercise the H1 rm -rf guard. A bind
         # needs CAP_SYS_ADMIN only in the namespace doing the mounting, so they re-exec
