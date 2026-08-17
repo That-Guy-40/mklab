@@ -747,8 +747,16 @@ Carried from §16, unchanged:
 1. **Where to stop.** Slices 2, 4, 6, or 7 are all honest stopping points.
 2. **Decision E — the seam** (§8.3). Recommendation: defer to slice 5; slice 4
    carries the tripwire.
-3. **Decision G — MAAS registry reuse** (§8.4). Recommendation: invoke for
-   deploy drivers, separate registry initially, revisit at slice 6.
+3. ~~**Decision G — MAAS registry reuse** (§8.4). Recommendation: invoke for
+   deploy drivers, separate registry initially, revisit at slice 6.~~ →
+   **SETTLED 2026-08-16**
+   ([§8.4a](../../MICRO_CLOUD_LAB_PLAN.md#84a-decision-g--settled-2026-08-16-derive-the-facts-record-only-the-intent)):
+   **no registry of facts.** Enumerating MAAS's fourteen registry fields split
+   them cleanly — everything that is a *fact about the instance* is derivable
+   from an engine (state, kernel/rootfs digests, MAC-from-name), and everything
+   that is not derivable is *intent or history*. `apply` reads reality on every
+   pass, which deletes MAAS's "ground the registry in reality" phase rather than
+   reimplementing it. Option 1 still stands for the deploy drivers.
 4. **Decision B — `extract-vmlinux`** (§6.3c). An experiment for slice 1.
 5. **The beginner walkthrough** — §17.3.
 
