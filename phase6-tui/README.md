@@ -1,8 +1,9 @@
 # phase6-tui — Textual TUI for LAB_CREATE_V2
 
 A Python 3.11+ Textual app that surfaces resources produced by Phases 1–5
-(chroots, VMs, docker/podman containers, LXD/Incus instances) in one
-keyboard-driven UI, plus cross-phase topology bring-up / tear-down.
+and Phase 7 (chroots, VMs, docker/podman containers, LXD/Incus instances,
+Firecracker microVMs) in one keyboard-driven UI, plus cross-phase topology
+bring-up / tear-down.
 
 This is **v0.1**: read-only inventory + cross-phase topology orchestration,
 **plus** five per-phase create wizards (`n`) and interactive console attach
@@ -39,7 +40,11 @@ uv run python -m lab_tui --topology ../examples/lab-unified-demo.toml
 - `lab_tui/state.py` — `watchfiles`-based state watcher with a 5 s tick
   for docker (which has no filesystem surface).
 - `lab_tui/topology.py` — parses a `lab.toml`, enumerates which phases
-  it invokes, and emits an ordered list of `(script, argv)` plans.
+  it invokes, and emits an ordered list of `(script, argv)` plans. Five
+  slots are one `up --config` each; the Phase 7 slot expands to that
+  driver's own verbs (`create --config`, then `start <name>` per
+  `[[microvm]]`), because `lab-fc.sh` has no `up` — see the module
+  docstring for why that is a decision rather than an omission.
 
 ## Tests
 

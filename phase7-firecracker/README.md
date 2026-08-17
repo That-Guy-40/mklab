@@ -116,6 +116,7 @@ outcomes: `match`, `CHANGED since create`, or `UNKNOWN` when the file is gone.
 | **taps from** | [`examples/micro-cloud/fabric.sh`](../examples/micro-cloud/) |
 | **compared with** | [`phase2-qemu-vm`](../phase2-qemu-vm/) — same lab, a full VM instead of a microVM |
 | **exercised end-to-end by** | [`examples/micro-cloud/tests/test-edge-on-the-fabric.sh`](../examples/micro-cloud/tests/test-edge-on-the-fabric.sh) — boots `api1` through this tool, on a fabric tap, beside a QEMU cloud image |
+| **surfaced in** | [`phase6-tui`](../phase6-tui/) / [`phase6b-web`](../phase6b-web/) — the `fc` backend lists instances, and the topology screen brings a `[[microvm]]` block up **in this tool's own verbs** (`create --config`, then `start <name>`), because there is no `up` here to call |
 
 ## Testing
 
