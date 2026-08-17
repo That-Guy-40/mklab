@@ -20,7 +20,7 @@ from typing import Literal
 
 from watchfiles import Change, awatch
 
-BackendName = Literal["chroot", "vm", "docker", "podman", "lxd", "control-pane"]
+BackendName = Literal["chroot", "vm", "docker", "podman", "lxd", "fc", "control-pane"]
 
 # Which backends we tick on the timer (no filesystem trigger). control-pane progress is
 # time-based (re-run the engine over each node's console), so it polls like docker.
@@ -56,6 +56,7 @@ def state_subdir(backend: BackendName) -> Path:
         case "vm":     return root / "vms"
         case "podman": return root / "podman"
         case "lxd":    return root / "lxd"
+        case "fc":     return root / "fc"      # phase 7 microVMs
         case "control-pane": return root / "control-pane"
         case "docker": return root  # docker has no on-disk state; placeholder
     raise ValueError(f"unknown backend: {backend}")
@@ -64,7 +65,7 @@ def state_subdir(backend: BackendName) -> Path:
 # Map of backend → directory whose changes mean "this backend's inventory
 # may have shifted".  Docker is intentionally absent (label-only).
 _FS_BACKENDS: dict[BackendName, Path] = {
-    b: state_subdir(b) for b in ("chroot", "vm", "podman", "lxd")
+    b: state_subdir(b) for b in ("chroot", "vm", "podman", "lxd", "fc")
 }
 
 
