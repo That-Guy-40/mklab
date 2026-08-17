@@ -199,14 +199,19 @@ def test_plan_down_stops_each_microvm_and_destroys_none(microvm_toml: Path) -> N
     """
     plans = [p for p in plan_down(microvm_toml) if p.slot == "fc"]
     real = [p for p in plans if p.argv[0] != "echo"]
-    assert [p.argv[1:] for p in real] == [
-        ["stop", "api2", "--force"],   # reverse of file order
-        ["stop", "api1", "--force"],
-    ]
+    # THE NAMED ASSERTION GOES FIRST.  It did not, at first, and the shape of that
+    # mistake is the one this repo writes down: injecting `destroy` fired the argv
+    # equality below instead, so the failure printed a list diff and the sentence
+    # explaining WHY it matters never ran.  One assertion, one specific message —
+    # and the most specific one has to be the one that bites.
     assert not any("destroy" in p.argv for p in real), (
         "REGRESSION: tear-down destroyed a microVM — its rootfs copy is persistent "
         "state, like a chroot or a vm, and destroy is a deliberate manual act"
     )
+    assert [p.argv[1:] for p in real] == [
+        ["stop", "api2", "--force"],   # reverse of file order
+        ["stop", "api1", "--force"],
+    ]
     # ...and the operator is told the state is still there, rather than guessing.
     note = next(p for p in plans if p.argv[0] == "echo")
     assert "persists" in note.argv[1] and "destroy" in note.argv[1]
