@@ -22,6 +22,7 @@ import pytest
 
 from lab_tui.apply import (
     ACTIONABLE,
+    held_for_want_of_a_verb,  # noqa: F401  (imported so a rename breaks here too)
     FC_FLAGS,
     apply,
     report,
@@ -225,6 +226,54 @@ def test_apply_holds_a_drifted_instance_instead_of_recreating_it(tmp_path: Path)
     assert not r.converged, "a held row must not read as convergence"
 
 
+def test_a_stopped_container_is_held_because_no_driver_can_start_one(
+    spec: Path,
+) -> None:
+    """Measured live, and it is why `held_for_want_of_a_verb` exists.
+
+    `up` on the three container engines is create-if-absent, not converge: against
+    a stopped container `lab-podman.sh up` logs *"container exists … leaving
+    as-is"* and returns 0, and none of docker/podman/lxd has a `start` verb at all.
+    The two dishonest options are to call it converged, or to reach around the
+    driver to `podman start` — the second breaking the seam discipline decision E
+    settled, and both hiding the real gap, which is in the driver.
+    """
+    live = _res(backend="docker", name="lab-mc-web", svc="web", lab="mc",
+                status="stopped", extra={"state": "exited"})
+    docker = ConvergingEngine("docker", [live])
+    log: list[list[str]] = []
+    r = apply(spec, max_passes=2, backend_for=_engines(
+        chroot=ConvergingEngine("chroot"), fc=ConvergingEngine("fc"), docker=docker,
+    ), run=_runner({"docker": docker}, log))
+    assert any(d.slot == "docker" and d.kind == "stopped" for d in r.held), (
+        "REGRESSION: a stopped container was treated as fixable — `up` would log "
+        "'leaving as-is', return 0, and the loop would call that progress"
+    )
+    assert not r.converged
+    assert not any(a[1] == "start" and "lab-docker.sh" in a[0] for a in r.issued)
+
+
+def test_a_stopped_vm_or_microvm_is_NOT_held_because_those_drivers_have_start(
+    tmp_path: Path,
+) -> None:
+    """The control for the row above.
+
+    Holding every stopped row would satisfy that test and break the feature: the
+    two drivers that DO have a per-instance `start` must still be issued at.
+    """
+    p = tmp_path / "fc.toml"
+    p.write_text(
+        '[lab]\nname = "mc"\n\n[[microvm]]\nname = "api1"\n'
+        'kernel = "/k"\nrootfs = "/r"\ntap = "t"\n'
+    )
+    fc = ConvergingEngine("fc", [_res(
+        backend="fc", name="api1", lab="mc", status="stopped",
+        extra={"tap": "t", "kernel": "/k"})])
+    r = apply(p, backend_for=_engines(fc=fc), run=_runner({"fc": fc}, []))
+    assert r.converged and [a[1] for a in r.issued] == ["start"]
+    assert r.held == []
+
+
 def test_the_actionable_set_is_exactly_two_kinds() -> None:
     """Guards the refusals as a set rather than one test per kind.
 
@@ -298,12 +347,16 @@ def test_fc_is_issued_per_instance_and_the_others_once_per_slot(spec: Path) -> N
     argvs = transitions(deltas, spec, parsed)
     verbs = [(Path(a[0]).name, a[1]) for a in argvs]
     assert verbs == [
-        ("lab-chroot.sh", "up"),        # dependency order, not alphabetical
+        # `create`, not `up` — measured: lab-chroot.sh has never had an `up` verb
+        # (it answers it exactly as it answers a bogus one).  Dependency order,
+        # not alphabetical.
+        ("lab-chroot.sh", "create"),
         ("lab-fc.sh", "create"),
         ("lab-fc.sh", "start"),
-        ("lab-docker.sh", "up"),
+        ("lab-docker.sh", "up"),        # docker/podman/lxd are the three that DO
     ]
-    create = next(a for a in argvs if a[1] == "create")
+    # TWO creates now — chroot's and fc's — so select by script, not by verb.
+    create = next(a for a in argvs if a[1] == "create" and "lab-fc.sh" in a[0])
     assert "--name" in create and "api1" in create
     assert "--memory" in create and "512M" in create
     assert "--lab" in create and "mc" in create

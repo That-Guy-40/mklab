@@ -110,6 +110,8 @@ class LXDBackend(BackendRunner):
                 type="instance" if inst_type == "container" else "vm",
                 status=_lxd_status(row.get("status", "")),
                 extra={
+                    # The RAW engine state — see docker.py for why it is kept.
+                    "state": row.get("status", ""),
                     "engine": engine,
                     "project": project,
                     "instance_type": inst_type,

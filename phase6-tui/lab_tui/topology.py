@@ -14,14 +14,21 @@ output):
   3. Phase 7 (microvms)           — no deps; grouped with vm, see _UP_ORDER
   4. Phase 3, 4, 5  (parallel)    — no inter-phase deps
 
-PHASE 7 DOES NOT SPEAK `up --config`, AND THIS FILE DOES NOT PRETEND IT DOES.
+ONLY THREE OF THE SIX DRIVERS HAVE AN `up` VERB.
 -----------------------------------------------------------------------------
-Every other slot's argv is literally `<script> up --config <toml>`, and it was
-tempting to add `fc` to the table and be done in three lines.  `lab-fc.sh` has
-no `up` verb and no `down --lab`: its verbs are `create` (whole config),
-`start`/`stop`/`destroy`/`inspect` (one instance), and it dies with
-`unknown verb: up` — so those three lines would have produced a plan that
-renders perfectly in the plan pane and fails on execution, for every lab.
+`lab-fc.sh` has no `up` and no `down --lab`: its verbs are `create` (whole
+config) and `start`/`stop`/`destroy`/`inspect` (one instance).  It was tempting
+to add `fc` to the table like the others and be done in three lines; that would
+have produced a plan that renders perfectly in the plan pane and dies with
+`unknown verb: up` on execution, for every lab.
+
+**And phase 7 turned out not to be the exception.**  `lab-chroot.sh` and
+`lab-vm.sh` have no `up` either — they create with `create --config` (each
+iterating every block in the file) and phase 2 runs with `start <name>`.  This
+module emitted `up` for both from the beginning, so the two slots the dependency
+order below calls STRICT PREREQUISITES failed at their first step in every
+cross-phase bring-up.  Found by generalising the fc verb check to all six slots
+(`tests/test_topology.py`), which is now the durable guard.
 
 That is the micro-cloud plan's decision E, shape **(b)**, arriving where it was
 predicted to: *per-engine drivers, a common contract, engine-specific verbs; the
@@ -233,6 +240,47 @@ _UP_ORDER: tuple[PhaseSlot, ...] = ("chroot", "vm", "fc", "docker", "podman", "l
 _DOWN_ORDER: tuple[PhaseSlot, ...] = tuple(reversed(_UP_ORDER))
 
 
+#: Slots whose driver has NO `up` verb.  Measured, not read off the usage text:
+#: each verb was run and its reply compared byte-for-byte against the reply to a
+#: deliberately bogus verb — if a driver answers `up` exactly as it answers
+#: `zzznotaverb`, it does not have `up`.
+#:
+#: `plan_up` emitted `lab-chroot.sh up --config …` and `lab-vm.sh up --config …`
+#: from the beginning.  Neither has ever existed: both fall through to usage and
+#: exit 1.  These are the two slots the module docstring calls STRICT
+#: PREREQUISITES, so every cross-phase bring-up through this screen failed at its
+#: first step — the repo's own recorded bug class, *"the CLI verbs a doc cites all
+#: exist" while its first command had never worked at any commit*.
+#:
+#: They are not exceptions to a rule.  THREE of the six drivers create with
+#: `create` and run with `start`; only docker, podman and lxd have `up`.
+_NO_UP_VERB: frozenset[PhaseSlot] = frozenset({"chroot", "vm", "fc"})
+
+#: Slots with a per-instance `start`.  Container engines have none — their `up` is
+#: create-if-absent and logs *"container exists … leaving as-is"* over a stopped
+#: one, so nothing this dispatcher can call will start it.  See `apply.py`.
+_HAS_START_VERB: frozenset[PhaseSlot] = frozenset({"vm", "fc"})
+
+
+def instance_names(parsed: dict, block: str, toml_path: Path) -> list[str]:
+    """Declared names for a `[[<block>]]` array, refused early if unusable."""
+    blocks = parsed.get(block) or []
+    if not isinstance(blocks, list) or not all(isinstance(b, dict) for b in blocks):
+        raise ValueError(
+            f"{toml_path}: {block} must be an array of tables — write [[{block}]]"
+        )
+    names = []
+    for i, b in enumerate(blocks, start=1):
+        name = b.get("name")
+        if not name or not isinstance(name, str):
+            raise ValueError(
+                f"{toml_path}: [[{block}]] #{i} has no `name` — the driver addresses "
+                "it by name for start/stop/destroy"
+            )
+        names.append(name)
+    return names
+
+
 def _fc_up_plans(parsed: dict, toml_path: Path) -> list[PhasePlan]:
     """`create --config` once, then `start` per instance — Phase 7's own verbs."""
     script = str(_script_for("fc"))
@@ -269,9 +317,27 @@ def plan_up(toml_path: Path) -> list[PhasePlan]:
         if slot == "fc":
             plans.extend(_fc_up_plans(parsed, toml_path))
             continue
+        script = str(_script_for(slot))
+        if slot in _NO_UP_VERB:
+            # `create --config` — the verb this driver actually has.  Both
+            # `lab-chroot.sh` and `lab-vm.sh` iterate EVERY block in the file
+            # (`create_one` per spec), so one invocation is still the whole slot.
+            plans.append(PhasePlan(
+                slot=slot,
+                argv=[script, "create", "--config", str(toml_path)],
+                description=f"phase {slot}: create --config {toml_path.name}",
+            ))
+            if slot in _HAS_START_VERB:
+                # A VM is created stopped; `up` for this slot means it is running.
+                plans += [
+                    PhasePlan(slot=slot, argv=[script, "start", n],
+                              description=f"phase {slot}: start {n}")
+                    for n in instance_names(parsed, slot, toml_path)
+                ]
+            continue
         plans.append(PhasePlan(
             slot=slot,
-            argv=[str(_script_for(slot)), "up", "--config", str(toml_path)],
+            argv=[script, "up", "--config", str(toml_path)],
             description=f"phase {slot}: up --config {toml_path.name}",
         ))
     return plans

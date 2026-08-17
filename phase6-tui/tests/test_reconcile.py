@@ -108,6 +108,55 @@ def test_an_unreachable_engine_is_unknown_not_absent(spec: Path) -> None:
     assert exit_code(deltas) == INCOMPLETE
 
 
+@pytest.mark.parametrize("raw", ["restarting", "stopping", "removing"])
+def test_a_state_the_backend_cannot_map_is_unknown_not_stopped(
+    spec: Path, raw: str,
+) -> None:
+    """The SECOND way not to know, and it was missed the first time round.
+
+    `_docker_status` / `_podman_status` / `_lxd_status` collapse every state outside
+    their table to `status="unknown"`.  This module used to read that as `stopped`
+    — *with `would: start`* — so a crash-looping container was described confidently
+    as merely off, and `apply` (which acts on `stopped`) would have kept starting it.
+
+    Measured against the real code before the fix:
+        kind='stopped'  detail='present but unknown'  would='start'
+
+    "I do not know what state this is in" is an UNKNOWN wherever it comes from.
+    Only "the engine says it is not running" is `stopped`.
+    """
+    live = _res(backend="docker", name="lab-mc-web", svc="web", lab="mc",
+                status="unknown", extra={"state": raw})
+    deltas = diff(spec, backend_for=_fixed({
+        "chroot": FakeBackend(), "fc": FakeBackend(), "docker": FakeBackend([live]),
+    }))
+    d = next(x for x in deltas if x.slot == "docker")
+    assert d.kind == "unknown", (
+        "REGRESSION: a state the backend could not map was reported as a confident "
+        "`stopped`, and apply acts on stopped"
+    )
+    assert d.would is None
+    # A report that cannot name what it saw is a shrug, not a finding.
+    assert raw in d.detail
+    assert exit_code(deltas) == INCOMPLETE
+
+
+def test_a_mapped_not_running_state_is_still_stopped(spec: Path) -> None:
+    """The control for the row above.
+
+    Without it, routing EVERY non-running status to `unknown` would satisfy the
+    assertions there — and `apply` would then never start anything, which is the
+    same feature broken in the opposite direction.
+    """
+    live = _res(backend="docker", name="lab-mc-web", svc="web", lab="mc",
+                status="stopped", extra={"state": "exited"})
+    deltas = diff(spec, backend_for=_fixed({
+        "chroot": FakeBackend(), "fc": FakeBackend(), "docker": FakeBackend([live]),
+    }))
+    d = next(x for x in deltas if x.slot == "docker")
+    assert d.kind == "stopped" and d.would == "start"
+
+
 def test_a_reachable_engine_with_nothing_running_is_absent(spec: Path) -> None:
     """The positive control for the row above.
 

@@ -91,6 +91,11 @@ class DockerBackend(BackendRunner):
                 type="container",
                 status=_docker_status(row.get("State", "")),
                 extra={
+                    # The RAW engine state, kept beside the mapped one: `_docker_status`
+                    # collapses anything it does not know to "unknown", and a report that
+                    # cannot name what it saw ("restarting"? "removing"?) is a shrug
+                    # rather than a finding.  reconcile.py prints it.
+                    "state": row.get("State", ""),
                     "image": row.get("Image", ""),
                     "id": row.get("ID", ""),
                     "ports": row.get("Ports", ""),

@@ -73,6 +73,24 @@ which can be picked up tonight and which cannot be picked up at all here.
 
 ### Not blocked — buildable now
 
+- [ ] **A.3** — **Phases 3, 4 and 5 have no per-service `start` verb**, and their
+      `up` is *create-if-absent, not converge*. Found 2026-08-17 by
+      [`phase6-tui/tests/test_apply_live.py`](phase6-tui/tests/test_apply_live.py)
+      driving rootless podman for real: against a **stopped** container
+      `lab-podman.sh up` logs `[warn] service 'web' container exists (…); leaving
+      as-is` and returns **0**. All three drivers do this
+      (`phase3-docker/lab-docker.sh:1021`, `phase4-podman/lab-podman.sh:800`,
+      `phase5-lxd/lab-lxd.sh:1126`), and none has a `start` verb at all — so a
+      stopped container is a state **no phase-6 verb can repair**.
+      [`apply.py`](phase6-tui/lab_tui/apply.py) currently **holds** it by name
+      rather than reaching around the driver to `podman start` (which would break
+      the seam discipline decision E settled) or calling it converged. The fix is
+      in the drivers: a per-service `start`, symmetrical with phase 2's and phase
+      7's. Until then the gap is honest but real — `apply` cannot bring a stopped
+      container back up.
+      *Why it went unseen: every earlier assertion about `apply` ran against
+      injected backends, and a fake converges because the fixture says so.*
+
 - [x] **A.1** ✅ **DONE 2026-08-15** — the cross-node CHAOS ROWS for
       [`examples/nested-calico-sandbox/`](examples/nested-calico-sandbox/README.md#the-cross-node-rows--f6-with-a-witness):
       `cross-node-chaos.sh` + `guest-xprobe.sh`, graded by `tests/test-cross-node-chaos.sh`,

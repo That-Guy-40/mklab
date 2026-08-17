@@ -87,6 +87,8 @@ class PodmanBackend(BackendRunner):
                 type="container",
                 status=_podman_status(row.get("State", "")),
                 extra={
+                    # The RAW engine state — see docker.py for why it is kept.
+                    "state": row.get("State", ""),
                     "image": row.get("Image", ""),
                     "id": row.get("Id", ""),
                     "pod": labels.get("lab-create.pod"),
