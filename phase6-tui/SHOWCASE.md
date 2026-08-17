@@ -90,7 +90,10 @@ every tick" is structurally avoided.
 `t` from the browser, or launch with `--topology <path>` to pre-load.
 The screen parses any `lab.toml` and renders a dispatch plan:
 
-- **Up order:** `chroot → vm → fc → docker → podman → lxd`. Phases 1 and
+- **Up order:** `chroot → vm → fc → docker → podman → lxd`, each in its
+  own driver's verbs (`create --config` for chroot/vm/fc, `up --config`
+  for the three container engines, plus `start <name>` where the driver
+  has one). Phases 1 and
   2 go first because Phase 4/5 may `from_chroot` Phase 1's output and
   Phase 5 may `from_qcow2` Phase 2's. Phase 7 (`fc`) has no dependents;
   it sits beside `vm` because it is the same kind of thing — a machine
@@ -250,6 +253,7 @@ refusal is a decision, not an unimplemented feature:
 | `undeclared` | **held, and no flag changes it** | deleting what nobody declared is the half of a reconcile loop that destroys work. On this repo's ladder a stray is at worst DEGRADED; a wrong deletion is unrecoverable |
 | `unknown` | **held** | issuing `create` against a row nobody could read is exactly the duplicate-creation bug the unknown/absent distinction exists to prevent — and it would do it while reporting progress |
 | `drifted` | **held** | the repair is destroy-and-recreate, which deletes a per-instance rootfs copy |
+| `stopped`, on docker/podman/lxd | **held** | measured live: `up` is create-if-absent, not converge — it logs *"container exists … leaving as-is"* and returns 0 — and none of the three has a `start` verb. The gap is in the driver, and papering over it here would hide that |
 
 **Minimum transitions, per engine.** Five drivers are declarative, so one
 `up --config` converges every row they own. Phase 7 is not — it has no
@@ -303,17 +307,28 @@ find which phases the file invokes (`[[chroot]]` → Phase 1, `[[vm]]`
 → Phase 2, `[[service]] engine=docker|podman` → Phase 3/4,
 `[[instance]]`/`[[project]]`/`[[profile]]` → Phase 5, `[[microvm]]` →
 Phase 7), and emits a list of `PhasePlan(slot, argv, description)`.
-For five of the six slots the argv is literally `<phase-script> up
---config <toml>` — Phase 6 doesn't re-implement the cross-phase shape;
-it just calls the scripts in order.
+**Only three of the six drivers have an `up` verb.** Docker, podman and
+lxd do. Chroot, vm and fc create with `create --config` (each iterating
+every block in the file) and, where they have run state, run with
+`start <name>`.
 
-**Phase 7 is the exception, and it is the interesting one.** `lab-fc.sh`
-has no `up` verb and no `down --lab`: it speaks `create` (whole config)
-and `start`/`stop`/`destroy`/`inspect` (one instance). Adding `fc` to
-the table like the others would have produced a plan that renders
-perfectly in the plan pane and dies with `unknown verb: up` on
-execution, for every lab. So the `fc` slot expands to the verbs that
-driver actually has:
+That was not the original claim here, and the correction is the point.
+This page said *"five of the six"* and the planner emitted
+`lab-chroot.sh up --config …` and `lab-vm.sh up --config …` — **verbs
+neither driver has ever had.** Both fall through to usage and exit 1, and
+those are the two slots the dependency order calls *strict
+prerequisites*, so every cross-phase bring-up through this screen failed
+at its first step. It was found by generalising the check that had been
+written for `fc` alone to all six slots — the repo's own recorded bug
+class: *the CLI verbs a doc cites all exist, while its first command had
+never worked at any commit.*
+
+The verb probe is driver-agnostic, because each driver words its refusal
+differently (`lab-fc.sh` says `unknown verb: up`; the other two just
+print usage). What is universal: **a driver answers a verb it does not
+have exactly as it answers a verb nobody has.** So run both and compare.
+
+So each slot expands to the verbs its driver actually has:
 
 ```
 Up order:

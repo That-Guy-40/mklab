@@ -110,13 +110,25 @@ def test_an_explicit_engine_still_routes_to_exactly_one(tmp_path: Path) -> None:
 
 def test_plan_up_orders_chroot_first(sample_toml: Path) -> None:
     plans = plan_up(sample_toml)
-    slots = [p.slot for p in plans]
-    assert slots == ["chroot", "vm", "docker", "podman", "lxd"]
-    # Each plan's argv should call the right script with up --config.
+    assert [p.slot for p in plans] == [
+        "chroot", "vm", "vm", "docker", "podman", "lxd",
+    ]
+    # This used to assert `argv[1] == "up"` for EVERY plan, which is how
+    # `lab-chroot.sh up` and `lab-vm.sh up` — verbs neither driver has ever had —
+    # went unnoticed: the test asserted the shape the planner emitted rather than
+    # the vocabulary the drivers speak.  Only three of the six have `up`.
+    assert [(Path(p.argv[0]).name, p.argv[1]) for p in plans] == [
+        ("lab-chroot.sh", "create"),
+        ("lab-vm.sh", "create"),
+        ("lab-vm.sh", "start"),      # a VM is created stopped
+        ("lab-docker.sh", "up"),
+        ("lab-podman.sh", "up"),
+        ("lab-lxd.sh", "up"),
+    ]
     for p in plans:
-        assert p.argv[1] == "up"
-        assert p.argv[2] == "--config"
-        assert p.argv[3] == str(sample_toml)
+        if p.argv[1] in {"up", "create"}:
+            assert p.argv[2] == "--config"
+            assert p.argv[3] == str(sample_toml)
 
 
 def test_plan_down_reverses_order(sample_toml: Path) -> None:
@@ -218,7 +230,7 @@ def test_fc_sits_between_vm_and_the_container_engines(tmp_path: Path) -> None:
         '\n[[instance]]\nname = "c1"\nengine = "lxd"\n'
     )
     slots = [pl.slot for pl in plan_up(p)]
-    assert slots == ["chroot", "vm", "fc", "fc", "fc", "docker", "lxd"]
+    assert slots == ["chroot", "vm", "vm", "fc", "fc", "fc", "docker", "lxd"]
     # ...and the reversal puts the cattle down first and the machines last.
     down = [pl.slot for pl in plan_down(p)]
     assert down.index("lxd") < down.index("docker") < down.index("fc") < down.index("vm")
@@ -264,6 +276,82 @@ def test_fc_name_regex_is_the_drivers_own(tmp_path: Path) -> None:
     assert m.group(1) == FC_NAME_RE.pattern, (
         f"lab-fc.sh says {m.group(1)!r}, topology.py says {FC_NAME_RE.pattern!r}"
     )
+
+
+def _verb_is_missing(script: Path, verb: str, tmp_path: Path) -> bool:
+    """Does this driver have this verb?  Asked of the driver, driver-agnostically.
+
+    Each driver words its refusal differently — `lab-fc.sh` says `unknown verb: up`,
+    while `lab-chroot.sh` and `lab-vm.sh` just fall through to usage with no
+    distinctive string at all — so there is no one message to grep for.  What IS
+    universal: **a driver answers a verb it does not have exactly as it answers a
+    verb nobody has.**  So run both and compare.
+
+    The verb name is normalised out with WORD BOUNDARIES, which matters: a first
+    version used `s/up/VERB/g`, which also rewrote "group" and "setup" inside the
+    usage text, made the two outputs differ, and reported `up` as *present* on the
+    two drivers that have never had it.  A cheap normalisation standing in for the
+    real comparison — the mistake this repo keeps re-finding.
+    """
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path),
+           "LAB_STATE_DIR": str(tmp_path / "state")}
+
+    def reply(v: str) -> str:
+        cp = subprocess.run(["bash", str(script), v], capture_output=True,
+                            text=True, timeout=60, env=env)
+        return re.sub(rf"\b{re.escape(v)}\b", "VERB", cp.stdout + cp.stderr)
+
+    return reply(verb) == reply("zzznotaverb")
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="no bash")
+def test_every_verb_every_slot_emits_is_a_verb_that_driver_has(tmp_path: Path) -> None:
+    """The check that was missing, and the three defects it found.
+
+    The fc slot got this test when it was built; the other five never had one — so
+    `plan_up` emitted `lab-chroot.sh up --config …` and `lab-vm.sh up --config …`
+    from the beginning, and NEITHER DRIVER HAS EVER HAD AN `up` VERB.  Both fall
+    through to usage and exit 1.  Those are the two slots the module docstring
+    calls strict prerequisites, so every cross-phase bring-up through this screen
+    failed at its first step.
+
+    This covers every slot, both directions, so the next driver whose vocabulary
+    differs is caught by a test rather than by a lab that will not come up.
+    """
+    p = tmp_path / "all.toml"
+    p.write_text(
+        '[lab]\nname = "mc"\n\n[[chroot]]\nname = "base"\n\n[[vm]]\nname = "edge"\n\n'
+        '[[microvm]]\nname = "api1"\nkernel = "/k"\nrootfs = "/r"\ntap = "t"\n\n'
+        '[[service]]\nname = "web"\nengine = "docker"\n\n'
+        '[[service]]\nname = "cache"\nengine = "podman"\n\n'
+        '[[instance]]\nname = "c1"\nengine = "lxd"\n'
+    )
+    pairs = {
+        (plan.argv[0], plan.argv[1])
+        for plan in plan_up(p) + plan_down(p)
+        if plan.argv[0] != "echo"
+    }
+    assert len(pairs) >= 6, f"only probed {pairs} — the fixture stopped covering slots"
+    missing = [
+        f"{Path(script).name} has no `{verb}` verb"
+        for script, verb in sorted(pairs)
+        if _verb_is_missing(Path(script), verb, tmp_path)
+    ]
+    assert not missing, "REGRESSION: the planner emits verbs that do not exist: " + \
+        "; ".join(missing)
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="no bash")
+def test_the_verb_probe_can_actually_detect_a_missing_verb(tmp_path: Path) -> None:
+    """The control for the probe above — without it, a probe that always returned
+    False would make the whole sweep vacuously green.
+
+    `up` on `lab-fc.sh` is the known-missing case (that is why the fc slot emits
+    `create`/`start`), and `list` is the known-present one.
+    """
+    fc = phase_script("phase7-firecracker/lab-fc.sh")
+    assert _verb_is_missing(fc, "up", tmp_path), "the probe cannot see a missing verb"
+    assert not _verb_is_missing(fc, "list", tmp_path), "the probe calls a real verb missing"
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="no bash")

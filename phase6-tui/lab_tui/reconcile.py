@@ -32,6 +32,14 @@ a difference and is certainly not convergence — it is *I could not look*.  Sam
 for `undeclared`: a backend that cannot be queried cannot tell you about strays,
 so it does not get to say there are none.
 
+There is a SECOND way not to know, and it was missed the first time round: the
+engine answers, but with a state the backend does not map.  All three container
+backends collapse anything outside their table (`restarting`, `stopping`,
+`removing`) to `status="unknown"`, and this module used to read that as `stopped`
+— *with `would: start`* — so a crash-looping container was described confidently
+as merely off.  "I do not know what state this is in" is an UNKNOWN wherever it
+comes from; only "the engine says it is not running" is `stopped`.
+
 WHAT THIS DIFF CANNOT SEE, STATED SO NOBODY INFERS IT
 -----------------------------------------------------
 `converged` means **it exists and it is up** — not that its contents match the
@@ -224,6 +232,26 @@ def diff(
                 deltas.append(Delta(slot, n, "drifted", drift))
             elif r.status in _UP_STATUS[slot]:
                 deltas.append(Delta(slot, n, "converged", f"present and {r.status}"))
+            elif r.status == "unknown":
+                # THE ENGINE ANSWERED — WITH SOMETHING THIS BACKEND DOES NOT MAP.
+                #
+                # A different failure from "the engine could not be asked", and the
+                # one that was missing: `_docker_status`/`_podman_status`/`_lxd_status`
+                # collapse every state outside their table (`restarting`, `stopping`,
+                # `removing`) to "unknown".  This branch used to fall through to the
+                # `else` below and report `stopped` — with `would: start` — so a
+                # crash-looping container was described confidently as merely off,
+                # and `apply` would have kept starting it.
+                #
+                # "I do not know what state this is in" is an UNKNOWN wherever it
+                # comes from.  The raw state is named because a report that cannot
+                # say WHAT it saw is a shrug rather than a finding.
+                raw = r.extra.get("state") or "?"
+                deltas.append(Delta(
+                    slot, n, "unknown",
+                    f"present, but the engine reported state {raw!r}, which this "
+                    "backend does not map — so its run state was not established",
+                ))
             else:
                 deltas.append(Delta(slot, n, "stopped", f"present but {r.status}"))
         # Strays are REPORTED and never actioned.  Deleting something the operator

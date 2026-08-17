@@ -38,11 +38,17 @@ the rest.
 
 MINIMUM TRANSITIONS, PER ENGINE (decision E, shape (b), again)
 ---------------------------------------------------------------
-Five drivers are declarative: `up --config <toml>` converges every row they own,
-so one invocation per slot is the minimum.  Phase 7 is not — it has no `up`, and
-`create --config` refuses the whole file if a single instance already exists.  So
-fc is issued **per instance**, with the flags built from that block: exactly what
-`tests/test-cli-vs-config-parity.sh` exists to guarantee is possible.
+This section used to begin *"five drivers are declarative"*.  **Three are.**  Only
+docker, podman and lxd have an `up` verb at all; chroot, vm and fc create with
+`create` and (where they have run state) run with `start`.  That was measured by
+asking each driver — see `_NO_UP_VERB` in topology.py — after `plan_up` was found
+to have been emitting `lab-chroot.sh up` and `lab-vm.sh up` since the beginning.
+
+And `up` is **create-if-absent, not converge**: against a stopped container the
+three drivers that have it log *"container exists … leaving as-is"* and return 0,
+and none of them has a `start`.  So a stopped container is a state this control
+plane cannot repair through the driver, and it is held rather than papered over —
+see `held_for_want_of_a_verb`.
 """
 
 from __future__ import annotations
@@ -56,6 +62,8 @@ from pathlib import Path
 from lab_tui.backends.base import BackendRunner, phase_script
 from lab_tui.reconcile import Delta, diff, render
 from lab_tui.topology import (
+    _HAS_START_VERB,
+    _NO_UP_VERB,
     _script_for,
     _UP_ORDER,
     PhaseSlot,
@@ -132,11 +140,11 @@ def transitions(deltas: Sequence[Delta], toml_path: Path, parsed: dict) -> list[
         rows = [d for d in todo if d.slot == slot]
         if not rows:
             continue
+        script = str(_script_for(slot))
         if slot == "fc":
             # Per instance: `create --config` would refuse the whole file the moment
             # one instance already exists, which is exactly the mixed state a
             # reconcile loop is FOR.
-            script = str(phase_script("phase7-firecracker/lab-fc.sh"))
             for d in rows:
                 if d.kind == "absent" and d.name in fc_blocks:
                     argvs.append(_fc_create_argv(fc_blocks[d.name], lab))
@@ -144,9 +152,35 @@ def transitions(deltas: Sequence[Delta], toml_path: Path, parsed: dict) -> list[
                 elif d.kind == "stopped":
                     argvs.append([script, "start", d.name])
             continue
-        # The other five are declarative: one `up` converges every row they own.
-        argvs.append([str(_script_for(slot)), "up", "--config", str(toml_path)])
+        create_verb = "create" if slot in _NO_UP_VERB else "up"
+        if any(d.kind == "absent" for d in rows):
+            argvs.append([script, create_verb, "--config", str(toml_path)])
+        if slot in _HAS_START_VERB:
+            argvs += [[script, "start", d.name] for d in rows
+                      if d.kind in ("absent", "stopped")]
     return argvs
+
+
+def held_for_want_of_a_verb(deltas: Sequence[Delta]) -> list[Delta]:
+    """Actionable rows whose driver offers nothing that would fix them.
+
+    MEASURED, and it is the finding that made this function exist: `up` on the
+    three container engines is **create-if-absent, not converge**.  Against a
+    stopped container `lab-podman.sh up` logs
+
+        [warn] service 'web' container exists (lab-…-web); leaving as-is
+
+    and returns 0.  None of docker/podman/lxd has a `start` verb at all.  So a
+    stopped container is a state this control plane cannot repair through the
+    driver, and the two dishonest options are to report it converged or to reach
+    around the driver to `podman start` — the second breaking the seam discipline
+    that decision E settled, and both hiding the real gap, which is in the driver.
+
+    So it is HELD, by name, with the reason.  `apply` then reports NOT converged
+    instead of looping `up` at something that will keep saying "leaving as-is".
+    """
+    return [d for d in deltas
+            if d.kind == "stopped" and d.slot not in _HAS_START_VERB]
 
 
 def _default_run(argv: list[str]) -> int:
@@ -173,6 +207,7 @@ def apply(
         result.final = list(deltas)
         result.held = [d for d in deltas
                        if d.kind not in ACTIONABLE and d.kind != "converged"]
+        result.held += held_for_want_of_a_verb(deltas)
         argvs = transitions(deltas, toml_path, parsed)
         if not argvs:
             # Nothing to do.  This is the no-op-on-pass-two property, and it holds
@@ -204,8 +239,9 @@ def apply(
     if not result.failed and not result.stuck:
         # Fell out of the loop having used every pass.
         result.final = diff(toml_path, backend_for=backend_for)
-        result.held = [d for d in result.final
-                       if d.kind not in ACTIONABLE and d.kind != "converged"]
+        result.held = ([d for d in result.final
+                        if d.kind not in ACTIONABLE and d.kind != "converged"]
+                       + held_for_want_of_a_verb(result.final))
         result.converged = (
             not result.held
             and not [d for d in result.final if d.kind in ACTIONABLE]
