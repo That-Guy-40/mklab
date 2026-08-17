@@ -85,19 +85,24 @@ Each yield names the backend whose surface changed; the browser
 re-runs only that backend's `list_resources()`. "Redraw everything
 every tick" is structurally avoided.
 
-### The topology screen — bring-up + tear-down across all 5 phases
+### The topology screen — bring-up + tear-down across every phase driver
 
 `t` from the browser, or launch with `--topology <path>` to pre-load.
 The screen parses any `lab.toml` and renders a dispatch plan:
 
-- **Up order:** `chroot → vm → docker → podman → lxd`. Phases 1 and 2
-  go first because Phase 4/5 may `from_chroot` Phase 1's output and
-  Phase 5 may `from_qcow2` Phase 2's. Phases 3/4/5 have no inter-phase
-  deps.
+- **Up order:** `chroot → vm → fc → docker → podman → lxd`. Phases 1 and
+  2 go first because Phase 4/5 may `from_chroot` Phase 1's output and
+  Phase 5 may `from_qcow2` Phase 2's. Phase 7 (`fc`) has no dependents;
+  it sits beside `vm` because it is the same kind of thing — a machine
+  whose disk outlives the lab. Phases 3/4/5 have no inter-phase deps.
 - **Down order:** reverse — but **chroot and vm entries are skipped**,
   since those typically persist across lab tear-down (you'll reuse
   them). The plan pane surfaces this with
-  `phase chroot: skipped (chroots persist)`.
+  `phase chroot: skipped (chroots persist)`. Phase 7 is the middle
+  case: its microVMs are **stopped** (`stop <name> --force`, a verb that
+  polls until the process is gone rather than trusting `kill(2)`) and
+  never destroyed, because `destroy` would delete a per-instance rootfs
+  copy — the same persistent state the two slots above refuse to reap.
 
 `u` runs bring-up; stdout streams into the output pane in real time,
 halting on the first non-zero exit. `d` routes through the confirm
@@ -187,10 +192,46 @@ side.
 `lab_tui/topology.py` parses the TOML, calls `phases_present()` to
 find which phases the file invokes (`[[chroot]]` → Phase 1, `[[vm]]`
 → Phase 2, `[[service]] engine=docker|podman` → Phase 3/4,
-`[[instance]]`/`[[project]]`/`[[profile]]` → Phase 5), and emits a
-list of `PhasePlan(slot, argv, description)`. The argv is literally
-`<phase-script> up --config <toml>` — Phase 6 doesn't re-implement
-the cross-phase shape; it just calls the scripts in order.
+`[[instance]]`/`[[project]]`/`[[profile]]` → Phase 5, `[[microvm]]` →
+Phase 7), and emits a list of `PhasePlan(slot, argv, description)`.
+For five of the six slots the argv is literally `<phase-script> up
+--config <toml>` — Phase 6 doesn't re-implement the cross-phase shape;
+it just calls the scripts in order.
+
+**Phase 7 is the exception, and it is the interesting one.** `lab-fc.sh`
+has no `up` verb and no `down --lab`: it speaks `create` (whole config)
+and `start`/`stop`/`destroy`/`inspect` (one instance). Adding `fc` to
+the table like the others would have produced a plan that renders
+perfectly in the plan pane and dies with `unknown verb: up` on
+execution, for every lab. So the `fc` slot expands to the verbs that
+driver actually has:
+
+```
+Up order:
+  → phase fc: create --config mc.toml (2 microvms; refuses if one already exists)
+  → phase fc: start api1
+  → phase fc: start api2
+Down order:
+  → phase fc: stop api2 --force
+  → phase fc: stop api1 --force
+  → phase fc: state persists (stopped, not destroyed)
+```
+
+That is [the micro-cloud plan's](../MICRO_CLOUD_LAB_PLAN.md) decision E,
+shape **(b)** — *per-engine drivers, a common contract, engine-specific
+verbs; the control plane speaks the intersection* — arriving exactly
+where it was predicted to. Two consequences are stated in the plan pane
+rather than left to be discovered: `create` refuses to overwrite an
+existing instance, so a **second** `up` on a live lab halts by design;
+and the tap is not the TUI's to make (`fabric.sh` owns tap lifecycle and
+needs root), so `create`'s preflight refuses by name if the fabric has
+not run.
+
+`tests/test_topology.py` asks the driver instead of reading it: every
+verb the planner emits is executed with no arguments and must fail for
+its *own* reason, never with `unknown verb` — with `up` as the negative
+control, since a driver that had lost its verb check would otherwise
+pass the positive half.
 
 ### State watcher — filesystem events vs polling
 
