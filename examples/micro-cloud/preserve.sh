@@ -161,11 +161,16 @@ portable_verb_of() {
     esac
 }
 
-# Tier 1. Only phase 2 has an engine-native snapshot verb in this repo today.
+# Tier 1. Phase 2 (qemu-img, offline) and phase 7 (Firecracker snapshot+memory, LIVE).
+# Phase 7 gained its verb on 2026-08-18; before that this row was '-' and the refusal
+# below named it as DEFERRED. `tests/test-preserve-capability-table.sh` is what makes that
+# a fact rather than a comment — it probes each driver and fails when this table and the
+# drivers disagree in EITHER direction, including a table that goes on refusing a tier the
+# repo has since grown.
 fast_verb_of() {
     case "$1" in
-        vm) printf 'snapshot' ;;
-        *)  printf '-' ;;
+        vm|fc) printf 'snapshot' ;;
+        *)     printf '-' ;;
     esac
 }
 
@@ -178,7 +183,7 @@ fast_mechanism_of() {
         docker) printf '`docker commit` — lab-docker.sh has no commit verb' ;;
         podman) printf '`podman commit` — lab-podman.sh has no commit verb' ;;
         lxd)    printf '`incus snapshot` (stateful) — lab-lxd.sh has no snapshot verb' ;;
-        fc)     printf 'Firecracker snapshot+memory (§5.8) — lab-fc.sh has no snapshot verb; it is DEFERRED, not absent by accident' ;;
+        fc)     printf 'Firecracker snapshot+memory — lab-fc.sh HAS this verb since 2026-08-18; if you are reading this refusal, the capability table and the driver have drifted apart' ;;
         *)      printf 'unknown' ;;
     esac
 }
