@@ -94,8 +94,11 @@ x86-64, the kernel it boots is x86-64, the firmware is not.
 [X86-64-FEASIBILITY.md](X86-64-FEASIBILITY.md) measures what a long-mode port
 would take: `arch/amd64` turns out to be a fossil that compiles **zero** files
 (its `ldscript` still says `elf32-i386`), while the Forth core is already
-64-bit clean — so the missing piece is only the entry layer. The same study
-finds the answer for OFW is **no**, and says why.
+64-bit clean — so the missing piece is only the entry layer. The study's
+Spike 0 has since been **run** (`patches/02`/`03`): the census found the
+fossil's real debt is 2008–2013 **API drift**, the only true 64-bit C errors
+are `context.c`'s eight, and revival-patch bug #1 sits in `arch/amd64` verbatim.
+The same study finds the answer for OFW is **no**, and says why.
 
 ## Quick start
 
@@ -131,7 +134,8 @@ proves the linuxboot **and** OFW labs' kept ROMs survive. No sudo anywhere.
 | [`RUNBOOK.md`](RUNBOOK.md) | guided tour: `0 >` semantics, device tree, the unix-process firmware, rival-vs-rival exercises |
 | [`MANUAL_TESTING.md`](MANUAL_TESTING.md) | exact commands + real success signatures |
 | [`PLAN.md`](PLAN.md) · POC-[1](POC-1-BUILD-BOX.md)/[2](POC-2-OK-PROMPT.md)/[3](POC-3-COREBOOT-PAYLOAD.md)/[4](POC-4-BOOT-LINUX.md)/[5](POC-5-PPC-SWAP-IN.md) | roadmap + blow-by-blow spike write-ups |
-| [`X86-64-FEASIBILITY.md`](X86-64-FEASIBILITY.md) | could this firmware run in **long mode**? — a measured study, not a spike: `arch/amd64` builds **zero** object files and **zero** images, but the Forth core is already 64-bit |
+| [`X86-64-FEASIBILITY.md`](X86-64-FEASIBILITY.md) | could this firmware run in **long mode**? — measured, audited, **Spike 0 run**: `arch/amd64` builds zero images even with the image types enabled, and after nine mechanical drift lines the only true 64-bit C errors left are `context.c`'s eight |
+| [`patches/02-amd64-spike0-build-on.patch`](patches/02-amd64-spike0-build-on.patch) · [`03-…-drift-fixes.patch`](patches/03-amd64-spike0-drift-fixes.patch) | the feasibility study's Spike 0, reproducible: a real amd64 `build.xml` + 64-bit ldscript, then the drift-only pass — **not** applied by `build-openbios.sh` (it applies `01` by name) |
 
 The pty driver this lab extracted,
 [`tools/drive-pty-repl.py`](../../tools/drive-pty-repl.py), is repo-wide
