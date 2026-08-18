@@ -381,6 +381,58 @@ runner behind a FastAPI route handler. The Pydantic `Resource` model is
 JSON-serialisable out of the box — exactly the foundation the now-shipped
 [`../phase6b-web/`](../phase6b-web/) web UI sits on.
 
+### The chaos matrix — a fault at every layer, graded
+
+```bash
+uv run pytest tests/test_control_plane_chaos.py -q     # prints the matrix
+```
+
+```
+  LAYER          GRADE     FAULT / WHAT HAPPENED
+  none           ABSORBED  no fault injected → converged
+  engine         ABSORBED  daemon unreachable → declined to act on rows it could not read
+  engine         ABSORBED  answers with an unmappable state → declined to act
+  derivation     ABSORBED  another lab's resource leaks into the answer → ignored it
+  driver         HALTED    exits 0 having done nothing → a pass repeated the previous diff
+  driver         HALTED    refuses with a non-zero exit → rc=7, argv in the report
+  artifact       HALTED    built from a different tap → held for the operator: drifted
+  control-plane  DEGRADED  interrupted between transitions → a second apply converged
+
+  4 ABSORBED, 1 DEGRADED, 3 HALTED
+  0 critical
+```
+
+This is slice 6's break-it row, and
+[§8.4a](../MICRO_CLOUD_LAB_PLAN.md#84a-decision-g--settled-2026-08-16-derive-the-facts-record-only-the-intent)
+changed what it *is*. It used to read *"make the registry disagree with
+reality"* — but with no registry of facts there is nothing to make
+disagree, so the fault moved down to what replaced it: **make the
+derivation answer for the wrong subject.**
+
+**It found a `LIED` on its first run.** `reconcile` passed `lab=` to each
+backend and then trusted the answer. Injecting a backend whose filter was
+absent — the shape of a label selector that is wrong, or that silently
+matched nothing — let another lab's `web` answer this lab's question, and
+`apply` reported **converged over a lab with nothing running**. Every
+`Resource` already carries the lab it belongs to, so the scope can be
+*checked* rather than trusted; that is the same "derive the fact, don't
+cache it" rule one level up — **don't accept a scoping you did not
+perform.** Reverting the fix puts the row straight back to `LIED`.
+
+The rules that make the matrix worth having are each a test, not a
+comment: a run passes at **zero criticals**; the intermediate rungs must
+be **occupied** (a matrix that never broke anything is all-ABSORBED and
+proves nothing); **every layer needs a scenario**, so an uncovered one
+fails by name; and there is a **no-fault control row**, without which
+"the harness reported failures" is indistinguishable from a system that
+never worked.
+
+The injector is a **real `BackendRunner`**, handed in through the same
+seam the real backends use, so every fault runs through the real gates
+rather than a special case inside the system under test — and a test
+asserts it is *not* in `ALL_BACKENDS`, because an injector the browser
+pane could pick up is a hazard rather than a harness.
+
 ## The cross-phase showcase
 
 ### A unified TOML, five engines, one bring-up

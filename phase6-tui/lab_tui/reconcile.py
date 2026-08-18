@@ -221,7 +221,21 @@ def diff(
             ]
             continue
 
-        actual = {_key(r): r for r in backend.list_resources(lab=lab)}
+        # RE-CHECK THE SCOPE WE ASKED FOR.  `list_resources(lab=…)` is the
+        # backend's own filter — a label selector for docker/podman, a manifest
+        # read for fc — and until the chaos matrix injected a backend whose filter
+        # was absent, this module simply trusted it.  Graded LIED, the worst rung:
+        # another lab's `web` answered this lab's question and `apply` reported
+        # CONVERGED over a lab with nothing running.
+        #
+        # Every Resource already carries the lab it belongs to, so the answer can
+        # be checked instead of trusted — the same "derive the fact, do not cache
+        # it" rule one level up: do not accept a scoping you did not perform.
+        # Rows with no lab at all are excluded for the same reason, and that
+        # matches what the backends themselves do when asked for a named lab.
+        actual = {
+            _key(r): r for r in backend.list_resources(lab=lab) if r.lab == lab
+        }
         for n in names:
             r = actual.get(n)
             if r is None:
