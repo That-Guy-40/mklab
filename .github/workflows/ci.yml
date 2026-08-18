@@ -61,6 +61,8 @@ jobs:
             examples/micro-cloud/tests/test-vsock-both-engines.sh \
             examples/micro-cloud/tests/test-vsock-chaos.sh \
             examples/micro-cloud/preserve.sh \
+            examples/micro-cloud/tests/test-usage-is-data.sh \
+            tools/check-usage-is-data.sh \
             examples/micro-cloud/tests/test-preserve-gate.sh \
             examples/micro-cloud/tests/test-preserve-capability-table.sh \
             examples/micro-cloud/tests/test-preserve-round-trip.sh \

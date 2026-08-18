@@ -18,7 +18,9 @@ tests=(test-fabric-mac-derivation.sh test-bench-boot.sh test-fabric-round-trip.s
        # Slice 7 — §9.5 preserve. The gate and the capability table are unprivileged AND
        # engine-free on purpose, so the assertion this lab most needs to keep is the one
        # that runs everywhere; the round trip needs a live rootless podman and SKIPs.
-       test-preserve-gate.sh test-preserve-capability-table.sh test-preserve-round-trip.sh)
+       test-preserve-gate.sh test-preserve-capability-table.sh test-preserve-round-trip.sh
+       # The class behind phase 2's usage-heredoc bug, checked here for preserve.sh.
+       test-usage-is-data.sh)
 
 # The list is compared against the disk: a test with no runner is a test nobody runs,
 # and a comment saying so does not fail a build (metal-as-a-service kept one for weeks).

@@ -134,6 +134,28 @@ bug, not a result — the reader can't tell a real failure from a broken harness
   **summary** named it. Scoping the assertion to the summary section found four runners
   that only counted.
 
+### A usage heredoc is a program: help text must not be able to run
+
+A `usage()` built as `cat <<EOF` has an **unquoted** delimiter — it has to, the text
+interpolates `$LAB_PROG` — so a backtick or `$(...)` anywhere in that text is **command
+substitution**. Phase 2 shipped ``Start the `listen` VM first.`` for months: bash ran
+`listen`, wrote `listen: command not found` to stderr, and substituted the empty result
+**into the help**, so every reader was told *"Start the  VM first."* Nothing failed;
+`--help` still exited 0. It is this file's opening rule pointed the other way round —
+there the live command was test data, here it was **prose**.
+
+**"`--help` writes nothing to stderr" is the cheap check, and it is a liar.** It catches
+only a command that does not *exist*. `` `date` `` or `$(pwd)` runs fine, emits no stderr,
+and rewrites the help text silently — the dangerous case is the quiet one. Ask the real
+question: *is there command substitution in a usage heredoc whose delimiter is unquoted?*
+
+[`tools/check-usage-is-data.sh`](tools/check-usage-is-data.sh) asks both, and — per the
+`check-harness-net.sh` lesson — proves itself against **5 must-catch and 5 must-not-catch**
+shapes plus a `$(pwd)` fixture demonstrating the stderr check alone would pass it, **before**
+it looks at a real file. Its §0 immediately caught the scanner's own blind spot (`usage() {
+cat <<EOF` is one line, and an early `continue` skipped it). Every driver suite ships a
+`tests/test-usage-is-data.sh` that execs it.
+
 ### "Fix a value everywhere" tasks: map the full blast radius BEFORE the first edit
 
 When changing a value, path, or name that recurs across the repo (a **port**, a
