@@ -1095,7 +1095,23 @@ should go *back* to one. P1 measured that direction too:
 | podman | `export-tarball` | ✅ **2026-08-18** — round trip verified: marker written into a container, exported, re-imported through `from-tarball`, read back |
 | docker | `export-tarball` | ✅ **2026-08-18** — same round trip, same proof |
 | LXD/Incus | `export-tarball` | ◑ **2026-08-18** — implemented (guest-side tar → bare rootfs tarball); refusals verified against a real incus, the **round trip is gated behind `LAB_LXD_LIVE=1`** and is an UNKNOWN on the development host (live Calico cluster, [F.6](#f6-additive-was-not-safe--the-tap-captured-a-live-clusters-tunnel)) |
-| **QEMU VM** | **only `snapshot`** | ⛔ **gap** — and pleasingly, it is the exact inverse of the `from-chroot` backend that already exists. `virt-tar-out` closes it with **no root**, once supermin has a readable kernel: `/boot/vmlinuz-*` is `0600` on Debian/Ubuntu while `/lib/modules/` is not, so `SUPERMIN_KERNEL` + `SUPERMIN_MODULES` is the whole fix |
+| **QEMU VM** | `export-tarball` | ✅ **2026-08-18 — and rootless.** The exact inverse of `from-chroot`, read through a libguestfs appliance: no loop mount, no `qemu-nbd`, no sudo. Verified as uid 1000, and the tarball then **imported as an OCI image**, so a VM's filesystem crosses into phase 3/4 |
+
+> **The kernel-permission finding, because it is the whole reason this is rootless.**
+> libguestfs is not root-requiring; supermin just needs a kernel it can read to boot the
+> appliance, and on Debian/Ubuntu `/boot/vmlinuz-*` is `0600` while `/lib/modules/` is
+> world-readable. So `SUPERMIN_KERNEL` + `SUPERMIN_MODULES` pointed at a readable **copy** is
+> the entire fix — and a copy rather than `chmod 0644 /boot/...` on purpose: Ubuntu sets that
+> bit deliberately (a readable vmlinuz leaks symbol addresses, which helps a local attacker
+> defeat KASLR), and the copy preserves it for `/boot`. `lab-vm.sh` finds the copy itself and,
+> where there is none, **refuses with the exact command that fixes it** rather than reporting
+> a missing package.
+>
+> **Inspection alone is not enough for this phase**, which is a fact about phase 2 rather than
+> a libguestfs quirk: `lab-vm.sh` also builds kernel+initrd and `from-chroot` VMs whose disk is
+> a **bare filesystem** with no partition table and no `/etc/os-release` — nothing for `-i` to
+> recognise, and exactly the images this round trip cares most about. A single unpartitioned
+> filesystem is therefore mounted explicitly instead of refused.
 
 > **`export` and `export-tarball` are different verbs on purpose.** `export` emits a topology
 > **spec** (kube / compose / lxc-yaml) and always did; `export-tarball` emits the **filesystem**,
