@@ -1588,6 +1588,65 @@ cmd_logs() {
     fi
 }
 
+# ─── Subcommand: start ─────────────────────────────────────────────────────
+# TODO A.3 / REVIEW: the driver had NO way to start an existing container, and
+# `up` is create-if-absent rather than converge — against a stopped container it
+# logs "container exists (…); leaving as-is" and returns 0.  So a container that
+# had been stopped was a state no verb in this tool could repair, and phase 6's
+# `apply` had to HOLD it (`held_for_want_of_a_verb`) rather than reach around the
+# driver to `podman start`, which would have put a second owner on the lifecycle.
+# Found 2026-08-17 by phase6-tui/tests/test_apply_live.py driving real podman —
+# invisible to every earlier test, because a fake converges when the fixture says so.
+#
+# ASSERT THE OUTCOME, not the exit status.  `podman start` returning 0 says the
+# request was accepted; a container whose entrypoint exits immediately is back to
+# `exited` a moment later, and reporting PASS on rc alone is the defect phase 7's
+# `start` was fixed for (REVIEW-phase7.md P7-4: "PASS: started k1" over a config
+# Firecracker had refused).  So the state is read back from podman afterwards.
+cmd_start() {
+    local target="${POS_ARGS[0]:-}"
+    [[ -n "$target" ]] || die "usage: $LAB_PROG start <name|lab/service>"
+    require_rootless
+    require_podman
+    local cname; cname="$(_resolve_container_name "$target")"
+
+    podman container exists "$cname" \
+        || die "no such container: $cname — 'start' does not create anything; run '$LAB_PROG up --config <file>' first"
+
+    local state
+    state="$(podman inspect -f '{{.State.Status}}' "$cname" 2>/dev/null || printf 'unknown')"
+    if [[ "$state" == "running" ]]; then
+        # Idempotent BY DESIGN: a reconcile loop may issue this against a row that
+        # started between the diff and the transition, and that is not an error.
+        printf 'PASS: %s is already running (nothing to do)\n' "$cname"
+        return 0
+    fi
+
+    # A quadlet-managed container is owned by systemd; starting the container
+    # behind systemd's back leaves the unit thinking it is inactive.  Same
+    # heuristic `cmd_logs` uses to route to journalctl.
+    if [[ $EUID -ne 0 ]] && have systemctl \
+       && systemctl --user list-unit-files "${cname}.service" --no-legend 2>/dev/null | grep -q .; then
+        log_info "starting via systemd unit ${cname}.service (quadlet-managed)"
+        systemctl --user start "${cname}.service" \
+            || die "systemctl --user start ${cname}.service failed"
+    else
+        log_info "podman start $cname"
+        podman start "$cname" >/dev/null \
+            || die "podman start $cname failed"
+    fi
+
+    local i
+    for i in $(seq 1 20); do
+        state="$(podman inspect -f '{{.State.Status}}' "$cname" 2>/dev/null || printf 'unknown')"
+        [[ "$state" == "running" ]] && break
+        sleep 0.25
+    done
+    [[ "$state" == "running" ]] \
+        || die "REGRESSION: $cname is '$state' after start — the request was accepted and the container is still not running (check '$LAB_PROG logs $target')"
+    printf 'PASS: started %s — state read back as running, not merely requested\n' "$cname"
+}
+
 # ─── Subcommand: status ────────────────────────────────────────────────────
 cmd_status() {
     local target="${POS_ARGS[0]:-${OPT_LAB:-}}"
@@ -2227,6 +2286,7 @@ USAGE
   $LAB_PROG run      --name N   [--image IMG | --chroot PATH | --tarball FILE | --context DIR] [opts...]
   $LAB_PROG up       --config topology.toml
   $LAB_PROG down     --lab NAME | --config topology.toml
+  $LAB_PROG start    <name|lab/service>                 # start an EXISTING container (up creates; it does not converge)
   $LAB_PROG exec     <name|lab/service> [-- cmd args...]
   $LAB_PROG logs     <name|lab/service> [--follow]      # routes to journalctl for quadlet mode
   $LAB_PROG status   [<name|lab>]
@@ -2341,6 +2401,7 @@ main() {
         build)    cmd_build    ;;
         run)      cmd_run      ;;
         up)       cmd_up       ;;
+        start)    cmd_start    ;;
         down)     cmd_down     ;;
         exec)     cmd_exec     ;;
         logs)     cmd_logs     ;;

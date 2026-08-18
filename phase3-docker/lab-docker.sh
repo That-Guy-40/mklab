@@ -1235,6 +1235,51 @@ cmd_destroy() {
     log_info "destroyed: $cname"
 }
 
+# ─── Subcommand: start ─────────────────────────────────────────────────────
+# TODO A.3: this driver had no way to start an EXISTING container, and `up` is
+# create-if-absent rather than converge — against a stopped container it logs
+# "container already exists (…); leaving as-is" and returns 0.  A stopped
+# container was therefore a state no verb here could repair, so phase 6's `apply`
+# had to hold it rather than reach around the driver to `docker start` and put a
+# second owner on the lifecycle.  Symmetrical with phase 2's and phase 7's `start`.
+#
+# ASSERT THE OUTCOME.  `docker start` returning 0 means the request was accepted;
+# a container whose entrypoint exits immediately is back to `exited` a moment
+# later.  Reporting PASS on rc alone is the defect phase 7's start was fixed for
+# (REVIEW-phase7.md P7-4), and it is watched to bite: a container running `true`
+# must FAIL here, not pass.
+cmd_start() {
+    local target="${POS_ARGS[0]:-}"
+    [[ -n "$target" ]] || die "usage: $LAB_PROG start <name|lab/service>"
+    require_docker
+    local cname; cname="$(_resolve_container_name "$target")"
+
+    docker container inspect "$cname" >/dev/null 2>&1 \
+        || die "no such container: $cname — 'start' does not create anything; run '$LAB_PROG up --config <file>' first"
+
+    local state
+    state="$(docker inspect -f '{{.State.Status}}' "$cname" 2>/dev/null || printf 'unknown')"
+    if [[ "$state" == "running" ]]; then
+        # Idempotent BY DESIGN: a reconcile loop may issue this against a row that
+        # started between the diff and the transition, and that is not an error.
+        printf 'PASS: %s is already running (nothing to do)\n' "$cname"
+        return 0
+    fi
+
+    log_info "docker start $cname"
+    docker start "$cname" >/dev/null || die "docker start $cname failed"
+
+    local i
+    for i in $(seq 1 20); do
+        state="$(docker inspect -f '{{.State.Status}}' "$cname" 2>/dev/null || printf 'unknown')"
+        [[ "$state" == "running" ]] && break
+        sleep 0.25
+    done
+    [[ "$state" == "running" ]] \
+        || die "REGRESSION: $cname is '$state' after start — the request was accepted and the container is still not running (check '$LAB_PROG logs $target')"
+    printf 'PASS: started %s — state read back as running, not merely requested\n' "$cname"
+}
+
 # ─── Subcommand: status ────────────────────────────────────────────────────
 # Three call shapes (mirrors lab-podman.sh status):
 #   status                        → daemon/host summary
@@ -1718,6 +1763,7 @@ USAGE
   $LAB_PROG run      --name N   [--image IMG | --chroot PATH | --context DIR] [opts...]
   $LAB_PROG up       --config topology.toml|compose.yml
   $LAB_PROG down     --lab NAME | --config topology.toml|compose.yml
+  $LAB_PROG start    <name|lab/service>                 # start an EXISTING container (up creates; it does not converge)
   $LAB_PROG exec     <name|lab/service> [-- cmd args...]
   $LAB_PROG logs     <name|lab/service> [--follow]
   $LAB_PROG status   [<name|lab>]
@@ -1838,6 +1884,7 @@ main() {
         push)    cmd_push    ;;
         run)     cmd_run     ;;
         up)      cmd_up      ;;
+        start)   cmd_start   ;;
         down)    cmd_down    ;;
         exec)    cmd_exec    ;;
         logs)    cmd_logs    ;;

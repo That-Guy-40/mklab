@@ -111,26 +111,24 @@ def test_apply_converges_a_real_engine_and_the_second_pass_is_a_no_op(
     assert second.converged and second.passes == 1
 
 
-def test_a_really_stopped_container_is_held_and_not_destroyed(live: Path) -> None:
-    """THE FINDING THIS SUITE EXISTS TO HAVE MADE.
+def test_a_really_stopped_container_is_started_and_not_recreated(live: Path) -> None:
+    """THE FINDING THIS SUITE MADE, NOW ON THE OTHER SIDE OF ITS FIX.
 
     Written expecting `apply` to start it.  Live podman said otherwise, and the
     driver said so out loud:
 
         [warn] service 'web' container exists (lab-mklabselftesta-web); leaving as-is
 
-    `up` on the three container engines is **create-if-absent, not converge**, and
-    none of docker/podman/lxd has a `start` verb at all.  Against a fake this was
-    invisible — the fake converges because the fixture says so.
+    `up` on the three container engines is create-if-absent, not converge, and
+    none of them had a `start` at all — invisible to every earlier test, because a
+    fake converges when the fixture says so.  For one commit `apply` HELD the row;
+    the durable fix was TODO A.3, which gave phases 3/4/5 the verb they lacked
+    rather than having phase 6 reach around them to `podman start` and put a
+    second owner on the lifecycle.
 
-    So a stopped container is a state the control plane cannot repair through the
-    driver.  The two dishonest exits are to report it converged, or to reach around
-    the driver to `podman start`; the second breaks the seam discipline decision E
-    settled, and both hide the real gap, which is in the driver.  It is HELD, and
-    `apply` reports NOT converged.
-
-    The container must also survive intact — a "repair" that destroyed and
-    recreated it would satisfy "running again" while losing everything inside.
+    So this now asserts the repair — and asserts it is a repair and not a rebuild:
+    the container ID must be unchanged, because a destroy-and-recreate would
+    satisfy "running again" while losing everything inside it.
     """
     spec = _spec(live, LAB_A)
     apply(spec)
@@ -142,18 +140,34 @@ def test_a_really_stopped_container_is_held_and_not_destroyed(live: Path) -> Non
     assert [x.kind for x in d] == ["stopped"], d
 
     r = apply(spec)
-    assert not r.converged, "a row no driver verb can fix must not read as converged"
-    assert any(x.slot == "podman" and x.kind == "stopped" for x in r.held)
+    assert r.converged, f"apply did not converge a stopped container: {r.held} {r.issued}"
+    assert any(a[1] == "start" for a in r.issued), (
+        f"converged without issuing a start — what closed it? {r.issued}"
+    )
 
     after = _container(LAB_A)
-    assert after is not None, (
-        "REGRESSION: apply removed a container it could not start — holding means "
-        "leaving it alone, not tidying it away"
-    )
+    assert after is not None and after["State"] == "running"
     assert after["Id"] == before["Id"], (
-        "REGRESSION: the container was re-created rather than left alone — its data "
+        "REGRESSION: the container was re-created rather than started — its data "
         "and any manual state inside it are gone"
     )
+
+
+def test_apply_is_still_a_no_op_once_it_has_started_something(live: Path) -> None:
+    """The pass-two property, over the path that was broken until TODO A.3.
+
+    `start` is idempotent by design (a reconcile loop may issue it against a row
+    that started between the diff and the transition), so a driver that reported
+    "already running" as an error would break convergence here rather than in the
+    first pass.
+    """
+    spec = _spec(live, LAB_A)
+    apply(spec)
+    _podman("stop", "-t", "1", _container(LAB_A)["Names"][0])
+    apply(spec)
+    again = apply(spec)
+    assert again.issued == [], f"apply kept issuing after convergence: {again.issued}"
+    assert again.converged and again.passes == 1
 
 
 def test_the_derivation_answers_for_the_right_lab(live: Path) -> None:

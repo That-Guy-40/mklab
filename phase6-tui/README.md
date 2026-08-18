@@ -57,7 +57,10 @@ uv run python -m lab_tui --topology ../examples/lab-unified-demo.toml
   holds the rest: `undeclared` (deleting what nobody declared is the half
   of a reconcile loop that destroys work), `unknown` (issuing against a row
   nobody could read is the duplicate-creation bug the diff exists to
-  prevent), and `drifted` (the repair deletes a rootfs copy).
+  prevent), and `drifted` (the repair deletes a rootfs copy). Starting a
+  stopped container works because TODO A.3 gave phases 3/4/5 the `start`
+  verb they lacked — the fix went into the drivers rather than having the
+  control plane reach around them.
 
 ## Tests
 

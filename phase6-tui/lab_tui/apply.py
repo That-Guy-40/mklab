@@ -45,10 +45,14 @@ asking each driver — see `_NO_UP_VERB` in topology.py — after `plan_up` was 
 to have been emitting `lab-chroot.sh up` and `lab-vm.sh up` since the beginning.
 
 And `up` is **create-if-absent, not converge**: against a stopped container the
-three drivers that have it log *"container exists … leaving as-is"* and return 0,
-and none of them has a `start`.  So a stopped container is a state this control
-plane cannot repair through the driver, and it is held rather than papered over —
-see `held_for_want_of_a_verb`.
+three drivers that have it log *"container exists … leaving as-is"* and return 0.
+That used to be the end of the story — none of them had a `start` either, so a
+stopped container was a state this control plane could not repair and `apply`
+HELD it.  **The fix went where the gap was** (TODO A.3): `lab-docker.sh`,
+`lab-podman.sh` and `lab-lxd.sh` each grew a `start <name|lab/service>` that reads
+the state back afterwards instead of trusting the engine's exit status.  `apply`
+now issues it; `held_for_want_of_a_verb` stays for the slots that still have
+nothing — see its docstring.
 """
 
 from __future__ import annotations
@@ -63,6 +67,7 @@ from lab_tui.backends.base import BackendRunner, phase_script
 from lab_tui.reconcile import Delta, diff, render
 from lab_tui.topology import (
     _HAS_START_VERB,
+    _START_TAKES_LAB_SLASH_SVC,
     _NO_UP_VERB,
     _script_for,
     _UP_ORDER,
@@ -155,29 +160,49 @@ def transitions(deltas: Sequence[Delta], toml_path: Path, parsed: dict) -> list[
         create_verb = "create" if slot in _NO_UP_VERB else "up"
         if any(d.kind == "absent" for d in rows):
             argvs.append([script, create_verb, "--config", str(toml_path)])
+        # Which rows still need a `start` after that command:
+        #   * chroot/vm/fc `create` leaves the thing STOPPED, so an absent vm needs
+        #     one too (a chroot has no run state and is never in this branch);
+        #   * docker/podman/lxd `up` starts what it creates, so only the rows that
+        #     were already there and stopped need it.
+        needs_start = ("absent", "stopped") if slot in _NO_UP_VERB else ("stopped",)
         if slot in _HAS_START_VERB:
-            argvs += [[script, "start", d.name] for d in rows
-                      if d.kind in ("absent", "stopped")]
+            argvs += [[script, "start", _start_target(slot, d.name, lab)]
+                      for d in rows if d.kind in needs_start]
     return argvs
+
+
+def _start_target(slot: PhaseSlot, name: str, lab: str) -> str:
+    """How this driver wants the instance addressed on the command line.
+
+    Phases 3/4/5 rename what they create (`lab-<lab>-<svc>`) and resolve a BARE
+    target to `lab-<name>` — so handing them the declared service name alone would
+    address `lab-web`, a container that is not ours and probably does not exist.
+    Measured while writing phase 4's own test, whose first version refused
+    `lab-lab-startverb-…-dies` for exactly this reason.
+    """
+    return f"{lab}/{name}" if slot in _START_TAKES_LAB_SLASH_SVC else name
 
 
 def held_for_want_of_a_verb(deltas: Sequence[Delta]) -> list[Delta]:
     """Actionable rows whose driver offers nothing that would fix them.
 
-    MEASURED, and it is the finding that made this function exist: `up` on the
-    three container engines is **create-if-absent, not converge**.  Against a
-    stopped container `lab-podman.sh up` logs
+    It exists because of a gap that is now CLOSED, and it stays because the shape
+    recurs.  `up` on the three container engines is create-if-absent, not converge
+    — against a stopped container `lab-podman.sh up` logs
 
         [warn] service 'web' container exists (lab-…-web); leaving as-is
 
-    and returns 0.  None of docker/podman/lxd has a `start` verb at all.  So a
-    stopped container is a state this control plane cannot repair through the
-    driver, and the two dishonest options are to report it converged or to reach
-    around the driver to `podman start` — the second breaking the seam discipline
-    that decision E settled, and both hiding the real gap, which is in the driver.
+    and returns 0 — and until 2026-08-17 none of docker/podman/lxd had a `start`
+    either, so `apply` held those rows.  The two dishonest exits were to report
+    convergence, or to reach around the driver to `podman start` and put a second
+    owner on the lifecycle.  Instead the fix went into the drivers (TODO A.3).
 
-    So it is HELD, by name, with the reason.  `apply` then reports NOT converged
-    instead of looping `up` at something that will keep saying "leaving as-is".
+    What remains here is the general rule: a slot with no `start` verb cannot have
+    a stopped row repaired, and saying so by name beats looping `up` at something
+    that will keep answering "leaving as-is".  `chroot` is the only slot still in
+    that position — it has no run state, so it lands here only via a status like
+    `error`, which is exactly a case a human should look at.
     """
     return [d for d in deltas
             if d.kind == "stopped" and d.slot not in _HAS_START_VERB]
