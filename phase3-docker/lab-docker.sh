@@ -1280,6 +1280,66 @@ cmd_start() {
     printf 'PASS: started %s — state read back as running, not merely requested\n' "$cname"
 }
 
+# ─── Subcommand: export-tarball ────────────────────────────────────────────
+# Slice 7 / §9.5 tier 2: a running thing → a PORTABLE artifact.
+#
+# `export` (above) emits a topology SPEC — kube or compose YAML. That is a
+# different thing, and conflating the two is what put three wrong ✅s in the
+# plan's §9.5 table: Appendix A measured "`export` verb present" when the
+# question was "can this become a portable artifact". The verb was present and
+# answered a different question.
+#
+# So the filesystem export gets phase 1's name, `export-tarball`, because it
+# produces phase 1's artifact: a BARE ROOTFS TARBALL, which is exactly what
+# `docker import` — and therefore this driver's own `from-tarball` backend —
+# consumes. That closes §2's loop in the return direction: everything comes
+# from a chroot, so everything can go back to one.
+#
+# No pipe into gzip: `docker export | gzip > f` reports GZIP's exit status, and
+# a failed export would leave a valid empty archive with a clean rc. `-o` first,
+# compress second, each gated on its own status (the house rule that once merged
+# a red PR).
+cmd_export_tarball() {
+    local target="${POS_ARGS[0]:-}"
+    [[ -n "$target" ]] || die "usage: $LAB_PROG export-tarball <name|lab/service> [--output PATH]"
+    require_docker
+    local cname; cname="$(_resolve_container_name "$target")"
+
+    docker container inspect "$cname" >/dev/null 2>&1 \
+        || die "no such container: $cname — export-tarball reads a container's filesystem; it does not create one"
+
+    local out="${OPT_OUTPUT:-/tmp/${cname}.tar.gz}"
+    [[ -e "$out" ]] && die "refusing to overwrite $out — pass --output to choose another path"
+
+    local tmp; tmp="$(mktemp "${TMPDIR:-/tmp}/lab-docker-export.XXXXXX.tar")"
+    # shellcheck disable=SC2064
+    trap "rm -f '$tmp'" RETURN
+
+    log_info "docker export $cname → $out"
+    docker export -o "$tmp" "$cname" || die "docker export $cname failed"
+    gzip -c "$tmp" > "$out" || { rm -f "$out"; die "gzip failed writing $out"; }
+
+    # ASSERT THE ARTIFACT, not the exit status. An empty or truncated tarball is
+    # a file that exists and imports as nothing; the members are read back so a
+    # PASS means "this archive has a filesystem in it".
+    # NO `head` HERE, and that is not a style choice. The first version read
+    #     tar tzf "$out" | head -200 | wc -l
+    # to bound the work — and `head` closing the pipe early sent SIGPIPE to tar,
+    # which under this script's `set -o pipefail` made the whole pipeline fail.
+    # The count came back 0 and the export was DELETED as corrupt while
+    # `podman export` had in fact written 518 members including the marker file.
+    # A gate that destroys a good artifact is worse than no gate; `wc -l`
+    # consumes the whole stream, so nothing gets SIGPIPE.
+    local members
+    members="$(tar tzf "$out" 2>/dev/null | wc -l)" || members=0
+    (( members > 0 )) \
+        || { rm -f "$out"; die "REGRESSION: $out contains no readable members — the export produced an archive with no filesystem in it"; }
+
+    printf 'PASS: exported %s → %s (%s, %s members)\n' \
+        "$cname" "$out" "$(du -h "$out" | cut -f1)" "$members"
+    printf '      round-trips with: %s run --name NEW --tarball %s\n' "$LAB_PROG" "$out"
+}
+
 # ─── Subcommand: status ────────────────────────────────────────────────────
 # Three call shapes (mirrors lab-podman.sh status):
 #   status                        → daemon/host summary
@@ -1771,6 +1831,7 @@ USAGE
   $LAB_PROG inspect  <name|lab/service> [--json]
   $LAB_PROG destroy  <name|lab/service> [--force]
   $LAB_PROG export   --config topology.toml|compose.yml [--format compose]   # emit compose YAML
+  $LAB_PROG export-tarball <name|lab/service> [--output PATH]   # the FILESYSTEM, not the spec
   $LAB_PROG version | help
 
 BUILD / RUN OPTIONS
@@ -1818,6 +1879,7 @@ EXTRA_ARGS=()
 
 parse_args() {
     OPT_CONFIG=""
+    OPT_OUTPUT=""
     OPT_TAG="" OPT_BACKEND="" OPT_CONTEXT="" OPT_CHROOT="" OPT_TARBALL=""
     OPT_NAME="" OPT_IMAGE="" OPT_ARCH=""
     OPT_NETWORK="" OPT_HOSTNAME=""
@@ -1838,6 +1900,7 @@ parse_args() {
         case "$1" in
             --)             seen_doubledash=1; shift ;;
             --config)       OPT_CONFIG="$2"; shift 2 ;;
+            --output)        OPT_OUTPUT="$2"; shift 2 ;;   # export-tarball
             --tag)          OPT_TAG="$2"; shift 2 ;;
             --backend)      OPT_BACKEND="$2"; shift 2 ;;
             --context)      OPT_CONTEXT="$2"; shift 2 ;;
@@ -1893,6 +1956,7 @@ main() {
         inspect) cmd_inspect ;;
         destroy) cmd_destroy ;;
         export)  cmd_export  ;;
+        export-tarball) cmd_export_tarball ;;
         help|-h|--help)    usage       ;;
         version) printf '%s %s\n' "$LAB_PROG" "$LAB_VERSION" ;;
         *)       usage; die "unknown subcommand: $SUBCMD" ;;

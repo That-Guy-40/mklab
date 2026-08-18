@@ -1408,6 +1408,74 @@ cmd_start() {
     printf 'PASS: started %s — state read back as Running, not merely requested\n' "$iname"
 }
 
+# ─── Subcommand: export-tarball ────────────────────────────────────────────
+# Slice 7 / §9.5 tier 2: a running thing → a PORTABLE artifact.
+#
+# `export` (above) emits a topology SPEC — lxc-yaml or compose. That is a
+# different thing, and conflating the two is what put three wrong ✅s in the
+# plan's §9.5 table: Appendix A measured "`export` verb present" when the
+# question was "can this become a portable artifact".
+#
+# WHY NOT `incus export`.  The engine has its own export, and it produces an
+# INSTANCE BACKUP: a tarball whose members live under `backup/container/rootfs/`,
+# round-trippable with `incus import` and with nothing else.  That is a fine
+# engine-native artifact — it is tier 1's shape, not tier 2's.  Tier 2 asks for
+# the artifact every other phase can consume, which is a BARE ROOTFS TARBALL:
+# what `podman import`, `docker import` and this driver's own `from-tarball`
+# backend all take.  So the filesystem is tarred inside the guest, with the same
+# exclusions phase 1's `export-tarball` uses.
+#
+# Needs `tar` in the guest.  BusyBox's counts; a distroless image does not have
+# one, and the refusal below says so by name rather than writing a short archive.
+cmd_export_tarball() {
+    local target="${POS_ARGS[0]:-}"
+    [[ -n "$target" ]] || die "usage: $LAB_PROG export-tarball <name|lab/service> [--output PATH]"
+    require_lxd_or_incus
+    local iname; iname="$(_resolve_instance_name "$target")"
+    local _proj; _proj="$(_instance_project "$iname")"
+    local -a scope=(); [[ -n "$_proj" && "$_proj" != "default" ]] && scope=(--project "$_proj")
+
+    local state
+    state="$("$LXC_CMD" list "${scope[@]}" --format=json 2>/dev/null \
+        | jq -r --arg n "$iname" 'first(.[] | select(.name==$n) | .status) // empty')"
+    [[ -n "$state" ]] \
+        || die "no such instance: $iname — export-tarball reads an instance's filesystem; it does not create one"
+    [[ "$state" == "Running" ]] \
+        || die "instance '$iname' is '$state' — the filesystem is tarred from INSIDE the guest, so it must be running (start it with: $LAB_PROG start $target)"
+
+    local out="${OPT_OUTPUT:-/tmp/${iname}.tar.gz}"
+    [[ -e "$out" ]] && die "refusing to overwrite $out — pass --output to choose another path"
+
+    "$LXC_CMD" exec "${scope[@]}" "$iname" -- sh -c 'command -v tar >/dev/null' \
+        || die "no \`tar\` inside '$iname' — the guest has to be able to archive itself (BusyBox tar counts)"
+
+    log_info "tarring $iname's filesystem from inside the guest → $out"
+    # The exclusions phase 1 uses, for the same reason: /proc and /sys are kernel
+    # views, /dev is repopulated on boot, and archiving them produces a tarball
+    # that cannot be imported cleanly.
+    if ! "$LXC_CMD" exec "${scope[@]}" "$iname" -- \
+            tar -C / --numeric-owner \
+                --exclude=./proc/'*' --exclude=./sys/'*' --exclude=./dev/'*' \
+                --exclude=./run/'*'  --exclude=./tmp/'*' \
+                -czf - . > "$out" 2>/dev/null; then
+        rm -f "$out"
+        die "guest-side tar failed for $iname — nothing was written"
+    fi
+
+    # ASSERT THE ARTIFACT, not the exit status. `wc -l` and not `head`/`grep -q`:
+    # either would close the pipe early, send SIGPIPE to tar, and under
+    # `set -o pipefail` fail an assertion over a perfectly good archive — which is
+    # exactly what happened while writing phase 4's version of this verb.
+    local members
+    members="$(tar tzf "$out" 2>/dev/null | wc -l)" || members=0
+    (( members > 0 )) \
+        || { rm -f "$out"; die "REGRESSION: $out contains no readable members — the export produced an archive with no filesystem in it"; }
+
+    printf 'PASS: exported %s → %s (%s, %s members)\n' \
+        "$iname" "$out" "$(du -h "$out" | cut -f1)" "$members"
+    printf '      round-trips with: %s run --name NEW --tarball %s\n' "$LAB_PROG" "$out"
+}
+
 # ─── Subcommand: exec ──────────────────────────────────────────────────────
 cmd_exec() {
     local target="${POS_ARGS[0]:-}"
@@ -2042,6 +2110,7 @@ USAGE
   $LAB_PROG destroy  <name|lab/service> [--force]
   $LAB_PROG inspect  <name|lab/service> [--json]
   $LAB_PROG export   <lab> --format {lxc-yaml|compose} # lxc-yaml: config show --expanded; compose: Compose YAML
+  $LAB_PROG export-tarball <name|lab/service> [--output PATH]   # the FILESYSTEM, not the spec
   $LAB_PROG version | help
 
 OPTIONS
@@ -2086,6 +2155,7 @@ EXTRA_ARGS=()
 
 parse_args() {
     OPT_CONFIG=""
+    OPT_OUTPUT=""
     OPT_TAG="" OPT_ALIAS="" OPT_BACKEND="" OPT_IMAGE="" OPT_CHROOT="" OPT_TARBALL="" OPT_QCOW2=""
     OPT_NAME="" OPT_TYPE="" OPT_PROJECT="" OPT_STORAGE="" OPT_NETWORK=""
     OPT_LAB="" OPT_FOLLOW="" OPT_FORCE="" OPT_FORMAT=""
@@ -2100,6 +2170,7 @@ parse_args() {
         case "$1" in
             --)             seen_doubledash=1; shift ;;
             --config)       OPT_CONFIG="$2"; shift 2 ;;
+            --output)       OPT_OUTPUT="$2"; shift 2 ;;   # export-tarball
             --alias|--tag)  OPT_ALIAS="$2"; shift 2 ;;
             --backend)      OPT_BACKEND="$2"; shift 2 ;;
             --image)        OPT_IMAGE="$2"; shift 2 ;;
@@ -2139,6 +2210,7 @@ main() {
         destroy) cmd_destroy ;;
         inspect) cmd_inspect ;;
         export)  cmd_export  ;;
+        export-tarball) cmd_export_tarball ;;
         help|-h|--help)    usage       ;;
         version) printf '%s %s\n' "$LAB_PROG" "$LAB_VERSION" ;;
         *)       usage; die "unknown subcommand: $SUBCMD" ;;

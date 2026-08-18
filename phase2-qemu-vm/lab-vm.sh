@@ -2999,6 +2999,103 @@ cmd_create() {
     exec {_lockfd}>&-
 }
 
+# ─── Subcommand: export-tarball ────────────────────────────────────────────
+# Slice 7 / §9.5 tier 2, and the last of the four. This is the exact inverse of
+# the `from-chroot` backend that already exists: everything comes FROM a chroot,
+# so everything can go back to one.
+#
+# ROOTLESS, which was not obvious. `virt-tar-out`/`guestfish` read a disk image
+# through a libguestfs appliance built by supermin — no loop mount, no qemu-nbd,
+# no sudo. The one thing that stops it on Debian/Ubuntu is that `/boot/vmlinuz-*`
+# is mode 0600 while `/lib/modules/` is world-readable, so supermin cannot read a
+# kernel to boot its appliance with. `SUPERMIN_KERNEL` + `SUPERMIN_MODULES` is the
+# entire fix, and `_guestfs_kernel_env` below finds a readable copy if the host
+# kernel is not one. Measured 2026-08-18: with the copy in place,
+# `guestfish --ro -a disk.img -m /dev/sda tar-out / out.tar` extracted a
+# filesystem as uid 1000 and the marker file read back intact.
+#
+# THE VM MUST BE STOPPED. libguestfs will happily open a disk another process has
+# open for writing, and what comes out is a torn image — a backup that restores to
+# a filesystem no kernel ever saw. Refusing by name beats producing that quietly.
+_guestfs_kernel_env() {
+    local kver; kver="$(uname -r)"
+    [[ -r "/boot/vmlinuz-$kver" ]] && return 0     # nothing to do
+    local copy="${MKLAB_SUPERMIN_KERNEL:-$HOME/.cache/mklab-kernel/vmlinuz}"
+    if [[ -r "$copy" ]]; then
+        export SUPERMIN_KERNEL="$copy"
+        export SUPERMIN_MODULES="/lib/modules/$kver"
+        log_debug "supermin: using readable kernel copy $copy"
+        return 0
+    fi
+    die "libguestfs cannot build its appliance: /boot/vmlinuz-$kver is not readable by $(id -un) and no readable copy was found at $copy.
+     This is a permission bit, not a missing package — /lib/modules/$kver is already readable. Fix it with ONE of:
+       sudo install -D -m 0644 /boot/vmlinuz-$kver $copy     # a copy you own; /boot untouched (recommended)
+       sudo chmod 0644 /boot/vmlinuz-$kver                    # reverts on every kernel upgrade
+     Ubuntu sets 0600 deliberately: a readable vmlinuz leaks symbol addresses, which helps a local attacker defeat KASLR. The copy keeps that property for /boot."
+}
+
+cmd_export_tarball() {
+    local name="${POS_ARGS[0]:-}"
+    [[ -n "$name" ]] || die "usage: $LAB_PROG export-tarball <name> [--output PATH]"
+    validate_vm_name "$name"
+    vm_exists "$name" || die "no VM named '$name' (try 'list')"
+    vm_running "$name" \
+        && die "'$name' is running (pid $(cat "$(vm_pidfile "$name")" 2>/dev/null)) — a disk being written to exports as a TORN image, which restores to a filesystem no kernel ever saw. Stop it first: $LAB_PROG stop $name"
+
+    require_cmd guestfish
+    local disk; disk="$(vm_disk "$name")"
+    [[ -r "$disk" ]] || die "no readable disk for '$name' at $disk"
+
+    local out="${OPT_OUTPUT:-/tmp/${name}.tar.gz}"
+    [[ -e "$out" ]] && die "refusing to overwrite $out — pass --output to choose another path"
+
+    _guestfs_kernel_env
+
+    log_info "reading $disk through a libguestfs appliance (no root, no loop mount)"
+    # `-i` inspects the image to find and mount its root filesystem, which is what
+    # makes this work on a real distro disk with a partition table. tar-out writes
+    # gzip directly, so there is no pipe whose exit status could be masked.
+    # `-i` inspects the image to find and mount its root filesystem, which is what
+    # works on a real distro disk with a partition table.
+    #
+    # IT IS NOT ENOUGH ON ITS OWN, and that is a fact about THIS phase rather than
+    # a libguestfs quirk: `lab-vm.sh` also builds kernel+initrd and from-chroot
+    # VMs whose disk is a BARE FILESYSTEM with no partition table and often no
+    # /etc/os-release — nothing for inspection to recognise. Those are exactly the
+    # images §9.5's round trip cares most about, so a single unpartitioned
+    # filesystem is mounted explicitly rather than refused.
+    if ! guestfish --ro -a "$disk" -i tar-out / "$out" compress:gzip 2>/dev/null; then
+        rm -f "$out"
+        local fs
+        fs="$(guestfish --ro -a "$disk" run : list-filesystems 2>/dev/null \
+              | awk -F: '$2 !~ /unknown|swap/ {print $1}')"
+        local count; count="$(printf '%s\n' "$fs" | grep -c . || true)"
+        if [[ "$count" == 1 ]]; then
+            log_info "no inspectable OS; mounting the single filesystem ($fs) directly"
+            guestfish --ro -a "$disk" -m "$fs" tar-out / "$out" compress:gzip 2>/dev/null \
+                || { rm -f "$out"; die "guestfish could not tar '$fs' out of $disk"; }
+        else
+            rm -f "$out"
+            die "guestfish could not export '$name': inspection found no OS, and the disk has ${count:-0} candidate filesystems rather than exactly one, so there is no unambiguous root to tar. Look with: guestfish --ro -a $disk run : list-filesystems"
+        fi
+    fi
+
+    # ASSERT THE ARTIFACT. `wc -l` over the whole stream, never `head`/`grep -q`:
+    # either closes the pipe early, sends SIGPIPE to tar, and under `set -o
+    # pipefail` fails the assertion over a perfectly good archive — which is
+    # exactly what happened while writing phase 4's version of this verb, where it
+    # DELETED a valid 518-member export as corrupt.
+    local members
+    members="$(tar tzf "$out" 2>/dev/null | wc -l)" || members=0
+    (( members > 0 )) \
+        || { rm -f "$out"; die "REGRESSION: $out contains no readable members — the export produced an archive with no filesystem in it"; }
+
+    printf 'PASS: exported %s → %s (%s, %s members)\n' \
+        "$name" "$out" "$(du -h "$out" | cut -f1)" "$members"
+    printf '      the §9.5 inverse of from-chroot: %s\n' \
+        "phase4-podman/lab-podman.sh run --name NEW --tarball $out"
+}
+
 # ─── Subcommand: start ─────────────────────────────────────────────────────
 cmd_start() {
     local name="${POS_ARGS[0]:-}"
@@ -3651,6 +3748,7 @@ USAGE
   $LAB_PROG list                     # VMs in your store + the system store, with OWNER (sudo to see all)
   $LAB_PROG inspect  <name> [--json]
   $LAB_PROG snapshot {create|list|restore|delete} <name> [snap-name]   # offline qcow2 snapshots
+  $LAB_PROG export-tarball <name> [--output PATH]     # the FILESYSTEM → a portable rootfs tarball (§9.5)
   $LAB_PROG publish-netboot <name> [opts...]   # copy a kernel+initrd VM's kernel/initrd to a netboot dir
   $LAB_PROG version | help
 
@@ -3732,6 +3830,7 @@ EXTRA_ARGS=()
 
 parse_args() {
     OPT_CONFIG=""
+    OPT_OUTPUT=""
     OPT_NAME="" OPT_BACKEND="" OPT_DISTRO="" OPT_SUITE="" OPT_ARCH=""
     OPT_MEMORY="" OPT_CPUS="" OPT_MICROVM="false"
     OPT_IMAGE="" OPT_KERNEL="" OPT_INITRD="" OPT_APPEND=""
@@ -3756,6 +3855,7 @@ parse_args() {
         case "$1" in
             --)             seen_doubledash=1; shift ;;
             --config)       OPT_CONFIG="$2"; shift 2 ;;
+            --output)       OPT_OUTPUT="$2"; shift 2 ;;   # export-tarball
             --name)         OPT_NAME="$2"; shift 2 ;;
             --backend)      OPT_BACKEND="$2"; shift 2 ;;
             --distro)       OPT_DISTRO="$2"; shift 2 ;;
@@ -3923,6 +4023,7 @@ main() {
     case "$SUBCMD" in
         create)   cmd_create   ;;
         start)    cmd_start    ;;
+        export-tarball) cmd_export_tarball ;;
         stop)     cmd_stop     ;;
         console)  cmd_console  ;;
         ssh)      cmd_ssh      ;;
