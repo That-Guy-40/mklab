@@ -73,23 +73,33 @@ which can be picked up tonight and which cannot be picked up at all here.
 
 ### Not blocked — buildable now
 
-- [ ] **A.3** — **Phases 3, 4 and 5 have no per-service `start` verb**, and their
-      `up` is *create-if-absent, not converge*. Found 2026-08-17 by
+- [x] **A.3** ✅ **DONE 2026-08-17** — **phases 3, 4 and 5 now have a per-service
+      `start`**, symmetrical with phase 2's and phase 7's, and their `up` stays what
+      it always was: create-if-absent.
+      *The gap:* against a **stopped** container `lab-podman.sh up` logs
+      `[warn] service 'web' container exists (…); leaving as-is` and returns **0**,
+      and none of the three had any other verb that could run one — so a stopped
+      container was a state **no phase-6 verb could repair**. Found by
       [`phase6-tui/tests/test_apply_live.py`](phase6-tui/tests/test_apply_live.py)
-      driving rootless podman for real: against a **stopped** container
-      `lab-podman.sh up` logs `[warn] service 'web' container exists (…); leaving
-      as-is` and returns **0**. All three drivers do this
-      (`phase3-docker/lab-docker.sh:1021`, `phase4-podman/lab-podman.sh:800`,
-      `phase5-lxd/lab-lxd.sh:1126`), and none has a `start` verb at all — so a
-      stopped container is a state **no phase-6 verb can repair**.
-      [`apply.py`](phase6-tui/lab_tui/apply.py) currently **holds** it by name
-      rather than reaching around the driver to `podman start` (which would break
-      the seam discipline decision E settled) or calling it converged. The fix is
-      in the drivers: a per-service `start`, symmetrical with phase 2's and phase
-      7's. Until then the gap is honest but real — `apply` cannot bring a stopped
-      container back up.
-      *Why it went unseen: every earlier assertion about `apply` ran against
-      injected backends, and a fake converges because the fixture says so.*
+      driving rootless podman for real; invisible to every earlier assertion about
+      `apply`, because those ran against injected backends and a fake converges
+      when the fixture says so.
+      *The fix went where the gap was* — into the drivers, not into `apply`.
+      Phase 6 reaching around a driver to `podman start` would have put a **second
+      owner on one lifecycle**, which is the stale-record shape this repo keeps
+      finding; `held_for_want_of_a_verb` stays as the general rule for a slot that
+      still has nothing (only `chroot`, which has no run state).
+      *Each `start` asserts the OUTCOME*, not the engine's exit status: it reads the
+      state back afterwards, so a container whose entrypoint exits immediately is a
+      **FAIL**, not a `PASS` — REVIEW-phase7.md P7-4's lesson (`PASS: started` over a
+      VM that never booted) carried across before it could recur. Watched to bite in
+      `phase3-docker/tests/test-start-verb.sh` and `phase4-podman/tests/test-start-verb.sh`.
+      *Not verified live for LXD:* this host runs a live Calico cluster and launching
+      an instance manufactures the Appendix F.6 bridge-capture hazard, so
+      [`phase5-lxd/tests/test-start-verb.sh`](phase5-lxd/tests/test-start-verb.sh)
+      runs its read-only half (refusal + both target-resolution forms, against a real
+      incus) and **SKIPs the launch/stop/start half behind `LAB_LXD_LIVE=1`**. That
+      half is an **UNKNOWN**, and says so.
 
 - [x] **A.1** ✅ **DONE 2026-08-15** — the cross-node CHAOS ROWS for
       [`examples/nested-calico-sandbox/`](examples/nested-calico-sandbox/README.md#the-cross-node-rows--f6-with-a-witness):

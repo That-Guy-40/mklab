@@ -226,17 +226,20 @@ def test_apply_holds_a_drifted_instance_instead_of_recreating_it(tmp_path: Path)
     assert not r.converged, "a held row must not read as convergence"
 
 
-def test_a_stopped_container_is_held_because_no_driver_can_start_one(
+def test_a_stopped_container_is_started_through_the_drivers_new_verb(
     spec: Path,
 ) -> None:
-    """Measured live, and it is why `held_for_want_of_a_verb` exists.
+    """This test asserted the opposite until 2026-08-17, and the opposite was a gap.
 
-    `up` on the three container engines is create-if-absent, not converge: against
-    a stopped container `lab-podman.sh up` logs *"container exists … leaving
-    as-is"* and returns 0, and none of docker/podman/lxd has a `start` verb at all.
-    The two dishonest options are to call it converged, or to reach around the
-    driver to `podman start` — the second breaking the seam discipline decision E
-    settled, and both hiding the real gap, which is in the driver.
+    It read *"a stopped container is held because no driver can start one"* — true
+    when it was written: `up` is create-if-absent (it logs "container exists …
+    leaving as-is" and returns 0) and none of docker/podman/lxd had a `start`.
+    The fix went into the drivers rather than here, because reaching around a
+    driver to `podman start` puts a second owner on the lifecycle — the
+    stale-record shape this repo keeps finding.
+
+    The target form is the load-bearing detail: phases 3/4/5 resolve a BARE name
+    to `lab-<name>`, so `start web` would address a container that is not ours.
     """
     live = _res(backend="docker", name="lab-mc-web", svc="web", lab="mc",
                 status="stopped", extra={"state": "exited"})
@@ -245,15 +248,19 @@ def test_a_stopped_container_is_held_because_no_driver_can_start_one(
     r = apply(spec, max_passes=2, backend_for=_engines(
         chroot=ConvergingEngine("chroot"), fc=ConvergingEngine("fc"), docker=docker,
     ), run=_runner({"docker": docker}, log))
-    assert any(d.slot == "docker" and d.kind == "stopped" for d in r.held), (
-        "REGRESSION: a stopped container was treated as fixable — `up` would log "
-        "'leaving as-is', return 0, and the loop would call that progress"
+    started = [a for a in r.issued if a[1] == "start" and "lab-docker.sh" in a[0]]
+    assert started, (
+        "REGRESSION: a stopped container was not started — TODO A.3 gave phases "
+        "3/4/5 a `start` verb precisely so this row stopped being unrepairable"
     )
-    assert not r.converged
-    assert not any(a[1] == "start" and "lab-docker.sh" in a[0] for a in r.issued)
+    assert started[0][2] == "mc/web", (
+        "REGRESSION: the target must be <lab>/<service> — a bare name resolves to "
+        f"lab-<name> in the driver and would address the wrong container: {started[0]}"
+    )
+    assert not any(d.slot == "docker" and d.kind == "stopped" for d in r.held)
 
 
-def test_a_stopped_vm_or_microvm_is_NOT_held_because_those_drivers_have_start(
+def test_a_stopped_row_is_only_held_when_the_slot_has_no_start_verb(
     tmp_path: Path,
 ) -> None:
     """The control for the row above.

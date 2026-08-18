@@ -256,10 +256,29 @@ _DOWN_ORDER: tuple[PhaseSlot, ...] = tuple(reversed(_UP_ORDER))
 #: `create` and run with `start`; only docker, podman and lxd have `up`.
 _NO_UP_VERB: frozenset[PhaseSlot] = frozenset({"chroot", "vm", "fc"})
 
-#: Slots with a per-instance `start`.  Container engines have none — their `up` is
-#: create-if-absent and logs *"container exists … leaving as-is"* over a stopped
-#: one, so nothing this dispatcher can call will start it.  See `apply.py`.
-_HAS_START_VERB: frozenset[PhaseSlot] = frozenset({"vm", "fc"})
+#: Slots with a per-instance `start`.
+#:
+#: Was `{"vm", "fc"}`: the three container drivers had no `start` at all, and their
+#: `up` is create-if-absent — over a stopped container it logs *"container exists …
+#: leaving as-is"* and returns 0 — so a stopped container was a state this control
+#: plane could not repair and `apply` HELD it (TODO A.3, found by driving real
+#: podman).  The fix went where the gap was: `lab-docker.sh`, `lab-podman.sh` and
+#: `lab-lxd.sh` each grew a `start <name|lab/service>` that asserts the outcome
+#: rather than trusting the engine's exit status.
+#:
+#: `chroot` is still absent, and always will be: a chroot has no run state at all.
+_HAS_START_VERB: frozenset[PhaseSlot] = frozenset(
+    {"vm", "fc", "docker", "podman", "lxd"}
+)
+
+#: Slots whose `start` takes `<lab>/<service>` rather than a bare name.  Phases 3,
+#: 4 and 5 rename what they create (`lab-<lab>-<svc>`) and resolve a BARE target to
+#: `lab-<name>` — so passing the declared service name alone would address
+#: `lab-web` instead of `lab-<lab>-web`: a different container, or none.  Measured
+#: while writing phase 4's test, where the first version refused `lab-lab-…-dies`.
+_START_TAKES_LAB_SLASH_SVC: frozenset[PhaseSlot] = frozenset(
+    {"docker", "podman", "lxd"}
+)
 
 
 def instance_names(parsed: dict, block: str, toml_path: Path) -> list[str]:

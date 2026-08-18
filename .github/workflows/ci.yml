@@ -272,9 +272,32 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install uv
         uses: astral-sh/setup-uv@v5
+      - name: Provide a container engine for the LIVE reconcile rows
+        # phase6-tui/tests/test_apply_live.py drives a REAL engine: it is the only
+        # thing that proves apply's no-op-on-pass-two property against something
+        # that can disagree with it (a fake converges because the fixture says so),
+        # and it carries slice 6's break-it row. It refuses to pull over the network
+        # itself — on a developer's box that would be a surprise — so CI, where a
+        # pull is unremarkable, provides the image instead.
+        #
+        # A ::warning:: on every failure branch, because the alternative is a green
+        # tick that silently means "the live rows did not run". That distinction is
+        # the whole reason the suite skips loudly rather than passing quietly.
+        run: |
+          if ! command -v podman >/dev/null 2>&1; then
+            echo "::warning::podman is absent on this runner — phase6-tui's 4 live reconcile/apply rows will SKIP, so the no-op-on-pass-two property against a real engine, the started-not-recreated repair, and slice 6's cross-lab identity row are NOT exercised by this run"
+            exit 0
+          fi
+          podman --version
+          if ! podman pull -q docker.io/library/busybox:latest; then
+            echo "::warning::could not pull busybox — phase6-tui's 4 live reconcile/apply rows will SKIP (see above for what that leaves unexercised)"
+          fi
       - name: phase6-tui pytest
         working-directory: phase6-tui
-        run: uv run --frozen pytest -q
+        # -rs NAMES every skip in the job log. A count cannot say WHICH guard did
+        # not run, and this suite's skips are exactly the rows whose absence would
+        # otherwise be invisible behind a green tick.
+        run: uv run --frozen pytest -q -rs
       - name: phase6b-web pytest
         working-directory: phase6b-web
-        run: uv run --frozen pytest -q
+        run: uv run --frozen pytest -q -rs

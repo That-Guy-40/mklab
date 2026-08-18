@@ -253,7 +253,14 @@ refusal is a decision, not an unimplemented feature:
 | `undeclared` | **held, and no flag changes it** | deleting what nobody declared is the half of a reconcile loop that destroys work. On this repo's ladder a stray is at worst DEGRADED; a wrong deletion is unrecoverable |
 | `unknown` | **held** | issuing `create` against a row nobody could read is exactly the duplicate-creation bug the unknown/absent distinction exists to prevent — and it would do it while reporting progress |
 | `drifted` | **held** | the repair is destroy-and-recreate, which deletes a per-instance rootfs copy |
-| `stopped`, on docker/podman/lxd | **held** | measured live: `up` is create-if-absent, not converge — it logs *"container exists … leaving as-is"* and returns 0 — and none of the three has a `start` verb. The gap is in the driver, and papering over it here would hide that |
+| `stopped`, on docker/podman/lxd | **issue** `start <lab>/<svc>` | this row read **held** for one commit. Measured live, `up` is create-if-absent, not converge — it logs *"container exists … leaving as-is"* and returns 0 — and none of the three had a `start` at all. The fix went into the **drivers** (TODO A.3), not here: phase 6 reaching around a driver to `podman start` would put a second owner on one lifecycle |
+
+**The target form matters.** Phases 3/4/5 rename what they create
+(`lab-<lab>-<svc>`) and resolve a *bare* target to `lab-<name>`, so
+`start web` would address a container that is not ours. `apply` issues
+`<lab>/<service>` for those three and a bare name for vm/fc — found while
+writing phase 4's own test, whose first version refused
+`lab-lab-startverb-…-dies`.
 
 **Minimum transitions, per engine.** Five drivers are declarative, so one
 `up --config` converges every row they own. Phase 7 is not — it has no

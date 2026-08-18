@@ -1355,6 +1355,59 @@ _instance_project() {
             'first(.[] | select(.name==$n and .config[$tk]==$tv) | (.project // "default")) // empty'
 }
 
+# ─── Subcommand: start ─────────────────────────────────────────────────────
+# TODO A.3, and the third of three: `up` here is create-if-absent too — against an
+# existing instance it logs "instance '<n>' exists (…); leaving as-is" and returns
+# 0 — so a stopped instance was a state no verb in this driver could repair, and
+# phase 6's `apply` had to hold it rather than reach around to `incus start`.
+#
+# NOT VERIFIED LIVE ON THE DEVELOPMENT HOST, and that is recorded rather than
+# glossed: this box runs a live Calico cluster and the repo's standing rule is
+# never to `incus admin init` here, so both daemons are inactive and
+# tests/test-start-verb.sh SKIPs.  Its docker and podman siblings were exercised
+# end to end.  An unmet precondition is an UNKNOWN, not a pass.
+#
+# ASSERT THE OUTCOME: `start` returning 0 says the request was accepted; the state
+# is read back from the engine afterwards (REVIEW-phase7.md P7-4's lesson).
+cmd_start() {
+    local target="${POS_ARGS[0]:-}"
+    [[ -n "$target" ]] || die "usage: $LAB_PROG start <name|lab/service>"
+    require_lxd_or_incus
+    local iname; iname="$(_resolve_instance_name "$target")"
+    # Same project re-scoping cmd_exec does (Review M5): an instance may live in a
+    # non-default project, and a start issued in the wrong one addresses nothing.
+    local _proj; _proj="$(_instance_project "$iname")"
+    local -a scope=(); [[ -n "$_proj" && "$_proj" != "default" ]] && scope=(--project "$_proj")
+
+    _lxd_state() {
+        "$LXC_CMD" list "${scope[@]}" --format=json 2>/dev/null \
+            | jq -r --arg n "$iname" 'first(.[] | select(.name==$n) | .status) // empty'
+    }
+
+    local state; state="$(_lxd_state)"
+    [[ -n "$state" ]] \
+        || die "no such instance: $iname — 'start' does not create anything; run '$LAB_PROG up --config <file>' first"
+    if [[ "$state" == "Running" ]]; then
+        # Idempotent BY DESIGN: a reconcile loop may issue this against a row that
+        # started between the diff and the transition, and that is not an error.
+        printf 'PASS: %s is already running (nothing to do)\n' "$iname"
+        return 0
+    fi
+
+    log_info "$LXC_CMD start $iname"
+    "$LXC_CMD" start "${scope[@]}" "$iname" || die "$LXC_CMD start $iname failed"
+
+    local i
+    for i in $(seq 1 20); do
+        state="$(_lxd_state)"
+        [[ "$state" == "Running" ]] && break
+        sleep 0.25
+    done
+    [[ "$state" == "Running" ]] \
+        || die "REGRESSION: $iname is '$state' after start — the request was accepted and the instance is still not running (check '$LAB_PROG logs $target')"
+    printf 'PASS: started %s — state read back as Running, not merely requested\n' "$iname"
+}
+
 # ─── Subcommand: exec ──────────────────────────────────────────────────────
 cmd_exec() {
     local target="${POS_ARGS[0]:-}"
@@ -1981,6 +2034,7 @@ USAGE
   $LAB_PROG run      --name N    [--image I | --chroot PATH | --tarball PATH | --qcow2 PATH] [--type container|vm]
   $LAB_PROG up       --config topology.toml
   $LAB_PROG down     --lab NAME | --config topology.toml
+  $LAB_PROG start    <name|lab/service>                 # start an EXISTING instance (up creates; it does not converge)
   $LAB_PROG exec     <name|lab/service> [-- cmd args...]
   $LAB_PROG logs     <name|lab/service> [--follow]
   $LAB_PROG status   [<name|lab>]
@@ -2076,6 +2130,7 @@ main() {
         build)   cmd_build   ;;
         run)     cmd_run     ;;
         up)      cmd_up      ;;
+        start)   cmd_start   ;;
         down)    cmd_down    ;;
         exec)    cmd_exec    ;;
         logs)    cmd_logs    ;;
