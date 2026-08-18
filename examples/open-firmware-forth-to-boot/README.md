@@ -60,6 +60,14 @@ $ qemu-system-ppc -nographic       # stock QEMU, no lab artifacts at all
 
 Ten seconds to an IEEE 1275 prompt, and a concrete grip on the distinction.
 
+The distinction has a sharp consequence for anyone eyeing a 64-bit port: OFW's
+x86 support *is* a hand-written 32-bit assembler-in-Forth (`cpu/x86/assem.fth`,
+`kerncode.fth`) with the cell nailed to four bytes, and the tree has been frozen
+since December 2015 — so long mode is a rewrite with no upstream, while for
+OpenBIOS it is an entry layer over an already-64-bit core. Measured in the
+sibling lab's
+[X86-64-FEASIBILITY.md](../openbios-the-rival-that-shipped/X86-64-FEASIBILITY.md).
+
 ## Quick start
 
 ```console
