@@ -1,7 +1,17 @@
 # Micro-Cloud Lab — ☁️ under construction
 
-> **Status (2026-08-06):** slices 0–4 are **done**, **slice 5a is done — both halves**, and **slice 5b is done**
-> — a second engine (QEMU `-M microvm`) booting the same kernel and the same rootfs,
+> **Status (2026-08-18):** slices **0–4, 5a (both halves), 5b, 5c, 6 and 7 are done.**
+> Slice 6 is the control plane — [`reconcile.py`](../../phase6-tui/lab_tui/reconcile.py) (declared vs
+> derived, issuing nothing) and [`apply.py`](../../phase6-tui/lab_tui/apply.py) (the half that issues, acting
+> on 2 of the 6 diff kinds and holding the rest), with a 6-layer graded chaos matrix that
+> found a **LIED** on its first run. Slice 7 is **preserve** —
+> [`preserve.sh`](preserve.sh) + [`RUNBOOK-preserve.md`](RUNBOOK-preserve.md): two tiers, a
+> `derivation.toml`, and a restore that refuses a changed artifact **by name, with both
+> digests, before importing anything**. **Slices 8–10 remain** (the fleet · two paths
+> finished · the demo). What follows is the 5b write-up, kept because the finding is the
+> point:
+>
+> **slice 5b** — a second engine (QEMU `-M microvm`) booting the same kernel and the same rootfs,
 > so the only variable is the VMM. It produced the number nobody had **and corrected
 > the one everybody had**: `0.512 s` of Firecracker's canonical `0.567 s` is a kernel
 > **i8042 probe** waiting out a PS/2 controller QEMU's `microvm` does not emulate. At
