@@ -604,6 +604,46 @@ for n in 1 2 3 4 5; do lab-fc.sh restore "w$n" --from api1:warm; done
 Five warm instances from one memory image, in about the time one would take to boot. That
 is literally how Lambda serves a cold start.
 
+> ✅ **BUILT 2026-08-18 — the verb exists, and the CLI shape is not the sketch above.**
+> `lab-fc.sh snapshot {create|list|restore|delete} <name> [snap]`, deliberately the same
+> shape as `lab-vm.sh snapshot` so [§9.5](#95-preserve--two-tiers-and-a-derivation)'s fast
+> tier can reach both phases through one form. Three findings, all of which change what
+> slice 8 has to do:
+>
+> - **The blocker was `--no-api`, not a missing verb.** `start` ran the VMM with
+>   `--no-api --config-file`, and pause / `snapshot/create` / `snapshot/load` are API-only —
+>   there was nowhere to send them. `start` now passes `--api-sock` *beside* the config
+>   file, so the boot is unchanged and a control channel is added. (`sun_path` is 108 bytes
+>   including the NUL, and this stack has been bitten by that before, so a too-long instance
+>   path falls back to a short **derived** socket name rather than failing to start.)
+>
+> - **A snapshot must carry the DISK, and this one does.** Firecracker's snapshot is memory
+>   + device state; the guest's page cache, open inodes and dirty buffers all describe the
+>   rootfs *as it was at the pause*. Restore that memory over a rootfs that has moved on and
+>   **nothing errors** — you get a running guest whose kernel believes things about a
+>   filesystem that are no longer true. So `snapshot create` copies the rootfs *inside the
+>   pause*, making the three files one instant, and `restore` refuses a snapshot whose bytes
+>   have changed **by name, with both digests**. It is expensive (a 128 MiB rootfs is
+>   128 MiB per snapshot) and `create` says so — but it is also exactly what the five clones
+>   below need, since each must get its own disk or they scribble over each other.
+>
+> - **A restored VMM has no `--config-file`**, because the snapshot carries the machine
+>   configuration. That broke the P7-5 identity check (which matched only the config path in
+>   argv), and would have made every restored instance invisible to `list`, `stop` and
+>   `start` — P7-5 reintroduced through a new verb rather than a new bug. `_running_pid` now
+>   accepts either per-instance path.
+>
+> **Proof it is a restore and not a reboot:**
+> [`tests/test-snapshot-round-trip.sh`](phase7-firecracker/tests/test-snapshot-round-trip.sh)
+> boots a real guest that prints a monotonic counter to its console, snapshots at tick *N*,
+> lets the live VM run on to *N+4*, stops it, restores — and asserts the restored guest's
+> **first** tick is *N+1*. A fresh boot restarts at 1; a guest that never rewound would be
+> past *N+4*. The console log is append-only across restores, so it is read from a recorded
+> byte offset — the same trap metal-as-a-service's stale console set. Measured: snapshot at
+> 4, live reached 8, restored resumed at **5**, no kernel banner. The negative control (a
+> restore patched to boot fresh instead of loading the memory image) was injected and
+> watched to bite.
+
 **v2 called MMDS "the highest-value teaching artifact." v3 disagrees.** MMDS is the most
 *delightful*, but it is a ~30-line contract. The deepest lesson is the **clone hazard**:
 every restored clone resumes with the same entropy pool, the same in-memory secrets, the
@@ -1102,13 +1142,19 @@ or chroots I like."*
 > Still worth having, still non-portable — but a reader who took this table at its word
 > would expect to resume a live guest and would not.
 >
-> **And the fast tier is one phase wide, not four.** Only `lab-vm.sh` has an engine-native
-> snapshot verb. `preserve.sh --tier fast` therefore **refuses the other five by name**,
-> each naming the mechanism this table intends *and* the verb that does not exist
-> (`podman commit`, `docker commit`, `incus snapshot` stateful, FC snapshot+memory per
-> §5.8). Silently falling back to the portable tier would hand an operator a backup with no
-> running state while they believed they had one — the failure this section exists to
-> prevent, wearing a helpful face.
+> **And the fast tier was one phase wide.** `preserve.sh --tier fast` refuses a phase whose
+> driver has no engine-native verb **by name**, each refusal naming the mechanism this table
+> intends *and* the verb that does not exist (`podman commit`, `docker commit`, `incus
+> snapshot` stateful). Silently falling back to the portable tier would hand an operator a
+> backup with no running state while they believed they had one — the failure this section
+> exists to prevent, wearing a helpful face.
+>
+> ✅ **Firecracker's row closed 2026-08-18.** `lab-fc.sh snapshot {create|list|restore|delete}`
+> now exists, so the fast tier is **two** phases wide and the one it gained is the one §5.8
+> needs. The blocker was never a missing verb: `start` ran the VMM with **`--no-api`**, and
+> Firecracker's pause / `snapshot/create` / `snapshot/load` are API-only, so there was
+> nowhere to send them. `start` now passes `--api-sock` beside the config file — the boot is
+> unchanged, a control channel is added — and that is what unblocks **slice 8**.
 
 > ⚠ **The portable tier loses MORE than running state, and this was found by trying it.**
 > The three container drivers advertise `run --name NEW --tarball FILE` as their round trip
@@ -1336,7 +1382,7 @@ exercise · break**, and the break pass writes into `LEDGER.md`.
 | **5c** ✅ | **vsock — the first channel that is not the fabric** — **DONE 2026-08-07, [Appendix N](#appendix-n--slice-5c-vsock-the-first-channel-that-is-not-the-fabric-2026-08-07)** | one static guest agent (musl, no engine `#ifdef`) answering over vsock from **both** engines, injected into slice 3's ext4 with `debugfs -w` — no loop mount, no sudo; the §18.4 row filled in from what the two host APIs needed (a unix socket + `CONNECT <port>` handshake under Firecracker, a raw `AF_VSOCK` address under QEMU) | the guest contract is byte-identical while the host API differs in kind — a harder case for shape (b) than 5a or 5b produced, and it held | six-row chaos matrix ([`tests/test-vsock-chaos.sh`](examples/micro-cloud/tests/test-vsock-chaos.sh)), unprivileged, graded on the ladder and written as a regression guard: **`guest_cid` is advisory under Firecracker and allocated under QEMU**, so three machines believed they were CID 43 at once |
 | **6** ✅ | **The control plane** — **DONE 2026-08-18**: ~~`fc.py` backend~~ **done** (it refuses `vm.py`'s bare-liveness check — [P7-5](REVIEW-phase7.md) measured one pidfile giving three answers), ~~topology slot~~ **done**, ~~decision G~~ **settled 2026-08-16 ([§8.4a](#84a-decision-g--settled-2026-08-16-derive-the-facts-record-only-the-intent)): no registry of facts**, ~~`apply`'s read-only half~~ **done 2026-08-16** ([`reconcile.py`](phase6-tui/lab_tui/reconcile.py) — declared vs derived, issuing nothing; `unknown` is a verdict distinct from `absent`), ~~the half that issues~~ **done 2026-08-17** ([`apply.py`](phase6-tui/lab_tui/apply.py) — no-op on pass two, and it acts on 2 of the 6 diff kinds: `undeclared`/`unknown`/`drifted` are held for the operator). **Build, exercise and break are all done** — §8.4a moved that fault from *make the registry disagree with reality* to *make the derivation answer for the wrong subject*, now a **6-layer graded matrix** that found a **LIED** on its first run (`reconcile` trusted each backend's own lab filter; another lab's resource answered this lab's question and `apply` reported converged over nothing). And [`test_apply_live.py`](phase6-tui/tests/test_apply_live.py) runs it against **live rootless podman**: two labs each declaring a service called `web`, one removed, and the diff must still answer for the right lab. That suite also found a real gap — the three container drivers' `up` is create-if-absent, not converge, and none has a `start` (TODO A.3) | whichever §8.3 shape slice 5 argued for; `fc.py` backend + topology slot; revisit decision G | all instances in one tree; `apply` a no-op on pass two, if the seam supports it. **The slot is shape (b) in practice**: `lab-fc.sh` has no `up`, so the `fc` slot emits `create --config` + `start <name>` — the intersection, spoken in the driver's own verbs, rather than a fifth slot pretending to be the other four | make the registry disagree with reality — MAAS's registry-layer fault, ported |
 | **7** ✅ | **Preserve** — **DONE 2026-08-18.** Both halves: ~~`lab-vm.sh export`~~ **done** (#233 — `export-tarball` across all four phases, and **rootless** on phase 2 through a libguestfs appliance, which closed the §9.5 gap that was four phases wide rather than one), and ~~`preserve.sh`, both tiers, `derivation.toml`~~ **done** ([`preserve.sh`](examples/micro-cloud/preserve.sh) + [`RUNBOOK-preserve.md`](examples/micro-cloud/RUNBOOK-preserve.md)). Two findings, both corrections to [§9.5](#95-preserve--two-tiers-and-a-derivation)'s own table: the fast tier does **not** preserve running state for phase 2 and is **one phase wide, not four** (the other five refuse **by name**, each naming the verb that does not exist); and the portable tier loses the **image configuration** as well as running state — `podman export` writes no OCI config, so the drivers' own advertised `run --tarball` round trip dies at *"no command or entrypoint provided"*, which is now **TODO A.4** | `preserve.sh`, both tiers, `derivation.toml`; **`lab-vm.sh export`** (the §9.5 gap) | back up a lab, destroy it, restore it, prove it is the same — [`test-preserve-round-trip.sh`](examples/micro-cloud/tests/test-preserve-round-trip.sh) does exactly that against **live rootless podman**, with a marker written into the container *after* it starts so the export is proved to read the container's filesystem and not its image | restore with a **changed** artifact hash and confirm it refuses **by name** — [`test-preserve-gate.sh`](examples/micro-cloud/tests/test-preserve-gate.sh), and it asserts all **three** outcomes: one byte changed → refused with **both digests** and **nothing imported**; unreadable → **UNKNOWN**, not CHANGED and not a pass; put back → the gate falls silent. Both negative controls were injected and watched to bite |
-| **8** | **The fleet** | snapshot/restore; the jailer tier | five warm clones from one memory image | clone-entropy hazard then re-seeding; diff `/proc/<pid>/root`, `ns/net`, `Seccomp` plain vs jailed |
+| **8** | **The fleet** — **UNBLOCKED 2026-08-18**: its dependency was `lab-fc.sh snapshot`, which did not exist because `start` ran the VMM with `--no-api` and Firecracker's snapshot calls are API-only ([§5.8](#58-snapshot--restore--and-the-deepest-lesson-in-the-plan)). The verb now exists, is proved to RESUME rather than reboot against a real guest, and carries the disk inside the pause — so a clone gets its own rootfs by construction, which is the half the `for n in 1 2 3 4 5` sketch quietly assumed | snapshot/restore; the jailer tier | five warm clones from one memory image | clone-entropy hazard then re-seeding; diff `/proc/<pid>/root`, `ns/net`, `Seccomp` plain vs jailed |
 | **9** | **Two paths, finished** | web wizards (§8.2 gap); a `microvm` wizard; the learning path | a beginner reaches a booted microVM guided-only; you reach one raw-only | `test-guided-path-is-a-view.sh` bites when a guided step does something the CLI cannot |
 | **10** | **The demo** | `micro-cloud.sh up`, five instances, §15's transcript; catalog routing | the transcript reproduces; §9.3's isolation matrix | teardown leaves **nothing of ours** and **everything of Calico's** |
 

@@ -12,6 +12,9 @@
 #   lab-fc.sh start     <name> [--force]     # --force: start despite a changed/missing kernel
 #   lab-fc.sh stop      <name> [--force]     # --force: escalate to SIGKILL if SIGTERM is ignored
 #   lab-fc.sh destroy   <name> [--force]     # --force: kill it first if it is running
+#   lab-fc.sh snapshot  {create|list|restore|delete} <name> [snap]
+#                                            # memory + devices + the disk, from one pause.
+#                                            # create needs it RUNNING; restore needs it STOPPED.
 #   lab-fc.sh list      [--json]
 #   lab-fc.sh inspect   <name>
 #   lab-fc.sh mac       <name>               # the guest MAC this tool would set — read-only,
@@ -53,6 +56,7 @@ readonly DEF_VCPUS=1
 
 die()  { printf 'lab-fc.sh: %s\n' "$*" >&2; exit 1; }
 note() { printf '  - %s\n' "$*" >&2; }
+require_cmd() { command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"; }
 
 # ── the instance name is a PATH COMPONENT, so it is gated at the accessor ────
 # REVIEW-phase7.md P7-3: `preflight_checks` has always regex-gated the name, but only
@@ -77,6 +81,61 @@ fc_manifest() { printf '%s/manifest.toml' "$(fc_dir "$1")"; }
 fc_pidfile()  { printf '%s/fc.pid'        "$(fc_dir "$1")"; }
 fc_log()      { printf '%s/fc.log'        "$(fc_dir "$1")"; }
 fc_rootfs()   { printf '%s/rootfs.ext4'   "$(fc_dir "$1")"; }
+fc_snapdir()  { printf '%s/snapshots'     "$(fc_dir "$1")"; }
+
+# WHERE THE API SOCKET PATH IS RECORDED, AND WHY IT IS NOT IN manifest.toml.
+# The manifest is the CREATE-time record — what this instance is. The socket is RUN-time
+# state, chosen at `start`, exactly like the pidfile: rewriting a provenance file on every
+# start is how a record starts describing two different things at once.
+fc_sockfile() { printf '%s/api-sock.path' "$(fc_dir "$1")"; }
+
+# THE 108-BYTE CAP IS NOT A DETAIL. `sockaddr_un.sun_path` is 108 bytes INCLUDING the NUL,
+# and this stack has been bitten by it before: an agent scratch dir under $TMPDIR pushed
+# Firecracker's `uds_path` and QEMU's `-qmp` path over the limit, and the error read like a
+# vsock problem rather than a path-length one. So the primary location is inside the
+# instance dir (where `destroy` already reaps it), and when THAT would not fit we fall back
+# to a SHORT path derived from the instance dir — derived, so there is still exactly one
+# owner and it is recomputable, not a random name nobody can find again.
+_api_sock_for() {  # _api_sock_for <name> -> the path start would use
+    local name="$1" primary h
+    primary="$(fc_dir "$name")/api.sock"
+    (( ${#primary} <= 100 )) && { printf '%s' "$primary"; return; }
+    h="$(printf '%s' "$(fc_dir "$name")" | sha256sum)"
+    printf '%s/lab-fc-%s.sock' "${TMPDIR:-/tmp}" "${h:0:12}"
+}
+
+api_sock_of() {  # api_sock_of <name> -> the socket THIS RUNNING instance was started with
+    local f; f="$(fc_sockfile "$1")"
+    [[ -r "$f" ]] || return 1
+    local sp; sp="$(cat "$f" 2>/dev/null || true)"
+    [[ -n "$sp" ]] || return 1
+    printf '%s' "$sp"
+}
+
+# ── the Firecracker API, over its unix socket ───────────────────────────────
+# The status code is the gate, and it is read from curl's own -w rather than from the body:
+# Firecracker answers a REFUSED request with 400 and a JSON explanation, so "curl exited 0"
+# means the HTTP conversation happened, not that the VMM agreed to anything.
+_api() {  # _api <sock> <METHOD> <path> [json-body]  -> body on stdout; non-zero on any non-2xx
+    local sock="$1" method="$2" path="$3" body="${4:-}" out code
+    # Named `curl_args` rather than `args` on purpose: gen_config has a local STRING called
+    # `args` (the guest kernel cmdline), and shellcheck reasons about the name across the
+    # file, so reusing it here made it warn about the boot_args expansion 50 lines away.
+    # BOUNDED, because an unresponsive VMM must not wedge the CLI. A Firecracker that has
+    # accepted the connection and then stopped answering — wedged, paused mid-snapshot, or
+    # simply not the thing you think is listening — would otherwise leave `curl` waiting
+    # forever, and a tool that hangs is worse than one that fails: nothing prints, nothing
+    # times out, and the operator has no verdict at all. Found by a stand-in VMM that binds
+    # the socket without implementing the API, which is exactly that case.
+    local -a curl_args=(--unix-socket "$sock" -sS -X "$method" "http://localhost${path}"
+                        --connect-timeout 5 --max-time "${LAB_FC_API_TIMEOUT:-20}"
+                        -H 'Accept: application/json' -w '\n%{http_code}')
+    [[ -n "$body" ]] && curl_args+=(-H 'Content-Type: application/json' -d "$body")
+    out="$(curl "${curl_args[@]}" 2>&1)" || { printf '%s' "$out"; return 1; }
+    code="${out##*$'\n'}"
+    printf '%s' "${out%$'\n'*}"
+    [[ "$code" == 2* ]]
+}
 
 # ── provenance ──────────────────────────────────────────────────────────────
 # Tags, worst-to-best for the reader's attention:
@@ -655,8 +714,17 @@ _running_pid() {  # _running_pid <name> -> prints the pid iff OUR firecracker is
     [[ -d "/proc/$p" ]] || return 1
     cfg="$(fc_config "$name")"
     grep -qa firecracker "/proc/$p/cmdline" 2>/dev/null || return 1
-    grep -qaF -- "$cfg" "/proc/$p/cmdline" 2>/dev/null || return 1
-    printf '%s' "$p"
+    # EITHER per-instance path is a sufficient identity, and BOTH are needed as options
+    # because a RESTORED VMM has no --config-file at all: a snapshot carries the machine
+    # configuration, so `snapshot restore` starts firecracker with only --api-sock. Keeping
+    # just the config check here would have made every restored instance invisible to
+    # `list`, `stop` and `start` — the P7-5 defect (one pidfile, three answers) reintroduced
+    # through a new verb rather than a new bug.
+    local sock=""; sock="$(api_sock_of "$name" 2>/dev/null || true)"
+    grep -qaF -- "$cfg" "/proc/$p/cmdline" 2>/dev/null && { printf '%s' "$p"; return 0; }
+    [[ -n "$sock" ]] && grep -qaF -- "$sock" "/proc/$p/cmdline" 2>/dev/null \
+        && { printf '%s' "$p"; return 0; }
+    return 1
 }
 
 cmd_start() {
@@ -669,7 +737,21 @@ cmd_start() {
 
     verify_recorded_artifacts "$name" "$force"
 
-    setsid firecracker --no-api --config-file "$(fc_config "$name")" \
+    # ── WHY THIS IS NO LONGER `--no-api` ───────────────────────────────────────────────
+    # It was, from slice 1 onward, and nothing needed more. But Firecracker's snapshot
+    # facility exists ONLY on the API socket: pause, snapshot/create and snapshot/load are
+    # API calls, and a VMM launched with --no-api has nowhere to receive them. §5.8's fleet
+    # (five warm clones from one memory image) and §9.5's fast preserve tier both bottom out
+    # there, so `--no-api` was the actual blocker behind "lab-fc.sh has no snapshot verb".
+    #
+    # The config file STAYS. Firecracker takes both: it boots from --config-file and serves
+    # the API on --api-sock, so nothing about how an instance boots changes — the socket only
+    # adds a control channel that was previously absent. That matters for the identity check
+    # above and for every existing test that greps this argv.
+    local sock; sock="$(_api_sock_for "$name")"
+    rm -f -- "$sock"     # a socket left by a dead VMM would make bind(2) fail with EADDRINUSE
+    printf '%s' "$sock" > "$(fc_sockfile "$name")"
+    setsid firecracker --api-sock "$sock" --config-file "$(fc_config "$name")" \
         > "$(fc_log "$name")" 2>&1 < /dev/null &
     p=$!
     printf '%s\n' "$p" > "$(fc_pidfile "$name")"
@@ -744,7 +826,214 @@ cmd_stop() {
         fi
     fi
     rm -f "$(fc_pidfile "$name")"
+    # A unix socket outlives the process that bound it, and bind(2) fails with EADDRINUSE on
+    # a leftover — so a stopped instance leaves none. `start` also unlinks defensively,
+    # because a SIGKILLed VMM never gets here.
+    local sock; sock="$(api_sock_of "$name" 2>/dev/null || true)"
+    [[ -n "$sock" ]] && rm -f -- "$sock"
     printf 'PASS: %s (pid %s) stopped — process confirmed gone, not merely signalled\n' "$name" "$p"
+}
+
+# ── snapshot: the verb §5.8 and §9.5 both bottom out on ─────────────────────
+#
+# Firecracker's snapshot is memory + device state, and it does NOT include the disk. The
+# guest's page cache, its open inodes and its dirty buffers all describe the rootfs AS IT
+# WAS at the instant of the pause. Restore that memory onto a rootfs that has moved on and
+# nothing errors — you get a running guest whose kernel believes things about a filesystem
+# that are no longer true, which is filesystem corruption with a clean exit code.
+#
+# So a snapshot here is SELF-CONTAINED: vmstate + mem + a copy of the rootfs, taken while
+# the VM is paused so all three are the same instant. That is also exactly what §5.8's five
+# warm clones need (each clone must get its own disk or they scribble over each other), so
+# the expensive choice is the one the next slice was going to require anyway. It is not
+# cheap — a 128 MiB rootfs is 128 MiB per snapshot — and `create` says so.
+#
+# The alternative, recording only the rootfs digest and refusing a changed one, was
+# rejected: `create` resumes the VM afterwards, the guest immediately writes to its disk,
+# and every later restore would refuse. A gate that fires on correct behaviour is how a
+# real check gets switched off.
+_snap_dir() { printf '%s/%s' "$(fc_snapdir "$1")" "$2"; }
+
+_resume_or_warn() {  # best-effort resume; NEVER leave a paused VM behind on an error path
+    local sock="$1" name="$2"
+    if _api "$sock" PATCH /vm '{"state":"Resumed"}' >/dev/null 2>&1; then return 0; fi
+    printf 'WARNING: %s is still PAUSED — the snapshot step failed and the resume did too.\n' "$name" >&2
+    printf '         Resume it by hand:  curl --unix-socket %s -X PATCH http://localhost/vm -d '"'"'{"state":"Resumed"}'"'"'\n' "$sock" >&2
+}
+
+cmd_snapshot() {  # cmd_snapshot <action> <name> [snap] [force]
+    local action="$1" name="$2" snap="${3:-}" force="${4:-0}"
+    local d; d="$(fc_dir "$name")"
+    [[ -d "$d" ]] || die "no such instance: $name"
+
+    case "$action" in
+        list)
+            local sd; sd="$(fc_snapdir "$name")"
+            if [[ ! -d "$sd" ]] || [[ -z "$(ls -A "$sd" 2>/dev/null)" ]]; then
+                printf 'no snapshots for %s\n' "$name"; return 0
+            fi
+            printf '%-20s %-22s %10s  %s\n' SNAPSHOT TAKEN SIZE ROOTFS-SHA
+            local one m
+            for one in "$sd"/*/; do
+                [[ -d "$one" ]] || continue
+                m="$one/snapshot.toml"
+                printf '%-20s %-22s %10s  %s\n' "$(basename "$one")" \
+                    "$( [[ -r "$m" ]] && sed -n 's/^taken = "\(.*\)"$/\1/p' "$m" || printf '?')" \
+                    "$(du -sh "$one" 2>/dev/null | cut -f1)" \
+                    "$( [[ -r "$m" ]] && sed -n 's/^rootfs_sha256 = "\(.\{0,16\}\).*"$/\1…/p' "$m" || printf '?')"
+            done
+            return 0
+            ;;
+        create|restore|delete) ;;
+        *) die "unknown snapshot action: $action (use create|list|restore|delete)" ;;
+    esac
+
+    [[ -n "$snap" ]] || die "snapshot $action needs a snapshot name: snapshot $action <instance> <snap>"
+    # The snapshot name is a PATH COMPONENT, exactly as the instance name is — same gate,
+    # same reason (P7-3). A name is not a path.
+    valid_name "$snap" || die "invalid snapshot name '$snap' — must match ${FC_NAME_RE} (it is used as a directory name)"
+    local sdir; sdir="$(_snap_dir "$name" "$snap")"
+
+    case "$action" in
+    delete)
+        [[ -d "$sdir" ]] || die "no snapshot '$snap' for '$name' (try: snapshot list $name)"
+        rm -rf -- "$sdir"
+        [[ ! -d "$sdir" ]] || die "could not remove $sdir"
+        printf 'PASS: deleted snapshot %s/%s\n' "$name" "$snap"
+        ;;
+
+    create)
+        local p sock
+        p="$(_running_pid "$name")" \
+            || die "'$name' is not running — a snapshot captures MEMORY, and there is none to capture.  Run: $0 start $name"
+        sock="$(api_sock_of "$name")" \
+            || die "'$name' was started without an API socket (by a lab-fc.sh older than the snapshot verb).  Restart it: $0 stop $name && $0 start $name"
+        [[ -S "$sock" ]] \
+            || die "the recorded API socket is not there: $sock — restart '$name' so it is recreated"
+        [[ ! -d "$sdir" ]] \
+            || die "snapshot '$snap' already exists for '$name' — refusing to write over it (delete it first)"
+        require_cmd curl
+        mkdir -p "$sdir" || die "could not create $sdir"
+
+        # PAUSE → CAPTURE → COPY THE DISK → RESUME. The copy happens INSIDE the pause on
+        # purpose: that is the only window in which the memory image and the bytes on disk
+        # describe the same instant.
+        _api "$sock" PATCH /vm '{"state":"Paused"}' >/dev/null \
+            || { rm -rf -- "$sdir"; die "could not pause '$name' — nothing was written"; }
+
+        local rc=0 out
+        out="$(_api "$sock" PUT /snapshot/create \
+              "{\"snapshot_type\":\"Full\",\"snapshot_path\":\"$sdir/vmstate\",\"mem_file_path\":\"$sdir/mem\"}" 2>&1)" || rc=1
+        if (( rc == 0 )); then
+            cp -- "$(fc_rootfs "$name")" "$sdir/rootfs.ext4" || rc=1
+        fi
+        _resume_or_warn "$sock" "$name"
+        if (( rc != 0 )); then
+            rm -rf -- "$sdir"
+            die "snapshot/create failed for '$name' (the VM was resumed; nothing was kept): $out"
+        fi
+
+        # ASSERT THE OUTCOME. A 204 from the API says the request was accepted; these files
+        # existing and being non-empty is what says a snapshot exists. This tool has printed
+        # PASS on the strength of a call returning before (P7-4) and the lesson is written
+        # into `start` and `stop` twenty lines apart — carried across this time.
+        local f
+        for f in vmstate mem rootfs.ext4; do
+            [[ -s "$sdir/$f" ]] || { rm -rf -- "$sdir"; die "snapshot/create returned success and left no $f — refusing to record a snapshot that is not there"; }
+        done
+
+        {
+            printf '# snapshot of instance "%s" — written by lab-fc.sh\n' "$name"
+            printf '#\n# The three files here are ONE INSTANT: mem and vmstate were captured while the VM\n'
+            printf '# was paused, and rootfs.ext4 was copied before it was resumed. Restoring the memory\n'
+            printf '# onto a different disk is silent filesystem corruption, which is why the disk is\n'
+            printf '# kept here rather than referenced.\n\n'
+            printf 'instance = "%s"\n' "$name"
+            printf 'snapshot = "%s"\n' "$snap"
+            printf 'taken = "%s"\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            printf 'fc_version = "%s"\n' "$(firecracker --version 2>/dev/null | head -1 || printf 'UNKNOWN')"
+            printf 'vmstate_sha256 = "%s"\n' "$(sha256sum "$sdir/vmstate" | cut -d' ' -f1)"
+            printf 'mem_sha256 = "%s"\n' "$(sha256sum "$sdir/mem" | cut -d' ' -f1)"
+            printf 'rootfs_sha256 = "%s"\n' "$(sha256sum "$sdir/rootfs.ext4" | cut -d' ' -f1)"
+        } > "$sdir/snapshot.toml"
+
+        printf 'PASS: snapshot %s/%s — %s, VM resumed and still running (pid %s)\n' \
+            "$name" "$snap" "$(du -sh "$sdir" | cut -f1)" "$p"
+        printf '      memory, device state AND the disk, all from the same pause\n'
+        ;;
+
+    restore)
+        [[ -d "$sdir" ]] || die "no snapshot '$snap' for '$name' (try: snapshot list $name)"
+        local p
+        if p="$(_running_pid "$name")"; then
+            die "'$name' is running (pid $p) — restore replaces both its memory and its disk.  Stop it first: $0 stop $name"
+        fi
+        require_cmd curl
+
+        # THE SNAPSHOT'S OWN DIGESTS, IN THREE OUTCOMES. A snapshot whose bytes have moved
+        # since it was taken is not restorable and it is not "probably fine"; a snapshot
+        # taken before this manifest existed is UNKNOWN, which is neither a match nor a
+        # mismatch and must not be rendered as either.
+        local m="$sdir/snapshot.toml" f want got
+        if [[ ! -r "$m" ]]; then
+            note "UNKNOWN: this snapshot has no snapshot.toml — its bytes were NOT verified"
+        else
+            for f in vmstate mem rootfs.ext4; do
+                want="$(sed -n "s/^${f%%.*}_sha256 = \"\(.*\)\"$/\1/p" "$m")"
+                [[ -n "$want" ]] || { note "UNKNOWN: no digest recorded for $f — it was NOT verified"; continue; }
+                [[ -r "$sdir/$f" ]] || die "the snapshot is incomplete: $f is gone from $sdir"
+                got="$(sha256sum "$sdir/$f" | cut -d' ' -f1)"
+                [[ "$got" == "$want" ]] || die "REFUSING to restore '$name/$snap': $f is not the file that was captured.
+       recorded: $want
+       on disk:  $got
+       Restoring a memory image onto bytes it does not describe corrupts the guest silently."
+            done
+            note "snapshot digests match the ones recorded when it was taken"
+        fi
+
+        # The disk goes back FIRST and the VMM is started second, so the guest never sees a
+        # disk change under it.
+        cp -- "$sdir/rootfs.ext4" "$(fc_rootfs "$name")" \
+            || die "could not restore the snapshot's rootfs over $(fc_rootfs "$name")"
+
+        local sock; sock="$(_api_sock_for "$name")"
+        rm -f -- "$sock"
+        printf '%s' "$sock" > "$(fc_sockfile "$name")"
+        # NO --config-file. The snapshot carries the machine configuration; passing a config
+        # as well makes Firecracker refuse the load. This is why `_running_pid` accepts the
+        # socket path as an identity.
+        setsid firecracker --api-sock "$sock" >> "$(fc_log "$name")" 2>&1 < /dev/null &
+        local newp=$!
+        printf '%s\n' "$newp" > "$(fc_pidfile "$name")"
+
+        local i
+        for i in $(seq 1 60); do [[ -S "$sock" ]] && break; [[ -d "/proc/$newp" ]] || break; sleep 0.05; done
+        [[ -S "$sock" ]] || { rm -f "$(fc_pidfile "$name")"; die "firecracker did not create its API socket at $sock (see $(fc_log "$name"))"; }
+
+        local out rc2=0
+        out="$(_api "$sock" PUT /snapshot/load \
+              "{\"snapshot_path\":\"$sdir/vmstate\",\"mem_backend\":{\"backend_type\":\"File\",\"backend_path\":\"$sdir/mem\"},\"enable_diff_snapshots\":false,\"resume_vm\":true}" 2>&1)" || rc2=1
+        if (( rc2 != 0 )); then
+            kill "$newp" 2>/dev/null || true
+            rm -f "$(fc_pidfile "$name")"
+            die "snapshot/load failed for '$name/$snap': $out"
+        fi
+
+        # ASSERT THE OUTCOME, TWICE, because each half can be true while the other is not:
+        # the process being alive says a VMM exists, and the API saying Running says a GUEST
+        # was resumed into it. A load that half-failed leaves the first true and the second
+        # not, and that is precisely the shape this tool has shipped before.
+        _running_pid "$name" >/dev/null \
+            || { rm -f "$(fc_pidfile "$name")"; die "the restored VMM is not running (see $(fc_log "$name"))"; }
+        local state
+        state="$(_api "$sock" GET / 2>/dev/null | grep -o '"state": *"[^"]*"' | head -1 | cut -d'"' -f4 || true)"
+        [[ "$state" == "Running" ]] \
+            || die "the VMM is up but the guest was not resumed — /  reports state=${state:-UNKNOWN} (see $(fc_log "$name"))"
+
+        printf 'PASS: restored %s from snapshot %s (pid %s) — API reports state=Running\n' "$name" "$snap" "$newp"
+        printf '      memory, devices and disk all came from the same captured instant\n'
+        ;;
+    esac
 }
 
 cmd_destroy() {
@@ -757,6 +1046,12 @@ cmd_destroy() {
         (( force )) || die "'$name' is running (pid $p) — stop it first, or pass --force to kill and destroy it"
         _kill_recorded "$name" KILL >/dev/null || true
     fi
+    # The API socket is normally INSIDE $d and goes with it. When the instance path was too
+    # long for sun_path it is not, and a `rm -rf $d` would leave it behind — a stale socket
+    # that makes the next `start` fail its bind. Reap it by the path this instance recorded,
+    # never by a pattern over /tmp.
+    local sock; sock="$(api_sock_of "$name" 2>/dev/null || true)"
+    [[ -n "$sock" && "$sock" != "$d"/* ]] && rm -f -- "$sock"
     rm -rf -- "$d"
     # The tap is NOT deleted here -- the fabric owns it (see the header).
     printf 'PASS: destroyed %s (its tap, if any, belongs to the fabric and was left alone)\n' "$name"
@@ -886,12 +1181,20 @@ main() {
     case "$verb" in
         list)    cmd_list "$json"; return ;;
         start|stop|destroy|inspect) _name_arg ;;
+        snapshot)
+            # `snapshot <action> <name> [snap]` — the instance is the SECOND positional, so
+            # _name_arg (which reads the first) cannot be reused. Same validation, applied
+            # to the argument that is actually the name.
+            [[ -n "${positional[1]:-}" ]] || die "usage: $0 snapshot {create|list|restore|delete} <name> [snap]"
+            valid_name "${positional[1]}" || die "invalid instance name '${positional[1]}' — must match ${FC_NAME_RE}"
+            name="${positional[1]}" ;;
     esac
     case "$verb" in
         start)   cmd_start   "$name" "$force"; return ;;
         stop)    cmd_stop    "$name" "$force"; return ;;
         destroy) cmd_destroy "$name" "$force"; return ;;
         inspect) cmd_inspect "$name"; return ;;
+        snapshot) cmd_snapshot "${positional[0]}" "$name" "${positional[2]:-}" "$force"; return ;;
         mac)     # read-only, no tap, no root: the MAC this tool WOULD set for a name.
                  # Exists so the fabric/VMM agreement can be asserted in CI instead of only
                  # on a host that can create taps — an invariant only checkable under root
