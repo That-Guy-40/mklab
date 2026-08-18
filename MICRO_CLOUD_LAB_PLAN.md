@@ -1091,10 +1091,33 @@ should go *back* to one. P1 measured that direction too:
 
 | running thing → portable artifact | verb | status |
 |---|---|---|
-| podman | `export` | ✅ |
-| docker | `export`, `export-tarball` | ✅ |
-| LXD/Incus | `export` | ✅ |
-| **QEMU VM** | **only `snapshot`** | ⛔ **gap** — and pleasingly, it is the exact inverse of the `from-chroot` backend that already exists |
+| chroot | `export-tarball` / `export-rootfs` | ✅ **the only one that was ever true** |
+| podman | `export-tarball` | ✅ **2026-08-18** — round trip verified: marker written into a container, exported, re-imported through `from-tarball`, read back |
+| docker | `export-tarball` | ✅ **2026-08-18** — same round trip, same proof |
+| LXD/Incus | `export-tarball` | ◑ **2026-08-18** — implemented (guest-side tar → bare rootfs tarball); refusals verified against a real incus, the **round trip is gated behind `LAB_LXD_LIVE=1`** and is an UNKNOWN on the development host (live Calico cluster, [F.6](#f6-additive-was-not-safe--the-tap-captured-a-live-clusters-tunnel)) |
+| **QEMU VM** | **only `snapshot`** | ⛔ **gap** — and pleasingly, it is the exact inverse of the `from-chroot` backend that already exists. `virt-tar-out` closes it with **no root**, once supermin has a readable kernel: `/boot/vmlinuz-*` is `0600` on Debian/Ubuntu while `/lib/modules/` is not, so `SUPERMIN_KERNEL` + `SUPERMIN_MODULES` is the whole fix |
+
+> **`export` and `export-tarball` are different verbs on purpose.** `export` emits a topology
+> **spec** (kube / compose / lxc-yaml) and always did; `export-tarball` emits the **filesystem**,
+> and takes phase 1's name because it produces phase 1's artifact — the bare rootfs tarball that
+> `podman import`, `docker import` and every `from-tarball` backend already consume. Tier 2's
+> round trip is therefore closed by construction rather than by a new format.
+
+> **Corrected 2026-08-18, and the correction is bigger than the row it fixes.** The three ✅s
+> above were read off [Appendix A](#appendix-a--p1-assumption-preflight-2026-07-29)'s rows
+> *"preserve: podman → portable — `export` verb present"*. The verb **is** present in all
+> three drivers; it emits a **topology spec** (`--format kube|compose|lxc-yaml`). None of them
+> wraps `docker export` / `podman export` / `incus export`, and none can produce a filesystem
+> artifact — measured 2026-08-18 by grepping every driver for those engine verbs: **zero
+> hits**. So *"`export` verb present"* is a **mechanism check standing in for an outcome**,
+> which is [§0.1](#01-how-this-lab-is-built-differs-from-the-others)'s own bug class: the
+> question was *can this thing become a portable artifact*, and what was measured was *does a
+> verb with that name exist*.
+>
+> **The real §9.5 gap is therefore four phases wide, not one.** Only phase 1 can currently
+> round-trip to a tarball — which is a tidy result rather than a discouraging one, because §2
+> already says everything comes *from* a chroot, and this says the return path exists at
+> exactly the same place.
 
 ---
 
@@ -1771,6 +1794,12 @@ so the script **exits non-zero if no XFAIL fires.**
 | PASS | §2 | matrix: chroot → LXD/Incus | `from-tarball` in `lab-lxd.sh` |
 | **XFAIL** | §6 | matrix: chroot → Firecracker raw ext4 | **expected gap — what §6 builds** |
 | PASS | §6.2 | `mkfs.ext4 -d` populates a fs, no mount, no root | `debugfs` read back `microcloud-p1` |
+> ⚠ **2026-08-18 — the four `preserve:` rows below were measured wrong.** `export` is
+> present in all three drivers and emits a **topology spec**, not a filesystem; the
+> question was whether the thing can become a portable artifact. Corrected in
+> [§9.5](#95-preserve--two-tiers-and-a-derivation); the rows are left as recorded
+> because an appendix is a dated record of what was measured, not a status surface.
+
 | PASS | §new | preserve: podman → portable | `export` verb present |
 | PASS | §new | preserve: docker → portable | `export` verb present |
 | PASS | §new | preserve: LXD → portable | `export` verb present |
