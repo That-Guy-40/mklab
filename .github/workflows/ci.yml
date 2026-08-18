@@ -60,6 +60,10 @@ jobs:
             examples/micro-cloud/tests/test-dhcp-exhaustion.sh \
             examples/micro-cloud/tests/test-vsock-both-engines.sh \
             examples/micro-cloud/tests/test-vsock-chaos.sh \
+            examples/micro-cloud/preserve.sh \
+            examples/micro-cloud/tests/test-preserve-gate.sh \
+            examples/micro-cloud/tests/test-preserve-capability-table.sh \
+            examples/micro-cloud/tests/test-preserve-round-trip.sh \
             examples/micro-cloud/make-vsock-rootfs.sh \
             examples/nested-calico-sandbox/sandbox.sh \
             examples/nested-calico-sandbox/guest-experiment.sh \
@@ -255,8 +259,13 @@ jobs:
           # nested-calico-sandbox: the findings-binding test is headless; the two live ones
           # SKIP without a sandbox VM, which CI cannot build. An unmet precondition is an
           # UNKNOWN, and run-all.sh reports it as a skip rather than a pass.
+          # micro-cloud: SHELLCHECKED SINCE SLICE 3 AND NEVER RUN, which is the same gap as
+          # "a test with no runner" one level up -- and it mattered the moment slice 7's
+          # preserve gate was written to need no engine and no root SPECIFICALLY so it could
+          # run here. Most of this suite is root-gated and will skip, by name.
           for t in examples/kali-packer-vagrant/tests/test-offline-archive.sh \
                    examples/almalinux-packer-images/tests/test-offline-archive.sh \
+                   examples/micro-cloud/tests/run-all.sh \
                    examples/nested-calico-sandbox/tests/run-all.sh; do
             echo "::group::$t"
             bash "$t"; r=$?
