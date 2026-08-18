@@ -101,6 +101,32 @@ which can be picked up tonight and which cannot be picked up at all here.
       incus) and **SKIPs the launch/stop/start half behind `LAB_LXD_LIVE=1`**. That
       half is an **UNKNOWN**, and says so.
 
+- [ ] **A.4** — **phases 3, 4 and 5's `inspect` should report the container's command.**
+      *The gap, found 2026-08-18 building [`examples/micro-cloud/preserve.sh`](examples/micro-cloud/preserve.sh):*
+      `podman export` writes the **filesystem** and not the OCI config, so the image
+      `podman import` builds back from a §9.5 tier-2 tarball has **no `CMD`, no
+      `ENTRYPOINT`, no `ENV`, no `WORKDIR`**. The drivers' own advertised round trip
+      (`run --name NEW --tarball FILE`, the line `export-tarball` prints on its way out)
+      therefore dies at the last inch against a real rootless podman:
+      `Error: no command or entrypoint provided, and no CMD or ENTRYPOINT from image`.
+      The filesystem survives; **the intent does not.**
+      *Why it belongs in the drivers:* the derivation is the right home for that intent and
+      cannot carry it, because nothing can be asked — `inspect` renders labels, state,
+      userns and network and **no command**. Same shape as A.3: put the missing fact where
+      the gap is rather than having `preserve.sh` shell out to `podman inspect` and become a
+      second owner of a lifecycle it does not run.
+      *Shape:* one derived row (`command`, and `entrypoint` where the engine distinguishes
+      them) in each of phases 3/4/5's `inspect`, human and `--json` (bump `schema_version`);
+      then `preserve.sh` records it in `derivation.toml` and `restore` replays it via the
+      `--` passthrough that `cmd_run` already has, upgrading a container restore from **an
+      image** to **a running container**.
+      *Until then, honestly:* `restore` hands back an image and **names what it could not
+      restore** — [`RUNBOOK-preserve.md`](examples/micro-cloud/RUNBOOK-preserve.md#what-a-restore-gives-you-back--and-what-it-does-not)
+      — because an unstartable image reported as a clean success is the liar case.
+      *Guarded meanwhile:* `test-preserve-round-trip.sh` **fails** if the restored image
+      ever gains a default command, so the day podman starts carrying the config through
+      export/import, the stale claim in `preserve.sh` gets caught rather than believed.
+
 - [x] **A.1** ✅ **DONE 2026-08-15** — the cross-node CHAOS ROWS for
       [`examples/nested-calico-sandbox/`](examples/nested-calico-sandbox/README.md#the-cross-node-rows--f6-with-a-witness):
       `cross-node-chaos.sh` + `guest-xprobe.sh`, graded by `tests/test-cross-node-chaos.sh`,

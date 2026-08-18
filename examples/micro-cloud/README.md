@@ -1,7 +1,17 @@
 # Micro-Cloud Lab — ☁️ under construction
 
-> **Status (2026-08-06):** slices 0–4 are **done**, **slice 5a is done — both halves**, and **slice 5b is done**
-> — a second engine (QEMU `-M microvm`) booting the same kernel and the same rootfs,
+> **Status (2026-08-18):** slices **0–4, 5a (both halves), 5b, 5c, 6 and 7 are done.**
+> Slice 6 is the control plane — [`reconcile.py`](../../phase6-tui/lab_tui/reconcile.py) (declared vs
+> derived, issuing nothing) and [`apply.py`](../../phase6-tui/lab_tui/apply.py) (the half that issues, acting
+> on 2 of the 6 diff kinds and holding the rest), with a 6-layer graded chaos matrix that
+> found a **LIED** on its first run. Slice 7 is **preserve** —
+> [`preserve.sh`](preserve.sh) + [`RUNBOOK-preserve.md`](RUNBOOK-preserve.md): two tiers, a
+> `derivation.toml`, and a restore that refuses a changed artifact **by name, with both
+> digests, before importing anything**. **Slices 8–10 remain** (the fleet · two paths
+> finished · the demo). What follows is the 5b write-up, kept because the finding is the
+> point:
+>
+> **slice 5b** — a second engine (QEMU `-M microvm`) booting the same kernel and the same rootfs,
 > so the only variable is the VMM. It produced the number nobody had **and corrected
 > the one everybody had**: `0.512 s` of Firecracker's canonical `0.567 s` is a kernel
 > **i8042 probe** waiting out a PS/2 controller QEMU's `microvm` does not emulate. At
@@ -47,6 +57,7 @@ beside QEMU VMs, containers, and LXD system containers.
 | **`edge.toml`** + `tests/test-edge-on-the-fabric.sh` | 5b | ✅ **GREEN 2026-08-06** ([M.1](../../MICRO_CLOUD_LAB_PLAN.md#appendix-m--slice-5b-the-fidelity-case-joins-the-fabric-2026-08-06)) — The fidelity case: a stock Debian cloud image on `-M q35` with cloud-init, on a `fabric.sh` tap beside a Firecracker microVM, asserting it takes the lease the fabric **reserved** (not merely *an* address from the pool) and reaches `api1` by name. `api1` is booted **through `lab-fc.sh`**, which no previous slice did — that is the seam [Appendix L](../../MICRO_CLOUD_LAB_PLAN.md#appendix-l--slice-5bs-first-finding-before-a-line-of-it-was-built-the-two-tools-could-never-agree-2026-08-05) fixed. **Needs root; SKIPs without it** — run 2026-08-06: the edge took its **reserved** lease `10.71.0.102` and reached `api1` by name |
 | **`vsock-agent.c`** + **`make-vsock-rootfs.sh`** + **`vsock-probe.py`** + `tests/test-vsock-both-engines.sh` | 5c | ✅ **GREEN 2026-08-07** — vsock, the first channel that is **not the fabric**. The gap was never plumbing (every host-side fact checked out; the kernel has `CONFIG_VSOCKETS`/`VIRTIO_VSOCK` **built in**, which matters because Firecracker boots with no initramfs): it was **userspace** — `strings api1.ext4 \| grep -ci vsock` was **0**, and busybox `nc` has no `AF_VSOCK`. So [`vsock-agent.c`](vsock-agent.c) is a static musl agent, injected by [`make-vsock-rootfs.sh`](make-vsock-rootfs.sh) with `debugfs` (**no loop mount, no sudo** — the `mke2fs -d` family of trick) and verified by reading it back out. **The only boot test here that needs neither root nor a fabric**, which is the thesis rather than a convenience: it asserts `br-mc0`'s *absence*. Findings in [Appendix N](../../MICRO_CLOUD_LAB_PLAN.md#appendix-n--slice-5c-vsock-the-first-channel-that-is-not-the-fabric-2026-08-07) |
 | **`tests/test-vsock-chaos.sh`** | 5c (break pass) | ✅ **GREEN** — **micro-cloud's first chaos matrix**, **six rows** (five on 2026-08-07; the stalled-client row 2026-08-08), **unprivileged**, graded on `CLAUDE.md`'s ladder and written as a *regression guard*: each row records the rung it was measured at and the test fails when a rung **moves**, in either direction. Severing the guest's **entire network** is **ABSORBED** (vsock really is not the fabric — and the guest's own `MC-LINK carrier=0` proves the fault landed, after a no-op injector was found passing the row); a reserved CID is **ABSORBED** at device creation; killing the VMM **HALTS** both engines in 0 s with a named errno. The **critical is not ours**: `rm`-ing Firecracker's host socket leaves a running, healthy guest permanently unreachable — its API answers *"not supported after starting the microVM"* — and **QEMU cannot suffer the fault at all**, because its host end is not a file. [N.8](../../MICRO_CLOUD_LAB_PLAN.md#n8-the-break-pass-micro-clouds-first-chaos-matrix-and-a-critical-that-is-not-ours) |
+| **`preserve.sh`** + `tests/test-preserve-gate.sh` + `test-preserve-round-trip.sh` + `test-preserve-capability-table.sh` | 7 | ✅ **GREEN 2026-08-18** — [§9.5](../../MICRO_CLOUD_LAB_PLAN.md#95-preserve--two-tiers-and-a-derivation)'s two tiers and the `derivation.toml` that makes a backup able to say what built it. Walkthrough: [`RUNBOOK-preserve.md`](RUNBOOK-preserve.md). The break-it row is the point — a **one-byte** change to an artifact is refused **by name, with both digests, before anything is imported** — and it is asserted alongside its two neighbours, because an artifact nobody could read must come back **UNKNOWN**, not CHANGED and not a pass. **The gate and the capability table need no engine and no root** (phase 1's `export-tarball` takes a plain path), so the assertion this lab most needs runs in CI; the live round trip drives real rootless podman and SKIPs without it. Two findings: §9.5's fast tier does **not** preserve running state for phase 2 (`qemu-img` internal snapshots are refused against a live disk), and tier 2 loses the **image configuration** as well as running state — `podman export` writes no OCI config, so a restored image has no `CMD` and the drivers' own advertised `run --tarball` round trip dies at the last inch |
 | slice 1/2 configs, boot logs, images | 1–2 | ⛔ host workdirs `micro-cloud-s1/`, `micro-cloud-s2/` — [`DEFERRED.md`](DEFERRED.md) §17.0 item 2. **These really are there** (verified 2026-08-04); it was only the *scripts* that were not |
 
 > ⚠️ **Do not reimplement `fabric.sh` from Appendix G's description.** The
@@ -85,11 +96,12 @@ examples/micro-cloud/
 ├── bench-boot.sh             time-to-userspace, 2 VMMs x i8042 on/off (5a) — EXISTS
 ├── edge.toml                 the §9.2 `edge`: cloud image on q35, one spec (5b) — EXISTS
 ├── micro-cloud.sh            up | down | status — orders the phase tools
-├── preserve.sh               two tiers + derivation manifest
+├── preserve.sh               two tiers + derivation manifest (slice 7) — EXISTS
 ├── install-catalog.toml      names the lab that owns each install method
 ├── images/                   .gitignore'd build output (vmlinux, *.ext4)
 ├── hand-walk/                Containerfile + RUNBOOK
-├── RUNBOOK-*.md              build-images · first-microvm · micro-cloud · fleet · preserve
+├── RUNBOOK-*.md              build-images · first-microvm · micro-cloud · fleet ·
+│                             [preserve](RUNBOOK-preserve.md) — EXISTS
 ├── LEDGER.md                 the running defect/surprise ledger
 ├── CLONES.md                 every fork, with the constraint that justified it
 ├── UPSTREAM.md               cite-don't-mirror provenance

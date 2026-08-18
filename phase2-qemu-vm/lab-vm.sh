@@ -3792,7 +3792,7 @@ CREATE OPTIONS
                                           it with:  fabric.sh mac NAME)
   --peer-link {listen|connect}:PORT      (a PRIVATE L2 WIRE to one other VM, over a QEMU
                                           socket netdev on 127.0.0.1 -- no bridge, no tap,
-                                          no host interface, NO ROOT. Start the `listen` VM
+                                          no host interface, NO ROOT. Start the 'listen' VM
                                           first. Requires --peer-mac: both ends would
                                           otherwise take QEMU's default MAC for NIC 1 and
                                           collide silently on the segment)
