@@ -180,8 +180,34 @@ jobs:
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
       - name: Install jq + tomlq
+        # `jq` SHIPS IN THE RUNNER IMAGE, and this step used to `apt-get update` anyway.
+        # On 2026-08-19 that unconditional update wedged THREE separate runs — 8+ minutes
+        # each on a mirror that never answered, holding the whole job open with no output
+        # and no timeout, to install a binary that was already on PATH. A cancel-and-rerun
+        # hit it again immediately, so it is a reproducible failure mode rather than a
+        # one-off, and "re-run it" is not a fix for something that reappears on demand.
+        #
+        # So: ask whether the tool is there before reaching for the network, and when it
+        # genuinely is not, bound the attempt. An unbounded install is not more reliable
+        # than a bounded one — it just fails later, as a timeout on the whole job, with the
+        # cause buried under every step that never got to run.
         run: |
-          sudo apt-get update && sudo apt-get install -y jq
+          if command -v jq >/dev/null 2>&1; then
+            echo "jq already present in the runner image: $(jq --version) — no apt needed"
+          else
+            ok=0
+            for attempt in 1 2; do
+              if timeout 180 sudo apt-get update && timeout 180 sudo apt-get install -y jq; then
+                ok=1; break
+              fi
+              echo "apt attempt $attempt failed or timed out after 180s"
+              sleep 10
+            done
+            if [ "$ok" -ne 1 ]; then
+              echo "::error::could not install jq after 2 bounded attempts"
+              exit 1
+            fi
+          fi
           pip install yq            # provides tomlq (needs jq)
       - name: Install the disk-image toolchain (so phase 5's VM-backend test RUNS, not SKIPs)
         # `phase5-lxd/tests/test-vm-image-build.sh` builds a real MBR/extlinux disk image
