@@ -563,16 +563,37 @@ hypervisor*. The step: boot the same microVM plain and jailed, then diff
 edge: under the jailer every path in `config.json` is **relative to the new chroot**, so
 kernel and rootfs must be hard-linked or bind-mounted in first.
 
-> ◐ **BUILT 2026-08-19 — `start --jailer`; the live diff is UNKNOWN until it is run as root.**
+> ✅ **BUILT AND VERIFIED 2026-08-19 — `start --jailer`, and the live plain-vs-jailed diff is
+> GREEN on its sixth privileged run.**
 > Staging, the in-chroot config rewrite, the jailed identity and the refusal are all verified
 > here, unprivileged, by
 > [`tests/test-jailer-staging.sh`](phase7-firecracker/tests/test-jailer-staging.sh) (six
 > negative controls, every one watched to bite). The plain-vs-jailed comparison this section
 > asks for is
 > [`examples/micro-cloud/tests/test-jailer-isolation.sh`](examples/micro-cloud/tests/test-jailer-isolation.sh)
-> and it **has not been run**: `jailer` unshares a mount namespace, so it needs CAP_SYS_ADMIN,
-> and the agent's shell has none. It SKIPs by name, and that SKIP is an **UNKNOWN about this
-> section**, not a pass.
+> and it needs CAP_SYS_ADMIN, so it SKIPs by name for any unprivileged reader — and that SKIP
+> is an **UNKNOWN about this section**, not a pass. It is the strongest argument in this plan
+> for keeping author-run rows: **the privileged half was where every defect was.** **Run as root six times on 2026-08-19. The first five
+> failed — each time on a different, real defect that no unprivileged run could have
+> reached** (the bullets below; one was in the test's own fixture, three were successive wrong
+> answers to the same question, and the fifth was **this section's own instruction being
+> unanswerable from the host**). **The sixth run is GREEN**, and this is what it measured:
+>
+> | field | plain | jailed | |
+> |---|---|---|---|
+> | `ns/mnt` | `mnt:[4026531841]` | `mnt:[4026535173]` | **asserted** — the unshare happened |
+> | the guest disk, as each has it open | `…/fc/jplain/rootfs.ext4` | **`/rootfs.ext4`** | **asserted** — the chroot, made visible |
+> | `Uid` | 0 | **30000** | **asserted** — the privilege drop |
+> | `/proc/<pid>/root` | `/` | `/` | *reported* — does not distinguish them |
+> | `ns/net` | `net:[4026531840]` | `net:[4026531840]` | *reported* — jailer joins, never creates |
+> | `Seccomp` | 2 | 2 | *reported* — Firecracker filters itself either way |
+>
+> The second row is the one to show a reader: **the same guest disk, opened by two VMMs, and
+> the jailed one calls it `/rootfs.ext4`.** That is the chroot in a single line of output, and
+> it is what §5.6's `/proc/<pid>/root` was reaching for and could not deliver.
+> Until it comes back green the plain-vs-jailed comparison itself remains **UNVERIFIED**.
+> That is the argument for author-run rows in one paragraph: the privileged half was not
+> ceremony, it is where the bugs were.
 >
 > - **The sharp edge this section names is the one that bit.** Every path in `config.json` is
 >   relative to the new chroot, so `--jailer` writes a **second** config with in-chroot paths
@@ -602,7 +623,69 @@ kernel and rootfs must be hard-linked or bind-mounted in first.
 >   because jailer's own error ("Failed to unshare into new mount namespace") names neither,
 >   and arrives after it has already copied its exec-file in.
 >
-> - **Two of the three things this section says to diff are expected NOT to differ**, and the
+> - **THE FIRST PRIVILEGED RUN FOUND A REAL DEFECT, WHICH IS WHY IT WAS RUN** (2026-08-19).
+>   The jailed VMM started, bound its API socket, and then died on its own root device:
+>   `Unable to create the virtio block device: … Permission denied (os error 13) /rootfs.ext4`.
+>   `jailer` chowns the chroot and its own copy of the exec-file, and **nothing else** — files
+>   staged in beforehand keep the invoking user's ownership, and the VMM has by then dropped
+>   to `--uid`. `_stage_jail` now chowns what it stages, and refuses **by name** when it
+>   cannot, quoting the VMM error it is preventing. Nothing unprivileged could have caught
+>   this: the staging is correct, the config is correct, the paths are correct, and the only
+>   wrong thing is a uid that does not exist until a privilege boundary is crossed.
+>
+> - **IDENTIFYING A JAILED VMM TOOK THREE WRONG GUESSES, ALL THE SAME SHAPE: an inference
+>   about how the kernel RENDERS something, standing in for a fact.**
+>   - *run 3* — identity by `readlink /proc/<pid>/root` == the jail. Never matched. Diagnosed
+>     as *"jailer forks, so `$!` is the wrong pid"*.
+>   - *run 4* — a `/proc` scan for that, with a working-directory fallback. Neither probe ever
+>     matched; the scan was slow enough that its 60 iterations took **45 seconds** while a
+>     healthy guest ticked away — and the same run **disproved the fork theory outright**, by
+>     reporting `$!` STILL ALIVE. Two guesses, and a diagnosis built on the first one.
+>   - then `stat -c %i` on the socket file, to find its holder by fd. **That is the wrong
+>     inode**: it is the socket FILE's inode on the filesystem, while `/proc/<pid>/fd` shows
+>     `socket:[N]` with N the socket's inode in socket space. Unrelated numbers, matching
+>     nothing, silently.
+>
+>   What is *not* an inference: **ask the VMM who it is.** `GET /` on the jail's API socket
+>   returns the instance id jailer was given, so the machine answers for itself instead of
+>   being identified by something around it — and `/proc/net/unix` is the table that joins a
+>   bound path to the socket inode when a pid is needed to signal. `_running_pid` asks the
+>   identical question `start` does, because a `start` that recognises a VMM one way and a
+>   `stop` that recognises it another way *is* P7-5 whatever the two ways are.
+>
+> - **And the fix has a consequence worth stating rather than hiding.** The rootfs is
+>   hard-linked, so chowning it for the jail chowns **the instance's own disk** — one inode,
+>   two names, one ownership. A later plain `start` would then have failed with the same
+>   opaque `Permission denied` from the other direction, so it now checks first and names
+>   the cause and the way back (`sudo chown …`). The alternative — copying instead of
+>   linking — buys independent ownership at the price of two mutable images of one guest
+>   disk, which is a drift `cmd_create` already shipped once.
+>
+> - **THIS SECTION'S OWN INSTRUCTION DOES NOT ANSWER FROM THE HOST** (fifth privileged run).
+>   §5.6 says to diff `/proc/<pid>/root`. Measured: it is **`/` for the jailed VMM, exactly as
+>   it is for the plain one**. The jail is built inside a private mount namespace, so its path
+>   is not reachable from the reader's namespace and the kernel renders the link as `/`. The
+>   field is present, correct, and useless for telling the two tiers apart.
+>
+>   That is this file's own rule — *assert the outcome, not the mechanism* — arriving in the
+>   **instructions** rather than in a test. "Read this `/proc` field" is a mechanism; "this
+>   process is confined to a different filesystem view" is the property, and it has to be
+>   measured by something that does not depend on how a path is rendered to a reader:
+>   - **the mount namespaces differ.** `readlink /proc/<pid>/ns/mnt` yields `mnt:[N]` — an
+>     inode number, not a path — so it is immune to the rendering problem. jailer's first act
+>     is `unshare(CLONE_NEWNS)`; if these match, it did not happen.
+>   - **what each VMM has open.** Both opened the same guest disk; the plain one holds it
+>     under its host path (`…/fc/<name>/rootfs.ext4`, measured) and the jailed one under a
+>     path inside its own root. That is the chroot made visible, and it is what a reader
+>     following §5.6 by hand actually wants to see.
+>
+>   So §5.6's three-field diff is now a **five-field** one, and **three of the five are
+>   REPORTED rather than asserted** — each because the tier does not claim them. Which is the
+>   more honest artifact: a test that asserted the original three would have failed on a
+>   working jail, and one that quietly dropped them would have hidden that the instruction
+>   was wrong.
+>
+> - **Two of the remaining fields are expected NOT to differ**, and the
 >   test reports them rather than asserting them: the jailer **joins** a network namespace
 >   given with `--netns` and does not create one, and Firecracker installs its own seccomp
 >   filter in either tier. What the jailer adds is the chroot and the uid switch **around**
@@ -1504,7 +1587,7 @@ exercise · break**, and the break pass writes into `LEDGER.md`.
 | **5c** ✅ | **vsock — the first channel that is not the fabric** — **DONE 2026-08-07, [Appendix N](#appendix-n--slice-5c-vsock-the-first-channel-that-is-not-the-fabric-2026-08-07)** | one static guest agent (musl, no engine `#ifdef`) answering over vsock from **both** engines, injected into slice 3's ext4 with `debugfs -w` — no loop mount, no sudo; the §18.4 row filled in from what the two host APIs needed (a unix socket + `CONNECT <port>` handshake under Firecracker, a raw `AF_VSOCK` address under QEMU) | the guest contract is byte-identical while the host API differs in kind — a harder case for shape (b) than 5a or 5b produced, and it held | six-row chaos matrix ([`tests/test-vsock-chaos.sh`](examples/micro-cloud/tests/test-vsock-chaos.sh)), unprivileged, graded on the ladder and written as a regression guard: **`guest_cid` is advisory under Firecracker and allocated under QEMU**, so three machines believed they were CID 43 at once |
 | **6** ✅ | **The control plane** — **DONE 2026-08-18**: ~~`fc.py` backend~~ **done** (it refuses `vm.py`'s bare-liveness check — [P7-5](REVIEW-phase7.md) measured one pidfile giving three answers), ~~topology slot~~ **done**, ~~decision G~~ **settled 2026-08-16 ([§8.4a](#84a-decision-g--settled-2026-08-16-derive-the-facts-record-only-the-intent)): no registry of facts**, ~~`apply`'s read-only half~~ **done 2026-08-16** ([`reconcile.py`](phase6-tui/lab_tui/reconcile.py) — declared vs derived, issuing nothing; `unknown` is a verdict distinct from `absent`), ~~the half that issues~~ **done 2026-08-17** ([`apply.py`](phase6-tui/lab_tui/apply.py) — no-op on pass two, and it acts on 2 of the 6 diff kinds: `undeclared`/`unknown`/`drifted` are held for the operator). **Build, exercise and break are all done** — §8.4a moved that fault from *make the registry disagree with reality* to *make the derivation answer for the wrong subject*, now a **6-layer graded matrix** that found a **LIED** on its first run (`reconcile` trusted each backend's own lab filter; another lab's resource answered this lab's question and `apply` reported converged over nothing). And [`test_apply_live.py`](phase6-tui/tests/test_apply_live.py) runs it against **live rootless podman**: two labs each declaring a service called `web`, one removed, and the diff must still answer for the right lab. That suite also found a real gap — the three container drivers' `up` is create-if-absent, not converge, and none has a `start` (TODO A.3) | whichever §8.3 shape slice 5 argued for; `fc.py` backend + topology slot; revisit decision G | all instances in one tree; `apply` a no-op on pass two, if the seam supports it. **The slot is shape (b) in practice**: `lab-fc.sh` has no `up`, so the `fc` slot emits `create --config` + `start <name>` — the intersection, spoken in the driver's own verbs, rather than a fifth slot pretending to be the other four | make the registry disagree with reality — MAAS's registry-layer fault, ported |
 | **7** ✅ | **Preserve** — **DONE 2026-08-18.** Both halves: ~~`lab-vm.sh export`~~ **done** (#233 — `export-tarball` across all four phases, and **rootless** on phase 2 through a libguestfs appliance, which closed the §9.5 gap that was four phases wide rather than one), and ~~`preserve.sh`, both tiers, `derivation.toml`~~ **done** ([`preserve.sh`](examples/micro-cloud/preserve.sh) + [`RUNBOOK-preserve.md`](examples/micro-cloud/RUNBOOK-preserve.md)). Two findings, both corrections to [§9.5](#95-preserve--two-tiers-and-a-derivation)'s own table: the fast tier does **not** preserve running state for phase 2 and is **one phase wide, not four** (the other five refuse **by name**, each naming the verb that does not exist); and the portable tier loses the **image configuration** as well as running state — `podman export` writes no OCI config, so the drivers' own advertised `run --tarball` round trip dies at *"no command or entrypoint provided"*, which is now **TODO A.4** | `preserve.sh`, both tiers, `derivation.toml`; **`lab-vm.sh export`** (the §9.5 gap) | back up a lab, destroy it, restore it, prove it is the same — [`test-preserve-round-trip.sh`](examples/micro-cloud/tests/test-preserve-round-trip.sh) does exactly that against **live rootless podman**, with a marker written into the container *after* it starts so the export is proved to read the container's filesystem and not its image | restore with a **changed** artifact hash and confirm it refuses **by name** — [`test-preserve-gate.sh`](examples/micro-cloud/tests/test-preserve-gate.sh), and it asserts all **three** outcomes: one byte changed → refused with **both digests** and **nothing imported**; unreadable → **UNKNOWN**, not CHANGED and not a pass; put back → the gate falls silent. Both negative controls were injected and watched to bite |
-| **8** ◐ | **The fleet** — **the fleet half DONE 2026-08-19; the jailer tier remains.** ~~snapshot/restore~~ ✅ (#236) and ~~`clone`, five warm clones, the entropy hazard~~ ✅ ([§5.8](#58-snapshot--restore--and-the-deepest-lesson-in-the-plan)'s BUILT block, [`RUNBOOK-fleet.md`](examples/micro-cloud/RUNBOOK-fleet.md)). The memory image really is **shared** — `MAP_PRIVATE`, asserted by its digest being unchanged after five guests ran on it — while each clone gets its own disk, and the `PATCH /drives` that re-points it is a hard gate because a clone that skipped it would run on the source's disk with exit code 0 throughout. **The break-it row rewrote itself:** the prescribed `head -c8 /dev/urandom` demonstration does **not** reproduce, for two conflated reasons — the guest kernel already implements the prescribed fix (VMGenID) *and* the window is only a **handful of reads** wide (1, 3 and 20 across runs here), so a probe that pauses before looking reports "no hazard" in the row where the hazard is real. Disable VMGenID, read tightly, and the clones are byte-identical exactly as written. **The jailer tier is BUILT** (`start --jailer`, [§5.6](#56-the-jailer-tier--phase-1-closes-the-loop)) with its staging, config rewrite, jailed identity and refusal all verified unprivileged; **the live plain-vs-jailed diff is UNKNOWN until it is run as root** — `jailer` unshares a mount namespace, so it needs CAP_SYS_ADMIN and the agent has none. It SKIPs by name, and that SKIP is an UNKNOWN about §5.6, not a pass | ~~snapshot/restore~~ ✅ · ~~the jailer tier~~ ✅ built; the live diff is **author-run** | ~~five warm clones from one memory image~~ ✅ **2.1 s for five**, against ~0.5 s to boot one | ~~clone-entropy hazard then re-seeding~~ ✅ — and the finding is that **no reseed fixes what was already derived**: in every cell of the 2×2 all clones keep the source's `boot_id` and any secret minted before the snapshot · diff `/proc/<pid>/root`, `ns/net`, `Seccomp` plain vs jailed — **written and wired, NOT YET RUN** ([`test-jailer-isolation.sh`](examples/micro-cloud/tests/test-jailer-isolation.sh)); two of the three are expected *not* to differ and are reported rather than asserted, since the jailer joins a netns rather than creating one and Firecracker seccomps itself in either tier |
+| **8** ✅ | **The fleet** — **DONE 2026-08-19, both halves.** ~~snapshot/restore~~ ✅ (#236) and ~~`clone`, five warm clones, the entropy hazard~~ ✅ ([§5.8](#58-snapshot--restore--and-the-deepest-lesson-in-the-plan)'s BUILT block, [`RUNBOOK-fleet.md`](examples/micro-cloud/RUNBOOK-fleet.md)). The memory image really is **shared** — `MAP_PRIVATE`, asserted by its digest being unchanged after five guests ran on it — while each clone gets its own disk, and the `PATCH /drives` that re-points it is a hard gate because a clone that skipped it would run on the source's disk with exit code 0 throughout. **The break-it row rewrote itself:** the prescribed `head -c8 /dev/urandom` demonstration does **not** reproduce, for two conflated reasons — the guest kernel already implements the prescribed fix (VMGenID) *and* the window is only a **handful of reads** wide (1, 3 and 20 across runs here), so a probe that pauses before looking reports "no hazard" in the row where the hazard is real. Disable VMGenID, read tightly, and the clones are byte-identical exactly as written. ~~**The jailer tier**~~ ✅ **DONE 2026-08-19** (`start --jailer`, [§5.6](#56-the-jailer-tier--phase-1-closes-the-loop)) — green on its **sixth** privileged run. The first five each failed on a different real defect no unprivileged run could reach, and the fifth was **§5.6's own instruction being unanswerable from the host**: `/proc/<pid>/root` renders as `/` for a jailed VMM exactly as for a plain one. The chroot is shown instead by the two VMMs' mount namespaces differing and by **the same guest disk being open as `/rootfs.ext4` inside the jail** and as its host path outside | ~~snapshot/restore~~ ✅ · ~~the jailer tier~~ ✅ | ~~five warm clones from one memory image~~ ✅ **2.1 s for five**, against ~0.5 s to boot one | ~~clone-entropy hazard then re-seeding~~ ✅ — and the finding is that **no reseed fixes what was already derived**: in every cell of the 2×2 all clones keep the source's `boot_id` and any secret minted before the snapshot · ~~diff `/proc/<pid>/root`, `ns/net`, `Seccomp` plain vs jailed~~ ✅ **RUN AND GREEN** ([`test-jailer-isolation.sh`](examples/micro-cloud/tests/test-jailer-isolation.sh)) — and **all three** fields this row named turned out to be ones the tier does not claim, so they are reported rather than asserted: `/proc/<pid>/root` is `/` for both, `ns/net` is identical (jailer *joins* a netns, it does not create one), `Seccomp` is 2 for both (Firecracker filters itself either way). What IS asserted: different mount namespaces, the guest disk open as `/rootfs.ext4` inside the jail vs its host path outside, and uid 30000 vs 0 |
 | **9** | **Two paths, finished** | web wizards (§8.2 gap); a `microvm` wizard; the learning path | a beginner reaches a booted microVM guided-only; you reach one raw-only | `test-guided-path-is-a-view.sh` bites when a guided step does something the CLI cannot |
 | **10** | **The demo** | `micro-cloud.sh up`, five instances, §15's transcript; catalog routing | the transcript reproduces; §9.3's isolation matrix | teardown leaves **nothing of ours** and **everything of Calico's** |
 

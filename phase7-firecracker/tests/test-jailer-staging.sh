@@ -103,8 +103,8 @@ rootfs_inode_before="$(stat -c %i "$D/rootfs.ext4")"
 
 # `( … )` so a `die` inside is contained rather than ending this test before its assertions —
 # the silent-exit trap this repo has a rule about. Then run it for real, for its effects.
-( _stage_jail "$N" ) >/dev/null 2>&1 || fail "_stage_jail failed on a valid instance"
-_stage_jail "$N" >/dev/null 2>&1
+( _stage_jail "$N" "$(id -u)" "$(id -g)" ) >/dev/null 2>&1 || fail "_stage_jail failed on a valid instance"
+_stage_jail "$N" "$(id -u)" "$(id -g)" >/dev/null 2>&1
 JR="$D/jail/firecracker/$N/root"
 
 [[ -f "$JR/vmlinux" ]]     || fail "the kernel was not staged into the jail root — inside the chroot there is nothing to boot"
@@ -141,15 +141,43 @@ grep -q '"kernel_image_path":"' "$D/config.json" \
 grep -qF "$D/rootfs.ext4" "$D/config.json" \
     || fail "REGRESSION: staging the jail rewrote the INSTANCE's own config.json — a plain start would now name a path that only exists inside a chroot"
 
+# ── 3a. THE STAGED FILES MUST BELONG TO THE UID THE VMM WILL BECOME ────────────────────
+# MEASURED 2026-08-19, on the first privileged run of the sibling isolation test: without the
+# chown the jailed VMM starts, binds its API socket, and then dies with
+#     Unable to create the virtio block device: … Permission denied (os error 13) /rootfs.ext4
+# jailer chowns the chroot and its own copy of the exec-file, and nothing else — files staged
+# in beforehand keep the invoking user's ownership, and the VMM has by then dropped to --uid.
+#
+# Unprivileged, the POSITIVE case is trivially true (staging as our own uid), so the assertion
+# that carries weight is the negative one: asking for a uid we cannot grant must FAIL BY NAME
+# rather than stage files the VMM will not be able to open. A chown whose failure is swallowed
+# is exactly how the defect above would come back, silently and one layer down.
+[[ "$(stat -c %u "$JR/rootfs.ext4")" == "$(id -u)" ]] \
+    || fail "the staged rootfs is not owned by the uid it was staged for — the jailed VMM drops to that uid before opening it and would fail with a bare 'Permission denied' about a path inside the chroot"
+if (( HAVE_CAP == 0 )); then
+    rc=0; out="$( _stage_jail "$N" 30000 30000 2>&1 )" || rc=$?
+    (( rc != 0 )) \
+        || fail "REGRESSION: _stage_jail reported success staging for uid 30000 while unable to chown to it — the files would belong to the wrong uid and the VMM would die on its own root device"
+    grep -q 'chown' <<<"$out" \
+        || fail "the staging failure does not name the chown, so the reader is sent to look at the jail rather than at ownership: $out"
+    grep -q 'Permission denied' <<<"$out" \
+        || fail "the staging failure does not name the error the VMM would have given, which is the whole point of failing here instead: $out"
+    note "staging refuses by name when it cannot give the files to the jail uid, naming the VMM error it prevents"
+else
+    note "UNKNOWN: this process has CAP_SYS_ADMIN, so the cannot-chown refusal was NOT exercised on this run"
+fi
+
 # ── 4. THE JAILED IDENTITY, which is where P7-5 would return for a third time ───────────
 # A jailed VMM's argv carries neither the host config path nor the host socket path — jailer
 # chroots before it execs, so both are in-chroot names identical for every instance. If
 # `_running_pid` still asked only about argv, `list`, `stop` and `start` would each give a
 # different answer about a jailed instance, which is P7-5 verbatim.
 #
-# Proved with a live process of our own: a `sleep` rooted at / must NOT be accepted as this
-# instance, and the same pid IS accepted once the manifest's jail_root matches where that
-# process is actually rooted. No jailer, no root, and the question asked is the real one.
+# This section asserts the NEGATIVE half — that an unrelated live process is not accepted for
+# this instance — with a `sleep` of our own. The positive half (what a jailed instance IS
+# recognised by) moved twice and now lives in §4a: the VMM answering `GET /` with its own id.
+# Both halves are needed, and neither is sufficient: a check that accepts everything and a
+# check that accepts nothing both make one of these two rows pass.
 sleep 300 & SLEEPER=$!
 on_exit 'kill '"$SLEEPER"' 2>/dev/null || true'
 printf '%s\n' "$SLEEPER" > "$D/fc.pid"
@@ -167,7 +195,69 @@ sed -i "s#^jail_root = .*#jail_root = \"$(readlink "/proc/$SLEEPER/root")\"#" "$
 if _running_pid "$N" >/dev/null 2>&1; then
     fail "_running_pid accepted a process whose cmdline is not firecracker — the jail_root check must ADD an identity, never replace the question of whether this is a VMM"
 fi
-note "jailed identity reads /proc/<pid>/root and refuses a process rooted elsewhere, without weakening the is-it-a-VMM check"
+note "an unrelated live process is not accepted as this jailed instance, and the is-it-a-VMM check is not weakened to make room for the jail check"
+
+# ── 4a. IDENTIFYING THE JAILED VMM — and the two guesses that were wrong ───────────────
+# Three privileged runs went into this, each on a guess about how the kernel renders a
+# chrooted process to a reader in another mount namespace:
+#   run 3: `readlink /proc/<pid>/root` == the jail. Never matched.
+#   run 4: a /proc scan for that, plus a working-directory fallback. Neither matched, the
+#          scan took 45 s of a healthy guest's life, and the same run disproved the "jailer
+#          forks" theory the run-3 diagnosis rested on — `$!` was reported STILL ALIVE.
+# What is not a guess: firecracker binds its API socket inside the chroot, which is a real
+# host directory, so the socket has an inode this tool can compare against every open fd —
+# and the VMM will state its own id if asked. Both are checkable here with no jail at all,
+# because neither is a question about jails: one is about an inode, the other about an HTTP
+# reply on a unix socket.
+for _f in _jail_sock_pid _jail_id_matches; do
+    command -v "$_f" >/dev/null 2>&1 \
+        || fail "$_f is not defined — the jailed-VMM identity cannot be exercised, so it is UNVERIFIED"
+done
+
+require_cmd python3 curl
+# A stand-in that binds $JR/api.sock and answers `GET /` the way Firecracker does. It is the
+# honest subject: `_jail_id_matches` asks a socket a question and reads the answer, and it
+# neither knows nor cares which program is on the other end.
+cat > "$tmp/fakevmm.py" <<'PY'
+import os, socket, sys, threading
+sock, ident = sys.argv[1], sys.argv[2]
+try: os.unlink(sock)
+except FileNotFoundError: pass
+s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM); s.bind(sock); s.listen(4)
+body = ('{"id": "%s", "state": "Running", "vmm_version": "1.16.1"}' % ident).encode()
+while True:
+    c, _ = s.accept()
+    try:
+        c.recv(4096)
+        c.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: "
+                  + str(len(body)).encode() + b"\r\n\r\n" + body)
+    finally:
+        c.close()
+PY
+python3 "$tmp/fakevmm.py" "$JR/api.sock" "$N" & FAKE=$!
+on_exit 'kill '"$FAKE"' 2>/dev/null || true'
+for _ in $(seq 1 60); do [[ -S "$JR/api.sock" ]] && break; sleep 0.05; done
+[[ -S "$JR/api.sock" ]] || skip "the stand-in VMM never bound $JR/api.sock"
+
+# THE VMM ANSWERS FOR ITSELF. This is the identity `start`, `list` and `stop` all use.
+_jail_id_matches "$JR" "$N" \
+    || fail "_jail_id_matches did not accept a VMM answering with its own id — this is the identity every verb uses for a jailed instance, so list/stop/start would all report it as not running while it happily served its API"
+# …and it must REFUSE another instance's id. Without this row the assertion above is
+# satisfied by a check that accepts anything answering on a socket, which is exactly the
+# recycled-identity shape P7-5 was.
+_jail_id_matches "$JR" "someotherinstance" \
+    && fail "REGRESSION: _jail_id_matches accepted a VMM that named itself '$N' as 'someotherinstance' — it is testing that SOMETHING answers, not that the right machine did, so two jailed instances would answer for each other"
+
+# THE PID THAT HOLDS THAT SOCKET, by inode. Derived from a file this tool created, not
+# inferred from how a namespace renders.
+found="$(_jail_sock_pid "$JR" 2>/dev/null || true)"
+[[ "$found" == "$FAKE" ]] \
+    || fail "_jail_sock_pid did not find the process holding $JR/api.sock (found '${found:-nothing}', expected $FAKE) — without it a jailed instance has no pid to stop"
+mkdir -p "$tmp/otherjail"
+other="$(_jail_sock_pid "$tmp/otherjail" 2>/dev/null || true)"
+[[ -z "$other" ]] \
+    || fail "REGRESSION: _jail_sock_pid returned pid $other for a jail with no socket at all"
+note "the jailed VMM is identified by ASKING IT (it must name itself, and another name is refused) and located by the inode of the socket it holds"
 
 # ── 5. THE REAL JAILER, as far as it will go without the privilege ─────────────────────
 # Not a claim that a jailed VM boots. It is the one thing a stand-in cannot tell us: that the

@@ -773,12 +773,66 @@ _running_pid() {  # _running_pid <name> -> prints the pid iff OUR firecracker is
     # be spoofed by a recycled pid running an unrelated firecracker, because that process is
     # rooted somewhere else. (§5.6 asks you to READ this link as the exercise; here the tool
     # reads it to know what it is looking at.)
+    # THE SAME QUESTION `start` ASKS, because a `start` that recognises a VMM one way and a
+    # `stop` that recognises it another way IS P7-5, whatever the two ways are. Reading
+    # /proc/<pid>/root or cwd was tried and measured wrong twice (see _jail_sock_pid); the
+    # VMM answering `GET /` with its own id is not an inference about namespaces, it is the
+    # machine speaking. Bounded by _api's own --max-time, so a wedged VMM cannot hang a list.
     local jroot=""; jroot="$(sed -n 's/^jail_root = "\(.*\)"$/\1/p' "$(fc_manifest "$name")" 2>/dev/null || true)"
-    if [[ -n "$jroot" ]]; then
-        local actual=""; actual="$(readlink "/proc/$p/root" 2>/dev/null || true)"
-        [[ "$actual" == "$jroot" ]] && { printf '%s' "$p"; return 0; }
+    if [[ -n "$jroot" ]] && _jail_id_matches "$jroot" "$name"; then
+        printf '%s' "$p"; return 0
     fi
     return 1
+}
+
+# ── FINDING THE JAILED VMM, AND THE TWO GUESSES THAT WERE WRONG ─────────────
+#
+# Measured over three privileged runs, because each answer was a guess about how the kernel
+# renders a chrooted process and each one was wrong:
+#
+#   run 3: identity by `readlink /proc/<pid>/root` == the jail. It does not match. Diagnosed
+#          as "jailer forks, so $! is the wrong pid" — WRONG, see below.
+#   run 4: a /proc scan for any firecracker rooted at the jail, with a working-directory
+#          fallback. Neither probe ever matched, and the scan was slow enough that its 60
+#          iterations took 45 seconds while a perfectly healthy guest ticked away. The same
+#          run also disproved the fork theory outright: `$!` was reported STILL ALIVE.
+#
+# So `$!` is the VMM after all, and what is unreliable is reading a process's root or cwd
+# from another mount namespace — both are rendered relative to the reader, and after
+# unshare(CLONE_NEWNS) neither is required to come back as a host path this tool would
+# recognise. Two guesses about a rendering, in a row.
+#
+# THE THING THAT IS NOT A GUESS IS THE SOCKET. firecracker binds its API socket inside the
+# chroot, which is a real directory on the host, so `$jroot/api.sock` is a host path with an
+# inode — and the process holding it can be found by comparing that inode against every open
+# fd. That is a derivation from a file this tool created, not an inference about namespaces.
+# And the confirmation is stronger still: ASK THE VMM WHO IT IS. `GET /` returns the
+# instance id jailer was given, so the machine answers for itself instead of being identified
+# by something around it.
+_jail_sock_pid() {  # _jail_sock_pid <jail-root> -> pid holding that jail's API socket, or 1
+    # `stat -c %i` IS THE WRONG INODE, and it is the third rendering this got wrong: that is
+    # the socket FILE's inode on the filesystem, while /proc/<pid>/fd shows `socket:[N]` with
+    # N the socket's inode in the network/socket space. The two numbers are unrelated, so the
+    # scan matched nothing and did so silently. /proc/net/unix is the table that joins a bound
+    # path to that number, and it is the only thing here that is not an inference.
+    local jroot="$1" path="$1/api.sock" ino d fd
+    ino="$(awk -v p="$path" '$NF == p { print $(NF-1) }' /proc/net/unix 2>/dev/null | head -1)"
+    [[ -n "$ino" ]] || return 1
+    for d in /proc/[0-9]*; do
+        for fd in "$d"/fd/*; do
+            [[ "$(readlink "$fd" 2>/dev/null)" == "socket:[$ino]" ]] || continue
+            printf '%s' "${d#/proc/}"; return 0
+        done
+    done
+    return 1
+}
+
+_jail_id_matches() {  # _jail_id_matches <jail-root> <name> -> 0 iff the VMM says it is <name>
+    local jroot="$1" name="$2" body id
+    [[ -S "$jroot/api.sock" ]] || return 1
+    body="$(_api "$jroot/api.sock" GET / 2>/dev/null)" || return 1
+    id="$(grep -o '"id": *"[^"]*"' <<<"$body" | head -1 | cut -d'"' -f4 || true)"
+    [[ "$id" == "$name" ]]
 }
 
 # ── staging a jail, which is where §5.6's sharp edge lives ──────────────────
@@ -801,8 +855,8 @@ _running_pid() {  # _running_pid <name> -> prints the pid iff OUR firecracker is
 # optimisation: a copy would be a second mutable image of the same disk, and this tool has
 # already shipped the bug where two names for one guest's disk drift apart (see cmd_create).
 # A hard link is the same inode — one disk, two names, no drift possible.
-_stage_jail() {  # _stage_jail <name> -> populates the jail root; echoes nothing
-    local name="$1" root; root="$(fc_jailroot "$name")"
+_stage_jail() {  # _stage_jail <name> <uid> <gid> -> populates the jail root; echoes nothing
+    local name="$1" uid="$2" gid="$3" root; root="$(fc_jailroot "$name")"
     mkdir -p "$root" || die "could not create the jail root at $root"
 
     local man kernel; man="$(fc_manifest "$name")"
@@ -821,6 +875,26 @@ _stage_jail() {  # _stage_jail <name> -> populates the jail root; echoes nothing
     note "kernel $how into the jail ($how, because a hard link needs one filesystem)"
     _stage_one "$(fc_rootfs "$name")" rootfs.ext4
     note "rootfs $how into the jail"
+
+    # ── THE STAGED FILES MUST BELONG TO THE UID THE VMM WILL BECOME ────────────────────
+    # MEASURED 2026-08-19, on the first privileged run: without this the jailed VMM starts,
+    # binds its API socket, and then dies with
+    #     Unable to create the virtio block device: … Permission denied (os error 13) /rootfs.ext4
+    # jailer chowns what IT creates — the chroot directory and its own copy of the exec-file
+    # — and nothing else. Files staged in beforehand keep the ownership they were made with,
+    # which is the invoking user's, and the VMM has by then dropped to --uid. So the guest
+    # cannot open its own root device, and the error says "permission denied" about a path
+    # inside a chroot, which reads like a jail-construction bug rather than a chown one.
+    #
+    # THE ROOTFS IS A HARD LINK, SO THIS CHOWNS THE INSTANCE'S OWN DISK TOO — one inode,
+    # two names, one ownership. That is a real consequence of the tier rather than a side
+    # effect to be hidden, and it is why `start` without --jailer now checks and says so
+    # instead of failing the same opaque way from the other direction.
+    local f
+    for f in vmlinux rootfs.ext4; do
+        chown "$uid:$gid" "$root/$f" \
+            || die "could not chown $root/$f to $uid:$gid — the jailed VMM drops to that uid before it opens this file, and would fail with 'Permission denied' about a path inside the chroot.  (Staging a jail needs the same privilege jailer does.)"
+    done
 
     # THE IN-CHROOT CONFIG. Derived from the real one by rewriting exactly the two paths that
     # move, so it cannot drift from the config `create` generated in any OTHER field — which
@@ -847,6 +921,8 @@ _stage_jail() {  # _stage_jail <name> -> populates the jail root; echoes nothing
         || die "the in-chroot config still names a host rootfs path — inside the chroot it does not exist"
     grep -q "$LAB_FC_STATE_DIR" "$root/config.json" \
         && die "the in-chroot config still contains a host state path — every path in it must resolve inside $root"
+    chown "$uid:$gid" "$root/config.json" \
+        || die "could not chown $root/config.json to $uid:$gid"
     return 0
 }
 
@@ -891,8 +967,10 @@ cmd_start() {
        jailer's first act is unshare(CLONE_NEWNS); without the capability it fails AFTER
        staging the chroot, with an error that names neither the privilege nor the fix.
        Run this verb under sudo, or start '$name' without --jailer for the untiered VMM."
-        local jroot; jroot="$(fc_jailroot "$name")"
-        _stage_jail "$name"
+        local jroot juid jgid
+        jroot="$(fc_jailroot "$name")"
+        juid="${LAB_FC_JAIL_UID:-$(id -u)}"; jgid="${LAB_FC_JAIL_GID:-$(id -g)}"
+        _stage_jail "$name" "$juid" "$jgid"
 
         # The API socket lives INSIDE the jail, so it has two names: the one firecracker is
         # told (in-chroot) and the one the host opens. Recording the HOST one is what keeps
@@ -901,17 +979,55 @@ cmd_start() {
         rm -f -- "$hostsock"
         printf '%s' "$hostsock" > "$(fc_sockfile "$name")"
         setsid jailer --id "$name" --exec-file "$(command -v firecracker)" \
-            --uid "${LAB_FC_JAIL_UID:-$(id -u)}" --gid "${LAB_FC_JAIL_GID:-$(id -g)}" \
+            --uid "$juid" --gid "$jgid" \
             --chroot-base-dir "$(fc_jailbase "$name")" \
             -- --api-sock /api.sock --config-file /config.json \
             > "$(fc_log "$name")" 2>&1 < /dev/null &
-        p=$!
-        printf '%s\n' "$p" > "$(fc_pidfile "$name")"
-        # The manifest gains the jail root, and `_running_pid` reads it as this instance's
-        # IDENTITY — see the comment there. Appended rather than rewritten: the manifest is
-        # the create-time record and this is the one run-time fact that is also a boundary.
+        local forked=$!
+        # The manifest gains the jail root BEFORE the wait, because it is what identity is
+        # matched on afterwards. Appended rather than rewritten: the manifest is the
+        # create-time record and this is the one run-time fact that is also a boundary.
         printf 'jail_root = "%s"\n' "$jroot" >> "$(fc_manifest "$name")"
+
+        # WAIT FOR THE VMM TO ANSWER FOR ITSELF. Not for a pid to look a certain way in
+        # /proc — two attempts at that were two wrong guesses about how the kernel renders a
+        # chrooted process to a reader in another namespace. The socket appearing means
+        # firecracker got far enough to bind it; `GET /` returning this instance's id means
+        # the machine in the jail is the one we asked for.
+        p=""
+        for i in $(seq 1 200); do
+            if _jail_id_matches "$jroot" "$name"; then
+                p="$(_jail_sock_pid "$jroot")" || p="$forked"
+                break
+            fi
+            [[ -d "/proc/$forked" ]] || break
+            sleep 0.05
+        done
+        if [[ -z "$p" ]]; then
+            printf 'FAIL: %s did not start jailed — the VMM never answered for itself on %s.\n' \
+                "$name" "$jroot/api.sock" >&2
+            printf '      socket present: %s · forked pid %s: %s\n' \
+                "$( [[ -S "$jroot/api.sock" ]] && printf yes || printf no )" "$forked" \
+                "$( [[ -d "/proc/$forked" ]] && printf 'alive' || printf 'gone' )" >&2
+            printf '      Console log (%s):\n' "$(fc_log "$name")" >&2
+            [[ -r "$(fc_log "$name")" ]] && { tail -10 "$(fc_log "$name")" | sed -e 's/^/      /' >&2 || true; }
+            return 1
+        fi
+        printf '%s\n' "$p" > "$(fc_pidfile "$name")"
     else
+        # A JAILED START TOOK OWNERSHIP OF THIS DISK, AND THIS IS THE WAY BACK.
+        # `--jailer` hard-links the rootfs into the jail and chowns it to the jail uid — one
+        # inode, two names, one ownership — so after a jailed run the instance's own disk
+        # belongs to that uid. Firecracker would then fail here with a bare
+        # "Permission denied (os error 13)" about its backing file, which is the same opaque
+        # error the jailed arm gave from the other direction. Named instead, with the fix.
+        if [[ ! -r "$(fc_rootfs "$name")" || ! -w "$(fc_rootfs "$name")" ]]; then
+            die "'$name''s rootfs is not readable+writable by uid $EUID: $(fc_rootfs "$name") (owned by $(stat -c '%u:%g' "$(fc_rootfs "$name")" 2>/dev/null || printf '?'))
+       A \`start --jailer\` hard-links this disk into the jail and chowns it to the jail uid,
+       so it is one inode with one ownership. Take it back with:
+           sudo chown $(id -u):$(id -g) $(fc_rootfs "$name")
+       or start it jailed again."
+        fi
         local sock; sock="$(_api_sock_for "$name")"
         rm -f -- "$sock" # a socket left by a dead VMM would make bind(2) fail with EADDRINUSE
         printf '%s' "$sock" > "$(fc_sockfile "$name")"
