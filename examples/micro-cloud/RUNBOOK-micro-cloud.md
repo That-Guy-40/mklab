@@ -50,9 +50,12 @@ the existing microVM evidence to keep meaning what it meant.
 
 ```bash
 # the spine itself (debootstrap needs root)
+#
+# `--include systemd-sysv` IS THE INTERESTING FLAG, and it was added because the lab failed
+# without it. See "where universal stops" below.
 sudo phase1-chroot/lab-chroot.sh create \
      --backend debootstrap --distro debian --suite bookworm --arch x86_64 \
-     --variant minbase --manager none \
+     --variant minbase --manager none --include systemd-sysv \
      --name micro-cloud-base --target /var/chroots/micro-cloud-base --lab micro-cloud
 
 # export 1 — the microVMs' root filesystem, written WITHOUT a loop mount
@@ -67,6 +70,26 @@ sudo phase1-chroot/lab-chroot.sh export-tarball micro-cloud-base \
      --output examples/micro-cloud/images/micro-cloud-base.tar.gz
 sudo chown "$USER" examples/micro-cloud/images/micro-cloud-base.tar.gz
 ```
+
+### Where "universal" stops, measured
+
+§2 says a chroot is the userspace *every compute type imports*. Running it found the edge of
+that: a Debian `--variant minbase` tree has **no init at all** — no `/sbin/init`, no systemd.
+That is:
+
+* **fine for a microVM.** Firecracker boots a kernel that execs whatever `/sbin/init` you put
+  there; slice 1's images use a shell script.
+* **fine as an OCI layer.** A container image needs a command, not an init.
+* **fatal for a system container.** LXC execs `/sbin/init` and there wasn't one, so `db`
+  failed at launch with `forklxc … exit status 1` *after* the image imported perfectly. The
+  import succeeding is what makes this worth writing down: everything about the export route
+  worked, and the tree was still the wrong tree.
+
+And it lands on exactly the instance whose lesson it is — [§9.2](../../MICRO_CLOUD_LAB_PLAN.md#92-the-instances)
+calls `db` *"the system-container case: a stateful pet **with its own init**"*. So the
+universal userspace is not free of the consumer's requirements: `--include systemd-sysv` is
+what makes one tree serve all three, and it is a real cost (a microVM rootfs exported from
+this tree now carries systemd, which boots slower and wants more than 256 MB).
 
 **Why the chroot is not a block in `micro-cloud.toml`.** It was, until running the lab showed
 it could not be: the instances consume its *exports*, the control plane has no slot that emits

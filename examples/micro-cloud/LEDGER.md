@@ -531,3 +531,61 @@ demonstration.**
 `db` has still never come up — the tarball did not exist when it ran. The next run is the
 first that can produce all five, and it is also the first where the chroot is load-bearing:
 if step 0's export is missing, `db` fails and says so, which is the honest coupling.
+
+---
+
+## L10-11 — the spine imported perfectly and could not run: `minbase` has no init
+
+**Run 2026-08-19.** Step 0 worked exactly as designed — chroot built in 24 s, `export-tarball`
+wrote an 89 MB archive owned by the invoking user — and phase 5 got two gates further than
+last time. The image **imported**. Then:
+
+```text
+[info] extracting Phase 1 tarball into staging rootfs/
+[info] rebundling → unified tarball
+[info] imported: lab-micro-cloud-db-img
+[info] launching container 'db' as lab-micro-cloud-db
+[error] Failed to run: incusd forklxc lab-micro-cloud-db … : exit status 1
+```
+
+The whole export route — the thing the previous entry built — is **correct**. The tree it
+delivered is the wrong tree:
+
+```console
+$ ls -l /var/chroots/micro-cloud-base/sbin/init
+ls: cannot access …: No such file or directory
+$ ls /var/chroots/micro-cloud-base/lib/systemd/systemd
+ls: cannot access …: No such file or directory
+```
+
+Debian `--variant minbase` has **no init system at all**, and LXC's job is to exec
+`/sbin/init`.
+
+### This is where §2's "universal" has an edge, and the edge is instructive
+
+| consumer | needs | `minbase` |
+|---|---|---|
+| Firecracker microVM | *some* `/sbin/init`; slice 1 uses a shell script | ✅ fine |
+| OCI image (podman) | a command, not an init | ✅ fine |
+| **LXD/Incus system container** | a **real init**, exec'd by LXC | ❌ **fatal** |
+
+And it lands precisely on the instance whose lesson it is: [§9.2](../../MICRO_CLOUD_LAB_PLAN.md#92-the-instances)
+calls `db` *"the system-container case: a stateful pet **with its own init**"*. The spec had
+been asking one tree to serve three consumers while building the one variant that cannot
+serve the third.
+
+**The import succeeding is what makes this worth recording.** Every mechanism in the chain
+worked — tar as root, chown to the user, extract, rebundle, import — and a check on any of
+them would have reported success. The outcome, *can this thing be a system container*, is a
+different question, and only launching it asked.
+
+Fixed with `--include systemd-sysv` in step 0, and it is a real cost rather than a free win:
+a microVM rootfs exported from this tree now carries systemd, which boots slower and wants
+more than the 256 MB the spec gives `api1`. **A universal userspace is not free of its
+consumers' requirements** — that sentence is the finding, and it took a launch failure to
+earn it.
+
+### Everything else in the run repeated cleanly
+
+`edge` at `10.71.0.103` with ssh, the capstone probes green, `down` rc=0, and the cluster plus
+both engine bridges unchanged — 65 s end to end.
