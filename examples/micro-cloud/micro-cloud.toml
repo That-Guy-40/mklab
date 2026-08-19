@@ -117,11 +117,16 @@ runcmd = [
 # and memberless.  Parenting to `br-mc0` means the lab never brings that bridge up or down,
 # which is the difference between "db joined the fabric" and "the lab moved a live
 # cluster's node IP".  See §7.1 and the LEDGER entry for the derivation.
+# NOTE: no `lab` key here, and that is not an oversight. Phase 5's [[instance]] schema does
+# not have one -- the lab name comes from [lab] above -- while [[microvm]], [[vm]] and
+# [[service]] all do. Writing it here by analogy with them cost a privileged run:
+# `lab-lxd.sh` refused with *"unknown key 'lab' -- 'up' would silently ignore it"*, which is
+# the driver behaving exactly as it should. tests/test-spec-is-one-description.sh now checks
+# every key in this file against the driver's own declared key list.
 [[instance]]
 name    = "db"
 engine  = "lxd"
 type    = "container"
-lab     = "micro-cloud"
 devices = { eth0 = { type = "nic", nictype = "bridged", parent = "br-mc0", hwaddr = "06:00:ac:47:d7:7d" } }
 
 # ── the OCI case, rootless (§9.2) ────────────────────────────────────────────

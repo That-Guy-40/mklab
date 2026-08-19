@@ -87,6 +87,31 @@ probe_all() {
 run_host() { bash -c "$1" 2>/dev/null; }
 run_ctr()  { podman exec "$CTR" sh -c "$1" 2>/dev/null; }
 
+# ── the two rows a LIVE lab makes measurable, and the two it does not ────────
+# Each runner is just "run this shell command in that instance's context". The rows differ
+# only in how the command gets there, which is the point: the boundary is what changes, not
+# the question.
+run_lxd()  { "$REPO_DIR/phase5-lxd/lab-lxd.sh" exec micro-cloud/db -- sh -c "$1" 2>/dev/null; }
+run_edge() { ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+                 -o ConnectTimeout=5 "lab@$EDGE_IP" "$1" 2>/dev/null; }
+
+# `db` is reachable when the engine says it is running. Asked, not assumed.
+db_up() {
+    "$REPO_DIR/phase5-lxd/lab-lxd.sh" list --lab micro-cloud 2>/dev/null \
+        | grep -qE '\bdb\b.*(RUNNING|running)'
+}
+
+# `edge` is reachable at the address the FABRIC leased it — never a number from a doc, and
+# never `lab-vm.sh ssh`, which connects to a slirp hostfwd a tap-mode VM does not have.
+EDGE_IP=""
+edge_up() {
+    local leases="${MC_LEASES:-/run/mklab-mc/leases}"
+    [[ -r "$leases" ]] || return 1
+    EDGE_IP="$(awk '$4 == "edge" { print $3 }' "$leases" | head -1)"
+    [[ -n "$EDGE_IP" ]] || return 1
+    run_edge true >/dev/null 2>&1
+}
+
 # ── the container row ────────────────────────────────────────────────────────
 # `sleep infinity` and alpine: the same image and command micro-cloud.toml declares for
 # `metrics`, so this row measures the boundary the LAB has, not a boundary invented here.
@@ -98,14 +123,33 @@ MATRIX="$WORK/matrix.tsv"
 {
     probe_all run_host "host"
     probe_all run_ctr  "metrics (podman, rootless)"
+    # Measured ONLY when the instance answers. A row that cannot be probed stays UNKNOWN
+    # further down -- rows are unmeasured by default and leave that list only by being
+    # measured, which is the rule an earlier version of this file broke by recording its
+    # UNKNOWNs conditionally and losing a row entirely.
+    if db_up;   then probe_all run_lxd  "db (lxd system container)"; fi
+    if edge_up; then probe_all run_edge "edge (qemu vm, full stack)"; fi
 } > "$MATRIX"
 
-printf '\n  %-28s %6s %-10s %-9s %-9s %-9s %-7s %s\n' \
+# A NAMESPACE ID IS ONLY COMPARABLE WITHIN ONE KERNEL, and the table invites the opposite
+# reading. `edge` reported netns 4026531840 — identical to the host's — and that is NOT
+# sharing: 4026531840 is the initial-netns inode in *every* Linux kernel, and edge has its
+# own. A reader comparing those two numbers would conclude the VM is on the host's network
+# namespace, which is the exact opposite of the truth.
+#
+# Which rows have their own kernel is DERIVED rather than listed: a row whose boot_id differs
+# from the host's is a different kernel, so its ns ids are its own numbering.
+host_boot="$(head -1 "$MATRIX" | cut -f4)"
+printf '\n  %-28s %6s %-10s %-9s %-11s %-9s %-7s %s\n' \
     ROW PIDS PID1 BOOT_ID NETNS DMESG /dev/kvm UID >&2
 while IFS=$'\t' read -r a b c d e f g h; do
-    printf '  %-28s %6s %-10s %-9s %-9s %-9s %-7s %s\n' "$a" "$b" "$c" "$d" "$e" "$f" "$g" "$h" >&2
+    mark=""
+    [[ "$d" != "$host_boot" ]] && mark="*"
+    printf '  %-28s %6s %-10s %-9s %-10s%-1s %-9s %-7s %s\n' "$a" "$b" "$c" "$d" "$e" "$mark" "$f" "$g" "$h" >&2
 done < "$MATRIX"
-printf '\n' >&2
+printf '  * = own kernel (boot_id differs from the host), so its NETNS number is its own\n' >&2
+printf '      numbering and is NOT comparable with the host row. 4026531840 is the initial\n' >&2
+printf '      netns inode in every kernel; two rows sharing it prove nothing.\n\n' >&2
 
 host_row="$(sed -n '1p' "$MATRIX")"
 ctr_row="$( sed -n '2p' "$MATRIX")"
@@ -180,11 +224,13 @@ note "dmesg: host=$h_dmesg container=$c_dmesg (kernel.dmesg_restrict=$dmesg_rest
 # removed only by code that actually probes them.  Each carries the reason it needs the
 # privileged run rather than a generic "not available".
 unknown "api1, api2 (firecracker microVM)" \
-    "needs a booted microVM: KVM, the two ext4 images, and a tap from a root-run fabric. A microVM's boundary is a hypervisor, so it cannot be probed with 'podman exec' — the probe has to run INSIDE the guest, over its console or vsock"
-unknown "edge (qemu vm)" \
-    "needs the fidelity VM booted on a fabric tap (root), which is slice 5b's privileged path"
-unknown "db (lxd)" \
-    "needs a running LXD instance parented to br-mc0 (root for the bridge). On this host that row also carries a hazard worth reading before running it: see LEDGER.md L10-1"
+    "STRUCTURAL, not a matter of running the lab harder: a microVM's boundary is a hypervisor, so the probe has to execute INSIDE the guest, and the slice-1/3 rootfs these boot has no exec channel at all — no ssh, no agent, and a console that only speaks outward. What would close it is booting them on slice 5c's vsock-agent rootfs (make-vsock-rootfs.sh) and running the probes over vsock, which is a different image rather than a different privilege"
+grep -q '^edge (qemu vm' "$MATRIX" \
+    || unknown "edge (qemu vm)" \
+        "no lease for 'edge' in the fabric's lease file, or it did not answer ssh at that address. It is booted on a fabric tap by the privileged path; note that \`lab-vm.sh ssh\` CANNOT reach it (that verb needs a slirp hostfwd a tap-mode VM does not have)"
+grep -q '^db (lxd' "$MATRIX" \
+    || unknown "db (lxd)" \
+        "no running LXD instance named 'db' in lab micro-cloud. It needs br-mc0 to exist first (its nic device names it as a parent), and on this host that row carries a hazard worth reading before running it: see LEDGER.md L10-1"
 
 if (( ${#UNKNOWN_ROWS[@]} )); then
     printf '  UNKNOWN rows (measured by nothing, so reported as unmeasured):\n' >&2
@@ -192,4 +238,10 @@ if (( ${#UNKNOWN_ROWS[@]} )); then
     printf '  Fill them in with the privileged run in MANUAL_TESTING.md.\n\n' >&2
 fi
 
-pass "§9.3 isolation matrix: 2 of ${#UNKNOWN_ROWS[@]}+2 rows measured (host + rootless container), rows differ, PID and network namespaces both observed to bound what metrics can see; ${#UNKNOWN_ROWS[@]} row(s) reported UNKNOWN by name"
+# DERIVED FROM THE MATRIX, not from a literal. The first version said "2 of …" because the
+# 2 was typed in — so a run that measured THREE rows (host, metrics and a live `edge`)
+# printed all three in the table above and then reported two. Under-reporting is the less
+# dangerous direction, but this file's whole subject is honest row accounting, and a count
+# that cannot change when the thing it counts changes is not a count.
+_measured="$(wc -l < "$MATRIX")"
+pass "§9.3 isolation matrix: $_measured of $((_measured + ${#UNKNOWN_ROWS[@]})) rows measured ($(cut -f1 "$MATRIX" | paste -sd'; ')), rows differ, PID and network namespaces both observed to bound what metrics can see; ${#UNKNOWN_ROWS[@]} row(s) reported UNKNOWN by name"

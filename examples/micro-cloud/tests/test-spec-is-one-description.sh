@@ -145,4 +145,50 @@ mc_leases="$(sed -n 's/.*MC_LEASES:-\([^}]*\)}.*/\1/p' "$LAB_DIR/micro-cloud.sh"
     || fail "REGRESSION: micro-cloud.sh reads leases from '$mc_leases' but fabric.sh writes them under '$fabric_state'. 'status' would report every instance's address as UNKNOWN while the fabric was serving them perfectly well"
 note "the lease path micro-cloud.sh reads ($mc_leases) is the one fabric.sh writes"
 
+# ── 5. every key in the spec is a key its driver actually knows ──────────────
+# THIS IS THE CHECK THAT WOULD HAVE SAVED A PRIVILEGED RUN. `[[instance]]` carried
+# `lab = "micro-cloud"` -- written by analogy with [[microvm]], [[vm]] and [[service]], all
+# of which DO have that key. Phase 5's does not: the lab name comes from [lab]. `lab-lxd.sh`
+# refused, correctly and loudly -- *"unknown key 'lab' -- 'up' would silently ignore it"* --
+# but only at the very end of a full bring-up, after four other instances were already
+# running.
+#
+# The oracle here is strong, unlike the flag check next door: each driver declares the list
+# it VALIDATES AGAINST as a shell constant, so this compares the spec against the same string
+# the driver uses, not against prose about it.
+#
+# SCOPE, NAMED: only phases 5 and 7 declare such a constant. Phases 1, 2 and 4 validate
+# differently or not at all -- phase 4 accepted the same `lab` key without complaint -- so
+# their blocks are NOT covered here, and saying so is better than implying they are.
+check_block_keys() {  # check_block_keys <block> <driver> <constant-name>
+    local block="$1" driver="$2" const="$3" known key
+    known="$(sed -n "s/^readonly ${const}=\"\(.*\)\"$/\1/p" "$REPO_DIR/$driver" | head -1)"
+    [[ -n "$known" ]] \
+        || fail "could not read $const out of $driver — the constant was renamed or reformatted, so the spec is no longer being checked against the driver's own list. Update this test with it rather than leaving the check silently inert"
+    while read -r key; do
+        [[ -n "$key" ]] || continue
+        [[ " $known " == *" $key "* ]] \
+            || fail "REGRESSION: micro-cloud.toml's [[$block]] uses key '$key', which $(basename "$driver") does not know. Its own list is: $known
+  A key the driver does not know is not a harmless extra: phase 5 REFUSES the whole config for one, and it refuses at the end of the bring-up, after everything else is already up"
+    done < <(python3 - "$SPEC" "$block" <<'PY'
+import sys, tomllib
+with open(sys.argv[1], "rb") as fh:
+    doc = tomllib.load(fh)
+for item in doc.get(sys.argv[2]) or []:
+    for k in item:
+        print(k)
+PY
+)
+    note "[[$block]] keys are all known to $(basename "$driver") ($const)"
+}
+check_block_keys instance phase5-lxd/lab-lxd.sh          _INSTANCE_KEYS_KNOWN
+check_block_keys microvm  phase7-firecracker/lab-fc.sh   KNOWN_KEYS
+
+# The control: a key nobody declares must be caught. Without it, a constant that failed to
+# parse would leave `known` holding something permissive and every key would "pass".
+_known_fc="$(sed -n 's/^readonly KNOWN_KEYS="\(.*\)"$/\1/p' "$REPO_DIR/phase7-firecracker/lab-fc.sh" | head -1)"
+[[ " $_known_fc " != *" zzznotakey "* ]] \
+    || fail "the control is void: 'zzznotakey' is somehow in phase 7's KNOWN_KEYS"
+note "control: an undeclared key ('zzznotakey') is absent from phase 7's list, so the comparison above can fail"
+
 pass "micro-cloud.toml restates edge.toml exactly, every MAC still matches what both tools derive, and status reads the lease file the fabric actually writes"
