@@ -6,6 +6,7 @@ from lab_tui.screens.wizards.phase2 import VMWizard
 from lab_tui.screens.wizards.phase3 import DockerServiceWizard
 from lab_tui.screens.wizards.phase4 import PodmanServiceWizard
 from lab_tui.screens.wizards.phase5 import LXDInstanceWizard
+from lab_tui.screens.wizards.phase7 import MicroVMWizard
 
 __all__ = [
     "WizardModal",
@@ -14,4 +15,5 @@ __all__ = [
     "DockerServiceWizard",
     "PodmanServiceWizard",
     "LXDInstanceWizard",
+    "MicroVMWizard",
 ]

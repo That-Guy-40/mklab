@@ -109,6 +109,7 @@ class ResourceBrowserScreen(Screen):
             "phase3": "lab_tui.screens.wizards.phase3.DockerServiceWizard",
             "phase4": "lab_tui.screens.wizards.phase4.PodmanServiceWizard",
             "phase5": "lab_tui.screens.wizards.phase5.LXDInstanceWizard",
+            "phase7": "lab_tui.screens.wizards.phase7.MicroVMWizard",
         }
         dotted = _WIZARDS.get(phase_id)
         if dotted is None:

@@ -1,7 +1,7 @@
 """WizardSelectScreen — pick which phase's create-wizard to open.
 
 Shown when the user presses 'n' (new) in the resource browser.
-A simple modal list of the five phases; selecting one opens the
+A simple modal list of the phases that have a create-wizard; selecting one opens the
 corresponding WizardModal.
 """
 
@@ -19,6 +19,7 @@ _OPTIONS = [
     Option("Phase 3 — Docker svc   (lab-docker.sh up)",     id="phase3"),
     Option("Phase 4 — Podman svc   (lab-podman.sh up)",     id="phase4"),
     Option("Phase 5 — LXD instance (lab-lxd.sh up)",        id="phase5"),
+    Option("Phase 7 — microVM      (lab-fc.sh create)",     id="phase7"),
 ]
 
 

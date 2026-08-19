@@ -33,7 +33,9 @@ tests=(test-fabric-mac-derivation.sh test-bench-boot.sh test-fabric-round-trip.s
        # not exercise this runner at all. Cost two attempts: the second one named the gate.
        test-jailer-isolation.sh
        # The class behind phase 2's usage-heredoc bug, checked here for preserve.sh.
-       test-usage-is-data.sh)
+       test-usage-is-data.sh
+       # Slice 9 — §0.2's invariant: every guided step names a command you could type.
+       test-guided-path-is-a-view.sh)
 
 # The list is compared against the disk: a test with no runner is a test nobody runs,
 # and a comment saying so does not fail a build (metal-as-a-service kept one for weeks).

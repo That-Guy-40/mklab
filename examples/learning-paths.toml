@@ -18,7 +18,6 @@ time_buckets      = ["⏱ <30m", "⏱ ~1–2h", "⏱ half-day+"]
 # Lab units intentionally NOT routed into any journey (kept honest, with a why).
 [meta.coverage_exempt]
 "learning-paths.toml" = "the source of truth itself, not a lab"
-"micro-cloud" = "under construction — build slices 0-4 done; routed as its own path at slices 9-10 per MICRO_CLOUD_LAB_PLAN.md §11, with the slices as the path's steps"
 
 
 # ════════════════════════════════════════════════════════════════════════════
@@ -493,6 +492,54 @@ goal       = "Build a root filesystem once (Phase 1), then run the SAME artifact
   lab        = "rhel-bootc-minimal/"
   learn      = "a *minimal* bootc base image → `bootc install to-disk` → boot it as a real OS."
   checkpoint = "the image is ~59% smaller than stock; serial login shows an `ostree=` boot of the image's own kernel."
+
+[[path]]
+id         = "micro-cloud"
+title      = "Build a cloud small enough to hold in your head"
+difficulty = "🔴"
+est        = "⏱ half-day+"
+prereqs    = ["container-internals", "chroot-to-system"]
+audience   = "you have booted a VM and run a container; now find out what a cloud adds on top of them"
+goal       = "Assemble the smallest honest cloud: microVMs that boot in a tenth of a second, one L2 they share with a QEMU VM and a rootless container, a real 169.254.169.254 served by a process you started, a control plane that reconciles declared against derived, backups that can say what built them, and a fleet of warm clones from one memory image. Every step is a command you type; the wizard is only a view of it."
+  [[path.step]]
+  lab        = "micro-cloud/"
+  learn      = "one Firecracker microVM by hand — a config.json, a kernel, an ext4 rootfs, and the REST socket the VMM serves. Nothing here is a tool yet."
+  checkpoint = "a login prompt at ~0.55 s, and the same boot again over the API with `curl` — RUNBOOK-first-microvm.md."
+  [[path.step]]
+  lab        = "micro-cloud/"
+  learn      = "the microVM gets an identity: MMDS v2 at 169.254.169.254, with the token handshake EC2 taught you, served by the process you started."
+  checkpoint = "`instance-id` read INSIDE the guest matches the host's PUT; the same GET without a token returns 401."
+  [[path.step]]
+  lab        = "micro-cloud/"
+  learn      = "the fabric — one bridge, addressless taps, dnsmasq as DHCP and DNS — built ADDITIVELY beside whatever already owns your host's networking."
+  checkpoint = "`api1` pings `api2` BY NAME; teardown asserts the absence of our objects only, and the host's own tunnel binding is unmoved."
+  [[path.step]]
+  lab        = "micro-cloud/"
+  learn      = "the tool, and what it hides: `lab-fc.sh` generates that config and babysits the process, and every field it fills in for you is reported."
+  checkpoint = "`lab-fc.sh mac api1` prints a MAC DERIVED from the name — the same value `fabric.sh mac` must produce, or the guest misses its DHCP reservation silently; and `create --config … --dry-run` prints the config plus a provenance table naming every value you did not type."
+  verify_cmd = "phase7-firecracker/lab-fc.sh mac api1"
+  verify_marker = "06:00:ac:47"
+  verify_host = true
+  [[path.step]]
+  lab        = "micro-cloud/"
+  learn      = "a second engine on one fabric: QEMU `-M microvm` booting the SAME kernel and the SAME rootfs, so the only variable left is the VMM."
+  checkpoint = "a boot-time number with its spread — and the surprise that 90% of Firecracker's canonical figure was a PS/2 probe."
+  [[path.step]]
+  lab        = "micro-cloud/"
+  learn      = "vsock — the first channel that is not the fabric. One static guest agent, two host APIs that differ in kind."
+  checkpoint = "the same guest record shape from both engines, with no bridge, no tap and no root."
+  [[path.step]]
+  lab        = "micro-cloud/"
+  learn      = "the control plane: declared versus derived, and a diff that holds back the kinds it must not act on."
+  checkpoint = "`apply` is a no-op on pass two because the DIFF finds nothing — not because a flag was remembered."
+  [[path.step]]
+  lab        = "micro-cloud/"
+  learn      = "preserve: two tiers and a derivation, so a backup can say what built it."
+  checkpoint = "change ONE byte of a saved artifact and the restore refuses BY NAME, with both digests, before importing anything — RUNBOOK-preserve.md."
+  [[path.step]]
+  lab        = "micro-cloud/"
+  learn      = "the fleet: five warm clones from ONE memory image, and the identity that comes back with them."
+  checkpoint = "all five resume the captured tick rather than booting, share one unchanged mem file — and all five share one boot_id, which is the lesson — RUNBOOK-fleet.md."
 
 [[path]]
 id         = "kali-security"
