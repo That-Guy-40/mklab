@@ -42,6 +42,24 @@ phase7-firecracker/lab-fc.sh preflight --config examples/micro-cloud/micro-cloud
 
 ### The run
 
+**There is a script that does all of this and records the evidence**, and it is the one to
+use — [`run-privileged-demo.sh`](run-privileged-demo.sh):
+
+```bash
+sudo -E examples/micro-cloud/run-privileged-demo.sh --reset
+```
+
+It brackets the whole run with an *independent* recording of the CNI's state, waits for
+readiness (which `up` does not), asks the capstone question from `edge` at its leased
+address, runs the matrix, tears down, and diffs the before/after. `--reset` destroys what
+earlier runs left — each object through the tool that made it, by name — which a repeat run
+needs, because `down` does not destroy and `create` refuses an instance that exists.
+
+It lived in a scratch directory for five runs and a reboot took it. That is the second
+privileged harness this lab has lost to `/tmp`; it is in the repo now.
+
+The steps it performs, if you would rather type them:
+
 ```bash
 sudo examples/micro-cloud/micro-cloud.sh up
      examples/micro-cloud/micro-cloud.sh status

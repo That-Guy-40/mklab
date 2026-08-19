@@ -19,6 +19,9 @@
 # the tool applies to it — passing it in would have produced a §2 failure for a file that
 # simply does not have the feature, which is worse than not checking it.
 #
+# run-privileged-demo.sh joined when it moved out of /tmp (LEDGER L10-12): its usage
+# interpolates $0, so the delimiter cannot be quoted either.
+#
 # micro-cloud.sh joined the list with slice 10. Its usage names $SPEC_REL, so the delimiter
 # cannot be quoted, so a backtick or $(...) landing in that text later would RUN — and would
 # run silently, rewriting the help rather than failing it. That is the whole reason this
@@ -26,4 +29,5 @@
 REPO="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../../.." && pwd)"
 exec "$REPO/tools/check-usage-is-data.sh" \
      "$REPO/examples/micro-cloud/preserve.sh" \
-     "$REPO/examples/micro-cloud/micro-cloud.sh"
+     "$REPO/examples/micro-cloud/micro-cloud.sh" \
+     "$REPO/examples/micro-cloud/run-privileged-demo.sh"

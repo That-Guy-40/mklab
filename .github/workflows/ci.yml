@@ -96,6 +96,7 @@ jobs:
             examples/micro-cloud/tests/test-preserve-capability-table.sh \
             examples/micro-cloud/tests/test-preserve-round-trip.sh \
             examples/micro-cloud/micro-cloud.sh \
+            examples/micro-cloud/run-privileged-demo.sh \
             examples/micro-cloud/tests/test-micro-cloud-plan.sh \
             examples/micro-cloud/tests/test-spec-is-one-description.sh \
             examples/micro-cloud/tests/test-isolation-matrix.sh \
