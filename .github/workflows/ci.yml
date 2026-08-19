@@ -64,6 +64,8 @@ jobs:
             phase7-firecracker/tests/test-snapshot-refusals.sh \
             phase7-firecracker/tests/test-snapshot-round-trip.sh \
             phase7-firecracker/tests/test-clone-refusals.sh \
+            phase7-firecracker/tests/test-jailer-staging.sh \
+            examples/micro-cloud/tests/test-jailer-isolation.sh \
             examples/micro-cloud/tests/test-fleet-clones.sh \
             examples/micro-cloud/tests/test-clone-entropy.sh \
             examples/micro-cloud/tests/test-usage-is-data.sh \

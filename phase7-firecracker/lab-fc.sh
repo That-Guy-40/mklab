@@ -9,7 +9,14 @@
 # ── USAGE ──
 #   lab-fc.sh preflight --config <f.toml> | <spec flags>
 #   lab-fc.sh create    ... [--dry-run]      # --dry-run prints config + PROVENANCE, writes nothing
-#   lab-fc.sh start     <name> [--force]     # --force: start despite a changed/missing kernel
+#   lab-fc.sh start     <name> [--force] [--jailer]
+#                                            # --force:  start despite a changed/missing kernel
+#                                            # --jailer: §5.6's isolation tier — chroot + a
+#                                            #   uid/gid switch + seccomp, around the VMM.
+#                                            #   Needs CAP_SYS_ADMIN (jailer unshares a mount
+#                                            #   namespace) and stages the kernel and rootfs
+#                                            #   INSIDE the jail, because every path in
+#                                            #   config.json is then relative to the chroot.
 #   lab-fc.sh stop      <name> [--force]     # --force: escalate to SIGKILL if SIGTERM is ignored
 #   lab-fc.sh destroy   <name> [--force]     # --force: kill it first if it is running
 #   lab-fc.sh snapshot  {create|list|restore|delete} <name> [snap]
@@ -89,6 +96,27 @@ fc_pidfile()  { printf '%s/fc.pid'        "$(fc_dir "$1")"; }
 fc_log()      { printf '%s/fc.log'        "$(fc_dir "$1")"; }
 fc_rootfs()   { printf '%s/rootfs.ext4'   "$(fc_dir "$1")"; }
 fc_snapdir()  { printf '%s/snapshots'     "$(fc_dir "$1")"; }
+
+# ── the jailer tier (§5.6) ──────────────────────────────────────────────────
+# `jailer` builds <chroot-base>/firecracker/<id>/root/, chroots into it and execs firecracker
+# there. So the jail root is a path THIS tool has to know, because everything the VM opens has
+# to be inside it and every path in config.json has to be spelled relative to it.
+fc_jailbase() { printf '%s/jail' "$(fc_dir "$1")"; }
+fc_jailroot() { printf '%s/firecracker/%s/root' "$(fc_jailbase "$1")" "$1"; }
+
+# CAP_SYS_ADMIN, DERIVED — not `[[ $EUID -eq 0 ]]`.
+# What jailer actually needs is unshare(CLONE_NEWNS), which is CAP_SYS_ADMIN. uid 0 usually
+# carries it and a uid-0 check would be right most of the time, which is exactly the problem:
+# it is a mechanism standing in for the capability, so it says "no" to a non-root process that
+# has the capability and "yes" to a root process in a userns that does not. Bit 21 of CapEff
+# is the fact itself.
+have_cap_sys_admin() {
+    local eff
+    eff="$(sed -n 's/^CapEff:[[:space:]]*//p' /proc/self/status 2>/dev/null)" || return 1
+    [[ -n "$eff" ]] || return 1
+    # 16^n arithmetic without bc: bash handles 64-bit hex natively.
+    (( ( 0x$eff >> 21 ) & 1 ))
+}
 
 # WHERE THE API SOCKET PATH IS RECORDED, AND WHY IT IS NOT IN manifest.toml.
 # The manifest is the CREATE-time record — what this instance is. The socket is RUN-time
@@ -731,11 +759,99 @@ _running_pid() {  # _running_pid <name> -> prints the pid iff OUR firecracker is
     grep -qaF -- "$cfg" "/proc/$p/cmdline" 2>/dev/null && { printf '%s' "$p"; return 0; }
     [[ -n "$sock" ]] && grep -qaF -- "$sock" "/proc/$p/cmdline" 2>/dev/null \
         && { printf '%s' "$p"; return 0; }
+
+    # A JAILED VMM'S ARGV CARRIES NEITHER OF THE ABOVE, AND THAT IS THE WHOLE POINT OF IT.
+    # jailer chroots before it execs, so firecracker is told `--config-file /config.json` and
+    # `--api-sock /api.sock` — paths inside the jail, identical for every instance, and
+    # matching nothing on the host. Left as it was, `list`/`stop`/`start` would each have
+    # given a different answer about a jailed instance: P7-5 for the THIRD time, arriving
+    # through a third new verb rather than through a new bug.
+    #
+    # The identity used instead is STRONGER than an argv match, and it is the isolation
+    # boundary itself: /proc/<pid>/root is where this process's filesystem root actually is,
+    # and for a jailed instance that is a per-instance host path this tool created. It cannot
+    # be spoofed by a recycled pid running an unrelated firecracker, because that process is
+    # rooted somewhere else. (§5.6 asks you to READ this link as the exercise; here the tool
+    # reads it to know what it is looking at.)
+    local jroot=""; jroot="$(sed -n 's/^jail_root = "\(.*\)"$/\1/p' "$(fc_manifest "$name")" 2>/dev/null || true)"
+    if [[ -n "$jroot" ]]; then
+        local actual=""; actual="$(readlink "/proc/$p/root" 2>/dev/null || true)"
+        [[ "$actual" == "$jroot" ]] && { printf '%s' "$p"; return 0; }
+    fi
     return 1
 }
 
+# ── staging a jail, which is where §5.6's sharp edge lives ──────────────────
+#
+# "Under the jailer every path in config.json is relative to the new chroot." That one
+# sentence is the whole difference, and it bites in a way nothing warns you about: the config
+# a plain `start` uses names /home/you/.local/state/.../rootfs.ext4, and inside the chroot
+# that path does not exist. Firecracker then fails to open its own root device — which reads
+# like a corrupt image, not like a path problem.
+#
+# So `--jailer` does three things a plain start does not:
+#   1. stages the kernel and the rootfs INSIDE the jail root (hard link where the filesystem
+#      allows it, copy otherwise — and it says which, because one is free and the other costs
+#      the size of the guest disk);
+#   2. writes a SECOND config.json, inside the jail, whose paths are the in-chroot ones;
+#   3. hands jailer a --chroot-base-dir under this instance's own state dir, so a jail is
+#      destroyed with its instance rather than accumulating under /srv/jailer.
+#
+# The rootfs is HARD-LINKED rather than copied when it can be, and that is not only an
+# optimisation: a copy would be a second mutable image of the same disk, and this tool has
+# already shipped the bug where two names for one guest's disk drift apart (see cmd_create).
+# A hard link is the same inode — one disk, two names, no drift possible.
+_stage_jail() {  # _stage_jail <name> -> populates the jail root; echoes nothing
+    local name="$1" root; root="$(fc_jailroot "$name")"
+    mkdir -p "$root" || die "could not create the jail root at $root"
+
+    local man kernel; man="$(fc_manifest "$name")"
+    kernel="$(sed -n 's/^kernel = "\(.*\)"$/\1/p' "$man")"
+    [[ -r "$kernel" ]] || die "the kernel recorded for '$name' is not readable: $kernel"
+
+    local how
+    _stage_one() {  # _stage_one <src> <dst-basename> -> sets $how
+        local src="$1" dst="$root/$2"
+        rm -f -- "$dst"
+        if ln -- "$src" "$dst" 2>/dev/null; then how=hard-linked; return 0; fi
+        cp -- "$src" "$dst" || die "could not stage $src into the jail at $dst"
+        how=copied
+    }
+    _stage_one "$kernel" vmlinux
+    note "kernel $how into the jail ($how, because a hard link needs one filesystem)"
+    _stage_one "$(fc_rootfs "$name")" rootfs.ext4
+    note "rootfs $how into the jail"
+
+    # THE IN-CHROOT CONFIG. Derived from the real one by rewriting exactly the two paths that
+    # move, so it cannot drift from the config `create` generated in any OTHER field — which
+    # is what a hand-written second config would eventually do.
+    # `[[:space:]]*` after the colon, not a literal space. JSON allows either and the first
+    # version of this required the space `gen_config` happens to emit — so it silently
+    # rewrote NOTHING against a config written any other way, and the only thing standing
+    # between that and a Firecracker failing to open its root device was the assertion
+    # below. Matching the format one writer happens to produce is a cache of that writer's
+    # habits.
+    local cfg; cfg="$(fc_config "$name")"
+    sed -e "s#\"kernel_image_path\":[[:space:]]*\"[^\"]*\"#\"kernel_image_path\": \"/vmlinux\"#" \
+        -e "s#\"path_on_host\":[[:space:]]*\"[^\"]*\"#\"path_on_host\": \"/rootfs.ext4\"#" \
+        "$cfg" > "$root/config.json" \
+        || die "could not write the in-chroot config at $root/config.json"
+
+    # ASSERT THE REWRITE, rather than trusting the sed. A config that still names a host path
+    # produces a Firecracker that cannot open its root device, and the error looks like a bad
+    # image rather than a bad path — so this is the cheap assertion that saves the expensive
+    # diagnosis.
+    grep -q '"kernel_image_path": "/vmlinux"'  "$root/config.json" \
+        || die "the in-chroot config still names a host kernel path — inside the chroot it does not exist"
+    grep -q '"path_on_host": "/rootfs.ext4"'   "$root/config.json" \
+        || die "the in-chroot config still names a host rootfs path — inside the chroot it does not exist"
+    grep -q "$LAB_FC_STATE_DIR" "$root/config.json" \
+        && die "the in-chroot config still contains a host state path — every path in it must resolve inside $root"
+    return 0
+}
+
 cmd_start() {
-    local name="$1" force="${2:-0}" d p i
+    local name="$1" force="${2:-0}" jail="${3:-0}" d p i
     d="$(fc_dir "$name")"
     if [[ ! -r "$(fc_config "$name")" ]]; then
         # A CLONE has no config.json and never will: the machine configuration is inside the
@@ -764,13 +880,46 @@ cmd_start() {
     # the API on --api-sock, so nothing about how an instance boots changes — the socket only
     # adds a control channel that was previously absent. That matters for the identity check
     # above and for every existing test that greps this argv.
-    local sock; sock="$(_api_sock_for "$name")"
-    rm -f -- "$sock"     # a socket left by a dead VMM would make bind(2) fail with EADDRINUSE
-    printf '%s' "$sock" > "$(fc_sockfile "$name")"
-    setsid firecracker --api-sock "$sock" --config-file "$(fc_config "$name")" \
-        > "$(fc_log "$name")" 2>&1 < /dev/null &
-    p=$!
-    printf '%s\n' "$p" > "$(fc_pidfile "$name")"
+    if (( jail )); then
+        require_cmd jailer
+        # REFUSE BEFORE THE IRREVERSIBLE STEP, and refuse on the FACT rather than on a proxy
+        # for it. Staging copies a guest disk; jailer's own failure comes after that, and its
+        # message ("Failed to unshare into new mount namespace") does not say which privilege
+        # is missing or how to get it.
+        have_cap_sys_admin \
+            || die "the jailer tier needs CAP_SYS_ADMIN and this process does not have it (CapEff=$(sed -n 's/^CapEff:[[:space:]]*//p' /proc/self/status)).
+       jailer's first act is unshare(CLONE_NEWNS); without the capability it fails AFTER
+       staging the chroot, with an error that names neither the privilege nor the fix.
+       Run this verb under sudo, or start '$name' without --jailer for the untiered VMM."
+        local jroot; jroot="$(fc_jailroot "$name")"
+        _stage_jail "$name"
+
+        # The API socket lives INSIDE the jail, so it has two names: the one firecracker is
+        # told (in-chroot) and the one the host opens. Recording the HOST one is what keeps
+        # `snapshot` and `stop` working against a jailed instance.
+        local hostsock="$jroot/api.sock"
+        rm -f -- "$hostsock"
+        printf '%s' "$hostsock" > "$(fc_sockfile "$name")"
+        setsid jailer --id "$name" --exec-file "$(command -v firecracker)" \
+            --uid "${LAB_FC_JAIL_UID:-$(id -u)}" --gid "${LAB_FC_JAIL_GID:-$(id -g)}" \
+            --chroot-base-dir "$(fc_jailbase "$name")" \
+            -- --api-sock /api.sock --config-file /config.json \
+            > "$(fc_log "$name")" 2>&1 < /dev/null &
+        p=$!
+        printf '%s\n' "$p" > "$(fc_pidfile "$name")"
+        # The manifest gains the jail root, and `_running_pid` reads it as this instance's
+        # IDENTITY — see the comment there. Appended rather than rewritten: the manifest is
+        # the create-time record and this is the one run-time fact that is also a boundary.
+        printf 'jail_root = "%s"\n' "$jroot" >> "$(fc_manifest "$name")"
+    else
+        local sock; sock="$(_api_sock_for "$name")"
+        rm -f -- "$sock" # a socket left by a dead VMM would make bind(2) fail with EADDRINUSE
+        printf '%s' "$sock" > "$(fc_sockfile "$name")"
+        setsid firecracker --api-sock "$sock" --config-file "$(fc_config "$name")" \
+            > "$(fc_log "$name")" 2>&1 < /dev/null &
+        p=$!
+        printf '%s\n' "$p" > "$(fc_pidfile "$name")"
+    fi
 
     # ASSERT THE OUTCOME. This used to print PASS on the strength of the fork returning —
     # which says only that bash created a process, not that a microVM exists. Measured
@@ -796,8 +945,15 @@ cmd_start() {
             && { tail -10 "$(fc_log "$name")" | sed -e 's/^/      /' >&2 || true; }
         return 1
     fi
-    printf 'PASS: started %s (pid %s) — process confirmed running, not merely forked; console -> %s\n' \
-        "$name" "$p" "$(fc_log "$name")"
+    if (( jail )); then
+        printf 'PASS: started %s JAILED (pid %s) — process confirmed running, not merely forked; console -> %s\n' \
+            "$name" "$p" "$(fc_log "$name")"
+        printf '      chroot: %s\n' "$(fc_jailroot "$name")"
+        printf '      compare it with a plain start:  readlink /proc/%s/root ; readlink /proc/%s/ns/net ; grep Seccomp /proc/%s/status\n' "$p" "$p" "$p"
+    else
+        printf 'PASS: started %s (pid %s) — process confirmed running, not merely forked; console -> %s\n' \
+            "$name" "$p" "$(fc_log "$name")"
+    fi
 }
 
 # stop/destroy resolve to a PID and kill THAT. Never a pattern: the per-VM paths appear in
@@ -1351,7 +1507,7 @@ main() {
     [[ -n "$verb" ]] || usage
     case "$verb" in help|-h|--help) usage ;; esac
 
-    local cfg="" name="" kernel="" rootfs="" memory="" vcpus="" tap="" mac="" ipaddr="" gw="" mask="" mmds="" append="" dry=0 json=0 lab="" force=0
+    local cfg="" name="" kernel="" rootfs="" memory="" vcpus="" tap="" mac="" ipaddr="" gw="" mask="" mmds="" append="" dry=0 json=0 lab="" force=0 jailer=0
     local positional=()
     while (( $# )); do
         case "$1" in
@@ -1372,6 +1528,7 @@ main() {
             --dry-run) dry=1; shift ;;
             --json)    json=1; shift ;;
             --force)   force=1; shift ;;
+            --jailer)  jailer=1; shift ;;
             -*)        die "unknown flag: $1" ;;
             *)         positional+=("$1"); shift ;;
         esac
@@ -1411,7 +1568,7 @@ main() {
             valid_name "${positional[2]}" || die "invalid instance name '${positional[2]}' — must match ${FC_NAME_RE}" ;;
     esac
     case "$verb" in
-        start)   cmd_start   "$name" "$force"; return ;;
+        start)   cmd_start   "$name" "$force" "$jailer"; return ;;
         stop)    cmd_stop    "$name" "$force"; return ;;
         destroy) cmd_destroy "$name" "$force"; return ;;
         inspect) cmd_inspect "$name"; return ;;
