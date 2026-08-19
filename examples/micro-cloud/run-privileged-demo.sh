@@ -139,10 +139,32 @@ if [[ -d /var/chroots/micro-cloud-base ]]; then
         echo "  !! 'db' will fail at launch with 'forklxc … exit status 1'. Re-run with"
         echo "  !! --reset to rebuild it. See LEDGER L10-11."
     fi
+    if [[ ! -e /var/chroots/micro-cloud-base/etc/systemd/network/10-fabric.network ]]; then
+        echo "  !! it has NO network unit — this tree predates the DHCP fix, so 'db' will"
+        echo "  !! start, get its veth on br-mc0, and never ask for an address: present on"
+        echo "  !! the L2 and invisible on the network. --reset rebuilds it. LEDGER L10-13."
+    fi
 else
+    # TWO consumer-specific requirements, both found by running it, both on `db`:
+    #
+    #   --include systemd-sysv   a minbase tree has NO /sbin/init, and LXC execs it. Fine for
+    #                            a microVM (slice 1 supplies its own init) and fatal for a
+    #                            system container. LEDGER L10-11.
+    #   the .network unit        systemd-networkd ships with systemd but is NOT ENABLED, and
+    #                            minbase has no dhclient, no ifupdown, no udhcpc. So `db` came
+    #                            up, got its veth on br-mc0, and NOTHING EVER ASKED FOR AN
+    #                            ADDRESS -- on the L2 physically and invisible on the network.
+    #                            LEDGER L10-13.
+    #
+    # A microVM needs neither of these (its init DHCPs itself); an OCI container needs neither
+    # (podman supplies the namespace and the command). Only the system container needs both,
+    # which is what "universal userspace" costs.
     "$REPO/phase1-chroot/lab-chroot.sh" create \
         --backend debootstrap --distro debian --suite bookworm --arch x86_64 \
         --variant minbase --manager none --include systemd-sysv \
+        --post-command 'systemctl enable systemd-networkd' \
+        --post-command 'mkdir -p /etc/systemd/network' \
+        --post-command 'printf "[Match]\nName=eth0 en*\n\n[Network]\nDHCP=ipv4\n" > /etc/systemd/network/10-fabric.network' \
         --name micro-cloud-base --target /var/chroots/micro-cloud-base --lab micro-cloud \
         2>&1 | tail -3 | sed 's/^/  /'
 fi

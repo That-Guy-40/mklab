@@ -56,6 +56,9 @@ the existing microVM evidence to keep meaning what it meant.
 sudo phase1-chroot/lab-chroot.sh create \
      --backend debootstrap --distro debian --suite bookworm --arch x86_64 \
      --variant minbase --manager none --include systemd-sysv \
+     --post-command 'systemctl enable systemd-networkd' \
+     --post-command 'mkdir -p /etc/systemd/network' \
+     --post-command 'printf "[Match]\nName=eth0 en*\n\n[Network]\nDHCP=ipv4\n" > /etc/systemd/network/10-fabric.network' \
      --name micro-cloud-base --target /var/chroots/micro-cloud-base --lab micro-cloud
 
 # export 1 — the microVMs' root filesystem, written WITHOUT a loop mount
@@ -86,10 +89,25 @@ That is:
   worked, and the tree was still the wrong tree.
 
 And it lands on exactly the instance whose lesson it is — [§9.2](../../MICRO_CLOUD_LAB_PLAN.md#92-the-instances)
-calls `db` *"the system-container case: a stateful pet **with its own init**"*. So the
-universal userspace is not free of the consumer's requirements: `--include systemd-sysv` is
-what makes one tree serve all three, and it is a real cost (a microVM rootfs exported from
-this tree now carries systemd, which boots slower and wants more than 256 MB).
+calls `db` *"the system-container case: a stateful pet **with its own init**"*.
+
+**Then it happened again, one layer up.** With an init, `db` started — and had no address.
+`systemd-networkd` ships with systemd but is **not enabled**, and a minbase tree has no
+`dhclient`, no `ifupdown`, no `udhcpc`. So the container came up, got its veth on `br-mc0`,
+and *nothing ever asked for one*: present on the L2, invisible on the network, with
+`getent db` returning nothing from `edge`. Hence the three `--post-command` lines above.
+
+So the tally of what "universal" costs, per consumer:
+
+| | init | network config |
+|---|---|---|
+| Firecracker microVM | supplies its own | its init DHCPs itself |
+| OCI container | not needed | podman supplies the namespace |
+| **LXD system container** | **needs one** | **needs one** |
+
+`--include systemd-sysv` and the `.network` unit are what make one tree serve all three, and
+they are a real cost: a microVM rootfs exported from this tree now carries systemd, which
+boots slower and wants more than 256 MB.
 
 **Why the chroot is not a block in `micro-cloud.toml`.** It was, until running the lab showed
 it could not be: the instances consume its *exports*, the control plane has no slot that emits

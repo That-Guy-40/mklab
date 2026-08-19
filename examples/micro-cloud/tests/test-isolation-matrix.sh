@@ -95,10 +95,20 @@ run_lxd()  { "$REPO_DIR/phase5-lxd/lab-lxd.sh" exec micro-cloud/db -- sh -c "$1"
 run_edge() { ssh -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
                  -o ConnectTimeout=5 "lab@$EDGE_IP" "$1" 2>/dev/null; }
 
-# `db` is reachable when the engine says it is running. Asked, not assumed.
+# `db` is reachable when the engine says it is running.
+#
+# NOT `(RUNNING|running)`, which is what this was. Incus prints **`Running`** — a third
+# capitalisation the alternation did not enumerate — so on the first run where `db` actually
+# came up, the matrix reported it UNKNOWN ("no running LXD instance named 'db'") while
+# `lab-lxd.sh list` showed it `Running` three lines earlier in the same log. A FALSE UNKNOWN,
+# for the third time in this lab, and the same shape each time: a format guessed at instead
+# of asked about (`inspect --json`, `lab =`, and now this).
+#
+# Enumerating spellings is the bug. Case-folding removes the class rather than adding the
+# third member to it.
 db_up() {
     "$REPO_DIR/phase5-lxd/lab-lxd.sh" list --lab micro-cloud 2>/dev/null \
-        | grep -qE '\bdb\b.*(RUNNING|running)'
+        | grep -qiE '\bdb\b.*\brunning\b'
 }
 
 # `edge` is reachable at the address the FABRIC leased it — never a number from a doc, and
