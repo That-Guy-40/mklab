@@ -129,6 +129,19 @@ while it is still free to be wrong.
 
 ## Step 1 — bring it up
 
+> **Or run the whole thing at once.**
+> [`run-privileged-demo.sh`](run-privileged-demo.sh) performs every step below — step 0
+> included — waits for readiness, asks the capstone question the way it has to be asked, and
+> brackets the run with an independent recording of the host CNI's state:
+>
+> ```bash
+> sudo -E examples/micro-cloud/run-privileged-demo.sh --reset
+> ```
+>
+> The rest of this runbook is what it does, in the order it does it, so you can run any step
+> by hand and know what it was for.
+
+
 ```bash
 sudo examples/micro-cloud/micro-cloud.sh up
 ```

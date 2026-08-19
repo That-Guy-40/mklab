@@ -589,3 +589,53 @@ earn it.
 
 `edge` at `10.71.0.103` with ssh, the capstone probes green, `down` rc=0, and the cluster plus
 both engine bridges unchanged — 65 s end to end.
+
+---
+
+## L10-12 — the harness lived in /tmp for five runs, and a reboot took it
+
+**2026-08-19.** The script that performs the privileged run — reset, step 0, `up`, the
+readiness waits, the capstone probes, the isolation matrix, `down`, and the before/after
+comparison of the host CNI's state — existed only in a session scratch directory. The machine
+rebooted between runs and it was gone. The artifacts it had produced survived
+(`/var/chroots/micro-cloud-base`, the images, the tarball); the procedure that produced them
+did not.
+
+**This is the second time this lab has lost a privileged harness to a temp directory.**
+`fabric.sh` was written and exercised in a `/tmp` scratchpad on 2026-08-02, and PR #129 landed
+the 307-line appendix *about* it without landing **it** — §14 said the slice was done, §9.1
+listed the file, and both catalog gates were green, *because neither checker has an opinion
+about a tool that does not exist*. It was recovered on 2026-08-04 by replaying one Write and
+eleven Edits out of a session transcript. Its header still opens with **"THIS FILE WAS ALMOST
+LOST, WHICH IS THE FIRST THING TO KNOW ABOUT IT."**
+
+The lesson was written down and then not applied to the next thing of the same kind. What
+made it easy to miss is that the second one never felt like an artifact: it was "the command I
+run to test the lab", regenerated a little each time, and it accumulated — five runs' worth of
+ordering constraints, every one of them bought by a failed run:
+
+* the privilege boundary follows the resource, so the phase steps drop to `$SUDO_USER`
+  ([L10-6](#l10-6--the-first-privileged-run-the-fabric-was-right-the-orchestrator-was-wrong));
+* readiness is not what `up` returns on, so everything that reads state waits first
+  ([L10-2](#l10-2--up-orders-invocations-and-readiness-is-a-different-question));
+* the capstone is asked from `edge` at its **leased** address, never through `lab-vm.sh ssh`
+  ([L10-8](#l10-8--the-full-spec-the-chroot-and-the-vm-both-built-and-the-capstone-probe-could-never-have-worked));
+* step 0 builds the spine and its exports because the runtime spec cannot
+  ([L10-10](#l10-10--db-finally-spoke-and-what-it-said-was-that-the-spine-was-decorative));
+* and the chroot needs `--include systemd-sysv` or `db` cannot launch
+  ([L10-11](#l10-11--the-spine-imported-perfectly-and-could-not-run-minbase-has-no-init)).
+
+Every one of those is a thing a reader would otherwise have to rediscover by failing the same
+way. Losing the file loses the *reasons*, which are worth more than the commands.
+
+It is now [`run-privileged-demo.sh`](run-privileged-demo.sh), in the repo, linked from
+[`MANUAL_TESTING.md`](MANUAL_TESTING.md) and [`RUNBOOK-micro-cloud.md`](RUNBOOK-micro-cloud.md)
+so `link_check.py` will not let it become an orphan, and shellcheck'd in CI. Two behavioural
+changes came with the move, both because a repo file has different obligations than a scratch
+one:
+
+- **destroying is opt-in.** `--reset` is a flag now, not the first phase. A script anyone can
+  run should not delete a chroot because it was invoked.
+- **it refuses to mislead about the chroot it finds.** If `/var/chroots/micro-cloud-base`
+  exists without `/sbin/init` — the tree every run before L10-11 built — it says so and names
+  `--reset`, rather than proceeding to a `forklxc` failure whose cause is three files away.
