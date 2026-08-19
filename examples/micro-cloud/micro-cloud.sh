@@ -78,6 +78,41 @@ LAB="micro-cloud"
 # script and pasting its plan must be the same act; this makes them so.
 cd "$REPO"
 
+# ── WHO RUNS THE INSTANCES, AND WHY IT IS NOT ROOT ───────────────────────────
+# `up` needs root, but only for the FABRIC. Running the instance steps as root too was the
+# first privileged run's blocking defect, and it is worth stating precisely because it looks
+# like a permissions nuisance and is actually the lab's central lesson inverted:
+#
+#     FAIL  tap mc-api1 is owned by uid 1000, not 0 — Firecracker would get EPERM
+#
+# `fabric.sh` hands each tap to the INVOKING user on purpose, so the VMM can open it with no
+# privilege at all — that is slice 2's finding and slice 5a's test drops both VMMs to uid
+# 1000 precisely so the ownership assertion means something. A root `up` would have run
+# Firecracker as uid 0 against a tap built for uid 1000: refused by the preflight, and had it
+# not been, it would have thrown away the isolation property this lab exists to demonstrate.
+# The same collision sits one step further on — `lab-podman.sh` refuses to run as root at
+# all, because `metrics` is a ROOTLESS sidecar (§9.3's exhibit).
+#
+# So the privilege boundary follows the resource: the network is root's, the instances are
+# yours. `runuser` sets HOME to the target user's, which is what makes `lab-fc.sh` and
+# friends use YOUR state directory rather than root's — otherwise root creates instances a
+# later unprivileged `status` cannot see.
+#
+# The owner is read from the SAME variable `fabric.sh` uses to decide who owns a tap. Two
+# independent answers to "who is this lab for" is exactly how the two halves came to
+# disagree in the first place.
+RUN_AS="${MC_OWNER:-${SUDO_USER:-}}"
+
+# The argv prefix that drops privilege, or nothing when there is none to drop. It is
+# PREPENDED INTO THE PLAN rather than applied invisibly at execution time, so `plan` prints
+# the command that actually runs — a plan that quietly differs from the run is not a view of
+# anything.
+drop_prefix() {
+    if (( EUID == 0 )) && [[ -n "$RUN_AS" && "$RUN_AS" != root ]]; then
+        printf '%s\n' runuser -u "$RUN_AS" --
+    fi
+}
+
 ESC=$'\033'
 bold(){ printf '%s[1m%s%s[0m\n' "$ESC" "$*" "$ESC"; }
 c_ok(){   printf '  %s[32m+%s[0m %s\n' "$ESC" "$ESC" "$*"; }
@@ -161,7 +196,14 @@ run_topology(){
         # "/my labs/" would otherwise split into two arguments here.
         mapfile -t -d '' argv < <(jq -j --argjson i "$i" '.[$i].argv[] | (. + ([0] | implode))' <<<"$json")
         desc="$(jq -r --argjson i "$i" '.[$i].description' <<<"$json")"
-        step "$desc" "${argv[@]}"
+        # The instances are the invoking user's; see the note by RUN_AS. An `echo` step is
+        # the driver telling you something (phase 1 and 2 emit advice rather than acting),
+        # so it is left alone -- wrapping a message in runuser would be theatre.
+        local -a pre=()
+        if [[ "${argv[0]}" != "echo" ]]; then
+            mapfile -t pre < <(drop_prefix)
+        fi
+        step "$desc" ${pre+"${pre[@]}"} "${argv[@]}"
     done
 }
 
@@ -213,11 +255,35 @@ cmd_status(){
 
     bold ""
     bold "-- the instances, each driver asked directly --"
+    # THREE OUTCOMES, AND THE MIDDLE ONE IS THE REASON THIS LOOKS FUSSY.
+    #
+    # The first version ran `inspect <name> --json` and piped it to jq. Phase 7's `inspect`
+    # HAS NO `--json` — phases 2 and 5 do, and the flag was written here by analogy with
+    # them — and it does not reject the unknown flag either: it prints its ordinary TOML and
+    # exits 0. So jq failed, the fallback fired, and `status` reported
+    #     api1  microvm  UNKNOWN (driver could not be asked)
+    # about a microVM that was RUNNING and answering `inspect` perfectly. Measured on the
+    # first successful privileged run, where step 3b's direct call printed `state = "running"`
+    # three lines further down the same log.
+    #
+    # A false UNKNOWN is not the safe direction. The whole point of UNKNOWN being a verdict
+    # is that it means *nobody could look* — and once it can also mean *I looked wrongly*, it
+    # stops carrying information in either direction. So the driver's own exit status decides
+    # which of the three this is, and "could not be asked" is reserved for the case where it
+    # genuinely could not.
+    local out rc
     while read -r name; do
         [[ -n "$name" ]] || continue
-        state="$("$REPO/phase7-firecracker/lab-fc.sh" inspect "$name" --json 2>/dev/null \
-                 | jq -r '.state // "unknown"' 2>/dev/null)" || state=""
-        printf '  %-9s %-10s %s\n' "$name" "microvm" "${state:-UNKNOWN (driver could not be asked)}"
+        rc=0; out="$("$REPO/phase7-firecracker/lab-fc.sh" inspect "$name" 2>&1)" || rc=$?
+        if (( rc != 0 )); then
+            # The driver refused. It says why — usually "no such instance" — and that is a
+            # fact about the lab, not a failure to observe it.
+            printf '  %-9s %-10s %s\n' "$name" "microvm" "not created (${out##*: })"
+        else
+            state="$(sed -n 's/^state[[:space:]]*=[[:space:]]*"\(.*\)"$/\1/p' <<<"$out" | head -1)"
+            printf '  %-9s %-10s %s\n' "$name" "microvm" \
+                "${state:-UNKNOWN: the driver answered but printed no state line}"
+        fi
     done < <(microvm_names)
 
     rc=0; "$REPO/phase2-qemu-vm/lab-vm.sh"    list                2>/dev/null | sed 's/^/  vm      /' || rc=$?
@@ -226,9 +292,31 @@ cmd_status(){
 
     bold ""
     bold "-- addresses, read back from the leases, never from a record of ours --"
-    local leases="${MC_LEASES:-/var/lib/misc/mc-dnsmasq.leases}"
-    if [[ -r "$leases" ]]; then
+    # The fabric's dnsmasq lease file. THIS PATH IS A COPY OF `STATE` IN fabric.sh, and it
+    # is the second thing in this lab bound to its source by a test rather than trusted:
+    # tests/test-spec-is-one-description.sh reads fabric.sh's own STATE= line and refuses a
+    # mismatch. The first version of this line guessed `/var/lib/misc/mc-dnsmasq.leases` —
+    # dnsmasq's distro default, and not what the fabric passes to `--dhcp-leasefile` — so
+    # `status` would have reported every address as UNKNOWN on every run, while looking like
+    # it had checked. Caught by reading fabric.sh before the first privileged run, not by it.
+    local leases="${MC_LEASES:-/run/mklab-mc/leases}"
+    if [[ -r "$leases" && -s "$leases" ]]; then
         awk '{printf "  %-18s %-16s %s\n", $4, $3, $2}' "$leases"
+    elif [[ -r "$leases" ]]; then
+        # AN EMPTY LEASE FILE IS NOT AN UNREADABLE ONE. The fabric truncates this file at
+        # `up`, so "exists but empty" means the fabric is serving and nothing has asked yet
+        # -- a reserved instance that has not booted, or one that booted without a NIC. The
+        # first version printed nothing at all here, which read as though the section had
+        # failed to run.
+        c_warn "the fabric is up and its lease file is EMPTY: no guest has taken an address YET."
+        c_warn "A reservation is not a lease -- 'fabric.sh tap <name>' reserves one, and a"
+        c_warn "guest appears here only once it has actually DHCPed."
+        c_warn "IF YOU RAN THIS STRAIGHT AFTER 'up', THIS IS THE READINESS GAP, NOT A FAULT:"
+        c_warn "'up' returns when the VMMs are running, and a guest still has to boot and"
+        c_warn "complete a DHCP exchange after that. Observed 2026-08-19: this section was"
+        c_warn "empty while both guests' consoles already showed 'dhcp rc=0' and their"
+        c_warn "reserved addresses. Wait a moment and run 'status' again, or read the truth"
+        c_warn "from the guest itself: less \$LAB_STATE_DIR/fc/<name>/fc.log"
     else
         c_warn "no readable lease file at $leases"
         c_warn "addresses are UNKNOWN, which is not the same as 'none' - the fabric may be"
