@@ -639,3 +639,70 @@ one:
 - **it refuses to mislead about the chroot it finds.** If `/var/chroots/micro-cloud-base`
   exists without `/sbin/init` — the tree every run before L10-11 built — it says so and names
   `--reset`, rather than proceeding to a `forklxc` failure whose cause is three files away.
+
+---
+
+## L10-13 — all five up, and two defects inside the green run
+
+**Run 2026-08-19**, `--reset`, from the harness now in the repo. **`up` rc=0** — the first
+clean full bring-up — `down` rc=0, 73 s, cluster and both engine bridges unchanged.
+
+```text
+api1     "running"          api2     "running"
+edge     running            (10.71.0.103, ssh answered)
+db       lab-micro-cloud-db  default  container  Running     <-- first time
+metrics  Up 8 seconds        alpine:latest
+br-mc0 members: mc-api1 mc-api2 mc-edge veth756ac590         <-- db's veth, on the fabric
+```
+
+The capstone held again: from `edge`, `getent hosts api1` → `10.71.0.101`, `getent hosts
+api2` → `10.71.0.102`, `ping api1` → **0% loss**.
+
+### 1. `db` is on the L2 and invisible on the network
+
+`getent db` returned nothing and `ping db` said *"Name or service not known"* — while `db`
+was Running with a veth on `br-mc0`. It never appears in the lease file.
+
+`systemd-networkd` ships **with** systemd but is **not enabled**, and a minbase tree has no
+`dhclient`, no `ifupdown`, no `udhcpc`. So `db` came up, got its interface, and **nothing
+ever asked for an address.**
+
+This is [L10-11](#l10-11--the-spine-imported-perfectly-and-could-not-run-minbase-has-no-init)
+happening one layer up, and the pair of them is the real shape of §2's cost:
+
+| consumer | init | network config |
+|---|---|---|
+| Firecracker microVM | supplies its own | its init DHCPs itself |
+| OCI container | not needed | podman supplies the namespace |
+| **LXD system container** | **needs one** | **needs one** |
+
+Two rounds, same lesson: **the shared userspace is missing whatever the newest consumer
+assumes.** The microVM and the container each brought their own answer; the system container
+expects the image to have brought it. Fixed with three `--post-command` lines that enable
+`systemd-networkd` and write a `DHCP=ipv4` unit.
+
+### 2. A false UNKNOWN, and it was mine — for the third time
+
+The matrix reported
+
+> `db (lxd)` — no running LXD instance named 'db' in lab micro-cloud
+
+while `lab-lxd.sh list` showed it **`Running`** three lines earlier **in the same log**. The
+probe was `grep -qE '\bdb\b.*(RUNNING|running)'`. Incus prints `Running` — a third
+capitalisation the alternation did not enumerate.
+
+Third time in this lab, same shape every time: **a format guessed at rather than asked
+about.** `inspect --json` (phase 7 has no such flag), `lab =` in `[[instance]]` (phase 5 has
+no such key), and now a status string spelled two of three ways. Each looked obviously right
+because a sibling did it that way.
+
+The fix is `grep -qi`, and the distinction matters more than the character: *enumerating
+spellings is the bug*. Adding `Running` to the list would have fixed this run and left the
+class. Case-folding removes the class. Verified against all three spellings plus `Stopped`
+as the negative control.
+
+### What is left
+
+`api1`/`api2` remain structurally unmeasurable by the matrix — their rootfs has no exec
+channel, and closing that means slice 5c's vsock-agent image rather than more privilege.
+That is the only row of §9.3 whose absence is not a to-do.
