@@ -53,10 +53,30 @@ ELF-only and answers a bzImage with `Elf(InvalidElfMagicNumber)`. `lab-fc.sh pre
 checks this before anything is copied, and tells you to run `extract-vmlinux` if you handed
 it the wrong one.
 
+**If you COPY an image rather than build one, fsck it.** An ext4 copied out of a directory
+where it was last used by a running guest is marked dirty, and `debugfs` refuses to open it:
+
+```bash
+e2fsck -fy examples/micro-cloud/images/api1.ext4
+```
+
+Preflight reports that case as **UNKNOWN**, not as a pass and not as a failure — *"cannot
+read … with debugfs (image is dirty or unsupported) — /sbin/init NOT verified"*. That
+distinction is the point: the gate could not run, and a gate that cannot run must not report
+that the thing it checks is fine. Observed on the first privileged run of this lab, on one of
+two otherwise identical images.
+
 Once both exist:
 
 ```bash
 phase7-firecracker/lab-fc.sh preflight --config examples/micro-cloud/micro-cloud.toml
+```
+
+`firecracker` must be on `PATH`, and it usually is not — the pinned binary lives in the
+slice-3 workdir. `sudo` will not carry your `PATH` either, so export it explicitly:
+
+```bash
+export PATH="$HOME/.local/state/lab-create/micro-cloud-s3:$PATH"
 ```
 
 Every gate, before any state is created. This is the step that catches a missing image, a
@@ -68,6 +88,22 @@ while it is still free to be wrong.
 ```bash
 sudo examples/micro-cloud/micro-cloud.sh up
 ```
+
+**`sudo` here does not mean the instances run as root, and that matters more than it looks.**
+The fabric is root's; the instances are yours. `micro-cloud.sh` drops back to the invoking
+user (`runuser -u $SUDO_USER --`) for every phase-tool step, and `plan` prints that prefix so
+you can see it. The first privileged run of this lab did *not* do that, and it was refused —
+correctly — at the first microVM:
+
+```text
+FAIL  tap mc-api1 is owned by uid 1000, not 0 — Firecracker would get EPERM from TUNSETIFF
+```
+
+`fabric.sh` hands each tap to the invoking user **on purpose**, so the VMM opens it with no
+privilege at all. A root `up` would have run Firecracker as uid 0 against a tap built for uid
+1000 — and had the gate not caught it, the lab would have quietly stopped demonstrating the
+thing it exists to demonstrate. The same boundary is why `metrics` works at all:
+`lab-podman.sh` refuses to run as root, because a rootless sidecar is §9.3's exhibit.
 
 The fabric first (bridge, nft, dnsmasq, then one addressless tap per instance that declares
 one), then the instances in the order `lab_tui.topology` computes. A step that returns

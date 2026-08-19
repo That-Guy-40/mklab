@@ -128,4 +128,21 @@ real_mac="$("$FABRIC" mac "$bogus_name" 2>/dev/null)" || fail "fabric.sh mac ref
     || fail "the control is void: the deliberately wrong MAC happens to BE the derived one for '$bogus_name'"
 note "control: $bogus_mac is not what fabric.sh derives for $bogus_name ($real_mac), so the comparison above can fail"
 
-pass "micro-cloud.toml restates edge.toml exactly, and every MAC in it still matches what both tools derive"
+# ── 4. the lease path micro-cloud.sh reads is the one fabric.sh writes ───────
+# `status` reads the fabric's dnsmasq lease file to report addresses, so it carries a copy
+# of a path fabric.sh owns. The first version guessed dnsmasq's distro default
+# (/var/lib/misc/…) rather than the `--dhcp-leasefile` the fabric actually passes, which
+# would have made `status` report every address as UNKNOWN on every run — a wrong answer
+# wearing the clothes of a careful one, since "UNKNOWN" is exactly what it should say when
+# the fabric is down. Bound to its source here rather than trusted.
+fabric_state="$(sed -n 's/^STATE=\(.*\)$/\1/p' "$FABRIC" | head -1)"
+[[ -n "$fabric_state" ]] \
+    || fail "could not read a STATE= line out of fabric.sh, so the lease path in micro-cloud.sh cannot be checked against its source — if that variable was renamed, this assertion needs updating with it"
+mc_leases="$(sed -n 's/.*MC_LEASES:-\([^}]*\)}.*/\1/p' "$LAB_DIR/micro-cloud.sh" | head -1)"
+[[ -n "$mc_leases" ]] \
+    || fail "could not read the lease path out of micro-cloud.sh (expected an \${MC_LEASES:-…} default)"
+[[ "$mc_leases" == "$fabric_state/leases" ]] \
+    || fail "REGRESSION: micro-cloud.sh reads leases from '$mc_leases' but fabric.sh writes them under '$fabric_state'. 'status' would report every instance's address as UNKNOWN while the fabric was serving them perfectly well"
+note "the lease path micro-cloud.sh reads ($mc_leases) is the one fabric.sh writes"
+
+pass "micro-cloud.toml restates edge.toml exactly, every MAC still matches what both tools derive, and status reads the lease file the fabric actually writes"

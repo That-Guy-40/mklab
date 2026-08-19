@@ -207,3 +207,123 @@ Every `fail` in it already named its own defect, but a death that produces no ve
 — a signal, an OOM, a host reboot — left the reader unable to tell `create` from `start` from
 a guest that never counted. It now announces each stage, so the last line printed names the
 command. That would not have prevented this misdiagnosis, but it shortens the next one.
+
+---
+
+## L10-6 — the first privileged run: the fabric was right, the orchestrator was wrong
+
+**Run 2026-08-19**, `sudo`, reduced spec (two microVMs), on the live-Calico host.
+
+**The safety property held, measured independently of the fabric's own assertion.** Calico's
+tunnel binding (`10.216.67.1 dev lxdbr0`), its `cali*` veth count (2) and `ip_forward` (1)
+were identical before, during and after; teardown asserted the absence of our bridge, taps,
+nft table, route and dnsmasq, and the script re-checked all of it from outside. `plan` ran
+nothing. `down` returned 0. `up` returned 1 — and that is the finding.
+
+### What blocked it
+
+```text
+FAIL  tap mc-api1 is owned by uid 1000, not 0 — Firecracker would get EPERM from TUNSETIFF
+```
+
+`fabric.sh` gives each tap to the **invoking user** on purpose: that is slice 2's finding,
+and slice 5a's test drops both VMMs to uid 1000 *precisely so the ownership assertion means
+something*. But `micro-cloud.sh up` ran the whole plan as root, because the fabric needs
+root — so the two halves disagreed by construction.
+
+**The preflight was right and the orchestrator was wrong**, and the wrongness is not a
+permissions nuisance: a root `up` runs Firecracker as uid 0 against a tap built for an
+unprivileged VMM. Had the gate not refused, the lab would have kept working while quietly no
+longer demonstrating the thing it exists to demonstrate. The same collision sits one step
+further along — `lab-podman.sh` refuses to run as root at all, because `metrics` is a
+**rootless** sidecar and that is §9.3's exhibit.
+
+Fixed by making the privilege boundary follow the resource rather than the command: the
+network is root's, the instances are the user's. `micro-cloud.sh` now prefixes every
+phase-tool step with `runuser -u $SUDO_USER --`, taken from **the same `MC_OWNER`/`SUDO_USER`
+variable `fabric.sh` uses to decide who owns a tap** — two independent answers to *"who is
+this lab for"* being exactly how the halves came to disagree. The prefix is prepended **into
+the plan**, so `plan` still prints the command that actually runs.
+
+It also fixes a wrinkle the run surfaced on the way: `runuser` sets `HOME` to the target
+user's, so the drivers use *your* state directory. A root `up` had been creating instances in
+`/root/.local/state` that a later unprivileged `status` could not see.
+
+### Two smaller things, both caught by something reporting honestly
+
+- **`UNKNOWN`, not a pass, on a dirty image.** `api1.ext4` — copied out of a workdir where a
+  guest had been running — was marked dirty, `debugfs` refused to open it, and preflight
+  said *"/sbin/init NOT verified"* rather than passing it. Its twin `api2.ext4` passed. An
+  `e2fsck -fy` cleared it. The gate behaved exactly as the UNKNOWN rule requires: a check
+  that could not run did not report the thing it checks as fine.
+- **`status` printed nothing under "addresses".** The lease file existed and was empty,
+  which is what the fabric leaves when it is up and no guest has DHCPed yet — but an empty
+  section reads like a section that failed to run. It now says so, and distinguishes that
+  from an unreadable file. (The path itself had already been fixed before this run: it was
+  guessing dnsmasq's distro default rather than the `--dhcp-leasefile` the fabric passes, and
+  is now bound to `fabric.sh`'s own `STATE=` by a test.)
+
+---
+
+## L10-7 — the second privileged run: green, and three defects only a green run could show
+
+**Run 2026-08-19**, `sudo`, reduced spec. **`up` rc=0, `down` rc=0.** Two microVMs created and
+started (pids confirmed *running*, not merely forked; `kernel_check = "match"`,
+`rootfs_source_check = "match"`), and the cluster's binding, veth count and `ip_forward`
+identical before, during and after.
+
+The privilege fix from [L10-6](#l10-6--the-first-privileged-run-the-fabric-was-right-the-orchestrator-was-wrong)
+worked, and it is visible in the plan rather than hidden in the run:
+
+```text
+runuser -u sqs -- …/phase7-firecracker/lab-fc.sh start api1
+```
+
+`preflight` then reported **`tap mc-api1 is owned by uid 1000 — openable unprivileged`**,
+which is the sentence the whole design exists to produce.
+
+**And the guests really joined the fabric.** From `api1`'s own console:
+
+```text
+dhcp rc=0
+addr   : 10.71.0.101/24
+route  : default via 10.71.0.1 dev eth0
+resolv : search mc.lab nameserver 10.71.0.1
+```
+
+That is the reserved address, taken against the MAC the two tools derive independently — the
+claim §9.2 makes, observed rather than asserted.
+
+### The three defects, all of them inside a run that returned 0
+
+| # | what it did | why a green run was the only way to see it |
+|---|---|---|
+| 1 | `status` reported **`UNKNOWN (driver could not be asked)`** for both microVMs | they were RUNNING, and `inspect` said so three lines further down the same log. `status` called `inspect <name> --json`; phase 7 **has no `--json`** (phases 2 and 5 do — it was written by analogy) and does not reject it either: it prints its ordinary TOML and exits 0, so `jq` failed and the fallback fired. **A false UNKNOWN is not the safe direction** — once UNKNOWN can also mean *I looked wrongly*, it stops carrying information in either direction |
+| 2 | the preflight's tap-owner gate refuses a root VMM claiming **EPERM**, and that is false | measured with `tun-open.py`: root opened a tap owned by uid 1000 and TUNSETIFF **succeeded**. The kernel's rule is `owner == euid OR CAP_NET_ADMIN`. The gate was right to be unhappy and wrong about why — now it passes for root with a warning that a root VMM discards the property the tap was made for, and fails (truthfully) only for an unprivileged mismatch |
+| 3 | `status`'s address section was **empty** while both guests already held their leases | the readiness gap of [L10-2](#l10-2--up-orders-invocations-and-readiness-is-a-different-question), seen from a new side: `up` returns when the VMMs are *running*, and a guest still has to boot and complete a DHCP exchange after that. Not a fault; but "empty" read as "broken", so the message now says which it is and points at the guest console |
+
+### The guard for #1 took three attempts, and each was caught by its own control
+
+The check is *"every flag micro-cloud.sh hands a driver is one that driver advertises **for
+that verb**"*. Getting there:
+
+1. a `grep | sed` pipeline that **matched nothing** — it reported "no flags found" and
+   passed, which is indistinguishable from having checked everything. Its control re-injected
+   the bug and the check stayed green.
+2. rewritten in python, fed by a heredoc — but `python3 -` reads its **program** from stdin,
+   so the piped data never arrived and it again examined nothing.
+3. working, but keyed on (tool, flag) — which **passed the re-injected bug**, because
+   `--json` *is* advertised by `lab-fc.sh`… on its `list` line. A flag that exists for a
+   different verb is not a flag this verb takes, and borrowing one verb's flag for another
+   was the entire defect.
+
+Now keyed on (tool, **verb**, flag), and it catches the real bug and passes when it is fixed.
+A usage line that elides its options (`lab-fc.sh create    ... [--dry-run]`) is reported
+**UNKNOWN**, not as a refusal: `create --config` is genuinely valid, and an oracle that
+cannot answer must not be read as saying no.
+
+**The oracle here is help text, which is normally the wrong kind** — and that is stated in
+the test rather than hidden, because phase 7 *silently ignores* an unknown flag. Running the
+tool with the flag and without it produces the same successful output, so there is no
+behavioural signal to probe. When a tool cannot be made to tell you, its documentation is the
+only oracle left.

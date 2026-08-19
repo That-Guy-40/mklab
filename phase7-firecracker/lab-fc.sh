@@ -473,10 +473,24 @@ preflight_checks() {  # preflight_checks <record>
             local own; own="$(cat "/sys/class/net/$tap/owner" 2>/dev/null || true)"
             if [[ "$own" == "$EUID" ]]; then
                 pf_ok "tap $tap is owned by uid $EUID — openable unprivileged"
+            elif (( EUID == 0 )); then
+                # MEASURED 2026-08-19, not reasoned: root opened a tap owned by uid 1000 and
+                # TUNSETIFF SUCCEEDED. The kernel's rule (tun_not_capable) is `owner == euid
+                # OR CAP_NET_ADMIN`, and root has the capability — so the EPERM this gate used
+                # to predict for root is simply false, and it refused a run that would have
+                # worked. A gate whose stated reason is untrue is the worst kind: it is right
+                # often enough to be trusted and wrong in a way nobody re-checks.
+                #
+                # It is still worth SAYING something, because a root VMM throws away the
+                # property the tap was built for — fabric.sh hands taps to the invoking user
+                # precisely so the VMM needs no privilege (slice 2), and slice 5a drops both
+                # VMMs to uid 1000 so that assertion means something. So: not a refusal, and
+                # not silence either.
+                pf_ok "tap $tap is owned by uid ${own:-<unset>} and you are root — TUNSETIFF will succeed (CAP_NET_ADMIN), but the VMM will run privileged, which is not what this tap was made for"
             else
                 # Slice 3 found this the hard way: `ip tuntap add` exiting 0 says nothing
                 # about the TUNSETIFF the VMM will issue.
-                pf_fail "tap $tap is owned by uid ${own:-<unset>}, not $EUID — Firecracker would get EPERM from TUNSETIFF"
+                pf_fail "tap $tap is owned by uid ${own:-<unset>}, not $EUID, and you lack CAP_NET_ADMIN — Firecracker would get EPERM from TUNSETIFF"
             fi
             local addrs; addrs="$(ip -4 -o addr show "$tap" 2>/dev/null)"
             if [[ "$addrs" == *inet* ]]; then

@@ -16,7 +16,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install shellcheck
-        run: sudo apt-get update && sudo apt-get install -y shellcheck
+        # Same treatment as `Install jq + tomlq` below, and for the same reason: shellcheck
+        # SHIPS IN THE RUNNER IMAGE, and an unbounded `apt-get update` for a binary already
+        # on PATH wedged this job on 2026-08-19 — the second time that day, in the step the
+        # first fix did not cover. Fixing one instance of a class leaves the class.
+        run: |
+          if command -v shellcheck >/dev/null 2>&1; then
+            echo "shellcheck already present: $(shellcheck --version | head -2 | tail -1)"
+          else
+            ok=0
+            for attempt in 1 2; do
+              if timeout 180 sudo apt-get update && timeout 180 sudo apt-get install -y shellcheck; then
+                ok=1; break
+              fi
+              echo "apt attempt $attempt failed or timed out after 180s"
+              sleep 10
+            done
+            if [ "$ok" -ne 1 ]; then
+              echo "::error::could not install shellcheck after 2 bounded attempts"
+              exit 1
+            fi
+          fi
       - name: Syntax check every tracked shell script
         run: |
           rc=0
@@ -222,8 +242,11 @@ jobs:
         # The verify line below names what is missing rather than letting the skip be
         # discovered by reading a log later.
         run: |
-          sudo apt-get install -y qemu-utils parted extlinux syslinux-common rsync e2fsprogs \
-            || echo "::warning::disk-image toolchain install failed — phase 5's VM-backend test will SKIP"
+          # BOUNDED. These packages are genuinely not in the runner image, so the install is
+          # real -- but an install with no deadline does not fail, it hangs, and the cause
+          # then arrives as a timeout on the whole job with every later step unrun.
+          timeout 300 sudo apt-get install -y qemu-utils parted extlinux syslinux-common rsync e2fsprogs \
+            || echo "::warning::disk-image toolchain install failed or timed out — phase 5's VM-backend test will SKIP"
           missing=""
           for c in qemu-img parted mkfs.ext4 losetup extlinux rsync blkid; do
             command -v "$c" >/dev/null 2>&1 || missing="$missing $c"

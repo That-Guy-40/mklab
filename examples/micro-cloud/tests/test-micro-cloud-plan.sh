@@ -184,6 +184,78 @@ stray="$(ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | grep -c '^mc-' 
     || fail "REGRESSION: $stray mc-* taps exist after 'micro-cloud.sh plan' — plan is not inert"
 note "plan created no bridge and no taps: it printed, it did not run"
 
+# ── every flag micro-cloud.sh hands a driver is a flag that driver advertises ──
+#
+# WHY THIS IS A DOC ORACLE, WHICH IS NORMALLY THE WRONG KIND.
+# `status` used to call `lab-fc.sh inspect <name> --json` and pipe it to jq. Phase 7's
+# `inspect` has no `--json` — phases 2 and 5 do, and the flag was written here by analogy
+# with them. Phase 7 also does not REJECT it: it prints its ordinary TOML and exits 0. So
+# there is no behavioural signal to probe for. Running the tool with the flag and without it
+# produces the same successful output, which is exactly why the bug survived to a live run,
+# where `status` reported `UNKNOWN (driver could not be asked)` about a microVM that was
+# running and answering three lines further down the same log.
+#
+# When a tool cannot be made to tell you, its help is the only oracle left. That is a
+# weakness of the check and it is stated rather than hidden: this compares intent against
+# documentation, and it would miss a flag a driver documents but ignores. It catches the
+# case that actually happened.
+# The driver-flag extractor, written to a file rather than fed as a heredoc: `python3 -`
+# reads its PROGRAM from stdin, so a heredoc version cannot also receive piped input. The
+# first attempt did exactly that and examined nothing.
+cat > "$WORK/extract-flags.py" <<'EXTRACT'
+import re, sys
+# THE VERB IS PART OF THE QUESTION. An earlier version emitted only (tool, flag) and asked
+# whether the flag appeared anywhere in that tool's help -- which passed the re-injected
+# `inspect --json`, because `--json` IS advertised by lab-fc.sh: on its `list` line. A flag
+# that exists for a different verb is not a flag this verb takes, and the whole defect was
+# borrowing one verb's flag for another.
+pat = re.compile(r'(phase[0-9a-z-]+/lab-[a-z]+\.sh)"?\s+"?([a-z][a-z-]*)"?((?:\s+[^\n]*)?)')
+seen = set()
+for line in sys.stdin:
+    if line.lstrip().startswith("#"):
+        continue                      # a comment naming a flag is documentation, not a call
+    for m in pat.finditer(line):
+        tool, verb, rest = m.group(1), m.group(2), m.group(3)
+        for flag in re.findall(r'(?<![\w-])(--[a-z][a-z-]*)', rest):
+            if (tool, verb, flag) not in seen:
+                seen.add((tool, verb, flag))
+                print(f"{tool}\t{verb}\t{flag}")
+EXTRACT
+
+flagged=0
+unverbed=0
+while IFS=$'\t' read -r tool verb flag; do
+    [[ -n "$tool" && -n "$verb" && -n "$flag" ]] || continue
+    abs="$REPO_DIR/$tool"
+    [[ -x "$abs" ]] || continue
+    # The usage line for THIS verb. Every driver here prints one line per verb, opening
+    # `<prog> <verb>`; if that shape ever changes the row becomes UNKNOWN rather than a
+    # pass, because a check that cannot find its subject has not checked it.
+    usage_line="$("$abs" --help 2>&1 | grep -E "^[[:space:]]*[a-z0-9-]+\.sh[[:space:]]+$verb([[:space:]]|\$)" | head -1)"
+    if [[ -z "$usage_line" ]]; then
+        unverbed=$((unverbed+1))
+        note "  UNKNOWN: $(basename "$tool") --help has no usage line for '$verb', so '$flag' was NOT checked"
+        continue
+    fi
+    # A usage line that elides its options ("lab-fc.sh create    ... [--dry-run]") cannot
+    # answer the question. `create --config` is genuinely valid — this lab creates two
+    # microVMs with it — but the line says `...`, so the honest verdict is that the oracle
+    # does not know, and an oracle that does not know must not be read as a refusal.
+    if grep -qF -- '...' <<<"$usage_line"; then
+        unverbed=$((unverbed+1))
+        note "  UNKNOWN: $(basename "$tool") $verb's usage line elides its options ('...'), so '$flag' was NOT checked"
+        continue
+    fi
+    flagged=$((flagged+1))
+    grep -qF -- "$flag" <<<"$usage_line" \
+        || fail "micro-cloud.sh passes '$flag' to \`$(basename "$tool") $verb\`, and that verb does not advertise it:
+    $usage_line
+  Phase 7 silently IGNORES an unknown flag rather than refusing, so this does not fail loudly — it fails as a WRONG ANSWER. That is exactly how 'inspect --json' came to report a running microVM as UNKNOWN, and why the flag must be checked against the VERB rather than against the tool (--json is real here, on 'list')"
+done < <(printf '%s\n' "$PLAN" | cat - "$MC" | python3 "$WORK/extract-flags.py")
+(( flagged > 0 )) \
+    || fail "the driver-flag scan found NOTHING to check. The rendered plan alone carries --config/--force/--lab, so a scan that sees none is broken — and a broken scan and a clean one print the same green line, which is how this check first shipped useless"
+note "$flagged driver flag(s) in micro-cloud.sh are advertised by the driver they are handed to"
+
 # The repo's kill rule, on the two scripts this slice adds to the lab.
 for f in "$MC" "$LAB_DIR/fabric.sh"; do
     if grep -nE '\b(pkill|killall)\b' "$f" >/dev/null 2>&1; then

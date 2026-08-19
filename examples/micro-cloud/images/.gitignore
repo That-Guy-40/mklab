@@ -1,0 +1,8 @@
+# Build output: the kernel and per-instance rootfs images the spec points at.
+# RUNBOOK-micro-cloud.md step 0 rebuilds them; they are large and host-specific, so they
+# are not tracked. Plan section 9.1 lists this directory as gitignored build output.
+#
+# This file itself IS tracked (the `!` line), so a fresh clone gets the directory and the
+# reason it is empty, rather than a path the spec references and nothing explains.
+*
+!.gitignore
