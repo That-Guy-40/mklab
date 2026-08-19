@@ -133,6 +133,20 @@ Two-pane layout: resource tree on the left, detail panel on the right.
   the resource's log via Server-Sent Events directly into the panel.
 - **Destroy** — red button with a browser confirmation dialog; POSTs to the
   action route and swaps in the result.
+- **Create wizards** — "✦ New resource" in the nav: pick a phase, fill a form, watch the
+  TOML appear as you type, save it. **They generate; they never execute** — the worst a
+  wizard can do is write one `.toml` inside the repo, and it then shows you the commands to
+  run, which you type yourself.
+  - **They are the TUI's wizards, not copies of them.** The form is rendered from each
+    Textual wizard's own `compose_form()` (the widgets it yields are inspected for id,
+    caption, options and default) and the spec comes from its own `generate_toml()`. Add a
+    field in `phase6-tui` and it appears here with no edit. A second description of a
+    resource — one in Textual, one in Jinja — would drift, and the day it did one of them
+    would generate specs the tool rejects while its own tests stayed green; that is asserted
+    against by comparing **byte-identical output through both paths**.
+  - `save` refuses a path outside the repo (resolved, then compared with `relative_to` — a
+    `startswith` is defeated by `..` and by a sibling like `/repo-evil`) and refuses a name
+    that is not a `.toml`.
 - **JSON API** — `GET /api/v1/resources` returns all resources as JSON.
   `GET /docs` is the auto-generated OpenAPI UI (FastAPI).
 
@@ -142,6 +156,10 @@ Two-pane layout: resource tree on the left, detail panel on the right.
 lab_web/
   app.py              FastAPI instance, lifespan (loads backends once)
   routes/
+    wizards.py        adapter over the TUI wizards: fields from compose_form(),
+                      spec from generate_toml() — no wizard is described here
+    routes/wizards.py GET /wizards, /wizards/{phase}; POST preview (writes nothing)
+                      and save (writes ONE .toml, executes nothing)
     resources.py      GET / (full page), /partials/resources (HTMX poll),
                       /resources/{b}/{n} (detail), /api/v1/resources (JSON)
     actions.py        POST /actions/destroy/{b}/{n}

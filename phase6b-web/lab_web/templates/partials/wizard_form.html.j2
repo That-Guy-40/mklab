@@ -1,0 +1,36 @@
+{# The form, rendered from the TUI wizard's OWN compose_form(). Add a field there and it
+   appears here; there is no second list of fields anywhere in this app. #}
+<div class="wizard" id="wizard-{{ phase }}">
+  <h2>{{ title }}</h2>
+  <form id="wizard-form"
+        hx-post="/wizards/{{ phase }}/preview"
+        hx-trigger="input changed delay:200ms from:#wizard-form, change from:#wizard-form, load"
+        hx-target="#wizard-preview" hx-swap="innerHTML">
+    {% for f in fields %}
+      {% if f.kind == "text" %}
+        <label class="field-label" for="{{ f.id }}">{{ f.label }}</label>
+        <input type="text" id="{{ f.id }}" name="{{ f.id }}" placeholder="{{ f.placeholder }}">
+      {% elif f.kind == "select" %}
+        <label class="field-label" for="{{ f.id }}">{{ f.label }}</label>
+        <select id="{{ f.id }}" name="{{ f.id }}">
+          {% for prompt, value in f.options %}
+            <option value="{{ value }}"{% if value == f.default %} selected{% endif %}>{{ prompt }}</option>
+          {% endfor %}
+        </select>
+      {% elif f.kind == "checkbox" %}
+        <label class="field-check">
+          <input type="checkbox" id="{{ f.id }}" name="{{ f.id }}"{% if f.checked %} checked{% endif %}>
+          {{ f.label }}
+        </label>
+      {% endif %}
+    {% endfor %}
+
+    <label class="field-label" for="save_path">Save to (must be inside the repo, and end in .toml)</label>
+    <input type="text" id="save_path" name="save_path" value="{{ save_path }}">
+
+    <button type="submit"
+            hx-post="/wizards/{{ phase }}/save"
+            hx-target="#wizard-preview" hx-swap="innerHTML">Save to file</button>
+  </form>
+  <div id="wizard-preview" class="wizard-preview"></div>
+</div>

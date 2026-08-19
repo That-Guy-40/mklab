@@ -232,8 +232,9 @@ async def add_security_headers(request: Request, call_next) -> Response:
     return resp
 
 
-from lab_web.routes import resources, actions, stream  # noqa: E402
+from lab_web.routes import resources, actions, stream, wizards  # noqa: E402
 
 app.include_router(resources.router)
 app.include_router(actions.router)
 app.include_router(stream.router)
+app.include_router(wizards.router)
