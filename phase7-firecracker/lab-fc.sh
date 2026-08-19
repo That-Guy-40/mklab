@@ -15,6 +15,13 @@
 #   lab-fc.sh snapshot  {create|list|restore|delete} <name> [snap]
 #                                            # memory + devices + the disk, from one pause.
 #                                            # create needs it RUNNING; restore needs it STOPPED.
+#   lab-fc.sh clone     <src> <snap> <new>   # a NEW machine from an existing snapshot: its
+#                                            # own copy of the disk, the snapshot's memory
+#                                            # image SHARED (mapped MAP_PRIVATE, so N clones
+#                                            # read one file). `restore` puts a snapshot back
+#                                            # into its own instance; `clone` makes another
+#                                            # machine out of it. It comes up believing it is
+#                                            # <src> and says so — see RUNBOOK-fleet.md.
 #   lab-fc.sh list      [--json]
 #   lab-fc.sh inspect   <name>
 #   lab-fc.sh mac       <name>               # the guest MAC this tool would set — read-only,
@@ -730,7 +737,16 @@ _running_pid() {  # _running_pid <name> -> prints the pid iff OUR firecracker is
 cmd_start() {
     local name="$1" force="${2:-0}" d p i
     d="$(fc_dir "$name")"
-    [[ -r "$(fc_config "$name")" ]] || die "no config for '$name' — run create first"
+    if [[ ! -r "$(fc_config "$name")" ]]; then
+        # A CLONE has no config.json and never will: the machine configuration is inside the
+        # memory image it was loaded from. Sending its operator to `create` would be a
+        # confidently wrong instruction, which is the failure mode this tool's ledger keeps
+        # naming — so the message is derived from what the instance actually IS.
+        local cf; cf="$(sed -n 's/^cloned_from = "\(.*\)"$/\1/p' "$(fc_manifest "$name")" 2>/dev/null || true)"
+        [[ -n "$cf" ]] \
+            && die "'$name' is a CLONE of $cf and has no config.json — a snapshot carries the machine configuration, so there is nothing here to boot.  Once stopped, a clone is gone: make another with \`$0 clone ${cf%/*} ${cf#*/} <new-name>\`"
+        die "no config for '$name' — run create first"
+    fi
     if p="$(_running_pid "$name")"; then
         die "'$name' is already running (pid $p)"
     fi
@@ -854,6 +870,37 @@ cmd_stop() {
 # real check gets switched off.
 _snap_dir() { printf '%s/%s' "$(fc_snapdir "$1")" "$2"; }
 
+# THE SNAPSHOT'S OWN DIGESTS, IN THREE OUTCOMES, IN ONE PLACE. A snapshot whose bytes have
+# moved since it was taken is not restorable and it is not "probably fine"; a snapshot taken
+# before this manifest existed is UNKNOWN, which is neither a match nor a mismatch and must
+# not be rendered as either.
+#
+# It is a FUNCTION because `clone` needs the identical gate, and this repo's own ledger says
+# what a second implementation of a safety check turns into: `preflight` is "the same
+# function `create` calls first, not a second implementation that predicts what `create`
+# will do" (§5.9), and the four-instruments audit (§18.7) found the one disagreement was a
+# copy that had gone stale. A gate that two verbs implement separately is a gate one of them
+# will stop having.
+_verify_snapshot_digests() {  # _verify_snapshot_digests <snapshot-dir> <what-is-being-refused>
+    local sdir="$1" what="$2"
+    local m="$sdir/snapshot.toml" f want got
+    if [[ ! -r "$m" ]]; then
+        note "UNKNOWN: this snapshot has no snapshot.toml — its bytes were NOT verified"
+        return 0
+    fi
+    for f in vmstate mem rootfs.ext4; do
+        want="$(sed -n "s/^${f%%.*}_sha256 = \"\(.*\)\"$/\1/p" "$m")"
+        [[ -n "$want" ]] || { note "UNKNOWN: no digest recorded for $f — it was NOT verified"; continue; }
+        [[ -r "$sdir/$f" ]] || die "the snapshot is incomplete: $f is gone from $sdir"
+        got="$(sha256sum "$sdir/$f" | cut -d' ' -f1)"
+        [[ "$got" == "$want" ]] || die "REFUSING to $what: $f is not the file that was captured.
+       recorded: $want
+       on disk:  $got
+       Restoring a memory image onto bytes it does not describe corrupts the guest silently."
+    done
+    note "snapshot digests match the ones recorded when it was taken"
+}
+
 _resume_or_warn() {  # best-effort resume; NEVER leave a paused VM behind on an error path
     local sock="$1" name="$2"
     if _api "$sock" PATCH /vm '{"state":"Resumed"}' >/dev/null 2>&1; then return 0; fi
@@ -970,26 +1017,7 @@ cmd_snapshot() {  # cmd_snapshot <action> <name> [snap] [force]
         fi
         require_cmd curl
 
-        # THE SNAPSHOT'S OWN DIGESTS, IN THREE OUTCOMES. A snapshot whose bytes have moved
-        # since it was taken is not restorable and it is not "probably fine"; a snapshot
-        # taken before this manifest existed is UNKNOWN, which is neither a match nor a
-        # mismatch and must not be rendered as either.
-        local m="$sdir/snapshot.toml" f want got
-        if [[ ! -r "$m" ]]; then
-            note "UNKNOWN: this snapshot has no snapshot.toml — its bytes were NOT verified"
-        else
-            for f in vmstate mem rootfs.ext4; do
-                want="$(sed -n "s/^${f%%.*}_sha256 = \"\(.*\)\"$/\1/p" "$m")"
-                [[ -n "$want" ]] || { note "UNKNOWN: no digest recorded for $f — it was NOT verified"; continue; }
-                [[ -r "$sdir/$f" ]] || die "the snapshot is incomplete: $f is gone from $sdir"
-                got="$(sha256sum "$sdir/$f" | cut -d' ' -f1)"
-                [[ "$got" == "$want" ]] || die "REFUSING to restore '$name/$snap': $f is not the file that was captured.
-       recorded: $want
-       on disk:  $got
-       Restoring a memory image onto bytes it does not describe corrupts the guest silently."
-            done
-            note "snapshot digests match the ones recorded when it was taken"
-        fi
+        _verify_snapshot_digests "$sdir" "restore '$name/$snap'"
 
         # The disk goes back FIRST and the VMM is started second, so the guest never sees a
         # disk change under it.
@@ -1036,6 +1064,143 @@ cmd_snapshot() {  # cmd_snapshot <action> <name> [snap] [force]
     esac
 }
 
+# ── clone: N machines from ONE memory image ─────────────────────────────────
+#
+# `snapshot restore` puts a snapshot back into the instance it came from. `clone` makes a
+# DIFFERENT machine from it — which is the whole of §5.8's fleet, and the two differ in
+# exactly two places:
+#
+#   * the disk is COPIED per clone, never shared. A snapshot's rootfs is one instant of one
+#     filesystem; two guests writing to one copy of it is corruption on the first write.
+#   * the MEMORY IMAGE IS SHARED, and that is the point rather than an optimisation.
+#     Firecracker maps a `File` mem backend MAP_PRIVATE, so N clones read one file and each
+#     one's writes are private to it. MEASURED, not assumed: after five clones had been
+#     running and writing for several seconds, the mem file's sha256 was unchanged
+#     (tests/../examples/micro-cloud/tests/test-fleet-clones.sh asserts exactly that). One
+#     256 MiB image serves the whole fleet; copying it per clone would cost 5x the RAM for
+#     no benefit, and it is why five clones come up in a fraction of one boot.
+#
+# WHY THE RESTORED CONFIG HAS TO BE PATCHED, AND WHY THE PATCH IS A HARD GATE.
+# The machine configuration lives INSIDE the snapshot, and it names the SOURCE instance's
+# rootfs by absolute path. Load it and resume with no further ado and every clone opens the
+# source's disk — five guests, one file, silent mutual corruption, exit code 0 throughout.
+# So the sequence is load(resume_vm:false) -> PATCH /drives/rootfs -> resume, and a PATCH
+# that does not return 2xx tears the clone down instead of resuming it. Resuming anyway
+# would be the LIED rung: a fleet that looks up and is eating itself.
+#
+# WHAT THIS VERB DELIBERATELY DOES NOT DO: --tap.
+# `PATCH /network-interfaces` moves the HOST tap. It cannot touch the guest's MAC or its
+# `ip=`, because both of those are in the memory image being copied — so N clones would all
+# claim one MAC and one address on one L2. That is not a networking bug to be worked around
+# later, it is §5.8's lesson in its purest form (identity is a property of a running thing),
+# and a knob that produced it silently would be this tool telling its own tripwire a lie.
+# The clone comes up with the source's identity and `clone` says so, by name, every time.
+cmd_clone() {  # cmd_clone <src> <snap> <new>
+    local src="$1" snap="$2" new="$3"
+    [[ -d "$(fc_dir "$src")" ]] || die "no such instance: $src"
+    valid_name "$snap" || die "invalid snapshot name '$snap' — must match ${FC_NAME_RE} (it is used as a directory name)"
+    local sdir; sdir="$(_snap_dir "$src" "$snap")"
+    [[ -d "$sdir" ]] || die "no snapshot '$snap' for '$src' (try: $0 snapshot list $src)"
+    [[ "$new" != "$src" ]] \
+        || die "a clone needs a NEW name — '$new' is the instance the snapshot was taken from.  To put it back into itself: $0 snapshot restore $src $snap"
+    local nd; nd="$(fc_dir "$new")"
+    [[ -e "$nd" ]] && die "instance '$new' already exists at $nd — clone does not overwrite (destroy it first)"
+    require_cmd curl sha256sum
+
+    # REFUSE BEFORE THE IRREVERSIBLE STEP. Nothing below this line is undone for free: the
+    # rootfs copy is the size of the guest's disk. The gate is the SAME function `restore`
+    # calls, not a second one.
+    _verify_snapshot_digests "$sdir" "clone '$src/$snap' into '$new'"
+
+    mkdir -p "$nd" || die "could not create $nd"
+    local rootfs; rootfs="$(fc_rootfs "$new")"
+    cp -- "$sdir/rootfs.ext4" "$rootfs" \
+        || { rm -rf -- "$nd"; die "could not copy the snapshot's rootfs to $rootfs — nothing was started"; }
+
+    local sock; sock="$(_api_sock_for "$new")"
+    rm -f -- "$sock"
+    printf '%s' "$sock" > "$(fc_sockfile "$new")"
+
+    # NO --config-file, for the same reason `snapshot restore` passes none: the snapshot
+    # carries the machine configuration, and Firecracker refuses a load when both are given.
+    setsid firecracker --api-sock "$sock" >> "$(fc_log "$new")" 2>&1 < /dev/null &
+    local p=$!
+    printf '%s\n' "$p" > "$(fc_pidfile "$new")"
+
+    # Every failure from here on tears the clone down. A half-made clone is worse than none:
+    # it has a directory, a manifest and a pidfile, so `list` would report it.
+    _clone_abort() {  # _clone_abort <msg>
+        kill "$p" 2>/dev/null || true
+        rm -f -- "$sock"
+        rm -rf -- "$nd"
+        die "$1"
+    }
+
+    local _i
+    for _i in $(seq 1 60); do [[ -S "$sock" ]] && break; [[ -d "/proc/$p" ]] || break; sleep 0.05; done
+    [[ -S "$sock" ]] || _clone_abort "firecracker did not create its API socket at $sock (see $(fc_log "$new"))"
+
+    local out
+    out="$(_api "$sock" PUT /snapshot/load \
+          "{\"snapshot_path\":\"$sdir/vmstate\",\"mem_backend\":{\"backend_type\":\"File\",\"backend_path\":\"$sdir/mem\"},\"enable_diff_snapshots\":false,\"resume_vm\":false}" 2>&1)" \
+        || _clone_abort "snapshot/load failed for clone '$new' from '$src/$snap': $out"
+
+    # THE PATCH IS A GATE, NOT A COURTESY -- see the header. Loaded-but-not-patched means
+    # this clone is pointed at the SOURCE's disk.
+    out="$(_api "$sock" PATCH /drives/rootfs \
+          "{\"drive_id\":\"rootfs\",\"path_on_host\":$(json_str "$rootfs")}" 2>&1)" \
+        || _clone_abort "could not re-point clone '$new' at its own disk (PATCH /drives/rootfs): $out
+       It was NOT resumed. Resuming it would have run it on '$src''s rootfs."
+
+    out="$(_api "$sock" PATCH /vm '{"state":"Resumed"}' 2>&1)" \
+        || _clone_abort "clone '$new' loaded and was re-pointed at its own disk, but would not resume: $out"
+
+    # ASSERT THE OUTCOME, TWICE, for the reason `snapshot restore` does: a live process says
+    # a VMM exists; the API saying Running says a GUEST was resumed into it. Each can be true
+    # while the other is not.
+    _running_pid "$new" >/dev/null || _clone_abort "the cloned VMM is not running (see $(fc_log "$new"))"
+    local state
+    state="$(_api "$sock" GET / 2>/dev/null | grep -o '"state": *"[^"]*"' | head -1 | cut -d'"' -f4 || true)"
+    [[ "$state" == "Running" ]] \
+        || _clone_abort "clone '$new' has a VMM but no resumed guest — / reports state=${state:-UNKNOWN} (see $(fc_log "$new"))"
+
+    # The manifest binds this clone to the memory image it is READING RIGHT NOW, by digest.
+    # That file lives in another instance's state dir and this clone does not own it, which
+    # is exactly the shape of record this repo keeps finding outliving its subject -- so
+    # `inspect` re-derives it in three outcomes and `destroy` refuses to pull it out from
+    # under a live clone by name.
+    {
+        printf '# instance "%s" — a CLONE, written by lab-fc.sh\n' "$new"
+        printf '#\n# It has no config.json: a snapshot carries the machine configuration, so there is\n'
+        printf '# nothing for this tool to generate. It also has no kernel of its own — the kernel is\n'
+        printf '# already running inside the memory image below.\n\n'
+        printf 'name = "%s"\n' "$new"
+        printf 'lab = "%s"\n' "$(sed -n 's/^lab = "\(.*\)"$/\1/p' "$(fc_manifest "$src")" 2>/dev/null || printf 'micro-cloud')"
+        printf 'cloned_from = "%s/%s"\n' "$src" "$snap"
+        printf 'clone_mem = "%s"\n' "$sdir/mem"
+        printf 'clone_mem_sha256 = "%s"\n' "$(sha256sum "$sdir/mem" | cut -d' ' -f1)"
+        printf 'rootfs = "%s"\n' "$rootfs"
+        printf 'rootfs_source = "%s"\n' "$sdir/rootfs.ext4"
+        printf 'rootfs_source_sha256 = "%s"\n' "$(sha256sum "$sdir/rootfs.ext4" | cut -d' ' -f1)"
+        printf 'created = "%s"\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    } > "$(fc_manifest "$new")"
+
+    printf 'PASS: cloned %s/%s -> %s (pid %s) — API reports state=Running\n' "$src" "$snap" "$new" "$p"
+    printf '      its own disk: %s\n' "$rootfs"
+    printf '      SHARED memory image (read-only to it, mapped MAP_PRIVATE): %s\n' "$sdir/mem"
+    printf '\n'
+    printf 'NOT RE-PERSONALISED — this clone resumed as a copy of a RUNNING machine, so it\n'
+    printf 'currently believes it is %s. Identical to every other clone of this snapshot:\n' "$src"
+    printf '  - /proc/sys/kernel/random/boot_id  (the kernel session id systemd and journald key off)\n'
+    printf '  - anything already derived from /dev/urandom and held in memory: session keys,\n'
+    printf '    ssh host keys read at boot, a seeded PRNG in a long-running process\n'
+    printf '  - the clock, the hostname, and (had it a NIC) the guest MAC and its ip= address\n'
+    printf 'The CRNG is reseeded on resume by the guest kernel IF it has VMGenID — but that\n'
+    printf 'reseed is an ASYNC notify, so it narrows the window rather than closing it, and it\n'
+    printf 'does not touch anything already derived from the pool. Measured both ways in\n'
+    printf 'RUNBOOK-fleet.md. Re-personalisation is a GUEST-side step; this tool does not fake it.\n'
+}
+
 cmd_destroy() {
     local name="$1" force="${2:-0}" d p; d="$(fc_dir "$name")"
     [[ -d "$d" ]] || die "no such instance: $name"
@@ -1052,6 +1217,35 @@ cmd_destroy() {
     # never by a pattern over /tmp.
     local sock; sock="$(api_sock_of "$name" 2>/dev/null || true)"
     [[ -n "$sock" && "$sock" != "$d"/* ]] && rm -f -- "$sock"
+
+    # A CLONE READS ITS MEMORY IMAGE OUT OF THIS DIRECTORY, AND DOES NOT OWN IT.
+    # `clone` shares the snapshot's mem file rather than copying it (see cmd_clone), so
+    # destroying the source takes the backing file out from under every clone made from it.
+    # A running clone survives -- the mapping outlives the unlink -- but nothing can be
+    # cloned from that snapshot again and no clone's provenance can ever be re-derived, so
+    # this is the "record outlives its subject" shape with the subject deleted on purpose.
+    # It is refused BY NAME, and --force is how you say you meant it. Derived by reading the
+    # sibling manifests, never cached: a list of dependants written at clone time is a
+    # record that goes stale the moment one is destroyed.
+    local -a users=() other om
+    for other in "$LAB_FC_STATE_DIR"/*/; do
+        om="$other/manifest.toml"
+        [[ -r "$om" ]] || continue
+        [[ "$(basename "$other")" != "$name" ]] || continue
+        grep -qF "clone_mem = \"$d/" "$om" 2>/dev/null && users+=("$(basename "$other")")
+    done
+    if (( ${#users[@]} )); then
+        if (( ! force )); then
+            printf 'lab-fc.sh: %d clone(s) read their memory image out of %s:\n' "${#users[@]}" "$d" >&2
+            local u
+            for u in "${users[@]}"; do
+                printf '  - %s (%s)\n' "$u" "$( _running_pid "$u" >/dev/null && printf 'RUNNING' || printf 'stopped' )" >&2
+            done
+            die "refusing to destroy '$name' — destroy those first, or pass --force to remove the memory image they were made from"
+        fi
+        note "--force: removing a memory image ${#users[@]} clone(s) were made from (${users[*]})"
+    fi
+
     rm -rf -- "$d"
     # The tap is NOT deleted here -- the fabric owns it (see the header).
     printf 'PASS: destroyed %s (its tap, if any, belongs to the fabric and was left alone)\n' "$name"
@@ -1085,7 +1279,14 @@ cmd_inspect() {
     local name="$1" d; d="$(fc_dir "$name")"
     [[ -d "$d" ]] || die "no such instance: $name"
     cat "$(fc_manifest "$name")"
-    printf 'config = "%s"\n' "$(fc_config "$name")"
+    # Name the file only if it is there. A clone has no config.json and never will, and a
+    # path printed as a fact is read as one -- `config = "…/w1/config.json"` sent a reader
+    # looking for a file that was never going to exist.
+    if [[ -r "$(fc_config "$name")" ]]; then
+        printf 'config = "%s"\n' "$(fc_config "$name")"
+    else
+        printf 'config = "none — a snapshot carries the machine configuration"\n'
+    fi
     local p; p="$(_running_pid "$name")" && printf 'state = "running"\npid = %s\n' "$p" \
         || printf 'state = "stopped"\n'
     # THREE outcomes for each recorded digest, never two. "I could not look" is not "it
@@ -1102,8 +1303,21 @@ cmd_inspect() {
         fi
     }
     local man; man="$(fc_manifest "$name")"
-    _digest_row kernel "$(sed -n 's/^kernel = "\(.*\)"$/\1/p' "$man")" \
-                       "$(sed -n 's/^kernel_sha256 = "\(.*\)"$/\1/p' "$man")"
+    # A CLONE has no kernel row to check — the kernel is inside the memory image — and it
+    # has one dependency an ordinary instance does not: a mem file in ANOTHER instance's
+    # state dir, which it is reading right now and does not own. Printing
+    # `kernel_check = "UNKNOWN: no digest recorded at create"` at a clone would be an
+    # UNKNOWN about a question that does not apply, and the one thing genuinely worth
+    # re-deriving would not be reported at all.
+    local cf; cf="$(sed -n 's/^cloned_from = "\(.*\)"$/\1/p' "$man")"
+    if [[ -n "$cf" ]]; then
+        printf 'kernel_check = "n/a — cloned instance; the kernel is inside the memory image"\n'
+        _digest_row clone_mem "$(sed -n 's/^clone_mem = "\(.*\)"$/\1/p' "$man")" \
+                              "$(sed -n 's/^clone_mem_sha256 = "\(.*\)"$/\1/p' "$man")"
+    else
+        _digest_row kernel "$(sed -n 's/^kernel = "\(.*\)"$/\1/p' "$man")" \
+                           "$(sed -n 's/^kernel_sha256 = "\(.*\)"$/\1/p' "$man")"
+    fi
     _digest_row rootfs_source "$(sed -n 's/^rootfs_source = "\(.*\)"$/\1/p' "$man")" \
                               "$(sed -n 's/^rootfs_source_sha256 = "\(.*\)"$/\1/p' "$man")"
 }
@@ -1188,6 +1402,13 @@ main() {
             [[ -n "${positional[1]:-}" ]] || die "usage: $0 snapshot {create|list|restore|delete} <name> [snap]"
             valid_name "${positional[1]}" || die "invalid instance name '${positional[1]}' — must match ${FC_NAME_RE}"
             name="${positional[1]}" ;;
+        clone)
+            # `clone <src> <snap> <new>` — TWO instance names, and both are path components.
+            # Validating only the first is how the escape gets back in through the argument
+            # nobody was looking at (P7-3 was exactly one un-gated positional).
+            (( ${#positional[@]} == 3 )) || die "usage: $0 clone <src-instance> <snapshot> <new-name>"
+            valid_name "${positional[0]}" || die "invalid instance name '${positional[0]}' — must match ${FC_NAME_RE}"
+            valid_name "${positional[2]}" || die "invalid instance name '${positional[2]}' — must match ${FC_NAME_RE}" ;;
     esac
     case "$verb" in
         start)   cmd_start   "$name" "$force"; return ;;
@@ -1195,6 +1416,7 @@ main() {
         destroy) cmd_destroy "$name" "$force"; return ;;
         inspect) cmd_inspect "$name"; return ;;
         snapshot) cmd_snapshot "${positional[0]}" "$name" "${positional[2]:-}" "$force"; return ;;
+        clone)    cmd_clone "${positional[0]}" "${positional[1]}" "${positional[2]}"; return ;;
         mac)     # read-only, no tap, no root: the MAC this tool WOULD set for a name.
                  # Exists so the fabric/VMM agreement can be asserted in CI instead of only
                  # on a host that can create taps — an invariant only checkable under root

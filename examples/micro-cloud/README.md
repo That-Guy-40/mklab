@@ -1,15 +1,18 @@
 # Micro-Cloud Lab — ☁️ under construction
 
-> **Status (2026-08-18):** slices **0–4, 5a (both halves), 5b, 5c, 6 and 7 are done.**
+> **Status (2026-08-19):** slices **0–4, 5a (both halves), 5b, 5c, 6, 7 and 8's fleet half are done.**
 > Slice 6 is the control plane — [`reconcile.py`](../../phase6-tui/lab_tui/reconcile.py) (declared vs
 > derived, issuing nothing) and [`apply.py`](../../phase6-tui/lab_tui/apply.py) (the half that issues, acting
 > on 2 of the 6 diff kinds and holding the rest), with a 6-layer graded chaos matrix that
 > found a **LIED** on its first run. Slice 7 is **preserve** —
 > [`preserve.sh`](preserve.sh) + [`RUNBOOK-preserve.md`](RUNBOOK-preserve.md): two tiers, a
 > `derivation.toml`, and a restore that refuses a changed artifact **by name, with both
-> digests, before importing anything**. **Slices 8–10 remain** (the fleet · two paths
-> finished · the demo). What follows is the 5b write-up, kept because the finding is the
-> point:
+> digests, before importing anything**. Slice 8's fleet half is **`lab-fc.sh clone`** +
+> [`RUNBOOK-fleet.md`](RUNBOOK-fleet.md): five warm clones from **one** memory image
+> (shared `MAP_PRIVATE`, proved by its digest being unchanged after five guests ran on it),
+> each with its own disk — and the clone hazard measured rather than asserted. **Slice 8's
+> jailer tier and slices 9–10 remain.** What follows is the 5b write-up, kept because the
+> finding is the point:
 >
 > **slice 5b** — a second engine (QEMU `-M microvm`) booting the same kernel and the same rootfs,
 > so the only variable is the VMM. It produced the number nobody had **and corrected
@@ -59,6 +62,7 @@ beside QEMU VMs, containers, and LXD system containers.
 | **`tests/test-vsock-chaos.sh`** | 5c (break pass) | ✅ **GREEN** — **micro-cloud's first chaos matrix**, **six rows** (five on 2026-08-07; the stalled-client row 2026-08-08), **unprivileged**, graded on `CLAUDE.md`'s ladder and written as a *regression guard*: each row records the rung it was measured at and the test fails when a rung **moves**, in either direction. Severing the guest's **entire network** is **ABSORBED** (vsock really is not the fabric — and the guest's own `MC-LINK carrier=0` proves the fault landed, after a no-op injector was found passing the row); a reserved CID is **ABSORBED** at device creation; killing the VMM **HALTS** both engines in 0 s with a named errno. The **critical is not ours**: `rm`-ing Firecracker's host socket leaves a running, healthy guest permanently unreachable — its API answers *"not supported after starting the microVM"* — and **QEMU cannot suffer the fault at all**, because its host end is not a file. [N.8](../../MICRO_CLOUD_LAB_PLAN.md#n8-the-break-pass-micro-clouds-first-chaos-matrix-and-a-critical-that-is-not-ours) |
 | **`preserve.sh`** + `tests/test-preserve-gate.sh` + `test-preserve-round-trip.sh` + `test-preserve-capability-table.sh` | 7 | ✅ **GREEN 2026-08-18** — [§9.5](../../MICRO_CLOUD_LAB_PLAN.md#95-preserve--two-tiers-and-a-derivation)'s two tiers and the `derivation.toml` that makes a backup able to say what built it. Walkthrough: [`RUNBOOK-preserve.md`](RUNBOOK-preserve.md). The break-it row is the point — a **one-byte** change to an artifact is refused **by name, with both digests, before anything is imported** — and it is asserted alongside its two neighbours, because an artifact nobody could read must come back **UNKNOWN**, not CHANGED and not a pass. **The gate and the capability table need no engine and no root** (phase 1's `export-tarball` takes a plain path), so the assertion this lab most needs runs in CI; the live round trip drives real rootless podman and SKIPs without it. Two findings: §9.5's fast tier does **not** preserve running state for phase 2 (`qemu-img` internal snapshots are refused against a live disk), and tier 2 loses the **image configuration** as well as running state — `podman export` writes no OCI config, so a restored image has no `CMD` and the drivers' own advertised `run --tarball` round trip dies at the last inch |
 | **`lab-fc.sh snapshot`** + `phase7-firecracker/tests/test-snapshot-{refusals,round-trip}.sh` | 7 → unblocks 8 | ✅ **GREEN 2026-08-18** — Firecracker snapshot+memory, the dependency [slice 8](../../MICRO_CLOUD_LAB_PLAN.md#14-build-order--vertical-slices) bottoms out on. **The blocker was `--no-api`**, not a missing verb: pause / `snapshot/create` / `snapshot/load` are API-only, so `start` now passes `--api-sock` beside the config file. A snapshot carries **memory, devices AND the disk from one pause**, because restoring memory over a rootfs that has moved on is filesystem corruption with a clean exit code — and `restore` refuses a changed snapshot by name with both digests. Proved to be a RESTORE and not a reboot by a guest that prints a monotonic counter: snapshot at tick 4, live VM ran to 8, restored resumed at **5**, no kernel banner (the console is append-only across restores, so it is read from a recorded byte offset). `preserve.sh --tier fast` reaches it through the same `snapshot create\|list\|restore\|delete` shape phase 2 uses |
+| **`lab-fc.sh clone`** + `tests/test-fleet-clones.sh` + `test-clone-entropy.sh` + `phase7-firecracker/tests/test-clone-refusals.sh` | 8 | ✅ **GREEN 2026-08-19** — §5.8's fleet: **five warm clones from ONE memory image**, in 2.1 s against ~0.5 s to boot one. Walkthrough: [`RUNBOOK-fleet.md`](RUNBOOK-fleet.md). The memory image is genuinely **shared** — Firecracker maps a `File` backend `MAP_PRIVATE`, and the test proves it by sha256ing that file before and after five guests have run and written on it — while each clone gets **its own disk**, because a snapshot's rootfs is one instant of one filesystem and two guests on one copy corrupt it on the first write. So `clone` is `load(resume_vm:false)` → `PATCH /drives/rootfs` → resume, and the PATCH is a **hard gate**: a clone that loaded but was not re-pointed would run on the source's disk with exit code 0 throughout. **The clone hazard turned out to need a 2×2 to see at all** — §5.8's prescribed demonstration (`head -c8 /dev/urandom` matching across clones) does **not** reproduce here, for two independent reasons that had been conflated: the guest kernel already implements §5.8's fix (**VMGenID** → `random: crng reseeded due to virtual machine fork`), *and* the window is only a **handful of reads** wide (1, 3 and 20 across runs here — a fraction of a second), so any probe that pauses before looking misses it. Disable VMGenID and read tightly and the clones are byte-identical, exactly as §5.8 says. In **both** configurations every clone keeps the source's `boot_id` and any secret already derived from the pool — **reseeding on resume fixes the randomness not yet asked for, never the identity already minted from it** |
 | slice 1/2 configs, boot logs, images | 1–2 | ⛔ host workdirs `micro-cloud-s1/`, `micro-cloud-s2/` — [`DEFERRED.md`](DEFERRED.md) §17.0 item 2. **These really are there** (verified 2026-08-04); it was only the *scripts* that were not |
 
 > ⚠️ **Do not reimplement `fabric.sh` from Appendix G's description.** The
@@ -101,8 +105,8 @@ examples/micro-cloud/
 ├── install-catalog.toml      names the lab that owns each install method
 ├── images/                   .gitignore'd build output (vmlinux, *.ext4)
 ├── hand-walk/                Containerfile + RUNBOOK
-├── RUNBOOK-*.md              build-images · first-microvm · micro-cloud · fleet ·
-│                             [preserve](RUNBOOK-preserve.md) — EXISTS
+├── RUNBOOK-*.md              build-images · first-microvm · micro-cloud ·
+│                             [fleet](RUNBOOK-fleet.md) · [preserve](RUNBOOK-preserve.md) — EXISTS
 ├── LEDGER.md                 the running defect/surprise ledger
 ├── CLONES.md                 every fork, with the constraint that justified it
 ├── UPSTREAM.md               cite-don't-mirror provenance
