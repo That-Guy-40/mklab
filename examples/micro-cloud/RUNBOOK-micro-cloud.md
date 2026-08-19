@@ -56,9 +56,9 @@ the existing microVM evidence to keep meaning what it meant.
 sudo phase1-chroot/lab-chroot.sh create \
      --backend debootstrap --distro debian --suite bookworm --arch x86_64 \
      --variant minbase --manager none --include systemd-sysv \
-     --post-command 'systemctl enable systemd-networkd' \
-     --post-command 'mkdir -p /etc/systemd/network' \
-     --post-command 'printf "[Match]\nName=eth0 en*\n\n[Network]\nDHCP=ipv4\n" > /etc/systemd/network/10-fabric.network' \
+     --post-command 'mkdir -p /etc/systemd/system/multi-user.target.wants /etc/systemd/network' \
+     --post-command 'ln -sf /lib/systemd/system/systemd-networkd.service /etc/systemd/system/multi-user.target.wants/systemd-networkd.service' \
+     --post-command 'printf "[Match]\nName=eth0 en*\n\n[Network]\nDHCP=ipv4\n\n[DHCPv4]\nHostname=db\n" > /etc/systemd/network/10-fabric.network' \
      --name micro-cloud-base --target /var/chroots/micro-cloud-base --lab micro-cloud
 
 # export 1 — the microVMs' root filesystem, written WITHOUT a loop mount
@@ -96,6 +96,20 @@ calls `db` *"the system-container case: a stateful pet **with its own init**"*.
 `dhclient`, no `ifupdown`, no `udhcpc`. So the container came up, got its veth on `br-mc0`,
 and *nothing ever asked for one*: present on the L2, invisible on the network, with
 `getent db` returning nothing from `edge`. Hence the three `--post-command` lines above.
+
+Two details in those `--post-command` lines are not incidental, and both were found by
+checking rather than by another run:
+
+- **enabled by symlink, not `systemctl enable`.** `systemctl` in a chroot has no running
+  systemd to talk to and its behaviour there varies by version — some refuse with *"Running
+  in chroot, ignoring request"*. The symlink is what `enable` creates, it is the same on
+  every version, and unlike the command its effect is checkable with `ls`.
+- **`Hostname=db` in the DHCP request.** dnsmasq serves DNS for names it learns from DHCP
+  (`--domain --expand-hosts`), but LXD sets the container's hostname to the **instance** name
+  — `lab-micro-cloud-db` — so `db` would have registered under *that*, and `getent db` from
+  `edge` would still have failed. `db` has no fabric reservation to fall back on either:
+  `fabric.sh tap` reserves against a MAC for instances that take a **tap**, and this one takes
+  an LXD veth. The name has to travel in the request itself.
 
 So the tally of what "universal" costs, per consumer:
 
