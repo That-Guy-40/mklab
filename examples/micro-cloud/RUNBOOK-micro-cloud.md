@@ -139,18 +139,55 @@ its name by a formula `fabric.sh` and `lab-fc.sh` share, and the reservation is 
 This is the part worth typing yourself, because it is the claim: **heterogeneous instances,
 one L2, resolved by name.**
 
-```bash
-# from the fidelity VM, which has a full userspace
-phase2-qemu-vm/lab-vm.sh ssh edge -- ping -c2 api1
-phase2-qemu-vm/lab-vm.sh ssh edge -- getent hosts db
+**`lab-vm.sh ssh edge` does not work here, and the reason is worth knowing.** That verb
+connects to `127.0.0.1:<ssh_port>`, which is a **slirp host port forward** — it exists only in
+user-mode networking. `edge` is `network_mode = "tap"`, so there is no forward and there never
+was; the `SSHPORT 2222` that `lab-vm.sh list` prints beside it is a number describing nothing.
+This runbook told you to run that command for a while, and it could not have worked at any
+commit. Phase 2 now refuses it by name and points here instead.
 
-# and the microVM's own identity, from the metadata service rather than from a file
+Reach the guest at its address **on the fabric** — the host holds `10.71.0.1` on `br-mc0`, so
+it can route to every instance:
+
+```bash
+# the address the fabric actually leased it (never a number from a doc)
+edge_ip=$(awk '$4 == "edge" { print $3 }' /run/mklab-mc/leases)
+
+ssh lab@"$edge_ip" -- getent hosts api1     # does the NAME resolve?
+ssh lab@"$edge_ip" -- ping -c2 api1         # and is it REACHABLE?
+
+# and the microVM's own identity, from the tool rather than from a file
 phase7-firecracker/lab-fc.sh inspect api1
 ```
 
-`getent hosts` rather than `ping` for the name half: `ping` answering proves resolution *and*
-reachability at once, and when it fails you cannot tell which broke. Ask the two questions
-separately.
+`getent hosts` and `ping` are asked separately on purpose: `ping` answering proves resolution
+*and* reachability at once, and when it fails you cannot tell which broke.
+
+**If the lease line is not there yet, the guest has not DHCPed yet** — see step 1's note about
+readiness, and read what it is actually doing:
+
+```bash
+less ~/.local/state/lab-create/vms/edge/console.log
+```
+
+That file exists because the serial chardev now carries a `logfile=`. It did not, until a run
+of this lab found that `edge`'s own cloud-init markers — `EDGE-BEGIN`, `EDGE-PING-BY-NAME` —
+were being written to a socket with no reader, and lost. The lab's success signature was
+unobservable through the documented path.
+
+## Running it a second time — reset first
+
+`down` stops microVMs and never destroys them, and `create` refuses an instance that already
+exists. Both are correct, and together they mean a second `up` halts at the first microVM with
+*"instance 'api1' already exists"*. That is the halt-don't-converge contract working, not a
+fault. To run the whole thing again:
+
+```bash
+phase7-firecracker/lab-fc.sh destroy api1 --force
+phase7-firecracker/lab-fc.sh destroy api2 --force
+phase2-qemu-vm/lab-vm.sh     destroy edge  --force
+sudo phase1-chroot/lab-chroot.sh destroy micro-cloud-base
+```
 
 ## Step 4 — the capstone
 

@@ -327,3 +327,70 @@ the test rather than hidden, because phase 7 *silently ignores* an unknown flag.
 tool with the flag and without it produces the same successful output, so there is no
 behavioural signal to probe. When a tool cannot be made to tell you, its documentation is the
 only oracle left.
+
+---
+
+## L10-8 — the full spec: the chroot and the VM both built, and the capstone probe could never have worked
+
+**Run 2026-08-19**, `sudo -E`, the whole `micro-cloud.toml`. `up` rc=1 at t+22 s, `down` rc=0,
+elapsed 276 s. Calico's binding, veth count, `ip_forward` **and** both engine bridges'
+membership identical before and after.
+
+### What got built
+
+* **the chroot** — `debootstrap` completed, `/var/chroots/micro-cloud-base` populated. §2's
+  spine, created by the one step that legitimately keeps root.
+* **`edge`** — provisioned from a cached Debian cloud image and started (pid 625835), on a
+  real fabric tap: `br-mc0`'s members were `mc-api1 mc-api2 mc-edge`.
+* **the halt** — `lab-fc.sh create` refused: *"instance 'api1' already exists"*, left over
+  from the previous run, because `down` stops microVMs and never destroys them. Both halves
+  are deliberate and together they make a second full run impossible without a reset. That is
+  the halt-don't-converge contract working; it is now documented with the four destroy
+  commands rather than left to be rediscovered.
+
+`db` and `metrics` were never reached, because `up` halts rather than carrying on.
+
+### The finding: a documented command that could not have worked at any commit
+
+The runbook's capstone probe was `lab-vm.sh ssh edge -- ping api1`. It waited **240 seconds**
+and got nothing, and the reason is structural rather than transient:
+
+> `lab-vm.sh ssh` connects to `127.0.0.1:$ssh_port`. That port is a **slirp host port
+> forward**. `edge` is `network_mode = "tap"` — there is no forward, and there never was.
+
+Meanwhile `lab-vm.sh list` went on printing `SSHPORT 2222` beside it: a number describing
+nothing. This is the repo's own recorded bug class arriving in a doc I wrote — *the CLI verbs
+a doc cites all exist, while its first command had never worked at any commit* — and it is why
+"the verb exists" is not the same question as "the verb applies here".
+`tools/check-guided-path-is-a-view.sh` verifies the former and cannot see the latter.
+
+Fixed in the driver rather than only in the doc: `ssh` now **refuses tap and bridge VMs by
+name**, before the *is it running* check — because whether a VM can be reached is a fact about
+its configuration, not its run state, and answering "it is not running" first sends the reader
+to `start` and then straight into the hang. The refusal names the console and the fabric
+address. Guarded by
+[`phase2-qemu-vm/tests/test-ssh-refuses-without-a-hostfwd.sh`](../../phase2-qemu-vm/tests/test-ssh-refuses-without-a-hostfwd.sh),
+whose control is that **user-mode networking must still get through** — an `ssh` that refused
+everything would satisfy every other assertion and be worse than the hang it replaced.
+
+### And the evidence was unobservable, which is why the first finding survived
+
+`edge.toml`'s `runcmd` writes `EDGE-BEGIN` and `EDGE-PING-BY-NAME OK|FAIL` to `/dev/console` —
+the lab's success signature. After the run, `qemu.log` was **empty** and the console was a
+unix socket with nothing attached, so every one of those lines was written into a socket with
+no reader and lost. There was no way to find out what `edge` had done.
+
+QEMU's chardev takes a `logfile=` alongside the socket, so `lab-vm.sh` now passes one: the
+socket stays exactly as interactive as it was, and the bytes also land in
+`<vm-dir>/console.log`. A lab whose claim is a console marker needs the console to survive
+past the moment nobody was watching.
+
+### One more, reported rather than fixed
+
+`down` returned 0 and `edge` was **still running** — on a tap the fabric had just deleted. VMs
+persisting across a teardown is deliberate (the disk is expensive state), but a machine left
+with its network yanked and nobody told is the **STRANDED** rung on this repo's own ladder,
+and the difference between stranded and merely stopped is entirely whether the operator was
+told. `micro-cloud.sh down` now names any still-running VM before the fabric step, and prints
+the `stop` command for each. It does not stop them: that is the operator's call, and a
+teardown that starts reaping VMs is one you run once and then stop trusting.
