@@ -1,0 +1,53 @@
+diff --git a/arch/amd64/console.c b/arch/amd64/console.c
+index 71a22b6..c405b44 100644
+--- a/arch/amd64/console.c
++++ b/arch/amd64/console.c
+@@ -8,6 +8,7 @@
+ #include "config.h"
+ #include "kernel/kernel.h"
+ #include "openbios.h"
++#include "libopenbios/console.h"
+ 
+ #ifdef CONFIG_DEBUG_CONSOLE
+ 
+diff --git a/arch/amd64/lib.c b/arch/amd64/lib.c
+index 9efbe68..6618e5c 100644
+--- a/arch/amd64/lib.c
++++ b/arch/amd64/lib.c
+@@ -45,7 +45,7 @@ void *malloc(size_t size)
+ 	if(memsize>=size) {
+ 		memsize-=size;
+ 		ret=memptr;
+-		memptr+=size;
++		memptr = (void *)((unsigned long)memptr + size);
+ 	}
+ 	return ret;
+ }
+diff --git a/arch/amd64/openbios.c b/arch/amd64/openbios.c
+index 15d3b62..064079b 100644
+--- a/arch/amd64/openbios.c
++++ b/arch/amd64/openbios.c
+@@ -9,6 +9,10 @@
+ #include "config.h"
+ #include "libopenbios/openbios.h"
+ #include "libopenbios/bindings.h"
++#include "libopenbios/console.h"
++#include "drivers/drivers.h"
++#include "drivers/pci.h"
++#include "libopenbios/video.h"
+ #include "asm/types.h"
+ #include "dict.h"
+ #include "kernel/kernel.h"
+diff --git a/arch/amd64/segment.c b/arch/amd64/segment.c
+index 09763bd..c6828f8 100644
+--- a/arch/amd64/segment.c
++++ b/arch/amd64/segment.c
+@@ -40,8 +40,6 @@ struct segment_desc gdt[NUM_SEG] = {
+     {0xffff, 0, 0, 0x93, 0xcf, 0},
+ };
+ 
+-extern char _start[], _end[];
+-
+ void relocate(struct sys_info *info)
+ {
+     int i;
