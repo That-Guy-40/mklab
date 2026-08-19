@@ -68,6 +68,8 @@ jobs:
             examples/micro-cloud/tests/test-jailer-isolation.sh \
             examples/micro-cloud/tests/test-fleet-clones.sh \
             examples/micro-cloud/tests/test-clone-entropy.sh \
+            examples/micro-cloud/tests/test-guided-path-is-a-view.sh \
+            tools/check-guided-path-is-a-view.sh \
             examples/micro-cloud/tests/test-usage-is-data.sh \
             tools/check-usage-is-data.sh \
             examples/micro-cloud/tests/test-preserve-gate.sh \

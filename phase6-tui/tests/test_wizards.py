@@ -344,3 +344,162 @@ class TestLXDInstanceWizard:
         assert "up" in hint
         assert "down" in hint
         assert "mylab" in hint
+
+
+# ── Phase 7: MicroVMWizard ───────────────────────────────────────────────────
+
+class TestMicroVMWizard:
+    """MICRO_CLOUD_LAB_PLAN §8.2's second gap: 'no microvm wizard'.
+
+    Every field here is a key `lab-fc.sh` already parses. That is the point rather than a
+    coincidence — §0.2's invariant says the guided path is a VIEW of the raw path, so a
+    wizard offering a knob the tool does not have would be a parallel implementation with a
+    form on it. `test_every_field_is_a_key_the_tool_parses` asserts it against the tool's
+    own KNOWN_KEYS rather than against a list copied into this file.
+    """
+
+    def _wiz(self, vals=None, sels=None, chks=None):
+        from lab_tui.screens.wizards.phase7 import MicroVMWizard
+        return _make_wizard(MicroVMWizard, vals or {}, sels or {}, chks or {})
+
+    def test_minimal_toml_has_the_required_keys(self) -> None:
+        toml = (self._wiz(
+            vals={"f-name": "api1", "f-kernel": "/k/vmlinux", "f-rootfs": "/r/api1.ext4"},
+            sels={"f-memory": "256M", "f-vcpus": "1"}))
+        assert "[[microvm]]" in toml
+        assert 'name    = "api1"' in toml
+        assert 'kernel  = "/k/vmlinux"' in toml
+        assert 'rootfs  = "/r/api1.ext4"' in toml
+        assert 'memory  = "256M"' in toml
+        assert "vcpus   = 1" in toml
+
+    def test_optional_keys_are_omitted_when_blank(self) -> None:
+        """An empty field must not become an empty VALUE.
+
+        `tap = ""` is not "no tap" to lab-fc.sh — it is a tap named the empty string, and
+        the config generator emits a network block iff a tap is set. A wizard that wrote
+        blank keys would be handing the tool a spec that says something the operator did
+        not.
+        """
+        toml = (self._wiz(vals={"f-name": "api1"}))
+        for key in ("tap", "ip", "gateway", "netmask", "mac", "lab", "append"):
+            assert f"{key} " not in toml, f"blank field '{key}' was written into the spec"
+        assert "mmds" not in toml
+
+    def test_mmds_is_written_only_when_checked(self) -> None:
+        assert "mmds    = true" in (self._wiz(
+            vals={"f-name": "api1", "f-tap": "mc-api1"}, chks={"f-mmds": True}))
+        assert "mmds" not in (self._wiz(vals={"f-name": "api1"}))
+
+    def test_free_text_is_escaped(self) -> None:
+        """F-01, the framework's own signature bug: a value that breaks the TOML.
+
+        `_toml_str` exists because a multi-line paste once wrote a broken spec to disk
+        while the preview said "(invalid input)" — the record disagreeing with reality,
+        inside the wizard code.
+        """
+        toml = (self._wiz(vals={"f-name": 'a"b', "f-append": "x\ny"}))
+        assert 'a\\"b' in toml
+        assert "\\n" in toml
+        # The generated spec must still be one key per line.
+        for line in toml.splitlines():
+            assert line.count("=") == 0 or not line.strip().startswith('"')
+
+    def test_run_hint_walks_preflight_dryrun_create_start(self) -> None:
+        """The hint is a teaching ladder, and the order is the lesson.
+
+        preflight and --dry-run come BEFORE create on purpose: phase 7's own design refuses
+        before the irreversible step, and a hint that opened with `create` would teach the
+        opposite of what the tool is built around.
+        """
+        hint = _make_hint(_cls7(), {"f-name": "api1"}, {})
+        for verb in ("preflight", "create --config", "--dry-run", "start api1",
+                     "inspect api1", "stop api1", "destroy api1"):
+            assert verb in hint, f"the hint never mentions '{verb}'"
+        assert hint.index("preflight") < hint.index("--dry-run") < hint.index("start api1")
+
+    def test_the_fabric_step_appears_only_when_a_tap_was_named(self) -> None:
+        """`fabric.sh tap` needs root. Telling someone to run a privileged command they do
+        not need is how a guided path teaches a superstition — so the step is conditional."""
+        with_tap = _make_hint(_cls7(), {"f-name": "api1", "f-tap": "mc-api1"}, {})
+        assert "fabric.sh tap" in with_tap
+        assert "sudo" in with_tap
+        without = _make_hint(_cls7(), {"f-name": "api1"}, {})
+        assert "fabric.sh" not in without
+
+    def test_every_field_is_a_key_the_tool_parses(self) -> None:
+        """§0.2: the guided path is a VIEW. A field the tool has no key for is an invention.
+
+        Read from lab-fc.sh's KNOWN_KEYS, not from a list duplicated here — a copy would go
+        stale exactly when the schema changed, which is the moment this test matters.
+        """
+        import re
+        from pathlib import Path as _P
+        tool = _P(__file__).resolve().parents[2] / "phase7-firecracker" / "lab-fc.sh"
+        m = re.search(r'^readonly KNOWN_KEYS="([^"]*)"', tool.read_text(), re.M)
+        assert m, "could not read KNOWN_KEYS out of lab-fc.sh — the tool's schema moved"
+        known = set(m.group(1).split())
+
+        toml = (self._wiz(
+            vals={"f-name": "a", "f-kernel": "k", "f-rootfs": "r", "f-tap": "t",
+                  "f-ip": "1.2.3.4", "f-gateway": "1.2.3.1", "f-netmask": "255.255.255.0",
+                  "f-mac": "06:00:ac:47:00:01", "f-lab": "l", "f-append": "quiet"},
+            sels={"f-memory": "256M", "f-vcpus": "2"}, chks={"f-mmds": True}))
+        emitted = {ln.split("=")[0].strip() for ln in toml.splitlines()
+                   if "=" in ln and not ln.strip().startswith("#")}
+        unknown = emitted - known
+        assert not unknown, (
+            f"the wizard writes key(s) lab-fc.sh does not parse: {sorted(unknown)} — "
+            "a guided path that can express something the CLI cannot is a parallel "
+            "implementation, which is exactly what §0.2 forbids")
+
+
+def _cls7():
+    from lab_tui.screens.wizards.phase7 import MicroVMWizard
+    return MicroVMWizard
+
+
+# ── the three registries must agree ──────────────────────────────────────────
+
+def test_every_wizard_in_the_package_is_reachable_from_the_ui() -> None:
+    """A wizard is registered in THREE places, and a wizard in only some of them is a
+    guided surface that either cannot be opened or is not offered.
+
+    tools/check-guided-path-is-a-view.sh discovers wizards from the PACKAGE, so one that is
+    exported but absent from the picker would pass that checker while being unreachable —
+    the checker would be verifying commands nobody can get to. This closes that gap from
+    the other side.
+    """
+    import importlib
+    from pathlib import Path as _P
+    import lab_tui.screens.wizards as pkg
+    from lab_tui.screens.wizards.base import WizardModal
+    from lab_tui.screens.wizard_select import _OPTIONS
+
+    in_package = set()
+    for mod_path in sorted(_P(pkg.__file__).parent.glob("*.py")):
+        if mod_path.stem in ("__init__", "base"):
+            continue
+        mod = importlib.import_module(f"lab_tui.screens.wizards.{mod_path.stem}")
+        for attr in dir(mod):
+            cls = getattr(mod, attr)
+            if (isinstance(cls, type) and issubclass(cls, WizardModal)
+                    and cls is not WizardModal and cls.__module__ == mod.__name__):
+                in_package.add(mod_path.stem)
+
+    in_picker = {o.id for o in _OPTIONS}
+
+    # The dispatch map is read out of browser.py: importing the screen drags in a Textual
+    # app context, and the question here is about the mapping, not about the widget.
+    src = (_P(pkg.__file__).parent.parent / "browser.py").read_text()
+    import re
+    block = re.search(r"_WIZARDS = \{(.*?)\}", src, re.S)
+    assert block, "could not find the _WIZARDS dispatch map in browser.py"
+    in_dispatch = set(re.findall(r'"(phase\d+)":', block.group(1)))
+
+    assert in_package == in_picker == in_dispatch, (
+        f"the three wizard registries disagree — package={sorted(in_package)} "
+        f"picker={sorted(in_picker)} dispatch={sorted(in_dispatch)}. A wizard missing from "
+        "the picker cannot be opened; one missing from the dispatch map opens nothing; one "
+        "missing from the package is offered and then fails to import."
+    )
