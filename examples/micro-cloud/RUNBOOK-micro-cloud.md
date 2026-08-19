@@ -34,24 +34,45 @@ and it is the reason `db` is pinned to `br-mc0` by an explicit `nic` device rath
 to LXD's default bridge. Your host will say something different; the point is that you look,
 because the fabric records this at `up` and compares it at `down`.
 
-## Step 0 — the images (root, once)
+## Step 0 — the spine, and the two things made from it (root, once)
 
-The two microVMs boot an ext4 built from the `[[chroot]]` block in `micro-cloud.toml`. That
-is [`RUNBOOK-build-images.md`](../../MICRO_CLOUD_LAB_PLAN.md#6-new-component-b--lab-chrootsh-export-rootfs)'s
-job in the plan; the short version is that `lab-chroot.sh create` needs root (debootstrap
-does) and `export-rootfs` turns the tree into the image without a loop mount:
+**This is where §2 becomes checkable.** *A chroot is the universal userspace every compute
+type imports* — so one tree is built here and both of the lab's own images are exported from
+it: an ext4 for the microVMs and a tarball for the LXD system container.
+
+**How far that is actually true right now, stated rather than implied.** The tarball route is
+live: `db` imports it, and without it `db` does not come up. The ext4 route is the documented
+path, but if you already have working microVM images from slices 1/3 they are a **BusyBox**
+tree, not this Debian one, and swapping them is not free — a Debian minbase boots systemd and
+prints none of the `SLICE3-*` console markers the microVM half is currently proved by. Export
+it if you want the whole spine demonstrated end to end; keep the slice-3 images if you want
+the existing microVM evidence to keep meaning what it meant.
 
 ```bash
-sudo phase1-chroot/lab-chroot.sh create --config examples/micro-cloud/micro-cloud.toml
+# the spine itself (debootstrap needs root)
+sudo phase1-chroot/lab-chroot.sh create \
+     --backend debootstrap --distro debian --suite bookworm --arch x86_64 \
+     --variant minbase --manager none \
+     --name micro-cloud-base --target /var/chroots/micro-cloud-base --lab micro-cloud
+
+# export 1 — the microVMs' root filesystem, written WITHOUT a loop mount
 sudo phase1-chroot/lab-chroot.sh export-rootfs micro-cloud-base \
      --output examples/micro-cloud/images/api1.ext4 --size 512M
 cp examples/micro-cloud/images/api1.ext4 examples/micro-cloud/images/api2.ext4
+
+# export 2 — db's image. NOT `from_chroot`: phase 5 refuses to read a root-built tree
+# directly (mode-600 files like /etc/shadow are unreadable to an unprivileged run) and says
+# so by name. export-tarball runs tar as root and chowns the result to you.
+sudo phase1-chroot/lab-chroot.sh export-tarball micro-cloud-base \
+     --output examples/micro-cloud/images/micro-cloud-base.tar.gz
+sudo chown "$USER" examples/micro-cloud/images/micro-cloud-base.tar.gz
 ```
 
-The kernel is an **uncompressed ELF `vmlinux`**, not a `vmlinuz` — Firecracker's loader is
-ELF-only and answers a bzImage with `Elf(InvalidElfMagicNumber)`. `lab-fc.sh preflight`
-checks this before anything is copied, and tells you to run `extract-vmlinux` if you handed
-it the wrong one.
+**Why the chroot is not a block in `micro-cloud.toml`.** It was, until running the lab showed
+it could not be: the instances consume its *exports*, the control plane has no slot that emits
+an export step, and so a bring-up needed the exports to exist before the very step that
+created the tree they come from. `micro-cloud.toml` now declares the five things that **run**,
+and this step builds what they run *on*. The spec carries the full reasoning.
 
 **If you COPY an image rather than build one, fsck it.** An ext4 copied out of a directory
 where it was last used by a running guest is marked dirty, and `debugfs` refuses to open it:
@@ -66,7 +87,7 @@ distinction is the point: the gate could not run, and a gate that cannot run mus
 that the thing it checks is fine. Observed on the first privileged run of this lab, on one of
 two otherwise identical images.
 
-Once both exist:
+Then check every gate before anything is created:
 
 ```bash
 phase7-firecracker/lab-fc.sh preflight --config examples/micro-cloud/micro-cloud.toml

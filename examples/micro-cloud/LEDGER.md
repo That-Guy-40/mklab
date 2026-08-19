@@ -462,3 +462,72 @@ probe must execute *inside*, and the slice-1/3 rootfs has no exec channel at all
 agent, a console that only speaks outward. Closing that row means booting them on slice 5c's
 vsock-agent rootfs and probing over vsock: a different **image**, not a different privilege.
 That is now what the UNKNOWN line says.
+
+---
+
+## L10-10 — `db` finally spoke, and what it said was that the spine was decorative
+
+**Run 2026-08-19** (the second clean run, with the `lab` key fixed). Same 58 s, same green
+teardown, same four instances — and a *different* error from phase 5:
+
+```text
+[error] instance 'db': specify exactly one of image | from_chroot | from_tarball | from_qcow2 (got 0)
+```
+
+The first refusal had hidden the second. Fixing the unknown key let the driver get one gate
+further, and the next gate asked the question that mattered: **where does `db`'s filesystem
+come from?** The spec had no answer, and following that through turned up something larger.
+
+### The chroot was built by every run and consumed by nothing
+
+§2's thesis is that *a chroot is the universal userspace every compute type imports*. In this
+spec it was a `[[chroot]]` block that got debootstrapped on every bring-up and then ignored:
+the microVMs booted pre-staged images, `edge` came from a cloud image, `metrics` from a
+registry, and `db` from nothing at all. The spine was **decorative**, and nothing said so
+because a decorative step still exits 0.
+
+Giving `db` the chroot exposed why the block could not stay:
+
+* a chroot is a **build input**, not a running instance. What instances consume are its
+  *exports* — `export-rootfs` for the microVMs, `export-tarball` for `db` — and the control
+  plane has no slot that emits an export step.
+* so a bring-up needed those exports to exist **before** the instance steps, while the block
+  was created by the *first* of those same steps. Circular, and `db` sat on the circle.
+* and it is not incidental plumbing: phase 5 **refuses** a root-built chroot read directly,
+  because `sudo lab-chroot create` leaves mode-600 files (`/etc/shadow`) an unprivileged run
+  cannot read — and it names `export-tarball` as the route. Another driver being right and
+  loud about a thing the spec had glossed.
+
+Worse, [`RUNBOOK-micro-cloud.md`](RUNBOOK-micro-cloud.md) step 0 *also* created the chroot, so
+two documented paths built the same tree and `up` would have refused the second one. That
+only stayed invisible because every run so far had destroyed the chroot first.
+
+### The fix, and it is the better lab
+
+`micro-cloud.toml` now declares the five things that **run**. Step 0 builds the spine and
+**both** exports, and `db` imports the tarball.
+
+**And here the claim has to be trimmed to what is true.** The sentence this entry first
+carried was *"one debootstrapped tree becomes the microVMs' root filesystem AND the LXD
+container's image, so two compute types demonstrably share one userspace."* Checked before
+believing it: `examples/micro-cloud/images/api1.ext4` is a minimal BusyBox tree from slices
+1/3 — it still has `mc-probe.sh` in it from the clone-entropy work — **not** the Debian
+chroot. So the shared-userspace claim is:
+
+| route | status |
+|---|---|
+| chroot → `export-tarball` → `db` | **real as of this change**, and the reason `db` can come up at all |
+| chroot → `export-rootfs` → `api1`/`api2` | **documented in step 0, not exercised here.** The images in place predate it, and swapping them is not free: a Debian minbase boots systemd and prints none of the `SLICE3-*` console markers the microVM half is currently proved by |
+
+So §2 is *half* demonstrated, and saying "two compute types share one userspace" would have
+been asserting the interesting half from the easy one.
+
+§9.1's layout line said *"ONE spec: chroot + microvms + vm + containers"*. It is corrected in
+the plan, with the reason: **a `[[chroot]]` block was the tidier document and the weaker
+demonstration.**
+
+### What this run does not yet show
+
+`db` has still never come up — the tarball did not exist when it ran. The next run is the
+first that can produce all five, and it is also the first where the chroot is load-bearing:
+if step 0's export is missing, `db` fails and says so, which is the honest coupling.
