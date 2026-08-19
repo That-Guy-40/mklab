@@ -1,0 +1,17 @@
+{# The live TOML, and — after a save — the commands to run next.
+
+   `toml` and `hint` come from the TUI wizard's own generate_toml()/run_hint(); nothing in
+   this template composes either. Autoescaping is on for .html.j2 (app.py F-1), so a value
+   typed into the form cannot become markup here. #}
+{% if error %}
+  <p class="wizard-error">✗ {{ error }}</p>
+{% elif saved %}
+  <p class="wizard-saved">✓ wrote <code>{{ saved }}</code></p>
+{% endif %}
+
+<pre class="wizard-toml">{{ toml }}</pre>
+
+{% if hint %}
+  <p class="muted">Now run these — the wizard does not:</p>
+  <pre class="wizard-hint">{{ hint }}</pre>
+{% endif %}

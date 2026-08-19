@@ -17,8 +17,12 @@
   <span class="brand">lab-create</span>
   <span class="subtitle">resource browser</span>
   <nav>
+    {# The wizards. They generate specs and never execute anything, so this link is safe
+       to put beside a read-only one — §0.2's "the worst case is a text file". #}
+    <a href="#" hx-get="/wizards" hx-target="#wizard-pane" hx-swap="innerHTML">✦ New resource</a>
     <a href="/api/v1/resources" target="_blank">JSON API</a>
   </nav>
+  <div id="wizard-pane"></div>
 </header>
 
 <div id="layout">

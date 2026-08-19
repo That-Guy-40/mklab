@@ -1,0 +1,19 @@
+{# The wizards this build offers. DERIVED from the TUI package, so a wizard added there
+   appears here with no edit — see lab_web/wizards.discover(). #}
+<div class="wizard-list">
+  <h2>New resource — choose a phase</h2>
+  <ul>
+    {% for w in wizards %}
+      <li>
+        <a href="/wizards/{{ w.phase }}"
+           hx-get="/wizards/{{ w.phase }}" hx-target="#wizard-pane" hx-swap="innerHTML">
+          {{ w.title }}
+        </a>
+      </li>
+    {% endfor %}
+  </ul>
+  <p class="muted">
+    A wizard generates a spec. It never runs anything — the worst it can do is write a
+    text file, and it tells you the commands to type next.
+  </p>
+</div>
