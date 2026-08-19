@@ -98,6 +98,20 @@ bug, not a result — the reader can't tell a real failure from a broken harness
   controls found a **third** blind spot neither audit named:
   `if true; then trap 'x' EXIT; fi`, since `then` is not one of the separators.
 
+  **§7 covers being KILLED, which is not the same as failing.** Bash runs no EXIT
+  trap for an untrapped fatal signal, so a run stopped from outside — a CI
+  deadline, an agent harness timeout, Ctrl-C — used to end in a log that simply
+  **stops**: no verdict, no reason. Measured 2026-08-19, and the cost is not
+  hypothetical: a SIGTERM to a suite's process group printed bash's bare
+  `Terminated`, and the truncated log was written up as an *intermittent defect in
+  the test it happened to interrupt*. A day went into a bug that was never there.
+  `lib.sh` now traps `TERM`/`INT`/`HUP`, names the signal, and re-exits `128+N`.
+  Its control strips the traps from a copy of the lib and requires the naming to
+  disappear — **and that control earned itself immediately**, disproving a claim
+  the first draft had written into all thirteen `lib.sh` files (that the traps also
+  rescued the teardown; they do not — a killed shell already ran its cleanup, which
+  is why the claim had to be measured rather than reasoned).
+
   It provides
   its own verdict helpers on purpose: it must not source the lib under test, or
   the subject would be supplying its own harness. Every `tests/` directory ships

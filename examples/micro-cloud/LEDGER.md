@@ -130,48 +130,80 @@ be actively probed to leave the list.
 
 ---
 
-## L10-5 — one intermittent failure in `test-clone-entropy.sh`, and the evidence was not kept
+## L10-5 — the intermittent was two things, and one of them was me
 
-**Observed 2026-08-19.** The first full `tests/run-all.sh` of the slice reported
-`15 listed, 14 passed, 6 skipped, 1 failed` with `test-clone-entropy.sh` in the failed list.
-An immediate re-run of the whole suite passed, and four consecutive standalone runs of that
-test passed. So: **1 failure in 6 observations, and no message.**
+**Reported first, corrected here.** This entry originally said `test-clone-entropy.sh` fails
+intermittently inside `run-all.sh`, and then — once a failure was captured — that it *"has a
+path that exits 1 while booting the VMGenID-active source, and gives no reason for it."*
+That diagnosis was wrong, and how it was wrong is the useful part.
 
-**Caught in the act.** The first write-up of this entry said *"no message"* and set the next
-step: keep the full log, not the summary. Six more suite runs did, and the seventh reproduced
-it. The whole of what the test printed:
+### What the evidence actually showed
+
+The captured failure was three lines:
 
 ```text
   - booting the VMGenID-active source…
+Terminated
 FAIL: test exited early (rc=1) — no verdict was printed by the test itself
 ```
 
-That second line is **`lib.sh`'s EXIT net**, not the test. So the finding is not about
-entropy at all:
+`Terminated` is bash reporting a **SIGTERM**, not anything the test did. And the log that
+contained it was **truncated**: 94 lines, no `=== summary ===`, and the log for the *next*
+iteration of that loop never created at all. Its siblings were 239 lines with a summary.
 
-> `test-clone-entropy.sh` has a path that exits 1 while **booting or cloning the
-> VMGenID-active source**, before any assertion runs, and gives no reason for it.
+That is the signature of the run being killed from outside — and the outside was this
+session's own tool, which times a foreground command out at two minutes and SIGTERMs the
+process group. Reproduced deliberately: re-running the identical three-iteration command
+produced the identical pattern — **run 1 complete (239 lines), run 2 truncated with no
+summary, run 3 never started** — and a SIGTERM aimed at a suite's process group mid-boot
+reproduces the bare `Terminated` line exactly.
 
-Which is this repo's own rule broken from the inside — *a bare non-zero exit with no message
-is a test bug, not a result* — and the reason the safety net exists. Without the net there
-would have been a blank terminal and an `rc=1`. With it there is a location.
+So of the two failures this entry was opened for:
 
-What is now known, and what is still not:
+| | verdict |
+|---|---|
+| the failure inside the timed-out loop | **not a defect.** The run was killed; nothing in the test went wrong, and no `fail` message could ever have named it |
+| the first failure, which completed with a full `14 passed, 6 skipped, 1 failed` summary | **still unexplained.** Its message was never captured. 1 occurrence in ~20 suite runs since |
 
-- **KNOWN**: it dies in the first of the 2×2's two boot phases, not in a comparison. Every
-  run that got past that line finished and passed, including the four that reported the
-  window as UNKNOWN — so the grading logic is not implicated.
-- **KNOWN**: it is not a false PASS. The net turns it into a loud failure, which is the
-  cheap half of *fix the liar first* already paid for.
-- **UNKNOWN**: which command. The candidates are all in the boot/clone sequence — a VMM that
-  did not come up in time, an API socket not yet accepting, a `snapshot create` racing a
-  pause — and `set -e` makes them indistinguishable from the outside.
-- **UNKNOWN**: whether suite context is causal. 2 failures in 8 suite runs, 0 in 4
-  standalone. That is consistent with contention (this is the first slice in which a podman
-  container runs alongside it) and equally consistent with a timeout that is simply tight.
+### What was ruled out on the way, by measurement rather than by argument
 
-**Not attributable to slice 10** — nothing here touches Firecracker, snapshots or the clone
-path — but *"probably unrelated"* is a belief, so it stays open. The fix is a named
-follow-up: give every step of that boot sequence its own `fail` message, so the next
-occurrence names the command instead of the phase. An intermittent nobody has localised is a
-test whose verdict means less than it appears to, in both directions.
+- **Stale-PID kills** — `/proc/sys/kernel/pid_max` is 4194304 here, so PID reuse inside one
+  suite run is not a mechanism.
+- **A delayed killer left by an earlier test** — the chaos harness `wait`s on the child it
+  kills; nothing in the suite backgrounds a watchdog that outlives it.
+- **`run-all.sh`** — a plain `bash "$t"; r=$?`. No pipe, no background, no timeout.
+- **The predecessor** — the suite pair (`test-fleet-clones.sh` then `test-clone-entropy.sh`)
+  ran 8 consecutive times without a failure.
+
+### The defect this actually found
+
+Not in the test. **In the net, in all thirteen `tests/lib.sh` files.**
+
+Bash runs no EXIT trap for an untrapped fatal signal, so a run stopped from outside — a CI
+deadline, an agent harness timeout, Ctrl-C — ended in a log that simply stops. No verdict, no
+reason. A reader then does what this ledger did: attributes the silence to whichever test was
+unlucky enough to be running, and goes hunting for a bug that is not there.
+
+`lib.sh` now traps `TERM`/`INT`/`HUP`, records which one, and re-exits `128+N` so the EXIT
+trap still runs. The output becomes:
+
+```text
+FAIL: test was TERMINATED FROM OUTSIDE by SIGTERM — the run was cut short, so nothing above
+is a result about the code under test
+```
+
+`tools/check-harness-net.sh` §7 proves it in every suite, against a copy of the lib with the
+traps stripped out — **and that control immediately disproved a claim written into all
+thirteen files on the way**: the first version of the comment said the traps also rescued the
+teardown. They do not. A killed shell already ran its cleanup; measured against the
+pre-change lib, which printed its cleanup line and no verdict at all. The claim was corrected
+everywhere it had been propagated, and cleanup is now asserted in §7 only as an ordinary
+regression guard — adding traps must not *cost* the teardown.
+
+### And the smaller thing that was worth doing anyway
+
+`boot_and_snap` made four tool calls and waited up to 60 seconds while printing **nothing**.
+Every `fail` in it already named its own defect, but a death that produces no verdict at all
+— a signal, an OOM, a host reboot — left the reader unable to tell `create` from `start` from
+a guest that never counted. It now announces each stage, so the last line printed names the
+command. That would not have prevented this misdiagnosis, but it shortens the next one.
