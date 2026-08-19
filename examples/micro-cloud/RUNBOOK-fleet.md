@@ -266,12 +266,56 @@ reading right now.
 
 ---
 
+## 6a. The other tier: the same microVM, jailed
+
+§5.6's isolation tier is the sibling of everything above — `clone` gives you *many* machines
+from one; `--jailer` puts *one* machine inside a chroot with its own uid.
+
+```console
+$ sudo LAB_FC_JAIL_UID=30000 LAB_FC_JAIL_GID=30000 lab-fc.sh start api1 --jailer
+PASS: started api1 JAILED (pid 1336963) — process confirmed running, not merely forked
+      chroot: …/fc/api1/jail/firecracker/api1/root
+```
+
+**Every path in `config.json` is relative to the new chroot**, so `--jailer` stages the
+kernel and rootfs inside the jail and writes a second, in-chroot config. The rootfs is
+hard-linked — one guest disk, not two mutable images — which means a jailed start takes
+ownership of the instance's disk, and a later plain `start` says so and gives you the way
+back rather than failing with a bare `Permission denied`.
+
+### What actually distinguishes a jailed VMM — and what does not
+
+§5.6 says to diff `/proc/<pid>/root`, `/proc/<pid>/ns/net` and the `Seccomp` line. Measured,
+**none of those three answers the question**:
+
+| field | plain | jailed | |
+|---|---|---|---|
+| `ns/mnt` | `mnt:[4026531841]` | `mnt:[4026535173]` | **asserted** — the unshare happened |
+| the guest disk, as each has it open | `…/fc/jplain/rootfs.ext4` | **`/rootfs.ext4`** | **asserted** — the chroot, visible |
+| `Uid` | 0 | **30000** | **asserted** — the privilege drop |
+| `/proc/<pid>/root` | `/` | `/` | *reported* — identical, see below |
+| `ns/net` | `net:[4026531840]` | `net:[4026531840]` | *reported* — jailer **joins** a netns, never creates one |
+| `Seccomp` | 2 | 2 | *reported* — Firecracker filters itself in either tier |
+
+**`/proc/<pid>/root` renders as `/` for a jailed VMM exactly as for a plain one**, because the
+jail is built inside a private mount namespace and its path is not reachable from the reader's
+namespace. The field is present, correct, and useless for telling the tiers apart — a
+mechanism standing in for a property, in the plan's own instructions.
+
+The row to show someone is the second one: **the same guest disk, opened by two VMMs, and the
+jailed one calls it `/rootfs.ext4`.** That is the chroot in a single line of output.
+
+---
+
 ## 7. Running it yourself
 
 ```console
 $ examples/micro-cloud/tests/test-fleet-clones.sh     # needs KVM + the slice-1/3 images
 $ examples/micro-cloud/tests/test-clone-entropy.sh    # ditto; boots two sources, clones six
 $ phase7-firecracker/tests/test-clone-refusals.sh     # no KVM, no VMM — runs anywhere
+$ phase7-firecracker/tests/test-jailer-staging.sh    # ditto — the jail tier's file-and-text half
+$ sudo -E env PATH="$HOME/.local/state/lab-create/micro-cloud-s3:$PATH" \
+      examples/micro-cloud/tests/test-jailer-isolation.sh   # needs CAP_SYS_ADMIN
 ```
 
 The first two SKIP by name where there is no KVM or no images. The third is the half that

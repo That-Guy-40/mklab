@@ -34,7 +34,7 @@
 #
 # shellcheck disable=SC1090
 . "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
-need sha256sum
+need sha256sum e2fsck debugfs
 
 FC_TOOL="$REPO_DIR/phase7-firecracker/lab-fc.sh"
 [[ -x "$FC_TOOL" ]] || skip "lab-fc.sh not executable at $FC_TOOL"
@@ -71,8 +71,32 @@ JAILED=jjail
 # pattern, which would also match the harness that mentions these paths.
 on_exit 'for _n in '"$PLAIN $JAILED"'; do bash "'"$FC_TOOL"'" destroy "$_n" --force >/dev/null 2>&1 || true; done'
 
+# ── THE GUEST HAS TO STAY UP, OR THERE IS NOTHING TO COMPARE ────────────────────────────
+# MEASURED 2026-08-19: the first version booted the base rootfs unmodified. That image's init
+# runs slice 3's network probe, finds no NIC (this test configures no tap), and EXITS — so the
+# VMM was gone by the time `start` polled for liveness and the run failed with "did not
+# start" about a guest whose console showed a perfectly good boot. A comparison of two live
+# /proc entries needs two live processes; a fixture that ends on its own is measuring a race.
+#
+# So the same backgrounded ticker the fleet tests use is injected with `debugfs` — no loop
+# mount, no extra privilege — and it keeps both arms running for as long as this test needs
+# them. It is registered as `sysinit` and BACKGROUNDED: busybox init runs every sysinit entry
+# to completion before it starts any respawn one.
 R="$tmp/r.ext4"
 cp -- "$BASE" "$R" || skip "could not copy the base rootfs"
+# A guest killed mid-run leaves a dirty bitmap debugfs refuses to open. Repair the COPY.
+e2fsck -fy "$R" >/dev/null 2>&1 || true
+cat > "$tmp/mc-probe.sh" <<'EOS'
+#!/bin/sh
+( while :; do echo "MC-ALIVE $(cut -d. -f1 /proc/uptime)" > /dev/console; sleep 1; done ) &
+EOS
+debugfs -w -R "rm /mc-probe.sh" "$R" >/dev/null 2>&1 || true
+debugfs -w -R "write $tmp/mc-probe.sh mc-probe.sh" "$R" >/dev/null 2>&1 \
+    || skip "debugfs could not inject the keep-alive probe into the rootfs copy"
+debugfs -w -R "sif /mc-probe.sh mode 0100755" "$R" >/dev/null 2>&1 || true
+debugfs -R "stat /mc-probe.sh" "$R" 2>/dev/null | grep -q 'Mode:  0755' \
+    || skip "the injected probe is not executable in the image — the guest would not stay up"
+
 fc() { bash "$FC_TOOL" "$@"; }
 
 # THE SAME microVM, TWICE. Same kernel, same rootfs bytes, same memory — so the only variable
@@ -91,24 +115,75 @@ out="$(fc start "$JAILED" --jailer 2>&1)" || fail "the JAILED start failed: $out
 
 pp="$(cat "$LAB_STATE_DIR/fc/$PLAIN/fc.pid")"
 jp="$(cat "$LAB_STATE_DIR/fc/$JAILED/fc.pid")"
-[[ -d "/proc/$pp" ]] || fail "the plain VMM (pid $pp) is not running"
-[[ -d "/proc/$jp" ]] || fail "the jailed VMM (pid $jp) is not running"
+# BOTH must still be alive AT THE SAME INSTANT, which is a different question from "did each
+# one start". `start` polls for liveness and returns; a guest that exits a second later
+# satisfies it and leaves nothing to compare. Named separately so a future failure says which
+# of the two happened.
+[[ -d "/proc/$pp" ]] || fail "the plain VMM (pid $pp) started and has since exited — its guest did not stay up, so there is no live process to compare against (see $LAB_STATE_DIR/fc/$PLAIN/fc.log)"
+[[ -d "/proc/$jp" ]] || fail "the jailed VMM (pid $jp) started and has since exited (see $LAB_STATE_DIR/fc/$JAILED/fc.log)"
+# …and they must both be up for long enough that the reads below are of the same moment.
+sleep 2
+[[ -d "/proc/$pp" && -d "/proc/$jp" ]] \
+    || fail "one of the two VMMs exited during the comparison — the /proc reads below would be of a machine that is no longer there"
 
-# ── /proc/<pid>/root — THE CHROOT, and the whole of the tier ────────────────────────────
-proot="$(readlink "/proc/$pp/root" || true)"
-jroot="$(readlink "/proc/$jp/root" || true)"
-expected="$(sed -n 's/^jail_root = "\(.*\)"$/\1/p' "$LAB_STATE_DIR/fc/$JAILED/manifest.toml")"
-[[ "$proot" == "/" ]] \
-    || fail "the PLAIN VMM is not rooted at / (it is at '$proot') — the control arm is not a control, so any difference below proves nothing about the jailer"
-[[ "$jroot" != "/" ]] \
-    || fail "REGRESSION: the JAILED VMM is rooted at / — it is not in a chroot at all, and §5.6's tier is a flag that did nothing"
-[[ "$jroot" == "$expected" ]] \
-    || fail "the jailed VMM is rooted at '$jroot', not at the jail this tool built ('$expected') — something else chrooted it, so what it can see is UNKNOWN"
-note "/proc/<pid>/root — plain: $proot · jailed: $jroot"
+# ── THE CHROOT — and §5.6 names a mechanism that does not answer from the host ──────────
+# MEASURED 2026-08-19, fifth privileged run: `readlink /proc/<pid>/root` is `/` for the
+# JAILED VMM, exactly as it is for the plain one. The jail is set up inside a private mount
+# namespace, so its path is not reachable from the reader's namespace and the kernel renders
+# the link as `/`. §5.6 says to diff that field; from the host it does not distinguish them.
+#
+# That is this repo's own rule arriving where it was least expected — in the plan's
+# instructions rather than in a test. The mechanism ("read this /proc field") is not the
+# property ("this process is confined to a different filesystem view"), and the mechanism can
+# be present, correct and useless. So the field is REPORTED, and the property is asserted
+# through things that do not depend on how a path is rendered to a reader:
+#
+#   * the two VMMs are in DIFFERENT MOUNT NAMESPACES. `readlink /proc/<pid>/ns/mnt` yields
+#     `mnt:[N]` — an inode number, not a path — so it is immune to the rendering problem
+#     above. jailer's first act is unshare(CLONE_NEWNS); if these match, it did not happen.
+#   * what each VMM HAS OPEN. Both opened the same guest disk; the plain one holds it under
+#     its host path and the jailed one under a path inside its own root. That is the chroot
+#     made visible, and it is the thing a reader of §5.6 actually wants to see.
+p_ns="$(readlink "/proc/$pp/ns/mnt" || true)"
+j_ns="$(readlink "/proc/$jp/ns/mnt" || true)"
+[[ -n "$p_ns" && -n "$j_ns" ]] || fail "could not read the mount namespace of both VMMs (plain='$p_ns' jailed='$j_ns')"
+[[ "$p_ns" != "$j_ns" ]] \
+    || fail "REGRESSION: both VMMs are in the SAME mount namespace ($j_ns) — jailer's first act is unshare(CLONE_NEWNS), so it did not happen and §5.6's tier is a flag that did nothing"
+note "mount namespace — plain: $p_ns · jailed: $j_ns (different, so the unshare happened)"
 
-# …and the chroot is not decorative: the host state dir must be unreachable from inside it.
-[[ ! -e "$jroot/$LAB_STATE_DIR" ]] \
-    || fail "the host state dir is reachable from inside the jail — the chroot contains the thing it is meant to exclude"
+# What each has open. Reported in full, and asserted only as "these are not the same path",
+# which is the chroot without depending on either path's exact spelling.
+_rootfs_fd() {  # _rootfs_fd <pid> -> the path that pid has its guest disk open under
+    local d fd l
+    for fd in "/proc/$1"/fd/*; do
+        l="$(readlink "$fd" 2>/dev/null || true)"
+        [[ "$l" == *rootfs.ext4* ]] && { printf '%s' "$l"; return 0; }
+    done
+    return 1
+}
+p_disk="$(_rootfs_fd "$pp" || true)"
+j_disk="$(_rootfs_fd "$jp" || true)"
+if [[ -n "$p_disk" && -n "$j_disk" ]]; then
+    [[ "$p_disk" != "$j_disk" ]] \
+        || fail "REGRESSION: both VMMs have their guest disk open under the SAME path ($j_disk) — the jailed one is not seeing a different filesystem root"
+    note "the guest disk, as each VMM has it open — plain: $p_disk · jailed: $j_disk"
+else
+    note "UNKNOWN: could not read an open rootfs fd for one of the VMMs (plain='${p_disk:-none}' jailed='${j_disk:-none}') — the chroot was NOT demonstrated this way on this run; the namespace assertion above stands on its own"
+fi
+
+# The field §5.6 names, reported rather than asserted, with what it actually said.
+p_root="$(readlink "/proc/$pp/root" || true)"
+j_root="$(readlink "/proc/$jp/root" || true)"
+note "/proc/<pid>/root — plain: ${p_root:-unreadable} · jailed: ${j_root:-unreadable} $( [[ "$p_root" == "$j_root" ]] && printf '(IDENTICAL — from the host this field does not distinguish the tiers; see the header)' )"
+
+# …and the jail directory this tool built must be where the tool said it is, so that a reader
+# following §5.6 by hand is looking at the right place.
+jail_dir="$(sed -n 's/^jail_root = "\(.*\)"$/\1/p' "$LAB_STATE_DIR/fc/$JAILED/manifest.toml")"
+[[ -d "$jail_dir" ]] || fail "the jail root recorded for '$JAILED' does not exist on the host: $jail_dir"
+[[ -f "$jail_dir/rootfs.ext4" && -f "$jail_dir/config.json" ]] \
+    || fail "the jail root $jail_dir does not contain the staged guest disk and config — the VMM is running on something else"
+[[ ! -e "$jail_dir/$LAB_STATE_DIR" ]] \
+    || fail "the host state dir is reachable inside the jail directory — the chroot contains the thing it is meant to exclude"
 
 # ── /proc/<pid>/status — the uid/gid switch, observable ─────────────────────────────────
 juid="$(awk '/^Uid:/{print $2}' "/proc/$jp/status")"
@@ -150,4 +225,4 @@ out="$(fc stop "$JAILED" 2>&1)" || fail "\`stop\` could not stop the jailed inst
 [[ -d "/proc/$jp" ]] \
     && fail "\`stop\` reported success and the jailed VMM (pid $jp) is still running"
 
-pass "the same microVM, plain and jailed: the jailed VMM is rooted at its own chroot ($jroot) while the plain one is at /, it dropped to uid $juid, the host state dir is unreachable from inside the jail, both VMMs carry Firecracker's own seccomp filter, and the jailed instance is still visible to \`list\` and stoppable by \`stop\` despite an argv that carries no host path at all. The network namespace is REPORTED rather than asserted: the jailer joins one given with --netns and does not create one"
+pass "the same microVM, plain and jailed: the two VMMs are in DIFFERENT mount namespaces, the jailed one holds its guest disk under a path inside its own root while the plain one holds the host path, it dropped to uid $juid, its jail ($jail_dir) contains the staged disk and config and not the host state dir, both carry Firecracker's own seccomp filter, and the jailed instance is still visible to \`list\` and stoppable by \`stop\` despite an argv that carries no host path at all. THREE fields are REPORTED rather than asserted, each because the tier does not claim them: /proc/<pid>/root (from the host it renders as / for both, so §5.6's own instruction does not distinguish them), the network namespace (jailer JOINS one given with --netns and does not create one), and the seccomp mode (Firecracker filters itself in either tier)"
