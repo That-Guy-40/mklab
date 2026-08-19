@@ -18,9 +18,12 @@ from typing import ClassVar, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# Resolve repo root from this file's location: phase6-tui/lab_tui/backends/base.py
-# → repo root is three parents up from this file's dir.
-_PHASE_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+# Where the phase scripts live.  DEFINED IN `lab_tui.paths`, not here, and imported
+# rather than recomputed: `topology.py` needs the same answer and importing this module
+# to get it drags in pydantic and `lab_tui.state` → watchfiles, so the plan generator
+# could not run without the TUI's dependencies.  See that module's docstring.  Both
+# names are re-exported below so every existing importer of `base` is unchanged.
+from lab_tui.paths import PHASE_ROOT as _PHASE_ROOT, phase_script  # noqa: F401
 
 # F-12: warn at import time when _PHASE_ROOT doesn't look like the repo root.
 # This happens when the package is installed as a wheel (site-packages),
@@ -171,11 +174,6 @@ class BackendRunner(ABC):
 def phase_root() -> Path:
     """Repo root (the directory containing phase{1..6}-* dirs)."""
     return _PHASE_ROOT
-
-
-def phase_script(rel: str) -> Path:
-    """Resolve a phase-script path relative to the repo root."""
-    return _PHASE_ROOT / rel
 
 
 # S1 (Review phase6): a phase-script mutation or engine query that runs longer

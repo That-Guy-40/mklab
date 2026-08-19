@@ -75,6 +75,10 @@ jobs:
             examples/micro-cloud/tests/test-preserve-gate.sh \
             examples/micro-cloud/tests/test-preserve-capability-table.sh \
             examples/micro-cloud/tests/test-preserve-round-trip.sh \
+            examples/micro-cloud/micro-cloud.sh \
+            examples/micro-cloud/tests/test-micro-cloud-plan.sh \
+            examples/micro-cloud/tests/test-spec-is-one-description.sh \
+            examples/micro-cloud/tests/test-isolation-matrix.sh \
             examples/micro-cloud/make-vsock-rootfs.sh \
             examples/nested-calico-sandbox/sandbox.sh \
             examples/nested-calico-sandbox/guest-experiment.sh \

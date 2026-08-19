@@ -1,0 +1,140 @@
+# micro-cloud.toml — MICRO_CLOUD_LAB_PLAN.md §9.1: ONE spec for the whole lab.
+#
+#   examples/micro-cloud/micro-cloud.sh plan     # the ordered commands, run nothing
+#   sudo examples/micro-cloud/micro-cloud.sh up  # run them
+#        examples/micro-cloud/micro-cloud.sh status
+#   sudo examples/micro-cloud/micro-cloud.sh down
+#
+# FOUR COMPUTE TYPES, ONE FILE, AND NO FIFTH SCHEMA
+# -------------------------------------------------
+# Nothing here is a micro-cloud format.  Every block below is a block one of the phase
+# drivers already parses — `[[chroot]]` is phase 1's, `[[vm]]` is phase 2's, `[[microvm]]`
+# is phase 7's, `[[service]]` is phase 4's, `[[instance]]` is phase 5's — and
+# `lab_tui/topology.py` routes each to the driver that claims it.  A micro-cloud schema
+# that had to be translated into those five would be §4.1's *clone in disguise*, and the
+# translation layer is where the drift would live.
+#
+# PATHS ARE REPO-RELATIVE, AND THE RUNNER SETS THE DIRECTORY
+# ----------------------------------------------------------
+# `lab-fc.sh` uses `kernel`/`rootfs` as given — no tilde expansion, no resolution against
+# this file's directory (measured, not assumed).  So they are written relative to the REPO
+# ROOT and `micro-cloud.sh` runs every step from there; `plan` prints the `cd` as its first
+# line so the pasteable form is the same command.  Build the two artifacts first:
+# RUNBOOK-build-images.md, which is the `[[chroot]]` block below plus `export-rootfs`.
+#
+# THE ADDRESSES ARE NOT IN THIS FILE, ON PURPOSE
+# -----------------------------------------------
+# §15's target transcript shows `api1 10.71.0.11`, `edge 10.71.0.101`, `db 10.71.0.102`.
+# The fabric does not promise those numbers and says so in its own code: reservations are
+# handed out by arrival order inside `MC_DHCP_LO..MC_DHCP_HI`, so `api1` was `.101` only
+# because it was always created first.  What each instance carries instead is its **MAC**,
+# derived from its name by a formula `fabric.sh` and `lab-fc.sh` share — the fabric reserves
+# against the MAC, so the guest gets the same address every time without any file naming it.
+# `micro-cloud.sh status` reads the addresses back from the lease file rather than declaring
+# them, which is §8.4a: *derive the facts, record only the intent.*
+
+[lab]
+name        = "micro-cloud"
+description = "Four compute types on one L2, one image lineage, one metadata service — the §9.3 isolation capstone."
+tags        = ["micro-cloud", "firecracker", "cross-phase", "capstone"]
+
+# ── the spine (§2) ───────────────────────────────────────────────────────────
+# A chroot is the universal userspace: this tree is what `export-rootfs` turns into the
+# ext4 the microVMs boot, and what phases 4 and 5 can import as an image.  It needs root
+# (debootstrap does), so it is the one step `up` cannot take unprivileged — and it refuses
+# by name if the target exists, which is why a second `up` halts here rather than
+# rebuilding a tree several instances are running on.
+[[chroot]]
+name    = "micro-cloud-base"
+backend = "debootstrap"
+distro  = "debian"
+suite   = "bookworm"
+arch    = "x86_64"
+target  = "/var/chroots/micro-cloud-base"
+variant = "minbase"
+manager = "none"
+lab     = "micro-cloud"
+
+# ── the density case (§9.2) ──────────────────────────────────────────────────
+# Two identical microVMs from ONE image lineage, told apart only by what MMDS hands each
+# one at 169.254.169.254.  `mac` is written out rather than left to the tool because the
+# fabric reserves the lease against it: if the two derived it differently the guest would
+# silently miss its reservation, take a dynamic lease, and nothing would report a fault.
+# Both values come from `fabric.sh mac <name>` / `lab-fc.sh mac <name>`, which agree.
+[[microvm]]
+name    = "api1"
+lab     = "micro-cloud"
+kernel  = "examples/micro-cloud/images/vmlinux"
+rootfs  = "examples/micro-cloud/images/api1.ext4"
+memory  = "256M"
+vcpus   = 1
+tap     = "mc-api1"
+mac     = "06:00:ac:47:f1:f7"
+mmds    = true
+
+[[microvm]]
+name    = "api2"
+lab     = "micro-cloud"
+kernel  = "examples/micro-cloud/images/vmlinux"
+rootfs  = "examples/micro-cloud/images/api2.ext4"
+memory  = "256M"
+vcpus   = 1
+tap     = "mc-api2"
+mac     = "06:00:ac:47:e9:b6"
+mmds    = true
+
+# ── the fidelity case (§9.2) ─────────────────────────────────────────────────
+# A stock Debian cloud image with a full network stack and cloud-init, on the same L2.
+# This block is a COPY of edge.toml's, which slice 5b verified end to end; the copy is
+# bound to its source by tests/test-spec-is-one-description.sh, which refuses a mismatch
+# by name.  A copy nobody compares is the stale-record bug this plan keeps finding.
+[[vm]]
+name  = "edge"
+lab   = "micro-cloud"
+backend = "disk-image"
+distro  = "debian"
+suite   = "bookworm"
+arch    = "x86_64"
+microvm = false
+memory  = "1G"
+cpus    = 1
+network_mode = "tap"
+tap          = "mc-edge"
+mac          = "06:00:ac:47:09:03"   # == `fabric.sh mac edge`; the test refuses a mismatch
+runcmd = [
+  "sh -c 'echo EDGE-BEGIN name=$(hostname) > /dev/console'",
+  "sh -c 'echo \"  addr  : $(ip -4 -o addr show scope global | awk \"{print \\$4}\" | tr \\\\n \" \")\" > /dev/console'",
+  "sh -c 'echo \"  resolv: $(getent hosts api1 | tr \\\\n \" \")\" > /dev/console'",
+  "sh -c 'ping -c2 -W3 api1 >/dev/null 2>&1 && echo \"EDGE-PING-BY-NAME OK peer=api1\" > /dev/console || echo \"EDGE-PING-BY-NAME FAIL peer=api1\" > /dev/console'",
+  "sh -c 'echo EDGE-END > /dev/console'",
+]
+
+# ── the system-container case (§9.2) ─────────────────────────────────────────
+# `db` is the "pet": its own init, its own package manager, a filesystem that outlives a
+# restart.  THE `nic` DEVICE IS THE LOAD-BEARING LINE.  Left to itself this driver attaches
+# an instance to the engine's own managed bridge — and on this host, on 2026-08-19,
+# `lxdbr0` is where Calico's VXLAN tunnel endpoint lives (`10.216.67.1`), while being DOWN
+# and memberless.  Parenting to `br-mc0` means the lab never brings that bridge up or down,
+# which is the difference between "db joined the fabric" and "the lab moved a live
+# cluster's node IP".  See §7.1 and the LEDGER entry for the derivation.
+[[instance]]
+name    = "db"
+engine  = "lxd"
+type    = "container"
+lab     = "micro-cloud"
+devices = { eth0 = { type = "nic", nictype = "bridged", parent = "br-mc0", hwaddr = "06:00:ac:47:d7:7d" } }
+
+# ── the OCI case, rootless (§9.2) ────────────────────────────────────────────
+# `metrics` is deliberately NOT on the fabric.  A rootless container cannot be given a tap
+# — that needs CAP_NET_ADMIN, which is the whole point — so it lives in the user's network
+# namespace and reaches the others as the host does.  §9.3 makes that asymmetry the
+# exhibit rather than a footnote: this is the one instance whose isolation boundary is
+# drawn by the KERNEL's user namespace instead of by a hypervisor, and the isolation
+# matrix measures what that costs and what it buys.
+[[service]]
+name    = "metrics"
+engine  = "podman"
+manager = "plain"
+lab     = "micro-cloud"
+image   = "docker.io/library/alpine:latest"
+command = "sleep infinity"

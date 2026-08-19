@@ -4,6 +4,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -444,3 +445,62 @@ def test_phase_7_accepts_a_cross_phase_toml_it_does_not_own(tmp_path: Path) -> N
     )
     assert cp2.returncode != 0
     assert "unknown [[microvm]] key not_a_key" in cp2.stdout + cp2.stderr
+
+
+def test_the_plan_can_be_obtained_without_the_tui_stack(tmp_path) -> None:
+    """`python -m lab_tui.topology` must work on a machine that has only the stdlib.
+
+    MICRO_CLOUD_LAB_PLAN §0.2: *the guided path is a VIEW of the raw path … delete the
+    guided path and nothing is lost.*  A plan you can only obtain by installing the guided
+    path's dependencies is not that — and this was REAL, not hypothetical: `topology.py`
+    took `phase_script` from `backends/base.py`, which imports pydantic and `lab_tui.state`,
+    which imports **watchfiles**.  So the module that answers *which commands do I type* died
+    on a file-watching library it does not use.  Nothing reported it, because the only caller
+    was the TUI, which of course had them.
+
+    The check has to BLOCK the heavy imports rather than merely not use them: in this
+    project's own venv they are all installed, so a subprocess that simply runs the module
+    would pass whether or not the boundary held.  A meta_path finder that refuses them by
+    name is the only way to ask the question a bare machine asks.
+    """
+    spec = tmp_path / "lab.toml"
+    spec.write_text('[lab]\nname = "mc"\n\n[[microvm]]\nname = "api1"\n')
+
+    probe = tmp_path / "probe.py"
+    probe.write_text(
+        "import sys\n"
+        "BANNED = ('watchfiles', 'pydantic', 'textual')\n"
+        "class Refuse:\n"
+        "    def find_module(self, name, path=None):\n"
+        "        return self.find_spec(name, path) and self\n"
+        "    def find_spec(self, name, path=None, target=None):\n"
+        "        if name.split('.')[0] in BANNED:\n"
+        "            raise ImportError('blocked by the test: ' + name)\n"
+        "        return None\n"
+        "sys.meta_path.insert(0, Refuse())\n"
+        "import lab_tui.topology as t\n"
+        "sys.argv = ['topology', '--json', 'up', sys.argv[1]]\n"
+        "raise SystemExit(t.main())\n"
+    )
+
+    repo_pkg = str(Path(__file__).resolve().parents[1])
+    env = dict(os.environ, PYTHONPATH=repo_pkg)
+    cp = subprocess.run([sys.executable, str(probe), str(spec)],
+                        capture_output=True, text=True, timeout=60, env=env)
+    assert cp.returncode == 0, (
+        "the plan generator could not run with the TUI's dependencies blocked — some import "
+        "on the path to lab_tui.topology reaches them again:\n" + cp.stderr
+    )
+    assert '"argv"' in cp.stdout and "lab-fc.sh" in cp.stdout
+
+    # The control: the blocker must actually block. Without it this test would pass in a
+    # venv that has everything installed, and would then be asserting nothing at all.
+    control = tmp_path / "control.py"
+    control.write_text(probe.read_text().replace(
+        "import lab_tui.topology as t", "import lab_tui.state  # must be refused\nimport lab_tui.topology as t"))
+    cp2 = subprocess.run([sys.executable, str(control), str(spec)],
+                         capture_output=True, text=True, timeout=60, env=env)
+    assert cp2.returncode != 0 and "blocked by the test" in cp2.stderr, (
+        "CONTROL DID NOT BITE: importing lab_tui.state (which imports watchfiles) succeeded "
+        "with the blocker installed, so the assertion above proves nothing"
+    )

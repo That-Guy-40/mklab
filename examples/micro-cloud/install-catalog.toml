@@ -1,0 +1,88 @@
+# install-catalog.toml — MICRO_CLOUD_LAB_PLAN.md §11.1, decision 13.
+#
+# THIS FILE BUILDS NOTHING, AND THAT IS THE DECISION IT RECORDS.
+#
+# This repo already ships 15 automated-install labs and 26 that touch cloud-init. A
+# micro-cloud that grew its own installer would be the sixteenth, and it would be the one
+# nobody exercised — the plan's §"docs drift from sibling docs" shape, where the
+# "recommended" path is the least-travelled. So micro-cloud CATALOGUES: per method, the lab
+# that OWNS it and the exact command you would type. Metal-as-a-service made the same call
+# and for the same reason.
+#
+# The `command` lines are checked, not decorative: tools/check-guided-path-is-a-view.sh §4
+# runs each tool with the verb it names and with a verb nobody has, and refuses a catalogue
+# row whose command could not be typed. A catalogue of commands that do not work is worse
+# than no catalogue, because it is read as a survey of what this repo can do.
+#
+# The check lives THERE rather than in a test here for the reason the whole slice argues:
+# one probe, proved once, against its own self-controls. This lab's suite execs that file
+# (tests/test-guided-path-is-a-view.sh), so these rows are checked in CI all the same.
+#
+# `owners` are directory paths under examples/, and they are checked too — a catalogue row
+# naming a lab that was renamed or removed is the stale record this repo has a table of.
+
+[meta]
+purpose = "Name the lab that owns each install method. Build nothing."
+plan    = "MICRO_CLOUD_LAB_PLAN.md#111-the-install-catalog--decision-13"
+
+[[method]]
+id      = "kickstart"
+title   = "Kickstart (Red Hat family)"
+status  = "owned"
+owners  = ["almalinux-kickstart-gallery/", "rocky-kickstart-gallery/", "metal-as-a-service/"]
+command = "examples/almalinux-kickstart-gallery/select-kickstart.sh --list"
+note    = "MAAS's install.sh drives this one against real hardware, so it is live-proven rather than only generated."
+
+[[method]]
+id      = "preseed"
+title   = "Debian preseed"
+status  = "owned"
+owners  = ["debian-preseed-gallery/", "kali-preseed-gallery/", "debian-pxe-lab/"]
+command = "examples/debian-preseed-gallery/fetch-preseeds.sh --no-refresh"
+note    = "Regular, LVM and crypto variants all verified on trixie."
+
+[[method]]
+id      = "ipxe-http"
+title   = "iPXE over HTTP / HTTPS"
+status  = "owned"
+owners  = ["debian-http-boot/", "libvirt-ipxe-http-pxe/"]
+command = "examples/libvirt-ipxe-http-pxe/setup-pxe-http.sh --help"
+note    = "The HTTPS half needs a custom iPXE build; imgverify wants keyUsage=digitalSignature on the leaf."
+
+[[method]]
+id      = "golden-image-dd"
+title   = "Golden image written with dd"
+status  = "owned"
+owners  = ["metal-as-a-service/"]
+command = "examples/metal-as-a-service/maas-lab.sh help"
+note    = "drivers/image.sh. The gate that refuses a changed artifact fires BEFORE the dd, which is what makes it a gate rather than a post-mortem."
+
+[[method]]
+id      = "ram-boot"
+title   = "RAM boot (no local disk)"
+status  = "owned"
+owners  = ["metal-as-a-service/"]
+command = "examples/metal-as-a-service/maas-lab.sh help"
+note    = "drivers/ramdisk.sh."
+
+[[method]]
+id      = "cloud-image"
+title   = "Stock cloud image + cloud-init (the micro cloud's own)"
+status  = "owned"
+owners  = ["micro-cloud/"]
+command = "examples/micro-cloud/micro-cloud.sh plan"
+note    = "The `edge` instance. This is the only row micro-cloud owns, and it owns it because slice 5b booted it."
+
+[[method]]
+id      = "ubuntu-autoinstall"
+title   = "Ubuntu autoinstall (subiquity)"
+status  = "gap"
+owners  = []
+note    = "Genuinely absent — an earlier grep hit was `dkms autoinstall`, a false positive. Scheduled as its own small lab (decision 18), consuming export-rootfs and this catalogue rather than inventing image plumbing."
+
+[[method]]
+id      = "whole-disk-capture"
+title   = "Clonezilla-style whole-disk capture (ddrescue, partclone)"
+status  = "gap"
+owners  = []
+note    = "The natural tier-1 counterpart to §9.5's preserve. Also its own lab, after slice 4 per decision 18."

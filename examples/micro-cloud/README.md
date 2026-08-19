@@ -1,6 +1,27 @@
-# Micro-Cloud Lab — ☁️ under construction
+# Micro-Cloud Lab — ☁️
 
-> **Status (2026-08-19):** slices **0–8 are done.**
+> **Status (2026-08-19):** **all ten build slices have landed.**
+>
+> **Slice 10 is the demo**, and it is one spec and one verb away from being typed:
+> [`micro-cloud.toml`](micro-cloud.toml) declares the whole lab — a chroot, two Firecracker
+> microVMs, a QEMU VM, an LXD system container and a rootless podman sidecar — using only
+> blocks the phase drivers already parse, so nothing here is a fifth schema.
+> [`micro-cloud.sh`](micro-cloud.sh) orders them, and its first verb is the one worth
+> knowing: **`plan` prints the entire lab as a pasteable shell script and runs nothing.**
+> The order comes from [`lab_tui.topology`](../../phase6-tui/lab_tui/topology.py) rather
+> than from this script — asking for it is what turned up
+> [L10-3](LEDGER.md), where the module that answers *which commands do I type* could not be
+> imported without a file-watching library. The capstone is
+> [§9.3](../../MICRO_CLOUD_LAB_PLAN.md#93-the-capstone-question--isolation-not-ping)'s
+> isolation matrix: *what can each of these four things see of the others?* — measured, with
+> the rows nobody could measure printed as **UNKNOWN by name**. Start at
+> [`RUNBOOK-micro-cloud.md`](RUNBOOK-micro-cloud.md), keep
+> [`MANUAL_TESTING.md`](MANUAL_TESTING.md) open for the privileged half, and read
+> [`LEDGER.md`](LEDGER.md) first if your host runs anything that owns its own networking.
+> The install methods this repo already covers are catalogued — never rebuilt — in
+> [`install-catalog.toml`](install-catalog.toml).
+>
+> **Slices 0–8:**
 > Slice 6 is the control plane — [`reconcile.py`](../../phase6-tui/lab_tui/reconcile.py) (declared vs
 > derived, issuing nothing) and [`apply.py`](../../phase6-tui/lab_tui/apply.py) (the half that issues, acting
 > on 2 of the 6 diff kinds and holding the rest), with a 6-layer graded chaos matrix that

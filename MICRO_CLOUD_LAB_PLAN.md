@@ -1291,7 +1291,7 @@ examples/micro-cloud/
 |---|---|---|---|
 | `edge` | QEMU VM | TLS reverse proxy, cert from [`lab-ca`](examples/lab-ca/README.md) | full network stack + cloud-init; the fidelity case |
 | `api1`, `api2` | **Firecracker** | two identical app microVMs behind `edge` | the density case; MMDS gives each its own identity from one image |
-| `db` | **LXD (`lxc`), pinned** | stateful "pet" with its own init | the system-container case. **Still pinned, but the reason has expired** — the original was that `incusbr0` carried Calico's VXLAN endpoint ([D.1](#d1-the-correction--the-vxlan-underlay-is-incusbr0-and-the-empty-daemon-is-the-load-bearing-one)); as of 2026-08-04 **both daemons are inactive and both bridges are gone** ([I.2](#i2-what-this-invalidates)), so starting *either* manufactures a fresh autodetection candidate under a live cluster. Pinning still matters (`lab-lxd.sh` probes); **which** engine must be re-derived when this instance is actually built |
+| `db` | **LXD (`lxc`), pinned** | stateful "pet" with its own init | the system-container case. **Still pinned, but the reason has expired** — the original was that `incusbr0` carried Calico's VXLAN endpoint ([D.1](#d1-the-correction--the-vxlan-underlay-is-incusbr0-and-the-empty-daemon-is-the-load-bearing-one)); as of 2026-08-04 both daemons were inactive and both bridges gone ([I.2](#i2-what-this-invalidates)), so starting *either* would manufacture a fresh autodetection candidate under a live cluster. ⚠️ **That sentence expired, and slice 10 caught it doing damage** — re-derived 2026-08-19: both daemons are **active**, both bridges **exist**, and Calico's tunnel endpoint is on **`lxdbr0`** while that bridge is `down` and memberless, i.e. bound to an interface its own first-found rules would no longer choose. The hazard is therefore the *opposite* of the one described: the candidate was not manufactured by a lab, and the dangerous act is bringing `lxdbr0` up and down — which is exactly what an LXD instance on its default bridge does, twice per demo, against autodetection that re-runs every 60 s. `micro-cloud.toml` pins `db` to `br-mc0` with an explicit `nic` device for this reason; see [LEDGER L10-1](examples/micro-cloud/LEDGER.md). Pinning still matters (`lab-lxd.sh` probes); **which** engine must be re-derived when this instance is actually built |
 | `metrics` | podman | rootless sidecar | the OCI case, rootless |
 
 ### 9.3 The capstone question — isolation, not ping
@@ -1600,7 +1600,26 @@ several things on a bridge. 8–10 are the flourish.
 
 ## 15. Exit criteria
 
-**A milestone, not the goal** (§0.1). Slice 10's target:
+**A milestone, not the goal** (§0.1).
+
+> ✅ **BUILT 2026-08-19 — and the transcript below is a TARGET, not a record.** Everything
+> that can be exercised without root is done and green:
+> [`micro-cloud.sh plan`](examples/micro-cloud/micro-cloud.sh) renders the whole lab as a
+> pasteable script, [`micro-cloud.toml`](examples/micro-cloud/micro-cloud.toml) is the one
+> spec, and §9.3's matrix measures the two rows a CI machine can reach. The five-instance
+> bring-up needs root, KVM and a live fabric, so it is
+> [`MANUAL_TESTING.md`](examples/micro-cloud/MANUAL_TESTING.md)'s seven-row success
+> signature with **every row still ⬜**. Two lines of the transcript below are already known
+> to be wrong, and both are worth reading before running it:
+>
+> * **the addresses are not promised.** `api1 10.71.0.11`, `edge …101`, `db …102` — the
+>   fabric hands reservations out by arrival order inside `MC_DHCP_LO..MC_DHCP_HI` and says
+>   so in its own code. What is stable is each instance's **MAC**, derived from its name.
+> * **`up` orders invocations, not readiness** ([L10-2](examples/micro-cloud/LEDGER.md)), so
+>   the `ssh api1 ping db.mc.lab` line is evidence only when run by hand after `status`
+>   shows all five. `edge`'s own first-boot ping is expected to lose that race.
+
+Slice 10's target:
 
 ```text
 $ examples/micro-cloud/micro-cloud.sh up

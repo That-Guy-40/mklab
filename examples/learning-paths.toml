@@ -540,6 +540,17 @@ goal       = "Assemble the smallest honest cloud: microVMs that boot in a tenth 
   lab        = "micro-cloud/"
   learn      = "the fleet: five warm clones from ONE memory image, and the identity that comes back with them."
   checkpoint = "all five resume the captured tick rather than booting, share one unchanged mem file — and all five share one boot_id, which is the lesson — RUNBOOK-fleet.md."
+  [[path.step]]
+  lab        = "micro-cloud/"
+  learn      = "the whole thing at once: ONE spec, five instances of four kinds, ordered by the control plane and printed as commands before any of them runs."
+  checkpoint = "`micro-cloud.sh plan` prints the entire lab as a pasteable script and runs nothing — pipe it to `bash -n` and it parses — RUNBOOK-micro-cloud.md."
+  verify_cmd = "examples/micro-cloud/micro-cloud.sh plan"
+  verify_marker = "fabric.sh tap api1"
+  verify_host = true
+  [[path.step]]
+  lab        = "micro-cloud/"
+  learn      = "the capstone, and it is not 'can they ping': what can each compute type SEE of the others, and what did each boundary cost?"
+  checkpoint = "the isolation matrix shows the rootless container enumerating 4 processes where the host sees ~950 — while reading the host's own boot_id straight out of /proc. Rows it could not measure are printed as UNKNOWN, by name."
 
 [[path]]
 id         = "kali-security"

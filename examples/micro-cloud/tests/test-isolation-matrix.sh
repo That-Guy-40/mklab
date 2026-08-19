@@ -1,0 +1,195 @@
+#!/usr/bin/env bash
+# Verdict: §9.3's capstone — what each compute type can see of the others, MEASURED, with
+# every row it could not run named as UNKNOWN rather than quietly dropped.
+#
+#   > v2 assumed heterogeneity-on-one-L2 was the payload.  v3 disagrees.  Two microVMs on a
+#   > bridge is a *networking* exercise.  A microVM beside a rootless container on the same
+#   > fabric is a *security* exercise … So the capstone is not "can they ping" — it is:
+#   > **What can each of these four things see of the others, and what did each boundary
+#   > cost?**
+#
+# WHY THIS FILE MEASURES A BOUNDARY AND NOT A FEATURE
+# ---------------------------------------------------
+# The tempting version of this test asserts that a container "is isolated" by checking that
+# some namespace file exists.  That is the mechanism, and this repo has a table of what
+# happens next: an assertion naming HOW the code works passes when that mechanism is present
+# and broken.  A `/proc/self/ns/pid` symlink proves a PID namespace was created; it says
+# nothing about what is visible through it.  So every probe below is phrased as a QUESTION
+# ABOUT VISIBILITY and answered by looking:
+#
+#   pids      how many processes can this thing enumerate, and can it see the host's init?
+#   procfs    is /proc its own, or the host's?  (read a value only the host has)
+#   netns     does it share the host's network namespace — the rootless-podman asymmetry
+#   dmesg     can it read the kernel ring buffer, i.e. the HOST's kernel log
+#   kvm       can it open /dev/kvm — the device that grants the power to make more of these
+#   clock     can it change the time, or only read it
+#   uid       what does root inside map to outside
+#
+# THE HOST ROW IS THE CONTROL, AND IT IS NOT DECORATION
+# -----------------------------------------------------
+# Without it, "the container could not see 400 processes" is unfalsifiable — maybe nothing
+# can.  The host row is what makes every other row a COMPARISON.  It also catches the
+# failure this repo keeps meeting from the other side: if the host row and the container row
+# agree on everything, the container is not isolated at all and the matrix would otherwise
+# report a tidy table of identical numbers as though that were a result.
+#
+# WHAT RUNS UNPRIVILEGED, AND WHAT DOES NOT
+# ------------------------------------------
+# The container and host rows need nothing but podman, so they run in CI.  The microVM, VM
+# and LXD rows need KVM, images, and a fabric that needs root — they are reported as
+# UNKNOWN, BY NAME, with the reason.  "I could not check this" must never render as "this is
+# fine": the summary lists exactly which rows were not measured, and the privileged run that
+# fills them in is MANUAL_TESTING.md's.
+set -uo pipefail
+. "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
+
+need podman
+have jq || skip "jq is needed to read podman's own answers back"
+
+WORK="$(mktemp -d)"
+on_exit 'rm -rf -- "$WORK"'
+
+CTR="mc-isolation-probe-$$"
+# Kill by NAME through podman's own lifecycle verb, never by pattern: `pkill -f` on a
+# container name matches every process whose argv carries it, and on this host that has
+# included the workload being protected.
+on_exit 'podman rm -f "'"$CTR"'" >/dev/null 2>&1 || true'
+
+UNKNOWN_ROWS=()
+unknown() { UNKNOWN_ROWS+=("$1 — $2"); }
+
+# ── the probes, one implementation, run in whichever context is passed in ────
+# `runner` is a function name: it takes a shell command and runs it in that row's context.
+probe_all() {
+    local runner="$1" label="$2"
+    local pids init_seen procfs netns dmesg kvm uid
+
+    pids="$("$runner" 'ls -d /proc/[0-9]* 2>/dev/null | wc -l')"
+    init_seen="$("$runner" 'grep -qs "^Name:" /proc/1/status && head -2 /proc/1/status | sed -n "s/^Name:\s*//p" || echo "-"')"
+    # A value only the real /proc has: the host's boot id.  If the row reads the SAME id the
+    # host does, its /proc is the host's — whatever mount table says otherwise.
+    procfs="$("$runner" 'cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo "-"')"
+    netns="$("$runner" 'readlink /proc/self/ns/net 2>/dev/null || echo "-"')"
+    # NOT `dmesg | tail -1 && echo readable`. That was the first version and it reported
+    # BOTH rows readable on a host with kernel.dmesg_restrict=1, where neither is: the exit
+    # status of a pipeline is the LAST element's, so it was reporting on `tail`, which
+    # succeeds over an empty input. The repo's own standing rule — never pipe a command
+    # whose exit status is the gate — arriving inside the test written to catch checks that
+    # measure the wrong thing.
+    dmesg="$("$runner" 'if dmesg >/dev/null 2>&1; then echo readable; else echo refused; fi')"
+    kvm="$("$runner" 'test -r /dev/kvm && echo open || echo closed')"
+    uid="$("$runner" 'id -u 2>/dev/null || echo "-"')"
+
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$label" "$pids" "$init_seen" "${procfs:0:8}" "${netns//[^0-9]/}" "$dmesg" "$kvm" "$uid"
+}
+
+run_host() { bash -c "$1" 2>/dev/null; }
+run_ctr()  { podman exec "$CTR" sh -c "$1" 2>/dev/null; }
+
+# ── the container row ────────────────────────────────────────────────────────
+# `sleep infinity` and alpine: the same image and command micro-cloud.toml declares for
+# `metrics`, so this row measures the boundary the LAB has, not a boundary invented here.
+if ! podman run -d --name "$CTR" docker.io/library/alpine:latest sleep infinity >/dev/null 2>&1; then
+    skip "could not start a rootless alpine container (no image cached and no network?) — the container row is the one row this test exists to run unprivileged"
+fi
+
+MATRIX="$WORK/matrix.tsv"
+{
+    probe_all run_host "host"
+    probe_all run_ctr  "metrics (podman, rootless)"
+} > "$MATRIX"
+
+printf '\n  %-28s %6s %-10s %-9s %-9s %-9s %-7s %s\n' \
+    ROW PIDS PID1 BOOT_ID NETNS DMESG /dev/kvm UID >&2
+while IFS=$'\t' read -r a b c d e f g h; do
+    printf '  %-28s %6s %-10s %-9s %-9s %-9s %-7s %s\n' "$a" "$b" "$c" "$d" "$e" "$f" "$g" "$h" >&2
+done < "$MATRIX"
+printf '\n' >&2
+
+host_row="$(sed -n '1p' "$MATRIX")"
+ctr_row="$( sed -n '2p' "$MATRIX")"
+
+IFS=$'\t' read -r _ h_pids h_init h_boot h_netns h_dmesg h_kvm h_uid <<<"$host_row"
+IFS=$'\t' read -r _ c_pids c_init c_boot c_netns c_dmesg c_kvm c_uid <<<"$ctr_row"
+
+# ── the assertions ───────────────────────────────────────────────────────────
+# 1. The rows must DIFFER.  An isolation matrix whose rows agree has measured nothing, and
+#    it is the failure that looks most like success: a full table of plausible numbers.
+[[ "$host_row" != "$ctr_row" ]] \
+    || fail "REGRESSION: the host row and the container row are IDENTICAL. Either the probes ran in the same context, or the container has no boundary at all — and a matrix of identical rows reads like a result"
+note "the host and container rows differ, so the probes are measuring a boundary"
+
+# 2. The process table is the boundary a reader can see at a glance.
+(( c_pids > 0 )) || fail "the container row enumerated 0 processes — the probe did not run, which is not the same as 'it could see nothing'"
+(( c_pids < h_pids )) \
+    || fail "REGRESSION: the container enumerated $c_pids processes and the host $h_pids. A rootless container has its own PID namespace; seeing as many as the host means it did not get one"
+note "process table: host $h_pids, container $c_pids — the PID namespace is doing something"
+
+# 3. Its /proc is its own.  Compared by a VALUE only the host has rather than by a mount
+#    table entry, because a bind of the host's /proc would still be called "proc".
+[[ "$c_boot" != "$h_boot" || "$c_boot" == "-" ]] || {
+    # boot_id is per-BOOT, not per-namespace: a container legitimately reads the host's.
+    # This is the interesting half of the row rather than a failure, so it is reported.
+    note "/proc: the container reads the HOST's boot_id ($h_boot…) — procfs is namespaced for PIDs, not for the machine's identity. That is the boundary's shape, and it is why §9.3 asks what each can SEE rather than whether it 'is isolated'"
+}
+
+# 4. THE ROOTLESS ASYMMETRY, WHICH IS THE WHOLE POINT OF §9.3's LAST PARAGRAPH.
+#    `metrics` cannot be given a tap: that needs CAP_NET_ADMIN. So it does not join the
+#    fabric — it lives in a network namespace pasta/slirp built for it, and reaches the
+#    other instances the way the host does. This is asserted, not narrated, because the
+#    spec DELIBERATELY gives metrics no tap and a future edit adding one should fail here.
+[[ -n "$c_netns" ]] || fail "could not read the container's network namespace id"
+[[ "$c_netns" != "$h_netns" ]] \
+    || fail "the rootless container SHARES the host's network namespace. §9.3's exhibit is that it does not — and if it did, 'rootless' would be buying much less than the lab claims"
+note "network namespace: host $h_netns, container $c_netns — metrics is NOT on the fabric, by construction"
+
+python3 - "$LAB_DIR/micro-cloud.toml" <<'PY' || fail "micro-cloud.toml gives 'metrics' a tap. A rootless container cannot open one (CAP_NET_ADMIN), so the spec would declare an instance the driver must refuse — and §9.3's asymmetry would stop being measurable"
+import sys, tomllib
+with open(sys.argv[1], "rb") as fh:
+    doc = tomllib.load(fh)
+svc = next((s for s in doc.get("service") or [] if s.get("name") == "metrics"), None)
+raise SystemExit(0 if svc is not None and not svc.get("tap") else 1)
+PY
+note "the spec still gives 'metrics' no tap, which is what makes the asymmetry above real"
+
+# 5. /dev/kvm — the device that grants the power to create more of these.
+[[ "$c_kvm" == "closed" || "$c_kvm" == "open" ]] || fail "the /dev/kvm probe returned '$c_kvm'"
+note "/dev/kvm: host=$h_kvm container=$c_kvm"
+
+# 6. dmesg. REPORTED, not asserted, and the distinction is the point: whether an
+#    unprivileged container can read the HOST's kernel ring buffer is a property of
+#    `kernel.dmesg_restrict`, which belongs to the machine and not to the lab. Asserting a
+#    value here would make the test fail on a hardened host for being hardened. But it is
+#    the single most surprising cell in the matrix — the boundary that keeps a container
+#    from seeing 900 processes does not keep it from reading what the kernel says about all
+#    of them — so it is printed with its cause attached.
+dmesg_restrict="$(cat /proc/sys/kernel/dmesg_restrict 2>/dev/null || echo '?')"
+note "dmesg: host=$h_dmesg container=$c_dmesg (kernel.dmesg_restrict=$dmesg_restrict — with 0, an unprivileged container reads the HOST's ring buffer; this is a host setting, so it is reported, not asserted)"
+
+# ── the rows this run could not measure, named ───────────────────────────────
+# A ROW IS UNKNOWN UNTIL IT IS MEASURED, not unknown if some precondition happens to fail.
+# The first version of this block had it the other way round and immediately demonstrated
+# the bug the whole file is about: it recorded the Firecracker row as UNKNOWN only when
+# /dev/kvm was unreadable OR the binary was missing — and on this host BOTH were present, so
+# the row was neither measured nor reported.  It vanished.  The summary then said "2 rows
+# measured" with no mention of the two microVMs, which is exactly the shape of *silently
+# downgrading an unchecked thing to a pass*.
+#
+# So the three remaining rows are declared unmeasured here, unconditionally, and would be
+# removed only by code that actually probes them.  Each carries the reason it needs the
+# privileged run rather than a generic "not available".
+unknown "api1, api2 (firecracker microVM)" \
+    "needs a booted microVM: KVM, the two ext4 images, and a tap from a root-run fabric. A microVM's boundary is a hypervisor, so it cannot be probed with 'podman exec' — the probe has to run INSIDE the guest, over its console or vsock"
+unknown "edge (qemu vm)" \
+    "needs the fidelity VM booted on a fabric tap (root), which is slice 5b's privileged path"
+unknown "db (lxd)" \
+    "needs a running LXD instance parented to br-mc0 (root for the bridge). On this host that row also carries a hazard worth reading before running it: see LEDGER.md L10-1"
+
+if (( ${#UNKNOWN_ROWS[@]} )); then
+    printf '  UNKNOWN rows (measured by nothing, so reported as unmeasured):\n' >&2
+    printf '    - %s\n' "${UNKNOWN_ROWS[@]}" >&2
+    printf '  Fill them in with the privileged run in MANUAL_TESTING.md.\n\n' >&2
+fi
+
+pass "§9.3 isolation matrix: 2 of ${#UNKNOWN_ROWS[@]}+2 rows measured (host + rootless container), rows differ, PID and network namespaces both observed to bound what metrics can see; ${#UNKNOWN_ROWS[@]} row(s) reported UNKNOWN by name"
