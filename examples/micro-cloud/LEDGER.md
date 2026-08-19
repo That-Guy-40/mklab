@@ -748,3 +748,71 @@ than after it.
 
 That is the only difference. **The mistake rate did not change; the point at which it was
 caught did.**
+
+---
+
+## L10-15 — the matrix reaches 4 of 5, and `db`'s missing address stops being guessed at
+
+**Run 2026-08-19**, `--reset`, with the L10-14 corrections. `up` rc=0, `down` rc=0, 74 s,
+cluster and both engine bridges unchanged. The chroot was verified to carry both fixes before
+the run rather than after: `post_command[4]` shows the `Hostname=db` unit being written, and
+the tree has the `systemd-networkd` symlink and the `.network` file with the right content.
+
+### §9.3's matrix is now 4 of 5
+
+```text
+  ROW                            PIDS PID1       BOOT_ID   NETNS
+  host                            979 systemd    07ff095c  4026531840
+  metrics (podman, rootless)        4 sleep      07ff095c  4026534179
+  db (lxd system container)         7 systemd    d6eaf799  4026535033*
+  edge (qemu vm, full stack)       74 systemd    34c39bca  4026531840*
+```
+
+`db` measured for the first time, and the row earns its place immediately: **7 processes with
+`systemd` as PID 1** is the system-container case stated in one line — a container that boots
+an init, beside a rootless container whose PID 1 is `sleep`, beside a VM with its own kernel.
+The case-folding fix from [L10-13](#l10-13--all-five-up-and-two-defects-inside-the-green-run)
+is what let it be seen at all.
+
+Only `api1`/`api2` remain, and their absence is structural rather than a to-do.
+
+### And `db` STILL has no address — which is now the interesting part
+
+`getent db` empty, `ping db` unresolvable, no lease. But this run establishes what the last
+two could not:
+
+* the image is right — the symlink and the `.network` unit are present and correct, checked
+  on disk after the run;
+* `systemd` **is** PID 1 inside the container, so the init half works;
+* `lab-lxd.sh exec` **works**, because the matrix probed through it.
+
+Every fact needed to explain this is one command away *inside* a container that was running
+while the script had a shell into it. Two rounds were spent diagnosing this by inference —
+first *"it has no init"*, then *"it has no DHCP client"* — and each guess cost a privileged
+run to test.
+
+So the harness now asks: `run-privileged-demo.sh` gained a step that queries `db` directly
+for its interfaces, addresses, hostname, whether `systemd-networkd` is active and enabled,
+what `networkctl` sees, the contents of `/etc/systemd/network/`, and the unit's journal.
+
+It prints those **whether or not `db` has an address**, deliberately. A block that appears
+only on failure is one nobody can read, because nobody has seen what healthy looks like.
+
+**The lesson is not about DHCP.** It is that a running instance with a working exec channel
+is the cheapest oracle in the lab, and it went unasked for two rounds while its behaviour was
+inferred from the image instead.
+
+### Addendum — the suite flaked again, and I lost the message again
+
+While preparing this entry, one `run-all.sh` reported `14 passed, 6 skipped, 1 failed`; three
+captured runs immediately after were clean. **The failing test's name was not recorded**,
+because the run was piped into `grep '=== summary'` and the `FAIL:` line went with it.
+
+[L10-5](#l10-5--the-intermittent-was-two-things-and-one-of-them-was-me) ends with the
+instruction *"next occurrence, keep the full log, not the summary"*, written after exactly
+this. I read that entry while writing this one and still piped the run.
+
+The instruction was not the fix. Filtering at the point of running is what loses the
+evidence, so the runs after it were written to files first and grepped second — which is what
+the instruction should have said, and now does here: **redirect, then read; never pipe a run
+whose failure you might need to explain.**
