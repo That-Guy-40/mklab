@@ -394,3 +394,71 @@ and the difference between stranded and merely stopped is entirely whether the o
 told. `micro-cloud.sh down` now names any still-running VM before the fabric step, and prints
 the `stop` command for each. It does not stop them: that is the operator's call, and a
 teardown that starts reaping VMs is one you run once and then stop trusting.
+
+---
+
+## L10-9 — the clean run: the capstone claim, observed
+
+**Run 2026-08-19**, `sudo -E`, full spec after a reset. **57 s**, `down` rc=0, cluster and
+both engine bridges unchanged.
+
+### §15's third exit criterion, met
+
+From `edge` — a full QEMU VM with systemd and 73 processes — to `api1`, a Firecracker
+microVM booting a 128 MB ext4:
+
+```text
+$ hostname            -> edge
+$ ip -4 addr          -> 10.71.0.103/24
+$ getent hosts api1   -> 10.71.0.101     api1
+$ ping -c2 api1       -> 2 packets transmitted, 2 received, 0% packet loss
+```
+
+Resolution and reachability asked **separately**, because `ping` answering proves both at
+once and tells you nothing about which broke when it fails. Three leases, each against the
+MAC derived from the instance's own name, `br-mc0` carrying `mc-api1 mc-api2 mc-edge`, and
+`api1`'s own console agreeing from the inside: `dhcp rc=0`, `gw ping: OK`,
+`resolv: search mc.lab nameserver 10.71.0.1`.
+
+**Four of five instances up** — `api1`, `api2`, `edge`, `metrics` (rootless podman, as
+`$SUDO_USER`, via the per-slot privilege drop).
+
+### The fifth, and it was my spec that was wrong
+
+```text
+[error] instance 'db': unknown key 'lab' — 'up' would silently ignore it.
+  known [[instance]] keys: name engine type image from_chroot from_tarball from_qcow2 …
+```
+
+`[[microvm]]`, `[[vm]]` and `[[service]]` all take a `lab` key. Phase 5's `[[instance]]` does
+not — the lab name comes from `[lab]` — and I wrote one by analogy, exactly as `--json` was
+written by analogy in [L10-7](#l10-7--the-second-privileged-run-green-and-three-defects-only-a-green-run-could-show).
+**`lab-lxd.sh` was right and loud**, refusing the whole config rather than ignoring a key it
+did not understand. It just refuses at the *end* of a bring-up, after four instances are
+already running.
+
+Guarded now, and with a stronger oracle than the flag check next door: phases 5 and 7 each
+declare the key list they **validate against** as a shell constant, so
+`test-spec-is-one-description.sh` compares the spec against the very string the driver uses.
+Re-injecting `lab` into `[[instance]]` makes it fail by name. Scope is stated rather than
+implied: phases 1, 2 and 4 declare no such constant — phase 4 accepted the same key without
+complaint — so their blocks are not covered.
+
+### Two defects in the matrix's own reporting
+
+- **It measured three rows and said two.** The `2` was a literal in the verdict line, so a
+  run that filled a live `edge` row printed it in the table and then under-reported the
+  count. Now derived from the matrix, and it names the rows it measured.
+- **A namespace id is only comparable within one kernel.** `edge` reported netns
+  `4026531840` — identical to the host's — and that is *not* sharing: it is the initial-netns
+  inode in **every** Linux kernel, and `edge` has its own. The table invited precisely the
+  wrong conclusion. Rows with their own kernel are now marked, **derived** from boot_id
+  differing rather than from a list, with the reason printed under the table.
+
+### Still UNKNOWN, and it is structural
+
+`api1`/`api2` cannot be probed from outside: a microVM's boundary is a hypervisor, so the
+probe must execute *inside*, and the slice-1/3 rootfs has no exec channel at all — no ssh, no
+agent, a console that only speaks outward. Closing that row means booting them on slice 5c's
+vsock-agent rootfs and probing over vsock: a different **image**, not a different privilege.
+That is now what the UNKNOWN line says.
