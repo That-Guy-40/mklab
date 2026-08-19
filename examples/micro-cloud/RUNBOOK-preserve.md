@@ -27,22 +27,30 @@ restore re-checks all of it **before** it imports anything.
 | what it writes | the filesystem, back out to a tarball, + `derivation.toml` | an engine-native snapshot, in place |
 | keeps | the bytes — reproducible, movable to another host | the engine's own notion of state |
 | loses | running state **and the image's configuration** (see below) | portability: locked to this host, this engine, this version |
-| phases | all six | **phase 2 only** — every other phase refuses **by name** and says what is missing |
+| phases | all six | **phases 2 and 7** — the other four refuse **by name** and say what is missing |
 
 Pick **portable** unless you specifically want to roll a VM's disk back in place.
 
-### The fast tier is thinner than §9.5's table suggests, and that is deliberate
+### The fast tier is thinner than §9.5's table suggests
 
-Only `lab-vm.sh` has an engine-native snapshot verb today. Ask for `--tier fast` anywhere
-else and you get a refusal that names the mechanism §9.5 intends and the verb that does not
-exist yet:
+> **Updated 2026-08-19.** This section read *"phase 2 only … `lab-fc.sh` has no snapshot
+> verb; it is DEFERRED"* for a day after that stopped being true — `lab-fc.sh snapshot`
+> landed in #236. Left visible rather than quietly rewritten, because it is the record-outlives-its-subject
+> shape in this lab's own documentation: nothing errored, the paragraph was simply false. The
+> **table** never was, because `capabilities` derives it by probing each driver and
+> [`tests/test-preserve-capability-table.sh`](tests/test-preserve-capability-table.sh) fails
+> when the two disagree **in either direction** — including this one, where a driver grows a
+> verb and the tool goes on refusing the tier with a very convincing message. Derive the
+> fact; don't cache it.
+
+Only `lab-vm.sh` and `lab-fc.sh` have an engine-native snapshot verb. Ask for `--tier fast`
+on a container phase and you get a refusal that names the mechanism §9.5 intends and the verb
+that does not exist yet:
 
 ```console
-$ ./preserve.sh save --tier fast --out /tmp/bk podman:mylab/web fc:api1
-[preserve.sh] REFUSED 2 — named, not skipped:
+$ ./preserve.sh save --tier fast --out /tmp/bk podman:mylab/web
+[preserve.sh] REFUSED 1 — named, not skipped:
   - podman:mylab/web — no fast tier: `podman commit` — lab-podman.sh has no commit verb
-  - fc:api1 — no fast tier: Firecracker snapshot+memory (§5.8) — lab-fc.sh has no snapshot
-    verb; it is DEFERRED, not absent by accident
 [preserve.sh] nothing was preserved
 ```
 
@@ -51,7 +59,9 @@ portable tier here would hand you a backup with no running state while you belie
 one — which is the whole failure mode §9.5 exists to prevent, wearing a helpful face.
 
 **And one correction to §9.5's own table:** it says the fast tier "preserves running state".
-For Firecracker snapshot+memory and a stateful LXD snapshot that is true. For phase 2 it is
+For Firecracker that is now literally true — `lab-fc.sh snapshot create` captures memory,
+devices **and** the disk from one pause, and a restore resumes the guest at the captured
+instant rather than rebooting it ([`RUNBOOK-fleet.md`](RUNBOOK-fleet.md)). For phase 2 it is
 **not** — `lab-vm.sh snapshot create` is a `qemu-img` *internal* snapshot and the driver
 refuses to take one against a running VM (it would corrupt a live disk), so what you get is
 **disk state at a stopped moment**. Still useful, still non-portable, but you cannot resume

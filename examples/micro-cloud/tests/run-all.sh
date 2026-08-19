@@ -19,6 +19,9 @@ tests=(test-fabric-mac-derivation.sh test-bench-boot.sh test-fabric-round-trip.s
        # engine-free on purpose, so the assertion this lab most needs to keep is the one
        # that runs everywhere; the round trip needs a live rootless podman and SKIPs.
        test-preserve-gate.sh test-preserve-capability-table.sh test-preserve-round-trip.sh
+       # Slice 8 — the fleet. Both need KVM, a kernel and a bootable rootfs and SKIP without
+       # them; the gates half runs everywhere and lives in phase7-firecracker/tests/.
+       test-fleet-clones.sh test-clone-entropy.sh
        # The class behind phase 2's usage-heredoc bug, checked here for preserve.sh.
        test-usage-is-data.sh)
 
