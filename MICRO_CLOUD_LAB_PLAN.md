@@ -1266,7 +1266,7 @@ confirm the control plane still names the right machine*.
 ```text
 examples/micro-cloud/
 ├── README.md                 the §2 matrix; what a cloud is; §3.1's one-tenant sentence
-├── micro-cloud.toml          ONE spec: chroot + microvms + vm + containers
+├── micro-cloud.toml          ONE spec: the five things that RUN (see the correction below)
 ├── fabric.sh                 bridge/tap/NAT/dnsmasq  (§7)
 ├── micro-cloud.sh            up | down | status — orders the phase tools
 ├── preserve.sh               the two tiers + derivation manifest (§9.5)
@@ -1284,6 +1284,22 @@ examples/micro-cloud/
 ├── MANUAL_TESTING.md         observed vs merely generated (§10)
 └── tests/                    lib.sh + run-all.sh + host-safe checks (§10)
 ```
+
+> ⚠️ **CORRECTED 2026-08-19, by running it.** The line above read *"ONE spec: chroot +
+> microvms + vm + containers"*, and the spec carried a `[[chroot]]` block until a full
+> bring-up showed it could not be what §2 says it is. A chroot is a **build input**: what the
+> instances consume are its *exports* — an ext4 for the microVMs and a tarball for `db` — and
+> the control plane has no slot that emits an export step. So the bring-up needed those
+> exports to exist **before** the very step that created the tree they come from, and `db`
+> failed on exactly that. Phase 5 also refuses to read a root-built chroot directly (mode-600
+> files an unprivileged run cannot read) and names `export-tarball` as the route.
+>
+> `micro-cloud.toml` now declares the five things that **run**;
+> [`RUNBOOK-micro-cloud.md`](examples/micro-cloud/RUNBOOK-micro-cloud.md) step 0 builds the
+> spine and both exports. §2 is *better* served by this: one debootstrapped tree becomes the
+> microVMs' root filesystem **and** `db`'s image, so "every compute type imports the same
+> userspace" is demonstrated rather than asserted. A `[[chroot]]` block was the tidier
+> document and the weaker demonstration.
 
 ### 9.2 The instances
 

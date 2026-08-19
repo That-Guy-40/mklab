@@ -38,22 +38,25 @@ name        = "micro-cloud"
 description = "Four compute types on one L2, one image lineage, one metadata service — the §9.3 isolation capstone."
 tags        = ["micro-cloud", "firecracker", "cross-phase", "capstone"]
 
-# ── the spine (§2) ───────────────────────────────────────────────────────────
-# A chroot is the universal userspace: this tree is what `export-rootfs` turns into the
-# ext4 the microVMs boot, and what phases 4 and 5 can import as an image.  It needs root
-# (debootstrap does), so it is the one step `up` cannot take unprivileged — and it refuses
-# by name if the target exists, which is why a second `up` halts here rather than
-# rebuilding a tree several instances are running on.
-[[chroot]]
-name    = "micro-cloud-base"
-backend = "debootstrap"
-distro  = "debian"
-suite   = "bookworm"
-arch    = "x86_64"
-target  = "/var/chroots/micro-cloud-base"
-variant = "minbase"
-manager = "none"
-lab     = "micro-cloud"
+# ── the spine (§2), and why it is NOT a block in this file ───────────────────
+# §2's thesis is that a chroot is the universal userspace *every compute type imports*, and
+# §9.1 sketched this file as "chroot + microvms + vm + containers". It carried a [[chroot]]
+# block until 2026-08-19, when running it revealed the block could not be what §2 says it is:
+#
+#   * a chroot is a BUILD INPUT, not a running instance. What the instances consume are its
+#     EXPORTS — an ext4 for the microVMs (`export-rootfs`) and a tarball for `db`
+#     (`export-tarball`) — and the control plane has no slot that emits an export step.
+#   * so a bring-up needs the exports to exist BEFORE the instance steps, while the chroot
+#     block was created by the FIRST of those same steps. Circular, and `db` failed on it.
+#   * and the export is not optional plumbing: phase 5 refuses a root-built chroot read
+#     directly, because `sudo lab-chroot create` leaves mode-600 files (/etc/shadow) that an
+#     unprivileged run cannot read. `export-tarball` runs tar as root and chowns the result,
+#     which is the repo's established clean rootless route.
+#
+# So the chroot and its two exports are RUNBOOK-micro-cloud.md's step 0, and the spine is
+# load-bearing rather than decorative: the same tree becomes the microVMs' root filesystem
+# AND `db`'s image. A [[chroot]] block here would have been the tidier document and the
+# weaker demonstration.
 
 # ── the density case (§9.2) ──────────────────────────────────────────────────
 # Two identical microVMs from ONE image lineage, told apart only by what MMDS hands each
@@ -124,9 +127,14 @@ runcmd = [
 # the driver behaving exactly as it should. tests/test-spec-is-one-description.sh now checks
 # every key in this file against the driver's own declared key list.
 [[instance]]
-name    = "db"
-engine  = "lxd"
-type    = "container"
+name         = "db"
+engine       = "lxd"
+type         = "container"
+# THE SPINE, CONSUMED. This tarball is the [[chroot]] tree of step 0, exported by
+# `lab-chroot.sh export-tarball` — so `db` and the microVMs run the same userspace, built
+# once. `from_chroot` would read the tree directly and phase 5 refuses that for a root-built
+# chroot, by name, pointing at exactly this route.
+from_tarball = "examples/micro-cloud/images/micro-cloud-base.tar.gz"
 devices = { eth0 = { type = "nic", nictype = "bridged", parent = "br-mc0", hwaddr = "06:00:ac:47:d7:7d" } }
 
 # ── the OCI case, rootless (§9.2) ────────────────────────────────────────────
