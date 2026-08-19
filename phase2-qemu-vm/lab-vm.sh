@@ -2665,7 +2665,15 @@ build_qemu_argv() {
 
     # Serial console exposed as a unix socket so `lab-vm.sh console` can attach
     QEMU_ARGV+=(
-        -chardev "socket,id=ser0,path=$(vm_serial "$name"),server=on,wait=off"
+        # `logfile=` IS THE DIFFERENCE BETWEEN A CONSOLE AND A LOST CONSOLE.
+        # The socket alone is live-only: nothing is listening at boot, so everything the
+        # guest says before a human runs `console` is gone. Measured 2026-08-19 — an
+        # `edge` VM whose cloud-init `runcmd` writes EDGE-BEGIN / EDGE-PING-BY-NAME to
+        # /dev/console produced NO record of either, because those lines are the lab's
+        # success signature and they were written into a socket with no reader. QEMU's
+        # chardev takes a logfile alongside the socket, so the socket stays exactly as
+        # interactive as it was and the bytes also land somewhere readable afterwards.
+        -chardev "socket,id=ser0,path=$(vm_serial "$name"),server=on,wait=off,logfile=$(vm_dir "$name")/console.log"
         -serial "chardev:ser0"
     )
 
@@ -3270,6 +3278,30 @@ cmd_ssh() {
     [[ -n "$name" ]] || die "usage: $LAB_PROG ssh <name> [-- cmd args...]"
     validate_vm_name "$name"
     vm_exists "$name" || die "no VM named '$name'"
+    # `ssh` CONNECTS TO 127.0.0.1:$ssh_port, WHICH ONLY EXISTS IN USER-MODE NETWORKING.
+    # That port is a slirp hostfwd. A VM on a tap or a bridge has no hostfwd at all, so this
+    # verb can never connect for one — it hangs until ssh gives up, and `list` goes on
+    # advertising an SSHPORT that means nothing. Measured 2026-08-19: micro-cloud's `edge`
+    # (network_mode = "tap") was waited on for 240 s by a runbook step that could not have
+    # worked at any commit — this repo's own recorded bug class, a documented command whose
+    # first invocation had never succeeded.
+    #
+    # Refuse, and name the thing that DOES work: the guest is reachable at its address on
+    # the fabric, and its console is readable either way.
+    #
+    # THIS RUNS BEFORE THE `is it running` CHECK, on purpose. Whether a VM can be
+    # ssh'd to at all is a fact about its CONFIGURATION, not about its run state --
+    # answering "it is not running" first sends the reader to `start` and then into
+    # exactly the hang this refusal exists to replace.
+    local nmode; nmode="$(read_manifest_field "$name" network_mode)"
+    if [[ "$nmode" == "tap" || "$nmode" == "bridge" ]]; then
+        die "'$name' has network_mode = \"$nmode\", so there is no host port forward to ssh through — this verb only works for user-mode networking, and the ssh_port in its manifest is meaningless here.
+  Reach it at its address on the fabric instead:
+      ssh ${user:-lab}@<guest-ip>        # the DHCP server that serves this VM knows the address
+  or read what it is saying:
+      $LAB_PROG console $name            # live
+      less \"$(vm_dir "$name")/console.log\"   # everything since boot"
+    fi
     vm_running "$name" || die "$name is not running (try '$LAB_PROG start $name')"
     local port user
     port="$(read_manifest_field "$name" ssh_port)"

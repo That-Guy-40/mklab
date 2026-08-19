@@ -103,11 +103,34 @@ cd "$REPO"
 # disagree in the first place.
 RUN_AS="${MC_OWNER:-${SUDO_USER:-}}"
 
-# The argv prefix that drops privilege, or nothing when there is none to drop. It is
-# PREPENDED INTO THE PLAN rather than applied invisibly at execution time, so `plan` prints
-# the command that actually runs — a plan that quietly differs from the run is not a view of
-# anything.
+# WHICH SLOTS KEEP ROOT, AND WHY EACH ONE DOES.
+#
+# The privilege requirement is PER SLOT, not uniform. The first version of this drop was
+# uniform, which would have run `lab-chroot.sh create` as an unprivileged user
+# — which would have traded one collision for another. Each entry names the reason, because
+# a list of slot names with no reasons is a cached decision nobody can re-check:
+#
+#   chroot  KEEPS ROOT. `debootstrap` makes device nodes and chroots into the tree. Phase 1
+#           does have a `--rootless` mode (fakechroot), but it does not survive a base with
+#           systemd helpers, which a Debian bookworm base has.
+#
+# Everything else is dropped, and for each the reason is a property of the resource:
+#   vm, fc  the TAPS ARE THE USER'S (fabric.sh creates them owned by $RUN_AS so the VMM
+#           needs no privilege at all — slice 2, and slice 5a's test asserts it).
+#   podman  `lab-podman.sh` REFUSES to run as root without --allow-root: `metrics` is a
+#           rootless sidecar and that is §9.3's exhibit.
+#   lxd     the engine is reached through a group-owned socket (`incus-admin`/`lxd`), so the
+#           user reaches it and root would create instances under a different project view.
+#   docker  same shape, via the `docker` group.
+_ROOT_SLOTS=" chroot "
+
+# The argv prefix that drops privilege for THIS slot, or nothing when there is none to drop
+# or the slot must keep it. It is PREPENDED INTO THE PLAN rather than applied invisibly at
+# execution time, so `plan` prints the command that actually runs — a plan that quietly
+# differs from the run is not a view of anything.
 drop_prefix() {
+    local slot="${1:-}"
+    [[ "$_ROOT_SLOTS" == *" $slot "* ]] && return 0
     if (( EUID == 0 )) && [[ -n "$RUN_AS" && "$RUN_AS" != root ]]; then
         printf '%s\n' runuser -u "$RUN_AS" --
     fi
@@ -199,9 +222,10 @@ run_topology(){
         # The instances are the invoking user's; see the note by RUN_AS. An `echo` step is
         # the driver telling you something (phase 1 and 2 emit advice rather than acting),
         # so it is left alone -- wrapping a message in runuser would be theatre.
+        local slot; slot="$(jq -r --argjson i "$i" '.[$i].slot' <<<"$json")"
         local -a pre=()
         if [[ "${argv[0]}" != "echo" ]]; then
-            mapfile -t pre < <(drop_prefix)
+            mapfile -t pre < <(drop_prefix "$slot")
         fi
         step "$desc" ${pre+"${pre[@]}"} "${argv[@]}"
     done
@@ -229,9 +253,30 @@ cmd_plan(){
     step "fabric: reverse ONLY ours, assert absence, compare Calico" "$FABRIC" down
 }
 
+# Rootless podman needs a user runtime directory, and root's is not it.
+#
+# `runuser` resets HOME but leaves XDG_RUNTIME_DIR alone, so a step dropped to $RUN_AS would
+# inherit whatever the root shell had -- unset, or /run/user/0. Rootless podman then cannot
+# find its runtime state and fails in a way that reads like a podman problem rather than an
+# environment one. `sudo -E` usually carries the right value through, but "usually" is not a
+# contract, so it is derived from the target user here and exported for every dropped step.
+fix_runtime_dir(){
+    local uid
+    [[ -n "$RUN_AS" && "$RUN_AS" != root ]] || return 0
+    (( EUID == 0 )) || return 0
+    uid="$(id -u "$RUN_AS" 2>/dev/null)" || return 0
+    if [[ -d "/run/user/$uid" ]]; then
+        export XDG_RUNTIME_DIR="/run/user/$uid"
+    else
+        c_warn "no /run/user/$uid — rootless podman may refuse; log in as $RUN_AS once, or"
+        c_warn "enable lingering: loginctl enable-linger $RUN_AS"
+    fi
+}
+
 cmd_up(){
     need_root up
     [[ -r "$SPEC" ]] || die "spec not found: $SPEC"
+    fix_runtime_dir
     fabric_steps
     run_topology up
     printf '\n'
@@ -240,9 +285,54 @@ cmd_up(){
     c_warn "the peer check: 'up' orders invocations, not readiness (header note 2)."
 }
 
+# Which declared VMs are still running, by asking phase 2 rather than guessing.
+#
+# `down` stops microVMs and leaves VMs alone -- deliberately: a VM's disk is expensive
+# persistent state and a teardown that reaps it is one you run once and then stop trusting.
+# But the fabric step immediately after DELETES THE TAPS those VMs are using, so a VM that
+# survives `down` survives it with its network yanked out. Observed 2026-08-19: `edge` was
+# still `running` after a clean `down rc=0`, on a tap that no longer existed.
+#
+# That is not a reason to start destroying VMs. It is a reason to SAY SO: on this repo's own
+# ladder, a machine left in a state nobody named is the STRANDED rung, and the difference
+# between stranded and merely stopped is entirely whether the operator was told.
+running_vms(){
+    local n
+    while read -r n; do
+        [[ -n "$n" ]] || continue
+        "$REPO/phase2-qemu-vm/lab-vm.sh" list 2>/dev/null \
+            | awk -v want="$n" '$1 == want && $0 ~ /running/ { print want }'
+    done < <(python3 - "$SPEC" <<'PY'
+import sys, tomllib
+with open(sys.argv[1], "rb") as fh:
+    doc = tomllib.load(fh)
+for item in doc.get("vm") or []:
+    if item.get("tap"):
+        print(item["name"])
+PY
+)
+}
+
 cmd_down(){
     need_root down
+    fix_runtime_dir
     run_topology down
+
+    local -a stranded=()
+    mapfile -t stranded < <(running_vms)
+    if (( ${#stranded[@]} )); then
+        printf '\n'
+        c_warn "STILL RUNNING, and the next step removes the taps they are using:"
+        c_warn "  ${stranded[*]}"
+        c_warn "phase 2 keeps VMs across a teardown on purpose (the disk is expensive), but"
+        c_warn "the fabric owns the taps and is about to delete them — so these will keep"
+        c_warn "running with a dead NIC. Stop them first if that is not what you want:"
+        local v
+        for v in "${stranded[@]}"; do
+            c_warn "  $REPO/phase2-qemu-vm/lab-vm.sh stop $v"
+        done
+    fi
+
     step "fabric: reverse ONLY ours, assert absence, compare Calico" "$FABRIC" down
 }
 

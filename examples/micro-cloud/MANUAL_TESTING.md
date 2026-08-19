@@ -45,8 +45,9 @@ phase7-firecracker/lab-fc.sh preflight --config examples/micro-cloud/micro-cloud
 ```bash
 sudo examples/micro-cloud/micro-cloud.sh up
      examples/micro-cloud/micro-cloud.sh status
-     phase2-qemu-vm/lab-vm.sh ssh edge -- getent hosts api1
-     phase2-qemu-vm/lab-vm.sh ssh edge -- ping -c2 api1
+     edge_ip=$(awk '$4 == "edge" { print $3 }' /run/mklab-mc/leases)
+     ssh lab@"$edge_ip" -- getent hosts api1     # NOT `lab-vm.sh ssh`: see below
+     ssh lab@"$edge_ip" -- ping -c2 api1
      examples/micro-cloud/tests/test-isolation-matrix.sh
 sudo examples/micro-cloud/micro-cloud.sh down
      examples/micro-cloud/fabric.sh status      # THEIRS must match what you wrote down
@@ -58,7 +59,7 @@ sudo examples/micro-cloud/micro-cloud.sh down
 |---|---|---|---|
 | 1 | the fabric came up and Calico did not move | `fabric.sh up` records the binding and the whole candidate set; `down` compares and reports a migration by name | ⬜ |
 | 2 | five instances of four kinds are up | `micro-cloud.sh status` shows `api1`, `api2` running, `edge` running, `db` and `metrics` listed by their own drivers | ⬜ |
-| 3 | they are on one L2 and resolve each other **by name** | `getent hosts api1` from `edge` returns an address in `10.71.0.0/24`; `ping -c2 api1` is 0% loss | ⬜ |
+| 3 | they are on one L2 and resolve each other **by name** | `getent hosts api1` from `edge` returns an address in `10.71.0.0/24`; `ping -c2 api1` is 0% loss. **Not via `lab-vm.sh ssh`** — that verb connects to a slirp hostfwd `edge` does not have (`network_mode = "tap"`), and phase 2 now refuses it by name. ssh to the leased address instead, or read `console.log` | ⬜ |
 | 4 | each microVM has its **own identity from one image** | `lab-fc.sh inspect api1` and `api2` show different MACs and addresses from the same rootfs lineage; MMDS answers `instance-id` inside each guest | ⬜ |
 | 5 | §9.3's matrix has five rows, not two | `test-isolation-matrix.sh` prints no UNKNOWN rows | ⬜ |
 | 6 | teardown left **nothing of ours** | `ip -o link show` has no `br-mc0` and no `mc-*`; `fabric.sh down` asserted absence itself and did not have to be trusted about it | ⬜ |
