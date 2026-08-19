@@ -337,6 +337,101 @@ else
                 || say "  (no verify_cmd lines in $LP)"
 fi
 
+# ── §3. micro-cloud.sh's plan ───────────────────────────────────────────────────────────
+# Slice 10's `micro-cloud.sh plan` prints the whole lab as commands, and §0.2's invariant is
+# the reason that verb exists at all: *delete the guided path and nothing is lost.*  A plan
+# naming a verb no driver has would satisfy the letter of that and none of the point — and
+# it is the surface MOST likely to acquire one, because the plan is generated from
+# `lab_tui/topology.py`'s per-slot verb table rather than typed by hand.  So the generator's
+# OUTPUT is checked here, not its source: the table said `lab-chroot.sh up` and `lab-vm.sh
+# up` for months, and neither has ever existed at any commit.
+#
+# The check lives in this file rather than in the lab's own suite because the probe does —
+# a second copy of `verb_present`, aimed at the same question, is exactly the duplication
+# §4.1 names.  The lab's tests/test-guided-path-is-a-view.sh execs this file, so the rows
+# below run inside micro-cloud's run-all.sh too.
+say
+say "§3 micro-cloud — every command in \`micro-cloud.sh plan\`"
+MC="$REPO/examples/micro-cloud/micro-cloud.sh"
+if [[ ! -x "$MC" ]]; then
+    warn "UNKNOWN: $MC is missing or not executable — the lab plan was NOT checked"
+elif (( EUID == 0 )); then
+    warn "UNKNOWN: running as root, so the micro-cloud plan was NOT rendered (its steps name the fabric, and this checker will not invoke host networking beside a live cluster)"
+else
+    n=0
+    if ! (cd "$REPO" && timeout 60 "$MC" plan) > "$WORK/mc-plan.txt" 2>"$WORK/mc-plan.err"; then
+        bad "micro-cloud: \`micro-cloud.sh plan\` exited non-zero as an unprivileged user — it must run nothing, so it must need nothing: $(head -2 "$WORK/mc-plan.err")"
+    else
+        # Command lines only: the plan interleaves `#` comments, a `cd`, and `echo` steps
+        # the drivers emit as advice. Absolute paths are made repo-relative because that is
+        # what check_command matches on, and %q escaping is undone the only safe way — by
+        # dropping the backslashes that %q adds before punctuation, never by eval.
+        while IFS= read -r line; do
+            [[ "$line" == "$REPO/"* ]] || continue
+            line="${line#"$REPO"/}"
+            line="${line//\\/}"
+            n=$((n+1))
+            check_command "micro-cloud plan" "$line"
+        done < "$WORK/mc-plan.txt"
+        (( n > 0 )) \
+            && ok "$n command(s) in the lab plan examined" \
+            || bad "micro-cloud: the plan named no repo tool at all — a plan that orders nothing is not a view of anything"
+    fi
+fi
+
+# ── §4. micro-cloud's install catalogue ─────────────────────────────────────────────────
+# §11.1 decision 13: micro-cloud CATALOGUES install methods and builds none, naming the lab
+# that owns each and the exact command. That makes the catalogue a set of guided steps in
+# every sense §0.2 means, and a survey of what this repo can do is the worst possible place
+# for a command that cannot be typed — a reader takes an unrunnable row as evidence the
+# capability exists.
+#
+# Two things are checked per row: the command (same probe as everything else here) and the
+# `owners`, which are directory paths under examples/. A row pointing at a renamed lab is
+# this repo's signature stale record, and unlike a broken link it trips no other checker:
+# link_check.py reads Markdown, and this is TOML.
+say
+say "§4 micro-cloud install catalogue — every command, and every owner directory"
+IC="$REPO/examples/micro-cloud/install-catalog.toml"
+if [[ ! -r "$IC" ]]; then
+    warn "UNKNOWN: $IC is not readable — the install catalogue was NOT checked"
+elif ! command -v python3 >/dev/null 2>&1; then
+    warn "UNKNOWN: python3 is absent, so the install catalogue (TOML) was NOT parsed"
+else
+    if ! python3 - "$IC" > "$WORK/catalog.tsv" 2>"$WORK/catalog.err" <<'CATPY'
+import sys, tomllib
+with open(sys.argv[1], "rb") as fh:
+    doc = tomllib.load(fh)
+rows = doc.get("method") or []
+if not rows:
+    raise SystemExit("no [[method]] rows")
+for m in rows:
+    for owner in m.get("owners") or []:
+        print(f"owner\t{m['id']}\t{owner}")
+    cmd = m.get("command")
+    if cmd:
+        print(f"cmd\t{m['id']}\t{cmd}")
+    elif m.get("status") != "gap":
+        print(f"nocmd\t{m['id']}\t")
+CATPY
+    then
+        bad "micro-cloud catalogue: could not be parsed: $(head -2 "$WORK/catalog.err")"
+    else
+        n=0
+        while IFS=$'\t' read -r kind id val; do
+            case "$kind" in
+                cmd)   n=$((n+1)); check_command "install-catalog:$id" "$val" ;;
+                owner) [[ -d "$REPO/examples/$val" ]] \
+                           || bad "install-catalog:$id names owner '$val', which is not a directory under examples/ — the lab was renamed or removed and the catalogue still points at it" ;;
+                nocmd) bad "install-catalog:$id claims status other than 'gap' but names no command — a method nobody can invoke is a gap wearing an owner's clothes" ;;
+            esac
+        done < "$WORK/catalog.tsv"
+        (( n > 0 )) \
+            && ok "$n catalogue command(s) examined, and every owner directory exists" \
+            || bad "micro-cloud catalogue: no row named a command at all"
+    fi
+fi
+
 # ── verdict ─────────────────────────────────────────────────────────────────────────────
 say
 if (( ${#WARNINGS[@]} )); then

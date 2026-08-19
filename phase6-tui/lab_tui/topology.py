@@ -50,14 +50,16 @@ Two consequences worth stating rather than discovering:
 
 from __future__ import annotations
 
+import json
 import re
+import shlex
 import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from lab_tui.backends.base import phase_script
+from lab_tui.paths import phase_script
 
 PhaseSlot = Literal["chroot", "vm", "fc", "docker", "podman", "lxd"]
 
@@ -430,16 +432,40 @@ def plan_down(toml_path: Path) -> list[PhasePlan]:
 
 
 def main() -> int:
-    """CLI for testing without the TUI: dump the up/down plan."""
-    if len(sys.argv) != 3 or sys.argv[1] not in {"up", "down"}:
-        print("usage: python -m lab_tui.topology {up|down} <lab.toml>",
+    """The plan, on stdout — the raw path's way of asking what the guided path would do.
+
+    Two output shapes, because they answer to two different readers:
+
+      text (default)  a pasteable script.  Each argv is joined with ``shlex.quote`` and
+                      NOT a bare space: a path containing a space rendered as
+                      ``--config /my labs/x.toml`` is two arguments, and the reader who
+                      pastes it gets a different command from the one the TUI runs.
+      ``--json``      the argv **as arrays**, for a consumer that must not re-parse a
+                      joined string.  ``examples/micro-cloud/micro-cloud.sh`` reads this;
+                      splitting the text form on whitespace would reintroduce, in the one
+                      script whose whole job is fidelity, exactly the lossy seam quoting
+                      exists to remove.
+    """
+    argv = sys.argv[1:]
+    as_json = False
+    if "--json" in argv:
+        as_json = True
+        argv = [a for a in argv if a != "--json"]
+    if len(argv) != 2 or argv[0] not in {"up", "down"}:
+        print("usage: python -m lab_tui.topology [--json] {up|down} <lab.toml>",
               file=sys.stderr)
         return 2
-    op, path = sys.argv[1], Path(sys.argv[2])
+    op, path = argv[0], Path(argv[1])
     plans = plan_up(path) if op == "up" else plan_down(path)
+    if as_json:
+        json.dump([{"slot": p.slot, "argv": list(p.argv),
+                    "description": p.description} for p in plans],
+                  sys.stdout, indent=2)
+        print()
+        return 0
     for p in plans:
         print(f"# {p.description}")
-        print(" ".join(p.argv))
+        print(shlex.join(p.argv))
     return 0
 
 

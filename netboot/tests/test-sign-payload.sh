@@ -53,9 +53,31 @@ fi
 note "untampered payload verifies"
 
 # 3b) a one-byte tamper MUST be rejected
+#
+# THE TAMPER IS DERIVED FROM THE BYTE IT REPLACES, AND THEN CHECKED.
+# This used to write a constant `\xff` at offset 1024 of a payload made of 65536 bytes of
+# /dev/urandom. One run in 256, that byte is ALREADY 0xff — so "the tamper" changed nothing,
+# openssl verified an untouched payload exactly as it should, and this test reported
+# `REGRESSION: a tampered payload verified against the untampered signature` about a signing
+# tool that was working perfectly. Seen in CI 2026-08-19 while every local run passed, which
+# is what a 0.4% flake looks like from the outside.
+#
+# It is this repo's own lesson pointed at its own negative control: a control that does not
+# verify it actually broke something is not known to be controlling anything — and this one
+# failed in the WORSE direction, manufacturing a security regression out of a coin flip.
+# `cmp` is the outcome check; "I ran dd" was the mechanism check.
 tampered="$TMP/vmlinuz.tampered"
 cp "$payload" "$tampered"
-printf '\xff' | dd of="$tampered" bs=1 seek=1024 count=1 conv=notrunc status=none 2>/dev/null
+orig_byte="$(dd if="$payload" bs=1 skip=1024 count=1 status=none | od -An -tu1 | tr -d '[:space:]')"
+[[ -n "$orig_byte" ]] || fail "could not read byte 1024 of the test payload, so the tamper below cannot be aimed"
+new_byte=$(( (orig_byte + 1) % 256 ))
+# shellcheck disable=SC2059  # the format IS the computed byte; that is the point
+printf "$(printf '\\x%02x' "$new_byte")" \
+    | dd of="$tampered" bs=1 seek=1024 count=1 conv=notrunc status=none 2>/dev/null
+cmp -s "$payload" "$tampered" \
+    && fail "the tamper did not change the payload (byte 1024 is still $orig_byte), so the verification below would prove nothing about tamper detection"
+note "tamper applied and confirmed: byte 1024 changed $orig_byte -> $new_byte"
+
 if openssl cms -verify -binary -purpose any -inform DER -in "$payload.sig" \
         -content "$tampered" -CAfile "$keydir/ca.crt" -out /dev/null 2>/dev/null; then
     fail "REGRESSION: a tampered payload verified against the untampered signature"

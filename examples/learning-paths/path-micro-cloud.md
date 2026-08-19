@@ -19,6 +19,8 @@
 | 7 | [`micro-cloud`](../micro-cloud/) | the control plane: declared versus derived, and a diff that holds back the kinds it must not act on. | `apply` is a no-op on pass two because the DIFF finds nothing — not because a flag was remembered. |
 | 8 | [`micro-cloud`](../micro-cloud/) | preserve: two tiers and a derivation, so a backup can say what built it. | change ONE byte of a saved artifact and the restore refuses BY NAME, with both digests, before importing anything — RUNBOOK-preserve.md. |
 | 9 | [`micro-cloud`](../micro-cloud/) | the fleet: five warm clones from ONE memory image, and the identity that comes back with them. | all five resume the captured tick rather than booting, share one unchanged mem file — and all five share one boot_id, which is the lesson — RUNBOOK-fleet.md. |
+| 10 | [`micro-cloud`](../micro-cloud/) | the whole thing at once: ONE spec, five instances of four kinds, ordered by the control plane and printed as commands before any of them runs. | `micro-cloud.sh plan` prints the entire lab as a pasteable script and runs nothing — pipe it to `bash -n` and it parses — RUNBOOK-micro-cloud.md.<br>🔎 auto-checkable → marker `fabric.sh tap api1` 🖥️ |
+| 11 | [`micro-cloud`](../micro-cloud/) | the capstone, and it is not 'can they ping': what can each compute type SEE of the others, and what did each boundary cost? | the isolation matrix shows the rootless container enumerating 4 processes where the host sees ~950 — while reading the host's own boot_id straight out of /proc. Rows it could not measure are printed as UNKNOWN, by name. |
 
 ---
 

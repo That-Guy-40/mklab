@@ -1,0 +1,264 @@
+#!/usr/bin/env bash
+# micro-cloud.sh — MICRO_CLOUD_LAB_PLAN.md §9.1 / §14 slice 10: the demo.
+#
+#        examples/micro-cloud/micro-cloud.sh plan     # the ordered commands. Runs NOTHING.
+#   sudo examples/micro-cloud/micro-cloud.sh up       # runs them, halting on the first failure
+#        examples/micro-cloud/micro-cloud.sh status   # derived, unprivileged
+#   sudo examples/micro-cloud/micro-cloud.sh down     # reverses ours, asserts absence, compares Calico
+#
+# -----------------------------------------------------------------------------
+# WHAT THIS SCRIPT IS, AND THE THREE THINGS IT REFUSES TO BE
+#
+# It orders the phase tools.  It does not *know* the order: `plan_up`/`plan_down` in
+# `phase6-tui/lab_tui/topology.py` already compute it — which slot runs when, which driver
+# has `up` and which has `create`+`start`, which name a `start` takes — and slice 6 paid
+# for every one of those answers by measuring the drivers rather than reading their help.
+# Re-deriving them here would be §4.1's *clone in disguise*, and the copy would be wrong
+# the first time a driver grew a verb.  So this script ASKS for the plan and executes it,
+# and the only thing it adds is the one layer the control plane does not own:
+#
+#   THE FABRIC.  `topology.py`'s own docstring says it: *"the tap is NOT ours to make …
+#   a bring-up through this screen therefore assumes the fabric already ran."*  `lab-fc.sh`
+#   validates a tap and never creates one, because two owners for one resource is the
+#   stale-record bug this repo keeps finding.  `fabric.sh` owns tap lifecycle and needs
+#   root.  Putting the two together — fabric first, instances second, reversed on the way
+#   down — is this file's entire contribution.
+#
+# 1. IT IS NOT A FIFTH DRIVER.  Every command it runs is one you can type; `plan` prints
+#    them, in order, with the `cd` that makes the relative paths resolve.  §0.2: *delete
+#    the guided path and nothing is lost.*  `plan` is the proof, and it is what
+#    tests/test-micro-cloud-plan.sh asserts against.
+#
+# 2. IT DOES NOT WAIT FOR READINESS, AND SAYS SO.  `up` orders INVOCATIONS, not states.
+#    Nothing here blocks until a guest answers, so a first-boot script that talks to a peer
+#    can lose the race with it — `edge`'s cloud-init pings `api1`, and the control plane
+#    starts VMs before microVMs, so on a cold `up` that probe reports FAIL.  Reordering the
+#    slot tuple would not fix it (a 0.5 s microVM boot still races a cloud-init that began
+#    30 s earlier); a readiness wait would, and the control plane has none.  `status` is
+#    where you find out, and RUNBOOK-micro-cloud.md re-runs the peer check from there.
+#
+# 3. IT RECORDS NOTHING IT COULD DERIVE.  There is no state file of instance addresses.
+#    §8.4a settled it: *derive the facts, record only the intent.*  The intent is
+#    `micro-cloud.toml`; the addresses come back out of the fabric's lease file, the
+#    liveness out of each driver's own `inspect`.  A cached address list is the record that
+#    outlives its subject, and this plan has a whole table of those.
+#
+# WHY `up` HALTS INSTEAD OF CONVERGING
+# ------------------------------------
+# `lab-chroot.sh create` refuses a target that exists; `lab-fc.sh create` refuses an
+# instance that exists (it would clobber a per-instance rootfs copy).  Those refusals are
+# correct and this script does not work around them: a second `up` halts, naming the step
+# and its exit status.  Converging is a different verb with a different contract and it is
+# already built — `phase6-tui/lab_tui/apply.py`, whose whole design note is that a second
+# pass must be a no-op *because the diff finds nothing to do*.  A `--force` here would be a
+# third answer to a question two components already answer.
+# -----------------------------------------------------------------------------
+set -euo pipefail
+
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(cd -- "$HERE/../.." && pwd)"
+# Overridable so the plan test can aim this at a DELIBERATELY BROKEN copy of the spec and
+# watch the assertions bite.  A guard nobody has seen fail is not known to work, and a test
+# that can only ever feed the real spec can only ever watch it pass.
+SPEC_REL="${MC_SPEC:-examples/micro-cloud/micro-cloud.toml}"
+# An absolute MC_SPEC used to be pasted onto the repo root -- "$REPO//tmp/x.toml" -- and the
+# failure was silent in the worst way: `plan_json` passes SPEC_REL straight through and was
+# fine, so the topology half of the plan looked perfect while `tap_instances` read a path
+# that does not exist and contributed NO fabric taps at all. A plan missing every tap still
+# parses, still orders correctly, and would have brought up VMMs opening devices nobody
+# made. Found by the tap assertion in tests/test-micro-cloud-plan.sh on its first real run.
+if [[ "$SPEC_REL" == /* ]]; then SPEC="$SPEC_REL"; else SPEC="$REPO/$SPEC_REL"; fi
+FABRIC="$HERE/fabric.sh"
+LAB="micro-cloud"
+
+# The `cd` is not a convenience, it is the same line `plan` prints for the reader.  The
+# spec's `kernel`/`rootfs` are repo-relative and `lab-fc.sh` uses them as given, so a run
+# from anywhere else resolves them somewhere else -- and the failure would be "kernel not
+# readable", which reads like a missing image rather than a wrong directory.  Running the
+# script and pasting its plan must be the same act; this makes them so.
+cd "$REPO"
+
+ESC=$'\033'
+bold(){ printf '%s[1m%s%s[0m\n' "$ESC" "$*" "$ESC"; }
+c_ok(){   printf '  %s[32m+%s[0m %s\n' "$ESC" "$ESC" "$*"; }
+c_run(){  printf '%s[1m-> %s%s[0m\n' "$ESC" "$*" "$ESC"; }
+c_warn(){ printf '  %s[33m!%s[0m %s\n' "$ESC" "$ESC" "$*"; }
+die(){    printf '%s[31mFAIL:%s[0m %s\n' "$ESC" "$ESC" "$*" >&2; exit 1; }
+
+# The instances that need a tap from the fabric.  DERIVED from the spec — a hand-written
+# list here would be a second description of the topology, and it would go stale in the
+# direction that hurts: an instance added to the TOML would come up with no tap, and
+# `lab-fc.sh`'s preflight would refuse it while pointing at a fabric nobody had told.
+# A `tap =` line is what makes an instance the fabric's business.
+tap_instances(){
+    python3 - "$SPEC" <<'PY'
+import sys, tomllib
+with open(sys.argv[1], "rb") as fh:
+    doc = tomllib.load(fh)
+for block in ("microvm", "vm"):
+    for item in doc.get(block) or []:
+        if item.get("tap"):
+            print(item["name"])
+PY
+}
+
+microvm_names(){
+    python3 - "$SPEC" <<'PY'
+import sys, tomllib
+with open(sys.argv[1], "rb") as fh:
+    doc = tomllib.load(fh)
+for item in doc.get("microvm") or []:
+    print(item["name"])
+PY
+}
+
+need_root(){
+    [[ ${EUID} -eq 0 ]] || die "'$1' needs root: the fabric creates a bridge, taps and nft rules (CAP_NET_ADMIN). Re-run with: sudo $0 $1"
+}
+
+# The topology plan, as argv ARRAYS.  `--json` rather than the text form because splitting
+# a joined command on whitespace is the lossy seam quoting exists to remove, and this is
+# the one script whose whole job is running the same command the plan names.
+plan_json(){
+    local op="$1"
+    PYTHONPATH="$REPO/phase6-tui" python3 -m lab_tui.topology --json "$op" "$SPEC_REL" \
+        || die "could not compute the $op plan from $SPEC_REL (lab_tui.topology). That module is stdlib-only, so this is a spec error rather than a missing dependency — the message above is the parser's."
+}
+
+# Run one step, or print it.  Halts the whole run on a non-zero, naming the step: a
+# tear-down that carried on past a failure would report success over a half-removed lab.
+DRY=0
+# Quote an argv for a human to paste.  `printf '%q ' "$@"` is the obvious one-liner and it
+# leaves a TRAILING SPACE on every line — which cost this file its first ordering check:
+# `grep 'fabric.sh up$'` matched nothing, so the check compared two empty positions and the
+# negative control appeared to bite for a reason that was not the one under test.  Joining
+# an array with IFS has no such edge.
+quoted(){ local -a q=(); local a; for a in "$@"; do q+=("$(printf '%q' "$a")"); done; printf '%s' "${q[*]}"; }
+
+step(){
+    local desc="$1" rc=0; shift
+    if (( DRY )); then
+        printf '# %s\n' "$desc"
+        printf '%s\n' "$(quoted "$@")"
+        return 0
+    fi
+    c_run "$desc"
+    # Not `... || die`: the status of the command is the gate, so it is captured on its own
+    # line and tested afterwards.  A pipe or a `||` chain here reports somebody else's rc.
+    "$@" || rc=$?
+    (( rc == 0 )) || die "step failed (rc=$rc): $desc
+    the command was: $(quoted "$@")"
+}
+
+run_topology(){
+    local op="$1" json n i desc
+    json="$(plan_json "$op")"
+    n="$(jq 'length' <<<"$json")"
+    for ((i = 0; i < n; i++)); do
+        local -a argv=()
+        # NUL-delimited, so an argument containing a space survives.  `lab-vm.sh` and
+        # `lab-chroot.sh` are addressed by absolute path and a repo checked out under
+        # "/my labs/" would otherwise split into two arguments here.
+        mapfile -t -d '' argv < <(jq -j --argjson i "$i" '.[$i].argv[] | (. + ([0] | implode))' <<<"$json")
+        desc="$(jq -r --argjson i "$i" '.[$i].description' <<<"$json")"
+        step "$desc" "${argv[@]}"
+    done
+}
+
+fabric_steps(){
+    local name
+    step "fabric: bridge, nft, dnsmasq" "$FABRIC" up
+    while read -r name; do
+        [[ -n "$name" ]] && step "fabric: tap for $name" "$FABRIC" tap "$name"
+    done < <(tap_instances)
+}
+
+cmd_plan(){
+    DRY=1
+    printf '# micro-cloud - the whole lab, as commands. Nothing below has been run.\n'
+    printf '# Paths in %s are repo-relative, so the directory is part of the plan:\n' "$SPEC_REL"
+    printf 'cd %q\n\n' "$REPO"
+    printf '# -- the fabric (root; the control plane does not own the network) --\n'
+    fabric_steps
+    printf '\n# -- the instances (lab_tui.topology decides this order, not this script) --\n'
+    run_topology up
+    printf '\n# -- and back down --\n'
+    run_topology down
+    step "fabric: reverse ONLY ours, assert absence, compare Calico" "$FABRIC" down
+}
+
+cmd_up(){
+    need_root up
+    [[ -r "$SPEC" ]] || die "spec not found: $SPEC"
+    fabric_steps
+    run_topology up
+    printf '\n'
+    c_ok "every step returned 0 - which is not the same as every guest being ready."
+    c_warn "run '$0 status' for what is actually up, and see RUNBOOK-micro-cloud.md for"
+    c_warn "the peer check: 'up' orders invocations, not readiness (header note 2)."
+}
+
+cmd_down(){
+    need_root down
+    run_topology down
+    step "fabric: reverse ONLY ours, assert absence, compare Calico" "$FABRIC" down
+}
+
+# `status` derives.  It reads nothing this script wrote, because this script writes nothing.
+cmd_status(){
+    local name state rc
+    bold "-- the fabric --"
+    rc=0; "$FABRIC" status || rc=$?
+    (( rc == 0 )) || c_warn "fabric status returned rc=$rc"
+
+    bold ""
+    bold "-- the instances, each driver asked directly --"
+    while read -r name; do
+        [[ -n "$name" ]] || continue
+        state="$("$REPO/phase7-firecracker/lab-fc.sh" inspect "$name" --json 2>/dev/null \
+                 | jq -r '.state // "unknown"' 2>/dev/null)" || state=""
+        printf '  %-9s %-10s %s\n' "$name" "microvm" "${state:-UNKNOWN (driver could not be asked)}"
+    done < <(microvm_names)
+
+    rc=0; "$REPO/phase2-qemu-vm/lab-vm.sh"    list                2>/dev/null | sed 's/^/  vm      /' || rc=$?
+    rc=0; "$REPO/phase4-podman/lab-podman.sh" status "$LAB"       2>/dev/null | sed 's/^/  podman  /' || c_warn "podman: nothing for lab '$LAB'"
+    rc=0; "$REPO/phase5-lxd/lab-lxd.sh"       status "$LAB"       2>/dev/null | sed 's/^/  lxd     /' || c_warn "lxd: nothing for lab '$LAB'"
+
+    bold ""
+    bold "-- addresses, read back from the leases, never from a record of ours --"
+    local leases="${MC_LEASES:-/var/lib/misc/mc-dnsmasq.leases}"
+    if [[ -r "$leases" ]]; then
+        awk '{printf "  %-18s %-16s %s\n", $4, $3, $2}' "$leases"
+    else
+        c_warn "no readable lease file at $leases"
+        c_warn "addresses are UNKNOWN, which is not the same as 'none' - the fabric may be"
+        c_warn "down, or the file may simply not be readable as this user."
+    fi
+}
+
+usage(){
+    cat <<EOF
+micro-cloud.sh - order the phase tools for the whole lab (plan section 9.1, slice 10)
+
+USAGE
+  micro-cloud.sh plan          the ordered commands, with the cd. Runs nothing.
+  micro-cloud.sh up            run them (needs root: the fabric does)
+  micro-cloud.sh status        what is actually up, derived. Unprivileged.
+  micro-cloud.sh down          reverse ours, assert absence, compare Calico's binding
+
+The spec is $SPEC_REL - one file, five blocks, each one a block a phase driver
+already parses. The order comes from lab_tui.topology, not from this script.
+
+'up' orders invocations, not readiness: nothing here waits for a guest to answer.
+EOF
+}
+
+case "${1:-}" in
+    plan)           shift; cmd_plan "$@" ;;
+    up)             shift; cmd_up "$@" ;;
+    down)           shift; cmd_down "$@" ;;
+    status)         shift; cmd_status "$@" ;;
+    help|--help|-h) usage ;;
+    "")             usage >&2; exit 1 ;;
+    *)              printf 'unknown verb: %s\n\n' "$1" >&2; usage >&2; exit 1 ;;
+esac
