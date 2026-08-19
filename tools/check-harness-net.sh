@@ -290,4 +290,69 @@ grep -q 'SAW-RC=0' <<<"$RCOK" \
     || fail "$NAME: \$_EXIT_RC was not 0 on a passing test, so a teardown keyed on it would take the failure path on every green run. Got: $(tr '\n' ' ' <<<"$RCOK")"
 note "$NAME: registered cleanup reads the exit status as \$_EXIT_RC (5 on a die, 0 on a pass)  ✓"
 
-pass "$NAME: lib.sh's EXIT net fires with a named rc when a test dies silently, stays quiet on pass/skip, prints exactly one FAIL line when the test already gave a verdict, still runs registered cleanup in reverse on every path — and no test in ${DIR#"$(cd "$DIR/../.." && pwd)/"} can disarm it by installing an EXIT trap of its own"
+# ── 7. being KILLED is reported, and does not silently lose the teardown ──
+# The gap this closes was found by being taken in by it. Bash runs NO exit trap for an
+# untrapped fatal signal, so a run stopped from outside — a CI deadline, an agent harness
+# timeout, Ctrl-C, an OOM reaper — used to end in a log that simply STOPS. Measured
+# 2026-08-19: a SIGTERM to a suite's process group printed bash's bare `Terminated`, the
+# truncated log was read as an intermittent defect in the test it happened to interrupt,
+# and a day went into hunting a bug that was never there.
+#
+# The property under test is exactly one: THE RUN SAYS IT WAS KILLED, naming the signal, so
+# it is not mistaken for a failure. An earlier draft of this section also claimed the traps
+# rescued the teardown — the control below disproved it on the first run (a killed shell
+# already ran its EXIT trap), so that claim is gone and cleanup is asserted here only as an
+# ordinary regression guard: adding signal traps must not COST the teardown.
+#
+# The fixture is killed by process GROUP, which is what a timeout actually does — killing
+# only the shell would leave `sleep` alive and the test would not be reproducing the case.
+kill_fixture() {  # kill_fixture <signal-name> <signal-num> <lib-to-source>
+    # Declared on separate lines: under `set -u`, a single `local a=$1 b=$WORK/$a` does not
+    # reliably see `a` while the same declaration is still being processed.
+    local sig="$1" num="$2" lib="$3"
+    local f="$WORK/killed-$sig.sh" log="$WORK/killed-$sig.log"
+    { printf 'source "%s"\n' "$lib"
+      printf "on_exit 'echo CLEANUP-AFTER-KILL'\n"
+      printf 'note "running"\n'
+      printf 'sleep 30\n'
+      printf 'pass "not reached"\n'; } > "$f"
+    set -m                      # each job in its own process group, so -PID is meaningful
+    bash "$f" > "$log" 2>&1 &
+    local w=$!
+    local i
+    for i in $(seq 1 40); do grep -q 'running' "$log" 2>/dev/null && break; sleep 0.25; done
+    kill -"$sig" -"$w" 2>/dev/null
+    wait "$w" 2>/dev/null; local rc=$?
+    set +m
+    printf 'rc:%s\n%s\n' "$rc" "$(cat "$log" 2>/dev/null)"
+}
+
+KILLED="$(kill_fixture TERM 15 "$LIB")"
+grep -q "TERMINATED FROM OUTSIDE by SIGTERM" <<<"$KILLED" \
+    || fail "REGRESSION: $NAME did not report an external SIGTERM. A run cut short then looks exactly like a test that failed on its own, and the reader goes hunting inside a test that never got the chance to fail — which is precisely how this section came to exist. Got: $(tr '\n' ' ' <<<"$KILLED")"
+grep -q 'CLEANUP-AFTER-KILL' <<<"$KILLED" \
+    || fail "REGRESSION: $NAME lost the teardown when the test was killed. Without a signal trap bash runs no EXIT trap at all, so every VM, tap and scratch dir the test created leaks on any interrupted run. Got: $(tr '\n' ' ' <<<"$KILLED")"
+grep -q '^rc:143$' <<<"$KILLED" \
+    || fail "$NAME: a SIGTERM-killed test did not exit 128+15=143, so a runner keying on the status cannot tell a kill from an ordinary failure. Got: $(head -1 <<<"$KILLED")"
+
+KILLED_INT="$(kill_fixture INT 2 "$LIB")"
+grep -q "TERMINATED FROM OUTSIDE by SIGINT" <<<"$KILLED_INT" \
+    || fail "$NAME: Ctrl-C (SIGINT) was not reported as an external termination. Got: $(tr '\n' ' ' <<<"$KILLED_INT")"
+
+# THE CONTROL. Everything above is also satisfied by a shell that happens to print those
+# words for some other reason, so the same fixture is run against a COPY of this lib with
+# the signal traps stripped out — and it must go silent. Without this, a section that had
+# quietly stopped testing the traps would look identical to one that passes.
+CTRL_LIB="$WORK/lib-nosig.sh"
+sed -e "/^trap '_on_signal TERM 15' TERM$/d" \
+    -e "/^trap '_on_signal INT 2'   INT$/d" \
+    -e "/^trap '_on_signal HUP 1'   HUP$/d" "$LIB" > "$CTRL_LIB"
+if cmp -s "$LIB" "$CTRL_LIB"; then
+    fail "$NAME: the control could not strip the signal traps from $LIB, so section 7 is not known to be testing them. If the trap lines were reformatted, update the sed here."
+fi
+CTRL="$(kill_fixture TERM 15 "$CTRL_LIB")"
+grep -q 'TERMINATED FROM OUTSIDE' <<<"$CTRL" \
+    && fail "CONTROL DID NOT BITE: $NAME reported an external termination even with the signal traps REMOVED, so section 7 is passing for some other reason and proves nothing about them"
+note "$NAME: an external SIGTERM/SIGINT is NAMED as a kill rather than a failure and exits 128+N; with the traps stripped the naming goes away, while teardown runs either way  ✓"
+
+pass "$NAME: lib.sh's EXIT net fires with a named rc when a test dies silently, stays quiet on pass/skip, prints exactly one FAIL line when the test already gave a verdict, still runs registered cleanup in reverse on every path, and NAMES an external SIGTERM/SIGINT as a kill rather than a failure (proved against a traps-stripped control) — and no test in ${DIR#"$(cd "$DIR/../.." && pwd)/"} can disarm it by installing an EXIT trap of its own"

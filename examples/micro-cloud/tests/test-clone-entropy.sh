@@ -135,14 +135,27 @@ sec_of()  { grep -m1 -o "MC-R [0-9]* [0-9a-f]* [0-9a-f]* [0-9a-f-]*" "$1" 2>/dev
 bid_of()  { grep -m1 -o "MC-R [0-9]* [0-9a-f]* [0-9a-f]* [0-9a-f-]*" "$1" 2>/dev/null | awk '{print $5}' || true; }
 
 # boot_and_snap <instance> [extra-append...] -> echoes the read number the snapshot was taken at
+# EVERY STAGE ANNOUNCES ITSELF, AND THAT IS NOT DECORATION.
+#
+# This function makes four tool calls and waits up to 60 s, and it used to print NOTHING on
+# the way. When a run died inside it the whole record was one line — `booting the …source…`
+# — followed by whatever the shell had to say, which is not enough to tell `create` from
+# `start` from a guest that never counted. A day was spent on exactly that: a truncated log
+# was read as a defect in this test, and the missing information was simply *where it had
+# got to*. Every `fail` below already names its own defect; these notes name the STAGE, so
+# even a death that produces no verdict at all (a signal, an OOM, a host reboot) leaves the
+# reader pointing at one command instead of at four.
 boot_and_snap() {
     local n="$1"; shift
     local -a extra=()
     (( $# )) && extra=(--append "$1")
     local o
+    note "  [$n] create"
     o="$(fc create --name "$n" --kernel "$KERNEL" --rootfs "$R" --memory 256M ${extra+"${extra[@]}"} 2>&1)" \
         || fail "create $n failed: $o"
+    note "  [$n] start"
     o="$(fc start "$n" 2>&1)" || fail "start $n failed: $o"
+    note "  [$n] waiting for the guest to reach read 50 (up to 60 s)"
     local lg="$LAB_STATE_DIR/fc/$n/fc.log" t=""
     for _ in $(seq 1 60); do
         t="$(last_n "$lg")"
@@ -151,7 +164,9 @@ boot_and_snap() {
     done
     [[ -n "$t" ]] || fail "$n never printed a read in 60 s — it did not boot, so nothing here could be measured (see $lg)"
     (( t >= 50 )) || fail "$n only reached read $t in 60 s — the probe is not looping tightly, and the whole point of this test is the width of the window between resume and the first read"
+    note "  [$n] snapshot create (pauses, captures memory + devices, resumes)"
     o="$(fc snapshot create "$n" warm 2>&1)" || fail "snapshot create $n failed: $o"
+    note "  [$n] stop"
     o="$(fc stop "$n" 2>&1)" || fail "stop $n failed: $o"
     printf '%s' "$(last_n "$lg")"
 }
@@ -161,6 +176,7 @@ clones_of() {
     local src="$1"; shift
     local c o
     for c in "$@"; do
+        note "  [$src -> $c] clone"
         o="$(fc clone "$src" warm "$c" 2>&1)" || fail "clone $src -> $c failed: $o"
     done
     for c in "$@"; do

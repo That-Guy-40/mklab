@@ -38,6 +38,16 @@ arm_exit_trap() {
     trap '_on_exit' EXIT
 }
 trap _on_exit EXIT
+
+# ── being KILLED is not the same as FAILING, and the net could not tell you which ────────
+# See the note in the sibling lib.sh files: bash runs no EXIT trap for an untrapped fatal
+# signal, so a run stopped from outside used to end in silence. `arm_exit_trap` above may
+# re-install the EXIT trap; these three are separate dispositions and survive that.
+_SIGNALLED=""
+_on_signal() { _SIGNALLED="$1"; exit $(( 128 + $2 )); }
+trap '_on_signal TERM 15' TERM
+trap '_on_signal INT 2'   INT
+trap '_on_signal HUP 1'   HUP
 _on_exit() {
     local rc=$? i
     # Registered cleanup can READ the exit status as $_EXIT_RC. Without it a teardown
@@ -45,7 +55,9 @@ _on_exit() {
     # has to write its own `trap … EXIT`, which is the defect this block exists to stop.
     _EXIT_RC=$rc
     for (( i=${#_CLEANUPS[@]}-1; i>=0; i-- )); do eval "${_CLEANUPS[i]}" || true; done
-    if (( rc != 0 && rc != 77 )) && (( _VERDICT == 0 )); then
+    if [[ -n "${_SIGNALLED:-}" ]]; then
+        printf 'FAIL: test was TERMINATED FROM OUTSIDE by SIG%s — the run was cut short, so nothing above is a result about the code under test\n' "$_SIGNALLED" >&2
+    elif (( rc != 0 && rc != 77 )) && (( _VERDICT == 0 )); then
         printf 'FAIL: test exited early (rc=%d) — no verdict was printed by the test itself\n' "$rc" >&2
     fi
 }
