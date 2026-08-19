@@ -139,6 +139,10 @@ if [[ -d /var/chroots/micro-cloud-base ]]; then
         echo "  !! 'db' will fail at launch with 'forklxc … exit status 1'. Re-run with"
         echo "  !! --reset to rebuild it. See LEDGER L10-11."
     fi
+    if [[ ! -L /var/chroots/micro-cloud-base/etc/systemd/system/multi-user.target.wants/systemd-networkd.service ]]; then
+        echo "  !! systemd-networkd is NOT enabled in this tree — 'db' will start with an"
+        echo "  !! interface and never ask for an address. --reset rebuilds it. LEDGER L10-13."
+    fi
     if [[ ! -e /var/chroots/micro-cloud-base/etc/systemd/network/10-fabric.network ]]; then
         echo "  !! it has NO network unit — this tree predates the DHCP fix, so 'db' will"
         echo "  !! start, get its veth on br-mc0, and never ask for an address: present on"
@@ -156,15 +160,31 @@ else
     #                            ADDRESS -- on the L2 physically and invisible on the network.
     #                            LEDGER L10-13.
     #
+    # TWO DETAILS THAT ARE NOT INCIDENTAL, both found by checking instead of running:
+    #
+    #   ENABLED BY SYMLINK, not by `systemctl enable`. `systemctl` inside a chroot has no
+    #   running systemd to talk to and its behaviour there varies by version -- some refuse
+    #   with "Running in chroot, ignoring request". The symlink IS what enable creates, it is
+    #   the same thing on every version, and unlike the command its effect is checkable with
+    #   `ls`. This script checks for it below.
+    #
+    #   Hostname=db IN THE DHCP REQUEST. dnsmasq serves DNS for names it learns from DHCP
+    #   (--domain --expand-hosts), but LXD sets the container's hostname to the INSTANCE name
+    #   -- `lab-micro-cloud-db` -- so `db` would have registered under that and `getent db`
+    #   from `edge` would still have failed. `db` has no fabric reservation to fall back on
+    #   either: `fabric.sh tap` reserves against a MAC for instances that take a TAP, and this
+    #   one takes an LXD veth. So the name has to travel in the request itself.
+    #
     # A microVM needs neither of these (its init DHCPs itself); an OCI container needs neither
     # (podman supplies the namespace and the command). Only the system container needs both,
     # which is what "universal userspace" costs.
     "$REPO/phase1-chroot/lab-chroot.sh" create \
         --backend debootstrap --distro debian --suite bookworm --arch x86_64 \
         --variant minbase --manager none --include systemd-sysv \
-        --post-command 'systemctl enable systemd-networkd' \
-        --post-command 'mkdir -p /etc/systemd/network' \
-        --post-command 'printf "[Match]\nName=eth0 en*\n\n[Network]\nDHCP=ipv4\n" > /etc/systemd/network/10-fabric.network' \
+        --post-command 'mkdir -p /etc/systemd/system/multi-user.target.wants /etc/systemd/system/sockets.target.wants /etc/systemd/network' \
+        --post-command 'ln -sf /lib/systemd/system/systemd-networkd.service /etc/systemd/system/multi-user.target.wants/systemd-networkd.service' \
+        --post-command 'ln -sf /lib/systemd/system/systemd-networkd.socket  /etc/systemd/system/sockets.target.wants/systemd-networkd.socket' \
+        --post-command 'printf "[Match]\nName=eth0 en*\n\n[Network]\nDHCP=ipv4\n\n[DHCPv4]\nHostname=db\n" > /etc/systemd/network/10-fabric.network' \
         --name micro-cloud-base --target /var/chroots/micro-cloud-base --lab micro-cloud \
         2>&1 | tail -3 | sed 's/^/  /'
 fi

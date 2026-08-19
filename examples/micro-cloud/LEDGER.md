@@ -706,3 +706,45 @@ as the negative control.
 `api1`/`api2` remain structurally unmeasurable by the matrix — their rootfs has no exec
 channel, and closing that means slice 5c's vsock-agent image rather than more privilege.
 That is the only row of §9.3 whose absence is not a to-do.
+
+---
+
+## L10-14 — two errors in the fix for L10-13, found by checking instead of running
+
+The fix committed for [L10-13](#l10-13--all-five-up-and-two-defects-inside-the-green-run) was
+three `--post-command` lines. Before spending a run on it, each was checked against the thing
+it depends on. **Two of the three were wrong**, and neither would have announced itself as a
+mistake — `db` would simply have had no address again, for a different reason.
+
+### 1. `systemctl enable` inside a chroot is not a reliable way to enable anything
+
+There is no running systemd for it to talk to, and behaviour varies by version — some refuse
+with *"Running in chroot, ignoring request"*. The command might have worked, and if it had
+not, the failure would have been silent: a post-command that prints a notice and exits 0.
+
+Replaced with the symlink `enable` would have created. It is identical on every version, and
+— the part that matters — **its effect is checkable with `ls`**, which is why the run script
+can now warn about a tree that lacks it before `up` rather than after `db` fails.
+
+### 2. `db` would have registered in DNS under the wrong name
+
+dnsmasq does serve DNS for names it learns from DHCP — `--domain --expand-hosts` are in the
+fabric's argv. But **LXD sets a container's hostname to the instance name**, which here is
+`lab-micro-cloud-db`. So `db` would have got an address, registered as
+`lab-micro-cloud-db.mc.lab`, and `getent db` from `edge` would have failed exactly as before
+— with the DHCP fix working perfectly.
+
+Nor is there a fallback: `fabric.sh tap` reserves a lease against a MAC for instances that
+take a **tap**, and `db` takes an LXD veth, so it has no reservation and no name from that
+path either. The name has to travel in the request, which is `[DHCPv4] Hostname=db`.
+
+### Why this entry exists at all
+
+The three defects before it were each *"a format guessed at rather than asked about"*, and
+each cost a privileged run to discover. These two were the same shape — an assumption about
+someone else's behaviour, written because it looked obviously right — and they cost a few
+minutes of reading instead, because this time the question was asked before the run rather
+than after it.
+
+That is the only difference. **The mistake rate did not change; the point at which it was
+caught did.**
