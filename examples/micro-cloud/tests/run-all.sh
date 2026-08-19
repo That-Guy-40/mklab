@@ -22,6 +22,16 @@ tests=(test-fabric-mac-derivation.sh test-bench-boot.sh test-fabric-round-trip.s
        # Slice 8 — the fleet. Both need KVM, a kernel and a bootable rootfs and SKIP without
        # them; the gates half runs everywhere and lives in phase7-firecracker/tests/.
        test-fleet-clones.sh test-clone-entropy.sh
+       # §5.6's isolation tier. Needs CAP_SYS_ADMIN (jailer unshares a mount namespace), so it
+       # SKIPs everywhere else; the half that does not need the privilege lives in
+       # phase7-firecracker/tests/ and runs in CI.
+       #
+       # NAME NO TEST FILE THAT IS NOT IN THIS LIST, not even in a comment. The repo's
+       # runner gate under tools/tests/ harvests fixture names from this WHOLE file and then
+       # drives the runner with them, so a sibling suite's filename mentioned here becomes a
+       # fixture this list rightly refuses — and the gate reports, correctly, that it could
+       # not exercise this runner at all. Cost two attempts: the second one named the gate.
+       test-jailer-isolation.sh
        # The class behind phase 2's usage-heredoc bug, checked here for preserve.sh.
        test-usage-is-data.sh)
 
