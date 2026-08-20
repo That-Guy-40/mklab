@@ -55,10 +55,12 @@ the existing microVM evidence to keep meaning what it meant.
 # without it. See "where universal stops" below.
 sudo phase1-chroot/lab-chroot.sh create \
      --backend debootstrap --distro debian --suite bookworm --arch x86_64 \
-     --variant minbase --manager none --include systemd-sysv \
-     --post-command 'mkdir -p /etc/systemd/system/multi-user.target.wants /etc/systemd/network' \
-     --post-command 'ln -sf /lib/systemd/system/systemd-networkd.service /etc/systemd/system/multi-user.target.wants/systemd-networkd.service' \
-     --post-command 'printf "[Match]\nName=eth0 en*\n\n[Network]\nDHCP=ipv4\n\n[DHCPv4]\nHostname=db\n" > /etc/systemd/network/10-fabric.network' \
+     --variant minbase --manager none \
+     --include systemd-sysv,ifupdown,isc-dhcp-client,iproute2 \
+     --post-command 'mkdir -p /etc/network /etc/dhcp /etc/systemd/system/multi-user.target.wants' \
+     --post-command 'printf "auto lo\niface lo inet loopback\n\nauto eth0\niface eth0 inet dhcp\n" > /etc/network/interfaces' \
+     --post-command 'printf "send host-name \"db\";\n" >> /etc/dhcp/dhclient.conf' \
+     --post-command 'ln -sf /lib/systemd/system/networking.service /etc/systemd/system/multi-user.target.wants/networking.service' \
      --name micro-cloud-base --target /var/chroots/micro-cloud-base --lab micro-cloud
 
 # export 1 — the microVMs' root filesystem, written WITHOUT a loop mount
@@ -97,19 +99,40 @@ calls `db` *"the system-container case: a stateful pet **with its own init**"*.
 and *nothing ever asked for one*: present on the L2, invisible on the network, with
 `getent db` returning nothing from `edge`. Hence the three `--post-command` lines above.
 
-Two details in those `--post-command` lines are not incidental, and both were found by
-checking rather than by another run:
+### Why ifupdown and not systemd-networkd
+
+The obvious choice was `systemd-networkd` — it ships with systemd, so it costs no packages.
+It was tried, and it **ran**: `systemctl is-active` said `active`, `is-enabled` said `enabled`,
+the `.network` file was in place with the right contents. `db` still had no address. Its own
+journal, asked from inside the container, said why in four lines:
+
+```text
+lo: Link UP
+lo: Gained carrier
+Enumeration completed
+vethce0469d8: Interface name change detected, renamed to eth0.
+```
+
+It handled `lo` — loopback needs no udev — finished enumerating, watched `eth0` appear, and
+stopped. **systemd-networkd waits for udev to mark a link initialized before configuring it,
+and this tree has no `systemd-udevd` at all**: Debian ships udev as its own package and
+`systemd-sysv` does not pull it in. `ifupdown` is a boot-time script with no such dependency,
+which is why it is the conventional path inside a container.
+
+Two more details in those lines, neither incidental:
 
 - **enabled by symlink, not `systemctl enable`.** `systemctl` in a chroot has no running
   systemd to talk to and its behaviour there varies by version — some refuse with *"Running
   in chroot, ignoring request"*. The symlink is what `enable` creates, it is the same on
   every version, and unlike the command its effect is checkable with `ls`.
-- **`Hostname=db` in the DHCP request.** dnsmasq serves DNS for names it learns from DHCP
-  (`--domain --expand-hosts`), but LXD sets the container's hostname to the **instance** name
-  — `lab-micro-cloud-db` — so `db` would have registered under *that*, and `getent db` from
-  `edge` would still have failed. `db` has no fabric reservation to fall back on either:
-  `fabric.sh tap` reserves against a MAC for instances that take a **tap**, and this one takes
-  an LXD veth. The name has to travel in the request itself.
+- **`send host-name "db"`.** `dhclient` sends `/etc/hostname`, and `lab-chroot.sh` bakes a
+  **random** one into every tree it builds (`badass-box-qmhu` in one run). dnsmasq registers
+  whatever it is told — `--domain --expand-hosts` are in the fabric's argv — so without this,
+  `db` resolves under a name nobody could guess. There is no fabric reservation to fall back
+  on either: `fabric.sh tap` reserves against a MAC for instances that take a **tap**, and
+  this one takes an LXD veth. The name has to travel in the request itself.
+- **`iproute2` is for the diagnostic, not the lab.** `ip: not found` is why two probes in an
+  earlier run returned nothing at all.
 
 So the tally of what "universal" costs, per consumer:
 
