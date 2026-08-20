@@ -130,10 +130,82 @@ esac
 # --- A.3: --json shape checks ---------------------------------------------
 note "inspect --json (literal name)"
 json="$("$LAB_PODMAN" inspect "$CNAME" --json)"
-echo "$json" | jq -e '.schema_version == 1' >/dev/null \
-    || fail "json: schema_version != 1"
+echo "$json" | jq -e '.schema_version == 2' >/dev/null \
+    || fail "json: container schema_version != 2 (it moved to 2 on 2026-08-20 when \`container\` gained entrypoint/entrypoint_source/env/workdir and \`command\` became a stable array — TODO A.4)"
 [[ "$(jq -r '.kind' <<<"$json")" == "container" ]] \
     || fail "json: .kind != container (got: $(jq -r '.kind' <<<"$json"))"
+
+# === TODO A.4 ==============================================================
+# `podman export` writes the filesystem and not the OCI config, so an image built
+# back with `import` starts nothing — the derivation carries the intent across that
+# gap, and can only carry what this document reports.
+#
+# The type assertions are not ceremony. Until 2026-08-20 `command` read
+# `$c.Config.Cmd // $c.Config.Entrypoint // []`, and because podman reports a
+# container's Entrypoint as a JOINED STRING, an ENTRYPOINT-only image made
+# `.container.command` a STRING while every other image made it an array — inside a
+# document whose header calls itself stable. A consumer doing `.command | join(" ")`
+# breaks on one image and works on the next.
+note "A.4 fields: command / entrypoint / entrypoint_source / env / workdir"
+[[ "$(jq -r '.container.command | type' <<<"$json")" == "array" ]] \
+    || fail "REGRESSION: .container.command must ALWAYS be an array, got $(jq -r '.container.command | type' <<<"$json") — this is the string-or-array defect A.4 fixed"
+[[ "$(jq -r '.container.entrypoint | type' <<<"$json")" == "array" ]] \
+    || fail "json: .container.entrypoint must always be an array"
+[[ "$(jq -r '.container.env | type' <<<"$json")" == "array" ]] \
+    || fail "json: .container.env must be an array"
+[[ "$(jq -rc '.container.command' <<<"$json")" == '["sleep","3600"]' ]] \
+    || fail "json: .container.command is not the argv this test launched — got $(jq -rc '.container.command' <<<"$json")"
+[[ "$(jq -r '.container.entrypoint_source' <<<"$json")" == "none" ]] \
+    || fail "json: busybox has no ENTRYPOINT, so entrypoint_source should be 'none' — got $(jq -r '.container.entrypoint_source' <<<"$json")"
+
+# --- the two podman-specific derivations, and the control that separates them ----
+# podman flattens a container's entrypoint to one space-joined string. The array is
+# recoverable from the IMAGE — but an image is a cached fact about a DIFFERENT
+# subject, and `--entrypoint` at run time makes the container disagree with it. So
+# the driver accepts the image's array only when re-joining it reproduces the
+# container's string, and says which happened. Both branches are exercised: one
+# container that did not override (must be `image-verified`) and one that did (must
+# be `joined-string`, and must NOT come back wearing the image's argv).
+note "A.4: entrypoint recovery, both branches"
+EPIMG="lab-podman-a4-eponly-${SUFFIX}"
+EPNAME="lab-${LAB_NAME}-eponly"
+OVNAME="lab-${LAB_NAME}-epover"
+on_exit '
+    podman rm -f "$EPNAME" >/dev/null 2>&1 || true
+    podman rm -f "$OVNAME" >/dev/null 2>&1 || true
+    podman rmi -f "$EPIMG" >/dev/null 2>&1 || true
+'
+if printf 'FROM docker.io/library/busybox:latest\nENTRYPOINT ["/bin/sleep","600"]\n' \
+       | podman build -q -t "$EPIMG" -f - . >/dev/null 2>&1 \
+   && podman run -d --name "$EPNAME" "$EPIMG" >/dev/null 2>&1; then
+    epjson="$("$LAB_PODMAN" inspect "$EPNAME" --json)"
+    [[ "$(jq -r '.container.command | type' <<<"$epjson")" == "array" ]] \
+        || fail "REGRESSION: an ENTRYPOINT-only container made .container.command a $(jq -r '.container.command | type' <<<"$epjson") — that is exactly the defect A.4 fixed, come back"
+    [[ "$(jq -rc '.container.entrypoint' <<<"$epjson")" == '["/bin/sleep","600"]' ]] \
+        || fail "REGRESSION: the entrypoint was not recovered element-by-element — got $(jq -rc '.container.entrypoint' <<<"$epjson")"
+    [[ "$(jq -r '.container.entrypoint_source' <<<"$epjson")" == "image-verified" ]] \
+        || fail "json: this container did not override its entrypoint, so the image's array should have been accepted after the join check — source was $(jq -r '.container.entrypoint_source' <<<"$epjson")"
+
+    # THE CONTROL. Override the entrypoint so the container and its image disagree.
+    # The driver must REFUSE the image's array — reporting ["/bin/sleep","600"] for a
+    # container running `sleep 900` would be a record that outlived its subject — and
+    # must not guess a split either: '/bin/sh -c "sleep 900"' joins to the same string
+    # as a four-element argv and is a different program.
+    if podman run -d --name "$OVNAME" --entrypoint '["/bin/sh","-c","sleep 900"]' "$EPIMG" >/dev/null 2>&1; then
+        ovjson="$("$LAB_PODMAN" inspect "$OVNAME" --json)"
+        [[ "$(jq -r '.container.entrypoint_source' <<<"$ovjson")" == "joined-string" ]] \
+            || fail "REGRESSION: a container that OVERRODE its entrypoint reported source '$(jq -r '.container.entrypoint_source' <<<"$ovjson")' — the image's array must be refused when re-joining it does not reproduce the container's string"
+        [[ "$(jq -rc '.container.entrypoint' <<<"$ovjson")" != '["/bin/sleep","600"]' ]] \
+            || fail "REGRESSION: the driver served the IMAGE's entrypoint for a container that overrode it — a cached fact outliving its subject"
+        [[ "$(jq -r '.container.entrypoint | length' <<<"$ovjson")" == "1" ]] \
+            || fail "json: an unsplittable entrypoint must be reported as the ONE string it is known to be, not split on spaces — got $(jq -rc '.container.entrypoint' <<<"$ovjson")"
+        note "override control: source=joined-string, entrypoint=$(jq -rc '.container.entrypoint' <<<"$ovjson") (not split, not the image's)"
+    else
+        note "SKIPPED the override control: podman refused --entrypoint — that branch is UNVERIFIED on this host"
+    fi
+else
+    note "SKIPPED the ENTRYPOINT-only branch: could not build/run $EPIMG — UNVERIFIED on this host"
+fi
 
 note "schema spot-checks (labels)"
 [[ "$(jq -r '.labels.lab'  <<<"$json")" == "$LAB_NAME" ]] \

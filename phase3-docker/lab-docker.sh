@@ -1422,12 +1422,15 @@ Service: {{.Label "lab-create.svc"}}'
 #   networks — per-topology [network.X] blocks, driver preserved
 # ─── Subcommand: inspect ────────────────────────────────────────────────────
 # Single-container detail report — folds `docker inspect`'s nested JSON
-# into a stable schema_version=1 surface that the Phase 6 TUI can rely on.
+# into a stable schema_version=2 surface that the Phase 6 TUI can rely on.
+# (v2 since 2026-08-20: `container` gained `entrypoint`, `entrypoint_source`,
+# `env` and `workdir` — the four fields `docker export` does not write, without
+# which a tier-2 restore hands back an image nothing can start.  TODO A.4.)
 #
 # Two output modes:
 #   default      → human-readable [labels] / [container] / [state] /
 #                  [network] / [mounts] sections
-#   --json       → one JSON document on stdout, schema_version=1
+#   --json       → one JSON document on stdout, schema_version=2
 #
 # Designed primarily as a machine-readable surface for Phase 6 (the TUI's
 # docker detail panel).  CLI users get the same data but rendered.
@@ -1458,12 +1461,28 @@ cmd_inspect() {
     # schema flattening.  Doing this in jq (rather than printf-with-fields
     # like Phases 1/2) is much cleaner because docker's structure is
     # already well-typed.
+    # ── The four fields `docker export` does NOT write ──────────────────────
+    #
+    # TODO A.4.  `docker export` / `podman export` write the FILESYSTEM and not the
+    # OCI config, so an image built back with `import` has no CMD, no ENTRYPOINT, no
+    # ENV and no WORKDIR — and `run` on it dies at "no command or entrypoint
+    # provided".  The filesystem survives the round trip; the INTENT does not.
+    # Reporting the intent here is what lets a derivation carry it (A.3's rule: put
+    # the missing fact in the driver, rather than have the consumer reach around it).
+    #
+    # `command` was already emitted and was already WRONG, in the quiet direction.
+    # It read `$c.Config.Cmd // []`, which is exactly right for an image whose
+    # command is a CMD — and for an ENTRYPOINT-only image it reported `[]`: a
+    # container with an argv, described as having none.  Measured 2026-08-20 against
+    # docker 29.7.1 with an `ENTRYPOINT ["/bin/sleep","600"]` image.  A field that is
+    # empty when the answer is unknown is the liar case; `entrypoint` below makes
+    # `command: []` a TRUE statement instead of a misleading one.
     local rendered
     rendered="$(docker inspect "$cname" 2>/dev/null | jq -r '
         .[0] as $c |
         ($c.Config.Labels // {}) as $L |
         {
-            schema_version: 1,
+            schema_version: 2,
             name: ($c.Name | sub("^/"; "")),
             labels: {
                 lab:    $L["lab-create.lab"],
@@ -1476,6 +1495,11 @@ cmd_inspect() {
                 image:      $c.Config.Image,
                 image_id:   $c.Image,
                 command:    ($c.Config.Cmd // []),
+                entrypoint: ($c.Config.Entrypoint // []),
+                entrypoint_source: (if (($c.Config.Entrypoint // []) | length) == 0
+                                    then "none" else "engine-array" end),
+                env:        ($c.Config.Env // []),
+                workdir:    (($c.Config.WorkingDir // "") | if . == "" then null else . end),
                 created_at: $c.Created
             },
             state: {
@@ -1530,6 +1554,15 @@ cmd_inspect() {
     printf '  name           %s\n' "$cname"
     printf '  id             %s\n' "$(jq -r '.container.id[0:12]' <<<"$rendered")"
     printf '  image          %s\n' "$(jq -r '.container.image' <<<"$rendered")"
+    # Rendered as JSON arrays rather than joined with spaces, deliberately: an argv
+    # element may CONTAIN a space (`nginx -g 'daemon off;'` is three elements, one of
+    # which has one), and a joined line cannot be told apart from a different argv that
+    # happens to join to the same string.  Display is allowed to be verbose; it is not
+    # allowed to be ambiguous about the thing the reader came here to copy.
+    printf '  entrypoint     %s\n' "$(jq -rc '.container.entrypoint' <<<"$rendered")"
+    printf '  command        %s\n' "$(jq -rc '.container.command'    <<<"$rendered")"
+    printf '  workdir        %s\n' "$(jq -r  '.container.workdir // "—"' <<<"$rendered")"
+    printf '  env            %s\n' "$(jq -rc '.container.env | length' <<<"$rendered") variable(s) — see --json"
     printf '  created_at     %s\n' "$(jq -r '.container.created_at' <<<"$rendered")"
 
     printf '\n[state]\n'

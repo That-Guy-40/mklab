@@ -175,17 +175,24 @@ phase4-podman/lab-podman.sh export pwn --format compose > pwn-compose.yaml
 
 ### `inspect --json` — discriminates container vs pod
 
-Added in commit `add0e44`. `schema_version: 1`, top-level `kind` field
-is either `"container"` or `"pod"`, and the rest of the schema follows
-that discriminator.
+Added in commit `add0e44`. Top-level `kind` is either `"container"` or `"pod"`,
+and the rest of the schema follows that discriminator — **including the version**:
+the container document is at `schema_version: 2` and the pod document is still at
+`1`. That is not an oversight. The container document gained four fields on
+2026-08-20 and the pod document did not change, and bumping a document that did
+not change would be a false statement about it.
 
 **Container kind** — `phase4-podman/lab-podman.sh inspect pwn/attacker --json | jq` *(sample, truncated)*:
 
 ```json
 {
-  "schema_version": 1, "kind": "container",
+  "schema_version": 2, "kind": "container",
   "name": "lab-pwn-attacker",
   "labels": { "lab": "pwn", "svc": "attacker", "tool": "lab-podman" },
+  "container": { "id": "abcdef…", "image": "kali-rolling",
+                 "command": ["sleep", "3600"],
+                 "entrypoint": [], "entrypoint_source": "none",
+                 "env": ["PATH=…"], "workdir": "/" },
   "state": { "status": "running", "started_at": "2026-04-22T…" },
   "userns": "keep-id", "pod": "lab-pwn-ctf",
   "quadlet": { "managed": false }
@@ -206,6 +213,30 @@ that discriminator.
 
 The `kind` discriminator is what Phase 6's TUI keys off to render the
 right detail panel.
+
+**v2 (2026-08-20) — the argv, and one defect it removed.** `podman export` writes
+the filesystem and not the OCI config, so an image rebuilt from an exported
+tarball has no `CMD`, no `ENTRYPOINT`, no `ENV` and no `WORKDIR` and `run` on it
+dies at *"no command or entrypoint provided"*. The container document now reports
+all four ([TODO A.4](../TODO.md)), which is what lets
+[`preserve.sh`](../examples/micro-cloud/preserve.sh) carry the intent across the
+gap the bytes cross on their own.
+
+`command` was already there and was already **string-or-array**. It read
+`Cmd // Entrypoint // []`, and podman reports a container's entrypoint as a
+space-**joined string**, so an `ENTRYPOINT`-only image produced
+`"command": "/bin/sleep 600"` while every other image produced an array — inside a
+document this page calls stable. It is an array in every case now, and
+`entrypoint` is reported separately.
+
+`entrypoint_source` travels beside the value because a joined string cannot be
+re-split without guessing: `["/bin/sh","-c","sleep 900"]` and
+`["/bin/sh","-c","sleep","900"]` flatten to the same string and are different
+programs. The driver recovers the array from the **image** — but only when
+re-joining it reproduces the container's string, so a container started with
+`--entrypoint` is never described using its image's argv. When it cannot tell, it
+says `joined-string` and hands back the one string it knows, rather than a split
+it invented.
 
 ### Rootless HTTP artifact server — serve netboot images without sudo
 

@@ -191,13 +191,52 @@ Error: no command or entrypoint provided, and no CMD or ENTRYPOINT from image
 says the portable tier "loses running state"; what it actually loses is running state **and
 the image's configuration**. The filesystem survives the round trip; the *intent* does not.
 
-The derivation is the right place for that intent and it cannot carry it yet: no driver
-reports a container's argv (`inspect` renders labels, state, userns and network, and no
-command). Closing that is **TODO A.4** — a row in phases 3/4/5's `inspect`, which is where
-TODO A.3 put the last missing fact rather than having phase 6 reach around the drivers.
+The derivation is the right place for that intent, and **it carries it now** — TODO A.4,
+closed 2026-08-20. Phases 3 and 4's `inspect` report `command`, `entrypoint`,
+`entrypoint_source`, `env` and `workdir` at `schema_version: 2`; `preserve.sh save` writes
+the argv into `derivation.toml`; and `restore` prints the command that starts it, filled
+in from what was recorded rather than ending on a `<cmd>` placeholder you have to remember:
 
-Until then `restore` says what it could not restore instead of handing you an unstartable
-image and calling it success.
+```
+podman:api/keeper → image 'mklab-restored-podman-api-keeper'.
+  Start it with the argv this backup recorded:
+    phase4-podman/lab-podman.sh run --name NEW --image mklab-restored-podman-api-keeper -- 'sleep' '600'
+  [entrypoint/command split is not restored: the image has neither, so the whole argv is
+   passed as the command]
+```
+
+Three things about that, because each is a place this could have quietly lied:
+
+* **The image still has no config.** That is a property of `export` and nothing here
+  changes it. The argv is supplied at `run`, from the manifest.
+* **Entrypoint and command are concatenated**, which is what the engine itself does
+  (`run --entrypoint X img A B` execs `X A B`, and so does an image whose `ENTRYPOINT` is
+  `X` run with command `A B`). The argv is reproduced exactly; the *split* between the two
+  is not, and the line says so rather than leaving it to be discovered.
+* **`env` is deliberately not recorded.** A container's environment carries values the
+  engine injected for *that* container — `HOSTNAME=<its id>`, `HOME`, `container=podman`,
+  all measured absent from the image — so replaying them would bake a dead container's
+  identity into a new one. It is also where secrets live, and a manifest is the part of a
+  backup people paste into an issue. `inspect --json` reports it live, from the container,
+  for anyone who wants it.
+
+**The original A.4 entry was wrong about two of its three phases, and the corrections are
+the interesting part.** It read *"no driver reports a container's argv"* and prescribed *"a
+row in phases 3/4/5's inspect"*:
+
+* Phases 3 and 4 **did** already report `container.command` — and it was wrong in two ways
+  a green suite could not see. Docker's renderer read only `Config.Cmd`, so an
+  `ENTRYPOINT`-only container was reported as having **no argv at all**. Podman's read
+  `Cmd // Entrypoint // []`, and since podman reports the entrypoint as a space-joined
+  *string*, that field came back a **string for one image and an array for the next**.
+* Phase 5 has **neither the field nor the defect**, and should not grow either. A Phase 5
+  instance runs the image's own init — `lab-lxd.sh` refuses a `command` key by name for
+  exactly that reason — and its `from-tarball` backend synthesises `metadata.yaml`, so a
+  restored LXD image already launches. A `command` field there would report `[]` forever:
+  an empty answer to a question that does not apply, which is the shape A.4 exists to
+  remove rather than add.
+
+So `docker` and `podman` moved to `schema_version: 2` and `lxd` stayed at `1`.
 
 ### The phases with no automatic import path, and why
 

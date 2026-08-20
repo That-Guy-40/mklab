@@ -163,7 +163,7 @@ compose can't rebuild them itself.
 
 Added in commit `f1caefc` and consumed by the Phase 6 TUI's docker
 detail panel. `docker inspect` emits a deeply nested JSON array; we fold
-it in jq into a stable `schema_version: 1` surface:
+it in jq into a stable `schema_version: 2` surface:
 
 ```bash
 phase3-docker/lab-docker.sh inspect demo/web --json | jq
@@ -173,7 +173,7 @@ Sample output (truncated):
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "name": "lab-demo-web",
   "labels": {
     "lab": "demo",
@@ -181,7 +181,11 @@ Sample output (truncated):
     "tool": "lab-docker",
     "_other": { "maintainer": "NGINX Docker Maintainers <docker-maint@nginx.com>" }
   },
-  "container": { "id": "8f3c2…", "image": "nginx:alpine", "command": [], "created_at": "2026-04-22T…" },
+  "container": { "id": "8f3c2…", "image": "nginx:alpine",
+                  "command": ["nginx", "-g", "daemon off;"],
+                  "entrypoint": ["/docker-entrypoint.sh"], "entrypoint_source": "engine-array",
+                  "env": ["PATH=…", "NGINX_VERSION=…"], "workdir": "/",
+                  "created_at": "2026-04-22T…" },
   "state":     { "status": "running", "running": true, "exit_code": null, "restart_count": 0, "pid": 31418, "health": null },
   "network":   { "ports": [{ "container_port": 80, "protocol": "tcp", "host_ip": "0.0.0.0", "host_port": 8088 }],
                   "networks": ["lab-demo-frontend"], "ip_addresses": { "lab-demo-frontend": "172.20.0.3" } },
@@ -195,6 +199,20 @@ Image-side labels you didn't set (e.g. `maintainer`) get tucked under
 `labels._other` instead of polluting the lab/svc/tool top-level
 namespace. Drop `--json` for a human-formatted `[labels] / [container]
 / [state] / [network] / [mounts]` rendering of the same data.
+
+**v2 (2026-08-20) added the four fields `docker export` does not write** —
+`entrypoint`, `entrypoint_source`, `env`, `workdir` — because an image rebuilt
+from an exported tarball has none of them and refuses to start. See
+[TODO A.4](../TODO.md) and
+[`examples/micro-cloud/RUNBOOK-preserve.md`](../examples/micro-cloud/RUNBOOK-preserve.md).
+
+*The sample above used to read `"command": []` for this very container* — an
+nginx image whose command is `nginx -g 'daemon off;'`. The document was showing
+the empty answer the old renderer gave for an image whose argv lives in its
+`ENTRYPOINT`, and it had been showing it for months: a field that is empty when
+the answer is unknown reads as *"there is nothing here"*, which is the quiet
+half of the liar case. `entrypoint` is what makes `command: []` a **true**
+statement rather than a misleading one.
 
 ### `status` — three call shapes
 

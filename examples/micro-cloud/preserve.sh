@@ -266,6 +266,78 @@ save_unit_portable() {
     emit_artifact "$manifest" \
         "$phase:$target" "$phase" "$target" "$driver" "$driver_sha" \
         "export-tarball" "$file" "$out" "$ev" "filesystem"
+
+    # THE INTENT, which the tarball does not contain (TODO A.4, closed 2026-08-20).
+    #
+    # `docker export` / `podman export` write the FILESYSTEM.  They do not write the
+    # OCI config, so the image `import` builds back has no CMD and no ENTRYPOINT, and
+    # `run` on it dies at "no command or entrypoint provided".  The bytes survive the
+    # round trip; what the operator MEANT by them did not — which is precisely what a
+    # derivation is for.  So ask the driver, which now reports it, and record it here.
+    #
+    # It is appended immediately after `emit_artifact` on purpose: that call ends on
+    # the last field of this `[[artifact]]` table and nothing else writes until the
+    # next one opens, so these rows land inside the same table without emit_artifact
+    # growing four more positional parameters.
+    _emit_intent "$manifest" "$phase" "$target" "$driver_abs"
+}
+
+# Ask the driver what the container was told to run, and record it — or record, by
+# name, that it could not be known.  Only Phases 3 and 4 have anything to answer:
+#
+#   * `chroot` / `vm` / `fc` have no OCI config at all; their tarball is a root
+#     filesystem whose init comes from inside it.
+#   * `lxd` HAS no command — a system container runs the image's own init, which is
+#     why `lab-lxd.sh` refuses a `command` key by name — and its `from-tarball`
+#     backend synthesises `metadata.yaml`, so a restored LXD image already launches.
+#     Measured 2026-08-20; Phase 5 does not have the defect this function exists for.
+#
+# `env` is deliberately NOT recorded.  Two reasons, and the second is the one that
+# decides it: a container's env carries engine-injected values belonging to the OLD
+# container (`HOSTNAME=<its id>`, `HOME`, `container=podman` — measured, they are
+# absent from the image), so replaying them would bake a dead container's identity
+# into a new one; and env is where secrets live, and a manifest is the part of a
+# backup people paste into an issue.  `inspect --json` reports it live for anyone who
+# wants it, from the container rather than from a record that has outlived it.
+_emit_intent() {
+    local manifest="$1" phase="$2" target="$3" driver_abs="$4"
+    case "$phase" in
+        docker|podman) ;;
+        *) return 0 ;;
+    esac
+    local ins
+    if ! ins="$(bash "$driver_abs" inspect "$target" --json 2>/dev/null)" || [[ -z "$ins" ]]; then
+        printf 'argv_source    = "unavailable"\n' >> "$manifest"
+        note "could not read the argv from $phase:$target — recorded as unavailable, not as absent"
+        return 0
+    fi
+    local cmd ep eps wd
+    cmd="$(jq -c '.container.command    // []'   <<<"$ins" 2>/dev/null)" || cmd='[]'
+    ep="$( jq -c '.container.entrypoint // []'   <<<"$ins" 2>/dev/null)" || ep='[]'
+    eps="$(jq -r '.container.entrypoint_source // "unknown"' <<<"$ins" 2>/dev/null)" || eps=unknown
+    wd="$( jq -r '.container.workdir // ""'      <<<"$ins" 2>/dev/null)" || wd=""
+
+    # A driver still on schema_version 1 has none of these fields; that is a stale
+    # DRIVER rather than a container with no command, and the two must not render the
+    # same.  `jq` returns the literal string "null" for a missing key under -r, and
+    # `// []` above already turns a missing array into `[]` — so the tell is the
+    # schema version itself.  Ask it.
+    local sv; sv="$(jq -r '.schema_version // 0' <<<"$ins" 2>/dev/null)" || sv=0
+    if [[ "$sv" -lt 2 ]]; then
+        printf 'argv_source    = "driver-schema-v%s"\n' "$sv" >> "$manifest"
+        note "$phase:$target: the driver still emits schema_version=$sv, which has no argv — recorded as unknown, NOT as an empty command"
+        return 0
+    fi
+
+    printf 'command        = %s\n' "$cmd" >> "$manifest"
+    printf 'entrypoint     = %s\n' "$ep"  >> "$manifest"
+    # `entrypoint_source` travels WITH the value because it decides whether the value
+    # may be replayed: `joined-string` means the engine handed us an argv already
+    # flattened to one string and it could not be split back without guessing.
+    printf 'argv_source    = "%s"\n' "$(toml_safe argv_source "$eps")" >> "$manifest"
+    [[ -n "$wd" ]] && printf 'workdir        = "%s"\n' "$(toml_safe workdir "$wd")" >> "$manifest"
+    note "argv recorded: entrypoint=$ep command=$cmd (source: $eps)"
+    return 0
 }
 
 # Phase 7: derive the paths from the driver, copy the files, hash what was written.
@@ -492,24 +564,34 @@ manifest_path() {
 # `toml_safe` refuses everything that would need real parsing.
 each_artifact() {   # each_artifact <manifest> <callback>
     local manifest="$1" cb="$2"
-    local unit="" phase="" target="" role="" file="" sha="" inplace="" snapshot="" driver="" line key val
+    local unit="" phase="" target="" role="" file="" sha="" inplace="" snapshot="" driver=""
+    local cmdj="" epj="" argvsrc="" workdir="" line key val raw
     while IFS= read -r line || [[ -n "$line" ]]; do
         if [[ "$line" == "[[artifact]]" ]]; then
-            [[ -z "$unit" ]] || "$cb" "$unit" "$phase" "$target" "$role" "$file" "$sha" "$inplace" "$snapshot" "$driver"
+            [[ -z "$unit" ]] || "$cb" "$unit" "$phase" "$target" "$role" "$file" "$sha" "$inplace" "$snapshot" "$driver" "$cmdj" "$epj" "$argvsrc" "$workdir"
             unit=""; phase=""; target=""; role=""; file=""; sha=""; inplace=""; snapshot=""; driver=""
+            cmdj=""; epj=""; argvsrc=""; workdir=""
             continue
         fi
         [[ "${line#"${line%%[![:space:]]*}"}" != \#* ]] || continue   # a comment is not a field
         [[ "$line" == *=* ]] || continue
         key="${line%%=*}"; key="${key// /}"
-        val="${line#*=}"; val="${val# }"; val="${val%\"}"; val="${val#\"}"; val="${val%% }"
+        # `raw` keeps the right-hand side EXACTLY as written; `val` is the same with one
+        # layer of TOML string quoting removed.  `command`/`entrypoint` are TOML ARRAYS
+        # (`["sleep","600"]`) — which are also valid JSON, deliberately, so the same text
+        # round-trips through jq — and the quote-stripping that is right for every scalar
+        # field would eat the first and last characters of one.  So they read `raw`.
+        raw="${line#*=}"; raw="${raw# }"; raw="${raw%% }"
+        val="${raw%\"}"; val="${val#\"}"
         case "$key" in
             unit) unit="$val" ;; phase) phase="$val" ;; target) target="$val" ;;
             role) role="$val" ;; file) file="$val" ;; sha256) sha="$val" ;;
             inplace) inplace="$val" ;; snapshot) snapshot="$val" ;; driver) driver="$val" ;;
+            command) cmdj="$raw" ;; entrypoint) epj="$raw" ;;
+            argv_source) argvsrc="$val" ;; workdir) workdir="$val" ;;
         esac
     done < "$manifest"
-    [[ -z "$unit" ]] || "$cb" "$unit" "$phase" "$target" "$role" "$file" "$sha" "$inplace" "$snapshot" "$driver"
+    [[ -z "$unit" ]] || "$cb" "$unit" "$phase" "$target" "$role" "$file" "$sha" "$inplace" "$snapshot" "$driver" "$cmdj" "$epj" "$argvsrc" "$workdir"
 }
 
 V_MATCH=0; V_CHANGED=0; V_UNKNOWN=0
@@ -594,6 +676,7 @@ R_DONE=(); R_NOPATH=(); R_FAILED=(); R_NEXT=()
 
 _restore_row() {
     local unit="$1" phase="$2" target="$3" role="$4" file="$5" inplace="$7" snapshot="$8" driver="$9"
+    local cmdj="${10:-}" epj="${11:-}" argvsrc="${12:-}" workdir="${13:-}"
     local driver_abs="$REPO_ROOT/$driver"
 
     if [[ "$inplace" == "true" ]]; then
@@ -625,17 +708,24 @@ _restore_row() {
         # loses is running state AND the image's configuration — the filesystem survives
         # the round trip and the INTENT does not.
         #
-        # The derivation is the right place for that intent, and it cannot carry it yet:
-        # no driver reports a container's argv (`inspect` renders labels, state, userns and
-        # network, and no command). Closing that is TODO A.4 — a row in phases 3/4/5's
-        # `inspect`, which is where TODO A.3 put the last missing fact rather than having
-        # phase 6 reach around the drivers for it.
+        # ── CLOSED 2026-08-20 (TODO A.4) ────────────────────────────────────────
+        # The derivation is the right place for that intent, and it can carry it now:
+        # Phases 3 and 4 report `command`, `entrypoint` and `workdir` at
+        # schema_version 2, `save` writes them into this manifest, and the line below
+        # is built from what was recorded rather than ending on a `<cmd>` placeholder
+        # the reader has to fill in from memory.
         #
-        # Until then this restores the image and NAMES what it could not restore, because
-        # a restore that quietly produced something unstartable would be the liar case.
+        # The image STILL comes back without a config — that is a property of
+        # `export`, not something this can change — so the argv is supplied at `run`.
+        # Entrypoint and command are CONCATENATED, which is not a shortcut: it is what
+        # the engine itself does (`run --entrypoint X img A B` execs `X A B`, and so
+        # does an image whose ENTRYPOINT is X run with command `A B`).  The restored
+        # image has neither, so passing `entrypoint + command` as the command
+        # reproduces the same argv.  What is NOT reproduced is the SPLIT between the
+        # two, and that is said out loud rather than left for someone to discover.
         docker|podman)
             _issue "$unit" bash "$driver_abs" build --tag "$tag" --backend from-tarball --tarball "$path"
-            R_NEXT+=("$unit → image '$tag'.  Start it with a command, because the image has none: $driver run --name NEW --image $tag -- <cmd>") ;;
+            R_NEXT+=("$unit → image '$tag'.  $(_argv_advice "$driver" "$tag" "$cmdj" "$epj" "$argvsrc")") ;;
         lxd)
             _issue "$unit" bash "$driver_abs" build --alias "$tag" --backend from-tarball --tarball "$path"
             R_NEXT+=("$unit → image alias '$tag'.  Start it with: $driver run --name NEW --image $tag") ;;
@@ -646,6 +736,47 @@ _restore_row() {
         *)
             R_NOPATH+=("$unit — no import path is known for phase '$phase'") ;;
     esac
+}
+
+# Build the "now start it" line from what the derivation recorded — or say, by name,
+# why there is no line to build.  Four outcomes, and they are four because collapsing
+# them would put a guess where an UNKNOWN belongs:
+#
+#   exact / engine-array / image-verified → the argv is known element by element and
+#       is printed quoted, ready to paste.
+#   joined-string → the ENGINE handed the driver an argv already flattened into one
+#       string (podman 4.x does this for a container whose entrypoint was overridden
+#       at run time).  Re-splitting it on spaces would be a GUESS — `["/bin/sh","-c",
+#       "sleep 900"]` and `["/bin/sh","-c","sleep","900"]` flatten to the same string
+#       and are different programs — so the string is printed as the one argument it
+#       is known to be, with the ambiguity stated.
+#   unavailable / driver-schema-vN → the argv was never recorded.  This is an UNKNOWN
+#       about the backup, not a container with no command, and it must not render as
+#       the empty-argv case.
+#   "" (nothing recorded at all) → an OLD manifest, taken before this existed.  Same
+#       treatment: named, not silently treated as "no command".
+_argv_advice() {
+    local driver="$1" tag="$2" cmdj="$3" epj="$4" src="$5"
+    case "$src" in
+        ""|unavailable|driver-schema-*)
+            printf 'The image has no command (that is what `export` loses) and this manifest recorded none%s. Start it with: %s run --name NEW --image %s -- <cmd>' \
+                   "${src:+ (argv_source: $src)}" "$driver" "$tag"
+            return 0 ;;
+    esac
+    local argv
+    argv="$(jq -rn --argjson ep "${epj:-[]}" --argjson cmd "${cmdj:-[]}" \
+              '($ep + $cmd) | map(@sh) | join(" ")' 2>/dev/null)" || argv=""
+    if [[ -z "$argv" ]]; then
+        printf 'The recorded argv is empty — the container ran its image default, which `import` did not preserve. Start it with: %s run --name NEW --image %s -- <cmd>' \
+               "$driver" "$tag"
+        return 0
+    fi
+    printf 'Start it with the argv this backup recorded: %s run --name NEW --image %s -- %s' \
+           "$driver" "$tag" "$argv"
+    if [[ "$src" == "joined-string" ]]; then
+        printf '  [entrypoint was reported as ONE joined string by the engine and was NOT split — check it before trusting the word boundaries]'
+    fi
+    printf '  [entrypoint/command split is not restored: the image has neither, so the whole argv is passed as the command]'
 }
 
 _issue() {
