@@ -1047,3 +1047,79 @@ fabric" and "db reached the fabric by itself" can no longer be read off the same
 A probe that repairs its subject is a special case of the liar in the root `CLAUDE.md`: not a
 false success, but a **manufactured** one — and it is worse in one respect, because everything it
 prints is true.
+
+> **Superseded in part by L10-18a:** the drop-in below was the right shape and the wrong
+> **view**. The read-only 4b and the `DB_SELFCONF` line stand.
+
+## L10-18a — the wait was satisfied and `ifup` still could not find the device: two views, one name
+
+**Run 2026-08-20, `reset=1`.** `up` rc=0, `down` rc=0, 78 s, cluster unchanged. The new summary
+line did its job on its first outing:
+
+```text
+db self-configured=no   <- 'no' means db's capstone row, if any, was not earned
+```
+
+The drop-in was verifiably in place — the diagnostic `cat`s it out of the *running* container —
+and the failure was byte-identical to L10-18's. The delivery chain was then checked end to end
+from the exported image, with no privileged run needed:
+
+```console
+$ tar tzvf images/micro-cloud-base.tar.gz | grep wait-for-eth0
+-rwxr-xr-x 0/0  213  ./usr/local/sbin/wait-for-eth0
+-rw-r--r-- 0/0   72  ./etc/systemd/system/networking.service.d/wait-for-eth0.conf
+```
+
+Both present, the helper executable, the drop-in exactly 72 bytes — the length of its intended
+content. Nothing was lost between `--post-command`, the chroot, the tarball and the image.
+
+### The unit's own status names the contradiction
+
+`networking.service: Main process exited, code=exited, status=1/FAILURE` — **the main process**,
+i.e. `ifup`. systemd does not run `ExecStart` if an `ExecStartPre` fails. So `ExecStartPre`
+**returned 0**: the wait was *satisfied*, and the next command could not find the device.
+
+Both are true at once because they are **not the same view**:
+
+| view | whose netns it answers for |
+|---|---|
+| `/sys/class/net/…` | the netns of the **sysfs mount**, fixed when `/sys` was mounted |
+| `ip link` / `if_nametoindex` (netlink) | the **caller's own** netns |
+
+Shown locally in a fresh netns whose `/sys` is still the host's — no container, no privilege:
+
+```console
+    ip link show docker0   -> not present     # netlink: this netns has no docker0
+    /sys/class/net/docker0 -> VISIBLE         # sysfs: still answering for the host
+    OLD helper (sysfs)   rc=0    <- returned at once: FOOLED
+    NEW helper (netlink) rc=124  <- still waiting: agrees with ifup
+```
+
+**This is the root `CLAUDE.md`'s opening table with my own name on it.** The cheap check is not
+a weaker version of the real one; it is a *different question that happens to be easier to ask*,
+and it can be true while the thing it stands for is false. "A `/sys/class/net` entry exists" was
+a stand-in for "the name resolves in the namespace `ifup` will ask about", and the stand-in was
+satisfied by a namespace nobody was in. Three of L10-18's controls passed — the helper really
+does block, really does return, really does wait exactly as long as needed. **They measured the
+helper against the wrong seam, so they proved everything except the thing that mattered.**
+
+The fix: wait on `ip link show eth0`, the same lookup the consumer makes. This lab already has
+the rule in another shape — the delivery test that used `curl --data-binary` and proved the sink
+rather than the node, whose `busybox wget` truncates DER. *Drive the client the machine actually
+has.*
+
+### And it added a witness, because "never loaded" and "loaded and satisfied" looked identical
+
+The helper now echoes two lines that land in the unit's journal. Without them the run above
+could not distinguish *the drop-in was never read* from *it ran and was satisfied* — the
+`systemctl show ExecStartPre` probe added alongside answers the first directly. A silent
+success and a silent absence present the same way from outside; **`UNKNOWN` was the honest
+verdict for that run, and it took two probes to retire it.**
+
+### The no-quotes rule earned itself in the same edit
+
+The rewritten helper's comment first contained a quoted phrase — inside a `printf "…"` that
+crosses `--post-command`, the outer shell and an in-chroot `sh -c`. It would have terminated the
+format string and truncated the file mid-sentence. It was caught by **rendering the
+post-command through the real pipeline and reading the result**, not by inspecting it: the
+truncation is invisible in the source line and obvious in the output.

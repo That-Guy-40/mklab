@@ -207,7 +207,7 @@ else
         --post-command 'printf "auto lo\niface lo inet loopback\n\nauto eth0\niface eth0 inet dhcp\n" > /etc/network/interfaces' \
         --post-command 'printf "send host-name \"db\";\n" >> /etc/dhcp/dhclient.conf' \
         --post-command 'ln -sf /lib/systemd/system/networking.service /etc/systemd/system/multi-user.target.wants/networking.service' \
-        --post-command 'printf "#!/bin/sh\n# eth0 is inserted into this netns by the container manager, not by anything\n# in this tree, and nothing here is told when that happens. Wait for it.\nuntil [ -e /sys/class/net/eth0 ]; do sleep 0.2; done\n" > /usr/local/sbin/wait-for-eth0' \
+        --post-command 'printf "#!/bin/sh\n# eth0 is inserted into this netns by the container manager, not by anything\n# in this tree, and nothing here is told when that happens. Wait for it -- and\n# wait on NETLINK, the view ifup and dhclient actually consult, NOT on a\n# /sys/class/net entry: sysfs tags its net subsystem with the netns of the\n# MOUNT, so in a container it can answer for a namespace this process is not\n# in. The echoes are a witness -- they land in the unit journal, so the next\n# run can tell a drop-in that never loaded from one that ran and saw eth0.\necho wait-for-eth0: waiting for eth0 on netlink\nuntil ip link show eth0 >/dev/null 2>&1; do sleep 0.2; done\necho wait-for-eth0: eth0 is visible on netlink\n" > /usr/local/sbin/wait-for-eth0' \
         --post-command 'chmod 0755 /usr/local/sbin/wait-for-eth0' \
         --post-command 'printf "[Service]\nTimeoutStartSec=30\nExecStartPre=/usr/local/sbin/wait-for-eth0\n" > /etc/systemd/system/networking.service.d/wait-for-eth0.conf' \
         --name micro-cloud-base --target /var/chroots/micro-cloud-base --lab micro-cloud \
@@ -312,7 +312,19 @@ if asuser "$REPO/phase5-lxd/lab-lxd.sh" exec micro-cloud/db -- true >/dev/null 2
     # -- the unit ran, and it ran BEFORE eth0 existed in this netns. Not a broken config: an
     # ordering race, which is why five runs of checking the config found every ingredient
     # present and nothing wrong. LEDGER L10-18.
-    echo "    networking log:";     dbx 'journalctl -u networking --no-pager -n 20 2>&1 || echo "(no journal)"'
+    # DID THE DROP-IN LOAD, AND WHAT DID IT SEE? Both are needed, because the run of
+    # 2026-08-20 could not distinguish them: the unit failed with status=1 from *ifup*, which
+    # means ExecStartPre had already returned 0 -- so either the wait ran and was satisfied,
+    # or it was never configured. `systemctl show` answers the first; the helper's own echoes
+    # in the journal below answer the second.
+    echo "    ExecStartPre loaded:"; dbx 'systemctl show networking -p ExecStartPre -p Result -p TimeoutStartUSec 2>&1'
+    echo "    helper on disk:";      dbx 'ls -l /usr/local/sbin/wait-for-eth0 2>&1'
+    # THE TWO VIEWS, SIDE BY SIDE. sysfs tags its net subsystem with the netns of the MOUNT,
+    # netlink answers for the caller's own netns. Where they disagree, a probe reading sysfs
+    # is answering for a namespace nobody is in -- and `ifup` uses netlink.
+    echo "    netlink sees:";        dbx 'ip -o link show | cut -d: -f2 | tr -d " " | tr "\n" " "'
+    echo "    sysfs sees:";          dbx 'ls /sys/class/net | tr "\n" " "'
+    echo "    networking log:";     dbx 'journalctl -u networking --no-pager -n 60 2>&1 || echo "(no journal)"'
     echo "    wait-for-eth0 drop-in:"
     dbx 'cat /etc/systemd/system/networking.service.d/wait-for-eth0.conf 2>&1 || echo "ABSENT - tree predates the fix"'
     # networkd is kept only to confirm it is NOT the thing running, since a half-migration

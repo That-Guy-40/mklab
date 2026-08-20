@@ -61,7 +61,7 @@ sudo phase1-chroot/lab-chroot.sh create \
      --post-command 'printf "auto lo\niface lo inet loopback\n\nauto eth0\niface eth0 inet dhcp\n" > /etc/network/interfaces' \
      --post-command 'printf "send host-name \"db\";\n" >> /etc/dhcp/dhclient.conf' \
      --post-command 'ln -sf /lib/systemd/system/networking.service /etc/systemd/system/multi-user.target.wants/networking.service' \
-     --post-command 'printf "#!/bin/sh\n# eth0 is inserted into this netns by the container manager, not by anything\n# in this tree, and nothing here is told when that happens. Wait for it.\nuntil [ -e /sys/class/net/eth0 ]; do sleep 0.2; done\n" > /usr/local/sbin/wait-for-eth0' \
+     --post-command 'printf "#!/bin/sh\n# eth0 is inserted into this netns by the container manager, not by anything\n# in this tree, and nothing here is told when that happens. Wait for it -- and\n# wait on NETLINK, the view ifup and dhclient actually consult, NOT on a\n# /sys/class/net entry: sysfs tags its net subsystem with the netns of the\n# MOUNT, so in a container it can answer for a namespace this process is not\n# in. The echoes are a witness -- they land in the unit journal, so the next\n# run can tell a drop-in that never loaded from one that ran and saw eth0.\necho wait-for-eth0: waiting for eth0 on netlink\nuntil ip link show eth0 >/dev/null 2>&1; do sleep 0.2; done\necho wait-for-eth0: eth0 is visible on netlink\n" > /usr/local/sbin/wait-for-eth0' \
      --post-command 'chmod 0755 /usr/local/sbin/wait-for-eth0' \
      --post-command 'printf "[Service]\nTimeoutStartSec=30\nExecStartPre=/usr/local/sbin/wait-for-eth0\n" > /etc/systemd/system/networking.service.d/wait-for-eth0.conf' \
      --name micro-cloud-base --target /var/chroots/micro-cloud-base --lab micro-cloud
@@ -147,13 +147,47 @@ So the tree pays for having no udev **twice, in opposite directions**:
 | `ifupdown` | does not wait at all | fails at once — `No such device` |
 
 Neither is wrong; both are right for a machine that has udev. So the wait is supplied by hand,
-as the last three `--post-command` lines above: a two-line helper that blocks until
-`/sys/class/net/eth0` exists, and a drop-in that runs it as `ExecStartPre` with
-`TimeoutStartSec=30` — the timeout is what keeps it honest, since a device that genuinely never
-appears must still fail loudly rather than hang the boot.
+as the last three `--post-command` lines above: a helper that blocks until `eth0` appears, and
+a drop-in that runs it as `ExecStartPre` with `TimeoutStartSec=30` — the timeout is what keeps
+it honest, since a device that genuinely never appears must still fail loudly rather than hang
+the boot.
+
+### The helper waits on netlink, and the first version did not
+
+The first helper waited for **`/sys/class/net/eth0`** to exist, and the run of 2026-08-20 said
+it did not work — with the drop-in verifiably in the image and the unit still failing on
+`No such device`. The unit's status is what gives it away: `status=1/FAILURE` from **`ifup`**,
+which can only happen if `ExecStartPre` had already **returned 0**. The wait was satisfied and
+the very next command could not find the device.
+
+Both are true at once because **the two are not the same view**:
+
+| view | whose network namespace it answers for |
+|---|---|
+| `/sys/class/net/…` | the netns of the **sysfs mount** — fixed when `/sys` was mounted |
+| `ip link` / `if_nametoindex` (netlink) | the **caller's own** netns |
+
+Demonstrated locally, no container needed — in a fresh netns whose `/sys` is still the host's:
+
+```console
+$ unshare -rn --map-auto bash -c '...'
+    ip link show docker0   -> not present        # netlink: this netns has no docker0
+    /sys/class/net/docker0 -> VISIBLE            # sysfs: answering for the host
+    OLD helper (sysfs)   rc=0    <- returned at once: FOOLED
+    NEW helper (netlink) rc=124  <- still waiting: agrees with ifup
+```
+
+So the helper now waits on `ip link show eth0`, the same lookup `ifup` and `dhclient` make.
+**Assert the outcome, not the mechanism** — a `/sys` entry was a stand-in for "the name
+resolves", and the stand-in can be true while the thing it stands for is false. It also echoes
+two witness lines, which land in the unit's journal: without them, *"the drop-in never loaded"*
+and *"it ran and was satisfied"* look identical from outside.
 
 Neither file contains a `$` or a quote, deliberately: the text travels through `--post-command`
 → the outer shell → `sh -c` inside the chroot, and every layer is another chance to eat one.
+The rule earned itself immediately — the first draft of this very comment contained a quoted
+phrase, which would have truncated the helper at that character; rendering it through the real
+pipeline before trusting it is what caught that.
 
 Two more details in those lines, neither incidental:
 

@@ -44,6 +44,8 @@ require 'send host-name' \
         "db registers its DHCP lease under LXD's instance name (lab-micro-cloud-db) and 'getent db' fails from edge (LEDGER L10-13)"
 require 'multi-user.target.wants/networking.service' \
         "networking.service is installed but not enabled, so it never runs (LEDGER L10-16)"
+require 'until ip link show eth0' \
+        "the helper no longer waits on NETLINK. A /sys/class/net test answers for the netns of the sysfs MOUNT, not the caller's, so it can be satisfied while ifup's own lookup still fails -- which is exactly what happened (LEDGER L10-19)"
 require '> /usr/local/sbin/wait-for-eth0' \
         "the drop-in's ExecStartPre points at a helper that is never written, and the unit fails before ifup (LEDGER L10-18)"
 require 'networking.service.d/wait-for-eth0.conf' \
@@ -57,7 +59,7 @@ note "the runner's recipe and the RUNBOOK's are identical ($n_a lines)"
 
 # ── control: break one copy and watch the comparison bite ────────────────────
 tmp="$(mktemp)"; on_exit "rm -f '$tmp'"
-sed "s/until \[ -e \/sys\/class\/net\/eth0 \]/until [ -e \/sys\/class\/net\/DANGER-PLACEHOLDER ]/" "$DOC" > "$tmp"
+sed "s/until ip link show eth0/until ip link show DANGER-PLACEHOLDER/" "$DOC" > "$tmp"
 c="$(extract "$tmp")"
 [[ "$c" != "$a" ]] || fail "control failed: a doc whose wait-for-eth0 helper watches a different device still compared equal, so the comparison above proves nothing"
 note "control: altering the helper's device name in a copy of the doc does make the comparison fail"
