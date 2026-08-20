@@ -31,3 +31,9 @@ phase6-tui/*.egg-info/
 # (versions.lock and keys/ live outside out/ and stay tracked.)
 micro-linux/out/
 __pycache__/
+
+# Scratch that has landed in the repo root by accident before: a Python venv and
+# wget/OOM leavings. Ignored so a blanket `git add -A` cannot sweep them in again.
+lemonade-env/
+wget-log*
+/oom
