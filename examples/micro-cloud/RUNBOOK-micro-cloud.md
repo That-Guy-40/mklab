@@ -61,7 +61,7 @@ sudo phase1-chroot/lab-chroot.sh create \
      --post-command 'printf "auto lo\niface lo inet loopback\n\nauto eth0\niface eth0 inet dhcp\n" > /etc/network/interfaces' \
      --post-command 'printf "send host-name \"db\";\n" >> /etc/dhcp/dhclient.conf' \
      --post-command 'ln -sf /lib/systemd/system/networking.service /etc/systemd/system/multi-user.target.wants/networking.service' \
-     --post-command 'printf "#!/bin/sh\n# eth0 is inserted into this netns by the container manager, not by anything\n# in this tree, and nothing here is told when that happens. Wait for it -- and\n# wait on NETLINK, the view ifup and dhclient actually consult, NOT on a\n# /sys/class/net entry: sysfs tags its net subsystem with the netns of the\n# MOUNT, so in a container it can answer for a namespace this process is not\n# in. The echoes are a witness -- they land in the unit journal, so the next\n# run can tell a drop-in that never loaded from one that ran and saw eth0.\necho wait-for-eth0: waiting for eth0 on netlink\nuntil ip link show eth0 >/dev/null 2>&1; do sleep 0.2; done\necho wait-for-eth0: eth0 is visible on netlink\n" > /usr/local/sbin/wait-for-eth0' \
+     --post-command 'printf "#!/bin/sh\n# eth0 is inserted into this netns by the container manager, not by anything\n# in this tree, and nothing here is told when that happens. Wait for it -- and\n# wait on NETLINK, the view ifup and dhclient actually consult, NOT on a\n# /sys/class/net entry: sysfs tags its net subsystem with the netns of the\n# MOUNT, so in a container it can answer for a namespace this process is not\n# in. The echoes are a witness -- they land in the unit journal, so the next\n# run can tell a drop-in that never loaded from one that ran and saw eth0.\n# One line per poll, so the JOURNAL TIMESTAMPS say how long this blocked. No lines at all\n# between the two below means eth0 was already there and the wait was never exercised --\n# which is the difference between a fix and a race that happened to go the right way.\necho wait-for-eth0: waiting for eth0 on netlink\nuntil ip link show eth0 >/dev/null 2>&1; do echo wait-for-eth0: not visible yet; sleep 0.2; done\necho wait-for-eth0: eth0 is visible on netlink\n" > /usr/local/sbin/wait-for-eth0' \
      --post-command 'chmod 0755 /usr/local/sbin/wait-for-eth0' \
      --post-command 'printf "[Service]\nTimeoutStartSec=30\nExecStartPre=/usr/local/sbin/wait-for-eth0\n" > /etc/systemd/system/networking.service.d/wait-for-eth0.conf' \
      --name micro-cloud-base --target /var/chroots/micro-cloud-base --lab micro-cloud
@@ -180,8 +180,19 @@ $ unshare -rn --map-auto bash -c '...'
 So the helper now waits on `ip link show eth0`, the same lookup `ifup` and `dhclient` make.
 **Assert the outcome, not the mechanism** — a `/sys` entry was a stand-in for "the name
 resolves", and the stand-in can be true while the thing it stands for is false. It also echoes
-two witness lines, which land in the unit's journal: without them, *"the drop-in never loaded"*
-and *"it ran and was satisfied"* look identical from outside.
+witness lines into the unit's journal: without them, *"the drop-in never loaded"* and *"it ran
+and was satisfied"* look identical from outside, and one line per poll makes the journal
+timestamps say **how long it blocked** — no poll lines at all means `eth0` was already there and
+the wait was never exercised.
+
+That last distinction matters more than it sounds. On the run where `db` finally configured
+itself, `systemctl show` reported the helper's `start_time` and `stop_time` in the **same
+second**, and the container's two views **agreed** (`netlink sees: lo eth0@if186`, `sysfs sees:
+eth0 lo` — its own devices, not the host's). So that run did not exercise the wait, the
+divergence above is real but *not shown to be what happened here*, and the honest score is one
+failing run for the old helper against one passing run for the new one. The netlink version is
+the right one to keep because it asks the question the consumer asks — not because it has been
+proven to be the cure.
 
 Neither file contains a `$` or a quote, deliberately: the text travels through `--post-command`
 → the outer shell → `sh -c` inside the chroot, and every layer is another chance to eat one.

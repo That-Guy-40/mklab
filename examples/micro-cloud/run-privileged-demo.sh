@@ -207,7 +207,7 @@ else
         --post-command 'printf "auto lo\niface lo inet loopback\n\nauto eth0\niface eth0 inet dhcp\n" > /etc/network/interfaces' \
         --post-command 'printf "send host-name \"db\";\n" >> /etc/dhcp/dhclient.conf' \
         --post-command 'ln -sf /lib/systemd/system/networking.service /etc/systemd/system/multi-user.target.wants/networking.service' \
-        --post-command 'printf "#!/bin/sh\n# eth0 is inserted into this netns by the container manager, not by anything\n# in this tree, and nothing here is told when that happens. Wait for it -- and\n# wait on NETLINK, the view ifup and dhclient actually consult, NOT on a\n# /sys/class/net entry: sysfs tags its net subsystem with the netns of the\n# MOUNT, so in a container it can answer for a namespace this process is not\n# in. The echoes are a witness -- they land in the unit journal, so the next\n# run can tell a drop-in that never loaded from one that ran and saw eth0.\necho wait-for-eth0: waiting for eth0 on netlink\nuntil ip link show eth0 >/dev/null 2>&1; do sleep 0.2; done\necho wait-for-eth0: eth0 is visible on netlink\n" > /usr/local/sbin/wait-for-eth0' \
+        --post-command 'printf "#!/bin/sh\n# eth0 is inserted into this netns by the container manager, not by anything\n# in this tree, and nothing here is told when that happens. Wait for it -- and\n# wait on NETLINK, the view ifup and dhclient actually consult, NOT on a\n# /sys/class/net entry: sysfs tags its net subsystem with the netns of the\n# MOUNT, so in a container it can answer for a namespace this process is not\n# in. The echoes are a witness -- they land in the unit journal, so the next\n# run can tell a drop-in that never loaded from one that ran and saw eth0.\n# One line per poll, so the JOURNAL TIMESTAMPS say how long this blocked. No lines at all\n# between the two below means eth0 was already there and the wait was never exercised --\n# which is the difference between a fix and a race that happened to go the right way.\necho wait-for-eth0: waiting for eth0 on netlink\nuntil ip link show eth0 >/dev/null 2>&1; do echo wait-for-eth0: not visible yet; sleep 0.2; done\necho wait-for-eth0: eth0 is visible on netlink\n" > /usr/local/sbin/wait-for-eth0' \
         --post-command 'chmod 0755 /usr/local/sbin/wait-for-eth0' \
         --post-command 'printf "[Service]\nTimeoutStartSec=30\nExecStartPre=/usr/local/sbin/wait-for-eth0\n" > /etc/systemd/system/networking.service.d/wait-for-eth0.conf' \
         --name micro-cloud-base --target /var/chroots/micro-cloud-base --lab micro-cloud \
@@ -287,13 +287,24 @@ echo "  -- br-mc0 members --"; ls /sys/class/net/br-mc0/brif 2>/dev/null | tr '\
 # again be read off the same line.
 step "4b. db's own view of its network (asked, not inferred)"
 dbx() { asuser "$REPO/phase5-lxd/lab-lxd.sh" exec micro-cloud/db -- sh -c "$1" 2>&1 | sed 's/^/      /'; }
-DB_SELFCONF=unknown; DB_ADDR=""
+# ...AND IT WAITS, because the first version of this line reported a FALSE NEGATIVE. It
+# sampled once at t+46s and printed `db self-configured=no` while the container's DHCPDISCOVER
+# was still in flight; the DHCPACK landed four seconds later and the address was there. The
+# instrument built to stop a manufactured SUCCESS had manufactured a FAILURE, from the same
+# root cause both times -- sampling at the wrong moment relative to the event. So it polls to a
+# bound and reports how long it took, which is a fact worth having anyway: a `db` that needs 4 s
+# and one that needs 40 s are not the same lab.
+DB_SELFCONF=unknown; DB_ADDR=""; DB_WAIT=0
 if asuser "$REPO/phase5-lxd/lab-lxd.sh" exec micro-cloud/db -- true >/dev/null 2>&1; then
-    DB_ADDR="$(asuser "$REPO/phase5-lxd/lab-lxd.sh" exec micro-cloud/db -- \
-                 sh -c 'ip -4 -o addr show eth0 scope global 2>/dev/null | awk "{print \$4}"' \
-               2>/dev/null | tr -d ' \r\n')"
+    while (( DB_WAIT < 45 )); do
+        DB_ADDR="$(asuser "$REPO/phase5-lxd/lab-lxd.sh" exec micro-cloud/db -- \
+                     sh -c 'ip -4 -o addr show eth0 scope global 2>/dev/null | awk "{print \$4}"' \
+                   2>/dev/null | tr -d ' \r\n')"
+        [[ -n "$DB_ADDR" ]] && break
+        sleep 1; DB_WAIT=$(( DB_WAIT + 1 ))
+    done
     if [[ -n "$DB_ADDR" ]]; then DB_SELFCONF=yes; else DB_SELFCONF=no; fi
-    echo "    self-configured:     $DB_SELFCONF ${DB_ADDR:+($DB_ADDR)}"
+    echo "    self-configured:     $DB_SELFCONF ${DB_ADDR:+($DB_ADDR)} after ${DB_WAIT}s"
     echo "    interfaces:";        dbx 'ip -o link show | cut -d: -f2 | tr -d " "'
     echo "    addresses:";         dbx 'ip -4 -o addr show | awk "{print \$2, \$4}"'
     echo "    hostname:";          dbx 'hostname'
@@ -322,8 +333,8 @@ if asuser "$REPO/phase5-lxd/lab-lxd.sh" exec micro-cloud/db -- true >/dev/null 2
     # THE TWO VIEWS, SIDE BY SIDE. sysfs tags its net subsystem with the netns of the MOUNT,
     # netlink answers for the caller's own netns. Where they disagree, a probe reading sysfs
     # is answering for a namespace nobody is in -- and `ifup` uses netlink.
-    echo "    netlink sees:";        dbx 'ip -o link show | cut -d: -f2 | tr -d " " | tr "\n" " "'
-    echo "    sysfs sees:";          dbx 'ls /sys/class/net | tr "\n" " "'
+    echo "    netlink sees:";        dbx 'ip -o link show | cut -d: -f2 | tr -d " " | tr "\n" " "; echo'
+    echo "    sysfs sees:";          dbx 'ls /sys/class/net | tr "\n" " "; echo'
     echo "    networking log:";     dbx 'journalctl -u networking --no-pager -n 60 2>&1 || echo "(no journal)"'
     echo "    wait-for-eth0 drop-in:"
     dbx 'cat /etc/systemd/system/networking.service.d/wait-for-eth0.conf 2>&1 || echo "ABSENT - tree predates the fix"'
@@ -382,7 +393,7 @@ else
 fi
 echo
 echo "up rc=$UP_RC   down rc=$DOWN_RC   edge=${EDGE_IP:-none} ssh=$EDGE_SSH   elapsed=${SECONDS}s"
-echo "db self-configured=$DB_SELFCONF${DB_ADDR:+ ($DB_ADDR)}   <- 'no' means db's capstone row, if any, was not earned"
+echo "db self-configured=$DB_SELFCONF${DB_ADDR:+ ($DB_ADDR)}${DB_ADDR:+ after ${DB_WAIT}s}   <- 'no' means db's capstone row, if any, was not earned"
 echo
 echo "Persisting by design (this script never destroys them without --reset):"
 echo "  chroot   : sudo $REPO/phase1-chroot/lab-chroot.sh destroy micro-cloud-base"

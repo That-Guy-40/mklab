@@ -1123,3 +1123,78 @@ crosses `--post-command`, the outer shell and an in-chroot `sh -c`. It would hav
 format string and truncated the file mid-sentence. It was caught by **rendering the
 post-command through the real pipeline and reading the result**, not by inspecting it: the
 truncation is invisible in the source line and obvious in the output.
+
+> **Corrected by L10-19:** the *divergence* above is real and reproducible, but this entry
+> asserted it was the **cause** of L10-18's failure. It is not established. See L10-19.
+
+## L10-19 — the capstone, earned: five instances, one L2, `db` self-configured — and two corrections
+
+**Run 2026-08-20T02:38Z, `reset=1`.** `up` rc=0, `down` rc=0, 79 s, cluster unchanged.
+
+```text
+    getent api1  -> 10.71.0.101     api1
+    getent api2  -> 10.71.0.102     api2
+    getent db    -> 10.71.0.104     db
+    ping api1    -> 2 received, 0% packet loss
+    ping db      -> 2 received, 0% packet loss
+```
+
+`db`'s journal shows the whole sequence for the first time — the witness, then DHCP:
+
+```text
+wait-for-eth0[55]: wait-for-eth0: waiting for eth0 on netlink
+systemd[1]:        Starting networking.service - Raise network interfaces...
+wait-for-eth0[55]: wait-for-eth0: eth0 is visible on netlink
+dhclient[85]:      DHCPDISCOVER on eth0 ... interval 4
+dhclient[85]:      DHCPOFFER of 10.71.0.104 from 10.71.0.1
+dhclient[85]:      DHCPACK   of 10.71.0.104 from 10.71.0.1
+dhclient[85]:      bound to 10.71.0.104 -- renewal in 19190 seconds
+systemd[1]:        Finished networking.service - Raise network interfaces.
+```
+
+**§9.3's capstone is now met by all five instances**, and it is met with a **read-only** 4b —
+nothing in the run touched `db`'s network before `edge` resolved it. That distinction is the
+whole reason L10-18 exists.
+
+### Correction 1 — the guard against a manufactured success manufactured a failure
+
+The summary line said **`db self-configured=no`**. It is wrong, and the journal above says why:
+`DB_SELFCONF` sampled once at **t+46 s**, while the DHCPDISCOVER was still in flight
+(`interval 4`); the DHCPACK landed **four seconds later**. The `systemctl is-active` probe in
+the same block printed `activating`, which was the tell, and I read past it.
+
+**The same root cause as the bug it was built to prevent: sampling at the wrong moment relative
+to the event.** L10-18's probe ran *after* an effect it caused, and reported it as observation;
+this one ran *before* an effect it was waiting for, and reported its absence as fact. A
+single-shot sample of an asynchronous thing is a coin toss either way. It now polls to a bound
+and **prints how long it took** — `db` needing 4 s and `db` needing 40 s are not the same lab,
+and a duration is the one number a boolean cannot carry.
+
+### Correction 2 — L10-18a's diagnosis is NOT established, and this run is the evidence against it
+
+L10-18a claimed the sysfs helper was satisfied by a *different namespace's* view. Two facts here
+undercut it:
+
+* **`systemctl show` reports `start_time` and `stop_time` in the same second.** The wait did not
+  visibly block, so this run **did not exercise it**. A helper that never had to wait cannot be
+  credited with the outcome.
+* **This container's two views AGREE.** The new side-by-side probe prints
+  `netlink sees: lo eth0@if186` and `sysfs sees: eth0 lo` — the *container's* devices, not the
+  host's (`docker0`, `cali…`, `vxlan.calico`). So sysfs **is** namespaced here, and the
+  divergence I demonstrated locally, while entirely real, is not shown to be what happened.
+
+What is actually in hand: the sysfs helper, one failing run; the netlink helper, one passing
+run. **n = 1 each, against a defect that is timing-dependent by construction.** The netlink
+version is still the right one to keep — it asks the question the consumer asks, and that stands
+on its own — but *"the netlink change fixed it"* is a claim I have not earned.
+
+So the witness now logs **one line per poll**. The journal timestamps then say how long the wait
+blocked, and **no poll lines at all means eth0 was already there** — which is exactly the
+difference between a fix and a race that happened to fall the right way. Controlled both
+directions locally: a device created late produced five `not visible yet` lines; a device already
+present produced none.
+
+**The pattern across L10-18, L10-18a and L10-19 is one pattern.** Every wrong answer came from
+measuring at a moment that was not the moment in question — a probe upstream of its own
+observation, a sample taken before the event, a control aimed at a seam the consumer does not
+use. The subject was never mysterious. The clock was.
