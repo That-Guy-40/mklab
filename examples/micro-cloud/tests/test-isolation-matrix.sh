@@ -122,6 +122,87 @@ edge_up() {
     run_edge true >/dev/null 2>&1
 }
 
+# ── the microVM row ──────────────────────────────────────────────────────────
+# THE PROBE HAS TO EXECUTE INSIDE THE GUEST, because a microVM's boundary is a hypervisor:
+# there is no `exec` verb to borrow and no /proc to read from outside.  Slice 5c built the
+# channel that reaches in -- vsock, which needs no bridge, no lease and no root -- and its
+# agent now answers `EXEC <cmd>` with that command's stdout, verbatim.
+#
+# WHY EXEC AND NOT SEVEN PURPOSE-BUILT REPLIES. The matrix's integrity is that ONE
+# implementation of the probes runs in every context: the runner changes, the question does
+# not.  Had the agent answered the seven questions in C, this row alone would have been
+# computed by different code, and a row that differed from the container's would no longer
+# distinguish "the boundary differs" from "that C is wrong" -- the exact confusion the
+# matrix exists to remove.
+#
+# THIS GUEST IS BOOTED BY THE TEST, exactly as the container row's is, and the same caveat
+# applies in the same place: it is the lab's compute type, configured as the lab configures
+# it, not the lab's running instance.  Two honest differences, neither of which touches what
+# the row measures: its image carries the agent (slice-3's does not), and it has NO tap,
+# because a hypervisor boundary does not become a different boundary for having a NIC.
+FC_PORT=1234
+S3="${MC_STATE_DIR:-$HOME/.local/state/lab-create/micro-cloud-s3}"
+FC_BIN="${MC_FIRECRACKER:-$S3/firecracker}"
+FC_KERNEL="${MC_KERNEL:-$S3/vmlinux}"
+FC_BASE="${MC_ROOTFS:-$S3/api1.ext4}"
+FC_UDS=""; FC_WHY=""
+
+run_fc() { python3 "$LAB_DIR/vsock-probe.py" --engine firecracker \
+               --uds "$FC_UDS" --port "$FC_PORT" --exec "$1" --timeout 10 2>/dev/null; }
+
+# Returns non-zero WITH A REASON in FC_WHY, so an unmeasured row can say which precondition
+# was missing instead of reporting a generic absence.
+fc_boot() {
+    have python3            || { FC_WHY="python3 is absent, and vsock-probe.py is the host end of this channel"; return 1; }
+    [[ -x "$FC_BIN" ]]      || { FC_WHY="no firecracker binary at $FC_BIN (set MC_FIRECRACKER)"; return 1; }
+    [[ -r "$FC_KERNEL" ]]   || { FC_WHY="no guest kernel at $FC_KERNEL (set MC_KERNEL)"; return 1; }
+    [[ -r "$FC_BASE" ]]     || { FC_WHY="no slice-3 rootfs at $FC_BASE to add the agent to (set MC_ROOTFS)"; return 1; }
+    [[ -r /dev/kvm && -w /dev/kvm ]] \
+        || { FC_WHY="/dev/kvm is not read-write for this user, so no microVM can start unprivileged"; return 1; }
+    [[ -r /dev/vhost-vsock && -w /dev/vhost-vsock ]] \
+        || { FC_WHY="/dev/vhost-vsock is not read-write for this user, so the guest has no channel to answer on"; return 1; }
+    [[ -x "$LAB_DIR/make-vsock-rootfs.sh" ]] \
+        || { FC_WHY="make-vsock-rootfs.sh is missing — it is what puts the agent into the image without a loop mount or sudo"; return 1; }
+
+    bash "$LAB_DIR/make-vsock-rootfs.sh" --in "$FC_BASE" --out "$WORK/fc.ext4" --port "$FC_PORT" \
+        >"$WORK/mkrootfs.log" 2>&1 \
+        || { FC_WHY="make-vsock-rootfs.sh failed: $(tail -1 "$WORK/mkrootfs.log")"; return 1; }
+
+    # sockaddr_un caps a unix path at ~108 bytes and Firecracker's host end IS a unix
+    # socket, so a long $WORK would fail as something that reads like a vsock fault.
+    local short; short="$(mktemp -d /tmp/mcmx.XXXX)" \
+        || { FC_WHY="could not create a short-path scratch dir for the vsock socket"; return 1; }
+    on_exit "rm -rf -- '$short'"
+    FC_UDS="$short/fc.vsock"
+
+    cat > "$WORK/fc.json" <<JSON
+{
+  "boot-source": { "kernel_image_path": "$FC_KERNEL",
+    "boot_args": "console=ttyS0 reboot=k panic=1 pci=off mc_name=mx-fc" },
+  "drives": [ { "drive_id": "rootfs", "path_on_host": "$WORK/fc.ext4",
+                "is_root_device": true, "is_read_only": false } ],
+  "vsock": { "guest_cid": 42, "uds_path": "$FC_UDS" },
+  "machine-config": { "vcpu_count": 1, "mem_size_mib": 256 }
+}
+JSON
+    "$FC_BIN" --no-api --config-file "$WORK/fc.json" --api-sock "$short/fc.api" \
+        >"$WORK/fc.console" 2>&1 &
+    local pid=$!
+    # BY PID, never by pattern: a pattern carrying this socket path also matches the VMM
+    # whose argv carries it, which is how a previous run killed the workload it was measuring.
+    on_exit "kill $pid 2>/dev/null || true"
+
+    local _t
+    for _t in $(seq 1 90); do
+        grep -q 'MC-VSOCK-AGENT LISTENING' "$WORK/fc.console" 2>/dev/null && return 0
+        kill -0 "$pid" 2>/dev/null \
+            || { FC_WHY="the microVM exited before its agent listened; console tail: $(tail -1 "$WORK/fc.console" 2>/dev/null)"; return 1; }
+        sleep 0.5
+    done
+    FC_WHY="the guest never reported MC-VSOCK-AGENT LISTENING within 45s; console tail: $(tail -1 "$WORK/fc.console" 2>/dev/null)"
+    return 1
+}
+
 # ── the container row ────────────────────────────────────────────────────────
 # `sleep infinity` and alpine: the same image and command micro-cloud.toml declares for
 # `metrics`, so this row measures the boundary the LAB has, not a boundary invented here.
@@ -139,6 +220,7 @@ MATRIX="$WORK/matrix.tsv"
     # UNKNOWNs conditionally and losing a row entirely.
     if db_up;   then probe_all run_lxd  "db (lxd system container)"; fi
     if edge_up; then probe_all run_edge "edge (qemu vm, full stack)"; fi
+    if fc_boot; then probe_all run_fc   "api (firecracker microvm, vsock)"; fi
 } > "$MATRIX"
 
 # A NAMESPACE ID IS ONLY COMPARABLE WITHIN ONE KERNEL, and the table invites the opposite
@@ -150,12 +232,12 @@ MATRIX="$WORK/matrix.tsv"
 # Which rows have their own kernel is DERIVED rather than listed: a row whose boot_id differs
 # from the host's is a different kernel, so its ns ids are its own numbering.
 host_boot="$(head -1 "$MATRIX" | cut -f4)"
-printf '\n  %-28s %6s %-10s %-9s %-11s %-9s %-7s %s\n' \
+printf '\n  %-32s %6s %-10s %-9s %-11s %-9s %-7s %s\n' \
     ROW PIDS PID1 BOOT_ID NETNS DMESG /dev/kvm UID >&2
 while IFS=$'\t' read -r a b c d e f g h; do
     mark=""
     [[ "$d" != "$host_boot" ]] && mark="*"
-    printf '  %-28s %6s %-10s %-9s %-10s%-1s %-9s %-7s %s\n' "$a" "$b" "$c" "$d" "$e" "$mark" "$f" "$g" "$h" >&2
+    printf '  %-32s %6s %-10s %-9s %-10s%-1s %-9s %-7s %s\n' "$a" "$b" "$c" "$d" "$e" "$mark" "$f" "$g" "$h" >&2
 done < "$MATRIX"
 printf '  * = own kernel (boot_id differs from the host), so its NETNS number is its own\n' >&2
 printf '      numbering and is NOT comparable with the host row. 4026531840 is the initial\n' >&2
@@ -221,6 +303,34 @@ note "/dev/kvm: host=$h_kvm container=$c_kvm"
 dmesg_restrict="$(cat /proc/sys/kernel/dmesg_restrict 2>/dev/null || echo '?')"
 note "dmesg: host=$h_dmesg container=$c_dmesg (kernel.dmesg_restrict=$dmesg_restrict — with 0, an unprivileged container reads the HOST's ring buffer; this is a host setting, so it is reported, not asserted)"
 
+# ── the microVM row, when it was measured: is it its OWN machine? ────────────
+# The container's boundary and the microVM's are different KINDS, and boot_id is where that
+# stops being a slogan. `metrics` reads the HOST's boot_id through a namespaced /proc — its
+# isolation is a view of one machine. The microVM reads a DIFFERENT one, because it is a
+# different machine. If this row ever showed the host's boot_id it would mean the answers
+# came from the host and not from inside the guest at all: the seam answering for the wrong
+# instance, a class that has already bitten this repo once.
+#
+# It is a function so the control below can run the SAME check against values known to be
+# wrong, rather than reasoning about what it would have done.
+its_own_machine() { [[ -n "$1" && "$1" != "-" && "$1" != "$2" ]]; }
+
+fc_row="$(grep '^api (firecracker' "$MATRIX" || true)"
+if [[ -n "$fc_row" ]]; then
+    IFS=$'\t' read -r _ f_pids f_init f_boot _ f_dmesg _ _ <<<"$fc_row"
+    (( f_pids > 0 )) \
+        || fail "the microVM row enumerated 0 processes — the EXEC probe returned nothing, which is not the same as 'the guest could see nothing'"
+    its_own_machine "$f_boot" "$h_boot" \
+        || fail "REGRESSION: the firecracker row reports boot_id '$f_boot', the same machine identity as the host. A microVM has its own kernel, so this means the probes did not execute inside the guest — the channel answered for the wrong instance"
+    its_own_machine "$h_boot" "$h_boot" \
+        && fail "control failed: its_own_machine() accepted the host's own boot_id as evidence of a separate machine, so the assertion above cannot fail and proves nothing"
+    note "the microVM row is its OWN machine: boot_id $f_boot vs the host's $h_boot, pid1=$f_init, $f_pids processes — measured INSIDE the guest, over vsock"
+    # Not asserted, reported: it is its own kernel, so the HOST's dmesg_restrict does not
+    # reach it. A microVM reading dmesg is reading ITS OWN ring buffer, which is the
+    # opposite of the container case and the reason this cell is worth printing.
+    note "dmesg: microvm=$f_dmesg while host=$h_dmesg — not the same buffer, and not a leak: its kernel is not this kernel"
+fi
+
 # ── the rows this run could not measure, named ───────────────────────────────
 # A ROW IS UNKNOWN UNTIL IT IS MEASURED, not unknown if some precondition happens to fail.
 # The first version of this block had it the other way round and immediately demonstrated
@@ -233,8 +343,9 @@ note "dmesg: host=$h_dmesg container=$c_dmesg (kernel.dmesg_restrict=$dmesg_rest
 # So the three remaining rows are declared unmeasured here, unconditionally, and would be
 # removed only by code that actually probes them.  Each carries the reason it needs the
 # privileged run rather than a generic "not available".
-unknown "api1, api2 (firecracker microVM)" \
-    "STRUCTURAL, not a matter of running the lab harder: a microVM's boundary is a hypervisor, so the probe has to execute INSIDE the guest, and the slice-1/3 rootfs these boot has no exec channel at all — no ssh, no agent, and a console that only speaks outward. What would close it is booting them on slice 5c's vsock-agent rootfs (make-vsock-rootfs.sh) and running the probes over vsock, which is a different image rather than a different privilege"
+grep -q '^api (firecracker' "$MATRIX" \
+    || unknown "api (firecracker microVM)" \
+        "${FC_WHY:-the microVM row was not attempted}. This row used to be STRUCTURALLY unmeasurable — a hypervisor boundary admits no exec verb, and slice 3's rootfs has no channel at all — and it is measurable now because slice 5c's agent answers EXEC over vsock, which needs no bridge, no lease and no root"
 grep -q '^edge (qemu vm' "$MATRIX" \
     || unknown "edge (qemu vm)" \
         "no lease for 'edge' in the fabric's lease file, or it did not answer ssh at that address. It is booted on a fabric tap by the privileged path; note that \`lab-vm.sh ssh\` CANNOT reach it (that verb needs a slirp hostfwd a tap-mode VM does not have)"

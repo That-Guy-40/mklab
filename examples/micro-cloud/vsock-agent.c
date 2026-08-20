@@ -22,13 +22,39 @@
  * identical, no #ifdef here can be engine-specific — so there are none, and the hypothesis
  * is falsifiable: any divergence has to show up on the HOST side or not at all.
  *
- * Answers a one-line request with a one-line record. Deliberately not a shell: the reply
- * is machine-checkable, and every field is read at request time from the kernel rather
- * than captured at boot (a value cached at startup would keep being served after its
- * subject changed — the record-outlives-its-subject class this repo keeps finding).
+ * Answers a one-line request with a one-line record. Every field is read at request time
+ * from the kernel rather than captured at boot (a value cached at startup would keep being
+ * served after its subject changed — the record-outlives-its-subject class this repo keeps
+ * finding).
+ *
+ * IT ALSO RUNS COMMANDS NOW, AND THAT REVERSES A DECISION THIS COMMENT USED TO STATE.
+ * The original said "deliberately not a shell", and the reason was sound: a structured
+ * reply is machine-checkable. What changed is §9.3's isolation matrix. Its integrity comes
+ * from ONE implementation of the probes run in every context — the runner changes, the
+ * question does not — so that when two rows differ, the difference is attributable to the
+ * BOUNDARY. Answering the matrix's seven questions in C here would have made the microVM
+ * row the only one computed by different code, and a divergence would then be
+ * indistinguishable from a bug in this file. That is precisely the failure the matrix
+ * exists to avoid, so the guest runs the same shell commands every other row runs.
+ *
+ * What it costs, stated plainly: this image carries a remote shell reachable over vsock.
+ * It is not a privilege escalation — vsock is host-to-guest only, it is not routed, and
+ * the host already owns this guest's memory, disk and CPU. It is still a surface, so it
+ * lives in the image that exists to BE probed and is named in that image's README. PING
+ * keeps its structured reply, unchanged, so slice 5c's own tests are untouched.
  *
  *   > PING\n
  *   < MC-VSOCK-AGENT name=<mc_name> cid=<local cid> peer=<cid:port> uptime=<s> req=<n>\n
+ *
+ *   > EXEC <shell command>\n
+ *   < <the command's stdout, verbatim, then the connection closes>
+ *
+ * EXEC's reply is the command's stdout and NOTHING ELSE — no banner, no trailing status —
+ * because its caller is a `runner` in the isolation matrix, which expects exactly what
+ * `sh -c` would have printed. Adding a frame here would mean the microVM row needed
+ * un-framing that no other row needs, and the rows would stop being the same measurement.
+ * stderr is left to the guest console on purpose: the probes carry their own `2>/dev/null`
+ * where they want it, and silently merging streams would let a diagnostic land in a field.
  *
  * Build:  musl-gcc -static -Os -idirafter /usr/include -o mc-vsock-agent vsock-agent.c
  * Run:    mc-vsock-agent [port]        (default 1234, VMADDR_CID_ANY)
@@ -73,6 +99,10 @@ struct sockaddr_vm {
 #endif
 
 #define DEFAULT_PORT 1234
+/* A probe reply that is silently cut in half is a wrong answer wearing a right answer's
+ * clothes. 256 KiB is far above any matrix probe (the largest prints a few hundred bytes)
+ * and far below anything that would stall a guest with 256M of RAM. */
+#define EXEC_MAX_BYTES (256u * 1024u)
 #define IOCTL_VM_SOCKETS_GET_LOCAL_CID _IO(7, 0xb9)
 
 /* Read a whitespace-delimited value out of /proc/cmdline. The guest is told its name on
@@ -179,6 +209,42 @@ int main(int argc, char **argv) {
         if (n < 0) n = 0;
         req[n] = '\0';
         for (ssize_t i = 0; i < n; i++) if (req[i] == '\n' || req[i] == '\r') { req[i] = '\0'; break; }
+
+        /* EXEC: run it and return its stdout verbatim. See the protocol note at the top
+         * for why there is no frame around the output. The cap is a guard against a probe
+         * that accidentally cats something huge -- a truncated reply is a wrong answer, so
+         * it is announced on the guest console rather than silently delivered. */
+        if (strncmp(req, "EXEC ", 5) == 0) {
+            FILE *fp = popen(req + 5, "r");
+            if (!fp) {
+                char e[128];
+                int el = snprintf(e, sizeof(e), "MC-VSOCK-AGENT EXEC-FAILED errno=%d (%s)\n",
+                                  errno, strerror(errno));
+                if (el > 0) { ssize_t o = 0; while (o < el) { ssize_t w = write(c, e + o, (size_t)(el - o)); if (w <= 0) break; o += w; } }
+            } else {
+                char obuf[4096];
+                size_t total = 0, got;
+                while ((got = fread(obuf, 1, sizeof(obuf), fp)) > 0) {
+                    if (total >= EXEC_MAX_BYTES) break;
+                    if (total + got > EXEC_MAX_BYTES) got = EXEC_MAX_BYTES - total;
+                    ssize_t o = 0;
+                    while (o < (ssize_t)got) {
+                        ssize_t w = write(c, obuf + o, got - (size_t)o);
+                        if (w <= 0) break;
+                        o += w;
+                    }
+                    total += got;
+                }
+                pclose(fp);
+                if (total >= EXEC_MAX_BYTES) {
+                    printf("MC-VSOCK-AGENT EXEC-TRUNCATED at %u bytes req=%s\n",
+                           (unsigned)EXEC_MAX_BYTES, req + 5);
+                    fflush(stdout);
+                }
+            }
+            close(c);
+            continue;
+        }
 
         char up[32];
         uptime_str(up, sizeof(up));

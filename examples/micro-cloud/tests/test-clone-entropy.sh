@@ -249,13 +249,47 @@ resume_index() {
     (( hi - lo <= 1 )) \
         || fail "REGRESSION: clones resumed into read indices $lo…$hi — they were made from one memory image, so a spread wider than the one-line fragment means at least one of them booted rather than resumed (a fresh boot starts at 1)"
     # The HIGHEST first-index is the earliest read every clone is guaranteed to have.
-    RESUME_N="$hi"
-    local missing=()
-    for c in "$@"; do
-        [[ -n "$(at_n "$LAB_STATE_DIR/fc/$c/fc.log" "$RESUME_N")" ]] || missing+=("$c")
+    # `hi` is the highest FIRST index, and demanding that EVERY clone contain exactly it
+    # failed in a suite run on 2026-08-20 (`read #806 is absent from b3`) while passing
+    # standalone twice. Two different things can make that index absent, and they need
+    # different answers:
+    #
+    #   not yet written  the slowest clone has not reached `hi`      -> WAIT for it
+    #   never written    that one line was garbled on the console    -> take the NEXT index
+    #
+    # The clones share one console; a record that arrives interleaved does not match the
+    # anchored pattern and is simply not there, at any later time. Waiting alone would have
+    # turned an instant failure into a slow one. The record counts below decide which of the
+    # two it was, because "absent" cannot tell "not yet" from "never".
+    #
+    # THE FORWARD SEARCH IS DELIBERATELY NARROW. It would be easy to scan far ahead for any
+    # common index, and it would be wrong: §5.8's whole finding is that the shared-entropy
+    # window is only a FEW reads wide, so an index chosen well past it would find the clones
+    # already diverged and report "no hazard" — turning the thing this file exists to
+    # reproduce into a false negative. Two is enough to step over one mangled line.
+    local _w cand ok c2 missing=()
+    RESUME_N=""
+    for _w in $(seq 1 30); do
+        for cand in $(seq "$hi" $(( hi + 2 ))); do
+            ok=1
+            for c2 in "$@"; do
+                [[ -n "$(at_n "$LAB_STATE_DIR/fc/$c2/fc.log" "$cand")" ]] || { ok=0; break; }
+            done
+            (( ok )) && { RESUME_N="$cand"; break; }
+        done
+        [[ -n "$RESUME_N" ]] && break
+        sleep 1
     done
-    (( ${#missing[@]} == 0 )) \
-        || fail "read #$RESUME_N is absent from ${missing[*]} — the clones have no read index in common, so there is nothing to compare them at"
+    if [[ -z "$RESUME_N" ]]; then
+        local counts="" k
+        for k in "$@"; do
+            missing+=("$k=$(at_n "$LAB_STATE_DIR/fc/$k/fc.log" "$hi" >/dev/null 2>&1 && echo has || echo lacks)")
+            counts+=" $k=$(grep -cE "$_MCR" "$LAB_STATE_DIR/fc/$k/fc.log" 2>/dev/null || true)"
+        done
+        fail "no read index in common across the clones in #$hi..#$(( hi + 2 )), even after waiting 30s — so there is nothing to compare them at (complete records so far:${counts}). A high count with a missing index means the record was garbled on the shared console rather than never written"
+    fi
+    (( RESUME_N == hi )) \
+        || note "read #$hi was not present in every clone; comparing at #$RESUME_N instead (one console line was garbled — still inside §5.8's shared-entropy window, which is what makes this safe)"
 }
 
 # ── ROW 1: VMGenID ACTIVE (the default, and what an operator actually gets) ─────────────
