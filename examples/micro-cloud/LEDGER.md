@@ -1342,3 +1342,41 @@ It gained the control it never had: an invented flag must be refused **with the 
 loop greps for**. Without it, a `flag_for()` returning garbage would report nothing missing —
 the loop would simply never match — and the section would pass by looking for the wrong
 string, which is precisely the bug it had just been fixed for.
+
+### L10-21a — a fourth consumer of `KNOWN_KEYS`, and a control that measured stale bytecode
+
+CI caught what the local suites could not: **phase 6's TUI keeps its own copy of the key
+list**, and `test_fc_flags_match_the_drivers_known_keys` compares it against `lab-fc.sh`'s
+`KNOWN_KEYS` on every run. Adding two keys to the driver made them disagree.
+
+I had grepped for consumers and found two — the driver and micro-cloud's spec test. The
+third was `phase6-tui/lab_tui/apply.py`. **That is the blast-radius rule failing in its
+usual way: not by skipping the grep, but by stopping at the hits I expected.** The check
+that found it was written for exactly this, which is why it exists.
+
+The fix needed two things beyond the two names:
+
+* **A set, not a chain of `==`.** The emitter special-cased the string `"mmds"`, so `vsock`
+  — the second valueless flag — would have been issued as `--vsock true`, and the driver's
+  refusal would have named the *flag* rather than the omission. Enumerating spellings is the
+  bug; this lab has now met it three times (`RUNNING|running`, `--$k`, this).
+* **snake_case key, kebab-case flag**, asserted on the argv actually issued rather than only
+  on the static table.
+
+### The control that lied, and how
+
+Both new assertions were controlled by breaking the emitter — and the first control
+**reported a pass**. The cause was not the assertion: `cp` restored a file of *identical
+size* to the broken one, and CPython validates a `.pyc` on **(mtime, size)**. The cached
+bytecode was still considered valid, so three consecutive control runs executed code that
+was no longer on disk. The tell was an argv containing `--vsock_cid` while `grep` showed
+`--vsock-cid` in the source.
+
+**A stale `.pyc` is this ledger's opening class — a record outliving its subject — sitting
+inside the loop that exists to catch exactly that.** Controls are now run with the source
+`touch`ed and `PYTHONDONTWRITEBYTECODE=1`.
+
+It also exposed a **pre-existing weak assertion** that the re-run found: the valueless-flag
+test asserted `create[i+1:] != ["true"]`, comparing the whole remaining slice — which always
+ends `["--lab", "mc"]`, so it could never be equal and never fail. Tightened to look at the
+next element, and only then did control A bite.
