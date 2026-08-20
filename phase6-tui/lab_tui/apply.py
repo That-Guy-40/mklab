@@ -91,8 +91,20 @@ FC_FLAGS: dict[str, str] = {
     "memory": "--memory", "vcpus": "--vcpus", "tap": "--tap", "mac": "--mac",
     "ip": "--ip", "gateway": "--gateway", "netmask": "--netmask",
     "append": "--append", "lab": "--lab",
-    "mmds": "--mmds",   # valueless: present or absent, never `--mmds true`
+    # Valueless: present or absent, never `--mmds true`.
+    "mmds": "--mmds", "vsock": "--vsock",
+    # snake_case key, kebab-case flag. The mapping is spelled out rather than computed
+    # because this dict IS the contract with the driver, and a computed name would hide a
+    # divergence instead of failing on it -- which is what test_apply.py compares against
+    # lab-fc.sh's own KNOWN_KEYS.
+    "vsock_cid": "--vsock-cid",
 }
+
+# A SET, NOT A CHAIN OF `==`. This was `if key == "mmds"`, and `vsock` arriving as a second
+# valueless flag would have been emitted as `--vsock true` -- accepted by nothing, and the
+# failure would have named the flag rather than the omission. Enumerating spellings one at a
+# time is the bug; naming the class removes it.
+_FC_VALUELESS = frozenset({"mmds", "vsock"})
 
 
 @dataclass(slots=True)
@@ -120,7 +132,7 @@ def _fc_create_argv(block: dict, lab: str) -> list[str]:
         value = block.get(key)
         if value in (None, "", False):
             continue
-        if key == "mmds":
+        if key in _FC_VALUELESS:
             if value is True or str(value).lower() == "true":
                 argv.append(flag)
             continue

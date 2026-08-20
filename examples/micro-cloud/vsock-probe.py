@@ -136,6 +136,23 @@ def main():
                 last = "connected, but the guest sent no reply before the timeout"
                 raise ConnectionError(last)
             if args.exec_cmd:
+                # AN AGENT THAT PREDATES EXEC ANSWERS WITH ITS PING RECORD. It does not
+                # error -- unknown requests fall through to the default reply -- so the
+                # caller would receive a banner and use it as the command's output. Caught
+                # for real on 2026-08-20 against a rootfs built minutes before EXEC existed:
+                # every probe came back as `MC-VSOCK-AGENT name=... echo=EXEC <the command>`,
+                # which a matrix row would have recorded as a process count.
+                #
+                # It is refused rather than returned, because a wrong answer that looks like
+                # an answer is worse than no answer -- and the echo= field means the reply
+                # even CONTAINS the request, which is exactly how a stale record passes a
+                # cursory read.
+                if reply.startswith("MC-VSOCK-AGENT "):
+                    print(f"VSOCK-PROBE-FAILED the guest answered EXEC with the agent's own "
+                          f"PING record, so its agent predates EXEC and never ran the "
+                          f"command. Rebuild the image with make-vsock-rootfs.sh. Got: "
+                          f"{reply.strip()[:160]}", file=sys.stderr)
+                    return 2
                 # Verbatim: no HANDSHAKE line, no strip. The caller is standing in for
                 # `sh -c`, and anything added here would have to be removed there.
                 sys.stdout.write(reply)

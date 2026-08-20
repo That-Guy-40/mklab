@@ -38,7 +38,14 @@
 #   spec flags (one per [[microvm]] key — tests/test-cli-vs-config-parity.sh proves the
 #   two entry points stay in step, and that every flag reaches the record):
 #     --name --kernel --rootfs --memory --vcpus --tap --mac --ip --gateway --netmask
-#     --append --lab --mmds
+#     --append --lab --mmds --vsock --vsock-cid
+#
+#   vsock:  --vsock adds a virtio-vsock device. The guest_cid is DERIVED from the instance
+#           name (see `lab-fc.sh vsock-cid <name>`, the read-only counterpart of `mac`);
+#           --vsock-cid overrides it. Unlike --mmds it needs no tap: vsock has no bridge,
+#           no lease and no DNS, so a guest with no NIC still answers on it. Under
+#           Firecracker the host end is a unix socket and the CID is advisory, so what
+#           addresses a guest is the PATH, printed by `inspect` as vsock_uds.
 # ── END USAGE ──
 #
 # ── WHAT THIS TOOL DELIBERATELY DOES NOT DO ─────────────────────────────────
@@ -131,6 +138,33 @@ fc_sockfile() { printf '%s/api-sock.path' "$(fc_dir "$1")"; }
 # instance dir (where `destroy` already reaps it), and when THAT would not fit we fall back
 # to a SHORT path derived from the instance dir — derived, so there is still exactly one
 # owner and it is recomputable, not a random name nobody can find again.
+# The vsock host end is a unix socket too, so it has the SAME 108-byte cap and gets the
+# same treatment -- primary inside the instance dir (where `destroy` already reaps it),
+# derived short path when that would not fit. Two helpers rather than one parameterised
+# one, because the two sockets have different lifetimes: the API socket is chosen at
+# `start`, this one is named in config.json at `create` and must still resolve at `start`.
+# Removes a vsock socket left behind by a previous run. It reads the path from config.json
+# rather than recomputing it, so it unlinks the file Firecracker will actually try to bind
+# -- if $LAB_STATE_DIR moved, the derived path and the recorded one are different files and
+# only one of them is in the way. Silent when there is no vsock configured, which is most
+# instances.
+_unlink_stale_vsock() {  # _unlink_stale_vsock <name>
+    local cfg u
+    cfg="$(fc_config "$1")"
+    [[ -r "$cfg" ]] || return 0
+    u="$(sed -n 's/.*"uds_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$cfg" | head -1)"
+    [[ -n "$u" && -S "$u" ]] && rm -f -- "$u"
+    return 0
+}
+
+_vsock_uds_for() {  # _vsock_uds_for <name> -> the uds_path recorded in config.json
+    local name="$1" primary h
+    primary="$(fc_dir "$name")/vsock.sock"
+    (( ${#primary} <= 100 )) && { printf '%s' "$primary"; return; }
+    h="$(printf '%s' "$(fc_dir "$name")" | sha256sum)"
+    printf '%s/lab-fc-vs-%s.sock' "${TMPDIR:-/tmp}" "${h:0:12}"
+}
+
 _api_sock_for() {  # _api_sock_for <name> -> the path start would use
     local name="$1" primary h
     primary="$(fc_dir "$name")/api.sock"
@@ -205,7 +239,7 @@ prov_table() {
 # Deliberately not a general TOML parser. It reads the subset slices 1-3 proved necessary,
 # and refuses anything it does not understand rather than ignoring it -- a config key that
 # is silently dropped is a field that "appears to work and does nothing".
-readonly KNOWN_KEYS="name kernel rootfs memory vcpus tap mac ip gateway netmask mmds append lab"
+readonly KNOWN_KEYS="name kernel rootfs memory vcpus tap mac ip gateway netmask mmds vsock vsock_cid append lab"
 
 # A record is `k=v;k=v;…`, split back apart on ';'. So a ';' INSIDE a value is not a
 # quoting nuisance, it is a second key — REVIEW-phase7.md P7-6, measured:
@@ -517,7 +551,7 @@ preflight_checks() {  # preflight_checks <record>
 # ═══════════════════════════════════════════════════════════════════════════
 gen_config() {  # gen_config <record> <outfile|-> ; fills PROV[]
     local rec="$1" out="$2"
-    local name kernel rootfs tap mac ip gw mask mem vcpus mmds append
+    local name kernel rootfs tap mac ip gw mask mem vcpus mmds vsock vsock_cid append
     name="$(field "$rec" name)"
     kernel="$(field "$rec" kernel)"
     rootfs="$(field "$rec" rootfs)"
@@ -527,6 +561,8 @@ gen_config() {  # gen_config <record> <outfile|-> ; fills PROV[]
     gw="$(field "$rec" gateway)"
     mask="$(field "$rec" netmask "255.255.255.0")"
     mmds="$(field "$rec" mmds)"
+    vsock="$(field "$rec" vsock)"
+    vsock_cid="$(field "$rec" vsock_cid)"
     append="$(field "$rec" append)"
     mem="$(mem_to_mib "$(field "$rec" memory "$DEF_MEMORY_MIB")")"
     vcpus="$(field "$rec" vcpus "$DEF_VCPUS")"
@@ -590,6 +626,34 @@ EOF
         prov YOURS "mmds-config V2" "V2 requires a PUT token handshake; V1 would answer any GET (plan F.2/F.3)"
     fi
 
+    # ── vsock ────────────────────────────────────────────────────────────────
+    # NOT gated on a tap, unlike mmds: that is the whole point of the channel. vsock has no
+    # bridge, no lease, no name and no DNS, so a guest with no NIC at all still answers on
+    # it -- which is why slice 5c could assert br-mc0's ABSENCE while probing a guest.
+    local vsockblock=""
+    if [[ "$vsock" == "true" ]]; then
+        local _cid _uds
+        if [[ -n "$vsock_cid" ]]; then
+            [[ "$vsock_cid" =~ ^[0-9]+$ ]] && (( vsock_cid >= 3 && vsock_cid <= 4294967294 )) \
+                || die "vsock_cid must be an integer in 3..4294967294 — 0, 1 and 2 are reserved by the kernel (hypervisor, local, host) — got '$vsock_cid'"
+            _cid="$vsock_cid"
+            prov YOURS "vsock guest_cid = $_cid" "as given"
+        else
+            _cid="$(vsock_cid_for_name "$name")"
+            prov DERIVED "vsock guest_cid = $_cid" "hashed from the instance name, so two guests of one lab do not both report the same number"
+        fi
+        _uds="$(_vsock_uds_for "$name")"
+        # THE CID IS NOT THE IDENTITY HERE, AND SAYING SO IS THE POINT. Under Firecracker
+        # guest_cid is advisory: the host end is a userspace unix socket, so "which guest?"
+        # is answered by WHICH PATH you opened. Slice 5c measured the consequence -- three
+        # Firecracker guests happily believed they were CID 43 at once, while QEMU refused
+        # the second at device creation because there the number is a host-kernel
+        # allocation. A driver that presented the CID as identity would be describing the
+        # other engine's semantics.
+        prov DERIVED "vsock uds_path = $_uds" "the host end IS this file — under Firecracker it, not the CID, is what addresses this guest"
+        vsockblock="$(printf '\n  "vsock": { "guest_cid": %s, "uds_path": %s },' "$_cid" "$(json_str "$_uds")")"
+    fi
+
     local json
     json=$(cat <<EOF
 {
@@ -600,7 +664,7 @@ EOF
   "drives": [
     { "drive_id": "rootfs", "path_on_host": $(json_str "$rootfs"),
       "is_root_device": true, "is_read_only": false }
-  ],${netblock}${mmdsblock}
+  ],${netblock}${mmdsblock}${vsockblock}
   "machine-config": { "vcpu_count": $vcpus, "mem_size_mib": $mem, "smt": false }
 }
 EOF
@@ -1044,6 +1108,14 @@ cmd_start() {
         fi
         local sock; sock="$(_api_sock_for "$name")"
         rm -f -- "$sock" # a socket left by a dead VMM would make bind(2) fail with EADDRINUSE
+        # THE VSOCK SOCKET NEEDS THE SAME, and it was missed on the first cut of this key.
+        # Measured: a stopped instance left its vsock.sock behind and the next `start` died
+        # on `Error binding to the host-side Unix socket: Address in use (os error 98)` --
+        # an error that reads like a vsock fault and is a leftover-file fault, which is the
+        # SECOND time a stale path has masqueraded as a vsock problem in this driver (the
+        # first was the 108-byte cap). Unlinked unconditionally here for the same reason the
+        # API socket is: a SIGKILLed VMM never reaches the tidy-up in `stop`.
+        _unlink_stale_vsock "$name"
         printf '%s' "$sock" > "$(fc_sockfile "$name")"
         setsid firecracker --api-sock "$sock" --config-file "$(fc_config "$name")" \
             > "$(fc_log "$name")" 2>&1 < /dev/null &
@@ -1133,6 +1205,7 @@ cmd_stop() {
     # because a SIGKILLed VMM never gets here.
     local sock; sock="$(api_sock_of "$name" 2>/dev/null || true)"
     [[ -n "$sock" ]] && rm -f -- "$sock"
+    _unlink_stale_vsock "$name"
     printf 'PASS: %s (pid %s) stopped — process confirmed gone, not merely signalled\n' "$name" "$p"
 }
 
@@ -1312,6 +1385,7 @@ cmd_snapshot() {  # cmd_snapshot <action> <name> [snap] [force]
 
         local sock; sock="$(_api_sock_for "$name")"
         rm -f -- "$sock"
+        _unlink_stale_vsock "$name"
         printf '%s' "$sock" > "$(fc_sockfile "$name")"
         # NO --config-file. The snapshot carries the machine configuration; passing a config
         # as well makes Firecracker refuse the load. This is why `_running_pid` accepts the
@@ -1573,6 +1647,34 @@ cmd_inspect() {
     else
         printf 'config = "none — a snapshot carries the machine configuration"\n'
     fi
+    # READ THE UDS PATH OUT OF config.json, do not recompute it. _vsock_uds_for could
+    # answer differently from the file if $LAB_STATE_DIR moved between create and now, and
+    # the number that matters is the one Firecracker was actually handed. Deriving it a
+    # second time here is how a record starts disagreeing with its subject.
+    # GUARDED, not piped-and-hoped. The first cut was
+    #   _vu="$(sed -n ... "$(fc_config "$name")" 2>/dev/null | head -1)"
+    # and under this file's `set -e -o pipefail` that is a gate: on an instance with no
+    # config.json (a clone, or a bare dir) sed exits 1, pipefail hands the pipeline sed's
+    # status rather than head's, the assignment inherits it, and `inspect` DIED — printing
+    # two lines and no state. Caught by test-instance-name-is-validated.sh's control, which
+    # exists to notice exactly this: a legal name being refused.
+    local _vu="" _cfgf; _cfgf="$(fc_config "$name")"
+    if [[ -r "$_cfgf" ]]; then
+        _vu="$(sed -n 's/.*"uds_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$_cfgf" | head -1)" || true
+    fi
+    if [[ -n "$_vu" ]]; then
+        printf 'vsock_uds = "%s"\n' "$_vu"
+        # THREE outcomes, not two — the same rule the digest rows follow. A socket that is
+        # absent because the guest is stopped is not the same as one that is absent while it
+        # runs, and collapsing them would report a healthy stopped instance as broken.
+        if [[ -S "$_vu" ]]; then
+            printf 'vsock_uds_state = "present"\n'
+        elif _running_pid "$name" >/dev/null 2>&1; then
+            printf 'vsock_uds_state = "MISSING while the instance is running — nothing can reach this guest over vsock"\n'
+        else
+            printf 'vsock_uds_state = "absent (the instance is not running; Firecracker creates it at start)"\n'
+        fi
+    fi
     local p; p="$(_running_pid "$name")" && printf 'state = "running"\npid = %s\n' "$p" \
         || printf 'state = "stopped"\n'
     # THREE outcomes for each recorded digest, never two. "I could not look" is not "it
@@ -1624,6 +1726,15 @@ cmd_inspect() {
 # The two live in different phases and cannot share code, so the agreement is asserted by
 # `examples/micro-cloud/tests/test-fabric-mac-derivation.sh`, which drives BOTH tools' `mac`
 # verb rather than re-implementing either formula.
+# The CID is derived from the NAME for the same reason the MAC is: a value written into a
+# file is a value that can outlive its subject, and one computed from the name cannot. The
+# reserved low CIDs (0 hypervisor, 1 local, 2 host) are stepped over by the +3.
+vsock_cid_for_name() {
+    local h
+    h="$(printf '%s' "$1" | sha256sum)"
+    printf '%d' $(( 0x${h:0:6} + 3 ))
+}
+
 mac_for_name() {
     local n="$1" h
     h="$(printf '%s' "$n" | md5sum)" || return 1
@@ -1637,7 +1748,7 @@ main() {
     [[ -n "$verb" ]] || usage
     case "$verb" in help|-h|--help) usage ;; esac
 
-    local cfg="" name="" kernel="" rootfs="" memory="" vcpus="" tap="" mac="" ipaddr="" gw="" mask="" mmds="" append="" dry=0 json=0 lab="" force=0 jailer=0
+    local cfg="" name="" kernel="" rootfs="" memory="" vcpus="" tap="" mac="" ipaddr="" gw="" mask="" mmds="" vsock="" vsock_cid="" append="" dry=0 json=0 lab="" force=0 jailer=0
     local positional=()
     while (( $# )); do
         case "$1" in
@@ -1655,6 +1766,8 @@ main() {
             --append)  append="$2"; shift 2 ;;
             --lab)     lab="$2"; shift 2 ;;
             --mmds)    mmds=true; shift ;;
+            --vsock)   vsock=true; shift ;;
+            --vsock-cid) shift; vsock_cid="${1:?--vsock-cid needs a number}"; shift ;;
             --dry-run) dry=1; shift ;;
             --json)    json=1; shift ;;
             --force)   force=1; shift ;;
@@ -1711,6 +1824,11 @@ main() {
                  mac_for_name "${positional[0]:?instance name required}" \
                      || die "could not derive a MAC (is md5sum present?)"
                  printf '\n'; return ;;
+        vsock-cid) # read-only, exactly like `mac`: the CID this tool WOULD assign, so the
+                 # agreement between a spec and the driver is checkable without booting.
+                 vsock_cid_for_name "${positional[0]:?instance name required}" \
+                     || die "could not derive a vsock CID (is sha256sum present?)"
+                 printf '\n'; return ;;
         preflight|create) ;;
         *) die "unknown verb: $verb (try --help)" ;;
     esac
@@ -1739,13 +1857,15 @@ main() {
         # tests/test-cli-vs-config-parity.sh now derives this list from KNOWN_KEYS, so a
         # key added later without a flag fails rather than being noticed by someone.
         local r="" k v
-        for k in name kernel rootfs memory vcpus tap mac ip gateway netmask append lab mmds; do
+        for k in name kernel rootfs memory vcpus tap mac ip gateway netmask append lab mmds vsock vsock_cid; do
             case "$k" in
                 name) v="$name" ;; kernel) v="$kernel" ;; rootfs) v="$rootfs" ;;
                 memory) v="$memory" ;; vcpus) v="$vcpus" ;; tap) v="$tap" ;;
                 mac) v="$mac" ;; ip) v="$ipaddr" ;; gateway) v="$gw" ;;
                 netmask) v="$mask" ;; append) v="$append" ;; lab) v="$lab" ;;
                 mmds) v="$mmds" ;;
+                vsock) v="$vsock" ;;
+                vsock_cid) v="$vsock_cid" ;;
             esac
             [[ -n "$v" ]] || continue
             # The same refusal the config parser makes, at the other entry point — the

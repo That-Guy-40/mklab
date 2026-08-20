@@ -44,8 +44,9 @@ lab-fc.sh mac       <name>               # the guest MAC this tool would set —
 
 ## The spec
 
-One `[[microvm]]` block per instance. Every key below is also a `--flag` of the same name
-(`ip` is `--ip`, `mmds` is a bare `--mmds`), and
+One `[[microvm]]` block per instance. Every key below is also a `--flag` of the same name —
+snake_case keys become kebab-case flags (`vsock_cid` is `--vsock-cid`), and booleans take no
+argument (`mmds` is a bare `--mmds`, `vsock` a bare `--vsock`) — and
 [`tests/test-cli-vs-config-parity.sh`](tests/test-cli-vs-config-parity.sh) proves the two
 spellings generate a byte-identical config **and** a byte-identical provenance table.
 
@@ -62,9 +63,32 @@ ip      = "10.71.0.101"             # only legal alongside a tap
 gateway = "10.71.0.1"
 netmask = "255.255.255.0"
 mmds    = true                      # MMDS v2 (v1 answers any GET, unauthenticated)
+vsock   = true                      # virtio-vsock. Needs NO tap — see below
+vsock_cid = 42                      # optional; derived from the name when omitted
 append  = "mc_name=api1"            # extra boot args, verbatim. root= is REFUSED — see below
 lab     = "micro-cloud"
 ```
+
+### `vsock`, and why it is the one device that does not need a NIC
+
+`mmds = true` without a `tap` is **refused**, because MMDS is reached over a network
+interface. `vsock` is the opposite case and deliberately so: it has no bridge, no lease, no
+name and no DNS, so a guest with **no NIC at all** still answers on it. That is what let
+slice 5c assert `br-mc0`'s *absence* while talking to a running guest.
+
+Two things about the CID are worth knowing before you rely on it:
+
+- **It is derived from the instance name**, like the MAC, so a value cannot outlive its
+  subject. `lab-fc.sh vsock-cid <name>` prints what the driver would assign, without booting
+  anything — the read-only counterpart of `lab-fc.sh mac <name>`. `vsock_cid = N` overrides
+  it; `0`, `1` and `2` are refused, being the kernel's own (hypervisor, local, host).
+- **Under Firecracker the CID is advisory, and the socket path is the identity.** The host
+  end is a userspace unix socket, so *which guest?* is answered by which path you opened.
+  Slice 5c measured the consequence: three Firecracker guests happily believed they were CID
+  43 at once, while QEMU refused the second at device creation, because there the number is a
+  host-kernel allocation. `inspect` therefore prints `vsock_uds` — and prints its state in
+  **three** outcomes, since a socket absent while the instance is *stopped* is not the same
+  fact as one absent while it *runs*.
 
 Anything else is refused **by name**, and the run stops before a single gate executes — a
 key that is silently dropped is a field that appears to work and does nothing.

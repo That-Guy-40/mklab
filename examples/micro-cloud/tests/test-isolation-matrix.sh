@@ -145,7 +145,7 @@ S3="${MC_STATE_DIR:-$HOME/.local/state/lab-create/micro-cloud-s3}"
 FC_BIN="${MC_FIRECRACKER:-$S3/firecracker}"
 FC_KERNEL="${MC_KERNEL:-$S3/vmlinux}"
 FC_BASE="${MC_ROOTFS:-$S3/api1.ext4}"
-FC_UDS=""; FC_WHY=""
+FC_UDS=""; FC_WHY=""; FC_LABEL="api (firecracker microvm, vsock)"
 
 run_fc() { python3 "$LAB_DIR/vsock-probe.py" --engine firecracker \
                --uds "$FC_UDS" --port "$FC_PORT" --exec "$1" --timeout 10 2>/dev/null; }
@@ -154,6 +154,26 @@ run_fc() { python3 "$LAB_DIR/vsock-probe.py" --engine firecracker \
 # was missing instead of reporting a generic absence.
 fc_boot() {
     have python3            || { FC_WHY="python3 is absent, and vsock-probe.py is the host end of this channel"; return 1; }
+
+    # PREFER THE LAB'S OWN api1 when it is running with a vsock socket. The spec declares
+    # `vsock = true` for both microVMs, so on a privileged run this row stops being a
+    # stand-in and becomes the instance the rest of the matrix is about. The socket EXISTING
+    # is not enough to use it -- Firecracker creates the file whether or not anything in the
+    # guest listens -- so it has to answer first, and if it does not we boot our own rather
+    # than report an UNKNOWN that a fallback could have avoided.
+    local _u
+    _u="$("$REPO_DIR/phase7-firecracker/lab-fc.sh" inspect api1 2>/dev/null \
+            | sed -n 's/^vsock_uds = "\(.*\)"$/\1/p')"
+    if [[ -n "$_u" && -S "$_u" ]]; then
+        FC_UDS="$_u"
+        if [[ "$(run_fc 'echo MC-ALIVE')" == *MC-ALIVE* ]]; then
+            FC_LABEL="api1 (firecracker microvm, the LAB's own)"
+            note "the lab's api1 answers over vsock, so this row is the real instance rather than a stand-in"
+            return 0
+        fi
+        FC_UDS=""
+    fi
+
     [[ -x "$FC_BIN" ]]      || { FC_WHY="no firecracker binary at $FC_BIN (set MC_FIRECRACKER)"; return 1; }
     [[ -r "$FC_KERNEL" ]]   || { FC_WHY="no guest kernel at $FC_KERNEL (set MC_KERNEL)"; return 1; }
     [[ -r "$FC_BASE" ]]     || { FC_WHY="no slice-3 rootfs at $FC_BASE to add the agent to (set MC_ROOTFS)"; return 1; }
@@ -220,7 +240,7 @@ MATRIX="$WORK/matrix.tsv"
     # UNKNOWNs conditionally and losing a row entirely.
     if db_up;   then probe_all run_lxd  "db (lxd system container)"; fi
     if edge_up; then probe_all run_edge "edge (qemu vm, full stack)"; fi
-    if fc_boot; then probe_all run_fc   "api (firecracker microvm, vsock)"; fi
+    if fc_boot; then probe_all run_fc   "$FC_LABEL"; fi
 } > "$MATRIX"
 
 # A NAMESPACE ID IS ONLY COMPARABLE WITHIN ONE KERNEL, and the table invites the opposite
@@ -315,7 +335,7 @@ note "dmesg: host=$h_dmesg container=$c_dmesg (kernel.dmesg_restrict=$dmesg_rest
 # wrong, rather than reasoning about what it would have done.
 its_own_machine() { [[ -n "$1" && "$1" != "-" && "$1" != "$2" ]]; }
 
-fc_row="$(grep '^api (firecracker' "$MATRIX" || true)"
+fc_row="$(grep -E '^api[0-9]* \(firecracker' "$MATRIX" || true)"
 if [[ -n "$fc_row" ]]; then
     IFS=$'\t' read -r _ f_pids f_init f_boot _ f_dmesg _ _ <<<"$fc_row"
     (( f_pids > 0 )) \
@@ -343,7 +363,7 @@ fi
 # So the three remaining rows are declared unmeasured here, unconditionally, and would be
 # removed only by code that actually probes them.  Each carries the reason it needs the
 # privileged run rather than a generic "not available".
-grep -q '^api (firecracker' "$MATRIX" \
+grep -qE '^api[0-9]* \(firecracker' "$MATRIX" \
     || unknown "api (firecracker microVM)" \
         "${FC_WHY:-the microVM row was not attempted}. This row used to be STRUCTURALLY unmeasurable — a hypervisor boundary admits no exec verb, and slice 3's rootfs has no channel at all — and it is measurable now because slice 5c's agent answers EXEC over vsock, which needs no bridge, no lease and no root"
 grep -q '^edge (qemu vm' "$MATRIX" \

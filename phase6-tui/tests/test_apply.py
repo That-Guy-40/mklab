@@ -369,18 +369,50 @@ def test_fc_is_issued_per_instance_and_the_others_once_per_slot(spec: Path) -> N
     assert "--lab" in create and "mc" in create
 
 
-def test_a_valueless_flag_is_not_given_a_value(tmp_path: Path) -> None:
-    """`--mmds` is a switch in the driver's arg loop; `--mmds true` would make
-    `true` the next positional and be refused."""
+@pytest.mark.parametrize("key,flag", [("mmds", "--mmds"), ("vsock", "--vsock")])
+def test_a_valueless_flag_is_not_given_a_value(tmp_path: Path, key: str, flag: str) -> None:
+    """`--mmds`/`--vsock` are switches in the driver's arg loop; `--mmds true`
+    would make `true` the next positional and be refused.
+
+    PARAMETRISED BECAUSE THERE ARE TWO OF THEM NOW. The emitter special-cased the
+    string "mmds", so `vsock` -- the second valueless flag -- would have been sent
+    as `--vsock true`, and the refusal would have named the FLAG rather than the
+    omission. A test naming one member of a class stops guarding the class the
+    moment it gains a second."""
     p = tmp_path / "m.toml"
     p.write_text(
         '[lab]\nname = "mc"\n\n[[microvm]]\nname = "api1"\n'
-        'kernel = "/k"\nrootfs = "/r"\ntap = "t"\nmmds = true\n'
+        f'kernel = "/k"\nrootfs = "/r"\ntap = "t"\n{key} = true\n'
     )
     argvs = transitions([Delta("fc", "api1", "absent", "")], p, parse_topology(p))
     create = next(a for a in argvs if a[1] == "create")
-    assert "--mmds" in create
-    assert create[create.index("--mmds") + 1:] != ["true"], "--mmds took a value"
+    assert flag in create
+    # THE NEXT ELEMENT, not the rest of the list. The original assertion compared the whole
+    # remaining slice to ["true"] -- and the slice always ends with ["--lab", "mc"], so it
+    # could never be equal and the assertion could never fail. It was watched not to bite:
+    # with the emitter reverted to a single-key special case, `--vsock true` was issued and
+    # this test still passed.
+    i = create.index(flag)
+    nxt = create[i + 1] if i + 1 < len(create) else None
+    assert nxt is None or nxt.startswith("--"), (
+        f"{flag} is valueless but was followed by {nxt!r} in {create}")
+
+
+def test_a_valued_flag_that_is_snake_case_becomes_kebab_case(tmp_path: Path) -> None:
+    """`vsock_cid` is the first [[microvm]] key with an underscore, and the driver
+    spells its flag `--vsock-cid`. Emitting `--vsock_cid` would die as an unknown
+    flag -- the same divergence test_fc_flags_match_the_driver catches statically,
+    asserted here on what is actually issued."""
+    p = tmp_path / "c.toml"
+    p.write_text(
+        '[lab]\nname = "mc"\n\n[[microvm]]\nname = "api1"\n'
+        'kernel = "/k"\nrootfs = "/r"\ntap = "t"\nvsock = true\nvsock_cid = 42\n'
+    )
+    argvs = transitions([Delta("fc", "api1", "absent", "")], p, parse_topology(p))
+    create = next(a for a in argvs if a[1] == "create")
+    assert "--vsock-cid" in create, f"expected a kebab-case flag, got: {create}"
+    assert "--vsock_cid" not in create
+    assert create[create.index("--vsock-cid") + 1] == "42"
 
 
 def test_converged_rows_produce_no_transitions(spec: Path) -> None:
