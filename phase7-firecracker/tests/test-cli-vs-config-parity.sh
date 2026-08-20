@@ -31,21 +31,40 @@ keys="$(sed -n 's/^readonly KNOWN_KEYS="\(.*\)"$/\1/p' "$LAB_FC")"
 note "KNOWN_KEYS as the driver defines them: $keys"
 
 # ── 1. every schema key has a flag ────────────────────────────────────────────────────
-# `ip` is spelled `--ip`; everything else is `--<key>`. An unknown flag is a hard `die`, so
-# the probe is simply "does the parser accept it?" — nothing needs to be valid past that.
+# An unknown flag is a hard `die`, so the probe is simply "does the parser accept it?" —
+# nothing needs to be valid past that.
+#
+# TOML KEYS ARE snake_case AND FLAGS ARE kebab-case. This used to build the flag as `--$k`
+# literally, which was right only because every key happened to be one word; `vsock_cid`
+# was the first that was not, and the test reported it as having NO FLAG while `--vsock-cid`
+# was sitting in the parser. Encoding the convention beats special-casing the key, because
+# the next underscored key would otherwise fail the same way and read as a real regression.
+flag_for() { printf -- '--%s' "${1//_/-}"; }
+
 missing=()
 for k in $keys; do
+    f="$(flag_for "$k")"
     case "$k" in
-        mmds) probe=(--mmds) ;;                 # boolean, takes no argument
-        *)    probe=("--$k" X) ;;
+        mmds|vsock) probe=("$f") ;;             # booleans, take no argument
+        *)          probe=("$f" X) ;;
     esac
     run_fc "$tmp/f.out" preflight "${probe[@]}" --name t1 \
         --kernel /nonexistent/vmlinux --rootfs /nonexistent/rootfs.ext4 || true
-    grep -q "unknown flag: --$k" "$tmp/f.out" && missing+=("$k")
+    grep -q "unknown flag: $f" "$tmp/f.out" && missing+=("$k")
 done
 (( ${#missing[@]} == 0 )) \
     || fail "REGRESSION: [[microvm]] key(s) with no CLI flag: ${missing[*]} — a spec expressible in the config cannot be expressed on the command line (§3)"
 note "all $(printf '%s\n' $keys | wc -l) schema keys are reachable from the CLI"
+
+# CONTROL: a key the driver does NOT have a flag for must be reported. Without it, a
+# flag_for() that produced garbage for every key would report nothing missing — the loop
+# would simply never match "unknown flag: <garbage>" — and this section would pass by
+# looking for the wrong string, which is the failure mode it was just fixed for.
+run_fc "$tmp/z.out" preflight --zzznotaflag X --name t1 \
+    --kernel /nonexistent/vmlinux --rootfs /nonexistent/rootfs.ext4 || true
+grep -q "unknown flag: --zzznotaflag" "$tmp/z.out" \
+    || fail "control: the driver did not refuse '--zzznotaflag' with the message this section greps for, so the loop above cannot detect a missing flag at all"
+note "control: an invented flag IS refused with that message, so the loop above can actually fail"
 
 # ── 2. and every flag REACHES THE RECORD ──────────────────────────────────────────────
 # Being parsed is not being used: `--lab` was parsed for months. The manifest is the

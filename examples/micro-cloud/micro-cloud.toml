@@ -74,6 +74,7 @@ vcpus   = 1
 tap     = "mc-api1"
 mac     = "06:00:ac:47:f1:f7"
 mmds    = true
+vsock   = true
 
 [[microvm]]
 name    = "api2"
@@ -85,6 +86,7 @@ vcpus   = 1
 tap     = "mc-api2"
 mac     = "06:00:ac:47:e9:b6"
 mmds    = true
+vsock   = true
 
 # ── the fidelity case (§9.2) ─────────────────────────────────────────────────
 # A stock Debian cloud image with a full network stack and cloud-init, on the same L2.
