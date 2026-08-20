@@ -925,3 +925,50 @@ worked, and every one of those seven lines was one command away the whole time. 
 difference is that the harness now asks by default and prints the answers whether or not
 anything is wrong — so the next person does not have to think of the question while a lab is
 still up.
+
+---
+
+## L10-17 — ifupdown is installed, configured, enabled — and `eth0` still has no address
+
+**Run 2026-08-19.** `up` rc=0, `down` rc=0, 77 s, cluster unchanged. `db` Running. Still no
+lease, still `getent db` empty.
+
+What the container reported this time is different from last time, and narrower:
+
+```text
+    interfaces:        lo
+                       eth0@if114          <-- the interface EXISTS
+    addresses:         lo 127.0.0.1/8      <-- and only lo has one
+    networkd active:   inactive / disabled <-- correct: we migrated off it
+    .network files:    (none)              <-- correct
+```
+
+Verified on disk afterwards: `ifupdown` and `isc-dhcp-client` installed, `/etc/network/interfaces`
+correct, `send host-name "db";` in `dhclient.conf`, and `networking.service` symlinked into
+`multi-user.target.wants`. Every ingredient is present and `eth0` is unconfigured.
+
+### Two of my own checks were wrong, in the same way, in one session
+
+* **`-e` on a symlink into the container's root.** Checking the enable symlink from the host,
+  `[[ -e …/multi-user.target.wants/networking.service ]]` said ABSENT. It is not: `-e`
+  **follows** the link, and an absolute symlink to `/lib/systemd/system/networking.service`
+  dangles when resolved against the *host's* filesystem. `ls` showed it immediately. The run
+  script's own pre-flight uses `-L` and was right all along; the ad-hoc check I typed was not.
+* **The diagnostic was still aimed at systemd-networkd** after the lab migrated to ifupdown.
+  So a run whose entire question was *"did ifupdown bring eth0 up"* answered *"networkd is
+  inactive"* — true, and beside the point. **A diagnostic aimed at the previous design
+  confirms the previous design is gone**, which reads like information and is not.
+
+Both are the same shape as the defects they were meant to catch: asking a question whose
+answer cannot distinguish the cases you care about.
+
+### What the next run asks instead
+
+`networking.service` active/enabled, the interfaces file as the container sees it, whether
+`dhclient` is on PATH there, `/var/lib/dhcp/` leases, `journalctl -u networking`, and — the
+decisive one — **`ifup eth0` run by hand with its output and the resulting address**. That
+last one collapses the remaining space: either it works, and the unit did not run; or it
+fails, and says why.
+
+`systemd-networkd` is still probed, expecting `inactive`, because a half-migration with both
+managers present would look exactly like this too.

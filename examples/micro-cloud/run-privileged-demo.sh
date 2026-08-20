@@ -275,10 +275,20 @@ if asuser "$REPO/phase5-lxd/lab-lxd.sh" exec micro-cloud/db -- true >/dev/null 2
     echo "    interfaces:";        dbx 'ip -o link show | cut -d: -f2 | tr -d " "'
     echo "    addresses:";         dbx 'ip -4 -o addr show | awk "{print \$2, \$4}"'
     echo "    hostname:";          dbx 'hostname'
-    echo "    networkd active:";   dbx 'systemctl is-active systemd-networkd 2>&1; systemctl is-enabled systemd-networkd 2>&1'
-    echo "    networkd sees:";     dbx 'networkctl --no-pager 2>&1 | head -6'
-    echo "    .network files:";    dbx 'ls -la /etc/systemd/network/ 2>&1'
-    echo "    networkd log:";      dbx 'journalctl -u systemd-networkd --no-pager -n 12 2>&1 || echo "(no journal)"'
+    # ASK ABOUT THE MECHANISM ACTUALLY IN USE. The first version of this block probed
+    # systemd-networkd -- and stayed pointed at it after the lab switched to ifupdown, so a
+    # run whose whole question was "did ifupdown bring eth0 up" answered "networkd is
+    # inactive", which is both true and beside the point. A diagnostic aimed at the previous
+    # design is a diagnostic that confirms the previous design is gone.
+    echo "    networking.service:"; dbx 'systemctl is-active networking 2>&1; systemctl is-enabled networking 2>&1'
+    echo "    interfaces file:";    dbx 'cat /etc/network/interfaces 2>&1'
+    echo "    dhclient present:";   dbx 'command -v dhclient || echo "NOT INSTALLED"'
+    echo "    dhclient leases:";    dbx 'ls -la /var/lib/dhcp/ 2>&1 | head -5'
+    echo "    networking log:";     dbx 'journalctl -u networking --no-pager -n 20 2>&1 || echo "(no journal)"'
+    echo "    ifup by hand:";       dbx 'ifup eth0 2>&1 | tail -5; echo "rc=$?"; ip -4 -o addr show eth0 2>&1'
+    # networkd is kept only to confirm it is NOT the thing running, since a half-migration
+    # with both managers would look like this too.
+    echo "    (networkd, expect inactive):"; dbx 'systemctl is-active systemd-networkd 2>&1'
 else
     echo "    db is not exec-able, so nothing could be asked of it"
 fi
