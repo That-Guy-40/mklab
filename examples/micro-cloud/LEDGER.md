@@ -1437,3 +1437,84 @@ compute type, and a second instance of it would be the same measurement twice. T
 of MANUAL_TESTING row 4 remains unchecked: nothing in these runs has read `instance-id` at
 `169.254.169.254` *from inside a guest*, and slice 2 proving it once is not this lab proving it
 now. That one is a to-do, not a structural gap — the guest now has a channel that could ask.
+## L10-23 — the last open row: MMDS was enabled, empty, and unaskable, and none of that was privilege
+
+**2026-08-20.** MANUAL_TESTING row 4 had been *half* observed since the lab was built: the two
+microVMs demonstrably take their own MACs and their own leases, and nothing had ever read
+`instance-id` at `169.254.169.254` **from inside a guest**. It was written down as needing a
+privileged run. It did not.
+
+Three separate things were missing, and privilege was none of them.
+
+### 1. The device was enabled and the store was empty
+
+`mmds = true` put `mmds-config` in the config and stopped there. A guest that asked got `404`
+— which reads as *"metadata is broken"*, not *"nobody wrote any"*. **The config key promised a
+service and delivered a socket.** `lab-fc.sh start` now seeds it over the Firecracker API:
+
+```json
+{"latest": {"meta-data": {"instance-id": "<name>", "local-hostname": "<name>"}}}
+```
+
+Derived from the name, never stored. `instance-id` is exactly the field a cached value would
+corrupt — a clone that kept its source's id is a machine reporting someone else's identity —
+so it is computed from the subject at the moment it is served. Seeding is best-effort **and
+says so**: the VM is already running, and refusing to report a started VM because a metadata
+PUT failed would be a worse lie than a warning.
+
+### 2. Nothing could ask from inside — until slice 5c's channel grew a verb
+
+That is what `EXEC` is for, and this is its first use outside the isolation matrix.
+
+### 3. A tap does not need root, and that is why this waited for nothing
+
+**MMDS is answered by the VMM on the guest's own NIC; those packets never leave it.** So the
+tap can be made inside an unprivileged **user netns** — no fabric, no bridge, no sudo. The row
+had been filed under "needs the privileged run" because the fabric is how this lab usually
+gets a tap, and the general fact was never separated from the local habit. It runs in
+CI-shaped conditions now.
+
+```text
+token: fC8Oj7fb5MII8Sy/K2KaWq0+…  (48 bytes, obtained by PUT)
+instance-id: mmp                  ← read INSIDE the guest
+no-token GET: HTTP/1.0 401        ← V2, not V1
+```
+
+### Drive the client the machine actually has — twice in one test
+
+MMDS **v2 requires a PUT** to get a token, and the guest's **busybox `wget` cannot PUT**. So
+the handshake is spoken over `nc`. That is this repo's `curl --data-binary` lesson arriving
+again: the capable tool on the host proves the *sink*, and says nothing about a guest whose
+client cannot make the request at all.
+
+And the check for `nc` was itself a proxy that lied. `strings api1.ext4 | grep -x nc` returns
+**0**; the guest's own `busybox --list` returns **`nc`**. The image was asked instead of
+inferred, and the inference was wrong — which is the same shape as every other entry here.
+
+### A route is not enough, and the failure taught more than the fix
+
+With `eth0` up and a route to `169.254.169.254` but **no address**, the guest cannot build the
+packet, and `nc` simply blocks. That blocked `nc` then exposed a real defect in **my own**
+`EXEC`: the agent is one accept loop, so a command that never returns does not fail a probe —
+**it disables the channel permanently.** The next probe reported *"nothing in the guest is
+listening on port 1234"* about an agent that was alive and stuck, which is a false diagnosis
+of a dead guest.
+
+`EXEC` is now bounded by `timeout 15`, and the command is **re-quoted into a single-quoted
+argument** rather than prefixed — prefixing bounds only the first element of a pipeline, so
+`timeout 15 printf … | nc …` would time out the `printf` and let `nc` block, which is exactly
+the case that wedged it. Controlled: `sleep 600` returns, and the agent answers
+`STILL-ALIVE` afterwards.
+
+An `EXEC` that writes nothing is still reported by the probe as a **failure** rather than an
+empty answer — which is the property that matters, since an empty string must never land in a
+matrix cell as if it were a measurement.
+
+### And one control in this session did not run at all
+
+The 401 control was first injected with a `sed` whose delimiter appeared in the pattern; it
+errored, the file was untouched, and the test printed `PASS`. **A control that fails to apply
+and a control that passes are the same green.** Re-done through a checked edit, it fired:
+`HTTP/1.0 200` instead of `401`. The restore then failed too — `git checkout --` cannot
+restore a file git does not track yet — which is worth knowing the day you break a new test on
+purpose.

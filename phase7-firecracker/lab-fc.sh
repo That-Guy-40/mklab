@@ -1147,6 +1147,34 @@ cmd_start() {
             && { tail -10 "$(fc_log "$name")" | sed -e 's/^/      /' >&2 || true; }
         return 1
     fi
+    # ── seed MMDS, because an ENABLED metadata service with nothing in it is a trap ──────
+    # `mmds = true` put `mmds-config` in the config and stopped there, so the device existed
+    # and the store was EMPTY: a guest that asked got 404s, which reads as "metadata is
+    # broken" rather than "nobody wrote any". The config key promised a service; this is the
+    # rest of that promise.
+    #
+    # DERIVED FROM THE NAME, not stored anywhere. instance-id is the one field a guest uses
+    # to find out WHICH instance it is, so a cached value here is the record-outlives-its-
+    # subject bug pointed at the question it would corrupt: a clone that kept its source's
+    # instance-id is a machine that reports someone else's identity.
+    #
+    # Best-effort ON PURPOSE, and it says so: the VM is already running and refusing to
+    # report a started VM because a metadata PUT failed would be a worse lie than a warning.
+    if grep -q '"mmds-config"' "$(fc_config "$name")" 2>/dev/null; then
+        if ! command -v curl >/dev/null 2>&1; then
+            printf '      NOTE: mmds is enabled but curl is absent, so its store was NOT seeded — a guest asking will get 404, which is emptiness and not breakage\n' >&2
+        else
+            local _mmds_body
+            _mmds_body="$(printf '{"latest":{"meta-data":{"instance-id":%s,"local-hostname":%s}}}' \
+                            "$(json_str "$name")" "$(json_str "$name")")"
+            if _api "$(_api_sock_for "$name")" PUT /mmds "$_mmds_body" >/dev/null 2>&1; then
+                printf '      mmds seeded: instance-id=%s (V2 — the guest must PUT for a token first)\n' "$name"
+            else
+                printf '      NOTE: mmds is enabled but seeding its store FAILED; a guest asking will get 404\n' >&2
+            fi
+        fi
+    fi
+
     if (( jail )); then
         printf 'PASS: started %s JAILED (pid %s) — process confirmed running, not merely forked; console -> %s\n' \
             "$name" "$p" "$(fc_log "$name")"
