@@ -76,11 +76,19 @@ def probe_qemu(cid, port, request, timeout):
     return s, None
 
 
-def read_reply(s, timeout):
+def read_reply(s, timeout, to_eof=False):
+    """Read one line (PING) or everything up to EOF (EXEC).
+
+    EXEC's payload is a command's stdout and may be many lines, so stopping at the first
+    newline would silently return a PREFIX -- the same shape of bug as the unanchored
+    extractor in test-clone-entropy.sh, which matched a truncated record and returned its
+    first field as the answer. A short read here would be indistinguishable from a short
+    command, so it is the caller who says which it expects.
+    """
     s.settimeout(timeout)
     buf = b""
     deadline = time.monotonic() + timeout
-    while b"\n" not in buf and time.monotonic() < deadline:
+    while (to_eof or b"\n" not in buf) and time.monotonic() < deadline:
         try:
             chunk = s.recv(4096)
         except socket.timeout:
@@ -88,7 +96,7 @@ def read_reply(s, timeout):
         if not chunk:
             break
         buf += chunk
-    return buf.decode(errors="replace").strip()
+    return buf.decode(errors="replace") if to_eof else buf.decode(errors="replace").strip()
 
 
 def main():
@@ -98,10 +106,17 @@ def main():
     ap.add_argument("--cid", type=int, help="qemu: the guest-cid= given to vhost-vsock-device")
     ap.add_argument("--port", type=int, default=1234)
     ap.add_argument("--request", default="PING\n")
+    ap.add_argument("--exec", dest="exec_cmd",
+                    help="run a shell command in the guest and print ONLY its stdout "
+                         "(no handshake banner, no framing) -- the form the isolation "
+                         "matrix's runners need, since every other row is measured by "
+                         "running exactly this command through a different boundary")
     ap.add_argument("--timeout", type=float, default=5.0)
     ap.add_argument("--retries", type=int, default=1,
                     help="attempts while the guest is still booting its agent")
     args = ap.parse_args()
+    if args.exec_cmd:
+        args.request = "EXEC " + args.exec_cmd + "\n"
 
     if args.engine == "firecracker" and not args.uds:
         ap.error("--engine firecracker needs --uds (its host end is a unix socket path)")
@@ -115,11 +130,16 @@ def main():
                 s, hs = probe_firecracker(args.uds, args.port, args.request, args.timeout)
             else:
                 s, hs = probe_qemu(args.cid, args.port, args.request, args.timeout)
-            reply = read_reply(s, args.timeout)
+            reply = read_reply(s, args.timeout, to_eof=bool(args.exec_cmd))
             s.close()
             if not reply:
                 last = "connected, but the guest sent no reply before the timeout"
                 raise ConnectionError(last)
+            if args.exec_cmd:
+                # Verbatim: no HANDSHAKE line, no strip. The caller is standing in for
+                # `sh -c`, and anything added here would have to be removed there.
+                sys.stdout.write(reply)
+                return 0
             if hs:
                 print(f"HANDSHAKE {hs}")
             print(reply)

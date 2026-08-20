@@ -1198,3 +1198,84 @@ present produced none.
 measuring at a moment that was not the moment in question — a probe upstream of its own
 observation, a sample taken before the event, a control aimed at a seam the consumer does not
 use. The subject was never mysterious. The clock was.
+
+## L10-20 — the microVM row was never structural; it was waiting for a channel that already existed
+
+**2026-08-20.** §9.3's matrix has said the same thing for weeks: `api1`/`api2` are
+**structurally** unmeasurable, because a microVM's boundary is a hypervisor, the probe has to
+run *inside*, and slice 3's rootfs has no exec channel at all. Every clause of that was true,
+and the conclusion was still wrong — **slice 5c had built the channel on 2026-08-07.** vsock
+needs no bridge, no lease and no root. What it lacked was not access but a *verb*.
+
+```text
+  ROW                                PIDS PID1       BOOT_ID   NETNS       DMESG    /dev/kvm UID
+  host                                921 systemd    07ff095c  4026531840  refused  open    1000
+  metrics (podman, rootless)            4 sleep      07ff095c  4026538850  refused  closed  0
+  api (firecracker microvm, vsock)     59 init       7ff31aa1  4026531840* readable closed  0
+```
+
+Measured **unprivileged, with no fabric and no root**.
+
+### Why the agent runs commands instead of answering seven questions
+
+The obvious design was to teach the agent the matrix's seven probes and have it reply with
+values. It is the wrong one, and the reason is the matrix's entire basis: **one implementation
+of the probes, run in every context — the runner changes, the question does not.** Answering in
+C would have made this the only row computed by different code, so a row that differed from the
+container's could no longer distinguish *the boundary differs* from *that C is wrong*. That is
+the confusion §9.3 exists to remove, so the agent gained `EXEC <cmd>` and the guest runs the
+same shell commands every other row runs.
+
+This **reverses** a decision `vsock-agent.c` stated in its own header — *"deliberately not a
+shell"* — so the header now records the reversal and what it costs: the image carries a remote
+shell reachable over vsock. Not an escalation (vsock is host-to-guest, unrouted, and the host
+already owns the guest's memory, disk and CPU), but a surface, and it lives only in the image
+built to *be* probed. `PING` keeps its structured reply, so slice 5c's own tests are untouched —
+verified by running them.
+
+### What the row actually shows, which is not what the container row shows
+
+`metrics` reads the **host's** `boot_id` through a namespaced `/proc`: its isolation is a *view*
+of one machine. The microVM reads a **different** one, because it *is* a different machine — and
+that is now an assertion, not an observation for the reader. If this row ever reported the
+host's `boot_id`, it would mean the answers came from the host: **the seam answering for the
+wrong instance**, a class that has bitten this repo before. Controlled by pointing the runner at
+the host and watching it fire, and the control-of-the-control by inverting it.
+
+`dmesg` is the cell worth staring at. Host `refused`, container `refused`, microVM **`readable`**
+— and that is not a leak. `kernel.dmesg_restrict` belongs to *this* kernel, and the guest is not
+running it. It is reading **its own** ring buffer. The container, which shares the kernel, cannot.
+
+### The row is booted by the test, exactly as the container row is
+
+`metrics`'s row has never been the lab's running container either — it is a fresh one with the
+same image and command. The microVM row follows that precedent, with two honest differences
+recorded in the file: its image carries the agent, and it has **no tap**, because a hypervisor
+boundary does not become a different boundary for having a NIC. The consequence is that the row
+is measured on *ordinary* runs rather than only on the privileged one.
+
+### A fourth instance of the same mistake, in the same session
+
+`test-clone-entropy.sh` failed in the suite (`read #806 is absent from b3`) while passing twice
+standalone. The comparison index was the highest FIRST index across the clones, demanded of all
+three immediately. Two different things make it absent, and they need different answers:
+
+| cause | evidence | answer |
+|---|---|---|
+| not yet written | low record count | **wait** for it |
+| never written — garbled on the shared console | ~59 000 records and still absent | take the **next** index |
+
+The counts settled it: with 59k records each, #806 was not "not yet". So the fix is a bounded
+wait **and** a two-index forward search, and the failure now prints each clone's record count,
+because *absent* cannot tell *not yet* from *never*.
+
+**The forward search is deliberately narrow.** Scanning far ahead for any common index would
+find the clones already diverged and report *no hazard* — turning the thing this file exists to
+reproduce into a false negative. The control earned that reasoning rather than assuming it:
+excluding `hi` entirely, the test takes `hi+1`, says so, and **still passes**, which is direct
+evidence that ±2 stays inside §5.8's window.
+
+That is now **four** in one session — L10-18's probe running before its own observation, L10-19's
+`DB_SELFCONF` sampling before the DHCPACK, L10-19's helper measured against the wrong seam, and
+this. Every one was a measurement taken at a moment, or through a view, that was not the one in
+question.
