@@ -140,9 +140,19 @@ examples/micro-cloud/
 
 ## Routing note
 
-This lab is deliberately **not yet routed** into a learning path: the plan
-([§11](../../MICRO_CLOUD_LAB_PLAN.md#11-catalog-routing-and-the-install-surface))
-routes it at slices 9–10, with the build slices as the path's steps. Until
-then it is listed in `learning-paths.toml`'s `[meta.coverage_exempt]` with this
-reason, so `tools/paths.py --check` stays green without pretending the journey
-exists.
+**Routed 2026-08-19, exactly as the plan said it would be at slices 9–10**
+([§11](../../MICRO_CLOUD_LAB_PLAN.md#11-catalog-routing-and-the-install-surface)):
+the journey is [**Build a cloud small enough to hold in your
+head**](../learning-paths/path-micro-cloud.md), and its eleven steps *are* the
+build slices, in order, each with the checkpoint that slice was exercised
+against.
+
+> **This note said the opposite until 2026-08-20**, and it is worth keeping the
+> correction visible rather than quietly overwriting it. It claimed the lab was
+> *"deliberately not yet routed"* and *"listed in `learning-paths.toml`'s
+> `[meta.coverage_exempt]` with this reason"* — both false: the path had existed
+> for a day, and `coverage_exempt` holds exactly one entry, `learning-paths.toml`
+> itself. **Both gates stayed green the whole time**, because the routing was
+> real; `tools/paths.py --check` verifies the *routing*, and no checker reads the
+> prose that denies it. A record that outlived its subject, in the one file a
+> reader consults to find the journey.
