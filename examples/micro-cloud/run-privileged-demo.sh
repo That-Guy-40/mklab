@@ -244,6 +244,28 @@ asuser "$REPO/phase4-podman/lab-podman.sh"   status micro-cloud       2>&1 | tai
 echo "  -- leases --";        sed 's/^/    /' "$LEASES" 2>/dev/null
 echo "  -- br-mc0 members --"; ls /sys/class/net/br-mc0/brif 2>/dev/null | tr '\n' ' '; echo
 
+# ── why does db have no address? ASK IT. ────────────────────────────────────
+# Two rounds of this were diagnosed by inference — first "it has no init", then "it has no
+# DHCP client" — and each cost a privileged run to test a guess. The container is running,
+# `lab-lxd.sh exec` demonstrably works (the isolation matrix probes through it), and every
+# fact needed is one command away inside it. So it is asked rather than reasoned about, and
+# the answers are printed whether or not it worked: a run where `db` DID get an address
+# should show that too, or the block becomes a thing that only ever appears on failure and
+# nobody knows what healthy looks like.
+step "4b. db's own view of its network (asked, not inferred)"
+dbx() { asuser "$REPO/phase5-lxd/lab-lxd.sh" exec micro-cloud/db -- sh -c "$1" 2>&1 | sed 's/^/      /'; }
+if asuser "$REPO/phase5-lxd/lab-lxd.sh" exec micro-cloud/db -- true >/dev/null 2>&1; then
+    echo "    interfaces:";        dbx 'ip -o link show | cut -d: -f2 | tr -d " "'
+    echo "    addresses:";         dbx 'ip -4 -o addr show | awk "{print \$2, \$4}"'
+    echo "    hostname:";          dbx 'hostname'
+    echo "    networkd active:";   dbx 'systemctl is-active systemd-networkd 2>&1; systemctl is-enabled systemd-networkd 2>&1'
+    echo "    networkd sees:";     dbx 'networkctl --no-pager 2>&1 | head -6'
+    echo "    .network files:";    dbx 'ls -la /etc/systemd/network/ 2>&1'
+    echo "    networkd log:";      dbx 'journalctl -u systemd-networkd --no-pager -n 12 2>&1 || echo "(no journal)"'
+else
+    echo "    db is not exec-able, so nothing could be asked of it"
+fi
+
 # ── the capstone ────────────────────────────────────────────────────────────
 step "5. CAPSTONE — heterogeneous instances, one L2, resolved BY NAME"
 if [[ "$EDGE_SSH" == yes ]]; then
