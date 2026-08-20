@@ -57,10 +57,13 @@ sudo phase1-chroot/lab-chroot.sh create \
      --backend debootstrap --distro debian --suite bookworm --arch x86_64 \
      --variant minbase --manager none \
      --include systemd-sysv,ifupdown,isc-dhcp-client,iproute2 \
-     --post-command 'mkdir -p /etc/network /etc/dhcp /etc/systemd/system/multi-user.target.wants' \
+     --post-command 'mkdir -p /etc/network /etc/dhcp /etc/systemd/system/multi-user.target.wants /etc/systemd/system/networking.service.d /usr/local/sbin' \
      --post-command 'printf "auto lo\niface lo inet loopback\n\nauto eth0\niface eth0 inet dhcp\n" > /etc/network/interfaces' \
      --post-command 'printf "send host-name \"db\";\n" >> /etc/dhcp/dhclient.conf' \
      --post-command 'ln -sf /lib/systemd/system/networking.service /etc/systemd/system/multi-user.target.wants/networking.service' \
+     --post-command 'printf "#!/bin/sh\n# eth0 is inserted into this netns by the container manager, not by anything\n# in this tree, and nothing here is told when that happens. Wait for it.\nuntil [ -e /sys/class/net/eth0 ]; do sleep 0.2; done\n" > /usr/local/sbin/wait-for-eth0' \
+     --post-command 'chmod 0755 /usr/local/sbin/wait-for-eth0' \
+     --post-command 'printf "[Service]\nTimeoutStartSec=30\nExecStartPre=/usr/local/sbin/wait-for-eth0\n" > /etc/systemd/system/networking.service.d/wait-for-eth0.conf' \
      --name micro-cloud-base --target /var/chroots/micro-cloud-base --lab micro-cloud
 
 # export 1 — the microVMs' root filesystem, written WITHOUT a loop mount
@@ -118,6 +121,39 @@ stopped. **systemd-networkd waits for udev to mark a link initialized before con
 and this tree has no `systemd-udevd` at all**: Debian ships udev as its own package and
 `systemd-sysv` does not pull it in. `ifupdown` is a boot-time script with no such dependency,
 which is why it is the conventional path inside a container.
+
+### …and then ifupdown lost the same race from the other side
+
+Switching to `ifupdown` did **not** give `db` an address either, and the reason is the mirror
+image of the one above. Its journal:
+
+```text
+ifup[74]: Failed to get interface index: No such device
+ifup[55]: ifup: failed to bring up eth0
+systemd[1]: networking.service: Failed with result 'exit-code'
+```
+
+The unit ran, and it ran **before `eth0` existed in this netns**. Being `Type=oneshot`, it never
+looked again. The same `ifup eth0` typed by hand seconds later got a lease on the first
+DHCPDISCOVER. Every ingredient was present; only the **order** was wrong — which is why several
+rounds of checking *"is it installed / configured / enabled"* found nothing. An ordering bug is
+invisible to a question about state; it takes a **log**, the one artifact that carries time.
+
+So the tree pays for having no udev **twice, in opposite directions**:
+
+| manager | when the link is not there yet | outcome |
+|---|---|---|
+| `systemd-networkd` | waits for udev to say the link is initialized | waits forever — no udev exists to say it |
+| `ifupdown` | does not wait at all | fails at once — `No such device` |
+
+Neither is wrong; both are right for a machine that has udev. So the wait is supplied by hand,
+as the last three `--post-command` lines above: a two-line helper that blocks until
+`/sys/class/net/eth0` exists, and a drop-in that runs it as `ExecStartPre` with
+`TimeoutStartSec=30` — the timeout is what keeps it honest, since a device that genuinely never
+appears must still fail loudly rather than hang the boot.
+
+Neither file contains a `$` or a quote, deliberately: the text travels through `--post-command`
+→ the outer shell → `sh -c` inside the chroot, and every layer is another chance to eat one.
 
 Two more details in those lines, neither incidental:
 

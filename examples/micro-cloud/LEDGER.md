@@ -972,3 +972,78 @@ fails, and says why.
 
 `systemd-networkd` is still probed, expecting `inactive`, because a half-migration with both
 managers present would look exactly like this too.
+
+## L10-18 — `networking.service` won the race to `eth0` and lost: an ordering bug, not a config bug
+
+**Run 2026-08-19 (second).** `up` rc=0, `down` rc=0, 81 s, cluster unchanged, all five Running.
+The re-aimed diagnostic (L10-17) asked the right question and the journal answered it outright:
+
+```text
+    networking.service:  failed / enabled
+    networking log:
+      ifup[74]: Failed to get interface index: No such device
+      ifup[55]: ifup: failed to bring up eth0
+      systemd[1]: networking.service: Failed with result 'exit-code'
+    ifup by hand:
+      DHCPACK of 10.71.0.104 from 10.71.0.1
+      eth0 inet 10.71.0.104/24 ... rc=0
+```
+
+The unit ran. It ran **before `eth0` existed in the container's netns**, failed on a device that
+was not there yet, and — being `Type=oneshot` — never looked again. Seconds later the same
+command, by hand, got a lease on the first DISCOVER.
+
+**This is why five runs of checking ingredients found nothing.** Every ingredient *was* present.
+The defect was never in the set of facts, it was in their **order**, and no amount of asking
+"is X installed / configured / enabled" can see an ordering bug. Three rounds of this lab's
+`db` problem were diagnosed by inspecting state; the one that solved it read a **log**, which
+is the only artifact that carries time.
+
+### The tree pays for having no udev twice, in opposite directions
+
+| manager | what it does when the link is not there yet | outcome here |
+|---|---|---|
+| **systemd-networkd** (L10-16) | waits for udev to mark the link initialized | waits **forever** — there is no udev to send the event |
+| **ifupdown** (L10-17) | does not wait at all; runs at boot and exits | fails **immediately** — `No such device` |
+
+Neither is wrong; both are correct designs for a machine that *has* udev. `minbase` has none
+(Debian ships `udev` as its own package and `systemd-sysv` does not pull it), so the wait has to
+be supplied by hand. The fix is a drop-in:
+
+```ini
+[Service]
+TimeoutStartSec=30
+ExecStartPre=/usr/local/sbin/wait-for-eth0
+```
+
+```sh
+until [ -e /sys/class/net/eth0 ]; do sleep 0.2; done
+```
+
+`TimeoutStartSec` is what bounds it — systemd kills the `ExecStartPre` at 30 s, so a device that
+genuinely never appears still fails loudly instead of hanging the boot. No variables and no
+quotes in either file, which is deliberate: the content travels through `--post-command` → the
+outer shell → `sh -c` inside the chroot, and each layer is one more chance to eat a `$` or a
+`'`. Both files were rendered through that exact pipeline and diffed before being trusted.
+
+**Controls, run rather than reasoned** — device present → returns 0 immediately; device absent →
+still blocking at the timeout (rc 124, so it really does wait); device created **late** inside an
+`unshare -rmn` netns → blocked exactly 2 s and returned 0. The third needs `mount -t sysfs sys
+/sys` inside the namespace, or `/sys/class/net` keeps showing the *host's* devices and the
+control silently proves nothing.
+
+### The diagnostic healed the subject it was measuring
+
+The `ifup by hand` probe that produced the answer above also **brought `eth0` up**. Step 5 ran
+two seconds later and reported the capstone in full — `getent db → 10.71.0.104`, `ping db` 0%
+loss. That capstone row is not a result. It is the diagnostic's own side effect, read back.
+
+Nothing was wrong with running `ifup` — it was the decisive test and it decided. The mistake was
+running it **upstream of an observation**, in a script whose next step observes. So 4b is now
+read-only, and the thing that made the confusion possible is gone from the report: `DB_SELFCONF`
+is sampled *before* any probe runs and printed on its own summary line, so **"db reached the
+fabric" and "db reached the fabric by itself" can no longer be read off the same line.**
+
+A probe that repairs its subject is a special case of the liar in the root `CLAUDE.md`: not a
+false success, but a **manufactured** one — and it is worse in one respect, because everything it
+prints is true.

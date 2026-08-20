@@ -145,6 +145,11 @@ if [[ -d /var/chroots/micro-cloud-base ]]; then
         echo "  !! on br-mc0, and never ask for an address: present on the L2 and invisible"
         echo "  !! on the network. --reset rebuilds it. LEDGER L10-13 / L10-16."
     fi
+    if [[ ! -e /var/chroots/micro-cloud-base/etc/systemd/system/networking.service.d/wait-for-eth0.conf ]]; then
+        echo "  !! this tree predates the wait-for-eth0 drop-in: its networking.service will"
+        echo "  !! race the veth's insertion and die on 'No such device' before eth0 exists."
+        echo "  !! --reset rebuilds it. LEDGER L10-18."
+    fi
 else
     # TWO consumer-specific requirements, both found by running it, both on `db`:
     #
@@ -198,10 +203,13 @@ else
         --backend debootstrap --distro debian --suite bookworm --arch x86_64 \
         --variant minbase --manager none \
         --include systemd-sysv,ifupdown,isc-dhcp-client,iproute2 \
-        --post-command 'mkdir -p /etc/network /etc/dhcp /etc/systemd/system/multi-user.target.wants' \
+        --post-command 'mkdir -p /etc/network /etc/dhcp /etc/systemd/system/multi-user.target.wants /etc/systemd/system/networking.service.d /usr/local/sbin' \
         --post-command 'printf "auto lo\niface lo inet loopback\n\nauto eth0\niface eth0 inet dhcp\n" > /etc/network/interfaces' \
         --post-command 'printf "send host-name \"db\";\n" >> /etc/dhcp/dhclient.conf' \
         --post-command 'ln -sf /lib/systemd/system/networking.service /etc/systemd/system/multi-user.target.wants/networking.service' \
+        --post-command 'printf "#!/bin/sh\n# eth0 is inserted into this netns by the container manager, not by anything\n# in this tree, and nothing here is told when that happens. Wait for it.\nuntil [ -e /sys/class/net/eth0 ]; do sleep 0.2; done\n" > /usr/local/sbin/wait-for-eth0' \
+        --post-command 'chmod 0755 /usr/local/sbin/wait-for-eth0' \
+        --post-command 'printf "[Service]\nTimeoutStartSec=30\nExecStartPre=/usr/local/sbin/wait-for-eth0\n" > /etc/systemd/system/networking.service.d/wait-for-eth0.conf' \
         --name micro-cloud-base --target /var/chroots/micro-cloud-base --lab micro-cloud \
         2>&1 | tail -3 | sed 's/^/  /'
 fi
@@ -269,9 +277,23 @@ echo "  -- br-mc0 members --"; ls /sys/class/net/br-mc0/brif 2>/dev/null | tr '\
 # the answers are printed whether or not it worked: a run where `db` DID get an address
 # should show that too, or the block becomes a thing that only ever appears on failure and
 # nobody knows what healthy looks like.
+#
+# AND IT IS READ-ONLY, which it was not: the previous version ended on `ifup eth0` "by hand"
+# to settle whether the unit or the config was at fault. It settled it -- and it also brought
+# eth0 up, so step 5 two seconds later resolved `db` and reported a capstone the DIAGNOSTIC
+# had manufactured. A probe that repairs its subject cannot then be used to observe it.
+# Nothing below writes; DB_SELFCONF is sampled first, before any of it runs, and the summary
+# carries it -- so "db reached the fabric" and "db reached the fabric BY ITSELF" can never
+# again be read off the same line.
 step "4b. db's own view of its network (asked, not inferred)"
 dbx() { asuser "$REPO/phase5-lxd/lab-lxd.sh" exec micro-cloud/db -- sh -c "$1" 2>&1 | sed 's/^/      /'; }
+DB_SELFCONF=unknown; DB_ADDR=""
 if asuser "$REPO/phase5-lxd/lab-lxd.sh" exec micro-cloud/db -- true >/dev/null 2>&1; then
+    DB_ADDR="$(asuser "$REPO/phase5-lxd/lab-lxd.sh" exec micro-cloud/db -- \
+                 sh -c 'ip -4 -o addr show eth0 scope global 2>/dev/null | awk "{print \$4}"' \
+               2>/dev/null | tr -d ' \r\n')"
+    if [[ -n "$DB_ADDR" ]]; then DB_SELFCONF=yes; else DB_SELFCONF=no; fi
+    echo "    self-configured:     $DB_SELFCONF ${DB_ADDR:+($DB_ADDR)}"
     echo "    interfaces:";        dbx 'ip -o link show | cut -d: -f2 | tr -d " "'
     echo "    addresses:";         dbx 'ip -4 -o addr show | awk "{print \$2, \$4}"'
     echo "    hostname:";          dbx 'hostname'
@@ -284,8 +306,15 @@ if asuser "$REPO/phase5-lxd/lab-lxd.sh" exec micro-cloud/db -- true >/dev/null 2
     echo "    interfaces file:";    dbx 'cat /etc/network/interfaces 2>&1'
     echo "    dhclient present:";   dbx 'command -v dhclient || echo "NOT INSTALLED"'
     echo "    dhclient leases:";    dbx 'ls -la /var/lib/dhcp/ 2>&1 | head -5'
+    # THE JOURNAL IS THE ANSWER, and it was, on 2026-08-19:
+    #     ifup[74]: Failed to get interface index: No such device
+    #     ifup[55]: ifup: failed to bring up eth0
+    # -- the unit ran, and it ran BEFORE eth0 existed in this netns. Not a broken config: an
+    # ordering race, which is why five runs of checking the config found every ingredient
+    # present and nothing wrong. LEDGER L10-18.
     echo "    networking log:";     dbx 'journalctl -u networking --no-pager -n 20 2>&1 || echo "(no journal)"'
-    echo "    ifup by hand:";       dbx 'ifup eth0 2>&1 | tail -5; echo "rc=$?"; ip -4 -o addr show eth0 2>&1'
+    echo "    wait-for-eth0 drop-in:"
+    dbx 'cat /etc/systemd/system/networking.service.d/wait-for-eth0.conf 2>&1 || echo "ABSENT - tree predates the fix"'
     # networkd is kept only to confirm it is NOT the thing running, since a half-migration
     # with both managers would look like this too.
     echo "    (networkd, expect inactive):"; dbx 'systemctl is-active systemd-networkd 2>&1'
@@ -341,6 +370,7 @@ else
 fi
 echo
 echo "up rc=$UP_RC   down rc=$DOWN_RC   edge=${EDGE_IP:-none} ssh=$EDGE_SSH   elapsed=${SECONDS}s"
+echo "db self-configured=$DB_SELFCONF${DB_ADDR:+ ($DB_ADDR)}   <- 'no' means db's capstone row, if any, was not earned"
 echo
 echo "Persisting by design (this script never destroys them without --reset):"
 echo "  chroot   : sudo $REPO/phase1-chroot/lab-chroot.sh destroy micro-cloud-base"
