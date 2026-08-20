@@ -38,7 +38,9 @@ tests=(test-fabric-mac-derivation.sh test-bench-boot.sh test-fabric-round-trip.s
        test-guided-path-is-a-view.sh
        # Slice 10 — the demo. The plan is the lab as commands; the spec is ONE description
        # of it; and §9.3's capstone asks what each compute type can see of the others.
-       test-micro-cloud-plan.sh test-spec-is-one-description.sh test-isolation-matrix.sh)
+       test-micro-cloud-plan.sh test-spec-is-one-description.sh test-isolation-matrix.sh
+       # ...and db's chroot recipe is written down twice — once to run, once to read.
+       test-db-recipe-is-one-recipe.sh)
 
 # The list is compared against the disk: a test with no runner is a test nobody runs,
 # and a comment saying so does not fail a build (metal-as-a-service kept one for weeks).

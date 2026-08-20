@@ -57,10 +57,13 @@ sudo phase1-chroot/lab-chroot.sh create \
      --backend debootstrap --distro debian --suite bookworm --arch x86_64 \
      --variant minbase --manager none \
      --include systemd-sysv,ifupdown,isc-dhcp-client,iproute2 \
-     --post-command 'mkdir -p /etc/network /etc/dhcp /etc/systemd/system/multi-user.target.wants' \
+     --post-command 'mkdir -p /etc/network /etc/dhcp /etc/systemd/system/multi-user.target.wants /etc/systemd/system/networking.service.d /usr/local/sbin' \
      --post-command 'printf "auto lo\niface lo inet loopback\n\nauto eth0\niface eth0 inet dhcp\n" > /etc/network/interfaces' \
      --post-command 'printf "send host-name \"db\";\n" >> /etc/dhcp/dhclient.conf' \
      --post-command 'ln -sf /lib/systemd/system/networking.service /etc/systemd/system/multi-user.target.wants/networking.service' \
+     --post-command 'printf "#!/bin/sh\n# eth0 is inserted into this netns by the container manager, not by anything\n# in this tree, and nothing here is told when that happens. Wait for it -- and\n# wait on NETLINK, the view ifup and dhclient actually consult, NOT on a\n# /sys/class/net entry: sysfs tags its net subsystem with the netns of the\n# MOUNT, so in a container it can answer for a namespace this process is not\n# in. The echoes are a witness -- they land in the unit journal, so the next\n# run can tell a drop-in that never loaded from one that ran and saw eth0.\n# One line per poll, so the JOURNAL TIMESTAMPS say how long this blocked. No lines at all\n# between the two below means eth0 was already there and the wait was never exercised --\n# which is the difference between a fix and a race that happened to go the right way.\necho wait-for-eth0: waiting for eth0 on netlink\nuntil ip link show eth0 >/dev/null 2>&1; do echo wait-for-eth0: not visible yet; sleep 0.2; done\necho wait-for-eth0: eth0 is visible on netlink\n" > /usr/local/sbin/wait-for-eth0' \
+     --post-command 'chmod 0755 /usr/local/sbin/wait-for-eth0' \
+     --post-command 'printf "[Service]\nTimeoutStartSec=30\nExecStartPre=/usr/local/sbin/wait-for-eth0\n" > /etc/systemd/system/networking.service.d/wait-for-eth0.conf' \
      --name micro-cloud-base --target /var/chroots/micro-cloud-base --lab micro-cloud
 
 # export 1 — the microVMs' root filesystem, written WITHOUT a loop mount
@@ -118,6 +121,84 @@ stopped. **systemd-networkd waits for udev to mark a link initialized before con
 and this tree has no `systemd-udevd` at all**: Debian ships udev as its own package and
 `systemd-sysv` does not pull it in. `ifupdown` is a boot-time script with no such dependency,
 which is why it is the conventional path inside a container.
+
+### …and then ifupdown lost the same race from the other side
+
+Switching to `ifupdown` did **not** give `db` an address either, and the reason is the mirror
+image of the one above. Its journal:
+
+```text
+ifup[74]: Failed to get interface index: No such device
+ifup[55]: ifup: failed to bring up eth0
+systemd[1]: networking.service: Failed with result 'exit-code'
+```
+
+The unit ran, and it ran **before `eth0` existed in this netns**. Being `Type=oneshot`, it never
+looked again. The same `ifup eth0` typed by hand seconds later got a lease on the first
+DHCPDISCOVER. Every ingredient was present; only the **order** was wrong — which is why several
+rounds of checking *"is it installed / configured / enabled"* found nothing. An ordering bug is
+invisible to a question about state; it takes a **log**, the one artifact that carries time.
+
+So the tree pays for having no udev **twice, in opposite directions**:
+
+| manager | when the link is not there yet | outcome |
+|---|---|---|
+| `systemd-networkd` | waits for udev to say the link is initialized | waits forever — no udev exists to say it |
+| `ifupdown` | does not wait at all | fails at once — `No such device` |
+
+Neither is wrong; both are right for a machine that has udev. So the wait is supplied by hand,
+as the last three `--post-command` lines above: a helper that blocks until `eth0` appears, and
+a drop-in that runs it as `ExecStartPre` with `TimeoutStartSec=30` — the timeout is what keeps
+it honest, since a device that genuinely never appears must still fail loudly rather than hang
+the boot.
+
+### The helper waits on netlink, and the first version did not
+
+The first helper waited for **`/sys/class/net/eth0`** to exist, and the run of 2026-08-20 said
+it did not work — with the drop-in verifiably in the image and the unit still failing on
+`No such device`. The unit's status is what gives it away: `status=1/FAILURE` from **`ifup`**,
+which can only happen if `ExecStartPre` had already **returned 0**. The wait was satisfied and
+the very next command could not find the device.
+
+Both are true at once because **the two are not the same view**:
+
+| view | whose network namespace it answers for |
+|---|---|
+| `/sys/class/net/…` | the netns of the **sysfs mount** — fixed when `/sys` was mounted |
+| `ip link` / `if_nametoindex` (netlink) | the **caller's own** netns |
+
+Demonstrated locally, no container needed — in a fresh netns whose `/sys` is still the host's:
+
+```console
+$ unshare -rn --map-auto bash -c '...'
+    ip link show docker0   -> not present        # netlink: this netns has no docker0
+    /sys/class/net/docker0 -> VISIBLE            # sysfs: answering for the host
+    OLD helper (sysfs)   rc=0    <- returned at once: FOOLED
+    NEW helper (netlink) rc=124  <- still waiting: agrees with ifup
+```
+
+So the helper now waits on `ip link show eth0`, the same lookup `ifup` and `dhclient` make.
+**Assert the outcome, not the mechanism** — a `/sys` entry was a stand-in for "the name
+resolves", and the stand-in can be true while the thing it stands for is false. It also echoes
+witness lines into the unit's journal: without them, *"the drop-in never loaded"* and *"it ran
+and was satisfied"* look identical from outside, and one line per poll makes the journal
+timestamps say **how long it blocked** — no poll lines at all means `eth0` was already there and
+the wait was never exercised.
+
+That last distinction matters more than it sounds. On the run where `db` finally configured
+itself, `systemctl show` reported the helper's `start_time` and `stop_time` in the **same
+second**, and the container's two views **agreed** (`netlink sees: lo eth0@if186`, `sysfs sees:
+eth0 lo` — its own devices, not the host's). So that run did not exercise the wait, the
+divergence above is real but *not shown to be what happened here*, and the honest score is one
+failing run for the old helper against one passing run for the new one. The netlink version is
+the right one to keep because it asks the question the consumer asks — not because it has been
+proven to be the cure.
+
+Neither file contains a `$` or a quote, deliberately: the text travels through `--post-command`
+→ the outer shell → `sh -c` inside the chroot, and every layer is another chance to eat one.
+The rule earned itself immediately — the first draft of this very comment contained a quoted
+phrase, which would have truncated the helper at that character; rendering it through the real
+pipeline before trusting it is what caught that.
 
 Two more details in those lines, neither incidental:
 

@@ -972,3 +972,229 @@ fails, and says why.
 
 `systemd-networkd` is still probed, expecting `inactive`, because a half-migration with both
 managers present would look exactly like this too.
+
+## L10-18 — `networking.service` won the race to `eth0` and lost: an ordering bug, not a config bug
+
+**Run 2026-08-19 (second).** `up` rc=0, `down` rc=0, 81 s, cluster unchanged, all five Running.
+The re-aimed diagnostic (L10-17) asked the right question and the journal answered it outright:
+
+```text
+    networking.service:  failed / enabled
+    networking log:
+      ifup[74]: Failed to get interface index: No such device
+      ifup[55]: ifup: failed to bring up eth0
+      systemd[1]: networking.service: Failed with result 'exit-code'
+    ifup by hand:
+      DHCPACK of 10.71.0.104 from 10.71.0.1
+      eth0 inet 10.71.0.104/24 ... rc=0
+```
+
+The unit ran. It ran **before `eth0` existed in the container's netns**, failed on a device that
+was not there yet, and — being `Type=oneshot` — never looked again. Seconds later the same
+command, by hand, got a lease on the first DISCOVER.
+
+**This is why five runs of checking ingredients found nothing.** Every ingredient *was* present.
+The defect was never in the set of facts, it was in their **order**, and no amount of asking
+"is X installed / configured / enabled" can see an ordering bug. Three rounds of this lab's
+`db` problem were diagnosed by inspecting state; the one that solved it read a **log**, which
+is the only artifact that carries time.
+
+### The tree pays for having no udev twice, in opposite directions
+
+| manager | what it does when the link is not there yet | outcome here |
+|---|---|---|
+| **systemd-networkd** (L10-16) | waits for udev to mark the link initialized | waits **forever** — there is no udev to send the event |
+| **ifupdown** (L10-17) | does not wait at all; runs at boot and exits | fails **immediately** — `No such device` |
+
+Neither is wrong; both are correct designs for a machine that *has* udev. `minbase` has none
+(Debian ships `udev` as its own package and `systemd-sysv` does not pull it), so the wait has to
+be supplied by hand. The fix is a drop-in:
+
+```ini
+[Service]
+TimeoutStartSec=30
+ExecStartPre=/usr/local/sbin/wait-for-eth0
+```
+
+```sh
+until [ -e /sys/class/net/eth0 ]; do sleep 0.2; done
+```
+
+`TimeoutStartSec` is what bounds it — systemd kills the `ExecStartPre` at 30 s, so a device that
+genuinely never appears still fails loudly instead of hanging the boot. No variables and no
+quotes in either file, which is deliberate: the content travels through `--post-command` → the
+outer shell → `sh -c` inside the chroot, and each layer is one more chance to eat a `$` or a
+`'`. Both files were rendered through that exact pipeline and diffed before being trusted.
+
+**Controls, run rather than reasoned** — device present → returns 0 immediately; device absent →
+still blocking at the timeout (rc 124, so it really does wait); device created **late** inside an
+`unshare -rmn` netns → blocked exactly 2 s and returned 0. The third needs `mount -t sysfs sys
+/sys` inside the namespace, or `/sys/class/net` keeps showing the *host's* devices and the
+control silently proves nothing.
+
+### The diagnostic healed the subject it was measuring
+
+The `ifup by hand` probe that produced the answer above also **brought `eth0` up**. Step 5 ran
+two seconds later and reported the capstone in full — `getent db → 10.71.0.104`, `ping db` 0%
+loss. That capstone row is not a result. It is the diagnostic's own side effect, read back.
+
+Nothing was wrong with running `ifup` — it was the decisive test and it decided. The mistake was
+running it **upstream of an observation**, in a script whose next step observes. So 4b is now
+read-only, and the thing that made the confusion possible is gone from the report: `DB_SELFCONF`
+is sampled *before* any probe runs and printed on its own summary line, so **"db reached the
+fabric" and "db reached the fabric by itself" can no longer be read off the same line.**
+
+A probe that repairs its subject is a special case of the liar in the root `CLAUDE.md`: not a
+false success, but a **manufactured** one — and it is worse in one respect, because everything it
+prints is true.
+
+> **Superseded in part by L10-18a:** the drop-in below was the right shape and the wrong
+> **view**. The read-only 4b and the `DB_SELFCONF` line stand.
+
+## L10-18a — the wait was satisfied and `ifup` still could not find the device: two views, one name
+
+**Run 2026-08-20, `reset=1`.** `up` rc=0, `down` rc=0, 78 s, cluster unchanged. The new summary
+line did its job on its first outing:
+
+```text
+db self-configured=no   <- 'no' means db's capstone row, if any, was not earned
+```
+
+The drop-in was verifiably in place — the diagnostic `cat`s it out of the *running* container —
+and the failure was byte-identical to L10-18's. The delivery chain was then checked end to end
+from the exported image, with no privileged run needed:
+
+```console
+$ tar tzvf images/micro-cloud-base.tar.gz | grep wait-for-eth0
+-rwxr-xr-x 0/0  213  ./usr/local/sbin/wait-for-eth0
+-rw-r--r-- 0/0   72  ./etc/systemd/system/networking.service.d/wait-for-eth0.conf
+```
+
+Both present, the helper executable, the drop-in exactly 72 bytes — the length of its intended
+content. Nothing was lost between `--post-command`, the chroot, the tarball and the image.
+
+### The unit's own status names the contradiction
+
+`networking.service: Main process exited, code=exited, status=1/FAILURE` — **the main process**,
+i.e. `ifup`. systemd does not run `ExecStart` if an `ExecStartPre` fails. So `ExecStartPre`
+**returned 0**: the wait was *satisfied*, and the next command could not find the device.
+
+Both are true at once because they are **not the same view**:
+
+| view | whose netns it answers for |
+|---|---|
+| `/sys/class/net/…` | the netns of the **sysfs mount**, fixed when `/sys` was mounted |
+| `ip link` / `if_nametoindex` (netlink) | the **caller's own** netns |
+
+Shown locally in a fresh netns whose `/sys` is still the host's — no container, no privilege:
+
+```console
+    ip link show docker0   -> not present     # netlink: this netns has no docker0
+    /sys/class/net/docker0 -> VISIBLE         # sysfs: still answering for the host
+    OLD helper (sysfs)   rc=0    <- returned at once: FOOLED
+    NEW helper (netlink) rc=124  <- still waiting: agrees with ifup
+```
+
+**This is the root `CLAUDE.md`'s opening table with my own name on it.** The cheap check is not
+a weaker version of the real one; it is a *different question that happens to be easier to ask*,
+and it can be true while the thing it stands for is false. "A `/sys/class/net` entry exists" was
+a stand-in for "the name resolves in the namespace `ifup` will ask about", and the stand-in was
+satisfied by a namespace nobody was in. Three of L10-18's controls passed — the helper really
+does block, really does return, really does wait exactly as long as needed. **They measured the
+helper against the wrong seam, so they proved everything except the thing that mattered.**
+
+The fix: wait on `ip link show eth0`, the same lookup the consumer makes. This lab already has
+the rule in another shape — the delivery test that used `curl --data-binary` and proved the sink
+rather than the node, whose `busybox wget` truncates DER. *Drive the client the machine actually
+has.*
+
+### And it added a witness, because "never loaded" and "loaded and satisfied" looked identical
+
+The helper now echoes two lines that land in the unit's journal. Without them the run above
+could not distinguish *the drop-in was never read* from *it ran and was satisfied* — the
+`systemctl show ExecStartPre` probe added alongside answers the first directly. A silent
+success and a silent absence present the same way from outside; **`UNKNOWN` was the honest
+verdict for that run, and it took two probes to retire it.**
+
+### The no-quotes rule earned itself in the same edit
+
+The rewritten helper's comment first contained a quoted phrase — inside a `printf "…"` that
+crosses `--post-command`, the outer shell and an in-chroot `sh -c`. It would have terminated the
+format string and truncated the file mid-sentence. It was caught by **rendering the
+post-command through the real pipeline and reading the result**, not by inspecting it: the
+truncation is invisible in the source line and obvious in the output.
+
+> **Corrected by L10-19:** the *divergence* above is real and reproducible, but this entry
+> asserted it was the **cause** of L10-18's failure. It is not established. See L10-19.
+
+## L10-19 — the capstone, earned: five instances, one L2, `db` self-configured — and two corrections
+
+**Run 2026-08-20T02:38Z, `reset=1`.** `up` rc=0, `down` rc=0, 79 s, cluster unchanged.
+
+```text
+    getent api1  -> 10.71.0.101     api1
+    getent api2  -> 10.71.0.102     api2
+    getent db    -> 10.71.0.104     db
+    ping api1    -> 2 received, 0% packet loss
+    ping db      -> 2 received, 0% packet loss
+```
+
+`db`'s journal shows the whole sequence for the first time — the witness, then DHCP:
+
+```text
+wait-for-eth0[55]: wait-for-eth0: waiting for eth0 on netlink
+systemd[1]:        Starting networking.service - Raise network interfaces...
+wait-for-eth0[55]: wait-for-eth0: eth0 is visible on netlink
+dhclient[85]:      DHCPDISCOVER on eth0 ... interval 4
+dhclient[85]:      DHCPOFFER of 10.71.0.104 from 10.71.0.1
+dhclient[85]:      DHCPACK   of 10.71.0.104 from 10.71.0.1
+dhclient[85]:      bound to 10.71.0.104 -- renewal in 19190 seconds
+systemd[1]:        Finished networking.service - Raise network interfaces.
+```
+
+**§9.3's capstone is now met by all five instances**, and it is met with a **read-only** 4b —
+nothing in the run touched `db`'s network before `edge` resolved it. That distinction is the
+whole reason L10-18 exists.
+
+### Correction 1 — the guard against a manufactured success manufactured a failure
+
+The summary line said **`db self-configured=no`**. It is wrong, and the journal above says why:
+`DB_SELFCONF` sampled once at **t+46 s**, while the DHCPDISCOVER was still in flight
+(`interval 4`); the DHCPACK landed **four seconds later**. The `systemctl is-active` probe in
+the same block printed `activating`, which was the tell, and I read past it.
+
+**The same root cause as the bug it was built to prevent: sampling at the wrong moment relative
+to the event.** L10-18's probe ran *after* an effect it caused, and reported it as observation;
+this one ran *before* an effect it was waiting for, and reported its absence as fact. A
+single-shot sample of an asynchronous thing is a coin toss either way. It now polls to a bound
+and **prints how long it took** — `db` needing 4 s and `db` needing 40 s are not the same lab,
+and a duration is the one number a boolean cannot carry.
+
+### Correction 2 — L10-18a's diagnosis is NOT established, and this run is the evidence against it
+
+L10-18a claimed the sysfs helper was satisfied by a *different namespace's* view. Two facts here
+undercut it:
+
+* **`systemctl show` reports `start_time` and `stop_time` in the same second.** The wait did not
+  visibly block, so this run **did not exercise it**. A helper that never had to wait cannot be
+  credited with the outcome.
+* **This container's two views AGREE.** The new side-by-side probe prints
+  `netlink sees: lo eth0@if186` and `sysfs sees: eth0 lo` — the *container's* devices, not the
+  host's (`docker0`, `cali…`, `vxlan.calico`). So sysfs **is** namespaced here, and the
+  divergence I demonstrated locally, while entirely real, is not shown to be what happened.
+
+What is actually in hand: the sysfs helper, one failing run; the netlink helper, one passing
+run. **n = 1 each, against a defect that is timing-dependent by construction.** The netlink
+version is still the right one to keep — it asks the question the consumer asks, and that stands
+on its own — but *"the netlink change fixed it"* is a claim I have not earned.
+
+So the witness now logs **one line per poll**. The journal timestamps then say how long the wait
+blocked, and **no poll lines at all means eth0 was already there** — which is exactly the
+difference between a fix and a race that happened to fall the right way. Controlled both
+directions locally: a device created late produced five `not visible yet` lines; a device already
+present produced none.
+
+**The pattern across L10-18, L10-18a and L10-19 is one pattern.** Every wrong answer came from
+measuring at a moment that was not the moment in question — a probe upstream of its own
+observation, a sample taken before the event, a control aimed at a seam the consumer does not
+use. The subject was never mysterious. The clock was.
