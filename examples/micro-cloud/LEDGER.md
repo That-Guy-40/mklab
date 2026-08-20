@@ -1279,3 +1279,66 @@ That is now **four** in one session — L10-18's probe running before its own ob
 `DB_SELFCONF` sampling before the DHCPACK, L10-19's helper measured against the wrong seam, and
 this. Every one was a measurement taken at a moment, or through a view, that was not the one in
 question.
+
+## L10-21 — the driver could not configure the channel the lab is built on
+
+**2026-08-20.** L10-20 closed §9.3's microVM row by booting a guest *the test* configured.
+The row was honest about that, and it left an odd asymmetry standing: the lab **documents**
+vsock, **tests** vsock, and **depends** on vsock — and `lab-fc.sh` could not emit the device.
+Slice 5c's own test hand-writes a `config.json` and launches Firecracker directly, which is
+why nobody noticed. **A channel the driver cannot configure is one every consumer
+re-implements**, and each of them gets to rediscover the 108-byte `sockaddr_un` cap alone.
+
+So `vsock` and `vsock_cid` are now first-class `[[microvm]]` keys, with `--vsock` /
+`--vsock-cid`, and `micro-cloud.toml` declares them for `api1` and `api2`.
+
+### The CID is derived, and it is not the identity
+
+`vsock_cid_for_name` hashes the name exactly as `mac_for_name` does — a number written into
+a file can outlive its subject; one computed from the name cannot — and `lab-fc.sh vsock-cid
+<name>` prints it without booting, the read-only counterpart of `mac`. `0`, `1` and `2` are
+refused as the kernel's own.
+
+But the number is **advisory under Firecracker**, and the driver says so where it matters.
+The host end is a userspace unix socket, so *which guest?* is answered by **which path you
+opened**. Slice 5c already measured the consequence — three guests believing they were CID
+43 at once, while QEMU refused the second at device creation. So `inspect` prints
+`vsock_uds`, and prints its state in **three** outcomes: present; *missing while running*,
+which is a fault; and *absent while stopped*, which is not. Collapsing those two would report
+a healthy stopped instance as broken.
+
+### Three defects, each found by running it rather than reading it
+
+1. **A device with nothing behind it is worse than no device.** Declaring `vsock = true` for
+   `api1` makes the socket exist while the slice-3 image has no agent — so `vsock_uds_state =
+   "present"` and every probe times out, which reads as a *broken channel* rather than an
+   *empty guest*. The privileged demo now injects the agent into the api images in place,
+   with `debugfs`, idempotently.
+2. **A stale socket blocked the next start.** `stop` left `vsock.sock` behind and the next
+   `start` died on `Error binding to the host-side Unix socket: Address in use (os error 98)`
+   — **the second time in this driver that a stale path has masqueraded as a vsock fault**
+   (the first was the 108-byte cap). The API socket has had `rm -f` with that exact comment
+   for months; I simply did not give the new socket the same treatment. Now unlinked at
+   `start` *and* `stop`, and controlled by stopping and starting a guest that previously
+   failed — it now boots and reports a **new** `boot_id`, which is what distinguishes a fresh
+   boot from a stale connection to the old one.
+3. **`inspect` died on an instance with no `config.json`.** The uds path was read with
+   `sed … | head -1`; under this file's `set -e -o pipefail` a missing file makes `sed` exit
+   1, `pipefail` hands the pipeline *sed's* status rather than `head's`, and the assignment
+   inherits it. `inspect` printed two lines and stopped. **This repo's own standing rule —
+   never pipe a command whose exit status is the gate — arriving from the other direction: I
+   did not want a gate and the pipe created one.** Caught by an existing control that exists
+   for exactly this shape (*"'inspect' refused a LEGAL instance name"*).
+
+### And the parity test called a real flag missing
+
+`test-cli-vs-config-parity.sh` builds each key's flag as `--$k`, which was correct only
+because every key had been one word. `vsock_cid` was the first that was not, so the test
+reported *"key with no CLI flag: vsock_cid"* while `--vsock-cid` sat in the parser. TOML keys
+are snake_case and flags are kebab-case; encoding that convention beats special-casing the
+key, since the next underscored key would fail identically and read as a real regression.
+
+It gained the control it never had: an invented flag must be refused **with the message the
+loop greps for**. Without it, a `flag_for()` returning garbage would report nothing missing —
+the loop would simply never match — and the section would pass by looking for the wrong
+string, which is precisely the bug it had just been fixed for.

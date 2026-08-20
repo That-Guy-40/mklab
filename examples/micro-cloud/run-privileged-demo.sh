@@ -223,6 +223,26 @@ ls -l "$IMG/micro-cloud-base.tar.gz" 2>&1 | awk '{print "  db image             
 # The microVM ext4s are left alone on purpose: the ones in place are a BusyBox tree from
 # slices 1/3 whose SLICE3-* console markers are what the microVM half is proved by, and a
 # Debian minbase would boot systemd and print none of them.
+#
+# THE AGENT IS ADDED IN PLACE, not by rebuilding them. The spec now declares `vsock = true`
+# for both, which makes the driver create the device -- and a device with nothing listening
+# behind it is worse than no device: `vsock_uds_state = "present"` while every probe times
+# out, which reads as a broken channel rather than an empty guest. So if the image has no
+# agent in it, one is injected with debugfs (no loop mount, no sudo) and the SLICE3 tree is
+# otherwise untouched. Idempotent, and skipped entirely when the agent is already there.
+for _api in api1 api2; do
+    if strings "$IMG/$_api.ext4" 2>/dev/null | grep -q 'MC-VSOCK-AGENT'; then
+        echo "  $_api image           : vsock agent already present"
+    elif [[ -r "$IMG/$_api.ext4" ]]; then
+        if bash "$HERE/make-vsock-rootfs.sh" --in "$IMG/$_api.ext4" --out "$IMG/$_api.vsock.ext4" --port 1234 \
+             >"$LAB_STATE_DIR/mk-$_api.log" 2>&1 && mv -f "$IMG/$_api.vsock.ext4" "$IMG/$_api.ext4"; then
+            chown "$REAL_USER" "$IMG/$_api.ext4" 2>/dev/null || true
+            echo "  $_api image           : vsock agent injected"
+        else
+            echo "  $_api image           : !! agent injection FAILED — the vsock device will exist with nothing behind it"
+        fi
+    fi
+done
 ls -l "$IMG"/api1.ext4 "$IMG"/api2.ext4 2>&1 | awk '{print "  microVM image        :", $3, $5, $9}'
 
 # ── up ──────────────────────────────────────────────────────────────────────
