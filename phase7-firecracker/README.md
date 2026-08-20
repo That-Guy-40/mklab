@@ -62,12 +62,33 @@ mac     = "06:00:ac:47:f1:f7"       # optional; derived from the name if omitted
 ip      = "10.71.0.101"             # only legal alongside a tap
 gateway = "10.71.0.1"
 netmask = "255.255.255.0"
-mmds    = true                      # MMDS v2 (v1 answers any GET, unauthenticated)
+mmds    = true                      # MMDS v2, and `start` SEEDS it (see below)
 vsock   = true                      # virtio-vsock. Needs NO tap — see below
 vsock_cid = 42                      # optional; derived from the name when omitted
 append  = "mc_name=api1"            # extra boot args, verbatim. root= is REFUSED — see below
 lab     = "micro-cloud"
 ```
+
+### `mmds`, and the store that used to be empty
+
+`mmds = true` puts `mmds-config` in the config — and for a long time it stopped there, so the
+**device existed and the store was empty**. A guest that asked got `404`, which reads as
+*"metadata is broken"* rather than *"nobody wrote any"*. `start` now seeds it over the
+Firecracker API with the fields a guest needs to learn **which instance it is**:
+
+```json
+{"latest": {"meta-data": {"instance-id": "<name>", "local-hostname": "<name>"}}}
+```
+
+Derived from the name, never stored: `instance-id` is precisely the field a cached value
+would corrupt — a clone that kept its source's id is a machine reporting someone else's
+identity. Seeding is **best-effort and says so**: the VM is already running, and refusing to
+report a started VM because a metadata PUT failed would be a worse lie than a warning.
+
+It is **v2**, so a guest must `PUT /latest/api/token` before any `GET`. Note what that costs
+inside a minimal guest: **busybox `wget` cannot PUT**, so the handshake is spoken with `nc`.
+(And `strings rootfs.ext4 | grep -x nc` claims the image has no `nc`; the guest's own
+`busybox --list` says it does. Ask the image, don't infer from a proxy.)
 
 ### `vsock`, and why it is the one device that does not need a NIC
 

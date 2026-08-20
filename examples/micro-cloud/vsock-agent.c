@@ -103,6 +103,9 @@ struct sockaddr_vm {
  * clothes. 256 KiB is far above any matrix probe (the largest prints a few hundred bytes)
  * and far below anything that would stall a guest with 256M of RAM. */
 #define EXEC_MAX_BYTES (256u * 1024u)
+/* A string, because it is pasted into the shell command. 15 s is far above any probe here
+ * and far below a human's patience with a channel that has stopped answering. */
+#define EXEC_TIMEOUT_S "15"
 #define IOCTL_VM_SOCKETS_GET_LOCAL_CID _IO(7, 0xb9)
 
 /* Read a whitespace-delimited value out of /proc/cmdline. The guest is told its name on
@@ -215,7 +218,33 @@ int main(int argc, char **argv) {
          * that accidentally cats something huge -- a truncated reply is a wrong answer, so
          * it is announced on the guest console rather than silently delivered. */
         if (strncmp(req, "EXEC ", 5) == 0) {
-            FILE *fp = popen(req + 5, "r");
+            /* BOUNDED, because this agent is ONE accept loop and a command that never
+             * returns does not fail a probe -- it disables the channel for good. Measured
+             * on 2026-08-20: a `nc` to an unreachable MMDS blocked forever, and every
+             * subsequent request was answered by nothing at all, which reads from outside
+             * as "the guest died". The first probe after it reported `nothing in the guest
+             * is listening on port 1234` about an agent that was alive and stuck.
+             *
+             * The command is re-quoted into a single-quoted argument of `timeout` rather
+             * than prefixed, because prefixing only bounds the FIRST element of a pipeline
+             * -- `timeout 15 printf ... | nc ...` times out the printf and lets nc block,
+             * which is the exact case that wedged it. */
+            char wrapped[sizeof(req) * 4 + 32];
+            size_t w = 0;
+            const char *pfx = "timeout " EXEC_TIMEOUT_S " sh -c '";
+            for (const char *q = pfx; *q && w + 1 < sizeof(wrapped); q++) wrapped[w++] = *q;
+            for (const char *q = req + 5; *q && w + 5 < sizeof(wrapped); q++) {
+                if (*q == '\'') {           /* ' -> '\'' : close, escaped quote, reopen */
+                    wrapped[w++] = '\''; wrapped[w++] = '\\';
+                    wrapped[w++] = '\''; wrapped[w++] = '\'';
+                } else {
+                    wrapped[w++] = *q;
+                }
+            }
+            if (w + 2 < sizeof(wrapped)) wrapped[w++] = '\'';
+            wrapped[w] = '\0';
+
+            FILE *fp = popen(wrapped, "r");
             if (!fp) {
                 char e[128];
                 int el = snprintf(e, sizeof(e), "MC-VSOCK-AGENT EXEC-FAILED errno=%d (%s)\n",
