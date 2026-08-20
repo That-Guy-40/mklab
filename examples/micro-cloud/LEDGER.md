@@ -1380,3 +1380,60 @@ It also exposed a **pre-existing weak assertion** that the re-run found: the val
 test asserted `create[i+1:] != ["true"]`, comparing the whole remaining slice — which always
 ends `["--lab", "mc"]`, so it could never be equal and never fail. Tightened to look at the
 next element, and only then did control A bite.
+
+## L10-22 — 5 of 5, and every open claim in slice 10 is now observed rather than argued
+
+**Run 2026-08-20T04:54Z, `reset=1`.** `up` rc=0, `down` rc=0, 86 s, cluster unchanged.
+
+```text
+db self-configured=yes (10.71.0.104/24) after 2s
+
+  ROW                                        PIDS PID1     BOOT_ID   DMESG    UID
+  host                                       1039 systemd  07ff095c  refused  1000
+  metrics (podman, rootless)                    4 sleep    07ff095c  refused  0
+  db (lxd system container)                     6 systemd  4fa910f6  refused  0
+  edge (qemu vm, full stack)                   73 systemd  07ffd49b  refused  1000
+  api1 (firecracker microvm, the LAB's own)    58 init     8a8c1b4b  readable 0
+
+PASS: 5 of 5 rows measured … 0 row(s) reported UNKNOWN by name
+```
+
+Three things that had each been claimed at some point and are now *measured*:
+
+* **`db` configures itself**, in 2 s, with a **read-only** diagnostic. L10-18's probe had
+  manufactured that result by running `ifup` upstream of the observation; L10-19's instrument
+  then manufactured the opposite by sampling before the DHCPACK. The number `after 2s` is the
+  one a boolean could not carry, and it is why the third answer is believable where the first
+  two were not.
+* **The microVM row is the lab's own `api1`**, not a representative the test booted. The
+  matrix printed *"the lab's api1 answers over vsock, so this row is the real instance rather
+  than a stand-in"* — the branch that had never been exercised until this run.
+* **The agent reaches the lab's images.** `api1 image : vsock agent injected`, both of them,
+  in place, with `debugfs`, under the same root run that builds everything else.
+
+And the teardown check earned its keep quietly: **no `vsock.sock` was left behind** — only
+`api-sock.path`, which is a text file recording a path, not a socket. That is L10-21's
+stale-socket fix observed in the real lab rather than in the two-line reproduction that found
+it.
+
+### What the matrix says now that all five rows are present
+
+The two boundaries are legible side by side for the first time, and they are **different
+kinds**, not different amounts:
+
+| | `metrics` (namespaces) | `api1` (hypervisor) |
+|---|---|---|
+| `boot_id` | the **host's** — `/proc` is namespaced for PIDs, not for machine identity | **its own** — it is a different machine |
+| `dmesg` | refused, because it shares this kernel and `dmesg_restrict=1` | **readable**, because the host's setting does not reach a kernel it does not own |
+
+The `dmesg` row is the one worth keeping: the same word means *"blocked from the host's ring
+buffer"* on one line and *"reading its own"* on the next. A matrix that only counted
+"isolated / not isolated" would have printed one number for both and said nothing.
+
+### Still open, and now genuinely small
+
+`api2` is configured identically to `api1` and is not separately probed — the row measures the
+compute type, and a second instance of it would be the same measurement twice. The MMDS half
+of MANUAL_TESTING row 4 remains unchecked: nothing in these runs has read `instance-id` at
+`169.254.169.254` *from inside a guest*, and slice 2 proving it once is not this lab proving it
+now. That one is a to-do, not a structural gap — the guest now has a channel that could ask.
