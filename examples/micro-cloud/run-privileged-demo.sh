@@ -139,14 +139,11 @@ if [[ -d /var/chroots/micro-cloud-base ]]; then
         echo "  !! 'db' will fail at launch with 'forklxc … exit status 1'. Re-run with"
         echo "  !! --reset to rebuild it. See LEDGER L10-11."
     fi
-    if [[ ! -L /var/chroots/micro-cloud-base/etc/systemd/system/multi-user.target.wants/systemd-networkd.service ]]; then
-        echo "  !! systemd-networkd is NOT enabled in this tree — 'db' will start with an"
-        echo "  !! interface and never ask for an address. --reset rebuilds it. LEDGER L10-13."
-    fi
-    if [[ ! -e /var/chroots/micro-cloud-base/etc/systemd/network/10-fabric.network ]]; then
-        echo "  !! it has NO network unit — this tree predates the DHCP fix, so 'db' will"
-        echo "  !! start, get its veth on br-mc0, and never ask for an address: present on"
-        echo "  !! the L2 and invisible on the network. --reset rebuilds it. LEDGER L10-13."
+    if [[ ! -e /var/chroots/micro-cloud-base/etc/network/interfaces ]] \
+       || [[ ! -L /var/chroots/micro-cloud-base/etc/systemd/system/multi-user.target.wants/networking.service ]]; then
+        echo "  !! this tree has no ifupdown network config — 'db' will start, get its veth"
+        echo "  !! on br-mc0, and never ask for an address: present on the L2 and invisible"
+        echo "  !! on the network. --reset rebuilds it. LEDGER L10-13 / L10-16."
     fi
 else
     # TWO consumer-specific requirements, both found by running it, both on `db`:
@@ -154,11 +151,30 @@ else
     #   --include systemd-sysv   a minbase tree has NO /sbin/init, and LXC execs it. Fine for
     #                            a microVM (slice 1 supplies its own init) and fatal for a
     #                            system container. LEDGER L10-11.
-    #   the .network unit        systemd-networkd ships with systemd but is NOT ENABLED, and
-    #                            minbase has no dhclient, no ifupdown, no udhcpc. So `db` came
-    #                            up, got its veth on br-mc0, and NOTHING EVER ASKED FOR AN
-    #                            ADDRESS -- on the L2 physically and invisible on the network.
-    #                            LEDGER L10-13.
+    #   a network stack          minbase has NO dhclient, ifupdown, udhcpc or iproute2, so
+    #                            `db` came up, got its veth on br-mc0, and NOTHING EVER ASKED
+    #                            FOR AN ADDRESS -- on the L2 physically and invisible on the
+    #                            network. LEDGER L10-13.
+    #
+    # IFUPDOWN RATHER THAN systemd-networkd, AND THE REASON IS MEASURED. The first attempt
+    # enabled networkd, and it ran -- `systemctl is-active` said active, the .network file was
+    # in place -- and still configured nothing. Its own journal said why:
+    #
+    #     lo: Link UP / lo: Gained carrier / Enumeration completed
+    #     vethce0469d8: Interface name change detected, renamed to eth0.
+    #
+    # It handled `lo` (loopback needs no udev), finished enumerating, watched eth0 appear, and
+    # stopped there. systemd-networkd waits for **udev** to mark a link initialized before
+    # configuring it, and this tree has no systemd-udevd at all: Debian ships udev as its own
+    # package and `systemd-sysv` does not pull it. ifupdown is a boot-time script with no such
+    # dependency, which is why it is the conventional path in a container. LEDGER L10-16.
+    #
+    #   send host-name "db"      dhclient sends /etc/hostname by default, and lab-chroot.sh
+    #                            bakes a RANDOM one into the tree (`badass-box-qmhu`). dnsmasq
+    #                            registers whatever it is told, so without this `db` resolves
+    #                            under a name nobody can guess.
+    #   iproute2                 not for the lab -- for the DIAGNOSTIC. `ip: not found` is why
+    #                            two probes in the previous run returned nothing.
     #
     # TWO DETAILS THAT ARE NOT INCIDENTAL, both found by checking instead of running:
     #
@@ -180,11 +196,12 @@ else
     # which is what "universal userspace" costs.
     "$REPO/phase1-chroot/lab-chroot.sh" create \
         --backend debootstrap --distro debian --suite bookworm --arch x86_64 \
-        --variant minbase --manager none --include systemd-sysv \
-        --post-command 'mkdir -p /etc/systemd/system/multi-user.target.wants /etc/systemd/system/sockets.target.wants /etc/systemd/network' \
-        --post-command 'ln -sf /lib/systemd/system/systemd-networkd.service /etc/systemd/system/multi-user.target.wants/systemd-networkd.service' \
-        --post-command 'ln -sf /lib/systemd/system/systemd-networkd.socket  /etc/systemd/system/sockets.target.wants/systemd-networkd.socket' \
-        --post-command 'printf "[Match]\nName=eth0 en*\n\n[Network]\nDHCP=ipv4\n\n[DHCPv4]\nHostname=db\n" > /etc/systemd/network/10-fabric.network' \
+        --variant minbase --manager none \
+        --include systemd-sysv,ifupdown,isc-dhcp-client,iproute2 \
+        --post-command 'mkdir -p /etc/network /etc/dhcp /etc/systemd/system/multi-user.target.wants' \
+        --post-command 'printf "auto lo\niface lo inet loopback\n\nauto eth0\niface eth0 inet dhcp\n" > /etc/network/interfaces' \
+        --post-command 'printf "send host-name \"db\";\n" >> /etc/dhcp/dhclient.conf' \
+        --post-command 'ln -sf /lib/systemd/system/networking.service /etc/systemd/system/multi-user.target.wants/networking.service' \
         --name micro-cloud-base --target /var/chroots/micro-cloud-base --lab micro-cloud \
         2>&1 | tail -3 | sed 's/^/  /'
 fi

@@ -802,6 +802,31 @@ only on failure is one nobody can read, because nobody has seen what healthy loo
 is the cheapest oracle in the lab, and it went unasked for two rounds while its behaviour was
 inferred from the image instead.
 
+### Addendum 2 — CAUGHT, 2026-08-19
+
+Redirecting instead of piping worked on its first use. The intermittent is
+**`test-clone-entropy.sh`**, and the assertion is not a vague one:
+
+```text
+FAIL: clone b2 of bsrc has a different boot_id from b1 — VMGenID reseeds the CRNG and
+nothing else, so if boot_id has started changing, something re-personalises the guest now
+and every document here saying otherwise is wrong
+```
+
+That is slice 8's central conclusion checking itself, and it means one of two things:
+
+* **b2 booted instead of resuming.** A fresh boot regenerates `boot_id`. This is the likely
+  one — but the same test's `resume_index` refuses a spread wider than one read *because a
+  fresh boot starts at index 1*, so it should have failed there first, with a different
+  message. That it did not is the part that needs explaining.
+* **something really does re-personalise a clone**, in which case §5.8's finding — and every
+  document repeating it — is wrong. The assertion says so in as many words, which is why it
+  was written that way rather than as `boot_id mismatch`.
+
+Frequency so far: **2 failures in ~10 suite runs**, never standalone. Under investigation;
+recorded here rather than left as folklore because an intermittent that contradicts a
+documented conclusion is the one kind you must not learn to re-run past.
+
 ### Addendum — the suite flaked again, and I lost the message again
 
 While preparing this entry, one `run-all.sh` reported `14 passed, 6 skipped, 1 failed`; three
@@ -816,3 +841,62 @@ The instruction was not the fix. Filtering at the point of running is what loses
 evidence, so the runs after it were written to files first and grepped second — which is what
 the instruction should have said, and now does here: **redirect, then read; never pipe a run
 whose failure you might need to explain.**
+
+---
+
+## L10-16 — asked the container, got the mechanism: networkd waits for udev, and there is no udev
+
+**Run 2026-08-19.** `up` rc=0, `down` rc=0, 76 s. The diagnostic added in
+[L10-15](#l10-15--the-matrix-reaches-4-of-5-and-dbs-missing-address-stops-being-guessed-at)
+did its job on its first run: two rounds of inference replaced by seven lines of fact.
+
+```text
+    hostname:          badass-box-qmhu
+    networkd active:   active
+                       enabled
+    .network files:    -rw-r--r-- 1 1000 1000 65 10-fabric.network
+    networkd log:
+      systemd-networkd[51]: lo: Link UP
+      systemd-networkd[51]: lo: Gained carrier
+      systemd-networkd[51]: Enumeration completed
+      systemd-networkd[51]: vethce0469d8: Interface name change detected, renamed to eth0.
+```
+
+**The fix from L10-14 worked, and was not enough.** `systemd-networkd` was active, enabled,
+and reading the right file. It handled `lo`, finished enumerating, watched `eth0` appear —
+and stopped. Confirmed on disk afterwards: the tree has **no `systemd-udevd`**. Debian ships
+udev as its own package; `systemd-sysv` does not pull it in.
+
+> **systemd-networkd waits for udev to mark a link initialized before configuring it.**
+> `lo` is exempt, which is exactly why the one interface it configured was the one that
+> proves nothing.
+
+Two more facts arrived in the same output, each of which would have caused the *next* failure:
+
+* **`hostname: badass-box-qmhu`** — not `db`, and not the LXD instance name either.
+  `lab-chroot.sh` bakes a **random** hostname into every tree it builds. `dhclient` sends
+  `/etc/hostname` by default and dnsmasq registers what it is told, so `db` would have come up
+  with an address and resolved under a name nobody could guess. `send host-name "db";` puts
+  the name in the request instead.
+* **`ip: not found`** — no iproute2, so two of the probes returned nothing. A diagnostic gap
+  found by the diagnostic, which is the cheapest possible place to find one.
+
+### The fix chosen, and why it is not the obvious one
+
+`ifupdown` + `isc-dhcp-client`, not networkd. networkd costs no packages and is the modern
+answer, and it is the wrong answer *here* for a reason that is a property of the environment
+rather than of the tool: a container has no udev. `ifupdown` is a boot-time script with no
+such dependency, which is why it remains the conventional path inside one.
+
+That is also the rule this whole sequence keeps producing, now in its fourth form: **the
+shared userspace is missing whatever the newest consumer assumes**, and what the system
+container assumes is an entire boot-time network stack — an init (L10-11), a configuration
+(L10-13), a client that does not need udev (here), and a name to send (here).
+
+### What this run changes about how the lab is debugged
+
+Nothing about the previous two rounds was unknowable. `db` was running, `lab-lxd.sh exec`
+worked, and every one of those seven lines was one command away the whole time. The
+difference is that the harness now asks by default and prints the answers whether or not
+anything is wrong — so the next person does not have to think of the question while a lab is
+still up.
