@@ -802,10 +802,10 @@ only on failure is one nobody can read, because nobody has seen what healthy loo
 is the cheapest oracle in the lab, and it went unasked for two rounds while its behaviour was
 inferred from the image instead.
 
-### Addendum 2 — CAUGHT, 2026-08-19
+### Addendum 2 — CAUGHT, THEN EXPLAINED, THEN FIXED (2026-08-19)
 
 Redirecting instead of piping worked on its first use. The intermittent is
-**`test-clone-entropy.sh`**, and the assertion is not a vague one:
+**`test-clone-entropy.sh`**:
 
 ```text
 FAIL: clone b2 of bsrc has a different boot_id from b1 — VMGenID reseeds the CRNG and
@@ -813,21 +813,46 @@ nothing else, so if boot_id has started changing, something re-personalises the 
 and every document here saying otherwise is wrong
 ```
 
-That is slice 8's central conclusion checking itself, and it means one of two things:
+**§5.8 is not wrong. The test was mis-reading a truncated line**, and the mechanism is one
+this repo has a section about: *a regex standing in for a question.*
 
-* **b2 booted instead of resuming.** A fresh boot regenerates `boot_id`. This is the likely
-  one — but the same test's `resume_index` refuses a spread wider than one read *because a
-  fresh boot starts at index 1*, so it should have failed there first, with a different
-  message. That it did not is the part that needs explaining.
-* **something really does re-personalise a clone**, in which case §5.8's finding — and every
-  document repeating it — is wrong. The assertion says so in as many words, which is why it
-  was written that way rather than as `boot_id mismatch`.
+The record extractor ended `[0-9a-f-]*`, which is **unanchored**, so a console line cut
+part-way through the boot_id still matched and `-o` handed back the truncated prefix as
+though it were the value. Measured directly, no VM required:
 
-Frequency so far: **2 failures in ~10 suite runs**, never standalone. Under investigation;
-recorded here rather than left as folklore because an intermittent that contradicts a
-documented conclusion is the one kind you must not learn to re-run past.
+```console
+$ complete   → 3dd1b6c8-fe90-4ced-a0e8-dded4c31a5b2
+$ truncated  → 3dd1b6c8-fe90-4ced-a0e8-dded          # matches; a strict PREFIX of the above
+```
 
-### Addendum — the suite flaked again, and I lost the message again
+A resumed clone's first console output **is** such a fragment — the remainder of a line the
+guest was mid-`echo` through when the snapshot froze it. That is exactly the case the
+extractor's own comment claimed to step over (*"half a line is not a read"*), and it did step
+over it **for the index and nothing else**: `$2` is a complete field early in the line, so a
+record truncated inside the boot_id still yields a perfectly good index. Which is why
+`resume_index` passed and the comparison two assertions later failed — the detail that made
+the obvious explanation (a clone booting instead of resuming) impossible, and left the thing
+unexplained for four days.
+
+Everything else follows: rare, because the pause has to land inside the last field
+specifically; only under a full suite, because load shifts where it lands; and phrased as an
+accusation against §5.8, because the assertion was written to be loud about the thing it
+would mean *if the input were trustworthy*.
+
+**Fixed** by anchoring the last field to a full UUID — `8-4-4-4-12` — so a partial one is not
+a match and `-m1` steps to the next record that really is complete. All four extractors share
+one pattern now.
+
+**And the control that would have caught it** runs before anything boots: a two-line fixture
+whose first record is truncated inside the boot_id, and the extractors must skip it and read
+the second. Re-injecting the old pattern makes it fail by name (*"returned index '800',
+expected 801"*). Verified both directions.
+
+> The strong evidence here is the control reproducing the exact failure mode, not the absence
+> of the failure afterwards. At ~2 occurrences in 10 suite runs, "it did not recur" would need
+> a great many runs to mean anything, and would still be the weaker claim.
+
+### Addendum — the suite flaked again, and I lost the message again### Addendum — the suite flaked again, and I lost the message again
 
 While preparing this entry, one `run-all.sh` reported `14 passed, 6 skipped, 1 failed`; three
 captured runs immediately after were clean. **The failing test's name was not recorded**,
