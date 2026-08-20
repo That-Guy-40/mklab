@@ -127,12 +127,46 @@ last_n()  { grep -o 'MC-R [0-9]*' "$1" 2>/dev/null | tail -1 | awk '{print $2}' 
 # The obvious alternative — "the read the source was at when it was snapshotted, plus one" —
 # is not knowable from the host: `snapshot create` resumes the VM, so by the time the log can
 # be read the source has counted on past the captured instant. Asking the CLONES where they
-# started is asking the thing that actually knows. `-m1 -o` over the full record also steps
-# over a fragment: the guest may have been paused mid-`echo`, and half a line is not a read.
-first_n() { grep -m1 -o "MC-R [0-9]* [0-9a-f]* [0-9a-f]* [0-9a-f-]*" "$1" 2>/dev/null | awk '{print $2}' || true; }
-at_n()    { grep -m1 -o "MC-R $2 [0-9a-f]* [0-9a-f]* [0-9a-f-]*" "$1" 2>/dev/null | awk '{print $3}' || true; }
-sec_of()  { grep -m1 -o "MC-R [0-9]* [0-9a-f]* [0-9a-f]* [0-9a-f-]*" "$1" 2>/dev/null | awk '{print $4}' || true; }
-bid_of()  { grep -m1 -o "MC-R [0-9]* [0-9a-f]* [0-9a-f]* [0-9a-f-]*" "$1" 2>/dev/null | awk '{print $5}' || true; }
+# started is asking the thing that actually knows.
+#
+# ── WHY THE LAST FIELD IS ANCHORED TO A FULL UUID, AND WHAT IT COST TO LEARN ────────────
+# The previous pattern ended `[0-9a-f-]*`, which is UNANCHORED: a record cut off part-way
+# through the boot_id still matches, and `-o` hands back the truncated prefix as though it
+# were the value. A resumed clone's first console output IS such a fragment — the remainder
+# of a line the guest was mid-`echo` through when the snapshot froze it — which is precisely
+# the case the comment above claimed to step over.
+#
+# It stepped over it for the INDEX and not for the rest, because `$2` is a complete field
+# early in the line: a record truncated inside the boot_id still yields a perfectly good
+# index. So `resume_index` passed, and the boot_id comparison two assertions later failed
+# with `clone b2 of bsrc has a different boot_id from b1` — a FALSE FAILURE accusing §5.8's
+# central finding of being wrong, at roughly 2 runs in 10, and only under the load of a full
+# suite (which shifts where the pause lands). Measured: the two values differ, and one is a
+# strict PREFIX of the other.
+#
+# 8-4-4-4-12 makes a partial UUID not-a-match, so `-m1` steps to the next record that really
+# is complete. §0 below feeds a deliberately truncated line to each of these and requires
+# them to skip it — the control that would have caught the original.
+_MCR='MC-R [0-9]+ [0-9a-f]+ [0-9a-f]+ [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
+first_n() { grep -m1 -oE "$_MCR" "$1" 2>/dev/null | awk '{print $2}' || true; }
+at_n()    { grep -m1 -oE "MC-R $2 [0-9a-f]+ [0-9a-f]+ [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}" "$1" 2>/dev/null | awk '{print $3}' || true; }
+sec_of()  { grep -m1 -oE "$_MCR" "$1" 2>/dev/null | awk '{print $4}' || true; }
+bid_of()  { grep -m1 -oE "$_MCR" "$1" 2>/dev/null | awk '{print $5}' || true; }
+
+# ── §0 CONTROL: the extractors must REJECT a truncated record ───────────────────────────
+# Run before anything boots, because a scan that has never been shown to reject the shape it
+# exists to reject is not known to reject it — and this file has now shipped one that did not.
+_ctl="$(mktemp)"; on_exit 'rm -f -- "'"$_ctl"'"'
+{
+  printf 'MC-R 800 aaaaaaaaaaaaaaaa bbbbbbbbbbbbbbbb 3dd1b6c8-fe90-4ced-a0e8-dded\n'
+  printf 'MC-R 801 cccccccccccccccc dddddddddddddddd 3dd1b6c8-fe90-4ced-a0e8-dded4c31a5b2\n'
+} > "$_ctl"
+_cn="$(first_n "$_ctl")"; _cb="$(bid_of "$_ctl")"
+[[ "$_cn" == 801 ]] \
+    || fail "CONTROL: the record extractor accepted a line truncated inside the boot_id — it returned index '$_cn', expected 801 (the first COMPLETE record). This is the exact defect that made this test intermittently accuse §5.8 of being wrong"
+[[ "$_cb" == "3dd1b6c8-fe90-4ced-a0e8-dded4c31a5b2" ]] \
+    || fail "CONTROL: bid_of returned '$_cb' from a file whose first line is a truncated boot_id — a partial UUID must not match, or a fragment is read as a value"
+note "§0 control: a record truncated inside the boot_id is skipped; the first COMPLETE one is read"
 
 # boot_and_snap <instance> [extra-append...] -> echoes the read number the snapshot was taken at
 # EVERY STAGE ANNOUNCES ITSELF, AND THAT IS NOT DECORATION.
