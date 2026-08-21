@@ -29,6 +29,11 @@
 > [`preserve.sh`](preserve.sh) + [`RUNBOOK-preserve.md`](RUNBOOK-preserve.md): two tiers, a
 > `derivation.toml`, and a restore that refuses a changed artifact **by name, with both
 > digests, before importing anything**. Slice 8's fleet half is **`lab-fc.sh clone`** +
+> [`RUNBOOK-first-microvm.md`](RUNBOOK-first-microvm.md): slice 1, by hand — a JSON file, a
+> `vmlinux`, `MICROVM-UP uptime=0.55s`, then the **same** boot driven over the REST socket
+> with four `curl -X PUT`s. Start here if you want to know what `lab-fc.sh` is generating
+> before you let it generate it.
+>
 > [`RUNBOOK-fleet.md`](RUNBOOK-fleet.md): five warm clones from **one** memory image
 > (shared `MAP_PRIVATE`, proved by its digest being unchanged after five guests ran on it),
 > each with its own disk — and the clone hazard measured rather than asserted. Slice 8's jailer tier
@@ -128,15 +133,24 @@ examples/micro-cloud/
 ├── preserve.sh               two tiers + derivation manifest (slice 7) — EXISTS
 ├── install-catalog.toml      names the lab that owns each install method
 ├── images/                   .gitignore'd build output (vmlinux, *.ext4)
-├── hand-walk/                Containerfile + RUNBOOK
-├── RUNBOOK-*.md              build-images · first-microvm · micro-cloud ·
-│                             [fleet](RUNBOOK-fleet.md) · [preserve](RUNBOOK-preserve.md) — EXISTS
+├── RUNBOOK-*.md              [first-microvm](RUNBOOK-first-microvm.md) ·
+│                             [micro-cloud](RUNBOOK-micro-cloud.md) ·
+│                             [fleet](RUNBOOK-fleet.md) · [preserve](RUNBOOK-preserve.md)
 ├── LEDGER.md                 the running defect/surprise ledger
-├── CLONES.md                 every fork, with the constraint that justified it
-├── UPSTREAM.md               cite-don't-mirror provenance
 ├── MANUAL_TESTING.md         observed vs merely generated
-└── tests/                    lib.sh + run-all.sh — EXISTS (round-trip test; root-gated)
+└── tests/                    lib.sh + run-all.sh (round-trip test; root-gated)
 ```
+
+**Promised by the plan and NOT built** — named here rather than left in the tree above, where
+they read as things you could open: `hand-walk/`, `CLONES.md`, `UPSTREAM.md`, and
+`RUNBOOK-build-images.md` (whose content is
+[step 0](RUNBOOK-micro-cloud.md#step-0--the-spine-and-the-two-things-made-from-it-root-once)
+and should not become a second document). Tracked as [TODO](../../TODO.md) **A.5**.
+
+*Found 2026-08-20 while fixing two of the four.* Both this tree and the plan's are **ASCII
+art inside a code fence**, so `tools/link_check.py` cannot see them — a filename in a tree
+diagram is not a link, exactly as a filename in prose is not. That is the same blind spot
+twice in one file, and it is why the entries are now a sentence rather than tree rows.
 
 ## Routing note
 

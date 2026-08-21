@@ -20,7 +20,10 @@
 # this file's directory (measured, not assumed).  So they are written relative to the REPO
 # ROOT and `micro-cloud.sh` runs every step from there; `plan` prints the `cd` as its first
 # line so the pasteable form is the same command.  Build the two artifacts first:
-# RUNBOOK-build-images.md, which is the `[[chroot]]` block below plus `export-rootfs`.
+# RUNBOOK-micro-cloud.md step 0, which is the `[[chroot]]` block below plus `export-rootfs`.
+# (This line cited RUNBOOK-build-images.md until 2026-08-20. That file has never existed:
+#  the citation was bare prose, so link_check.py -- which checks markdown links -- never
+#  saw it, and it pointed at nothing for as long as this spec has.)
 #
 # THE ADDRESSES ARE NOT IN THIS FILE, ON PURPOSE
 # -----------------------------------------------

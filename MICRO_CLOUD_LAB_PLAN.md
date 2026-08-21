@@ -1272,15 +1272,16 @@ examples/micro-cloud/
 ├── preserve.sh               the two tiers + derivation manifest (§9.5)
 ├── install-catalog.toml      names the lab that owns each install method (§11.1)
 ├── images/                   .gitignore'd build output (vmlinux, *.ext4)
-├── hand-walk/                Containerfile + RUNBOOK — P1 proved --device /dev/kvm works
-├── RUNBOOK-build-images.md   chroot → export-rootfs → vmlinux (§6)
+├── hand-walk/                Containerfile + RUNBOOK — P1 proved --device /dev/kvm works   ⚠ NOT BUILT
+├── RUNBOOK-build-images.md   chroot → export-rootfs → vmlinux (§6)                        ⚠ NOT BUILT — it is
+│                             RUNBOOK-micro-cloud.md step 0, and should not be duplicated
 ├── RUNBOOK-first-microvm.md  boot one FC by hand over the REST API (§5.5)
 ├── RUNBOOK-micro-cloud.md    the full bring-up, instance by instance
 ├── RUNBOOK-fleet.md          snapshot → restore ×5 + the clone hazards (§5.8)
 ├── RUNBOOK-preserve.md       back up a lab you liked, and restore it elsewhere (§9.5)
 ├── LEDGER.md                 the running defect/surprise ledger (§0.1 rule 3)
-├── CLONES.md                 every fork, with the constraint that justified it (§4.1)
-├── UPSTREAM.md               cite-don't-mirror provenance (§12)
+├── CLONES.md                 every fork, with the constraint that justified it (§4.1)      ⚠ NOT BUILT
+├── UPSTREAM.md               cite-don't-mirror provenance (§12)                            ⚠ NOT BUILT
 ├── MANUAL_TESTING.md         observed vs merely generated (§10)
 └── tests/                    lib.sh + run-all.sh + host-safe checks (§10)
 ```
@@ -1378,7 +1379,7 @@ or chroots I like."*
 > unchanged, a control channel is added — and that is what unblocks **slice 8**.
 
 > ⚠ **The portable tier loses MORE than running state, and this was found by trying it.**
-> The three container drivers advertise `run --name NEW --tarball FILE` as their round trip
+> The three container drivers advertise `run --name <NEW-NAME> --tarball FILE` as their round trip
 > — it is the line `export-tarball` prints on its way out. Against a real rootless podman it
 > fails at the last inch: `Error: no command or entrypoint provided, and no CMD or
 > ENTRYPOINT from image`. `podman export` writes the **filesystem** and not the OCI config,
