@@ -73,10 +73,23 @@ def test_inspect_prefers_inspect_json_when_available(
 
     fixture = (fixtures_dir / "docker-ps.txt").read_text()
     fake_doc = {
-        "schema_version": 1,
+        "schema_version": 2,
         "name": "lab-web-nginx",
         "labels": {"lab": "web", "svc": "nginx", "tool": "lab-docker"},
-        "container": {"id": "abc123", "image": "nginx:1.27"},
+        "container": {
+            "id": "abc123",
+            "image": "nginx:1.27",
+            # A.4's fields (driver schema_version 2). The backend is a
+            # pass-through and parses none of this — the point of carrying it
+            # here is that a fixture standing in for a driver should describe a
+            # document the driver actually emits, or the day the shape matters
+            # the fixture will still be describing the old one.
+            "command": ["nginx", "-g", "daemon off;"],
+            "entrypoint": ["/docker-entrypoint.sh"],
+            "entrypoint_source": "engine-array",
+            "env": ["PATH=/usr/local/sbin:/usr/local/bin"],
+            "workdir": "/",
+        },
         "state": {"status": "running", "running": True, "pid": 4242},
     }
     # Marker that ONLY appears in the docker-inspect fallback output, so
@@ -106,7 +119,7 @@ def test_inspect_prefers_inspect_json_when_available(
     out = backend.inspect(target)
     # Pretty-printed JSON, two-space indent — distinguishes from the
     # single-line fallback payload.
-    assert '"schema_version": 1' in out
+    assert '"schema_version": 2' in out
     assert '"image": "nginx:1.27"' in out
     # The fallback's marker must NOT appear — proves we took the script path.
     assert "FALLBACK_MARKER" not in out
@@ -146,7 +159,7 @@ def test_inspect_falls_back_to_docker_inspect_when_inspect_fails(
     assert out == fallback_payload
     assert "FALLBACK_MARKER" in out
     # And it should NOT have been pretty-printed (no two-space indent).
-    assert '"schema_version": 1' not in out
+    assert '"schema_version": 2' not in out
 
 
 def test_log_command_has_dashdash_before_name(patched_docker) -> None:

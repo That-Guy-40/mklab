@@ -1782,7 +1782,8 @@ cmd_list() {
 # ─── Subcommand: inspect ────────────────────────────────────────────────────
 # Single-resource detail report for a container OR a pod.  Folds the
 # nested `podman inspect` / `podman pod inspect` output into a stable
-# schema_version=1 surface, augmented with Phase 4's extras:
+# schema_version=2 surface for containers (pods stay at 1 — see below),
+# augmented with Phase 4's extras:
 #   - userns mode (from HostConfig.IDMappings)
 #   - pod membership (for containers in a pod)
 #   - quadlet registration (scans $LAB_POD_STATE_DIR/*/quadlet-links/
@@ -1791,7 +1792,13 @@ cmd_list() {
 # Two output modes:
 #   default   → human-readable [labels]/[container|pod]/[state]/[network]/
 #               [mounts]/[userns]/[quadlet] sections
-#   --json    → one JSON document on stdout, schema_version=1
+#   --json    → one JSON document on stdout; schema_version=2 for
+#               `kind: "container"`, schema_version=1 for `kind: "pod"`.
+#               The container document gained `entrypoint`, `entrypoint_source`,
+#               `env` and `workdir` on 2026-08-20 and `command` became a stable
+#               ARRAY (it could previously be a string — see cmd_inspect).  The
+#               pod document did not change, and a bump on an unchanged document
+#               would be a false statement about it; `kind` is the discriminator.
 #
 # The top-level `kind` field discriminates: "container" | "pod".  Phase
 # 6's TUI branches on this so it doesn't need to guess.
@@ -1852,14 +1859,64 @@ cmd_inspect() {
         done
     fi
 
+    # --- the entrypoint, and why it takes a second engine call ---------------
+    #
+    # TODO A.4.  `podman export` writes the FILESYSTEM and not the OCI config, so an
+    # image built back with `import` has no CMD, no ENTRYPOINT, no ENV and no WORKDIR
+    # and `run` on it dies at "no command or entrypoint provided".  The filesystem
+    # survives the round trip; the INTENT does not, and a derivation can only carry
+    # what a driver will report.
+    #
+    # The two engines report that intent in DIFFERENT SHAPES, and the difference is
+    # not cosmetic.  Measured 2026-08-20:
+    #
+    #   docker 29.7.1   .Config.Entrypoint = ["/bin/sleep","600"]   (array)
+    #   podman 4.9.3    .Config.Entrypoint = "/bin/sleep 600"       (JOINED STRING)
+    #
+    # A joined string cannot be re-split safely — an argv element may itself contain
+    # a space (`nginx -g 'daemon off;'` is three elements, one of which has one) — so
+    # splitting on whitespace would confidently produce a DIFFERENT argv.  The image
+    # config does keep the array, so ask it; but an image's config is a cached fact
+    # about a different subject, and `--entrypoint` at run time makes the container
+    # disagree with its image.  So: take the image's array only when joining it
+    # REPRODUCES the container's string, and otherwise say we could not split it.
+    # That is derive-don't-cache with the identity check attached, and it is why
+    # `entrypoint_source` is emitted beside the value rather than left implicit.
+    #
+    # This also fixes a defect the old field had.  `command` read
+    # `$c.Config.Cmd // $c.Config.Entrypoint // []`, and that fallback CANNOT FIRE:
+    # jq's `//` rejects only null and false, so a `Cmd` of `[]` is kept, and when
+    # `Cmd` IS null the alternative supplies podman's STRING — making
+    # `container.command` a string for one image and an array for the next, inside a
+    # document whose own header calls it "a stable schema_version=1 surface that the
+    # Phase 6 TUI can rely on".  Measured: an ENTRYPOINT-only image yielded
+    # `"command": "/bin/sleep 600"`.  `command` is now always an array.
+    local img_entrypoint='[]'
+    if [[ "$kind" == "container" ]]; then
+        local _img_id
+        _img_id="$(podman container inspect "$engine_name" --format '{{.Image}}' 2>/dev/null || true)"
+        if [[ -n "$_img_id" ]]; then
+            img_entrypoint="$(podman image inspect "$_img_id" 2>/dev/null \
+                              | jq -c '(.[0].Config.Entrypoint // []) | if type == "array" then . else [] end' \
+                              2>/dev/null || printf '[]')"
+        fi
+        [[ -n "$img_entrypoint" ]] || img_entrypoint='[]'
+    fi
+
     # --- render via jq ---
     local rendered
     if [[ "$kind" == "container" ]]; then
-        rendered="$(podman container inspect "$engine_name" 2>/dev/null | jq -r --arg qm "$quadlet_managed" --arg qs "$quadlet_symlink" --arg qu "$quadlet_unit" '
+        rendered="$(podman container inspect "$engine_name" 2>/dev/null | jq -r --arg qm "$quadlet_managed" --arg qs "$quadlet_symlink" --arg qu "$quadlet_unit" --argjson imgep "$img_entrypoint" '
             .[0] as $c |
             ($c.Config.Labels // {}) as $L |
+            (($c.Config.Entrypoint // null) |
+              if . == null or . == "" or . == [] then {ep: [], src: "none"}
+              elif type == "array"             then {ep: ., src: "engine-array"}
+              elif ($imgep | length) > 0 and ($imgep | join(" ")) == . then {ep: $imgep, src: "image-verified"}
+              else {ep: [.], src: "joined-string"}
+              end) as $E |
             {
-                schema_version: 1,
+                schema_version: 2,
                 kind: "container",
                 name: ($c.Name | sub("^/"; "")),
                 labels: {
@@ -1873,7 +1930,11 @@ cmd_inspect() {
                     id:         $c.Id,
                     image:      $c.ImageName,
                     image_id:   $c.Image,
-                    command:    ($c.Config.Cmd // $c.Config.Entrypoint // []),
+                    command:    (($c.Config.Cmd // []) | if type == "array" then . else [.] end),
+                    entrypoint: $E.ep,
+                    entrypoint_source: $E.src,
+                    env:        ($c.Config.Env // []),
+                    workdir:    (($c.Config.WorkingDir // "") | if . == "" then null else . end),
                     created_at: $c.Created
                 },
                 state: {

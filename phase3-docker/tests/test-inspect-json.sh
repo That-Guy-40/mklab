@@ -127,8 +127,55 @@ esac
 # === RUNNING VARIANT — --json ===============================================
 note "running inspect --json (literal name)"
 json="$("$LAB_DOCKER" inspect "$CNAME" --json)"
-echo "$json" | jq -e '.schema_version == 1' >/dev/null \
-    || fail "json: schema_version != 1"
+echo "$json" | jq -e '.schema_version == 2' >/dev/null \
+    || fail "json: schema_version != 2 (it moved to 2 on 2026-08-20 when \`container\` gained entrypoint/entrypoint_source/env/workdir — TODO A.4)"
+
+# === TODO A.4: the four fields `docker export` does not write ===============
+# `docker export` writes the filesystem and not the OCI config, so an image built
+# back with `import` starts nothing. These fields are what lets a derivation carry
+# the intent across that gap — assert the TYPE as well as the value, because the
+# consumer this document exists for is a program, and "sometimes an array" is not a
+# schema. (Phase 4's `command` really was string-or-array depending on the image.)
+note "A.4 fields: command / entrypoint / entrypoint_source / env / workdir"
+[[ "$(jq -r '.container.command | type' <<<"$json")" == "array" ]] \
+    || fail "json: .container.command must always be an array, got $(jq -r '.container.command | type' <<<"$json")"
+[[ "$(jq -r '.container.entrypoint | type' <<<"$json")" == "array" ]] \
+    || fail "json: .container.entrypoint must always be an array, got $(jq -r '.container.entrypoint | type' <<<"$json")"
+[[ "$(jq -r '.container.env | type' <<<"$json")" == "array" ]] \
+    || fail "json: .container.env must be an array"
+# The container was launched as `httpd -f -p 80` with no ENTRYPOINT: command carries
+# the argv, entrypoint is empty, and `entrypoint_source` says so BY NAME rather than
+# leaving an empty array to mean either "none" or "could not tell".
+[[ "$(jq -rc '.container.command' <<<"$json")" == '["httpd","-f","-p","80"]' ]] \
+    || fail "json: .container.command is not the argv this test launched — got $(jq -rc '.container.command' <<<"$json")"
+[[ "$(jq -rc '.container.entrypoint' <<<"$json")" == '[]' ]] \
+    || fail "json: busybox has no ENTRYPOINT; .container.entrypoint should be [] — got $(jq -rc '.container.entrypoint' <<<"$json")"
+[[ "$(jq -r '.container.entrypoint_source' <<<"$json")" == "none" ]] \
+    || fail "json: .container.entrypoint_source should be 'none' for an image with no ENTRYPOINT — got $(jq -r '.container.entrypoint_source' <<<"$json")"
+
+# The other direction, and it is the one that was broken. Before A.4 this document
+# reported `command: []` for an ENTRYPOINT-only container — a container WITH an argv
+# described as having none, which is the quiet half of the liar case. Build the image
+# here rather than reaching for one: the assertion has to be about a shape, and a
+# shape this test controls cannot silently stop being that shape.
+note "A.4 control: an ENTRYPOINT-only image must not report an empty argv"
+EPIMG="lab-docker-a4-eponly-$$"
+EPNAME="lab-${LAB_NAME}-eponly"
+on_exit "docker rm -f '$EPNAME' >/dev/null 2>&1 || true; docker rmi -f '$EPIMG' >/dev/null 2>&1 || true"
+if printf 'FROM busybox:latest\nENTRYPOINT ["/bin/sleep","600"]\n' \
+       | docker build -q -t "$EPIMG" -f - . >/dev/null 2>&1 \
+   && docker run -d --name "$EPNAME" "$EPIMG" >/dev/null 2>&1; then
+    epjson="$("$LAB_DOCKER" inspect "$EPNAME" --json)"
+    [[ "$(jq -rc '.container.entrypoint' <<<"$epjson")" == '["/bin/sleep","600"]' ]] \
+        || fail "REGRESSION: an ENTRYPOINT-only container reports entrypoint $(jq -rc '.container.entrypoint' <<<"$epjson") — before A.4 this document had no entrypoint field at all and reported the container as having no argv"
+    [[ "$(jq -rc '.container.command' <<<"$epjson")" == '[]' ]] \
+        || fail "json: this image has no CMD; .container.command should be [] — got $(jq -rc '.container.command' <<<"$epjson")"
+    [[ "$(jq -r '.container.entrypoint_source' <<<"$epjson")" == "engine-array" ]] \
+        || fail "json: docker reports Entrypoint as an ARRAY, so entrypoint_source should be 'engine-array' — got $(jq -r '.container.entrypoint_source' <<<"$epjson"). If docker started joining it into a string, this driver must stop trusting the array path"
+    note "entrypoint-only container: entrypoint=$(jq -rc '.container.entrypoint' <<<"$epjson") command=[] (source: engine-array)"
+else
+    note "SKIPPED the ENTRYPOINT-only control: could not build/run $EPIMG (docker build from stdin unavailable?) — this leaf is UNVERIFIED on this host"
+fi
 
 note "schema spot-checks (labels)"
 [[ "$(jq -r '.labels.lab'  <<<"$json")" == "$LAB_NAME" ]] \

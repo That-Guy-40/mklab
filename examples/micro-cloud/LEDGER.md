@@ -1518,3 +1518,114 @@ and a control that passes are the same green.** Re-done through a checked edit, 
 `HTTP/1.0 200` instead of `401`. The restore then failed too — `git checkout --` cannot
 restore a file git does not track yet — which is worth knowing the day you break a new test on
 purpose.
+
+---
+
+## L10-24 — TODO A.4: a restore that hands back a *running container*, and three of A.4's own claims that did not survive being re-derived
+
+*2026-08-20. Slice 7's last debt, closed against live docker 29.7.1 and rootless podman
+4.9.3.*
+
+**The defect, reproduced first.** `podman export` writes the filesystem and not the OCI
+config, so an image `import` builds back has no `CMD`, `ENTRYPOINT`, `ENV` or `WORKDIR`:
+
+```
+$ podman run --rm -d mklab-restored-podman-a4rt
+Error: no command or entrypoint provided, and no CMD or ENTRYPOINT from image
+```
+
+The bytes cross the round trip on their own. The **intent** does not, and a derivation is
+exactly the thing that should carry it. So: phases 3 and 4's `inspect` report `command`,
+`entrypoint`, `entrypoint_source`, `env` and `workdir` at `schema_version: 2`;
+`preserve.sh save` writes the argv into `derivation.toml`; `restore` prints the command
+that starts it. Pasted verbatim, that line returns `Up 1 second  /bin/sleep 600`.
+
+### The entry's premise was wrong, and re-deriving it before writing code is what found it
+
+A.4 read: *"no driver reports a container's argv (`inspect` renders labels, state, userns
+and network, and no command)"*, and prescribed *"a row in phases 3/4/5's `inspect`"*. Both
+halves were false, in three separate ways — and **all three were invisible to a green
+suite**, because every existing assertion was about the document's *shape*, and the shape
+was fine.
+
+| what the entry said | what measurement said |
+|---|---|
+| no driver reports the argv | **docker and podman both did**, and both were wrong |
+| docker's is missing | docker read only `Config.Cmd` → an `ENTRYPOINT`-only container reported **`command: []`**: an argv described as absent |
+| podman's is missing | podman read `Cmd // Entrypoint // []` → **string for one image, array for the next** |
+| phase 5 needs the same row | phase 5 has **neither the field nor the defect**, and must not grow either |
+
+**Docker's was the quiet one.** Its own SHOWCASE published `"command": []` as the sample
+output for an *nginx* container — an image whose argv is `nginx -g 'daemon off;'` — and had
+done for months. An empty field where the answer is unknown reads as *"there is nothing
+here"*. That is why the fix is a **separate `entrypoint` field** rather than a smarter
+`command`: only with the entrypoint reported beside it does `command: []` become a **true**
+statement instead of a misleading one.
+
+**Podman's was a fallback that could not fire.** jq's `//` rejects only `null` and `false`,
+so a `Cmd` of `[]` was kept and the alternative never ran; and when `Cmd` *was* null it
+supplied podman's joined **string**. `container.command` was therefore string-or-array
+depending on the image — inside a document whose own header calls it *"a stable
+schema_version=1 surface that the Phase 6 TUI can rely on"*. (This is the third time the
+`//`-eats-the-wrong-thing shape has been recorded here.)
+
+**Phase 5 is a finding, not a narrowing.** An LXD instance runs the image's own init —
+`lab-lxd.sh` refuses a `command` key *by name* with that explanation — and its
+`from-tarball` backend synthesises `metadata.yaml`, so a restored LXD image already
+launches. A `command` row there would report `[]` forever: an empty answer to a question
+that does not apply, which is the shape A.4 exists to remove. `lxd` stays at
+`schema_version: 1`, and so does podman's **pod** document — bumping a document that did
+not change is a false statement about it, and `kind` is the discriminator that lets each
+version on its own evidence.
+
+### The engines disagree about the shape, and the answer was a provenance row, not a split
+
+| engine | `.Config.Entrypoint` for the same image |
+|---|---|
+| docker 29.7.1 | `["/bin/sleep","600"]` — an array |
+| podman 4.9.3 | `"/bin/sleep 600"` — **joined with spaces** |
+
+A joined string **cannot be re-split without guessing**: `["/bin/sh","-c","sleep 900"]` and
+`["/bin/sh","-c","sleep","900"]` flatten to the same string and are different programs. So
+the array is recovered from the **image**, which does keep it — and accepted only when
+re-joining it reproduces the container's string, because an image is a cached fact about a
+*different subject* and `--entrypoint` at run time makes the two disagree.
+`entrypoint_source` (`engine-array` · `image-verified` · `joined-string` · `none`) travels
+beside the value because it is what decides whether the value may be replayed.
+
+Both controls executed:
+
+```
+container started with --entrypoint '["/bin/sh","-c","sleep 900"]'
+  container: "/bin/sh -c sleep 900"      image: ["/bin/sleep","600"]
+  driver   -> {"e":["/bin/sh -c sleep 900"],"s":"joined-string"}
+```
+
+The image's argv was **refused** — reporting `["/bin/sleep","600"]` for a container running
+`sleep 900` would be a record outliving its subject — and no split was invented.
+
+### `env` is recorded nowhere, deliberately
+
+Measured: podman injects `container=podman`, `HOME=/root` and `HOSTNAME=<container id>`
+into a container's env; they are absent from the image. Replaying them would bake a **dead
+container's identity** into a new one. Env is also where secrets live, and a manifest is the
+part of a backup people paste into an issue. `inspect --json` reports it live, from the
+container, for anyone who wants it — derived, not cached.
+
+### And the control caught the TEST, not the code
+
+The first version of `test-preserve-round-trip.sh`'s new section read the argv out of the
+**manifest** and compared the revived container against it — the record against itself.
+Sabotaging `preserve.sh` to record `["sleep","999"]` for a container running `sleep 600`
+produced a wrong manifest, a faithful replay of the wrong value, and a green **PASS**.
+
+*The property is not "the replay matches the record"; it is "the record matches what was
+preserved",* and only the original can answer that. The test now captures the original's
+argv **from the engine, before anything is destroyed**, and compares against that — with a
+second, separate assertion against the manifest so a failure says *which half moved*: a
+manifest that disagrees with the original is a bad **recording**; a revival that disagrees
+with the manifest is a bad **replay**.
+
+Three controls now fire, each on its own assertion — **no record** (driver rolled back to
+schema 1), **wrong record** (`["sleep","999"]`), **record ignored** (`_argv_advice` forced
+to its fallback) — and each printed exactly one `FAIL`, naming a different defect.

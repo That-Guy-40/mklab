@@ -70,6 +70,21 @@ out="$(bash "$TOOL" up --config "$WORK/spec.toml" 2>&1)"; rc=$?
 podman exec "lab-${LAB}-keeper" sh -c "echo $MARKER > /etc/mklab-preserve-marker" \
     || fail "could not write the marker into the running container"
 
+# TODO A.4's ground truth, read from the ORIGINAL container while it still exists, and
+# from the ENGINE rather than from the spec that asked for it.
+#
+# This line exists because its absence let a control walk straight through. The first
+# version of the A.4 section below compared the revived container's argv against the argv
+# it had just read out of the MANIFEST — a comparison of the record with itself.
+# Sabotaging preserve.sh to record `["sleep","999"]` for a container running `sleep 600`
+# produced a manifest that was wrong, a revival that faithfully replayed the wrong value,
+# and a green PASS. The property is not "the replay matches the record"; it is "the record
+# matches what was preserved", and only the original can answer that.
+ORIG_ARGV="$(podman inspect -f '{{range .Config.Cmd}}{{.}} {{end}}' "lab-${LAB}-keeper" 2>/dev/null || true)"
+[[ -n "$ORIG_ARGV" ]] \
+    || fail "could not read the original container's argv — there is nothing to compare a restore against"
+note "original argv (ground truth): $ORIG_ARGV"
+
 # ── save ────────────────────────────────────────────────────────────────────────────────
 out="$(bash "$PRESERVE" save --tier portable --out "$WORK/bk" --spec "$WORK/spec.toml" "podman:$LAB/keeper" 2>&1)"; rc=$?
 (( rc == 0 )) || fail "save failed against a live podman (rc=$rc): $out"
@@ -113,4 +128,60 @@ fi
 grep -q 'what came back, and what did NOT' <<<"$out" \
     || fail "restore did not tell the operator what it could not restore — an unstartable image reported as a clean success is the liar case"
 
-pass "a marker written into a LIVE container survived export → derivation → destroy → restore, and the restore named the image config it could not bring back"
+# ── TODO A.4: the INTENT survives too, and the proof is a container that RUNS ───────────
+# Above proves the loss. This proves what closed it. The image still has no config — that
+# is `export`, and nothing here can change it — so the argv has to come from the manifest,
+# which means the manifest has to have it. Assert the OUTCOME (a container in state
+# `running`, executing the original's argv), not the mechanism (a field being present):
+# a `command = [...]` row could be there and still be the wrong argv, or unusable.
+grep -qE '^command +=' "$MAN"     || fail "REGRESSION: the derivation records no 'command' — TODO A.4 put it there so a restore stops handing back an image nothing can start"
+grep -qE '^entrypoint +=' "$MAN"  || fail "REGRESSION: the derivation records no 'entrypoint'"
+grep -qE '^argv_source +=' "$MAN" || fail "REGRESSION: the derivation records no 'argv_source' — the value is only replayable if we know HOW it was derived"
+note "manifest argv: $(sed -n 's/^entrypoint *= *//p' "$MAN" | head -1) + $(sed -n 's/^command *= *//p' "$MAN" | head -1) (source: $(sed -n 's/^argv_source *= *"\(.*\)"$/\1/p' "$MAN" | head -1))"
+
+case "$out" in
+    *'Start it with the argv this backup recorded:'*) ;;
+    *) fail "REGRESSION: restore did not offer the recorded argv — it fell back to the '<cmd>' placeholder that TODO A.4 removed. Output was:\n$out" ;;
+esac
+
+# Take the argv from the DERIVATION rather than from the string restore printed: parsing
+# the advice line back would test this test's own regex against its own prose. The
+# manifest's `command`/`entrypoint` rows are TOML arrays that are also valid JSON, on
+# purpose, so jq reads them directly.
+_ep="$(sed -n 's/^entrypoint *= *//p' "$MAN" | head -1)"
+_cmd="$(sed -n 's/^command *= *//p'    "$MAN" | head -1)"
+mapfile -t RESTORED_ARGV < <(jq -r --argjson ep "${_ep:-[]}" --argjson cmd "${_cmd:-[]}" -n '($ep + $cmd)[]')
+(( ${#RESTORED_ARGV[@]} > 0 ))     || fail "REGRESSION: the recorded argv is empty for a container created with command = \"sleep 600\" — the driver reported nothing, or the manifest lost it"
+
+RNAME="${LAB}-revived"
+on_exit 'podman rm -f "lab-${LAB}-revived" >/dev/null 2>&1 || true'
+out2="$(bash "$TOOL" run --name "$RNAME" --image "$TAG" --detach -- "${RESTORED_ARGV[@]}" 2>&1)"; rc=$?
+(( rc == 0 )) || fail "REGRESSION: the argv the derivation recorded does not start the restored image (rc=$rc): $out2"
+
+# `run` returning 0 is the engine accepting the request, not the container running — the
+# same distinction REVIEW-phase7.md P7-4 was written about. Read the state back.
+state=""
+for _i in 1 2 3 4 5 6 7 8 9 10; do
+    state="$(podman inspect -f '{{.State.Status}}' "lab-${LAB}-revived" 2>/dev/null || true)"
+    [[ "$state" == "running" ]] && break
+    sleep 0.5
+done
+[[ "$state" == "running" ]]     || fail "REGRESSION: the restored image started with the recorded argv and is not running (state: ${state:-<none>}) — an unstartable restore reported as success is the liar case"
+
+# …and it is running THE ORIGINAL'S argv. Compared against $ORIG_ARGV — captured from the
+# original container above — and NOT against what the manifest said, which would compare
+# the record with itself and pass over a manifest that recorded the wrong thing.
+got_argv="$(podman inspect -f '{{range .Config.Cmd}}{{.}} {{end}}' "lab-${LAB}-revived" 2>/dev/null || true)"
+[[ "$got_argv" == "$ORIG_ARGV" ]] \
+    || fail "REGRESSION: the revived container does not run the ORIGINAL's argv — it runs '$got_argv' where the container this backup describes ran '$ORIG_ARGV'"
+
+# The same comparison against the record itself, so a mismatch says WHICH half moved: a
+# manifest that disagrees with the original is a bad RECORDING; a revival that disagrees
+# with the manifest is a bad REPLAY. One message each, rather than one that covers both
+# and identifies neither.
+[[ "${RESTORED_ARGV[*]} " == "$ORIG_ARGV" ]] \
+    || fail "REGRESSION: the DERIVATION recorded the wrong argv — it says '${RESTORED_ARGV[*]}' for a container that ran '$ORIG_ARGV'"
+
+note "revived from the derivation's own argv: ${RESTORED_ARGV[*]}"
+
+pass "a marker written into a LIVE container survived export → derivation → destroy → restore; the restore named the image config it could not bring back AND replayed the argv it recorded into a container that is RUNNING it"

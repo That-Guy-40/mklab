@@ -94,38 +94,81 @@ which can be picked up tonight and which cannot be picked up at all here.
       **FAIL**, not a `PASS` — REVIEW-phase7.md P7-4's lesson (`PASS: started` over a
       VM that never booted) carried across before it could recur. Watched to bite in
       `phase3-docker/tests/test-start-verb.sh` and `phase4-podman/tests/test-start-verb.sh`.
-      *Not verified live for LXD:* this host runs a live Calico cluster and launching
-      an instance manufactures the Appendix F.6 bridge-capture hazard, so
-      [`phase5-lxd/tests/test-start-verb.sh`](phase5-lxd/tests/test-start-verb.sh)
-      runs its read-only half (refusal + both target-resolution forms, against a real
-      incus) and **SKIPs the launch/stop/start half behind `LAB_LXD_LIVE=1`**. That
-      half is an **UNKNOWN**, and says so.
+      *Not verified live for LXD* — ✅ **now verified, 2026-08-20.** The half behind
+      `LAB_LXD_LIVE=1` was an **UNKNOWN** because launching an instance on this host
+      manufactures the Appendix F.6 bridge-capture hazard. **The blocker was the
+      cluster's configuration, not the test**: `IP_AUTODETECTION_METHOD` was
+      `first-found`, so any addressed bridge at a higher ifindex could take the tunnel.
+      Pinned to `interface=enx00051b8eb138`, then run:
+      [`test-start-verb.sh`](phase5-lxd/tests/test-start-verb.sh) and
+      [`test-export-tarball.sh`](phase5-lxd/tests/test-export-tarball.sh) both **PASS**,
+      and a 2-second witness over the whole run — 135 samples, 4m28s, spanning four
+      60 s autodetection intervals — recorded **one** binding.
+      The control is that the hazard was **neutralised rather than removed**: `incusbr0`
+      (idx 86) and `lxdbr0` (idx 92) were still up with their addresses throughout, so
+      the pin is what ignored them, not an absence of candidates.
+      *Which makes this the second entry in this file to have carried a blocker that was
+      not what it said* — see C.2. The stated blocker was "launching an instance"; the
+      real one was one unpinned environment variable.
 
-- [ ] **A.4** — **phases 3, 4 and 5's `inspect` should report the container's command.**
-      *The gap, found 2026-08-18 building [`examples/micro-cloud/preserve.sh`](examples/micro-cloud/preserve.sh):*
-      `podman export` writes the **filesystem** and not the OCI config, so the image
-      `podman import` builds back from a §9.5 tier-2 tarball has **no `CMD`, no
-      `ENTRYPOINT`, no `ENV`, no `WORKDIR`**. The drivers' own advertised round trip
-      (`run --name NEW --tarball FILE`, the line `export-tarball` prints on its way out)
-      therefore dies at the last inch against a real rootless podman:
-      `Error: no command or entrypoint provided, and no CMD or ENTRYPOINT from image`.
-      The filesystem survives; **the intent does not.**
-      *Why it belongs in the drivers:* the derivation is the right home for that intent and
-      cannot carry it, because nothing can be asked — `inspect` renders labels, state,
-      userns and network and **no command**. Same shape as A.3: put the missing fact where
-      the gap is rather than having `preserve.sh` shell out to `podman inspect` and become a
-      second owner of a lifecycle it does not run.
-      *Shape:* one derived row (`command`, and `entrypoint` where the engine distinguishes
-      them) in each of phases 3/4/5's `inspect`, human and `--json` (bump `schema_version`);
-      then `preserve.sh` records it in `derivation.toml` and `restore` replays it via the
-      `--` passthrough that `cmd_run` already has, upgrading a container restore from **an
-      image** to **a running container**.
-      *Until then, honestly:* `restore` hands back an image and **names what it could not
-      restore** — [`RUNBOOK-preserve.md`](examples/micro-cloud/RUNBOOK-preserve.md#what-a-restore-gives-you-back--and-what-it-does-not)
-      — because an unstartable image reported as a clean success is the liar case.
-      *Guarded meanwhile:* `test-preserve-round-trip.sh` **fails** if the restored image
-      ever gains a default command, so the day podman starts carrying the config through
-      export/import, the stale claim in `preserve.sh` gets caught rather than believed.
+- [x] **A.4** ✅ **DONE 2026-08-20 — and the entry was wrong about two of its three
+      phases.** Closed as *"a restore hands back a running container"*: phases 3 and 4's
+      `inspect` report `command`, `entrypoint`, `entrypoint_source`, `env` and `workdir`
+      at **`schema_version: 2`**;
+      [`preserve.sh`](examples/micro-cloud/preserve.sh) writes the argv into
+      `derivation.toml`; and `restore` prints the command that starts it, filled in from
+      what was recorded. Measured end to end against live rootless podman: the image
+      alone still dies at `no command or entrypoint provided`, and the line `restore`
+      now prints comes back `Up 1 second  /bin/sleep 600`.
+
+      **The premise was re-derived before anything was written, and it did not survive.**
+      This entry said *"no driver reports a container's argv (`inspect` renders labels,
+      state, userns and network, and no command)"*. Phases 3 and 4 had reported
+      `container.command` all along — **wrongly, in two different ways, neither visible to
+      a green suite**:
+      - **docker** read only `Config.Cmd`, so an `ENTRYPOINT`-only container was reported
+        as having **no argv at all**. Its own SHOWCASE published that empty array as the
+        sample output for an *nginx* container, for months. An empty field where the
+        answer is unknown reads as *"there is nothing here"* — the quiet half of the liar
+        case, and the reason `entrypoint` had to be a separate field rather than a better
+        `command`: only then is `command: []` a **true** statement.
+      - **podman** read `Cmd // Entrypoint // []`. jq's `//` rejects only `null` and
+        `false`, so the fallback could never fire for a `Cmd` of `[]` — and when `Cmd`
+        *was* null it supplied podman's **joined string**, making `container.command` a
+        string for one image and an array for the next, inside a document whose header
+        calls it *"a stable schema_version=1 surface that the Phase 6 TUI can rely on"*.
+
+      **Phase 5 is not in scope, and that is a finding rather than a narrowing.** An LXD
+      instance runs the image's own init — `lab-lxd.sh` already refuses a `command` key
+      **by name** with that explanation — and its `from-tarball` backend synthesises
+      `metadata.yaml`, so a restored LXD image *launches*. Phase 5 has neither the field
+      nor the defect; a `command` row there would report `[]` forever, which is the shape
+      this item exists to remove. So `docker`/`podman` moved to 2 and `lxd` stayed at 1,
+      as did podman's **pod** document — a bump on a document that did not change is a
+      false statement about it, and `kind` is the discriminator that lets each version on
+      its own evidence.
+
+      **The engines disagree about the shape, and the fix is a provenance row rather than
+      a split.** Measured: docker 29.7.1 gives `["/bin/sleep","600"]`; podman 4.9.3 gives
+      `"/bin/sleep 600"`. A joined string cannot be re-split without guessing —
+      `["/bin/sh","-c","sleep 900"]` and `["/bin/sh","-c","sleep","900"]` flatten
+      identically and are different programs — so the array is recovered from the
+      **image**, and accepted only when re-joining it reproduces the container's string.
+      `entrypoint_source` (`engine-array` · `image-verified` · `joined-string` · `none`)
+      travels with the value because it decides whether the value may be replayed. Both
+      controls were run: a container started with `--entrypoint` is **not** described
+      using its image's argv, and an unsplittable entrypoint comes back as the one string
+      it is known to be.
+
+      **A control caught the test rather than the code.** The first version of
+      `test-preserve-round-trip.sh`'s new section compared the revived container's argv
+      against the argv it had just read out of the **manifest** — the record against
+      itself. Sabotaging `preserve.sh` to record `["sleep","999"]` for a container running
+      `sleep 600` produced a wrong manifest, a faithful replay of the wrong value, and a
+      green **PASS**. The property is *"the record matches what was preserved"*, so the
+      test now captures the original's argv from the engine before anything is destroyed
+      and compares against **that**. Three controls fire, each on its own assertion: no
+      record, wrong record, record ignored.
 
 - [x] **A.1** ✅ **DONE 2026-08-15** — the cross-node CHAOS ROWS for
       [`examples/nested-calico-sandbox/`](examples/nested-calico-sandbox/README.md#the-cross-node-rows--f6-with-a-witness):
@@ -173,8 +216,25 @@ which can be picked up tonight and which cannot be picked up at all here.
       `NCS_DATASTORE_OBSERVABLE_IS_NODE_TO_POD=one-veth-not-two` rather than presented as the
       same measurement as the other rows.
 
-> **§0.5's "buildable now" list is now empty** — A.1 landed 2026-08-15, A.2 on 2026-08-08.
-> A.2 is the **fifth** entry found this week whose subject had closed underneath it (see the
+> ~~**§0.5's "buildable now" list is now empty**~~ — **that sentence was false for two days
+> and nothing noticed.** Written when A.1 landed (2026-08-15), it asserted a property of the
+> *list*; **A.4 was then filed into the list directly above it on 2026-08-18** and the
+> sentence went on saying the section was empty. A summary line claiming a section is empty
+> is precisely the thing that stops a reader opening it — so an item nobody was blocked on
+> sat unread behind a line that said there was nothing there.
+>
+> That is C.2's mistake pointed the other way, in the same file that names it: C.2 attached a
+> **blocker that was not real** to finished work; this attached an **emptiness that was not
+> real** to unfinished work. Both stop the next reader for the same reason — a status line is
+> read *instead of* the section, not alongside it.
+>
+> **The fix is not a better sentence, it is no sentence.** A restated count is a cached fact
+> about a list that is sitting right there; whatever number is written here will be wrong the
+> next time an item is filed, and the person filing it has no reason to look up. **Count the
+> unticked boxes.** What can be said without rotting is the history, so that is all that is
+> said now: A.1 landed 2026-08-15, A.2 on 2026-08-08, A.3 on 2026-08-17, A.4 on 2026-08-20.
+>
+> A.2 was the **fifth** entry found that week whose subject had closed underneath it (see the
 > four in §4, §8, §0.5 C.2 and micro-cloud's `DEFERRED.md`), and it shares their shape
 > exactly: written the same day the work landed, describing the solution, never ticked.
 

@@ -1656,6 +1656,29 @@ cmd_destroy() {
 # already in place so future expansion doesn't break the
 # schema_version=1 contract.
 #
+# ── Why this document did NOT gain command/entrypoint/env/workdir ───────────
+# TODO A.4 was filed as "a row in phases 3/4/5's inspect", and for Phase 5 that
+# premise turned out to be false in BOTH halves.  Checked 2026-08-20, before
+# writing anything:
+#
+#   1. A Phase 5 instance HAS no command.  It is a system container running the
+#      image's own init, which is why `validate_instance_keys` refuses a
+#      `command` key BY NAME with exactly that explanation.  A `command` field
+#      here would contradict the driver's own refusal one screen away, and would
+#      report `[]` forever — an empty answer to a question that does not apply,
+#      which is the shape A.4 exists to remove, not add.
+#   2. Phase 5 does not HAVE A.4's defect.  The defect is that `docker`/`podman`
+#      `import` rebuilds an image with no OCI config, so `run` refuses.  LXD's
+#      `backend_from_tarball` SYNTHESISES `metadata.yaml` (arch, distro, release,
+#      all derived from the extracted rootfs) before `image import`, so the
+#      restored image launches — and `preserve.sh`'s summary for `lxd` already
+#      says `run --name NEW --image <alias>` with no command to supply.
+#
+# So Phase 5 keeps schema_version 1 while Phases 3 and 4 move to 2.  A version
+# bump on a document that did not change would be a false statement about the
+# document — and `kind` is the discriminator that lets each document version on
+# its own evidence rather than on its neighbour's.
+#
 # Name resolution mirrors Phase 3/4: try the literal name first (the
 # TUI passes `lab-<lab>-<svc>` directly), then `_resolve_instance_name`
 # (which produces the same).  Search across ALL projects via
