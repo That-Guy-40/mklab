@@ -162,7 +162,7 @@ $ examples/micro-cloud/preserve.sh restore ~/backups/mylab
 restored 1 · no import path 0 · failed 0
 what came back, and what did NOT (tier 2 keeps the filesystem, not the image config):
   - podman:mylab/web → image 'mklab-restored-podman-mylab-web'.  Start it with a command,
-    because the image has none: …/lab-podman.sh run --name NEW --image mklab-… -- <cmd>
+    because the image has none: …/lab-podman.sh run --name <NEW-NAME> --image mklab-… -- <cmd>
 ```
 
 ### 6. Prove it is the same
@@ -179,7 +179,7 @@ I-WAS-HERE
 **A restore of a container phase gives you an IMAGE, not a running container.** That is a
 measured property of tier 2, not a shortcut.
 
-The drivers advertise `run --name NEW --tarball FILE` as the round trip, and that was tried
+The drivers advertise `run --name <NEW-NAME> --tarball FILE` as the round trip, and that was tried
 first. Against a real rootless podman it fails at the last inch:
 
 ```
@@ -200,7 +200,7 @@ in from what was recorded rather than ending on a `<cmd>` placeholder you have t
 ```
 podman:api/keeper → image 'mklab-restored-podman-api-keeper'.
   Start it with the argv this backup recorded:
-    phase4-podman/lab-podman.sh run --name NEW --image mklab-restored-podman-api-keeper -- 'sleep' '600'
+    phase4-podman/lab-podman.sh run --name <NEW-NAME> --image mklab-restored-podman-api-keeper -- 'sleep' '600'
   [entrypoint/command split is not restored: the image has neither, so the whole argv is
    passed as the command]
 ```

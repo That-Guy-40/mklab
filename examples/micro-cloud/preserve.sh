@@ -697,7 +697,7 @@ _restore_row() {
     case "$phase" in
         # A RESTORE GIVES YOU BACK AN IMAGE, NOT A RUNNING CONTAINER — and that is a
         # measured fact about tier 2, not a shortcut. The drivers advertise
-        # `run --name NEW --tarball FILE` on their way out of `export-tarball`, and it was
+        # `run --name <NEW-NAME> --tarball FILE` on their way out of `export-tarball`, and it was
         # tried first. Against a real rootless podman it fails, at the last inch:
         #
         #     Error: no command or entrypoint provided, and no CMD or ENTRYPOINT from image
@@ -728,7 +728,7 @@ _restore_row() {
             R_NEXT+=("$unit → image '$tag'.  $(_argv_advice "$driver" "$tag" "$cmdj" "$epj" "$argvsrc")") ;;
         lxd)
             _issue "$unit" bash "$driver_abs" build --alias "$tag" --backend from-tarball --tarball "$path"
-            R_NEXT+=("$unit → image alias '$tag'.  Start it with: $driver run --name NEW --image $tag") ;;
+            R_NEXT+=("$unit → image alias '$tag'.  Start it with: $driver run --name <NEW-NAME> --image $tag") ;;
         vm)
             R_NOPATH+=("$unit — phase 2 has no from-tarball backend: \`create --backend from-chroot\` takes a DIRECTORY and needs root (loop mounts, mkfs, extlinux). Extract $file as root, then point --chroot at it") ;;
         chroot)
@@ -759,7 +759,7 @@ _argv_advice() {
     local driver="$1" tag="$2" cmdj="$3" epj="$4" src="$5"
     case "$src" in
         ""|unavailable|driver-schema-*)
-            printf 'The image has no command (that is what `export` loses) and this manifest recorded none%s. Start it with: %s run --name NEW --image %s -- <cmd>' \
+            printf 'The image has no command (that is what `export` loses) and this manifest recorded none%s. Start it with: %s run --name <NEW-NAME> --image %s -- <cmd>' \
                    "${src:+ (argv_source: $src)}" "$driver" "$tag"
             return 0 ;;
     esac
@@ -767,11 +767,11 @@ _argv_advice() {
     argv="$(jq -rn --argjson ep "${epj:-[]}" --argjson cmd "${cmdj:-[]}" \
               '($ep + $cmd) | map(@sh) | join(" ")' 2>/dev/null)" || argv=""
     if [[ -z "$argv" ]]; then
-        printf 'The recorded argv is empty — the container ran its image default, which `import` did not preserve. Start it with: %s run --name NEW --image %s -- <cmd>' \
+        printf 'The recorded argv is empty — the container ran its image default, which `import` did not preserve. Start it with: %s run --name <NEW-NAME> --image %s -- <cmd>' \
                "$driver" "$tag"
         return 0
     fi
-    printf 'Start it with the argv this backup recorded: %s run --name NEW --image %s -- %s' \
+    printf 'Start it with the argv this backup recorded: %s run --name <NEW-NAME> --image %s -- %s' \
            "$driver" "$tag" "$argv"
     if [[ "$src" == "joined-string" ]]; then
         printf '  [entrypoint was reported as ONE joined string by the engine and was NOT split — check it before trusting the word boundaries]'

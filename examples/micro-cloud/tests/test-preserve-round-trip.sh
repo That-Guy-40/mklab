@@ -17,7 +17,7 @@
 # ── AND THE HALF THAT DOES NOT SURVIVE, ASSERTED AS AN OUTCOME ──────────────────────────
 # `podman export` writes the filesystem and NOT the OCI config, so the image `import`
 # builds back has no CMD. This was found by trying the round trip the drivers advertise
-# (`run --name NEW --tarball FILE`) and watching it die at the last inch:
+# (`run --name <NEW-NAME> --tarball FILE`) and watching it die at the last inch:
 #
 #     Error: no command or entrypoint provided, and no CMD or ENTRYPOINT from image
 #
@@ -138,6 +138,20 @@ grep -qE '^command +=' "$MAN"     || fail "REGRESSION: the derivation records no
 grep -qE '^entrypoint +=' "$MAN"  || fail "REGRESSION: the derivation records no 'entrypoint'"
 grep -qE '^argv_source +=' "$MAN" || fail "REGRESSION: the derivation records no 'argv_source' — the value is only replayable if we know HOW it was derived"
 note "manifest argv: $(sed -n 's/^entrypoint *= *//p' "$MAN" | head -1) + $(sed -n 's/^command *= *//p' "$MAN" | head -1) (source: $(sed -n 's/^argv_source *= *"\(.*\)"$/\1/p' "$MAN" | head -1))"
+
+# The advice line is meant to be PASTED, so its placeholder must look like one. It read
+# `--name NEW` until 2026-08-20, which is a legal container name: pasting it verbatim
+# silently created a container called `lab-NEW` and reported success. `<NEW-NAME>` is a
+# shell redirection, so the same paste dies with a syntax error before podman is reached —
+# an honest failure instead of a false one. Asserted on the real output, not on the source.
+case "$out" in
+    *'--name NEW '*|*'--name NEW"'*)
+        fail "REGRESSION: the restore advice offers a bare '--name NEW' — that is a VALID container name, so a reader who pastes the line gets a container called lab-NEW and no warning. Use a placeholder that cannot be pasted by accident." ;;
+esac
+case "$out" in
+    *'--name <NEW-NAME>'*) ;;
+    *) fail "REGRESSION: the restore advice no longer carries a visible <NEW-NAME> placeholder — output was:\n$out" ;;
+esac
 
 case "$out" in
     *'Start it with the argv this backup recorded:'*) ;;
