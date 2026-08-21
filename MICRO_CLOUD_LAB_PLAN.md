@@ -3650,6 +3650,63 @@ cluster, and I.3 has just made *more* expensive here, not less.
 "restart" as the trigger should say "**startup, or the 60-second monitor**", because the
 narrower wording invites a reader to believe a lab is safe between restarts.
 
+### I.4a The trigger is cheaper than every version of this document has said (2026-08-20)
+
+I.4 widened the exposure from *"a calico-node restart"* to *"sixty seconds, continuously"*.
+This widens **what counts as an act**. Every framing so far — F.6, F.8, G.9, I.3, this
+appendix — describes the trigger as *creating an addressed interface*: a tap, a bridge, a
+lab. Measured with timestamps on the mklab host:
+
+| time (EDT) | event |
+|---|---|
+| 20:03:38 | a **read-only `incus list`** socket-activated `incus` → `incusbr0` came up |
+| ~20:04 | the 60 s monitor moved the tunnel to **`incusbr0`** (10.45.178.1, idx 86) |
+| 20:06:53 | a phase-5 test invoked `lxc` → socket-activated the LXD snap → **`lxdbr0` created** |
+| 20:07:20 | calico-node restarted; `startup/` picked **`lxdbr0: 10.216.67.1/24`** (idx 92) |
+
+**Nothing created an interface. Two commands *listed* things.** Socket activation brings
+up an addressed bridge on your behalf, and `lab-lxd.sh` calls `detect_lxd_engine` on
+essentially every invocation — so *any* phase-5 test is enough, including the ten that
+create no instance. Those ten produced both bridges.
+
+**And `carrier` is not the gate.** Calico adopted `incusbr0` while it was `NO-CARRIER`,
+`operstate=down`, `carrier=0`. Admin-`UP` + an IPv4 address + a higher ifindex suffices.
+That is worth stating because it was *derived by reasoning* first — "the bridge has no
+carrier, therefore it is not a candidate, therefore the suite is safe" — and the
+measurement disproved it within the hour. The cheap check was a different question.
+
+**What the cluster showed while this was true:** node `Ready`, zero pods not Running, DNS
+resolving, API reachable from a pod. A single-node VXLAN tunnel has no peers, so nothing
+crosses it and nothing complains. **A latent F.6 is invisible from every health signal the
+cluster offers** — it becomes an outage only when a second node joins. This is the
+nested-calico finding (*"the cluster never admitted the outage"*) reproduced on the host it
+was originally inferred from.
+
+**The fix is a pin, and it makes the phase-5 suite runnable here for the first time.**
+`IP_AUTODETECTION_METHOD=interface=<uplink>` on the `calico-node` DaemonSet. Verified by a
+2-second witness — 135 samples over 4m28s, four autodetection intervals, **one** binding —
+with `incusbr0` and `lxdbr0` **still up and addressed throughout**, so the pin is what
+ignored them rather than an absence of candidates. `phase5-lxd/tests/run-all.sh`: 20/20
+ran, 17 passed, 3 skipped, 0 failed; the two `LAB_LXD_LIVE=1` tests pass as well, closing
+[TODO A.3](TODO.md)'s recorded UNKNOWN.
+
+The general form, and it applies past Calico: **a host-wide autodetector is a shared
+mutable global.** Any lab that so much as *talks to* a daemon which owns a bridge is
+writing to it.
+
+**And it closes I.4's own open question, by accident.** I.4 ends by naming what it had
+*not* measured — *"that `monitor-addresses` writes the node resource when the address
+changes, rather than only logging it"* — and defers the experiment that would settle it to
+a host without a live cluster. It got settled here, on the live one, without anybody
+choosing to run it: **the write happens.** The tunnel *device* was re-bound
+(`vxlan.calico → local 10.216.67.1 dev lxdbr0`) and the Node annotation
+`projectcalico.org/IPv4Address` changed to `10.216.67.1/24`. Not a log line — the record.
+
+That is also the honest reason this appendix exists: the experiment G.9 and I.3 both call
+too expensive to run on this host **ran anyway**, triggered by two read-only list commands.
+An experiment you have decided not to perform is not thereby an experiment that will not
+happen to you.
+
 ### I.5 What did not resolve
 
 `enx00051b8eb138` won today, which confirms it is **eligible** — the half of the F.7 puzzle

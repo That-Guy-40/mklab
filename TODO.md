@@ -94,12 +94,22 @@ which can be picked up tonight and which cannot be picked up at all here.
       **FAIL**, not a `PASS` — REVIEW-phase7.md P7-4's lesson (`PASS: started` over a
       VM that never booted) carried across before it could recur. Watched to bite in
       `phase3-docker/tests/test-start-verb.sh` and `phase4-podman/tests/test-start-verb.sh`.
-      *Not verified live for LXD:* this host runs a live Calico cluster and launching
-      an instance manufactures the Appendix F.6 bridge-capture hazard, so
-      [`phase5-lxd/tests/test-start-verb.sh`](phase5-lxd/tests/test-start-verb.sh)
-      runs its read-only half (refusal + both target-resolution forms, against a real
-      incus) and **SKIPs the launch/stop/start half behind `LAB_LXD_LIVE=1`**. That
-      half is an **UNKNOWN**, and says so.
+      *Not verified live for LXD* — ✅ **now verified, 2026-08-20.** The half behind
+      `LAB_LXD_LIVE=1` was an **UNKNOWN** because launching an instance on this host
+      manufactures the Appendix F.6 bridge-capture hazard. **The blocker was the
+      cluster's configuration, not the test**: `IP_AUTODETECTION_METHOD` was
+      `first-found`, so any addressed bridge at a higher ifindex could take the tunnel.
+      Pinned to `interface=enx00051b8eb138`, then run:
+      [`test-start-verb.sh`](phase5-lxd/tests/test-start-verb.sh) and
+      [`test-export-tarball.sh`](phase5-lxd/tests/test-export-tarball.sh) both **PASS**,
+      and a 2-second witness over the whole run — 135 samples, 4m28s, spanning four
+      60 s autodetection intervals — recorded **one** binding.
+      The control is that the hazard was **neutralised rather than removed**: `incusbr0`
+      (idx 86) and `lxdbr0` (idx 92) were still up with their addresses throughout, so
+      the pin is what ignored them, not an absence of candidates.
+      *Which makes this the second entry in this file to have carried a blocker that was
+      not what it said* — see C.2. The stated blocker was "launching an instance"; the
+      real one was one unpinned environment variable.
 
 - [x] **A.4** ✅ **DONE 2026-08-20 — and the entry was wrong about two of its three
       phases.** Closed as *"a restore hands back a running container"*: phases 3 and 4's
