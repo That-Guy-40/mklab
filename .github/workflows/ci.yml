@@ -307,15 +307,55 @@ jobs:
       - name: Run every phase's run-all.sh
         # Tests needing docker/podman/incus/root exit 77 (skip); run-all.sh only
         # fails the job on a real FAIL, so the pure-logic tests are the gate here.
+        #
+        # A GREEN TICK HERE DOES NOT SAY WHICH ROWS RAN, and that is not a small gap:
+        # measured on 21a5aea, micro-cloud reported `11 passed, 12 SKIPPED, 0 failed` on
+        # this runner against `17 passed, 6 skipped` on the author's box. Both are green.
+        # Every runner in this repo already NAMES its skipped files (CLAUDE.md: "an unmet
+        # precondition is an UNKNOWN, and it has to be legible as one") -- but it names
+        # them inside a collapsed ::group::, where nobody looks at a passing job. So
+        # `run_suite` below re-surfaces them as ONE annotation at the end of the step:
+        # the count is the runner's to keep, and the annotation says which guards were
+        # not exercised by THIS run.
         run: |
           rc=0
+          skipped_report=""
+          # Run one suite: stream its output, capture its status WITHOUT letting errexit
+          # abort the step, and remember any files it named as skipped.
+          #
+          # `bash "$t" || r=$?` and NOT `bash "$t"; r=$?`. GitHub's default shell is
+          # `bash -e {0}`, and under errexit the second form never reaches the assignment
+          # -- the step dies with the raw status instead. That is how the previous
+          # `[ "$r" -eq 77 ] || rc=1` tolerance came to be DEAD CODE: a suite that exited
+          # 77 (a skip this line exists to permit) killed the step before the test that
+          # permits it could run, and the remaining suites in the loop never ran at all.
+          # Never observed because none of them has yet exited non-zero here. Measured
+          # 2026-08-21: `bash -e -o pipefail -c 'f(){ return 77; }; f; r=$?; echo reached'`
+          # prints nothing and exits 77.
+          run_suite() {
+            local label="$1" cmd="$2" log r=0
+            log="$(mktemp)"
+            echo "::group::$label"
+            bash "$cmd" > "$log" 2>&1 || r=$?
+            cat "$log"
+            echo "::endgroup::"
+            [ "$r" -eq 0 ] || [ "$r" -eq 77 ] || rc=1
+            # %0A is how a workflow command encodes a newline in an annotation, and it
+            # keeps this on ONE line -- a literal newline here would be a shallower line
+            # inside a YAML block scalar, which silently ends the block. awk rather than
+            # `grep -v` because an assignment takes the status of its command
+            # substitution, and under errexit a grep that matches nothing would abort the
+            # step from inside a string.
+            if grep -q '^skipped — these did NOT run' "$log"; then
+              skipped_report="$skipped_report%0A  $label: $(awk '/^skipped — these did NOT run/{f=1;next} /^failed:/{f=0} f && NF {printf "%s ", $1}' "$log")"
+            fi
+            rm -f "$log"
+          }
           # netboot is not a phase, but it now has a run-all.sh and its tests are
           # headless (openssl + a PATH-shimmed docker). Until 2026-08-07 the directory
           # held exactly one test and no runner, so CI ran none of it.
           for d in phase1-chroot phase2-qemu-vm phase3-docker phase4-podman phase5-lxd phase7-firecracker netboot; do
-            echo "::group::$d"
-            bash "$d/tests/run-all.sh" || rc=1
-            echo "::endgroup::"
+            run_suite "$d" "$d/tests/run-all.sh"
           done
           # Example-lab guards that are headless (no root, no network, no KVM).
           # These were NOT gated before: the loop above only covers phase*/tests, so the
@@ -328,15 +368,29 @@ jobs:
           # "a test with no runner" one level up -- and it mattered the moment slice 7's
           # preserve gate was written to need no engine and no root SPECIFICALLY so it could
           # run here. Most of this suite is root-gated and will skip, by name.
+          # metal-as-a-service: ADDED 2026-08-21, and it had never been gated AT ALL -- the
+          # largest suite in the repo (39 tests, headless BY CONSTRUCTION: a mock BMC, a
+          # mock deploy driver and real crypto, so the whole Ironic-faithful lifecycle
+          # drives with no libvirt, no vbmcd and no root). It is the lab whose own
+          # DEFERRED.md is about what a green run cannot prove, and nothing was proving
+          # even the green part. What made the gap concrete: the audit in 21a5aea found a
+          # README quickstart command that had never worked at any commit, fixed it, and
+          # added tests/test-inspect-facts-from-a-stream.sh to stop it regressing -- a
+          # regression guard that, until this line, no automated run would ever execute.
+          # It costs ~11 minutes, which is the honest price of the largest suite here.
           for t in examples/kali-packer-vagrant/tests/test-offline-archive.sh \
                    examples/almalinux-packer-images/tests/test-offline-archive.sh \
                    examples/micro-cloud/tests/run-all.sh \
-                   examples/nested-calico-sandbox/tests/run-all.sh; do
-            echo "::group::$t"
-            bash "$t"; r=$?
-            [ "$r" -eq 0 ] || [ "$r" -eq 77 ] || rc=1
-            echo "::endgroup::"
+                   examples/nested-calico-sandbox/tests/run-all.sh \
+                   examples/metal-as-a-service/tests/run-all.sh; do
+            run_suite "$t" "$t"
           done
+          # ONE annotation, not one per suite: GitHub displays only the first handful of
+          # annotations of a given type per step, and a truncated list of what did not run
+          # is its own kind of lie.
+          if [ -n "$skipped_report" ]; then
+            echo "::warning::Suites that SKIPPED rows on this runner — an unmet precondition is an UNKNOWN, not a pass, so these guards were NOT exercised by this run:$skipped_report"
+          fi
           exit $rc
 
   python-tests:

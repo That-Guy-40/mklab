@@ -398,3 +398,24 @@ it?"* would have caught D5 and D7 mechanically, and is the obvious next tool in 
   the question on every run, the class is open regardless of these fixes.
 - **D8's driver-side question is open**: should `lab-fc.sh` honour an env override for the
   Firecracker binary, as its own tests do? Deliberately not decided here.
+
+> **Addendum 2026-08-21, after the merge — the fix for D1 was not being run.** Reading the
+> CI log for the merge commit rather than its green tick: `examples/metal-as-a-service/tests/run-all.sh`
+> **was in no CI job at all**. The largest suite in the repo — 39 tests, headless by
+> construction — was the only one nobody gated, so D1's regression guard, whose entire
+> purpose is to stop a documented command from silently ceasing to work, would never have
+> run anywhere but a human's terminal. Closed by adding it to
+> [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+>
+> Two things came out of doing that, and both are the same lesson as the nine:
+>
+> - **A green tick does not say which rows ran.** micro-cloud reported `11 passed, 12
+>   SKIPPED, 0 failed` on the runner against `17 passed, 6 skipped` here. Both green. Every
+>   runner already names its skipped files — inside a collapsed `::group::` that nobody
+>   opens on a passing job. The step now re-surfaces them as one annotation.
+> - **The loop's own skip-tolerance was dead code.** `bash "$t"; r=$?` under GitHub's
+>   default `bash -e` never reaches the assignment: a suite exiting **77** killed the step
+>   with the raw status, before the `[ "$r" -eq 77 ]` test written to permit it — and every
+>   suite after it in the loop was silently not run. Never observed, because none had yet
+>   skipped wholesale. Measured, then re-measured as a control: the old shape aborts at the
+>   77 and never prints its own `::endgroup::`.
