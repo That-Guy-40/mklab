@@ -347,7 +347,7 @@ than "can five instances ping each other."
 | 12 | Hand-walk | **yes** — P1 proved a container can use `--device /dev/kvm` |
 | **13** | **Install methods: own or route?** | **Catalog, don't absorb.** 15 install labs already exist; micro-cloud ships a table naming the lab that owns each method and the exact command, and **builds nothing** — MAAS's catalog rule. Plus fill the **two real gaps** as their own small labs (§11.1) |
 | **14** | **Preserve** | **Two tiers** — §9.5. Fast/engine-native keeps *running state*; portable/round-trip keeps *reproducibility*, and carries a **derivation manifest** (source spec + artifact `sha256`s + tool versions + date). *A backup that cannot tell you what built it is a record that will outlive its subject.* |
-| **15** | **Wizards** | **They already exist and pass** — 5 implementations, `base.py`, **28 tests green** (P1). Work is *extension*, not invention: the **web UI has none**, and phase 7 needs one. Invariant: **wizards generate specs, never execute** (§0.2) |
+| **15** | **Wizards** | **They already exist and pass** — implementations under `lab_tui/screens/wizards/` + `base.py`, green in `phase6-tui/tests/test_wizards.py` (P1 measured five and 28 tests; **slice 9 added the sixth**, for phase 7, and the web UI's adapter — so read the count off `ls` and the suite, not off this row). Invariant: **wizards generate specs, never execute** (§0.2) |
 | **16** | **Reuse discipline** | **Hardline four-rung ladder + an enforced ledger** — §4.1 |
 | **17** | **Two entry points** | **Yes** — §0.2, with the guided path a *view* of the raw one |
 | **18** | **When do the two install gaps land?** | **After slice 4**, as their own small labs (§11.1). They are independently useful, so the temptation is to start them early — but built *before* `export-rootfs` and the catalog shape exist, each would have to invent its own image plumbing and its own way of being discovered, and then be retrofitted. Landing them after means they *consume* both, and become reusable building blocks rather than one-offs |
@@ -399,23 +399,44 @@ and `tests/` whose every file prints exactly one `PASS`/`FAIL`/`SKIP` line.
 
 ### 5.1 CLI surface
 
+> ⚠️ **This block was a WISH LIST and read as a manual — corrected 2026-08-21
+> ([`REVIEW-docs-micro-cloud-maas.md`](REVIEW-docs-micro-cloud-maas.md) D5).** Five of its
+> thirteen lines named verbs `lab-fc.sh` refuses (`console`, `ssh`, `restore`, `preserve`,
+> `mmds` → `unknown verb`, rc=1) and a sixth a flag it refuses (`snapshot --tag` →
+> `unknown flag`). Nothing had gone wrong in the build; the section simply never said which
+> half was aspiration. What made it *read* as current is that it had been amended in place
+> once already — the ⚠️ note below, dated 2026-08-02 — and a section that visibly receives
+> corrections is taken for a maintained one. **`lab-fc.sh --help` is the authority; this is
+> a map.**
+
+**SHIPPED** — every line below runs today:
+
 ```bash
 lab-fc.sh preflight --config examples/micro-cloud/micro-cloud.toml   # §5.9
-lab-fc.sh create   --config examples/micro-cloud/micro-cloud.toml
-lab-fc.sh create   --name api1 --rootfs images/debian.ext4 --kernel images/vmlinux \
-                   --memory 256M --vcpus 1
-lab-fc.sh start    api1              # spawn firecracker, wait for the boot banner
-lab-fc.sh console  api1              # attach to the serial console
-lab-fc.sh ssh      api1
-lab-fc.sh list     [--lab micro-cloud] [--json]
-lab-fc.sh inspect  api1 [--json]     # manifest + live pid/tap/ip/uptime
-lab-fc.sh stop     api1 [--force]    # graceful: SendCtrlAltDel; --force: SIGKILL by PID
-lab-fc.sh destroy  api1 [--force]    # stop + delete tap + delete state dir
-lab-fc.sh snapshot api1 --tag warm   # pause → snapshot → resume
-lab-fc.sh restore  api2 --from api1:warm
-lab-fc.sh preserve api1 --tier portable   # §9.5
-lab-fc.sh mmds     api1 --set '{"instance-id":"api1"}' | --get
+lab-fc.sh create    --config examples/micro-cloud/micro-cloud.toml
+lab-fc.sh create    --name api1 --rootfs images/debian.ext4 --kernel images/vmlinux \
+                    --memory 256M --vcpus 1 [--mmds] [--vsock] [--dry-run]
+lab-fc.sh start     api1 [--jailer]  # spawn firecracker, wait for the boot banner (§5.6)
+lab-fc.sh list      [--lab micro-cloud] [--json]
+lab-fc.sh inspect   api1 [--json]    # manifest + live pid/tap/ip/uptime
+lab-fc.sh stop      api1 [--force]   # graceful: SendCtrlAltDel; --force: SIGKILL by PID
+lab-fc.sh destroy   api1 [--force]   # stop + delete state dir — NOT the tap, see below
+lab-fc.sh snapshot  create|list|restore|delete <name> [snap]   # §5.7; pause → snapshot → resume
+lab-fc.sh clone     api1 warm w1     # §5.8: load(resume_vm:false) → PATCH /drives → resume
+lab-fc.sh mac       api1             # read-only: the MAC this tool WOULD set (no root, no tap)
+lab-fc.sh vsock-cid api1             # read-only: the CID it WOULD assign
 ```
+
+**NOT BUILT** — kept because each names a real question, not because you can type it:
+
+| line as it was written | status |
+|---|---|
+| `lab-fc.sh console api1` | **no such verb.** The `fc` backend was built without it and is right to have been — see [§8.1](#81-the-mechanical-half--surfacing). Firecracker's console is the VMM's stdout, which `start` already redirects to the instance's `console.log`; there is nothing to attach to |
+| `lab-fc.sh ssh api1` | **no such verb**, and no plan to add one — the guest images this lab boots run no sshd. `edge` (§9.2) is the fidelity case that does, and it is reached by `ssh` at its leased address |
+| `lab-fc.sh snapshot api1 --tag warm` | **wrong shape.** The real one is the `create\|list\|restore\|delete` sub-verb form above, chosen so `preserve.sh --tier fast` reaches it through the same shape phase 2 uses |
+| `lab-fc.sh restore api2 --from api1:warm` | **superseded by `clone`**, which is a different operation: `restore` puts a snapshot back over *its own* instance, `clone` re-points the disk so a second guest can run from the same memory image. Both exist — the first as `snapshot restore` |
+| `lab-fc.sh preserve api1 --tier portable` | **not in this tool.** Preserve is [`examples/micro-cloud/preserve.sh`](examples/micro-cloud/preserve.sh), one level up, because it spans all six phases (§9.5) |
+| `lab-fc.sh mmds api1 --set … \| --get` | **not a verb.** MMDS is a *create-time* key (`--mmds` / `mmds = true`), seeded by the driver and read by the guest at `169.254.169.254`; `tests/test-mmds-answers-inside-the-guest.sh` is what proves it |
 
 > ⚠️ **`destroy` does NOT delete the tap — corrected 2026-08-02, see
 > [H.5](#h5-the-83-tripwire-held--and-51-needs-a-correction).** Slice 3 gave tap lifecycle to
@@ -727,7 +748,7 @@ cannot use, and saying why is the exercise.
 
 ```bash
 lab-fc.sh snapshot api1 --tag warm
-for n in 1 2 3 4 5; do lab-fc.sh restore "w$n" --from api1:warm; done
+for n in 1 2 3 4 5; do lab-fc.sh clone api1 warm "w$n"; done   # (was `restore … --from`, a verb that never shipped — D5)
 ```
 
 Five warm instances from one memory image, in about the time one would take to boot. That
@@ -1115,21 +1136,47 @@ cleanup, it is an outage.
 ### 8.1 The mechanical half — surfacing
 
 [`phase6-tui/lab_tui/backends/`](phase6-tui/) has `base.py` plus `chroot.py`, `docker.py`,
-`lxd.py`, `podman.py`, `vm.py` (+ `control_pane.py`). A sixth is a known shape:
+`lxd.py`, `podman.py`, `vm.py` (+ `control_pane.py`). **The sixth is BUILT** — slice 6, done
+2026-08-18 — and this is what it turned out to be:
 
 - `backends/fc.py` — `FCBackend(BackendRunner)`, `name = "fc"`, `state_paths() →
   $LAB_STATE_DIR/fc`, `list_resources()` reading each `manifest.toml` + `fc.pid` liveness
-  (the `_pid_alive` pattern `vm.py` uses), `inspect()` preferring `lab-fc.sh inspect --json`,
-  `console_command → lab-fc.sh console <name>`.
-- `BackendName` literal and `ALL_BACKENDS` gain `"fc"`.
+  — *not* `vm.py`'s bare `_pid_alive`, which it refuses: [P7-5](REVIEW-phase7.md) measured
+  one pidfile giving three answers. `inspect()` prefers `lab-fc.sh inspect --json`.
+- **`console_command` is `[]`, deliberately** — and `phase6-tui/tests/test_backends_fc.py`
+  asserts that it stays empty.
+
+  > ⚠️ **This bullet used to specify `console_command → lab-fc.sh console <name>`;
+  > corrected 2026-08-21** ([`REVIEW-docs-micro-cloud-maas.md`](REVIEW-docs-micro-cloud-maas.md) D7).
+  > There is no `console` verb ([§5.1](#51-cli-surface)), so the spec was wrong in the
+  > direction that would have broken the tool had anyone implemented it as written. The
+  > implementer measured instead of reading and got it right; the plan is the half that was
+  > stale. A microVM has no console to *attach* to — Firecracker's console is the VMM's own
+  > stdout, which `start` redirects into the instance's `console.log`, so the TUI's
+  > attach action correctly has nothing to offer and says so.
+- `BackendName` literal and `ALL_BACKENDS` gained `"fc"`.
 - `topology.py` — an `"fc"` `PhaseSlot`. Ordering is a **dependency**, not a preference:
-  Phase 1 → export-rootfs → fabric up → fc/vm/containers → fabric down last.
-- Phase 6b picks it up for free (`base.py` is framework-agnostic).
+  Phase 1 → export-rootfs → fabric up → fc/vm/containers → fabric down last. It emits
+  `create --config` + `start <name>` rather than an `up`, because `lab-fc.sh` has none —
+  §8.3 shape (b), spoken in the driver's own verbs.
+- Phase 6b picked it up for free (`base.py` is framework-agnostic).
 
 ### 8.2 Wizards — they exist, they pass, and their shape is already right
 
-P1 measured it: **five wizards** (`wizards/base.py` + `phase1.py`…`phase5.py`,
-`wizard_select.py`) with **28 tests passing**. Not stale.
+P1 measured **five wizards** (`screens/wizards/base.py` + `phase1.py`…`phase5.py`,
+`screens/wizard_select.py`) with **28 tests passing**. `phase7.py` arrived with slice 9
+(§14's slice-9 row: *"a `microvm` wizard ✅"*), so there are more of both now — *measured
+2026-08-21: six wizards, `phase6-tui/tests/test_wizards.py` → 36 passed.* Both figures
+carry their date because that is the only thing that keeps a figure honest; the live
+answers are `ls lab_tui/screens/wizards/` and the suite itself.
+
+> ⚠️ **This paragraph read *"five wizards … 28 tests passing. **Not stale.**"* until
+> 2026-08-21** ([`REVIEW-docs-micro-cloud-maas.md`](REVIEW-docs-micro-cloud-maas.md) D6),
+> when both halves were false and §14 of *this document* already recorded the sixth landing.
+> The citation to P1 was never the problem — a measurement carries its own date. **"Not
+> stale." was**: two words that convert a dated citation into a claim about today, with
+> nothing deriving it. An undated integer in prose is a cache entry; a dated one is a
+> measurement.
 
 The architecture, from `base.py`: a modal with a form on the left and a **live TOML preview
 on the right** that updates as you type; buttons *Save to file* and *Close*; subclasses

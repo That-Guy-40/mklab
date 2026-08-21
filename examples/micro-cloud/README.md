@@ -1,6 +1,6 @@
 # Micro-Cloud Lab — ☁️
 
-> **Status (2026-08-19):** **all ten build slices have landed.**
+> **Status (2026-08-20):** **all ten build slices have landed.**
 >
 > **Slice 10 is the demo**, and it is one spec and one verb away from being typed:
 > [`micro-cloud.toml`](micro-cloud.toml) declares the whole lab — a chroot, two Firecracker
@@ -39,8 +39,13 @@
 > each with its own disk — and the clone hazard measured rather than asserted. Slice 8's jailer tier
 > (`start --jailer`) is **done and green**, on its sixth privileged run — the five failures
 > before it are the argument for author-run rows, and one of them was §5.6's own instruction
-> being unanswerable from the host. **Slices 9–10 remain.** What follows is the 5b write-up, kept because the
-> finding is the point:
+> being unanswerable from the host. **Slices 9 and 10 have since landed too** — this
+> block is the slices-0–8 write-up and stopped being a status line when they did; the
+> status is the header above and [§14](../../MICRO_CLOUD_LAB_PLAN.md#14-build-order--vertical-slices).
+> *(It read "**Slices 9–10 remain**" until 2026-08-21, forty lines under a header saying all
+> ten had landed — and it survived the sweep in `0b6a382` that fixed seven other stale status
+> lines, which is the useful part: fixing seven instances of a class is not closing it.)*
+> What follows is the 5b write-up, kept because the finding is the point:
 >
 > **slice 5b** — a second engine (QEMU `-M microvm`) booting the same kernel and the same rootfs,
 > so the only variable is the VMM. It produced the number nobody had **and corrected
@@ -109,12 +114,21 @@ beside QEMU VMs, containers, and LXD system containers.
 > asserting a refusal's *wording* where `fabric.sh` was correct. Zero defects in the tool.
 > [Appendix P](../../MICRO_CLOUD_LAB_PLAN.md#appendix-p--retaps-first-privileged-run-the-test-failed-and-that-is-the-finding-2026-08-07)
 
-> 📋 **Queued as its own lab unit: [`nested-calico-sandbox/`](DEFERRED.md#queued--nested-calico-sandbox-a-disposable-cluster-to-break-on-purpose)**
+> ✅ **Built and routed as its own lab unit: [`nested-calico-sandbox/`](../nested-calico-sandbox/README.md)**
 > — a throwaway microk8s inside a phase-2 VM. `fabric.sh`'s two safety rules (the `^br-.*`
 > exclusion; an addressed interface becomes a candidate) are **derived from one host at one
-> Calico version** and cannot be falsified here without breaking a live cluster. A cluster
-> we may destroy turns them into measurements — and is a safe host for the **whole**
-> slice-3 break pass. (`retap` is no longer part of that debt — **green 2026-08-07**.)
+> Calico version** and could not be falsified here without breaking a live cluster. A cluster
+> we may destroy turned them into measurements: **G.9 is closed on the real artifact** — a
+> genuine `fabric.sh` tap captured the guest cluster's tunnel once it was addressed, which is
+> [F.6](../../MICRO_CLOUD_LAB_PLAN.md#f6-additive-was-not-safe--the-tap-captured-a-live-clusters-tunnel)
+> reproduced on purpose ([Appendix Q](../../MICRO_CLOUD_LAB_PLAN.md#appendix-q--the-sandbox-packaged-g9-closed-on-the-real-artifact-2026-08-07)).
+> **The caveat that motivated it survives the closure:** the sandbox answers about Calico
+> **v3.29.3** and this host runs **v3.28.1**, so its harness stamps the version it observed
+> and refuses to generalise across a mismatch.
+>
+> *This callout said "📋 Queued" until 2026-08-21 — two weeks after the lab shipped, and while
+> [`DEFERRED.md`](DEFERRED.md) (the queue that owns the item) already said it was done. The
+> queue was right; the README that advertises it was not, which is the worse direction.*
 
 ## Target layout
 
@@ -151,6 +165,17 @@ and should not become a second document). Tracked as [TODO](../../TODO.md) **A.5
 art inside a code fence**, so `tools/link_check.py` cannot see them — a filename in a tree
 diagram is not a link, exactly as a filename in prose is not. That is the same blind spot
 twice in one file, and it is why the entries are now a sentence rather than tree rows.
+
+## Doc audit
+
+**2026-08-21** — the prose of this lab and of
+[`metal-as-a-service/`](../metal-as-a-service/README.md) was audited against the tools it
+describes: [`REVIEW-docs-micro-cloud-maas.md`](../../REVIEW-docs-micro-cloud-maas.md). Nine
+defects, **all nine in sentences written in the present tense** — the dated records
+(`LEDGER.md`, `DEFERRED.md`, the plan's appendices) came through clean. Four of the nine
+were in this file and in [`MANUAL_TESTING.md`](MANUAL_TESTING.md); three were in
+[the plan](../../MICRO_CLOUD_LAB_PLAN.md)'s design sections, including a "CLI surface" whose
+lines named five verbs `lab-fc.sh` refuses. All fixed.
 
 ## Routing note
 
