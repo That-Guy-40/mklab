@@ -504,7 +504,7 @@ goal       = "Assemble the smallest honest cloud: microVMs that boot in a tenth 
   [[path.step]]
   lab        = "micro-cloud/"
   learn      = "one Firecracker microVM by hand — a config.json, a kernel, an ext4 rootfs, and the REST socket the VMM serves. Nothing here is a tool yet."
-  checkpoint = "a login prompt at ~0.55 s, and the same boot again over the API with `curl` — RUNBOOK-first-microvm.md."
+  checkpoint = "a login prompt at ~0.55 s (`MICROVM-UP uptime=0.55s`, the guest's own /proc/uptime), and the same boot again over the API — four `curl -X PUT` calls returning `204` and an identical 0.55 s — [RUNBOOK-first-microvm.md](../micro-cloud/RUNBOOK-first-microvm.md)."
   [[path.step]]
   lab        = "micro-cloud/"
   learn      = "the microVM gets an identity: MMDS v2 at 169.254.169.254, with the token handshake EC2 taught you, served by the process you started."

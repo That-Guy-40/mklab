@@ -238,6 +238,31 @@ which can be picked up tonight and which cannot be picked up at all here.
 > four in §4, §8, §0.5 C.2 and micro-cloud's `DEFERRED.md`), and it shares their shape
 > exactly: written the same day the work landed, describing the solution, never ticked.
 
+- [ ] **A.5** — **four files the micro-cloud docs promise and do not have.** Found
+      2026-08-20 while fixing two of them, and the interesting part is *why nobody noticed*.
+      `RUNBOOK-first-microvm.md` was cited by [`learning-paths.toml`](examples/learning-paths.toml)
+      as **step 1's checkpoint** — the entry point of the whole journey — and had never
+      existed; it is now written and every command in it was run before it was written.
+      `RUNBOOK-build-images.md` was cited by
+      [`micro-cloud.toml`](examples/micro-cloud/micro-cloud.toml) and should **not** be
+      built: its content is
+      [`RUNBOOK-micro-cloud.md` step 0](examples/micro-cloud/RUNBOOK-micro-cloud.md), and a
+      second copy is the duplicate-doc defect. Both citations are re-pointed.
+      **Still missing, and this entry exists so they stop being invisible:** `hand-walk/`
+      (the plan says P1 proved `--device /dev/kvm` works, so the Containerfile is designable
+      today), `CLONES.md` (§4.1 — every fork with the constraint that justified it; already
+      named as missing once by §18.2 and still absent), and `UPSTREAM.md` (§12 —
+      cite-don't-mirror provenance; six other labs have one).
+      *Why the checkers were green the whole time:* all four were cited as **bare filenames
+      in prose and in ASCII tree diagrams inside code fences**.
+      [`link_check.py`](tools/link_check.py) validates markdown *links*; a filename in a tree
+      diagram is not a link, exactly as a filename in a sentence is not. Both trees now name
+      the absent files as absent rather than listing them as things you could open — which is
+      the honest fix, but **not a checkable one**. The checkable version would be a gate that
+      reads a lab's tree diagram and compares it against `git ls-files`, which is
+      [§16 q6](MICRO_CLOUD_LAB_PLAN.md#16-open-questions)'s *"what else in this document
+      describes something that does not exist?"* made mechanical.
+
 ### Blocked on hardware — recorded so it stops being re-raised as if it were schedulable
 
 - [ ] **C.1 — metal-as-a-service `image` / `image+measured` drivers on REAL hardware.**

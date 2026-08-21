@@ -36,9 +36,27 @@ default behaviour would have moved it.
 ### Preconditions, checked before anything privileged
 
 ```bash
+# lab-fc.sh finds the VMM with `command -v firecracker` and honours no override, so the
+# pinned v1.16.1 copy has to be ON PATH or the next line refuses with
+# `FAIL  firecracker not on PATH` — on the very host this lab was built on.
+export PATH="$HOME/.local/state/lab-create/micro-cloud-s3:$PATH"
+
 examples/micro-cloud/fabric.sh status          # read the THEIRS block. Write it down.
 phase7-firecracker/lab-fc.sh preflight --config examples/micro-cloud/micro-cloud.toml
 ```
+
+> The `export` was missing here until 2026-08-21
+> ([`REVIEW-docs-micro-cloud-maas.md`](../../REVIEW-docs-micro-cloud-maas.md) D8). Three
+> RUNBOOKs carried it — [`RUNBOOK-first-microvm.md`](RUNBOOK-first-microvm.md#what-you-need)
+> is where the binary's provenance is written down — and the one block that *runs the
+> command needing it* did not. Nothing was broken; the reader simply hit a refusal in the
+> first thing this file asks them to type. The lab's own tests never noticed because they
+> resolve the binary from the workdir (`MC_FIRECRACKER`), not from `PATH` — two different
+> answers to "where is the VMM", and only one of them is documented at the entry point.
+>
+> **Expect two remaining `FAIL` lines**, and they are correct: `tap mc-api1 does not exist`
+> and the same for `mc-api2`. The fabric has not been brought up yet, and `lab-fc.sh` never
+> manufactures taps. They clear once `micro-cloud.sh up` runs.
 
 ### The run
 

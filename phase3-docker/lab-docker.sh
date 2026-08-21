@@ -1337,7 +1337,7 @@ cmd_export_tarball() {
 
     printf 'PASS: exported %s → %s (%s, %s members)\n' \
         "$cname" "$out" "$(du -h "$out" | cut -f1)" "$members"
-    printf '      round-trips with: %s run --name NEW --tarball %s\n' "$LAB_PROG" "$out"
+    printf '      round-trips with: %s run --name <NEW-NAME> --tarball %s\n' "$LAB_PROG" "$out"
 }
 
 # ─── Subcommand: status ────────────────────────────────────────────────────

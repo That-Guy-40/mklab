@@ -41,8 +41,17 @@ note "the EXIT trap is installed, and nothing kills by pattern  ✓"
 FN="$SANDBOX/reap.sh"
 sed -n '/^reap() {/,/^}/p' "$E2E" > "$FN"
 [[ -s "$FN" ]] || fail "could not extract reap() from run-e2e.sh — has it been renamed?"
-# shellcheck disable=SC1090
-MD_PID=""; source "$FN" || fail "the extracted reap() does not parse"
+MD_PID=""
+# A `# shellcheck disable` attaches to the next COMMAND, not the next LINE. This directive
+# sat above `MD_PID=""; source "$FN" || fail …`, so it covered the assignment and never
+# reached the `source` — measured 2026-08-21: stripping the directive entirely changed
+# the output not at all, which is the definition of an inert suppression. (Rewording this
+# very comment cost a round too: a line STARTING `# shellcheck` is parsed as a directive
+# wherever it appears, so the prose broke the file it was explaining.) It is a
+# smaller cousin of the defect in tools/check-harness-net.sh §1 (twice) and of
+# CLAUDE.md's own rule: a thing aimed at a line is not a thing aimed at a command.
+# shellcheck disable=SC1090   # $FN is sed'd out of run-e2e.sh at runtime; nothing to follow
+source "$FN" || fail "the extracted reap() does not parse"
 
 sleep 30 & VICTIM=$!            # the "sink": recorded, must die
 sleep 30 & BYSTANDER=$!         # same command line, NOT recorded: must survive

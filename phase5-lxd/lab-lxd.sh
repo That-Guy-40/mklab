@@ -1473,7 +1473,7 @@ cmd_export_tarball() {
 
     printf 'PASS: exported %s → %s (%s, %s members)\n' \
         "$iname" "$out" "$(du -h "$out" | cut -f1)" "$members"
-    printf '      round-trips with: %s run --name NEW --tarball %s\n' "$LAB_PROG" "$out"
+    printf '      round-trips with: %s run --name <NEW-NAME> --tarball %s\n' "$LAB_PROG" "$out"
 }
 
 # ─── Subcommand: exec ──────────────────────────────────────────────────────
@@ -1672,7 +1672,7 @@ cmd_destroy() {
 #      `backend_from_tarball` SYNTHESISES `metadata.yaml` (arch, distro, release,
 #      all derived from the extracted rootfs) before `image import`, so the
 #      restored image launches — and `preserve.sh`'s summary for `lxd` already
-#      says `run --name NEW --image <alias>` with no command to supply.
+#      says `run --name <NEW-NAME> --image <alias>` with no command to supply.
 #
 # So Phase 5 keeps schema_version 1 while Phases 3 and 4 move to 2.  A version
 # bump on a document that did not change would be a false statement about the

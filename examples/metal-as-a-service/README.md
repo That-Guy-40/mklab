@@ -13,19 +13,37 @@ out-of-band layer is [`bmc-toolkit/`](../bmc-toolkit/README.md) (which generaliz
 PXE-install / RAM-boot / golden-image labs. Design roadmap:
 [`METAL_AS_A_SERVICE_LAB_PLAN.md`](../../METAL_AS_A_SERVICE_LAB_PLAN.md).
 
-> **Build status — increments 1–3 of the roadmap (§9 steps 1–3).** Shipped: the
-> fleet **registry** + **full state machine** + guarded `cleaning` + `rescue` (step 1);
-> the **`inspect` RAM probe** + **NoCloud metadata service** + **`watch`** wiring the
-> fleet into [`tools/control-pane`](../../tools/control-pane) for live progress bars
-> (step 2); and the **`install` deploy driver + health-gated activation + A/B rollback
-> + F2 signature gate** (step 3) — `deploy` now only reaches `active` when the image
-> **verifies** (OpenSSL CMS) and passes its **health gate**, and a failing image
-> **rolls back to the previous good one** instead of bricking. All **verifiable
-> headlessly** (mock BMC + mock driver, real crypto; `tests/run-all.sh` → 15 passed);
-> the real `install` and `inspect --boot` are author-run. Step 4 adds the **`ramdisk`
-> driver + its catalog**, making the control plane a single front door to every
-> RAM-bootable payload in the repo. Step 6 adds **`apply`** — the declarative reconcile loop — and step 7 the
-> **actions panel**, whose first key is `apply` itself. **All 7 increments are done**, plus the three fast-follows: `image+measured`, `ramdisk`→region wiring, and a flavor/tag scheduler atop `apply`. See [PLAN.md](PLAN.md) for the ladder.
+> **Build status (2026-07-29): the whole ladder is built — all 7 increments, both
+> sub-increments and all three fast-follows — and all three live end-to-end runs pass on
+> real libvirt domains.** [`PLAN.md`](PLAN.md) is the ladder with each increment's outcome;
+> what follows is what each one put in your hands:
+>
+> | | |
+> |---|---|
+> | **1** | the fleet **registry** + **full state machine** + guarded `cleaning` + `rescue` |
+> | **2** | the **`inspect` RAM probe** + **NoCloud metadata service** + **`watch`**, wiring the fleet into [`tools/control-pane`](../../tools/control-pane) for live progress bars |
+> | **3** | the **`install` deploy driver + health-gated activation + A/B rollback + F2 signature gate** — `deploy` reaches `active` only when the image **verifies** (OpenSSL CMS) and passes its **health gate**, and a failing image **rolls back to the previous good one** instead of bricking |
+> | **4 · 4a** | the **`ramdisk` driver + its catalog**, making the control plane a single front door to every RAM-bootable payload in the repo; then the **chaos driver + resilience matrix**, and the `abort`/`recheck` verbs it found were missing |
+> | **5** | the **`image` driver** — a golden whole-disk image streamed onto the node, read back and checked |
+> | **6 · 7** | **`apply`**, the declarative reconcile loop; and the **actions panel**, whose first key is `apply` itself |
+> | **fast-follows** | `image+measured` (the TPM-attested gate), `ramdisk`→region wiring, and a flavor/tag scheduler atop `apply` |
+>
+> Everything above is **verifiable headlessly** (mock BMC + mock driver, real crypto):
+> `tests/run-all.sh` reports **every listed test ran, 0 skipped, 0 failed** — a ratio
+> against the list, so no integer here has to be maintained by hand. The real `install`
+> and `inspect --boot` are **author-run**.
+>
+> **All-✅ is not "nothing left to prove."** The live runs found thirteen defects the green
+> headless suite could not see. [`DEFERRED.md`](DEFERRED.md) is what a passing run still
+> does not prove — read it before concluding this lab is finished.
+>
+> *This block opened **"Build status — increments 1–3 of the roadmap"** until 2026-08-21,
+> four increments and three fast-follows later. It had been extended by appending — so the
+> headline stayed frozen at the day it was written while sentences accreted behind it in the
+> future tense (**"Step 4 adds…"**, **"Step 6 adds…"**), increment 5 was never mentioned at
+> all, and the correction arrived as a clause at the very end: "All 7 increments are done."
+> Not false, and still the wrong shape: a status line a reader has to finish the paragraph
+> to distrust.*
 
 ## The state machine
 
@@ -68,7 +86,7 @@ export MAAS_STATE="$(mktemp -d)/maas"  MAAS_BMC="$PWD/tests/mock-bmc.sh"
 printf 'Unpacking initramfs\nMAAS inspection probe up\ncollected facts cpus=4\nfacts posted\n' > /tmp/n1.console
 ./maas-lab.sh watch   node1 --profile probe --console /tmp/n1.console   # live bar → terminal
 
-bash tests/run-all.sh                    # 6 one-verdict smokes, all headless
+bash tests/run-all.sh                    # every test one verdict, all headless
 ```
 
 ## Bring up the real fleet (author-run, rootful)
@@ -270,7 +288,7 @@ lifecycle runs with no libvirt at all.
 | [`lib/dnsmasq_arch_xml.py`](lib/dnsmasq_arch_xml.py) | teach the PXE network to answer **UEFI** clients with `ipxe.efi` and everyone else with the iPXE script — including the `tag-if` line that stops a running iPXE being handed itself forever |
 | [`lib/vbmc_check.py`](lib/vbmc_check.py) | refuse a fleet whose BMC ports are answered by another machine |
 | [`run-e2e.sh`](run-e2e.sh) | the one-shot live driver: 10 phases, real domains, real BMCs, real netboot (author-run) |
-| [`run-e2e-install.sh`](run-e2e-install.sh) | the INSTALL-driver live path (separate so the fast run stays fast): Anaconda via the chain → kickstart → poweroff → disk boot → login (author-run, ~25 min; **verified live 2026-07-28**) |
+| [`run-e2e-install.sh`](run-e2e-install.sh) | the INSTALL-driver live path (separate so the fast run stays fast): Anaconda via the chain → kickstart → poweroff → disk boot → login (author-run, ~25 min; **verified live 2026-07-28**, and untouched since that day) |
 | [`fleet.toml`](fleet.toml) | the 3-node fleet spec (hardware + declared end-state for `apply`) |
 | [`lib/fleet.py`](lib/fleet.py) | stdlib TOML reader projecting `fleet.toml` for bash |
 | [`probe-init.sh`](probe-init.sh) | the inspection probe's busybox `/init` (gathers facts, POSTs, powers off) |
@@ -279,7 +297,7 @@ lifecycle runs with no libvirt at all.
 | [`milestones.toml`](milestones.toml) | MAAS's progress profiles (`probe`/`install`/`ramdisk`/`image`) for `watch` |
 | [`drivers/install.sh`](drivers/install.sh) | the `install` deploy driver (PXE kickstart/preseed → boot from disk; author-run) |
 | [`drivers/ramdisk.sh`](drivers/ramdisk.sh) | the `ramdisk` deploy driver (netboot into RAM; `stage`/`verify`/`deploy`/`health`) |
-| [`drivers/image.sh`](drivers/image.sh) + [`deployer-init.sh`](deployer-init.sh) | the `image` deploy driver and its deployer ramdisk (streams a golden whole-disk image onto the node, reads it back and checks the sha256; **destructive**; verified live 2026-07-28) |
+| [`drivers/image.sh`](drivers/image.sh) + [`deployer-init.sh`](deployer-init.sh) | the `image` deploy driver and its deployer ramdisk (streams a golden whole-disk image onto the node, reads it back and checks the sha256; **destructive**; verified live 2026-07-28 **at the commit before `ff4b22f`** — the file gained the ownership gate there on 2026-08-06, so the live run covers the deploy path and *not* that refusal, which is proved headlessly by `tests/test-describe-ownership.sh`) |
 | [`run-e2e-image.sh`](run-e2e-image.sh) | the IMAGE-driver live path: deployer ramdisk → stream to disk → verify what landed → boot it (author-run; targets node2, whose disk it destroys) |
 | [`drivers/image-measured.sh`](drivers/image-measured.sh) | `image` + a **TPM attestation gate** — activates only on a signed quote matching the image's PCR policy (swtpm: mechanism, **not** a trust anchor) |
 | [`build-golden-measured.sh`](build-golden-measured.sh) + [`measure-init.sh`](measure-init.sh) | the measuring golden image: a UEFI ESP carrying a UKI whose init reads real TPM PCRs, signs the quote on the node, and parks rather than claiming attestation it did not achieve (**UEFI because BIOS measures no payload** — see DEFERRED) |
@@ -288,10 +306,11 @@ lifecycle runs with no libvirt at all.
 | [`ramdisk-catalog.toml`](ramdisk-catalog.toml) + [`lib/catalog.py`](lib/catalog.py) | the `--image` registry (RAM-INFRA trio · micro-linux · floppinux · busybox) and its validating reader |
 | [`install-catalog.toml`](install-catalog.toml) | the install driver's own image registry (AlmaLinux 9 Anaconda kickstart) — each driver's staged shape is its ownership claim |
 | [`drivers/verify-lib.sh`](drivers/verify-lib.sh) | the F2 signature gate (OpenSSL CMS sign/verify, iPXE-`imgverify` format) |
-| [`tests/`](tests/) | 27 headless smokes: state-machine, cleaning-guard, registry, inspect-metadata, watch, probe-build, deploy-rollback, verify-tamper, install-driver, ramdisk-driver, image-driver, image-measured-driver, apply-reconcile, apply-selfheal, region-and-scheduler, probe-boot-script, bmc-binding-check, e2e-reaps-sink, e2e-fails-fast, chaos-matrix (+ `mock-bmc.sh`, `mock.sh` driver, `run-all.sh`) |
+| [`tests/`](tests/) | the headless smokes — one verdict each, `run-all.sh` printing a **ratio** rather than a count (it refuses a run where a listed test never ran, and refuses to leave a test file on disk unlisted, so the number is the runner's to keep and not this table's): state-machine, cleaning-guard, registry, inspect-metadata, watch, probe-build, deploy-rollback, verify-tamper, install-driver, ramdisk-driver, image-driver, image-measured-driver, apply-reconcile, apply-selfheal, region-and-scheduler, probe-boot-script, bmc-binding-check, e2e-reaps-sink, e2e-fails-fast, chaos-matrix (+ `mock-bmc.sh`, `mock.sh` driver, `run-all.sh`) |
 | [`PLAN.md`](PLAN.md) | the increment ladder + each increment's outcome |
 | [`DEFERRED.md`](DEFERRED.md) | **what a green run still does not prove** — the gaps a passing run cannot reveal; most now closed, each recording the defect closing it found |
 | [`MANUAL_TESTING.md`](MANUAL_TESTING.md) | verified transcripts (headless) + the author-run bring-up handoff |
+| [`REVIEW-docs-micro-cloud-maas.md`](../../REVIEW-docs-micro-cloud-maas.md) | **doc audit, 2026-08-21** — this README's prose run against the tool it describes. Three of the nine findings were here, including a quickstart line that had never worked at any commit (D1) and three mutually inconsistent test counts (D2) |
 
 ## Prereqs
 `bash` + **Python 3.11+** (`tomllib`) for the headless path. The real fleet

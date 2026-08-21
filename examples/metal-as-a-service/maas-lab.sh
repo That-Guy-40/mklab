@@ -306,8 +306,18 @@ cmd_inspect() {
     local nd; nd="$(node_dir "$node")"
     case "$mode" in
         facts)
-            [[ -f "$facts" ]] || die "inspect: --facts file not found: $facts"
-            cp -- "$facts" "$nd/facts.json"
+            # -r, NOT -f. The README's own quickstart injects facts with
+            # `--facts /dev/stdin <<<'{...}'`, and under bash 5.2 a here-string is a PIPE:
+            # /dev/stdin resolves through /proc/self/fd/0 to a pipe, so `-f` is FALSE while
+            # `-r` is true and `cp` copies it happily. That gate shipped in this tool's
+            # first commit and the README line in the next one, so the documented command
+            # had never worked at any commit -- and all 38 tests stayed green, because the
+            # only --facts caller among them passes a real file. Ask whether the source is
+            # READABLE (the thing cp needs), and refuse a directory by name, which is the
+            # case `-f` was really excluding.
+            [[ -d "$facts" ]] && die "inspect: --facts is a directory, not a facts file: $facts"
+            [[ -r "$facts" ]] || die "inspect: --facts source is not readable: $facts"
+            cp -- "$facts" "$nd/facts.json" || die "inspect: could not read facts from $facts"
             info "recorded schedulable facts from $facts" ;;
         metadata)
             [[ -f "$nd/facts.received" ]] || die "inspect --from-metadata: node '$node' has not reported facts yet (no POST to the metadata service). Boot the probe (--boot) or run metadata-serve.sh + the probe."

@@ -3101,7 +3101,7 @@ cmd_export_tarball() {
     printf 'PASS: exported %s → %s (%s, %s members)\n' \
         "$name" "$out" "$(du -h "$out" | cut -f1)" "$members"
     printf '      the §9.5 inverse of from-chroot: %s\n' \
-        "phase4-podman/lab-podman.sh run --name NEW --tarball $out"
+        "phase4-podman/lab-podman.sh run --name <NEW-NAME> --tarball $out"
 }
 
 # ─── Subcommand: start ─────────────────────────────────────────────────────
