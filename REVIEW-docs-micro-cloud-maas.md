@@ -418,4 +418,10 @@ it?"* would have caught D5 and D7 mechanically, and is the obvious next tool in 
 >   with the raw status, before the `[ "$r" -eq 77 ]` test written to permit it — and every
 >   suite after it in the loop was silently not run. Never observed, because none had yet
 >   skipped wholesale. Measured, then re-measured as a control: the old shape aborts at the
->   77 and never prints its own `::endgroup::`.
+>   77 and never prints its own `::endgroup::` — but that control ran **here**, and the
+>   branch still has not executed on a runner.
+>
+> What that pass left open — the 58 rows CI skips every run and which of them are closable,
+> the 455 tracked scripts `shellcheck` does not see, the doc-verb checker §4 asks for, and
+> D8's driver-side question — is now **[`TODO.md` §11](TODO.md)**, with the numbers measured
+> rather than estimated.
