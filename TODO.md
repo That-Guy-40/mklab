@@ -1002,5 +1002,131 @@ follow is a rule that gets broken.
 
 ---
 
+## 11. CI coverage: what a green tick still does not run (2026-08-21)
+
+Raised while gating the metal-as-a-service suite ([#267](https://github.com/That-Guy-40/mklab/pull/267)),
+which was the largest suite in the repo and the only one nobody ran. **CI is green and
+correct for what it covers.** This section is what it does *not* cover, written down so
+`0 failed` stops being read as *everything ran* — which is this repo's oldest rule
+(**UNKNOWN is a verdict, distinct from PASS**) pointed at its own pipeline.
+
+Everything below is **measured from the job log of `1c756a6`**, not estimated.
+
+### 11.1 The one honest debt from #267: the dead-code fix is unproven in production
+
+#267 repaired a branch that could never execute. The example-lab loop had:
+
+```bash
+bash "$t"; r=$?
+[ "$r" -eq 0 ] || [ "$r" -eq 77 ] || rc=1
+```
+
+Under GitHub's default `bash -e {0}`, `cmd; r=$?` never reaches the assignment — the step
+dies with the raw status. So a suite exiting **77**, the skip that line exists to permit,
+failed the job *and silently stopped every suite after it in the loop*.
+
+**It is still unproven where it matters.** No suite has yet exited 77 wholesale on a
+runner, so the repaired branch has not run in CI. What exists is a **local** six-case
+harness driving the *shipped* `run_suite` (sed'd out of `ci.yml`, not re-implemented),
+with the control showing the old shape dying at the 77 without printing its own
+`::endgroup::`. Real, measured — measured *here*, which
+[is not the same thing](CLAUDE.md).
+
+- [ ] **11.1** — make a suite exit 77 wholesale on a runner **on purpose**, once, and
+      confirm the loop tolerates it and continues. A one-commit throwaway on a branch (a
+      `run-all.sh` whose every test skips), or better: a `tools/tests/` fixture that
+      drives the extracted step the way `test-run-all-reports-a-ratio.sh` drives the
+      runners — behavioural, and it would then run on every push instead of once.
+
+### 11.2 Fifty-eight rows skip on every CI run — 21 of them closable
+
+The new annotation names them; nothing had before. **The count cross-checks:** the
+annotation's per-suite totals sum to **58**, and so does the sum of every runner's own
+`N skipped`, which is a nice accident — the parser is not dropping any.
+
+| suite | rows skipped |
+|---|---|
+| `phase2-qemu-vm` | 12 |
+| `examples/micro-cloud/` | 12 |
+| `phase1-chroot` | 11 |
+| `phase5-lxd` | 10 |
+| `examples/metal-as-a-service/` | 7 |
+| `examples/nested-calico-sandbox/` | 4 |
+| `phase3-docker` · `phase7-firecracker` | 1 each |
+
+Grouped by **what each is blocked on**, which is the only thing that says which are
+schedulable:
+
+**(a) Closable by installing a package on the runner — 21 rows:**
+
+| install | rows it unblocks |
+|---|---|
+| `qemu-system-x86` | **12** — most of phase 2's argv tests plus MAAS's `measured-image`, `probe-nic`, `verifying-rom` |
+| `musl-tools` | 2 — micro-cloud's two vsock tests |
+| `dnsmasq` | 2 — MAAS's DHCP-reservation and UEFI-netboot rows |
+| `swtpm` · `ovmf` · `libguestfs-tools` · `xorriso` | 1 each |
+| binfmt `qemu-aarch64` | 1 — phase 3's buildx multiarch row |
+
+- [ ] **11.2a** — add `qemu-system-x86` first: one package, twelve rows, and phase 2's
+      argv tests need only the binary to *exist*, not to boot anything. Weigh each
+      install against runner minutes and say so in the step comment, the way the
+      disk-image and `/dev/kvm` steps already do.
+
+**(b) Not closable on a hosted runner — 37 rows, and they must stay UNKNOWN:**
+17 need **root** (phase 1's mount/debootstrap guards, micro-cloud's fabric), 10 need a
+reachable **LXD/Incus daemon**, 4 need a live **nested Calico sandbox**, and 6 need the
+**pinned `firecracker` binary** — which is *deliberately* not fetched: the repo's
+toolchain-fetch gate forbids fetch+exec of prebuilt toolchains, so this one is **closed
+by decision, not open**. Recorded here so it stops being re-raised as if it were
+schedulable.
+
+### 11.3 `shellcheck` gates 60 of 515 tracked scripts
+
+`bash -n` covers **all 515**. `shellcheck` runs against a **hand-maintained list of 60** —
+the phase drivers plus the micro-cloud instruments — so a list, again, is doing a job a
+question should do. Measured: of the **455** un-gated tracked scripts, **415 already pass**
+at CI's own severity and **40 would fail** (1 of them vendored upstream, so 39 are ours).
+*(That count was 454/414 for one draft of this entry: the file feeding the loop had no
+trailing newline, so `wc -l` under-reported by one and `while read` never handed over the
+last line — `tools/wizard-walkthrough.sh`, which passes. A tally that silently drops its
+final element, in a section about checks that silently cover less than they look.)*
+`examples/metal-as-a-service/maas-lab.sh` — 73K, the largest driver in the repo — is
+un-gated and *passes today*; four of its siblings (`create-fleet.sh`, `deployer-init.sh`,
+`lib/e2e-common.sh`, `measure-init.sh`) are among the 40.
+
+- [ ] **11.3** — invert it: shellcheck **everything tracked** with an explicit, commented
+      exclusion list for the 39, rather than an inclusion list of 60. A file added
+      tomorrow is then gated by default, which is the property the current shape lacks —
+      the same reasoning that made `run-all.sh` compare its list against the disk.
+
+### 11.4 Nothing asks whether a verb a doc types actually exists
+
+Two of the nine findings in
+[`REVIEW-docs-micro-cloud-maas.md`](REVIEW-docs-micro-cloud-maas.md) (**D5**, **D7**) were
+documents naming verbs the tool refuses, and both were found **by hand**. `link_check.py`
+verifies that a link resolves and has no opinion on the sentence around it;
+`tools/check-guided-path-is-a-view.sh` asks this question already, but only of the
+*rendered plan* and `install-catalog.toml`.
+
+- [ ] **11.4** — generalise it: extract every `<tool>.sh <verb>` from a doc set and assert
+      the tool dispatches it. The dispatch tables are readable (`case "$verb" in`), and the
+      hard part is the false positives — prose like *"`preserve.sh` two tiers"* and tree
+      diagrams — so it needs the `check-usage-is-data.sh` treatment: a must-catch/must-not-catch
+      fixture set proved **before** it is aimed at a real file. Until it exists this class
+      is open regardless of the nine fixes.
+
+### 11.5 Open question left by D8: should `lab-fc.sh` take an env override for the VMM?
+
+`lab-fc.sh` resolves Firecracker with `command -v firecracker` in three places and honours
+no override, while **every test in micro-cloud** resolves it from the workdir via
+`MC_FIRECRACKER`. Two answers to *"where is the VMM"*, and only one is reachable from the
+tool. D8 fixed the **doc** (the precondition block now carries the `export PATH`), which
+was the honest fix for an audit with no mandate to change a driver.
+
+- [ ] **11.5** — decide it deliberately. An override would let the six firecracker-gated
+      rows in 11.2(b) run wherever the binary is staged, without relaxing the fetch gate.
+
+---
+
 *Created 2026-06-06; #5–#6 added 2026-06-11; #7 added 2026-06-11; #8 added
-2026-08-03; #9 added 2026-08-06; #10 added 2026-08-06.*
+2026-08-03; #9 added 2026-08-06; #10 added 2026-08-06; #11 added 2026-08-21.*
