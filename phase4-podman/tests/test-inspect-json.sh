@@ -183,8 +183,21 @@ if printf 'FROM docker.io/library/busybox:latest\nENTRYPOINT ["/bin/sleep","600"
         || fail "REGRESSION: an ENTRYPOINT-only container made .container.command a $(jq -r '.container.command | type' <<<"$epjson") — that is exactly the defect A.4 fixed, come back"
     [[ "$(jq -rc '.container.entrypoint' <<<"$epjson")" == '["/bin/sleep","600"]' ]] \
         || fail "REGRESSION: the entrypoint was not recovered element-by-element — got $(jq -rc '.container.entrypoint' <<<"$epjson")"
-    [[ "$(jq -r '.container.entrypoint_source' <<<"$epjson")" == "image-verified" ]] \
-        || fail "json: this container did not override its entrypoint, so the image's array should have been accepted after the join check — source was $(jq -r '.container.entrypoint_source' <<<"$epjson")"
+    # Assert that the entrypoint was recovered EXACTLY — not WHICH ROUTE recovered it.
+    #
+    # This assertion pinned `image-verified` when it was written, and CI failed on it
+    # immediately: podman 4.9.3 (dev host) joins `.Config.Entrypoint` into a string, so
+    # the array has to be recovered from the image; podman 5.8.4 (runner) hands back the
+    # ARRAY and no recovery is needed. Nothing was broken — a better route existed, and
+    # an assertion naming the route called it a regression. That is the
+    # mechanism-not-outcome trap in CLAUDE.md's own table, in an assertion added the same
+    # day, so the route is now reported rather than required.
+    epsrc="$(jq -r '.container.entrypoint_source' <<<"$epjson")"
+    case "$epsrc" in
+        engine-array|image-verified) ;;
+        *) fail "json: the entrypoint was not recovered exactly — source '$epsrc' means the driver could not produce an element-by-element argv for a container that has one" ;;
+    esac
+    note "entrypoint-only container: recovered via '$epsrc' ($(podman --version))"
 
     # THE CONTROL. Override the entrypoint so the container and its image disagree.
     # The driver must REFUSE the image's array — reporting ["/bin/sleep","600"] for a
@@ -193,13 +206,28 @@ if printf 'FROM docker.io/library/busybox:latest\nENTRYPOINT ["/bin/sleep","600"
     # as a four-element argv and is a different program.
     if podman run -d --name "$OVNAME" --entrypoint '["/bin/sh","-c","sleep 900"]' "$EPIMG" >/dev/null 2>&1; then
         ovjson="$("$LAB_PODMAN" inspect "$OVNAME" --json)"
-        [[ "$(jq -r '.container.entrypoint_source' <<<"$ovjson")" == "joined-string" ]] \
-            || fail "REGRESSION: a container that OVERRODE its entrypoint reported source '$(jq -r '.container.entrypoint_source' <<<"$ovjson")' — the image's array must be refused when re-joining it does not reproduce the container's string"
-        [[ "$(jq -rc '.container.entrypoint' <<<"$ovjson")" != '["/bin/sleep","600"]' ]] \
+        ovsrc="$(jq -r '.container.entrypoint_source' <<<"$ovjson")"
+        ovep="$(jq -rc '.container.entrypoint' <<<"$ovjson")"
+
+        # THE PROPERTY, and it holds whichever shape the engine reports: the answer
+        # describes THIS CONTAINER, and no word boundary was invented. Everything below
+        # is engine-independent; only the route differs.
+        [[ "$ovep" != '["/bin/sleep","600"]' ]] \
             || fail "REGRESSION: the driver served the IMAGE's entrypoint for a container that overrode it — a cached fact outliving its subject"
-        [[ "$(jq -r '.container.entrypoint | length' <<<"$ovjson")" == "1" ]] \
-            || fail "json: an unsplittable entrypoint must be reported as the ONE string it is known to be, not split on spaces — got $(jq -rc '.container.entrypoint' <<<"$ovjson")"
-        note "override control: source=joined-string, entrypoint=$(jq -rc '.container.entrypoint' <<<"$ovjson") (not split, not the image's)"
+        [[ "$ovsrc" != "image-verified" ]] \
+            || fail "REGRESSION: source 'image-verified' for a container that OVERRODE its entrypoint — re-joining the image's array cannot reproduce this container's, so the identity check did not bite"
+        case "$ovsrc" in
+            engine-array)
+                # The engine gave the array, so it must be the real argv, exactly.
+                [[ "$ovep" == '["/bin/sh","-c","sleep 900"]' ]] \
+                    || fail "json: the engine reported an array, so the override must round-trip exactly — got $ovep" ;;
+            joined-string)
+                # The engine flattened it; the driver must NOT guess where the words were.
+                [[ "$(jq -r '.container.entrypoint | length' <<<"$ovjson")" == "1" ]] \
+                    || fail "json: an unsplittable entrypoint must be reported as the ONE string it is known to be, not split on spaces — got $ovep" ;;
+            *)  fail "json: unexpected entrypoint_source '$ovsrc' for an overridden entrypoint" ;;
+        esac
+        note "override control: source=$ovsrc, entrypoint=$ovep (this container's, never the image's, never a guessed split)"
     else
         note "SKIPPED the override control: podman refused --entrypoint — that branch is UNVERIFIED on this host"
     fi
