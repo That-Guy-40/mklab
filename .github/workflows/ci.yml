@@ -169,6 +169,20 @@ jobs:
         # own control: the bare-count shape it replaced must fail the same assertions.
         run: bash tools/tests/test-run-all-reports-a-ratio.sh
 
+      - name: the suite loop tolerates a suite that skips wholesale
+        # TODO 11.1. #267 repaired a skip-tolerance that was DEAD CODE: under GitHub's
+        # default `bash -e {0}`, `cmd; r=$?` never reaches the assignment, so a suite
+        # exiting 77 killed the step and every suite after it silently never ran. The
+        # repair has still never executed in production -- no suite has yet exited 77
+        # wholesale on a runner -- so the branch that permits it has not been taken here.
+        # This takes it deliberately, on every push: it seds the SHIPPED run_suite out of
+        # this very file (a re-implementation would drift and then prove something about
+        # the copy), drives it under both `bash -e` and `bash -eo pipefail` against
+        # synthetic suites exiting 0/77/1, and asserts what the step PRINTS and EXITS.
+        # Its control re-injects the pre-#267 shape and requires it to fail the same
+        # assertions.
+        run: bash tools/tests/test-ci-tolerates-a-skipped-suite.sh
+
       - name: no cached host facts in the micro-cloud instruments
         # Pure text analysis, no host state — safe on a runner that has none of these
         # interfaces. Guards the defect class that made one instrument print a fact from
@@ -303,6 +317,37 @@ jobs:
             echo "::warning::/dev/kvm exists but is not read-write for uid $(id -u) — 7 phase-7 tests will SKIP, so the config-generator escaping, record-encoding and lifecycle guards are NOT exercised by this run"
           else
             echo "::warning::/dev/kvm is absent on this runner — 7 phase-7 tests will SKIP, so the config-generator escaping, record-encoding and lifecycle guards are NOT exercised by this run"
+          fi
+      - name: Install qemu-system (so phase 2's argv unit tests RUN, not SKIP)
+        # TODO 11.2a. Measured from the annotation on 1c756a6: phase 2 skipped 12 of its
+        # rows on this runner, and NINE of them are gated on a qemu-system binary merely
+        # EXISTING -- they source `build_qemu_argv` and assert the argv it renders. Nothing
+        # here boots: without /dev/kvm the generator simply renders tcg, which is a
+        # different assertion, not a broken one.
+        #
+        # Two packages, deliberately: seven rows need only `qemu-system-x86_64`, and
+        # `test-microvm-argv.sh` also requires `qemu-system-aarch64` (a separate package)
+        # because the microvm/virt split is the thing it exists to check. The ninth,
+        # `test-debian-x86_64-boot.sh`, will STILL skip -- it needs /dev/kvm, socat, curl
+        # and an ISO maker, and booting Debian under TCG is not worth a runner's minutes.
+        #
+        # THE PRICE, stated because §11.2a asks for it: ~120 MB and roughly a minute of
+        # install, once per run of this job, to move eight rows from UNKNOWN to measured.
+        # The three MAAS rows the same binary appears to gate are NOT bought by this: each
+        # needs more behind it (ukify+swtpm+mtools+OVMF; a ROM built with docker; a staged
+        # netboot kernel), which the earlier tally missed by reading only the FIRST missing
+        # command in each skip line.
+        run: |
+          timeout 300 sudo apt-get install -y qemu-system-x86 qemu-system-arm \
+            || echo "::warning::qemu-system install failed or timed out — phase 2's argv unit tests will SKIP, so build_qemu_argv is NOT exercised by this run"
+          missing=""
+          for c in qemu-system-x86_64 qemu-system-aarch64; do
+            command -v "$c" >/dev/null 2>&1 || missing="$missing $c"
+          done
+          if [ -n "$missing" ]; then
+            echo "::warning::still missing:$missing — the phase-2 rows gated on it will SKIP, and the end-of-step annotation will name each one"
+          else
+            echo "qemu-system present ($(qemu-system-x86_64 --version | head -1)) — phase 2's argv unit tests will run"
           fi
       - name: Run every phase's run-all.sh
         # Tests needing docker/podman/incus/root exit 77 (skip); run-all.sh only
