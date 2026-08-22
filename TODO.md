@@ -1089,12 +1089,17 @@ schedulable:
 
 - [x] **11.2a** — **done 2026-08-22, and the figure above was wrong.** `qemu-system-x86`
       + `qemu-system-arm` + `xorriso` (~120 MB, ~1 min per run of the job) took the total
-      from **58 skipped rows to 49**, measured from the annotation on both sides:
+      from **58 skipped rows to 48**, measured from the annotation on both sides:
 
       | suite | before | after | what moved |
       |---|---|---|---|
-      | `phase2-qemu-vm` | 12 | **4** | the eight argv rows; `test-debian-x86_64-boot.sh` still needs `/dev/kvm`, socat, curl and an ISO maker |
+      | `phase2-qemu-vm` | 12 | **3** | the eight argv rows, plus `test-seed-and-sha256.sh` on `xorriso`; `test-debian-x86_64-boot.sh` still needs `/dev/kvm`, socat and curl |
       | `examples/metal-as-a-service/` | 7 | **6** | `test-tpm-xml.sh` |
+
+      *(That table read `4` and `49` for one draft — written from the FIRST green run,
+      before `xorriso` was in the install. The figures here are from the run that shipped.
+      A number copied out of a previous run is a cache entry, in a section about exactly
+      that; the annotation is the source, so read it after the last change, not before.)*
 
       **Two corrections to 11.2's table, both from reading only the FIRST missing command
       in each skip line.** It over-counted: `qemu-system-x86` was credited with twelve rows
