@@ -1133,9 +1133,10 @@ toolchain-fetch gate forbids fetch+exec of prebuilt toolchains, so this one is *
 by decision, not open**. Recorded here so it stops being re-raised as if it were
 schedulable.
 
-### 11.3 `shellcheck` gates 60 of 515 tracked scripts
+### 11.3 `shellcheck` gates 60 of 516 tracked scripts
 
-`bash -n` covers **all 515**. `shellcheck` runs against a **hand-maintained list of 60** —
+**As measured 2026-08-21:** `bash -n` covers **all 515**. `shellcheck` runs against a
+**hand-maintained list of 60** —
 the phase drivers plus the micro-cloud instruments — so a list, again, is doing a job a
 question should do. Measured: of the **455** un-gated tracked scripts, **415 already pass**
 at CI's own severity and **40 would fail** (1 of them vendored upstream, so 39 are ours).
@@ -1147,10 +1148,101 @@ final element, in a section about checks that silently cover less than they look
 un-gated and *passes today*; four of its siblings (`create-fleet.sh`, `deployer-init.sh`,
 `lib/e2e-common.sh`, `measure-init.sh`) are among the 40.
 
-- [ ] **11.3** — invert it: shellcheck **everything tracked** with an explicit, commented
-      exclusion list for the 39, rather than an inclusion list of 60. A file added
-      tomorrow is then gated by default, which is the property the current shape lacks —
-      the same reasoning that made `run-all.sh` compare its list against the disk.
+**Re-derived 2026-08-22** (the paragraph above is from 2026-08-21, and a figure in prose
+is a cache entry): **516** tracked scripts, **60** gated at `--severity=warning`, **456**
+un-gated, of which **416 already pass** and **40 would fail**, carrying **59 findings**.
+The drift is one file — this section's own sibling, `test-ci-tolerates-a-skipped-suite.sh`,
+added the same day. Every classification below is from that sweep; re-run it before acting
+on it rather than trusting these numbers.
+
+**The wiring is ten lines. The work is the 40 files** — so 11.3 is two tasks, in this
+order, and the order is the point: **flip the gate second**, or the inversion ships red and
+a gate that starts red is a gate someone disables.
+
+#### 11.3a — fix what is real (do this first)
+
+The 59 findings triage into three tiers. An earlier note in this session put "roughly ten"
+in the top tier; reading each one puts **three** there, and being wrong in that direction
+is worth recording — a code that *can* indicate a defect is not a defect, and the tally was
+made from severity codes rather than from the lines they point at.
+
+**Tier 1 — real defects (3 files, 4 findings). Each is a one-line fix, and each is a shape
+this repo already has a rule about:**
+
+| where | code | what is actually wrong | fix |
+|---|---|---|---|
+| `examples/FREEBSD-simple-templating-serving-RHEL-kickstart-files/templating/kickstart.sh:72` | SC2320 | `if [ ${?} -eq 0 ]` sits after two `echo`s, so it tests the **echo's** status. The script announces *"ISO image generated"* whether or not `mkisofs` succeeded — a **false success**, the one that outranks an honest failure | capture `mkisofs`'s status into a variable **on its own line**, before the echoes, and test that |
+| `examples/metal-as-a-service/create-fleet.sh:106` | SC2318 | `local name="$1" log="$CONSOLE_DIR/$name.log"` — `local` is a *command*, so its arguments are expanded **before** it runs and `$name` is the **caller's**, not `$1`. Correct today only by accident: the call site is `for name in $(fleet_names)` with `name` left global and holding the same value. Measured: same-value caller → `/dir/node1.log`; a caller whose `name` differs → **that** node's path; **no** caller global (i.e. if that loop variable were ever made `local`) → `/dir/.log`, one shared append-only console for the whole fleet, written into the domain XML and recorded in the registry. Node B's boot output would then satisfy node A's health gate — the record-outlives-its-subject class this lab's own [`DEFERRED.md`](examples/metal-as-a-service/DEFERRED.md) is about. Needs sudo + libvirt to execute, so the green suite cannot see it | split into two `local` statements |
+| `phase5-lxd/tests/test-inspect-json.sh:337` | SC2221 + SC2222 | `*"no instance"*\|*"no instance, profile"*` — the second pattern is subsumed by the first and can never match. The assertion accepts one message while reading as though it accepts two | drop the dead pattern, or make the first specific enough that both are reachable |
+
+**Tier 2 — real, low-grade, mechanical (15 findings).** `cd` with no guard (SC2164, 11×) —
+six of them the opening `cd -- "$(dirname -- "${BASH_SOURCE[0]}")"` in a `run-all.sh`, where
+a failed `cd` leaves the runner globbing `test-*.sh` in an unrelated directory and reporting
+a clean `0/0`. Append `|| exit 1`. Plus `ls | grep` / `ls | xargs` (SC2010 3×, SC2011 1×) —
+replace with a glob or `find -exec`.
+
+**Tier 3 — labels, not bugs (40 findings).** These are the exclusion list, and each gets an
+**in-file** `# shellcheck disable=<code>  # <reason>` rather than a central entry, so the
+excuse lives beside the code and dies with it:
+
+- **SC2154 (20×)** — deferred or indirect assignment shellcheck cannot see: `rc=$?` inside a
+  single-quoted `trap` body, and `_shellmath_getReturnValue _sm` assigning by name. One of
+  the 20 reads `did you mean 'r_sm'?`, which is the only typo-shaped one and is **not** a
+  typo — check it, don't assume it.
+- **SC2054 (6×)** — `QEMU+=(-nic user,model=virtio-net-pci)`: those commas are QEMU option
+  syntax inside one word, not array separators. Quote the word; behaviour is unchanged.
+- **SC1112 (3×)** — typographic apostrophes inside single-quoted **prose** (`the container's`).
+  Retype as ASCII.
+- **SC2187 (2×)** — `deployer-init.sh` / `measure-init.sh` are `#!/bin/busybox sh`. Add
+  `# shellcheck shell=dash`, then **re-run**: dash-checking will surface findings the
+  bash-assumed pass never reported.
+- **SC2148 / SC1090 / SC1007 / SC2217 / SC1008 / SC1113 / SC2096 / SC3045 (1× each)** —
+  a sourced lib with no shebang (`shell=bash`), a non-constant `source`, a deliberate
+  `VAR= cmd` prefix, a deliberate `sleep 30 </etc/hostname &` holding an fd open *because
+  that is the article's subject*, a `/etc/profile.d/` snippet whose first comment line
+  shellcheck reads as a shebang, and `ulimit -n` under `#!/bin/sh`.
+- **SC2076 (1×)** — the only genuinely **vendored** file
+  (`examples/almalinux-packer-images/upstream-repo/…/99-img-check.sh`), and therefore the
+  only one that belongs in a central exclusion: it is not ours to edit.
+
+- [ ] **11.3a** — land Tier 1 and Tier 2 as their own PR, Tier 3 as directives. Each Tier-1
+      fix wants a **negative control**, not just a green re-run: for `kickstart.sh`, make
+      `mkisofs` fail and watch the success line *stop* printing; for `create-fleet.sh`, the
+      three-way measurement above re-run after the split; for the `case`, feed it the second
+      message and watch it be accepted.
+
+#### 11.3b — flip the gate (only once 11.3a is green)
+
+```yaml
+- name: shellcheck EVERY tracked shell script
+  run: |
+    mapfile -t files < <(git ls-files '*.sh' | grep -vxF -f .shellcheck-exclude)
+    echo "linting ${#files[@]} of $(git ls-files '*.sh' | wc -l) tracked scripts"
+    shellcheck -x --severity=warning -e SC2064,SC2155,SC2034 -f gcc "${files[@]}"
+```
+
+replacing **both** hand-maintained lists (the phase drivers and the micro-cloud
+instruments). Keep the existing error-severity sweep of `*/tests/*.sh`: it is a subset, and
+deleting it is a change nobody needs to make on the same day.
+
+Four things that make it a gate rather than a decoration:
+
+1. **`.shellcheck-exclude` is a file of exact paths with a `# why` above each**, and it
+   should end up holding **one** entry (the vendored upstream script). An exclusion list of
+   39 is the same construct as an inclusion list of 60 — a list doing a question's job.
+2. **Print the ratio it linted** (`N of M tracked`), for the same reason `run-all.sh` prints
+   `ran/listed`: a step that silently lints nothing and a step that lints everything both
+   exit 0.
+3. **Fail when an excluded path no longer exists.** A stale exclusion is a cache entry: it
+   keeps excusing a file that was renamed, and the *new* name is silently gated by nobody.
+4. **Run the negative control before believing it.** Plant a file with a known-bad line
+   (`cd /tmp` with no guard is enough), confirm the step **fails**, and confirm the count in
+   (2) went up by one. An all-PASS sweep is indistinguishable from one that matched no
+   files — which is exactly how a `git ls-files` glob typo would present.
+
+- [ ] **11.3b** — flip it, with (1)–(4). A file added tomorrow is then gated by default,
+      which is the property the current shape lacks — the same reasoning that made
+      `run-all.sh` compare its list against the disk.
 
 ### 11.4 Nothing asks whether a verb a doc types actually exists
 
