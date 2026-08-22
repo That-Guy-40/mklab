@@ -57,11 +57,18 @@ note "refusal: a malformed MAC is rejected before the VM is built"
 # ── 3. the CLI end — the half that was actually missing ─────────────────────
 # THE REGRESSION: --mac existed nowhere, and `mac` was absent from the CLI spec builder's
 # jq object, so this path silently produced a VM with QEMU's default MAC.
-out="$("$LAB_VM" create --name mactest --backend kernel+initrd \
+# --no-cloud-init: create SEEDS a NoCloud ISO by default, so without it this create needs
+# genisoimage/xorriso/mkisofs on the host — machinery this test has no opinion about. It
+# cost a CI failure the first time the row actually ran (2026-08-22, the run that installed
+# qemu-system and moved eight phase-2 rows from UNKNOWN to measured): the host had no ISO
+# maker, create refused, and the verdict below announced that `--mac` was missing. It was
+# not. A test that names the wrong cause is worse than one that skips, and the fix is to
+# stop depending on the incidental step rather than to install a tool for it.
+out="$("$LAB_VM" create --name mactest --backend kernel+initrd --no-cloud-init \
         --kernel /dev/null --initrd /dev/null \
         --network-mode tap --tap mc-edge --mac "$MAC" 2>&1)" || {
     printf '%s\n' "$out" >&2
-    fail "REGRESSION: 'create --mac' failed — the flag must exist and be accepted on the command line"
+    fail "REGRESSION: 'create --mac' exited non-zero — see create's own output above for the cause; if it names --mac the flag has regressed, and if it names anything else this test has picked up a dependency it should not have"
 }
 mf="$LAB_STATE_DIR/vms/mactest/manifest.toml"
 [[ -r "$mf" ]] || fail "no manifest written at $mf"
@@ -70,7 +77,7 @@ grep -Eq "^mac[[:space:]]*=[[:space:]]*\"$MAC\"" "$mf" \
 note "cli: --mac -> spec -> manifest.toml ($MAC)"
 
 # ── 4. and the CLI's refusal is the tool's, not QEMU's, and not silence ─────
-if ( "$LAB_VM" create --name macbad --backend kernel+initrd --kernel /dev/null \
+if ( "$LAB_VM" create --name macbad --backend kernel+initrd --no-cloud-init --kernel /dev/null \
         --initrd /dev/null --network-mode tap --tap mc-edge --mac "zz:zz" >/dev/null 2>&1 ); then
     fail "create accepted --mac zz:zz — a malformed MAC must be refused"
 fi

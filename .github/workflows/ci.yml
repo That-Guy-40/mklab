@@ -337,11 +337,18 @@ jobs:
         # needs more behind it (ukify+swtpm+mtools+OVMF; a ROM built with docker; a staged
         # netboot kernel), which the earlier tally missed by reading only the FIRST missing
         # command in each skip line.
+        #
+        # `xorriso` rides along (a few MB) for a different row: test-seed-and-sha256.sh
+        # skipped with "no ISO maker", and unlike the argv rows its SUBJECT is the NoCloud
+        # seed ISO, so the tool is a genuine precondition there rather than incidental
+        # machinery. That distinction is not academic -- it is exactly what the first run
+        # of this step turned up: test-mac-cli.sh had quietly depended on an ISO maker it
+        # has no opinion about, and announced the absence as a regression in `--mac`.
         run: |
-          timeout 300 sudo apt-get install -y qemu-system-x86 qemu-system-arm \
+          timeout 300 sudo apt-get install -y qemu-system-x86 qemu-system-arm xorriso \
             || echo "::warning::qemu-system install failed or timed out — phase 2's argv unit tests will SKIP, so build_qemu_argv is NOT exercised by this run"
           missing=""
-          for c in qemu-system-x86_64 qemu-system-aarch64; do
+          for c in qemu-system-x86_64 qemu-system-aarch64 xorrisofs; do
             command -v "$c" >/dev/null 2>&1 || missing="$missing $c"
           done
           if [ -n "$missing" ]; then

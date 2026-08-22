@@ -1032,11 +1032,31 @@ with the control showing the old shape dying at the 77 without printing its own
 `::endgroup::`. Real, measured — measured *here*, which
 [is not the same thing](CLAUDE.md).
 
-- [ ] **11.1** — make a suite exit 77 wholesale on a runner **on purpose**, once, and
-      confirm the loop tolerates it and continues. A one-commit throwaway on a branch (a
-      `run-all.sh` whose every test skips), or better: a `tools/tests/` fixture that
-      drives the extracted step the way `test-run-all-reports-a-ratio.sh` drives the
-      runners — behavioural, and it would then run on every push instead of once.
+- [x] **11.1** — **closed 2026-08-22** by the durable form, not the throwaway:
+      [`tools/tests/test-ci-tolerates-a-skipped-suite.sh`](tools/tests/test-ci-tolerates-a-skipped-suite.sh)
+      seds the **shipped** `run_suite` out of `ci.yml` (a re-implementation would drift and
+      then prove something about the copy) and drives it under both `bash -e` and
+      `bash -eo pipefail` against synthetic suites exiting 0/77/1. It asserts the loop
+      **reaches the suite after the 77** — a sentinel, not the exit code, because the
+      truncation was the expensive half — that `::group::` closes across it, that a suite
+      exiting 1 still fails the step *and* still does not truncate the loop, and that the
+      annotation names every skipped test on one line while staying silent when nothing
+      skipped. Two controls: the pre-#267 `; r=$?` shape must fail the same assertions, and
+      an absent annotation block must produce no annotation.
+
+      **It ran on a runner** in the `shellcheck + bash -n` job of PR #269 and printed both
+      the verdict and `control: the pre-#267 '; r=$?' shape dies at the 77 (rc=77) and the
+      later suite never runs`. So the tolerant branch is now taken on every push, on
+      GitHub's own shell — which is what "measured *there*" was asking for.
+
+      Four mutants of `ci.yml` were run and watched to bite before it shipped. One of them
+      retired a check inside the checker: a `grep -q 77` extraction-sanity line fired first
+      on the deleted-tolerance mutant and blamed *the extraction* for a defect that was
+      nothing of the sort. Behaviourally the same mutant now reports "the tolerance is too
+      wide and CI gates nothing", which is true. And the control caught a bug in itself on
+      its first execution: in `${v/pat/repl}` an unescaped `&` in the **replacement**
+      expands to the matched text, so a replacement containing `2>&1` spliced the match
+      back into itself and built a line that never ran.
 
 ### 11.2 Fifty-eight rows skip on every CI run — 21 of them closable
 
@@ -1067,10 +1087,38 @@ schedulable:
 | `swtpm` · `ovmf` · `libguestfs-tools` · `xorriso` | 1 each |
 | binfmt `qemu-aarch64` | 1 — phase 3's buildx multiarch row |
 
-- [ ] **11.2a** — add `qemu-system-x86` first: one package, twelve rows, and phase 2's
-      argv tests need only the binary to *exist*, not to boot anything. Weigh each
-      install against runner minutes and say so in the step comment, the way the
-      disk-image and `/dev/kvm` steps already do.
+- [x] **11.2a** — **done 2026-08-22, and the figure above was wrong.** `qemu-system-x86`
+      + `qemu-system-arm` + `xorriso` (~120 MB, ~1 min per run of the job) took the total
+      from **58 skipped rows to 49**, measured from the annotation on both sides:
+
+      | suite | before | after | what moved |
+      |---|---|---|---|
+      | `phase2-qemu-vm` | 12 | **4** | the eight argv rows; `test-debian-x86_64-boot.sh` still needs `/dev/kvm`, socat, curl and an ISO maker |
+      | `examples/metal-as-a-service/` | 7 | **6** | `test-tpm-xml.sh` |
+
+      **Two corrections to 11.2's table, both from reading only the FIRST missing command
+      in each skip line.** It over-counted: `qemu-system-x86` was credited with twelve rows
+      and bought nine, because `test-debian-x86_64-boot.sh` needs four more things and the
+      three MAAS rows named `qemu-system-x86_64` first while each needs a whole chain
+      behind it (`ukify`+`swtpm`+`mtools`+OVMF; a ROM built with docker; a staged netboot
+      kernel). It also **under**-counted, in the other direction: nothing predicted
+      `test-tpm-xml.sh`, which the same install bought anyway. A tally derived from one
+      line of a skip message is a cache entry, and it was wrong in both directions at once.
+
+      **And the eighth row failed the moment it ran** — the whole point of moving a row
+      from UNKNOWN to measured. `test-mac-cli.sh` calls `create`, which seeds a NoCloud ISO
+      by **default**, so on a host with no `genisoimage`/`xorriso`/`mkisofs` it failed and
+      announced `REGRESSION: 'create --mac' failed — the flag must exist`. The flag was
+      fine. A test that names the wrong cause is worse than one that skips, so it now
+      passes `--no-cloud-init` (its subject is MAC → spec → manifest → argv; seed ISOs are
+      machinery it has no opinion about) and its failure message defers to `create`'s own
+      output. Proven both ways locally against a PATH built without the three ISO makers:
+      the pre-fix test reproduces the runner's failure exactly, the fixed one passes with
+      and without them.
+
+      The remaining 11.2(a) installs are unchanged and still open: `musl-tools` (2),
+      `dnsmasq` (2), `swtpm`·`ovmf`·`libguestfs-tools` (1 each), binfmt `qemu-aarch64` (1).
+      Each should be weighed against runner minutes in its step comment, as this one is.
 
 **(b) Not closable on a hosted runner — 37 rows, and they must stay UNKNOWN:**
 17 need **root** (phase 1's mount/debootstrap guards, micro-cloud's fabric), 10 need a
@@ -1129,4 +1177,5 @@ was the honest fix for an audit with no mandate to change a driver.
 ---
 
 *Created 2026-06-06; #5–#6 added 2026-06-11; #7 added 2026-06-11; #8 added
-2026-08-03; #9 added 2026-08-06; #10 added 2026-08-06; #11 added 2026-08-21.*
+2026-08-03; #9 added 2026-08-06; #10 added 2026-08-06; #11 added 2026-08-21;
+#11.1 and #11.2a closed 2026-08-22.*
