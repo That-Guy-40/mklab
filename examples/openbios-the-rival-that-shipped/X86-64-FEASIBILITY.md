@@ -5,7 +5,7 @@
 >
 > First written 2026-08-18 as a study; **audited the same day, and Spike 0 —
 > which the first version explicitly had not attempted — has now been run.**
-> The verdict survived. Seven claims did not survive unchanged; they are
+> The verdict survived. Eight claims did not survive unchanged; they are
 > corrected in place and listed in
 > [§ What the audit corrected](#what-the-audit-corrected). The spike's build
 > patches ship in [`patches/`](patches/) so every number below is
@@ -305,6 +305,14 @@ per the repo's learning-path rule:
 | **1 — the trampoline** | apply the drift fixes + the bug-#1 header fix (both already written); rewrite `switch.S`; author the 32→64 stub; stub out `boot.c`/`linux_load.c` to get a link | `0 >` on the serial socket, and `-1 u.` answering `ffffffffffffffff` from the *bare metal* rather than from `openbios-unix` |
 | **2 — context + exceptions** | the 64-bit context frame (`context.c`'s eight errors), a 64-bit IDT in a new `exception.c` | a deliberate `0 0 !` reports a named fault instead of triple-faulting; the client-program context still switches back to the prompt |
 | **3 — boot Linux** | re-port `boot.c`/`linux_load.c` off the dead API (x86's twins show the shape), then the `+0x200` entry | the existing [`showcase-rival-boots-linux.sh`](showcase-rival-boots-linux.sh) success signature, unchanged, from the 64-bit firmware |
+| **P0–P2 — persistence** | *(runs in parallel, on the 32-bit firmware — see [the persistence spikes](#the-persistence-spikes--a-ladder-that-does-not-wait-for-the-port))* | a config variable that survives a power cycle, asserted on the **host's** backing file |
+| **P3 — the pmem store** | the only persistence work that needs long mode, and it depends on spike 1 | `/nvram` answering at a physical address ≥ `0x100000000` |
+
+**Ordering.** Spikes 1–3 and P0–P2 are independent: the persistence rungs need
+no 64-bit anything, and P3 needs spike 1 (a firmware that runs in long mode)
+before it needs anything of its own. Doing P0–P2 first is the cheaper order —
+it lands a working NVRAM on the firmware that already boots, so the port is not
+being asked to debug two unfinished subsystems at once.
 
 Known failure mode worth planning for in 1–2: a triple fault under
 `-no-reboot` exits QEMU with **rc=0** ([POC-2](POC-2-OK-PROMPT.md)'s pitfall
@@ -411,10 +419,12 @@ bytes 2–15), lengths counted in **16-byte granules**, free space named
 |---|---|---|---|---|
 | **CMOS/RTC, 128 bytes** | yes | **no** — QEMU offers no file backing | yes | a CMOS driver, and the format does not fit |
 | **A file on an attached drive** | yes | yes | yes | **a write path at every layer — none exists** |
-| **`-drive if=pflash`** | yes | yes | yes — maps at `0xffc00000` | the three functions, plus a boot-path change |
+| **`-drive if=pflash`** | yes | yes | yes — vars unit at `0xffbe0000` | a small CFI driver, plus a 4 MiB pflash0 image — **configuration booted** |
 | **NVDIMM / pmem** | yes | yes | **no — measured at `0x100000000`** | ACPI discovery, a memory-map fix, *then* long mode |
 
-Only the last row needs the port. What follows is what each row costs.
+Only the last row needs the port — and row 3 has been booted, so the recommended
+order is not the order the table is written in. What follows is what each row
+costs.
 
 #### 1. CMOS/RTC — the one that is genuinely "the PC's NVRAM", and it is a dead end
 
@@ -470,32 +480,77 @@ the `disk-label` stub, and teaching one filesystem to write — and the
 whole-image `arch_nvram_put` contract means it must be a full rewrite of the
 region every time, so no append trick shortens it.
 
-#### 3. `-drive if=pflash` — the best fit for the contract, at the price of the boot path
+#### 3. `-drive if=pflash` — the best fit for the contract, and the one configuration that has actually been booted
 
-Measured on QEMU 8.2.2, `-M pc`:
+Measured on QEMU 8.2.2, `-M pc`, with both units attached:
 
 ```
+00000000ffbe0000-00000000ffbfffff (prio 0, romd): system.flash1
 00000000ffc00000-00000000ffffffff (prio 0, romd): system.flash0
 ```
 
-The top 4 MiB of the 32-bit address space — squarely reachable, and *memory-mapped*,
-which is exactly the shape `arch_nvram_get`/`put` want: two `memcpy`s against a
-fixed address. This is the EFI-shaped answer (`OVMF_VARS.fd` is precisely this),
-and it is a real NV region the firmware owns rather than borrows.
+A **128 KiB vars store at a fixed `0xffbe0000`**, directly below the 4 MiB code
+unit, both squarely inside the 32-bit address space — and eight times macio's
+16 KiB, so the format has room to spare. This is the EFI-shaped answer
+(`OVMF_VARS.fd` is precisely this pairing): a real NV region the firmware owns
+rather than borrows.
 
-The price is measured too:
+**The `-kernel` boot path and pflash0 are mutually exclusive in practice**, which
+is not what the command line says. QEMU accepts `-kernel` alongside a pflash0
+without a murmur — that is the cheap check — so the question had to be asked by
+booting. Baseline against variants, same tree, same command shape:
+
+| configuration | last lines on the serial console |
+|---|---|
+| `-kernel openbios.multiboot` (the lab's path today) | `Welcome to OpenBIOS v1.1 …` then `0 >` |
+| + `-drive if=pflash,file=<4 MiB of zeros>,unit=0` | **nothing at all** |
+| + a `unit=1` vars image as well | **nothing at all** |
+
+pflash0 *is* the BIOS: supplying an empty one removes the SeaBIOS that loads the
+multiboot image in the first place, and the machine goes dark. (The passing
+baseline is the control — without it, "no output" would be indistinguishable
+from a broken harness.)
+
+Populate it and the configuration works. SeaBIOS written to the **top** of a
+4 MiB image, so the reset vector lands in it, with the vars unit beside it:
+
+```console
+$ truncate -s 4M seabios-flash.img
+$ dd if=/usr/share/seabios/bios.bin of=seabios-flash.img bs=1 \
+     seek=$(( 4*1024*1024 - 131072 )) conv=notrunc
+$ truncate -s 128k vars.img
+$ qemu-system-i386 -M pc -m 256 -display none -serial stdio \
+     -kernel obj-x86/openbios.multiboot -initrd obj-x86/openbios.dict \
+     -drive if=pflash,format=raw,file=seabios-flash.img,unit=0 \
+     -drive if=pflash,format=raw,file=vars.img,unit=1
+vga-driver-fcode:load-base isn't unique.
+Welcome to OpenBIOS v1.1 built on Jul 23 2026 03:04
+
+0 >
+```
+
+So row 3 is buildable today, on the 32-bit firmware, and the boot-path change it
+costs is **one 4 MiB image, measured, not guessed**.
+
+**One correction to make before anyone writes the code**: an earlier draft of this
+section said `arch_nvram_get`/`put` would be "two `memcpy`s against a fixed
+address." The read half is right; the write half is not, and `romd` in the
+mapping above is the tell — a ROM-device region serves reads straight from the
+backing but sends **writes to the device model**. Asked directly:
 
 ```
-qemu-system-i386: pflash1 requires pflash0
+dev: cfi.pflash01, id ""
+  sector-length = 4096 (0x1000)
+  width = 1 (0x1)
 ```
 
-The two-unit shape *is* the OVMF code+vars pairing, so using pflash1 as a variable
-store obliges you to fill pflash0 — the **system flash** slot. This lab boots the
-firmware with `-kernel openbios.multiboot`, leaving pflash0 empty, so row 3 costs a
-change to how OpenBIOS is loaded (build a flash image of it) on top of the three
-functions. *(QEMU did **not** reject `-bios` alongside pflash0, so no exclusivity
-is claimed here — only that the slot is the system-flash slot and the pairing is
-enforced.)*
+`cfi.pflash01` is the **Intel command set**, so `arch_nvram_put` is an unlock /
+block-erase / program / poll-status / read-array sequence over 4 KiB sectors at
+one byte per bus cycle — 32 sectors for a whole-store rewrite, which the
+no-offset contract makes mandatory every time. And there is nothing to reuse:
+grepping the tree for a CFI or flash driver finds **none** — only a PCI class
+string in `pci_database.c` and macio's `compatible = "nvram,flash"` property.
+That small driver, not the three functions, is the real content of row 3.
 
 #### 4. NVDIMM / pmem — measured above 4 GB, and long mode is the *third* blocker, not the first
 
@@ -547,6 +602,49 @@ up, and only the last is about mode:
 Blockers 1 and 2 are work you would do in **either** mode. So the honest form of
 the headline is: *a pmem NVRAM is the only backing that long mode unlocks, and
 long mode is the cheapest third of it.*
+
+### The persistence spikes — a ladder that does not wait for the port
+
+The single most useful consequence of the table above is a scheduling one:
+**three of the four backings are 32-bit-reachable, so persistence is not blocked
+on long mode.** It can be built, and each rung proved, on the firmware this lab
+already boots — which also means the eventual 64-bit port inherits a *working*
+NVRAM instead of debugging two unfinished things at once.
+
+Each rung keeps an observable checkpoint, per the repo's learning-path rule, and
+each one's checkpoint is chosen to be an **outcome rather than a mechanism** —
+"the bytes on the host changed", not "the word returned what I set".
+
+| rung | work | observable checkpoint | mode |
+|---|---|---|---|
+| **P0 — a node that exists** | implement `arch_nvram_size/get/put` in `arch/x86` over a plain static buffer; call `nvram_init()` once | `dev / ls` lists **`nvram`**, and `dev /nvram .properties` answers — the exact probe that comes back without it today | 32-bit |
+| **P1 — survives a firmware reset** | a CFI driver (Intel command set, 4 KiB sectors, byte-wide) over `0xffbe0000`; the 4 MiB pflash0 image | set a config variable, then **`cmp` the host's `vars.img` before and after** — it must differ | 32-bit |
+| **P2 — survives an OS boot, then a power cycle** | nothing new — P1's store, exercised | set a value, boot Linux with the existing [`showcase-rival-boots-linux.sh`](showcase-rival-boots-linux.sh), exit QEMU entirely, start a **fresh process**, read it back | 32-bit |
+| **P3 — the pmem store** | an NFIT reader (or, as a first step, a hard-coded region); lift `multiboot.c`'s type-1 filter; then the 64-bit addressing | `/nvram` answering at a physical address **≥ `0x100000000`**, with the backing file changing on the host | **needs the port** |
+
+Three notes on why the rungs are cut here and not elsewhere:
+
+- **P0 is worth its own rung even though it persists nothing.** It is the step
+  that turns *"the vocabulary answers while the device does not exist"* into its
+  opposite, and it is the only rung whose before-picture has already been
+  measured — the `dev / ls` output at the top of this section **is** P0's
+  negative control, recorded before the code exists.
+- **P1's checkpoint deliberately ignores the Forth.** Reading a variable back
+  inside one firmware session proves nothing about storage: dictionary state
+  answers identically, which is precisely today's illusion. The assertion has to
+  land on the host's file.
+- **P2 needs no new code, and that is the point.** If P1 is real, P2 is free; if
+  P2 fails after P1 passed, the store is RAM-shaped and P1's checkpoint was
+  measuring the wrong thing. It is P1's control as much as its successor — and
+  a RAM-backed P0 must **fail** P2, which is the way to find that out cheaply.
+
+What this ladder deliberately does not do is settle **row 2**. A writable
+filesystem is a larger project than all of P0–P2 together (five layers, listed
+above), and nothing in the persistence story needs it — it is worth building
+only if the goal is *OFW parity*, i.e. `pseudo-nvram` as a file a human can read
+with the OS booted. Named here rather than left implicit, per the rule about
+coverage lists that under-cover in silence.
+
 ### "Data survives an OS boot" is three different questions
 
 Worth separating before any of it is built, because the OFW lab already paid for
@@ -634,8 +732,16 @@ bullets were discharged by measurement, and the measurement created new ones:
   every local build here carried `-Wno-error=unused-result`. A host-toolchain
   artifact (the lab's [`Containerfile`](Containerfile) pins its own), not a
   finding about the port.
-- **Nothing was tested on real hardware.** Everything here is a build; QEMU
-  was not involved in any command in this document.
+- **Nothing was tested on real hardware.** Every claim here comes from a build
+  or from an emulator.
+- **"QEMU was not involved in any command in this document" was true when
+  written, and stopped being true on 2026-08-23.** The *census* is still
+  build-only — but the persistence section boots the firmware, drives its prompt
+  over a pty, and reads QEMU's own address map. A did-not-prove list is exactly
+  the kind of present-tense claim that keeps being served after its subject
+  changes, so it is corrected here rather than quietly deleted. What remains
+  true, and is the load-bearing part: **nothing in the 64-bit story has been
+  booted.** Spikes 1–3 and P3 are all unexercised.
 
 ## Provenance
 
@@ -646,3 +752,6 @@ bullets were discharged by measurement, and the measurement created new ones:
 | OFW | https://github.com/openbios/openfirmware @ `d5cc657` (**2015-12-18** — HEAD) |
 | first measured | 2026-08-18, gcc 13.3.0 (Ubuntu 24.04), rootless, no QEMU involved |
 | audited + Spike 0 | 2026-08-18, same host and pins; `gcc-multilib` added for the x86 contrast build; spike patches in [`patches/`](patches/) |
+| persistence section | 2026-08-23, same host and pins — the first work here to run QEMU |
+| QEMU | **8.2.2** (Debian `1:8.2.2+ds-0ubuntu1.17`) — the flash and NVDIMM addresses, the `-rtc` option list and the `pflash1 requires pflash0` refusal are all this version's, and are the claims most likely to move under another |
+| SeaBIOS | `/usr/share/seabios/bios.bin`, 131,072 bytes — the pflash0 image built in row 3 |
