@@ -44,83 +44,52 @@ jobs:
             bash -n "$f" || { echo "bash -n FAILED: $f"; rc=1; }
           done < <(git ls-files '*.sh')
           exit $rc
-      - name: shellcheck the phase drivers
-        # -x follows sourced libs. --severity=warning ignores info-level *style*
-        # notes (SC2295/SC2012/SC2015 etc.) that vary by shellcheck version; the
-        # three excluded codes are the repo's documented-intentional warnings
-        # (validated-name traps, declare+assign, dynamic-scope vars). Fail on any
-        # real warning or error.
+      - name: shellcheck EVERY tracked shell script
+        # TODO 11.3b. This replaced TWO hand-maintained INCLUSION lists (the phase drivers,
+        # then the micro-cloud instruments) totalling 60 files out of 516 tracked. A list
+        # was doing a job a question should do: a script added tomorrow was gated by nobody
+        # unless someone remembered to type its name here.
+        #
+        # Inverted, with an exclusion file that holds ONE entry -- a vendored upstream
+        # script that is not ours to edit. Everything else either got fixed (11.3a: three
+        # real defects, 15 live pipe-gated verdicts, 11 unguarded cd) or carries an in-file
+        # `# shellcheck disable=<code>  # <reason>`, which lives beside the code it excuses
+        # and dies with it. An exclusion list of 39 would have been the inclusion list again.
+        #
+        # -x follows sourced libs. The three excluded codes are the repo's documented
+        # intentional warnings (validated-name traps, declare+assign, dynamic-scope vars).
+        #
+        # tools/tests/test-shellcheck-gate.sh proves this step's SELECTION and its failure
+        # behaviour on planted fixtures -- because an all-PASS sweep and a glob that matched
+        # nothing print the same green tick.
         run: |
-          shellcheck -x --severity=warning -e SC2064,SC2155,SC2034 \
-            phase1-chroot/lab-chroot.sh \
-            phase2-qemu-vm/lab-vm.sh \
-            phase3-docker/lab-docker.sh \
-            phase4-podman/lab-podman.sh \
-            phase5-lxd/lab-lxd.sh \
-            phase7-firecracker/lab-fc.sh
-
-      - name: shellcheck the micro-cloud instruments
-        # Same invocation, separate step so the one above keeps its accurate name.
-        # These are root-run and CAP_NET_ADMIN-bearing, so a typo here costs more than
-        # in a phase driver, not less -- and until now none of them was gated at all.
-        run: |
-          shellcheck -x --severity=warning -e SC2064,SC2155,SC2034 \
-            tools/micro-cloud-preflight.sh \
-            tools/micro-cloud-preflight-p2.sh \
-            tools/micro-cloud-fabric-probe.sh \
-            examples/micro-cloud/fabric.sh \
-            examples/micro-cloud/bench-boot.sh \
-            examples/micro-cloud/tests/lib.sh \
-            examples/micro-cloud/tests/run-all.sh \
-            examples/micro-cloud/tests/test-bench-boot.sh \
-            examples/micro-cloud/tests/test-fabric-mac-derivation.sh \
-            examples/micro-cloud/tests/test-fabric-round-trip.sh \
-            examples/micro-cloud/tests/test-edge-on-the-fabric.sh \
-            examples/micro-cloud/tests/test-two-engines-one-fabric.sh \
-            examples/micro-cloud/tests/test-dhcp-exhaustion.sh \
-            examples/micro-cloud/tests/test-vsock-both-engines.sh \
-            examples/micro-cloud/tests/test-vsock-chaos.sh \
-            examples/micro-cloud/preserve.sh \
-            phase7-firecracker/tests/test-snapshot-refusals.sh \
-            phase7-firecracker/tests/test-snapshot-round-trip.sh \
-            phase7-firecracker/tests/test-clone-refusals.sh \
-            phase7-firecracker/tests/test-jailer-staging.sh \
-            examples/micro-cloud/tests/test-jailer-isolation.sh \
-            examples/micro-cloud/tests/test-fleet-clones.sh \
-            examples/micro-cloud/tests/test-clone-entropy.sh \
-            examples/micro-cloud/tests/test-guided-path-is-a-view.sh \
-            tools/check-guided-path-is-a-view.sh \
-            examples/micro-cloud/tests/test-usage-is-data.sh \
-            tools/check-usage-is-data.sh \
-            examples/micro-cloud/tests/test-preserve-gate.sh \
-            examples/micro-cloud/tests/test-preserve-capability-table.sh \
-            examples/micro-cloud/tests/test-preserve-round-trip.sh \
-            examples/micro-cloud/micro-cloud.sh \
-            examples/micro-cloud/run-privileged-demo.sh \
-            examples/micro-cloud/tests/test-micro-cloud-plan.sh \
-            examples/micro-cloud/tests/test-spec-is-one-description.sh \
-            examples/micro-cloud/tests/test-isolation-matrix.sh \
-            examples/micro-cloud/make-vsock-rootfs.sh \
-            examples/nested-calico-sandbox/sandbox.sh \
-            examples/nested-calico-sandbox/guest-experiment.sh \
-            examples/nested-calico-sandbox/tests/lib.sh \
-            examples/nested-calico-sandbox/tests/run-all.sh \
-            examples/nested-calico-sandbox/tests/test-findings-are-bound.sh \
-            examples/nested-calico-sandbox/tests/test-selection-rules.sh \
-            examples/nested-calico-sandbox/tests/test-fabric-tap-becomes-candidate.sh \
-            examples/nested-calico-sandbox/tests/test-cni-chaos.sh \
-            examples/nested-calico-sandbox/cni-chaos.sh \
-            examples/kali-packer-vagrant/fetch-kali-packer.sh \
-            examples/kali-packer-vagrant/tests/test-offline-archive.sh \
-            examples/almalinux-packer-images/fetch-cloud-images.sh \
-            examples/almalinux-packer-images/tests/test-offline-archive.sh \
-            netboot/build-ipxe.sh \
-            netboot/ipxe-build-inner.sh \
-            netboot/tests/lib.sh \
-            netboot/tests/run-all.sh \
-            netboot/tests/test-ipxe-pin.sh
+          # A stale exclusion is a cache entry: it keeps excusing a file that was renamed,
+          # and the NEW name is then gated by nobody. Refuse by name.
+          mapfile -t excluded < <(grep -vE '^[[:space:]]*(#|$)' .shellcheck-exclude)
+          missing=""
+          for e in "${excluded[@]}"; do [ -e "$e" ] || missing="$missing $e"; done
+          if [ -n "$missing" ]; then
+            echo "::error::.shellcheck-exclude names paths that no longer exist:$missing — a stale exclusion keeps excusing a file that moved while its new name is gated by nobody. Update or delete the entry."
+            exit 1
+          fi
+          printf '%s\n' "${excluded[@]}" > /tmp/shellcheck-exclude.list
+          mapfile -t files < <(git ls-files '*.sh' | grep -vxF -f /tmp/shellcheck-exclude.list)
+          total="$(git ls-files '*.sh' | wc -l)"
+          # The ratio, for the same reason run-all.sh prints ran/listed: a step that lints
+          # NOTHING and a step that lints everything both exit 0.
+          echo "linting ${#files[@]} of $total tracked scripts (${#excluded[@]} excluded — see .shellcheck-exclude)"
+          if [ "${#files[@]}" -lt $(( total - 10 )) ]; then
+            echo "::error::selection collapsed — ${#files[@]} of $total files. A glob typo would present exactly this way, as a clean pass over almost nothing."
+            exit 1
+          fi
+          shellcheck -x --severity=warning -e SC2064,SC2155,SC2034 -f gcc "${files[@]}"
 
       - name: shellcheck EVERY tracked test script (errors only)
+        # NOW A SUBSET of the step above, and kept deliberately rather than deleted: it is
+        # narrower (error severity, no -e exclusions) and would still fire if someone ever
+        # widens the exclusion file or relaxes the sweep. Cheap, and it names the corpus it
+        # counts. Said out loud here because a redundant step nobody explains is a step
+        # someone deletes on the assumption it was covering something.
         # The steps above name individual files, so the ~219 scripts under */tests/ were
         # linted by nobody. That is how two of them carried
         #     # shellcheck disable=SC2034  (reason in a parenthetical)
@@ -138,6 +107,15 @@ jobs:
           mapfile -t files < <(git ls-files '*/tests/*.sh')
           echo "linting ${#files[@]} test scripts at error severity"
           shellcheck -x --severity=error -f gcc "${files[@]}"
+
+      - name: the shellcheck gate's own control
+        # The step above sweeps `git ls-files '*.sh'`. An all-PASS sweep and a glob that
+        # matched nothing print the same green tick, and this repo has been burned by that
+        # exact shape three times. So the gate ships with its control attached: this seds
+        # the SHIPPED step out of ci.yml and runs it against planted fixtures -- a bad
+        # script must fail it AND raise its count by one, an exclusion must silence that
+        # file, and an exclusion naming a path that no longer exists must fail by name.
+        run: bash tools/tests/test-shellcheck-gate.sh
 
       - name: the EXIT-trap safety net, in every tests/ directory
         # Each phase's run-all.sh already runs its own tests/test-harness-net.sh, but the

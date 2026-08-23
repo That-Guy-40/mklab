@@ -1,0 +1,16 @@
+# .shellcheck-exclude — paths the repo-wide shellcheck gate skips, one per line, exact.
+#
+# THE LIST SHOULD STAY THIS SHORT. It replaced an INCLUSION list of 60 files, and an
+# exclusion list of 39 would have been the same construct wearing a different hat: a list
+# doing a job a question should do. Everything else was fixed or carries an in-file
+# `# shellcheck disable=<code>  # <reason>` directive, which lives beside the code it
+# excuses and dies with it. Reach for this file only when the code is NOT OURS TO EDIT.
+#
+# CI fails if a path here no longer exists: a stale exclusion keeps excusing a file that was
+# renamed, while the new name is gated by nobody.
+
+# Vendored byte-exact from AlmaLinux's cloud-images repo (see the sibling upstream README).
+# Editing it would break the provenance the archive exists to provide -- its sha256 is
+# recorded, and a fix of ours would make the copy no longer the thing it claims to be.
+# Carries SC2076 (quoted RHS of =~) at line 556.
+examples/almalinux-packer-images/upstream-repo/cloud-images/vm-scripts/digitalocean/99-img-check.sh
