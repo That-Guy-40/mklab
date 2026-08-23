@@ -1254,10 +1254,19 @@ excuse lives beside the code and dies with it:
 
       Verified after: `bash -n` over all 516 tracked scripts; the four `tools/tests` gates;
       phase 5's suite 20/20 (17 passed, 3 skipped) against a live incus; the four affected
-      MAAS/micro-cloud tests individually green; phase 1's two export tests green. **NOT
-      verified by execution:** `test-nspawn-integration.sh`, `test-schroot-integration.sh`
-      and `test-rootful-up.sh` skip without root here, so their rewritten assertions were
-      exercised on fixtures in both directions instead — an UNKNOWN reduced, not closed.
+      MAAS/micro-cloud tests individually green; phase 1's two export tests green.
+
+      **The last three were closed the next day, 2026-08-23, by running them as root.**
+      `test-nspawn-integration.sh`, `test-schroot-integration.sh` and `test-rootful-up.sh`
+      skip without root *both here and on the CI runner*, so their rewritten assertions were
+      the only ones in that change never watched executing anywhere — fixtures in both
+      directions were a reduction of that UNKNOWN, not a closure of it. All three now
+      **PASS** under real root, each through its full round-trip (nspawn registers and
+      destroys a `machinectl` image; schroot writes and removes its `chroot.d` conf; the
+      rootful test binds privileged port 1013 and confirms a non-root user warns for the
+      same port). A root run is not something CI can do, so this is the form the closure
+      takes: [`tools/verify-root-gated-tests.sh`](tools/verify-root-gated-tests.sh) exists to be re-run
+      by hand when those three change again.
 
 #### 11.3b — flip the gate (only once 11.3a is green)
 
@@ -1288,9 +1297,25 @@ Four things that make it a gate rather than a decoration:
    (2) went up by one. An all-PASS sweep is indistinguishable from one that matched no
    files — which is exactly how a `git ls-files` glob typo would present.
 
-- [ ] **11.3b** — flip it, with (1)–(4). A file added tomorrow is then gated by default,
-      which is the property the current shape lacks — the same reasoning that made
-      `run-all.sh` compare its list against the disk.
+- [x] **11.3b** — **done 2026-08-23.** Two inclusion lists (60 files) replaced by one sweep
+      of `git ls-files '*.sh'` minus [`.shellcheck-exclude`](.shellcheck-exclude), which holds
+      **one** entry: a vendored upstream script that is not ours to edit. Measured: the gate
+      lints **515 of 516** tracked scripts and the repo is at zero findings, because 11.3a
+      went first.
+
+      All four properties shipped, and (4) is a *permanent* control rather than a pre-flight:
+      [`tools/tests/test-shellcheck-gate.sh`](tools/tests/test-shellcheck-gate.sh) seds the
+      **shipped** step out of `ci.yml` and runs it against planted fixtures on every push —
+      a script with an unguarded `cd` must fail it **and raise the linted count by one** (a
+      gate that fails for some other reason is not evidence it saw the file), excluding that
+      file must silence it, and an exclusion naming a path that no longer exists must fail
+      **by name**. The step itself also refuses a selection that collapsed to fewer than
+      `total - 10` files, because a glob typo presents exactly as a clean pass over almost
+      nothing.
+
+      Writing the control caught the usual thing: its first extraction pulled in the
+      *following* step's `- name:` line, so it reported "the extracted step does not parse as
+      bash" — true, and about YAML rather than about the step.
 
 ### 11.4 Nothing asks whether a verb a doc types actually exists
 
