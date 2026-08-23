@@ -1,4 +1,9 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2154  # FILE-SCOPED, and deliberately: every variable shellcheck calls
+# unassigned here is written BY NAME from inside the vendored upstream library --
+# `_shellmath_getReturnValue s1` assigns $s1 indirectly, which no static reader can follow.
+# Six sites, one cause. One of them reads as a typo ("did you mean 'r_sm'?") and is NOT one:
+# checked line by line, 2026-08-22, before this directive was written.
 # demo.sh — floating-point arithmetic in Bash: prove it, don't just show it.
 #
 # Runs in ~/float-math/ inside the lab container (see ../setup-workshop.sh).
@@ -35,7 +40,14 @@ check() { # check <label> <expected> <actual>
 }
 # EXIT-trap safety net: a bare `exit` must never leave the reader with no verdict.
 _verdict_printed=""
-trap '[ -n "$_verdict_printed" ] || { rc=$?; [ "$rc" = 0 ] && rc=1; printf "FAIL: demo.sh exited early (rc=%s)\n" "$rc"; }' EXIT
+# `rc=$?` FIRST, before the `[ -n … ]` test. It used to sit inside the `||` block, where
+# `$?` is the status of that very test rather than the script's -- so the net reported
+# `rc=1` for every early exit, including a 77. Capturing the status before running any of
+# the teardown is the same rule lib.sh's `_on_exit` follows, and for the same reason.
+# shellcheck disable=SC2154  # rc IS assigned, by the `rc=$?` at the start of this same
+# single-quoted trap body; shellcheck analyses the string without carrying the assignment
+# into the uses that follow it.
+trap 'rc=$?; [ -n "$_verdict_printed" ] || { [ "$rc" = 0 ] && rc=1; printf "FAIL: demo.sh exited early (rc=%s)\n" "$rc"; }' EXIT
 
 command -v bc  >/dev/null || { _verdict_printed=1; echo "SKIP: bc not installed (run setup-workshop.sh)"; exit 77; }
 command -v awk >/dev/null || { _verdict_printed=1; echo "SKIP: awk not installed"; exit 77; }

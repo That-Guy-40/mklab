@@ -1205,11 +1205,59 @@ excuse lives beside the code and dies with it:
   (`examples/almalinux-packer-images/upstream-repo/…/99-img-check.sh`), and therefore the
   only one that belongs in a central exclusion: it is not ours to edit.
 
-- [ ] **11.3a** — land Tier 1 and Tier 2 as their own PR, Tier 3 as directives. Each Tier-1
-      fix wants a **negative control**, not just a green re-run: for `kickstart.sh`, make
-      `mkisofs` fail and watch the success line *stop* printing; for `create-fleet.sh`, the
-      three-way measurement above re-run after the split; for the `case`, feed it the second
-      message and watch it be accepted.
+- [x] **11.3a** — **done 2026-08-22.** The ungated set went from **40 files / 59 findings**
+      to **1 file / 1 finding** (the vendored upstream script, which 11.3b's exclusion owns).
+      Each Tier-1 fix was watched to bite, not just re-run green:
+
+      | fix | the control that was RUN |
+      |---|---|
+      | `kickstart.sh` | with a stub `mkisofs` forced to fail: **before**, `rc=0` and *"ISO image generated"*; **after**, `rc=1` and the ERROR branch. Then the happy path with a real `mkisofs` |
+      | `create-fleet.sh` | the real `give_console`, extracted from both versions and driven three ways. Before: a caller whose `name` differs writes **that** node's path, and no caller global writes `/console/.log`. After: `/console/node1.log` in all three |
+      | `test-inspect-json.sh` | both messages fed to the `case` and accepted, a drifted one refused — **and the real test run against a live incus**, which is what proves the patterns match what `lab-lxd.sh` actually emits |
+
+      **Two more real defects turned up while fixing those three**, which is the argument for
+      doing 11.3a before 11.3b rather than the reverse:
+
+      1. **A safety net that always reported `rc=1`.**
+         `examples/UNIX-floating-point-arithmetic-in-bash/demo.sh` captured `rc=$?` *inside*
+         the `||` block of its EXIT trap, so `$?` was the status of the `[ -n … ]` test that
+         preceded it, not the script's. Measured: an early `exit 77` printed
+         `FAIL: exited early (rc=1)`. Capturing first fixes it — the rule `lib.sh`'s
+         `_on_exit` already follows, in a file that had reimplemented the net by hand.
+      2. **`tools/tests/test-no-pipe-gates.sh` was a liar, in this repo's signature way.**
+         Its scan was a `grep` over a **physical line**, so a gate written as
+         `producer | grep -q X \` + `|| fail` was invisible. That is the **third** time here
+         that a regex over a line has stood in for a question about a *command*
+         (`check-harness-net.sh` §1 was wrong the same way **twice**). Worse, its fixture had
+         **already planted** the continuation shape — behind a `>= 1` assertion the same-line
+         plant satisfied on its own, so the plant sat there for months proving nothing.
+
+         Fixed by joining backslash-continuations before matching (a bounded normalisation,
+         not a shell parser — the remaining blind spot, a `grep -q` inside a quoted string or
+         heredoc, is named in the file), by requiring each planted shape to be caught
+         **individually**, and by `[^|]` on both patterns so the second bar of `||` stops
+         reading as a pipe — six false positives appeared the moment lines were joined.
+
+         **It then found 15 live pipe-gated verdicts across 9 files**, every one invisible
+         before. Fourteen are the noisy `|| fail` form; **one is the SILENT `&& fail`**
+         variant in `examples/micro-cloud/tests/test-preserve-round-trip.sh` — a leftover-
+         container guard that, when SIGPIPE'd, reports the leftover as absent, which is the
+         single outcome it exists to prevent. All 15 converted to capture-then-test, and the
+         widened scanner was watched biting on a re-injected continuation in a real file.
+
+      Tier 2 (11 unguarded `cd`, `ls | grep`, `ls | xargs`) and Tier 3 (the labels, each an
+      in-file `# shellcheck disable=<code>  # <reason>`) landed with it. Two placement
+      mistakes are worth remembering: a directive above a *blank line or a comment* attaches
+      to the wrong command — it must sit immediately above the command it excuses — and
+      retyping a typographic apostrophe as ASCII inside a **single-quoted** string closes the
+      string, which is why those three are labelled rather than "fixed".
+
+      Verified after: `bash -n` over all 516 tracked scripts; the four `tools/tests` gates;
+      phase 5's suite 20/20 (17 passed, 3 skipped) against a live incus; the four affected
+      MAAS/micro-cloud tests individually green; phase 1's two export tests green. **NOT
+      verified by execution:** `test-nspawn-integration.sh`, `test-schroot-integration.sh`
+      and `test-rootful-up.sh` skip without root here, so their rewritten assertions were
+      exercised on fixtures in both directions instead — an UNKNOWN reduced, not closed.
 
 #### 11.3b — flip the gate (only once 11.3a is green)
 

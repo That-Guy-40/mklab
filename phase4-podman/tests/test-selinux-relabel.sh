@@ -88,6 +88,8 @@ note "the relabel is announced, not silent"
 # ── and the discriminator itself ───────────────────────────────────────────────────
 # Permissive must behave like Disabled — only "Enforcing" enables the suffix.
 export LAB_LOG_LEVEL=error
+# shellcheck disable=SC1090  # $LAB_PODMAN is resolved at runtime; there is no constant path
+# for shellcheck to follow into.
 . "$LAB_PODMAN" 2>/dev/null || true
 for mode in Permissive Disabled; do
     printf '#!/usr/bin/env bash\nprintf "%s\\n"\n' "$mode" > "$bin/getenforce"

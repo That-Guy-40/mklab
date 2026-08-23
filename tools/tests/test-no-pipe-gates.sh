@@ -43,6 +43,9 @@ _V=0
 pass() { _V=1; printf 'PASS: %s\n' "$*" >&2; exit 0; }
 fail() { _V=1; printf 'FAIL: %s\n' "$*" >&2; exit 1; }
 note() { printf '  - %s\n' "$*" >&2; }
+# shellcheck disable=SC2154  # rc IS assigned, by the `rc=$?` at the start of this same
+# single-quoted trap body; shellcheck analyses the string without carrying the assignment
+# into the uses that follow it.
 trap 'rc=$?; (( rc != 0 && rc != 77 )) && (( _V == 0 )) && printf "FAIL: exited early (rc=%d) with no verdict\n" "$rc" >&2' EXIT
 
 DIRS=(phase1-chroot/tests phase2-qemu-vm/tests phase3-docker/tests phase4-podman/tests
@@ -86,13 +89,49 @@ DIRS=(phase1-chroot/tests phase2-qemu-vm/tests phase3-docker/tests phase4-podman
 #
 # All 8 sites were converted to capture-then-test, so this gate starts at zero. It is one
 # check now, not a check plus a TODO.
+# ── LOGICAL lines, not physical ones ───────────────────────────────────────────────────
+# These scans used to be a `grep -rnE` over a PHYSICAL line, so a gate written as
+#
+#     ls "$t/lib"* 2>/dev/null | grep -q . \\
+#         || fail "no libs copied"
+#
+# was invisible: the pipe and the `|| fail` are on different lines. Found 2026-08-22 in
+# phase1-chroot/tests/test-host-copy.sh, live, while this check reported a clean repo.
+#
+# That is the THIRD time here that a regex over a line has stood in for a question about a
+# COMMAND -- tools/check-harness-net.sh §1 was wrong the same way twice, and its own fix
+# note says the real question is not textual. The fixture below had even PLANTED this
+# continuation shape; the assertion just said `>= 1`, which the same-line plant satisfied
+# on its own, so the plant sat there for months proving nothing. Both are fixed here: the
+# scanners join backslash-continuations first, and each planted shape is now required to
+# be caught INDIVIDUALLY.
+#
+# The `[^|]` prefix on both patterns matters once lines are joined: `grep -q X "$f" || grep
+# -q Y "$f" || fail` contains no pipe at all, and without it the second bar of `||` reads as
+# one. Six such false positives appeared the moment continuations were joined.
+#
+# It joins continuations and nothing else -- a bounded normalisation, not a shell parser.
+# A `grep -q` inside a quoted string or a heredoc would still be read as code; that is a
+# narrower blind spot than the one it replaces, and it is named here rather than implied.
+logical_lines() {
+    local f
+    for f in $(git ls-files -- "${DIRS[@]/%//*.sh}" 2>/dev/null); do
+        awk -v F="$f" '
+            { start = NR; line = $0
+              while (line ~ /\\$/) {
+                  sub(/\\$/, "", line)
+                  if ((getline nxt) > 0) line = line " " nxt; else break
+              }
+              print F ":" start ": " line }' "$f"
+    done
+}
 gate_hits() {
-    grep -rnE '\| *grep -q[a-zA-Z]* .*&& *(fail|die)' --include='*.sh' \
-        "${DIRS[@]}" 2>/dev/null | grep -v '/lib\.sh:' | grep -vE '^[^:]+:[0-9]+: *#'
+    logical_lines | grep -E '[^|]\| *grep -q[a-zA-Z]* .*&& *(fail|die)' \
+        | grep -v '/lib\.sh:' | grep -vE '^[^:]+:[0-9]+: *#'
 }
 noisy_hits() {
-    grep -rnE '\| *grep -q[a-zA-Z]* .*\|\| *(fail|die)' --include='*.sh' \
-        "${DIRS[@]}" 2>/dev/null | grep -v '/lib\.sh:' | grep -vE '^[^:]+:[0-9]+: *#'
+    logical_lines | grep -E '[^|]\| *grep -q[a-zA-Z]* .*\|\| *(fail|die)' \
+        | grep -v '/lib\.sh:' | grep -vE '^[^:]+:[0-9]+: *#'
 }
 
 hits="$(gate_hits)"
@@ -127,13 +166,27 @@ podman ps -a --format '{{.Names}}' | grep -qx "$c" && fail "still present"
 ip -o link show | grep -q inet \
     || die "no address"
 EOS
-caught="$(grep -cE '\| *grep -q[a-zA-Z]* .*&& *(fail|die)' "$TMP/tests/planted.sh")"
+# Each shape is required INDIVIDUALLY. `>= 1` on the noisy pair is what let the planted
+# backslash-continuation sit here unexamined: the same-line plant satisfied it alone.
+plant_logical() {
+    awk -v F="planted.sh" '
+        { start = NR; line = $0
+          while (line ~ /\\$/) {
+              sub(/\\$/, "", line)
+              if ((getline nxt) > 0) line = line " " nxt; else break
+          }
+          print F ":" start ": " line }' "$TMP/tests/planted.sh"
+}
+caught="$(plant_logical | grep -cE '[^|]\| *grep -q[a-zA-Z]* .*&& *(fail|die)')"
 (( caught == 1 )) \
     || fail "the scanner found $caught of the 1 planted SILENT violation. A scanner that misses its own shape reports a clean repo it never examined"
-noisy_caught="$(grep -cE '\| *grep -q[a-zA-Z]* .*\|\| *(fail|die)' "$TMP/tests/planted.sh")"
-(( noisy_caught >= 1 )) \
-    || fail "the scanner matched none of the planted NOISY forms, so gating on it means nothing"
-note "negative control: both planted shapes were caught by their scanners  ✓"
+noisy_same_line="$(plant_logical | grep -E '[^|]\| *grep -q[a-zA-Z]* .*\|\| *(fail|die)' | grep -c 'docker ps')"
+(( noisy_same_line == 1 )) \
+    || fail "the scanner missed the planted SAME-LINE noisy form (\`docker ps … | grep -qx … || fail\`), so gating on it means nothing"
+noisy_continued="$(plant_logical | grep -E '[^|]\| *grep -q[a-zA-Z]* .*\|\| *(fail|die)' | grep -c 'ip -o link')"
+(( noisy_continued == 1 )) \
+    || fail "the scanner missed the planted BACKSLASH-CONTINUATION noisy form (\`… | grep -q inet \\\` then \`|| die\`). That shape was live in phase1-chroot/tests/test-host-copy.sh while this check reported a clean repo, and this fixture had been carrying it uncaught behind a \`>= 1\` assertion"
+note "negative control: all THREE planted shapes were caught individually — silent, noisy same-line, and noisy split across a backslash continuation  ✓"
 
 # ── AND THE PREMISE ITSELF, because the premise is what was wrong before ────────────────
 # This file spent months asserting the noisy form "only bites with a producer big enough to

@@ -39,16 +39,25 @@ leaf="$WORK/new/codesign.crt"
 leaf_ku="$(openssl x509 -in "$leaf" -noout -ext keyUsage 2>/dev/null)"
 grep -qi 'Digital Signature' <<<"$leaf_ku" \
     || fail "REGRESSION: the minted code-signing leaf has no keyUsage=digitalSignature — iPXE imgverify refuses it as 'Not a signing certificate' (022ae1), so no signed payload can boot on verifying firmware"
-openssl x509 -in "$leaf" -noout -ext extendedKeyUsage 2>/dev/null | grep -qi 'Code Signing' \
+# Capture, then test: a verdict must not hang off a pipe into `grep -q` (it exits on the
+# first match, the producer can take SIGPIPE, and with pipefail the pipeline is non-zero,
+# so a match that WAS found reads as absent). Invisible to tools/tests/test-no-pipe-gates.sh
+# until 2026-08-22, because that scanner read PHYSICAL lines and this gate spans a
+# backslash continuation. `|| true` keeps the capture from tripping errexit where it is set.
+leaf_eku="$(openssl x509 -in "$leaf" -noout -ext extendedKeyUsage 2>/dev/null || true)"
+grep -qi 'Code Signing' <<<"$leaf_eku" \
     || fail "REGRESSION: the minted leaf has no extendedKeyUsage=codeSigning — iPXE refuses it as 'Not a code-signing certificate'"
-openssl x509 -in "$leaf" -noout -ext basicConstraints 2>/dev/null | grep -qi 'CA:FALSE' \
+leaf_bc="$(openssl x509 -in "$leaf" -noout -ext basicConstraints 2>/dev/null || true)"
+grep -qi 'CA:FALSE' <<<"$leaf_bc" \
     || fail "REGRESSION: the minted code-signing leaf claims CA:TRUE — a signer must not also be a certificate authority"
 note "leaf: CA:FALSE + digitalSignature + codeSigning"
 
 ca_crt="$WORK/new/ca.crt"
-openssl x509 -in "$ca_crt" -noout -ext basicConstraints 2>/dev/null | grep -qi 'CA:TRUE' \
+ca_bc="$(openssl x509 -in "$ca_crt" -noout -ext basicConstraints 2>/dev/null || true)"
+grep -qi 'CA:TRUE' <<<"$ca_bc" \
     || fail "REGRESSION: the minted CA is not marked CA:TRUE — it cannot issue the leaf"
-openssl x509 -in "$ca_crt" -noout -ext keyUsage 2>/dev/null | grep -qi 'Certificate Sign' \
+ca_ku="$(openssl x509 -in "$ca_crt" -noout -ext keyUsage 2>/dev/null || true)"
+grep -qi 'Certificate Sign' <<<"$ca_ku" \
     || fail "REGRESSION: the minted CA has no keyUsage=keyCertSign"
 note "CA: CA:TRUE + keyCertSign"
 

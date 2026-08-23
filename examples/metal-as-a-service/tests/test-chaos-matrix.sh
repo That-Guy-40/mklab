@@ -177,7 +177,13 @@ mapfile -t DECLARED < <("$LAB_DIR/chaos-run.sh" --layers 2>/dev/null | awk '{pri
 [[ ${#DECLARED[@]} -ge 5 ]] \
     || fail "chaos-run.sh --layers reported only ${#DECLARED[@]} layers — the layer taxonomy has gone missing"
 for L in "${DECLARED[@]}"; do
-    printf '%s\n' "${COVERED[@]}" | grep -qx -- "$L" \
+    # Capture, then test: a verdict must not hang off a pipe into `grep -q` (it exits on the
+    # first match, the producer can take SIGPIPE, and with pipefail the pipeline is non-zero,
+    # so a match that WAS found reads as absent). Invisible to tools/tests/test-no-pipe-gates.sh
+    # until 2026-08-22, because that scanner read PHYSICAL lines and this gate spans a
+    # backslash continuation. `|| true` keeps the capture from tripping errexit where it is set.
+    _covered="$(printf '%s\n' "${COVERED[@]}")"
+    grep -qx -- "$L" <<<"$_covered" \
         || fail "REGRESSION: layer '$L' is declared but has NO chaos scenario. The house rule is that every discrete layer gets a fault-injection point — an uncovered layer is one nobody has watched fall over. Add a scenario for it in chaos-run.sh"
 done
 note "all ${#DECLARED[@]} declared layers have at least one fault scenario: ${DECLARED[*]}  ✓"

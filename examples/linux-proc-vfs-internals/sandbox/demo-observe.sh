@@ -45,6 +45,9 @@ $CC -Wall -o socket socket.c
 ./socket 1 3600 & s1=$!
 sleep 1
 echo "   /proc/$s1/fd (fd 3 is the socket the program made):"
+# shellcheck disable=SC2010  # `ls -l | grep` is the SUBJECT here, not an accident: the article
+# reads /proc/<pid>/fd symlink TARGETS, which only `ls -l` prints. The entries are numeric fds,
+# so the non-alphanumeric-filename hazard SC2010 warns about cannot arise.
 ls -l "/proc/$s1/fd" | grep 'socket:'
 kill "$s1" 2>/dev/null
 
@@ -52,6 +55,7 @@ p 'ARTICLE 6 — the article''s 100-socket variant: watch /proc/<pid>/net/sockst
 ./socket 100 3600 & s2=$!
 sleep 1
 echo "   socket:[inode] fds held by pid $s2 (the 100 we opened):"
+# shellcheck disable=SC2010  # same: the `ls -l` output IS what the article shows.
 ls -l "/proc/$s2/fd" | grep -c 'socket:'
 echo "   the kernel's own tally, /proc/$s2/net/sockstat:"
 grep 'sockets: used' "/proc/$s2/net/sockstat"

@@ -1,3 +1,5 @@
+# shellcheck shell=bash  # SOURCED, never executed, so it carries no shebang -- but its callers
+# are bash and it uses bash arrays and [[ ]], so it must be checked as bash rather than sh.
 # lib/e2e-common.sh — helpers shared by the live runners (run-e2e-image.sh,
 # run-e2e-measured.sh). Sourced, not executed.
 #

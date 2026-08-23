@@ -60,7 +60,14 @@ command = "sleep 600"
 EOF
 
 # A leftover from an earlier run would make every assertion below meaningless.
-podman ps -a --format '{{.Names}}' | grep -qx "lab-${LAB}-keeper" \
+# Capture, THEN test: `podman ps … | grep -qx … && fail` is the SILENT inversion. grep -q
+# exits on its first match and closes the pipe, podman can die on SIGPIPE, and with
+# pipefail set the pipeline is non-zero — so the `&& fail` never runs and a leftover that
+# WAS there is reported as absent, which is the one outcome this guard exists to prevent.
+# It hid from tools/tests/test-no-pipe-gates.sh until 2026-08-22 because that scanner
+# matched a physical line and this gate spans a backslash continuation.
+_existing="$(podman ps -a --format '{{.Names}}' 2>/dev/null)"
+grep -qx "lab-${LAB}-keeper" <<<"$_existing" \
     && fail "a container from a previous run is still here (lab-${LAB}-keeper) — refusing to run over it"
 
 out="$(bash "$TOOL" up --config "$WORK/spec.toml" 2>&1)"; rc=$?
@@ -108,7 +115,13 @@ out="$(bash "$PRESERVE" verify "$WORK/bk" 2>&1)"; rc=$?
 # distinguish a working restore from a test reading the thing it never removed.
 out="$(bash "$TOOL" down --lab "$LAB" 2>&1)"; rc=$?
 (( rc == 0 )) || fail "could not tear the lab down (rc=$rc): $out"
-! podman ps -a --format '{{.Names}}' | grep -qx "lab-${LAB}-keeper" \
+# Capture, then test: a verdict must not hang off a pipe into `grep -q` (it exits on the
+# first match, the producer can take SIGPIPE, and with pipefail the pipeline is non-zero,
+# so a match that WAS found reads as absent). Invisible to tools/tests/test-no-pipe-gates.sh
+# until 2026-08-22, because that scanner read PHYSICAL lines and this gate spans a
+# backslash continuation. `|| true` keeps the capture from tripping errexit where it is set.
+_after="$(podman ps -a --format '{{.Names}}' 2>/dev/null || true)"
+! grep -qx "lab-${LAB}-keeper" <<<"$_after" \
     || fail "down reported success and the container is still there"
 
 out="$(bash "$PRESERVE" restore "$WORK/bk" 2>&1)"; rc=$?

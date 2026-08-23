@@ -42,9 +42,13 @@ echo '   asking for far more than the limit; the cgroup page_counter stops us:'
 echo "   >>> mem-hog exit status: $?  (137 = 128 + SIGKILL(9) = OOM-killed)"
 
 p 'ARTICLE 4 — ulimit -n and /proc/self/limits agree (both are prlimit under the hood)'
+# shellcheck disable=SC3045  # `ulimit -n` is outside POSIX but implemented by dash, bash and
+# busybox ash -- every shell this sandbox actually runs.
 echo "   ulimit -n           = $(ulimit -n)"
 grep 'Max open files' /proc/self/limits
 
+# shellcheck disable=SC1112  # typographic apostrophe inside single-quoted prose; an ASCII one
+# would terminate the string.
 p 'ARTICLE 4 — limit-open-files.c: use prlimit() to change another PID’s NOFILE'
 $CC -Wall -o limit-open-files limit-open-files.c
 sleep 120 & target=$!

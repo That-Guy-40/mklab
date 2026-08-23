@@ -127,9 +127,9 @@ QEMU=(
     qemu-system-x86_64
     -machine q35 -accel "$ACCEL"
     -m "$MEMORY" -smp "$CPUS"
-    -device virtio-scsi-pci,id=scsi0
-    -drive file="$DISK",format=qcow2,if=none,id=hd0
-    -device scsi-hd,drive=hd0,bus=scsi0.0
+    -device "virtio-scsi-pci,id=scsi0"
+    -drive "file=$DISK,format=qcow2,if=none,id=hd0"
+    -device "scsi-hd,drive=hd0,bus=scsi0.0"
     -vga virtio
     -device qemu-xhci -device usb-tablet
     -name "kali-packer:$(basename "$IMAGE")"
@@ -137,7 +137,7 @@ QEMU=(
 [ "$ACCEL" = kvm ] && QEMU+=(-cpu host)
 
 if [ "$SSH_PORT" = "0" ] || [ -z "$SSH_PORT" ]; then
-    QEMU+=(-nic user,model=virtio-net-pci)
+    QEMU+=(-nic "user,model=virtio-net-pci")
 else
     QEMU+=(-nic "user,model=virtio-net-pci,hostfwd=tcp::${SSH_PORT}-:22")
 fi

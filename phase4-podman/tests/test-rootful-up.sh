@@ -177,7 +177,13 @@ else
 fi
 
 # The low port really was bound — the thing rootless could not have done.
-ss -ltn 2>/dev/null | awk '{split($4,a,":"); print a[length(a)]}' | grep -qx "$lowport" \
+# Capture, then test: a verdict must not hang off a pipe into `grep -q` (it exits on the
+# first match, the producer can take SIGPIPE, and with pipefail the pipeline is non-zero,
+# so a match that WAS found reads as absent). Invisible to tools/tests/test-no-pipe-gates.sh
+# until 2026-08-22, because that scanner read PHYSICAL lines and this gate spans a
+# backslash continuation. `|| true` keeps the capture from tripping errexit where it is set.
+_listening="$(ss -ltn 2>/dev/null | awk '{split($4,a,":"); print a[length(a)]}' || true)"
+grep -qx "$lowport" <<<"$_listening" \
     || fail "host port $lowport is not listening; the rootful publish did not take effect"
 note "host port $lowport (privileged) is bound — something rootless podman could not do"
 

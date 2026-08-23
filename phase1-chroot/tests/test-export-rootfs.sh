@@ -61,7 +61,13 @@ got="$(debugfs -R "cat /etc/hostname" "$img" 2>/dev/null | tr -d '\0')"
     || fail "the image does not contain the source tree's /etc/hostname (read back: '${got:0:40}')"
 note "content round-trips: /etc/hostname read back out of the image with debugfs"
 
-debugfs -R "stat /sbin/init" "$img" 2>/dev/null | grep -q 'Inode:' \
+# Capture, then test: a verdict must not hang off a pipe into `grep -q` (it exits on the
+# first match, the producer can take SIGPIPE, and with pipefail the pipeline is non-zero,
+# so a match that WAS found reads as absent). Invisible to tools/tests/test-no-pipe-gates.sh
+# until 2026-08-22, because that scanner read PHYSICAL lines and this gate spans a
+# backslash continuation. `|| true` keeps the capture from tripping errexit where it is set.
+_stat_init="$(debugfs -R "stat /sbin/init" "$img" 2>/dev/null || true)"
+grep -q 'Inode:' <<<"$_stat_init" \
     || fail "/sbin/init is missing from an image built from a tree that has one"
 [[ "$(blkid -s LABEL -o value "$img" 2>/dev/null)" == mcroot ]] \
     || note "label not readable via blkid here (not fatal)"

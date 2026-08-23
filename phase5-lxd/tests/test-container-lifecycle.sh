@@ -25,7 +25,13 @@ note "up"
 "$LAB_LXD" up --config "$cfg"
 
 note "list --lab shows the instance"
-"$LAB_LXD" list --lab "$lab" 2>&1 | grep -q "lab-${lab}-a" \
+# Capture, then test: a verdict must not hang off a pipe into `grep -q` (it exits on the
+# first match, the producer can take SIGPIPE, and with pipefail the pipeline is non-zero,
+# so a match that WAS found reads as absent). Invisible to tools/tests/test-no-pipe-gates.sh
+# until 2026-08-22, because that scanner read PHYSICAL lines and this gate spans a
+# backslash continuation. `|| true` keeps the capture from tripping errexit where it is set.
+_listing="$("$LAB_LXD" list --lab "$lab" 2>&1 || true)"
+grep -q "lab-${lab}-a" <<<"$_listing" \
     || fail "list did not show lab-${lab}-a"
 
 note "exec returns alpine banner"

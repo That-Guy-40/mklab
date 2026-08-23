@@ -1,4 +1,6 @@
 #!/bin/busybox sh
+# shellcheck shell=dash  # busybox ash; see deployer-init.sh. Checking as dash keeps a bashism
+# from being introduced into an /init that has no bash to run it.
 # measure-init.sh — the MEASURED golden image's /init: report what this machine
 # actually measured, signed, to the control plane, so `deploy --driver
 # image+measured` can decide whether it may activate.

@@ -105,7 +105,7 @@ QEMU=(
     qemu-system-x86_64
     -machine q35 -accel "$ACCEL"
     -m "$MEMORY" -smp "$CPUS"
-    -drive file="$DISK",format=qcow2,if=virtio
+    -drive "file=$DISK,format=qcow2,if=virtio"
     -vga virtio
     -device qemu-xhci -device usb-tablet
     -name "kali-vm:$(basename "$IMAGE")"
@@ -114,7 +114,7 @@ QEMU=(
 
 # Networking: user-mode (slirp) + optional SSH forward.
 if [ "$SSH_PORT" = "0" ] || [ -z "$SSH_PORT" ]; then
-    QEMU+=(-nic user,model=virtio-net-pci)
+    QEMU+=(-nic "user,model=virtio-net-pci")
 else
     QEMU+=(-nic "user,model=virtio-net-pci,hostfwd=tcp::${SSH_PORT}-:22")
 fi

@@ -1,4 +1,7 @@
 #!/bin/busybox sh
+# shellcheck shell=dash  # busybox ash. Dash is the closest dialect shellcheck models, and
+# checking as dash is stricter here than the bash it would otherwise assume -- this /init runs
+# inside a ramdisk where bash does not exist at all.
 # deployer-init.sh — the DEPLOYER RAMDISK's /init, for `deploy --driver image`.
 #
 # It netboots, streams a golden whole-disk raw over HTTP straight onto the node's

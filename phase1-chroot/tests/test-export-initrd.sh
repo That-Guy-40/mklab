@@ -132,7 +132,13 @@ IOUT="$WORK/t8-initrd.gz"
 "$LAB_CHROOT" export-initrd "$ROOT" --kernel "$KOUT" --output "$IOUT" \
     --init-flavor busybox 2>/dev/null
 
-zcat "$IOUT" | cpio -t 2>/dev/null | grep -q '\./init\|^init$' \
+# Capture, then test: a verdict must not hang off a pipe into `grep -q` (it exits on the
+# first match, the producer can take SIGPIPE, and with pipefail the pipeline is non-zero,
+# so a match that WAS found reads as absent). Invisible to tools/tests/test-no-pipe-gates.sh
+# until 2026-08-22, because that scanner read PHYSICAL lines and this gate spans a
+# backslash continuation. `|| true` keeps the capture from tripping errexit where it is set.
+_cpio_list="$(zcat "$IOUT" | cpio -t 2>/dev/null || true)"
+grep -q '\./init\|^init$' <<<"$_cpio_list" \
     || fail "test8: ./init not found in cpio archive"
 
 pass "export-initrd OK"

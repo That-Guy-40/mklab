@@ -97,7 +97,13 @@ for st in active rescue; do
         || fail "REGRESSION: a node in '$st' was waved through instead of released. Nothing leads from '$st' to 'manageable', so phase 6's 'inspect' fails two phases later with a message about inspect — the third time this exact permissive branch caused that"
     grep -q '^manage node1$' "$SANDBOX/calls" \
         || fail "REGRESSION: '$st' was released but never managed. release lands the node in 'available'; without the follow-up 'manage' it is one edge short of the state inspect needs"
-    grep -n 'release node1' "$SANDBOX/calls" | grep -q '^1:' \
+    # Capture, then test: a verdict must not hang off a pipe into `grep -q` (it exits on the
+    # first match, the producer can take SIGPIPE, and with pipefail the pipeline is non-zero,
+    # so a match that WAS found reads as absent). Invisible to tools/tests/test-no-pipe-gates.sh
+    # until 2026-08-22, because that scanner read PHYSICAL lines and this gate spans a
+    # backslash continuation. `|| true` keeps the capture from tripping errexit where it is set.
+    _rel_line="$(grep -n 'release node1' "$SANDBOX/calls" || true)"
+    grep -q '^1:' <<<"$_rel_line" \
         || fail "'manage' was issued before 'release' for a node in '$st' — manage cannot accept '$st', so the order is the fix"
 done
 note "a node in 'active'/'rescue' is released back to the pool and re-managed, in that order  ✓"
@@ -175,7 +181,8 @@ for st in verifying deploying cleaning rescuing deleting; do
         || fail "REGRESSION: a node stranded in transient state '$st' was not aborted. Nothing accepts a node mid-transition, so it was waved through as 'already advanced' and the run died later somewhere unrelated — the strand is the cause and the message named something else"
     grep -q '^manage node1$' "$SANDBOX/calls" \
         || fail "REGRESSION: '$st' was aborted but never managed. abort lands the node in 'error'; without the follow-up 'manage' it is recoverable and not recovered, which fails the same way one phase later"
-    grep -n 'abort node1' "$SANDBOX/calls" | grep -q '^1:' \
+    _abort_line="$(grep -n 'abort node1' "$SANDBOX/calls" || true)"
+    grep -q '^1:' <<<"$_abort_line" \
         || fail "'manage' was issued before 'abort' for a node in '$st' — manage cannot accept a transient state, so the order is the whole fix"
 done
 note "each transient state is aborted into 'error' and then managed, in that order  ✓"

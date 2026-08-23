@@ -29,6 +29,9 @@ note() { printf '  - %s\n' "$*" >&2; }
 
 # Safety net: no silent exits (house rule). Any path out that is not an
 # explicit verdict prints one here.
+# shellcheck disable=SC2154  # rc IS assigned, by the `rc=$?` at the start of this same
+# single-quoted trap body; shellcheck analyses the string without carrying the assignment
+# into the uses that follow it.
 trap 'rc=$?; rm -rf -- "$TMP"; [[ $rc == 0 || $rc == 77 || $rc == 1 ]] || \
       printf "FAIL: test exited early (rc=%s)\n" "$rc" >&2' EXIT
 

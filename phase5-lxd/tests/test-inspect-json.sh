@@ -333,9 +333,16 @@ if "$LAB_LXD" inspect "$bogus" 2>/dev/null; then
     fail "inspect of unknown name should exit non-zero"
 fi
 err="$("$LAB_LXD" inspect "$bogus" 2>&1 || true)"
+# Both of the driver's real refusals, spelled out far enough to tell them apart.
+# It read `*"no instance"*|*"no instance, profile"*` until 2026-08-22, where the FIRST
+# pattern subsumes the second and the second can therefore never match: the assertion
+# accepted one message while reading as though it accepted two, and would have kept
+# passing if `inspect` started answering with the wrong one of the pair. lab-lxd.sh emits
+# "no instance named <n>" (the direct lookup) or "no instance, profile, or project matches
+# '<n>'" (after the profile/project fallback), and either is a correct refusal here.
 case "$err" in
-    *"no instance"*|*"no instance, profile"*) ;;
-    *) fail "inspect of unknown name: error should mention 'no instance'; got: $err" ;;
+    *"no instance named"*|*"no instance, profile, or project matches"*) ;;
+    *) fail "inspect of unknown name: expected 'no instance named …' or 'no instance, profile, or project matches …'; got: $err" ;;
 esac
 
 pass "inspect [--json] OK"
