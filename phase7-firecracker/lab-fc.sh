@@ -69,6 +69,34 @@ fi
 readonly LAB_FC_STATE_DIR="${LAB_STATE_DIR}/fc"
 readonly FC_PINNED_VERSION="${FC_PINNED_VERSION:-v1.16.1}"
 
+# WHERE IS THE VMM? One answer, not two. Until 2026-08-23 this driver resolved Firecracker
+# with `command -v firecracker` in five places and honoured no override, while every test in
+# examples/micro-cloud/ resolved it from a workdir via $MC_FIRECRACKER -- two answers to one
+# question, and only one of them reachable from the tool. REVIEW-docs-micro-cloud-maas.md's
+# D8 fixed the DOC (a `export PATH=…` line in the precondition block), which was the honest
+# fix for an audit with no mandate to change a driver. TODO 11.5 is the driver half.
+#
+# $LAB_FC_BIN, and PATH BY DEFAULT -- that default is load-bearing, not politeness: phase 7's
+# tests stand in a VMM by PATH-shimming a fake `firecracker`, so anything that stopped
+# consulting PATH would take seven tests with it.
+#
+# It does NOT relax the toolchain-fetch gate. The binary still has to be put there by
+# somebody; this only stops the driver from insisting it be on PATH.
+FC_BIN_SOURCE=""
+fc_bin() {
+    if [[ -n "${LAB_FC_BIN:-}" ]]; then
+        [[ -f "$LAB_FC_BIN" ]] || die "LAB_FC_BIN is set but names no file: $LAB_FC_BIN"
+        [[ -x "$LAB_FC_BIN" ]] || die "LAB_FC_BIN is set but is not executable: $LAB_FC_BIN"
+        FC_BIN_SOURCE="\$LAB_FC_BIN"
+        printf '%s' "$LAB_FC_BIN"
+        return 0
+    fi
+    local p; p="$(command -v firecracker || true)"
+    [[ -n "$p" ]] || die "no firecracker on PATH, and \$LAB_FC_BIN is not set — stage the pinned binary and point LAB_FC_BIN at it, or add it to PATH"
+    FC_BIN_SOURCE="PATH"
+    printf '%s' "$p"
+}
+
 # Defaults, each one a thing the tool supplies that you did not type. Every entry here is a
 # line in the provenance table, by construction — a default that is not reported is exactly
 # the drift this slice exists to expose.
@@ -414,16 +442,32 @@ preflight_checks() {  # preflight_checks <record>
         pf_fail "/dev/kvm is missing or not read-write for uid $EUID (add yourself to the kvm group)"
     fi
 
-    local fcbin; fcbin="$(command -v firecracker || true)"
+    # Reported, not just used: "which firecracker is this" is the question a preflight
+    # exists to answer, and $LAB_FC_BIN makes the answer non-obvious.
+    # A BAD OVERRIDE IS NAMED, never quietly ignored. Falling back to PATH here would run a
+    # DIFFERENT VMM than the one asked for and report success -- and the operator with a typo
+    # in $LAB_FC_BIN is exactly the person who would believe it.
+    local fcbin=""
+    if [[ -n "${LAB_FC_BIN:-}" ]]; then
+        if [[ ! -f "$LAB_FC_BIN" ]]; then
+            pf_fail "\$LAB_FC_BIN is set but names no file: $LAB_FC_BIN"
+        elif [[ ! -x "$LAB_FC_BIN" ]]; then
+            pf_fail "\$LAB_FC_BIN is set but is not executable: $LAB_FC_BIN"
+        else
+            fcbin="$LAB_FC_BIN"; FC_BIN_SOURCE="\$LAB_FC_BIN"
+        fi
+    else
+        fcbin="$(command -v firecracker || true)"; [[ -n "$fcbin" ]] && FC_BIN_SOURCE="PATH"
+    fi
     if [[ -n "$fcbin" ]]; then
         local v; v="$("$fcbin" --version 2>&1 | head -1 | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' || true)"
         if [[ "$v" == "$FC_PINNED_VERSION" ]]; then
-            pf_ok "firecracker $v at $fcbin (pinned)"
+            pf_ok "firecracker $v at $fcbin (pinned, via $FC_BIN_SOURCE)"
         else
             pf_fail "firecracker is ${v:-unknown}, pinned is $FC_PINNED_VERSION"
         fi
     else
-        pf_fail "firecracker not on PATH"
+        [[ -n "${LAB_FC_BIN:-}" ]] || pf_fail "firecracker not on PATH (and \$LAB_FC_BIN is not set)"
     fi
 
     # -- the kernel must be an ELF, not a bzImage -------------------------
@@ -826,7 +870,15 @@ _running_pid() {  # _running_pid <name> -> prints the pid iff OUR firecracker is
     [[ "$p" =~ ^[0-9]+$ ]] || return 1
     [[ -d "/proc/$p" ]] || return 1
     cfg="$(fc_config "$name")"
-    grep -qa firecracker "/proc/$p/cmdline" 2>/dev/null || return 1
+    # The BASENAME of the resolved binary, not the literal string "firecracker". This check
+    # asks "is the process on that pid our VMM", and $LAB_FC_BIN may legitimately point at
+    # `fc-v1.16.1` or `firecracker.bin` — in which case a hardcoded literal answers NOT
+    # RUNNING for a VMM that is running, which is the worst of the three possible wrong
+    # answers: `stop` reports nothing to stop and leaves it running. The override created
+    # this hazard; noticing it was the reason to grep the whole driver for the binary name
+    # before changing any of it.
+    local _fcname; _fcname="$(basename -- "${LAB_FC_BIN:-firecracker}")"
+    grep -qa -- "$_fcname" "/proc/$p/cmdline" 2>/dev/null || return 1
     # EITHER per-instance path is a sufficient identity, and BOTH are needed as options
     # because a RESTORED VMM has no --config-file at all: a snapshot carries the machine
     # configuration, so `snapshot restore` starts firecracker with only --api-sock. Keeping
@@ -1056,7 +1108,7 @@ cmd_start() {
         local hostsock="$jroot/api.sock"
         rm -f -- "$hostsock"
         printf '%s' "$hostsock" > "$(fc_sockfile "$name")"
-        setsid jailer --id "$name" --exec-file "$(command -v firecracker)" \
+        setsid jailer --id "$name" --exec-file "$(fc_bin)" \
             --uid "$juid" --gid "$jgid" \
             --chroot-base-dir "$(fc_jailbase "$name")" \
             -- --api-sock /api.sock --config-file /config.json \
@@ -1117,7 +1169,7 @@ cmd_start() {
         # API socket is: a SIGKILLed VMM never reaches the tidy-up in `stop`.
         _unlink_stale_vsock "$name"
         printf '%s' "$sock" > "$(fc_sockfile "$name")"
-        setsid firecracker --api-sock "$sock" --config-file "$(fc_config "$name")" \
+        setsid "$(fc_bin)" --api-sock "$sock" --config-file "$(fc_config "$name")" \
             > "$(fc_log "$name")" 2>&1 < /dev/null &
         p=$!
         printf '%s\n' "$p" > "$(fc_pidfile "$name")"
@@ -1418,7 +1470,7 @@ cmd_snapshot() {  # cmd_snapshot <action> <name> [snap] [force]
         # NO --config-file. The snapshot carries the machine configuration; passing a config
         # as well makes Firecracker refuse the load. This is why `_running_pid` accepts the
         # socket path as an identity.
-        setsid firecracker --api-sock "$sock" >> "$(fc_log "$name")" 2>&1 < /dev/null &
+        setsid "$(fc_bin)" --api-sock "$sock" >> "$(fc_log "$name")" 2>&1 < /dev/null &
         local newp=$!
         printf '%s\n' "$newp" > "$(fc_pidfile "$name")"
 
@@ -1511,7 +1563,7 @@ cmd_clone() {  # cmd_clone <src> <snap> <new>
 
     # NO --config-file, for the same reason `snapshot restore` passes none: the snapshot
     # carries the machine configuration, and Firecracker refuses a load when both are given.
-    setsid firecracker --api-sock "$sock" >> "$(fc_log "$new")" 2>&1 < /dev/null &
+    setsid "$(fc_bin)" --api-sock "$sock" >> "$(fc_log "$new")" 2>&1 < /dev/null &
     local p=$!
     printf '%s\n' "$p" > "$(fc_pidfile "$new")"
 

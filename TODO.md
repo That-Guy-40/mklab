@@ -1392,8 +1392,36 @@ no override, while **every test in micro-cloud** resolves it from the workdir vi
 tool. D8 fixed the **doc** (the precondition block now carries the `export PATH`), which
 was the honest fix for an audit with no mandate to change a driver.
 
-- [ ] **11.5** — decide it deliberately. An override would let the six firecracker-gated
-      rows in 11.2(b) run wherever the binary is staged, without relaxing the fetch gate.
+- [x] **11.5** — **decided 2026-08-23: yes.** `lab-fc.sh` honours **`$LAB_FC_BIN`**, and
+      falls back to `command -v firecracker` when it is unset. That default is load-bearing
+      rather than polite: phase 7 stands in a VMM by PATH-shimming a fake `firecracker`, so
+      anything that stopped consulting `PATH` would take seven tests with it. It does not
+      relax the toolchain-fetch gate — somebody still has to stage the binary; the driver
+      merely stops insisting it be on `PATH`.
+
+      **Mapping the blast radius first found the reason to be careful, and it was not the
+      five call sites.** `_running_pid` identified the VMM by grepping `/proc/<pid>/cmdline`
+      for the **literal string `firecracker`** — so an override pointing at `fc-v1.16.1`
+      would answer NOT RUNNING for a VMM that *is* running, and `stop` would then report
+      nothing to stop and leave the guest behind. The override created that hazard; the fix
+      greps the resolved binary's basename. Measured: against the row-4 fixture the old
+      literal misses the process entirely, the basename matches it.
+
+      Six rows in [`tests/test-vmm-override.sh`](phase7-firecracker/tests/test-vmm-override.sh),
+      all green, 20/20 for the suite: the override selects the VMM; an override naming no
+      file and one naming something non-executable are each refused **by name** (a silent
+      fallback would run a *different* VMM and report success to the one person — the
+      operator with a typo — who would believe it); `preflight` reports the binary **and its
+      source**; the liveness check follows the override; and with `$LAB_FC_BIN` unset `PATH`
+      still decides. The row-4 control asserts the fixture's argv does **not** contain
+      `firecracker`, so the row cannot pass against the pre-fix driver.
+
+      D8's doc workaround is retired: `examples/micro-cloud/MANUAL_TESTING.md` now exports
+      `LAB_FC_BIN` instead of prepending to `PATH`.
+
+      **It does not by itself close 11.2(b)'s six firecracker-gated rows.** Those need a
+      binary present, which CI still has no sanctioned way to obtain; what changes is that
+      staging one anywhere is now enough.
 
 ---
 
