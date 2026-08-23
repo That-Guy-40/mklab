@@ -280,6 +280,7 @@ pure-64-bit build.
 |---|---|
 | memory above 4 GB | `claim`/`release` over the whole map; today's firmware simply cannot address it |
 | an honest device tree | `#address-cells 2`, a `/cpus` node that isn't lying about the mode the CPU is in |
+| the one persistence story that needs long mode | a file-backed **pmem region above 4 GB** — the only NVRAM backing a 32-bit firmware cannot address. CMOS, a drive file and pflash all work in 32-bit today. See *Persistence* below |
 | a simpler kernel handoff | no 64→32 drop; the `+0x200` entry, per the corrected claim above |
 | an upstream-shaped patch | OpenBIOS would plausibly take a real `arch/amd64` target: its own example config already requests the image, and the drift fixes are exactly the sweeps upstream applies anyway |
 
@@ -347,6 +348,70 @@ none of which mention a cell width. A 64-bit OpenBIOS is a smaller step than
 that one: same implementation, same dictionary source, wider cell. The place to
 look for breakage is any word that assumes `/n = 4` (a literal `4 +` where `na+`
 was meant), which is a grep, not a port.
+
+## Persistence: what would back an NVRAM on x86-64 — measured 2026-08-23
+
+Asked because the 64-bit port's clearest gain is *an honest device tree*, and the
+obvious next question is whether that tree could carry a node whose **contents
+outlive a boot**. The short answer: OpenBIOS x86 has no NVRAM at all today, and
+only one of the four ways to give it one has anything to do with long mode.
+
+### Today: the package is compiled and never instantiated
+
+| evidence | what it says |
+|---|---|
+| `nm obj-x86/libpackages.a` | `nvram_init` **is** in the x86 build — `packages/nvram.c` is compiled unconditionally |
+| `grep -rn nvram_init --include='*.c'` | its only callers are `arch/ppc/pearpc/init.c`, `arch/ppc/mol/init.c` and `drivers/macio.c`. **No x86 caller** |
+| `grep arch_nvram_{size,get,put}` | defined only in `arch/ppc/qemu/qemu.c`, `arch/ppc/briq/briq.c`, `arch/ppc/mol/mol.c`. x86 and amd64 define **none** |
+| live `dev / ls` (multiboot, QEMU) | `aliases openprom options chosen builtin packages pci8086,1237@0 ide@0..3 console` — **there is no `/nvram`** |
+| live `devalias` | prints nothing: no aliases are defined |
+| live `dev /options .properties` | exactly three: `name`, `screen-#columns`, `screen-#rows` |
+| live `nvramrc` | the **word exists** — it pushes a string (the prompt goes `0 >` → `2 >`) |
+
+That last pair is the distinction worth holding: the *config-variable vocabulary*
+from `forth/admin/nvram.fs` is in the dictionary and answers, while the *device*
+that would give it a backing store does not exist. Every value it returns is
+dictionary state, so a reset loses all of it. **Bug #3 (`load-base`) was about that
+vocabulary, not about storage** — and the boot log still prints
+`vga-driver-fcode:load-base isn't unique.`, which is the fix meeting an existing
+definition.
+
+So "add NVRAM to x86" is precisely: implement three functions
+(`arch_nvram_size/get/put`), call `nvram_init(path)` once, and decide what the
+three functions talk to. That last decision is the whole problem.
+
+### The four candidate backings, and what each actually survives
+
+| backing | survives firmware reset | survives an OS boot / power cycle | notes |
+|---|---|---|---|
+| **CMOS/RTC, 128 bytes** (ports `0x70`/`0x71`) | yes | **no** on QEMU by default — it is not file-backed | genuinely "the PC's NVRAM", and far too small for `nvramrc` |
+| **A file on an attached drive** | yes | yes | what OFW actually does: its `pseudo-nvram` is *a file on a drive*, the odd one out in [`../open-firmware-debugs-itself/DELIVERY-MECHANISMS.md`](../open-firmware-debugs-itself/DELIVERY-MECHANISMS.md)'s comparison table. Bradley's own comment says a generic PC gives firmware no NV region it can own, so it borrows a filesystem. OpenBIOS x86 has `ide@0..3` nodes to build on |
+| **`-drive if=pflash`** | yes | yes | the EFI-shaped answer (`OVMF_VARS.fd` is exactly this) — a real NV region the firmware owns rather than borrows |
+| **NVDIMM / pmem** (`-object memory-backend-file` + `-device nvdimm`) | yes | yes | file-backed **memory**, and it can sit **above 4 GB** |
+
+**Only the last row needs the port.** CMOS, a drive file and pflash are all
+reachable from the 32-bit firmware today; adding any of them is an
+`arch/x86` patch, not an `arch/amd64` one. A pmem region placed above 4 GB is the
+one backing a 32-bit firmware *cannot address* — which makes it the only
+persistence story that is an argument **for** long mode rather than beside it.
+
+### "Data survives an OS boot" is three different questions
+
+Worth separating before any of it is built, because the OFW lab already paid for
+conflating two of them — its x86 warm-reboot gap turned out to have a **second
+cause**:
+
+1. **Across a firmware reset**, no OS involved — the easy one; any of the four backings does it.
+2. **Across a boot, with the OS in between** — the OS owns the machine, so the bytes must live somewhere it will not reuse: a declared-reserved e820 region, a pmem device it is told about, or a file it never touches.
+3. **Across a power cycle** — rules out anything RAM-shaped that is not file-backed, which is what makes the middle two rows above the pragmatic choices.
+
+### What this section did NOT prove
+
+No `arch/amd64` target was built, no `arch_nvram_*` was implemented, and no NVDIMM
+was attached to OpenBIOS. The claims above are (a) source reads of the current
+clone, (b) two live probes of the running 32-bit firmware, quoted verbatim. The
+pmem-above-4-GB row in particular is a *design* claim: nothing here has shown
+OpenBIOS enumerating an NVDIMM at all, in either mode.
 
 ## What the audit corrected
 

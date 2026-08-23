@@ -165,7 +165,8 @@ done
 note "controls: a promised-but-absent entry is caught; a real file, a real directory, a glob with a match and a placeholder are not"
 
 # ── §1 — every tracked document ─────────────────────────────────────────────────────────
-if (( $# )); then DOCS=("$@"); else mapfile -t DOCS < <(git ls-files '*.md'); fi
+EXPLICIT=""
+if (( $# )); then DOCS=("$@"); EXPLICIT=1; else mapfile -t DOCS < <(git ls-files '*.md'); fi
 problems=(); n_entries=0; n_trees=0; n_skipped=0; skipped_roots=()
 for d in "${DOCS[@]}"; do
     seen_tree=0
@@ -209,7 +210,15 @@ for d in "${DOCS[@]}"; do
     done < <(tree_entries "$d")
     (( seen_tree )) && n_trees=$((n_trees+1))
 done
-(( n_entries > 0 )) || fail "no tree entries found in ${#DOCS[@]} document(s) — this would pass vacuously"
+# The vacuous-pass guard belongs to the WHOLE-CORPUS run only. Given explicit files, "this
+# document has no tree" is an answer, not an emptiness to be alarmed about -- and the first
+# time the tool was pointed at one file it reported FAIL for having nothing to do.
+if (( n_entries == 0 )); then
+    if (( ${#EXPLICIT} )); then
+        pass "the ${#DOCS[@]} document(s) named on the command line contain no ASCII tree entries to check"
+    fi
+    fail "no tree entries found in ${#DOCS[@]} document(s) — a whole-corpus run finding none means the scan is broken, not that the repo has no trees"
+fi
 
 if (( ${#problems[@]} )); then
     fail "$(printf '%d tree entr(ies) name something that does not exist:' "${#problems[@]}"
