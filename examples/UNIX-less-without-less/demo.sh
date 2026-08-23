@@ -80,7 +80,9 @@ echo "================================================================"
 
 # ── 0. fixtures ────────────────────────────────────────────────────────────────
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/ddpager-demo.XXXXXX")"
-cd "$WORK"    # short filenames: the 80-column status line truncates long paths
+# `|| exit 1`: `set -u` is on but not `set -e`, so an unguarded cd that failed would
+# quietly build these fixtures in the caller's directory instead of the scratch one.
+cd "$WORK" || exit 1    # short filenames: the 80-column status line truncates long paths
 seq 1 100 | sed 's/^/line /' > hundred.txt
 { seq 1 59 | sed 's/^/line /'; echo 'a needle here'
   seq 61 79 | sed 's/^/line /'; echo 'a needle again'

@@ -4,7 +4,10 @@
 
 set -uo pipefail
 
-cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+# `|| exit 1`: without it a failed cd leaves the runner globbing test-*.sh in whatever
+# directory it was invoked from -- finding nothing, and printing a clean `0/0 ... 0 failed`.
+# A runner that ran no tests must not be indistinguishable from one where everything passed.
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")" || exit 1
 
 # ── discover ONCE, so "how many ran" has something to be a ratio against ────────────────
 shopt -s nullglob

@@ -76,7 +76,9 @@ echo "================================================================"
 # every diff see exactly the same directory.
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/ddls-demo.XXXXXX")"
 mkdir "$WORK/box"
-cd "$WORK/box"
+# `|| exit 1` on every cd: this script has `set -u` but not `set -e`, so a failed cd
+# would silently carry on and build its fixtures in the CALLER'S directory instead.
+cd "$WORK/box" || exit 1
 mkdir subdir subdir/nested
 printf 'hello\n'             > subdir/inner.txt
 printf 'alpha\n'             > alpha.txt
@@ -140,7 +142,7 @@ echo
 echo "3. DIVERGENCES: four places ddls and ls disagree. Each is pinned"
 echo "   as a REGRESSION check on the verbatim script (so it cannot drift"
 echo "   silently), and the corrected twin must match ls."
-cd "$WORK"
+cd "$WORK" || exit 1
 
 note "(a) -t compares whole seconds (stat %Y); ls compares nanoseconds."
 mkdir tie && touch -d '2026-01-01 10:00:00.900' tie/zzz \
@@ -194,7 +196,7 @@ echo
 echo "4. ON A TTY: color and column behavior (driven through script(1))."
 ESC="$(printf '\033')"
 if [ "$HAVE_SCRIPT" = 1 ]; then
-    cd "$WORK/box"
+    cd "$WORK/box" || exit 1
     esc_n="$(script -qec "bash '$DDLS' --color=never ." /dev/null | grep -c "${ESC}\[")" || true
     check "REGRESSION: --color=never on a tty STILL emits ANSI (auto-color runs after parse_args)" \
           "yes" "$( [ "${esc_n:-0}" -gt 0 ] && echo yes || echo no )"
@@ -203,7 +205,7 @@ if [ "$HAVE_SCRIPT" = 1 ]; then
     esc_n="$(script -qec "bash '$FDLS' --color=never ." /dev/null | grep -c "${ESC}\[")" || true
     check "FIXED: --color=never is honored" "0" "${esc_n:-0}"
 
-    cd "$WORK"
+    cd "$WORK" || exit 1
     mkdir manyfiles; for i in 01 02 03 04 05 06 07 08 09 10 11 12; do touch "manyfiles/f$i"; done
     # How many of the 12 survive depends on the pty's width (it equals the
     # column layout's num_rows) -- the INVARIANT is: some are silently dropped.

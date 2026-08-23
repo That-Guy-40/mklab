@@ -28,6 +28,9 @@ pass() { echo "PASS: $*"; exit 0; }
 fail() { echo "FAIL: $*"; exit 1; }
 skip() { echo "SKIP: $*"; exit 77; }
 note() { echo "  - $*"; }
+# shellcheck disable=SC2154  # rc IS assigned, by the `rc=$?` at the start of this same
+# single-quoted trap body; shellcheck analyses the string without carrying the assignment
+# into the uses that follow it.
 trap 'rc=$?; [[ $rc -eq 0 || $rc -eq 1 || $rc -eq 77 ]] || echo "FAIL: test exited early (rc=$rc)"' EXIT
 
 command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"

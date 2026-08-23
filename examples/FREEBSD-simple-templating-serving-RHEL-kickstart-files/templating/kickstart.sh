@@ -65,11 +65,18 @@ mkisofs -J -R -l -graft-points -V "OEMDRV" \
         -input-charset utf-8 \
         -o iso/${SYSTEM_NAME}.oemdrv.iso \
         ks.cfg=files/${SYSTEM_NAME}.cfg ksfloppy
+# Captured HERE, on the line after the command, because the two echoes below would
+# otherwise be what `${?}` reports. The two `if [ ${?} -eq 0 ]` blocks above are fine --
+# a blank line does not touch the status, a command does -- and this one was not: it read
+# the second echo's status, so a failed mkisofs still printed "ISO image generated" and
+# exited 0. A false success outranks an honest failure: the ISO is missing, the caller is
+# told it exists, and Anaconda's OEMDRV scan is what finally reports it, three steps later.
+mkisofs_rc=${?}
 
 echo "-----------------------------"
 echo "INFO: mkisofs(8) output ENDED"
 
-if [ ${?} -eq 0 ]
+if [ ${mkisofs_rc} -eq 0 ]
 then
   echo "INFO: ISO image 'iso/${SYSTEM_NAME}.oemdrv.iso' generated"
 else

@@ -96,7 +96,7 @@ ACCEL="tcg"
 if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then ACCEL="kvm"; else warn "/dev/kvm not accessible — slow TCG emulation"; fi
 
 QEMU=(qemu-system-x86_64 -machine q35 -accel "$ACCEL" -m "$MEMORY" -smp "$CPUS"
-      -drive file="$DISK",format=qcow2,if=virtio -vga virtio
+      -drive "file=$DISK,format=qcow2,if=virtio" -vga virtio
       -device qemu-xhci -device usb-tablet -name "debian-vm:$(basename "$IMAGE")")
 [ "$ACCEL" = kvm ] && QEMU+=(-cpu host)
 
@@ -115,7 +115,7 @@ else
     QEMU+=(-bios "$COMBINED"); log "UEFI: $COMBINED"
 fi
 
-if [ "$SSH_PORT" = "0" ] || [ -z "$SSH_PORT" ]; then QEMU+=(-nic user,model=virtio-net-pci)
+if [ "$SSH_PORT" = "0" ] || [ -z "$SSH_PORT" ]; then QEMU+=(-nic "user,model=virtio-net-pci")
 else QEMU+=(-nic "user,model=virtio-net-pci,hostfwd=tcp::${SSH_PORT}-:22"); fi
 
 case "$DISPLAY_BACK" in gtk) QEMU+=(-display gtk);; sdl) QEMU+=(-display sdl);; none) QEMU+=(-display none);; esac

@@ -30,6 +30,9 @@ skip() { echo "SKIP: $*"; exit 77; }
 note() { echo "  - $*"; }
 ACCEL="$([[ -w /dev/kvm ]] && echo kvm || echo tcg)"
 
+# shellcheck disable=SC2154  # rc IS assigned, by the `rc=$?` at the start of this same
+# single-quoted trap body; shellcheck analyses the string without carrying the assignment
+# into the uses that follow it.
 trap 'rc=$?; [[ $rc -eq 0 || $rc -eq 1 || $rc -eq 77 ]] || echo "FAIL: test exited early (rc=$rc)"' EXIT
 
 case "$FLAVOR" in

@@ -33,6 +33,9 @@ cleanup() {
     podman network rm "$NET"    >/dev/null 2>&1 || true
 }
 # Safety net: no silent exit (house rule). Any non-verdict exit prints one.
+# shellcheck disable=SC2154  # rc IS assigned, by the `rc=$?` at the start of this same
+# single-quoted trap body; shellcheck analyses the string without carrying the assignment
+# into the uses that follow it.
 trap 'rc=$?; cleanup; [[ $rc == 0 || $rc == 77 || $rc == 1 ]] || \
       printf "FAIL: demo exited early (rc=%s)\n" "$rc" >&2' EXIT
 

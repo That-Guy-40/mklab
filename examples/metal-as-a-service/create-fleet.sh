@@ -103,7 +103,19 @@ do_enroll() {
 # give_console <node> — swap the domain's pty console for a file, and tell the
 # registry where it is (the `console` field the drivers already read).
 give_console() {
-    local name="$1" log="$CONSOLE_DIR/$name.log"
+    # TWO `local` statements, not one. `local` is a COMMAND: its arguments are expanded
+    # before it runs, so in `local name="$1" log="$CONSOLE_DIR/$name.log"` the `$name` on
+    # the right is the CALLER'S name, never `$1`. This read correctly only by accident --
+    # the sole call site is `for name in $(fleet_names)` with the loop variable left
+    # global, holding the very value being passed. Measured 2026-08-22: a caller whose
+    # `name` differs writes THAT node's path, and with no caller global at all every node
+    # gets `$CONSOLE_DIR/.log` -- one shared, append-only console for the whole fleet,
+    # written into the domain XML and recorded in the registry, so node B's boot output
+    # would satisfy node A's health gate. That is this lab's own headline defect class (a
+    # record that outlives the thing it describes), armed and waiting for someone to tidy
+    # up an unrelated loop variable.
+    local name="$1"
+    local log="$CONSOLE_DIR/$name.log"
     if [[ "$FLEET_CONSOLE" != file ]]; then
         info "$name: FLEET_CONSOLE=$FLEET_CONSOLE — leaving the pty console (health gates that read a console log will time out)"
         return 0

@@ -26,6 +26,8 @@ head -n 3 /proc/self/status
 
 p 'ARTICLE 1 — a file descriptor is an index into a per-process table'
 # Hold a file open in a background process, then read ITS /proc/<pid>/fd.
+# shellcheck disable=SC2217  # `sleep` is not meant to READ this; the redirect exists so the
+# process HOLDS an open fd, which is what the next line inspects in /proc/<pid>/fd.
 sleep 30 </etc/hostname & bg=$!
 sleep 1
 echo "   background pid $bg has these open fds (0/1/2 = stdin/stdout/stderr):"
@@ -60,6 +62,8 @@ ls -d /proc/[0-9]* 2>/dev/null | sed 's:/proc/::' | sort -n | tr '\n' ' '; echo
 p 'GEM — in THIS container /proc/meminfo is served by lxcfs (a FUSE fs)'
 if grep -q 'lxcfs' /proc/mounts 2>/dev/null; then
 	echo '   Some /proc files are not just computed by the kernel but *overridden*'
+	# shellcheck disable=SC1112  # a typographic apostrophe inside single-quoted PROSE. An
+	# ASCII ' here would end the string, so this one stays as it is deliberately.
 	echo '   by lxcfs to report the container’s cgroup limits — Ciro’s "generated'
 	echo '   on read" thesis made physical (note: unlike a native procfs file,'
 	echo '   these FUSE-backed files even advertise a real size):'

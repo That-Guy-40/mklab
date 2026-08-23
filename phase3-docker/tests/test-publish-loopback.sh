@@ -25,6 +25,8 @@ eq "ipv6 bind preserved"         "$(_pub_host '[::1]:8080:80')"   '[::1]:8080:80
 # LAB_PUBLISH_HOST overrides the default...
 eq "override to all-interfaces"  "$(LAB_PUBLISH_HOST=0.0.0.0 _pub_host '8080:80')" '0.0.0.0:8080:80'
 # ...and an empty override restores the engine's own default (no rewrite).
+# shellcheck disable=SC1007  # `LAB_PUBLISH_HOST= cmd` is a deliberate empty-value env prefix --
+# the very case this row exercises -- not a stray space in an assignment.
 eq "empty override = no rewrite" "$(LAB_PUBLISH_HOST= _pub_host '8080:80')"        '8080:80'
 
 pass "published ports default to loopback; explicit binds + LAB_PUBLISH_HOST honored"

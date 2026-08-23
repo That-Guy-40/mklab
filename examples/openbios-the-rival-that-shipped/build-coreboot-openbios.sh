@@ -19,8 +19,15 @@ GUARD="$WORKDIR/coreboot-guard.sha"
 
 # Sha-guard the sibling labs' kept artifacts (only the ones that exist).
 if [[ ! -f "$GUARD" ]]; then
-    (cd "$CB" && ls .config build/coreboot.rom .config-ofw build-ofw/coreboot.rom 2>/dev/null \
-        | xargs -r sha256sum) > "$GUARD"
+    # A loop, not `ls … | xargs`: the four names are literals, so `ls` was only ever
+    # answering "which of these exist" -- a question `[[ -f ]]` answers without handing
+    # filenames through a pipe. Order is irrelevant to the `sha256sum -c` below.
+    # `if`, NOT `[[ -f … ]] && sha256sum …`: this script runs under `set -e`, and a `&&`
+    # whose left side is false on the LAST iteration makes the whole subshell exit 1 and
+    # takes the build with it. An `if` with no `else` is 0 when its condition is false.
+    (cd "$CB" && for f in .config build/coreboot.rom .config-ofw build-ofw/coreboot.rom; do
+        if [[ -f "$f" ]]; then sha256sum "$f"; fi
+    done) > "$GUARD"
     echo "==> wrote guard $GUARD"
 fi
 

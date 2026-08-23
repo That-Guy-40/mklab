@@ -32,7 +32,14 @@ note "creating host-copy chroot at $target with $probe_bin"
 # so don't insist on /lib* in that case — the regression test
 # test-host-copy-static-binary.sh covers the static path explicitly.
 if ldd "$probe_bin" >/dev/null 2>&1; then
-    ls "${target}/lib"* "${target}/lib64" 2>/dev/null | grep -q . \
+    # A glob, not `ls … | grep -q .`. Two reasons, and the second is this repo's own rule:
+    # a verdict must never hang off a pipe, because the producer can be SIGPIPE'd and the
+    # status you read is the CONSUMER'S. `grep -q .` was also standing in for the real
+    # question -- "did any file land under a lib dir" -- which a glob answers directly.
+    shopt -s nullglob dotglob
+    _libfiles=( "${target}"/lib*/* "${target}"/lib64/* )
+    shopt -u nullglob dotglob
+    (( ${#_libfiles[@]} > 0 )) \
         || fail "no libs copied (chroot would be unable to exec dynamic $probe_bin)"
 else
     note "$probe_bin is statically linked — skipping lib-presence check"

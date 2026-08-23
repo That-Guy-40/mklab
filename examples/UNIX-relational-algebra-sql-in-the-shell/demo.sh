@@ -26,6 +26,9 @@ W="$(mktemp -d)"
 CHECKS=0
 FAILED=0
 # Belt-and-suspenders: never exit silently. Any early death still prints a verdict.
+# shellcheck disable=SC2154  # rc IS assigned, by the `rc=$?` at the start of this same
+# single-quoted trap body; shellcheck analyses the string without carrying the assignment
+# into the uses that follow it.
 trap 'rc=$?; rm -rf "$W"; if [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; then
         echo "FAIL: demo.sh exited early (rc=$rc)"; fi' EXIT
 

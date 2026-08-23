@@ -32,6 +32,9 @@ cleanup() {
          for l in $(losetup -j /work/.vdev.img -O NAME -n 2>/dev/null); do losetup -d "$l"; done; true' >/dev/null 2>&1 || true
     rm -f "$VDEV" "$HERE/.asset.sha"
 }
+# shellcheck disable=SC2154  # rc IS assigned, by the `rc=$?` at the start of this same
+# single-quoted trap body; shellcheck analyses the string without carrying the assignment
+# into the uses that follow it.
 trap 'rc=$?; cleanup; [[ $rc == 0 || $rc == 77 || $rc == 1 ]] || \
       printf "FAIL: demo exited early (rc=%s)\n" "$rc" >&2' EXIT
 
