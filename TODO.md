@@ -1455,6 +1455,28 @@ was the honest fix for an audit with no mandate to change a driver.
       binary present, which CI still has no sanctioned way to obtain; what changes is that
       staging one anywhere is now enough.
 
+      **Finished properly on a re-audit the same day**, after "is 11.5 thoroughly done?" was
+      asked and the answer turned out to be no. The driver change was complete; three things
+      around it were not, and the third is the one that mattered:
+
+      1. **`--help` never mentioned the knob.** A tool that honours an environment variable
+         and does not document it is the doc-drift class this repo keeps finding. `--help`
+         now has an `environment:` section naming `LAB_FC_BIN`, `LAB_STATE_DIR` and
+         `FC_PINNED_VERSION` — and it is comment-extracted rather than a heredoc, so the
+         usage-is-data hazard does not apply.
+      2. **Three RUNBOOKs still told the reader to use `PATH`**, and one of them asserted
+         *"`firecracker` must be on `PATH`"* — a present-tense claim that the driver change
+         had just made **false**. Two were instructions and are updated; the third is a
+         **dated transcript**, so the note goes *beside* it rather than over it. A transcript
+         records what happened, and editing one to match today is falsifying a record.
+      3. **Four micro-cloud files resolve the binary themselves AND shell out to
+         `lab-fc.sh`** — which is the D8 seam itself, not a side-effect of it. Adding an
+         override without wiring those would have made two answers into **three**. Each now
+         `export`s `LAB_FC_BIN="$FC_BIN"` beside its own resolution, so both halves run the
+         same binary rather than the same version by luck. Re-run after: the override test,
+         `test-isolation-matrix.sh` and `test-mmds-answers-inside-the-guest.sh` pass;
+         `test-edge-on-the-fabric.sh` skips for root, as it did before.
+
 ---
 
 *Created 2026-06-06; #5–#6 added 2026-06-11; #7 added 2026-06-11; #8 added

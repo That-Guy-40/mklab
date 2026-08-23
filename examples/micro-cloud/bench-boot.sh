@@ -79,6 +79,12 @@ WORKDIR="${MC_WORKDIR:-$(_invoking_user_home)/.local/state/lab-create/micro-clou
 KERNEL="${MC_KERNEL:-$WORKDIR/vmlinux}"
 ROOTFS="${MC_ROOTFS:-$WORKDIR/api1.ext4}"
 FC_BIN="${MC_FIRECRACKER:-$WORKDIR/firecracker}"
+# ONE ANSWER TO "WHERE IS THE VMM". This file resolves the binary itself (it launches
+# Firecracker directly) AND shells out to lab-fc.sh, which used to resolve it from PATH --
+# the D8 seam: two tools, two answers, and nothing making them agree. Since 2026-08-23 the
+# driver takes $LAB_FC_BIN, so exporting it here means both halves run the SAME binary
+# rather than the same version by luck. TODO §11.5.
+export LAB_FC_BIN="$FC_BIN"
 QEMU_BIN="${MC_QEMU:-qemu-system-x86_64}"
 QBOOT="${MC_QBOOT:-/usr/share/qemu/qboot.rom}"
 

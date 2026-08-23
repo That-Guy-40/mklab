@@ -17,7 +17,7 @@ slice 4 you already know exactly what it is generating.
 
 | | |
 |---|---|
-| `firecracker` v1.16.1 | `export PATH="$HOME/.local/state/lab-create/micro-cloud-s3:$PATH"` — the pinned copy P2 fetched and sha-verified |
+| `firecracker` v1.16.1 | `export LAB_FC_BIN="$HOME/.local/state/lab-create/micro-cloud-s3/firecracker"` — the pinned copy, named directly. (`export PATH=…` still works; `lab-fc.sh` has taken `$LAB_FC_BIN` since 2026-08-23, and it says which binary it resolved.)
 | a **`vmlinux`** | an *uncompressed ELF*. See the naming trap below |
 | a rootfs `.ext4` | built by [`RUNBOOK-micro-cloud.md` step 0](RUNBOOK-micro-cloud.md#step-0--the-spine-and-the-two-things-made-from-it-root-once), or the Alpine one from slice 1 |
 | `/dev/kvm` readable | be in the `kvm` group; `ls -l /dev/kvm` |

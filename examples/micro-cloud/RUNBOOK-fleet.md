@@ -318,6 +318,12 @@ $ sudo -E env PATH="$HOME/.local/state/lab-create/micro-cloud-s3:$PATH" \
       examples/micro-cloud/tests/test-jailer-isolation.sh   # needs CAP_SYS_ADMIN
 ```
 
+> The `sudo -E env PATH=…` above is **what was run**, and is left as recorded. Since
+> 2026-08-23 `lab-fc.sh` also takes `$LAB_FC_BIN`, so `sudo -E env
+> LAB_FC_BIN="$HOME/.local/state/lab-create/micro-cloud-s3/firecracker" …` does the same
+> job and names the binary rather than a directory to search. A transcript is a record of
+> what happened; the note goes beside it rather than over it.
+
 The first two SKIP by name where there is no KVM or no images. The third is the half that
 must never rot, so it is built to need neither: its source instance is a directory and its
 snapshot is four files, both fabricated in the test, because `clone`'s gates are questions
