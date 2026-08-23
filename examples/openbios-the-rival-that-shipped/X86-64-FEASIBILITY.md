@@ -702,7 +702,7 @@ each one's checkpoint is chosen to be an **outcome rather than a mechanism** —
 |---|---|---|---|
 | **P0 — a node that exists** ✅ **DONE** | implement `arch_nvram_size/get/put` in `arch/x86` over a plain static buffer; call `nvram_init()` once | `dev / ls` lists **`nvram`**, and `dev /nvram .properties` answers — the exact probe that comes back without it today | 32-bit |
 | **P1 — survives a firmware reset** ✅ **DONE** | `WIN_WRITE 0x30` + an `ob_ide_write_ata` mirroring the read twin; a dedicated raw `-drive if=ide` image as the store | set a config variable, then **`cmp` the host's image before and after** — it must differ | 32-bit |
-| **P2 — survives a power cycle** ✅ **DONE** (an OS in between is still untested) | nothing new — P1's store, exercised | set a value, boot Linux with the existing [`showcase-rival-boots-linux.sh`](showcase-rival-boots-linux.sh), exit QEMU entirely, start a **fresh process**, read it back | 32-bit |
+| **P2 — survives an OS boot, then a power cycle** ✅ **DONE** | nothing new — P1's store, exercised | set a value, boot Linux with the existing [`showcase-rival-boots-linux.sh`](showcase-rival-boots-linux.sh), exit QEMU entirely, start a **fresh process**, read it back | 32-bit |
 | **P3 — the pmem store** | an NFIT reader (or, as a first step, a hard-coded region); lift `multiboot.c`'s type-1 filter; then the 64-bit addressing | `/nvram` answering at a physical address **≥ `0x100000000`**, with the backing file changing on the host | **needs the port** |
 
 #### P0 — RUN, and it passes
@@ -815,6 +815,56 @@ All three assertions were then watched to bite, by planting the defect:
 | wipe the image between write and read-back | `FAIL: REGRESSION: boot-file did not survive a power cycle` |
 | restore the image after the write, so the write reports success and lands nothing | `FAIL: REGRESSION: update-nvram reported success and the host image is byte-identical` |
 | give the "no drive" control a drive | `FAIL: REGRESSION: the control saw <nonce> with no drive attached — this check cannot fail` |
+
+##### P2's other half: a power cycle with an **OS in between**
+
+The three survivals this section separates are not the same question, and the
+ladder had only answered two of them. `qemu exit; qemu start` never asks the
+third: **while an OS runs, it owns the machine** — it enumerates the disks, and
+anything it decides to reuse is gone.
+
+`./smoke-openbios.sh persist-os` boots three times: write the store, **boot
+Linux**, read it back.
+
+```
+0 > printenv boot-file
+boot-file                 "OS-SURVIVED"
+```
+
+— after a full `boot /ide@1/cdrom@0:\vmlinuz … initrd=…` into u-root, with no
+`zapping pram` on the way back. The store survived.
+
+**The assertion that makes it mean something is not the banner.** An OS that
+booted but never saw the disk has not spared it; it simply never met it. So the
+track reads the kernel's own enumeration out of the boot log:
+
+```
+ata2.01: ATA-7: QEMU HARDDISK, 2.5+, max UDMA/100
+ata2.01: 2048 sectors, multi 16: LBA48
+```
+
+**2048 sectors is 1 MiB — this track's store, not any disk.** Binding the
+assertion to the size is what stops it passing on a machine that happened to
+have some other drive attached. And reading it from the kernel log means no
+interactive shell has to be driven, which matters: u-root's shell opens by
+querying the terminal (`ESC]10;?`, `ESC[6n`, then `ESC]11;?`) and blocks until
+something answers, so scripting it is a chain of escape replies that would rot
+the first time the shell changed.
+
+Three controls, planted and watched:
+
+| planted defect | verdict |
+|---|---|
+| wipe the store between the OS boot and the read-back | `REGRESSION: boot-file did not survive a boot with an OS in between` |
+| run the OS phase with the store **not attached** | `the kernel never enumerated an ATA disk — this run does not answer the OS-in-between question` |
+| never boot Linux at all | `Linux did not reach u-root, so no OS ever owned the machine and this track measured nothing` |
+
+The second and third are the ones that matter: without them this track silently
+degrades into `persist` with a longer runtime, and would keep reporting a pass
+for a question it had stopped asking. (A fourth attempt at the third control
+failed to inject and the script ran **unmodified** — reported here because a
+control that did not modify its subject is a green tick that proves nothing, and
+that is exactly the failure mode this table exists to rule out.)
 
 ##### A second backing, and why it had to be an unlike one
 
@@ -986,7 +1036,7 @@ conflating two of them — its x86 warm-reboot gap turned out to have a **second
 cause**:
 
 1. **Across a firmware reset**, no OS involved — the easy one; any of the four backings does it.
-2. **Across a boot, with the OS in between** — the OS owns the machine, so the bytes must live somewhere it will not reuse: a declared-reserved e820 region, a pmem device it is told about, or a file it never touches.
+2. **Across a boot, with the OS in between** — the OS owns the machine, so the bytes must live somewhere it will not reuse: a declared-reserved e820 region, a pmem device it is told about, or a file it never touches. **Measured: survives** — see *P2's other half* below, where Linux enumerates the very disk holding the store and leaves it alone.
 3. **Across a power cycle** — rules out anything RAM-shaped that is not file-backed, which is what makes the middle two rows above the pragmatic choices.
 
 ### What this section did NOT prove

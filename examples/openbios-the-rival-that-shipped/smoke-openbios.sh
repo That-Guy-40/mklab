@@ -282,5 +282,84 @@ case "$FLAVOR" in
       || fail "the floppy WRITE no longer reports failure — if the known-blocked turnaround is fixed, this track and the KNOWN-BLOCKED note in drivers/floppy.c both need updating, and persist-floppy should become a real track — see $LOG"
     fail "the floppy write failed against a backing that is not floppy0 — this track is not measuring what it thinks — see $LOG"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy]" >&2; exit 1 ;;
+  persist-os)
+    # P2's OTHER half: not just a power cycle, but a POWER CYCLE WITH AN OS IN
+    # BETWEEN. The distinction matters because the OS owns the machine while it
+    # runs -- it enumerates the disks, and anything it decides to reuse is gone.
+    # A store that survives `qemu exit; qemu start` has not been asked that
+    # question at all.
+    #
+    # Three boots: write / boot Linux / read back.
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v genisoimage >/dev/null || skip "genisoimage not installed"
+    MB="$WORKDIR/openbios/obj-x86/openbios.multiboot"
+    [[ -f "$MB" ]] || skip "no image at $MB — run ./build-openbios.sh x86 first"
+    SRC="$WORKDIR/openbios/arch/x86/openbios.c"
+    grep -q 'ob_ide_write_blocks_nr' "$SRC" 2>/dev/null \
+      || skip "the store has no IDE backing in $SRC — this track measures a backed store"
+    KERNEL="${KERNEL:-$HOME/linuxboot-lab/payload-bzImage}"
+    INITRD="${INITRD:-$HOME/linuxboot-lab/uroot.cpio}"
+    [[ -f "$KERNEL" ]] || skip "no kernel at $KERNEL (set KERNEL=; an x86_64 bzImage with a serial console)"
+    [[ -f "$INITRD" ]] || skip "no initrd at $INITRD (set INITRD=)"
+
+    NONCE="P2-OS-$$"
+    NV="$WORKDIR/persist-os-store.img"
+    rm -f "$NV"; truncate -s 1M "$NV"          # 1 MiB == 2048 sectors, asserted below
+    DRIVE=(-drive "if=ide,index=3,format=raw,cache=writethrough,file=$NV")
+    ISO="$WORKDIR/persist-os.iso"; STAGE="$WORKDIR/persist-os-stage"
+    rm -rf "$STAGE"; mkdir -p "$STAGE"; rm -f "$ISO"
+    cp "$KERNEL" "$STAGE/VMLINUZ"; cp "$INITRD" "$STAGE/UROOT.IMG"
+    genisoimage -quiet -o "$ISO" -V OBISO -r -J "$STAGE"
+
+    _boot() { # _boot <log> <timeout> <send-args...>; QEXTRA holds qemu extras
+      local log="$1" tmo="$2"; shift 2
+      rm -f "$SOCK" "$log"
+      qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$MB" \
+        -initrd "$WORKDIR/openbios/obj-x86/openbios.dict" "${QEXTRA[@]}" \
+        -display none -serial "unix:$SOCK,server=on" -no-reboot >/dev/null 2>&1 &
+      local qp=$!
+      python3 "$REPO/tools/drive-serial-repl.py" "$SOCK" "$log" --timeout "$tmo" "$@" >/dev/null 2>&1
+      local rc=$?
+      kill "$qp" 2>/dev/null   # by PID, never by pattern
+      sleep 1
+      return $rc
+    }
+
+    note "1/3 writing boot-file=$NONCE → $LOG.write"
+    QEXTRA=("${DRIVE[@]}")
+    _boot "$LOG.write" 90 --expect "0 > " \
+      --send "setenv boot-file $NONCE\r" --expect "0 > " \
+      --send "\" /nvram\" \" update-nvram\" execute-device-method .\r" --expect "0 > " \
+      || fail "no prompt conversation while writing the store — see $LOG.write"
+    grep -q "nvram: backed by ide@3" "$LOG.write" \
+      || fail "the store was not IDE-backed on the write boot — see $LOG.write"
+
+    note "2/3 booting Linux with the store still attached → $LOG.os"
+    QEXTRA=("${DRIVE[@]}" -cdrom "$ISO")
+    # The boot line is 78 chars; the firmware's input buffer eats past ~80 (POC-4).
+    _boot "$LOG.os" 260 --expect "0 > " \
+      --send 'boot /ide@1/cdrom@0:\\vmlinuz console=ttyS0 initrd=/ide@1/cdrom@0:\\uroot.img\r' \
+      --expect "Welcome to u-root" \
+      || fail "Linux did not reach u-root, so no OS ever owned the machine and this track measured nothing — see $LOG.os"
+    # THE OS MUST HAVE SEEN THE STORE. Without this the "OS in between" is just a
+    # slow reboot: an OS that never enumerated the disk cannot have spared it.
+    # Bound to OUR disk by its size (1 MiB == 2048 sectors), not to any disk.
+    grep -q "ATA-7: QEMU HARDDISK" "$LOG.os" \
+      || fail "the kernel never enumerated an ATA disk — the store was not visible to the OS, so this run does not answer the OS-in-between question — see $LOG.os"
+    grep -q "2048 sectors" "$LOG.os" \
+      || fail "the kernel enumerated a disk but not one of 2048 sectors — it saw something other than this track's store — see $LOG.os"
+    note "   the OS booted AND enumerated the store (ATA-7 QEMU HARDDISK, 2048 sectors)"
+
+    note "3/3 fresh firmware boot, reading it back → $LOG.read"
+    QEXTRA=("${DRIVE[@]}")
+    _boot "$LOG.read" 90 --expect "0 > " --send "printenv boot-file\r" --expect "0 > " \
+      || fail "no prompt conversation on the read-back boot — see $LOG.read"
+    grep -q "$NONCE" "$LOG.read" \
+      || fail "REGRESSION: boot-file did not survive a boot with an OS in between — the store was lost or reused while Linux owned the machine — see $LOG.read"
+    grep -q "zapping pram" "$LOG.read" \
+      && fail "REGRESSION: the store was re-formatted after the OS boot — it did not arrive valid — see $LOG.read"
+
+    pass "P2 (OS in between): boot-file=$NONCE survived a full Linux boot that enumerated the very disk holding it"
+    ;;
+  *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os]" >&2; exit 1 ;;
 esac
