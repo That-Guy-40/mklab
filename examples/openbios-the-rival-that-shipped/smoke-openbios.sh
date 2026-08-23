@@ -390,5 +390,48 @@ case "$FLAVOR" in
     fi
     pass "P2 (OS in between): boot-file=$NONCE survived a full Linux boot on $WANT_BACKEND (the OS was not shown to have seen the store — see the note above)"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash]" >&2; exit 1 ;;
+  amd64)
+    # SPIKE 1: the firmware itself running in LONG MODE, on bare metal.
+    #
+    # Not openbios-unix. That hosted binary has answered ffffffffffffffff since
+    # before this lab existed, and it proves the Forth engine is 64-bit clean --
+    # nothing about the arch layer. This track boots obj-amd64/openbios.multiboot32
+    # under QEMU and asks the same question of the metal.
+    #
+    # The `32` in that filename is not cosmetic: QEMU's multiboot loader REFUSES
+    # an x86-64 ELF ("Cannot load x86-64 image, give a 32bit one"), so the image
+    # is linked ELF64 and wrapped in ELF32 headers by objcopy. Every entry path
+    # on this machine class hands off in 32-bit; the trampoline is what climbs.
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    MB="$WORKDIR/openbios/obj-amd64/openbios.multiboot32"
+    DICT="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    [[ -f "$MB" ]] || skip "no image at $MB — run ./build-openbios.sh amd64 first"
+    [[ -f "$DICT" ]] || skip "no dictionary at $DICT"
+    note "booting the 64-bit firmware (accel=$ACCEL) → $LOG"
+    rm -f "$SOCK" "$LOG"
+    qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$MB" -initrd "$DICT" \
+      -display none -serial "unix:$SOCK,server=on" -no-reboot >/dev/null 2>&1 &
+    QPID=$!
+    python3 "$REPO/tools/drive-serial-repl.py" "$SOCK" "$LOG" --timeout 90 \
+      --expect "0 > " \
+      --send '3 4 + .\r' --expect "7 " \
+      --send '-1 u.\r' --expect "0 > " \
+      --send 'dev / ls\r' --expect "0 > "
+    RC=$?
+    kill "$QPID" 2>/dev/null   # by PID, never by pattern
+    # A triple fault under -no-reboot exits QEMU with rc=0 (POC-2's pitfall
+    # list), so NEVER read a clean exit as success: assert the prompt.
+    [[ $RC -eq 0 ]] || fail "the 64-bit firmware did not answer at the prompt (rc=$RC) — see $LOG"
+    grep -q 'ffffffffffffffff' "$LOG" \
+      || fail "REGRESSION: the prompt answered but '-1 u.' did not print ffffffffffffffff — the cell is not 64-bit on the metal — see $LOG"
+    # The trampoline's own witness. If relocation ever comes back, long mode's
+    # indifference to segment bases makes it a silent corruptor, so the skip is
+    # asserted rather than assumed.
+    grep -q 'long mode ignores segment bases' "$LOG" \
+      || fail "the firmware did not report skipping relocation — see $LOG"
+    grep -q 'openprom' "$LOG" \
+      || fail "no device tree at the 64-bit prompt — see $LOG"
+    pass "SPIKE 1: the firmware runs in long mode on bare metal — 0 > answered 7, '-1 u.' printed ffffffffffffffff, and the device tree is there"
+    ;;
+  *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|amd64]" >&2; exit 1 ;;
 esac

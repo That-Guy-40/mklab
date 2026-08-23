@@ -1,0 +1,1829 @@
+# patches/08-amd64-spike1-trampoline.patch — SPIKE 1: the firmware runs in long mode.
+#
+# Applies on top of 01-x86-revival.patch. SUPERSEDES 02 and 03 (it contains the
+# build-on and drift-fix work); do not apply those as well.
+#
+# Verified by: ./build-openbios.sh amd64 && ./smoke-openbios.sh amd64
+#   0 > 3 4 + . 7  ok
+#   0 > -1 u. ffffffffffffffff  ok        <- a 64-bit cell, on BARE METAL
+#
+# WHAT HAD TO BE TRUE, in the order the machine insisted on it:
+#
+#  1. switch.S rewritten. 116 lines of 32-bit assembly (pushal/popal, pushl %ds,
+#     lret) lived in the 64-bit arch directory. Replaced by a trampoline: build a
+#     PML4 identity-mapping the low 4 GiB with 2 MiB pages, set CR4.PAE, EFER.LME
+#     and CR0.PG, far-jump through a descriptor with L=1.
+#  2. SSE had to be enabled. SSE2 is BASELINE for x86-64 so gcc emits it unasked;
+#     the first fault was #UD on a `movups %xmm0` gcc generated to copy a 16-byte
+#     struct. Set CR0.MP, clear CR0.EM, set CR4.OSFXSR|OSXMMEXCPT, fninit.
+#  3. The multiboot handoff had to be SAVED. %eax/%ebx carry the magic and the
+#     info pointer, and building page tables is the first thing that destroys
+#     them. Missing this is silent: it panics later with "no dictionary".
+#  4. multiboot.h's WIRE-FORMAT structs used `unsigned long` -- 4 bytes on x86,
+#     8 here -- so every field after the first was read at double its offset.
+#  5. `dict_end - dict_start` is POINTER subtraction on `unsigned long *`: an
+#     EIGHTH of the byte count. The dictionary checksummed over 1/8 of itself.
+#  6. relocate() is a NO-OP now, and that is the biggest finding: the x86
+#     firmware relocates by REBASING THE GDT DATA SEGMENT, and long mode IGNORES
+#     segment bases. It is not a routine that needs porting; it is a strategy
+#     that does not survive the port.
+#  7. libgcc's 128-bit helpers were conditioned on SPARC64 next to a comment
+#     reading CONDITION="CONFIG_64BITS" -- the right condition, hard-coded to the
+#     only 64-bit arch that shipped. amd64 needs them: dcell is 128-bit.
+#  8. elf_load.c's ofmem guard named the arches that were built, not amd64.
+#  9. auto-boot? defaulted true, so the firmware banner'd and stopped WITHOUT a
+#     prompt -- which reads exactly like a hang and is not one.
+# 10. QEMU REFUSES an ELF64 multiboot image ("give a 32bit one"), so the build
+#     now wraps the ELF64 in ELF32 headers with objcopy -> openbios.multiboot32.
+#
+# STUBBED, ON PURPOSE, AND LOUDLY: __switch_context/__exit_context halt rather
+# than returning (Spike 2 owns context + exceptions), and linux_load() reports
+# that it is stubbed (Spike 3 owns booting Linux). A context switch that
+# silently did nothing would corrupt whatever ran next.
+
+diff --git a/Makefile.target b/Makefile.target
+index 6f2d264..22dd31e 100644
+--- a/Makefile.target
++++ b/Makefile.target
+@@ -24,6 +24,9 @@ AR     := $(TARGET)ar
+ LD     := $(TARGET)ld
+ NM     := $(TARGET)nm
+ STRIP  := $(TARGET)strip
++# Spike 1: amd64 needs objcopy to wrap its ELF64 image in ELF32 headers --
++# QEMU's multiboot loader refuses an x86-64 ELF outright ("give a 32bit one").
++OBJCOPY := $(TARGET)objcopy
+ RANLIB := $(TARGET)ranlib
+ 
+ CFLAGS+= -Os -g -DNATIVE_BITWIDTH_EQUALS_HOST_BITWIDTH -USWAP_ENDIANNESS
+diff --git a/arch/amd64/boot.c b/arch/amd64/boot.c
+index 0e1fe7e..ee0fb78 100644
+--- a/arch/amd64/boot.c
++++ b/arch/amd64/boot.c
+@@ -1,27 +1,30 @@
+-/*
++/* tag: openbios boot command for amd64 (Spike 1)
+  *
++ * Ported from arch/x86/boot.c, which is the current twin of this file. The
++ * amd64 copy still #included libopenbios/elfload.h -- a header DELETED from
++ * the tree years ago -- and called elf_load(), which no longer exists. It
++ * compiled for eighteen years only in the sense that nothing ever compiled it.
++ *
++ * See the file "COPYING" for further information about
++ * the copyright and warranty status of this work.
+  */
++
+ #undef BOOTSTRAP
+ #include "config.h"
+ #include "libopenbios/bindings.h"
+-#include "libopenbios/elfload.h"
+ #include "arch/common/nvram.h"
+ #include "libc/diskio.h"
++#include "libopenbios/initprogram.h"
+ #include "libopenbios/sys_info.h"
+-
+-int elf_load(struct sys_info *, const char *filename, const char *cmdline);
+-int linux_load(struct sys_info *, const char *filename, const char *cmdline);
+-
+-void boot(void);
++#include "libc/string.h"
++#include "boot.h"
+ 
+ void boot(void)
+ {
+ 	char *path=pop_fstr_copy(), *param;
+ 
+-	// char *param="root=/dev/hda2 console=ttyS0,115200n8 console=tty0";
+-
+ 	if(!path) {
+-		printk("[x86] Booting default not supported.\n");
++		printk("[amd64] Booting default not supported.\n");
+ 		return;
+ 	}
+ 
+@@ -31,11 +34,10 @@ void boot(void)
+ 		param++;
+ 	}
+ 
+-	printk("[x86] Booting file '%s' with parameters '%s'\n",path, param);
++	printk("[amd64] Booting file '%s' with parameters '%s'\n",path, param);
+ 
+-	if (elf_load(&sys_info, path, param) == LOADER_NOT_SUPPORT)
+-		if (linux_load(&sys_info, path, param) == LOADER_NOT_SUPPORT)
+-			printk("Unsupported image format\n");
++	if (linux_load(&sys_info, path, param) == LOADER_NOT_SUPPORT)
++		printk("Unsupported image format\n");
+ 
+ 	free(path);
+ }
+diff --git a/arch/amd64/build.xml b/arch/amd64/build.xml
+index 8f436d0..fbde045 100644
+--- a/arch/amd64/build.xml
++++ b/arch/amd64/build.xml
+@@ -1,6 +1,37 @@
+ <build condition="AMD64">
++
+  <dictionary name="openbios-amd64" init="openbios" target="forth">
+   <object source="init.fs"/>
+   <object source="QEMU,VGA.bin" target="fcode" condition="DRIVER_VGA" />
+  </dictionary>
++
++ <library name="amd64" type="static" target="target">
++  <object source="openbios.c"/>
++  <object source="console.c"/>
++  <object source="lib.c"/>
++  <object source="boot.c"/>
++  <object source="context.c"/>
++  <object source="linux_load.c"/>
++  <object source="segment.c"/>
++  <object source="sys_info.c"/>
++  <object source="switch.S"/>
++ </library>
++
++ <executable name="openbios.multiboot" target="target" condition="IMAGE_ELF_MULTIBOOT">
++  <rule>
++	$(call quiet-command,$(LD) --warn-common -N -T $(SRCDIR)/arch/amd64/ldscript -o $@.nostrip --whole-archive $^,"  LINK  $(TARGET_DIR)$@")
++	$(call quiet-command,$(NM) $@.nostrip | sort > $(ODIR)/openbios-multiboot.syms,"  GEN   $(TARGET_DIR)$@.syms")
++	$(call quiet-command,$(STRIP) $@.nostrip -o $@,"  STRIP $(TARGET_DIR)$@")
++	$(call quiet-command,$(OBJCOPY) -I elf64-x86-64 -O elf32-i386 $@ $@32,"  ELF32 $(TARGET_DIR)$@32")</rule>
++  <object source="multiboot.c"/>
++  <external-object source="libamd64.a"/>
++  <external-object source="libbootstrap.a"/>
++  <external-object source="libopenbios.a"/>
++  <external-object source="libpackages.a"/>
++  <external-object source="libdrivers.a"/>
++  <external-object source="liblibc.a"/>
++  <external-object source="libfs.a"/>
++  <external-object source="libgcc.a"/>
++ </executable>
++
+ </build>
+diff --git a/arch/amd64/console.c b/arch/amd64/console.c
+index 71a22b6..44ee731 100644
+--- a/arch/amd64/console.c
++++ b/arch/amd64/console.c
+@@ -8,6 +8,7 @@
+ #include "config.h"
+ #include "kernel/kernel.h"
+ #include "openbios.h"
++#include "libopenbios/console.h"
+ 
+ #ifdef CONFIG_DEBUG_CONSOLE
+ 
+@@ -361,7 +362,7 @@ static unsigned char keyboard_readdata(void)
+  *      common functions, implementing simple concurrent console
+  * ****************************************************************** */
+ 
+-int arch_putchar(int c)
++static int arch_putchar(int c)
+ {
+ #ifdef CONFIG_DEBUG_CONSOLE_SERIAL
+ 	serial_putchar(c);
+@@ -372,7 +373,7 @@ int arch_putchar(int c)
+ 	return c;
+ }
+ 
+-int arch_availchar(void)
++static int arch_availchar(void)
+ {
+ #ifdef CONFIG_DEBUG_CONSOLE_SERIAL
+ 	if (uart_charav(CONFIG_SERIAL_PORT))
+@@ -385,7 +386,7 @@ int arch_availchar(void)
+ 	return 0;
+ }
+ 
+-int arch_getchar(void)
++static int arch_getchar(void)
+ {
+ #ifdef CONFIG_DEBUG_CONSOLE_SERIAL
+ 	if (uart_charav(CONFIG_SERIAL_PORT))
+diff --git a/arch/amd64/context.c b/arch/amd64/context.c
+index dff9975..385acfe 100644
+--- a/arch/amd64/context.c
++++ b/arch/amd64/context.c
+@@ -9,13 +9,19 @@
+ #include "libopenbios/initprogram.h"
+ #include "segment.h"
+ #include "context.h"
++#include "openbios.h"   /* Spike 1: for openbios(), which was a nested extern */
++
++/* Spike 1: stashed by the trampoline in switch.S before it clobbers them. */
++extern uint64_t mb_magic, mb_info;
+ 
+ #define MAIN_STACK_SIZE 16384
+ #define IMAGE_STACK_SIZE 4096
+ 
+ #define debug printk
+ 
+-static void start_main(void); /* forward decl. */
++/* Spike 1: no longer static -- the trampoline in switch.S calls it directly,
++ * because the context-switch path that used to reach it is Spike 2's work. */
++void start_main(void); /* forward decl. */
+ void __exit_context(void); /* assembly routine */
+ 
+ /*
+@@ -32,14 +38,14 @@ struct context main_ctx __attribute__((section (".initctx"))) = {
+     .fs = FLAT_DS,
+     .gs = FLAT_DS,
+     .ss = FLAT_DS,
+-    .esp = (uint32_t) ESP_LOC(&main_ctx),
+-    .eip = (uint32_t) start_main,
+-    .return_addr = (uint32_t) __exit_context,
++    .rsp = (uint64_t) ESP_LOC(&main_ctx),
++    .rip = (uint64_t) start_main,
++    .return_addr = (uint64_t) __exit_context,
+ };
+ 
+ /* This is used by assembly routine to load/store the context which
+  * it is to switch/switched.  */
+-struct context *__context = &main_ctx;
++struct context * volatile __context = &main_ctx;   /* Spike 1 drift: volatile, as arch/x86 has */
+ 
+ /* Client program context */
+ static struct context *client_ctx;
+@@ -54,13 +60,19 @@ unsigned long __boot_ctx;
+  * Main starter
+  * This is the C function that runs first.
+  */
+-static void start_main(void)
++void start_main(void)
+ {
+     int retval;
+-    extern int openbios(void);
++    /* Spike 1 drift: the nested extern is gone; openbios() is declared in
++     * arch/amd64/openbios.h, exactly as the x86 twin arranges it. */
++
++    /* Spike 1: put the loader's handoff where sys_info.c reads it from.
++     * The trampoline stashed %eax/%ebx before it clobbered them building page
++     * tables; the frame they used to be pushed into did not exist yet. */
++    __context->rax = mb_magic;
++    __context->rbx = mb_info;
+ 
+-    /* Save startup context, so we can refer to it later.
+-     * We have to keep it in physical address since we will relocate. */
++    /* Save startup context, so we can refer to it later. */
+     __boot_ctx = virt_to_phys(__context);
+ 
+     /* Set up client context */
+@@ -71,7 +83,7 @@ static void start_main(void)
+     retval = openbios();
+ 
+     /* Pass return value to startup context. Bootloader may see it. */
+-    boot_ctx->eax = retval;
++    boot_ctx->rax = retval;
+ 
+     /* Returning from here should jump to __exit_context */
+     __context = boot_ctx;
+@@ -80,12 +92,12 @@ static void start_main(void)
+ /* Setup a new context using the given stack.
+  */
+ struct context *
+-init_context(uint8_t *stack, uint32_t stack_size, int num_params)
++init_context(uint8_t *stack, uint64_t stack_size, int num_params)
+ {
+     struct context *ctx;
+ 
+     ctx = (struct context *)
+-	(stack + stack_size - (sizeof(*ctx) + num_params*sizeof(uint32_t)));
++	(stack + stack_size - (sizeof(*ctx) + num_params*sizeof(ucell)));
+     memset(ctx, 0, sizeof(*ctx));
+ 
+     return ctx;
+@@ -107,7 +119,7 @@ arch_init_program(void)
+     ctx->fs = FLAT_DS;
+     ctx->gs = FLAT_DS;
+     ctx->ss = FLAT_DS;
+-    ctx->esp = virt_to_phys(ESP_LOC(ctx));
++    ctx->rsp = virt_to_phys(ESP_LOC(ctx));
+     ctx->return_addr = virt_to_phys(__exit_context);
+     
+     /* Set param */
+@@ -119,14 +131,14 @@ arch_init_program(void)
+     feval("load-state >ls.file-type @");
+     type = POP();
+     if (type == 0) {
+-        ctx->eax = 0xe1fb007;
+-        ctx->ebx = param;
++        ctx->rax = 0xe1fb007;
++        ctx->rbx = param;
+     }
+ 
+     /* Set entry point */
+     feval("load-state >ls.entry @");
+     entry = POP();
+-    ctx->eip = entry;
++    ctx->rip = entry;
+ 
+     return 0;
+ }
+@@ -140,7 +152,13 @@ struct context *switch_to(struct context *ctx)
+     debug("switching to new context:\n");
+     save = __context;
+     __context = ctx;
+-    asm ("pushl %cs; call __switch_context");
++    /* Spike 1: `pushl %cs` does not assemble in long mode, and the routine it
++     * called is stubbed in switch.S -- context switching is Spike 2's work.
++     * Calling the stub is deliberate: it HALTS, loudly, instead of returning
++     * here as though a switch had happened. A silent no-op would let the
++     * caller carry on with a client program's context half-installed, which is
++     * a far worse failure than stopping. */
++    asm volatile ("call __switch_context");
+     ret = __context;
+     __context = (struct context *)save;
+     return ret;
+@@ -152,5 +170,5 @@ unsigned int start_elf(void)
+     volatile struct context *ctx = __context;
+ 
+     ctx = switch_to((struct context *)ctx);
+-    return ctx->eax;
++    return ctx->rax;
+ }
+diff --git a/arch/amd64/context.h b/arch/amd64/context.h
+index 4c3832e..4906346 100644
+--- a/arch/amd64/context.h
++++ b/arch/amd64/context.h
+@@ -2,39 +2,51 @@
+ #define AMD64_CONTEXT_H
+ 
+ struct context {
++    /* Spike 1: this frame was a THIRTY-TWO BIT one wearing a 64-bit arch's
++     * name -- edi/esi/ebp/esp/ebx/edx/ecx/eax as uint32_t, eip 32-bit, and a
++     * comment reading "accessed with pushal/popal", an instruction that does
++     * not exist in long mode. Every pointer stored here was silently truncated.
++     *
++     * Widened, and the registers renamed to what they actually are. The eight
++     * r8-r15 slots are new: a 64-bit frame that omits them is not a frame.
++     * Spike 2 owns the assembly that fills it; Spike 1 only needs it to hold a
++     * pointer without cutting it in half. */
++
+     /* Stack Segment, placed here because of the alignment issue... */
+     uint16_t ss;
+-    /* Used with sgdt/lgdt */
++    /* Used with sgdt/lgdt -- 2 + 8 bytes in long mode, not 2 + 4 */
+     uint16_t gdt_limit;
+     uint64_t gdt_base;
+-    /* General registers, accessed with pushal/popal */
+-    uint32_t edi;
+-    uint32_t esi;
+-    uint32_t ebp;
+-    uint32_t esp; /* points just below eax */
+-    uint32_t ebx;
+-    uint32_t edx;
+-    uint32_t ecx;
+-    uint32_t eax;
++
++    /* General registers */
++    uint64_t rdi;
++    uint64_t rsi;
++    uint64_t rbp;
++    uint64_t rsp; /* points just below rax */
++    uint64_t rbx;
++    uint64_t rdx;
++    uint64_t rcx;
++    uint64_t rax;
++    uint64_t r8, r9, r10, r11, r12, r13, r14, r15;
+ #define ESP_LOC(ctx) (&(ctx)->gs)
+-    /* Segment registers */
+-    uint32_t gs;
+-    uint32_t fs;
+-    uint32_t es;
+-    uint32_t ds;
++    /* Segment registers (64-bit slots; the registers themselves stay 16-bit) */
++    uint64_t gs;
++    uint64_t fs;
++    uint64_t es;
++    uint64_t ds;
+     /* Flags */
+-    uint32_t eflags;
++    uint64_t rflags;
+     /* Code segment:offset */
+-    uint32_t eip;
+-    uint32_t cs;
++    uint64_t rip;
++    uint64_t cs;
+     /* Optional stack contents */
+-    uint32_t return_addr;
+-    uint32_t param[0];
++    uint64_t return_addr;
++    ucell param[0];
+ };
+ 
+ /* Create a new context in the given stack */
+ struct context *
+-init_context(uint8_t *stack, uint32_t stack_size, int num_param);
++init_context(uint8_t *stack, uint64_t stack_size, int num_param);
+ 
+ /* Switch context */
+ struct context *switch_to(struct context *);
+diff --git a/arch/amd64/ldscript b/arch/amd64/ldscript
+index 8976c7a..bf65906 100644
+--- a/arch/amd64/ldscript
++++ b/arch/amd64/ldscript
+@@ -1,5 +1,5 @@
+-OUTPUT_FORMAT(elf32-i386)
+-OUTPUT_ARCH(i386)
++OUTPUT_FORMAT(elf64-x86-64)
++OUTPUT_ARCH(i386:x86-64)
+ 
+ ENTRY(entry)
+ 
+diff --git a/arch/amd64/lib.c b/arch/amd64/lib.c
+index 9efbe68..6618e5c 100644
+--- a/arch/amd64/lib.c
++++ b/arch/amd64/lib.c
+@@ -45,7 +45,7 @@ void *malloc(size_t size)
+ 	if(memsize>=size) {
+ 		memsize-=size;
+ 		ret=memptr;
+-		memptr+=size;
++		memptr = (void *)((unsigned long)memptr + size);
+ 	}
+ 	return ret;
+ }
+diff --git a/arch/amd64/linux_load.c b/arch/amd64/linux_load.c
+index f33d4e3..1b6c933 100644
+--- a/arch/amd64/linux_load.c
++++ b/arch/amd64/linux_load.c
+@@ -1,647 +1,29 @@
+-/*
+- * Linux/i386 loader
+- * Supports bzImage, zImage and Image format.
++/* tag: Linux/bzImage loader for amd64 -- STUBBED FOR SPIKE 1
+  *
+- * Based on work by Steve Gehlbach.
+- * Portions are taken from mkelfImage.
++ * The real file is 647 lines and #includes "loadfs.h", which was DELETED
++ * tree-wide; the current x86 twin reads through libc/diskio.h instead. Porting
++ * it is mode-INDEPENDENT work and belongs to Spike 3 ("boot Linux"), not here.
+  *
+- * 2003-09 by SONE Takeshi
++ * Spike 1's question is only whether this firmware can reach its own prompt in
++ * long mode. So this stub exists to make the image LINK, and it is deliberately
++ * loud rather than silent: a loader that quietly returns "not supported" would
++ * be indistinguishable from one that tried and failed. The original is kept
++ * verbatim in git history and re-ported by Spike 3.
+  */
+ 
+ #include "config.h"
+-#include "kernel/kernel.h"
+ #include "libopenbios/bindings.h"
+ #include "libopenbios/sys_info.h"
+-#include "context.h"
+-#include "segment.h"
+-#include "loadfs.h"
+-
+-#define printf printk
+-#define debug printk
+-#define strtoull_with_suffix strtol
+-
+-#define LINUX_PARAM_LOC 0x90000
+-#define COMMAND_LINE_LOC 0x91000
+-#define GDT_LOC 0x92000
+-#define STACK_LOC 0x93000
+-
+-#define E820MAX	32		/* number of entries in E820MAP */
+-struct e820entry {
+-	unsigned long long addr;	/* start of memory segment */
+-	unsigned long long size;	/* size of memory segment */
+-	unsigned long type;		/* type of memory segment */
+-#define E820_RAM	1
+-#define E820_RESERVED	2
+-#define E820_ACPI	3 /* usable as RAM once ACPI tables have been read */
+-#define E820_NVS	4
+-};
+-
+-/* The header of Linux/i386 kernel */
+-struct linux_header {
+-    uint8_t  reserved1[0x1f1];		/* 0x000 */
+-    uint8_t  setup_sects;		/* 0x1f1 */
+-    uint16_t root_flags;		/* 0x1f2 */
+-    uint8_t  reserved2[6];		/* 0x1f4 */
+-    uint16_t vid_mode;			/* 0x1fa */
+-    uint16_t root_dev;			/* 0x1fc */
+-    uint16_t boot_sector_magic;		/* 0x1fe */
+-    /* 2.00+ */
+-    uint8_t  reserved3[2];		/* 0x200 */
+-    uint8_t  header_magic[4];		/* 0x202 */
+-    uint16_t protocol_version;		/* 0x206 */
+-    uint32_t realmode_swtch;		/* 0x208 */
+-    uint16_t start_sys;			/* 0x20c */
+-    uint16_t kver_addr;			/* 0x20e */
+-    uint8_t  type_of_loader;		/* 0x210 */
+-    uint8_t  loadflags;			/* 0x211 */
+-    uint16_t setup_move_size;		/* 0x212 */
+-    uint32_t code32_start;		/* 0x214 */
+-    uint32_t ramdisk_image;		/* 0x218 */
+-    uint32_t ramdisk_size;		/* 0x21c */
+-    uint8_t  reserved4[4];		/* 0x220 */
+-    /* 2.01+ */
+-    uint16_t heap_end_ptr;		/* 0x224 */
+-    uint8_t  reserved5[2];		/* 0x226 */
+-    /* 2.02+ */
+-    uint32_t cmd_line_ptr;		/* 0x228 */
+-    /* 2.03+ */
+-    uint32_t initrd_addr_max;		/* 0x22c */
+-} __attribute__ ((packed));
+-
+-
+-/* Paramters passed to 32-bit part of Linux
+- * This is another view of the structure above.. */
+-struct linux_params {
+-    uint8_t  orig_x;			/* 0x00 */
+-    uint8_t  orig_y;			/* 0x01 */
+-    uint16_t ext_mem_k;			/* 0x02 -- EXT_MEM_K sits here */
+-    uint16_t orig_video_page;		/* 0x04 */
+-    uint8_t  orig_video_mode;		/* 0x06 */
+-    uint8_t  orig_video_cols;		/* 0x07 */
+-    uint16_t unused2;			/* 0x08 */
+-    uint16_t orig_video_ega_bx;		/* 0x0a */
+-    uint16_t unused3;			/* 0x0c */
+-    uint8_t  orig_video_lines;		/* 0x0e */
+-    uint8_t  orig_video_isVGA;		/* 0x0f */
+-    uint16_t orig_video_points;		/* 0x10 */
+-
+-    /* VESA graphic mode -- linear frame buffer */
+-    uint16_t lfb_width;			/* 0x12 */
+-    uint16_t lfb_height;		/* 0x14 */
+-    uint16_t lfb_depth;			/* 0x16 */
+-    uint32_t lfb_base;			/* 0x18 */
+-    uint32_t lfb_size;			/* 0x1c */
+-    uint16_t cl_magic;			/* 0x20 */
+-#define CL_MAGIC_VALUE 0xA33F
+-    uint16_t cl_offset;			/* 0x22 */
+-    uint16_t lfb_linelength;		/* 0x24 */
+-    uint8_t  red_size;			/* 0x26 */
+-    uint8_t  red_pos;			/* 0x27 */
+-    uint8_t  green_size;		/* 0x28 */
+-    uint8_t  green_pos;			/* 0x29 */
+-    uint8_t  blue_size;			/* 0x2a */
+-    uint8_t  blue_pos;			/* 0x2b */
+-    uint8_t  rsvd_size;			/* 0x2c */
+-    uint8_t  rsvd_pos;			/* 0x2d */
+-    uint16_t vesapm_seg;		/* 0x2e */
+-    uint16_t vesapm_off;		/* 0x30 */
+-    uint16_t pages;			/* 0x32 */
+-    uint8_t  reserved4[12];		/* 0x34 -- 0x3f reserved for future expansion */
+-
+-    //struct apm_bios_info apm_bios_info;	/* 0x40 */
+-    uint8_t  apm_bios_info[0x40];
+-    //struct drive_info_struct drive_info;	/* 0x80 */
+-    uint8_t  drive_info[0x20];
+-    //struct sys_desc_table sys_desc_table;	/* 0xa0 */
+-    uint8_t  sys_desc_table[0x140];
+-    uint32_t alt_mem_k;			/* 0x1e0 */
+-    uint8_t  reserved5[4];		/* 0x1e4 */
+-    uint8_t  e820_map_nr;		/* 0x1e8 */
+-    uint8_t  reserved6[9];		/* 0x1e9 */
+-    uint16_t mount_root_rdonly;		/* 0x1f2 */
+-    uint8_t  reserved7[4];		/* 0x1f4 */
+-    uint16_t ramdisk_flags;		/* 0x1f8 */
+-#define RAMDISK_IMAGE_START_MASK  	0x07FF
+-#define RAMDISK_PROMPT_FLAG		0x8000
+-#define RAMDISK_LOAD_FLAG		0x4000
+-    uint8_t  reserved8[2];		/* 0x1fa */
+-    uint16_t orig_root_dev;		/* 0x1fc */
+-    uint8_t  reserved9[1];		/* 0x1fe */
+-    uint8_t  aux_device_info;		/* 0x1ff */
+-    uint8_t  reserved10[2];		/* 0x200 */
+-    uint8_t  param_block_signature[4];	/* 0x202 */
+-    uint16_t param_block_version;	/* 0x206 */
+-    uint8_t  reserved11[8];		/* 0x208 */
+-    uint8_t  loader_type;		/* 0x210 */
+-#define LOADER_TYPE_LOADLIN         1
+-#define LOADER_TYPE_BOOTSECT_LOADER 2
+-#define LOADER_TYPE_SYSLINUX        3
+-#define LOADER_TYPE_ETHERBOOT       4
+-#define LOADER_TYPE_KERNEL          5
+-    uint8_t  loader_flags;		/* 0x211 */
+-    uint8_t  reserved12[2];		/* 0x212 */
+-    uint32_t kernel_start;		/* 0x214 */
+-    uint32_t initrd_start;		/* 0x218 */
+-    uint32_t initrd_size;		/* 0x21c */
+-    uint8_t  reserved12_5[8];		/* 0x220 */
+-    uint32_t cmd_line_ptr;		/* 0x228 */
+-    uint8_t  reserved13[164];		/* 0x22c */
+-    struct e820entry e820_map[E820MAX];	/* 0x2d0 */
+-    uint8_t  reserved16[688];		/* 0x550 */
+-#define COMMAND_LINE_SIZE 256
+-    /* Command line is copied here by 32-bit i386/kernel/head.S.
+-     * So I will follow the boot protocol, rather than putting it
+-     * directly here. --ts1 */
+-    uint8_t  command_line[COMMAND_LINE_SIZE]; /* 0x800 */
+-    uint8_t  reserved17[1792];		/* 0x900 - 0x1000 */
+-};
+-
+-uint64_t forced_memsize;
+-
+-/* Load the first part the file and check if it's Linux */
+-static uint32_t load_linux_header(struct linux_header *hdr)
+-{
+-    int load_high;
+-    uint32_t kern_addr;
+-
+-    if (lfile_read(hdr, sizeof *hdr) != sizeof *hdr) {
+-	debug("Can't read Linux header\n");
+-	return 0;
+-    }
+-    if (hdr->boot_sector_magic != 0xaa55) {
+-	debug("Not a Linux kernel image\n");
+-	return 0;
+-    }
+-
+-    /* Linux is found. Print some information */
+-    if (memcmp(hdr->header_magic, "HdrS", 4) != 0) {
+-	/* This may be floppy disk image or something.
+-	 * Perform a simple (incomplete) sanity check. */
+-	if (hdr->setup_sects >= 16
+-		|| file_size() - (hdr->setup_sects<<9) >= 512<<10) {
+-	    debug("This looks like a bootdisk image but not like Linux...\n");
+-	    return 0;
+-	}
+-
+-	printf("Possible very old Linux");
+-	/* This kernel does not even have a protocol version.
+-	 * Force the value. */
+-	hdr->protocol_version = 0; /* pre-2.00 */
+-    } else
+-	printf("Found Linux");
+-    if (hdr->protocol_version >= 0x200 && hdr->kver_addr) {
+-	char kver[256];
+-	file_seek(hdr->kver_addr + 0x200);
+-	if (lfile_read(kver, sizeof kver) != 0) {
+-	    kver[255] = 0;
+-	    printf(" version %s", kver);
+-	}
+-    }
+-    debug(" (protocol %#x)", hdr->protocol_version);
+-    load_high = 0;
+-    if (hdr->protocol_version >= 0x200) {
+-	debug(" (loadflags %#x)", hdr->loadflags);
+-	load_high = hdr->loadflags & 1;
+-    }
+-    if (load_high) {
+-	printf(" bzImage");
+-	kern_addr = 0x100000;
+-    } else {
+-	printf(" zImage or Image");
+-	kern_addr = 0x1000;
+-    }
+-    printf(".\n");
+-
+-    return kern_addr;
+-}
+-
+-/* Set up parameters for 32-bit kernel */
+-static void
+-init_linux_params(struct linux_params *params, struct linux_header *hdr)
+-{
+-    debug("Setting up parameters at %#lx\n", virt_to_phys(params));
+-    memset(params, 0, sizeof *params);
+-
+-    /* Copy some useful values from header */
+-    params->mount_root_rdonly = hdr->root_flags;
+-    params->orig_root_dev = hdr->root_dev;
+-
+-    /* Video parameters.
+-     * This assumes we have VGA in standard 80x25 text mode,
+-     * just like our vga.c does.
+-     * Cursor position is filled later to allow some more printf's. */
+-    params->orig_video_mode = 3;
+-    params->orig_video_cols = 80;
+-    params->orig_video_lines = 25;
+-    params->orig_video_isVGA = 1;
+-    params->orig_video_points = 16;
+-
+-    params->loader_type = 0xff; /* Unregistered Linux loader */
+-}
+-
+-/* Memory map */
+-static void
+-set_memory_size(struct linux_params *params, struct sys_info *info)
+-{
+-    int i;
+-    uint64_t end;
+-    uint32_t ramtop = 0;
+-    struct e820entry *linux_map;
+-    struct memrange *filo_map;
+-
+-    linux_map = params->e820_map;
+-    filo_map = info->memrange;
+-    for (i = 0; i < info->n_memranges; i++, linux_map++, filo_map++) {
+-	if (i < E820MAX) {
+-	    /* Convert to BIOS e820 style */
+-	    linux_map->addr = filo_map->base;
+-	    linux_map->size = filo_map->size;
+-	    linux_map->type = E820_RAM;
+-	    debug("%016Lx - %016Lx\n", linux_map->addr,
+-		    linux_map->addr + linux_map->size);
+-	    params->e820_map_nr = i+1;
+-	}
+-
+-	/* Find out top of RAM. XXX This ignores hole above 1MB */
+-	end = filo_map->base + filo_map->size;
+-	if (end < (1ULL << 32)) { /* don't count memory above 4GB */
+-	    if (end > ramtop)
+-		ramtop = (uint32_t) end;
+-	}
+-    }
+-    debug("ramtop=%#x\n", ramtop);
+-    /* Size of memory above 1MB in KB */
+-    params->alt_mem_k = (ramtop - (1<<20)) >> 10;
+-    /* old style, 64MB max */
+-    if (ramtop >= (64<<20))
+-	params->ext_mem_k = (63<<10);
+-    else
+-	params->ext_mem_k = params->alt_mem_k;
+-    debug("ext_mem_k=%d, alt_mem_k=%d\n", params->ext_mem_k, params->alt_mem_k);
+-}
+-
+-/*
+- * Parse command line
+- * Some parameters, like initrd=<file>, are not passed to kernel,
+- * we are responsible to process them.
+- * Parameters for kernel are copied to kern_cmdline. Returns name of initrd.
+- */
+-static char *parse_command_line(const char *orig_cmdline, char *kern_cmdline)
+-{
+-    const char *start, *sep, *end, *val;
+-    char name[64];
+-    int len;
+-    int k_len;
+-    int to_kern;
+-    char *initrd = 0;
+-    int toolong = 0;
+-
+-    forced_memsize = 0;
+-
+-    if (!orig_cmdline) {
+-	*kern_cmdline = 0;
+-	return 0;
+-    }
+-
+-    k_len = 0;
+-    debug("original command line: \"%s\"\n", orig_cmdline);
+-    debug("kernel command line at %#lx\n", virt_to_phys(kern_cmdline));
+-
+-    start = orig_cmdline;
+-    while (*start == ' ')
+-	start++;
+-    while (*start) {
+-	end = strchr(start, ' ');
+-	if (!end)
+-	    end = start + strlen(start);
+-	sep = strchr(start, '=');
+-	if (!sep || sep > end)
+-	    sep = end;
+-	len = sep - start;
+-	if (len >= sizeof(name))
+-	    len = sizeof(name) - 1;
+-	memcpy(name, start, len);
+-	name[len] = 0;
+-
+-	if (*sep == '=') {
+-	    val = sep + 1;
+-	    len = end - val;
+-	} else {
+-	    val = 0;
+-	    len = 0;
+-	}
+-
+-	/* Only initrd= and mem= are handled here. vga= is not,
+-	 * which I believe is a paramter to the realmode part of Linux,
+-	 * which we don't execute. */
+-	if (strcmp(name, "initrd") == 0) {
+-	    if (!val)
+-		printf("Missing filename to initrd parameter\n");
+-	    else {
+-		initrd = malloc(len + 1);
+-		memcpy(initrd, val, len);
+-		initrd[len] = 0;
+-		debug("initrd=%s\n", initrd);
+-	    }
+-	    /* Don't pass this to kernel */
+-	    to_kern = 0;
+-	} else if (strcmp(name, "mem") == 0) {
+-	    if (!val)
+-		printf("Missing value for mem parameter\n");
+-	    else {
+-		forced_memsize = strtoull_with_suffix(val, (char**)&val, 0);
+-		if (forced_memsize == 0)
+-		    printf("Invalid mem option, ignored\n");
+-		if (val != end) {
+-		    printf("Garbage after mem=<size>, ignored\n");
+-		    forced_memsize = 0;
+-		}
+-		debug("mem=%Lu\n", forced_memsize);
+-	    }
+-	    /* mem= is for both loader and kernel */
+-	    to_kern = 1;
+-	} else
+-	    to_kern = 1;
+-
+-	if (to_kern) {
+-	    /* Copy to kernel command line buffer */
+-	    if (k_len != 0)
+-		kern_cmdline[k_len++] = ' '; /* put separator */
+-	    len = end - start;
+-	    if (k_len + len >= COMMAND_LINE_SIZE) {
+-		len = COMMAND_LINE_SIZE - k_len - 1;
+-		if (!toolong) {
+-		    printf("Kernel command line is too long; truncated to "
+-			    "%d bytes\n", COMMAND_LINE_SIZE-1);
+-		    toolong = 1;
+-		}
+-	    }
+-	    memcpy(kern_cmdline + k_len, start, len);
+-	    k_len += len;
+-	}
+-
+-	start = end;
+-	while (*start == ' ')
+-	    start++;
+-    }
+-    kern_cmdline[k_len] = 0;
+-    debug("kernel command line (%d bytes): \"%s\"\n", k_len, kern_cmdline);
+-
+-    return initrd;
+-}
+-
+-/* Set command line location */
+-static void set_command_line_loc(struct linux_params *params,
+-	struct linux_header *hdr)
+-{
+-    if (hdr->protocol_version >= 0x202) {
+-	/* new style */
+-	params->cmd_line_ptr = COMMAND_LINE_LOC;
+-    } else {
+-	/* old style */
+-	params->cl_magic = CL_MAGIC_VALUE;
+-	params->cl_offset = COMMAND_LINE_LOC - LINUX_PARAM_LOC;
+-    }
+-}
+-
+-/* Load 32-bit part of kernel */
+-static int load_linux_kernel(struct linux_header *hdr, uint32_t kern_addr)
+-{
+-    uint32_t kern_offset, kern_size;
+-
+-    if (hdr->setup_sects == 0)
+-	hdr->setup_sects = 4;
+-    kern_offset = (hdr->setup_sects + 1) * 512;
+-    file_seek(kern_offset);
+-    kern_size = file_size() - kern_offset;
+-    debug("offset=%#x addr=%#x size=%#x\n", kern_offset, kern_addr, kern_size);
+-
+-#if 0
+-    if (using_devsize) {
+-	printf("Attempt to load up to end of device as kernel; "
+-		"specify the image size\n");
+-	return 0;
+-    }
+-#endif
+-
+-    printf("Loading kernel... ");
+-    if (lfile_read(phys_to_virt(kern_addr), kern_size) != kern_size) {
+-	printf("Can't read kernel\n");
+-	return 0;
+-    }
+-    printf("ok\n");
+-
+-    return kern_size;
+-}
+-
+-static int load_initrd(struct linux_header *hdr, struct sys_info *info,
+-	uint32_t kern_end, struct linux_params *params, const char *initrd_file)
+-{
+-    uint32_t max;
+-    uint32_t start, end, size;
+-    uint64_t forced;
+-    extern char _start[], _end[];
+-
+-    if (!file_open(initrd_file)) {
+-	printf("Can't open initrd: %s\n", initrd_file);
+-	return -1;
+-    }
+-
+-#if 0
+-    if (using_devsize) {
+-	printf("Attempt to load up to end of device as initrd; "
+-		"specify the image size\n");
+-	return -1;
+-    }
+-#endif
+-
+-    size = file_size();
+-
+-
+-    /* Find out the kernel's restriction on how high the initrd can be
+-     * placed */
+-    if (hdr->protocol_version >= 0x203)
+-	max = hdr->initrd_addr_max;
+-    else
+-	max = 0x38000000; /* Hardcoded value for older kernels */
+-
+-    /* FILO itself is at the top of RAM. (relocated)
+-     * So, try putting initrd just below us. */
+-    end = virt_to_phys(_start);
+-    if (end > max)
+-	end = max;
+-
+-    /* If "mem=" option is given, we have to put the initrd within
+-     * the specified range. */
+-    if (forced_memsize) {
+-	forced = forced_memsize;
+-	if (forced > max)
+-	    forced = max;
+-	/* If the "mem=" is lower, it's easy */
+-	if (forced <= end)
+-	    end = forced;
+-	else {
+-	    /* Otherwise, see if we can put it above us */
+-	    if (virt_to_phys(_end) + size <= forced)
+-		end = forced; /* Ok */
+-	}
+-    }
+-
+-    start = end - size;
+-    start &= ~0xfff; /* page align */
+-    end = start + size;
+-
+-    debug("start=%#x end=%#x\n", start, end);
+-
+-    if (start < kern_end) {
+-	printf("Initrd is too big to fit in memory\n");
+-	return -1;
+-    }
+-
+-    printf("Loading initrd... ");
+-    if (lfile_read(phys_to_virt(start), size) != size) {
+-	printf("Can't read initrd\n");
+-	return -1;
+-    }
+-    printf("ok\n");
+-
+-    params->initrd_start = start;
+-    params->initrd_size = size;
+-
+-    return 0;
+-}
+-
+-static void hardware_setup(void)
+-{
+-    /* Disable nmi */
+-    outb(0x80, 0x70);
+-
+-    /* Make sure any coprocessor is properly reset.. */
+-    outb(0, 0xf0);
+-    outb(0, 0xf1);
+-
+-    /* we're getting screwed again and again by this problem of the 8259.
+-     * so we're going to leave this lying around for inclusion into
+-     * crt0.S on an as-needed basis.
+-     *
+-     * well, that went ok, I hope. Now we have to reprogram the interrupts :-(
+-     * we put them right after the intel-reserved hardware interrupts, at
+-     * int 0x20-0x2F. There they won't mess up anything. Sadly IBM really
+-     * messed this up with the original PC, and they haven't been able to
+-     * rectify it afterwards. Thus the bios puts interrupts at 0x08-0x0f,
+-     * which is used for the internal hardware interrupts as well. We just
+-     * have to reprogram the 8259's, and it isn't fun.
+-     */
+-
+-    outb(0x11, 0x20);		/* initialization sequence to 8259A-1 */
+-    outb(0x11, 0xA0);		/* and to 8259A-2 */
+-
+-    outb(0x20, 0x21);		/* start of hardware int's (0x20) */
+-    outb(0x28, 0xA1);		/* start of hardware int's 2 (0x28) */
+-
+-    outb(0x04, 0x21);		/* 8259-1 is master */
+-    outb(0x02, 0xA1);		/* 8259-2 is slave */
+-
+-    outb(0x01, 0x21);		/* 8086 mode for both */
+-    outb(0x01, 0xA1);
+-
+-    outb(0xFF, 0xA1);		/* mask off all interrupts for now */
+-    outb(0xFB, 0x21);		/* mask all irq's but irq2 which is cascaded */
+-}
+-
+-/* Start Linux */
+-static int start_linux(uint32_t kern_addr, struct linux_params *params)
+-{
+-    struct segment_desc *linux_gdt;
+-    struct context *ctx;
+-    //extern int cursor_x, cursor_y;
+-
+-    ctx = init_context(phys_to_virt(STACK_LOC), 4096, 0);
+-
+-    /* Linux expects GDT being in low memory */
+-    linux_gdt = phys_to_virt(GDT_LOC);
+-    memset(linux_gdt, 0, 13*sizeof(struct segment_desc));
+-    /* Normal kernel code/data segments */
+-    linux_gdt[2] = gdt[FLAT_CODE];
+-    linux_gdt[3] = gdt[FLAT_DATA];
+-    /* 2.6 kernel uses 12 and 13, but head.S uses backward-compatible
+-     * segments (2 and 3), so it SHOULD not be a problem.
+-     * However, some distro kernels (eg. RH9) with backported threading
+-     * patch use 12 and 13 also when booting... */
+-    linux_gdt[12] = gdt[FLAT_CODE];
+-    linux_gdt[13] = gdt[FLAT_DATA];
+-    ctx->gdt_base = GDT_LOC;
+-    ctx->gdt_limit = 14*8-1;
+-    ctx->cs = 0x10;
+-    ctx->ds = 0x18;
+-    ctx->es = 0x18;
+-    ctx->fs = 0x18;
+-    ctx->gs = 0x18;
+-    ctx->ss = 0x18;
+-
+-    /* Parameter location */
+-    ctx->esi = virt_to_phys(params);
+-
+-    /* Entry point */
+-    ctx->eip = kern_addr;
+-
+-    debug("eip=%#x\n", kern_addr);
+-    printf("Jumping to entry point...\n");
+-
+-#ifdef VGA_CONSOLE
+-    /* Update VGA cursor position.
+-     * This must be here because the printf changes the value! */
+-    params->orig_x = cursor_x;
+-    params->orig_y = cursor_y;
+-#endif
+-
+-    /* Go... */
+-    ctx = switch_to(ctx);
+-
+-    /* It's impossible but... */
+-    printf("Returned with eax=%#x\n", ctx->eax);
+-
+-    return ctx->eax;
+-}
++#include "libopenbios/initprogram.h"
++#include "boot.h"
+ 
+ int linux_load(struct sys_info *info, const char *file, const char *cmdline)
+ {
+-    struct linux_header hdr;
+-    struct linux_params *params;
+-    uint32_t kern_addr, kern_size;
+-    char *initrd_file = 0;
+-
+-    if (!file_open(file))
+-	return -1;
++	(void)info; (void)file; (void)cmdline;
+ 
+-    kern_addr = load_linux_header(&hdr);
+-    if (kern_addr == 0)
++	printk("[amd64] linux_load is STUBBED in this build (Spike 1).\n");
++	printk("        The bzImage loader is Spike 3's work; this image only\n");
++	printk("        answers the question 'does the firmware reach its own\n");
++	printk("        prompt in long mode?'\n");
+ 	return LOADER_NOT_SUPPORT;
+-
+-    params = phys_to_virt(LINUX_PARAM_LOC);
+-    init_linux_params(params, &hdr);
+-    set_memory_size(params, info);
+-    initrd_file = parse_command_line(cmdline, phys_to_virt(COMMAND_LINE_LOC));
+-    set_command_line_loc(params, &hdr);
+-
+-    kern_size = load_linux_kernel(&hdr, kern_addr);
+-    if (kern_size == 0) {
+-	if (initrd_file)
+-	    free(initrd_file);
+-	return -1;
+-    }
+-
+-    if (initrd_file) {
+-	if (load_initrd(&hdr, info, kern_addr+kern_size, params, initrd_file)
+-		!= 0) {
+-	    free(initrd_file);
+-	    return -1;
+-	}
+-	free(initrd_file);
+-    }
+-
+-    hardware_setup();
+-
+-    start_linux(kern_addr, params);
+-    return 0;
+ }
+diff --git a/arch/amd64/multiboot.c b/arch/amd64/multiboot.c
+index 4271bd5..9d29c75 100644
+--- a/arch/amd64/multiboot.c
++++ b/arch/amd64/multiboot.c
+@@ -63,9 +63,12 @@ void collect_multiboot_info(struct sys_info *info)
+ 	    return;
+     }
+ 
+-    mod = (module_t *) mbinfo->mods_addr;
+-    info->dict_start=(unsigned long *)mod->mod_start;
+-    info->dict_end=(unsigned long *)mod->mod_end;
++    /* Spike 1: the wire fields are 32-bit by specification (see multiboot.h);
++     * widen through uintptr_t rather than casting a 32-bit value straight to a
++     * 64-bit pointer, which -Werror=int-to-pointer-cast rightly refuses. */
++    mod = (module_t *) (uintptr_t) mbinfo->mods_addr;
++    info->dict_start=(unsigned long *) (uintptr_t) mod->mod_start;
++    info->dict_end=(unsigned long *) (uintptr_t) mod->mod_end;
+ 
+     if (mbinfo->flags & MULTIBOOT_MMAP_VALID) {
+ 	/* convert mmap records */
+diff --git a/arch/amd64/multiboot.h b/arch/amd64/multiboot.h
+index 17cf202..5c4c9b3 100644
+--- a/arch/amd64/multiboot.h
++++ b/arch/amd64/multiboot.h
+@@ -11,7 +11,10 @@
+ #define MULTIBOOT_HEADER_MAGIC		0x1BADB002
+ 
+ /* flags for multiboot header */
+-#define MULTIBOOT_HEADER_FLAGS		0x00010003
++#define MULTIBOOT_HEADER_FLAGS		0x00000003	/* Spike 1: bug #1 of the x86 revival, waiting verbatim here.
++						 * Bit 16 demanded address fields this 3-word header
++						 * does not carry, so QEMU -kernel loaded at 0 and
++						 * jumped to 0. The one-line fix travels as-is. */
+ 
+ /* magic number passed by multiboot-compliant boot loader.  */
+ #define MULTIBOOT_BOOTLOADER_MAGIC	0x2BADB002
+@@ -58,39 +61,48 @@ typedef struct elf_section_header_table {
+ } elf_section_header_table_t;
+ 
+ /* multiboot information */
++/* SPIKE 1: these are WIRE-FORMAT structures, written by the bootloader, and
++ * the Multiboot specification fixes every field at 32 BITS. They were declared
++ * `unsigned long`, which is 4 bytes on x86 and 8 on amd64 -- so at 64-bit every
++ * field after the first is read at double its offset. The symptom was not a
++ * crash: the firmware booted, read mods_count out of the middle of another
++ * field, decided there was no module, and panicked much later with "no
++ * dictionary entry point". A struct that describes bytes somebody else wrote
++ * must name its widths.
++ */
+ typedef struct multiboot_info {
+-	unsigned long flags;
+-	unsigned long mem_lower;
+-	unsigned long mem_upper;
+-	unsigned long boot_device;
+-	unsigned long cmdline;
+-	unsigned long mods_count;
+-	unsigned long mods_addr;
++	uint32_t flags;
++	uint32_t mem_lower;
++	uint32_t mem_upper;
++	uint32_t boot_device;
++	uint32_t cmdline;
++	uint32_t mods_count;
++	uint32_t mods_addr;
+ 	union {
+ 		aout_symbol_table_t aout_sym;
+ 		elf_section_header_table_t elf_sec;
+ 	} u;
+-	unsigned long mmap_length;
+-	unsigned long mmap_addr;
++	uint32_t mmap_length;
++	uint32_t mmap_addr;
+ } multiboot_info_t;
+ 
+ /* module structure */
+ typedef struct module {
+-	unsigned long mod_start;
+-	unsigned long mod_end;
+-	unsigned long string;
+-	unsigned long reserved;
++	uint32_t mod_start;
++	uint32_t mod_end;
++	uint32_t string;
++	uint32_t reserved;
+ } module_t;
+ 
+ /* memory map. Be careful that the offset 0 is base_addr_low
+    but no size.  */
+ typedef struct memory_map {
+-	unsigned long size;
+-	unsigned long base_addr_low;
+-	unsigned long base_addr_high;
+-	unsigned long length_low;
+-	unsigned long length_high;
+-	unsigned long type;
++	uint32_t size;
++	uint32_t base_addr_low;
++	uint32_t base_addr_high;
++	uint32_t length_low;
++	uint32_t length_high;
++	uint32_t type;
+ } memory_map_t;
+ 
+ #endif				/* ! ASM */
+diff --git a/arch/amd64/openbios.c b/arch/amd64/openbios.c
+index 15d3b62..535e4ff 100644
+--- a/arch/amd64/openbios.c
++++ b/arch/amd64/openbios.c
+@@ -9,12 +9,21 @@
+ #include "config.h"
+ #include "libopenbios/openbios.h"
+ #include "libopenbios/bindings.h"
++#include "libopenbios/console.h"
++#include "drivers/drivers.h"
++#include "drivers/pci.h"
++#include "libopenbios/video.h"
+ #include "asm/types.h"
+ #include "dict.h"
+ #include "kernel/kernel.h"
+ #include "kernel/stack.h"
+ #include "libopenbios/sys_info.h"
+ #include "openbios.h"
++#include "arch/common/nvram.h"
++
++/* Spike 1 drift: declared at file scope, as arch/x86/openbios.c:34 does.
++ * amd64 carried a nested extern, which -Werror=nested-externs refuses. */
++void collect_sys_info(struct sys_info *info);
+ #include "relocate.h"
+ 
+ void boot(void);
+@@ -38,7 +47,8 @@ static void init_memory(void)
+ static void
+ arch_init( void )
+ {
+-	void setup_timers(void);
++	/* Spike 1 drift: the stale nested declaration is gone -- drivers.h has
++	 * declared setup_timers() since a sweep amd64 was never compiled for. */
+ 
+ 	openbios_init();
+ 	modules_init();
+@@ -65,11 +75,17 @@ int openbios(void)
+ 
+         collect_sys_info(&sys_info);
+ 
+-	dict=intdict;
++	dict = (unsigned char *)intdict;   /* Spike 1 drift: cast, as arch/x86 does */
+ 	dictlimit = DICTIONARY_SIZE;
+ 
++	/* Spike 1: POINTER SUBTRACTION, not byte subtraction. dict_start and
++	 * dict_end are `unsigned long *`, so the difference is in ELEMENTS --
++	 * a quarter of the byte count on x86 and an EIGHTH of it here. The
++	 * dictionary then checksums over one eighth of itself and fails.
++	 * arch/x86 casts both sides to char* first; this did not. */
+ 	load_dictionary((char *)sys_info.dict_start,
+-			sys_info.dict_end-sys_info.dict_start);
++			(char *)sys_info.dict_end
++			- (char *)sys_info.dict_start);
+ 	forth_init();
+ 
+ 	relocate(&sys_info);
+@@ -106,3 +122,33 @@ int openbios(void)
+ 
+ 	return 0;
+ }
++
++/* ------------------------------------------------------------------ *
++ * Spike 1: an NVRAM store for amd64.
++ *
++ * packages/nvram.c is compiled into every build and needs these three; amd64
++ * defined NONE, which is why the link failed here. Note the contrast with what
++ * arch/x86 had: THREE STUBS IN entry.S THAT LIED -- size returning 0, get and
++ * put a bare `ret` -- so a caller got silent success and an empty store.
++ *
++ * These do not lie. The buffer is volatile and nothing pretends otherwise; the
++ * real backings (raw IDE sectors, CFI flash) are implemented for arch/x86 and
++ * porting them is not what Spike 1 is asking about. P3 is where amd64's store
++ * gets to live above 4 GiB, which is the only part of this that needs the port.
++ * ------------------------------------------------------------------ */
++static char amd64_nvram[8192];
++
++int arch_nvram_size(void)
++{
++	return sizeof(amd64_nvram);
++}
++
++void arch_nvram_get(char *buf)
++{
++	memcpy(buf, amd64_nvram, sizeof(amd64_nvram));
++}
++
++void arch_nvram_put(char *buf)
++{
++	memcpy(amd64_nvram, buf, sizeof(amd64_nvram));
++}
+diff --git a/arch/amd64/segment.c b/arch/amd64/segment.c
+index 09763bd..82c9193 100644
+--- a/arch/amd64/segment.c
++++ b/arch/amd64/segment.c
+@@ -40,79 +40,36 @@ struct segment_desc gdt[NUM_SEG] = {
+     {0xffff, 0, 0, 0x93, 0xcf, 0},
+ };
+ 
+-extern char _start[], _end[];
+-
+ void relocate(struct sys_info *info)
+ {
+-    int i;
+-    unsigned long prog_addr;
+-    unsigned long prog_size;
+-    unsigned long addr, new_base;
+-    unsigned long long segsize;
+-    unsigned long new_offset;
+-    unsigned d0, d1, d2;
+-    struct gdtarg gdtarg;
+-#define ALIGNMENT 16
+-
+-    prog_addr = virt_to_phys(&_start);
+-    prog_size = virt_to_phys(&_end) - virt_to_phys(&_start);
+-    debug("Current location: %#lx-%#lx\n", prog_addr, prog_addr+prog_size-1);
+-
+-    new_base = 0;
+-    for (i = 0; i < info->n_memranges; i++) {
+-	if (info->memrange[i].base >= 1ULL<<32)
+-	    continue;
+-	segsize = info->memrange[i].size;
+-	if (info->memrange[i].base + segsize > 1ULL<<32)
+-	    segsize = (1ULL<<32) - info->memrange[i].base;
+-	if (segsize < prog_size+ALIGNMENT)
+-	    continue;
+-	addr = info->memrange[i].base + segsize - prog_size;
+-	addr &= ~(ALIGNMENT-1);
+-	if (addr >= prog_addr && addr < prog_addr + prog_size)
+-	    continue;
+-	if (prog_addr >= addr && prog_addr < addr + prog_size)
+-	    continue;
+-	if (addr > new_base)
+-	    new_base = addr;
+-    }
+-    if (new_base == 0) {
+-	printf("Can't find address to relocate\n");
+-	return;
+-    }
+-
+-    debug("Relocating to %#lx-%#lx... ",
+-	    new_base, new_base + prog_size - 1);
+-
+-    /* New virtual address offset */
+-    new_offset = new_base - (unsigned long) &_start;
+-
+-    /* Tweak the GDT */
+-    gdt[RELOC_CODE].base_0 = (unsigned short) new_offset;
+-    gdt[RELOC_CODE].base_16 = (unsigned char) (new_offset>>16);
+-    gdt[RELOC_CODE].base_24 = (unsigned char) (new_offset>>24);
+-    gdt[RELOC_DATA].base_0 = (unsigned short) new_offset;
+-    gdt[RELOC_DATA].base_16 = (unsigned char) (new_offset>>16);
+-    gdt[RELOC_DATA].base_24 = (unsigned char) (new_offset>>24);
+-
+-    /* Load new GDT and reload segments */
+-    gdtarg.base = new_offset + (unsigned long) gdt;
+-    gdtarg.limit = GDT_LIMIT;
+-    __asm__ __volatile__ (
+-	    "rep; movsb\n\t" /* copy everything */
+-	    "lgdt %3\n\t"
+-	    "ljmp %4, $1f\n1:\t"
+-	    "movw %5, %%ds\n\t"
+-	    "movw %5, %%es\n\t"
+-	    "movw %5, %%fs\n\t"
+-	    "movw %5, %%gs\n\t"
+-	    "movw %5, %%ss\n"
+-	    : "=&S" (d0), "=&D" (d1), "=&c" (d2)
+-	    : "m" (gdtarg), "n" (RELOC_CS), "q" ((unsigned short) RELOC_DS),
+-	    "0" (&_start), "1" (new_base), "2" (prog_size));
+-
+-    virt_offset = new_offset;
+-    debug("ok\n");
++    (void) info;
++
++    /* SPIKE 1: DELIBERATELY A NO-OP, and this is the single most important
++     * thing the trampoline work found.
++     *
++     * The x86 firmware relocates itself to the top of RAM by REBASING THE GDT
++     * DATA SEGMENT: it copies the image, rewrites the base fields of the code
++     * and data descriptors, lgdt's, and far-jumps to reload CS. Every address
++     * Forth then hands around is segment-relative, and virt_offset is what the
++     * CPU adds to reach physical memory. (That mechanism is why `load-base`
++     * had to be computed in C -- a constant in nvram.fs resolved to
++     * physical + virt_offset and landed past the end of RAM.)
++     *
++     * IN LONG MODE SEGMENT BASES ARE IGNORED for CS, DS, ES and SS. The
++     * descriptor fields this code rewrites have no effect on address
++     * translation at all, and `ljmp` does not even assemble. So this is not a
++     * routine that needs porting -- it is a STRATEGY that does not survive the
++     * port. A 64-bit firmware that wants to move itself must copy the image
++     * and then use RIP-relative addressing or paging, and virt_offset has to
++     * become 0 rather than a segment base.
++     *
++     * Spike 1 therefore runs IN PLACE at the 1 MiB the loader put it at, which
++     * the trampoline's identity map covers, and sets virt_offset = 0 so every
++     * phys_to_virt()/virt_to_phys() in the tree is the identity. Moving the
++     * firmware is not required to answer "does it reach its own prompt".
++     */
++    virt_offset = 0;
++    debug("relocate: skipped (long mode ignores segment bases) -- running in place\n");
+ }
+ 
+ #if 0
+diff --git a/arch/amd64/switch.S b/arch/amd64/switch.S
+index 6666815..a434c1a 100644
+--- a/arch/amd64/switch.S
++++ b/arch/amd64/switch.S
+@@ -1,116 +1,207 @@
+-	.globl	entry, __switch_context, __exit_context, halt
+-
+-	.text
+-	.align	4
+-
+-/*
+- * Entry point
+- * We start execution from here.
+- * It is assumed that CPU is in 32-bit protected mode and
+- * all segments are 4GB and base zero (flat model).
+- */
+-entry:
+-	/* Save boot context and switch to our main context.
+-	 * Main context is statically defined in C.
+-	 */
+-	pushl	%cs
+-	call	__switch_context
+-
+-	/* We get here when the main context switches back to
+-	 * the boot context.
+-	 * Return to previous bootloader.
+-	 */
+-	ret
+-
+-/*
+- * Switch execution context
+- * This saves registers, segments, and GDT in the stack, then
+- * switches the stack, and restores everything from the new stack.
+- * This function takes no argument. New stack pointer is
+- * taken from global variable __context, and old stack pointer
+- * is also saved to __context. This way we can just jump to
+- * this routine to get back to the original context.
++/* tag: amd64 entry point and 32->64 trampoline  (Spike 1)
++ *
++ * REPLACES 116 lines of 32-bit assembly that lived in the 64-bit arch
++ * directory, opening with the comment "It is assumed that CPU is in 32-bit
++ * protected mode" and entering at `pushl %cs`. Every instruction it used to
++ * save context -- pushal, popal, pushl %ds, lret -- either does not exist in
++ * long mode or does not mean there what it meant here.
+  *
+- * Call this routine with lcall or pushl %cs; call.
++ * WHAT THIS FILE DOES, and what it deliberately does not:
++ *
++ *   entry:              multiboot hands control over in 32-BIT protected mode
++ *                       with paging OFF -- there is no way to be handed control
++ *                       in long mode on this machine class -- so this builds a
++ *                       PML4 identity-mapping the low 4 GiB with 2 MiB pages,
++ *                       sets CR4.PAE, EFER.LME and CR0.PG, far-jumps through a
++ *                       64-bit code descriptor, and calls start_main().
++ *
++ *   __switch_context:   STUBBED. Context switching between the firmware and a
++ *   __exit_context:     client program is Spike 2's work ("context + exceptions").
++ *                       Spike 1 asks one question -- does this firmware reach
++ *                       its own prompt in long mode -- and answering it does not
++ *                       require switching away from that prompt. They HALT LOUDLY
++ *                       rather than returning, because a context switch that
++ *                       silently did nothing would corrupt whatever ran next.
++ *
++ * See the file "COPYING" for further information about
++ * the copyright and warranty status of this work.
+  */
+-__switch_context:
+-	/* Save everything in current stack */
+-	pushfl		    /* 56 */
+-	pushl	%ds	    /* 52 */
+-	pushl	%es	    /* 48 */
+-	pushl	%fs	    /* 44 */
+-	pushl	%gs	    /* 40 */
+-	pushal		    /* 8 */
+-	subl	$8, %esp
+-	movw	%ss, (%esp) /* 0 */
+-	sgdt	2(%esp)	    /* 2 */
+-
+-#if 0
+-	/* Swap %cs and %eip on the stack, so lret will work */
+-	movl	60(%esp), %eax
+-	xchgl	%eax, 64(%esp)
+-	movl	%eax, 60(%esp)
+-#endif
+-
+-	/* At this point we don't know if we are on flat segment
+-	 * or relocated. So compute the address offset from %eip.
+-	 * Assuming CS.base==DS.base==SS.base.
+-	 */
+-	call	1f
+-1:	popl	%ebx
+-	subl	$1b, %ebx
+-
+-	/* Interrupts are not allowed... */
+-	cli
+-
+-	/* Current context pointer is our stack pointer */
+-	movl	%esp, %esi
+ 
+-	/* Normalize the ctx pointer */
+-	subl	%ebx, %esi
+-
+-	/* Swap it with new value */
+-	xchgl	%esi, __context(%ebx)
+-
+-	/* Adjust new ctx pointer for current address offset */
+-	addl	%ebx, %esi
+-
+-	/* Load new %ss and %esp to temporary */
+-	movzwl	(%esi), %edx
+-	movl	20(%esi), %eax
+-
+-	/* Load new GDT */
+-	lgdt	2(%esi)
+-
+-	/* Load new stack segment with new GDT */
+-	movl	%edx, %ss
++	.globl	entry, __switch_context, __exit_context, halt
+ 
+-	/* Set new stack pointer, but we have to adjust it because
+-	 * pushal saves %esp value before pushal, and we want the value
+-	 * after pushal.
++/* ------------------------------------------------------------------ */
++	.section .text
++	.code32
++	.align	16
++entry:
++	cli
++	cld
++
++	/* THE LOADER'S HANDOFF LIVES IN %eax AND %ebx, and it is the first
++	 * thing a trampoline destroys if it is not careful: multiboot passes
++	 * the magic in %eax and the info structure in %ebx, and the very next
++	 * thing this code does is use both registers to build page tables.
++	 *
++	 * The 32-bit assembly this file replaced saved them by pushing a whole
++	 * context frame; there is no frame here yet, so stash them in .data and
++	 * let start_main() put them where sys_info.c expects to read them.
++	 * Skipping this is silent: the firmware boots, finds no modules, and
++	 * panics much later with "no dictionary entry point". */
++	movl	%eax, mb_magic
++	movl	%ebx, mb_info
++
++	/* A 32-bit stack to work from until we have a 64-bit one. */
++	movl	$_estack, %esp
++
++	/* ---- build the page tables ------------------------------------
++	 * Identity-map the low 4 GiB with 2 MiB pages:
++	 *   PML4[0]   -> PDPT
++	 *   PDPT[0..3]-> PD[0..3]
++	 *   PD[i][j]  =  (i<<30) + (j<<21) | PRESENT|RW|PS
++	 * 4 GiB is enough by construction: this firmware links at 1 MiB and
++	 * everything it touches on this machine class is below 4 GiB. The
++	 * region that is NOT -- a pmem NVRAM at 0x100000000 -- is P3's work
++	 * and will want a fifth PDPT entry.
+ 	 */
+-	leal	-32(%eax), %esp
+-
+-	/* Load the rest from new stack */
+-	popal
+-	popl	%gs
+-	popl	%fs
+-	popl	%es
+-	popl	%ds
+-	popfl
+-
+-	/* Finally, load new %cs and %eip */
+-	lret
++	xorl	%eax, %eax
++	movl	$pml4, %edi
++	movl	$(4096*6/4), %ecx	/* pml4 + pdpt + 4 pd, in dwords */
++	rep	stosl
++
++	/* PML4[0] = pdpt | RW | PRESENT */
++	movl	$pdpt, %eax
++	orl	$0x03, %eax
++	movl	%eax, pml4
++
++	/* PDPT[i] = pd + i*4096 | RW | PRESENT   (i = 0..3) */
++	movl	$pd, %eax
++	orl	$0x03, %eax
++	movl	$pdpt, %edi
++	movl	$4, %ecx
++1:	movl	%eax, (%edi)
++	addl	$4096, %eax
++	addl	$8, %edi
++	loop	1b
++
++	/* PD[k] = (k << 21) | PRESENT|RW|PS   for k = 0 .. 2047 */
++	movl	$pd, %edi
++	xorl	%eax, %eax		/* low dword of the entry  */
++	xorl	%edx, %edx		/* high dword: stays 0 (<4 GiB) */
++	orl	$0x83, %eax		/* PRESENT|RW|PS */
++	movl	$2048, %ecx
++2:	movl	%eax, (%edi)
++	movl	%edx, 4(%edi)
++	addl	$0x200000, %eax		/* next 2 MiB */
++	adcl	$0, %edx
++	addl	$8, %edi
++	loop	2b
++
++	/* ---- enter long mode ------------------------------------------ */
++	movl	%cr4, %eax
++	orl	$(1<<5), %eax		/* CR4.PAE */
++	movl	%eax, %cr4
++
++	movl	$pml4, %eax
++	movl	%eax, %cr3
++
++	movl	$0xC0000080, %ecx	/* IA32_EFER */
++	rdmsr
++	orl	$(1<<8), %eax		/* EFER.LME */
++	wrmsr
++
++	movl	%cr0, %eax
++	orl	$0x80000001, %eax	/* CR0.PG | CR0.PE */
++	movl	%eax, %cr0
++
++	/* Long mode is ACTIVE but we are in compatibility mode until CS says
++	 * otherwise. The far jump through a descriptor with L=1 is the step
++	 * that actually puts the CPU in 64-bit mode. */
++	lgdt	gdt64_desc32
++	ljmp	$0x08, $long_entry
++
++/* ------------------------------------------------------------------ */
++	.code64
++	.align	16
++long_entry:
++	movw	$0x10, %ax
++	movw	%ax, %ds
++	movw	%ax, %es
++	movw	%ax, %ss
++	movw	%ax, %fs
++	movw	%ax, %gs
++
++	/* ---- enable SSE --------------------------------------------------
++	 * NOT optional, and easy to leave out: SSE2 is BASELINE for x86-64, so
++	 * gcc emits it without being asked -- the first fault this trampoline
++	 * took was #UD on a `movups %xmm0` that gcc had generated to copy a
++	 * 16-byte struct in openbios(). The CPU raises invalid-opcode on every
++	 * SSE instruction until OSFXSR says the OS is ready to save xmm state.
++	 *
++	 * Consequence for Spike 2: a context switch must now preserve the xmm
++	 * registers, or use -mgeneral-regs-only to keep them out of the ABI.
++	 */
++	movq	%cr0, %rax
++	andq	$-5, %rax		/* clear CR0.EM (bit 2) */
++	orq	$2, %rax		/* set   CR0.MP (bit 1) */
++	movq	%rax, %cr0
++	movq	%cr4, %rax
++	orq	$((1<<9)|(1<<10)), %rax	/* OSFXSR | OSXMMEXCPT */
++	movq	%rax, %cr4
++	fninit
++
++	movq	$_estack, %rsp
++	xorq	%rbp, %rbp
++
++	call	start_main
++
++	/* start_main() is not supposed to return. If it does, say so rather
++	 * than falling into whatever bytes come next. */
++	jmp	halt
+ 
++/* Spike 2 owns these. Halting is the honest stub: returning would hand
++ * control back with none of the state a switch is supposed to have restored. */
++__switch_context:
+ __exit_context:
+-	/* Get back to the original context */
+-	pushl	%cs
+-	call	__switch_context
++	jmp	halt
+ 
+-	/* We get here if the other context attempt to switch to this
+-	 * dead context. This should not happen. */
++/* Spike 1: arch/x86 defines this in entry.S, which amd64 does not have -- the
++ * census recorded "no bare-metal entry path at all", and this is one of the
++ * symbols that fell out with it. libgcc's __udivmoddi4 branches here on a
++ * divide by zero. Halting is correct: there is no IDT yet (Spike 2 authors
++ * exception.c), so there is nowhere to return to. */
++	.globl	__divide_error
++__divide_error:
++	jmp	halt
+ 
++	.globl	halt
+ halt:
+ 	cli
+ 	hlt
+ 	jmp	halt
++
++/* ------------------------------------------------------------------ */
++	.section .data
++	.align	8
++	.globl	mb_magic, mb_info
++mb_magic:	.quad	0
++mb_info:	.quad	0
++
++	.section .rodata
++	.align	16
++gdt64:
++	.quad	0x0000000000000000	/* null */
++	.quad	0x00AF9A000000FFFF	/* 0x08: 64-bit code, L=1 */
++	.quad	0x00CF92000000FFFF	/* 0x10: data */
++gdt64_end:
++
++	/* Loaded while still in 32-bit mode, so the base is 32 bits wide. */
++gdt64_desc32:
++	.word	gdt64_end - gdt64 - 1
++	.long	gdt64
++
++/* ------------------------------------------------------------------ */
++	.section .bss
++	.align	4096
++pml4:	.space	4096
++pdpt:	.space	4096
++pd:	.space	4096*4
+diff --git a/arch/amd64/sys_info.c b/arch/amd64/sys_info.c
+index 5b3fcc1..d2826e2 100644
+--- a/arch/amd64/sys_info.c
++++ b/arch/amd64/sys_info.c
+@@ -20,8 +20,8 @@ void collect_sys_info(struct sys_info *info)
+     struct memrange *mmap;
+ 
+     /* Pick up parameters given by bootloader to us */
+-    info->boot_type = boot_ctx->eax;
+-    info->boot_data = boot_ctx->ebx;
++    info->boot_type = boot_ctx->rax;
++    info->boot_data = boot_ctx->rbx;
+     info->boot_arg = boot_ctx->param[0];
+     debug("boot eax = %#lx\n", info->boot_type);
+     debug("boot ebx = %#lx\n", info->boot_data);
+diff --git a/libgcc/build.xml b/libgcc/build.xml
+index 1b7724c..ae83691 100644
+--- a/libgcc/build.xml
++++ b/libgcc/build.xml
+@@ -19,6 +19,20 @@
+   <object source="__umodti3.c" condition="SPARC64"/>
+   <object source="multi3.c" condition="SPARC64"/>
+   <object source="__negti2.c" condition="SPARC64"/>
++
++  <!-- Spike 1: the 128-bit helpers above carry a comment reading
++       CONDITION="CONFIG_64BITS" and a condition reading SPARC64. Someone knew
++       the right condition and hard-coded the only 64-bit arch that shipped.
++       amd64 needs them for the same reason sparc64 does: dcell is a 128-bit
++       type, so the Forth engine's double-cell arithmetic divides in 128 bits.
++       Duplicated per-arch rather than rewriting the condition system, which
++       has no OR. -->
++  <object source="__divti3.c" condition="AMD64"/>
++  <object source="__udivti3.c" condition="AMD64"/>
++  <object source="__udivmodti4.c" condition="AMD64"/>
++  <object source="__umodti3.c" condition="AMD64"/>
++  <object source="multi3.c" condition="AMD64"/>
++  <object source="__negti2.c" condition="AMD64"/>
+  </library>
+ 
+ </build>
+diff --git a/libopenbios/elf_load.c b/libopenbios/elf_load.c
+index f09ccf6..1f291c0 100644
+--- a/libopenbios/elf_load.c
++++ b/libopenbios/elf_load.c
+@@ -505,7 +505,9 @@ elf_init_program(void)
+ 		size = MIN(phdr[i].p_filesz, phdr[i].p_memsz);
+ 		if (!size)
+ 			continue;
+-#if !defined(CONFIG_SPARC32) && !defined(CONFIG_X86)
++/* Spike 1: CONFIG_AMD64 added. The list excluded the arches without an ofmem
++ * implementation, and amd64 has none either -- it was simply never linked. */
++#if !defined(CONFIG_SPARC32) && !defined(CONFIG_X86) && !defined(CONFIG_AMD64)
+ 		if( ofmem_claim( phdr[i].p_vaddr, phdr[i].p_memsz, 0 ) == -1 ) {
+                         printk("Ignoring failed claim for va %lx memsz %lx!\n",
+                                (unsigned long)phdr[i].p_vaddr,
+@@ -525,7 +527,20 @@ elf_init_program(void)
+ #endif
+ 	}
+ 
++	/* Declare what we just loaded, as every other loader does (xcoff,
++	 * bootcode, prep, forth all set this). elf_init_program never did, so
++	 * `load-state >ls.file-type` held uninitialised dictionary garbage and
++	 * every arch_init_program() test against it silently fell through --
++	 * including the one that hands a client its interface callback. */
++	feval("elf load-state >ls.file-type !");
++
+ 	// Initialise load-state
++	/* NB x86: the entry point is NOT translated, unlike the segment copy
++	 * above. The copy is performed by the firmware, which runs with the
++	 * rebased data segment; the client is entered with FLAT, base-0
++	 * segments (see the client GDT used by switch_to_context), so it needs
++	 * the physical address. Translating it here jumped to eip 0xe046b092
++	 * and the CPU triple-faulted out of KVM. */
+ 	PUSH(ehdr->e_entry);
+ 	feval("load-state >ls.entry !");
+ 	
+--- a/forth/admin/nvram.fs
++++ b/forth/admin/nvram.fs
+@@ -304,11 +304,20 @@
+ \ x86: auto-boot is unconditional (main.fs has no interrupt window) and the
+ \ post-probe boot attempt detonates when IDE media is attached — land at the
+ \ ok prompt instead; boot is typed there. Other arches keep the 1275 default.
++\ Spike 1: amd64 inherits this for the same reason x86 needs it -- it is the
++\ same main.fs with no interrupt window, and the trampoline lands in the same
++\ post-probe boot attempt. Without it the 64-bit firmware prints its banner,
++\ tries to boot nothing, and stops WITHOUT a prompt, which reads exactly like
++\ a hang and is not one.
+ [IFDEF] CONFIG_X86
+ s" false"    s" auto-boot?"           bool-config   \ 7.4.3.5
+ [ELSE]
++[IFDEF] CONFIG_AMD64
++s" false"    s" auto-boot?"           bool-config   \ 7.4.3.5
++[ELSE]
+ s" true"     s" auto-boot?"           bool-config   \ 7.4.3.5
+ [THEN]
++[THEN]
+ s" boot"     s" boot-command"         str-config    \ 7.4.3.5
+ s" "         s" boot-file"            str-config    \ 7.4.3.5
+ s" false"    s" diag-switch?"         bool-config   \ 7.4.3.5
