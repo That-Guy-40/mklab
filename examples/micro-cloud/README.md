@@ -155,11 +155,21 @@ examples/micro-cloud/
 └── tests/                    lib.sh + run-all.sh (round-trip test; root-gated)
 ```
 
-**Promised by the plan and NOT built** — named here rather than left in the tree above, where
-they read as things you could open: `hand-walk/`, `CLONES.md`, `UPSTREAM.md`, and
-`RUNBOOK-build-images.md` (whose content is
-[step 0](RUNBOOK-micro-cloud.md#step-0--the-spine-and-the-two-things-made-from-it-root-once)
-and should not become a second document). Tracked as [TODO](../../TODO.md) **A.5**.
+**Built 2026-08-23:** [`CLONES.md`](CLONES.md) (the §4.1 reuse ledger — no rung-4 clones, and
+that is a `git grep` result rather than an aspiration) and [`UPSTREAM.md`](UPSTREAM.md)
+(cite-don't-mirror provenance; every URL fetched and 200 before it was written down, and the
+staged binary's sha256 computed from its bytes).
+
+**Still promised by the plan and NOT built** — named here rather than left in the tree above,
+where they read as things you could open: `hand-walk/`. And `RUNBOOK-build-images.md` should
+**not** be built: its content is
+[step 0](RUNBOOK-micro-cloud.md#step-0--the-spine-and-the-two-things-made-from-it-root-once),
+and a second copy is the duplicate-doc defect. Tracked as [TODO](../../TODO.md) **A.5**.
+
+*This class is now checkable rather than only annotated:*
+[`tools/check-tree-diagrams.sh`](../../tools/check-tree-diagrams.sh) reads the ASCII trees in
+every tracked document and fails when an entry names something that does not exist — the
+mechanical form of the question below.
 
 *Found 2026-08-20 while fixing two of the four.* Both this tree and the plan's are **ASCII
 art inside a code fence**, so `tools/link_check.py` cannot see them — a filename in a tree
