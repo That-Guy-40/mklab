@@ -57,6 +57,18 @@ handful of commands. (To learn the **actual** `vbmcd`/`vbmc`/`ipmitool` undernea
 — including installing them on the host per the upstream how-tos — follow the
 [RUNBOOK](RUNBOOK.md), which is the point of this lab.)
 
+> **If this lab's container, image and domain are missing, that is probably not you.**
+> On **2026-08-23** `tools/check-doc-verbs.sh` — a documentation checker that probes whether
+> a verb a document types really exists — invoked `vbmc-lab.sh destroy`, and the verb did its
+> job: the `vbmcd-lab` container, the `alpine-node` domain definition and the `vbmcd:lab`
+> image went away. The domain's disk under `/var/lib/libvirt/images` and the BMC configs in
+> `state/vbmc/` were left in place, which is this lab's own teardown design, so the quickstart
+> below rebuilds everything with no special recovery step.
+>
+> The checker no longer invokes any destructive verb ([`TODO.md` §11.4a](../../TODO.md) has
+> the incident and the fix). Recorded here rather than only there, because the person who
+> finds an empty lab looks *at the lab*.
+
 ```bash
 cd examples/virtualbmc-ipmi-lab
 
