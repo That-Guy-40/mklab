@@ -5,7 +5,7 @@
 >
 > First written 2026-08-18 as a study; **audited the same day, and Spike 0 —
 > which the first version explicitly had not attempted — has now been run.**
-> The verdict survived. Seven claims did not survive unchanged; they are
+> The verdict survived. Nine claims did not survive unchanged; they are
 > corrected in place and listed in
 > [§ What the audit corrected](#what-the-audit-corrected). The spike's build
 > patches ship in [`patches/`](patches/) so every number below is
@@ -305,6 +305,14 @@ per the repo's learning-path rule:
 | **1 — the trampoline** | apply the drift fixes + the bug-#1 header fix (both already written); rewrite `switch.S`; author the 32→64 stub; stub out `boot.c`/`linux_load.c` to get a link | `0 >` on the serial socket, and `-1 u.` answering `ffffffffffffffff` from the *bare metal* rather than from `openbios-unix` |
 | **2 — context + exceptions** | the 64-bit context frame (`context.c`'s eight errors), a 64-bit IDT in a new `exception.c` | a deliberate `0 0 !` reports a named fault instead of triple-faulting; the client-program context still switches back to the prompt |
 | **3 — boot Linux** | re-port `boot.c`/`linux_load.c` off the dead API (x86's twins show the shape), then the `+0x200` entry | the existing [`showcase-rival-boots-linux.sh`](showcase-rival-boots-linux.sh) success signature, unchanged, from the 64-bit firmware |
+| **P0–P2 — persistence** | *(runs in parallel, on the 32-bit firmware — see [the persistence spikes](#the-persistence-spikes--a-ladder-that-does-not-wait-for-the-port))* | a config variable that survives a power cycle, asserted on the **host's** backing file |
+| **P3 — the pmem store** | the only persistence work that needs long mode, and it depends on spike 1 | `/nvram` answering at a physical address ≥ `0x100000000` |
+
+**Ordering.** Spikes 1–3 and P0–P2 are independent: the persistence rungs need
+no 64-bit anything, and P3 needs spike 1 (a firmware that runs in long mode)
+before it needs anything of its own. Doing P0–P2 first is the cheaper order —
+it lands a working NVRAM on the firmware that already boots, so the port is not
+being asked to debug two unfinished subsystems at once.
 
 Known failure mode worth planning for in 1–2: a triple fault under
 `-no-reboot` exits QEMU with **rc=0** ([POC-2](POC-2-OK-PROMPT.md)'s pitfall
@@ -364,7 +372,8 @@ long mode.
 |---|---|
 | `nm obj-x86/libpackages.a` | `nvram_init` **is** in the x86 build — `packages/nvram.c` is compiled unconditionally |
 | `grep -rn nvram_init --include='*.c'` | its only callers are `arch/ppc/pearpc/init.c`, `arch/ppc/mol/init.c` and `drivers/macio.c`. **No x86 caller** |
-| `grep arch_nvram_{size,get,put}` | defined only in `arch/ppc/qemu/qemu.c`, `arch/ppc/briq/briq.c`, `arch/ppc/mol/mol.c`. x86 and amd64 define **none** |
+| `grep arch_nvram_*` over **`*.c` only** | said "defined only in three ppc files; x86 and amd64 define none" — **and that was wrong about x86**, see the row below. It is also incomplete on the other side: `arch/ppc/pearpc/pearpc.c`, `drivers/obio.c` (sparc32) and `arch/sparc64/openbios.c` define them too |
+| the same grep including **`*.S`** | `arch/x86/entry.S:306` defines **all three** — `.globl arch_nvram_size, arch_nvram_get, arch_nvram_put`. They are not missing. They are **stubs that lie**: `size` is `xor %eax,%eax` (returns 0) and `get`/`put` are a bare `ret`. A caller would get silent success and an empty store. Nothing noticed for years because nothing called `nvram_init()`. amd64 defines none — it has no `entry.S` at all |
 | live `dev / ls` (multiboot, QEMU) | `aliases openprom options chosen builtin packages pci8086,1237@0 ide@0..3 console` — **there is no `/nvram`** |
 | live `devalias` | prints nothing: no aliases are defined |
 | live `dev /options .properties` | exactly three: `name`, `screen-#columns`, `screen-#rows` |
@@ -378,9 +387,16 @@ vocabulary, not about storage** — and the boot log still prints
 `vga-driver-fcode:load-base isn't unique.`, which is the fix meeting an existing
 definition.
 
-So "add NVRAM to x86" is precisely: implement three functions
-(`arch_nvram_size/get/put`), call `nvram_init(path)` once, and decide what the
-three functions talk to. That last decision is the whole problem.
+So "add NVRAM to x86" is precisely: **replace** three lying stubs, call
+`nvram_init(path)` once, and decide what the three functions talk to. That last
+decision is the whole problem — and the stubs are the reason the missing piece
+was never visible: a firmware whose NVRAM hooks return success is
+indistinguishable, from the inside, from one that has no NVRAM.
+
+**This is [CLAUDE.md](../../CLAUDE.md)'s *fix the liar first* in the subject
+rather than in the tooling**, and it was found the only way it could be — by
+building. The `.c`-only grep in the row above is the cheap check: a question
+about *symbols* answered by searching one language.
 
 ### The contract all four have to satisfy
 
@@ -410,11 +426,13 @@ bytes 2–15), lengths counted in **16-byte granules**, free space named
 | backing | survives firmware reset | survives an OS boot / power cycle | reachable in 32-bit | code missing today |
 |---|---|---|---|---|
 | **CMOS/RTC, 128 bytes** | yes | **no** — QEMU offers no file backing | yes | a CMOS driver, and the format does not fit |
-| **A file on an attached drive** | yes | yes | yes | **a write path at every layer — none exists** |
-| **`-drive if=pflash`** | yes | yes | yes — maps at `0xffc00000` | the three functions, plus a boot-path change |
+| **A file on an attached drive** | yes | yes | yes | for a *file*, a write path at five layers; for **raw sectors**, one — see the reframe below |
+| **`-drive if=pflash`** | yes | yes | yes — vars unit at `0xffbe0000` | a small CFI driver, plus a 4 MiB pflash0 image — **configuration booted** |
 | **NVDIMM / pmem** | yes | yes | **no — measured at `0x100000000`** | ACPI discovery, a memory-map fix, *then* long mode |
 
-Only the last row needs the port. What follows is what each row costs.
+Only the last row needs the port — and row 3 has been booted, so the recommended
+order is not the order the table is written in. What follows is what each row
+costs.
 
 #### 1. CMOS/RTC — the one that is genuinely "the PC's NVRAM", and it is a dead end
 
@@ -470,32 +488,77 @@ the `disk-label` stub, and teaching one filesystem to write — and the
 whole-image `arch_nvram_put` contract means it must be a full rewrite of the
 region every time, so no append trick shortens it.
 
-#### 3. `-drive if=pflash` — the best fit for the contract, at the price of the boot path
+#### 3. `-drive if=pflash` — the best fit for the contract, and the one configuration that has actually been booted
 
-Measured on QEMU 8.2.2, `-M pc`:
+Measured on QEMU 8.2.2, `-M pc`, with both units attached:
 
 ```
+00000000ffbe0000-00000000ffbfffff (prio 0, romd): system.flash1
 00000000ffc00000-00000000ffffffff (prio 0, romd): system.flash0
 ```
 
-The top 4 MiB of the 32-bit address space — squarely reachable, and *memory-mapped*,
-which is exactly the shape `arch_nvram_get`/`put` want: two `memcpy`s against a
-fixed address. This is the EFI-shaped answer (`OVMF_VARS.fd` is precisely this),
-and it is a real NV region the firmware owns rather than borrows.
+A **128 KiB vars store at a fixed `0xffbe0000`**, directly below the 4 MiB code
+unit, both squarely inside the 32-bit address space — and eight times macio's
+16 KiB, so the format has room to spare. This is the EFI-shaped answer
+(`OVMF_VARS.fd` is precisely this pairing): a real NV region the firmware owns
+rather than borrows.
 
-The price is measured too:
+**The `-kernel` boot path and pflash0 are mutually exclusive in practice**, which
+is not what the command line says. QEMU accepts `-kernel` alongside a pflash0
+without a murmur — that is the cheap check — so the question had to be asked by
+booting. Baseline against variants, same tree, same command shape:
+
+| configuration | last lines on the serial console |
+|---|---|
+| `-kernel openbios.multiboot` (the lab's path today) | `Welcome to OpenBIOS v1.1 …` then `0 >` |
+| + `-drive if=pflash,file=<4 MiB of zeros>,unit=0` | **nothing at all** |
+| + a `unit=1` vars image as well | **nothing at all** |
+
+pflash0 *is* the BIOS: supplying an empty one removes the SeaBIOS that loads the
+multiboot image in the first place, and the machine goes dark. (The passing
+baseline is the control — without it, "no output" would be indistinguishable
+from a broken harness.)
+
+Populate it and the configuration works. SeaBIOS written to the **top** of a
+4 MiB image, so the reset vector lands in it, with the vars unit beside it:
+
+```console
+$ truncate -s 4M seabios-flash.img
+$ dd if=/usr/share/seabios/bios.bin of=seabios-flash.img bs=1 \
+     seek=$(( 4*1024*1024 - 131072 )) conv=notrunc
+$ truncate -s 128k vars.img
+$ qemu-system-i386 -M pc -m 256 -display none -serial stdio \
+     -kernel obj-x86/openbios.multiboot -initrd obj-x86/openbios.dict \
+     -drive if=pflash,format=raw,file=seabios-flash.img,unit=0 \
+     -drive if=pflash,format=raw,file=vars.img,unit=1
+vga-driver-fcode:load-base isn't unique.
+Welcome to OpenBIOS v1.1 built on Jul 23 2026 03:04
+
+0 >
+```
+
+So row 3 is buildable today, on the 32-bit firmware, and the boot-path change it
+costs is **one 4 MiB image, measured, not guessed**.
+
+**One correction to make before anyone writes the code**: an earlier draft of this
+section said `arch_nvram_get`/`put` would be "two `memcpy`s against a fixed
+address." The read half is right; the write half is not, and `romd` in the
+mapping above is the tell — a ROM-device region serves reads straight from the
+backing but sends **writes to the device model**. Asked directly:
 
 ```
-qemu-system-i386: pflash1 requires pflash0
+dev: cfi.pflash01, id ""
+  sector-length = 4096 (0x1000)
+  width = 1 (0x1)
 ```
 
-The two-unit shape *is* the OVMF code+vars pairing, so using pflash1 as a variable
-store obliges you to fill pflash0 — the **system flash** slot. This lab boots the
-firmware with `-kernel openbios.multiboot`, leaving pflash0 empty, so row 3 costs a
-change to how OpenBIOS is loaded (build a flash image of it) on top of the three
-functions. *(QEMU did **not** reject `-bios` alongside pflash0, so no exclusivity
-is claimed here — only that the slot is the system-flash slot and the pairing is
-enforced.)*
+`cfi.pflash01` is the **Intel command set**, so `arch_nvram_put` is an unlock /
+block-erase / program / poll-status / read-array sequence over 4 KiB sectors at
+one byte per bus cycle — 32 sectors for a whole-store rewrite, which the
+no-offset contract makes mandatory every time. And there is nothing to reuse:
+grepping the tree for a CFI or flash driver finds **none** — only a PCI class
+string in `pci_database.c` and macio's `compatible = "nvram,flash"` property.
+That small driver, not the three functions, is the real content of row 3.
 
 #### 4. NVDIMM / pmem — measured above 4 GB, and long mode is the *third* blocker, not the first
 
@@ -547,6 +610,375 @@ up, and only the last is about mode:
 Blockers 1 and 2 are work you would do in **either** mode. So the honest form of
 the headline is: *a pmem NVRAM is the only backing that long mode unlocks, and
 long mode is the cheapest third of it.*
+
+### The reframe: `arch_nvram_*` never touches the filesystem stack
+
+Everything above about row 2 answers the question *"can OpenBIOS write a **file**?"*
+— and NVRAM never asks it. The five read-only layers are real, and they are
+**irrelevant to this contract**: `arch_nvram_get`/`put` are *arch* code. They do
+not go through the device tree, `disk-label`, `pc-parts`, or a filesystem. The
+ppc implementations prove it — macio's is plain MMIO against a hardware window,
+with no package in sight.
+
+What the contract actually needs is **raw bytes at a fixed place**. That deletes
+four of row 2's five layers and leaves exactly one: *can this driver put a
+sector back?* Asked that way, the backings re-grade — and the recommendation
+inverts.
+
+| backing | data path | what is actually missing | new subsystems |
+|---|---|---|---|
+| **IDE, raw sectors** | PIO — and `ob_ide_pio_outsw` is **already used to send bulk data** (the ATAPI packet path, `ide.c:560`) | `WIN_WRITE 0x30` in `ide.h`, and an `ob_ide_write_ata` mirroring the 16-line `ob_ide_read_sectors` | **none** |
+| **Floppy, raw sectors** | PIO — the driver polls `STATUS_NON_DMA`, so no ISA DMA controller is involved | flip a config switch; author a write path; add an ED geometry for 2.88 MB | the FDC |
+| **pflash / CFI** | MMIO | a CFI driver written from scratch; the 4 MiB pflash0 image | CFI, plus a boot-path change |
+
+**IDE is the cheapest by a clear margin**: no new bus, no config switch, no
+boot-path change, and its read twin is the code this lab already boots a client
+program with. `ide.h` defines `WIN_READ`, `WIN_READ_EXT`, `WIN_IDENTIFY`,
+`WIN_PACKET` and `WIN_IDENTIFY_PACKET` — **no write command at all** — so the
+delta is a constant and one function whose mirror image is sixteen lines away.
+
+The natural shape is a **dedicated small `-drive if=ide` image whose entire
+contents are the store**: no partition table, no filesystem, nothing for the
+read-only stack to be read-only about. That is OFW's borrow-a-file idea with the
+filesystem removed.
+
+#### The floppy, graded
+
+Worth its own note, because it is the option that looks most like OFW's and
+because the repo already has form here — [`floppinux-2.88mb/`](../tiny-linux-experiments/floppinux/floppinux-2.88mb/)
+boots QEMU with `fd0 is 2.88M`, verified end to end.
+
+The good news is better than expected: **OpenBIOS ships a full 1,185-line FDC
+driver, and x86 already calls it** —
+
+```c
+/* arch/x86/openbios.c:202 */
+#ifdef CONFIG_DRIVER_FLOPPY
+	ob_floppy_init("/isa", "floppy0", 0x3f0, 0);
+```
+
+— behind a switch that is **off for x86 and on for both sparcs**:
+
+```
+config/examples/x86_config.xml:62:     CONFIG_DRIVER_FLOPPY  value="false"
+config/examples/sparc32_config.xml:69: CONFIG_DRIVER_FLOPPY  value="true"
+config/examples/sparc64_config.xml:67: CONFIG_DRIVER_FLOPPY  value="true"
+```
+
+That is the same shape as [`../open-firmware-debugs-itself/`](../open-firmware-debugs-itself/README.md)'s
+x86 `pseudo-nvram` finding: **a disabled switch, not absent code.**
+
+Two corrections to expectations, both measured:
+
+- **It is 1.44 MB, not 2.88.** The driver hard-codes a single geometry, `H1440` —
+  `SECT 18`, `HEAD 2`, `TRACK 80` = 2880 *sectors* × 512 B = **1.44 MB**. There
+  is no extended-density row, so 2.88 MB means adding one (36 sectors/track, a
+  500 kbps→1 Mbps rate change). Not a blocker in the slightest: 1.44 MB is
+  already **92×** macio's 16 KiB, and the store needs kilobytes.
+- **There is no dormant write path.** `FD_WRITE 0xC5` is defined at
+  `floppy.c:100` and **referenced nowhere else in the file** — a constant carried
+  over from the Linux driver this one descends from. The method table exports
+  `open close read-blocks block-size max-transfer`, the same read-only shape as
+  IDE.
+
+So the floppy is a real option and a good one for *fidelity* — it is the most
+period-correct answer, and a 1.44 MB image is a thing a human can mount and read
+on the host. It is simply not the cheapest, because IDE needs no switch and no
+new controller.
+
+### The persistence spikes — a ladder that does not wait for the port
+
+The single most useful consequence of the table above is a scheduling one:
+**three of the four backings are 32-bit-reachable, so persistence is not blocked
+on long mode.** It can be built, and each rung proved, on the firmware this lab
+already boots — which also means the eventual 64-bit port inherits a *working*
+NVRAM instead of debugging two unfinished things at once.
+
+Each rung keeps an observable checkpoint, per the repo's learning-path rule, and
+each one's checkpoint is chosen to be an **outcome rather than a mechanism** —
+"the bytes on the host changed", not "the word returned what I set".
+
+| rung | work | observable checkpoint | mode |
+|---|---|---|---|
+| **P0 — a node that exists** ✅ **DONE** | implement `arch_nvram_size/get/put` in `arch/x86` over a plain static buffer; call `nvram_init()` once | `dev / ls` lists **`nvram`**, and `dev /nvram .properties` answers — the exact probe that comes back without it today | 32-bit |
+| **P1 — survives a firmware reset** ✅ **DONE** | `WIN_WRITE 0x30` + an `ob_ide_write_ata` mirroring the read twin; a dedicated raw `-drive if=ide` image as the store | set a config variable, then **`cmp` the host's image before and after** — it must differ | 32-bit |
+| **P2 — survives a power cycle** ✅ **DONE** (an OS in between is still untested) | nothing new — P1's store, exercised | set a value, boot Linux with the existing [`showcase-rival-boots-linux.sh`](showcase-rival-boots-linux.sh), exit QEMU entirely, start a **fresh process**, read it back | 32-bit |
+| **P3 — the pmem store** | an NFIT reader (or, as a first step, a hard-coded region); lift `multiboot.c`'s type-1 filter; then the 64-bit addressing | `/nvram` answering at a physical address **≥ `0x100000000`**, with the backing file changing on the host | **needs the port** |
+
+#### P0 — RUN, and it passes
+
+[`patches/04-x86-nvram-p0.patch`](patches/04-x86-nvram-p0.patch) (applied by hand
+on top of `01-x86-revival.patch`, exactly like spikes 02/03) does three things:
+deletes the lying stubs from `entry.S`, implements the hooks over an 8 KiB static
+buffer in `arch/x86/openbios.c`, and calls `nvram_init("/")` + `nvconf_init()`.
+
+The checkpoint, driven over the serial socket by the lab's own
+[`tools/drive-serial-repl.py`](../../tools/drive-serial-repl.py):
+
+```console
+0 > dev / ls
+127c10 aliases
+127cb4 openprom
+127e5c options
+127ed4 chosen
+127f84 builtin
+12da24 packages
+130320 pci8086,1237@0
+131a1c ide@0
+131ce4 ide@1
+1323f4 ide@2
+1326bc ide@3
+132984 console
+132af0 nvram
+ ok
+0 > dev /nvram .properties
+name                      "nvram"
+ ok
+```
+
+Compare the same probe recorded before the code existed, at the top of this
+section: identical down to `console`, and then it stopped. **The negative control
+was measured first, and it is what makes this line mean anything.**
+
+Two things the boot log shows on the way, both predicted from reading
+`nvconf_init()` and both worth keeping:
+
+```
+vga-driver-fcode:invalid nvram partition length
+nvram error detected, zapping pram
+```
+
+A zeroed store fails the partition scan, `zap_nvram()` formats it (a free part
+plus an `NV_SIG_SYSTEM` "common" partition), and the `for(;;)` retry terminates
+on the second pass. **That message appears on every boot, and that is the point**
+— the buffer is volatile, so the store is blank every time. P0 persists nothing
+by design, and this line is the standing proof of it: when P1 lands, it must stop
+appearing. It is P2's control, visible from the first run.
+
+Sized 8 KiB because `nvconf_init()` asks for a `DEF_SYSTEM_SIZE` of `0xc10`
+(3,088 bytes); anything smaller is silently clamped by `create_nv_part()` — which
+is what happens to briq's 2,048.
+
+**Two things P0 does not claim.** The node's `open` method is
+`nvram_open() { RET(-1); }` upstream — it exists and refuses — so nothing has
+opened this device; and `#bytes`, which macio publishes, is not set here, so
+`.properties` shows only `name`. Both are P1's business.
+
+#### P1 + P2 — RUN, and they pass
+
+[`patches/05-x86-nvram-p1-ide-backing.patch`](patches/05-x86-nvram-p1-ide-backing.patch)
+gives the store a real backing, and the reframe above is what made it small:
+
+| layer | change |
+|---|---|
+| `drivers/ide.h` | `WIN_WRITE 0x30` — **absent upstream**, which defined only `READ`, `READ_EXT`, `IDENTIFY`, `PACKET`, `IDENTIFY_PACKET` |
+| `drivers/ide.c` | `ob_ide_pio_data_out()` — the mirror of `data_in`, identical up to the transfer, because `ob_ide_pio_outsw` already existed and was already used by the ATAPI packet path |
+| `drivers/ide.c` | an LBA28 write, and a by-number drive registry: the channels are `malloc`'d inside `ob_ide_init()` and kept nowhere a caller could reach, so `arch_nvram_*` had nothing to talk to |
+| `arch/x86/openbios.c` | `get`/`put` read and write **raw sectors on ide@3** |
+
+**Nothing in `disk-label`, `pc-parts` or `fs/` is touched.** They are still
+read-only, and none of them is in the path — which is the reframe made concrete.
+
+Two deliberate refusals, both *before* the irreversible step:
+
+- **The write path refuses anything outside LBA28** rather than silently falling
+  through to a CHS or LBA48 path nobody has exercised.
+- **The store refuses a drive that is carrying someone else's data.** It accepts
+  a blank first 8 KiB or one already bearing `nvram.c`'s partition names, and
+  otherwise keeps the volatile buffer and says so on the console. Pointing this
+  at a real boot disk would eat it, and a gate after the `write` is a post-mortem.
+
+The write also waits for `READY` with no error before reporting success —
+otherwise "the write succeeded" is a claim about the **bus**, not about storage.
+
+##### The checkpoint, and why the control is half of it
+
+`./smoke-openbios.sh persist` boots three times:
+
+1. **write** — `setenv boot-file <nonce>`, then
+   `" /nvram" " update-nvram" execute-device-method`, which answers `-1`; the
+   host image's sha256 must change.
+2. **read back** — a **brand-new QEMU process**, same image: the nonce must be
+   there, and `zapping pram` must *not* (the store has to arrive already valid).
+3. **control** — the identical boot with **no drive attached**: the nonce must be
+   absent, and the firmware must say `no drive at ide@3`.
+
+Step 3 is not decoration. The first hand-run of this check used `auto-boot?`,
+whose x86 default is **already `false`** — so it "passed" while measuring the
+default, and the control printed the identical line, which is the only reason it
+was caught. Hence the nonce, which no default can equal.
+
+All three assertions were then watched to bite, by planting the defect:
+
+| planted defect | verdict |
+|---|---|
+| wipe the image between write and read-back | `FAIL: REGRESSION: boot-file did not survive a power cycle` |
+| restore the image after the write, so the write reports success and lands nothing | `FAIL: REGRESSION: update-nvram reported success and the host image is byte-identical` |
+| give the "no drive" control a drive | `FAIL: REGRESSION: the control saw <nonce> with no drive attached — this check cannot fail` |
+
+##### A second backing, and why it had to be an unlike one
+
+[`patches/06-x86-nvram-cfi-flash-backing.patch`](patches/06-x86-nvram-cfi-flash-backing.patch)
+adds **CFI flash** beside the IDE store. Two backings that failed the same way
+would be one data point, so this one is deliberately unalike: IDE is a PIO block
+device reached through I/O ports; this is **memory-mapped** flash at physical
+`0xffbe0000` — QEMU's `cfi.pflash01`, Intel command set, 4 KiB sectors, byte-wide.
+
+Selection is a **runtime probe, not a build option**: a CFI query either answers
+`QRY` or it does not. Flash first, then `ide@3`, then a volatile buffer — and the
+firmware prints which one it got:
+
+```
+nvram: backed by pflash@0xffbe0000
+```
+
+That line is what the test asserts on, and the reason is specific: with both
+attached, flash wins, so a "flash" run could otherwise pass while quietly
+measuring the IDE store. The control for that was planted and watched to bite —
+`FAIL: this track measures pflash@0xffbe0000 but the firmware reported: nvram:
+backed by ide@3`.
+
+**Two traps this backing hits that the block device did not**, and both were
+already written down in this repo before they were met:
+
+- **`romd` means reads come from the backing and writes do not.** A write is
+  unlock / block-erase / program / poll-status, not a store. This document's own
+  earlier draft called `get`/`put` "two `memcpy`s"; the read half was right.
+- **The address must go through `phys_to_virt()`.** `arch/x86` relocates itself
+  by rebasing the GDT data segment, so a constant physical address used raw
+  lands somewhere else entirely — the same trap that made `load-base` read back
+  as zeros while every byte count looked correct.
+
+`./smoke-openbios.sh persist-flash` runs the identical three-boot shape as the
+IDE track, against `-drive if=pflash,unit=1`. It has to build a **populated**
+`unit=0` first — SeaBIOS at the top of a 4 MiB image — because pflash0 *is* the
+BIOS on `-M pc`, and an empty one removes the thing that loads the multiboot
+image. That was measured earlier in this section and is now automated.
+
+##### The third backing: a floppy, and it is half done
+
+[`patches/07-x86-floppy-backing.patch`](patches/07-x86-floppy-backing.patch).
+Reported as half done because that is what it is — and the half that works cost
+a real upstream bug to find.
+
+**Flipping the switch was the easy part.** `CONFIG_DRIVER_FLOPPY` is `false` for
+x86 and `true` for both sparcs, and `arch/x86/openbios.c` already called
+`ob_floppy_init`. Flipped, the node appears as `floppy0@0` and the controller
+identifies itself: `FDC is a S82078B`.
+
+**The read then failed, and the reason is worth keeping.** Debug output showed
+`bytes_read = 9216` — the entire track had transferred correctly — followed by
+`ret = -1`. The result bytes said `ST0=0x04 ST1=0x00 ST2=0x00`: **normal
+termination**, on head 1. And `read_ok()` compares ST0's head field to the
+**requested** head:
+
+```c
+if (((results[0] & ST0_HA) >> 2) != head)
+        result_ok = 0;
+```
+
+But `floppy_read_sectors()` sets the **MT (multi-track)** bit whenever the
+geometry has two heads — so the transfer starts on head 0 and legitimately
+*finishes* on head 1. The driver enables MT and then validates as though it
+had not. Every multi-track read was judged a failure after succeeding.
+
+It never bit anyone because the switch was off: **a disabled switch hiding a
+broken path**, which is the same shape as this lab's `pseudo-nvram` finding and
+as the `arch_nvram_*` stubs two rungs ago. Fixed by accepting the requested head
+*or* the last one, and `./smoke-openbios.sh floppy` guards it — its control
+re-injects the strict comparison and the track fails by name.
+
+**The write is KNOWN-BLOCKED, and stated as such rather than fudged.** All 512
+bytes of a sector transfer (`sent 512 of 512`); the controller then sits at
+status `0x30` (`BUSY|NON_DMA`) through 200,000 polls, never turning the bus
+around, so `result()` reads no status bytes and returns `-1`. The bytes go out
+and the completion never comes back. The read path works on the same controller,
+so this is specific to the non-DMA write turnaround.
+
+What was fixed is the *dishonesty*, not the gap:
+
+| before | after |
+|---|---|
+| an **unbounded** `do { } while (status != READY\|NON_DMA)` copied from the read path — the firmware hung silently, the store's first sector on disk and the machine mute until the harness killed it | bounded waits, a named `floppy: write never entered execution phase` message, and `nvram: WRITE FAILED to floppy0` from the arch layer |
+
+And one bug in that path *was* mine: the read's result loop drains `FD_DATA` to
+clear FIFO residue, and copying it verbatim into the write **ate the result
+bytes** — a failure the cleanup manufactured. Removed.
+
+**A second unbounded wait, found by the other tracks going red.** Enabling the
+driver made every boot *without* a floppy attached hang silently, right after
+`vga-driver-fcode:` — because `floppy_read_sectors()`'s execution-phase wait is
+an unbounded `do/while` upstream, and with no media the controller never enters
+that phase. Four green tracks turned red the moment the patch landed, which is
+exactly what they are for; an ad-hoc check of only the floppy would have shipped
+a firmware that hangs on every machine with an empty drive. Bounded, and the
+read now returns `-1` so the arch layer falls through to the volatile buffer.
+
+**Also: it is 1.44 MB, not 2.88.** The driver hard-codes a single geometry
+(`H1440`: 18 sectors × 2 heads × 80 tracks). 2.88 MB would need an
+extended-density row. Immaterial to the store, which needs kilobytes.
+
+So the ladder's floppy variant stands at: **read proven, write blocked, failing
+honestly.** `persist-floppy` is deliberately *not* shipped as a permanently-red
+track — the `floppy` track asserts the read works *and* that the write gap is
+still the gap, so that closing it does not slip by unnoticed.
+
+##### The refusal gate, watched firing
+
+The store refuses a drive carrying someone else's data. That gate was written
+before it was tested, which makes it a claim rather than a guarantee, so it was
+aimed at 1 MiB of `/dev/urandom`:
+
+```
+nvram: ide@3 holds data that is not an nvram store -- refusing to write to it
+nvram: not backed -- this change will NOT survive a reset
+```
+
+and the foreign image came back **byte-identical**. The refusal happens on the
+read, before any write is attempted — a gate after the write is a post-mortem.
+
+##### The harness's own bug, caught on its first regression run
+
+The `nvram` track originally derived its expectation with
+`git apply --reverse --check patches/04`, i.e. *"is exactly that diff present"*.
+It broke the moment P1 edited the same file: P0 was still in effect, the node was
+still there, and the check insisted it should be absent. **A patch is a diff,
+which is a cache of a state.** Both tracks now derive from the *cause* — whether
+`arch/x86/openbios.c` calls `nvram_init(`, and whether it calls
+`ob_ide_write_blocks_nr` — which survives later patches to the same file.
+
+Three notes on why the rungs are cut here and not elsewhere:
+
+- **P0 is worth its own rung even though it persists nothing.** It is the step
+  that turns *"the vocabulary answers while the device does not exist"* into its
+  opposite, and it is the only rung whose before-picture has already been
+  measured — the `dev / ls` output at the top of this section **is** P0's
+  negative control, recorded before the code exists.
+- **P1's checkpoint deliberately ignores the Forth.** Reading a variable back
+  inside one firmware session proves nothing about storage: dictionary state
+  answers identically, which is precisely today's illusion. The assertion has to
+  land on the host's file.
+- **P2 needs no new code, and that is the point.** If P1 is real, P2 is free; if
+  P2 fails after P1 passed, the store is RAM-shaped and P1's checkpoint was
+  measuring the wrong thing. It is P1's control as much as its successor — and
+  a RAM-backed P0 must **fail** P2, which is the way to find that out cheaply.
+
+**P1 deliberately picks the cheapest backing, not the most interesting one.**
+The other two stay on the table as *variants* of the same rung, each buying
+something the raw-IDE store does not, and each costing exactly one thing:
+
+| variant | what it buys | what it costs |
+|---|---|---|
+| **floppy** ⚠️ **half done** | period fidelity, and a 1.44 MB image a human can mount on the host | switch flipped and **read proven** (an upstream MT bug fixed); the **write is known-blocked** on QEMU's FDC — see below |
+| **pflash** ✅ **DONE** | a region the firmware *owns* rather than borrows — the EFI shape | a CFI driver; the 4 MiB pflash0 image — both built, see below |
+
+What the ladder deliberately does **not** do is build a writable **filesystem**.
+That is a genuinely large project (five layers) and — per the reframe above —
+nothing in the persistence story needs it. It is worth doing only for full *OFW
+parity*: `pseudo-nvram` as a file the booted OS can also read. Named here rather
+than left implicit, per the rule about coverage lists that under-cover in
+silence.
+
 ### "Data survives an OS boot" is three different questions
 
 Worth separating before any of it is built, because the OFW lab already paid for
@@ -611,6 +1043,15 @@ did not, and per house style they are named rather than silently rewritten:
    most missing code, not the least. The corresponding over-claim in the other
    direction is also fixed: the pmem row was a *design* claim and its placement is
    now measured at `0x100000000`.
+9. **And then the corrected row 2 was itself answering the wrong question.** The
+   five read-only layers are real, but they gate writing a **file** — which
+   `arch_nvram_get`/`put` never do. They are arch code: macio's implementation is
+   plain MMIO with no package in sight. NVRAM needs raw bytes at a fixed place,
+   which deletes four of the five layers and leaves one — *can this driver put a
+   sector back?* On that question **IDE is the cheapest backing of the three**,
+   not the most expensive, and the recommendation in the ladder inverted
+   accordingly. Correction 8 was right about the layers and wrong about which
+   question they answered.
 
 ## What this document did NOT prove
 
@@ -634,8 +1075,16 @@ bullets were discharged by measurement, and the measurement created new ones:
   every local build here carried `-Wno-error=unused-result`. A host-toolchain
   artifact (the lab's [`Containerfile`](Containerfile) pins its own), not a
   finding about the port.
-- **Nothing was tested on real hardware.** Everything here is a build; QEMU
-  was not involved in any command in this document.
+- **Nothing was tested on real hardware.** Every claim here comes from a build
+  or from an emulator.
+- **"QEMU was not involved in any command in this document" was true when
+  written, and stopped being true on 2026-08-23.** The *census* is still
+  build-only — but the persistence section boots the firmware, drives its prompt
+  over a pty, and reads QEMU's own address map. A did-not-prove list is exactly
+  the kind of present-tense claim that keeps being served after its subject
+  changes, so it is corrected here rather than quietly deleted. What remains
+  true, and is the load-bearing part: **nothing in the 64-bit story has been
+  booted.** Spikes 1–3 and P3 are all unexercised.
 
 ## Provenance
 
@@ -646,3 +1095,6 @@ bullets were discharged by measurement, and the measurement created new ones:
 | OFW | https://github.com/openbios/openfirmware @ `d5cc657` (**2015-12-18** — HEAD) |
 | first measured | 2026-08-18, gcc 13.3.0 (Ubuntu 24.04), rootless, no QEMU involved |
 | audited + Spike 0 | 2026-08-18, same host and pins; `gcc-multilib` added for the x86 contrast build; spike patches in [`patches/`](patches/) |
+| persistence section | 2026-08-23, same host and pins — the first work here to run QEMU |
+| QEMU | **8.2.2** (Debian `1:8.2.2+ds-0ubuntu1.17`) — the flash and NVDIMM addresses, the `-rtc` option list and the `pflash1 requires pflash0` refusal are all this version's, and are the claims most likely to move under another |
+| SeaBIOS | `/usr/share/seabios/bios.bin`, 131,072 bytes — the pflash0 image built in row 3 |

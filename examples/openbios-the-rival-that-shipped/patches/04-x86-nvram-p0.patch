@@ -1,0 +1,109 @@
+# patches/04-x86-nvram-p0.patch — P0 of the persistence ladder:
+# an NVRAM node that EXISTS. Applies on top of 01-x86-revival.patch.
+#
+# Measured 2026-08-23: with this applied, 'dev / ls' gains an 'nvram' entry
+# that the unpatched firmware does not have. The backing is a static buffer,
+# so it persists NOTHING -- that is deliberate, and it is P2's control.
+#
+# Apply by hand (the lab's build-openbios.sh applies 01 by name only):
+#   git -C $OPENBIOS_WORKDIR/openbios apply patches/04-x86-nvram-p0.patch
+
+--- a/arch/x86/entry.S
++++ b/arch/x86/entry.S
+@@ -303,13 +303,10 @@
+         .fill   20, 8, 0        # idt is unitiailzed
+ _idt_end:
+ 
+-        .globl  arch_nvram_size, arch_nvram_get, arch_nvram_put
+-arch_nvram_size:
+-        xor     %eax, %eax
+-        ret
+-
+-arch_nvram_get:
+-        ret
+-
+-arch_nvram_put:
+-        ret
++        /* P0: the three arch_nvram_* stubs that lived here are GONE.
++         *
++         * They were not missing hooks -- they were present ones that lied:
++         * arch_nvram_size returned 0 (xor %eax,%eax) and get/put were a bare
++         * ret, so a caller got silent success and an empty store. Nothing
++         * ever noticed because arch/x86 never called nvram_init(). The real
++         * implementations now live in arch/x86/openbios.c. */
+--- a/arch/x86/openbios.c
++++ b/arch/x86/openbios.c
+@@ -23,6 +23,8 @@
+ #include "boot.h"
+ #include "libc/vsprintf.h"
+ #include "arch/x86/io.h"
++#include "packages/nvram.h"
++#include "arch/common/nvram.h"
+ 
+ /* Where a loaded client/image lands, as a PHYSICAL address. 4 MiB is
+  * clear of low memory, the dictionary, and the firmware image (which
+@@ -179,6 +181,45 @@
+ 		claim_next = base;
+ }
+ 
++/* ------------------------------------------------------------------ *
++ * P0: an NVRAM that exists.
++ *
++ * packages/nvram.c has been compiled into every x86 build for years with no
++ * x86 caller, because the three hooks below were defined only by the ppc
++ * boards. Wiring them makes `dev / ls` show an `nvram` node and gives the
++ * config variables in forth/admin/nvram.fs somewhere to live.
++ *
++ * THE BACKING IS DELIBERATELY VOLATILE. This rung proves the package
++ * instantiates and the format round-trips; it persists NOTHING, and the
++ * ladder's P2 checkpoint (a value surviving a fresh QEMU process) must FAIL
++ * against this buffer. That failure is the control for P1's real backing --
++ * if P2 passed here, it would be measuring dictionary state rather than
++ * storage, which is exactly the illusion this whole exercise started from.
++ *
++ * Sized 8 KiB: nvconf_init() asks for a DEF_SYSTEM_SIZE (0xc10 = 3088 byte)
++ * system partition, so anything smaller is silently clamped by
++ * create_nv_part(). briq's 2048 is below that line and takes the clamp.
++ * ------------------------------------------------------------------ */
++static char x86_nvram[8192];
++
++int
++arch_nvram_size( void )
++{
++	return sizeof(x86_nvram);
++}
++
++void
++arch_nvram_get( char *buf )
++{
++	memcpy( buf, x86_nvram, sizeof(x86_nvram) );
++}
++
++void
++arch_nvram_put( char *buf )
++{
++	memcpy( x86_nvram, buf, sizeof(x86_nvram) );
++}
++
+ static void
+ arch_init( void )
+ {
+@@ -213,6 +254,18 @@
+ #endif
+ 	ob_console_init();
+ 
++	/* P0: create /nvram, then bind the Forth config variables to it.
++	 * Two calls, not one -- nvram_init() makes the device node, while
++	 * nvconf_init() reads the store and runs nvram-load-configs. The
++	 * sparcs call only the second because obio builds their node.
++	 *
++	 * AFTER ob_console_init(), deliberately. The first draft of this put
++	 * it before, and when nvconf_init() hung the machine printed NOTHING
++	 * -- no banner, no reason, indistinguishable from a broken image. A
++	 * step that can fail belongs downstream of the thing that reports. */
++	nvram_init("/");
++	nvconf_init();
++
+ 	push_str("/openprom/client-services");
+ 	fword("find-device");
+ 	bind_func("cif-claim", ciface_claim_x86);

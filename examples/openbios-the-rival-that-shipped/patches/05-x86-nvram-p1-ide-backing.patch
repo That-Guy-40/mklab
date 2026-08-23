@@ -1,0 +1,365 @@
+# patches/05-x86-nvram-p1-ide-backing.patch — P1 of the persistence ladder:
+# the store gets a real backing. Applies on top of 04-x86-nvram-p0.patch.
+#
+# Adds WIN_WRITE (absent upstream: ide.h defined only reads), a PIO data-out
+# transport mirroring data-in, an LBA28 write, and a by-number drive registry
+# so arch code can reach a drive at all. arch_nvram_get/put then read and write
+# raw sectors on ide@3 -- touching NO filesystem, partition or disk-label code,
+# all of which are read-only and none of which an NVRAM needs.
+#
+# It REFUSES to write to a drive whose first 8 KiB is neither blank nor already
+# an nvram store, and it refuses BEFORE the write, not after.
+#
+# Verified by: ./smoke-openbios.sh persist
+
+--- a/drivers/ide.h
++++ b/drivers/ide.h
+@@ -50,6 +50,7 @@
+  */
+ #define WIN_READ		0x20
+ #define WIN_READ_EXT		0x24
++#define WIN_WRITE		0x30	/* P1: absent upstream -- ide.h defined only reads */
+ #define WIN_IDENTIFY		0xEC
+ #define WIN_PACKET		0xA0
+ #define WIN_IDENTIFY_PACKET	0xA1
+--- a/drivers/ide.c
++++ b/drivers/ide.c
+@@ -359,6 +359,88 @@
+ /*
+  * execute given command with a pio data-in phase.
+  */
++/*
++ * P1: the mirror of ob_ide_pio_data_in below.
++ *
++ * Everything up to the transfer is identical -- select, wait, write the task
++ * file -- because it is the same protocol; only the direction of the data
++ * register changes, and ob_ide_pio_outsw already existed and was already used
++ * (the ATAPI packet path). This is why "add a write path" costs one function
++ * here rather than five layers up in the filesystem stack.
++ */
++static int
++ob_ide_pio_data_out(struct ide_drive *drive, struct ata_command *cmd)
++{
++	unsigned char stat;
++	unsigned int bytes, timeout;
++
++	if (ob_ide_select_drive(drive))
++		return 1;
++
++	timeout = 0;
++	do {
++		stat = ob_ide_pio_readb(drive, IDEREG_STATUS);
++		if ((stat & (BUSY_STAT | READY_STAT)) == READY_STAT)
++			break;
++		ob_ide_400ns_delay(drive);
++	} while (timeout++ < 1000);
++
++	if (timeout >= 1000) {
++		ob_ide_error(drive, stat, "drive timed out");
++		cmd->stat = stat;
++		return 1;
++	}
++
++	ob_ide_write_registers(drive, cmd);
++
++	bytes = cmd->buflen;
++	do {
++		unsigned count = cmd->buflen;
++
++		if (count > drive->bs)
++			count = drive->bs;
++
++		if (ob_ide_wait_stat(drive, 0, BUSY_STAT | ERR_STAT, &stat)) {
++			ob_ide_error(drive, stat, "timed out waiting for BUSY clear");
++			cmd->stat = stat;
++			break;
++		}
++
++		if ((stat & (BUSY_STAT | DRQ_STAT)) == DRQ_STAT) {
++			ob_ide_pio_outsw(drive, IDEREG_DATA, cmd->buffer, count);
++			cmd->bytes -= count;
++			cmd->buffer += count;
++			bytes -= count;
++
++			ob_ide_400ns_delay(drive);
++		}
++
++		if (stat & (BUSY_STAT | WRERR_STAT | ERR_STAT)) {
++			cmd->stat = stat;
++			break;
++		}
++
++		if (!(stat & DRQ_STAT)) {
++			cmd->stat = stat;
++			break;
++		}
++	} while (bytes);
++
++	/*
++	 * A write is not on the platter when the last DRQ clears. Wait for the
++	 * drive to go READY with no error before calling it done -- otherwise
++	 * "the write succeeded" is a claim about the bus, not about storage,
++	 * which is the whole distinction this rung exists to make.
++	 */
++	if (!bytes && ob_ide_wait_stat(drive, READY_STAT, BUSY_STAT | ERR_STAT, &stat)) {
++		ob_ide_error(drive, stat, "write did not complete");
++		cmd->stat = stat;
++		return 1;
++	}
++
++	return bytes ? 1 : 0;
++}
++
+ static int
+ ob_ide_pio_data_in(struct ide_drive *drive, struct ata_command *cmd)
+ {
+@@ -868,6 +950,93 @@
+ }
+ 
+ /*
++ * P1: LBA28 write. Deliberately NOT a full mirror of the read side -- there is
++ * no CHS and no LBA48 variant, because the NVRAM store this exists for lives in
++ * the first few sectors of a small dedicated image. A caller asking for anything
++ * outside LBA28 is REFUSED rather than silently served by a path nobody has
++ * exercised.
++ */
++static int
++ob_ide_write_ata_lba28(struct ide_drive *drive, unsigned long long block,
++                       unsigned char *buf, unsigned int sectors)
++{
++	struct ata_command *cmd = &drive->channel->ata_cmd;
++
++	memset(cmd, 0, sizeof(*cmd));
++
++	cmd->buffer = buf;
++	cmd->buflen = sectors * 512;
++
++	cmd->nsector = sectors;
++	cmd->sector  = block;
++	cmd->lcyl    = block >>= 8;
++	cmd->hcyl    = block >>= 8;
++	cmd->device_head  = ((block >> 8) & 0x0f);
++	cmd->device_head |= (1 << 6);
++
++	cmd->command = WIN_WRITE;
++
++	return ob_ide_pio_data_out(drive, cmd);
++}
++
++static int
++ob_ide_write_sectors(struct ide_drive *drive, unsigned long long block,
++                     unsigned char *buf, unsigned int sectors)
++{
++	if (!sectors)
++		return 1;
++	if (block + sectors > drive->sectors)
++		return 1;
++	if (drive->type != ide_type_ata)
++		return 1;               /* no ATAPI writes: not what this is for */
++	if (block + sectors > (1ULL << 28) || sectors > 255)
++		return 1;               /* outside LBA28 -- refuse, see above */
++	if (drive->addressing == ide_chs)
++		return 1;               /* CHS write path deliberately not written */
++
++	return ob_ide_write_ata_lba28(drive, block, buf, sectors);
++}
++
++/*
++ * P1: the one hook arch code needs.
++ *
++ * The channels are malloc'd inside ob_ide_init() and never kept anywhere a
++ * caller could reach, so arch_nvram_* had nothing to talk to. This registry is
++ * the smallest thing that fixes it: remember drives as they are probed and hand
++ * one back BY NUMBER.
++ */
++static struct ide_drive *ob_ide_drives[IDE_MAX_CHANNELS * 2];
++
++static void ob_ide_register_drive(struct ide_drive *d)
++{
++	if (d->nr >= 0 && d->nr < (int)(sizeof(ob_ide_drives)/sizeof(ob_ide_drives[0])))
++		ob_ide_drives[d->nr] = d;
++}
++
++static struct ide_drive *ob_ide_drive_by_nr(int nr)
++{
++	if (nr < 0 || nr >= (int)(sizeof(ob_ide_drives)/sizeof(ob_ide_drives[0])))
++		return NULL;
++	if (!ob_ide_drives[nr] || !ob_ide_drives[nr]->present)
++		return NULL;
++	return ob_ide_drives[nr];
++}
++
++int ob_ide_read_blocks_nr(int nr, unsigned long long block,
++                          unsigned char *buf, unsigned int sectors)
++{
++	struct ide_drive *d = ob_ide_drive_by_nr(nr);
++	return d ? ob_ide_read_sectors(d, block, buf, sectors) : 1;
++}
++
++int ob_ide_write_blocks_nr(int nr, unsigned long long block,
++                           unsigned char *buf, unsigned int sectors)
++{
++	struct ide_drive *d = ob_ide_drive_by_nr(nr);
++	return d ? ob_ide_write_sectors(d, block, buf, sectors) : 1;
++}
++
++/*
+  * byte swap the string if necessay, and strip leading/trailing blanks
+  */
+ static void
+@@ -1395,6 +1564,7 @@
+ 			chan->drives[j].bs = 512;
+ 
+ 			chan->drives[j].nr = i * 2 + j;
++			ob_ide_register_drive(&chan->drives[j]);
+ 		}
+ 
+ 		ob_ide_probe(chan);
+@@ -1583,6 +1753,7 @@
+ 			chan->drives[j].bs = 512;
+ 
+ 			chan->drives[j].nr = i * 2 + j;
++			ob_ide_register_drive(&chan->drives[j]);
+ 		}
+ 
+ 		ob_ide_probe(chan);
+--- a/include/drivers/drivers.h
++++ b/include/drivers/drivers.h
+@@ -63,6 +63,11 @@
+ int ob_ide_init(const char *path, uint32_t io_port0, uint32_t ctl_port0,
+                 uint32_t io_port1, uint32_t ctl_port1);
+ void ob_ide_quiesce(void);
++/* P1: raw-sector access by drive number, for arch_nvram_* (see drivers/ide.c) */
++int ob_ide_read_blocks_nr(int nr, unsigned long long block,
++                          unsigned char *buf, unsigned int sectors);
++int ob_ide_write_blocks_nr(int nr, unsigned long long block,
++                           unsigned char *buf, unsigned int sectors);
+ int macio_ide_init(const char *path, uint32_t addr, int nb_channels);
+ #endif
+ #ifdef CONFIG_DRIVER_ESP
+--- a/arch/x86/openbios.c
++++ b/arch/x86/openbios.c
+@@ -182,25 +182,56 @@
+ }
+ 
+ /* ------------------------------------------------------------------ *
+- * P0: an NVRAM that exists.
++ * P0/P1: the NVRAM store.
+  *
+- * packages/nvram.c has been compiled into every x86 build for years with no
+- * x86 caller, because the three hooks below were defined only by the ppc
+- * boards. Wiring them makes `dev / ls` show an `nvram` node and gives the
+- * config variables in forth/admin/nvram.fs somewhere to live.
++ * P0 replaced three stubs in entry.S that LIED -- arch_nvram_size returned 0
++ * and get/put were a bare `ret`, so a caller got silent success and an empty
++ * store. Nothing noticed for years because arch/x86 never called nvram_init().
+  *
+- * THE BACKING IS DELIBERATELY VOLATILE. This rung proves the package
+- * instantiates and the format round-trips; it persists NOTHING, and the
+- * ladder's P2 checkpoint (a value surviving a fresh QEMU process) must FAIL
+- * against this buffer. That failure is the control for P1's real backing --
+- * if P2 passed here, it would be measuring dictionary state rather than
+- * storage, which is exactly the illusion this whole exercise started from.
++ * P1 gives the buffer a backing: raw sectors on a dedicated IDE drive. Note
++ * what this does NOT touch -- disk-label, pc-parts, and every filesystem in
++ * fs/ are read-only, and none of them is in the path. arch_nvram_* is arch
++ * code: it needs raw bytes at a fixed place, not a file. That is why the write
++ * path costs one function in the driver instead of five layers above it.
+  *
+- * Sized 8 KiB: nvconf_init() asks for a DEF_SYSTEM_SIZE (0xc10 = 3088 byte)
+- * system partition, so anything smaller is silently clamped by
+- * create_nv_part(). briq's 2048 is below that line and takes the clamp.
++ * THE DRIVE IS NOT GUESSED. LAB_NVRAM_DRIVE names a unit that the lab attaches
++ * on purpose and nothing else uses. Writing sectors on whatever happens to be
++ * unit 0 would eat the boot disk of anyone who ran this with a real image
++ * attached -- so the store REFUSES to write unless the drive it was handed
++ * still looks like the store (see nvram_backing_ok below). A gate after the
++ * write is a post-mortem, not a gate.
+  * ------------------------------------------------------------------ */
+-static char x86_nvram[8192];
++#define LAB_NVRAM_DRIVE   3          /* secondary slave: ide@3 */
++#define LAB_NVRAM_SECTORS 16         /* 16 * 512 = 8 KiB */
++
++static char x86_nvram[LAB_NVRAM_SECTORS * 512];
++static int  x86_nvram_backed;        /* 1 once a real drive answered */
++
++/*
++ * Refuse a drive that is carrying someone else's data. The store is either
++ * blank (a fresh image, all zeros) or already ours (nvram.c's partition format
++ * puts a signature byte and a 12-char name in the first 16 bytes, and the free
++ * partition it creates is named "77777777777"). Anything else -- a partition
++ * table, a filesystem superblock, a kernel -- and we keep the volatile buffer
++ * and say so, rather than overwrite it.
++ */
++static int nvram_backing_ok(const unsigned char *buf, int len)
++{
++	int i, blank = 1;
++
++	for (i = 0; i < len; i++)
++		if (buf[i]) { blank = 0; break; }
++	if (blank)
++		return 1;
++
++	/* nvram.c's own partition names, at the documented offsets */
++	if (!memcmp(buf + 4, "77777777777", 11))
++		return 1;
++	if (!memcmp(buf + 4, "common", 6))
++		return 1;
++
++	return 0;
++}
+ 
+ int
+ arch_nvram_size( void )
+@@ -211,6 +242,25 @@
+ void
+ arch_nvram_get( char *buf )
+ {
++	unsigned char *p = (unsigned char *)x86_nvram;
++
++	x86_nvram_backed = 0;
++
++	if (!ob_ide_read_blocks_nr(LAB_NVRAM_DRIVE, 0, p, LAB_NVRAM_SECTORS)) {
++		if (nvram_backing_ok(p, sizeof(x86_nvram))) {
++			x86_nvram_backed = 1;
++		} else {
++			printk("nvram: ide@%d holds data that is not an nvram store"
++			       " -- refusing to write to it; using a volatile buffer\n",
++			       LAB_NVRAM_DRIVE);
++			memset(x86_nvram, 0, sizeof(x86_nvram));
++		}
++	} else {
++		printk("nvram: no drive at ide@%d -- using a volatile buffer\n",
++		       LAB_NVRAM_DRIVE);
++		memset(x86_nvram, 0, sizeof(x86_nvram));
++	}
++
+ 	memcpy( buf, x86_nvram, sizeof(x86_nvram) );
+ }
+ 
+@@ -218,6 +268,16 @@
+ arch_nvram_put( char *buf )
+ {
+ 	memcpy( x86_nvram, buf, sizeof(x86_nvram) );
++
++	if (!x86_nvram_backed) {
++		printk("nvram: not backed -- this change will NOT survive a reset\n");
++		return;
++	}
++
++	if (ob_ide_write_blocks_nr(LAB_NVRAM_DRIVE, 0,
++	                           (unsigned char *)x86_nvram, LAB_NVRAM_SECTORS))
++		printk("nvram: WRITE FAILED to ide@%d -- the store on disk is now"
++		       " out of date\n", LAB_NVRAM_DRIVE);
+ }
+ 
+ static void
+@@ -264,7 +324,7 @@
+ 	 * -- no banner, no reason, indistinguishable from a broken image. A
+ 	 * step that can fail belongs downstream of the thing that reports. */
+ 	nvram_init("/");
+-	/* BISECT: nvconf_init(); */
++	nvconf_init();
+ 
+ 	push_str("/openprom/client-services");
+ 	fword("find-device");
