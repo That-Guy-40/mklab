@@ -199,6 +199,33 @@ candidate() {
 # it fails in. A coverage list silently under-covers: the file it forgot is simply not
 # checked, and nothing says so. This one is a SAFETY boundary that names every row it did
 # not check, so its omissions arrive as UNKNOWNs in the verdict instead of as silence.
+# A DESTRUCTIVE VERB IS NEVER INVOKED, whatever tool it belongs to. This list beats the
+# allowlist below and is checked first.
+#
+# It exists because the allowlist was not enough, and the proof cost something real: on
+# 2026-08-23 this checker probed `vbmc-lab.sh destroy` -- an allowlisted tool -- and the verb
+# DID ITS JOB. It removed the vbmcd container, undefined the `alpine-node` domain and removed
+# the image. (The lab's own design left the disk and the BMC configs, so it was a recoverable
+# teardown rather than data loss.) The safety note in tools/lib/verb-probe.sh says a guard
+# that damages the thing it is checking is not a guard; that was this checker, doing it.
+#
+# The allowlist asks "is this tool a driver?", which is the wrong question for `destroy`. A
+# driver is exactly the kind of tool whose destructive verbs WORK. So the verb is asked about
+# too, and a verb on this list becomes an UNPROBED row -- named in the output, never silently
+# passed, and never run.
+verb_is_destructive() {
+    case "$1" in
+        # PREFIXES, not exact names. `sandbox.sh down2` is a real verb whose own usage line
+        # reads "destroy the two-node pair", and an exact-match list sailed straight past it
+        # -- so the checker went on invoking a destroy verb every run, which is the same
+        # defect as the vbmc one wearing a digit.
+        down*|destroy*|delete*|remove*|rm|reset*|wipe*|purge*|stop*|kill*|clean*|prune*|\
+        teardown*|undefine*|abort*|release*|deprovision*|unmaintenance*|nuke*|reap*)
+            return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 probe_is_safe() {
     case "$1" in
         */lab-*.sh) return 0 ;;                       # the phase drivers
@@ -253,6 +280,10 @@ check_doc_command() {
         else
             warn "$src: mentions '$tool', which exists but is not executable"
         fi
+        return
+    fi
+    if verb_is_destructive "$verb"; then
+        UNPROBED+=("$src: $tool $verb  (destructive verb — never invoked)")
         return
     fi
     if ! probe_is_safe "$tool"; then

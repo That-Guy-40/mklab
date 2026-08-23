@@ -1432,10 +1432,35 @@ verifies that a link resolves and has no opinion on the sentence around it;
       stray files, and each call is bounded to 30s — but *"it happened not to break
       anything"* is not a safety argument.
 
-- [ ] **11.4a** — the 79 unprobed rows and the 14 bare-name warnings are the remaining tail.
-      Neither is closable by tightening a regex: the first needs a safe way to ask a
-      build/smoke script what verbs it has without running one, and the second needs the
-      document to say which it meant.
+**11.4a's first finding was against the checker itself, and it did damage.** Recorded here
+because a tool that harms what it inspects is the one thing this repo's probe-safety note
+says must never happen — and it happened, to the tool written by the note's own reasoning.
+
+On **2026-08-23** `check-doc-verbs.sh` probed **`vbmc-lab.sh destroy`**, and the verb did its
+job: it removed the `vbmcd-lab` container, undefined the `alpine-node` domain, and removed
+the `vbmcd:lab` image. (The lab's own design leaves the disk image and the `state/vbmc/*`
+BMC configs, so it was a recoverable teardown rather than data loss — but that is the lab's
+mercy, not the checker's.) It had been doing this on **every run, locally and in CI**, along
+with `lab-chroot.sh destroy`, `lab-vm.sh destroy`, `lab-docker.sh down` and `lab-lxd.sh down`
+— all of which happened to refuse only because no instance of that name existed.
+
+**The allowlist asked the wrong question.** *"Is this tool a driver?"* is not a safety
+question: a driver is exactly the kind of tool whose destructive verbs **work**. The verb has
+to be asked about too, so `verb_is_destructive` now beats the allowlist and turns those rows
+into named UNPROBED entries instead of invocations. It matches **prefixes**: an exact-match
+first draft sailed past `sandbox.sh down2`, whose own usage line reads *"destroy the two-node
+pair"* — the same defect wearing a digit. Measured after: **0** safety warnings (there is
+nothing left that acts), 89 probed, 17 rows declined as destructive.
+
+- [ ] **11.4a** — the remaining tail: **93 unprobed rows** (17 of them destructive-by-verb,
+      the rest outside the tool allowlist) and **11 bare-name warnings**. Neither closes by
+      tightening a regex. The first wants a way to ask a build/smoke script what verbs it has
+      **without running one** — the most promising shape is to invoke *only the nonce*, which
+      is the safest possible call, and read the tool's own usage output rather than its
+      source. The second needs the document to say which it meant; triage of the current 11
+      found them to be **prose, historical quotations, and shorthand for subverbs**
+      (`lab-fc.sh restore` for `snapshot restore`), which is a third category the checker
+      does not model.
 
 ### 11.5 Open question left by D8: should `lab-fc.sh` take an env override for the VMM?
 
