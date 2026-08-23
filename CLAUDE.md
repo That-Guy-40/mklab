@@ -148,6 +148,47 @@ bug, not a result — the reader can't tell a real failure from a broken harness
   **summary** named it. Scoping the assertion to the summary section found four runners
   that only counted.
 
+### The control is where the bugs are
+
+Every checker in `tools/` ships with a control that plants the defect and watches the
+scanner catch it — the rule the rest of this file keeps restating. What was not written
+down until **2026-08-23** is where the defects actually turn up: **in the control, and in
+the checker, far more often than in the corpus being checked.**
+
+Measured over one day's work on four checkers. Each defect was caught by that checker's own
+control, on the run that introduced it, and **none** would have been visible in a green run:
+
+| the defect | how it presented |
+|---|---|
+| in `${v/pat/repl}`, an unescaped **`&` in the REPLACEMENT expands to the matched text** — so a replacement containing `2>&1` spliced the match back into itself | the "legacy" variant the control builds never ran; it reported *"the old shape survived a 77 too"* |
+| in an ERE, **`\t` is a literal `t`** — `grep -vE '\t[[:space:]]*$'` drops every line **ending in the letter t** | the extractor silently lost its own fixtures `… lab-lxd.sh list` |
+| arguments passed in the **wrong order**, so `class` held a file path | every hard finding quietly degraded to a warning — *a checker grading its own findings down to advisory* |
+| a `# shellcheck disable` / an extraction aimed **one line off** the command it meant | a suppression that suppressed nothing; an extraction that swallowed the next YAML key and blamed bash |
+
+Four rules follow, and the last two are the ones that were learned the expensive way:
+
+- **Write the control first, then break the subject and watch it bite.** Not reason about it
+  — run it. A control that has never failed is not known to be attached to anything.
+- **When the control reports something surprising, suspect the control.** Every instance
+  above first looked like a finding about the subject.
+- **A scan that matches nothing and a scan that is broken print the same green ✓** — so make
+  the checker prove itself on must-catch/must-not-catch fixtures *before* it is aimed at a
+  real file (`check-harness-net.sh` §1a, `check-usage-is-data.sh` §0,
+  `check-doc-verbs.sh` §0), and **prove it end to end**, not just its extractor: the
+  question is *"does a bad input FAIL the run"*, and the extractor is only the first of the
+  classifier, the probe and the reporting that sit between input and verdict.
+- **Extract the shipped thing; never re-implement it.** `test-ci-tolerates-a-skipped-suite.sh`
+  and `test-shellcheck-gate.sh` `sed` the step out of `ci.yml`; `check-doc-verbs.sh` and
+  `check-guided-path-is-a-view.sh` share
+  [`tools/lib/verb-probe.sh`](tools/lib/verb-probe.sh). A copy drifts from its subject and
+  then proves something about the copy.
+
+**And a checker that cannot decide must say so.** `check-doc-verbs.sh` grades a bare
+`` `preserve.sh two tiers` `` as a warning, not a failure, because prose and a command are
+structurally identical there; it leaves 78 commands **UNPROBED by name** rather than
+invoking a `smoke-*.sh` to find out. Naming what it declined is what separates that from a
+coverage list, which under-covers in silence.
+
 ### A usage heredoc is a program: help text must not be able to run
 
 A `usage()` built as `cat <<EOF` has an **unquoted** delimiter — it has to, the text
