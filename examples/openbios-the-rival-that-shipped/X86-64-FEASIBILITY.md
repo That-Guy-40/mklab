@@ -372,7 +372,8 @@ long mode.
 |---|---|
 | `nm obj-x86/libpackages.a` | `nvram_init` **is** in the x86 build — `packages/nvram.c` is compiled unconditionally |
 | `grep -rn nvram_init --include='*.c'` | its only callers are `arch/ppc/pearpc/init.c`, `arch/ppc/mol/init.c` and `drivers/macio.c`. **No x86 caller** |
-| `grep arch_nvram_{size,get,put}` | defined only in `arch/ppc/qemu/qemu.c`, `arch/ppc/briq/briq.c`, `arch/ppc/mol/mol.c`. x86 and amd64 define **none** |
+| `grep arch_nvram_*` over **`*.c` only** | said "defined only in three ppc files; x86 and amd64 define none" — **and that was wrong about x86**, see the row below. It is also incomplete on the other side: `arch/ppc/pearpc/pearpc.c`, `drivers/obio.c` (sparc32) and `arch/sparc64/openbios.c` define them too |
+| the same grep including **`*.S`** | `arch/x86/entry.S:306` defines **all three** — `.globl arch_nvram_size, arch_nvram_get, arch_nvram_put`. They are not missing. They are **stubs that lie**: `size` is `xor %eax,%eax` (returns 0) and `get`/`put` are a bare `ret`. A caller would get silent success and an empty store. Nothing noticed for years because nothing called `nvram_init()`. amd64 defines none — it has no `entry.S` at all |
 | live `dev / ls` (multiboot, QEMU) | `aliases openprom options chosen builtin packages pci8086,1237@0 ide@0..3 console` — **there is no `/nvram`** |
 | live `devalias` | prints nothing: no aliases are defined |
 | live `dev /options .properties` | exactly three: `name`, `screen-#columns`, `screen-#rows` |
@@ -386,9 +387,16 @@ vocabulary, not about storage** — and the boot log still prints
 `vga-driver-fcode:load-base isn't unique.`, which is the fix meeting an existing
 definition.
 
-So "add NVRAM to x86" is precisely: implement three functions
-(`arch_nvram_size/get/put`), call `nvram_init(path)` once, and decide what the
-three functions talk to. That last decision is the whole problem.
+So "add NVRAM to x86" is precisely: **replace** three lying stubs, call
+`nvram_init(path)` once, and decide what the three functions talk to. That last
+decision is the whole problem — and the stubs are the reason the missing piece
+was never visible: a firmware whose NVRAM hooks return success is
+indistinguishable, from the inside, from one that has no NVRAM.
+
+**This is [CLAUDE.md](../../CLAUDE.md)'s *fix the liar first* in the subject
+rather than in the tooling**, and it was found the only way it could be — by
+building. The `.c`-only grep in the row above is the cheap check: a question
+about *symbols* answered by searching one language.
 
 ### The contract all four have to satisfy
 
@@ -692,10 +700,69 @@ each one's checkpoint is chosen to be an **outcome rather than a mechanism** —
 
 | rung | work | observable checkpoint | mode |
 |---|---|---|---|
-| **P0 — a node that exists** | implement `arch_nvram_size/get/put` in `arch/x86` over a plain static buffer; call `nvram_init()` once | `dev / ls` lists **`nvram`**, and `dev /nvram .properties` answers — the exact probe that comes back without it today | 32-bit |
+| **P0 — a node that exists** ✅ **DONE** | implement `arch_nvram_size/get/put` in `arch/x86` over a plain static buffer; call `nvram_init()` once | `dev / ls` lists **`nvram`**, and `dev /nvram .properties` answers — the exact probe that comes back without it today | 32-bit |
 | **P1 — survives a firmware reset** | `WIN_WRITE 0x30` + an `ob_ide_write_ata` mirroring the read twin; a dedicated raw `-drive if=ide` image as the store | set a config variable, then **`cmp` the host's image before and after** — it must differ | 32-bit |
 | **P2 — survives an OS boot, then a power cycle** | nothing new — P1's store, exercised | set a value, boot Linux with the existing [`showcase-rival-boots-linux.sh`](showcase-rival-boots-linux.sh), exit QEMU entirely, start a **fresh process**, read it back | 32-bit |
 | **P3 — the pmem store** | an NFIT reader (or, as a first step, a hard-coded region); lift `multiboot.c`'s type-1 filter; then the 64-bit addressing | `/nvram` answering at a physical address **≥ `0x100000000`**, with the backing file changing on the host | **needs the port** |
+
+#### P0 — RUN, and it passes
+
+[`patches/04-x86-nvram-p0.patch`](patches/04-x86-nvram-p0.patch) (applied by hand
+on top of `01-x86-revival.patch`, exactly like spikes 02/03) does three things:
+deletes the lying stubs from `entry.S`, implements the hooks over an 8 KiB static
+buffer in `arch/x86/openbios.c`, and calls `nvram_init("/")` + `nvconf_init()`.
+
+The checkpoint, driven over the serial socket by the lab's own
+[`tools/drive-serial-repl.py`](../../tools/drive-serial-repl.py):
+
+```console
+0 > dev / ls
+127c10 aliases
+127cb4 openprom
+127e5c options
+127ed4 chosen
+127f84 builtin
+12da24 packages
+130320 pci8086,1237@0
+131a1c ide@0
+131ce4 ide@1
+1323f4 ide@2
+1326bc ide@3
+132984 console
+132af0 nvram
+ ok
+0 > dev /nvram .properties
+name                      "nvram"
+ ok
+```
+
+Compare the same probe recorded before the code existed, at the top of this
+section: identical down to `console`, and then it stopped. **The negative control
+was measured first, and it is what makes this line mean anything.**
+
+Two things the boot log shows on the way, both predicted from reading
+`nvconf_init()` and both worth keeping:
+
+```
+vga-driver-fcode:invalid nvram partition length
+nvram error detected, zapping pram
+```
+
+A zeroed store fails the partition scan, `zap_nvram()` formats it (a free part
+plus an `NV_SIG_SYSTEM` "common" partition), and the `for(;;)` retry terminates
+on the second pass. **That message appears on every boot, and that is the point**
+— the buffer is volatile, so the store is blank every time. P0 persists nothing
+by design, and this line is the standing proof of it: when P1 lands, it must stop
+appearing. It is P2's control, visible from the first run.
+
+Sized 8 KiB because `nvconf_init()` asks for a `DEF_SYSTEM_SIZE` of `0xc10`
+(3,088 bytes); anything smaller is silently clamped by `create_nv_part()` — which
+is what happens to briq's 2,048.
+
+**Two things P0 does not claim.** The node's `open` method is
+`nvram_open() { RET(-1); }` upstream — it exists and refuses — so nothing has
+opened this device; and `#bytes`, which macio publishes, is not set here, so
+`.properties` shows only `name`. Both are P1's business.
 
 Three notes on why the rungs are cut here and not elsewhere:
 
