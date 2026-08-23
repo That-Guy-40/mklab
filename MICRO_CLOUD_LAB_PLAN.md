@@ -1327,8 +1327,8 @@ examples/micro-cloud/
 ├── RUNBOOK-fleet.md          snapshot → restore ×5 + the clone hazards (§5.8)
 ├── RUNBOOK-preserve.md       back up a lab you liked, and restore it elsewhere (§9.5)
 ├── LEDGER.md                 the running defect/surprise ledger (§0.1 rule 3)
-├── CLONES.md                 every fork, with the constraint that justified it (§4.1)      ⚠ NOT BUILT
-├── UPSTREAM.md               cite-don't-mirror provenance (§12)                            ⚠ NOT BUILT
+├── CLONES.md                 every fork, with the constraint that justified it (§4.1)
+├── UPSTREAM.md               cite-don't-mirror provenance (§12)
 ├── MANUAL_TESTING.md         observed vs merely generated (§10)
 └── tests/                    lib.sh + run-all.sh + host-safe checks (§10)
 ```

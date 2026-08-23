@@ -25,6 +25,12 @@ set -uo pipefail
 need python3
 S3="${MC_STATE_DIR:-$HOME/.local/state/lab-create/micro-cloud-s3}"
 FC_BIN="${MC_FIRECRACKER:-$S3/firecracker}"
+# ONE ANSWER TO "WHERE IS THE VMM". This file resolves the binary itself (it launches
+# Firecracker directly) AND shells out to lab-fc.sh, which used to resolve it from PATH --
+# the D8 seam: two tools, two answers, and nothing making them agree. Since 2026-08-23 the
+# driver takes $LAB_FC_BIN, so exporting it here means both halves run the SAME binary
+# rather than the same version by luck. TODO §11.5.
+export LAB_FC_BIN="$FC_BIN"
 KERNEL="${MC_KERNEL:-$S3/vmlinux}"
 BASE="${MC_ROOTFS:-$S3/api1.ext4}"
 LAB_FC="$REPO_DIR/phase7-firecracker/lab-fc.sh"

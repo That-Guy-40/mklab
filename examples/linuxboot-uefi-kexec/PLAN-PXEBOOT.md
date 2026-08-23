@@ -229,7 +229,7 @@ examples/linuxboot-uefi-kexec/
 ├── serve-netboot.sh           # :8181 nginx (reuse podman netboot TOML); --tls uses a lab-ca server cert
 ├── run-coreboot-pxe.sh        # P1/P2: coreboot ROM + slirp DHCP/TFTP/HTTP, drive pxeboot
 ├── fetch-go.sh build-st.sh make-ospkg.sh run-stboot.sh   # P3 (ST; keys come from examples/lab-ca/)
-├── build-coreboot-edk2.sh run-stboot-coreboot.sh         # P3b (ST from a coreboot ROM via edk2 UEFI)
+├── build-coreboot-edk2.sh run-stboot-coreboot.sh         # P3b — NOT BUILT (ST from a coreboot ROM via edk2)
 └── RUNBOOK-pxeboot.md MANUAL_TESTING-pxeboot.md           # (later) by-hand walk + real transcripts
 ```
 (+ 00-INDEX entry for `lab-ca/`, README/SHOWCASE "Going further" updates, `link_check` green.)

@@ -248,20 +248,48 @@ which can be picked up tonight and which cannot be picked up at all here.
       built: its content is
       [`RUNBOOK-micro-cloud.md` step 0](examples/micro-cloud/RUNBOOK-micro-cloud.md), and a
       second copy is the duplicate-doc defect. Both citations are re-pointed.
-      **Still missing, and this entry exists so they stop being invisible:** `hand-walk/`
-      (the plan says P1 proved `--device /dev/kvm` works, so the Containerfile is designable
-      today), `CLONES.md` (§4.1 — every fork with the constraint that justified it; already
-      named as missing once by §18.2 and still absent), and `UPSTREAM.md` (§12 —
-      cite-don't-mirror provenance; six other labs have one).
+      **Two of the three landed 2026-08-23.**
+      [`CLONES.md`](examples/micro-cloud/CLONES.md) — the §4.1 reuse ledger, and its entry is
+      a **measurement**: `git grep -niE 'forked from|clone of|copied from|adapted from'` over
+      the lab returns no file declaring a fork, so there are no rung-4 clones, and the four
+      hits it does return are about *values* being derived (a MAC from a name) rather than
+      code. It also records what §4.1 asks for and **does not yet exist** — the test that
+      fails when a file declares a fork and is not listed — because an unenforced ledger and
+      an enforced one look identical on the day they are both correct.
+      [`UPSTREAM.md`](examples/micro-cloud/UPSTREAM.md) — cite-don't-mirror provenance, with
+      every URL **fetched and 200 before it was written down** (this repo has enshrined an
+      error page's sha256 as "the tutorial" once) and the staged binary's sha256 computed
+      from its bytes, labelled as *what these transcripts ran against* rather than as a claim
+      about what upstream publishes, since the release's own `.sha256` was not compared.
+
+      **Still missing:** `hand-walk/`. It is a real deliverable rather than a document —
+      Containerfile + RUNBOOK + a 00-INDEX entry + an inbound link + learning-paths routing —
+      and the repo's own rule is that a hand-walk is *built and booted* before it is claimed,
+      which is why it is not being knocked out alongside two markdown files.
       *Why the checkers were green the whole time:* all four were cited as **bare filenames
       in prose and in ASCII tree diagrams inside code fences**.
       [`link_check.py`](tools/link_check.py) validates markdown *links*; a filename in a tree
-      diagram is not a link, exactly as a filename in a sentence is not. Both trees now name
-      the absent files as absent rather than listing them as things you could open — which is
-      the honest fix, but **not a checkable one**. The checkable version would be a gate that
-      reads a lab's tree diagram and compares it against `git ls-files`, which is
-      [§16 q6](MICRO_CLOUD_LAB_PLAN.md#16-open-questions)'s *"what else in this document
-      describes something that does not exist?"* made mechanical.
+      diagram is not a link, exactly as a filename in a sentence is not.
+
+      **The checkable version now exists**:
+      [`tools/check-tree-diagrams.sh`](tools/check-tree-diagrams.sh), gated in the `docs` job
+      — §16 q6's *"what else in this document describes something that does not exist?"* made
+      mechanical. Measured: **58 entries across the 5 documents whose trees describe this
+      repo**, all present; **34 further tree blocks declined and named**, because a tree
+      rooted at `/srv/tftp/` or at a flowchart label describes something that is not this
+      repo.
+
+      Four false-positive classes had to be measured away first, and each was found by
+      running it rather than by thinking about it: **box-drawing diagrams** share the `└──`
+      corner glyph (the first run reported 100+ fragments of ASCII art as missing files);
+      **one fence can hold several trees** separated by a blank line, and without resetting
+      the root, PLAN-PXEBOOT.md's second tree was checked against the first tree's directory;
+      **the root may be the document's own directory** (`tools/README.md` roots at `tools/`,
+      which resolved to the repo's top-level `tools/` and reported six files missing from a
+      directory nobody claimed them to be in); and — the one worth remembering — **an entry
+      already marked `⚠ NOT BUILT` is not a broken promise, it is the fix**, so the first run
+      reported all four A.5 files, every one already carrying the marker. A checker that
+      punishes the remedy it recommends is worse than no checker.
 
 ### Blocked on hardware — recorded so it stops being re-raised as if it were schedulable
 
@@ -269,6 +297,10 @@ which can be picked up tonight and which cannot be picked up at all here.
       Detail in [`examples/metal-as-a-service/DEFERRED.md`](examples/metal-as-a-service/DEFERRED.md).
       Everything that can be proven under emulation has been; what remains needs a machine
       with a real BMC, and no amount of local work advances it.
+      **Blocker re-verified 2026-08-23** — this section's own rule is that a blocker is
+      checked before it is restated, since C.2 sat behind a wrong one for eight days. Still
+      held: `DEFERRED.md` names the requirement as real hardware with a BMC, and this host
+      has none. Nothing in the emulated path has become the missing evidence.
 - [x] **C.2 — the rollback-pair corruption case** — ✅ **DONE 2026-07-28 (night)**, and it
       was **never blocked on hardware**: it is a registry-write ordering defect, fixed
       headlessly and regression-locked headlessly. The `(driver, image)` pair is now only
@@ -1422,6 +1454,28 @@ was the honest fix for an audit with no mandate to change a driver.
       **It does not by itself close 11.2(b)'s six firecracker-gated rows.** Those need a
       binary present, which CI still has no sanctioned way to obtain; what changes is that
       staging one anywhere is now enough.
+
+      **Finished properly on a re-audit the same day**, after "is 11.5 thoroughly done?" was
+      asked and the answer turned out to be no. The driver change was complete; three things
+      around it were not, and the third is the one that mattered:
+
+      1. **`--help` never mentioned the knob.** A tool that honours an environment variable
+         and does not document it is the doc-drift class this repo keeps finding. `--help`
+         now has an `environment:` section naming `LAB_FC_BIN`, `LAB_STATE_DIR` and
+         `FC_PINNED_VERSION` — and it is comment-extracted rather than a heredoc, so the
+         usage-is-data hazard does not apply.
+      2. **Three RUNBOOKs still told the reader to use `PATH`**, and one of them asserted
+         *"`firecracker` must be on `PATH`"* — a present-tense claim that the driver change
+         had just made **false**. Two were instructions and are updated; the third is a
+         **dated transcript**, so the note goes *beside* it rather than over it. A transcript
+         records what happened, and editing one to match today is falsifying a record.
+      3. **Four micro-cloud files resolve the binary themselves AND shell out to
+         `lab-fc.sh`** — which is the D8 seam itself, not a side-effect of it. Adding an
+         override without wiring those would have made two answers into **three**. Each now
+         `export`s `LAB_FC_BIN="$FC_BIN"` beside its own resolution, so both halves run the
+         same binary rather than the same version by luck. Re-run after: the override test,
+         `test-isolation-matrix.sh` and `test-mmds-answers-inside-the-guest.sh` pass;
+         `test-edge-on-the-fabric.sh` skips for root, as it did before.
 
 ---
 

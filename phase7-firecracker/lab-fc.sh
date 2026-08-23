@@ -46,6 +46,16 @@
 #           no lease and no DNS, so a guest with no NIC still answers on it. Under
 #           Firecracker the host end is a unix socket and the CID is advisory, so what
 #           addresses a guest is the PATH, printed by `inspect` as vsock_uds.
+#
+#   environment:
+#     LAB_FC_BIN        which Firecracker to run. Unset, the tool takes the first
+#                       `firecracker` on PATH. Set, it must name an executable file, and a
+#                       value that does not is REFUSED BY NAME rather than falling back —
+#                       a silent fallback would run a different VMM and report success to
+#                       the one person who would believe it. `preflight` prints the binary
+#                       it resolved AND whether that came from the override or from PATH.
+#     LAB_STATE_DIR     where instances live (default ~/.local/state/lab-create).
+#     FC_PINNED_VERSION the version `preflight` checks the binary against.
 # ── END USAGE ──
 #
 # ── WHAT THIS TOOL DELIBERATELY DOES NOT DO ─────────────────────────────────

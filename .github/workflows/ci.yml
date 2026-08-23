@@ -196,6 +196,20 @@ jobs:
         # command quoted behind a `$ ` prompt must not.
         run: bash tools/check-doc-verbs.sh
 
+      - name: every filename in an ASCII tree exists
+        # TODO A.5. Four files the micro-cloud docs listed had never existed, and every
+        # checker was green: all four were named in ASCII TREE DIAGRAMS inside code fences,
+        # and link_check.py validates markdown LINKS -- a filename in a tree is no more a
+        # link than a filename in a sentence. The fix at the time was to annotate the absent
+        # ones, which was honest but not checkable. This is the checkable version.
+        #
+        # It excuses what should be excused: gitignored build output (`images/` is a real
+        # directory this repo declines to track), globs (checked as "at least one"),
+        # placeholders, and entries already marked `NOT BUILT` -- punishing that marker would
+        # punish the remedy. It also NAMES the tree blocks it declined, because a block rooted
+        # at `/srv/tftp/` or at a flowchart label describes something that is not this repo.
+        run: bash tools/check-tree-diagrams.sh
+
       - name: Learning-path routing + freshness gate
         run: python3 tools/paths.py --check
 

@@ -252,12 +252,19 @@ Then check every gate before anything is created:
 phase7-firecracker/lab-fc.sh preflight --config examples/micro-cloud/micro-cloud.toml
 ```
 
-`firecracker` must be on `PATH`, and it usually is not — the pinned binary lives in the
-slice-3 workdir. `sudo` will not carry your `PATH` either, so export it explicitly:
+`lab-fc.sh` has to be told which `firecracker` to run: the pinned binary lives in the
+slice-3 workdir, not on `PATH`. Name it directly — and note `sudo` carries neither your
+`PATH` nor your environment unless you ask it to (`sudo -E`, or `sudo env VAR=…`):
 
 ```bash
-export PATH="$HOME/.local/state/lab-create/micro-cloud-s3:$PATH"
+export LAB_FC_BIN="$HOME/.local/state/lab-create/micro-cloud-s3/firecracker"
 ```
+
+> Until 2026-08-23 this said *"`firecracker` must be on `PATH`"* and exported `PATH`
+> instead, because the driver resolved the VMM with `command -v firecracker` and honoured
+> no override — [TODO §11.5](../../TODO.md). `PATH` still works and is still the default;
+> the override is better here only because it names *which* binary, which is the thing two
+> tools kept disagreeing about.
 
 Every gate, before any state is created. This is the step that catches a missing image, a
 wrong kernel format, a tap that does not exist, and a name the driver cannot address —
