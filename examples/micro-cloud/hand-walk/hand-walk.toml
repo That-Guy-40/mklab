@@ -1,0 +1,27 @@
+# The hand-walk box, driven through phase 4 like every other lab unit — no one-off
+# `podman run`. The repo's rule is that a hand-walk goes through the existing phase tool
+# unless a step needs a privilege the tool will not inject; `devices` covers /dev/kvm, so
+# nothing here needs an exception.
+#
+# THE THREE MOUNTS ARE THE POINT. The image carries no firecracker, no kernel and no rootfs:
+# the binary is pinned (toolchain-fetch gate — see the Containerfile) and the other two are
+# lab OUTPUT that would go stale if baked. Paths are absolute because TOML expands nothing.
+
+[lab]
+name        = "micro-cloud-hand-walk"
+description = "Disposable box for booting a Firecracker microVM by hand over its REST API"
+tags        = ["micro-cloud", "firecracker", "hand-walk", "rootless"]
+
+[[service]]
+name    = "handwalk"
+engine  = "podman"
+build   = "examples/micro-cloud/hand-walk"
+command = "sleep infinity"
+# /dev/kvm is what P1 proved a container can be given: `podman run --device /dev/kvm` and
+# the guest sees it. Everything else in this box is unprivileged.
+devices = ["/dev/kvm"]
+volumes = [
+  "/home/sqs/.local/state/lab-create/micro-cloud-s3/firecracker:/usr/local/bin/firecracker:ro",
+  "/home/sqs/.local/state/lab-create/micro-cloud-s1/vmlinux-6.1.155:/work/vmlinux:ro",
+  "/home/sqs/.local/state/lab-create/micro-cloud-s1/alpine.ext4:/work/rootfs.ext4:ro",
+]

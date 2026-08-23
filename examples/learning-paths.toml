@@ -649,7 +649,8 @@ theme   = "A disposable container reproducing the tutorial author's OWN environm
 members = ["../micro-linux/hand-walk/", "../phase1-chroot/hand-walk/",
            "debian-http-boot/hand-walk/", "almalinux-pxe-lab/hand-walk/",
            "rocky-pxe-lab/hand-walk/", "kali-llm-lab/hand-walk/",
-           "tiny-linux-experiments/floppinux/hand-walk/"]
+           "tiny-linux-experiments/floppinux/hand-walk/",
+           "micro-cloud/hand-walk/"]
 
 [[collection]]
 id      = "magazine-reproductions"

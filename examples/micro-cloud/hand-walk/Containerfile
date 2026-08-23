@@ -1,0 +1,38 @@
+# micro-cloud hand-walk — a disposable box that boots a Firecracker microVM BY HAND.
+#
+# WHY A NEUTRAL DEBIAN BASE. The repo's rule is the author's distro where the source is
+# distro-specific, a neutral Debian where it is "any POSIX". Firecracker's docs are the
+# latter: they describe an HTTP API over a unix socket and a kernel + rootfs, and say
+# nothing about a package manager. See ../UPSTREAM.md for the citations this walks.
+FROM debian:trixie-slim
+
+# One RUN line per reason, so a reader can see WHICH step needs WHAT.
+#
+# curl          — the whole API walk. Firecracker listens on a UNIX socket, so every step of
+#                 the hand-walk is `curl --unix-socket`. This is the tool the docs use.
+# ca-certificates — so curl can reach anything over TLS if a step wants to.
+# e2fsprogs     — `mkfs.ext4 -d` builds a rootfs from a directory with NO mount and NO loop
+#                 device, which is why the whole walk is unprivileged.
+# iproute2      — `ip link` / `ip addr` inside the guest-side steps, and to SHOW that a tap
+#                 cannot be made here (see the CAP_NET_ADMIN note in RUNBOOK.md).
+# jq            — read the API's JSON answers without squinting.
+# procps        — `ps`, to see the VMM as a process rather than as a claim.
+# file          — the vmlinux-vs-bzImage trap has its own step; `file -b` is how you see it.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        curl ca-certificates e2fsprogs iproute2 jq procps file \
+ && rm -rf /var/lib/apt/lists/*
+
+# NO FIRECRACKER BINARY IS FETCHED HERE, and that is deliberate rather than an omission.
+# This repo's toolchain-fetch gate forbids fetch+exec of a prebuilt toolchain, and a
+# Containerfile that curl'd a release tarball and ran it would be exactly that, one layer
+# down. The pinned binary is BIND-MOUNTED IN by the spec beside this file, which also means
+# the box runs the same v1.16.1 the rest of the lab measured rather than whatever is newest
+# on the day someone rebuilds the image. See ../UPSTREAM.md for the digest.
+#
+# The same reasoning covers the kernel and rootfs: they are lab OUTPUT (RUNBOOK-micro-cloud
+# step 0 builds them), so they are mounted, not baked. An image that carried them would go
+# stale against the thing that produces them.
+
+WORKDIR /work
+CMD ["sleep", "infinity"]

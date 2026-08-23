@@ -160,8 +160,11 @@ that is a `git grep` result rather than an aspiration) and [`UPSTREAM.md`](UPSTR
 (cite-don't-mirror provenance; every URL fetched and 200 before it was written down, and the
 staged binary's sha256 computed from its bytes).
 
-**Still promised by the plan and NOT built** — named here rather than left in the tree above,
-where they read as things you could open: `hand-walk/`. And `RUNBOOK-build-images.md` should
+**Also built 2026-08-23:** [`hand-walk/`](hand-walk/RUNBOOK.md) — the disposable box that boots
+a microVM **by hand** over the REST API, verified to an Alpine login at `uptime=0.04s` inside a
+rootless container. Networking stays author-run: a tap needs `CAP_NET_ADMIN` the box will not take.
+
+**Not to be built:** `RUNBOOK-build-images.md` should
 **not** be built: its content is
 [step 0](RUNBOOK-micro-cloud.md#step-0--the-spine-and-the-two-things-made-from-it-root-once),
 and a second copy is the duplicate-doc defect. Tracked as [TODO](../../TODO.md) **A.5**.

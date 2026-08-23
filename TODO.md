@@ -262,10 +262,31 @@ which can be picked up tonight and which cannot be picked up at all here.
       from its bytes, labelled as *what these transcripts ran against* rather than as a claim
       about what upstream publishes, since the release's own `.sha256` was not compared.
 
-      **Still missing:** `hand-walk/`. It is a real deliverable rather than a document —
-      Containerfile + RUNBOOK + a 00-INDEX entry + an inbound link + learning-paths routing —
-      and the repo's own rule is that a hand-walk is *built and booted* before it is claimed,
-      which is why it is not being knocked out alongside two markdown files.
+      **`hand-walk/` landed 2026-08-23, built AND booted** — the repo's rule, and the reason
+      it was not knocked out alongside two markdown files.
+      [`examples/micro-cloud/hand-walk/`](examples/micro-cloud/hand-walk/RUNBOOK.md): a
+      Debian box driven through **phase 4** (`build =` context + a `devices` key for
+      `/dev/kvm`) — no one-off `podman run`, which is the repo's rule and needed no exception
+      here. Verified by running it: `curl` the REST API over a unix socket, two PUTs and an
+      `InstanceStart`, and the guest reached an **Alpine login prompt at `uptime=0.04s`
+      inside a rootless container**. That transcript is what the RUNBOOK quotes.
+
+      Two things the image deliberately does **not** contain, and both are decisions rather
+      than omissions: the `firecracker` binary (a `RUN curl … && chmod +x` would be
+      fetch+exec of a prebuilt toolchain one layer down, so the pinned v1.16.1 is
+      bind-mounted — the box runs the binary the lab measured, not whatever is newest on
+      rebuild day) and the kernel + rootfs (lab **output**; an image carrying them starts
+      going stale against the thing that produces them).
+
+      **Networking stays author-run**, named rather than quietly skipped: a tap needs
+      `CAP_NET_ADMIN`, which this box does not have and should not be given — the host runs a
+      live Calico cluster whose tunnel endpoint a stray tap has captured before. Same
+      partition `phase1-chroot/hand-walk/` documents for `binfmt`.
+
+      Routing caught one thing worth recording: `paths.py --check` passed **before** the
+      hand-walk was added to the `tutorial-hand-walks` collection, because micro-cloud itself
+      is already routed. A green coverage gate therefore did *not* mean the new unit was in
+      the by-journey view built for it — it is now.
       *Why the checkers were green the whole time:* all four were cited as **bare filenames
       in prose and in ASCII tree diagrams inside code fences**.
       [`link_check.py`](tools/link_check.py) validates markdown *links*; a filename in a tree

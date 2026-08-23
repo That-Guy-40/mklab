@@ -1319,7 +1319,7 @@ examples/micro-cloud/
 ├── preserve.sh               the two tiers + derivation manifest (§9.5)
 ├── install-catalog.toml      names the lab that owns each install method (§11.1)
 ├── images/                   .gitignore'd build output (vmlinux, *.ext4)
-├── hand-walk/                Containerfile + RUNBOOK — P1 proved --device /dev/kvm works   ⚠ NOT BUILT
+├── hand-walk/                Containerfile + RUNBOOK — boots a microVM in a rootless box
 ├── RUNBOOK-build-images.md   chroot → export-rootfs → vmlinux (§6)                        ⚠ NOT BUILT — it is
 │                             RUNBOOK-micro-cloud.md step 0, and should not be duplicated
 ├── RUNBOOK-first-microvm.md  boot one FC by hand over the REST API (§5.5)

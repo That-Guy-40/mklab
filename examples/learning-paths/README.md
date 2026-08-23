@@ -45,7 +45,7 @@ These are orthogonal to 00-INDEX's *run-cost* tags, which are carried through un
 
 *A disposable container reproducing the tutorial author's OWN environment, so you type the recipe by hand.*
 
-[`../micro-linux/hand-walk`](../../micro-linux/hand-walk/) · [`../phase1-chroot/hand-walk`](../../phase1-chroot/hand-walk/) · [`debian-http-boot/hand-walk`](../debian-http-boot/hand-walk/) · [`almalinux-pxe-lab/hand-walk`](../almalinux-pxe-lab/hand-walk/) · [`rocky-pxe-lab/hand-walk`](../rocky-pxe-lab/hand-walk/) · [`kali-llm-lab/hand-walk`](../kali-llm-lab/hand-walk/) · [`tiny-linux-experiments/floppinux/hand-walk`](../tiny-linux-experiments/floppinux/hand-walk/)
+[`../micro-linux/hand-walk`](../../micro-linux/hand-walk/) · [`../phase1-chroot/hand-walk`](../../phase1-chroot/hand-walk/) · [`debian-http-boot/hand-walk`](../debian-http-boot/hand-walk/) · [`almalinux-pxe-lab/hand-walk`](../almalinux-pxe-lab/hand-walk/) · [`rocky-pxe-lab/hand-walk`](../rocky-pxe-lab/hand-walk/) · [`kali-llm-lab/hand-walk`](../kali-llm-lab/hand-walk/) · [`tiny-linux-experiments/floppinux/hand-walk`](../tiny-linux-experiments/floppinux/hand-walk/) · [`micro-cloud/hand-walk`](../micro-cloud/hand-walk/)
 
 ### Magazine & blog reproductions
 
