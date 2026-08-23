@@ -1452,15 +1452,45 @@ first draft sailed past `sandbox.sh down2`, whose own usage line reads *"destroy
 pair"* — the same defect wearing a digit. Measured after: **0** safety warnings (there is
 nothing left that acts), 89 probed, 17 rows declined as destructive.
 
-- [ ] **11.4a** — the remaining tail: **93 unprobed rows** (17 of them destructive-by-verb,
-      the rest outside the tool allowlist) and **11 bare-name warnings**. Neither closes by
-      tightening a regex. The first wants a way to ask a build/smoke script what verbs it has
-      **without running one** — the most promising shape is to invoke *only the nonce*, which
-      is the safest possible call, and read the tool's own usage output rather than its
-      source. The second needs the document to say which it meant; triage of the current 11
-      found them to be **prose, historical quotations, and shorthand for subverbs**
-      (`lab-fc.sh restore` for `snapshot restore`), which is a third category the checker
-      does not model.
+**11.4a, partly closed 2026-08-23.** Two new oracles, both measured and both labelled as
+weaker than tier A:
+
+**Tier B — ask the tool, never run one of its verbs.** A *nonce* verb is the safest possible
+call (no tool has it, so a dispatching tool can only refuse), and `--help` is no more
+dangerous than the nonce. Read the pair and compare the document's verb against what the tool
+says it accepts. It is layered, because "only the nonce" still invokes something: a script
+with no dispatch is filtered out **statically** and never invoked at all. The grep is a
+**pre-filter for safety**, not the oracle. And a **thin answer is not evidence of absence** —
+if the tool did not print something verb-list-shaped, the row stays UNKNOWN rather than
+becoming a finding. Without that rule, sourced driver libraries (`verify-lib.sh`,
+`install.sh`) produced "does not list" warnings for interface verbs they implement fine.
+
+**Subverbs**, the third category the earlier triage named: `lab-fc.sh restore` is shorthand
+for `snapshot restore`. **The pattern was wrong four times, each looking right**, and every
+one was caught by measuring rather than reading:
+
+| the pattern | what it actually matched |
+|---|---|
+| `(…\|\$)` as an end-anchor | `\$` in a double-quoted string is a **literal dollar**, so it demanded a `$` character |
+| `[[:space:],}\)\]]` | a backslash inside a **bracket expression** is not an escape in POSIX ERE — the class closed early and left a stray `]` to match |
+| `[^a-z]*restore` | the prose *"create needs it RUNNING; restore needs it STOPPED"* |
+| `[a-z0-9\|,-]*up` | the **suffix** inside `--groups group,group` — which excused `lab-chroot.sh up`, the very verb two documents quote as never having existed |
+| `([a-z0-9,-]+[\|,])*boot` | repeats **zero** times, collapsing to `<word> <verb>`: *"install at first boot"* |
+
+The fix asks the real question instead of approximating it: the character immediately before
+the verb must be a group separator, because a usage block writes `<parent> {a|b|verb|c}` and
+prose never puts `|` `,` `{` `(` against the word. **The control fixture is what exposed it**
+— a clean usage block failed while the live run reported three "subverbs", all prose.
+
+Measured after: **106 probed** (was 89), 15 by tier B, 1 genuine subverb, 11 warnings, **78
+unprobed** (was 93), 0 hard failures.
+
+- [ ] **11.4a** — the remaining tail: **78 unprobed rows** (17 of them destructive-by-verb,
+      the rest with no dispatch, or whose answer was too thin to judge) and **11 warnings**.
+      What is left is genuinely hard rather than unfinished: a tool with no verb dispatch has
+      no self-description to read, and a bare-name mention in prose is structurally identical
+      to a command. Closing either needs the *document* to say which it meant — a convention,
+      not a regex.
 
 ### 11.5 Open question left by D8: should `lab-fc.sh` take an env override for the VMM?
 
