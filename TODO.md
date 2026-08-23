@@ -1326,12 +1326,56 @@ verifies that a link resolves and has no opinion on the sentence around it;
 `tools/check-guided-path-is-a-view.sh` asks this question already, but only of the
 *rendered plan* and `install-catalog.toml`.
 
-- [ ] **11.4** — generalise it: extract every `<tool>.sh <verb>` from a doc set and assert
-      the tool dispatches it. The dispatch tables are readable (`case "$verb" in`), and the
-      hard part is the false positives — prose like *"`preserve.sh` two tiers"* and tree
-      diagrams — so it needs the `check-usage-is-data.sh` treatment: a must-catch/must-not-catch
-      fixture set proved **before** it is aimed at a real file. Until it exists this class
-      is open regardless of the nine fixes.
+- [x] **11.4** — **done 2026-08-23.** [`tools/check-doc-verbs.sh`](tools/check-doc-verbs.sh),
+      gated in the `docs` job. Measured on the whole corpus: **191** distinct `<tool>.sh
+      <verb>` commands across **440** documents, **0** hard failures.
+
+      It does **not** grep the dispatch table. `verb_present` — which asks the tool, since a
+      driver answers a verb it lacks exactly as it answers a verb nobody has — was lifted out
+      of `check-guided-path-is-a-view.sh` into [`tools/lib/verb-probe.sh`](tools/lib/verb-probe.sh)
+      and is now **shared**, because a copy drifts from its subject and then proves something
+      about the copy.
+
+      **The false positives were the whole job, exactly as this entry predicted**, and every
+      rule that separates them was measured rather than guessed:
+
+      | what looked like a broken command | what it actually was | how it is told apart |
+      |---|---|---|
+      | `tools/pxe-fetch.sh probe` ×4 | a real tool, addressed from the **lab root** — the README lives inside `examples/pxe-boot-mechanics/tools/` | resolve repo-root, then the doc's directory, then each ancestor |
+      | `phase{N}-*/lab-*.sh` | metasyntax describing a *shape* | a token containing `{}*<>$` is never a path |
+      | `` `lab-chroot.sh up` `` in `phase6-tui/SHOWCASE.md` | the doc **explaining that no such verb has ever existed** | an inline span is a mention, not an instruction |
+      | `$ phase1-chroot/lab-chroot.sh up --config mc.toml` | a **transcript** of what a planner once emitted | a `$ ` prompt marks a recording |
+
+      That last rule is the one worth keeping: it is measured, not assumed. Counted across
+      every tracked document, **1234** command lines sit in ` ```bash ` fences with **no**
+      prompt, while **all 74** in untagged fences carry `$ `, as do the 26 in ` ```console `.
+      The convention is unambiguous, so the prompt decides — and an early draft *stripped the
+      prompt before classifying*, erasing the one signal that answers the question.
+
+      **Three defects in the checker were caught by its own controls**, each on the run that
+      introduced it: an indented code block was invisible (Markdown code without a fence);
+      `grep -vE '\t…'` matched a literal **`t`**, silently dropping every line ending in that
+      letter — including its own fixtures `… lab-lxd.sh list`; and the arguments to
+      `check_doc_command` were passed in the wrong order, so `class` held the document path
+      and every hard mismatch quietly degraded to a warning. A checker grading its own
+      findings down to advisory is the failure mode it exists to prevent.
+
+      **Two verdicts short of PASS, both named rather than counted as passes:** 14 bare-name
+      mentions reported for a human (prose and a command are structurally identical there —
+      *"`preserve.sh` two tiers"* parses exactly like *"`lab-fc.sh clone`"*, and a checker
+      that cannot tell them apart must not fail a build on the guess), and **79 commands left
+      UNPROBED by a safety boundary**. That boundary is a list, one week after 11.3b deleted
+      one — the difference being the direction it fails in: a coverage list silently
+      under-covers, while this one names every row it declined. It exists because this checker
+      **invokes** verbs, and the first repo-wide run reached `smoke-nvram.sh all`,
+      `mlbuild.sh` and `build-verifying-rom.sh`. Nothing was harmed — no taps, no VMs, no
+      stray files, and each call is bounded to 30s — but *"it happened not to break
+      anything"* is not a safety argument.
+
+- [ ] **11.4a** — the 79 unprobed rows and the 14 bare-name warnings are the remaining tail.
+      Neither is closable by tightening a regex: the first needs a safe way to ask a
+      build/smoke script what verbs it has without running one, and the second needs the
+      document to say which it meant.
 
 ### 11.5 Open question left by D8: should `lab-fc.sh` take an env override for the VMM?
 

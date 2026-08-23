@@ -182,6 +182,20 @@ jobs:
         # that the 8 legitimate anchors beside them are NOT, and that --no-anchors (the
         # pre-2026-08-05 blindness) reports zero on the same fixture.
         run: bash tools/tests/test-link-check-anchors.sh
+      - name: every verb a document types is a verb the tool has
+        # TODO 11.4. Two of the nine findings in REVIEW-docs-micro-cloud-maas.md (D5, D7)
+        # were documents naming verbs the tool refuses, and both were found BY HAND.
+        # link_check.py verifies that a link resolves and has no opinion on the sentence
+        # around it; check-guided-path-is-a-view.sh asks this question already, but only of
+        # a rendered plan and install-catalog.toml. Prose was gated by nobody.
+        #
+        # It ASKS THE TOOL rather than grepping its dispatch table (tools/lib/verb-probe.sh,
+        # shared with that sibling so neither drifts), and it proves its extractor on
+        # fixtures before reading a real document -- including end to end, in both
+        # directions: a fenced command naming a missing verb must fail the run, and the same
+        # command quoted behind a `$ ` prompt must not.
+        run: bash tools/check-doc-verbs.sh
+
       - name: Learning-path routing + freshness gate
         run: python3 tools/paths.py --check
 
@@ -334,6 +348,62 @@ jobs:
           else
             echo "qemu-system present ($(qemu-system-x86_64 --version | head -1)) — phase 2's argv unit tests will run"
           fi
+      - name: Install dnsmasq-base + qemu-user-static (three more rows)
+        # TODO 11.2a, second pass. Each install weighed against runner minutes, and the ones
+        # NOT done are named below rather than left as a silent omission.
+        #
+        # DONE — dnsmasq-base (~500 KB) buys TWO MAAS rows: the DHCP-reservation-identity
+        # and UEFI-netboot behaviour tests, which run a real dnsmasq inside `unshare -rn`.
+        # `dnsmasq-base`, NOT `dnsmasq`: the latter also installs a system service that binds
+        # :53 on the runner, which these tests neither need nor want -- they want the binary.
+        # They have a SECOND gate after this one (unprivileged user+net namespaces with a
+        # subuid mapping), so the verify line below reports whether that holds rather than
+        # assuming it does; if it does not, the end-of-step annotation still names them.
+        #
+        # DONE — qemu-user-static (~50 MB) + `update-binfmts --enable qemu-aarch64` buys
+        # phase 3's buildx multiarch row, whose skip line asks for exactly that command. It
+        # builds a one-line alpine image for linux/arm64 under emulation; its own note warns
+        # "this can take a couple of minutes", which is the honest price of the only row that
+        # proves the buildx backend crosses architectures at all.
+        #
+        # NOT DONE, deliberately, and this is the "weigh it and say so" half of 11.2a:
+        #   * libguestfs-tools for phase 2's export-tarball row (1 row). guestfish boots a
+        #     full appliance VM; this runner has no usable /dev/kvm, so that is TCG, and the
+        #     install is ~200 MB before it boots anything. One row is not worth minutes on
+        #     every run of every PR.
+        #   * ukify + swtpm + mtools + ovmf for MAAS's measured-image row (1 row). FOUR
+        #     packages, and then a UEFI+TPM boot under TCG to reach a PCR measurement. The
+        #     row is valuable and the price is wrong; it belongs on hardware with KVM.
+        #   * musl-tools for micro-cloud's two vsock rows buys ZERO. `musl-gcc` is only the
+        #     first gate; both rows also require the pinned `firecracker` binary, which the
+        #     repo's toolchain-fetch gate deliberately does not fetch. Closed by decision,
+        #     not open -- and 11.2's table credited it with 2 rows by reading only the first
+        #     missing command in the skip line, the same error it made for qemu-system-x86.
+        run: |
+          timeout 300 sudo apt-get install -y dnsmasq-base qemu-user-static \
+            || echo "::warning::dnsmasq-base / qemu-user-static install failed or timed out — the two MAAS DHCP rows and phase 3's multiarch row will SKIP"
+          sudo update-binfmts --enable qemu-aarch64 2>/dev/null \
+            || echo "::warning::could not enable the qemu-aarch64 binfmt handler — phase 3's buildx multiarch row will SKIP"
+          # Report each precondition rather than assuming the install settled it. The DHCP
+          # rows have a second gate this package cannot satisfy.
+          # An `if`, not `a || b && c || d`: that chain evaluates left to right and quietly
+          # does the wrong thing the moment anyone edits one link of it.
+          if command -v dnsmasq >/dev/null 2>&1 || [ -x /usr/sbin/dnsmasq ]; then
+            echo "dnsmasq: present"
+          else
+            echo "::warning::dnsmasq still absent — the 2 MAAS DHCP rows will SKIP"
+          fi
+          if unshare -rn --map-auto true 2>/dev/null; then
+            echo "rootless netns with subuid mapping: AVAILABLE — the MAAS DHCP rows can run"
+          else
+            echo "::warning::unshare -rn --map-auto failed — the 2 MAAS DHCP rows will SKIP on their SECOND gate, so installing dnsmasq did not buy them"
+          fi
+          if update-binfmts --display qemu-aarch64 >/dev/null 2>&1; then
+            echo "binfmt qemu-aarch64: registered — phase 3's multiarch row can run"
+          else
+            echo "::warning::binfmt qemu-aarch64 not registered — phase 3's multiarch row will SKIP"
+          fi
+
       - name: Run every phase's run-all.sh
         # Tests needing docker/podman/incus/root exit 77 (skip); run-all.sh only
         # fails the job on a real FAIL, so the pure-logic tests are the gate here.
