@@ -1352,8 +1352,15 @@ verifies that a link resolves and has no opinion on the sentence around it;
       The convention is unambiguous, so the prompt decides — and an early draft *stripped the
       prompt before classifying*, erasing the one signal that answers the question.
 
-      **Three defects in the checker were caught by its own controls**, each on the run that
-      introduced it: an indented code block was invisible (Markdown code without a fence);
+      **A fourth was caught by CI, on the checker's first production run, and it is the best
+      one:** the `docs` job failed on **`TODO.md` — this entry**, whose table above quotes
+      `tools/pxe-fetch.sh probe` inline as an *example of a false positive*. The missing-tool
+      branch fired before the class was consulted, so a path quoted in a sentence was graded
+      as a broken instruction. The checker was right that no such path resolves from the repo
+      root and wrong that anyone was being told to run it. A tool whose own documentation
+      trips it is a tidy demonstration that prose and commands are not separable by shape.
+
+      **Three more were caught by its own controls**, each on the run that introduced it: an indented code block was invisible (Markdown code without a fence);
       `grep -vE '\t…'` matched a literal **`t`**, silently dropping every line ending in that
       letter — including its own fixtures `… lab-lxd.sh list`; and the arguments to
       `check_doc_command` were passed in the wrong order, so `class` held the document path

@@ -231,9 +231,30 @@ check_doc_command() {
             d="$(dirname "$d")"
         done
     fi
-    [[ -n "$abs" ]] || { bad "$src: names a tool that does not exist: $tool"; return; }
+    # A MISSING TOOL IS ALSO ONLY A HARD FAILURE IN A BLOCK. The class has to be consulted
+    # here too, not just at the verb check -- a sentence may legitimately quote a path that
+    # does not resolve, and this checker proved that on its own first production run: the
+    # TODO §11.4 entry written to DOCUMENT these false positives quotes
+    # `tools/pxe-fetch.sh probe` inline as an example, and the docs job failed on it. The
+    # checker was right that no such path exists from the repo root and wrong that the
+    # document was instructing anyone to run it.
+    if [[ -z "$abs" ]]; then
+        if [[ "$class" == hard ]]; then
+            bad "$src: names a tool that does not exist: $tool"
+        else
+            warn "$src: mentions '$tool', which resolves to no file from the repo root, this document's directory, or any ancestor. In a sentence that may be deliberate (a historical path, an example, a shape); in a command it would be a broken instruction"
+        fi
+        return
+    fi
     tool="${abs#"$REPO"/}"
-    [[ -x "$abs" ]] || { bad "$src: names a tool that is not executable: $tool"; return; }
+    if [[ ! -x "$abs" ]]; then
+        if [[ "$class" == hard ]]; then
+            bad "$src: names a tool that is not executable: $tool"
+        else
+            warn "$src: mentions '$tool', which exists but is not executable"
+        fi
+        return
+    fi
     if ! probe_is_safe "$tool"; then
         UNPROBED+=("$src: $tool $verb")
         return
