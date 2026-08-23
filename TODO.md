@@ -1326,12 +1326,63 @@ verifies that a link resolves and has no opinion on the sentence around it;
 `tools/check-guided-path-is-a-view.sh` asks this question already, but only of the
 *rendered plan* and `install-catalog.toml`.
 
-- [ ] **11.4** — generalise it: extract every `<tool>.sh <verb>` from a doc set and assert
-      the tool dispatches it. The dispatch tables are readable (`case "$verb" in`), and the
-      hard part is the false positives — prose like *"`preserve.sh` two tiers"* and tree
-      diagrams — so it needs the `check-usage-is-data.sh` treatment: a must-catch/must-not-catch
-      fixture set proved **before** it is aimed at a real file. Until it exists this class
-      is open regardless of the nine fixes.
+- [x] **11.4** — **done 2026-08-23.** [`tools/check-doc-verbs.sh`](tools/check-doc-verbs.sh),
+      gated in the `docs` job. Measured on the whole corpus: **191** distinct `<tool>.sh
+      <verb>` commands across **440** documents, **0** hard failures.
+
+      It does **not** grep the dispatch table. `verb_present` — which asks the tool, since a
+      driver answers a verb it lacks exactly as it answers a verb nobody has — was lifted out
+      of `check-guided-path-is-a-view.sh` into [`tools/lib/verb-probe.sh`](tools/lib/verb-probe.sh)
+      and is now **shared**, because a copy drifts from its subject and then proves something
+      about the copy.
+
+      **The false positives were the whole job, exactly as this entry predicted**, and every
+      rule that separates them was measured rather than guessed:
+
+      | what looked like a broken command | what it actually was | how it is told apart |
+      |---|---|---|
+      | `tools/pxe-fetch.sh probe` ×4 | a real tool, addressed from the **lab root** — the README lives inside `examples/pxe-boot-mechanics/tools/` | resolve repo-root, then the doc's directory, then each ancestor |
+      | `phase{N}-*/lab-*.sh` | metasyntax describing a *shape* | a token containing `{}*<>$` is never a path |
+      | `` `lab-chroot.sh up` `` in `phase6-tui/SHOWCASE.md` | the doc **explaining that no such verb has ever existed** | an inline span is a mention, not an instruction |
+      | `$ phase1-chroot/lab-chroot.sh up --config mc.toml` | a **transcript** of what a planner once emitted | a `$ ` prompt marks a recording |
+
+      That last rule is the one worth keeping: it is measured, not assumed. Counted across
+      every tracked document, **1234** command lines sit in ` ```bash ` fences with **no**
+      prompt, while **all 74** in untagged fences carry `$ `, as do the 26 in ` ```console `.
+      The convention is unambiguous, so the prompt decides — and an early draft *stripped the
+      prompt before classifying*, erasing the one signal that answers the question.
+
+      **A fourth was caught by CI, on the checker's first production run, and it is the best
+      one:** the `docs` job failed on **`TODO.md` — this entry**, whose table above quotes
+      `tools/pxe-fetch.sh probe` inline as an *example of a false positive*. The missing-tool
+      branch fired before the class was consulted, so a path quoted in a sentence was graded
+      as a broken instruction. The checker was right that no such path resolves from the repo
+      root and wrong that anyone was being told to run it. A tool whose own documentation
+      trips it is a tidy demonstration that prose and commands are not separable by shape.
+
+      **Three more were caught by its own controls**, each on the run that introduced it: an indented code block was invisible (Markdown code without a fence);
+      `grep -vE '\t…'` matched a literal **`t`**, silently dropping every line ending in that
+      letter — including its own fixtures `… lab-lxd.sh list`; and the arguments to
+      `check_doc_command` were passed in the wrong order, so `class` held the document path
+      and every hard mismatch quietly degraded to a warning. A checker grading its own
+      findings down to advisory is the failure mode it exists to prevent.
+
+      **Two verdicts short of PASS, both named rather than counted as passes:** 14 bare-name
+      mentions reported for a human (prose and a command are structurally identical there —
+      *"`preserve.sh` two tiers"* parses exactly like *"`lab-fc.sh clone`"*, and a checker
+      that cannot tell them apart must not fail a build on the guess), and **79 commands left
+      UNPROBED by a safety boundary**. That boundary is a list, one week after 11.3b deleted
+      one — the difference being the direction it fails in: a coverage list silently
+      under-covers, while this one names every row it declined. It exists because this checker
+      **invokes** verbs, and the first repo-wide run reached `smoke-nvram.sh all`,
+      `mlbuild.sh` and `build-verifying-rom.sh`. Nothing was harmed — no taps, no VMs, no
+      stray files, and each call is bounded to 30s — but *"it happened not to break
+      anything"* is not a safety argument.
+
+- [ ] **11.4a** — the 79 unprobed rows and the 14 bare-name warnings are the remaining tail.
+      Neither is closable by tightening a regex: the first needs a safe way to ask a
+      build/smoke script what verbs it has without running one, and the second needs the
+      document to say which it meant.
 
 ### 11.5 Open question left by D8: should `lab-fc.sh` take an env override for the VMM?
 
@@ -1341,8 +1392,36 @@ no override, while **every test in micro-cloud** resolves it from the workdir vi
 tool. D8 fixed the **doc** (the precondition block now carries the `export PATH`), which
 was the honest fix for an audit with no mandate to change a driver.
 
-- [ ] **11.5** — decide it deliberately. An override would let the six firecracker-gated
-      rows in 11.2(b) run wherever the binary is staged, without relaxing the fetch gate.
+- [x] **11.5** — **decided 2026-08-23: yes.** `lab-fc.sh` honours **`$LAB_FC_BIN`**, and
+      falls back to `command -v firecracker` when it is unset. That default is load-bearing
+      rather than polite: phase 7 stands in a VMM by PATH-shimming a fake `firecracker`, so
+      anything that stopped consulting `PATH` would take seven tests with it. It does not
+      relax the toolchain-fetch gate — somebody still has to stage the binary; the driver
+      merely stops insisting it be on `PATH`.
+
+      **Mapping the blast radius first found the reason to be careful, and it was not the
+      five call sites.** `_running_pid` identified the VMM by grepping `/proc/<pid>/cmdline`
+      for the **literal string `firecracker`** — so an override pointing at `fc-v1.16.1`
+      would answer NOT RUNNING for a VMM that *is* running, and `stop` would then report
+      nothing to stop and leave the guest behind. The override created that hazard; the fix
+      greps the resolved binary's basename. Measured: against the row-4 fixture the old
+      literal misses the process entirely, the basename matches it.
+
+      Six rows in [`tests/test-vmm-override.sh`](phase7-firecracker/tests/test-vmm-override.sh),
+      all green, 20/20 for the suite: the override selects the VMM; an override naming no
+      file and one naming something non-executable are each refused **by name** (a silent
+      fallback would run a *different* VMM and report success to the one person — the
+      operator with a typo — who would believe it); `preflight` reports the binary **and its
+      source**; the liveness check follows the override; and with `$LAB_FC_BIN` unset `PATH`
+      still decides. The row-4 control asserts the fixture's argv does **not** contain
+      `firecracker`, so the row cannot pass against the pre-fix driver.
+
+      D8's doc workaround is retired: `examples/micro-cloud/MANUAL_TESTING.md` now exports
+      `LAB_FC_BIN` instead of prepending to `PATH`.
+
+      **It does not by itself close 11.2(b)'s six firecracker-gated rows.** Those need a
+      binary present, which CI still has no sanctioned way to obtain; what changes is that
+      staging one anywhere is now enough.
 
 ---
 

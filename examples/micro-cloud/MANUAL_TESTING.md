@@ -36,10 +36,10 @@ default behaviour would have moved it.
 ### Preconditions, checked before anything privileged
 
 ```bash
-# lab-fc.sh finds the VMM with `command -v firecracker` and honours no override, so the
-# pinned v1.16.1 copy has to be ON PATH or the next line refuses with
-# `FAIL  firecracker not on PATH` — on the very host this lab was built on.
-export PATH="$HOME/.local/state/lab-create/micro-cloud-s3:$PATH"
+# Point lab-fc.sh at the pinned v1.16.1 copy this lab staged. Either form works — the
+# driver takes $LAB_FC_BIN and falls back to PATH — but the override says WHICH binary,
+# which is the thing a second answer to "where is the VMM" kept getting wrong.
+export LAB_FC_BIN="$HOME/.local/state/lab-create/micro-cloud-s3/firecracker"
 
 examples/micro-cloud/fabric.sh status          # read the THEIRS block. Write it down.
 phase7-firecracker/lab-fc.sh preflight --config examples/micro-cloud/micro-cloud.toml
@@ -53,6 +53,15 @@ phase7-firecracker/lab-fc.sh preflight --config examples/micro-cloud/micro-cloud
 > first thing this file asks them to type. The lab's own tests never noticed because they
 > resolve the binary from the workdir (`MC_FIRECRACKER`), not from `PATH` — two different
 > answers to "where is the VMM", and only one of them is documented at the entry point.
+>
+> **The driver half landed 2026-08-23** (TODO §11.5): `lab-fc.sh` now honours
+> **`$LAB_FC_BIN`**, so the tool can be told where the VMM is instead of requiring it on
+> `PATH`, and `preflight` names the binary it resolved *and* whether that came from the
+> override or from `PATH`. A `$LAB_FC_BIN` that names nothing, or names something
+> non-executable, is refused **by name** rather than silently falling back — the operator
+> with a typo in it is exactly the person who would otherwise be told a different VMM was
+> fine. PATH remains the default, which is not politeness: phase 7 stands in a VMM by
+> PATH-shimming a fake `firecracker`, and seven of its tests depend on that.
 >
 > **Expect two remaining `FAIL` lines**, and they are correct: `tap mc-api1 does not exist`
 > and the same for `mc-api2`. The fabric has not been brought up yet, and `lab-fc.sh` never
