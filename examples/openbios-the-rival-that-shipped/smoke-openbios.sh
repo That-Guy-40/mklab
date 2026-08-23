@@ -131,7 +131,7 @@ case "$FLAVOR" in
     if grep -q 'zapping pram' "$LOG"; then VOL=" (no store on this boot — nothing attached at ide@, so it came up blank and re-formatted)"; else VOL=" (the store arrived already valid on this boot)"; fi
     pass "P0: /nvram is in the device tree${VOL}"
     ;;
-  persist)
+  persist|persist-flash)
     # The ladder's P1+P2 checkpoint: a config variable that survives a POWER
     # CYCLE, asserted on the HOST'S FILE and on a brand-new QEMU process.
     #
@@ -147,17 +147,35 @@ case "$FLAVOR" in
     command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
     MB="$WORKDIR/openbios/obj-x86/openbios.multiboot"
     [[ -f "$MB" ]] || skip "no image at $MB — run ./build-openbios.sh x86 first"
-    # Same rule as the nvram track: derive from the cause. The store is
-    # IDE-backed iff arch_nvram_* actually calls the block layer.
+    # Same rule as the nvram track: derive from the cause, per backing.
     SRC="$WORKDIR/openbios/arch/x86/openbios.c"
     [[ -f "$SRC" ]] || skip "no clone at $SRC — run ./build-openbios.sh x86 first"
-    grep -q 'ob_ide_write_blocks_nr' "$SRC" \
-      || skip "the store has no IDE backing in $SRC (P1 not applied) — this track measures a backed store"
 
-    NV="$WORKDIR/nvram-store.img"
     NONCE="P1-PERSIST-$$"
-    DRIVE=(-drive "if=ide,index=3,format=raw,cache=writethrough,file=$NV")
-    rm -f "$NV"; truncate -s 1M "$NV"
+    if [[ "$FLAVOR" == persist-flash ]]; then
+      # pflash0 IS the BIOS on -M pc: an empty one removes the SeaBIOS that
+      # loads the multiboot image and the machine goes dark (measured). So the
+      # code unit has to carry a BIOS for the vars unit to be reachable at all.
+      SEABIOS=$(ls /usr/share/seabios/bios.bin /usr/share/qemu/bios.bin 2>/dev/null | head -1)
+      [[ -n "$SEABIOS" ]] || skip "no seabios image found — pflash0 must hold a BIOS or nothing boots"
+      grep -q 'lab_flash_present' "$WORKDIR/openbios/arch/x86/openbios.c" \
+        || skip "no CFI flash backing in arch/x86/openbios.c — this track measures the pflash store"
+      F0="$WORKDIR/flash0.img"; NV="$WORKDIR/flash1.img"
+      truncate -s 4M "$F0"
+      dd if="$SEABIOS" of="$F0" bs=1 seek=$(( 4*1024*1024 - $(stat -c%s "$SEABIOS") )) \
+         conv=notrunc status=none
+      rm -f "$NV"; truncate -s 128k "$NV"
+      DRIVE=(-drive "if=pflash,format=raw,file=$F0,unit=0"
+             -drive "if=pflash,format=raw,file=$NV,unit=1")
+      WANT_BACKEND="pflash@0xffbe0000"
+    else
+      grep -q 'ob_ide_write_blocks_nr' "$SRC" \
+        || skip "the store has no IDE backing in $SRC (P1 not applied) — this track measures a backed store"
+      NV="$WORKDIR/nvram-store.img"
+      rm -f "$NV"; truncate -s 1M "$NV"
+      DRIVE=(-drive "if=ide,index=3,format=raw,cache=writethrough,file=$NV")
+      WANT_BACKEND="ide@3"
+    fi
     BEFORE=$(sha256sum "$NV" | cut -d" " -f1)
 
     _boot() { # _boot <log> <send-args...> -- trailing args after -- are qemu extras
@@ -182,6 +200,10 @@ case "$FLAVOR" in
       || fail "no prompt conversation while writing the store — see $LOG.write"
     grep -q '^0 > " /nvram" " update-nvram" execute-device-method \. -1' <(tr -d "\r" < "$LOG.write") \
       || fail "update-nvram did not report success (-1) — see $LOG.write"
+    # WHICH backing answered matters: with both attached, flash wins, and a
+    # "flash" run could otherwise pass while measuring the IDE store.
+    grep -q "nvram: backed by $WANT_BACKEND" "$LOG.write" \
+      || fail "this track measures $WANT_BACKEND but the firmware reported: $(grep -o 'nvram: backed by .*' "$LOG.write" | tr -d '\r' | head -1)"
     AFTER=$(sha256sum "$NV" | cut -d" " -f1)
     [[ "$BEFORE" != "$AFTER" ]] \
       || fail "REGRESSION: update-nvram reported success and the host image is byte-identical — the write never reached the disk"
@@ -202,10 +224,10 @@ case "$FLAVOR" in
       || fail "no prompt conversation on the control boot — see $LOG.control"
     grep -q "$NONCE" "$LOG.control" \
       && fail "REGRESSION: the control saw $NONCE with no drive attached — this check cannot fail and proves nothing"
-    grep -q "no drive at ide@" "$LOG.control" \
-      || fail "the control did not report a missing drive — the firmware is not looking for the store where this test thinks it is — see $LOG.control"
+    grep -q "no backing store found" "$LOG.control" \
+      || fail "the control did not report a missing backing store — the firmware found a store somewhere this test did not attach one, so the control is not a control — see $LOG.control"
 
-    pass "P1+P2: boot-file=$NONCE survived a power cycle on the IDE-backed store (host image changed, arrived valid, and the no-drive control did NOT see it)"
+    pass "P1+P2: boot-file=$NONCE survived a power cycle on $WANT_BACKEND (host image changed, arrived valid, and the no-drive control did NOT see it)"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist]" >&2; exit 1 ;;
+  *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash]" >&2; exit 1 ;;
 esac

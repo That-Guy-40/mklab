@@ -816,6 +816,59 @@ All three assertions were then watched to bite, by planting the defect:
 | restore the image after the write, so the write reports success and lands nothing | `FAIL: REGRESSION: update-nvram reported success and the host image is byte-identical` |
 | give the "no drive" control a drive | `FAIL: REGRESSION: the control saw <nonce> with no drive attached — this check cannot fail` |
 
+##### A second backing, and why it had to be an unlike one
+
+[`patches/06-x86-nvram-cfi-flash-backing.patch`](patches/06-x86-nvram-cfi-flash-backing.patch)
+adds **CFI flash** beside the IDE store. Two backings that failed the same way
+would be one data point, so this one is deliberately unalike: IDE is a PIO block
+device reached through I/O ports; this is **memory-mapped** flash at physical
+`0xffbe0000` — QEMU's `cfi.pflash01`, Intel command set, 4 KiB sectors, byte-wide.
+
+Selection is a **runtime probe, not a build option**: a CFI query either answers
+`QRY` or it does not. Flash first, then `ide@3`, then a volatile buffer — and the
+firmware prints which one it got:
+
+```
+nvram: backed by pflash@0xffbe0000
+```
+
+That line is what the test asserts on, and the reason is specific: with both
+attached, flash wins, so a "flash" run could otherwise pass while quietly
+measuring the IDE store. The control for that was planted and watched to bite —
+`FAIL: this track measures pflash@0xffbe0000 but the firmware reported: nvram:
+backed by ide@3`.
+
+**Two traps this backing hits that the block device did not**, and both were
+already written down in this repo before they were met:
+
+- **`romd` means reads come from the backing and writes do not.** A write is
+  unlock / block-erase / program / poll-status, not a store. This document's own
+  earlier draft called `get`/`put` "two `memcpy`s"; the read half was right.
+- **The address must go through `phys_to_virt()`.** `arch/x86` relocates itself
+  by rebasing the GDT data segment, so a constant physical address used raw
+  lands somewhere else entirely — the same trap that made `load-base` read back
+  as zeros while every byte count looked correct.
+
+`./smoke-openbios.sh persist-flash` runs the identical three-boot shape as the
+IDE track, against `-drive if=pflash,unit=1`. It has to build a **populated**
+`unit=0` first — SeaBIOS at the top of a 4 MiB image — because pflash0 *is* the
+BIOS on `-M pc`, and an empty one removes the thing that loads the multiboot
+image. That was measured earlier in this section and is now automated.
+
+##### The refusal gate, watched firing
+
+The store refuses a drive carrying someone else's data. That gate was written
+before it was tested, which makes it a claim rather than a guarantee, so it was
+aimed at 1 MiB of `/dev/urandom`:
+
+```
+nvram: ide@3 holds data that is not an nvram store -- refusing to write to it
+nvram: not backed -- this change will NOT survive a reset
+```
+
+and the foreign image came back **byte-identical**. The refusal happens on the
+read, before any write is attempted — a gate after the write is a post-mortem.
+
 ##### The harness's own bug, caught on its first regression run
 
 The `nvram` track originally derived its expectation with
@@ -848,8 +901,8 @@ something the raw-IDE store does not, and each costing exactly one thing:
 
 | variant | what it buys | what it costs |
 |---|---|---|
-| **floppy** | period fidelity, and a 1.44 MB image a human can mount on the host | flip `CONFIG_DRIVER_FLOPPY`; a write path; an ED row for 2.88 MB |
-| **pflash** | a region the firmware *owns* rather than borrows — the EFI shape | a CFI driver; the 4 MiB pflash0 image (booted, above) |
+| **floppy** | period fidelity, and a 1.44 MB image a human can mount on the host | flip `CONFIG_DRIVER_FLOPPY`; a write path; an ED row for 2.88 MB — **still open** |
+| **pflash** ✅ **DONE** | a region the firmware *owns* rather than borrows — the EFI shape | a CFI driver; the 4 MiB pflash0 image — both built, see below |
 
 What the ladder deliberately does **not** do is build a writable **filesystem**.
 That is a genuinely large project (five layers) and — per the reframe above —

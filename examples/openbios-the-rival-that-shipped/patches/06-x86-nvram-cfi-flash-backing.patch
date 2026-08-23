@@ -1,0 +1,207 @@
+# patches/06-x86-nvram-cfi-flash-backing.patch — a SECOND backing store.
+# Applies on top of 05-x86-nvram-p1-ide-backing.patch.
+#
+# Deliberately unlike the first: IDE is a PIO block device reached through I/O
+# ports; this is memory-mapped CFI flash (QEMU's cfi.pflash01, Intel command
+# set, 4 KiB sectors, byte-wide) at physical 0xffbe0000 -- pflash unit 1 on
+# -M pc. Two backings that failed the same way would be one data point.
+#
+# Selection is a RUNTIME PROBE, not a build option: a CFI query answers QRY or
+# it does not. Flash first, then ide@3, then a volatile buffer -- and the
+# firmware prints which one it got, which is what the test asserts on.
+#
+# Two traps this backing hits that the IDE one did not:
+#   * romd means reads come from the backing and WRITES DO NOT -- a write is
+#     unlock/erase/program/poll, not a store.
+#   * the address must go through phys_to_virt(): arch/x86 rebases the GDT
+#     data segment, which is the same trap that made load-base read as zeros.
+#
+# Verified by: ./smoke-openbios.sh persist-flash
+
+--- a/arch/x86/openbios.c
++++ b/arch/x86/openbios.c
+@@ -205,7 +205,6 @@
+ #define LAB_NVRAM_SECTORS 16         /* 16 * 512 = 8 KiB */
+ 
+ static char x86_nvram[LAB_NVRAM_SECTORS * 512];
+-static int  x86_nvram_backed;        /* 1 once a real drive answered */
+ 
+ /*
+  * Refuse a drive that is carrying someone else's data. The store is either
+@@ -233,6 +232,97 @@
+ 	return 0;
+ }
+ 
++/* ---- backing 2: CFI flash (a region the firmware OWNS) -------------- *
++ *
++ * The second backing on purpose, and deliberately UNLIKE the first: IDE is a
++ * PIO block device reached through I/O ports, flash is memory-mapped. Two
++ * backings that fail the same way would be one data point.
++ *
++ * QEMU maps `-drive if=pflash,unit=1` at physical 0xffbe0000 on -M pc (unit 0
++ * is the system flash, so the firmware image has to fill it -- SeaBIOS at the
++ * top of a 4 MiB image works and is what the lab's runner does). The device is
++ * cfi.pflash01: the INTEL command set, 4 KiB sectors, one byte per bus cycle.
++ *
++ * `romd` is the thing to understand here: reads come straight from the backing
++ * like RAM, but writes DO NOT. They go to the device's command state machine,
++ * so a write is unlock/erase/program/poll -- not a store. An earlier draft of
++ * this file's own documentation called it "two memcpys"; the read half was
++ * right and the write half was not.
++ *
++ * AND THE ADDRESS MUST GO THROUGH phys_to_virt(). arch/x86 relocates itself by
++ * rebasing the GDT data segment, so a constant physical address used raw lands
++ * somewhere else entirely -- exactly the bug that made `load-base` read back as
++ * zeros while every byte count looked correct.
++ */
++#define LAB_FLASH_PHYS   0xffbe0000UL
++#define CFI_SECTOR       4096
++#define CFI_STATUS_READY 0x80
++#define CFI_STATUS_ERR   0x3e
++
++static volatile unsigned char *lab_flash(void)
++{
++	return (volatile unsigned char *)phys_to_virt(LAB_FLASH_PHYS);
++}
++
++/* Ask the chip what it is. A CFI query answers "QRY" at 0x10..0x12; anything
++ * else and there is no flash there, which is how this stays safe on a machine
++ * that has no pflash unit attached. */
++static int lab_flash_present(void)
++{
++	volatile unsigned char *f = lab_flash();
++	int ok;
++
++	f[0] = 0x98;
++	ok = (f[0x10] == 'Q' && f[0x11] == 'R' && f[0x12] == 'Y');
++	f[0] = 0xff;                    /* back to read-array */
++	return ok;
++}
++
++static int lab_flash_wait(volatile unsigned char *f, int at)
++{
++	unsigned char st = 0;
++	int spin;
++
++	for (spin = 0; spin < 2000000; spin++) {
++		f[at] = 0x70;
++		st = f[at];
++		if (st & CFI_STATUS_READY)
++			break;
++	}
++	if (!(st & CFI_STATUS_READY) || (st & CFI_STATUS_ERR))
++		return 1;
++	return 0;
++}
++
++static int lab_flash_write(const unsigned char *buf, int len)
++{
++	volatile unsigned char *f = lab_flash();
++	int off, i;
++
++	for (off = 0; off < len; off += CFI_SECTOR) {
++		f[off] = 0x50;                  /* clear status */
++		f[off] = 0x20;                  /* block erase  */
++		f[off] = 0xd0;                  /* confirm      */
++		if (lab_flash_wait(f, off)) { f[0] = 0xff; return 1; }
++	}
++	for (i = 0; i < len; i++) {
++		f[i] = 0x40;                    /* program      */
++		f[i] = buf[i];
++		if (lab_flash_wait(f, i)) { f[0] = 0xff; return 1; }
++	}
++	f[0] = 0xff;
++	return 0;
++}
++
++/* ---- backing selection --------------------------------------------- */
++enum { NV_NONE = 0, NV_FLASH, NV_IDE };
++static int x86_nvram_backend;
++
++static const char *nv_backend_name(int b)
++{
++	return b == NV_FLASH ? "pflash@0xffbe0000" : b == NV_IDE ? "ide@3" : "none";
++}
++
+ int
+ arch_nvram_size( void )
+ {
+@@ -244,21 +334,33 @@
+ {
+ 	unsigned char *p = (unsigned char *)x86_nvram;
+ 
+-	x86_nvram_backed = 0;
++	x86_nvram_backend = NV_NONE;
++
++	/* Flash first: it is the region the firmware owns, and its probe is a
++	 * CFI query rather than a guess, so asking costs nothing when absent. */
++	if (lab_flash_present()) {
++		memcpy(p, (const void *)lab_flash(), sizeof(x86_nvram));
++		if (nvram_backing_ok(p, sizeof(x86_nvram)))
++			x86_nvram_backend = NV_FLASH;
++		else
++			printk("nvram: pflash holds data that is not an nvram store"
++			       " -- refusing to write to it\n");
++	}
+ 
+-	if (!ob_ide_read_blocks_nr(LAB_NVRAM_DRIVE, 0, p, LAB_NVRAM_SECTORS)) {
+-		if (nvram_backing_ok(p, sizeof(x86_nvram))) {
+-			x86_nvram_backed = 1;
+-		} else {
++	if (x86_nvram_backend == NV_NONE &&
++	    !ob_ide_read_blocks_nr(LAB_NVRAM_DRIVE, 0, p, LAB_NVRAM_SECTORS)) {
++		if (nvram_backing_ok(p, sizeof(x86_nvram)))
++			x86_nvram_backend = NV_IDE;
++		else
+ 			printk("nvram: ide@%d holds data that is not an nvram store"
+-			       " -- refusing to write to it; using a volatile buffer\n",
+-			       LAB_NVRAM_DRIVE);
+-			memset(x86_nvram, 0, sizeof(x86_nvram));
+-		}
+-	} else {
+-		printk("nvram: no drive at ide@%d -- using a volatile buffer\n",
+-		       LAB_NVRAM_DRIVE);
++			       " -- refusing to write to it\n", LAB_NVRAM_DRIVE);
++	}
++
++	if (x86_nvram_backend == NV_NONE) {
++		printk("nvram: no backing store found -- using a volatile buffer\n");
+ 		memset(x86_nvram, 0, sizeof(x86_nvram));
++	} else {
++		printk("nvram: backed by %s\n", nv_backend_name(x86_nvram_backend));
+ 	}
+ 
+ 	memcpy( buf, x86_nvram, sizeof(x86_nvram) );
+@@ -267,17 +369,27 @@
+ void
+ arch_nvram_put( char *buf )
+ {
++	int rc;
++
+ 	memcpy( x86_nvram, buf, sizeof(x86_nvram) );
+ 
+-	if (!x86_nvram_backed) {
++	switch (x86_nvram_backend) {
++	case NV_FLASH:
++		rc = lab_flash_write((unsigned char *)x86_nvram, sizeof(x86_nvram));
++		break;
++	case NV_IDE:
++		rc = ob_ide_write_blocks_nr(LAB_NVRAM_DRIVE, 0,
++		                            (unsigned char *)x86_nvram,
++		                            LAB_NVRAM_SECTORS);
++		break;
++	default:
+ 		printk("nvram: not backed -- this change will NOT survive a reset\n");
+ 		return;
+ 	}
+ 
+-	if (ob_ide_write_blocks_nr(LAB_NVRAM_DRIVE, 0,
+-	                           (unsigned char *)x86_nvram, LAB_NVRAM_SECTORS))
+-		printk("nvram: WRITE FAILED to ide@%d -- the store on disk is now"
+-		       " out of date\n", LAB_NVRAM_DRIVE);
++	if (rc)
++		printk("nvram: WRITE FAILED to %s -- the store is now out of date\n",
++		       nv_backend_name(x86_nvram_backend));
+ }
+ 
+ static void
