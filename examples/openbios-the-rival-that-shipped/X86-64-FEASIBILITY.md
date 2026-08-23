@@ -5,7 +5,7 @@
 >
 > First written 2026-08-18 as a study; **audited the same day, and Spike 0 —
 > which the first version explicitly had not attempted — has now been run.**
-> The verdict survived. Eight claims did not survive unchanged; they are
+> The verdict survived. Nine claims did not survive unchanged; they are
 > corrected in place and listed in
 > [§ What the audit corrected](#what-the-audit-corrected). The spike's build
 > patches ship in [`patches/`](patches/) so every number below is
@@ -418,7 +418,7 @@ bytes 2–15), lengths counted in **16-byte granules**, free space named
 | backing | survives firmware reset | survives an OS boot / power cycle | reachable in 32-bit | code missing today |
 |---|---|---|---|---|
 | **CMOS/RTC, 128 bytes** | yes | **no** — QEMU offers no file backing | yes | a CMOS driver, and the format does not fit |
-| **A file on an attached drive** | yes | yes | yes | **a write path at every layer — none exists** |
+| **A file on an attached drive** | yes | yes | yes | for a *file*, a write path at five layers; for **raw sectors**, one — see the reframe below |
 | **`-drive if=pflash`** | yes | yes | yes — vars unit at `0xffbe0000` | a small CFI driver, plus a 4 MiB pflash0 image — **configuration booted** |
 | **NVDIMM / pmem** | yes | yes | **no — measured at `0x100000000`** | ACPI discovery, a memory-map fix, *then* long mode |
 
@@ -603,6 +603,81 @@ Blockers 1 and 2 are work you would do in **either** mode. So the honest form of
 the headline is: *a pmem NVRAM is the only backing that long mode unlocks, and
 long mode is the cheapest third of it.*
 
+### The reframe: `arch_nvram_*` never touches the filesystem stack
+
+Everything above about row 2 answers the question *"can OpenBIOS write a **file**?"*
+— and NVRAM never asks it. The five read-only layers are real, and they are
+**irrelevant to this contract**: `arch_nvram_get`/`put` are *arch* code. They do
+not go through the device tree, `disk-label`, `pc-parts`, or a filesystem. The
+ppc implementations prove it — macio's is plain MMIO against a hardware window,
+with no package in sight.
+
+What the contract actually needs is **raw bytes at a fixed place**. That deletes
+four of row 2's five layers and leaves exactly one: *can this driver put a
+sector back?* Asked that way, the backings re-grade — and the recommendation
+inverts.
+
+| backing | data path | what is actually missing | new subsystems |
+|---|---|---|---|
+| **IDE, raw sectors** | PIO — and `ob_ide_pio_outsw` is **already used to send bulk data** (the ATAPI packet path, `ide.c:560`) | `WIN_WRITE 0x30` in `ide.h`, and an `ob_ide_write_ata` mirroring the 16-line `ob_ide_read_sectors` | **none** |
+| **Floppy, raw sectors** | PIO — the driver polls `STATUS_NON_DMA`, so no ISA DMA controller is involved | flip a config switch; author a write path; add an ED geometry for 2.88 MB | the FDC |
+| **pflash / CFI** | MMIO | a CFI driver written from scratch; the 4 MiB pflash0 image | CFI, plus a boot-path change |
+
+**IDE is the cheapest by a clear margin**: no new bus, no config switch, no
+boot-path change, and its read twin is the code this lab already boots a client
+program with. `ide.h` defines `WIN_READ`, `WIN_READ_EXT`, `WIN_IDENTIFY`,
+`WIN_PACKET` and `WIN_IDENTIFY_PACKET` — **no write command at all** — so the
+delta is a constant and one function whose mirror image is sixteen lines away.
+
+The natural shape is a **dedicated small `-drive if=ide` image whose entire
+contents are the store**: no partition table, no filesystem, nothing for the
+read-only stack to be read-only about. That is OFW's borrow-a-file idea with the
+filesystem removed.
+
+#### The floppy, graded
+
+Worth its own note, because it is the option that looks most like OFW's and
+because the repo already has form here — [`floppinux-2.88mb/`](../tiny-linux-experiments/floppinux/floppinux-2.88mb/)
+boots QEMU with `fd0 is 2.88M`, verified end to end.
+
+The good news is better than expected: **OpenBIOS ships a full 1,185-line FDC
+driver, and x86 already calls it** —
+
+```c
+/* arch/x86/openbios.c:202 */
+#ifdef CONFIG_DRIVER_FLOPPY
+	ob_floppy_init("/isa", "floppy0", 0x3f0, 0);
+```
+
+— behind a switch that is **off for x86 and on for both sparcs**:
+
+```
+config/examples/x86_config.xml:62:     CONFIG_DRIVER_FLOPPY  value="false"
+config/examples/sparc32_config.xml:69: CONFIG_DRIVER_FLOPPY  value="true"
+config/examples/sparc64_config.xml:67: CONFIG_DRIVER_FLOPPY  value="true"
+```
+
+That is the same shape as [`../open-firmware-debugs-itself/`](../open-firmware-debugs-itself/README.md)'s
+x86 `pseudo-nvram` finding: **a disabled switch, not absent code.**
+
+Two corrections to expectations, both measured:
+
+- **It is 1.44 MB, not 2.88.** The driver hard-codes a single geometry, `H1440` —
+  `SECT 18`, `HEAD 2`, `TRACK 80` = 2880 *sectors* × 512 B = **1.44 MB**. There
+  is no extended-density row, so 2.88 MB means adding one (36 sectors/track, a
+  500 kbps→1 Mbps rate change). Not a blocker in the slightest: 1.44 MB is
+  already **92×** macio's 16 KiB, and the store needs kilobytes.
+- **There is no dormant write path.** `FD_WRITE 0xC5` is defined at
+  `floppy.c:100` and **referenced nowhere else in the file** — a constant carried
+  over from the Linux driver this one descends from. The method table exports
+  `open close read-blocks block-size max-transfer`, the same read-only shape as
+  IDE.
+
+So the floppy is a real option and a good one for *fidelity* — it is the most
+period-correct answer, and a 1.44 MB image is a thing a human can mount and read
+on the host. It is simply not the cheapest, because IDE needs no switch and no
+new controller.
+
 ### The persistence spikes — a ladder that does not wait for the port
 
 The single most useful consequence of the table above is a scheduling one:
@@ -618,7 +693,7 @@ each one's checkpoint is chosen to be an **outcome rather than a mechanism** —
 | rung | work | observable checkpoint | mode |
 |---|---|---|---|
 | **P0 — a node that exists** | implement `arch_nvram_size/get/put` in `arch/x86` over a plain static buffer; call `nvram_init()` once | `dev / ls` lists **`nvram`**, and `dev /nvram .properties` answers — the exact probe that comes back without it today | 32-bit |
-| **P1 — survives a firmware reset** | a CFI driver (Intel command set, 4 KiB sectors, byte-wide) over `0xffbe0000`; the 4 MiB pflash0 image | set a config variable, then **`cmp` the host's `vars.img` before and after** — it must differ | 32-bit |
+| **P1 — survives a firmware reset** | `WIN_WRITE 0x30` + an `ob_ide_write_ata` mirroring the read twin; a dedicated raw `-drive if=ide` image as the store | set a config variable, then **`cmp` the host's image before and after** — it must differ | 32-bit |
 | **P2 — survives an OS boot, then a power cycle** | nothing new — P1's store, exercised | set a value, boot Linux with the existing [`showcase-rival-boots-linux.sh`](showcase-rival-boots-linux.sh), exit QEMU entirely, start a **fresh process**, read it back | 32-bit |
 | **P3 — the pmem store** | an NFIT reader (or, as a first step, a hard-coded region); lift `multiboot.c`'s type-1 filter; then the 64-bit addressing | `/nvram` answering at a physical address **≥ `0x100000000`**, with the backing file changing on the host | **needs the port** |
 
@@ -638,12 +713,21 @@ Three notes on why the rungs are cut here and not elsewhere:
   measuring the wrong thing. It is P1's control as much as its successor — and
   a RAM-backed P0 must **fail** P2, which is the way to find that out cheaply.
 
-What this ladder deliberately does not do is settle **row 2**. A writable
-filesystem is a larger project than all of P0–P2 together (five layers, listed
-above), and nothing in the persistence story needs it — it is worth building
-only if the goal is *OFW parity*, i.e. `pseudo-nvram` as a file a human can read
-with the OS booted. Named here rather than left implicit, per the rule about
-coverage lists that under-cover in silence.
+**P1 deliberately picks the cheapest backing, not the most interesting one.**
+The other two stay on the table as *variants* of the same rung, each buying
+something the raw-IDE store does not, and each costing exactly one thing:
+
+| variant | what it buys | what it costs |
+|---|---|---|
+| **floppy** | period fidelity, and a 1.44 MB image a human can mount on the host | flip `CONFIG_DRIVER_FLOPPY`; a write path; an ED row for 2.88 MB |
+| **pflash** | a region the firmware *owns* rather than borrows — the EFI shape | a CFI driver; the 4 MiB pflash0 image (booted, above) |
+
+What the ladder deliberately does **not** do is build a writable **filesystem**.
+That is a genuinely large project (five layers) and — per the reframe above —
+nothing in the persistence story needs it. It is worth doing only for full *OFW
+parity*: `pseudo-nvram` as a file the booted OS can also read. Named here rather
+than left implicit, per the rule about coverage lists that under-cover in
+silence.
 
 ### "Data survives an OS boot" is three different questions
 
@@ -709,6 +793,15 @@ did not, and per house style they are named rather than silently rewritten:
    most missing code, not the least. The corresponding over-claim in the other
    direction is also fixed: the pmem row was a *design* claim and its placement is
    now measured at `0x100000000`.
+9. **And then the corrected row 2 was itself answering the wrong question.** The
+   five read-only layers are real, but they gate writing a **file** — which
+   `arch_nvram_get`/`put` never do. They are arch code: macio's implementation is
+   plain MMIO with no package in sight. NVRAM needs raw bytes at a fixed place,
+   which deletes four of the five layers and leaves one — *can this driver put a
+   sector back?* On that question **IDE is the cheapest backing of the three**,
+   not the most expensive, and the recommendation in the ladder inverted
+   accordingly. Correction 8 was right about the layers and wrong about which
+   question they answered.
 
 ## What this document did NOT prove
 
