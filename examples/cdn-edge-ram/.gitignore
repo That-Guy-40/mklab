@@ -1,0 +1,13 @@
+# Lab scratch. Everything here is created by the procedure in MANUAL_TESTING.md and
+# demo-cdn-state.sh, which bind-mount THIS DIRECTORY into the container as /work — so a
+# container-side path like `/work/altroot` lands right here, owned by root.
+#
+# altroot/ is the giveaway: `zpool import -R /work/altroot` needs a mountpoint, creates one,
+# and leaves the empty tree behind on export. It is a mountpoint by design, not litter, and
+# it kept turning up in `git status` as an untracked root-owned directory that looked like
+# something had gone wrong.
+altroot/
+
+# The loop-backed pool vdev ($HERE/.vdev.img) and the fetched asset's digest.
+.vdev.img
+.asset.sha
