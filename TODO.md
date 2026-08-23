@@ -238,8 +238,10 @@ which can be picked up tonight and which cannot be picked up at all here.
 > four in §4, §8, §0.5 C.2 and micro-cloud's `DEFERRED.md`), and it shares their shape
 > exactly: written the same day the work landed, describing the solution, never ticked.
 
-- [ ] **A.5** — **four files the micro-cloud docs promise and do not have.** Found
-      2026-08-20 while fixing two of them, and the interesting part is *why nobody noticed*.
+- [x] **A.5** — **four files the micro-cloud docs promised and did not have.** ✅ **DONE
+      2026-08-23** — all four resolved: two written, one built and booted, one deliberately
+      NOT built. Found 2026-08-20 while fixing two of them, and the interesting part is
+      *why nobody noticed*.
       `RUNBOOK-first-microvm.md` was cited by [`learning-paths.toml`](examples/learning-paths.toml)
       as **step 1's checkpoint** — the entry point of the whole journey — and had never
       existed; it is now written and every command in it was run before it was written.
@@ -287,6 +289,17 @@ which can be picked up tonight and which cannot be picked up at all here.
       hand-walk was added to the `tutorial-hand-walks` collection, because micro-cloud itself
       is already routed. A green coverage gate therefore did *not* mean the new unit was in
       the by-journey view built for it — it is now.
+
+      **What is left of this entry is a wish, not a task, and that is why the box is ticked.**
+      §4.1 also asks for a test that fails when a file declares a fork and is not listed in
+      `CLONES.md`. No such file exists today (the ledger's entry is a `git grep` result), so
+      there is nothing to gate and no way to know the gate works. It is recorded where the
+      person who would need it looks — [`CLONES.md`](examples/micro-cloud/CLONES.md)'s *"what
+      is NOT yet enforced"* section — rather than held here as an open box.
+
+      **An unticked box should mean schedulable work.** Leaving this one open made the list
+      read as five items when two were real, which is §0.5's own complaint about a status
+      line being read *instead of* the section it heads.
       *Why the checkers were green the whole time:* all four were cited as **bare filenames
       in prose and in ASCII tree diagrams inside code fences**.
       [`link_check.py`](tools/link_check.py) validates markdown *links*; a filename in a tree
@@ -314,10 +327,14 @@ which can be picked up tonight and which cannot be picked up at all here.
 
 ### Blocked on hardware — recorded so it stops being re-raised as if it were schedulable
 
-- [ ] **C.1 — metal-as-a-service `image` / `image+measured` drivers on REAL hardware.**
+- **C.1 — metal-as-a-service `image` / `image+measured` drivers on REAL hardware.**
       Detail in [`examples/metal-as-a-service/DEFERRED.md`](examples/metal-as-a-service/DEFERRED.md).
       Everything that can be proven under emulation has been; what remains needs a machine
       with a real BMC, and no amount of local work advances it.
+      **NOT A CHECKBOX, deliberately.** This is not undone work; it is work this host cannot
+      do, and an empty box invites someone to pick it up, re-scope it and defer it again —
+      the churn this section exists to prevent. It carries a date instead.
+
       **Blocker re-verified 2026-08-23** — this section's own rule is that a blocker is
       checked before it is restated, since C.2 sat behind a wrong one for eight days. Still
       held: `DEFERRED.md` names the requirement as real hardware with a BMC, and this host
