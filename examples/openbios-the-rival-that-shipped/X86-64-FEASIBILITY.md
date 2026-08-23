@@ -851,10 +851,26 @@ querying the terminal (`ESC]10;?`, `ESC[6n`, then `ESC]11;?`) and blocks until
 something answers, so scripting it is a chain of escape replies that would rot
 the first time the shell changed.
 
+**Both writable backings were run through it**, and the two claims are not equally
+strong — which the track says out loud rather than flattening:
+
+| track | survives an OS boot | did the OS *see* the store? |
+|---|---|---|
+| `persist-os` (ide@3) | **yes** | **yes, asserted** — the kernel enumerated it by size |
+| `persist-os-flash` (pflash) | **yes** | **not shown** — Linux does not enumerate a vars pflash as a block device |
+
+The flash row is weaker *on purpose and by construction*: a region the firmware
+**owns** is one the OS never meets. That is the backing's whole appeal, and it
+also means that run proves *"survived an OS boot"*, not *"survived an OS that
+could have clobbered it."* The IDE row is the one that shows the second thing,
+and it is the one to cite when the question is whether the bytes are safe from a
+running system.
+
 Three controls, planted and watched:
 
 | planted defect | verdict |
 |---|---|
+| run the **flash** track against the IDE store | `this track measures pflash@0xffbe0000 but the write boot reported: nvram: backed by ide@3` |
 | wipe the store between the OS boot and the read-back | `REGRESSION: boot-file did not survive a boot with an OS in between` |
 | run the OS phase with the store **not attached** | `the kernel never enumerated an ATA disk — this run does not answer the OS-in-between question` |
 | never boot Linux at all | `Linux did not reach u-root, so no OS ever owned the machine and this track measured nothing` |

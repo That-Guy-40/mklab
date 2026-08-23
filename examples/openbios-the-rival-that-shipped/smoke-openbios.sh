@@ -282,7 +282,7 @@ case "$FLAVOR" in
       || fail "the floppy WRITE no longer reports failure — if the known-blocked turnaround is fixed, this track and the KNOWN-BLOCKED note in drivers/floppy.c both need updating, and persist-floppy should become a real track — see $LOG"
     fail "the floppy write failed against a backing that is not floppy0 — this track is not measuring what it thinks — see $LOG"
     ;;
-  persist-os)
+  persist-os|persist-os-flash)
     # P2's OTHER half: not just a power cycle, but a POWER CYCLE WITH AN OS IN
     # BETWEEN. The distinction matters because the OS owns the machine while it
     # runs -- it enumerates the disks, and anything it decides to reuse is gone.
@@ -303,9 +303,24 @@ case "$FLAVOR" in
     [[ -f "$INITRD" ]] || skip "no initrd at $INITRD (set INITRD=)"
 
     NONCE="P2-OS-$$"
-    NV="$WORKDIR/persist-os-store.img"
-    rm -f "$NV"; truncate -s 1M "$NV"          # 1 MiB == 2048 sectors, asserted below
-    DRIVE=(-drive "if=ide,index=3,format=raw,cache=writethrough,file=$NV")
+    if [[ "$FLAVOR" == persist-os-flash ]]; then
+      SEABIOS=$(ls /usr/share/seabios/bios.bin /usr/share/qemu/bios.bin 2>/dev/null | head -1)
+      [[ -n "$SEABIOS" ]] || skip "no seabios image found — pflash0 must hold a BIOS or nothing boots"
+      grep -q 'lab_flash_present' "$SRC" || skip "no CFI flash backing in $SRC"
+      F0="$WORKDIR/os-flash0.img"; NV="$WORKDIR/os-flash1.img"
+      truncate -s 4M "$F0"
+      dd if="$SEABIOS" of="$F0" bs=1 seek=$(( 4*1024*1024 - $(stat -c%s "$SEABIOS") )) \
+         conv=notrunc status=none
+      rm -f "$NV"; truncate -s 128k "$NV"
+      DRIVE=(-drive "if=pflash,format=raw,file=$F0,unit=0"
+             -drive "if=pflash,format=raw,file=$NV,unit=1")
+      WANT_BACKEND="pflash@0xffbe0000"
+    else
+      NV="$WORKDIR/persist-os-store.img"
+      rm -f "$NV"; truncate -s 1M "$NV"        # 1 MiB == 2048 sectors, asserted below
+      DRIVE=(-drive "if=ide,index=3,format=raw,cache=writethrough,file=$NV")
+      WANT_BACKEND="ide@3"
+    fi
     ISO="$WORKDIR/persist-os.iso"; STAGE="$WORKDIR/persist-os-stage"
     rm -rf "$STAGE"; mkdir -p "$STAGE"; rm -f "$ISO"
     cp "$KERNEL" "$STAGE/VMLINUZ"; cp "$INITRD" "$STAGE/UROOT.IMG"
@@ -331,8 +346,8 @@ case "$FLAVOR" in
       --send "setenv boot-file $NONCE\r" --expect "0 > " \
       --send "\" /nvram\" \" update-nvram\" execute-device-method .\r" --expect "0 > " \
       || fail "no prompt conversation while writing the store — see $LOG.write"
-    grep -q "nvram: backed by ide@3" "$LOG.write" \
-      || fail "the store was not IDE-backed on the write boot — see $LOG.write"
+    grep -q "nvram: backed by $WANT_BACKEND" "$LOG.write" \
+      || fail "this track measures $WANT_BACKEND but the write boot reported: $(grep -o 'nvram: backed by .*' "$LOG.write" | tr -d '\r' | head -1)"
 
     note "2/3 booting Linux with the store still attached → $LOG.os"
     QEXTRA=("${DRIVE[@]}" -cdrom "$ISO")
@@ -341,14 +356,25 @@ case "$FLAVOR" in
       --send 'boot /ide@1/cdrom@0:\\vmlinuz console=ttyS0 initrd=/ide@1/cdrom@0:\\uroot.img\r' \
       --expect "Welcome to u-root" \
       || fail "Linux did not reach u-root, so no OS ever owned the machine and this track measured nothing — see $LOG.os"
-    # THE OS MUST HAVE SEEN THE STORE. Without this the "OS in between" is just a
-    # slow reboot: an OS that never enumerated the disk cannot have spared it.
-    # Bound to OUR disk by its size (1 MiB == 2048 sectors), not to any disk.
-    grep -q "ATA-7: QEMU HARDDISK" "$LOG.os" \
-      || fail "the kernel never enumerated an ATA disk — the store was not visible to the OS, so this run does not answer the OS-in-between question — see $LOG.os"
-    grep -q "2048 sectors" "$LOG.os" \
-      || fail "the kernel enumerated a disk but not one of 2048 sectors — it saw something other than this track's store — see $LOG.os"
-    note "   the OS booted AND enumerated the store (ATA-7 QEMU HARDDISK, 2048 sectors)"
+    if [[ "$FLAVOR" == persist-os ]]; then
+      # THE OS MUST HAVE SEEN THE STORE. Without this the "OS in between" is
+      # just a slow reboot: an OS that never enumerated the disk cannot have
+      # spared it. Bound to OUR disk by size (1 MiB == 2048 sectors).
+      grep -q "ATA-7: QEMU HARDDISK" "$LOG.os" \
+        || fail "the kernel never enumerated an ATA disk — the store was not visible to the OS, so this run does not answer the OS-in-between question — see $LOG.os"
+      grep -q "2048 sectors" "$LOG.os" \
+        || fail "the kernel enumerated a disk but not one of 2048 sectors — it saw something other than this track's store — see $LOG.os"
+      note "   the OS booted AND enumerated the store (ATA-7 QEMU HARDDISK, 2048 sectors)"
+    else
+      # A WEAKER CLAIM, STATED AS SUCH. Linux does not enumerate the vars pflash
+      # as a block device, so there is no equivalent line to assert and this
+      # track cannot show the OS ever met the store. That is the point of the
+      # backing -- a region the firmware OWNS rather than one it shares -- but it
+      # also means this run proves "survived an OS boot", NOT "survived an OS
+      # that could have clobbered it". The ide track is the one that shows that.
+      note "   the OS booted; NOT asserting the OS saw the store — Linux does not"
+      note "   enumerate a vars pflash, so this rung is weaker here than on ide@3"
+    fi
 
     note "3/3 fresh firmware boot, reading it back → $LOG.read"
     QEXTRA=("${DRIVE[@]}")
@@ -359,7 +385,10 @@ case "$FLAVOR" in
     grep -q "zapping pram" "$LOG.read" \
       && fail "REGRESSION: the store was re-formatted after the OS boot — it did not arrive valid — see $LOG.read"
 
-    pass "P2 (OS in between): boot-file=$NONCE survived a full Linux boot that enumerated the very disk holding it"
+    if [[ "$FLAVOR" == persist-os ]]; then
+      pass "P2 (OS in between): boot-file=$NONCE survived a full Linux boot that enumerated the very disk holding it"
+    fi
+    pass "P2 (OS in between): boot-file=$NONCE survived a full Linux boot on $WANT_BACKEND (the OS was not shown to have seen the store — see the note above)"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os]" >&2; exit 1 ;;
+  *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash]" >&2; exit 1 ;;
 esac
