@@ -701,8 +701,8 @@ each one's checkpoint is chosen to be an **outcome rather than a mechanism** —
 | rung | work | observable checkpoint | mode |
 |---|---|---|---|
 | **P0 — a node that exists** ✅ **DONE** | implement `arch_nvram_size/get/put` in `arch/x86` over a plain static buffer; call `nvram_init()` once | `dev / ls` lists **`nvram`**, and `dev /nvram .properties` answers — the exact probe that comes back without it today | 32-bit |
-| **P1 — survives a firmware reset** | `WIN_WRITE 0x30` + an `ob_ide_write_ata` mirroring the read twin; a dedicated raw `-drive if=ide` image as the store | set a config variable, then **`cmp` the host's image before and after** — it must differ | 32-bit |
-| **P2 — survives an OS boot, then a power cycle** | nothing new — P1's store, exercised | set a value, boot Linux with the existing [`showcase-rival-boots-linux.sh`](showcase-rival-boots-linux.sh), exit QEMU entirely, start a **fresh process**, read it back | 32-bit |
+| **P1 — survives a firmware reset** ✅ **DONE** | `WIN_WRITE 0x30` + an `ob_ide_write_ata` mirroring the read twin; a dedicated raw `-drive if=ide` image as the store | set a config variable, then **`cmp` the host's image before and after** — it must differ | 32-bit |
+| **P2 — survives a power cycle** ✅ **DONE** (an OS in between is still untested) | nothing new — P1's store, exercised | set a value, boot Linux with the existing [`showcase-rival-boots-linux.sh`](showcase-rival-boots-linux.sh), exit QEMU entirely, start a **fresh process**, read it back | 32-bit |
 | **P3 — the pmem store** | an NFIT reader (or, as a first step, a hard-coded region); lift `multiboot.c`'s type-1 filter; then the 64-bit addressing | `/nvram` answering at a physical address **≥ `0x100000000`**, with the backing file changing on the host | **needs the port** |
 
 #### P0 — RUN, and it passes
@@ -763,6 +763,68 @@ is what happens to briq's 2,048.
 `nvram_open() { RET(-1); }` upstream — it exists and refuses — so nothing has
 opened this device; and `#bytes`, which macio publishes, is not set here, so
 `.properties` shows only `name`. Both are P1's business.
+
+#### P1 + P2 — RUN, and they pass
+
+[`patches/05-x86-nvram-p1-ide-backing.patch`](patches/05-x86-nvram-p1-ide-backing.patch)
+gives the store a real backing, and the reframe above is what made it small:
+
+| layer | change |
+|---|---|
+| `drivers/ide.h` | `WIN_WRITE 0x30` — **absent upstream**, which defined only `READ`, `READ_EXT`, `IDENTIFY`, `PACKET`, `IDENTIFY_PACKET` |
+| `drivers/ide.c` | `ob_ide_pio_data_out()` — the mirror of `data_in`, identical up to the transfer, because `ob_ide_pio_outsw` already existed and was already used by the ATAPI packet path |
+| `drivers/ide.c` | an LBA28 write, and a by-number drive registry: the channels are `malloc`'d inside `ob_ide_init()` and kept nowhere a caller could reach, so `arch_nvram_*` had nothing to talk to |
+| `arch/x86/openbios.c` | `get`/`put` read and write **raw sectors on ide@3** |
+
+**Nothing in `disk-label`, `pc-parts` or `fs/` is touched.** They are still
+read-only, and none of them is in the path — which is the reframe made concrete.
+
+Two deliberate refusals, both *before* the irreversible step:
+
+- **The write path refuses anything outside LBA28** rather than silently falling
+  through to a CHS or LBA48 path nobody has exercised.
+- **The store refuses a drive that is carrying someone else's data.** It accepts
+  a blank first 8 KiB or one already bearing `nvram.c`'s partition names, and
+  otherwise keeps the volatile buffer and says so on the console. Pointing this
+  at a real boot disk would eat it, and a gate after the `write` is a post-mortem.
+
+The write also waits for `READY` with no error before reporting success —
+otherwise "the write succeeded" is a claim about the **bus**, not about storage.
+
+##### The checkpoint, and why the control is half of it
+
+`./smoke-openbios.sh persist` boots three times:
+
+1. **write** — `setenv boot-file <nonce>`, then
+   `" /nvram" " update-nvram" execute-device-method`, which answers `-1`; the
+   host image's sha256 must change.
+2. **read back** — a **brand-new QEMU process**, same image: the nonce must be
+   there, and `zapping pram` must *not* (the store has to arrive already valid).
+3. **control** — the identical boot with **no drive attached**: the nonce must be
+   absent, and the firmware must say `no drive at ide@3`.
+
+Step 3 is not decoration. The first hand-run of this check used `auto-boot?`,
+whose x86 default is **already `false`** — so it "passed" while measuring the
+default, and the control printed the identical line, which is the only reason it
+was caught. Hence the nonce, which no default can equal.
+
+All three assertions were then watched to bite, by planting the defect:
+
+| planted defect | verdict |
+|---|---|
+| wipe the image between write and read-back | `FAIL: REGRESSION: boot-file did not survive a power cycle` |
+| restore the image after the write, so the write reports success and lands nothing | `FAIL: REGRESSION: update-nvram reported success and the host image is byte-identical` |
+| give the "no drive" control a drive | `FAIL: REGRESSION: the control saw <nonce> with no drive attached — this check cannot fail` |
+
+##### The harness's own bug, caught on its first regression run
+
+The `nvram` track originally derived its expectation with
+`git apply --reverse --check patches/04`, i.e. *"is exactly that diff present"*.
+It broke the moment P1 edited the same file: P0 was still in effect, the node was
+still there, and the check insisted it should be absent. **A patch is a diff,
+which is a cache of a state.** Both tracks now derive from the *cause* — whether
+`arch/x86/openbios.c` calls `nvram_init(`, and whether it calls
+`ob_ide_write_blocks_nr` — which survives later patches to the same file.
 
 Three notes on why the rungs are cut here and not elsewhere:
 
