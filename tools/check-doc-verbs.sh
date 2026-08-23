@@ -226,6 +226,113 @@ verb_is_destructive() {
     esac
 }
 
+# ── TIER B: ask the tool WITHOUT running any verb it has ────────────────────────────────
+# TODO 11.4a. 93 rows were UNPROBED because invoking their verbs could do work. The way out
+# is that a NONCE verb is the safest possible call: no tool has it, so a verb-dispatched tool
+# can only refuse. What comes back with that refusal is the tool's own usage text, and that
+# is a real oracle -- the tool's self-description, not a regex over its source.
+#
+# It is WEAKER than tier A and is labelled as such wherever it speaks: tier A asks the
+# dispatch itself (a verb it lacks is answered exactly like a verb nobody has), while this
+# asks what the tool SAYS it accepts. A tool whose usage is out of date will be believed.
+# That is worth having anyway, because the alternative for these rows is nothing at all.
+#
+# LAYERED, because "only the nonce" still invokes something. A script with no argument
+# parsing ignores the nonce and just runs, so it is filtered out STATICALLY first and never
+# invoked at all. The grep is a PRE-FILTER for safety, not the oracle -- the oracle is still
+# the tool's answer.
+has_dispatch() {
+    local t="$1"
+    grep -qE 'case[[:space:]]+"?\$\{?(1|verb|VERB|cmd|CMD|subcmd|action)' "$t" 2>/dev/null && return 0
+    grep -qE '^[[:space:]]*(usage|print_usage|show_help)\(\)' "$t" 2>/dev/null && return 0
+    return 1
+}
+
+# usage_verbs <tool-abs> — invoke ONLY the nonce, bounded, in a scratch cwd, and print the
+# verb-looking tokens from whatever it says back. Prints nothing if it did not clearly refuse.
+usage_verbs() {
+    local t="$1" out rc scratch
+    scratch="$(mktemp -d "$WORK/scratch.XXXXXX")"
+    out="$( cd "$scratch" && LAB_STATE_DIR="$scratch/state" timeout 10 bash "$t" "$NONCE" </dev/null 2>&1 )"; rc=$?
+    rm -rf -- "$scratch"
+    # A timeout means it did NOT refuse -- it started doing something. Say nothing, and let
+    # the caller record an UNKNOWN rather than guess from a half-finished run.
+    (( rc == 124 )) && return 1
+    [[ -n "$out" ]] || return 1
+    grep -qiE 'usage|unknown|unrecognis|unrecogniz|invalid|no such|not a (known|valid)|expected one of' <<<"$out" || return 1
+    # THE REFUSAL OFTEN DOES NOT CONTAIN THE VERB LIST. Measured 2026-08-23: be.sh answers a
+    # nonce with `error: unknown command '…' (try --help)` and nothing else, so reading only
+    # this output made every documented verb look absent -- 21 false warnings on the first
+    # run. The listing is one call further on, and `--help` is no more dangerous than the
+    # nonce: neither is a verb the tool has, and has_dispatch() already established there is
+    # a dispatch to refuse them. Concatenate both and read the pair.
+    local help_out scratch2
+    scratch2="$(mktemp -d "$WORK/help.XXXXXX")"
+    help_out="$( cd "$scratch2" && LAB_STATE_DIR="$scratch2/state" timeout 10 bash "$t" --help </dev/null 2>&1 )"
+    rm -rf -- "$scratch2"
+    out="$out
+$help_out"
+    # Verb-looking tokens: a bare lowercase word at the start of a line or after a pipe,
+    # which is how every usage block in this repo lists them.
+    printf '%s\n' "$out" \
+        | grep -oE '(^|[[:space:]|])[a-z][a-z0-9-]{1,20}([[:space:]|]|$)' \
+        | tr -d ' |' | sort -u
+}
+
+# subverb_of <tool-abs> <verb> — does the tool spell this verb as "<parent> <verb>"?
+# Asked of the tool's own usage output, same as tier B, not of its source.
+subverb_of() {
+    local t="$1" v="$2" out scratch
+    scratch="$(mktemp -d "$WORK/sv.XXXXXX")"
+    out="$( cd "$scratch" && LAB_STATE_DIR="$scratch/state" timeout 10 bash "$t" --help </dev/null 2>&1
+            cd "$scratch" && LAB_STATE_DIR="$scratch/state" timeout 10 bash "$t" "$NONCE" </dev/null 2>&1 )"
+    rm -rf -- "$scratch"
+    [[ -n "$out" ]] || return 1
+    # `<parent> <verb>` on one line, or `parent create|list|restore` with the verb among the
+    # alternatives -- both are how this repo's usage blocks spell a subverb.
+    # Braces and commas count: this repo spells a subverb group as
+    #     lab-fc.sh snapshot  {create|list|restore|delete} <name>
+    # and a pattern without `{` matched none of them -- subverbs read as 0 on the first run
+    # while seven of them sat in the warning list.
+    # TWO THINGS THIS COST, both invisible from a pattern that reads correctly:
+    #
+    #  1. `\$` inside a double-quoted string is a LITERAL DOLLAR, so `(…|\$)` did not mean
+    #     "or end of line" -- it meant "or a dollar sign", and the anchor became a required
+    #     character. A space is appended to every line instead, so the delimiter always exists.
+    #  2. A backslash inside a BRACKET EXPRESSION is not an escape in POSIX ERE, so
+    #     `[[:space:]|,}\)\]]` closed at the first `]` and left a stray one that had to match
+    #     literally. The class below contains no brackets to misparse: "the verb ends here"
+    #     is just "the next character is not one a verb is made of".
+    #
+    # Subverbs read as 0 for four runs while seven of them sat in the warning list, and the
+    # pattern matched every time it was tested at a prompt -- because typing it there goes
+    # through different quoting than storing it in a file.
+    # `[^a-z]*` was WRONG and its wrongness is instructive: it let the verb sit behind any
+    # run of non-lowercase text, so the prose line "create needs it RUNNING; restore needs it
+    # STOPPED." matched as if `restore` were a subverb of `it`. Three "subverbs" were found
+    # that way on the real tool while THIS fixture -- a clean usage block -- failed. The
+    # control fixture disagreeing with the live run is what exposed it.
+    #
+    # Only an ALTERNATION GROUP counts: `<parent> {a|b|verb|c}`, which is how a usage block
+    # spells a subverb and how prose never does.
+    # THE VERB MUST FOLLOW A SEPARATOR, not merely appear after some letters. Without the
+    # `([a-z0-9,-]+[|,])*` group below, `[a-z0-9|,-]*up` matched the "up" inside
+    # `--groups   group,group,...` and excused `lab-chroot.sh up` as a subverb -- the very
+    # verb two documents quote as never having existed. A rule that excuses a missing verb
+    # is worse than no rule, and this one got there by matching a SUFFIX.
+    # THE CHARACTER IMMEDIATELY BEFORE THE VERB MUST BE A GROUP SEPARATOR. Four earlier
+    # patterns each admitted prose by a different door, and every one of them looked right:
+    #   `[^a-z]*verb`        matched "it RUNNING; restore" -- any non-lowercase run
+    #   `[a-z0-9|,-]*up`     matched the "up" inside "--groups group,group" -- a SUFFIX
+    #   `([a-z0-9,-]+[|,])*` repeated ZERO times, collapsing to "<word> <verb>", which
+    #                        matched "install at first boot"
+    # A usage block spells a subverb as `<parent> {a|b|verb|c}`; prose never puts `|`, `,`,
+    # `{` or `(` immediately before the word. That is the whole distinction, so ask for it
+    # directly rather than approximating it with a quantifier.
+    grep -qE "[a-z][a-z0-9-]+[[:space:]]+[^[:space:]]*[{(|,]${v}[^a-z0-9-]" \
+        <<<"$(sed 's/$/ /' <<<"$out")"
+}
+
 probe_is_safe() {
     case "$1" in
         */lab-*.sh) return 0 ;;                       # the phase drivers
@@ -287,11 +394,42 @@ check_doc_command() {
         return
     fi
     if ! probe_is_safe "$tool"; then
-        UNPROBED+=("$src: $tool $verb")
+        # TIER B — never invoke one of ITS verbs; ask the nonce and read what it says back.
+        if ! has_dispatch "$abs"; then
+            UNPROBED+=("$src: $tool $verb  (no verb dispatch found — not invoked at all)")
+            return
+        fi
+        local -a uverbs
+        mapfile -t uverbs < <(usage_verbs "$abs")
+        if (( ${#uverbs[@]} == 0 )); then
+            UNPROBED+=("$src: $tool $verb  (did not refuse the nonce with usage — left alone)")
+            return
+        fi
+        # A THIN ANSWER IS NOT EVIDENCE OF ABSENCE. Tier B is a weak oracle, and it may only
+        # WARN when the tool actually printed something verb-list-shaped. Measured: without
+        # this, `drivers/verify-lib.sh` and `drivers/install.sh` -- SOURCED driver libraries,
+        # not verb-dispatched CLIs -- produced "does not list" warnings for interface verbs
+        # they implement perfectly well, and an English word in prose ("stays") became a
+        # finding about a real tool. UNKNOWN is a verdict; a guess dressed as one is not.
+        if (( ${#uverbs[@]} < 5 )); then
+            UNPROBED+=("$src: $tool $verb  (its answer was too thin to list verbs — not judged)")
+            return
+        fi
+        if printf '%s\n' "${uverbs[@]}" | grep -qxF "$verb"; then
+            ok "$src: $tool $verb  [tier B: the tool's own usage lists it]"
+        else
+            warn "$src: '$tool' does not list '$verb' in the usage it printed for an unknown verb. TIER B is a WEAKER oracle than asking the dispatch — it believes the tool's self-description, so an out-of-date usage reads as a missing verb. Check the sentence before believing this one"
+        fi
         return
     fi
     if verb_present "$abs" "$verb"; then
         ok "$src: $tool $verb"
+    elif subverb_of "$abs" "$verb"; then
+        # THE THIRD CATEGORY, found by triaging 11.4's warnings: `lab-fc.sh restore` is
+        # shorthand for `lab-fc.sh snapshot restore`. The dispatch has no top-level `restore`,
+        # so asking it says "no" — correctly, and uselessly, because the document is not
+        # wrong so much as abbreviated. Reported as a note, not a defect.
+        ok "$src: $tool $verb  [a SUBVERB — the tool spells it '<parent> $verb'; the document abbreviates]"
     elif [[ "$class" == hard ]]; then
         bad "$src: '$tool' has no verb '$verb' — the document types a command that cannot be run"
     else
@@ -409,6 +547,47 @@ if (( ${#PROBLEMS[@]} != _before )); then
     fail "CONTROL FAILED: the SAME command quoted behind a \`$ \` prompt was treated as an instruction. A transcript records what happened; it is not a command the document is telling anyone to type"
 fi
 ok "end-to-end: the same command quoted as a \`$ \` transcript does NOT fail it"
+
+# §0.3 — TIER B AND THE SUBVERB RULE, both of which are new oracles and neither of which may
+# ship unwatched. Fixtures, so the controls do not depend on any real tool's usage text.
+_tb="$WORK/tierb-tool.sh"
+cat > "$_tb" <<'TBTOOL'
+#!/usr/bin/env bash
+case "${1:-}" in
+    --help)
+        cat <<USAGE
+usage: tierb-tool.sh <verb>
+  start    begin
+  stop     end
+  status   report
+  inspect  look
+  snapshot {create|list|restore|delete} <name>
+  --groups   group,group,...   (the suffix trap: "gro"+"up" is not a subverb "up")
+  install at first boot        (prose: "<word> <verb>" is not a subverb either)
+USAGE
+        exit 0 ;;
+    start|stop|status|inspect|snapshot) exit 0 ;;
+    *) echo "unknown command '${1:-}' (try --help)" >&2; exit 1 ;;
+esac
+TBTOOL
+chmod +x "$_tb"
+has_dispatch "$_tb" || fail 'CONTROL FAILED: the fixture dispatches on $1 with a case statement and has_dispatch() did not see it — tier B would never be reached for a tool that qualifies. (Single-quoted on purpose: an unescaped backtick in a double-quoted string is command substitution.)' 
+mapfile -t _uv < <(usage_verbs "$_tb")
+printf '%s\n' "${_uv[@]}" | grep -qxF inspect \
+    || fail "CONTROL FAILED: tier B did not read 'inspect' out of a usage block the fixture printed for an unknown verb — the nonce-then---help path is not working, and every tier-B row would read as a missing verb"
+printf '%s\n' "${_uv[@]}" | grep -qxF zzzz-not-a-verb \
+    && fail "CONTROL FAILED: tier B reported a verb the fixture never printed"
+ok "tier B: reads a real verb out of the usage a fixture prints for an unknown one, and invents none"
+
+subverb_of "$_tb" restore \
+    || fail "CONTROL FAILED: 'restore' is spelled '{create|list|restore|delete}' after 'snapshot' in the fixture, and subverb_of did not see it. That pattern was wrong FOUR times (a \$ that was a literal dollar, a backslash inside a bracket expression) and matched perfectly every time it was tested at a prompt"
+subverb_of "$_tb" nosuchthing \
+    && fail "CONTROL FAILED: subverb_of matched a word the fixture does not contain, so it would excuse any missing verb as a subverb"
+subverb_of "$_tb" boot \
+    && fail "CONTROL FAILED: 'boot' appears in the fixture only as the last word of a PROSE line, and subverb_of took it for a subverb. A quantifier that may repeat zero times collapses to \"<word> <verb>\", which is what prose looks like"
+subverb_of "$_tb" up \
+    && fail "CONTROL FAILED: 'up' appears only INSIDE the word 'group' in the fixture, and subverb_of took it for a subverb. That is how it excused lab-chroot.sh's non-existent 'up' verb on a real run"
+ok "subverb: recognises '<parent> {…|verb|…}' and refuses a word that is not there"
 
 # ── §1. the documents ───────────────────────────────────────────────────────────────────
 if (( $# )); then DOCS=("$@"); else mapfile -t DOCS < <(git ls-files '*.md'); fi
