@@ -280,6 +280,7 @@ pure-64-bit build.
 |---|---|
 | memory above 4 GB | `claim`/`release` over the whole map; today's firmware simply cannot address it |
 | an honest device tree | `#address-cells 2`, a `/cpus` node that isn't lying about the mode the CPU is in |
+| the one persistence story that needs long mode | a file-backed **pmem region**, measured at exactly `0x100000000` on `-M pc` — the only NVRAM backing a 32-bit firmware cannot address. CMOS, a drive file and pflash are all reachable in 32-bit today (whether they *work* is a separate question: the drive-file row has no write path at any layer). Long mode is the cheapest third of that story — ACPI discovery and the multiboot map filter block it in either mode. See *Persistence* below |
 | a simpler kernel handoff | no 64→32 drop; the `+0x200` entry, per the corrected claim above |
 | an upstream-shaped patch | OpenBIOS would plausibly take a real `arch/amd64` target: its own example config already requests the image, and the drift fixes are exactly the sweeps upstream applies anyway |
 
@@ -348,9 +349,235 @@ that one: same implementation, same dictionary source, wider cell. The place to
 look for breakage is any word that assumes `/n = 4` (a literal `4 +` where `na+`
 was meant), which is a grep, not a port.
 
+## Persistence: what would back an NVRAM on x86-64 — measured 2026-08-23
+
+Asked because the 64-bit port's clearest gain is *an honest device tree*, and the
+obvious next question is whether that tree could carry a node whose **contents
+outlive a boot**. The short answer: OpenBIOS x86 has no NVRAM at all today; only
+one of the four ways to give it one has anything to do with long mode; and that
+one is *also* the only one blocked by two things that have nothing to do with
+long mode.
+
+### Today: the package is compiled and never instantiated
+
+| evidence | what it says |
+|---|---|
+| `nm obj-x86/libpackages.a` | `nvram_init` **is** in the x86 build — `packages/nvram.c` is compiled unconditionally |
+| `grep -rn nvram_init --include='*.c'` | its only callers are `arch/ppc/pearpc/init.c`, `arch/ppc/mol/init.c` and `drivers/macio.c`. **No x86 caller** |
+| `grep arch_nvram_{size,get,put}` | defined only in `arch/ppc/qemu/qemu.c`, `arch/ppc/briq/briq.c`, `arch/ppc/mol/mol.c`. x86 and amd64 define **none** |
+| live `dev / ls` (multiboot, QEMU) | `aliases openprom options chosen builtin packages pci8086,1237@0 ide@0..3 console` — **there is no `/nvram`** |
+| live `devalias` | prints nothing: no aliases are defined |
+| live `dev /options .properties` | exactly three: `name`, `screen-#columns`, `screen-#rows` |
+| live `nvramrc` | the **word exists** — it pushes a string (the prompt goes `0 >` → `2 >`) |
+
+That last pair is the distinction worth holding: the *config-variable vocabulary*
+from `forth/admin/nvram.fs` is in the dictionary and answers, while the *device*
+that would give it a backing store does not exist. Every value it returns is
+dictionary state, so a reset loses all of it. **Bug #3 (`load-base`) was about that
+vocabulary, not about storage** — and the boot log still prints
+`vga-driver-fcode:load-base isn't unique.`, which is the fix meeting an existing
+definition.
+
+So "add NVRAM to x86" is precisely: implement three functions
+(`arch_nvram_size/get/put`), call `nvram_init(path)` once, and decide what the
+three functions talk to. That last decision is the whole problem.
+
+### The contract all four have to satisfy
+
+Before comparing them, read what `packages/nvram.c` actually asks its arch for
+([`include/arch/common/nvram.h`](https://github.com/openbios/openbios/blob/master/include/arch/common/nvram.h)):
+
+```c
+extern int  arch_nvram_size( void );
+extern void arch_nvram_get( char *buf );
+extern void arch_nvram_put( char *buf );
+```
+
+**No offset, no length — `get` fills a buffer with the whole store and `put`
+writes the whole store back.** That is easy for something memory-mapped and
+awkward for anything that has to be seeked to, and it is the single fact that
+reorders the table below.
+
+The *format* matters too, and it is not a flat byte array: `nvram.c` implements
+the **Mac partitioned NVRAM** — a 16-byte header per partition (checksummed over
+bytes 2–15), lengths counted in **16-byte granules**, free space named
+`77777777777`. Size references from the targets that actually run it:
+`briq` declares `static char nvram[2048]`, and new-world macio reports
+`NW_IO_NVRAM_SIZE 0x00004000` — **16 KiB**.
+
+### The four candidate backings, re-graded against that contract
+
+| backing | survives firmware reset | survives an OS boot / power cycle | reachable in 32-bit | code missing today |
+|---|---|---|---|---|
+| **CMOS/RTC, 128 bytes** | yes | **no** — QEMU offers no file backing | yes | a CMOS driver, and the format does not fit |
+| **A file on an attached drive** | yes | yes | yes | **a write path at every layer — none exists** |
+| **`-drive if=pflash`** | yes | yes | yes — maps at `0xffc00000` | the three functions, plus a boot-path change |
+| **NVDIMM / pmem** | yes | yes | **no — measured at `0x100000000`** | ACPI discovery, a memory-map fix, *then* long mode |
+
+Only the last row needs the port. What follows is what each row costs.
+
+#### 1. CMOS/RTC — the one that is genuinely "the PC's NVRAM", and it is a dead end
+
+QEMU's RTC takes exactly three options, and none of them is a file:
+
+```
+rtc options:
+  base=<str>
+  clock=<str>
+  driftfix=<str>
+```
+
+So it survives a firmware reset and nothing else — which fails the only survival
+that motivated the question. It is also far too small: 128 bytes is **8 granules**,
+one 16-byte partition header leaves **112 bytes** for the entire store, against
+briq's 2 KiB and macio's 16 KiB. `nvramrc` alone is meant to hold a Forth
+program.
+
+And there is no driver to extend: the whole x86 tree touches ports `0x70`/`0x71`
+**once**, and not as storage —
+
+```c
+arch/x86/linux_load.c:570:    outb(0x80, 0x70);
+```
+
+— which is the NMI-disable idiom on the way out to Linux, not a CMOS access.
+
+#### 2. A file on an attached drive — the row that looked easiest and has the most missing code
+
+This is what OFW actually does: its `pseudo-nvram` is *a file on a drive*, the odd
+one out in [`../open-firmware-debugs-itself/DELIVERY-MECHANISMS.md`](../open-firmware-debugs-itself/DELIVERY-MECHANISMS.md)'s
+comparison table, because a generic PC gives firmware no NV region it can own, so
+it borrows a filesystem.
+
+The first draft of this table graded it *easy* on the reasoning that "OpenBIOS x86
+already has `ide@0..3` nodes to build on." That is this repo's standing mistake in
+miniature — **nodes to build on is not a question about writing.** Asking the
+real question, layer by layer:
+
+| layer | methods it exports | write? |
+|---|---|---|
+| `drivers/ide.c` (the disk node) | `open close read-blocks block-size max-transfer dma-*` | **no `write-blocks`** |
+| `packages/pc-parts.c` (the x86 partition package) | `probe open seek read load dir get-info block-size` | **no `write`** |
+| `packages/disk-label.c` | `load read write seek tell dir` | present, and a **stub**: `dlabel_write` drops its argument and pushes `-1` |
+| `packages/deblocker.c` | `read write seek tell` | a real implementation — which forwards to a parent `write` the IDE node does not have |
+| `fs/` — ext2, grubfs, iso9660, hfs, hfsplus | consumers only | **none registers a `write` method** |
+
+So the stack is read-only from the filesystem down to the ATA command layer. This
+lab has already booted a client program off ext2, which proves the *read* half
+end to end and says nothing about the other one. Writing a file back means
+implementing `write-blocks` in the IDE driver, a `write` in `pc-parts`, replacing
+the `disk-label` stub, and teaching one filesystem to write — and the
+whole-image `arch_nvram_put` contract means it must be a full rewrite of the
+region every time, so no append trick shortens it.
+
+#### 3. `-drive if=pflash` — the best fit for the contract, at the price of the boot path
+
+Measured on QEMU 8.2.2, `-M pc`:
+
+```
+00000000ffc00000-00000000ffffffff (prio 0, romd): system.flash0
+```
+
+The top 4 MiB of the 32-bit address space — squarely reachable, and *memory-mapped*,
+which is exactly the shape `arch_nvram_get`/`put` want: two `memcpy`s against a
+fixed address. This is the EFI-shaped answer (`OVMF_VARS.fd` is precisely this),
+and it is a real NV region the firmware owns rather than borrows.
+
+The price is measured too:
+
+```
+qemu-system-i386: pflash1 requires pflash0
+```
+
+The two-unit shape *is* the OVMF code+vars pairing, so using pflash1 as a variable
+store obliges you to fill pflash0 — the **system flash** slot. This lab boots the
+firmware with `-kernel openbios.multiboot`, leaving pflash0 empty, so row 3 costs a
+change to how OpenBIOS is loaded (build a flash image of it) on top of the three
+functions. *(QEMU did **not** reject `-bios` alongside pflash0, so no exclusivity
+is claimed here — only that the slot is the system-flash slot and the pairing is
+enforced.)*
+
+#### 4. NVDIMM / pmem — measured above 4 GB, and long mode is the *third* blocker, not the first
+
+The placement is no longer a design claim. `-M pc,nvdimm=on -m 512,slots=2,maxmem=2G`
+with a 64 MiB `memory-backend-file`, asked over the monitor:
+
+```
+Memory device [nvdimm]: "nv1"
+  addr: 0x100000000
+  slot: 0
+  size: 67108864
+```
+
+**Exactly 4 GiB** — and identically under `qemu-system-i386` and
+`qemu-system-x86_64`. QEMU's device-memory window starts there *by construction*,
+not because the guest is large: a 512 MiB guest with `maxmem=2G` still puts it at
+`0x100000000`. There is no "keep the machine small" escape hatch, which is what
+makes this row a real argument for the port.
+
+But long mode is **necessary and nowhere near sufficient**. Three blockers stack
+up, and only the last is about mode:
+
+1. **Discovery.** An NVDIMM is advertised through ACPI (the NFIT). Grepping the
+   whole tree for ACPI finds **no parser** — every hit is the *Linux boot
+   protocol's* own `e820entry` / `E820_ACPI` constants in
+   `arch/x86/linux_load.c` and its sparc32 twin. OpenBIOS never looks for an RSDP.
+2. **The map it does read throws the range away.** `arch/x86/multiboot.c` keeps
+   one type and drops the rest:
+
+   ```c
+   if (mbmem->type == 1) { /* Only normal RAM */
+   ```
+
+   which is where a persistent-memory range would arrive.
+3. **Two explicit 4 GiB truncations in the x86 code**, both in the source
+   verbatim — `set_memory_size()` in `linux_load.c`:
+
+   ```c
+   if (end < (1ULL << 32)) { /* don't count memory above 4GB */
+   ```
+
+   and `arch/x86/segment.c:61`:
+
+   ```c
+   if (info->memrange[i].base >= 1ULL<<32)
+       continue;
+   ```
+
+Blockers 1 and 2 are work you would do in **either** mode. So the honest form of
+the headline is: *a pmem NVRAM is the only backing that long mode unlocks, and
+long mode is the cheapest third of it.*
+### "Data survives an OS boot" is three different questions
+
+Worth separating before any of it is built, because the OFW lab already paid for
+conflating two of them — its x86 warm-reboot gap turned out to have a **second
+cause**:
+
+1. **Across a firmware reset**, no OS involved — the easy one; any of the four backings does it.
+2. **Across a boot, with the OS in between** — the OS owns the machine, so the bytes must live somewhere it will not reuse: a declared-reserved e820 region, a pmem device it is told about, or a file it never touches.
+3. **Across a power cycle** — rules out anything RAM-shaped that is not file-backed, which is what makes the middle two rows above the pragmatic choices.
+
+### What this section did NOT prove
+
+No `arch/amd64` target was built, no `arch_nvram_*` was implemented, and **no
+NVDIMM was ever attached to OpenBIOS**. The claims above are of three kinds, and
+they are not equally strong:
+
+| kind | what it covers | strength |
+|---|---|---|
+| source reads of the pinned clone | the missing callers, the absent `write` methods, the two 4 GiB truncations, the multiboot type filter, the `arch_nvram_*` contract | quoted verbatim; re-derivable at the pin |
+| live probes of the running 32-bit firmware | `dev / ls`, `devalias`, `/options .properties`, `nvramrc` | quoted verbatim from the pty |
+| live probes of **QEMU**, not of OpenBIOS | `rtc options`, `system.flash0` at `0xffc00000`, `pflash1 requires pflash0`, the NVDIMM at `0x100000000` | measured on QEMU 8.2.2 — these say where a backing *would* live, not that the firmware can use it |
+
+The third row is the one to hold loosely. The pmem placement is now a
+**measurement** rather than the design claim it was in the first draft, but it is
+a measurement about QEMU's address map; nothing here has shown OpenBIOS
+enumerating an NVDIMM at all, in either mode, and blocker 1 (no ACPI parser) says
+it currently cannot.
+
 ## What the audit corrected
 
-The verdict and the shape of the work survived the audit; these seven claims
+The verdict and the shape of the work survived the audit; these eight claims
 did not, and per house style they are named rather than silently rewritten:
 
 1. **The `defconfig` evidence row cited a file the build never reads.**
@@ -375,6 +602,15 @@ did not, and per house style they are named rather than silently rewritten:
 7. **The "context.c + switch.S — 162 lines" row conflated files**: 162 was
    `context.c` alone; `arch/x86` has no `switch.S` (its context switch lives
    in `entry.S`); amd64's `switch.S` is 116 further lines.
+8. **The persistence table graded "a file on an attached drive" as the easy row,
+   on the evidence that "OpenBIOS x86 has `ide@0..3` nodes to build on."** That
+   is this repo's standing mistake — *nodes to build on* is not a question about
+   *writing*. Asked properly, the stack is read-only at **every** layer: no
+   `write-blocks` in `drivers/ide.c`, no `write` in `pc-parts.c`, and
+   `disk-label.c`'s `write` is a stub that pushes `-1`. It is now the row with the
+   most missing code, not the least. The corresponding over-claim in the other
+   direction is also fixed: the pmem row was a *design* claim and its placement is
+   now measured at `0x100000000`.
 
 ## What this document did NOT prove
 
