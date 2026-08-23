@@ -855,6 +855,74 @@ IDE track, against `-drive if=pflash,unit=1`. It has to build a **populated**
 BIOS on `-M pc`, and an empty one removes the thing that loads the multiboot
 image. That was measured earlier in this section and is now automated.
 
+##### The third backing: a floppy, and it is half done
+
+[`patches/07-x86-floppy-backing.patch`](patches/07-x86-floppy-backing.patch).
+Reported as half done because that is what it is — and the half that works cost
+a real upstream bug to find.
+
+**Flipping the switch was the easy part.** `CONFIG_DRIVER_FLOPPY` is `false` for
+x86 and `true` for both sparcs, and `arch/x86/openbios.c` already called
+`ob_floppy_init`. Flipped, the node appears as `floppy0@0` and the controller
+identifies itself: `FDC is a S82078B`.
+
+**The read then failed, and the reason is worth keeping.** Debug output showed
+`bytes_read = 9216` — the entire track had transferred correctly — followed by
+`ret = -1`. The result bytes said `ST0=0x04 ST1=0x00 ST2=0x00`: **normal
+termination**, on head 1. And `read_ok()` compares ST0's head field to the
+**requested** head:
+
+```c
+if (((results[0] & ST0_HA) >> 2) != head)
+        result_ok = 0;
+```
+
+But `floppy_read_sectors()` sets the **MT (multi-track)** bit whenever the
+geometry has two heads — so the transfer starts on head 0 and legitimately
+*finishes* on head 1. The driver enables MT and then validates as though it
+had not. Every multi-track read was judged a failure after succeeding.
+
+It never bit anyone because the switch was off: **a disabled switch hiding a
+broken path**, which is the same shape as this lab's `pseudo-nvram` finding and
+as the `arch_nvram_*` stubs two rungs ago. Fixed by accepting the requested head
+*or* the last one, and `./smoke-openbios.sh floppy` guards it — its control
+re-injects the strict comparison and the track fails by name.
+
+**The write is KNOWN-BLOCKED, and stated as such rather than fudged.** All 512
+bytes of a sector transfer (`sent 512 of 512`); the controller then sits at
+status `0x30` (`BUSY|NON_DMA`) through 200,000 polls, never turning the bus
+around, so `result()` reads no status bytes and returns `-1`. The bytes go out
+and the completion never comes back. The read path works on the same controller,
+so this is specific to the non-DMA write turnaround.
+
+What was fixed is the *dishonesty*, not the gap:
+
+| before | after |
+|---|---|
+| an **unbounded** `do { } while (status != READY\|NON_DMA)` copied from the read path — the firmware hung silently, the store's first sector on disk and the machine mute until the harness killed it | bounded waits, a named `floppy: write never entered execution phase` message, and `nvram: WRITE FAILED to floppy0` from the arch layer |
+
+And one bug in that path *was* mine: the read's result loop drains `FD_DATA` to
+clear FIFO residue, and copying it verbatim into the write **ate the result
+bytes** — a failure the cleanup manufactured. Removed.
+
+**A second unbounded wait, found by the other tracks going red.** Enabling the
+driver made every boot *without* a floppy attached hang silently, right after
+`vga-driver-fcode:` — because `floppy_read_sectors()`'s execution-phase wait is
+an unbounded `do/while` upstream, and with no media the controller never enters
+that phase. Four green tracks turned red the moment the patch landed, which is
+exactly what they are for; an ad-hoc check of only the floppy would have shipped
+a firmware that hangs on every machine with an empty drive. Bounded, and the
+read now returns `-1` so the arch layer falls through to the volatile buffer.
+
+**Also: it is 1.44 MB, not 2.88.** The driver hard-codes a single geometry
+(`H1440`: 18 sectors × 2 heads × 80 tracks). 2.88 MB would need an
+extended-density row. Immaterial to the store, which needs kilobytes.
+
+So the ladder's floppy variant stands at: **read proven, write blocked, failing
+honestly.** `persist-floppy` is deliberately *not* shipped as a permanently-red
+track — the `floppy` track asserts the read works *and* that the write gap is
+still the gap, so that closing it does not slip by unnoticed.
+
 ##### The refusal gate, watched firing
 
 The store refuses a drive carrying someone else's data. That gate was written
@@ -901,7 +969,7 @@ something the raw-IDE store does not, and each costing exactly one thing:
 
 | variant | what it buys | what it costs |
 |---|---|---|
-| **floppy** | period fidelity, and a 1.44 MB image a human can mount on the host | flip `CONFIG_DRIVER_FLOPPY`; a write path; an ED row for 2.88 MB — **still open** |
+| **floppy** ⚠️ **half done** | period fidelity, and a 1.44 MB image a human can mount on the host | switch flipped and **read proven** (an upstream MT bug fixed); the **write is known-blocked** on QEMU's FDC — see below |
 | **pflash** ✅ **DONE** | a region the firmware *owns* rather than borrows — the EFI shape | a CFI driver; the 4 MiB pflash0 image — both built, see below |
 
 What the ladder deliberately does **not** do is build a writable **filesystem**.

@@ -229,5 +229,58 @@ case "$FLAVOR" in
 
     pass "P1+P2: boot-file=$NONCE survived a power cycle on $WANT_BACKEND (host image changed, arrived valid, and the no-drive control did NOT see it)"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash]" >&2; exit 1 ;;
+  floppy)
+    # The floppy backing, which is HALF done, and this track asserts exactly the
+    # half that works rather than pretending either more or less.
+    #
+    # WHAT IT PROVES: the FDC read path functions on x86 -- which it did not
+    # before, because read_ok() compared ST0's head field to the REQUESTED head
+    # while floppy_read_sectors() sets the MT bit, so every multi-track read was
+    # judged a failure after transferring perfectly. That bug sat behind
+    # CONFIG_DRIVER_FLOPPY=false for x86. If the store comes back reporting
+    # floppy0 as its backing, the read worked.
+    #
+    # WHAT IT DOES NOT PROVE: writing. See the KNOWN-BLOCKED note in
+    # drivers/floppy.c -- 512 bytes transfer and the controller never turns the
+    # bus around. That gap is deliberately NOT a permanently-red test here; it is
+    # recorded in the doc and in the driver. This track would go green either way
+    # on the read, so it also asserts the write gap is still the gap it was,
+    # which is what makes it notice if someone fixes it.
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    MB="$WORKDIR/openbios/obj-x86/openbios.multiboot"
+    [[ -f "$MB" ]] || skip "no image at $MB — run ./build-openbios.sh x86 first"
+    grep -q 'CONFIG_DRIVER_FLOPPY" type="boolean" value="true"' \
+      "$WORKDIR/openbios/config/examples/x86_config.xml" \
+      || skip "CONFIG_DRIVER_FLOPPY is off for x86 in the clone — nothing to measure"
+
+    FD="$WORKDIR/nvram-floppy.img"
+    rm -f "$FD"; truncate -s 1474560 "$FD"     # exactly 1.44 MB: the H1440 geometry
+    rm -f "$SOCK" "$LOG"
+    note "booting with a blank 1.44 MB floppy at fd0 → $LOG"
+    qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$MB" \
+      -initrd "$WORKDIR/openbios/obj-x86/openbios.dict" \
+      -drive "if=floppy,index=0,format=raw,file=$FD" \
+      -display none -serial "unix:$SOCK,server=on" -no-reboot >/dev/null 2>&1 &
+    QPID=$!
+    python3 "$REPO/tools/drive-serial-repl.py" "$SOCK" "$LOG" --timeout 120 \
+      --expect "0 > " \
+      --send "setenv boot-file FLOPPY-PROBE\r" --expect "0 > " \
+      --send "\" /nvram\" \" update-nvram\" execute-device-method .\r" --expect "0 > "
+    RC=$?
+    kill "$QPID" 2>/dev/null   # by PID, never by pattern
+    [[ $RC -eq 0 ]] || fail "no prompt conversation on the floppy track (rc=$RC) — see $LOG"
+
+    grep -q "nvram: backed by floppy0" "$LOG" \
+      || fail "REGRESSION: the floppy read path no longer selects floppy0 as a backing — the ST0_HA/MT fix in read_ok() has come undone, or the media was not read — see $LOG"
+    note "read path OK: the store was read off fd0 and floppy0 was selected"
+
+    if grep -q "WRITE FAILED to floppy0" "$LOG"; then
+      pass "floppy: the FDC READ path works on x86 (backing selected off a 1.44 MB image) and the write is still the known-blocked gap, failing honestly rather than hanging"
+    fi
+    # The gap closed. That is good news and must not slip by unnoticed.
+    grep -q "nvram: WRITE FAILED" "$LOG" \
+      || fail "the floppy WRITE no longer reports failure — if the known-blocked turnaround is fixed, this track and the KNOWN-BLOCKED note in drivers/floppy.c both need updating, and persist-floppy should become a real track — see $LOG"
+    fail "the floppy write failed against a backing that is not floppy0 — this track is not measuring what it thinks — see $LOG"
+    ;;
+  *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy]" >&2; exit 1 ;;
 esac

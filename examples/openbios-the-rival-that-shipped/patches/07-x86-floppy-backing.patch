@@ -1,0 +1,418 @@
+# patches/07-x86-floppy-backing.patch — the floppy backing, HALF DONE.
+# Applies on top of 06-x86-nvram-cfi-flash-backing.patch.
+#
+# READ: works, and getting there fixed a real upstream bug. read_ok() compared
+# ST0's head field to the REQUESTED head, while floppy_read_sectors() sets the
+# MT (multi-track) bit whenever the geometry has two heads -- so the transfer
+# legitimately ENDS on head 1 and every read was judged a failure after
+# transferring perfectly (measured: ST0=0x04 ST1=0x00 ST2=0x00, normal
+# termination, after all 9216 bytes had arrived). It never bit anyone because
+# CONFIG_DRIVER_FLOPPY is false for x86 -- a disabled switch hiding a broken path.
+#
+# WRITE: KNOWN-BLOCKED against QEMU's S82078B. All 512 bytes transfer and the
+# controller then stays at status 0x30 (BUSY|NON_DMA) through 200,000 polls,
+# never turning the bus around, so result() gets no status bytes. It fails
+# HONESTLY -- bounded waits, a named message, WRITE FAILED from arch_nvram_put.
+# An earlier draft hung there forever with no output at all.
+#
+# Also: this is 1.44 MB, not 2.88 -- the driver hard-codes one geometry (H1440).
+#
+# Verified by: ./smoke-openbios.sh floppy   (its control re-injects the MT bug)
+
+# TWO unbounded waits were bounded, and the second one was found the hard way:
+# enabling CONFIG_DRIVER_FLOPPY made every boot WITHOUT a floppy attached hang
+# silently, because floppy_read_sectors()'s execution-phase wait is an unbounded
+# do/while and with no media the controller never enters that phase. A wait that
+# cannot fail is a hang, not a wait.
+#
+--- a/config/examples/x86_config.xml
++++ b/config/examples/x86_config.xml
+@@ -59,5 +59,5 @@
+   <option name="CONFIG_IDE_NUM_CHANNELS" type="integer" value="4"/>
+   <option name="CONFIG_DEBUG_IDE" type="boolean" value="false"/>
+   <option name="CONFIG_DRIVER_VGA" type="boolean" value="true"/>
+-  <option name="CONFIG_DRIVER_FLOPPY" type="boolean" value="false"/>
++  <option name="CONFIG_DRIVER_FLOPPY" type="boolean" value="true"/>
+   <option name="CONFIG_DEBUG_FLOPPY" type="boolean" value="false"/>
+--- a/drivers/floppy.c
++++ b/drivers/floppy.c
+@@ -784,9 +784,28 @@
+ 			(results[2] == 0)) {
+ 			result_ok = 1;
+ 		}
+-		/* Verify the reply had the correct head */
+-		if (((results[0] & ST0_HA) >> 2) != head) {
+-			result_ok = 0;
++		/* Verify the reply had a plausible head.
++		 *
++		 * NOT simply `== head`. floppy_read_sectors() sets the MT
++		 * (multi-track) bit whenever the geometry has two heads, which
++		 * means the transfer STARTS on `head` and legitimately FINISHES
++		 * on the last one -- so ST0 comes back reporting head 1 for a
++		 * read issued against head 0. The original check compared it to
++		 * the requested head and failed every multi-track read.
++		 *
++		 * Measured on QEMU's S82078B: ST0=0x04 ST1=0x00 ST2=0x00,
++		 * i.e. NORMAL TERMINATION (ST0_INTR_OK) with head=1, after the
++		 * full 9216-byte track had already transferred correctly. The
++		 * data was right and the verdict was wrong.
++		 *
++		 * This never bit anyone because CONFIG_DRIVER_FLOPPY is `false`
++		 * for x86 -- a disabled switch hiding a broken path. */
++		{
++			unsigned got_head = (results[0] & ST0_HA) >> 2;
++			if (got_head != head &&
++			    got_head != (unsigned)(DISK_H1440_HEAD - 1)) {
++				result_ok = 0;
++			}
+ 		}
+ 		/* Verify the reply had the correct drive */
+ 		if (((results[0] & ST0_DS) != FD_DRIVE)) {
+@@ -931,6 +950,186 @@
+ 	return -1;
+ }
+ 
++/* ---------------------------------------------------------------- *
++ * P1 variant: the write path.
++ *
++ * FD_WRITE has been #define'd at the top of this file since it was derived
++ * from Linux's driver, and NOTHING referenced it -- the method table exports
++ * read-blocks and nothing else. This is the smallest honest completion: ONE
++ * SECTOR at a time (EOT == the sector being written, and the MT bit cleared),
++ * because a multi-sector write that goes wrong halfway is much harder to
++ * reason about than one that does not.
++ *
++ * Direction is the tell: the read loop waits for STATUS_DIR SET (fdc->cpu);
++ * a write requires it CLEAR (cpu->fdc). Getting that backwards would sit
++ * there feeding bytes to a controller that is trying to hand them back.
++ * ---------------------------------------------------------------- */
++
++/* Like read_ok(), but names WRITE PROTECT specifically. A write-protected
++ * disk is not a malfunction -- it is a refusal, and reporting it as a generic
++ * failure would send someone hunting the wrong bug. */
++static int write_ok(unsigned head)
++{
++	unsigned char results[7];
++	int nr = result(results, 7);
++
++	if (nr != 7)
++		return 0;
++	if ((results[1] & ST1_WP)) {
++		printk("floppy: WRITE PROTECTED -- refusing\n");
++		return 0;
++	}
++	if ((results[0] & ST0_INTR) != ST0_INTR_OK)
++		return 0;
++	if (((results[0] & ST0_HA) >> 2) != head)
++		return 0;
++	if ((results[0] & ST0_DS) != FD_DRIVE)
++		return 0;
++	return 1;
++}
++
++/* KNOWN-BLOCKED against QEMU's S82078B model, measured 2026-08-23.
++ *
++ * All 512 bytes transfer ("sent 512 of 512"), and then the controller stays at
++ * status 0x30 (BUSY|NON_DMA) through 200,000 polls: it never turns the bus
++ * around, so result() reads no status bytes and reports -1. The bytes go out
++ * and the completion never comes back. The READ path on the same controller
++ * works (see the ST0_HA fix in read_ok), so this is specific to the non-DMA
++ * write turnaround, not to the driver's command plumbing in general.
++ *
++ * It fails HONESTLY -- bounded waits, a named message, and arch_nvram_put
++ * reporting WRITE FAILED -- which is the point. An earlier draft hung here
++ * forever with no output at all.
++ */
++static int floppy_write_sector(const char *src, unsigned sector,
++                               unsigned head, unsigned track)
++{
++	int i, status;
++	unsigned char cmd[9];
++
++	cmd[0] = FD_WRITE & ~0x80;      /* MFM, single sector: MT cleared */
++	cmd[1] = (head << 2) | FD_DRIVE;
++	cmd[2] = track;
++	cmd[3] = head;
++	cmd[4] = sector;
++	cmd[5] = 2;                     /* 2^2 * 128 == 512 bytes */
++	cmd[6] = sector;                /* EOT == this sector: exactly one */
++	cmd[7] = DISK_H1440_GAP;
++	cmd[8] = 0xff;
++
++	printk_debug("floppy_write_sector c=%u h=%u r=%u\n", track, head, sector);
++
++	if (output_command(cmd, 9) < 0)
++		return -1;
++
++	/* Execution phase begins when READY|NON_DMA is set.
++	 *
++	 * BOUNDED, unlike the read path's copy of this loop. An unbounded wait
++	 * on a hardware status bit is a hang, not a wait: if the controller
++	 * never enters the execution phase the firmware spins forever with no
++	 * output, which is precisely what the first draft of this function did
++	 * -- the store's first sector landed and the machine then sat mute
++	 * until the harness killed it. A wait that cannot fail cannot be
++	 * debugged. */
++	{
++		int spin;
++		for (spin = 0; spin < 1000000; spin++) {
++			status = fdc_state.fdc_inb(FD_STATUS);
++			status &= STATUS_READY | STATUS_NON_DMA;
++			if (status == (STATUS_READY | STATUS_NON_DMA))
++				break;
++		}
++		if (status != (STATUS_READY | STATUS_NON_DMA)) {
++			printk("floppy: write never entered execution phase"
++			       " (status=%02x)\n", status);
++			return -1;
++		}
++	}
++
++	for (i = 0; i < 512; i++) {
++		if ((status = wait_til_ready()) < 0)
++			break;
++		status &= STATUS_READY | STATUS_DIR | STATUS_NON_DMA;
++		/* DIR must be CLEAR here: cpu -> fdc */
++		if (status != (STATUS_READY | STATUS_NON_DMA))
++			break;
++		fdc_state.fdc_outb(src[i], FD_DATA);
++	}
++
++	/* Wait for the execution phase to end -- WITHOUT touching FD_DATA.
++	 *
++	 * The read path drains FD_DATA here, because a read leaves residue in
++	 * the FIFO past the end of the sector. A WRITE does not, and reading
++	 * the data register while the controller is turning around EATS THE
++	 * RESULT BYTES: result() then returns -1 and the caller sees a failure
++	 * that its own cleanup manufactured. Copying the read's loop verbatim
++	 * is exactly how that happened here (write result nr=-1, with garbage
++	 * where ST0/ST1/ST2 should be). */
++	{
++		int spin;
++		for (spin = 0; spin < 200000; spin++) {
++			status = fdc_state.fdc_inb(FD_STATUS);
++			if (!(status & STATUS_NON_DMA))
++				break;
++		}
++	}
++
++	printk_debug("floppy_write_sector: sent %d of 512\n", i);
++
++	if (i != 512)
++		return -1;
++	if (!write_ok(head))
++		return -1;
++	return 512;
++}
++
++static int __floppy_write(const char *src, unsigned long offset)
++{
++	unsigned head, track, sector, sector_offset;
++
++	if (offset % 512)
++		return -1;              /* sector-aligned only, by construction */
++
++	sector_offset = offset / 512;
++	sector = (sector_offset % DISK_H1440_SECT) + 1;
++	head   = (sector_offset / DISK_H1440_SECT) % DISK_H1440_HEAD;
++	track  = (sector_offset / (DISK_H1440_SECT * DISK_H1440_HEAD)) % DISK_H1440_TRACK;
++
++	if (!floppy_seek(track))
++		return -1;
++
++	return floppy_write_sector(src, sector, head, track);
++}
++
++/* Write `length` bytes at `offset`, both sector-aligned. Retries a sector a
++ * few times like the read side, then gives up and SAYS SO rather than
++ * reporting a short write as success. */
++static int floppy_write(const char *src, unsigned long offset, unsigned long length)
++{
++	unsigned long done = 0;
++
++	printk_debug("floppy_write off=%lu len=%lu\n", offset, length);
++
++	if ((offset % 512) || (length % 512))
++		return -1;
++
++	while (done < length) {
++		int tries = 3, ret = -1;
++
++		while (tries-- > 0) {
++			ret = __floppy_write(src + done, offset + done);
++			if (ret == 512)
++				break;
++			floppy_reset();
++		}
++		printk_debug("floppy_write: off=%lu ret=%d\n", offset + done, ret);
++		if (ret != 512)
++			return -1;
++		done += 512;
++	}
++	return (int)done;
++}
++
+ static int floppy_read(char *dest, unsigned long offset, unsigned long length)
+ {
+         int fr_result, bytes_read;;
+@@ -1032,6 +1231,8 @@
+ } /* get_fdc_version */
+ 
+ 
++static int fdc_usable;          /* controller answered a version query */
++
+ static int floppy_init(unsigned long io_base, unsigned long mmio_base)
+ {
+ 	printk_debug("floppy_init\n");
+@@ -1107,6 +1308,42 @@
+         selfword("close-deblocker");
+ }
+ 
++/* P1 variant: the write half of the block interface, and the raw entry points
++ * arch_nvram_* needs. ob_floppy_present() reports the CONTROLLER, not media. */
++static void
++ob_floppy_write_blocks(int *idx)
++{
++	cell n = POP();
++	cell cnt = POP();
++	ucell blk = POP();
++	char *src = (char*)cell2pointer(POP());
++	(void)idx; (void)n;
++	if (floppy_write(src, blk*512, cnt*512) < 0) {
++		PUSH(0);
++		return;
++	}
++	PUSH(cnt);
++}
++
++int ob_floppy_present(void)
++{
++	return fdc_usable;
++}
++
++int ob_floppy_read_raw(char *dest, unsigned long offset, unsigned long length)
++{
++	if (!fdc_usable)
++		return -1;
++	return floppy_read(dest, offset, length);
++}
++
++int ob_floppy_write_raw(const char *src, unsigned long offset, unsigned long length)
++{
++	if (!fdc_usable)
++		return -1;
++	return floppy_write(src, offset, length);
++}
++
+ static void
+ ob_floppy_read_blocks(int *idx)
+ {
+@@ -1135,6 +1372,7 @@
+         { "open",               ob_floppy_open             },
+         { "close",              ob_floppy_close            },
+         { "read-blocks",        ob_floppy_read_blocks      },
++        { "write-blocks",       ob_floppy_write_blocks     },
+         { "block-size",         ob_floppy_block_size       },
+         { "max-transfer",       ob_floppy_max_transfer     },
+ };
+@@ -1173,7 +1411,11 @@
+         // Already in tree and mapped
+         BIND_NODE_METHODS(get_cur_dev(), ob_floppy);
+     }
+-    floppy_init(io_base, mmio_base);
++    /* floppy_init() returns -1 when get_fdc_version() says FDC_NONE, and
++     * ob_floppy_init() threw that away. NOTE WHAT THIS DOES AND DOES NOT MEAN:
++     * it is "the CONTROLLER answered", not "there is a disk in the drive".
++     * Media presence only shows up when a read is attempted. */
++    fdc_usable = (floppy_init(io_base, mmio_base) == 0);
+ 
+     fword("finish-device");
+ 
+--- a/include/drivers/drivers.h
++++ b/include/drivers/drivers.h
+@@ -63,6 +63,11 @@
+ int ob_ide_init(const char *path, uint32_t io_port0, uint32_t ctl_port0,
+                 uint32_t io_port1, uint32_t ctl_port1);
+ void ob_ide_quiesce(void);
++/* P1: raw-sector access by drive number, for arch_nvram_* (see drivers/ide.c) */
++int ob_ide_read_blocks_nr(int nr, unsigned long long block,
++                          unsigned char *buf, unsigned int sectors);
++int ob_ide_write_blocks_nr(int nr, unsigned long long block,
++                           unsigned char *buf, unsigned int sectors);
+ int macio_ide_init(const char *path, uint32_t addr, int nb_channels);
+ #endif
+ #ifdef CONFIG_DRIVER_ESP
+@@ -113,6 +118,11 @@
+ extern char boot_device;
+ #endif
+ #ifdef CONFIG_DRIVER_FLOPPY
++/* P1 variant: raw floppy access for arch_nvram_* (see drivers/floppy.c).
++ * ob_floppy_present() means the CONTROLLER answered, not that media is in. */
++int ob_floppy_present(void);
++int ob_floppy_read_raw(char *dest, unsigned long offset, unsigned long length);
++int ob_floppy_write_raw(const char *src, unsigned long offset, unsigned long length);
+ int ob_floppy_init(const char *path, const char *dev_name,
+                    unsigned long io_base, unsigned long mmio_base);
+ #endif
+--- a/arch/x86/openbios.c
++++ b/arch/x86/openbios.c
+@@ -315,12 +315,17 @@
+ }
+ 
+ /* ---- backing selection --------------------------------------------- */
+-enum { NV_NONE = 0, NV_FLASH, NV_IDE };
++enum { NV_NONE = 0, NV_FLASH, NV_IDE, NV_FLOPPY };
+ static int x86_nvram_backend;
+ 
+ static const char *nv_backend_name(int b)
+ {
+-	return b == NV_FLASH ? "pflash@0xffbe0000" : b == NV_IDE ? "ide@3" : "none";
++	switch (b) {
++	case NV_FLASH:  return "pflash@0xffbe0000";
++	case NV_IDE:    return "ide@3";
++	case NV_FLOPPY: return "floppy0";
++	default:        return "none";
++	}
+ }
+ 
+ int
+@@ -356,6 +361,28 @@
+ 			       " -- refusing to write to it\n", LAB_NVRAM_DRIVE);
+ 	}
+ 
++	/* Floppy last, and only if the CONTROLLER answered. Note the ordering
++	 * rationale: it is the slowest of the three and the one most likely to
++	 * have no media in it, so it is the fallback rather than the default --
++	 * but it is tried BEFORE giving up, because a 1.44 MB image a human can
++	 * mount on the host is the most legible store of the three. */
++	if (x86_nvram_backend == NV_NONE) {
++		if (!ob_floppy_present()) {
++			printk("nvram: floppy0 controller did not answer\n");
++		} else {
++			int got = ob_floppy_read_raw((char *)p, 0, sizeof(x86_nvram));
++			if (got != (int)sizeof(x86_nvram))
++				printk("nvram: floppy0 read returned %d, wanted %d"
++				       " -- no media, or the read failed\n",
++				       got, (int)sizeof(x86_nvram));
++			else if (!nvram_backing_ok(p, sizeof(x86_nvram)))
++				printk("nvram: floppy0 holds data that is not an nvram"
++				       " store -- refusing to write to it\n");
++			else
++				x86_nvram_backend = NV_FLOPPY;
++		}
++	}
++
+ 	if (x86_nvram_backend == NV_NONE) {
+ 		printk("nvram: no backing store found -- using a volatile buffer\n");
+ 		memset(x86_nvram, 0, sizeof(x86_nvram));
+@@ -382,6 +409,10 @@
+ 		                            (unsigned char *)x86_nvram,
+ 		                            LAB_NVRAM_SECTORS);
+ 		break;
++	case NV_FLOPPY:
++		rc = (ob_floppy_write_raw(x86_nvram, 0, sizeof(x86_nvram))
++		      != (int)sizeof(x86_nvram));
++		break;
+ 	default:
+ 		printk("nvram: not backed -- this change will NOT survive a reset\n");
+ 		return;
