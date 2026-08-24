@@ -55,12 +55,15 @@ case "$TARGET" in
   x86)  obuild x86 ;;
   ppc)  obuild qemu-ppc ;;
   unix) obuild unix-amd64 ;;
-  all)  obuild x86; obuild qemu-ppc; obuild unix-amd64 ;;
-  *) echo "usage: $0 [x86|ppc|unix|all]" >&2; exit 1 ;;
+  amd64) obuild amd64 ;;      # Spike 1: the BARE-METAL 64-bit target, not unix-amd64
+  all)  obuild x86; obuild qemu-ppc; obuild unix-amd64; obuild amd64 ;;
+  *) echo "usage: $0 [x86|ppc|unix|amd64|all]" >&2; exit 1 ;;
 esac
 
 echo "==> artifacts:"
-ls -1 "$WORKDIR"/openbios/obj-x86/openbios.multiboot \
+ls -1 "$WORKDIR"/openbios/obj-amd64/openbios.multiboot32 \
+      "$WORKDIR"/openbios/obj-amd64/openbios-amd64.dict \
+      "$WORKDIR"/openbios/obj-x86/openbios.multiboot \
       "$WORKDIR"/openbios/obj-x86/openbios.dict \
       "$WORKDIR"/openbios/obj-x86/openbios-builtin.elf \
       "$WORKDIR"/openbios/obj-ppc/openbios-qemu.elf \

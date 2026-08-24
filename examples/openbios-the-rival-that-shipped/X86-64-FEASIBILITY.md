@@ -3,6 +3,10 @@
 > **VERDICT: OpenBIOS — feasible, and the expensive half is already done.
 > OFW — not feasible as a lab.**
 >
+> **Spike 1 is now RUN: the firmware reaches its own `0 >` prompt in long mode
+> on bare metal, and `-1 u.` answers `ffffffffffffffff` there.** See
+> [§ Spike 1, run](#spike-1-run-the-firmware-runs-in-long-mode--measured-2026-08-23).
+>
 > First written 2026-08-18 as a study; **audited the same day, and Spike 0 —
 > which the first version explicitly had not attempted — has now been run.**
 > The verdict survived. Nine claims did not survive unchanged; they are
@@ -302,7 +306,7 @@ per the repo's learning-path rule:
 
 | spike | work | checkpoint |
 |---|---|---|
-| **1 — the trampoline** | apply the drift fixes + the bug-#1 header fix (both already written); rewrite `switch.S`; author the 32→64 stub; stub out `boot.c`/`linux_load.c` to get a link | `0 >` on the serial socket, and `-1 u.` answering `ffffffffffffffff` from the *bare metal* rather than from `openbios-unix` |
+| **1 — the trampoline** ✅ **DONE** | apply the drift fixes + the bug-#1 header fix (both already written); rewrite `switch.S`; author the 32→64 stub; stub out `boot.c`/`linux_load.c` to get a link | `0 >` on the serial socket, and `-1 u.` answering `ffffffffffffffff` from the *bare metal* rather than from `openbios-unix` |
 | **2 — context + exceptions** | the 64-bit context frame (`context.c`'s eight errors), a 64-bit IDT in a new `exception.c` | a deliberate `0 0 !` reports a named fault instead of triple-faulting; the client-program context still switches back to the prompt |
 | **3 — boot Linux** | re-port `boot.c`/`linux_load.c` off the dead API (x86's twins show the shape), then the `+0x200` entry | the existing [`showcase-rival-boots-linux.sh`](showcase-rival-boots-linux.sh) success signature, unchanged, from the 64-bit firmware |
 | **P0–P2 — persistence** | *(runs in parallel, on the 32-bit firmware — see [the persistence spikes](#the-persistence-spikes--a-ladder-that-does-not-wait-for-the-port))* | a config variable that survives a power cycle, asserted on the **host's** backing file |
@@ -317,6 +321,93 @@ being asked to debug two unfinished subsystems at once.
 Known failure mode worth planning for in 1–2: a triple fault under
 `-no-reboot` exits QEMU with **rc=0** ([POC-2](POC-2-OK-PROMPT.md)'s pitfall
 list), so the harness must assert the prompt, never merely a clean exit.
+
+## Spike 1, run: the firmware runs in long mode — measured 2026-08-23
+
+The remaining-spikes table asked for `0 >` on the serial socket and `-1 u.`
+answering `ffffffffffffffff` **from the bare metal** rather than from
+`openbios-unix`. Both, from
+[`patches/08-amd64-spike1-trampoline.patch`](patches/08-amd64-spike1-trampoline.patch):
+
+```console
+0 > 3 4 + . 7  ok
+0 > -1 u. ffffffffffffffff  ok
+0 > dev / ls
+13a248 aliases
+13a370 openprom
+...
+147a70 memory
+147b98 cpus
+149ef0 ide@0
+ ok
+```
+
+`arch/amd64` had never produced a firmware image. This document's own measured
+census recorded *"x86 answers with two firmware images. amd64 answers with
+none."* It answers now, and it boots.
+
+### The ten things that had to be true, in the order the machine insisted
+
+The estimate said the work was the asm layer. It was — and then it was nine
+other things, most of which are the same bug this lab keeps finding: **a
+condition, a guard or a struct that names the targets somebody actually built.**
+
+| # | what stopped it | why it is interesting |
+|---|---|---|
+| 1 | **`switch.S`** — 116 lines of 32-bit assembly in the 64-bit arch dir | replaced by a trampoline: PML4 identity-mapping the low 4 GiB with 2 MiB pages, `CR4.PAE`, `EFER.LME`, `CR0.PG`, far jump through an `L=1` descriptor |
+| 2 | **SSE was not enabled** | SSE2 is *baseline* for x86-64, so gcc emits it unasked. The first fault was `#UD` on a `movups %xmm0` gcc generated to copy a 16-byte struct. Firmware has to opt in: `CR0.MP`, clear `CR0.EM`, `CR4.OSFXSR\|OSXMMEXCPT`, `fninit` |
+| 3 | **the multiboot handoff was destroyed** | `%eax`/`%ebx` carry the magic and the info pointer, and building page tables is the first thing that clobbers them. The old code saved them by pushing a context frame that does not exist yet |
+| 4 | **`multiboot.h` used `unsigned long` for wire-format structs** | 4 bytes on x86, **8 here** — every field after the first read at double its offset. A struct describing bytes somebody else wrote must name its widths |
+| 5 | **`dict_end - dict_start` is pointer subtraction** | on `unsigned long *` that is an **eighth** of the byte count; the dictionary checksummed over ⅛ of itself. `arch/x86` casts to `char *` first |
+| 6 | **`relocate()`** | see below — the biggest finding |
+| 7 | **libgcc's 128-bit helpers were `condition="SPARC64"`** | directly under a comment reading `CONDITION="CONFIG_64BITS"`. Someone knew the right condition and hard-coded the only 64-bit arch that shipped. `dcell` is 128-bit on amd64 too |
+| 8 | **`elf_load.c`'s ofmem guard** | `#if !defined(CONFIG_SPARC32) && !defined(CONFIG_X86)` — the list named the arches that were built |
+| 9 | **`auto-boot?` defaulted true** | the firmware printed its banner, tried to boot nothing, and stopped **without a prompt** — which reads exactly like a hang and is not one |
+| 10 | **QEMU refuses an ELF64 multiboot image** | `Cannot load x86-64 image, give a 32bit one.` The build now wraps the ELF64 in ELF32 headers via `objcopy` → `openbios.multiboot32` |
+
+### The finding that outranks the rest: relocation cannot survive the port
+
+`arch/x86` relocates itself to the top of RAM by **rebasing the GDT data
+segment** — copy the image, rewrite the base fields of the code and data
+descriptors, `lgdt`, far-jump to reload `CS`. Every address Forth then hands
+around is segment-relative, and `virt_offset` is what the CPU adds to reach
+physical memory. (That mechanism is precisely why `load-base` had to be computed
+in C: a constant in `nvram.fs` resolved to *physical + virt_offset* and landed
+past the end of RAM.)
+
+**In long mode, segment bases are ignored for CS, DS, ES and SS.** The
+descriptor fields that code rewrites have no effect on address translation at
+all, and `ljmp` does not even assemble. So this is not a routine that needs
+porting — it is a **strategy that does not survive the port**. Spike 1 therefore
+runs in place at the 1 MiB the loader chose, with `virt_offset = 0`, and says so
+on the console every boot:
+
+```
+relocate: skipped (long mode ignores segment bases) -- running in place
+```
+
+A 64-bit firmware that wants to move itself must copy the image and then use
+RIP-relative addressing or paging. That is a design change, not a port, and it
+is the one item here that should be costed before anyone commits to Spike 2.
+
+### What is stubbed, and why it halts rather than returns
+
+`__switch_context` and `__exit_context` **halt**. Context switching between the
+firmware and a client program is Spike 2's work, and a switch that silently did
+nothing would hand control back with none of the state a switch is supposed to
+have restored — corrupting whatever ran next, at a distance. `linux_load()`
+likewise reports that it is stubbed rather than returning a quiet
+`LOADER_NOT_SUPPORT`; re-porting it off the deleted `loadfs.h` API is Spike 3's.
+
+### Kept honest by
+
+`./smoke-openbios.sh amd64` asserts the prompt, the `ffffffffffffffff`, the
+relocation-skip line and a device tree — **never a clean exit**, because a
+triple fault under `-no-reboot` exits QEMU with `rc=0`, which this lab has
+written down since POC-2 and which is exactly how the first broken trampoline
+presented. Its control points the track at the 32-bit x86 image: the prompt
+answers, and the cell assertion fails by name.
+
 
 ## OFW / OpenBoot: why this one is a no
 
