@@ -444,12 +444,17 @@ case "$FLAVOR" in
     # fault and the machine simply vanished -- which is precisely how Spike 1's
     # SSE bug presented, and why it cost a debug session to find.
     #
-    # The fault is provoked ABOVE 4 GiB rather than at address 0. A null-write
-    # trap was built and REVERTED: page 0 on a PC holds the real-mode IVT and
-    # the BIOS Data Area, and this firmware's console reads the BDA to find the
-    # VGA CRTC port, so unmapping it faults during boot. Faulting at
-    # 0x100000000 demonstrates more anyway -- it is an address a 32-bit
-    # firmware cannot even form.
+    # The fault is provoked ABOVE the identity map rather than at address 0. A
+    # null-write trap was built and REVERTED: page 0 on a PC holds the real-mode
+    # IVT and the BIOS Data Area, and this firmware's console reads the BDA to
+    # find the VGA CRTC port, so unmapping it faults during boot.
+    #
+    # AND THE ADDRESS MOVED ONCE ALREADY. It was 0x100000000 until P3 extended
+    # the map to 5 GiB to reach the pmem store -- at which point this track went
+    # red, because the write it counts on faulting simply SUCCEEDED. That is the
+    # track doing its job: the fault address is a property of the memory map,
+    # not a constant, and pinning it to 8 GiB only holds until something maps
+    # that too. If this fails again, check the map before the handler.
     command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
     MB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"
     DICT="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
@@ -462,7 +467,7 @@ case "$FLAVOR" in
       -display none -serial "unix:$SOCK,server=on" -no-reboot >/dev/null 2>&1 &
     QPID=$!
     python3 "$REPO/tools/drive-serial-repl.py" "$SOCK" "$LOG" --timeout 90 \
-      --expect "0 > " --send '0 100000000 !\r' --expect "page fault"
+      --expect "0 > " --send '0 200000000 !\r' --expect "page fault"
     RC=$?
     kill "$QPID" 2>/dev/null   # by PID, never by pattern
     [[ $RC -eq 0 ]] || fail "no named fault at the 64-bit prompt (rc=$RC) — see $LOG"
@@ -471,8 +476,8 @@ case "$FLAVOR" in
       || fail "REGRESSION: the fault was not NAMED — the IDT is gone or its gates are wrong, and an unnamed fault is a triple fault waiting to happen — see $LOG"
     # The faulting address is the whole point: CR2, not the frame, and it must
     # be the 4 GiB one we asked for rather than whatever else went wrong.
-    grep -q 'Faulting address: 0000000100000000' "$LOG" \
-      || fail "REGRESSION: the handler named a page fault but not at 0x100000000 — it is reporting CR2 wrongly, or a DIFFERENT fault beat ours to it — see $LOG"
+    grep -q 'Faulting address: 0000000200000000' "$LOG" \
+      || fail "REGRESSION: the handler named a page fault but not at 0x200000000 — it is reporting CR2 wrongly, a DIFFERENT fault beat ours to it, or the identity map has grown to cover 8 GiB — see $LOG"
     grep -q 'dstackcnt=' "$LOG" \
       || fail "the dump carries no Forth engine state — see $LOG"
 
@@ -484,7 +489,7 @@ case "$FLAVOR" in
     if grep -qE '^0 > 3 4 \+ \. 7' "$LOG"; then
       fail "the prompt now RESUMES after a fault — that is better than the documented state, so update this track and the Spike 2 notes rather than leaving a stale 'known limit' in the record"
     fi
-    pass "SPIKE 2 (exceptions): a write above 4 GiB is named as a page fault, CR2 reported as 0x100000000, machine and Forth state dumped, and NO triple fault — the prompt does not yet resume, which is recorded as the known limit"
+    pass "SPIKE 2 (exceptions): a write above the identity map is named as a page fault, CR2 reported as 0x200000000, machine and Forth state dumped, and NO triple fault — the prompt does not yet resume, which is recorded as the known limit"
     ;;
   amd64-ctx)
     # SPIKE 2, second half: the context switch, and the checkpoint's own words --
@@ -528,5 +533,83 @@ case "$FLAVOR" in
       || fail "REGRESSION: the prompt came back but the 64-bit cell did not survive the round trip — see $LOG"
     pass "SPIKE 2 (context): switched into a client context, it ran and set 0x5a, __exit_context switched back, and the prompt still evaluates 7 and ffffffffffffffff"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|amd64|amd64-fault|amd64-ctx]" >&2; exit 1 ;;
+  amd64-pmem)
+    # P3: the ONE backing that needed the port.
+    #
+    # IDE sectors, CFI flash and a floppy are all reachable from the 32-bit
+    # firmware and were built there. A file-backed pmem region is not: QEMU
+    # places device memory at 0x100000000 on -M pc, and that is the first
+    # address a 32-bit firmware cannot form. Reaching it is what Spikes 1-2
+    # were for.
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    MB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"
+    DICT="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    [[ -f "$MB" && -f "$DICT" ]] || skip "no amd64 image — run ./build-openbios.sh amd64 first"
+    grep -q 'PMEM_BASE' "$WORKDIR/openbios/arch/amd64/openbios.c" 2>/dev/null \
+      || skip "no pmem backing in arch/amd64/openbios.c — this track measures P3"
+
+    NV="$WORKDIR/pmem-store.img"
+    rm -f "$NV"; truncate -s 64M "$NV"
+    BEFORE=$(sha256sum "$NV" | cut -d" " -f1)
+    # shellcheck disable=SC2054  # the commas are INSIDE one QEMU option string,
+    # not element separators; splitting on them would hand qemu five bad options.
+    PM=(-object "memory-backend-file,id=nv,share=on,mem-path=$NV,size=64M"
+        -device nvdimm,id=nv1,memdev=nv)
+    _pboot() { # _pboot <log> <send-args...>; QEXTRA holds the pmem device or not
+      local log="$1"; shift
+      rm -f "$SOCK" "$log"
+      qemu-system-x86_64 -M "pc,accel=$ACCEL,nvdimm=on" -m 512,slots=2,maxmem=2G \
+        -kernel "$MB" -initrd "$DICT" "${QEXTRA[@]}" \
+        -display none -serial "unix:$SOCK,server=on" -no-reboot >/dev/null 2>&1 &
+      local q=$!
+      python3 "$REPO/tools/drive-serial-repl.py" "$SOCK" "$log" --timeout 90 "$@" >/dev/null 2>&1
+      local rc=$?
+      kill "$q" 2>/dev/null   # by PID, never by pattern
+      sleep 1
+      return $rc
+    }
+
+    note "1/3 writing the store to pmem at 0x100000000 → $LOG.write"
+    QEXTRA=("${PM[@]}")
+    _pboot "$LOG.write" --expect "0 > " \
+      --send 'setenv boot-file P3-PMEM\r' --expect "0 > " \
+      --send '" /nvram" " update-nvram" execute-device-method .\r' --expect "0 > " \
+      || fail "no prompt conversation while writing the pmem store — see $LOG.write"
+    grep -q 'nvram: backed by pmem@0x100000000' "$LOG.write" \
+      || fail "REGRESSION: the store is not backed by pmem — the identity map may no longer reach past 4 GiB, or the probe found nothing there — see $LOG.write"
+    AFTER=$(sha256sum "$NV" | cut -d" " -f1)
+    [[ "$BEFORE" != "$AFTER" ]] \
+      || fail "REGRESSION: the firmware reported a pmem backing and the host file is byte-identical — the write went nowhere"
+    note "   host pmem image changed: ${BEFORE:0:12}… → ${AFTER:0:12}…"
+    grep -q 'boot-file=P3-PMEM' <(strings "$NV" 2>/dev/null | head -200) \
+      || fail "the value is not in the host image — see $LOG.write"
+
+    note "2/3 fresh QEMU process, same pmem file → $LOG.read"
+    QEXTRA=("${PM[@]}")
+    _pboot "$LOG.read" --expect "0 > " --send 'printenv boot-file\r' --expect "0 > " \
+      || fail "no prompt conversation on the read-back boot — see $LOG.read"
+    grep -q 'nvram: backed by pmem@0x100000000' "$LOG.read" \
+      || fail "the read-back boot did not find the pmem store — see $LOG.read"
+    # The STRUCTURE survived if the store did not have to be re-formatted.
+    grep -q 'zapping pram' "$LOG.read" \
+      && fail "REGRESSION: the pmem store was re-formatted on the read-back boot — it did not arrive valid — see $LOG.read"
+
+    note "3/3 control: identical boot with NO nvdimm attached → $LOG.control"
+    QEXTRA=()
+    _pboot "$LOG.control" --expect "0 > " --send 'printenv boot-file\r' --expect "0 > " \
+      || fail "no prompt conversation on the control boot — see $LOG.control"
+    grep -q 'no memory at 0x100000000' "$LOG.control" \
+      || fail "the control did not report an absent region — the presence probe is not probing, so a 'backed' verdict means nothing — see $LOG.control"
+
+    # KNOWN GAP, asserted so that closing it cannot pass unnoticed: the store
+    # persists STRUCTURALLY (valid partitions, no re-format, the value present
+    # in the host image) but the Forth config variable does not come back on
+    # amd64. On arch/x86 the identical round trip works -- see persist /
+    # persist-flash -- so this is amd64's own, and it is not the addressing.
+    if grep -q 'P3-PMEM' "$LOG.read"; then
+      fail "the config variable now SURVIVES on amd64 — that is better than the documented state, so update this track and the P3 notes rather than leaving a stale 'known gap' in the record"
+    fi
+    pass "P3: the store lives in pmem at 0x100000000 — above 4 GiB, reachable only in long mode — the host image changed, the value is in it, the structure survived a power cycle, and the no-nvdimm control saw nothing. The config-variable round trip does NOT complete on amd64, which is recorded as the known gap"
+    ;;
+  *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|amd64|amd64-fault|amd64-ctx|amd64-pmem]" >&2; exit 1 ;;
 esac

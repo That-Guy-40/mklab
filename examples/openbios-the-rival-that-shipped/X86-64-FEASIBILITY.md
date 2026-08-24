@@ -998,7 +998,7 @@ each one's checkpoint is chosen to be an **outcome rather than a mechanism** —
 | **P0 — a node that exists** ✅ **DONE** | implement `arch_nvram_size/get/put` in `arch/x86` over a plain static buffer; call `nvram_init()` once | `dev / ls` lists **`nvram`**, and `dev /nvram .properties` answers — the exact probe that comes back without it today | 32-bit |
 | **P1 — survives a firmware reset** ✅ **DONE** | `WIN_WRITE 0x30` + an `ob_ide_write_ata` mirroring the read twin; a dedicated raw `-drive if=ide` image as the store | set a config variable, then **`cmp` the host's image before and after** — it must differ | 32-bit |
 | **P2 — survives an OS boot, then a power cycle** ✅ **DONE** | nothing new — P1's store, exercised | set a value, boot Linux with the existing [`showcase-rival-boots-linux.sh`](showcase-rival-boots-linux.sh), exit QEMU entirely, start a **fresh process**, read it back | 32-bit |
-| **P3 — the pmem store** | an NFIT reader (or, as a first step, a hard-coded region); lift `multiboot.c`'s type-1 filter; then the 64-bit addressing | `/nvram` answering at a physical address **≥ `0x100000000`**, with the backing file changing on the host | **needs the port** |
+| **P3 — the pmem store** ⚠️ **mostly done** | a hard-coded region (an NFIT reader is still the real answer); the identity map extended to 5 GiB; the 64-bit addressing | `/nvram` answering at `0x100000000` with the backing file changing on the host — **met**; the config-variable round trip is the remaining gap | **needed the port** |
 
 #### P0 — RUN, and it passes
 
@@ -1339,6 +1339,58 @@ nothing in the persistence story needs it. It is worth doing only for full *OFW
 parity*: `pseudo-nvram` as a file the booted OS can also read. Named here rather
 than left implicit, per the rule about coverage lists that under-cover in
 silence.
+
+##### P3, run: the one backing that needed the port
+
+[`patches/10-amd64-p3-pmem-store.patch`](patches/10-amd64-p3-pmem-store.patch).
+
+Raw IDE sectors, CFI flash and a floppy are all reachable from the 32-bit
+firmware, and all three were built there. **A file-backed pmem region is not.**
+QEMU places device memory at `0x100000000` on `-M pc` — measured earlier in this
+section — and that is the first address a 32-bit firmware cannot form. This rung
+is the reason the port mattered.
+
+```
+nvram: backed by pmem@0x100000000
+```
+
+- the host image's sha256 **changes** after `update-nvram`
+- `boot-file=P3-PMEM` is **in the host image**, in the config partition
+- a **fresh QEMU process** finds the store valid and does **not** re-format it
+- the control, with no NVDIMM attached, reports `no memory at 0x100000000`
+
+**The trampoline is where reaching it starts.** The identity map grew from four
+PDPT entries to five — 0–5 GiB. The control for that is blunt and conclusive:
+shrink it back to four and the firmware **faults inside the presence probe** and
+never reaches a prompt. The map extension is not decoration.
+
+**Discovery is hard-coded, and said to be.** An NVDIMM announces itself through
+ACPI's NFIT, and this tree has no ACPI parser at all. What is hard-coded is the
+*address*; whether anything is **there** is probed — write a pattern, read it
+back, restore what was there. On QEMU a write to an address no device claims is
+silently dropped, so without that probe the firmware would "persist" into nothing
+and report success. That is the failure this repo calls a **lie** rather than a
+bug, and the no-NVDIMM control exists to keep the probe honest.
+
+This also had to add `nvram_init()`/`nvconf_init()` to `arch/amd64`, which never
+had them — the same omission P0 fixed for `arch/x86`. Until then the store was
+reachable from C and invisible from the prompt.
+
+**And P3 moved a checkpoint.** The exception track provoked its fault at
+`0x100000000` — until the map grew to 5 GiB to reach the store, at which point
+that write simply *succeeded* and `amd64-fault` went red. That is the track
+doing its job: **a fault address is a property of the memory map, not a
+constant.** It is pinned at 8 GiB now, which holds only until something maps
+that too.
+
+**Known gap, asserted rather than glossed:** the store persists *structurally* —
+valid partitions, no re-format, the value present in the host image — but the
+Forth **config variable does not come back** on amd64. The identical round trip
+works on `arch/x86` (the `persist` and `persist-flash` tracks prove it), so this
+is amd64's own and **it is not the addressing**: the bytes make the round trip,
+the interpreter does not pick them up. `amd64-pmem` fails if the value ever does
+survive, so closing it cannot leave a stale note behind.
+
 
 ### "Data survives an OS boot" is three different questions
 

@@ -1,0 +1,218 @@
+# patches/10-amd64-p3-pmem-store.patch — P3: the NVRAM store in PERSISTENT
+# MEMORY ABOVE 4 GiB. Applies on top of 09-amd64-spike2-exceptions.patch.
+#
+# Verified by: ./smoke-openbios.sh amd64-pmem
+#   nvram: backed by pmem@0x100000000
+#
+# THIS IS THE ONE BACKING THAT NEEDED THE PORT. Raw IDE sectors, CFI flash and a
+# floppy are all reachable from the 32-bit firmware and were built there. A
+# file-backed pmem region is not: QEMU places device memory at 0x100000000 on
+# -M pc, and that is the first address a 32-bit firmware cannot form.
+#
+# THE TRAMPOLINE IS WHERE REACHING IT STARTS: the identity map grows from four
+# PDPT entries to FIVE (0-5 GiB). The control for that is blunt -- shrink it
+# back to four and the firmware faults inside the presence probe and never
+# reaches a prompt, so the map extension is demonstrably load-bearing.
+#
+# DISCOVERY IS HARD-CODED AND SAID TO BE. An NVDIMM announces itself through
+# ACPI's NFIT and this tree has no ACPI parser at all. What is hard-coded is the
+# ADDRESS; whether anything is there is PROBED -- write a pattern, read it back,
+# restore what was there. On QEMU a write to an unclaimed address is silently
+# dropped, so without the probe the firmware would "persist" into nothing and
+# report success, which this repo calls a lie rather than a bug.
+#
+# Also adds nvram_init()/nvconf_init() to arch/amd64, which never had them --
+# the same omission P0 fixed for arch/x86. Until this, the store was reachable
+# from C and invisible from the prompt.
+#
+# KNOWN GAP: the store persists STRUCTURALLY -- valid partitions, no re-format
+# on the next boot, and the value present in the host image -- but the Forth
+# config variable does not come back on amd64. The identical round trip works on
+# arch/x86 (see the persist / persist-flash tracks), so this is amd64's own and
+# it is NOT the addressing. amd64-pmem asserts the gap is still the gap.
+
+--- a/arch/amd64/switch.S
++++ b/arch/amd64/switch.S
+@@ -105,11 +105,17 @@
+ 	orl	$0x03, %eax
+ 	movl	%eax, pml4
+ 
+-	/* PDPT[i] = pd + i*4096 | RW | PRESENT   (i = 0..3) */
++	/* PDPT[i] = pd + i*4096 | RW | PRESENT   (i = 0..4)
++	 *
++	 * FIVE, not four. Entries 0-3 identity-map the low 4 GiB as before;
++	 * entry 4 covers 4-5 GiB, which is where QEMU puts device memory --
++	 * an NVDIMM lands at exactly 0x100000000. P3's whole point is that
++	 * this is the one address a 32-bit firmware cannot reach, so the
++	 * trampoline is where reaching it starts. */
+ 	movl	$pd, %eax
+ 	orl	$0x03, %eax
+ 	movl	$pdpt, %edi
+-	movl	$4, %ecx
++	movl	$5, %ecx
+ 1:	movl	%eax, (%edi)
+ 	addl	$4096, %eax
+ 	addl	$8, %edi
+@@ -120,7 +126,7 @@
+ 	xorl	%eax, %eax		/* low dword of the entry  */
+ 	xorl	%edx, %edx		/* high dword: stays 0 (<4 GiB) */
+ 	orl	$0x83, %eax		/* PRESENT|RW|PS */
+-	movl	$2048, %ecx
++	movl	$2560, %ecx		/* 5 GiB / 2 MiB: the extra 512 are 4-5 GiB */
+ 2:	movl	%eax, (%edi)
+ 	movl	%edx, 4(%edi)
+ 	addl	$0x200000, %eax		/* next 2 MiB */
+@@ -476,5 +482,5 @@
+ 	.align	4096
+ pml4:	.space	4096
+ pdpt:	.space	4096
+-pd:	.space	4096*4
++pd:	.space	4096*5	/* P3: five, for 0-5 GiB */
+ pt0:	.space	4096
+--- a/arch/amd64/openbios.c
++++ b/arch/amd64/openbios.c
+@@ -20,6 +20,7 @@
+ #include "libopenbios/sys_info.h"
+ #include "openbios.h"
+ #include "arch/common/nvram.h"
++#include "packages/nvram.h"
+ #include "context.h"
+ 
+ /* Spike 1 drift: declared at file scope, as arch/x86/openbios.c:34 does.
+@@ -63,6 +64,12 @@
+ 	setup_timers();
+ 	ob_ide_init("/pci/pci-ata", 0x1f0, 0x3f6, 0x170, 0x376);
+ #endif
++	/* P3: create /nvram and bind the config variables to it, exactly as
++	 * P0 did for arch/x86. amd64 never had these calls either -- the store
++	 * above was reachable from C and invisible from the prompt. */
++	nvram_init("/");
++	nvconf_init();
++
+ 	device_end();
+ 	bind_func("platform-boot", boot );
+ 
+@@ -135,19 +142,75 @@
+ }
+ 
+ /* ------------------------------------------------------------------ *
+- * Spike 1: an NVRAM store for amd64.
++ * P3: the NVRAM store, backed by PERSISTENT MEMORY ABOVE 4 GiB.
+  *
+- * packages/nvram.c is compiled into every build and needs these three; amd64
+- * defined NONE, which is why the link failed here. Note the contrast with what
+- * arch/x86 had: THREE STUBS IN entry.S THAT LIED -- size returning 0, get and
+- * put a bare `ret` -- so a caller got silent success and an empty store.
++ * This is the rung the whole 64-bit port was needed for. The other three
++ * backings -- raw IDE sectors, CFI flash, a floppy -- are all reachable from
++ * the 32-bit firmware and were built there. A file-backed pmem region is not:
++ * QEMU places device memory at 0x100000000 on `-M pc`, measured, and that is
++ * the first address a 32-bit firmware cannot form.
+  *
+- * These do not lie. The buffer is volatile and nothing pretends otherwise; the
+- * real backings (raw IDE sectors, CFI flash) are implemented for arch/x86 and
+- * porting them is not what Spike 1 is asking about. P3 is where amd64's store
+- * gets to live above 4 GiB, which is the only part of this that needs the port.
++ * DISCOVERY IS HARD-CODED, AND THAT IS A KNOWN GAP, not an oversight. An
++ * NVDIMM announces itself through ACPI's NFIT, and this tree has no ACPI
++ * parser at all -- every ACPI symbol in it belongs to the Linux boot protocol's
++ * own e820 constants. Reading the NFIT is the real answer and it is
++ * mode-INDEPENDENT work. What is hard-coded here is the address; whether
++ * anything is actually THERE is probed rather than assumed.
+  * ------------------------------------------------------------------ */
+-static char amd64_nvram[8192];
++#define PMEM_BASE   0x100000000ULL
++#define PMEM_SIZE   8192
++
++static char amd64_nvram[PMEM_SIZE];
++static int  amd64_nvram_backed;
++
++static volatile char *pmem(void)
++{
++	return (volatile char *) (unsigned long) PMEM_BASE;
++}
++
++/* Is there memory at PMEM_BASE at all?
++ *
++ * On QEMU a write to an address no device claims is simply dropped and reads
++ * come back as ones or zeros -- no fault, no signal. So the probe writes a
++ * pattern and reads it back, and restores whatever was there first. Without
++ * this the firmware would happily "persist" into nothing and report success,
++ * which is the failure mode this repo names a LIE rather than a bug. */
++static int pmem_present(void)
++{
++	volatile char *p = pmem();
++	char save[8];
++	int i, ok = 1;
++
++	for (i = 0; i < 8; i++)
++		save[i] = p[i];
++	for (i = 0; i < 8; i++)
++		p[i] = (char)(0xA5 ^ i);
++	for (i = 0; i < 8; i++)
++		if (p[i] != (char)(0xA5 ^ i))
++			ok = 0;
++	for (i = 0; i < 8; i++)
++		p[i] = save[i];
++
++	return ok;
++}
++
++/* The same refusal the x86 backings use: the store is either blank or already
++ * ours. Anything else and we keep a volatile buffer and say so, rather than
++ * write over somebody's data. Refuse BEFORE the write, not after. */
++static int nvram_backing_ok(const unsigned char *buf, int len)
++{
++	int i, blank = 1;
++
++	for (i = 0; i < len; i++)
++		if (buf[i]) { blank = 0; break; }
++	if (blank)
++		return 1;
++	if (!memcmp(buf + 4, "77777777777", 11))
++		return 1;
++	if (!memcmp(buf + 4, "common", 6))
++		return 1;
++	return 0;
++}
+ 
+ int arch_nvram_size(void)
+ {
+@@ -156,10 +219,37 @@
+ 
+ void arch_nvram_get(char *buf)
+ {
++	amd64_nvram_backed = 0;
++
++	if (pmem_present()) {
++		memcpy(amd64_nvram, (const void *)pmem(), sizeof(amd64_nvram));
++		if (nvram_backing_ok((unsigned char *)amd64_nvram, sizeof(amd64_nvram))) {
++			amd64_nvram_backed = 1;
++			printk("nvram: backed by pmem@0x%llx\n",
++			       (unsigned long long)PMEM_BASE);
++		} else {
++			printk("nvram: pmem@0x%llx holds data that is not an nvram"
++			       " store -- refusing to write to it\n",
++			       (unsigned long long)PMEM_BASE);
++			memset(amd64_nvram, 0, sizeof(amd64_nvram));
++		}
++	} else {
++		printk("nvram: no memory at 0x%llx -- using a volatile buffer\n",
++		       (unsigned long long)PMEM_BASE);
++		memset(amd64_nvram, 0, sizeof(amd64_nvram));
++	}
++
+ 	memcpy(buf, amd64_nvram, sizeof(amd64_nvram));
+ }
+ 
+ void arch_nvram_put(char *buf)
+ {
+ 	memcpy(amd64_nvram, buf, sizeof(amd64_nvram));
++
++	if (!amd64_nvram_backed) {
++		printk("nvram: not backed -- this change will NOT survive a reset\n");
++		return;
++	}
++
++	memcpy((void *)pmem(), amd64_nvram, sizeof(amd64_nvram));
+ }
