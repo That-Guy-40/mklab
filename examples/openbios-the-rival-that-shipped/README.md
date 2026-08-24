@@ -128,7 +128,7 @@ proves the linuxboot **and** OFW labs' kept ROMs survive. No sudo anywhere.
 | [`patches/01-x86-revival.patch`](patches/01-x86-revival.patch) | the eight fixes above, one reviewable diff |
 | [`build-openbios.sh`](build-openbios.sh) | clone + patch (idempotent) + container-build x86 / ppc / unix targets |
 | [`build-coreboot-openbios.sh`](build-coreboot-openbios.sh) | isolated coreboot build carrying `openbios-builtin.elf`; sha-guards both sibling labs' artifacts |
-| [`run-openbios-qemu.sh`](run-openbios-qemu.sh) | interactive boot, any track, `0 >` on your terminal |
+| [`run-openbios-qemu.sh`](run-openbios-qemu.sh) | interactive boot, any track (`multiboot`/`coreboot`/`ppc`/`amd64`), `0 >` on your terminal |
 | [`smoke-openbios.sh`](smoke-openbios.sh) | one-verdict smokes; the ppc one proves the running blob is OURS by build-date banner |
 | [`showcase-rival-boots-linux.sh`](showcase-rival-boots-linux.sh) | the finale: one `boot` line at the prompt → Linux 6.3 → u-root, either x86 track |
 | [`RUNBOOK.md`](RUNBOOK.md) | guided tour: `0 >` semantics, device tree, the unix-process firmware, rival-vs-rival exercises |
