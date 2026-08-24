@@ -437,5 +437,54 @@ case "$FLAVOR" in
       || fail "no device tree at the 64-bit prompt — see $LOG"
     pass "SPIKE 1: QEMU booted a 64-bit ELF (via the multiboot a.out kludge) and the firmware runs in long mode — 0 > answered 7, '-1 u.' printed ffffffffffffffff, and the device tree is there"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|amd64]" >&2; exit 1 ;;
+  amd64-fault)
+    # SPIKE 2, first half: the 64-bit exception layer.
+    #
+    # Before this, the firmware had NO IDT: the first exception was a triple
+    # fault and the machine simply vanished -- which is precisely how Spike 1's
+    # SSE bug presented, and why it cost a debug session to find.
+    #
+    # The fault is provoked ABOVE 4 GiB rather than at address 0. A null-write
+    # trap was built and REVERTED: page 0 on a PC holds the real-mode IVT and
+    # the BIOS Data Area, and this firmware's console reads the BDA to find the
+    # VGA CRTC port, so unmapping it faults during boot. Faulting at
+    # 0x100000000 demonstrates more anyway -- it is an address a 32-bit
+    # firmware cannot even form.
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    MB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"
+    DICT="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    [[ -f "$MB" && -f "$DICT" ]] || skip "no amd64 image — run ./build-openbios.sh amd64 first"
+    grep -q 'amd64_exception' "$WORKDIR/openbios/arch/amd64/exception.c" 2>/dev/null \
+      || skip "no arch/amd64/exception.c in the clone — this track measures the exception layer"
+    note "provoking a page fault above 4 GiB → $LOG"
+    rm -f "$SOCK" "$LOG"
+    qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$MB" -initrd "$DICT" \
+      -display none -serial "unix:$SOCK,server=on" -no-reboot >/dev/null 2>&1 &
+    QPID=$!
+    python3 "$REPO/tools/drive-serial-repl.py" "$SOCK" "$LOG" --timeout 90 \
+      --expect "0 > " --send '0 100000000 !\r' --expect "page fault"
+    RC=$?
+    kill "$QPID" 2>/dev/null   # by PID, never by pattern
+    [[ $RC -eq 0 ]] || fail "no named fault at the 64-bit prompt (rc=$RC) — see $LOG"
+
+    grep -q 'Unexpected Exception: page fault' "$LOG" \
+      || fail "REGRESSION: the fault was not NAMED — the IDT is gone or its gates are wrong, and an unnamed fault is a triple fault waiting to happen — see $LOG"
+    # The faulting address is the whole point: CR2, not the frame, and it must
+    # be the 4 GiB one we asked for rather than whatever else went wrong.
+    grep -q 'Faulting address: 0000000100000000' "$LOG" \
+      || fail "REGRESSION: the handler named a page fault but not at 0x100000000 — it is reporting CR2 wrongly, or a DIFFERENT fault beat ours to it — see $LOG"
+    grep -q 'dstackcnt=' "$LOG" \
+      || fail "the dump carries no Forth engine state — see $LOG"
+
+    # KNOWN LIMIT, asserted so that fixing it cannot pass unnoticed: the machine
+    # survives the fault and prints " ok", but the outer interpreter does not
+    # accept further input. Recovery is x86's design (return through a
+    # do-nothing function) and this is the first time anything has exercised it
+    # -- on x86 a fault is hard to provoke at all, since it runs unpaged.
+    if grep -qE '^0 > 3 4 \+ \. 7' "$LOG"; then
+      fail "the prompt now RESUMES after a fault — that is better than the documented state, so update this track and the Spike 2 notes rather than leaving a stale 'known limit' in the record"
+    fi
+    pass "SPIKE 2 (exceptions): a write above 4 GiB is named as a page fault, CR2 reported as 0x100000000, machine and Forth state dumped, and NO triple fault — the prompt does not yet resume, which is recorded as the known limit"
+    ;;
+  *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|amd64|amd64-fault]" >&2; exit 1 ;;
 esac

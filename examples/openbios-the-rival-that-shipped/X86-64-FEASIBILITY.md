@@ -307,7 +307,7 @@ per the repo's learning-path rule:
 | spike | work | checkpoint |
 |---|---|---|
 | **1 — the trampoline** ✅ **DONE** | apply the drift fixes + the bug-#1 header fix (both already written); rewrite `switch.S`; author the 32→64 stub; stub out `boot.c`/`linux_load.c` to get a link | `0 >` on the serial socket, and `-1 u.` answering `ffffffffffffffff` from the *bare metal* rather than from `openbios-unix` |
-| **2 — context + exceptions** | the 64-bit context frame (`context.c`'s eight errors), a 64-bit IDT in a new `exception.c` | a deliberate `0 0 !` reports a named fault instead of triple-faulting; the client-program context still switches back to the prompt |
+| **2 — context + exceptions** ⚠️ **half done** | the 64-bit context frame (`context.c`'s eight errors), a 64-bit IDT in a new `exception.c` | a deliberate `0 0 !` reports a named fault instead of triple-faulting; the client-program context still switches back to the prompt |
 | **3 — boot Linux** | re-port `boot.c`/`linux_load.c` off the dead API (x86's twins show the shape), then the `+0x200` entry | the existing [`showcase-rival-boots-linux.sh`](showcase-rival-boots-linux.sh) success signature, unchanged, from the 64-bit firmware |
 | **P0–P2 — persistence** | *(runs in parallel, on the 32-bit firmware — see [the persistence spikes](#the-persistence-spikes--a-ladder-that-does-not-wait-for-the-port))* | a config variable that survives a power cycle, asserted on the **host's** backing file |
 | **P3 — the pmem store** | the only persistence work that needs long mode, and it depends on spike 1 | `/nvram` answering at a physical address ≥ `0x100000000` |
@@ -486,6 +486,92 @@ triple fault under `-no-reboot` exits QEMU with `rc=0`, which this lab has
 written down since POC-2 and which is exactly how the first broken trampoline
 presented. Its control points the track at the 32-bit x86 image: the prompt
 answers, and the cell assertion fails by name.
+
+
+## Spike 2, first half: exceptions — measured 2026-08-23
+
+The spike asks for two things: a 64-bit IDT so a fault is *named* instead of
+triple-faulting, and a client-program context that switches back to the prompt.
+**The first is done. The second is not**, and is still stubbed.
+
+```console
+0 > 0 100000000 !
+Unexpected Exception: page fault @ 08:0000000000101d50
+Code: 2  rflags: 0000000000010046
+Faulting address: 0000000100000000
+rax: 0000000000000000 rbx: 000000000018a240 rcx: 0000000100000000 …
+dict=0x11f020 here=0x14d040(dict+0x2e020) pc=0x1880c8(dict+0x690a8)
+dstackcnt=0 rstackcnt=22
+```
+
+Before this, `arch/amd64` had no IDT at all — the census recorded `exception.c`
+as *"still to author from scratch"* — so the **first** exception was a triple
+fault and the machine simply vanished. That is not hypothetical: it is exactly
+how Spike 1's SSE bug presented, and it cost a debugging session to find.
+
+**A 64-bit gate is sixteen bytes, not eight**, with the handler offset split
+across three separate fields. An IDT built by the 32-bit routine looks
+plausible and dispatches every vector into garbage, so `init_exceptions` is new
+code rather than a port.
+
+### The null-pointer trap that had to be given back
+
+The checkpoint as written says `0 0 !`. The first attempt earned that literally:
+the low 2 MiB was re-mapped as 4 KiB pages with **page 0 left absent**, so a
+null write would fault. It faulted — during boot, before the prompt existed:
+
+```
+Unexpected Exception: page fault @ 08:00000000001034c3
+Faulting address: 0000000000000000
+rdx: 3f8   rsi: 3d5
+```
+
+Those two registers name the culprit. `0x3d5` is the VGA CRTC data port, and
+the console finds its address by reading the **BIOS Data Area at 0x400–0x463**
+— which is *inside page 0*. On a PC, page zero is not spare: it holds the
+real-mode interrupt vector table and the BDA, and this firmware legitimately
+reads the latter.
+
+So a null trap is buyable, but the price is teaching the video code to stop
+reading the BDA — a real change with a real benefit, and not this spike's
+question. The identity map stays whole and the checkpoint faults **above 4 GiB**
+instead, which demonstrates rather more: `0x100000000` is an address a 32-bit
+firmware cannot even form.
+
+### The known limit, stated rather than glossed
+
+The machine **survives** the fault — it is named, dumped, and does not triple
+fault — but the outer interpreter does **not accept further input** afterwards.
+It prints ` ok` and stops listening: alive, and not listening.
+
+The recovery mechanism is inherited from `arch/x86/exception.c`, which resets
+the Forth stacks, points `PC` at `outer-interpreter` and returns through a
+do-nothing function. Two observations, and the second is a claim rather than a
+measurement:
+
+- `arch/x86`'s version omits an offset the engine's own equivalent path keeps:
+  `kernel/forth.c:686` reads `PC = findword("outer-interpreter") + sizeof(ucell)`
+  — `findword()` returns the word's *header*, and the interpreter has to be
+  entered at its *body*. Adding it here did not fix the wedge, so it is not the
+  whole story, but the asymmetry is real.
+- **That path has probably never been exercised on x86.** `arch/x86` runs
+  unpaged with flat 4 GB segments, so provoking a fault at its prompt is
+  genuinely difficult — a stray write goes to real memory and returns. This may
+  be the first time the recovery has actually been asked to work.
+
+`./smoke-openbios.sh amd64-fault` asserts the fault is named, that CR2 reports
+`0x100000000`, and that the engine state is dumped — **and asserts the limit is
+still the limit**, failing if the prompt ever does resume, so that fixing it
+cannot slip by leaving a stale "known limit" in the record. Its control removes
+the `init_exceptions()` call: the fault then produces no message at all and the
+track fails, which is the shape this layer exists to end.
+
+### Still open in Spike 2
+
+`__switch_context` and `__exit_context` remain stubs that halt. Client-program
+context switching — the checkpoint's second clause — is untouched, and the SSE
+enable from Spike 1 adds a requirement to it: the xmm registers are now live, so
+a switch must preserve them or the build must move to `-mgeneral-regs-only`.
 
 
 ## OFW / OpenBoot: why this one is a no
