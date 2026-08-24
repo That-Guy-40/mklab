@@ -1700,8 +1700,51 @@ currently an **UNKNOWN**, not a pass — the pointer-width bugs that the census
 found elsewhere in the tree are exactly the shape that would show up there
 first.
 
+## 13. The 1275 encode/decode wordset at a 64-bit cell
+
+*Added 2026-08-24, from [`REVIEW-preboot-forth-binary-structures.md`](REVIEW-preboot-forth-binary-structures.md)
+— a review of [`DESIGN-NOTES-preboot-forth-binary-structures.md`](DESIGN-NOTES-preboot-forth-binary-structures.md),
+which proposed generalizing the property-encoding wordset into a GNU-poke-like
+structure builder. The design question is the notes' to settle; what belongs here is
+the four defects the review found in the shipped wordset, all of which bite the amd64
+track regardless of whether that toolkit is ever built.*
+
+### 13.1 Three more config flips, found the same way blocker 1 was
+
+§12's blocker 1 (`CONFIG_FSYS_ISO9660`) is one row of a six-row diff between
+`config/examples/x86_config.xml` and `config/examples/amd64_config.xml`. Two more are
+in-scope work, not cosmetics:
+
+- **`CONFIG_LOADER_FORTH`** — `true` on x86, `false` on amd64. Until it is on, every
+  line of test Forth has to be typed at the serial prompt, through the ~80-char
+  truncation §12 already records. **Checkpoint:** a `.fth` loaded off media prints its
+  own marker.
+- **`CONFIG_DRIVER_VGA`** — `true` on x86, `false` on amd64. `drivers/pci.c:1045`
+  (`feval("['] vga-driver-fcode 2 cells + 1 byte-load")`) is the **only in-tree FCode
+  execution on the x86 side**, so with VGA off, amd64 has never evaluated a byte of
+  FCode. **Checkpoint:** `byte-load` reached at all — which would also be the first
+  FCode ever evaluated at a 64-bit cell in this tree.
+
+### 13.2 Four defects in `forth/device/property.fs`, none of which a byte diff can see
+
+Read at `openbios` `e5ac46d`; **none has been watched to bite** — that is the work.
+
+| # | defect | why it matters on amd64 |
+|---|---|---|
+| a | `l@-be` (`:24`) accumulates 4 bytes into a **cell**, zero-extending | `-1 encode-int decode-int` is `-1` on x86 and `4294967295` on amd64 — **same bytes, different value**. `forth/admin/devices.fs:434` compares a decoded int against a phandle |
+| b | `l!-be` (`:16`) masks to 4 bytes with **no overflow check**, and the tree encodes pointers as ints (`forth/admin/iocontrol.fs:42,76`; `forth/device/display.fs:362`) | an ihandle above 4 GiB is silently truncated into `/chosen`'s `stdin`. Masked today only because the firmware runs at 1 MiB — and the port's headline gain is memory above 4 GiB |
+| c | `encode+` is `nip +` (`:233`), i.e. **adjacency-by-`alloc-tree`**, not concatenation | correct today; silently produces a lying length if anything touches `HERE` between two fragments |
+| d | `decode-bytes` (`:195`) has two bare `r>` with no matching `>r`, and is **called by nothing** and absent from the FCode table | the `encode-bytes` round trip does not exist; fix or delete before anything claims it does |
+
+**Write the assertions on the 64-bit build, not as a cross-build byte diff.** A diff of
+encoded bytes cannot state any of the above: `encode-int` is `/l`-sized by construction
+(`/l` is `sizeof(u32)`, `kernel/bootstrap.c:849`), so the bytes match on both builds
+even when everything above them is wrong — and the input that triggers (b) is
+unrepresentable on a 4-byte-cell stack. Also assert `encode-phys` (`:237`) changes
+length with the parent's `#address-cells`, so nobody re-reads it as fixed-width.
+
 ---
 
 *Created 2026-06-06; #5–#6 added 2026-06-11; #7 added 2026-06-11; #8 added
 2026-08-03; #9 added 2026-08-06; #10 added 2026-08-06; #11 added 2026-08-21;
-#11.1 and #11.2a closed 2026-08-22; #12 added 2026-08-24.*
+#11.1 and #11.2a closed 2026-08-22; #12 and #13 added 2026-08-24.*
