@@ -26,6 +26,18 @@ trap 'rc=$?; [[ $rc -eq 0 || $rc -eq 1 || $rc -eq 77 ]] || echo "FAIL: test exit
 
 command -v python3 >/dev/null || skip "python3 not installed"
 ACCEL=$([[ -w /dev/kvm ]] && echo kvm || echo tcg)
+# THE X86 DICTIONARY IS openbios-x86.dict, NOT openbios.dict — and this lab had
+# it backwards for months. arch/x86/build.xml declares
+# `<dictionary name="openbios-x86" init="openbios">`: that is CUMULATIVE, "start
+# from the openbios dict and add these", so openbios-x86.dict is a SUPERSET
+# (105,812 → 109,032 bytes on 2026-08-23). The `.d` file lists only the
+# incremental inputs, and POC-2 read that as "the overlay, not the system".
+#
+# Booting the base dict means booting x86 WITHOUT arch/x86/init.fs: no /memory,
+# no /cpus, no /chosen preopens, and no set-defaults. That last omission is why
+# the persistence tracks looked greener than the firmware was — see the
+# `dict-identity` track, which exists so this cannot silently come back.
+XDICT="$WORKDIR/openbios/obj-x86/openbios-x86.dict"
 LOG="$WORKDIR/smoke-openbios-$FLAVOR.log"
 SOCK="$WORKDIR/smoke-$FLAVOR.sock"
 rm -f "$LOG" "$SOCK"
@@ -37,7 +49,7 @@ case "$FLAVOR" in
       MB="$WORKDIR/openbios/obj-x86/openbios.multiboot"
       [[ -f "$MB" ]] || skip "no image at $MB — run ./build-openbios.sh x86 first"
       QEMU=(qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$MB"
-            -initrd "$WORKDIR/openbios/obj-x86/openbios.dict")
+            -initrd "$XDICT")
     else
       ROM="$CB/build-openbios/coreboot.rom"
       [[ -f "$ROM" ]] || skip "no ROM at $ROM — run ./build-coreboot-openbios.sh first"
@@ -104,7 +116,7 @@ case "$FLAVOR" in
     note "P0 patch is $([[ $WANT == present ]] && echo applied || echo 'NOT applied') → /nvram must be $WANT"
     note "booting multiboot (accel=$ACCEL), listing the device tree → $LOG"
     qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$MB" \
-      -initrd "$WORKDIR/openbios/obj-x86/openbios.dict" \
+      -initrd "$XDICT" \
       -display none -serial "unix:$SOCK,server=on" -no-reboot >/dev/null 2>&1 &
     QPID=$!
     python3 "$REPO/tools/drive-serial-repl.py" "$SOCK" "$LOG" --timeout 90 \
@@ -182,7 +194,7 @@ case "$FLAVOR" in
       local log="$1"; shift
       rm -f "$SOCK" "$log"
       qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$MB" \
-        -initrd "$WORKDIR/openbios/obj-x86/openbios.dict" "${QEXTRA[@]}" \
+        -initrd "$XDICT" "${QEXTRA[@]}" \
         -display none -serial "unix:$SOCK,server=on" -no-reboot >/dev/null 2>&1 &
       local qp=$!
       python3 "$REPO/tools/drive-serial-repl.py" "$SOCK" "$log" --timeout 90 "$@" >/dev/null 2>&1
@@ -213,8 +225,17 @@ case "$FLAVOR" in
     QEXTRA=("${DRIVE[@]}")
     _boot "$LOG.read" --expect "0 > " --send "printenv boot-file\r" --expect "0 > " \
       || fail "no prompt conversation on the read-back boot — see $LOG.read"
-    grep -q "$NONCE" "$LOG.read" \
-      || fail "REGRESSION: boot-file did not survive a power cycle — the store is not backed — see $LOG.read"
+    if ! grep -q "$NONCE" "$LOG.read"; then
+      # TWO VERY DIFFERENT CAUSES LOOK THE SAME HERE, and this message used to
+      # assert the first one. If the firmware found the backing and did NOT
+      # re-format it, the bytes arrived: the value was read and then thrown
+      # away, which is the set-defaults ordering bug (see dict-identity and
+      # arch/x86/init.fs).
+      if grep -q "nvram: backed by $WANT_BACKEND" "$LOG.read" && ! grep -q "zapping pram" "$LOG.read"; then
+        fail "REGRESSION: the store arrived valid on $WANT_BACKEND and boot-file is still the default — the bytes made the round trip and something after nvconf_init reset /options; check that set-defaults is a PREPOST-initializer in arch/x86/init.fs, not a SYSTEM one — see $LOG.read"
+      fi
+      fail "REGRESSION: boot-file did not survive a power cycle — the store is not backed — see $LOG.read"
+    fi
     grep -q "zapping pram" "$LOG.read" \
       && fail "REGRESSION: the store was re-formatted on the read-back boot — it did not arrive valid — see $LOG.read"
 
@@ -258,7 +279,7 @@ case "$FLAVOR" in
     rm -f "$SOCK" "$LOG"
     note "booting with a blank 1.44 MB floppy at fd0 → $LOG"
     qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$MB" \
-      -initrd "$WORKDIR/openbios/obj-x86/openbios.dict" \
+      -initrd "$XDICT" \
       -drive "if=floppy,index=0,format=raw,file=$FD" \
       -display none -serial "unix:$SOCK,server=on" -no-reboot >/dev/null 2>&1 &
     QPID=$!
@@ -330,7 +351,7 @@ case "$FLAVOR" in
       local log="$1" tmo="$2"; shift 2
       rm -f "$SOCK" "$log"
       qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$MB" \
-        -initrd "$WORKDIR/openbios/obj-x86/openbios.dict" "${QEXTRA[@]}" \
+        -initrd "$XDICT" "${QEXTRA[@]}" \
         -display none -serial "unix:$SOCK,server=on" -no-reboot >/dev/null 2>&1 &
       local qp=$!
       python3 "$REPO/tools/drive-serial-repl.py" "$SOCK" "$log" --timeout "$tmo" "$@" >/dev/null 2>&1
@@ -467,10 +488,24 @@ case "$FLAVOR" in
       -display none -serial "unix:$SOCK,server=on" -no-reboot >/dev/null 2>&1 &
     QPID=$!
     python3 "$REPO/tools/drive-serial-repl.py" "$SOCK" "$LOG" --timeout 90 \
-      --expect "0 > " --send '0 200000000 !\r' --expect "page fault"
+      --expect "0 > " \
+      --send '0 200000000 !\r' --expect "page fault" --expect "0 > " \
+      --send '0 210000000 !\r' --expect "page fault" --expect "0 > " \
+      --send '0 220000000 !\r' --expect "page fault" --expect "0 > " \
+      --send '3 4 + .\r' --expect "7 " --expect "0 > " \
+      --send 'dev / ls\r' --expect "nvram" --expect "0 > "
     RC=$?
     kill "$QPID" 2>/dev/null   # by PID, never by pattern
-    [[ $RC -eq 0 ]] || fail "no named fault at the 64-bit prompt (rc=$RC) — see $LOG"
+    # THE FAILURE MESSAGE HAS TO NAME THE RIGHT DEFECT. A wedged recovery times
+    # out waiting for the prompt, which the driver reports identically to "the
+    # fault never happened" -- and the control run proved that: it printed "no
+    # named fault" about a run whose fault was named perfectly. Look before
+    # blaming.
+    if [[ $RC -ne 0 ]]; then
+      grep -q 'Unexpected Exception: page fault' "$LOG" \
+        && fail "REGRESSION: the fault WAS named and the prompt never came back (rc=$RC) — recovery wedged: this is the do_nothing-return shape arch/amd64/exception.c was rewritten to replace — see $LOG"
+      fail "no named fault at the 64-bit prompt (rc=$RC) — see $LOG"
+    fi
 
     grep -q 'Unexpected Exception: page fault' "$LOG" \
       || fail "REGRESSION: the fault was not NAMED — the IDT is gone or its gates are wrong, and an unnamed fault is a triple fault waiting to happen — see $LOG"
@@ -481,15 +516,35 @@ case "$FLAVOR" in
     grep -q 'dstackcnt=' "$LOG" \
       || fail "the dump carries no Forth engine state — see $LOG"
 
-    # KNOWN LIMIT, asserted so that fixing it cannot pass unnoticed: the machine
-    # survives the fault and prints " ok", but the outer interpreter does not
-    # accept further input. Recovery is x86's design (return through a
-    # do-nothing function) and this is the first time anything has exercised it
-    # -- on x86 a fault is hard to provoke at all, since it runs unpaged.
-    if grep -qE '^0 > 3 4 \+ \. 7' "$LOG"; then
-      fail "the prompt now RESUMES after a fault — that is better than the documented state, so update this track and the Spike 2 notes rather than leaving a stale 'known limit' in the record"
-    fi
-    pass "SPIKE 2 (exceptions): a write above the identity map is named as a page fault, CR2 reported as 0x200000000, machine and Forth state dumped, and NO triple fault — the prompt does not yet resume, which is recorded as the known limit"
+    # SURVIVING A FAULT IS NOT THE SAME AS RECOVERING FROM ONE, and until
+    # 2026-08-23 this track recorded the difference as a known limit: the
+    # machine printed its dump, printed one " ok", and then accepted no
+    # further input -- alive and not listening.
+    #
+    # The cause was arch/x86's recovery shape, which arch/amd64 had copied:
+    # zero the Forth stacks, aim PC at the outer interpreter, and resume at a
+    # do-nothing function so the C stack unwinds back into enterforth's loop.
+    # That loop is `while (rstackcnt > tmp)` with tmp captured at ENTRY, so
+    # `rstackcnt = 0` makes it false for every enterforth frame on the stack:
+    # measured, the frame it returned into had tmp=8 and exited without
+    # calling next() once, and four nested frames unwound the same way. The
+    # PC was never executed. arch/amd64/exception.c now abandons the faulted
+    # stack instead -- iretq onto _estack and re-enter the interpreter.
+    #
+    # So the assertion is the OUTCOME, not the mechanism: type at the prompt
+    # after the fault and require an answer. Three faults in a row are driven
+    # because a recovery that works once and wedges on the second is a
+    # different bug wearing this one's clothes.
+    grep -qE '^0 > 3 4 \+ \. 7' <(tr -d "\r" < "$LOG") \
+      || fail "REGRESSION: the prompt does not answer after a fault — the machine survived but stopped listening, which is the wedge arch/amd64/exception.c was rewritten to fix — see $LOG"
+    grep -q 'nvram' "$LOG" \
+      || fail "REGRESSION: the device tree does not walk after a fault — recovery re-entered the interpreter but the dictionary did not survive it — see $LOG"
+    FAULTS=$(grep -ac 'Faulting address: 00000002' <(tr -d "\r" < "$LOG"))
+    [[ "$FAULTS" -eq 3 ]] \
+      || fail "REGRESSION: expected 3 recovered page faults, saw $FAULTS — a later fault was not caught, or the 'second fault before restart' guard fired — see $LOG"
+    grep -q 'halting' "$LOG" \
+      && fail "REGRESSION: the handler halted instead of recovering — see $LOG"
+    pass "SPIKE 2 (exceptions): three page faults above the identity map, each NAMED with CR2 and a full machine+Forth dump, each RECOVERED — the prompt answers 7 and still walks the device tree afterwards"
     ;;
   amd64-ctx)
     # SPIKE 2, second half: the context switch, and the checkpoint's own words --
@@ -601,15 +656,89 @@ case "$FLAVOR" in
     grep -q 'no memory at 0x100000000' "$LOG.control" \
       || fail "the control did not report an absent region — the presence probe is not probing, so a 'backed' verdict means nothing — see $LOG.control"
 
-    # KNOWN GAP, asserted so that closing it cannot pass unnoticed: the store
-    # persists STRUCTURALLY (valid partitions, no re-format, the value present
-    # in the host image) but the Forth config variable does not come back on
-    # amd64. On arch/x86 the identical round trip works -- see persist /
-    # persist-flash -- so this is amd64's own, and it is not the addressing.
-    if grep -q 'P3-PMEM' "$LOG.read"; then
-      fail "the config variable now SURVIVES on amd64 — that is better than the documented state, so update this track and the P3 notes rather than leaving a stale 'known gap' in the record"
-    fi
-    pass "P3: the store lives in pmem at 0x100000000 — above 4 GiB, reachable only in long mode — the host image changed, the value is in it, the structure survived a power cycle, and the no-nvdimm control saw nothing. The config-variable round trip does NOT complete on amd64, which is recorded as the known gap"
+    # THE VALUE ITSELF, not just the bytes. Until 2026-08-23 this was a
+    # recorded gap: the store round-tripped structurally and `printenv` still
+    # showed the compile-time default. The cause was NOT amd64's addressing --
+    # running `nvram-load-configs` by hand at the prompt, on the same store,
+    # set every variable correctly. It was WHEN set-defaults runs.
+    #
+    # arch/amd64/init.fs (and arch/x86/init.fs, and ia64's) registered
+    # set-defaults as a SYSTEM-initializer. arch_init -- which calls
+    # nvconf_init() -- is registered from C as a PREPOST-initializer, and
+    # PREPOST runs first, so the store was read, parsed, applied to /options,
+    # and then overwritten with defaults every boot. ppc/qemu, sparc32 and
+    # sparc64 all say PREPOST-initializer. amd64 and x86 now do too.
+    grep -q 'P3-PMEM' "$LOG.read" \
+      || fail "REGRESSION: the store arrived valid and the config variable is still the default — something after nvconf_init is resetting /options; check that set-defaults is a PREPOST-initializer in arch/amd64/init.fs, not a SYSTEM one — see $LOG.read"
+    grep -q 'P3-PMEM' "$LOG.control" \
+      && fail "REGRESSION: the no-nvdimm control saw P3-PMEM — this check cannot fail and proves nothing"
+    pass "P3: the store lives in pmem at 0x100000000 — above 4 GiB, reachable only in long mode — the host image changed, the value is in it, the structure survived a power cycle, boot-file reads back as P3-PMEM, and the no-nvdimm control saw neither the region nor the value"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|amd64|amd64-fault|amd64-ctx|amd64-pmem]" >&2; exit 1 ;;
+  dict-identity)
+    # WHICH DICTIONARY IS THE X86 FIRMWARE ACTUALLY RUNNING?
+    #
+    # This lab booted `openbios.dict` on x86 for months, on a conclusion
+    # POC-2 wrote down as a pitfall -- *"openbios-x86.dict is NOT the
+    # dictionary; the <platform> name is the decoy"*. That conclusion was
+    # drawn while chasing a panic whose real cause was elsewhere
+    # (load_dictionary was never called), and nobody re-derived it once the
+    # panic was fixed. A cached fact outliving its evidence, in a document.
+    #
+    # arch/x86/build.xml says `<dictionary name="openbios-x86" init="openbios">`
+    # -- CUMULATIVE: start from the openbios dict, then add arch/x86/init.fs.
+    # The `.d` file lists only the increment, which is what "overlay" was read
+    # off. The superset is bigger, and it carries /memory, /cpus, the /chosen
+    # preopens and set-defaults. Booting the base dict quietly ran x86 without
+    # any of them -- which is exactly why the persistence tracks looked
+    # greener than the firmware was.
+    #
+    # So this track asks the question two ways that can both fail: the file
+    # sizes, and what the running device tree contains. The base-dict boot IS
+    # the control -- it must NOT show the nodes.
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    MB="$WORKDIR/openbios/obj-x86/openbios.multiboot"
+    BASE="$WORKDIR/openbios/obj-x86/openbios.dict"
+    [[ -f "$MB" && -f "$XDICT" && -f "$BASE" ]] \
+      || skip "no x86 images — run ./build-openbios.sh x86 first"
+
+    SZ_ARCH=$(stat -c%s "$XDICT"); SZ_BASE=$(stat -c%s "$BASE")
+    note "openbios.dict=$SZ_BASE bytes, openbios-x86.dict=$SZ_ARCH bytes"
+    [[ "$SZ_ARCH" -gt "$SZ_BASE" ]] \
+      || fail "REGRESSION: \$XDICT ($SZ_ARCH bytes) is not larger than openbios.dict ($SZ_BASE) — most likely XDICT is pointed back at the base dict; failing that, the build changed or the 'overlay' reading was right after all"
+
+    _dboot() { # _dboot <dict-path> <log>
+      rm -f "$SOCK" "$2"
+      qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$MB" -initrd "$1" \
+        -display none -serial "unix:$SOCK,server=on" -no-reboot >/dev/null 2>&1 &
+      local q=$!
+      python3 "$REPO/tools/drive-serial-repl.py" "$SOCK" "$2" --timeout 60 \
+        --expect "0 > " --send 'dev / ls\r' --expect "0 > " >/dev/null 2>&1
+      local rc=$?
+      kill "$q" 2>/dev/null   # by PID, never by pattern
+      sleep 1
+      return $rc
+    }
+    # `dev / ls` prints "<hex-phandle> <name>"; anchor on that shape so the
+    # word appearing in prose cannot pass for a node.
+    _has() { grep -qE "^[0-9a-f]+ $2[[:space:]]*\$" <(tr -d "\r" < "$1"); }
+
+    note "1/2 booting the ARCH dict → $LOG.arch"
+    _dboot "$XDICT" "$LOG.arch" || fail "no prompt on the arch-dict boot — see $LOG.arch"
+    for n in memory cpus; do
+      _has "$LOG.arch" "$n" \
+        || fail "REGRESSION: /$n is missing from the device tree with openbios-x86.dict — that node exists ONLY because arch/x86/init.fs is in the dictionary, so the firmware is not running the arch dict — see $LOG.arch"
+    done
+
+    note "2/2 control: the BASE dict, which must NOT have them → $LOG.base"
+    _dboot "$BASE" "$LOG.base" || fail "no prompt on the base-dict control boot — see $LOG.base"
+    for n in memory cpus; do
+      _has "$LOG.base" "$n" \
+        && fail "the base dict ALSO carries /$n — then these two dictionaries no longer differ in the way this track measures, and its arch-dict assertion above cannot fail — re-derive what openbios.dict contains before trusting either — see $LOG.base"
+    done
+    grep -qE '^[0-9a-f]+ openprom[[:space:]]*$' <(tr -d "\r" < "$LOG.base") \
+      || fail "the base-dict control did not produce a device tree at all — it proves nothing about /memory — see $LOG.base"
+
+    pass "the x86 tracks boot openbios-x86.dict ($SZ_ARCH bytes, the superset): /memory and /cpus are in the running device tree, and the base openbios.dict ($SZ_BASE bytes) boots to a prompt WITHOUT them"
+    ;;
+  *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem]" >&2; exit 1 ;;
 esac

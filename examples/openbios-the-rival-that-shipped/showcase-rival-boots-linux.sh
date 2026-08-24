@@ -44,7 +44,7 @@ case "$FLAVOR" in
     MB="$WORKDIR/openbios/obj-x86/openbios.multiboot"
     [[ -f "$MB" ]] || skip "no image at $MB — run ./build-openbios.sh x86 first"
     QEMU=(qemu-system-x86_64 -m 512 -kernel "$MB"
-          -initrd "$WORKDIR/openbios/obj-x86/openbios.dict") ;;
+          -initrd "$WORKDIR/openbios/obj-x86/openbios-x86.dict") ;;
   coreboot)
     ROM="$CB/build-openbios/coreboot.rom"
     [[ -f "$ROM" ]] || skip "no ROM at $ROM — run ./build-coreboot-openbios.sh first"

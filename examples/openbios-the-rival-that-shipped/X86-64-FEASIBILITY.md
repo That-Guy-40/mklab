@@ -492,8 +492,16 @@ answers, and the cell assertion fails by name.
 
 The spike asks for two things: a 64-bit IDT so a fault is *named* instead of
 triple-faulting, and a client-program context that switches back to the prompt.
-**Both are done.** One thing beyond the checkpoint is not, and is recorded as a
-known limit at the end.
+The whole layer ships as
+[`patches/09-amd64-spike2-exceptions.patch`](patches/09-amd64-spike2-exceptions.patch),
+with the recovery rewrite in
+[`patches/11-config-defaults-and-fault-recovery.patch`](patches/11-config-defaults-and-fault-recovery.patch).
+
+**Both are done** — and a third thing, beyond the checkpoint, which the first
+version of this section recorded as a known limit and which is now closed: the
+prompt *comes back* after a fault. That took finding out that the recovery
+`arch/amd64` inherited from `arch/x86` never worked at all. See
+[§ The limit, found and closed](#the-limit-found-and-closed-2026-08-23).
 
 ```console
 0 > 0 100000000 !
@@ -539,33 +547,117 @@ question. The identity map stays whole and the checkpoint faults **above 4 GiB**
 instead, which demonstrates rather more: `0x100000000` is an address a 32-bit
 firmware cannot even form.
 
-### The known limit, stated rather than glossed
+### The limit, found and closed (2026-08-23)
 
-The machine **survives** the fault — it is named, dumped, and does not triple
-fault — but the outer interpreter does **not accept further input** afterwards.
-It prints ` ok` and stops listening: alive, and not listening.
+For a while this section recorded a **known limit**: the machine survived the
+fault — named, dumped, no triple fault — and then the prompt answered nothing.
+Alive, and not listening. It also recorded a *guess* about the cause, and the
+guess was wrong in both directions, which is the part worth keeping.
 
-The recovery mechanism is inherited from `arch/x86/exception.c`, which resets
-the Forth stacks, points `PC` at `outer-interpreter` and returns through a
-do-nothing function. Two observations, and the second is a claim rather than a
-measurement:
+**The guess, and why it was backwards.** `arch/x86`'s recovery omits an offset
+the engine's own path keeps — `kernel/forth.c:686` reads
+`PC = findword("outer-interpreter") + sizeof(ucell)` — so `arch/amd64` added it.
+Adding it changed nothing, and the honest reading of that is not *"so it is not
+the whole story"*: it is that **the offset was never the story, and `arch/x86`
+had it right.** `next()` is
 
-- `arch/x86`'s version omits an offset the engine's own equivalent path keeps:
-  `kernel/forth.c:686` reads `PC = findword("outer-interpreter") + sizeof(ucell)`
-  — `findword()` returns the word's *header*, and the interpreter has to be
-  entered at its *body*. Adding it here did not fix the wedge, so it is not the
-  whole story, but the asymmetry is real.
-- **That path has probably never been exercised on x86.** `arch/x86` runs
-  unpaged with flat 4 GB segments, so provoking a fault at its prompt is
-  genuinely difficult — a stray write goes to real memory and returns. This may
-  be the first time the recovery has actually been asked to work.
+```c
+static inline void next(void)
+{
+    PC += sizeof(ucell);
+    processxt(read_ucell(cell2pointer(read_ucell(cell2pointer(PC)))));
+}
+```
 
-`./smoke-openbios.sh amd64-fault` asserts the fault is named, that CR2 reports
-`0x100000000`, and that the engine state is dumped — **and asserts the limit is
-still the limit**, failing if the prompt ever does resume, so that fixing it
-cannot slip by leaving a stale "known limit" in the record. Its control removes
-the `init_exceptions()` call: the fault then produces no message at all and the
-track fails, which is the shape this layer exists to end.
+— it **pre-increments**. A handler that resumes *into* that loop must therefore
+not pre-add the cell. `kernel/forth.c:686` needs the offset for exactly the
+opposite reason: it is reached from `next_dbg()`, which has already advanced
+`PC` before calling the debugger. One word, two call sites, two resumption
+semantics — and comparing them without checking which side of the increment
+each sits on produced a confident, symmetrical, wrong conclusion.
+
+**The cause.** `enterforth`'s loop is
+
+```c
+tmp = rstackcnt;  ...  while (rstackcnt > tmp && !interruptforth) next();
+```
+
+with `tmp` captured **at entry** — and the recovery sets `rstackcnt = 0`. That
+makes the condition false for *every* `enterforth` frame on the C stack, so each
+returns without calling `next()` even once. The `PC` the handler chose is never
+executed by anybody. Measured by printing each frame's own `tmp` on the way out:
+
+```
+DBG: recovering, PC=128a58 (xt=128a58) rstackcnt->0
+DBG: do_nothing reached, rstackcnt=0 dstackcnt=0 PC=128a58 retaddr=1026fc
+DBG: enterforth exit #2 tmp=8 rstackcnt=0
+ ok
+DBG: enterforth exit #3 tmp=0 rstackcnt=0
+DBG: enterforth exit #4 tmp=0 rstackcnt=0
+DBG: enterforth exit #5 tmp=0 rstackcnt=0
+DBG: enterforth exit #6 tmp=0 rstackcnt=0
+```
+
+`iretq` lands correctly and `do_nothing` runs — the mechanism people would
+suspect is fine. Then five nested interpreter frames unwind one after another,
+the first holding `tmp=8`. That single ` ok` is the last thing a dying
+interpreter says on its way out.
+
+**The fix is to stop coming back through it.** A faulted C stack has no
+invariants left, and recovering *through* it makes recovery depend on where the
+fault happened to land. `arch/amd64/exception.c` now abandons it — `iretq` onto
+the firmware's own `_estack` and re-enter the outer interpreter from scratch:
+
+```c
+sp = ((uint64_t)(uintptr_t)_estack) & ~0xFULL;
+sp -= 8;                /* as a CALL would leave it: rsp % 16 == 8 */
+info->rsp = sp;
+info->rip = (uint64_t)(uintptr_t)&restart_interpreter;
+```
+
+`restart_interpreter()` zeroes the Forth stacks, sets
+`PC = findword("outer-interpreter")` and calls `enterforth()` — the same two
+lines `openbios()` uses to start the interpreter the first time — and never
+returns. A second fault arriving *before* that lands is refused by name rather
+than recursing on a fresh stack each time.
+
+```console
+0 > 0 200000000 !
+Unexpected Exception: page fault @ 08:0000000000101fd0
+Faulting address: 0000000200000000
+...
+0 > 3 4 + . 7  ok
+0 > dev / ls
+13b248 aliases
+...
+14ca98 nvram
+ ok
+0 >
+```
+
+`./smoke-openbios.sh amd64-fault` drives **three** faults in a row and then
+types at the prompt, because a recovery that works once and wedges on the second
+is a different bug wearing this one's clothes. It asserts the outcome — an
+answer of `7` and a device tree that still walks — not the mechanism. Two
+controls: removing `init_exceptions()` produces no message at all, and restoring
+the `do_nothing` return reproduces the wedge exactly (`rc=1`, *"the machine
+survived but stopped listening"*).
+
+**`arch/x86` is NOT fixed here, and that is an UNKNOWN rather than a pass.** Its
+handler has the same dead shape, but the same fix does not transcribe: a 32-bit
+same-privilege `iret` does not reload `esp`, so switching stacks needs an asm
+trampoline rather than a struct field. More to the point, **the defect cannot be
+demonstrated on x86 from this lab** — `arch/x86` runs unpaged with flat 4 GB
+segments, so a stray write lands in real memory and returns, and nothing at its
+prompt provokes a fault at all. Fixing it blind would be a change nobody here
+could watch bite. The comment in `arch/amd64/exception.c` names the x86 twin so
+the next person to reach it starts from the measurement rather than the guess.
+
+**A related non-defect, recorded so it is not re-diagnosed:** `1 0 /` hangs the
+64-bit firmware with *no* exception — not an IDT gap. `mu/mod` divides a
+`ducell`, which on a 64-bit build is `__int128`, so the compiler emits a call to
+libgcc's `__udivmodti4` rather than an `idiv`. Verified in the disassembly.
+There is no `#DE` to catch; the machine is spinning inside a software divide.
 
 ### The second half: the context switch
 
@@ -998,7 +1090,7 @@ each one's checkpoint is chosen to be an **outcome rather than a mechanism** —
 | **P0 — a node that exists** ✅ **DONE** | implement `arch_nvram_size/get/put` in `arch/x86` over a plain static buffer; call `nvram_init()` once | `dev / ls` lists **`nvram`**, and `dev /nvram .properties` answers — the exact probe that comes back without it today | 32-bit |
 | **P1 — survives a firmware reset** ✅ **DONE** | `WIN_WRITE 0x30` + an `ob_ide_write_ata` mirroring the read twin; a dedicated raw `-drive if=ide` image as the store | set a config variable, then **`cmp` the host's image before and after** — it must differ | 32-bit |
 | **P2 — survives an OS boot, then a power cycle** ✅ **DONE** | nothing new — P1's store, exercised | set a value, boot Linux with the existing [`showcase-rival-boots-linux.sh`](showcase-rival-boots-linux.sh), exit QEMU entirely, start a **fresh process**, read it back | 32-bit |
-| **P3 — the pmem store** ⚠️ **mostly done** | a hard-coded region (an NFIT reader is still the real answer); the identity map extended to 5 GiB; the 64-bit addressing | `/nvram` answering at `0x100000000` with the backing file changing on the host — **met**; the config-variable round trip is the remaining gap | **needed the port** |
+| **P3 — the pmem store** ✅ **DONE** | a hard-coded region (an NFIT reader is still the real answer); the identity map extended to 5 GiB; the 64-bit addressing | `/nvram` answering at `0x100000000`, the backing file changing on the host, and `printenv boot-file` reading the value back in a fresh QEMU process — **all met** (the round trip needed [the `set-defaults` ordering fix](#the-gap-that-was-not-amd64s-2026-08-23)) | **needed the port** |
 
 #### P0 — RUN, and it passes
 
@@ -1383,13 +1475,111 @@ doing its job: **a fault address is a property of the memory map, not a
 constant.** It is pinned at 8 GiB now, which holds only until something maps
 that too.
 
-**Known gap, asserted rather than glossed:** the store persists *structurally* —
-valid partitions, no re-format, the value present in the host image — but the
-Forth **config variable does not come back** on amd64. The identical round trip
-works on `arch/x86` (the `persist` and `persist-flash` tracks prove it), so this
-is amd64's own and **it is not the addressing**: the bytes make the round trip,
-the interpreter does not pick them up. `amd64-pmem` fails if the value ever does
-survive, so closing it cannot leave a stale note behind.
+### The dictionary x86 was never booting
+
+The `set-defaults` ordering bug above is in `arch/x86` too, and has been since
+the file was written. So why did every x86 persistence track pass?
+
+**Because the x86 tracks were booting the wrong dictionary.** `arch/x86` builds
+two:
+
+```
+obj-x86/openbios.dict       104,952 bytes
+obj-x86/openbios-x86.dict   108,060 bytes
+```
+
+`arch/x86/build.xml` declares `<dictionary name="openbios-x86" init="openbios">`
+— **cumulative**: *start from the `openbios` dict, then add `arch/x86/init.fs`*.
+The second is a superset. This lab booted the first, on a conclusion
+[POC-2](POC-2-OK-PROMPT.md) wrote down as a pitfall — *"`openbios-x86.dict` is
+NOT the dictionary; the `<platform>` name is the decoy"* — reasoning from the
+`.d` file, which lists only the increment. That conclusion was reached while
+chasing a panic whose real cause turned out to be `load_dictionary()` never being
+called; once that was fixed, nobody re-derived which dictionary was right. **A
+cached fact outliving its evidence, in a document.**
+
+What the base dict leaves out is not cosmetic. `dev / ls`, same firmware binary,
+the two dictionaries side by side:
+
+| `openbios.dict` | `openbios-x86.dict` |
+|---|---|
+| aliases openprom options chosen builtin packages … | aliases openprom options chosen builtin packages **memory cpus** … |
+
+No `/memory`, no `/cpus`, no `/chosen` preopens — and **no `set-defaults`**,
+because that initializer lives in `arch/x86/init.fs`. The one omission that
+mattered was the one that made a broken thing look fixed.
+
+The masking is measurable directly. With `set-defaults` deliberately restored to
+a `SYSTEM-initializer` — i.e. the bug present — the same `persist` track:
+
+| dictionary | result |
+|---|---|
+| `openbios-x86.dict` (the arch dict) | **FAIL** — `boot-file` did not survive |
+| `openbios.dict` (the base) | **PASS** |
+
+Two artifacts, one firmware, opposite verdicts. The green run was the one
+running less code.
+
+`./smoke-openbios.sh dict-identity` now asks the question two ways that can each
+fail — the file sizes, and whether `/memory` and `/cpus` are in the *running*
+device tree — and boots the base dict as its control, which must **not** have
+them. All five x86 tracks, `run-openbios-qemu.sh` and the Linux showcase now pass
+`openbios-x86.dict`; the showcase still reaches u-root, so nothing depended on
+the base dict's absences.
+
+### The gap that was not amd64's (2026-08-23)
+
+P3 first shipped with a **known gap**: the store persisted *structurally* — valid
+partitions, no re-format, the value visible in the host image — while `printenv
+boot-file` still read the compile-time default. The note said it was amd64's own,
+because *"the identical round trip works on `arch/x86`"*. Both halves of that
+were wrong, and finding out cost four measurements, each of which killed a
+plausible suspect:
+
+| the probe | what it killed |
+|---|---|
+| `100000010 c00 nvram-load-configs` typed **at the prompt**, on the same store | the parser, the addressing and the store. It sets every variable correctly. |
+| a `printk` in `nvconf_init` | *"the loader never runs"*: it runs, with `data=15f71f size=3072 first=626f6f74` — `"boot"`, the first key |
+| a counter and a throw-printer inside `nvram-load-configs` | *"`$setenv` is throwing and `catch` swallows it"*: **24 iterations, zero throws** |
+| printing `boot-file` at seven points inside `initialize-of` | the answer |
+
+That last one is the whole diagnosis in seven lines:
+
+```
+NVP1[P3-PMEM]      <- after PREPOST-list  (arch_init → nvconf_init ran here)
+NVP2[P3-PMEM]      <- after POST-list
+NVP3[]             <- after SYSTEM-list
+NVP4[] NVP5[] NVP6[] NVP7[]
+```
+
+Something in the **SYSTEM** list was throwing it away. That something is
+`arch/amd64/init.fs`:
+
+```forth
+:noname
+  set-defaults
+; SYSTEM-initializer
+```
+
+`set-defaults` walks every config word and rewrites `/options` with its
+compile-time default. `arch_init` — which calls `nvconf_init()` — is registered
+from C as a **PREPOST**-initializer, and PREPOST runs first. So the store was
+read, parsed, applied, and then overwritten. Every boot. `nvconf_init()` already
+calls `set-defaults` *itself*, on the path where the store had to be zapped —
+which is the only path where it is wanted.
+
+**And the arches that work say so.** `ppc/qemu`, `sparc32` and `sparc64` — the
+three anyone actually boots — all register `set-defaults` as a
+**PREPOST**-initializer. `x86`, `amd64` and `ia64` — the three never finished —
+all say SYSTEM. The fix is one word in `arch/amd64/init.fs` and one in
+`arch/x86/init.fs`, and the config variable comes back on both.
+
+The control: restore `SYSTEM-initializer` and rebuild, and `amd64-pmem` fails by
+name (*"the store arrived valid and the config variable is still the default"*)
+while `persist` fails on x86 too. Restore the fix and both go green.
+
+Both this fix and the exception-recovery one ship as
+[`patches/11-config-defaults-and-fault-recovery.patch`](patches/11-config-defaults-and-fault-recovery.patch).
 
 
 ### "Data survives an OS boot" is three different questions
@@ -1422,8 +1612,11 @@ it currently cannot.
 
 ## What the audit corrected
 
-The verdict and the shape of the work survived the audit; these eight claims
-did not, and per house style they are named rather than silently rewritten:
+The verdict and the shape of the work survived the audit; these eleven claims
+did not, and per house style they are named rather than silently rewritten.
+Entries 10–12 were found in the *fixing*, not in the audit — two of them are
+claims **this document made** while diagnosing something else, which is the
+pattern worth noticing more than any single correction.
 
 1. **The `defconfig` evidence row cited a file the build never reads.**
    `arch/amd64/defconfig` is referenced by nothing; the operative
@@ -1465,6 +1658,29 @@ did not, and per house style they are named rather than silently rewritten:
    not the most expensive, and the recommendation in the ladder inverted
    accordingly. Correction 8 was right about the layers and wrong about which
    question they answered.
+10. **"`arch/x86` omits an offset the engine's own path keeps" had it exactly
+    backwards.** `kernel/forth.c:686` adds `sizeof(ucell)` because it is reached
+    from `next_dbg()`, which has *already* advanced `PC`; `next()` advances it
+    itself, so a handler resuming into the interpreter loop must not pre-add it.
+    `arch/x86` was right and `arch/amd64`'s copy was the off-by-one. The
+    comparison looked symmetrical and was not, because the two call sites sit on
+    opposite sides of the same increment — and the wedge it was offered as an
+    explanation for had nothing to do with either spelling. See
+    [§ The limit, found and closed](#the-limit-found-and-closed-2026-08-23).
+11. **"The config-variable round trip works on `arch/x86`" was an artifact of
+    booting the wrong dictionary.** `arch/x86` has the same `set-defaults`
+    ordering bug; it did not show because the x86 tracks loaded
+    `openbios.dict` — the arch-less base — instead of `openbios-x86.dict`, and
+    `set-defaults` lives in `arch/x86/init.fs`. With the correct dictionary the
+    same track fails on x86 too. The claim was measured, repeatedly, on an
+    artifact that was not the subject. See
+    [§ The dictionary x86 was never booting](#the-dictionary-x86-was-never-booting).
+12. **"`openbios-x86.dict` is NOT the dictionary" (POC-2) was wrong from the
+    day it was written.** `<dictionary name="openbios-x86" init="openbios">` is
+    cumulative, so it is a *superset*; the `.d` file listing only the increment
+    is what "overlay" was read off. It was concluded while chasing a panic whose
+    cause turned out to be elsewhere, and never re-derived once that was fixed.
+    `./smoke-openbios.sh dict-identity` now re-derives it every run.
 
 ## What this document did NOT prove
 

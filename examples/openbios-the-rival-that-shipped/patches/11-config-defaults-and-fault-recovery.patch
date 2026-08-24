@@ -1,0 +1,202 @@
+Subject: [PATCH 11/11] set-defaults runs in the wrong list, and a fault recovery
+ that never reached the interpreter
+
+Two defects that a green suite could not see, both inherited by arch/amd64 from
+arch/x86 and both present upstream.
+
+1. arch/{x86,amd64,ia64}/init.fs register `set-defaults` as a SYSTEM-initializer.
+   arch_init -- which calls nvconf_init() -- is registered from C as a PREPOST
+   one, and PREPOST runs first, so every boot read the NVRAM store, parsed it,
+   applied it to /options, and then overwrote it with the compile-time defaults.
+   ppc/qemu, sparc32 and sparc64 all say PREPOST-initializer. Say it here too.
+
+2. arch/amd64/exception.c recovered by zeroing the Forth stacks, aiming PC at
+   outer-interpreter, and returning through a do-nothing function so the C stack
+   would unwind into enterforth's loop. That loop is `while (rstackcnt > tmp)`
+   with tmp captured at entry, so rstackcnt = 0 makes it false for every frame:
+   measured, the frame it returned into had tmp=8 and exited without calling
+   next() once, and four nested frames unwound the same way. The chosen PC was
+   never executed -- the machine printed one " ok" and stopped listening.
+
+   Abandon the faulted stack instead: iretq onto _estack and re-enter the outer
+   interpreter from scratch. A faulted C stack has no invariants left, and
+   recovering through it makes recovery depend on where the fault landed.
+
+   (The `+ sizeof(ucell)` this file carried was a separate error in the other
+   direction: kernel/forth.c:686 needs it because next_dbg() has already
+   advanced PC; next() advances it itself, so arch/x86's spelling was right.)
+
+diff --git a/arch/amd64/init.fs b/arch/amd64/init.fs
+index fda3acd..ececba9 100644
+--- a/arch/amd64/init.fs
++++ b/arch/amd64/init.fs
+@@ -51,9 +51,22 @@ finish-device
+   then
+ ;
+  
++\ WHEN this runs is the whole of it. set-defaults overwrites EVERY config
++\ variable with its compile-time default, so it has to run BEFORE the NVRAM
++\ store is read, never after. arch_init -- which calls nvconf_init() -- is
++\ registered from C as a PREPOST-initializer, and list-add APPENDS, so a
++\ PREPOST entry compiled into the dictionary here is reached first and the
++\ store's values land on top of the defaults, which is the intent.
++\
++\ As a SYSTEM-initializer (what x86, amd64 and ia64 all shipped) it runs in
++\ the NEXT list instead, i.e. AFTER nvconf_init has loaded the store -- so a
++\ perfectly good store was read, parsed, applied to /options, and then thrown
++\ away every boot. ppc/qemu, sparc32 and sparc64 -- the three arches anyone
++\ actually boots -- all say PREPOST-initializer here. The never-finished
++\ three copied the line into the wrong list.
+ :noname
+   set-defaults
+-; SYSTEM-initializer
++; PREPOST-initializer
+ 
+ \ preopen device nodes (and store the ihandles under /chosen)
+ :noname
+diff --git a/arch/x86/init.fs b/arch/x86/init.fs
+index eef72e9..2c86959 100644
+--- a/arch/x86/init.fs
++++ b/arch/x86/init.fs
+@@ -52,9 +52,22 @@ finish-device
+   device-end
+ ;
+  
++\ WHEN this runs is the whole of it. set-defaults overwrites EVERY config
++\ variable with its compile-time default, so it has to run BEFORE the NVRAM
++\ store is read, never after. arch_init -- which calls nvconf_init() -- is
++\ registered from C as a PREPOST-initializer, and list-add APPENDS, so a
++\ PREPOST entry compiled into the dictionary here is reached first and the
++\ store's values land on top of the defaults, which is the intent.
++\
++\ As a SYSTEM-initializer (what x86, amd64 and ia64 all shipped) it runs in
++\ the NEXT list instead, i.e. AFTER nvconf_init has loaded the store -- so a
++\ perfectly good store was read, parsed, applied to /options, and then thrown
++\ away every boot. ppc/qemu, sparc32 and sparc64 -- the three arches anyone
++\ actually boots -- all say PREPOST-initializer here. The never-finished
++\ three copied the line into the wrong list.
+ :noname
+   set-defaults
+-; SYSTEM-initializer
++; PREPOST-initializer
+ 
+ \ preopen device nodes (and store the ihandles under /chosen)
+ :noname
+--- a/arch/amd64/exception.c
++++ b/arch/amd64/exception.c
+@@ -61,15 +61,46 @@
+ 	"machine check exception",
+ };
+ 
+-void do_nothing(void);
+-void do_nothing(void)
++/* The firmware's own stack top, from arch/amd64/ldscript. Recovery abandons
++ * the faulted stack and starts again on this one -- see restart_interpreter. */
++extern char _estack[];
++
++/* Set between the fault and the moment the interpreter is actually re-entered.
++ * A second fault inside that window would recurse forever on a fresh stack
++ * each time, printing the same dump until the console scrolls the original
++ * off; halting once is the honest answer. */
++static volatile int recovering;
++
++static void halt_forever(void)
++{
++	for (;;)
++		asm volatile ("cli; hlt");
++}
++
++/* Never returns. Entered by iretq on a FRESH STACK, with the faulted one
++ * abandoned entirely -- see the long note in amd64_exception. */
++static void restart_interpreter(void)
+ {
++	recovering = 0;
++
++	rstackcnt = 0;
++	dstackcnt = 0;
++
++	PC = (ucell)findword("outer-interpreter");
++	enterforth((xt_t)PC);
++
++	/* The outer interpreter is a loop; reaching here means it fell out,
++	 * which recovery cannot paper over. Say so rather than returning into
++	 * a stack that no longer exists. */
++	printk("\nthe outer interpreter returned after a fault -- halting.\n");
++	halt_forever();
+ }
+ 
+ void amd64_exception(struct eregs *info);
+ void amd64_exception(struct eregs *info)
+ {
+ 	uint64_t cr2 = 0;
++	uint64_t sp;
+ 
+ 	if (info->vector <= 18)
+ 		printk("\nUnexpected Exception: %s", exception_names[info->vector]);
+@@ -110,25 +141,49 @@
+ 	 * so once is worth more than pretending a hundred times. */
+ 	if (!dict) {
+ 		printk("\nFault before the dictionary was loaded -- halting.\n");
+-		for (;;)
+-			asm volatile ("cli; hlt");
++		halt_forever();
+ 	}
+ 
+-	/* Recover rather than halt, exactly as arch/x86 does: empty the Forth
+-	 * stacks, aim the interpreter at its outer loop, and return through a
+-	 * function that does nothing. iretq then resumes there instead of at
+-	 * the instruction that faulted. */
+-	rstackcnt = 0;
+-	dstackcnt = 0;
++	if (recovering) {
++		printk("\nA second fault arrived before the interpreter restarted"
++		       " -- halting.\n");
++		halt_forever();
++	}
++	recovering = 1;
+ 
+-	/* + sizeof(ucell), which arch/x86's copy of this line OMITS.
+-	 * findword() returns the word's HEADER; the interpreter has to be
+-	 * entered at its BODY, one cell along. kernel/forth.c:686 -- the
+-	 * engine's own "start a subordinate interpreter" path -- gets this
+-	 * right: `PC = findword("outer-interpreter") + sizeof(ucell)`.
+-	 * Without the offset the machine survives the fault, prints " ok",
+-	 * and then accepts no further input: alive, and not listening. */
+-	PC = findword("outer-interpreter") + sizeof(ucell);
++	/* THE FAULTED C STACK CANNOT BE RECOVERED THROUGH, and arch/x86's
++	 * handler -- which this was copied from -- has always tried to.
++	 *
++	 * Its shape is: zero the Forth stacks, point PC at the outer
++	 * interpreter, and resume at a do-nothing function so the C stack
++	 * unwinds back into enterforth's loop, which then runs the new PC.
++	 * The last step is the one that never happens. enterforth's loop is
++	 *
++	 *     tmp = rstackcnt; ... while (rstackcnt > tmp && ...) next();
++	 *
++	 * so setting rstackcnt = 0 makes that condition false for EVERY
++	 * enterforth frame on the stack. Measured here on 2026-08-23 with a
++	 * page fault at the prompt: the frame we returned into had tmp = 8,
++	 * exited without calling next() even once, and four more nested frames
++	 * unwound the same way. The carefully-chosen PC was never executed.
++	 * The machine survived, printed one " ok", and then accepted no input
++	 * -- alive and not listening, which is exactly the reported symptom.
++	 *
++	 * (The `+ sizeof(ucell)` this file used to carry was a separate error
++	 * in the other direction. kernel/forth.c:686 needs that offset because
++	 * next_dbg() has ALREADY advanced PC before calling the debugger;
++	 * next() advances it itself, so a handler that returns into the loop
++	 * must NOT pre-add it. Both spellings wedge identically -- measured --
++	 * because the loop is never reached either way.)
++	 *
++	 * So: do not return into it. iretq onto the firmware's own stack and
++	 * enter the outer interpreter from scratch. Nothing on the faulted
++	 * stack is worth keeping -- its invariants died with the fault -- and
++	 * abandoning it is what makes the recovery independent of where the
++	 * fault happened to land. */
++	sp = ((uint64_t)(uintptr_t)_estack) & ~0xFULL;
++	sp -= 8;		/* as a CALL would leave it: rsp % 16 == 8 */
+ 
+-	info->rip = (uint64_t)&do_nothing;
++	info->rsp = sp;
++	info->rip = (uint64_t)(uintptr_t)&restart_interpreter;
+ }

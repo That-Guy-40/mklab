@@ -10,7 +10,7 @@ five bitrotted code paths with an eight-part patch, because nobody had booted
 Linux from OpenBIOS-x86 since the zImage era.
 
 ```text
-Track 1 (multiboot):  qemu -kernel openbios.multiboot -initrd openbios.dict ──► 0 > ──► boot ──► Linux 6.3 ──► u-root
+Track 1 (multiboot):  qemu -kernel openbios.multiboot -initrd openbios-x86.dict ──► 0 > ──► boot ──► Linux 6.3 ──► u-root
 Track 2 (coreboot):   qemu -bios coreboot.rom ──► ramstage ──► openbios-builtin.elf ──► 0 > ──► Linux ──► u-root
 Track 3 (ppc):        qemu-system-ppc -bios OUR openbios-qemu.elf ──► 0 > (banner proves it's ours)
 Bonus:                obj-amd64/openbios-unix — the same firmware as a host userspace process
