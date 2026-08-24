@@ -18,7 +18,7 @@ Building OpenBIOS for ppc amd64 ... ok.
 /home/sqs/openbios-lab/openbios/obj-amd64/openbios-unix
 /home/sqs/openbios-lab/openbios/obj-ppc/openbios-qemu.elf
 /home/sqs/openbios-lab/openbios/obj-x86/openbios-builtin.elf
-/home/sqs/openbios-lab/openbios/obj-x86/openbios.dict
+/home/sqs/openbios-lab/openbios/obj-x86/openbios-x86.dict
 /home/sqs/openbios-lab/openbios/obj-x86/openbios.multiboot
 ```
 
@@ -62,7 +62,51 @@ $ ./smoke-openbios.sh ppc
 PASS: our own openbios-ppc (built on Jul 21 2026 07:09) answered 7 at the 0 > prompt
 ```
 
-Runtime ≈ 15–30 s each. SKIP (77) when the image, qemu, or python3 is absent.
+```console
+$ ./smoke-openbios.sh dict-identity
+  - openbios.dict=104952 bytes, openbios-x86.dict=108060 bytes
+  - 1/2 booting the ARCH dict → .../smoke-openbios-dict-identity.log.arch
+  - 2/2 control: the BASE dict, which must NOT have them → .../smoke-openbios-dict-identity.log.base
+PASS: the x86 tracks boot openbios-x86.dict (108060 bytes, the superset): /memory and /cpus
+      are in the running device tree, and the base openbios.dict (104952 bytes) boots to a
+      prompt WITHOUT them
+
+$ ./smoke-openbios.sh amd64-fault
+  - provoking a page fault above 4 GiB → .../smoke-openbios-amd64-fault.log
+PASS: SPIKE 2 (exceptions): three page faults above the identity map, each NAMED with CR2
+      and a full machine+Forth dump, each RECOVERED — the prompt answers 7 and still walks
+      the device tree afterwards
+
+$ ./smoke-openbios.sh amd64-pmem
+  - 1/3 writing the store to pmem at 0x100000000 → …log.write
+  -    host pmem image changed: 8a2b1f0d4c6e… → 3f77c0921ab4…
+  - 2/3 fresh QEMU process, same pmem file → …log.read
+  - 3/3 control: identical boot with NO nvdimm attached → …log.control
+PASS: P3: … boot-file reads back as P3-PMEM, and the no-nvdimm control saw neither the
+      region nor the value
+```
+
+Runtime ≈ 15–30 s each (`amd64-pmem` and the `persist*` family boot three times,
+≈ 60–90 s). SKIP (77) when the image, qemu, or python3 is absent.
+
+**The full list**: `multiboot coreboot ppc nvram dict-identity persist
+persist-flash floppy persist-os persist-os-flash amd64 amd64-fault amd64-ctx
+amd64-pmem` — 14 tracks. Measured 2026-08-23 on this host: **13 of 14 ran and
+passed; the one SKIP is `coreboot`**, which has no cached ROM (rebuild it with
+`./build-coreboot-openbios.sh`). The Linux showcase: `multiboot` PASS,
+`coreboot` SKIP for the same reason.
+
+### The negative controls, run 2026-08-23
+
+Each fix was broken and watched to bite before being trusted:
+
+| control | result |
+|---|---|
+| `set-defaults` back to a `SYSTEM-initializer` (both `init.fs`) | `persist` **FAIL**, `amd64-pmem` **FAIL** — by name, pointing at the initializer list |
+| …the same break, but booting the **base** dict | `persist` **PASS** — the masking, reproduced on demand |
+| `$XDICT` pointed back at `openbios.dict` | `dict-identity` **FAIL** |
+| `arch/amd64/exception.c` back to the `do_nothing` return | `amd64-fault` **FAIL** — *"the fault WAS named and the prompt never came back"* |
+| all restored | all four **PASS** again |
 
 ## 4. The showcase — OpenBIOS boots Linux to u-root
 
@@ -139,6 +183,14 @@ $ ./run-openbios-qemu.sh ppc          # OUR openbios-ppc via -bios (-nographic)
 - **Slow-send always** (40 ms/byte — both drive tools' default): firmware
   serial has no flow control.
 - **Kill QEMU by PID**, never by pattern (house rule; the scripts comply).
+- **`openbios-x86.dict` is the x86 dictionary**, not `openbios.dict` — the
+  latter is the arch-less base it is built *from*, and booting it silently
+  drops `arch/x86/init.fs` (no `/memory`, no `/cpus`, no `set-defaults`).
+  `dict-identity` measures this on every run; POC-2 said the opposite until
+  2026-08-23.
+- **`1 0 /` hangs the 64-bit firmware with no exception** and that is not an
+  IDT gap: `mu/mod` divides an `__int128`, so the compiler calls libgcc's
+  `__udivmodti4` rather than emitting `idiv`. There is no `#DE` to catch.
 - **A triple fault under `-no-reboot` looks like a clean rc=0 exit** — check
   the log for a prompt, don't trust the exit code. KVM's "internal error" is
   the louder failure mode.

@@ -63,8 +63,8 @@ shipped ppc blob uses — that name choice matters in POC-5) and `unix-amd64`.
 
 ```
 obj-x86/openbios.multiboot       97 KB   multiboot ELF: "boot from GRUB or LinuxBIOS" — the dict rides as a module
-obj-x86/openbios.dict           102 KB   the full Forth system as ONE dictionary file (header + reloc table)
-obj-x86/openbios-x86.dict         a trap: only the arch overlay (init.fs + VGA FCode) — see POC-2
+obj-x86/openbios.dict           102 KB   the ARCH-LESS Forth system (header + reloc table) — not what x86 boots
+obj-x86/openbios-x86.dict       106 KB   THE x86 dictionary: the above PLUS arch/x86/init.fs + VGA FCode
 obj-x86/openbios-builtin.elf    350 KB   dict EMBEDDED — self-contained: the coreboot-payload shape
 obj-ppc/openbios-qemu.elf       661 KB   what /usr/share/qemu/openbios-ppc is built from
 obj-amd64/openbios-unix                  the same Forth engine as a host executable
@@ -95,3 +95,16 @@ stack depth; it's the same prompt the teaser in the OFW lab's RUNBOOK showed.)
 - `xsltproc` is load-bearing: the whole Makefile is generated from XML.
 - Build products are timestamped (`built on <date>` banner) — byte-identical
   rebuilds are not expected, and POC-5 turns that "flaw" into the proof.
+- **The "already applied?" test must ask for the CAUSE, not for the diff.**
+  `build-openbios.sh` used to answer it with `git apply --reverse --check
+  patches/01-x86-revival.patch`, i.e. *"is exactly this diff present"* — and
+  that broke the day a later patch (Spike 1) edited a region patch 01 had
+  touched, in a file where patch 01's change was still fully in effect. The
+  build refused to run at all, on any target, and the message blamed upstream.
+  It now checks **one marker per file the patch touches**: all eight present =
+  applied, none = apply it, and a *mixture* stops the build by name, because a
+  half-revived tree is the one that builds and then misbehaves elsewhere. The
+  first draft of that marker list was itself wrong — it attributed
+  `kernel_info_offset` to `multiboot.h` instead of `linux_load.c` — and the
+  check caught its own defect on its first run, which is the only reason it is
+  trustworthy now.

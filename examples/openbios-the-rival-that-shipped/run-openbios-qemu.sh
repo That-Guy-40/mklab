@@ -2,7 +2,7 @@
 # run-openbios-qemu.sh [multiboot|coreboot|ppc] — boot OpenBIOS interactively,
 # `0 >` prompt on THIS terminal (Ctrl-A X quits QEMU).
 #
-#   multiboot → qemu -kernel openbios.multiboot -initrd openbios.dict [default]
+#   multiboot → qemu -kernel openbios.multiboot -initrd openbios-x86.dict [default]
 #   coreboot  → qemu -bios coreboot.rom   (coreboot → OpenBIOS payload chain)
 #   ppc       → qemu-system-ppc -bios our openbios-qemu.elf  (the swap-in)
 #
@@ -28,7 +28,7 @@ case "$FLAVOR" in
     MB="$WORKDIR/openbios/obj-x86/openbios.multiboot"
     [[ -f "$MB" ]] || { echo "no image at $MB — run ./build-openbios.sh x86" >&2; exit 1; }
     exec qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 \
-      -kernel "$MB" -initrd "$WORKDIR/openbios/obj-x86/openbios.dict" \
+      -kernel "$MB" -initrd "$WORKDIR/openbios/obj-x86/openbios-x86.dict" \
       "${CDROM[@]}" -display none -serial mon:stdio -no-reboot ;;
   coreboot)
     ROM="$CB/build-openbios/coreboot.rom"

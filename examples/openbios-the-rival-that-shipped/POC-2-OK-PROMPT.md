@@ -64,6 +64,26 @@ dependency file shows it holds only `arch/x86/init.fs` + the VGA FCode — the
 *overlay*, not the system. The full dictionary is `openbios.dict` (its `.d`
 lists every forth source in the tree). Swap it in: **same panic.**
 
+> **⚠️ That reading was WRONG, and it stood for months — corrected 2026-08-23.**
+> The panic had nothing to do with which module was passed (it was
+> `load_dictionary()` never being called, below), so *both* dicts panicked and
+> the guess was never re-tested once the real cause was fixed. A conclusion that
+> outlived its evidence.
+>
+> `arch/x86/build.xml` says
+> `<dictionary name="openbios-x86" init="openbios">` — that is **cumulative**:
+> *start from the `openbios` dict, then add these*. So `openbios-x86.dict` is a
+> **superset**, not an overlay (105,812 → 109,032 bytes, measured), and the `.d`
+> file lists only the incremental inputs, which is what "overlay" was read off.
+>
+> Booting `openbios.dict` runs x86 **without `arch/x86/init.fs`**: no `/memory`,
+> no `/cpus`, no `/chosen` preopens, and no `set-defaults`. That last omission
+> silently *flattered* the NVRAM work — the config-variable round trip appeared
+> to succeed on x86 while the same firmware, given its own dictionary, threw the
+> loaded values away. See
+> [`X86-64-FEASIBILITY.md` § The dictionary x86 was never booting](X86-64-FEASIBILITY.md#the-dictionary-x86-was-never-booting).
+> `./smoke-openbios.sh dict-identity` now measures it both ways on every run.
+
 **The thinking:** stop guessing, read the panic's producer.
 `arch/x86/openbios.c` does:
 
@@ -121,8 +141,12 @@ path, so over serial the boot ends at a bare `0 > ` — expect the prompt, not
 
 - **flags 0x10003 with a 3-word header** is spec-invalid; QEMU/GRUB will
   honor bit 16 and jump to 0. Trust the loader, dump the header.
-- `openbios-x86.dict` is NOT the dictionary — `openbios.dict` is. The
-  `<platform>` name is the decoy.
+- **`openbios-x86.dict` IS the x86 dictionary** — `openbios.dict` is the
+  arch-less base it is built *from*. `<dictionary name="openbios-x86"
+  init="openbios">` is cumulative; the `.d` file lists only the increment, and
+  reading that as "an overlay" is what cost this lab months of booting a
+  dictionary with no `arch/x86/init.fs` in it. Compare the two file sizes:
+  the arch one is bigger. (This bullet said the opposite until 2026-08-23.)
 - `panic: no dictionary entry point` on x86-multiboot = `dict_last` never
   set = `load_dictionary()` never called. arch/amd64 has the reference flow.
 - A triple fault under `-no-reboot` looks like a clean rc=0 QEMU exit —
