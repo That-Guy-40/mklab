@@ -398,14 +398,18 @@ case "$FLAVOR" in
     # nothing about the arch layer. This track boots obj-amd64/openbios.multiboot32
     # under QEMU and asks the same question of the metal.
     #
-    # The `32` in that filename is not cosmetic: QEMU's multiboot loader REFUSES
-    # an x86-64 ELF ("Cannot load x86-64 image, give a 32bit one"), so the image
-    # is linked ELF64 and wrapped in ELF32 headers by objcopy. Every entry path
-    # on this machine class hands off in 32-bit; the trampoline is what climbs.
+    # AND IT IS A REAL ELF64, asserted below. QEMU does print "Cannot load
+    # x86-64 image, give a 32bit one" -- but only on its ELF path. The image
+    # carries the multiboot a.out-kludge flag, so the loader never parses the
+    # ELF and never reaches that check. Asserting the ELF class is the point:
+    # without it this track would pass just as happily on the ELF32-wrapped
+    # variant, and the claim "QEMU booted a 64-bit ELF" would go unmeasured.
     command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
-    MB="$WORKDIR/openbios/obj-amd64/openbios.multiboot32"
+    MB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"
     DICT="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
     [[ -f "$MB" ]] || skip "no image at $MB — run ./build-openbios.sh amd64 first"
+    readelf -h "$MB" 2>/dev/null | grep -q 'ELF64' \
+      || fail "$MB is not an ELF64 — this track's claim is that QEMU boots a 64-BIT ELF, and an ELF32 would pass every assertion below while proving something weaker"
     [[ -f "$DICT" ]] || skip "no dictionary at $DICT"
     note "booting the 64-bit firmware (accel=$ACCEL) → $LOG"
     rm -f "$SOCK" "$LOG"
@@ -431,7 +435,7 @@ case "$FLAVOR" in
       || fail "the firmware did not report skipping relocation — see $LOG"
     grep -q 'openprom' "$LOG" \
       || fail "no device tree at the 64-bit prompt — see $LOG"
-    pass "SPIKE 1: the firmware runs in long mode on bare metal — 0 > answered 7, '-1 u.' printed ffffffffffffffff, and the device tree is there"
+    pass "SPIKE 1: QEMU booted a 64-bit ELF (via the multiboot a.out kludge) and the firmware runs in long mode — 0 > answered 7, '-1 u.' printed ffffffffffffffff, and the device tree is there"
     ;;
   *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|amd64]" >&2; exit 1 ;;
 esac

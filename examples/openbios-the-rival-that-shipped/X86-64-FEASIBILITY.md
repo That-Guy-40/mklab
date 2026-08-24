@@ -363,7 +363,86 @@ condition, a guard or a struct that names the targets somebody actually built.**
 | 7 | **libgcc's 128-bit helpers were `condition="SPARC64"`** | directly under a comment reading `CONDITION="CONFIG_64BITS"`. Someone knew the right condition and hard-coded the only 64-bit arch that shipped. `dcell` is 128-bit on amd64 too |
 | 8 | **`elf_load.c`'s ofmem guard** | `#if !defined(CONFIG_SPARC32) && !defined(CONFIG_X86)` — the list named the arches that were built |
 | 9 | **`auto-boot?` defaulted true** | the firmware printed its banner, tried to boot nothing, and stopped **without a prompt** — which reads exactly like a hang and is not one |
-| 10 | **QEMU refuses an ELF64 multiboot image** | `Cannot load x86-64 image, give a 32bit one.` The build now wraps the ELF64 in ELF32 headers via `objcopy` → `openbios.multiboot32` |
+| 10 | **QEMU appears to refuse an ELF64 multiboot image** | `Cannot load x86-64 image, give a 32bit one.` — and this turned out to be the most interesting item of the ten. It is one line deep, on the ELF path only, and the multiboot **a.out kludge** goes round it. QEMU boots this firmware as a real ELF64. See below |
+
+### Item 10, re-investigated: QEMU's ELF64 refusal is real, narrow, and bypassable
+
+The first draft of this section recorded that QEMU *"refuses an ELF64 multiboot
+image"* and wrapped the image in ELF32 headers with `objcopy` to get past it.
+That worked, and it was the wrong conclusion. **QEMU boots this firmware as a
+64-bit ELF, unmodified.** What follows is why, because the answer corrects
+something else in this document.
+
+**The check exists and is exactly one line deep.** In `hw/i386/multiboot.c`:
+
+```c
+if (((struct elf64_hdr*)header)->e_machine == EM_X86_64) {
+    error_report("Cannot load x86-64 image, give a 32bit one.");
+    exit(1);
+}
+```
+
+**It sits only on the ELF path.** When the multiboot header sets bit 16 — the
+**a.out kludge**, declaring `load_addr`/`load_end_addr`/`bss_end_addr`/
+`entry_addr` valid — QEMU takes the other branch, loads the file flat from
+those addresses, and never parses the ELF at all. `e_machine` is never read.
+
+That is not a trick. The Multiboot specification provides the address fields
+precisely for an image *"in some other format"*, and to a 32-bit-only loader an
+ELF64 is exactly that.
+
+**Measured, with the kludge and no `objcopy`:**
+
+```console
+$ file obj-amd64/openbios.multiboot
+… ELF 64-bit LSB executable, x86-64 …
+$ qemu-system-x86_64 -M pc -m 512 -kernel obj-amd64/openbios.multiboot \
+      -initrd obj-amd64/openbios-amd64.dict
+Welcome to OpenBIOS v1.1 built on Aug 23 2026 23:21
+
+0 >
+```
+
+The one prerequisite is that the loaded image be **contiguous in the file**, so
+those addresses can describe it: `.initctx` moved ahead of `.bss` in the
+ldscript, and `_load_end` marks the boundary.
+
+#### This corrects "A known bug, waiting verbatim"
+
+That section reads amd64's `MULTIBOOT_HEADER_FLAGS 0x00010003` as *"the exact
+spec-invalid header that was bug #1"* of the x86 revival, with the one-line fix
+travelling as-is. **Half of that is wrong, and it is the interesting half.**
+
+- For **x86**, an ELF32, clearing bit 16 is right: the ELF path works and the
+  address fields are redundant.
+- For **amd64**, an ELF64, bit 16 is the **only** documented way past a loader
+  that refuses the ELF path. The original header was reaching for the correct
+  mechanism; it was invalid solely because its three-word struct carried **none
+  of the five address fields the bit promises**.
+
+Whoever wrote `0x00010003` into a 64-bit arch directory in 2006 may have known
+exactly what they were doing. The fix is to *finish* that header, not remove it.
+
+#### Why the refusal is there at all
+
+Worth knowing before anyone files it as a QEMU bug — it is a **contested policy
+choice**, not a technical limit:
+
+| when | what |
+|---|---|
+| Aug 2010 | Adam Lackorzynski proposes the check: an x86_64 ELF supplied via `-kernel` "is being started in 32bit mode" |
+| | Avi Kivity **objects** — `kvm-unit-tests` relies on the existing behaviour: 64-bit ELF binaries "loaded in 32-bit mode [that] switch immediately to 64-bit" |
+| | Alexander Graf: *"I'm in full sympathy to stick to whatever grub does, as that's the reference implementation"* |
+| Jan 2019 | [qemu#243](https://gitlab.com/qemu-project/qemu/-/issues/243) reports the refusal, noting the premise was mistaken: **both GRUB and Syslinux load 64-bit ELF kernels** |
+
+GRUB loads an ELF64 whenever the physical load addresses fit in 32 bits. So the
+check was adopted to match a reference implementation that does not behave that
+way, over a live objection from a project doing the same thing this spike does.
+Two patches to lift it (2010, 2017) went nowhere.
+
+**None of which had to be litigated to boot this firmware** — the specification
+already provided the door, and it was the one amd64's own header was pointing at.
+
 
 ### The finding that outranks the rest: relocation cannot survive the port
 
