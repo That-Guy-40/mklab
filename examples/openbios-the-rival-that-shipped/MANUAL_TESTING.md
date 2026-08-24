@@ -216,7 +216,8 @@ an empty store, not a failure.
 - **Device paths:** `:\file` (backslash) is a filename; `:/file` is a node
   path. `genisoimage -r` lowercases (`VMLINUZ`→`vmlinuz`).
 - **Boot line ≤ ~80 chars** — the firmware input buffer drops the tail
-  silently (the showcase line is exactly 78).
+  silently. The showcase line is **75** characters (measured 2026-08-24; this
+  and POC-4 both said "exactly 78", a copied integer nobody re-counted).
 - **Serial client must gate the guest**: `-serial unix:…,server=on` with wait
   ON, so the banner isn't emitted before the client connects.
 - **Slow-send always** (40 ms/byte — both drive tools' default): firmware
