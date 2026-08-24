@@ -187,5 +187,7 @@ so the loader got fixed.
   subset — missing `init_size`/`pref_address` faults the decompressor.
 - `RAM <small> MB` from coreboot on a big VM = unchased LB_TAG_FORWARD.
 - Keep the boot line ≤ ~80 chars: the firmware input buffer silently drops
-  the tail (the `.img` vanished off the end once — the showcase line is
-  exactly 78).
+  the tail (the `.img` vanished off the end once). The showcase line is **75**
+  characters — this said "exactly 78" until 2026-08-24, a hand-written integer
+  that was simply never re-derived. Count it, don't quote it:
+  `awk '{print length}'`.

@@ -1572,6 +1572,136 @@ was the honest fix for an audit with no mandate to change a driver.
 
 ---
 
+
+---
+
+## 12. Spike 3 — boot Linux from the **64-bit** firmware (`examples/openbios-the-rival-that-shipped/`)
+
+*Added 2026-08-24, after Spikes 0–2 and P0–P3 landed (#280–#288).* The last rung
+of the port. Everything below the loader now works in long mode; this item is
+about the loader.
+
+**Checkpoint** (unchanged from
+[`X86-64-FEASIBILITY.md`](examples/openbios-the-rival-that-shipped/X86-64-FEASIBILITY.md)):
+*the existing [`showcase-rival-boots-linux.sh`](examples/openbios-the-rival-that-shipped/showcase-rival-boots-linux.sh)
+success signature — `Welcome to u-root!` — unchanged, from the 64-bit firmware.*
+
+### Start here: three blockers, measured at the 64-bit prompt on 2026-08-24
+
+Driven through `./run-openbios-qemu.sh amd64` with the showcase ISO attached.
+**None of these was known before typing at the prompt**, and the first is
+cheaper than anyone had assumed:
+
+```console
+0 > dev /ide@1 ls
+14be28 cdrom@0                         \ IDE enumerates in long mode — fine
+ ok
+0 > dir /ide@1/cdrom@0:\
+Probing for ext2fs
+Probing for reiserfs
+Unknown filesystem type                 \ <-- BLOCKER 1
+Unable to locate device /ide@1/cdrom@0:\ ok
+0 > boot /ide@1/cdrom@0:\vmlinuz console=ttyS0
+[amd64] Booting file '/ide@1/cdrom@0:\vmlinuz' with parameters 'console=ttyS0'
+[amd64] linux_load is STUBBED in this build (Spike 1).   \ <-- BLOCKER 2
+Unsupported image format
+Trying disk...
+load-base: undefined word.              \ <-- BLOCKER 3
+```
+
+1. **The ISO9660 driver is not compiled in.** `config/examples/amd64_config.xml`
+   has `CONFIG_FSYS_ISO9660 = false`; the x86 config has it `true`. (`FSYS_FAT`
+   and `FSYS_UFS` differ the same way.) **A one-line config flip, not code** —
+   do this first, because it is testable on its own: `dir /ide@1/cdrom@0:\` must
+   list `vmlinuz` and `uroot.img`. Until it does, nothing about the loader can
+   be measured, since the loader never gets a file.
+2. `arch/amd64/linux_load.c` is the loud Spike-1 stub. See the port below.
+3. **`load-base` is undefined on amd64** — the *same* defect
+   [`patches/01-x86-revival.patch`](examples/openbios-the-rival-that-shipped/patches/01-x86-revival.patch)
+   fixed for x86, in two places, neither of which has an amd64 arm:
+   `forth/admin/nvram.fs` (`s" 4000000" s" load-base" int-config`, under
+   `[IFDEF] CONFIG_X86`) and the `feval("%lx constant load-base")` at the end of
+   `arch/x86/openbios.c`'s `arch_init`. **Check whether amd64 needs the second
+   one at all**: x86 needs it because relocation rebases the GDT so every Forth
+   address is segment-relative, and long mode ignores segment bases — so
+   `virt_offset` is 0 here and the plain `int-config` may be enough. Do not
+   transcribe x86's workaround without asking whether its cause exists.
+
+### The port itself is smaller than the record implied
+
+`arch/amd64/linux_load.c` was described as *"the real file is 647 lines"*.
+Measured: **the upstream amd64 original and the live x86 twin differ by 76
+insertions and 15 deletions** — 91 lines out of 647. It is a mechanical
+substitution of one file API for another:
+
+| dead `loadfs.h` (amd64 original) | live `libc/diskio.h` (x86 twin) |
+|---|---|
+| `file_open(f)` | `fd = open_io(f)` — an explicit `fd` is threaded through |
+| `lfile_read(buf, n)` | `read_io(fd, buf, n)` |
+| `file_seek(off)` | `seek_io(fd, off)` |
+| `file_size()` | a local static helper: `tell` → `seek_io(fd,-1)` → `tell` → restore |
+| — | `close_io(fd)` |
+
+Also dropped in the x86 twin: `uint64_t forced_memsize`. **Take the x86 file as
+the base and re-apply the amd64 delta**, not the other way round — the x86 one
+already carries revival-patch fixes #5 (grubfs `seek`/`tell`, without which
+`file_size()` reports ~4 GB for every file) and #7 (copying the whole setup
+header into the zero page).
+
+### Then the 64-bit entry, which is where the thinking is
+
+The `+0x200` entry does **not** dispense with the zero page —
+`boot_params` is still built and handed over, and the modern header fields are
+still read. What it buys is avoiding the **64→32 mode drop**.
+
+The handoff differs from x86's in a way that will not survive transcription:
+
+```c
+/* arch/x86/linux_load.c */          /* arch/amd64: struct context has NO esp/rsp */
+ctx->esp = virt_to_phys(ESP_LOC(ctx));   /* <-- no counterpart */
+ctx->eip = kern_addr;                    /* ctx->rip = kern_addr + 0x200 */
+                                         /* ctx->rsi = <zero page>  <-- already a field */
+```
+
+`arch/amd64/context.h`'s comment says it outright: *the frame IS the stack*, so
+`switch_to` takes `rsp` from the frame pointer itself and there is no field to
+set. And the frame already carries **`rsi`**, which is exactly the register the
+64-bit boot protocol wants `boot_params` in. That is a happy accident of
+Spike 2's design, not something it was built for — verify it, do not assume it.
+
+**Verify against `Documentation/x86/boot.rst`, do not recall:** the alignment
+the 64-bit entry requires, what the loader must have identity-mapped (the
+trampoline maps 0–5 GiB with 2 MiB pages — probably enough, but *probably* is
+not a measurement), and the interrupt/flag state expected at entry.
+
+### Harness work that comes with it
+
+- **`showcase-rival-boots-linux.sh` needs an `amd64` flavor** — it currently
+  takes `multiboot|coreboot` only. Mirror what
+  [`run-openbios-qemu.sh`](examples/openbios-the-rival-that-shipped/run-openbios-qemu.sh)
+  gained in #288.
+- **A `smoke-openbios.sh` track** asserting the *outcome* (u-root reached), with
+  a control — the obvious one being the ISO9660 flag back off, which must fail
+  at `dir`, not at `boot`.
+- The `boot` line is **≤ ~80 chars** — the firmware input buffer drops the tail
+  silently. The showcase line is **75** characters (two docs said 78 until
+  2026-08-24; a copied integer nobody re-counted).
+
+### Known-good ground to build on
+
+Long mode, the trampoline, SSE, the 64-bit IDT with **recovering** fault
+handling, the context switch, `/nvram` on an NVDIMM above 4 GiB, and
+`arch/amd64/boot.c` (already re-ported off the deleted `elfload.h`). 14 smoke
+tracks, 13 passing. Rebuild with `./build-openbios.sh amd64`; ~5 s warm.
+
+**One thing NOT proven and worth stating:** the fs layer has never read a byte
+in long mode. Blocker 1 has been masking it, so *"grubfs works on amd64"* is
+currently an **UNKNOWN**, not a pass — the pointer-width bugs that the census
+found elsewhere in the tree are exactly the shape that would show up there
+first.
+
+---
+
 *Created 2026-06-06; #5–#6 added 2026-06-11; #7 added 2026-06-11; #8 added
 2026-08-03; #9 added 2026-08-06; #10 added 2026-08-06; #11 added 2026-08-21;
-#11.1 and #11.2a closed 2026-08-22.*
+#11.1 and #11.2a closed 2026-08-22; #12 added 2026-08-24.*
