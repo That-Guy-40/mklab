@@ -161,8 +161,47 @@ self-hosting Forth) has no equivalent.
 $ ./run-openbios-qemu.sh              # multiboot, 0 > on this terminal (Ctrl-A X quits)
 $ ./run-openbios-qemu.sh coreboot     # coreboot → OpenBIOS
 $ ./run-openbios-qemu.sh ppc          # OUR openbios-ppc via -bios (-nographic)
+$ ./run-openbios-qemu.sh amd64        # the 64-BIT firmware, NVRAM on an NVDIMM at 0x100000000
 0 > 3 4 + . 7  ok
 ```
+
+The `amd64` flavor, driven by hand 2026-08-23 — every line below was typed at
+the prompt the tool drops you at:
+
+```console
+0 > -1 u. ffffffffffffffff  ok            \ a 64-bit cell; x86 prints ffffffff
+0 > test-ctx-switch . switching to new context:
+5a  ok
+0 > 0 200000000 !
+Unexpected Exception: page fault @ 08:0000000000101fd0
+Faulting address: 0000000200000000
+...
+0 > 3 4 + . 7  ok                          \ ...and the prompt CAME BACK
+```
+
+Persistence, across two separate QEMU processes:
+
+```console
+0 > setenv boot-file HELLO-64-8821  ok
+0 > " /nvram" " update-nvram" execute-device-method . -1  ok
+                                           \ Ctrl-A X, then run the tool again
+nvram: backed by pmem@0x100000000
+0 > printenv boot-file
+boot-file                 "HELLO-64-8821"
+```
+
+`OPENBIOS_NO_PMEM=1` is the **control**, not just an off switch — the same tool,
+the same firmware, no NVDIMM:
+
+```console
+nvram: no memory at 0x100000000 -- using a volatile buffer
+boot-file                 ""
+```
+
+`OPENBIOS_PMEM_IMG=<path>` picks a different store; the default
+(`$OPENBIOS_WORKDIR/pmem-nvram.img`) is created on first use and kept. A fresh
+image prints `nvram error detected, zapping pram` once — that is it formatting
+an empty store, not a failure.
 
 ## Reproducer notes (the sharp edges)
 
