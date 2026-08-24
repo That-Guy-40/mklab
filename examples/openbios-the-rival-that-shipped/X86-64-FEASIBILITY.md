@@ -307,7 +307,7 @@ per the repo's learning-path rule:
 | spike | work | checkpoint |
 |---|---|---|
 | **1 — the trampoline** ✅ **DONE** | apply the drift fixes + the bug-#1 header fix (both already written); rewrite `switch.S`; author the 32→64 stub; stub out `boot.c`/`linux_load.c` to get a link | `0 >` on the serial socket, and `-1 u.` answering `ffffffffffffffff` from the *bare metal* rather than from `openbios-unix` |
-| **2 — context + exceptions** ⚠️ **half done** | the 64-bit context frame (`context.c`'s eight errors), a 64-bit IDT in a new `exception.c` | a deliberate `0 0 !` reports a named fault instead of triple-faulting; the client-program context still switches back to the prompt |
+| **2 — context + exceptions** ✅ **DONE** | the 64-bit context frame (`context.c`'s eight errors), a 64-bit IDT in a new `exception.c` | a deliberate `0 0 !` reports a named fault instead of triple-faulting; the client-program context still switches back to the prompt |
 | **3 — boot Linux** | re-port `boot.c`/`linux_load.c` off the dead API (x86's twins show the shape), then the `+0x200` entry | the existing [`showcase-rival-boots-linux.sh`](showcase-rival-boots-linux.sh) success signature, unchanged, from the 64-bit firmware |
 | **P0–P2 — persistence** | *(runs in parallel, on the 32-bit firmware — see [the persistence spikes](#the-persistence-spikes--a-ladder-that-does-not-wait-for-the-port))* | a config variable that survives a power cycle, asserted on the **host's** backing file |
 | **P3 — the pmem store** | the only persistence work that needs long mode, and it depends on spike 1 | `/nvram` answering at a physical address ≥ `0x100000000` |
@@ -488,11 +488,12 @@ presented. Its control points the track at the 32-bit x86 image: the prompt
 answers, and the cell assertion fails by name.
 
 
-## Spike 2, first half: exceptions — measured 2026-08-23
+## Spike 2, run: exceptions and the context switch — measured 2026-08-23
 
 The spike asks for two things: a 64-bit IDT so a fault is *named* instead of
 triple-faulting, and a client-program context that switches back to the prompt.
-**The first is done. The second is not**, and is still stubbed.
+**Both are done.** One thing beyond the checkpoint is not, and is recorded as a
+known limit at the end.
 
 ```console
 0 > 0 100000000 !
@@ -566,12 +567,50 @@ cannot slip by leaving a stale "known limit" in the record. Its control removes
 the `init_exceptions()` call: the fault then produces no message at all and the
 track fails, which is the shape this layer exists to end.
 
-### Still open in Spike 2
+### The second half: the context switch
 
-`__switch_context` and `__exit_context` remain stubs that halt. Client-program
-context switching — the checkpoint's second clause — is untouched, and the SSE
-enable from Spike 1 adds a requirement to it: the xmm registers are now live, so
-a switch must preserve them or the build must move to `-mgeneral-regs-only`.
+```console
+0 > test-ctx-switch . switching to new context:
+5a  ok
+0 > 3 4 + . 7  ok
+0 > -1 u. ffffffffffffffff  ok
+```
+
+`0x5a` is set **by the code running in the other context**. It then returns,
+lands on `__exit_context`, and switches back — and the prompt is not merely
+alive afterwards but still evaluating correctly at 64 bits.
+
+**The frame is the stack.** Push everything, hand the stack pointer to
+`__context`, take whatever was there, pop. The pointer swap *is* the switch.
+Two things the 32-bit original did are simply gone, and both follow from Spike
+1's finding rather than from taste:
+
+- **No `sgdt`/`lgdt` in the frame.** x86 carries the GDT because relocation
+  rebases the code and data descriptors and a switch must bring the new base
+  with it. Long mode ignores segment bases, `relocate()` is a no-op, and the
+  firmware and any client share the one flat GDT the trampoline built.
+- **No `lretq`, no segment pushes.** CS and SS never change, and `push %ds`
+  does not encode in long mode.
+
+**And no xmm saves** — which was worth checking, because the opposite was the
+obvious guess after Spike 1 enabled SSE. SysV makes `xmm0-15` *caller*-saved and
+`__switch_context` is reached by a `call`, so the compiler has already assumed
+they are gone. Spike 1's SSE enable costs the switch nothing.
+
+The self-test is bound as a Forth word rather than driven through a client ELF
+because loading one is Spike 3's work — but it exercises the same machinery:
+`init_context` builds a frame on a fresh stack, the entry point is planted by
+hand, `switch_to()` runs it. **A switch that never came back cannot fake this**:
+the word simply never returns and the prompt never comes, so the harness
+timeout is itself a failure this track detects. Its control breaks the switch to
+return *without adopting the new frame*; the flag assertion catches it, where a
+"did the prompt come back" test alone would have passed.
+
+### Still open
+
+The fault-recovery wedge above. **The context switch working does not fix it** —
+they are different mechanisms, and it was re-measured after this landed rather
+than assumed. `amd64-fault` asserts the limit is still the limit.
 
 
 ## OFW / OpenBoot: why this one is a no

@@ -1,414 +1,58 @@
-# patches/09-amd64-spike2-exceptions.patch — SPIKE 2, first half: a 64-bit IDT.
-#
-# Applies on top of 08-amd64-spike1-trampoline.patch.
+# patches/09-amd64-spike2-exceptions.patch — SPIKE 2, BOTH HALVES: a 64-bit IDT
+# and a working context switch. Applies on top of 08-amd64-spike1-trampoline.patch.
 #
 # Verified by: ./smoke-openbios.sh amd64-fault
+#              ./smoke-openbios.sh amd64-ctx
+#
+# EXCEPTIONS. arch/amd64 had no IDT: the first fault was a triple fault and the
+# machine vanished -- exactly how Spike 1's SSE bug presented. A 64-bit gate is
+# SIXTEEN bytes with the handler offset split over three fields, so
+# init_exceptions is new code rather than a port of x86's.
+#
 #   0 > 0 100000000 !
 #   Unexpected Exception: page fault @ 08:...
 #   Faulting address: 0000000100000000
 #
-# arch/amd64 had NO exception.c and NO IDT: the first fault was a triple fault
-# and the machine vanished -- which is exactly how Spike 1's SSE bug presented.
+# A null trap was built and GIVEN BACK: page 0 on a PC holds the real-mode IVT
+# and the BIOS Data Area, and this firmware's console reads the BDA to find the
+# VGA CRTC port, so unmapping it faults during boot. Faulting above 4 GiB
+# demonstrates more anyway -- a 32-bit firmware cannot form the address.
 #
-# A 64-bit gate is SIXTEEN bytes, not eight, with the handler offset split over
-# three fields, so init_exceptions is new code rather than a port of x86's.
+# CONTEXT SWITCH. THE FRAME IS THE STACK: push everything, hand the stack
+# pointer to __context, take what was there, pop. The pointer swap IS the
+# switch. Two things the 32-bit original did are simply gone, and both follow
+# from Spike 1's finding that long mode ignores segment bases:
+#   * no sgdt/lgdt in the frame -- the firmware and any client share the one
+#     flat GDT the trampoline built, and relocate() is a no-op;
+#   * no lretq and no segment pushes -- CS/SS never change, and `push %ds` does
+#     not encode in long mode.
+# No xmm saves either: SysV makes xmm0-15 CALLER-saved and this is reached by a
+# `call`, so Spike 1's SSE enable costs the switch nothing. That was worth
+# checking, because the opposite was the obvious guess.
 #
-# THE NULL TRAP WAS BUILT AND GIVEN BACK. Mapping the low 2 MiB as 4 KiB pages
-# with page 0 absent makes `0 0 !` fault -- and makes the firmware fault during
-# BOOT, because the console reads the VGA CRTC port address out of the BIOS
-# Data Area at 0x400-0x463, which is inside page 0. Page zero is not spare on a
-# PC. The checkpoint faults above 4 GiB instead, which a 32-bit firmware cannot
-# even address.
+#   0 > test-ctx-switch . switching to new context:
+#   5a  ok
 #
-# KNOWN LIMIT: the machine survives the fault and prints " ok", but the outer
-# interpreter accepts no further input. The recovery design is inherited from
-# arch/x86/exception.c, whose own version omits the `+ sizeof(ucell)` that
-# kernel/forth.c:686 keeps -- and which has probably never been exercised,
-# since arch/x86 runs unpaged and a stray write there simply lands.
+# KNOWN LIMIT, still: after a FAULT the machine survives and prints " ok" but
+# the outer interpreter accepts no further input. The context switch working
+# does not fix it -- they are different mechanisms -- and amd64-fault asserts
+# the limit is still the limit so that fixing it cannot pass unnoticed.
 
-diff --git a/arch/amd64/build.xml b/arch/amd64/build.xml
-index 8f436d0..a914cb2 100644
---- a/arch/amd64/build.xml
-+++ b/arch/amd64/build.xml
-@@ -1,6 +1,38 @@
- <build condition="AMD64">
-+
-  <dictionary name="openbios-amd64" init="openbios" target="forth">
-   <object source="init.fs"/>
-   <object source="QEMU,VGA.bin" target="fcode" condition="DRIVER_VGA" />
-  </dictionary>
-+
-+ <library name="amd64" type="static" target="target">
-+  <object source="openbios.c"/>
-+  <object source="console.c"/>
-+  <object source="lib.c"/>
-+  <object source="boot.c"/>
-+  <object source="context.c"/>
-+  <object source="exception.c"/>
-+  <object source="linux_load.c"/>
-+  <object source="segment.c"/>
-+  <object source="sys_info.c"/>
-+  <object source="switch.S"/>
-+ </library>
-+
-+ <executable name="openbios.multiboot" target="target" condition="IMAGE_ELF_MULTIBOOT">
-+  <rule>
-+	$(call quiet-command,$(LD) --warn-common -N -T $(SRCDIR)/arch/amd64/ldscript -o $@.nostrip --whole-archive $^,"  LINK  $(TARGET_DIR)$@")
-+	$(call quiet-command,$(NM) $@.nostrip | sort > $(ODIR)/openbios-multiboot.syms,"  GEN   $(TARGET_DIR)$@.syms")
-+	$(call quiet-command,$(STRIP) $@.nostrip -o $@,"  STRIP $(TARGET_DIR)$@")
-+	$(call quiet-command,$(OBJCOPY) -I elf64-x86-64 -O elf32-i386 $@ $@32,"  ELF32 $(TARGET_DIR)$@32")</rule>
-+  <object source="multiboot.c"/>
-+  <external-object source="libamd64.a"/>
-+  <external-object source="libbootstrap.a"/>
-+  <external-object source="libopenbios.a"/>
-+  <external-object source="libpackages.a"/>
-+  <external-object source="libdrivers.a"/>
-+  <external-object source="liblibc.a"/>
-+  <external-object source="libfs.a"/>
-+  <external-object source="libgcc.a"/>
-+ </executable>
-+
- </build>
-diff --git a/arch/amd64/context.c b/arch/amd64/context.c
-index dff9975..1ddab32 100644
---- a/arch/amd64/context.c
-+++ b/arch/amd64/context.c
-@@ -9,13 +9,20 @@
- #include "libopenbios/initprogram.h"
- #include "segment.h"
- #include "context.h"
-+#include "openbios.h"   /* Spike 1: for openbios(), which was a nested extern */
-+
-+/* Spike 1: stashed by the trampoline in switch.S before it clobbers them. */
-+extern uint64_t mb_magic, mb_info;
-+extern int init_exceptions(void);
- 
- #define MAIN_STACK_SIZE 16384
- #define IMAGE_STACK_SIZE 4096
- 
- #define debug printk
- 
--static void start_main(void); /* forward decl. */
-+/* Spike 1: no longer static -- the trampoline in switch.S calls it directly,
-+ * because the context-switch path that used to reach it is Spike 2's work. */
-+void start_main(void); /* forward decl. */
- void __exit_context(void); /* assembly routine */
- 
- /*
-@@ -32,14 +39,14 @@ struct context main_ctx __attribute__((section (".initctx"))) = {
-     .fs = FLAT_DS,
-     .gs = FLAT_DS,
-     .ss = FLAT_DS,
--    .esp = (uint32_t) ESP_LOC(&main_ctx),
--    .eip = (uint32_t) start_main,
--    .return_addr = (uint32_t) __exit_context,
-+    .rsp = (uint64_t) ESP_LOC(&main_ctx),
-+    .rip = (uint64_t) start_main,
-+    .return_addr = (uint64_t) __exit_context,
- };
- 
- /* This is used by assembly routine to load/store the context which
-  * it is to switch/switched.  */
--struct context *__context = &main_ctx;
-+struct context * volatile __context = &main_ctx;   /* Spike 1 drift: volatile, as arch/x86 has */
- 
- /* Client program context */
- static struct context *client_ctx;
-@@ -54,13 +61,24 @@ unsigned long __boot_ctx;
-  * Main starter
-  * This is the C function that runs first.
-  */
--static void start_main(void)
-+void start_main(void)
- {
-     int retval;
--    extern int openbios(void);
-+    /* Spike 1 drift: the nested extern is gone; openbios() is declared in
-+     * arch/amd64/openbios.h, exactly as the x86 twin arranges it. */
-+
-+    /* Spike 1: put the loader's handoff where sys_info.c reads it from.
-+     * The trampoline stashed %eax/%ebx before it clobbered them building page
-+     * tables; the frame they used to be pushed into did not exist yet. */
-+    __context->rax = mb_magic;
-+    __context->rbx = mb_info;
-+
-+    /* Spike 2: install the IDT before anything can fault. Until this runs,
-+     * the first exception is a triple fault and the machine simply vanishes --
-+     * which is exactly how Spike 1's SSE bug presented. */
-+    init_exceptions();
- 
--    /* Save startup context, so we can refer to it later.
--     * We have to keep it in physical address since we will relocate. */
-+    /* Save startup context, so we can refer to it later. */
-     __boot_ctx = virt_to_phys(__context);
- 
-     /* Set up client context */
-@@ -71,7 +89,7 @@ static void start_main(void)
-     retval = openbios();
- 
-     /* Pass return value to startup context. Bootloader may see it. */
--    boot_ctx->eax = retval;
-+    boot_ctx->rax = retval;
- 
-     /* Returning from here should jump to __exit_context */
-     __context = boot_ctx;
-@@ -80,12 +98,12 @@ static void start_main(void)
- /* Setup a new context using the given stack.
-  */
- struct context *
--init_context(uint8_t *stack, uint32_t stack_size, int num_params)
-+init_context(uint8_t *stack, uint64_t stack_size, int num_params)
- {
-     struct context *ctx;
- 
-     ctx = (struct context *)
--	(stack + stack_size - (sizeof(*ctx) + num_params*sizeof(uint32_t)));
-+	(stack + stack_size - (sizeof(*ctx) + num_params*sizeof(ucell)));
-     memset(ctx, 0, sizeof(*ctx));
- 
-     return ctx;
-@@ -107,7 +125,7 @@ arch_init_program(void)
-     ctx->fs = FLAT_DS;
-     ctx->gs = FLAT_DS;
-     ctx->ss = FLAT_DS;
--    ctx->esp = virt_to_phys(ESP_LOC(ctx));
-+    ctx->rsp = virt_to_phys(ESP_LOC(ctx));
-     ctx->return_addr = virt_to_phys(__exit_context);
-     
-     /* Set param */
-@@ -119,14 +137,14 @@ arch_init_program(void)
-     feval("load-state >ls.file-type @");
-     type = POP();
-     if (type == 0) {
--        ctx->eax = 0xe1fb007;
--        ctx->ebx = param;
-+        ctx->rax = 0xe1fb007;
-+        ctx->rbx = param;
-     }
- 
-     /* Set entry point */
-     feval("load-state >ls.entry @");
-     entry = POP();
--    ctx->eip = entry;
-+    ctx->rip = entry;
- 
-     return 0;
- }
-@@ -140,7 +158,13 @@ struct context *switch_to(struct context *ctx)
-     debug("switching to new context:\n");
-     save = __context;
-     __context = ctx;
--    asm ("pushl %cs; call __switch_context");
-+    /* Spike 1: `pushl %cs` does not assemble in long mode, and the routine it
-+     * called is stubbed in switch.S -- context switching is Spike 2's work.
-+     * Calling the stub is deliberate: it HALTS, loudly, instead of returning
-+     * here as though a switch had happened. A silent no-op would let the
-+     * caller carry on with a client program's context half-installed, which is
-+     * a far worse failure than stopping. */
-+    asm volatile ("call __switch_context");
-     ret = __context;
-     __context = (struct context *)save;
-     return ret;
-@@ -152,5 +176,5 @@ unsigned int start_elf(void)
-     volatile struct context *ctx = __context;
- 
-     ctx = switch_to((struct context *)ctx);
--    return ctx->eax;
-+    return ctx->rax;
- }
-diff --git a/arch/amd64/switch.S b/arch/amd64/switch.S
-index 6666815..d2fdd52 100644
 --- a/arch/amd64/switch.S
 +++ b/arch/amd64/switch.S
-@@ -1,116 +1,413 @@
+@@ -27,7 +27,7 @@
+  * the copyright and warranty status of this work.
+  */
+ 
 -	.globl	entry, __switch_context, __exit_context, halt
-+/* tag: amd64 entry point and 32->64 trampoline  (Spike 1)
-+ *
-+ * REPLACES 116 lines of 32-bit assembly that lived in the 64-bit arch
-+ * directory, opening with the comment "It is assumed that CPU is in 32-bit
-+ * protected mode" and entering at `pushl %cs`. Every instruction it used to
-+ * save context -- pushal, popal, pushl %ds, lret -- either does not exist in
-+ * long mode or does not mean there what it meant here.
-+ *
-+ * WHAT THIS FILE DOES, and what it deliberately does not:
-+ *
-+ *   entry:              multiboot hands control over in 32-BIT protected mode
-+ *                       with paging OFF -- there is no way to be handed control
-+ *                       in long mode on this machine class -- so this builds a
-+ *                       PML4 identity-mapping the low 4 GiB with 2 MiB pages,
-+ *                       sets CR4.PAE, EFER.LME and CR0.PG, far-jumps through a
-+ *                       64-bit code descriptor, and calls start_main().
-+ *
-+ *   __switch_context:   STUBBED. Context switching between the firmware and a
-+ *   __exit_context:     client program is Spike 2's work ("context + exceptions").
-+ *                       Spike 1 asks one question -- does this firmware reach
-+ *                       its own prompt in long mode -- and answering it does not
-+ *                       require switching away from that prompt. They HALT LOUDLY
-+ *                       rather than returning, because a context switch that
-+ *                       silently did nothing would corrupt whatever ran next.
-+ *
-+ * See the file "COPYING" for further information about
-+ * the copyright and warranty status of this work.
-+ */
-+
 +	.globl	entry, __switch_context, __exit_context, halt, init_exceptions
  
--	.text
-+/* ------------------------------------------------------------------ *
-+ * The multiboot header, WITH the a.out kludge -- and this is the answer to
-+ * "why does QEMU refuse a 64-bit ELF".
-+ *
-+ * QEMU checks e_machine and rejects EM_X86_64, but ONLY on the ELF path. Bit 16
-+ * of flags declares the address fields below valid, and the loader then treats
-+ * the file as FLAT and never parses the ELF at all. That is the specification's
-+ * documented route for an image "in some other format" -- which is exactly what
-+ * an ELF64 is to a 32-bit-only loader.
-+ *
-+ * So amd64's original 0x00010003 was reaching for the RIGHT mechanism. It was
-+ * broken only because its three-word header carried none of the address fields
-+ * the bit promises. Supplying them is the fix; removing the bit -- correct for
-+ * x86's ELF32, where the ELF path works -- is not.
-+ *
-+ * All five fields are 32-bit BY SPECIFICATION even though this is an ELF64.
-+ * They fit because the firmware links at 1 MiB.
-+ * ------------------------------------------------------------------ */
-+	.section .hdr, "a"
- 	.align	4
-+	.globl	mb_header
-+mb_header:
-+	.long	0x1BADB002			/* magic          */
-+	.long	0x00010003			/* PAGE_ALIGN|MEMORY_INFO|ADDR */
-+	.long	-(0x1BADB002 + 0x00010003)	/* checksum       */
-+	.long	mb_header			/* header_addr    */
-+	.long	mb_header			/* load_addr      */
-+	.long	_load_end			/* load_end_addr  */
-+	.long	_end				/* bss_end_addr   */
-+	.long	entry				/* entry_addr     */
+ /* ------------------------------------------------------------------ *
+  * The multiboot header, WITH the a.out kludge -- and this is the answer to
+@@ -128,6 +128,29 @@
+ 	addl	$8, %edi
+ 	loop	2b
  
--/*
-- * Entry point
-- * We start execution from here.
-- * It is assumed that CPU is in 32-bit protected mode and
-- * all segments are 4GB and base zero (flat model).
-- */
-+
-+/* ------------------------------------------------------------------ */
-+	.section .text
-+	.code32
-+	.align	16
- entry:
--	/* Save boot context and switch to our main context.
--	 * Main context is statically defined in C.
--	 */
--	pushl	%cs
--	call	__switch_context
-+	cli
-+	cld
- 
--	/* We get here when the main context switches back to
--	 * the boot context.
--	 * Return to previous bootloader.
--	 */
--	ret
-+	/* THE LOADER'S HANDOFF LIVES IN %eax AND %ebx, and it is the first
-+	 * thing a trampoline destroys if it is not careful: multiboot passes
-+	 * the magic in %eax and the info structure in %ebx, and the very next
-+	 * thing this code does is use both registers to build page tables.
-+	 *
-+	 * The 32-bit assembly this file replaced saved them by pushing a whole
-+	 * context frame; there is no frame here yet, so stash them in .data and
-+	 * let start_main() put them where sys_info.c expects to read them.
-+	 * Skipping this is silent: the firmware boots, finds no modules, and
-+	 * panics much later with "no dictionary entry point". */
-+	movl	%eax, mb_magic
-+	movl	%ebx, mb_info
- 
--/*
-- * Switch execution context
-- * This saves registers, segments, and GDT in the stack, then
-- * switches the stack, and restores everything from the new stack.
-- * This function takes no argument. New stack pointer is
-- * taken from global variable __context, and old stack pointer
-- * is also saved to __context. This way we can just jump to
-- * this routine to get back to the original context.
-- *
-- * Call this routine with lcall or pushl %cs; call.
-- */
--__switch_context:
--	/* Save everything in current stack */
--	pushfl		    /* 56 */
--	pushl	%ds	    /* 52 */
--	pushl	%es	    /* 48 */
--	pushl	%fs	    /* 44 */
--	pushl	%gs	    /* 40 */
--	pushal		    /* 8 */
--	subl	$8, %esp
--	movw	%ss, (%esp) /* 0 */
--	sgdt	2(%esp)	    /* 2 */
--
--#if 0
--	/* Swap %cs and %eip on the stack, so lret will work */
--	movl	60(%esp), %eax
--	xchgl	%eax, 64(%esp)
--	movl	%eax, 60(%esp)
--#endif
--
--	/* At this point we don't know if we are on flat segment
--	 * or relocated. So compute the address offset from %eip.
--	 * Assuming CS.base==DS.base==SS.base.
-+	/* A 32-bit stack to work from until we have a 64-bit one. */
-+	movl	$_estack, %esp
-+
-+	/* ---- build the page tables ------------------------------------
-+	 * Identity-map the low 4 GiB with 2 MiB pages:
-+	 *   PML4[0]   -> PDPT
-+	 *   PDPT[0..3]-> PD[0..3]
-+	 *   PD[i][j]  =  (i<<30) + (j<<21) | PRESENT|RW|PS
-+	 * 4 GiB is enough by construction: this firmware links at 1 MiB and
-+	 * everything it touches on this machine class is below 4 GiB. The
-+	 * region that is NOT -- a pmem NVRAM at 0x100000000 -- is P3's work
-+	 * and will want a fifth PDPT entry.
- 	 */
--	call	1f
--1:	popl	%ebx
--	subl	$1b, %ebx
-+	xorl	%eax, %eax
-+	movl	$pml4, %edi
-+	movl	$(4096*6/4), %ecx	/* pml4 + pdpt + 4 pd, in dwords */
-+	rep	stosl
- 
--	/* Interrupts are not allowed... */
--	cli
-+	/* PML4[0] = pdpt | RW | PRESENT */
-+	movl	$pdpt, %eax
-+	orl	$0x03, %eax
-+	movl	%eax, pml4
-+
-+	/* PDPT[i] = pd + i*4096 | RW | PRESENT   (i = 0..3) */
-+	movl	$pd, %eax
-+	orl	$0x03, %eax
-+	movl	$pdpt, %edi
-+	movl	$4, %ecx
-+1:	movl	%eax, (%edi)
-+	addl	$4096, %eax
-+	addl	$8, %edi
-+	loop	1b
-+
-+	/* PD[k] = (k << 21) | PRESENT|RW|PS   for k = 0 .. 2047 */
-+	movl	$pd, %edi
-+	xorl	%eax, %eax		/* low dword of the entry  */
-+	xorl	%edx, %edx		/* high dword: stays 0 (<4 GiB) */
-+	orl	$0x83, %eax		/* PRESENT|RW|PS */
-+	movl	$2048, %ecx
-+2:	movl	%eax, (%edi)
-+	movl	%edx, 4(%edi)
-+	addl	$0x200000, %eax		/* next 2 MiB */
-+	adcl	$0, %edx
-+	addl	$8, %edi
-+	loop	2b
- 
--	/* Current context pointer is our stack pointer */
--	movl	%esp, %esi
 +	/* ---- Spike 2 tried a null-pointer trap here, and REVERTED it -------
 +	 * The first 2 MiB was re-done as 4 KiB pages with page 0 left absent,
 +	 * so that `0 0 !` would fault. It faults, all right -- during boot,
@@ -431,104 +75,89 @@ index 6666815..d2fdd52 100644
 +	 * address a 32-bit firmware could not even name, which demonstrates
 +	 * rather more than a null write would have.
 +	 */
- 
--	/* Normalize the ctx pointer */
--	subl	%ebx, %esi
-+	/* ---- enter long mode ------------------------------------------ */
-+	movl	%cr4, %eax
-+	orl	$(1<<5), %eax		/* CR4.PAE */
-+	movl	%eax, %cr4
- 
--	/* Swap it with new value */
--	xchgl	%esi, __context(%ebx)
-+	movl	$pml4, %eax
-+	movl	%eax, %cr3
- 
--	/* Adjust new ctx pointer for current address offset */
--	addl	%ebx, %esi
-+	movl	$0xC0000080, %ecx	/* IA32_EFER */
-+	rdmsr
-+	orl	$(1<<8), %eax		/* EFER.LME */
-+	wrmsr
- 
--	/* Load new %ss and %esp to temporary */
--	movzwl	(%esi), %edx
--	movl	20(%esi), %eax
-+	movl	%cr0, %eax
-+	orl	$0x80000001, %eax	/* CR0.PG | CR0.PE */
-+	movl	%eax, %cr0
- 
--	/* Load new GDT */
--	lgdt	2(%esi)
-+	/* Long mode is ACTIVE but we are in compatibility mode until CS says
-+	 * otherwise. The far jump through a descriptor with L=1 is the step
-+	 * that actually puts the CPU in 64-bit mode. */
-+	lgdt	gdt64_desc32
-+	ljmp	$0x08, $long_entry
- 
--	/* Load new stack segment with new GDT */
--	movl	%edx, %ss
-+/* ------------------------------------------------------------------ */
-+	.code64
-+	.align	16
-+long_entry:
-+	movw	$0x10, %ax
-+	movw	%ax, %ds
-+	movw	%ax, %es
-+	movw	%ax, %ss
-+	movw	%ax, %fs
-+	movw	%ax, %gs
- 
--	/* Set new stack pointer, but we have to adjust it because
--	 * pushal saves %esp value before pushal, and we want the value
--	 * after pushal.
-+	/* ---- enable SSE --------------------------------------------------
-+	 * NOT optional, and easy to leave out: SSE2 is BASELINE for x86-64, so
-+	 * gcc emits it without being asked -- the first fault this trampoline
-+	 * took was #UD on a `movups %xmm0` that gcc had generated to copy a
-+	 * 16-byte struct in openbios(). The CPU raises invalid-opcode on every
-+	 * SSE instruction until OSFXSR says the OS is ready to save xmm state.
-+	 *
-+	 * Consequence for Spike 2: a context switch must now preserve the xmm
-+	 * registers, or use -mgeneral-regs-only to keep them out of the ABI.
- 	 */
--	leal	-32(%eax), %esp
-+	movq	%cr0, %rax
-+	andq	$-5, %rax		/* clear CR0.EM (bit 2) */
-+	orq	$2, %rax		/* set   CR0.MP (bit 1) */
-+	movq	%rax, %cr0
-+	movq	%cr4, %rax
-+	orq	$((1<<9)|(1<<10)), %rax	/* OSFXSR | OSXMMEXCPT */
-+	movq	%rax, %cr4
-+	fninit
 +
-+	movq	$_estack, %rsp
-+	xorq	%rbp, %rbp
+ 	/* ---- enter long mode ------------------------------------------ */
+ 	movl	%cr4, %eax
+ 	orl	$(1<<5), %eax		/* CR4.PAE */
+@@ -190,12 +213,229 @@
+ 	 * than falling into whatever bytes come next. */
+ 	jmp	halt
  
--	/* Load the rest from new stack */
--	popal
--	popl	%gs
--	popl	%fs
--	popl	%es
--	popl	%ds
--	popfl
-+	call	start_main
- 
--	/* Finally, load new %cs and %eip */
--	lret
-+	/* start_main() is not supposed to return. If it does, say so rather
-+	 * than falling into whatever bytes come next. */
-+	jmp	halt
- 
-+/* Spike 2 owns these. Halting is the honest stub: returning would hand
-+ * control back with none of the state a switch is supposed to have restored. */
-+__switch_context:
+-/* Spike 2 owns these. Halting is the honest stub: returning would hand
+- * control back with none of the state a switch is supposed to have restored. */
++/* ------------------------------------------------------------------ *
++ * Spike 2: the context switch.
++ *
++ * THE FRAME IS THE STACK. Push everything, hand the stack pointer to
++ * __context, take whatever __context was holding, and pop. The pointer swap
++ * IS the switch; there is no copying and no second stack.
++ *
++ * Called with `call`, so the return address is already on the stack and
++ * becomes the frame's `rip`. The push order below is the field order of
++ * struct context, ascending -- r15 last, so it lands lowest.
++ *
++ * No lretq and no segment pushes, unlike the 32-bit original: CS and SS never
++ * change here (one flat GDT, no relocation), and `push %ds` does not encode in
++ * long mode anyway. No xmm saves either -- SysV makes them caller-saved, and
++ * this is reached by a call.
++ * ------------------------------------------------------------------ */
+ __switch_context:
++	pushfq
++	pushq	%rax
++	pushq	%rcx
++	pushq	%rdx
++	pushq	%rbx
++	pushq	%rbp
++	pushq	%rsi
++	pushq	%rdi
++	pushq	%r8
++	pushq	%r9
++	pushq	%r10
++	pushq	%r11
++	pushq	%r12
++	pushq	%r13
++	pushq	%r14
++	pushq	%r15
++
++	cli
++
++	/* Swap our frame pointer with the one in __context. */
++	movq	%rsp, %rax
++	xchgq	%rax, __context(%rip)
++	movq	%rax, %rsp
++
++	popq	%r15
++	popq	%r14
++	popq	%r13
++	popq	%r12
++	popq	%r11
++	popq	%r10
++	popq	%r9
++	popq	%r8
++	popq	%rdi
++	popq	%rsi
++	popq	%rbp
++	popq	%rbx
++	popq	%rdx
++	popq	%rcx
++	popq	%rax
++	popfq
++
++	/* Straight into the new context: for a resumed one this returns to its
++	 * own call site, and for a fresh one it enters at the rip that
++	 * init_context/arch_init_program planted. */
++	ret
++
++/* A client that runs off the end of its program returns HERE, because
++ * init_context put this address above its entry point. Switch back to
++ * whoever started it. */
  __exit_context:
--	/* Get back to the original context */
--	pushl	%cs
--	call	__switch_context
-+	jmp	halt
++	call	__switch_context
 +
++	/* Reached only if something switches INTO a context that has already
++	 * exited. There is nothing sensible to do with that. */
+ 	jmp	halt
+ 
 +/* ------------------------------------------------------------------ *
 + * Spike 2: exceptions.
 + *
@@ -591,9 +220,7 @@ index 6666815..d2fdd52 100644
 +	pushq	$\num
 +	jmp	int_hand
 +.endm
- 
--	/* We get here if the other context attempt to switch to this
--	 * dead context. This should not happen. */
++
 +	.align	VECSTUB_SIZE
 +vec0:	VEC_NOERR 0
 +	VEC_NOERR 1
@@ -627,7 +254,7 @@ index 6666815..d2fdd52 100644
 +	VEC_NOERR 29
 +	VEC_NOERR 30
 +	VEC_NOERR 31
- 
++
 +int_hand:
 +	/* On entry the stack holds, from %rsp up:
 +	 *   vector, error_code, rip, cs, rflags, rsp, ss
@@ -681,48 +308,277 @@ index 6666815..d2fdd52 100644
 +	.space	32 * 16			/* 32 gates, 16 bytes each */
 +_idt_end:
 +
-+/* Spike 1: arch/x86 defines this in entry.S, which amd64 does not have -- the
-+ * census recorded "no bare-metal entry path at all", and this is one of the
-+ * symbols that fell out with it. libgcc's __udivmoddi4 branches here on a
-+ * divide by zero. Halting is correct: there is no IDT yet (Spike 2 authors
-+ * exception.c), so there is nowhere to return to. */
-+	.globl	__divide_error
-+__divide_error:
-+	jmp	halt
-+
-+	.globl	halt
- halt:
- 	cli
- 	hlt
- 	jmp	halt
-+
-+/* ------------------------------------------------------------------ */
-+	.section .data
-+	.align	8
-+	.globl	mb_magic, mb_info
-+mb_magic:	.quad	0
-+mb_info:	.quad	0
-+
-+	.section .rodata
-+	.align	16
-+gdt64:
-+	.quad	0x0000000000000000	/* null */
-+	.quad	0x00AF9A000000FFFF	/* 0x08: 64-bit code, L=1 */
-+	.quad	0x00CF92000000FFFF	/* 0x10: data */
-+gdt64_end:
-+
-+	/* Loaded while still in 32-bit mode, so the base is 32 bits wide. */
-+gdt64_desc32:
-+	.word	gdt64_end - gdt64 - 1
-+	.long	gdt64
-+
-+/* ------------------------------------------------------------------ */
-+	.section .bss
-+	.align	4096
-+pml4:	.space	4096
-+pdpt:	.space	4096
-+pd:	.space	4096*4
+ /* Spike 1: arch/x86 defines this in entry.S, which amd64 does not have -- the
+  * census recorded "no bare-metal entry path at all", and this is one of the
+  * symbols that fell out with it. libgcc's __udivmoddi4 branches here on a
+@@ -237,3 +477,4 @@
+ pml4:	.space	4096
+ pdpt:	.space	4096
+ pd:	.space	4096*4
 +pt0:	.space	4096
+--- a/arch/amd64/context.c
++++ b/arch/amd64/context.c
+@@ -13,6 +13,7 @@
+ 
+ /* Spike 1: stashed by the trampoline in switch.S before it clobbers them. */
+ extern uint64_t mb_magic, mb_info;
++extern int init_exceptions(void);
+ 
+ #define MAIN_STACK_SIZE 16384
+ #define IMAGE_STACK_SIZE 4096
+@@ -29,20 +30,13 @@
+  * It is placed at the bottom of our stack, and loaded by assembly routine
+  * to start us up.
+  */
+-struct context main_ctx __attribute__((section (".initctx"))) = {
+-    .gdt_base = (uint64_t) gdt,
+-    .gdt_limit = GDT_LIMIT,
+-    .cs = FLAT_CS,
+-    .ds = FLAT_DS,
+-    .es = FLAT_DS,
+-    .fs = FLAT_DS,
+-    .gs = FLAT_DS,
+-    .ss = FLAT_DS,
+-    .rsp = (uint64_t) ESP_LOC(&main_ctx),
+-    .rip = (uint64_t) start_main,
+-    .return_addr = (uint64_t) __exit_context,
+-};
+-
++/* Spike 2: the boot context is now just a PLACE TO SAVE INTO. The trampoline
++ * calls start_main() directly, so none of the old entry-point initialisers
++ * (.rip = start_main, .rsp = ESP_LOC(...)) mean anything -- the first switch
++ * overwrites the whole frame with the firmware's live stack anyway. What still
++ * matters is that sys_info.c reads rax/rbx out of it, and start_main sets
++ * those from the trampoline's stash. */
++struct context main_ctx __attribute__((section (".initctx")));
+ /* This is used by assembly routine to load/store the context which
+  * it is to switch/switched.  */
+ struct context * volatile __context = &main_ctx;   /* Spike 1 drift: volatile, as arch/x86 has */
+@@ -72,6 +66,11 @@
+     __context->rax = mb_magic;
+     __context->rbx = mb_info;
+ 
++    /* Spike 2: install the IDT before anything can fault. Until this runs,
++     * the first exception is a triple fault and the machine simply vanishes --
++     * which is exactly how Spike 1's SSE bug presented. */
++    init_exceptions();
++
+     /* Save startup context, so we can refer to it later. */
+     __boot_ctx = virt_to_phys(__context);
+ 
+@@ -100,6 +99,12 @@
+ 	(stack + stack_size - (sizeof(*ctx) + num_params*sizeof(ucell)));
+     memset(ctx, 0, sizeof(*ctx));
+ 
++    /* A client that RETURNS lands here, which switches back to whoever
++     * started it. Leaving this zero would send it to address 0 -- and with
++     * Spike 2's IDT that is now a named page fault rather than a vanishing
++     * machine, but it is still not where anyone wants to go. */
++    ctx->return_addr = (uint64_t) __exit_context;
++
+     return ctx;
+ }
+ 
+@@ -110,17 +115,10 @@
+     struct context volatile *ctx = __context;
+     ucell type, entry, param;
+     
+-    /* Fill in reasonable default for flat memory model */
+-    ctx->gdt_base = virt_to_phys(gdt);
+-    ctx->gdt_limit = GDT_LIMIT;
+-    ctx->cs = FLAT_CS;
+-    ctx->ds = FLAT_DS;
+-    ctx->es = FLAT_DS;
+-    ctx->fs = FLAT_DS;
+-    ctx->gs = FLAT_DS;
+-    ctx->ss = FLAT_DS;
+-    ctx->rsp = virt_to_phys(ESP_LOC(ctx));
+-    ctx->return_addr = virt_to_phys(__exit_context);
++    /* No GDT or segment fill: long mode ignores segment bases and the one
++     * flat GDT the trampoline built serves the firmware and the client alike.
++     * See the note on struct context. */
++    ctx->return_addr = (uint64_t) __exit_context;
+     
+     /* Set param */
+     feval("load-state >ls.param @");
+@@ -158,7 +156,9 @@
+      * here as though a switch had happened. A silent no-op would let the
+      * caller carry on with a client program's context half-installed, which is
+      * a far worse failure than stopping. */
+-    asm volatile ("call __switch_context");
++    asm volatile ("call __switch_context"
++                  : : : "rax","rcx","rdx","rsi","rdi",
++                        "r8","r9","r10","r11","memory");
+     ret = __context;
+     __context = (struct context *)save;
+     return ret;
+@@ -172,3 +172,41 @@
+     ctx = switch_to((struct context *)ctx);
+     return ctx->rax;
+ }
++
++/* ------------------------------------------------------------------ *
++ * Spike 2: a self-test of the switch, bound as the Forth word
++ * `test-ctx-switch`.
++ *
++ * The checkpoint is "the client-program context still switches back to the
++ * prompt", and proving that normally needs a client ELF -- which is Spike 3's
++ * work. This exercises THE SAME MACHINERY a client uses: init_context builds a
++ * frame on a fresh stack, arch_init_program's entry field is set by hand, and
++ * switch_to() runs it. The callee sets a flag and returns, which lands on
++ * __exit_context and switches back.
++ *
++ * It returns the flag rather than printing it, so the Forth side decides what
++ * a pass looks like -- and a switch that never came back cannot fake it: the
++ * word simply never returns, and the prompt never comes.
++ * ------------------------------------------------------------------ */
++static volatile int ctx_test_flag;
++static uint8_t ctx_test_stack[8192];
++
++static void ctx_test_body(void)
++{
++    ctx_test_flag = 0x5A;
++    /* returning lands on __exit_context, planted by init_context */
++}
++
++int context_self_test(void)
++{
++    struct context *ctx;
++
++    ctx_test_flag = 0;
++
++    ctx = init_context(ctx_test_stack, sizeof(ctx_test_stack), 0);
++    ctx->rip = (uint64_t) ctx_test_body;
++
++    switch_to(ctx);
++
++    return ctx_test_flag;
++}
+--- a/arch/amd64/context.h
++++ b/arch/amd64/context.h
+@@ -1,53 +1,39 @@
+ #ifndef AMD64_CONTEXT_H
+ #define AMD64_CONTEXT_H
+ 
++/* SPIKE 2: the frame IS the stack, and its field order IS the push order.
++ *
++ * The x86 original saves the GDT in here with sgdt and reloads it with lgdt,
++ * because relocation rebases the code and data descriptors and a switch has to
++ * carry the new base with it. THIS FRAME DOES NOT, and that follows directly
++ * from Spike 1's finding: long mode ignores segment bases, relocate() is a
++ * no-op, and the firmware and any client share the one flat GDT the trampoline
++ * built. Saving it would be ceremony around a value that never changes.
++ *
++ * Nor are the xmm registers here. SysV makes xmm0-15 CALLER-saved, and
++ * __switch_context is reached by a `call` from C -- the compiler has already
++ * assumed they are gone. Spike 1's SSE enable therefore costs this nothing,
++ * which is worth stating because the reverse was the obvious guess.
++ *
++ * Fields ascend from the frame pointer in exactly the order switch.S pushes
++ * them. Reordering one line here without reordering switch.S produces a switch
++ * that runs and lands somewhere arbitrary.
++ */
+ struct context {
+-    /* Spike 1: this frame was a THIRTY-TWO BIT one wearing a 64-bit arch's
+-     * name -- edi/esi/ebp/esp/ebx/edx/ecx/eax as uint32_t, eip 32-bit, and a
+-     * comment reading "accessed with pushal/popal", an instruction that does
+-     * not exist in long mode. Every pointer stored here was silently truncated.
+-     *
+-     * Widened, and the registers renamed to what they actually are. The eight
+-     * r8-r15 slots are new: a 64-bit frame that omits them is not a frame.
+-     * Spike 2 owns the assembly that fills it; Spike 1 only needs it to hold a
+-     * pointer without cutting it in half. */
+-
+-    /* Stack Segment, placed here because of the alignment issue... */
+-    uint16_t ss;
+-    /* Used with sgdt/lgdt -- 2 + 8 bytes in long mode, not 2 + 4 */
+-    uint16_t gdt_limit;
+-    uint64_t gdt_base;
+-
+-    /* General registers */
+-    uint64_t rdi;
+-    uint64_t rsi;
+-    uint64_t rbp;
+-    uint64_t rsp; /* points just below rax */
+-    uint64_t rbx;
+-    uint64_t rdx;
+-    uint64_t rcx;
+-    uint64_t rax;
+-    uint64_t r8, r9, r10, r11, r12, r13, r14, r15;
+-#define ESP_LOC(ctx) (&(ctx)->gs)
+-    /* Segment registers (64-bit slots; the registers themselves stay 16-bit) */
+-    uint64_t gs;
+-    uint64_t fs;
+-    uint64_t es;
+-    uint64_t ds;
+-    /* Flags */
++    uint64_t r15, r14, r13, r12, r11, r10, r9, r8;
++    uint64_t rdi, rsi, rbp, rbx, rdx, rcx, rax;
+     uint64_t rflags;
+-    /* Code segment:offset */
+-    uint64_t rip;
+-    uint64_t cs;
+-    /* Optional stack contents */
+-    uint64_t return_addr;
++    uint64_t rip;          /* where the closing `ret` goes */
++    uint64_t return_addr;  /* where the CLIENT's own `ret` goes: __exit_context */
+     ucell param[0];
+ };
+-
+ /* Create a new context in the given stack */
+ struct context *
+ init_context(uint8_t *stack, uint64_t stack_size, int num_param);
+ 
++/* Spike 2: a self-test of the switch, bound as the Forth word test-ctx-switch */
++int context_self_test(void);
++
+ /* Switch context */
+ struct context *switch_to(struct context *);
+ 
+--- a/arch/amd64/openbios.c
++++ b/arch/amd64/openbios.c
+@@ -20,6 +20,7 @@
+ #include "libopenbios/sys_info.h"
+ #include "openbios.h"
+ #include "arch/common/nvram.h"
++#include "context.h"
+ 
+ /* Spike 1 drift: declared at file scope, as arch/x86/openbios.c:34 does.
+  * amd64 carried a nested extern, which -Werror=nested-externs refuses. */
+@@ -44,6 +45,12 @@
+ 	PUSH(0x9FFFF);
+ }
+ 
++/* Spike 2: ( -- n )  run the context-switch self-test and push its result. */
++static void ctx_switch_word( void )
++{
++	PUSH( context_self_test() );
++}
++
+ static void
+ arch_init( void )
+ {
+@@ -58,6 +65,10 @@
+ #endif
+ 	device_end();
+ 	bind_func("platform-boot", boot );
++
++	/* Spike 2: expose the context-switch self-test at the prompt, so the
++	 * checkpoint can be driven the same way every other one is. */
++	bind_func("test-ctx-switch", ctx_switch_word );
+ }
+ 
+ extern struct _console_ops arch_console_ops;
+--- a/arch/amd64/build.xml
++++ b/arch/amd64/build.xml
+@@ -11,6 +11,7 @@
+   <object source="lib.c"/>
+   <object source="boot.c"/>
+   <object source="context.c"/>
++  <object source="exception.c"/>
+   <object source="linux_load.c"/>
+   <object source="segment.c"/>
+   <object source="sys_info.c"/>
 --- /dev/null
 +++ b/arch/amd64/exception.c
 @@ -0,0 +1,134 @@
