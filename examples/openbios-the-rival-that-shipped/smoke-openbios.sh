@@ -486,5 +486,47 @@ case "$FLAVOR" in
     fi
     pass "SPIKE 2 (exceptions): a write above 4 GiB is named as a page fault, CR2 reported as 0x100000000, machine and Forth state dumped, and NO triple fault — the prompt does not yet resume, which is recorded as the known limit"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|amd64|amd64-fault]" >&2; exit 1 ;;
+  amd64-ctx)
+    # SPIKE 2, second half: the context switch, and the checkpoint's own words --
+    # "the client-program context still switches back to the prompt".
+    #
+    # `test-ctx-switch` runs THE SAME MACHINERY a client program uses:
+    # init_context builds a frame on a fresh stack, the entry point is planted
+    # by hand, switch_to() runs it, the callee sets 0x5A and RETURNS -- which
+    # lands on __exit_context and switches back. A switch that never came back
+    # cannot fake this: the word simply never returns and the prompt never comes,
+    # so the timeout is itself a failure mode this track detects.
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    MB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"
+    DICT="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    [[ -f "$MB" && -f "$DICT" ]] || skip "no amd64 image — run ./build-openbios.sh amd64 first"
+    grep -q 'context_self_test' "$WORKDIR/openbios/arch/amd64/context.c" 2>/dev/null \
+      || skip "no context_self_test in the clone — this track measures the switch"
+    note "switching into a client context and back → $LOG"
+    rm -f "$SOCK" "$LOG"
+    qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$MB" -initrd "$DICT" \
+      -display none -serial "unix:$SOCK,server=on" -no-reboot >/dev/null 2>&1 &
+    QPID=$!
+    python3 "$REPO/tools/drive-serial-repl.py" "$SOCK" "$LOG" --timeout 90 \
+      --expect "0 > " \
+      --send 'test-ctx-switch .\r' --expect "0 > " \
+      --send '3 4 + .\r' --expect "7 " \
+      --send '-1 u.\r' --expect "ffffffffffffffff"
+    RC=$?
+    kill "$QPID" 2>/dev/null   # by PID, never by pattern
+    [[ $RC -eq 0 ]] || fail "the prompt did not come back after switching into a client context (rc=$RC) — see $LOG"
+
+    # 0x5A is set BY THE CODE RUNNING IN THE OTHER CONTEXT. Without it the word
+    # could return 0 through a switch that never actually ran anything, and the
+    # prompt coming back would prove only that nothing happened.
+    grep -q '^0 > test-ctx-switch \. switching to new context:' "$LOG" \
+      || fail "switch_to() was not reached — see $LOG"
+    grep -q '5a  ok' "$LOG" \
+      || fail "REGRESSION: the client context did not set its flag — the switch returned without running the entry point, so the round trip is a no-op — see $LOG"
+    # And the engine must still be intact afterwards, not merely responsive.
+    grep -q 'ffffffffffffffff' "$LOG" \
+      || fail "REGRESSION: the prompt came back but the 64-bit cell did not survive the round trip — see $LOG"
+    pass "SPIKE 2 (context): switched into a client context, it ran and set 0x5a, __exit_context switched back, and the prompt still evaluates 7 and ffffffffffffffff"
+    ;;
+  *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|amd64|amd64-fault|amd64-ctx]" >&2; exit 1 ;;
 esac
