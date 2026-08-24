@@ -33,8 +33,18 @@
 #  8. elf_load.c's ofmem guard named the arches that were built, not amd64.
 #  9. auto-boot? defaulted true, so the firmware banner'd and stopped WITHOUT a
 #     prompt -- which reads exactly like a hang and is not one.
-# 10. QEMU REFUSES an ELF64 multiboot image ("give a 32bit one"), so the build
-#     now wraps the ELF64 in ELF32 headers with objcopy -> openbios.multiboot32.
+# 10. QEMU only APPEARS to refuse an ELF64 multiboot image. The e_machine check
+#     that prints "give a 32bit one" sits on the ELF path ONLY; setting bit 16
+#     of the multiboot flags (the a.out kludge) and supplying the five address
+#     fields makes the loader treat the file as flat and never parse the ELF.
+#     QEMU boots this firmware as a REAL ELF64. That also re-reads amd64's
+#     original 0x00010003 header: it was reaching for the right mechanism and
+#     was broken only because its three-word struct carried none of the address
+#     fields the bit promises. The header now lives in switch.S (C refuses to
+#     truncate link-time addresses in a static initializer) and the ldscript
+#     puts .initctx ahead of .bss so the loaded image is contiguous in the file.
+#     The objcopy -> openbios.multiboot32 route still works and is still built,
+#     as the alternative.
 #
 # STUBBED, ON PURPOSE, AND LOUDLY: __switch_context/__exit_context halt rather
 # than returning (Spike 2 owns context + exceptions), and linux_load() reports
