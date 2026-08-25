@@ -1,4 +1,5 @@
 Subject: [PATCH 15/15] LOCAL DIVERGENCE: make the Forth-source loader actually run
+Arch-tested: x86 amd64 ppc
 
 Two defects in libopenbios/initprogram.c that between them mean OpenBIOS's
 Forth-source loader has never evaluated a byte -- on any arch, for as long as
@@ -66,8 +67,21 @@ built with this patch and WITHOUT an x86 equivalent of patch 14 still ends `load
 in "Unable to locate (init-program)!", because that binding defect is per-arch.
 Only amd64 carries the binding fix today.
 
-x86 regression in the divergence tree: multiboot, dict-identity and nvram all
-PASS. amd64: all five tracks PASS.
+ARCH COVERAGE, measured on every arch this lab can drive:
+
+  x86    multiboot, dict-identity, nvram          PASS
+  amd64  all five amd64 tracks                    PASS
+  ppc    rebuilt and the ppc track re-run          PASS
+
+The ppc run was the one nearly missed: initprogram.c is built
+unconditionally for EVERY arch, and this lab builds ppc, but the first version
+of this patch was opened as a PR before that track had been run. It passed when
+it was run, so nothing broke -- the point is that nothing would have said so.
+tools/check-patch-scope.sh now makes the declaration above mandatory for any
+patch that leaves arch/{x86,amd64}, so the next one cannot be forgotten quietly.
+
+NOT COVERED: sparc32/sparc64 also build from this file and this lab has no track
+for them. That is an UNKNOWN, stated rather than folded into the passes above.
 
 --- a/libopenbios/initprogram.c
 +++ b/libopenbios/initprogram.c
