@@ -20,6 +20,27 @@
 # on x86 (the unconditional auto-boot detonates when IDE media is attached).
 # Each fix's story: POC-2/POC-4. Idempotent: skipped when already applied.
 set -euo pipefail
+usage() {
+    cat <<'USAGE'
+build-openbios.sh [TARGET]      clone + patch + container-build OpenBIOS
+
+TARGET:
+  x86      32-bit PC firmware: openbios.multiboot + openbios-x86.dict
+  amd64    the 64-bit port (Spikes 0-3): openbios.multiboot + openbios-amd64.dict
+  ppc      openbios-qemu.elf, for the -bios swap-in track
+  unix     openbios-unix, the firmware as an ordinary host process
+  all      x86 + ppc + unix (the default; amd64 is opt-in, it is a separate port)
+
+The revival patch is applied by MARKER, not by `git apply --check`, so a rerun
+after unrelated edits to the same regions still says "already applied" instead
+of refusing to build. A partial application is an error naming the missing file.
+
+Env: OPENBIOS_WORKDIR (default ~/openbios-lab)
+USAGE
+}
+
+case "${1:-}" in -h|--help) usage; exit 0 ;; esac
+
 HERE="$(cd "$(dirname "$0")" && pwd)"
 WORKDIR="${OPENBIOS_WORKDIR:-$HOME/openbios-lab}"
 IMG=localhost/openbios-build

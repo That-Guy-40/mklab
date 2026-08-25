@@ -23,6 +23,26 @@
 # Kernel + initrd default to the linuxboot lab's cached artifacts.
 # Exit: 0 PASS / 1 FAIL / 77 SKIP.
 set -u
+usage() {
+    cat <<'USAGE'
+showcase-rival-boots-linux.sh [FLAVOR]   the finale: OpenBIOS boots Linux to u-root
+
+FLAVOR:
+  multiboot   32-bit firmware via qemu -kernel (the default)
+  coreboot    the same firmware entered through a coreboot ROM
+  amd64       the 64-bit firmware -- Spike 3, same boot line, from long mode
+
+One `boot` line typed at the 0 > prompt loads kernel AND initrd and reaches
+"Welcome to u-root!". No memmap=, no hand-staged initrd, no zero-page pokes:
+this rival's loader could be patched instead of worked around.
+
+Exit: 0 PASS / 1 FAIL / 77 SKIP.
+Env: KERNEL, INITRD (default ~/linuxboot-lab/), OPENBIOS_WORKDIR, COREBOOT_DIR
+USAGE
+}
+
+case "${1:-}" in -h|--help) usage; exit 0 ;; esac
+
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 WORKDIR="${OPENBIOS_WORKDIR:-$HOME/openbios-lab}"

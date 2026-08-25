@@ -127,6 +127,41 @@ keeps re-finding: a match on a string that is always present. The check is now
 anchored (`^Linux version `), and a third branch distinguishes *handed off and
 the kernel said nothing* — which on this path means silence, not a dead kernel.
 
+### The help text is checked, because it is a program
+
+`--help` on any of the five scripts prints and exits 0:
+
+```console
+$ ./smoke-openbios.sh --help
+smoke-openbios.sh [TRACK]   one-verdict smoke tests against a real boot
+...
+```
+
+That is guarded by [`tests/test-usage-is-data.sh`](tests/test-usage-is-data.sh),
+which `exec`s the shared [`tools/check-usage-is-data.sh`](../../tools/check-usage-is-data.sh)
+and is listed by path in CI. **It found five defects the day it was first
+aimed here** (2026-08-25) — this lab had no `tests/` directory until then, so
+the checker every phase runs against its driver had never seen these scripts.
+Four exited 1 on `--help`; `build-coreboot-openbios.sh` exited **0 after
+actually starting a coreboot build**. Asking a tool to describe itself should
+not be the thing that does the work.
+
+Every usage heredoc here uses a **quoted** delimiter (`<<'USAGE'`), which makes
+the text structurally inert. The control shows why that is not fussiness — with
+the delimiter unquoted, a backtick in the prose runs:
+
+| | |
+|---|---|
+| authored | `multiboot coreboot ppc      run the ` + `` `date` `` + ` track first` |
+| **printed to the reader** | `multiboot coreboot ppc      run the Tue Aug 25 12:51:53 AM EDT 2026 track first` |
+| written to stderr | **nothing** |
+
+The cheap check — *"`--help` writes nothing to stderr"* — passes that. It only
+catches a command that does not *exist*; one that succeeds rewrites the
+documentation silently, which is the dangerous case. The checker asks the real
+question instead and names the file and line. Both controls were run: removing
+a `--help` handler, and unquoting a delimiter. Restored, both go green.
+
 ## 4. The showcase — OpenBIOS boots Linux to u-root
 
 ```console

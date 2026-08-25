@@ -32,6 +32,30 @@
 # prompt; boot Linux by hand with (≤80 chars per line — the input buffer!):
 #   boot /ide@1/cdrom@0:\vmlinuz console=ttyS0 initrd=/ide@1/cdrom@0:\uroot.img
 set -euo pipefail
+usage() {
+    cat <<'USAGE'
+run-openbios-qemu.sh [FLAVOR]   boot OpenBIOS interactively; 0 > on this terminal
+
+FLAVOR:
+  multiboot   32-bit, qemu -kernel openbios.multiboot (the default)
+  coreboot    the same firmware as a coreboot payload, via -bios
+  ppc         our own openbios-qemu.elf on qemu-system-ppc
+  amd64       the 64-bit port, with an NVDIMM at 0x100000000 for /nvram
+
+Quit with Ctrl-A X. The prompt is `0 > ` -- that leading digit is the STACK
+DEPTH, not a version. Default number base is HEX.
+
+TYPE SLOWLY: the serial console has no flow control and silently drops
+characters that arrive faster than the firmware consumes them. Pasting a long
+line loses its tail with no error.
+
+Env: OPENBIOS_WORKDIR (default ~/openbios-lab), OPENBIOS_NO_PMEM=1 to drop the
+     amd64 NVDIMM, OPENBIOS_PMEM_IMG to point it elsewhere
+USAGE
+}
+
+case "${1:-}" in -h|--help) usage; exit 0 ;; esac
+
 FLAVOR="${1:-multiboot}"
 WORKDIR="${OPENBIOS_WORKDIR:-$HOME/openbios-lab}"
 CB="${COREBOOT_DIR:-$HOME/linuxboot-lab/coreboot}"
