@@ -1,0 +1,64 @@
+Subject: [PATCH 13/13] amd64: compile the Forth loader in (TODO 13.1)
+
+CONFIG_LOADER_FORTH is true on x86 and was false on amd64. It gates
+libopenbios/forth_load.c and the is_forth() arm of libopenbios/initprogram.c,
+so without it the generic loader chain has no Forth entry at all.
+
+THIS IS A PREREQUISITE AND IT IS INERT TODAY, which is stated here rather than
+left for a reader to infer from a landed config change. TODO 13.1's checkpoint
+-- "a .fth loaded off media prints its own marker" -- CANNOT be reached, and
+x86 fails identically, so the blocker is not the port's:
+
+  0 > load /ide@1/cdrom@0:\marker.fth
+  Mounted iso9660
+  Path=/marker.fth
+  Unable to locate (init-program)!
+
+`boot <file>` never consults this chain on either arch -- arch/{x86,amd64}/boot.c
+call linux_load() and nothing else -- so the chain is reached through `load` ->
+`$load`, which ends with `init-program`, which is
+`s" (init-program)" $find if execute else ." Unable to locate..." then`.
+
+Probed at the prompt: `dup`, `is-cfunc`, `(does>)` and `platform-boot` are all
+FOUND; `(init-program)` and `(go)` are MISSING -- on amd64 AND on x86. So $find
+works, bind_func works, and precisely the two words bound inside openbios_init()
+are unreachable. `platform-boot`, bound by bind_func later in the same
+arch_init() after device_end(), is found.
+
+Two hypotheses were tested and both are refuted:
+
+  - "parenthesised names are not findable" -- (does>) is found.
+  - "is-cfunc uses $create, which defines into the current vocabulary, so an
+    active device context swallows them" -- adding device_end() before
+    openbios_init() gave `set_property: NULL phandle` and a general protection
+    fault at 08:0000000000102ba3, named by Spike 2's handler. Reverted.
+
+Cause is recorded as UNKNOWN rather than guessed at. The next probe that would
+separate "openbios_init() is never called here" from "it is called and its words
+land somewhere unreachable" is a throwaway marker bound as its first statement.
+
+What this patch does assert: the build is clean, and neither `smoke-openbios.sh
+amd64` nor `amd64-linux` regressed.
+
+CONFIG_DRIVER_VGA -- 13.1's other flip -- is deliberately NOT changed. Its
+checkpoint is `byte-load` reached at all, and drivers/pci.c:1045's feval lives in
+vga_config_cb, which runs only while enumerating a VGA-class PCI device. amd64
+never enumerates PCI: arch/x86 calls ob_pci_init() and then ob_ide_init on the
+probed path, arch/amd64 calls only ob_ide_init against a hardcoded
+"/pci/pci-ata". Flipping it would compile a driver nothing can call. (And that
+feval is not itself guarded by CONFIG_DRIVER_VGA, so an arch that DID enumerate
+PCI with VGA off would execute an undefined word -- masked here only by the
+missing enumeration.) Wiring ob_pci_init() into amd64 is Spike-sized and belongs
+in its own item.
+
+--- a/config/examples/amd64_config.xml
++++ b/config/examples/amd64_config.xml
+@@ -25,7 +25,7 @@
+   <option name="CONFIG_LOADER_BOOTINFO" type="boolean" value="false"/>
+   <option name="CONFIG_LOADER_ELF" type="boolean" value="true"/>
+   <option name="CONFIG_LOADER_FCODE" type="boolean" value="false"/>
+-  <option name="CONFIG_LOADER_FORTH" type="boolean" value="false"/>
++  <option name="CONFIG_LOADER_FORTH" type="boolean" value="true"/>
+   <option name="CONFIG_LOADER_XCOFF" type="boolean" value="false"/>
+ 
+   <!-- Filesystem Configuration -->
