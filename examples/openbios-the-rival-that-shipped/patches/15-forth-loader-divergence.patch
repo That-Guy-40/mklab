@@ -1,0 +1,125 @@
+Subject: [PATCH 15/15] LOCAL DIVERGENCE: make the Forth-source loader actually run
+
+Two defects in libopenbios/initprogram.c that between them mean OpenBIOS's
+Forth-source loader has never evaluated a byte -- on any arch, for as long as
+these lines have existed. Both are silent.
+
+DELIBERATELY NOT SENT UPSTREAM. This is a divergence we carry, and the reason is
+a difference in goals rather than a judgement about the code: upstream maintains
+a firmware that boots operating systems under QEMU, and nothing it ships needs
+`load` of a .fth to work. This lab is a teaching artifact, and needs exactly that
+path -- loading Forth off media is what makes multi-line test Forth possible at
+all, given the firmware's ~80-char serial input truncation. Handing a maintainer
+a fix for a road they do not drive on is a cost to them, not a gift.
+
+Developed in a SEPARATE TREE (~/openbios-lab-archneutral/) because these are the
+first arch-neutral lines this lab has touched -- the file is shared with x86, ppc
+and sparc, and three targets this lab does not exercise should not change on the
+strength of an amd64 measurement.
+
+(a) TWO RECORDS OF ONE FACT. init_forth_context() evaluates `load-base` for
+    `load-state >ls.file-size` bytes. The C loaders in libopenbios/load.c each
+    set that field. But `load` does not go through them: $load
+    (forth/debugging/client.fs:135) calls the DEVICE PACKAGE's own `load` method
+    and records the size with `!load-size`, which writes a SEPARATE
+    `variable file-size` (client.fs:37-41). Nothing connects the two.
+
+    Measured: after `load /ide@1/cdrom@0:\marker.fth`, load-base held
+    `\ marker.." SPIK` -- the file, intact -- while `load-state >ls.file-size @`
+    printed 0 and `load-size` printed 23 (hex; the file is 35 bytes). So the
+    evaluation ran over ZERO bytes and returned ok.
+
+    Fixed as a fallback, not an overwrite: where a C loader has already filled
+    the field in, that value is authoritative and is left alone.
+
+(b) `eval2` DOES NOT EXIST. The `fword("eval2")` at the end of
+    init_forth_context() was the ONLY occurrence of that name in the tree, and
+    nothing defines it. fword() on a missing word is silent, which is why the
+    symptom was "Evaluating Forth..." followed by a clean ok. Confirmed at the
+    prompt: `load-base load-size eval2` answers `eval2: undefined word.`, while
+    `load-base load-size evaluate` prints the marker. The real word is `evaluate`
+    ( str len -- ), forth/bootstrap/interpreter.fs:163.
+
+The size selection is done in C rather than in the feval string on purpose:
+`if`/`then` are compile-only, so a fallback written as interpreted Forth does not
+run -- and it fails exactly as silently as the bug it is fixing, which cost a
+build to notice.
+
+WHAT THIS BUYS. With patch 14 (amd64's binding fix) and this one:
+
+    0 > load /ide@1/cdrom@0:\marker.fth
+    0 > go
+    switching to new context:
+    Evaluating Forth...
+    SPIKE-FORTH-LOADED
+     ok
+    0 >
+
+`go` now works, not just the `load-base load-size evaluate` recipe patch 14
+documented. That also RETIRES a fourth defect this lab had recorded as UNKNOWN
+("with 2 and 3 fixed, the go trampoline still evaluates nothing"): it does not
+exist. It was an artifact of a measurement taken before the eval2 change was in
+the running image, and it is named here rather than quietly dropped.
+
+NECESSARY BUT NOT SUFFICIENT PER ARCH, and measured rather than assumed: x86
+built with this patch and WITHOUT an x86 equivalent of patch 14 still ends `load`
+in "Unable to locate (init-program)!", because that binding defect is per-arch.
+Only amd64 carries the binding fix today.
+
+x86 regression in the divergence tree: multiboot, dict-identity and nvram all
+PASS. amd64: all five tracks PASS.
+
+--- a/libopenbios/initprogram.c
++++ b/libopenbios/initprogram.c
+@@ -114,9 +114,48 @@
+ {
+ 	/* Execute Forth payload */
+ 	printk("Evaluating Forth...\n");
+-	fword("load-base");
+-	feval("load-state >ls.file-size @");
+-	fword("eval2");
++
++	/* LOCAL DIVERGENCE (mklab). Two defects on this path, both silent, and
++	 * both of which mean the Forth-source loader has never run a byte.
++	 *
++	 * (a) TWO RECORDS OF ONE FACT. The C loaders in libopenbios/load.c each
++	 *     set `load-state >ls.file-size` themselves, which is what this
++	 *     function reads. But `load` does not go through them: $load
++	 *     (forth/debugging/client.fs:135) calls the DEVICE PACKAGE's own
++	 *     `load` method and records the result with `!load-size`, which
++	 *     writes a separate `variable file-size` (client.fs:37-41). Nothing
++	 *     connects the two, so the size read here is 0 and the evaluation
++	 *     covers no bytes. Measured: load-base held `\ marker.." SPIK` while
++	 *     `load-state >ls.file-size @` printed 0.
++	 *
++	 *     Fall back rather than overwrite -- where a C loader has already
++	 *     filled the field in, that value is authoritative and is left alone.
++	 *
++	 * (b) `eval2` IS NOT DEFINED ANYWHERE IN THE TREE. This call site was its
++	 *     only occurrence; nothing defines it, and fword() on a missing word
++	 *     is silent, so the symptom was "Evaluating Forth..." followed by a
++	 *     clean ok. The real word is `evaluate` ( str len -- ),
++	 *     forth/bootstrap/interpreter.fs:163.
++	 *
++	 * The size selection is done in C and not in the feval string on purpose:
++	 * `if`/`then` are compile-only, so a fallback written as interpreted Forth
++	 * does not run -- and it fails exactly as silently as the bug it fixes,
++	 * which cost a build to notice. */
++	{
++		ucell size;
++
++		feval("load-state >ls.file-size @");
++		size = POP();
++		if (size == 0) {
++			feval("load-size");
++			size = POP();
++		}
++
++		fword("load-base");
++		PUSH(size);
++	}
++
++	fword("evaluate");
+ }
+ 
+ void go(void)

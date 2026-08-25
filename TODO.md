@@ -1780,21 +1780,54 @@ one call site, `arch/amd64` only. Control: put it back and both words vanish and
 (`set_property: NULL phandle`, GPF at `08:0000000000102ba3`) — the tree is not built
 yet at the top of `arch_init`.
 
-#### Three further defects on the same path — arch-neutral, deliberately untouched
+#### The arch-neutral pair — **fixed as a LOCAL DIVERGENCE, 2026-08-25**
 
-Found while chasing the above; each was hidden by the one before it, and all are in
-code shared with x86, ppc and sparc, so they are being taken up **in a separate tree**
-(`~/openbios-lab-archneutral/`) rather than changing three targets this lab does not test.
+Two defects, not three: **the fourth does not exist.** This entry recorded *"with 2
+and 3 fixed locally, the `go` trampoline still evaluates nothing — UNKNOWN"*. It
+was an artifact of a measurement taken before the `eval2` change was in the running
+image. With both fixed in a clean tree, `go` works. Named here rather than quietly
+dropped, because a retired UNKNOWN that nobody announces is how a phantom defect
+gets designed around.
 
 | # | defect | evidence |
 |---|---|---|
-| 2 | `load-state >ls.file-size` is never set on the `$load` path — `!load-size` writes a *separate* `variable file-size` (`client.fs:37-41`). Two records of one fact | `load-base` held `\ marker.." SPIK` while `load-state >ls.file-size @` printed **0** |
-| 3 | **`eval2` does not exist.** `libopenbios/initprogram.c:152` is the only reference to that name in the tree and nothing defines it; `fword()` on a missing word is silent | `eval2: undefined word.` at the prompt — so the Forth-source loader has **never evaluated a byte, on any arch** |
-| 4 | with 2 and 3 fixed locally, the `go` trampoline *still* evaluates nothing | **UNKNOWN** |
+| 2 | `load-state >ls.file-size` is never set on the `$load` path — `!load-size` writes a *separate* `variable file-size` (`client.fs:37-41`). Two records of one fact | after `load`, `load-base` held `\ marker.." SPIK` — the file, intact — while `>ls.file-size` printed **0** and `load-size` printed `23` (hex; 35 bytes) |
+| 3 | **`eval2` does not exist.** The `fword("eval2")` in `initprogram.c` was the only occurrence of that name in the tree; nothing defines it, and `fword()` on a missing word is silent | `load-base load-size eval2` → `eval2: undefined word.`; the same line with `evaluate` prints the marker |
 
-That is why the recipe above uses `evaluate` directly and not `go`. It also means
-`CONFIG_LOADER_FORTH` — landed inert in #294 — **is no longer inert**: with defect 1
-fixed, `load` completes and the loaded text can be evaluated.
+Together they mean **OpenBIOS's Forth-source loader has never evaluated a byte, on
+any arch**, for as long as those lines have existed.
+
+**Carried as a divergence, not sent upstream** —
+[`patches/15-forth-loader-divergence.patch`](examples/openbios-the-rival-that-shipped/patches/15-forth-loader-divergence.patch).
+The reason is a difference in *goals*, not a judgement about the code: upstream
+maintains a firmware that boots operating systems under QEMU, and nothing it ships
+needs `load` of a `.fth` to work. This lab is a teaching artifact and needs exactly
+that path, because loading Forth off media is what makes multi-line test Forth
+possible against an ~80-char serial truncation. Handing a maintainer a fix for a
+road they do not drive on is a cost to them, not a gift.
+
+Developed in a **separate tree** (`~/openbios-lab-archneutral/`, a full copy that
+builds independently via `OPENBIOS_WORKDIR`) because these are the first
+arch-neutral lines this lab has touched — `initprogram.c` is shared with x86, ppc
+and sparc, and three targets this lab does not exercise should not change on the
+strength of an amd64 measurement.
+
+With patches 14 and 15 both applied, `go` works and not just the `evaluate` recipe:
+
+```console
+0 > load /ide@1/cdrom@0:\marker.fth
+0 > go
+switching to new context:
+Evaluating Forth...
+SPIKE-FORTH-LOADED
+```
+
+**Necessary but not sufficient per arch, measured rather than assumed:** x86 built
+with patch 15 and *without* an x86 equivalent of patch 14 still ends `load` in
+`Unable to locate (init-program)!`, because that binding defect is per-arch. Only
+amd64 carries the binding fix today — **an x86 arm is the obvious next increment**
+and would make `CONFIG_LOADER_FORTH` meaningful on the arch that has had it set to
+`true` all along.
 
 *The original diagnosis, kept because it is how the cause was found:* the checkpoint
 could not be reached, and **x86 failed identically**, so it was not port work.

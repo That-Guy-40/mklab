@@ -180,12 +180,23 @@ The file must begin with `\ ` (a Forth comment) — that is literally how
 `is_forth()` recognises it (`libopenbios/forth_load.c:21`). `genisoimage -r`
 lowercases names, so stage it as `MARKER.FTH` and type `marker.fth`.
 
-**Use `evaluate`, not `go`.** `go` prints `Evaluating Forth...` and then runs
-nothing, for two reasons that live in arch-neutral code and are deliberately not
-fixed here: the `$load` path never sets `load-state >ls.file-size` (it records the
-size in a *different* variable), and `eval2` — the word
-`libopenbios/initprogram.c` calls to do the evaluating — **is not defined anywhere
-in the tree**. See [TODO §13.1](../../TODO.md).
+**`go` works too**, since [patch 15](patches/15-forth-loader-divergence.patch):
+
+```console
+0 > go
+switching to new context:
+Evaluating Forth...
+SPIKE-FORTH-LOADED
+```
+
+That patch is a **divergence this lab carries on purpose**. Two defects kept the
+loader from ever running: the `$load` path never sets `load-state >ls.file-size`
+(it records the size in a *different* variable), and `eval2` — the word
+`libopenbios/initprogram.c` calls to do the evaluating — **is defined nowhere in
+the tree**. Both are in arch-neutral code, so they were developed in a separate
+copy of the source and regression-tested against x86 before being applied here.
+Not sent upstream: nothing upstream ships needs this path. See
+[TODO §13.1](../../TODO.md).
 
 ## 4. The showcase — OpenBIOS boots Linux to u-root
 
