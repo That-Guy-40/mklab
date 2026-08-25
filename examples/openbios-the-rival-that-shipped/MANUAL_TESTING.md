@@ -162,6 +162,31 @@ documentation silently, which is the dangerous case. The checker asks the real
 question instead and names the file and line. Both controls were run: removing
 a `--help` handler, and unquoting a delimiter. Restored, both go green.
 
+### Loading Forth source off media (amd64)
+
+Since [patch 14](patches/14-amd64-openbios-init-after-device-end.patch), a `.fth`
+on the CD can be run instead of typed through the ~80-char serial truncation:
+
+```console
+0 > load /ide@1/cdrom@0:\marker.fth
+Mounted iso9660
+Path=/marker.fth
+ ok
+0 > load-base load-size evaluate
+SPIKE-FORTH-LOADED
+```
+
+The file must begin with `\ ` (a Forth comment) — that is literally how
+`is_forth()` recognises it (`libopenbios/forth_load.c:21`). `genisoimage -r`
+lowercases names, so stage it as `MARKER.FTH` and type `marker.fth`.
+
+**Use `evaluate`, not `go`.** `go` prints `Evaluating Forth...` and then runs
+nothing, for two reasons that live in arch-neutral code and are deliberately not
+fixed here: the `$load` path never sets `load-state >ls.file-size` (it records the
+size in a *different* variable), and `eval2` — the word
+`libopenbios/initprogram.c` calls to do the evaluating — **is not defined anywhere
+in the tree**. See [TODO §13.1](../../TODO.md).
+
 ## 4. The showcase — OpenBIOS boots Linux to u-root
 
 ```console

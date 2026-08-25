@@ -1733,7 +1733,7 @@ structure builder. The design question is the notes' to settle; what belongs her
 the four defects the review found in the shipped wordset, all of which bite the amd64
 track regardless of whether that toolkit is ever built.*
 
-### 13.1 Two more config flips — **RUN 2026-08-25, and both checkpoints are blocked**
+### 13.1 Two more config flips — **`LOADER_FORTH` CLOSED 2026-08-25; `DRIVER_VGA` deferred**
 
 *Original text kept below the rule, because being wrong in a specific way is the useful
 part.* `CONFIG_LOADER_FORTH` **is now `true` on amd64** (parity with x86, builds clean,
@@ -1743,10 +1743,61 @@ the two checkpoints turned into:
 **Neither is a one-line config flip, and they are blocked by two unrelated defects
 neither of which was recorded anywhere.**
 
-#### The `LOADER_FORTH` checkpoint is blocked by a defect that is not amd64's
+#### The `LOADER_FORTH` checkpoint — **MET**, by a one-call-site amd64 fix
 
-The checkpoint — *a `.fth` loaded off media prints its own marker* — cannot be reached,
-and **x86 fails identically**, so this is not port work.
+> **Correction.** The version of this entry merged in #294 said this checkpoint
+> *"CANNOT be reached"*. That was true of the code as it stood and is **false now**;
+> it was reached the same evening. The paragraph below is kept because the reasoning
+> that followed from it is still how the cause was found.
+
+```console
+0 > load /ide@1/cdrom@0:\marker.fth      \ clean, ok, empty stack
+0 > load-base load-size evaluate
+SPIKE-FORTH-LOADED
+```
+
+**The cause: every `bind_func` before `device_end()` is invisible to `$find`.**
+`bind_func` is `is-cfunc` (`libopenbios/clib.fs:17`) is `$create`, and `$create`
+defines into the *current* vocabulary — so while a device context is open, the words
+land in that node instead of the dictionary. Markers planted through `arch_init` and
+probed at the prompt:
+
+| bound | result |
+|---|---|
+| arch_init's first statement | **MISSING** |
+| straight after `openbios_init()` | **MISSING** |
+| after `modules_init()` | **MISSING** |
+| `platform-boot`, after `device_end()` | **FOUND** |
+
+`$find` works (`dup`, `is-cfunc`, `(does>)` all found — `(does>)` also kills the
+"parenthesised names are unfindable" idea). The only thing between the missing and the
+found is `device_end()`. **Fix:** move `openbios_init()` after it —
+[`patches/14-…`](examples/openbios-the-rival-that-shipped/patches/14-amd64-openbios-init-after-device-end.patch),
+one call site, `arch/amd64` only. Control: put it back and both words vanish and
+`load` prints `Unable to locate (init-program)!` again.
+
+**Not** fixed by calling `device_end()` *earlier*: that faults
+(`set_property: NULL phandle`, GPF at `08:0000000000102ba3`) — the tree is not built
+yet at the top of `arch_init`.
+
+#### Three further defects on the same path — arch-neutral, deliberately untouched
+
+Found while chasing the above; each was hidden by the one before it, and all are in
+code shared with x86, ppc and sparc, so they are being taken up **in a separate tree**
+(`~/openbios-lab-archneutral/`) rather than changing three targets this lab does not test.
+
+| # | defect | evidence |
+|---|---|---|
+| 2 | `load-state >ls.file-size` is never set on the `$load` path — `!load-size` writes a *separate* `variable file-size` (`client.fs:37-41`). Two records of one fact | `load-base` held `\ marker.." SPIK` while `load-state >ls.file-size @` printed **0** |
+| 3 | **`eval2` does not exist.** `libopenbios/initprogram.c:152` is the only reference to that name in the tree and nothing defines it; `fword()` on a missing word is silent | `eval2: undefined word.` at the prompt — so the Forth-source loader has **never evaluated a byte, on any arch** |
+| 4 | with 2 and 3 fixed locally, the `go` trampoline *still* evaluates nothing | **UNKNOWN** |
+
+That is why the recipe above uses `evaluate` directly and not `go`. It also means
+`CONFIG_LOADER_FORTH` — landed inert in #294 — **is no longer inert**: with defect 1
+fixed, `load` completes and the loaded text can be evaluated.
+
+*The original diagnosis, kept because it is how the cause was found:* the checkpoint
+could not be reached, and **x86 failed identically**, so it was not port work.
 
 `boot <file>` never consults the Forth loader on **either** arch: `arch/{x86,amd64}/boot.c`
 call `linux_load()` and nothing else. The generic loader chain in `libopenbios/load.c`,
