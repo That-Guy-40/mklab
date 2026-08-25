@@ -740,5 +740,58 @@ case "$FLAVOR" in
 
     pass "the x86 tracks boot openbios-x86.dict ($SZ_ARCH bytes, the superset): /memory and /cpus are in the running device tree, and the base openbios.dict ($SZ_BASE bytes) boots to a prompt WITHOUT them"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem]" >&2; exit 1 ;;
+  amd64-linux)
+    # SPIKE 3: the 64-bit firmware boots Linux.
+    #
+    # THE ASSERTION IS THE OUTCOME -- u-root's banner -- and not any of the
+    # five mechanisms that had to be right to reach it. That matters here more
+    # than usual, because every one of those mechanisms failed SILENTLY while
+    # the firmware itself kept reporting success:
+    #
+    #   1. CONFIG_FSYS_ISO9660 was false, so the loader never saw a file.
+    #   2. arch/amd64 does not relocate, so it is sitting at the 1 MiB a
+    #      bzImage runs at -- the read overwrote the running firmware and the
+    #      machine stopped mid-word, with no fault to report.
+    #   3. the copy stub then demolished the page tables it was translated
+    #      through (they are in .bss at 0x184000, inside the destination).
+    #   4. the initrd placement inherited x86's "we are at the top of RAM"
+    #      assumption, and `end - size` UNDERFLOWED to 0xff501000.
+    #   5. `unsigned long type` made struct e820entry 24 bytes instead of 20,
+    #      so the kernel saw one memory range instead of two, decided it had
+    #      640 KiB, and panicked in init_mem_mapping BEFORE console_init --
+    #      the panic went to the printk ring buffer and never to a console.
+    #
+    # Defect 5 is the one to keep in mind when reading this track: the kernel
+    # was RUNNING and completely silent. A track asserting "no error appeared
+    # on the console" would have passed. Only "u-root said hello" catches it.
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v genisoimage >/dev/null || skip "genisoimage not installed"
+    MB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"
+    DICT="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    [[ -f "$MB" && -f "$DICT" ]] || skip "no amd64 image — run ./build-openbios.sh amd64 first"
+    KERNEL="${KERNEL:-$HOME/linuxboot-lab/payload-bzImage}"
+    INITRD="${INITRD:-$HOME/linuxboot-lab/uroot.cpio}"
+    [[ -f "$KERNEL" ]] || skip "no kernel at $KERNEL (set KERNEL=; an x86_64 bzImage)"
+    [[ -f "$INITRD" ]] || skip "no initrd at $INITRD (set INITRD=; a cpio the kernel can unpack)"
+    # Drive the SHIPPED showcase rather than re-implementing its boot line: a
+    # copy of a harness drifts from it and then proves something about the copy.
+    note "handing off to showcase-rival-boots-linux.sh amd64"
+    OUT="$($HERE/showcase-rival-boots-linux.sh amd64 2>&1)"; RC=$?
+    printf '%s\n' "$OUT" | sed 's/^/    /'
+    [[ $RC -eq 77 ]] && skip "showcase skipped: $(printf '%s' "$OUT" | tail -1)"
+    [[ $RC -eq 0 ]] \
+      || fail "REGRESSION: the 64-bit firmware no longer boots Linux to u-root (rc=$RC) — see $WORKDIR/showcase-amd64.log; the five silent failure modes in this track's comment are where to look"
+    # The showcase already required "Welcome to u-root", but assert the memory
+    # map here too: defect 5 is invisible at the banner (a 640 KiB machine and
+    # a 512 MiB one both reach u-root or both do not, depending only on how
+    # much the kernel needs) and this is the cheap way to keep it honest.
+    LOG="$WORKDIR/showcase-amd64.log"
+    N=$(grep -ac 'BIOS-e820: \[mem ' <(tr -d "\r" < "$LOG") || true)
+    [[ "$N" -eq 2 ]] \
+      || fail "REGRESSION: the kernel logged $N e820 entries, expected 2 — struct e820entry has drifted off the 20-byte zero-page ABI again (the LINUX_ABI_ASSERT in arch/amd64/linux_load.c should have caught this at BUILD time; if it did not, it has been disabled) — see $LOG"
+    grep -q 'Moving kernel' "$LOG" \
+      || fail "the kernel was not staged-and-copied — arch/amd64 has started relocating itself, or load_linux_header's address changed; the handoff stub's reason for existing is gone and this track no longer proves it — see $LOG"
+    pass "SPIKE 3: the 64-bit firmware boots Linux — one line at the 0 > prompt stages a bzImage above the firmware, copies it over the firmware from a stub in low memory, enters at +0x200 in long mode, and reaches u-root with both e820 ranges intact"
+    ;;
+  *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux]" >&2; exit 1 ;;
 esac

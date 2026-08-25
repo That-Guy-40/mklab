@@ -705,6 +705,103 @@ they are different mechanisms, and it was re-measured after this landed rather
 than assumed. `amd64-fault` asserts the limit is still the limit.
 
 
+## Spike 3, run: the 64-bit firmware boots Linux — measured 2026-08-25
+
+**GREEN.** `./showcase-rival-boots-linux.sh amd64` reaches `Welcome to u-root!`
+— the *existing* success signature, unchanged, which was the checkpoint set for
+this rung before any of it was written.
+
+```console
+0 > boot /ide@1/cdrom@0:\vmlinuz console=ttyS0 initrd=/ide@1/cdrom@0:\uroot.img
+Found Linux version 6.3.0 ... (protocol 0x20f) (loadflags 0x1) bzImage.
+staging kernel at 0x200000 (firmware ends 0x19e790, align 0x200000)
+Loading kernel... ok
+Loading initrd... ok
+Moving kernel 0x200000 -> 0x100000 (0x3147f0 bytes) and jumping...
+rip=0x100200 rsi=0x90000 stub=0x80000+0x13e
+Linux version 6.3.0 (coreboot@reproducible) ...
+2026/08/25 04:21:39 Welcome to u-root!
+```
+
+### The port was the easy half; five silent failures were the other
+
+[TODO §12](../../TODO.md) predicted the loader port and got its size right —
+the x86 twin is a strict superset of the dead amd64 fork, so the port is that
+file plus a 64-bit handoff. What it did not predict is that **every failure
+between there and u-root was silent**, and three of them were caused by a
+decision Spike 1 made correctly.
+
+That decision: long mode ignores segment bases, so `relocate()` is pointless
+and `arch/amd64` prints *"relocate: skipped — running in place"*. Correct. The
+consequence nobody wrote down is that the firmware then **permanently occupies
+1 MiB, which is the address a bzImage runs at**, and `arch/x86/linux_load.c` is
+written throughout on the assumption that the firmware has moved out of the way.
+
+| # | the defect | how it presented |
+|---|---|---|
+| 1 | `CONFIG_FSYS_ISO9660 = false` in `amd64_config.xml` | *"Unknown filesystem type"* — the loader never saw a file |
+| 2 | the kernel was read to `0x100000`, **over the running firmware** | not a crash: the machine printed `Loading kernel... ` and never the `ok`. Overwriting your own text raises no fault, so Spike 2's handler — which had diagnosed every previous 64-bit bug — said nothing |
+| 3 | the copy stub demolished **the page tables it was translated through** | `pml4` is in `.bss` at `0x184000`, inside the destination. The copy reaches it after `0x84000` bytes, when it is reading from `0x284000`; QEMU's `-d int` reported `#PF` at `CR2=0x285000`, `IP=0x80029` — the `rep movsb` itself — then `#DF` |
+| 4 | `end = virt_to_phys(_start)` for initrd placement | x86's comment says *"FILO itself is at the top of RAM (relocated)"* — true there. Here `_start` is `0x100020`, so `end - size` **underflowed** to `0xff501000` in a 512 MiB machine, and the `start < kern_end` guard passed with room to spare because a wrapped value is enormous |
+| 5 | `unsigned long type` in `struct e820entry` | 4 bytes on i386, **8 on LP64** — so 24 bytes per entry where the zero page says 20. The kernel read entry 0 correctly (the low half of an 8-byte `type` is the right `u32` little-endian) and garbage after |
+
+**Defect 5 is the one worth the space.** The kernel logged one memory range
+instead of two, concluded it had 640 KiB, and panicked in `init_mem_mapping` —
+*before* `console_init`. So the panic went into the printk ring buffer and never
+to a console: a kernel that was **running correctly and completely silent**.
+Registers caught mid-`printk` spelled it out in fragments (`"ages: ca"`,
+`"n not al"`, `"loc memo"`), and dumping 48 MiB of guest RAM over QMP produced
+the sentence:
+
+```
+Kernel panic - not syncing: alloc_low_pages: can not alloc memory
+```
+
+A test asserting *"nothing bad appeared on the console"* passes through all of
+that. Only *"u-root said hello"* catches it — which is why
+[`smoke-openbios.sh amd64-linux`](smoke-openbios.sh) asserts the banner, and
+then separately asserts **two** `BIOS-e820` lines, because the banner alone
+cannot see defect 5 until the machine happens to be too small to boot.
+
+### What the handoff had to be, and why `switch_to()` could not be it
+
+The near-miss is what makes this interesting. `arch/amd64`'s context frame
+already carries `rsi` — exactly the register the 64-bit boot protocol wants
+`boot_params` in — so `ctx->rip = kern_addr + 0x200; ctx->rsi = zero_page;
+switch_to(ctx)` *enters the kernel*. On the **firmware's** GDT. And
+`Documentation/arch/x86/boot.rst` is unambiguous:
+
+> a GDT must be loaded with the descriptors for selectors `__BOOT_CS(0x10)` and
+> `__BOOT_DS(0x18)` … CS must be `__BOOT_CS` and DS, ES, SS must be `__BOOT_DS`
+
+The live long-mode GDT is `gdt64` in `switch.S`: null, `0x08` = 64-bit code,
+`0x10` = **data**. The selector the kernel requires for *code* is the one this
+firmware uses for *data*, and `0x18` does not exist. `context.h` says on purpose
+that the frame carries no GDT and no segment registers, so no context switch can
+fix that. The handoff is therefore its own thing —
+`linux_handoff` in [`arch/amd64/switch.S`](patches/12-amd64-spike3-boots-linux.patch):
+`lgdt`, reload the segments, take a stack that travels with the blob
+(RIP-relative, so no constant has to be agreed with the C side), `rep movsb` the
+kernel down over the firmware, and `lretq` to `0x10:kern_addr+0x200`.
+
+It is copied to `0x80000` and run from there, so it is position-independent by
+necessity rather than by taste — and defect 3 is the reminder that
+position-independent code still runs on a page table. The C side builds a fresh
+0–5 GiB identity map at `0x81000` and switches `CR3` to it before the copy.
+
+### Kept honest by
+
+`LINUX_ABI_ASSERT` in [`arch/amd64/linux_load.c`](patches/12-amd64-spike3-boots-linux.patch)
+— eight negative-array-size assertions on the offsets the zero page mandates
+(`sizeof(struct e820entry) == 20`, `e820_map` at `0x2d0`, `cmd_line_ptr` at
+`0x228`, …). Every field in those structs already carried its offset in a
+comment, and **comments do not fail a build**: defect 5 grew the struct by four
+bytes per entry while every comment stayed "right". The control re-injects
+`unsigned long type` and the build stops on
+`size of array 'linux_abi_e820entry_is_20_bytes' is negative` — at compile time,
+where the runtime symptom is silence.
+
+
 ## OFW / OpenBoot: why this one is a no
 
 Different situation entirely, and the answer is not "harder" but "a different
@@ -1612,11 +1709,13 @@ it currently cannot.
 
 ## What the audit corrected
 
-The verdict and the shape of the work survived the audit; these eleven claims
+The verdict and the shape of the work survived the audit; these fourteen claims
 did not, and per house style they are named rather than silently rewritten.
 Entries 10–12 were found in the *fixing*, not in the audit — two of them are
 claims **this document made** while diagnosing something else, which is the
-pattern worth noticing more than any single correction.
+pattern worth noticing more than any single correction. Entries 13–14 are from
+[TODO §12](../../TODO.md), written the night before Spike 3 was built and wrong
+by the next morning: **a plan is a cache entry too.**
 
 1. **The `defconfig` evidence row cited a file the build never reads.**
    `arch/amd64/defconfig` is referenced by nothing; the operative
@@ -1681,6 +1780,23 @@ pattern worth noticing more than any single correction.
     is what "overlay" was read off. It was concluded while chasing a panic whose
     cause turned out to be elsewhere, and never re-derived once that was fixed.
     `./smoke-openbios.sh dict-identity` now re-derives it every run.
+13. **§12's checkpoint for the ISO9660 blocker could never have passed on any
+    arch.** It said *"`dir /ide@1/cdrom@0:\` must list `vmlinuz` and
+    `uroot.img`"*, and proposed turning the flag back off as the control on the
+    grounds that it *"must fail at `dir`, not at `boot`"*. But
+    `grubfs_files_dir()` in `fs/grubfs/grubfs_fs.c` is an unconditional stub
+    that prints *"dir method not implemented for grubfs filesystem"* — on
+    **x86 too**, verified by running the same command against the 32-bit
+    firmware. The flag flip was right and the way to see it was not: the
+    evidence that ISO9660 is compiled in is `Mounted iso9660` and
+    `Path=/vmlinuz`, not a listing. A checkpoint nobody has run is a guess.
+14. **§12 said the 64-bit entry needed only `ctx->rip` and `ctx->rsi`, calling
+    the frame's existing `rsi` field "a happy accident of Spike 2's design".**
+    The accident is real and the conclusion drawn from it was wrong: a
+    `switch_to()` handoff leaves CS at `0x08` and DS at `0x10`, and the boot
+    protocol requires `0x10`/`0x18`. §12 even instructed *"verify it, do not
+    assume it"* about the `rsi` field — and verified the half that was true.
+    See [§ Spike 3](#spike-3-run-the-64-bit-firmware-boots-linux--measured-2026-08-25).
 
 ## What this document did NOT prove
 
