@@ -9,6 +9,38 @@
 #   OFW lab:   .config-ofw + build-ofw/coreboot.rom
 # A sha guard proves it (written on first run, checked on every run).
 set -euo pipefail
+
+# THIS SCRIPT USED TO START A COREBOOT BUILD WHEN ASKED FOR HELP. It takes no
+# arguments, so `--help` fell straight through to the build -- exiting 0 after
+# several minutes of make, having written cmocka warnings to stderr. That is a
+# worse shape than the four flavor scripts here, which at least refused: asking
+# a tool to describe itself should never be the thing that does the work.
+#
+# The delimiter is QUOTED, so nothing in the text below can execute. See
+# tools/check-usage-is-data.sh -- an unquoted one makes help text a program.
+usage() {
+    cat <<'USAGE'
+build-coreboot-openbios.sh      a coreboot ROM carrying openbios-builtin.elf
+
+Takes no arguments. OpenBIOS began life as a LinuxBIOS payload, and this builds
+it back into that shape: coreboot with CONFIG_PAYLOAD_ELF pointing at our own
+openbios-builtin.elf, bootable with `qemu -bios`.
+
+Reuses the linuxboot lab's cached coreboot tree and crossgcc with FULL
+isolation -- our config and objdir are .config-openbios and build-openbios/ --
+so the kept ROMs of both sibling labs survive untouched:
+  linuxboot: .config      + build/coreboot.rom
+  OFW lab:   .config-ofw  + build-ofw/coreboot.rom
+A sha guard proves it: written on first run, checked on every run after.
+
+Run ./build-openbios.sh x86 first -- the payload has to exist.
+Then: ./smoke-openbios.sh coreboot  and  ./showcase-rival-boots-linux.sh coreboot
+
+Env: OPENBIOS_WORKDIR (default ~/openbios-lab), COREBOOT_DIR
+USAGE
+}
+case "${1:-}" in -h|--help) usage; exit 0 ;; esac
+
 WORKDIR="${OPENBIOS_WORKDIR:-$HOME/openbios-lab}"
 CB="${COREBOOT_DIR:-$HOME/linuxboot-lab/coreboot}"
 PAYLOAD="$WORKDIR/openbios/obj-x86/openbios-builtin.elf"

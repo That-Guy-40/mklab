@@ -492,8 +492,16 @@ jobs:
           # added tests/test-inspect-facts-from-a-stream.sh to stop it regressing -- a
           # regression guard that, until this line, no automated run would ever execute.
           # It costs ~11 minutes, which is the honest price of the largest suite here.
+          # openbios-the-rival-that-shipped: ADDED 2026-08-25, and the lab had no
+          # tests/ directory at all until then -- so tools/check-usage-is-data.sh, which
+          # every phase runs against its driver, had never been pointed at these five
+          # scripts. When it finally was, all five came back UNKNOWN: four exited 1 on
+          # `--help` (they take a positional flavor), and build-coreboot-openbios.sh
+          # exited 0 having STARTED A COREBOOT BUILD. Headless: it only reads the scripts
+          # and runs `--help`, which is now guaranteed to run nothing.
           for t in examples/kali-packer-vagrant/tests/test-offline-archive.sh \
                    examples/almalinux-packer-images/tests/test-offline-archive.sh \
+                   examples/openbios-the-rival-that-shipped/tests/test-usage-is-data.sh \
                    examples/micro-cloud/tests/run-all.sh \
                    examples/nested-calico-sandbox/tests/run-all.sh \
                    examples/metal-as-a-service/tests/run-all.sh; do

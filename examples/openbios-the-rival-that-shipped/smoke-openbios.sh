@@ -9,6 +9,29 @@
 #              is ours (build-date banner ≠ the distro blob's) + answers 7.
 # Exit: 0 PASS / 1 FAIL / 77 SKIP.
 set -u
+usage() {
+    cat <<'USAGE'
+smoke-openbios.sh [TRACK]   one-verdict smoke tests against a real boot
+
+TRACK (default multiboot):
+  multiboot coreboot ppc      the firmware answers 7 at the 0 > prompt
+  nvram floppy                the NVRAM package, and its floppy backing
+  persist persist-flash       a config variable survives a power cycle
+  persist-os persist-os-flash ...and survives an OS boot in between
+  dict-identity               proves the x86 tracks load openbios-x86.dict --
+                              the SUPERSET -- and not the arch-less base
+  amd64                       the 64-bit prompt (Spike 1)
+  amd64-fault amd64-ctx       exceptions and the context switch (Spike 2)
+  amd64-pmem                  /nvram on an NVDIMM above 4 GiB (P3)
+  amd64-linux                 the 64-bit firmware boots Linux (Spike 3)
+
+Exit: 0 PASS / 1 FAIL / 77 SKIP. Each track ends on exactly one verdict line.
+Env: OPENBIOS_WORKDIR, KERNEL, INITRD, COREBOOT_DIR
+USAGE
+}
+
+case "${1:-}" in -h|--help) usage; exit 0 ;; esac
+
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 WORKDIR="${OPENBIOS_WORKDIR:-$HOME/openbios-lab}"
