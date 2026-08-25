@@ -1767,9 +1767,129 @@ even when everything above them is wrong — and the input that triggers (b) is
 unrepresentable on a 4-byte-cell stack. Also assert `encode-phys` (`:237`) changes
 length with the parent's `#address-cells`, so nobody re-reads it as fixed-width.
 
+## 14. A real test suite for `examples/openbios-the-rival-that-shipped/`
+
+*Added 2026-08-25, immediately after Spike 3 (#291) and the `--help` fix (#292).*
+
+The lab has **15 smoke tracks, a three-flavor showcase, and exactly one thing CI
+runs** — [`tests/test-usage-is-data.sh`](examples/openbios-the-rival-that-shipped/tests/test-usage-is-data.sh),
+added by #292, which checks help text and nothing else. Every assertion that the
+*firmware works* runs only when a human types it. That is the gap: a lab whose
+whole subject is *"a green suite cannot see this"* has almost no suite.
+
+### Measured first, so the plan is not a guess
+
+Each of these was checked on 2026-08-25 rather than assumed, and two of them
+changed the shape of this item:
+
+- **Every track skips without a built firmware.** Checked arm by arm: all 12
+  `case` arms (15 names — some arms carry several) guard on a built artifact
+  first, whether that is `no image at $MB — run ./build-openbios.sh x86 first`
+  or coreboot's `no ROM at $ROM`. So a suite wired naively
+  into CI would report **15 SKIPs and a green tick** — which is the exact shape
+  this repo keeps re-finding: *an all-PASS result is indistinguishable from one
+  that checks nothing.* Tiering is therefore not a nicety, it is the whole
+  design problem.
+- **[`tools/check-doc-verbs.sh`](tools/check-doc-verbs.sh) is blind here, by its
+  own design.** Pointed at the lab's README + MANUAL_TESTING it reports
+  *"0 distinct commands across 2 documents"*, because this lab writes its
+  examples as `$ `-prefixed console transcripts and that tool deliberately
+  passes over transcripts. **Do not wire it in and call it coverage** — it would
+  be a green tick over nothing. A lab-specific A5 below does the real job.
+- The 15 `case` arms, the 15 names in the usage string, and MANUAL_TESTING's
+  prose *"15 tracks"* **currently agree**. The guards below are therefore
+  **preventive, not corrective** — none of them is fixing live drift today. Said
+  plainly because "we added a checker" reads as "we found something", and here
+  that would be false. (The prose integer was hand-written on 2026-08-25, which
+  is precisely the shape CLAUDE.md's *don't write the test count in prose* rule
+  exists for.)
+- All eight `REVIVAL_MARKERS` in
+  [`build-openbios.sh`](examples/openbios-the-rival-that-shipped/build-openbios.sh)
+  name files that `patches/01-x86-revival.patch` touches. Also coherent today —
+  and also a **cached description of a patch**, which is bug class #1.
+- **The clone is unpinned**: `git clone https://github.com/openbios/openbios.git`
+  with no ref. Anything built in CI tracks upstream HEAD, so a Tier-B job would
+  go red on somebody else's commit. Pinning is a prerequisite, not a nice-to-have.
+- **podman may be absent on the runner** — `ci.yml` already carries a
+  `::warning::` for exactly that in the phase6 job. Tier B cannot be assumed.
+
+### Tier A — headless: no clone, no container engine, no QEMU
+
+The tier that must run on every PR, and the one that must not be empty.
+
+| | guard | its control |
+|---|---|---|
+| **A1** | usage text is data — **done**, #292 | ✅ both run: a removed `--help`, and an unquoted delimiter with `` `date` `` in the prose |
+| **A2** | track-list coherence: every `case` arm appears in the usage string and vice versa, and MANUAL_TESTING's count matches | add an arm without touching the usage string → must FAIL naming it |
+| **A3** | marker/patch coherence: every `REVIVAL_MARKERS` entry names a file `patches/01` touches **and** a string it actually adds | mutate one marker → must FAIL naming that marker, not "the build is broken" |
+| **A4** | patch-file hygiene: each `patches/NN-*.patch` is a well-formed unified diff whose `Subject: [PATCH NN/..]` matches its filename | renumber a Subject → FAIL |
+| **A5** | every flavor/track name typed in README, MANUAL_TESTING and RUNBOOK is a real `case` arm of the script it is typed against | cite a nonexistent track in a doc → FAIL. **This is the job `check-doc-verbs.sh` cannot do here**; it is small, and it is the one that catches a renamed track leaving the docs behind |
+
+### Tier B — needs the pinned clone + podman + QEMU (TCG, no KVM)
+
+Runnable in CI *if* we choose to pay for it; ~10 min, and only after the clone
+is pinned.
+
+- **B1** build `x86`, then `smoke-openbios.sh multiboot` under `accel=tcg` — the
+  firmware reaches its own prompt and answers.
+- **B2** `dict-identity` — the guard that the x86 tracks load
+  `openbios-x86.dict` (the superset) and not the arch-less base. Worth more than
+  its size: that confusion made a broken NVRAM round-trip look like a working
+  one for months.
+- **B3** patch round-trip for `08`–`12`: each applies to its reconstructed base
+  and reproduces the built tree **byte-exactly**. Done by hand for `12` on
+  2026-08-25; a version string is not an identity, so compare bytes.
+
+### Tier C — local only, and it must be legible as UNKNOWN
+
+Needs host artifacts CI will never have: the linuxboot lab's cached
+`payload-bzImage` + `uroot.cpio` (showcase, `amd64-linux`, `floppy`), a cached
+coreboot tree (`coreboot`), a SeaBIOS image and CFI flash (`persist*`), and KVM
+for anything that would otherwise take minutes under TCG.
+
+**These must be named in the summary, not counted.** An unmet precondition is an
+UNKNOWN, and the runner has to say *which* guard did not run — the 2026-08-15
+incident (two mount guards silently skipping behind a healthy-looking
+`13 passed, 13 skipped`) is the reason that rule exists.
+
+### What building this opts the lab into
+
+Worth knowing **before** starting, because both are hard gates that drive the
+real files rather than grepping them:
+
+- creating `tests/lib.sh` enrolls the lab in `ci.yml`'s
+  `git ls-files '*/tests/lib.sh'` loop → [`tools/check-harness-net.sh`](tools/check-harness-net.sh)
+  §1–§7: `lib.sh` owns the single EXIT trap, tests register teardown with
+  `on_exit`, cleanup can read `$_EXIT_RC`, `TERM`/`INT`/`HUP` are named and
+  re-exited `128+N`, and **no test may install its own `trap … EXIT`**.
+- creating `tests/run-all.sh` enrolls it in
+  [`tools/tests/test-run-all-reports-a-ratio.sh`](tools/tests/test-run-all-reports-a-ratio.sh),
+  which drives the runner with synthetic pass/fail/skip fixtures and asserts
+  what it **prints**: a `ran/listed` ratio, the skipped file named, the failed
+  file named, and exit 1 when a test fails.
+- ship the five-line `tests/test-harness-net.sh`, and add the runner to
+  `ci.yml`'s example-lab loop next to the entry #292 already added.
+
+### Decisions to make first
+
+1. **Pin the clone** — recommended, and A3/B3 are only meaningful once it is.
+2. **Tier B in CI, or local + nightly?** ~10 min per PR against a firmware that
+   changes rarely. A nightly `workflow_dispatch`/schedule may be the better
+   trade; say which, rather than leaving it implicit.
+3. **Keep `smoke-openbios.sh` as the single driver** and have `tests/` wrap it
+   one file per track, or split the tracks into test files? Wrapping keeps one
+   place to type a track by hand — which is how this lab is actually used — and
+   the wrapper is what `run-all.sh` lists.
+
+**The acceptance test for this item is not "the suite is green".** It is: break
+one thing in each tier and watch the named guard bite, and confirm the summary
+names every Tier-C row it did not run.
+
+---
+
 ---
 
 *Created 2026-06-06; #5–#6 added 2026-06-11; #7 added 2026-06-11; #8 added
 2026-08-03; #9 added 2026-08-06; #10 added 2026-08-06; #11 added 2026-08-21;
 #11.1 and #11.2a closed 2026-08-22; #12 and #13 added 2026-08-24; #12 **closed
-2026-08-25**.*
+2026-08-25**; #14 added 2026-08-25.*
