@@ -1575,11 +1575,35 @@ was the honest fix for an audit with no mandate to change a driver.
 
 ---
 
-## 12. Spike 3 — boot Linux from the **64-bit** firmware (`examples/openbios-the-rival-that-shipped/`)
+## 12. Spike 3 — boot Linux from the **64-bit** firmware ✅ **DONE 2026-08-25**
 
-*Added 2026-08-24, after Spikes 0–2 and P0–P3 landed (#280–#288).* The last rung
-of the port. Everything below the loader now works in long mode; this item is
-about the loader.
+*Added 2026-08-24, after Spikes 0–2 and P0–P3 landed (#280–#288); **done
+2026-08-25**.* The last rung of the port.
+
+**`./showcase-rival-boots-linux.sh amd64` → `PASS`.** The checkpoint below was
+met unchanged. What the plan below got right: the loader port's size and shape,
+and that `load-base` would not need x86's C-side workaround. What it got wrong
+is recorded as corrections **13 and 14** in
+[`X86-64-FEASIBILITY.md`](examples/openbios-the-rival-that-shipped/X86-64-FEASIBILITY.md#what-the-audit-corrected),
+and the five *silent* failures it did not anticipate are in
+[§ Spike 3, run](examples/openbios-the-rival-that-shipped/X86-64-FEASIBILITY.md#spike-3-run-the-64-bit-firmware-boots-linux--measured-2026-08-25).
+The short version, because it generalises: **`arch/amd64` does not relocate, so
+the firmware sits at the 1 MiB a bzImage runs at**, and three of the five
+defects are `arch/x86/linux_load.c` assuming otherwise — including an initrd
+placement that underflowed to `0xff501000` and a kernel read that overwrote the
+running firmware mid-read with no fault to report.
+
+**The one to remember:** `unsigned long type` in `struct e820entry` is 4 bytes
+on i386 and 8 on LP64, so the zero page's 20-byte entries became 24. The kernel
+saw one memory range instead of two, decided it had 640 KiB, and panicked in
+`init_mem_mapping` **before `console_init`** — so the panic went to the printk
+ring buffer and never to a console. A correctly-running kernel, completely
+silent, for an hour. It is now a **build** error (`LINUX_ABI_ASSERT`), because
+the runtime symptom is nothing at all.
+
+*The original plan follows, unedited, since being wrong in an interesting way is
+the point of keeping it.* Everything below the loader worked in long mode; this
+item was about the loader.
 
 **Checkpoint** (unchanged from
 [`X86-64-FEASIBILITY.md`](examples/openbios-the-rival-that-shipped/X86-64-FEASIBILITY.md)):
@@ -1747,4 +1771,5 @@ length with the parent's `#address-cells`, so nobody re-reads it as fixed-width.
 
 *Created 2026-06-06; #5–#6 added 2026-06-11; #7 added 2026-06-11; #8 added
 2026-08-03; #9 added 2026-08-06; #10 added 2026-08-06; #11 added 2026-08-21;
-#11.1 and #11.2a closed 2026-08-22; #12 and #13 added 2026-08-24.*
+#11.1 and #11.2a closed 2026-08-22; #12 and #13 added 2026-08-24; #12 **closed
+2026-08-25**.*

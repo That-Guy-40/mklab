@@ -1,0 +1,1231 @@
+Subject: [PATCH 12/12] Spike 3: the 64-bit firmware boots Linux
+
+Re-ports the bzImage loader to arch/amd64 and gives it a 64-bit handoff. The
+checkpoint is unchanged: showcase-rival-boots-linux.sh amd64 reaches
+"Welcome to u-root!".
+
+The port itself is mechanical -- arch/x86/linux_load.c is a strict superset of
+the dead amd64 fork (which still #includes the deleted loadfs.h), so the x86
+file is the base and the amd64 delta is re-applied on top. Taking the old fork
+as the base would have silently dropped two revival-patch fixes it predates.
+
+What was NOT mechanical is that arch/amd64 does not relocate itself. Long mode
+ignores segment bases, so Spike 1 dropped relocate() -- correctly -- and the
+consequence nobody wrote down is that the firmware permanently occupies the
+1 MiB a bzImage runs at, while arch/x86/linux_load.c assumes throughout that
+the firmware has moved out of the way. Three of the five defects below are that
+assumption showing through, and every one of the five failed SILENTLY.
+
+1. config/examples/amd64_config.xml had CONFIG_FSYS_ISO9660 = false where x86
+   has true, so the loader never saw a file. (FSYS_FAT and FSYS_UFS still
+   differ; only ISO9660 is flipped here, because only it was measured.)
+
+2. The kernel was read straight to 0x100000, over the running firmware. Not a
+   crash: the machine printed "Loading kernel... " and never the "ok", because
+   overwriting your own text raises no fault -- so Spike 2's exception handler,
+   which had diagnosed every previous 64-bit bug, had nothing to say. The
+   kernel is now staged above _end and a position-independent stub parked at
+   0x80000 copies it down over the firmware and lretq's to kern_addr + 0x200.
+
+3. That stub then demolished the page tables it was being translated through:
+   pml4 is in .bss at 0x184000, inside the destination. Writing from 0x100000
+   it reaches them after 0x84000 bytes, while reading from 0x284000; QEMU's
+   -d int reported #PF at CR2=0x285000, IP=0x80029 -- the rep movsb itself --
+   then #DF. The handoff now builds its own 0-5 GiB identity map at 0x81000 and
+   switches CR3 before the copy. Position-independent code still runs on a page
+   table.
+
+4. load_initrd() placed the initrd with `end = virt_to_phys(_start)`, under a
+   comment reading "FILO itself is at the top of RAM. (relocated)" -- true on
+   x86. Here _start is 0x100020, so `start = end - size` UNDERFLOWED to
+   0xff501000 in a 512 MiB machine, and the `start < kern_end` guard passed
+   with room to spare because a wrapped value is enormous. It now asks for the
+   top of RAM directly (ram_top(), extracted so set_memory_size and this share
+   one implementation) and checks for the overflow before the subtraction that
+   used to wrap, not after.
+
+5. struct e820entry declared `type` as `unsigned long`: 4 bytes on i386, 8 on
+   LP64. So each entry was 24 bytes where the zero page says 20, and the kernel
+   read entry 0 correctly (the low half of an 8-byte type is the right u32 on a
+   little-endian machine) and garbage after. It concluded it had 640 KiB and
+   panicked in init_mem_mapping -- BEFORE console_init, so the panic went to the
+   printk ring buffer and never to a console:
+
+       Kernel panic - not syncing: alloc_low_pages: can not alloc memory
+
+   recovered by dumping 48 MiB of guest RAM over QMP. A correctly-running,
+   completely silent kernel. Fixed-width types and packed, plus eight
+   LINUX_ABI_ASSERT negative-array assertions on the offsets the zero page
+   mandates -- because every field already carried its offset in a comment and
+   comments do not fail a build. The control re-injects `unsigned long type`
+   and the build stops on "size of array
+   'linux_abi_e820entry_is_20_bytes' is negative".
+
+Also adds the [IFDEF] CONFIG_AMD64 block forth/admin/nvram.fs never had, giving
+amd64 load-base and little-endian?. x86's C-side `feval("%lx constant
+load-base")` is deliberately NOT copied: it exists because relocation rebases
+x86's GDT and a constant physical address is wrong there by construction.
+arch/amd64/segment.c sets virt_offset = 0, so the plain int-config is already
+right, and transcribing the workaround would have added a second definition to
+fix a cause that does not exist here.
+
+The handoff is its own routine rather than a switch_to(): arch/amd64's context
+frame carries rsi -- exactly where the 64-bit boot protocol wants boot_params --
+which makes the wrong answer look right. It carries no GDT and no segment
+registers, on purpose, and the live long-mode GDT has 0x08 = code, 0x10 = data,
+where the protocol requires CS = 0x10 and DS = 0x18. No context switch can fix
+that.
+
+--- a/config/examples/amd64_config.xml
++++ b/config/examples/amd64_config.xml
+@@ -42,7 +42,7 @@
+   <option name="CONFIG_FSYS_REISERFS" type="boolean" value="true"/>
+   <option name="CONFIG_FSYS_XFS" type="boolean" value="false"/>
+   <option name="CONFIG_FSYS_UFS" type="boolean" value="false"/>
+-  <option name="CONFIG_FSYS_ISO9660" type="boolean" value="false"/>
++  <option name="CONFIG_FSYS_ISO9660" type="boolean" value="true"/>
+   <option name="CONFIG_FSYS_FFS" type="boolean" value="false"/>
+   <option name="CONFIG_FSYS_VSTAFS" type="boolean" value="false"/>
+   <option name="CONFIG_FSYS_NTFS" type="boolean" value="false"/>
+--- a/forth/admin/nvram.fs
++++ b/forth/admin/nvram.fs
+@@ -364,6 +364,31 @@
+ s" 4000000"  s" load-base"            int-config
+ [THEN]
+ 
++[IFDEF] CONFIG_AMD64
++\ ---- AMD64 ----
++\ The per-arch section below had PPC, X86, SPARC32 and SPARC64 arms and no
++\ amd64 one (the only CONFIG_AMD64 test in this file was Spike 1's auto-boot?
++\ arm further up), so the 64-bit firmware got neither of these -- and
++\ `load-base` being undefined is not cosmetic: it is
++\ the SAME defect the x86 comment above describes, reached the same way.
++\ `boot <file>` that fails falls through to "Trying disk...", whose $load runs
++\ `" load-base" evaluate`, and an undefined word there ends the boot path in
++\ a Stack Underflow rather than an error anyone can read.
++\
++\ NOTE WHAT IS DELIBERATELY *NOT* COPIED FROM x86: arch/x86/openbios.c also
++\ feval()s a `constant load-base` over the top of this one, because x86
++\ relocates itself by rebasing the GDT and every Forth address is therefore
++\ segment-relative -- a constant PHYSICAL address is wrong there by
++\ construction. amd64 does not relocate (long mode ignores segment bases;
++\ arch/amd64/segment.c sets virt_offset = 0 and says so), so phys_to_virt()
++\ is the identity and this value is already correct. Transcribing x86's
++\ workaround would have added a second definition -- x86 prints "load-base
++\ isn't unique." on every boot because of it -- to fix a cause that does not
++\ exist here.
++s" true"     s" little-endian?"       bool-config
++s" 4000000"  s" load-base"            int-config
++[THEN]
++
+ [IFDEF] CONFIG_SPARC32
+ \ ---- SPARC32 ----
+ s" 4000"     s" load-base"             int-config
+--- a/arch/amd64/linux_load.c
++++ b/arch/amd64/linux_load.c
+@@ -1,29 +1,990 @@
+-/* tag: Linux/bzImage loader for amd64 -- STUBBED FOR SPIKE 1
++/*
++ * Linux/x86-64 loader -- Spike 3.
+  *
+- * The real file is 647 lines and #includes "loadfs.h", which was DELETED
+- * tree-wide; the current x86 twin reads through libc/diskio.h instead. Porting
+- * it is mode-INDEPENDENT work and belongs to Spike 3 ("boot Linux"), not here.
+- *
+- * Spike 1's question is only whether this firmware can reach its own prompt in
+- * long mode. So this stub exists to make the image LINK, and it is deliberately
+- * loud rather than silent: a loader that quietly returns "not supported" would
+- * be indistinguishable from one that tried and failed. The original is kept
+- * verbatim in git history and re-ported by Spike 3.
++ * Based on work by Steve Gehlbach.
++ * Portions are taken from mkelfImage.
++ *
++ * 2003-09 by SONE Takeshi
++ *
++ * PORTED FROM arch/x86/linux_load.c, NOT from the amd64 original.
++ *
++ * The upstream amd64 file was a 2003 fork that still #includes the deleted
++ * "loadfs.h", and it differs from the live x86 twin by 76 insertions and 15
++ * deletions -- ALL of which are the x86 side's, none of them 64-bit work. Two
++ * of those insertions are load-bearing revival-patch fixes (#5: grubfs
++ * seek/tell, without which file_size() reports ~4 GB for every file; #7:
++ * copying the whole setup header into the zero page, without which a modern
++ * kernel's relocation math walks off into a >4 GB stack). Re-porting the old
++ * fork would have silently dropped both. So the x86 file is the base, and
++ * everything below is what LONG MODE actually forces to change -- which is
++ * only the handoff.
+  */
+ 
+ #include "config.h"
++#include "kernel/kernel.h"
+ #include "libopenbios/bindings.h"
+ #include "libopenbios/sys_info.h"
+-#include "libopenbios/initprogram.h"
++#include "context.h"
++#include "segment.h"
++#include "libc/diskio.h"
+ #include "boot.h"
+ 
++#define printf printk
++#define debug printk
++#define strtoull_with_suffix strtol
++
++#define LINUX_PARAM_LOC 0x90000
++#define COMMAND_LINE_LOC 0x91000
++#define GDT_LOC 0x92000
++#define STACK_LOC 0x93000
++
++#define E820MAX	32		/* number of entries in E820MAP */
++/* THE ZERO PAGE IS AN ABI, AND `unsigned long` IS NOT PART OF IT.
++ *
++ * x86's version of this struct declares `type` as `unsigned long`, which is
++ * 4 bytes on i386 -- so the entry is 8+8+4 = 20 bytes, exactly what the boot
++ * protocol says, and x86 has been right by accident for twenty years. On LP64
++ * `unsigned long` is 8 bytes and the compiler pads the struct to 24. Every
++ * entry after the first then lands 4 bytes late.
++ *
++ * What that looked like: the firmware printed both of its memory ranges and
++ * wrote both into the zero page, and the kernel logged exactly one --
++ *
++ *     BIOS-e820: [mem 0x0000000000000000-0x000000000009fbff] usable
++ *     last_pfn = 0x2018
++ *
++ * -- because entry 0 still decoded (the low half of the 8-byte `type` reads as
++ * the right u32 on a little-endian machine) and entry 1 was read from the
++ * middle of ours. A 512 MiB machine became a 640 KiB one, and the kernel then
++ * died in init_mem_mapping with "alloc_low_pages: can not alloc memory",
++ * BEFORE console_init -- so the panic went into the printk ring buffer and
++ * never to a console. Total silence, from a kernel that was running fine.
++ *
++ * Fixed-width types and `packed`, so the layout is the protocol's rather than
++ * the ABI's. */
++struct e820entry {
++	uint64_t addr;			/* start of memory segment */
++	uint64_t size;			/* size of memory segment */
++	uint32_t type;			/* type of memory segment */
++#define E820_RAM	1
++#define E820_RESERVED	2
++#define E820_ACPI	3 /* usable as RAM once ACPI tables have been read */
++#define E820_NVS	4
++} __attribute__((packed));
++
++/* The header of Linux/i386 kernel */
++struct linux_header {
++    uint8_t  reserved1[0x1f1];		/* 0x000 */
++    uint8_t  setup_sects;		/* 0x1f1 */
++    uint16_t root_flags;		/* 0x1f2 */
++    uint8_t  reserved2[6];		/* 0x1f4 */
++    uint16_t vid_mode;			/* 0x1fa */
++    uint16_t root_dev;			/* 0x1fc */
++    uint16_t boot_sector_magic;		/* 0x1fe */
++    /* 2.00+ */
++    uint8_t  reserved3[2];		/* 0x200 */
++    uint8_t  header_magic[4];		/* 0x202 */
++    uint16_t protocol_version;		/* 0x206 */
++    uint32_t realmode_swtch;		/* 0x208 */
++    uint16_t start_sys;			/* 0x20c */
++    uint16_t kver_addr;			/* 0x20e */
++    uint8_t  type_of_loader;		/* 0x210 */
++    uint8_t  loadflags;			/* 0x211 */
++    uint16_t setup_move_size;		/* 0x212 */
++    uint32_t code32_start;		/* 0x214 */
++    uint32_t ramdisk_image;		/* 0x218 */
++    uint32_t ramdisk_size;		/* 0x21c */
++    uint8_t  reserved4[4];		/* 0x220 */
++    /* 2.01+ */
++    uint16_t heap_end_ptr;		/* 0x224 */
++    uint8_t  reserved5[2];		/* 0x226 */
++    /* 2.02+ */
++    uint32_t cmd_line_ptr;		/* 0x228 */
++    /* 2.03+ */
++    uint32_t initrd_addr_max;		/* 0x22c */
++    /* 2.05+ */
++    uint32_t kernel_alignment;		/* 0x230 */
++    uint8_t  relocatable_kernel;	/* 0x234 */
++    uint8_t  min_alignment;		/* 0x235 */
++    uint16_t xloadflags;		/* 0x236 */
++    /* 2.06+ */
++    uint32_t cmdline_size;		/* 0x238 */
++    /* 2.07+ */
++    uint32_t hardware_subarch;		/* 0x23c */
++    uint64_t hardware_subarch_data;	/* 0x240 */
++    /* 2.08+ */
++    uint32_t payload_offset;		/* 0x248 */
++    uint32_t payload_length;		/* 0x24c */
++    /* 2.09+ */
++    uint64_t setup_data;		/* 0x250 */
++    /* 2.10+ */
++    uint64_t pref_address;		/* 0x258 */
++    uint32_t init_size;			/* 0x260 */
++    /* 2.11+ */
++    uint32_t handover_offset;		/* 0x264 */
++    /* 2.15+ */
++    uint32_t kernel_info_offset;	/* 0x268 */
++} __attribute__ ((packed));
++
++
++/* Paramters passed to 32-bit part of Linux
++ * This is another view of the structure above.. */
++struct linux_params {
++    uint8_t  orig_x;			/* 0x00 */
++    uint8_t  orig_y;			/* 0x01 */
++    uint16_t ext_mem_k;			/* 0x02 -- EXT_MEM_K sits here */
++    uint16_t orig_video_page;		/* 0x04 */
++    uint8_t  orig_video_mode;		/* 0x06 */
++    uint8_t  orig_video_cols;		/* 0x07 */
++    uint16_t unused2;			/* 0x08 */
++    uint16_t orig_video_ega_bx;		/* 0x0a */
++    uint16_t unused3;			/* 0x0c */
++    uint8_t  orig_video_lines;		/* 0x0e */
++    uint8_t  orig_video_isVGA;		/* 0x0f */
++    uint16_t orig_video_points;		/* 0x10 */
++
++    /* VESA graphic mode -- linear frame buffer */
++    uint16_t lfb_width;			/* 0x12 */
++    uint16_t lfb_height;		/* 0x14 */
++    uint16_t lfb_depth;			/* 0x16 */
++    uint32_t lfb_base;			/* 0x18 */
++    uint32_t lfb_size;			/* 0x1c */
++    uint16_t cl_magic;			/* 0x20 */
++#define CL_MAGIC_VALUE 0xA33F
++    uint16_t cl_offset;			/* 0x22 */
++    uint16_t lfb_linelength;		/* 0x24 */
++    uint8_t  red_size;			/* 0x26 */
++    uint8_t  red_pos;			/* 0x27 */
++    uint8_t  green_size;		/* 0x28 */
++    uint8_t  green_pos;			/* 0x29 */
++    uint8_t  blue_size;			/* 0x2a */
++    uint8_t  blue_pos;			/* 0x2b */
++    uint8_t  rsvd_size;			/* 0x2c */
++    uint8_t  rsvd_pos;			/* 0x2d */
++    uint16_t vesapm_seg;		/* 0x2e */
++    uint16_t vesapm_off;		/* 0x30 */
++    uint16_t pages;			/* 0x32 */
++    uint8_t  reserved4[12];		/* 0x34 -- 0x3f reserved for future expansion */
++
++    //struct apm_bios_info apm_bios_info;	/* 0x40 */
++    uint8_t  apm_bios_info[0x40];
++    //struct drive_info_struct drive_info;	/* 0x80 */
++    uint8_t  drive_info[0x20];
++    //struct sys_desc_table sys_desc_table;	/* 0xa0 */
++    uint8_t  sys_desc_table[0x140];
++    uint32_t alt_mem_k;			/* 0x1e0 */
++    uint8_t  reserved5[4];		/* 0x1e4 */
++    uint8_t  e820_map_nr;		/* 0x1e8 */
++    uint8_t  reserved6[9];		/* 0x1e9 */
++    uint16_t mount_root_rdonly;		/* 0x1f2 */
++    uint8_t  reserved7[4];		/* 0x1f4 */
++    uint16_t ramdisk_flags;		/* 0x1f8 */
++#define RAMDISK_IMAGE_START_MASK  	0x07FF
++#define RAMDISK_PROMPT_FLAG		0x8000
++#define RAMDISK_LOAD_FLAG		0x4000
++    uint8_t  reserved8[2];		/* 0x1fa */
++    uint16_t orig_root_dev;		/* 0x1fc */
++    uint8_t  reserved9[1];		/* 0x1fe */
++    uint8_t  aux_device_info;		/* 0x1ff */
++    uint8_t  reserved10[2];		/* 0x200 */
++    uint8_t  param_block_signature[4];	/* 0x202 */
++    uint16_t param_block_version;	/* 0x206 */
++    uint8_t  reserved11[8];		/* 0x208 */
++    uint8_t  loader_type;		/* 0x210 */
++#define LOADER_TYPE_LOADLIN         1
++#define LOADER_TYPE_BOOTSECT_LOADER 2
++#define LOADER_TYPE_SYSLINUX        3
++#define LOADER_TYPE_ETHERBOOT       4
++#define LOADER_TYPE_KERNEL          5
++    uint8_t  loader_flags;		/* 0x211 */
++    uint8_t  reserved12[2];		/* 0x212 */
++    uint32_t kernel_start;		/* 0x214 */
++    uint32_t initrd_start;		/* 0x218 */
++    uint32_t initrd_size;		/* 0x21c */
++    uint8_t  reserved12_5[8];		/* 0x220 */
++    uint32_t cmd_line_ptr;		/* 0x228 */
++    uint8_t  reserved13[164];		/* 0x22c */
++    struct e820entry e820_map[E820MAX];	/* 0x2d0 */
++    uint8_t  reserved16[688];		/* 0x550 */
++#define COMMAND_LINE_SIZE 256
++    /* Command line is copied here by 32-bit i386/kernel/head.S.
++     * So I will follow the boot protocol, rather than putting it
++     * directly here. --ts1 */
++    uint8_t  command_line[COMMAND_LINE_SIZE]; /* 0x800 */
++    uint8_t  reserved17[1792];		/* 0x900 - 0x1000 */
++};
++
++/* THE OFFSETS ARE THE CONTRACT, so let the compiler check them.
++ *
++ * Every field above carries its zero-page offset in a comment, and comments do
++ * not fail a build. The e820 bug proved that: the struct silently grew by four
++ * bytes per entry on LP64, every offset comment stayed "right", and the only
++ * symptom was a kernel that thought it had 640 KiB and then died where nobody
++ * could hear it.
++ *
++ * A negative array size rather than _Static_assert, because this tree is built
++ * as gnu89 and has to keep compiling for the 32-bit arches too. If one of these
++ * ever stops holding, the build stops -- which is the whole point, since the
++ * runtime symptom is silence. */
++/* This is a freestanding build: there is no <stddef.h> on the include path, so
++ * offsetof has to come from the compiler rather than the C library. */
++#ifndef offsetof
++#define offsetof(TYPE, MEMBER) __builtin_offsetof(TYPE, MEMBER)
++#endif
++
++#define LINUX_ABI_ASSERT(name, cond) \
++	typedef char linux_abi_##name[(cond) ? 1 : -1]
++
++LINUX_ABI_ASSERT(e820entry_is_20_bytes,  sizeof(struct e820entry) == 20);
++LINUX_ABI_ASSERT(zero_page_is_a_page,    sizeof(struct linux_params) == 4096);
++LINUX_ABI_ASSERT(e820_map_nr_at_1e8,
++		 offsetof(struct linux_params, e820_map_nr) == 0x1e8);
++LINUX_ABI_ASSERT(e820_map_at_2d0,
++		 offsetof(struct linux_params, e820_map) == 0x2d0);
++/* 0x1f1 is where init_linux_params() starts its copy of the setup header --
++ * one past the sentinel at 0x1ef, which must stay zero. */
++LINUX_ABI_ASSERT(setup_hdr_copy_starts_at_1f1,
++		 offsetof(struct linux_params, reserved6) + 8 == 0x1f1);
++LINUX_ABI_ASSERT(cmd_line_ptr_at_228,
++		 offsetof(struct linux_params, cmd_line_ptr) == 0x228);
++LINUX_ABI_ASSERT(hdr_xloadflags_at_236,
++		 offsetof(struct linux_header, xloadflags) == 0x236);
++LINUX_ABI_ASSERT(hdr_relocatable_at_234,
++		 offsetof(struct linux_header, relocatable_kernel) == 0x234);
++
++
++static uint64_t forced_memsize;
++/* The firmware extent comes from arch/amd64/ldscript. It is already declared
++ * by include/arch/amd64/io.h as `extern char _start, _end` -- scalars, not
++ * arrays -- so the addresses are taken with &. Re-declaring them here as
++ * char[] (the spelling arch/x86/linux_load.c uses inside load_initrd) is a
++ * conflicting type and does not compile. */
++static int fd;
++
++static unsigned long file_size(void)
++{
++	long long fpos, fsize;
++
++	/* Save current position */
++	fpos = tell(fd);
++
++	/* Go to end of file and get position */
++	seek_io(fd, -1);
++	fsize = tell(fd);
++
++	/* Go back to old position */
++	seek_io(fd, 0);
++	seek_io(fd, fpos);
++
++	return fsize;
++}
++
++/* Load the first part the file and check if it's Linux */
++static uint32_t load_linux_header(struct linux_header *hdr)
++{
++    int load_high;
++    uint32_t kern_addr;
++
++    if (read_io(fd, hdr, sizeof *hdr) != sizeof *hdr) {
++	debug("Can't read Linux header\n");
++	return 0;
++    }
++    if (hdr->boot_sector_magic != 0xaa55) {
++	debug("Not a Linux kernel image\n");
++	return 0;
++    }
++
++    /* Linux is found. Print some information */
++    if (memcmp(hdr->header_magic, "HdrS", 4) != 0) {
++	/* This may be floppy disk image or something.
++	 * Perform a simple (incomplete) sanity check. */
++	if (hdr->setup_sects >= 16
++		|| file_size() - (hdr->setup_sects<<9) >= 512<<10) {
++	    debug("This looks like a bootdisk image but not like Linux...\n");
++	    return 0;
++	}
++
++	printf("Possible very old Linux");
++	/* This kernel does not even have a protocol version.
++	 * Force the value. */
++	hdr->protocol_version = 0; /* pre-2.00 */
++    } else
++	printf("Found Linux");
++    if (hdr->protocol_version >= 0x200 && hdr->kver_addr) {
++	char kver[256];
++	seek_io(fd, hdr->kver_addr + 0x200);
++	if (read_io(fd, kver, sizeof kver) != 0) {
++	    kver[255] = 0;
++	    printf(" version %s", kver);
++	}
++    }
++    debug(" (protocol %#x)", hdr->protocol_version);
++    load_high = 0;
++    if (hdr->protocol_version >= 0x200) {
++	debug(" (loadflags %#x)", hdr->loadflags);
++	load_high = hdr->loadflags & 1;
++    }
++    if (load_high) {
++	printf(" bzImage");
++	kern_addr = 0x100000;
++    } else {
++	printf(" zImage or Image");
++	kern_addr = 0x1000;
++    }
++    printf(".\n");
++
++    return kern_addr;
++}
++
++/* Set up parameters for 32-bit kernel */
++static void
++init_linux_params(struct linux_params *params, struct linux_header *hdr)
++{
++    debug("Setting up parameters at %#lx\n", virt_to_phys(params));
++    memset(params, 0, sizeof *params);
++
++    /* Boot protocol 2.02+: the loader must copy the ENTIRE setup header
++     * into the zero page at 0x1f1 — modern kernels read fields this 2003
++     * loader never knew (kernel_alignment, init_size, pref_address...);
++     * leaving them zero sent the decompression stub's relocation math to
++     * a >4 GB stack (page fault in startup_64 before the first printk).
++     * Loader-owned fields are overwritten again below/later. */
++    memcpy((uint8_t *)params + 0x1f1, (uint8_t *)hdr + 0x1f1,
++           sizeof(*hdr) - 0x1f1);
++
++    /* Copy some useful values from header */
++    params->mount_root_rdonly = hdr->root_flags;
++    params->orig_root_dev = hdr->root_dev;
++
++    /* Video parameters.
++     * This assumes we have VGA in standard 80x25 text mode,
++     * just like our vga.c does.
++     * Cursor position is filled later to allow some more printf's. */
++    params->orig_video_mode = 3;
++    params->orig_video_cols = 80;
++    params->orig_video_lines = 25;
++    params->orig_video_isVGA = 1;
++    params->orig_video_points = 16;
++
++    params->loader_type = 0xff; /* Unregistered Linux loader */
++}
++
++/* Top of usable RAM below 4 GiB. Pulled out of set_memory_size() because
++ * load_initrd() needs the same number and computing it twice is how the two
++ * answers drift apart. */
++static uint32_t ram_top(struct sys_info *info)
++{
++    uint32_t ramtop = 0;
++    int i;
++
++    for (i = 0; i < info->n_memranges; i++) {
++	uint64_t end = info->memrange[i].base + info->memrange[i].size;
++
++	if (end < (1ULL << 32) && (uint32_t)end > ramtop)
++	    ramtop = (uint32_t)end;
++    }
++    return ramtop;
++}
++
++/* Memory map */
++static void
++set_memory_size(struct linux_params *params, struct sys_info *info)
++{
++    int i;
++    uint32_t ramtop = ram_top(info);
++    struct e820entry *linux_map;
++    struct memrange *filo_map;
++
++    linux_map = params->e820_map;
++    filo_map = info->memrange;
++    for (i = 0; i < info->n_memranges; i++, linux_map++, filo_map++) {
++	if (i < E820MAX) {
++	    /* Convert to BIOS e820 style */
++	    linux_map->addr = filo_map->base;
++	    linux_map->size = filo_map->size;
++	    linux_map->type = E820_RAM;
++	    /* Cast at the call site: uint64_t is `unsigned long` on LP64, so
++	     * %Lx is a type mismatch here even though the value is right. */
++	    debug("%016Lx - %016Lx\n",
++		    (unsigned long long)linux_map->addr,
++		    (unsigned long long)(linux_map->addr + linux_map->size));
++	    params->e820_map_nr = i+1;
++	}
++
++    }
++    debug("ramtop=%#x\n", ramtop);
++    /* Size of memory above 1MB in KB */
++    params->alt_mem_k = (ramtop - (1<<20)) >> 10;
++    /* old style, 64MB max */
++    if (ramtop >= (64<<20))
++	params->ext_mem_k = (63<<10);
++    else
++	params->ext_mem_k = params->alt_mem_k;
++    debug("ext_mem_k=%d, alt_mem_k=%d\n", params->ext_mem_k, params->alt_mem_k);
++}
++
++/*
++ * Parse command line
++ * Some parameters, like initrd=<file>, are not passed to kernel,
++ * we are responsible to process them.
++ * Parameters for kernel are copied to kern_cmdline. Returns name of initrd.
++ */
++static char *parse_command_line(const char *orig_cmdline, char *kern_cmdline)
++{
++    const char *start, *sep, *end, *val;
++    char name[64];
++    int len;
++    int k_len;
++    int to_kern;
++    char *initrd = NULL;
++    int toolong = 0;
++
++    forced_memsize = 0;
++
++    if (!orig_cmdline) {
++	*kern_cmdline = 0;
++        return NULL;
++    }
++
++    k_len = 0;
++    debug("original command line: \"%s\"\n", orig_cmdline);
++    debug("kernel command line at %#lx\n", virt_to_phys(kern_cmdline));
++
++    start = orig_cmdline;
++    while (*start == ' ')
++	start++;
++    while (*start) {
++	end = strchr(start, ' ');
++	if (!end)
++	    end = start + strlen(start);
++	sep = strchr(start, '=');
++	if (!sep || sep > end)
++	    sep = end;
++	len = sep - start;
++	if (len >= sizeof(name))
++	    len = sizeof(name) - 1;
++	memcpy(name, start, len);
++	name[len] = 0;
++
++	if (*sep == '=') {
++	    val = sep + 1;
++	    len = end - val;
++	} else {
++            val = NULL;
++	    len = 0;
++	}
++
++	/* Only initrd= and mem= are handled here. vga= is not,
++	 * which I believe is a paramter to the realmode part of Linux,
++	 * which we don't execute. */
++	if (strcmp(name, "initrd") == 0) {
++	    if (!val)
++		printf("Missing filename to initrd parameter\n");
++	    else {
++		initrd = malloc(len + 1);
++		memcpy(initrd, val, len);
++		initrd[len] = 0;
++		debug("initrd=%s\n", initrd);
++	    }
++	    /* Don't pass this to kernel */
++	    to_kern = 0;
++	} else if (strcmp(name, "mem") == 0) {
++	    if (!val)
++		printf("Missing value for mem parameter\n");
++	    else {
++		forced_memsize = strtoull_with_suffix(val, (char**)&val, 0);
++		if (forced_memsize == 0)
++		    printf("Invalid mem option, ignored\n");
++		if (val != end) {
++		    printf("Garbage after mem=<size>, ignored\n");
++		    forced_memsize = 0;
++		}
++		/* uint64_t is `unsigned long` on LP64, so x86's %Lu is a type
++		 * mismatch here rather than a portable spelling. Cast at the
++		 * call site; the format stays what printk understands. */
++		debug("mem=%Lu\n", (unsigned long long)forced_memsize);
++	    }
++	    /* mem= is for both loader and kernel */
++	    to_kern = 1;
++	} else
++	    to_kern = 1;
++
++	if (to_kern) {
++	    /* Copy to kernel command line buffer */
++	    if (k_len != 0)
++		kern_cmdline[k_len++] = ' '; /* put separator */
++	    len = end - start;
++	    if (k_len + len >= COMMAND_LINE_SIZE) {
++		len = COMMAND_LINE_SIZE - k_len - 1;
++		if (!toolong) {
++		    printf("Kernel command line is too long; truncated to "
++			    "%d bytes\n", COMMAND_LINE_SIZE-1);
++		    toolong = 1;
++		}
++	    }
++	    memcpy(kern_cmdline + k_len, start, len);
++	    k_len += len;
++	}
++
++	start = end;
++	while (*start == ' ')
++	    start++;
++    }
++    kern_cmdline[k_len] = 0;
++    debug("kernel command line (%d bytes): \"%s\"\n", k_len, kern_cmdline);
++
++    return initrd;
++}
++
++/* Set command line location */
++static void set_command_line_loc(struct linux_params *params,
++	struct linux_header *hdr)
++{
++    if (hdr->protocol_version >= 0x202) {
++	/* new style */
++	params->cmd_line_ptr = COMMAND_LINE_LOC;
++    } else {
++	/* old style */
++	params->cl_magic = CL_MAGIC_VALUE;
++	params->cl_offset = COMMAND_LINE_LOC - LINUX_PARAM_LOC;
++    }
++}
++
++/* Load 32-bit part of kernel */
++static int load_linux_kernel(struct linux_header *hdr, uint32_t kern_addr)
++{
++    uint32_t kern_offset, kern_size;
++
++    if (hdr->setup_sects == 0)
++	hdr->setup_sects = 4;
++    kern_offset = (hdr->setup_sects + 1) * 512;
++    seek_io(fd, kern_offset);
++    kern_size = file_size() - kern_offset;
++    debug("offset=%#x addr=%#x size=%#x\n", kern_offset, kern_addr, kern_size);
++
++#if 0
++    if (using_devsize) {
++	printf("Attempt to load up to end of device as kernel; "
++		"specify the image size\n");
++	return 0;
++    }
++#endif
++
++    printf("Loading kernel... ");
++    if (read_io(fd, phys_to_virt(kern_addr), kern_size) != kern_size) {
++	printf("Can't read kernel\n");
++	return 0;
++    }
++    printf("ok\n");
++
++    return kern_size;
++}
++
++static int load_initrd(struct linux_header *hdr, struct sys_info *info,
++	uint32_t kern_end, struct linux_params *params, const char *initrd_file)
++{
++    uint32_t max;
++    uint32_t start, end, size;
++    uint64_t forced;
++
++    fd = open_io(initrd_file);
++    if (fd == -1) {
++	printf("Can't open initrd: %s\n", initrd_file);
++	return -1;
++    }
++
++#if 0
++    if (using_devsize) {
++	printf("Attempt to load up to end of device as initrd; "
++		"specify the image size\n");
++	return -1;
++    }
++#endif
++
++    size = file_size();
++
++
++    /* Find out the kernel's restriction on how high the initrd can be
++     * placed */
++    if (hdr->protocol_version >= 0x203)
++	max = hdr->initrd_addr_max;
++    else
++	max = 0x38000000; /* Hardcoded value for older kernels */
++
++    /* THE COMMENT THIS REPLACED WAS THE BUG, and it was true when written:
++     *
++     *     "FILO itself is at the top of RAM. (relocated)
++     *      So, try putting initrd just below us."
++     *          end = virt_to_phys(_start);
++     *
++     * On x86 the firmware HAS relocated to the top of RAM by this point, so
++     * "just below _start" is just below the top of RAM and the initrd lands
++     * where it should. arch/amd64 does not relocate, so _start is 0x100020 --
++     * and `start = end - size` on unsigned 32-bit arithmetic UNDERFLOWED for
++     * any initrd bigger than a megabyte. Measured with the showcase initrd:
++     * start wrapped to 0xff501000, end to 0xfffffdfc, in a machine with
++     * 512 MiB of RAM. Nothing complained. The `start < kern_end` guard below
++     * is no help either -- after a wrap, start is enormous, so the check
++     * passes with room to spare, and the read went off into unbacked address
++     * space while reporting the full byte count.
++     *
++     * So ask for the top of RAM directly instead of inferring it from where
++     * the firmware happens to be sitting. */
++    end = ram_top(info);
++    if (end > max)
++	end = max;
++
++    /* If "mem=" option is given, we have to put the initrd within
++     * the specified range. */
++    if (forced_memsize) {
++	forced = forced_memsize;
++	if (forced > max)
++	    forced = max;
++	/* If the "mem=" is lower, it's easy */
++	if (forced <= end)
++	    end = forced;
++	else {
++	    /* Otherwise, see if we can put it above us */
++	    if (virt_to_phys(_end) + size <= forced)
++		end = forced; /* Ok */
++	}
++    }
++
++    /* Checked BEFORE the subtraction, not after: `end - size` is unsigned, so
++     * once it has wrapped there is no oversized value left to detect. */
++    if (size > end || end - size < kern_end) {
++	printf("Initrd is too big to fit in memory "
++	       "(%#x bytes, window %#x-%#x)\n", size, kern_end, end);
++	return -1;
++    }
++
++    start = end - size;
++    start &= ~0xfff; /* page align */
++    end = start + size;
++
++    debug("start=%#x end=%#x\n", start, end);
++
++    if (start < kern_end) {
++	printf("Initrd is too big to fit in memory\n");
++	return -1;
++    }
++
++    printf("Loading initrd... ");
++    if (read_io(fd, phys_to_virt(start), size) != size) {
++	printf("Can't read initrd\n");
++	return -1;
++    }
++    printf("ok\n");
++
++    params->initrd_start = start;
++    params->initrd_size = size;
++
++    close_io(fd);
++
++    return 0;
++}
++
++static void hardware_setup(void)
++{
++    /* Disable nmi */
++    outb(0x80, 0x70);
++
++    /* Make sure any coprocessor is properly reset.. */
++    outb(0, 0xf0);
++    outb(0, 0xf1);
++
++    /* we're getting screwed again and again by this problem of the 8259.
++     * so we're going to leave this lying around for inclusion into
++     * crt0.S on an as-needed basis.
++     *
++     * well, that went ok, I hope. Now we have to reprogram the interrupts :-(
++     * we put them right after the intel-reserved hardware interrupts, at
++     * int 0x20-0x2F. There they won't mess up anything. Sadly IBM really
++     * messed this up with the original PC, and they haven't been able to
++     * rectify it afterwards. Thus the bios puts interrupts at 0x08-0x0f,
++     * which is used for the internal hardware interrupts as well. We just
++     * have to reprogram the 8259's, and it isn't fun.
++     */
++
++    outb(0x11, 0x20);		/* initialization sequence to 8259A-1 */
++    outb(0x11, 0xA0);		/* and to 8259A-2 */
++
++    outb(0x20, 0x21);		/* start of hardware int's (0x20) */
++    outb(0x28, 0xA1);		/* start of hardware int's 2 (0x28) */
++
++    outb(0x04, 0x21);		/* 8259-1 is master */
++    outb(0x02, 0xA1);		/* 8259-2 is slave */
++
++    outb(0x01, 0x21);		/* 8086 mode for both */
++    outb(0x01, 0xA1);
++
++    outb(0xFF, 0xA1);		/* mask off all interrupts for now */
++    outb(0xFB, 0x21);		/* mask all irq's but irq2 which is cascaded */
++}
++
++/* Start Linux -- the 64-bit entry.
++ *
++ * THIS IS THE ONE PLACE THE PORT IS NOT A TRANSCRIPTION, and the trap is that
++ * transcribing x86's handoff very nearly works. x86 hands over with
++ * switch_to(): it fills a context frame with cs/ds/ss/gdt_base and lets the
++ * switch reload them. arch/amd64's frame carries NONE of those -- context.h
++ * says so on purpose, because long mode ignores segment bases and the firmware
++ * and its clients share the one flat GDT the trampoline built. The frame does
++ * carry rsi, which is exactly the register the 64-bit boot protocol wants
++ * boot_params in, and that near-miss is what makes the wrong answer look
++ * right: set ctx->rip and ctx->rsi, call switch_to(), and the kernel is
++ * entered -- on the FIRMWARE's GDT.
++ *
++ * Documentation/arch/x86/boot.rst, "64-bit Boot Protocol", is unambiguous:
++ *
++ *     a GDT must be loaded with the descriptors for selectors __BOOT_CS(0x10)
++ *     and __BOOT_DS(0x18); both descriptors must be 4G flat segment; ...
++ *     CS must be __BOOT_CS and DS, ES, SS must be __BOOT_DS; interrupt must
++ *     be disabled; %rsi must hold the base address of the struct boot_params.
++ *
++ * The live long-mode GDT is gdt64 in arch/amd64/switch.S -- three entries:
++ * null, 0x08 = 64-bit code (L=1), 0x10 = data. Note what that means: the
++ * selector the kernel requires for CODE is the one this firmware uses for
++ * DATA, and 0x18 does not exist at all. Nothing in switch_to() can fix that.
++ *
++ * (arch/amd64/segment.c's gdt[] is NOT the live table -- it is the 32-bit
++ * descriptor set inherited from x86, unused once the trampoline runs. Reusing
++ * its FLAT_CODE/FLAT_DATA here would build the Linux GDT out of descriptors
++ * the CPU is not currently executing on.)
++ *
++ * And the handoff has a second job the x86 one never had: see the comment on
++ * linux_handoff in switch.S. The firmware occupies the address the kernel has
++ * to run at, so the last act is to copy the kernel over the firmware from a
++ * stub parked outside both.
++ */
++
++/* The blob in switch.S, and its extent. Copied, then called at its copy. */
++extern char linux_handoff[], linux_handoff_end[];
++
++typedef void (*handoff_fn)(uint64_t entry, uint64_t boot_params, void *gdt_desc,
++			   uint64_t src, uint64_t dst, uint64_t len);
++
++/* The handoff apparatus lives in one contiguous block of conventional memory:
++ *
++ *   0x80000            the stub blob (a few hundred bytes)
++ *   0x81000-0x88000    page tables: PML4 + PDPT + 5 PDs, identity 0-5 GiB
++ *   0x90000            zero page      (LINUX_PARAM_LOC)
++ *   0x91000            command line   (COMMAND_LINE_LOC)
++ *   0x92000            the Linux GDT  (GDT_LOC)
++ *
++ * All of it below the 1 MiB where both the firmware and the kernel live, so
++ * none of it is in the blast radius of the copy.
++ *
++ * THE PAGE TABLES ARE THE PART THAT IS NOT OBVIOUS, and it cost a triple
++ * fault to find. The stub is position-independent, but position-independent
++ * code still runs on a page table, and switch.S puts pml4/pdpt/pd in .bss --
++ * inside the firmware, at 0x184000, which is inside the region the copy
++ * overwrites. The copy therefore demolished the mappings it was itself being
++ * translated through, partway through its own execution.
++ *
++ * The arithmetic is exact and worth keeping, because it is what turned a
++ * silent hang into a one-line diagnosis: writing from 0x100000, the copy
++ * reaches pml4 at 0x184000 after 0x84000 bytes, at which point it is reading
++ * from 0x200000 + 0x84000 = 0x284000. QEMU's -d int reported the page fault
++ * at CR2=0x285000, one page later, at IP=0x80029 -- the `rep movsb` itself.
++ * Then #DF, then the machine was gone.
++ *
++ * So the handoff builds its own identity map down here and switches CR3 to it
++ * before the copy. It maps 0-5 GiB to match what the trampoline in switch.S
++ * maps, rather than the 4 GiB the boot protocol requires, so that nothing the
++ * firmware still touches between here and the jump -- P3 put the NVRAM store
++ * at 0x100000000 -- goes missing at the last moment. */
++#define HANDOFF_LOC    0x80000
++#define HANDOFF_PT_LOC 0x81000
++#define HANDOFF_PT_GIB 5
++
++/* Identity-map 0-5 GiB with 2 MiB pages. 2 MiB rather than 1 GiB pages because
++ * PDPE1GB is a CPUID feature and not every QEMU CPU model has it; seven 4 KiB
++ * pages is a cheap way not to have to ask. */
++static void build_handoff_pagetables(void)
++{
++    uint64_t *pml4 = phys_to_virt(HANDOFF_PT_LOC);
++    uint64_t *pdpt = phys_to_virt(HANDOFF_PT_LOC + 0x1000);
++    uint64_t *pd   = phys_to_virt(HANDOFF_PT_LOC + 0x2000);
++    int g, i;
++
++    memset(pml4, 0, 0x1000);
++    memset(pdpt, 0, 0x1000);
++    pml4[0] = (uint64_t)(HANDOFF_PT_LOC + 0x1000) | 3;		/* P | RW */
++
++    for (g = 0; g < HANDOFF_PT_GIB; g++) {
++	pdpt[g] = (uint64_t)(HANDOFF_PT_LOC + 0x2000 + g * 0x1000) | 3;
++	for (i = 0; i < 512; i++)
++	    pd[g * 512 + i] = (((uint64_t)g << 30) | ((uint64_t)i << 21))
++			      | 0x83;				/* P | RW | PS */
++    }
++}
++
++/* The lgdt operand in 64-bit mode is m16&64: a 2-byte limit and an 8-byte
++ * base. (x86's struct gdtarg has a 4-byte base -- another silent near-miss.) */
++struct gdt64_desc {
++    uint16_t limit;
++    uint64_t base;
++} __attribute__((packed));
++
++/* Not on the C stack: the stack is inside the firmware, and while lgdt happens
++ * before the copy, keeping the descriptor somewhere the copy cannot reach is
++ * one less thing to have to reason about. */
++static struct gdt64_desc handoff_gdt_desc;
++
++static int start_linux(uint32_t kern_run_addr, uint32_t kern_load_addr,
++		       uint32_t kern_size, struct linux_params *params)
++{
++    uint64_t *linux_gdt;
++    handoff_fn stub;
++    uint64_t entry;
++    size_t stub_len;
++
++    /* Four flat descriptors at GDT_LOC. Indices 2 and 3 are the ones the
++     * protocol names; 0 is the mandatory null and 1 is left null so that a
++     * kernel which reloads CS with 0x08 by mistake faults instead of executing
++     * data. GDT_LOC is 0x92000 -- below the kernel, so the copy leaves the
++     * table the far return is about to read through intact. */
++    linux_gdt = phys_to_virt(GDT_LOC);
++    linux_gdt[0] = 0x0000000000000000ULL;	/* null */
++    linux_gdt[1] = 0x0000000000000000ULL;	/* unused */
++    linux_gdt[2] = 0x00AF9A000000FFFFULL;	/* 0x10 __BOOT_CS: 64-bit, L=1 */
++    linux_gdt[3] = 0x00CF92000000FFFFULL;	/* 0x18 __BOOT_DS: flat data */
++
++    handoff_gdt_desc.limit = 4 * 8 - 1;
++    handoff_gdt_desc.base = GDT_LOC;
++
++    /* "the kernel is started by jumping to the 64-bit kernel entry point,
++     * which is the start address of loaded 64-bit kernel plus 0x200." The
++     * entry is relative to where the kernel will RUN, not where it was read
++     * to -- those differ whenever the stub has a copy to do. */
++    entry = (uint64_t)kern_run_addr + 0x200;
++
++    stub_len = (size_t)(linux_handoff_end - linux_handoff);
++    memcpy(phys_to_virt(HANDOFF_LOC), linux_handoff, stub_len);
++    stub = (handoff_fn)(uintptr_t)phys_to_virt(HANDOFF_LOC);
++
++    if (kern_load_addr != kern_run_addr)
++	printf("Moving kernel %#x -> %#x (%#x bytes) and jumping...\n",
++	       kern_load_addr, kern_run_addr, kern_size);
++    else
++	printf("Jumping to entry point...\n");
++
++    debug("rip=%#llx rsi=%#lx stub=%#x+%#lx\n", (unsigned long long)entry,
++	  virt_to_phys(params), HANDOFF_LOC, (unsigned long)stub_len);
++
++#ifdef VGA_CONSOLE
++    /* Update VGA cursor position.
++     * This must be here because the printf changes the value! */
++    params->orig_x = cursor_x;
++    params->orig_y = cursor_y;
++#endif
++
++    /* Off the firmware's page tables before anything overwrites them. Safe to
++     * do here and keep running: the new map is the identity over the same
++     * range, so every address the firmware is using still resolves to itself. */
++    build_handoff_pagetables();
++    asm volatile ("movq %0, %%cr3" : : "r" ((uint64_t)HANDOFF_PT_LOC)
++					: "memory");
++
++    /* Go... A copy length of zero means "already in place"; `rep` with a zero
++     * count is a no-op, so the stub needs no second path for it. */
++    stub(entry, virt_to_phys(params), &handoff_gdt_desc,
++	 kern_load_addr, kern_run_addr,
++	 kern_load_addr == kern_run_addr ? 0 : kern_size);
++
++    /* Not reached. */
++    return 0;
++}
++
+ int linux_load(struct sys_info *info, const char *file, const char *cmdline)
+ {
+-	(void)info; (void)file; (void)cmdline;
++    struct linux_header hdr;
++    struct linux_params *params;
++    uint32_t kern_addr, kern_size, kern_load_addr, fw_end;
++    char *initrd_file = NULL;
+ 
+-	printk("[amd64] linux_load is STUBBED in this build (Spike 1).\n");
+-	printk("        The bzImage loader is Spike 3's work; this image only\n");
+-	printk("        answers the question 'does the firmware reach its own\n");
+-	printk("        prompt in long mode?'\n");
++    fd = open_io(file);
++    if (fd == -1) {
++	return -1;
++    }
++
++    kern_addr = load_linux_header(&hdr);
++    if (kern_addr == 0)
+ 	return LOADER_NOT_SUPPORT;
++
++    /* WHERE THE KERNEL RUNS AND WHERE IT IS READ TO ARE NOT THE SAME ADDRESS
++     * ON amd64, and the reason is in switch.S: the firmware is linked at
++     * BASE_ADDR = 0x100000 and never relocates, which is exactly where a
++     * bzImage runs. Reading the file straight to kern_addr overwrites the
++     * running firmware mid-read -- which does not crash, it just stops: the
++     * machine printed "Loading kernel... " and never the "ok", with no
++     * faulting address for the Spike 2 handler to report, because overwriting
++     * your own text is not a fault.
++     *
++     * So it is read somewhere clear and the handoff stub moves it into place
++     * as its last act. Staging goes above the firmware, aligned the way the
++     * kernel asks to be aligned. */
++    fw_end = (uint32_t)(uintptr_t)&_end;
++    kern_load_addr = kern_addr;
++    if (kern_addr < fw_end) {
++	uint32_t align = hdr.kernel_alignment ? hdr.kernel_alignment : 0x200000;
++
++	kern_load_addr = (fw_end + align - 1) & ~(align - 1);
++	debug("staging kernel at %#x (firmware ends %#x, align %#x)\n",
++	      kern_load_addr, fw_end, align);
++    }
++
++    params = phys_to_virt(LINUX_PARAM_LOC);
++    init_linux_params(params, &hdr);
++    set_memory_size(params, info);
++    initrd_file = parse_command_line(cmdline, phys_to_virt(COMMAND_LINE_LOC));
++    set_command_line_loc(params, &hdr);
++
++    kern_size = load_linux_kernel(&hdr, kern_load_addr);
++    if (kern_size == 0) {
++	if (initrd_file)
++	    free(initrd_file);
++	return -1;
++    }
++
++    if (initrd_file) {
++	/* The initrd has to clear everything the kernel will occupy: the staged
++	 * copy it is read from AND the region it decompresses into once it has
++	 * been moved to kern_addr. init_size (2.10+) is the kernel's own
++	 * statement of that second extent; without it the initrd can land
++	 * inside the area the decompressor is about to expand over, which the
++	 * kernel would report much later as a corrupt initramfs. */
++	uint32_t staged_end = kern_load_addr + kern_size;
++	uint32_t run_end = kern_addr + (hdr.protocol_version >= 0x20a
++					&& hdr.init_size ? hdr.init_size
++							 : kern_size);
++	uint32_t kern_end = staged_end > run_end ? staged_end : run_end;
++
++	if (load_initrd(&hdr, info, kern_end, params, initrd_file)
++		!= 0) {
++	    free(initrd_file);
++	    return -1;
++	}
++	free(initrd_file);
++    }
++
++    /* XLF_KERNEL_64 (bit 0 of xloadflags, protocol 2.12+) is the kernel's own
++     * statement that the +0x200 entry exists. Refusing here by name beats
++     * jumping into a 32-bit-only image and letting the fault handler describe
++     * the wreckage -- and it is a real possibility, since this loader still
++     * accepts the zImage and Image formats that predate the flag entirely. */
++    if (hdr.protocol_version < 0x20c || !(hdr.xloadflags & 1)) {
++	printf("This kernel has no 64-bit entry point "
++	       "(protocol %d.%02d, xloadflags %#x).\n",
++	       hdr.protocol_version >> 8, hdr.protocol_version & 0xff,
++	       hdr.xloadflags);
++	printf("The amd64 firmware cannot drop back to the 32-bit entry.\n");
++	return LOADER_NOT_SUPPORT;
++    }
++
++    hardware_setup();
++
++    start_linux(kern_addr, kern_load_addr, kern_size, params);
++    return 0;
+ }
+--- a/arch/amd64/switch.S
++++ b/arch/amd64/switch.S
+@@ -484,3 +484,96 @@
+ pdpt:	.space	4096
+ pd:	.space	4096*5	/* P3: five, for 0-5 GiB */
+ pt0:	.space	4096
++
++/* ------------------------------------------------------------------
++ * SPIKE 3: the Linux handoff.
++ *
++ *   void linux_handoff(uint64_t entry, uint64_t boot_params, void *gdt_desc,
++ *                      uint64_t src, uint64_t dst, uint64_t len)
++ *          %rdi            %rsi              %rdx        %rcx      %r8    %r9
++ *
++ * THIS BLOB IS COPIED SOMEWHERE ELSE AND RUN FROM THERE, so every instruction
++ * below has to be position-independent. That is not a style preference; it is
++ * the whole reason the blob exists.
++ *
++ * arch/x86 relocates the firmware to the top of RAM, so when it loads a
++ * bzImage to 1 MiB it is writing into free memory. arch/amd64 deliberately
++ * does NOT relocate -- long mode ignores segment bases, so Spike 1 dropped
++ * relocate() as pointless -- and the image is linked at BASE_ADDR = 0x100000.
++ * The firmware therefore LIVES at the address a bzImage must run at, and a
++ * kernel built with CONFIG_RELOCATABLE=n (the showcase payload is exactly
++ * that: relocatable_kernel = 0, verified in the bytes) cannot be asked to move
++ * aside. One of the two has to be overwritten, and by this point the firmware
++ * has no further work to do -- so the copy runs from a stub parked in low
++ * memory, out of both the source and the destination, and the firmware is
++ * demolished underneath it.
++ *
++ * The stack moves too, and forgetting that is the subtle half: %rsp still
++ * points into the firmware's _estack, which is inside the region about to be
++ * overwritten. The `pushq`/`lretq` at the end would then write two words into
++ * the loaded kernel image. So the stub takes its own stack BEFORE it copies.
++ *
++ * The SysV argument registers do part of the work for free: boot_params is the
++ * second argument and so arrives in %rsi, exactly where the 64-bit protocol
++ * wants it. It cannot simply be left there -- `rep movsb` needs %rsi for the
++ * source -- so it is parked in %r11 and put back afterwards. Moving
++ * boot_params to a different argument position would break this silently.
++ */
++	.section .text
++	.code64
++	.globl	linux_handoff, linux_handoff_end
++	.type	linux_handoff, @function
++linux_handoff:
++	cli				/* "interrupt must be disabled" */
++	lgdt	(%rdx)			/* m16&64: 2-byte limit, 8-byte base */
++
++	movw	$0x18, %ax		/* __BOOT_DS */
++	movw	%ax, %ds
++	movw	%ax, %es
++	movw	%ax, %ss
++	movw	%ax, %fs
++	movw	%ax, %gs
++
++	movq	%rdi, %r10		/* entry       (rdi is about to be dst) */
++	movq	%rsi, %r11		/* boot_params (rsi is about to be src) */
++
++	/* Off the firmware stack before a single byte is written -- and onto a
++	 * stack that travels WITH the blob. A fixed address here would have to
++	 * be agreed with linux_load.c, and a constant duplicated across two
++	 * files is a cached fact waiting to go stale. RIP-relative addressing
++	 * is position-independent by construction, so the scratch space at the
++	 * end of this blob is reachable wherever the blob was copied to, with
++	 * nothing to keep in sync. */
++	leaq	handoff_stack_top(%rip), %rsp
++
++	movq	%rcx, %rsi		/* src */
++	movq	%r8,  %rdi		/* dst */
++	movq	%r9,  %rcx		/* len -- zero when no copy is needed,
++					 * and `rep` with %rcx=0 is a no-op, so
++					 * the two cases need no branch */
++	cld				/* forward: dst < src, so an overlap
++					 * still copies correctly */
++	rep	movsb
++
++	/* The firmware no longer exists below this line. */
++
++	movq	%r11, %rsi		/* %rsi = struct boot_params */
++	xorq	%rbp, %rbp
++	xorq	%rbx, %rbx
++	xorq	%rdi, %rdi
++
++	/* Reload CS with __BOOT_CS(0x10). A far JMP in long mode needs an
++	 * m16:64 memory operand -- which would be a reference to this blob's
++	 * own address, the one thing it must not have. A far RETURN takes the
++	 * same pair off the stack instead, and the stack is now ours. */
++	pushq	$0x10
++	pushq	%r10
++	lretq
++
++	/* Two pushes and the far return's pops, with room to spare. Part of the
++	 * blob, so it is copied along with the code and needs no allocation. */
++	.align	16
++	.space	256
++handoff_stack_top:
++linux_handoff_end:
++	.size	linux_handoff, . - linux_handoff

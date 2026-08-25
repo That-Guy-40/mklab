@@ -91,10 +91,12 @@ Runtime ≈ 15–30 s each (`amd64-pmem` and the `persist*` family boot three ti
 
 **The full list**: `multiboot coreboot ppc nvram dict-identity persist
 persist-flash floppy persist-os persist-os-flash amd64 amd64-fault amd64-ctx
-amd64-pmem` — 14 tracks. Measured 2026-08-23 on this host: **13 of 14 ran and
-passed; the one SKIP is `coreboot`**, which has no cached ROM (rebuild it with
-`./build-coreboot-openbios.sh`). The Linux showcase: `multiboot` PASS,
-`coreboot` SKIP for the same reason.
+amd64-pmem amd64-linux` — 15 tracks, the last added 2026-08-25 with Spike 3.
+Measured 2026-08-23 on this host: **13 of 14 ran and passed; the one SKIP is
+`coreboot`**, which has no cached ROM (rebuild it with
+`./build-coreboot-openbios.sh`). The Linux showcase now takes a third flavor:
+`multiboot` PASS, **`amd64` PASS (2026-08-25)**, `coreboot` SKIP for the same
+ROM reason.
 
 ### The negative controls, run 2026-08-23
 
@@ -107,6 +109,23 @@ Each fix was broken and watched to bite before being trusted:
 | `$XDICT` pointed back at `openbios.dict` | `dict-identity` **FAIL** |
 | `arch/amd64/exception.c` back to the `do_nothing` return | `amd64-fault` **FAIL** — *"the fault WAS named and the prompt never came back"* |
 | all restored | all four **PASS** again |
+
+### The Spike 3 controls, run 2026-08-25
+
+| control | result |
+|---|---|
+| `unsigned long type` back in `struct e820entry` | the **build** stops: *"size of array `linux_abi_e820entry_is_20_bytes` is negative"*. This is the one that matters — the runtime symptom it replaces is a correctly-running kernel emitting nothing at all |
+| the `CR3` switch removed from `start_linux()` | `showcase … amd64` **FAIL** — the copy demolishes the page tables it is translated through, and the log stops one line after the handoff |
+| all restored | `showcase … amd64` and `smoke … amd64-linux` **PASS** again |
+
+**And the second control found a liar in the harness itself.** The showcase's
+failure branch was `grep -aq "Linux version"` → *"kernel started but no u-root
+banner"* — but the **firmware** prints `Found Linux version 6.3.0 …` the moment
+it recognises the image, so that branch reported "the kernel started" about a
+machine that had triple-faulted inside the loader. It is the shape this repo
+keeps re-finding: a match on a string that is always present. The check is now
+anchored (`^Linux version `), and a third branch distinguishes *handed off and
+the kernel said nothing* — which on this path means silence, not a dead kernel.
 
 ## 4. The showcase — OpenBIOS boots Linux to u-root
 

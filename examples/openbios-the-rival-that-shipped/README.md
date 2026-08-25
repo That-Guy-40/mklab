@@ -111,6 +111,8 @@ $ ./showcase-rival-boots-linux.sh  # PASS: the rival boots Linux: ... reached u-
 $ ./build-coreboot-openbios.sh     # wrap openbios-builtin.elf in a coreboot ROM (~1 min, cached tree)
 $ ./smoke-openbios.sh coreboot     # PASS: OpenBIOS (coreboot) answered 7 ...
 $ ./showcase-rival-boots-linux.sh coreboot   # the same one-liner, entered through coreboot
+$ ./build-openbios.sh amd64        # the 64-bit port
+$ ./showcase-rival-boots-linux.sh amd64      # the same one-liner, from LONG MODE (Spike 3)
 ```
 
 Prereqs: podman, qemu-system-x86_64, qemu-system-ppc (ppc track), python3,
@@ -130,11 +132,12 @@ proves the linuxboot **and** OFW labs' kept ROMs survive. No sudo anywhere.
 | [`build-coreboot-openbios.sh`](build-coreboot-openbios.sh) | isolated coreboot build carrying `openbios-builtin.elf`; sha-guards both sibling labs' artifacts |
 | [`run-openbios-qemu.sh`](run-openbios-qemu.sh) | interactive boot, any track (`multiboot`/`coreboot`/`ppc`/`amd64`), `0 >` on your terminal |
 | [`smoke-openbios.sh`](smoke-openbios.sh) | one-verdict smokes; the ppc one proves the running blob is OURS by build-date banner |
-| [`showcase-rival-boots-linux.sh`](showcase-rival-boots-linux.sh) | the finale: one `boot` line at the prompt → Linux 6.3 → u-root, either x86 track |
+| [`showcase-rival-boots-linux.sh`](showcase-rival-boots-linux.sh) | the finale: one `boot` line at the prompt → Linux 6.3 → u-root, on `multiboot`, `coreboot` **or `amd64`** — the same line, unchanged, from 64-bit firmware |
 | [`RUNBOOK.md`](RUNBOOK.md) | guided tour: `0 >` semantics, device tree, the unix-process firmware, rival-vs-rival exercises |
 | [`MANUAL_TESTING.md`](MANUAL_TESTING.md) | exact commands + real success signatures |
 | [`PLAN.md`](PLAN.md) · POC-[1](POC-1-BUILD-BOX.md)/[2](POC-2-OK-PROMPT.md)/[3](POC-3-COREBOOT-PAYLOAD.md)/[4](POC-4-BOOT-LINUX.md)/[5](POC-5-PPC-SWAP-IN.md) | roadmap + blow-by-blow spike write-ups |
 | [`X86-64-FEASIBILITY.md`](X86-64-FEASIBILITY.md) | could this firmware run in **long mode**? — measured, audited, **Spike 0 run**: `arch/amd64` builds zero images even with the image types enabled, and after nine mechanical drift lines the only true 64-bit C errors left are `context.c`'s eight |
+| [`patches/12-amd64-spike3-boots-linux.patch`](patches/12-amd64-spike3-boots-linux.patch) | **Spike 3**: the bzImage loader re-ported to long mode, and a handoff that copies the kernel over the firmware — because `arch/amd64` does not relocate and so *is* sitting at the 1 MiB a bzImage runs at |
 | [`patches/02-amd64-spike0-build-on.patch`](patches/02-amd64-spike0-build-on.patch) · [`03-…-drift-fixes.patch`](patches/03-amd64-spike0-drift-fixes.patch) | the feasibility study's Spike 0, reproducible: a real amd64 `build.xml` + 64-bit ldscript, then the drift-only pass — **not** applied by `build-openbios.sh` (it applies `01` by name) |
 
 The pty driver this lab extracted,
