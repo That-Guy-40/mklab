@@ -1,0 +1,115 @@
+Subject: [PATCH 14/14] amd64: bind (init-program)/(go) where $find can see them
+
+Moves openbios_init() in arch/amd64/openbios.c to AFTER device_end(). One call
+site; the ordering is the whole of it.
+
+openbios_init() binds `(init-program)` and `(go)` with bind_func, which is
+`is-cfunc` (libopenbios/clib.fs:17), which is `$create` -- and $create defines
+into the CURRENT vocabulary. While a device context is still open, every word it
+creates lands in that node rather than the dictionary, where $find cannot see it.
+
+MEASURED, not reasoned. Markers were planted through arch_init and probed at the
+prompt:
+
+    bound as arch_init's first statement    MISSING
+    bound straight after openbios_init()    MISSING
+    bound after modules_init()              MISSING
+    platform-boot, bound after device_end() FOUND
+
+$find itself works (`dup`, `is-cfunc`, `(does>)` all found, and `(does>)` also
+rules out "parenthesised names are unfindable"). bind_func works. The only thing
+between the missing words and the found one is device_end().
+
+The symptom was that `load` of ANY file ended in
+
+    Unable to locate (init-program)!
+
+from forth/debugging/client.fs:57 -- $load's last step -- so the entire
+`load` client path was unreachable on amd64.
+
+With the call moved, measured on the 64-bit firmware:
+
+    0 > load /ide@1/cdrom@0:\marker.fth        -> clean, ok, empty stack
+    0 > load-base load-size evaluate
+    SPIKE-FORTH-LOADED
+
+which is TODO 13.1's checkpoint -- "a .fth loaded off media prints its own
+marker" -- met. PR #294 recorded that checkpoint as one that CANNOT be reached;
+that was true of the code as it stood and is now false, and 13.1 says so.
+
+NOT fixed by calling device_end() earlier instead. Tried: `set_property: NULL
+phandle` and then a general protection fault at 08:0000000000102ba3, named by
+Spike 2's handler, because the device tree is not built yet at the top of
+arch_init. The call moves; the teardown stays where it is.
+
+Control run and watched to bite: with openbios_init() put back before
+device_end(), `(init-program)` and `(go)` are MISSING again and `load` prints
+"Unable to locate (init-program)!" again. Restored, both are found.
+
+Scope is deliberately arch/amd64 only. Three further defects on this path were
+found and are NOT touched here, because they live in arch-neutral code shared
+with x86, ppc and sparc, and changing them alters three targets this lab does
+not test:
+
+  2. `load-state >ls.file-size` is never set on the $load path -- `!load-size`
+     writes a separate `variable file-size` (client.fs:37-41). Two records of one
+     fact. Measured: load-base held the file while ls.file-size read 0.
+  3. `eval2` (libopenbios/initprogram.c:152) is the ONLY reference to that name
+     in the tree and NOTHING defines it. fword() on a missing word is silent, so
+     the Forth-source loader has never evaluated a byte on any arch.
+  4. even with 2 and 3 addressed locally, the `go` trampoline still evaluates
+     nothing. UNKNOWN.
+
+Those are why the recipe above uses `evaluate` directly rather than `go`. They
+are being taken up in a separate tree.
+
+Regression: build clean; smoke-openbios.sh amd64, amd64-fault, amd64-ctx,
+amd64-pmem and amd64-linux all PASS.
+
+--- a/arch/amd64/openbios.c
++++ b/arch/amd64/openbios.c
+@@ -58,7 +58,6 @@
+ 	/* Spike 1 drift: the stale nested declaration is gone -- drivers.h has
+ 	 * declared setup_timers() since a sweep amd64 was never compiled for. */
+ 
+-	openbios_init();
+ 	modules_init();
+ #ifdef CONFIG_DRIVER_IDE
+ 	setup_timers();
+@@ -71,6 +70,36 @@
+ 	nvconf_init();
+ 
+ 	device_end();
++
++	/* openbios_init() RUNS HERE, NOT AT THE TOP, and the ordering is the whole
++	 * of it.
++	 *
++	 * It binds `(init-program)` and `(go)` with bind_func, which is
++	 * `is-cfunc` (libopenbios/clib.fs:17), which is `$create` -- and $create
++	 * defines into the CURRENT vocabulary. While a device context is still
++	 * open, every word it creates lands in that node instead of the
++	 * dictionary, where $find cannot see it.
++	 *
++	 * Measured by planting markers through arch_init: one bound as the first
++	 * statement, one straight after openbios_init(), one after modules_init()
++	 * -- all three MISSING from $find. `platform-boot`, bound two lines below
++	 * this comment, is FOUND. The only thing between them is device_end().
++	 *
++	 * The symptom was `load` of any file ending in:
++	 *
++	 *     Unable to locate (init-program)!
++	 *
++	 * from forth/debugging/client.fs:57, which is $load's last step -- so the
++	 * whole `load`/`go` client path was unreachable. With the call moved here,
++	 * `load` completes clean and `load-base load-size evaluate` runs a Forth
++	 * source file off media.
++	 *
++	 * NOT fixed by calling device_end() earlier instead: tried, and it faults
++	 * (`set_property: NULL phandle`, then a GPF at 08:0000000000102ba3) because
++	 * the tree is not built yet at the top of arch_init. The call moves; the
++	 * teardown does not. */
++	openbios_init();
++
+ 	bind_func("platform-boot", boot );
+ 
+ 	/* Spike 2: expose the context-switch self-test at the prompt, so the
