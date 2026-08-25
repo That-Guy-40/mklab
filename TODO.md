@@ -1733,21 +1733,113 @@ structure builder. The design question is the notes' to settle; what belongs her
 the four defects the review found in the shipped wordset, all of which bite the amd64
 track regardless of whether that toolkit is ever built.*
 
-### 13.1 Three more config flips, found the same way blocker 1 was
+### 13.1 Two more config flips — **RUN 2026-08-25, and both checkpoints are blocked**
 
-§12's blocker 1 (`CONFIG_FSYS_ISO9660`) is one row of a six-row diff between
-`config/examples/x86_config.xml` and `config/examples/amd64_config.xml`. Two more are
-in-scope work, not cosmetics:
+*Original text kept below the rule, because being wrong in a specific way is the useful
+part.* `CONFIG_LOADER_FORTH` **is now `true` on amd64** (parity with x86, builds clean,
+`amd64` and `amd64-linux` both still PASS). `CONFIG_DRIVER_VGA` was **not** flipped. What
+the two checkpoints turned into:
 
-- **`CONFIG_LOADER_FORTH`** — `true` on x86, `false` on amd64. Until it is on, every
-  line of test Forth has to be typed at the serial prompt, through the ~80-char
-  truncation §12 already records. **Checkpoint:** a `.fth` loaded off media prints its
-  own marker.
-- **`CONFIG_DRIVER_VGA`** — `true` on x86, `false` on amd64. `drivers/pci.c:1045`
-  (`feval("['] vga-driver-fcode 2 cells + 1 byte-load")`) is the **only in-tree FCode
-  execution on the x86 side**, so with VGA off, amd64 has never evaluated a byte of
-  FCode. **Checkpoint:** `byte-load` reached at all — which would also be the first
-  FCode ever evaluated at a 64-bit cell in this tree.
+**Neither is a one-line config flip, and they are blocked by two unrelated defects
+neither of which was recorded anywhere.**
+
+#### The `LOADER_FORTH` checkpoint is blocked by a defect that is not amd64's
+
+The checkpoint — *a `.fth` loaded off media prints its own marker* — cannot be reached,
+and **x86 fails identically**, so this is not port work.
+
+`boot <file>` never consults the Forth loader on **either** arch: `arch/{x86,amd64}/boot.c`
+call `linux_load()` and nothing else. The generic loader chain in `libopenbios/load.c`,
+which is what `CONFIG_LOADER_FORTH` gates, is reached through `load` → `$load`
+(`forth/debugging/client.fs:189,135`). Driving that:
+
+```console
+0 > load /ide@1/cdrom@0:\marker.fth
+Mounted iso9660
+Path=/marker.fth
+Unable to locate (init-program)!
+ ok
+2 >
+```
+
+`$load` ends with `r> close-dev` then `init-program`, and `init-program` is
+`s" (init-program)" $find if execute else ." Unable to locate…" then`. Probed directly at
+the prompt, on a build of each arch:
+
+| word | amd64 | x86 | bound by |
+|---|---|---|---|
+| `dup` | found | — | the dictionary |
+| `is-cfunc` | found | — | `libopenbios/clib.fs` |
+| `(does>)` | **found** | — | `forth/bootstrap/bootstrap.fs` |
+| `platform-boot` | **found** | — | `bind_func` in `arch_init`, **after** `device_end()` |
+| `(init-program)` | **MISSING** | **MISSING** | `bind_func` in `openbios_init()` |
+| `(go)` | **MISSING** | — | `bind_func` in `openbios_init()` |
+
+So `$find` works, `bind_func` works, and the two words bound inside `openbios_init()` are
+the ones that are gone. **Two hypotheses were tested and both are refuted:**
+
+- *"parenthesised names are not findable"* — `(does>)` is found. Refuted.
+- *"`is-cfunc` uses `$create`, which defines into the current vocabulary, so an active
+  device context at `openbios_init()` time swallows them"* — adding `device_end()` before
+  `openbios_init()` in `arch/amd64/openbios.c` produced `set_property: NULL phandle` and a
+  **general protection fault at `08:0000000000102ba3`**, named by Spike 2's handler.
+  Reverted. That disproves the *fix*, and leaves the ordering idea unproven either way.
+
+**Cause: UNKNOWN.** The symptom is reproducible on both arches and the instrument has been
+checked against known-present words of the same shape. Next probe: whether `openbios_init()`
+runs at all at that point (`bind_func` a throwaway marker as its first statement and look
+for it), which separates *"never called"* from *"called, words land somewhere unreachable"*.
+
+**Consequence for the flip:** `CONFIG_LOADER_FORTH=true` is a genuine prerequisite —
+`forth_load.c` is only compiled under it, and `is_forth()` dispatch in
+`libopenbios/initprogram.c` only exists under it — but it is **inert today**, and the entry
+says so rather than letting a landed config change imply a working feature.
+
+#### The `DRIVER_VGA` checkpoint needs code, not a flag
+
+`drivers/pci.c:1045`'s `feval("['] vga-driver-fcode 2 cells + 1 byte-load")` lives in
+`vga_config_cb`, which runs only while enumerating a VGA-class PCI device. **amd64 never
+enumerates PCI at all**: `arch/x86/openbios.c:438` calls `ob_pci_init()` and then
+`ob_ide_init("/pci/isa", …)`; `arch/amd64/openbios.c` calls **only**
+`ob_ide_init("/pci/pci-ata", …)`, against a hardcoded path, with no `ob_pci_init()`
+anywhere. The amd64 boot log shows it — none of the `Cannot manage 'PCI host bridge'`
+lines x86 prints appear.
+
+So flipping `CONFIG_DRIVER_VGA` would compile `vga_load_regs.c`, `vga_set_mode.c` and the
+`QEMU,VGA.bin` FCode blob into a build where **nothing ever calls them**. Note also that
+`vga_config_cb`'s `feval` is *not* guarded by `CONFIG_DRIVER_VGA`, so on any arch that does
+enumerate PCI with VGA off it would execute an undefined word — masked here only by the
+missing enumeration. **Real scope:** wire `ob_pci_init()` into amd64's `arch_init` and move
+IDE onto the probed path. That is Spike-sized, not a flip, and it should be its own item.
+
+#### And the header was wrong
+
+It said *"Three more config flips"* and the body listed **two**. Measured 2026-08-25 after
+§12 closed: `ISO9660` now agrees, **six** shared options still differ
+(`DEBUG_FS`, `DRIVER_VGA`, `FSYS_FAT`, `FSYS_UFS`, `HFSP`, `LOADER_FORTH`), so the
+"six-row diff" the original text described was **seven** at the time it was written. Two
+further options — `CONFIG_DEBUG_FLOPPY` and `CONFIG_DRIVER_FLOPPY` — exist in the x86
+config and **not at all** in amd64's, a third category the original missed.
+
+---
+
+*Original text, 2026-08-24:*
+
+> ### 13.1 Three more config flips, found the same way blocker 1 was
+>
+> §12's blocker 1 (`CONFIG_FSYS_ISO9660`) is one row of a six-row diff between
+> `config/examples/x86_config.xml` and `config/examples/amd64_config.xml`. Two more are
+> in-scope work, not cosmetics:
+>
+> - **`CONFIG_LOADER_FORTH`** — `true` on x86, `false` on amd64. Until it is on, every
+>   line of test Forth has to be typed at the serial prompt, through the ~80-char
+>   truncation §12 already records. **Checkpoint:** a `.fth` loaded off media prints its
+>   own marker.
+> - **`CONFIG_DRIVER_VGA`** — `true` on x86, `false` on amd64. `drivers/pci.c:1045`
+>   (`feval("['] vga-driver-fcode 2 cells + 1 byte-load")`) is the **only in-tree FCode
+>   execution on the x86 side**, so with VGA off, amd64 has never evaluated a byte of
+>   FCode. **Checkpoint:** `byte-load` reached at all — which would also be the first
+>   FCode ever evaluated at a 64-bit cell in this tree.
 
 ### 13.2 Four defects in `forth/device/property.fs`, none of which a byte diff can see
 
