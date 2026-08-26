@@ -2188,9 +2188,9 @@ new line **completes** that half-message instead of competing with it.
    Its `%s` case has the correct `strnlen(s, precision)` under an `#if 0`, and the live
    branch is `len = mstrlen(s); if( precision > len ) len = precision;` — **precision is a
    MINIMUM, not a maximum.** `%.96s` on a 13-byte string prints 96 bytes, 83 past the
-   terminator. Clipped in C instead. **Reported, not fixed:** different subsystem, needs its
-   own fixtures, and `fs/hfsplus/hfsp_record.c`'s two `%4.4s` are its only other callers —
-   both of which can currently print *more* than four characters.
+   terminator. Clipped in C instead, and the printf bug **fixed separately in
+   [§13.1c](#131c-s-precision-was-a-minimum--closed-2026-08-26)** — a message written to
+   end a silence, silenced by the printf it was written with.
 2. **Reporting on the interactive path is noise.** First draft: `pwd` at the prompt printed
    `no active devicefeval: pwd -- threw -2 (...)` then ` Aborted.` — the same failure said
    twice, once by a layer with no business saying it. A channel that fires on ordinary typos
@@ -2228,6 +2228,68 @@ Unanchored, it reports both.
 **Not watched to fire:** `_eword()`'s *"word not in the dictionary"* branch. It is reachable
 only if `evaluate` itself is missing, which cannot happen in a firmware that has reached the
 prompt. Named rather than counted as covered.
+
+### 13.1c `%s` precision was a MINIMUM — **CLOSED 2026-08-26**
+
+**Patch 21, arch-neutral, `Arch-tested: x86 amd64 ppc`.** Found by §13.1b's own diagnostic.
+
+`libc/vsprintf.c`'s `%s` case:
+
+```c
+#if 0
+    len = strnlen(s, precision);
+#else
+    len = mstrlen(s);
+    if( precision > len )
+        len = precision;
+#endif
+```
+
+C99 7.19.6.1 says precision on `%s` is the **maximum** number of bytes to write, and the
+argument need not be NUL-terminated within them. The live branch made it a **floor**:
+
+| format | argument | printed |
+|---|---|---|
+| `%.3s` | `"abcdef"` | all six characters |
+| `%.10s` | `"abc"` | **ten bytes**, seven past the terminator |
+| `%.0s` | `"abc"` | `"abc"` |
+| `%8.3s` | `"abcdef"` | precision confused with field width |
+
+**The correct call was one line above, under an `#if 0`**, and `libc/string.c:214`'s
+`strnlen()` is and always was correct. A live line somebody disabled, not a missing
+implementation.
+
+**In-tree victims:** `fs/hfsplus/hfsp_record.c` prints a FourCC that is *not*
+NUL-terminated with `%4.4s`, twice. Measured with the defect in place, a 4-byte field
+followed by `XYZ!` printed **`ABCDXYZ!`** — eight characters where four were asked for,
+from a debug path walking off the end of a struct field.
+
+#### The fixtures run in the firmware, and the control found a hole in them
+
+`test-printf-precision` is bound in `libopenbios/init.c` — one definition for all three
+arches — because `kernel/bootstrap.c` `#define`s `printk` to the **host** printf under
+`BOOTSTRAP`, so a host harness would exercise glibc and report on OpenBIOS. Six of its
+seven cases were wrong before the patch; the seventh, bare `%s`, is the **must-NOT-break**
+control (a "fix" routing the no-precision path through `strnlen(s, -1)` would still pass
+the other six).
+
+**And this is the part worth keeping.** The first fixture compared with `strcmp()` alone —
+and **`strcmp` stops at the first NUL**. `%.10s` on `"abc"` wrote `"abc\0"` plus six bytes
+of whatever followed, and `strcmp(got, "abc")` said **equal**. The case that most directly
+demonstrates an over-read was the one case the fixture could not see; the control reported
+`2/7` and called `no-extend` a pass. `vsnprintf()` returns `str-buf` — what it actually
+produced — so the length is now checked beside the bytes:
+
+```
+printf-precision: no-extend want[abc](3) got[abc](10) BAD
+```
+
+and the control reports `1/7`. **An assertion that can only see up to a NUL is not an
+assertion about a function whose bug is writing past one.**
+
+**Not covered:** precision on conversions other than `%s` (`%.*d` and friends go through
+`number()`, a different path), and `vsnprintf`'s truncation behaviour at the buffer edge.
+Named rather than counted as tested.
 
 ### 13.2 Four defects in `forth/device/property.fs` — **three WATCHED TO BITE 2026-08-25**
 

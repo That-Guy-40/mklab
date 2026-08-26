@@ -1,0 +1,217 @@
+Subject: [PATCH 21/21] libc/vsprintf: %s precision is a MAXIMUM, not a minimum
+Arch-tested: x86 amd64 ppc
+
+libc/vsprintf.c's %s case treated `precision` as a floor:
+
+    #if 0
+        len = strnlen(s, precision);
+    #else
+        len = mstrlen(s);
+        if( precision > len )
+            len = precision;
+    #endif
+
+C99 7.19.6.1 says the opposite -- precision on %s is the MAXIMUM number of
+bytes to write, and the argument need not be NUL-terminated within them. So
+
+    %.3s   on "abcdef"   printed all six characters
+    %.10s  on "abc"      produced TEN bytes, seven of them past the terminator
+    %.0s   on "abc"      printed "abc"
+    %8.3s  on "abcdef"   confused precision with field width
+
+The correct call was sitting one line above under an `#if 0`, and
+libc/string.c:214's strnlen() is and always was correct. This is a live line
+that somebody disabled, not a missing implementation. The `-1` sentinel for
+"no precision given" keeps the untouched path untouched.
+
+FOUND BY THE PREVIOUS PATCH. Patch 20 added a diagnostic to end a silence and
+used `%.96s` to clip a Forth fragment; it printed a mangled half-line. A
+message written to end a silence, silenced by the printf it was written with.
+
+IN-TREE VICTIMS: fs/hfsplus/hfsp_record.c prints a FourCC that is NOT
+NUL-terminated with `%4.4s`, twice. Measured with the defect in place, a 4-byte
+field followed by "XYZ!" printed ABCDXYZ! -- eight characters where four were
+asked for, from a debug path that walks off the end of a struct field.
+
+THE FIXTURES RUN IN THE FIRMWARE, not on the host, and that is deliberate:
+kernel/bootstrap.c #defines printk to the HOST printf under BOOTSTRAP, so a
+host harness would exercise glibc and report on OpenBIOS. `test-printf-report`'s
+neighbour `test-printf-precision` is bound in libopenbios/init.c -- one
+definition for all three arches -- and prints one line per case plus a ratio:
+
+    printf-precision: clip      want[abc](3)       got[abc](3)       OK
+    printf-precision: no-extend want[abc](3)       got[abc](3)       OK
+    printf-precision: fourcc    want[ABCD](4)      got[ABCD](4)      OK
+    printf-precision: bare      want[abc](3)       got[abc](3)       OK
+    printf-precision: zero      want[](0)          got[](0)          OK
+    printf-precision: left      want[abc     |](9) got[abc     |](9) OK
+    printf-precision: right     want[     abc|](9) got[     abc|](9) OK
+    printf-precision: 7/7 ok
+
+Six of the seven were wrong before this patch. The seventh -- bare `%s`, no
+precision -- is the must-NOT-break control: a "fix" that pushed the
+no-precision path through strnlen(s, -1) would still pass the other six.
+
+NEGATIVE CONTROL, run not reasoned: the old two lines put back, amd64 rebuilt,
+and the fixture reported 1/7 with `bare` the only survivor.
+
+AND THE CONTROL FOUND A HOLE IN THE FIXTURE, which is the part worth keeping.
+The first version compared with strcmp() alone, and strcmp STOPS AT THE FIRST
+NUL -- so `%.10s` on "abc" wrote "abc\0" plus six bytes of whatever followed,
+and strcmp(got, "abc") said EQUAL. The case that most directly demonstrates an
+over-read was the one case the fixture could not see; it reported 2/7 and
+called `no-extend` a pass. vsnprintf() returns str-buf, what it actually
+produced, so the length is now checked beside the bytes:
+
+    printf-precision: no-extend want[abc](3) got[abc](10) BAD
+
+and the control reports 1/7. An assertion that can only see up to a NUL is not
+an assertion about a function whose bug is writing past one.
+
+NOT COVERED: precision on conversions other than %s (%.*d and friends go
+through number(), a different code path), and vsnprintf's truncation behaviour
+at the buffer edge. Named rather than counted as tested.
+
+diff --git a/libc/vsprintf.c b/libc/vsprintf.c
+--- a/libc/vsprintf.c
++++ b/libc/vsprintf.c
+@@ -268,13 +268,41 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
+ 				if ((unsigned long)s < PAGE_SIZE)
+ 					s = "<NULL>";
+ 
+-#if 0
+-                                len = strnlen(s, precision);
+-#else
+-                                len = mstrlen(s);
+-                                if( precision > len )
+-                                    len = precision;
+-#endif
++				/* PRECISION ON %s IS A MAXIMUM (C99 7.19.6.1):
++				 * print AT MOST `precision` bytes, and the
++				 * argument need not be NUL-terminated within
++				 * them. It is not a minimum, and it is not a
++				 * field width -- the padding below is what
++				 * handles width.
++				 *
++				 * What was here did the opposite:
++				 *
++				 *     len = mstrlen(s);
++				 *     if( precision > len ) len = precision;
++				 *
++				 * so `%.96s` on a 13-byte string printed 96
++				 * bytes, 83 of them PAST THE TERMINATOR, and
++				 * `%.3s` on "abcdef" printed all six. The
++				 * correct call was sitting directly above it
++				 * under an `#if 0`, and libc/string.c:214's
++				 * strnlen() is and always was correct -- so
++				 * this is a live line that was disabled, not
++				 * a missing implementation.
++				 *
++				 * Found 2026-08-26 when a NEW diagnostic in
++				 * libopenbios/bindings.c used `%.96s` to clip
++				 * a Forth fragment and printed a mangled
++				 * half-line: a message added to end a silence,
++				 * silenced by the printf it was written with.
++				 *
++				 * fs/hfsplus/hfsp_record.c's two `%4.4s` over
++				 * a non-terminated FourCC are the only other
++				 * callers in the tree, and both could print
++				 * more than four characters. -1 means "no
++				 * precision given" (set at the `.` parse
++				 * above), and that path is unchanged. */
++				len = (precision < 0) ? mstrlen(s)
++						      : (int)strnlen(s, (size_t)precision);
+ 				if (!(flags & LEFT)) {
+ 					while (len < field_width--) {
+ 						if (str <= end)
+--- a/libopenbios/init.c
++++ b/libopenbios/init.c
+@@ -16,6 +16,8 @@
+ 
+ #include "config.h"
+ #include "libc/byteorder.h"
++#include "libc/string.h"
++#include "libc/vsprintf.h"
+ #include "libopenbios/openbios.h"
+ #include "libopenbios/bindings.h"
+ #include "libopenbios/initprogram.h"
+@@ -87,6 +89,69 @@
+ 	(void)feval("openbios-feval-selftest-no-such-word");
+ }
+ 
++/* THE PRECISION FIX'S OWN FIXTURE SET, run inside the shipped firmware.
++ *
++ * libc/vsprintf.c's %s case treated `precision` as a MINIMUM. Six of the seven
++ * cases below were wrong before that was corrected, and the seventh -- plain
++ * %s, no precision -- is the must-NOT-break control: a "fix" that routed the
++ * no-precision path through strnlen(s, -1) would still pass the other six.
++ *
++ * Run in the FIRMWARE and not on the host on purpose. libc/vsprintf.c is the
++ * target's printf; kernel/bootstrap.c #defines printk to the HOST printf under
++ * BOOTSTRAP, so a host harness would test glibc and report on OpenBIOS. Case 3
++ * is the one the tree actually contains: fs/hfsplus/hfsp_record.c prints a
++ * FourCC that is NOT NUL-terminated with `%4.4s`.
++ *
++ * ( -- )  prints one line per case and a ratio; leaves the stack alone.
++ */
++static void printf_precision_selftest( void )
++{
++	/* Deliberately NOT NUL-terminated within its first four bytes: this is
++	 * the hfsplus shape, and it is what makes a strlen-based clip unsafe. */
++	static const char fourcc[] = { 'A','B','C','D','X','Y','Z','!','\0' };
++	static const char *abcdef = "abcdef";
++	static const char *abc = "abc";
++	char got[32];
++	int ok = 0, n = 0;
++
++	/* THE RETURNED LENGTH IS CHECKED TOO, and the control is why.
++	 *
++	 * strcmp() stops at the first NUL, so it cannot see an over-read that
++	 * copies PAST one. Measured with the defect re-injected: `%.10s` on
++	 * "abc" wrote ten bytes -- "abc", the terminator, and six bytes of
++	 * whatever followed -- and strcmp(got, "abc") said EQUAL. The case that
++	 * most directly demonstrates the bug was the one case the fixture could
++	 * not see. vsnprintf() returns str-buf, i.e. what it actually produced,
++	 * so the length catches it: 10 against an expected 3. */
++#define PREC_CASE(label, want, ...) do {				\
++		int rc_ = snprintf(got, sizeof(got), __VA_ARGS__);	\
++		int good_ = !strcmp(got, (want))			\
++			    && rc_ == (int)strlen(want);		\
++		n++;							\
++		if( good_ )						\
++			ok++;						\
++		printk("printf-precision: %s want[%s](%d) got[%s](%d)"	\
++		       " %s\n", (label), (want), (int)strlen(want),	\
++		       got, rc_, good_ ? "OK" : "BAD");			\
++	} while(0)
++
++	/* 1-2: precision clips, and does not extend. */
++	PREC_CASE("clip",      "abc",       "%.3s",   abcdef);
++	PREC_CASE("no-extend", "abc",       "%.10s",  abc);
++	/* 3: the in-tree case -- four bytes of a buffer with no NUL in them. */
++	PREC_CASE("fourcc",    "ABCD",      "%4.4s",  fourcc);
++	/* 4: MUST NOT BREAK -- no precision at all. */
++	PREC_CASE("bare",      "abc",       "%s",     abc);
++	/* 5: zero precision prints nothing. */
++	PREC_CASE("zero",      "",          "%.0s",   abc);
++	/* 6-7: precision and field width are different things. */
++	PREC_CASE("left",      "abc     |", "%-8.3s|", abcdef);
++	PREC_CASE("right",     "     abc|", "%8.3s|",  abcdef);
++#undef PREC_CASE
++
++	printk("printf-precision: %d/%d ok\n", ok, n);
++}
++
+ void
+ openbios_init( void )
+ {
+@@ -108,6 +173,9 @@
+ 	// The reporter's must-catch fixture -- see feval_report_selftest above
+ 	bind_func("test-feval-report", feval_report_selftest);
+ 
++	// libc/vsprintf.c's %s precision fixtures -- see above
++	bind_func("test-printf-precision", printf_precision_selftest);
++
+ 	// Bind the LE access words
+ 	bind_func("le-w!", lewstore);
+ 	bind_func("le-l!", lelstore);

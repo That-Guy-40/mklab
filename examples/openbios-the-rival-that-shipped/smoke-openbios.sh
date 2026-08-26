@@ -28,8 +28,9 @@ TRACK (default multiboot):
                               to bite on both arches
   vga                         PCI enumeration on amd64, and the VGA FCode
                               blob that had never been evaluated on either
-  diagnostics                 the Forth bindings report their own failures:
-                              silent on a clean boot, loud on a real one
+  diagnostics                 the Forth bindings report their own failures
+                              (silent on a clean boot, loud on a real one),
+                              and libc/vsprintf.c's %s precision clips
 
 Exit: 0 PASS / 1 FAIL / 77 SKIP. Each track ends on exactly one verdict line.
 Env: OPENBIOS_WORKDIR, KERNEL, INITRD, COREBOOT_DIR
@@ -1105,6 +1106,7 @@ FTH
         python3 "$REPO/tools/drive-pty-repl.py" "$DLOG" --timeout 120 \
           --expect "Welcome to OpenBIOS" --expect "0 > " \
           --send 'test-feval-report\r' --expect "> " \
+          --send 'test-printf-precision\r' --expect "> " \
           -- qemu-system-ppc -bios "$PELF" -nographic -vga none
         RC=$?
       else
@@ -1115,7 +1117,8 @@ FTH
         QPID=$!
         python3 "$REPO/tools/drive-serial-repl.py" "$DSOCK" "$DLOG" --timeout 120 \
           --expect "0 > " \
-          --send 'test-feval-report\r' --expect "> "
+          --send 'test-feval-report\r' --expect "> " \
+          --send 'test-printf-precision\r' --expect "> "
         RC=$?
         kill "$QPID" 2>/dev/null   # by PID, never by pattern
       fi
@@ -1150,10 +1153,23 @@ FTH
       grep -aqF 'threw -19 (hex -13' <<<"$DL" \
         || fail "REGRESSION: the $A diagnostic did not carry 'threw -19 (hex -13' — the code is the half that says WHICH failure it was, and both bases are printed because the Forth sources and the C table spell the same undefined-word code differently — see $DLOG"
 
-      note "$A: 0 binding failures during boot, and the fixture produced exactly 1 naming '$SELFW' with its code"
+      # (3) libc/vsprintf.c's %s precision, seven fixtures inside the shipped
+      # firmware. SIX of them were wrong before patch 21 -- precision was
+      # treated as a MINIMUM, so `%.3s` on "abcdef" printed all six bytes and
+      # `%.10s` on "abc" read ten. The seventh, bare `%s`, is the must-NOT-break
+      # control: a "fix" that pushed the no-precision path through
+      # strnlen(s, -1) would still pass the other six. Run here and not on the
+      # host because kernel/bootstrap.c #defines printk to the HOST printf under
+      # BOOTSTRAP -- a host harness would test glibc and report on OpenBIOS.
+      grep -aqF 'printf-precision: 7/7 ok' <<<"$DL" \
+        || fail "REGRESSION: $A did not print 'printf-precision: 7/7 ok' — libc/vsprintf.c's %s precision is wrong again, or the fixture set changed size without this assertion: $(grep -aoE 'printf-precision: [^ ]+ .{0,44}BAD' <<<"$DL" | head -3 | tr '\n' '|') — see $DLOG"
+      grep -aq 'printf-precision: .* BAD' <<<"$DL" \
+        && fail "REGRESSION: $A reported a BAD printf-precision case even though the ratio line passed — the two disagree, which means the counter and the per-case verdict are out of step — see $DLOG"
+
+      note "$A: 0 binding failures during boot, the reporter fixture produced exactly 1 naming '$SELFW', and 7/7 printf-precision cases pass"
     done
 
-    pass "the Forth bindings report their own failures on x86, amd64 and ppc: a clean boot prints ZERO feval/fword/eword lines on all three, and test-feval-report — the reporter's own must-catch fixture — prints exactly one, naming the unresolvable word and its throw code in both bases (-19 decimal, -13 hex — the Forth sources spell it the second way)"
+    pass "the Forth bindings report their own failures on x86, amd64 and ppc: a clean boot prints ZERO feval/fword/eword lines on all three, and test-feval-report — the reporter's own must-catch fixture — prints exactly one, naming the unresolvable word and its throw code in both bases (-19 decimal, -13 hex — the Forth sources spell it the second way); and libc/vsprintf.c's %s precision now clips instead of over-reading, 7/7 fixtures on each arch"
     ;;
   *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|vga|diagnostics]" >&2; exit 1 ;;
 esac
