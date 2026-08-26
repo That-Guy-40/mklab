@@ -90,10 +90,21 @@ case "$FLAVOR" in
     python3 "$REPO/tools/drive-serial-repl.py" "$SOCK" "$LOG" --timeout 90 \
       --expect "0 > " \
       --send '3 4 + .\r' --expect "7 " \
+      --send 'variable ap-probe  5 ap-probe !\r' --expect "0 > " \
+      --send 'device-end  ." AP=" ap-probe @ . cr\r' --expect "0 > " \
       --send 'dev / ls\r' --expect "openprom" --expect "0 > "
     RC=$?
     kill "$QPID" 2>/dev/null   # by PID, never by pattern
-    [[ $RC -eq 0 ]] && pass "OpenBIOS ($FLAVOR) answered 7 at the 0 > prompt and listed the device tree"
+    # The x86 arm of the amd64 track's clean-prompt probe, and it is here as a
+    # CONTROL: x86's preopen has always ended in device-end (init.fs:52), so
+    # this has always passed. An assertion that only ever runs on the arch it
+    # was written for cannot distinguish "the fix works" from "the probe cannot
+    # fail". If this line ever goes red, the shared shape regressed, not amd64.
+    if [[ $RC -eq 0 ]]; then
+      grep -q 'AP=5' "$LOG" \
+        || fail "REGRESSION: a variable defined at the x86 prompt did not survive device-end — arch/x86/init.fs's preopen has ended in device-end since forever, so the firmware is now leaving a node active the way amd64 used to — see $LOG"
+      pass "OpenBIOS ($FLAVOR) answered 7 at the 0 > prompt, listed the device tree, and left no device node active (a prompt-defined variable survives device-end)"
+    fi
     fail "no prompt conversation on the $FLAVOR track (rc=$RC) — see $LOG" ;;
   ppc)
     command -v qemu-system-ppc >/dev/null || skip "qemu-system-ppc not installed"
@@ -468,6 +479,8 @@ case "$FLAVOR" in
       --expect "0 > " \
       --send '3 4 + .\r' --expect "7 " \
       --send '-1 u.\r' --expect "0 > " \
+      --send 'variable ap-probe  5 ap-probe !\r' --expect "0 > " \
+      --send 'device-end  ." AP=" ap-probe @ . cr\r' --expect "0 > " \
       --send 'dev / ls\r' --expect "0 > "
     RC=$?
     kill "$QPID" 2>/dev/null   # by PID, never by pattern
@@ -483,7 +496,25 @@ case "$FLAVOR" in
       || fail "the firmware did not report skipping relocation — see $LOG"
     grep -q 'openprom' "$LOG" \
       || fail "no device tree at the 64-bit prompt — see $LOG"
-    pass "SPIKE 1: QEMU booted a 64-bit ELF (via the multiboot a.out kludge) and the firmware runs in long mode — 0 > answered 7, '-1 u.' printed ffffffffffffffff, and the device tree is there"
+    # THE PROMPT MUST BE CLEAN, and until 2026-08-26 amd64's was not: the last
+    # preopen of the SYSTEM-initializer left /chosen active because
+    # arch/amd64/init.fs's preopen was missing the device-end x86:52 has. That
+    # is not cosmetic. active-package! sets CURRENT to the active node's method
+    # list -- correct IEEE 1275, it is how `: open ... ;` becomes a node method
+    # -- so with a node left open EVERY definition made at the prompt landed in
+    # /chosen and vanished the instant anything called device-end:
+    #
+    #     0 > variable la  5 la !  la @ .    5  ok
+    #     0 > device-end  la @ .             la: undefined word.
+    #
+    # The assertion is the OUTCOME -- a word defined at the prompt is still
+    # there after device-end -- not `active-package u.`, which is the
+    # mechanism and would keep passing if the walk were fixed some other way.
+    # The x86 arm of this same probe lives in the multiboot track, where it has
+    # ALWAYS passed: that is the control proving this assertion is not vacuous.
+    grep -q 'AP=5' "$LOG" \
+      || fail "REGRESSION: a variable defined at the amd64 prompt did not survive device-end — the firmware is coming up with a device node still active (it was /chosen), so every definition made at the prompt is quietly a node method — see $LOG"
+    pass "SPIKE 1: QEMU booted a 64-bit ELF (via the multiboot a.out kludge) and the firmware runs in long mode — 0 > answered 7, '-1 u.' printed ffffffffffffffff, the device tree is there, and a variable defined at the prompt survives device-end (no node left active)"
     ;;
   amd64-fault)
     # SPIKE 2, first half: the 64-bit exception layer.
