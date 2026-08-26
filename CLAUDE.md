@@ -164,6 +164,7 @@ control, on the run that introduced it, and **none** would have been visible in 
 | in an ERE, **`\t` is a literal `t`** — `grep -vE '\t[[:space:]]*$'` drops every line **ending in the letter t** | the extractor silently lost its own fixtures `… lab-lxd.sh list` |
 | arguments passed in the **wrong order**, so `class` held a file path | every hard finding quietly degraded to a warning — *a checker grading its own findings down to advisory* |
 | a `# shellcheck disable` / an extraction aimed **one line off** the command it meant | a suppression that suppressed nothing; an extraction that swallowed the next YAML key and blamed bash |
+| **`strcmp` stops at the first NUL** — so a fixture for a `printf` whose bug is writing *past* one compared `"abc"` equal to `"abc\0"` plus six bytes of whatever followed (2026-08-26) | the single case that best demonstrated the over-read — `%.10s` on a 3-byte string producing **10** — reported `OK`, and the control read `2/7` where the truth was `1/7` |
 
 Four rules follow, and the last two are the ones that were learned the expensive way:
 
@@ -177,6 +178,16 @@ Four rules follow, and the last two are the ones that were learned the expensive
   `check-doc-verbs.sh` §0), and **prove it end to end**, not just its extractor: the
   question is *"does a bad input FAIL the run"*, and the extractor is only the first of the
   classifier, the probe and the reporting that sit between input and verdict.
+- **The instrument must out-reach the defect.** *Assert the outcome* is not enough: the
+  **primitive doing the asserting** has to be capable of observing the failure at all.
+  `strcmp` cannot test a function whose bug is writing past a NUL — it stops there. A
+  **line-anchored** regex cannot see a message that *continues* someone else's line, which
+  is why `^(feval|fword|eword):` counted 1 failure where there were 2 (the undefined-word
+  report follows `interpreter.fs`'s `<word>:`, with no newline between them) — the third
+  time a line-anchored pattern has stood in for a question about a *command* or a
+  *message* in this repo. Ask what the defect physically does, then pick an instrument with
+  more reach than that: compare `vsnprintf`'s **returned length** beside the bytes, lex the
+  command instead of matching the line.
 - **Extract the shipped thing; never re-implement it.** `test-ci-tolerates-a-skipped-suite.sh`
   and `test-shellcheck-gate.sh` `sed` the step out of `ci.yml`; `check-doc-verbs.sh` and
   `check-guided-path-is-a-view.sh` share
