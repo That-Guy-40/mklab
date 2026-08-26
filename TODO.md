@@ -2358,6 +2358,182 @@ It has no in-tree caller — the only integer conversions carrying a precision a
 ppc's own two `%8.8lx`, which the fixture asserts correct — so it is named, not fixed, and
 the track fails if it ever spreads to another arch.
 
+### 13.1d x86's `go` hung on an uninitialised `load-state` — **CLOSED 2026-08-26**
+
+**Patch 23, arch-neutral, `Arch-tested: x86 amd64 ppc`.** §13.1 carried *"x86's `go` hangs
+where amd64's completes"* as an UNKNOWN. It is neither a context-switch bug nor arch code.
+
+```forth
+constant load-state.size
+create load-state load-state.size allot     \ allot does NOT zero
+```
+
+Nothing else initialises it. The six C loaders in `libopenbios/*_load.c` each fill in
+`>ls.file-size` for their own format; **the `$load` path fills in none of it.** And
+`init_forth_context()` reads that field treating **0 as "nobody wrote this"**.
+
+Measured — same firmware, same 31-byte `.fth`, **both arches loading it correctly**
+(`load-size` `0x1f`, first byte `0x5c` on both):
+
+| | `load-state >ls.file-size @` | what `evaluate` got |
+|---|---|---|
+| amd64 | `0` | fallback fired → **31 bytes** → worked |
+| x86 | `0x30000000` | fallback did **not** fire → **768 MB** to interpret as Forth |
+
+That is the hang. **amd64 had been passing by luck**, on the contents of memory.
+
+#### Three lines and a printk
+
+1. **`erase` `load-state` at creation**, so `0` finally means *"nothing was loaded"* rather
+   than *"nobody wrote it down"*. Covers `>ls.entry` and `>ls.file-type` too — same
+   exposure, and no reader had any way to know.
+2. **`!load-size` writes both records of the one fact.** `variable file-size` and
+   `load-state >ls.file-size` hold the same number and only the first was set on the
+   `$load` path — the "two records" defect [§13.1](#131-two-more-config-flips--both-closed-loader_forth-2026-08-25-driver_vga-2026-08-26)'s
+   patch 15 *named and worked around rather than fixed*. Ordering is safe: `$load` calls
+   `!load-size` **before** `init-program`, so a C loader still wins with its own value.
+3. **A zero size is a refusal with a reason.** `evaluate` of 0 bytes succeeds and prints
+   nothing, so an unwritten size looked exactly like a payload with nothing to say — the
+   same silence this lab has now chased four times.
+
+#### And it surfaced a second x86 defect, now honest instead of hanging
+
+```
+0 > go
+switching to new context:
+Evaluating Forth...
+init-program: nothing to evaluate -- ls.file-size=0 load-size=0 load-base=4000000
+```
+
+Comparing the two words the context reads — **by xt and by value**, at the prompt and from
+inside:
+
+| word | xt @prompt | xt @context | value @prompt | value @context |
+|---|---|---|---|---|
+| `load-base` | `13756c` | **`12ebb8`** | `e066fdd0` | `4000000` |
+| `load-size` | `12afc8` | `12afc8` | `1f` | **`0`** |
+
+**Those are two different mechanisms wearing one symptom:**
+
+- **`load-base` resolves to a different word** (different xt). `13756c` is the C shadow
+  `arch/x86/openbios.c` defines late as `phys_to_virt(LOAD_BASE_PHYS)`; `12ebb8` is the
+  earlier constant in `forth/admin/nvram.fs`.
+- **`load-size` resolves to the same word** (identical xt) and yields a **different
+  number**. That is not a lookup failure at all — the fetch of `variable file-size` returns
+  something else.
+
+> **Retraction.** The first write-up of this said the constant *"rules out address
+> translation, because a constant would carry the same number through any segment change."*
+> **That was wrong.** A Forth constant's value lives in its dictionary body and is *fetched
+> at execution time*, through whatever data segment is in effect — a segment change moves it
+> like anything else. Reasoning was standing in for a measurement; the table above replaced
+> it, and no single-mechanism story explains both rows.
+
+**Beyond that the mechanism is not established, and no guess is recorded in its place.**
+amd64 is unaffected — it defines no shadow, because it does not relocate — and runs the
+payload.
+
+`go` on x86 therefore goes from a **silent 768 MB walk to a named refusal**, which is the
+whole of what patch 23 claims. **Running the payload there is the next item**, and it is
+now a debuggable failure rather than a hang.
+
+### 13.3 Still open — measured, named, and not fixed
+
+Everything here was **observed**, not deduced. Where a mechanism is unknown it says so, and
+no guess stands in its place. Nothing in this list has an in-tree caller that is currently
+broken by it; that is why each is recorded rather than repaired.
+
+#### A. x86's client context reads different values than the prompt — **the reason `go` still doesn't run the payload**
+
+From [§13.1d](#131d-x86s-go-hung-on-an-uninitialised-load-state--closed-2026-08-26). Once
+the 768 MB walk was fixed, `go` refuses honestly and prints why. Comparing **by xt and by
+value**:
+
+| word | xt @prompt | xt @context | value @prompt | value @context |
+|---|---|---|---|---|
+| `load-base` | `13756c` | **`12ebb8`** | `e066fdd0` | `4000000` |
+| `load-size` | `12afc8` | `12afc8` | `1f` | **`0`** |
+
+**Two mechanisms, one symptom**, and this is the part to start from:
+
+- **`load-base` resolves to a different word.** `13756c` is the C shadow
+  `arch/x86/openbios.c` defines late as `phys_to_virt(LOAD_BASE_PHYS)`; `12ebb8` is the
+  earlier constant in `forth/admin/nvram.fs`. A **lookup** difference.
+- **`load-size` resolves to the same word** — identical xt — and yields a different number.
+  A **fetch** difference. Not a lookup problem at all.
+
+No single-mechanism story explains both rows. amd64 is unaffected: it defines no shadow,
+because it does not relocate. **The next session starts from this table**, which the
+firmware now prints itself.
+
+#### B. `number()` diverges from C99 in two measured ways
+
+Both from `libc/vsprintf.c`, both asserted **as themselves** by `test-printf-edges` so that
+closing either one goes red on purpose.
+
+| case | C99 | here | why |
+|---|---|---|---|
+| `%.0d` of `0` | *(nothing)* | `"0"` | `if (num == 0) tmp[i++] = '0';` runs unconditionally |
+| `%08.3d` of `42` | `"     042"` | `"00000042"` | the `0` flag is **not** ignored when a precision is given |
+
+The second is **independently corroborated by GCC**, which refuses the literal:
+`-Werror=format=` → *"'0' flag ignored with precision and '%d'"*. The compiler is right
+about the rule; this printf does not follow it.
+
+**Not fixed** — no in-tree caller combines a zero flag with a precision. The only integer
+conversions carrying a precision anywhere are `arch/ppc/qemu/main.c:58-59`'s two `%8.8lx`,
+which carry no `0` flag and are asserted correct. Both divergences mis-*format*; neither
+over-*reads*, which is what separated them from
+[§13.1c](#131c-s-precision-was-a-minimum--closed-2026-08-26)'s `%s` bug.
+
+**And one suspicion deliberately NOT tested:** `number()` does `num = -num` on a
+`long long` with no guard, so `LLONG_MIN` is undefined behaviour. It is left unexercised
+**because testing it would mean shipping the UB in a fixture** — read from the source,
+named here, not measured.
+
+#### C. ppc's `snprintf` writes a byte and returns 0
+
+For `%.0d` of `0` only:
+
+| arch | writes | returns |
+|---|---|---|
+| x86 | `"0"` | `1` |
+| amd64 | `"0"` | `1` |
+| **ppc** | `"0"` | **`0`** |
+
+Worse-shaped than a formatting divergence — a caller advancing a cursor by the return would
+overwrite the character. **Mechanism not traced.** `number()` takes the `num == 0` branch,
+emits one character, and `vsnprintf` returns `str-buf`; why that is `0` there and `1`
+elsewhere is unknown. The track pins the line per arch and **fails if it spreads**.
+
+#### D. The device tree, from §13.1a
+
+- **`QEMU,VGA@0` cannot be reached by path.** `ls` under the host bridge lists it, but
+  `dev /pci8086,1237@0/QEMU,VGA@0` — and the relative form — both answer *no such device*,
+  **on x86 as well**. `pnodename` and `pathres` disagree about that node's unit address.
+- **No `screen` devalias** on either arch. The FCode installs the node and its properties;
+  nothing points at it, so `" screen" find-dev` returns `0`. The `vga` track prints this as
+  an UNKNOWN on every run.
+
+#### E. Unverified by construction
+
+- **sparc32/sparc64 carry amd64's `preopen` omission** (no `device-end`). This lab cannot
+  boot sparc, so they stay UNVERIFIED rather than patched blind —
+  [`check-patch-scope.sh`](tools/check-patch-scope.sh) prints `NOT COVERED: sparc` on every
+  run so a green three-arch line cannot read as "all arches covered".
+- **`_eword()`'s "word not in the dictionary" branch** is not watched to fire. It is
+  reachable only if `evaluate` itself is missing, which cannot happen in a firmware that
+  has reached the prompt.
+- **Untested printf surface:** `%n`, and `long long` conversions beyond the `%8.8lx` shape
+  the tree actually uses.
+
+#### Resolved while writing this list
+
+**x86's `load` prints no probe/mount trace where amd64 prints five lines.** Noticed during
+§13.1d and briefly filed as unexplained; it is not a defect. `CONFIG_DEBUG_FS` is `true` on
+amd64 and `false` on x86 — one of the six shared config options §13.1 already recorded as
+differing. Named here so the next person who sees the asymmetry does not re-open it.
+
 ### 13.2 Four defects in `forth/device/property.fs` — **three WATCHED TO BITE 2026-08-25**
 
 Read at `openbios` `e5ac46d`. **The work was to watch them bite, and (a)(b)(c) now do** —

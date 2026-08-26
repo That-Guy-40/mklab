@@ -1,0 +1,199 @@
+Subject: [PATCH 23/23] client.fs: load-state is never zeroed, and x86's `go` walked 768 MB
+Arch-tested: x86 amd64 ppc
+
+TODO 13.1 recorded "x86's `go` hangs where amd64's completes" as an UNKNOWN.
+It is not a context-switch bug and it is not arch-specific code. It is one
+uninitialised structure and a sentinel that could not mean what it was read to
+mean.
+
+    struct ( load-state ) ... constant load-state.size
+    create load-state load-state.size allot     <- allot does NOT zero
+
+Nothing else initialises it. The six C loaders in libopenbios/*_load.c each fill
+in >ls.file-size for their own format; the $load path fills in none of it. And
+libopenbios/initprogram.c's init_forth_context() reads that field and treats
+ZERO AS "NOBODY WROTE THIS":
+
+    feval("load-state >ls.file-size @");
+    size = POP();
+    if (size == 0) { feval("load-size"); size = POP(); }
+    fword("load-base"); PUSH(size); fword("evaluate");
+
+Measured 2026-08-26, same firmware, same 31-byte .fth, both arches loading it
+correctly (load-size 0x1f, first byte 0x5c on both):
+
+    load-state >ls.file-size @      amd64 -> 0           x86 -> 30000000
+
+On amd64 the field happened to be zero, the fallback fired, 31 bytes evaluated,
+`go` worked. On x86 it held 0x30000000 of dictionary garbage, so the fallback
+did NOT fire and `evaluate` was handed 768 MEGABYTES to interpret as Forth.
+That is the hang. amd64 had been passing BY LUCK, on the contents of memory.
+
+THE FIX IS THREE LINES AND ONE PRINTK:
+
+  1. client.fs ERASES load-state at creation, so 0 finally means "nothing was
+     loaded" rather than "nobody wrote it down". This covers >ls.entry and
+     >ls.file-type too -- they have the same exposure and no reader had any
+     way to know.
+  2. !load-size writes BOTH records of the one fact. `variable file-size` and
+     `load-state >ls.file-size` hold the same number and only the first was
+     being set on the $load path, which is the "two records" defect patch 15's
+     comment named and worked around rather than fixed. Ordering is safe:
+     $load calls !load-size BEFORE init-program, so a C loader that later
+     writes its own authoritative value still wins.
+  3. A zero size is now a REFUSAL WITH A REASON. `evaluate` of 0 bytes
+     succeeds and prints nothing, so a size that never got written looked
+     exactly like a payload with nothing to say -- the same silence this lab
+     has now chased four times (patches 14, 16, 18, 20).
+
+AFTER, x86 NO LONGER HANGS. It says what happened instead:
+
+    0 > go
+    switching to new context:
+    Evaluating Forth...
+    init-program: nothing to evaluate -- ls.file-size=0 load-size=0
+    load-base=4000000 -- no bytes were loaded, or this context cannot see them
+
+WHICH SURFACES A SECOND, SEPARATE x86 DEFECT -- now honest instead of hanging,
+and NOT fixed here. Comparing the two words the context reads, BY xt AND BY
+VALUE, at the prompt and from inside:
+
+    word         xt @prompt   xt @context   value @prompt   value @context
+    load-base    13756c       12ebb8        e066fdd0        4000000
+    load-size    12afc8       12afc8        1f              0
+
+THOSE ARE TWO DIFFERENT MECHANISMS WEARING ONE SYMPTOM:
+
+  - load-base resolves to a DIFFERENT WORD (different xt). 13756c is the C
+    shadow arch/x86/openbios.c defines late as phys_to_virt(LOAD_BASE_PHYS);
+    12ebb8 is the earlier constant in forth/admin/nvram.fs.
+  - load-size resolves to the SAME WORD (identical xt) and yields a DIFFERENT
+    NUMBER. That is not a lookup failure at all -- the fetch of `variable
+    file-size` returns something else.
+
+An earlier draft of this header claimed the constant "rules out address
+translation, because a constant would carry the same number through any
+segment change". THAT WAS WRONG and is retracted: a Forth constant's value
+lives in its dictionary body and is FETCHED AT EXECUTION TIME, through
+whatever data segment is in effect, so a segment change moves it like anything
+else. The reasoning was replaced by the measurement above, which no
+single-mechanism story explains.
+
+Mechanism beyond that is NOT established, and no guess is recorded in its
+place. amd64 is unaffected (it defines no shadow -- it does not relocate) and
+runs the payload.
+
+So `go` on x86 goes from a silent 768 MB walk to a named refusal, which is the
+whole of what this patch claims. Running the payload there is the next item.
+
+All 13 smoke tracks pass on x86, amd64 and ppc.
+
+diff --git a/forth/debugging/client.fs b/forth/debugging/client.fs
+diff --git a/forth/debugging/client.fs b/forth/debugging/client.fs
+--- a/forth/debugging/client.fs
++++ b/forth/debugging/client.fs
+@@ -31,12 +31,45 @@ struct ( load-state )
+ constant load-state.size
+ create load-state load-state.size allot
+ 
++\ ERASED, and it is load-bearing. `create ... allot` hands back whatever was in
++\ the dictionary space, and NOTHING else initialises this structure: the six C
++\ loaders in libopenbios/*_load.c each fill in >ls.file-size for their own
++\ format, and the $load path below fills in none of it. So every reader that
++\ treats 0 as "nobody wrote this" was asking a question the storage could not
++\ answer.
++\
++\ Measured 2026-08-26, and it is exactly why `go` hung on x86 and not on amd64:
++\
++\     load /ide@1/cdrom@0:\go.fth   then   load-state >ls.file-size @
++\       amd64  ->  0            ( so libopenbios/initprogram.c fell back to
++\                                 load-size, 31 bytes, and it worked )
++\       x86    ->  30000000     ( so it did NOT fall back, and handed
++\                                 `evaluate` 768 MB to interpret as Forth )
++\
++\ Same firmware, same file, same 31 bytes correctly loaded on both. The only
++\ difference was what happened to be lying in the dictionary at that address.
++\ amd64 had been passing BY LUCK.
++load-state load-state.size erase
++
+ variable state-valid
+ 0 state-valid !
+ 
+ variable file-size
+ 
+-: !load-size file-size ! ;
++: !load-size  ( n -- )
++  \ BOTH RECORDS OF THE ONE FACT. `variable file-size` and
++  \ `load-state >ls.file-size` are two places holding the same number, and
++  \ before this only the first was written here while libopenbios reads the
++  \ second -- so a file loaded through $load reported its size to nobody who
++  \ was asking. Writing both at the point the fact is learned is what makes
++  \ the erase above mean something: 0 now says "nothing was loaded", not
++  \ "nothing wrote it down".
++  \
++  \ Ordering is safe: $load calls !load-size BEFORE init-program, so a C
++  \ loader that later fills in its own authoritative value still wins.
++  dup file-size !
++  load-state >ls.file-size !
++;
+ 
+ : load-size file-size @ ;
+ 
+--- a/libopenbios/initprogram.c
++++ b/libopenbios/initprogram.c
+@@ -151,6 +151,55 @@
+ 			size = POP();
+ 		}
+ 
++		/* A ZERO HERE IS A REFUSAL, NOT A NO-OP.
++		 *
++		 * `evaluate` of 0 bytes succeeds and prints nothing, so before
++		 * this a size that never got written looked exactly like a
++		 * payload that had nothing to say -- the same silence this
++		 * lab has now chased four times.
++		 *
++		 * The 0-means-unset test above is kept as belt and braces, but
++		 * it is no longer what makes this correct: client.fs now
++		 * ERASES load-state at creation and !load-size writes BOTH
++		 * records, so 0 finally means "nothing was loaded" rather than
++		 * "nobody wrote it down". It did not mean that before, and
++		 * that is precisely how `go` hung on x86: the field held
++		 * 0x30000000 of dictionary garbage, the fallback therefore did
++		 * not fire, and `evaluate` was handed 768 MB to interpret. */
++		if (size == 0) {
++			ucell fs, ls, lb;
++
++			/* Report the three values SEPARATELY. "both 0" cannot
++			 * distinguish "nothing was loaded" from "this context
++			 * cannot see what was loaded", and on x86 those are
++			 * different answers: at the prompt load-size reads
++			 * 0x1f, and here it reads 0. */
++			ucell xb, xs;
++
++			/* THE XTs DECIDE IT. If `load-base` resolves to the
++			 * SAME xt here as at the prompt but yields a different
++			 * number, the fetch of its body read a different cell
++			 * -- address translation. If the xt DIFFERS, a
++			 * different word resolved. A constant does NOT settle
++			 * this by itself: its value lives in the dictionary
++			 * and is fetched at execution time, through whatever
++			 * data segment is in effect. */
++			feval("load-state >ls.file-size @"); fs = POP();
++			feval("load-size");                  ls = POP();
++			feval("load-base");                  lb = POP();
++			feval("' load-base");                xb = POP();
++			feval("' load-size");                xs = POP();
++			printk("init-program: nothing to evaluate --"
++			       " ls.file-size=%lx load-size=%lx load-base=%lx"
++			       " xt(load-base)=%lx xt(load-size)=%lx"
++			       " -- no bytes were loaded, or this context"
++			       " cannot see them\n",
++			       (unsigned long)fs, (unsigned long)ls,
++			       (unsigned long)lb, (unsigned long)xb,
++			       (unsigned long)xs);
++			return;
++		}
++
+ 		fword("load-base");
+ 		PUSH(size);
+ 	}

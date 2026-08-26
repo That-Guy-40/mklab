@@ -1185,8 +1185,8 @@ FTH
       # reads one extra character rather than over-reading like patch 21's bug,
       # and it sits in a boot path on the control arch. If someone fixes it the
       # fixture says DIVERGENCE-CLOSED and this assertion goes red on purpose.
-      grep -aqF 'printf-edges: 10/10 ok, 1/1 recorded divergence' <<<"$DL" \
-        || fail "REGRESSION: $A did not print 'printf-edges: 10/10 ok, 1/1 recorded divergence' — either number()/vsnprintf changed behaviour, or the %.0d divergence was closed and this record is now false: $(grep -aoE 'printf-edges: [^ ]+ .{0,52}(BAD|CLOSED)' <<<"$DL" | head -3 | tr '\n' '|') — see $DLOG"
+      grep -aqF 'printf-edges: 12/12 ok, 2/2 recorded divergence' <<<"$DL" \
+        || fail "REGRESSION: $A did not print 'printf-edges: 12/12 ok, 2/2 recorded divergence' — either number()/vsnprintf changed behaviour, or one of the two recorded C99 divergences (%.0d of 0; the 0 flag surviving a precision) was closed and this record is now false: $(grep -aoE 'printf-edges: [^ ]+ .{0,52}(BAD|CLOSED)' <<<"$DL" | head -3 | tr '\n' '|') — see $DLOG"
 
       # (5) THE d-zero LINE IS PINNED PER ARCH, because the two halves of it
       # move independently and a ratio cannot say which one did. All three
@@ -1214,10 +1214,10 @@ FTH
           && fail "REGRESSION: $A now reports RET-DISAGREES on d-zero — snprintf writing a byte and returning 0 was a ppc-only anomaly, and it has spread — see $DLOG"
       fi
 
-      note "$A: 0 binding failures during boot, the reporter fixture produced exactly 1 naming '$SELFW', 7/7 printf-precision and 10/10 printf-edges cases pass (+1 recorded %.0d divergence$([[ "$A" == ppc ]] && echo ', and ppc-only RET-DISAGREES'))"
+      note "$A: 0 binding failures during boot, the reporter fixture produced exactly 1 naming '$SELFW', 7/7 printf-precision and 12/12 printf-edges cases pass (+2 recorded C99 divergences$([[ "$A" == ppc ]] && echo ', and ppc-only RET-DISAGREES'))"
     done
 
-    pass "the Forth bindings report their own failures on x86, amd64 and ppc: a clean boot prints ZERO feval/fword/eword lines on all three, and test-feval-report — the reporter's own must-catch fixture — prints exactly one, naming the unresolvable word and its throw code in both bases (-19 decimal, -13 hex — the Forth sources spell it the second way); and libc/vsprintf.c's %s precision now clips instead of over-reading (7/7), while number() precision and vsnprintf's buffer edge are correct on all three (10/10) with the one C99 divergence — %.0d of 0 — asserted as itself rather than hidden in a pass, and its ppc-only return-value anomaly (writes a byte, returns 0) pinned as a named UNKNOWN"
+    pass "the Forth bindings report their own failures on x86, amd64 and ppc: a clean boot prints ZERO feval/fword/eword lines on all three, and test-feval-report — the reporter's own must-catch fixture — prints exactly one, naming the unresolvable word and its throw code in both bases (-19 decimal, -13 hex — the Forth sources spell it the second way); and libc/vsprintf.c's %s precision now clips instead of over-reading (7/7), while number() precision and vsnprintf's buffer edge are correct on all three (12/12) with the two C99 divergences — %.0d of 0, and the 0 flag surviving a precision — asserted as themselves rather than hidden in a pass, and its ppc-only return-value anomaly (writes a byte, returns 0) pinned as a named UNKNOWN"
     ;;
   *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|vga|diagnostics]" >&2; exit 1 ;;
 esac
