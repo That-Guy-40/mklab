@@ -83,12 +83,31 @@ is 0 there and 1 elsewhere has NOT been traced, and no guess is written down in
 place of tracing it. No in-tree caller, so it is named rather than fixed -- and
 the track fails if it ever spreads to another arch.
 
-NOT COVERED, still: %n, the SPECIAL/`#` flag combinations, and long long
-conversions. Named rather than counted as tested.
+A SECOND C99 DIVERGENCE, measured 2026-08-26 when the flag/precision
+interactions were finally asked about rather than assumed:
+
+    %08.3d of 42     C99 "     042"     here "00000042"
+
+C99 7.19.6.1: "For d, i, o, u, x, and X conversions, if a precision is
+specified, the 0 flag is ignored." number() does not ignore it. AND GCC REFUSES
+THE LITERAL -- `-Werror=format=` says "'0' flag ignored with precision and
+'%d'" -- which is independent corroboration of the rule rather than a second
+opinion of my own. The construct is suppressed beside the one call it excuses,
+because the divergent behaviour IS the subject under test. `%+.3d` and `%#.3x`
+were measured at the same time and are CORRECT.
+
+Recorded, not fixed, for the same reasons as %.0d: no in-tree caller combines a
+zero flag with a precision, and it mis-formats rather than over-reading.
+
+NOT COVERED, still: %n, and long long conversions beyond the %8.8lx shape the
+tree actually uses. AND ONE SUSPICION DELIBERATELY NOT TESTED: number() does
+`num = -num` on a long long with no guard, so LLONG_MIN is undefined behaviour.
+It is left unexercised because testing it would mean SHIPPING the UB in a
+fixture -- read from the source, named, not measured.
 
 --- a/libopenbios/init.c
 +++ b/libopenbios/init.c
-@@ -152,6 +152,165 @@
+@@ -152,6 +152,213 @@
  	printk("printf-precision: %d/%d ok\n", ok, n);
  }
  
@@ -133,6 +152,14 @@ conversions. Named rather than counted as tested.
 +	EDGE_CASE("d-width", "  042", "%5.3d", 42);
 +	EDGE_CASE("d-left",  "042  ", "%-5.3d", 42);
 +	EDGE_CASE("x-pad",   "0ab",   "%.3x",  0xab);
++	/* C99 7.19.6.1: "For d, i, o, u, x, and X conversions, if a precision
++	 * is specified, the 0 flag is ignored." number() does not ignore it --
++	 * `c = (type & ZEROPAD) ? '0' : ' '` and the pad loop runs regardless
++	 * -- so these three ask whether that is actually reachable, rather than
++	 * asserting it from a read of the source. */
++	EDGE_CASE("plus-prec",    "+042",     "%+.3d",  42);
++	EDGE_CASE("hash-prec",    "0x0ab",    "%#.3x",  0xab);
++
 +	/* The shape the tree ACTUALLY uses: arch/ppc/qemu/main.c:58-59 prints
 +	 * four `%8.8lx` in the boot path, and that is the only integer
 +	 * conversion with a precision anywhere outside this fixture. Test the
@@ -247,6 +274,46 @@ conversions. Named rather than counted as tested.
 +	       canary[0], rc,
 +	       (canary[0] == 'Z' && rc == 3) ? "OK" : "BAD");
 +
++	/* RECORDED DIVERGENCE 2: the 0 flag survives a precision.
++	 *
++	 * C99 7.19.6.1: "For d, i, o, u, x, and X conversions, if a precision
++	 * is specified, the 0 flag is ignored." number() does not ignore it --
++	 * `c = (type & ZEROPAD) ? '0' : ' '` and the pad loop runs whatever
++	 * the precision is -- so `%08.3d` of 42 gives 00000042 where C99 gives
++	 * "     042".
++	 *
++	 * GCC REFUSES THE LITERAL, which is independent corroboration rather
++	 * than a second opinion of my own: `-Werror=format=` says "'0' flag
++	 * ignored with precision and '%d'". It is right about the rule; this
++	 * printf does not follow it. Suppressed beside the one call it
++	 * excuses, because the divergent behaviour IS the subject under test.
++	 *
++	 * Not fixed, same reasoning as d-zero: no in-tree caller combines a
++	 * zero flag with a precision (the only integer conversions with a
++	 * precision anywhere are ppc's two %8.8lx, which carry no 0 flag and
++	 * are asserted correct above), and it mis-pads rather than
++	 * over-reading. */
++#if defined(__GNUC__)
++#pragma GCC diagnostic push
++#pragma GCC diagnostic ignored "-Wformat"
++#endif
++	rc = snprintf(got, sizeof(got), "%08.3d", 42);
++#if defined(__GNUC__)
++#pragma GCC diagnostic pop
++#endif
++	n_div++;
++	if( !strcmp(got, "00000042") ) {
++		ok_div++;
++		printk("printf-edges: zeropad-prec C99[     042](8) here[%s]"
++		       " wrote=%d ret=%d DIVERGES-AS-RECORDED\n",
++		       got, (int)strlen(got), rc);
++	} else {
++		printk("printf-edges: zeropad-prec C99[     042](8) here[%s]"
++		       " wrote=%d ret=%d DIVERGENCE-CLOSED -- number() now"
++		       " ignores the 0 flag; update this case and TODO 13.1c\n",
++		       got, (int)strlen(got), rc);
++	}
++
 +	printk("printf-edges: %d/%d ok, %d/%d recorded divergence\n",
 +	       ok, n, ok_div, n_div);
 +}
@@ -254,7 +321,7 @@ conversions. Named rather than counted as tested.
  void
  openbios_init( void )
  {
-@@ -176,6 +335,9 @@
+@@ -176,6 +383,9 @@
  	// libc/vsprintf.c's %s precision fixtures -- see above
  	bind_func("test-printf-precision", printf_precision_selftest);
  
