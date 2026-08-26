@@ -2405,15 +2405,33 @@ Evaluating Forth...
 init-program: nothing to evaluate -- ls.file-size=0 load-size=0 load-base=4000000
 ```
 
-At the **prompt** x86 reads `load-size=1f` and `load-base=e066fdd0` — the C shadow
-`arch/x86/openbios.c` defines as `phys_to_virt(LOAD_BASE_PHYS)`. **Inside the client
-context** the same two words read `0` and `4000000` — and `0x4000000` is the constant in
-`forth/admin/nvram.fs`, a **different word** from the one the prompt resolves.
+Comparing the two words the context reads — **by xt and by value**, at the prompt and from
+inside:
 
-So this is about **which definition is visible from inside the context**, not about address
-translation: a `constant` would carry the same number through any segment change. **Beyond
-that the mechanism is not established, and no guess is recorded in its place.** amd64 is
-unaffected — it defines no shadow, because it does not relocate — and runs the payload.
+| word | xt @prompt | xt @context | value @prompt | value @context |
+|---|---|---|---|---|
+| `load-base` | `13756c` | **`12ebb8`** | `e066fdd0` | `4000000` |
+| `load-size` | `12afc8` | `12afc8` | `1f` | **`0`** |
+
+**Those are two different mechanisms wearing one symptom:**
+
+- **`load-base` resolves to a different word** (different xt). `13756c` is the C shadow
+  `arch/x86/openbios.c` defines late as `phys_to_virt(LOAD_BASE_PHYS)`; `12ebb8` is the
+  earlier constant in `forth/admin/nvram.fs`.
+- **`load-size` resolves to the same word** (identical xt) and yields a **different
+  number**. That is not a lookup failure at all — the fetch of `variable file-size` returns
+  something else.
+
+> **Retraction.** The first write-up of this said the constant *"rules out address
+> translation, because a constant would carry the same number through any segment change."*
+> **That was wrong.** A Forth constant's value lives in its dictionary body and is *fetched
+> at execution time*, through whatever data segment is in effect — a segment change moves it
+> like anything else. Reasoning was standing in for a measurement; the table above replaced
+> it, and no single-mechanism story explains both rows.
+
+**Beyond that the mechanism is not established, and no guess is recorded in its place.**
+amd64 is unaffected — it defines no shadow, because it does not relocate — and runs the
+payload.
 
 `go` on x86 therefore goes from a **silent 768 MB walk to a named refusal**, which is the
 whole of what patch 23 claims. **Running the payload there is the next item**, and it is

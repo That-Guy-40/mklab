@@ -55,22 +55,40 @@ AFTER, x86 NO LONGER HANGS. It says what happened instead:
     load-base=4000000 -- no bytes were loaded, or this context cannot see them
 
 WHICH SURFACES A SECOND, SEPARATE x86 DEFECT -- now honest instead of hanging,
-and NOT fixed here. At the prompt, x86 reads load-size=1f and
-load-base=e066fdd0 (the C shadow arch/x86/openbios.c defines as
-phys_to_virt(LOAD_BASE_PHYS)). INSIDE the client context the same two words
-read 0 and 4000000 -- and 0x4000000 is the constant in forth/admin/nvram.fs,
-a DIFFERENT WORD from the one the prompt resolves. So this is about which
-definition is visible from inside the context, not about address translation;
-a `constant` would carry the same number through any segment change. Mechanism
-beyond that is NOT established and no guess is recorded in its place.
-amd64 is unaffected (it defines no shadow -- it does not relocate) and runs the
-payload.
+and NOT fixed here. Comparing the two words the context reads, BY xt AND BY
+VALUE, at the prompt and from inside:
+
+    word         xt @prompt   xt @context   value @prompt   value @context
+    load-base    13756c       12ebb8        e066fdd0        4000000
+    load-size    12afc8       12afc8        1f              0
+
+THOSE ARE TWO DIFFERENT MECHANISMS WEARING ONE SYMPTOM:
+
+  - load-base resolves to a DIFFERENT WORD (different xt). 13756c is the C
+    shadow arch/x86/openbios.c defines late as phys_to_virt(LOAD_BASE_PHYS);
+    12ebb8 is the earlier constant in forth/admin/nvram.fs.
+  - load-size resolves to the SAME WORD (identical xt) and yields a DIFFERENT
+    NUMBER. That is not a lookup failure at all -- the fetch of `variable
+    file-size` returns something else.
+
+An earlier draft of this header claimed the constant "rules out address
+translation, because a constant would carry the same number through any
+segment change". THAT WAS WRONG and is retracted: a Forth constant's value
+lives in its dictionary body and is FETCHED AT EXECUTION TIME, through
+whatever data segment is in effect, so a segment change moves it like anything
+else. The reasoning was replaced by the measurement above, which no
+single-mechanism story explains.
+
+Mechanism beyond that is NOT established, and no guess is recorded in its
+place. amd64 is unaffected (it defines no shadow -- it does not relocate) and
+runs the payload.
 
 So `go` on x86 goes from a silent 768 MB walk to a named refusal, which is the
 whole of what this patch claims. Running the payload there is the next item.
 
 All 13 smoke tracks pass on x86, amd64 and ppc.
 
+diff --git a/forth/debugging/client.fs b/forth/debugging/client.fs
 diff --git a/forth/debugging/client.fs b/forth/debugging/client.fs
 --- a/forth/debugging/client.fs
 +++ b/forth/debugging/client.fs
@@ -123,7 +141,7 @@ diff --git a/forth/debugging/client.fs b/forth/debugging/client.fs
  
 --- a/libopenbios/initprogram.c
 +++ b/libopenbios/initprogram.c
-@@ -151,6 +151,41 @@
+@@ -151,6 +151,55 @@
  			size = POP();
  		}
  
@@ -150,15 +168,29 @@ diff --git a/forth/debugging/client.fs b/forth/debugging/client.fs
 +			 * cannot see what was loaded", and on x86 those are
 +			 * different answers: at the prompt load-size reads
 +			 * 0x1f, and here it reads 0. */
++			ucell xb, xs;
++
++			/* THE XTs DECIDE IT. If `load-base` resolves to the
++			 * SAME xt here as at the prompt but yields a different
++			 * number, the fetch of its body read a different cell
++			 * -- address translation. If the xt DIFFERS, a
++			 * different word resolved. A constant does NOT settle
++			 * this by itself: its value lives in the dictionary
++			 * and is fetched at execution time, through whatever
++			 * data segment is in effect. */
 +			feval("load-state >ls.file-size @"); fs = POP();
 +			feval("load-size");                  ls = POP();
 +			feval("load-base");                  lb = POP();
++			feval("' load-base");                xb = POP();
++			feval("' load-size");                xs = POP();
 +			printk("init-program: nothing to evaluate --"
 +			       " ls.file-size=%lx load-size=%lx load-base=%lx"
++			       " xt(load-base)=%lx xt(load-size)=%lx"
 +			       " -- no bytes were loaded, or this context"
 +			       " cannot see them\n",
 +			       (unsigned long)fs, (unsigned long)ls,
-+			       (unsigned long)lb);
++			       (unsigned long)lb, (unsigned long)xb,
++			       (unsigned long)xs);
 +			return;
 +		}
 +
