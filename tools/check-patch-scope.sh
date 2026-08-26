@@ -9,8 +9,8 @@
 # aren't polluting the ppc tree?", which is exactly the kind of catch that should not
 # depend on someone thinking to ask.
 #
-# THE RULE. A patch whose diff touches any path outside arch/x86/, arch/amd64/ and the two
-# per-arch config files must carry a header line:
+# THE RULE. A patch whose diff touches any path outside arch/x86/, arch/amd64/,
+# include/arch/{x86,amd64}/ and the two per-arch config files must carry a header line:
 #
 #     Arch-tested: x86 amd64 ppc
 #
@@ -49,6 +49,12 @@ LAB_ARCHES=(x86 amd64 ppc)
 is_confined() {
     case "$1" in
         arch/x86/*|arch/amd64/*)                                   return 0 ;;
+        # An arch's OWN header dir, added 2026-08-26 for patch 17. It is the same
+        # blast radius as arch/<a>/ -- include/arch/amd64/io.h is compiled into
+        # nothing but amd64 -- and the distinction that matters is one directory
+        # away: include/drivers/, include/libopenbios/ and friends are SHARED, and
+        # must-catch-5 below keeps them on the declaring side of the line.
+        include/arch/x86/*|include/arch/amd64/*)                   return 0 ;;
         config/examples/x86_config.xml|config/examples/amd64_config.xml) return 0 ;;
         *)                                                         return 1 ;;
     esac
@@ -125,6 +131,19 @@ Arch-tested: x86 amd64 ppc
 mk must-not-4.patch 'Subject: [PATCH] per-arch config files are confined
 --- a/config/examples/amd64_config.xml
 +++ b/config/examples/amd64_config.xml'
+mk must-not-5.patch 'Subject: [PATCH] an arch owns its own include dir too
+--- a/include/arch/amd64/io.h
++++ b/include/arch/amd64/io.h'
+
+# The pair that makes the widening meaningful. Both live under include/; only one of
+# them is an arch's own. If is_confined() is ever loosened to a bare include/arch or,
+# worse, to include/, must-catch-5 fires.
+mk must-catch-5.patch 'Subject: [PATCH] include/drivers is SHARED, one directory away
+--- a/include/drivers/vga.h
++++ b/include/drivers/vga.h'
+mk must-catch-6.patch 'Subject: [PATCH] another arch include dir is not ours to test
+--- a/include/arch/ppc/io.h
++++ b/include/arch/ppc/io.h'
 
 ctl_fail=()
 for f in "$WORK"/must-catch-*.patch; do
@@ -136,7 +155,7 @@ done
 if (( ${#ctl_fail[@]} )); then
     fail "$(printf 'the checker failed its own controls:'; printf '\n      %s' "${ctl_fail[@]}")"
 fi
-note "§0 controls: 4 must-catch, 4 must-not-catch — all 8 behaved"
+note "§0 controls: 6 must-catch, 5 must-not-catch — all 11 behaved"
 
 # ── §1 the real patches ────────────────────────────────────────────────────────────────
 (( $# )) || fail "usage: check-patch-scope.sh <patches-dir>"
@@ -177,4 +196,4 @@ if (( ${#problems[@]} )); then
     fail "$(printf '%d patch(es) leave arch/{x86,amd64} without saying what was tested:' "${#problems[@]}"; printf '\n      %s' "${problems[@]}")"
 fi
 
-pass "$checked patch(es) checked: every one that touches a path outside arch/{x86,amd64} names all of ${LAB_ARCHES[*]} as tested (8 self-controls fired first; ${#exempted[@]} grandfathered by name with reasons)"
+pass "$checked patch(es) checked: every one that touches a path outside arch/{x86,amd64} names all of ${LAB_ARCHES[*]} as tested (11 self-controls fired first; ${#exempted[@]} grandfathered by name with reasons)"

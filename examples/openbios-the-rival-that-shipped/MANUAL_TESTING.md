@@ -89,11 +89,15 @@ PASS: P3: … boot-file reads back as P3-PMEM, and the no-nvdimm control saw nei
 Runtime ≈ 15–30 s each (`amd64-pmem` and the `persist*` family boot three times,
 ≈ 60–90 s). SKIP (77) when the image, qemu, or python3 is absent.
 
-**The full list**: `multiboot coreboot ppc nvram dict-identity persist
-persist-flash floppy persist-os persist-os-flash amd64 amd64-fault amd64-ctx
-amd64-pmem amd64-linux property-abi` — 16 tracks, the last two added 2026-08-25 (Spike 3, then TODO §13.2's wordset probe).
-Measured 2026-08-23 on this host: **13 of 14 ran and passed; the one SKIP is
-`coreboot`**, which has no cached ROM (rebuild it with
+**The full list is what `./smoke-openbios.sh --help` prints** — read it there rather than
+from this paragraph, which is a copy and can drift: `multiboot coreboot ppc nvram
+dict-identity persist persist-flash floppy persist-os persist-os-flash amd64 amd64-fault
+amd64-ctx amd64-pmem amd64-linux property-abi vga`. The last three were added 2026-08-25/26
+(Spike 3; TODO §13.2's wordset probe; TODO §13.1a's PCI + FCode track).
+Measured 2026-08-26 on this host: **11 of 11 driven tracks passed** — `multiboot
+dict-identity nvram amd64 amd64-fault amd64-ctx amd64-pmem amd64-linux ppc floppy
+property-abi`, plus `vga`, with 0 SKIP among them. Measured 2026-08-23: **13 of 14 ran and
+passed; the one SKIP is `coreboot`**, which has no cached ROM (rebuild it with
 `./build-coreboot-openbios.sh`). The Linux showcase now takes a third flavor:
 `multiboot` PASS, **`amd64` PASS (2026-08-25)**, `coreboot` SKIP for the same
 ROM reason.

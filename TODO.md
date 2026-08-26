@@ -1733,12 +1733,14 @@ structure builder. The design question is the notes' to settle; what belongs her
 the four defects the review found in the shipped wordset, all of which bite the amd64
 track regardless of whether that toolkit is ever built.*
 
-### 13.1 Two more config flips — **`LOADER_FORTH` CLOSED 2026-08-25; `DRIVER_VGA` deferred**
+### 13.1 Two more config flips — **BOTH CLOSED: `LOADER_FORTH` 2026-08-25, `DRIVER_VGA` 2026-08-26**
 
 *Original text kept below the rule, because being wrong in a specific way is the useful
 part.* `CONFIG_LOADER_FORTH` **is now `true` on amd64** (parity with x86, builds clean,
-`amd64` and `amd64-linux` both still PASS). `CONFIG_DRIVER_VGA` was **not** flipped. What
-the two checkpoints turned into:
+`amd64` and `amd64-linux` both still PASS). `CONFIG_DRIVER_VGA` **is now `true` too**, and
+getting there cost two patches and turned up a defect on **x86**, where the flag had been
+`true` all along — see [§13.1a](#131a-driver_vga-closed--and-the-x86-half-was-broken-too)
+below the original text. What the two checkpoints turned into:
 
 **Neither is a one-line config flip, and they are blocked by two unrelated defects
 neither of which was recorded anywhere.**
@@ -1941,6 +1943,11 @@ enumerate PCI with VGA off it would execute an undefined word — masked here on
 missing enumeration. **Real scope:** wire `ob_pci_init()` into amd64's `arch_init` and move
 IDE onto the probed path. That is Spike-sized, not a flip, and it should be its own item.
 
+> **Half of that last sentence is wrong, and §13.1a says how.** There is no probed path to
+> move IDE onto: `drivers/ide.c:1519` names its `const char *path` argument and never reads
+> it again. And the `feval` being unguarded turned out to matter far more than "masked here
+> by the missing enumeration" — it has been failing on **x86**, every boot, for years.
+
 #### And the header was wrong
 
 It said *"Three more config flips"* and the body listed **two**. Measured 2026-08-25 after
@@ -1969,6 +1976,118 @@ config and **not at all** in amd64's, a third category the original missed.
 >   execution on the x86 side**, so with VGA off, amd64 has never evaluated a byte of
 >   FCode. **Checkpoint:** `byte-load` reached at all — which would also be the first
 >   FCode ever evaluated at a 64-bit cell in this tree.
+
+### 13.1a `DRIVER_VGA` CLOSED — and the x86 half was broken too
+
+**2026-08-26, patches 17 and 18, `./smoke-openbios.sh vga`.** The flag is now `true` on
+amd64. The Spike had two halves, and only the first was the one §13.1 predicted.
+
+#### Half one: amd64 had no PCI bus (patch 17)
+
+`CONFIG_DRIVER_PCI` was already `true`, so `drivers/pci.c` was compiled and linked — and
+`arch/amd64/arch_init()` never called `ob_pci_init()`. Copying x86's five-line preamble
+(`arch = &default_pci_host`, `find-device /`, `open-dev to my-self`, the call, `0 to
+my-self`) gives amd64 the bus it never had:
+
+| at the amd64 prompt | before | after |
+|---|---|---|
+| `dev /pci8086,1237@0` | *no such device* | 5 children |
+| `openbios-video-width` | `0` | `320` (hex; 800) |
+| `Cannot manage 'ISA bridge' …` in the boot log | absent | present, as on x86 |
+
+Two things §13.1 got wrong, both found by measuring rather than reading:
+
+- **"Move IDE onto the probed path" cannot be done, because there is no such path.**
+  `drivers/ide.c:1519` takes `const char *path` and **never reads it again** —
+  `ob_ide_init()` calls `new-device` in whatever device context is current. So
+  `"/pci/pci-ata"` and x86's `"/pci/isa"` are both inert strings, `dev / ls` shows
+  `ide@0..ide@3` at the **top level on x86 too**, and there is **no `/pci` node on either
+  arch**. Left as-is with a comment.
+- **`include/arch/amd64/io.h` was missing `#include "asm/types.h"`**, which x86's copy has
+  always had. `DRIVER_VGA` pulls in `drivers/vga_load_regs.c`, whose include chain reaches
+  `include/drivers/vga.h` — and *that* header declares `extern volatile uint32_t *dac;`
+  **without including a types header at all**. It has been building on x86 by accident.
+  Fixing the shared header would be the more correct repair and needs the ppc/sparc arms;
+  the arch's own include dir is where the divergence is.
+
+#### Half two: the FCode blob was defined into the ROOT NODE, on both arches (patch 18)
+
+With PCI wired and `DRIVER_VGA` on, `vga_config_cb` still did not work — and the reason
+turned out to be **the same defect as patches 14 and 16, a third time, in Forth**.
+
+`arch/{x86,amd64}/init.fs` line 9 runs `" /" find-device` and nothing closes it. Eighty
+lines later, `-1 value vga-driver-fcode` — and `value` is `$create`, which defines into the
+**current vocabulary**. Measured on x86 *before* the fix, with the flag `true`:
+
+```
+0 > " vga-driver-fcode" $find .        0        \ not found
+0 > vga-driver-fcode u.                vga-driver-fcode: undefined word.
+0 > dev / " vga-driver-fcode" $find .  -1       \ found — inside root
+0 > dev / words                        vga-driver-fcode preopen make-openable …
+```
+
+`drivers/pci.c:1045` runs its `feval` with the **PCI device node** current, not root, so
+the lookup failed on every boot. **The VGA FCode driver had never been evaluated on x86
+either** — on the arch where the flag has been `true` for years.
+
+**Why nobody noticed, and it is the sharpest part.**
+`forth/bootstrap/interpreter.fs:64` reports an unresolvable token with `type 3a emit` — the
+word, then a colon — then throws `-13`. `feval`'s caller prints no status. So the entire
+failure is the string
+
+```
+vga-driver-fcode:
+```
+
+with **no newline**, no *"undefined word"*, and the next `printk` landing on the same line.
+It reads as a progress marker. This lab had already written that exact string into
+`drivers/floppy.c` as a **boot landmark** (*"hung … right after `vga-driver-fcode:`"*).
+A cheap check for the string's *presence* would therefore have asserted the **defect**;
+the `vga` track asserts its **absence**, scoped to the boot output before the first prompt
+so the probe's own command echo cannot answer for it.
+
+**Why it survived upstream:** `arch/ppc/ppc.fs` carries the same block and **never calls
+`find-device`**, so on ppc the word is global and the driver has always loaded. Verified
+unchanged by this work — ppc answers `-1` before and after. It is broken only on the two
+arches nobody boots.
+
+#### The fix, and what it measures
+
+One word — `device-end`, before the block — on both arches:
+
+| | x86 | amd64 |
+|---|---|---|
+| `" vga-driver-fcode" $find .` | `-1` (was `0`) | `-1` (was `0`) |
+| `vga-driver-fcode:` in the boot log | gone | gone |
+| `openbios-video-width` | `320` | `320` (was `0`) |
+| `QEMU,VGA@0` under the host bridge | present | present (new) |
+
+The two patches are **independent**, and that was measured rather than assumed: rebuilding
+amd64 with patch 18 re-injected still shows `W=320` and `QEMU,VGA@0` while `F` drops back
+to `0` — enumeration and reachability are separate failures.
+
+**Negative control, run not reasoned.** The `device-end` was deleted from
+`arch/amd64/init.fs`, amd64 rebuilt, and the track fired:
+
+```
+FAIL: REGRESSION: amd64 printed 'vga-driver-fcode:' during boot — that is
+interpreter.fs:64 reporting an unresolvable token, not progress …
+```
+
+The same broken image also prints `F=0`, so the second assertion would have fired had the
+first not exited. All eleven other smoke tracks pass on x86, amd64 and ppc.
+
+#### Still open, and named rather than folded into the pass
+
+- **`" screen" find-dev` returns `0` on both arches.** The FCode installs the node and its
+  properties; nothing creates a `screen` devalias, so nothing points at the display. The
+  `vga` track prints this as an `UNKNOWN` note on every run.
+- **The `QEMU,VGA@0` node cannot be reached by path.** `ls` under the host bridge lists it,
+  but `dev /pci8086,1237@0/QEMU,VGA@0` — and the relative form — both answer *no such
+  device*, on x86 as well. `pnodename` and `pathres` disagree about that node's unit
+  address. Unmeasured beyond that.
+- **`arch/amd64/init.fs`'s `preopen` has no `device-end`** where `arch/x86/init.fs:52`
+  does. Noticed while counting `device-end` occurrences for the control; not investigated.
 
 ### 13.2 Four defects in `forth/device/property.fs` — **three WATCHED TO BITE 2026-08-25**
 
