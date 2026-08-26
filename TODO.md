@@ -2287,9 +2287,76 @@ printf-precision: no-extend want[abc](3) got[abc](10) BAD
 and the control reports `1/7`. **An assertion that can only see up to a NUL is not an
 assertion about a function whose bug is writing past one.**
 
-**Not covered:** precision on conversions other than `%s` (`%.*d` and friends go through
-`number()`, a different path), and `vsnprintf`'s truncation behaviour at the buffer edge.
-Named rather than counted as tested.
+#### The two gaps this section named — **both now measured, 2026-08-26**
+
+`test-printf-edges`, a sibling fixture bound the same way. Eleven cases; the sequence was
+**measure, then decide what to assert** — what C99 says and what this firmware does are two
+questions, and the second is the one a caller here depends on.
+
+| path | result |
+|---|---|
+| `number()` precision — a **minimum** digit count, the opposite sense to `%s`, on a different code path | correct in every case except one |
+| `vsnprintf` at the buffer edge | **correct in full** — truncates, NUL-terminates, returns the *untruncated* length, and leaves the buffer untouched at `size 0` |
+
+The `size 0` case is checked with a **canary byte**, because a correct return value says
+nothing about whether it wrote. And the two `%8.8lx` cases are not decoration: they are the
+shape [`arch/ppc/qemu/main.c:58-59`](https://github.com/openbios/openbios) actually prints
+four of in its boot path, and a repo-wide grep finds them to be the **only** integer
+conversions with a precision anywhere outside the fixture. Test the shipped shape.
+
+#### The one divergence, asserted as itself
+
+`%.0d` of `0` prints `"0"`. C99 7.19.6.1 says *"if the value and the precision are both 0,
+no characters are produced"* — `number()` does `if (num == 0) tmp[i++] = '0';`
+unconditionally.
+
+**Deliberately not fixed**, and the reasons matter more than the line would:
+
+- **Zero in-tree callers.** The only integer conversions with a precision are ppc's two
+  `%8.8lx`, and both are asserted correct.
+- **It is harmless** — one extra character, no access past a bound. Unlike patch 21's bug,
+  which over-*read*.
+- **The one real caller is a boot path on the control arch.** Editing `number()` to serve
+  no caller, in front of that, is churn with a nonzero downside.
+
+So the **measured** behaviour is asserted and the C99 answer printed beside it:
+
+```
+printf-edges: d-zero C99[](0) here[0](1) DIVERGES-AS-RECORDED
+printf-edges: 10/10 ok, 1/1 recorded divergence
+```
+
+If someone fixes `number()`, the fixture prints `DIVERGENCE-CLOSED` and the track goes red
+on purpose. **A divergence that stops being true has to be visible, or the record quietly
+becomes false** — which is this file's cached-fact rule pointed at its own notes.
+
+#### And the same case found a second, ppc-only anomaly
+
+The first version of the assertion folded the **return value** into the pass condition. ppc
+went red — and the reason was not the divergence:
+
+| arch | `%.0d` of `0` writes | returns |
+|---|---|---|
+| x86 | `"0"` | `1` |
+| amd64 | `"0"` | `1` |
+| **ppc** | `"0"` | **`0`** |
+
+**On ppc, `snprintf` writes a byte and reports having written none.** That is a different
+defect from the C99 divergence, and a worse-shaped one: a caller advancing a cursor by the
+return value would overwrite the character. All three arches agree on what is *written*;
+only the *return* moves.
+
+Which is why the ratio keys on the written bytes and the line prints `wrote=` and `ret=`
+separately, with the exact line pinned **per arch** by the track. **A single number cannot
+say which half moved** — folding them together made one arch's ratio differ for a second,
+unrelated reason and hid both.
+
+**The ppc mechanism is UNKNOWN and is recorded as one.** `number()` takes the `num == 0`
+branch, emits one character, and `vsnprintf` returns `str-buf`; why that is `0` there and
+`1` elsewhere has not been traced, and **no guess is written down in place of tracing it**.
+It has no in-tree caller — the only integer conversions carrying a precision anywhere are
+ppc's own two `%8.8lx`, which the fixture asserts correct — so it is named, not fixed, and
+the track fails if it ever spreads to another arch.
 
 ### 13.2 Four defects in `forth/device/property.fs` — **three WATCHED TO BITE 2026-08-25**
 

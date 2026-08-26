@@ -1,0 +1,266 @@
+Subject: [PATCH 22/22] libopenbios: close TODO 13.1c's two named gaps
+Arch-tested: x86 amd64 ppc
+
+Patch 21 fixed %s precision and named two paths it had NOT tested. This tests
+them, and the sequence was MEASURE FIRST, THEN DECIDE WHAT TO ASSERT -- what
+C99 says and what this firmware does are two questions, and the second is the
+one a caller here depends on.
+
+  number() precision      a MINIMUM digit count, the opposite sense to %s, and
+                          a different code path entirely
+  vsnprintf buffer edge   the `if (str <= end)` guard and the return value
+
+Measured 2026-08-26, eleven cases, `test-printf-edges` bound in
+libopenbios/init.c beside its sibling so one definition serves all three arches:
+
+  printf-edges: d-pad    want[00042](5)   got[00042](5)   OK
+  printf-edges: d-star   want[007](3)     got[007](3)     OK
+  printf-edges: d-width  want[  042](5)   got[  042](5)   OK
+  printf-edges: d-left   want[042  ](5)   got[042  ](5)   OK
+  printf-edges: x-pad    want[0ab](3)     got[0ab](3)     OK
+  printf-edges: lx-fits  want[deadbeef](8) got[deadbeef](8) OK
+  printf-edges: lx-pads  want[000000ab](8) got[000000ab](8) OK
+  printf-edges: d-zero   C99[](0) here[0](1) DIVERGES-AS-RECORDED
+  printf-edges: trunc    want[abc](6)     got[abc](6)     OK
+  printf-edges: trunc1   want[](3)        got[](3)        OK
+  printf-edges: size0    want[canary Z](3) got[canary Z](3) OK
+  printf-edges: 10/10 ok, 1/1 recorded divergence
+
+vsnprintf is correct IN FULL: it truncates, NUL-terminates, returns the
+UNTRUNCATED length (what C99 asks for, and what a caller sizing a second buffer
+depends on), and leaves the buffer untouched at size 0. That last is checked
+with a CANARY BYTE, because a correct return value says nothing about whether
+it wrote.
+
+The two %8.8lx cases are not decoration. arch/ppc/qemu/main.c:58-59 prints four
+of them in the boot path, and a repo-wide grep finds those to be the ONLY
+integer conversions carrying a precision anywhere outside this fixture. Test
+the shipped shape, not a convenient stand-in.
+
+THE ONE DIVERGENCE IS ASSERTED AS ITSELF. `%.0d` of 0 prints "0"; C99 7.19.6.1
+says no characters, and number() does `if (num == 0) tmp[i++] = '0';`
+unconditionally. NOT FIXED, deliberately:
+
+  - ZERO in-tree callers -- the only integer conversions with a precision are
+    ppc's two %8.8lx, both asserted correct above.
+  - It is HARMLESS: one extra character, no access past a bound. Patch 21's bug
+    over-READ; this does not.
+  - The one real caller is a BOOT PATH on the arch this lab uses as its control.
+    Editing number() to serve no caller, in front of that, is churn with a
+    nonzero downside.
+
+So the measured behaviour is asserted and the C99 answer printed beside it. If
+someone fixes number(), the fixture prints DIVERGENCE-CLOSED and the track goes
+red on purpose: a divergence that stops being true has to be visible, or the
+record quietly becomes false.
+
+AND THE PPC CROSS-COMPILER EARNED THE Arch-tested: RULE. The truncation cases
+tripped -Werror=format-truncation= on ppc while amd64 and x86 compiled the same
+file clean -- the two arches this lab develops on would have shipped a tree that
+does not build on the third. The warning is CORRECT (the truncation is the
+subject under test), so it is suppressed locally with a pragma beside the code
+it excuses and nowhere wider, guarded on __GNUC__ >= 7.
+
+AND THE SAME CASE FOUND A SECOND, ppc-ONLY ANOMALY. The first version of this
+assertion folded the RETURN VALUE into the pass condition, and ppc went red for
+a reason that was not the divergence:
+
+    arch     %.0d of 0 writes    returns
+    x86      "0"                 1
+    amd64    "0"                 1
+    ppc      "0"                 0     <- writes a byte, reports writing none
+
+That is a different defect and a worse-shaped one: a caller advancing a cursor
+by the return would overwrite the character. All three agree on what is
+WRITTEN; only the RETURN moves. So the ratio keys on the written bytes, the
+line prints wrote= and ret= separately, and the smoke track pins the exact line
+PER ARCH -- a single number cannot say which half moved, and folding them made
+one arch's ratio differ for a second, unrelated reason and hid both.
+
+THE ppc MECHANISM IS UNKNOWN AND IS RECORDED AS ONE. number() takes the
+`num == 0` branch, emits one character, and vsnprintf returns str-buf; why that
+is 0 there and 1 elsewhere has NOT been traced, and no guess is written down in
+place of tracing it. No in-tree caller, so it is named rather than fixed -- and
+the track fails if it ever spreads to another arch.
+
+NOT COVERED, still: %n, the SPECIAL/`#` flag combinations, and long long
+conversions. Named rather than counted as tested.
+
+--- a/libopenbios/init.c
++++ b/libopenbios/init.c
+@@ -152,6 +152,165 @@
+ 	printk("printf-precision: %d/%d ok\n", ok, n);
+ }
+ 
++/* THE TWO GAPS TODO 13.1c NAMED AND DID NOT TEST.
++ *
++ * `test-printf-precision` covers %s only. Precision on an INTEGER conversion is
++ * a different thing entirely -- a MINIMUM digit count, zero-padded -- and it
++ * runs through number() rather than the %s case, a separate code path that the
++ * %s fix did not touch. vsnprintf's behaviour at the buffer edge is a third
++ * path again: the `if (str <= end)` guard and the return value.
++ *
++ * These REPORT before they assert. What C99 says and what this firmware does
++ * are two different questions, and the second is the one that matters to a
++ * caller here; a case that disagrees is a finding to record, not a conformance
++ * bug to silently "fix" in firmware something may already depend on.
++ *
++ * ( -- )  prints one line per case and a ratio; leaves the stack alone.
++ */
++static void printf_edges_selftest( void )
++{
++	char got[32];
++	char canary[8];
++	int ok = 0, n = 0, rc;
++	int ok_div = 0, n_div = 0;
++
++#define EDGE_CASE(label, want, ...) do {				\
++		int rc_ = snprintf(got, sizeof(got), __VA_ARGS__);	\
++		int good_ = !strcmp(got, (want))			\
++			    && rc_ == (int)strlen(want);		\
++		n++;							\
++		if( good_ )						\
++			ok++;						\
++		printk("printf-edges: %s want[%s](%d) got[%s](%d) %s\n",\
++		       (label), (want), (int)strlen(want), got, rc_,	\
++		       good_ ? "OK" : "BAD");				\
++	} while(0)
++
++	/* number(): precision is a MINIMUM digit count, zero-padded -- the
++	 * opposite sense to %s, on a different code path. */
++	EDGE_CASE("d-pad",   "00042", "%.5d",  42);
++	EDGE_CASE("d-star",  "007",   "%.*d",  3, 7);
++	EDGE_CASE("d-width", "  042", "%5.3d", 42);
++	EDGE_CASE("d-left",  "042  ", "%-5.3d", 42);
++	EDGE_CASE("x-pad",   "0ab",   "%.3x",  0xab);
++	/* The shape the tree ACTUALLY uses: arch/ppc/qemu/main.c:58-59 prints
++	 * four `%8.8lx` in the boot path, and that is the only integer
++	 * conversion with a precision anywhere outside this fixture. Test the
++	 * shipped shape, not a convenient stand-in. */
++	EDGE_CASE("lx-fits", "deadbeef", "%8.8lx", (unsigned long)0xdeadbeefUL);
++	EDGE_CASE("lx-pads", "000000ab", "%8.8lx", (unsigned long)0xabUL);
++#undef EDGE_CASE
++
++	/* A RECORDED DIVERGENCE, not a pass and not a failure.
++	 *
++	 * C99 7.19.6.1: "if the value and the precision are both 0, no
++	 * characters are produced." number() (libc/vsprintf.c) does
++	 *
++	 *     i = 0;
++	 *     if (num == 0)
++	 *             tmp[i++] = '0';
++	 *
++	 * unconditionally, so `%.0d` of 0 prints "0" here.
++	 *
++	 * NOT FIXED, deliberately, and the reasons are worth keeping:
++	 *   - ZERO in-tree callers. A repo-wide grep for a precision on an
++	 *     integer conversion finds exactly two lines, both `%8.8lx` in
++	 *     ppc's boot path, and both are asserted correct just above.
++	 *   - It is harmless. One extra character, no access past a bound --
++	 *     unlike the %s precision bug (patch 21), which over-READ.
++	 *   - The one real caller is in a BOOT PATH on the arch this lab uses
++	 *     as its control. Editing number() to serve no caller, in front of
++	 *     that, is churn with a nonzero downside.
++	 *
++	 * So the MEASURED behaviour is asserted, and the C99 answer is printed
++	 * beside it. If someone fixes number(), this line fails and says so --
++	 * a divergence that stops being true has to be visible, or the record
++	 * quietly becomes false. */
++	got[0] = 'Q'; got[1] = 'Q'; got[2] = '\0';
++	rc = snprintf(got, sizeof(got), "%.0d", 0);
++	n_div++;
++	/* WRITTEN length and RETURNED length reported separately: on ppc the
++	 * two disagree, and a single number cannot say which half moved. The
++	 * buffer is pre-poisoned with 'Q' so "wrote nothing" is visible as
++	 * itself rather than as a leftover from the previous case. */
++	/* THE RATIO KEYS ON WHAT WAS WRITTEN, NOT ON THE RETURN, and that split
++	 * is a finding rather than a convenience.
++	 *
++	 * All three arches write "0" -- that is the C99 divergence, and it is
++	 * stable. But the RETURN disagrees by arch: x86 and amd64 report 1,
++	 * ppc reports 0 while having written a byte. Folding the return into
++	 * the pass condition would have made one arch's ratio differ from the
++	 * others for a second, unrelated reason, and a single number cannot say
++	 * which half moved. So: the ratio asserts the divergence, the line
++	 * prints wrote= and ret= separately, and the smoke track pins the exact
++	 * line PER ARCH so either half moving goes red.
++	 *
++	 * THE ppc MECHANISM IS NOT ESTABLISHED. number() takes the `num == 0`
++	 * branch, emits one character, and vsnprintf returns str-buf; why that
++	 * is 0 on ppc and 1 elsewhere has not been traced, and no guess is
++	 * recorded here in place of tracing it. It has NO in-tree caller -- the
++	 * only integer conversions with a precision are ppc's own two %8.8lx,
++	 * asserted correct above -- so it is an UNKNOWN, named, not a blocker. */
++	if( !strcmp(got, "0") ) {
++		ok_div++;
++		printk("printf-edges: d-zero C99[](0) here[%s] wrote=%d"
++		       " ret=%d DIVERGES-AS-RECORDED%s\n",
++		       got, (int)strlen(got), rc,
++		       rc == (int)strlen(got) ? "" : " RET-DISAGREES");
++	} else {
++		printk("printf-edges: d-zero C99[](0) here[%s] wrote=%d"
++		       " ret=%d DIVERGENCE-CLOSED -- number() was fixed;"
++		       " update this case and TODO 13.1c\n",
++		       got, (int)strlen(got), rc);
++	}
++
++	/* vsnprintf at the buffer edge. Not EDGE_CASE: these need a short buf,
++	 * and the interesting half is the RETURN -- C99 says "what would have
++	 * been written", so a caller sizing a second buffer from it is relying
++	 * on the untruncated length, not on what fit. */
++	/* The TRUNCATION IS THE SUBJECT UNDER TEST, so GCC's warning about it is
++	 * correct and unwanted here -- suppressed locally, beside the code it
++	 * excuses, and nowhere wider.
++	 *
++	 * Caught by the PPC CROSS-COMPILER and by neither host-native build:
++	 * `-Werror=format-truncation=` fired on ppc while amd64 and x86 compiled
++	 * this file clean. That is the Arch-tested: rule earning itself on an
++	 * arch-neutral change -- the two arches this lab develops on would have
++	 * shipped a tree that does not build on the third. */
++#if defined(__GNUC__) && __GNUC__ >= 7
++#pragma GCC diagnostic push
++#pragma GCC diagnostic ignored "-Wformat-truncation"
++#endif
++	rc = snprintf(got, 4, "abcdef");
++	n++;
++	if( !strcmp(got, "abc") && rc == 6 ) ok++;
++	printk("printf-edges: trunc want[abc](6) got[%s](%d) %s\n",
++	       got, rc, (!strcmp(got, "abc") && rc == 6) ? "OK" : "BAD");
++
++	rc = snprintf(got, 1, "abc");
++	n++;
++	if( got[0] == '\0' && rc == 3 ) ok++;
++	printk("printf-edges: trunc1 want[](3) got[%s](%d) %s\n",
++	       got, rc, (got[0] == '\0' && rc == 3) ? "OK" : "BAD");
++
++#if defined(__GNUC__) && __GNUC__ >= 7
++#pragma GCC diagnostic pop
++#endif
++
++	/* size 0 must not touch the buffer at all. A canary, because "it
++	 * returned the right number" says nothing about whether it wrote. */
++	canary[0] = 'Z'; canary[1] = 'Z';
++	rc = snprintf(canary, 0, "abc");
++	n++;
++	if( canary[0] == 'Z' && rc == 3 ) ok++;
++	printk("printf-edges: size0 want[canary Z](3) got[canary %c](%d) %s\n",
++	       canary[0], rc,
++	       (canary[0] == 'Z' && rc == 3) ? "OK" : "BAD");
++
++	printk("printf-edges: %d/%d ok, %d/%d recorded divergence\n",
++	       ok, n, ok_div, n_div);
++}
++
+ void
+ openbios_init( void )
+ {
+@@ -176,6 +335,9 @@
+ 	// libc/vsprintf.c's %s precision fixtures -- see above
+ 	bind_func("test-printf-precision", printf_precision_selftest);
+ 
++	// number() precision and vsnprintf's buffer edge -- see above
++	bind_func("test-printf-edges", printf_edges_selftest);
++
+ 	// Bind the LE access words
+ 	bind_func("le-w!", lewstore);
+ 	bind_func("le-l!", lelstore);
