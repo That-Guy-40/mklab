@@ -1987,6 +1987,18 @@ typed through the ~80-char truncation). Measured:
 *"correct today"*, and it is correct only while nothing moves `here` between two
 fragments. Forcing one `allot` breaks it immediately.
 
+**And `encode-phys` is not fixed-width — asserted, because that is the misreading
+this entry warned about.** It encodes `my-#acells` ints, and `my-#acells` reads the
+**parent's** `#address-cells` (clamped 1–4, default 2 when there is no parent).
+Measured on amd64:
+
+| context | `my-#acells` | `encode-phys` length |
+|---|---|---|
+| `dev /` | 2 — the **default**, root has no parent | **8 bytes** |
+| `dev /ide@1` | 1 — from root's own `#address-cells` | **4 bytes** |
+
+Root is the trap: its own property says `1` while `encode-phys` *under* it uses `2`.
+
 The track is a **characterization** test: if it fails saying *"appears FIXED"* that is
 good news, and the expectations here and there get updated together.
 

@@ -878,6 +878,12 @@ then
 drop
 = if ." c-ADJACENT" else ." c-NOT-ADJACENT-ENCODE+-WOULD-LIE" then cr
 2drop
+dev /
+." e-len-root=" 0 0 0 0 encode-phys nip . cr
+clear
+dev /ide@1
+." e-len-ide=" 0 0 0 0 encode-phys nip . cr
+clear
 ." P132-END" cr
 FTH
     genisoimage -quiet -o "$WORKDIR/prop.iso" -V PROPISO -r -J "$PST"
@@ -919,7 +925,29 @@ FTH
     grep -qF 'c-NOT-ADJACENT-ENCODE+-WOULD-LIE' <<<"$AL" && grep -qF 'c-NOT-ADJACENT-ENCODE+-WOULD-LIE' <<<"$XL" \
       || fail "13.2(c) appears FIXED: encode+ survived an allot between fragments on at least one arch. Update this track and §13.2"
 
-    pass "TODO 13.2 watched to bite: (a) the SAME four bytes decode to ffffffff on amd64 and -1 on x86 — encode-int/decode-int is not a round trip at a 64-bit cell; (b) a value >= 2^32 is silently truncated on amd64 and is UNREPRESENTABLE on x86, reported as an UNKNOWN not a pass; (c) encode+ lies about length on BOTH arches once anything moves HERE between fragments"
+    # encode-phys is NOT fixed-width: it encodes my-#acells ints, and my-#acells
+    # reads the PARENT's #address-cells (clamped 1-4, default 2 when there is no
+    # parent). Measured: `dev /` gives 2 cells = 8 bytes -- the DEFAULT, because
+    # root has no parent -- while `dev /ide@1` gives 1 cell = 4 bytes, from root's
+    # own `#address-cells 1`. So the same call yields a different length in two
+    # contexts, and root is the trap: its property says 1 while encode-phys under
+    # it uses 2.
+    # The comparison is done HERE and not in the probe: `variable` does not stick
+    # inside the evaluated text (it reports "la: undefined word." at the point of
+    # use — the same define-into-the-current-vocabulary shape patches 14/16 fixed
+    # for bind_func). Two measured values differing is the proof anyway.
+    ELR="$(grep -oE 'e-len-root=[0-9a-f]+' <<<"$AL" | head -1 | cut -d= -f2)"
+    ELI="$(grep -oE 'e-len-ide=[0-9a-f]+'  <<<"$AL" | head -1 | cut -d= -f2)"
+    [[ -n "$ELR" && -n "$ELI" ]] \
+      || fail "13.2: the encode-phys probe printed no lengths — see $WORKDIR/prop-amd64.log"
+    [[ "$ELR" != "$ELI" ]] \
+      || fail "13.2: encode-phys returned the SAME length ($ELR) under / and /ide@1 — either the tree's #address-cells changed, or somebody made encode-phys fixed-width, which is the misreading this assertion exists to prevent"
+    grep -q 'e-len-root=8' <<<"$AL" \
+      || fail "13.2: encode-phys under / is no longer 8 bytes — my-#acells falls back to 2 there because root has no parent; if that default moved, every caller's idea of a phys length moved with it"
+    grep -q 'e-len-ide=4' <<<"$AL" \
+      || fail "13.2: encode-phys under /ide@1 is no longer 4 bytes — that came from root's own '#address-cells 1'"
+
+    pass "TODO 13.2 watched to bite: (a) the SAME four bytes decode to ffffffff on amd64 and -1 on x86 — encode-int/decode-int is not a round trip at a 64-bit cell; (b) a value >= 2^32 is silently truncated on amd64 and is UNREPRESENTABLE on x86, reported as an UNKNOWN not a pass; (c) encode+ lies about length on BOTH arches once anything moves HERE between fragments; and encode-phys is NOT fixed-width — 8 bytes under / (the no-parent default of 2 cells) against 4 under /ide@1 (root's own #address-cells 1)"
     ;;
   *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi]" >&2; exit 1 ;;
 esac
