@@ -1,0 +1,349 @@
+Subject: [PATCH 20/20] libopenbios: the Forth bindings report their own failures
+Arch-tested: x86 amd64 ppc
+
+Four defects in this lab shipped behind ONE silence, and this is that silence.
+
+feval() has ALWAYS returned the throw code -- eword() wraps the call in `catch`
+and hands the result back. Counted in this tree at e5ac46d:
+
+    146  feval() call sites,  of which  1  looks at the return value
+    969  fword() call sites,  of which  0  do
+
+The one is packages/cmdline.c:257, the interactive command line, which pushes
+the code straight into print-status. Everywhere else, a Forth fragment that
+threw -- or a word that was not in the dictionary at all -- executed nothing,
+said nothing, and the C caller carried on as though it had worked.
+
+What that cost, in this lab alone:
+
+  * fword("eval2") in libopenbios/initprogram.c named a word DEFINED NOWHERE IN
+    THE TREE. findword() returned 0, _fword() returned -1, the macro discarded
+    it, and OpenBIOS's Forth-source loader silently evaluated nothing. (patch 15)
+  * feval("['] vga-driver-fcode 2 cells + 1 byte-load") in drivers/pci.c threw
+    on x86 for years: the VGA FCode driver had never run. (patch 18)
+  * openbios_init()'s bind_func()s landed in an open device node, so
+    (init-program) was unreachable and `load` failed with a message from a
+    DIFFERENT layer -- which is where the search then started. (patches 14, 16)
+  * amd64's preopen left /chosen active, so words defined at the prompt
+    evaporated. (patch 19)
+
+All four are one failure -- "the word is not where the caller is looking" --
+and all four were invisible here.
+
+WHY THE OLD OUTPUT WAS WORSE THAN NOTHING. For an undefined word the
+interpreter does print something: forth/bootstrap/interpreter.fs:64 does
+`type 3a emit`, the offending word then a colon, and throws. With no status
+printed by anyone, the whole failure is
+
+    vga-driver-fcode:
+
+no newline, so the NEXT printk lands on the same line and the pair reads as a
+progress marker. This lab believed exactly that for long enough to write the
+string into drivers/floppy.c as a boot landmark. The new line COMPLETES that
+half-message rather than competing with it:
+
+    vga-driver-fcode:feval: ['] vga-driver-fcode 2 cells + 1 byte-load -- threw
+    -19 (hex -13; the Forth sources spell throw codes in HEX -- see
+    print-status, forth/bootstrap/interpreter.fs)
+
+THREE THINGS THIS PATCH GOT WRONG FIRST, each caught by measuring:
+
+1. `%.96s` PRINTED A MANGLED HALF-LINE. libc/vsprintf.c's %s case has the
+   correct `strnlen(s, precision)` under an `#if 0`, and the live branch is
+
+       len = mstrlen(s);
+       if( precision > len ) len = precision;
+
+   -- precision is a MINIMUM, not a maximum, so `%.96s` on a 13-byte string
+   prints 96 bytes, 83 of them past the terminator. A diagnostic that
+   over-reads to report an error is not a diagnostic. Clipped in C instead.
+   The vsprintf bug is REPORTED, NOT FIXED here: different subsystem, needs its
+   own fixtures, and fs/hfsplus/hfsp_record.c's two `%4.4s` are its only other
+   callers (both of which can currently print MORE than four characters).
+
+2. REPORTING FROM feval() ON THE INTERACTIVE PATH IS NOISE. First draft:
+
+       0 > pwd
+       no active devicefeval: pwd -- threw -2 (...)
+        Aborted.
+
+   -- the same failure said twice, once by a layer with no business saying it.
+   A channel that fires on ordinary typos is one people learn to ignore, which
+   recreates the silence being fixed. feval_quiet() exists for the one caller
+   that renders the status itself; cmdline.c uses it.
+
+3. THE CODE IS -19, NOT -13, AND BOTH ARE RIGHT. OpenBIOS's Forth runs in base
+   16, so the `-13 throw` in interpreter.fs is hex -- decimal -19, which is why
+   kernel/bootstrap.c's table says `case -19:` for "undefined word." while the
+   Forth table says -13. The message prints both; the first draft of the smoke
+   assertion looked for -13 and went red against a working reporter. No C copy
+   of the code->name table is made: this file's own history says copies drift,
+   so the message names where the table lives instead.
+
+TESTED, and the track is two-sided in a single boot on all three arches
+(`./smoke-openbios.sh diagnostics`):
+
+  (1) a clean boot prints ZERO feval:/fword:/eword: lines -- x86, amd64, ppc
+  (2) test-feval-report, bound in libopenbios/init.c so one definition serves
+      every arch, prints EXACTLY ONE, naming a word that cannot exist
+
+Neither half is worth having alone: (1) reads identically whether the reporter
+works or was compiled out, and (2) would pass a reporter that fires on
+everything.
+
+NEGATIVE CONTROL, run not reasoned. Patch 18's defect re-injected (device-end
+removed from arch/amd64/init.fs) alongside a bogus fword("no-such-word-control")
+in openbios_init(). Both branches printed and assertion (1) bit -- and the
+control immediately found a flaw in the assertion itself: it matched
+'^(feval|fword|eword):' and reported 1 failure where there were 2, because the
+undefined-word case CONTINUES interpreter.fs's line and never starts one. A
+line-anchored regex standing in for a question about a message, which is the
+mistake tools/check-harness-net.sh made twice. Unanchored, it reports both.
+
+NOT WATCHED TO FIRE: _eword()'s "word not in the dictionary" branch. It is
+reachable only if `evaluate` itself is missing, which cannot happen in a
+firmware that has reached the prompt. Named rather than counted as covered.
+
+diff --git a/include/libopenbios/bindings.h b/include/libopenbios/bindings.h
+--- a/include/libopenbios/bindings.h
++++ b/include/libopenbios/bindings.h
+@@ -88,6 +88,9 @@ extern char		*pop_fstr_copy( void );
+ 
+ extern int		_fword( const char *word, xt_t *cache_xt );
+ extern cell		_eword( const char *word, xt_t *cache_xt, int nargs );
++/* feval() reports a throw; feval_quiet() does not. Use the quiet one ONLY when
++ * the caller renders the status itself -- see libopenbios/bindings.c. */
++extern cell		feval_quiet( const char *str );
+ extern int		_selfword( const char *method, xt_t *cache_xt );
+ extern int		_parword( const char *method, xt_t *cache_xt );
+ 
+diff --git a/libopenbios/bindings.c b/libopenbios/bindings.c
+--- a/libopenbios/bindings.c
++++ b/libopenbios/bindings.c
+@@ -32,14 +32,143 @@ push_str( const char *str )
+ 	PUSH( str ? strlen(str) : 0 );
+ }
+ 
+-/* WARNING: sloooow - AVOID */
++/* THE BINDINGS REPORT THEIR OWN FAILURES, and until 2026-08-26 they did not.
++ *
++ * feval() has ALWAYS returned the throw code -- eword() wraps the call in
++ * `catch` and hands the result back. Counted in this tree: 146 feval() call
++ * sites, of which exactly ONE looks at the return value, and 969 fword() call
++ * sites, of which NONE do. (The one is packages/cmdline.c:257, the interactive
++ * command line, which is why feval_quiet() exists below. drivers/obio.c's two
++ * `if (i != 0) fword("encode+")` are loop guards, not return checks.) So a
++ * Forth fragment that threw, or a word that was not in the dictionary at all,
++ * executed nothing and said nothing, and the C caller carried on as though it
++ * had worked.
++ *
++ * Three defects shipped behind that silence, each costing a debugging session:
++ *
++ *   - `fword("eval2")` in libopenbios/initprogram.c named a word DEFINED
++ *     NOWHERE IN THE TREE. findword() returned 0, _fword() returned -1, the
++ *     macro discarded it, and the Forth loader silently evaluated nothing.
++ *   - `feval("['] vga-driver-fcode 2 cells + 1 byte-load")` in drivers/pci.c
++ *     threw -13 on x86 for years: the VGA FCode driver had never run.
++ *   - `openbios_init()`'s bind_func()s landed in an open device node, so
++ *     `(init-program)` was unreachable and every `load` ended in a message
++ *     from a DIFFERENT layer, which is where the search then started.
++ *
++ * All three are the same failure -- "the word is not where the caller is
++ * looking" -- and all three were invisible here.
++ *
++ * WHY THE OLD OUTPUT WAS WORSE THAN NOTHING. For a -13 the interpreter does
++ * print something: forth/bootstrap/interpreter.fs:64 does `type 3a emit`, the
++ * offending word followed by a colon, and then throws. With no status printed
++ * by anyone, the whole failure is
++ *
++ *     vga-driver-fcode:
++ *
++ * with no newline, so the NEXT printk lands on the same line and the pair reads
++ * as a progress marker. This lab believed exactly that for long enough to write
++ * the string into drivers/floppy.c as a boot landmark. The line below completes
++ * that half-message instead of adding a competing one.
++ *
++ * THE CODE IS PRINTED AS A NUMBER, deliberately. forth/bootstrap/interpreter.fs
++ * (print-status) already holds the code->name table; a second copy in C is a
++ * copy, and this file's own history says copies drift. The message names where
++ * the table lives instead.
++ */
++static void
++report_forth_failure( const char *what, const char *subject, cell code )
++{
++	char clip[97];
++	int n = 0;
++	int c;
++
++	/* Long fragments get clipped: some feval() strings are whole colon
++	 * definitions, and a diagnostic that wraps the console is one nobody
++	 * reads. The head is the useful part -- it contains the verb.
++	 *
++	 * CLIPPED HERE, IN C, AND NOT WITH `%.96s` -- which is what the first
++	 * draft did, and which printed a mangled half-line. libc/vsprintf.c's
++	 * %s case has the correct `strnlen(s, precision)` sitting under an
++	 * `#if 0`, and the live branch is
++	 *
++	 *     len = mstrlen(s);
++	 *     if( precision > len ) len = precision;
++	 *
++	 * so precision is a MINIMUM, not a maximum: `%.96s` on a 13-byte string
++	 * prints 96 bytes, walking 83 past the terminator. A diagnostic that
++	 * over-reads to report an error is not a diagnostic. Recorded in TODO
++	 * rather than fixed here -- it is a different subsystem and needs its
++	 * own fixtures, and fs/hfsplus/hfsp_record.c's two `%4.4s` are its only
++	 * other callers. */
++	while( n < (int)sizeof(clip) - 1 && subject[n] ) {
++		clip[n] = subject[n];
++		n++;
++	}
++	clip[n] = '\0';
++
++	/* (int), not a cell-width format. FMT_CELL_d lives in kernel/cross.h,
++	 * which is a HOST header for the bootstrap tool and has no business in
++	 * target code -- and a throw code is a small integer on every arch, so
++	 * there is no width question to get wrong. This file's neighbourhood
++	 * already lost a day to `unsigned long` meaning 4 bytes on i386 and 8
++	 * on LP64 (struct e820entry, Spike 3); the narrowing here is explicit
++	 * rather than assumed. */
++	/* BOTH BASES, and the reason is a trap this message walked into on its
++	 * first run. An undefined word inside `evaluate` reports here as
++	 *
++	 *     threw -19
++	 *
++	 * while forth/bootstrap/{interpreter,bootstrap}.fs spell that same code
++	 * `-13`. They are the same number: OpenBIOS's Forth runs in BASE 16, so
++	 * the source literal -13 is hex, i.e. -19 decimal -- which is exactly
++	 * why kernel/bootstrap.c's table says `case -19:` for "undefined word."
++	 * while the Forth table says -13. Printing one base only sends the
++	 * reader looking for a code that is not in the file they open. */
++	c = (int)code;
++	printk("%s: %s%s -- threw %d (hex %s%x; the Forth sources spell throw"
++	       " codes in HEX -- see print-status,"
++	       " forth/bootstrap/interpreter.fs)\n",
++	       what, clip, subject[n] ? "..." : "", c,
++	       c < 0 ? "-" : "", (unsigned)(c < 0 ? -c : c));
++}
++
++/* For the ONE caller in the tree that renders the status itself.
++ *
++ * packages/cmdline.c:257 is the interactive command line:
++ *
++ *     PUSH( feval(buf) );
++ *     fword("print-status");
++ *
++ * -- it hands the throw code straight to forth/bootstrap/interpreter.fs's
++ * print-status, which is exactly right. Reporting from feval() as well would
++ * put a C diagnostic under every mistyped word at the `0 >` prompt, and a
++ * channel that fires on ordinary typos is one people learn to ignore, which
++ * recreates the silence this file is fixing. Measured before the split:
++ *
++ *     0 > pwd
++ *     no active devicefeval: pwd -- threw -2 (...)
++ *      Aborted.
++ *
++ * -- the same failure said twice, once by a layer that had no business saying
++ * it. WARNING: sloooow - AVOID (as feval). */
+ cell
+-feval( const char *str )
++feval_quiet( const char *str )
+ {
+ 	push_str( str );
+ 	return eword("evaluate", 2);
+ }
+ 
++/* WARNING: sloooow - AVOID */
++cell
++feval( const char *str )
++{
++	cell ret = feval_quiet( str );
++
++	if( ret )
++		report_forth_failure( "feval", str, ret );
++	return ret;
++}
++
+ cell
+ _eword( const char *word, xt_t *cache_xt, int nargs )
+ {
+@@ -56,6 +185,12 @@ _eword( const char *word, xt_t *cache_xt, int nargs )
+ 		enterforth( catch_xt );
+ 		if( (ret=POP()) )
+ 			dstackcnt -= nargs;
++	} else {
++		/* NOT the same thing as a -1 throw, and the two were
++		 * indistinguishable before: both left ret == -1. This branch
++		 * means the word was never found and NOTHING RAN. */
++		printk("eword: '%s' is not in the dictionary -- nothing was"
++		       " executed\n", word);
+ 	}
+ 	return ret;
+ }
+@@ -71,6 +206,11 @@ _fword( const char *word, xt_t *cache_xt )
+ 		enterforth( *cache_xt );
+ 		return 0;
+ 	}
++	/* The `eval2` shape. Only the built-in dictionary is searched, so a word
++	 * that exists as a NODE METHOD lands here too -- which is precisely the
++	 * defect patches 14, 16, 18 and 19 fixed four times over. */
++	printk("fword: '%s' is not in the dictionary -- nothing was executed\n",
++	       word);
+ 	return -1;
+ }
+ 
+diff --git a/libopenbios/init.c b/libopenbios/init.c
+--- a/libopenbios/init.c
++++ b/libopenbios/init.c
+@@ -65,6 +65,28 @@ static void lelfetch(void)
+ 	PUSH(__le32_to_cpu(*aaddr));
+ }
+ 
++/* THE REPORTER'S OWN MUST-CATCH FIXTURE, bound into the firmware on purpose.
++ *
++ * "a clean boot prints no diagnostics" is a ONE-SIDED assertion: it reads
++ * exactly the same whether the reporter in libopenbios/bindings.c works or was
++ * compiled out, and a scan that matches nothing prints the same green tick as
++ * one that is broken. This word makes the pair testable in a single boot --
++ * the boot region must be silent, and this must produce exactly one feval:
++ * line naming a word that cannot exist.
++ *
++ * It is bound HERE, in libopenbios/init.c, so every arch gets it from one
++ * place rather than three copies drifting apart.
++ *
++ * Leaves the stack as it found it: the diagnostic line IS the result, and a
++ * self-test that unbalances the stack makes every probe after it read oddly.
++ * The code it provokes is "undefined word" -- -19 decimal, which the Forth
++ * sources spell -13 because they are in base 16.
++ */
++static void feval_report_selftest( void )
++{
++	(void)feval("openbios-feval-selftest-no-such-word");
++}
++
+ void
+ openbios_init( void )
+ {
+@@ -83,6 +105,9 @@ openbios_init( void )
+ 	// Bind the C implementation of (go) into Forth
+ 	bind_func("(go)", go);
+ 	
++	// The reporter's must-catch fixture -- see feval_report_selftest above
++	bind_func("test-feval-report", feval_report_selftest);
++
+ 	// Bind the LE access words
+ 	bind_func("le-w!", lewstore);
+ 	bind_func("le-l!", lelstore);
+diff --git a/packages/cmdline.c b/packages/cmdline.c
+--- a/packages/cmdline.c
++++ b/packages/cmdline.c
+@@ -254,7 +254,9 @@ cmdline_prompt( cmdline_info_t *ci )
+ 
+ 			emit_str( &buf[pos] );
+ 			emit(' ');
+-			PUSH( feval(buf) );
++			/* feval_quiet, because print-status on the very next
++			 * line IS the report. See libopenbios/bindings.c. */
++			PUSH( feval_quiet(buf) );
+ 			fword("print-status");
+ 
+ 			/* Leave the interpreter if terminate? value set */

@@ -28,6 +28,8 @@ TRACK (default multiboot):
                               to bite on both arches
   vga                         PCI enumeration on amd64, and the VGA FCode
                               blob that had never been evaluated on either
+  diagnostics                 the Forth bindings report their own failures:
+                              silent on a clean boot, loud on a real one
 
 Exit: 0 PASS / 1 FAIL / 77 SKIP. Each track ends on exactly one verdict line.
 Env: OPENBIOS_WORKDIR, KERNEL, INITRD, COREBOOT_DIR
@@ -1062,5 +1064,96 @@ FTH
 
     pass "TODO 13.1 DRIVER_VGA: amd64 enumerates PCI (QEMU,VGA@0 is under the i440FX bridge, openbios-video-width=0x320) and the VGA FCode blob is reachable from \$find on BOTH arches — the 'vga-driver-fcode:' undefined-token report that had been in every x86 boot log is gone"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|vga]" >&2; exit 1 ;;
+  diagnostics)
+    # The Forth bindings report their own failures now (patch 20), and this
+    # track is TWO-SIDED IN A SINGLE BOOT, on every arch this lab can drive.
+    #
+    #   (1) the boot region must be SILENT -- zero feval:/fword:/eword: lines
+    #   (2) `test-feval-report` must produce EXACTLY ONE, naming a word that
+    #       cannot exist and carrying its throw code
+    #
+    # Neither half is worth having alone. (1) by itself reads identically
+    # whether the reporter works or was compiled out -- a scan that matches
+    # nothing prints the same tick as one that is broken. (2) by itself would
+    # pass a reporter that fires on everything, which is the failure mode that
+    # actually destroys a diagnostic channel: people learn to ignore it. That
+    # is not hypothetical here -- the first draft reported from feval() on the
+    # interactive path too, so every mistyped word at the 0 > prompt printed a
+    # C diagnostic under Forth's own " Aborted.", the same failure said twice.
+    # packages/cmdline.c uses feval_quiet() for exactly that reason.
+    #
+    # test-feval-report is bound in libopenbios/init.c, one place for all three
+    # arches, and it is the reporter's own must-catch fixture rather than a
+    # real failure someone has to remember to keep broken.
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v qemu-system-i386 >/dev/null || skip "qemu-system-i386 not installed"
+    command -v qemu-system-ppc >/dev/null || skip "qemu-system-ppc not installed"
+    AMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"
+    ADICT="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    XMB="$WORKDIR/openbios/obj-x86/openbios.multiboot"
+    PELF="$WORKDIR/openbios/obj-ppc/openbios-qemu.elf"
+    [[ -f "$AMB" && -f "$ADICT" ]] || skip "no amd64 image — run ./build-openbios.sh amd64 first"
+    [[ -f "$XMB" && -f "$XDICT" ]] || skip "no x86 image — run ./build-openbios.sh x86 first"
+    [[ -f "$PELF" ]] || skip "no ppc image — run ./build-openbios.sh ppc first"
+    SELFW='openbios-feval-selftest-no-such-word'
+    for A in amd64 x86 ppc; do
+      DLOG="$WORKDIR/diag-$A.log"; DSOCK="$WORKDIR/smoke-diag-$A.sock"
+      rm -f "$DLOG" "$DSOCK"
+      note "booting $A and firing the reporter's own fixture → $DLOG"
+      if [[ "$A" == ppc ]]; then
+        # ppc console input needs a muxed pty, as the ppc track documents.
+        python3 "$REPO/tools/drive-pty-repl.py" "$DLOG" --timeout 120 \
+          --expect "Welcome to OpenBIOS" --expect "0 > " \
+          --send 'test-feval-report\r' --expect "> " \
+          -- qemu-system-ppc -bios "$PELF" -nographic -vga none
+        RC=$?
+      else
+        if [[ "$A" == amd64 ]]; then Q=qemu-system-x86_64; DMB="$AMB"; DDICT="$ADICT"
+        else Q=qemu-system-i386; DMB="$XMB"; DDICT="$XDICT"; fi
+        "$Q" -M "pc,accel=$ACCEL" -m 512 -kernel "$DMB" -initrd "$DDICT" \
+          -display none -serial "unix:$DSOCK,server=on" -no-reboot >/dev/null 2>&1 &
+        QPID=$!
+        python3 "$REPO/tools/drive-serial-repl.py" "$DSOCK" "$DLOG" --timeout 120 \
+          --expect "0 > " \
+          --send 'test-feval-report\r' --expect "> "
+        RC=$?
+        kill "$QPID" 2>/dev/null   # by PID, never by pattern
+      fi
+      [[ $RC -eq 0 ]] || fail "the $A firmware did not reach the prompt for the diagnostics probe (rc=$RC) — see $DLOG"
+      DL="$(cat "$DLOG")"
+
+      # (1) SILENT ON A HEALTHY BOOT. Scoped to the output before the first
+      # prompt so the fixture fired below cannot be counted as boot noise.
+      BOOT="${DL%%0 > *}"
+      # UNANCHORED, and the control is why. The first draft matched
+      # '^(feval|fword|eword):' and missed the single most important case: for
+      # an undefined word, forth/bootstrap/interpreter.fs has ALREADY printed
+      # "<word>:" with no newline, so the diagnostic continues that line and
+      # never starts one. Re-injecting patch 18's defect alongside a bogus
+      # fword() reported 1 failure where there were 2 -- a line-anchored regex
+      # standing in for a question about a MESSAGE, which is the mistake
+      # tools/check-harness-net.sh made twice.
+      NB="$(grep -acE '(feval|fword|eword): ' <<<"$BOOT" || true)"
+      [[ "$NB" -eq 0 ]] \
+        || fail "REGRESSION: $A printed $NB binding-failure line(s) during a CLEAN boot — something in the firmware is calling feval/fword on a word it cannot reach, which is the class of defect patches 14/16/18/19 each fixed once: $(grep -aoE '(feval|fword|eword): .{0,60}' <<<"$BOOT" | head -3 | tr '\n' '|') — see $DLOG"
+
+      # (2) AND LOUD WHEN IT SHOULD BE. Exactly one line, naming the fixture.
+      NF="$(grep -acF "feval: $SELFW" <<<"$DL" || true)"
+      [[ "$NF" -eq 1 ]] \
+        || fail "REGRESSION: test-feval-report produced $NF 'feval: $SELFW' line(s) on $A, expected exactly 1 — 0 means the reporter in libopenbios/bindings.c is not wired (and assertion 1 above would then pass over ANY silent failure); more than 1 means it fires repeatedly for one throw — see $DLOG"
+      # -19 DECIMAL, and the hex is printed beside it on purpose. The Forth
+      # sources spell this same code -13, because OpenBIOS's Forth runs in
+      # base 16 -- which is why kernel/bootstrap.c says `case -19:` for
+      # "undefined word." while forth/bootstrap/interpreter.fs says -13. The
+      # first draft of this assertion looked for -13 and went red against a
+      # working reporter.
+      grep -aqF 'threw -19 (hex -13' <<<"$DL" \
+        || fail "REGRESSION: the $A diagnostic did not carry 'threw -19 (hex -13' — the code is the half that says WHICH failure it was, and both bases are printed because the Forth sources and the C table spell the same undefined-word code differently — see $DLOG"
+
+      note "$A: 0 binding failures during boot, and the fixture produced exactly 1 naming '$SELFW' with its code"
+    done
+
+    pass "the Forth bindings report their own failures on x86, amd64 and ppc: a clean boot prints ZERO feval/fword/eword lines on all three, and test-feval-report — the reporter's own must-catch fixture — prints exactly one, naming the unresolvable word and its throw code in both bases (-19 decimal, -13 hex — the Forth sources spell it the second way)"
+    ;;
+  *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|vga|diagnostics]" >&2; exit 1 ;;
 esac

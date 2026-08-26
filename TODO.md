@@ -2155,11 +2155,79 @@ patch — [`tools/check-patch-scope.sh`](tools/check-patch-scope.sh) would deman
   address. Unmeasured beyond that.
 - ~~**`arch/amd64/init.fs`'s `preopen` has no `device-end`**~~ — investigated the same day
   and fixed by **patch 19**, above. It was the second unbalanced site, not a curiosity.
-- **The `feval` that reports nothing.** `libopenbios`'s `feval()` of a word that does not
-  resolve prints `<word>:` (`interpreter.fs:64`'s `type 3a emit`) and throws `-13` into a
-  caller that says nothing. That silence is why three separate instances of this defect
-  shipped undetected. Fixing it is **arch-neutral**, so it needs the ppc arm and an
-  `Arch-tested:` line — a real piece of work, and the highest-value one left here.
+- ~~**The `feval` that reports nothing.**~~ — **CLOSED 2026-08-26, patch 20.** See
+  [§13.1b](#131b-the-silence-all-four-defects-hid-behind--closed-2026-08-26) below.
+
+### 13.1b The silence all four defects hid behind — **CLOSED 2026-08-26**
+
+**Patch 20, arch-neutral, `Arch-tested: x86 amd64 ppc`.** `./smoke-openbios.sh diagnostics`.
+
+`feval()` has **always** returned the throw code — `eword()` wraps the call in `catch` and
+hands the result back. Counted in this tree at `e5ac46d`:
+
+| binding | call sites | that look at the return |
+|---|---|---|
+| `feval()` | **146** | **1** |
+| `fword()` | **969** | **0** |
+
+The one is `packages/cmdline.c:257`, the interactive command line, which pushes the code
+straight into `print-status`. Everywhere else a Forth fragment that threw — or a word that
+was not in the dictionary at all — executed nothing, said nothing, and the C caller carried
+on as though it had worked. **Every defect in §13.1 and §13.1a hid behind that**, and they
+are all one failure: *the word is not where the caller is looking.*
+
+**Why the old output was worse than nothing.** For an undefined word the interpreter *does*
+print something — `interpreter.fs:64` does `type 3a emit`, the word then a colon — and then
+throws into a caller that prints no status. So the entire failure is `vga-driver-fcode:`
+with no newline, and the next `printk` lands on the same line. It reads as progress. The
+new line **completes** that half-message instead of competing with it.
+
+#### Three things the patch got wrong first, each caught by measuring
+
+1. **`%.96s` printed a mangled half-line — and that is a real bug in `libc/vsprintf.c`.**
+   Its `%s` case has the correct `strnlen(s, precision)` under an `#if 0`, and the live
+   branch is `len = mstrlen(s); if( precision > len ) len = precision;` — **precision is a
+   MINIMUM, not a maximum.** `%.96s` on a 13-byte string prints 96 bytes, 83 past the
+   terminator. Clipped in C instead. **Reported, not fixed:** different subsystem, needs its
+   own fixtures, and `fs/hfsplus/hfsp_record.c`'s two `%4.4s` are its only other callers —
+   both of which can currently print *more* than four characters.
+2. **Reporting on the interactive path is noise.** First draft: `pwd` at the prompt printed
+   `no active devicefeval: pwd -- threw -2 (...)` then ` Aborted.` — the same failure said
+   twice, once by a layer with no business saying it. A channel that fires on ordinary typos
+   is one people learn to ignore, which **recreates the silence being fixed**.
+   `feval_quiet()` exists for the one caller that renders the status itself.
+3. **The code is `-19`, not `-13`, and both are right.** OpenBIOS's Forth runs in **base
+   16**, so `-13 throw` in `interpreter.fs` is hex — decimal `-19`, which is why
+   `kernel/bootstrap.c` says `case -19:` for *"undefined word."* while the Forth table says
+   `-13`. The message prints both. The first draft of the smoke assertion looked for `-13`
+   and went **red against a working reporter**. No C copy of the code→name table was made —
+   this file's history says copies drift — so the message names where the table lives.
+
+#### The track is two-sided in a single boot
+
+| | assertion |
+|---|---|
+| **silent when healthy** | a clean boot prints **zero** `feval:`/`fword:`/`eword:` lines on x86, amd64 and ppc |
+| **loud when it should be** | `test-feval-report` prints **exactly one**, naming a word that cannot exist, with its code in both bases |
+
+Neither half is worth having alone: the first reads identically whether the reporter works
+or was compiled out, and the second would pass a reporter that fires on everything.
+`test-feval-report` is bound in `libopenbios/init.c` — one definition for all three arches,
+and the reporter's own **must-catch fixture** rather than a real failure someone has to
+remember to keep broken.
+
+**Negative control, run not reasoned.** Patch 18's defect re-injected (the `device-end`
+removed from `arch/amd64/init.fs`) alongside a bogus `fword("no-such-word-control")`. Both
+branches printed and the silence assertion bit — **and the control immediately found a flaw
+in the assertion itself**: it matched `^(feval|fword|eword):` and reported **1** failure
+where there were **2**, because the undefined-word case *continues* `interpreter.fs`'s line
+and never starts one. A line-anchored regex standing in for a question about a message —
+the mistake [`tools/check-harness-net.sh`](tools/check-harness-net.sh) made twice.
+Unanchored, it reports both.
+
+**Not watched to fire:** `_eword()`'s *"word not in the dictionary"* branch. It is reachable
+only if `evaluate` itself is missing, which cannot happen in a firmware that has reached the
+prompt. Named rather than counted as covered.
 
 ### 13.2 Four defects in `forth/device/property.fs` — **three WATCHED TO BITE 2026-08-25**
 
