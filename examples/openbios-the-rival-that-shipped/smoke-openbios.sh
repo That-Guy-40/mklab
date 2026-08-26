@@ -31,6 +31,8 @@ TRACK (default multiboot):
   diagnostics                 the Forth bindings report their own failures
                               (silent on a clean boot, loud on a real one),
                               and libc/vsprintf.c's %s precision clips
+  client-forth                `go` runs a Forth payload loaded off media --
+                              the trampoline's segments (TODO 13.3(A))
 
 Exit: 0 PASS / 1 FAIL / 77 SKIP. Each track ends on exactly one verdict line.
 Env: OPENBIOS_WORKDIR, KERNEL, INITRD, COREBOOT_DIR
@@ -1219,5 +1221,131 @@ FTH
 
     pass "the Forth bindings report their own failures on x86, amd64 and ppc: a clean boot prints ZERO feval/fword/eword lines on all three, and test-feval-report — the reporter's own must-catch fixture — prints exactly one, naming the unresolvable word and its throw code in both bases (-19 decimal, -13 hex — the Forth sources spell it the second way); and libc/vsprintf.c's %s precision now clips instead of over-reading (7/7), while number() precision and vsnprintf's buffer edge are correct on all three (12/12) with the two C99 divergences — %.0d of 0, and the 0 flag surviving a precision — asserted as themselves rather than hidden in a pass, and its ppc-only return-value anomaly (writes a byte, returns 0) pinned as a named UNKNOWN"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|vga|diagnostics]" >&2; exit 1 ;;
+  client-forth)
+    # TODO 13.3(A): x86's `go` reached the Forth trampoline and evaluated
+    # NOTHING, and the reason was one mechanism wearing two faces.
+    #
+    # arch/x86/context.c handed the fcode/forth trampolines the CLIENT
+    # program's FLAT segments. But their entry is not a client program -- it is
+    # a firmware function (init_forth_context), and x86 relocates itself by
+    # REBASING THE GDT, so every Forth address is segment-relative. Run flat,
+    # the trampoline read each address at its link-time value, where the
+    # original un-relocated copy of the image still sits: a byte-exact snapshot
+    # frozen at the instant of relocation. Nothing faults. It is merely STALE.
+    #
+    # That single fact produced both rows 13.3(A) recorded and could not
+    # reconcile: `load-base` "resolving to a different word" is the same $find
+    # over an older chain (the stale head predates the `constant load-base`
+    # arch_init defines), and `load-size` "fetching a different number" from an
+    # identical xt is the same address read in the other window.
+    #
+    # THE THIRD ASSERTION IS THE ONE THAT MAKES THE OTHER TWO MEAN ANYTHING.
+    # On an arch where the two windows are the same memory, running the
+    # trampoline in the wrong one is undetectable -- which is exactly why amd64
+    # passed throughout: it does not relocate, virt_offset is 0, flat IS
+    # reloc. So x86 also proves the windows still DIFFER before its pass is
+    # allowed to count. amd64 runs here as the positive control: the arch that
+    # never had the bug must not acquire one.
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v qemu-system-i386 >/dev/null || skip "qemu-system-i386 not installed"
+    command -v genisoimage >/dev/null || skip "genisoimage not installed"
+    CAMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"
+    CADI="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    CXMB="$WORKDIR/openbios/obj-x86/openbios.multiboot"
+    [[ -f "$CAMB" && -f "$CADI" ]] || skip "no amd64 image — run ./build-openbios.sh amd64 first"
+    [[ -f "$CXMB" && -f "$XDICT" ]] || skip "no x86 image — run ./build-openbios.sh x86 first"
+
+    # Two payloads, one byte of difference that matters. GO.FTH opens with the
+    # `\ ` that libopenbios/forth_load.c's is_forth() requires; NOGO.FTH does
+    # not, and is otherwise the same program with the same shape of marker in
+    # it. The marker being ABSENT from the second run is therefore an observed
+    # difference and not an untested assumption -- without it, "the marker did
+    # not appear" and "this track cannot see markers" print the same green.
+    CST="$WORKDIR/cf-stage"; rm -rf "$CST"; mkdir -p "$CST"
+    printf '\\ client-forth payload\n." CLIENT-FORTH-RAN" cr\n' > "$CST/GO.FTH"
+    printf '." CLIENT-FORTH-NOGO-RAN" cr\n'                     > "$CST/NOGO.FTH"
+    genisoimage -quiet -o "$WORKDIR/cf.iso" -V CFISO -r -J "$CST"
+
+    cf_boot() {   # cf_boot <arch> <logsuffix> <send-steps...>
+      local a="$1" tag="$2"; shift 2
+      local mb di q sock log
+      if [[ "$a" == amd64 ]]; then q=qemu-system-x86_64; mb="$CAMB"; di="$CADI"
+      else q=qemu-system-i386; mb="$CXMB"; di="$XDICT"; fi
+      sock="$WORKDIR/smoke-cf-$a-$tag.sock"; log="$WORKDIR/cf-$a-$tag.log"
+      rm -f "$sock" "$log"
+      "$q" -M "pc,accel=$ACCEL" -m 512 -kernel "$mb" -initrd "$di" \
+        -cdrom "$WORKDIR/cf.iso" -display none -serial "unix:$sock,server=on" \
+        -no-reboot >/dev/null 2>&1 &
+      local qpid=$!
+      python3 "$REPO/tools/drive-serial-repl.py" "$sock" "$log" --timeout 150 "$@"
+      local rc=$?
+      kill "$qpid" 2>/dev/null   # by PID, never by pattern
+      echo "$rc"
+    }
+
+    for A in x86 amd64; do
+      note "$A: load + go on a Forth payload → $WORKDIR/cf-$A-run.log"
+      RC="$(cf_boot "$A" run \
+        --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\go.fth\r' --expect "0 > " \
+        --send 'go\r' --expect "0 > " \
+        --send '." SVL=" forth-wordlist dup @ swap 400000 load-base - - @ = . cr\r' \
+        --expect "0 > " \
+        --send '." SVLX=" forth-wordlist dup @ swap @ = . cr\r' --expect "0 > " \
+        --send '." CF-END" cr\r' --expect "CF-END")"
+      [[ "$RC" -eq 0 ]] || fail "the $A firmware did not finish the client-forth probe (rc=$RC) — see $WORKDIR/cf-$A-run.log"
+      CL="$(tr -d '\r' < "$WORKDIR/cf-$A-run.log")"
+
+      # (1) THE OUTCOME. Not "the segments are RELOC" -- whether the payload's
+      # own words executed. Scoped past the `go` echo so the command line
+      # cannot answer for the firmware.
+      CAFTER="${CL#*$'\n'0 > go}"
+      grep -aqF 'CLIENT-FORTH-RAN' <<<"$CAFTER" \
+        || fail "REGRESSION: $A's \`go\` did not run the Forth payload — the trampoline reached init_forth_context and evaluated nothing (13.3(A)) — see $WORKDIR/cf-$A-run.log"
+
+      # (2) THE NAMED REFUSAL MUST BE GONE. libopenbios/initprogram.c prints
+      # this when the size it can see is 0; on x86 that was the stale window
+      # answering, and its fingerprint was load-base reading the nvram config
+      # word 4000000 on an arch whose shadow constant says otherwise.
+      grep -aqF 'init-program: nothing to evaluate' <<<"$CL" \
+        && fail "REGRESSION: $A still prints init-program's refusal after \`go\` — $(grep -aoE 'init-program: nothing to evaluate.{0,110}' <<<"$CL" | head -1) — see $WORKDIR/cf-$A-run.log"
+
+      # (3) x86 ONLY: the two windows must still be DIFFERENT memory, or (1)
+      # proves nothing about which one the trampoline used. `400000 load-base -`
+      # recovers virt_offset from the shadow constant (phys LOAD_BASE_PHYS),
+      # so this derives the offset from the running firmware rather than
+      # carrying a number that would rot the next time relocation moves.
+      if [[ "$A" == x86 ]]; then
+        grep -aqE 'SVL=[[:space:]]*0( |$)' <<<"$CAFTER" \
+          || fail "x86's live and stale dictionary heads compare EQUAL — either the firmware stopped relocating or the probe is not reading two windows, and until they differ this track cannot tell a fixed trampoline from a lucky one: $(grep -aoE 'SVL=.{0,20}' <<<"$CAFTER" | head -1) — see $WORKDIR/cf-$A-run.log"
+        # ...and the same comparison WITHOUT the offset must print -1. A `=`
+        # that answered 0 for every input would satisfy the line above while
+        # measuring nothing; this is the tautology that says the instrument is
+        # connected.
+        grep -aqE 'SVLX=[[:space:]]*-1( |$)' <<<"$CAFTER" \
+          || fail "x86's SVL comparison cannot report EQUAL even when handed one cell twice, so its 0 above is an artefact of the probe rather than a difference between the windows: $(grep -aoE 'SVLX=.{0,20}' <<<"$CAFTER" | head -1) — see $WORKDIR/cf-$A-run.log"
+        note "x86: live head ≠ stale head (and the same probe DOES report -1 on a cell against itself), so the flat window is still a real, wrong place to read from"
+      fi
+
+      # (4) THE NEGATIVE CONTROL, in its own boot. Reusing the first would not
+      # be one: a load that matches no loader leaves state-valid set from the
+      # previous one, so `go` would re-enter the trampoline and evaluate the
+      # new bytes anyway. A separate boot asks the question cleanly.
+      note "$A: the same program without is_forth()'s magic must NOT run"
+      RC="$(cf_boot "$A" ctl \
+        --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\nogo.fth\r' --expect "0 > " \
+        --send 'go\r' --expect "0 > " \
+        --send '." CF-END" cr\r' --expect "CF-END")"
+      [[ "$RC" -eq 0 ]] || fail "the $A control boot did not finish (rc=$RC) — see $WORKDIR/cf-$A-ctl.log"
+      CC="$(tr -d '\r' < "$WORKDIR/cf-$A-ctl.log")"
+      grep -aqF 'CLIENT-FORTH-NOGO-RAN' <<<"$CC" \
+        && fail "the $A control RAN a payload libopenbios/forth_load.c's is_forth() must reject — either the magic check is gone or \`go\` is evaluating whatever is at load-base — see $WORKDIR/cf-$A-ctl.log"
+      grep -aqF 'No valid state has been set' <<<"$CC" \
+        || fail "the $A control neither ran the payload nor refused by name — \`go\` on an unrecognised file must say so (forth/debugging/client.fs:247), and silence here means this control cannot distinguish a refusal from a hang — see $WORKDIR/cf-$A-ctl.log"
+    done
+
+    pass "the Forth trampoline runs in the firmware's own segments on both arches: x86's \`go\` evaluates a Forth payload loaded off media (it printed init-program's 'nothing to evaluate' before, reading a stale pre-relocation copy of the dictionary that made \$find walk past the load-base shadow and load-size fetch 0), amd64 — which does not relocate, so the bug could not show — still passes, x86's live and stale dictionary heads are proven to DIFFER so its pass is about the right window, and in a separate boot both arches refuse a payload without is_forth()'s magic by name instead of evaluating it"
+    ;;
+  *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|vga|diagnostics|client-forth]" >&2; exit 1 ;;
 esac

@@ -92,9 +92,9 @@ Runtime ≈ 15–30 s each (`amd64-pmem` and the `persist*` family boot three ti
 **The full list is what `./smoke-openbios.sh --help` prints** — read it there rather than
 from this paragraph, which is a copy and can drift: `multiboot coreboot ppc nvram
 dict-identity persist persist-flash floppy persist-os persist-os-flash amd64 amd64-fault
-amd64-ctx amd64-pmem amd64-linux property-abi vga diagnostics`. The last four were added
-2026-08-25/26 (Spike 3; TODO §13.2's wordset probe; §13.1a's PCI + FCode track; §13.1b's
-binding-failure reporter).
+amd64-ctx amd64-pmem amd64-linux property-abi vga diagnostics client-forth`. The last five
+were added 2026-08-25/26 (Spike 3; TODO §13.2's wordset probe; §13.1a's PCI + FCode track;
+§13.1b's binding-failure reporter; §13.3(A)'s trampoline segments).
 Measured 2026-08-26 on this host: **13 of 13 driven tracks passed** — `multiboot
 dict-identity nvram amd64 amd64-fault amd64-ctx amd64-pmem amd64-linux ppc floppy
 property-abi vga diagnostics`, with 0 SKIP among them. `diagnostics` is the only track
@@ -108,6 +108,13 @@ passed; the one SKIP is `coreboot`**, which has no cached ROM (rebuild it with
 `./build-coreboot-openbios.sh`). The Linux showcase now takes a third flavor:
 `multiboot` PASS, **`amd64` PASS (2026-08-25)**, `coreboot` SKIP for the same
 ROM reason.
+
+**2026-08-26, patch 24 (TODO §13.3(A)):** nine tracks re-run after the trampoline fix —
+`client-forth multiboot dict-identity amd64 amd64-ctx property-abi vga diagnostics ppc`,
+all PASS, 0 SKIP. The other six (`nvram amd64-fault amd64-pmem amd64-linux floppy
+persist*`, plus `coreboot`) were **not re-run** and are UNKNOWN for that change rather
+than assumed green: patch 24 touches `arch/x86/context.c` and the two loader
+`*_init_program()` entry points, which none of them drives.
 
 ### The negative controls, run 2026-08-23
 
