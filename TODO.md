@@ -1970,9 +1970,40 @@ config and **not at all** in amd64's, a third category the original missed.
 >   FCode. **Checkpoint:** `byte-load` reached at all — which would also be the first
 >   FCode ever evaluated at a 64-bit cell in this tree.
 
-### 13.2 Four defects in `forth/device/property.fs`, none of which a byte diff can see
+### 13.2 Four defects in `forth/device/property.fs` — **three WATCHED TO BITE 2026-08-25**
 
-Read at `openbios` `e5ac46d`; **none has been watched to bite** — that is the work.
+Read at `openbios` `e5ac46d`. **The work was to watch them bite, and (a)(b)(c) now do** —
+`./smoke-openbios.sh property-abi` runs a multi-line Forth probe **loaded off media**
+on both arches (only possible since patches 14/15/16; before them every line had to be
+typed through the ~80-char truncation). Measured:
+
+| | amd64 (64-bit cell) | x86 (32-bit cell) |
+|---|---|---|
+| **(a)** `-1 encode-int decode-int` | `ffffffff` — **not a round trip** | `-1` — round-trips |
+| **(b)** a value ≥ 2³² | **silently truncated to 0** | **UNREPRESENTABLE** — an UNKNOWN, not a pass |
+| **(c)** `encode+` with an `allot` between fragments | **lies about the length** | **lies about the length** |
+
+**(c) bites on BOTH arches**, so it is not a 64-bit issue at all — this entry called it
+*"correct today"*, and it is correct only while nothing moves `here` between two
+fragments. Forcing one `allot` breaks it immediately.
+
+The track is a **characterization** test: if it fails saying *"appears FIXED"* that is
+good news, and the expectations here and there get updated together.
+
+**Two false passes were caught in the probe itself, both by the x86 control:**
+- the first version printed `b-WIDE-OK` on x86, because the literal `100000000`
+  truncates to 0 *on entry* on a 4-byte cell — so it compared `0 = 0` and reported a
+  pass for a case the stack cannot express. It now checks the literal survived first.
+- the (c) assertion used `grep -q '…ENCODE\+-WOULD…'`, and in a **basic** regex `\+` is
+  a *quantifier*, not a literal plus — so it matched nothing and reported (c) FIXED
+  while both logs plainly contained the string. Now `grep -F`.
+
+**(d) `decode-bytes` is deliberately not in the probe.** Two bare `r>` with no matching
+`>r`, so calling it corrupts the return stack and would take the machine down mid-run,
+invalidating (a)–(c). Re-derived 2026-08-25: it is called by **nothing** anywhere in the
+tree and `forth/device/table.fs` carries `encode-bytes` with **no `decode-bytes`** — so
+the round trip genuinely does not exist and its damage today is zero. Its own isolated
+destructive experiment.
 
 | # | defect | why it matters on amd64 |
 |---|---|---|

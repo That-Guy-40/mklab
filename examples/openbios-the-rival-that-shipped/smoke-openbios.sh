@@ -816,5 +816,110 @@ case "$FLAVOR" in
       || fail "the kernel was not staged-and-copied — arch/amd64 has started relocating itself, or load_linux_header's address changed; the handoff stub's reason for existing is gone and this track no longer proves it — see $LOG"
     pass "SPIKE 3: the 64-bit firmware boots Linux — one line at the 0 > prompt stages a bzImage above the firmware, copies it over the firmware from a stub in low memory, enters at +0x200 in long mode, and reaches u-root with both e820 ranges intact"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux]" >&2; exit 1 ;;
+  property-abi)
+    # TODO 13.2: the 1275 encode/decode wordset at a 64-bit cell.
+    #
+    # A CHARACTERIZATION TRACK, not a pass/fail on correctness. Three defects in
+    # forth/device/property.fs had been READ but never WATCHED TO BITE; this runs
+    # them on BOTH arches and asserts the disagreement, because the disagreement
+    # is the defect's signature:
+    #
+    #   (a) l@-be accumulates 4 bytes into a CELL, zero-extending. So the same
+    #       four bytes decode to -1 on a 32-bit cell and ffffffff on a 64-bit one.
+    #       forth/admin/devices.fs:434 compares a decoded int against a phandle.
+    #   (b) l!-be masks to 4 bytes with no overflow check -- a value >= 2^32 is
+    #       silently truncated. UNREPRESENTABLE on x86, which is an UNKNOWN and is
+    #       reported as one rather than as a pass.
+    #   (c) encode+ is `nip +`: adjacency-by-alloc-tree, not concatenation. Force
+    #       an `allot` between two fragments and the length it returns is a lie.
+    #       Bites on BOTH arches -- 13.2 called this one "correct today".
+    #
+    # IF THIS TRACK FAILS SAYING "appears FIXED", that is good news and not a
+    # regression: somebody changed the wordset. Update the expectations here and
+    # TODO 13.2 together.
+    #
+    # (d) decode-bytes is deliberately NOT exercised: it has two bare `r>` with no
+    # matching `>r`, so calling it corrupts the return stack and would take the
+    # machine down mid-run, invalidating a-c. It is called by nothing in the tree
+    # and is absent from the FCode table, so it damages nothing today. Separate
+    # destructive experiment.
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v genisoimage >/dev/null || skip "genisoimage not installed"
+    AMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"
+    ADI="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    XMB="$WORKDIR/openbios/obj-x86/openbios.multiboot"
+    XDI2="$WORKDIR/openbios/obj-x86/openbios-x86.dict"
+    for f in "$AMB" "$ADI" "$XMB" "$XDI2"; do
+      [[ -f "$f" ]] || skip "missing $f — run ./build-openbios.sh amd64 and x86 first"
+    done
+    # The probe is multi-line Forth LOADED OFF MEDIA. That is only possible since
+    # patches 14/15/16; before them `load` could not reach (init-program) and every
+    # line had to be typed through the firmware's ~80-char input truncation.
+    PST="$WORKDIR/prop-stage"; rm -rf "$PST"; mkdir -p "$PST"
+    cat > "$PST/PROP.FTH" <<'FTH'
+\ TODO 13.2 probe. Base is HEX.
+." P132-START" cr
+." cell-bits=" 1 cells 8 * . cr
+-1 encode-int decode-int
+." a-decoded=" dup . cr
+-1 = if ." a-ROUNDTRIP-OK" else ." a-ROUNDTRIP-BROKEN" then cr
+2drop
+100000000 dup 0= if
+  drop ." b-UNREPRESENTABLE-ON-THIS-CELL" cr
+else
+  encode-int decode-int
+  ." b-decoded=" dup . cr
+  100000000 = if ." b-WIDE-OK" else ." b-WIDE-TRUNCATED" then cr
+  2drop
+then
+1 encode-int 2dup +
+10 allot
+2 encode-int
+drop
+= if ." c-ADJACENT" else ." c-NOT-ADJACENT-ENCODE+-WOULD-LIE" then cr
+2drop
+." P132-END" cr
+FTH
+    genisoimage -quiet -o "$WORKDIR/prop.iso" -V PROPISO -r -J "$PST"
+    note "running the probe on both arches → $WORKDIR/prop-{amd64,x86}.log"
+    for A in amd64 x86; do
+      if [[ "$A" == amd64 ]]; then MB="$AMB"; DI="$ADI"; else MB="$XMB"; DI="$XDI2"; fi
+      PSOCK="$WORKDIR/pa-$A.sock"; PLOG="$WORKDIR/prop-$A.log"; rm -f "$PSOCK" "$PLOG"
+      qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$MB" -initrd "$DI" \
+        -cdrom "$WORKDIR/prop.iso" -display none -serial "unix:$PSOCK,server=on" \
+        -no-reboot >/dev/null 2>&1 &
+      PQ=$!
+      python3 "$REPO/tools/drive-serial-repl.py" "$PSOCK" "$PLOG" --timeout 120 \
+        --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\prop.fth\r' --expect "0 > " \
+        --send 'load-base load-size evaluate\r' --expect "P132-END"
+      PRC=$?
+      kill "$PQ" 2>/dev/null   # by PID, never by pattern
+      [[ $PRC -eq 0 ]] \
+        || fail "the probe did not complete on $A (rc=$PRC) — loading Forth off media is what patches 14/15/16 bought; if `load` no longer reaches (init-program), that is the regression, not the wordset — see $PLOG"
+    done
+    AL="$(tr -d "\r" < "$WORKDIR/prop-amd64.log")"
+    XL="$(tr -d "\r" < "$WORKDIR/prop-x86.log")"
+
+    grep -q 'a-ROUNDTRIP-BROKEN' <<<"$AL" \
+      || fail "13.2(a) appears FIXED on amd64: -1 encode-int decode-int now round-trips. Good news — update this track and TODO §13.2 together"
+    grep -q 'a-ROUNDTRIP-OK' <<<"$XL" \
+      || fail "REGRESSION: 13.2(a) now bites on x86 too — the 32-bit cell used to round-trip -1 correctly; something changed l@-be or the cell width"
+    grep -q 'a-decoded=ffffffff' <<<"$AL" \
+      || fail "13.2(a) on amd64 decoded something other than ffffffff — the zero-extension is the whole claim; see $WORKDIR/prop-amd64.log"
+
+    grep -q 'b-WIDE-TRUNCATED' <<<"$AL" \
+      || fail "13.2(b) appears FIXED on amd64: a value >= 2^32 no longer vanishes through l!-be. Update this track and §13.2"
+    grep -q 'b-UNREPRESENTABLE-ON-THIS-CELL' <<<"$XL" \
+      || fail "13.2(b) reported a verdict on x86, where a 4-byte cell cannot express the input — that can only mean the probe stopped checking the literal survived, which is the false PASS this track was written to avoid"
+
+    # -F, not -q alone: in a BASIC regex `\+` is a QUANTIFIER, not a literal plus,
+    # so `ENCODE\+-WOULD` asks for one-or-more E and matches nothing. Caught by this
+    # very assertion failing on a run where both logs plainly contained the string.
+    grep -qF 'c-NOT-ADJACENT-ENCODE+-WOULD-LIE' <<<"$AL" && grep -qF 'c-NOT-ADJACENT-ENCODE+-WOULD-LIE' <<<"$XL" \
+      || fail "13.2(c) appears FIXED: encode+ survived an allot between fragments on at least one arch. Update this track and §13.2"
+
+    pass "TODO 13.2 watched to bite: (a) the SAME four bytes decode to ffffffff on amd64 and -1 on x86 — encode-int/decode-int is not a round trip at a 64-bit cell; (b) a value >= 2^32 is silently truncated on amd64 and is UNREPRESENTABLE on x86, reported as an UNKNOWN not a pass; (c) encode+ lies about length on BOTH arches once anything moves HERE between fragments"
+    ;;
+  *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi]" >&2; exit 1 ;;
 esac
