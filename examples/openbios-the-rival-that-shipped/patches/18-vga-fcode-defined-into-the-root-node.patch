@@ -1,0 +1,145 @@
+Subject: [PATCH 18/18] x86+amd64: the VGA FCode blob was defined into the root node
+
+The bug patches 14 and 16 fixed in C, a third time, in Forth -- and this one had
+been shipping on x86 for years with CONFIG_DRIVER_VGA set to TRUE.
+
+arch/{x86,amd64}/init.fs line 9 executes
+
+    " /" find-device
+
+and nothing ever closes it. Eighty lines later the file does
+
+    [IFDEF] CONFIG_DRIVER_VGA
+      -1 value vga-driver-fcode
+      " QEMU,VGA.bin" $encode-file to vga-driver-fcode
+    [THEN]
+
+`value` is $create, and $create defines into the CURRENT VOCABULARY. So
+vga-driver-fcode was created as a method of the ROOT NODE, not as a dictionary
+word. Measured at the x86 prompt before this patch:
+
+    0 > " vga-driver-fcode" $find .
+    0                                    \ not found
+    0 > vga-driver-fcode u.
+    vga-driver-fcode: undefined word.
+    0 > dev / " vga-driver-fcode" $find .
+    -1                                   \ found -- inside root
+    0 > dev / words
+    vga-driver-fcode preopen make-openable encode-unit decode-unit close open
+
+drivers/pci.c:1045 runs
+
+    feval("['] vga-driver-fcode 2 cells + 1 byte-load")
+
+from vga_config_cb, with the PCI DEVICE node current -- not root -- so the
+lookup failed on every boot and the FCode driver has never been evaluated on
+either arch.
+
+WHAT THE FAILURE LOOKED LIKE, and why it survived: forth/bootstrap/interpreter.fs:64
+reports an unresolvable token with
+
+    type 3a emit
+
+-- the word, then a colon -- and then throws -13. feval's caller prints no
+status, so the entire failure is the string
+
+    vga-driver-fcode:
+
+with no newline, no "undefined word", and the next printk landing on the same
+line. It reads as a progress marker. This lab had already written that exact
+string into drivers/floppy.c as a boot LANDMARK ("hung ... right after
+`vga-driver-fcode:`"), which is how thoroughly it passes for normal output.
+
+WHY IT SURVIVED UPSTREAM: arch/ppc/ppc.fs carries the same block and never calls
+find-device, so on ppc the word is global and the driver has always loaded.
+Verified, unchanged by this patch:
+
+    ppc     0 > " vga-driver-fcode" $find .   ->  -1     (before and after)
+
+It is broken only on the two arches nobody boots.
+
+THE FIX is one word: device-end, before the block. Measured after, on both:
+
+                                       x86              amd64
+  " vga-driver-fcode" $find .          -1  (was 0)      -1  (was 0)
+  "vga-driver-fcode:" in the boot log  gone             gone
+  openbios-video-width                 320              320  (was 0)
+  QEMU,VGA@0 under the host bridge     present          present (new, patch 17)
+
+NOT closed by this patch: `" screen" find-dev` still returns 0 on both arches
+-- there is no screen devalias, so a display node exists and nothing points at
+it. That is a separate question and is recorded as one, not folded into this
+result.
+
+All eleven smoke tracks pass on x86, amd64 and ppc after this patch. It is
+confined to arch/{x86,amd64}/ and needs no Arch-tested: line; ppc was built and
+driven anyway, because it is the control that explains the bug.
+
+--- a/arch/x86/init.fs
++++ b/arch/x86/init.fs
+@@ -91,7 +91,31 @@
+ ; CONSOLE-IN-initializer
+ 
+ \ Load VGA FCode driver blob
++\
++\ device-end FIRST, and it is load-bearing. Line 9 of this file executes
++\ `" /" find-device` and NOTHING closes it, so everything below runs with the
++\ ROOT NODE as the current device -- and `value` is $create, which defines into
++\ the CURRENT VOCABULARY. Without this, `vga-driver-fcode` lands in root's
++\ method list instead of the dictionary: measured on x86, `dev / words` prints
++\ it, a bare `$find` returns 0, and drivers/pci.c:1045's
++\ `feval("['] vga-driver-fcode 2 cells + 1 byte-load")` -- which runs with the
++\ PCI device node current, not root -- reported it undefined every boot.
++\
++\ The report is one token long and looks like progress: interpreter.fs:64 does
++\ `type 3a emit` (the word, then a colon) before throwing -13, and feval's
++\ caller prints no status, so the whole failure is the string
++\ "vga-driver-fcode:" with no newline. This lab had already written that string
++\ into drivers/floppy.c as a boot LANDMARK. The FCode driver has never been
++\ evaluated on x86 or amd64.
++\
++\ arch/ppc/ppc.fs carries the same block and never calls find-device, so ppc's
++\ copy is a global word and ppc's VGA has always worked -- which is why this
++\ survived: it is broken only on the arches nobody boots.
++\
++\ Same defect as patches 14 and 16 (bind_func before device_end), third
++\ instance, this time in Forth rather than C.
+ [IFDEF] CONFIG_DRIVER_VGA
++  device-end
+   -1 value vga-driver-fcode
+   " QEMU,VGA.bin" $encode-file to vga-driver-fcode
+ [THEN]
+--- a/arch/amd64/init.fs
++++ b/arch/amd64/init.fs
+@@ -90,7 +90,31 @@
+ ; CONSOLE-IN-initializer
+   
+ \ Load VGA FCode driver blob
++\
++\ device-end FIRST, and it is load-bearing. Line 9 of this file executes
++\ `" /" find-device` and NOTHING closes it, so everything below runs with the
++\ ROOT NODE as the current device -- and `value` is $create, which defines into
++\ the CURRENT VOCABULARY. Without this, `vga-driver-fcode` lands in root's
++\ method list instead of the dictionary: measured on x86, `dev / words` prints
++\ it, a bare `$find` returns 0, and drivers/pci.c:1045's
++\ `feval("['] vga-driver-fcode 2 cells + 1 byte-load")` -- which runs with the
++\ PCI device node current, not root -- reported it undefined every boot.
++\
++\ The report is one token long and looks like progress: interpreter.fs:64 does
++\ `type 3a emit` (the word, then a colon) before throwing -13, and feval's
++\ caller prints no status, so the whole failure is the string
++\ "vga-driver-fcode:" with no newline. This lab had already written that string
++\ into drivers/floppy.c as a boot LANDMARK. The FCode driver has never been
++\ evaluated on x86 or amd64.
++\
++\ arch/ppc/ppc.fs carries the same block and never calls find-device, so ppc's
++\ copy is a global word and ppc's VGA has always worked -- which is why this
++\ survived: it is broken only on the arches nobody boots.
++\
++\ Same defect as patches 14 and 16 (bind_func before device_end), third
++\ instance, this time in Forth rather than C.
+ [IFDEF] CONFIG_DRIVER_VGA
++  device-end
+   -1 value vga-driver-fcode
+   " QEMU,VGA.bin" $encode-file to vga-driver-fcode
+ [THEN]

@@ -24,6 +24,10 @@ TRACK (default multiboot):
   amd64-fault amd64-ctx       exceptions and the context switch (Spike 2)
   amd64-pmem                  /nvram on an NVDIMM above 4 GiB (P3)
   amd64-linux                 the 64-bit firmware boots Linux (Spike 3)
+  property-abi                TODO 13.2's four property.fs defects, watched
+                              to bite on both arches
+  vga                         PCI enumeration on amd64, and the VGA FCode
+                              blob that had never been evaluated on either
 
 Exit: 0 PASS / 1 FAIL / 77 SKIP. Each track ends on exactly one verdict line.
 Env: OPENBIOS_WORKDIR, KERNEL, INITRD, COREBOOT_DIR
@@ -949,5 +953,83 @@ FTH
 
     pass "TODO 13.2 watched to bite: (a) the SAME four bytes decode to ffffffff on amd64 and -1 on x86 — encode-int/decode-int is not a round trip at a 64-bit cell; (b) a value >= 2^32 is silently truncated on amd64 and is UNREPRESENTABLE on x86, reported as an UNKNOWN not a pass; (c) encode+ lies about length on BOTH arches once anything moves HERE between fragments; and encode-phys is NOT fixed-width — 8 bytes under / (the no-parent default of 2 cells) against 4 under /ide@1 (root's own #address-cells 1)"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi]" >&2; exit 1 ;;
+  vga)
+    # TODO 13.1's DRIVER_VGA half: PCI enumeration on amd64 (patch 17) and the
+    # VGA FCode blob that had never been evaluated on EITHER arch (patch 18).
+    #
+    # WHAT THIS TRACK REFUSES TO ASSERT, and why. The obvious check is "the
+    # boot log says vga-driver-fcode:" -- and that string is the FAILURE. It is
+    # what forth/bootstrap/interpreter.fs:64 prints for a token it cannot
+    # resolve: `type 3a emit`, the word then a colon, then throw -13, with no
+    # newline and no "undefined word" because feval's caller prints no status.
+    # It reads as a progress marker, and this lab believed it was one for long
+    # enough to write it into drivers/floppy.c as a boot landmark. So the
+    # assertion below is that the string is ABSENT, and it is scoped to the
+    # boot output BEFORE the first prompt -- the probe's own command echo names
+    # the same word, and a grep over the whole log would match that instead.
+    #
+    # The positive half cannot be a print either. `$find` returning -1 is the
+    # outcome: the word is reachable from the vocabulary drivers/pci.c:1045
+    # calls it from. Before patch 18 it was 0 on both arches and the same word
+    # was sitting in ROOT's method list, where `dev / words` still prints it.
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v qemu-system-i386 >/dev/null || skip "qemu-system-i386 not installed"
+    AMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"
+    ADICT="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    XMB="$WORKDIR/openbios/obj-x86/openbios.multiboot"
+    [[ -f "$AMB" && -f "$ADICT" ]] || skip "no amd64 image — run ./build-openbios.sh amd64 first"
+    [[ -f "$XMB" && -f "$XDICT" ]] || skip "no x86 image — run ./build-openbios.sh x86 first"
+
+    for A in amd64 x86; do
+      case "$A" in
+        amd64) Q=qemu-system-x86_64; VMB="$AMB"; VDICT="$ADICT" ;;
+        x86)   Q=qemu-system-i386;   VMB="$XMB"; VDICT="$XDICT" ;;
+      esac
+      VLOG="$WORKDIR/vga-$A.log"; VSOCK="$WORKDIR/smoke-vga-$A.sock"
+      rm -f "$VLOG" "$VSOCK"
+      note "booting $A and asking whether the FCode blob is reachable → $VLOG"
+      "$Q" -M "pc,accel=$ACCEL" -m 512 -kernel "$VMB" -initrd "$VDICT" \
+        -display none -serial "unix:$VSOCK,server=on" -no-reboot >/dev/null 2>&1 &
+      QPID=$!
+      python3 "$REPO/tools/drive-serial-repl.py" "$VSOCK" "$VLOG" --timeout 120 \
+        --expect "0 > " \
+        --send '." F=" " vga-driver-fcode" $find . cr\r'  --expect "> " \
+        --send 'clear ." W=" openbios-video-width . cr\r' --expect "> " \
+        --send 'clear ." S=" " screen" find-dev . cr\r'   --expect "> " \
+        --send 'clear dev /pci8086,1237@0 ls\r'           --expect "> "
+      RC=$?
+      kill "$QPID" 2>/dev/null   # by PID, never by pattern
+      [[ $RC -eq 0 ]] || fail "the $A firmware did not finish the VGA probe (rc=$RC) — see $VLOG"
+      VL="$(cat "$VLOG")"
+
+      # Scoped to the boot output, so the probe's own echo cannot answer for it.
+      BOOT="${VL%%0 > *}"
+      grep -qF 'vga-driver-fcode:' <<<"$BOOT" \
+        && fail "REGRESSION: $A printed 'vga-driver-fcode:' during boot — that is interpreter.fs:64 reporting an unresolvable token, not progress; the FCode blob is back in a vocabulary drivers/pci.c cannot see (patch 18) — see $VLOG"
+
+      grep -q 'F=-1' <<<"$VL" \
+        || fail "REGRESSION: \$find could not see vga-driver-fcode on $A — it is defined into whatever device context arch/$A/init.fs leaves open, and a bare \$find returns 0 while 'dev / words' still lists it (patch 18) — see $VLOG"
+
+      VW="$(grep -oE 'W=[0-9a-f]+' <<<"$VL" | tail -1 | cut -d= -f2)"
+      [[ -n "$VW" ]] \
+        || fail "the $A probe printed no W= line — openbios-video-width did not resolve, so this track proved nothing about setup_video — see $VLOG"
+      [[ "$VW" != 0 ]] \
+        || fail "REGRESSION: openbios-video-width is 0 on $A — setup_video() never ran, which means PCI enumeration never reached a VGA-class device (patch 17 on amd64; it has always run on x86) — see $VLOG"
+
+      note "$A: vga-driver-fcode FOUND, openbios-video-width=0x$VW, no undefined-token report during boot"
+
+      if [[ "$A" == amd64 ]]; then
+        grep -q 'QEMU,VGA@0' <<<"$VL" \
+          || fail "REGRESSION: amd64 has no QEMU,VGA@0 under /pci8086,1237@0 — ob_pci_init() is not being called from arch_init, so the bus below the firmware does not exist (patch 17) — see $VLOG"
+      fi
+
+      # UNKNOWN, said out loud rather than folded into the pass. A display node
+      # exists and nothing points at it; that is a separate defect, not this one.
+      grep -q 'S=0' <<<"$VL" \
+        && note "$A: UNKNOWN — '\" screen\" find-dev' is still 0; the FCode installs the node but no screen devalias is created, so nothing yet drives it"
+    done
+
+    pass "TODO 13.1 DRIVER_VGA: amd64 enumerates PCI (QEMU,VGA@0 is under the i440FX bridge, openbios-video-width=0x320) and the VGA FCode blob is reachable from \$find on BOTH arches — the 'vga-driver-fcode:' undefined-token report that had been in every x86 boot log is gone"
+    ;;
+  *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|vga]" >&2; exit 1 ;;
 esac

@@ -1,0 +1,152 @@
+Subject: [PATCH 17/18] amd64: enumerate PCI, so the bus below the firmware exists
+
+CONFIG_DRIVER_PCI has been `true` in config/examples/amd64_config.xml since the
+port started. drivers/pci.c was compiled, linked, and NEVER CALLED: arch/amd64's
+arch_init() had no ob_pci_init(), so amd64 had no host bridge, no PCI children,
+and nothing downstream of the bus could run.
+
+Measured at the amd64 prompt, before and after:
+
+                                   before          after
+  dev /pci8086,1237@0              no such device  5 children
+  openbios-video-width             0               320 (hex; 800 decimal)
+  Cannot manage 'ISA bridge' ...   absent          present, as on x86
+
+The tree gains what x86 has had all along -- pci8086,7000@0 (ISA), 7010@0 (IDE),
+7113@0 (ACPI), QEMU,VGA@0 and e1000@0 -- and the `Cannot manage '<class>'` lines
+appear in the boot log for the first time on this arch. They are not errors: PCI
+enumeration prints one per device it has no driver for, and x86 has always
+printed the same five.
+
+The `arch = &default_pci_host` + `" /" open-dev to my-self` preamble is copied
+from arch/x86/openbios.c because amd64 boots the SAME QEMU machine (`-M pc`,
+i440FX). ob_pci_init() walks the bus with new-device/finish-device and needs a
+current instance to hang the bridge off; without it the first new-device faults.
+
+THREE THINGS THIS PATCH DOES NOT DO, each measured rather than assumed:
+
+1. It does not move IDE "onto the probed path". TODO 13.1 said it should, and
+   TODO 13.1 was wrong: drivers/ide.c:1519 takes `const char *path` and NEVER
+   READS IT AGAIN. ob_ide_init() calls `new-device` in whatever device context
+   happens to be current, which is root -- so `dev / ls` shows ide@0..ide@3 at
+   the TOP LEVEL on x86 too, and there is no /pci node on either arch. The
+   string "/pci/pci-ata" vs x86's "/pci/isa" has never meant anything. Left
+   as-is, with a comment, so this stays a diff about PCI.
+
+2. It does not deduplicate the IDE nodes. Enumeration now finds 8086:7010 and
+   reports it unmanaged; ob_ide_init() still creates its own ide@N from the
+   legacy ports. That is exactly what x86 does, and amd64-linux still boots off
+   ide@1, so the duplication is upstream behaviour and not something this patch
+   introduced.
+
+3. include/arch/amd64/io.h gains `#include "asm/types.h"`, which x86's copy has
+   always had. Turning DRIVER_VGA on pulls in drivers/vga_load_regs.c, whose
+   include chain reaches include/drivers/vga.h -- and THAT header declares
+   `extern volatile uint32_t *dac;` without including a types header at all. It
+   built on x86 by accident, through asm/io.h. Fixing include/drivers/vga.h
+   would be the more correct repair, but it is a SHARED header and would need
+   the ppc and sparc arms; this restores parity inside the arch's own include
+   dir, which is where the divergence is.
+
+CONFIG_DRIVER_VGA flips to true here because with enumeration wired up it is now
+reachable -- see patch 18 for why reachable was not yet the same as working.
+
+All eleven smoke tracks pass after this patch, on all three arches this lab
+drives: multiboot, dict-identity, nvram, amd64, amd64-fault, amd64-ctx,
+amd64-pmem, amd64-linux, ppc, floppy, property-abi.
+
+--- a/arch/amd64/openbios.c
++++ b/arch/amd64/openbios.c
+@@ -33,6 +33,23 @@
+ #define DICTIONARY_SIZE (256*1024)      /* 256K for the dictionary   */
+ static char intdict[DICTIONARY_SIZE];
+ 
++#ifdef CONFIG_DRIVER_PCI
++/* The i440FX host bridge QEMU's `pc` machine presents, byte-identical to
++ * arch/x86/openbios.c:37. amd64 boots the SAME machine type -- the smoke
++ * tracks all run `-M pc` -- so a second, divergent copy would be a lie
++ * waiting to happen, not a port. */
++static const pci_arch_t default_pci_host = {
++    .name = "Intel,i440FX",
++    .vendor_id = PCI_VENDOR_ID_INTEL,
++    .device_id = PCI_DEVICE_ID_INTEL_82441,
++    .io_base = 0x1000,
++    .host_ranges = {
++        { .type = IO_SPACE, .parentaddr = 0, .childaddr = 0x1000, .len = 0 },
++        { .type = 0, .parentaddr = 0, .childaddr = 0, .len = 0 }
++     }
++};
++#endif
++
+ static void init_memory(void)
+ {
+ 	/* push start and end of available memory to the stack
+@@ -59,8 +76,37 @@
+ 	 * declared setup_timers() since a sweep amd64 was never compiled for. */
+ 
+ 	modules_init();
++#ifdef CONFIG_DRIVER_PCI
++	/* amd64 had NO PCI enumeration at all until here: CONFIG_DRIVER_PCI was
++	 * already true, so drivers/pci.c was compiled and linked in, and nothing
++	 * ever called it. Everything downstream of the bus was therefore
++	 * unreachable -- including vga_config_cb(), the ONLY caller of the
++	 * tree's only `byte-load`, which is why CONFIG_DRIVER_VGA could not be
++	 * turned on by flipping the flag.
++	 *
++	 * The `open-dev to my-self` dance is not decoration: ob_pci_init() walks
++	 * the bus with `new-device`/`finish-device` and needs a current instance
++	 * to hang the host bridge off, exactly as arch/x86/openbios.c does. */
++	arch = &default_pci_host;
++
++	push_str("/");
++	fword("find-device");
++	feval("\" /\" open-dev to my-self");
++
++	ob_pci_init();
++
++	feval("0 to my-self");
++#endif
+ #ifdef CONFIG_DRIVER_IDE
+ 	setup_timers();
++	/* The path argument is DEAD. drivers/ide.c:1519 names it and never
++	 * reads it again -- ob_ide_init() calls `new-device` in whatever device
++	 * context is current, so the nodes land wherever that points (root, on
++	 * both arches: `dev / ls` shows ide@0..ide@3 at the top level on x86
++	 * too, and there is no /pci node on either). Left reading
++	 * "/pci/pci-ata" so this port stays a diff about PCI; TODO 13.1's
++	 * "move IDE onto the probed path" was written before the argument was
++	 * measured, and there is no probed path to move it to. */
+ 	ob_ide_init("/pci/pci-ata", 0x1f0, 0x3f6, 0x170, 0x376);
+ #endif
+ 	/* P3: create /nvram and bind the config variables to it, exactly as
+--- a/include/arch/amd64/io.h
++++ b/include/arch/amd64/io.h
+@@ -1,6 +1,20 @@
+ #ifndef _ASM_IO_H
+ #define _ASM_IO_H
+ 
++/* include/arch/x86/io.h has had this line all along; amd64's copy is the odd
++ * one out, and nothing noticed because nothing amd64 compiled had needed a
++ * fixed-width type through this path. CONFIG_DRIVER_VGA pulls in
++ * drivers/vga_load_regs.c, whose include chain is asm/io.h -> drivers/vga.h,
++ * and drivers/vga.h declares `extern volatile uint32_t *dac;` WITHOUT
++ * including a types header -- so it built on x86 by accident and failed on
++ * amd64 with "unknown type name 'uint32_t'".
++ *
++ * Fixing drivers/vga.h instead would be the more correct repair (a header
++ * should include what it uses) but it is a SHARED header: that patch would
++ * need the ppc and sparc arms too. This restores parity inside the arch's own
++ * include dir, which is where the divergence actually is. */
++#include "asm/types.h"
++
+ extern char _start, _end;
+ extern unsigned long virt_offset;
+ 
+--- a/config/examples/amd64_config.xml
++++ b/config/examples/amd64_config.xml
+@@ -58,4 +58,4 @@
+   <option name="CONFIG_DRIVER_IDE" type="boolean" value="true"/>
+   <option name="CONFIG_IDE_NUM_CHANNELS" type="integer" value="4"/>
+   <option name="CONFIG_DEBUG_IDE" type="boolean" value="false"/>
+-  <option name="CONFIG_DRIVER_VGA" type="boolean" value="false"/>
++  <option name="CONFIG_DRIVER_VGA" type="boolean" value="true"/>
