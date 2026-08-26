@@ -92,11 +92,13 @@ Runtime ≈ 15–30 s each (`amd64-pmem` and the `persist*` family boot three ti
 **The full list is what `./smoke-openbios.sh --help` prints** — read it there rather than
 from this paragraph, which is a copy and can drift: `multiboot coreboot ppc nvram
 dict-identity persist persist-flash floppy persist-os persist-os-flash amd64 amd64-fault
-amd64-ctx amd64-pmem amd64-linux property-abi vga`. The last three were added 2026-08-25/26
-(Spike 3; TODO §13.2's wordset probe; TODO §13.1a's PCI + FCode track).
-Measured 2026-08-26 on this host: **12 of 12 driven tracks passed** — `multiboot
+amd64-ctx amd64-pmem amd64-linux property-abi vga diagnostics`. The last four were added
+2026-08-25/26 (Spike 3; TODO §13.2's wordset probe; §13.1a's PCI + FCode track; §13.1b's
+binding-failure reporter).
+Measured 2026-08-26 on this host: **13 of 13 driven tracks passed** — `multiboot
 dict-identity nvram amd64 amd64-fault amd64-ctx amd64-pmem amd64-linux ppc floppy
-property-abi vga`, with 0 SKIP among them. Two of those carry the clean-prompt probe
+property-abi vga diagnostics`, with 0 SKIP among them. `diagnostics` is the only track
+that boots **all three** arches in one run. Two of those carry the clean-prompt probe
 added the same day: `amd64` asserts it (patch 19 fixed it there) and `multiboot` is its
 **control**, since x86 has always passed. Measured 2026-08-23: **13 of 14 ran and
 passed; the one SKIP is `coreboot`**, which has no cached ROM (rebuild it with
