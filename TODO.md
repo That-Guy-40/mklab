@@ -2559,9 +2559,68 @@ names every Tier-C row it did not run.
 
 ---
 
+## 15. Corpus survey (2026-08-26) — synergies not wired, families with a hole
+
+Full write-up: [`SURVEY-examples-synergy.md`](SURVEY-examples-synergy.md). A desk survey of
+`examples/` against the two catalogues, the seven drivers and `ci.yml`. The routing is
+complete and the backlog is drained, so this looks only for what nobody has written down.
+The boxes below are the actionable half; §C2, §D and §E of the survey are design calls, not
+work items, and are deliberately not checkboxes here.
+
+- [ ] **15.1 — the EXIT-trap CI loop is keyed on the defect.** `ci.yml`'s loop enumerates
+      `git ls-files '*/tests/lib.sh'`, but `check-harness-net.sh`'s **first** check is
+      *whether a `lib.sh` exists at all*. So a `tests/` directory with no shared net is not a
+      failure — it is not a row. **Measured:** the checker aimed by hand at all 21 `tests/`
+      dirs returns **13 × rc 0** (every enrolled suite) and **5 × rc 1** — `almalinux-packer-images/`,
+      `kali-packer-vagrant/`, `openbios-the-rival-that-shipped/`, `package-mirror-ram/`, and
+      **`tools/tests` itself**, the directory holding the meta-checkers. Enumerate `tests/`
+      **directories** containing `*.sh` instead; the five rows go red, which is the point.
+      This is `CLAUDE.md`'s *"a scan that matches nothing and a scan that is broken print the
+      same green ✓"* moved up one level — a broken **population** rather than a broken pattern.
+- [ ] **15.2 — three private copies of the net, one already drifted weaker.** Blocked behind
+      15.1 seeing them at all. `package-mirror-ram/tests/test-state-mount-guard.sh` installs its
+      own `trap` with **no `_VERDICT` flag** and whitelists `rc == 1` — so a `die` (which is
+      `exit 1`) ends the run with **no `FAIL:` line**, the exact silent exit the net exists to
+      prevent. The two `test-offline-archive.sh` files carry near-identical hand-rolled copies.
+      Give all four a `lib.sh` (or point them at a shared one) and delete the copies.
+- [ ] **15.3 — four `tests/` dirs have no `run-all.sh`,** so `test-run-all-reports-a-ratio.sh`
+      has no runner to drive, and the list moved into a hand-maintained `for t in …` in
+      `ci.yml` — the *"a test file in no list"* shape the ratio rule was written to kill,
+      relocated to a YAML file no ratio check reads.
+- [ ] **15.4 — `netboot/` mints a snakeoil CA next door to `lab-ca/`.** `sign-payload.sh`'s own
+      header documents a `--keydir` seam for "real material (`ca.crt`/`ca.key` +
+      `codesign.crt`/`codesign.key`)"; `examples/lab-ca/issue-signing-cert.sh` produces exactly
+      that; `git grep lab-ca netboot/` returns **nothing**. Wiring it makes `lab-ca` the first
+      anchor in this repo trusted by more than one consumer — which is the only part of PKI
+      that is actually hard, and the RAM-infra family's "reboot pulls the newest **verified**
+      image" thesis currently chains to a key each lab minted for itself.
+- [ ] **15.5 — a package mirror nobody installs from.** `package-mirror-ram/` serves a Debian
+      mirror; all four ZTP install labs install from public mirrors, and no install lab
+      references it. `d-i mirror/http/hostname` (or kickstart `url --url=`) buys the
+      **air-gapped install** — a path no lab here demonstrates end to end — and gives
+      `package-mirror-ram`'s ⏳ author-run half its first consumer-side proof.
+- [ ] **15.6 — `push` exists only in phase 3, and there is no registry to push to.**
+      `registry:2` → **0 files** repo-wide. A rootless `registry:2` in a phase-4 pod gives the
+      verb a target, justifies it in phases 4/5, and — with 15.4 — is where TLS and (with
+      `cosign`, also 0 files) container-artifact signing would live. The repo has a firm
+      opinion about signed *boot* artifacts and none about signed *container* ones.
+- [ ] **15.7 — one spec hard-codes this machine's home.**
+      `examples/zfsbootmenu-boot-environments/zbm-debian.toml:21` is the only `/home/user/` in
+      any tracked `.toml`. The README is right that the path must be **absolute** (it is a
+      qcow2 backing file); whose `$HOME` it names is a separate question.
+
+**Deliberately not a box:** the survey's §D — the repo has grown a **second, undocumented**
+answer to "hand-walk a tutorial" (`RUNBOOK.md` + `setup-workshop.sh` + a
+`<lab>-debian.toml`/`<lab>-alpine.toml` pair, in **13** labs, used as a genuine cross-libc
+parity oracle) alongside the **10** documented `hand-walk/` subdirs. It is an upgrade nobody
+wrote down, not a defect; but nothing asserts the two halves of a pair stay in step, so the
+parity claims in those READMEs are unguarded.
+
+---
+
 ---
 
 *Created 2026-06-06; #5–#6 added 2026-06-11; #7 added 2026-06-11; #8 added
 2026-08-03; #9 added 2026-08-06; #10 added 2026-08-06; #11 added 2026-08-21;
 #11.1 and #11.2a closed 2026-08-22; #12 and #13 added 2026-08-24; #12 **closed
-2026-08-25**; #14 added 2026-08-25.*
+2026-08-25**; #14 added 2026-08-25; #15 added 2026-08-26.*
