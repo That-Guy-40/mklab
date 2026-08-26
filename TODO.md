@@ -1998,12 +1998,32 @@ good news, and the expectations here and there get updated together.
   a *quantifier*, not a literal plus — so it matched nothing and reported (c) FIXED
   while both logs plainly contained the string. Now `grep -F`.
 
-**(d) `decode-bytes` is deliberately not in the probe.** Two bare `r>` with no matching
-`>r`, so calling it corrupts the return stack and would take the machine down mid-run,
-invalidating (a)–(c). Re-derived 2026-08-25: it is called by **nothing** anywhere in the
-tree and `forth/device/table.fs` carries `encode-bytes` with **no `decode-bytes`** — so
-the round trip genuinely does not exist and its damage today is zero. Its own isolated
-destructive experiment.
+**(d) `decode-bytes` — run in isolation 2026-08-25, and it does NOT crash.** That
+prediction ("calling it corrupts the return stack and would take the machine down") was
+this entry's, and it is wrong. Measured on amd64:
+
+```console
+D-DEPTH-BEFORE=0
+D-ENCODED-DEPTH=2      \ after `" ab" encode-bytes`
+D-CALLING-NOW          \ `1 decode-bytes`, so 3 items in
+D-RETURNED             \ it came back
+D-DEPTH-AFTER=6        \ documented effect is 4 out — TWO EXTRA
+```
+
+The two extra cells are exactly the two bare `r>`: it pulls them off the **return**
+stack and leaves them on the data stack. It survived because `evaluate`'s return stack
+was deep enough to be robbed without the closing `;` landing anywhere fatal.
+
+**That is worse than a crash, not better.** A word that corrupts the return stack and
+then returns *cleanly* hands its caller a silently wrong stack and an intact-looking
+machine. It stayed out of the `property-abi` probe for the right reason — it perturbs
+state mid-run and would invalidate (a)–(c) — but not for the stated one.
+
+Its damage today is still zero, re-derived: called by **nothing** anywhere in the tree,
+and `forth/device/table.fs` carries `encode-bytes` with **no `decode-bytes`**, so the
+round trip does not exist. **Fix or delete it** before anything claims otherwise — and
+the fix is not merely balancing the `r>`s, since the stack comment describes an effect
+(`addr len2 addr1 #bytes`) that no caller has ever depended on.
 
 | # | defect | why it matters on amd64 |
 |---|---|---|
