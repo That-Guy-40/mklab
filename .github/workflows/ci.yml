@@ -502,6 +502,7 @@ jobs:
           for t in examples/kali-packer-vagrant/tests/test-offline-archive.sh \
                    examples/almalinux-packer-images/tests/test-offline-archive.sh \
                    examples/openbios-the-rival-that-shipped/tests/test-usage-is-data.sh \
+                   examples/openbios-the-rival-that-shipped/tests/test-patch-scope.sh \
                    examples/micro-cloud/tests/run-all.sh \
                    examples/nested-calico-sandbox/tests/run-all.sh \
                    examples/metal-as-a-service/tests/run-all.sh; do

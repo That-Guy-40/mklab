@@ -1,0 +1,96 @@
+Subject: [PATCH 16/16] x86: the same binding fix patch 14 made for amd64
+
+arch/x86/openbios.c has the identical defect and takes the identical one-call-site
+fix: openbios_init() moves to AFTER device_end().
+
+bind_func is is-cfunc (libopenbios/clib.fs:17) is $create, and $create defines
+into the CURRENT vocabulary -- so while a device context is open, the words land
+in that node rather than the dictionary, invisible to $find.
+
+Measured at the x86 prompt, before and after:
+
+                    before      after
+  (init-program)    MISSING     FOUND
+  (go)              MISSING     FOUND
+  platform-boot     FOUND       FOUND     (already bound after device_end)
+
+The symptom was `load` of any file ending in "Unable to locate (init-program)!"
+(forth/debugging/client.fs:57) -- so the whole `load` client path was dead on the
+arch that has had CONFIG_LOADER_FORTH set to TRUE all along. After:
+
+    0 > load /ide@1/cdrom@0:\marker.fth
+     ok
+    0 > load-size . cr
+    23
+    0 > load-base load-size evaluate
+    SPIKE-FORTH-LOADED
+
+WHAT IS DELIBERATELY NOT MOVED, and it is the interesting half. A few lines above
+device_end(), x86 binds cif-claim and cif-release:
+
+    push_str("/openprom/client-services");
+    fword("find-device");
+    bind_func("cif-claim", ciface_claim_x86);
+    bind_func("cif-release", ciface_release_x86);
+
+Those are ALSO unreachable to a global $find, and they are SUPPOSED to be: the
+find-device wrapper installs them as METHODS OF THAT NODE, which is what ppc and
+sparc do for the same two names via NODE_METHODS. Their invisibility is the
+mechanism being used correctly, not a second instance of the bug.
+
+That distinction was checked rather than assumed -- an earlier reading of this
+same code called them a second defect, on the strength of the probe alone, and
+was wrong. The probe answers "is this word global"; it does not answer "should
+it be". Only the find-device wrapper does.
+
+Arch coverage for this patch is arch/x86/ only, so no Arch-tested line is
+required (tools/check-patch-scope.sh). Run anyway, since the file is load-bearing
+for every x86 track: multiboot, dict-identity, nvram, persist and floppy all
+PASS, and showcase-rival-boots-linux.sh multiboot PASSes.
+
+STILL OPEN, and new: x86's `go` prints "Evaluating Forth..." and then HANGS,
+where amd64's completes and prints the marker. The `evaluate` recipe above works
+on both. That divergence is recorded as an UNKNOWN in TODO 13.1 rather than
+being smoothed over -- x86 rebases the GDT and carries two definitions of
+load-base, either of which could matter, and neither has been measured.
+
+--- a/arch/x86/openbios.c
++++ b/arch/x86/openbios.c
+@@ -426,7 +426,6 @@
+ static void
+ arch_init( void )
+ {
+-	openbios_init();
+ 	modules_init();
+ #ifdef CONFIG_DRIVER_PCI
+ 	arch = &default_pci_host;
+@@ -475,6 +474,29 @@
+ 	bind_func("cif-release", ciface_release_x86);
+ 
+ 	device_end();
++
++	/* openbios_init() RUNS HERE, NOT AT THE TOP, and the ordering is the whole
++	 * of it. Same fix as arch/amd64 (patch 14); the defect is identical here.
++	 *
++	 * It binds `(init-program)` and `(go)` with bind_func, which is `is-cfunc`
++	 * (libopenbios/clib.fs:17), which is `$create` -- and $create defines into
++	 * the CURRENT vocabulary. While a device context is open, the words land in
++	 * that node instead of the dictionary, where $find cannot see them.
++	 *
++	 * Measured on x86 BEFORE this move: `(init-program)` MISSING, `(go)`
++	 * MISSING, `platform-boot` (bound just below device_end) FOUND. The symptom
++	 * was `load` of any file ending in "Unable to locate (init-program)!"
++	 * (forth/debugging/client.fs:57), so the whole `load` client path was dead
++	 * on the arch that has had CONFIG_LOADER_FORTH set to true all along.
++	 *
++	 * NOTE what is deliberately NOT moved: the cif-claim/cif-release binds a few
++	 * lines above are wrapped in find-device /openprom/client-services ...
++	 * device_end() ON PURPOSE. Those are NODE METHODS -- ppc and sparc install
++	 * the same two names via NODE_METHODS on that same node -- so their being
++	 * invisible to a global $find is correct, not a second instance of this bug.
++	 * That distinction was checked before touching anything. */
++	openbios_init();
++
+ 	bind_func("platform-boot", boot );
+ 
+ 	/* x86 relocates itself by REBASING THE GDT data segment (see

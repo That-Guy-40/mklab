@@ -1822,12 +1822,57 @@ Evaluating Forth...
 SPIKE-FORTH-LOADED
 ```
 
-**Necessary but not sufficient per arch, measured rather than assumed:** x86 built
-with patch 15 and *without* an x86 equivalent of patch 14 still ends `load` in
-`Unable to locate (init-program)!`, because that binding defect is per-arch. Only
-amd64 carries the binding fix today — **an x86 arm is the obvious next increment**
-and would make `CONFIG_LOADER_FORTH` meaningful on the arch that has had it set to
-`true` all along.
+#### The x86 arm — **done**, and it corrected a claim made here
+
+The binding defect is per-arch, so patch 15 alone was necessary but not sufficient:
+x86 built with it and *without* an x86 equivalent of patch 14 still ended `load` in
+`Unable to locate (init-program)!`.
+[`patches/16-…`](examples/openbios-the-rival-that-shipped/patches/16-x86-openbios-init-after-device-end.patch)
+is the identical one-call-site move.
+
+| word | before | after |
+|---|---|---|
+| `(init-program)` | MISSING | **FOUND** |
+| `(go)` | MISSING | **FOUND** |
+| `platform-boot` | FOUND | FOUND |
+
+so `CONFIG_LOADER_FORTH` — `true` on x86 all along, over a dead path — finally means
+something. x86 regression: `multiboot`, `dict-identity`, `nvram`, `persist`, `floppy`
+and the **showcase** all PASS.
+
+**The correction.** This lab briefly recorded `cif-claim`/`cif-release` as a second
+instance of the same bug, because they too are invisible to a global `$find`. They are
+**not a defect**: they are bound inside `find-device /openprom/client-services … device_end()`
+*on purpose*, which installs them as **node methods** — exactly what ppc and sparc do
+for those two names via `NODE_METHODS`. The probe answers *"is this word global"*; it
+cannot answer *"should it be"*. Only the source does, and it was read before anything
+was moved.
+
+**New UNKNOWN:** x86's `go` prints `Evaluating Forth...` and then **hangs**, where
+amd64's completes. The `load` + `evaluate` recipe works on both. x86 rebases the GDT
+and carries two definitions of `load-base`; either could matter and neither has been
+measured.
+
+#### The rule is now a check, not a habit
+
+The ppc run above was nearly missed — `initprogram.c` is built unconditionally for
+every arch, and the PR was opened before that track was run. It passed, so nothing
+broke; the point is that **nothing would have said so**, and it was caught by a person
+thinking to ask.
+[`tools/check-patch-scope.sh`](tools/check-patch-scope.sh) now requires any patch
+touching a path outside `arch/{x86,amd64}/` to carry `Arch-tested:` naming all three
+arches this lab can drive, and the lab's
+[`tests/test-patch-scope.sh`](examples/openbios-the-rival-that-shipped/tests/test-patch-scope.sh)
+runs it in CI. It proves itself on 8 fixtures first, grandfathers pre-rule patches
+**by name with reasons** (a date cutoff grows silently), and states on every run that
+**sparc is reachable from these shared files and untestable here** — so "all three
+named" can never be read as "all arches covered".
+
+**Working convention that goes with it:** `~/openbios-lab-archneutral/` is a
+**scratchpad, not a parallel branch**. Resync it *from* the lab tree when starting a
+change that leaves `arch/{x86,amd64}/` — `libopenbios/`, `forth/`, `drivers/`,
+`kernel/` — and do arch-confined work directly in the lab tree, where the file path
+is itself the blast-radius proof.
 
 *The original diagnosis, kept because it is how the cause was found:* the checkpoint
 could not be reached, and **x86 failed identically**, so it was not port work.
