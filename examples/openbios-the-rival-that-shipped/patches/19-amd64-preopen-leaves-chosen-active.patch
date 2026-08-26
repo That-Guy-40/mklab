@@ -1,0 +1,104 @@
+Subject: [PATCH 19/19] amd64: preopen never closed /chosen, so the prompt was never clean
+
+One word, and the arch it brings amd64 into line with is x86.
+
+arch/x86/init.fs:52 ends preopen with `device-end`. arch/amd64/init.fs's copy
+never did -- so the LAST preopen run by the SYSTEM-initializer left /chosen as
+the active package, for the rest of the boot and all the way to the prompt.
+Measured before this patch:
+
+                        amd64            x86
+  active-package u.     13d708           0
+  pwd                   /chosen          no active device
+  get-order .           2                1
+
+WHY THAT IS NOT COSMETIC. active-package! (forth/device/package.fs) does
+
+    ?dup if
+      forth-wordlist over >dn.methods @ 2 set-order
+      >dn.methods @ set-current
+    else
+      forth-wordlist dup 1 set-order set-current
+    then
+
+-- with a package active, CURRENT is the node's method list. That is correct
+IEEE 1275 and is exactly how `: open ... ;` inside new-device/finish-device
+becomes a node method; there is nothing to fix in $create, value or variable.
+The consequence when nobody closes the node is that EVERY definition made at the
+amd64 prompt was silently a method of /chosen:
+
+    0 > variable la  5 la !  la @ .    5  ok
+    0 > device-end  la @ .             la: undefined word.
+
+Defined, usable, and then gone -- because device-end sets the search order back
+to [forth-wordlist] alone, and the word was never in it. Anything that walks the
+device tree between a definition and its use does this, which is why it surfaced
+first inside a multi-line Forth probe and was misread as a property of
+`evaluate`. It is not: the two lines above were typed straight at the prompt.
+
+This is the SECOND of two unbalanced sites in this file. Line 9's
+`" /" find-device` is the other, fixed by patch 18. Each arch got a different
+subset of the two right, which is why one defect kept presenting as four
+unrelated symptoms:
+
+  arch      line-9 find-device closed   preopen closes   prompt
+  x86       no  (patch 18)              YES (:52)        clean
+  amd64     no  (patch 18)              no  (THIS)       /chosen active
+  sparc64   yes (device-end :51)        no               UNVERIFIED
+  sparc32   yes (device-end :38)        no               UNVERIFIED
+  ppc       never opens one             n/a              UNVERIFIED
+
+NOT FIXED HERE: arch/sparc64/init.fs and arch/sparc32/init.fs have the identical
+omission. This lab cannot boot sparc, so they are recorded as an UNKNOWN rather
+than patched blind -- tools/check-patch-scope.sh would demand an `Arch-tested:`
+line naming three arches, and this lab cannot honestly write one for a sparc
+file.
+
+After, amd64 is byte-for-byte x86's answer: active-package 0, "no active
+device", order 1. The assertion added to the `amd64` smoke track is the OUTCOME
+-- a variable defined at the prompt survives device-end -- not `active-package
+u.`, which is the mechanism. The same probe was added to the `multiboot` track
+as its CONTROL: x86 has always passed it, which is what distinguishes "the fix
+works" from "the probe cannot fail".
+
+Negative control: this device-end deleted and amd64 rebuilt, the amd64 track
+fires its REGRESSION line and the multiboot track stays green.
+
+All twelve smoke tracks pass on x86, amd64 and ppc.
+
+--- a/arch/amd64/init.fs
++++ b/arch/amd64/init.fs
+@@ -49,6 +49,33 @@
+   else
+     2drop
+   then
++  \ arch/x86/init.fs:52 has this line and amd64's copy never did, so the LAST
++  \ preopen of the SYSTEM-initializer left /chosen active -- for the rest of the
++  \ boot and all the way to the prompt. Measured before this line existed:
++  \
++  \     0 > active-package u.   13d708
++  \     0 > pwd                 /chosen        ( x86: "no active device" )
++  \     0 > get-order .         2              ( x86: 1 )
++  \
++  \ active-package! (forth/device/package.fs) sets CURRENT to the active node's
++  \ method list, which is correct IEEE 1275 -- it is how `: open ... ;` inside
++  \ new-device becomes a node method. The consequence when nobody closes the
++  \ node is that EVERY definition made at the amd64 prompt landed in /chosen
++  \ and evaporated the moment anything called device-end:
++  \
++  \     0 > variable la  5 la !  la @ .    5  ok
++  \     0 > device-end  la @ .             la: undefined word.
++  \
++  \ Same shape as patches 14, 16 and 18, and the second of the two unbalanced
++  \ sites in this file -- line 9's `" /" find-device` is the other one. Each
++  \ arch got a different subset of the two right, which is why one defect kept
++  \ presenting as four unrelated symptoms.
++  \
++  \ NOT FIXED HERE: arch/sparc64/init.fs has the identical omission. This lab
++  \ cannot boot sparc, so it is recorded as an UNKNOWN rather than patched
++  \ blind -- see tools/check-patch-scope.sh, which would demand an Arch-tested:
++  \ line this lab cannot honestly write.
++  device-end
+ ;
+  
+ \ WHEN this runs is the whole of it. set-defaults overwrites EVERY config

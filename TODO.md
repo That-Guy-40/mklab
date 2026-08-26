@@ -2077,6 +2077,73 @@ interpreter.fs:64 reporting an unresolvable token, not progress …
 The same broken image also prints `F=0`, so the second assertion would have fired had the
 first not exited. All eleven other smoke tracks pass on x86, amd64 and ppc.
 
+#### The second unbalanced site: amd64's prompt was never clean (patch 19)
+
+Asked afterwards whether any of this is a defect in the **Forth definition machinery**.
+It is not — and asking produced a fourth instance of the same shape.
+
+`active-package!` (`forth/device/package.fs`) is faithful IEEE 1275:
+
+```forth
+: active-package! ( phandle -- )
+  ?dup if
+    forth-wordlist over >dn.methods @ 2 set-order
+    >dn.methods @ set-current          \ definitions land in the NODE
+  else
+    forth-wordlist dup 1 set-order set-current
+  then ;
+```
+
+Defining into the active package is not a bug, it is *how* `: open ... ;` inside
+`new-device`/`finish-device` becomes a node method. Nothing to fix in `$create`, `value`
+or `variable`.
+
+**But the measurement that settled it found a second unbalanced `find-device`.** Asked
+what was actually active at the prompt:
+
+| | `active-package` | `pwd` | `get-order` |
+|---|---|---|---|
+| **x86** | `0` | *no active device* | `1` |
+| **amd64** | `0x13d708` | **`/chosen`** | `2` |
+
+`arch/x86/init.fs:52` ends `preopen` with `device-end`; **amd64's copy never did**, so the
+last `preopen` of the `SYSTEM-initializer` left `/chosen` active for the rest of the boot.
+Every definition made at the amd64 prompt was silently a method of `/chosen`:
+
+```
+0 > variable la  5 la !  la @ .    5  ok
+0 > device-end  la @ .             la: undefined word.
+```
+
+Defined, usable, then gone — `device-end` sets the order back to `[forth-wordlist]` alone
+and the word was never in it. **This has nothing to do with `evaluate`**, which is how it
+was first (wrongly) explained: the two lines above were typed straight at the prompt. It
+surfaced inside a multi-line probe only because a probe is the kind of thing that walks the
+tree between defining a word and using it.
+
+| arch | line-9 `find-device` closed | `preopen` closes | prompt |
+|---|---|---|---|
+| x86 | no → patch 18 | **yes** (`:52`) | clean |
+| amd64 | no → patch 18 | **no** → patch 19 | `/chosen` active |
+| sparc64 | yes (`device-end :51`) | no | **UNVERIFIED** |
+| sparc32 | yes (`device-end :38`) | no | **UNVERIFIED** |
+| ppc | never opens one | n/a | **UNVERIFIED** |
+
+Each arch got a different subset of the two sites right, which is why **one** defect kept
+presenting as **four** unrelated symptoms: `(init-program)` missing, `(go)` missing, the
+VGA blob unreachable, and a variable that evaporates.
+
+After patch 19 amd64 gives x86's answer exactly: `active-package 0`, *no active device*,
+order `1`. The `amd64` track asserts the **outcome** — a variable defined at the prompt
+survives `device-end` — not `active-package u.`, which is the mechanism. The same probe
+went into the **`multiboot`** track as its control: x86 has always passed it, which is what
+separates *"the fix works"* from *"the probe cannot fail"*.
+
+**Deliberately not fixed:** `arch/sparc64/init.fs` and `arch/sparc32/init.fs` have the
+identical omission. This lab cannot boot sparc, so they stay an UNKNOWN rather than a blind
+patch — [`tools/check-patch-scope.sh`](tools/check-patch-scope.sh) would demand an
+`Arch-tested:` line naming three arches, and no honest one can be written for a sparc file.
+
 #### Still open, and named rather than folded into the pass
 
 - **`" screen" find-dev` returns `0` on both arches.** The FCode installs the node and its
@@ -2086,8 +2153,13 @@ first not exited. All eleven other smoke tracks pass on x86, amd64 and ppc.
   but `dev /pci8086,1237@0/QEMU,VGA@0` — and the relative form — both answer *no such
   device*, on x86 as well. `pnodename` and `pathres` disagree about that node's unit
   address. Unmeasured beyond that.
-- **`arch/amd64/init.fs`'s `preopen` has no `device-end`** where `arch/x86/init.fs:52`
-  does. Noticed while counting `device-end` occurrences for the control; not investigated.
+- ~~**`arch/amd64/init.fs`'s `preopen` has no `device-end`**~~ — investigated the same day
+  and fixed by **patch 19**, above. It was the second unbalanced site, not a curiosity.
+- **The `feval` that reports nothing.** `libopenbios`'s `feval()` of a word that does not
+  resolve prints `<word>:` (`interpreter.fs:64`'s `type 3a emit`) and throws `-13` into a
+  caller that says nothing. That silence is why three separate instances of this defect
+  shipped undetected. Fixing it is **arch-neutral**, so it needs the ppc arm and an
+  `Arch-tested:` line — a real piece of work, and the highest-value one left here.
 
 ### 13.2 Four defects in `forth/device/property.fs` — **three WATCHED TO BITE 2026-08-25**
 
