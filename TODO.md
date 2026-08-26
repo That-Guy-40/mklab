@@ -1970,9 +1970,72 @@ config and **not at all** in amd64's, a third category the original missed.
 >   FCode. **Checkpoint:** `byte-load` reached at all — which would also be the first
 >   FCode ever evaluated at a 64-bit cell in this tree.
 
-### 13.2 Four defects in `forth/device/property.fs`, none of which a byte diff can see
+### 13.2 Four defects in `forth/device/property.fs` — **three WATCHED TO BITE 2026-08-25**
 
-Read at `openbios` `e5ac46d`; **none has been watched to bite** — that is the work.
+Read at `openbios` `e5ac46d`. **The work was to watch them bite, and (a)(b)(c) now do** —
+`./smoke-openbios.sh property-abi` runs a multi-line Forth probe **loaded off media**
+on both arches (only possible since patches 14/15/16; before them every line had to be
+typed through the ~80-char truncation). Measured:
+
+| | amd64 (64-bit cell) | x86 (32-bit cell) |
+|---|---|---|
+| **(a)** `-1 encode-int decode-int` | `ffffffff` — **not a round trip** | `-1` — round-trips |
+| **(b)** a value ≥ 2³² | **silently truncated to 0** | **UNREPRESENTABLE** — an UNKNOWN, not a pass |
+| **(c)** `encode+` with an `allot` between fragments | **lies about the length** | **lies about the length** |
+
+**(c) bites on BOTH arches**, so it is not a 64-bit issue at all — this entry called it
+*"correct today"*, and it is correct only while nothing moves `here` between two
+fragments. Forcing one `allot` breaks it immediately.
+
+**And `encode-phys` is not fixed-width — asserted, because that is the misreading
+this entry warned about.** It encodes `my-#acells` ints, and `my-#acells` reads the
+**parent's** `#address-cells` (clamped 1–4, default 2 when there is no parent).
+Measured on amd64:
+
+| context | `my-#acells` | `encode-phys` length |
+|---|---|---|
+| `dev /` | 2 — the **default**, root has no parent | **8 bytes** |
+| `dev /ide@1` | 1 — from root's own `#address-cells` | **4 bytes** |
+
+Root is the trap: its own property says `1` while `encode-phys` *under* it uses `2`.
+
+The track is a **characterization** test: if it fails saying *"appears FIXED"* that is
+good news, and the expectations here and there get updated together.
+
+**Two false passes were caught in the probe itself, both by the x86 control:**
+- the first version printed `b-WIDE-OK` on x86, because the literal `100000000`
+  truncates to 0 *on entry* on a 4-byte cell — so it compared `0 = 0` and reported a
+  pass for a case the stack cannot express. It now checks the literal survived first.
+- the (c) assertion used `grep -q '…ENCODE\+-WOULD…'`, and in a **basic** regex `\+` is
+  a *quantifier*, not a literal plus — so it matched nothing and reported (c) FIXED
+  while both logs plainly contained the string. Now `grep -F`.
+
+**(d) `decode-bytes` — run in isolation 2026-08-25, and it does NOT crash.** That
+prediction ("calling it corrupts the return stack and would take the machine down") was
+this entry's, and it is wrong. Measured on amd64:
+
+```console
+D-DEPTH-BEFORE=0
+D-ENCODED-DEPTH=2      \ after `" ab" encode-bytes`
+D-CALLING-NOW          \ `1 decode-bytes`, so 3 items in
+D-RETURNED             \ it came back
+D-DEPTH-AFTER=6        \ documented effect is 4 out — TWO EXTRA
+```
+
+The two extra cells are exactly the two bare `r>`: it pulls them off the **return**
+stack and leaves them on the data stack. It survived because `evaluate`'s return stack
+was deep enough to be robbed without the closing `;` landing anywhere fatal.
+
+**That is worse than a crash, not better.** A word that corrupts the return stack and
+then returns *cleanly* hands its caller a silently wrong stack and an intact-looking
+machine. It stayed out of the `property-abi` probe for the right reason — it perturbs
+state mid-run and would invalidate (a)–(c) — but not for the stated one.
+
+Its damage today is still zero, re-derived: called by **nothing** anywhere in the tree,
+and `forth/device/table.fs` carries `encode-bytes` with **no `decode-bytes`**, so the
+round trip does not exist. **Fix or delete it** before anything claims otherwise — and
+the fix is not merely balancing the `r>`s, since the stack comment describes an effect
+(`addr len2 addr1 #bytes`) that no caller has ever depended on.
 
 | # | defect | why it matters on amd64 |
 |---|---|---|
