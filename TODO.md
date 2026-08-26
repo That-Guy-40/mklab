@@ -2358,6 +2358,67 @@ It has no in-tree caller — the only integer conversions carrying a precision a
 ppc's own two `%8.8lx`, which the fixture asserts correct — so it is named, not fixed, and
 the track fails if it ever spreads to another arch.
 
+### 13.1d x86's `go` hung on an uninitialised `load-state` — **CLOSED 2026-08-26**
+
+**Patch 23, arch-neutral, `Arch-tested: x86 amd64 ppc`.** §13.1 carried *"x86's `go` hangs
+where amd64's completes"* as an UNKNOWN. It is neither a context-switch bug nor arch code.
+
+```forth
+constant load-state.size
+create load-state load-state.size allot     \ allot does NOT zero
+```
+
+Nothing else initialises it. The six C loaders in `libopenbios/*_load.c` each fill in
+`>ls.file-size` for their own format; **the `$load` path fills in none of it.** And
+`init_forth_context()` reads that field treating **0 as "nobody wrote this"**.
+
+Measured — same firmware, same 31-byte `.fth`, **both arches loading it correctly**
+(`load-size` `0x1f`, first byte `0x5c` on both):
+
+| | `load-state >ls.file-size @` | what `evaluate` got |
+|---|---|---|
+| amd64 | `0` | fallback fired → **31 bytes** → worked |
+| x86 | `0x30000000` | fallback did **not** fire → **768 MB** to interpret as Forth |
+
+That is the hang. **amd64 had been passing by luck**, on the contents of memory.
+
+#### Three lines and a printk
+
+1. **`erase` `load-state` at creation**, so `0` finally means *"nothing was loaded"* rather
+   than *"nobody wrote it down"*. Covers `>ls.entry` and `>ls.file-type` too — same
+   exposure, and no reader had any way to know.
+2. **`!load-size` writes both records of the one fact.** `variable file-size` and
+   `load-state >ls.file-size` hold the same number and only the first was set on the
+   `$load` path — the "two records" defect [§13.1](#131-two-more-config-flips--both-closed-loader_forth-2026-08-25-driver_vga-2026-08-26)'s
+   patch 15 *named and worked around rather than fixed*. Ordering is safe: `$load` calls
+   `!load-size` **before** `init-program`, so a C loader still wins with its own value.
+3. **A zero size is a refusal with a reason.** `evaluate` of 0 bytes succeeds and prints
+   nothing, so an unwritten size looked exactly like a payload with nothing to say — the
+   same silence this lab has now chased four times.
+
+#### And it surfaced a second x86 defect, now honest instead of hanging
+
+```
+0 > go
+switching to new context:
+Evaluating Forth...
+init-program: nothing to evaluate -- ls.file-size=0 load-size=0 load-base=4000000
+```
+
+At the **prompt** x86 reads `load-size=1f` and `load-base=e066fdd0` — the C shadow
+`arch/x86/openbios.c` defines as `phys_to_virt(LOAD_BASE_PHYS)`. **Inside the client
+context** the same two words read `0` and `4000000` — and `0x4000000` is the constant in
+`forth/admin/nvram.fs`, a **different word** from the one the prompt resolves.
+
+So this is about **which definition is visible from inside the context**, not about address
+translation: a `constant` would carry the same number through any segment change. **Beyond
+that the mechanism is not established, and no guess is recorded in its place.** amd64 is
+unaffected — it defines no shadow, because it does not relocate — and runs the payload.
+
+`go` on x86 therefore goes from a **silent 768 MB walk to a named refusal**, which is the
+whole of what patch 23 claims. **Running the payload there is the next item**, and it is
+now a debuggable failure rather than a hang.
+
 ### 13.2 Four defects in `forth/device/property.fs` — **three WATCHED TO BITE 2026-08-25**
 
 Read at `openbios` `e5ac46d`. **The work was to watch them bite, and (a)(b)(c) now do** —
