@@ -99,7 +99,9 @@ Measured 2026-08-26 on this host: **13 of 13 driven tracks passed** — `multibo
 dict-identity nvram amd64 amd64-fault amd64-ctx amd64-pmem amd64-linux ppc floppy
 property-abi vga diagnostics`, with 0 SKIP among them. `diagnostics` is the only track
 that boots **all three** arches in one run, and it is the only one that is two-sided in a
-single boot: silence where silence is correct, and a must-catch fixture where it is not. Two of those carry the clean-prompt probe
+single boot: silence where silence is correct, and a must-catch fixture where it is not. It
+also carries the two printf fixture sets (`7/7` and `10/10`, plus one **recorded
+divergence** — `%.0d` of `0` — asserted as itself so that closing it goes red on purpose). Two of those carry the clean-prompt probe
 added the same day: `amd64` asserts it (patch 19 fixed it there) and `multiboot` is its
 **control**, since x86 has always passed. Measured 2026-08-23: **13 of 14 ran and
 passed; the one SKIP is `coreboot`**, which has no cached ROM (rebuild it with

@@ -1107,6 +1107,7 @@ FTH
           --expect "Welcome to OpenBIOS" --expect "0 > " \
           --send 'test-feval-report\r' --expect "> " \
           --send 'test-printf-precision\r' --expect "> " \
+          --send 'test-printf-edges\r' --expect "> " \
           -- qemu-system-ppc -bios "$PELF" -nographic -vga none
         RC=$?
       else
@@ -1118,7 +1119,8 @@ FTH
         python3 "$REPO/tools/drive-serial-repl.py" "$DSOCK" "$DLOG" --timeout 120 \
           --expect "0 > " \
           --send 'test-feval-report\r' --expect "> " \
-          --send 'test-printf-precision\r' --expect "> "
+          --send 'test-printf-precision\r' --expect "> " \
+          --send 'test-printf-edges\r' --expect "> "
         RC=$?
         kill "$QPID" 2>/dev/null   # by PID, never by pattern
       fi
@@ -1166,10 +1168,56 @@ FTH
       grep -aq 'printf-precision: .* BAD' <<<"$DL" \
         && fail "REGRESSION: $A reported a BAD printf-precision case even though the ratio line passed — the two disagree, which means the counter and the per-case verdict are out of step — see $DLOG"
 
-      note "$A: 0 binding failures during boot, the reporter fixture produced exactly 1 naming '$SELFW', and 7/7 printf-precision cases pass"
+      # (4) the two paths TODO 13.1c named and did not test: precision on an
+      # INTEGER conversion, which is a MINIMUM digit count and runs through
+      # number() rather than the %s case, and vsnprintf at the buffer edge.
+      # Measured 2026-08-26: number() is right everywhere except `%.0d` of 0,
+      # and vsnprintf is right in full -- it truncates, NUL-terminates, returns
+      # the UNTRUNCATED length, and leaves the buffer untouched at size 0
+      # (checked with a canary, because a correct return value says nothing
+      # about whether it wrote).
+      #
+      # THE DIVERGENCE IS ASSERTED AS ITSELF, not as a failure and not hidden
+      # in a pass. `%.0d` of 0 prints "0" where C99 says nothing, because
+      # number() does `if (num == 0) tmp[i++] = '0';` unconditionally. Not
+      # fixed: no in-tree caller (the only integer conversions with a precision
+      # anywhere are ppc's two boot-path `%8.8lx`, asserted correct here), it
+      # reads one extra character rather than over-reading like patch 21's bug,
+      # and it sits in a boot path on the control arch. If someone fixes it the
+      # fixture says DIVERGENCE-CLOSED and this assertion goes red on purpose.
+      grep -aqF 'printf-edges: 10/10 ok, 1/1 recorded divergence' <<<"$DL" \
+        || fail "REGRESSION: $A did not print 'printf-edges: 10/10 ok, 1/1 recorded divergence' — either number()/vsnprintf changed behaviour, or the %.0d divergence was closed and this record is now false: $(grep -aoE 'printf-edges: [^ ]+ .{0,52}(BAD|CLOSED)' <<<"$DL" | head -3 | tr '\n' '|') — see $DLOG"
+
+      # (5) THE d-zero LINE IS PINNED PER ARCH, because the two halves of it
+      # move independently and a ratio cannot say which one did. All three
+      # WRITE "0" where C99 says nothing -- that is the recorded divergence,
+      # and it is stable. But the RETURN disagrees by arch:
+      #
+      #   x86, amd64   wrote=1 ret=1
+      #   ppc          wrote=1 ret=0   <- writes a byte, reports writing none
+      #
+      # The ppc mechanism is NOT established: number() takes the `num == 0`
+      # branch, emits one character, and vsnprintf returns str-buf; why that is
+      # 0 there and 1 elsewhere has not been traced, and no guess is recorded
+      # in place of tracing it. It has NO in-tree caller -- the only integer
+      # conversions carrying a precision anywhere are ppc's own two %8.8lx,
+      # asserted correct by the fixture -- so it is an UNKNOWN, named here so
+      # that it cannot quietly become either a pass or a forgotten bug.
+      case "$A" in
+        ppc) DZ='wrote=1 ret=0 DIVERGES-AS-RECORDED RET-DISAGREES' ;;
+        *)   DZ='wrote=1 ret=1 DIVERGES-AS-RECORDED' ;;
+      esac
+      grep -aqF "$DZ" <<<"$DL" \
+        || fail "REGRESSION: $A's d-zero line is not '$DZ' — %.0d of 0 changed what it writes, or what it returns, and those are two different defects: $(grep -aoE 'd-zero.{0,72}' <<<"$DL" | head -1) — see $DLOG"
+      if [[ "$A" != ppc ]]; then
+        grep -aq 'RET-DISAGREES' <<<"$DL" \
+          && fail "REGRESSION: $A now reports RET-DISAGREES on d-zero — snprintf writing a byte and returning 0 was a ppc-only anomaly, and it has spread — see $DLOG"
+      fi
+
+      note "$A: 0 binding failures during boot, the reporter fixture produced exactly 1 naming '$SELFW', 7/7 printf-precision and 10/10 printf-edges cases pass (+1 recorded %.0d divergence$([[ "$A" == ppc ]] && echo ', and ppc-only RET-DISAGREES'))"
     done
 
-    pass "the Forth bindings report their own failures on x86, amd64 and ppc: a clean boot prints ZERO feval/fword/eword lines on all three, and test-feval-report — the reporter's own must-catch fixture — prints exactly one, naming the unresolvable word and its throw code in both bases (-19 decimal, -13 hex — the Forth sources spell it the second way); and libc/vsprintf.c's %s precision now clips instead of over-reading, 7/7 fixtures on each arch"
+    pass "the Forth bindings report their own failures on x86, amd64 and ppc: a clean boot prints ZERO feval/fword/eword lines on all three, and test-feval-report — the reporter's own must-catch fixture — prints exactly one, naming the unresolvable word and its throw code in both bases (-19 decimal, -13 hex — the Forth sources spell it the second way); and libc/vsprintf.c's %s precision now clips instead of over-reading (7/7), while number() precision and vsnprintf's buffer edge are correct on all three (10/10) with the one C99 divergence — %.0d of 0 — asserted as itself rather than hidden in a pass, and its ppc-only return-value anomaly (writes a byte, returns 0) pinned as a named UNKNOWN"
     ;;
   *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|vga|diagnostics]" >&2; exit 1 ;;
 esac
