@@ -886,9 +886,15 @@ case "$FLAVOR" in
     #       different object with nothing reporting it. It now REFUSES by name:
     #       LIED down to HALTED. Still UNREPRESENTABLE on x86, which is an
     #       UNKNOWN and is reported as one rather than as a pass.
-    #   (c) encode+ is `nip +`: adjacency-by-alloc-tree, not concatenation. Force
-    #       an `allot` between two fragments and the length it returns is a lie.
-    #       Bites on BOTH arches -- 13.2 called this one "correct today".
+    #   (c) FIXED (patch 27). encode+ was `nip +` -- adjacency-by-assumption, not
+    #       concatenation. AND THE LENGTH IS NOT WHAT IT GOT WRONG: 13.2 recorded
+    #       it as "lies about the length" and the control disproved that. `nip +`
+    #       returns l1+l2, which is right; what it returns is the wrong ARRAY --
+    #       a1 followed by whatever sits at a1+l1. With one `allot` forced
+    #       between the fragments the second decode-int came back 30302f63, the
+    #       gap read as an integer. Bit on BOTH arches, so it was never a 64-bit
+    #       issue; 13.2 called it "correct today", and today was doing the work in
+    #       that sentence.
     #
     # IF THIS TRACK FAILS SAYING "appears FIXED", that is good news and not a
     # regression: somebody changed the wordset. Update the expectations here and
@@ -941,11 +947,22 @@ then
 clear
 ffffffff encode-int 2drop ." b-ctl-u32-OK" cr
 -1 encode-int 2drop ." b-ctl-neg-OK" cr
-1 encode-int 2dup +
+3 encode-int
+4 encode-int
+3 pick 3 pick + 2 pick = if ." c-fast-ADJACENT" else ." c-fast-NOT" then cr
+encode+
+." c-fast-len=" dup . cr
+decode-int ." c-fast-i1=" . cr
+decode-int ." c-fast-i2=" . cr
+2drop
+1 encode-int
 10 allot
 2 encode-int
-drop
-= if ." c-ADJACENT" else ." c-NOT-ADJACENT-ENCODE+-WOULD-LIE" then cr
+3 pick 3 pick + 2 pick = if ." c-slow-ADJACENT" else ." c-slow-NOT" then cr
+encode+
+." c-slow-len=" dup . cr
+decode-int ." c-slow-i1=" . cr
+decode-int ." c-slow-i2=" . cr
 2drop
 dev /
 ." e-len-root=" 0 0 0 0 encode-phys nip . cr
@@ -1066,11 +1083,32 @@ FTH
         || fail "13.2(b) on $A: encode-int REFUSED -1 — a sign-extended negative fills a cell with ones and still fits in four bytes; refusing it would break every negative property value — see $WORKDIR/prop-$A.log"
     done
 
-    # -F, not -q alone: in a BASIC regex `\+` is a QUANTIFIER, not a literal plus,
-    # so `ENCODE\+-WOULD` asks for one-or-more E and matches nothing. Caught by this
-    # very assertion failing on a run where both logs plainly contained the string.
-    grep -qF 'c-NOT-ADJACENT-ENCODE+-WOULD-LIE' <<<"$AL" && grep -qF 'c-NOT-ADJACENT-ENCODE+-WOULD-LIE' <<<"$XL" \
-      || fail "13.2(c) appears FIXED: encode+ survived an allot between fragments on at least one arch. Update this track and §13.2"
+    # 13.2(c) FIXED (patch 27), and BOTH BRANCHES are exercised because a fix that
+    # only ever runs the fast path is indistinguishable from no fix at all. The
+    # `c-slow-NOT` line is what says the concatenating branch actually ran.
+    #
+    # The old assertion here used `grep -q 'ENCODE\+-WOULD'`, and in a BASIC regex
+    # `\+` is a QUANTIFIER, not a literal plus — it asked for one-or-more E and
+    # matched nothing, reporting (c) FIXED while both logs plainly contained the
+    # string. Hence -F everywhere below.
+    for A in amd64 x86; do
+      CL2="$(tr -d "\r" < "$WORKDIR/prop-$A.log")"
+      grep -qF 'c-fast-ADJACENT' <<<"$CL2" \
+        || fail "13.2(c) on $A: two back-to-back encode-ints did NOT come out adjacent, so the fast path this fix preserves was never taken and the run says nothing about it — see $WORKDIR/prop-$A.log"
+      grep -qF 'c-slow-NOT' <<<"$CL2" \
+        || fail "13.2(c) on $A: an allot between two encode-ints no longer separates them, so the CONCATENATING branch never ran — a fix whose slow path is unreachable is not a fix — see $WORKDIR/prop-$A.log"
+      # The length is the WEAK check and is here only to catch a mis-sized
+      # allocation on the new path: `nip +` got the length right and the bytes
+      # wrong, which is why the decodes below are what actually bite.
+      for W in fast slow; do
+        grep -qE "c-$W-len=[[:space:]]*8( |\$)" <<<"$CL2" \
+          || fail "13.2(c) on $A: encode+ of two 4-byte ints returned $(grep -aoE "c-$W-len=[0-9a-f]+" <<<"$CL2" | head -1 | cut -d= -f2) bytes on the $W path, not 8 — see $WORKDIR/prop-$A.log"
+      done
+      grep -qE 'c-fast-i1=[[:space:]]*3( |$)' <<<"$CL2" && grep -qE 'c-fast-i2=[[:space:]]*4( |$)' <<<"$CL2" \
+        || fail "13.2(c) on $A: the adjacent case decoded back to $(grep -aoE 'c-fast-i[12]=[0-9a-f]+ ?' <<<"$CL2" | tr '\n' ' ') instead of 3 and 4 — the length can be right while the bytes are not — see $WORKDIR/prop-$A.log"
+      grep -qE 'c-slow-i1=[[:space:]]*1( |$)' <<<"$CL2" && grep -qE 'c-slow-i2=[[:space:]]*2( |$)' <<<"$CL2" \
+        || fail "REGRESSION: 13.2(c) on $A: the NON-adjacent case decoded back to $(grep -aoE 'c-slow-i[12]=[0-9a-f]+ ?' <<<"$CL2" | tr '\n' ' ') instead of 1 and 2 — encode+ returned a plausible length over the wrong bytes, which is exactly what it used to do silently — see $WORKDIR/prop-$A.log"
+    done
 
     # encode-phys is NOT fixed-width: it encodes my-#acells ints, and my-#acells
     # reads the PARENT's #address-cells (clamped 1-4, default 2 when there is no
@@ -1128,7 +1166,7 @@ FTH
         || fail "13.2(d) on $A: the remainder length after decoding all 2 bytes of a 2-byte property is not 0 — decode-bytes is not subtracting #bytes from prop-len1: $(grep -aoE 'd-len2=.{0,12}' <<<"$DL2" | head -1) — see $WORKDIR/prop-$A.log"
     done
 
-    pass "TODO 13.2 watched to bite: (a) the SAME four bytes decode to ffffffff on amd64 and -1 on x86 — encode-int/decode-int is not a round trip at a 64-bit cell — and the premise it is tolerated on is now DERIVED rather than assumed: every four-byte decode of the boot is counted, and none has bit 31 set, which is the only reason zero-extension has yet to give a real consumer a wrong answer; (b) FIXED — a value >= 2^32 is now REFUSED BY NAME on amd64 where it used to be silently truncated into four bytes, with ffffffff and -1 both still encoding cleanly in the same run so the gate is not simply refusing everything, and the input still UNREPRESENTABLE on x86, reported as an UNKNOWN not a pass; (c) encode+ lies about length on BOTH arches once anything moves HERE between fragments; and encode-phys is NOT fixed-width — 8 bytes under / (the no-parent default of 2 cells) against 4 under /ide@1 (root's own #address-cells 1); and (d) decode-bytes, which used to return CLEANLY with six items where four are documented — two cells robbed off the return stack — now round-trips encode-bytes on both arches at depth exactly 4, from an empty stack back to an empty one"
+    pass "TODO 13.2 watched to bite: (a) the SAME four bytes decode to ffffffff on amd64 and -1 on x86 — encode-int/decode-int is not a round trip at a 64-bit cell — and the premise it is tolerated on is now DERIVED rather than assumed: every four-byte decode of the boot is counted, and none has bit 31 set, which is the only reason zero-extension has yet to give a real consumer a wrong answer; (b) FIXED — a value >= 2^32 is now REFUSED BY NAME on amd64 where it used to be silently truncated into four bytes, with ffffffff and -1 both still encoding cleanly in the same run so the gate is not simply refusing everything, and the input still UNREPRESENTABLE on x86, reported as an UNKNOWN not a pass; (c) FIXED — encode+ used to be `nip +`, adjacency-by-assumption: it returned the RIGHT length over the WRONG bytes the moment anything moved HERE between fragments, so the second decode-int read the gap (30302f63) rather than the fragment, and §13.2's own "lies about the length" was disproved by the control; it now concatenates, with BOTH branches exercised in the same run (adjacent 3,4 and non-adjacent 1,2 each coming back out of an 8-byte array) so a fix whose slow path never runs cannot pass; and encode-phys is NOT fixed-width — 8 bytes under / (the no-parent default of 2 cells) against 4 under /ide@1 (root's own #address-cells 1); and (d) decode-bytes, which used to return CLEANLY with six items where four are documented — two cells robbed off the return stack — now round-trips encode-bytes on both arches at depth exactly 4, from an empty stack back to an empty one"
     ;;
   vga)
     # TODO 13.1's DRIVER_VGA half: PCI enumeration on amd64 (patch 17) and the

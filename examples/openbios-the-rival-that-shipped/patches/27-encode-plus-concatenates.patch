@@ -1,0 +1,91 @@
+Subject: [PATCH 27/27] property.fs: encode+ returned the right length over the wrong bytes
+Arch-tested: x86 amd64 ppc
+
+TODO 13.2(c). `encode+` is `nip +`: keep the first address, add the two
+lengths. That is not concatenation, it is ADJACENCY-BY-ASSUMPTION --
+right only while fragment 2 begins exactly where fragment 1 ends, which
+holds only while nothing moves `here` between the two alloc-tree calls.
+
+AND THE LENGTH IS NOT WHAT IT GETS WRONG. 13.2 recorded this as "lies
+about the length" on both arches, and re-injecting the defect disproved
+that on the first run: `nip +` returns l1+l2, which is exactly right.
+What it returns is the wrong ARRAY -- a1 followed by whatever happens to
+sit at a1+l1. Measured on amd64 and x86 alike, with one `allot` forced
+between `1 encode-int` and `2 encode-int`:
+
+    encode+ length      8          correct
+    first decode-int    1          correct
+    second decode-int   30302f63   the allot'd gap, read as an integer
+
+A plausible length over the wrong bytes is the LIED rung, and worse than
+13.2(b): nothing throws, the array decodes, and every field before the
+gap is right. The old entry's claim had never been measured -- its probe
+tested ADJACENCY and inferred the rest, which is the same shape as the
+two claims corrected one commit earlier.
+
+THE FIX keeps the classic fast path byte for byte, for the adjacent case
+every existing caller produces, and concatenates into a third array when
+the fragments are not adjacent. 1275 5.3.5.1 asks for the combination of
+two encoded arrays; it does not promise the first address back, and no
+caller in this tree relies on getting it.
+
+WATCHED TO BITE, and BOTH BRANCHES RUN. A fix whose slow path is never
+taken is indistinguishable from no fix, so the probe reports which branch
+it got before asserting the result:
+
+    c-fast-ADJACENT  c-fast-len=8  c-fast-i1=3  c-fast-i2=4
+    c-slow-NOT       c-slow-len=8  c-slow-i1=1  c-slow-i2=2
+
+Re-injecting `nip +` fails it by name on the slow path's SECOND decode --
+not on its length, which is why the assertion had to be the decode. The
+length check stays, demoted to what it actually is: a guard against the
+new path mis-sizing its allocation.
+
+diff --git a/forth/device/property.fs b/forth/device/property.fs
+--- a/forth/device/property.fs
++++ b/forth/device/property.fs
+@@ -333,8 +333,43 @@
+   swap
+   ;
+ 
++\ LOCAL DIVERGENCE (mklab). TODO 13.2(c).
++\
++\ Upstream is `nip +`: keep the first address, add the two lengths. That is not
++\ concatenation, it is ADJACENCY-BY-ASSUMPTION -- right only while fragment 2
++\ begins exactly where fragment 1 ends, which holds only while nothing moves
++\ `here` between the two alloc-tree calls.
++\
++\ AND THE LENGTH IS NOT WHAT IT GETS WRONG. TODO 13.2 recorded this as "lies
++\ about the length", and the control disproved that: `nip +` returns l1+l2, which
++\ is exactly right. What it returns is the wrong ARRAY -- a1 followed by whatever
++\ happens to sit at a1+l1. Measured on amd64 with one `allot` forced between
++\ `1 encode-int` and `2 encode-int`, both arches alike:
++\
++\     encode+ length      8          correct
++\     first decode-int    1          correct
++\     second decode-int   30302f63   the allot'd gap, read as an integer
++\
++\ A plausible length over the wrong bytes is the LIED rung, and worse than (b):
++\ nothing throws, the array decodes, and every field before the gap is right.
++\ The old entry's claim had never been measured -- its probe tested ADJACENCY and
++\ inferred the rest.
++\
++\ So: keep the classic fast path, exactly as it was, for the adjacent case that
++\ every existing caller produces; and when the fragments are NOT adjacent,
++\ actually concatenate them into a third array. IEEE 1275 5.3.5.1 asks for the
++\ combination of two encoded arrays; it does not promise the first address back,
++\ and no caller in this tree relies on getting it.
+ : encode+ ( prop-addr1 prop-len1 prop-addr2 prop-len2 -- prop-addr3 prop-len3 )
+-  nip +
++  3 pick 3 pick + 2 pick = if
++    nip +                        \ fragment 2 already follows fragment 1
++    exit
++  then
++  dup 3 pick + alloc-tree >r     ( a1 l1 a2 l2 )   ( R: a3 )
++  over r@ 4 pick + 2 pick move   \ fragment 2 -> a3 + l1
++  3 pick r@ 4 pick move          \ fragment 1 -> a3
++  nip + nip                      ( l1+l2 )
++  r> swap
+   ;
+ 
+ : encode-phys ( phys.lo ... phys.hi -- prop-addr prop-len )

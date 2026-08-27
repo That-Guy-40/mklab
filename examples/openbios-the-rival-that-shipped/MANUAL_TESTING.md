@@ -128,6 +128,11 @@ one that matters for (b): its store is at `0x100000000` and the new refusal does
 it. (a) is **not fixed** — sign-extension would corrupt PCI addresses with bit 31 set — and
 its premise is now a counter read on every boot instead of a claim.
 
+**2026-08-27, patch 27 (TODO §13.2(c)):** `property-abi multiboot amd64 amd64-pmem vga
+diagnostics ppc client-forth dict-identity` — all PASS on x86 + amd64 + ppc builds. `encode+`
+now concatenates; the probe exercises **both** branches and names which one it took, because
+a fix whose slow path never runs is indistinguishable from no fix.
+
 ### The negative controls, run 2026-08-23
 
 Each fix was broken and watched to bite before being trusted:
