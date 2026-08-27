@@ -178,6 +178,26 @@ jobs:
         # here instead of quietly falling outside the filter.
         run: bash tools/tests/test-openbios-tier-b-relevance.sh
 
+      - name: Tier B refuses an empty track list instead of finishing green
+        # `${{ inputs.tracks }}` exists only on workflow_dispatch. When Tier B was wired
+        # to pull_request and a weekly schedule, TRACKS began arriving EMPTY on both --
+        # and an empty `for` list runs zero tracks, prints no failure and exits 0. This
+        # repo's oldest shape, inside the very job built to catch it.
+        #
+        # The fix is TWO guards, and they are orthogonal rather than redundant, which was
+        # established by breaking each and watching what happened: the fallback to
+        # DEFAULT_TRACKS is what makes the job WORK on those events, and the `ran == 0`
+        # refusal is what makes it SAFE if the list is ever empty anyway. Remove the
+        # fallback and every PR fails loudly; remove the refusal and the job goes silently
+        # green the day something empties the list.
+        #
+        # Neither had ever been watched. This seds the SHIPPED "Boot the tracks" body out
+        # of openbios-tier-b.yml and runs it -- 18 assertions, only smoke-openbios.sh
+        # stubbed, since the question is about the loop and not about whether firmware
+        # boots. It carries a control (the pre-fix shape must exit 0 silently), and all
+        # three defects were re-injected into the real workflow and watched to bite.
+        run: bash tools/tests/test-tier-b-refuses-an-empty-track-list.sh
+
       - name: no cached host facts in the micro-cloud instruments
         # Pure text analysis, no host state — safe on a runner that has none of these
         # interfaces. Guards the defect class that made one instrument print a fact from

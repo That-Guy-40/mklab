@@ -3315,10 +3315,43 @@ real files rather than grepping them:
    **And the empty-`TRACKS` hole, found while wiring this up:** `inputs` exists
    only on `workflow_dispatch`, so on a `pull_request` or the weekly run
    `TRACKS` arrived **empty** — and an empty `for` list runs zero tracks, prints
-   no failure, and exits 0. The oldest shape in this file. Fixed with a fallback
-   to a single `DEFAULT_TRACKS` (the input's own `default:` was removed, so the
-   list is defined once) **and** a refusal to finish having run zero tracks,
-   because either alone is a half measure.
+   no failure, and exits 0. The oldest shape in this file, inside the very job
+   built to catch it. Fixed with a fallback to a single `DEFAULT_TRACKS` (the
+   input's own `default:` was removed, so the list is defined once) **and** a
+   refusal to finish having run zero tracks.
+
+   **Both were reasoned about and neither had been watched**, which is the same
+   gap one level up: the fallback has since fired in production (Tier B ran
+   seven tracks on a `pull_request`), but the refusal had **never executed at
+   all**. So
+   [`tools/tests/test-tier-b-refuses-an-empty-track-list.sh`](tools/tests/test-tier-b-refuses-an-empty-track-list.sh)
+   (in `ci.yml`) `sed`s the **shipped** `Boot the tracks` body out of the
+   workflow and runs it — **18 assertions**, only `smoke-openbios.sh` stubbed,
+   since the question is about the loop and not about whether firmware boots. It
+   carries a control (the pre-fix shape must exit 0 silently), and all three
+   defects were **re-injected into the real workflow** and watched to bite.
+
+   **The measurement corrected the claim that wrote it.** "Either alone is a
+   half measure" implied two copies of one guard; breaking each showed they are
+   **orthogonal**. Remove the fallback and the count check fires — the job is
+   *safe but useless*, every PR failing loudly. Remove the count check and the
+   job works normally and goes *silently green* the day something empties the
+   list. One provides **function**, the other **safety**, and only the second is
+   the bug class this repo keeps re-finding.
+
+   One weaker result worth naming rather than leaving implicit: deleting the
+   fallback line was first caught by the test's **extraction sanity check** (*the
+   extracted body does not reference `DEFAULT_TRACKS`*) rather than by a
+   behavioural row. That is a guard doing its job, but it is a string check
+   standing where a behaviour check should be, so the injection was sharpened —
+   neuter the fallback while keeping the identifier present — and **4 of 18
+   behavioural assertions** then failed by name. The instrument was confirmed to
+   out-reach the defect only after being made to.
+
+   **Blast radius, measured rather than assumed:** `${{ inputs.… }}` is consumed
+   in exactly **one** place in the whole repo (this step), and exactly one
+   `workflow_dispatch` input is declared anywhere. Nothing else needed the same
+   fix.
 3. **Keep `smoke-openbios.sh` as the single driver** and have `tests/` wrap it
    one file per track, or split the tracks into test files? Wrapping keeps one
    place to type a track by hand — which is how this lab is actually used — and
