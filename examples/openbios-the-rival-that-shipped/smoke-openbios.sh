@@ -37,6 +37,8 @@ TRACK (default multiboot):
                               4 GiB and found in the host file (TODO 16)
   flash-writer                and why CFI flash is NOT the same seam: a bare
                               store is a command, not data (TODO 16)
+  mmio-writer                 stores into the VGA aperture, seen by QEMU's
+                              screendump — an observer outside the firmware
 
 Exit: 0 PASS / 1 FAIL / 77 SKIP. Each track ends on exactly one verdict line.
 Env: OPENBIOS_WORKDIR, KERNEL, INITRD, COREBOOT_DIR
@@ -1871,5 +1873,117 @@ FTH
 
     pass "TODO 16, scope: a CFI part is NOT a store-to seam, measured rather than assumed. The writer can be AIMED at 0xffbe0000 — the corrected window reads an erased part's ff ff ff where the no-flash control reads something else — but three int!+ stores leave the array and the host image untouched, because a CFI write is a command sequence (0x20/0x40/0xff, arch/x86/openbios.c) and not a store. The split's conclusion holds and its scope is narrower than pmem-writer suggests: the writer produces bytes, the flash driver programs them. And storing at the UNCORRECTED ffbe0000 reads back convincingly as c0 ff ee — into RAM, nowhere near the chip, which is TODO 13.3(A)'s segment fact met from the other side"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|vga|diagnostics|client-forth|pmem-writer|flash-writer]" >&2; exit 1 ;;
+  mmio-writer)
+    # TODO 16's third seam, and it gives a THIRD distinct answer -- which is why
+    # it was worth doing rather than assuming it would repeat one of the others.
+    #
+    #   NVDIMM (pmem-writer)   stores land; the observer is a FILE
+    #   CFI flash (flash-writer)  stores are COMMANDS; the array is untouched
+    #   VGA text buffer (here)    stores land; the observer is a DEVICE
+    #
+    # The observer is the point. A backing file can be read after QEMU exits; a
+    # display cannot. This asks QEMU's own monitor for a `screendump`, which is
+    # outside the firmware in exactly the sense that matters: the firmware
+    # cannot fake it, and `decode-int` agreeing with `int!` says nothing about
+    # what the hardware did.
+    #
+    # THIS IS THE LEGACY APERTURE AT 0xB8000, NOT A PCI BAR, and that distinction
+    # is a finding rather than a shortcut. Measured 2026-08-27, QEMU's own
+    # `info pci` reports the VGA framebuffer as
+    #
+    #     Bus 0, device 2: BAR0: 32 bit prefetchable memory at 0xffffffffffffffff
+    #
+    # i.e. UNASSIGNED -- the firmware's PCI allocator gives BAR2 and BAR6
+    # addresses inside a ~1 MiB window and never places the 16 MiB BAR0. So the
+    # device tree's `assigned-addresses` carries phys.lo = 0 for it, and
+    # `" screen" open-dev` faults (general protection fault, dstackcnt=-3)
+    # downstream of that same zero. Both are recorded in TODO 16; neither is
+    # something this track can route around, because there is no mapped BAR to
+    # aim at. The property under test -- a window whose observer is a device --
+    # is what 0xB8000 provides.
+    #
+    # WHY THE WHOLE BUFFER AND NOT FOUR CHARACTERS. The firmware's console paints
+    # this same screen, so it scrolls: a four-character write at row 0 is gone
+    # by the time the next prompt is drawn, and the first version of this probe
+    # duly reported no change at all. Filling all 80x25 cells is scroll-proof.
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    MMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"
+    MDI="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    [[ -f "$MMB" && -f "$MDI" ]] || skip "no amd64 image — run ./build-openbios.sh amd64 first"
+
+    MSOCK="$WORKDIR/smoke-mw.sock"; MMON="$WORKDIR/smoke-mw.mon"
+    # count_blue <ppm> — VGA attribute 1f is white on BLUE, and the console
+    # only ever paints grey on black, so this colour cannot arrive by accident.
+    _count_blue() {
+      python3 - "$1" <<'PYC'
+import sys
+d=open(sys.argv[1],'rb').read()
+i=d.index(b'255\n')+4
+px=d[i:]
+n=sum(1 for k in range(0,len(px)-2,3) if px[k:k+3]==b'\x00\x00\xa8')
+print(n)
+PYC
+    }
+    _shot() {
+      python3 - "$1" <<'PYS'
+import socket,sys,time,os
+s=socket.socket(socket.AF_UNIX); s.connect(os.environ["MMON"]); time.sleep(0.3)
+try: s.recv(65536)
+except Exception: pass
+s.sendall(("screendump "+sys.argv[1]+"\n").encode()); time.sleep(1.5)
+PYS
+    }
+    export MMON
+
+    # _mrun <tag> <write?> — boot, shoot, optionally write, shoot again.
+    _mrun() {
+      local tag="$1" dowrite="$2"
+      rm -f "$MSOCK" "$MMON" "$WORKDIR/mw-$tag".{pre,post}.ppm "$WORKDIR/mw-$tag.log"
+      qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 \
+        -kernel "$MMB" -initrd "$MDI" \
+        -serial "unix:$MSOCK,server=on" -monitor "unix:$MMON,server=on,nowait" \
+        -display none -no-reboot >/dev/null 2>&1 &
+      local q=$!
+      python3 "$REPO/tools/drive-serial-repl.py" "$MSOCK" "$WORKDIR/mw-$tag.log" \
+        --timeout 90 --expect "0 > " >/dev/null 2>&1
+      local rc=$?
+      if [[ $rc -eq 0 ]]; then
+        _shot "$WORKDIR/mw-$tag.pre.ppm"
+        local args=(--send '." h0=" here . cr\r' --expect "> ")
+        [[ "$dowrite" == write ]] && args+=(--send 'b8000 3e8 0 do 411f411f over int! 4 + loop drop\r' --expect "> ")
+        args+=(--send '." h1=" here . cr\r' --expect "> " --send 'clear ." MWDONE" cr\r' --expect "MWDONE")
+        python3 "$REPO/tools/drive-serial-repl.py" "$MSOCK" "$WORKDIR/mw-$tag.log.w" \
+          --timeout 90 "${args[@]}" >/dev/null 2>&1
+        rc=$?
+        _shot "$WORKDIR/mw-$tag.post.ppm"
+      fi
+      kill "$q" 2>/dev/null   # by PID, never by pattern
+      sleep 1
+      return $rc
+    }
+
+    note "1/2 filling the text buffer at 0xb8000 with int! → $WORKDIR/mw-write.post.ppm"
+    _mrun write write || fail "the amd64 firmware did not finish the mmio-writer probe — see $WORKDIR/mw-write.log.w"
+    MPRE=$(_count_blue "$WORKDIR/mw-write.pre.ppm")
+    MPOST=$(_count_blue "$WORKDIR/mw-write.post.ppm")
+    MW="$(tr -d "\r" < "$WORKDIR/mw-write.log.w")"
+    MH0="$(grep -aoE 'h0=[0-9a-f]+' <<<"$MW" | tail -1 | cut -d= -f2)"
+    MH1="$(grep -aoE 'h1=[0-9a-f]+' <<<"$MW" | tail -1 | cut -d= -f2)"
+
+    [[ "$MPRE" -eq 0 ]] \
+      || fail "the display already held $MPRE blue pixels BEFORE the write, so finding them afterwards would prove nothing — the console paints grey on black and should never produce attribute 1f — see $WORKDIR/mw-write.pre.ppm"
+    [[ "$MPOST" -gt 50000 ]] \
+      || fail "after filling 80x25 cells with attribute 1f the display holds only $MPOST blue pixels — the stores did not reach the aperture, or the screen was repainted before the dump — see $WORKDIR/mw-write.post.ppm"
+    [[ -n "$MH0" && "$MH0" == "$MH1" ]] \
+      || fail "HERE moved from ${MH0:-?} to ${MH1:-?} across 1000 int! stores into MMIO — the writer allocated instead of writing where it was told — see $WORKDIR/mw-write.log.w"
+
+    note "2/2 control: the identical boot and dumps with NO write → $WORKDIR/mw-ctl.post.ppm"
+    _mrun ctl nowrite || fail "the no-write control did not finish — see $WORKDIR/mw-ctl.log.w"
+    MCTL=$(_count_blue "$WORKDIR/mw-ctl.post.ppm")
+    [[ "$MCTL" -eq 0 ]] \
+      || fail "the no-write control ALSO ended with $MCTL blue pixels, so the colour arrives from booting rather than from int! and the assertion above measures nothing — see $WORKDIR/mw-ctl.post.ppm"
+
+    pass "TODO 16, the third seam: 1000 int! stores into the legacy VGA aperture at 0xb8000 put $MPOST blue pixels on the display where the pre-write dump and the no-write control each hold 0, with HERE unchanged at $MH0 — read by QEMU's screendump, an observer the firmware cannot fake. Stores LAND here (unlike CFI flash, where they are commands) and the observer is a DEVICE (unlike the NVDIMM, where it is a file), which is the third distinct answer. NOT a PCI BAR: QEMU reports the VGA framebuffer BAR0 unassigned (0xffffffffffffffff), the tree's assigned-addresses carries phys.lo=0 for it, and '\" screen\" open-dev' faults downstream of that — see TODO 16"
+    ;;
+  *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer]" >&2; exit 1 ;;
 esac
