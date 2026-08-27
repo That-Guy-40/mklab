@@ -3,9 +3,12 @@
 #
 # TODO §14 Tier A, guards A3 and A4.
 #
-#   A3  every REVIVAL_MARKERS entry in build-openbios.sh names a file that
-#       patches/01 touches, a string that patch actually ADDS, and — A3b — a string
-#       that is NOT already in the pristine upstream file.
+#   A3  every TESTED_TREE_MARKERS entry in build-openbios.sh names a file that
+#       patches/TESTED-TREE.patch touches, a string that patch actually ADDS, and
+#       — A3b — a string that is NOT already in the pristine upstream file.
+#   A6  the RECORD and the BUILT divergence name the SAME files: every file in
+#       patches/TESTED-TREE.patch is described by some patches/NN-*.patch, and
+#       every file a numbered patch touches is in what actually gets applied.
 #   A4  every patches/NN-*.patch parses as a unified diff, and its
 #       `Subject: [PATCH NN/M]` agrees with its own filename. Plus: the series
 #       is numbered 01..N with no gaps and no duplicates.
@@ -18,7 +21,7 @@
 # exempt list is PRINTED on every run for the same reason.
 #
 # Only the subject half is exempt. Parsing as a unified diff is not a
-# convention, it is correctness, and all thirty are held to it.
+# convention, it is correctness, and every patch is held to it.
 #
 # WHY A3. build-openbios.sh decides "is patch 01 already applied?" by looking
 # for eight marker strings rather than by `git apply --reverse --check`, and it
@@ -115,9 +118,9 @@ check_markers() {
             || { PROBLEMS+="marker '$f' names a file $(basename "$patch") does not touch — the marker array has drifted from the patch it describes"$'\n'; continue; }
         grep -qF -- "$pat" <<<"$added" \
             || PROBLEMS+="marker '$f' looks for a string $(basename "$patch") does not ADD: '$pat' — the build will read a correctly patched tree as unpatched"$'\n'
-    done < <(sed -n '/^REVIVAL_MARKERS=(/,/^)/p' "$build" | sed -n 's/^[[:space:]]*["'"'"']\(.*\)["'"'"']$/\1/p')
+    done < <(sed -n '/^TESTED_TREE_MARKERS=(/,/^)/p' "$build" | sed -n 's/^[[:space:]]*["'"'"']\(.*\)["'"'"']$/\1/p')
     if (( n == 0 )); then
-        PROBLEMS+="no REVIVAL_MARKERS entries were extracted from $(basename "$build") — the array moved or changed shape, and this check is asserting nothing"$'\n'
+        PROBLEMS+="no TESTED_TREE_MARKERS entries were extracted from $(basename "$build") — the array moved or changed shape, and this check is asserting nothing"$'\n'
     fi
     NMARK="$n"
 }
@@ -125,8 +128,9 @@ check_markers() {
 # A3b: the marker must be ABSENT from the pinned upstream file. Sets A3B to the
 # number checked, or leaves it empty when the network is unavailable.
 A3B=""
+NEWFILES=""
 check_markers_pristine() {
-    local build="$1" pin url line f pat body n=0
+    local build="$1" pin url line f pat body code n=0
     pin="$(sed -n 's/^OPENBIOS_PIN=\([0-9a-f]\{40\}\)$/\1/p' "$build" | head -1)"
     if [[ -z "$pin" ]]; then
         PROBLEMS+="A3b: no 40-character OPENBIOS_PIN in $(basename "$build"), so the pristine file cannot be identified — either the pin was removed or its shape changed"$'\n'
@@ -137,16 +141,64 @@ check_markers_pristine() {
         [[ -z "$line" ]] && continue
         f="${line%%:*}"; pat="${line#*:}"
         url="https://raw.githubusercontent.com/openbios/openbios/$pin/$f"
-        if ! body="$(timeout 30 curl -fsSL "$url" 2>/dev/null)"; then
-            note "A3b SKIPPED after $n marker(s): could not fetch $f at ${pin:0:7} — the rest are UNCHECKED against the pristine tree, which is an UNKNOWN and not a pass"
+        # A 404 is not a network failure, it is an ANSWER: the file does not
+        # exist at the pin, so the marker cannot possibly be in it and the check
+        # passes trivially. Distinguishing the two matters now that the markers
+        # span the amd64 port, several of whose files the patch CREATES —
+        # `curl -f` alone turns every one of those into a SKIP, and a SKIP that
+        # is really a pass teaches the reader to ignore the SKIP that is really
+        # an unknown.
+        code="$(timeout 30 curl -sSL -o "$WORK/a3b.body" -w '%{http_code}' "$url" 2>/dev/null)" || code=000
+        if [[ "$code" == 404 ]]; then
+            n=$((n + 1)); NEWFILES="$NEWFILES $f"; continue
+        fi
+        if [[ "$code" != 200 ]]; then
+            note "A3b SKIPPED after $n marker(s): fetching $f at ${pin:0:7} returned '$code' — the rest are UNCHECKED against the pristine tree, which is an UNKNOWN and not a pass"
             return
         fi
+        body="$(cat "$WORK/a3b.body")"
         n=$((n + 1))
         if grep -qF -- "$pat" <<<"$body"; then
             PROBLEMS+="marker '$f' looks for '$pat', which is ALREADY IN the pristine file at ${pin:0:7} — the marker means \"present => applied\", so it matches an unpatched tree and makes every cold clone read as half-applied"$'\n'
         fi
-    done < <(sed -n '/^REVIVAL_MARKERS=(/,/^)/p' "$build" | sed -n 's/^[[:space:]]*["'"'"']\(.*\)["'"'"']$/\1/p')
+    done < <(sed -n '/^TESTED_TREE_MARKERS=(/,/^)/p' "$build" | sed -n 's/^[[:space:]]*["'"'"']\(.*\)["'"'"']$/\1/p')
     A3B="$n"
+}
+
+# A6: the RECORD and the BUILT divergence must name the same files.
+#
+# The lab keeps two artifacts describing one divergence: patches/NN-*.patch are
+# READ (one annotated change each), patches/TESTED-TREE.patch is APPLIED. That
+# is bug class #1 in CLAUDE.md — a record that outlives its subject — and the
+# gap is invisible from either side on its own: the numbered patches all parse,
+# the build all works, and nothing compares them.
+#
+# It found one on the day the split was introduced (2026-08-27):
+# arch/amd64/boot.h was in the applied patch and in NO numbered patch, while
+# arch/amd64/boot.c had been `#include`-ing it since Spike 1. The port was
+# compiling against a file the record did not mention.
+#
+# Both directions are errors, and they are different errors. Built-but-unrecorded
+# ships a change with no account of why. Recorded-but-unbuilt is worse: it is a
+# document describing firmware nobody runs.
+A6_BUILT=0; A6_REC=0
+check_record_covers_build() {
+    local lab="$1" tt="$1/patches/TESTED-TREE.patch"
+    local built recorded only_built only_rec p
+    if [[ ! -f "$tt" ]]; then
+        PROBLEMS+="A6: patches/TESTED-TREE.patch is missing — it is the patch build-openbios.sh applies, so a clean checkout would build pristine upstream and the whole record would describe firmware nobody runs"$'\n'
+        return
+    fi
+    built="$(touched_files "$tt")"
+    recorded="$(for p in "$lab"/patches/[0-9][0-9]-*.patch; do [[ -f "$p" ]] && touched_files "$p"; done | sort -u)"
+    A6_BUILT="$(printf '%s\n' "$built"    | grep -c . || true)"
+    A6_REC="$(  printf '%s\n' "$recorded" | grep -c . || true)"
+    only_built="$(comm -23 <(printf '%s\n' "$built") <(printf '%s\n' "$recorded"))"
+    only_rec="$(  comm -13 <(printf '%s\n' "$built") <(printf '%s\n' "$recorded"))"
+    [[ -z "$only_built" ]] \
+        || PROBLEMS+="A6: built but named by NO numbered patch, so the change ships with no record of why it exists: $(tr '\n' ' ' <<<"$only_built")"$'\n'
+    [[ -z "$only_rec" ]] \
+        || PROBLEMS+="A6: recorded in a numbered patch but NOT in what is applied, so the record describes firmware nobody builds: $(tr '\n' ' ' <<<"$only_rec")"$'\n'
 }
 
 # check_patch <patch> — A4 for one file.
@@ -180,7 +232,7 @@ mk_patch() { # mk_patch <path> <subject-nn> <total> <file> <added-line>
     printf 'Subject: [PATCH %s/%s] demo\n\ndiff --git a/%s b/%s\n--- a/%s\n+++ b/%s\n@@ -1,2 +1,3 @@\n ctx\n+%s\n ctx2\n' \
         "$2" "$3" "$4" "$4" "$4" "$4" "$5" > "$1"
 }
-mk_build() { printf 'REVIVAL_MARKERS=(\n%s)\n' "$1" > "$2"; }
+mk_build() { printf 'TESTED_TREE_MARKERS=(\n%s)\n' "$1" > "$2"; }
 c_ok=0; c_bad=0
 expect() {
     local want="$1" label="$2"
@@ -237,12 +289,46 @@ check_patch "$WORK/03-demo.patch"; expect catch "subject number disagrees with t
 printf 'Subject: [PATCH 04/9] demo\n\ndiff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1,3 +1,9 @@\n a\n-b\n+c\n' > "$WORK/04-corrupt.patch"
 check_patch "$WORK/04-corrupt.patch"; expect catch "hunk header line counts do not match the hunk"
 
+# ── §0: A6's own controls ───────────────────────────────────────────────────
+# A6 compares two file sets, and a set comparison that silently compares nothing
+# is the all-PASS-proves-nothing shape: an empty `built` and an empty `recorded`
+# agree perfectly. So it is aimed at four fixture labs — one that agrees, and one
+# for each way they can disagree — before it is aimed at the real one.
+mk_tt() { # mk_tt <lab> <file>...
+    local lab="$1"; shift; local f
+    mkdir -p "$lab/patches"
+    : > "$lab/patches/TESTED-TREE.patch"
+    for f in "$@"; do
+        printf 'diff --git a/%s b/%s\n--- a/%s\n+++ b/%s\n@@ -1,1 +1,2 @@\n ctx\n+x\n' \
+            "$f" "$f" "$f" "$f" >> "$lab/patches/TESTED-TREE.patch"
+    done
+}
+mk_tt "$WORK/lab-agree" src/a.c src/b.c
+mk_patch "$WORK/lab-agree/patches/01-a.patch" 01 2 "src/a.c" "x"
+mk_patch "$WORK/lab-agree/patches/02-b.patch" 02 2 "src/b.c" "x"
+check_record_covers_build "$WORK/lab-agree"; expect clean "record and applied patch name the same files"
+
+# the real 2026-08-27 defect: a file is built and no numbered patch mentions it
+mk_tt "$WORK/lab-unrecorded" src/a.c src/b.c
+mk_patch "$WORK/lab-unrecorded/patches/01-a.patch" 01 1 "src/a.c" "x"
+check_record_covers_build "$WORK/lab-unrecorded"; expect catch "a file is BUILT but named by no numbered patch (the arch/amd64/boot.h shape)"
+
+# the opposite: the record describes a change nothing applies
+mk_tt "$WORK/lab-unbuilt" src/a.c
+mk_patch "$WORK/lab-unbuilt/patches/01-a.patch" 01 2 "src/a.c" "x"
+mk_patch "$WORK/lab-unbuilt/patches/02-b.patch" 02 2 "src/b.c" "x"
+check_record_covers_build "$WORK/lab-unbuilt"; expect catch "a file is RECORDED but not in what is applied"
+
+mkdir -p "$WORK/lab-nott/patches"
+mk_patch "$WORK/lab-nott/patches/01-a.patch" 01 1 "src/a.c" "x"
+check_record_covers_build "$WORK/lab-nott"; expect catch "patches/TESTED-TREE.patch is absent entirely"
+
 (( c_bad == 0 )) \
     || fail "§0: $c_bad of $((c_ok + c_bad)) scanner controls behaved wrongly — nothing below its verdict means anything"
 # The fixtures used the exemption too; clear what they recorded, or the report
 # below names a temp file as a grandfathered patch.
 EXEMPT_USED=""
-note "§0 controls: 6 must-catch, 6 must-not-catch — all $c_ok behaved"
+note "§0 controls: 9 must-catch, 7 must-not-catch — all $c_ok behaved"
 
 # ---------------------------------------------------------------- the real files
 
@@ -254,10 +340,11 @@ BUILD="$LAB/build-openbios.sh"
 mapfile -t PATCHES < <(find "$LAB/patches" -maxdepth 1 -name '[0-9][0-9]-*.patch' | sort)
 (( ${#PATCHES[@]} > 0 )) || fail "no NN-*.patch files in $LAB/patches — every check below would run over nothing"
 
-P01="$LAB/patches/01-x86-revival.patch"
-[[ -f "$P01" ]] || fail "patches/01-x86-revival.patch is missing — it is the one patch build-openbios.sh applies, and the markers describe it"
-check_markers "$BUILD" "$P01"
+PTT="$LAB/patches/TESTED-TREE.patch"
+[[ -f "$PTT" ]] || fail "patches/TESTED-TREE.patch is missing — it is the patch build-openbios.sh applies, and the markers describe it"
+check_markers "$BUILD" "$PTT"
 check_markers_pristine "$BUILD"
+check_record_covers_build "$LAB"
 
 for p in "${PATCHES[@]}"; do check_patch "$p"; done
 
@@ -277,12 +364,14 @@ if [[ -n "$PROBLEMS" ]]; then
     while read -r p; do [[ -n "$p" ]] && note "$p"; done <<<"$PROBLEMS"
     fail "$(grep -c . <<<"$PROBLEMS") patch-hygiene problem(s) — see the lines above"
 fi
-note "A3: $NMARK revival markers, each naming a file patch 01 touches and a string it adds"
+note "A3: $NMARK markers, each naming a file TESTED-TREE.patch touches and a string it adds"
 if [[ -n "$A3B" ]]; then
     note "A3b: $A3B of them also checked against the PRISTINE file at the pinned commit, and absent from it"
+    [[ -n "$NEWFILES" ]] && note "A3b: absent because the patch CREATES the file (404 at the pin, which is an answer and not a skip):$NEWFILES"
 fi
+note "A6: the record and the applied patch agree on all $A6_BUILT files"
 note "A4: ${#PATCHES[@]} patches parse as unified diffs, subjects agree with filenames, series is 01..${#PATCHES[@]}"
 if [[ -n "$EXEMPT_USED" ]]; then
     note "A4: no Subject: line on ${EXEMPT_USED% } — grandfathered BY NAME (the convention began at patch 11), printed here so the exemption cannot grow unnoticed"
 fi
-pass "the patch series is coherent with itself and with the build: $NMARK markers describe strings patches/01 actually adds, and all ${#PATCHES[@]} patches read as unified diffs numbered 01..${#PATCHES[@]} with subjects that match their filenames (12 scanner self-controls fired first)"
+pass "the patch series is coherent with itself, with what is applied, and with the build: $NMARK markers describe strings the applied patch actually adds, and all ${#PATCHES[@]} patches read as unified diffs numbered 01..${#PATCHES[@]} with subjects that match their filenames, and the record and the applied TESTED-TREE.patch name the same $A6_BUILT files (16 scanner self-controls fired first)"
