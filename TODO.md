@@ -3258,9 +3258,31 @@ real files rather than grepping them:
 ### Decisions to make first
 
 1. **Pin the clone** — recommended, and A3/B3 are only meaningful once it is.
-2. **Tier B in CI, or local + nightly?** ~10 min per PR against a firmware that
-   changes rarely. A nightly `workflow_dispatch`/schedule may be the better
-   trade; say which, rather than leaving it implicit.
+2. **Tier B in CI, or local + nightly?** ~~~10 min per PR~~ — **MEASURED
+   2026-08-27**, run `33115835118`, cold `ubuntu-latest`, podman present, **no
+   KVM** so every boot is TCG: **3m11s wall**, 3m06s in the job.
+
+   | phase | | |
+   |---|---|---|
+   | `build:x86` **37s** | `build:amd64` **8s** | `build:ppc` **11s** |
+   | `track:multiboot` **5s** | `track:dict-identity` **6s** | `track:amd64` **6s** |
+   | `track:property-abi` **10s** | `track:diagnostics` **15s** | `track:ppc` **21s** |
+   | `track:vga` **29s** | | |
+
+   56s to build all three firmwares from nothing (the container image, which
+   compiles `toke` from source, is inside the x86 number); 92s to boot seven
+   tracks under TCG. The guess was 3× high, and the x86 build dominates only
+   because it pays for the image.
+
+   **Recommendation: path-filtered per-PR.** Three minutes is not a nightly-only
+   cost, and the argument for per-PR is no longer about minutes — this lab's
+   firmware is built from a patch that nothing else exercises, and Tier B has now
+   found **two** defects invisible to every green run: a marker matching a
+   pristine file, and a build applying 1 of 34 patches. Both were only visible
+   from a cold checkout, and a nightly would have found them a day later against
+   a merged main rather than in the PR that caused them. Filter on
+   `examples/openbios-the-rival-that-shipped/**` and `tools/openbios-*` so the
+   other ~120 labs do not pay for it.
 3. **Keep `smoke-openbios.sh` as the single driver** and have `tests/` wrap it
    one file per track, or split the tracks into test files? Wrapping keeps one
    place to type a track by hand — which is how this lab is actually used — and
