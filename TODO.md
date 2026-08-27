@@ -2676,6 +2676,46 @@ the counters at the **end**, caught the probe's own `ffffffff`, and that is how 
 error was found. **The day `a-signbit-boot` goes non-zero, (a) has its first real consumer
 and the decision is forced.**
 
+#### Two claims this track made, both corrected by measurement 2026-08-27
+
+Neither was a firmware defect. Both were shipped as present-tense comments and both were
+re-derived rather than re-quoted, which is the only reason they were caught.
+
+**1. *"a tick in evaluated text parses an empty name."*** `' encode-int catch` failed inside
+the (b) probe with a nameless `: undefined word.`, and that was written up as a limitation of
+`evaluate`. It is not:
+
+| | amd64 | x86 |
+|---|---|---|
+| `'` at the top level of evaluated text | works | works |
+| `'` inside an interpreted `if … else … then` | **fails** | **fails** |
+| `[']` in the same place | works | works |
+
+The mechanism is [`forth/bootstrap/bootstrap.fs:201`](examples/openbios-the-rival-that-shipped/patches/26-encode-int-refuses-what-four-bytes-cannot-hold.patch):
+`if` calls `setup-tmp-comp`, which switches to **compile** state and builds the body as a
+temporary definition that `then` executes afterwards. A non-immediate word like `'` is
+therefore *compiled*, and runs when `>in` is already past the whole construct, so its
+`parse-word` returns nothing. `[']` is immediate, parses at compile time, and works.
+**Standard Forth: an interpreted `if` here IS a definition.** The probe uses `[']` and is back
+to one file and one `evaluate`, which also deleted the stack-dirty hazard the (b) control
+found.
+
+*(`state @` inside the branch reads `0`, and that is the instrument answering the wrong
+question — it is compiled too, so it runs after `then` has restored the state.)*
+
+**2. *"`variable` does not stick inside the evaluated text."*** Measured:
+
+```console
+variable qw  7 qw !  qw @ .     →  7    (and still 7 at the prompt afterwards)
+dev /  variable la  9 la !      →  la @ is 9 while the context is open
+device-end  la @                →  la: undefined word.
+```
+
+So it was never about `evaluate`. The probe defined `la` after a `dev /`, and `$create`
+defines into the **active package's** method list, which `device-end` drops from the search
+order — correct IEEE 1275, and this lab's own documented rule, misfiled as a limitation of
+evaluated text.
+
 **(d) `decode-bytes` — FIXED 2026-08-26, and it was one transposed character.** Two
 predictions in this entry were wrong, in opposite directions, and both are kept below.
 

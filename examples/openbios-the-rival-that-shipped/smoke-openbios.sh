@@ -867,6 +867,19 @@ case "$FLAVOR" in
     #   (a) l@-be accumulates 4 bytes into a CELL, zero-extending. So the same
     #       four bytes decode to -1 on a 32-bit cell and ffffffff on a 64-bit one.
     #       forth/admin/devices.fs:434 compares a decoded int against a phandle.
+    #   NOTE ON `[']` BELOW, because the first draft got this wrong and shipped
+    #   the wrong reason. `' encode-int catch` inside the probe's if/else failed
+    #   with a nameless ": undefined word.", and that was written up as "a tick
+    #   in evaluated text parses an empty name". It is not. Measured 2026-08-27:
+    #   `'` works fine at the top level of evaluated text, and fails only INSIDE
+    #   an interpreted if...then -- because bootstrap.fs:201's `if` calls
+    #   setup-tmp-comp, which switches to COMPILE state and builds the body as a
+    #   temporary definition that `then` executes afterwards. A non-immediate
+    #   word like `'` is therefore compiled and runs when >in is already past the
+    #   whole construct, so its parse-word returns nothing. `[']` is immediate,
+    #   parses at compile time, and works. Standard Forth, not a firmware defect:
+    #   an interpreted `if` here IS a definition.
+    #
     #   (b) FIXED (patch 26). l!-be used to mask to 4 bytes with no overflow
     #       check, so a value >= 2^32 was silently truncated -- and the tree
     #       encodes ihandles through this path, so /chosen's stdin could name a
@@ -914,6 +927,18 @@ case "$FLAVOR" in
 ." a-decoded=" dup . cr
 -1 = if ." a-ROUNDTRIP-OK" else ." a-ROUNDTRIP-BROKEN" then cr
 2drop
+100000000 dup 0= if
+  drop ." b-UNREPRESENTABLE-ON-THIS-CELL" cr
+else
+  ['] encode-int catch ?dup if
+    ." b-REFUSED=" . cr
+  else
+    decode-int
+    ." b-decoded=" dup . cr
+    100000000 = if ." b-WIDE-OK" else ." b-WIDE-TRUNCATED" then cr
+  then
+then
+clear
 ffffffff encode-int 2drop ." b-ctl-u32-OK" cr
 -1 encode-int 2drop ." b-ctl-neg-OK" cr
 1 encode-int 2dup +
@@ -939,31 +964,6 @@ drop
 ." a-signbit-end=" l@be-signbit @ . cr
 ." P132-END" cr
 FTH
-    # THE WIDE VALUE GETS ITS OWN FILE, and the reason is the fix. `encode-int`
-    # of a value that cannot survive four bytes now ABORTS, which unwinds to the
-    # prompt and takes the rest of the evaluated text with it. Catching it in
-    # place was the obvious move and does not work here: `'` inside evaluated
-    # text parses an EMPTY name and the firmware answers ": undefined word." —
-    # the same class as the `variable` note below, and the reason this is a
-    # second `load` rather than a `catch`.
-    cat > "$PST/PROPB.FTH" <<'FTHB'
-\ TODO 13.2(b): the value that four bytes cannot hold. Base is HEX.
-." P132B-START" cr
-100000000 dup 0= if
-  drop ." b-UNREPRESENTABLE-ON-THIS-CELL" cr ." P132B-END" cr
-else
-  ." b-ENCODING-NOW" cr
-  encode-int decode-int
-  ." b-decoded=" dup . cr
-  100000000 = if ." b-WIDE-OK" else ." b-WIDE-TRUNCATED" then cr
-  ." P132B-END" cr
-then
-\ LEAVE THE STACK AS WE FOUND IT. The prompt prints the depth, so a probe that
-\ drops two items short returns to `2 > ` and every later --expect "0 > " waits
-\ forever. Invisible while the refusal is in place, because an abort clears the
-\ stack on its way out: only the CONTROL run ever reaches this line.
-clear
-FTHB
     genisoimage -quiet -o "$WORKDIR/prop.iso" -V PROPISO -r -J "$PST"
     note "running the probe on both arches → $WORKDIR/prop-{amd64,x86}.log"
     for A in amd64 x86; do
@@ -976,10 +976,7 @@ FTHB
       python3 "$REPO/tools/drive-serial-repl.py" "$PSOCK" "$PLOG" --timeout 120 \
         --expect "0 > " \
         --send 'load /ide@1/cdrom@0:\\prop.fth\r' --expect "0 > " \
-        --send 'load-base load-size evaluate\r' --expect "P132-END" \
-        --expect "0 > " \
-        --send 'load /ide@1/cdrom@0:\\propb.fth\r' --expect "0 > " \
-        --send 'load-base load-size evaluate\r' --expect "0 > "
+        --send 'load-base load-size evaluate\r' --expect "P132-END"
       PRC=$?
       kill "$PQ" 2>/dev/null   # by PID, never by pattern
       # THE (d) LINE IS READ BEFORE THE rc GATE, and the control is why. A
@@ -1048,12 +1045,10 @@ FTHB
     # survive the four bytes 1275 encodes an integer into, rather than writing
     # the low half and saying nothing — LIED down to HALTED, which is the whole
     # of the ladder in CLAUDE.md.
-    grep -qF 'b-ENCODING-NOW' <<<"$AL" \
-      || fail "13.2(b) on amd64: the wide-value probe never reached encode-int, so nothing was asked — its silence is an UNKNOWN, not a refusal — see $WORKDIR/prop-amd64.log"
+    grep -qE 'b-REFUSED=[[:space:]]*-2( |$)' <<<"$AL" \
+      || fail "13.2(b) on amd64: encode-int of 100000000 did not throw -2 — either the refusal is gone or something else threw: $(grep -aoE 'b-(REFUSED|decoded|WIDE|ctl)[^ ]*.{0,16}' <<<"$AL" | head -2 | tr '\n' ' ') — see $WORKDIR/prop-amd64.log"
     grep -qF 'encode-int: value does not fit' <<<"$AL" \
-      || fail "13.2(b) on amd64: encode-int of 100000000 neither refused by name nor reported a decoded value — see $WORKDIR/prop-amd64.log"
-    grep -qF 'P132B-END' <<<"$AL" \
-      && fail "13.2(b) on amd64: the wide-value probe RAN TO COMPLETION, so encode-int accepted a value four bytes cannot hold — the refusal is not a refusal — see $WORKDIR/prop-amd64.log"
+      || fail "13.2(b) on amd64: -2 was thrown but l!-be's message never reached the console, so the refusal cannot tell an operator what it refused — see $WORKDIR/prop-amd64.log"
     grep -q 'b-UNREPRESENTABLE-ON-THIS-CELL' <<<"$XL" \
       || fail "13.2(b) reported a verdict on x86, where a 4-byte cell cannot express the input — that can only mean the probe stopped checking the literal survived, which is the false PASS this track was written to avoid"
 
@@ -1084,10 +1079,21 @@ FTHB
     # own `#address-cells 1`. So the same call yields a different length in two
     # contexts, and root is the trap: its property says 1 while encode-phys under
     # it uses 2.
-    # The comparison is done HERE and not in the probe: `variable` does not stick
-    # inside the evaluated text (it reports "la: undefined word." at the point of
-    # use — the same define-into-the-current-vocabulary shape patches 14/16 fixed
-    # for bind_func). Two measured values differing is the proof anyway.
+    # The comparison is done HERE and not in the probe, and the reason this
+    # comment used to give was WRONG. It said `variable` "does not stick inside
+    # the evaluated text". Re-derived 2026-08-27 on both arches:
+    #
+    #   variable qw  7 qw !  qw @ .      in evaluated text -> 7, and still 7 at
+    #                                    the prompt afterwards
+    #   dev /  variable la  9 la !       -> la @ is 9 while the context is open
+    #   device-end  la @                 -> "la: undefined word."
+    #
+    # So the original observation was never about `evaluate` at all: the probe
+    # defined `la` after a `dev /`, and $create defines into the ACTIVE PACKAGE's
+    # method list, which device-end drops from the search order. That is correct
+    # IEEE 1275 and this lab's own documented rule, misfiled as a limitation of
+    # evaluated text. The comparison stays here because two measured values
+    # differing is the proof anyway.
     ELR="$(grep -oE 'e-len-root=[0-9a-f]+' <<<"$AL" | head -1 | cut -d= -f2)"
     ELI="$(grep -oE 'e-len-ide=[0-9a-f]+'  <<<"$AL" | head -1 | cut -d= -f2)"
     [[ -n "$ELR" && -n "$ELI" ]] \
