@@ -3125,6 +3125,60 @@ file at the pinned commit and require the marker to be **absent** — and SKIPs 
 passes when the network is unavailable, because an unchecked marker is an UNKNOWN and this
 whole checker exists because an unchecked marker was read as a checked one.
 
+### Archiving the tested tree — a snapshot that can prove what it is
+
+**Done 2026-08-27.** [`tools/openbios-archive-tree.sh`](tools/openbios-archive-tree.sh)
+takes a dated, compressed snapshot of the patched OpenBIOS tree — 5.7 MB of source
+to an **884 KB** `.tar.zst` — and `build-openbios.sh` will take one after a
+successful build when `OPENBIOS_ARCHIVE=1`.
+
+**The archive is not the source of truth, and the design says so.** The tree is
+reproducible: pin + `TESTED-TREE.patch` regenerates it exactly. This is insurance
+against upstream vanishing or a rewritten history, not a second definition of the
+firmware. Which is precisely why it must carry an identity — a directory of
+tarballs named only by date is bug class #1 waiting to happen, because the day two
+of them disagree nothing says which was the tree that was tested.
+
+So every archive is stamped with the **pin**, the **sha256 of the patch** that
+produced it, the **mklab commit**, and a **tree digest** over file contents
+(sorted under `LC_ALL=C`, since a digest that depends on the asker's locale is not
+an identity). **The date is a record; the digest is the identity.** Both are in
+the filename, so `ls` answers *when* and *is this the same tree* without opening
+anything.
+
+Three properties fall out, and the third is the one that ties this back to §14:
+
+- **Dedup is by content.** Re-running on an unchanged tree writes nothing, which
+  is what makes it safe to leave switched on in the build.
+- **`obj-*` and `config-host.mak` are excluded**, so the digest identifies *the
+  source*, not *what was last built*.
+- **Which makes the archive comparable to a cold reproduction** — and they agree.
+  The live tree, the archive, and a tree rebuilt from the pin and the patch on a
+  fresh clone all carry `fee928e882ef096e88553a635213c64d98116d93eb9717da16f11f945f93dc6f`.
+  The snapshot, the running firmware, and the reproducible path are the same bytes,
+  measured rather than asserted.
+
+[`tools/tests/test-openbios-archive-identity.sh`](tools/tests/test-openbios-archive-identity.sh)
+(in `ci.yml`, synthetic tree, no clone or network needed) carries 16 assertions,
+and the load-bearing ones are the two where verification must **FAIL**: a tampered
+archive and one with no manifest. Both were re-injected into the tool and watched
+to bite.
+
+**Two defects in the test, both in the control, both found the same way.** The
+first draft read `$?` inside its assertion helper — whose own first statement is
+`n=$((n+1))`, an arithmetic assignment that **sets `$?`** — so every status row was
+reading the increment. It reported both controls as failures while the tool was
+fine, and would equally have reported a broken verify as a pass. The second: the
+dedup row counted files, but dedup produces the same date and the same digest and
+therefore the **same filename**, so a re-archive overwrites in place and the count
+is identical either way. The row now asserts the bytes were not rewritten.
+
+And a third, in the *injection* rather than the test: the control that was meant to
+prove the dedup gap used the wrong indentation, so it never applied and reported
+"does not bite". *When the control reports something surprising, suspect the
+control.* Re-run correctly it bites on the new row while the file-count row still
+passes — which is the evidence the strengthening needed.
+
 ### Tier B's second finding: the lab was not reproducible, and had never been
 
 The marker fix got the build running. It then went green on all three arches — `build:x86`
