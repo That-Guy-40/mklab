@@ -1326,6 +1326,9 @@ FTH
         --send '." F=" " vga-driver-fcode" $find . cr\r'  --expect "> " \
         --send 'clear ." W=" openbios-video-width . cr\r' --expect "> " \
         --send 'clear ." S=" " screen" find-dev if ." FOUND " . else ." NONE" then cr\r' --expect "> " \
+        --send 'clear dev /pci8086,1237@0/QEMU,VGA@2 ." AC=" my-#acells . cr\r' --expect "> " \
+        --send 'clear device-end " screen" open-dev ." OD=" dup . cr\r' --expect "> " \
+        --send '." FB=" frame-buffer-adr . cr\r' --expect "> " \
         --send 'clear dev /pci8086,1237@0 ls\r'           --expect "> "
       RC=$?
       kill "$QPID" 2>/dev/null   # by PID, never by pattern
@@ -1372,9 +1375,28 @@ FTH
         && fail "REGRESSION: $A's '\" screen\" find-dev' found nothing — /aliases still carries screen, so this means the path it names cannot be resolved, and every child of the PCI bridge encoding as @0 is exactly what 13.3(D) was — see $VLOG"
       grep -qF 'S=FOUND' <<<"$VL" \
         || fail "$A: the screen-alias probe printed neither FOUND nor NONE, so it proved nothing about the alias either way — see $VLOG"
+
+      # TODO 0.6c/0.6d. Resolving the alias was never the same as being able to
+      # USE it: for as long as this track only checked find-dev, `open-dev` on
+      # that same node faulted on both arches and nothing said so.
+      #
+      # AC is the cause and OD is the effect, asserted separately because they
+      # were two bugs rather than one. #address-cells was never written on a PCI
+      # bus (nothing in pci_database.c sets acells), so my-#acells fell back to
+      # its no-property default of 2 and every Forth consumer of decode-phys read
+      # one cell short. FB is patch 33's half: the framebuffer BAR was being
+      # assigned address 0, so even a correct decode had nothing to map.
+      grep -qE 'AC=[[:space:]]*3( |$)' <<<"$VL" \
+        || fail "REGRESSION: $A: my-#acells under the VGA node is $(grep -aoE 'AC=[0-9a-f]+' <<<"$VL" | tail -1 | cut -d= -f2), not 3 — the PCI bus has stopped declaring #address-cells, so decode-phys returns fewer cells than pci_encode_phys_addr wrote and pci-bar>pci-addr shifts its stack (TODO 0.6d) — see $VLOG"
+      grep -qE 'OD=[[:space:]]*[1-9a-f][0-9a-f]*( |$)' <<<"$VL" \
+        || fail "REGRESSION: $A: '\" screen\" open-dev' did not return an ihandle ($(grep -aoE 'OD=[0-9a-f-]+' <<<"$VL" | tail -1)) — opening the display is what faulted before 0.6c/0.6d, with a general protection fault on amd64 and an invalid opcode on x86, both from the same stack underflow — see $VLOG"
+      grep -qE 'FB=[[:space:]]*40000000( |$)' <<<"$VL" \
+        || fail "REGRESSION: $A: frame-buffer-adr is $(grep -aoE 'FB=[0-9a-f]+' <<<"$VL" | tail -1 | cut -d= -f2), not 40000000 — either the BAR lost its address again (pci_mem_base, TODO 0.6c) or map-fb stopped reaching it — see $VLOG"
+      grep -qaE 'Exception|general protection|invalid opcode' <<<"$VL" \
+        && fail "REGRESSION: $A threw during the VGA probe — opening the display used to fault and the whole point of 0.6c/0.6d is that it no longer does: $(grep -aoE '(Unexpected Exception|Exception #)[^\n]{0,60}' <<<"$VL" | head -1) — see $VLOG"
     done
 
-    pass "TODO 13.1 DRIVER_VGA + 13.3(D): amd64 enumerates PCI (QEMU,VGA@2 is under the i440FX bridge at its REAL device number, openbios-video-width=0x320), the VGA FCode blob is reachable from \$find on BOTH arches — the 'vga-driver-fcode:' undefined-token report that had been in every x86 boot log is gone — and '\" screen\" find-dev' now returns that node's phandle instead of 0, which it did on every run for as long as pci.c wrote its property cells in host byte order"
+    pass "TODO 13.1 DRIVER_VGA + 13.3(D): amd64 enumerates PCI (QEMU,VGA@2 is under the i440FX bridge at its REAL device number, openbios-video-width=0x320), the VGA FCode blob is reachable from \$find on BOTH arches — the 'vga-driver-fcode:' undefined-token report that had been in every x86 boot log is gone — and '\" screen\" find-dev' now returns that node's phandle instead of 0, which it did on every run for as long as pci.c wrote its property cells in host byte order — and the node can now be OPENED as well as found: my-#acells is 3 where a PCI bus that declares nothing defaulted to 2, open-dev returns an ihandle where it used to fault on both arches, and frame-buffer-adr is 40000000 where the BAR used to be assigned address zero (TODO 0.6c/0.6d)"
     ;;
   diagnostics)
     # The Forth bindings report their own failures now (patch 20), and this

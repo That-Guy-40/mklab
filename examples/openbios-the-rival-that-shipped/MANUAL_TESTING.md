@@ -189,6 +189,14 @@ sweep is the assertion: `vga property-abi mmio-writer pmem-writer flash-writer a
 multiboot diagnostics ppc nvram amd64-pmem dict-identity client-forth` — 13 of 13 PASS, and
 §13.2(a)'s `a-signbit-boot` guard is still `0` because the base was chosen with bit 31 clear.
 
+**2026-08-27, patch 34 (TODO §0.6d):** the PCI bus never declared its cell counts, so
+`my-#acells` was **2** where the C side wrote **3** — a silent stack shift that faulted
+`" screen" open-dev` on both arches. The `vga` track had only ever checked that the alias
+*resolved*; it now asserts `AC=3`, `OD=<ihandle>`, `FB=40000000` and **no exception in the
+log**, and removing the two property writes fails it by name. Shared code, so ppc was rebuilt
+and run: `vga property-abi mmio-writer pmem-writer flash-writer amd64 multiboot diagnostics
+ppc nvram amd64-pmem dict-identity client-forth amd64-ctx` — 14 of 14 PASS.
+
 ### The negative controls, run 2026-08-23
 
 Each fix was broken and watched to bite before being trusted:

@@ -121,12 +121,25 @@ items, and neither is blocked on anything.**
       trip §13.2(a)'s `a-signbit-boot` guard — the guard would be working, and forcing that
       decision as a side effect of a BAR fix is what would be wrong. Verified after:
       `a-signbit-boot=0` still.
-- [ ] **0.6d — `" screen" open-dev` faults**, a stack underflow (`dstackcnt=-3` on amd64;
-      invalid opcode plus `threw -4` on x86 — **it reproduces on both arches**, which the
-      first framing also got wrong). **The hypothesis above is DISPROVED**: 0.6c is fixed,
-      the BAR now has a real address, and this still faults. They are independent. It is a
-      driver question — `map-fb` / the display node's `open` — and the patch-20 reporter
-      already names the underflow, which is a starting point.
+- [x] **0.6d — FIXED 2026-08-27**, [patch 34](examples/openbios-the-rival-that-shipped/patches/34-pci-bus-cell-counts.patch).
+      Independent of 0.6c, as the measurement showed. **A PCI bus never declared its cell
+      counts.** `#address-cells`/`#size-cells` are written from `pci_dev->acells`/`->scells`
+      and **nothing in `pci_database.c` assigns either field, on any entry**;
+      `host_config_cb` is never reached here at all, because QEMU's i440FX is not in the
+      database (*"Cannot manage 'PCI host bridge' … 8086 1237"* in every boot log) and the
+      generic subclass row has a `NULL` callback. So `my-#acells` fell back to its
+      no-property default of **2** for every child of a PCI bus.
+
+      **The C side always encoded three cells** (`pci_encode_phys_addr` writes
+      phys.hi/mid/lo), so `reg` and `assigned-addresses` were right on disk the whole time.
+      The **Forth decode side read two where three were written** — a silent stack shift, not
+      an error: `pci-bar>pci-addr` is commented `( reg prop prop-len phys.lo phys.mid
+      phys.hi )`, receives one fewer, and its `6 pick` reaches past the operand it wants.
+
+      After, on both arches: `my-#acells` 3, `pci-bar>pci-addr` leaves exactly 5,
+      `" screen" open-dev` returns an ihandle, `frame-buffer-adr` = `40000000`, **0
+      exceptions**. The `vga` track now asserts cause and effect separately — it had only
+      ever checked that the alias *resolved*, which is not the same as being able to use it.
 
 **What NOT to re-derive**, because each cost a run and is written up in §16:
 
