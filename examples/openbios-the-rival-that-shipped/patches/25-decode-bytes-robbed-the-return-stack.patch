@@ -1,0 +1,122 @@
+Subject: [PATCH 25/25] property.fs: decode-bytes robbed the return stack — one transposed character
+Arch-tested: x86 amd64 ppc
+
+TODO 13.2(d) predicted that calling `decode-bytes` "corrupts the return stack
+and would take the machine down". Measured on amd64 2026-08-25, it did not take
+anything down: it RETURNED, with six items on the stack where four are
+documented.
+
+    D-DEPTH-BEFORE=0
+    D-ENCODED-DEPTH=2      \ after `" ab" encode-bytes`
+    D-CALLING-NOW          \ `1 decode-bytes`, so 3 items in
+    D-RETURNED             \ it came back
+    D-DEPTH-AFTER=6        \ documented effect is 4 out -- TWO EXTRA
+
+That is worse than a crash, not better. A word that corrupts the return stack
+and then returns cleanly hands its caller a silently wrong stack and an
+intact-looking machine.
+
+WHAT IT ACTUALLY IS. Upstream:
+
+    : decode-bytes  ( addr1 len1 #bytes -- addr len2 addr1 #bytes )
+      tuck -  ( addr1 #bytes len2 )
+      r> 2dup +  ( addr1 #bytes addr2 ) ( R: len2 )
+      r> 2swap
+      ;
+
+Two bare `r>` and no `>r` anywhere. The two extra cells are exactly those: it
+pulls them off the return stack and leaves them on the data stack.
+
+13.2(d) went on to say the fix "is not merely balancing the `r>`s, since the
+stack comment describes an effect that no caller has ever depended on". The
+first half of that is wrong, and the annotations already in the source say so.
+Read them as intent and every one lines up with IEEE 1275-1994 5.3.5.2:
+
+    decode-bytes ( prop-addr1 prop-len1 #bytes
+                     -- prop-addr2 prop-len2 data-addr data-len )
+
+`>r` on the first one: len2 is parked, addr2 = addr1 + #bytes is computed, len2
+comes back, and `2swap` puts the remainder under the decoded array. The `( R:
+len2 )` note beside that line is only true if it is a `>r` — the comment has
+been describing the correct word all along. The decoded bytes are returned in
+place, a pointer into the property; 1275 does not ask for a copy.
+
+FIXED rather than deleted, and the choice is not close. One transposed character
+produces the standard's word, while deleting it would leave `encode-bytes` —
+five callers plus an FCode-table entry — with no inverse. Its absence from
+forth/device/table.fs is NOT a gap to be filled either: `decode-bytes` has no
+FCode number in 1275, and that table is positional.
+
+WATCHED TO BITE. `./smoke-openbios.sh property-abi` now ends on a (d) section,
+after (a)-(c) so that a robbed stack could not have invalidated them:
+
+    d-depth-pre=0    " ab" encode-bytes 2 decode-bytes    d-depth=4
+    d-data=ab        d-len2=0                             d-depth-post=0
+
+on both arches. THE DEPTH IS THE ASSERTION. A round trip that prints "ab" proves
+the bytes were found and says nothing about the two cells taken from underneath
+the caller.
+
+Re-injecting the bare `r>` fails it by name with `left 6 items on the stack, not
+4` — and the control immediately earned itself twice over, in the harness rather
+than the subject:
+
+  * the corrupt return stack does not merely leave six items, it derails the
+    rest of the evaluation, so the run times out and the GENERIC "probe did not
+    complete" gate fired first — blaming patches 14/15/16 for a defect the probe
+    had measured and printed two lines earlier. The (d) line is now read BEFORE
+    the rc gate.
+  * that generic message contained an UNESCAPED `load` in backticks, so bash ran
+    it, wrote "load: command not found" to stderr, and spliced the empty result
+    into the text: the failure read "if  no longer reaches (init-program)". The
+    same command-substitution-in-prose bug CLAUDE.md records for usage heredocs,
+    in a fail string — and visible only on a run that was already failing.
+
+diff --git a/forth/device/property.fs b/forth/device/property.fs
+--- a/forth/device/property.fs
++++ b/forth/device/property.fs
+@@ -192,9 +192,43 @@
+   then
+   ;
+ 
++\ LOCAL DIVERGENCE (mklab). TODO 13.2(d): the first `r>` is a transposed `>r`.
++\
++\ Upstream reads
++\
++\     tuck -  ( addr1 #bytes len2 )
++\     r> 2dup +  ( addr1 #bytes addr2 ) ( R: len2 )
++\     r> 2swap
++\
++\ with two bare `r>` and no `>r` at all -- so it takes two cells off the RETURN
++\ stack and leaves them on the data stack. Measured on amd64 2026-08-25: called
++\ with three items in, it returned with SIX on the stack where the documented
++\ effect is four. It did not crash, because `evaluate`'s return stack was deep
++\ enough to be robbed without the closing `;` landing anywhere fatal -- which is
++\ worse than a crash, not better: a word that corrupts the return stack and then
++\ returns CLEANLY hands its caller a silently wrong stack and an intact machine.
++\
++\ TODO 13.2 said the fix could not be a matter of balancing the `r>`s, because
++\ the stack comment described an effect no caller depended on. That was wrong on
++\ the first half. Read the comments as intent and they are exactly right, and
++\ exactly IEEE 1275-1994 5.3.5.2:
++\
++\     decode-bytes ( prop-addr1 prop-len1 #bytes
++\                      -- prop-addr2 prop-len2 data-addr data-len )
++\
++\ `>r` on the first one and every annotation below lines up: len2 is parked,
++\ addr2 = addr1 + #bytes is computed, len2 comes back, and 2swap puts the
++\ remainder under the decoded array. The decoded bytes are returned in place, as
++\ a pointer into the property -- there is no copy, and 1275 does not ask for one.
++\
++\ FIXED rather than deleted, and the choice is not close: one transposed
++\ character produces the standard's word, while deleting it would leave
++\ `encode-bytes` (five callers, plus an FCode-table entry) with no inverse. Its
++\ absence from forth/device/table.fs is NOT a gap to be filled -- `decode-bytes`
++\ has no FCode number in 1275, and that table is positional.
+ : decode-bytes  ( addr1 len1 #bytes -- addr len2 addr1 #bytes )
+   tuck -  ( addr1 #bytes len2 )
+-  r> 2dup +  ( addr1 #bytes addr2 ) ( R: len2 )
++  >r 2dup +  ( addr1 #bytes addr2 ) ( R: len2 )
+   r> 2swap
+   ;
+   

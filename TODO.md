@@ -2437,13 +2437,72 @@ payload.
 whole of what patch 23 claims. **Running the payload there is the next item**, and it is
 now a debuggable failure rather than a hang.
 
-### 13.3 Still open — measured, named, and not fixed
+### 13.3 Measured, named — and (A) since fixed
 
 Everything here was **observed**, not deduced. Where a mechanism is unknown it says so, and
-no guess stands in its place. Nothing in this list has an in-tree caller that is currently
-broken by it; that is why each is recorded rather than repaired.
+no guess stands in its place. **(A) is CLOSED (2026-08-26)**; it was the one entry with an
+in-tree caller actually broken by it, and tracing it is what turned "two mechanisms, one
+symptom" into one. B–E have no broken caller today, which is why each stays recorded rather
+than repaired.
 
-#### A. x86's client context reads different values than the prompt — **the reason `go` still doesn't run the payload**
+#### A. x86's client context read a STALE COPY of the firmware — **CLOSED 2026-08-26**
+
+*The original entry is kept below the rule, because the way it was wrong is the useful
+part: it recorded two mechanisms where there is one, and said so in as many words.*
+
+`arch/x86/context.c`'s `arch_init_program()` entered the **fcode/forth trampolines** in the
+CLIENT program's **flat** segments. Those trampolines are not client programs — their entry
+is a firmware function (`init_forth_context()` / `init_fcode_context()` in
+`libopenbios/initprogram.c`) which then drives the Forth interpreter. x86 relocates OpenBIOS by **rebasing the GDT**, so
+every Forth address is segment-relative; entered flat, the trampoline read each address at
+its link-time value — where the **original, un-relocated copy of the image** still sits,
+byte-exact, frozen at the instant of relocation. Nothing faults. The copy is valid. It is
+merely stale.
+
+Measured at the prompt, reading both windows (`400000 load-base -` recovers `virt_offset`
+= `1fd8fe50` from the running firmware, so the stale window is `<addr> 400000 load-base - -`):
+
+| | live | stale |
+|---|---|---|
+| `forth-wordlist @` | `137808` | `132b08` |
+| `file-size @` | `16` | `0` |
+
+That is both rows of the table below, from one cause:
+
+- **The "lookup difference" is not one.** `#order`, `context[0]` and `current` are
+  *identical* in the two windows — checked. The stale chain head simply predates the
+  `constant load-base` that `arch/x86/openbios.c` defines at the end of `arch_init`, so the
+  same `$find` walks past the shadow to `nvram.fs`'s config word.
+- **The "fetch difference" is the same address in the other window.** `load-size` is
+  `file-size @`; same xt, same address, different memory.
+
+**And amd64 was never affected because it does not relocate** — `virt_offset` is 0, flat
+*is* reloc. The arch that could not show the bug is the one that looked healthy. Fourth
+time in this lab.
+
+Fixed by [patch 24](examples/openbios-the-rival-that-shipped/patches/24-forth-trampoline-runs-in-firmware-segments.patch):
+the trampolines get the firmware's own relocated segments (and no client-entry arguments,
+being C functions that take none), and `{forth,fcode}_init_program()` **stamp
+`ls.file-type`** — only the C loader path wrote it, so a payload loaded with `load` reached
+`arch_init_program()` claiming to be an *elf-boot image*. Same two-records-of-one-fact shape
+as [§13.1d](#131d-x86s-go-hung-on-an-uninitialised-load-state--closed-2026-08-26), one
+field over.
+
+**Watched to bite.** `./smoke-openbios.sh client-forth`: x86 and amd64 each `load` a Forth
+payload off a CD and `go` it, and must print the payload's own marker. Re-injecting the flat
+segments fails it **by name on x86 while amd64 still passes** — the asymmetry is the point.
+The obvious re-injection does not compile (`-Werror=unused-but-set-variable`), so the
+control uses an unsatisfiable condition. The track also asserts x86's two windows still
+**differ** before its pass is allowed to count — on an arch where they are the same memory
+the bug is undetectable — and carries a same-probe tautology (a cell compared with itself
+must report `-1`) so a `=` answering `0` for everything cannot satisfy it. Negative control:
+a second boot with the same program minus `is_forth()`'s `\ ` magic, which must be refused
+by name rather than evaluated (and that one was watched to fire too, by giving the control
+payload the magic).
+
+---
+
+*Original entry, 2026-08-26:*
 
 From [§13.1d](#131d-x86s-go-hung-on-an-uninitialised-load-state--closed-2026-08-26). Once
 the 768 MB walk was fixed, `go` refuses honestly and prints why. Comparing **by xt and by
@@ -2534,7 +2593,7 @@ elsewhere is unknown. The track pins the line per arch and **fails if it spreads
 amd64 and `false` on x86 — one of the six shared config options §13.1 already recorded as
 differing. Named here so the next person who sees the asymmetry does not re-open it.
 
-### 13.2 Four defects in `forth/device/property.fs` — **three WATCHED TO BITE 2026-08-25**
+### 13.2 Four defects in `forth/device/property.fs` — **(a)(b)(c) WATCHED TO BITE 2026-08-25, (d) FIXED 2026-08-26**
 
 Read at `openbios` `e5ac46d`. **The work was to watch them bite, and (a)(b)(c) now do** —
 `./smoke-openbios.sh property-abi` runs a multi-line Forth probe **loaded off media**
@@ -2574,7 +2633,37 @@ good news, and the expectations here and there get updated together.
   a *quantifier*, not a literal plus — so it matched nothing and reported (c) FIXED
   while both logs plainly contained the string. Now `grep -F`.
 
-**(d) `decode-bytes` — run in isolation 2026-08-25, and it does NOT crash.** That
+**(d) `decode-bytes` — FIXED 2026-08-26, and it was one transposed character.** Two
+predictions in this entry were wrong, in opposite directions, and both are kept below.
+
+The word's own stack annotations were right all along, and they are IEEE 1275-1994
+§5.3.5.2 exactly: `( prop-addr1 prop-len1 #bytes -- prop-addr2 prop-len2 data-addr
+data-len )`. The `( R: len2 )` note beside the offending line is only *true* if that line
+is a `>r` — which is what it should have been. With `>r`, len2 is parked, `addr2 = addr1 +
+#bytes` is computed, len2 comes back, and `2swap` puts the remainder under the decoded
+array. So the fix **is** balancing the `r>`s, contrary to the paragraph two below.
+
+**Fixed rather than deleted**, and the choice is not close: one character produces the
+standard's word, while deleting it would leave `encode-bytes` — five callers plus an
+FCode-table entry — with no inverse. And its absence from `forth/device/table.fs` is **not
+a gap to fill**: `decode-bytes` has no FCode number in 1275, and that table is positional.
+
+[Patch 25](examples/openbios-the-rival-that-shipped/patches/25-decode-bytes-robbed-the-return-stack.patch).
+`property-abi` now ends on a (d) section — after (a)–(c), so a robbed stack cannot
+invalidate them — asserting `d-depth-pre=0`, `d-depth=4`, `d-data=ab`, `d-len2=0`,
+`d-depth-post=0` on both arches. **The depth is the assertion**: a round trip that prints
+`ab` proves the bytes were found and says nothing about the two cells taken from underneath
+the caller. Re-injecting the bare `r>` fails it by name (`left 6 items on the stack, not
+4`) — and that control found **two defects in the harness**, which is where they keep
+turning up: the generic "probe did not complete" gate fired first and blamed patches
+14/15/16 for a defect the probe had already printed, and its message carried an
+**unescaped `` `load` `` in backticks** that bash *ran*, splicing the empty result into the
+text so the failure read *"if  no longer reaches"* — CLAUDE.md's usage-heredoc rule,
+pointed at a `fail` string, visible only on a run that was already failing.
+
+*Original entry, 2026-08-25 — the crash prediction, and the measurement that disproved it:*
+
+**Run in isolation 2026-08-25, and it does NOT crash.** That
 prediction ("calling it corrupts the return stack and would take the machine down") was
 this entry's, and it is wrong. Measured on amd64:
 
@@ -2600,6 +2689,9 @@ and `forth/device/table.fs` carries `encode-bytes` with **no `decode-bytes`**, s
 round trip does not exist. **Fix or delete it** before anything claims otherwise — and
 the fix is not merely balancing the `r>`s, since the stack comment describes an effect
 (`addr len2 addr1 #bytes`) that no caller has ever depended on.
+
+*(That last sentence is the second wrong prediction. The stack comment describes the 1275
+effect, and balancing the `r>`s produces it.)*
 
 | # | defect | why it matters on amd64 |
 |---|---|---|

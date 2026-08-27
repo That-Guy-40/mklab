@@ -1,0 +1,210 @@
+Subject: [PATCH 24/24] the Forth/FCode trampoline ran in the CLIENT's segments
+Arch-tested: x86 amd64 ppc
+
+TODO 13.3(A) recorded x86's client context reading different values than the
+prompt, and said in as many words that no single-mechanism story explained it:
+
+    word         xt @prompt   xt @context   value @prompt   value @context
+    load-base    13756c       12ebb8        e066fdd0        4000000
+    load-size    12afc8       12afc8        1f              0
+
+    "Two mechanisms, one symptom ... a LOOKUP difference ... a FETCH
+     difference.  Not a lookup problem at all."
+
+There is one mechanism. Both rows are the same firmware being read through the
+wrong window.
+
+WHAT arch/x86/context.c DID. arch_init_program() fills the client context with
+"reasonable default for flat memory model" -- FLAT_CS/FLAT_DS, whose GDT base is
+0 -- and then switches to those for everything except file-type 1, which gets
+RELOC_CS/RELOC_DS (base = virt_offset). That is right for a client program. It
+is wrong for the two file types whose ENTRY IS FIRMWARE CODE:
+
+    libopenbios/forth_load.c   PUSH((ucell)&init_forth_context)
+    libopenbios/fcode_load.c   PUSH((ucell)&init_fcode_context)
+
+Those trampolines are firmware functions that go on to drive the Forth
+interpreter, and x86 relocates OpenBIOS by REBASING THE GDT (arch/x86/segment.c),
+so every Forth address is segment-relative. Entered flat, the trampoline reads
+each address at its link-time value -- where the ORIGINAL, un-relocated copy of
+the image still sits, byte-exact, frozen at the instant of relocation. Nothing
+faults. The copy is there and is valid. It is merely STALE.
+
+MEASURED 2026-08-26, x86, `load /ide@1/cdrom@0:\go.fth` then `go`. virt_offset
+recovered from the running firmware as `400000 load-base -` = 1fd8fe50, so the
+stale window is read from the prompt as `<addr> 400000 load-base - -`:
+
+    forth-wordlist @     live 137808     stale 132b08
+    file-size @          live 16         stale 0
+
+That is the whole of both rows:
+
+  * the stale chain head (132b08) predates the `constant load-base` that
+    arch/x86/openbios.c defines at the end of arch_init (137808), so $find walks
+    straight past the shadow to nvram.fs's config word. The SAME search, over an
+    older chain. Not a different search order: #order, context[0] and current
+    are identical in both windows -- checked.
+  * `load-size` is `file-size @` and its xt is genuinely the same word. The
+    address it fetches is the same too. The MEMORY at that address is not.
+
+And it is why amd64 passed throughout: amd64 does not relocate, virt_offset is
+0, and flat IS reloc. The arch that could not show the bug is the one that
+looked healthy -- which is the fourth time in this lab that the passing arch was
+the one running less.
+
+THE FIX, in two parts.
+
+(1) arch/x86/context.c enters the fcode/forth trampolines in the firmware's own
+    relocated segments, as it already did for a type-1 client, and returns
+    before laying down the five client-entry arguments -- a C function with no
+    parameters wants none. The two type numbers are read from the Forth
+    constants (`fcode`, `forth`) rather than written here as 10 and 11: a number
+    copied into C is a cache of a fact that lives in
+    forth/debugging/client.fs:76-86.
+
+(2) libopenbios/{forth,fcode}_load.c stamp ls.file-type in *_init_program(),
+    not only in *_load(). The type is a property of the entry installed one line
+    above, but only the C loader path wrote it -- `load <path>` goes through
+    $load, which calls the DEVICE PACKAGE's own `load` method and never touches
+    the field, so on that path it kept the 0 that client.fs erases it to, and 0
+    means elf-boot. Before this, a Forth payload loaded with `load` reached
+    arch_init_program() claiming to be an elf-boot image and was handed
+    elf-boot's segments and elf-boot's 0xe1fb007 magic in eax. Same shape as the
+    two-records-of-one-fact defect patch 23 fixed one field over.
+
+WATCHED TO BITE. `./smoke-openbios.sh client-forth` is the new track: x86 and
+amd64 each `load` a Forth payload off a CD and `go` it, and must print the
+payload's own marker. Re-injecting (1) -- flat segments for the trampolines
+again -- fails it by name on x86 while amd64 still passes, which is exactly the
+asymmetry above. The obvious re-injection does not even compile
+(-Werror=unused-but-set-variable on t_fcode/t_forth), so the control uses an
+unsatisfiable condition instead.
+
+The track also proves x86's two windows still DIFFER before its pass counts --
+on an arch where they are the same memory, running the trampoline in the wrong
+one is undetectable -- and carries a same-probe tautology (a cell compared with
+itself must report -1) so that a `=` answering 0 for everything cannot satisfy
+it. The negative control is a second boot with the same program minus is_forth()'s
+`\ ` magic: it must be refused by name, not evaluated.
+
+diff --git a/arch/x86/context.c b/arch/x86/context.c
+--- a/arch/x86/context.c
++++ b/arch/x86/context.c
+@@ -110,6 +110,15 @@
+ {
+     struct context volatile *ctx = __context;
+     ucell type, entry, param;
++    ucell t_fcode, t_forth;
++
++    /* The two file types whose ENTRY IS FIRMWARE CODE, read from the Forth
++     * constants rather than written here as 10 and 11
++     * (forth/debugging/client.fs:76-86): a number copied into C is a cache of
++     * a fact that lives somewhere else. */
++    feval("fcode"); t_fcode = POP();
++    feval("forth"); t_forth = POP();
++
+     /* Fill in reasonable default for flat memory model */
+     ctx->gdt_base = virt_to_phys(gdt);
+     ctx->gdt_limit = GDT_LIMIT;
+@@ -147,7 +156,7 @@
+      * the client stack where its _start(residual, entry, cif, args, argslen)
+      * reads them. param[0..4] sit just above return_addr per ESP_LOC, so on
+      * entry the client sees them as its C arguments 1..5. */
+-    if (type == 1) {
++    if (type == 1 || type == t_fcode || type == t_forth) {
+         /* Enter the client with the firmware's RELOCATED segments, not the
+          * flat ones an elf-boot image gets. x86 relocates OpenBIOS by rebasing
+          * the GDT (arch/x86/segment.c), so firmware pointers are
+@@ -165,7 +174,35 @@
+          * window below _start (0x100010), which maps to physical memory just
+          * below the relocated firmware. That window tracks RAM size
+          * automatically, because both ends move with virt_offset.
+-         */
++         *
++         * THE fcode/forth TYPES ARE NOT CLIENT PROGRAMS AT ALL, and they are
++         * here for a stronger version of the same reason. Their `entry` is the
++         * address of a FIRMWARE FUNCTION -- init_fcode_context() /
++         * init_forth_context() in libopenbios/initprogram.c -- which then
++         * drives the Forth interpreter. Run flat, that trampoline reads every
++         * Forth address at its LINK-TIME value, which on this arch still holds
++         * the original, un-relocated copy of the firmware image: a byte-exact
++         * snapshot frozen at the instant of relocation. Nothing faults, because
++         * that copy is there and is valid; it is simply STALE.
++         *
++         * Measured on x86, 2026-08-26, `load` of a 0x16-byte Forth file then
++         * `go` (virt_offset = 0x1fd8fe50, so linear = forth address + that):
++         *
++         *   forth-wordlist @   live 0x137808   stale 0x132b08
++         *   file-size @        live 0x16       stale 0
++         *
++         * Those are the two symptoms TODO 13.3(A) recorded as a "lookup
++         * difference" and a "fetch difference" and could not fit into one
++         * story. They are one story: the SAME search over an older chain (the
++         * stale head predates the `constant load-base` arch_init defines, so
++         * $find walks past it to nvram.fs's config word), and the SAME address
++         * fetched in the other window. The trampoline was reading a firmware
++         * that had stopped existing before Forth ran a single word.
++         *
++         * amd64 is unaffected and always was: it does not relocate, so
++         * virt_offset is 0 and the two windows are the same memory. That is
++         * why the arch this bug hides on is the one that passes.
++         *         */
+         ctx->cs = RELOC_CS;
+         ctx->ds = RELOC_DS;
+         ctx->es = RELOC_DS;
+@@ -178,6 +215,11 @@
+         ctx->esp = (uint32_t)(uintptr_t)ESP_LOC(ctx);
+         ctx->return_addr = (uint32_t)(uintptr_t)__exit_context;
+ 
++        /* Client-entry arguments: for a real client program only. The
++         * trampolines are C functions that take none. */
++        if (type != 1)
++            return 0;
++
+         ctx->param[0] = 0;                                   /* residual data */
+         ctx->param[1] = entry;                               /* program entry */
+         ctx->param[2] = (ucell)(uintptr_t)of_client_interface; /* the CIF */
+diff --git a/libopenbios/forth_load.c b/libopenbios/forth_load.c
+--- a/libopenbios/forth_load.c
++++ b/libopenbios/forth_load.c
+@@ -82,6 +82,24 @@
+     PUSH((ucell)&init_forth_context);
+     feval("load-state >ls.entry !");
+ 
++    /* LOCAL DIVERGENCE (mklab). STAMP THE TYPE HERE, NOT ONLY IN forth_load().
++     *
++     * The file type is a property of the ENTRY installed on the line above --
++     * this is the Forth trampoline, so the type IS `forth`, whoever read the
++     * bytes. But only forth_load() wrote it, and forth_load() runs on the C
++     * loader path alone. `load <path>` goes through $load
++     * (forth/debugging/client.fs), which calls the DEVICE PACKAGE's own `load`
++     * method and never touches ls.file-type -- so on that path the field kept
++     * the value client.fs erased it to, which is 0, which means `elf-boot`.
++     *
++     * Measured on x86 before this: a Forth payload loaded with `load` reached
++     * arch_init_program() claiming to be an elf-boot image, and was handed
++     * elf-boot's segments and elf-boot's 0xe1fb007 magic in eax.
++     *
++     * Same shape as the two records of one fact in initprogram.c: a field
++     * three paths maintain and a fourth does not is worse than absent. */
++    feval("forth load-state >ls.file-type !");
++
+     arch_init_program();
+     
+     feval("-1 state-valid !");
+diff --git a/libopenbios/fcode_load.c b/libopenbios/fcode_load.c
+--- a/libopenbios/fcode_load.c
++++ b/libopenbios/fcode_load.c
+@@ -93,6 +93,12 @@
+     PUSH((ucell)&init_fcode_context);
+     feval("load-state >ls.entry !");
+ 
++    /* Stamp the type here for the same reason forth_init_program() does: the
++     * entry installed above IS the FCode trampoline, and the $load path never
++     * sets ls.file-type, so without this it reaches arch_init_program()
++     * looking like an elf-boot image. */
++    feval("fcode load-state >ls.file-type !");
++
+     arch_init_program();
+     
+     feval("-1 state-valid !");
