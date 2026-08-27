@@ -153,6 +153,12 @@ says, with **`here` unchanged**. Two controls isolate the two halves — one bum
 while the bytes stay right, the other corrupts the bytes while `here` stays put — because
 neither assertion is sufficient alone.
 
+**2026-08-27, patch 32 (TODO §16, the cursor):** same ten tracks, all PASS. `property-abi`
+now also composes three fields at a caller-chosen address with `int!+` and reads them back
+with the stock `decode-int`. Its stride control is the instructive one — a wrong stride
+leaves **field one correct** and only corrupts what follows, which is why the assertions
+cover fields two and three.
+
 ### The negative controls, run 2026-08-23
 
 Each fix was broken and watched to bite before being trusted:

@@ -1,0 +1,90 @@
+Subject: [PATCH 32/32] property.fs: the cursor — compose a structure at an address the caller chose
+Arch-tested: x86 amd64 ppc
+
+TODO 16's second deliverable. Patch 31 made a single field writable where
+the caller says; a structure is more than one field, and composing them
+at a chosen address is the operation the arena words cannot do. `encode+`
+concatenates in the arena -- honestly, since patch 27, even across a
+moved HERE -- but the arena is exactly what the toolkit is escaping.
+
+    int!+    ( n dest -- dest' )
+    string!+ ( str len dest -- dest' )
+    bytes!+  ( data-addr data-len dest -- dest' )
+
+`( dest -- dest' )` AND NOT A CURRENT-DESTINATION VARIABLE. The cursor is
+the value on the stack: two structures can be under construction at once,
+in different memory, with no interleaving hazard and nothing to save and
+restore. A variable would be the mode flag TODO 16 rejected, one layer
+up.
+
+They have NO caller in the device tree by construction -- the tree builds
+properties through encode-*, into the arena, as it always did.
+
+WHAT IT DEMONSTRATES, and it is the toolkit's minimum viable shape: three
+fields written at a caller-chosen address, then read back with the STOCK
+1275 decoder. The read half was always general (that is F2's other half:
+`decode-int` takes an arbitrary prop-addr/prop-len and reads through it);
+only the write half was arena-bound. Now both halves meet at an address
+the caller picked:
+
+    tgt  11111111 swap int!+  22222222 swap int!+  33333333 swap int!+
+    w-advanced=c   w-HERE-UNCHANGED
+    tgt c decode-int -> 11111111, 22222222, 33333333
+
+WATCHED TO BITE, and this time the controls are scoped by construction --
+the new words have no device-tree callers, so a fault in them cannot take
+the firmware down before the probe runs. That was the failure the first
+attempt at controlling patch 31's writers ran into.
+
+  stride wrong (`/int 1+`)   w-advanced=f, and FIELD ONE IS STILL CORRECT:
+
+      w-i1=11111111   w-i2=ff222222   w-i3=22ff3333
+
+    which is why the decode assertions cover fields two and three. A
+    cursor that advances wrongly writes the first field perfectly; the
+    `ff` bleeding through is the buffer's poison showing in the gaps.
+
+  cursor touches the arena    w-HERE-MOVED, with all three fields still
+                              decoding correctly -- isolating the arena
+                              property from the correctness property, the
+                              same pairing patch 31 needed.
+
+diff --git a/forth/device/property.fs b/forth/device/property.fs
+--- a/forth/device/property.fs
++++ b/forth/device/property.fs
+@@ -362,6 +362,35 @@
+ 
+ : bytes!  ( data-addr data-len dest -- )    swap move ;
+ 
++\ TODO 16, the cursor. A structure is more than one field, and composing
++\ fields at a caller-chosen address is the operation the arena words cannot do:
++\ `encode+` concatenates in the arena (and since patch 27 it does so honestly
++\ even across a moved HERE), but the arena is exactly what the toolkit is trying
++\ to escape.
++\
++\ `( dest -- dest' )` AND NOT A CURRENT-DESTINATION VARIABLE. The cursor is the
++\ value on the stack; two structures can be under construction at once, in
++\ different memory, with no interleaving hazard and nothing to save and restore.
++\ A variable would be the mode flag TODO 16 rejected, one layer up.
++\
++\ These have NO caller in the device tree by construction -- the tree builds
++\ properties through encode-*, into the arena, as it always did. That is also
++\ what makes them safe to break in a control: a fault here cannot take the
++\ firmware down before the probe runs, which is the failure the first attempt at
++\ controlling the writers ran into.
++
++: int!+    ( n dest -- dest' )
++  dup >r int! r> /int +
++  ;
++
++: string!+ ( str len dest -- dest' )
++  >r 2dup /string r@ swap >r string! r> r> +
++  ;
++
++: bytes!+  ( data-addr data-len dest -- dest' )
++  >r 2dup /bytes r@ swap >r bytes! r> r> +
++  ;
++
+ : encode-int    ( n -- prop-addr prop-len )
+   /int alloc-tree tuck int! /int
+   ;

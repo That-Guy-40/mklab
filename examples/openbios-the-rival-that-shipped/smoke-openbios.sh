@@ -963,6 +963,22 @@ here = if ." s-str-HERE-UNCHANGED" else ." s-str-HERE-MOVED" then cr
 ." s-str-nul=" tgt 2 + c@ . cr
 ." s-str-txt=" tgt 2 type cr
 clear
+\ TODO 16, the cursor: a whole structure at an address the caller chose,
+\ then read back with the stock 1275 decoder.
+tgt 20 ff fill
+here
+tgt
+11111111 swap int!+
+22222222 swap int!+
+33333333 swap int!+
+tgt - ." w-advanced=" dup . cr
+drop
+here = if ." w-HERE-UNCHANGED" else ." w-HERE-MOVED" then cr
+tgt c decode-int ." w-i1=" . cr
+decode-int ." w-i2=" . cr
+decode-int ." w-i3=" . cr
+2drop
+clear
 3 encode-int
 4 encode-int
 3 pick 3 pick + 2 pick = if ." c-fast-ADJACENT" else ." c-fast-NOT" then cr
@@ -1109,6 +1125,23 @@ FTH
         || fail "TODO 16 on $A: string! left no terminator — the buffer is poisoned with ff first precisely so an inherited zero cannot pass for a written one: $(grep -aoE 's-str-nul=.{0,12}' <<<"$SW" | head -1) — see $WORKDIR/prop-$A.log"
       grep -qF 's-str-txt=ab' <<<"$SW" \
         || fail "TODO 16 on $A: string! did not copy the bytes — see $WORKDIR/prop-$A.log"
+
+      # THE CURSOR. Three fields written at a caller-chosen address and read back
+      # with the stock 1275 decoder — the toolkit's minimum viable shape, since
+      # the read half was already general and only the write half was arena-bound.
+      #
+      # The decode assertions are what make this more than the single-field case:
+      # a cursor that advances by the wrong amount still writes the first field
+      # correctly, so field ONE proves nothing. Fields two and three are where a
+      # bad stride shows.
+      grep -qE 'w-advanced=[[:space:]]*c( |$)' <<<"$SW" \
+        || fail "REGRESSION: TODO 16 on $A: three int!+ calls advanced the cursor by $(grep -aoE 'w-advanced=[0-9a-f]+' <<<"$SW" | head -1 | cut -d= -f2) bytes, not c — the stride disagrees with /int, so every field after the first lands in the wrong place — see $WORKDIR/prop-$A.log"
+      grep -qF 'w-HERE-UNCHANGED' <<<"$SW" \
+        || fail "REGRESSION: TODO 16 on $A: the cursor moved HERE — composing at a chosen address must not touch the arena, or the whole point of the split is lost — see $WORKDIR/prop-$A.log"
+      for f in 1:11111111 2:22222222 3:33333333; do
+        grep -qE "w-i${f%%:*}=[[:space:]]*${f#*:}( |\$)" <<<"$SW" \
+          || fail "REGRESSION: TODO 16 on $A: field ${f%%:*} of the cursor-written structure decoded as $(grep -aoE "w-i${f%%:*}=[0-9a-f-]+" <<<"$SW" | head -1 | cut -d= -f2), not ${f#*:} — written at a caller-chosen address and read back with the stock decode-int, these have to agree or the two halves do not meet — see $WORKDIR/prop-$A.log"
+      done
     done
 
     # THE MUST-NOT-CATCH PAIR, and without it the line above is satisfied by a
@@ -1208,7 +1241,7 @@ FTH
         || fail "13.2(d) on $A: the remainder length after decoding all 2 bytes of a 2-byte property is not 0 — decode-bytes is not subtracting #bytes from prop-len1: $(grep -aoE 'd-len2=.{0,12}' <<<"$DL2" | head -1) — see $WORKDIR/prop-$A.log"
     done
 
-    pass "TODO 13.2 watched to bite: (a) the SAME four bytes decode to ffffffff on amd64 and -1 on x86 — encode-int/decode-int is not a round trip at a 64-bit cell — and the premise it is tolerated on is now DERIVED rather than assumed: every four-byte decode of the boot is counted, and none has bit 31 set, which is the only reason zero-extension has yet to give a real consumer a wrong answer; (b) FIXED — a value >= 2^32 is now REFUSED BY NAME on amd64 where it used to be silently truncated into four bytes, with ffffffff and -1 both still encoding cleanly in the same run so the gate is not simply refusing everything, and the input still UNREPRESENTABLE on x86, reported as an UNKNOWN not a pass; (c) FIXED — encode+ used to be `nip +`, adjacency-by-assumption: it returned the RIGHT length over the WRONG bytes the moment anything moved HERE between fragments, so the second decode-int read the gap (30302f63) rather than the fragment, and §13.2's own "lies about the length" was disproved by the control; it now concatenates, with BOTH branches exercised in the same run (adjacent 3,4 and non-adjacent 1,2 each coming back out of an 8-byte array) so a fix whose slow path never runs cannot pass; and encode-phys is NOT fixed-width — 8 bytes under / (the no-parent default of 2 cells) against 4 under /ide@1 (root's own #address-cells 1); and (d) decode-bytes, which used to return CLEANLY with six items where four are documented — two cells robbed off the return stack — now round-trips encode-bytes on both arches at depth exactly 4, from an empty stack back to an empty one"
+    pass "TODO 13.2 watched to bite: (a) the SAME four bytes decode to ffffffff on amd64 and -1 on x86 — encode-int/decode-int is not a round trip at a 64-bit cell — and the premise it is tolerated on is now DERIVED rather than assumed: every four-byte decode of the boot is counted, and none has bit 31 set, which is the only reason zero-extension has yet to give a real consumer a wrong answer; (b) FIXED — a value >= 2^32 is now REFUSED BY NAME on amd64 where it used to be silently truncated into four bytes, with ffffffff and -1 both still encoding cleanly in the same run so the gate is not simply refusing everything, and the input still UNREPRESENTABLE on x86, reported as an UNKNOWN not a pass; (c) FIXED — encode+ used to be `nip +`, adjacency-by-assumption: it returned the RIGHT length over the WRONG bytes the moment anything moved HERE between fragments, so the second decode-int read the gap (30302f63) rather than the fragment, and §13.2's own "lies about the length" was disproved by the control; it now concatenates, with BOTH branches exercised in the same run (adjacent 3,4 and non-adjacent 1,2 each coming back out of an 8-byte array) so a fix whose slow path never runs cannot pass; and encode-phys is NOT fixed-width — 8 bytes under / (the no-parent default of 2 cells) against 4 under /ide@1 (root's own #address-cells 1); and (d) decode-bytes, which used to return CLEANLY with six items where four are documented — two cells robbed off the return stack — now round-trips encode-bytes on both arches at depth exactly 4, from an empty stack back to an empty one; and TODO 16's storage split holds on both arches — int!/string! write where the caller says with HERE unchanged, and the cursor composes three fields at a chosen address that the stock 1275 decode-int reads back unchanged"
     ;;
   vga)
     # TODO 13.1's DRIVER_VGA half: PCI enumeration on amd64 (patch 17) and the

@@ -3249,10 +3249,38 @@ The second is scoped to a value the device tree never encodes, so the firmware s
 only the subject fails. `string!` losing its terminator fails by name too, against a buffer
 poisoned with `ff` first so an inherited zero cannot pass for a written one.
 
-### What is still not done
+### Second deliverable, the cursor — **DONE 2026-08-27**, [patch 32](examples/openbios-the-rival-that-shipped/patches/32-the-cursor.patch)
 
-- **The cursor.** Composition for the mapped case — `( dest -- dest' )` — is not written.
-  `encode+` no longer requires arena adjacency (patch 27), so nothing blocks it.
+`int!+ ( n dest -- dest' )`, `string!+`, `bytes!+`. **The cursor is the value on the stack,
+not a current-destination variable** — two structures can be under construction at once, in
+different memory, with nothing to save and restore. A variable would be the mode flag this
+section rejected, one layer up.
+
+What it demonstrates is the toolkit's **minimum viable shape**: three fields written at a
+caller-chosen address, then read back with the **stock 1275 decoder**. The read half was
+always general — that is F2's other half — and only the write half was arena-bound. Now
+both halves meet at an address the caller picked:
+
+```
+tgt  11111111 swap int!+  22222222 swap int!+  33333333 swap int!+
+w-advanced=c   w-HERE-UNCHANGED
+tgt c decode-int  ->  11111111, 22222222, 33333333
+```
+
+**The controls are scoped by construction** this time: the new words have no device-tree
+callers, so a fault in them cannot take the firmware down before the probe runs — which is
+exactly what went wrong controlling patch 31's writers.
+
+| injected | what fired |
+|---|---|
+| stride wrong (`/int 1+`) | `w-advanced=f`, and **field one is still correct**: `w-i1=11111111`, `w-i2=ff222222`, `w-i3=22ff3333` — the buffer's poison bleeding through the gaps |
+| the cursor touches the arena | `w-HERE-MOVED`, with all three fields still decoding correctly |
+
+The first of those is why the assertions cover fields **two and three**: a cursor that
+advances wrongly writes the first field perfectly, so field one proves nothing. The second
+isolates the arena property from the correctness property, the same pairing patch 31 needed.
+
+### What is still not done
 - **Nothing has been aimed at real storage yet.** A writer that leaves `here` alone *can* be
   pointed at flash or MMIO; none has been. Until one is, §8's blocked applications
   (boot-handoff structures, CBFS assembly, measured boot) stay blocked in fact even though
