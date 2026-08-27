@@ -3093,8 +3093,30 @@ The tier that must run on every PR, and the one that must not be empty.
 
 ### Tier B — needs the pinned clone + podman + QEMU (TCG, no KVM)
 
-Runnable in CI *if* we choose to pay for it; ~10 min, and only after the clone
-is pinned.
+**Landed 2026-08-27 as `workflow_dispatch` ONLY**
+([`.github/workflows/openbios-tier-b.yml`](.github/workflows/openbios-tier-b.yml)), because
+the decision it informs is a **cost** decision and nobody had the number. Wiring it to
+`pull_request` before measuring a cold run would be guessing with someone else's minutes.
+The "~10 min" below was an estimate, never a measurement.
+
+**The gate matters more than the minutes.** Every track guards on a built artifact and SKIPs
+without one, so a Tier B job that cannot build produces a full sweep of SKIPs and a green
+tick — the shape this section already measured. So the job **fails** if the five artifacts
+are absent, and a `77` *after* a successful build is reported as a warning rather than
+counted green.
+
+**What it cannot do, stated rather than discovered later:** `ubuntu-latest` has no KVM, so
+every boot is TCG and the timings are an **upper bound**.
+
+The remaining decision, once the number exists: `pull_request` on every PR, nightly, or
+**path-filtered per-PR** (only when the PR touches this lab or `tools/drive-*`) — which the
+original text did not consider and which buys per-PR signal at roughly nightly cost. Tonight
+argues for per-PR signal: three tracks went **red on a fix**, which is exactly what you want
+from the person who caused it, and eight firmware patches in one night would make a nightly
+failure a bisect.
+
+Original estimate below, kept because being wrong about it in a specific way is the useful
+part.
 
 - **B1** build `x86`, then `smoke-openbios.sh multiboot` under `accel=tcg` — the
   firmware reaches its own prompt and answers.

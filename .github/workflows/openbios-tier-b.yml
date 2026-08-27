@@ -1,0 +1,144 @@
+# openbios Tier B — build the firmware and boot it. MANUAL ONLY, for now.
+#
+# TODO §14 Tier B. This exists first as `workflow_dispatch` and nothing else,
+# because the decision it informs is a COST decision and nobody has the number:
+# how long a cold runner takes to build the container image (which compiles
+# `toke` from source), then three firmwares, then boot them under TCG. Wiring it
+# to `pull_request` before measuring that would be guessing with someone else's
+# minutes.
+#
+# THE GATE MATTERS MORE THAN THE MINUTES. Every track in smoke-openbios.sh guards
+# on a built artifact and SKIPs without one, so a Tier B job that cannot build
+# produces a full sweep of SKIPs and a green tick — the exact shape §14 measured
+# and this repo keeps re-finding. So the "did the build actually happen" step
+# below FAILS; it does not skip, and it does not let the tracks run to produce a
+# reassuring row of 77s.
+#
+# What it cannot do, stated rather than discovered later: ubuntu-latest has no
+# KVM, so every boot is TCG. Timings here are therefore an UPPER bound for any
+# runner with nested virt, and the right bound for the runners this repo uses.
+name: openbios Tier B (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      tracks:
+        description: smoke-openbios.sh tracks to run, space separated
+        required: false
+        default: multiboot dict-identity amd64 property-abi diagnostics vga ppc
+
+permissions:
+  contents: read
+
+jobs:
+  tier-b:
+    name: build + boot (TCG)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: What this runner can actually do
+        run: |
+          set -u
+          echo "## Tier B environment" >> "$GITHUB_STEP_SUMMARY"
+          for c in podman qemu-system-i386 qemu-system-x86_64 qemu-system-ppc genisoimage python3; do
+            if command -v "$c" >/dev/null 2>&1; then
+              printf -- '- `%s` present\n' "$c" >> "$GITHUB_STEP_SUMMARY"
+            else
+              printf -- '- `%s` **MISSING**\n' "$c" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+          if [[ -w /dev/kvm ]]; then
+            echo "- /dev/kvm writable — boots use KVM" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- no /dev/kvm — **every boot is TCG**, so these timings are an upper bound" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Install what the tracks need
+        run: |
+          set -u
+          # Bounded like every other install step in ci.yml: a hung apt must not
+          # eat the runner's hour, and a failed one must be visible rather than
+          # turning into a sweep of SKIPs two steps later.
+          timeout 180 sudo apt-get update || echo "::warning::apt-get update failed"
+          timeout 300 sudo apt-get install -y qemu-system-x86 qemu-system-ppc genisoimage \
+            || echo "::warning::install failed — the artifact gate below will say what that cost"
+
+      - name: Build x86, amd64 and ppc
+        id: build
+        run: |
+          set -u
+          cd examples/openbios-the-rival-that-shipped
+          : > /tmp/tierb-times
+          for a in x86 amd64 ppc; do
+            s=$(date +%s)
+            timeout 3000 ./build-openbios.sh "$a" > "/tmp/build-$a.log" 2>&1; rc=$?
+            e=$(date +%s)
+            printf 'build:%s %ss rc=%s\n' "$a" "$((e - s))" "$rc" >> /tmp/tierb-times
+            [[ $rc -eq 0 ]] || { echo "--- tail of build-$a.log ---"; tail -30 "/tmp/build-$a.log"; }
+          done
+          cat /tmp/tierb-times
+
+      - name: The artifact gate — FAIL, never skip
+        run: |
+          set -u
+          W="${OPENBIOS_WORKDIR:-$HOME/openbios-lab}/openbios"
+          missing=()
+          for f in obj-x86/openbios.multiboot obj-x86/openbios-x86.dict \
+                   obj-amd64/openbios.multiboot obj-amd64/openbios-amd64.dict \
+                   obj-ppc/openbios-qemu.elf; do
+            [[ -f "$W/$f" ]] || missing+=("$f")
+          done
+          if (( ${#missing[@]} )); then
+            echo "::error::Tier B produced no firmware: ${missing[*]}"
+            echo "Every smoke track guards on a built artifact and SKIPs without one, so"
+            echo "letting the tracks run from here would print a sweep of 77s and a green"
+            echo "tick. That is the failure mode this gate exists to prevent."
+            exit 1
+          fi
+          echo "all five artifacts present"
+
+      - name: Boot the tracks
+        env:
+          # Through the ENVIRONMENT, never interpolated into the script body: a
+          # `${{ }}` expansion is pasted in as source before bash sees it, so a
+          # dispatch input containing shell would run as this job. Low stakes for a
+          # collaborator-only manual trigger, and still not a habit worth having.
+          TRACKS: ${{ inputs.tracks }}
+        run: |
+          set -u
+          cd examples/openbios-the-rival-that-shipped
+          rc=0
+          for t in $TRACKS; do
+            # ...and validated, so a typo names itself instead of reaching smoke-openbios.sh
+            # as an argument it will reject far less legibly.
+            [[ "$t" =~ ^[a-z0-9][a-z0-9-]*$ ]] \
+              || { echo "::error::refusing track name '$t' — expected [a-z0-9-]"; exit 1; }
+            s=$(date +%s)
+            timeout 1200 ./smoke-openbios.sh "$t" > "/tmp/track-$t.out" 2>&1; r=$?
+            e=$(date +%s)
+            printf 'track:%s %ss rc=%s\n' "$t" "$((e - s))" "$r" >> /tmp/tierb-times
+            tail -1 "/tmp/track-$t.out"
+            # A SKIP here is not a pass. The artifacts exist by now, so a 77 means
+            # the track wanted something else — say so rather than counting it green.
+            case $r in
+              0) ;;
+              77) echo "::warning::$t SKIPPED after a successful build — it needs something this runner lacks" ;;
+              *) rc=1 ;;
+            esac
+          done
+          exit $rc
+
+      - name: Timings
+        if: always()
+        run: |
+          set -u
+          {
+            echo "## Tier B timings"
+            echo
+            echo '```'
+            cat /tmp/tierb-times 2>/dev/null || echo "(none recorded)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/tierb-times 2>/dev/null || true
