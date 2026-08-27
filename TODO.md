@@ -3280,11 +3280,43 @@ The first of those is why the assertions cover fields **two and three**: a curso
 advances wrongly writes the first field perfectly, so field one proves nothing. The second
 isolates the arena property from the correctness property, the same pairing patch 31 needed.
 
+### Third deliverable, real storage — **DONE 2026-08-27**, `smoke-openbios.sh pmem-writer`
+
+The first two were proven against a dictionary buffer, which is still the firmware's own
+memory: `here` unchanged was the *only* thing separating them from the arena words they
+replaced. This aims them at an **NVDIMM at `0x100000000`** — above 4 GiB, reachable only in
+long mode, and backed by a file on the host.
+
+```
+before: offset 4194304 reads [00 00 00 00 00 00 00 00 00 00 00 00]
+after:  offset 4194304 reads [c0 ff ee 01 c0 ff ee 02 c0 ff ee 03]
+```
+
+Three ints written by `int!+` at `0x100400000` (4 MiB into the region, clear of `/nvram`'s
+own partition at the base), read back through the stock `decode-int` with `here` unchanged —
+and then found **byte-for-byte in the host's file by `od`, after QEMU exited**. If the bytes
+are in that file, they left the firmware. **F2 is closed in fact, not only in principle.**
+
+**The host file is the assertion and the prompt is not**, and the control proves why. Aiming
+the identical probe at ordinary RAM (`0x4000000` instead of `0x100400000`):
+
+| | |
+|---|---|
+| `padv`, `pi1`–`pi3`, `here` | **all pass** — `int!+` and `decode-int` agree with each other |
+| the host file | **unchanged**, and the track fails on it |
+
+That agreement between two firmware words is exactly what this check exists to distrust:
+only a reader that is *not* the firmware can say where the bytes went. Same reason the
+`amd64-pmem` track greps the image rather than trusting `printenv`.
+
+*(One self-inflicted delay worth recording: the first driver expected `"0 > "` between the
+writes. The prompt prints the **stack depth**, and the cursor is deliberately on the stack —
+so it waited forever. Third time tonight the depth-in-the-prompt has caught me.)*
+
 ### What is still not done
-- **Nothing has been aimed at real storage yet.** A writer that leaves `here` alone *can* be
-  pointed at flash or MMIO; none has been. Until one is, §8's blocked applications
-  (boot-handoff structures, CBFS assembly, measured boot) stay blocked in fact even though
-  the obstacle F2 named is gone.
+- **Flash and MMIO specifically.** An NVDIMM is memory-mapped storage the firmware does not
+  own, which is the property that mattered; a CFI flash part and a device BAR are not the
+  same seam and have not been tried.
 - **Review §2's fourth assertion** — `/chosen`'s `stdin` surviving a round trip at whatever
   address instances land on in long mode — and the review's own unmeasured question of
   whether an amd64 instance can land above 4 GiB at all.

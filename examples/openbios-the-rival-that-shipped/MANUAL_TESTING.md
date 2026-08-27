@@ -159,6 +159,13 @@ with the stock `decode-int`. Its stride control is the instructive one — a wro
 leaves **field one correct** and only corrupts what follows, which is why the assertions
 cover fields two and three.
 
+**2026-08-27, `pmem-writer` (TODO §16, third deliverable):** a new track — three 1275-encoded
+ints written by `int!+` to an **NVDIMM at `0x100000000`**, read back with the stock
+`decode-int`, and then found byte-for-byte in the host's backing file by `od` **after QEMU
+exited**. Its control aims the identical probe at ordinary RAM: every firmware-side
+assertion passes and only the host-file one fails, which is the point — two firmware words
+agreeing with each other cannot say where the bytes went.
+
 ### The negative controls, run 2026-08-23
 
 Each fix was broken and watched to bite before being trusted:

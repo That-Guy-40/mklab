@@ -191,6 +191,21 @@ Everything runs as your user in QEMU (KVM or TCG) and rootless podman; no
 sudo, no host services, no listening ports. The revival patch changes a
 firmware run for study inside a VM — nothing on the host boots it.
 
+## Where the write half got out of the arena
+
+`REVIEW-preboot-forth-binary-structures.md`'s **F2** is that `encode-*` chooses its own
+destination, so it can never be aimed at storage the firmware does not own. Patches 31 and 32
+split size from write and added a cursor; `smoke-openbios.sh pmem-writer` shows the result
+reaching an **NVDIMM above 4 GiB** and surviving into the host's file:
+
+```
+before: offset 4194304 reads [00 00 00 00 00 00 00 00 00 00 00 00]
+after:  offset 4194304 reads [c0 ff ee 01 c0 ff ee 02 c0 ff ee 03]
+```
+
+read by `od` on the host after QEMU exited. Its control aims the same probe at ordinary RAM —
+every firmware-side assertion still passes, and only the host-file check fails.
+
 ## The upstream clone is pinned
 
 `build-openbios.sh` checks out `openbios` at **`e5ac46d`** and `fcode-utils` at

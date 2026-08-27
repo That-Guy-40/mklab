@@ -33,6 +33,8 @@ TRACK (default multiboot):
                               and libc/vsprintf.c's %s precision clips
   client-forth                `go` runs a Forth payload loaded off media --
                               the trampoline's segments (TODO 13.3(A))
+  pmem-writer                 a 1275 structure written to an NVDIMM above
+                              4 GiB and found in the host file (TODO 16)
 
 Exit: 0 PASS / 1 FAIL / 77 SKIP. Each track ends on exactly one verdict line.
 Env: OPENBIOS_WORKDIR, KERNEL, INITRD, COREBOOT_DIR
@@ -1636,5 +1638,97 @@ FTH
 
     pass "the Forth trampoline runs in the firmware's own segments on both arches: x86's \`go\` evaluates a Forth payload loaded off media (it printed init-program's 'nothing to evaluate' before, reading a stale pre-relocation copy of the dictionary that made \$find walk past the load-base shadow and load-size fetch 0), amd64 — which does not relocate, so the bug could not show — still passes, x86's live and stale dictionary heads are proven to DIFFER so its pass is about the right window, and in a separate boot both arches refuse a payload without is_forth()'s magic by name instead of evaluating it"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|vga|diagnostics|client-forth]" >&2; exit 1 ;;
+  pmem-writer)
+    # TODO 16's THIRD deliverable, and the one that makes the other two mean
+    # something: a 1275-encoded structure written to storage THE FIRMWARE DOES
+    # NOT OWN, and then found in the host's file after QEMU is gone.
+    #
+    # Patch 31 gave the writers a destination; patch 32 gave them a cursor. Both
+    # were proven against a dictionary buffer, which is still the firmware's own
+    # memory -- so `here` unchanged was the only thing separating them from the
+    # arena words they replaced. This aims them at an NVDIMM mapped at
+    # 0x100000000: above 4 GiB, reachable only in long mode, and backed by a file
+    # on the host. If the bytes are in that file, they left the firmware.
+    #
+    # WHY THE HOST FILE IS THE ASSERTION AND THE PROMPT IS NOT. `decode-int`
+    # reading back what `int!+` wrote proves the two words agree with each other;
+    # it would pass just as happily if both were operating on RAM the firmware
+    # allocated. Only a reader that is not the firmware can say where the bytes
+    # went. This is the same reason the amd64-pmem track greps the image rather
+    # than trusting `printenv`.
+    #
+    # The offset is 4 MiB into the region, well clear of /nvram's own partition
+    # at the base: the point is to write beside the firmware's storage, not on
+    # top of it.
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v od >/dev/null || skip "od not installed — the host-side read is the assertion"
+    WMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"
+    WDI="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    [[ -f "$WMB" && -f "$WDI" ]] || skip "no amd64 image — run ./build-openbios.sh amd64 first"
+
+    WNV="$WORKDIR/pmem-writer.img"
+    rm -f "$WNV"; truncate -s 64M "$WNV"
+    WOFF=$((0x400000))
+    WANT="c0 ff ee 01 c0 ff ee 02 c0 ff ee 03"
+
+    # THE BEFORE READING IS A CONTROL, not bookkeeping: a fresh sparse file reads
+    # as zeros, so finding the pattern afterwards cannot be something that was
+    # already there.
+    HAD="$(od -An -tx1 -j "$WOFF" -N 12 "$WNV" | tr -s ' ' | sed 's/^ //;s/ $//')"
+    [[ "$HAD" != "$WANT" ]] \
+      || fail "the pattern was already at offset $WOFF in a freshly truncated file, so finding it after the write would prove nothing"
+    note "before: offset $WOFF reads [$HAD]"
+
+    WSOCK="$WORKDIR/smoke-pw.sock"; WLOG="$WORKDIR/pmem-writer.log"
+    rm -f "$WSOCK" "$WLOG"
+    qemu-system-x86_64 -M "pc,accel=$ACCEL,nvdimm=on" -m 512,slots=2,maxmem=2G \
+      -kernel "$WMB" -initrd "$WDI" \
+      -object "memory-backend-file,id=nv,share=on,mem-path=$WNV,size=64M" \
+      -device nvdimm,id=nv1,memdev=nv \
+      -display none -serial "unix:$WSOCK,server=on" -no-reboot >/dev/null 2>&1 &
+    WQ=$!
+    python3 "$REPO/tools/drive-serial-repl.py" "$WSOCK" "$WLOG" --timeout 120 \
+      --expect "0 > " \
+      `# the prompt PRINTS THE STACK DEPTH, and the cursor is deliberately on it` \
+      `# between the writes: expecting "0 > " here waits forever, which it did.` \
+      --send '." phere0=" here . cr\r' --expect "> " \
+      --send '100400000 c0ffee01 swap int!+ c0ffee02 swap int!+\r' --expect "> " \
+      --send 'c0ffee03 swap int!+ 100400000 - ." padv=" . cr\r' --expect "> " \
+      --send '." phere1=" here . cr\r' --expect "> " \
+      --send '100400000 c decode-int ." pi1=" . cr\r' --expect "> " \
+      --send 'decode-int ." pi2=" . cr\r' --expect "> " \
+      --send 'decode-int ." pi3=" . cr\r' --expect "> " \
+      --send 'clear ." PWDONE" cr\r' --expect "PWDONE"
+    WRC=$?
+    kill "$WQ" 2>/dev/null   # by PID, never by pattern
+    sleep 1
+    [[ $WRC -eq 0 ]] || fail "the amd64 firmware did not finish the pmem-writer probe (rc=$WRC) — see $WLOG"
+    WL="$(tr -d "\r" < "$WLOG")"
+
+    # (1) the firmware's own view: the cursor advanced by three ints, and reading
+    # back through the stock 1275 decoder returns what was written.
+    grep -qE 'padv=[[:space:]]*c( |$)' <<<"$WL" \
+      || fail "the cursor advanced by $(grep -aoE 'padv=[0-9a-f]+' <<<"$WL" | head -1 | cut -d= -f2) bytes across three int!+ calls, not c — see $WLOG"
+    for f in 1:c0ffee01 2:c0ffee02 3:c0ffee03; do
+      grep -qE "pi${f%%:*}=[[:space:]]*${f#*:}( |$)" <<<"$WL" \
+        || fail "field ${f%%:*} read back from pmem as $(grep -aoE "pi${f%%:*}=[0-9a-f-]+" <<<"$WL" | head -1 | cut -d= -f2), not ${f#*:} — see $WLOG"
+    done
+
+    # (2) HERE unchanged, across writes to memory 4 GiB up. The whole storage
+    # split is this line: a writer that bumped HERE would have put these bytes in
+    # the dictionary and copied nothing to the NVDIMM.
+    PH0="$(grep -aoE 'phere0=[0-9a-f]+' <<<"$WL" | head -1 | cut -d= -f2)"
+    PH1="$(grep -aoE 'phere1=[0-9a-f]+' <<<"$WL" | head -1 | cut -d= -f2)"
+    [[ -n "$PH0" && "$PH0" == "$PH1" ]] \
+      || fail "HERE moved from ${PH0:-?} to ${PH1:-?} across the pmem writes — the writer allocated instead of writing where it was told, which is exactly what makes it unusable for storage the firmware does not own — see $WLOG"
+
+    # (3) THE ASSERTION. QEMU is gone; this is the host reading its own file.
+    GOT="$(od -An -tx1 -j "$WOFF" -N 12 "$WNV" | tr -s ' ' | sed 's/^ //;s/ $//')"
+    [[ "$GOT" == "$WANT" ]] \
+      || fail "the host image holds [$GOT] at offset $WOFF, not [$WANT] — the firmware read back its own three fields, so int!+ and decode-int agree with each other, but the bytes did not reach storage outside the firmware. That agreement is what this check exists to distrust — see $WLOG"
+    note "after:  offset $WOFF reads [$GOT] — big-endian, written by int!+, read by od"
+
+    pass "TODO 16 end to end: three 1275-encoded ints written by int!+ at 0x100400000 — an NVDIMM above 4 GiB, reachable only in long mode — read back through the stock decode-int with HERE unchanged, and found byte-for-byte at offset $WOFF of the host's backing file after QEMU exited, where a fresh file held [$HAD]. The write half is no longer arena-bound (F2 in REVIEW-preboot-forth-binary-structures.md)"
+    ;;
+  *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|vga|diagnostics|client-forth|pmem-writer]" >&2; exit 1 ;;
 esac
