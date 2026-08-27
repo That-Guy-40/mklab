@@ -1,0 +1,166 @@
+Subject: [PATCH 26/26] property.fs: encode-int REFUSED what four bytes cannot hold, and (a)'s premise is now derived
+Arch-tested: x86 amd64 ppc
+
+Two halves of TODO 13.2, and they end differently on purpose.
+
+--- (b) FIXED -----------------------------------------------------------
+
+A 1275 property-encoded integer is FOUR BYTES (5.3.5.1). On a 32-bit cell
+that is the whole cell and nothing can be lost. On a 64-bit cell it is
+half of one, and `l!-be` wrote the low four bytes and dropped the rest
+with no error and no flag. The tree encodes POINTERS through this path
+(forth/admin/iocontrol.fs:42,76; forth/device/display.fs:362), so an
+ihandle above 4 GiB went into /chosen's `stdin` as its bottom 32 bits and
+read back as a different object.
+
+That is the LIED rung of the ladder in CLAUDE.md, and it outranks HALTED
+for exactly this reason: an honest failure is debuggable, a false success
+is not. `l!-be` now refuses BEFORE the write -- the only place a refusal
+is a gate rather than a post-mortem:
+
+    encode-int: value does not fit in the 4 bytes 1275 encodes an
+    integer into  Aborted.
+
+WHAT STILL FITS is both halves of the 32-bit range, because both are
+reachable and both survive four bytes: top 32 bits all ZERO (an unsigned
+quantity -- an address, a phandle, ffffffff) and top 32 bits all ONES
+with bit 31 set (a sign-extended negative -- -1 as a full cell). On a
+32-bit cell the test short-circuits before any shift, so `20 rshift` is
+never executed with a shift count equal to the cell width.
+
+Measured, amd64, one probe run:
+
+    b-ctl-u32-OK                      ffffffff encodes
+    b-ctl-neg-OK                      -1 encodes
+    b-ENCODING-NOW
+    encode-int: value does not fit... 100000000 does not
+
+x86 still reports the input as UNREPRESENTABLE, which is an UNKNOWN and
+is printed as one. Nothing in the tree trips the new gate: multiboot,
+amd64, amd64-pmem (whose store is at 0x100000000), vga, ppc, diagnostics,
+client-forth and dict-identity all pass.
+
+--- (a) NOT FIXED, and this is the measurement that decides it ----------
+
+`l@-be` zero-extends, so the same four bytes decode to -1 on x86 and
+ffffffff on amd64, and `-1 encode-int decode-int` is not a round trip at
+64 bits.
+
+Sign-extending it is the one-line fix and it is NOT SAFE HERE. It would
+turn every decoded value with bit 31 set into a negative cell -- and
+`assigned-addresses` carries PCI physical addresses, QEMU's 32-bit PCI
+window sits just under 4 GiB, and drivers/vga.fs:148 hands exactly such
+an entry to pci-bar>pci-addr through drivers/pci.fs. A framebuffer at
+fd000000 would become fffffffffd000000 and be used as an address. The
+real fix is signed decode PLUS an `ffffffff and` in every consumer that
+wants an unsigned 32-bit address, which reaches drivers/sbus.fs and the
+sparc trees this lab cannot boot.
+
+So (a) is tolerated on a PREMISE -- "nothing here decodes a value with
+bit 31 set" -- and a claim about a corpus is a cache. Two counters in
+l@-be derive it on every boot instead, and property-abi reads them
+BEFORE the probe decodes anything of its own:
+
+    a-decodes-boot=2b   a-signbit-boot=0     both arches
+
+with the probe's own deliberate ffffffff as the counter's must-catch
+control in the same run (a-signbit-end=1). Without that second reading a
+counter wired to nothing would report the same reassuring 0 as a firmware
+that never saw one -- which is not hypothetical: the first draft read the
+counters at the END, caught the probe's own ffffffff, and that is how the
+scoping error was found.
+
+The day a-signbit-boot goes non-zero, (a) has its first real consumer and
+the decision is forced. Until then it is measured, not assumed.
+
+diff --git a/forth/device/property.fs b/forth/device/property.fs
+--- a/forth/device/property.fs
++++ b/forth/device/property.fs
+@@ -13,7 +13,43 @@
+   10 here ! here c@ 10 <>
+   ;
+ 
++\ LOCAL DIVERGENCE (mklab). TODO 13.2(b).
++\
++\ A 1275 property-encoded integer is FOUR BYTES, by definition (5.3.5.1). On a
++\ 32-bit cell that is the whole cell and nothing can be lost. On a 64-bit cell
++\ it is HALF the cell, and `l!-be` below writes the low four bytes and drops the
++\ rest -- silently, with no error and no truncation flag. The tree encodes
++\ pointers through this path (forth/admin/iocontrol.fs:42,76;
++\ forth/device/display.fs:362), so an ihandle above 4 GiB was written into
++\ /chosen's `stdin` as its bottom 32 bits and read back as a different object.
++\
++\ That is the LIED rung, and it is the one this lab treats as critical: the
++\ record and reality disagree, and nothing errors. Refusing is the HALTED rung
++\ -- not serving, but honestly, with a named reason -- and honest beats false.
++\ So: refuse BEFORE the write, which is the only place a refusal is still a gate
++\ rather than a post-mortem.
++\
++\ WHAT FITS. Both halves of the 32-bit range, because both are reachable and
++\ both round-trip: a value whose top 32 bits are all ZERO (an unsigned 32-bit
++\ quantity -- an address, a phandle, ffffffff) and a value whose top 32 bits are
++\ all ONES with bit 31 set (a sign-extended negative -- -1 as a full cell). What
++\ is refused is everything else, which is precisely the set that cannot survive
++\ four bytes.
++\
++\ On a 32-bit cell the test short-circuits to "fits" before any shift, so the
++\ arch this cannot go wrong on pays nothing -- and `20 rshift` is never executed
++\ with a shift count equal to the cell width, which is where a check like this
++\ would otherwise become undefined.
++: l-fits? ( val -- flag )
++  /n /l = if drop true exit then      \ 32-bit cell: four bytes IS the cell
++  dup 20 rshift                       ( val hi )
++  dup 0= if 2drop true exit then      \ unsigned 32-bit
++  -1 20 rshift <> if drop false exit then
++  80000000 and 0<>                    \ sign-extended negative
++  ;
++
+ : l!-be ( val addr )
++  over l-fits? 0= abort" encode-int: value does not fit in the 4 bytes 1275 encodes an integer into"
+   3 bounds swap do
+     dup ff and i c! 
+     8 rshift
+@@ -21,10 +57,43 @@
+   drop
+   ;
+ 
++\ LOCAL DIVERGENCE (mklab). TODO 13.2(a), and it is an INSTRUMENT, not a fix.
++\
++\ `l@-be` accumulates four bytes into a CELL, zero-extending. On a 32-bit cell
++\ four bytes IS the cell and nothing is decided; on a 64-bit cell it is a choice,
++\ and it is the reason the same four bytes decode to -1 on x86 and ffffffff on
++\ amd64. `-1 encode-int decode-int` is therefore not a round trip at 64 bits,
++\ which IEEE 1275 5.3.5.2 says it should be.
++\
++\ THE OBVIOUS FIX IS NOT SAFE HERE, and that is the finding. Sign-extending the
++\ result makes `-1` round-trip -- and turns every decoded value with bit 31 set
++\ into a negative cell. Those are not rare in principle: `assigned-addresses`
++\ carries PCI physical addresses, QEMU's 32-bit PCI window sits just under 4 GiB,
++\ and drivers/vga.fs:148 hands exactly such an entry to pci-bar>pci-addr through
++\ drivers/pci.fs. A framebuffer at fd000000 would sign-extend to
++\ fffffffffd000000 and be used as an address. The real fix is not one line here;
++\ it is signed decode PLUS an `ffffffff and` in every consumer that wants an
++\ unsigned 32-bit address -- which reaches drivers/sbus.fs and the sparc trees
++\ this lab cannot boot. Patching that blind is how a 64-bit port acquires a
++\ defect nobody can see.
++\
++\ SO MEASURE THE PREMISE INSTEAD. The reason (a) is tolerable today is a claim
++\ about the corpus -- "nothing decodes a value with bit 31 set" -- and a claim
++\ about a corpus is a cache. These two counters derive it on every boot, and the
++\ property-abi track reads them: zero sign-bit decodes means (a) is still
++\ theoretical, and the first non-zero one names the value that ended that. The
++\ count itself is the control: a zero that comes from an instrument nobody ran
++\ reads exactly like a zero that means what it says.
++variable l@be-count    0 l@be-count !
++variable l@be-signbit  0 l@be-signbit !
++variable l@be-last     0 l@be-last !
++
+ : l@-be ( addr )
+   0 swap 4 bounds do
+     i c@ swap 8 << or
+   loop
++  1 l@be-count +!
++  dup 80000000 and if 1 l@be-signbit +! dup l@be-last ! then
+   ;
+ 
+ \ allocate n bytes for device tree information

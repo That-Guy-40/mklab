@@ -122,6 +122,12 @@ new decode-bytes section, plus `ppc diagnostics client-forth multiboot amd64` �
 `diagnostics` tracks, **not** by the property probe, which loads Forth off a CD and has no
 ppc arm. That is a named gap, not a covered one.
 
+**2026-08-26, patch 26 (TODO §13.2(b), and §13.2(a) decided):** `multiboot amd64 amd64-pmem
+vga diagnostics ppc client-forth dict-identity property-abi` — all PASS. `amd64-pmem` is the
+one that matters for (b): its store is at `0x100000000` and the new refusal does not trip on
+it. (a) is **not fixed** — sign-extension would corrupt PCI addresses with bit 31 set — and
+its premise is now a counter read on every boot instead of a claim.
+
 ### The negative controls, run 2026-08-23
 
 Each fix was broken and watched to bite before being trusted:

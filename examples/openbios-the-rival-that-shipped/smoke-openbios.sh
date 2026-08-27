@@ -867,9 +867,25 @@ case "$FLAVOR" in
     #   (a) l@-be accumulates 4 bytes into a CELL, zero-extending. So the same
     #       four bytes decode to -1 on a 32-bit cell and ffffffff on a 64-bit one.
     #       forth/admin/devices.fs:434 compares a decoded int against a phandle.
-    #   (b) l!-be masks to 4 bytes with no overflow check -- a value >= 2^32 is
-    #       silently truncated. UNREPRESENTABLE on x86, which is an UNKNOWN and is
-    #       reported as one rather than as a pass.
+    #   NOTE ON `[']` BELOW, because the first draft got this wrong and shipped
+    #   the wrong reason. `' encode-int catch` inside the probe's if/else failed
+    #   with a nameless ": undefined word.", and that was written up as "a tick
+    #   in evaluated text parses an empty name". It is not. Measured 2026-08-27:
+    #   `'` works fine at the top level of evaluated text, and fails only INSIDE
+    #   an interpreted if...then -- because bootstrap.fs:201's `if` calls
+    #   setup-tmp-comp, which switches to COMPILE state and builds the body as a
+    #   temporary definition that `then` executes afterwards. A non-immediate
+    #   word like `'` is therefore compiled and runs when >in is already past the
+    #   whole construct, so its parse-word returns nothing. `[']` is immediate,
+    #   parses at compile time, and works. Standard Forth, not a firmware defect:
+    #   an interpreted `if` here IS a definition.
+    #
+    #   (b) FIXED (patch 26). l!-be used to mask to 4 bytes with no overflow
+    #       check, so a value >= 2^32 was silently truncated -- and the tree
+    #       encodes ihandles through this path, so /chosen's stdin could name a
+    #       different object with nothing reporting it. It now REFUSES by name:
+    #       LIED down to HALTED. Still UNREPRESENTABLE on x86, which is an
+    #       UNKNOWN and is reported as one rather than as a pass.
     #   (c) encode+ is `nip +`: adjacency-by-alloc-tree, not concatenation. Force
     #       an `allot` between two fragments and the length it returns is a lie.
     #       Bites on BOTH arches -- 13.2 called this one "correct today".
@@ -902,6 +918,11 @@ case "$FLAVOR" in
 \ TODO 13.2 probe. Base is HEX.
 ." P132-START" cr
 ." cell-bits=" 1 cells 8 * . cr
+\ FIRST, before this probe decodes anything of its own: the counters as the
+\ BOOT left them. Read at the end instead and the measurement includes the
+\ measurer -- section (a) below decodes ffffffff on purpose.
+." a-decodes-boot=" l@be-count @ . cr
+." a-signbit-boot=" l@be-signbit @ . ." a-last-boot=" l@be-last @ . cr
 -1 encode-int decode-int
 ." a-decoded=" dup . cr
 -1 = if ." a-ROUNDTRIP-OK" else ." a-ROUNDTRIP-BROKEN" then cr
@@ -909,11 +930,17 @@ case "$FLAVOR" in
 100000000 dup 0= if
   drop ." b-UNREPRESENTABLE-ON-THIS-CELL" cr
 else
-  encode-int decode-int
-  ." b-decoded=" dup . cr
-  100000000 = if ." b-WIDE-OK" else ." b-WIDE-TRUNCATED" then cr
-  2drop
+  ['] encode-int catch ?dup if
+    ." b-REFUSED=" . cr
+  else
+    decode-int
+    ." b-decoded=" dup . cr
+    100000000 = if ." b-WIDE-OK" else ." b-WIDE-TRUNCATED" then cr
+  then
 then
+clear
+ffffffff encode-int 2drop ." b-ctl-u32-OK" cr
+-1 encode-int 2drop ." b-ctl-neg-OK" cr
 1 encode-int 2dup +
 10 allot
 2 encode-int
@@ -934,6 +961,7 @@ clear
 ." d-len2=" . cr
 drop
 ." d-depth-post=" depth . cr
+." a-signbit-end=" l@be-signbit @ . cr
 ." P132-END" cr
 FTH
     genisoimage -quiet -o "$WORKDIR/prop.iso" -V PROPISO -r -J "$PST"
@@ -957,6 +985,8 @@ FTH
       # GENERIC message below fires — blaming patches 14/15/16 for a defect the
       # probe had already measured and printed two lines earlier. A failure that
       # names the wrong subject is worse than a slow one.
+      grep -qF 'b-WIDE-TRUNCATED' "$PLOG" \
+        && fail "REGRESSION: 13.2(b) is back on $A — a value >= 2^32 went through l!-be and came out as its low 32 bits with no error. The tree encodes ihandles this way (forth/admin/iocontrol.fs:42,76), so this is /chosen's stdin quietly naming a different object$([[ $PRC -ne 0 ]] && echo " (rc=$PRC: the probe also left the stack short and the prompt came back as '2 > ', which is the same defect downstream)") — see $PLOG"
       PD="$(grep -aoE 'd-depth=[0-9a-f]+' "$PLOG" | head -1 | cut -d= -f2)"
       [[ -z "$PD" || "$PD" == 4 ]] \
         || fail "REGRESSION: 13.2(d) on $A: decode-bytes left $PD items on the stack, not 4 — the documented effect is ( addr1 len1 #bytes -- addr2 len2 addr1 #bytes ), and anything above 4 is cells pulled off the RETURN stack by a bare r>$([[ $PRC -ne 0 ]] && echo " (and the probe then failed to finish, rc=$PRC, which is the same defect downstream)") — see $PLOG"
@@ -978,10 +1008,63 @@ FTH
     grep -q 'a-decoded=ffffffff' <<<"$AL" \
       || fail "13.2(a) on amd64 decoded something other than ffffffff — the zero-extension is the whole claim; see $WORKDIR/prop-amd64.log"
 
-    grep -q 'b-WIDE-TRUNCATED' <<<"$AL" \
-      || fail "13.2(b) appears FIXED on amd64: a value >= 2^32 no longer vanishes through l!-be. Update this track and §13.2"
+    # 13.2(a) IS TOLERATED ON A PREMISE, and the premise is a claim about the
+    # corpus: nothing in this tree decodes a property value with bit 31 set, so
+    # zero-extension has never yet produced a wrong answer for a real consumer.
+    # That is a cache. These counters derive it on every boot instead.
+    #
+    # It matters because the obvious fix is NOT safe: sign-extending l@-be makes
+    # -1 round-trip and turns every decoded address with bit 31 set into a
+    # negative cell — and assigned-addresses carries PCI physical addresses that
+    # drivers/vga.fs:148 hands to pci-bar>pci-addr. The day a-signbit goes
+    # non-zero, that hazard has a first instance and the decision is forced.
+    #
+    # THE COUNT IS THE CONTROL. A zero from an instrument nobody ran reads
+    # exactly like a zero that means what it says.
+    for A in amd64 x86; do
+      SL="$(tr -d "\r" < "$WORKDIR/prop-$A.log")"
+      AN="$(grep -aoE 'a-decodes-boot=[0-9a-f]+' <<<"$SL" | head -1 | cut -d= -f2)"
+      AE="$(grep -aoE 'a-signbit-end=[0-9a-f]+' <<<"$SL" | head -1 | cut -d= -f2)"
+      [[ -n "$AN" && "$AN" != 0 ]] \
+        || fail "13.2(a) on $A: l@be-count is ${AN:-absent} at the start of the probe — no property was decoded during the whole boot, so a sign-bit count of zero measures nothing. The instrument, not the firmware, is what failed — see $WORKDIR/prop-$A.log"
+      # ...AND IT MUST BE ABLE TO COUNT. Section (a) decodes ffffffff on purpose
+      # a few lines below the boot reading, so by the end of the probe the sign-bit
+      # counter MUST have moved. Without this, a counter wired to nothing reports
+      # the same reassuring 0 as a firmware that never saw one — the first draft
+      # of this assertion read the counters at the END and duly caught the probe's
+      # own ffffffff, which is how the scoping error was found.
+      [[ -n "$AE" && "$AE" != 0 ]] \
+        || fail "13.2(a) on $A: the sign-bit counter is still ${AE:-absent} AFTER the probe decoded ffffffff on purpose — it is not attached to l@-be, so its zero during boot proves nothing — see $WORKDIR/prop-$A.log"
+      grep -qE 'a-signbit-boot=[[:space:]]*0( |$)' <<<"$SL" \
+        || fail "13.2(a) on $A: a property value with BIT 31 SET was decoded DURING BOOT ($(grep -aoE 'a-(signbit|last)-boot=[0-9a-f]+ ?' <<<"$SL" | tr '\n' ' ')) — that is the first real consumer of the zero-extension, and it ends the premise this defect has been tolerated on. Sign-extending l@-be is still not the fix on its own: it would corrupt exactly this value if it is an address. Read TODO §13.2(a) before changing either side — see $WORKDIR/prop-$A.log"
+      note "$A: $AN four-byte decodes during boot, 0 with bit 31 set — and the counter moved to $AE once the probe decoded one on purpose, so that 0 is a measurement"
+    done
+
+    # 13.2(b) FIXED (patch 26), and this is the one place in the track where a
+    # fix means the assertion inverts. `l!-be` now REFUSES a value that cannot
+    # survive the four bytes 1275 encodes an integer into, rather than writing
+    # the low half and saying nothing — LIED down to HALTED, which is the whole
+    # of the ladder in CLAUDE.md.
+    grep -qE 'b-REFUSED=[[:space:]]*-2( |$)' <<<"$AL" \
+      || fail "13.2(b) on amd64: encode-int of 100000000 did not throw -2 — either the refusal is gone or something else threw: $(grep -aoE 'b-(REFUSED|decoded|WIDE|ctl)[^ ]*.{0,16}' <<<"$AL" | head -2 | tr '\n' ' ') — see $WORKDIR/prop-amd64.log"
+    grep -qF 'encode-int: value does not fit' <<<"$AL" \
+      || fail "13.2(b) on amd64: -2 was thrown but l!-be's message never reached the console, so the refusal cannot tell an operator what it refused — see $WORKDIR/prop-amd64.log"
     grep -q 'b-UNREPRESENTABLE-ON-THIS-CELL' <<<"$XL" \
       || fail "13.2(b) reported a verdict on x86, where a 4-byte cell cannot express the input — that can only mean the probe stopped checking the literal survived, which is the false PASS this track was written to avoid"
+
+    # THE MUST-NOT-CATCH PAIR, and without it the line above is satisfied by a
+    # gate that refuses EVERYTHING — which would be a firmware that cannot encode
+    # an integer at all. Both halves of the 32-bit range have to survive: an
+    # unsigned quantity (ffffffff, an address or a phandle) and a sign-extended
+    # negative (-1 as a full cell). (a)'s `a-decoded=ffffffff` two lines up is a
+    # third instance of the same control, from before this fix existed.
+    for A in amd64 x86; do
+      BL="$(tr -d "\r" < "$WORKDIR/prop-$A.log")"
+      grep -qF 'b-ctl-u32-OK' <<<"$BL" \
+        || fail "13.2(b) on $A: encode-int REFUSED ffffffff, an ordinary unsigned 32-bit value — an address or a phandle — so the fit test is rejecting the top half of the range it exists to protect (the probe aborted there and printed no marker) — see $WORKDIR/prop-$A.log"
+      grep -qF 'b-ctl-neg-OK' <<<"$BL" \
+        || fail "13.2(b) on $A: encode-int REFUSED -1 — a sign-extended negative fills a cell with ones and still fits in four bytes; refusing it would break every negative property value — see $WORKDIR/prop-$A.log"
+    done
 
     # -F, not -q alone: in a BASIC regex `\+` is a QUANTIFIER, not a literal plus,
     # so `ENCODE\+-WOULD` asks for one-or-more E and matches nothing. Caught by this
@@ -996,10 +1079,21 @@ FTH
     # own `#address-cells 1`. So the same call yields a different length in two
     # contexts, and root is the trap: its property says 1 while encode-phys under
     # it uses 2.
-    # The comparison is done HERE and not in the probe: `variable` does not stick
-    # inside the evaluated text (it reports "la: undefined word." at the point of
-    # use — the same define-into-the-current-vocabulary shape patches 14/16 fixed
-    # for bind_func). Two measured values differing is the proof anyway.
+    # The comparison is done HERE and not in the probe, and the reason this
+    # comment used to give was WRONG. It said `variable` "does not stick inside
+    # the evaluated text". Re-derived 2026-08-27 on both arches:
+    #
+    #   variable qw  7 qw !  qw @ .      in evaluated text -> 7, and still 7 at
+    #                                    the prompt afterwards
+    #   dev /  variable la  9 la !       -> la @ is 9 while the context is open
+    #   device-end  la @                 -> "la: undefined word."
+    #
+    # So the original observation was never about `evaluate` at all: the probe
+    # defined `la` after a `dev /`, and $create defines into the ACTIVE PACKAGE's
+    # method list, which device-end drops from the search order. That is correct
+    # IEEE 1275 and this lab's own documented rule, misfiled as a limitation of
+    # evaluated text. The comparison stays here because two measured values
+    # differing is the proof anyway.
     ELR="$(grep -oE 'e-len-root=[0-9a-f]+' <<<"$AL" | head -1 | cut -d= -f2)"
     ELI="$(grep -oE 'e-len-ide=[0-9a-f]+'  <<<"$AL" | head -1 | cut -d= -f2)"
     [[ -n "$ELR" && -n "$ELI" ]] \
@@ -1034,7 +1128,7 @@ FTH
         || fail "13.2(d) on $A: the remainder length after decoding all 2 bytes of a 2-byte property is not 0 — decode-bytes is not subtracting #bytes from prop-len1: $(grep -aoE 'd-len2=.{0,12}' <<<"$DL2" | head -1) — see $WORKDIR/prop-$A.log"
     done
 
-    pass "TODO 13.2 watched to bite: (a) the SAME four bytes decode to ffffffff on amd64 and -1 on x86 — encode-int/decode-int is not a round trip at a 64-bit cell; (b) a value >= 2^32 is silently truncated on amd64 and is UNREPRESENTABLE on x86, reported as an UNKNOWN not a pass; (c) encode+ lies about length on BOTH arches once anything moves HERE between fragments; and encode-phys is NOT fixed-width — 8 bytes under / (the no-parent default of 2 cells) against 4 under /ide@1 (root's own #address-cells 1); and (d) decode-bytes, which used to return CLEANLY with six items where four are documented — two cells robbed off the return stack — now round-trips encode-bytes on both arches at depth exactly 4, from an empty stack back to an empty one"
+    pass "TODO 13.2 watched to bite: (a) the SAME four bytes decode to ffffffff on amd64 and -1 on x86 — encode-int/decode-int is not a round trip at a 64-bit cell — and the premise it is tolerated on is now DERIVED rather than assumed: every four-byte decode of the boot is counted, and none has bit 31 set, which is the only reason zero-extension has yet to give a real consumer a wrong answer; (b) FIXED — a value >= 2^32 is now REFUSED BY NAME on amd64 where it used to be silently truncated into four bytes, with ffffffff and -1 both still encoding cleanly in the same run so the gate is not simply refusing everything, and the input still UNREPRESENTABLE on x86, reported as an UNKNOWN not a pass; (c) encode+ lies about length on BOTH arches once anything moves HERE between fragments; and encode-phys is NOT fixed-width — 8 bytes under / (the no-parent default of 2 cells) against 4 under /ide@1 (root's own #address-cells 1); and (d) decode-bytes, which used to return CLEANLY with six items where four are documented — two cells robbed off the return stack — now round-trips encode-bytes on both arches at depth exactly 4, from an empty stack back to an empty one"
     ;;
   vga)
     # TODO 13.1's DRIVER_VGA half: PCI enumeration on amd64 (patch 17) and the
