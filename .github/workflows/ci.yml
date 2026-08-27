@@ -507,11 +507,17 @@ jobs:
           # job check-doc-verbs.sh cannot do here: pointed at this lab that tool reports
           # "0 distinct commands", because it deliberately passes over the $-prefixed
           # console transcripts this lab writes all its examples as.
+          #
+          # test-patch-hygiene.sh (A3 and A4) joined the same day: build-openbios.sh's
+          # REVIVAL_MARKERS array against the patch it describes, and all 30 patches
+          # against git's own diff reader. The marker array is a CACHED DESCRIPTION OF A
+          # PATCH -- bug class #1 in CLAUDE.md -- and nothing had ever compared the two.
           for t in examples/kali-packer-vagrant/tests/test-offline-archive.sh \
                    examples/almalinux-packer-images/tests/test-offline-archive.sh \
                    examples/openbios-the-rival-that-shipped/tests/test-usage-is-data.sh \
                    examples/openbios-the-rival-that-shipped/tests/test-patch-scope.sh \
                    examples/openbios-the-rival-that-shipped/tests/test-track-list.sh \
+                   examples/openbios-the-rival-that-shipped/tests/test-patch-hygiene.sh \
                    examples/micro-cloud/tests/run-all.sh \
                    examples/nested-calico-sandbox/tests/run-all.sh \
                    examples/metal-as-a-service/tests/run-all.sh; do
