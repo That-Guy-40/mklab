@@ -3454,7 +3454,20 @@ was drawn, and the probe duly reported no change; filling all 80×25 cells is sc
 And the assertion counts pixels of VGA **blue** (attribute `1f`), a colour the console never
 produces, rather than diffing the images — a raw diff is swamped by console echo.*
 
-### It is NOT a PCI BAR, and that is two new defects
+**Upgraded 2026-08-27, once 0.6c and 0.6d were fixed:** `mmio-writer` now also aims at the
+**live PCI BAR**, which is the test this section originally wanted.
+
+```
+BAR0 at 0x40000000:  [00 00 00 00 00 00 00 00] → [c0 ff ee 01 c0 ff ee 01]
+```
+
+read by QEMU's monitor (`xp`, a guest-physical read) rather than by `screendump`. **The
+display cannot answer that one**: the VGA sits in 640×480 compat mode scanning the
+**legacy** aperture, not the linear framebuffer, so a real store into BAR0 is invisible on
+screen — and `screendump` could not tell it from a store that never happened. Two outside
+observers, chosen for what each can actually see.
+
+### It WAS not a PCI BAR, and that was two defects — both now fixed
 
 Trying to aim at the real framebuffer BAR is what found them.
 
@@ -3469,8 +3482,13 @@ Trying to aim at the real framebuffer BAR is what found them.
   that fix the `screen` alias resolved to nothing, so nobody could open it. Fixing one layer
   exposed the next, which is the ordinary shape of this work.
 
-Both are recorded rather than fixed: they are a PCI-allocator question and a driver question,
-not a storage-split question, and §16 is the storage split.
+Both are now fixed — [patch 33](examples/openbios-the-rival-that-shipped/patches/33-first-memory-bar-got-address-zero.patch)
+and [patch 34](examples/openbios-the-rival-that-shipped/patches/34-pci-bus-cell-counts.patch),
+§0.6c and §0.6d — and neither was what its first framing said. The BAR was not too big for a
+window; the allocator's base was never seeded. And the open did not fault because of that
+zero; a PCI bus had never declared `#address-cells`, so every Forth decode read one cell
+short. **They were independent**, which the measurement settled after the TODO had guessed
+they were one.
 
 Review §2's fourth assertion is **closed** (§0.6a): `/chosen`'s `stdin` round-trips at the
 address instances actually land on, and the review's own UNKNOWN — whether an amd64 instance

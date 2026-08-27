@@ -197,6 +197,13 @@ log**, and removing the two property writes fails it by name. Shared code, so pp
 and run: `vga property-abi mmio-writer pmem-writer flash-writer amd64 multiboot diagnostics
 ppc nvram amd64-pmem dict-identity client-forth amd64-ctx` — 14 of 14 PASS.
 
+**2026-08-27, `mmio-writer` upgraded:** with §0.6c and §0.6d fixed, the track now aims at the
+**live PCI BAR** as well as the legacy aperture — `[00 …] → [c0 ff ee 01 c0 ff ee 01]` at
+`0x40000000`, read by QEMU's monitor (`xp`) rather than `screendump`. The display cannot
+answer that one: the VGA is in 640×480 compat mode scanning the legacy aperture, so a real
+store into the linear framebuffer is invisible on screen. Two outside observers, each chosen
+for what it can actually see.
+
 ### The negative controls, run 2026-08-23
 
 Each fix was broken and watched to bite before being trusted:
