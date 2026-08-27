@@ -13,12 +13,16 @@
 # github.com/openbios/openbios and github.com/openbios/fcode-utils (toke is a
 # hard build prereq — built from source in the image, no prebuilt pulls).
 #
-# patches/01-x86-revival.patch is applied to the openbios clone first: eight
-# small fixes that resurrect the never-finished x86 paths (multiboot header,
-# dictionary-module loading, load-base, grubfs seek/tell, boot→linux_load,
-# ctx->esp, modern zero page, coreboot forwarding tables) plus auto-boot?=false
-# on x86 (the unconditional auto-boot detonates when IDE media is attached).
-# Each fix's story: POC-2/POC-4. Idempotent: skipped when already applied.
+# patches/TESTED-TREE.patch is applied to the openbios clone first: the whole
+# of this lab's divergence from the pinned upstream commit, in one generated
+# diff -- the x86 revival (multiboot header, dictionary-module loading,
+# load-base, grubfs seek/tell, boot→linux_load, ctx->esp, modern zero page,
+# coreboot forwarding tables, auto-boot?=false), the amd64 port, and the
+# 2026-08 fixes. Idempotent: skipped when already applied.
+#
+# patches/NN-*.patch are the RECORD -- one annotated diff per change, for
+# reading. They are NOT applied, and they are not a linear series; see the long
+# comment above TESTED_TREE_MARKERS for the measurement that settled it.
 set -euo pipefail
 usage() {
     cat <<'USAGE'
@@ -31,9 +35,12 @@ TARGET:
   unix     openbios-unix, the firmware as an ordinary host process
   all      x86 + ppc + unix (the default; amd64 is opt-in, it is a separate port)
 
-The revival patch is applied by MARKER, not by `git apply --check`, so a rerun
-after unrelated edits to the same regions still says "already applied" instead
-of refusing to build. A partial application is an error naming the missing file.
+patches/TESTED-TREE.patch (the full divergence from the pinned commit) is
+applied by MARKER, not by `git apply --check`, so a rerun after unrelated edits
+to the same regions still says "already applied" instead of refusing to build.
+A partial application is an error naming the missing files -- including the
+case where the x86 revival is present and the amd64 port is absent, which is
+what a clean checkout silently produced until 2026-08-27.
 
 Env: OPENBIOS_WORKDIR (default ~/openbios-lab)
 USAGE
@@ -46,8 +53,8 @@ WORKDIR="${OPENBIOS_WORKDIR:-$HOME/openbios-lab}"
 IMG=localhost/openbios-build
 TARGET="${1:-all}"
 
-# THE CLONE IS PINNED, and every patch in patches/ is a diff against these two
-# commits. Unpinned, this script tracked upstream HEAD: two people running it a
+# THE CLONE IS PINNED, and patches/TESTED-TREE.patch is a diff against these
+# two commits. Unpinned, this script tracked upstream HEAD: two people running it a
 # month apart built different firmware from the same repo, every `Arch-tested:`
 # line named a tree that no longer existed, and any CI job would have gone red
 # on somebody else's commit rather than on a change in this lab.
@@ -57,9 +64,10 @@ TARGET="${1:-all}"
 # bytes that get built. These are commit SHAs.
 #
 # TO MOVE THE PIN: bump the SHA, run ./smoke-openbios.sh for every track, and
-# expect the 30 patches to need re-reading rather than assuming they still
+# expect every patch to need re-reading rather than assuming they still
 # apply. `tools/openbios-pin-check.sh` reports when upstream has moved past it,
 # so the bump is a decision someone makes and not a surprise mid-build.
+# Regenerate TESTED-TREE.patch from the re-based tree; do not hand-edit it.
 OPENBIOS_PIN=e5ac46dd24e6216c36aa80462af25457e7029440
 FCODE_UTILS_PIN=6e563ee54aa9f60e538d90eedaa012ae77610344
 
@@ -107,39 +115,85 @@ checkout_pinned() {
 checkout_pinned "$WORKDIR/openbios"     https://github.com/openbios/openbios.git     "$OPENBIOS_PIN"
 checkout_pinned "$WORKDIR/fcode-utils"  https://github.com/openbios/fcode-utils.git  "$FCODE_UTILS_PIN"
 
-echo "==> applying the revival patch (idempotent)"
+echo "==> applying the lab's divergence (idempotent)"
+# THE PATCH THAT IS APPLIED IS NOT ONE OF THE NUMBERED ONES.
+#
+# patches/NN-*.patch are the RECORD: 34 annotated diffs, one per change, each
+# written so a reader can follow one fix at a time. They are not a linear
+# series and never were. Every one of them was extracted as a diff against a
+# tree that ALREADY had the others applied, so its context lines describe the
+# finished tree rather than the tree as it stood at that step.
+#
+# Measured 2026-08-27, because "apply them in order" was the obvious fix and it
+# does not work: applying 01..34 to a pristine pin lands 19 of 34, and `git
+# apply -3` lands the same 19 -- a merge strategy cannot recover context that
+# was never written. Reverse-walking from the finished tree reverses 23 of 34
+# before the early ones stop. The intermediate trees that would make the series
+# linear do not exist anywhere any more.
+#
+# So what gets applied is patches/TESTED-TREE.patch: the CUMULATIVE divergence
+# from OPENBIOS_PIN to the tree every smoke track has actually been run
+# against. It is generated (`git diff` at the pin) rather than written, and it
+# is verified by reproducing that tree -- 722 of 722 source files identical by
+# sha256, the sole difference being config-host.mak, which switch-arch
+# generates. tools/check-patch-hygiene.sh binds the record to it, so a change
+# recorded in a numbered patch but missing from what is built is a failure.
+#
+# HOW THE GAP WAS FOUND. Until today this script applied 01-x86-revival.patch
+# and nothing else -- 1 of 34. A clean checkout therefore built the x86 revival
+# and NO amd64 port at all: patch 02 is what adds
+# <executable name="openbios.multiboot"> to arch/amd64/build.xml, so the file
+# every amd64 track boots was never produced. Meanwhile smoke-openbios.sh
+# asserts amd64 behaviour in 21 tracks. Every working copy here had been
+# patched by hand since the day it was made, so the cold path had no exercise
+# and three green CI runs said nothing about it. Tier B's first cold build is
+# what found it, on the first run that ever started from nothing.
+
 # THE "ALREADY APPLIED?" TEST ASKS FOR THE CAUSE, NOT FOR THE DIFF.
 #
-# It used to ask `git apply --reverse --check`, i.e. *"is exactly this diff
-# present"* -- and that broke the day a LATER patch edited a region patch 01
-# had touched (Spike 1 added an amd64 arm to the same `auto-boot?` block in
-# forth/admin/nvram.fs). Patch 01 was still fully in effect; the reverse check
-# said the tree had diverged and the build refused to run. A patch is a diff,
-# which is a cache of a state; the state is what matters. Exactly the lesson
-# the nvram smoke track already carries.
+# Not `git apply --reverse --check`, which asks *"is exactly this diff
+# present"*. This tree is where the lab DEVELOPS the next change, so it is
+# routinely the patch plus uncommitted work; a reverse check calls that
+# "diverged" and refuses to build the thing the developer is mid-way through.
+# A patch is a diff, which is a cache of a state; the state is what matters.
 #
-# So: one marker per file the patch touches -- a string it ADDS that nothing
-# since has had a reason to remove. All eight present = applied. None present =
-# apply it. A MIXTURE is the interesting case and it stops the build by name,
-# because a half-applied tree is the one that builds and then misbehaves.
-REVIVAL_MARKERS=(
-    "arch/x86/boot.c:[x86] Booting file"
-    "arch/x86/builtin.c:#define DICTIONARY_SIZE (1024 * 1024 / sizeof(ucell))"
-    "arch/x86/linux_load.c:kernel_info_offset"
-    "arch/x86/multiboot.h:#define MULTIBOOT_HEADER_FLAGS		0x00000003"
+# So: one marker per area of the divergence -- a string it ADDS that nothing
+# since has had a reason to remove, and that is ABSENT from the pinned upstream
+# file (tools/check-patch-hygiene.sh A3b re-derives that against the real
+# upstream blob rather than trusting this list). All present = applied. None =
+# apply it. A MIXTURE stops the build BY NAME, because a half-applied tree is
+# the one that builds and then misbehaves somewhere else entirely.
+#
+# The list spans all three eras of the divergence on purpose -- the x86
+# revival, the amd64 port, and the 2026-08 fixes -- so that the failure Tier B
+# found (x86 present, amd64 entirely absent) reads as a MIXTURE and stops here,
+# instead of building an amd64 target that silently has no multiboot image.
+TESTED_TREE_MARKERS=(
+    # -- the x86 revival (patch 01) --
     "arch/x86/openbios.c:load_dictionary((char *)sys_info.dict_start"
-    # NOT `s" load-base"`: that string is in the PRISTINE file three times already
-    # (the ppc, sparc32 and sparc64 arms), so it matched an unpatched tree and made
-    # the detector below report "1 of 8 markers present — HALF applied" on every
-    # cold clone. A marker's whole semantics are "present => applied", so a string
-    # the patch adds is not enough; it has to be one that did not exist before.
-    # Found by Tier B, on the first cold checkout this lab has ever had.
-    "forth/admin/nvram.fs:Every other arch defines load-base"
     "fs/grubfs/grubfs_fs.c:grubfs_files_tell"
     "libopenbios/linuxbios_info.c:forward_lb_table"
+    # NOT `s" load-base"`: that string is in the PRISTINE nvram.fs three times
+    # already (the ppc, sparc32 and sparc64 arms), so it matched an unpatched
+    # tree and reported "1 of 8 markers present -- HALF applied" on every cold
+    # clone. A marker's whole semantics are "present => applied", so a string
+    # the patch adds is not enough; it must be one that did not exist before.
+    "forth/admin/nvram.fs:Every other arch defines load-base"
+    # -- the amd64 port (patches 02+) --
+    # THIS is the marker whose absence was the bug: without patch 02 there is no
+    # openbios.multiboot rule for amd64 at all, and the gate downstream fails on
+    # a missing file with nothing explaining why.
+    "arch/amd64/build.xml:openbios.multiboot"
+    "arch/amd64/exception.c:exception"
+    # -- the 2026-08 fixes (patches 20-34) --
+    'arch/x86/context.c:feval("fcode"); t_fcode = POP();'
+    "forth/device/property.fs:l-fits?"
+    'drivers/pci.c:set_int_property(phandle, "#address-cells", 3);'
+    "libopenbios/init.c:eword_report_selftest"
+    "config/scripts/switch-arch:TODO 13.3(C): -fno-builtin, not the two"
 )
 present=(); absent=()
-for m in "${REVIVAL_MARKERS[@]}"; do
+for m in "${TESTED_TREE_MARKERS[@]}"; do
     f="${m%%:*}"; pat="${m#*:}"
     if grep -qF -- "$pat" "$WORKDIR/openbios/$f" 2>/dev/null; then
         present+=("$f")
@@ -150,18 +204,21 @@ done
 if [[ ${#absent[@]} -eq 0 ]]; then
     echo "    already applied (all ${#present[@]} markers present)"
 elif [[ ${#present[@]} -eq 0 ]]; then
-    if git -C "$WORKDIR/openbios" apply "$HERE/patches/01-x86-revival.patch"; then
-        echo "    applied"
+    if git -C "$WORKDIR/openbios" apply "$HERE/patches/TESTED-TREE.patch"; then
+        echo "    applied patches/TESTED-TREE.patch ($(grep -c '^+++ b/' "$HERE/patches/TESTED-TREE.patch") files)"
     else
-        echo "ERROR: no revival marker is present and the patch does not apply —" >&2
-        echo "       upstream moved. Inspect $WORKDIR/openbios against" >&2
-        echo "       patches/01-x86-revival.patch." >&2
+        echo "ERROR: no marker is present and patches/TESTED-TREE.patch does not" >&2
+        echo "       apply. The clone is not at the pin, or upstream rewrote it." >&2
+        echo "       Inspect $WORKDIR/openbios against" >&2
+        echo "       patches/TESTED-TREE.patch." >&2
         exit 1
     fi
 else
-    echo "ERROR: the revival patch is HALF applied — ${#present[@]} of ${#REVIVAL_MARKERS[@]} markers present." >&2
+    echo "ERROR: the divergence is HALF applied -- ${#present[@]} of ${#TESTED_TREE_MARKERS[@]} markers present." >&2
     printf '       missing: %s\n' "${absent[@]}" >&2
-    echo "       A partly-revived tree builds and then fails somewhere else." >&2
+    echo "       A partly-patched tree builds and then fails somewhere else." >&2
+    echo "       This is the shape Tier B found: an x86 revival with no amd64" >&2
+    echo "       port behind it, which builds fine and produces no multiboot." >&2
     exit 1
 fi
 

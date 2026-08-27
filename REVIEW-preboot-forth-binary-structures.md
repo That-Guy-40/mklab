@@ -35,12 +35,21 @@ anything. Two corpora:
 | `openbios/openbios` @ `e5ac46dd24e6216c36aa80462af25457e7029440` (2026-06-29) | fresh shallow clone of `master`, 2026-08-24 |
 | this repo's Open Firmware labs | in tree |
 
-**That commit is not pinned by anything.** [`build-openbios.sh`](examples/openbios-the-rival-that-shipped/build-openbios.sh)
-does a bare `git clone` of upstream `master` and applies the revival patch to whatever
-it lands on; `e5ac46d` is simply what `master` resolved to on the review date, and it
-happens to be the same commit [`X86-64-FEASIBILITY.md`](examples/openbios-the-rival-that-shipped/X86-64-FEASIBILITY.md)
-recorded. **Every line reference below can therefore drift under a later clone** — check
-the commit before treating a `file:line` here as current.
+~~**That commit is not pinned by anything.**~~ — **PINNED 2026-08-27.**
+[`build-openbios.sh`](examples/openbios-the-rival-that-shipped/build-openbios.sh) now
+checks `openbios` out at `e5ac46d` detached, so the line references below no longer
+drift under a later clone. When this was written the script did a bare `git clone` of
+`master` and patched whatever it landed on; `e5ac46d` is simply what `master` resolved
+to on the review date, and it happens to be the same commit
+[`X86-64-FEASIBILITY.md`](examples/openbios-the-rival-that-shipped/X86-64-FEASIBILITY.md)
+recorded.
+
+It also applied **one** patch. As of 2026-08-27 it applies
+[`patches/TESTED-TREE.patch`](examples/openbios-the-rival-that-shipped/patches/TESTED-TREE.patch),
+the whole divergence — the numbered patches are the record and are *not* a linear
+series. That mattered here: before the change, a clean checkout built no `arch/amd64`
+at all, so a reader following this review's amd64 line references would have been
+reading about firmware their own tree could not produce.
 
 **No firmware was built and no prompt was driven for this review.** Where a claim would
 need a boot to settle, it is labelled **UNKNOWN** rather than asserted — the notes'

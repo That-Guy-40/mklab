@@ -1,0 +1,34 @@
+From: mklab <noreply@example.invalid>
+Subject: [PATCH 35/35] record arch/amd64/boot.h, which the port needed and the record did not have
+
+arch/amd64/boot.c has `#include "boot.h"` and arch/amd64 had no such header --
+arch/x86 gained one in an upstream sweep that never reached this directory,
+because nothing compiled it. Spike 1 wrote the file; nothing ever recorded it.
+
+It surfaced on 2026-08-27 from the completeness check that binds the numbered
+record to patches/TESTED-TREE.patch: 49 of the 50 files in the built divergence
+were named by some numbered patch, and this was the one that was not. The port
+had been compiling against a file no patch mentioned.
+
+Arch-tested: amd64 (cold build from a pristine pin, 2026-08-27)
+
+diff --git a/arch/amd64/boot.h b/arch/amd64/boot.h
+new file mode 100644
+index 0000000..84136f1
+--- /dev/null
++++ b/arch/amd64/boot.h
+@@ -0,0 +1,14 @@
++/* tag: openbios loader prototypes for amd64
++ *
++ * Spike 1: arch/x86 has had this header since the sweep that introduced it;
++ * arch/amd64 never gained one because nothing compiled this directory.
++ *
++ * See the file "COPYING" for further information about
++ * the copyright and warranty status of this work.
++ */
++
++/* linux_load.c */
++int linux_load(struct sys_info *info, const char *file, const char *cmdline);
++
++/* boot.c */
++extern void boot(void);
