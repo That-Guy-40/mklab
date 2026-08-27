@@ -188,3 +188,23 @@ clone itself:
 Everything runs as your user in QEMU (KVM or TCG) and rootless podman; no
 sudo, no host services, no listening ports. The revival patch changes a
 firmware run for study inside a VM — nothing on the host boots it.
+
+## The upstream clone is pinned
+
+`build-openbios.sh` checks out `openbios` at **`e5ac46d`** and `fcode-utils` at
+**`6e563ee`**, detached. Every patch in [`patches/`](patches/) is a diff against those
+commits, so an unpinned clone meant two people a month apart built different firmware from
+the same repository — and every `Arch-tested:` line named a tree that no longer existed.
+
+A **tag would not do**: a version string is not an identity and a tag can be moved. These are
+SHAs.
+
+A clone already at the pin is left completely alone, so the uncommitted divergence this lab
+develops in is never disturbed. A clone that is *not* at the pin **and** has uncommitted
+changes makes the build refuse by name rather than move `HEAD` under that work.
+
+[`tools/openbios-pin-check.sh`](../../tools/openbios-pin-check.sh) reports when upstream has
+moved past the pin — reading the SHAs *out of* `build-openbios.sh`, because a second copy
+would be a cache of the first and stale in exactly the case it exists to detect. A weekly
+cloud routine runs it. **Neither ever bumps the pin**: moving it means re-reading 30 patches
+and re-running every track on three arches, which is a decision, not a build step.
