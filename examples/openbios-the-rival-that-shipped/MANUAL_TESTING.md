@@ -133,6 +133,12 @@ diagnostics ppc client-forth dict-identity` — all PASS on x86 + amd64 + ppc bu
 now concatenates; the probe exercises **both** branches and names which one it took, because
 a fix whose slow path never runs is indistinguishable from no fix.
 
+**2026-08-27, patch 28 (TODO §13.3(D)):** `vga multiboot amd64 property-abi nvram amd64-pmem
+client-forth diagnostics ppc dict-identity` — all PASS on x86 + amd64 + ppc builds. The `vga`
+track went **red on the fix** first, because it asserted the defective `QEMU,VGA@0`; that is
+the good-news failure a characterization test exists to produce, and it now asserts `@2`.
+Its `screen`-alias UNKNOWN, printed on every run since 2026-08-26, is now an assertion.
+
 ### The negative controls, run 2026-08-23
 
 Each fix was broken and watched to bite before being trusted:
