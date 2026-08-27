@@ -1,11 +1,19 @@
-# openbios Tier B — build the firmware and boot it. MANUAL ONLY, for now.
+# openbios Tier B — build the firmware and boot it.
 #
-# TODO §14 Tier B. This exists first as `workflow_dispatch` and nothing else,
-# because the decision it informs is a COST decision and nobody has the number:
-# how long a cold runner takes to build the container image (which compiles
-# `toke` from source), then three firmwares, then boot them under TCG. Wiring it
-# to `pull_request` before measuring that would be guessing with someone else's
-# minutes.
+# TODO §14 Tier B. This began as `workflow_dispatch` and nothing else, because the
+# decision it informs was a COST decision and nobody had the number. MEASURED
+# 2026-08-27 (run 33115835118, cold ubuntu-latest, podman present, no KVM):
+# 3m11s wall — 56s to build all three firmwares from nothing (the container image,
+# which compiles `toke` from source, is inside the 37s x86 number) and 92s to boot
+# seven tracks under TCG. The guess had been ~10 min.
+#
+# It now runs PER PULL REQUEST, path-filtered, plus a weekly backstop. Three
+# minutes is not a nightly-only cost, and the argument stopped being about minutes:
+# Tier B has found TWO defects invisible to every green run — a marker string that
+# was already in the pristine upstream file, and a build applying 1 of 34 patches —
+# and both were visible only from a cold checkout. A nightly reports those the next
+# morning against a merged main, so you start from "something on main is broken"
+# and bisect; per-PR reports them against the one diff that caused them.
 #
 # THE GATE MATTERS MORE THAN THE MINUTES. Every track in smoke-openbios.sh guards
 # on a built artifact and SKIPs without one, so a Tier B job that cannot build
@@ -17,22 +25,74 @@
 # What it cannot do, stated rather than discovered later: ubuntu-latest has no
 # KVM, so every boot is TCG. Timings here are therefore an UPPER bound for any
 # runner with nested virt, and the right bound for the runners this repo uses.
-name: openbios Tier B (manual)
+name: openbios Tier B
 
 on:
+  # NOT `on.pull_request.paths`. A workflow-level path filter stops the run from
+  # happening at all on a non-matching PR, so a REQUIRED status check never reports
+  # and the PR blocks forever waiting on something that will never arrive. The
+  # filtering happens in the `changes` job below instead, so `gate` always reports.
+  pull_request:
+  schedule:
+    # The weekly backstop. The path filter is a cached fact about what Tier B
+    # depends on, and a wrong one is SILENT — a PR that skips Tier B looks exactly
+    # like a PR that did not need it. This bounds a miss at a week.
+    # tools/tests/test-openbios-tier-b-relevance.sh re-derives the filter from this
+    # file's own entry points; the backstop is what covers what it cannot derive.
+    - cron: '17 6 * * 1'
   workflow_dispatch:
     inputs:
       tracks:
-        description: smoke-openbios.sh tracks to run, space separated
+        # NO `default:` HERE ON PURPOSE. The default list lives once, in
+        # DEFAULT_TRACKS below, because a default repeated in two places is a
+        # cached fact that drifts — and on `pull_request` and `schedule` there is
+        # no `inputs` at all, so the job needs the fallback regardless.
+        description: tracks to run, space separated (blank = the standard seven)
         required: false
-        default: multiboot dict-identity amd64 property-abi diagnostics vga ppc
 
 permissions:
   contents: read
 
+env:
+  DEFAULT_TRACKS: multiboot dict-identity amd64 property-abi diagnostics vga ppc
+
 jobs:
+  # Cheap, ~15s, and always runs: it is what lets `gate` report on every PR.
+  changes:
+    name: does this change touch the firmware?
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      relevant: ${{ steps.decide.outputs.relevant }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0     # the base commit has to be present to diff against
+      - id: decide
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.sha }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT" != pull_request ]]; then
+            echo "event is '$EVENT', not a pull request — Tier B runs unconditionally"
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Not piped into the decider: `a | b` reports b's status, and this repo
+          # merged a red PR that way once. The list goes to a file, then the
+          # decider reads it and its own rc is the one that is checked.
+          git diff --name-only "$BASE" "$HEAD_SHA" > /tmp/changed-files
+          echo "changed files:"; sed 's/^/  /' /tmp/changed-files
+          r="$(tools/openbios-tier-b-relevant.sh < /tmp/changed-files)"
+          echo "relevant=$r" >> "$GITHUB_OUTPUT"
+          echo "Tier B relevant: $r"
+
   tier-b:
     name: build + boot (TCG)
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -148,8 +208,16 @@ jobs:
           TRACKS: ${{ inputs.tracks }}
         run: |
           set -u
+          # `inputs` exists only on workflow_dispatch, so on a pull_request or the
+          # weekly run TRACKS arrives EMPTY — and an empty `for` list runs zero
+          # tracks, prints no failure and exits 0. That is this repo's oldest shape:
+          # a checker that looks at nothing prints the same tick as one that passes.
+          # Hence the fallback AND the count check at the end; either alone is a
+          # half measure, since a typo could still leave the list empty.
+          [[ -n "${TRACKS// /}" ]] || TRACKS="$DEFAULT_TRACKS"
           cd examples/openbios-the-rival-that-shipped
           rc=0
+          ran=0
           for t in $TRACKS; do
             # ...and validated, so a typo names itself instead of reaching smoke-openbios.sh
             # as an argument it will reject far less legibly.
@@ -167,7 +235,13 @@ jobs:
               77) echo "::warning::$t SKIPPED after a successful build — it needs something this runner lacks" ;;
               *) rc=1 ;;
             esac
+            ran=$((ran + 1))
           done
+          if (( ran == 0 )); then
+            echo "::error::no tracks ran — TRACKS was empty after the fallback, so this job proved nothing"
+            exit 1
+          fi
+          echo "$ran track(s) ran"
           exit $rc
 
       - name: Timings
@@ -182,3 +256,27 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           cat /tmp/tierb-times 2>/dev/null || true
+
+  # THE ONE TO MARK REQUIRED IN BRANCH PROTECTION.
+  #
+  # It runs on every pull request, including ones that skip Tier B entirely, which
+  # is the whole reason the filtering happens in `changes` rather than in
+  # `on.pull_request.paths`. Its logic lives in a script so it can be driven
+  # directly by tools/tests/test-openbios-tier-b-relevance.sh §2 — a gate observed
+  # only on its happy path is indistinguishable from `exit 0`, and this one is
+  # default-deny: the two known-good combinations pass and everything else, an
+  # unfinished relevance job included, refuses.
+  gate:
+    name: Tier B gate
+    needs: [changes, tier-b]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Decide
+        run: |
+          tools/openbios-tier-b-gate.sh \
+            '${{ needs.changes.result }}' \
+            '${{ needs.changes.outputs.relevant }}' \
+            '${{ needs.tier-b.result }}'

@@ -3274,7 +3274,7 @@ real files rather than grepping them:
    tracks under TCG. The guess was 3× high, and the x86 build dominates only
    because it pays for the image.
 
-   **Recommendation: path-filtered per-PR.** Three minutes is not a nightly-only
+   **LANDED 2026-08-27: path-filtered per-PR, weekly backstop, always-reporting gate.** Three minutes is not a nightly-only
    cost, and the argument for per-PR is no longer about minutes — this lab's
    firmware is built from a patch that nothing else exercises, and Tier B has now
    found **two** defects invisible to every green run: a marker matching a
@@ -3283,6 +3283,42 @@ real files rather than grepping them:
    a merged main rather than in the PR that caused them. Filter on
    `examples/openbios-the-rival-that-shipped/**` and `tools/openbios-*` so the
    other ~120 labs do not pay for it.
+
+   The shape, and why it is not `on.pull_request.paths`: a workflow-level path
+   filter stops the run happening **at all** on a non-matching PR, so a
+   **required** status check never reports and the PR blocks forever on
+   something that will never arrive. Instead the workflow always triggers, a
+   ~15s `changes` job asks
+   [`tools/openbios-tier-b-relevant.sh`](tools/openbios-tier-b-relevant.sh),
+   `tier-b` is skipped when the answer is `false`, and
+   [`tools/openbios-tier-b-gate.sh`](tools/openbios-tier-b-gate.sh) reports on
+   behalf of all of it — that is the one to mark required.
+
+   Both halves fail **silently**, so both are driven by
+   [`tools/tests/test-openbios-tier-b-relevance.sh`](tools/tests/test-openbios-tier-b-relevance.sh)
+   (in `ci.yml`): the filter on **9 must-match and 7 must-not-match** real
+   paths; the gate on its whole truth table — **2 rows pass, 8 refuse**,
+   including a relevance job that never finished, and the silent one, *a
+   relevant change that did not run Tier B*, which is the gating logic having
+   broken and otherwise looks identical to a PR that needed nothing. The gate is
+   **default-deny** for that reason: a gate whose default is "pass" opens when
+   its own machinery breaks, which is exactly when it should be shut.
+
+   §1 of that test **re-derives** the filter's `tools/` half from the workflow's
+   own entry points, so a lab that starts using a new repo tool fails there
+   rather than falling quietly outside the filter — the list is a cached fact,
+   so something has to re-derive it. Its first draft derived from the whole lab
+   and reported four checkers as uncovered; those are run by the lab's `tests/`,
+   which Tier B does not invoke and `ci.yml` already gates. It was answering a
+   true thing that was not the question.
+
+   **And the empty-`TRACKS` hole, found while wiring this up:** `inputs` exists
+   only on `workflow_dispatch`, so on a `pull_request` or the weekly run
+   `TRACKS` arrived **empty** — and an empty `for` list runs zero tracks, prints
+   no failure, and exits 0. The oldest shape in this file. Fixed with a fallback
+   to a single `DEFAULT_TRACKS` (the input's own `default:` was removed, so the
+   list is defined once) **and** a refusal to finish having run zero tracks,
+   because either alone is a half measure.
 3. **Keep `smoke-openbios.sh` as the single driver** and have `tests/` wrap it
    one file per track, or split the tracks into test files? Wrapping keeps one
    place to type a track by hand — which is how this lab is actually used — and
