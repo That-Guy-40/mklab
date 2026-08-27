@@ -1293,6 +1293,7 @@ FTH
     [[ -f "$XMB" && -f "$XDICT" ]] || skip "no x86 image — run ./build-openbios.sh x86 first"
     [[ -f "$PELF" ]] || skip "no ppc image — run ./build-openbios.sh ppc first"
     SELFW='openbios-feval-selftest-no-such-word'
+    ESELFW='openbios-eword-selftest-no-such-word'
     for A in amd64 x86 ppc; do
       DLOG="$WORKDIR/diag-$A.log"; DSOCK="$WORKDIR/smoke-diag-$A.sock"
       rm -f "$DLOG" "$DSOCK"
@@ -1302,6 +1303,7 @@ FTH
         python3 "$REPO/tools/drive-pty-repl.py" "$DLOG" --timeout 120 \
           --expect "Welcome to OpenBIOS" --expect "0 > " \
           --send 'test-feval-report\r' --expect "> " \
+          --send 'test-eword-report\r' --expect "> " \
           --send 'test-printf-precision\r' --expect "> " \
           --send 'test-printf-edges\r' --expect "> " \
           -- qemu-system-ppc -bios "$PELF" -nographic -vga none
@@ -1315,6 +1317,7 @@ FTH
         python3 "$REPO/tools/drive-serial-repl.py" "$DSOCK" "$DLOG" --timeout 120 \
           --expect "0 > " \
           --send 'test-feval-report\r' --expect "> " \
+          --send 'test-eword-report\r' --expect "> " \
           --send 'test-printf-precision\r' --expect "> " \
           --send 'test-printf-edges\r' --expect "> "
         RC=$?
@@ -1359,6 +1362,16 @@ FTH
       # strnlen(s, -1) would still pass the other six. Run here and not on the
       # host because kernel/bootstrap.c #defines printk to the HOST printf under
       # BOOTSTRAP -- a host harness would test glibc and report on OpenBIOS.
+      # TODO 13.3(E): eword()'s "not in the dictionary" branch, which that entry
+      # listed as unverified by construction — "reachable only if `evaluate`
+      # itself is missing". True of the CALLERS, false of the branch: eword()
+      # takes the word as an argument. It is a DIFFERENT failure from a throw
+      # (nothing ran at all), and before the reporter existed both left ret==-1
+      # and printed the same nothing.
+      NE="$(grep -acF "eword: '$ESELFW'" <<<"$DL" || true)"
+      [[ "$NE" -eq 1 ]] \
+        || fail "REGRESSION: test-eword-report produced $NE \"eword: '$ESELFW'\" line(s) on $A, expected exactly 1 — 0 means _eword()'s not-found branch is unreachable or unwired, which is what made a missing word and a thrown -1 indistinguishable; more than 1 means it fires repeatedly for one lookup — see $DLOG"
+
       grep -aqF 'printf-precision: 7/7 ok' <<<"$DL" \
         || fail "REGRESSION: $A did not print 'printf-precision: 7/7 ok' — libc/vsprintf.c's %s precision is wrong again, or the fixture set changed size without this assertion: $(grep -aoE 'printf-precision: [^ ]+ .{0,44}BAD' <<<"$DL" | head -3 | tr '\n' '|') — see $DLOG"
       grep -aq 'printf-precision: .* BAD' <<<"$DL" \
@@ -1381,8 +1394,8 @@ FTH
       # reads one extra character rather than over-reading like patch 21's bug,
       # and it sits in a boot path on the control arch. If someone fixes it the
       # fixture says DIVERGENCE-CLOSED and this assertion goes red on purpose.
-      grep -aqF 'printf-edges: 12/12 ok, 2/2 recorded divergence' <<<"$DL" \
-        || fail "REGRESSION: $A did not print 'printf-edges: 12/12 ok, 2/2 recorded divergence' — either number()/vsnprintf changed behaviour, or one of the two recorded C99 divergences (%.0d of 0; the 0 flag surviving a precision) was closed and this record is now false: $(grep -aoE 'printf-edges: [^ ]+ .{0,52}(BAD|CLOSED)' <<<"$DL" | head -3 | tr '\n' '|') — see $DLOG"
+      grep -aqF 'printf-edges: 14/14 ok, 2/2 recorded divergence' <<<"$DL" \
+        || fail "REGRESSION: $A did not print 'printf-edges: 14/14 ok, 2/2 recorded divergence' — either number()/vsnprintf changed behaviour, or one of the two recorded C99 divergences (%.0d of 0; the 0 flag surviving a precision) was closed and this record is now false: $(grep -aoE 'printf-edges: [^ ]+ .{0,52}(BAD|CLOSED)' <<<"$DL" | head -3 | tr '\n' '|') — see $DLOG"
 
       # (5) THE d-zero LINE IS PINNED PER ARCH, because the two halves of it
       # move independently and a ratio cannot say which one did. All three
@@ -1399,21 +1412,28 @@ FTH
       # conversions carrying a precision anywhere are ppc's own two %8.8lx,
       # asserted correct by the fixture -- so it is an UNKNOWN, named here so
       # that it cannot quietly become either a pass or a forgotten bug.
-      case "$A" in
-        ppc) DZ='wrote=1 ret=0 DIVERGES-AS-RECORDED RET-DISAGREES' ;;
-        *)   DZ='wrote=1 ret=1 DIVERGES-AS-RECORDED' ;;
-      esac
+      # ONE EXPECTED LINE FOR ALL THREE ARCHES since 2026-08-27. ppc used to
+      # print `ret=0 ... RET-DISAGREES` here and it was recorded as an untraced
+      # UNKNOWN (TODO 13.3(C)). It was not the firmware: ppc32 was the only arch
+      # in the tree built without -fno-builtin, so GCC treated snprintf as a
+      # BUILTIN and computed the return value itself — per C99, where %.0d of 0
+      # produces nothing — while leaving the call in place for its side effect,
+      # which libc/vsprintf.c performed by writing "0". Two different printfs
+      # answering one call. Fixed in config/scripts/switch-arch (patch 29).
+      DZ='wrote=1 ret=1 DIVERGES-AS-RECORDED'
       grep -aqF "$DZ" <<<"$DL" \
         || fail "REGRESSION: $A's d-zero line is not '$DZ' — %.0d of 0 changed what it writes, or what it returns, and those are two different defects: $(grep -aoE 'd-zero.{0,72}' <<<"$DL" | head -1) — see $DLOG"
-      if [[ "$A" != ppc ]]; then
-        grep -aq 'RET-DISAGREES' <<<"$DL" \
-          && fail "REGRESSION: $A now reports RET-DISAGREES on d-zero — snprintf writing a byte and returning 0 was a ppc-only anomaly, and it has spread — see $DLOG"
-      fi
+      # THE FIXTURE IS DELIBERATELY NOT MADE OPAQUE to the optimiser. Passing
+      # the format through a volatile pointer would stop a compiler answering
+      # for our libc — and would also hide the day a build flag lets one, which
+      # is the regression this line exists to catch.
+      grep -aq 'RET-DISAGREES' <<<"$DL" \
+        && fail "REGRESSION: $A reports RET-DISAGREES on d-zero — the length written and the length returned disagree, which means something other than libc/vsprintf.c answered for the return. On ppc that was snprintf left as a GCC builtin; check -fno-builtin in config/scripts/switch-arch before looking at number() — see $DLOG"
 
-      note "$A: 0 binding failures during boot, the reporter fixture produced exactly 1 naming '$SELFW', 7/7 printf-precision and 12/12 printf-edges cases pass (+2 recorded C99 divergences$([[ "$A" == ppc ]] && echo ', and ppc-only RET-DISAGREES'))"
+      note "$A: 0 binding failures during boot, the two reporter fixtures produced exactly 1 line each naming '$SELFW' and '$ESELFW', 7/7 printf-precision and 14/14 printf-edges cases pass (+2 recorded C99 divergences)"
     done
 
-    pass "the Forth bindings report their own failures on x86, amd64 and ppc: a clean boot prints ZERO feval/fword/eword lines on all three, and test-feval-report — the reporter's own must-catch fixture — prints exactly one, naming the unresolvable word and its throw code in both bases (-19 decimal, -13 hex — the Forth sources spell it the second way); and libc/vsprintf.c's %s precision now clips instead of over-reading (7/7), while number() precision and vsnprintf's buffer edge are correct on all three (12/12) with the two C99 divergences — %.0d of 0, and the 0 flag surviving a precision — asserted as themselves rather than hidden in a pass, and its ppc-only return-value anomaly (writes a byte, returns 0) pinned as a named UNKNOWN"
+    pass "the Forth bindings report their own failures on x86, amd64 and ppc: a clean boot prints ZERO feval/fword/eword lines on all three, and test-feval-report — the reporter's own must-catch fixture — prints exactly one, naming the unresolvable word and its throw code in both bases (-19 decimal, -13 hex — the Forth sources spell it the second way); and libc/vsprintf.c's %s precision now clips instead of over-reading (7/7), while number() precision and vsnprintf's buffer edge are correct on all three (12/12) with the two C99 divergences — %.0d of 0, and the 0 flag surviving a precision — asserted as themselves rather than hidden in a pass, and the ppc-only return-value anomaly that used to sit here as a named UNKNOWN is CLOSED: it was never number(), it was ppc32 being the one arch built without -fno-builtin, so GCC computed snprintf's return itself while our libc wrote the buffer — all three arches now print the same d-zero line. TODO 13.3(E) closes two of its three rows here: eword()'s not-found branch is watched to fire by name, and the untested printf surface it listed — %n and a long long wider than a cell — is now two cases that pass on every arch, including a 60-bit %llx on x86, whose stack cannot hold the value it prints"
     ;;
   client-forth)
     # TODO 13.3(A): x86's `go` reached the Forth trampoline and evaluated
