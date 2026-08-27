@@ -2604,7 +2604,7 @@ typed through the ~80-char truncation). Measured:
 |---|---|---|
 | **(a)** `-1 encode-int decode-int` | `ffffffff` — **not a round trip** | `-1` — round-trips |
 | **(b)** a value ≥ 2³² | ~~silently truncated to 0~~ → **REFUSED BY NAME** (patch 26) | **UNREPRESENTABLE** — an UNKNOWN, not a pass |
-| **(c)** `encode+` with an `allot` between fragments | **lies about the length** | **lies about the length** |
+| **(c)** `encode+` with an `allot` between fragments | ~~lies about the length~~ → **FIXED** (patch 27); the length was right, the **bytes** were not | same — it never was a 64-bit issue |
 
 **(c) bites on BOTH arches**, so it is not a 64-bit issue at all — this entry called it
 *"correct today"*, and it is correct only while nothing moves `here` between two
@@ -2675,6 +2675,31 @@ same reassuring `0` as a firmware that never saw one — not hypothetical: the f
 the counters at the **end**, caught the probe's own `ffffffff`, and that is how the scoping
 error was found. **The day `a-signbit-boot` goes non-zero, (a) has its first real consumer
 and the decision is forced.**
+
+**(c) `encode+` — FIXED 2026-08-26/27, and the entry's own description of it was wrong.**
+`nip +` keeps the first address and adds the two lengths: adjacency-by-assumption, right only
+while nothing moves `here` between the two `alloc-tree` calls. This section called that
+*"lies about the length"* — and re-injecting the defect disproved it on the first run.
+`nip +` returns `l1+l2`, which is **exactly right**. What it returns is the wrong **array**:
+`a1` followed by whatever sits at `a1+l1`. Measured on both arches, one `allot` forced
+between `1 encode-int` and `2 encode-int`:
+
+| | |
+|---|---|
+| `encode+` length | `8` — correct |
+| first `decode-int` | `1` — correct |
+| second `decode-int` | **`30302f63`** — the allot'd gap, read as an integer |
+
+A plausible length over the wrong bytes is the **LIED** rung, and worse than (b): nothing
+throws, the array decodes, and every field before the gap is right. The claim had never been
+measured — the old probe tested **adjacency** and inferred the rest, which is the same shape
+as the two claims below.
+
+The fix keeps the classic fast path byte for byte and concatenates into a third array when
+the fragments are not adjacent. **Both branches run in the probe**, and it says which it got
+(`c-fast-ADJACENT` / `c-slow-NOT`) before asserting the result — a fix whose slow path is
+never taken is indistinguishable from no fix. Re-injecting `nip +` fails it on the slow
+path's **second decode**, not on its length, which is why the assertion had to be the decode.
 
 #### Two claims this track made, both corrected by measurement 2026-08-27
 
