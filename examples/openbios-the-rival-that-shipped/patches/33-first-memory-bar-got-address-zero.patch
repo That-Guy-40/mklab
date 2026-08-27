@@ -1,0 +1,134 @@
+Subject: [PATCH 33/33] x86+amd64: the first memory BAR was assigned address ZERO
+Arch-tested: x86 amd64 ppc
+
+TODO 0.6c. QEMU's own `info pci` reported the VGA framebuffer as
+
+    Bus 0, device 2: BAR0: 32 bit prefetchable memory at 0xffffffffffffffff
+
+i.e. unmapped, on BOTH x86 and amd64 — the first framing of this as an
+amd64 problem was wrong. The device tree carried phys.lo = 0 for that
+BAR, `" screen" open-dev` faulted downstream of the zero, and 16 MiB of
+framebuffer was unreachable.
+
+CAUSE, from the firmware's own trace with CONFIG_DEBUG_PCI:
+
+    Configuring BARs for .../QEMU,VGA: reloc 0x0 omask 0x8
+                                       mem_base 0x1000000 size 0x1000000
+
+drivers/pci.c:2125 seeds its allocator with `mem_base =
+arch->pci_mem_base`, and this arch's `default_pci_host` OMITTED the
+field. So it was 0, `reloc` for the first memory BAR came out 0, and the
+BAR was programmed with an address that is not an address. Every LATER
+BAR looked fine — mem_base had advanced past it by then — which is why
+this survived: the symptom is confined to whichever memory BAR happens to
+be configured first, and on QEMU's `pc` that is the framebuffer.
+
+Every other arch in the tree already sets it: ppc 0x80000000, sparc64
+0x20000000, both with the comment "avoid VGA at 0xa0000". x86 and amd64
+never did. Reading source alone would not have found this — I checked the
+struct against x86's first and confirmed they were byte-identical, which
+is true and was the wrong question. The trace answered it.
+
+AFTER, on both arches:
+
+    BAR0: 32 bit prefetchable memory at 0x40000000 [0x40ffffff]
+    BAR2: 32 bit memory at 0x41000000 [0x41000fff]
+
+WHY 0x40000000 AND NOT THE CONVENTIONAL 0xC0000000. Above this lab's RAM
+(512 MiB) with room to spare, below the APIC hole at 0xFEC00000 and the
+pflash window at 0xFFBE0000 — and with BIT 31 CLEAR, so every PCI address
+stays a positive 32-bit value.
+
+That last part is not cosmetic while TODO 13.2(a) is undecided.
+`decode-int` zero-extends, the tree encodes pointers as ints, and a base
+of 0xC0000000 would put bit 31 into every BAR address and trip 13.2(a)'s
+`a-signbit-boot` guard on the next boot. The guard would be working;
+forcing that decision as a side effect of a BAR fix is what would be
+wrong. Verified after the change: `a-signbit-boot=0` still, across 0x2b
+four-byte decodes.
+
+WHAT THIS DID NOT FIX, measured rather than assumed: `" screen" open-dev`
+STILL faults with a stack underflow after the BAR has a real address, on
+x86 and amd64 alike. TODO 0.6d predicted it "may simply go away" once
+0.6c was fixed. It does not. The two are independent, and 0.6d stays open
+as a driver question.
+
+Run: vga property-abi mmio-writer pmem-writer flash-writer amd64
+multiboot diagnostics ppc nvram amd64-pmem dict-identity client-forth —
+all 13 PASS. The change moves every PCI memory address on both arches, so
+the sweep is the point.
+
+diff --git a/arch/x86/openbios.c b/arch/x86/openbios.c
+--- a/arch/x86/openbios.c
++++ b/arch/x86/openbios.c
+@@ -39,6 +39,33 @@
+     .vendor_id = PCI_VENDOR_ID_INTEL,
+     .device_id = PCI_DEVICE_ID_INTEL_82441,
+     .io_base = 0x1000,
++    /* LOCAL DIVERGENCE (mklab). TODO 0.6c: WITHOUT THIS THE FIRST MEMORY BAR IS
++     * ASSIGNED ADDRESS ZERO. drivers/pci.c:2125 seeds its allocator with
++     * `mem_base = arch->pci_mem_base`, and this struct omitted the field — so it
++     * was 0, `reloc` for the first memory BAR came out 0, and the BAR was
++     * programmed with an address that is not an address. Every LATER BAR looked
++     * fine, because mem_base had advanced past it.
++     *
++     * Measured with CONFIG_DEBUG_PCI on x86:
++     *
++     *   Configuring BARs for .../QEMU,VGA: reloc 0x0 omask 0x8 mem_base 0x1000000 size 0x1000000
++     *
++     * The victim is whichever memory BAR is configured first; on QEMU's `pc`
++     * that is the VGA framebuffer, 16 MiB, which is why `" screen" open-dev`
++     * faulted and why the device tree carried phys.lo = 0 for it. Every other
++     * arch in the tree already sets this — ppc 0x80000000, sparc64 0x20000000,
++     * both with the comment "avoid VGA at 0xa0000". x86 and amd64 never did.
++     *
++     * WHY 0x40000000 AND NOT THE CONVENTIONAL 0xC0000000. Above this lab's RAM
++     * (512 MiB) with room to spare, below the APIC hole at 0xFEC00000, and
++     * below the pflash window at 0xFFBE0000 — but also with BIT 31 CLEAR, so
++     * every PCI address stays a positive 32-bit value. That is not cosmetic
++     * while TODO 13.2(a) is undecided: `decode-int` zero-extends, the tree
++     * encodes pointers as ints, and a base of 0xC0000000 would put bit 31 into
++     * every BAR address and trip 13.2(a)'s `a-signbit-boot` guard on the next
++     * boot. The guard would be working; forcing that decision as a side effect
++     * of a BAR fix is what would be wrong. */
++    .pci_mem_base = 0x40000000,
+     .host_ranges = {
+         { .type = IO_SPACE, .parentaddr = 0, .childaddr = 0x1000, .len = 0 },
+         { .type = 0, .parentaddr = 0, .childaddr = 0, .len = 0 }
+diff --git a/arch/amd64/openbios.c b/arch/amd64/openbios.c
+--- a/arch/amd64/openbios.c
++++ b/arch/amd64/openbios.c
+@@ -43,6 +43,33 @@
+     .vendor_id = PCI_VENDOR_ID_INTEL,
+     .device_id = PCI_DEVICE_ID_INTEL_82441,
+     .io_base = 0x1000,
++    /* LOCAL DIVERGENCE (mklab). TODO 0.6c: WITHOUT THIS THE FIRST MEMORY BAR IS
++     * ASSIGNED ADDRESS ZERO. drivers/pci.c:2125 seeds its allocator with
++     * `mem_base = arch->pci_mem_base`, and this struct omitted the field — so it
++     * was 0, `reloc` for the first memory BAR came out 0, and the BAR was
++     * programmed with an address that is not an address. Every LATER BAR looked
++     * fine, because mem_base had advanced past it.
++     *
++     * Measured with CONFIG_DEBUG_PCI on x86:
++     *
++     *   Configuring BARs for .../QEMU,VGA: reloc 0x0 omask 0x8 mem_base 0x1000000 size 0x1000000
++     *
++     * The victim is whichever memory BAR is configured first; on QEMU's `pc`
++     * that is the VGA framebuffer, 16 MiB, which is why `" screen" open-dev`
++     * faulted and why the device tree carried phys.lo = 0 for it. Every other
++     * arch in the tree already sets this — ppc 0x80000000, sparc64 0x20000000,
++     * both with the comment "avoid VGA at 0xa0000". x86 and amd64 never did.
++     *
++     * WHY 0x40000000 AND NOT THE CONVENTIONAL 0xC0000000. Above this lab's RAM
++     * (512 MiB) with room to spare, below the APIC hole at 0xFEC00000, and
++     * below the pflash window at 0xFFBE0000 — but also with BIT 31 CLEAR, so
++     * every PCI address stays a positive 32-bit value. That is not cosmetic
++     * while TODO 13.2(a) is undecided: `decode-int` zero-extends, the tree
++     * encodes pointers as ints, and a base of 0xC0000000 would put bit 31 into
++     * every BAR address and trip 13.2(a)'s `a-signbit-boot` guard on the next
++     * boot. The guard would be working; forcing that decision as a side effect
++     * of a BAR fix is what would be wrong. */
++    .pci_mem_base = 0x40000000,
+     .host_ranges = {
+         { .type = IO_SPACE, .parentaddr = 0, .childaddr = 0x1000, .len = 0 },
+         { .type = 0, .parentaddr = 0, .childaddr = 0, .len = 0 }

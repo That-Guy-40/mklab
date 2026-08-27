@@ -182,6 +182,13 @@ vanished before the next prompt; and a raw image diff is swamped by console echo
 assertion counts a colour the console never produces. **Not a PCI BAR** — QEMU reports the
 VGA BAR0 unassigned, which is TODO §0.6c.
 
+**2026-08-27, patch 33 (TODO §0.6c):** the first memory BAR was being assigned address `0`,
+on **both** arches. Fixed by giving `default_pci_host` a `.pci_mem_base`; `BAR0` now lands at
+`0x40000000`. The change moves **every PCI memory address on x86 and amd64**, so the whole
+sweep is the assertion: `vga property-abi mmio-writer pmem-writer flash-writer amd64
+multiboot diagnostics ppc nvram amd64-pmem dict-identity client-forth` — 13 of 13 PASS, and
+§13.2(a)'s `a-signbit-boot` guard is still `0` because the base was chosen with bit 31 clear.
+
 ### The negative controls, run 2026-08-23
 
 Each fix was broken and watched to bite before being trusted:

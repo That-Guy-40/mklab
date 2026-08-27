@@ -109,12 +109,24 @@ items, and neither is blocked on anything.**
       by a file, so the assertion has to come from outside the firmware some other way
       (QEMU's `screendump` is the obvious candidate, and it has not been tried).
 
-- [ ] **0.6c — the VGA BAR0 is never assigned on amd64.** 16 MiB does not fit the window the
-      firmware allocates from, so `assigned-addresses` carries `phys.lo = 0` and QEMU reports
-      the BAR unmapped. Everything below it inherits that zero.
-- [ ] **0.6d — `" screen" open-dev` GPFs**, `dstackcnt=-3`, downstream of 0.6c's zero.
-      Reachable only since §13.3(D) made the alias resolve. Fix 0.6c first and re-measure
-      before touching the driver: this may simply go away.
+- [x] **0.6c — FIXED 2026-08-27**, [patch 33](examples/openbios-the-rival-that-shipped/patches/33-first-memory-bar-got-address-zero.patch).
+      **Not a window-size problem, and not an amd64 one** — both framings above were wrong.
+      `drivers/pci.c:2125` seeds its allocator with `mem_base = arch->pci_mem_base`, and
+      x86's and amd64's `default_pci_host` **omitted the field**, so it was 0 and the FIRST
+      memory BAR was programmed with address 0. Every later BAR looked fine because
+      `mem_base` had advanced past it — which is why it survived. ppc and sparc64 both set
+      it already, with the comment *"avoid VGA at 0xa0000"*. Now `.pci_mem_base = 0x40000000`
+      on both, and `BAR0: 32 bit prefetchable memory at 0x40000000 [0x40ffffff]`.
+      **Bit 31 deliberately clear**: `0xC0000000` would put it into every BAR address and
+      trip §13.2(a)'s `a-signbit-boot` guard — the guard would be working, and forcing that
+      decision as a side effect of a BAR fix is what would be wrong. Verified after:
+      `a-signbit-boot=0` still.
+- [ ] **0.6d — `" screen" open-dev` faults**, a stack underflow (`dstackcnt=-3` on amd64;
+      invalid opcode plus `threw -4` on x86 — **it reproduces on both arches**, which the
+      first framing also got wrong). **The hypothesis above is DISPROVED**: 0.6c is fixed,
+      the BAR now has a real address, and this still faults. They are independent. It is a
+      driver question — `map-fb` / the display node's `open` — and the patch-20 reporter
+      already names the underflow, which is a starting point.
 
 **What NOT to re-derive**, because each cost a run and is written up in §16:
 
