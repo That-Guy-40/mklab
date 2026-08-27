@@ -146,6 +146,33 @@ divergent d-zero line; it now expects one line for all three arches. `printf-edg
 from 12/12 to 14/14 with the `%n` and `%llx` cases, and `test-eword-report` is a second
 must-catch fixture beside `test-feval-report`.
 
+**2026-08-27, patch 31 (TODO §16):** `property-abi multiboot amd64 vga diagnostics ppc
+client-forth nvram dict-identity amd64-pmem` — all PASS on x86 + amd64 + ppc builds.
+`property-abi` gained the storage checkpoint: `int!` and `string!` write where the caller
+says, with **`here` unchanged**. Two controls isolate the two halves — one bumps `here`
+while the bytes stay right, the other corrupts the bytes while `here` stays put — because
+neither assertion is sufficient alone.
+
+**2026-08-27, patch 32 (TODO §16, the cursor):** same ten tracks, all PASS. `property-abi`
+now also composes three fields at a caller-chosen address with `int!+` and reads them back
+with the stock `decode-int`. Its stride control is the instructive one — a wrong stride
+leaves **field one correct** and only corrupts what follows, which is why the assertions
+cover fields two and three.
+
+**2026-08-27, `pmem-writer` (TODO §16, third deliverable):** a new track — three 1275-encoded
+ints written by `int!+` to an **NVDIMM at `0x100000000`**, read back with the stock
+`decode-int`, and then found byte-for-byte in the host's backing file by `od` **after QEMU
+exited**. Its control aims the identical probe at ordinary RAM: every firmware-side
+assertion passes and only the host-file one fails, which is the point — two firmware words
+agreeing with each other cannot say where the bytes went.
+
+**2026-08-27, `flash-writer` (TODO §16, scope):** a second new track, and its verdict is
+**no** — a CFI part is not a store-to seam. The corrected window reads an erased part's
+`ff ff ff` (the no-flash control reads `0 0 0`, so that is a measurement), three `int!+`
+stores leave both the array and the host image untouched, and storing at the **uncorrected**
+`ffbe0000` reads back convincingly as `c0 ff ee` — into RAM, nowhere near the chip. Run with
+`persist-flash pmem-writer property-abi multiboot amd64 diagnostics`, all PASS.
+
 ### The negative controls, run 2026-08-23
 
 Each fix was broken and watched to bite before being trusted:

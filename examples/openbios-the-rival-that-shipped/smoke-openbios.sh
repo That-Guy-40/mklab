@@ -33,6 +33,10 @@ TRACK (default multiboot):
                               and libc/vsprintf.c's %s precision clips
   client-forth                `go` runs a Forth payload loaded off media --
                               the trampoline's segments (TODO 13.3(A))
+  pmem-writer                 a 1275 structure written to an NVDIMM above
+                              4 GiB and found in the host file (TODO 16)
+  flash-writer                and why CFI flash is NOT the same seam: a bare
+                              store is a command, not data (TODO 16)
 
 Exit: 0 PASS / 1 FAIL / 77 SKIP. Each track ends on exactly one verdict line.
 Env: OPENBIOS_WORKDIR, KERNEL, INITRD, COREBOOT_DIR
@@ -923,6 +927,7 @@ case "$FLAVOR" in
     cat > "$PST/PROP.FTH" <<'FTH'
 \ TODO 13.2 probe. Base is HEX.
 ." P132-START" cr
+create tgt 20 allot
 ." cell-bits=" 1 cells 8 * . cr
 \ FIRST, before this probe decodes anything of its own: the counters as the
 \ BOOT left them. Read at the end instead and the measurement includes the
@@ -947,6 +952,37 @@ then
 clear
 ffffffff encode-int 2drop ." b-ctl-u32-OK" cr
 -1 encode-int 2drop ." b-ctl-neg-OK" cr
+\ TODO 16: write where the caller says, and do not move HERE doing it.
+tgt 20 ff fill
+here
+12345678 tgt int!
+here = if ." s-int-HERE-UNCHANGED" else ." s-int-HERE-MOVED" then cr
+12345678 encode-int drop
+tgt swap 4 comp 0= if ." s-int-BYTES-MATCH" else ." s-int-BYTES-DIFFER" then cr
+tgt 20 ff fill
+here
+" ab" tgt string!
+here = if ." s-str-HERE-UNCHANGED" else ." s-str-HERE-MOVED" then cr
+." s-str-len=" " ab" /string . cr
+." s-str-nul=" tgt 2 + c@ . cr
+." s-str-txt=" tgt 2 type cr
+clear
+\ TODO 16, the cursor: a whole structure at an address the caller chose,
+\ then read back with the stock 1275 decoder.
+tgt 20 ff fill
+here
+tgt
+11111111 swap int!+
+22222222 swap int!+
+33333333 swap int!+
+tgt - ." w-advanced=" dup . cr
+drop
+here = if ." w-HERE-UNCHANGED" else ." w-HERE-MOVED" then cr
+tgt c decode-int ." w-i1=" . cr
+decode-int ." w-i2=" . cr
+decode-int ." w-i3=" . cr
+2drop
+clear
 3 encode-int
 4 encode-int
 3 pick 3 pick + 2 pick = if ." c-fast-ADJACENT" else ." c-fast-NOT" then cr
@@ -979,6 +1015,24 @@ clear
 drop
 ." d-depth-post=" depth . cr
 ." a-signbit-end=" l@be-signbit @ . cr
+\ Review 2's fourth assertion, and the UNKNOWN under it: does /chosen's
+\ stdin survive a round trip, and where do instances actually land?
+." h-live=" stdin @ . cr
+" stdin" " /chosen" find-dev drop get-package-property 0= if
+  decode-int nip nip ." h-prop=" . cr
+else
+  ." h-NOPROP" cr
+then
+." h-hi=" /n /l = if 0 else stdin @ 20 rshift then . cr
+\ The must-NOT-match control, in the same run: a DIFFERENT ihandle from the
+\ same node must not compare equal, or "they matched" would be a sentence about
+\ the comparison rather than about the round trip.
+" stdout" " /chosen" find-dev drop get-package-property 0= if
+  decode-int nip nip ." h-other=" . cr
+else
+  ." h-NOOTHER" cr
+then
+clear
 ." P132-END" cr
 FTH
     genisoimage -quiet -o "$WORKDIR/prop.iso" -V PROPISO -r -J "$PST"
@@ -1069,6 +1123,49 @@ FTH
     grep -q 'b-UNREPRESENTABLE-ON-THIS-CELL' <<<"$XL" \
       || fail "13.2(b) reported a verdict on x86, where a 4-byte cell cannot express the input — that can only mean the probe stopped checking the literal survived, which is the false PASS this track was written to avoid"
 
+    # TODO 16, THE FIRST DELIVERABLE OF THE STORAGE DECISION. `int!` and
+    # `string!` take the destination as a stack parameter, and `encode-int` /
+    # `encode-string` are redefined in terms of them — one implementation per
+    # encoding, shared by the device tree and by anything aimed elsewhere.
+    #
+    # `here` UNCHANGED IS THE WHOLE ASSERTION. Bytes landing at the right address
+    # is satisfied by a writer that allocates in the arena and copies; only a
+    # writer that leaves HERE alone can ever be pointed at flash or MMIO. The
+    # byte-match line is necessary too — writing nothing moves HERE just as
+    # little — so neither is sufficient by itself.
+    for A in amd64 x86; do
+      SW="$(tr -d "\r" < "$WORKDIR/prop-$A.log")"
+      grep -qF 's-int-HERE-UNCHANGED' <<<"$SW" \
+        || fail "REGRESSION: TODO 16 on $A: int! moved HERE — it allocated instead of writing where it was told, and that is the one property that lets this be aimed at memory the firmware does not own (F2 in REVIEW-preboot-forth-binary-structures.md) — see $WORKDIR/prop-$A.log"
+      grep -qF 's-int-BYTES-MATCH' <<<"$SW" \
+        || fail "REGRESSION: TODO 16 on $A: the four bytes int! wrote to a caller-chosen buffer differ from what encode-int produces for the same value — one encoding used two ways is the whole point of the split — see $WORKDIR/prop-$A.log"
+      grep -qF 's-str-HERE-UNCHANGED' <<<"$SW" \
+        || fail "REGRESSION: TODO 16 on $A: string! moved HERE — see $WORKDIR/prop-$A.log"
+      grep -qE 's-str-len=[[:space:]]*3( |$)' <<<"$SW" \
+        || fail "TODO 16 on $A: /string of a 2-byte string is not 3 — the sizer and the terminator disagree, so a caller sizing a buffer with it comes up short: $(grep -aoE 's-str-len=.{0,12}' <<<"$SW" | head -1) — see $WORKDIR/prop-$A.log"
+      grep -qE 's-str-nul=[[:space:]]*0( |$)' <<<"$SW" \
+        || fail "TODO 16 on $A: string! left no terminator — the buffer is poisoned with ff first precisely so an inherited zero cannot pass for a written one: $(grep -aoE 's-str-nul=.{0,12}' <<<"$SW" | head -1) — see $WORKDIR/prop-$A.log"
+      grep -qF 's-str-txt=ab' <<<"$SW" \
+        || fail "TODO 16 on $A: string! did not copy the bytes — see $WORKDIR/prop-$A.log"
+
+      # THE CURSOR. Three fields written at a caller-chosen address and read back
+      # with the stock 1275 decoder — the toolkit's minimum viable shape, since
+      # the read half was already general and only the write half was arena-bound.
+      #
+      # The decode assertions are what make this more than the single-field case:
+      # a cursor that advances by the wrong amount still writes the first field
+      # correctly, so field ONE proves nothing. Fields two and three are where a
+      # bad stride shows.
+      grep -qE 'w-advanced=[[:space:]]*c( |$)' <<<"$SW" \
+        || fail "REGRESSION: TODO 16 on $A: three int!+ calls advanced the cursor by $(grep -aoE 'w-advanced=[0-9a-f]+' <<<"$SW" | head -1 | cut -d= -f2) bytes, not c — the stride disagrees with /int, so every field after the first lands in the wrong place — see $WORKDIR/prop-$A.log"
+      grep -qF 'w-HERE-UNCHANGED' <<<"$SW" \
+        || fail "REGRESSION: TODO 16 on $A: the cursor moved HERE — composing at a chosen address must not touch the arena, or the whole point of the split is lost — see $WORKDIR/prop-$A.log"
+      for f in 1:11111111 2:22222222 3:33333333; do
+        grep -qE "w-i${f%%:*}=[[:space:]]*${f#*:}( |\$)" <<<"$SW" \
+          || fail "REGRESSION: TODO 16 on $A: field ${f%%:*} of the cursor-written structure decoded as $(grep -aoE "w-i${f%%:*}=[0-9a-f-]+" <<<"$SW" | head -1 | cut -d= -f2), not ${f#*:} — written at a caller-chosen address and read back with the stock decode-int, these have to agree or the two halves do not meet — see $WORKDIR/prop-$A.log"
+      done
+    done
+
     # THE MUST-NOT-CATCH PAIR, and without it the line above is satisfied by a
     # gate that refuses EVERYTHING — which would be a firmware that cannot encode
     # an integer at all. Both halves of the 32-bit range have to survive: an
@@ -1095,6 +1192,22 @@ FTH
       CL2="$(tr -d "\r" < "$WORKDIR/prop-$A.log")"
       grep -qF 'c-fast-ADJACENT' <<<"$CL2" \
         || fail "13.2(c) on $A: two back-to-back encode-ints did NOT come out adjacent, so the fast path this fix preserves was never taken and the run says nothing about it — see $WORKDIR/prop-$A.log"
+      # REVIEW 2's FOURTH ASSERTION, and the UNKNOWN underneath it. The entry
+      # asked for /chosen's stdin to survive a round trip "at whatever address
+      # instances actually land on in long mode" — and the review's own closing
+      # section named the prior question: whether an amd64 instance can land
+      # above 4 GiB at all. Both are answered per boot rather than once.
+      HL="$(grep -aoE 'h-live=[0-9a-f]+' <<<"$CL2" | tail -1 | cut -d= -f2)"
+      HP="$(grep -aoE 'h-prop=[0-9a-f]+' <<<"$CL2" | tail -1 | cut -d= -f2)"
+      HO="$(grep -aoE 'h-other=[0-9a-f]+' <<<"$CL2" | tail -1 | cut -d= -f2)"
+      [[ -n "$HL" && "$HL" == "$HP" ]] \
+        || fail "13.3(E)/review §2: on $A, /chosen's stdin property decodes to ${HP:-absent} but the live ihandle is ${HL:-absent} — encode-int/decode-int does not round-trip the pointer the tree stores there, which is the hazard 13.2(b)'s refusal exists to make honest — see $WORKDIR/prop-$A.log"
+      [[ -n "$HO" && "$HO" != "$HL" ]] \
+        || fail "13.3(E)/review §2: on $A, stdout's ihandle (${HO:-absent}) is not distinguishable from stdin's ($HL), so 'they matched' above is a statement about the comparison and not about the round trip — see $WORKDIR/prop-$A.log"
+      grep -qE 'h-hi=[[:space:]]*0( |$)' <<<"$CL2" \
+        || fail "13.3(E)/review §2: on $A an instance now lands ABOVE 4 GiB (top 32 bits $(grep -aoE 'h-hi=[0-9a-f]+' <<<"$CL2" | tail -1 | cut -d= -f2)) — the truncation hazard the review named is live from this boot on. 13.2(b) means encode-int will REFUSE rather than truncate it, so expect an honest abort where /chosen used to be written; that is the good failure, but it is a failure — see $WORKDIR/prop-$A.log"
+      note "$A: /chosen stdin round-trips ($HL), stdout is distinguishable ($HO), and instances land below 4 GiB"
+
       grep -qF 'c-slow-NOT' <<<"$CL2" \
         || fail "13.2(c) on $A: an allot between two encode-ints no longer separates them, so the CONCATENATING branch never ran — a fix whose slow path is unreachable is not a fix — see $WORKDIR/prop-$A.log"
       # The length is the WEAK check and is here only to catch a mis-sized
@@ -1166,7 +1279,7 @@ FTH
         || fail "13.2(d) on $A: the remainder length after decoding all 2 bytes of a 2-byte property is not 0 — decode-bytes is not subtracting #bytes from prop-len1: $(grep -aoE 'd-len2=.{0,12}' <<<"$DL2" | head -1) — see $WORKDIR/prop-$A.log"
     done
 
-    pass "TODO 13.2 watched to bite: (a) the SAME four bytes decode to ffffffff on amd64 and -1 on x86 — encode-int/decode-int is not a round trip at a 64-bit cell — and the premise it is tolerated on is now DERIVED rather than assumed: every four-byte decode of the boot is counted, and none has bit 31 set, which is the only reason zero-extension has yet to give a real consumer a wrong answer; (b) FIXED — a value >= 2^32 is now REFUSED BY NAME on amd64 where it used to be silently truncated into four bytes, with ffffffff and -1 both still encoding cleanly in the same run so the gate is not simply refusing everything, and the input still UNREPRESENTABLE on x86, reported as an UNKNOWN not a pass; (c) FIXED — encode+ used to be `nip +`, adjacency-by-assumption: it returned the RIGHT length over the WRONG bytes the moment anything moved HERE between fragments, so the second decode-int read the gap (30302f63) rather than the fragment, and §13.2's own "lies about the length" was disproved by the control; it now concatenates, with BOTH branches exercised in the same run (adjacent 3,4 and non-adjacent 1,2 each coming back out of an 8-byte array) so a fix whose slow path never runs cannot pass; and encode-phys is NOT fixed-width — 8 bytes under / (the no-parent default of 2 cells) against 4 under /ide@1 (root's own #address-cells 1); and (d) decode-bytes, which used to return CLEANLY with six items where four are documented — two cells robbed off the return stack — now round-trips encode-bytes on both arches at depth exactly 4, from an empty stack back to an empty one"
+    pass "TODO 13.2 watched to bite: (a) the SAME four bytes decode to ffffffff on amd64 and -1 on x86 — encode-int/decode-int is not a round trip at a 64-bit cell — and the premise it is tolerated on is now DERIVED rather than assumed: every four-byte decode of the boot is counted, and none has bit 31 set, which is the only reason zero-extension has yet to give a real consumer a wrong answer; (b) FIXED — a value >= 2^32 is now REFUSED BY NAME on amd64 where it used to be silently truncated into four bytes, with ffffffff and -1 both still encoding cleanly in the same run so the gate is not simply refusing everything, and the input still UNREPRESENTABLE on x86, reported as an UNKNOWN not a pass; (c) FIXED — encode+ used to be `nip +`, adjacency-by-assumption: it returned the RIGHT length over the WRONG bytes the moment anything moved HERE between fragments, so the second decode-int read the gap (30302f63) rather than the fragment, and §13.2's own "lies about the length" was disproved by the control; it now concatenates, with BOTH branches exercised in the same run (adjacent 3,4 and non-adjacent 1,2 each coming back out of an 8-byte array) so a fix whose slow path never runs cannot pass; and encode-phys is NOT fixed-width — 8 bytes under / (the no-parent default of 2 cells) against 4 under /ide@1 (root's own #address-cells 1); and (d) decode-bytes, which used to return CLEANLY with six items where four are documented — two cells robbed off the return stack — now round-trips encode-bytes on both arches at depth exactly 4, from an empty stack back to an empty one; and review §2's fourth assertion is closed — /chosen's stdin round-trips through encode-int/decode-int at the address instances actually land on, a different ihandle from the same node is distinguishable so that match means something, and the top 32 bits are derived per boot rather than assumed, which answers the review's own UNKNOWN: an amd64 instance does NOT land above 4 GiB today; and TODO 16's storage split holds on both arches — int!/string! write where the caller says with HERE unchanged, and the cursor composes three fields at a chosen address that the stock 1275 decode-int reads back unchanged"
     ;;
   vga)
     # TODO 13.1's DRIVER_VGA half: PCI enumeration on amd64 (patch 17) and the
@@ -1561,5 +1674,202 @@ FTH
 
     pass "the Forth trampoline runs in the firmware's own segments on both arches: x86's \`go\` evaluates a Forth payload loaded off media (it printed init-program's 'nothing to evaluate' before, reading a stale pre-relocation copy of the dictionary that made \$find walk past the load-base shadow and load-size fetch 0), amd64 — which does not relocate, so the bug could not show — still passes, x86's live and stale dictionary heads are proven to DIFFER so its pass is about the right window, and in a separate boot both arches refuse a payload without is_forth()'s magic by name instead of evaluating it"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|vga|diagnostics|client-forth]" >&2; exit 1 ;;
+  pmem-writer)
+    # TODO 16's THIRD deliverable, and the one that makes the other two mean
+    # something: a 1275-encoded structure written to storage THE FIRMWARE DOES
+    # NOT OWN, and then found in the host's file after QEMU is gone.
+    #
+    # Patch 31 gave the writers a destination; patch 32 gave them a cursor. Both
+    # were proven against a dictionary buffer, which is still the firmware's own
+    # memory -- so `here` unchanged was the only thing separating them from the
+    # arena words they replaced. This aims them at an NVDIMM mapped at
+    # 0x100000000: above 4 GiB, reachable only in long mode, and backed by a file
+    # on the host. If the bytes are in that file, they left the firmware.
+    #
+    # WHY THE HOST FILE IS THE ASSERTION AND THE PROMPT IS NOT. `decode-int`
+    # reading back what `int!+` wrote proves the two words agree with each other;
+    # it would pass just as happily if both were operating on RAM the firmware
+    # allocated. Only a reader that is not the firmware can say where the bytes
+    # went. This is the same reason the amd64-pmem track greps the image rather
+    # than trusting `printenv`.
+    #
+    # The offset is 4 MiB into the region, well clear of /nvram's own partition
+    # at the base: the point is to write beside the firmware's storage, not on
+    # top of it.
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v od >/dev/null || skip "od not installed — the host-side read is the assertion"
+    WMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"
+    WDI="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    [[ -f "$WMB" && -f "$WDI" ]] || skip "no amd64 image — run ./build-openbios.sh amd64 first"
+
+    WNV="$WORKDIR/pmem-writer.img"
+    rm -f "$WNV"; truncate -s 64M "$WNV"
+    WOFF=$((0x400000))
+    WANT="c0 ff ee 01 c0 ff ee 02 c0 ff ee 03"
+
+    # THE BEFORE READING IS A CONTROL, not bookkeeping: a fresh sparse file reads
+    # as zeros, so finding the pattern afterwards cannot be something that was
+    # already there.
+    HAD="$(od -An -tx1 -j "$WOFF" -N 12 "$WNV" | tr -s ' ' | sed 's/^ //;s/ $//')"
+    [[ "$HAD" != "$WANT" ]] \
+      || fail "the pattern was already at offset $WOFF in a freshly truncated file, so finding it after the write would prove nothing"
+    note "before: offset $WOFF reads [$HAD]"
+
+    WSOCK="$WORKDIR/smoke-pw.sock"; WLOG="$WORKDIR/pmem-writer.log"
+    rm -f "$WSOCK" "$WLOG"
+    qemu-system-x86_64 -M "pc,accel=$ACCEL,nvdimm=on" -m 512,slots=2,maxmem=2G \
+      -kernel "$WMB" -initrd "$WDI" \
+      -object "memory-backend-file,id=nv,share=on,mem-path=$WNV,size=64M" \
+      -device nvdimm,id=nv1,memdev=nv \
+      -display none -serial "unix:$WSOCK,server=on" -no-reboot >/dev/null 2>&1 &
+    WQ=$!
+    python3 "$REPO/tools/drive-serial-repl.py" "$WSOCK" "$WLOG" --timeout 120 \
+      --expect "0 > " \
+      `# the prompt PRINTS THE STACK DEPTH, and the cursor is deliberately on it` \
+      `# between the writes: expecting "0 > " here waits forever, which it did.` \
+      --send '." phere0=" here . cr\r' --expect "> " \
+      --send '100400000 c0ffee01 swap int!+ c0ffee02 swap int!+\r' --expect "> " \
+      --send 'c0ffee03 swap int!+ 100400000 - ." padv=" . cr\r' --expect "> " \
+      --send '." phere1=" here . cr\r' --expect "> " \
+      --send '100400000 c decode-int ." pi1=" . cr\r' --expect "> " \
+      --send 'decode-int ." pi2=" . cr\r' --expect "> " \
+      --send 'decode-int ." pi3=" . cr\r' --expect "> " \
+      --send 'clear ." PWDONE" cr\r' --expect "PWDONE"
+    WRC=$?
+    kill "$WQ" 2>/dev/null   # by PID, never by pattern
+    sleep 1
+    [[ $WRC -eq 0 ]] || fail "the amd64 firmware did not finish the pmem-writer probe (rc=$WRC) — see $WLOG"
+    WL="$(tr -d "\r" < "$WLOG")"
+
+    # (1) the firmware's own view: the cursor advanced by three ints, and reading
+    # back through the stock 1275 decoder returns what was written.
+    grep -qE 'padv=[[:space:]]*c( |$)' <<<"$WL" \
+      || fail "the cursor advanced by $(grep -aoE 'padv=[0-9a-f]+' <<<"$WL" | head -1 | cut -d= -f2) bytes across three int!+ calls, not c — see $WLOG"
+    for f in 1:c0ffee01 2:c0ffee02 3:c0ffee03; do
+      grep -qE "pi${f%%:*}=[[:space:]]*${f#*:}( |$)" <<<"$WL" \
+        || fail "field ${f%%:*} read back from pmem as $(grep -aoE "pi${f%%:*}=[0-9a-f-]+" <<<"$WL" | head -1 | cut -d= -f2), not ${f#*:} — see $WLOG"
+    done
+
+    # (2) HERE unchanged, across writes to memory 4 GiB up. The whole storage
+    # split is this line: a writer that bumped HERE would have put these bytes in
+    # the dictionary and copied nothing to the NVDIMM.
+    PH0="$(grep -aoE 'phere0=[0-9a-f]+' <<<"$WL" | head -1 | cut -d= -f2)"
+    PH1="$(grep -aoE 'phere1=[0-9a-f]+' <<<"$WL" | head -1 | cut -d= -f2)"
+    [[ -n "$PH0" && "$PH0" == "$PH1" ]] \
+      || fail "HERE moved from ${PH0:-?} to ${PH1:-?} across the pmem writes — the writer allocated instead of writing where it was told, which is exactly what makes it unusable for storage the firmware does not own — see $WLOG"
+
+    # (3) THE ASSERTION. QEMU is gone; this is the host reading its own file.
+    GOT="$(od -An -tx1 -j "$WOFF" -N 12 "$WNV" | tr -s ' ' | sed 's/^ //;s/ $//')"
+    [[ "$GOT" == "$WANT" ]] \
+      || fail "the host image holds [$GOT] at offset $WOFF, not [$WANT] — the firmware read back its own three fields, so int!+ and decode-int agree with each other, but the bytes did not reach storage outside the firmware. That agreement is what this check exists to distrust — see $WLOG"
+    note "after:  offset $WOFF reads [$GOT] — big-endian, written by int!+, read by od"
+
+    pass "TODO 16 end to end: three 1275-encoded ints written by int!+ at 0x100400000 — an NVDIMM above 4 GiB, reachable only in long mode — read back through the stock decode-int with HERE unchanged, and found byte-for-byte at offset $WOFF of the host's backing file after QEMU exited, where a fresh file held [$HAD]. The write half is no longer arena-bound (F2 in REVIEW-preboot-forth-binary-structures.md)"
+    ;;
+  flash-writer)
+    # TODO 16, and the answer is NO -- which is the point of measuring it.
+    #
+    # `pmem-writer` showed a 1275 structure written by int!+ reaching an NVDIMM
+    # and surviving into the host's file. The obvious next question is whether
+    # that generalizes to the other seam this lab already has: CFI flash. It does
+    # not, and the reason is not a defect in the writer.
+    #
+    # A CFI part is not a store-to seam. arch/x86/openbios.c's lab_flash_write()
+    # does the Intel sequence -- 0x20 setup, poll status, 0x40 program per byte,
+    # 0xff back to read-array. A bare store into that window is a COMMAND, not
+    # data. So the split's conclusion stands but its scope is narrower than the
+    # NVDIMM result suggests: the writer produces bytes at an address; getting
+    # those bytes into flash is the flash driver's job, above it.
+    #
+    # THREE THINGS ARE PINNED HERE, and the third is the trap.
+    #
+    #   1. the window really is the chip -- an erased part reads ff, and the
+    #      no-drive control reads 0, so "ff" is a measurement and not a constant
+    #   2. a bare store leaves both the array and the host file untouched
+    #   3. AIMING AT THE UNCORRECTED ADDRESS LOOKS LIKE IT WORKED. x86 rebases
+    #      the GDT, so a Forth address is not a physical one: storing at
+    #      `ffbe0000` writes RAM, and reading `ffbe0000` back returns exactly
+    #      what was written. Convincing, and nowhere near the flash. This is the
+    #      same segment fact as TODO 13.3(A), met from the other side, and it
+    #      cost this track two runs before the erased-flash read caught it.
+    #
+    # A NOTE ON READING THE VALUES BACK OUT. The console echoes the command, so
+    # a log contains `r0=" fw @ c@ ...` before it contains `r0=ff ff ff` — a
+    # pattern that allows a space right after the `=` matches the echo first and
+    # reports an empty value. Every extraction below requires a hex digit
+    # immediately after the `=` and takes the LAST match.
+    command -v qemu-system-i386 >/dev/null || skip "qemu-system-i386 not installed"
+    command -v od >/dev/null || skip "od not installed — the host-side read is an assertion"
+    FXMB="$WORKDIR/openbios/obj-x86/openbios.multiboot"
+    [[ -f "$FXMB" && -f "$XDICT" ]] || skip "no x86 image — run ./build-openbios.sh x86 first"
+    grep -q 'lab_flash_present' "$WORKDIR/openbios/arch/x86/openbios.c" 2>/dev/null \
+      || skip "no CFI flash backing in arch/x86/openbios.c — this track measures that seam"
+    FSEA=$(ls /usr/share/seabios/bios.bin /usr/share/qemu/bios.bin 2>/dev/null | head -1)
+    [[ -n "$FSEA" ]] || skip "no seabios image found — pflash0 must hold a BIOS or nothing boots"
+
+    FF0="$WORKDIR/fw-flash0.img"; FF1="$WORKDIR/fw-flash1.img"
+    rm -f "$FF0" "$FF1"; truncate -s 4M "$FF0"
+    dd if="$FSEA" of="$FF0" bs=1 seek=$(( 4*1024*1024 - $(stat -c%s "$FSEA") )) \
+       conv=notrunc status=none
+    # ERASED, not zeroed: a CFI part in read-array mode returns its contents, and
+    # a zero-filled file would make "the store wrote nothing" indistinguishable
+    # from "the store wrote zeros".
+    head -c 131072 /dev/zero | tr '\000' '\377' > "$FF1"
+
+    _fboot() {  # _fboot <log> <extra-qemu-args-array-name>
+      local log="$1"; shift
+      rm -f "$WORKDIR/smoke-fw.sock" "$log"
+      qemu-system-i386 -M "pc,accel=$ACCEL" -m 512 \
+        -kernel "$FXMB" -initrd "$XDICT" "$@" \
+        -display none -serial "unix:$WORKDIR/smoke-fw.sock,server=on" \
+        -no-reboot >/dev/null 2>&1 &
+      local q=$!
+      python3 "$REPO/tools/drive-serial-repl.py" "$WORKDIR/smoke-fw.sock" "$log" --timeout 120 \
+        --expect "0 > " \
+        --send 'variable vo  400000 load-base - vo !\r' --expect "> " \
+        --send 'variable fw  ffbe0000 vo @ - fw !\r' --expect "> " \
+        --send '." r0=" fw @ c@ . fw @ 1+ c@ . fw @ 2 + c@ . cr\r' --expect "> " \
+        --send 'fw @ c0ffee01 swap int!+ c0ffee02 swap int!+\r' --expect "> " \
+        --send 'c0ffee03 swap int!+ drop\r' --expect "> " \
+        --send '." r1=" fw @ c@ . fw @ 1+ c@ . fw @ 2 + c@ . cr\r' --expect "> " \
+        --send 'ffbe0000 c0ffee01 swap int!+ drop\r' --expect "> " \
+        --send '." r2=" ffbe0000 c@ . ffbe0001 c@ . ffbe0002 c@ . cr\r' --expect "> " \
+        --send 'clear ." FWDONE" cr\r' --expect "FWDONE" >/dev/null 2>&1
+      local rc=$?
+      kill "$q" 2>/dev/null   # by PID, never by pattern
+      sleep 1
+      return $rc
+    }
+
+    FLOG="$WORKDIR/flash-writer.log"
+    note "1/2 storing into the CFI window at 0xffbe0000 → $FLOG"
+    _fboot "$FLOG" -drive "if=pflash,format=raw,file=$FF0,unit=0" \
+                   -drive "if=pflash,format=raw,file=$FF1,unit=1" \
+      || fail "the x86 firmware did not finish the flash-writer probe — see $FLOG"
+    FL="$(tr -d "\r" < "$FLOG")"
+
+    grep -qF 'nvram: backed by pflash@0xffbe0000' <<<"$FL" \
+      || grep -qF 'pflash holds data that is not an nvram store' <<<"$FL" \
+      || fail "the firmware's own CFI probe did not find a chip at 0xffbe0000, so nothing below is about flash — see $FLOG"
+    grep -qE 'r0=[[:space:]]*ff ff ff' <<<"$FL" \
+      || fail "the corrected window read $(grep -aoE 'r0=[0-9a-f]+( [0-9a-f]+)*' <<<"$FL" | tail -1) instead of an erased part's ff ff ff — the probe is not looking at the chip, and the two assertions after this would be about some other memory — see $FLOG"
+    grep -qE 'r1=[[:space:]]*ff ff ff' <<<"$FL" \
+      || fail "GOOD NEWS IF DELIBERATE: a bare store into the CFI window changed the array to $(grep -aoE 'r1=[0-9a-f]+( [0-9a-f]+)*' <<<"$FL" | tail -1). CFI parts take commands, not data, so this means something now sits between int! and the chip. Update this track and TODO 16 together — see $FLOG"
+    grep -qE 'r2=[[:space:]]*c0 ff ee' <<<"$FL" \
+      || fail "storing at the UNCORRECTED address ffbe0000 no longer reads back as c0 ff ee — either x86 stopped rebasing the GDT, or virt_offset stopped applying to Forth addresses. That trap is the reason this track corrects the address at all — see $FLOG"
+
+    FGOT="$(od -An -tx1 -j 0 -N 3 "$FF1" | tr -s ' ' | sed 's/^ //;s/ $//')"
+    [[ "$FGOT" == "ff ff ff" ]] \
+      || fail "the host flash image now reads [$FGOT] at offset 0 — a bare store reached the part, which CFI says it should not — see $FLOG"
+
+    note "2/2 control: the identical probe with NO flash attached → $FLOG.control"
+    _fboot "$FLOG.control" >/dev/null 2>&1
+    FC="$(tr -d "\r" < "$FLOG.control")"
+    grep -qE 'r0=[[:space:]]*ff ff ff' <<<"$FC" \
+      && fail "the no-flash control ALSO read ff ff ff at the window — then ff is a constant this probe would print with or without a chip, and assertion 1 proves nothing — see $FLOG.control"
+    note "control read $(grep -aoE 'r0=[0-9a-f]+( [0-9a-f]+)*' <<<"$FC" | tail -1) with no chip attached, so ff ff ff was a measurement"
+
+    pass "TODO 16, scope: a CFI part is NOT a store-to seam, measured rather than assumed. The writer can be AIMED at 0xffbe0000 — the corrected window reads an erased part's ff ff ff where the no-flash control reads something else — but three int!+ stores leave the array and the host image untouched, because a CFI write is a command sequence (0x20/0x40/0xff, arch/x86/openbios.c) and not a store. The split's conclusion holds and its scope is narrower than pmem-writer suggests: the writer produces bytes, the flash driver programs them. And storing at the UNCORRECTED ffbe0000 reads back convincingly as c0 ff ee — into RAM, nowhere near the chip, which is TODO 13.3(A)'s segment fact met from the other side"
+    ;;
+  *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|vga|diagnostics|client-forth|pmem-writer|flash-writer]" >&2; exit 1 ;;
 esac

@@ -153,6 +153,8 @@ proves the linuxboot **and** OFW labs' kept ROMs survive. No sudo anywhere.
 | [`patches/28-pci-property-cells-are-big-endian.patch`](patches/28-pci-property-cells-are-big-endian.patch) | TODO 13.3(D): `drivers/pci.c` handed `set_property()` raw **host-order** `u32` arrays, while the whole tree reads property cells big-endian. So every child of the PCI bridge encoded as `@0` and none could be reached by path — including the one the `screen` alias names. Invisible on ppc/sparc64, which is where OpenBIOS's PCI code actually runs |
 | [`patches/29-ppc32-had-no-fno-builtin.patch`](patches/29-ppc32-had-no-fno-builtin.patch) | TODO 13.3(C): ppc32 was the **only** arch in the tree without `-fno-builtin`, so GCC treated `snprintf` as a builtin and computed its **return value** per C99 while our divergent libc wrote the buffer. "Writes a byte, returns 0" was two different printfs answering one call |
 | [`patches/30-eword-and-printf-surface-fixtures.patch`](patches/30-eword-and-printf-surface-fixtures.patch) | TODO 13.3(E): two of its three "unverified by construction" rows were verified-by-**nobody**. `_eword()`'s not-found branch is reachable by argument, and `%n` and `long long` were implemented and never run — 12/12 becomes 14/14 |
+| [`patches/31-encode-writers-take-a-destination.patch`](patches/31-encode-writers-take-a-destination.patch) | **TODO 16**, and the first move toward what this lab is ultimately for: `encode-*` chose its own destination, so it could never be aimed at flash, MMIO or a boot-handoff page. Size and write are now separate, the writer takes the address as a parameter, and the 1275 words are redefined in terms of it — one encoding, two uses. The assertion is `here` **unchanged** |
+| [`patches/32-the-cursor.patch`](patches/32-the-cursor.patch) | **TODO 16**'s second half: `int!+` `string!+` `bytes!+` compose *successive* fields at a caller-chosen address, with the cursor as a **stack value** rather than a current-destination variable. Three fields written at a chosen buffer and read back by the stock `decode-int` — the read half was always general; this is where the two halves finally meet |
 | [`tests/test-patch-scope.sh`](tests/test-patch-scope.sh) | CI guard: a patch leaving `arch/{x86,amd64}/` must name which arches were regression-tested. It caught its first real case on the run that introduced it |
 | [`patches/15-forth-loader-divergence.patch`](patches/15-forth-loader-divergence.patch) | **a divergence we carry on purpose**: `ls.file-size` is never set on the `load` path, and `eval2` — the word the loader calls to evaluate — **is defined nowhere in the tree**. Together they mean OpenBIOS's Forth-source loader has never run a byte, on any arch. Not sent upstream: our goals differ from theirs |
 | [`patches/14-amd64-openbios-init-after-device-end.patch`](patches/14-amd64-openbios-init-after-device-end.patch) | one call site: **every `bind_func` before `device_end()` is invisible to `$find`**, so `(init-program)` and `(go)` were unreachable and `load` could not complete. Moving `openbios_init()` after it makes a `.fth` loadable off media |
@@ -188,6 +190,21 @@ clone itself:
 Everything runs as your user in QEMU (KVM or TCG) and rootless podman; no
 sudo, no host services, no listening ports. The revival patch changes a
 firmware run for study inside a VM — nothing on the host boots it.
+
+## Where the write half got out of the arena
+
+`REVIEW-preboot-forth-binary-structures.md`'s **F2** is that `encode-*` chooses its own
+destination, so it can never be aimed at storage the firmware does not own. Patches 31 and 32
+split size from write and added a cursor; `smoke-openbios.sh pmem-writer` shows the result
+reaching an **NVDIMM above 4 GiB** and surviving into the host's file:
+
+```
+before: offset 4194304 reads [00 00 00 00 00 00 00 00 00 00 00 00]
+after:  offset 4194304 reads [c0 ff ee 01 c0 ff ee 02 c0 ff ee 03]
+```
+
+read by `od` on the host after QEMU exited. Its control aims the same probe at ordinary RAM —
+every firmware-side assertion still passes, and only the host-file check fails.
 
 ## The upstream clone is pinned
 

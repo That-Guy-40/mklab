@@ -65,6 +65,59 @@ watched to fail on a needle that never arrives.
       without gating them — the first draft flagged all 30 hits including its own
       documentation, which would have bred exemptions until it meant nothing.
 
+## 0.6 The OpenBIOS toolkit's front of the queue (2026-08-27)
+
+*Placed above §0.5 on purpose, and scoped narrowly on purpose.* §0.5 still has two open
+boxes and is not superseded; this section covers only the thread that ran from §13 through
+§16, because that thread now has a **stated end goal** and two named steps left, and a
+reader should not have to walk 3,000 lines to find them.
+
+**The end goal is [`REVIEW-preboot-forth-binary-structures.md`](REVIEW-preboot-forth-binary-structures.md)** —
+poke's model in the environment poke is locked out of. Its **F2** was the only structural
+blocker: `encode-*` chose its own destination, so it could never be aimed at storage the
+firmware does not own. **F2 is now closed in fact** (§16): the writers take a destination,
+the cursor composes at one, and `smoke-openbios.sh pmem-writer` finds the bytes in the
+host's NVDIMM image after QEMU has exited.
+
+The review's *Revised next steps* are 3½ of 4 done — §1 (config flips), §3 (the storage
+question), §4 (`decode-bytes`), and three of §2's four assertions. **What is left is two
+items, and neither is blocked on anything.**
+
+- [x] **0.6a — the review's last unticked assertion. DONE 2026-08-27.** Measured in
+      `property-abi` on both arches: `/chosen`'s `stdin` round-trips
+      (amd64 `h-live=h-prop=14c08`), a **different** ihandle from the same node is
+      distinguishable (`stdout`, `14ae8`) so the match is a statement about the round trip
+      and not about the comparison, and **`h-hi=0`** — the top 32 bits, derived per boot.
+      **So the review's own UNKNOWN is answered: an amd64 instance does NOT land above
+      4 GiB today**, which is why the truncation hazard is latent rather than live. The
+      assertion is written so the day that changes it fails by name, and §13.2(b)'s refusal
+      means the firmware would abort honestly rather than truncate. *Original text:* §2's fourth: *"assert `/chosen`'s
+      `stdin` survives a round trip at whatever address instances actually land on in long
+      mode."* Cheap — no firmware change, one amd64 boot, arithmetic on values the prompt
+      already prints. It also settles the review's own named UNKNOWN, from *What this review
+      did NOT prove*: **whether an amd64 instance can land above 4 GiB at all.** That is the
+      gate on the whole hazard: §13.2(b)'s refusal turned a silent truncation into an honest
+      abort, but nobody has put an instance up there and watched one round-trip.
+
+- [ ] **0.6b — the third seam: a live device BAR.** The NVDIMM answered *"memory the firmware
+      does not own"* and CFI flash answered *"command-sequenced device"* — a BAR is neither.
+      The `vga` track already reaches `QEMU,VGA@2`'s `assigned-addresses`, so the address is
+      available without new plumbing. **Expect a third distinct answer**, not a repeat of
+      either: a framebuffer accepts stores like RAM but is observed by a device rather than
+      by a file, so the assertion has to come from outside the firmware some other way
+      (QEMU's `screendump` is the obvious candidate, and it has not been tried).
+
+**What NOT to re-derive**, because each cost a run tonight and is written up in §16:
+
+| | |
+|---|---|
+| a Forth address is **not** a physical one on x86 | the GDT rebase; `ffbe0000` stores land in RAM and read back convincingly. §13.3(A)'s fact from the other side |
+| the prompt prints the **stack depth** | `--expect "0 > "` hangs forever whenever a cursor is deliberately left on the stack. Caught three times in one night |
+| the console **echoes the command** | `r0=" fw @ …` precedes `r0=ff ff ff`, so a value extraction that allows a space after the `=` matches the echo |
+| a fault in a **shared** word is not scoped | breaking `int!` breaks every property in the device tree, and the generic gate fires instead of the named one. Inject into a word with no in-tree callers, or scope the fault to a value the tree never uses |
+
+---
+
 ## 0.5 The queue after §0 drained — what is actually next (2026-08-08)
 
 §0.1–0.4 are all closed, so this section replaces them as the front of the queue. It is
@@ -3214,5 +3267,143 @@ buffer must equal what `encode-int` produces into the arena for the same value.
 you were told* from *writing into the arena and copying*, and only the first of those can
 ever be aimed at MMIO or flash.
 
-**Not started.** This entry is the decision, which is what the review asked for at this
-point.
+### First deliverable — **DONE 2026-08-27**, [patch 31](examples/openbios-the-rival-that-shipped/patches/31-encode-writers-take-a-destination.patch)
+
+`/int` `/string` `/bytes` and `int!` `string!` `bytes!` exist; the three `encode-*` words
+are redefined in terms of them with their signatures unchanged. `string!` writes the
+terminator itself — `alloc-tree` zero-fills and the old `encode-string` inherited that, but
+a caller's buffer is not pre-zeroed. And `int!` **inherits §13.2(b)'s
+refusal for free**, because it *is* `l!-be`: a value that cannot survive four bytes is
+refused wherever it is aimed.
+
+`property-abi` asserts both halves of the checkpoint, on both arches:
+
+```
+s-int-HERE-UNCHANGED   s-int-BYTES-MATCH
+s-str-HERE-UNCHANGED   s-str-len=3   s-str-nul=0   s-str-txt=ab
+```
+
+**The first two controls were bad ones, and the way they were bad is the point.** Making
+`int!` allocate-and-write-elsewhere, or do nothing at all, broke **every property in the
+device tree** — the probe never ran, and the generic *"probe did not complete"* gate fired
+instead of the named assertion. That is this repo's own rule, from the chaos-harness
+section: *scope the fault to the subject under test*, because a fault that breaks everything
+sends every scenario to the same rung.
+
+The narrowed pair isolates one assertion each **with the other still passing**, which is
+what proves they are jointly necessary rather than one being decorative:
+
+| injected | `here` | bytes |
+|---|---|---|
+| `int!` also bumps `here` | **MOVED** ✗ | MATCH ✓ |
+| `int!` writes one byte late, **only for the probe's value** | UNCHANGED ✓ | **DIFFER** ✗ |
+
+The second is scoped to a value the device tree never encodes, so the firmware stays up and
+only the subject fails. `string!` losing its terminator fails by name too, against a buffer
+poisoned with `ff` first so an inherited zero cannot pass for a written one.
+
+### Second deliverable, the cursor — **DONE 2026-08-27**, [patch 32](examples/openbios-the-rival-that-shipped/patches/32-the-cursor.patch)
+
+`int!+ ( n dest -- dest' )`, `string!+`, `bytes!+`. **The cursor is the value on the stack,
+not a current-destination variable** — two structures can be under construction at once, in
+different memory, with nothing to save and restore. A variable would be the mode flag this
+section rejected, one layer up.
+
+What it demonstrates is the toolkit's **minimum viable shape**: three fields written at a
+caller-chosen address, then read back with the **stock 1275 decoder**. The read half was
+always general — that is F2's other half — and only the write half was arena-bound. Now
+both halves meet at an address the caller picked:
+
+```
+tgt  11111111 swap int!+  22222222 swap int!+  33333333 swap int!+
+w-advanced=c   w-HERE-UNCHANGED
+tgt c decode-int  ->  11111111, 22222222, 33333333
+```
+
+**The controls are scoped by construction** this time: the new words have no device-tree
+callers, so a fault in them cannot take the firmware down before the probe runs — which is
+exactly what went wrong controlling patch 31's writers.
+
+| injected | what fired |
+|---|---|
+| stride wrong (`/int 1+`) | `w-advanced=f`, and **field one is still correct**: `w-i1=11111111`, `w-i2=ff222222`, `w-i3=22ff3333` — the buffer's poison bleeding through the gaps |
+| the cursor touches the arena | `w-HERE-MOVED`, with all three fields still decoding correctly |
+
+The first of those is why the assertions cover fields **two and three**: a cursor that
+advances wrongly writes the first field perfectly, so field one proves nothing. The second
+isolates the arena property from the correctness property, the same pairing patch 31 needed.
+
+### Third deliverable, real storage — **DONE 2026-08-27**, `smoke-openbios.sh pmem-writer`
+
+The first two were proven against a dictionary buffer, which is still the firmware's own
+memory: `here` unchanged was the *only* thing separating them from the arena words they
+replaced. This aims them at an **NVDIMM at `0x100000000`** — above 4 GiB, reachable only in
+long mode, and backed by a file on the host.
+
+```
+before: offset 4194304 reads [00 00 00 00 00 00 00 00 00 00 00 00]
+after:  offset 4194304 reads [c0 ff ee 01 c0 ff ee 02 c0 ff ee 03]
+```
+
+Three ints written by `int!+` at `0x100400000` (4 MiB into the region, clear of `/nvram`'s
+own partition at the base), read back through the stock `decode-int` with `here` unchanged —
+and then found **byte-for-byte in the host's file by `od`, after QEMU exited**. If the bytes
+are in that file, they left the firmware. **F2 is closed in fact, not only in principle.**
+
+**The host file is the assertion and the prompt is not**, and the control proves why. Aiming
+the identical probe at ordinary RAM (`0x4000000` instead of `0x100400000`):
+
+| | |
+|---|---|
+| `padv`, `pi1`–`pi3`, `here` | **all pass** — `int!+` and `decode-int` agree with each other |
+| the host file | **unchanged**, and the track fails on it |
+
+That agreement between two firmware words is exactly what this check exists to distrust:
+only a reader that is *not* the firmware can say where the bytes went. Same reason the
+`amd64-pmem` track greps the image rather than trusting `printenv`.
+
+*(One self-inflicted delay worth recording: the first driver expected `"0 > "` between the
+writes. The prompt prints the **stack depth**, and the cursor is deliberately on the stack —
+so it waited forever. Third time tonight the depth-in-the-prompt has caught me.)*
+
+### Flash — measured 2026-08-27, and the answer is **no**, `smoke-openbios.sh flash-writer`
+
+**A CFI part is not a store-to seam**, and knowing that is worth more than assuming the
+NVDIMM result generalizes. `arch/x86/openbios.c`'s `lab_flash_write()` does the Intel
+sequence — `0x20` setup, poll status, `0x40` program per byte, `0xff` back to read-array — so
+a bare store into that window is a **command**, not data.
+
+| | |
+|---|---|
+| the corrected window, erased part | `r0=ff ff ff` — and the no-flash control reads `0 0 0`, so `ff` is a measurement |
+| after three `int!+` stores | `r1=ff ff ff` — the array is untouched |
+| the host image at offset 0 | `ff ff ff` — untouched |
+
+**So the split's conclusion holds and its scope is narrower than `pmem-writer` suggests: the
+writer produces bytes at an address; getting those bytes into flash is the flash driver's
+job, above it.** That is the correct layering rather than a gap — it is how every real
+firmware programs a part.
+
+**And the trap is worth the track on its own.** Storing at the *uncorrected* `ffbe0000` reads
+back as `c0 ff ee` — convincingly, and nowhere near the chip. x86 rebases the GDT, so a Forth
+address is not a physical one; the store went to RAM. That is
+[§13.3(A)](#a-x86s-client-context-read-a-stale-copy-of-the-firmware--closed-2026-08-26)'s
+segment fact met from the other side, and it cost this track two runs before the erased-flash
+read caught it. The track pins all three facts, so nobody re-derives the wrong one.
+
+*(Two instrument bugs found on the way, both by the controls: the first attempt sized the
+pflash images wrong and the firmware's own CFI probe reported no chip at all; and every value
+extraction matched the console's command **echo** — `r0=" fw @ …` comes before `r0=ff ff ff`
+in the log — and printed an empty value into otherwise-correct messages.)*
+
+### What is still not done
+
+**One seam.** A live device BAR — the NVDIMM answered *"memory the firmware does not own"*
+and CFI flash answered *"command-sequenced device"*; a BAR is neither. See §0.6b.
+
+Review §2's fourth assertion is **closed** (§0.6a): `/chosen`'s `stdin` round-trips at the
+address instances actually land on, and the review's own UNKNOWN — whether an amd64 instance
+can land above 4 GiB — is answered per boot rather than assumed. It cannot, today.
+- **Review §2's fourth assertion** — `/chosen`'s `stdin` surviving a round trip at whatever
+  address instances land on in long mode — and the review's own unmeasured question of
+  whether an amd64 instance can land above 4 GiB at all.
