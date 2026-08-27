@@ -198,6 +198,19 @@ jobs:
         # three defects were re-injected into the real workflow and watched to bite.
         run: bash tools/tests/test-tier-b-refuses-an-empty-track-list.sh
 
+      - name: an openbios tree archive can prove what it holds
+        # tools/openbios-archive-tree.sh snapshots the patched firmware tree, which makes
+        # it a RECORD, and a record that cannot identify its subject is this repo's
+        # most-repeated defect: a directory of tarballs whose names say WHEN they were
+        # made and nothing about WHAT is in them.
+        #
+        # Runs on a synthetic tree, so it needs no openbios clone and no network. The
+        # rows that carry the weight are the ones where verification must FAIL -- a
+        # tampered archive, and one with no manifest -- because an all-PASS verify is
+        # indistinguishable from one that compares a value to itself. Both defects were
+        # re-injected into the tool and watched to bite.
+        run: bash tools/tests/test-openbios-archive-identity.sh
+
       - name: no cached host facts in the micro-cloud instruments
         # Pure text analysis, no host state — safe on a runner that has none of these
         # interfaces. Guards the defect class that made one instrument print a fact from

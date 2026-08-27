@@ -42,7 +42,10 @@ A partial application is an error naming the missing files -- including the
 case where the x86 revival is present and the amd64 port is absent, which is
 what a clean checkout silently produced until 2026-08-27.
 
-Env: OPENBIOS_WORKDIR (default ~/openbios-lab)
+Env: OPENBIOS_WORKDIR   (default ~/openbios-lab)
+     OPENBIOS_ARCHIVE=1 snapshot the patched tree after a successful build,
+                        via tools/openbios-archive-tree.sh. Content-addressed
+                        and deduplicating, so it is free when nothing changed.
 USAGE
 }
 
@@ -239,6 +242,19 @@ case "$TARGET" in
   all)  obuild x86; obuild qemu-ppc; obuild unix-amd64; obuild amd64 ;;
   *) echo "usage: $0 [x86|ppc|unix|amd64|all]" >&2; exit 1 ;;
 esac
+
+# OPTIONAL, OPT-IN, AND LOUD IF IT FAILS. Set OPENBIOS_ARCHIVE=1 to snapshot the
+# patched tree after a successful build. It is content-addressed and deduplicates,
+# so running it on every build costs nothing while the tree is unchanged -- which
+# is what makes it safe to leave switched on.
+#
+# It fails the build if it fails. A build that says it archived and did not is a
+# false success, and this repo's rule is that a false success outranks an honest
+# failure: you cannot debug through a lying oracle.
+if [[ "${OPENBIOS_ARCHIVE:-0}" == 1 ]]; then
+    echo "==> archiving the patched tree (OPENBIOS_ARCHIVE=1)"
+    "$HERE/../../tools/openbios-archive-tree.sh" --workdir "$WORKDIR/openbios"
+fi
 
 echo "==> artifacts:"
 ls -1 "$WORKDIR"/openbios/obj-amd64/openbios.multiboot32 \
