@@ -39,21 +39,27 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: What this runner can actually do
+        # TO STDOUT AS WELL AS THE SUMMARY. The first version wrote only to
+        # $GITHUB_STEP_SUMMARY, which is not in the job log — so when the build
+        # failed, the log could not say whether podman had even been present. A
+        # diagnostic that is invisible in the artifact you read when things go
+        # wrong is not a diagnostic.
         run: |
           set -u
-          echo "## Tier B environment" >> "$GITHUB_STEP_SUMMARY"
+          { echo "## Tier B environment"; } | tee -a "$GITHUB_STEP_SUMMARY"
           for c in podman qemu-system-i386 qemu-system-x86_64 qemu-system-ppc genisoimage python3; do
             if command -v "$c" >/dev/null 2>&1; then
-              printf -- '- `%s` present\n' "$c" >> "$GITHUB_STEP_SUMMARY"
+              printf -- '- `%s` present (%s)\n' "$c" "$(command -v "$c")" | tee -a "$GITHUB_STEP_SUMMARY"
             else
-              printf -- '- `%s` **MISSING**\n' "$c" >> "$GITHUB_STEP_SUMMARY"
+              printf -- '- `%s` **MISSING**\n' "$c" | tee -a "$GITHUB_STEP_SUMMARY"
             fi
           done
           if [[ -w /dev/kvm ]]; then
-            echo "- /dev/kvm writable — boots use KVM" >> "$GITHUB_STEP_SUMMARY"
+            echo "- /dev/kvm writable — boots use KVM" | tee -a "$GITHUB_STEP_SUMMARY"
           else
-            echo "- no /dev/kvm — **every boot is TCG**, so these timings are an upper bound" >> "$GITHUB_STEP_SUMMARY"
+            echo "- no /dev/kvm — **every boot is TCG**, so these timings are an upper bound" | tee -a "$GITHUB_STEP_SUMMARY"
           fi
+          podman version 2>&1 | head -5 || true
 
       - name: Install what the tracks need
         run: |
@@ -67,20 +73,47 @@ jobs:
 
       - name: Build x86, amd64 and ppc
         id: build
+        # `if ! cmd; then` AND NOT `cmd; rc=$?`. GitHub runs `run:` under
+        # `/usr/bin/bash -e {0}`, so -e is in force whether or not the script asks
+        # for it: a bare failing command aborts the step BEFORE the next line, and
+        # the `rc=$?` capture below never happened. The first run died 20 seconds
+        # in having printed none of the build output it was written to print — the
+        # diagnostic was unreachable for the same reason the failure was.
+        #
+        # A command inside an `if` condition is exempt from -e, which is the whole
+        # fix. Same family as CLAUDE.md's "never pipe a command whose exit status
+        # is the gate": the shell was answering a different question than the one
+        # the script asked.
         run: |
           set -u
           cd examples/openbios-the-rival-that-shipped
           : > /tmp/tierb-times
           for a in x86 amd64 ppc; do
             s=$(date +%s)
-            timeout 3000 ./build-openbios.sh "$a" > "/tmp/build-$a.log" 2>&1; rc=$?
+            rc=0
+            if ! timeout 3000 ./build-openbios.sh "$a" > "/tmp/build-$a.log" 2>&1; then
+              rc=$?
+            fi
             e=$(date +%s)
             printf 'build:%s %ss rc=%s\n' "$a" "$((e - s))" "$rc" >> /tmp/tierb-times
-            [[ $rc -eq 0 ]] || { echo "--- tail of build-$a.log ---"; tail -30 "/tmp/build-$a.log"; }
+            if (( rc != 0 )); then
+              echo "--- tail of build-$a.log (rc=$rc) ---"
+              tail -40 "/tmp/build-$a.log" || true
+              { echo; echo "### build $a FAILED (rc=$rc)"; echo '```';
+                tail -40 "/tmp/build-$a.log"; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true
+            fi
           done
           cat /tmp/tierb-times
 
       - name: The artifact gate — FAIL, never skip
+        # `always()`, AND THAT IS THE POINT OF THE STEP. On the first run the build
+        # step failed, so GitHub's default `if: success()` SKIPPED this gate — the
+        # one step written specifically to refuse a silent skip was itself silently
+        # skipped. The job still went red, so nothing was falsely green; but the
+        # message explaining what a missing artifact means never printed, and a
+        # build that "succeeded" while producing nothing would have sailed past a
+        # gate that only runs when everything already worked.
+        if: always()
         run: |
           set -u
           W="${OPENBIOS_WORKDIR:-$HOME/openbios-lab}/openbios"
