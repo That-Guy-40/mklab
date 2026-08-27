@@ -3130,3 +3130,89 @@ parity claims in those READMEs are unguarded.
 2026-08-03; #9 added 2026-08-06; #10 added 2026-08-06; #11 added 2026-08-21;
 #11.1 and #11.2a closed 2026-08-22; #12 and #13 added 2026-08-24; #12 **closed
 2026-08-25**; #14 added 2026-08-25; #15 added 2026-08-26.*
+
+---
+
+## 16. The storage question, decided (2026-08-27)
+
+[`REVIEW-preboot-forth-binary-structures.md`](REVIEW-preboot-forth-binary-structures.md)'s
+**F2** is the ultimate goal's only structural blocker, and its *Revised next steps* §3 says
+to settle it **before** writing any convenience layer, *"because it is a design fork rather
+than sugar"*. This is that decision, written down.
+
+The rest of that step list is now done: §1's three config flips (13.1), §4's `decode-bytes`
+(13.2(d)), and three of §2's four assertions — `encode-int` **refuses** a value ≥ 2³²
+(13.2(b)), `decode-int`'s zero-extension is **pinned as deliberate** with the reason
+measured (13.2(a)), and `encode-phys`'s length is asserted to change with `#address-cells`.
+§2's fourth — *"assert `/chosen`'s `stdin` survives a round trip at whatever address
+instances actually land on in long mode"* — is **still open**, and so is the review's own
+unmeasured question of whether an amd64 instance can land above 4 GiB at all.
+
+### The fork, and why "pluggable `alloc-tree`" is the wrong half of it
+
+The choice was between generalizing **underneath** the 1275 words (make `alloc-tree`'s
+destination pluggable) and a **parallel `encode-at` vocabulary beside** them. Underneath was
+chosen — *"with the destination as an explicit parameter rather than a mode flag"*.
+
+**Those two halves turn out to contradict each other, and finding that is the useful part.**
+`alloc-tree` is called *inside* `encode-int`, where the caller cannot reach it. Making it
+pluggable therefore means the destination lives in a **variable** that `encode-int` reads —
+which is a mode flag wearing a parameter's clothes, and *"a cached fact about which arena you
+are in"* is the bug class this repo has now found eleven times. It also leaves the
+device-tree path and the toolkit path sharing one mutable global, which was the risk the
+option was chosen *despite*.
+
+### What is chosen instead: split allocate-and-write, and keep one implementation
+
+Each encode word is already **size → allocate → write at the allocated address**, and *the
+write already takes an explicit destination*:
+
+```forth
+: encode-int    ( n -- prop-addr prop-len )     /l alloc-tree tuck l!-be /l ;
+: encode-string ( str len -- prop-addr prop-len ) tuck char+ alloc-tree tuck 3 pick move swap 1+ ;
+: encode-bytes  ( data-addr data-len -- prop-addr prop-len ) tuck alloc-tree tuck 3 pick move swap ;
+```
+
+So the writer is `l!-be` and `move` — both already parameterized by address. The refactor
+**exposes the writer and the sizer, and redefines the 1275 word in terms of them**:
+
+| new | shape |
+|---|---|
+| `/int` `/string` `/bytes` | sizers — how many bytes this value needs |
+| `int!` `string!` `bytes!` | writers — **destination is a stack parameter** |
+| `encode-int` … | unchanged signature: sizer → `alloc-tree` → writer |
+
+That satisfies both halves of the decision at once, and it satisfies a rule the "pluggable"
+version could not: **extract the shipped thing, never re-implement it.** There is one
+encoder per type, used by the device tree and by the toolkit alike. The two paths share
+**no mutable state at all** — not a global, not a mode — so the risk named when the option
+was chosen is removed rather than accepted.
+
+Composition for the mapped case is a **cursor passed explicitly** (`( dest -- dest' )`), not
+a current-arena variable. [Patch 27](examples/openbios-the-rival-that-shipped/patches/27-encode-plus-concatenates.patch)
+already removed the obstacle the review named here: `encode+` no longer requires arena
+adjacency, so composing fragments no longer depends on where they were allocated.
+
+### The surface is four call sites, not eight
+
+Re-derived rather than quoted — the earlier figure counted the whole file:
+
+| `property.fs` | what it allocates | in scope? |
+|---|---|---|
+| `encode-int` `encode-string` `encode-bytes` | **encoded arrays** | ✅ the toolkit surface |
+| `encode+`'s non-adjacent path | a combined encoded array | ✅ |
+| `(property)`'s `prop-node.size` and its name copy | **device-tree nodes**, not encoded arrays | ❌ deliberately different — redirecting these would put tree structure in a flash region |
+
+### First deliverable, and its observable checkpoint
+
+Per the house rule, an outcome and not a mechanism: **the same `encode-int` bytes appear at
+an address the caller chose, with `here` unchanged across the call.** Concretely, at the
+amd64 prompt — `here` before and after must be equal, and the four bytes at a caller-supplied
+buffer must equal what `encode-int` produces into the arena for the same value.
+
+`here` being unchanged is the assertion that matters: it is what distinguishes *writing where
+you were told* from *writing into the arena and copying*, and only the first of those can
+ever be aimed at MMIO or flash.
+
+**Not started.** This entry is the decision, which is what the review asked for at this
+point.
