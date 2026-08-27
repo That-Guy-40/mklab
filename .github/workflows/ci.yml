@@ -161,6 +161,23 @@ jobs:
         # assertions.
         run: bash tools/tests/test-ci-tolerates-a-skipped-suite.sh
 
+      - name: the Tier B path filter and its required gate decide correctly
+        # openbios Tier B runs per-PR behind a path filter, and both halves are the kind
+        # of thing that fails SILENTLY. A filter that is too narrow lets a change reach
+        # main without the only job that has ever exercised a cold checkout -- and a PR
+        # that skipped Tier B looks exactly like a PR that did not need it. The gate is
+        # worse: it is the REQUIRED check, it reports on every PR by design, so a gate
+        # that always passes is indistinguishable from `exit 0`.
+        #
+        # So this drives the two SHIPPED scripts (never a copy of their logic): the
+        # filter on 9 must-match and 7 must-not-match real paths, and the gate on its
+        # whole truth table -- 2 rows that must pass and 8 that must REFUSE, including
+        # the silent one (a relevant change that never ran the job) and a relevance job
+        # that did not finish. It also re-derives the filter's tools/ half from the
+        # workflow's own entry points, so a lab that starts using a new repo tool fails
+        # here instead of quietly falling outside the filter.
+        run: bash tools/tests/test-openbios-tier-b-relevance.sh
+
       - name: no cached host facts in the micro-cloud instruments
         # Pure text analysis, no host state — safe on a runner that has none of these
         # interfaces. Guards the defect class that made one instrument print a fact from
