@@ -1015,6 +1015,24 @@ clear
 drop
 ." d-depth-post=" depth . cr
 ." a-signbit-end=" l@be-signbit @ . cr
+\ Review 2's fourth assertion, and the UNKNOWN under it: does /chosen's
+\ stdin survive a round trip, and where do instances actually land?
+." h-live=" stdin @ . cr
+" stdin" " /chosen" find-dev drop get-package-property 0= if
+  decode-int nip nip ." h-prop=" . cr
+else
+  ." h-NOPROP" cr
+then
+." h-hi=" /n /l = if 0 else stdin @ 20 rshift then . cr
+\ The must-NOT-match control, in the same run: a DIFFERENT ihandle from the
+\ same node must not compare equal, or "they matched" would be a sentence about
+\ the comparison rather than about the round trip.
+" stdout" " /chosen" find-dev drop get-package-property 0= if
+  decode-int nip nip ." h-other=" . cr
+else
+  ." h-NOOTHER" cr
+then
+clear
 ." P132-END" cr
 FTH
     genisoimage -quiet -o "$WORKDIR/prop.iso" -V PROPISO -r -J "$PST"
@@ -1174,6 +1192,22 @@ FTH
       CL2="$(tr -d "\r" < "$WORKDIR/prop-$A.log")"
       grep -qF 'c-fast-ADJACENT' <<<"$CL2" \
         || fail "13.2(c) on $A: two back-to-back encode-ints did NOT come out adjacent, so the fast path this fix preserves was never taken and the run says nothing about it — see $WORKDIR/prop-$A.log"
+      # REVIEW 2's FOURTH ASSERTION, and the UNKNOWN underneath it. The entry
+      # asked for /chosen's stdin to survive a round trip "at whatever address
+      # instances actually land on in long mode" — and the review's own closing
+      # section named the prior question: whether an amd64 instance can land
+      # above 4 GiB at all. Both are answered per boot rather than once.
+      HL="$(grep -aoE 'h-live=[0-9a-f]+' <<<"$CL2" | tail -1 | cut -d= -f2)"
+      HP="$(grep -aoE 'h-prop=[0-9a-f]+' <<<"$CL2" | tail -1 | cut -d= -f2)"
+      HO="$(grep -aoE 'h-other=[0-9a-f]+' <<<"$CL2" | tail -1 | cut -d= -f2)"
+      [[ -n "$HL" && "$HL" == "$HP" ]] \
+        || fail "13.3(E)/review §2: on $A, /chosen's stdin property decodes to ${HP:-absent} but the live ihandle is ${HL:-absent} — encode-int/decode-int does not round-trip the pointer the tree stores there, which is the hazard 13.2(b)'s refusal exists to make honest — see $WORKDIR/prop-$A.log"
+      [[ -n "$HO" && "$HO" != "$HL" ]] \
+        || fail "13.3(E)/review §2: on $A, stdout's ihandle (${HO:-absent}) is not distinguishable from stdin's ($HL), so 'they matched' above is a statement about the comparison and not about the round trip — see $WORKDIR/prop-$A.log"
+      grep -qE 'h-hi=[[:space:]]*0( |$)' <<<"$CL2" \
+        || fail "13.3(E)/review §2: on $A an instance now lands ABOVE 4 GiB (top 32 bits $(grep -aoE 'h-hi=[0-9a-f]+' <<<"$CL2" | tail -1 | cut -d= -f2)) — the truncation hazard the review named is live from this boot on. 13.2(b) means encode-int will REFUSE rather than truncate it, so expect an honest abort where /chosen used to be written; that is the good failure, but it is a failure — see $WORKDIR/prop-$A.log"
+      note "$A: /chosen stdin round-trips ($HL), stdout is distinguishable ($HO), and instances land below 4 GiB"
+
       grep -qF 'c-slow-NOT' <<<"$CL2" \
         || fail "13.2(c) on $A: an allot between two encode-ints no longer separates them, so the CONCATENATING branch never ran — a fix whose slow path is unreachable is not a fix — see $WORKDIR/prop-$A.log"
       # The length is the WEAK check and is here only to catch a mis-sized
@@ -1245,7 +1279,7 @@ FTH
         || fail "13.2(d) on $A: the remainder length after decoding all 2 bytes of a 2-byte property is not 0 — decode-bytes is not subtracting #bytes from prop-len1: $(grep -aoE 'd-len2=.{0,12}' <<<"$DL2" | head -1) — see $WORKDIR/prop-$A.log"
     done
 
-    pass "TODO 13.2 watched to bite: (a) the SAME four bytes decode to ffffffff on amd64 and -1 on x86 — encode-int/decode-int is not a round trip at a 64-bit cell — and the premise it is tolerated on is now DERIVED rather than assumed: every four-byte decode of the boot is counted, and none has bit 31 set, which is the only reason zero-extension has yet to give a real consumer a wrong answer; (b) FIXED — a value >= 2^32 is now REFUSED BY NAME on amd64 where it used to be silently truncated into four bytes, with ffffffff and -1 both still encoding cleanly in the same run so the gate is not simply refusing everything, and the input still UNREPRESENTABLE on x86, reported as an UNKNOWN not a pass; (c) FIXED — encode+ used to be `nip +`, adjacency-by-assumption: it returned the RIGHT length over the WRONG bytes the moment anything moved HERE between fragments, so the second decode-int read the gap (30302f63) rather than the fragment, and §13.2's own "lies about the length" was disproved by the control; it now concatenates, with BOTH branches exercised in the same run (adjacent 3,4 and non-adjacent 1,2 each coming back out of an 8-byte array) so a fix whose slow path never runs cannot pass; and encode-phys is NOT fixed-width — 8 bytes under / (the no-parent default of 2 cells) against 4 under /ide@1 (root's own #address-cells 1); and (d) decode-bytes, which used to return CLEANLY with six items where four are documented — two cells robbed off the return stack — now round-trips encode-bytes on both arches at depth exactly 4, from an empty stack back to an empty one; and TODO 16's storage split holds on both arches — int!/string! write where the caller says with HERE unchanged, and the cursor composes three fields at a chosen address that the stock 1275 decode-int reads back unchanged"
+    pass "TODO 13.2 watched to bite: (a) the SAME four bytes decode to ffffffff on amd64 and -1 on x86 — encode-int/decode-int is not a round trip at a 64-bit cell — and the premise it is tolerated on is now DERIVED rather than assumed: every four-byte decode of the boot is counted, and none has bit 31 set, which is the only reason zero-extension has yet to give a real consumer a wrong answer; (b) FIXED — a value >= 2^32 is now REFUSED BY NAME on amd64 where it used to be silently truncated into four bytes, with ffffffff and -1 both still encoding cleanly in the same run so the gate is not simply refusing everything, and the input still UNREPRESENTABLE on x86, reported as an UNKNOWN not a pass; (c) FIXED — encode+ used to be `nip +`, adjacency-by-assumption: it returned the RIGHT length over the WRONG bytes the moment anything moved HERE between fragments, so the second decode-int read the gap (30302f63) rather than the fragment, and §13.2's own "lies about the length" was disproved by the control; it now concatenates, with BOTH branches exercised in the same run (adjacent 3,4 and non-adjacent 1,2 each coming back out of an 8-byte array) so a fix whose slow path never runs cannot pass; and encode-phys is NOT fixed-width — 8 bytes under / (the no-parent default of 2 cells) against 4 under /ide@1 (root's own #address-cells 1); and (d) decode-bytes, which used to return CLEANLY with six items where four are documented — two cells robbed off the return stack — now round-trips encode-bytes on both arches at depth exactly 4, from an empty stack back to an empty one; and review §2's fourth assertion is closed — /chosen's stdin round-trips through encode-int/decode-int at the address instances actually land on, a different ihandle from the same node is distinguishable so that match means something, and the top 32 bits are derived per boot rather than assumed, which answers the review's own UNKNOWN: an amd64 instance does NOT land above 4 GiB today; and TODO 16's storage split holds on both arches — int!/string! write where the caller says with HERE unchanged, and the cursor composes three fields at a chosen address that the stock 1275 decode-int reads back unchanged"
     ;;
   vga)
     # TODO 13.1's DRIVER_VGA half: PCI enumeration on amd64 (patch 17) and the

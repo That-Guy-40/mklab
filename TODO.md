@@ -65,6 +65,59 @@ watched to fail on a needle that never arrives.
       without gating them — the first draft flagged all 30 hits including its own
       documentation, which would have bred exemptions until it meant nothing.
 
+## 0.6 The OpenBIOS toolkit's front of the queue (2026-08-27)
+
+*Placed above §0.5 on purpose, and scoped narrowly on purpose.* §0.5 still has two open
+boxes and is not superseded; this section covers only the thread that ran from §13 through
+§16, because that thread now has a **stated end goal** and two named steps left, and a
+reader should not have to walk 3,000 lines to find them.
+
+**The end goal is [`REVIEW-preboot-forth-binary-structures.md`](REVIEW-preboot-forth-binary-structures.md)** —
+poke's model in the environment poke is locked out of. Its **F2** was the only structural
+blocker: `encode-*` chose its own destination, so it could never be aimed at storage the
+firmware does not own. **F2 is now closed in fact** (§16): the writers take a destination,
+the cursor composes at one, and `smoke-openbios.sh pmem-writer` finds the bytes in the
+host's NVDIMM image after QEMU has exited.
+
+The review's *Revised next steps* are 3½ of 4 done — §1 (config flips), §3 (the storage
+question), §4 (`decode-bytes`), and three of §2's four assertions. **What is left is two
+items, and neither is blocked on anything.**
+
+- [x] **0.6a — the review's last unticked assertion. DONE 2026-08-27.** Measured in
+      `property-abi` on both arches: `/chosen`'s `stdin` round-trips
+      (amd64 `h-live=h-prop=14c08`), a **different** ihandle from the same node is
+      distinguishable (`stdout`, `14ae8`) so the match is a statement about the round trip
+      and not about the comparison, and **`h-hi=0`** — the top 32 bits, derived per boot.
+      **So the review's own UNKNOWN is answered: an amd64 instance does NOT land above
+      4 GiB today**, which is why the truncation hazard is latent rather than live. The
+      assertion is written so the day that changes it fails by name, and §13.2(b)'s refusal
+      means the firmware would abort honestly rather than truncate. *Original text:* §2's fourth: *"assert `/chosen`'s
+      `stdin` survives a round trip at whatever address instances actually land on in long
+      mode."* Cheap — no firmware change, one amd64 boot, arithmetic on values the prompt
+      already prints. It also settles the review's own named UNKNOWN, from *What this review
+      did NOT prove*: **whether an amd64 instance can land above 4 GiB at all.** That is the
+      gate on the whole hazard: §13.2(b)'s refusal turned a silent truncation into an honest
+      abort, but nobody has put an instance up there and watched one round-trip.
+
+- [ ] **0.6b — the third seam: a live device BAR.** The NVDIMM answered *"memory the firmware
+      does not own"* and CFI flash answered *"command-sequenced device"* — a BAR is neither.
+      The `vga` track already reaches `QEMU,VGA@2`'s `assigned-addresses`, so the address is
+      available without new plumbing. **Expect a third distinct answer**, not a repeat of
+      either: a framebuffer accepts stores like RAM but is observed by a device rather than
+      by a file, so the assertion has to come from outside the firmware some other way
+      (QEMU's `screendump` is the obvious candidate, and it has not been tried).
+
+**What NOT to re-derive**, because each cost a run tonight and is written up in §16:
+
+| | |
+|---|---|
+| a Forth address is **not** a physical one on x86 | the GDT rebase; `ffbe0000` stores land in RAM and read back convincingly. §13.3(A)'s fact from the other side |
+| the prompt prints the **stack depth** | `--expect "0 > "` hangs forever whenever a cursor is deliberately left on the stack. Caught three times in one night |
+| the console **echoes the command** | `r0=" fw @ …` precedes `r0=ff ff ff`, so a value extraction that allows a space after the `=` matches the echo |
+| a fault in a **shared** word is not scoped | breaking `int!` breaks every property in the device tree, and the generic gate fires instead of the named one. Inject into a word with no in-tree callers, or scope the fault to a value the tree never uses |
+
+---
+
 ## 0.5 The queue after §0 drained — what is actually next (2026-08-08)
 
 §0.1–0.4 are all closed, so this section replaces them as the front of the queue. It is
@@ -3344,12 +3397,13 @@ extraction matched the console's command **echo** — `r0=" fw @ …` comes befo
 in the log — and printed an empty value into otherwise-correct messages.)*
 
 ### What is still not done
-- **MMIO specifically.** A device BAR is a third seam and has not been tried; the NVDIMM
-  answered the "memory the firmware does not own" question, and flash answered the
-  "command-sequenced device" one, but a live BAR is neither.
-- **Review §2's fourth assertion** — `/chosen`'s `stdin` surviving a round trip at whatever
-  address instances land on in long mode — and the review's own unmeasured question of
-  whether an amd64 instance can land above 4 GiB at all.
+
+**One seam.** A live device BAR — the NVDIMM answered *"memory the firmware does not own"*
+and CFI flash answered *"command-sequenced device"*; a BAR is neither. See §0.6b.
+
+Review §2's fourth assertion is **closed** (§0.6a): `/chosen`'s `stdin` round-trips at the
+address instances actually land on, and the review's own UNKNOWN — whether an amd64 instance
+can land above 4 GiB — is answered per boot rather than assumed. It cannot, today.
 - **Review §2's fourth assertion** — `/chosen`'s `stdin` surviving a round trip at whatever
   address instances land on in long mode — and the review's own unmeasured question of
   whether an amd64 instance can land above 4 GiB at all.
