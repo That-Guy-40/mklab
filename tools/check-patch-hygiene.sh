@@ -4,7 +4,8 @@
 # TODO §14 Tier A, guards A3 and A4.
 #
 #   A3  every REVIVAL_MARKERS entry in build-openbios.sh names a file that
-#       patches/01 touches AND a string that patch actually ADDS.
+#       patches/01 touches, a string that patch actually ADDS, and — A3b — a string
+#       that is NOT already in the pristine upstream file.
 #   A4  every patches/NN-*.patch parses as a unified diff, and its
 #       `Subject: [PATCH NN/M]` agrees with its own filename. Plus: the series
 #       is numbered 01..N with no gaps and no duplicates.
@@ -27,6 +28,21 @@
 # -- bug class #1 in CLAUDE.md -- and nothing checked it against the patch. A
 # marker that patch 01 no longer adds makes the build say "not applied" and
 # reapply, or say "half applied" and stop, for a tree that is fine.
+#
+# WHY A3b IS A SEPARATE QUESTION, learned the expensive way. A3 asked "does the
+# patch add this string?" and `s" load-base"` passes: patch 01 adds exactly that
+# line for x86. But the marker's semantics are PRESENT => APPLIED, and that string
+# is in the pristine file three times already (the ppc, sparc32 and sparc64 arms).
+# So a cold clone matched 1 of 8 markers and build-openbios.sh refused every build
+# with "the revival patch is HALF applied". The lab never saw it because every
+# working copy here has been patched since the day it was made; TODO §14's Tier B
+# found it on the first cold checkout this lab has ever had.
+#
+# A3 was asking a true thing that was not the question. A3b asks the question:
+# fetch the file at the pinned commit and require the marker to be ABSENT. That
+# needs the network, so it SKIPS when the fetch fails rather than passing — an
+# unchecked marker is an UNKNOWN, and this whole file exists because an unchecked
+# marker was read as a checked one.
 #
 # WHY --numstat AND NOT A HAND-ROLLED PARSER. `git apply --numstat` is git's own
 # diff reader; it validates structure without needing the target files and
@@ -104,6 +120,33 @@ check_markers() {
         PROBLEMS+="no REVIVAL_MARKERS entries were extracted from $(basename "$build") — the array moved or changed shape, and this check is asserting nothing"$'\n'
     fi
     NMARK="$n"
+}
+
+# A3b: the marker must be ABSENT from the pinned upstream file. Sets A3B to the
+# number checked, or leaves it empty when the network is unavailable.
+A3B=""
+check_markers_pristine() {
+    local build="$1" pin url line f pat body n=0
+    pin="$(sed -n 's/^OPENBIOS_PIN=\([0-9a-f]\{40\}\)$/\1/p' "$build" | head -1)"
+    if [[ -z "$pin" ]]; then
+        PROBLEMS+="A3b: no 40-character OPENBIOS_PIN in $(basename "$build"), so the pristine file cannot be identified — either the pin was removed or its shape changed"$'\n'
+        return
+    fi
+    command -v curl >/dev/null || { note "A3b SKIPPED: curl is not installed — the markers are UNCHECKED against the pristine tree, which is an UNKNOWN and not a pass"; return; }
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        f="${line%%:*}"; pat="${line#*:}"
+        url="https://raw.githubusercontent.com/openbios/openbios/$pin/$f"
+        if ! body="$(timeout 30 curl -fsSL "$url" 2>/dev/null)"; then
+            note "A3b SKIPPED after $n marker(s): could not fetch $f at ${pin:0:7} — the rest are UNCHECKED against the pristine tree, which is an UNKNOWN and not a pass"
+            return
+        fi
+        n=$((n + 1))
+        if grep -qF -- "$pat" <<<"$body"; then
+            PROBLEMS+="marker '$f' looks for '$pat', which is ALREADY IN the pristine file at ${pin:0:7} — the marker means \"present => applied\", so it matches an unpatched tree and makes every cold clone read as half-applied"$'\n'
+        fi
+    done < <(sed -n '/^REVIVAL_MARKERS=(/,/^)/p' "$build" | sed -n 's/^[[:space:]]*["'"'"']\(.*\)["'"'"']$/\1/p')
+    A3B="$n"
 }
 
 # check_patch <patch> — A4 for one file.
@@ -214,6 +257,7 @@ mapfile -t PATCHES < <(find "$LAB/patches" -maxdepth 1 -name '[0-9][0-9]-*.patch
 P01="$LAB/patches/01-x86-revival.patch"
 [[ -f "$P01" ]] || fail "patches/01-x86-revival.patch is missing — it is the one patch build-openbios.sh applies, and the markers describe it"
 check_markers "$BUILD" "$P01"
+check_markers_pristine "$BUILD"
 
 for p in "${PATCHES[@]}"; do check_patch "$p"; done
 
@@ -234,6 +278,9 @@ if [[ -n "$PROBLEMS" ]]; then
     fail "$(grep -c . <<<"$PROBLEMS") patch-hygiene problem(s) — see the lines above"
 fi
 note "A3: $NMARK revival markers, each naming a file patch 01 touches and a string it adds"
+if [[ -n "$A3B" ]]; then
+    note "A3b: $A3B of them also checked against the PRISTINE file at the pinned commit, and absent from it"
+fi
 note "A4: ${#PATCHES[@]} patches parse as unified diffs, subjects agree with filenames, series is 01..${#PATCHES[@]}"
 if [[ -n "$EXEMPT_USED" ]]; then
     note "A4: no Subject: line on ${EXEMPT_USED% } — grandfathered BY NAME (the convention began at patch 11), printed here so the exemption cannot grow unnoticed"

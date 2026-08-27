@@ -96,8 +96,15 @@ jobs:
             fi
             e=$(date +%s)
             printf 'build:%s %ss rc=%s\n' "$a" "$((e - s))" "$rc" >> /tmp/tierb-times
+            # PRINTED ON EVERY PATH, not only on failure. The first run that got
+            # this far reported rc=0 in zero seconds having built nothing, and the
+            # log that would have said why was written to a file this step only
+            # showed when rc was non-zero. A diagnostic gated on the failure you
+            # expected is no diagnostic for the one you did not.
+            echo "--- last lines of build-$a.log (rc=$rc) ---"
+            tail -12 "/tmp/build-$a.log" || true
             if (( rc != 0 )); then
-              echo "--- tail of build-$a.log (rc=$rc) ---"
+              echo "--- fuller tail (rc=$rc) ---"
               tail -40 "/tmp/build-$a.log" || true
               { echo; echo "### build $a FAILED (rc=$rc)"; echo '```';
                 tail -40 "/tmp/build-$a.log"; echo '```'; } >> "$GITHUB_STEP_SUMMARY" || true

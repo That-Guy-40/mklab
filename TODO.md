@@ -3108,6 +3108,21 @@ counted green.
 **What it cannot do, stated rather than discovered later:** `ubuntu-latest` has no KVM, so
 every boot is TCG and the timings are an **upper bound**.
 
+**It earned its place before it ever produced a timing.** On the first run that got as far as
+building, `build-openbios.sh` reported **rc=0 in zero seconds having built nothing**, and the
+gate caught it. Cause: `REVIVAL_MARKERS` carried `s" load-base"`, a string that is in the
+**pristine** `forth/admin/nvram.fs` three times already (the ppc, sparc32 and sparc64 arms).
+A marker means *present ⇒ applied*, so a cold clone matched 1 of 8 and the build refused
+every target with *"the revival patch is HALF applied"*. **Every working copy in this lab has
+been patched since the day it was made**, so no cold checkout had ever happened — the bug was
+invisible to every green run for the lab's whole life.
+
+`check-patch-hygiene.sh`'s A3 passed it, and was right to: patch 01 *does* add that line. **A3
+was asking a true thing that was not the question.** A3b now asks the question — fetch the
+file at the pinned commit and require the marker to be **absent** — and SKIPs rather than
+passes when the network is unavailable, because an unchecked marker is an UNKNOWN and this
+whole checker exists because an unchecked marker was read as a checked one.
+
 The remaining decision, once the number exists: `pull_request` on every PR, nightly, or
 **path-filtered per-PR** (only when the PR touches this lab or `tools/drive-*`) — which the
 original text did not consider and which buys per-PR signal at roughly nightly cost. Tonight

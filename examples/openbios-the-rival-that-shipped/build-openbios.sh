@@ -128,7 +128,13 @@ REVIVAL_MARKERS=(
     "arch/x86/linux_load.c:kernel_info_offset"
     "arch/x86/multiboot.h:#define MULTIBOOT_HEADER_FLAGS		0x00000003"
     "arch/x86/openbios.c:load_dictionary((char *)sys_info.dict_start"
-    'forth/admin/nvram.fs:s" load-base"'
+    # NOT `s" load-base"`: that string is in the PRISTINE file three times already
+    # (the ppc, sparc32 and sparc64 arms), so it matched an unpatched tree and made
+    # the detector below report "1 of 8 markers present — HALF applied" on every
+    # cold clone. A marker's whole semantics are "present => applied", so a string
+    # the patch adds is not enough; it has to be one that did not exist before.
+    # Found by Tier B, on the first cold checkout this lab has ever had.
+    "forth/admin/nvram.fs:Every other arch defines load-base"
     "fs/grubfs/grubfs_fs.c:grubfs_files_tell"
     "libopenbios/linuxbios_info.c:forward_lb_table"
 )
