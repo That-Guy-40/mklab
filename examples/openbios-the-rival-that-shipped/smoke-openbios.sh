@@ -1946,6 +1946,23 @@ n=sum(1 for k in range(0,len(px)-2,3) if px[k:k+3]==b'\x00\x00\xa8')
 print(n)
 PYC
     }
+    # xp reads GUEST PHYSICAL memory from QEMU's monitor. Like screendump it is
+    # outside the firmware, but it does not need the device to render anything —
+    # which the BAR case below requires, because the VGA is left in 640x480
+    # compat mode and scans the LEGACY aperture, not the linear framebuffer. So
+    # a store into BAR0 is real and invisible at the same time, and screendump
+    # cannot tell it from a store that never happened.
+    _xp() {
+      MONSOCK="$MMON" python3 - "$1" <<'PYX'
+import socket,sys,time,os
+s=socket.socket(socket.AF_UNIX); s.connect(os.environ["MONSOCK"]); time.sleep(0.3)
+try: s.recv(65536)
+except Exception: pass
+s.sendall((sys.argv[1]+"\n").encode()); time.sleep(1.2)
+out=s.recv(65536).decode(errors="replace")
+print(" ".join(l.split(": ",1)[1].strip() for l in out.splitlines() if ": 0x" in l))
+PYX
+    }
     _shot() {
       python3 - "$1" <<'PYS'
 import socket,sys,time,os
@@ -1978,6 +1995,22 @@ PYS
           --timeout 90 "${args[@]}" >/dev/null 2>&1
         rc=$?
         _shot "$WORKDIR/mw-$tag.post.ppm"
+
+        # THE SECOND CASE: a live PCI BAR. Only reachable since TODO 0.6c/0.6d —
+        # the framebuffer BAR was assigned address 0 and the display node
+        # faulted when opened, so `frame-buffer-adr` was 0 and there was nothing
+        # to aim at.
+        local bargs=(--send 'clear " screen" open-dev drop\r' --expect "> "
+                     --send '." fb=" frame-buffer-adr . cr\r' --expect "> ")
+        python3 "$REPO/tools/drive-serial-repl.py" "$MSOCK" "$WORKDIR/mw-$tag.log.b" \
+          --timeout 90 "${bargs[@]}" >/dev/null 2>&1
+        _xp "xp /8xb 0x40000000" > "$WORKDIR/mw-$tag.bar.pre"
+        local wargs=()
+        [[ "$dowrite" == write ]] && wargs+=(--send 'frame-buffer-adr 8 0 do c0ffee01 over int! 4 + loop drop\r' --expect "> ")
+        wargs+=(--send 'clear ." MWBDONE" cr\r' --expect "MWBDONE")
+        python3 "$REPO/tools/drive-serial-repl.py" "$MSOCK" "$WORKDIR/mw-$tag.log.b2" \
+          --timeout 90 "${wargs[@]}" >/dev/null 2>&1
+        _xp "xp /8xb 0x40000000" > "$WORKDIR/mw-$tag.bar.post"
       fi
       kill "$q" 2>/dev/null   # by PID, never by pattern
       sleep 1
@@ -1999,13 +2032,30 @@ PYS
     [[ -n "$MH0" && "$MH0" == "$MH1" ]] \
       || fail "HERE moved from ${MH0:-?} to ${MH1:-?} across 1000 int! stores into MMIO — the writer allocated instead of writing where it was told — see $WORKDIR/mw-write.log.w"
 
+    # THE BAR CASE. `frame-buffer-adr` is the address patch 33 gave BAR0, and
+    # 0.6d made the node openable enough to read it; both had to be true before
+    # a single byte could be aimed here.
+    MFB="$(grep -aoE 'fb=[0-9a-f]+' "$WORKDIR/mw-write.log.b" | tail -1 | cut -d= -f2)"
+    [[ "$MFB" == 40000000 ]] \
+      || fail "frame-buffer-adr is ${MFB:-absent}, not 40000000 — the display did not map its BAR, so the write below had no live BAR to aim at (TODO 0.6c/0.6d) — see $WORKDIR/mw-write.log.b"
+    MBPRE="$(cat "$WORKDIR/mw-write.bar.pre")"
+    MBPOST="$(cat "$WORKDIR/mw-write.bar.post")"
+    [[ "$MBPRE" == "0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00" ]] \
+      || fail "the BAR already held [$MBPRE] before the write, so finding a pattern there afterwards would prove nothing"
+    [[ "$MBPOST" == "0xc0 0xff 0xee 0x01 0xc0 0xff 0xee 0x01" ]] \
+      || fail "after two int! stores into BAR0 the monitor reads [$MBPOST] at 0x40000000, not the pattern — the stores did not reach the BAR. Note the display cannot answer this: the VGA is in 640x480 compat mode scanning the LEGACY aperture, so a real store into the linear framebuffer is invisible on screen"
+    note "BAR0 at 0x40000000: [$MBPRE] → [$MBPOST], read by the monitor's xp"
+
     note "2/2 control: the identical boot and dumps with NO write → $WORKDIR/mw-ctl.post.ppm"
     _mrun ctl nowrite || fail "the no-write control did not finish — see $WORKDIR/mw-ctl.log.w"
     MCTL=$(_count_blue "$WORKDIR/mw-ctl.post.ppm")
     [[ "$MCTL" -eq 0 ]] \
       || fail "the no-write control ALSO ended with $MCTL blue pixels, so the colour arrives from booting rather than from int! and the assertion above measures nothing — see $WORKDIR/mw-ctl.post.ppm"
+    MCB="$(cat "$WORKDIR/mw-ctl.bar.post")"
+    [[ "$MCB" == "0x00 0x00 0x00 0x00 0x00 0x00 0x00 0x00" ]] \
+      || fail "the no-write control ALSO ended with [$MCB] in BAR0, so those bytes arrive from opening the display rather than from int! — see $WORKDIR/mw-ctl.bar.post"
 
-    pass "TODO 16, the third seam: 1000 int! stores into the legacy VGA aperture at 0xb8000 put $MPOST blue pixels on the display where the pre-write dump and the no-write control each hold 0, with HERE unchanged at $MH0 — read by QEMU's screendump, an observer the firmware cannot fake. Stores LAND here (unlike CFI flash, where they are commands) and the observer is a DEVICE (unlike the NVDIMM, where it is a file), which is the third distinct answer. NOT a PCI BAR: QEMU reports the VGA framebuffer BAR0 unassigned (0xffffffffffffffff), the tree's assigned-addresses carries phys.lo=0 for it, and '\" screen\" open-dev' faults downstream of that — see TODO 16"
+    pass "TODO 16, the third seam, at BOTH of its addresses: 1000 int! stores into the legacy VGA aperture at 0xb8000 put $MPOST blue pixels on the display where the pre-write dump and the no-write control each hold 0, with HERE unchanged at $MH0 — read by QEMU's screendump, an observer the firmware cannot fake. Stores LAND here (unlike CFI flash, where they are commands) and the observer is a DEVICE (unlike the NVDIMM, where it is a file), which is the third distinct answer. AND at a LIVE PCI BAR since TODO 0.6c/0.6d: two int! stores into the framebuffer at 0x40000000 read back through QEMU's monitor as c0 ff ee 01 c0 ff ee 01 where the pre-write read and the no-write control each hold zeros. That one needs the monitor rather than the display, because the VGA sits in 640x480 compat mode scanning the legacy aperture — a real store into the linear framebuffer is invisible on screen, and screendump cannot tell it from a store that never happened"
     ;;
   *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer]" >&2; exit 1 ;;
 esac
