@@ -116,6 +116,12 @@ persist*`, plus `coreboot`) were **not re-run** and are UNKNOWN for that change 
 than assumed green: patch 24 touches `arch/x86/context.c` and the two loader
 `*_init_program()` entry points, which none of them drives.
 
+**2026-08-26, patch 25 (TODO §13.2(d)):** `property-abi` re-run on x86 and amd64 with its
+new decode-bytes section, plus `ppc diagnostics client-forth multiboot amd64` — all PASS.
+`property.fs` is shared, so all three arches were rebuilt; ppc is driven by the `ppc` and
+`diagnostics` tracks, **not** by the property probe, which loads Forth off a CD and has no
+ppc arm. That is a named gap, not a covered one.
+
 ### The negative controls, run 2026-08-23
 
 Each fix was broken and watched to bite before being trusted:

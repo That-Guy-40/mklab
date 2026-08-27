@@ -878,11 +878,13 @@ case "$FLAVOR" in
     # regression: somebody changed the wordset. Update the expectations here and
     # TODO 13.2 together.
     #
-    # (d) decode-bytes is deliberately NOT exercised: it has two bare `r>` with no
-    # matching `>r`, so calling it corrupts the return stack and would take the
-    # machine down mid-run, invalidating a-c. It is called by nothing in the tree
-    # and is absent from the FCode table, so it damages nothing today. Separate
-    # destructive experiment.
+    #   (d) decode-bytes -- the only one of the four that is FIXED here rather
+    #       than characterized. It had two bare `r>` and no `>r`, so it took two
+    #       cells off the RETURN stack and left them on the data stack: six items
+    #       out where four are documented, and it RETURNED, which is worse than
+    #       the crash this comment used to predict. The first `r>` is a
+    #       transposed `>r` (patch 25); the assertion is the DEPTH, and it runs
+    #       last so that a robbed stack could not have invalidated (a)-(c).
     command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
     command -v genisoimage >/dev/null || skip "genisoimage not installed"
     AMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"
@@ -924,6 +926,14 @@ clear
 dev /ide@1
 ." e-len-ide=" 0 0 0 0 encode-phys nip . cr
 clear
+." d-depth-pre=" depth . cr
+" ab" encode-bytes 2 decode-bytes
+." d-depth=" depth . cr
+." d-data=" 2dup type cr
+2drop
+." d-len2=" . cr
+drop
+." d-depth-post=" depth . cr
 ." P132-END" cr
 FTH
     genisoimage -quiet -o "$WORKDIR/prop.iso" -V PROPISO -r -J "$PST"
@@ -941,8 +951,22 @@ FTH
         --send 'load-base load-size evaluate\r' --expect "P132-END"
       PRC=$?
       kill "$PQ" 2>/dev/null   # by PID, never by pattern
+      # THE (d) LINE IS READ BEFORE THE rc GATE, and the control is why. A
+      # decode-bytes that robs the return stack does not merely leave six items:
+      # it derails the rest of the evaluation, so the run times out and the
+      # GENERIC message below fires — blaming patches 14/15/16 for a defect the
+      # probe had already measured and printed two lines earlier. A failure that
+      # names the wrong subject is worse than a slow one.
+      PD="$(grep -aoE 'd-depth=[0-9a-f]+' "$PLOG" | head -1 | cut -d= -f2)"
+      [[ -z "$PD" || "$PD" == 4 ]] \
+        || fail "REGRESSION: 13.2(d) on $A: decode-bytes left $PD items on the stack, not 4 — the documented effect is ( addr1 len1 #bytes -- addr2 len2 addr1 #bytes ), and anything above 4 is cells pulled off the RETURN stack by a bare r>$([[ $PRC -ne 0 ]] && echo " (and the probe then failed to finish, rc=$PRC, which is the same defect downstream)") — see $PLOG"
+      # ESCAPED backticks. Unescaped, `load` here was COMMAND SUBSTITUTION: bash
+      # ran it, wrote "load: command not found" to stderr, and spliced the empty
+      # result into the message, so the failure read "if  no longer reaches". Same
+      # bug class as the usage-heredoc rule in CLAUDE.md, pointed at a fail string
+      # — and it only ever showed on a run that was already failing.
       [[ $PRC -eq 0 ]] \
-        || fail "the probe did not complete on $A (rc=$PRC) — loading Forth off media is what patches 14/15/16 bought; if `load` no longer reaches (init-program), that is the regression, not the wordset — see $PLOG"
+        || fail "the probe did not complete on $A (rc=$PRC) — loading Forth off media is what patches 14/15/16 bought; if \`load\` no longer reaches (init-program), that is the regression, not the wordset — see $PLOG"
     done
     AL="$(tr -d "\r" < "$WORKDIR/prop-amd64.log")"
     XL="$(tr -d "\r" < "$WORKDIR/prop-x86.log")"
@@ -987,7 +1011,30 @@ FTH
     grep -q 'e-len-ide=4' <<<"$AL" \
       || fail "13.2: encode-phys under /ide@1 is no longer 4 bytes — that came from root's own '#address-cells 1'"
 
-    pass "TODO 13.2 watched to bite: (a) the SAME four bytes decode to ffffffff on amd64 and -1 on x86 — encode-int/decode-int is not a round trip at a 64-bit cell; (b) a value >= 2^32 is silently truncated on amd64 and is UNREPRESENTABLE on x86, reported as an UNKNOWN not a pass; (c) encode+ lies about length on BOTH arches once anything moves HERE between fragments; and encode-phys is NOT fixed-width — 8 bytes under / (the no-parent default of 2 cells) against 4 under /ide@1 (root's own #address-cells 1)"
+    # 13.2(d) decode-bytes: FIXED (patch 25) rather than deleted. Upstream had two
+    # bare `r>` and no `>r`, so it robbed the RETURN stack of two cells and left
+    # them on the data stack -- returning CLEANLY with six items where the
+    # documented effect is four, which is worse than a crash. The first `r>` is a
+    # transposed `>r`; with it, the stack comments and IEEE 1275-1994 5.3.5.2
+    # agree line for line.
+    #
+    # THE DEPTH IS THE ASSERTION, not the decoded text. A round trip that prints
+    # "ab" proves the bytes were found; it says nothing about the two cells taken
+    # from underneath the caller -- and it is the second thing that took the
+    # machine down when it ran out of return stack to rob.
+    for A in amd64 x86; do
+      DL2="$(tr -d "\r" < "$WORKDIR/prop-$A.log")"
+      grep -qE 'd-depth=[[:space:]]*4( |$)' <<<"$DL2" \
+        || fail "13.2(d) on $A: no d-depth=4 line — the probe never reached the decode-bytes section, so its silence is an UNKNOWN and not a pass (the depth itself is gated above, where a wrong one can be named before the run's rc is) — see $WORKDIR/prop-$A.log"
+      grep -qE 'd-depth-pre=[[:space:]]*0( |$)' <<<"$DL2" && grep -qE 'd-depth-post=[[:space:]]*0( |$)' <<<"$DL2" \
+        || fail "13.2(d) on $A: the stack was not empty before or after the decode-bytes probe, so its depth of 4 is not a measurement of decode-bytes — see $WORKDIR/prop-$A.log"
+      grep -qF 'd-data=ab' <<<"$DL2" \
+        || fail "13.2(d) on $A: decode-bytes returned a data pointer/length that does not name the two bytes encode-bytes was given — a balanced stack over the wrong bytes is still broken: $(grep -aoE 'd-data=.{0,12}' <<<"$DL2" | head -1) — see $WORKDIR/prop-$A.log"
+      grep -qE 'd-len2=[[:space:]]*0( |$)' <<<"$DL2" \
+        || fail "13.2(d) on $A: the remainder length after decoding all 2 bytes of a 2-byte property is not 0 — decode-bytes is not subtracting #bytes from prop-len1: $(grep -aoE 'd-len2=.{0,12}' <<<"$DL2" | head -1) — see $WORKDIR/prop-$A.log"
+    done
+
+    pass "TODO 13.2 watched to bite: (a) the SAME four bytes decode to ffffffff on amd64 and -1 on x86 — encode-int/decode-int is not a round trip at a 64-bit cell; (b) a value >= 2^32 is silently truncated on amd64 and is UNREPRESENTABLE on x86, reported as an UNKNOWN not a pass; (c) encode+ lies about length on BOTH arches once anything moves HERE between fragments; and encode-phys is NOT fixed-width — 8 bytes under / (the no-parent default of 2 cells) against 4 under /ide@1 (root's own #address-cells 1); and (d) decode-bytes, which used to return CLEANLY with six items where four are documented — two cells robbed off the return stack — now round-trips encode-bytes on both arches at depth exactly 4, from an empty stack back to an empty one"
     ;;
   vga)
     # TODO 13.1's DRIVER_VGA half: PCI enumeration on amd64 (patch 17) and the

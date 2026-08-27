@@ -2593,7 +2593,7 @@ elsewhere is unknown. The track pins the line per arch and **fails if it spreads
 amd64 and `false` on x86 — one of the six shared config options §13.1 already recorded as
 differing. Named here so the next person who sees the asymmetry does not re-open it.
 
-### 13.2 Four defects in `forth/device/property.fs` — **three WATCHED TO BITE 2026-08-25**
+### 13.2 Four defects in `forth/device/property.fs` — **(a)(b)(c) WATCHED TO BITE 2026-08-25, (d) FIXED 2026-08-26**
 
 Read at `openbios` `e5ac46d`. **The work was to watch them bite, and (a)(b)(c) now do** —
 `./smoke-openbios.sh property-abi` runs a multi-line Forth probe **loaded off media**
@@ -2633,7 +2633,37 @@ good news, and the expectations here and there get updated together.
   a *quantifier*, not a literal plus — so it matched nothing and reported (c) FIXED
   while both logs plainly contained the string. Now `grep -F`.
 
-**(d) `decode-bytes` — run in isolation 2026-08-25, and it does NOT crash.** That
+**(d) `decode-bytes` — FIXED 2026-08-26, and it was one transposed character.** Two
+predictions in this entry were wrong, in opposite directions, and both are kept below.
+
+The word's own stack annotations were right all along, and they are IEEE 1275-1994
+§5.3.5.2 exactly: `( prop-addr1 prop-len1 #bytes -- prop-addr2 prop-len2 data-addr
+data-len )`. The `( R: len2 )` note beside the offending line is only *true* if that line
+is a `>r` — which is what it should have been. With `>r`, len2 is parked, `addr2 = addr1 +
+#bytes` is computed, len2 comes back, and `2swap` puts the remainder under the decoded
+array. So the fix **is** balancing the `r>`s, contrary to the paragraph two below.
+
+**Fixed rather than deleted**, and the choice is not close: one character produces the
+standard's word, while deleting it would leave `encode-bytes` — five callers plus an
+FCode-table entry — with no inverse. And its absence from `forth/device/table.fs` is **not
+a gap to fill**: `decode-bytes` has no FCode number in 1275, and that table is positional.
+
+[Patch 25](examples/openbios-the-rival-that-shipped/patches/25-decode-bytes-robbed-the-return-stack.patch).
+`property-abi` now ends on a (d) section — after (a)–(c), so a robbed stack cannot
+invalidate them — asserting `d-depth-pre=0`, `d-depth=4`, `d-data=ab`, `d-len2=0`,
+`d-depth-post=0` on both arches. **The depth is the assertion**: a round trip that prints
+`ab` proves the bytes were found and says nothing about the two cells taken from underneath
+the caller. Re-injecting the bare `r>` fails it by name (`left 6 items on the stack, not
+4`) — and that control found **two defects in the harness**, which is where they keep
+turning up: the generic "probe did not complete" gate fired first and blamed patches
+14/15/16 for a defect the probe had already printed, and its message carried an
+**unescaped `` `load` `` in backticks** that bash *ran*, splicing the empty result into the
+text so the failure read *"if  no longer reaches"* — CLAUDE.md's usage-heredoc rule,
+pointed at a `fail` string, visible only on a run that was already failing.
+
+*Original entry, 2026-08-25 — the crash prediction, and the measurement that disproved it:*
+
+**Run in isolation 2026-08-25, and it does NOT crash.** That
 prediction ("calling it corrupts the return stack and would take the machine down") was
 this entry's, and it is wrong. Measured on amd64:
 
@@ -2659,6 +2689,9 @@ and `forth/device/table.fs` carries `encode-bytes` with **no `decode-bytes`**, s
 round trip does not exist. **Fix or delete it** before anything claims otherwise — and
 the fix is not merely balancing the `r>`s, since the stack comment describes an effect
 (`addr len2 addr1 #bytes`) that no caller has ever depended on.
+
+*(That last sentence is the second wrong prediction. The stack comment describes the 1275
+effect, and balancing the `r>`s produces it.)*
 
 | # | defect | why it matters on amd64 |
 |---|---|---|
