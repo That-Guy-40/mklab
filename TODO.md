@@ -2437,7 +2437,7 @@ payload.
 whole of what patch 23 claims. **Running the payload there is the next item**, and it is
 now a debuggable failure rather than a hang.
 
-### 13.3 Measured, named — and (A) and (D) since fixed
+### 13.3 Measured, named — and (A), (C), (D) and most of (E) since fixed
 
 Everything here was **observed**, not deduced. Where a mechanism is unknown it says so, and
 no guess stands in its place. **(A) is CLOSED (2026-08-26)** and **(D) is CLOSED (2026-08-27)** — between them they
@@ -2551,20 +2551,41 @@ over-*reads*, which is what separated them from
 **because testing it would mean shipping the UB in a fixture** — read from the source,
 named here, not measured.
 
-#### C. ppc's `snprintf` writes a byte and returns 0
+#### C. ppc32 was the only arch built without `-fno-builtin` — **CLOSED 2026-08-27**
 
-For `%.0d` of `0` only:
+*It was never `number()`, and it was never ppc's libc.* Every arch in this tree passes
+`-fno-builtin` — amd64, x86, sparc32, sparc64, ppc64, and even ppc-`unix` — except one:
 
-| arch | writes | returns |
-|---|---|---|
-| x86 | `"0"` | `1` |
-| amd64 | `"0"` | `1` |
-| **ppc** | `"0"` | **`0`** |
+```sh
+ppc)  CFLAGS="-m32 -mcpu=604 -msoft-float -fno-builtin-bcopy -fno-builtin-log2 ..."
+```
 
-Worse-shaped than a formatting divergence — a caller advancing a cursor by the return would
-overwrite the character. **Mechanism not traced.** `number()` takes the `num == 0` branch,
-emits one character, and `vsnprintf` returns `str-buf`; why that is `0` there and `1`
-elsewhere is unknown. The track pins the line per arch and **fails if it spreads**.
+Two named exclusions where every sibling disables the lot. With `snprintf` left as a **GCC
+builtin**, a call with a constant format and a constant argument lets the compiler compute
+the **return value** itself — per C99, where `%.0d` of `0` produces no characters — while
+leaving the call in place for its side effect. `libc/vsprintf.c` then performed that side
+effect and wrote `"0"`, because it diverges from C99 exactly there ([§13.3(B)](#b-number-diverges-from-c99-in-two-measured-ways)).
+
+**The buffer came from our implementation and the return came from GCC's.** Two different
+printfs answering one call, and the arch that disagreed was the one that let a second printf
+into the room.
+
+Measured, changing that one line and nothing else:
+
+| | |
+|---|---|
+| before | `d-zero … wrote=1 ret=0 DIVERGES-AS-RECORDED RET-DISAGREES` |
+| after | `d-zero … wrote=1 ret=1 DIVERGES-AS-RECORDED` |
+
+which is what x86 and amd64 have always printed.
+[Patch 29](examples/openbios-the-rival-that-shipped/patches/29-ppc32-had-no-fno-builtin.patch).
+
+**Watched to bite.** The `diagnostics` track pinned the d-zero line *per arch* and went red
+on the fix — the good-news failure again. It now expects one line for all three and applies
+its `RET-DISAGREES` guard to every arch instead of excusing ppc; taking `-fno-builtin` away
+fails it by name. **And the fixture is deliberately left foldable**: passing the format
+through a `volatile` pointer would stop a compiler answering for our libc, and would also
+hide the day a build flag lets one in again — which is exactly what that guard is for.
 
 #### D. `pci.c` wrote its property cells in HOST byte order — **CLOSED 2026-08-27**
 
@@ -2635,17 +2656,33 @@ says `FOUND`/`NONE` outright.
   nothing points at it, so `" screen" find-dev` returns `0`. The `vga` track prints this as
   an UNKNOWN on every run.
 
-#### E. Unverified by construction
+#### E. Unverified by construction — **two of three rows CLOSED 2026-08-27**
 
-- **sparc32/sparc64 carry amd64's `preopen` omission** (no `device-end`). This lab cannot
-  boot sparc, so they stay UNVERIFIED rather than patched blind —
-  [`check-patch-scope.sh`](tools/check-patch-scope.sh) prints `NOT COVERED: sparc` on every
-  run so a green three-arch line cannot read as "all arches covered".
-- **`_eword()`'s "word not in the dictionary" branch** is not watched to fire. It is
-  reachable only if `evaluate` itself is missing, which cannot happen in a firmware that
-  has reached the prompt.
-- **Untested printf surface:** `%n`, and `long long` conversions beyond the `%8.8lx` shape
-  the tree actually uses.
+Re-read, two of them were *verified-by-nobody* rather than unverifiable.
+[Patch 30](examples/openbios-the-rival-that-shipped/patches/30-eword-and-printf-surface-fixtures.patch).
+
+- **`_eword()`'s "word not in the dictionary" branch — CLOSED.** The entry said it is
+  *"reachable only if `evaluate` itself is missing"*. True of the **callers** and false of
+  the branch: `eword()` takes the word to run as an **argument**, so any name that does not
+  exist reaches it. `test-eword-report` asks for one, and the `diagnostics` track requires
+  **exactly one** `eword:` line naming it. Worth a fixture because the two failures are not
+  the same failure — a `-1` throw means the word ran and aborted, this means **nothing ran**
+  — and before the reporter existed both left `ret == -1` and printed the same nothing.
+- **The untested printf surface — CLOSED.** `%n` and the `L` qualifier (which `ll` also maps
+  to) are both *implemented* and neither had ever been run; an implemented-but-unrun
+  conversion is an UNKNOWN, not a pass. Two cases join `test-printf-edges`, taking it from
+  12/12 to **14/14**: `"ab%ncd"` → `abcd`, `rc 4`, `n 2`; and `%llx` of `0x123456789abcdef`
+  → `123456789abcdef`, `rc 15`. **`%n` *is* the return value**, written through a pointer at
+  the point it appears — so it asserts the same quantity the `trunc` cases assert about `rc`,
+  at a different *moment*: mid-format rather than at the end. And the `llx` case needs 60
+  bits, so on x86 it prints a number the Forth stack under it cannot hold.
+- **sparc32/sparc64 carry amd64's `preopen` omission** (no `device-end`) — **still open, and
+  re-derived rather than re-quoted**: measured 2026-08-27, `device-end` appears **0** times
+  in each of `arch/sparc32/init.fs` and `arch/sparc64/init.fs`, against **1** in x86 and
+  **3** in amd64. This lab still cannot boot sparc, so it stays UNVERIFIED rather than
+  patched blind — [`check-patch-scope.sh`](tools/check-patch-scope.sh) prints
+  `NOT COVERED: sparc` on every run so a green three-arch line cannot read as "all arches
+  covered".
 
 #### Resolved while writing this list
 

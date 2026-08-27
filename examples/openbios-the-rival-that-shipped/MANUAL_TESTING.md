@@ -139,6 +139,13 @@ track went **red on the fix** first, because it asserted the defective `QEMU,VGA
 the good-news failure a characterization test exists to produce, and it now asserts `@2`.
 Its `screen`-alias UNKNOWN, printed on every run since 2026-08-26, is now an assertion.
 
+**2026-08-27, patches 29–30 (TODO §13.3(C) and most of §13.3(E)):** `diagnostics vga
+property-abi multiboot amd64 ppc client-forth nvram dict-identity amd64-pmem` — all PASS on
+x86 + amd64 + ppc builds. `diagnostics` went **red on the (C) fix** because it pinned ppc's
+divergent d-zero line; it now expects one line for all three arches. `printf-edges` moved
+from 12/12 to 14/14 with the `%n` and `%llx` cases, and `test-eword-report` is a second
+must-catch fixture beside `test-feval-report`.
+
 ### The negative controls, run 2026-08-23
 
 Each fix was broken and watched to bite before being trusted:

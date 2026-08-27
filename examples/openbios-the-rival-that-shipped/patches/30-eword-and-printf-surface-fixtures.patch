@@ -1,0 +1,141 @@
+Subject: [PATCH 30/30] TODO 13.3(E): two of its three rows were testable after all
+Arch-tested: x86 amd64 ppc
+
+13.3(E) listed three things "unverified by construction". Re-read, two of
+them were verified-by-nobody rather than unverifiable.
+
+1. "_eword()'s 'word not in the dictionary' branch is not watched to
+   fire. It is reachable only if `evaluate` itself is missing, which
+   cannot happen in a firmware that has reached the prompt."
+
+   True of the CALLERS and false of the branch: eword() takes the word to
+   run as an ARGUMENT, so any name that does not exist reaches it.
+   `test-eword-report` asks for one. The distinction is worth a fixture
+   because the two failures are not the same failure -- a -1 throw means
+   the word ran and aborted; this means NOTHING RAN -- and before the
+   reporter existed both left ret == -1 and printed the same nothing.
+
+2. "Untested printf surface: %n, and long long conversions beyond the
+   %8.8lx shape the tree actually uses."
+
+   Both are implemented (libc/vsprintf.c's case 'n', and the 'L'
+   qualifier that `ll` also maps to) and neither had ever been run. An
+   implemented-but-unrun conversion is an UNKNOWN, not a pass. Two cases
+   join test-printf-edges, taking it from 12/12 to 14/14:
+
+     pct-n   "ab%ncd" -> abcd, rc 4, n 2
+     llx     %llx of 0x123456789abcdef -> 123456789abcdef, rc 15
+
+   %n IS the return value, written through a pointer at the point it
+   appears -- so it asserts the same quantity the trunc cases assert
+   about rc, at a different MOMENT: mid-format rather than at the end.
+   And the llx case needs 60 bits, so on x86 it prints a number the
+   Forth stack under it cannot hold.
+
+The third row stands and is re-derived rather than re-quoted: sparc32 and
+sparc64 still carry amd64's `preopen` omission -- measured 2026-08-27,
+`device-end` appears 0 times in each, against 1 in x86 and 3 in amd64 --
+and this lab still cannot boot sparc, so it stays UNVERIFIED and
+check-patch-scope.sh still prints NOT COVERED: sparc on every run.
+
+WATCHED TO BITE, all three at once, each naming its own defect:
+
+  * the printk in _eword's not-found branch removed -> "test-eword-report
+    produced 0 lines, expected exactly 1"
+  * case 'n' storing 0 instead of str-buf -> "pct-n ... n=0 MISMATCH"
+  * the 'L' qualifier reading unsigned int -> "llx ... got[89abcdef](8)
+    MISMATCH", which is the low half of the value and the same shape as
+    13.2(b) one layer down
+
+with the ratio dropping to 12/14 to catch them in aggregate.
+
+diff --git a/libopenbios/init.c b/libopenbios/init.c
+--- a/libopenbios/init.c
++++ b/libopenbios/init.c
+@@ -89,6 +89,27 @@
+ 	(void)feval("openbios-feval-selftest-no-such-word");
+ }
+ 
++/* THE OTHER HALF OF THE SAME REPORTER, and TODO 13.3(E) listed it as
++ * unverified by construction: "_eword()'s 'word not in the dictionary' branch
++ * is not watched to fire. It is reachable only if `evaluate` itself is
++ * missing, which cannot happen in a firmware that has reached the prompt."
++ *
++ * That is true of the CALLERS and false of the branch. eword() takes the word
++ * to run as an argument, so the branch is reachable by asking for any word that
++ * does not exist -- which is what this does. The distinction matters because
++ * the two failures are not the same failure: a -1 THROW means the word ran and
++ * aborted, while this means NOTHING RAN, and before the reporter existed both
++ * left ret == -1 and printed the same nothing.
++ *
++ * Leaves the stack as it found it, like the feval fixture: nargs is 0, so
++ * _eword has nothing to unwind even on the path that does run something.
++ */
++static void eword_report_selftest( void )
++{
++	static xt_t never_cached = 0;
++	(void)_eword("openbios-eword-selftest-no-such-word", &never_cached, 0);
++}
++
+ /* THE PRECISION FIX'S OWN FIXTURE SET, run inside the shipped firmware.
+  *
+  * libc/vsprintf.c's %s case treated `precision` as a MINIMUM. Six of the seven
+@@ -365,6 +386,47 @@
+ 		       got, (int)strlen(got), rc);
+ 	}
+ 
++	/* TODO 13.3(E)'s "untested printf surface": %n, and a long long wider
++	 * than a cell. Both are implemented (libc/vsprintf.c case 'n' and the
++	 * 'L' qualifier, which `ll` also maps to) and neither had ever been
++	 * exercised -- an implemented-but-unrun conversion is an UNKNOWN, not a
++	 * pass.
++	 *
++	 * %n IS the return value, written through a pointer: it stores
++	 * str - buf at the point it appears. So this case asserts the same
++	 * quantity the trunc cases assert about rc, at a DIFFERENT moment --
++	 * mid-format rather than at the end -- which is the only way to catch a
++	 * str that is advanced correctly overall but not while running. */
++	{
++		int nn = -1;
++		n++;
++		rc = snprintf(got, sizeof(got), "ab%ncd", &nn);
++		if( nn == 2 && rc == 4 && !strcmp(got, "abcd") ) {
++			ok++;
++			printk("printf-edges: pct-n want[abcd](4) n=2"
++			       " got[%s](%d) n=%d OK\n", got, rc, nn);
++		} else {
++			printk("printf-edges: pct-n want[abcd](4) n=2"
++			       " got[%s](%d) n=%d MISMATCH\n", got, rc, nn);
++		}
++	}
++
++	/* A long long WIDER THAN A CELL, which is the case x86 cannot express on
++	 * its stack and can still print: the value below needs 60 bits. If the
++	 * 'L' qualifier were dropped, va_arg would read half of it and the low
++	 * word would come out as the whole number -- the same shape as 13.2(b),
++	 * one layer down. */
++	n++;
++	rc = snprintf(got, sizeof(got), "%llx", 0x123456789abcdefULL);
++	if( !strcmp(got, "123456789abcdef") && rc == 15 ) {
++		ok++;
++		printk("printf-edges: llx want[123456789abcdef](15)"
++		       " got[%s](%d) OK\n", got, rc);
++	} else {
++		printk("printf-edges: llx want[123456789abcdef](15)"
++		       " got[%s](%d) MISMATCH\n", got, rc);
++	}
++
+ 	printk("printf-edges: %d/%d ok, %d/%d recorded divergence\n",
+ 	       ok, n, ok_div, n_div);
+ }
+@@ -390,6 +452,10 @@
+ 	// The reporter's must-catch fixture -- see feval_report_selftest above
+ 	bind_func("test-feval-report", feval_report_selftest);
+ 
++	// ...and eword()'s "not in the dictionary" branch, which is a DIFFERENT
++	// failure from a throw: nothing ran. TODO 13.3(E).
++	bind_func("test-eword-report", eword_report_selftest);
++
+ 	// libc/vsprintf.c's %s precision fixtures -- see above
+ 	bind_func("test-printf-precision", printf_precision_selftest);
+ 

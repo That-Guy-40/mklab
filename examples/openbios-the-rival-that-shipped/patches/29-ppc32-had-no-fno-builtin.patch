@@ -1,0 +1,85 @@
+Subject: [PATCH 29/30] ppc32 was the only arch built without -fno-builtin
+Arch-tested: x86 amd64 ppc
+
+TODO 13.3(C): "ppc's snprintf writes a byte and returns 0", for `%.0d` of
+`0` only, with "MECHANISM NOT TRACED" written beside it.
+
+    arch     writes   returns
+    x86      "0"      1
+    amd64    "0"      1
+    ppc      "0"      0
+
+It was never number(), and it was never ppc's Forth or its libc. Every
+arch in this tree passes -fno-builtin -- amd64, x86, sparc32, sparc64,
+ppc64, and even ppc-unix -- except one:
+
+    ppc)  CFLAGS="-m32 -mcpu=604 -msoft-float \
+                  -fno-builtin-bcopy -fno-builtin-log2 ..."
+
+Two named exclusions where every sibling disables the lot. With snprintf
+left as a GCC BUILTIN, a call with a constant format and a constant
+argument lets the compiler compute the RETURN VALUE itself -- per C99,
+where `%.0d` of `0` produces no characters -- while leaving the call in
+place for its side effect. libc/vsprintf.c then performed that side
+effect and wrote "0", because it diverges from C99 exactly there (TODO
+13.3(B), `if (num == 0) tmp[i++] = '0';` runs unconditionally).
+
+So the buffer came from our implementation and the return came from
+GCC's. Two different printfs answering one call, and the arch that
+disagreed was the one that let a second printf into the room.
+
+MEASURED. Adding -fno-builtin to that one line, changing nothing else:
+
+    before   d-zero ... wrote=1 ret=0 DIVERGES-AS-RECORDED RET-DISAGREES
+    after    d-zero ... wrote=1 ret=1 DIVERGES-AS-RECORDED
+
+which is what x86 and amd64 have always printed. The two named
+exclusions are subsumed by -fno-builtin and are dropped.
+
+A freestanding firmware that ships its own libc must not have the
+compiler substituting its idea of that libc's semantics for the one on
+disk -- and this is what that costs when it does: a divergence recorded
+for a day as a defect in code that was innocent.
+
+WATCHED TO BITE. The `diagnostics` track pinned the d-zero line PER ARCH
+and went red on the fix, which is the good-news failure a
+characterization test exists to produce. It now expects one line for all
+three, and its RET-DISAGREES guard applies to every arch instead of
+excusing ppc. Taking -fno-builtin away again fails it by name.
+
+AND THE FIXTURE IS DELIBERATELY LEFT FOLDABLE. Passing the format through
+a volatile pointer would stop a compiler answering for our libc -- and
+would also hide the day a build flag lets one in again, which is exactly
+what that guard is for.
+
+diff --git a/config/scripts/switch-arch b/config/scripts/switch-arch
+--- a/config/scripts/switch-arch
++++ b/config/scripts/switch-arch
+@@ -267,7 +267,26 @@
+         select_prefix powerpc powerpc64
+         if [ "$unix" = "no" ]; then
+             # 604 cpu includes support for PReP as well as Mac
+-            CFLAGS="-m32 -mcpu=604 -msoft-float -fno-builtin-bcopy -fno-builtin-log2 -fno-stack-protector -fno-pic"
++            #
++            # LOCAL DIVERGENCE (mklab). TODO 13.3(C): -fno-builtin, not the two
++            # named exclusions. This was the ONLY arch in the tree without full
++            # -fno-builtin -- amd64, x86, sparc32, sparc64, ppc64 and even
++            # ppc-unix all have it -- and it was the only arch where snprintf
++            # wrote a byte and returned 0.
++            #
++            # With snprintf left as a GCC builtin, a call with a constant format
++            # and constant argument lets the compiler compute the RETURN VALUE
++            # itself, per C99, while leaving the call in place for its side
++            # effect. libc/vsprintf.c's number() diverges from C99 for %.0d of 0
++            # (TODO 13.3(B)): it writes "0" where C99 writes nothing. So the
++            # buffer came from OUR implementation and the return came from
++            # GCC's -- "wrote 1 byte, returned 0" was two different printfs
++            # answering one call.
++            #
++            # A freestanding firmware that ships its own libc must not have the
++            # compiler substituting its idea of that libc's semantics for the
++            # one on disk. -fno-builtin subsumes the two exclusions below.
++            CFLAGS="-m32 -mcpu=604 -msoft-float -fno-builtin -fno-stack-protector -fno-pic"
+             AS_FLAGS="-m32"
+         else
+             CFLAGS="-fno-builtin -fno-stack-protector"
