@@ -2593,7 +2593,7 @@ elsewhere is unknown. The track pins the line per arch and **fails if it spreads
 amd64 and `false` on x86 — one of the six shared config options §13.1 already recorded as
 differing. Named here so the next person who sees the asymmetry does not re-open it.
 
-### 13.2 Four defects in `forth/device/property.fs` — **(a)(b)(c) WATCHED TO BITE 2026-08-25, (d) FIXED 2026-08-26**
+### 13.2 Four defects in `forth/device/property.fs` — **(b)(d) FIXED 2026-08-26, (a)(c) characterized**
 
 Read at `openbios` `e5ac46d`. **The work was to watch them bite, and (a)(b)(c) now do** —
 `./smoke-openbios.sh property-abi` runs a multi-line Forth probe **loaded off media**
@@ -2603,7 +2603,7 @@ typed through the ~80-char truncation). Measured:
 | | amd64 (64-bit cell) | x86 (32-bit cell) |
 |---|---|---|
 | **(a)** `-1 encode-int decode-int` | `ffffffff` — **not a round trip** | `-1` — round-trips |
-| **(b)** a value ≥ 2³² | **silently truncated to 0** | **UNREPRESENTABLE** — an UNKNOWN, not a pass |
+| **(b)** a value ≥ 2³² | ~~silently truncated to 0~~ → **REFUSED BY NAME** (patch 26) | **UNREPRESENTABLE** — an UNKNOWN, not a pass |
 | **(c)** `encode+` with an `allot` between fragments | **lies about the length** | **lies about the length** |
 
 **(c) bites on BOTH arches**, so it is not a 64-bit issue at all — this entry called it
@@ -2632,6 +2632,49 @@ good news, and the expectations here and there get updated together.
 - the (c) assertion used `grep -q '…ENCODE\+-WOULD…'`, and in a **basic** regex `\+` is
   a *quantifier*, not a literal plus — so it matched nothing and reported (c) FIXED
   while both logs plainly contained the string. Now `grep -F`.
+
+**(b) `l!-be` — FIXED 2026-08-26.** A 1275 property-encoded integer is **four bytes**
+(§5.3.5.1). On a 32-bit cell that is the whole cell; on a 64-bit cell it is half of one, and
+`l!-be` wrote the low four bytes and dropped the rest with no error and no flag. The tree
+encodes **pointers** through this path (`forth/admin/iocontrol.fs:42,76`;
+`forth/device/display.fs:362`), so an ihandle above 4 GiB went into `/chosen`'s `stdin` as
+its bottom 32 bits and read back as a different object — the **LIED** rung, which outranks
+HALTED for exactly that reason. It now refuses *before* the write, which is the only place a
+refusal is a gate rather than a post-mortem:
+
+```console
+encode-int: value does not fit in the 4 bytes 1275 encodes an integer into  Aborted.
+```
+
+**Both halves of the 32-bit range still encode**, and they are the must-not-catch pair in the
+same run: `ffffffff` (an unsigned address or phandle) and `-1` (a sign-extended negative
+filling a cell with ones). Nothing in the tree trips the gate — `amd64-pmem`, whose store
+sits at `0x100000000`, passes unchanged.
+
+**(a) `l@-be` — NOT fixed, and 2026-08-26 is when that became a decision rather than an
+omission.** Sign-extending is the one-line fix and it is **not safe here**: it turns every
+decoded value with bit 31 set into a negative cell, and `assigned-addresses` carries PCI
+physical addresses — QEMU's 32-bit PCI window sits just under 4 GiB, and
+`drivers/vga.fs:148` hands exactly such an entry to `pci-bar>pci-addr`. A framebuffer at
+`fd000000` would become `fffffffffd000000` and be used as an address. The real fix is signed
+decode **plus** an `ffffffff and` in every consumer wanting an unsigned 32-bit address, which
+reaches `drivers/sbus.fs` and the sparc trees this lab cannot boot.
+
+So (a) is tolerated on a **premise** — *"nothing here decodes a value with bit 31 set"* — and
+a claim about a corpus is a cache. Two counters in `l@-be` derive it on every boot, read
+**before** the probe decodes anything of its own:
+
+| | amd64 | x86 |
+|---|---|---|
+| `a-decodes-boot` | `2b` | `2b` |
+| `a-signbit-boot` | **`0`** | **`0`** |
+
+with the probe's own deliberate `ffffffff` as the counter's must-catch control in the same
+run (`a-signbit-end=1`). Without that second reading, a counter wired to nothing reports the
+same reassuring `0` as a firmware that never saw one — not hypothetical: the first draft read
+the counters at the **end**, caught the probe's own `ffffffff`, and that is how the scoping
+error was found. **The day `a-signbit-boot` goes non-zero, (a) has its first real consumer
+and the decision is forced.**
 
 **(d) `decode-bytes` — FIXED 2026-08-26, and it was one transposed character.** Two
 predictions in this entry were wrong, in opposite directions, and both are kept below.
