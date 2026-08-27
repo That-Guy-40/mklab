@@ -46,11 +46,66 @@ WORKDIR="${OPENBIOS_WORKDIR:-$HOME/openbios-lab}"
 IMG=localhost/openbios-build
 TARGET="${1:-all}"
 
+# THE CLONE IS PINNED, and every patch in patches/ is a diff against these two
+# commits. Unpinned, this script tracked upstream HEAD: two people running it a
+# month apart built different firmware from the same repo, every `Arch-tested:`
+# line named a tree that no longer existed, and any CI job would have gone red
+# on somebody else's commit rather than on a change in this lab.
+#
+# A TAG WOULD NOT DO. A version string is not an identity — a tag can be moved,
+# and the whole point is that the bytes the patches were written against are the
+# bytes that get built. These are commit SHAs.
+#
+# TO MOVE THE PIN: bump the SHA, run ./smoke-openbios.sh for every track, and
+# expect the 30 patches to need re-reading rather than assuming they still
+# apply. `tools/openbios-pin-check.sh` reports when upstream has moved past it,
+# so the bump is a decision someone makes and not a surprise mid-build.
+OPENBIOS_PIN=e5ac46dd24e6216c36aa80462af25457e7029440
+FCODE_UTILS_PIN=6e563ee54aa9f60e538d90eedaa012ae77610344
+
 mkdir -p "$WORKDIR"
-[[ -d "$WORKDIR/openbios/.git" ]] || \
-    git clone https://github.com/openbios/openbios.git "$WORKDIR/openbios"
-[[ -d "$WORKDIR/fcode-utils/.git" ]] || \
-    git clone https://github.com/openbios/fcode-utils.git "$WORKDIR/fcode-utils"
+
+# checkout_pinned <dir> <url> <sha>
+#
+# Fetches the exact object when the clone is missing it, then checks it out
+# DETACHED. The `rev-parse HEAD` gate is what makes a rerun cheap and a drifted
+# tree loud: a working copy already at the pin is left completely alone, so
+# uncommitted local work — which is how this lab develops the divergence before
+# a patch is extracted — is never touched.
+checkout_pinned() {
+    local dir="$1" url="$2" sha="$3" name; name="$(basename "$dir")"
+    if [[ ! -d "$dir/.git" ]]; then
+        git clone "$url" "$dir"
+    fi
+    local at; at="$(git -C "$dir" rev-parse HEAD 2>/dev/null || echo none)"
+    if [[ "$at" == "$sha" ]]; then
+        echo "==> $name pinned at ${sha:0:7} (already there)"
+        return 0
+    fi
+    if ! git -C "$dir" cat-file -e "$sha^{commit}" 2>/dev/null; then
+        echo "==> $name: fetching pinned ${sha:0:7}"
+        git -C "$dir" fetch --quiet origin "$sha" 2>/dev/null || git -C "$dir" fetch --quiet origin
+    fi
+    if ! git -C "$dir" cat-file -e "$sha^{commit}" 2>/dev/null; then
+        echo "ERROR: $name has no commit $sha — the pin names an object this" >&2
+        echo "       remote does not carry. Upstream rewrote history, or the" >&2
+        echo "       SHA is wrong. Do not build against whatever HEAD is." >&2
+        exit 1
+    fi
+    # A dirty tree is the lab mid-divergence; moving HEAD under it would discard
+    # exactly the work the next patch is extracted from.
+    if [[ -n "$(git -C "$dir" status --porcelain)" ]]; then
+        echo "ERROR: $name is at ${at:0:7}, the pin is ${sha:0:7}, and the tree" >&2
+        echo "       has uncommitted changes. Refusing to move HEAD under them." >&2
+        echo "       Stash or commit in $dir, then rerun." >&2
+        exit 1
+    fi
+    echo "==> $name: checking out pinned ${sha:0:7} (was ${at:0:7})"
+    git -C "$dir" -c advice.detachedHead=false checkout --quiet "$sha"
+}
+
+checkout_pinned "$WORKDIR/openbios"     https://github.com/openbios/openbios.git     "$OPENBIOS_PIN"
+checkout_pinned "$WORKDIR/fcode-utils"  https://github.com/openbios/fcode-utils.git  "$FCODE_UTILS_PIN"
 
 echo "==> applying the revival patch (idempotent)"
 # THE "ALREADY APPLIED?" TEST ASKS FOR THE CAUSE, NOT FOR THE DIFF.

@@ -2691,9 +2691,17 @@ Re-read, two of them were *verified-by-nobody* rather than unverifiable.
 amd64 and `false` on x86 — one of the six shared config options §13.1 already recorded as
 differing. Named here so the next person who sees the asymmetry does not re-open it.
 
-### 13.2 Four defects in `forth/device/property.fs` — **(b)(d) FIXED 2026-08-26, (a)(c) characterized**
+### 13.2 Four defects in `forth/device/property.fs` — **(b)(d) FIXED 2026-08-26, (c) FIXED 2026-08-27, (a) decided and instrumented**
 
-Read at `openbios` `e5ac46d`. **The work was to watch them bite, and (a)(b)(c) now do** —
+Read at `openbios` `e5ac46d`. **The work was to watch them bite; three then turned out to be
+fixable and were fixed.** What is left characterized is (a) alone, and that is a decision with
+a measurement behind it rather than an omission — see its entry below.
+
+*(This heading and this sentence were themselves stale for four hours on 2026-08-27: they
+still said "(a)(c) characterized" after (c) had been fixed and merged. Recorded rather than
+quietly corrected, because it is the same shape as the seven claims this section's own work
+disproved — a present-tense summary outliving its subject.)*
+
 `./smoke-openbios.sh property-abi` runs a multi-line Forth probe **loaded off media**
 on both arches (only possible since patches 14/15/16; before them every line had to be
 typed through the ~80-char truncation). Measured:
@@ -2942,20 +2950,44 @@ changed the shape of this item:
   examples as `$ `-prefixed console transcripts and that tool deliberately
   passes over transcripts. **Do not wire it in and call it coverage** — it would
   be a green tick over nothing. A lab-specific A5 below does the real job.
-- The 15 `case` arms, the 15 names in the usage string, and MANUAL_TESTING's
-  prose *"15 tracks"* **currently agree**. The guards below are therefore
-  **preventive, not corrective** — none of them is fixing live drift today. Said
+- The `case` arms, the usage string and MANUAL_TESTING **agreed** when this was
+  written, and still agreed when A2/A5 were finally built on 2026-08-27 — 31
+  dispatch names across four scripts, 19 of them `smoke-openbios.sh`'s. So the
+  guards are **preventive, not corrective**: neither found live drift. Said
   plainly because "we added a checker" reads as "we found something", and here
-  that would be false. (The prose integer was hand-written on 2026-08-25, which
-  is precisely the shape CLAUDE.md's *don't write the test count in prose* rule
-  exists for.)
+  that would be false. What the checker's own §0 controls *did* find is in
+  [`tools/check-track-list.sh`](tools/check-track-list.sh): the first backward
+  scan stopped at a **nested** `case` inside an arm and read 2 arms out of 19 —
+  and the fixture written to catch exactly that shape **passed anyway**, because
+  it put the nested `case` on the arm's own line where there is no bare `case`
+  line to stop at. A fixture that does not reproduce the real shape proves
+  nothing. Fifth time in two days.
 - All eight `REVIVAL_MARKERS` in
   [`build-openbios.sh`](examples/openbios-the-rival-that-shipped/build-openbios.sh)
   name files that `patches/01-x86-revival.patch` touches. Also coherent today —
   and also a **cached description of a patch**, which is bug class #1.
-- **The clone is unpinned**: `git clone https://github.com/openbios/openbios.git`
-  with no ref. Anything built in CI tracks upstream HEAD, so a Tier-B job would
-  go red on somebody else's commit. Pinning is a prerequisite, not a nice-to-have.
+- ~~**The clone is unpinned**~~ — **PINNED 2026-08-27.** `build-openbios.sh` now
+  checks out `openbios` at `e5ac46d` and `fcode-utils` at `6e563ee`, detached,
+  fetching the exact object when the clone lacks it. A **tag would not do**: a
+  version string is not an identity and a tag can be moved, so these are SHAs.
+  A clone already at the pin is left completely alone, so the uncommitted
+  divergence this lab develops in is never touched; a clone that is *not* at the
+  pin and *is* dirty makes the build refuse by name rather than move HEAD under
+  that work. [`tools/openbios-pin-check.sh`](tools/openbios-pin-check.sh) reads
+  the SHAs **out of** `build-openbios.sh` — a second copy would be a cache of the
+  first, stale in exactly the case it exists to detect — and reports when
+  upstream has moved past them. It never bumps anything: moving the pin means
+  re-reading 30 patches and re-running every track on three arches, and that is a
+  decision someone makes rather than a surprise mid-build.
+
+  **A pin nobody looks at ages silently, so a routine looks at it weekly** —
+  Mondays 09:00 America/New_York (`0 13 * * 1` UTC), routine
+  `trig_01BxvYWNk9j4H2sitWXYfkp4`. It runs `openbios-pin-check.sh` in a cloud
+  session against this repository and reports; when a pin has moved it also
+  counts the commits and lists their subjects from a blobless clone. It is
+  granted **Bash, Read and Grep only** — no `Write`, no `Edit` — so "it never
+  bumps anything" is enforced by the harness rather than promised by the prompt.
+  Its instructions say in as many words that a `77` is an UNKNOWN and not a pass.
 - **podman may be absent on the runner** — `ci.yml` already carries a
   `::warning::` for exactly that in the phase6 job. Tier B cannot be assumed.
 
@@ -2966,10 +2998,10 @@ The tier that must run on every PR, and the one that must not be empty.
 | | guard | its control |
 |---|---|---|
 | **A1** | usage text is data — **done**, #292 | ✅ both run: a removed `--help`, and an unquoted delimiter with `` `date` `` in the prose |
-| **A2** | track-list coherence: every `case` arm appears in the usage string and vice versa, and MANUAL_TESTING's count matches | add an arm without touching the usage string → must FAIL naming it |
+| **A2** | ✅ **done 2026-08-27** — every `case` arm appears in the usage string and vice versa, **and in the `usage()` heredoc**, across all four dispatching scripts | ✅ both run against the REAL corpus: renaming one name in the usage line fails with *both* halves named (`'client-forth' is a case arm but is NOT in its own usage list` / `'client-forthh' is offered by the usage list but has NO case arm`) |
 | **A3** | marker/patch coherence: every `REVIVAL_MARKERS` entry names a file `patches/01` touches **and** a string it actually adds | mutate one marker → must FAIL naming that marker, not "the build is broken" |
 | **A4** | patch-file hygiene: each `patches/NN-*.patch` is a well-formed unified diff whose `Subject: [PATCH NN/..]` matches its filename | renumber a Subject → FAIL |
-| **A5** | every flavor/track name typed in README, MANUAL_TESTING and RUNBOOK is a real `case` arm of the script it is typed against | cite a nonexistent track in a doc → FAIL. **This is the job `check-doc-verbs.sh` cannot do here**; it is small, and it is the one that catches a renamed track leaving the docs behind |
+| **A5** | ✅ **done 2026-08-27** — every `<script> <name>` typed in the lab's ten documents names a real arm of that script. **This is the job `check-doc-verbs.sh` cannot do here** | ✅ appending `` `./smoke-openbios.sh vgaa` `` to MANUAL_TESTING fails with *the docs type 'smoke-openbios.sh vgaa', which is not one of its arms* |
 
 ### Tier B — needs the pinned clone + podman + QEMU (TCG, no KVM)
 

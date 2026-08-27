@@ -499,10 +499,19 @@ jobs:
           # `--help` (they take a positional flavor), and build-coreboot-openbios.sh
           # exited 0 having STARTED A COREBOOT BUILD. Headless: it only reads the scripts
           # and runs `--help`, which is now guaranteed to run nothing.
+          #
+          # test-track-list.sh (TODO 14 Tier A, A2 and A5) joined 2026-08-27: the names the
+          # lab's four dispatching scripts accept, against their own usage lines, their
+          # --help text, and every `<script> <name>` typed in its ten documents. Headless
+          # by construction -- it reads and compares, it never runs a track. It is the one
+          # job check-doc-verbs.sh cannot do here: pointed at this lab that tool reports
+          # "0 distinct commands", because it deliberately passes over the $-prefixed
+          # console transcripts this lab writes all its examples as.
           for t in examples/kali-packer-vagrant/tests/test-offline-archive.sh \
                    examples/almalinux-packer-images/tests/test-offline-archive.sh \
                    examples/openbios-the-rival-that-shipped/tests/test-usage-is-data.sh \
                    examples/openbios-the-rival-that-shipped/tests/test-patch-scope.sh \
+                   examples/openbios-the-rival-that-shipped/tests/test-track-list.sh \
                    examples/micro-cloud/tests/run-all.sh \
                    examples/nested-calico-sandbox/tests/run-all.sh \
                    examples/metal-as-a-service/tests/run-all.sh; do
