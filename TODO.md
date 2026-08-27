@@ -99,7 +99,9 @@ items, and neither is blocked on anything.**
       gate on the whole hazard: §13.2(b)'s refusal turned a silent truncation into an honest
       abort, but nobody has put an instance up there and watched one round-trip.
 
-- [ ] **0.6b — the third seam: a live device BAR.** The NVDIMM answered *"memory the firmware
+- [x] **0.6b — the third seam. DONE 2026-08-27**, `smoke-openbios.sh mmio-writer`, and it
+      gave the third distinct answer as predicted — but **not at a PCI BAR**, because there
+      isn't one to aim at. See 0.6c/0.6d, both found by trying. *Original text:* The NVDIMM answered *"memory the firmware
       does not own"* and CFI flash answered *"command-sequenced device"* — a BAR is neither.
       The `vga` track already reaches `QEMU,VGA@2`'s `assigned-addresses`, so the address is
       available without new plumbing. **Expect a third distinct answer**, not a repeat of
@@ -107,7 +109,14 @@ items, and neither is blocked on anything.**
       by a file, so the assertion has to come from outside the firmware some other way
       (QEMU's `screendump` is the obvious candidate, and it has not been tried).
 
-**What NOT to re-derive**, because each cost a run tonight and is written up in §16:
+- [ ] **0.6c — the VGA BAR0 is never assigned on amd64.** 16 MiB does not fit the window the
+      firmware allocates from, so `assigned-addresses` carries `phys.lo = 0` and QEMU reports
+      the BAR unmapped. Everything below it inherits that zero.
+- [ ] **0.6d — `" screen" open-dev` GPFs**, `dstackcnt=-3`, downstream of 0.6c's zero.
+      Reachable only since §13.3(D) made the alias resolve. Fix 0.6c first and re-measure
+      before touching the driver: this may simply go away.
+
+**What NOT to re-derive**, because each cost a run and is written up in §16:
 
 | | |
 |---|---|
@@ -115,6 +124,7 @@ items, and neither is blocked on anything.**
 | the prompt prints the **stack depth** | `--expect "0 > "` hangs forever whenever a cursor is deliberately left on the stack. Caught three times in one night |
 | the console **echoes the command** | `r0=" fw @ …` precedes `r0=ff ff ff`, so a value extraction that allows a space after the `=` matches the echo |
 | a fault in a **shared** word is not scoped | breaking `int!` breaks every property in the device tree, and the generic gate fires instead of the named one. Inject into a word with no in-tree callers, or scope the fault to a value the tree never uses |
+| the console **paints the VGA screen too** | it scrolls, so a small write at row 0 is gone by the next prompt, and a raw image diff is swamped by echo. Fill the whole buffer, and assert on a **colour the console never produces** |
 
 ---
 
@@ -3396,10 +3406,46 @@ pflash images wrong and the firmware's own CFI probe reported no chip at all; an
 extraction matched the console's command **echo** — `r0=" fw @ …` comes before `r0=ff ff ff`
 in the log — and printed an empty value into otherwise-correct messages.)*
 
-### What is still not done
+### Third seam, MMIO — **DONE 2026-08-27**, `smoke-openbios.sh mmio-writer`
 
-**One seam.** A live device BAR — the NVDIMM answered *"memory the firmware does not own"*
-and CFI flash answered *"command-sequenced device"*; a BAR is neither. See §0.6b.
+1000 `int!` stores into the legacy VGA aperture at `0xb8000` put **167,685 blue pixels** on
+the display, where the pre-write dump and the no-write control each hold **0**, with `here`
+unchanged. Read by QEMU's **`screendump`** — an observer the firmware cannot fake, and the
+point of the exercise: `decode-int` agreeing with `int!` says nothing about what the hardware
+did.
+
+| seam | stores | observer |
+|---|---|---|
+| NVDIMM (`pmem-writer`) | **land** | a **file**, read after QEMU exits |
+| CFI flash (`flash-writer`) | are **commands**; the array is untouched | the array, and the host image |
+| VGA aperture (`mmio-writer`) | **land** | a **device**, read by `screendump` |
+
+Three seams, three answers. The writer can be aimed at all three; what differs is whether a
+store is data and who can see it.
+
+*Two implementation notes, both from failed first attempts. The console paints this same
+screen, so it **scrolls** — a four-character write at row 0 was gone before the next prompt
+was drawn, and the probe duly reported no change; filling all 80×25 cells is scroll-proof.
+And the assertion counts pixels of VGA **blue** (attribute `1f`), a colour the console never
+produces, rather than diffing the images — a raw diff is swamped by console echo.*
+
+### It is NOT a PCI BAR, and that is two new defects
+
+Trying to aim at the real framebuffer BAR is what found them.
+
+- **The VGA BAR0 is never assigned on amd64.** QEMU's own `info pci` reports
+  `Bus 0, device 2: BAR0: 32 bit prefetchable memory at 0xffffffffffffffff` — unassigned.
+  The firmware places BAR2 and BAR6 inside a ~1 MiB window and never finds room for the
+  16 MiB BAR0, so the device tree's `assigned-addresses` carries **`phys.lo = 0`** for it.
+- **`" screen" open-dev` faults**, downstream of that same zero: a general protection fault
+  with **`dstackcnt=-3`** — a data-stack underflow — as `map-fb` hands `pci-bar>pci-addr` an
+  entry whose address is 0. **This became reachable only with
+  [§13.3(D)](#d-pcic-wrote-its-property-cells-in-host-byte-order--closed-2026-08-27)**: before
+  that fix the `screen` alias resolved to nothing, so nobody could open it. Fixing one layer
+  exposed the next, which is the ordinary shape of this work.
+
+Both are recorded rather than fixed: they are a PCI-allocator question and a driver question,
+not a storage-split question, and §16 is the storage split.
 
 Review §2's fourth assertion is **closed** (§0.6a): `/chosen`'s `stdin` round-trips at the
 address instances actually land on, and the review's own UNKNOWN — whether an amd64 instance

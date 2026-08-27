@@ -173,6 +173,15 @@ stores leave both the array and the host image untouched, and storing at the **u
 `ffbe0000` reads back convincingly as `c0 ff ee` — into RAM, nowhere near the chip. Run with
 `persist-flash pmem-writer property-abi multiboot amd64 diagnostics`, all PASS.
 
+**2026-08-27, `mmio-writer` (TODO §16, third seam):** 1000 `int!` stores into the legacy VGA
+aperture at `0xb8000` put **167,685 blue pixels** on the display — read by QEMU's
+`screendump`, an observer the firmware cannot fake — where the pre-write dump and the
+no-write control each hold **0**, with `here` unchanged. Two first attempts failed
+instructively: the console paints the same screen and **scrolls**, so a four-character write
+vanished before the next prompt; and a raw image diff is swamped by console echo, so the
+assertion counts a colour the console never produces. **Not a PCI BAR** — QEMU reports the
+VGA BAR0 unassigned, which is TODO §0.6c.
+
 ### The negative controls, run 2026-08-23
 
 Each fix was broken and watched to bite before being trusted:

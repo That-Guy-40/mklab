@@ -206,6 +206,15 @@ after:  offset 4194304 reads [c0 ff ee 01 c0 ff ee 02 c0 ff ee 03]
 read by `od` on the host after QEMU exited. Its control aims the same probe at ordinary RAM —
 every firmware-side assertion still passes, and only the host-file check fails.
 
+Three seams, three answers — the writer reaches all of them, and what differs is whether a
+store is *data* and *who can see it*:
+
+| seam | stores | observer |
+|---|---|---|
+| NVDIMM (`pmem-writer`) | **land** | a **file**, read after QEMU exits |
+| CFI flash (`flash-writer`) | are **commands**; the array is untouched | the host image |
+| VGA aperture (`mmio-writer`) | **land** | a **device**, read by QEMU's `screendump` |
+
 ## The upstream clone is pinned
 
 `build-openbios.sh` checks out `openbios` at **`e5ac46d`** and `fcode-utils` at
