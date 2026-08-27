@@ -3214,5 +3214,49 @@ buffer must equal what `encode-int` produces into the arena for the same value.
 you were told* from *writing into the arena and copying*, and only the first of those can
 ever be aimed at MMIO or flash.
 
-**Not started.** This entry is the decision, which is what the review asked for at this
-point.
+### First deliverable — **DONE 2026-08-27**, [patch 31](examples/openbios-the-rival-that-shipped/patches/31-encode-writers-take-a-destination.patch)
+
+`/int` `/string` `/bytes` and `int!` `string!` `bytes!` exist; the three `encode-*` words
+are redefined in terms of them with their signatures unchanged. `string!` writes the
+terminator itself — `alloc-tree` zero-fills and the old `encode-string` inherited that, but
+a caller's buffer is not pre-zeroed. And `int!` **inherits §13.2(b)'s
+refusal for free**, because it *is* `l!-be`: a value that cannot survive four bytes is
+refused wherever it is aimed.
+
+`property-abi` asserts both halves of the checkpoint, on both arches:
+
+```
+s-int-HERE-UNCHANGED   s-int-BYTES-MATCH
+s-str-HERE-UNCHANGED   s-str-len=3   s-str-nul=0   s-str-txt=ab
+```
+
+**The first two controls were bad ones, and the way they were bad is the point.** Making
+`int!` allocate-and-write-elsewhere, or do nothing at all, broke **every property in the
+device tree** — the probe never ran, and the generic *"probe did not complete"* gate fired
+instead of the named assertion. That is this repo's own rule, from the chaos-harness
+section: *scope the fault to the subject under test*, because a fault that breaks everything
+sends every scenario to the same rung.
+
+The narrowed pair isolates one assertion each **with the other still passing**, which is
+what proves they are jointly necessary rather than one being decorative:
+
+| injected | `here` | bytes |
+|---|---|---|
+| `int!` also bumps `here` | **MOVED** ✗ | MATCH ✓ |
+| `int!` writes one byte late, **only for the probe's value** | UNCHANGED ✓ | **DIFFER** ✗ |
+
+The second is scoped to a value the device tree never encodes, so the firmware stays up and
+only the subject fails. `string!` losing its terminator fails by name too, against a buffer
+poisoned with `ff` first so an inherited zero cannot pass for a written one.
+
+### What is still not done
+
+- **The cursor.** Composition for the mapped case — `( dest -- dest' )` — is not written.
+  `encode+` no longer requires arena adjacency (patch 27), so nothing blocks it.
+- **Nothing has been aimed at real storage yet.** A writer that leaves `here` alone *can* be
+  pointed at flash or MMIO; none has been. Until one is, §8's blocked applications
+  (boot-handoff structures, CBFS assembly, measured boot) stay blocked in fact even though
+  the obstacle F2 named is gone.
+- **Review §2's fourth assertion** — `/chosen`'s `stdin` surviving a round trip at whatever
+  address instances land on in long mode — and the review's own unmeasured question of
+  whether an amd64 instance can land above 4 GiB at all.

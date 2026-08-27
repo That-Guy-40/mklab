@@ -146,6 +146,13 @@ divergent d-zero line; it now expects one line for all three arches. `printf-edg
 from 12/12 to 14/14 with the `%n` and `%llx` cases, and `test-eword-report` is a second
 must-catch fixture beside `test-feval-report`.
 
+**2026-08-27, patch 31 (TODO §16):** `property-abi multiboot amd64 vga diagnostics ppc
+client-forth nvram dict-identity amd64-pmem` — all PASS on x86 + amd64 + ppc builds.
+`property-abi` gained the storage checkpoint: `int!` and `string!` write where the caller
+says, with **`here` unchanged**. Two controls isolate the two halves — one bumps `here`
+while the bytes stay right, the other corrupts the bytes while `here` stays put — because
+neither assertion is sufficient alone.
+
 ### The negative controls, run 2026-08-23
 
 Each fix was broken and watched to bite before being trusted:

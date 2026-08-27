@@ -923,6 +923,7 @@ case "$FLAVOR" in
     cat > "$PST/PROP.FTH" <<'FTH'
 \ TODO 13.2 probe. Base is HEX.
 ." P132-START" cr
+create tgt 20 allot
 ." cell-bits=" 1 cells 8 * . cr
 \ FIRST, before this probe decodes anything of its own: the counters as the
 \ BOOT left them. Read at the end instead and the measurement includes the
@@ -947,6 +948,21 @@ then
 clear
 ffffffff encode-int 2drop ." b-ctl-u32-OK" cr
 -1 encode-int 2drop ." b-ctl-neg-OK" cr
+\ TODO 16: write where the caller says, and do not move HERE doing it.
+tgt 20 ff fill
+here
+12345678 tgt int!
+here = if ." s-int-HERE-UNCHANGED" else ." s-int-HERE-MOVED" then cr
+12345678 encode-int drop
+tgt swap 4 comp 0= if ." s-int-BYTES-MATCH" else ." s-int-BYTES-DIFFER" then cr
+tgt 20 ff fill
+here
+" ab" tgt string!
+here = if ." s-str-HERE-UNCHANGED" else ." s-str-HERE-MOVED" then cr
+." s-str-len=" " ab" /string . cr
+." s-str-nul=" tgt 2 + c@ . cr
+." s-str-txt=" tgt 2 type cr
+clear
 3 encode-int
 4 encode-int
 3 pick 3 pick + 2 pick = if ." c-fast-ADJACENT" else ." c-fast-NOT" then cr
@@ -1068,6 +1084,32 @@ FTH
       || fail "13.2(b) on amd64: -2 was thrown but l!-be's message never reached the console, so the refusal cannot tell an operator what it refused — see $WORKDIR/prop-amd64.log"
     grep -q 'b-UNREPRESENTABLE-ON-THIS-CELL' <<<"$XL" \
       || fail "13.2(b) reported a verdict on x86, where a 4-byte cell cannot express the input — that can only mean the probe stopped checking the literal survived, which is the false PASS this track was written to avoid"
+
+    # TODO 16, THE FIRST DELIVERABLE OF THE STORAGE DECISION. `int!` and
+    # `string!` take the destination as a stack parameter, and `encode-int` /
+    # `encode-string` are redefined in terms of them — one implementation per
+    # encoding, shared by the device tree and by anything aimed elsewhere.
+    #
+    # `here` UNCHANGED IS THE WHOLE ASSERTION. Bytes landing at the right address
+    # is satisfied by a writer that allocates in the arena and copies; only a
+    # writer that leaves HERE alone can ever be pointed at flash or MMIO. The
+    # byte-match line is necessary too — writing nothing moves HERE just as
+    # little — so neither is sufficient by itself.
+    for A in amd64 x86; do
+      SW="$(tr -d "\r" < "$WORKDIR/prop-$A.log")"
+      grep -qF 's-int-HERE-UNCHANGED' <<<"$SW" \
+        || fail "REGRESSION: TODO 16 on $A: int! moved HERE — it allocated instead of writing where it was told, and that is the one property that lets this be aimed at memory the firmware does not own (F2 in REVIEW-preboot-forth-binary-structures.md) — see $WORKDIR/prop-$A.log"
+      grep -qF 's-int-BYTES-MATCH' <<<"$SW" \
+        || fail "REGRESSION: TODO 16 on $A: the four bytes int! wrote to a caller-chosen buffer differ from what encode-int produces for the same value — one encoding used two ways is the whole point of the split — see $WORKDIR/prop-$A.log"
+      grep -qF 's-str-HERE-UNCHANGED' <<<"$SW" \
+        || fail "REGRESSION: TODO 16 on $A: string! moved HERE — see $WORKDIR/prop-$A.log"
+      grep -qE 's-str-len=[[:space:]]*3( |$)' <<<"$SW" \
+        || fail "TODO 16 on $A: /string of a 2-byte string is not 3 — the sizer and the terminator disagree, so a caller sizing a buffer with it comes up short: $(grep -aoE 's-str-len=.{0,12}' <<<"$SW" | head -1) — see $WORKDIR/prop-$A.log"
+      grep -qE 's-str-nul=[[:space:]]*0( |$)' <<<"$SW" \
+        || fail "TODO 16 on $A: string! left no terminator — the buffer is poisoned with ff first precisely so an inherited zero cannot pass for a written one: $(grep -aoE 's-str-nul=.{0,12}' <<<"$SW" | head -1) — see $WORKDIR/prop-$A.log"
+      grep -qF 's-str-txt=ab' <<<"$SW" \
+        || fail "TODO 16 on $A: string! did not copy the bytes — see $WORKDIR/prop-$A.log"
+    done
 
     # THE MUST-NOT-CATCH PAIR, and without it the line above is satisfied by a
     # gate that refuses EVERYTHING — which would be a firmware that cannot encode

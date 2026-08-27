@@ -1,0 +1,154 @@
+Subject: [PATCH 31/31] property.fs: split SIZE and WRITE, so the caller can name the destination
+Arch-tested: x86 amd64 ppc
+
+TODO 16, the first deliverable of the storage decision, which is
+REVIEW-preboot-forth-binary-structures.md's F2 -- the only structural
+blocker between this lab and the poke-like toolkit it exists to reach.
+
+F2: there is no "encode INTO this address" primitive anywhere in the
+1275 wordset. Every encode-* word chooses its own destination via
+alloc-tree, so it cannot be aimed at a flash region, an MMIO window, a
+CBFS entry or a boot-handoff page. poke maps a type over storage that
+already exists; encode-* constructs fresh bytes in an arena you do not
+pick. The read half generalizes; the write half does not exist.
+
+NOT A PLUGGABLE ALLOCATOR, and the reason is in TODO 16. alloc-tree is
+called INSIDE encode-int, where the caller cannot reach it, so a
+"destination" it consulted would have to live in a variable -- a mode
+flag wearing a parameter's clothes, and a cached fact about which arena
+you are in is the bug class this lab keeps finding. It would also leave
+the device-tree path and the toolkit path sharing one mutable global.
+
+Instead: each encode word was already
+
+    size -> alloc-tree -> write at the address alloc-tree chose
+
+with the write step ALREADY parameterised by an address (l!-be, move).
+So the sizer and the writer are exposed and the 1275 word is redefined in
+terms of them:
+
+    /int  /string  /bytes      sizers
+    int!  string!  bytes!      writers -- destination is a stack parameter
+    encode-int ...             unchanged signature: sizer, alloc-tree, writer
+
+Same signatures. ONE implementation per encoding, used by the device tree
+and by anything aimed elsewhere -- extract the shipped thing, never
+re-implement it, which the pluggable version could not satisfy. The two
+paths share no mutable state at all: not a global, not a mode.
+
+string! writes the terminator itself. alloc-tree zero-fills and the old
+encode-string inherited that; a caller's buffer is not pre-zeroed.
+
+int! inherits 13.2(b)'s refusal for free, because it IS l!-be: a value
+that cannot survive four bytes is refused wherever it is aimed.
+
+THE CHECKPOINT IS `here` UNCHANGED, and that is the whole of it. Bytes
+landing at the right address is satisfied by a writer that allocates in
+the arena and copies; only a writer that leaves HERE alone can ever be
+pointed at memory the firmware does not own. property-abi asserts both,
+because neither is sufficient alone -- writing nothing moves HERE just as
+little.
+
+WATCHED TO BITE, and the first two attempts were BAD CONTROLS.
+
+Making int! allocate-and-write-elsewhere, or do nothing at all, broke
+every property in the device tree and the probe never ran: the generic
+"probe did not complete" gate fired instead of the named one. That is
+CLAUDE.md's own rule -- scope the fault to the subject under test -- and
+I broke it. A fault that breaks everything sends every scenario to the
+same rung.
+
+The narrowed pair isolates one assertion each, with the other still
+passing, which is what proves they are jointly necessary:
+
+    int! also bumps here          -> s-int-HERE-MOVED, BYTES-MATCH still ok
+    int! writes one byte late,
+      only for the probe's value  -> s-int-HERE-UNCHANGED, BYTES-DIFFER
+
+The second is scoped to a value the device tree never encodes, so the
+firmware stays up and only the subject fails. string! losing its
+terminator fails by name too, against a buffer poisoned with ff first so
+that an inherited zero cannot pass for a written one.
+
+diff --git a/forth/device/property.fs b/forth/device/property.fs
+--- a/forth/device/property.fs
++++ b/forth/device/property.fs
+@@ -316,21 +316,71 @@
+ \ 5.3.5.1 Property array encoding
+ \ 
+ 
++\ LOCAL DIVERGENCE (mklab). TODO 16: SIZE and WRITE, split apart.
++\
++\ Every encode word below was `size -> alloc-tree -> write at the address
++\ alloc-tree chose`, with the write step already parameterised by an address
++\ (`l!-be`, `move`). REVIEW-preboot-forth-binary-structures.md's F2 is that the
++\ chooser is not the caller: there is no "encode INTO this address" primitive
++\ anywhere in the wordset, so it cannot be aimed at a flash region, an MMIO
++\ window, a CBFS entry or a boot-handoff page. poke maps a type over storage
++\ that already exists; this constructs fresh bytes in an arena you do not pick.
++\
++\ THE FIX IS NOT A PLUGGABLE ALLOCATOR. `alloc-tree` is called INSIDE
++\ encode-int, where the caller cannot reach it, so a "destination" it consulted
++\ would have to live in a variable -- a mode flag wearing a parameter's clothes,
++\ and a cached fact about which arena you are in is the bug class this lab keeps
++\ finding. It would also leave the device-tree path and the toolkit path sharing
++\ one mutable global.
++\
++\ So the sizer and the writer are exposed, and the 1275 word is redefined in
++\ terms of them. Same signatures, ONE implementation per encoding used by both
++\ paths, destination a genuine stack parameter, and no shared mutable state --
++\ not a global, not a mode.
++\
++\ THE ASSERTION THAT MATTERS IS `here` UNCHANGED across a writer call. That is
++\ what separates writing where you were told from writing into the arena and
++\ copying, and only the first can ever be aimed at memory the firmware does not
++\ own. property-abi checks exactly that.
++\
++\ `int!` inherits 13.2(b)'s refusal for free, because it IS `l!-be`: a value
++\ that cannot survive four bytes is refused wherever it is aimed.
++
++: /int    ( -- n )                          /l ;
++: /string ( str len -- n )                  nip char+ ;
++: /bytes  ( data-addr data-len -- n )       nip ;
++
++: int!    ( n dest -- )                     l!-be ;
++
++: string! ( str len dest -- )
++  \ The caller's buffer is not pre-zeroed the way alloc-tree's is, so the
++  \ terminator is written here rather than inherited.
++  2dup + >r        ( str len dest )   ( R: dest+len )
++  swap move
++  0 r> c!
++  ;
++
++: bytes!  ( data-addr data-len dest -- )    swap move ;
++
+ : encode-int    ( n -- prop-addr prop-len )
+-  /l alloc-tree tuck l!-be /l
++  /int alloc-tree tuck int! /int
+   ;
+ 
+ : encode-string ( str len -- prop-addr prop-len )
+   \ we trust len here. should probably check string?
+-  tuck char+ alloc-tree ( len str prop-addr )
+-  tuck 3 pick move      ( len prop-addr )
+-  swap 1+
++  2dup /string           ( str len n )
++  dup alloc-tree         ( str len n addr )
++  swap >r  dup >r        ( str len addr )   ( R: n addr )
++  string!
++  r> r>                  ( addr n )
+   ;
+ 
+ : encode-bytes ( data-addr data-len -- prop-addr prop-len )
+-  tuck alloc-tree ( len str prop-addr )
+-  tuck 3 pick move
+-  swap
++  2dup /bytes            ( a l n )
++  dup alloc-tree         ( a l n addr )
++  swap >r  dup >r        ( a l addr )       ( R: n addr )
++  bytes!
++  r> r>                  ( addr n )
+   ;
+ 
+ \ LOCAL DIVERGENCE (mklab). TODO 13.2(c).
