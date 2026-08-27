@@ -1,0 +1,106 @@
+Subject: [PATCH 34/34] a PCI bus never declared its cell counts, so every Forth decode read one cell short
+Arch-tested: x86 amd64 ppc
+
+TODO 0.6d. `" screen" open-dev` faulted -- a general protection fault
+with dstackcnt=-3 on amd64, an invalid opcode with a throw -4 on x86 --
+and patch 33 did not fix it, which is what TODO 0.6d had predicted it
+would. The two were independent after all.
+
+CAUSE. #address-cells and #size-cells are written from pci_dev->acells /
+->scells (pci.c:1367), and NOTHING in drivers/pci_database.c assigns
+either field, on any entry. host_config_cb would have been the other
+candidate home and is never reached here at all: QEMU's i440FX is not in
+the database -- every boot log carries "Cannot manage 'PCI host bridge'
+... 8086 1237" -- so it falls to the generic subclass row, whose
+config_cb is NULL.
+
+So the property was never written, and forth/device/property.fs's
+my-#acells fell back to its no-property default of TWO for every child of
+a PCI bus. Measured at the amd64 prompt under
+/pci8086,1237@0/QEMU,VGA@2:
+
+    my-#acells = 2
+
+EVERYTHING ON THE C SIDE ENCODES THREE CELLS REGARDLESS --
+pci_encode_phys_addr writes phys.hi/mid/lo -- so `reg` and
+`assigned-addresses` were correct on disk the whole time. It is the FORTH
+decode side that read two where three were written, and the mismatch is a
+silent stack shift rather than an error: drivers/pci.fs's
+pci-bar>pci-addr is commented ( reg prop prop-len phys.lo phys.mid
+phys.hi ) and receives one fewer, so its `6 pick` reaches past the
+operand it wants and its exit path leaves the wrong count. map-fb then
+hands pci-map-in four items it may not have, and the machine falls over
+in whatever way that arch falls over.
+
+AFTER, on both arches:
+
+    my-#acells            3
+    pci-bar>pci-addr      leaves exactly 5:  40000000 0 42001010 1000000 -1
+    " screen" open-dev    ih=14dd8 (amd64) / 12a64 (x86)
+    frame-buffer-adr      40000000
+    exceptions            0
+
+3 and 2 are what the 1275 PCI binding specifies and what every C encoder
+here already assumes.
+
+WATCHED TO BITE. The `vga` track asserted only that the alias RESOLVED,
+which is not the same as being able to use it -- open-dev faulted on both
+arches for as long as that was all it checked. It now asserts the cause
+and the effect separately, because they were two bugs: AC (my-#acells is
+3), OD (open-dev returns an ihandle), FB (frame-buffer-adr is the BAR
+address from patch 33), and that the log carries no exception at all.
+Removing these two lines fails it by name:
+
+    REGRESSION: amd64: my-#acells under the VGA node is 2, not 3
+
+Run: vga property-abi mmio-writer pmem-writer flash-writer amd64
+multiboot diagnostics ppc nvram amd64-pmem dict-identity client-forth
+amd64-ctx -- all 14 PASS. This is shared code and reaches ppc, which is
+why the sweep includes it.
+
+diff --git a/drivers/pci.c b/drivers/pci.c
+--- a/drivers/pci.c
++++ b/drivers/pci.c
+@@ -1862,6 +1862,42 @@
+         } else {
+             BIND_NODE_METHODS(phandle, ob_pci_bus_node);
+         }
++
++        /* LOCAL DIVERGENCE (mklab). TODO 0.6d: A PCI BUS MUST DECLARE ITS CELL
++         * COUNTS, and no node in this tree ever did.
++         *
++         * #address-cells / #size-cells are written from pci_dev->acells /
++         * ->scells (pci.c:1367) -- and NOTHING in drivers/pci_database.c assigns
++         * either field, on any entry. host_config_cb would have been the other
++         * candidate home, and it is never reached here at all: QEMU's i440FX is
++         * not in the database (every boot log says "Cannot manage 'PCI host
++         * bridge' ... 8086 1237"), so it falls to the generic subclass row,
++         * whose config_cb is NULL. Hence this sits on the bind path, which every
++         * bridge takes on every arch.
++         *
++         * So the property was never written, and forth/device/property.fs's
++         * my-#acells fell back to its no-property default of TWO for every child
++         * of a PCI bus. Measured at the amd64 prompt under
++         * /pci8086,1237@0/QEMU,VGA@2: my-#acells = 2.
++         *
++         * Everything on the C side encodes three cells regardless
++         * (pci_encode_phys_addr writes phys.hi/mid/lo), so `reg` and
++         * `assigned-addresses` are right on disk. It is the FORTH decode side
++         * that read two where three were written, and the mismatch is a silent
++         * stack shift: drivers/pci.fs's pci-bar>pci-addr is commented
++         * ( reg prop prop-len phys.lo phys.mid phys.hi ) and receives one fewer,
++         * so its `6 pick` reaches past the operand it wants.
++         *
++         * Downstream that is TODO 0.6d: `" screen" open-dev` faults, because
++         * drivers/vga.fs's map-fb calls pci-bar>pci-addr and then hands
++         * pci-map-in four items it may not have. amd64 reported a general
++         * protection fault with dstackcnt=-3, x86 an invalid opcode with a
++         * throw -4 -- the same underflow in local costume.
++         *
++         * 3 and 2 are what the 1275 PCI binding specifies and what every C
++         * encoder here already assumes. */
++        set_int_property(phandle, "#address-cells", 3);
++        set_int_property(phandle, "#size-cells", 2);
+         break;
+     }
+ 
