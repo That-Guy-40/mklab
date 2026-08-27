@@ -166,6 +166,13 @@ exited**. Its control aims the identical probe at ordinary RAM: every firmware-s
 assertion passes and only the host-file one fails, which is the point — two firmware words
 agreeing with each other cannot say where the bytes went.
 
+**2026-08-27, `flash-writer` (TODO §16, scope):** a second new track, and its verdict is
+**no** — a CFI part is not a store-to seam. The corrected window reads an erased part's
+`ff ff ff` (the no-flash control reads `0 0 0`, so that is a measurement), three `int!+`
+stores leave both the array and the host image untouched, and storing at the **uncorrected**
+`ffbe0000` reads back convincingly as `c0 ff ee` — into RAM, nowhere near the chip. Run with
+`persist-flash pmem-writer property-abi multiboot amd64 diagnostics`, all PASS.
+
 ### The negative controls, run 2026-08-23
 
 Each fix was broken and watched to bite before being trusted:

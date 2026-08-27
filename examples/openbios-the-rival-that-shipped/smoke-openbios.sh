@@ -35,6 +35,8 @@ TRACK (default multiboot):
                               the trampoline's segments (TODO 13.3(A))
   pmem-writer                 a 1275 structure written to an NVDIMM above
                               4 GiB and found in the host file (TODO 16)
+  flash-writer                and why CFI flash is NOT the same seam: a bare
+                              store is a command, not data (TODO 16)
 
 Exit: 0 PASS / 1 FAIL / 77 SKIP. Each track ends on exactly one verdict line.
 Env: OPENBIOS_WORKDIR, KERNEL, INITRD, COREBOOT_DIR
@@ -1730,5 +1732,110 @@ FTH
 
     pass "TODO 16 end to end: three 1275-encoded ints written by int!+ at 0x100400000 — an NVDIMM above 4 GiB, reachable only in long mode — read back through the stock decode-int with HERE unchanged, and found byte-for-byte at offset $WOFF of the host's backing file after QEMU exited, where a fresh file held [$HAD]. The write half is no longer arena-bound (F2 in REVIEW-preboot-forth-binary-structures.md)"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|vga|diagnostics|client-forth|pmem-writer]" >&2; exit 1 ;;
+  flash-writer)
+    # TODO 16, and the answer is NO -- which is the point of measuring it.
+    #
+    # `pmem-writer` showed a 1275 structure written by int!+ reaching an NVDIMM
+    # and surviving into the host's file. The obvious next question is whether
+    # that generalizes to the other seam this lab already has: CFI flash. It does
+    # not, and the reason is not a defect in the writer.
+    #
+    # A CFI part is not a store-to seam. arch/x86/openbios.c's lab_flash_write()
+    # does the Intel sequence -- 0x20 setup, poll status, 0x40 program per byte,
+    # 0xff back to read-array. A bare store into that window is a COMMAND, not
+    # data. So the split's conclusion stands but its scope is narrower than the
+    # NVDIMM result suggests: the writer produces bytes at an address; getting
+    # those bytes into flash is the flash driver's job, above it.
+    #
+    # THREE THINGS ARE PINNED HERE, and the third is the trap.
+    #
+    #   1. the window really is the chip -- an erased part reads ff, and the
+    #      no-drive control reads 0, so "ff" is a measurement and not a constant
+    #   2. a bare store leaves both the array and the host file untouched
+    #   3. AIMING AT THE UNCORRECTED ADDRESS LOOKS LIKE IT WORKED. x86 rebases
+    #      the GDT, so a Forth address is not a physical one: storing at
+    #      `ffbe0000` writes RAM, and reading `ffbe0000` back returns exactly
+    #      what was written. Convincing, and nowhere near the flash. This is the
+    #      same segment fact as TODO 13.3(A), met from the other side, and it
+    #      cost this track two runs before the erased-flash read caught it.
+    #
+    # A NOTE ON READING THE VALUES BACK OUT. The console echoes the command, so
+    # a log contains `r0=" fw @ c@ ...` before it contains `r0=ff ff ff` — a
+    # pattern that allows a space right after the `=` matches the echo first and
+    # reports an empty value. Every extraction below requires a hex digit
+    # immediately after the `=` and takes the LAST match.
+    command -v qemu-system-i386 >/dev/null || skip "qemu-system-i386 not installed"
+    command -v od >/dev/null || skip "od not installed — the host-side read is an assertion"
+    FXMB="$WORKDIR/openbios/obj-x86/openbios.multiboot"
+    [[ -f "$FXMB" && -f "$XDICT" ]] || skip "no x86 image — run ./build-openbios.sh x86 first"
+    grep -q 'lab_flash_present' "$WORKDIR/openbios/arch/x86/openbios.c" 2>/dev/null \
+      || skip "no CFI flash backing in arch/x86/openbios.c — this track measures that seam"
+    FSEA=$(ls /usr/share/seabios/bios.bin /usr/share/qemu/bios.bin 2>/dev/null | head -1)
+    [[ -n "$FSEA" ]] || skip "no seabios image found — pflash0 must hold a BIOS or nothing boots"
+
+    FF0="$WORKDIR/fw-flash0.img"; FF1="$WORKDIR/fw-flash1.img"
+    rm -f "$FF0" "$FF1"; truncate -s 4M "$FF0"
+    dd if="$FSEA" of="$FF0" bs=1 seek=$(( 4*1024*1024 - $(stat -c%s "$FSEA") )) \
+       conv=notrunc status=none
+    # ERASED, not zeroed: a CFI part in read-array mode returns its contents, and
+    # a zero-filled file would make "the store wrote nothing" indistinguishable
+    # from "the store wrote zeros".
+    head -c 131072 /dev/zero | tr '\000' '\377' > "$FF1"
+
+    _fboot() {  # _fboot <log> <extra-qemu-args-array-name>
+      local log="$1"; shift
+      rm -f "$WORKDIR/smoke-fw.sock" "$log"
+      qemu-system-i386 -M "pc,accel=$ACCEL" -m 512 \
+        -kernel "$FXMB" -initrd "$XDICT" "$@" \
+        -display none -serial "unix:$WORKDIR/smoke-fw.sock,server=on" \
+        -no-reboot >/dev/null 2>&1 &
+      local q=$!
+      python3 "$REPO/tools/drive-serial-repl.py" "$WORKDIR/smoke-fw.sock" "$log" --timeout 120 \
+        --expect "0 > " \
+        --send 'variable vo  400000 load-base - vo !\r' --expect "> " \
+        --send 'variable fw  ffbe0000 vo @ - fw !\r' --expect "> " \
+        --send '." r0=" fw @ c@ . fw @ 1+ c@ . fw @ 2 + c@ . cr\r' --expect "> " \
+        --send 'fw @ c0ffee01 swap int!+ c0ffee02 swap int!+\r' --expect "> " \
+        --send 'c0ffee03 swap int!+ drop\r' --expect "> " \
+        --send '." r1=" fw @ c@ . fw @ 1+ c@ . fw @ 2 + c@ . cr\r' --expect "> " \
+        --send 'ffbe0000 c0ffee01 swap int!+ drop\r' --expect "> " \
+        --send '." r2=" ffbe0000 c@ . ffbe0001 c@ . ffbe0002 c@ . cr\r' --expect "> " \
+        --send 'clear ." FWDONE" cr\r' --expect "FWDONE" >/dev/null 2>&1
+      local rc=$?
+      kill "$q" 2>/dev/null   # by PID, never by pattern
+      sleep 1
+      return $rc
+    }
+
+    FLOG="$WORKDIR/flash-writer.log"
+    note "1/2 storing into the CFI window at 0xffbe0000 → $FLOG"
+    _fboot "$FLOG" -drive "if=pflash,format=raw,file=$FF0,unit=0" \
+                   -drive "if=pflash,format=raw,file=$FF1,unit=1" \
+      || fail "the x86 firmware did not finish the flash-writer probe — see $FLOG"
+    FL="$(tr -d "\r" < "$FLOG")"
+
+    grep -qF 'nvram: backed by pflash@0xffbe0000' <<<"$FL" \
+      || grep -qF 'pflash holds data that is not an nvram store' <<<"$FL" \
+      || fail "the firmware's own CFI probe did not find a chip at 0xffbe0000, so nothing below is about flash — see $FLOG"
+    grep -qE 'r0=[[:space:]]*ff ff ff' <<<"$FL" \
+      || fail "the corrected window read $(grep -aoE 'r0=[0-9a-f]+( [0-9a-f]+)*' <<<"$FL" | tail -1) instead of an erased part's ff ff ff — the probe is not looking at the chip, and the two assertions after this would be about some other memory — see $FLOG"
+    grep -qE 'r1=[[:space:]]*ff ff ff' <<<"$FL" \
+      || fail "GOOD NEWS IF DELIBERATE: a bare store into the CFI window changed the array to $(grep -aoE 'r1=[0-9a-f]+( [0-9a-f]+)*' <<<"$FL" | tail -1). CFI parts take commands, not data, so this means something now sits between int! and the chip. Update this track and TODO 16 together — see $FLOG"
+    grep -qE 'r2=[[:space:]]*c0 ff ee' <<<"$FL" \
+      || fail "storing at the UNCORRECTED address ffbe0000 no longer reads back as c0 ff ee — either x86 stopped rebasing the GDT, or virt_offset stopped applying to Forth addresses. That trap is the reason this track corrects the address at all — see $FLOG"
+
+    FGOT="$(od -An -tx1 -j 0 -N 3 "$FF1" | tr -s ' ' | sed 's/^ //;s/ $//')"
+    [[ "$FGOT" == "ff ff ff" ]] \
+      || fail "the host flash image now reads [$FGOT] at offset 0 — a bare store reached the part, which CFI says it should not — see $FLOG"
+
+    note "2/2 control: the identical probe with NO flash attached → $FLOG.control"
+    _fboot "$FLOG.control" >/dev/null 2>&1
+    FC="$(tr -d "\r" < "$FLOG.control")"
+    grep -qE 'r0=[[:space:]]*ff ff ff' <<<"$FC" \
+      && fail "the no-flash control ALSO read ff ff ff at the window — then ff is a constant this probe would print with or without a chip, and assertion 1 proves nothing — see $FLOG.control"
+    note "control read $(grep -aoE 'r0=[0-9a-f]+( [0-9a-f]+)*' <<<"$FC" | tail -1) with no chip attached, so ff ff ff was a measurement"
+
+    pass "TODO 16, scope: a CFI part is NOT a store-to seam, measured rather than assumed. The writer can be AIMED at 0xffbe0000 — the corrected window reads an erased part's ff ff ff where the no-flash control reads something else — but three int!+ stores leave the array and the host image untouched, because a CFI write is a command sequence (0x20/0x40/0xff, arch/x86/openbios.c) and not a store. The split's conclusion holds and its scope is narrower than pmem-writer suggests: the writer produces bytes, the flash driver programs them. And storing at the UNCORRECTED ffbe0000 reads back convincingly as c0 ff ee — into RAM, nowhere near the chip, which is TODO 13.3(A)'s segment fact met from the other side"
+    ;;
+  *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|vga|diagnostics|client-forth|pmem-writer|flash-writer]" >&2; exit 1 ;;
 esac

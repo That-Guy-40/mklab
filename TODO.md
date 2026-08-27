@@ -3313,10 +3313,43 @@ only a reader that is *not* the firmware can say where the bytes went. Same reas
 writes. The prompt prints the **stack depth**, and the cursor is deliberately on the stack —
 so it waited forever. Third time tonight the depth-in-the-prompt has caught me.)*
 
+### Flash — measured 2026-08-27, and the answer is **no**, `smoke-openbios.sh flash-writer`
+
+**A CFI part is not a store-to seam**, and knowing that is worth more than assuming the
+NVDIMM result generalizes. `arch/x86/openbios.c`'s `lab_flash_write()` does the Intel
+sequence — `0x20` setup, poll status, `0x40` program per byte, `0xff` back to read-array — so
+a bare store into that window is a **command**, not data.
+
+| | |
+|---|---|
+| the corrected window, erased part | `r0=ff ff ff` — and the no-flash control reads `0 0 0`, so `ff` is a measurement |
+| after three `int!+` stores | `r1=ff ff ff` — the array is untouched |
+| the host image at offset 0 | `ff ff ff` — untouched |
+
+**So the split's conclusion holds and its scope is narrower than `pmem-writer` suggests: the
+writer produces bytes at an address; getting those bytes into flash is the flash driver's
+job, above it.** That is the correct layering rather than a gap — it is how every real
+firmware programs a part.
+
+**And the trap is worth the track on its own.** Storing at the *uncorrected* `ffbe0000` reads
+back as `c0 ff ee` — convincingly, and nowhere near the chip. x86 rebases the GDT, so a Forth
+address is not a physical one; the store went to RAM. That is
+[§13.3(A)](#a-x86s-client-context-read-a-stale-copy-of-the-firmware--closed-2026-08-26)'s
+segment fact met from the other side, and it cost this track two runs before the erased-flash
+read caught it. The track pins all three facts, so nobody re-derives the wrong one.
+
+*(Two instrument bugs found on the way, both by the controls: the first attempt sized the
+pflash images wrong and the firmware's own CFI probe reported no chip at all; and every value
+extraction matched the console's command **echo** — `r0=" fw @ …` comes before `r0=ff ff ff`
+in the log — and printed an empty value into otherwise-correct messages.)*
+
 ### What is still not done
-- **Flash and MMIO specifically.** An NVDIMM is memory-mapped storage the firmware does not
-  own, which is the property that mattered; a CFI flash part and a device BAR are not the
-  same seam and have not been tried.
+- **MMIO specifically.** A device BAR is a third seam and has not been tried; the NVDIMM
+  answered the "memory the firmware does not own" question, and flash answered the
+  "command-sequenced device" one, but a live BAR is neither.
+- **Review §2's fourth assertion** — `/chosen`'s `stdin` surviving a round trip at whatever
+  address instances land on in long mode — and the review's own unmeasured question of
+  whether an amd64 instance can land above 4 GiB at all.
 - **Review §2's fourth assertion** — `/chosen`'s `stdin` surviving a round trip at whatever
   address instances land on in long mode — and the review's own unmeasured question of
   whether an amd64 instance can land above 4 GiB at all.
