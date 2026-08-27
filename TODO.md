@@ -3118,6 +3118,24 @@ UNKNOWN, and the runner has to say *which* guard did not run — the 2026-08-15
 incident (two mount guards silently skipping behind a healthy-looking
 `13 passed, 13 skipped`) is the reason that rule exists.
 
+### The structural piece — **DONE 2026-08-27**
+
+`tests/lib.sh` and `tests/run-all.sh` exist. **The net is copied verbatim from
+[`phase7-firecracker/tests/lib.sh`](phase7-firecracker/tests/lib.sh)** — the exemplar
+CLAUDE.md names — rather than rewritten, because a second implementation of a safety net is
+a second thing to get wrong; `tests/test-harness-net.sh` then holds the copy to the same
+seven sections instead of trusting it for being a copy. All five tests are **headless by
+construction**: they read files and run `--help`, so the suite cannot become the *"15 SKIPs
+and a green tick"* this section measured. `ci.yml` now carries **one** entry instead of five.
+
+That closes **§15.1** and **§15.3** for this lab (four and three rows left respectively).
+
+*One thing worth knowing before writing another runner:* the ratio checker harvests fixture
+names by grepping the runner's source for `test-*.sh` — **comments included**. Naming
+another suite's test file in prose makes it build a fixture by that name, which the runner's
+own disk-vs-list check then rejects; the checker says it could not drive the runner rather
+than quietly weakening its assertion. Refer to it by directory.
+
 ### What building this opts the lab into
 
 Worth knowing **before** starting, because both are hard gates that drive the
@@ -3165,9 +3183,12 @@ work items, and are deliberately not checkboxes here.
       `git ls-files '*/tests/lib.sh'`, but `check-harness-net.sh`'s **first** check is
       *whether a `lib.sh` exists at all*. So a `tests/` directory with no shared net is not a
       failure — it is not a row. **Measured:** the checker aimed by hand at all 21 `tests/`
-      dirs returns **13 × rc 0** (every enrolled suite) and **5 × rc 1** — `almalinux-packer-images/`,
-      `kali-packer-vagrant/`, `openbios-the-rival-that-shipped/`, `package-mirror-ram/`, and
-      **`tools/tests` itself**, the directory holding the meta-checkers. Enumerate `tests/`
+      dirs returned **13 × rc 0** (every enrolled suite) and **5 × rc 1** — `almalinux-packer-images/`,
+      `kali-packer-vagrant/`, ~~`openbios-the-rival-that-shipped/`~~, `package-mirror-ram/`, and
+      **`tools/tests` itself**, the directory holding the meta-checkers. **openbios's row
+      closed 2026-08-27**: it now has a `lib.sh` (the net copied verbatim from
+      `phase7-firecracker`, not rewritten) and passes all seven sections, so the enumeration
+      picks it up. **Four rows left.** Enumerate `tests/`
       **directories** containing `*.sh` instead; the five rows go red, which is the point.
       This is `CLAUDE.md`'s *"a scan that matches nothing and a scan that is broken print the
       same green ✓"* moved up one level — a broken **population** rather than a broken pattern.
@@ -3177,7 +3198,9 @@ work items, and are deliberately not checkboxes here.
       `exit 1`) ends the run with **no `FAIL:` line**, the exact silent exit the net exists to
       prevent. The two `test-offline-archive.sh` files carry near-identical hand-rolled copies.
       Give all four a `lib.sh` (or point them at a shared one) and delete the copies.
-- [ ] **15.3 — four `tests/` dirs have no `run-all.sh`,** so `test-run-all-reports-a-ratio.sh`
+- [ ] **15.3 — ~~four~~ THREE `tests/` dirs have no `run-all.sh`** (openbios's landed
+      2026-08-27, and its five tests moved from five hand-written lines in `ci.yml` into one
+      runner a checker reads), so `test-run-all-reports-a-ratio.sh`
       has no runner to drive, and the list moved into a hand-maintained `for t in …` in
       `ci.yml` — the *"a test file in no list"* shape the ratio rule was written to kill,
       relocated to a YAML file no ratio check reads.

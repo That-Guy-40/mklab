@@ -508,16 +508,21 @@ jobs:
           # "0 distinct commands", because it deliberately passes over the $-prefixed
           # console transcripts this lab writes all its examples as.
           #
+          # ONE ENTRY, NOT FIVE, since 2026-08-27: the lab gained a tests/run-all.sh, so its
+          # five tests are listed in one place that a checker reads instead of five places
+          # in this YAML that none does. That is TODO 15.3's shape — "a test file in no
+          # list" relocated into a file no ratio check looks at — closed for this lab.
+          # Creating the runner also enrolled it in tools/tests/'s ratio checker, and the
+          # lib.sh it needed enrolled the directory in check-harness-net.sh's seven
+          # sections, which is TODO 15.1 closed for this lab too.
+          #
           # test-patch-hygiene.sh (A3 and A4) joined the same day: build-openbios.sh's
           # REVIVAL_MARKERS array against the patch it describes, and all 30 patches
           # against git's own diff reader. The marker array is a CACHED DESCRIPTION OF A
           # PATCH -- bug class #1 in CLAUDE.md -- and nothing had ever compared the two.
           for t in examples/kali-packer-vagrant/tests/test-offline-archive.sh \
                    examples/almalinux-packer-images/tests/test-offline-archive.sh \
-                   examples/openbios-the-rival-that-shipped/tests/test-usage-is-data.sh \
-                   examples/openbios-the-rival-that-shipped/tests/test-patch-scope.sh \
-                   examples/openbios-the-rival-that-shipped/tests/test-track-list.sh \
-                   examples/openbios-the-rival-that-shipped/tests/test-patch-hygiene.sh \
+                   examples/openbios-the-rival-that-shipped/tests/run-all.sh \
                    examples/micro-cloud/tests/run-all.sh \
                    examples/nested-calico-sandbox/tests/run-all.sh \
                    examples/metal-as-a-service/tests/run-all.sh; do
