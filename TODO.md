@@ -3406,10 +3406,48 @@ real files rather than grepping them:
    in exactly **one** place in the whole repo (this step), and exactly one
    `workflow_dispatch` input is declared anywhere. Nothing else needed the same
    fix.
-3. **Keep `smoke-openbios.sh` as the single driver** and have `tests/` wrap it
-   one file per track, or split the tracks into test files? Wrapping keeps one
-   place to type a track by hand — which is how this lab is actually used — and
-   the wrapper is what `run-all.sh` lists.
+3. ~~**Keep `smoke-openbios.sh` as the single driver**…~~ — **DONE 2026-08-27:
+   wrapped.** The driver stays the single implementation and `tests/` carries one
+   `test-smoke-<track>.sh` per track, each a five-line `exec` — so the verdict,
+   the SKIP and the exit code are all the driver's, and there is still one place
+   to type a track by hand.
+
+   **The objection in the old runner header was right, and had to be answered
+   rather than overruled.** It read *"all five are headless by construction"* and
+   kept the tracks out because every one guards on a built artifact and SKIPs
+   without it — so a suite that merely included them printed a green tick on a
+   machine that cannot build. §14 had measured exactly that. Including them is
+   only safe once an all-SKIP sweep stops reading as a pass, so `run-all.sh` now
+   reports the two groups **separately** (`of which boot tracks: n/22`), prints
+   an explicit **UNKNOWN** when none executed and **PARTIAL** when some did not,
+   and `OPENBIOS_REQUIRE_TRACKS=1` turns any skip into a failure.
+
+   **Strict mode fails on ANY skip, not only on all of them, and that distinction
+   was earned by measurement.** Driven against an empty `OPENBIOS_WORKDIR`, the
+   sweep came back **21 skipped, 1 passed** — because the `coreboot` track reads
+   its ROM from the *linuxboot* lab (`COREBOOT_DIR`, default
+   `~/linuxboot-lab/coreboot`) and is therefore independent of the tree under
+   test. A guard that only fires when *every* track skips is silenced by exactly
+   that: one unrelated pass hiding twenty-one unknowns.
+
+   **Which surfaced a finding worth its own line:** `test-smoke-coreboot.sh` can
+   **PASS while the firmware under test was never built** — it booted a ROM built
+   at some earlier time from a sibling lab's tree. Whether that ROM's embedded
+   payload is re-derived or is a record outliving its subject is **not yet
+   established**; the lab's 00-INDEX entry claims it sha-guards both siblings'
+   ROMs. **Open question, not a fixed bug** — see §14 follow-ups.
+
+   [`tests/test-every-track-has-a-wrapper.sh`](examples/openbios-the-rival-that-shipped/tests/test-every-track-has-a-wrapper.sh)
+   holds the set together in **both** directions — a track with no wrapper is a
+   track nobody runs, a wrapper naming a dead track is drift — and also asserts
+   each wrapper actually `exec`s the driver rather than reimplementing it, and
+   that every one is listed in `run-all.sh` so the ratio is measured against the
+   full 22. It borrows `arms_of()` out of `check-track-list.sh` rather than
+   growing a second parser for the same dispatch.
+
+   **It caught a naming collision on its first run:** the wrappers were originally
+   `test-track-<name>.sh`, which the existing headless `test-track-list.sh`
+   matches — so "list" was read as a track. Hence the `test-smoke-` prefix.
 
 **The acceptance test for this item is not "the suite is green".** It is: break
 one thing in each tier and watch the named guard bite, and confirm the summary
