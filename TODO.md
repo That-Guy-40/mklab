@@ -2437,13 +2437,14 @@ payload.
 whole of what patch 23 claims. **Running the payload there is the next item**, and it is
 now a debuggable failure rather than a hang.
 
-### 13.3 Measured, named — and (A) since fixed
+### 13.3 Measured, named — and (A) and (D) since fixed
 
 Everything here was **observed**, not deduced. Where a mechanism is unknown it says so, and
-no guess stands in its place. **(A) is CLOSED (2026-08-26)**; it was the one entry with an
-in-tree caller actually broken by it, and tracing it is what turned "two mechanisms, one
-symptom" into one. B–E have no broken caller today, which is why each stays recorded rather
-than repaired.
+no guess stands in its place. **(A) is CLOSED (2026-08-26)** and **(D) is CLOSED (2026-08-27)** — between them they
+account for both entries that had an in-tree caller actually broken. Tracing (A) turned "two
+mechanisms, one symptom" into one; tracing (D) turned "pnodename and pathres disagree" into
+four bytes in the wrong order. B, C and E have no broken caller today, which is why each
+stays recorded rather than repaired.
 
 #### A. x86's client context read a STALE COPY of the firmware — **CLOSED 2026-08-26**
 
@@ -2565,7 +2566,67 @@ overwrite the character. **Mechanism not traced.** `number()` takes the `num == 
 emits one character, and `vsnprintf` returns `str-buf`; why that is `0` there and `1`
 elsewhere is unknown. The track pins the line per arch and **fails if it spreads**.
 
-#### D. The device tree, from §13.1a
+#### D. `pci.c` wrote its property cells in HOST byte order — **CLOSED 2026-08-27**
+
+*Both original bullets are kept below the rule. One of them was false, and the other was
+true about the wrong node.*
+
+**No child of the PCI host bridge could be reached by path** — not the VGA node
+specifically. `ls` listed five children and gave every one of them the same unit address
+(`@0`) while their `reg` phys.hi cells were all distinct. The first child's four bytes:
+
+| | |
+|---|---|
+| bytes | `00 08 00 00` |
+| read **little**-endian | `0x00000800` — bus 0, device 1, function 0: the correct 1275 phys.hi |
+| read **big**-endian (what `decode-int` does, via `l@-be`) | `0x00080000` — device field `(hi>>11)&0x1F` = **0** |
+
+So `ob_pci_encode_unit()` faithfully rendered `"0"` for all five, and
+`ob_pci_decode_unit("0")` produced a phys.hi of 0 that matched none of their `reg` cells.
+**`pnodename` and `pathres` never disagreed** — they agreed perfectly about a value that had
+been byte-swapped underneath them.
+
+The rest of the tree already knows: `set_int_property()` writes `__cpu_to_be32(val)`,
+`get_int_property()` reads `__be32_to_cpu(*p)`, every Forth reader goes through `l@-be`. Only
+`drivers/pci.c`'s builders handed `set_property()` raw host-order `u32` arrays. **On a
+big-endian host that is the same thing** — and OpenBIOS's PCI support is exercised almost
+entirely on ppc and sparc64. x86 and amd64 are the only little-endian targets, so this is a
+defect that existed only where nobody was looking.
+
+[Patch 28](examples/openbios-the-rival-that-shipped/patches/28-pci-property-cells-are-big-endian.patch)
+wraps the cell stores in `__cpu_to_be32`, which is the **identity** under
+`CONFIG_BIG_ENDIAN` — provably inert on ppc and sparc, changing only the arches that were
+broken. Two sites are deliberately left alone and named: `pci_set_AAPL_address()`'s
+`cell`-typed props (a `__cpu_to_be32` would truncate a 64-bit cell, and it is Apple/ppc-only),
+and the literal props blocks under `CONFIG_SPARC64`/`CONFIG_PPC` (big-endian-only, already
+correct, untestable here).
+
+After, on both arches:
+
+```console
+14f470 pci8086,7000@1
+14fb60 pci8086,7010@1,1
+150028 pci8086,7113@1,3
+150788 QEMU,VGA@2
+151e58 e1000@3
+" screen" find-dev   ->  150788
+```
+
+— QEMU's actual i440FX topology, function numbers and all. **Both bullets close on one fix**,
+because the second was never a missing alias: `/aliases` had carried `screen` all along,
+pointing at a path that could not resolve.
+
+**Watched to bite.** The `vga` track asserted `QEMU,VGA@0` — the defect — so it went red on
+the fix, which is the good-news failure a characterization test exists to produce. It now
+asserts `@2` and names both candidate causes; its `screen` line was an UNKNOWN printed on
+every run and is now an assertion. Re-injecting the host-order phys.hi fails it by name. One
+control bug of my own, caught the same way: `find-dev` returns `( phandle true | false )`, so
+the probe's bare `.` printed the **flag**, and `S=-1` read as "no phandle" — the probe now
+says `FOUND`/`NONE` outright.
+
+---
+
+*Original entry, 2026-08-26:*
 
 - **`QEMU,VGA@0` cannot be reached by path.** `ls` under the host bridge lists it, but
   `dev /pci8086,1237@0/QEMU,VGA@0` — and the relative form — both answer *no such device*,

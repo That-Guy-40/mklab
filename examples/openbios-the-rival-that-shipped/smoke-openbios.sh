@@ -1210,7 +1210,7 @@ FTH
         --expect "0 > " \
         --send '." F=" " vga-driver-fcode" $find . cr\r'  --expect "> " \
         --send 'clear ." W=" openbios-video-width . cr\r' --expect "> " \
-        --send 'clear ." S=" " screen" find-dev . cr\r'   --expect "> " \
+        --send 'clear ." S=" " screen" find-dev if ." FOUND " . else ." NONE" then cr\r' --expect "> " \
         --send 'clear dev /pci8086,1237@0 ls\r'           --expect "> "
       RC=$?
       kill "$QPID" 2>/dev/null   # by PID, never by pattern
@@ -1234,17 +1234,32 @@ FTH
       note "$A: vga-driver-fcode FOUND, openbios-video-width=0x$VW, no undefined-token report during boot"
 
       if [[ "$A" == amd64 ]]; then
-        grep -q 'QEMU,VGA@0' <<<"$VL" \
-          || fail "REGRESSION: amd64 has no QEMU,VGA@0 under /pci8086,1237@0 — ob_pci_init() is not being called from arch_init, so the bus below the firmware does not exist (patch 17) — see $VLOG"
+        # @2, NOT @0 — and the difference is TODO 13.3(D), patch 28. The unit
+        # address is generated from the node's `reg`, which pci.c used to write
+        # in HOST order while every reader decodes it big-endian; on this
+        # little-endian arch that made every child of the bridge encode as `@0`,
+        # so none of them could be reached by path. QEMU's VGA is at device 2.
+        grep -q 'QEMU,VGA@2' <<<"$VL" \
+          || fail "REGRESSION: amd64 has no QEMU,VGA@2 under /pci8086,1237@0 — either ob_pci_init() is not being called from arch_init so the bus does not exist (patch 17), or the reg cells are host-ordered again so every child encodes as @0 (patch 28): $(grep -ao 'QEMU,VGA@[0-9a-f,]*' <<<"$VL" | head -1) — see $VLOG"
       fi
 
       # UNKNOWN, said out loud rather than folded into the pass. A display node
       # exists and nothing points at it; that is a separate defect, not this one.
-      grep -q 'S=0' <<<"$VL" \
-        && note "$A: UNKNOWN — '\" screen\" find-dev' is still 0; the FCode installs the node but no screen devalias is created, so nothing yet drives it"
+      # WAS AN UNKNOWN PRINTED ON EVERY RUN, now an assertion. The /aliases
+      # entry always existed; it pointed at a path that could not resolve, so
+      # `" screen" find-dev` answered 0 and this track could only say so. With
+      # 13.3(D) fixed the alias resolves, and a 0 here means it has come undone.
+      # find-dev returns ( phandle true | false ), so a bare `.` prints the FLAG
+      # and -1 reads like a phandle. The probe now says FOUND/NONE outright —
+      # the first version of this assertion accepted `S=-1` as "no phandle" and
+      # failed a working firmware.
+      grep -qF 'S=NONE' <<<"$VL" \
+        && fail "REGRESSION: $A's '\" screen\" find-dev' found nothing — /aliases still carries screen, so this means the path it names cannot be resolved, and every child of the PCI bridge encoding as @0 is exactly what 13.3(D) was — see $VLOG"
+      grep -qF 'S=FOUND' <<<"$VL" \
+        || fail "$A: the screen-alias probe printed neither FOUND nor NONE, so it proved nothing about the alias either way — see $VLOG"
     done
 
-    pass "TODO 13.1 DRIVER_VGA: amd64 enumerates PCI (QEMU,VGA@0 is under the i440FX bridge, openbios-video-width=0x320) and the VGA FCode blob is reachable from \$find on BOTH arches — the 'vga-driver-fcode:' undefined-token report that had been in every x86 boot log is gone"
+    pass "TODO 13.1 DRIVER_VGA + 13.3(D): amd64 enumerates PCI (QEMU,VGA@2 is under the i440FX bridge at its REAL device number, openbios-video-width=0x320), the VGA FCode blob is reachable from \$find on BOTH arches — the 'vga-driver-fcode:' undefined-token report that had been in every x86 boot log is gone — and '\" screen\" find-dev' now returns that node's phandle instead of 0, which it did on every run for as long as pci.c wrote its property cells in host byte order"
     ;;
   diagnostics)
     # The Forth bindings report their own failures now (patch 20), and this
