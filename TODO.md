@@ -3346,7 +3346,30 @@ real files rather than grepping them:
    [`tools/openbios-tier-b-relevant.sh`](tools/openbios-tier-b-relevant.sh),
    `tier-b` is skipped when the answer is `false`, and
    [`tools/openbios-tier-b-gate.sh`](tools/openbios-tier-b-gate.sh) reports on
-   behalf of all of it — that is the one to mark required.
+   behalf of all of it — that is the one that WOULD be marked required.
+
+   **DECIDED 2026-08-27: `main` stays unprotected, deliberately.** Required
+   status checks were proposed (`Tier B gate` and the four `ci.yml` jobs,
+   `strict: false`, `enforce_admins: false`) and declined, because this repo
+   sometimes needs to **land red work and come back to it** — a lab left
+   mid-investigation is a normal state here, and a gate that argues about it
+   costs more than it catches on a single-maintainer repo.
+
+   Two things this does NOT change, worth stating so the decision is not
+   re-litigated from a false premise:
+
+   - **Every check still runs and still reports on every PR.** Protection governs
+     only whether a red one can be *merged*; it has no effect on what is measured.
+     Nothing in §14 or §15 depends on it.
+   - **It would not have been a wall anyway.** With `enforce_admins: false` the
+     maintainer keeps an admin override, so red work could still be merged — the
+     rule would have added a confirmation step, not a barrier. Which is precisely
+     why it was not worth the friction.
+
+   If it is ever revisited, the contexts must be copied **verbatim** from the
+   check-runs API on a real head commit, not typed from the workflow file: a
+   required context whose name does not match is a check that never reports, and
+   that blocks every PR with nothing on the page explaining why.
 
    Both halves fail **silently**, so both are driven by
    [`tools/tests/test-openbios-tier-b-relevance.sh`](tools/tests/test-openbios-tier-b-relevance.sh)
