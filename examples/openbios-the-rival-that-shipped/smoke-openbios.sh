@@ -171,6 +171,20 @@ case "$FLAVOR" in
     if [[ $RC -eq 0 ]]; then
       grep -q 'ffffffffffffffff' "$LOG" \
         || fail "REGRESSION: the coreboot payload reached a prompt but '-1 u.' did not print ffffffffffffffff — a 32-bit firmware is answering, so this ROM is not carrying the amd64 payload — see $LOG"
+      # THE COREBOOT MEMORY TABLE, asserted as a VALUE and not as "it printed
+      # something". libopenbios/linuxbios.h used a plain uint64_t in a WIRE
+      # format: the i386 ABI aligns that to 4 and x86-64 to 8, so the same struct
+      # is 20 bytes compiled 32-bit and 24 compiled 64-bit. coreboot emits 20, so
+      # this firmware strode `map[i]` by 24 over 20-byte records -- the first
+      # entry read correctly and every one after it was garbage, ending in
+      # "RAM 0 MB" (patch 39). A guard that only checked for the word "RAM" would
+      # have passed throughout.
+      RAMMB="$(grep -aoE '^RAM ([0-9]+) MB' "$LOG" | grep -oE '[0-9]+' | head -1)"
+      [[ -n "$RAMMB" ]] \
+        || fail "REGRESSION: the boot printed no 'RAM <n> MB' line at all — the coreboot table was not read — see $LOG"
+      (( RAMMB >= 256 )) \
+        || fail "REGRESSION: the firmware found only ${RAMMB} MB of the 512 MB QEMU was given — libopenbios/linuxbios.h has lost the aligned(4) lb_uint64_t (patch 39), so a 64-bit reader is striding 24 bytes over coreboot's 20-byte memory records — see $LOG"
+      note "coreboot memory table: ${RAMMB} MB of the 512 MB given to QEMU"
       grep -q 'no dictionary entry point' "$LOG" \
         && fail "REGRESSION: 'panic: no dictionary entry point' is back — arch/amd64/openbios.c has lost the sys_info.dict_last branch (patch 38), so an embedded dictionary is being parsed as a dictionary FILE again — see $LOG"
       pass "OpenBIOS runs IN LONG MODE as a coreboot payload: the ROM's embedded dictionary reached the 0 > prompt, answered 7, printed ffffffffffffffff for '-1 u.' (64-bit cells, so this is arch/amd64 and not the x86 ROM beside it), and carries a device tree"

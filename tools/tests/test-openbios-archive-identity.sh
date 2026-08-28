@@ -128,6 +128,51 @@ rm -f "${CORRUPT%.tar.*}.manifest.txt"
 RC="$(rc_of "$SUT" --workdir "$TREE" --verify "$CORRUPT")"
 check "CONTROL: an archive with no manifest is refused" '[[ "$RC" != 0 ]]'
 
+# ── 7. retention: keep the newest N, and NEVER sweep up anything else ──────────
+# This is the only part of the tool that DELETES, so the rows that matter are the
+# ones about what it must leave alone. "Keeps 4" is easy; "does not eat the file a
+# human put in the directory" is the property worth a test.
+RET="$WORK/ret"; mkdir -p "$RET"
+mkfake() { # mkfake <name> <age-days> [--no-manifest]
+    printf 'fake\n' > "$RET/$1.tar.zst"
+    [[ "${3:-}" == --no-manifest ]] || printf 'rom-sha256: x\ntree-digest: y\n' > "$RET/$1.manifest.txt"
+    touch -d "$2 days ago" "$RET/$1.tar.zst" 2>/dev/null || true
+}
+# THE MANIFEST-LESS ONE IS THE OLDEST ON PURPOSE. The first draft made it the
+# second-NEWEST, so it survived --keep 2 simply by being inside the window and the
+# row asserting "it must not be deleted" proved nothing at all. Put outside the
+# window, the tool has to actively decline to delete it, which is the property.
+mkfake openbios-tested-tree-2026-08-01-aaaaaaaaaaaa 9 --no-manifest
+mkfake openbios-tested-tree-2026-08-02-bbbbbbbbbbbb 8
+mkfake openbios-tested-tree-2026-08-03-cccccccccccc 7
+mkfake openbios-tested-tree-2026-08-04-dddddddddddd 6
+mkfake openbios-tested-tree-2026-08-05-eeeeeeeeeeee 5
+# and a file that is not one of this tool's names at all
+printf 'someone else\n' > "$RET/notes-please-keep.tar.zst"
+
+# A new archive only appears if the TREE changed -- this tool archives a tree, and
+# dedup is by content, so touching anything else would make the rows below assert
+# against a run that wrote nothing.
+printf 'RETENTION-ROUND-1\n' >> "$TREE/Makefile.target"
+"$SUT" --workdir "$TREE" --out "$RET" --keep 2 >/dev/null 2>&1
+kept=$(find "$RET" -maxdepth 1 -name 'openbios-tested-tree-*.tar.*' | wc -l)
+n=$((n + 1)); [[ "$kept" == 3 ]] || problems+=("retention: expected 3 archives to survive --keep 2 (the 2 newest plus the manifest-less one it must not touch), found $kept")
+n=$((n + 1)); [[ -f "$RET/openbios-tested-tree-2026-08-01-aaaaaaaaaaaa.tar.zst" ]] || problems+=("retention: DELETED the manifest-less tarball — it is the OLDEST and so squarely outside --keep 2, which is exactly when the tool has to decline: it did not write that file as a pair")
+n=$((n + 1)); [[ -f "$RET/notes-please-keep.tar.zst" ]] || problems+=("retention: DELETED a file that is not one of this tool's names — a retention policy must be invisible to files it did not create")
+n=$((n + 1)); [[ ! -f "$RET/openbios-tested-tree-2026-08-02-bbbbbbbbbbbb.tar.zst" ]] || problems+=("retention: an archive well outside --keep 2 survived, so nothing was pruned")
+n=$((n + 1)); [[ ! -f "$RET/openbios-tested-tree-2026-08-02-bbbbbbbbbbbb.manifest.txt" ]] || problems+=("retention: removed a tarball but left its manifest behind, which is an orphan record")
+
+# --keep 0 means keep everything: the escape hatch has to actually work.
+RET0="$WORK/ret0"; mkdir -p "$RET0"
+for i in 1 2 3 4 5 6; do
+    printf 'fake\n' > "$RET0/openbios-tested-tree-2026-07-0$i-00000000000$i.tar.zst"
+    printf 'x\n'    > "$RET0/openbios-tested-tree-2026-07-0$i-00000000000$i.manifest.txt"
+done
+printf 'RETENTION-ROUND-2\n' >> "$TREE/Makefile.target"
+"$SUT" --workdir "$TREE" --out "$RET0" --keep 0 >/dev/null 2>&1
+kept0=$(find "$RET0" -maxdepth 1 -name 'openbios-tested-tree-*.tar.*' | wc -l)
+n=$((n + 1)); [[ "$kept0" == 7 ]] || problems+=("--keep 0 pruned anyway: expected all 7 archives, found $kept0")
+
 if (( ${#problems[@]} )); then
     printf '  - %s\n' "${problems[@]}" >&2
     fail "$(printf '%d' "${#problems[@]}") of $n archive-identity assertions failed"
