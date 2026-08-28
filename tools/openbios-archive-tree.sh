@@ -44,6 +44,7 @@ with a manifest binding it to the pin and patch that produced it.
   --verify FILE    verify an existing archive instead of writing one:
                    re-derives its tree digest from the bytes and compares it
                    against its own manifest, and against the live tree
+  --keep N         keep only the N most recent archives (default 4; 0 = keep all)
   --force          write even when an archive of this exact tree already exists
   --quiet          only print the archive path (for scripting)
 
@@ -51,12 +52,15 @@ Exit: 0 ok / 1 a check failed / 2 usage error.
 USAGE
 }
 
-WD="$HOME/openbios-lab/openbios"; OUT=""; VERIFY=""; FORCE=0; QUIET=0
+WD="$HOME/openbios-lab/openbios"; OUT=""; VERIFY=""; FORCE=0; QUIET=0; KEEP=4
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --workdir) WD="${2:?--workdir needs a directory}"; shift 2 ;;
         --out)     OUT="${2:?--out needs a directory}"; shift 2 ;;
         --verify)  VERIFY="${2:?--verify needs a file}"; shift 2 ;;
+        --keep)    KEEP="${2:?--keep needs a number}"
+                   [[ "$KEEP" =~ ^[0-9]+$ ]] || { echo "--keep wants a non-negative integer, got '$KEEP'" >&2; exit 2; }
+                   shift 2 ;;
         --force)   FORCE=1; shift ;;
         --quiet)   QUIET=1; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -192,5 +196,36 @@ MAN
 say "==> wrote:"
 say "    $TARBALL ($(du -h "$TARBALL" | cut -f1))"
 say "    $MANIFEST"
+
+# RETENTION. Archives are snapshots of a reproducible tree, so old ones are a
+# convenience and not a record anyone is obliged to keep -- but "keep everything"
+# turns a tool that is safe to run on every build into one that fills a disk.
+#
+# THREE RULES, because this deletes files:
+#   1. Only this tool's OWN names are ever considered:
+#      openbios-tested-tree-<date>-<digest>.tar.*  -- anything else in the
+#      directory is invisible to it, so a file someone put here by hand cannot be
+#      swept up by a retention policy it was never part of.
+#   2. A tarball is only removed together with ITS manifest, and only if that
+#      manifest exists. An archive with no manifest cannot be verified and is also
+#      not something this tool wrote in one piece, so it is left alone and NAMED.
+#   3. Everything removed is PRINTED. A retention policy that prunes quietly is
+#      indistinguishable from a bug that eats archives.
+if (( KEEP > 0 )); then
+    mapfile -t ARCHIVES < <(find "$OUT" -maxdepth 1 -name 'openbios-tested-tree-*.tar.*' \
+                            -printf '%T@ %p\n' 2>/dev/null | sort -rn | cut -d' ' -f2-)
+    if (( ${#ARCHIVES[@]} > KEEP )); then
+        say "==> retention: keeping the $KEEP most recent of ${#ARCHIVES[@]} archives"
+        for old in "${ARCHIVES[@]:$KEEP}"; do
+            oldman="${old%.tar.*}.manifest.txt"
+            if [[ -f "$oldman" ]]; then
+                rm -f -- "$old" "$oldman"
+                say "    removed $(basename "$old") and its manifest"
+            else
+                say "    KEPT $(basename "$old") — it has no manifest, so this tool did not write it as a pair and will not delete it"
+            fi
+        done
+    fi
+fi
 (( QUIET )) && printf '%s\n' "$TARBALL"
 exit 0

@@ -3170,12 +3170,62 @@ the vindication of
 [`openbios-archive-tree.sh`](tools/openbios-archive-tree.sh) digesting **source**
 and excluding `obj-*`: a digest over the binaries would identify nothing.
 
-**Still open:** the boot prints `RAM 0 MB` and a garbled LinuxBIOS table
-(`0x09f00000000000 0x00000100000000 655360`). The coreboot table parser misreads in
-64-bit — the `unsigned long`-in-an-ABI-struct trap, 4 bytes on i386 and 8 on LP64,
-in [`libopenbios/linuxbios_info.c`](examples/openbios-the-rival-that-shipped/patches/01-x86-revival.patch).
-It does not block reaching the prompt, so it is a separate item and is **not**
-claimed as fixed.
+~~**Still open:** … `RAM 0 MB` …~~ — **FIXED, patch 39 below. And the diagnosis
+written here first was wrong**: it named the `unsigned long`-in-an-ABI-struct trap
+and the wrong file. The mechanism is `uint64_t` **alignment**, in
+`libopenbios/linuxbios.h`. A guess recorded in the same sentence as a measurement
+reads like a measurement, which is why it is struck through rather than edited
+away.
+
+### The coreboot memory table is a wire format — patch 39
+
+**Done 2026-08-28.** `libopenbios/linuxbios.h` described coreboot's table with a
+plain `uint64_t`. That is not portable **in a wire format**, and the reason is
+alignment rather than width:
+
+| | `_Alignof(uint64_t)` | `sizeof(struct lb_memory_range)` |
+|---|---|---|
+| i386 | 4 | **20** |
+| x86-64 | 8 | **24** — four bytes of tail padding |
+
+coreboot emits **20**-byte entries. So the amd64 firmware computed `size / 24` for
+the entry count and strode `map[i]` by **24** over 20-byte records: the first entry
+read correctly and every one after it was garbage.
+
+```
+before:  0x09f00000000000 0x00000100000000 655360     after:  0x00000000001000 0x0000000009f000 1
+         0x00000000056000 0x0f600000000002 0                  0x000000000a0000 0x00000000056000 2
+         RAM 0 MB                                             RAM 510 MB
+```
+
+**coreboot had already solved this on its own side, and says why** — which is what
+settled the choice of fix rather than a preference:
+
+```c
+/* lb_uint64_t will keep 64bit coreboot table values aligned to 32bit
+ * to ensure compatibility. */
+typedef __aligned(LB_ENTRY_ALIGN) uint64_t lb_uint64_t;    /* LB_ENTRY_ALIGN 4 */
+```
+
+The patch mirrors that typedef rather than reaching for `__attribute__((packed))`.
+Packing gives the same 20 bytes here **only by coincidence of this struct's shape**;
+the `aligned(4)` typedef *is* the ABI and stays right for any other record that
+later gains a 64-bit field. Measured: natural 24 / packed 20 / this 20 on x86-64,
+and 20 / 20 / 20 on i386 — so **arch/x86 is unaffected either way**, which is why
+this was invisible until amd64 could be a coreboot payload at all.
+
+**The track asserts the VALUE, not that something printed.** `coreboot-amd64` now
+extracts `RAM <n> MB` and fails when it is under 256 of the 512 given to QEMU. A
+guard checking merely that the word `RAM` appeared would have passed throughout the
+bug. Control: the typedef was removed, the firmware and ROM rebuilt, and the track
+failed with *"found only 0 MB of the 512 MB QEMU was given"*.
+
+**NOT fixed, and measured rather than assumed:** `/memory` still carries no `reg`
+property. Checked on **arch/x86 as well**, on both its multiboot and coreboot
+paths, and it has none either — so publishing the map into the device tree is a
+separate pre-existing gap on both arches, and patch 39 does not touch it. That
+comparison is the only reason this section can say what it fixed without
+overstating it.
 
 ### Archiving the tested tree — a snapshot that can prove what it is
 

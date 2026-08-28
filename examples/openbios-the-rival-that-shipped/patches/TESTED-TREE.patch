@@ -5929,6 +5929,46 @@ index 3213378..345abc4 100644
  }
  
  void go(void)
+diff --git a/libopenbios/linuxbios.h b/libopenbios/linuxbios.h
+index 0f7cba9..30ab9aa 100644
+--- a/libopenbios/linuxbios.h
++++ b/libopenbios/linuxbios.h
+@@ -55,9 +55,33 @@ struct lb_record {
+ 
+ #define LB_TAG_MEMORY	0x0001
+ 
++/* THE COREBOOT TABLE IS A WIRE FORMAT, AND uint64_t IS NOT PORTABLE IN ONE.
++ *
++ * The System V i386 ABI aligns uint64_t to 4 bytes; the x86-64 ABI aligns it to
++ * 8. So `{ uint64_t; uint64_t; uint32_t; }` is 20 bytes when compiled 32-bit and
++ * 24 when compiled 64-bit -- four bytes of tail padding that exist in the READER
++ * and not in the table. coreboot emits 20-byte entries, so a 64-bit consumer of
++ * this header computed `size / 24` for the entry count and strode `map[i]` by 24
++ * over 20-byte records: the first entry read correctly and every one after it was
++ * garbage, which is what "RAM 0 MB" and a device tree with no memory came from.
++ *
++ * coreboot solved this on its own side and says so, in
++ * src/commonlib/include/commonlib/coreboot_tables.h:
++ *
++ *     /-* lb_uint64_t will keep 64bit coreboot table values aligned to 32bit
++ *      * to ensure compatibility. *-/
++ *     typedef __aligned(LB_ENTRY_ALIGN) uint64_t lb_uint64_t;   // LB_ENTRY_ALIGN 4
++ *
++ * This mirrors that typedef rather than reaching for __attribute__((packed)).
++ * Packing would give the same 20 bytes here by coincidence of this struct's
++ * shape; the aligned(4) typedef is the ABI, so it stays right for any other
++ * record that gains a 64-bit field later. Measured: natural 24 / packed 20 /
++ * this 20 on x86-64, and 20 / 20 / 20 on i386. */
++typedef uint64_t lb_uint64_t __attribute__((aligned(4)));
++
+ struct lb_memory_range {
+-	uint64_t start;
+-	uint64_t size;
++	lb_uint64_t start;
++	lb_uint64_t size;
+ 	uint32_t type;
+ #define LB_MEM_RAM       1	/* Memory anyone can use */
+ #define LB_MEM_RESERVED  2	/* Don't use this memory region */
 diff --git a/libopenbios/linuxbios_info.c b/libopenbios/linuxbios_info.c
 index bef996c..d9ce7c5 100644
 --- a/libopenbios/linuxbios_info.c
