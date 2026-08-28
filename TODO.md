@@ -3220,12 +3220,78 @@ guard checking merely that the word `RAM` appeared would have passed throughout 
 bug. Control: the typedef was removed, the firmware and ROM rebuilt, and the track
 failed with *"found only 0 MB of the 512 MB QEMU was given"*.
 
-**NOT fixed, and measured rather than assumed:** `/memory` still carries no `reg`
-property. Checked on **arch/x86 as well**, on both its multiboot and coreboot
-paths, and it has none either — so publishing the map into the device tree is a
-separate pre-existing gap on both arches, and patch 39 does not touch it. That
-comparison is the only reason this section can say what it fixed without
-overstating it.
+~~**NOT fixed…** `/memory` still carries no `reg`…~~ — **FIXED, patch 40 below.**
+The comparison against arch/x86 is what scoped it correctly: it was never a
+coreboot-path gap, it was that *nobody published the map at all.*
+
+### Nothing published the memory map — patch 40
+
+**Done 2026-08-28.** `/memory` had a `name` and nothing else, on **both** x86
+arches and on **every** path. On ppc and sparc the `reg` is a by-product of ofmem,
+which those arches lean on (20 references in `arch/ppc`, 6 in `arch/sparc32`);
+`arch/x86` states in its own `openbios.c` that it has none, and `arch/amd64`
+mentions ofmem nowhere. So nobody ever wrote the map into the tree.
+
+**The scoping came from a comparison, not from the first thing that looked wrong.**
+It surfaced on the amd64 coreboot path, which made "the coreboot path is missing
+it" the obvious diagnosis — so x86 multiboot was checked before anything was
+written, and it had no `reg` either. Those are different bugs and only the second
+was real.
+
+`publish_memory_ranges()` sits in `libopenbios/init.c` so both arches call **one**
+implementation, from `arch_init()` **after** `openbios_init()` — the tree does not
+exist at the top of `arch_init`, where `find_dev()` faults rather than returning 0,
+which the file already records from an earlier session.
+
+Two decisions worth keeping:
+
+- **The cell counts are read from the root, not assumed.** A `reg` means nothing
+  without the `#address-cells`/`#size-cells` that decode it, and this root declares
+  **`#address-cells 1`** and **no `#size-cells`** — so a hardcoded 2/2 would have
+  produced a property every consumer misreads. Absent counts fall back to the 1275
+  defaults.
+- **A range that does not fit is dropped and said out loud, never truncated.** One
+  address cell is 32 bits, and this lab routinely puts an NVDIMM at
+  `0x100000000`; silently writing the low half is a property that looks valid and
+  points somewhere else.
+
+| path | published |
+|---|---|
+| x86 / amd64 multiboot (QEMU e820) | `00000000 0009fc00` + `00100000 1fee0000` — **511 MB** |
+| amd64 coreboot (the coreboot table) | `00001000 0009f000` + `00100000 1fd71000` — **510 MB** |
+
+`assert_memory_reg` in the driver sums the **size column** rather than stopping at
+"a reg exists", because an empty or zero-filled property is exactly what a broken
+encoder emits and it would satisfy a presence check. Control: the call was removed
+from `arch/x86`, the firmware rebuilt, and the track failed with *"/memory carries
+no 'reg' property"*.
+
+**Publishing a `reg` RENAMES the node, and the suite caught it the expensive way.**
+A 1275 node carrying a `reg` has a unit address, so `dev / ls` went from `memory`
+to **`memory@0`** — and `dict-identity`, which anchors on `^<phandle> <name>$` so
+that a word in prose cannot pass for a node, failed while **nothing was broken**.
+That is the second direction of the mechanism-not-outcome trap: an assertion that
+fails when the mechanism is replaced by a *better* one. The pattern now allows an
+optional `@unit`, still anchored. `dev /memory` resolves either way, which is why
+every probe during development kept working and only the strict test noticed.
+
+(The `147a70 memory` line in
+[`X86-64-FEASIBILITY.md`](examples/openbios-the-rival-that-shipped/X86-64-FEASIBILITY.md)
+is left alone on purpose: it is a **dated transcript** of what the firmware printed
+then, and editing it to match today's output would turn a true record into a false
+one.)
+
+**And a defect of my own, found by this work:** the cross-arch entry added to
+`build-coreboot-openbios.sh`'s sha-guard a day earlier was wrong. That guard file
+is written **once and cached**, and it listed this lab's *own* other-arch ROM —
+which the lab rebuilds on demand. So rebuilding x86 left amd64's guard describing a
+ROM that had legitimately changed, and the next amd64 build failed its own guard.
+**A cached expectation about a thing that is supposed to change — bug class #1,
+committed while fixing bug class #1.** The guard now covers only the *sibling
+labs'* artifacts, which this lab never writes, and self-heals a guard file written
+by the broken version rather than requiring someone to delete it by hand. The two
+arches never needed the guard for isolation: separate `DOTCONFIG` and `obj=` dirs
+are what keep them apart.
 
 ### Archiving the tested tree — a snapshot that can prove what it is
 

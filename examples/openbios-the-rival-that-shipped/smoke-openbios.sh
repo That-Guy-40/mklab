@@ -49,6 +49,31 @@ USAGE
 
 case "${1:-}" in -h|--help) usage; exit 0 ;; esac
 
+# assert_memory_reg <log> — /memory must carry a `reg`, and it must add up.
+#
+# THE DEFECT WAS ABSENCE, so presence is most of the assertion: until 2026-08-28
+# /memory carried nothing but its name on BOTH x86 arches and on every path
+# (measured on x86 too, before blaming the coreboot one). ppc and sparc get this
+# from ofmem; arch/x86 says in its own source that it has none, and arch/amd64
+# mentions it nowhere.
+#
+# It sums the SIZE column rather than stopping at "a reg exists", because an empty
+# or zero-filled property is exactly what a broken encoder would emit and it would
+# satisfy a presence check. .properties prints the cells as 8-hex-digit columns;
+# with the root's #address-cells 1 / #size-cells 1 that is (base, size).
+assert_memory_reg() {
+    local log="$1" total=0 sz nranges
+    grep -qa '^reg ' "$log" \
+        || fail "REGRESSION: /memory carries no 'reg' property — publish_memory_ranges() did not run or found no ranges, so the device tree does not say where RAM is — see $log"
+    while read -r sz; do
+        [[ -n "$sz" ]] && total=$(( total + 0x$sz ))
+    done < <(sed -n '/^reg /,/ ok/p' "$log" | grep -oE '[0-9a-f]{8}[[:space:]]+[0-9a-f]{8}' | awk '{print $2}')
+    nranges="$(sed -n '/^reg /,/ ok/p' "$log" | grep -cE '[0-9a-f]{8}[[:space:]]+[0-9a-f]{8}' || true)"
+    (( total >= 0x10000000 )) \
+        || fail "REGRESSION: /memory's reg totals only $(( total / 1024 / 1024 )) MB of the 512 MB QEMU was given — the property is present but its cells are wrong — see $log"
+    note "/memory reg publishes $(( total / 1024 / 1024 )) MB across $nranges range(s)"
+}
+
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 WORKDIR="${OPENBIOS_WORKDIR:-$HOME/openbios-lab}"
@@ -119,7 +144,8 @@ case "$FLAVOR" in
       --send '3 4 + .\r' --expect "7 " \
       --send 'variable ap-probe  5 ap-probe !\r' --expect "0 > " \
       --send 'device-end  ." AP=" ap-probe @ . cr\r' --expect "0 > " \
-      --send 'dev / ls\r' --expect "openprom" --expect "0 > "
+      --send 'dev / ls\r' --expect "openprom" --expect "0 > " \
+      --send 'dev /memory  .properties\r' --expect "0 > "
     RC=$?
     kill "$QPID" 2>/dev/null   # by PID, never by pattern
     # The x86 arm of the amd64 track's clean-prompt probe, and it is here as a
@@ -128,6 +154,7 @@ case "$FLAVOR" in
     # was written for cannot distinguish "the fix works" from "the probe cannot
     # fail". If this line ever goes red, the shared shape regressed, not amd64.
     if [[ $RC -eq 0 ]]; then
+      assert_memory_reg "$LOG"
       grep -q 'AP=5' "$LOG" \
         || fail "REGRESSION: a variable defined at the x86 prompt did not survive device-end — arch/x86/init.fs's preopen has ended in device-end since forever, so the firmware is now leaving a node active the way amd64 used to — see $LOG"
       pass "OpenBIOS ($FLAVOR) answered 7 at the 0 > prompt, listed the device tree, and left no device node active (a prompt-defined variable survives device-end)"
@@ -165,10 +192,12 @@ case "$FLAVOR" in
       --expect "0 > " \
       --send '3 4 + .\r' --expect "7 " \
       --send '-1 u.\r' --expect "> " \
-      --send 'dev / ls\r' --expect "openprom" --expect "0 > "
+      --send 'dev / ls\r' --expect "openprom" --expect "0 > " \
+      --send 'dev /memory  .properties\r' --expect "0 > "
     RC=$?
     kill "$QPID" 2>/dev/null   # by PID, never by pattern
     if [[ $RC -eq 0 ]]; then
+      assert_memory_reg "$LOG"
       grep -q 'ffffffffffffffff' "$LOG" \
         || fail "REGRESSION: the coreboot payload reached a prompt but '-1 u.' did not print ffffffffffffffff — a 32-bit firmware is answering, so this ROM is not carrying the amd64 payload — see $LOG"
       # THE COREBOOT MEMORY TABLE, asserted as a VALUE and not as "it printed
@@ -863,7 +892,17 @@ case "$FLAVOR" in
     }
     # `dev / ls` prints "<hex-phandle> <name>"; anchor on that shape so the
     # word appearing in prose cannot pass for a node.
-    _has() { grep -qE "^[0-9a-f]+ $2[[:space:]]*\$" <(tr -d "\r" < "$1"); }
+    #
+    # THE `@unit` SUFFIX IS OPTIONAL AND THAT IS NOT LAXITY. A 1275 node carrying a
+    # `reg` has a unit address, and `ls` prints the full name -- so the moment
+    # patch 40 started publishing /memory's map, this node went from `memory` to
+    # `memory@0` and this assertion failed while nothing was broken. That is the
+    # second direction of the mechanism-not-outcome trap in CLAUDE.md, the
+    # expensive one: an assertion that fails when the mechanism is replaced by a
+    # BETTER one. The outcome being tested is "the arch dict carries this node",
+    # and a unit address does not change that. Still anchored, so `memoryfoo` or a
+    # word in prose cannot match.
+    _has() { grep -qE "^[0-9a-f]+ $2(@[0-9a-f,]+)?[[:space:]]*\$" <(tr -d "\r" < "$1"); }
 
     note "1/2 booting the ARCH dict → $LOG.arch"
     _dboot "$XDICT" "$LOG.arch" || fail "no prompt on the arch-dict boot — see $LOG.arch"
