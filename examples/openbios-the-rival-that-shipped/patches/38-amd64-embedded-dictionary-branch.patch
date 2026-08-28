@@ -1,0 +1,90 @@
+From: mklab <noreply@example.invalid>
+Subject: [PATCH 38/38] amd64 knew only one kind of dictionary, so an embedded one panicked
+
+arch/amd64/openbios.c had only the MULTIBOOT dictionary path, unconditionally.
+Fed an embedded image it parsed a ready-to-run dictionary as though it were a
+dictionary FILE and never set `last`, so findword() found nothing:
+
+  forth started.
+  initializing memory...done
+  fword: 'is-noname-cfunc' is not in the dictionary -- nothing was executed
+  panic: no dictionary entry point.
+
+...which reads as a dictionary bug rather than a missing branch, because it
+happens AFTER long mode and after Forth starts.
+
+This ports arch/x86's `if (sys_info.dict_last)` arm: a builtin image is used in
+place, with `last` taken from the image and dict_end read as an OFFSET (both
+builtin.c files set it from FORTH_DICTIONARY_END, a constant in the generated
+static-dict.h), while the multiboot arm keeps parsing into intdict. arch/x86's
+comment on that second arm reads "as arch/amd64 does" -- the code already
+recorded that this was the only path here.
+
+With this, a coreboot ROM carrying openbios-builtin.elf32 reaches the prompt on
+amd64 and `-1 u.` prints ffffffffffffffff: OpenBIOS in long mode as a coreboot
+payload, on the arch that used to build zero objects.
+
+Arch-tested: amd64
+
+diff --git a/arch/amd64/openbios.c b/arch/amd64/openbios.c
+--- a/arch/amd64/openbios.c
++++ b/arch/amd64/openbios.c
+@@ -195,17 +195,48 @@
+ 
+         collect_sys_info(&sys_info);
+ 
+-	dict = (unsigned char *)intdict;   /* Spike 1 drift: cast, as arch/x86 does */
+-	dictlimit = DICTIONARY_SIZE;
++	/* TWO KINDS OF DICTIONARY, AND amd64 KNEW ONLY ONE.
++	 *
++	 * A BUILTIN image (IMAGE_ELF_EMBEDDED -- which is what a coreboot
++	 * payload has to be, since coreboot cannot hand a payload a separate
++	 * module the way -kernel/-initrd does) carries a dictionary that is
++	 * ALREADY relocated and ready to run: it is used in place, and `last`,
++	 * the pointer to its final word, comes from the image. Note dict_end is
++	 * an OFFSET here, not an address -- arch/{x86,amd64}/builtin.c sets it
++	 * from FORTH_DICTIONARY_END, a constant in the generated static-dict.h.
++	 *
++	 * A MULTIBOOT module instead carries a dictionary FILE -- header and
++	 * relocation table and all -- which has to be parsed into intdict.
++	 *
++	 * amd64 had only the second arm, unconditionally, because nothing had
++	 * ever built an embedded image for it. Fed one, it parsed a ready-to-run
++	 * dictionary as though it were a file and never set `last`, so
++	 * findword() found nothing and the boot died in "panic: no dictionary
++	 * entry point" -- AFTER reaching long mode and printing "forth started",
++	 * which is what made it read as a dictionary bug rather than a missing
++	 * branch. arch/x86's comment on its own multiboot arm says "as
++	 * arch/amd64 does": the code already recorded that this was the only
++	 * path here. */
++	if (sys_info.dict_last) {
++		/* builtin image: an embedded, ready-to-run dictionary */
++		dict = (unsigned char *)sys_info.dict_start;
++		dicthead = (cell)sys_info.dict_end;
++		last = sys_info.dict_last;
++		dictlimit = sys_info.dict_limit;
++	} else {
++		dict = (unsigned char *)intdict;   /* Spike 1 drift: cast, as arch/x86 does */
++		dictlimit = DICTIONARY_SIZE;
+ 
+-	/* Spike 1: POINTER SUBTRACTION, not byte subtraction. dict_start and
+-	 * dict_end are `unsigned long *`, so the difference is in ELEMENTS --
+-	 * a quarter of the byte count on x86 and an EIGHTH of it here. The
+-	 * dictionary then checksums over one eighth of itself and fails.
+-	 * arch/x86 casts both sides to char* first; this did not. */
+-	load_dictionary((char *)sys_info.dict_start,
+-			(char *)sys_info.dict_end
+-			- (char *)sys_info.dict_start);
++		/* Spike 1: POINTER SUBTRACTION, not byte subtraction. dict_start
++		 * and dict_end are `unsigned long *`, so the difference is in
++		 * ELEMENTS -- a quarter of the byte count on x86 and an EIGHTH of
++		 * it here. The dictionary then checksums over one eighth of itself
++		 * and fails. arch/x86 casts both sides to char* first; this did
++		 * not. */
++		load_dictionary((char *)sys_info.dict_start,
++				(char *)sys_info.dict_end
++				- (char *)sys_info.dict_start);
++	}
+ 	forth_init();
+ 
+ 	relocate(&sys_info);

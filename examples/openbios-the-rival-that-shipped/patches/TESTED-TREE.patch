@@ -108,10 +108,10 @@ index 0000000..84136f1
 +/* boot.c */
 +extern void boot(void);
 diff --git a/arch/amd64/build.xml b/arch/amd64/build.xml
-index 8f436d0..a914cb2 100644
+index 8f436d0..f8587ba 100644
 --- a/arch/amd64/build.xml
 +++ b/arch/amd64/build.xml
-@@ -1,6 +1,38 @@
+@@ -1,6 +1,74 @@
  <build condition="AMD64">
 +
   <dictionary name="openbios-amd64" init="openbios" target="forth">
@@ -149,7 +149,75 @@ index 8f436d0..a914cb2 100644
 +  <external-object source="libgcc.a"/>
 + </executable>
 +
++ <!-- SPIKE: the IMAGE_ELF_EMBEDDED set, mirroring arch/x86/build.xml. coreboot has
++      no way to hand a payload a separate dictionary module the way -kernel/-initrd
++      does, so the coreboot image is the one with the dictionary compiled IN. -->
++
++ <!-- HACK ALERT -->
++
++ <executable name="target/include/static-dict.h" target="target" condition="IMAGE_ELF_EMBEDDED">
++  <rule><![CDATA[
++	$(call quiet-command,$(ODIR)/forthstrap -x -D $@ -d $< </dev/null, "  GEN   $(TARGET_DIR)$@")]]></rule>
++  <external-object source="openbios-amd64.dict"/>
++ </executable>
++
++ <executable name="target/arch/amd64/builtin.o" target="target" condition="IMAGE_ELF_EMBEDDED">
++  <rule><![CDATA[ $(SRCDIR)/arch/amd64/builtin.c $(ODIR)/target/include/static-dict.h
++	$(call quiet-command,$(CC) $$EXTRACFLAGS $(CFLAGS) $(INCLUDES) -c -o $@ $(SRCDIR)/arch/amd64/builtin.c, "  CC    $(TARGET_DIR)$@")]]></rule>
++ </executable>
++
++ <!-- END OF HACK ALERT -->
++
++ <executable name="openbios-builtin.elf" target="target" condition="IMAGE_ELF_EMBEDDED">
++  <rule>
++	$(call quiet-command,$(LD) --warn-common -N -T $(SRCDIR)/arch/amd64/ldscript -o $@.nostrip --whole-archive $^,"  LINK  $(TARGET_DIR)$@")
++	$(call quiet-command,$(NM) $@.nostrip | sort > $(ODIR)/openbios-builtin.syms,"  GEN   $(TARGET_DIR)$@.syms")
++	$(call quiet-command,$(STRIP) $@.nostrip -o $@,"  STRIP $(TARGET_DIR)$@")
++	$(call quiet-command,$(OBJCOPY) -I elf64-x86-64 -O elf32-i386 $@ $@32,"  ELF32 $(TARGET_DIR)$@32")</rule>
++  <external-object source="target/arch/amd64/builtin.o"/>
++  <external-object source="libamd64.a"/>
++  <external-object source="libbootstrap.a"/>
++  <external-object source="libopenbios.a"/>
++  <external-object source="libpackages.a"/>
++  <external-object source="libdrivers.a"/>
++  <external-object source="liblibc.a"/>
++  <external-object source="libfs.a"/>
++  <external-object source="libgcc.a"/>
++ </executable>
++
  </build>
+diff --git a/arch/amd64/builtin.c b/arch/amd64/builtin.c
+index 93ced0a..dd3a36d 100644
+--- a/arch/amd64/builtin.c
++++ b/arch/amd64/builtin.c
+@@ -14,12 +14,25 @@
+  * wrap an array around the hex'ed dictionary file
+  */
+ 
++/* SPIKE: the array this file's own comment says it wraps. Upstream never wrote it
++ * -- static-dict.h is only the initializer DATA, and arch/x86/builtin.c is where
++ * the declaration lives. Nothing ever compiled arch/amd64, so a file that cannot
++ * possibly build sat here since 2003 with a comment describing what it does not do. */
++#define DICTIONARY_SIZE (1024 * 1024 / sizeof(ucell))
++#define DICTIONARY_BASE ((ucell)((char *)&forth_dictionary))
++
++static ucell forth_dictionary[DICTIONARY_SIZE] = {
+ #include "static-dict.h"
++};
+ 
+ void collect_multiboot_info(struct sys_info *info);
+ void collect_multiboot_info(struct sys_info *info)
+ {
+ 	info->dict_start=(unsigned long *)forth_dictionary;
+-	info->dict_end=(unsigned long *)((ucell)forth_dictionary +
+-			sizeof(forth_dictionary));
++	/* dict_end/dict_last/dict_limit as arch/x86 sets them: the same three
++	 * fields patch 01 had to add there for load_dictionary to work at all. */
++	info->dict_end = (unsigned long *)FORTH_DICTIONARY_END;
++	info->dict_last = (ucell *)((unsigned char *)forth_dictionary +
++					    FORTH_DICTIONARY_LAST);
++	info->dict_limit = sizeof(forth_dictionary);
+ }
 diff --git a/arch/amd64/console.c b/arch/amd64/console.c
 index 71a22b6..44ee731 100644
 --- a/arch/amd64/console.c
@@ -1672,7 +1740,7 @@ index 17cf202..6a7281d 100644
  
  #endif				/* ! ASM */
 diff --git a/arch/amd64/openbios.c b/arch/amd64/openbios.c
-index 15d3b62..6f4e966 100644
+index 15d3b62..73bf3b9 100644
 --- a/arch/amd64/openbios.c
 +++ b/arch/amd64/openbios.c
 @@ -9,12 +9,23 @@
@@ -1847,27 +1915,60 @@ index 15d3b62..6f4e966 100644
  }
  
  extern struct _console_ops arch_console_ops;
-@@ -65,11 +195,17 @@ int openbios(void)
+@@ -65,11 +195,48 @@ int openbios(void)
  
          collect_sys_info(&sys_info);
  
 -	dict=intdict;
-+	dict = (unsigned char *)intdict;   /* Spike 1 drift: cast, as arch/x86 does */
- 	dictlimit = DICTIONARY_SIZE;
+-	dictlimit = DICTIONARY_SIZE;
++	/* TWO KINDS OF DICTIONARY, AND amd64 KNEW ONLY ONE.
++	 *
++	 * A BUILTIN image (IMAGE_ELF_EMBEDDED -- which is what a coreboot
++	 * payload has to be, since coreboot cannot hand a payload a separate
++	 * module the way -kernel/-initrd does) carries a dictionary that is
++	 * ALREADY relocated and ready to run: it is used in place, and `last`,
++	 * the pointer to its final word, comes from the image. Note dict_end is
++	 * an OFFSET here, not an address -- arch/{x86,amd64}/builtin.c sets it
++	 * from FORTH_DICTIONARY_END, a constant in the generated static-dict.h.
++	 *
++	 * A MULTIBOOT module instead carries a dictionary FILE -- header and
++	 * relocation table and all -- which has to be parsed into intdict.
++	 *
++	 * amd64 had only the second arm, unconditionally, because nothing had
++	 * ever built an embedded image for it. Fed one, it parsed a ready-to-run
++	 * dictionary as though it were a file and never set `last`, so
++	 * findword() found nothing and the boot died in "panic: no dictionary
++	 * entry point" -- AFTER reaching long mode and printing "forth started",
++	 * which is what made it read as a dictionary bug rather than a missing
++	 * branch. arch/x86's comment on its own multiboot arm says "as
++	 * arch/amd64 does": the code already recorded that this was the only
++	 * path here. */
++	if (sys_info.dict_last) {
++		/* builtin image: an embedded, ready-to-run dictionary */
++		dict = (unsigned char *)sys_info.dict_start;
++		dicthead = (cell)sys_info.dict_end;
++		last = sys_info.dict_last;
++		dictlimit = sys_info.dict_limit;
++	} else {
++		dict = (unsigned char *)intdict;   /* Spike 1 drift: cast, as arch/x86 does */
++		dictlimit = DICTIONARY_SIZE;
  
-+	/* Spike 1: POINTER SUBTRACTION, not byte subtraction. dict_start and
-+	 * dict_end are `unsigned long *`, so the difference is in ELEMENTS --
-+	 * a quarter of the byte count on x86 and an EIGHTH of it here. The
-+	 * dictionary then checksums over one eighth of itself and fails.
-+	 * arch/x86 casts both sides to char* first; this did not. */
- 	load_dictionary((char *)sys_info.dict_start,
+-	load_dictionary((char *)sys_info.dict_start,
 -			sys_info.dict_end-sys_info.dict_start);
-+			(char *)sys_info.dict_end
-+			- (char *)sys_info.dict_start);
++		/* Spike 1: POINTER SUBTRACTION, not byte subtraction. dict_start
++		 * and dict_end are `unsigned long *`, so the difference is in
++		 * ELEMENTS -- a quarter of the byte count on x86 and an EIGHTH of
++		 * it here. The dictionary then checksums over one eighth of itself
++		 * and fails. arch/x86 casts both sides to char* first; this did
++		 * not. */
++		load_dictionary((char *)sys_info.dict_start,
++				(char *)sys_info.dict_end
++				- (char *)sys_info.dict_start);
++	}
  	forth_init();
  
  	relocate(&sys_info);
-@@ -106,3 +242,116 @@ int openbios(void)
+@@ -106,3 +273,116 @@ int openbios(void)
  
  	return 0;
  }

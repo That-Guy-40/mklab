@@ -15,6 +15,8 @@ smoke-openbios.sh [TRACK]   one-verdict smoke tests against a real boot
 
 TRACK (default multiboot):
   multiboot coreboot ppc      the firmware answers 7 at the 0 > prompt
+  coreboot-amd64              ...and the 64-bit firmware does it as a coreboot
+                              payload, with the dictionary compiled in
   nvram floppy                the NVRAM package, and its floppy backing
   persist persist-flash       a config variable survives a power cycle
   persist-os persist-os-flash ...and survives an OS boot in between
@@ -131,6 +133,50 @@ case "$FLAVOR" in
       pass "OpenBIOS ($FLAVOR) answered 7 at the 0 > prompt, listed the device tree, and left no device node active (a prompt-defined variable survives device-end)"
     fi
     fail "no prompt conversation on the $FLAVOR track (rc=$RC) — see $LOG" ;;
+  coreboot-amd64)
+    # OPENBIOS IN LONG MODE, AS A COREBOOT PAYLOAD. The other half of the coreboot
+    # story: arch/x86 has been a LinuxBIOS payload since 2003, arch/amd64 could not
+    # be one at all because it built no embedded image. Patches 36-38 fixed that in
+    # three steps that each hid the next -- build.xml had no IMAGE_ELF_EMBEDDED
+    # rules (so `builtin-amd64` exited 0 having built nothing), builtin.c never
+    # declared the array its own comment describes (so it could not compile), and
+    # openbios.c knew only the multiboot dictionary path (so it reached long mode,
+    # started Forth, and panicked with "no dictionary entry point").
+    #
+    # coreboot enters a payload in 32-bit protected mode, so the payload is the
+    # ELF32 that arch/amd64/build.xml's objcopy produces; the firmware takes itself
+    # to long mode. THE 64-BIT ASSERTION IS THE POINT OF THE TRACK -- a prompt alone
+    # would be satisfied by the x86 ROM sitting in the tree next door.
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    ROM="$CB/build-openbios-amd64/coreboot.rom"
+    [[ -f "$ROM" ]] || skip "no ROM at $ROM — run ./build-coreboot-openbios.sh amd64 first"
+    PAYLOAD="$WORKDIR/openbios/obj-amd64/openbios-builtin.elf32"
+    PROV="$("$REPO/tools/openbios-rom-provenance.sh" --check "$ROM" "$PAYLOAD" 2>&1)"; PRC=$?
+    case $PRC in
+      0)  note "provenance: $PROV" ;;
+      77) skip "$PROV" ;;
+      *)  fail "$PROV" ;;
+    esac
+    note "booting the amd64 coreboot payload (accel=$ACCEL) → $LOG"
+    qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -bios "$ROM" \
+      -display none -serial "unix:$SOCK,server=on" -no-reboot >/dev/null 2>&1 &
+    QPID=$!
+    python3 "$REPO/tools/drive-serial-repl.py" "$SOCK" "$LOG" --timeout 90 \
+      --expect "0 > " \
+      --send '3 4 + .\r' --expect "7 " \
+      --send '-1 u.\r' --expect "> " \
+      --send 'dev / ls\r' --expect "openprom" --expect "0 > "
+    RC=$?
+    kill "$QPID" 2>/dev/null   # by PID, never by pattern
+    if [[ $RC -eq 0 ]]; then
+      grep -q 'ffffffffffffffff' "$LOG" \
+        || fail "REGRESSION: the coreboot payload reached a prompt but '-1 u.' did not print ffffffffffffffff — a 32-bit firmware is answering, so this ROM is not carrying the amd64 payload — see $LOG"
+      grep -q 'no dictionary entry point' "$LOG" \
+        && fail "REGRESSION: 'panic: no dictionary entry point' is back — arch/amd64/openbios.c has lost the sys_info.dict_last branch (patch 38), so an embedded dictionary is being parsed as a dictionary FILE again — see $LOG"
+      pass "OpenBIOS runs IN LONG MODE as a coreboot payload: the ROM's embedded dictionary reached the 0 > prompt, answered 7, printed ffffffffffffffff for '-1 u.' (64-bit cells, so this is arch/amd64 and not the x86 ROM beside it), and carries a device tree"
+    fi
+    fail "no prompt conversation on the coreboot-amd64 track (rc=$RC) — see $LOG" ;;
+
   ppc)
     command -v qemu-system-ppc >/dev/null || skip "qemu-system-ppc not installed"
     ELF="$WORKDIR/openbios/obj-ppc/openbios-qemu.elf"
@@ -2071,5 +2117,5 @@ PYS
 
     pass "TODO 16, the third seam, at BOTH of its addresses: 1000 int! stores into the legacy VGA aperture at 0xb8000 put $MPOST blue pixels on the display where the pre-write dump and the no-write control each hold 0, with HERE unchanged at $MH0 — read by QEMU's screendump, an observer the firmware cannot fake. Stores LAND here (unlike CFI flash, where they are commands) and the observer is a DEVICE (unlike the NVDIMM, where it is a file), which is the third distinct answer. AND at a LIVE PCI BAR since TODO 0.6c/0.6d: two int! stores into the framebuffer at 0x40000000 read back through QEMU's monitor as c0 ff ee 01 c0 ff ee 01 where the pre-write read and the no-write control each hold zeros. That one needs the monitor rather than the display, because the VGA sits in 640x480 compat mode scanning the legacy aperture — a real store into the linear framebuffer is invisible on screen, and screendump cannot tell it from a store that never happened"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer]" >&2; exit 1 ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer]" >&2; exit 1 ;;
 esac
