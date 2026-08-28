@@ -3162,9 +3162,9 @@ also fails by name if `panic: no dictionary entry point` ever returns.
 now includes **the other arch's ROM**, since that is the same clobbering question
 one arch wider.
 
-**A note on reproducibility, measured rather than assumed:** the cold tree builds
-these images, but its binaries are **not** byte-identical to the dev tree's — and
-neither is a rebuild of the *same* tree, so the non-determinism is pre-existing
+**A note on reproducibility, measured rather than assumed (§17.5):** the cold tree
+builds these images, but its binaries are **not** byte-identical to the dev tree's —
+and neither is a rebuild of the *same* tree, so the non-determinism is pre-existing
 (something dated is baked into the dictionary) and not introduced here. It is also
 the vindication of
 [`openbios-archive-tree.sh`](tools/openbios-archive-tree.sh) digesting **source**
@@ -3266,7 +3266,7 @@ declares `#address-cells 1`"*. Seeing the memory and being able to **encode** it
 different questions. Whether the root should declare `#address-cells 2` is a
 device-tree design decision with a wide blast radius — every node's address
 encoding, and this session already had to give PCI its own `#address-cells 3 /
-#size-cells 2`. **Open, and deliberately not decided here.**
+#size-cells 2`. **Open, and deliberately not decided here — carried as §17.1.**
 
 ### Nothing published the memory map — patch 40
 
@@ -4079,3 +4079,105 @@ can land above 4 GiB — is answered per boot rather than assumed. It cannot, to
 - **Review §2's fourth assertion** — `/chosen`'s `stdin` surviving a round trip at whatever
   address instances land on in long mode — and the review's own unmeasured question of
   whether an amd64 instance can land above 4 GiB at all.
+
+---
+
+## 17. OpenBIOS: open decisions and dangling issues (as of 2026-08-28)
+
+Everything still open for `examples/openbios-the-rival-that-shipped/`, in one place,
+so it stops being scattered across §13–§16 and the PR history. **Two of these need a
+decision rather than work.**
+
+### 17.1 — DECISION: should the root declare `#address-cells 2`?
+
+**The single remaining blocker for memory above 4 GiB, on BOTH paths.** As of patches
+39 and 41 the firmware *sees* all of a 5 GB machine — multiboot reports `RAM 5119 MB`,
+coreboot `RAM 5118 MB` — and both then say:
+
+```
+/memory: 1 of 3 range(s) NOT published -- the root declares #address-cells 1 /
+#size-cells 1, so an address or size above 4 GiB cannot be encoded here
+```
+
+Seeing the memory and being able to **encode** it are different questions. One address
+cell is 32 bits, so the `0x100000000` range cannot go into `reg` at all. Patch 40 drops
+it and says so rather than truncating, which is why this is visible instead of being a
+property that looks valid and points somewhere else.
+
+**Why it is not a one-line change.** `#address-cells` on the root governs how *every*
+child's addresses are encoded and decoded — `encode-phys` reads `my-#acells` from the
+parent, and this session already had to give PCI its own `#address-cells 3 /
+#size-cells 2` (patch 34) after a bus that declared nothing made every Forth decode read
+one cell short. Changing the root means re-checking every consumer, and §13.2's
+`property-abi` track is the place that would catch a regression.
+
+**Not attempted, and no recommendation recorded** — this is a device-tree design
+decision, not a defect.
+
+### 17.2 — DECISION: upstream the patches that are upstream's bugs
+
+`patches/` now holds **41**. Some are deliberate lab divergence (patch 15's Forth-loader
+divergence is carried on purpose); several are plain upstream defects that any user of
+`openbios/openbios` would hit:
+
+| patch | why it is upstream's | shape |
+|---|---|---|
+| **39** | coreboot's own header says *why* it forces 4-byte alignment; OpenBIOS's copy dropped it, so any 64-bit reader misreads the table | one typedef, with a before/after |
+| **41** | the same file's wire-format fix stopped short of the structs in its union | four field types |
+| **37** | `arch/amd64/builtin.c` cannot compile — broken since 2003 | one array declaration |
+| **36** | `switch-arch builtin-amd64` is in upstream's **own usage text** and silently builds nothing | build.xml rules |
+| **01** | the eight x86 revival fixes, already described as PR-ready in 00-INDEX | eight fixes |
+
+**The blocking unknown is now answered.** [`open-firmware-native-habitats/`](examples/open-firmware-native-habitats/README.md)
+records that whether upstream accepts PRs was **unverified** and that the check comes
+first. Measured 2026-08-28: `openbios/openbios` has commits dated **2026-06-29**,
+including a `.github/workflows` update — an actively maintained repository with CI, not
+an archive.
+
+The bounded task is **sorting all 41 into upstreamable vs ours**, with a reason per
+patch. The `Subject:` lines are already PR-shaped and `check-patch-scope.sh` already
+requires an `Arch-tested:` line on anything touching shared paths.
+
+### 17.3 — `/memory` has a `reg` but no `available`
+
+Patch 40 publishes `reg`. Open Firmware conventionally also carries `available` on
+`/memory` — the *unallocated* subset — which is what a client program consults before
+`claim`ing. Nothing here needs it yet (`arch/x86` has no ofmem and does its own simple
+claim), so it is **named rather than filed as a defect**: if a client-program lab ever
+asks `/memory` what is free, this is the gap it will find.
+
+### 17.4 — §13.3(B): `number()`'s two C99 divergences
+
+Deliberately parked, and the reasoning still holds: there is **no in-tree caller**, GCC
+corroborates the behaviour, and the divergence is asserted as itself rather than
+"fixed". Lowest value of anything in this list. Kept here only so it is not rediscovered
+as new.
+
+### 17.5 — Builds are not byte-reproducible
+
+Measured 2026-08-28: rebuilding **the same tree** produces a different
+`openbios-builtin.elf32`, and the differing bytes sit inside the embedded dictionary —
+something dated is baked in during bootstrap. Pre-existing, not introduced by any patch
+here, and not chased down.
+
+Two consequences worth keeping:
+- [`openbios-archive-tree.sh`](tools/openbios-archive-tree.sh) digests **source** and
+  excludes `obj-*`, which is what makes an archive comparable to a cold reproduction. A
+  digest over the binaries would identify nothing.
+- "the cold tree and the dev tree build identical bytes" is **not** a claim this lab can
+  make, and no test asserts it.
+
+### 17.6 — The provenance/rebuild ordering trips easily
+
+`smoke-openbios.sh`'s coreboot tracks SKIP with *"this ROM was built from a DIFFERENT
+payload"* whenever the firmware is rebuilt without rerunning
+`./build-coreboot-openbios.sh <arch>`. That is the guard working — it fired **three
+times on 2026-08-28 alone**, correctly each time — but it is a sequencing trap for
+anyone iterating on firmware. Not a bug; recorded so the SKIP is recognised instantly
+rather than debugged.
+
+### 17.7 — Repo-wide, not OpenBIOS-specific
+
+§15.1, §15.2 and §15.3 remain open. openbios's own `run-all.sh` landed 2026-08-27, so
+**this lab is no longer one of §15.3's rows** — the remaining three are elsewhere.
+
