@@ -49,6 +49,7 @@ tracks=(
     test-smoke-amd64-pmem.sh
     test-smoke-client-forth.sh
     test-smoke-coreboot.sh
+    test-smoke-coreboot-amd64.sh
     test-smoke-diagnostics.sh
     test-smoke-dict-identity.sh
     test-smoke-flash-writer.sh

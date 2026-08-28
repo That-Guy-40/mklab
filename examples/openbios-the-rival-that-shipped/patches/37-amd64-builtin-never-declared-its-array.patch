@@ -1,0 +1,46 @@
+From: mklab <noreply@example.invalid>
+Subject: [PATCH 37/37] arch/amd64/builtin.c never declared the array its own comment describes
+
+arch/amd64/builtin.c has said "wrap an array around the hex'ed dictionary file"
+since 2003 and never wrapped it: static-dict.h is only the initializer DATA,
+and the `static ucell forth_dictionary[...] = { #include ... };` declaration
+lives in arch/x86/builtin.c. This file referenced forth_dictionary without ever
+declaring it, so it could not compile at all -- invisible for 23 years because
+nothing ever built arch/amd64.
+
+Also sets dict_end/dict_last/dict_limit, the three sys_info fields the x86
+revival (patch 01) had to add before load_dictionary worked there.
+
+Arch-tested: amd64
+
+diff --git a/arch/amd64/builtin.c b/arch/amd64/builtin.c
+--- a/arch/amd64/builtin.c
++++ b/arch/amd64/builtin.c
+@@ -14,12 +14,25 @@
+  * wrap an array around the hex'ed dictionary file
+  */
+ 
++/* SPIKE: the array this file's own comment says it wraps. Upstream never wrote it
++ * -- static-dict.h is only the initializer DATA, and arch/x86/builtin.c is where
++ * the declaration lives. Nothing ever compiled arch/amd64, so a file that cannot
++ * possibly build sat here since 2003 with a comment describing what it does not do. */
++#define DICTIONARY_SIZE (1024 * 1024 / sizeof(ucell))
++#define DICTIONARY_BASE ((ucell)((char *)&forth_dictionary))
++
++static ucell forth_dictionary[DICTIONARY_SIZE] = {
+ #include "static-dict.h"
++};
+ 
+ void collect_multiboot_info(struct sys_info *info);
+ void collect_multiboot_info(struct sys_info *info)
+ {
+ 	info->dict_start=(unsigned long *)forth_dictionary;
+-	info->dict_end=(unsigned long *)((ucell)forth_dictionary +
+-			sizeof(forth_dictionary));
++	/* dict_end/dict_last/dict_limit as arch/x86 sets them: the same three
++	 * fields patch 01 had to add there for load_dictionary to work at all. */
++	info->dict_end = (unsigned long *)FORTH_DICTIONARY_END;
++	info->dict_last = (ucell *)((unsigned char *)forth_dictionary +
++					    FORTH_DICTIONARY_LAST);
++	info->dict_limit = sizeof(forth_dictionary);
+ }

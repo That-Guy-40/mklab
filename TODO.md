@@ -3125,6 +3125,58 @@ file at the pinned commit and require the marker to be **absent** — and SKIPs 
 passes when the network is unavailable, because an unchecked marker is an UNKNOWN and this
 whole checker exists because an unchecked marker was read as a checked one.
 
+### OpenBIOS in long mode as a coreboot payload — patches 36-38
+
+**Done 2026-08-28.** `arch/amd64` could not be a coreboot payload at all: coreboot
+cannot hand a payload a separate dictionary module the way QEMU's
+`-kernel`/`-initrd` can, so a coreboot image must be the **embedded** one
+(`IMAGE_ELF_EMBEDDED`, dictionary compiled in), and amd64 built no such image.
+Three defects, each of which hid the next — which is why this looked like one
+question and was three:
+
+| # | patch | the defect | how it presented |
+|---|---|---|---|
+| 36 | [`build.xml`](examples/openbios-the-rival-that-shipped/patches/36-amd64-embedded-image-set.patch) | `arch/amd64/build.xml` declared **one** executable; x86 declares four | `switch-arch builtin-amd64` set `CONFIG_IMAGE_ELF_EMBEDDED` and built **nothing**, rc=0 — a silent no-op |
+| 37 | [`builtin.c`](examples/openbios-the-rival-that-shipped/patches/37-amd64-builtin-never-declared-its-array.patch) | the file says *"wrap an array around the hex'ed dictionary file"* and never wraps it | `error: 'forth_dictionary' undeclared` — it could not compile, and had not since **2003** |
+| 38 | [`openbios.c`](examples/openbios-the-rival-that-shipped/patches/38-amd64-embedded-dictionary-branch.patch) | only the **multiboot** dictionary path existed | reached long mode, printed `forth started`, then `panic: no dictionary entry point` |
+
+**Patch 38 is the interesting one.** x86 branches on `sys_info.dict_last`: a builtin
+image is already relocated and ready to run, so it is used **in place** with `last`
+taken from the image; a multiboot module is a dictionary **file** and gets parsed
+into `intdict`. amd64 had only the second arm, so it parsed a ready-to-run
+dictionary as though it were a file and never set `last` — `findword()` then found
+nothing. The tell was in x86's own comment on that arm: *"as arch/amd64 does."*
+**The code already recorded that this was the only path there.**
+
+And the failure arrives **after** long mode and after Forth starts, which is what
+made it read as a dictionary bug rather than a missing branch.
+
+**Result, driven through the shipped path:** `./build-coreboot-openbios.sh amd64`
+→ `./smoke-openbios.sh coreboot-amd64` → the `0 > ` prompt, `3 4 + .` → `7`, and
+**`-1 u.` → `ffffffffffffffff`**. The 64-bit assertion is the point of the track: a
+prompt alone would be satisfied by the x86 ROM in the tree next door, so the track
+also fails by name if `panic: no dictionary entry point` ever returns.
+
+`build-coreboot-openbios.sh` now takes `[x86|amd64]`, with a separate `DOTCONFIG`,
+`obj=` dir, guard file and provenance stamp per arch — and each arch's guard list
+now includes **the other arch's ROM**, since that is the same clobbering question
+one arch wider.
+
+**A note on reproducibility, measured rather than assumed:** the cold tree builds
+these images, but its binaries are **not** byte-identical to the dev tree's — and
+neither is a rebuild of the *same* tree, so the non-determinism is pre-existing
+(something dated is baked into the dictionary) and not introduced here. It is also
+the vindication of
+[`openbios-archive-tree.sh`](tools/openbios-archive-tree.sh) digesting **source**
+and excluding `obj-*`: a digest over the binaries would identify nothing.
+
+**Still open:** the boot prints `RAM 0 MB` and a garbled LinuxBIOS table
+(`0x09f00000000000 0x00000100000000 655360`). The coreboot table parser misreads in
+64-bit — the `unsigned long`-in-an-ABI-struct trap, 4 bytes on i386 and 8 on LP64,
+in [`libopenbios/linuxbios_info.c`](examples/openbios-the-rival-that-shipped/patches/01-x86-revival.patch).
+It does not block reaching the prompt, so it is a separate item and is **not**
+claimed as fixed.
+
 ### Archiving the tested tree — a snapshot that can prove what it is
 
 **Done 2026-08-27.** [`tools/openbios-archive-tree.sh`](tools/openbios-archive-tree.sh)

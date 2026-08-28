@@ -20,9 +20,13 @@ set -euo pipefail
 # tools/check-usage-is-data.sh -- an unquoted one makes help text a program.
 usage() {
     cat <<'USAGE'
-build-coreboot-openbios.sh      a coreboot ROM carrying openbios-builtin.elf
+build-coreboot-openbios.sh [ARCH]   a coreboot ROM carrying openbios-builtin.elf
 
-Takes no arguments. OpenBIOS began life as a LinuxBIOS payload, and this builds
+ARCH:
+  x86      32-bit payload, obj-x86/openbios-builtin.elf   (the default)
+  amd64    64-bit firmware entered 32-bit, obj-amd64/openbios-builtin.elf32
+
+OpenBIOS began life as a LinuxBIOS payload, and this builds
 it back into that shape: coreboot with CONFIG_PAYLOAD_ELF pointing at our own
 openbios-builtin.elf, bootable with `qemu -bios`.
 
@@ -45,10 +49,24 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 WORKDIR="${OPENBIOS_WORKDIR:-$HOME/openbios-lab}"
 CB="${COREBOOT_DIR:-$HOME/linuxboot-lab/coreboot}"
-PAYLOAD="$WORKDIR/openbios/obj-x86/openbios-builtin.elf"
-GUARD="$WORKDIR/coreboot-guard.sha"
+ARCH="${1:-x86}"
 
-[[ -f "$PAYLOAD" ]] || { echo "no payload at $PAYLOAD — run ./build-openbios.sh x86 first" >&2; exit 1; }
+# TWO ARCHES, TWO OUTPUT TREES, and nothing shared but the coreboot checkout.
+# The amd64 payload is the ELF32 produced by the objcopy in arch/amd64/build.xml:
+# coreboot enters a payload in 32-bit protected mode, and the firmware goes long
+# mode itself. Each arch gets its own DOTCONFIG, its own obj= dir and its own
+# guard file, so building one cannot quietly replace the other's ROM -- which is
+# the same clobbering question the guard below has always been about, one arch wider.
+case "$ARCH" in
+  x86)   PAYLOAD="$WORKDIR/openbios/obj-x86/openbios-builtin.elf"
+         OBJDIR=build-openbios;       DOTCONFIG=.config-openbios ;;
+  amd64) PAYLOAD="$WORKDIR/openbios/obj-amd64/openbios-builtin.elf32"
+         OBJDIR=build-openbios-amd64; DOTCONFIG=.config-openbios-amd64 ;;
+  *) echo "usage: $0 [x86|amd64]" >&2; exit 1 ;;
+esac
+GUARD="$WORKDIR/coreboot-guard-$ARCH.sha"
+
+[[ -f "$PAYLOAD" ]] || { echo "no payload at $PAYLOAD — run ./build-openbios.sh $ARCH first" >&2; exit 1; }
 [[ -d "$CB" ]] || { echo "no coreboot tree at $CB (set COREBOOT_DIR=; the linuxboot lab builds one)" >&2; exit 1; }
 
 # Sha-guard the sibling labs' kept artifacts (only the ones that exist).
@@ -59,22 +77,25 @@ if [[ ! -f "$GUARD" ]]; then
     # `if`, NOT `[[ -f … ]] && sha256sum …`: this script runs under `set -e`, and a `&&`
     # whose left side is false on the LAST iteration makes the whole subshell exit 1 and
     # takes the build with it. An `if` with no `else` is 0 when its condition is false.
-    (cd "$CB" && for f in .config build/coreboot.rom .config-ofw build-ofw/coreboot.rom; do
+    # The OTHER arch's ROM is a sibling artifact too, so it joins the list.
+    (cd "$CB" && for f in .config build/coreboot.rom .config-ofw build-ofw/coreboot.rom \
+                          build-openbios/coreboot.rom build-openbios-amd64/coreboot.rom; do
+        [[ "$f" == "$OBJDIR/coreboot.rom" ]] && continue
         if [[ -f "$f" ]]; then sha256sum "$f"; fi
     done) > "$GUARD"
     echo "==> wrote guard $GUARD"
 fi
 
-echo "==> isolated config/build (.config-openbios + build-openbios/) — sibling artifacts untouched"
-cat > "$CB/.config-openbios" <<EOF
+echo "==> isolated config/build ($DOTCONFIG + $OBJDIR/) — sibling artifacts untouched"
+cat > "$CB/$DOTCONFIG" <<EOF
 CONFIG_VENDOR_EMULATION=y
 CONFIG_BOARD_EMULATION_QEMU_X86_I440FX=y
 CONFIG_COREBOOT_ROMSIZE_KB_4096=y
 CONFIG_PAYLOAD_ELF=y
 CONFIG_PAYLOAD_FILE="$PAYLOAD"
 EOF
-make -C "$CB" DOTCONFIG=.config-openbios obj=build-openbios olddefconfig >/dev/null
-make -C "$CB" DOTCONFIG=.config-openbios obj=build-openbios -j"$(nproc)" \
+make -C "$CB" DOTCONFIG="$DOTCONFIG" obj="$OBJDIR" olddefconfig >/dev/null
+make -C "$CB" DOTCONFIG="$DOTCONFIG" obj="$OBJDIR" -j"$(nproc)" \
     | tail -3
 
 echo "==> guard check:"
@@ -85,5 +106,5 @@ echo "==> guard check:"
 # the smoke track booted it and reported on whatever firmware happened to be baked
 # in months ago. coreboot transforms the ELF on the way in, so the pairing cannot be
 # re-derived afterwards; it has to be recorded as it is made.
-"$REPO/tools/openbios-rom-provenance.sh" --stamp "$CB/build-openbios/coreboot.rom" "$PAYLOAD"
-echo "==> $CB/build-openbios/coreboot.rom"
+"$REPO/tools/openbios-rom-provenance.sh" --stamp "$CB/$OBJDIR/coreboot.rom" "$PAYLOAD"
+echo "==> $CB/$OBJDIR/coreboot.rom"
