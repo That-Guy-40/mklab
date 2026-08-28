@@ -211,6 +211,21 @@ jobs:
         # re-injected into the tool and watched to bite.
         run: bash tools/tests/test-openbios-archive-identity.sh
 
+      - name: a coreboot ROM cannot answer for a payload that is not inside it
+        # smoke-openbios.sh's coreboot track boots a ROM from OUTSIDE the tree under test
+        # (the linuxboot lab's, via COREBOOT_DIR). Nothing related the two, and both
+        # consequences were observed on 2026-08-27: the track PASSED against an empty
+        # OPENBIOS_WORKDIR, and the ROM on the dev machine was two days older than the
+        # payload beside it, so every run reported on firmware predating the fixes it
+        # appeared to be testing. Nothing errored — the ROM boots and answers 7.
+        #
+        # Synthetic files, no coreboot and no network. The rows that carry the weight are
+        # the gradings: a ROM built from another payload is UNKNOWN (77) because a rebuild
+        # restores the answer, while a sidecar describing a different ROM is a FAILURE (1)
+        # because the record and reality disagree. Two controls prove the comparison can
+        # distinguish at all, since every row compares a digest to a digest.
+        run: bash tools/tests/test-openbios-rom-provenance.sh
+
       - name: no cached host facts in the micro-cloud instruments
         # Pure text analysis, no host state — safe on a runner that has none of these
         # interfaces. Guards the defect class that made one instrument print a fact from
