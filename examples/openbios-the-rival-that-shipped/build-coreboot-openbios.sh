@@ -77,13 +77,28 @@ if [[ ! -f "$GUARD" ]]; then
     # `if`, NOT `[[ -f … ]] && sha256sum …`: this script runs under `set -e`, and a `&&`
     # whose left side is false on the LAST iteration makes the whole subshell exit 1 and
     # takes the build with it. An `if` with no `else` is 0 when its condition is false.
-    # The OTHER arch's ROM is a sibling artifact too, so it joins the list.
-    (cd "$CB" && for f in .config build/coreboot.rom .config-ofw build-ofw/coreboot.rom \
-                          build-openbios/coreboot.rom build-openbios-amd64/coreboot.rom; do
-        [[ "$f" == "$OBJDIR/coreboot.rom" ]] && continue
+    # ONLY ARTIFACTS THIS LAB NEVER WRITES. The first version of the amd64 support
+    # listed the OTHER arch's ROM here too, reasoning that it is a sibling artifact
+    # -- but this lab OWNS both of those and rebuilds them on demand, while the
+    # guard file is written ONCE and then cached. So rebuilding x86 left amd64's
+    # guard describing a ROM that had legitimately changed, and the next amd64
+    # build failed its own guard check. A cached expectation about a thing that is
+    # supposed to change: bug class #1 in CLAUDE.md, committed while fixing bug
+    # class #1. The two arches never needed the guard for isolation anyway --
+    # separate DOTCONFIG and obj= dirs are what actually keep them apart.
+    (cd "$CB" && for f in .config build/coreboot.rom .config-ofw build-ofw/coreboot.rom; do
         if [[ -f "$f" ]]; then sha256sum "$f"; fi
     done) > "$GUARD"
     echo "==> wrote guard $GUARD"
+elif grep -q 'build-openbios' "$GUARD"; then
+    # SELF-HEAL A GUARD WRITTEN BY THAT VERSION. It names ROMs this lab rebuilds, so
+    # it fails the moment either arch is rebuilt -- and a guard nobody can satisfy
+    # gets deleted by hand, after which nobody has one at all. Rewriting it keeps
+    # the protection for the artifacts it is actually about, and says so out loud.
+    echo "==> $GUARD named this lab's own ROMs (which it rebuilds) — rewriting it to cover only the sibling labs' artifacts"
+    (cd "$CB" && for f in .config build/coreboot.rom .config-ofw build-ofw/coreboot.rom; do
+        if [[ -f "$f" ]]; then sha256sum "$f"; fi
+    done) > "$GUARD"
 fi
 
 echo "==> isolated config/build ($DOTCONFIG + $OBJDIR/) — sibling artifacts untouched"

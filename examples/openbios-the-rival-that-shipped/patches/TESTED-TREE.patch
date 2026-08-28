@@ -1740,7 +1740,7 @@ index 17cf202..6a7281d 100644
  
  #endif				/* ! ASM */
 diff --git a/arch/amd64/openbios.c b/arch/amd64/openbios.c
-index 15d3b62..73bf3b9 100644
+index 15d3b62..7eb05c9 100644
 --- a/arch/amd64/openbios.c
 +++ b/arch/amd64/openbios.c
 @@ -9,12 +9,23 @@
@@ -1818,7 +1818,7 @@ index 15d3b62..73bf3b9 100644
  static void init_memory(void)
  {
  	/* push start and end of available memory to the stack
-@@ -35,19 +90,94 @@ static void init_memory(void)
+@@ -35,19 +90,99 @@ static void init_memory(void)
  	PUSH(0x9FFFF);
  }
  
@@ -1907,6 +1907,11 @@ index 15d3b62..73bf3b9 100644
 +	 * teardown does not. */
 +	openbios_init();
 +
++	/* AFTER openbios_init(), for the same reason the long comment above gives:
++	 * the device tree does not exist at the top of arch_init, and find_dev()
++	 * on a tree that is not built yet faults rather than returning 0. */
++	publish_memory_ranges(&sys_info);
++
  	bind_func("platform-boot", boot );
 +
 +	/* Spike 2: expose the context-switch self-test at the prompt, so the
@@ -1915,7 +1920,7 @@ index 15d3b62..73bf3b9 100644
  }
  
  extern struct _console_ops arch_console_ops;
-@@ -65,11 +195,48 @@ int openbios(void)
+@@ -65,11 +200,48 @@ int openbios(void)
  
          collect_sys_info(&sys_info);
  
@@ -1968,7 +1973,7 @@ index 15d3b62..73bf3b9 100644
  	forth_init();
  
  	relocate(&sys_info);
-@@ -106,3 +273,116 @@ int openbios(void)
+@@ -106,3 +278,116 @@ int openbios(void)
  
  	return 0;
  }
@@ -3233,7 +3238,7 @@ index fd0fe97..920a561 100644
  /* magic number passed by multiboot-compliant boot loader.  */
  #define MULTIBOOT_BOOTLOADER_MAGIC	0x2BADB002
 diff --git a/arch/x86/openbios.c b/arch/x86/openbios.c
-index 1274d2b..75cc4f9 100644
+index 1274d2b..c2ec3f7 100644
 --- a/arch/x86/openbios.c
 +++ b/arch/x86/openbios.c
 @@ -21,6 +21,15 @@
@@ -3661,7 +3666,7 @@ index 1274d2b..75cc4f9 100644
  	modules_init();
  #ifdef CONFIG_DRIVER_PCI
  	arch = &default_pci_host;
-@@ -82,11 +481,77 @@ arch_init( void )
+@@ -82,11 +481,82 @@ arch_init( void )
  	init_video();
  	node_methods_init();
  #endif
@@ -3708,6 +3713,11 @@ index 1274d2b..75cc4f9 100644
 +	 * That distinction was checked before touching anything. */
 +	openbios_init();
 +
++	/* AFTER openbios_init(), for the same reason the long comment above gives:
++	 * the device tree does not exist at the top of arch_init, and find_dev()
++	 * on a tree that is not built yet faults rather than returning 0. */
++	publish_memory_ranges(&sys_info);
++
  	bind_func("platform-boot", boot );
 -}
  
@@ -3741,7 +3751,7 @@ index 1274d2b..75cc4f9 100644
  
  int openbios(void)
  {
-@@ -101,10 +566,22 @@ int openbios(void)
+@@ -101,10 +571,22 @@ int openbios(void)
  
          collect_sys_info(&sys_info);
  
@@ -5081,6 +5091,21 @@ index 6b0302d..369318b 100644
  extern int		_selfword( const char *method, xt_t *cache_xt );
  extern int		_parword( const char *method, xt_t *cache_xt );
  
+diff --git a/include/libopenbios/sys_info.h b/include/libopenbios/sys_info.h
+index a8b3cce..9e4cb90 100644
+--- a/include/libopenbios/sys_info.h
++++ b/include/libopenbios/sys_info.h
+@@ -3,6 +3,10 @@
+ 
+ /* Information collected from firmware/bootloader */
+ 
++/* Publishes the map below into /memory's `reg`; see libopenbios/init.c. */
++struct sys_info;
++extern void publish_memory_ranges(struct sys_info *info);
++
+ struct sys_info {
+     /* Values passed by bootloader */
+     unsigned long boot_type;
 diff --git a/libc/vsprintf.c b/libc/vsprintf.c
 index ed4d38a..e51731d 100644
 --- a/libc/vsprintf.c
@@ -5421,10 +5446,10 @@ index 4433635..3694115 100644
      
      feval("-1 state-valid !");
 diff --git a/libopenbios/init.c b/libopenbios/init.c
-index f96b621..6de8448 100644
+index f96b621..414a679 100644
 --- a/libopenbios/init.c
 +++ b/libopenbios/init.c
-@@ -16,6 +16,8 @@
+@@ -16,9 +16,13 @@
  
  #include "config.h"
  #include "libc/byteorder.h"
@@ -5433,7 +5458,12 @@ index f96b621..6de8448 100644
  #include "libopenbios/openbios.h"
  #include "libopenbios/bindings.h"
  #include "libopenbios/initprogram.h"
-@@ -65,6 +67,370 @@ static void lelfetch(void)
++#include "libopenbios/sys_info.h"
++#include "libc/stdlib.h"
+ #define NO_QEMU_PROTOS
+ #include "arch/common/fw_cfg.h"
+ 
+@@ -65,6 +69,370 @@ static void lelfetch(void)
  	PUSH(__le32_to_cpu(*aaddr));
  }
  
@@ -5804,7 +5834,7 @@ index f96b621..6de8448 100644
  void
  openbios_init( void )
  {
-@@ -83,6 +449,19 @@ openbios_init( void )
+@@ -83,9 +451,110 @@ openbios_init( void )
  	// Bind the C implementation of (go) into Forth
  	bind_func("(go)", go);
  	
@@ -5824,6 +5854,97 @@ index f96b621..6de8448 100644
  	// Bind the LE access words
  	bind_func("le-w!", lewstore);
  	bind_func("le-l!", lelstore);
+ 	bind_func("le-w@", lewfetch);
+ 	bind_func("le-l@", lelfetch);
+ }
++
++/* publish_memory_ranges — put the firmware's memory map into /memory's `reg`.
++ *
++ * WHY THIS DID NOT EXIST. On ppc and sparc the `reg` on /memory is a by-product of
++ * ofmem, which those arches use heavily (20 references in arch/ppc, 6 in
++ * arch/sparc32). arch/x86 says outright that it has none -- "x86 has no ofmem, so
++ * this is a simple..." in its own openbios.c -- and arch/amd64 has zero references
++ * to it. So both x86 arches have always booted with a /memory node carrying
++ * nothing but its name, on EVERY path: multiboot and coreboot alike. Measured
++ * 2026-08-28 before writing a line of this, because "the coreboot path is missing
++ * it" and "nobody publishes it" are different bugs and only the second is true.
++ *
++ * THE CELL COUNTS ARE READ FROM THE ROOT, NOT ASSUMED. A `reg` is meaningless
++ * without the #address-cells/#size-cells that decode it, and this tree's root
++ * declares `#address-cells 1` and NO #size-cells at all -- so a hardcoded 2/2
++ * here would produce a property every consumer would misread. Absent counts fall
++ * back to the 1275 defaults (2 and 1), which is what my-#acells does elsewhere.
++ *
++ * A RANGE THAT DOES NOT FIT IS DROPPED AND SAID OUT LOUD, never truncated. With
++ * one address cell an address is 32 bits, and this lab routinely puts an NVDIMM at
++ * 0x100000000 -- silently writing the low half of that would be a property that
++ * looks valid and points somewhere else, which is the failure this codebase keeps
++ * finding. Dropping is a smaller lie than truncating, and printk makes it neither.
++ *
++ * Cells are BIG-ENDIAN, high cell first: 1275 property encoding, and the same trap
++ * drivers/pci.c documents after its builders handed set_property() raw host-order
++ * u32 arrays. */
++static u32 *emit_cells(u32 *p, unsigned long long v, int cells)
++{
++	int i;
++	for (i = cells - 1; i >= 0; i--)
++		*p++ = __cpu_to_be32((u32)(v >> (32 * i)));
++	return p;
++}
++
++void publish_memory_ranges(struct sys_info *info)
++{
++	phandle_t mem, root;
++	u32 *cells, *p, v;
++	int i, acells = 2, scells = 1, retlen, emitted = 0, dropped = 0;
++
++	if (!info || info->n_memranges <= 0)
++		return;
++	mem = find_dev("/memory");
++	if (!mem)
++		return;
++
++	root = find_dev("/");
++	if (root) {
++		v = get_int_property(root, "#address-cells", &retlen);
++		if (retlen == (int)sizeof(u32))
++			acells = (int)v;
++		v = get_int_property(root, "#size-cells", &retlen);
++		if (retlen == (int)sizeof(u32))
++			scells = (int)v;
++	}
++	/* Anything outside 1..2 is a tree this function was not written for, and a
++	 * wrong `reg` is worse than none: leave it absent rather than guess. */
++	if (acells < 1 || acells > 2 || scells < 1 || scells > 2) {
++		printk("/memory: root declares #address-cells %d / #size-cells %d, "
++		       "which this does not encode -- leaving reg unset\n", acells, scells);
++		return;
++	}
++
++	cells = malloc(info->n_memranges * (acells + scells) * sizeof(u32));
++	if (!cells)
++		return;
++	p = cells;
++	for (i = 0; i < info->n_memranges; i++) {
++		unsigned long long base = info->memrange[i].base;
++		unsigned long long size = info->memrange[i].size;
++		if ((acells == 1 && (base >> 32)) || (scells == 1 && (size >> 32))) {
++			dropped++;
++			continue;
++		}
++		p = emit_cells(p, base, acells);
++		p = emit_cells(p, size, scells);
++		emitted++;
++	}
++	if (emitted)
++		set_property(mem, "reg", (char *)cells, (int)((p - cells) * sizeof(u32)));
++	if (dropped)
++		printk("/memory: %d of %d range(s) NOT published -- the root declares "
++		       "#address-cells %d / #size-cells %d, so an address or size above "
++		       "4 GiB cannot be encoded here\n",
++		       dropped, info->n_memranges, acells, scells);
++	free(cells);
++}
 diff --git a/libopenbios/initprogram.c b/libopenbios/initprogram.c
 index 3213378..345abc4 100644
 --- a/libopenbios/initprogram.c
