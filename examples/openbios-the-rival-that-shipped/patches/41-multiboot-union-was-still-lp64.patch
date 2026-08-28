@@ -1,0 +1,93 @@
+From: mklab <noreply@example.invalid>
+Subject: [PATCH 41/41] Spike 1 finished: the wire-format fix stopped one struct short
+
+arch/amd64 saw 3071 MB of a 5 GB machine, and the reason was half of an earlier
+fix. Spike 1 changed struct multiboot_info's own fields from `unsigned long` to
+uint32_t and left a comment saying these are WIRE-FORMAT structures with every
+field fixed at 32 bits -- but the two structs inside the UNION immediately before
+mmap_length/mmap_addr kept `unsigned long`.
+
+Measured: 4 x unsigned long is 32 bytes on LP64 against 16 for the specified
+uint32_t, which puts mmap_length at offset 64 where Multiboot says 44 -- off by
+20. On i386 both are 16 and the offset is 44, so arch/x86 never saw it. Same
+shape as the coreboot-table alignment bug in patch 39, and the same reason it hid.
+
+  x86-64:  union(unsigned long)=32  union(uint32_t)=16  offsetof(mmap_length) 64 vs 44
+  i386  :  union(unsigned long)=16  union(uint32_t)=16  offsetof(mmap_length) 44 vs 44
+
+THE SYMPTOM WAS A PLAUSIBLE NUMBER. The firmware read garbage for
+mmap_length/mmap_addr, computed an entry count of ZERO, printed "Multiboot mmap is
+broken", and fell back to mem_lower/mem_upper -- which cannot express memory above
+4 GiB. With -m 5G it reported 3071 MB. Nothing crashed and nothing printed an
+absurd value; only asking for MORE than 4 GiB and checking the total against what
+QEMU was given tells the two apart.
+
+  before: Multiboot mmap is broken / RAM 3071 MB   (2 ranges, both below 4 GiB)
+  after:  9 mmap entries parsed    / RAM 5119 MB   (3 ranges, incl. 0x100000000)
+
+A partial fix reads as a complete one when the comment beside it describes the
+whole problem.
+
+The smoke track now boots a SECOND time with -m 5G and asserts the total, because
+the -m 512 boot above it cannot distinguish these cases at all. Control: the
+`unsigned long` was restored and the track failed with "'Multiboot mmap is broken'
+-- the Multiboot info struct's offsets are wrong again".
+
+Downstream and NOT fixed here: with all three ranges now collected, /memory
+publishes two of them and says so -- "1 of 3 range(s) NOT published ... the root
+declares #address-cells 1". Seeing the memory and being able to ENCODE it are
+different questions, and the second is a device-tree design decision rather than a
+bug in this file.
+
+Arch-tested: x86 amd64 ppc
+
+diff --git a/arch/amd64/multiboot.h b/arch/amd64/multiboot.h
+--- a/arch/amd64/multiboot.h
++++ b/arch/amd64/multiboot.h
+@@ -51,20 +51,38 @@
+ 	unsigned long entry_addr;
+ } multiboot_header_t;
+ 
++/* SPIKE 1, FINISHED. These two are the OTHER half of the wire-format fix below,
++ * and they were missed: multiboot_info's own fields were changed to uint32_t and
++ * given the comment explaining why, while these kept `unsigned long` -- and they
++ * sit in a UNION immediately before mmap_length/mmap_addr, so their width decides
++ * those two offsets.
++ *
++ * Measured: 4 x unsigned long is 32 bytes on LP64 against 16 for the specified
++ * uint32_t, which puts mmap_length at offset 64 where Multiboot says 44. On i386
++ * both are 16 and the offset is 44, so arch/x86 never saw it -- the same shape as
++ * the coreboot-table alignment bug, and the same reason it hid.
++ *
++ * The symptom was not a crash and not a wrong number in an obvious place: the
++ * firmware read garbage for mmap_length/mmap_addr, computed an entry count of
++ * ZERO, printed "Multiboot mmap is broken", and fell back to mem_lower/mem_upper
++ * -- which cannot express memory above 4 GiB. With -m 5G it reported 3071 MB and
++ * looked like a plausible answer. A partial fix reads as a complete one when the
++ * comment beside it describes the whole problem. */
++
+ /* symbol table for a.out */
+ typedef struct aout_symbol_table {
+-	unsigned long tabsize;
+-	unsigned long strsize;
+-	unsigned long addr;
+-	unsigned long reserved;
++	uint32_t tabsize;
++	uint32_t strsize;
++	uint32_t addr;
++	uint32_t reserved;
+ } aout_symbol_table_t;
+ 
+ /* section header table for ELF */
+ typedef struct elf_section_header_table {
+-	unsigned long num;
+-	unsigned long size;
+-	unsigned long addr;
+-	unsigned long shndx;
++	uint32_t num;
++	uint32_t size;
++	uint32_t addr;
++	uint32_t shndx;
+ } elf_section_header_table_t;
+ 
+ /* multiboot information */

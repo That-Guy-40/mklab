@@ -628,7 +628,38 @@ case "$FLAVOR" in
     # ALWAYS passed: that is the control proving this assertion is not vacuous.
     grep -q 'AP=5' "$LOG" \
       || fail "REGRESSION: a variable defined at the amd64 prompt did not survive device-end — the firmware is coming up with a device node still active (it was /chosen), so every definition made at the prompt is quietly a node method — see $LOG"
-    pass "SPIKE 1: QEMU booted a 64-bit ELF (via the multiboot a.out kludge) and the firmware runs in long mode — 0 > answered 7, '-1 u.' printed ffffffffffffffff, the device tree is there, and a variable defined at the prompt survives device-end (no node left active)"
+    # ── 2/2: does a 64-bit firmware see memory ABOVE 4 GiB? ─────────────────
+    # The whole premise of the port, and it was false until 2026-08-28. The
+    # Multiboot info struct's fields were fixed to uint32_t in Spike 1 with a
+    # comment explaining that they are wire-format -- but the two structs in the
+    # UNION immediately before mmap_length/mmap_addr kept `unsigned long`. On LP64
+    # that union is 32 bytes instead of 16, so those two fields were read at offset
+    # 64 where Multiboot says 44. The firmware got garbage, computed ZERO map
+    # entries, printed "Multiboot mmap is broken", and fell back to
+    # mem_lower/mem_upper -- which cannot express anything above 4 GiB.
+    #
+    # It did not crash and it did not print an absurd number: with -m 5G it said
+    # 3071 MB, which looks like an answer. Only asking for MORE than 4 GiB and
+    # checking the total against what QEMU was given can tell those apart, which is
+    # why this boots a second time rather than reusing the -m 512 boot above.
+    HILOG="$LOG.highmem"
+    note "2/2 booting with -m 5G — does it see past 4 GiB? → $HILOG"
+    qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 5G -kernel "$MB" -initrd "$DICT" \
+      -display none -serial "file:$HILOG" -no-reboot >/dev/null 2>&1 &
+    HPID=$!
+    sleep 20
+    kill "$HPID" 2>/dev/null   # by PID, never by pattern
+    wait "$HPID" 2>/dev/null
+    grep -qa 'Multiboot mmap is broken' "$HILOG" \
+      && fail "REGRESSION: 'Multiboot mmap is broken' — the Multiboot info struct's offsets are wrong again, so the firmware fell back to mem_lower/mem_upper and cannot see above 4 GiB (arch/amd64/multiboot.h: the aout/elf structs in the union must be uint32_t, not unsigned long) — see $HILOG"
+    HIMB="$(grep -aoE '^RAM ([0-9]+) MB' "$HILOG" | grep -oE '[0-9]+' | head -1)"
+    [[ -n "$HIMB" ]] \
+      || fail "REGRESSION: the -m 5G boot printed no 'RAM <n> MB' line at all — see $HILOG"
+    (( HIMB >= 4096 )) \
+      || fail "REGRESSION: with 5 GB the firmware found only ${HIMB} MB — it is not seeing memory above 4 GiB, which is the premise of the whole port. 3071 MB specifically means the Multiboot mmap was rejected and mem_lower/mem_upper answered instead — see $HILOG"
+    note "with -m 5G the firmware sees ${HIMB} MB"
+
+    pass "SPIKE 1: QEMU booted a 64-bit ELF (via the multiboot a.out kludge) and the firmware runs in long mode — 0 > answered 7, '-1 u.' printed ffffffffffffffff, the device tree is there, a variable defined at the prompt survives device-end (no node left active), and with -m 5G it sees ${HIMB} MB, i.e. past the 4 GiB that mem_lower/mem_upper can express"
     ;;
   amd64-fault)
     # SPIKE 2, first half: the 64-bit exception layer.

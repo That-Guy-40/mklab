@@ -1651,7 +1651,7 @@ index 4271bd5..c8afbd0 100644
      if (mbinfo->flags & MULTIBOOT_MMAP_VALID) {
  	/* convert mmap records */
 diff --git a/arch/amd64/multiboot.h b/arch/amd64/multiboot.h
-index 17cf202..6a7281d 100644
+index 17cf202..bf0af39 100644
 --- a/arch/amd64/multiboot.h
 +++ b/arch/amd64/multiboot.h
 @@ -11,6 +11,16 @@
@@ -1671,7 +1671,50 @@ index 17cf202..6a7281d 100644
  #define MULTIBOOT_HEADER_FLAGS		0x00010003
  
  /* magic number passed by multiboot-compliant boot loader.  */
-@@ -58,39 +68,48 @@ typedef struct elf_section_header_table {
+@@ -41,56 +51,83 @@ typedef struct multiboot_header {
+ 	unsigned long entry_addr;
+ } multiboot_header_t;
+ 
++/* SPIKE 1, FINISHED. These two are the OTHER half of the wire-format fix below,
++ * and they were missed: multiboot_info's own fields were changed to uint32_t and
++ * given the comment explaining why, while these kept `unsigned long` -- and they
++ * sit in a UNION immediately before mmap_length/mmap_addr, so their width decides
++ * those two offsets.
++ *
++ * Measured: 4 x unsigned long is 32 bytes on LP64 against 16 for the specified
++ * uint32_t, which puts mmap_length at offset 64 where Multiboot says 44. On i386
++ * both are 16 and the offset is 44, so arch/x86 never saw it -- the same shape as
++ * the coreboot-table alignment bug, and the same reason it hid.
++ *
++ * The symptom was not a crash and not a wrong number in an obvious place: the
++ * firmware read garbage for mmap_length/mmap_addr, computed an entry count of
++ * ZERO, printed "Multiboot mmap is broken", and fell back to mem_lower/mem_upper
++ * -- which cannot express memory above 4 GiB. With -m 5G it reported 3071 MB and
++ * looked like a plausible answer. A partial fix reads as a complete one when the
++ * comment beside it describes the whole problem. */
++
+ /* symbol table for a.out */
+ typedef struct aout_symbol_table {
+-	unsigned long tabsize;
+-	unsigned long strsize;
+-	unsigned long addr;
+-	unsigned long reserved;
++	uint32_t tabsize;
++	uint32_t strsize;
++	uint32_t addr;
++	uint32_t reserved;
+ } aout_symbol_table_t;
+ 
+ /* section header table for ELF */
+ typedef struct elf_section_header_table {
+-	unsigned long num;
+-	unsigned long size;
+-	unsigned long addr;
+-	unsigned long shndx;
++	uint32_t num;
++	uint32_t size;
++	uint32_t addr;
++	uint32_t shndx;
  } elf_section_header_table_t;
  
  /* multiboot information */
