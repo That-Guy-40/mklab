@@ -3224,6 +3224,50 @@ failed with *"found only 0 MB of the 512 MB QEMU was given"*.
 The comparison against arch/x86 is what scoped it correctly: it was never a
 coreboot-path gap, it was that *nobody published the map at all.*
 
+### amd64 saw 3 GB of a 5 GB machine — patch 41
+
+**Done 2026-08-28**, and it was **half of an earlier fix**. Spike 1 changed
+`struct multiboot_info`'s own fields from `unsigned long` to `uint32_t` and left a
+comment saying these are wire-format structures with every field fixed at 32 bits
+— but the two structs inside the **union immediately before
+`mmap_length`/`mmap_addr`** kept `unsigned long`.
+
+| | union size | `offsetof(mmap_length)` |
+|---|---|---|
+| x86-64, `unsigned long` | 32 | **64** — spec says 44 |
+| x86-64, `uint32_t` | 16 | 44 ✓ |
+| i386, either | 16 | 44 ✓ |
+
+So arch/x86 never saw it — the same shape as patch 39, and the same reason it hid.
+
+**The symptom was a plausible number.** The firmware read garbage for
+`mmap_length`/`mmap_addr`, computed an entry count of **zero**, printed *"Multiboot
+mmap is broken"*, and fell back to `mem_lower`/`mem_upper` — which cannot express
+anything above 4 GiB. With `-m 5G` it answered **3071 MB**. Nothing crashed and
+nothing printed an absurd value.
+
+```
+before:  Multiboot mmap is broken / RAM 3071 MB   (2 ranges, both below 4 GiB)
+after:   9 mmap entries parsed    / RAM 5119 MB   (3 ranges, incl. 0x100000000)
+```
+
+**A partial fix reads as a complete one when the comment beside it describes the
+whole problem.** That is the durable lesson here: the comment was accurate about
+the bug class and the code below it only carried half the remedy.
+
+The `amd64` track now boots a **second** time with `-m 5G` and asserts the total,
+because the `-m 512` boot above it cannot distinguish these cases at all — 3071 and
+5119 both look like answers at 512 MB. Control: the `unsigned long` was restored
+and the track failed naming the struct.
+
+**Now live, and NOT a bug in this file:** with all three ranges collected,
+`/memory` publishes two and says *"1 of 3 range(s) NOT published … the root
+declares `#address-cells 1`"*. Seeing the memory and being able to **encode** it are
+different questions. Whether the root should declare `#address-cells 2` is a
+device-tree design decision with a wide blast radius — every node's address
+encoding, and this session already had to give PCI its own `#address-cells 3 /
+#size-cells 2`. **Open, and deliberately not decided here.**
+
 ### Nothing published the memory map — patch 40
 
 **Done 2026-08-28.** `/memory` had a `name` and nothing else, on **both** x86
