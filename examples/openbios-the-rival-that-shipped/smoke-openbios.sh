@@ -91,6 +91,20 @@ case "$FLAVOR" in
     else
       ROM="$CB/build-openbios/coreboot.rom"
       [[ -f "$ROM" ]] || skip "no ROM at $ROM — run ./build-coreboot-openbios.sh first"
+      # THE ROM IS NOT IN THE TREE UNDER TEST, and until 2026-08-27 nothing said so.
+      # Unlike the multiboot arm above — which boots straight out of $WORKDIR — this
+      # one boots a ROM built at some earlier time from the linuxboot lab's tree. So
+      # it PASSED against an empty $OPENBIOS_WORKDIR, reporting a prompt for a tree
+      # that had never been built, and on this machine it spent two days reporting on
+      # a payload that predated every fix in the tree beside it. Nothing errored: the
+      # ROM is readable and it does answer 7. It was a record outliving its subject.
+      PAYLOAD="$WORKDIR/openbios/obj-x86/openbios-builtin.elf"
+      PROV="$("$REPO/tools/openbios-rom-provenance.sh" --check "$ROM" "$PAYLOAD" 2>&1)"; PRC=$?
+      case $PRC in
+        0)  note "provenance: $PROV" ;;
+        77) skip "$PROV" ;;
+        *)  fail "$PROV" ;;
+      esac
       QEMU=(qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -bios "$ROM")
     fi
     note "booting $FLAVOR (accel=$ACCEL), driving the 0 > prompt → $LOG"

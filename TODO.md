@@ -3453,12 +3453,53 @@ real files rather than grepping them:
    test. A guard that only fires when *every* track skips is silenced by exactly
    that: one unrelated pass hiding twenty-one unknowns.
 
-   **Which surfaced a finding worth its own line:** `test-smoke-coreboot.sh` can
-   **PASS while the firmware under test was never built** — it booted a ROM built
-   at some earlier time from a sibling lab's tree. Whether that ROM's embedded
-   payload is re-derived or is a record outliving its subject is **not yet
-   established**; the lab's 00-INDEX entry claims it sha-guards both siblings'
-   ROMs. **Open question, not a fixed bug** — see §14 follow-ups.
+   **Which surfaced a finding worth its own line — now CLOSED, and it was the bad
+   case.** `test-smoke-coreboot.sh` could **PASS while the firmware under test was
+   never built**. Measured 2026-08-27: the track boots
+   `$COREBOOT_DIR/build-openbios/coreboot.rom` — the *linuxboot* lab's tree —
+   while the `multiboot` arm beside it boots straight out of `$OPENBIOS_WORKDIR`,
+   and **nothing related the ROM to the payload inside it**. Two consequences,
+   both observed rather than reasoned:
+
+   - Against an empty workdir it passed, reporting *"OpenBIOS (coreboot) answered
+     7 at the 0 > prompt"* for a tree that had never been built.
+   - The ROM on this machine was dated **Aug 25 00:48**, the payload ELF **Aug 27
+     14:02**. Every run for two days reported on firmware predating an entire
+     session of fixes, while presenting the result as a test of them.
+
+   Nothing errored: the ROM is readable and it does answer 7. It was a record
+   outliving its subject — the reason a green suite could not see it. The 00-INDEX
+   claim that it *"sha-guards both sibling labs' ROMs"* is **accurate and about a
+   different question**: that guard stops the siblings' ROMs being clobbered, and
+   was the only sha check in the builder.
+
+   **The fix is the exemplar CLAUDE.md names for exactly this.** Deriving was the
+   first choice and is not available — coreboot *transforms* an ELF on the way in
+   (1,162,128 bytes became a 75,851-byte `simple elf` CBFS file) and this tree's
+   `cbfstool` cannot `extract` a payload at all. So
+   [`tools/openbios-rom-provenance.sh`](tools/openbios-rom-provenance.sh) records
+   the **pairing** at build time and re-derives **both** digests at check time:
+   only the pairing is stored, because only the pairing cannot be recovered
+   afterwards.
+
+   The two failure modes are graded by the ladder, not lumped together:
+
+   | outcome | grade | why |
+   |---|---|---|
+   | ROM built from a different payload | **77 UNKNOWN** | nothing is broken; a rebuild restores the answer |
+   | sidecar describes a different ROM | **1 FAIL** | the record and reality disagree — the LIED rung |
+   | no sidecar / no payload / no ROM | **77 UNKNOWN** | stated, never passed |
+
+   Proved end to end on the real track, in **both** directions — a truthfully
+   stamped ROM passes and prints the payload digest it carries; an empty workdir
+   is refused by name. That second run matters as much as the first: *a track that
+   can never pass is as broken as one that can never fail.* The ROM was rebuilt in
+   the process, so `coreboot` now tests this session's firmware for the first time.
+   13 assertions in
+   [`tools/tests/test-openbios-rom-provenance.sh`](tools/tests/test-openbios-rom-provenance.sh)
+   (in `ci.yml`, synthetic, no coreboot needed), including two controls proving the
+   comparison can distinguish at all — every row compares a digest to a digest, so
+   the file would pass entirely if the comparison always succeeded.
 
    [`tests/test-every-track-has-a-wrapper.sh`](examples/openbios-the-rival-that-shipped/tests/test-every-track-has-a-wrapper.sh)
    holds the set together in **both** directions — a track with no wrapper is a

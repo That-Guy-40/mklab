@@ -41,6 +41,8 @@ USAGE
 }
 case "${1:-}" in -h|--help) usage; exit 0 ;; esac
 
+HERE="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$HERE/../.." && pwd)"
 WORKDIR="${OPENBIOS_WORKDIR:-$HOME/openbios-lab}"
 CB="${COREBOOT_DIR:-$HOME/linuxboot-lab/coreboot}"
 PAYLOAD="$WORKDIR/openbios/obj-x86/openbios-builtin.elf"
@@ -77,4 +79,11 @@ make -C "$CB" DOTCONFIG=.config-openbios obj=build-openbios -j"$(nproc)" \
 
 echo "==> guard check:"
 (cd "$CB" && sha256sum -c "$GUARD")
+# BIND THE ROM TO THE PAYLOAD THAT WENT INTO IT. The guard above protects the
+# SIBLING labs' ROMs from being clobbered — a different question, and it was the
+# only sha check here. Nothing recorded which openbios build is inside THIS ROM, so
+# the smoke track booted it and reported on whatever firmware happened to be baked
+# in months ago. coreboot transforms the ELF on the way in, so the pairing cannot be
+# re-derived afterwards; it has to be recorded as it is made.
+"$REPO/tools/openbios-rom-provenance.sh" --stamp "$CB/build-openbios/coreboot.rom" "$PAYLOAD"
 echo "==> $CB/build-openbios/coreboot.rom"
