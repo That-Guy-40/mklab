@@ -447,12 +447,14 @@ an empty store, not a failure.
 
   ```
   - x86: byte-identical across two builds, stamped 'Nov 14 2023 22:13' (3 artifacts)
-  - amd64: KNOWN GAP still open, as recorded — openbios-amd64.dict(79 bytes) …
+  - amd64: byte-identical across two builds, stamped 'Nov 14 2023 22:13' (3 artifacts)
+  - control: with SOURCE_DATE_EPOCH unset, x86's openbios-x86.dict differs … (12 bytes)
   PASS: TODO 17.5 measured rather than asserted …
   ```
 
-  **x86 is byte-reproducible with the epoch pinned; amd64 is not**, and the
-  reason is named rather than mysterious — the cell before `end-mem` holds a
-  **host pointer** that `forth/bootstrap/memory.fs`'s `init-mem` stores while
-  the dictionary is built on the build machine, and it moves with ASLR. That row
-  is expected to FAIL and the checker exits non-zero if it ever stops.
+  **Both arches are byte-reproducible with the epoch pinned** (patch 48 closed
+  the second cause: the bootstrap was baking **host-arena pointers** into the
+  image, and `arch/x86` only escaped because `pointer2cell` subtracts
+  `base_address` at narrower widths). The last line is the **negative control** —
+  a build with the variable *unset*, watched to differ — and the checker refuses
+  to pass without it, because "identical" and "compared nothing" print the same.

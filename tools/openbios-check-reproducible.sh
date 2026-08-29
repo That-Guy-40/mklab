@@ -18,23 +18,23 @@
 # honours SOURCE_DATE_EPOCH -- the reproducible-builds standard -- and is
 # unchanged when it is unset.
 #
-# CAUSE 2, amd64 ONLY, and it was NOT in the record: with the date pinned, the
-# amd64 dictionary still differs by ~79 bytes. The cell holding `end-mem` reads
+# CAUSE 2, amd64 ONLY, was NOT in the record, and is now FIXED (patch 48). With
+# the date pinned the amd64 dictionary used to differ by ~79 bytes: the cell
+# holding `end-mem` read
 #     build A  0000 7322 4a7d e018
 #     build B  0000 70d9 f729 c018
-# which are canonical Linux userspace addresses: a HOST POINTER is baked into
-# the shipped dictionary and moves with ASLR. forth/bootstrap/memory.fs's
-# init-mem runs on the host while the dictionary is being built and stores the
-# host arena's bounds; the dump then keeps them. x86 does not show it -- its
-# target cell is four bytes and the value stored there is small and stable.
+# -- canonical Linux userspace addresses. A HOST POINTER was baked into the
+# shipped dictionary and moved with ASLR. kernel/bootstrap.c now scrubs those
+# cells out of everything it writes; see scrub_host_arena_ptr() there for why
+# zeroing them is safe and why x86 never showed it.
 #
-# WHY x86 PASSES AND amd64 IS A KNOWN GAP, and why that asymmetry is the point:
-# an all-PASS reproducibility check is indistinguishable from one that compares
-# nothing. amd64 is carried as a row that MUST STILL FAIL, and this script exits
-# non-zero if it ever stops failing -- because then the gap closed and the record
-# above is what needs updating.
+# THERE IS NO KNOWN-GAP ROW LEFT, so the thing that keeps this from being an
+# all-PASS check that compares nothing is a real NEGATIVE CONTROL: one extra
+# build with SOURCE_DATE_EPOCH UNSET, which must differ from the pinned ones.
+# Without it, "identical" would be equally consistent with a comparison that
+# never looked.
 #
-# Not in tests/run-all.sh on purpose: four container builds, minutes each.
+# Not in tests/run-all.sh on purpose: five container builds, minutes each.
 # MANUAL_TESTING.md carries the invocation.
 #
 # Usage: openbios-check-reproducible.sh <lab-dir>
@@ -72,11 +72,14 @@ WORK="$(mktemp -d)"
 # arch : artifacts : expectation
 ROWS=(
     "x86:openbios-x86.dict openbios-builtin.elf openbios.multiboot:same"
-    "amd64:openbios-amd64.dict openbios-builtin.elf32:differ"
+    "amd64:openbios-amd64.dict openbios-builtin.elf32 openbios.multiboot:same"
 )
+# The arch the negative control is run on. One extra build; x86 is the cheaper.
+CTL_ARCH=x86
+CTL_ART=openbios-x86.dict
 
 PROBLEMS=""
-GAP_FIRED=0
+CTL_FIRED=0
 for row in "${ROWS[@]}"; do
     arch="${row%%:*}"; rest="${row#*:}"
     arts="${rest%%:*}"; want="${rest##*:}"
@@ -114,22 +117,31 @@ for row in "${ROWS[@]}"; do
         (( ident == 1 )) \
             || PROBLEMS+="$arch: two builds of one tree with the date pinned are NOT identical: $diffs— a second source of non-determinism has appeared beside the build date"$'\n'
         (( ident == 1 )) && note "$arch: byte-identical across two builds, stamped '$WANT_STAMP' ($(echo $arts | wc -w) artifacts)"
-    else
-        # THE KNOWN GAP. It must still fire, or this script is all-PASS and
-        # proves nothing.
-        if (( ident == 0 )); then
-            GAP_FIRED=1
-            note "$arch: KNOWN GAP still open, as recorded — $diffs differ with the date pinned; the cell before \`end-mem\` holds a HOST pointer (forth/bootstrap/memory.fs's init-mem runs on the host while the dictionary is built) and it moves with ASLR"
-        else
-            PROBLEMS+="$arch: the known gap CLOSED — two builds are now identical with the date pinned. That is good news and a failure of this record: the host pointer in the dictionary is gone, so update TODO 17.5 and this script together"$'\n'
-        fi
     fi
 done
+
+# ── THE NEGATIVE CONTROL. Everything above says "identical"; this is what makes
+# that a measurement. One build with the epoch UNSET must differ from the pinned
+# one -- if it does not, either the comparison is broken or SOURCE_DATE_EPOCH is
+# not the thing doing the work.
+if [[ -z "$PROBLEMS" ]]; then
+    if ( cd "$LAB" && env -u SOURCE_DATE_EPOCH ./build-openbios.sh "$CTL_ARCH" ) \
+            >"$WORK/build-ctl.log" 2>&1; then
+        if cmp -s "$WORK/$CTL_ARCH-1/$CTL_ART" "$HOME/openbios-lab/openbios/obj-$CTL_ARCH/$CTL_ART"; then
+            PROBLEMS+="the negative control did NOT fire: a build with SOURCE_DATE_EPOCH UNSET produced the same $CTL_ART as the pinned one, so 'byte-identical' above is consistent with a comparison that never looked"$'\n'
+        else
+            CTL_FIRED=1
+            note "control: with SOURCE_DATE_EPOCH unset, $CTL_ARCH's $CTL_ART differs from the pinned build ($(cmp -l "$WORK/$CTL_ARCH-1/$CTL_ART" "$HOME/openbios-lab/openbios/obj-$CTL_ARCH/$CTL_ART" | grep -c .) bytes) — so the identity above is the variable's doing"
+        fi
+    else
+        PROBLEMS+="the negative control build failed — see $WORK/build-ctl.log"$'\n'
+    fi
+fi
 
 if [[ -n "$PROBLEMS" ]]; then
     while read -r p; do [[ -n "$p" ]] && note "$p"; done <<<"$PROBLEMS"
     fail "$(grep -c . <<<"$PROBLEMS") reproducibility problem(s) — see the lines above"
 fi
-(( GAP_FIRED == 1 )) \
-    || fail "no known-gap row fired — an all-PASS reproducibility check and one that compares nothing print the same thing, so this refuses to be green without the row it expects to be red"
-pass "TODO 17.5 measured rather than asserted: with SOURCE_DATE_EPOCH pinned (and the dictionary stamped '$WANT_STAMP', which proves the build honoured it) x86 rebuilds byte-identically, so the build DATE was its only source of non-determinism; amd64 still differs and the reason is named rather than mysterious — a host pointer baked into the dictionary by init-mem running on the build machine, moving with ASLR — and this check refuses to pass if that known gap ever stops firing"
+(( CTL_FIRED == 1 )) \
+    || fail "the negative control never fired — an all-PASS reproducibility check and one that compares nothing print the same thing, so this refuses to be green without watching a difference it can see"
+pass "TODO 17.5 measured rather than asserted: with SOURCE_DATE_EPOCH pinned — and each dictionary stamped '$WANT_STAMP', which proves the build honoured it rather than two builds merely landing in the same minute — BOTH arches rebuild byte-identically, dictionaries and ELFs alike; the build date was one cause and a host-arena pointer baked into the amd64 image by the bootstrap was the other, and both are closed; and the identity is a measurement rather than an empty comparison because a build with the variable UNSET is watched to differ in the same run"

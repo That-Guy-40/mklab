@@ -207,6 +207,8 @@ TESTED_TREE_MARKERS=(
     "libc/vsprintf.c:unsigned long long unum;"
     # -- TODO 17.5: reproducible on request (patch 47) --
     "Makefile.target:BUILD_DATE := "
+    # -- TODO 17.5 cause 2: host pointers scrubbed from the image (patch 48) --
+    "kernel/bootstrap.c:scrub_host_arena_ptr"
 )
 present=(); absent=()
 for m in "${TESTED_TREE_MARKERS[@]}"; do
