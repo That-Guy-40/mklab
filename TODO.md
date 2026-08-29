@@ -4278,9 +4278,13 @@ themselves wrong first** — this repo's own rule about where the bugs are:
 | a refused claim republishes anyway | *"a REFUSED claim still moved 'available'"* |
 | hard-code the cells to 1/1 | *"not encoded with the counts that decode it"* |
 
-**Not asserted, said out loud:** that `available` is a subset of `reg`. It is by
-construction — the window comes from the same `sys_info` — but nothing parses
-`reg` and checks containment, so that is a claim from reading, not a measurement.
+**~~Not asserted~~ — CLOSED 2026-08-29:** that `available` is a subset of `reg`
+was a claim from *reading* (*"true by construction, the window comes from the
+same `sys_info`"*), which is the shape of every stale record this lab has found.
+The track now reads `reg`'s cells off the running firmware, regroups them with
+the root's counts, and asserts containment. Control: publishing a window
+`0x10000` past the range end fails with *"the free window 800000..1fff0000 is NOT
+inside any range of /memory's reg"*.
 
 ### 17.4 — ~~§13.3(B): `number()`'s two C99 divergences~~ — DONE 2026-08-29 (patch 46)
 
@@ -4314,13 +4318,29 @@ testing it would mean shipping the UB in a fixture"*, which was correct. The
 digits now come from an unsigned accumulator, where the negation is defined for
 every input.
 
-**And that case is an UNKNOWN, not a proof — measured, not assumed.**
-Re-injecting the old signed `-num` leaves the `llmin` line **green**: on x86-64
-GCC the undefined negation happens to produce the two's-complement bit pattern,
-which is the right magnitude. **A test cannot observe the absence of undefined
-behaviour** — that is a property of the source, not an observable of one build.
-So the fixture asserts the output, and the comment beside it says what it cannot
-say. The control is reported as BLIND rather than quietly dropped.
+**The `llmin` fixture is an UNKNOWN, not a proof** — re-injecting the old signed
+`-num` leaves it **green**, because on x86-64 GCC the undefined negation happens
+to produce the two's-complement bit pattern. That was reported as BLIND rather
+than hidden.
+
+**CLOSED 2026-08-29 with an instrument that out-reaches the defect.** A firmware
+fixture compares *bytes*, and the bug produces the right bytes; no arrangement of
+byte comparisons can see it. A **sanitiser** observes the *operation*.
+[`tools/openbios-check-vsprintf-ub.sh`](tools/openbios-check-vsprintf-ub.sh)
+compiles the **shipped** `libc/vsprintf.c` on the host under
+`-fsanitize=undefined` and runs the same case: silent on the shipped file,
+and with `-num` re-injected it reports *"negation of -9223372036854775808 cannot
+be represented in type 'long long int'"*. Its §0 runs that control **first**, so
+the instrument proves itself before it is aimed at anything.
+
+**And the reach depends on `-O0`, which is the finding.** At `-O1` or `-O2` GCC
+legally rewrites the signed negation into an unsigned one and the undefined
+operation stops existing in the object code — measured on gcc 13.3. That is also
+the deeper reason no *runtime* test could ever have seen this: the firmware is
+not built at `-O0`, so at its own optimisation level the UB has already been
+optimised away. Undefined behaviour is a property of the **source**; `-O0` is
+what keeps enough of the source in the binary for a sanitiser to point at it.
+`tests/test-vsprintf-ub.sh` runs it in the suite — it costs a compile, not a boot.
 
 **The fixtures inverted rather than disappeared** — they were built for this day
 (*"if someone fixes `number()`, this line fails and says so"*) — and moved from
@@ -4333,10 +4353,11 @@ Controls: `%.0d` re-injected → `d-zero want[](0) got[0](1) BAD`; the `0` flag
 re-injected → `zeropad-prec got[00000042] BAD`; the signed negation re-injected →
 **BLIND**, reported above.
 
-### 17.5 — ~~Builds are not byte-reproducible~~ — CHASED 2026-08-29 (patch 47); one cause fixed, one named
+### 17.5 — ~~Builds are not byte-reproducible~~ — DONE 2026-08-29 (patches 47-48); both causes closed
 
 §17.5 said *"something dated is baked in during bootstrap"* and left it. Chased,
-and it is **two causes**, not one.
+and it is **two causes**, not one. Both are now closed and both arches rebuild
+byte-identically on request.
 
 **Cause 1 — the build date, both arches, and it is exactly two bytes.**
 `Makefile.target` generates `obj-<arch>/forth/version.fs` from
@@ -4357,36 +4378,57 @@ builds, and the dictionary is stamped `Nov 14 2023 22:13`, which is the control
 proving the build honoured the variable rather than two builds merely landing in
 the same minute.
 
-**Cause 2 — amd64 only, and it was NOT in the record.** With the date pinned the
-amd64 dictionary *still* differs, by ~79 bytes. The cell holding `end-mem` reads
+**Cause 2 — amd64 only, was NOT in the record, and is now FIXED (patch 48).**
+With the date pinned the amd64 dictionary *still* differed, by ~79 bytes. The
+cell holding `end-mem` read
 
 ```
 build A   0000 7322 4a7d e018
 build B   0000 70d9 f729 c018
 ```
 
-— canonical Linux userspace addresses. **A host pointer is baked into the shipped
-dictionary and moves with ASLR.** `forth/bootstrap/memory.fs`'s `init-mem` runs on
-the host while the dictionary is being built and stores the host arena's bounds;
-the dump keeps them. x86 does not show it: its target cell is four bytes and what
-lands there is small and stable.
+— canonical Linux userspace addresses. `init_memory()` hands `initialize-forth`
+the bounds of the **host's** 1 MiB Forth arena, and the bootstrap then stores
+pointers into that arena in ordinary dictionary cells: `start-mem`, `end-mem`,
+`free-list`, the pockets, `prep-dict`, `prep-here`, `/options`' string values.
+**Fourteen of them.** They are not relocatable — the relocation table covers
+pointers into the *dictionary*, and these point into a different allocation — so
+they were written out raw and moved with ASLR.
 
-**Cause 2 is diagnosed and recorded, not fixed.** It is a change to the
-bootstrap's memory init, which §17.5 did not ask for and which should not be made
-blind. It is carried by
-[`tools/openbios-check-reproducible.sh`](tools/openbios-check-reproducible.sh) as
-a row that **must still fail** — the checker exits non-zero if amd64 ever becomes
-identical, because then the gap closed and this record is what needs updating.
-An all-PASS reproducibility check is indistinguishable from one that compares
-nothing.
+**x86 never showed it for a reason, not by luck.** When the target cell is
+narrower than a host pointer, `cross.h`'s `pointer2cell` **subtracts**
+`base_address`, so what lands in the image is a small stable offset. At equal
+widths the raw address is stored.
+
+**Zeroing them is safe because they are dead data**: every one is written again
+before it is read, by `initialize-forth` → `init-mem` / `init-pockets` /
+`init-tmp-comp`. The image's copies have never been the values the firmware runs
+on.
+
+**Two things about the fix were found rather than foreseen, and both by controls:**
+
+| | |
+|---|---|
+| the first draft was **unscoped** | on narrower-target builds `arena_lo` comes out as **0**, the window becomes `[0, 1 MiB)`, and every small integer matches — building x86 scrubbed **4530** cells and the bootstrap segfaulted. The comment claiming the range *"cannot collide with a real value"* was simply wrong |
+| scrubbing **one** writer was not enough | `openbios-builtin.elf32` still differed by 30 bytes: `write_dictionary_hex()` emits the C array compiled into the builtin ELF and reads the live dictionary separately. The rule now lives in one `scrub_host_arena_ptr()` that both writers call |
+
+**Measured after: both arches rebuild byte-identically** with the epoch pinned —
+dictionaries, multiboot images and the builtin ELF alike.
+
+**The checker has no known-gap row left, so it grew a real negative control.**
+[`tools/openbios-check-reproducible.sh`](tools/openbios-check-reproducible.sh)
+now also builds once with `SOURCE_DATE_EPOCH` **unset** and requires that build
+to differ. Without it, *"identical"* would be equally consistent with a
+comparison that never looked.
 
 **Consequences that still hold:**
 - [`openbios-archive-tree.sh`](tools/openbios-archive-tree.sh) digests **source**
   and excludes `obj-*`, which is what makes an archive comparable to a cold
   reproduction. A digest over the binaries would still identify nothing on amd64.
 - *"The cold tree and the dev tree build identical bytes"* is now a claim this lab
-  **can** make for x86 with `SOURCE_DATE_EPOCH` set, and still cannot make for
-  amd64. No test asserts it in `run-all.sh`: four container builds, minutes each.
+  **can** make, on both arches, with `SOURCE_DATE_EPOCH` set. No test asserts it
+  in `run-all.sh`: five container builds, minutes each — `MANUAL_TESTING.md`
+  carries the invocation.
 
 ### 17.6 — The provenance/rebuild ordering trips easily
 

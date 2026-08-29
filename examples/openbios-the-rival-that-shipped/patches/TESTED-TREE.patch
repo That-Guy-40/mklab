@@ -5460,6 +5460,98 @@ index a8b3cce..1c2ad86 100644
  struct sys_info {
      /* Values passed by bootloader */
      unsigned long boot_type;
+diff --git a/kernel/bootstrap.c b/kernel/bootstrap.c
+index 8ad3efe..5230953 100644
+--- a/kernel/bootstrap.c
++++ b/kernel/bootstrap.c
+@@ -140,6 +140,49 @@ static void relocation_table(unsigned char * dict_one, unsigned char *dict_two,
+ 	relocation_address=reloc_table;
+ }
+ 
++/* TODO 17.5, cause 2: the HOST's own working pointers, scrubbed out of anything
++ * we write.
++ *
++ * init_memory() hands initialize-forth the bounds of the host's Forth arena, and
++ * the bootstrap then stores pointers into that arena in ordinary dictionary
++ * cells -- start-mem, end-mem, free-list, the pockets, prep-dict/prep-here,
++ * /options' string values. Fourteen of them in the amd64 image, measured. They
++ * are NOT relocatable: the relocation table covers pointers into the
++ * DICTIONARY, and these point into a different allocation entirely, so they are
++ * written out raw and move with the host's ASLR on every build. That was the
++ * whole of the remaining difference between two builds of one tree.
++ *
++ * ZEROING THEM IS SAFE BECAUSE THEY ARE DEAD DATA. Every one is written again
++ * before it is read: the C core enters initialize-of (or initialize, for a
++ * staged bootstrap dictionary), which calls initialize-forth, which calls
++ * init-mem, init-pockets and init-tmp-comp. The image's copies have never been
++ * the values the firmware runs on.
++ *
++ * SCOPED TO THE BUILDS THAT HAVE THE DEFECT, and the first draft was not. When
++ * the target cell is narrower than a host pointer, cross.h's pointer2cell
++ * SUBTRACTS base_address -- which is the arena's own address -- so arena_lo
++ * comes out as 0, the window becomes [0, 1 MiB), and every small integer in the
++ * dictionary matches. Measured: building x86 that way scrubbed 4530 cells and
++ * the bootstrap segfaulted on the next stage. There is also nothing to fix
++ * there, because those builds already store stable offsets rather than host
++ * addresses. The arena_lo > MEMORY_SIZE test is deliberately redundant with the
++ * #ifndef: it makes the safety readable without knowing what the macro means.
++ *
++ * ONE IMPLEMENTATION, TWO WRITERS. write_dictionary() emits the .dict file and
++ * write_dictionary_hex() emits the C array that gets compiled into
++ * openbios-builtin.elf; scrubbing only the first left the ELF still differing
++ * by 30 bytes between builds, which is how this was found. */
++static ucell scrub_host_arena_ptr(ucell v)
++{
++#ifndef NATIVE_BITWIDTH_SMALLER_THAN_HOST_BITWIDTH
++	ucell arena_lo = pointer2cell(memory);
++
++	if (arena_lo > MEMORY_SIZE && v >= arena_lo && v < arena_lo + MEMORY_SIZE)
++		return 0;
++#endif
++	return v;
++}
++
+ static void write_dictionary(const char *filename)
+ {
+ 	FILE *f;
+@@ -190,6 +233,26 @@ static void write_dictionary(const char *filename)
+ 	walk_data=write_data+sizeof(dictionary_header_t);
+ 	memcpy (walk_data, dict, dicthead);
+ 
++	/* The image is the COPY, not the live dictionary: a staged build keeps
++	 * interpreting out of `dict` after this function returns. */
++	{
++		unsigned int off, scrubbed = 0;
++
++		for (off = 0; off + sizeof(ucell) <= (unsigned int)dicthead;
++		     off += sizeof(ucell)) {
++			ucell *c = (ucell *)(walk_data + off);
++			ucell v = read_ucell(c);
++
++			if (scrub_host_arena_ptr(v) != v) {
++				write_ucell(c, 0);
++				scrubbed++;
++			}
++		}
++		if (scrubbed)
++			printk("  scrubbed %u host-arena pointer(s) from the image\n",
++			       scrubbed);
++	}
++
+ 	/*
+ 	 * prepare relocation data.
+ 	 * relocation_address is zero when writing a dictionary core.
+@@ -275,7 +338,9 @@ static void write_dictionary_hex(const char *filename)
+             fprintf(f, "DICTIONARY_BASE + 0x%" FMT_CELL_x
+                     ",\n", val);
+         } else {
+-            fprintf(f, "0x%" FMT_CELL_x",\n", val);
++            /* Non-relocatable: a dictionary pointer would have been marked
++             * above, so this is the branch a host-arena pointer lands in. */
++            fprintf(f, "0x%" FMT_CELL_x",\n", scrub_host_arena_ptr(val));
+         }
+     }
+ 
 diff --git a/libc/vsprintf.c b/libc/vsprintf.c
 index ed4d38a..71afae7 100644
 --- a/libc/vsprintf.c

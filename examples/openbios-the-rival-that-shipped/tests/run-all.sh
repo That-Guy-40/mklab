@@ -35,7 +35,7 @@ set -uo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")" || exit 2
 
 headless=(test-harness-net.sh test-usage-is-data.sh test-patch-scope.sh
-          test-track-list.sh test-patch-hygiene.sh
+          test-track-list.sh test-patch-hygiene.sh test-vsprintf-ub.sh
           test-every-track-has-a-wrapper.sh)
 
 # One per track in ../smoke-openbios.sh. tools/check-track-list.sh guards the names

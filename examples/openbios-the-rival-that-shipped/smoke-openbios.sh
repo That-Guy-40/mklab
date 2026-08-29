@@ -1577,6 +1577,16 @@ clear
   else
     ." m-AVAIL-ABSENT" cr
   then ;
+\ Every cell of a property on one line, however many there are -- `reg` carries
+\ three ranges of (acells + scells) cells and the count is per-arch.
+: .allcells ( a l -- )
+  begin dup 0> while decode-int u. repeat 2drop ;
+: ?reg
+  " reg" " /memory" find-dev drop get-package-property 0= if
+    ." m-regcells=" .allcells cr
+  else
+    ." m-REG-ABSENT" cr
+  then ;
 variable cb
 dev /memory
 ." m-acells=" my-#acells . cr
@@ -1590,6 +1600,8 @@ clear
 else
   ." m-cs-MISSING" cr
 then
+clear
+?reg
 clear
 ." m-phase=before" cr ?avail
 clear
@@ -1671,6 +1683,34 @@ FTH
       done
       (( 0x$S0 > 0 )) \
         || fail "17.3 on $A: 'available' says 0 bytes are free at boot, before anything claimed — the window is empty, so either claim_limit found no usable range or the base sits outside every one of them — see $MLOG"
+
+      # available MUST BE A SUBSET OF reg, and until 2026-08-29 this was a claim
+      # from READING the source rather than a measurement -- "it is by
+      # construction, the window comes from the same sys_info". That sentence is
+      # exactly the shape of every stale record this lab has found: true when
+      # written, unchecked afterwards. A window that drifts outside `reg` would
+      # hand a client memory the firmware has not told it exists.
+      #
+      # reg's cells are read off the running firmware and regrouped with the
+      # ROOT's counts (per-arch since patch 43), so one assertion covers both.
+      MREG="$(grep -aoE 'm-regcells=[0-9a-f ]+' <<<"$ML" | head -1 | cut -d= -f2)"
+      [[ -n "$MREG" ]] \
+        || fail "17.3 on $A: /memory has no 'reg' cells in the probe output — patch 40 publishes it, and without it there is nothing to check 'available' against — see $MLOG"
+      read -r -a MRC <<<"$MREG"
+      (( ${#MRC[@]} % (0x$MAC + 0x$MSC) == 0 && ${#MRC[@]} > 0 )) \
+        || fail "17.3 on $A: 'reg' has ${#MRC[@]} cells, which is not a whole number of (acells $MAC + scells $MSC) entries — the property and the root's counts disagree — see $MLOG"
+      # join <first-index> <count> -> the value of a multi-cell field, hi first
+      ma_join() { local i n v=0; for (( i=$1, n=0; n < $2; i++, n++ )); do v=$(( (v << 32) | 0x${MRC[$i]} )); done; printf '%d' "$v"; }
+      AB=$(( 0x$B0 )); AE=$(( 0x$B0 + 0x$S0 ))
+      MCONTAINED=0; MRANGES=""
+      for (( r = 0; r < ${#MRC[@]}; r += 0x$MAC + 0x$MSC )); do
+        rb=$(ma_join "$r" "$((0x$MAC))"); rs=$(ma_join "$(( r + 0x$MAC ))" "$((0x$MSC))")
+        MRANGES+="$(printf '%x..%x ' "$rb" "$(( rb + rs ))")"
+        (( AB >= rb && AE <= rb + rs )) && MCONTAINED=1
+      done
+      (( MCONTAINED == 1 )) \
+        || fail "17.3 on $A: the free window $(printf '%x..%x' "$AB" "$AE") is NOT inside any range of /memory's reg ($MRANGES) — 'available' is advertising memory the firmware has not said exists, which is worse than advertising none — see $MLOG"
+      note "$A: available $(printf '%x..%x' "$AB" "$AE") lies inside reg's $MRANGES— measured, not argued from construction"
 
       # THE OUTCOME: a page claimed moves the base up by a page and the size down
       # by a page. Both halves, because a base that advances while the size stays

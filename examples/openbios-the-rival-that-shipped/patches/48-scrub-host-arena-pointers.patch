@@ -1,0 +1,146 @@
+From: mklab <noreply@example.invalid>
+Subject: [PATCH 48/48] TODO 17.5 cause 2: the bootstrap baked HOST pointers into the image
+
+Arch-tested: x86 amd64 ppc
+
+With the build date pinned (patch 47), two amd64 builds of one tree still
+differed -- 79 bytes in the dictionary and 65 in openbios-builtin.elf32. The
+cell holding `end-mem` read
+
+    build A   0000 7322 4a7d e018
+    build B   0000 70d9 f729 c018
+
+which are canonical Linux userspace addresses.
+
+WHAT IS HAPPENING. init_memory() pushes the bounds of the HOST's 1 MiB Forth
+arena, and initialize-forth stores pointers into that arena in ordinary
+dictionary cells: start-mem, end-mem, free-list, the pockets, prep-dict,
+prep-here, /options' string values. Fourteen of them. They are NOT relocatable
+-- the relocation table covers pointers into the DICTIONARY, and these point
+into a different allocation entirely -- so they are written out raw and move
+with the host's ASLR on every build.
+
+WHY x86 NEVER SHOWED IT, which is the part that explains the whole asymmetry:
+when the target cell is narrower than a host pointer, cross.h's pointer2cell
+SUBTRACTS base_address, so what lands in the image is a small stable offset. At
+equal widths the raw address is stored. arch/x86 was reproducible for a reason,
+not by luck.
+
+ZEROING THEM IS SAFE BECAUSE THEY ARE DEAD DATA. Every one is written again
+before it is read: the C core enters initialize-of (or initialize, for a staged
+bootstrap dictionary), which calls initialize-forth, which calls init-mem,
+init-pockets and init-tmp-comp. The image's copies have never been the values
+the firmware runs on.
+
+SCOPED TO THE BUILDS THAT HAVE THE DEFECT, AND THE FIRST DRAFT WAS NOT. Without
+the #ifndef, arena_lo comes out as 0 on the narrower-target builds, the window
+becomes [0, 1 MiB), and every small integer matches: building x86 scrubbed 4530
+cells and the bootstrap segfaulted on the next stage. The x86 build caught it
+immediately, and the comment claiming the range "cannot collide with a real
+value" was simply wrong -- it is now scoped, and the arena_lo > MEMORY_SIZE test
+is kept as a readable second guard.
+
+ONE IMPLEMENTATION, TWO WRITERS, and that too was found rather than foreseen.
+Scrubbing only write_dictionary() left openbios-builtin.elf32 still differing by
+30 bytes: write_dictionary_hex() emits the C array that gets compiled into the
+builtin ELF, and it reads the live dictionary cell by cell. The rule now lives
+in scrub_host_arena_ptr() and both writers call it. In the hex writer it is
+applied only to the NON-relocatable branch, because a cell the relocation table
+marked is a dictionary pointer rather than an arena one.
+
+MEASURED AFTER: both arches rebuild byte-identically with SOURCE_DATE_EPOCH
+pinned -- dictionaries, multiboot images and the builtin ELF alike -- and
+tools/openbios-check-reproducible.sh now carries a real negative control (one
+build with the variable UNSET, watched to differ) in place of the known-gap row
+this closes.
+
+--- a/kernel/bootstrap.c
++++ b/kernel/bootstrap.c
+@@ -140,6 +140,49 @@
+ 	relocation_address=reloc_table;
+ }
+ 
++/* TODO 17.5, cause 2: the HOST's own working pointers, scrubbed out of anything
++ * we write.
++ *
++ * init_memory() hands initialize-forth the bounds of the host's Forth arena, and
++ * the bootstrap then stores pointers into that arena in ordinary dictionary
++ * cells -- start-mem, end-mem, free-list, the pockets, prep-dict/prep-here,
++ * /options' string values. Fourteen of them in the amd64 image, measured. They
++ * are NOT relocatable: the relocation table covers pointers into the
++ * DICTIONARY, and these point into a different allocation entirely, so they are
++ * written out raw and move with the host's ASLR on every build. That was the
++ * whole of the remaining difference between two builds of one tree.
++ *
++ * ZEROING THEM IS SAFE BECAUSE THEY ARE DEAD DATA. Every one is written again
++ * before it is read: the C core enters initialize-of (or initialize, for a
++ * staged bootstrap dictionary), which calls initialize-forth, which calls
++ * init-mem, init-pockets and init-tmp-comp. The image's copies have never been
++ * the values the firmware runs on.
++ *
++ * SCOPED TO THE BUILDS THAT HAVE THE DEFECT, and the first draft was not. When
++ * the target cell is narrower than a host pointer, cross.h's pointer2cell
++ * SUBTRACTS base_address -- which is the arena's own address -- so arena_lo
++ * comes out as 0, the window becomes [0, 1 MiB), and every small integer in the
++ * dictionary matches. Measured: building x86 that way scrubbed 4530 cells and
++ * the bootstrap segfaulted on the next stage. There is also nothing to fix
++ * there, because those builds already store stable offsets rather than host
++ * addresses. The arena_lo > MEMORY_SIZE test is deliberately redundant with the
++ * #ifndef: it makes the safety readable without knowing what the macro means.
++ *
++ * ONE IMPLEMENTATION, TWO WRITERS. write_dictionary() emits the .dict file and
++ * write_dictionary_hex() emits the C array that gets compiled into
++ * openbios-builtin.elf; scrubbing only the first left the ELF still differing
++ * by 30 bytes between builds, which is how this was found. */
++static ucell scrub_host_arena_ptr(ucell v)
++{
++#ifndef NATIVE_BITWIDTH_SMALLER_THAN_HOST_BITWIDTH
++	ucell arena_lo = pointer2cell(memory);
++
++	if (arena_lo > MEMORY_SIZE && v >= arena_lo && v < arena_lo + MEMORY_SIZE)
++		return 0;
++#endif
++	return v;
++}
++
+ static void write_dictionary(const char *filename)
+ {
+ 	FILE *f;
+@@ -190,6 +233,26 @@
+ 	walk_data=write_data+sizeof(dictionary_header_t);
+ 	memcpy (walk_data, dict, dicthead);
+ 
++	/* The image is the COPY, not the live dictionary: a staged build keeps
++	 * interpreting out of `dict` after this function returns. */
++	{
++		unsigned int off, scrubbed = 0;
++
++		for (off = 0; off + sizeof(ucell) <= (unsigned int)dicthead;
++		     off += sizeof(ucell)) {
++			ucell *c = (ucell *)(walk_data + off);
++			ucell v = read_ucell(c);
++
++			if (scrub_host_arena_ptr(v) != v) {
++				write_ucell(c, 0);
++				scrubbed++;
++			}
++		}
++		if (scrubbed)
++			printk("  scrubbed %u host-arena pointer(s) from the image\n",
++			       scrubbed);
++	}
++
+ 	/*
+ 	 * prepare relocation data.
+ 	 * relocation_address is zero when writing a dictionary core.
+@@ -275,7 +338,9 @@
+             fprintf(f, "DICTIONARY_BASE + 0x%" FMT_CELL_x
+                     ",\n", val);
+         } else {
+-            fprintf(f, "0x%" FMT_CELL_x",\n", val);
++            /* Non-relocatable: a dictionary pointer would have been marked
++             * above, so this is the branch a host-arena pointer lands in. */
++            fprintf(f, "0x%" FMT_CELL_x",\n", scrub_host_arena_ptr(val));
+         }
+     }
+ 
