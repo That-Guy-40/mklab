@@ -113,12 +113,13 @@ Rows link to the diff. The narrative for patches 12–34 lives in the
 | [`43-amd64-root-two-address-cells.patch`](43-amd64-root-two-address-cells.patch) | `FEATURE` | arch-local | **TODO 17.1**: the amd64 root declares `#address-cells 2 / #size-cells 2`, so `/memory` can finally describe the range at `0x100000000`. x86 stays at one cell, where one cell is *accurate*. The root's unit words had to move with the count |
 | [`44-amd64-had-no-claim.patch`](44-amd64-had-no-claim.patch) | `PORT` | arch-local | `arch/amd64` bound **no** `cif-claim` or `cif-release`, so the 1275 claim service fell through `ciface.fs`'s `else 3drop -1` and every client allocation on the 64-bit firmware returned -1. x86's window formula could not be copied: it sizes itself with `virt_offset`, and amd64 does not relocate |
 | [`45-memory-available.patch`](45-memory-available.patch) | `FEATURE` | shared | **TODO 17.3**: `/memory` carries an `available` beside its `reg`, **republished on every claim and release** rather than snapshotted — it describes a cursor, and a boot-time snapshot is stale from the first allocation. Deliberately narrower than "all unallocated RAM": advertising memory `claim` will refuse would be the lie |
+| [`46-number-agrees-with-c99.patch`](46-number-agrees-with-c99.patch) | `UPSTREAM-BUG` | shared | **TODO 17.4**: `%.0d` of 0 produced `"0"` where C99 produces nothing, and the `0` flag survived a precision — GCC refuses the literal for the second. Plus `num = -num` at `LLONG_MIN`, which was undefined behaviour. Closing them removes a latent "two printfs answering one call" (§13.3(C)), not just a formatting difference |
 
 ## What the sort says
 
 | kind | count | |
 |---|---|---|
-| `UPSTREAM-BUG` | 21 | defects any user of `openbios/openbios` would hit. The candidate set, if the decision above is ever revisited |
+| `UPSTREAM-BUG` | 22 | defects any user of `openbios/openbios` would hit. The candidate set, if the decision above is ever revisited |
 | `PORT` | 11 | `arch/amd64`, which upstream ships and has not built since 2003 |
 | `FEATURE` | 9 | capabilities upstream never claimed — three NVRAM backings, a pmem store, the encoder work, a root that can describe memory above 4 GiB, and a `/memory` that says what is free |
 | `FIXTURE` | 2 | test surface compiled into the firmware |
@@ -129,16 +130,16 @@ And by where a future rebase will hurt:
 
 | scope | count | |
 |---|---|---|
-| shared | 24 | touches a path some *other* architecture's build also compiles — this is where a pin bump conflicts |
+| shared | 25 | touches a path some *other* architecture's build also compiles — this is where a pin bump conflicts |
 | arch-local | 21 | only `arch/`, `include/arch/`, or its own `*_config.xml` — nearly free to carry |
 
 **Only one patch is a divergence in the sense of "we want different behaviour."**
-The other 44 are things upstream would arguably want and is not going to be
+The other 45 are things upstream would arguably want and is not going to be
 asked for. That asymmetry is the honest summary of what "all 41 are ours" means
 here: it is a decision about traffic, not about taste.
 
 **Two of the six kinds have exactly one member**, which is a thin taxonomy and
 is left thin on purpose — `RECORD` and `DIVERGENCE` each name a genuinely
 different reason for a patch to exist, and collapsing them into the others would
-hide the only deliberate behavioural divergence in the series behind 21 bug
+hide the only deliberate behavioural divergence in the series behind 22 bug
 fixes.
