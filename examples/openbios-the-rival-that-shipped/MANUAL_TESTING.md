@@ -430,5 +430,29 @@ an empty store, not a failure.
 - **A triple fault under `-no-reboot` looks like a clean rc=0 exit** — check
   the log for a prompt, don't trust the exit code. KVM's "internal error" is
   the louder failure mode.
-- **Timestamped builds**: the banner embeds `__DATE__`/`__TIME__` — that's the
-  ppc swap-in's proof (§3), so byte-identical rebuilds are not expected.
+- **Timestamped builds, and how to turn that off** (TODO §17.5, corrected
+  2026-08-29). The banner does **not** come from `__DATE__`/`__TIME__`:
+  `Makefile.target` generates `obj-<arch>/forth/version.fs` from
+  `date +'%b %e %Y %H:%M'` and compiles it into the dictionary. It is
+  load-bearing — the ppc swap-in's proof (§3) is that banner — so it is not
+  removed. Set `SOURCE_DATE_EPOCH` to pin it:
+
+  ```sh
+  SOURCE_DATE_EPOCH=1700000000 ./build-openbios.sh x86   # stamps "Nov 14 2023 22:13"
+  ```
+
+  Success signature, from
+  [`tools/openbios-check-reproducible.sh`](../../tools/openbios-check-reproducible.sh)
+  (four container builds, minutes each — deliberately **not** in `run-all.sh`):
+
+  ```
+  - x86: byte-identical across two builds, stamped 'Nov 14 2023 22:13' (3 artifacts)
+  - amd64: KNOWN GAP still open, as recorded — openbios-amd64.dict(79 bytes) …
+  PASS: TODO 17.5 measured rather than asserted …
+  ```
+
+  **x86 is byte-reproducible with the epoch pinned; amd64 is not**, and the
+  reason is named rather than mysterious — the cell before `end-mem` holds a
+  **host pointer** that `forth/bootstrap/memory.fs`'s `init-mem` stores while
+  the dictionary is built on the build machine, and it moves with ASLR. That row
+  is expected to FAIL and the checker exits non-zero if it ever stops.

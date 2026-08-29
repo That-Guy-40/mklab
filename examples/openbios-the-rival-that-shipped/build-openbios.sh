@@ -205,6 +205,8 @@ TESTED_TREE_MARKERS=(
     "libopenbios/init.c:publish_memory_available"
     # -- TODO 17.4: number() agrees with C99 (patch 46) --
     "libc/vsprintf.c:unsigned long long unum;"
+    # -- TODO 17.5: reproducible on request (patch 47) --
+    "Makefile.target:BUILD_DATE := "
 )
 present=(); absent=()
 for m in "${TESTED_TREE_MARKERS[@]}"; do
@@ -241,8 +243,16 @@ echo "==> building the build-box image ($IMG)"
 podman build -q -t openbios-build -f "$HERE/Containerfile" "$WORKDIR" >/dev/null
 
 obuild() { # obuild <switch-arch target...>
+    # TODO 17.5: SOURCE_DATE_EPOCH is forwarded when the caller set it, and
+    # NOT invented when they did not. Setting it here unconditionally would
+    # make every build reproducible and, in the same move, delete the ppc
+    # track's identity check -- it proves the running firmware is OURS by
+    # comparing the build-date banner against the distro blob's, and two blobs
+    # stamped from a constant would compare equal.
+    local envargs=()
+    [[ -n "${SOURCE_DATE_EPOCH:-}" ]] && envargs+=(-e "SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH")
     podman run --rm -v "$WORKDIR/openbios:/src" --userns=keep-id -w /src \
-        "$IMG" sh -c "config/scripts/switch-arch $* && make"
+        "${envargs[@]}" "$IMG" sh -c "config/scripts/switch-arch $* && make"
 }
 
 case "$TARGET" in

@@ -4333,19 +4333,60 @@ Controls: `%.0d` re-injected → `d-zero want[](0) got[0](1) BAD`; the `0` flag
 re-injected → `zeropad-prec got[00000042] BAD`; the signed negation re-injected →
 **BLIND**, reported above.
 
-### 17.5 — Builds are not byte-reproducible
+### 17.5 — ~~Builds are not byte-reproducible~~ — CHASED 2026-08-29 (patch 47); one cause fixed, one named
 
-Measured 2026-08-28: rebuilding **the same tree** produces a different
-`openbios-builtin.elf32`, and the differing bytes sit inside the embedded dictionary —
-something dated is baked in during bootstrap. Pre-existing, not introduced by any patch
-here, and not chased down.
+§17.5 said *"something dated is baked in during bootstrap"* and left it. Chased,
+and it is **two causes**, not one.
 
-Two consequences worth keeping:
-- [`openbios-archive-tree.sh`](tools/openbios-archive-tree.sh) digests **source** and
-  excludes `obj-*`, which is what makes an archive comparable to a cold reproduction. A
-  digest over the binaries would identify nothing.
-- "the cold tree and the dev tree build identical bytes" is **not** a claim this lab can
-  make, and no test asserts it.
+**Cause 1 — the build date, both arches, and it is exactly two bytes.**
+`Makefile.target` generates `obj-<arch>/forth/version.fs` from
+`date +'%b %e %Y %H:%M'` and compiles it into the dictionary. Two x86 builds a
+minute apart differ by the minute digits and nothing else. (The old note in
+`MANUAL_TESTING.md` blamed `__DATE__`/`__TIME__`; it is make, not the compiler.)
+
+**The date is not noise, which is why it was not deleted.** `smoke-openbios.sh`'s
+ppc track proves the running firmware is **ours** rather than the distro's
+`-bios` blob by comparing exactly that banner, and boots the distro blob
+alongside to show the two differ. Stamping a constant would make that comparison
+pass on two identical blobs. So the build honours **`SOURCE_DATE_EPOCH`** — the
+reproducible-builds standard — and is bit-for-bit unchanged when it is unset.
+
+Measured both ways: with the epoch pinned, x86's dictionary,
+`openbios-builtin.elf` and `openbios.multiboot` are **byte-identical** across two
+builds, and the dictionary is stamped `Nov 14 2023 22:13`, which is the control
+proving the build honoured the variable rather than two builds merely landing in
+the same minute.
+
+**Cause 2 — amd64 only, and it was NOT in the record.** With the date pinned the
+amd64 dictionary *still* differs, by ~79 bytes. The cell holding `end-mem` reads
+
+```
+build A   0000 7322 4a7d e018
+build B   0000 70d9 f729 c018
+```
+
+— canonical Linux userspace addresses. **A host pointer is baked into the shipped
+dictionary and moves with ASLR.** `forth/bootstrap/memory.fs`'s `init-mem` runs on
+the host while the dictionary is being built and stores the host arena's bounds;
+the dump keeps them. x86 does not show it: its target cell is four bytes and what
+lands there is small and stable.
+
+**Cause 2 is diagnosed and recorded, not fixed.** It is a change to the
+bootstrap's memory init, which §17.5 did not ask for and which should not be made
+blind. It is carried by
+[`tools/openbios-check-reproducible.sh`](tools/openbios-check-reproducible.sh) as
+a row that **must still fail** — the checker exits non-zero if amd64 ever becomes
+identical, because then the gap closed and this record is what needs updating.
+An all-PASS reproducibility check is indistinguishable from one that compares
+nothing.
+
+**Consequences that still hold:**
+- [`openbios-archive-tree.sh`](tools/openbios-archive-tree.sh) digests **source**
+  and excludes `obj-*`, which is what makes an archive comparable to a cold
+  reproduction. A digest over the binaries would still identify nothing on amd64.
+- *"The cold tree and the dev tree build identical bytes"* is now a claim this lab
+  **can** make for x86 with `SOURCE_DATE_EPOCH` set, and still cannot make for
+  amd64. No test asserts it in `run-all.sh`: four container builds, minutes each.
 
 ### 17.6 — The provenance/rebuild ordering trips easily
 
