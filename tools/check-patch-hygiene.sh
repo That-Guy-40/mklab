@@ -282,13 +282,26 @@ check_catalog() {
         (( n == 1 )) \
             || PROBLEMS+="A7: $base has $n rows in 00-CATALOG.md (want exactly 1) — an unclassified patch is a divergence nobody decided to carry"$'\n'
     done
-    # the counts, recomputed
+    # the counts, recomputed -- BOTH summaries. The kind table drifted within an
+    # hour of being typed; the scope table is the same shape and gets the same
+    # treatment rather than waiting its turn.
+    local nsum=0
     while read -r kind n; do
         [[ -z "$kind" ]] && continue
+        nsum=$((nsum + 1))
         want="$(printf '%s\n' "$rows" | awk -v k="$kind" '$2 == k' | grep -c . || true)"
         (( n == want )) \
             || PROBLEMS+="A7: the summary says $n $kind row(s); there are $want — a count written in prose, drifting"$'\n'
     done < <(sed -n 's/^| `\([A-Z-]\+\)` | \([0-9]\+\) |.*/\1 \2/p' "$cat")
+    while read -r sc n; do
+        [[ -z "$sc" ]] && continue
+        nsum=$((nsum + 1))
+        want="$(printf '%s\n' "$rows" | awk -v k="$sc" '$3 == k' | grep -c . || true)"
+        (( n == want )) \
+            || PROBLEMS+="A7: the scope summary says $n $sc row(s); there are $want — the column that predicts a rebase conflict, counted wrong"$'\n'
+    done < <(sed -n 's/^| \(shared\|arch-local\) | \([0-9]\+\) |.*/\1 \2/p' "$cat")
+    (( nsum > 0 )) \
+        || PROBLEMS+="A7: no summary counts parsed out of 00-CATALOG.md — the tables moved or changed shape, so nothing below is being counted at all"$'\n'
 }
 
 # check_patch <patch> — A4 for one file.
@@ -468,6 +481,20 @@ mk_cat_lab "$WORK/cat-count" "$CAT_VOCAB
 | \`FIXTURE\` | 1 |"
 check_catalog "$WORK/cat-count"; expect catch "a summary count written in prose and drifted from the rows"
 
+mk_cat_lab "$WORK/cat-scopecount" "$CAT_VOCAB
+| [\`01-a.patch\`](01-a.patch) | \`PORT\` | arch-local | it is a port |
+| [\`02-b.patch\`](02-b.patch) | \`FIXTURE\` | shared | it is a fixture |
+$CAT_SUMS| shared | 2 |
+| arch-local | 1 |"
+check_catalog "$WORK/cat-scopecount"; expect catch "a SCOPE summary count drifted from the rows"
+
+mk_cat_lab "$WORK/cat-scopeok" "$CAT_VOCAB
+| [\`01-a.patch\`](01-a.patch) | \`PORT\` | arch-local | it is a port |
+| [\`02-b.patch\`](02-b.patch) | \`FIXTURE\` | shared | it is a fixture |
+$CAT_SUMS| shared | 1 |
+| arch-local | 1 |"
+check_catalog "$WORK/cat-scopeok"; expect clean "a catalog carrying BOTH summaries, each agreeing with the rows"
+
 mk_cat_lab "$WORK/cat-kind" "$CAT_VOCAB
 | [\`01-a.patch\`](01-a.patch) | \`DIVERGENCE\` | arch-local | a kind the doc never defines |
 | [\`02-b.patch\`](02-b.patch) | \`FIXTURE\` | shared | it is a fixture |
@@ -491,7 +518,7 @@ check_catalog "$WORK/cat-shape"; expect catch "a reshaped table out of which no 
 # The fixtures used the exemption too; clear what they recorded, or the report
 # below names a temp file as a grandfathered patch.
 EXEMPT_USED=""
-note "§0 controls: 16 must-catch, 8 must-not-catch — all $c_ok behaved"
+note "§0 controls: 17 must-catch, 9 must-not-catch — all $c_ok behaved"
 
 # ---------------------------------------------------------------- the real files
 
@@ -539,4 +566,4 @@ note "A4: ${#PATCHES[@]} patches parse as unified diffs, subjects agree with fil
 if [[ -n "$EXEMPT_USED" ]]; then
     note "A4: no Subject: line on ${EXEMPT_USED% } — grandfathered BY NAME (the convention began at patch 11), printed here so the exemption cannot grow unnoticed"
 fi
-pass "the patch series is coherent with itself, with what is applied, and with the build: $NMARK markers describe strings the applied patch actually adds, and all ${#PATCHES[@]} patches read as unified diffs numbered 01..${#PATCHES[@]} with subjects that match their filenames, and the record and the applied TESTED-TREE.patch name the same $A6_BUILT files, and 00-CATALOG.md classifies all $CAT_ROWS of them with scopes and counts recomputed rather than read (24 scanner self-controls fired first)"
+pass "the patch series is coherent with itself, with what is applied, and with the build: $NMARK markers describe strings the applied patch actually adds, and all ${#PATCHES[@]} patches read as unified diffs numbered 01..${#PATCHES[@]} with subjects that match their filenames, and the record and the applied TESTED-TREE.patch name the same $A6_BUILT files, and 00-CATALOG.md classifies all $CAT_ROWS of them with scopes and counts recomputed rather than read (26 scanner self-controls fired first)"

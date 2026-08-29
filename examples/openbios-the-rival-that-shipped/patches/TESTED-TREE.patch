@@ -747,10 +747,65 @@ index 0000000..e8ebdd0
 +	info->rip = (uint64_t)(uintptr_t)&restart_interpreter;
 +}
 diff --git a/arch/amd64/init.fs b/arch/amd64/init.fs
-index fda3acd..5e455ac 100644
+index fda3acd..3b3505a 100644
 --- a/arch/amd64/init.fs
 +++ b/arch/amd64/init.fs
-@@ -49,11 +49,51 @@ finish-device
+@@ -8,6 +8,54 @@ include config.fs
+ 
+ " /" find-device
+ 
++\ TODO 17.1: TWO ADDRESS CELLS, on amd64 ONLY.
++\
++\ forth/device/tree.fs builds one root for every arch and gives it
++\ `#address-cells 1` and NO `#size-cells` at all. One address cell is 32 bits,
++\ so a 64-bit firmware could see all of a 5 GB machine and still not DESCRIBE
++\ it: libopenbios/init.c publishes /memory's `reg` from the counts declared
++\ here, and dropped the range at 0x100000000 -- honestly, by name, on every
++\ boot -- because nothing above 4 GiB fits in the cells the root was offering.
++\
++\ ONLY amd64. arch/x86 stays at one cell because one cell is ACCURATE there: a
++\ 32-bit firmware cannot form the address either way, so two cells would be a
++\ wider hole to say the same nothing in. The blast radius is per-arch for the
++\ same reason the capability is.
++\
++\ #size-cells IS DECLARED, not left to the defaults, and that closes a
++\ disagreement rather than opening one. Absent, this tree had TWO answers for
++\ it: forth/device/property.fs's my-#scells falls back to 1, while
++\ drivers/pci.c asks get_int_property() and got 0 -- which is why the PCI host
++\ bridge's `reg` was a lone address cell with no size beside it. Two readers,
++\ two answers, one silent property.
++\
++\ THE UNIT WORDS HAVE TO MOVE WITH THE COUNT. tree.fs's root decodes a unit
++\ address with `parse-hex` and encodes it with `tohexstr` -- one cell each way
++\ -- and forth/device/pathres.fs's (exact-match) compares exactly as many
++\ leading cells of a child's `reg` as decode-unit returned values. Leave these
++\ at one cell and every root child with a `reg` stops resolving by path.
++\ arch/sparc64/tree.fs does the same thing for the same reason (its
++\ encode-unit-upa / decode-unit-upa), which is the in-tree precedent for
++\ overriding a method the shared root already defined.
++\
++\ The two cells are the two halves of ONE 64-bit physical address, so the unit
++\ string stays a single hex number: /memory@0 and /ide@1 keep the names they
++\ had. sparc64 prints "id,lun" instead because there the two cells are two
++\ independent fields; here they are not.
++  2 " #address-cells" int-property
++  2 " #size-cells" int-property
++
++  : decode-unit ( str len -- phys.lo phys.hi )
++    parse-hex
++    dup h# ffffffff and         \ phys.lo
++    swap h# 20 rshift           \ phys.hi  ( h# 20 = 32: .fs sources compile in HEX )
++  ;
++
++  : encode-unit ( phys.lo phys.hi -- str len )
++    h# 20 lshift or
++    pocket tohexstr
++  ;
++
+ new-device
+   " memory" device-name
+   \ 12230 encode-int " reg" property
+@@ -49,11 +97,51 @@ finish-device
    else
      2drop
    then
@@ -803,7 +858,7 @@ index fda3acd..5e455ac 100644
  
  \ preopen device nodes (and store the ihandles under /chosen)
  :noname
-@@ -77,7 +117,31 @@ finish-device
+@@ -77,7 +165,31 @@ finish-device
  ; CONSOLE-IN-initializer
    
  \ Load VGA FCode driver blob
@@ -4232,7 +4287,7 @@ index a3dff1f..04d0519 100644
      fword("finish-device");
  
 diff --git a/drivers/ide.c b/drivers/ide.c
-index 4cc572c..bb74c26 100644
+index 4cc572c..417bce4 100644
 --- a/drivers/ide.c
 +++ b/drivers/ide.c
 @@ -359,6 +359,88 @@ ob_ide_pio_non_data(struct ide_drive *drive, struct ata_command *cmd)
@@ -4418,7 +4473,53 @@ index 4cc572c..bb74c26 100644
  /*
   * byte swap the string if necessay, and strip leading/trailing blanks
   */
-@@ -1395,6 +1564,7 @@ int ob_ide_init(const char *path, uint32_t io_port0, uint32_t ctl_port0,
+@@ -1347,6 +1516,45 @@ static void set_ide_alias(const char *path)
+ 	set_property(aliases, idestr, path, strlen(path) + 1);
+ }
+ 
++#if !defined(CONFIG_PPC) && !defined(CONFIG_SPARC64)
++/* The parent of the node `new-device` just created. NOT my_parent(): that is
++ * instance-based and reads my-self, which is whatever the last opened package
++ * left behind -- this runs during tree construction, where there is no
++ * instance. >dn.parent is the device-node field itself (structures.fs:34). */
++static phandle_t ide_node_parent(phandle_t node)
++{
++	PUSH(node);
++	fword(">dn.parent");
++	return *(phandle_t *)cell2pointer(POP());
++}
++
++static int ide_cells(phandle_t node, const char *name, int dflt)
++{
++	int len;
++	ucell v;
++
++	if (!node)
++		return dflt;
++	v = get_int_property(node, name, &len);
++	/* Absent is not zero: the 1275 defaults are what my-#acells and
++	 * my-#scells fall back to (property.fs:221,234), and disagreeing with
++	 * the tree's own decoder is how a property becomes unreadable. */
++	if (len != (int)sizeof(u32))
++		return dflt;
++	return (int)v;
++}
++
++/* 1275 cells are big-endian, high cell first. */
++static int ide_encode_cells(u32 *prop, int cells, ucell val)
++{
++	int i;
++
++	for (i = cells - 1; i >= 0; i--)
++		prop[cells - 1 - i] = __cpu_to_be32((u32)(val >> (16 * i) >> (16 * i)));
++	return cells;
++}
++#endif
++
+ int ob_ide_init(const char *path, uint32_t io_port0, uint32_t ctl_port0,
+ 		uint32_t io_port1, uint32_t ctl_port1)
+ {
+@@ -1395,6 +1603,7 @@ int ob_ide_init(const char *path, uint32_t io_port0, uint32_t ctl_port0,
  			chan->drives[j].bs = 512;
  
  			chan->drives[j].nr = i * 2 + j;
@@ -4426,7 +4527,62 @@ index 4cc572c..bb74c26 100644
  		}
  
  		ob_ide_probe(chan);
-@@ -1583,6 +1753,7 @@ int macio_ide_init(const char *path, uint32_t addr, int nb_channels)
+@@ -1418,10 +1627,54 @@ int ob_ide_init(const char *path, uint32_t io_port0, uint32_t ctl_port0,
+ 			     (char *)&props, 2*sizeof(props[0]));
+ #endif
+ 
++#if !defined(CONFIG_PPC) && !defined(CONFIG_SPARC64)
++		/* A `reg` IS NOT SELF-DESCRIBING: it is decoded with the PARENT's
++		 * #address-cells / #size-cells, and this wrote a fixed three cells
++		 * regardless of what the parent declares. On the PC arches the parent
++		 * is the root, which says one address cell, so the third cell was
++		 * slop nobody read and the property happened to decode correctly.
++		 *
++		 * It stops being a happy accident the moment the root declares two
++		 * address cells: `(exact-match)` in forth/device/pathres.fs compares
++		 * the first #address-cells CELLS of `reg` against what the parent's
++		 * decode-unit returned for the unit string, so [channel][0] would be
++		 * read as the address (channel << 32) and `/ide@1` would resolve to
++		 * nothing while `/ide@100000000` resolved instead -- taking the boot
++		 * aliases, the showcase's boot line and every `load` off the CD with
++		 * it. Derive the layout from the parent instead of assuming it.
++		 *
++		 * ppc and sparc64 keep the old three cells byte for byte: they reach
++		 * this function through drivers/pci.c with a PCI bus as the parent
++		 * (3 address cells), where deriving would MOVE the channel number from
++		 * the first cell to the third and rename every node. That is a real
++		 * defect there too, and it is not this change's to fix blind on an
++		 * arch whose IDE path nothing here boots. */
++		{
++			phandle_t par = ide_node_parent(dnode);
++			int acells = ide_cells(par, "#address-cells", 2);
++			int scells = ide_cells(par, "#size-cells", 1);
++			int n = 0;
++
++			if (acells < 1 || acells > 2 || scells < 0 || scells > 2) {
++				/* A tree this was not written for. Refuse to write a
++				 * property every consumer would misread. */
++				printk("ide: parent declares #address-cells %d / "
++				       "#size-cells %d -- leaving reg unset\n",
++				       acells, scells);
++			} else {
++				n += ide_encode_cells(props + n, acells,
++						      current_channel);
++				n += ide_encode_cells(props + n, scells, 0);
++				set_property(dnode, "reg", (char *)props,
++					     n * sizeof(props[0]));
++			}
++		}
++#else
+ 		props[0] = __cpu_to_be32(current_channel);
+ 		props[1] = __cpu_to_be32(0);
+ 		props[2] = 0;
+ 		set_property(dnode, "reg", (char *)&props, 3*sizeof(props[0]));
++#endif
+ 
+ 		set_int_property(dnode, "#address-cells", 1);
+ 		set_int_property(dnode, "#size-cells", 0);
+@@ -1583,6 +1836,7 @@ int macio_ide_init(const char *path, uint32_t addr, int nb_channels)
  			chan->drives[j].bs = 512;
  
  			chan->drives[j].nr = i * 2 + j;

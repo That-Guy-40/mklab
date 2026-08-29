@@ -1,4 +1,4 @@
-# The 41 patches, sorted — and why none of them goes upstream
+# Every patch, sorted — and why none of them goes upstream
 
 `patches/` holds one annotated diff per change against the pinned commit
 `6e563ee`. [`TESTED-TREE.patch`](TESTED-TREE.patch) is the cumulative version
@@ -64,7 +64,7 @@ cached fact about a file that changes.
 Rows link to the diff. The narrative for patches 12–34 lives in the
 [README's “What's here” table](../README.md#whats-here); this index does not repeat it.
 
-## The 41
+## The series
 
 | patch | kind | scope | what it is |
 |---|---|---|---|
@@ -109,25 +109,34 @@ Rows link to the diff. The narrative for patches 12–34 lives in the
 | [`39-coreboot-table-is-a-wire-format.patch`](39-coreboot-table-is-a-wire-format.patch) | `UPSTREAM-BUG` | shared | coreboot's own header says why it forces 4-byte alignment on its `uint64_t`; OpenBIOS's copy dropped it, so any 64-bit reader misreads the table |
 | [`40-publish-the-memory-map.patch`](40-publish-the-memory-map.patch) | `UPSTREAM-BUG` | shared | nothing published the memory map — `/memory` carried only its name, so no client could ask this firmware what memory exists |
 | [`41-multiboot-union-was-still-lp64.patch`](41-multiboot-union-was-still-lp64.patch) | `UPSTREAM-BUG` | arch-local | 39's wire-format fix stopped one struct short: a union of four `unsigned long` is 16 bytes on i386 and 32 on LP64, shifting `mmap_length` from offset 44 to 64 |
+| [`42-ide-reg-follows-its-parents-cells.patch`](42-ide-reg-follows-its-parents-cells.patch) | `UPSTREAM-BUG` | shared | a `reg` is decoded with the PARENT's cells and ide wrote a fixed three, so `/ide@1` resolved by luck — ppc/sparc64 keep the old bytes, where the parent is a PCI bus and deriving would rename every node |
+| [`43-amd64-root-two-address-cells.patch`](43-amd64-root-two-address-cells.patch) | `FEATURE` | arch-local | **TODO 17.1**: the amd64 root declares `#address-cells 2 / #size-cells 2`, so `/memory` can finally describe the range at `0x100000000`. x86 stays at one cell, where one cell is *accurate*. The root's unit words had to move with the count |
 
 ## What the sort says
 
 | kind | count | |
 |---|---|---|
-| `UPSTREAM-BUG` | 20 | defects any user of `openbios/openbios` would hit. The candidate set, if the decision above is ever revisited |
+| `UPSTREAM-BUG` | 21 | defects any user of `openbios/openbios` would hit. The candidate set, if the decision above is ever revisited |
 | `PORT` | 10 | `arch/amd64`, which upstream ships and has not built since 2003 |
-| `FEATURE` | 7 | capabilities upstream never claimed — three NVRAM backings, a pmem store, and the encoder work |
+| `FEATURE` | 8 | capabilities upstream never claimed — three NVRAM backings, a pmem store, the encoder work, and a root that can describe memory above 4 GiB |
 | `FIXTURE` | 2 | test surface compiled into the firmware |
 | `DIVERGENCE` | 1 | patch 15, and only patch 15 |
 | `RECORD` | 1 | bookkeeping |
 
+And by where a future rebase will hurt:
+
+| scope | count | |
+|---|---|---|
+| shared | 23 | touches a path some *other* architecture's build also compiles — this is where a pin bump conflicts |
+| arch-local | 20 | only `arch/`, `include/arch/`, or its own `*_config.xml` — nearly free to carry |
+
 **Only one patch is a divergence in the sense of "we want different behaviour."**
-The other 40 are things upstream would arguably want and is not going to be
+The other 42 are things upstream would arguably want and is not going to be
 asked for. That asymmetry is the honest summary of what "all 41 are ours" means
 here: it is a decision about traffic, not about taste.
 
 **Two of the six kinds have exactly one member**, which is a thin taxonomy and
 is left thin on purpose — `RECORD` and `DIVERGENCE` each name a genuinely
 different reason for a patch to exist, and collapsing them into the others would
-hide the only deliberate behavioural divergence in the series behind 20 bug
+hide the only deliberate behavioural divergence in the series behind 21 bug
 fixes.

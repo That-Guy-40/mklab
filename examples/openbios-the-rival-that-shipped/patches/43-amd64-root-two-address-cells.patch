@@ -1,0 +1,108 @@
+From: mklab <noreply@example.invalid>
+Subject: [PATCH 43/43] TODO 17.1: the amd64 root declares two address cells, so /memory can describe the machine
+
+Arch-tested: x86 amd64 ppc
+
+A 64-bit firmware could SEE all of a 5 GB machine and still not DESCRIBE it.
+Patches 39 and 41 fixed the seeing -- `RAM 5119 MB` -- and patch 40 published
+/memory's `reg` from the counts the root declares. forth/device/tree.fs builds
+one root for every arch with `#address-cells 1` and no `#size-cells` at all, so
+one address cell is 32 bits and the range at 0x100000000 could not be encoded.
+It was dropped, by name, on every boot:
+
+    /memory: 1 of 3 range(s) NOT published -- the root declares
+    #address-cells 1 / #size-cells 1, so an address or size above 4 GiB
+    cannot be encoded here
+
+Now, at -m 5G:
+
+    reg    00000000 00000000   00000000 0009fc00
+           00000000 00100000   00000000 bfee0000
+           00000001 00000000   00000000 80000000
+
+ONLY amd64, and that is not timidity. One cell is ACCURATE on arch/x86: a 32-bit
+firmware cannot form the address either way, so two cells there would be a wider
+hole to say the same nothing in. The blast radius is per-arch because the
+capability is.
+
+#size-cells IS DECLARED, and that closes a disagreement rather than opening one.
+Absent, this tree had TWO answers: forth/device/property.fs's my-#scells falls
+back to 1, while drivers/pci.c asks get_int_property() and got 0 -- which is why
+the PCI host bridge's `reg` was a lone address cell with no size beside it.
+
+THE UNIT WORDS HAD TO MOVE WITH THE COUNT, and this is the part that would have
+broken everything quietly. tree.fs's root decodes a unit address with parse-hex
+and encodes it with tohexstr -- one cell each way -- while pathres.fs compares
+exactly as many leading cells of a child's `reg` as decode-unit returned values.
+Left alone, every root child with a `reg` stops resolving by path.
+arch/sparc64/tree.fs overrides the same two methods on the same shared root for
+the same reason, which is the in-tree precedent that this works at all.
+
+The two cells are the two halves of ONE 64-bit physical address, so the unit
+string stays a single hex number and /memory@0, /ide@1..3 and /pci8086,1237@0
+keep the names they had. sparc64 prints "id,lun" because there the two cells are
+two independent fields; here they are not.
+
+Measured after: dev / ls unchanged; /ide@1 reg = 00000000 00000001 | 00000000
+00000000; the PCI bus still declares its own 3/2 (patch 34) and QEMU,VGA@2 still
+sits at its real device number; property-abi, dict-identity, vga, client-forth,
+diagnostics, amd64, amd64-pmem, amd64-linux, multiboot, persist, coreboot,
+coreboot-amd64 and ppc all green.
+
+--- a/arch/amd64/init.fs
++++ b/arch/amd64/init.fs
+@@ -8,6 +8,54 @@
+ 
+ " /" find-device
+ 
++\ TODO 17.1: TWO ADDRESS CELLS, on amd64 ONLY.
++\
++\ forth/device/tree.fs builds one root for every arch and gives it
++\ `#address-cells 1` and NO `#size-cells` at all. One address cell is 32 bits,
++\ so a 64-bit firmware could see all of a 5 GB machine and still not DESCRIBE
++\ it: libopenbios/init.c publishes /memory's `reg` from the counts declared
++\ here, and dropped the range at 0x100000000 -- honestly, by name, on every
++\ boot -- because nothing above 4 GiB fits in the cells the root was offering.
++\
++\ ONLY amd64. arch/x86 stays at one cell because one cell is ACCURATE there: a
++\ 32-bit firmware cannot form the address either way, so two cells would be a
++\ wider hole to say the same nothing in. The blast radius is per-arch for the
++\ same reason the capability is.
++\
++\ #size-cells IS DECLARED, not left to the defaults, and that closes a
++\ disagreement rather than opening one. Absent, this tree had TWO answers for
++\ it: forth/device/property.fs's my-#scells falls back to 1, while
++\ drivers/pci.c asks get_int_property() and got 0 -- which is why the PCI host
++\ bridge's `reg` was a lone address cell with no size beside it. Two readers,
++\ two answers, one silent property.
++\
++\ THE UNIT WORDS HAVE TO MOVE WITH THE COUNT. tree.fs's root decodes a unit
++\ address with `parse-hex` and encodes it with `tohexstr` -- one cell each way
++\ -- and forth/device/pathres.fs's (exact-match) compares exactly as many
++\ leading cells of a child's `reg` as decode-unit returned values. Leave these
++\ at one cell and every root child with a `reg` stops resolving by path.
++\ arch/sparc64/tree.fs does the same thing for the same reason (its
++\ encode-unit-upa / decode-unit-upa), which is the in-tree precedent for
++\ overriding a method the shared root already defined.
++\
++\ The two cells are the two halves of ONE 64-bit physical address, so the unit
++\ string stays a single hex number: /memory@0 and /ide@1 keep the names they
++\ had. sparc64 prints "id,lun" instead because there the two cells are two
++\ independent fields; here they are not.
++  2 " #address-cells" int-property
++  2 " #size-cells" int-property
++
++  : decode-unit ( str len -- phys.lo phys.hi )
++    parse-hex
++    dup h# ffffffff and         \ phys.lo
++    swap h# 20 rshift           \ phys.hi  ( h# 20 = 32: .fs sources compile in HEX )
++  ;
++
++  : encode-unit ( phys.lo phys.hi -- str len )
++    h# 20 lshift or
++    pocket tohexstr
++  ;
++
+ new-device
+   " memory" device-name
+   \ 12230 encode-int " reg" property

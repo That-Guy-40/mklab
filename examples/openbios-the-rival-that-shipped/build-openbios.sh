@@ -194,6 +194,12 @@ TESTED_TREE_MARKERS=(
     'drivers/pci.c:set_int_property(phandle, "#address-cells", 3);'
     "libopenbios/init.c:eword_report_selftest"
     "config/scripts/switch-arch:TODO 13.3(C): -fno-builtin, not the two"
+    # -- TODO 17.1: two address cells on the amd64 root (patches 42-43) --
+    # Both are in files the patch already touched for other reasons, so neither
+    # is a NEW file: A3b will fetch them at the pin and require these strings to
+    # be absent there, which is the check that caught the `s" load-base"` marker.
+    "drivers/ide.c:ide_node_parent"
+    "arch/amd64/init.fs:TODO 17.1: TWO ADDRESS CELLS"
 )
 present=(); absent=()
 for m in "${TESTED_TREE_MARKERS[@]}"; do
