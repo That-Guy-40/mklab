@@ -203,6 +203,8 @@ TESTED_TREE_MARKERS=(
     # -- TODO 17.3: /memory's available, and the claim it describes (44-45) --
     "arch/amd64/openbios.c:ciface_claim_amd64"
     "libopenbios/init.c:publish_memory_available"
+    # -- TODO 17.4: number() agrees with C99 (patch 46) --
+    "libc/vsprintf.c:unsigned long long unum;"
 )
 present=(); absent=()
 for m in "${TESTED_TREE_MARKERS[@]}"; do

@@ -5428,10 +5428,111 @@ index a8b3cce..1c2ad86 100644
      /* Values passed by bootloader */
      unsigned long boot_type;
 diff --git a/libc/vsprintf.c b/libc/vsprintf.c
-index ed4d38a..e51731d 100644
+index ed4d38a..71afae7 100644
 --- a/libc/vsprintf.c
 +++ b/libc/vsprintf.c
-@@ -268,13 +268,41 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
+@@ -57,11 +57,28 @@ static char * number(char * buf, char * end, long long num, int base, int size,
+ 	const char *digits;
+ 	static const char small_digits[] = "0123456789abcdefghijklmnopqrstuvwxyz";
+ 	static const char large_digits[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
++	/* The digits are generated from an UNSIGNED accumulator, and that is
++	 * TODO 17.4's third fix rather than a style choice -- see the negation
++	 * below. do_div() already reinterprets its argument as unsigned long
++	 * long, so the unsigned conversions were relying on that all along. */
++	unsigned long long unum;
+ 	int i;
+ 
+ 	digits = (type & LARGE) ? large_digits : small_digits;
+ 	if (type & LEFT)
+ 		type &= ~ZEROPAD;
++	/* TODO 17.4, C99 7.19.6.1p6: "For d, i, o, u, x, and X conversions, if a
++	 * precision is specified, the 0 flag is ignored." It was not, so %08.3d
++	 * of 42 gave 00000042 where C99 gives "     042". GCC corroborates the
++	 * rule independently -- -Werror=format= refuses the literal with "'0'
++	 * flag ignored with precision and '%d'".
++	 *
++	 * precision is -1 when none was given (vsnprintf sets it), so `>= 0` is
++	 * exactly "a precision is specified". %p passes its precision through
++	 * here too, but %p's conversion is implementation-defined in C99 and
++	 * nothing writes %.Np. */
++	if (precision >= 0)
++		type &= ~ZEROPAD;
+ 	if (base < 2 || base > 36)
+                 return NULL;
+ 	c = (type & ZEROPAD) ? '0' : ' ';
+@@ -69,15 +86,43 @@ static char * number(char * buf, char * end, long long num, int base, int size,
+ 	if (type & SIGN) {
+ 		if (num < 0) {
+ 			sign = '-';
+-			num = -num;
+-			size--;
+-		} else if (type & PLUS) {
+-			sign = '+';
+-			size--;
+-		} else if (type & SPACE) {
+-			sign = ' ';
++			/* TODO 17.4. NOT `num = -num`: at LLONG_MIN there is no
++			 * positive counterpart and negating it is UNDEFINED
++			 * BEHAVIOUR -- §13.3(B) named this from the source and
++			 * left it unexercised because a fixture would have had
++			 * to trigger the UB to test it. Converting to unsigned
++			 * first is well defined (C99 6.3.1.3p2 adds 2^64) and
++			 * negating an unsigned is modular arithmetic, so this
++			 * yields the magnitude for every input including
++			 * LLONG_MIN.
++			 *
++			 * WHAT THE FIXTURE CAN AND CANNOT SHOW, measured
++			 * 2026-08-29 rather than assumed. Re-injecting the old
++			 * `-num` and running the llmin case does NOT go red:
++			 * on x86-64 GCC the UB happens to compute the
++			 * two's-complement negation, whose bit pattern is the
++			 * right magnitude. So the fixture proves the OUTPUT is
++			 * correct on the arches tested; it does not and cannot
++			 * prove this negation is defined. Absence of UB is a
++			 * property of the source, not an observable of one
++			 * build. What the fix buys is that the fixture is
++			 * legitimate to ship at all -- §13.3(B) declined to
++			 * write it precisely because it would have had to
++			 * trigger the UB to run. */
++			unum = -(unsigned long long)num;
+ 			size--;
++		} else {
++			unum = (unsigned long long)num;
++			if (type & PLUS) {
++				sign = '+';
++				size--;
++			} else if (type & SPACE) {
++				sign = ' ';
++				size--;
++			}
+ 		}
++	} else {
++		unum = (unsigned long long)num;
+ 	}
+ 	if (type & SPECIAL) {
+ 		if (base == 16)
+@@ -86,10 +131,16 @@ static char * number(char * buf, char * end, long long num, int base, int size,
+ 			size--;
+ 	}
+ 	i = 0;
+-	if (num == 0)
+-		tmp[i++]='0';
+-	else while (num != 0)
+-		tmp[i++] = digits[do_div(num,base)];
++	if (unum == 0) {
++		/* TODO 17.4, C99 7.19.6.1p8 (d,i,o,u,x,X): "if the value and the
++		 * precision are both 0, no characters are produced." This wrote
++		 * '0' unconditionally, so %.0d of 0 printed "0". precision is
++		 * -1 when none was given, which is why this tests for 0 and not
++		 * for falsity. */
++		if (precision != 0)
++			tmp[i++]='0';
++	} else while (unum != 0)
++		tmp[i++] = digits[do_div(unum,base)];
+ 	if (i > precision)
+ 		precision = i;
+ 	size -= precision;
+@@ -268,13 +319,41 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
  				if ((unsigned long)s < PAGE_SIZE)
  					s = "<NULL>";
  
@@ -5767,7 +5868,7 @@ index 4433635..3694115 100644
      
      feval("-1 state-valid !");
 diff --git a/libopenbios/init.c b/libopenbios/init.c
-index f96b621..4bc85b1 100644
+index f96b621..c7d045a 100644
 --- a/libopenbios/init.c
 +++ b/libopenbios/init.c
 @@ -16,9 +16,13 @@
@@ -5784,7 +5885,7 @@ index f96b621..4bc85b1 100644
  #define NO_QEMU_PROTOS
  #include "arch/common/fw_cfg.h"
  
-@@ -65,6 +69,370 @@ static void lelfetch(void)
+@@ -65,6 +69,349 @@ static void lelfetch(void)
  	PUSH(__le32_to_cpu(*aaddr));
  }
  
@@ -5914,6 +6015,11 @@ index f96b621..4bc85b1 100644
 +	char got[32];
 +	char canary[8];
 +	int ok = 0, n = 0, rc;
++	/* TODO 17.4 closed both recorded divergences on 2026-08-29, so these are
++	 * 0/0 -- and they STAY in the summary rather than being deleted. "0
++	 * recorded divergences" is a positive statement that somebody looked;
++	 * dropping the phrase would make a tree with a new, unrecorded
++	 * divergence print exactly what a conformant one prints. */
 +	int ok_div = 0, n_div = 0;
 +
 +#define EDGE_CASE(label, want, ...) do {				\
@@ -5949,79 +6055,47 @@ index f96b621..4bc85b1 100644
 +	 * shipped shape, not a convenient stand-in. */
 +	EDGE_CASE("lx-fits", "deadbeef", "%8.8lx", (unsigned long)0xdeadbeefUL);
 +	EDGE_CASE("lx-pads", "000000ab", "%8.8lx", (unsigned long)0xabUL);
-+#undef EDGE_CASE
 +
-+	/* A RECORDED DIVERGENCE, not a pass and not a failure.
++	/* TODO 17.4 -- CLOSED 2026-08-29. This was a RECORDED DIVERGENCE for two
++	 * months and is now a conformance case, which is exactly the transition
++	 * the old fixture was built to make visible.
 +	 *
-+	 * C99 7.19.6.1: "if the value and the precision are both 0, no
-+	 * characters are produced." number() (libc/vsprintf.c) does
++	 * C99 7.19.6.1p8: "if the value and the precision are both 0, no
++	 * characters are produced." number() did
 +	 *
 +	 *     i = 0;
 +	 *     if (num == 0)
 +	 *             tmp[i++] = '0';
 +	 *
-+	 * unconditionally, so `%.0d` of 0 prints "0" here.
++	 * unconditionally, so `%.0d` of 0 printed "0". It now tests the
++	 * precision first.
 +	 *
-+	 * NOT FIXED, deliberately, and the reasons are worth keeping:
-+	 *   - ZERO in-tree callers. A repo-wide grep for a precision on an
-+	 *     integer conversion finds exactly two lines, both `%8.8lx` in
-+	 *     ppc's boot path, and both are asserted correct just above.
-+	 *   - It is harmless. One extra character, no access past a bound --
-+	 *     unlike the %s precision bug (patch 21), which over-READ.
-+	 *   - The one real caller is in a BOOT PATH on the arch this lab uses
-+	 *     as its control. Editing number() to serve no caller, in front of
-+	 *     that, is churn with a nonzero downside.
++	 * WHY IT WAS FIXED AFTER BEING PARKED TWICE. The parked reasoning was
++	 * "no in-tree caller, and it only mis-formats". Both still hold -- the
++	 * premise was RE-DERIVED on 2026-08-29 rather than trusted, and the only
++	 * %08.3d in the tree is this fixture itself. What the old note did not
++	 * weigh is §13.3(C): a printf that disagrees with C99 is a latent
++	 * "two printfs answering one call". GCC may constant-fold snprintf's
++	 * RETURN per C99 while our code writes different bytes, which is
++	 * precisely the ppc32 bug that cost a day. -fno-builtin now prevents it
++	 * on every arch -- but that is a mitigation one build-flag edit away
++	 * from being lost, and the divergence is the thing it mitigates.
 +	 *
-+	 * So the MEASURED behaviour is asserted, and the C99 answer is printed
-+	 * beside it. If someone fixes number(), this line fails and says so --
-+	 * a divergence that stops being true has to be visible, or the record
-+	 * quietly becomes false. */
++	 * The buffer is still pre-poisoned with 'Q' so "wrote nothing" is
++	 * visible as itself rather than as a leftover, and wrote= and ret= are
++	 * still reported separately: they disagreed by ARCH once, and a single
++	 * number cannot say which half moved. */
 +	got[0] = 'Q'; got[1] = 'Q'; got[2] = '\0';
 +	rc = snprintf(got, sizeof(got), "%.0d", 0);
-+	n_div++;
-+	/* WRITTEN length and RETURNED length reported separately: on ppc the
-+	 * two disagree, and a single number cannot say which half moved. The
-+	 * buffer is pre-poisoned with 'Q' so "wrote nothing" is visible as
-+	 * itself rather than as a leftover from the previous case. */
-+	/* THE RATIO KEYS ON WHAT WAS WRITTEN, NOT ON THE RETURN, and that split
-+	 * is a finding rather than a convenience.
-+	 *
-+	 * All three arches write "0" -- that is the C99 divergence, and it is
-+	 * stable. But the RETURN disagrees by arch: x86 and amd64 report 1,
-+	 * ppc reports 0 while having written a byte. Folding the return into
-+	 * the pass condition would have made one arch's ratio differ from the
-+	 * others for a second, unrelated reason, and a single number cannot say
-+	 * which half moved. So: the ratio asserts the divergence, the line
-+	 * prints wrote= and ret= separately, and the smoke track pins the exact
-+	 * line PER ARCH so either half moving goes red.
-+	 *
-+	 * THE ppc MECHANISM, TRACED 2026-08-27, AND IT WAS NOT number().
-+	 * ppc32 was the only arch in the tree built without -fno-builtin --
-+	 * amd64, x86, sparc32, sparc64, ppc64 and even ppc-unix all had it,
-+	 * while ppc32 named just two exclusions (-fno-builtin-bcopy,
-+	 * -fno-builtin-log2). With snprintf left as a GCC BUILTIN, a call with a
-+	 * constant format and constant argument lets the compiler compute the
-+	 * RETURN VALUE itself -- per C99, where %.0d of 0 produces nothing --
-+	 * while leaving the call in place for its side effect, which this libc
-+	 * performed by writing "0". The buffer came from our implementation and
-+	 * the return came from GCC's: two different printfs answering one call.
-+	 * Fixed in config/scripts/switch-arch; all three arches now agree.
-+	 *
-+	 * THIS FIXTURE IS DELIBERATELY LEFT FOLDABLE. Passing the format through
-+	 * a volatile pointer would stop a compiler answering for our libc -- and
-+	 * would also hide the day a build flag lets one again, which is exactly
-+	 * what the RET-DISAGREES check exists to catch. */
-+	if( !strcmp(got, "0") ) {
-+		ok_div++;
-+		printk("printf-edges: d-zero C99[](0) here[%s] wrote=%d"
-+		       " ret=%d DIVERGES-AS-RECORDED%s\n",
++	n++;
++	if( got[0] == '\0' && rc == 0 ) {
++		ok++;
++		printk("printf-edges: d-zero want[](0) got[%s](%d) ret=%d OK\n",
++		       got, (int)strlen(got), rc);
++	} else {
++		printk("printf-edges: d-zero want[](0) got[%s](%d) ret=%d BAD%s\n",
 +		       got, (int)strlen(got), rc,
 +		       rc == (int)strlen(got) ? "" : " RET-DISAGREES");
-+	} else {
-+		printk("printf-edges: d-zero C99[](0) here[%s] wrote=%d"
-+		       " ret=%d DIVERGENCE-CLOSED -- number() was fixed;"
-+		       " update this case and TODO 13.1c\n",
-+		       got, (int)strlen(got), rc);
 +	}
 +
 +	/* vsnprintf at the buffer edge. Not EDGE_CASE: these need a short buf,
@@ -6067,45 +6141,51 @@ index f96b621..4bc85b1 100644
 +	       canary[0], rc,
 +	       (canary[0] == 'Z' && rc == 3) ? "OK" : "BAD");
 +
-+	/* RECORDED DIVERGENCE 2: the 0 flag survives a precision.
++	/* TODO 17.4 -- CLOSED 2026-08-29, the second of the two.
 +	 *
-+	 * C99 7.19.6.1: "For d, i, o, u, x, and X conversions, if a precision
-+	 * is specified, the 0 flag is ignored." number() does not ignore it --
-+	 * `c = (type & ZEROPAD) ? '0' : ' '` and the pad loop runs whatever
-+	 * the precision is -- so `%08.3d` of 42 gives 00000042 where C99 gives
-+	 * "     042".
++	 * C99 7.19.6.1p6: "For d, i, o, u, x, and X conversions, if a precision
++	 * is specified, the 0 flag is ignored." number() did not ignore it, so
++	 * `%08.3d` of 42 gave 00000042 where C99 gives "     042". It now clears
++	 * ZEROPAD whenever a precision was given.
 +	 *
-+	 * GCC REFUSES THE LITERAL, which is independent corroboration rather
-+	 * than a second opinion of my own: `-Werror=format=` says "'0' flag
-+	 * ignored with precision and '%d'". It is right about the rule; this
-+	 * printf does not follow it. Suppressed beside the one call it
-+	 * excuses, because the divergent behaviour IS the subject under test.
-+	 *
-+	 * Not fixed, same reasoning as d-zero: no in-tree caller combines a
-+	 * zero flag with a precision (the only integer conversions with a
-+	 * precision anywhere are ppc's two %8.8lx, which carry no 0 flag and
-+	 * are asserted correct above), and it mis-pads rather than
-+	 * over-reading. */
++	 * GCC REFUSED THE LITERAL ALL ALONG, which is what made this one more
++	 * than an opinion: -Werror=format= says "'0' flag ignored with precision
++	 * and '%d'". The compiler was right about the rule and this printf now
++	 * follows it. The warning is STILL suppressed here, and the reason has
++	 * inverted: it used to excuse testing divergent behaviour, and now
++	 * excuses writing a format GCC considers pointless in order to prove we
++	 * treat it the way GCC says it must be treated. */
 +#if defined(__GNUC__)
 +#pragma GCC diagnostic push
 +#pragma GCC diagnostic ignored "-Wformat"
 +#endif
-+	rc = snprintf(got, sizeof(got), "%08.3d", 42);
++	EDGE_CASE("zeropad-prec", "     042", "%08.3d", 42);
 +#if defined(__GNUC__)
 +#pragma GCC diagnostic pop
 +#endif
-+	n_div++;
-+	if( !strcmp(got, "00000042") ) {
-+		ok_div++;
-+		printk("printf-edges: zeropad-prec C99[     042](8) here[%s]"
-+		       " wrote=%d ret=%d DIVERGES-AS-RECORDED\n",
-+		       got, (int)strlen(got), rc);
-+	} else {
-+		printk("printf-edges: zeropad-prec C99[     042](8) here[%s]"
-+		       " wrote=%d ret=%d DIVERGENCE-CLOSED -- number() now"
-+		       " ignores the 0 flag; update this case and TODO 13.1c\n",
-+		       got, (int)strlen(got), rc);
-+	}
++
++	/* TODO 17.4's third item, and the fixture §13.3(B) said it could not
++	 * write. number() did `num = -num` on a long long with no guard, so
++	 * LLONG_MIN was UNDEFINED BEHAVIOUR -- and the note left it unexercised
++	 * "because testing it would mean shipping the UB in a fixture", which
++	 * was correct. Fixing it first is what makes the test safe: the digits
++	 * now come from an unsigned accumulator, where the negation is defined
++	 * for every input. Written as -N-1 rather than as the literal, because
++	 * -9223372036854775808 is unary minus applied to a constant too large
++	 * for long long -- the same trap one level up.
++	 *
++	 * THIS CASE IS A CONFORMANCE CHECK, NOT A PROOF THE FIX MATTERS, and the
++	 * difference was measured rather than assumed. Re-injecting the old
++	 * signed `-num` leaves this line GREEN: on x86-64 GCC the undefined
++	 * negation happens to produce the two's-complement bit pattern, which is
++	 * the right magnitude. A test cannot observe the absence of UB -- that is
++	 * a property of the source. What the fix buys is the right to ship this
++	 * fixture at all, which §13.3(B) correctly declined to do while running
++	 * it meant triggering the UB. Recorded as an UNKNOWN in TODO §17.4, not
++	 * folded into the pass. */
++	EDGE_CASE("llmin", "-9223372036854775808", "%lld",
++		  -9223372036854775807LL - 1);
++#undef EDGE_CASE
 +
 +	/* TODO 13.3(E)'s "untested printf surface": %n, and a long long wider
 +	 * than a cell. Both are implemented (libc/vsprintf.c case 'n' and the
@@ -6155,7 +6235,7 @@ index f96b621..4bc85b1 100644
  void
  openbios_init( void )
  {
-@@ -83,9 +451,182 @@ openbios_init( void )
+@@ -83,9 +430,182 @@ openbios_init( void )
  	// Bind the C implementation of (go) into Forth
  	bind_func("(go)", go);
  	
