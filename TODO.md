@@ -2614,7 +2614,7 @@ No single-mechanism story explains both rows. amd64 is unaffected: it defines no
 because it does not relocate. **The next session starts from this table**, which the
 firmware now prints itself.
 
-#### B. `number()` diverges from C99 in two measured ways
+#### B. `number()` diverges from C99 in two measured ways — **CLOSED 2026-08-29 (patch 46)**
 
 Both from `libc/vsprintf.c`, both asserted **as themselves** by `test-printf-edges` so that
 closing either one goes red on purpose.
@@ -2628,7 +2628,12 @@ The second is **independently corroborated by GCC**, which refuses the literal:
 `-Werror=format=` → *"'0' flag ignored with precision and '%d'"*. The compiler is right
 about the rule; this printf does not follow it.
 
-**Not fixed** — no in-tree caller combines a zero flag with a precision. The only integer
+**Both are now fixed, and so is the `LLONG_MIN` negation below** — see §17.4 for
+why the parked reasoning was re-derived and then overruled by §13.3(C), and for
+the control that came back BLIND. What follows is the record as it stood while
+they were carried.
+
+~~**Not fixed**~~ — no in-tree caller combines a zero flag with a precision. The only integer
 conversions carrying a precision anywhere are `arch/ppc/qemu/main.c:58-59`'s two `%8.8lx`,
 which carry no `0` flag and are asserted correct. Both divergences mis-*format*; neither
 over-*reads*, which is what separated them from
@@ -2652,7 +2657,7 @@ Two named exclusions where every sibling disables the lot. With `snprintf` left 
 builtin**, a call with a constant format and a constant argument lets the compiler compute
 the **return value** itself — per C99, where `%.0d` of `0` produces no characters — while
 leaving the call in place for its side effect. `libc/vsprintf.c` then performed that side
-effect and wrote `"0"`, because it diverges from C99 exactly there ([§13.3(B)](#b-number-diverges-from-c99-in-two-measured-ways)).
+effect and wrote `"0"`, because it diverges from C99 exactly there ([§13.3(B)](#b-number-diverges-from-c99-in-two-measured-ways--closed-2026-08-29-patch-46)).
 
 **The buffer came from our implementation and the return came from GCC's.** Two different
 printfs answering one call, and the arch that disagreed was the one that let a second printf
@@ -4277,12 +4282,56 @@ themselves wrong first** — this repo's own rule about where the bugs are:
 construction — the window comes from the same `sys_info` — but nothing parses
 `reg` and checks containment, so that is a claim from reading, not a measurement.
 
-### 17.4 — §13.3(B): `number()`'s two C99 divergences
+### 17.4 — ~~§13.3(B): `number()`'s two C99 divergences~~ — DONE 2026-08-29 (patch 46)
 
-Deliberately parked, and the reasoning still holds: there is **no in-tree caller**, GCC
-corroborates the behaviour, and the divergence is asserted as itself rather than
-"fixed". Lowest value of anything in this list. Kept here only so it is not rediscovered
-as new.
+Both closed, plus the undefined behaviour §13.3(B) named and declined to test.
+
+| case | C99 | before | after |
+|---|---|---|---|
+| `%.0d` of `0` | *(nothing)* | `"0"` | *(nothing)* |
+| `%08.3d` of `42` | `"     042"` | `"00000042"` | `"     042"` |
+
+**The parked reasoning was re-derived, not trusted, and it still held.** A
+repo-wide grep for an integer conversion carrying a precision finds ppc's four
+`%8.8lx` in the boot path — no `0` flag, asserted correct — and for `%08.3d`,
+nothing but the fixture asserting the divergence itself. So there was still no
+in-tree caller.
+
+**What the parked note did not weigh is §13.3(C), which happened in this same
+tree.** A printf that disagrees with C99 is a latent *"two printfs answering one
+call"*: GCC may constant-fold `snprintf`'s **return** per C99 while our code
+writes different bytes. That is precisely the ppc32 bug that cost a day and
+presented as a firmware defect. `-fno-builtin` now prevents it on every arch
+(patch 29) — but that is a mitigation one build-flag edit away from being lost,
+and the divergence is the thing it mitigates. Closing it removes the hazard
+rather than the symptom. **That argument, not the formatting, is why this stopped
+being the lowest-value item on the list.**
+
+**The third fix is what made the fixture shippable.** `number()` did
+`num = -num` on a `long long` with no guard, so `LLONG_MIN` was undefined
+behaviour; §13.3(B) named it from the source and declined to test it *"because
+testing it would mean shipping the UB in a fixture"*, which was correct. The
+digits now come from an unsigned accumulator, where the negation is defined for
+every input.
+
+**And that case is an UNKNOWN, not a proof — measured, not assumed.**
+Re-injecting the old signed `-num` leaves the `llmin` line **green**: on x86-64
+GCC the undefined negation happens to produce the two's-complement bit pattern,
+which is the right magnitude. **A test cannot observe the absence of undefined
+behaviour** — that is a property of the source, not an observable of one build.
+So the fixture asserts the output, and the comment beside it says what it cannot
+say. The control is reported as BLIND rather than quietly dropped.
+
+**The fixtures inverted rather than disappeared** — they were built for this day
+(*"if someone fixes `number()`, this line fails and says so"*) — and moved from
+the divergence counter into the ordinary one: **17/17 ok, 0/0 recorded
+divergence**. The `0/0` half stays in the summary on purpose: it is a positive
+statement that somebody looked, and dropping the phrase would make a tree
+carrying a *new* divergence print exactly what a conformant one prints.
+
+Controls: `%.0d` re-injected → `d-zero want[](0) got[0](1) BAD`; the `0` flag
+re-injected → `zeropad-prec got[00000042] BAD`; the signed negation re-injected →
+**BLIND**, reported above.
 
 ### 17.5 — Builds are not byte-reproducible
 

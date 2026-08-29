@@ -1941,8 +1941,16 @@ FTH
       # reads one extra character rather than over-reading like patch 21's bug,
       # and it sits in a boot path on the control arch. If someone fixes it the
       # fixture says DIVERGENCE-CLOSED and this assertion goes red on purpose.
-      grep -aqF 'printf-edges: 14/14 ok, 2/2 recorded divergence' <<<"$DL" \
-        || fail "REGRESSION: $A did not print 'printf-edges: 14/14 ok, 2/2 recorded divergence' — either number()/vsnprintf changed behaviour, or one of the two recorded C99 divergences (%.0d of 0; the 0 flag surviving a precision) was closed and this record is now false: $(grep -aoE 'printf-edges: [^ ]+ .{0,52}(BAD|CLOSED)' <<<"$DL" | head -3 | tr '\n' '|') — see $DLOG"
+      # TODO 17.4 CLOSED 2026-08-29: this was '14/14 ok, 2/2 recorded
+      # divergence' for two months. Both C99 divergences are fixed, so they
+      # moved from the divergence counter into the ordinary one, and the
+      # previously-untestable LLONG_MIN case joined them: 14 + 2 + 1 = 17.
+      #
+      # THE '0/0 recorded divergence' HALF IS NOT VESTIGIAL. It is a positive
+      # statement that somebody looked. Drop the phrase and a tree carrying a
+      # NEW, unrecorded divergence prints exactly what a conformant one prints.
+      grep -aqF 'printf-edges: 17/17 ok, 0/0 recorded divergence' <<<"$DL" \
+        || fail "REGRESSION: $A did not print 'printf-edges: 17/17 ok, 0/0 recorded divergence' — number()/vsnprintf changed behaviour, or one of TODO 17.4's three fixes (%.0d of 0 producing nothing; the 0 flag ignored when a precision is given; LLONG_MIN negated through an unsigned accumulator) came undone: $(grep -aoE 'printf-edges: [^ ]+ .{0,52}(BAD|MISMATCH)' <<<"$DL" | head -3 | tr '\n' '|') — see $DLOG"
 
       # (5) THE d-zero LINE IS PINNED PER ARCH, because the two halves of it
       # move independently and a ratio cannot say which one did. All three
@@ -1967,7 +1975,12 @@ FTH
       # produces nothing — while leaving the call in place for its side effect,
       # which libc/vsprintf.c performed by writing "0". Two different printfs
       # answering one call. Fixed in config/scripts/switch-arch (patch 29).
-      DZ='wrote=1 ret=1 DIVERGES-AS-RECORDED'
+      # SINCE TODO 17.4 THIS ASSERTS CONFORMANCE, not the divergence: C99
+      # 7.19.6.1p8 says %.0d of 0 produces NO characters, and all three arches
+      # now write none and return 0. The line stays pinned per arch for the
+      # reason it always was -- wrote= and ret= move independently, and a ratio
+      # cannot say which one did.
+      DZ='d-zero want[](0) got[](0) ret=0 OK'
       grep -aqF "$DZ" <<<"$DL" \
         || fail "REGRESSION: $A's d-zero line is not '$DZ' — %.0d of 0 changed what it writes, or what it returns, and those are two different defects: $(grep -aoE 'd-zero.{0,72}' <<<"$DL" | head -1) — see $DLOG"
       # THE FIXTURE IS DELIBERATELY NOT MADE OPAQUE to the optimiser. Passing
@@ -1977,10 +1990,10 @@ FTH
       grep -aq 'RET-DISAGREES' <<<"$DL" \
         && fail "REGRESSION: $A reports RET-DISAGREES on d-zero — the length written and the length returned disagree, which means something other than libc/vsprintf.c answered for the return. On ppc that was snprintf left as a GCC builtin; check -fno-builtin in config/scripts/switch-arch before looking at number() — see $DLOG"
 
-      note "$A: 0 binding failures during boot, the two reporter fixtures produced exactly 1 line each naming '$SELFW' and '$ESELFW', 7/7 printf-precision and 14/14 printf-edges cases pass (+2 recorded C99 divergences)"
+      note "$A: 0 binding failures during boot, the two reporter fixtures produced exactly 1 line each naming '$SELFW' and '$ESELFW', 7/7 printf-precision and 17/17 printf-edges cases pass, with 0 recorded C99 divergences left to carry"
     done
 
-    pass "the Forth bindings report their own failures on x86, amd64 and ppc: a clean boot prints ZERO feval/fword/eword lines on all three, and test-feval-report — the reporter's own must-catch fixture — prints exactly one, naming the unresolvable word and its throw code in both bases (-19 decimal, -13 hex — the Forth sources spell it the second way); and libc/vsprintf.c's %s precision now clips instead of over-reading (7/7), while number() precision and vsnprintf's buffer edge are correct on all three (12/12) with the two C99 divergences — %.0d of 0, and the 0 flag surviving a precision — asserted as themselves rather than hidden in a pass, and the ppc-only return-value anomaly that used to sit here as a named UNKNOWN is CLOSED: it was never number(), it was ppc32 being the one arch built without -fno-builtin, so GCC computed snprintf's return itself while our libc wrote the buffer — all three arches now print the same d-zero line. TODO 13.3(E) closes two of its three rows here: eword()'s not-found branch is watched to fire by name, and the untested printf surface it listed — %n and a long long wider than a cell — is now two cases that pass on every arch, including a 60-bit %llx on x86, whose stack cannot hold the value it prints"
+    pass "the Forth bindings report their own failures on x86, amd64 and ppc: a clean boot prints ZERO feval/fword/eword lines on all three, and test-feval-report — the reporter's own must-catch fixture — prints exactly one, naming the unresolvable word and its throw code in both bases (-19 decimal, -13 hex — the Forth sources spell it the second way); and libc/vsprintf.c's %s precision now clips instead of over-reading (7/7), while number() precision and vsnprintf's buffer edge are correct on all three (12/12) with and TODO 17.4's two C99 divergences are CLOSED rather than carried — %.0d of 0 now produces no characters and the 0 flag is ignored when a precision is given, both watched to bite by re-injection, and number()'s undefined \`num = -num\` at LLONG_MIN is fixed through an unsigned accumulator, which is what made that case testable at all (17/17, 0/0 recorded divergence), and the ppc-only return-value anomaly that used to sit here as a named UNKNOWN is CLOSED: it was never number(), it was ppc32 being the one arch built without -fno-builtin, so GCC computed snprintf's return itself while our libc wrote the buffer — all three arches now print the same d-zero line. TODO 13.3(E) closes two of its three rows here: eword()'s not-found branch is watched to fire by name, and the untested printf surface it listed — %n and a long long wider than a cell — is now two cases that pass on every arch, including a 60-bit %llx on x86, whose stack cannot hold the value it prints"
     ;;
   client-forth)
     # TODO 13.3(A): x86's `go` reached the Forth trampoline and evaluated
