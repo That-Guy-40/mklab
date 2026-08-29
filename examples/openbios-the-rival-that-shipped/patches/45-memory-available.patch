@@ -1,0 +1,291 @@
+From: mklab <noreply@example.invalid>
+Subject: [PATCH 45/45] TODO 17.3: /memory carries an `available`, and it is not a snapshot
+
+Arch-tested: x86 amd64 ppc
+
+Patch 40 gave /memory a `reg`. Open Firmware also carries `available` -- the
+UNALLOCATED subset -- which is what a client program consults before it claims,
+and neither PC arch published one. Both now do.
+
+IT IS REPUBLISHED ON EVERY CLAIM AND EVERY RELEASE, and that is the design
+rather than a detail. `available` describes a CURSOR: a snapshot taken at boot
+is a record that outlives its subject the first time a client allocates, which
+is bug class #1 in this repo's own notes. libopenbios/ofmem_common.c does the
+same thing for the arches that have ofmem (ofmem_update_memory_available); x86
+and amd64 have none, so their bump allocators call it themselves.
+
+    available  00800000 1f7e0000        (amd64, -m 512)
+    claim 0x1000 -> 00801000 1f7df000
+    release      -> 00800000 1f7e0000
+
+IT IS DELIBERATELY NARROWER THAN "ALL UNALLOCATED RAM", and that direction is
+chosen rather than accidental. Both PC arches allocate from ONE window, so any
+RAM outside it -- everything above 4 GiB included -- is in `reg` and will be
+REFUSED by claim. Advertising it would advertise memory the firmware will not
+give you, and a client that believes `available` and then gets -1 has been lied
+to. Under-reporting only costs a client an option it never had. Over-reporting
+would be the lie.
+
+An EMPTY window publishes a ZERO-LENGTH property rather than none: "nothing is
+free" and "nobody has said" are different answers and a client cannot tell them
+apart from an absent property.
+
+The cell counts come from ONE reader, extracted here rather than copied:
+memory_root_cells() now serves both publishers, so `available` is encoded with
+the same counts as `reg` -- which patch 43 made per-arch, 2/2 on amd64 and 1/1
+on x86. A window that does not fit those counts is left UNSET with a printk
+naming it, never truncated: truncating an address names a different region.
+
+All four assertions were watched to bite, and TWO OF THE FOUR CONTROLS were
+themselves wrong on the first attempt -- which is this repo's own rule about
+where the bugs are:
+  * publish once at boot, never after -> "available is not tracking the
+    allocator". (First attempt sed'd away the BOOT publish too, so the property
+    was absent and an earlier assertion fired; the control never reached the one
+    it meant.)
+  * amd64 binds no cif-claim -> the missing-method failure. (First attempt
+    DELETED the bind; the function went unused, -Werror stopped the build, and
+    the track SKIPped having tested nothing.)
+  * a refused claim republishes anyway -> "a REFUSED claim still moved".
+  * hard-code 1/1 -> "not encoded with the counts that decode it".
+
+NOT ASSERTED, said out loud: that `available` is a subset of `reg`. It is by
+construction -- the window comes from the same sys_info -- but nothing parses
+`reg` and checks containment, so that is a claim from reading, not a
+measurement.
+
+--- a/libopenbios/init.c
++++ b/libopenbios/init.c
+@@ -505,34 +505,106 @@
+ 	return p;
+ }
+ 
+-void publish_memory_ranges(struct sys_info *info)
++/* The root's cell counts, ONE reader for every publisher below. Absent counts
++ * fall back to the 1275 defaults (2 and 1), which is what my-#acells and
++ * my-#scells do (forth/device/property.fs:221,234); disagreeing with the tree's
++ * own decoder is how a property becomes unreadable.
++ *
++ * Returns 0 on success. Anything outside 1..2 is a tree these were not written
++ * for, and a wrong property is worse than none. */
++static int memory_root_cells(int *acells, int *scells, const char *what)
+ {
+-	phandle_t mem, root;
+-	u32 *cells, *p, v;
+-	int i, acells = 2, scells = 1, retlen, emitted = 0, dropped = 0;
+-
+-	if (!info || info->n_memranges <= 0)
+-		return;
+-	mem = find_dev("/memory");
+-	if (!mem)
+-		return;
++	phandle_t root;
++	int retlen;
++	ucell v;
+ 
++	*acells = 2;
++	*scells = 1;
+ 	root = find_dev("/");
+ 	if (root) {
+ 		v = get_int_property(root, "#address-cells", &retlen);
+ 		if (retlen == (int)sizeof(u32))
+-			acells = (int)v;
++			*acells = (int)v;
+ 		v = get_int_property(root, "#size-cells", &retlen);
+ 		if (retlen == (int)sizeof(u32))
+-			scells = (int)v;
++			*scells = (int)v;
+ 	}
+-	/* Anything outside 1..2 is a tree this function was not written for, and a
+-	 * wrong `reg` is worse than none: leave it absent rather than guess. */
+-	if (acells < 1 || acells > 2 || scells < 1 || scells > 2) {
++	if (*acells < 1 || *acells > 2 || *scells < 1 || *scells > 2) {
+ 		printk("/memory: root declares #address-cells %d / #size-cells %d, "
+-		       "which this does not encode -- leaving reg unset\n", acells, scells);
++		       "which this does not encode -- leaving %s unset\n",
++		       *acells, *scells, what);
++		return -1;
++	}
++	return 0;
++}
++
++/* publish_memory_available -- /memory's `available`, the UNALLOCATED subset.
++ *
++ * WHY IT IS NOT PUBLISHED ONCE. `available` describes a cursor that MOVES: the
++ * whole point of the property is what is free NOW, and a snapshot taken at boot
++ * is a record that outlives its subject the first time a client claims. So the
++ * arch allocators call this again on every claim and every release, which is
++ * what libopenbios/ofmem_common.c's ofmem_update_memory_available() does for the
++ * arches that have ofmem. x86 and amd64 do not.
++ *
++ * IT IS DELIBERATELY NARROWER THAN "ALL UNALLOCATED RAM", and that direction is
++ * chosen. Both PC arches allocate with a bump allocator over ONE window, so any
++ * RAM outside that window -- everything above 4 GiB included -- is in `reg` and
++ * will be REFUSED by `claim`. Advertising it would be advertising memory the
++ * firmware will not give you, and a client that believes `available` and then
++ * gets -1 has been lied to. Under-reporting only costs a client an option it
++ * never had.
++ *
++ * An EMPTY window publishes a zero-length property rather than no property:
++ * "nothing is free" and "nobody has said" are different answers, and a client
++ * cannot tell them apart from an absent property. */
++void publish_memory_available(unsigned long long start, unsigned long long end)
++{
++	phandle_t mem;
++	u32 cells[4], *p;
++	int acells, scells;
++
++	mem = find_dev("/memory");
++	if (!mem)
++		return;
++	if (memory_root_cells(&acells, &scells, "available"))
++		return;
++
++	if (end <= start) {
++		set_property(mem, "available", (char *)cells, 0);
++		return;
++	}
++	/* A window this cannot encode is a window a client must not be told about:
++	 * truncating it would name a different region entirely. */
++	if ((acells == 1 && (start >> 32)) || (scells == 1 && ((end - start) >> 32))) {
++		/* %llx, not FMT_ucellx: ucell is 32 bits on x86 and the whole point
++		 * of this branch is a value that does not fit in 32. libc/vsprintf.c
++		 * implements long long (TODO 13.3(E), patch 30 ran it for the first
++		 * time). */
++		printk("/memory: the free window %llx..%llx does not fit "
++		       "#address-cells %d / #size-cells %d -- leaving available unset\n",
++		       start, end, acells, scells);
+ 		return;
+ 	}
++	p = emit_cells(cells, start, acells);
++	p = emit_cells(p, end - start, scells);
++	set_property(mem, "available", (char *)cells,
++		     (int)((p - cells) * sizeof(u32)));
++}
++
++void publish_memory_ranges(struct sys_info *info)
++{
++	phandle_t mem;
++	u32 *cells, *p;
++	int i, acells, scells, emitted = 0, dropped = 0;
++
++	if (!info || info->n_memranges <= 0)
++		return;
++	mem = find_dev("/memory");
++	if (!mem)
++		return;
++	if (memory_root_cells(&acells, &scells, "reg"))
++		return;
+ 
+ 	cells = malloc(info->n_memranges * (acells + scells) * sizeof(u32));
+ 	if (!cells)
+--- a/include/libopenbios/sys_info.h
++++ b/include/libopenbios/sys_info.h
+@@ -6,6 +6,11 @@
+ /* Publishes the map below into /memory's `reg`; see libopenbios/init.c. */
+ struct sys_info;
+ extern void publish_memory_ranges(struct sys_info *info);
++/* /memory's `available` -- the still-free part of the arch allocator's window.
++ * Call it again on every claim and release: it describes a cursor that moves,
++ * and a snapshot taken once is stale from the first allocation. */
++extern void publish_memory_available(unsigned long long start,
++                                     unsigned long long end);
+ 
+ struct sys_info {
+     /* Values passed by bootloader */
+--- a/arch/x86/openbios.c
++++ b/arch/x86/openbios.c
+@@ -171,6 +171,17 @@
+ 
+ static unsigned long claim_next = CLAIM_BASE_PHYS;
+ 
++/* TODO 17.3: /memory's `available` is the still-free part of THIS window, and
++ * it is republished on every claim and release rather than snapshotted at boot.
++ * The property describes a cursor that moves; publishing it once would be a
++ * record that outlives its subject the first time a client allocates. */
++static void
++x86_publish_available( void )
++{
++	publish_memory_available((unsigned long long)claim_next,
++				 (unsigned long long)virt_to_phys(0));
++}
++
+ /* ( virt size align -- baseaddr|-1 ) */
+ static void
+ ciface_claim_x86( void )
+@@ -191,6 +202,7 @@
+ 		return;
+ 	}
+ 	claim_next = base + size;
++	x86_publish_available();
+ 	/* Return it the way the client will use it: firmware-virtual, because
+ 	 * a client runs in the firmware's rebased segments (arch_init_program). */
+ 	PUSH((ucell)(uintptr_t)phys_to_virt(base));
+@@ -204,8 +216,10 @@
+ 	ucell size = POP(), virt = POP();
+ 	unsigned long base = virt_to_phys((void *)(uintptr_t)virt);
+ 
+-	if (base + size == claim_next)
++	if (base + size == claim_next) {
+ 		claim_next = base;
++		x86_publish_available();
++	}
+ }
+ 
+ /* ------------------------------------------------------------------ *
+@@ -528,6 +542,9 @@
+ 	 * the device tree does not exist at the top of arch_init, and find_dev()
+ 	 * on a tree that is not built yet faults rather than returning 0. */
+ 	publish_memory_ranges(&sys_info);
++	/* AFTER the reg above: `available` is a subset of it, and find_dev needs
++	 * the node either way. */
++	x86_publish_available();
+ 
+ 	bind_func("platform-boot", boot );
+ 
+--- a/arch/amd64/openbios.c
++++ b/arch/amd64/openbios.c
+@@ -129,6 +129,13 @@
+ 	return 0;
+ }
+ 
++/* TODO 17.3: republished on every claim and release, never snapshotted. */
++static void
++amd64_publish_available( void )
++{
++	publish_memory_available(claim_next, claim_limit());
++}
++
+ /* ( virt size align -- baseaddr|-1 ) */
+ static void
+ ciface_claim_amd64( void )
+@@ -149,6 +156,7 @@
+ 		return;
+ 	}
+ 	claim_next = base + size;
++	amd64_publish_available();
+ 	/* No phys_to_virt() here, unlike x86: this firmware runs in place, so the
+ 	 * physical address IS the address a client uses. */
+ 	PUSH((ucell)base);
+@@ -161,8 +169,10 @@
+ {
+ 	ucell size = POP(), virt = POP();
+ 
+-	if ((unsigned long long)virt + size == claim_next)
++	if ((unsigned long long)virt + size == claim_next) {
+ 		claim_next = virt;
++		amd64_publish_available();
++	}
+ }
+ 
+ /* Spike 2: ( -- n )  run the context-switch self-test and push its result. */
+@@ -265,6 +275,9 @@
+ 	bind_func("cif-release", ciface_release_amd64);
+ 	device_end();
+ 
++	/* AFTER the reg above: `available` is a subset of it. */
++	amd64_publish_available();
++
+ 	bind_func("platform-boot", boot );
+ 
+ 	/* Spike 2: expose the context-switch self-test at the prompt, so the

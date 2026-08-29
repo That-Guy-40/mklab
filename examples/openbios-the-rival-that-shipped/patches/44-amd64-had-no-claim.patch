@@ -1,0 +1,148 @@
+From: mklab <noreply@example.invalid>
+Subject: [PATCH 44/45] arch/amd64 bound no cif-claim at all, so every client allocation returned -1
+
+Arch-tested: x86 amd64 ppc
+
+arch/x86 got a bump allocator when this lab found that x86 shipped no cif-claim
+and the IEEE 1275 `claim` service fell through forth/system/ciface.fs's
+`else 3drop -1`. arch/amd64 was never given one. It has no
+/openprom/client-services block at all, so on the 64-bit firmware every client
+allocation has always returned -1.
+
+Measured before writing this, with the positive control in the same run:
+
+    " cif-claim" find-method   x86: FOUND     amd64: MISSING
+    " cif-release" find-method x86: FOUND     amd64: MISSING
+
+Nothing had noticed because the client-program ladder was built on ppc and the
+revived x86, and no 64-bit client had ever asked for memory.
+
+THE WINDOW CANNOT BE COPIED FROM x86, which is the part worth reading. x86 sizes
+its window as 8 MiB up to virt_to_phys(0) -- the bottom of the client's address
+window, just below the RELOCATED firmware -- and both ends move with
+virt_offset. arch/amd64 does not relocate at all (long mode ignores segment
+bases, Spike 1), so virt_to_phys(0) is 0 and x86's formula yields an EMPTY
+window: a claim allocator that refuses everything, which is what it replaced.
+The limit is derived from sys_info's memory map instead -- the end of the usable
+range containing the base -- which is the same map `reg` is published from and
+is therefore right at any -m size.
+
+The other divergence is the return value: x86 hands back phys_to_virt(base)
+because a client there runs in the firmware's rebased segments; amd64 runs in
+place, so the physical address IS the address the client uses.
+
+They are NODE METHODS on /openprom/client-services, not global words. ppc and
+sparc install the same two names there via NODE_METHODS and arch/x86 wraps its
+pair in the identical find-device/device_end, so being invisible to a global
+$find is correct here rather than a second instance of the patch-14 binding bug.
+TODO §13.1 records that distinction, after this lab briefly got it wrong in the
+other direction.
+
+Control: renaming the bind to "cif-claim-CONTROL" makes the new
+memory-available track fail naming the missing method. (Deleting the bind
+instead does NOT work as a control -- the function goes unused, -Werror stops
+the build, and the track SKIPs on a missing artifact having tested nothing.)
+
+--- a/arch/amd64/openbios.c
++++ b/arch/amd64/openbios.c
+@@ -90,6 +90,81 @@
+ 	PUSH(0x9FFFF);
+ }
+ 
++/* ---- `claim` for amd64 (TODO 17.3) ----------------------------------
++ * arch/amd64 bound NO cif-claim and NO cif-release, so the IEEE 1275 `claim`
++ * service fell through forth/system/ciface.fs's `else 3drop -1` and every
++ * client allocation on the 64-bit firmware failed. arch/x86 got a bump
++ * allocator when this lab found the same hole there; amd64 never did, and it
++ * went unnoticed because nothing here had asked a 64-bit client to allocate.
++ * Measured before writing this: `" cif-claim" find-method` finds it on x86 and
++ * does NOT on amd64.
++ *
++ * THE WINDOW CANNOT BE COPIED FROM x86, and that is the interesting part.
++ * x86 sizes its window as 8 MiB up to virt_to_phys(0) -- the bottom of the
++ * client's address window, just below the RELOCATED firmware -- and both ends
++ * move with virt_offset. amd64 does not relocate at all (long mode ignores
++ * segment bases, Spike 1), so virt_to_phys(0) is 0 and that formula yields an
++ * empty window. The limit here is DERIVED from the memory map instead: the end
++ * of the usable range that contains the base, which is the same sys_info the
++ * `reg` above is published from and is therefore correct at any -m size.
++ */
++#define CLAIM_BASE_PHYS	0x800000ULL
++
++static unsigned long long claim_next = CLAIM_BASE_PHYS;
++
++/* The end of the usable range containing CLAIM_BASE_PHYS, or 0 if the base is
++ * not in any usable range -- which would mean a machine too small to allocate
++ * from, and 0 makes the window empty rather than unbounded. */
++static unsigned long long claim_limit( void )
++{
++	int i;
++
++	for (i = 0; i < sys_info.n_memranges; i++) {
++		unsigned long long base = sys_info.memrange[i].base;
++		unsigned long long end  = base + sys_info.memrange[i].size;
++
++		if (CLAIM_BASE_PHYS >= base && CLAIM_BASE_PHYS < end)
++			return end;
++	}
++	return 0;
++}
++
++/* ( virt size align -- baseaddr|-1 ) */
++static void
++ciface_claim_amd64( void )
++{
++	ucell align = POP(), size = POP(), virt = POP();
++	unsigned long long base, limit;
++
++	if (virt) {		/* caller named an address; honour it */
++		PUSH(virt);
++		return;
++	}
++	if (align < 0x1000)
++		align = 0x1000;
++	base = (claim_next + align - 1) & ~((unsigned long long)align - 1);
++	limit = claim_limit();
++	if (!size || base + size > limit || base + size < base) {
++		PUSH((ucell)-1);
++		return;
++	}
++	claim_next = base + size;
++	/* No phys_to_virt() here, unlike x86: this firmware runs in place, so the
++	 * physical address IS the address a client uses. */
++	PUSH((ucell)base);
++}
++
++/* ( virt size -- ). A bump allocator cannot free; releasing in LIFO order is
++ * the only case worth honouring, and clients exit immediately after. */
++static void
++ciface_release_amd64( void )
++{
++	ucell size = POP(), virt = POP();
++
++	if ((unsigned long long)virt + size == claim_next)
++		claim_next = virt;
++}
++
+ /* Spike 2: ( -- n )  run the context-switch self-test and push its result. */
+ static void ctx_switch_word( void )
+ {
+@@ -178,6 +253,18 @@
+ 	 * on a tree that is not built yet faults rather than returning 0. */
+ 	publish_memory_ranges(&sys_info);
+ 
++	/* TODO 17.3. Node METHODS on /openprom/client-services, not global words:
++	 * ppc and sparc install the same two names there via NODE_METHODS, and
++	 * arch/x86 wraps its pair in the identical find-device/device_end. Their
++	 * being invisible to a global $find is correct here, not a second instance
++	 * of the patch-14 binding bug -- TODO §13.1 records that distinction after
++	 * this lab briefly got it wrong in the other direction. */
++	push_str("/openprom/client-services");
++	fword("find-device");
++	bind_func("cif-claim", ciface_claim_amd64);
++	bind_func("cif-release", ciface_release_amd64);
++	device_end();
++
+ 	bind_func("platform-boot", boot );
+ 
+ 	/* Spike 2: expose the context-switch self-test at the prompt, so the
