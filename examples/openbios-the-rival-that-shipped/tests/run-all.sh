@@ -55,6 +55,7 @@ tracks=(
     test-smoke-flash-writer.sh
     test-smoke-floppy.sh
     test-smoke-mmio-writer.sh
+    test-smoke-memory-available.sh
     test-smoke-multiboot.sh
     test-smoke-nvram.sh
     test-smoke-persist.sh

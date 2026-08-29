@@ -1838,7 +1838,7 @@ index 17cf202..bf0af39 100644
  
  #endif				/* ! ASM */
 diff --git a/arch/amd64/openbios.c b/arch/amd64/openbios.c
-index 15d3b62..7eb05c9 100644
+index 15d3b62..dc47b27 100644
 --- a/arch/amd64/openbios.c
 +++ b/arch/amd64/openbios.c
 @@ -9,12 +9,23 @@
@@ -1916,10 +1916,95 @@ index 15d3b62..7eb05c9 100644
  static void init_memory(void)
  {
  	/* push start and end of available memory to the stack
-@@ -35,19 +90,99 @@ static void init_memory(void)
+@@ -35,19 +90,199 @@ static void init_memory(void)
  	PUSH(0x9FFFF);
  }
  
++/* ---- `claim` for amd64 (TODO 17.3) ----------------------------------
++ * arch/amd64 bound NO cif-claim and NO cif-release, so the IEEE 1275 `claim`
++ * service fell through forth/system/ciface.fs's `else 3drop -1` and every
++ * client allocation on the 64-bit firmware failed. arch/x86 got a bump
++ * allocator when this lab found the same hole there; amd64 never did, and it
++ * went unnoticed because nothing here had asked a 64-bit client to allocate.
++ * Measured before writing this: `" cif-claim" find-method` finds it on x86 and
++ * does NOT on amd64.
++ *
++ * THE WINDOW CANNOT BE COPIED FROM x86, and that is the interesting part.
++ * x86 sizes its window as 8 MiB up to virt_to_phys(0) -- the bottom of the
++ * client's address window, just below the RELOCATED firmware -- and both ends
++ * move with virt_offset. amd64 does not relocate at all (long mode ignores
++ * segment bases, Spike 1), so virt_to_phys(0) is 0 and that formula yields an
++ * empty window. The limit here is DERIVED from the memory map instead: the end
++ * of the usable range that contains the base, which is the same sys_info the
++ * `reg` above is published from and is therefore correct at any -m size.
++ */
++#define CLAIM_BASE_PHYS	0x800000ULL
++
++static unsigned long long claim_next = CLAIM_BASE_PHYS;
++
++/* The end of the usable range containing CLAIM_BASE_PHYS, or 0 if the base is
++ * not in any usable range -- which would mean a machine too small to allocate
++ * from, and 0 makes the window empty rather than unbounded. */
++static unsigned long long claim_limit( void )
++{
++	int i;
++
++	for (i = 0; i < sys_info.n_memranges; i++) {
++		unsigned long long base = sys_info.memrange[i].base;
++		unsigned long long end  = base + sys_info.memrange[i].size;
++
++		if (CLAIM_BASE_PHYS >= base && CLAIM_BASE_PHYS < end)
++			return end;
++	}
++	return 0;
++}
++
++/* TODO 17.3: republished on every claim and release, never snapshotted. */
++static void
++amd64_publish_available( void )
++{
++	publish_memory_available(claim_next, claim_limit());
++}
++
++/* ( virt size align -- baseaddr|-1 ) */
++static void
++ciface_claim_amd64( void )
++{
++	ucell align = POP(), size = POP(), virt = POP();
++	unsigned long long base, limit;
++
++	if (virt) {		/* caller named an address; honour it */
++		PUSH(virt);
++		return;
++	}
++	if (align < 0x1000)
++		align = 0x1000;
++	base = (claim_next + align - 1) & ~((unsigned long long)align - 1);
++	limit = claim_limit();
++	if (!size || base + size > limit || base + size < base) {
++		PUSH((ucell)-1);
++		return;
++	}
++	claim_next = base + size;
++	amd64_publish_available();
++	/* No phys_to_virt() here, unlike x86: this firmware runs in place, so the
++	 * physical address IS the address a client uses. */
++	PUSH((ucell)base);
++}
++
++/* ( virt size -- ). A bump allocator cannot free; releasing in LIFO order is
++ * the only case worth honouring, and clients exit immediately after. */
++static void
++ciface_release_amd64( void )
++{
++	ucell size = POP(), virt = POP();
++
++	if ((unsigned long long)virt + size == claim_next) {
++		claim_next = virt;
++		amd64_publish_available();
++	}
++}
++
 +/* Spike 2: ( -- n )  run the context-switch self-test and push its result. */
 +static void ctx_switch_word( void )
 +{
@@ -1974,7 +2059,7 @@ index 15d3b62..7eb05c9 100644
 +	nvram_init("/");
 +	nvconf_init();
 +
- 	device_end();
++	device_end();
 +
 +	/* openbios_init() RUNS HERE, NOT AT THE TOP, and the ordering is the whole
 +	 * of it.
@@ -2010,6 +2095,21 @@ index 15d3b62..7eb05c9 100644
 +	 * on a tree that is not built yet faults rather than returning 0. */
 +	publish_memory_ranges(&sys_info);
 +
++	/* TODO 17.3. Node METHODS on /openprom/client-services, not global words:
++	 * ppc and sparc install the same two names there via NODE_METHODS, and
++	 * arch/x86 wraps its pair in the identical find-device/device_end. Their
++	 * being invisible to a global $find is correct here, not a second instance
++	 * of the patch-14 binding bug -- TODO §13.1 records that distinction after
++	 * this lab briefly got it wrong in the other direction. */
++	push_str("/openprom/client-services");
++	fword("find-device");
++	bind_func("cif-claim", ciface_claim_amd64);
++	bind_func("cif-release", ciface_release_amd64);
+ 	device_end();
++
++	/* AFTER the reg above: `available` is a subset of it. */
++	amd64_publish_available();
++
  	bind_func("platform-boot", boot );
 +
 +	/* Spike 2: expose the context-switch self-test at the prompt, so the
@@ -2018,7 +2118,7 @@ index 15d3b62..7eb05c9 100644
  }
  
  extern struct _console_ops arch_console_ops;
-@@ -65,11 +200,48 @@ int openbios(void)
+@@ -65,11 +300,48 @@ int openbios(void)
  
          collect_sys_info(&sys_info);
  
@@ -2071,7 +2171,7 @@ index 15d3b62..7eb05c9 100644
  	forth_init();
  
  	relocate(&sys_info);
-@@ -106,3 +278,116 @@ int openbios(void)
+@@ -106,3 +378,116 @@ int openbios(void)
  
  	return 0;
  }
@@ -3336,7 +3436,7 @@ index fd0fe97..920a561 100644
  /* magic number passed by multiboot-compliant boot loader.  */
  #define MULTIBOOT_BOOTLOADER_MAGIC	0x2BADB002
 diff --git a/arch/x86/openbios.c b/arch/x86/openbios.c
-index 1274d2b..c2ec3f7 100644
+index 1274d2b..73eebd7 100644
 --- a/arch/x86/openbios.c
 +++ b/arch/x86/openbios.c
 @@ -21,6 +21,15 @@
@@ -3389,7 +3489,7 @@ index 1274d2b..c2ec3f7 100644
      .host_ranges = {
          { .type = IO_SPACE, .parentaddr = 0, .childaddr = 0x1000, .len = 0 },
          { .type = 0, .parentaddr = 0, .childaddr = 0, .len = 0 }
-@@ -50,10 +86,373 @@ static void init_memory(void)
+@@ -50,10 +86,387 @@ static void init_memory(void)
  	PUSH(0x9FFFF);
  }
  
@@ -3478,6 +3578,17 @@ index 1274d2b..c2ec3f7 100644
 +
 +static unsigned long claim_next = CLAIM_BASE_PHYS;
 +
++/* TODO 17.3: /memory's `available` is the still-free part of THIS window, and
++ * it is republished on every claim and release rather than snapshotted at boot.
++ * The property describes a cursor that moves; publishing it once would be a
++ * record that outlives its subject the first time a client allocates. */
++static void
++x86_publish_available( void )
++{
++	publish_memory_available((unsigned long long)claim_next,
++				 (unsigned long long)virt_to_phys(0));
++}
++
 +/* ( virt size align -- baseaddr|-1 ) */
 +static void
 +ciface_claim_x86( void )
@@ -3498,6 +3609,7 @@ index 1274d2b..c2ec3f7 100644
 +		return;
 +	}
 +	claim_next = base + size;
++	x86_publish_available();
 +	/* Return it the way the client will use it: firmware-virtual, because
 +	 * a client runs in the firmware's rebased segments (arch_init_program). */
 +	PUSH((ucell)(uintptr_t)phys_to_virt(base));
@@ -3511,8 +3623,10 @@ index 1274d2b..c2ec3f7 100644
 +	ucell size = POP(), virt = POP();
 +	unsigned long base = virt_to_phys((void *)(uintptr_t)virt);
 +
-+	if (base + size == claim_next)
++	if (base + size == claim_next) {
 +		claim_next = base;
++		x86_publish_available();
++	}
 +}
 +
 +/* ------------------------------------------------------------------ *
@@ -3764,7 +3878,7 @@ index 1274d2b..c2ec3f7 100644
  	modules_init();
  #ifdef CONFIG_DRIVER_PCI
  	arch = &default_pci_host;
-@@ -82,11 +481,82 @@ arch_init( void )
+@@ -82,11 +495,85 @@ arch_init( void )
  	init_video();
  	node_methods_init();
  #endif
@@ -3815,6 +3929,9 @@ index 1274d2b..c2ec3f7 100644
 +	 * the device tree does not exist at the top of arch_init, and find_dev()
 +	 * on a tree that is not built yet faults rather than returning 0. */
 +	publish_memory_ranges(&sys_info);
++	/* AFTER the reg above: `available` is a subset of it, and find_dev needs
++	 * the node either way. */
++	x86_publish_available();
 +
  	bind_func("platform-boot", boot );
 -}
@@ -3849,7 +3966,7 @@ index 1274d2b..c2ec3f7 100644
  
  int openbios(void)
  {
-@@ -101,10 +571,22 @@ int openbios(void)
+@@ -101,10 +588,22 @@ int openbios(void)
  
          collect_sys_info(&sys_info);
  
@@ -5291,16 +5408,21 @@ index 6b0302d..369318b 100644
  extern int		_parword( const char *method, xt_t *cache_xt );
  
 diff --git a/include/libopenbios/sys_info.h b/include/libopenbios/sys_info.h
-index a8b3cce..9e4cb90 100644
+index a8b3cce..1c2ad86 100644
 --- a/include/libopenbios/sys_info.h
 +++ b/include/libopenbios/sys_info.h
-@@ -3,6 +3,10 @@
+@@ -3,6 +3,15 @@
  
  /* Information collected from firmware/bootloader */
  
 +/* Publishes the map below into /memory's `reg`; see libopenbios/init.c. */
 +struct sys_info;
 +extern void publish_memory_ranges(struct sys_info *info);
++/* /memory's `available` -- the still-free part of the arch allocator's window.
++ * Call it again on every claim and release: it describes a cursor that moves,
++ * and a snapshot taken once is stale from the first allocation. */
++extern void publish_memory_available(unsigned long long start,
++                                     unsigned long long end);
 +
  struct sys_info {
      /* Values passed by bootloader */
@@ -5645,7 +5767,7 @@ index 4433635..3694115 100644
      
      feval("-1 state-valid !");
 diff --git a/libopenbios/init.c b/libopenbios/init.c
-index f96b621..414a679 100644
+index f96b621..4bc85b1 100644
 --- a/libopenbios/init.c
 +++ b/libopenbios/init.c
 @@ -16,9 +16,13 @@
@@ -6033,7 +6155,7 @@ index f96b621..414a679 100644
  void
  openbios_init( void )
  {
-@@ -83,9 +451,110 @@ openbios_init( void )
+@@ -83,9 +451,182 @@ openbios_init( void )
  	// Bind the C implementation of (go) into Forth
  	bind_func("(go)", go);
  	
@@ -6091,34 +6213,106 @@ index f96b621..414a679 100644
 +	return p;
 +}
 +
++/* The root's cell counts, ONE reader for every publisher below. Absent counts
++ * fall back to the 1275 defaults (2 and 1), which is what my-#acells and
++ * my-#scells do (forth/device/property.fs:221,234); disagreeing with the tree's
++ * own decoder is how a property becomes unreadable.
++ *
++ * Returns 0 on success. Anything outside 1..2 is a tree these were not written
++ * for, and a wrong property is worse than none. */
++static int memory_root_cells(int *acells, int *scells, const char *what)
++{
++	phandle_t root;
++	int retlen;
++	ucell v;
++
++	*acells = 2;
++	*scells = 1;
++	root = find_dev("/");
++	if (root) {
++		v = get_int_property(root, "#address-cells", &retlen);
++		if (retlen == (int)sizeof(u32))
++			*acells = (int)v;
++		v = get_int_property(root, "#size-cells", &retlen);
++		if (retlen == (int)sizeof(u32))
++			*scells = (int)v;
++	}
++	if (*acells < 1 || *acells > 2 || *scells < 1 || *scells > 2) {
++		printk("/memory: root declares #address-cells %d / #size-cells %d, "
++		       "which this does not encode -- leaving %s unset\n",
++		       *acells, *scells, what);
++		return -1;
++	}
++	return 0;
++}
++
++/* publish_memory_available -- /memory's `available`, the UNALLOCATED subset.
++ *
++ * WHY IT IS NOT PUBLISHED ONCE. `available` describes a cursor that MOVES: the
++ * whole point of the property is what is free NOW, and a snapshot taken at boot
++ * is a record that outlives its subject the first time a client claims. So the
++ * arch allocators call this again on every claim and every release, which is
++ * what libopenbios/ofmem_common.c's ofmem_update_memory_available() does for the
++ * arches that have ofmem. x86 and amd64 do not.
++ *
++ * IT IS DELIBERATELY NARROWER THAN "ALL UNALLOCATED RAM", and that direction is
++ * chosen. Both PC arches allocate with a bump allocator over ONE window, so any
++ * RAM outside that window -- everything above 4 GiB included -- is in `reg` and
++ * will be REFUSED by `claim`. Advertising it would be advertising memory the
++ * firmware will not give you, and a client that believes `available` and then
++ * gets -1 has been lied to. Under-reporting only costs a client an option it
++ * never had.
++ *
++ * An EMPTY window publishes a zero-length property rather than no property:
++ * "nothing is free" and "nobody has said" are different answers, and a client
++ * cannot tell them apart from an absent property. */
++void publish_memory_available(unsigned long long start, unsigned long long end)
++{
++	phandle_t mem;
++	u32 cells[4], *p;
++	int acells, scells;
++
++	mem = find_dev("/memory");
++	if (!mem)
++		return;
++	if (memory_root_cells(&acells, &scells, "available"))
++		return;
++
++	if (end <= start) {
++		set_property(mem, "available", (char *)cells, 0);
++		return;
++	}
++	/* A window this cannot encode is a window a client must not be told about:
++	 * truncating it would name a different region entirely. */
++	if ((acells == 1 && (start >> 32)) || (scells == 1 && ((end - start) >> 32))) {
++		/* %llx, not FMT_ucellx: ucell is 32 bits on x86 and the whole point
++		 * of this branch is a value that does not fit in 32. libc/vsprintf.c
++		 * implements long long (TODO 13.3(E), patch 30 ran it for the first
++		 * time). */
++		printk("/memory: the free window %llx..%llx does not fit "
++		       "#address-cells %d / #size-cells %d -- leaving available unset\n",
++		       start, end, acells, scells);
++		return;
++	}
++	p = emit_cells(cells, start, acells);
++	p = emit_cells(p, end - start, scells);
++	set_property(mem, "available", (char *)cells,
++		     (int)((p - cells) * sizeof(u32)));
++}
++
 +void publish_memory_ranges(struct sys_info *info)
 +{
-+	phandle_t mem, root;
-+	u32 *cells, *p, v;
-+	int i, acells = 2, scells = 1, retlen, emitted = 0, dropped = 0;
++	phandle_t mem;
++	u32 *cells, *p;
++	int i, acells, scells, emitted = 0, dropped = 0;
 +
 +	if (!info || info->n_memranges <= 0)
 +		return;
 +	mem = find_dev("/memory");
 +	if (!mem)
 +		return;
-+
-+	root = find_dev("/");
-+	if (root) {
-+		v = get_int_property(root, "#address-cells", &retlen);
-+		if (retlen == (int)sizeof(u32))
-+			acells = (int)v;
-+		v = get_int_property(root, "#size-cells", &retlen);
-+		if (retlen == (int)sizeof(u32))
-+			scells = (int)v;
-+	}
-+	/* Anything outside 1..2 is a tree this function was not written for, and a
-+	 * wrong `reg` is worse than none: leave it absent rather than guess. */
-+	if (acells < 1 || acells > 2 || scells < 1 || scells > 2) {
-+		printk("/memory: root declares #address-cells %d / #size-cells %d, "
-+		       "which this does not encode -- leaving reg unset\n", acells, scells);
++	if (memory_root_cells(&acells, &scells, "reg"))
 +		return;
-+	}
 +
 +	cells = malloc(info->n_memranges * (acells + scells) * sizeof(u32));
 +	if (!cells)

@@ -4218,13 +4218,64 @@ count, a kind renamed in one place only) were watched to bite.
 already one-per-defect with PR-shaped `Subject:` lines and `Arch-tested:` lines
 from patch 20 onward. Carrying them locally forecloses nothing.
 
-### 17.3 — `/memory` has a `reg` but no `available`
+### 17.3 — ~~`/memory` has a `reg` but no `available`~~ — DONE 2026-08-29 (patches 44-45)
 
-Patch 40 publishes `reg`. Open Firmware conventionally also carries `available` on
-`/memory` — the *unallocated* subset — which is what a client program consults before
-`claim`ing. Nothing here needs it yet (`arch/x86` has no ofmem and does its own simple
-claim), so it is **named rather than filed as a defect**: if a client-program lab ever
-asks `/memory` what is free, this is the gap it will find.
+Both PC arches now publish `available` beside `reg`, and **it is republished on
+every claim and every release rather than snapshotted at boot** —
+`libopenbios/ofmem_common.c` does the same for the arches that have ofmem; x86
+and amd64 have none, so their bump allocators call it themselves. A property
+that describes a *cursor* and is written once is a record that outlives its
+subject the first time a client allocates.
+
+```
+available  00800000 1f7e0000        (amd64, -m 512)
+claim 1000 -> 00801000 1f7df000
+release    -> 00800000 1f7e0000
+```
+
+**17.3 turned out to contain a second, unrecorded defect, and it was the bigger
+one.** `arch/amd64` bound **no `cif-claim` or `cif-release` at all** — no
+`/openprom/client-services` block — so the 1275 claim service fell through
+`forth/system/ciface.fs`'s `else 3drop -1` and *every* client allocation on the
+64-bit firmware returned `-1`. Measured before writing anything, with the
+positive control in the same run: `" cif-claim" find-method` found it on x86 and
+did not on amd64. Publishing `available` there first would have advertised memory
+nothing could take. That is **patch 44**, kept as its own diff.
+
+**x86's window formula could not be copied**, which is the interesting part.
+x86 sizes its window as 8 MiB up to `virt_to_phys(0)` — the bottom of the
+client's address window, below the **relocated** firmware — and both ends move
+with `virt_offset`. amd64 does not relocate at all, so `virt_to_phys(0)` is 0 and
+the same expression yields an **empty** window: an allocator that refuses
+everything. amd64's limit is derived from `sys_info`'s memory map instead.
+
+**`available` is deliberately narrower than "all unallocated RAM".** Both arches
+allocate from one window, so RAM outside it — everything above 4 GiB included —
+is in `reg` and will be **refused** by `claim`. Under-reporting costs a client an
+option it never had; over-reporting is a lie. An empty window publishes a
+**zero-length** property rather than none, because *"nothing is free"* and
+*"nobody has said"* are different answers.
+
+**New track: `memory-available`**, on both arches, and it asserts that the
+property **moves** rather than that it exists — claim a page, the free base rises
+by exactly `0x1000` *and* the size falls by exactly `0x1000`; a LIFO release puts
+both back. The control that makes those mean anything is a claim of `0xffffff000`
+bytes: it must return `-1` and leave the property **untouched**, or "it moves"
+would be satisfied by a value wired to anything that changes.
+
+**All four assertions were watched to bite, and two of the four controls were
+themselves wrong first** — this repo's own rule about where the bugs are:
+
+| injected | result |
+|---|---|
+| publish once at boot, never after | *"available is not tracking the allocator"* — but only after the control was fixed: the first attempt removed the **boot** publish too, so the property was absent and an earlier assertion fired |
+| amd64 binds no `cif-claim` | the missing-method failure — but only after the control was fixed: **deleting** the bind left the function unused, `-Werror` stopped the build, and the track SKIPped having tested nothing |
+| a refused claim republishes anyway | *"a REFUSED claim still moved 'available'"* |
+| hard-code the cells to 1/1 | *"not encoded with the counts that decode it"* |
+
+**Not asserted, said out loud:** that `available` is a subset of `reg`. It is by
+construction — the window comes from the same `sys_info` — but nothing parses
+`reg` and checks containment, so that is a claim from reading, not a measurement.
 
 ### 17.4 — §13.3(B): `number()`'s two C99 divergences
 

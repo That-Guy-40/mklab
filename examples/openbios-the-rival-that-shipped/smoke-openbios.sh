@@ -26,6 +26,7 @@ TRACK (default multiboot):
   amd64-fault amd64-ctx       exceptions and the context switch (Spike 2)
   amd64-pmem                  /nvram on an NVDIMM above 4 GiB (P3)
   amd64-linux                 the 64-bit firmware boots Linux (Spike 3)
+  memory-available            TODO 17.3: /memory's available, and the claim it describes
   property-abi                TODO 13.2's four property.fs defects, watched
                               to bite on both arches
   vga                         PCI enumeration on amd64, and the VGA FCode
@@ -1518,6 +1519,180 @@ FTH
 
     pass "TODO 13.2 watched to bite: (a) the SAME four bytes decode to ffffffff on amd64 and -1 on x86 — encode-int/decode-int is not a round trip at a 64-bit cell — and the premise it is tolerated on is now DERIVED rather than assumed: every four-byte decode of the boot is counted, and none has bit 31 set, which is the only reason zero-extension has yet to give a real consumer a wrong answer; (b) FIXED — a value >= 2^32 is now REFUSED BY NAME on amd64 where it used to be silently truncated into four bytes, with ffffffff and -1 both still encoding cleanly in the same run so the gate is not simply refusing everything, and the input still UNREPRESENTABLE on x86, reported as an UNKNOWN not a pass; (c) FIXED — encode+ used to be \`nip +\`, adjacency-by-assumption: it returned the RIGHT length over the WRONG bytes the moment anything moved HERE between fragments, so the second decode-int read the gap (30302f63) rather than the fragment, and §13.2's own \"lies about the length\" was disproved by the control; it now concatenates, with BOTH branches exercised in the same run (adjacent 3,4 and non-adjacent 1,2 each coming back out of an 8-byte array) so a fix whose slow path never runs cannot pass; and encode-phys is NOT fixed-width, measured in three contexts per arch — 8 bytes under / (the no-parent default of 2 cells), the root's OWN declaration under /ide@1 (derived per arch, since TODO 17.1 gives amd64 two address cells and leaves x86 at one), and c under a PCI child whose bus declares 3; and the parent half of a \`ranges\` entry round-trips through decode-int at whatever width the root is currently declaring, phys.hi first; and (d) decode-bytes, which used to return CLEANLY with six items where four are documented — two cells robbed off the return stack — now round-trips encode-bytes on both arches at depth exactly 4, from an empty stack back to an empty one; and review §2's fourth assertion is closed — /chosen's stdin round-trips through encode-int/decode-int at the address instances actually land on, a different ihandle from the same node is distinguishable so that match means something, and the top 32 bits are derived per boot rather than assumed, which answers the review's own UNKNOWN: an amd64 instance does NOT land above 4 GiB today; and TODO 16's storage split holds on both arches — int!/string! write where the caller says with HERE unchanged, and the cursor composes three fields at a chosen address that the stock 1275 decode-int reads back unchanged"
     ;;
+  memory-available)
+    # TODO 17.3: /memory's `available` -- the UNALLOCATED subset -- and the
+    # `claim` it is supposed to describe.
+    #
+    # WHAT WAS ACTUALLY MISSING WAS BIGGER THAN THE PROPERTY. arch/amd64 bound
+    # no cif-claim and no cif-release at all, so the 1275 `claim` service fell
+    # through ciface.fs's `else 3drop -1` and every allocation on the 64-bit
+    # firmware failed. Measured before writing a line of this, with the positive
+    # control in the same run: `" cif-claim" find-method` found it on x86 and did
+    # NOT on amd64. Publishing `available` there first would have advertised
+    # memory nothing could take.
+    #
+    # THE ASSERTION IS THAT THE PROPERTY MOVES, not that it exists. `available`
+    # describes a cursor, and a snapshot taken at boot is a record that outlives
+    # its subject the first time a client claims -- bug class #1 in CLAUDE.md. So
+    # this claims a page, asserts the base advanced by EXACTLY that page and the
+    # size shrank by it, releases, and asserts it went back.
+    #
+    # AND THE REFUSAL IS THE CONTROL. A property that changed on every call would
+    # pass "it moves" while tracking nothing, so the run ends with a claim no
+    # window can hold: it must return -1 and `available` must NOT move. Without
+    # that row, "it moves" and "it is wired to a random number" are the same
+    # measurement.
+    #
+    # WHAT THIS DOES NOT ASSERT, said out loud: that `available` is a SUBSET of
+    # `reg`. It is by construction -- the window is derived from the same
+    # sys_info -- but nothing here parses `reg` and checks containment, so that
+    # is a claim from reading, not a measurement.
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v genisoimage >/dev/null || skip "genisoimage not installed"
+    AMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"
+    ADI="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    XMB="$WORKDIR/openbios/obj-x86/openbios.multiboot"
+    XDI3="$WORKDIR/openbios/obj-x86/openbios-x86.dict"
+    for f in "$AMB" "$ADI" "$XMB" "$XDI3"; do
+      [[ -f "$f" ]] || skip "missing $f — run ./build-openbios.sh amd64 and x86 first"
+    done
+    MST="$WORKDIR/mem-stage"; rm -rf "$MST"; mkdir -p "$MST"
+    cat > "$MST/MEMAV.FTH" <<'FTH'
+\ TODO 17.3 probe. Base is HEX.
+." MA-START" cr
+clear
+\ Four cells covers both regimes: at #address-cells 1 the property is
+\ [base][size] and the last two decode-ints return 0 off an exhausted property;
+\ at 2 it is [0][base][0][size]. Which cells carry the value is computed from
+\ m-acells rather than assumed here.
+: .avail
+  decode-int ." m-c0=" u. cr
+  decode-int ." m-c1=" u. cr
+  decode-int ." m-c2=" u. cr
+  decode-int ." m-c3=" u. cr
+  2drop ;
+: ?avail
+  " available" " /memory" find-dev drop get-package-property 0= if
+    ." m-len=" 2dup nip . cr .avail
+  else
+    ." m-AVAIL-ABSENT" cr
+  then ;
+variable cb
+dev /memory
+." m-acells=" my-#acells . cr
+." m-scells=" my-#scells . cr
+device-end
+clear
+" /openprom/client-services" find-dev if
+  " cif-claim"   2 pick find-method if ." m-claim-FOUND" cr   drop else ." m-claim-MISSING" cr then
+  " cif-release" 2 pick find-method if ." m-release-FOUND" cr drop else ." m-release-MISSING" cr then
+  drop
+else
+  ." m-cs-MISSING" cr
+then
+clear
+." m-phase=before" cr ?avail
+clear
+dev /openprom/client-services
+0 1000 1000 cif-claim dup cb ! ." m-claimed=" u. cr
+device-end
+clear
+." m-phase=afterclaim" cr ?avail
+clear
+dev /openprom/client-services
+cb @ 1000 cif-release
+device-end
+clear
+." m-phase=afterrelease" cr ?avail
+clear
+\ THE CONTROL: a claim nothing can satisfy. -1 back, and available unmoved.
+dev /openprom/client-services
+0 ffffff000 1000 cif-claim ." m-huge=" u. cr
+device-end
+clear
+." m-phase=afterhuge" cr ?avail
+clear
+." MA-END" cr
+FTH
+    genisoimage -quiet -o "$WORKDIR/memav.iso" -V MEMAV -r -J "$MST"
+    note "asking both arches what /memory says is free → $WORKDIR/memav-{amd64,x86}.log"
+    for A in amd64 x86; do
+      if [[ "$A" == amd64 ]]; then MB="$AMB"; DI="$ADI"; else MB="$XMB"; DI="$XDI3"; fi
+      MSOCK="$WORKDIR/ma-$A.sock"; MLOG="$WORKDIR/memav-$A.log"; rm -f "$MSOCK" "$MLOG"
+      qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$MB" -initrd "$DI" \
+        -cdrom "$WORKDIR/memav.iso" -display none -serial "unix:$MSOCK,server=on" \
+        -no-reboot >/dev/null 2>&1 &
+      MQ=$!
+      python3 "$REPO/tools/drive-serial-repl.py" "$MSOCK" "$MLOG" --timeout 120 \
+        --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\memav.fth\r' --expect "0 > " \
+        --send 'load-base load-size evaluate\r' --expect "MA-END"
+      MRC=$?
+      kill "$MQ" 2>/dev/null   # by PID, never by pattern
+      ML="$(tr -d "\r" < "$MLOG")"
+
+      # Read the claim binding BEFORE the rc gate: if cif-claim is missing the
+      # probe still completes, but every number below it is meaningless, and a
+      # timeout would otherwise blame the property for a missing method.
+      grep -qF 'm-claim-FOUND' <<<"$ML" \
+        || fail "REGRESSION: $A has no cif-claim on /openprom/client-services — the 1275 claim service falls through ciface.fs's 'else 3drop -1' and every client allocation returns -1. This is what arch/amd64 shipped until TODO 17.3; publishing 'available' without it advertises memory nothing can take — see $MLOG"
+      grep -qF 'm-release-FOUND' <<<"$ML" \
+        || fail "REGRESSION: $A has no cif-release — claim without release is a one-way allocator, and the LIFO path below cannot be exercised — see $MLOG"
+      [[ $MRC -eq 0 ]] \
+        || fail "the probe did not complete on $A (rc=$MRC) — see $MLOG"
+
+      grep -qF 'm-AVAIL-ABSENT' <<<"$ML" \
+        && fail "REGRESSION: /memory has no 'available' on $A — TODO 17.3 publishes it beside 'reg', and a client asking what is free before it claims gets no answer at all — see $MLOG"
+
+      MAC="$(grep -aoE 'm-acells=[0-9a-f]+' <<<"$ML" | head -1 | cut -d= -f2)"
+      MSC="$(grep -aoE 'm-scells=[0-9a-f]+' <<<"$ML" | head -1 | cut -d= -f2)"
+      [[ -n "$MAC" && -n "$MSC" ]] \
+        || fail "17.3 on $A: the probe printed no cell counts, so it cannot say which cells carry the address — see $MLOG"
+      # The property is encoded with the ROOT's counts, which patch 43 made
+      # per-arch. Deriving the length here is what lets one assertion cover both.
+      MWANT="$(printf '%x' $(( (0x$MAC + 0x$MSC) * 4 )))"
+      MLEN="$(grep -aoE 'm-len=[0-9a-f]+' <<<"$ML" | head -1 | cut -d= -f2)"
+      [[ "$MLEN" == "$MWANT" ]] \
+        || fail "17.3 on $A: 'available' is $MLEN bytes where the root's #address-cells $MAC / #size-cells $MSC want $MWANT — it is not encoded with the counts that decode it — see $MLOG"
+
+      # phase <n> -> the cells of that phase's `available`
+      ma_cell() { # ma_cell <phase> <index>
+        sed -n "/m-phase=$1\$/,/m-c3=/p" <<<"$ML" | grep -aoE "m-c$2=[0-9a-f]+" | head -1 | cut -d= -f2
+      }
+      MBI=$(( 0x$MAC - 1 ))            # last address cell
+      MSI=$(( 0x$MAC + 0x$MSC - 1 ))   # last size cell
+      B0="$(ma_cell before      "$MBI")"; S0="$(ma_cell before      "$MSI")"
+      B1="$(ma_cell afterclaim  "$MBI")"; S1="$(ma_cell afterclaim  "$MSI")"
+      B2="$(ma_cell afterrelease "$MBI")"; S2="$(ma_cell afterrelease "$MSI")"
+      B3="$(ma_cell afterhuge   "$MBI")"; S3="$(ma_cell afterhuge   "$MSI")"
+      for v in "$B0" "$S0" "$B1" "$S1" "$B2" "$S2" "$B3" "$S3"; do
+        [[ -n "$v" ]] \
+          || fail "17.3 on $A: a phase of the probe printed no available cells (before=$B0/$S0 afterclaim=$B1/$S1 afterrelease=$B2/$S2 afterhuge=$B3/$S3) — see $MLOG"
+      done
+      (( 0x$S0 > 0 )) \
+        || fail "17.3 on $A: 'available' says 0 bytes are free at boot, before anything claimed — the window is empty, so either claim_limit found no usable range or the base sits outside every one of them — see $MLOG"
+
+      # THE OUTCOME: a page claimed moves the base up by a page and the size down
+      # by a page. Both halves, because a base that advances while the size stays
+      # put describes a window running off its own end.
+      (( 0x$B1 == 0x$B0 + 0x1000 )) \
+        || fail "17.3 on $A: after claiming 0x1000 the free base is $B1, not $B0 + 0x1000 — 'available' is not tracking the allocator, which is the whole reason it is republished rather than snapshotted — see $MLOG"
+      (( 0x$S1 == 0x$S0 - 0x1000 )) \
+        || fail "17.3 on $A: after claiming 0x1000 the free size is $S1, not $S0 - 0x1000 — the base moved and the size did not, so the window now runs past its own end — see $MLOG"
+      # The LIFO release path, which is the only release a bump allocator honours.
+      [[ "$B2" == "$B0" && "$S2" == "$S0" ]] \
+        || fail "17.3 on $A: releasing the page just claimed left 'available' at $B2/$S2 instead of back at $B0/$S0 — a LIFO release is the one case the bump allocator can undo, and the property did not follow it — see $MLOG"
+      # THE CONTROL. Without this, "it moves" is satisfied by a property wired to
+      # anything that changes.
+      MHUGE="$(grep -aoE 'm-huge=[0-9a-f]+' <<<"$ML" | head -1 | cut -d= -f2)"
+      [[ "$MHUGE" =~ ^f+$ ]] \
+        || fail "17.3 on $A: a claim of 0xffffff000 bytes returned $MHUGE instead of -1 — the allocator handed out a window larger than the machine has, so every bound below it is decorative — see $MLOG"
+      [[ "$B3" == "$B2" && "$S3" == "$S2" ]] \
+        || fail "17.3 on $A: a REFUSED claim still moved 'available' ($B2/$S2 -> $B3/$S3) — the property changes on calls that allocated nothing, so the movement asserted above says nothing about the allocator — see $MLOG"
+      note "$A: available=$B0/$S0 at boot (root cells $MAC/$MSC, $MLEN bytes) → claim 1000 → $B1/$S1 → release → $B2/$S2 → refused claim leaves it at $B3/$S3"
+    done
+    pass "TODO 17.3: /memory carries an 'available' beside its 'reg' on BOTH arches, and it is the allocator's own state rather than a snapshot — arch/amd64 bound NO cif-claim or cif-release at all until now, so every client allocation on the 64-bit firmware returned -1 and an 'available' there would have described memory nothing could take; the property is encoded with the ROOT's cell counts (per-arch since patch 43, and derived here rather than written down), claiming one page moves the free base up by exactly 0x1000 AND the size down by exactly 0x1000, a LIFO release puts both back, and — the control that makes those mean anything — a claim of 0xffffff000 bytes is REFUSED with -1 and leaves the property untouched, so a value that merely changes on every call cannot pass"
+    ;;
   vga)
     # TODO 13.1's DRIVER_VGA half: PCI enumeration on amd64 (patch 17) and the
     # VGA FCode blob that had never been evaluated on EITHER arch (patch 18).
@@ -2292,5 +2467,5 @@ PYS
 
     pass "TODO 16, the third seam, at BOTH of its addresses: 1000 int! stores into the legacy VGA aperture at 0xb8000 put $MPOST blue pixels on the display where the pre-write dump and the no-write control each hold 0, with HERE unchanged at $MH0 — read by QEMU's screendump, an observer the firmware cannot fake. Stores LAND here (unlike CFI flash, where they are commands) and the observer is a DEVICE (unlike the NVDIMM, where it is a file), which is the third distinct answer. AND at a LIVE PCI BAR since TODO 0.6c/0.6d: two int! stores into the framebuffer at 0x40000000 read back through QEMU's monitor as c0 ff ee 01 c0 ff ee 01 where the pre-write read and the no-write control each hold zeros. That one needs the monitor rather than the display, because the VGA sits in 640x480 compat mode scanning the legacy aperture — a real store into the linear framebuffer is invisible on screen, and screendump cannot tell it from a store that never happened"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer]" >&2; exit 1 ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer]" >&2; exit 1 ;;
 esac

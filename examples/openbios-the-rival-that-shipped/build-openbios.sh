@@ -200,6 +200,9 @@ TESTED_TREE_MARKERS=(
     # be absent there, which is the check that caught the `s" load-base"` marker.
     "drivers/ide.c:ide_node_parent"
     "arch/amd64/init.fs:TODO 17.1: TWO ADDRESS CELLS"
+    # -- TODO 17.3: /memory's available, and the claim it describes (44-45) --
+    "arch/amd64/openbios.c:ciface_claim_amd64"
+    "libopenbios/init.c:publish_memory_available"
 )
 present=(); absent=()
 for m in "${TESTED_TREE_MARKERS[@]}"; do
