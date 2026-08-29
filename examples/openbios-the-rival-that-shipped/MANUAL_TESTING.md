@@ -430,6 +430,18 @@ an empty store, not a failure.
 - **A triple fault under `-no-reboot` looks like a clean rc=0 exit** — check
   the log for a prompt, don't trust the exit code. KVM's "internal error" is
   the louder failure mode.
+- **Rebuild the firmware and the coreboot ROMs go stale** — and `build-openbios.sh`
+  now tells you so at the moment it happens (TODO §17.6), rather than leaving you
+  to meet it later as a SKIP:
+
+  ```
+  ==> NOTE: build-openbios/coreboot.rom no longer carries this firmware.
+      ./smoke-openbios.sh coreboot will SKIP until you run:
+          ./build-coreboot-openbios.sh x86
+  ```
+
+  It is a note, not a failure: rebuilding firmware without rebuilding a ROM is
+  ordinary, and only matters if you then expect the coreboot tracks to run.
 - **Timestamped builds, and how to turn that off** (TODO §17.5, corrected
   2026-08-29). The banner does **not** come from `__DATE__`/`__TIME__`:
   `Makefile.target` generates `obj-<arch>/forth/version.fs` from
