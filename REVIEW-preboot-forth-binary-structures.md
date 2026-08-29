@@ -27,6 +27,11 @@ a poke analogue written from scratch.*
 
 ## STATUS 2026-08-29 — the verdict above is largely INOPERATIVE
 
+**A second pass, written against a tree that boots, is
+[`REVIEW-preboot-forth-as-a-poke-engine.md`](REVIEW-preboot-forth-as-a-poke-engine.md).**
+It grades the same idea after F2 was closed, and finds the remaining gap is a
+*type* layer rather than more primitives.
+
 **This review became the work plan for patches 25-34, and then for TODO 16.** Both
 structural findings are closed, and so are F4, F5 and F6. The findings are left
 as written — struck through and annotated in place rather than edited away,
