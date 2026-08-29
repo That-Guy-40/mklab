@@ -56,8 +56,16 @@ for sig in TERM INT HUP; do
 done
 
 SRC="${1:-$HOME/openbios-lab/openbios}"
+# ABSENT AND WRONG ARE DIFFERENT ANSWERS, and the first draft returned FAIL for
+# both. In CI the clone does not exist at all -- every sibling openbios test
+# SKIPs there -- so failing made a green suite red for a tree nobody had
+# checked out. A directory that exists but has no libc/vsprintf.c is a different
+# thing: somebody aimed this at the wrong tree, and that is a usage error.
+if [[ ! -d "$SRC" ]]; then
+    skip "no OpenBIOS source tree at $SRC — nothing has cloned it here (run ./build-openbios.sh, or pass a tree). An unchecked file is an UNKNOWN, not a pass"
+fi
 [[ -f "$SRC/libc/vsprintf.c" ]] \
-    || fail "usage: openbios-check-vsprintf-ub.sh <openbios-source-tree>  (no libc/vsprintf.c under '$SRC')"
+    || fail "'$SRC' exists but has no libc/vsprintf.c — that is not an OpenBIOS source tree, so this checked nothing"
 command -v gcc >/dev/null || skip "gcc is not installed — the sanitiser is the only instrument that can see this, and no instrument is an UNKNOWN, not a pass"
 
 WORK="$(mktemp -d)"
