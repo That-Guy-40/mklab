@@ -1152,6 +1152,33 @@ clear
 dev /ide@1
 ." e-len-ide=" 0 0 0 0 encode-phys nip . cr
 clear
+dev /pci8086,1237@0/QEMU,VGA@2
+." e-len-vga=" 0 0 0 0 encode-phys nip . cr
+clear
+\ TODO 17.1 PRE-CHECK: the PARENT half of a `ranges` entry, taken at the bus
+\ where one lives. A ranges entry is (child-phys, PARENT-phys, child-size), and
+\ its three strides come from two different nodes: the child halves use the
+\ bus's own #address-cells 3 / #size-cells 2 (patch 34) while the parent half
+\ is encoded in the ROOT's cells. decode-phys IS my-#acells calls to
+\ decode-int, so this is decode-int's CALLING CODE at exactly the seam a root
+\ #address-cells change moves -- and it is written to hold at 1 cell and at 2,
+\ so it can be landed BEFORE the root moves and then say whether the move broke
+\ anything. The cells are read back with explicit decode-ints rather than by
+\ counting stack items, because how many items decode-phys leaves is itself a
+\ function of my-#acells: an earlier draft printed the remaining LENGTH at one
+\ cell and the low ADDRESS cell at two, from the same line.
+clear
+dev /pci8086,1237@0
+." r-pacells=" my-#acells . cr
+" #address-cells" active-package get-package-property 0= if
+  decode-int nip nip ." r-cacells=" . cr else ." r-cacells-NONE" cr then
+" #size-cells" active-package get-package-property 0= if
+  decode-int nip nip ." r-cscells=" . cr else ." r-cscells-NONE" cr then
+0 0 deadbeef c0000000 encode-phys
+." r-plen=" 2dup nip . cr
+2dup decode-int nip nip ." r-c0=" u. cr
+2dup decode-int drop decode-int nip nip ." r-c1=" u. cr
+clear
 ." d-depth-pre=" depth . cr
 " ab" encode-bytes 2 decode-bytes
 ." d-depth=" depth . cr
@@ -1391,16 +1418,80 @@ FTH
     # IEEE 1275 and this lab's own documented rule, misfiled as a limitation of
     # evaluated text. The comparison stays here because two measured values
     # differing is the proof anyway.
-    ELR="$(grep -oE 'e-len-root=[0-9a-f]+' <<<"$AL" | head -1 | cut -d= -f2)"
-    ELI="$(grep -oE 'e-len-ide=[0-9a-f]+'  <<<"$AL" | head -1 | cut -d= -f2)"
-    [[ -n "$ELR" && -n "$ELI" ]] \
-      || fail "13.2: the encode-phys probe printed no lengths — see $WORKDIR/prop-amd64.log"
-    [[ "$ELR" != "$ELI" ]] \
-      || fail "13.2: encode-phys returned the SAME length ($ELR) under / and /ide@1 — either the tree's #address-cells changed, or somebody made encode-phys fixed-width, which is the misreading this assertion exists to prevent"
-    grep -q 'e-len-root=8' <<<"$AL" \
-      || fail "13.2: encode-phys under / is no longer 8 bytes — my-#acells falls back to 2 there because root has no parent; if that default moved, every caller's idea of a phys length moved with it"
-    grep -q 'e-len-ide=4' <<<"$AL" \
-      || fail "13.2: encode-phys under /ide@1 is no longer 4 bytes — that came from root's own '#address-cells 1'"
+    # encode-phys is NOT fixed-width, measured in THREE contexts per arch. This
+    # used to be a two-way comparison of / against /ide@1, and TODO 17.1 broke
+    # it -- not by breaking anything, but by making the two EQUAL on amd64,
+    # where the root now declares the same 2 cells that the no-parent default
+    # already used. That is the mechanism-not-outcome trap in its expensive
+    # direction: nothing was wrong and the suite would have insisted otherwise.
+    #
+    # The third context is what makes the claim survive the change. /ide@1 reads
+    # the root's declaration, which is now per-arch (1 on x86, 2 on amd64) and
+    # is therefore DERIVED from r-pacells rather than written down; the VGA node
+    # reads the PCI bus's own 3 (patch 34), which no root change can move. A
+    # fixed-width encode-phys makes all three equal on both arches.
+    for A in amd64 x86; do
+      EL="$(tr -d "\r" < "$WORKDIR/prop-$A.log")"
+      ELR="$(grep -aoE 'e-len-root=[0-9a-f]+' <<<"$EL" | head -1 | cut -d= -f2)"
+      ELI="$(grep -aoE 'e-len-ide=[0-9a-f]+'  <<<"$EL" | head -1 | cut -d= -f2)"
+      ELV="$(grep -aoE 'e-len-vga=[0-9a-f]+'  <<<"$EL" | head -1 | cut -d= -f2)"
+      ELP="$(grep -aoE 'r-pacells=[0-9a-f]+'  <<<"$EL" | head -1 | cut -d= -f2)"
+      [[ -n "$ELR" && -n "$ELI" && -n "$ELV" && -n "$ELP" ]] \
+        || fail "13.2 on $A: the encode-phys probe printed no lengths (root=${ELR:-absent} ide=${ELI:-absent} vga=${ELV:-absent} pacells=${ELP:-absent}) — see $WORKDIR/prop-$A.log"
+      [[ "$ELR" == 8 ]] \
+        || fail "13.2 on $A: encode-phys under / is $ELR bytes, not 8 — my-#acells falls back to 2 there because root has no parent; if that default moved, every caller's idea of a phys length moved with it — see $WORKDIR/prop-$A.log"
+      WANTIDE="$(printf '%x' $(( 0x$ELP * 4 )))"
+      [[ "$ELI" == "$WANTIDE" ]] \
+        || fail "13.2 on $A: encode-phys under /ide@1 is $ELI bytes for a root declaring $ELP address cell(s), which wants $WANTIDE — the encoder and the root disagree about how wide an address under / is — see $WORKDIR/prop-$A.log"
+      [[ "$ELV" == c ]] \
+        || fail "REGRESSION: patch 34 on $A: encode-phys under /pci8086,1237@0/QEMU,VGA@2 is $ELV bytes, not c — the PCI bus's own #address-cells 3 is what makes that 12, and losing it is the defect that shifted pci-bar>pci-addr's stack and faulted the display open — see $WORKDIR/prop-$A.log"
+      [[ "$ELV" != "$ELI" ]] \
+        || fail "13.2 on $A: encode-phys returned the SAME length ($ELV) under /ide@1 and under a PCI child whose parent declares 3 address cells — somebody made encode-phys fixed-width, which is the misreading this assertion exists to prevent — see $WORKDIR/prop-$A.log"
+      note "$A: encode-phys is context-sized — 8 under / (no parent, default 2), $ELI under /ide@1 (root's own $ELP), c under a PCI child (the bus's 3)"
+    done
+
+    # TODO 17.1 PRE-CHECK, on BOTH arches: the parent half of a `ranges` entry.
+    #
+    # EVERY EXPECTATION HERE IS DERIVED FROM r-pacells, which is the root's own
+    # declaration read back off the running firmware. That is the whole point: a
+    # hard-coded "4 bytes" would be a cached copy of a number this lab is about
+    # to change on purpose, and it would fail on the change rather than on a
+    # defect — the mechanism-not-outcome trap in its expensive direction, which
+    # has already cost this lab a day (the dict-identity pattern, patch 40).
+    #
+    # What is NOT derived is the bus's own 3/2: that is patch 34's fix and is a
+    # property of the PCI binding, not of the root, so it is asserted flat.
+    for A in amd64 x86; do
+      RL="$(tr -d "\r" < "$WORKDIR/prop-$A.log")"
+      RPA="$(grep -aoE 'r-pacells=[0-9a-f]+' <<<"$RL" | head -1 | cut -d= -f2)"
+      RPL="$(grep -aoE 'r-plen=[0-9a-f]+'    <<<"$RL" | head -1 | cut -d= -f2)"
+      RC0="$(grep -aoE 'r-c0=[0-9a-f]+'      <<<"$RL" | head -1 | cut -d= -f2)"
+      RC1="$(grep -aoE 'r-c1=[0-9a-f]+'      <<<"$RL" | head -1 | cut -d= -f2)"
+      [[ -n "$RPA" ]] \
+        || fail "17.1 on $A: the ranges probe printed no r-pacells — it never reached /pci8086,1237@0, so everything below it is an UNKNOWN and not a pass — see $WORKDIR/prop-$A.log"
+      grep -qE 'r-cacells=[[:space:]]*3( |$)' <<<"$RL" \
+        || fail "REGRESSION: patch 34 on $A: the PCI bus no longer declares #address-cells 3 ($(grep -aoE 'r-cacells[^ ]*.{0,6}' <<<"$RL" | head -1)) — every Forth decode under it then reads one cell short, which is the defect that faulted the display open — see $WORKDIR/prop-$A.log"
+      grep -qE 'r-cscells=[[:space:]]*2( |$)' <<<"$RL" \
+        || fail "REGRESSION: patch 34 on $A: the PCI bus no longer declares #size-cells 2 ($(grep -aoE 'r-cscells[^ ]*.{0,6}' <<<"$RL" | head -1)) — a ranges entry's size half is read with this — see $WORKDIR/prop-$A.log"
+      WANTLEN="$(printf '%x' $(( 0x$RPA * 4 )))"
+      [[ "$RPL" == "$WANTLEN" ]] \
+        || fail "17.1 on $A: encode-phys at the PCI bus produced $RPL bytes for a root declaring $RPA address cell(s); $WANTLEN is the only length that decodes — the parent half of every ranges entry is this wide — see $WORKDIR/prop-$A.log"
+      [[ "$RC0" == c0000000 ]] \
+        || fail "17.1 on $A: the FIRST cell of the encoded parent address is $RC0, not c0000000 — 1275 puts phys.hi first, and a consumer reading this ranges entry would map the wrong window — see $WORKDIR/prop-$A.log"
+      # The low cell is where a wrong stride actually shows: at one address cell
+      # there is no second cell and decode-int correctly returns 0 for an
+      # exhausted property; at two there must be the value that was encoded. A
+      # test that accepted either would be satisfied by a decoder that read
+      # nothing.
+      if [[ "$RPA" == 1 ]]; then
+        [[ "$RC1" == 0 ]] \
+          || fail "17.1 on $A: with ONE address cell the property is exhausted after the first, so a second decode-int must return 0, not $RC1 — decode-int is reading past the end of the property — see $WORKDIR/prop-$A.log"
+      else
+        [[ "$RC1" == deadbeef ]] \
+          || fail "17.1 on $A: with $RPA address cells the SECOND cell must be deadbeef, the low half of what encode-phys was given; it is $RC1 — the stride between cells disagrees between the encoder and the decoder, which is patch 34's defect one level up — see $WORKDIR/prop-$A.log"
+      fi
+      note "$A: ranges parent half = $RPA cell(s)/$RPL bytes at the PCI bus (child 3/2), phys.hi first, round-tripped through decode-int"
+    done
 
     # 13.2(d) decode-bytes: FIXED (patch 25) rather than deleted. Upstream had two
     # bare `r>` and no `>r`, so it robbed the RETURN stack of two cells and left
@@ -1425,7 +1516,7 @@ FTH
         || fail "13.2(d) on $A: the remainder length after decoding all 2 bytes of a 2-byte property is not 0 — decode-bytes is not subtracting #bytes from prop-len1: $(grep -aoE 'd-len2=.{0,12}' <<<"$DL2" | head -1) — see $WORKDIR/prop-$A.log"
     done
 
-    pass "TODO 13.2 watched to bite: (a) the SAME four bytes decode to ffffffff on amd64 and -1 on x86 — encode-int/decode-int is not a round trip at a 64-bit cell — and the premise it is tolerated on is now DERIVED rather than assumed: every four-byte decode of the boot is counted, and none has bit 31 set, which is the only reason zero-extension has yet to give a real consumer a wrong answer; (b) FIXED — a value >= 2^32 is now REFUSED BY NAME on amd64 where it used to be silently truncated into four bytes, with ffffffff and -1 both still encoding cleanly in the same run so the gate is not simply refusing everything, and the input still UNREPRESENTABLE on x86, reported as an UNKNOWN not a pass; (c) FIXED — encode+ used to be `nip +`, adjacency-by-assumption: it returned the RIGHT length over the WRONG bytes the moment anything moved HERE between fragments, so the second decode-int read the gap (30302f63) rather than the fragment, and §13.2's own "lies about the length" was disproved by the control; it now concatenates, with BOTH branches exercised in the same run (adjacent 3,4 and non-adjacent 1,2 each coming back out of an 8-byte array) so a fix whose slow path never runs cannot pass; and encode-phys is NOT fixed-width — 8 bytes under / (the no-parent default of 2 cells) against 4 under /ide@1 (root's own #address-cells 1); and (d) decode-bytes, which used to return CLEANLY with six items where four are documented — two cells robbed off the return stack — now round-trips encode-bytes on both arches at depth exactly 4, from an empty stack back to an empty one; and review §2's fourth assertion is closed — /chosen's stdin round-trips through encode-int/decode-int at the address instances actually land on, a different ihandle from the same node is distinguishable so that match means something, and the top 32 bits are derived per boot rather than assumed, which answers the review's own UNKNOWN: an amd64 instance does NOT land above 4 GiB today; and TODO 16's storage split holds on both arches — int!/string! write where the caller says with HERE unchanged, and the cursor composes three fields at a chosen address that the stock 1275 decode-int reads back unchanged"
+    pass "TODO 13.2 watched to bite: (a) the SAME four bytes decode to ffffffff on amd64 and -1 on x86 — encode-int/decode-int is not a round trip at a 64-bit cell — and the premise it is tolerated on is now DERIVED rather than assumed: every four-byte decode of the boot is counted, and none has bit 31 set, which is the only reason zero-extension has yet to give a real consumer a wrong answer; (b) FIXED — a value >= 2^32 is now REFUSED BY NAME on amd64 where it used to be silently truncated into four bytes, with ffffffff and -1 both still encoding cleanly in the same run so the gate is not simply refusing everything, and the input still UNREPRESENTABLE on x86, reported as an UNKNOWN not a pass; (c) FIXED — encode+ used to be \`nip +\`, adjacency-by-assumption: it returned the RIGHT length over the WRONG bytes the moment anything moved HERE between fragments, so the second decode-int read the gap (30302f63) rather than the fragment, and §13.2's own \"lies about the length\" was disproved by the control; it now concatenates, with BOTH branches exercised in the same run (adjacent 3,4 and non-adjacent 1,2 each coming back out of an 8-byte array) so a fix whose slow path never runs cannot pass; and encode-phys is NOT fixed-width, measured in three contexts per arch — 8 bytes under / (the no-parent default of 2 cells), the root's OWN declaration under /ide@1 (derived per arch, since TODO 17.1 gives amd64 two address cells and leaves x86 at one), and c under a PCI child whose bus declares 3; and the parent half of a \`ranges\` entry round-trips through decode-int at whatever width the root is currently declaring, phys.hi first; and (d) decode-bytes, which used to return CLEANLY with six items where four are documented — two cells robbed off the return stack — now round-trips encode-bytes on both arches at depth exactly 4, from an empty stack back to an empty one; and review §2's fourth assertion is closed — /chosen's stdin round-trips through encode-int/decode-int at the address instances actually land on, a different ihandle from the same node is distinguishable so that match means something, and the top 32 bits are derived per boot rather than assumed, which answers the review's own UNKNOWN: an amd64 instance does NOT land above 4 GiB today; and TODO 16's storage split holds on both arches — int!/string! write where the caller says with HERE unchanged, and the cursor composes three fields at a chosen address that the stock 1275 decode-int reads back unchanged"
     ;;
   vga)
     # TODO 13.1's DRIVER_VGA half: PCI enumeration on amd64 (patch 17) and the

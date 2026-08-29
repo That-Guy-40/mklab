@@ -3266,7 +3266,10 @@ declares `#address-cells 1`"*. Seeing the memory and being able to **encode** it
 different questions. Whether the root should declare `#address-cells 2` is a
 device-tree design decision with a wide blast radius — every node's address
 encoding, and this session already had to give PCI its own `#address-cells 3 /
-#size-cells 2`. **Open, and deliberately not decided here — carried as §17.1.**
+#size-cells 2`. **Was carried as §17.1, and is now DECIDED and DONE** (2026-08-29,
+patches 42-43): two address cells on the amd64 root, x86 left at one because one
+cell is accurate there. All three ranges publish. See §17.1 for the blast-radius
+map and what the change cost.
 
 ### Nothing published the memory map — patch 40
 
@@ -4085,35 +4088,90 @@ can land above 4 GiB — is answered per boot rather than assumed. It cannot, to
 ## 17. OpenBIOS: open decisions and dangling issues (as of 2026-08-28)
 
 Everything still open for `examples/openbios-the-rival-that-shipped/`, in one place,
-so it stops being scattered across §13–§16 and the PR history. **One of these still
-needs a decision rather than work** — §17.1. §17.2 was the other, and was decided on
-2026-08-28: nothing goes upstream.
+so it stops being scattered across §13–§16 and the PR history. **Both of the
+decisions are now taken**: §17.2 on 2026-08-28 (nothing goes upstream) and §17.1
+on 2026-08-29 (two address cells, amd64 only). What is left below is dangling
+issues, named so they are not rediscovered as new.
 
-### 17.1 — DECISION: should the root declare `#address-cells 2`?
+### 17.1 — ~~DECISION: should the root declare `#address-cells 2`?~~ — DONE 2026-08-29 (patches 42-43)
 
-**The single remaining blocker for memory above 4 GiB, on BOTH paths.** As of patches
-39 and 41 the firmware *sees* all of a 5 GB machine — multiboot reports `RAM 5119 MB`,
-coreboot `RAM 5118 MB` — and both then say:
+**Decided: yes, on amd64 only.** `arch/amd64/init.fs` now declares
+`#address-cells 2 / #size-cells 2` on the root, and `/memory` describes the whole
+machine. At `-m 5G`:
 
 ```
-/memory: 1 of 3 range(s) NOT published -- the root declares #address-cells 1 /
-#size-cells 1, so an address or size above 4 GiB cannot be encoded here
+reg    00000000 00000000   00000000 0009fc00
+       00000000 00100000   00000000 bfee0000
+       00000001 00000000   00000000 80000000
 ```
 
-Seeing the memory and being able to **encode** it are different questions. One address
-cell is 32 bits, so the `0x100000000` range cannot go into `reg` at all. Patch 40 drops
-it and says so rather than truncating, which is why this is visible instead of being a
-property that looks valid and points somewhere else.
+The coreboot path was measured separately rather than assumed, because
+§17.1 claimed *both* paths and only one of them had ever been booted at 5 GB.
+`-bios build-openbios-amd64/coreboot.rom -m 5G` reports `RAM 5118 MB` and:
 
-**Why it is not a one-line change.** `#address-cells` on the root governs how *every*
-child's addresses are encoded and decoded — `encode-phys` reads `my-#acells` from the
-parent, and this session already had to give PCI its own `#address-cells 3 /
-#size-cells 2` (patch 34) after a bus that declared nothing made every Forth decode read
-one cell short. Changing the root means re-checking every consumer, and §13.2's
-`property-abi` track is the place that would catch a regression.
+```
+reg    00000000 00001000   00000000 0009f000
+       00000000 00100000   00000000 bfd71000
+       00000001 00000000   00000000 80000000
+```
 
-**Not attempted, and no recommendation recorded** — this is a device-tree design
-decision, not a defect.
+Different first range — coreboot's map starts at `0x1000`, so the node is
+`memory@1000` there and `memory@0` on multiboot — and the same third range. The
+`1 of 3 range(s) NOT published` line is gone from both.
+
+**x86 stays at one cell, and that is the point rather than a compromise.** A
+32-bit firmware cannot form an address above 4 GiB either way, so one cell there
+is *accurate*; two would be a wider hole to say the same nothing in. The blast
+radius is per-arch because the capability is.
+
+**What the blast-radius map found before the first edit**, by asking the running
+firmware rather than reading C: root has fourteen children on amd64 and exactly
+**three** carry a `reg` — `memory@0`, `pci8086,1237@0` and `ide@0..3`. The first
+two already *derive* their cell counts from the root (`libopenbios/init.c`,
+`drivers/pci.c`). The third did not: `drivers/ide.c` wrote a fixed three cells,
+which decoded correctly by luck at one address cell and would have read
+`[channel][0]` as `channel << 32` at two — `/ide@1` resolving to nothing while
+`/ide@100000000` resolved instead, taking the boot aliases, the showcase's boot
+line and every `load` off the CD with it. That is patch 42, landed and measured
+*before* the root moved so the two are separable.
+
+**The unit words had to move with the count**, and this is the part that would
+have failed quietly. `forth/device/tree.fs`'s shared root decodes a unit address
+with `parse-hex` and encodes it with `tohexstr` — one cell each way — while
+`forth/device/pathres.fs`'s `(exact-match)` compares exactly as many leading
+cells of a child's `reg` as `decode-unit` returned values.
+[`arch/sparc64/tree.fs`](https://github.com/openbios/openbios) overrides the same
+two methods on the same shared root, which is the in-tree precedent that
+overriding works at all. Every node kept its name: `memory@0`, `ide@1`,
+`pci8086,1237@0`.
+
+**`#size-cells` is now declared rather than defaulted, which closed a
+disagreement.** Absent, this tree had two answers for it: `my-#scells` falls back
+to 1 (`forth/device/property.fs:234`) while `drivers/pci.c` asked
+`get_int_property()` and got **0** — which is why the PCI host bridge's `reg` was
+a lone address cell with no size beside it.
+
+**The instrument came first, as §17.1 predicted it could.**
+`smoke-openbios.sh property-abi` gained a `ranges` case — the *parent* half of a
+`ranges` entry, taken at the PCI bus where one lives, since a ranges entry's
+child halves use the bus's own 3/2 (patch 34) and its parent half uses the root's
+cells. It was landed and passing at **one** cell before the root moved, and every
+expectation in it is derived from the root's own declaration read back off the
+running firmware, so it now reports 2 cells on amd64 and 1 on x86 from the same
+assertions.
+
+**And it caught the thing it was aimed at.** The track's old `encode-phys is not
+fixed-width` assertion compared `/` (no parent → the 1275 default of 2) against
+`/ide@1` (root's declared 1). At two cells those become **equal** on amd64 — an
+assertion failing on a change rather than on a defect, which is the
+mechanism-not-outcome trap in its expensive direction. It now measures three
+contexts per arch, the third being a PCI child whose bus declares 3, which no
+root change can move.
+
+Green after: `property-abi`, `dict-identity`, `vga`, `client-forth`,
+`diagnostics`, `amd64`, `amd64-pmem`, `amd64-linux`, `multiboot`, `persist`,
+`coreboot`, `coreboot-amd64` — and **`ppc` rebuilt and re-smoked as the control**
+for the shared-file edit in `drivers/ide.c`.
 
 ### 17.2 — ~~DECISION: upstream the patches that are upstream's bugs~~ — DECIDED 2026-08-28: none of them
 

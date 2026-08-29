@@ -1,0 +1,138 @@
+From: mklab <noreply@example.invalid>
+Subject: [PATCH 42/43] a `reg` is decoded with the PARENT's cells, and ide wrote a fixed three
+
+Arch-tested: x86 amd64 ppc
+
+A `reg` property is not self-describing: it is read with the #address-cells and
+#size-cells its PARENT declares. drivers/ide.c wrote three cells regardless --
+channel, 0, 0 -- and on the PC arches that happened to decode correctly, because
+the root says one address cell and the third cell was slop nobody read.
+
+It stops being a happy accident the moment the root declares two (patch 43).
+forth/device/pathres.fs's (exact-match) compares the first #address-cells CELLS
+of a child's `reg` against whatever the parent's decode-unit returned for the
+unit string, so [channel][0] would be read as channel << 32: `/ide@1` would
+resolve to nothing and `/ide@100000000` would resolve instead, taking the boot
+aliases, the showcase's boot line and every `load` off the CD with it.
+
+Derive the layout from the parent. Measured before and after with the root still
+at ONE address cell, so the change is separable from the one that needed it:
+/ide@0..3 keep their names and `reg` goes from three cells to two (one address,
+one size), because the third was never anything but padding.
+
+NOT the parent's problem to guess at. ide_node_parent() reads the device-node's
+own >dn.parent field rather than my_parent(), which is instance-based and reads
+my-self -- whatever the last opened package left behind. This runs during tree
+construction, where there is no instance at all.
+
+ppc and sparc64 keep the old three cells byte for byte, under the same
+!CONFIG_PPC && !CONFIG_SPARC64 guard the interrupts property above already uses.
+They reach this function through drivers/pci.c with a PCI BUS as the parent
+(3 address cells), where deriving would move the channel number from the first
+cell to the third and rename every node. That is a real defect there too, and
+fixing it blind on an arch whose IDE path nothing here boots is how a shared
+file breaks two arches to fix one. ppc rebuilt and re-smoked as the control.
+
+--- a/drivers/ide.c
++++ b/drivers/ide.c
+@@ -1516,6 +1516,45 @@
+ 	set_property(aliases, idestr, path, strlen(path) + 1);
+ }
+ 
++#if !defined(CONFIG_PPC) && !defined(CONFIG_SPARC64)
++/* The parent of the node `new-device` just created. NOT my_parent(): that is
++ * instance-based and reads my-self, which is whatever the last opened package
++ * left behind -- this runs during tree construction, where there is no
++ * instance. >dn.parent is the device-node field itself (structures.fs:34). */
++static phandle_t ide_node_parent(phandle_t node)
++{
++	PUSH(node);
++	fword(">dn.parent");
++	return *(phandle_t *)cell2pointer(POP());
++}
++
++static int ide_cells(phandle_t node, const char *name, int dflt)
++{
++	int len;
++	ucell v;
++
++	if (!node)
++		return dflt;
++	v = get_int_property(node, name, &len);
++	/* Absent is not zero: the 1275 defaults are what my-#acells and
++	 * my-#scells fall back to (property.fs:221,234), and disagreeing with
++	 * the tree's own decoder is how a property becomes unreadable. */
++	if (len != (int)sizeof(u32))
++		return dflt;
++	return (int)v;
++}
++
++/* 1275 cells are big-endian, high cell first. */
++static int ide_encode_cells(u32 *prop, int cells, ucell val)
++{
++	int i;
++
++	for (i = cells - 1; i >= 0; i--)
++		prop[cells - 1 - i] = __cpu_to_be32((u32)(val >> (16 * i) >> (16 * i)));
++	return cells;
++}
++#endif
++
+ int ob_ide_init(const char *path, uint32_t io_port0, uint32_t ctl_port0,
+ 		uint32_t io_port1, uint32_t ctl_port1)
+ {
+@@ -1588,10 +1627,54 @@
+ 			     (char *)&props, 2*sizeof(props[0]));
+ #endif
+ 
++#if !defined(CONFIG_PPC) && !defined(CONFIG_SPARC64)
++		/* A `reg` IS NOT SELF-DESCRIBING: it is decoded with the PARENT's
++		 * #address-cells / #size-cells, and this wrote a fixed three cells
++		 * regardless of what the parent declares. On the PC arches the parent
++		 * is the root, which says one address cell, so the third cell was
++		 * slop nobody read and the property happened to decode correctly.
++		 *
++		 * It stops being a happy accident the moment the root declares two
++		 * address cells: `(exact-match)` in forth/device/pathres.fs compares
++		 * the first #address-cells CELLS of `reg` against what the parent's
++		 * decode-unit returned for the unit string, so [channel][0] would be
++		 * read as the address (channel << 32) and `/ide@1` would resolve to
++		 * nothing while `/ide@100000000` resolved instead -- taking the boot
++		 * aliases, the showcase's boot line and every `load` off the CD with
++		 * it. Derive the layout from the parent instead of assuming it.
++		 *
++		 * ppc and sparc64 keep the old three cells byte for byte: they reach
++		 * this function through drivers/pci.c with a PCI bus as the parent
++		 * (3 address cells), where deriving would MOVE the channel number from
++		 * the first cell to the third and rename every node. That is a real
++		 * defect there too, and it is not this change's to fix blind on an
++		 * arch whose IDE path nothing here boots. */
++		{
++			phandle_t par = ide_node_parent(dnode);
++			int acells = ide_cells(par, "#address-cells", 2);
++			int scells = ide_cells(par, "#size-cells", 1);
++			int n = 0;
++
++			if (acells < 1 || acells > 2 || scells < 0 || scells > 2) {
++				/* A tree this was not written for. Refuse to write a
++				 * property every consumer would misread. */
++				printk("ide: parent declares #address-cells %d / "
++				       "#size-cells %d -- leaving reg unset\n",
++				       acells, scells);
++			} else {
++				n += ide_encode_cells(props + n, acells,
++						      current_channel);
++				n += ide_encode_cells(props + n, scells, 0);
++				set_property(dnode, "reg", (char *)props,
++					     n * sizeof(props[0]));
++			}
++		}
++#else
+ 		props[0] = __cpu_to_be32(current_channel);
+ 		props[1] = __cpu_to_be32(0);
+ 		props[2] = 0;
+ 		set_property(dnode, "reg", (char *)&props, 3*sizeof(props[0]));
++#endif
+ 
+ 		set_int_property(dnode, "#address-cells", 1);
+ 		set_int_property(dnode, "#size-cells", 0);
