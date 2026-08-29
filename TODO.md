@@ -4085,8 +4085,9 @@ can land above 4 GiB — is answered per boot rather than assumed. It cannot, to
 ## 17. OpenBIOS: open decisions and dangling issues (as of 2026-08-28)
 
 Everything still open for `examples/openbios-the-rival-that-shipped/`, in one place,
-so it stops being scattered across §13–§16 and the PR history. **Two of these need a
-decision rather than work.**
+so it stops being scattered across §13–§16 and the PR history. **One of these still
+needs a decision rather than work** — §17.1. §17.2 was the other, and was decided on
+2026-08-28: nothing goes upstream.
 
 ### 17.1 — DECISION: should the root declare `#address-cells 2`?
 
@@ -4114,29 +4115,50 @@ one cell short. Changing the root means re-checking every consumer, and §13.2's
 **Not attempted, and no recommendation recorded** — this is a device-tree design
 decision, not a defect.
 
-### 17.2 — DECISION: upstream the patches that are upstream's bugs
+### 17.2 — ~~DECISION: upstream the patches that are upstream's bugs~~ — DECIDED 2026-08-28: none of them
 
-`patches/` now holds **41**. Some are deliberate lab divergence (patch 15's Forth-loader
-divergence is carried on purpose); several are plain upstream defects that any user of
-`openbios/openbios` would hit:
+**Settled: nothing goes upstream.** All 41 patches are carried as deliberate
+local divergence, indefinitely. The reason is review burden on a small volunteer
+project, not a judgement about the code:
 
-| patch | why it is upstream's | shape |
-|---|---|---|
-| **39** | coreboot's own header says *why* it forces 4-byte alignment; OpenBIOS's copy dropped it, so any 64-bit reader misreads the table | one typedef, with a before/after |
-| **41** | the same file's wire-format fix stopped short of the structs in its union | four field types |
-| **37** | `arch/amd64/builtin.c` cannot compile — broken since 2003 | one array declaration |
-| **36** | `switch-arch builtin-amd64` is in upstream's **own usage text** and silently builds nothing | build.xml rules |
-| **01** | the eight x86 revival fixes, already described as PR-ready in 00-INDEX | eight fixes |
+> "We won't be upstreaming anything… I don't want to bother the maintainers of
+> this project. This repo is very low activity. It seems to be in maintenance
+> mode."
 
-**The blocking unknown is now answered.** [`open-firmware-native-habitats/`](examples/open-firmware-native-habitats/README.md)
-records that whether upstream accepts PRs was **unverified** and that the check comes
-first. Measured 2026-08-28: `openbios/openbios` has commits dated **2026-06-29**,
-including a `.github/workflows` update — an actively maintained repository with CI, not
-an archive.
+**The blocking unknown was answered before deciding, and it answered the other
+way.** [`open-firmware-native-habitats/`](examples/open-firmware-native-habitats/README.md)
+recorded that whether upstream accepts PRs was **unverified** and that the check
+comes first. Measured 2026-08-28: `openbios/openbios` has commits dated
+**2026-06-29**, including a `.github/workflows` update — a maintained repository
+with CI, moving slowly. So this is a decision about our posture, **not** a claim
+that upstream is dead, and the catalog says so in those words. Writing down the
+comfortable version would have been a record that outlives its subject, which is
+the failure this lab exists to keep finding.
 
-The bounded task is **sorting all 41 into upstreamable vs ours**, with a reason per
-patch. The `Subject:` lines are already PR-shaped and `check-patch-scope.sh` already
-requires an `Arch-tested:` line on anything touching shared paths.
+**The sort was done, and it is now a checked artifact.**
+[`patches/00-CATALOG.md`](examples/openbios-the-rival-that-shipped/patches/00-CATALOG.md)
+classifies all 41 by why each exists — `UPSTREAM-BUG` 20, `PORT` 10, `FEATURE` 7,
+`FIXTURE` 2, `DIVERGENCE` 1, `RECORD` 1 — with a `scope` column separating the
+**22 shared-path** patches (where a pin bump will actually conflict) from the 19
+that touch only `arch/`, `include/arch/` or their own `*_config.xml`.
+
+**Only one patch is a divergence in the sense of wanting different behaviour**
+(patch 15's Forth-source loader). The other 40 are things upstream would
+arguably want and is not going to be asked for — which is the honest shape of
+"all 41 are ours".
+
+`check-patch-hygiene.sh` **A7** binds the catalog to the series: one row per
+patch both ways, kinds drawn from the vocabulary the document itself defines,
+and the scope and count columns **recomputed** from the patches on every run
+rather than read off the page. The counts earned that within an hour of being
+typed — the hand-tallied summary said 22 `UPSTREAM-BUG` and 9 `PORT` where the
+rows say 20 and 10. Eight scanner self-controls run first, and all four
+injections into the real catalog (a deleted row, a flipped scope, a decremented
+count, a kind renamed in one place only) were watched to bite.
+
+**What would reverse it.** The 20 `UPSTREAM-BUG` rows are the candidate set,
+already one-per-defect with PR-shaped `Subject:` lines and `Arch-tested:` lines
+from patch 20 onward. Carrying them locally forecloses nothing.
 
 ### 17.3 — `/memory` has a `reg` but no `available`
 

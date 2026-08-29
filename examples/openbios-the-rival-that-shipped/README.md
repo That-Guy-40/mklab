@@ -127,6 +127,7 @@ proves the linuxboot **and** OFW labs' kept ROMs survive. No sudo anywhere.
 | file | role |
 |---|---|
 | [`Containerfile`](Containerfile) | the build box: Debian 13 + xsltproc + ppc cross-gcc; **`toke` built from source** (fcode-utils — a hard prereq `switch-arch` aborts without) |
+| [`patches/00-CATALOG.md`](patches/00-CATALOG.md) | **all 41 patches sorted by why they exist**, and the 2026-08-28 decision that none of them is sent upstream. Kinds, scopes and counts are recomputed from the patches by `check-patch-hygiene.sh` A7, not read off the page |
 | [`patches/01-x86-revival.patch`](patches/01-x86-revival.patch) | the eight fixes above, one reviewable diff |
 | [`build-openbios.sh`](build-openbios.sh) | clone + patch (idempotent) + container-build x86 / ppc / unix targets |
 | [`build-coreboot-openbios.sh`](build-coreboot-openbios.sh) | isolated coreboot build carrying `openbios-builtin.elf`; sha-guards both sibling labs' artifacts |

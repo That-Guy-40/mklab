@@ -9,6 +9,10 @@
 #   A6  the RECORD and the BUILT divergence name the SAME files: every file in
 #       patches/TESTED-TREE.patch is described by some patches/NN-*.patch, and
 #       every file a numbered patch touches is in what actually gets applied.
+#   A7  patches/00-CATALOG.md and the series describe the same patches: one row
+#       each, a kind from the vocabulary the DOCUMENT defines, a scope column
+#       recomputed from the patch's own files, and summary counts recomputed
+#       from the rows.
 #   A4  every patches/NN-*.patch parses as a unified diff, and its
 #       `Subject: [PATCH NN/M]` agrees with its own filename. Plus: the series
 #       is numbered 01..N with no gaps and no duplicates.
@@ -201,6 +205,92 @@ check_record_covers_build() {
         || PROBLEMS+="A6: recorded in a numbered patch but NOT in what is applied, so the record describes firmware nobody builds: $(tr '\n' ' ' <<<"$only_rec")"$'\n'
 }
 
+# A7: the CATALOG and the series must describe the same 41 patches.
+#
+# patches/00-CATALOG.md records the 2026-08-28 decision that none of this goes
+# upstream, and sorts every patch by why it exists. That makes it a third record
+# of one subject -- alongside the numbered patches and TESTED-TREE.patch -- and
+# a record nothing checks is bug class #1 waiting to happen. A6 already binds
+# the other two together; A7 binds this one to them.
+#
+# It checks four things, and only ONE of them is about the prose:
+#
+#   * the bijection: every NN-*.patch has exactly one row, every row names a
+#     patch that exists. A patch added without a row is a divergence nobody
+#     classified; a row left behind is a document describing a diff nobody has.
+#   * the kind is drawn from the vocabulary THE DOCUMENT ITSELF defines. The
+#     list is not hard-coded here: it is read out of the doc's own kind table,
+#     and the three places kinds appear (that table, the rows, the summary) must
+#     name the identical set. A checker carrying its own copy of the vocabulary
+#     would drift from the doc and then prove something about itself.
+#   * the scope column is RECOMPUTED from each patch's own file list and must
+#     match. `arch-local` iff every touched path is under arch/, include/arch/,
+#     or config/examples/<arch>_config.xml. This is the column a reader uses to
+#     predict rebase pain at the next pin bump, and a hand-maintained answer to
+#     "which files does this patch touch?" is a cached fact about a file that
+#     changes.
+#   * the summary counts are recomputed from the rows. "Don't write the test
+#     count in prose" (CLAUDE.md) -- and this one earned it on the day it was
+#     written: the hand-tallied table said 22 UPSTREAM-BUG and 9 PORT where the
+#     rows say 20 and 10. Two numbers, wrong within an hour of being typed.
+CAT_ROWS=0
+patch_scope() { # patch_scope <patch> -> arch-local | shared
+    if touched_files "$1" | grep -qvE '^arch/|^include/arch/|^config/examples/[a-z0-9_]+_config\.xml$'; then
+        printf 'shared\n'
+    else
+        printf 'arch-local\n'
+    fi
+}
+check_catalog() {
+    local lab="$1" cat="$1/patches/00-CATALOG.md"
+    local rows vocab used sums p base kind scope want n
+    if [[ ! -f "$cat" ]]; then
+        PROBLEMS+="A7: patches/00-CATALOG.md is missing — the series has no record of which divergences are deliberate and why none is sent upstream"$'\n'
+        return
+    fi
+    # rows: | [`NN-name.patch`](NN-name.patch) | `KIND` | scope | text |
+    rows="$(sed -n 's/^| \[`\([0-9][0-9]-[^`]*\.patch\)`\]([^)]*) | `\([A-Z-]*\)` | \([a-z-]*\) |.*/\1 \2 \3/p' "$cat")"
+    CAT_ROWS="$(printf '%s\n' "$rows" | grep -c . || true)"
+    if (( CAT_ROWS == 0 )); then
+        PROBLEMS+="A7: no catalog rows parsed out of 00-CATALOG.md — the table moved or changed shape, and every check below it is asserting nothing"$'\n'
+        return
+    fi
+    # the vocabulary the DOCUMENT defines, and the two places it is used again
+    vocab="$(sed -n 's/^| `\([A-Z-]\+\)` | [a-z].*/\1/p' "$cat" | sort -u)"
+    used="$( printf '%s\n' "$rows" | awk '{print $2}' | sort -u)"
+    sums="$(sed -n 's/^| `\([A-Z-]\+\)` | \([0-9]\+\) |.*/\1/p' "$cat" | sort -u)"
+    [[ "$vocab" == "$used" ]] \
+        || PROBLEMS+="A7: the kinds the rows USE and the kinds the doc DEFINES are different sets — defined: $(tr '\n' ' ' <<<"$vocab")/ used: $(tr '\n' ' ' <<<"$used")"$'\n'
+    [[ "$vocab" == "$sums" ]] \
+        || PROBLEMS+="A7: the summary table and the kind table name different sets — a kind was added or renamed in one and not the other"$'\n'
+    # bijection + per-row scope
+    while read -r base kind scope; do
+        [[ -z "$base" ]] && continue
+        p="$lab/patches/$base"
+        if [[ ! -f "$p" ]]; then
+            PROBLEMS+="A7: 00-CATALOG.md has a row for $base, which is not in patches/ — the catalog describes a diff nobody has"$'\n'
+            continue
+        fi
+        want="$(patch_scope "$p")"
+        [[ "$scope" == "$want" ]] \
+            || PROBLEMS+="A7: $base is catalogued '$scope' but its files make it '$want' — recomputed from the patch, which is the only thing that knows"$'\n'
+    done <<<"$rows"
+    for p in "$lab"/patches/[0-9][0-9]-*.patch; do
+        [[ -f "$p" ]] || continue
+        base="$(basename "$p")"
+        n="$(printf '%s\n' "$rows" | awk -v b="$base" '$1 == b' | grep -c . || true)"
+        (( n == 1 )) \
+            || PROBLEMS+="A7: $base has $n rows in 00-CATALOG.md (want exactly 1) — an unclassified patch is a divergence nobody decided to carry"$'\n'
+    done
+    # the counts, recomputed
+    while read -r kind n; do
+        [[ -z "$kind" ]] && continue
+        want="$(printf '%s\n' "$rows" | awk -v k="$kind" '$2 == k' | grep -c . || true)"
+        (( n == want )) \
+            || PROBLEMS+="A7: the summary says $n $kind row(s); there are $want — a count written in prose, drifting"$'\n'
+    done < <(sed -n 's/^| `\([A-Z-]\+\)` | \([0-9]\+\) |.*/\1 \2/p' "$cat")
+}
+
 # check_patch <patch> — A4 for one file.
 check_patch() {
     local p="$1" base num subj
@@ -323,12 +413,85 @@ mkdir -p "$WORK/lab-nott/patches"
 mk_patch "$WORK/lab-nott/patches/01-a.patch" 01 1 "src/a.c" "x"
 check_record_covers_build "$WORK/lab-nott"; expect catch "patches/TESTED-TREE.patch is absent entirely"
 
+# ── §0: A7's own controls ───────────────────────────────────────────────────
+# The catalog is prose about diffs, and every column of it can be wrong while
+# the file still renders perfectly. So the scanner is aimed at a coherent
+# fixture and at one fixture per way the prose can drift from the patches,
+# BEFORE it is aimed at the real 00-CATALOG.md.
+#
+# The scope rows matter most: `arch-local` vs `shared` is the column a reader
+# uses to predict a rebase, it is derived from a file list that changes, and a
+# wrong answer there looks exactly like a right one.
+mk_cat_lab() { # mk_cat_lab <lab> <catalog-body>
+    local lab="$1" body="$2"
+    mkdir -p "$lab/patches"
+    mk_patch "$lab/patches/01-a.patch" 01 2 "arch/x86/a.c" "x"   # -> arch-local
+    mk_patch "$lab/patches/02-b.patch" 02 2 "libc/b.c"     "y"   # -> shared
+    printf '%s' "$body" > "$lab/patches/00-CATALOG.md"
+}
+CAT_VOCAB='| `PORT` | a port |
+| `FIXTURE` | a fixture |
+'
+CAT_SUMS='| `PORT` | 1 |
+| `FIXTURE` | 1 |
+'
+mk_cat_lab "$WORK/cat-ok" "$CAT_VOCAB
+| [\`01-a.patch\`](01-a.patch) | \`PORT\` | arch-local | it is a port |
+| [\`02-b.patch\`](02-b.patch) | \`FIXTURE\` | shared | it is a fixture |
+$CAT_SUMS"
+check_catalog "$WORK/cat-ok"; expect clean "a catalog whose rows, kinds, scopes and counts all agree with the patches"
+
+mk_cat_lab "$WORK/cat-missing" "$CAT_VOCAB
+| [\`01-a.patch\`](01-a.patch) | \`PORT\` | arch-local | it is a port |
+| \`PORT\` | 1 |
+| \`FIXTURE\` | 0 |"
+check_catalog "$WORK/cat-missing"; expect catch "a patch on disk with NO catalog row — an unclassified divergence"
+
+mk_cat_lab "$WORK/cat-orphan" "$CAT_VOCAB
+| [\`01-a.patch\`](01-a.patch) | \`PORT\` | arch-local | it is a port |
+| [\`02-b.patch\`](02-b.patch) | \`FIXTURE\` | shared | it is a fixture |
+| [\`03-gone.patch\`](03-gone.patch) | \`PORT\` | shared | it is not there |
+| \`PORT\` | 2 |
+| \`FIXTURE\` | 1 |"
+check_catalog "$WORK/cat-orphan"; expect catch "a catalog row naming a patch that does not exist"
+
+mk_cat_lab "$WORK/cat-scope" "$CAT_VOCAB
+| [\`01-a.patch\`](01-a.patch) | \`PORT\` | shared | it only touches arch/x86 |
+| [\`02-b.patch\`](02-b.patch) | \`FIXTURE\` | shared | it is a fixture |
+$CAT_SUMS"
+check_catalog "$WORK/cat-scope"; expect catch "a scope column that disagrees with the patch's own file list"
+
+mk_cat_lab "$WORK/cat-count" "$CAT_VOCAB
+| [\`01-a.patch\`](01-a.patch) | \`PORT\` | arch-local | it is a port |
+| [\`02-b.patch\`](02-b.patch) | \`FIXTURE\` | shared | it is a fixture |
+| \`PORT\` | 2 |
+| \`FIXTURE\` | 1 |"
+check_catalog "$WORK/cat-count"; expect catch "a summary count written in prose and drifted from the rows"
+
+mk_cat_lab "$WORK/cat-kind" "$CAT_VOCAB
+| [\`01-a.patch\`](01-a.patch) | \`DIVERGENCE\` | arch-local | a kind the doc never defines |
+| [\`02-b.patch\`](02-b.patch) | \`FIXTURE\` | shared | it is a fixture |
+$CAT_SUMS"
+check_catalog "$WORK/cat-kind"; expect catch "a row using a kind the document's own vocabulary does not define"
+
+mkdir -p "$WORK/cat-none/patches"
+mk_patch "$WORK/cat-none/patches/01-a.patch" 01 1 "arch/x86/a.c" "x"
+check_catalog "$WORK/cat-none"; expect catch "no 00-CATALOG.md at all"
+
+# The all-PASS-proves-nothing shape: if the table is reshaped so no row parses,
+# every check above it silently has nothing to say.
+mk_cat_lab "$WORK/cat-shape" "$CAT_VOCAB
+* 01-a.patch -- PORT -- arch-local
+* 02-b.patch -- FIXTURE -- shared
+$CAT_SUMS"
+check_catalog "$WORK/cat-shape"; expect catch "a reshaped table out of which no row parses — the scanner must say so, not pass"
+
 (( c_bad == 0 )) \
     || fail "§0: $c_bad of $((c_ok + c_bad)) scanner controls behaved wrongly — nothing below its verdict means anything"
 # The fixtures used the exemption too; clear what they recorded, or the report
 # below names a temp file as a grandfathered patch.
 EXEMPT_USED=""
-note "§0 controls: 9 must-catch, 7 must-not-catch — all $c_ok behaved"
+note "§0 controls: 16 must-catch, 8 must-not-catch — all $c_ok behaved"
 
 # ---------------------------------------------------------------- the real files
 
@@ -345,6 +508,7 @@ PTT="$LAB/patches/TESTED-TREE.patch"
 check_markers "$BUILD" "$PTT"
 check_markers_pristine "$BUILD"
 check_record_covers_build "$LAB"
+check_catalog "$LAB"
 
 for p in "${PATCHES[@]}"; do check_patch "$p"; done
 
@@ -370,8 +534,9 @@ if [[ -n "$A3B" ]]; then
     [[ -n "$NEWFILES" ]] && note "A3b: absent because the patch CREATES the file (404 at the pin, which is an answer and not a skip):$NEWFILES"
 fi
 note "A6: the record and the applied patch agree on all $A6_BUILT files"
+note "A7: 00-CATALOG.md classifies all $CAT_ROWS patches — kinds, scopes and counts all recomputed from the patches themselves"
 note "A4: ${#PATCHES[@]} patches parse as unified diffs, subjects agree with filenames, series is 01..${#PATCHES[@]}"
 if [[ -n "$EXEMPT_USED" ]]; then
     note "A4: no Subject: line on ${EXEMPT_USED% } — grandfathered BY NAME (the convention began at patch 11), printed here so the exemption cannot grow unnoticed"
 fi
-pass "the patch series is coherent with itself, with what is applied, and with the build: $NMARK markers describe strings the applied patch actually adds, and all ${#PATCHES[@]} patches read as unified diffs numbered 01..${#PATCHES[@]} with subjects that match their filenames, and the record and the applied TESTED-TREE.patch name the same $A6_BUILT files (16 scanner self-controls fired first)"
+pass "the patch series is coherent with itself, with what is applied, and with the build: $NMARK markers describe strings the applied patch actually adds, and all ${#PATCHES[@]} patches read as unified diffs numbered 01..${#PATCHES[@]} with subjects that match their filenames, and the record and the applied TESTED-TREE.patch name the same $A6_BUILT files, and 00-CATALOG.md classifies all $CAT_ROWS of them with scopes and counts recomputed rather than read (24 scanner self-controls fired first)"
