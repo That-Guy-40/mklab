@@ -14,7 +14,7 @@ Base: openbios e5ac46dd24e6216c36aa80462af25457e7029440
 Arch-tested: x86 amd64 ppc
 
 diff --git a/Makefile.target b/Makefile.target
-index 6f2d264..22dd31e 100644
+index 6f2d264..a4cf23b 100644
 --- a/Makefile.target
 +++ b/Makefile.target
 @@ -24,6 +24,9 @@ AR     := $(TARGET)ar
@@ -27,6 +27,39 @@ index 6f2d264..22dd31e 100644
  RANLIB := $(TARGET)ranlib
  
  CFLAGS+= -Os -g -DNATIVE_BITWIDTH_EQUALS_HOST_BITWIDTH -USWAP_ENDIANNESS
+@@ -54,16 +57,30 @@ all: versions dictionaries host-libraries target-libraries host-executables targ
+ 
+ versions: $(ODIR)/target/include/openbios-version.h $(ODIR)/forth/version.fs
+ 
++# TODO 17.5: the build date is what makes a build non-reproducible, and it is
++# NOT noise -- smoke-openbios.sh's ppc track proves the running firmware is OURS
++# rather than the distro's -bios blob by comparing exactly this banner. Removing
++# it would delete an identity check to buy a property nothing needed.
++#
++# So: reproducible ON REQUEST. SOURCE_DATE_EPOCH is the reproducible-builds
++# standard; when it is set the stamp is derived from it, and when it is not the
++# behaviour is bit-for-bit what it always was. := not =, so both consumers below
++# get the SAME stamp within one make run rather than two `date` calls that can
++# straddle a minute.
++BUILD_DATE := $(shell if [ -n "$$SOURCE_DATE_EPOCH" ]; then \
++	LC_ALL=C TZ=UTC date -u -d "@$$SOURCE_DATE_EPOCH" +'%b %e %Y %H:%M'; \
++	else LC_ALL=C TZ=UTC date +'%b %e %Y %H:%M'; fi)
++
+ $(ODIR)/forth/version.fs:
+ 	$(call quiet-command,true, "  GEN   $(TARGET_DIR)$@")
+-	@DATE="$(shell echo `LC_ALL=C TZ=UTC date +'%b %e %Y %H:%M'`)" ;  \
++	@DATE="$(BUILD_DATE)" ;  \
+ 		( echo ": builddate \" $$DATE\" ; " ;     \
+ 		  echo ": version \" $(VERSION)\" ; " ; ) \
+ 		  > $(dir $@)/version.fs
+ 
+ $(ODIR)/target/include/openbios-version.h:
+ 	$(call quiet-command,true, "  GEN   $(TARGET_DIR)$@")
+-	@DATE="$(shell echo `LC_ALL=C TZ=UTC date +'%b %e %Y %H:%M'`)" ; \
++	@DATE="$(BUILD_DATE)" ; \
+           ( echo "#define OPENBIOS_BUILD_DATE \"$$DATE\"" ; \
+            echo "#define OPENBIOS_VERSION_STR \"$(VERSION)\"" ; ) \
+          > $(dir $@)/openbios-version.h
 diff --git a/arch/amd64/boot.c b/arch/amd64/boot.c
 index 0e1fe7e..ee0fb78 100644
 --- a/arch/amd64/boot.c
