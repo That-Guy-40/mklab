@@ -279,6 +279,37 @@ if [[ "${OPENBIOS_ARCHIVE:-0}" == 1 ]]; then
     "$HERE/../../tools/openbios-archive-tree.sh" --workdir "$WORKDIR/openbios"
 fi
 
+# TODO 17.6: SAY IT WHEN THE STALENESS IS CREATED, not when it is discovered.
+#
+# Rebuilding the firmware leaves any coreboot ROM carrying the PREVIOUS payload,
+# and smoke-openbios.sh's coreboot tracks then SKIP with "this ROM was built
+# from a DIFFERENT payload". That guard is right -- it caught a ROM that spent
+# two days reporting on a payload predating every fix beside it -- but it fires
+# minutes later, in a different command, and it fired three times in one day
+# here before anyone wrote down that it is a SEQUENCING trap rather than a bug.
+#
+# So the notice moves to the moment the staleness is caused. It is a NOTE and
+# not a failure: rebuilding firmware without rebuilding a ROM is a perfectly
+# ordinary thing to do, and only becomes a problem if you then expect the
+# coreboot tracks to run.
+#
+# It asks the provenance tool rather than comparing dates or paths itself --
+# one implementation of "does this ROM carry this payload", used by the gate and
+# by this notice.
+CB="${COREBOOT_DIR:-$HOME/linuxboot-lab/coreboot}"
+# arch : rom dir : payload, relative to the tree : the track that will SKIP
+for _arm in "x86:build-openbios:obj-x86/openbios-builtin.elf:coreboot" \
+            "amd64:build-openbios-amd64:obj-amd64/openbios-builtin.elf32:coreboot-amd64"; do
+    IFS=: read -r _a _dir _pay _track <<<"$_arm"
+    _rom="$CB/$_dir/coreboot.rom"; _pay="$WORKDIR/openbios/$_pay"
+    [[ -f "$_rom" && -f "$_pay" ]] || continue
+    if ! "$HERE/../../tools/openbios-rom-provenance.sh" --check "$_rom" "$_pay" >/dev/null 2>&1; then
+        echo "==> NOTE: $_dir/coreboot.rom no longer carries this firmware."
+        echo "    ./smoke-openbios.sh $_track will SKIP until you run:"
+        echo "        ./build-coreboot-openbios.sh $_a"
+    fi
+done
+
 echo "==> artifacts:"
 ls -1 "$WORKDIR"/openbios/obj-amd64/openbios.multiboot32 \
       "$WORKDIR"/openbios/obj-amd64/openbios-amd64.dict \

@@ -3760,8 +3760,16 @@ work items, and are deliberately not checkboxes here.
       **directories** containing `*.sh` instead; the five rows go red, which is the point.
       This is `CLAUDE.md`'s *"a scan that matches nothing and a scan that is broken print the
       same green ✓"* moved up one level — a broken **population** rather than a broken pattern.
+      **RE-DERIVED 2026-08-29** (the measurement above was dated 2026-08-26, and a
+      fact three sessions old is a cache entry): aiming the checker at every `tests/`
+      directory containing a `*.sh` gives **18 directories, 14 rc 0, 4 rc 1** — the
+      same four this box names. The record was accurate. What it did not say is that
+      **all four fail on the FIRST check**, *"no lib.sh — there is no shared net to
+      check"*, so the scanner never reaches their tests: the state of those suites is
+      an **UNKNOWN**, not a known-bad.
 - [ ] **15.2 — three private copies of the net, one already drifted weaker.** Blocked behind
-      15.1 seeing them at all. `package-mirror-ram/tests/test-state-mount-guard.sh` installs its
+      15.1 seeing them at all. (See 15.1's 2026-08-29 note: what is known about these
+      four comes from READING them, because the checker stops before it can measure.) `package-mirror-ram/tests/test-state-mount-guard.sh` installs its
       own `trap` with **no `_VERDICT` flag** and whitelists `rc == 1` — so a `die` (which is
       `exit 1`) ends the run with **no `FAIL:` line**, the exact silent exit the net exists to
       prevent. The two `test-offline-archive.sh` files carry near-identical hand-rolled copies.
@@ -4430,17 +4438,61 @@ comparison that never looked.
   in `run-all.sh`: five container builds, minutes each — `MANUAL_TESTING.md`
   carries the invocation.
 
-### 17.6 — The provenance/rebuild ordering trips easily
+### 17.6 — ~~The provenance/rebuild ordering trips easily~~ — CLOSED 2026-08-29
 
-`smoke-openbios.sh`'s coreboot tracks SKIP with *"this ROM was built from a DIFFERENT
-payload"* whenever the firmware is rebuilt without rerunning
-`./build-coreboot-openbios.sh <arch>`. That is the guard working — it fired **three
-times on 2026-08-28 alone**, correctly each time — but it is a sequencing trap for
-anyone iterating on firmware. Not a bug; recorded so the SKIP is recognised instantly
-rather than debugged.
+The guard was never wrong: `smoke-openbios.sh`'s coreboot tracks SKIP with *"this
+ROM was built from a DIFFERENT payload"* whenever the firmware is rebuilt without
+rerunning `./build-coreboot-openbios.sh <arch>`, and it once caught a ROM that
+had spent **two days** reporting on a payload predating every fix in the tree
+beside it.
 
-### 17.7 — Repo-wide, not OpenBIOS-specific
+**What was wrong is WHERE it spoke.** It fired minutes later, from a different
+command, and it fired three times in one day here before anyone wrote down that
+it is a *sequencing* trap rather than a bug. A record that says *"recognise this
+SKIP instantly rather than debugging it"* is documentation standing in for a
+fix.
 
-§15.1, §15.2 and §15.3 remain open. openbios's own `run-all.sh` landed 2026-08-27, so
-**this lab is no longer one of §15.3's rows** — the remaining three are elsewhere.
+`build-openbios.sh` now says it **at the moment the staleness is caused**:
+
+```
+==> NOTE: build-openbios/coreboot.rom no longer carries this firmware.
+    ./smoke-openbios.sh coreboot will SKIP until you run:
+        ./build-coreboot-openbios.sh x86
+```
+
+It names the track that will skip and the exact command that fixes it. It is a
+**note, not a failure** — rebuilding firmware without rebuilding a ROM is an
+ordinary thing to do, and only matters if you then expect those tracks to run.
+And it asks [`openbios-rom-provenance.sh`](tools/openbios-rom-provenance.sh)
+rather than comparing dates or paths itself: one implementation of *"does this
+ROM carry this payload"*, shared by the gate and by the notice.
+
+Both directions were watched: rebuilding x86 firmware produces the x86 notice,
+and after rebuilding the x86 ROM, building **amd64** produces the amd64 notice
+and **no x86 notice** — so it is tracking the payload rather than firing on every
+build.
+
+### 17.7 — ~~Repo-wide, not OpenBIOS-specific~~ — CLOSED 2026-08-29 as double-tracking
+
+This was never an item, it was a **pointer** — and a backlog recorded in two
+places drifts in one of them. §15 is the home; §17 is for OpenBIOS. The openbios
+rows in §15.1 and §15.3 closed on 2026-08-27, which is what this entry existed to
+say, and it has now been said in §15 itself.
+
+**Re-derived before deleting it**, because the counts were dated 2026-08-26 and
+this lab's own rule is that a fact asserted three sessions ago is a cache entry.
+Measured 2026-08-29 by aiming `check-harness-net.sh` at every `tests/` directory
+containing a `*.sh`: **18 directories, 14 pass, 4 fail** —
+`examples/almalinux-packer-images/`, `examples/kali-packer-vagrant/`,
+`examples/package-mirror-ram/` and `tools/tests` — the same four §15.1 names, and
+the same three (plus `tools/tests`, which §15.3 excludes on purpose) with no
+`run-all.sh`. **The record was accurate**, which is worth knowing rather than
+assuming.
+
+**One thing the record did not say, and it changes what §15.2 means:** all four
+fail on the *first* check, *"no lib.sh — there is no shared net to check"*. The
+scanner never reaches their tests. So the state of those suites is **UNKNOWN**,
+not bad: §15.2's *"three private copies of the net, one already drifted weaker"*
+is what somebody found by reading, and nothing has yet been able to measure the
+rest.
 
