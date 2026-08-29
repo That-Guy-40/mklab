@@ -586,3 +586,40 @@ for is usually shared by the workload you are trying to protect.
   number, a config filename, a lab/VM name that recurs across cmdlines.
 - Prefer the tool's own lifecycle verb when there is one (`lab-vm.sh stop`,
   `lab-lxd.sh down`, `incus delete -f <name>`) over a raw signal.
+
+### Stacked PRs: retarget the dependents BEFORE deleting a base branch
+
+Squash-merging a PR with `--delete-branch` **closes every PR whose base was that
+branch**, and GitHub then refuses to retarget a closed one — *"Cannot change the
+base branch of a closed pull request"* (HTTP 422). `gh pr reopen` fails too,
+because the base no longer exists. The branch and its commits are untouched;
+what is lost is the **PR object** — its number, its body, and any review on it.
+
+**It is the DELETE that closes them, not the merge.** That distinction is the
+whole rule, and it is easy to get backwards: the merge is the loud step, so the
+closure looks like a consequence of merging.
+
+Measured 2026-08-29 on three sequential PRs (`#338 ← #339 ← #340`):
+`gh pr merge 338 --squash --delete-branch` closed **#339** on the spot, and it
+had to be reopened as a new PR (#341) carrying the identical commit. Doing the
+next one in the other order worked first time.
+
+The order that works:
+
+1. **Retarget the dependent while it is still open** —
+   `gh api -X PATCH repos/<owner>/<repo>/pulls/<n> -f base=main`
+   (`gh pr edit <n> --base main` is the same call and is fine too).
+2. Merge the parent **without** `--delete-branch`.
+3. Rebase the dependent onto the new tip:
+   `git rebase --onto origin/main <parent-branch-tip-sha>`.
+   **A squash merge rewrites history**, so the dependent's branch still carries
+   the parent's *original* commit while `main` carries a different one with the
+   same content. `mergeable=CONFLICTING` here does not mean there is a conflict
+   to resolve — it means the already-merged commit has to be dropped. Rebasing
+   `--onto` the merged base does that, usually with no conflict at all.
+4. `git push --force-with-lease`, wait for CI to re-run, merge, and **only then**
+   delete both branches.
+
+`gh pr view <n> --json state,baseRefName,mergeable` is the one-line check for
+whether a dependent survived, and it is worth running between every step of a
+stack rather than at the end.
