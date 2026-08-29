@@ -25,6 +25,34 @@ a poke analogue written from scratch.*
 
 ---
 
+## STATUS 2026-08-29 — the verdict above is largely INOPERATIVE
+
+**This review became the work plan for patches 25-34, and then for TODO 16.** Both
+structural findings are closed, and so are F4, F5 and F6. The findings are left
+as written — struck through and annotated in place rather than edited away,
+because what was true on 2026-08-24 is the record of why the work was done.
+
+| finding | 2026-08-24 | 2026-08-29 |
+|---|---|---|
+| **F1** two proven pieces are two firmwares | two codebases | **still two codebases — consequence void.** FCode now evaluates inside the 64-bit OpenBIOS build itself, so the cross-implementation confound is gone without the merge F1 asked for |
+| **F2** `encode+` is `nip +`; the write half does not generalize | the finding that breaks §5 | **CLOSED** — patch 27 concatenates; patches 31/32 give the writers a destination and a cursor |
+| **F3** the crux test tests the correct half | structurally blind | **CLOSED BY REPLACEMENT** — no cross-build byte diff exists; `property-abi` asserts the four 64-bit-only invariants this review proposed instead. One half is carried on purpose: see the note there |
+| **F4** `encode-phys` is not fixed-width | ungraded hazard | **CLOSED, and asserted** in three contexts per arch |
+| **F5** `decode-bytes` is broken, and dead | static reading | **CLOSED** — patch 25; and it is no longer dead, the probe exercises it and pins its depth |
+| **F6** step ordering is backwards | three config flips blocking everything | **CLOSED** — all three flipped, each with its own checkpoint |
+| **Revised next steps 1-4** | the replacement plan | **all four done**, including step 3's design fork |
+
+**What is still open**, and it is the honest remainder:
+
+- **§8's measured-boot / attestation row.** Nothing has been built. Its grade
+  should improve now that the arena problem is fixed, but that is a prediction.
+- **F3's decode-side asymmetry is unfixed BY CHOICE.** `l@-be` still
+  zero-extends. It is carried as TODO §13.2(a), characterized rather than fixed,
+  and the premise it is tolerated on is now **derived on every boot** — every
+  four-byte decode counted, none with bit 31 set — instead of assumed.
+
+---
+
 ## Method, and what this review did not do
 
 Every finding below was reached by **reading the shipped source**, not by booting
@@ -51,9 +79,11 @@ series. That mattered here: before the change, a clean checkout built no `arch/a
 at all, so a reader following this review's amd64 line references would have been
 reading about firmware their own tree could not produce.
 
-**No firmware was built and no prompt was driven for this review.** Where a claim would
-need a boot to settle, it is labelled **UNKNOWN** rather than asserted — the notes'
-own §6 discipline, kept. Line references are `file:line` at the commit above.
+~~**No firmware was built and no prompt was driven for this review.**~~ — true when
+written; **every finding below has since been booted** (2026-08-25 onward). Where a
+claim would need a boot to settle, it was labelled **UNKNOWN** rather than asserted —
+the notes' own §6 discipline, kept — and each of those UNKNOWNs has now been
+measured. See *What this review did NOT prove* at the end, which is annotated. Line references are `file:line` at the commit above.
 
 ---
 
@@ -84,6 +114,13 @@ available.
 
 ## F1 — The "two proven pieces" are two different firmwares
 
+> **2026-08-29 — the premise still holds, the consequence does not.** No OFW
+> `fcode` path was merged; they remain two codebases. But patches 17-18 brought
+> PCI enumeration and FCode evaluation up on OpenBIOS `arch/amd64`, so
+> FCode-at-a-64-bit-cell now exists **inside one firmware**. The
+> cross-implementation confound this finding warns about is gone without the
+> merge it asks for.
+
 §5's *"Why this unifies your two proven pieces"* argues the 32-bit FCode path and the
 64-bit device tree stop being separate milestones because encode/decode is load-bearing
 in both. **In this repo they are not two halves of one system:**
@@ -113,6 +150,17 @@ labs being described as one port.
 ---
 
 ## F2 — `encode+` is `nip +`: the write half does not generalize
+
+> **CLOSED 2026-08-29.** `encode+` now concatenates rather than assuming
+> adjacency (patch 27) — and the control disproved this section's own account of
+> the defect: `nip +` returned the *right* length over the *wrong* bytes, not a
+> wrong length. The storage abstraction this finding said was missing was then
+> built: `int!` / `string!` / `bytes!` take the destination as a parameter and
+> the 1275 words are redefined on top of them (patch 31), with `int!+` /
+> `string!+` / `bytes!+` composing successive fields at a caller-chosen address
+> (patch 32). The assertion is `here` **unchanged**. Three of §8's rows that this
+> finding blocked now have working tracks: `pmem-writer`, `flash-writer`,
+> `mmio-writer`.
 
 This is the finding that breaks §5's conclusion and most of §8.
 
@@ -162,6 +210,18 @@ which is exactly what §5 claims it is not.
 ---
 
 ## F3 — The crux test tests the correct half, and cannot express the real bug
+
+> **CLOSED BY REPLACEMENT 2026-08-29.** The cross-build byte diff was never
+> written. `smoke-openbios.sh property-abi` asserts the four 64-bit-only
+> invariants listed under *Revised next steps* instead — and every one of them
+> has bitten at least once.
+>
+> **One half is carried on purpose.** The encode-side truncation was resolved
+> toward *refuse*: `encode-int` of a value ≥ 2³² now throws by name (patch 26),
+> LIED down to HALTED. The decode-side zero-extension is **deliberately not
+> fixed** — sign-extending `l@-be` would corrupt every decoded address with bit
+> 31 set — so it is asserted *as itself*, and the premise it is tolerated on is
+> derived per boot rather than assumed.
 
 §7 step 1 proposes byte-identical encode output on both builds, diffed against a golden
 image, *before* anything else. Three problems, in increasing severity.
@@ -223,6 +283,12 @@ onto a 4-byte-cell stack to compare the two sides.
 
 ## F4 — `encode-phys` is not fixed-width
 
+> **CLOSED 2026-08-29, and now asserted rather than merely known.**
+> `property-abi` measures `encode-phys` in **three** contexts per arch: 8 bytes
+> under `/` (no parent, the 1275 default of 2 cells), the root's own declaration
+> under `/ide@1`, and `c` under a PCI child whose bus declares 3. A fixed-width
+> `encode-phys` makes all three equal.
+
 §5 and §7 step 1 both group `encode-phys` with `encode-int` as fixed-width. It is not:
 
 ```forth
@@ -252,6 +318,14 @@ happened from the diff alone.
   ;                                                \ forth/device/property.fs:195
 ```
 
+> **CLOSED 2026-08-29, and the UNKNOWN below was watched.** The first `r>` is a
+> transposed `>r` — one character (patch 25). The static reading was *nearly*
+> right and wrong about the outcome: it did not pop the caller's return address
+> and crash, it **returned cleanly with six items where four are documented**,
+> which is worse. It is also no longer dead: `property-abi` round-trips
+> `encode-bytes`/`decode-bytes` on both arches and asserts the **depth**, from an
+> empty stack back to an empty one.
+
 Two bare `r>` with no matching `>r`. The stack comment even annotates a return-stack
 item that nothing put there. As written this pops the caller's return address.
 
@@ -268,6 +342,13 @@ prompt. It should be trivially confirmable at the `ok` prompt once one is reacha
 ---
 
 ## F6 — The step ordering is backwards, for a delivery reason
+
+> **CLOSED 2026-08-29.** All three flips landed, each with its own observable
+> checkpoint: `CONFIG_FSYS_ISO9660` and `CONFIG_LOADER_FORTH` (patches 12-13, with
+> patch 14 making `(init-program)` reachable at all), `CONFIG_DRIVER_VGA`
+> (patches 17-18). Verified in the tree: all three read `true` on amd64. The
+> serial-console workaround this section dreads was never needed — the probes are
+> multi-line Forth **loaded off media**.
 
 §7 puts the round-trip test *first* and FCode *second*. But on the amd64 build there is
 currently no way to get test Forth into the firmware. Diffing the two upstream configs
@@ -301,14 +382,22 @@ supposition genuinely earns its keep.
 
 ## Revised next steps
 
+> **ALL FOUR DONE, 2026-08-29.** Marked per step below.
+
 Replacing §7, in dependency order:
 
-1. **Flip `CONFIG_DRIVER_VGA`, `CONFIG_FSYS_ISO9660` and `CONFIG_LOADER_FORTH` on
-   amd64.** Cheap, independently testable, and it gives every step below a delivery
+1. ~~**Flip `CONFIG_DRIVER_VGA`, `CONFIG_FSYS_ISO9660` and `CONFIG_LOADER_FORTH` on
+   amd64.**~~ — **DONE** (patches 12-14, 17-18); all three read `true` on amd64. Cheap, independently testable, and it gives every step below a delivery
    path. Each flip needs its own observable checkpoint — for ISO9660 that is TODO §12's
    `dir /ide@1/cdrom@0:\` listing `vmlinuz`; for `LOADER_FORTH` it is a `.fth` file
    loaded off media instead of typed; for VGA it is `byte-load` reached at all.
-2. **Write the 64-bit-only assertions, not the cross-build byte diff.** The invariants
+2. ~~**Write the 64-bit-only assertions, not the cross-build byte diff.**~~ —
+   **DONE**, and each of the four bullets below is now a live assertion in
+   `smoke-openbios.sh property-abi`: `encode-int` **refuses** (patch 26);
+   `decode-int`'s zero-extension is pinned as deliberate with its premise derived
+   per boot; `encode-phys`'s length is measured in three contexts; and `/chosen`'s
+   `stdin` round-trips, with a *different* ihandle checked to be distinguishable so
+   that "they matched" means something. The invariants
    worth money, none of which a golden-image diff can state:
    - `encode-int` of a value ≥ 2³² — must refuse, or be documented lossy and every call
      site audited.
@@ -321,12 +410,17 @@ Replacing §7, in dependency order:
    This is the same bug class the feasibility study's census already caught four times
    (`multiboot.h`'s `unsigned long` wire structs, `dict_end - dict_start` pointer
    subtraction) — one layer up, in Forth.
-3. **Decide the storage question before writing any convenience layer**, because it is a
+3. ~~**Decide the storage question before writing any convenience layer**~~ —
+   **DECIDED AND BUILT** (TODO 16, patches 31-32): the fork went to an
+   `encode-at`-style primitive **underneath** the 1275 words, not a parallel
+   vocabulary. `encode-int` and `encode-string` are now defined in terms of `int!`
+   and `string!`. Original reasoning kept: because it is a
    design fork rather than sugar: does the poke analogue get an `encode-at ( n addr -- )`
    / mapped-buffer primitive *underneath* the 1275 words, or a parallel vocabulary
    beside them? §8's entire application list depends on the answer, and §7 step 3
    currently assumes it away.
-4. **Fix or delete `decode-bytes`** before any round-trip claim mentions bytes.
+4. ~~**Fix or delete `decode-bytes`**~~ — **FIXED** (patch 25), not deleted, and
+   the round-trip claim now exists and asserts the stack depth.
 
 Each of these is stated as an outcome rather than a mechanism, per
 [CLAUDE.md](CLAUDE.md) — "the length changes when `#address-cells` changes", not "the
@@ -340,9 +434,9 @@ loop ran twice".
 |---|---|
 | **Device-tree construction/patching** | **works today as described** — it is the wordset's home ground, and the only entry that needs nothing from F2 |
 | **Exploratory RE of undocumented blobs** | **strong, and available now** — it needs only the decode half, which is already general. `ofscope.fth` is a working precedent |
-| **Boot-handoff structures** | **blocked on F2** — multiboot headers and boot params go at addresses the next stage dictates, which is exactly what `encode-*` cannot target |
-| **Firmware image assembly (CBFS, flash layout)** | **blocked on F2**, harder — the destination is not even RAM |
-| **Measured-boot / attestation** | **best fit for the bidirectional pitch, worst fit for the arena problem** — TPM event-log entries are written to a specific physical log, and PCR-extend data has a fixed digest layout to hit |
+| **Boot-handoff structures** | ~~**blocked on F2**~~ → **UNBLOCKED, demonstrated** — `smoke-openbios.sh pmem-writer` writes three 1275-encoded ints with `int!+` at `0x100400000`, above 4 GiB, and reads them back |
+| **Firmware image assembly (CBFS, flash layout)** | ~~**blocked on F2**, harder — the destination is not even RAM~~ → **PARTLY, and the scope was corrected by measurement**: `flash-writer` shows the writer can be *aimed* at a CFI part at `0xffbe0000`, and that a CFI part is **not** a store-to seam — a write is unlock/erase/program/poll, not a store. `mmio-writer` does store, at both of its addresses |
+| **Measured-boot / attestation** | ~~**worst fit for the arena problem**~~ — **the arena problem is fixed, and nothing has been built.** Still the open row: no TPM or event-log work exists in this lab. The grade should improve; that is a prediction, not a result |
 
 One thing the notes undersell: the poke-like **reader** is much closer to done than §4
 implies. [`examples/open-firmware-debugs-itself/`](examples/open-firmware-debugs-itself/README.md)
@@ -354,22 +448,30 @@ is the **writer** that is the new subsystem.
 ## What this review did NOT prove
 
 Stated explicitly, because the notes' §6 sets that standard and it would be poor form to
-drop it here:
+drop it here. **Annotated 2026-08-29: every one of these has since been settled, which
+is the part of this document that had the shortest shelf life.**
 
-- **Nothing was booted.** Every finding is a reading of source at a pinned commit. F5 in
-  particular (`decode-bytes` popping the return stack) is a static reading; it has not
-  been watched to bite.
-- **The port described in §4 was not inspected.** It may not be the tree reviewed here.
-  If the notes' port carries local changes to `forth/device/property.fs`, F2–F5 need
-  re-checking against *that* file — though F2 (the `nip +` adjacency contract) would
-  have to have been deliberately rewritten to not apply.
-- **Whether an amd64 instance can land above 4 GiB was not measured.** F3's truncation
-  is a live hazard only if it can, and today's firmware runs at 1 MiB. The claim made
-  here is narrower: the truncation is unchecked, and the proposed test cannot detect it.
-- **The config flips in F6 were not applied or built.** They are read from
-  `config/examples/*.xml` at the pinned commit.
-- **No claim is made about `encode-string`.** It is `alloc-tree`-based like the others
-  (property.fs:220) and inherits F2, but it has no width dimension worth testing.
+- ~~**Nothing was booted.**~~ — **all of it has been, from 2026-08-25 on.** F5 in
+  particular has been watched, and the static reading was *wrong about the outcome*:
+  `decode-bytes` did not pop the caller's return address and crash, it returned
+  **cleanly** with six items where four are documented. A clean return is worse than
+  the crash this section predicted, and only a boot could say so.
+- ~~**The port described in §4 was not inspected.**~~ — **moot.** `property.fs` in
+  this repo's tree now carries **five** local patches (25, 26, 27, 31, 32 — counted,
+  not recalled), so F2-F5 *were* re-checked against that file — by changing it. F2's
+  `nip +` adjacency contract was indeed deliberately rewritten, which is what closed it.
+- ~~**Whether an amd64 instance can land above 4 GiB was not measured.**~~ —
+  **MEASURED, on every boot.** `property-abi` prints the top 32 bits of `/chosen`'s
+  live `stdin` and asserts they are zero: instances land **below** 4 GiB today, and
+  the day that changes the track fails by name and says what it means. And the
+  truncation is no longer unchecked — `encode-int` refuses (patch 26), so the hazard
+  is now an honest abort rather than a silent wrong answer.
+- ~~**The config flips in F6 were not applied or built.**~~ — **applied, built and
+  booted**; all three read `true` on amd64 in the tree today.
+- ~~**No claim is made about `encode-string`.**~~ — it inherited F2 and it inherited
+  the fix: `string!` takes a destination and `encode-string` is defined in terms of it,
+  with `property-abi` asserting `here` unchanged, the terminator written, and the bytes
+  copied. Still no width dimension.
 
 ---
 
@@ -379,6 +481,7 @@ drop it here:
 |---|---|
 | Reviewed document | [DESIGN-NOTES-preboot-forth-binary-structures.md](DESIGN-NOTES-preboot-forth-binary-structures.md) |
 | Its `sha256` (as received, body without this repo's editorial footer) | `754b4ee682d581664d4c3b025179408803e81838e0d34ae125a55e52a09b3b6c` |
-| Source corpus | `github.com/openbios/openbios` @ `e5ac46dd24e6216c36aa80462af25457e7029440` (2026-06-29) — `master` as of the retrieval date, **not a pinned commit** |
+| Source corpus | `github.com/openbios/openbios` @ `e5ac46dd24e6216c36aa80462af25457e7029440` (2026-06-29) — ~~`master` as of the retrieval date, **not a pinned commit**~~ **pinned by `build-openbios.sh` since 2026-08-27** |
+| Status | **findings F2-F6 closed 2026-08-29**; see *STATUS* at the top |
 | Retrieved | 2026-08-24 |
 | Sibling measurements relied on | [X86-64-FEASIBILITY.md](examples/openbios-the-rival-that-shipped/X86-64-FEASIBILITY.md), [TODO.md](TODO.md) §12 |
