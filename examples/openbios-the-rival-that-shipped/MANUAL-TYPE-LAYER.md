@@ -38,6 +38,7 @@ W=${OPENBIOS_WORKDIR:-$HOME/openbios-lab}
 mkdir -p "$W/typelayer"
 cp dsl/struct.fth                          "$W/typelayer/STRUCT.FTH"
 cp dsl/elf.fth                             "$W/typelayer/ELF.FTH"
+cp dsl/elf32.fth                           "$W/typelayer/ELF32.FTH"
 cp "$W/openbios/obj-amd64/openbios.multiboot" "$W/typelayer/SUBJ.ELF"
 genisoimage -quiet -o "$W/typelayer.iso" -V TYPELAYER -r -J "$W/typelayer"
 ```
@@ -91,17 +92,25 @@ load /ide@1/cdrom@0:\struct.fth
 load-base load-size evaluate
 load /ide@1/cdrom@0:\elf.fth
 load-base load-size evaluate
+load /ide@1/cdrom@0:\elf32.fth
+load-base load-size evaluate
 ```
 
 The `load`s print some `Probing for …` chatter and a `Path=`; the `evaluate`s
 just say ` ok`.
 
-**Why two files.** `struct.fth` is the **engine** — `field:`, `t@`, `t!`,
+**Why three files.** `struct.fth` is the **engine** — `field:`, `t@`, `t!`,
 `array:`, `>virt`, `chk`, `dump` — and mentions no format at all. `elf.fth` is
-**one format** on top of it: the ELF64 layouts, the constraints, and the
-methods. That is GNU poke's own split (`elf-64.pk` is not part of `libpoke`),
-and it means a different format is a different second file, not a fork of the
-engine.
+**one format** on top of it: the ELF64 layouts, the constraints and the methods.
+`elf32.fth` is **the other ELF class**, and it is **optional** — without it
+everything still works on an ELF64 and refuses an ELF32 *by name* rather than
+misreading it. That is GNU poke's own split (`elf-64.pk` is not part of
+`libpoke`), and it means a different format is a different file, not a fork of
+the engine.
+
+With `elf32.fth` loaded, the generic words — `?elf`, `.elf`, `.phdrs`,
+`.sections`, `elf-load-base`, `vaddr>off`, `sh-name` — **read `e_class` and pick
+the right half**. You do not choose; the file does.
 
 ---
 
@@ -548,12 +557,12 @@ The other direction. Build an ELF64 header from nothing, in a buffer, using only
 
 ```forth
 40 alloc-mem value hdr
-hdr elf-new
+hdr elf64-new
 ?elf64
 hdr u.
 ```
 
-`elf-new` zeroes `0x40` bytes and fills the fields **by name** with `t!` — and
+`elf64-new` zeroes `0x40` bytes and fills the fields **by name** with `t!` — and
 then **the same `?elf64` that rejected the corrupted file in §9 accepts what you
 just built.** One predicate, two subjects: that is the whole argument for having
 a constraint rather than a comment.
@@ -611,6 +620,55 @@ with the loop closed at both ends.
 
 ---
 
+## 10a. Both ELF classes, through the same words
+
+`elf32.fth` adds ELF32. Nothing about how you drive it changes — the generic
+words dispatch on `e_class`:
+
+```forth
+load /ide@1/cdrom@0:\embed32.bin
+load-base 200 + elf-at
+?elf
+.elf
+```
+
+```
+ELF32  entry=101bf0  phnum=3  shnum=a  ehsize=34
+```
+
+`ehsize=34` where ELF64 said `40`. `.phdrs`, `.sections`, `elf-load-base`,
+`vaddr>off` and `sh-name` all work exactly as before.
+
+**Two things worth knowing.**
+
+**You cannot `load` a bare ELF32.** It never returns — the firmware's *own*
+loader recognises ELF32 and takes over. (An ELF64 is not recognised, which is
+the only reason this lab's usual subject is loadable as data at all.) The
+workaround is to embed it: pad the file so offset 0 is not an ELF, then bind at
+the offset — `load-base 200 + elf-at`. That is poke's `Elf32_File @ 512#B`, and
+inspecting a payload inside a container is the realistic case anyway.
+
+**ELF32 is not ELF64 with narrower fields.** The program header **reorders**:
+
+```
+ELF64  p_type p_flags p_offset p_vaddr p_paddr p_filesz p_memsz p_align
+ELF32  p_type p_offset p_vaddr p_paddr p_filesz p_memsz p_flags p_align
+```
+
+`p_flags` is **second** in one and **seventh** in the other. A port that only
+narrowed the widths would read permissions out of `p_offset` and never fault —
+it would just print the wrong `RWX`, confidently. That is why `smoke-openbios.sh
+elf-methods` asserts `p32-flags` per segment against the host.
+
+And each validator refuses the other class:
+
+```forth
+?elf64      \ on an ELF32 → CONSTRAINT: not ELF64 (e_class) -- want=2  got=1
+?elf32      \ on an ELF64 → CONSTRAINT: not ELF32 (e_class) -- want=1  got=2
+```
+
+---
+
 ## 11. Reference — the two files
 
 | word | stack | what it does |
@@ -650,7 +708,8 @@ with the loop closed at both ends.
 | `sh-name` | `( i -- adr )` | a section's name in the string table |
 | `elf-ph` / `elf-sh` | `( i -- adr )` | one program / section header |
 | `elf-phnum` / `elf-shnum` | `( -- n )` | how many |
-| `elf-new` | `( adr -- )` | author a valid ELF64 header there |
+| `elf64-new` / `elf32-new` | `( adr -- )` | author a valid header of that class |
+| `elf-class` / `elf64?` | `( -- n \| flag )` | which class is bound |
 | `.p-type` `.sh-type` `.p-flags` | `( n -- )` | names and `RWX`, not numbers |
 
 Widths are 1, 2, 4 (and 8 in memory space, on a 64-bit cell). Anything else is

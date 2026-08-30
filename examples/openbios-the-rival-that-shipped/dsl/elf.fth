@@ -11,7 +11,7 @@
 \   §E1 constraints  -- fields that REFUSE to map            -> ?elf64, ?phdr
 \   §E4 methods      -- semantics, not layout                -> vaddr>off,
 \                                                               elf-load-base,
-\                                                               sh-name
+\                                                               sh64-name
 \   §E3 a table declared once, not spelled out per use       -> phdr[] shdr[]
 \   §G4 bit-fields                                           -> .p-flags
 \   NOT §E6 (a machine-parameterised enum registry): poke-elf carries seven
@@ -23,21 +23,21 @@
 \        name rather than letting it through -- an honest halt for a limit this
 \        layer really has.
 \
-\ ELF64 ONLY, AND IT SAYS SO. poke-elf ships elf-32.pk (347 lines) beside
-\ elf-64.pk; there is no equivalent here. An ELF32 is REFUSED by name --
-\ `CONSTRAINT: not ELF64 (e_class) -- want=2 got=1` -- rather than misread,
-\ which matters because the first 24 bytes of the two formats are IDENTICAL
-\ (e_ident, e_type, e_machine, e_version) and everything from e_entry on
-\ diverges: ELF32 puts e_entry at 0x18 as 4 bytes and its header is 0x34 long,
-\ not 0x40. A layer without the class check would read the first six fields
-\ correctly and then quietly produce nonsense.
+\ ELF64 HERE; ELF32 IS dsl/elf32.fth, WHICH IS OPTIONAL. Without it the generic
+\ words below still work on an ELF64 and REFUSE an ELF32 by name rather than
+\ misreading it -- which matters because the first 0x18 bytes of the two classes
+\ are IDENTICAL and everything from e_entry on diverges. A layer without the
+\ class check would read the first six fields correctly and then quietly produce
+\ nonsense.
 \
-\ AND YOU CANNOT `load` ONE ANYWAY, measured 2026-08-30: `load` of a real
+\ AND YOU CANNOT `load` AN ELF32 DIRECTLY, measured 2026-08-30: `load` of a bare
 \ ELF32 never returns to the prompt, because the firmware's OWN loader
 \ recognises it and takes over. The same bytes with one magic byte changed
-\ (`ELG`) load fine, which is how that was isolated. An ELF64 is not
-\ recognised, which is the only reason the subject used throughout this lab is
-\ loadable as data at all.
+\ (`ELG`) load fine, which is how that was isolated. An ELF64 is not recognised,
+\ which is the only reason this lab's usual subject is loadable as data at all.
+\ The workaround is to embed it: pad the file so offset 0 is not an ELF, then
+\ `load-base 200 + elf-at`. That is poke's `Elf32_File @ 512#B`, and inspecting
+\ a payload inside a container is the realistic case anyway.
 \
 \ Base is HEX.
 hex
@@ -144,12 +144,12 @@ constant /elf64-shdr
 \ defines `1 constant elf`, and shadowing it would have broken the
 \ client-program debugging path for a spelling nobody needed. @elf is the name.
 
-: elf-phnum ( -- n )   @elf e_phnum t@ ;
-: elf-shnum ( -- n )   @elf e_shnum t@ ;
-: elf-phtab ( -- adr ) @elf  @elf e_phoff-lo t@ + ;
-: elf-shtab ( -- adr ) @elf  @elf e_shoff-lo t@ + ;
-: elf-ph ( i -- adr )  elf-phtab swap phdr[] ;
-: elf-sh ( i -- adr )  elf-shtab swap shdr[] ;
+: elf64-phnum ( -- n )   @elf e_phnum t@ ;
+: elf64-shnum ( -- n )   @elf e_shnum t@ ;
+: elf64-phtab ( -- adr ) @elf  @elf e_phoff-lo t@ + ;
+: elf64-shtab ( -- adr ) @elf  @elf e_shoff-lo t@ + ;
+: elf64-ph ( i -- adr )  elf64-phtab swap phdr[] ;
+: elf64-sh ( i -- adr )  elf64-shtab swap shdr[] ;
 
 \ ── §E1: constraints — this REFUSES a file it cannot describe ──────
 \ Every line names what it wants and prints what it got. ?elf64 is driven
@@ -162,12 +162,12 @@ constant /elf64-shdr
   @elf e_class  t@ 2            s" not ELF64 (e_class)"                     chk
   @elf e_data   t@ 1            s" big-endian ELF: this layer declares byte order per field, so it would MISREAD one (REVIEW E2)" chk
   @elf e_ehsize t@ /elf64-ehdr  s" e_ehsize disagrees with the layout"      chk
-  elf-phnum 0<> if
+  elf64-phnum 0<> if
     @elf e_phentsize t@ /elf64-phdr s" e_phentsize disagrees with the layout" chk
   then
-  elf-shnum 0<> if
+  elf64-shnum 0<> if
     @elf e_shentsize t@ /elf64-shdr s" e_shentsize disagrees with the layout" chk
-    @elf e_shstrndx t@ elf-shnum    s" e_shstrndx is past the last section"   chk<
+    @elf e_shstrndx t@ elf64-shnum    s" e_shstrndx is past the last section"   chk<
   then
   \ poke-elf spells this `ei_osabi == ELF_OSABI_NONE => ei_abiversion == 0`.
   \ `a => b` is `a 0= b or`, which is all an implication ever was.
@@ -176,9 +176,9 @@ constant /elf64-shdr
 
 \ Every PT_LOAD segment must fit inside the file, which is the check that
 \ catches a truncated or lying image -- poke-elf's elf64_check_phdr.
-: ?phdrs ( filesize -- )
-  elf-phnum 0 ?do
-    i elf-ph dup p_type t@ 1 = if
+: ?phdrs64 ( filesize -- )
+  elf64-phnum 0 ?do
+    i elf64-ph dup p_type t@ 1 = if
       dup p_offset-lo t@ over p_filesz-lo t@ +  2 pick u> 0=
         s" a PT_LOAD segment runs past the end of the file" chk?
     then drop
@@ -196,10 +196,10 @@ constant /elf64-shdr
 \ 64-bit cell and -1 on a 32-bit one, so amd64 answered 100000 and x86 answered
 \ ffffffff -- the sentinel winning every comparison. A bug that exists only on
 \ the narrow cell, found only because the track runs on both arches.
-: elf-load-base ( -- vaddr )
+: elf64-load-base ( -- vaddr )
   -1                                   \ max unsigned, at either cell width
-  elf-phnum 0 ?do
-    i elf-ph dup p_type t@ 1 = if
+  elf64-phnum 0 ?do
+    i elf64-ph dup p_type t@ 1 = if
       p_vaddr-lo t@                    ( acc v )
       2dup u< if drop else swap drop then
     else drop then
@@ -211,18 +211,18 @@ constant /elf64-shdr
   _ph p_type t@ 1 <> if false exit then
   _va  _ph p_vaddr-lo t@  dup _ph p_memsz-lo t@ +  within ;
 
-: vaddr>off ( vaddr -- fileoff | -1 )   \ poke's vaddr_to_file_offset
+: vaddr64>off ( vaddr -- fileoff | -1 )   \ poke's vaddr_to_file_offset
   to _va  -1
-  elf-phnum 0 ?do
-    i elf-ph to _ph
+  elf64-phnum 0 ?do
+    i elf64-ph to _ph
     dup -1 = seg-holds? and if
       drop  _va _ph p_vaddr-lo t@ -  _ph p_offset-lo t@ +
     then
   loop ;
 
 \ The string table, which poke spells `string @ shdr[strtab].sh_offset + off`.
-: elf-shstrtab ( -- adr )  @elf e_shstrndx t@ elf-sh sh_offset-lo t@ @elf + ;
-: sh-name ( i -- adr )     elf-sh sh_name t@ elf-shstrtab + ;
+: elf64-shstrtab ( -- adr )  @elf e_shstrndx t@ elf64-sh sh_offset-lo t@ @elf + ;
+: sh64-name ( i -- adr )     elf64-sh sh_name t@ elf64-shstrtab + ;
 
 \ ── names for the values a human actually reads (a small §E6) ──────
 : .p-type ( n -- )          \ fixed 7 columns, so the table lines up
@@ -250,15 +250,15 @@ constant /elf64-shdr
   over cstr-len swap over - 0 max >r drop .cstr r> spaces ;
 
 \ ── exploring: readelf's three most-used views, at the 0 > prompt ──
-: .elf ( -- )
+: .elf64 ( -- )
   ." ELF64  entry=" @elf e_entry-lo t@ u.
-  ."  phnum=" elf-phnum u. ."  shnum=" elf-shnum u.
+  ."  phnum=" elf64-phnum u. ."  shnum=" elf64-shnum u.
   ."  ehsize=" @elf e_ehsize t@ u. cr ;
 
-: .phdrs ( -- )
+: .phdrs64 ( -- )
   ." idx type     flg offset   vaddr    filesz   memsz" cr
-  elf-phnum 0 ?do
-    i 3 u.r ."  " i elf-ph
+  elf64-phnum 0 ?do
+    i 3 u.r ."  " i elf64-ph
     dup p_type t@ .p-type ."  "
     dup p_flags t@ .p-flags ."  "
     dup p_offset-lo t@ 8 u.r
@@ -267,20 +267,55 @@ constant /elf64-shdr
         p_memsz-lo  t@ 8 u.r cr
   loop ;
 
-: .sections ( -- )
+: .sections64 ( -- )
   ." idx name                 type      addr     offset   size" cr
-  elf-shnum 0 ?do
-    i 3 u.r ."  " i sh-name 14 .name-pad
-    i elf-sh
+  elf64-shnum 0 ?do
+    i 3 u.r ."  " i sh64-name 14 .name-pad
+    i elf64-sh
     dup sh_type t@ .sh-type ."  "
     dup sh_addr-lo   t@ 8 u.r
     dup sh_offset-lo t@ 8 u.r
         sh_size-lo   t@ 8 u.r cr
   loop ;
 
+\ ── dispatch on e_class ────────────────────────────────────────────
+\ THIS PART IS OURS, NOT A TRANSLITERATION, and the difference is worth saying.
+\ poke-elf does NOT dispatch: it declares `Elf32_File` and `Elf64_File` and the
+\ user picks. That is fine in a hosted REPL where you can retype the line; at a
+\ firmware prompt with no flow control, typing the wrong one and getting silent
+\ nonsense is exactly what this repo tries not to build. So the generic names
+\ read e_class and pick.
+\
+\ THE ELF32 HALF IS OPTIONAL. dsl/elf32.fth fills in the hooks below; without
+\ it, every generic still works on an ELF64 and REFUSES BY NAME on an ELF32
+\ rather than misreading it. A hook that is still 0 is a missing file, and it
+\ says which file.
+
+: elf-class ( -- n )  @elf e_class t@ ;
+: elf64?    ( -- flag )  elf-class 2 = ;
+
+variable 'x?elf    variable 'x?phdrs  variable 'x.elf     variable 'x.phdrs
+variable 'x.sects  variable 'xlbase   variable 'xva>off   variable 'xshname
+variable 'xphnum   variable 'xshnum
+
+: hook ( var -- )       \ ...and whatever the caller left below it
+  @ dup 0= abort" this is an ELF32 and dsl/elf32.fth is not loaded"
+  execute ;
+
+: ?elf          elf64? if ?elf64          else 'x?elf   hook then ;
+: ?phdrs        elf64? if ?phdrs64        else 'x?phdrs hook then ;
+: .elf          elf64? if .elf64          else 'x.elf   hook then ;
+: .phdrs        elf64? if .phdrs64        else 'x.phdrs hook then ;
+: .sections     elf64? if .sections64     else 'x.sects hook then ;
+: elf-load-base elf64? if elf64-load-base else 'xlbase  hook then ;
+: vaddr>off     elf64? if vaddr64>off     else 'xva>off hook then ;
+: sh-name       elf64? if sh64-name       else 'xshname hook then ;
+: elf-phnum     elf64? if elf64-phnum     else 'xphnum  hook then ;
+: elf-shnum     elf64? if elf64-shnum     else 'xshnum  hook then ;
+
 \ ── authoring: build a valid header, then validate it with the SAME
 \ ── constraint that rejects a bad one ──────────────────────────────
-: elf-new ( adr -- )
+: elf64-new ( adr -- )
   dup /elf64-ehdr erase
   dup elf-at
   464c457f    @elf e_magic     t!
