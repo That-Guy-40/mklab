@@ -209,6 +209,11 @@ TESTED_TREE_MARKERS=(
     "Makefile.target:BUILD_DATE := "
     # -- TODO 17.5 cause 2: host pointers scrubbed from the image (patch 48) --
     "kernel/bootstrap.c:scrub_host_arena_ptr"
+    # -- 1275 5.3.7.2's device-register words had EMPTY bodies (patch 49) --
+    # The marker is the BODY, not the name: `: rb@` is in the pristine file too,
+    # with nothing after it. A marker that matched the name would be present on
+    # an unpatched tree, which is the `s" load-base"` mistake above.
+    "forth/device/other.fs:( addr -- byte )   c@ ;"
 )
 present=(); absent=()
 for m in "${TESTED_TREE_MARKERS[@]}"; do

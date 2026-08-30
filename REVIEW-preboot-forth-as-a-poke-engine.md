@@ -350,6 +350,96 @@ lands once layouts are first-class.
 
 ---
 
+## G8 — Arrays, a second backend, and the defect that asking for one turned up
+
+*Added 2026-08-30, closing the two items §"What this review did NOT prove" still
+listed after G2 was built.*
+
+### Arrays: the other half of poke's composite model
+
+A single mapped struct is not poke's model; poke writes
+`Elf64_Phdr[ehdr.e_phnum] @ ehdr.e_phoff`. The Forth equivalent is a stride and
+an index, and `array:` is six lines over the same `create ... does>`.
+
+What makes `smoke-openbios.sh struct-array` worth more than a table of constants
+is that **the subject states its own layout**. An ELF64 header carries
+`e_ehsize`, `e_phentsize` and `e_phnum`, so three assertions compare the
+*declaration* against the *file* rather than against a number written twice:
+`/elf64-ehdr` must equal `e_ehsize`, `/elf64-phdr` must equal `e_phentsize`. An
+offset that drifts anywhere in the header layout moves the very field that
+catches it — demonstrated by injection: shrinking one field by two bytes made
+`e_ehsize` read `0x0`.
+
+The traversal is graded by a number the **firmware derives** — its own sum of
+`p_filesz` across the `PT_LOAD` segments — because a walk that gets one element
+wrong changes it. And the control is the stride: the same element type walked at
+a stride wrong by 8 must read exactly the bytes the host says live at that wrong
+place, and a *different* type from the correct walk. Without that row, "the walk
+worked" is satisfied by an array whose index does nothing.
+
+### A second backend — which is what poke's IO spaces are
+
+§P2 found that poke's whole IO contract is seven function pointers and eight
+backends, and concluded a flash target "is the model's own extension point."
+**IEEE 1275 had already made that split**, in §5.3.7.2: `rb@ rw@ rl@ rb! rw! rl!`
+are device-register access, distinct from `c@ w@ l@` precisely because a platform
+may need a barrier or a bus byte-swap there. So the type layer's second backend
+is not an invention; it is picking up a seam the standard already defines.
+`dev-field:` / `le-dev-field:` are built from `rb@`/`rb!` alone, a byte at a
+time, so byte order is explicit rather than inherited from the host CPU.
+
+### …except the seam was not implemented
+
+**The six words had bodies containing no words at all.** Not stubs that abort —
+empty. Measured at the prompt before anything was written:
+
+```
+b8000 c@   -> 41       (the byte just written there)
+b8000 rb@  -> b8000    at depth 1
+42 b8002 rb!           left depth 2 having stored nothing
+```
+
+`forth/device/table.fs:390-395` binds **FCode tokens `0x230`-`0x235`** to exactly
+these, so an FCode driver reading a device register receives an address, and one
+writing a register stores nothing *and leaks two cells*. The presenting symptom
+is therefore not a wrong value — it is a **stack shift**, surfacing somewhere
+else entirely. That is the same shape as this lab's patches 25 and 34, and it is
+the third time the real defect has been a stack shift wearing someone else's
+symptoms. `forth/device/feval.fs:72` carries a FIXME saying `byte-load` "uses
+`c@` rather than `rb@` for now" — the gap was known and worked around at one call
+site rather than closed.
+
+[Patch 49](examples/openbios-the-rival-that-shipped/patches/49-device-register-words-were-empty.patch)
+gives them their memory-mapped bodies. Reverting only `rb@` was watched to fire
+the track's headline row by name; reverting **all six** does not reach that row
+at all — it overflows the Forth stack, 4000 stores leaking two cells each, which
+is the write half's real failure mode and is worth knowing.
+
+### And the two arches disagree, which was not the plan
+
+On amd64 a typed array of VGA text cells mapped over `0xb8000` paints 2000 cells
+through the layer; physical `0xb8000` then reads `41 1f 41 1f …` under QEMU's
+monitor and the screen shows 158,445 blue pixels against **0** for an identical
+no-paint boot.
+
+On x86 the identical code **reads back `1f41` through Forth and never reaches the
+device.** Physical `0xb8000` still holds `30 07 20 07 3e 07 20 07` — the
+console's own `0 > ` prompt in grey-on-black — and the screen shows zero blue.
+`arch/x86` relocates by rebasing the GDT, so a Forth address is not a physical
+one; the store lands in ordinary RAM and reads back perfectly through the same
+accessor that wrote it.
+
+**That row is asserted positively rather than skipped**, because it is the cheap
+check lying in the same run as the arch where it tells the truth. It is the trap
+the `flash-writer` track met at `0xffbe0000`, met again from a different
+direction, and it is the sharpest argument in this document for the thing the
+proposal is least specific about: **a write to a device is graded by an observer
+that is not the writer.** poke on a hosted OS gets that for free from the kernel;
+here it has to be built, and the layer that makes field access convenient does
+nothing whatsoever to make the address correct.
+
+---
+
 ## G3 — Endianness is already solved in both directions, and it is upstream
 
 This removes what would otherwise be the first hard design question, and it is
@@ -487,11 +577,11 @@ Re-grading the first review's table, plus what this proposal adds:
 | application | grade |
 |---|---|
 | **Device-tree construction / patching** | **works today** — the wordset's home ground |
-| **Preboot RE of blobs in memory and MMIO** | **strong, available now** — `ofscope.fth` plus the two working writer seams |
+| **Preboot RE of blobs in memory and MMIO** | **strong, and now TYPED** — `ofscope.fth` and the two writer seams, plus a layout that can be mapped over a device's registers through 1275's own accessors (§G8). The x86 half also demonstrates the trap: a typed device write there reads back perfectly and never reaches the device |
 | **Boot-handoff structures** | **unblocked and demonstrated** — `pmem-writer` is exactly this shape |
 | **Post-mortem / transition forensics** | **the strongest fit, and now the ONLY one the differentiator uniquely licenses** (P3: a booted Linux poke reaches MMIO via `mmap`+`/dev/mem`; it cannot reach the boot transition). Caveat measured: `region-snap`/`region-diff` live in the **OFW** lab, not this OpenBIOS one — ~100 lines of plain Forth to port, but a port, not a reuse |
 | **Firmware image assembly (CBFS, flash)** | **needs a backend, not an address** — G1 |
-| **ELF / PE inspection at the prompt** | ~~blocked on G7 then G2~~ — **both closed; ELF64 header inspection works today** (`smoke-openbios.sh struct-layer`), with a named layout over a real image and every field matching host ground truth. PE is a `pe.pk`-shaped declaration away and untried; what is still missing for either is **arrays** (a section/program-header table is one) |
+| **ELF / PE inspection at the prompt** | ~~blocked on G7 then G2~~ — **closed, tables included.** `struct-layer` parses the header; `struct-array` walks the **program-header table** of a real image and is graded by a sum the firmware derives, so a single mis-stepped element fails it. PE is a `pe.pk`-shaped declaration away and untried |
 | **FCode authoring** | **the most OF-native of the list, nobody proposed it, and the execution half already exists.** `byte-load ( addr xt -- )` is a plain Forth word (`forth/device/feval.fs:63`), so *tokens built in a buffer at a chosen address can be executed by the firmware today* — `bytes!+` in, `byte-load` out. No FCode **assembler** exists anywhere (only the host-side `toke` and this repo's detokenizer), so the emitting half is new work; the loop it closes is not hypothetical |
 | **Measured-boot / attestation** | **still nothing built** — the arena problem that made it a poor fit is fixed, so the objection is gone and the work has not started |
 
@@ -530,12 +620,15 @@ Re-grading the first review's table, plus what this proposal adds:
   documentation, not an observation of its behaviour. In particular the
   three-step scalar poke-back is quoted from the manual, not watched.
 - ~~**The type layer was not prototyped.**~~ — **it was, and it works**; see
-  §G2. What is *still* unproven there: nothing has been mapped over a
-  **live device's registers** rather than RAM, a buffer and a loaded file, so
-  the layer's behaviour where a read has side effects is unmeasured; there are
-  no **arrays** of a type, which is the other half of poke's composite model;
-  and nothing writes a **structure the firmware then acts on**, which is the
-  difference between parsing and authoring.
+  §G2. ~~What is *still* unproven there: … a **live device's registers** … no
+  **arrays** of a type …~~ — **both closed 2026-08-30**, and the device half
+  produced a firmware patch (§G8). What remains, narrowed:
+  - **A read with side effects is still unmeasured, and now measurably
+    unreachable.** This firmware binds no port-I/O words on x86 or amd64 and no
+    config-space accessors, so MMIO is the only device seam Forth can reach and
+    its reads are idempotent. An UNKNOWN with a reason, not a gap.
+  - **Nothing writes a structure the firmware then acts on** — the difference
+    between parsing and authoring, and still the honest edge of this work.
 - ~~**G7 was not attempted.**~~ — **attempted and settled**; see G7. What was
   *not* attempted is reading a byte range without loading the whole file, and
   `seek`/`read` remain unexercised because `load` made them unnecessary.
@@ -559,5 +652,5 @@ Re-grading the first review's table, plus what this proposal adds:
 | Firmware corpus | `openbios/openbios` @ `e5ac46d`, pinned by `build-openbios.sh`, plus this repo's 48 patches |
 | First pass | [`REVIEW-preboot-forth-binary-structures.md`](REVIEW-preboot-forth-binary-structures.md) — F2 closed 2026-08-29 |
 | poke corpus | GNU poke **5.0** tarball from `ftp.gnu.org/gnu/poke/`, `sha256` `6873d59abe821c8111b88623…`, retrieved 2026-08-29 — read, **not built or run** |
-| Type layer | [`examples/openbios-the-rival-that-shipped/dsl/struct.fth`](examples/openbios-the-rival-that-shipped/dsl/struct.fth), measured by `smoke-openbios.sh struct-layer` on amd64 **and** x86 |
-| Written | 2026-08-29; §P and the G7 resolution added the same day; §G2 **built and corrected** the same day |
+| Type layer | [`examples/openbios-the-rival-that-shipped/dsl/struct.fth`](examples/openbios-the-rival-that-shipped/dsl/struct.fth), measured by `smoke-openbios.sh struct-layer`, `struct-array` and `struct-device` on amd64 **and** x86 |
+| Written | 2026-08-29; §P and the G7 resolution added the same day; §G2 **built and corrected** the same day; §G2's arrays and §G8's device backend added 2026-08-30 |

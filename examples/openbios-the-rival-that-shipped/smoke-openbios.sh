@@ -45,6 +45,11 @@ TRACK (default multiboot):
   struct-layer                REVIEW G2: a TYPE layer (dsl/struct.fth) over
                               the firmware's own struct/field, pointed at a
                               real ELF64 header
+  struct-array                ...and ARRAYS of a type: the ELF64 program-header
+                              table walked, graded by a derived sum
+  struct-device               ...and over a LIVE DEVICE's registers, which is
+                              what turned up patch 49 — 1275 5.3.7.2's six
+                              register words had EMPTY bodies
 
 Exit: 0 PASS / 1 FAIL / 77 SKIP. Each track ends on exactly one verdict line.
 Env: OPENBIOS_WORKDIR, KERNEL, INITRD, COREBOOT_DIR
@@ -76,6 +81,21 @@ assert_memory_reg() {
     (( total >= 0x10000000 )) \
         || fail "REGRESSION: /memory's reg totals only $(( total / 1024 / 1024 )) MB of the 512 MB QEMU was given — the property is present but its cells are wrong — see $log"
     note "/memory reg publishes $(( total / 1024 / 1024 )) MB across $nranges range(s)"
+}
+
+# _count_blue <ppm> — VGA attribute 1f is white on BLUE, and the console only ever
+# paints grey on black, so this colour cannot arrive by accident. Shared by the
+# mmio-writer and struct-device tracks: it IS the assertion in both, and a copy
+# would be a second implementation of the thing under test.
+_count_blue() {
+  python3 - "$1" <<'PYC'
+import sys
+d=open(sys.argv[1],'rb').read()
+i=d.index(b'255\n')+4
+px=d[i:]
+n=sum(1 for k in range(0,len(px)-2,3) if px[k:k+3]==b'\x00\x00\xa8')
+print(n)
+PYC
 }
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -2400,18 +2420,8 @@ FTH
     [[ -f "$MMB" && -f "$MDI" ]] || skip "no amd64 image — run ./build-openbios.sh amd64 first"
 
     MSOCK="$WORKDIR/smoke-mw.sock"; MMON="$WORKDIR/smoke-mw.mon"
-    # count_blue <ppm> — VGA attribute 1f is white on BLUE, and the console
-    # only ever paints grey on black, so this colour cannot arrive by accident.
-    _count_blue() {
-      python3 - "$1" <<'PYC'
-import sys
-d=open(sys.argv[1],'rb').read()
-i=d.index(b'255\n')+4
-px=d[i:]
-n=sum(1 for k in range(0,len(px)-2,3) if px[k:k+3]==b'\x00\x00\xa8')
-print(n)
-PYC
-    }
+    # _count_blue is defined once, above the case — mmio-writer and struct-device
+    # both grade a screendump with it, and a second copy would drift.
     # xp reads GUEST PHYSICAL memory from QEMU's monitor. Like screendump it is
     # outside the firmware, but it does not need the device to render anything —
     # which the BAR case below requires, because the VGA is left in 640x480
@@ -2841,5 +2851,452 @@ PY
     done
     pass "REVIEW G2: a TYPE layer over OpenBIOS Forth, both checkpoints met on BOTH arches. The definer was NOT the work — bootstrap.fs:1570 already ships 'struct'/'field' and it works untouched, which the review had wrong; what was missing is width and byte order, and dsl/struct.fth adds exactly that in ~60 lines over accessors that were already there. Checkpoint 1: a named field reads back deadbeef/cafebabe written by int! and le-l!, words that know nothing about the layer. Checkpoint 2: a typed store puts 11223344 into memory as 44 33 22 11 and a BARE le-l! through the field's own address is equally the write — no map/modify/poke-back, because a field yields the bytes rather than a copy of them (§P1). The controls are what make those mean anything: each field read through the OTHER byte order comes back exactly reversed (so 'it round-tripped' is not one accessor being its own inverse), the raw bytes are asserted beside every store, a poison byte past the layout is still ff, and THREE refusals fire by name — an unimplemented width, big-endian 64, and an 8-byte field on x86's 32-bit cell, where truncating would have been the LIED rung. Finally the layer is pointed at a real ELF64 — the amd64 firmware's own boot image, loaded off ISO9660 — and re-derives magic/class/type/machine/entry/size matching ground truth unpacked from the same bytes on the host, with e_entry read BOTH as two 4-byte halves and as one 8-byte field, agreeing"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|struct-layer]" >&2; exit 1 ;;
+  struct-array)
+    # REVIEW G2, second half: ARRAYS of a type — the part of GNU poke's
+    # composite model a single mapped struct does not reach. poke writes
+    # `Elf64_Phdr[ehdr.e_phnum] @ ehdr.e_phoff`; the Forth equivalent is a
+    # stride and an index, which is what dsl/struct.fth's `array:` is.
+    #
+    # THE SUBJECT STATES ITS OWN LAYOUT, and that is what makes this more than a
+    # table of constants. An ELF64 header carries e_ehsize, e_phentsize and
+    # e_phnum, so the file says how big its own header is, how big a program
+    # header is, and how many there are. Three assertions therefore compare the
+    # DECLARATION against the SUBJECT rather than against a number written down
+    # here: /elf64-ehdr must equal e_ehsize, /elf64-phdr must equal e_phentsize.
+    # An offset that drifted anywhere in the header layout moves the field that
+    # would have caught it, which is a self-check no constant can give.
+    #
+    # AND THE RESULT IS DERIVED, NOT READ. The firmware sums p_filesz across the
+    # PT_LOAD segments and prints one number. A walk that gets a single element
+    # wrong changes it, so the sum is an assertion about the whole traversal
+    # rather than about whichever entry happened to be looked at.
+    #
+    # THE CONTROL IS THE STRIDE. Walking N elements at the WRONG stride reads N
+    # plausible structures out of the middle of somebody else's bytes and every
+    # field "succeeds" — nothing errors, the numbers are just from the wrong
+    # place. So the probe also walks with a deliberately wrong stride and the
+    # values MUST differ; without that row, "the walk worked" is satisfied by an
+    # array whose index does nothing.
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v genisoimage >/dev/null || skip "genisoimage not installed"
+    AAMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"
+    AADI="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    AXMB="$WORKDIR/openbios/obj-x86/openbios.multiboot"
+    AXDI="$WORKDIR/openbios/obj-x86/openbios-x86.dict"
+    for f in "$AAMB" "$AADI" "$AXMB" "$AXDI"; do
+      [[ -f "$f" ]] || skip "missing $f — run ./build-openbios.sh amd64 and x86 first"
+    done
+    ADSL="$HERE/dsl/struct.fth"
+    [[ -f "$ADSL" ]] || fail "the type layer is missing at $ADSL — this track stages the SHIPPED file rather than re-implementing it"
+    AST="$WORKDIR/ga-stage"; rm -rf "$AST"; mkdir -p "$AST"
+    cp "$ADSL" "$AST/STRUCT.FTH"
+    cp "$AAMB" "$AST/SUBJ.ELF"
+    cat > "$AST/GA.FTH" <<'FTH'
+hex
+." GA-START" cr
+." ga-ehsize-decl=" /elf64-ehdr . cr
+." ga-phsize-decl=" /elf64-phdr . cr
+\ THE STRIDE CONTROL: the same element type at a stride that is wrong by 8.
+/elf64-phdr 8 + array: badphdr[]
+0 value phtab
+0 value nph
+: ga-walk
+  load-base load-base e_phoff-lo t@ + to phtab
+  load-base e_phnum t@ to nph
+  ." ga-ehsize="    load-base e_ehsize    t@ u. cr
+  ." ga-phentsize=" load-base e_phentsize t@ u. cr
+  ." ga-phnum="     nph u. cr
+  ." ga-phoffhi="   load-base e_phoff-hi  t@ u. cr
+  ." ga-phrel="     phtab load-base - u. cr
+  nph 0 do
+    phtab i phdr[]
+    ." ga-elem=" i .
+    ." type=" dup p_type      t@ u.
+    ." off="  dup p_offset-lo t@ u.
+    ." fsz="  dup p_filesz-lo t@ u.
+    ." msz="      p_memsz-lo  t@ u. cr
+  loop
+  \ ONE DERIVED NUMBER over the whole traversal.
+  0 nph 0 do
+    phtab i phdr[] dup p_type t@ 1 = if p_filesz-lo t@ + else drop then
+  loop
+  ." ga-loadsum=" u. cr
+  \ the wrong-stride control, at an index where it can actually differ
+  ." ga-bad1type=" phtab 1 badphdr[] p_type t@ u. cr
+  ." ga-bad1off="  phtab 1 badphdr[] p_offset-lo t@ u. cr
+  ." GA-END" cr ;
+." GA-READY" cr
+FTH
+    genisoimage -quiet -o "$WORKDIR/ga.iso" -V GA -r -J "$AST"
+
+    read -r AT_EHSIZE AT_PHENT AT_PHNUM AT_PHOFF AT_SUM AT_BADT AT_BADO < <(
+      python3 - "$AAMB" <<'PY'
+import sys, struct
+b = open(sys.argv[1], 'rb').read()
+phoff, = struct.unpack_from('<Q', b, 32)
+ehsize, phent, phnum = struct.unpack_from('<HHH', b, 52)
+tot = 0
+for i in range(phnum):
+    t, = struct.unpack_from('<I', b, phoff + i * phent)
+    if t == 1:
+        fsz, = struct.unpack_from('<Q', b, phoff + i * phent + 32)
+        tot += fsz
+# what a walk at a stride wrong by 8 would read at index 1
+bt, = struct.unpack_from('<I', b, phoff + 1 * (phent + 8))
+bo, = struct.unpack_from('<Q', b, phoff + 1 * (phent + 8) + 8)
+print("%x %x %x %x %x %x %x" % (ehsize, phent, phnum, phoff, tot, bt, bo & 0xffffffff))
+PY
+    )
+    ARROWS="$(python3 - "$AAMB" <<'PY'
+import sys, struct
+b = open(sys.argv[1], 'rb').read()
+phoff, = struct.unpack_from('<Q', b, 32)
+_, phent, phnum = struct.unpack_from('<HHH', b, 52)
+for i in range(phnum):
+    o = phoff + i * phent
+    t, = struct.unpack_from('<I', b, o)
+    off, = struct.unpack_from('<Q', b, o + 8)
+    fsz, = struct.unpack_from('<Q', b, o + 32)
+    msz, = struct.unpack_from('<Q', b, o + 40)
+    print("%x %x %x %x %x" % (i, t, off & 0xffffffff, fsz & 0xffffffff, msz & 0xffffffff))
+PY
+    )"
+    note "subject: $(basename "$AAMB") — e_ehsize=$AT_EHSIZE e_phentsize=$AT_PHENT e_phnum=$AT_PHNUM e_phoff=$AT_PHOFF, PT_LOAD filesz sum=$AT_SUM (host, from the bytes)"
+
+    for A in amd64 x86; do
+      if [[ "$A" == amd64 ]]; then MB="$AAMB"; DI="$AADI"; else MB="$AXMB"; DI="$AXDI"; fi
+      ASOCK="$WORKDIR/ga-$A.sock"; ALOG="$WORKDIR/ga-$A.log"; rm -f "$ASOCK" "$ALOG"
+      qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$MB" -initrd "$DI" \
+        -cdrom "$WORKDIR/ga.iso" -display none -serial "unix:$ASOCK,server=on" \
+        -no-reboot >/dev/null 2>&1 &
+      AQ=$!
+      python3 "$REPO/tools/drive-serial-repl.py" "$ASOCK" "$ALOG" --timeout 240 \
+        --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\struct.fth\r' --expect "0 > " \
+        --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\ga.fth\r' --expect "0 > " \
+        --send 'load-base load-size evaluate\r' --expect "GA-READY" \
+        --send 'load /ide@1/cdrom@0:\\subj.elf\r' --expect "0 > " \
+        --send 'ga-walk\r' --expect "GA-END"
+      ARC=$?
+      kill "$AQ" 2>/dev/null   # by PID, never by pattern
+      AL="$(tr -d "\r" < "$ALOG")"
+      # UNANCHORED: the console echoes the command, so the first output line
+      # continues the echo of `ga-walk`.
+      av() { grep -aoE "$1=[0-9a-f]+" <<<"$AL" | head -1 | cut -d= -f2; }
+
+      [[ $ARC -eq 0 ]] \
+        || fail "G2/arrays on $A: the walk did not complete (rc=$ARC) — see $ALOG"
+
+      # THE DECLARATION AGAINST THE SUBJECT — three ways, all from the file.
+      AED="$(av ga-ehsize-decl)"; AEF="$(av ga-ehsize)"
+      [[ "$AED" == "$AT_EHSIZE" && "$AEF" == "$AT_EHSIZE" ]] \
+        || fail "G2/arrays on $A: the ehdr layout declares 0x${AED:-absent} bytes and the file's own e_ehsize reads 0x${AEF:-absent}, where the host reads 0x$AT_EHSIZE — a header layout that disagrees with the header it is mapped over means every offset below is describing a different file — see $ALOG"
+      APD="$(av ga-phsize-decl)"; APF="$(av ga-phentsize)"
+      [[ "$APD" == "$AT_PHENT" && "$APF" == "$AT_PHENT" ]] \
+        || fail "G2/arrays on $A: the phdr layout declares 0x${APD:-absent} bytes and the file's e_phentsize reads 0x${APF:-absent}, where the host reads 0x$AT_PHENT — the array's STRIDE and the subject's stride are not the same number, so the walk below steps through the wrong bytes — see $ALOG"
+      AN="$(av ga-phnum)"; AOFF="$(av ga-phrel)"; AOHI="$(av ga-phoffhi)"
+      [[ "$AN" == "$AT_PHNUM" && "$AOFF" == "$AT_PHOFF" && "$AOHI" == 0 ]] \
+        || fail "G2/arrays on $A: phnum=${AN:-absent} phoff=${AOFF:-absent} (hi=${AOHI:-absent}) where the host reads $AT_PHNUM / $AT_PHOFF / 0 — see $ALOG"
+
+      # EVERY ELEMENT, against ground truth.
+      while read -r ei et eo ef em; do
+        [[ -z "$ei" ]] && continue
+        AROW="$(grep -aoE "ga-elem=$ei type=[0-9a-f]+ off=[0-9a-f]+ fsz=[0-9a-f]+ msz=[0-9a-f]+" <<<"$AL" | head -1)"
+        AWANT="ga-elem=$ei type=$et off=$eo fsz=$ef msz=$em"
+        [[ "$AROW" == "$AWANT" ]] \
+          || fail "G2/arrays on $A: program header $ei reads '${AROW:-absent}' where the host reads '$AWANT' — the array is indexing to the wrong element, or a field inside it is at the wrong offset — see $ALOG"
+      done <<< "$ARROWS"
+
+      # THE DERIVED NUMBER — one value over the whole traversal.
+      ASUM="$(av ga-loadsum)"
+      [[ "$ASUM" == "$AT_SUM" ]] \
+        || fail "G2/arrays on $A: the firmware summed PT_LOAD p_filesz to 0x${ASUM:-absent} where the host sums 0x$AT_SUM — a single mis-stepped element changes this, which is why it is asserted separately from the per-element rows — see $ALOG"
+
+      # THE STRIDE CONTROL. A stride wrong by 8 must read DIFFERENT bytes; if it
+      # does not, the index is not reaching the element and every row above is
+      # a statement about element 0 repeated.
+      ABT="$(av ga-bad1type)"; ABO="$(av ga-bad1off)"
+      [[ "$ABT" == "$AT_BADT" && "$ABO" == "$AT_BADO" ]] \
+        || fail "G2/arrays on $A: at a stride wrong by 8, element 1 reads type=${ABT:-absent} off=${ABO:-absent} where the host reads type=$AT_BADT off=$AT_BADO from that same wrong place — the wrong-stride walk is not landing where the arithmetic says, so it cannot serve as the control — see $ALOG"
+      AGOODT="$(grep -aoE "ga-elem=1 type=[0-9a-f]+" <<<"$AL" | head -1 | sed 's/.*type=//')"
+      [[ -n "$AGOODT" && "$ABT" != "$AGOODT" ]] \
+        || fail "G2/arrays on $A: the wrong-stride walk read the SAME type ($ABT) as the correct one at index 1 — the stride is not load-bearing, so 'the walk worked' would pass an array whose index does nothing — see $ALOG"
+
+      note "$A: ehdr decl 0x$AED == file e_ehsize 0x$AEF; phdr decl 0x$APD == e_phentsize 0x$APF; $AN headers at +0x$AOFF walked, PT_LOAD filesz sum 0x$ASUM; wrong stride reads type=$ABT where the right one reads $AGOODT"
+    done
+    pass "REVIEW G2, arrays: dsl/struct.fth's 'array:' walks the ELF64 program-header table of a real image — the amd64 firmware's own boot image, loaded off ISO9660 — on BOTH arches, and every element matches ground truth unpacked from the same bytes on the host. The layout is checked against the SUBJECT rather than against constants: /elf64-ehdr equals the file's own e_ehsize and /elf64-phdr equals its e_phentsize, so a drifted offset is caught by the field the drift itself moved. The traversal is graded by a DERIVED number — the firmware's own sum of p_filesz across PT_LOAD — which a single mis-stepped element changes. And the control is the stride: the same element type walked at a stride wrong by 8 reads exactly the bytes the host says live at that wrong place, and a DIFFERENT type from the correct walk, so 'the walk worked' cannot be satisfied by an array whose index does nothing"
+    ;;
+  struct-device)
+    # REVIEW G2's last named gap: map a layout over a LIVE DEVICE's registers
+    # rather than over RAM, a buffer or a loaded file — and patch 49, which is
+    # what asking that question turned up.
+    #
+    # THE FINDING CAME FIRST AND IT IS THE BIGGER HALF. IEEE 1275 5.3.7.2's six
+    # device-register words — rb@ rw@ rl@ rb! rw! rl! — were defined in
+    # forth/device/other.fs with bodies containing NO WORDS AT ALL. Measured at
+    # the amd64 prompt before anything was written:
+    #
+    #     b8000 c@   -> 41       (the byte just written there)
+    #     b8000 rb@  -> b8000    at depth 1
+    #     42 b8002 rb!           left depth 2 having stored nothing
+    #
+    # forth/device/table.fs:390-395 binds FCode tokens 0x230-0x235 to exactly
+    # these words, so the presenting symptom is not a wrong value — it is a
+    # STACK SHIFT inside an FCode driver, surfacing somewhere else entirely.
+    # Same shape as patch 34 and patch 25.
+    #
+    # SO THE FIRST ASSERTION IS THE REGRESSION: rb@ must NOT return the address
+    # it was given. That is the defect stated as itself, and it is the row that
+    # would go red the day someone reverts the patch.
+    #
+    # WHY THIS IS THE RIGHT SECOND BACKEND. poke's IO spaces are seven function
+    # pointers and eight backends (REVIEW §P2) — the same type over a file, over
+    # memory, or over a device. 1275 had already made that split; this lab found
+    # one side of it unimplemented. dsl/struct.fth's dev-field:/le-dev-field:
+    # are the type layer's second backend, built from rb@/rb! ALONE, a byte at a
+    # time, so byte order is explicit rather than inherited from the host CPU —
+    # which is why a device field reads identically on x86 and amd64 and the
+    # arch comparison below means something.
+    #
+    # WHAT IS DELIBERATELY NOT CLAIMED: nothing here has a read with SIDE
+    # EFFECTS. That was the review's actual wording and it is not reachable in
+    # this firmware — there are no port-I/O words on x86/amd64 (measured: no
+    # bind_func for in/out anywhere) and no config-space accessors either, so
+    # the only device seam Forth can reach is MMIO, whose reads are idempotent.
+    # An UNKNOWN, said out loud, rather than a pass.
+    #
+    # AND THE TWO ARCHES ANSWER DIFFERENTLY, which was not the plan. On x86 the
+    # typed device write to b8000 reads back perfectly and NEVER REACHES THE
+    # DEVICE: arch/x86 relocates by rebasing the GDT, so a Forth address is not
+    # a physical one. That row is kept as a POSITIVE assertion rather than a
+    # skip — it is the cheap check lying, measured, in the same run as the arch
+    # where it tells the truth.
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v genisoimage >/dev/null || skip "genisoimage not installed"
+    DAMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"
+    DADI="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    DXMB="$WORKDIR/openbios/obj-x86/openbios.multiboot"
+    DXDI="$WORKDIR/openbios/obj-x86/openbios-x86.dict"
+    for f in "$DAMB" "$DADI" "$DXMB" "$DXDI"; do
+      [[ -f "$f" ]] || skip "missing $f — run ./build-openbios.sh amd64 and x86 first"
+    done
+    DDSL="$HERE/dsl/struct.fth"
+    [[ -f "$DDSL" ]] || fail "the type layer is missing at $DDSL"
+    DST="$WORKDIR/gd-stage"; rm -rf "$DST"; mkdir -p "$DST"
+    cp "$DDSL" "$DST/STRUCT.FTH"
+    cat > "$DST/GD.FTH" <<'FTH'
+hex
+." GD-START" cr
+40 alloc-mem value db
+\ ff first, so an inherited zero can never pass for a byte something wrote.
+: dpoison  40 0 do ff db i + c! loop ;
+dpoison
+." gd-addr=" db u. cr
+5a db c!
+." gd-rb=" db rb@ u. cr
+." gd-c="  db c@  u. cr
+clear
+1234 db 4 + w!
+." gd-rw=" db 4 + rw@ u. cr
+." gd-w="  db 4 + w@  u. cr
+clear
+deadbeef db 8 + l!
+." gd-rl=" db 8 + rl@ u. cr
+." gd-l="  db 8 + l@  u. cr
+clear
+\ The store half. The DEPTH is the assertion as much as the value: an empty
+\ rb! consumed neither operand and left both behind.
+0 db c + c!
+a5 db c + rb!
+." gd-rbdepth=" depth . cr
+." gd-rbstore=" db c + c@ u. cr
+clear
+0 db 10 + w!   5678 db 10 + rw!
+." gd-rwdepth=" depth . cr
+." gd-rwstore=" db 10 + w@ u. cr
+clear
+0 db 14 + l!   cafebabe db 14 + rl!
+." gd-rldepth=" depth . cr
+." gd-rlstore=" db 14 + l@ u. cr
+clear
+\ A TYPED layout over the live VGA text buffer, through the device backend.
+struct
+  1 dev-field: vc-ch
+  1 dev-field: vc-attr
+constant /vga-cell
+/vga-cell array: vcell[]
+\ The SAME two bytes as one 2-byte little-endian device field: two views of one
+\ region, so the byte-wise assembly is checked against the byte-wise stores.
+struct
+  2 le-dev-field: vw-cell
+constant /vga-word
+." gd-cellsize=" /vga-cell . cr
+: paint ( ch attr -- )
+  7d0 0 do
+    over b8000 i vcell[] vc-ch   t!
+    dup  b8000 i vcell[] vc-attr t!
+  loop 2drop ;
+\ ONE SHORT WORD to invoke, because a long line at a console with no flow
+\ control drops characters silently.
+: gd-paint
+  41 1f paint
+  ." gd-vw=" b8000 vw-cell t@ u. cr
+  ." gd-back=" b8000 3e8 vcell[] vc-ch t@ u. cr
+  ." GD-PAINTED" cr ;
+\ An 8-byte DEVICE field must refuse: a 64-bit register is not one access on a
+\ 32-bit bus, and splitting it silently is the bug nobody sees until the device
+\ latches half of it.
+struct  8 le-dev-field: vx-wide  constant /vga-wide
+: gd-wide  ." gd-wide=" b8000 vx-wide t@ u. cr ." GD-WIDE-END" cr ;
+." GD-READY" cr
+FTH
+    genisoimage -quiet -o "$WORKDIR/gd.iso" -V GD -r -J "$DST"
+
+    # _dshot <monsock> <ppm> — ask QEMU's own monitor for a screendump. The
+    # observer is outside the firmware, which is the whole point: the firmware
+    # cannot fake what the emulated CRTC scanned out.
+    _dshot() {
+      DMON="$1" python3 - "$2" <<'PYS'
+import socket, sys, time, os
+s = socket.socket(socket.AF_UNIX); s.connect(os.environ["DMON"]); time.sleep(0.3)
+try: s.recv(65536)
+except Exception: pass
+s.sendall(("screendump " + sys.argv[1] + "\n").encode()); time.sleep(1.5)
+PYS
+    }
+
+    # _dxp <monsock> <cmd> — read GUEST PHYSICAL memory through QEMU's monitor.
+    # This is the observer that settles the x86 row below, and screendump cannot
+    # do it: a store that lands in RAM instead of the aperture leaves the screen
+    # exactly as a store that never happened would.
+    _dxp() {
+      DMON="$1" python3 - "$2" <<'PYX'
+import socket, sys, time, os
+s = socket.socket(socket.AF_UNIX); s.connect(os.environ["DMON"]); time.sleep(0.3)
+try: s.recv(65536)
+except Exception: pass
+s.sendall((sys.argv[1] + "\n").encode()); time.sleep(1.2)
+out = s.recv(65536).decode(errors="replace")
+print(" ".join(l.split(": ", 1)[1].strip() for l in out.splitlines() if ": 0x" in l))
+PYX
+    }
+
+    # _drun <arch> <paint|nopaint> — boot, run the probe, optionally paint, then
+    # read the aperture PHYSICALLY and shoot the screen.
+    _drun() {
+      local A="$1" mode="$2" mb di
+      if [[ "$A" == amd64 ]]; then mb="$DAMB"; di="$DADI"; else mb="$DXMB"; di="$DXDI"; fi
+      local sock="$WORKDIR/gd-$A-$mode.sock" mon="$WORKDIR/gd-$A-$mode.mon"
+      local log="$WORKDIR/gd-$A-$mode.log" ppm="$WORKDIR/gd-$A-$mode.ppm"
+      rm -f "$sock" "$mon" "$log" "$ppm"
+      qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$mb" -initrd "$di" \
+        -cdrom "$WORKDIR/gd.iso" -display none -serial "unix:$sock,server=on" \
+        -monitor "unix:$mon,server=on,nowait" -no-reboot >/dev/null 2>&1 &
+      local q=$!
+      local args=(--expect "0 > "
+                  --send 'load /ide@1/cdrom@0:\\struct.fth\r' --expect "0 > "
+                  --send 'load-base load-size evaluate\r' --expect "0 > "
+                  --send 'load /ide@1/cdrom@0:\\gd.fth\r' --expect "0 > "
+                  --send 'load-base load-size evaluate\r' --expect "GD-READY")
+      [[ "$mode" == paint ]] && args+=(--send 'gd-paint\r' --expect "GD-PAINTED")
+      args+=(--send 'gd-wide\r' --expect "0 > ")
+      python3 "$REPO/tools/drive-serial-repl.py" "$sock" "$log" --timeout 240 "${args[@]}"
+      local rc=$?
+      _dxp "$mon" "xp /8xb 0xb8000" > "$WORKDIR/gd-$A-$mode.phys"
+      _dshot "$mon" "$ppm"
+      kill "$q" 2>/dev/null   # by PID, never by pattern
+      return $rc
+    }
+
+    for A in amd64 x86; do
+      _drun "$A" paint
+      DRC=$?
+      DL="$(tr -d "\r" < "$WORKDIR/gd-$A-paint.log")"
+      dv() { grep -aoE "$1=[0-9a-f]+" <<<"$DL" | head -1 | cut -d= -f2; }
+      de() { grep -aoE "$1=[A-Za-z0-9-]+" <<<"$DL" | head -1 | cut -d= -f2; }
+
+      [[ $DRC -eq 0 ]] \
+        || fail "G2/devices on $A: the probe did not complete (rc=$DRC) — see $WORKDIR/gd-$A-paint.log"
+
+      # THE REGRESSION, stated as the defect itself.
+      DADDR="$(dv gd-addr)"; DRB="$(dv gd-rb)"; DC="$(dv gd-c)"
+      [[ -n "$DADDR" && "$DRB" != "$DADDR" ]] \
+        || fail "REGRESSION on $A: 'addr rb@' returned ${DRB:-absent}, which is the ADDRESS it was given ($DADDR) — IEEE 1275 5.3.7.2's device-register words are empty again (patch 49), so FCode tokens 0x230-0x235 hand a driver an address where a register value belongs — see $WORKDIR/gd-$A-paint.log"
+      [[ "$DRB" == "$DC" && "$DRB" == 5a ]] \
+        || fail "REGRESSION on $A: rb@ reads ${DRB:-absent} where c@ reads ${DC:-absent} at the same address, and 5a was written there — see $WORKDIR/gd-$A-paint.log"
+      DRW="$(dv gd-rw)"; DW="$(dv gd-w)"; DRL="$(dv gd-rl)"; DLL="$(dv gd-l)"
+      [[ "$DRW" == "$DW" && "$DRW" == 1234 ]] \
+        || fail "REGRESSION on $A: rw@ reads ${DRW:-absent} where w@ reads ${DW:-absent}; 1234 was written there — see $WORKDIR/gd-$A-paint.log"
+      [[ "$DRL" == "$DLL" && "$DRL" == deadbeef ]] \
+        || fail "REGRESSION on $A: rl@ reads ${DRL:-absent} where l@ reads ${DLL:-absent}; deadbeef was written there — see $WORKDIR/gd-$A-paint.log"
+
+      # THE STORE HALF, and the DEPTH is half the assertion: an empty rb!
+      # consumed neither operand, so a driver's stack drifted by two per write.
+      for trip in rb:a5 rw:5678 rl:cafebabe; do
+        DN="${trip%%:*}"; DV="${trip##*:}"
+        DS="$(dv "gd-${DN}store")"; DD="$(dv "gd-${DN}depth")"
+        [[ "$DS" == "$DV" ]] \
+          || fail "REGRESSION on $A: $DN! stored ${DS:-nothing} where $DV was written — a register write that does nothing is the half of patch 49 that loses data rather than returning the wrong value — see $WORKDIR/gd-$A-paint.log"
+        [[ "$DD" == 0 ]] \
+          || fail "REGRESSION on $A: after $DN! the stack was ${DD:-absent} deep, not 0 — the word did not consume its operands, which desynchronises every operation after it in an FCode driver. That stack shift, not a wrong value, is how this defect actually presents — see $WORKDIR/gd-$A-paint.log"
+      done
+
+      # THE TYPED LAYOUT OVER THE DEVICE, and two views of the same two bytes.
+      DCS="$(dv gd-cellsize)"; DVW="$(dv gd-vw)"; DBACK="$(dv gd-back)"
+      [[ "$DCS" == 2 ]] \
+        || fail "G2/devices on $A: the VGA cell layout is ${DCS:-absent} bytes, not 2 — see $WORKDIR/gd-$A-paint.log"
+      [[ "$DVW" == 1f41 ]] \
+        || fail "G2/devices on $A: the 2-byte little-endian DEVICE field over the first cell reads ${DVW:-absent}, not 1f41 — the two 1-byte device fields wrote 41 and 1f into those bytes, so a disagreement means the byte-wise assembly in rw@-le and the byte-wise stores in rb! do not describe the same region — see $WORKDIR/gd-$A-paint.log"
+      [[ "$DBACK" == 41 ]] \
+        || fail "G2/devices on $A: the LAST cell of the array (index 0x3e8) holds ch=${DBACK:-absent}, not 41 — the array reached the first cell and not the last, so the paint below is a statement about one cell — see $WORKDIR/gd-$A-paint.log"
+
+      # THE REFUSAL: no 8-byte device field.
+      DWIDE="$(de gd-wide)"
+      [[ "$DWIDE" == "T-ERR-devwidth" ]] \
+        || fail "G2/devices on $A: an 8-byte device field returned '${DWIDE:-absent}' instead of refusing by name — a 64-bit register is not one access on a 32-bit bus, and splitting it silently is the bug that shows up as the device latching half a value — see $WORKDIR/gd-$A-paint.log"
+      grep -qF 'GD-WIDE-END' <<<"$DL" \
+        && fail "G2/devices on $A: the 8-byte device field named the refusal and then ran to GD-WIDE-END — printing a refusal is not refusing — see $WORKDIR/gd-$A-paint.log"
+
+      # THE OBSERVERS OUTSIDE THE FIRMWARE — and this is where the two arches
+      # part company, for a reason that is the whole point of having them.
+      #
+      # `b8000 vw-cell t@` reading back 1f41 is the CHEAP CHECK, and on x86 it
+      # is a LIAR. arch/x86 relocates by rebasing the GDT, so a Forth address is
+      # not a physical one: the store lands in ordinary RAM, reads back
+      # perfectly through the same accessor, and never reaches the aperture.
+      # Measured 2026-08-29 — physical 0xb8000 on x86 holds `30 07 20 07 3e 07`,
+      # which is the console's own "0 > " prompt in grey-on-black, while the
+      # Forth read-back says 1f41. amd64 does not relocate, so there b8000 IS
+      # the aperture and physical memory holds 41 1f 41 1f.
+      #
+      # So the x86 row is not a failure and must not be a skip: it is the
+      # POSITIVE assertion that the false positive exists. It is the same trap
+      # the flash-writer track met at ffbe0000, and it is why this repo grades a
+      # write by an observer that is not the writer.
+      DPHYS="$(cat "$WORKDIR/gd-$A-paint.phys")"
+      DPIX="$(_count_blue "$WORKDIR/gd-$A-paint.ppm")"
+      if [[ "$A" == amd64 ]]; then
+        [[ "$DPHYS" == "0x41 0x1f 0x41 0x1f 0x41 0x1f 0x41 0x1f" ]] \
+          || fail "G2/devices on amd64: physical 0xb8000 reads [$DPHYS], not the painted 41 1f pattern — the typed device stores did not reach the aperture, and the Forth read-back of $DVW cannot tell you that because it goes through the same translation the store did — see $WORKDIR/gd-amd64-paint.phys"
+        [[ "$DPIX" -gt 50000 ]] \
+          || fail "G2/devices on amd64: after painting 2000 cells THROUGH THE TYPE LAYER the display holds only $DPIX blue pixels — the bytes are at the aperture but the device did not scan them out — see $WORKDIR/gd-amd64-paint.ppm"
+        _drun "$A" nopaint
+        DCPIX="$(_count_blue "$WORKDIR/gd-$A-nopaint.ppm")"
+        [[ "$DCPIX" -eq 0 ]] \
+          || fail "G2/devices on amd64: the identical boot with NO paint ALSO ended with $DCPIX blue pixels, so the colour arrives from booting rather than from the typed device stores — see $WORKDIR/gd-amd64-nopaint.ppm"
+        note "amd64: rb@/rw@/rl@ = $DRB/$DRW/$DRL, matching c@/w@/l@ and NOT the address $DADDR; rb!/rw!/rl! store a5/5678/cafebabe at depth 0; typed device array painted 2000 cells — physical 0xb8000 reads [$DPHYS] and the screen shows $DPIX blue pixels against $DCPIX with no paint; 8-byte device field refuses"
+      else
+        [[ "$DVW" == 1f41 ]] \
+          || fail "G2/devices on x86: the Forth read-back is ${DVW:-absent}, so the x86 row below cannot demonstrate anything — see $WORKDIR/gd-x86-paint.log"
+        [[ "$DPHYS" != "0x41 0x1f 0x41 0x1f 0x41 0x1f 0x41 0x1f" ]] \
+          || fail "G2/devices on x86: physical 0xb8000 now DOES hold the painted pattern [$DPHYS] — arch/x86 has stopped rebasing, so a Forth address is a physical one and this row no longer demonstrates the false positive it exists for. That is good news and it invalidates the control; re-derive TODO 13.3(A) — see $WORKDIR/gd-x86-paint.phys"
+        [[ "$DPIX" -eq 0 ]] \
+          || fail "G2/devices on x86: the display holds $DPIX blue pixels although physical 0xb8000 does not hold the pattern — two observers disagree, so one of them is measuring something other than what it is named for — see $WORKDIR/gd-x86-paint.ppm"
+        note "x86: rb@/rw@/rl@ = $DRB/$DRW/$DRL, matching c@/w@/l@ and NOT the address $DADDR; rb!/rw!/rl! store a5/5678/cafebabe at depth 0 — but the typed device write to b8000 is a FALSE POSITIVE here: Forth reads back $DVW while physical 0xb8000 holds [$DPHYS] (the console's own prompt) and the screen shows $DPIX blue. arch/x86 rebases, so b8000 is not the aperture — the same trap flash-writer met at ffbe0000"
+      fi
+    done
+    pass "REVIEW G2's last gap — a layout over a LIVE DEVICE's registers — and the patch that asking it produced. IEEE 1275 5.3.7.2's six device-register words (rb@ rw@ rl@ rb! rw! rl!) had bodies containing NO WORDS AT ALL: a read returned the ADDRESS it was given and a write stored nothing while leaving both operands on the stack. table.fs binds FCode tokens 0x230-0x235 to exactly these, so the defect presents as a STACK SHIFT inside a driver rather than a wrong value — the same shape as patches 25 and 34. Patch 49 gives them their memory-mapped-I/O bodies and this track asserts the defect as itself: rb@ must not return its own argument, all three reads must agree with c@/w@/l@, and all three writes must store AND leave depth 0. On top of that dsl/struct.fth gains dev-field:/le-dev-field: — the type layer's SECOND BACKEND, which is what poke's IO spaces are (§P2) — built from rb@/rb! a byte at a time so byte order is explicit and a device field reads identically on both arches. A typed array of VGA text cells mapped over 0xb8000 paints 2000 cells through the layer and QEMU's screendump, an observer outside the firmware, counts the blue where an identical no-paint boot counts ZERO; the last cell of the array is checked as well as the first; the same two bytes read as one 2-byte little-endian device field agree with the two 1-byte fields that wrote them; and an 8-byte device field REFUSES by name, because a 64-bit register is not one access on a 32-bit bus. AND THE TWO ARCHES DISAGREE ON PURPOSE: on amd64 the painted bytes are at PHYSICAL 0xb8000 (read by the monitor's xp) and on the screen; on x86 the identical code reads back 1f41 through Forth while physical 0xb8000 still holds the console's own '0 > ' prompt and the screen shows zero blue — arch/x86 rebases the GDT, so a Forth address is not a physical one and the read-back is a FALSE POSITIVE. That row is asserted positively rather than skipped, because it is the cheap check lying in the same run as the arch where it tells the truth — the same trap flash-writer met at ffbe0000. NOT CLAIMED, and said out loud: no read here has side effects — this firmware exposes no port-I/O and no config-space words, so MMIO is the only device seam Forth can reach and its reads are idempotent. That remains an UNKNOWN"
+    ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|struct-layer|struct-array|struct-device]" >&2; exit 1 ;;
 esac

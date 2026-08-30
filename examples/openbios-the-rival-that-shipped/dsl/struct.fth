@@ -60,12 +60,43 @@ hex
 \ PER FIELD because a real structure mixes them -- a 1275 property cell inside a
 \ little-endian handoff page is not hypothetical.
 
-: (tfield) ( off width order -- off' )
+\ ── the SECOND backend: device registers ───────────────────────────
+\ GNU poke's IO spaces are seven function pointers and eight backends
+\ (REVIEW §P2); the same layout applied over a file, over memory, or over a
+\ device is the whole point of that split. Forth's version of the split is
+\ already in IEEE 1275: 5.3.7.2's rb@/rw@/rl@/rb!/rw!/rl! are the
+\ device-register accessors, distinct from c@/w@/l@ precisely because a
+\ platform may need a barrier or a bus byte-swap there.
+\
+\ **They were EMPTY in this firmware** and patch 49 gave them bodies -- see
+\ forth/device/other.fs. Everything below is built from rb@/rb! ALONE, a byte
+\ at a time, so the byte order is explicit rather than inherited from whatever
+\ the host CPU does; that also means a device field behaves identically on x86
+\ and amd64, which is what makes the arch comparison in the track meaningful.
+
+: rw@-le ( adr -- w )  dup rb@ swap 1+ rb@ 8 lshift or ;
+: rw@-be ( adr -- w )  dup rb@ 8 lshift swap 1+ rb@ or ;
+: rw!-le ( w adr -- )  over ff and over rb! 1+ swap 8 rshift swap rb! ;
+: rw!-be ( w adr -- )  over 8 rshift over rb! 1+ swap ff and swap rb! ;
+: rl@-le ( adr -- l )  dup rw@-le swap 2 + rw@-le 10 lshift or ;
+: rl@-be ( adr -- l )  dup rw@-be 10 lshift swap 2 + rw@-be or ;
+: rl!-le ( l adr -- )  2dup 2 + swap 10 rshift swap rw!-le rw!-le ;
+: rl!-be ( l adr -- )  2dup 2 + rw!-be swap 10 rshift swap rw!-be ;
+
+\ ── the definer ────────────────────────────────────────────────────
+\ FOUR cells per field: offset, width, order (0 = big-endian, the 1275 native
+\ order; 1 = little-endian) and SPACE (0 = memory, 1 = device register).
+\ Endianness is per field because a real structure mixes them; the space is per
+\ field because a mapped region can span both -- a descriptor in RAM whose last
+\ member is a doorbell is the ordinary case, not the exotic one.
+
+: (tfield) ( off width order space -- off' )
   create
-    >r                  ( off width )        ( r: order )
+    >r >r               ( off width )   ( r: space order )
     over ,              \ +0  offset
     dup  ,              \ +1  width
     r>   ,              \ +2  order
+    r>   ,              \ +3  space
     +                   ( off' )
   does>                 ( base pfa -- adr tid )
     dup >r @ + r>
@@ -74,10 +105,13 @@ hex
 : t-off   ( tid -- n )  @ ;
 : t-width ( tid -- n )  cell+ @ ;
 : t-order ( tid -- n )  cell+ cell+ @ ;
+: t-space ( tid -- n )  cell+ cell+ cell+ @ ;
 : t-adr   ( adr tid -- adr )  drop ;
 
-: field:    ( off width -- off' )  0 (tfield) ;   \ big-endian  (1275 native)
-: le-field: ( off width -- off' )  1 (tfield) ;   \ little-endian
+: field:        ( off width -- off' )  0 0 (tfield) ;  \ big-endian  (1275 native)
+: le-field:     ( off width -- off' )  1 0 (tfield) ;  \ little-endian
+: dev-field:    ( off width -- off' )  0 1 (tfield) ;  \ ...through rb@/rb!
+: le-dev-field: ( off width -- off' )  1 1 (tfield) ;
 
 \ ── typed fetch and store ──────────────────────────────────────────
 \ An unsupported width REFUSES and names the width. Returning a plausible number
@@ -85,24 +119,48 @@ hex
 \ the wrong bytes; a `blob` field (e_ident, 16 bytes) is addressable and NOT
 \ scalar-readable, and saying so is the point.
 
-: t-width-err ( width -- )  ." T-ERR-width=" . cr abort ;
-: t-be64-err  ( -- )        ." T-ERR-be64" cr abort ;
+: t-width-err     ( width -- )  ." T-ERR-width=" . cr abort ;
+: t-be64-err      ( -- )        ." T-ERR-be64" cr abort ;
+: t-dev-width-err ( width -- )  ." T-ERR-devwidth=" . cr abort ;
 
-: t@ ( adr tid -- u )
-  dup t-order swap t-width                  ( adr order width )
+: (t@mem) ( adr order width -- u )
   dup 1 = if 2drop c@                   else
   dup 2 = if drop if le-w@ else w@-be then else
   dup 4 = if drop if le-l@ else l@-be then else
   dup 8 = if drop if le-x@ else t-be64-err then else
   t-width-err then then then then ;
 
-: t! ( u adr tid -- )
-  dup t-order swap t-width                  ( u adr order width )
+\ No 8-byte device field: a 64-bit register is not one access on a 32-bit bus,
+\ and pretending otherwise is the split-transaction bug nobody sees until the
+\ device latches half of it. Refused by name.
+: (t@dev) ( adr order width -- u )
+  dup 1 = if 2drop rb@                        else
+  dup 2 = if drop if rw@-le else rw@-be then  else
+  dup 4 = if drop if rl@-le else rl@-be then  else
+  t-dev-width-err then then then ;
+
+: (t!mem) ( u adr order width -- )
   dup 1 = if 2drop c!                   else
   dup 2 = if drop if le-w! else w!-be then else
   dup 4 = if drop if le-l! else l!-be then else
   dup 8 = if drop if le-x! else t-be64-err then else
   t-width-err then then then then ;
+
+: (t!dev) ( u adr order width -- )
+  dup 1 = if 2drop rb!                        else
+  dup 2 = if drop if rw!-le else rw!-be then  else
+  dup 4 = if drop if rl!-le else rl!-be then  else
+  t-dev-width-err then then then ;
+
+: t@ ( adr tid -- u )
+  dup t-space >r
+  dup t-order swap t-width                  ( adr order width )
+  r> if (t@dev) else (t@mem) then ;
+
+: t! ( u adr tid -- )
+  dup t-space >r
+  dup t-order swap t-width                  ( u adr order width )
+  r> if (t!dev) else (t!mem) then ;
 
 \ ── the ELF64 header, as a layout ──────────────────────────────────
 \ e_entry/e_phoff/e_shoff are 8 bytes in ELF64 and are declared here as two
@@ -122,7 +180,24 @@ struct
   4 le-field: e_version
   4 le-field: e_entry-lo
   4 le-field: e_entry-hi
+  4 le-field: e_phoff-lo       \ the program-header table's file offset
+  4 le-field: e_phoff-hi
+  4 le-field: e_shoff-lo
+  4 le-field: e_shoff-hi
+  4 le-field: e_flags
+  2 le-field: e_ehsize         \ the header's OWN size -- see below
+  2 le-field: e_phentsize      \ the stride of the phdr array
+  2 le-field: e_phnum          \ ...and its length
+  2 le-field: e_shentsize
+  2 le-field: e_shnum
+  2 le-field: e_shstrndx
 constant /elf64-ehdr
+
+\ /elf64-ehdr is 0x40, and so is `e_ehsize` READ OUT OF THE FILE. That equality
+\ is the layout checking itself against its own subject: a structure that
+\ declares its own size is rare and this one does, so an offset that drifted
+\ anywhere above would be caught by a field the drift itself moved. It costs
+\ one assertion and it is stronger than any constant written down twice.
 
 \ A SECOND VIEW of the same bytes, and it is the arch control. e_entry lives at
 \ 0x18 in an ELF64 header; declaring it as ONE 8-byte little-endian field must
@@ -134,3 +209,43 @@ struct
   18   field: x-ident-and-more   \ blob up to e_entry
   8 le-field: x-entry
 constant /elf64-entry
+
+\ ── arrays of a type ───────────────────────────────────────────────
+\ The other half of GNU poke's COMPOSITE model, and the half a single mapped
+\ struct does not reach. poke writes `Elf64_Phdr[ehdr.e_phnum] @ ehdr.e_phoff`;
+\ the Forth equivalent is a stride and an index, which is what `array:` is.
+\
+\ `<stride> array: NAME` creates NAME ( base index -- elem-base ), so a field
+\ word composes straight onto it:
+\
+\     phtab i phdr[] p_filesz-lo t@
+\
+\ THE STRIDE IS DECLARED, AND THE SUBJECT ALSO STATES IT. An ELF header carries
+\ `e_phentsize`; a declaration that disagrees with it is a layout describing a
+\ different file, so the caller is expected to compare the two rather than trust
+\ either. That comparison is the array's version of the poison byte: without it,
+\ walking N elements at the wrong stride reads N plausible structures out of the
+\ middle of somebody else's bytes and every field "succeeds".
+
+: array: ( stride -- )
+  create ,
+  does>   ( base index pfa -- elem-base )
+    @ * +
+  ;
+
+\ ── the ELF64 program header ───────────────────────────────────────
+\ Its 8-byte members are declared as 4-byte little-endian halves for the same
+\ reason the ehdr's are: one layout has to serve a 32-bit cell too.
+
+struct
+  4 le-field: p_type
+  4 le-field: p_flags
+  4 le-field: p_offset-lo   4 le-field: p_offset-hi
+  4 le-field: p_vaddr-lo    4 le-field: p_vaddr-hi
+  4 le-field: p_paddr-lo    4 le-field: p_paddr-hi
+  4 le-field: p_filesz-lo   4 le-field: p_filesz-hi
+  4 le-field: p_memsz-lo    4 le-field: p_memsz-hi
+  4 le-field: p_align-lo    4 le-field: p_align-hi
+constant /elf64-phdr
+
+/elf64-phdr array: phdr[]

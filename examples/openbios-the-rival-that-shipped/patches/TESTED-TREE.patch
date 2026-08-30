@@ -5045,6 +5045,67 @@ index 5ee6003..7867a98 100644
  
  : load-size file-size @ ;
  
+diff --git a/forth/device/other.fs b/forth/device/other.fs
+index 1bed9b8..f645620 100644
+--- a/forth/device/other.fs
++++ b/forth/device/other.fs
+@@ -56,24 +56,38 @@ defer (poke)
+ 
+ 
+ \ 5.3.7.2 Device-register access
+-
+-: rb@    ( addr -- byte )
+-  ;
+-  
+-: rw@    ( waddr -- w )
+-  ;
+-  
+-: rl@    ( qaddr -- quad )
+-  ;
+-  
+-: rb!    ( byte addr -- )
+-  ;
+-  
+-: rw!    ( w waddr -- )
+-  ;
+-  
+-: rl!    ( quad qaddr -- )
+-  ;
++\
++\ LOCAL DIVERGENCE (mklab). These six were EMPTY -- not stubs that abort, bodies
++\ containing no words at all -- so `addr rb@` consumed nothing and produced
++\ nothing, leaving the ADDRESS where the byte should be. Measured at the amd64
++\ prompt 2026-08-29, which is the only way this was ever going to surface:
++\
++\     b8000 c@   -> 41       (the byte just written there)
++\     b8000 rb@  -> b8000    at depth 1
++\     42 b8002 rb!           left depth 2 having stored nothing
++\
++\ THIS IS NOT A DORMANT PATH. forth/device/table.fs:390-395 binds FCode tokens
++\ 0x230-0x235 to exactly these words, so an FCode driver that READS a device
++\ register receives an address, and one that WRITES a register silently does
++\ nothing and leaves two items on the stack -- which desynchronises every
++\ operation after it in that driver. The failure is therefore not "the register
++\ read the wrong value"; it is a stack shift, which surfaces somewhere else
++\ entirely. forth/device/feval.fs:72 already carries a FIXME saying byte-load
++\ "uses c@ rather than rb@ for now", so the gap was known and worked around at
++\ one call site rather than closed.
++\
++\ On a memory-mapped-I/O architecture -- which is every target in this tree --
++\ device-register access IS memory access at the register's address, and that is
++\ what IEEE 1275 5.3.7.2 describes. A platform needing a barrier or a bus
++\ byte-swap would override these; none in this tree does, and nothing else in
++\ the tree defines them.
++
++: rb@    ( addr -- byte )   c@ ;
++: rw@    ( waddr -- w )     w@ ;
++: rl@    ( qaddr -- quad )  l@ ;
++: rb!    ( byte addr -- )   c! ;
++: rw!    ( w waddr -- )     w! ;
++: rl!    ( quad qaddr -- )  l! ;
+ 
+ : rx@ ( oaddr - o )
+   state @ if
 diff --git a/forth/device/property.fs b/forth/device/property.fs
 index 1d54e3e..6ef2eb9 100644
 --- a/forth/device/property.fs
