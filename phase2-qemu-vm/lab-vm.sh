@@ -2153,6 +2153,27 @@ validate_spec() {
             if [[ -z "$image" ]]; then
                 [[ -n "$distro" && -n "$suite" ]] \
                     || die "spec ($name) backend=disk-image needs either image or (distro+suite)"
+            else
+                # An explicit image is a BACKING FILE that must already exist --
+                # `create` layers a copy-on-write overlay on it.
+                #
+                # THE CHECK IS NOT NEW; ITS POSITION IS. create_one asked the
+                # same question, but only after state_init, the 0700 VM
+                # directory, the manifest and the port pick -- so a typo printed
+                # "creating VM 'x'", then an error, then "cleaning up partial VM
+                # dir". A gate that fires after the work is a post-mortem, which
+                # is the argument that moved the MAC check up a few lines below.
+                # There is now ONE such check, here.
+                #
+                # It matters because nothing else looks at that path: the
+                # zfsbootmenu spec named /home/user/mklab/... -- nobody's home
+                # directory on any machine -- from the day it was written, and
+                # the only question ever asked of it was whether it was
+                # ABSOLUTE, which it is (TODO 15.7).
+                [[ -r "$image" ]] \
+                    || die "spec ($name) image not readable: $image
+  backend=disk-image uses it as a qcow2 backing file, so it must exist BEFORE create.
+  If this is a lab that builds its own image, run that lab's build step first."
             fi
             ;;
         kernel+initrd)
@@ -2804,7 +2825,11 @@ create_one() {
             require_cmd qemu-img
             local base
             if [[ -n "$image" ]]; then
-                [[ -r "$image" ]] || die "image not readable: $image"
+                # Readability is checked in validate_spec, BEFORE the VM
+                # directory exists. A second copy here would be a cached
+                # duplicate of that rule and would go stale the day the rule
+                # changes; the early one always runs, because create_one opens
+                # with validate_spec.
                 base="$image"
             else
                 base="$(cache_image "$distro" "$suite" "$arch" "$refresh_image")"

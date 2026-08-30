@@ -10,7 +10,7 @@
 set -uo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")" || exit 2
 
-tests=(test-sign-payload.sh test-ipxe-pin.sh test-harness-net.sh)
+tests=(test-sign-payload.sh test-sign-payload-lab-ca.sh test-ipxe-pin.sh test-harness-net.sh)
 
 # A test on disk that is in no list is a test nobody runs — one sat unlisted in another
 # suite here for weeks. The comment explaining that would only be read by someone already

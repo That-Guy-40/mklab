@@ -3789,7 +3789,21 @@ complete and the backlog is drained, so this looks only for what nobody has writ
 The boxes below are the actionable half; §C2, §D and §E of the survey are design calls, not
 work items, and are deliberately not checkboxes here.
 
-- [ ] **15.1 — the EXIT-trap CI loop is keyed on the defect.** `ci.yml`'s loop enumerates
+- [x] **15.1 — the EXIT-trap CI loop is keyed on the defect.** ✅ **DONE 2026-08-30.** The
+      loop now enumerates `tests/` **directories** containing a `*.sh`, so a suite with no
+      shared net is a *failing row* instead of no row. Three of the four invisible
+      directories were enrolled the same day (a verbatim `lib.sh`, a runner, a
+      `test-harness-net.sh`) and all three pass all seven sections; the fourth,
+      `tools/tests`, is a **named** exemption in [`.harness-net-exempt`](.harness-net-exempt)
+      with its reason. The step prints `checked 17 of 18` and names what it did not check.
+      **The exemption file is refused two ways**, because a blanket excuse is how the
+      original four stayed invisible: an entry naming a directory that no longer exists,
+      and — the subtler rot — one naming a directory that has since *gained* a `lib.sh`
+      and could therefore be enrolled.
+      [`tools/tests/test-harness-net-loop.sh`](tools/tests/test-harness-net-loop.sh) drives
+      the step **sed'd out of `ci.yml`**, not a copy, against fixtures for all five ways it
+      can go quietly wrong, and re-derives the shipped exemptions against the real tree.
+      *Original text:* `ci.yml`'s loop enumerates
       `git ls-files '*/tests/lib.sh'`, but `check-harness-net.sh`'s **first** check is
       *whether a `lib.sh` exists at all*. So a `tests/` directory with no shared net is not a
       failure — it is not a row. **Measured:** the checker aimed by hand at all 21 `tests/`
@@ -3809,26 +3823,57 @@ work items, and are deliberately not checkboxes here.
       **all four fail on the FIRST check**, *"no lib.sh — there is no shared net to
       check"*, so the scanner never reaches their tests: the state of those suites is
       an **UNKNOWN**, not a known-bad.
-- [ ] **15.2 — three private copies of the net, one already drifted weaker.** Blocked behind
-      15.1 seeing them at all. (See 15.1's 2026-08-29 note: what is known about these
-      four comes from READING them, because the checker stops before it can measure.) `package-mirror-ram/tests/test-state-mount-guard.sh` installs its
-      own `trap` with **no `_VERDICT` flag** and whitelists `rc == 1` — so a `die` (which is
-      `exit 1`) ends the run with **no `FAIL:` line**, the exact silent exit the net exists to
-      prevent. The two `test-offline-archive.sh` files carry near-identical hand-rolled copies.
-      Give all four a `lib.sh` (or point them at a shared one) and delete the copies.
-- [ ] **15.3 — ~~four~~ THREE `tests/` dirs have no `run-all.sh`** (openbios's landed
-      2026-08-27, and its five tests moved from five hand-written lines in `ci.yml` into one
-      runner a checker reads), so `test-run-all-reports-a-ratio.sh`
-      has no runner to drive, and the list moved into a hand-maintained `for t in …` in
-      `ci.yml` — the *"a test file in no list"* shape the ratio rule was written to kill,
-      relocated to a YAML file no ratio check reads.
-- [ ] **15.4 — `netboot/` mints a snakeoil CA next door to `lab-ca/`.** `sign-payload.sh`'s own
-      header documents a `--keydir` seam for "real material (`ca.crt`/`ca.key` +
-      `codesign.crt`/`codesign.key`)"; `examples/lab-ca/issue-signing-cert.sh` produces exactly
-      that; `git grep lab-ca netboot/` returns **nothing**. Wiring it makes `lab-ca` the first
-      anchor in this repo trusted by more than one consumer — which is the only part of PKI
-      that is actually hard, and the RAM-infra family's "reboot pulls the newest **verified**
-      image" thesis currently chains to a key each lab minted for itself.
+- [x] **15.2 — three private copies of the net, one already drifted weaker.** ✅ **DONE
+      2026-08-30**, and the reading was right: `package-mirror-ram/tests/test-state-mount-guard.sh`
+      installed its own `trap` with **no `_VERDICT` flag** and whitelisted `rc == 1`, so a
+      `die` (which *is* `exit 1`) ended the run with **no `FAIL:` line** — the exact silent
+      exit the net exists to prevent. The two `test-offline-archive.sh` files carried
+      near-identical hand-rolled copies. All three now source a `lib.sh` **copied verbatim**
+      from an exemplar rather than written afresh (a fourth hand-written net is a fourth
+      thing to drift), register teardown with `on_exit`, and install no EXIT trap of their
+      own — which `check-harness-net.sh` §1 now verifies, because 15.1 made it able to see
+      them at all.
+- [x] **15.3 — ~~four~~ ~~THREE~~ ZERO `tests/` dirs have no `run-all.sh`** ✅ **DONE
+      2026-08-30** (openbios's landed 2026-08-27; the last three the same day as 15.1/15.2).
+      `test-run-all-reports-a-ratio.sh` now drives **14** runners, up from 11, and each
+      prints `ran/discovered` plus the names of anything skipped. Two of the three were
+      named in `ci.yml` as individual **test files** and the third — `package-mirror-ram` —
+      was named nowhere, so **CI had never run its state-mount guard at all**: the
+      *"a test file in no list"* shape, exactly as this box described it.
+      **`tools/tests` is deliberately not enrolled** (see 15.1's exemption), and a new gap
+      opened up while looking: **7 of the 18 files in `tools/tests/` are named in no CI step**
+      — `test-actions.sh`, `test-control-pane.sh`, `test-doc-verbs.sh`, `test-echo-gate.sh`,
+      `test-list.sh`, `test-serial-source.sh`, `test-tree-diagrams.sh`. That is the same
+      shape one level up, and it is **15.8**.
+- [x] **15.4 — `netboot/` mints a snakeoil CA next door to `lab-ca/`.** ✅ **DONE
+      2026-08-30, and verified by a boot rather than by `openssl verify`.**
+      `netboot/sign-payload.sh --lab-ca <name>` signs with a leaf issued by the shared root;
+      the DER trust root baked into iPXE **is** that anchor, compared by digest against the
+      tracked `lab-ca.fingerprint` rather than by path. Measured on KVM
+      ([`netboot/MANUAL_TESTING.md` §13.3](netboot/MANUAL_TESTING.md)):
+      `iPXE: slot current VERIFIED -- booting`, then the kernel; and the control — one byte
+      flipped in `current/initrd.gz`, `.sig` left stale — `imgverify FAILED for slot
+      current` → `rolling back current -> previous` → `slot previous VERIFIED`.
+
+      **Three things were found by doing it, and none of them was the wiring:**
+
+      | | |
+      |---|---|
+      | **the blocker was inside `sign-payload.sh`** | it required `ca.key` on *every* run, so the documented *"point `--keydir` at real (offline/HSM) material"* seam could not be used as documented — the ROOT PRIVATE KEY had to sit beside the signer, which is the one thing an offline root exists to avoid. Signing needs `ca.crt` + the leaf's key; the root key is now required only by `--gen-keys` |
+      | **the two consumers want CONTRADICTORY leaves** | stboot's `descriptor.Verify()` leaves `KeyUsages` unset, so Go requires `serverAuth` and rejects a `codeSigning` leaf; iPXE *requires* `codeSigning`. So `issue-signing-cert.sh` (Ed25519, **no EKU**) could not be reused, and `issue-codesign-cert.sh` (ECDSA P-256, `codeSigning` + `digitalSignature`) is a **second leaf profile under one root** — the correct PKI shape, and a thing somebody will try to unify. Both directions are now asserted |
+      | **it works only because the pin is v2.0.0** | the shared root is ECDSA, and `crypto/ecdsa.c` + `p256.c` + `p384.c` arrive in iPXE's first release since 2020. On v1.21.1 this root would be unparseable — so the pin bump `versions.env` already carried is load-bearing for a reason nobody had written down |
+
+      `examples/lab-ca/` also gained its **first tests** — the anchor matches its tracked
+      fingerprint, no private key is tracked, and the two profiles stay incompatible — plus
+      a CI row. `netboot/tests/test-sign-payload-lab-ca.sh` drives a **throwaway** root via
+      `LAB_CA_DIR`/`LAB_CA_KEYDIR`, because a guard that can only run on the one machine
+      holding the real key is an UNKNOWN everywhere else.
+
+      **The control found a defect in the test rather than in the subject, as usual.** The
+      key-hygiene assertion's message contained `` `git add -A` `` inside a **double-quoted**
+      string — command substitution — so firing it would have **staged the whole repo**.
+      It is `CLAUDE.md`'s opening rule aimed at an error message: text that merely *names* a
+      command must not sit where a shell will run it.
 - [ ] **15.5 — a package mirror nobody installs from.** `package-mirror-ram/` serves a Debian
       mirror; all four ZTP install labs install from public mirrors, and no install lab
       references it. `d-i mirror/http/hostname` (or kickstart `url --url=`) buys the
@@ -3839,10 +3884,38 @@ work items, and are deliberately not checkboxes here.
       verb a target, justifies it in phases 4/5, and — with 15.4 — is where TLS and (with
       `cosign`, also 0 files) container-artifact signing would live. The repo has a firm
       opinion about signed *boot* artifacts and none about signed *container* ones.
-- [ ] **15.7 — one spec hard-codes this machine's home.**
-      `examples/zfsbootmenu-boot-environments/zbm-debian.toml:21` is the only `/home/user/` in
-      any tracked `.toml`. The README is right that the path must be **absolute** (it is a
-      qcow2 backing file); whose `$HOME` it names is a separate question.
+- [x] **15.7 — one spec hard-codes ~~this machine's~~ NOBODY'S home.** ✅ **DONE
+      2026-08-30**, and the framing was wrong in a way worth keeping: `/home/user/mklab/…`
+      is not this machine's home, it is **no machine's**. The five sibling specs that carry
+      an absolute qcow2 path all name this checkout; that one named a placeholder, and it
+      had done so since the file was written.
+
+      **Nothing noticed because the only question ever asked of it was whether it began
+      with a slash.** The lab's own test asserted `img.startswith("/")` — which
+      `/home/user/…` satisfies perfectly. It now derives the expected value from the lab's
+      own location (`<lab>/out/root-on-zfs.qcow2`, the artifact `install-zfs-root.sh`
+      writes) and was watched to reject the old value by name.
+
+      **And `lab-vm.sh` moved its own check.** `create_one` did ask whether the backing
+      file was readable — but only after `state_init`, the 0700 VM directory and the
+      manifest, so a bad path printed *"creating VM"*, an error, and *"cleaning up partial
+      VM dir"*. It is in `validate_spec` now, where `kernel`/`initrd` have always been, and
+      there is one copy rather than two. The test asserts the **ordering**, not the message:
+      asserting the message alone passed identically against both versions, which is an
+      assertion attached to nothing.
+
+- [ ] **15.8 — 7 of the 18 files in `tools/tests/` are run by nobody** *(found 2026-08-30
+      while closing 15.3, which is the same shape one level up)*. `ci.yml` names the
+      meta-checkers one `run:` step at a time — a hand-maintained **inclusion list**, the
+      thing §11.3b inverted everywhere else — and these are in no step:
+      `test-actions.sh`, `test-control-pane.sh`, `test-doc-verbs.sh`, `test-echo-gate.sh`,
+      `test-list.sh`, `test-serial-source.sh`, `test-tree-diagrams.sh`. Some may be
+      deliberately manual (`test-echo-gate.sh` and `test-serial-source.sh` drive fixtures
+      that stand in for hardware); *deliberate* and *forgotten* look identical from here,
+      which is the finding. The fix is the one this repo already made twice: enumerate the
+      directory, and carry a named exemption list with reasons — `.harness-net-exempt` is
+      the shape, and `tools/tests` is exempt from the harness-net loop for a reason that
+      does **not** excuse it from being run.
 
 **Deliberately not a box:** the survey's §D — the repo has grown a **second, undocumented**
 answer to "hand-walk a tutorial" (`RUNBOOK.md` + `setup-workshop.sh` + a
@@ -3874,8 +3947,13 @@ The rest of that step list is now done: §1's three config flips (13.1), §4's `
 (13.2(b)), `decode-int`'s zero-extension is **pinned as deliberate** with the reason
 measured (13.2(a)), and `encode-phys`'s length is asserted to change with `#address-cells`.
 §2's fourth — *"assert `/chosen`'s `stdin` survives a round trip at whatever address
-instances actually land on in long mode"* — is **still open**, and so is the review's own
-unmeasured question of whether an amd64 instance can land above 4 GiB at all.
+instances actually land on in long mode"* — was open when this section was written and
+**closed later the same day by [§0.6a](#06-the-openbios-toolkits-front-of-the-queue-2026-08-27)**:
+`property-abi` measures the round trip on both arches (amd64 `h-live=h-prop=14c08`, a
+different ihandle from the same node distinguishable at `14ae8`) and reports **`h-hi=0`**,
+which also answers the review's own unmeasured question — an amd64 instance does **not**
+land above 4 GiB today, so the truncation hazard is latent rather than live. *Corrected
+2026-08-30: this paragraph said "still open" for three days after it was not.*
 
 ### The fork, and why "pluggable `alloc-tree`" is the wrong half of it
 

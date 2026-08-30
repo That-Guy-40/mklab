@@ -14,25 +14,18 @@
 # force-added, and assertion 2 below is what would notice if a future re-vendor forgot.
 #
 # Needs no network, no packer, no KVM. The build is not run; only the staging is.
-set -uo pipefail
-LAB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+# The helpers and the EXIT net used to be hand-written here — one of the three
+# private copies TODO 15.2 counted. They are lib.sh's now: one net, one place to
+# fix it, and `tools/check-harness-net.sh` can finally see this directory at all
+# (TODO 15.1 — its CI loop enumerated lib.sh files, so a suite without one was
+# not a failing row, it was not a row).
+# shellcheck disable=SC1091
+. "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
+set +e                # the assertions below capture rc explicitly
 
-_VERDICT=0
-skip() { _VERDICT=1; printf 'SKIP: %s\n' "$*" >&2; exit 77; }
-fail() { _VERDICT=1; printf 'FAIL: %s\n' "$*" >&2; exit 1; }
-pass() { _VERDICT=1; printf 'PASS: %s\n' "$*" >&2; exit 0; }
-note() { printf '  - %s\n' "$*" >&2; }
-
-command -v sha256sum >/dev/null || skip "missing required command: sha256sum"
+require_cmd sha256sum
 tmp="$(mktemp -d)"
-_on_exit() {
-    local rc=$?
-    rm -rf "$tmp"
-    if (( rc != 0 && rc != 77 )) && (( _VERDICT == 0 )); then
-        printf 'FAIL: test exited early (rc=%d) — no verdict was printed by the test itself\n' "$rc" >&2
-    fi
-}
-trap _on_exit EXIT
+on_exit 'rm -rf "$tmp"'
 
 ARCHIVE="$LAB_DIR/upstream-repo/cloud-images"
 [[ -d "$ARCHIVE" ]] || fail "the vendored archive is missing at upstream-repo/cloud-images"

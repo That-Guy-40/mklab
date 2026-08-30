@@ -26,5 +26,24 @@ expect_error "unknown arch"           "unknown arch"        -- create --name x -
 expect_error "missing kernel/initrd"  "not readable"        -- create --name x --backend kernel+initrd --arch x86_64 --kernel /tmp/nope-vmlinuz --initrd /tmp/nope-initrd
 expect_error "from-chroot needs chroot" "requires a chroot field" -- create --name x --backend from-chroot --arch x86_64
 expect_error "disk-image bare"        "needs either image"  -- create --name x --backend disk-image --arch x86_64
+# TODO 15.7. An explicit image is a backing file: it must EXIST at create time,
+# and until 2026-08-30 only kernel+initrd was asked that. The one thing anyone
+# had ever asked of a disk-image path was whether it was absolute — which
+# /home/user/mklab/... is, on nobody's machine.
+expect_error "disk-image missing file" "image not readable"  -- create --name x --backend disk-image --arch x86_64 --image /tmp/nope-there-is-no-such-qcow2
+
+# ...and it must be refused BEFORE anything is built. The refusal itself is not
+# the new property — create_one already asked the same question, but only after
+# state_init, the 0700 VM directory and the manifest, so a typo printed
+# "creating VM", an error, and "cleaning up partial VM dir". Asserting only the
+# message would pass identically against either version, which is an assertion
+# attached to nothing.
+out="$("$LAB_VM" create --name x --backend disk-image --arch x86_64 --image /tmp/nope-there-is-no-such-qcow2 2>&1)" && rc=0 || rc=$?
+(( rc != 0 )) || fail "a disk-image spec naming a nonexistent backing file was accepted"
+grep -qi "creating VM" <<<"$out" \
+    && fail "REGRESSION: the unreadable image was refused only AFTER 'creating VM' — the gate moved back downstream of the work it exists to prevent"
+grep -qi "cleaning up partial" <<<"$out" \
+    && fail "REGRESSION: a partial VM directory had to be cleaned up, so the refusal came after it was made"
+note "disk-image missing file is refused before any VM directory is made OK"
 
 pass "validation guardrails OK"

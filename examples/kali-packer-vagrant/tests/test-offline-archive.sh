@@ -21,25 +21,17 @@
 #
 # Nothing here needs packer, KVM, or the network. The build is not run; only the sourcing
 # of the upstream tree is.
-set -uo pipefail
-LAB_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+# The helpers and the EXIT net used to be hand-written here — the second of the
+# three near-identical private copies TODO 15.2 counted. They are lib.sh's now,
+# so there is one net rather than four, and this directory is finally VISIBLE to
+# tools/check-harness-net.sh (TODO 15.1).
+# shellcheck disable=SC1091
+. "$(dirname -- "${BASH_SOURCE[0]}")/lib.sh"
+set +e                # the assertions below capture rc explicitly
 
-_VERDICT=0
-skip() { _VERDICT=1; printf 'SKIP: %s\n' "$*" >&2; exit 77; }
-fail() { _VERDICT=1; printf 'FAIL: %s\n' "$*" >&2; exit 1; }
-pass() { _VERDICT=1; printf 'PASS: %s\n' "$*" >&2; exit 0; }
-note() { printf '  - %s\n' "$*" >&2; }
-
-command -v sha256sum >/dev/null || skip "missing required command: sha256sum"
+require_cmd sha256sum
 tmp="$(mktemp -d)"
-_on_exit() {
-    local rc=$?
-    rm -rf "$tmp"
-    if (( rc != 0 && rc != 77 )) && (( _VERDICT == 0 )); then
-        printf 'FAIL: test exited early (rc=%d) — no verdict was printed by the test itself\n' "$rc" >&2
-    fi
-}
-trap _on_exit EXIT
+on_exit 'rm -rf "$tmp"'
 
 [[ -d "$LAB_DIR/upstream-repo/kali-packer" ]] \
     || fail "the vendored archive is missing at upstream-repo/kali-packer — the lab cannot build offline at all"

@@ -18,8 +18,8 @@ SPEC="$LAB_DIR/zbm-debian.toml"
 [[ -r "$SPEC" ]] || fail "zbm-debian.toml not found at $SPEC"
 
 # (a) Structural validation of the spec — host-safe.
-python3 - "$SPEC" <<'PY' || fail "zbm-debian.toml failed validation (see message above)"
-import sys, tomllib
+python3 - "$SPEC" "$LAB_DIR" <<'PY' || fail "zbm-debian.toml failed validation (see message above)"
+import sys, tomllib, os
 with open(sys.argv[1], "rb") as f:
     try:
         doc = tomllib.load(f)
@@ -39,7 +39,20 @@ need(vm.get("cloud_init") is False, "cloud_init must be false — the ZFS image 
 img = vm.get("image", "")
 need(isinstance(img, str) and img.startswith("/"),
      "image must be an ABSOLUTE path (lab-vm.sh uses it as a qcow2 backing file)")
+# "Absolute" was the ONLY question ever asked of this path, and /home/user/mklab/...
+# answers it -- on nobody's machine. The artifact install-zfs-root.sh produces is
+# THIS lab's out/root-on-zfs.qcow2, so the path is derivable from where this test
+# is standing; asserting the derived value is what makes the check a statement
+# about the image rather than about the leading slash. (TODO 15.7)
+lab = os.path.realpath(sys.argv[2])
+want = os.path.join(lab, "out", "root-on-zfs.qcow2")
+need(os.path.realpath(img) == want,
+     f"image must name the artifact install-zfs-root.sh writes into THIS lab:\n"
+     f"      want {want}\n"
+     f"      got  {img}\n"
+     f"    An absolute path that exists on no machine passes an 'is it absolute?' check.")
 print(f"  - spec ok: name={vm['name']} backend=disk-image firmware=uefi cloud_init=false", file=sys.stderr)
+print(f"  - image names this lab's own out/root-on-zfs.qcow2 (not a placeholder home)", file=sys.stderr)
 PY
 note "zbm-debian.toml: UEFI disk-image spec is well-formed  ✓"
 
