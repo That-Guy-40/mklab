@@ -907,20 +907,28 @@ Re-grading the first review's table, plus what this proposal adds:
 - ~~**G7 was not attempted.**~~ — **attempted and settled**; see G7. What was
   *not* attempted is reading a byte range without loading the whole file, and
   `seek`/`read` remain unexercised because `load` made them unnecessary.
-- **This is ELF64 only.** `poke-elf` ships `elf-32.pk` (347 lines) beside
-  `elf-64.pk`; `dsl/elf.fth` has no ELF32 layouts. That is a *stated* limit
-  rather than a silent one: an ELF32 is refused by name
-  (`not ELF64 (e_class) -- want=2 got=1`, measured against the real
-  `openbios-builtin.elf32` header), which matters because the first 24 bytes of
-  the two formats are identical and everything from `e_entry` on diverges.
-  Measured alongside it: **a real ELF32 cannot be `load`ed at all** — the
-  firmware's own loader recognises it and never returns to the prompt. The same
-  bytes with one magic byte altered load fine, which is how that was isolated.
-  An ELF64 is not recognised, which is the only reason this lab's subject is
-  loadable as data.
+- ~~**This is ELF64 only.**~~ — **ELF32 added 2026-08-30**, in
+  [`dsl/elf32.fth`](examples/openbios-the-rival-that-shipped/dsl/elf32.fth), and
+  measured against the firmware's own 32-bit payload. Two things that were not
+  obvious going in:
+  - **poke-elf does not dispatch on class.** It ships `Elf32_File` and
+    `Elf64_File` and the user picks. The `e_class` dispatch here is *ours*, and
+    it is justified by the environment rather than by poke: at a prompt with no
+    flow control, typing the wrong one and getting silent nonsense is the failure
+    this repo exists to avoid. The ELF32 half stays optional, and a missing hook
+    names the file rather than falling through to the 64-bit half.
+  - **ELF32 is not ELF64 with narrower fields.** The program header **reorders**:
+    `p_flags` is the **second** member in ELF64 and the **seventh** in ELF32. A
+    port that narrowed the widths and kept the order would read permissions out
+    of `p_offset` and never fault — it would print the wrong `RWX`, confidently.
+    Asserted per segment against the host.
+
+  Still measured and still true: **a bare ELF32 cannot be `load`ed** — the
+  firmware's own loader recognises it and never returns. The subject is embedded
+  at offset `0x200` of a padded file, which is poke's `Elf32_File @ 512#B`.
 - **§E1 and §E4 are built; §E2, §E3, §E5, §E6 and §E7 are not.** What shipped is
   the two the analysis rated highest, plus the structural split (§E6's lesson,
-  not its registry) and bit-fields (§G4). §E2 — byte order taken from `ei_data`
+  not its registry), bit-fields (§G4), and both ELF classes. §E2 — byte order taken from `ei_data`
   at map time — is **refused by name** rather than implemented, so a big-endian
   ELF64 halts instead of being misread. §E3's declarative `file:` definer and
   §E5's unions remain sketches.

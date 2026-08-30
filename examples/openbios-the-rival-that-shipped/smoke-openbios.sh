@@ -3409,7 +3409,16 @@ PYX
     EST="$WORKDIR/elf-stage"; rm -rf "$EST"; mkdir -p "$EST"
     cp "$HERE/dsl/struct.fth" "$EST/STRUCT.FTH"
     cp "$HERE/dsl/elf.fth"    "$EST/ELF.FTH"
+    cp "$HERE/dsl/elf32.fth"  "$EST/ELF32.FTH"
     cp "$EAMB" "$EST/SUBJ.ELF"
+    # The ELF32 subject is the firmware's OWN 32-bit payload, padded so the
+    # firmware's loader cannot recognise it — see the probe's comment.
+    E32SRC="$WORKDIR/openbios/obj-amd64/openbios-builtin.elf32"
+    [[ -f "$E32SRC" ]] || skip "missing $E32SRC — run ./build-openbios.sh amd64 first"
+    python3 - "$E32SRC" "$EST/EMBED32.BIN" <<'PY'
+import sys
+open(sys.argv[2], 'wb').write(b'\0' * 512 + open(sys.argv[1], 'rb').read())
+PY
     cat > "$EST/EM.FTH" <<'FTH'
 hex
 ." EM-START" cr
@@ -3444,7 +3453,7 @@ hex
 \ the corrupted one above.
 40 alloc-mem value hdr
 : em-author
-  hdr elf-new ?elf64
+  hdr elf64-new ?elf64
   ." em-a-magic=" @elf e_magic t@ u. cr
   ." em-a-class=" @elf e_class t@ u. cr
   ." em-a-mach=" @elf e_machine t@ u. cr
@@ -3453,16 +3462,60 @@ hex
   ." em-a-shent=" @elf e_shentsize t@ u. cr
   ." em-hdr=" hdr u. cr
   ." EM-AUTHOR-END" cr ;
+\ ── the ELF32 half ─────────────────────────────────────────────────
+\ The subject is EMBEDDED AT OFFSET 0x200 of a padded file, for a reason worth
+\ recording: `load` of a bare ELF32 never returns, because the firmware's OWN
+\ loader recognises it and takes over. Padding puts a non-ELF at offset 0, and
+\ binding at 200 is poke's `Elf32_File @ 512#B` -- inspecting a payload inside a
+\ container, which is the realistic case anyway.
+: em32
+  load-base 200 + elf-at
+  ?elf  load-size 200 - ?phdrs
+  ." em32-class=" elf-class u. cr
+  ." em32-ehsize=" @elf e32-ehsize t@ u. cr
+  ." em32-phnum=" elf-phnum u. cr
+  ." em32-shnum=" elf-shnum u. cr
+  ." em32-loadbase=" elf-load-base u. cr
+  ." em32-entry=" @elf e32-entry t@ u. cr
+  ." em32-entryoff=" @elf e32-entry t@ vaddr>off u. cr
+  ." EM32-END" cr ;
+\ p32-flags is the SEVENTH member in ELF32 and the SECOND in ELF64. Asserting it
+\ per segment is what proves the reorder was honoured rather than the widths
+\ merely narrowed -- a wrong order here would print plausible permissions.
+: em32-ph
+  elf-phnum 0 ?do
+    ." em32-ph=" i u.
+    i elf32-ph
+    ." t=" dup p32-type   t@ u.
+    ." f=" dup p32-flags  t@ u.
+    ." o=" dup p32-offset t@ u.
+    ." z="     p32-filesz t@ u. cr
+  loop ." EM32-PH-END" cr ;
+: em32-names
+  elf-shnum 0 ?do ." em32-sh=" i u. i sh-name .cstr cr loop
+  ." EM32-NAMES-END" cr ;
+\ CROSS-CLASS CONTROLS: each validator must refuse the other class, or the
+\ dispatch is decorative and either would "work" on both.
+\ x32on64 needs an ELF64 to point at, and by the time it runs load-base holds
+\ the padded ELF32 -- the first draft bound offset 0 of THAT and refused on
+\ magic (512 zero bytes) instead of on class, which is a pass for the wrong
+\ reason. Keep a pristine copy while the ELF64 is still loaded.
+40 alloc-mem value keep64
+: keep64! load-base keep64 40 move ." KEPT" cr ;
+: x64on32 ." x1:" ?elf64 ." X1-END" cr ;
+: x32on64 ." x2:" keep64 elf-at ?elf32 ." X2-END" cr ;
+\ ...and the OPTIONAL-FILE claim, tested by taking the hook away again.
+: nohook  ." x3:" 0 'x?elf ! ?elf ." X3-END" cr ;
 ." EM-READY" cr
 FTH
     genisoimage -quiet -o "$WORKDIR/elfm.iso" -V ELFM -r -J "$EST"
 
-    read -r ET_SHNUM ET_PHNUM ET_LOADBASE ET_ENTRY ET_ENTRYOFF < <(
+    read -r ET_SHNUM ET_PHNUM ET_LOADBASE ET_ENTRY ET_ENTRYOFF ET_EHSIZE_64 < <(
       python3 - "$EAMB" <<'PY'
 import sys, struct
 b = open(sys.argv[1], 'rb').read()
 phoff, shoff = struct.unpack_from('<QQ', b, 32)
-_, phent, phnum, _, shnum, _ = struct.unpack_from('<HHHHHH', b, 52)
+ehsize, phent, phnum, _, shnum, _ = struct.unpack_from('<HHHHHH', b, 52)
 entry, = struct.unpack_from('<Q', b, 24)
 base, off = None, -1
 for i in range(phnum):
@@ -3475,7 +3528,7 @@ for i in range(phnum):
     base = va if base is None else min(base, va)
     if va <= entry < va + msz and off == -1:
         off = fo + (entry - va)
-print("%x %x %x %x %x" % (shnum, phnum, base, entry, off))
+print("%x %x %x %x %x %x" % (shnum, phnum, base, entry, off, ehsize))
 PY
     )
     ET_NAMES="$(python3 - "$EAMB" <<'PY'
@@ -3490,7 +3543,44 @@ for i in range(shnum):
     print("%x %s" % (i, b[stroff + n:e].decode()))
 PY
     )"
-    note "subject: $(basename "$EAMB") — shnum=$ET_SHNUM phnum=$ET_PHNUM load-base=$ET_LOADBASE entry=$ET_ENTRY → file offset $ET_ENTRYOFF (host, from the bytes)"
+    read -r E3_SHNUM E3_PHNUM E3_LOADBASE E3_ENTRY E3_ENTRYOFF E3_EHSIZE < <(
+      python3 - "$E32SRC" <<'P3'
+import sys, struct
+b = open(sys.argv[1], 'rb').read()
+entry, phoff, shoff, _f, ehsize, phent, phnum, _se, shnum, _sx = struct.unpack_from('<IIIIHHHHHH', b, 24)
+base, off = None, -1
+for i in range(phnum):
+    t, o, va, _pa, fsz, msz, _fl, _al = struct.unpack_from('<8I', b, phoff + i * phent)
+    if t != 1: continue
+    base = va if base is None else min(base, va)
+    if va <= entry < va + msz and off == -1: off = o + (entry - va)
+print("%x %x %x %x %x %x" % (shnum, phnum, base, entry, off, ehsize))
+P3
+    )
+    E3_PH="$(python3 - "$E32SRC" <<'P3'
+import sys, struct
+b = open(sys.argv[1], 'rb').read()
+phoff, = struct.unpack_from('<I', b, 28)
+phent, phnum = struct.unpack_from('<HH', b, 42)
+for i in range(phnum):
+    t, o, _va, _pa, fsz, _msz, fl, _al = struct.unpack_from('<8I', b, phoff + i * phent)
+    print("%x %x %x %x %x" % (i, t, fl, o, fsz))
+P3
+    )"
+    E3_NAMES="$(python3 - "$E32SRC" <<'P3'
+import sys, struct
+b = open(sys.argv[1], 'rb').read()
+shoff, = struct.unpack_from('<I', b, 32)
+shent, shnum, shstrndx = struct.unpack_from('<HHH', b, 46)
+stroff, = struct.unpack_from('<I', b, shoff + shstrndx * shent + 16)
+for i in range(shnum):
+    n, = struct.unpack_from('<I', b, shoff + i * shent)
+    e = b.index(b'\0', stroff + n)
+    print("%x %s" % (i, b[stroff + n:e].decode()))
+P3
+    )"
+    note "ELF64 subject: $(basename "$EAMB") — shnum=$ET_SHNUM phnum=$ET_PHNUM load-base=$ET_LOADBASE entry=$ET_ENTRY → file offset $ET_ENTRYOFF (host, from the bytes)"
+    note "ELF32 subject: $(basename "$E32SRC") — shnum=$E3_SHNUM phnum=$E3_PHNUM ehsize=$E3_EHSIZE load-base=$E3_LOADBASE entry=$E3_ENTRY → file offset $E3_ENTRYOFF"
 
     for A in amd64 x86; do
       if [[ "$A" == amd64 ]]; then MB="$EAMB"; DI="$EADI"; else MB="$EXMB"; DI="$EXDI"; fi
@@ -3509,6 +3599,8 @@ PY
         --send 'load-base load-size evaluate\r' --expect "0 > " \
         --send 'load /ide@1/cdrom@0:\\elf.fth\r' --expect "0 > " \
         --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\elf32.fth\r' --expect "0 > " \
+        --send 'load-base load-size evaluate\r' --expect "0 > " \
         --send 'load /ide@1/cdrom@0:\\em.fth\r' --expect "0 > " \
         --send 'load-base load-size evaluate\r' --expect "EM-READY" \
         --send 'load /ide@1/cdrom@0:\\subj.elf\r' --expect "0 > " \
@@ -3518,7 +3610,15 @@ PY
         --send 'c-class\r'  --expect "0 > " \
         --send 'c-ehsize\r' --expect "0 > " \
         --send 'c-endian\r' --expect "0 > " \
-        --send 'c-magic\r'  --expect "0 > "
+        --send 'c-magic\r'  --expect "0 > " \
+        --send 'load-base elf-at keep64!\r' --expect "KEPT" \
+        --send 'load /ide@1/cdrom@0:\\embed32.bin\r' --expect "0 > " \
+        --send 'em32\r' --expect "EM32-END" \
+        --send 'em32-ph\r' --expect "EM32-PH-END" \
+        --send 'em32-names\r' --expect "EM32-NAMES-END" \
+        --send 'x64on32\r' --expect "0 > " \
+        --send 'x32on64\r' --expect "0 > " \
+        --send 'load-base 200 + elf-at nohook\r' --expect "0 > "
       ERC=$?
       kill "$EQ" 2>/dev/null   # by PID, never by pattern
       EL="$(tr -d "\r" < "$ELOG")"
@@ -3572,9 +3672,14 @@ PY
         grep -qF "${ECN^^}-END" <<<"$EL" \
           && fail "§E1 on $A: a corrupted header reached ${ECN^^}-END, so ?elf64 printed a complaint and RETURNED — printing a refusal is not refusing, and every 'valid' above means nothing — see $ELOG"
       done
+      # SIX, not four: the four corruptions above plus the two cross-class
+      # controls below (?elf64 on an ELF32, ?elf32 on an ELF64), which are
+      # refusals by the same mechanism. Counting them together is deliberate —
+      # a constraint that fired twice, or a control that quietly stopped firing,
+      # changes this number and nothing else would notice.
       ECOUNT="$(grep -ac 'CONSTRAINT:' <<<"$EL" || true)"
-      (( ECOUNT == 4 )) \
-        || fail "§E1 on $A: $ECOUNT constraint failures fired where 4 corruptions were injected — see $ELOG"
+      (( ECOUNT == 6 )) \
+        || fail "§E1 on $A: $ECOUNT constraint failures fired where 6 are expected — 4 injected corruptions plus 2 cross-class refusals — see $ELOG"
       grep -qF 'want=2  got=0' <<<"$EL" \
         || fail "§E1 on $A: the e_class failure did not report both values (want=2 got=0). A constraint that says only 'failed' sends the reader back to the prompt to find out which — see $ELOG"
       # The big-endian row is the E2 LIMIT asserted as a refusal: this layer
@@ -3583,9 +3688,62 @@ PY
       grep -qF 'big-endian ELF' <<<"$EL" \
         || fail "§E2 on $A: e_data=2 (big-endian) was not refused by name — this layer fixes byte order at declaration time and would MISREAD such a file, so passing it silently is the exact defect §E2 records — see $ELOG"
 
+      # ── THE ELF32 HALF ──────────────────────────────────────────
+      # Same questions, the other class, through the SAME generic words —
+      # which is the whole point of dispatching on e_class.
+      grep -qF 'EM32-END' <<<"$EL" \
+        || fail "ELF32 on $A: ?elf or ?phdrs rejected the firmware's own 32-bit payload — see $ELOG"
+      E3C="$(ev em32-class)"
+      [[ "$E3C" == 1 ]] \
+        || fail "ELF32 on $A: elf-class reads ${E3C:-absent}, not 1 — the dispatcher is not seeing an ELF32, so every generic below went to the 64-bit half — see $ELOG"
+      for pair in ehsize:$E3_EHSIZE phnum:$E3_PHNUM shnum:$E3_SHNUM loadbase:$E3_LOADBASE entry:$E3_ENTRY entryoff:$E3_ENTRYOFF; do
+        EN="${pair%%:*}"; EW="${pair##*:}"
+        EV="$(ev "em32-$EN")"
+        [[ "$EV" == "$EW" ]] \
+          || fail "ELF32 on $A: $EN reads ${EV:-absent} where the host computes $EW from the same bytes — see $ELOG"
+      done
+      # e32-ehsize must be 0x34, and the ELF64 answer 0x40 — if they were equal
+      # this row could not tell the two layouts apart at all.
+      [[ "$E3_EHSIZE" == 34 && "$ET_EHSIZE_64" == 40 ]] \
+        || fail "ELF32 on $A: the two classes report header sizes $E3_EHSIZE and $ET_EHSIZE_64; they must be 34 and 40 or this comparison proves nothing"
+
+      # p32-flags is the SEVENTH member in ELF32 and the SECOND in ELF64. A port
+      # that narrowed the widths and kept the order would read p_flags out of
+      # p_offset and print plausible permissions. This is the row that catches it.
+      while read -r pi pt pf po pz; do
+        [[ -z "$pi" ]] && continue
+        PROW="$(grep -aoE "em32-ph=$pi t=[0-9a-f]+ f=[0-9a-f]+ o=[0-9a-f]+ z=[0-9a-f]+" <<<"$EL" | head -1)"
+        PWANT="em32-ph=$pi t=$pt f=$pf o=$po z=$pz"
+        [[ "$PROW" == "$PWANT" ]] \
+          || fail "ELF32 on $A: program header $pi reads '${PROW:-absent}' where the host reads '$PWANT' — if only the f= field differs, the ELF64 field ORDER was used for an ELF32 phdr — see $ELOG"
+      done <<< "$E3_PH"
+
+      while read -r si sname; do
+        [[ -z "$si" ]] && continue
+        EGOT="$(grep -aoE "em32-sh=$si [^ ]*" <<<"$EL" | head -1 | sed "s/^em32-sh=$si //")"
+        [[ "$EGOT" == "$sname" ]] \
+          || fail "ELF32 on $A: section $si is named '${EGOT:-absent}' where the host reads '$sname' — see $ELOG"
+      done <<< "$E3_NAMES"
+
+      # ── CROSS-CLASS CONTROLS. Each validator must refuse the other
+      # ── class, or the dispatch is decorative.
+      grep -qF 'X1-END' <<<"$EL" \
+        && fail "ELF32 on $A: ?elf64 ACCEPTED an ELF32 — the class check is not doing anything and either validator would 'work' on either file — see $ELOG"
+      grep -qF 'X2-END' <<<"$EL" \
+        && fail "ELF32 on $A: ?elf32 ACCEPTED an ELF64 — see $ELOG"
+      grep -qF 'not ELF32 (e_class)' <<<"$EL" \
+        || fail "ELF32 on $A: ?elf32 did not refuse the ELF64 by name — see $ELOG"
+      # ── and the OPTIONAL-FILE claim: with the hook cleared, an ELF32 must
+      # ── say which file is missing rather than misreading it as ELF64.
+      grep -qF 'X3-END' <<<"$EL" \
+        && fail "ELF32 on $A: with the ELF32 hook cleared, ?elf still completed — so an ELF32 would be handled by the 64-bit half when dsl/elf32.fth is absent, which is the silent misread the hook exists to prevent — see $ELOG"
+      grep -qF 'dsl/elf32.fth is not loaded' <<<"$EL" \
+        || fail "ELF32 on $A: the missing-hook path did not name dsl/elf32.fth — see $ELOG"
+
+      note "$A/ELF32: class=$E3C ehsize=$E3_EHSIZE (vs 40 for ELF64), $E3_PHNUM phdrs with p32-flags read from the SEVENTH member, $E3_SHNUM section names, load-base=$(ev em32-loadbase), entry $(ev em32-entry) → file offset $(ev em32-entryoff); ?elf64 and ?elf32 each refuse the other class, and a cleared hook names the missing file"
       note "$A: ?elf64+?phdrs accept the real image; load-base=$(ev em-loadbase), entry $(ev em-entry) → file offset $(ev em-entryoff), unmapped → -1; $ENAMES section names match the host; elf-new authored a header the same ?elf64 accepts; 4/4 corruptions refused by name and none returned"
     done
-    pass "REVIEW §E1 and §E4, built and measured on BOTH arches. The format moved into dsl/elf.fth on top of dsl/struct.fth — poke's own split (elf-64.pk is not libpoke), §E6's lesson applied to ourselves — and the engine no longer mentions ELF. §E1: ?elf64 carries poke-elf's constraints as predicates that ABORT with what they wanted and what they got, including its implication (e_osabi == NONE => e_abiversion == 0) which is just 'a 0= b or'; ?phdrs refuses a PT_LOAD running past EOF. §E4: elf-load-base is poke's get_load_base (min p_vaddr over PT_LOAD = $ET_LOADBASE), vaddr>off is vaddr_to_file_offset (entry $ET_ENTRY lives at file offset $ET_ENTRYOFF, and an address in no segment returns -1 rather than a plausible number), and sh-name reads the section-name STRING TABLE — all 0x$ET_SHNUM names match the host, in order. The controls are what make those mean anything: four corruptions injected into a real header — class, ehsize, byte order, magic — each aborts BY NAME with both values and NONE reaches the marker after it, because printing a refusal is not refusing. And the loop closes: elf-new authors a header field-by-field with t! and the SAME ?elf64 that rejects the corrupted image accepts it. The big-endian row is §E2's limit stated as a refusal rather than hidden: this layer declares byte order per field, so it says so instead of misreading the file"
+    pass "REVIEW §E1 and §E4, built and measured on BOTH arches. The format moved into dsl/elf.fth on top of dsl/struct.fth — poke's own split (elf-64.pk is not libpoke), §E6's lesson applied to ourselves — and the engine no longer mentions ELF. §E1: ?elf64 carries poke-elf's constraints as predicates that ABORT with what they wanted and what they got, including its implication (e_osabi == NONE => e_abiversion == 0) which is just 'a 0= b or'; ?phdrs refuses a PT_LOAD running past EOF. §E4: elf-load-base is poke's get_load_base (min p_vaddr over PT_LOAD = $ET_LOADBASE), vaddr>off is vaddr_to_file_offset (entry $ET_ENTRY lives at file offset $ET_ENTRYOFF, and an address in no segment returns -1 rather than a plausible number), and sh-name reads the section-name STRING TABLE — all 0x$ET_SHNUM names match the host, in order. The controls are what make those mean anything: four corruptions injected into a real header — class, ehsize, byte order, magic — each aborts BY NAME with both values and NONE reaches the marker after it, because printing a refusal is not refusing. And the loop closes: elf-new authors a header field-by-field with t! and the SAME ?elf64 that rejects the corrupted image accepts it. The big-endian row is §E2's limit stated as a refusal rather than hidden: this layer declares byte order per field, so it says so instead of misreading the file. AND BOTH CLASSES: dsl/elf32.fth adds ELF32 and the generic words dispatch on e_class, measured against the firmware's OWN 32-bit payload — ehsize 0x34 against ELF64's 0x40, all three program headers including p32-flags read from the SEVENTH member where ELF64 puts it SECOND (a port that narrowed the widths and kept the order would print plausible permissions out of p_offset), all ten section names, load base and vaddr-to-file-offset. Its controls are the ones that make the dispatch mean anything: ?elf64 refuses the ELF32 and ?elf32 refuses the ELF64, each by name, and clearing the hook makes an ELF32 report WHICH FILE IS MISSING instead of silently going to the 64-bit half. The ELF32 subject is embedded at offset 0x200 of a padded file because `load` of a bare ELF32 never returns — the firmware's own loader recognises it and takes over"
     ;;
   *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|struct-layer|struct-array|struct-device|elf-methods]" >&2; exit 1 ;;
 esac
