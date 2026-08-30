@@ -551,15 +551,23 @@ have always been — and refuses by name if it cannot:
 0 > start-mem @ u. 20000000  ok
 ```
 
-**And one page of slack either side is a finding, not padding.** Something in
-initialisation reads **eight bytes below** the arena. Measured rather than
-inferred: move the hint `0x20000000` → `0x40000000` and the faulting address
-moves `1ffffff8` → `3ffffff8`, so it is a systematic read at `base-8`. Every
-other target absorbs it silently because it has ordinary RAM below the arena, and
-malloc did the same here by leaving heap underneath; a bare `mmap` does not, so
-it surfaced as a SIGSEGV at exit. The slack restores the assumption the code has
-always been written against. **The read is still a bug** — filed as TODO §18(d)
-with that evidence, not fixed here.
+**A correction, recorded because the wrong version was published first.** This
+entry briefly claimed that "one page of slack either side is a finding, not
+padding" — that something in initialisation read eight bytes below the arena and
+every other target absorbed it silently. **There is no such read.** It was
+introduced by the fix itself: `main()` ended with `free(memory)`/`free(dict)`, and
+those had just become `mmap` regions, so glibc read its chunk header at `p-8`.
+The SIGSEGV and the later `free(): invalid pointer` were one bug in two costumes,
+one page apart. `free_below_4g()` (a `munmap`) is the fix; the slack is gone; and
+the control is that with **no** guard page and a correct deallocator the session
+runs clean.
+
+What sustained the wrong story is worth more than the bug: the panic dump prints
+`pc=…(dict+0xa0a0)`, which resolves to `bye` — but **that field is the firmware's
+Forth PC global, not the faulting instruction**. `bye` was just the last word to
+run before `main()` called `free()`. A stale record read as if it described the
+present moment. A gdb access-watchpoint on `memory-8` in the shipped build never
+fires, which is what settled it. See [TODO §18(d)](../../TODO.md#d-closed-2026-08-30--it-was-never-a-firmware-bug-it-was-free-on-an-mmapd-pointer).
 
 `./smoke-openbios.sh unix` now drives all of this on every run, and asserts the
 **property** rather than the boot: `stdin`, `stdout` and `start-mem` are read
