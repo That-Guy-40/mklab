@@ -4076,7 +4076,42 @@ PYX
     grep -qaF 'of-left-cleanly` is not in this dictionary' <<<"$UOUT" \
       && fail "unix: openbios-unix could not check whether the engine exited deliberately — of-left-cleanly is missing from the dictionary, so TODO §18(b)'s exit status is UNKNOWN rather than 0 — see $ULOG"
 
+    # ── THE THREE WAYS IT USED TO GO WRONG (patch 52) ──────────────────
+    # All three came out of one user session that simply tried to get a prompt.
+    # (i) A MISSING DICTIONARY. read_dictionary() returns 0 when stat() fails and
+    #     the caller ignored it, so it ran on with an EMPTY dictionary: two
+    #     baffling `fword:` lines, "not supported.", and exit 0. The file that
+    #     could not be read was never named.
+    "$UBIN" "$WORKDIR/no-such-dictionary.dict" >"$ULOG.baddict" 2>&1
+    UBRC=$?
+    [[ $UBRC -ne 0 ]] \
+      || fail "REGRESSION: unix: openbios-unix exited 0 for a dictionary that does not exist — a missing file must be a FAILURE, not a success with confusing output — see $ULOG.baddict"
+    grep -qaF 'cannot read the dictionary' "$ULOG.baddict" \
+      || fail "unix: a missing dictionary did not NAME the file it could not read — see $ULOG.baddict"
+    # (ii) EOF USED TO SPIN. kernel/forth.c's key() was `while (!availchar());`,
+    #      a busy-wait nothing could interrupt: Ctrl-D or a script not ending in
+    #      `bye` pinned a core at 100% forever. Bounded here, because a test for
+    #      a hang that itself hangs tells you nothing.
+    timeout 30 "$UBIN" "$UDICT" </dev/null >"$ULOG.eof" 2>&1
+    UERC=$?
+    [[ $UERC -ne 124 ]] \
+      || fail "REGRESSION: unix: openbios-unix HUNG on end-of-input (timed out at 30s) — key() must stop waiting for a key that is not coming — see $ULOG.eof"
+    [[ $UERC -eq 0 ]] \
+      || fail "unix: end-of-input exited $UERC, not 0 — Ctrl-D is how a REPL is left, so it is a deliberate exit like bye — see $ULOG.eof"
+    # (iii) AND IT MUST NOT ECHO THE EOF BYTE. Returning EOF from getchar pushed
+    #       (char)-1 into the line editor, which printed a row of 0xff.
+    grep -qaP '\xff' "$ULOG.eof" \
+      && fail "REGRESSION: unix: end-of-input echoed raw 0xff bytes — getchar must report EOF as end-of-LINE, not as a character — see $ULOG.eof"
+    # (iv) A CLEAN RUN MUST BE SILENT. packages/cmdline.c reset only the RETURN
+    #      stack before its `feval("0 to terminate?")`, so every clean exit
+    #      printed `feval: ... threw -4`. The diagnostics track already asserts
+    #      zero feval/fword lines on a clean boot for the QEMU arches; this is
+    #      that invariant for the target that had no track at all.
+    grep -qaE '^(feval|fword):' <<<"$UOUT" \
+      && fail "REGRESSION: unix: a clean session printed a feval/fword failure line — a warning on every healthy run is how real warnings stop being believed — see $ULOG"
+
     note "prompt reached: 3 4 + . answers 7, bye reaches Farewell!"
+    note "a missing dictionary is NAMED and exits $UBRC; end-of-input exits 0 without spinning; a clean run prints no feval/fword line"
     note "stdin=0x$USTDIN stdout=0x$USTDOUT start-mem=0x$UMEM — all inside four bytes, which is what encode-int is handed"
     pass "the firmware as a plain Unix process reaches its prompt again (TODO §18, patch 50): initialisation completes, '3 4 + .' answers 7 and 'bye' reaches Farewell!. The assertion is the PROPERTY that used to fail, not the boot — /chosen's stdin and stdout are read back from the prompt and must fit in FOUR BYTES, because that is what IEEE 1275 gives an integer (5.3.5.1) and an ihandle here IS a host pointer (pointer2cell is a plain cast at run time). glibc placed the Forth arena above 4 GiB and encode-int refused, CORRECTLY; arch/unix/unix.c now maps the arena and the dictionary below it, where every other target has always been — the QEMU firmwares live at 0x400000 and 0x4000000 — and patch 26's gate is untouched, because the refusal was never the bug. The named regression row returns the day that drifts back"
     ;;
