@@ -76,13 +76,25 @@ extract_commands() {
         # that the verb has never existed. An earlier draft stripped the prompt before
         # classifying and so reported that correct document as a defect -- erasing the one
         # signal that answers the question.
+        # `#` IS A COMMENT HERE, NOT A ROOT PROMPT, and that is measured rather than
+        # assumed (2026-08-30). Every one of the 25 lines in this corpus matching
+        # `# <repo-tool>.sh …` inside a fence is a COMMENT: a plan quoting a sequence
+        # (`#   netboot/build-ipxe.sh \`), a note about a file (`# gen-almalinux-ks.sh
+        # stays in netboot/`), an aside (`# lab-vm.sh also needs jq`). Not one is a
+        # root-prompt transcript — this repo writes privilege as `sudo`, not as `#`.
+        #
+        # Treating `#` as a prompt cost two of the tail warnings (TODO 11.4a): the
+        # English words "stays" and "also" were read as verbs of real tools, because a
+        # sentence inside a comment parses exactly like a command once the prompt is
+        # stripped. A comment is prose by definition, so it is skipped like any other.
         function emit(ctx, text,   prompted) {
             sub(/^[[:space:]]+/, "", text)
             sub(/[[:space:]]+$/, "", text)
-            prompted = (text ~ /^[$#][[:space:]]+/)
-            sub(/^[$#][[:space:]]+/, "", text)
+            if (text ~ /^#/) return                     # a comment, per the note above
+            prompted = (text ~ /^\$[[:space:]]+/)
+            sub(/^\$[[:space:]]+/, "", text)
             if (text == "") return
-            if (text ~ /^(#|\||└|├|─|│)/) return        # comments and tree-diagram glyphs
+            if (text ~ /^(\||└|├|─|│)/) return          # tree-diagram glyphs
             if (prompted) ctx = "PROMPT"
             print ctx "\t" text
         }
@@ -376,6 +388,10 @@ check_doc_command() {
         if [[ "$class" == hard ]]; then
             bad "$src: names a tool that does not exist: $tool"
         else
+            if is_declared "$src" "$tool" "$verb"; then
+                DECLARED+=("$src: $tool $verb  (declared a mention in .doc-verb-mentions — the tool itself does not exist)")
+                return
+            fi
             warn "$src: mentions '$tool', which resolves to no file from the repo root, this document's directory, or any ancestor. In a sentence that may be deliberate (a historical path, an example, a shape); in a command it would be a broken instruction"
         fi
         return
@@ -433,9 +449,69 @@ check_doc_command() {
     elif [[ "$class" == hard ]]; then
         bad "$src: '$tool' has no verb '$verb' — the document types a command that cannot be run"
     else
+        if is_declared "$src" "$tool" "$verb"; then
+            DECLARED+=("$src: $(basename "$tool") $verb  (declared a mention in .doc-verb-mentions)")
+            return
+        fi
         warn "$src: \`$(basename "$tool") $verb\` — '$tool' has no verb '$verb'. Read the sentence: this is either a doc naming a verb the tool refuses (the D5/D7 defect) or ordinary prose that happens to parse like a command. This checker cannot tell those apart and will not fail on the guess"
     fi
 }
+
+# ── DECLARED MENTIONS: the document says which it meant ─────────────────────────────────
+# TODO 11.4a. A `soft` row is a code span in a sentence or a table cell, where prose and a
+# command are STRUCTURALLY IDENTICAL — "`preserve.sh` two tiers" parses exactly like
+# "`lab-fc.sh clone`". This checker is right to refuse to guess, and right to warn instead
+# of failing. But a warning list that never empties is one everybody learns to scroll past,
+# which is the same argument this file already makes about UNKNOWN rows: the tail was ELEVEN
+# permanent warnings, so a NEW one would have arrived looking exactly like the noise.
+#
+# The way out is the one 11.4a named: not a cleverer regex, but letting the DOCUMENT say
+# which it meant. Six of the eleven are rows in a table whose whole subject is that the verb
+# does NOT exist ("`lab-fc.sh console api1` | **no such verb.**"); two are TODO entries
+# quoting this checker own false positives; one is a SHOWCASE quoting a planner broken
+# output. Each is declared here, with its reason, instead of being argued about every run.
+#
+# THREE WAYS AN ENTRY ROTS, ALL REFUSED BY NAME, because an exemption nobody revisits is how
+# a real defect hides:
+#   * the document no longer contains that mention at all -> stale, delete it
+#   * the tool has SINCE GAINED the verb -> the entry claims a falsehood; the mention is now
+#     a real command and must be checked like one
+#   * it silences nothing this run -> it is describing something that is not there
+#
+# AND A DECLARATION CANNOT REACH A FENCED COMMAND. Only `soft` rows consult this file: an
+# instruction someone will copy out of a code block is a hard failure whatever any list
+# says, or the mechanism would be a way to bless broken instructions.
+MENTIONS_FILE="${MENTIONS_FILE:-$REPO/.doc-verb-mentions}"
+declare -A MENTION_SEEN=()
+DECLARED=()
+mention_key() { printf '%s|%s|%s' "$1" "$2" "$3"; }
+load_mentions() {
+    MENTIONS=()
+    [[ -r "$MENTIONS_FILE" ]] || return 0
+    local line doc tool verb
+    while IFS= read -r line; do
+        line="${line%%#*}"
+        [[ -n "${line// }" ]] || continue
+        read -r doc tool verb <<<"$line"
+        [[ -n "$doc" && -n "$tool" && -n "$verb" ]] || continue
+        MENTIONS+=("$(mention_key "$doc" "$tool" "$verb")")
+    done < "$MENTIONS_FILE"
+}
+# is_declared <doc> <tool-as-written-or-resolved> <verb>
+is_declared() {
+    local doc="$1" tool="$2" verb="$3" k
+    for k in "${MENTIONS[@]:-}"; do
+        [[ -z "$k" ]] && continue
+        if [[ "$k" == "$(mention_key "$doc" "$tool" "$verb")" \
+           || "$k" == "$(mention_key "$doc" "$(basename "$tool")" "$verb")" ]]; then
+            MENTION_SEEN["$k"]=1
+            return 0
+        fi
+    done
+    return 1
+}
+MENTIONS=()
+load_mentions
 
 # ── §0. THE EXTRACTOR PROVES ITSELF, BEFORE IT READS A REAL DOC ─────────────────────────
 say "§0 controls — the extractor is aimed at fixtures first"
@@ -548,6 +624,47 @@ if (( ${#PROBLEMS[@]} != _before )); then
 fi
 ok "end-to-end: the same command quoted as a \`$ \` transcript does NOT fail it"
 
+# §0.2b — DECLARED MENTIONS, and the control that matters is the one where the declaration
+# must NOT work. A file that can silence a warning is a file that can silence a defect, so
+# it is aimed at fixtures before it is trusted with the real corpus: it must silence an
+# inline mention, must NOT reach a fenced command, and must refuse both ways an entry rots.
+_run_doc() {  # _run_doc <doc> ; echoes "problems warnings declared"
+    local d="$1" pb=${#PROBLEMS[@]} wb=${#WARNINGS[@]} db=${#DECLARED[@]} l c
+    while IFS= read -r l; do
+        c="$(candidate "$l" "$d")" || true
+        [[ -n "$c" ]] || continue
+        # shellcheck disable=SC2086
+        check_doc_command "${c%% *}" "$d" ${c#* } >/dev/null 2>&1
+    done < <(extract_commands "$d")
+    printf '%s %s %s\n' "$(( ${#PROBLEMS[@]} - pb ))" "$(( ${#WARNINGS[@]} - wb ))" "$(( ${#DECLARED[@]} - db ))"
+}
+_m_inline="$WORK/mention.md"
+printf 'The plan notes that `lab-vm.sh zzznotaverb` is not a thing.\n' > "$_m_inline"
+_m_fenced="$WORK/mention-fenced.md"
+printf '```bash\nphase2-qemu-vm/lab-vm.sh zzznotaverb --name x\n```\n' > "$_m_fenced"
+
+# (a) with NO declaration, the inline mention warns
+MENTIONS=(); MENTION_SEEN=()
+read -r _p _w _d <<<"$(_run_doc "$_m_inline")"
+(( _w == 1 && _d == 0 )) \
+    || fail "CONTROL FAILED: an undeclared inline mention of a missing verb produced problems=$_p warnings=$_w declared=$_d — expected exactly one warning, or the declaration control below proves nothing"
+
+# (b) declared, it is silenced and COUNTED as declared
+MENTIONS=("$(mention_key "$_m_inline" "lab-vm.sh" "zzznotaverb")"); MENTION_SEEN=()
+read -r _p _w _d <<<"$(_run_doc "$_m_inline")"
+(( _w == 0 && _d == 1 )) \
+    || fail "CONTROL FAILED: a declared inline mention still warned (problems=$_p warnings=$_w declared=$_d) — the file is not being consulted"
+
+# (c) THE ONE THAT MATTERS: the same declaration must NOT reach a fenced command.
+MENTIONS=("$(mention_key "$_m_fenced" "lab-vm.sh" "zzznotaverb")"
+          "$(mention_key "$_m_fenced" "phase2-qemu-vm/lab-vm.sh" "zzznotaverb")"); MENTION_SEEN=()
+read -r _p _w _d <<<"$(_run_doc "$_m_fenced")"
+(( _p == 1 )) \
+    || fail "CONTROL FAILED: a .doc-verb-mentions entry SILENCED A FENCED COMMAND (problems=$_p warnings=$_w declared=$_d). That would make this file a way to bless an instruction someone will copy and run — the opposite of what it is for"
+PROBLEMS=("${PROBLEMS[@]:0:$(( ${#PROBLEMS[@]} - _p ))}")
+ok "declared mentions: silence an inline mention, are counted, and CANNOT reach a fenced command"
+MENTIONS=(); MENTION_SEEN=()
+
 # §0.3 — TIER B AND THE SUBVERB RULE, both of which are new oracles and neither of which may
 # ship unwatched. Fixtures, so the controls do not depend on any real tool's usage text.
 _tb="$WORK/tierb-tool.sh"
@@ -589,6 +706,22 @@ subverb_of "$_tb" up \
     && fail "CONTROL FAILED: 'up' appears only INSIDE the word 'group' in the fixture, and subverb_of took it for a subverb. That is how it excused lab-chroot.sh's non-existent 'up' verb on a real run"
 ok "subverb: recognises '<parent> {…|verb|…}' and refuses a word that is not there"
 
+# ── §0 IS OVER: CLEAR WHAT THE FIXTURES RECORDED ────────────────────────────────────────
+# The controls above drive the real functions against fixtures, and those functions append
+# to the same PROBLEMS/WARNINGS/UNPROBED arrays the report reads. So a control that
+# deliberately triggers a warning was being counted as a warning ABOUT THIS REPO: the run
+# said "1 warning(s) — see the ! lines above" with no `!` line anywhere above it, because
+# the printf happened while a fixture's stderr was redirected. A tally that counts the
+# scanner's own rehearsal is a tally nobody can act on. (check-patch-hygiene.sh's §0 clears
+# its exemption record for exactly this reason; same defect, same remedy.)
+PROBLEMS=(); WARNINGS=(); UNPROBED=(); DECLARED=(); MENTION_SEEN=()
+# …and RELOAD what the fixtures overwrote. §0.2b drives the declaration machinery by
+# assigning MENTIONS directly, and left it empty — so the first version of this line's
+# absence made the real run report 9 undecided warnings and 0 declared mentions, i.e. the
+# controls had quietly disabled the feature they had just proved. Twice in one file now:
+# a control that mutates production state is a control that has to hand it back.
+load_mentions
+
 # ── §1. the documents ───────────────────────────────────────────────────────────────────
 if (( $# )); then DOCS=("$@"); else mapfile -t DOCS < <(git ls-files '*.md'); fi
 (( ${#DOCS[@]} > 0 )) || fail "no documents to check — this would pass vacuously"
@@ -615,6 +748,35 @@ for d in "${DOCS[@]}"; do
 done
 
 say ""
+# ── the declared mentions must still be true ────────────────────────────────────────────
+# Every entry is checked three ways, and all three are failures rather than notes: a list
+# that can quietly hold a falsehood is worse than no list, because it looks like a decision
+# somebody made.
+for _m in "${MENTIONS[@]:-}"; do
+    [[ -z "$_m" ]] && continue
+    _d="${_m%%|*}"; _rest="${_m#*|}"; _t="${_rest%%|*}"; _v="${_rest##*|}"
+    if [[ ! -f "$REPO/$_d" ]]; then
+        bad ".doc-verb-mentions names '$_d', which is not a document in this repo — a stale entry describes a mention nobody can read, while whatever replaced it is declared by nobody"
+        continue
+    fi
+    # "THE TOOL HAS SINCE GAINED THE VERB" NEEDS NO SECOND PROBE, and the first draft's
+    # attempt at one was a real defect rather than a redundancy: it called verb_present()
+    # directly, OUTSIDE the probe-safety boundary this file spends forty lines arguing for,
+    # and on the first run it invoked `pxe-fetch.sh probe` and reported that the call "does
+    # not look like a refusal" — i.e. it may have done work. The vbmc-destroy lesson,
+    # committed by the guard against stale exemptions.
+    #
+    # It is unnecessary because the run already answers it. A tool that HAS the verb makes
+    # the row an `ok`, which never reaches is_declared() — so the entry silences nothing and
+    # the single check below fires, for that reason and for "the sentence changed" alike.
+    [[ -n "${MENTION_SEEN[$_m]:-}" ]] \
+        || bad ".doc-verb-mentions declares \`$_t $_v\` in '$_d', but nothing in that document produced that warning this run. Either the sentence changed, or the tool has SINCE GAINED the verb and the mention is now an ordinary command — both mean the entry is asserting something that is no longer true"
+done
+if (( ${#DECLARED[@]} )); then
+    say "${#DECLARED[@]} mention(s) DECLARED in .doc-verb-mentions — the document says it is naming"
+    say "  a verb, not typing one. Listed so the list cannot grow unnoticed:"
+    printf '    ~ %s\n' "${DECLARED[@]}"
+fi
 if (( ${#UNPROBED[@]} )); then
     say "${#UNPROBED[@]} command(s) NOT PROBED — outside the probe-safety boundary above. These are"
     say "UNKNOWN, not PASS: this checker declines to invoke a tool that may do real work."
@@ -624,6 +786,10 @@ if (( ${#WARNINGS[@]} )); then
     say "${#WARNINGS[@]} warning(s) — see the ! lines above"
 fi
 if (( ${#PROBLEMS[@]} )); then
-    fail "$(printf '%d document(s) name a command that cannot be run:' "${#PROBLEMS[@]}"; printf '\n  - %s' "${PROBLEMS[@]}")"
+    # "document(s) name a command that cannot be run" was the only shape PROBLEMS could
+    # have until .doc-verb-mentions arrived; a stale declaration is now the other, and
+    # reporting it under the old heading sends a reader to look for a broken command in a
+    # document that has none.
+    fail "$(printf '%d problem(s) — a document naming a command that cannot be run, or a stale entry in .doc-verb-mentions:' "${#PROBLEMS[@]}"; printf '\n  - %s' "${PROBLEMS[@]}")"
 fi
-pass "of the $n_cmds distinct \`<tool>.sh <verb>\` commands typed across ${#DOCS[@]} documents, every path-qualified one names a tool that exists and a verb its dispatch accepts — asked of the tool, not grepped from it. ${#UNPROBED[@]} were left UNPROBED by the safety boundary and ${#WARNINGS[@]} bare-name mentions are reported for a human, both named above rather than counted as passes. The extractor proved on fixtures first that it passes over tree diagrams, prose mentions, placeholders, data blocks and flag-first invocations"
+pass "of the $n_cmds distinct \`<tool>.sh <verb>\` commands typed across ${#DOCS[@]} documents, every path-qualified one names a tool that exists and a verb its dispatch accepts — asked of the tool, not grepped from it. ${#UNPROBED[@]} were left UNPROBED by the safety boundary, ${#DECLARED[@]} are mentions the document DECLARES as such in .doc-verb-mentions (each re-checked: the doc still says it, and the tool still lacks the verb), and ${#WARNINGS[@]} undecided bare-name mentions are reported for a human — all three named above rather than counted as passes. The extractor proved on fixtures first that it passes over tree diagrams, prose mentions, placeholders, data blocks and flag-first invocations"
