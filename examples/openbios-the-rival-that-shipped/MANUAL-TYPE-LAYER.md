@@ -669,6 +669,107 @@ And each validator refuses the other class:
 
 ---
 
+## 10b. Part 8 — set a bit without disturbing its neighbours
+
+This one comes straight from the article that started the lab — mudge,
+*FORTH Hacking on Sparc Hardware*, Phrack 53:9 (1998), archived in
+[`upstream-tutorial/`](upstream-tutorial/). His first example turns an LED on:
+
+```forth
+:light-on   1 aux@ or aux!  ;      \ Sun OpenBoot: set bit 0 of the aux register
+:light-off  1 invert aux@ and aux! ;
+```
+
+That is a **read-modify-write**: read the register, OR in one bit, write it
+back. He does it that way — rather than `1 aux!` — because a bare store would
+zero every *other* bit in the register, and those bits belong to other
+functions.
+
+The DSL generalises this to `t-set` / `t-clr` / `t-tog` over a **typed field**,
+so it is not named for an LED and it carries the width, byte order and address
+space of the field:
+
+```forth
+struct  1 field: st  constant /reg
+40 alloc-mem value r
+
+80 r st t!        \ pretend bit 7 belongs to something else
+1 r st t-set      \ set bit 0
+r st t@ .         \ 81  — bit 7 SURVIVED
+1 r st t-clr
+r st t@ .         \ 80  — and back
+```
+
+Now the same thing a careless hand would write, so you can see why RMW exists:
+
+```forth
+80 r st t!
+1 r st t!         \ a plain store
+r st t@ .         \ 1   — bit 7 is GONE
+```
+
+**On a device register that difference is not tidiness, it is correctness.**
+Point a `dev-field:` at the VGA attribute byte (`bg<<4 | fg`) and set an `fg`
+bit: `t-set` keeps the blue background, a bare `t!` turns it black. The
+`rmw-fields` smoke track proves exactly that from *outside* the firmware, by
+reading physical `0xb8000` back through QEMU's monitor — the Forth read-back
+can't show it, because it goes through the same accessor the store did.
+
+`t-tog` is `xor` — mudge uses it in the same article's cisco decryptor — and two
+toggles of a bit return it to where it started.
+
+---
+
+## 10c. Part 9 — name a control, hide the plumbing
+
+`t-set` still wants a mask, a field and a base every time you call it. mudge's
+`light-on` didn't — it *was* "bit 0 of the aux register," baked in behind a
+name. `control:` does the same for any typed field:
+
+```forth
+struct  1 dev-field: d-at  constant /at
+b8000 >virt d-at  10  control: backlight   \ address + field + mask, behind a name
+```
+
+Now the verbs read as English, and the mask, the byte order, the address and the
+read-modify-write are all hidden:
+
+```forth
+backlight enable        \ set the bit(s), preserving the rest
+backlight disable
+backlight toggle
+backlight enabled?      \ -1 if any masked bit is set
+```
+
+They are **not** called `on` / `off` — those are the firmware's own flag setters
+(`variable x  x on`), and shadowing them is the `elf isn't unique.` mistake.
+`enable` / `disable` / `toggle` / `enabled?` are the names that are free *and*
+the ones that say what they do.
+
+**Two controls on one register don't fight**, which is the whole point — each
+`enable` preserves the other's bits:
+
+```forth
+r st 80 control: guard
+r st 01 control: led
+guard enable   led enable   r st t@ .    \ 81 — both, neither clobbered the other
+```
+
+And mudge's own words come back, now as one-liners over the abstraction rather
+than raw register pokes:
+
+```forth
+: light-on   led enable ;
+: light-off  led disable ;
+```
+
+That is the arc of the whole lab in three lines: his hardware-specific
+`1 aux@ or aux!`, generalised into a typed read-modify-write, and then given back
+its friendly name — but this time backed by a field that knows its width, its
+byte order, and whether it lives in memory or on a device.
+
+---
+
 ## 11. Reference — the two files
 
 | word | stack | what it does |
@@ -691,6 +792,12 @@ And each validator refuses the other class:
 | `chk?` | `( flag c-addr u -- )` | any predicate; `a => b` is `a 0= b or` |
 | `bits@` | `( value lsb width -- field )` | bit-field extract |
 | `bit?` | `( value n -- flag )` | one bit |
+| `t-set` | `( mask adr tid -- )` | set bits, **preserving** the rest (mudge's `aux@ or aux!`) |
+| `t-clr` | `( mask adr tid -- )` | clear bits, preserving the rest |
+| `t-tog` | `( mask adr tid -- )` | toggle bits (`xor`) |
+| `control:` | `( adr tid mask "name" -- )` | bake address+field+mask behind a name |
+| `enable` / `disable` / `toggle` | `( mask adr tid -- )` | on a control: set / clear / flip |
+| `enabled?` | `( mask adr tid -- flag )` | is any masked bit set |
 | `cstr` / `.cstr` / `cstr-len` | `( adr -- … )` | NUL-terminated strings |
 | `dump` | `( adr len -- )` | hex + ASCII, 16 to a line |
 
@@ -741,6 +848,7 @@ questions you actually ask. That is the whole shape.
 | a constraint fires on a field you did not touch | you corrupted the header earlier and never reloaded it. `load … subj.elf` again |
 | `CONSTRAINT: not ELF64 (e_class)` on a file you believe is fine | it is an **ELF32**. This layer is ELF64-only and says so rather than misreading it — the first 24 bytes of the two formats are identical, so a layer without that check would look right and then produce nonsense |
 | `load` of an ELF32 never comes back | the firmware's **own** loader recognises ELF32 and takes over. An ELF64 is not recognised, which is why this lab's subject is loadable as data at all |
+| `t-set` seems to wipe other bits | you used a bare `t!` somewhere, or the field's width is wrong. `t-set`/`t-clr`/`t-tog` read-modify-write; a plain `t!` replaces the whole field |
 
 ---
 

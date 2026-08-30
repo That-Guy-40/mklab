@@ -707,6 +707,38 @@ notably it is an *addressing* gap, not a typing one.
 
 ---
 
+### The write side of the device backend — read-modify-write
+
+*Added 2026-08-30, from the article that started the lab: mudge, "FORTH Hacking
+on Sparc Hardware", Phrack 53:9 (1998), now vendored at
+[`examples/openbios-the-rival-that-shipped/upstream-tutorial/`](examples/openbios-the-rival-that-shipped/upstream-tutorial/).*
+
+mudge's canonical example is `:light-on 1 aux@ or aux! ;` — a **read-modify-write**
+on a device register. It is the write-side complement to the `dev-field:`
+backend, and it is what §P1's "make field update be the write" looks like for a
+*sub-word* field: `t-set` / `t-clr` / `t-tog` set, clear and toggle bits in a
+typed field while preserving the rest. The generalisation over mudge is only
+that the field carries width, byte order and address space; the idiom is his.
+
+The property worth naming is that RMW **preserves the neighbouring bits** — the
+reason he wrote `aux@ or aux!` and not `1 aux!`, because on a device register
+the other bits belong to other functions. `smoke-openbios.sh rmw-fields` proves
+it on both arches with a bare `t!` as the control that destroys the neighbour,
+and on a real MMIO register (the VGA attribute byte) it reads the result back as
+*physical* memory through QEMU's monitor — because the Forth read-back goes
+through the same `rb@` the store did and cannot see a store that preserved the
+wrong thing.
+
+And it closes the loop on the naming, which is the point mudge's example makes.
+`t-set` still takes a mask, a field and a base; `control:` bakes all three behind
+a name, so `backlight enable` / `disable` / `toggle` / `enabled?` read as English
+and hide the read-modify-write, the mask, the byte order and the address —
+exactly what `light-on` did for "bit 0 of the aux register," now over a typed
+field. mudge's own words come back as one-liners (`: light-on led enable ;`), and
+two controls on one register provably do not clobber each other. The verbs are
+deliberately not `on`/`off`: those are the firmware's flag setters, and the
+verbose names are both the free ones and the readable ones.
+
 ## G3 — Endianness is already solved in both directions, and it is upstream
 
 This removes what would otherwise be the first hard design question, and it is
@@ -956,6 +988,7 @@ Re-grading the first review's table, plus what this proposal adds:
 | Repo state | `fc02a0b`, firmware built and booted, 31/31 tests and 24/24 boot tracks green |
 | Firmware corpus | `openbios/openbios` @ `e5ac46d`, pinned by `build-openbios.sh`, plus this repo's 48 patches |
 | First pass | [`REVIEW-preboot-forth-binary-structures.md`](REVIEW-preboot-forth-binary-structures.md) — F2 closed 2026-08-29 |
+| Inspiration | mudge, *FORTH Hacking on Sparc Hardware*, Phrack **53:9** (1998-07-08), vendored byte-exact at [`…/upstream-tutorial/`](examples/openbios-the-rival-that-shipped/upstream-tutorial/) — the article this whole lab traces back to |
 | poke corpus | GNU poke **5.0** tarball from `ftp.gnu.org/gnu/poke/`, `sha256` `6873d59abe821c8111b88623…`, retrieved 2026-08-29 — read, **not built or run** |
 | ELF pickles | `git://git.savannah.gnu.org/poke/poke-elf.git` @ **`ae45538`** (2024-10-15), cloned 2026-08-30 — **unreleased**, no tarball exists. 5,060 lines / 16 pickles, read, **not run** |
 | Type layer | engine: [`dsl/struct.fth`](examples/openbios-the-rival-that-shipped/dsl/struct.fth) — format: [`dsl/elf.fth`](examples/openbios-the-rival-that-shipped/dsl/elf.fth). Measured by `smoke-openbios.sh struct-layer`, `struct-array`, `struct-device` and `elf-methods` on amd64 **and** x86 |

@@ -53,6 +53,9 @@ TRACK (default multiboot):
   elf-methods                 REVIEW E1/E4 from poke-elf: constraints that
                               REFUSE a file, and vaddr>off / load-base /
                               section names (dsl/elf.fth)
+  rmw-fields                  read-modify-write bits in a typed field
+                              (t-set/t-clr/t-tog) — mudge's register idiom,
+                              generalized; preserves neighbours where t! clobbers
 
 Exit: 0 PASS / 1 FAIL / 77 SKIP. Each track ends on exactly one verdict line.
 Env: OPENBIOS_WORKDIR, KERNEL, INITRD, COREBOOT_DIR
@@ -3745,5 +3748,223 @@ P3
     done
     pass "REVIEW §E1 and §E4, built and measured on BOTH arches. The format moved into dsl/elf.fth on top of dsl/struct.fth — poke's own split (elf-64.pk is not libpoke), §E6's lesson applied to ourselves — and the engine no longer mentions ELF. §E1: ?elf64 carries poke-elf's constraints as predicates that ABORT with what they wanted and what they got, including its implication (e_osabi == NONE => e_abiversion == 0) which is just 'a 0= b or'; ?phdrs refuses a PT_LOAD running past EOF. §E4: elf-load-base is poke's get_load_base (min p_vaddr over PT_LOAD = $ET_LOADBASE), vaddr>off is vaddr_to_file_offset (entry $ET_ENTRY lives at file offset $ET_ENTRYOFF, and an address in no segment returns -1 rather than a plausible number), and sh-name reads the section-name STRING TABLE — all 0x$ET_SHNUM names match the host, in order. The controls are what make those mean anything: four corruptions injected into a real header — class, ehsize, byte order, magic — each aborts BY NAME with both values and NONE reaches the marker after it, because printing a refusal is not refusing. And the loop closes: elf-new authors a header field-by-field with t! and the SAME ?elf64 that rejects the corrupted image accepts it. The big-endian row is §E2's limit stated as a refusal rather than hidden: this layer declares byte order per field, so it says so instead of misreading the file. AND BOTH CLASSES: dsl/elf32.fth adds ELF32 and the generic words dispatch on e_class, measured against the firmware's OWN 32-bit payload — ehsize 0x34 against ELF64's 0x40, all three program headers including p32-flags read from the SEVENTH member where ELF64 puts it SECOND (a port that narrowed the widths and kept the order would print plausible permissions out of p_offset), all ten section names, load base and vaddr-to-file-offset. Its controls are the ones that make the dispatch mean anything: ?elf64 refuses the ELF32 and ?elf32 refuses the ELF64, each by name, and clearing the hook makes an ELF32 report WHICH FILE IS MISSING instead of silently going to the 64-bit half. The ELF32 subject is embedded at offset 0x200 of a padded file because `load` of a bare ELF32 never returns — the firmware's own loader recognises it and takes over"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|struct-layer|struct-array|struct-device|elf-methods]" >&2; exit 1 ;;
+  rmw-fields)
+    # mudge, "FORTH Hacking on Sparc Hardware", Phrack 53:9 (1998) --
+    # upstream-tutorial/. His headline example is a READ-MODIFY-WRITE on a device
+    # register: `:light-on 1 aux@ or aux! ;`. dsl/struct.fth generalises that to
+    # t-set / t-clr / t-tog over a TYPED field -- NOT named for an LED, because
+    # the point is that the width, byte order and address space ride along and
+    # the same word works on a scratch byte and on a device register.
+    #
+    # THE PROPERTY THAT MAKES RMW != A PLAIN WRITE is that it preserves the OTHER
+    # bits, which is the whole reason mudge wrote `aux@ or aux!` and not `1 aux!`.
+    # On a device register those neighbouring bits belong to other functions, so
+    # this is correctness, not tidiness. Every positive row here is paired with a
+    # bare `t!` control that DESTROYS the neighbour, so "it set the bit" cannot be
+    # satisfied by a word that also clobbered everything else.
+    #
+    # TWO PHASES: a memory field (deterministic, read back over serial) and a
+    # DEVICE register (through rb@/rb! over the VGA aperture, read back as
+    # physical memory by QEMU's monitor -- an observer outside the firmware,
+    # because a store that went nowhere reads back perfectly through the same
+    # accessor). Both on both arches.
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v genisoimage >/dev/null || skip "genisoimage not installed"
+    RAMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"
+    RADI="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    RXMB="$WORKDIR/openbios/obj-x86/openbios.multiboot"
+    RXDI="$WORKDIR/openbios/obj-x86/openbios-x86.dict"
+    for f in "$RAMB" "$RADI" "$RXMB" "$RXDI"; do
+      [[ -f "$f" ]] || skip "missing $f — run ./build-openbios.sh amd64 and x86 first"
+    done
+    [[ -f "$HERE/dsl/struct.fth" ]] || fail "the engine is missing at $HERE/dsl/struct.fth"
+    RST="$WORKDIR/rmw-stage"; rm -rf "$RST"; mkdir -p "$RST"
+    cp "$HERE/dsl/struct.fth" "$RST/STRUCT.FTH"
+    cat > "$RST/RMW.FTH" <<'FTH'
+hex
+." RMW-START" cr
+struct  1    field: st  constant /reg
+struct  4 le-field: w   constant /wreg
+struct  1 dev-field: d-ch  1 dev-field: d-at  constant /dc
+/dc array: dcell[]
+40 alloc-mem value r
+
+\ ── memory field: set / clear / toggle, each beside its naive control ──
+: rmw-mem
+  80 r st t!                    ." rm-init="  r st t@ u. cr   \ a neighbour bit
+  1  r st t-set                 ." rm-set="   r st t@ u. cr   \ 81  bit 7 SURVIVES
+  1  r st t-clr                 ." rm-clr="   r st t@ u. cr   \ 80  bit 7 still there
+  80 r st t!  1 r st t!         ." rm-naive="  r st t@ u. cr  \ 01  bit 7 DESTROYED
+  80 r st t!  1 r st t-tog  1 r st t-tog
+                                ." rm-xor2="  r st t@ u. cr   \ 80  xor round-trips
+  0  r st t!  f0 r st t-set  0f r st t-set
+                                ." rm-full="  r st t@ u. cr   \ ff  two sets compose
+  aa r st t!  0f r st t-clr     ." rm-clrlow=" r st t@ u. cr  \ a0  low nibble gone
+  ." RMW-MEM-END" cr ;
+
+\ ── the mask is applied to the VALUE, so byte order is honoured ────────
+: rmw-le
+  ff000000 r w t!              ." rl-init=" r w t@ u. cr      \ ff000000
+  1 r w t-set                  ." rl-set="  r w t@ u. cr      \ ff000001
+  ." rl-bytes=" r w t-adr dup c@ u. 1+ dup c@ u. 1+ dup c@ u. 1+ c@ u. cr  \ 01 00 00 ff
+  ." RMW-LE-END" cr ;
+
+\ ── device register: the same idiom over the VGA aperture ──────────────
+\ b8000 >virt reaches the aperture on BOTH arches (identity on amd64). The
+\ attribute byte packs bg<<4|fg; setting an fg bit must leave the bg nibble.
+\ Fill the WHOLE screen, not one cell: the console scrolls on the cr below, and
+\ after a scroll row 0 (which xp reads at b8000) becomes old row 1 -- so it only
+\ survives if every row holds the same bytes. This is the trap the mmio-writer
+\ track documents, met again.
+: dev-set
+  7d0 0 do
+    41 b8000 >virt i dcell[] d-ch t!    \ 'A'
+    10 b8000 >virt i dcell[] d-at t!    \ bg=1 (blue), fg=0
+    01 b8000 >virt i dcell[] d-at t-set \ set fg bit 0 -> 11, bg preserved
+  loop ." DEV-SET-END" cr ;
+: dev-naive
+  7d0 0 do
+    41 b8000 >virt i dcell[] d-ch t!
+    10 b8000 >virt i dcell[] d-at t!
+    01 b8000 >virt i dcell[] d-at t!    \ naive store -> 01, bg destroyed
+  loop ." DEV-NAIVE-END" cr ;
+\ ── named controls: the light-on flavour, verbose and backend-hidden ──
+\ A control bakes (address, field, mask) behind a name; the verbs read as
+\ English. Two controls on the SAME field must not disturb each other -- which
+\ is the RMW property, reached through the friendly layer.
+r st 80 control: guard        \ bit 7, a neighbour
+r st 01 control: led          \ bit 0
+: rmw-ctl
+  0 r st t!
+  guard enable                 ." rc-guard=" r st t@ u. cr   \ 80
+  led enable                   ." rc-both="  r st t@ u. cr   \ 81  neighbour kept
+  ." rc-led?="   led   enabled? . cr                          \ -1
+  ." rc-guard?=" guard enabled? . cr                          \ -1
+  led disable                  ." rc-off="   r st t@ u. cr   \ 80
+  ." rc-led2?="  led   enabled? . cr                          \ 0
+  led toggle                   ." rc-tog="   r st t@ u. cr   \ 81
+  ." RMW-CTL-END" cr ;
+\ mudge's exact words, re-expressed as thin aliases over the control
+: light-on   led enable ;
+: light-off  led disable ;
+: rmw-mudge
+  0 r st t!  80 r st t!
+  light-on   ." rc-lighton="  r st t@ u. cr                  \ 81
+  light-off  ." rc-lightoff=" r st t@ u. cr                  \ 80
+  ." RMW-MUDGE-END" cr ;
+." RMW-READY" cr
+FTH
+    genisoimage -quiet -o "$WORKDIR/rmw.iso" -V RMW -r -J "$RST"
+
+    _rxp() {  # _rxp <monsock> — read 8 bytes of physical 0xb8000
+      RMON="$1" python3 - <<'PYX'
+import socket, os, time
+s = socket.socket(socket.AF_UNIX); s.connect(os.environ["RMON"]); time.sleep(0.3)
+try: s.recv(65536)
+except Exception: pass
+s.sendall(b"xp /8xb 0xb8000\n"); time.sleep(1.2)
+out = s.recv(65536).decode(errors="replace")
+print(" ".join(l.split(": ", 1)[1].strip() for l in out.splitlines() if ": 0x" in l))
+PYX
+    }
+
+    for A in amd64 x86; do
+      if [[ "$A" == amd64 ]]; then MB="$RAMB"; DI="$RADI"; else MB="$RXMB"; DI="$RXDI"; fi
+      RSOCK="$WORKDIR/rmw-$A.sock"; RMON="$WORKDIR/rmw-$A.mon"; RLOG="$WORKDIR/rmw-$A.log"
+      rm -f "$RSOCK" "$RMON" "$RLOG"
+      qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$MB" -initrd "$DI" \
+        -cdrom "$WORKDIR/rmw.iso" -display none -serial "unix:$RSOCK,server=on" \
+        -monitor "unix:$RMON,server=on,nowait" -no-reboot >/dev/null 2>&1 &
+      RQ=$!
+      python3 "$REPO/tools/drive-serial-repl.py" "$RSOCK" "$RLOG" --timeout 200 \
+        --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\struct.fth\r' --expect "0 > " \
+        --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\rmw.fth\r' --expect "0 > " \
+        --send 'load-base load-size evaluate\r' --expect "RMW-READY" \
+        --send 'rmw-mem\r' --expect "RMW-MEM-END" \
+        --send 'rmw-le\r' --expect "RMW-LE-END" \
+        --send 'rmw-ctl\r' --expect "RMW-CTL-END" \
+        --send 'rmw-mudge\r' --expect "RMW-MUDGE-END" \
+        --send 'dev-set\r' --expect "DEV-SET-END"
+      RRC=$?
+      RSET_PHYS="$(_rxp "$RMON")"
+      # second boot for the device control, so the two runs cannot share state
+      kill "$RQ" 2>/dev/null; rm -f "$RSOCK" "$RMON"
+      qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$MB" -initrd "$DI" \
+        -cdrom "$WORKDIR/rmw.iso" -display none -serial "unix:$RSOCK,server=on" \
+        -monitor "unix:$RMON,server=on,nowait" -no-reboot >/dev/null 2>&1 &
+      RQ2=$!
+      python3 "$REPO/tools/drive-serial-repl.py" "$RSOCK" "$WORKDIR/rmw-$A-ctl.log" --timeout 200 \
+        --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\struct.fth\r' --expect "0 > " \
+        --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\rmw.fth\r' --expect "0 > " \
+        --send 'load-base load-size evaluate\r' --expect "RMW-READY" \
+        --send 'dev-naive\r' --expect "DEV-NAIVE-END"
+      RNAIVE_PHYS="$(_rxp "$RMON")"
+      kill "$RQ2" 2>/dev/null   # by PID, never by pattern
+      RL="$(tr -d "\r" < "$RLOG")"
+      rv() { grep -aoE "$1=[0-9a-f]+" <<<"$RL" | head -1 | cut -d= -f2; }
+
+      [[ $RRC -eq 0 ]] \
+        || fail "rmw-fields on $A: the probe did not complete (rc=$RRC) — see $RLOG"
+
+      # ── MEMORY: the three ops, and the control that earns them ──
+      [[ "$(rv rm-init)" == 80 ]] \
+        || fail "rmw-fields on $A: the field did not initialise to 80 — see $RLOG"
+      [[ "$(rv rm-set)" == 81 ]] \
+        || fail "rmw-fields on $A: t-set of bit 0 over a field holding 80 gave $(rv rm-set), not 81 — the read-modify-write did not preserve bit 7, which is the whole reason t-set exists rather than a bare store — see $RLOG"
+      [[ "$(rv rm-clr)" == 80 ]] \
+        || fail "rmw-fields on $A: t-clr of bit 0 gave $(rv rm-clr), not 80 — it cleared the wrong bits (a missing 'invert' ANDs with the raw mask and clears everything else) — see $RLOG"
+      # THE CONTROL. Without this row, "t-set set the bit" is satisfied by a bare
+      # store, which is exactly the bug the words exist to avoid.
+      [[ "$(rv rm-naive)" == 1 ]] \
+        || fail "rmw-fields on $A: a bare 't!' of 1 over a field holding 80 gave $(rv rm-naive), not 1 — if this is 81 then t! is somehow preserving neighbours and the contrast with t-set proves nothing — see $RLOG"
+      [[ "$(rv rm-xor2)" == 80 ]] \
+        || fail "rmw-fields on $A: two t-tog of the same bit did not round-trip (got $(rv rm-xor2), want 80) — see $RLOG"
+      [[ "$(rv rm-full)" == ff ]] \
+        || fail "rmw-fields on $A: t-set f0 then t-set 0f gave $(rv rm-full), not ff — successive sets do not compose — see $RLOG"
+      [[ "$(rv rm-clrlow)" == a0 ]] \
+        || fail "rmw-fields on $A: t-clr of 0f over aa gave $(rv rm-clrlow), not a0 — see $RLOG"
+
+      # ── ORDER: the mask is applied to the value, not to raw bytes ──
+      [[ "$(rv rl-init)" == ff000000 && "$(rv rl-set)" == ff000001 ]] \
+        || fail "rmw-fields on $A: t-set on a LITTLE-ENDIAN field gave $(rv rl-set) over $(rv rl-init) — expected ff000001 — the mask must apply to the decoded value, so the high byte survives — see $RLOG"
+      [[ "$(rv rl-bytes 2>/dev/null)" ]] || true
+      RLB="$(grep -aoE 'rl-bytes=[0-9a-f ]+' <<<"$RL" | head -1 | cut -d= -f2 | tr -s ' ' | sed 's/ *$//')"
+      [[ "$RLB" == "1 0 0 ff" ]] \
+        || fail "rmw-fields on $A: after t-set on the LE field the bytes are [$RLB], not [1 0 0 ff] — the value round-trips but memory does not hold it little-endian, so t-set is bypassing the field's byte order — see $RLOG"
+
+      # ── NAMED CONTROLS: the verbose, backend-hidden layer ──
+      # Same RMW property, reached through enable/disable/toggle/enabled? on a
+      # named control. Two controls on one field must not disturb each other.
+      [[ "$(rv rc-guard)" == 80 && "$(rv rc-both)" == 81 ]] \
+        || fail "rmw-fields on $A: two controls on one field gave guard=$(rv rc-guard) both=$(rv rc-both), not 80/81 — 'led enable' disturbed the 'guard' bit, so the friendly layer lost the read-modify-write property the raw words have — see $RLOG"
+      RLED="$(grep -aoE 'rc-led\?=-?[0-9]+' <<<"$RL" | head -1 | cut -d= -f2)"
+      RGRD="$(grep -aoE 'rc-guard\?=-?[0-9]+' <<<"$RL" | head -1 | cut -d= -f2)"
+      [[ "$RLED" == -1 && "$RGRD" == -1 ]] \
+        || fail "rmw-fields on $A: enabled? read led=$RLED guard=$RGRD, not -1/-1 — the query does not agree with the bits that were set — see $RLOG"
+      RLED2="$(grep -aoE 'rc-led2\?=-?[0-9]+' <<<"$RL" | head -1 | cut -d= -f2)"
+      [[ "$(rv rc-off)" == 80 && "$RLED2" == 0 ]] \
+        || fail "rmw-fields on $A: after 'led disable' the field is $(rv rc-off) and enabled? is $RLED2, not 80/0 — disable did not clear exactly the led bit — see $RLOG"
+      [[ "$(rv rc-tog)" == 81 ]] \
+        || fail "rmw-fields on $A: 'led toggle' over 80 gave $(rv rc-tog), not 81 — see $RLOG"
+      # mudge's exact words, re-expressed as aliases, still behave
+      [[ "$(rv rc-lighton)" == 81 && "$(rv rc-lightoff)" == 80 ]] \
+        || fail "rmw-fields on $A: light-on/light-off rebuilt over the control gave $(rv rc-lighton)/$(rv rc-lightoff), not 81/80 — the mudge aliases do not match the words they wrap — see $RLOG"
+
+      # ── DEVICE: RMW through rb@/rb!, seen as PHYSICAL memory ──
+      # cell 0 = char 'A' (41), attr. RMW set fg keeping bg -> attr 11.
+      [[ "$RSET_PHYS" == "0x41 0x11"* ]] \
+        || fail "rmw-fields on $A: after t-set through a dev-field, physical 0xb8000 reads [$RSET_PHYS], not starting 0x41 0x11 — the read-modify-write did not reach the aperture (or did not preserve the bg nibble) — see $RLOG. Note the Forth read-back cannot tell you this, because it uses the same rb@ path the store did"
+      # THE DEVICE CONTROL, physically observed: the bare store destroys bg.
+      [[ "$RNAIVE_PHYS" == "0x41 0x01"* ]] \
+        || fail "rmw-fields on $A: after a bare 't!' the attribute at physical 0xb8000 reads [$RNAIVE_PHYS], not 0x41 0x01 — if the bg nibble survived a plain store then the device control does not demonstrate what t-set is for — see $WORKDIR/rmw-$A-ctl.log"
+
+      note "$A: t-set/t-clr preserve bit 7 (81/80) where a bare t! destroys it (01); t-tog round-trips; LE field t-set keeps the high byte (bytes [1 0 0 ff]); and through a dev-field over the VGA aperture the RMW leaves attr 0x11 at physical 0xb8000 where a bare store leaves 0x01 — bg nibble preserved vs destroyed, read by the monitor"
+    done
+    pass "mudge's read-modify-write idiom (Phrack 53:9, 1998 — upstream-tutorial/), generalised to t-set/t-clr/t-tog over a TYPED field and NOT named for an LED, measured on BOTH arches. The property that makes RMW different from a store is that it PRESERVES THE OTHER BITS — which is why mudge wrote 'aux@ or aux!' and not '1 aux!' — so every positive row is paired with a bare 't!' control that destroys the neighbour: t-set/t-clr hold bit 7 at 81/80 where t! clobbers it to 01, t-tog round-trips, and the mask applies to the DECODED value so a little-endian field keeps its high byte (bytes [1 0 0 ff]). And it works on a real DEVICE register: through a dev-field over the VGA aperture at b8000 >virt, setting an fg bit leaves attr 0x11 at PHYSICAL 0xb8000 — read by QEMU's monitor, an observer outside the firmware — where a bare store leaves 0x01, the bg nibble preserved versus destroyed. The Forth read-back cannot see that difference because it uses the same rb@ path the store did"
+    ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields]" >&2; exit 1 ;;
 esac

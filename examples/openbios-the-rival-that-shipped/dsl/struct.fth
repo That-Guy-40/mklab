@@ -278,6 +278,61 @@ hex
 : bits@ ( value lsb width -- field )  1 swap lshift 1- -rot rshift and ;
 : bit?  ( value n -- flag )           1 swap lshift and 0<> ;
 
+\ ── read-modify-write a field: set / clear / toggle bits ───────────
+\ FROM mudge, "FORTH Hacking on Sparc Hardware", Phrack 53:9 (1998) --
+\ ../upstream-tutorial/. His canonical example is a read-modify-write on a
+\ device register:
+\
+\     :light-on   1 aux@ or aux!       ;   \ set bit 0 of the aux register
+\     :light-off  1 invert aux@ and aux! ;  \ clear bit 0
+\
+\ GENERALISED HERE, and deliberately NOT named for an LED. These set/clear/
+\ toggle bits in a TYPED field, so the width, byte order and address space ride
+\ along -- the same word works on a scratch byte and on a device register
+\ (dev-field:), which is where mudge's `aux@ or aux!` actually lived. or /
+\ and-not / xor are the three ops he uses across both programs in the article.
+\
+\ THE WHOLE POINT IS THAT THEY PRESERVE THE OTHER BITS. That is why mudge wrote
+\ `1 aux@ or aux!` and not `1 aux!`: a bare store clobbers every other bit in
+\ the register. On a device register that is not a nicety, it is correctness --
+\ the neighbouring bits belong to other functions. `smoke-openbios.sh
+\ rmw-fields` proves the neighbour survives, with a bare `t!` as the control
+\ that shows it does not.
+
+: t-set ( mask adr tid -- )  rot        >r  2dup t@  r> or  -rot t! ;
+: t-clr ( mask adr tid -- )  rot invert >r  2dup t@  r> and -rot t! ;
+: t-tog ( mask adr tid -- )  rot        >r  2dup t@  r> xor -rot t! ;
+
+\ ── named controls: mudge's light-on flavour, generalised ──────────
+\ t-set/t-clr/t-tog still take a mask, a field and a base every time. A CONTROL
+\ bakes all three behind a name -- the way mudge's `light-on` baked in "bit 0 of
+\ the aux register" -- so the verbs read as English and the read-modify-write,
+\ the mask, the byte order and the address are all hidden:
+\
+\     b8000 >virt d-at  10  control: backlight
+\     backlight enable        \ set the bit(s), preserving the rest
+\     backlight disable
+\     backlight toggle
+\     backlight enabled?       \ -1 if any masked bit is set
+\
+\ NOT `on`/`off`: those are the firmware's own flag setters
+\ (bootstrap.fs:599-600, `variable x  x on`), and `control` is taken too --
+\ shadowing either is the `elf isn't unique.` mistake. The verbose names are
+\ the ones that are free AND the ones that read better.
+\
+\ A control stores ( mask tid adr ) and re-pushes ( mask adr tid ) -- exactly
+\ what the three verbs (and enabled?) consume, so no juggling at the call site.
+\ mudge's own words come back as one-liners on top: `: light-on backlight enable ;`
+
+: control: ( adr tid mask "name" -- )
+  create , , ,                    \ +0 mask  +1 tid  +2 adr
+  does>  dup @  over 2 cells + @  rot cell+ @ ;   \ ( -- mask adr tid )
+
+: enable   ( mask adr tid -- )       t-set ;
+: disable  ( mask adr tid -- )       t-clr ;
+: toggle   ( mask adr tid -- )       t-tog ;
+: enabled? ( mask adr tid -- flag )  rot >r t@ r> and 0<> ;
+
 \ ── NUL-terminated strings, which poke spells `string @ offset` ────
 \ REVIEW §E4 named this the smallest concrete gap in the layer: poke-elf's
 \ get_section_name is a string read out of a string table, and there was no

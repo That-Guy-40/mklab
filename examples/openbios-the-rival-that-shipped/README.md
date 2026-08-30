@@ -133,9 +133,10 @@ proves the linuxboot **and** OFW labs' kept ROMs survive. No sudo anywhere.
 | [`build-coreboot-openbios.sh`](build-coreboot-openbios.sh) | isolated coreboot build carrying `openbios-builtin.elf`; sha-guards both sibling labs' artifacts |
 | [`run-openbios-qemu.sh`](run-openbios-qemu.sh) | interactive boot, any track (`multiboot`/`coreboot`/`ppc`/`amd64`), `0 >` on your terminal |
 | [`smoke-openbios.sh`](smoke-openbios.sh) | one-verdict smokes; the ppc one proves the running blob is OURS by build-date banner |
-| [`dsl/struct.fth`](dsl/struct.fth) | **the type layer** (REVIEW G2): `field:` / `le-field:` over the firmware's own `struct`/`field`, so a layout carries **width and byte order** and not just an offset. A field yields the ADDRESS of its bytes, so a store through it *is* the write — no map/modify/poke-back. Plus `array:` for tables, and `dev-field:` — a **second backend** over 1275's device-register words. Three tracks: `struct-layer`, `struct-array`, `struct-device` |
+| [`dsl/struct.fth`](dsl/struct.fth) | **the type layer** (REVIEW G2): `field:` / `le-field:` over the firmware's own `struct`/`field`, so a layout carries **width and byte order** and not just an offset. A field yields the ADDRESS of its bytes, so a store through it *is* the write — no map/modify/poke-back. Plus `array:` for tables, `dev-field:` — a **second backend** over 1275's device-register words — `t-set`/`t-clr`/`t-tog`, mudge's `aux@ or aux!` read-modify-write generalized to any typed field, and `control:` — bake an address+field+mask behind a name so `backlight enable` / `disable` / `toggle` read as English (mudge's `light-on`, given back its friendly name). Tracks: `struct-layer`, `struct-array`, `struct-device`, `elf-methods`, `rmw-fields` |
 | [`dsl/elf.fth`](dsl/elf.fth) | **one format on top of the engine** — ELF64 layouts, GNU poke's field **constraints** as `?elf64` / `?phdrs` (they *refuse* a file rather than describe it wrongly), and its **methods**: `elf-load-base`, `vaddr>off` (which bytes become that address at run time), `sh-name` out of the string table, plus `.elf` / `.phdrs` / `.sections` — `readelf`'s three views at the `0 >` prompt. Transliterated from `poke-elf` @ `ae45538`; see [REVIEW §E](../../REVIEW-preboot-forth-as-a-poke-engine.md) |
 | [`dsl/elf32.fth`](dsl/elf32.fth) | **the other ELF class**, optional: load it and the generic words dispatch on `e_class`; leave it out and an ELF32 is refused *by name* rather than misread. ELF32 is not ELF64 with narrower fields — the program header **reorders**, `p_flags` second in one and seventh in the other, so a width-only port prints the wrong `RWX` and never faults |
+| [`upstream-tutorial/`](upstream-tutorial/) | **the article that started this** — mudge, *FORTH Hacking on Sparc Hardware*, Phrack 53:9 (1998), byte-exact and attributed. Its README maps the lineage: `light-on` → `t-set`, `aux@`/`aux!` → `rb@`/`rb!`, a `proc.h` struct over live memory → `field:` |
 | [`patches/49-device-register-words-were-empty.patch`](patches/49-device-register-words-were-empty.patch) | asking for that second backend turned up a defect: IEEE 1275 **§5.3.7.2**'s six device-register words (`rb@ rw@ rl@ rb! rw! rl!`) had bodies containing **no words at all**, so a register read returned the ADDRESS and a write stored nothing while leaking two cells. `table.fs` binds **FCode tokens `0x230`-`0x235`** to them, so it presents as a **stack shift inside a driver** — the same shape as patches 25 and 34 |
 | [`showcase-rival-boots-linux.sh`](showcase-rival-boots-linux.sh) | the finale: one `boot` line at the prompt → Linux 6.3 → u-root, on `multiboot`, `coreboot` **or `amd64`** — the same line, unchanged, from 64-bit firmware |
 | [`RUNBOOK.md`](RUNBOOK.md) | guided tour: `0 >` semantics, device tree, the unix-process firmware, rival-vs-rival exercises |
@@ -183,7 +184,18 @@ infrastructure — sibling of `drive-serial-repl.py` for consoles that only
 accept input from a real terminal (OpenBIOS-ppc reads the muxed stdio but
 ignores a bare `-serial unix:` socket).
 
-## Provenance: cite, don't mirror (a deliberate deviation)
+## Provenance: two sources, two policies
+
+There are **two** upstreams here and they are handled differently on purpose.
+
+**The article that inspired the lab is vendored.** mudge's *FORTH Hacking on
+Sparc Hardware* (Phrack 53:9, 1998) is a single specific write-up that can rot or
+move — Phrack has changed hosts more than once — so it is archived byte-exact in
+[`upstream-tutorial/`](upstream-tutorial/), with a provenance table, per-file
+`sha256`, and the capability lineage from it to this lab's words. That is the
+codebase's tier-1 convention ("built from one specific write-up → vendor it").
+
+**The firmware source is cited, not mirrored** — a deliberate deviation, below.
 
 The sister lab vendored its three wiki pages byte-exact
 ([`../open-firmware-forth-to-boot/upstream-tutorial/`](../open-firmware-forth-to-boot/upstream-tutorial/README.md)
