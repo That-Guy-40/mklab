@@ -115,6 +115,13 @@ Also confirmed, and needed by §7 step 3: `does>` exists in this Forth
 (`forth/bootstrap/bootstrap.fs:1563`), so `CREATE`/`DOES>` structure-defining words are
 available.
 
+> **2026-08-29 — true, and it stops one line short of the useful fact.** Seven
+> lines further down the same file (`:1570`) the firmware already **uses**
+> `does>` to define `struct` and `field`, so a structure-defining word is not
+> merely *available* — one ships, and it works at the untouched prompt. That
+> distinction cost [`REVIEW-preboot-forth-as-a-poke-engine.md`](REVIEW-preboot-forth-as-a-poke-engine.md)
+> a whole section recommending something be built that existed; see its §G2.
+
 ---
 
 ## F1 — The "two proven pieces" are two different firmwares

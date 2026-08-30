@@ -17,11 +17,19 @@ closed; this one is written against a tree that boots.*
 > not, and that is a measured correction to the pitch rather than a detail** —
 > "the flash chip itself" is not an address you store to.
 >
-> What is missing is not primitives. It is **types**. The repo has
-> `int!` / `string!` / `bytes!` and a cursor; poke's model is a *type applied at
-> an offset yielding a named, write-through value*, and nothing here does that.
-> `create ... does>` — the exact machinery — is present and has never been
-> pointed at a structure.
+> ~~What is missing is not primitives. It is **types**. … `create ... does>` —
+> the exact machinery — is present and has never been pointed at a structure.~~
+>
+> **BUILT 2026-08-29 — and the review was wrong about where it starts.** The
+> diagnosis holds: what was missing is types. The *prescription* did not — the
+> definer was never the work, because **OpenBIOS already ships one**.
+> `forth/bootstrap/bootstrap.fs:1570` has `0 constant struct` and
+> `: field create over , + does> @ + ;`, and it works at the untouched prompt
+> (measured: `size`=7, offsets 0/4/6). What `field` lacks is **width and byte
+> order**; [`dsl/struct.fth`](examples/openbios-the-rival-that-shipped/dsl/struct.fth)
+> adds only that, in ~60 lines over accessors that were already bound. Both of
+> G2's checkpoints are met on both arches and the layer parses a real ELF64
+> header — see §G2.
 >
 > **UPDATED 2026-08-29, after reading GNU poke 5.0's source and manual.** The
 > analogy's foundation moved: poke is **not** write-through on assignment — its
@@ -208,9 +216,86 @@ this one was caught.
 
 ---
 
-## G2 — The gap is types, not primitives, and `does>` is sitting unused
+## G2 — ~~The gap is types, not primitives, and `does>` is sitting unused~~ — BUILT 2026-08-29, and `does>` was never the missing piece
 
-This is the finding that should shape the next piece of work.
+~~This is the finding that should shape the next piece of work.~~ — **it did, and
+the first thing building it found was a defect in this section.**
+
+> **RESOLVED.** [`dsl/struct.fth`](examples/openbios-the-rival-that-shipped/dsl/struct.fth)
+> plus `smoke-openbios.sh struct-layer`, green on **both** arches. The rest of
+> this section is kept because its *diagnosis* was right; its *prescription*
+> was not, and the correction is below.
+
+### The correction: the definer already existed
+
+This section says `create ... does>` is "present and has never been pointed at a
+structure" and treats writing the definer as the deliverable. Half of that is
+true — nothing in **this repo** had used it — and the half that matters is not:
+**the firmware ships the definer itself.**
+
+```forth
+0 constant struct                             \ forth/bootstrap/bootstrap.fs:1568
+: field  create over , + does> @ + ;          \ …:1570
+```
+
+`struct  4 field a  2 field b  1 field c  constant size` runs at the untouched
+`0 >` prompt and gives `size`=7 with offsets 0/4/6, measured on amd64 before a
+line of the layer was written. So the **address** half of poke's mapped value —
+apply a layout at a base, get the address of a named member — has been in
+OpenBIOS the whole time, and this review spent a section recommending it be
+built.
+
+**Why the mistake was possible, and it is this repo's own recurring shape.** The
+section was written from a `git grep` of *this repo* for a definer. That question
+is not the question it was taken to answer: *does the firmware already do this?*
+A grep over the lab is a cheap check standing in for one about the corpus
+underneath it — the same substitution `check-harness-net.sh` made twice. The fix
+was not cleverness; it was **booting the thing and asking it**.
+
+### What was actually missing, and what it cost
+
+`field` carries an **offset and nothing else**. Every read then restates the
+width and the byte order by hand at the call site, which is precisely where a
+binary-structure parser goes wrong. The layer adds those two facts and nothing
+else:
+
+```forth
+: field:    ( off width -- off' )  0 (tfield) ;   \ big-endian  (1275 native)
+: le-field: ( off width -- off' )  1 (tfield) ;   \ little-endian
+```
+
+A typed field leaves `( base -- adr tid )` — **the address first**, which is the
+whole design and is §P1 reached from the other side. poke needs
+map / modify / **poke-back** for a scalar because the variable is a copy; there
+is no copy here to write back from, so `t!` *and* a bare `le-l!` through `t-adr`
+are equally the write. Both were measured.
+
+Two accessors had to be written because the firmware ships neither: 2-byte
+big-endian (1275 never needed it — a property cell is four bytes) and 8-byte
+either way. The 8-byte path **refuses by name on a 32-bit cell** rather than
+truncating, which makes x86 an arch-level control: every other row is identical
+across the two arches, and only that one diverges.
+
+### What it proves, and the controls that make that mean something
+
+| checkpoint | measured |
+|---|---|
+| a named field reads back what a **different word** wrote | `int!` (the 1275 encoder) → BE field = `deadbeef`; `le-l!` (a C binding) → LE field = `cafebabe` |
+| storing **through** a field is the write, with no write-back step | `t!` of `11223344` leaves memory holding `44 33 22 11`; a bare `le-l!` at `t-adr` reads back `55667788` |
+| the layer parses a real ELF64 | the amd64 firmware's own boot image off ISO9660: magic `464c457f`, class 2, type 2, machine `3e`, entry `101d70`, size `21af8` — all equal to ground truth `struct.unpack`ed from the same bytes on the host |
+| **order control** — the same bytes through the other order | `bebafeca` / `efbeadde`, exact reversals. Without this row, "it round-tripped" is satisfied by one accessor being its own inverse |
+| **two views** of one region agree | `e_entry` as two 4-byte halves and as one 8-byte LE field at `0x18` both give `101d70`, so the offsets are not arithmetic nobody checked |
+| **three refusals** fire by name | an unimplemented width, big-endian 64, and an 8-byte field on x86's 32-bit cell |
+
+**Seven injections were run against it and all seven bit** — and the fourth
+exposed a defect in the assertions themselves, which is where this repo keeps
+finding them. Three rows asserted that a refusal *printed its name*. That is the
+mechanism. The **outcome** of a refusal is that the operation did not complete,
+so each refusing word now ends on its own marker and the assertion is that
+marker's **absence** — after which an injected `t-width-err` that names the
+width, balances the stack and returns a number anyway fails by name, where the
+printed-name assertion had passed it.
+
 
 What exists today is a **byte-placement layer**: put an int here, a string there,
 advance a cursor. What poke's model is — on the proposal's own account — is a
@@ -240,9 +325,13 @@ region**, with width and endianness attached — at which point `!`/`le-l!` on a
 field *is* poke's composite write-through, reached from the other side and
 without the shared-value machinery poke needed to get there.
 
-`create ... does>` is present (`forth/bootstrap/bootstrap.fs:1563`) and is exactly
+~~`create ... does>` is present (`forth/bootstrap/bootstrap.fs:1563`) and is exactly
 the machinery the proposal names. **The repo has never used it for a structure.**
-That is the single highest-value next artifact: a definer such that
+That is the single highest-value next artifact: a definer such that~~ — **the
+firmware had already used it for a structure, seven lines further down the same
+file (`:1570`). See the correction above.** The sketch below is close to what
+shipped, with `field:`/`le-field:` taking the width *before* the name so the
+declaration reads as the upstream `struct`/`field` idiom does:
 
 ```forth
 struct elf64-ehdr
@@ -402,7 +491,7 @@ Re-grading the first review's table, plus what this proposal adds:
 | **Boot-handoff structures** | **unblocked and demonstrated** — `pmem-writer` is exactly this shape |
 | **Post-mortem / transition forensics** | **the strongest fit, and now the ONLY one the differentiator uniquely licenses** (P3: a booted Linux poke reaches MMIO via `mmap`+`/dev/mem`; it cannot reach the boot transition). Caveat measured: `region-snap`/`region-diff` live in the **OFW** lab, not this OpenBIOS one — ~100 lines of plain Forth to port, but a port, not a reuse |
 | **Firmware image assembly (CBFS, flash)** | **needs a backend, not an address** — G1 |
-| **ELF / PE inspection at the prompt** | **blocked on G7 then G2** — mechanism plausible, never exercised |
+| **ELF / PE inspection at the prompt** | ~~blocked on G7 then G2~~ — **both closed; ELF64 header inspection works today** (`smoke-openbios.sh struct-layer`), with a named layout over a real image and every field matching host ground truth. PE is a `pe.pk`-shaped declaration away and untried; what is still missing for either is **arrays** (a section/program-header table is one) |
 | **FCode authoring** | **the most OF-native of the list, nobody proposed it, and the execution half already exists.** `byte-load ( addr xt -- )` is a plain Forth word (`forth/device/feval.fs:63`), so *tokens built in a buffer at a chosen address can be executed by the firmware today* — `bytes!+` in, `byte-load` out. No FCode **assembler** exists anywhere (only the host-side `toke` and this repo's detokenizer), so the emitting half is new work; the loop it closes is not hypothetical |
 | **Measured-boot / attestation** | **still nothing built** — the arena problem that made it a poor fit is fixed, so the objection is gone and the work has not started |
 
@@ -415,16 +504,14 @@ Re-grading the first review's table, plus what this proposal adds:
    fields matching host ground truth, with no `seek`/`read` needed. File
    inspection is unlocked with existing words. What is left there is reading a
    byte *range* of a file too large to load whole — irrelevant for headers.
-2. **Write the type layer (G2) — now the top item, and with a sharper spec.**
-   `create ... does>` over `int!` / `le-l@`, `field:` / `le-field:` so endianness
-   is per field (G3), **fields yielding addresses into the mapped region** so
-   that a store through a field is the write (§P1). Two checkpoints, both
-   outcomes: *a named field of a structure mapped at a chosen address reads back
-   what a different word wrote there*, and *storing through a field changes the
-   bytes at that address without any explicit write-back step* — the second is
-   what makes it poke's model rather than an accessor library.
-   The G7 experiment supplies a ready-made subject: point the definer at
-   `load-base` after loading an ELF and re-derive the same five fields.
+2. ~~**Write the type layer (G2) — now the top item, and with a sharper spec.**~~
+   — **DONE 2026-08-29.** Both checkpoints met on both arches, and the G7 subject
+   was used exactly as suggested: the definer pointed at `load-base` after
+   loading an ELF re-derives the same fields, against host ground truth. The
+   step cost less than this list assumed for a reason the list had wrong — the
+   definer already shipped (§G2). What it cost instead was the *typing*: two
+   accessors the firmware lacks, and seven injections to establish that the
+   assertions bite.
 3. **Bit-fields as a library (G4).** Skip unit-typed offsets, deliberately and in
    writing.
 4. **Pick ONE application and drive it end to end** before generalising. On the
@@ -442,11 +529,13 @@ Re-grading the first review's table, plus what this proposal adds:
   still not built or run**: every §P finding is a reading of its source and
   documentation, not an observation of its behaviour. In particular the
   three-step scalar poke-back is quoted from the manual, not watched.
-- **The type layer was not prototyped.** G2 says `does>` is present and unused;
-  it does not say the definer will be pleasant to write. Forth definers are
-  fiddly and this one has to carry endianness, width, **and now the
-  store-through requirement of §P1** — which is a stronger claim than the first
-  draft of G2 made, and correspondingly less certain.
+- ~~**The type layer was not prototyped.**~~ — **it was, and it works**; see
+  §G2. What is *still* unproven there: nothing has been mapped over a
+  **live device's registers** rather than RAM, a buffer and a loaded file, so
+  the layer's behaviour where a read has side effects is unmeasured; there are
+  no **arrays** of a type, which is the other half of poke's composite model;
+  and nothing writes a **structure the firmware then acts on**, which is the
+  difference between parsing and authoring.
 - ~~**G7 was not attempted.**~~ — **attempted and settled**; see G7. What was
   *not* attempted is reading a byte range without loading the whole file, and
   `seek`/`read` remain unexercised because `load` made them unnecessary.
@@ -470,4 +559,5 @@ Re-grading the first review's table, plus what this proposal adds:
 | Firmware corpus | `openbios/openbios` @ `e5ac46d`, pinned by `build-openbios.sh`, plus this repo's 48 patches |
 | First pass | [`REVIEW-preboot-forth-binary-structures.md`](REVIEW-preboot-forth-binary-structures.md) — F2 closed 2026-08-29 |
 | poke corpus | GNU poke **5.0** tarball from `ftp.gnu.org/gnu/poke/`, `sha256` `6873d59abe821c8111b88623…`, retrieved 2026-08-29 — read, **not built or run** |
-| Written | 2026-08-29; §P and the G7 resolution added the same day |
+| Type layer | [`examples/openbios-the-rival-that-shipped/dsl/struct.fth`](examples/openbios-the-rival-that-shipped/dsl/struct.fth), measured by `smoke-openbios.sh struct-layer` on amd64 **and** x86 |
+| Written | 2026-08-29; §P and the G7 resolution added the same day; §G2 **built and corrected** the same day |

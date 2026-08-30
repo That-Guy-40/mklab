@@ -47,14 +47,18 @@ on:
         # DEFAULT_TRACKS below, because a default repeated in two places is a
         # cached fact that drifts — and on `pull_request` and `schedule` there is
         # no `inputs` at all, so the job needs the fallback regardless.
-        description: tracks to run, space separated (blank = the standard seven)
+        description: tracks to run, space separated (blank = DEFAULT_TRACKS below)
         required: false
 
 permissions:
   contents: read
 
 env:
-  DEFAULT_TRACKS: multiboot dict-identity amd64 property-abi diagnostics vga ppc
+  # struct-layer joined 2026-08-29 (REVIEW G2). It earns a default slot where the
+  # other recent tracks did not: it needs exactly the four x86/amd64 artifacts the
+  # gate above already requires, needs no screendump and no host-side file check,
+  # and boots each arch once — and an unrun test rots.
+  DEFAULT_TRACKS: multiboot dict-identity amd64 property-abi diagnostics vga ppc struct-layer
 
 jobs:
   # Cheap, ~15s, and always runs: it is what lets `gate` report on every PR.

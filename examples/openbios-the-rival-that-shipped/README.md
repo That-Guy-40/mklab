@@ -133,6 +133,7 @@ proves the linuxboot **and** OFW labs' kept ROMs survive. No sudo anywhere.
 | [`build-coreboot-openbios.sh`](build-coreboot-openbios.sh) | isolated coreboot build carrying `openbios-builtin.elf`; sha-guards both sibling labs' artifacts |
 | [`run-openbios-qemu.sh`](run-openbios-qemu.sh) | interactive boot, any track (`multiboot`/`coreboot`/`ppc`/`amd64`), `0 >` on your terminal |
 | [`smoke-openbios.sh`](smoke-openbios.sh) | one-verdict smokes; the ppc one proves the running blob is OURS by build-date banner |
+| [`dsl/struct.fth`](dsl/struct.fth) | **the type layer** (REVIEW G2): `field:` / `le-field:` over the firmware's own `struct`/`field`, so a layout carries **width and byte order** and not just an offset. A field yields the ADDRESS of its bytes, so a store through it *is* the write — no map/modify/poke-back. `smoke-openbios.sh struct-layer` points it at a real ELF64 header |
 | [`showcase-rival-boots-linux.sh`](showcase-rival-boots-linux.sh) | the finale: one `boot` line at the prompt → Linux 6.3 → u-root, on `multiboot`, `coreboot` **or `amd64`** — the same line, unchanged, from 64-bit firmware |
 | [`RUNBOOK.md`](RUNBOOK.md) | guided tour: `0 >` semantics, device tree, the unix-process firmware, rival-vs-rival exercises |
 | [`tests/test-usage-is-data.sh`](tests/test-usage-is-data.sh) | CI guard: every script's `--help` prints and **runs nothing** — it found five defects the day it was first aimed here, one of which started a coreboot build |
@@ -224,6 +225,57 @@ store is *data* and *who can see it*:
 | NVDIMM (`pmem-writer`) | **land** | a **file**, read after QEMU exits |
 | CFI flash (`flash-writer`) | are **commands**; the array is untouched | the host image |
 | VGA aperture (`mmio-writer`) | **land** | a **device**, read by QEMU's `screendump` |
+
+## And where the type layer starts
+
+[`REVIEW-preboot-forth-as-a-poke-engine.md`](../../REVIEW-preboot-forth-as-a-poke-engine.md)'s
+**G2** is that the gap between this firmware and GNU poke is **types**, not primitives — poke
+applies a type at an offset and yields a named value you can read and assign through, and
+nothing here bound a layout to an address.
+
+**The review was wrong about where that starts, and measuring first is what found it.**
+OpenBIOS already ships the definer. `forth/bootstrap/bootstrap.fs:1570` has
+
+```forth
+0 constant struct
+: field  create over , + does> @ + ;
+```
+
+so `struct  4 field a  2 field b  1 field c  constant size` works at the untouched prompt
+today — measured on amd64 2026-08-29: `size`=7, offsets 0/4/6. The **address** half of the
+type layer has been in the firmware since before this lab existed.
+
+What `field` does not carry is the **type**: how wide the field is and which byte order it is
+in. That restatement — by hand, at every read — is where a binary-structure parser goes wrong.
+[`dsl/struct.fth`](dsl/struct.fth) adds exactly that in ~60 lines over accessors that were
+already there (`le-w@`/`le-l@`/`le-w!`/`le-l!` are bound in `libopenbios/init.c`; `l@-be`/`l!-be`
+are Forth in `forth/device/property.fs`), and nothing else:
+
+```forth
+struct
+  4 le-field: e_magic
+  1    field: e_class
+  ...
+constant /elf64-ehdr
+
+load-base e_machine t@       \ -> 3e
+3f load-base e_machine t!    \ the store IS the write
+```
+
+**Why the address comes first.** GNU poke's manual specifies a three-step
+map / modify / **poke-back** for a scalar, because the variable is a copy. There is no copy
+here to write back from: a field leaves ( base -- adr tid ), so `t!` and a bare `le-l!`
+through `t-adr` are equally the write. Forth is *more* immediate than poke at the scalar
+level; what it lacked was poke's composite half, which is knowing which bytes a field owns.
+
+`smoke-openbios.sh struct-layer` measures both of the review's checkpoints on **both** arches
+and ends by pointing the layer at a real ELF64 — the amd64 firmware's own boot image, loaded
+off ISO9660 — re-deriving `magic`/`class`/`type`/`machine`/`entry`/`size` against ground truth
+unpacked from the same bytes on the host. Its controls are the reason those mean anything:
+every field is also read through the **other** byte order and must come back exactly reversed,
+the raw bytes are asserted beside every store, a poison byte past the layout must still be
+`ff`, and **three refusals fire by name** — an unimplemented width, big-endian 64, and an
+8-byte field on x86's 32-bit cell, where truncating would have been the LIED rung.
 
 ## The upstream clone is pinned
 

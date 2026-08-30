@@ -65,6 +65,7 @@ tracks=(
     test-smoke-pmem-writer.sh
     test-smoke-ppc.sh
     test-smoke-property-abi.sh
+    test-smoke-struct-layer.sh
     test-smoke-vga.sh
 )
 

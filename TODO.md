@@ -141,6 +141,25 @@ items, and neither is blocked on anything.**
       exceptions**. The `vga` track now asserts cause and effect separately — it had only
       ever checked that the alias *resolved*, which is not the same as being able to use it.
 
+- [x] **0.6e — the type layer. DONE 2026-08-29**, `smoke-openbios.sh struct-layer` +
+      [`dsl/struct.fth`](examples/openbios-the-rival-that-shipped/dsl/struct.fth). This is
+      [`REVIEW-preboot-forth-as-a-poke-engine.md`](REVIEW-preboot-forth-as-a-poke-engine.md)'s
+      **G2**, the item that review put at the top of its own list once §16 closed F2.
+      **And the review was wrong about where it starts**, which measuring first is what
+      found: it recommends building a definer with `create ... does>`, and OpenBIOS
+      **already ships one** — `forth/bootstrap/bootstrap.fs:1570` has
+      `: field create over , + does> @ + ;`, working at the untouched prompt (`size`=7,
+      offsets 0/4/6, measured on amd64 before a line was written). The section had been
+      written from a `git grep` of *this repo*, which is a question about the lab standing
+      in for a question about the firmware — the same substitution `check-harness-net.sh`
+      made twice. What was actually missing is **width and byte order**: `field` carries an
+      offset and nothing else, so every read restates the type by hand. Both of G2's
+      checkpoints are met on both arches, the layer parses a real ELF64 header against host
+      ground truth, and **seven injections were run and all seven bit** — the fourth
+      exposing a defect in the assertions themselves (three rows asserted a refusal
+      *printed its name*, which is the mechanism; the outcome is that the operation did not
+      complete).
+
 **What NOT to re-derive**, because each cost a run and is written up in §16:
 
 | | |

@@ -204,6 +204,53 @@ answer that one: the VGA is in 640×480 compat mode scanning the legacy aperture
 store into the linear framebuffer is invisible on screen. Two outside observers, each chosen
 for what it can actually see.
 
+**2026-08-29, `struct-layer` (REVIEW G2, the type layer):** a new track, and the first thing
+it found was that **the review had the starting point wrong**. G2 says `create ... does>` is
+"sitting unused" and the definer is the work; OpenBIOS already ships `struct` and `field`
+(`forth/bootstrap/bootstrap.fs:1570`) and they work at the untouched prompt — `struct 4 field
+a 2 field b 1 field c constant size` gives `size`=7 and offsets 0/4/6. What was missing is
+**width and byte order**, which [`dsl/struct.fth`](dsl/struct.fth) adds in ~60 lines.
+
+Run: `./smoke-openbios.sh struct-layer`. Both arches, one boot each:
+
+```
+  - subject: openbios.multiboot — ELF64 magic=464c457f class=2 type=2 machine=3e entry=101d70 size=21af8 (host, from the bytes)
+  - amd64: layout 0x10, offsets 0/4/8/a/c; int!→BE field deadbeef, le-l!→LE field cafebabe,
+           cross-read bebafeca/efbeadde; t! 11223344 → memory [44 33 22 11]; t-adr le-l! → 55667788;
+           ELF64 magic=464c457f type=2 machine=3e entry=101d70 size=21af8; 8-byte view → 101d70
+  - x86:   …identical… ; 8-byte view → T-ERR-narrow-cell
+```
+
+The two checkpoints are different questions. **(1)** a named field reads back `deadbeef` /
+`cafebabe` written by `int!` and `le-l!` — words that know nothing about the layer. **(2)** a
+typed store puts `11223344` into memory as `44 33 22 11`, and a **bare** `le-l!` through the
+field's own address is equally the write: no map/modify/poke-back, because a field yields the
+bytes rather than a copy of them (review §P1).
+
+**The arch split is itself a control.** Every row is identical on x86 except the last: an
+8-byte field on a 32-bit cell **refuses by name** (`T-ERR-narrow-cell`) where amd64 answers
+`101d70` and agrees with the same bytes read as two 4-byte halves. Truncating there would
+have been the LIED rung — right in its low half, silently wrong above bit 31 — which is
+exactly the defect TODO 13.2(b) found in `l!-be`.
+
+### The G2 controls, run 2026-08-29
+
+Seven injections, seven bites. **The seventh is the one that earned its place**, and it was
+written only after injection 4 exposed a weakness in the assertions themselves: three rows
+asserted that a refusal **printed its name**, which is the mechanism. The outcome of a
+refusal is that the operation *did not complete* — so each refusing word now ends on its own
+`G2?-END` marker and the assertion is that marker's **absence**.
+
+| injection | result |
+|---|---|
+| `le-field:` compiled as big-endian | **FAIL** — *"a little-endian field over bytes written by `le-l!` reads bebafeca, not cafebabe"* (checkpoint 1 fires before the order control, which is correct: an independent writer catches an order defect directly) |
+| the definer's running offset never advances | **FAIL** — *"the pattern layout is 0x0 bytes, not 0x10"* |
+| the narrow-cell guard inverted, so x86 truncates instead of refusing | **FAIL** — *"an 8-byte field on a 32-bit cell returned '101d70' instead of refusing"* |
+| `t-width-err` returns 0 after naming the width | **FAIL** — but via `rc=124`: the leftover stack means the prompt never prints `0 > ` again. A real bite, on the wrong row |
+| `t-adr` off by one | **FAIL** — *"field p-be sits at offset 1, not 0"* |
+| the probe's cross-read uses the **same** order (as if `l@-be` and `le-l@` were one accessor) | **FAIL** — *"the order bit is not selecting an accessor, so every round trip above proves only that one accessor is its own inverse"* — the row that exists for exactly this |
+| `t-width-err` names the width, **balances the stack**, and returns a number | **FAIL** — *"printed T-ERR-width and then ran to G2O-END — the message is right and the operation completed anyway"*. This is the case the printed-name assertion would have passed |
+
 ### The negative controls, run 2026-08-23
 
 Each fix was broken and watched to bite before being trusted:
