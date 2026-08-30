@@ -3828,6 +3828,30 @@ struct  1 dev-field: d-ch  1 dev-field: d-at  constant /dc
     10 b8000 >virt i dcell[] d-at t!
     01 b8000 >virt i dcell[] d-at t!    \ naive store -> 01, bg destroyed
   loop ." DEV-NAIVE-END" cr ;
+\ ── named controls: the light-on flavour, verbose and backend-hidden ──
+\ A control bakes (address, field, mask) behind a name; the verbs read as
+\ English. Two controls on the SAME field must not disturb each other -- which
+\ is the RMW property, reached through the friendly layer.
+r st 80 control: guard        \ bit 7, a neighbour
+r st 01 control: led          \ bit 0
+: rmw-ctl
+  0 r st t!
+  guard enable                 ." rc-guard=" r st t@ u. cr   \ 80
+  led enable                   ." rc-both="  r st t@ u. cr   \ 81  neighbour kept
+  ." rc-led?="   led   enabled? . cr                          \ -1
+  ." rc-guard?=" guard enabled? . cr                          \ -1
+  led disable                  ." rc-off="   r st t@ u. cr   \ 80
+  ." rc-led2?="  led   enabled? . cr                          \ 0
+  led toggle                   ." rc-tog="   r st t@ u. cr   \ 81
+  ." RMW-CTL-END" cr ;
+\ mudge's exact words, re-expressed as thin aliases over the control
+: light-on   led enable ;
+: light-off  led disable ;
+: rmw-mudge
+  0 r st t!  80 r st t!
+  light-on   ." rc-lighton="  r st t@ u. cr                  \ 81
+  light-off  ." rc-lightoff=" r st t@ u. cr                  \ 80
+  ." RMW-MUDGE-END" cr ;
 ." RMW-READY" cr
 FTH
     genisoimage -quiet -o "$WORKDIR/rmw.iso" -V RMW -r -J "$RST"
@@ -3860,6 +3884,8 @@ PYX
         --send 'load-base load-size evaluate\r' --expect "RMW-READY" \
         --send 'rmw-mem\r' --expect "RMW-MEM-END" \
         --send 'rmw-le\r' --expect "RMW-LE-END" \
+        --send 'rmw-ctl\r' --expect "RMW-CTL-END" \
+        --send 'rmw-mudge\r' --expect "RMW-MUDGE-END" \
         --send 'dev-set\r' --expect "DEV-SET-END"
       RRC=$?
       RSET_PHYS="$(_rxp "$RMON")"
@@ -3909,6 +3935,24 @@ PYX
       RLB="$(grep -aoE 'rl-bytes=[0-9a-f ]+' <<<"$RL" | head -1 | cut -d= -f2 | tr -s ' ' | sed 's/ *$//')"
       [[ "$RLB" == "1 0 0 ff" ]] \
         || fail "rmw-fields on $A: after t-set on the LE field the bytes are [$RLB], not [1 0 0 ff] — the value round-trips but memory does not hold it little-endian, so t-set is bypassing the field's byte order — see $RLOG"
+
+      # ── NAMED CONTROLS: the verbose, backend-hidden layer ──
+      # Same RMW property, reached through enable/disable/toggle/enabled? on a
+      # named control. Two controls on one field must not disturb each other.
+      [[ "$(rv rc-guard)" == 80 && "$(rv rc-both)" == 81 ]] \
+        || fail "rmw-fields on $A: two controls on one field gave guard=$(rv rc-guard) both=$(rv rc-both), not 80/81 — 'led enable' disturbed the 'guard' bit, so the friendly layer lost the read-modify-write property the raw words have — see $RLOG"
+      RLED="$(grep -aoE 'rc-led\?=-?[0-9]+' <<<"$RL" | head -1 | cut -d= -f2)"
+      RGRD="$(grep -aoE 'rc-guard\?=-?[0-9]+' <<<"$RL" | head -1 | cut -d= -f2)"
+      [[ "$RLED" == -1 && "$RGRD" == -1 ]] \
+        || fail "rmw-fields on $A: enabled? read led=$RLED guard=$RGRD, not -1/-1 — the query does not agree with the bits that were set — see $RLOG"
+      RLED2="$(grep -aoE 'rc-led2\?=-?[0-9]+' <<<"$RL" | head -1 | cut -d= -f2)"
+      [[ "$(rv rc-off)" == 80 && "$RLED2" == 0 ]] \
+        || fail "rmw-fields on $A: after 'led disable' the field is $(rv rc-off) and enabled? is $RLED2, not 80/0 — disable did not clear exactly the led bit — see $RLOG"
+      [[ "$(rv rc-tog)" == 81 ]] \
+        || fail "rmw-fields on $A: 'led toggle' over 80 gave $(rv rc-tog), not 81 — see $RLOG"
+      # mudge's exact words, re-expressed as aliases, still behave
+      [[ "$(rv rc-lighton)" == 81 && "$(rv rc-lightoff)" == 80 ]] \
+        || fail "rmw-fields on $A: light-on/light-off rebuilt over the control gave $(rv rc-lighton)/$(rv rc-lightoff), not 81/80 — the mudge aliases do not match the words they wrap — see $RLOG"
 
       # ── DEVICE: RMW through rb@/rb!, seen as PHYSICAL memory ──
       # cell 0 = char 'A' (41), attr. RMW set fg keeping bg -> attr 11.

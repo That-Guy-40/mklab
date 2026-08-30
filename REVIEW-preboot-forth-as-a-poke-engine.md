@@ -729,6 +729,16 @@ and on a real MMIO register (the VGA attribute byte) it reads the result back as
 through the same `rb@` the store did and cannot see a store that preserved the
 wrong thing.
 
+And it closes the loop on the naming, which is the point mudge's example makes.
+`t-set` still takes a mask, a field and a base; `control:` bakes all three behind
+a name, so `backlight enable` / `disable` / `toggle` / `enabled?` read as English
+and hide the read-modify-write, the mask, the byte order and the address —
+exactly what `light-on` did for "bit 0 of the aux register," now over a typed
+field. mudge's own words come back as one-liners (`: light-on led enable ;`), and
+two controls on one register provably do not clobber each other. The verbs are
+deliberately not `on`/`off`: those are the firmware's flag setters, and the
+verbose names are both the free ones and the readable ones.
+
 ## G3 — Endianness is already solved in both directions, and it is upstream
 
 This removes what would otherwise be the first hard design question, and it is

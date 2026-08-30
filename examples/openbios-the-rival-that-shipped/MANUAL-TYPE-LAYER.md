@@ -720,6 +720,56 @@ toggles of a bit return it to where it started.
 
 ---
 
+## 10c. Part 9 — name a control, hide the plumbing
+
+`t-set` still wants a mask, a field and a base every time you call it. mudge's
+`light-on` didn't — it *was* "bit 0 of the aux register," baked in behind a
+name. `control:` does the same for any typed field:
+
+```forth
+struct  1 dev-field: d-at  constant /at
+b8000 >virt d-at  10  control: backlight   \ address + field + mask, behind a name
+```
+
+Now the verbs read as English, and the mask, the byte order, the address and the
+read-modify-write are all hidden:
+
+```forth
+backlight enable        \ set the bit(s), preserving the rest
+backlight disable
+backlight toggle
+backlight enabled?      \ -1 if any masked bit is set
+```
+
+They are **not** called `on` / `off` — those are the firmware's own flag setters
+(`variable x  x on`), and shadowing them is the `elf isn't unique.` mistake.
+`enable` / `disable` / `toggle` / `enabled?` are the names that are free *and*
+the ones that say what they do.
+
+**Two controls on one register don't fight**, which is the whole point — each
+`enable` preserves the other's bits:
+
+```forth
+r st 80 control: guard
+r st 01 control: led
+guard enable   led enable   r st t@ .    \ 81 — both, neither clobbered the other
+```
+
+And mudge's own words come back, now as one-liners over the abstraction rather
+than raw register pokes:
+
+```forth
+: light-on   led enable ;
+: light-off  led disable ;
+```
+
+That is the arc of the whole lab in three lines: his hardware-specific
+`1 aux@ or aux!`, generalised into a typed read-modify-write, and then given back
+its friendly name — but this time backed by a field that knows its width, its
+byte order, and whether it lives in memory or on a device.
+
+---
+
 ## 11. Reference — the two files
 
 | word | stack | what it does |
@@ -745,6 +795,9 @@ toggles of a bit return it to where it started.
 | `t-set` | `( mask adr tid -- )` | set bits, **preserving** the rest (mudge's `aux@ or aux!`) |
 | `t-clr` | `( mask adr tid -- )` | clear bits, preserving the rest |
 | `t-tog` | `( mask adr tid -- )` | toggle bits (`xor`) |
+| `control:` | `( adr tid mask "name" -- )` | bake address+field+mask behind a name |
+| `enable` / `disable` / `toggle` | `( mask adr tid -- )` | on a control: set / clear / flip |
+| `enabled?` | `( mask adr tid -- flag )` | is any masked bit set |
 | `cstr` / `.cstr` / `cstr-len` | `( adr -- … )` | NUL-terminated strings |
 | `dump` | `( adr len -- )` | hex + ASCII, 16 to a line |
 

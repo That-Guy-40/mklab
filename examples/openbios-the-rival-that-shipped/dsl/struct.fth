@@ -303,6 +303,36 @@ hex
 : t-clr ( mask adr tid -- )  rot invert >r  2dup t@  r> and -rot t! ;
 : t-tog ( mask adr tid -- )  rot        >r  2dup t@  r> xor -rot t! ;
 
+\ ── named controls: mudge's light-on flavour, generalised ──────────
+\ t-set/t-clr/t-tog still take a mask, a field and a base every time. A CONTROL
+\ bakes all three behind a name -- the way mudge's `light-on` baked in "bit 0 of
+\ the aux register" -- so the verbs read as English and the read-modify-write,
+\ the mask, the byte order and the address are all hidden:
+\
+\     b8000 >virt d-at  10  control: backlight
+\     backlight enable        \ set the bit(s), preserving the rest
+\     backlight disable
+\     backlight toggle
+\     backlight enabled?       \ -1 if any masked bit is set
+\
+\ NOT `on`/`off`: those are the firmware's own flag setters
+\ (bootstrap.fs:599-600, `variable x  x on`), and `control` is taken too --
+\ shadowing either is the `elf isn't unique.` mistake. The verbose names are
+\ the ones that are free AND the ones that read better.
+\
+\ A control stores ( mask tid adr ) and re-pushes ( mask adr tid ) -- exactly
+\ what the three verbs (and enabled?) consume, so no juggling at the call site.
+\ mudge's own words come back as one-liners on top: `: light-on backlight enable ;`
+
+: control: ( adr tid mask "name" -- )
+  create , , ,                    \ +0 mask  +1 tid  +2 adr
+  does>  dup @  over 2 cells + @  rot cell+ @ ;   \ ( -- mask adr tid )
+
+: enable   ( mask adr tid -- )       t-set ;
+: disable  ( mask adr tid -- )       t-clr ;
+: toggle   ( mask adr tid -- )       t-tog ;
+: enabled? ( mask adr tid -- flag )  rot >r t@ r> and 0<> ;
+
 \ ── NUL-terminated strings, which poke spells `string @ offset` ────
 \ REVIEW §E4 named this the smallest concrete gap in the layer: poke-elf's
 \ get_section_name is a string read out of a string table, and there was no
