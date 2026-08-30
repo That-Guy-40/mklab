@@ -1,5 +1,11 @@
 \ struct.fth — a TYPE layer over OpenBIOS Forth, for REVIEW G2.
 \
+\ THIS FILE IS THE ENGINE. The ELF layouts that used to live here moved to
+\ dsl/elf.fth on 2026-08-30, which is poke's own structure (elf-64.pk is a
+\ separate pickle from libpoke) and REVIEW §E6's lesson applied to ourselves:
+\ keeping the format out of the engine is why elf-64.pk stays 446 readable
+\ lines. Load this first, then whichever format you are looking at.
+\
 \ WHAT THIS IS NOT. It is not a definer built from scratch: OpenBIOS already
 \ ships one. `forth/bootstrap/bootstrap.fs:1570` has
 \
@@ -60,12 +66,43 @@ hex
 \ PER FIELD because a real structure mixes them -- a 1275 property cell inside a
 \ little-endian handoff page is not hypothetical.
 
-: (tfield) ( off width order -- off' )
+\ ── the SECOND backend: device registers ───────────────────────────
+\ GNU poke's IO spaces are seven function pointers and eight backends
+\ (REVIEW §P2); the same layout applied over a file, over memory, or over a
+\ device is the whole point of that split. Forth's version of the split is
+\ already in IEEE 1275: 5.3.7.2's rb@/rw@/rl@/rb!/rw!/rl! are the
+\ device-register accessors, distinct from c@/w@/l@ precisely because a
+\ platform may need a barrier or a bus byte-swap there.
+\
+\ **They were EMPTY in this firmware** and patch 49 gave them bodies -- see
+\ forth/device/other.fs. Everything below is built from rb@/rb! ALONE, a byte
+\ at a time, so the byte order is explicit rather than inherited from whatever
+\ the host CPU does; that also means a device field behaves identically on x86
+\ and amd64, which is what makes the arch comparison in the track meaningful.
+
+: rw@-le ( adr -- w )  dup rb@ swap 1+ rb@ 8 lshift or ;
+: rw@-be ( adr -- w )  dup rb@ 8 lshift swap 1+ rb@ or ;
+: rw!-le ( w adr -- )  over ff and over rb! 1+ swap 8 rshift swap rb! ;
+: rw!-be ( w adr -- )  over 8 rshift over rb! 1+ swap ff and swap rb! ;
+: rl@-le ( adr -- l )  dup rw@-le swap 2 + rw@-le 10 lshift or ;
+: rl@-be ( adr -- l )  dup rw@-be 10 lshift swap 2 + rw@-be or ;
+: rl!-le ( l adr -- )  2dup 2 + swap 10 rshift swap rw!-le rw!-le ;
+: rl!-be ( l adr -- )  2dup 2 + rw!-be swap 10 rshift swap rw!-be ;
+
+\ ── the definer ────────────────────────────────────────────────────
+\ FOUR cells per field: offset, width, order (0 = big-endian, the 1275 native
+\ order; 1 = little-endian) and SPACE (0 = memory, 1 = device register).
+\ Endianness is per field because a real structure mixes them; the space is per
+\ field because a mapped region can span both -- a descriptor in RAM whose last
+\ member is a doorbell is the ordinary case, not the exotic one.
+
+: (tfield) ( off width order space -- off' )
   create
-    >r                  ( off width )        ( r: order )
+    >r >r               ( off width )   ( r: space order )
     over ,              \ +0  offset
     dup  ,              \ +1  width
     r>   ,              \ +2  order
+    r>   ,              \ +3  space
     +                   ( off' )
   does>                 ( base pfa -- adr tid )
     dup >r @ + r>
@@ -74,10 +111,13 @@ hex
 : t-off   ( tid -- n )  @ ;
 : t-width ( tid -- n )  cell+ @ ;
 : t-order ( tid -- n )  cell+ cell+ @ ;
+: t-space ( tid -- n )  cell+ cell+ cell+ @ ;
 : t-adr   ( adr tid -- adr )  drop ;
 
-: field:    ( off width -- off' )  0 (tfield) ;   \ big-endian  (1275 native)
-: le-field: ( off width -- off' )  1 (tfield) ;   \ little-endian
+: field:        ( off width -- off' )  0 0 (tfield) ;  \ big-endian  (1275 native)
+: le-field:     ( off width -- off' )  1 0 (tfield) ;  \ little-endian
+: dev-field:    ( off width -- off' )  0 1 (tfield) ;  \ ...through rb@/rb!
+: le-dev-field: ( off width -- off' )  1 1 (tfield) ;
 
 \ ── typed fetch and store ──────────────────────────────────────────
 \ An unsupported width REFUSES and names the width. Returning a plausible number
@@ -85,52 +125,179 @@ hex
 \ the wrong bytes; a `blob` field (e_ident, 16 bytes) is addressable and NOT
 \ scalar-readable, and saying so is the point.
 
-: t-width-err ( width -- )  ." T-ERR-width=" . cr abort ;
-: t-be64-err  ( -- )        ." T-ERR-be64" cr abort ;
+: t-width-err     ( width -- )  ." T-ERR-width=" . cr abort ;
+: t-be64-err      ( -- )        ." T-ERR-be64" cr abort ;
+: t-dev-width-err ( width -- )  ." T-ERR-devwidth=" . cr abort ;
 
-: t@ ( adr tid -- u )
-  dup t-order swap t-width                  ( adr order width )
+: (t@mem) ( adr order width -- u )
   dup 1 = if 2drop c@                   else
   dup 2 = if drop if le-w@ else w@-be then else
   dup 4 = if drop if le-l@ else l@-be then else
   dup 8 = if drop if le-x@ else t-be64-err then else
   t-width-err then then then then ;
 
-: t! ( u adr tid -- )
-  dup t-order swap t-width                  ( u adr order width )
+\ No 8-byte device field: a 64-bit register is not one access on a 32-bit bus,
+\ and pretending otherwise is the split-transaction bug nobody sees until the
+\ device latches half of it. Refused by name.
+: (t@dev) ( adr order width -- u )
+  dup 1 = if 2drop rb@                        else
+  dup 2 = if drop if rw@-le else rw@-be then  else
+  dup 4 = if drop if rl@-le else rl@-be then  else
+  t-dev-width-err then then then ;
+
+: (t!mem) ( u adr order width -- )
   dup 1 = if 2drop c!                   else
   dup 2 = if drop if le-w! else w!-be then else
   dup 4 = if drop if le-l! else l!-be then else
   dup 8 = if drop if le-x! else t-be64-err then else
   t-width-err then then then then ;
 
-\ ── the ELF64 header, as a layout ──────────────────────────────────
-\ e_entry/e_phoff/e_shoff are 8 bytes in ELF64 and are declared here as two
-\ 4-byte little-endian halves ON PURPOSE, so one layout serves BOTH arches: an
-\ 8-byte field would refuse on x86's 32-bit cell and the whole parse would halt
-\ on a field nobody was asking about. The 8-byte path is exercised separately.
+: (t!dev) ( u adr order width -- )
+  dup 1 = if 2drop rb!                        else
+  dup 2 = if drop if rw!-le else rw!-be then  else
+  dup 4 = if drop if rl!-le else rl!-be then  else
+  t-dev-width-err then then then ;
 
-struct
-  4 le-field: e_magic          \ 7f 'E' 'L' 'F', read as an LE quad
-  1    field: e_class          \ 1 = ELF32, 2 = ELF64
-  1    field: e_data
-  1    field: e_version1
-  1    field: e_osabi
-  8    field: e_pad            \ blob: addressable, not scalar-readable
-  2 le-field: e_type
-  2 le-field: e_machine
-  4 le-field: e_version
-  4 le-field: e_entry-lo
-  4 le-field: e_entry-hi
-constant /elf64-ehdr
+: t@ ( adr tid -- u )
+  dup t-space >r
+  dup t-order swap t-width                  ( adr order width )
+  r> if (t@dev) else (t@mem) then ;
 
-\ A SECOND VIEW of the same bytes, and it is the arch control. e_entry lives at
-\ 0x18 in an ELF64 header; declaring it as ONE 8-byte little-endian field must
-\ agree with e_entry-hi:e_entry-lo above on a 64-bit cell -- and must REFUSE by
-\ name on a 32-bit one. Two views of one region that disagree would mean the
-\ offsets are arithmetic nobody checked.
+: t! ( u adr tid -- )
+  dup t-space >r
+  dup t-order swap t-width                  ( u adr order width )
+  r> if (t!dev) else (t!mem) then ;
 
-struct
-  18   field: x-ident-and-more   \ blob up to e_entry
-  8 le-field: x-entry
-constant /elf64-entry
+
+\ ── arrays of a type ───────────────────────────────────────────────
+\ The other half of GNU poke's COMPOSITE model, and the half a single mapped
+\ struct does not reach. poke writes `Elf64_Phdr[ehdr.e_phnum] @ ehdr.e_phoff`;
+\ the Forth equivalent is a stride and an index, which is what `array:` is.
+\
+\ `<stride> array: NAME` creates NAME ( base index -- elem-base ), so a field
+\ word composes straight onto it:
+\
+\     phtab i phdr[] p_filesz-lo t@
+\
+\ THE STRIDE IS DECLARED, AND THE SUBJECT ALSO STATES IT. An ELF header carries
+\ `e_phentsize`; a declaration that disagrees with it is a layout describing a
+\ different file, so the caller is expected to compare the two rather than trust
+\ either. That comparison is the array's version of the poison byte: without it,
+\ walking N elements at the wrong stride reads N plausible structures out of the
+\ middle of somebody else's bytes and every field "succeeds".
+
+: array: ( stride -- )
+  create ,
+  does>   ( base index pfa -- elem-base )
+    @ * +
+  ;
+
+
+\ ── the address space, which a type layer does NOT give you ────────
+\ A layout makes field access convenient. It does nothing whatsoever to make an
+\ ADDRESS correct, and on arch/x86 the naive one is wrong in the worst way: the
+\ store lands in ordinary RAM, reads back perfectly through the accessor that
+\ wrote it, and never reaches the device.
+\
+\ x86 relocates itself by REBASING THE GDT (arch/x86/segment.c), so every Forth
+\ address is segment-relative and the CPU adds virt_offset to reach physical
+\ memory. amd64 does not relocate -- long mode ignores segment bases and
+\ arch/amd64/segment.c sets virt_offset = 0 -- so there the two are the same.
+\
+\ virt_offset IS DERIVABLE AT THE PROMPT, and that is the whole trick.
+\ arch/x86/openbios.c:573 defines the load-base constant as
+\ `phys_to_virt(LOAD_BASE_PHYS)`, and phys_to_virt(P) is P - virt_offset
+\ (include/arch/x86/io.h:9). So
+\
+\     virt_offset = LOAD_BASE_PHYS - load-base
+\
+\ and no C needs to publish anything. Measured on x86 2026-08-30:
+\ load-base = e0670bd0, so virt_offset = 1fd8f430 -- and note that
+\ arch/x86/context.c:189 records 1fd8fe50 from 2026-08-26. Both are right for
+\ the tree they were measured on: relocation targets the TOP of RAM, so the
+\ value moves whenever the image size does. It is a fact to DERIVE, never one
+\ to write down -- which is exactly why this computes it every time.
+\
+\ THE ONE CACHED FACT, said out loud: LOAD_BASE_PHYS itself is read from C
+\ (arch/x86/openbios.c:32 = 400000; forth/admin/nvram.fs's amd64 arm = 4000000)
+\ and is selected here by cell width. Nothing in the device tree publishes it.
+\ Publishing virt_offset -- or implementing 1275's `map-in` -- would remove this
+\ last constant; until then the pair below is checked by `smoke-openbios.sh
+\ struct-device`, which paints through it and reads PHYSICAL memory back from
+\ outside the firmware.
+
+: load-base-phys ( -- p )  /n 8 = if 4000000 else 400000 then ;
+: >virt ( phys -- adr )    load-base-phys - load-base + ;
+: >phys ( adr -- phys )    load-base - load-base-phys + ;
+
+\ ── constraints: the primitive REVIEW §E1 is about ─────────────────
+\ GNU poke attaches a predicate to a field and REFUSES TO MAP when it is false
+\ (`Elf_Half e_shstrndx : e_shnum == 0 || e_shstrndx < e_shnum;`). The layer so
+\ far refuses what it CANNOT REPRESENT -- a width it does not implement, an
+\ 8-byte field on a 32-bit cell -- and says nothing about what it SHOULD NOT
+\ ACCEPT. This is that other half, and it is the same idea: a plausible wrong
+\ number is worse than an honest stop.
+\
+\ THE FIRST DESIGN DID NOT WORK, and the failure is worth keeping. `chk"` was
+\ built as an immediate word wrapping abort" -- `postpone chk-report postpone
+\ abort"` -- on the assumption that POSTPONE of an immediate word defers its
+\ compilation semantics. In this Forth it does not: the string was never parsed
+\ and the firmware answered `never": undefined word.` So the message is passed
+\ as an ordinary string instead, which needs no immediacy and reads at least as
+\ well:
+\
+\     @elf e_class t@ 2 s" not ELF64 (e_class)" chk
+\
+\ Each prints BOTH values on failure, because "constraint failed" without them
+\ sends you back to the prompt to find out which.
+\
+\ THE CONSTRAINT MUST NOT BE THE ONLY CHECK OF ITSELF: a validator that has
+\ never rejected anything is a scan that matches nothing. Every `?`-word that
+\ ships here is driven, in `smoke-openbios.sh elf-methods`, against a
+\ deliberately corrupted copy as well as a real one.
+
+\ chk  ( actual expected c-addr u -- )   equal, or report both and abort
+: chk
+  2over = if 2drop 2drop exit then
+  cr ." CONSTRAINT: " type ."  -- want=" u. ."  got=" u. cr abort ;
+
+\ chk< ( n limit c-addr u -- )           unsigned n < limit, or abort
+: chk<
+  2over u< if 2drop 2drop exit then
+  cr ." CONSTRAINT: " type ."  -- limit=" u. ."  got=" u. cr abort ;
+
+\ chk? ( flag c-addr u -- )              an arbitrary predicate, incl. poke's
+\                                        `=>` implication as `0= swap or`
+: chk?
+  rot if 2drop exit then
+  cr ." CONSTRAINT: " type cr abort ;
+
+\ ── bit-fields (REVIEW §G4: "cheap, do it") ────────────────────────
+\ Mask-and-shift over primitives the kernel already has. A p_flags RWX triple or
+\ an st_info bind/type split is two of these and nothing else.
+: bits@ ( value lsb width -- field )  1 swap lshift 1- -rot rshift and ;
+: bit?  ( value n -- flag )           1 swap lshift and 0<> ;
+
+\ ── NUL-terminated strings, which poke spells `string @ offset` ────
+\ REVIEW §E4 named this the smallest concrete gap in the layer: poke-elf's
+\ get_section_name is a string read out of a string table, and there was no
+\ string type here at all.
+: cstr-len ( adr -- len )  dup begin dup c@ while 1+ repeat swap - ;
+: cstr     ( adr -- adr len )  dup cstr-len ;
+: .cstr    ( adr -- )  cstr type ;
+
+\ ── a hex+ASCII dump, because exploring needs one ──────────────────
+\ Not poke-derived; poke gives you this for free and a bare `0 >` prompt does
+\ not. 16 bytes a line, address first, printable ASCII on the right.
+: .hexbyte ( c -- )  dup 10 < if ." 0" then u. ;
+: .ascii   ( adr n -- )
+  0 do dup i + c@ dup 20 7f within if emit else drop 2e emit then loop drop ;
+: dump ( adr len -- )
+  over + swap ?do
+    i 8 u.r ." : "
+    10 0 do
+      i j + c@ .hexbyte
+      i 7 = if ."  " then
+    loop
+    ."  |" i 10 .ascii ." |" cr
+  10 +loop ;

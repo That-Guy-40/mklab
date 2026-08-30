@@ -116,12 +116,13 @@ Rows link to the diff. The narrative for patches 12–34 lives in the
 | [`46-number-agrees-with-c99.patch`](46-number-agrees-with-c99.patch) | `UPSTREAM-BUG` | shared | **TODO 17.4**: `%.0d` of 0 produced `"0"` where C99 produces nothing, and the `0` flag survived a precision — GCC refuses the literal for the second. Plus `num = -num` at `LLONG_MIN`, which was undefined behaviour. Closing them removes a latent "two printfs answering one call" (§13.3(C)), not just a formatting difference |
 | [`47-source-date-epoch.patch`](47-source-date-epoch.patch) | `FEATURE` | shared | **TODO 17.5**: the build honours `SOURCE_DATE_EPOCH`, so a tree can be rebuilt byte-identically **on request**. The date is not deleted — the ppc track proves the running firmware is ours by comparing exactly that banner — and unset, behaviour is bit-for-bit what it was |
 | [`48-scrub-host-arena-pointers.patch`](48-scrub-host-arena-pointers.patch) | `UPSTREAM-BUG` | shared | **TODO 17.5 cause 2**: the bootstrap stored pointers into the HOST's Forth arena in ordinary dictionary cells — not relocatable, so written out raw and moving with ASLR. Dead data (re-initialised at boot), now scrubbed from both writers. x86 never showed it because `pointer2cell` subtracts `base_address` at narrower widths |
+| [`49-device-register-words-were-empty.patch`](49-device-register-words-were-empty.patch) | `UPSTREAM-BUG` | shared | IEEE 1275 **5.3.7.2**'s six device-register words — `rb@ rw@ rl@ rb! rw! rl!` — had bodies containing **no words at all**, so a register read returned the ADDRESS and a register write stored nothing while leaking two cells. `table.fs:390-395` binds FCode tokens `0x230-0x235` to them, so the presenting symptom is a **stack shift inside an FCode driver**, not a wrong value. `feval.fs:72`'s FIXME ("uses `c@` rather than `rb@` for now") shows the gap was known and worked around at one call site |
 
 ## What the sort says
 
 | kind | count | |
 |---|---|---|
-| `UPSTREAM-BUG` | 23 | defects any user of `openbios/openbios` would hit. The candidate set, if the decision above is ever revisited |
+| `UPSTREAM-BUG` | 24 | defects any user of `openbios/openbios` would hit. The candidate set, if the decision above is ever revisited |
 | `PORT` | 11 | `arch/amd64`, which upstream ships and has not built since 2003 |
 | `FEATURE` | 10 | capabilities upstream never claimed — three NVRAM backings, a pmem store, the encoder work, a root that can describe memory above 4 GiB, a `/memory` that says what is free, and a build that can be made reproducible on request |
 | `FIXTURE` | 2 | test surface compiled into the firmware |
@@ -132,11 +133,11 @@ And by where a future rebase will hurt:
 
 | scope | count | |
 |---|---|---|
-| shared | 27 | touches a path some *other* architecture's build also compiles — this is where a pin bump conflicts |
+| shared | 28 | touches a path some *other* architecture's build also compiles — this is where a pin bump conflicts |
 | arch-local | 21 | only `arch/`, `include/arch/`, or its own `*_config.xml` — nearly free to carry |
 
 **Only one patch is a divergence in the sense of "we want different behaviour."**
-The other 47 are things upstream would arguably want and is not going to be
+The other 48 are things upstream would arguably want and is not going to be
 asked for. That asymmetry is the honest summary of what "all 41 are ours" means
 here: it is a decision about traffic, not about taste.
 

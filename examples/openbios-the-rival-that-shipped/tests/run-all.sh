@@ -52,6 +52,7 @@ tracks=(
     test-smoke-coreboot-amd64.sh
     test-smoke-diagnostics.sh
     test-smoke-dict-identity.sh
+    test-smoke-elf-methods.sh
     test-smoke-flash-writer.sh
     test-smoke-floppy.sh
     test-smoke-mmio-writer.sh
@@ -65,6 +66,8 @@ tracks=(
     test-smoke-pmem-writer.sh
     test-smoke-ppc.sh
     test-smoke-property-abi.sh
+    test-smoke-struct-array.sh
+    test-smoke-struct-device.sh
     test-smoke-struct-layer.sh
     test-smoke-vga.sh
 )

@@ -133,10 +133,13 @@ proves the linuxboot **and** OFW labs' kept ROMs survive. No sudo anywhere.
 | [`build-coreboot-openbios.sh`](build-coreboot-openbios.sh) | isolated coreboot build carrying `openbios-builtin.elf`; sha-guards both sibling labs' artifacts |
 | [`run-openbios-qemu.sh`](run-openbios-qemu.sh) | interactive boot, any track (`multiboot`/`coreboot`/`ppc`/`amd64`), `0 >` on your terminal |
 | [`smoke-openbios.sh`](smoke-openbios.sh) | one-verdict smokes; the ppc one proves the running blob is OURS by build-date banner |
-| [`dsl/struct.fth`](dsl/struct.fth) | **the type layer** (REVIEW G2): `field:` / `le-field:` over the firmware's own `struct`/`field`, so a layout carries **width and byte order** and not just an offset. A field yields the ADDRESS of its bytes, so a store through it *is* the write — no map/modify/poke-back. `smoke-openbios.sh struct-layer` points it at a real ELF64 header |
+| [`dsl/struct.fth`](dsl/struct.fth) | **the type layer** (REVIEW G2): `field:` / `le-field:` over the firmware's own `struct`/`field`, so a layout carries **width and byte order** and not just an offset. A field yields the ADDRESS of its bytes, so a store through it *is* the write — no map/modify/poke-back. Plus `array:` for tables, and `dev-field:` — a **second backend** over 1275's device-register words. Three tracks: `struct-layer`, `struct-array`, `struct-device` |
+| [`dsl/elf.fth`](dsl/elf.fth) | **one format on top of the engine** — ELF64 layouts, GNU poke's field **constraints** as `?elf64` / `?phdrs` (they *refuse* a file rather than describe it wrongly), and its **methods**: `elf-load-base`, `vaddr>off` (which bytes become that address at run time), `sh-name` out of the string table, plus `.elf` / `.phdrs` / `.sections` — `readelf`'s three views at the `0 >` prompt. Transliterated from `poke-elf` @ `ae45538`; see [REVIEW §E](../../REVIEW-preboot-forth-as-a-poke-engine.md) |
+| [`patches/49-device-register-words-were-empty.patch`](patches/49-device-register-words-were-empty.patch) | asking for that second backend turned up a defect: IEEE 1275 **§5.3.7.2**'s six device-register words (`rb@ rw@ rl@ rb! rw! rl!`) had bodies containing **no words at all**, so a register read returned the ADDRESS and a write stored nothing while leaking two cells. `table.fs` binds **FCode tokens `0x230`-`0x235`** to them, so it presents as a **stack shift inside a driver** — the same shape as patches 25 and 34 |
 | [`showcase-rival-boots-linux.sh`](showcase-rival-boots-linux.sh) | the finale: one `boot` line at the prompt → Linux 6.3 → u-root, on `multiboot`, `coreboot` **or `amd64`** — the same line, unchanged, from 64-bit firmware |
 | [`RUNBOOK.md`](RUNBOOK.md) | guided tour: `0 >` semantics, device tree, the unix-process firmware, rival-vs-rival exercises |
 | [`tests/test-usage-is-data.sh`](tests/test-usage-is-data.sh) | CI guard: every script's `--help` prints and **runs nothing** — it found five defects the day it was first aimed here, one of which started a coreboot build |
+| [`MANUAL-TYPE-LAYER.md`](MANUAL-TYPE-LAYER.md) | **drive the type layer by hand**: draw on the VGA text buffer through a typed layout, parse a real ELF64, walk its program-header table, and author a header the *host's* `readelf` reads. Both arches — Part 2 is the one to do even if you skip the rest, because the identical VGA code silently does nothing on x86 and reads back a perfect answer anyway |
 | [`MANUAL_TESTING.md`](MANUAL_TESTING.md) | exact commands + real success signatures |
 | [`PLAN.md`](PLAN.md) · POC-[1](POC-1-BUILD-BOX.md)/[2](POC-2-OK-PROMPT.md)/[3](POC-3-COREBOOT-PAYLOAD.md)/[4](POC-4-BOOT-LINUX.md)/[5](POC-5-PPC-SWAP-IN.md) | roadmap + blow-by-blow spike write-ups |
 | [`X86-64-FEASIBILITY.md`](X86-64-FEASIBILITY.md) | could this firmware run in **long mode**? — measured, audited, **Spike 0 run**: `arch/amd64` builds zero images even with the image types enabled, and after nine mechanical drift lines the only true 64-bit C errors left are `context.c`'s eight |
@@ -268,6 +271,10 @@ here to write back from: a field leaves ( base -- adr tid ), so `t!` and a bare 
 through `t-adr` are equally the write. Forth is *more* immediate than poke at the scalar
 level; what it lacked was poke's composite half, which is knowing which bytes a field owns.
 
+**To drive it yourself**, [`MANUAL-TYPE-LAYER.md`](MANUAL-TYPE-LAYER.md) is a
+hands-on walkthrough at the `0 >` prompt on both arches — VGA drawing, ELF
+parsing, table walking, and authoring a header `readelf` can read.
+
 `smoke-openbios.sh struct-layer` measures both of the review's checkpoints on **both** arches
 and ends by pointing the layer at a real ELF64 — the amd64 firmware's own boot image, loaded
 off ISO9660 — re-deriving `magic`/`class`/`type`/`machine`/`entry`/`size` against ground truth
@@ -276,6 +283,35 @@ every field is also read through the **other** byte order and must come back exa
 the raw bytes are asserted beside every store, a poison byte past the layout must still be
 `ff`, and **three refusals fire by name** — an unimplemented width, big-endian 64, and an
 8-byte field on x86's 32-bit cell, where truncating would have been the LIED rung.
+
+### Arrays, and a second backend
+
+Two more pieces landed 2026-08-30, closing the last items the review still listed
+as unproven.
+
+**Arrays** (`smoke-openbios.sh struct-array`) walk the ELF64 **program-header
+table** of a real image. What makes it more than a table of constants is that the
+subject states its own layout: `/elf64-ehdr` must equal the file's own
+`e_ehsize`, `/elf64-phdr` must equal its `e_phentsize`. An offset that drifts
+moves the field that catches it. The traversal is graded by a number the
+*firmware* derives — its own sum of `p_filesz` across `PT_LOAD` — and the control
+is the stride: walked 8 bytes wrong, it must read different bytes, or the index
+is doing nothing.
+
+**A second backend** (`smoke-openbios.sh struct-device`) maps a typed array of
+VGA text cells over `0xb8000` through `dev-field:`. GNU poke's IO spaces are
+seven function pointers and eight backends; IEEE 1275 had already made the same
+split in §5.3.7.2 — and **this firmware had not implemented its side of it**
+(patch 49).
+
+**And the two arches disagree, which is the most useful thing here.** On amd64
+the paint reaches physical `0xb8000` (read by QEMU's monitor) and puts 158,445
+blue pixels on the screen against **0** for a no-paint control. On x86 the
+identical code reads back `1f41` through Forth and **never reaches the device**:
+physical `0xb8000` still holds the console's own `0 > ` prompt. `arch/x86`
+rebases the GDT, so a Forth address is not a physical one. That row is asserted
+**positively** — the cheap check caught lying, in the same run as the arch where
+it tells the truth.
 
 ## The upstream clone is pinned
 

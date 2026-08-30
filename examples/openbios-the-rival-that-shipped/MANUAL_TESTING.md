@@ -251,6 +251,54 @@ refusal is that the operation *did not complete* — so each refusing word now e
 | the probe's cross-read uses the **same** order (as if `l@-be` and `le-l@` were one accessor) | **FAIL** — *"the order bit is not selecting an accessor, so every round trip above proves only that one accessor is its own inverse"* — the row that exists for exactly this |
 | `t-width-err` names the width, **balances the stack**, and returns a number | **FAIL** — *"printed T-ERR-width and then ran to G2O-END — the message is right and the operation completed anyway"*. This is the case the printed-name assertion would have passed |
 
+**2026-08-30, `struct-array` and `struct-device` (REVIEW G2's last two gaps).**
+Arrays walk the ELF64 program-header table of the amd64 firmware's own boot
+image; both arches, every element against host ground truth, graded by a sum the
+firmware derives.
+
+Asking for the *device* half turned up **patch 49**: IEEE 1275 §5.3.7.2's six
+device-register words had bodies containing **no words at all**. Measured at the
+prompt before anything was written —
+
+```
+b8000 c@   -> 41       (the byte just written there)
+b8000 rb@  -> b8000    at depth 1
+42 b8002 rb!           left depth 2 having stored nothing
+```
+
+— and `table.fs:390-395` binds FCode tokens `0x230`-`0x235` to exactly these, so
+it presents as a **stack shift inside a driver**, not a wrong value.
+
+**The two arches disagree, on purpose:**
+
+```
+- amd64: … typed device array painted 2000 cells — physical 0xb8000 reads
+         [0x41 0x1f 0x41 0x1f …] and the screen shows 158445 blue pixels against 0 with no paint
+- x86:   … the typed device write to b8000 is a FALSE POSITIVE here: Forth reads back 1f41 while
+         physical 0xb8000 holds [0x30 0x07 0x20 0x07 0x3e 0x07 0x20 0x07] (the console's own prompt)
+         and the screen shows 0 blue. arch/x86 rebases, so b8000 is not the aperture
+```
+
+That x86 row is asserted **positively**, not skipped — it is the cheap check
+lying in the same run as the arch where it tells the truth, and it is the same
+trap `flash-writer` met at `0xffbe0000`.
+
+### The G8 controls, run 2026-08-30
+
+| injection | result |
+|---|---|
+| `array:` ignores the index (`@ * +` → `@ drop drop`) | **FAIL** — *"program header 1 reads … type=1 off=1000 … where the host reads … type=4 off=1020"* |
+| the ehdr layout drifts by 2 bytes | **FAIL** — *"the layout declares 0x3e bytes and the file's own `e_ehsize` reads 0x0"* — the drift moved the very field that catches it |
+| the 8-byte device-field refusal returns a number instead of aborting | **FAIL** — *"named the refusal and then ran to GD-WIDE-END"* |
+| **all six** register words reverted to empty | **FAIL**, but via `rc=124` — 4000 stores leaking two cells each overflow the Forth stack. That is the write half's real failure mode, and it never reaches the named row |
+| **only `rb@`** reverted to empty | **FAIL** — *"'addr rb@' returned 14c68, which is the ADDRESS it was given"*. The headline row, firing by name |
+
+**Coverage note:** patch 49 changes shared Forth that goes into the coreboot
+payload, so both cached ROMs went stale and their tracks correctly SKIPped as
+**UNKNOWN** by sha — the provenance guard doing its job. Rebuilding both with
+`./build-coreboot-openbios.sh` and `… amd64` closed them: **34/34 listed tests
+ran, 27/27 boot tracks, 0 skipped, 0 failed.**
+
 ### The negative controls, run 2026-08-23
 
 Each fix was broken and watched to bite before being trusted:

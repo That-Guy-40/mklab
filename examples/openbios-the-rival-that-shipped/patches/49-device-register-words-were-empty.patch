@@ -1,0 +1,101 @@
+From: mklab <noreply@example.invalid>
+Subject: [PATCH 49/49] IEEE 1275 5.3.7.2's device-register words were EMPTY
+
+Arch-tested: x86 amd64 ppc
+
+forth/device/other.fs defined rb@ rw@ rl@ rb! rw! rl! with bodies containing no
+words at all. Not stubs that abort -- empty. So `addr rb@` consumed nothing and
+produced nothing, leaving the ADDRESS where the byte should be, and a register
+write stored nothing while leaking two cells.
+
+MEASURED AT THE amd64 PROMPT, which is the only way this was ever going to
+surface, since it compiles, links and boots:
+
+    b8000 c@   -> 41       (the byte just written there)
+    b8000 rb@  -> b8000    at depth 1
+    42 b8002 rb!           left depth 2 having stored nothing
+
+THIS IS NOT A DORMANT PATH. forth/device/table.fs:390-395 binds FCode tokens
+0x230-0x235 to exactly these six words, so an FCode driver that reads a device
+register receives an address and one that writes a register silently does
+nothing AND desynchronises its own stack. The presenting symptom is therefore
+not "the register read the wrong value" -- it is a stack shift that surfaces
+somewhere else entirely, which is the same shape as patch 34's my-#acells bug
+and patch 25's decode-bytes.
+
+The gap was known: forth/device/feval.fs:72 carries a FIXME saying byte-load
+"uses c@ rather than rb@ for now", which is a workaround at one call site rather
+than a fix.
+
+On a memory-mapped-I/O architecture -- every target in this tree -- device
+register access IS memory access at the register's address, which is what
+5.3.7.2 describes. A platform needing a barrier or a bus byte-swap would
+override these; nothing else in the tree defines them, on any arch.
+
+WHY IT IS SAFE TO CHANGE SHARED CODE HERE: the words had no behaviour to
+preserve. Anything calling them was already getting an address or a no-op, so
+there is no caller that was relying on the old result -- only callers that were
+broken. ppc was rebuilt and its track re-run for the same reason patch 28 was:
+OpenBIOS's FCode path actually runs there.
+
+diff --git a/forth/device/other.fs b/forth/device/other.fs
+index 1bed9b8..f645620 100644
+--- a/forth/device/other.fs
++++ b/forth/device/other.fs
+@@ -56,24 +56,38 @@ defer (poke)
+ 
+ 
+ \ 5.3.7.2 Device-register access
+-
+-: rb@    ( addr -- byte )
+-  ;
+-  
+-: rw@    ( waddr -- w )
+-  ;
+-  
+-: rl@    ( qaddr -- quad )
+-  ;
+-  
+-: rb!    ( byte addr -- )
+-  ;
+-  
+-: rw!    ( w waddr -- )
+-  ;
+-  
+-: rl!    ( quad qaddr -- )
+-  ;
++\
++\ LOCAL DIVERGENCE (mklab). These six were EMPTY -- not stubs that abort, bodies
++\ containing no words at all -- so `addr rb@` consumed nothing and produced
++\ nothing, leaving the ADDRESS where the byte should be. Measured at the amd64
++\ prompt 2026-08-29, which is the only way this was ever going to surface:
++\
++\     b8000 c@   -> 41       (the byte just written there)
++\     b8000 rb@  -> b8000    at depth 1
++\     42 b8002 rb!           left depth 2 having stored nothing
++\
++\ THIS IS NOT A DORMANT PATH. forth/device/table.fs:390-395 binds FCode tokens
++\ 0x230-0x235 to exactly these words, so an FCode driver that READS a device
++\ register receives an address, and one that WRITES a register silently does
++\ nothing and leaves two items on the stack -- which desynchronises every
++\ operation after it in that driver. The failure is therefore not "the register
++\ read the wrong value"; it is a stack shift, which surfaces somewhere else
++\ entirely. forth/device/feval.fs:72 already carries a FIXME saying byte-load
++\ "uses c@ rather than rb@ for now", so the gap was known and worked around at
++\ one call site rather than closed.
++\
++\ On a memory-mapped-I/O architecture -- which is every target in this tree --
++\ device-register access IS memory access at the register's address, and that is
++\ what IEEE 1275 5.3.7.2 describes. A platform needing a barrier or a bus
++\ byte-swap would override these; none in this tree does, and nothing else in
++\ the tree defines them.
++
++: rb@    ( addr -- byte )   c@ ;
++: rw@    ( waddr -- w )     w@ ;
++: rl@    ( qaddr -- quad )  l@ ;
++: rb!    ( byte addr -- )   c! ;
++: rw!    ( w waddr -- )     w! ;
++: rl!    ( quad qaddr -- )  l! ;
+ 
+ : rx@ ( oaddr - o )
+   state @ if

@@ -54,11 +54,14 @@ permissions:
   contents: read
 
 env:
-  # struct-layer joined 2026-08-29 (REVIEW G2). It earns a default slot where the
-  # other recent tracks did not: it needs exactly the four x86/amd64 artifacts the
-  # gate above already requires, needs no screendump and no host-side file check,
-  # and boots each arch once — and an unrun test rots.
-  DEFAULT_TRACKS: multiboot dict-identity amd64 property-abi diagnostics vga ppc struct-layer
+  # struct-layer joined 2026-08-29 (REVIEW G2), struct-array and struct-device
+  # 2026-08-30. They earn default slots where the other recent tracks did not:
+  # they need exactly the four x86/amd64 artifacts the gate above already
+  # requires, and an unrun test rots. struct-device is the costliest of the three
+  # (three boots and a screendump) and is here anyway, because it carries the
+  # regression guard for patch 49 — the six 1275 device-register words that
+  # shipped EMPTY, whose failure mode is a silent stack shift in an FCode driver.
+  DEFAULT_TRACKS: multiboot dict-identity amd64 property-abi diagnostics vga ppc struct-layer struct-array struct-device elf-methods
 
 jobs:
   # Cheap, ~15s, and always runs: it is what lets `gate` report on every PR.

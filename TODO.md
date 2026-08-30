@@ -160,6 +160,29 @@ items, and neither is blocked on anything.**
       *printed its name*, which is the mechanism; the outcome is that the operation did not
       complete).
 
+- [x] **0.6f — arrays, and a layout over a live device. DONE 2026-08-30**,
+      `smoke-openbios.sh struct-array` + `struct-device`, closing the two items
+      [`REVIEW-preboot-forth-as-a-poke-engine.md`](REVIEW-preboot-forth-as-a-poke-engine.md)
+      still listed under *What this review did NOT prove* after 0.6e. **Arrays**
+      walk the ELF64 program-header table of a real image on both arches, checked
+      against the SUBJECT (`/elf64-ehdr` == the file's own `e_ehsize`) rather than
+      constants, and graded by a sum the firmware derives. **The device half
+      produced [patch 49](examples/openbios-the-rival-that-shipped/patches/49-device-register-words-were-empty.patch):**
+      IEEE 1275 §5.3.7.2's six device-register words had bodies containing **no
+      words at all** — `b8000 rb@` returned `b8000`, `42 b8002 rb!` left depth 2
+      having stored nothing — and `forth/device/table.fs:390-395` binds FCode
+      tokens `0x230`-`0x235` to them, so it presents as a **stack shift inside a
+      driver**, the same shape as patches 25 and 34.
+      **And the two arches disagree, which is the finding worth keeping:** on
+      amd64 the typed device write reaches physical `0xb8000` and the screen; on
+      x86 the identical code reads back `1f41` through Forth and never reaches the
+      device, because `arch/x86` rebases the GDT. That row is asserted
+      **positively** rather than skipped — the cheap check caught lying, in the
+      same run as the arch where it tells the truth (§13.3(A) from a third
+      direction). Five injections, five bites; reverting **all six** words does
+      not reach the named row at all — it overflows the Forth stack, which is the
+      write half's real failure mode.
+
 **What NOT to re-derive**, because each cost a run and is written up in §16:
 
 | | |
