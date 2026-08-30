@@ -13,6 +13,10 @@
 #       each, a kind from the vocabulary the DOCUMENT defines, a scope column
 #       recomputed from the patch's own files, and summary counts recomputed
 #       from the rows.
+#   A8  the NARRATIVE above those tables repeats none of their counts -- prose
+#       says "all of them", the table says how many -- and names the commit
+#       build-openbios.sh actually checks out. A7 guarded the tables; the five
+#       stale numbers and the wrong SHA were all in the paragraphs above them.
 #   A4  every patches/NN-*.patch parses as a unified diff, and its
 #       `Subject: [PATCH NN/M]` agrees with its own filename. Plus: the series
 #       is numbered 01..N with no gaps and no duplicates.
@@ -57,8 +61,11 @@
 # re-implement it: a private parser would drift and then prove something about
 # itself.
 #
-# §0 proves the scanner on 5 must-catch and 5 must-not-catch shapes BEFORE it is
-# aimed at a real file.
+# §0 proves the scanner on must-catch and must-not-catch shapes BEFORE it is
+# aimed at a real file. It does NOT say how many here: this comment said "5 and
+# 5" while §0's own summary line said "17 and 9", and both were typed by hand.
+# The run counts them as they fire and prints the tally itself -- which is A8's
+# rule applied to the file that enforces it.
 #
 # Usage: check-patch-hygiene.sh <lab-dir>
 set -uo pipefail
@@ -205,7 +212,8 @@ check_record_covers_build() {
         || PROBLEMS+="A6: recorded in a numbered patch but NOT in what is applied, so the record describes firmware nobody builds: $(tr '\n' ' ' <<<"$only_rec")"$'\n'
 }
 
-# A7: the CATALOG and the series must describe the same 41 patches.
+# A7: the CATALOG and the series must describe the same patches. (How many is
+# not written here: see A8, and the reason it exists.)
 #
 # patches/00-CATALOG.md records the 2026-08-28 decision that none of this goes
 # upstream, and sorts every patch by why it exists. That makes it a third record
@@ -304,6 +312,97 @@ check_catalog() {
         || PROBLEMS+="A7: no summary counts parsed out of 00-CATALOG.md — the tables moved or changed shape, so nothing below is being counted at all"$'\n'
 }
 
+# A8: the NARRATIVE above the tables, which is where A7 was not looking.
+#
+# A7 recomputes every number in 00-CATALOG.md's two summary TABLES, and has done
+# since the day the hand-tallied kind table drifted within an hour of being
+# typed. It says of itself that "only ONE of [its four checks] is about the
+# prose" -- and the one it means is those tables. The paragraphs ABOVE them were
+# never read by anything.
+#
+# So they drifted, in exactly the way the tables were stopped from drifting.
+# Measured 2026-08-30, with the checker green: the page opened "## The decision:
+# all 41 are ours", said a pin bump "re-applies all 41", split them "22 of 41"
+# shared against "The 19 arch-local rows", and closed on "what 'all 41 are ours'
+# means" -- while its own summary tables, four inches lower and machine-checked,
+# added up to 53. FIVE stale numbers on a page whose whole subject is numbers
+# that go stale, and CI could not see one of them.
+#
+# THE FIX IS NOT TO CHECK THE PROSE'S ARITHMETIC. A second checked copy of a
+# count is still a second copy; it merely fails loudly instead of quietly. The
+# rule is the repo's own -- derive the fact, don't cache it -- so the narrative
+# carries NO count, the summary tables are the single place counts live, and A8
+# enforces the absence rather than the value. Prose says "all of them"; the
+# table says how many.
+#
+# An absence rule cannot silently stop matching, which is why it is preferable
+# to anchoring on sentences: a scan for a phrase that has been reworded goes
+# green having read nothing, and that is the failure this file's §0 exists for.
+#
+# AND THE PIN, which is the other half. The catalog's first sentence names the
+# commit every patch is a diff against -- and it named `6e563ee`, which is
+# fcode-utils' pin. openbios' is `e5ac46d`. One wrong identity, in the single
+# document whose job is to say what these diffs apply to, found the same day.
+# It is read out of build-openbios.sh rather than kept here: a second copy of a
+# SHA is a cache of the first.
+#
+# THE SENTENCE THAT NAMES IT SPANS TWO LINES ("...against the pinned commit\n
+# `6e563ee`."), so the scan flattens the narrative before looking. A
+# line-anchored regex standing in for a question about a SENTENCE is how
+# check-harness-net.sh was wrong twice; it is not repeated here.
+CAT_PIN=""
+check_catalog_narrative() {
+    local lab="$1" cat="$1/patches/00-CATALOG.md" build="$1/build-openbios.sh"
+    local narr flat pin cpin hit
+    [[ -f "$cat" ]] || return   # A7 already reported the absence
+    if ! grep -q '^## The series' "$cat"; then
+        PROBLEMS+="A8: 00-CATALOG.md has no '## The series' heading — that heading is where the narrative ends and the table begins, so nothing below can tell prose from rows"$'\n'
+        return
+    fi
+    narr="$(sed '/^## The series/,$d' "$cat")"
+
+    # (1) no count-shaped claim in the PROSE -- every line that is not a table
+    # row, above the series table and below it alike. Each pattern is a SHAPE a
+    # patch count takes in a sentence, not a phrase: "all 41", "22 of 41",
+    # "41 patches", "19 arch-local rows", "the other 48", "23 bug fixes".
+    #
+    # It is scoped to non-`|` lines rather than to the narrative because the
+    # first draft WAS narrative-only, and the paragraphs BELOW the summary
+    # tables turned out to carry more stale numbers ("the other 48", "behind 23
+    # bug fixes"). A rule aimed at the half of the document where the bug was
+    # found is a rule that has already been outflanked once.
+    #
+    # AND IT IS FLATTENED, for the reason the pin check is. The line-based
+    # version of this scan MISSED "behind 23 bug\nfixes" in the real file --
+    # markdown wraps, so half these phrases straddle a line break. That is the
+    # fourth time in this repo a line-anchored pattern has stood in for a
+    # question about a sentence, and it was caught here only because the
+    # document it was aimed at happened to contain the wrapped case.
+    hit="$(grep -vE '^\|' "$cat" | tr '\n' ' ' \
+        | grep -oE '\ball [0-9]+\b|\bother [0-9]+\b|[0-9]+ of [0-9]+|[0-9]+ patches\b|[0-9]+ [a-z-]* ?(fixes|rows)\b|[0-9]+ (`?(arch-local|shared)`? )?rows\b' || true)"
+    if [[ -n "$hit" ]]; then
+        PROBLEMS+="A8: 00-CATALOG.md's prose carries a count its summary tables already hold — $(tr '\n' '/' <<<"$hit" | sed 's:/$::') — and a count in prose is a cache that goes stale while the checked table stays right (five did, 2026-08-30). Say 'all of them' and let the table say how many"$'\n'
+    fi
+
+    # (2) the commit the patches are against, derived from the build.
+    flat="$(printf '%s' "$narr" | tr '\n' ' ')"
+    # grep -o, not a `.*`-anchored sed: on a flattened document a leading `.*`
+    # is greedy and would silently read the LAST "pinned commit" in the file
+    # rather than the first. Take the first match explicitly.
+    cpin="$(grep -oE 'pinned commit[^`]*`[0-9a-f]{7,40}`' <<<"$flat" | head -1 | grep -oE '[0-9a-f]{7,40}')"
+    pin=""
+    [[ -f "$build" ]] && pin="$(sed -n 's/^OPENBIOS_PIN=\([0-9a-f]\{40\}\)$/\1/p' "$build" | head -1)"
+    if [[ -z "$pin" ]]; then
+        PROBLEMS+="A8: no OPENBIOS_PIN in $(basename "$build") — the catalog's base commit has nothing to be checked against, and an unchecked identity is what put fcode-utils' SHA in this document"$'\n'
+    elif [[ -z "$cpin" ]]; then
+        PROBLEMS+="A8: 00-CATALOG.md's narrative no longer names the pinned commit its patches are diffs against — the record and the tree it applies to are unbound"$'\n'
+    elif [[ "$pin" != "$cpin"* ]]; then
+        PROBLEMS+="A8: 00-CATALOG.md says the patches are against commit '$cpin'; build-openbios.sh checks out '${pin:0:7}' — the catalog is naming a different tree than the one every patch was made from"$'\n'
+    else
+        CAT_PIN="$cpin"
+    fi
+}
+
 # check_patch <patch> — A4 for one file.
 check_patch() {
     local p="$1" base num subj
@@ -336,12 +435,14 @@ mk_patch() { # mk_patch <path> <subject-nn> <total> <file> <added-line>
         "$2" "$3" "$4" "$4" "$4" "$4" "$5" > "$1"
 }
 mk_build() { printf 'TESTED_TREE_MARKERS=(\n%s)\n' "$1" > "$2"; }
-c_ok=0; c_bad=0
+c_ok=0; c_bad=0; c_catch=0; c_clean=0
 expect() {
     local want="$1" label="$2"
     if [[ "$want" == catch ]]; then
+        c_catch=$((c_catch+1))
         if [[ -n "$PROBLEMS" ]]; then c_ok=$((c_ok+1)); else c_bad=$((c_bad+1)); note "§0 MISSED: $label"; fi
     else
+        c_clean=$((c_clean+1))
         if [[ -z "$PROBLEMS" ]]; then c_ok=$((c_ok+1)); else c_bad=$((c_bad+1)); note "§0 FALSE POSITIVE: $label -> $PROBLEMS"; fi
     fi
     PROBLEMS=""
@@ -513,12 +614,108 @@ mk_cat_lab "$WORK/cat-shape" "$CAT_VOCAB
 $CAT_SUMS"
 check_catalog "$WORK/cat-shape"; expect catch "a reshaped table out of which no row parses — the scanner must say so, not pass"
 
+# ── §0: A8's own controls ───────────────────────────────────────────────────
+# A8 is an ABSENCE rule, and an absence rule has two ways to be useless: it can
+# miss the shapes a count actually takes, and it can fire on the ordinary
+# numbers a document about a patch series is full of (dates, patch numbers,
+# ranges). Both directions are fixtured here.
+mk_narr_lab() { # mk_narr_lab <lab> <narrative> <pin-line> [prose-AFTER-the-tables]
+    local lab="$1" narr="$2" pinline="$3" tail="${4:-the taxonomy is left thin on purpose.}"
+    mkdir -p "$lab/patches"
+    mk_patch "$lab/patches/01-a.patch" 01 2 "arch/x86/a.c" "x"
+    mk_patch "$lab/patches/02-b.patch" 02 2 "libc/b.c"     "y"
+    printf '%s\n\n## The series\n\n%s\n| [`01-a.patch`](01-a.patch) | `PORT` | arch-local | it is a port |\n| [`02-b.patch`](02-b.patch) | `FIXTURE` | shared | it is a fixture |\n%s\n%s\n' \
+        "$narr" "$CAT_VOCAB" "$CAT_SUMS" "$tail" > "$lab/patches/00-CATALOG.md"
+    printf 'OPENBIOS_PIN=%s\n' "$pinline" > "$lab/build-openbios.sh"
+}
+GOODPIN=e5ac46dd24e6216c36aa80462af25457e7029440
+
+NARR_OK='`patches/` holds one annotated diff per change against the pinned commit
+`e5ac46d`.
+
+## The decision (2026-08-28): all of them are ours
+
+Upstream carries commits dated 2026-06-29. Every patch from patch 20 onward has
+an `Arch-tested:` line, and the narrative for patches 12-34 lives in the README.
+The `shared` rows below are where a rebase will land; the summary says how many.'
+
+mk_narr_lab "$WORK/narr-ok" "$NARR_OK" "$GOODPIN"
+check_catalog_narrative "$WORK/narr-ok"
+expect clean "a narrative with dates, 'patch 20 onward' and a patch RANGE, carrying no count and the right pin"
+
+mk_narr_lab "$WORK/narr-all" "${NARR_OK/all of them are ours/all 41 are ours}" "$GOODPIN"
+check_catalog_narrative "$WORK/narr-all"
+expect catch "'all 41 are ours' — the exact shape that drifted to 53 with CI green"
+
+mk_narr_lab "$WORK/narr-of" "$NARR_OK
+The **22 of 41** shared rows are where it hurts." "$GOODPIN"
+check_catalog_narrative "$WORK/narr-of"
+expect catch "'22 of 41' — a split written in prose beside a table that recomputes it"
+
+mk_narr_lab "$WORK/narr-rows" "$NARR_OK
+The 19 \`arch-local\` rows are nearly free to carry." "$GOODPIN"
+check_catalog_narrative "$WORK/narr-rows"
+expect catch "'The 19 arch-local rows' — a row count in prose"
+
+mk_narr_lab "$WORK/narr-patches" "$NARR_OK
+A pin bump means re-reading 41 patches." "$GOODPIN"
+check_catalog_narrative "$WORK/narr-patches"
+expect catch "'41 patches' — the same count wearing a different noun"
+
+# The two shapes that outflanked the first draft: prose BELOW the summary
+# tables, which a narrative-only scan never reads.
+mk_narr_lab "$WORK/narr-tail-other" "$NARR_OK" "$GOODPIN" \
+    "Only one is a divergence; the other 48 are things upstream would want."
+check_catalog_narrative "$WORK/narr-tail-other"
+expect catch "'the other 48' — a count in the prose BELOW the tables, where the first draft did not look"
+
+mk_narr_lab "$WORK/narr-tail-fixes" "$NARR_OK" "$GOODPIN" \
+    "Collapsing them would hide the divergence behind 23 bug fixes."
+check_catalog_narrative "$WORK/narr-tail-fixes"
+expect catch "'behind 23 bug fixes' — the same count as a different noun, also below the tables"
+
+# THE WRAPPED CASE, which the line-based first draft missed in the real file:
+# markdown wraps, so the count and its noun land on different lines.
+mk_narr_lab "$WORK/narr-tail-wrap" "$NARR_OK" "$GOODPIN" \
+    "Collapsing them would hide the only divergence behind 23 bug
+fixes."
+check_catalog_narrative "$WORK/narr-tail-wrap"
+expect catch "a count SPLIT ACROSS A LINE BREAK ('23 bug\\nfixes') — the shape a line-anchored scan reads as clean"
+
+mk_narr_lab "$WORK/narr-wrongpin" "${NARR_OK/e5ac46d/6e563ee}" "$GOODPIN"
+check_catalog_narrative "$WORK/narr-wrongpin"
+expect catch "the catalog naming fcode-utils' pin as the commit these diffs apply to — the real defect, 2026-08-30"
+
+mk_narr_lab "$WORK/narr-nopin" "${NARR_OK/against the pinned commit
+\`e5ac46d\`./against upstream.}" "$GOODPIN"
+check_catalog_narrative "$WORK/narr-nopin"
+expect catch "a catalog that names no base commit at all — the record unbound from the tree it applies to"
+
+mk_narr_lab "$WORK/narr-nobuild" "$NARR_OK" "$GOODPIN"
+rm -f "$WORK/narr-nobuild/build-openbios.sh"
+check_catalog_narrative "$WORK/narr-nobuild"
+expect catch "no OPENBIOS_PIN to check against — an unchecked identity is how the wrong SHA got in"
+
+mk_narr_lab "$WORK/narr-noseries" "$NARR_OK" "$GOODPIN"
+sed -i '/^## The series/d' "$WORK/narr-noseries/patches/00-CATALOG.md"
+check_catalog_narrative "$WORK/narr-noseries"
+expect catch "the heading that separates prose from rows is gone — the scan can no longer tell them apart"
+
+# The two-line sentence, which is how the real file is written and how a
+# line-anchored scan would go green having read nothing.
+mk_narr_lab "$WORK/narr-split" "\`patches/\` holds one diff per change against the pinned commit
+\`6e563ee\`.
+
+## The decision: all of them are ours" "$GOODPIN"
+check_catalog_narrative "$WORK/narr-split"
+expect catch "a WRONG pin split across two lines — the shape a line-anchored regex misses"
+
 (( c_bad == 0 )) \
     || fail "§0: $c_bad of $((c_ok + c_bad)) scanner controls behaved wrongly — nothing below its verdict means anything"
 # The fixtures used the exemption too; clear what they recorded, or the report
 # below names a temp file as a grandfathered patch.
 EXEMPT_USED=""
-note "§0 controls: 17 must-catch, 9 must-not-catch — all $c_ok behaved"
+note "§0 controls: $c_catch must-catch, $c_clean must-not-catch — all $c_ok behaved (counted as they ran; this line used to carry the tally by hand, which is the defect A8 exists for)"
 
 # ---------------------------------------------------------------- the real files
 
@@ -536,6 +733,7 @@ check_markers "$BUILD" "$PTT"
 check_markers_pristine "$BUILD"
 check_record_covers_build "$LAB"
 check_catalog "$LAB"
+check_catalog_narrative "$LAB"
 
 for p in "${PATCHES[@]}"; do check_patch "$p"; done
 
@@ -562,8 +760,9 @@ if [[ -n "$A3B" ]]; then
 fi
 note "A6: the record and the applied patch agree on all $A6_BUILT files"
 note "A7: 00-CATALOG.md classifies all $CAT_ROWS patches — kinds, scopes and counts all recomputed from the patches themselves"
+note "A8: its narrative carries no count of its own, and names commit ${CAT_PIN:-?} — read out of build-openbios.sh, not out of this checker"
 note "A4: ${#PATCHES[@]} patches parse as unified diffs, subjects agree with filenames, series is 01..${#PATCHES[@]}"
 if [[ -n "$EXEMPT_USED" ]]; then
     note "A4: no Subject: line on ${EXEMPT_USED% } — grandfathered BY NAME (the convention began at patch 11), printed here so the exemption cannot grow unnoticed"
 fi
-pass "the patch series is coherent with itself, with what is applied, and with the build: $NMARK markers describe strings the applied patch actually adds, and all ${#PATCHES[@]} patches read as unified diffs numbered 01..${#PATCHES[@]} with subjects that match their filenames, and the record and the applied TESTED-TREE.patch name the same $A6_BUILT files, and 00-CATALOG.md classifies all $CAT_ROWS of them with scopes and counts recomputed rather than read (26 scanner self-controls fired first)"
+pass "the patch series is coherent with itself, with what is applied, and with the build: $NMARK markers describe strings the applied patch actually adds, and all ${#PATCHES[@]} patches read as unified diffs numbered 01..${#PATCHES[@]} with subjects that match their filenames, and the record and the applied TESTED-TREE.patch name the same $A6_BUILT files, and 00-CATALOG.md classifies all $CAT_ROWS of them with scopes and counts recomputed rather than read, its narrative repeating none of those counts and naming the pin the build actually checks out ($((c_catch + c_clean)) scanner self-controls fired first)"

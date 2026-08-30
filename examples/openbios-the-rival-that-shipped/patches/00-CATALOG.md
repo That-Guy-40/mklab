@@ -1,7 +1,7 @@
 # Every patch, sorted — and why none of them goes upstream
 
 `patches/` holds one annotated diff per change against the pinned commit
-`6e563ee`. [`TESTED-TREE.patch`](TESTED-TREE.patch) is the cumulative version
+`e5ac46d`. [`TESTED-TREE.patch`](TESTED-TREE.patch) is the cumulative version
 that [`build-openbios.sh`](../build-openbios.sh) actually applies; the numbered
 patches are **the record** — read, not run.
 [`tools/check-patch-hygiene.sh`](../../../tools/check-patch-hygiene.sh) binds
@@ -9,7 +9,7 @@ the two together so the record cannot quietly outlive what is built.
 
 This file is the fourth thing about them: **a decision, and a sorted index.**
 
-## The decision (2026-08-28): all 41 are ours
+## The decision (2026-08-28): all of them are ours
 
 **Nothing here is sent to `openbios/openbios`.** Every patch is carried as
 deliberate local divergence, indefinitely.
@@ -29,11 +29,14 @@ claim that patches would have nowhere to land. Recording it the other way round
 would be exactly the failure this lab keeps finding in everything else it
 touches: a record that outlives its subject, comfortable and wrong.
 
-**What the decision costs.** Every bump of `OPENBIOS_PIN` re-applies all 41. The
-`shared` rows below are where a conflict will actually land — **22 of 41** touch
-a path that some *other* architecture's build also compiles. The 19 `arch-local`
-rows touch only `arch/x86`, `arch/amd64`, their headers, or their own
-`*_config.xml`, and are nearly free to carry.
+**What the decision costs.** Every bump of `OPENBIOS_PIN` re-applies the whole
+series. The `shared` rows below are where a conflict will actually land — they
+touch a path that some *other* architecture's build also compiles. The
+`arch-local` rows touch only `arch/x86`, `arch/amd64`, their headers, or their
+own `*_config.xml`, and are nearly free to carry. **How many of each is in the
+scope summary below**, and nowhere else on this page: `check-patch-hygiene.sh`
+**A8** fails the run if a count reappears in the prose, because every count that
+was written here drifted while the machine-checked table stayed right.
 
 **What would reverse it.** The `UPSTREAM-BUG` rows are the candidate set, already
 one-per-defect with PR-shaped `Subject:` lines and (from patch 20 onward) an
@@ -140,13 +143,14 @@ And by where a future rebase will hurt:
 | shared | 30 | touches a path some *other* architecture's build also compiles — this is where a pin bump conflicts |
 | arch-local | 23 | only `arch/`, `include/arch/`, or its own `*_config.xml` — nearly free to carry |
 
-**Only one patch is a divergence in the sense of "we want different behaviour."**
-The other 48 are things upstream would arguably want and is not going to be
-asked for. That asymmetry is the honest summary of what "all 41 are ours" means
-here: it is a decision about traffic, not about taste.
+**Only the `DIVERGENCE` rows are divergences in the sense of "we want different
+behaviour."** Everything else is something upstream would arguably want and is
+not going to be asked for. That asymmetry is the honest summary of what "all of
+them are ours" means here: it is a decision about traffic, not about taste.
 
-**Two of the six kinds have exactly one member**, which is a thin taxonomy and
-is left thin on purpose — `RECORD` and `DIVERGENCE` each name a genuinely
-different reason for a patch to exist, and collapsing them into the others would
-hide the only deliberate behavioural divergence in the series behind 23 bug
-fixes.
+**`RECORD` is a taxonomy of one**, which is thin and is left thin on purpose: it
+names a genuinely different reason for a patch to exist — bookkeeping inside
+`patches/` itself, no behaviour change — and folding it into the others would
+file a non-change beside the fixes. `DIVERGENCE` began the same way and has
+since grown (patch 15's Forth loader, then the two unix patches), which is the
+argument for keeping a thin kind rather than against it.

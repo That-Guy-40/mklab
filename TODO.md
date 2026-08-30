@@ -3114,8 +3114,8 @@ changed the shape of this item:
   the SHAs **out of** `build-openbios.sh` — a second copy would be a cache of the
   first, stale in exactly the case it exists to detect — and reports when
   upstream has moved past them. It never bumps anything: moving the pin means
-  re-reading 30 patches and re-running every track on three arches, and that is a
-  decision someone makes rather than a surprise mid-build.
+  re-reading every patch in `patches/` and re-running every track on three
+  arches, and that is a decision someone makes rather than a surprise mid-build.
 
   **A pin nobody looks at ages silently, so a routine looks at it weekly** —
   Mondays 09:00 America/New_York (`0 13 * * 1` UTC), routine
@@ -4148,6 +4148,11 @@ decisions are now taken**: §17.2 on 2026-08-28 (nothing goes upstream) and §17
 on 2026-08-29 (two address cells, amd64 only). What is left below is dangling
 issues, named so they are not rediscovered as new.
 
+**All of 17.1–17.7 are closed. §17.8 is what was left when they were** — not
+items, but sentences inside the closed sections: a claim nothing had derived and
+a page of counts nothing was reading. Audit the closed section's *prose*, not
+just its checkboxes.
+
 ### 17.1 — ~~DECISION: should the root declare `#address-cells 2`?~~ — DONE 2026-08-29 (patches 42-43)
 
 **Decided: yes, on amd64 only.** `arch/amd64/init.fs` now declares
@@ -4475,10 +4480,18 @@ comparison that never looked.
 - [`openbios-archive-tree.sh`](tools/openbios-archive-tree.sh) digests **source**
   and excludes `obj-*`, which is what makes an archive comparable to a cold
   reproduction. A digest over the binaries would still identify nothing on amd64.
-- *"The cold tree and the dev tree build identical bytes"* is now a claim this lab
-  **can** make, on both arches, with `SOURCE_DATE_EPOCH` set. No test asserts it
-  in `run-all.sh`: five container builds, minutes each — `MANUAL_TESTING.md`
-  carries the invocation.
+- *"The cold tree and the dev tree build identical bytes"* — **MEASURED
+  2026-08-30, and it holds.** It was written here as a claim this lab *"**can**
+  make"*, which is not the same as one anybody had made: nothing had ever built
+  the cold tree and compared. [`tools/openbios-check-cold-tree.sh`](tools/openbios-check-cold-tree.sh)
+  does it — clone at the pin, apply `TESTED-TREE.patch`, build both arches with
+  `SOURCE_DATE_EPOCH` pinned — and reports **722/722 source files
+  sha256-identical** and **6/6 artifacts** byte-for-byte equal (both
+  dictionaries, both multiboot images, `openbios-builtin.elf` and
+  `.elf32`). So the tree this lab measures **is** the tree its record defines,
+  and that is now a derivation rather than a sentence. Not in `run-all.sh`: a
+  cold clone plus four container builds; `MANUAL_TESTING.md`'s *Reproducer
+  notes* carry the invocation and the transcript.
 
 ### 17.6 — ~~The provenance/rebuild ordering trips easily~~ — CLOSED 2026-08-29
 
@@ -4537,6 +4550,81 @@ scanner never reaches their tests. So the state of those suites is **UNKNOWN**,
 not bad: §15.2's *"three private copies of the net, one already drifted weaker"*
 is what somebody found by reading, and nothing has yet been able to measure the
 rest.
+
+### 17.8 — the residue inside §17 itself — CLOSED 2026-08-30
+
+Every subsection above was struck through, so "what is left in §17" was not a
+list of items but a handful of **sentences inside the closed ones**: a claim
+nothing had derived, and a page of counts nothing was reading. Both are the
+failure mode this section exists to document, committed by the section that
+documents it.
+
+**(a) *"can make"* is not *"measured"*.** §17.5 closed byte-reproducibility and
+then wrote that *"the cold tree and the dev tree build identical bytes"* is a
+claim this lab **can** make. Nobody had built the cold tree. Now
+[`tools/openbios-check-cold-tree.sh`](tools/openbios-check-cold-tree.sh) does:
+**722/722 source files sha256-identical**, **6/6 artifacts byte-identical** on
+both arches. The claim holds — which is the good outcome, and was never the
+point. An underived claim is an UNKNOWN wearing a PASS's clothes whether or not
+it happens to be true.
+
+**Its control found three defects in the checker, none visible in the green
+run** — the repo's own rule about where the bugs are, on the first try:
+
+| the defect | how it presented |
+|---|---|
+| the artifact message asserted *"the sources are identical, so a third source of non-determinism has appeared"* — **in a run where the source half had just reported them different** | four confident lines sending a reader to hunt determinism, when the cause was the edit named two lines above |
+| `cmp -l` writes `EOF on <file>` to **stderr** when the lengths differ | two lines of noise above the verdict, in the report of a tool whose subject is reading bytes carefully |
+| one edited file was counted as **2 differing entries** | `diff` emits a `<` and a `>` for the same path; the list printed it twice |
+
+**And the reach was measured rather than assumed.** Of the six artifacts, the
+two `openbios.multiboot` loaders do **not** embed the dictionary: the control
+tree — one extra Forth word — built a byte-identical multiboot on both arches
+while both `.dict`s and both `openbios-builtin.elf`s changed and contained the
+new word. So `6/6` is not six independent witnesses, and the tool now says which
+file answers which question instead of letting the ratio imply it.
+
+**(b) A7 guarded the tables; every stale number was in the prose above them.**
+[`patches/00-CATALOG.md`](examples/openbios-the-rival-that-shipped/patches/00-CATALOG.md)
+opened *"all 41 are ours"*, said a pin bump *"re-applies all 41"*, split them
+*"22 of 41"* against *"The 19 `arch-local` rows"*, and closed on *"the other
+48"* and *"behind 23 bug fixes"* — while its own summary tables, four inches
+lower and recomputed on every CI run since the day they drifted, added up to
+**53**. Five stale numbers on the page whose subject is numbers that go stale.
+
+**And its first sentence named the wrong tree.** *"one annotated diff per change
+against the pinned commit `6e563ee`"* — that is **fcode-utils'** pin. The
+patches are against `e5ac46d`. One wrong identity, in the single document whose
+job is to say what these diffs apply to, in the one place in the repo that got
+it wrong.
+
+`check-patch-hygiene.sh` gains **A8**, and it is deliberately an **absence**
+rule rather than a second checked copy of the counts: the prose carries none of
+them, the tables are the single place they live, and the base commit is read out
+of `build-openbios.sh` rather than kept anywhere. A rule that forbids a shape
+cannot silently stop matching the way a scan for a reworded sentence can. Ten
+new self-controls, all watched — and the widening was not foreseen but
+**forced**: the first draft scanned only the narrative *above* the series table
+and missed *"the other 48"*; the second was line-anchored and missed *"behind 23
+bug\nfixes"*, because markdown wraps. That is the **fourth** time in this repo a
+line-anchored pattern has stood in for a question about a sentence, and this one
+was caught only because the document it was aimed at happened to contain the
+wrapped case.
+
+**(c) The same count, stale in three more places**, all present-tense: *"moving
+the pin means re-reading 30 patches"* in the lab README, in
+[`tools/openbios-pin-check.sh`](tools/openbios-pin-check.sh)'s header, and in
+§0.6's own text here. All three now say *"every patch in `patches/`"* — the
+number was never doing any work. `MANUAL_TESTING.md` also billed
+`openbios-check-reproducible.sh` as *"four container builds"*; it is five, the
+fifth being the negative control that was added after the sentence was written.
+
+**(d) What was deliberately left alone**, so it is not rediscovered as a defect:
+[`REVIEW-preboot-forth-as-a-poke-engine.md`](REVIEW-preboot-forth-as-a-poke-engine.md)
+says *"this repo's 48 patches"* in a **Repo state** table stamped `fc02a0b`. That
+is a record bound to a commit, and it was true at that commit. A dated record
+that names its subject is exactly what a cache is not. §17.7's UNKNOWN belongs
+to §15, which is its home.
 
 
 ---

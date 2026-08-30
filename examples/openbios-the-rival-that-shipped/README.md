@@ -340,8 +340,17 @@ A clone already at the pin is left completely alone, so the uncommitted divergen
 develops in is never disturbed. A clone that is *not* at the pin **and** has uncommitted
 changes makes the build refuse by name rather than move `HEAD` under that work.
 
+**So the tree is a definition, not a directory — and that is checkable.**
+[`tools/openbios-check-cold-tree.sh`](../../tools/openbios-check-cold-tree.sh) clones cold at
+the pin, applies [`patches/TESTED-TREE.patch`](patches/TESTED-TREE.patch), builds both arches
+with `SOURCE_DATE_EPOCH` pinned, and compares: **722/722 source files sha256-identical, 6/6
+artifacts byte-for-byte** (2026-08-30). The failure it exists for is silent — a hand edit that
+lives only in the working copy makes every published result describe a tree nobody else can
+obtain, and both trees still build and still boot.
+
 [`tools/openbios-pin-check.sh`](../../tools/openbios-pin-check.sh) reports when upstream has
 moved past the pin — reading the SHAs *out of* `build-openbios.sh`, because a second copy
 would be a cache of the first and stale in exactly the case it exists to detect. A weekly
-cloud routine runs it. **Neither ever bumps the pin**: moving it means re-reading 30 patches
-and re-running every track on three arches, which is a decision, not a build step.
+cloud routine runs it. **Neither ever bumps the pin**: moving it means re-reading every
+patch in [`patches/`](patches/00-CATALOG.md) and re-running every track on three arches,
+which is a decision, not a build step.
