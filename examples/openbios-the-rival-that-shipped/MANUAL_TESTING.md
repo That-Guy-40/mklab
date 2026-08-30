@@ -576,6 +576,29 @@ back from the prompt and must each fit in four bytes, which is the value
 heap and the track fails by name, *"never printed its banner, so initialisation
 did not complete"*.
 
+**And the exit status now means something** (TODO §18(b),
+[patch 51](patches/51-unix-exit-status-reports-the-forth.patch)). `main()` used to
+`return 0` whatever the Forth had done, so the halt above reported *success* to
+the shell — a false success, which outranks an honest failure. Three obvious
+C-side signals cannot tell the two apart, and the reason is that `bye` and an
+uncaught `throw` unwind **identically** (`0 rdepth!` either way). So the flag sits
+on the deliberate path: `bye` sets `of-left-cleanly`, and `arch/unix` reads it
+through `feval()`. Measured:
+
+```console
+$ printf '3 4 + .\nbye\n' | obj-amd64/openbios-unix obj-amd64/openbios-unix.dict; echo $?
+… Farewell!
+0
+$ # with the arena forced back above 4 GiB, so initialisation aborts:
+openbios-unix: the Forth engine was left WITHOUT `bye` -- initialisation did not complete.
+1
+```
+
+A missing flag is **UNKNOWN**, not a failure: the C side says so by name and keeps
+the old status. *(Measure it without a pipeline — `printf … | openbios-unix | tail`
+makes `PIPESTATUS[0]` the status of `printf`, which reads 0 whatever the firmware
+did. That nearly produced a wrong verdict here.)*
+
 ## 6. Interactive & the ppc swap-in
 
 ```console

@@ -216,6 +216,8 @@ TESTED_TREE_MARKERS=(
     "forth/device/other.fs:( addr -- byte )   c@ ;"
     # -- TODO 18: the unix arena below 4 GiB, so an ihandle fits (patch 50) --
     "arch/unix/unix.c:alloc_below_4g"
+    # -- TODO 18(b): the exit status reports what the Forth did (patch 51) --
+    "forth/bootstrap/start.fs:of-left-cleanly"
 )
 present=(); absent=()
 for m in "${TESTED_TREE_MARKERS[@]}"; do

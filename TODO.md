@@ -4573,27 +4573,50 @@ A host pointer cannot survive four bytes. Before patch 26 this target "worked"
 by silently truncating them to their low 32 bits — the LIED rung — which is the
 era §5's old transcript came from. Patch 26 turned that into an honest halt.
 
-### (b) THE DEFECT: the honest halt still exits 0
+### (b) CLOSED 2026-08-30 — the exit status is a report now, not a constant
 
-`arch/unix/unix.c:599` returns 0 unconditionally after `enterforth()`, so a
-bootstrap that aborted and one that ran to completion are indistinguishable to
-the shell. A false success outranks an honest failure, so this is the part worth
-fixing.
+`arch/unix/unix.c` returned 0 unconditionally after `enterforth()`, so a
+bootstrap that aborted and one that ran to completion were indistinguishable to
+the shell. A false success outranks an honest failure, which is why this was the
+part worth fixing.
 
 **Three obvious signals were measured and all three fail to discriminate** —
-recorded so the next attempt does not re-derive them:
+kept, because they are why the fix is not a one-liner:
 
 | signal | abort case | clean case |
 |---|---|---|
 | `enterforth()`'s return (`rstackcnt != tmp`) | `0` | `0` — `throw` with no catch frame unwinds to depth 0, so the return stack balances |
-| `interruptforth & FORTH_INTSTAT_STOP` | `0` | `0` — cleared by the time `enterforth` returns |
+| `interruptforth & FORTH_INTSTAT_STOP` | `0` | `0` — it marks input EOF, not how the session ended |
 | `exception()` (`kernel/bootstrap.c:605`) | never called | never called — it serves the dictionary-BUILD path, not a prebuilt dict at runtime |
 
-So the fix needs a deliberate "initialisation completed" flag, which is a
-Forth→C binding or a shared-kernel change rather than an arch-local edit. Left
-undone on purpose; `smoke-openbios.sh unix` prints it as a **KNOWN DEFECT** on
-every run and its `[[ $URC -eq 0 ]]` row **goes red the day it is fixed**, which
-sends the fixer here.
+**The reason all three fail is one fact**, and `start.fs`'s own comment names it:
+`initialize-of` *"is never left unless something goes really wrong or the user
+decides to leave the engine"*. Both exits unwind **identically** — `bye` ends in
+`0 rdepth!`, and an uncaught `throw` ends in `catchframe @ rdepth!` where
+`catchframe` is `0`. The same store. So there is nothing to detect *about the
+abort*; the discriminator has to be on the path that is DELIBERATE.
+
+[Patch 51](examples/openbios-the-rival-that-shipped/patches/51-unix-exit-status-reports-the-forth.patch)
+does exactly that: `bye` sets `of-left-cleanly`, and `arch/unix` reads it through
+**`feval()`** — the shipped C-to-Forth call — rather than reaching into the
+dictionary at a guessed offset. Measured both ways:
+
+    clean session ending in bye ....... exit 0, no diagnostic
+    init aborts (arena above 4 GiB) ... exit 1, "the Forth engine was left
+                                        WITHOUT `bye` -- initialisation did
+                                        not complete. See TODO 18(b)."
+
+**And a missing flag is UNKNOWN, not a failure.** If `of-left-cleanly` is not in
+the dictionary the C side says so by name and keeps the old status, because "I
+could not check" must render as neither a pass nor a fail.
+
+`smoke-openbios.sh unix` asserts all three states: exit 0 on the healthy run, the
+absence of the abort diagnostic on it, and the absence of the UNKNOWN line.
+
+*(Measuring this is its own trap, recorded because it nearly produced a wrong
+verdict: `printf … | openbios-unix | tail` is a THREE-element pipeline, so
+`PIPESTATUS[0]` is `printf`'s status and reads 0 whatever the firmware did.
+Redirect to a file and read `$?`.)*
 
 ### (c) FIXED — but not the way this section first proposed
 
@@ -4662,10 +4685,3 @@ only `if (!segfault)` — so a real fault reaches gdb or a core file instead of
 being printed and `exit(1)`ed. It was already shipped; I did not need to build a
 probe.)*
 
-### (b), narrowed
-
-The false success is *no longer reachable on this path* — initialisation
-completes — and patch 50's own failure path exits non-zero. But
-`arch/unix/unix.c:599` still returns 0 after `enterforth()` whatever the Forth
-did, so **any other** bootstrap abort would still report success. The three
-signals measured above remain the reason that is not a one-liner.
