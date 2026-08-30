@@ -1086,11 +1086,17 @@ anchor — the pxeboot HTTPS tier and System Transparency OSPKG signing already
 chain to it — and until 2026-08-30 `git grep lab-ca netboot/` returned nothing.
 A trust anchor with one consumer is a self-signed certificate with extra steps.
 
-```bash
-examples/lab-ca/make-ca.sh                              # once, ever (ECDSA P-256 root)
-examples/lab-ca/issue-codesign-cert.sh netboot-payload  # ECDSA P-256 + codeSigning EKU
+`<name>` below is yours to choose; this transcript used **`netboot-payload`**. It is a
+positional argument, not a verb — `issue-codesign-cert.sh` does not dispatch on it, which
+is why it is written as a placeholder here (`tools/check-doc-verbs.sh` probes a bare word
+in that position by *running* the tool with it, and a tool that mints certificates should
+not be probed that way).
 
-netboot/sign-payload.sh --lab-ca netboot-payload \
+```bash
+examples/lab-ca/make-ca.sh                       # once, ever (ECDSA P-256 root)
+examples/lab-ca/issue-codesign-cert.sh <name>    # ECDSA P-256 + codeSigning EKU
+
+netboot/sign-payload.sh --lab-ca <name> \
     --out-trust ~/netboot/codesign/lab-ca.der \
     ~/netboot/images/dns/{current,previous}/{vmlinuz,initrd.gz}
 

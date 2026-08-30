@@ -80,7 +80,12 @@ note "--lab-ca with --gen-keys → refused as contradictory"
 LEAF="$CA/private/certs/netboot-payload-codesign.crt"
 
 # ── 3. the leaf is what iPXE needs: ECDSA, codeSigning EKU ──────────────────────────────
-openssl x509 -in "$LEAF" -noout -ext extendedKeyUsage 2>/dev/null | grep -q "Code Signing" \
+# Capture, then test. `producer | grep -q … || fail` is the inversion the repo gates on:
+# grep -q closes the pipe, the producer takes SIGPIPE, pipefail makes the pipeline non-zero,
+# and a match that WAS found reads as absent. tools/tests/test-no-pipe-gates.sh caught this
+# line in CI after every local suite was green.
+leaf_eku="$(openssl x509 -in "$LEAF" -noout -ext extendedKeyUsage 2>/dev/null || true)"
+grep -q "Code Signing" <<<"$leaf_eku" \
     || fail "REGRESSION: the code-signing leaf lacks the codeSigning EKU iPXE imgverify requires"
 alg="$(openssl x509 -in "$LEAF" -noout -text | sed -n 's/.*Public Key Algorithm: //p' | head -1)"
 [[ "$alg" == "id-ecPublicKey" ]] \
@@ -123,7 +128,8 @@ note "one flipped byte → the signature is rejected"
 ( cd "$CA" && ./issue-signing-cert.sh ospkg-signer ) >/dev/null 2>&1 \
     || fail "issue-signing-cert.sh failed to mint the stboot-profile leaf"
 ST_LEAF="$CA/private/certs/ospkg-signer-sign.crt"
-if openssl x509 -in "$ST_LEAF" -noout -ext extendedKeyUsage 2>/dev/null | grep -q "Code Signing"; then
+st_eku="$(openssl x509 -in "$ST_LEAF" -noout -ext extendedKeyUsage 2>/dev/null || true)"
+if grep -q "Code Signing" <<<"$st_eku"; then
     fail "REGRESSION: the System Transparency leaf has grown a codeSigning EKU — stboot's descriptor.Verify() will reject it with 'certificate specifies an incompatible key usage', and the OSPKG path breaks at boot with nothing here to say why"
 fi
 mkdir -p "$TMP/stdir/certs"

@@ -36,9 +36,14 @@ got="$(openssl x509 -in "$CRT" -noout -fingerprint -sha256 | sed 's/^.*=//')"
 note "the tracked fingerprint is the tracked certificate's"
 
 # ── 2. it is a usable CA, now ───────────────────────────────────────────────────────────
-openssl x509 -in "$CRT" -noout -ext basicConstraints 2>/dev/null | grep -q "CA:TRUE" \
+# Capture, then test, everywhere below: `producer | grep -q … || fail` is the inversion
+# tools/tests/test-no-pipe-gates.sh gates on — grep -q closes the pipe, the producer takes
+# SIGPIPE, pipefail makes the pipeline non-zero, and a match that WAS found reads as absent.
+anchor_bc="$(openssl x509 -in "$CRT" -noout -ext basicConstraints 2>/dev/null || true)"
+grep -q "CA:TRUE" <<<"$anchor_bc" \
     || fail "the anchor does not assert CA:TRUE — nothing it signs can chain to it"
-openssl x509 -in "$CRT" -noout -ext keyUsage 2>/dev/null | grep -qi "Certificate Sign" \
+anchor_ku="$(openssl x509 -in "$CRT" -noout -ext keyUsage 2>/dev/null || true)"
+grep -qi "Certificate Sign" <<<"$anchor_ku" \
     || fail "the anchor lacks keyCertSign — a verifier that checks key usage will refuse every leaf it issued"
 openssl x509 -in "$CRT" -noout -checkend 0 >/dev/null 2>&1 \
     || fail "the shared anchor has EXPIRED — every consumer fails closed, and the failure appears at boot as an unrelated chain error ($(openssl x509 -in "$CRT" -noout -enddate))"
@@ -61,7 +66,7 @@ tracked_keys="$( cd "$LAB_DIR" && git ls-files | grep -E '\.key$|key\.pem$|^priv
 if [[ -f "$LAB_DIR/private/lab-ca.key" ]]; then
     ( cd "$LAB_DIR" && git check-ignore -q private/lab-ca.key ) \
         || fail "private/lab-ca.key exists and is NOT gitignored — it is one 'git add -A' away from being published"
-    # NOT \`git add -A\` in that message. A backtick inside a DOUBLE-quoted string is
+    # Single quotes in that message, not backticks. A backtick in a DOUBLE-quoted string is
     # command substitution, so the first draft of this line RAN `git add -A` — staging the
     # whole repo — every time the assertion fired. Caught by this test's own control,
     # which is CLAUDE.md's opening rule pointed at a test's error message: never let text
@@ -86,7 +91,8 @@ IP="$CA/private/certs/ipxe-leaf-codesign.crt"
 st_alg="$(openssl x509 -in "$ST" -noout -text | sed -n 's/.*Public Key Algorithm: //p' | head -1)"
 [[ "$st_alg" == "ED25519" ]] \
     || fail "the System Transparency leaf is '$st_alg', not Ed25519 — ST/stmgr signs with Ed25519, so a different key type breaks OSPKG signing"
-if openssl x509 -in "$ST" -noout -ext extendedKeyUsage 2>/dev/null | grep -q .; then
+st_eku="$(openssl x509 -in "$ST" -noout -ext extendedKeyUsage 2>/dev/null || true)"
+if grep -q . <<<"$st_eku"; then
     fail "REGRESSION: the System Transparency leaf has grown an extendedKeyUsage. stboot's descriptor.Verify() leaves KeyUsages unset, so Go requires serverAuth and rejects ANY other EKU with 'certificate specifies an incompatible key usage' — at boot, not here"
 fi
 note "ST leaf: Ed25519, no EKU at all (what stboot's Go x509 accepts)"
@@ -94,9 +100,11 @@ note "ST leaf: Ed25519, no EKU at all (what stboot's Go x509 accepts)"
 ip_alg="$(openssl x509 -in "$IP" -noout -text | sed -n 's/.*Public Key Algorithm: //p' | head -1)"
 [[ "$ip_alg" == "id-ecPublicKey" ]] \
     || fail "the iPXE code-signing leaf is '$ip_alg'; iPXE has no Ed25519 support, so imgverify cannot parse it"
-openssl x509 -in "$IP" -noout -ext extendedKeyUsage 2>/dev/null | grep -q "Code Signing" \
+ip_eku="$(openssl x509 -in "$IP" -noout -ext extendedKeyUsage 2>/dev/null || true)"
+grep -q "Code Signing" <<<"$ip_eku" \
     || fail "REGRESSION: the iPXE leaf lacks the codeSigning EKU imgverify requires"
-openssl x509 -in "$IP" -noout -ext keyUsage 2>/dev/null | grep -qi "Digital Signature" \
+ip_ku="$(openssl x509 -in "$IP" -noout -ext keyUsage 2>/dev/null || true)"
+grep -qi "Digital Signature" <<<"$ip_ku" \
     || fail "REGRESSION: the iPXE leaf lacks keyUsage=digitalSignature. openssl cms -verify does not check key usage, so this passes every host-side gate and iPXE refuses it with 022ae13c 'Not a signing certificate' — the exact defect that cost a day in metal-as-a-service"
 note "iPXE leaf: ECDSA, codeSigning EKU + digitalSignature (all three checked by the firmware)"
 
