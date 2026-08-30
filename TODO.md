@@ -3904,18 +3904,41 @@ work items, and are deliberately not checkboxes here.
       asserting the message alone passed identically against both versions, which is an
       assertion attached to nothing.
 
-- [ ] **15.8 — 7 of the 18 files in `tools/tests/` are run by nobody** *(found 2026-08-30
-      while closing 15.3, which is the same shape one level up)*. `ci.yml` names the
-      meta-checkers one `run:` step at a time — a hand-maintained **inclusion list**, the
-      thing §11.3b inverted everywhere else — and these are in no step:
-      `test-actions.sh`, `test-control-pane.sh`, `test-doc-verbs.sh`, `test-echo-gate.sh`,
-      `test-list.sh`, `test-serial-source.sh`, `test-tree-diagrams.sh`. Some may be
-      deliberately manual (`test-echo-gate.sh` and `test-serial-source.sh` drive fixtures
-      that stand in for hardware); *deliberate* and *forgotten* look identical from here,
-      which is the finding. The fix is the one this repo already made twice: enumerate the
-      directory, and carry a named exemption list with reasons — `.harness-net-exempt` is
-      the shape, and `tools/tests` is exempt from the harness-net loop for a reason that
-      does **not** excuse it from being run.
+- [x] **15.8 — ~~7 of the 18~~ 8 of the 19 files in `tools/tests/` were run by nobody.**
+      ✅ **DONE 2026-08-30.** `ci.yml` named the meta-checkers one `run:` step at a time —
+      a hand-maintained **inclusion list**, the thing §11.3b inverted everywhere else,
+      sitting in the job whose entire subject is checks that quietly cover nothing. The ten
+      steps are now one: `bash tools/tests/run-all.sh`, discovery-based, so a checker added
+      tomorrow runs without anyone remembering to say so. **19/19 pass, 0 skipped**, in
+      about a minute.
+
+      **This entry's own count was wrong when it was filed**, which is the joke it
+      deserves: *"7 of the 18"* was typed by hand into an item about hand-maintained lists.
+      Derived, it is **8 of 19** — the omission was `test-watch.sh`, and the 18 was already
+      19 by the time the sentence was written.
+
+      **And the eight are not one group, which matters more than the number.** Two of them
+      — `test-doc-verbs.sh` and `test-tree-diagrams.sh` — are the **self-controls for tools
+      CI runs every day**: `check-doc-verbs.sh` and `check-tree-diagrams.sh` have their own
+      steps in the `docs` job. So those two checkers ran on every push while nothing had
+      ever confirmed they could still *catch* anything — *"a scan that matches nothing and
+      a scan that is broken print the same green ✓"*, arriving from the one direction this
+      repo had not yet looked. The other six (`test-actions.sh`, `test-control-pane.sh`,
+      `test-list.sh`, `test-watch.sh` — all four covering `tools/control-pane`, which no CI
+      step mentions at all — plus `test-echo-gate.sh` and `test-serial-source.sh`) test
+      tools CI does not run.
+
+      **No exemption list, deliberately**, unlike `.harness-net-exempt`. That file exists
+      because the *checker* cannot run on those subjects; here every file is a test that
+      can decide for itself and print `SKIP:` with its reason, which puts the "why not"
+      next to the code instead of in a file that goes stale. None of the nineteen needed
+      it. `tools/tests` keeps its harness-net exemption — a runner and a shared `lib.sh`
+      are different questions, and the loop's staleness check asks about the second.
+
+      **The ten step comments were not lost, they were the second copy.** Each of these
+      checkers opens with a long header naming the incident it exists for; the YAML
+      comments were a condensed duplicate sitting next to the runner rather than next to
+      the code. One record now, in the file.
 
 **Deliberately not a box:** the survey's §D — the repo has grown a **second, undocumented**
 answer to "hand-walk a tutorial" (`RUNBOOK.md` + `setup-workshop.sh` + a
