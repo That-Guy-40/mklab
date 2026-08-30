@@ -70,6 +70,7 @@ tracks=(
     test-smoke-struct-array.sh
     test-smoke-struct-device.sh
     test-smoke-struct-layer.sh
+    test-smoke-unix.sh
     test-smoke-vga.sh
 )
 

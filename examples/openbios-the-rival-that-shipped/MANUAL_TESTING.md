@@ -1,9 +1,17 @@
 # MANUAL_TESTING — exact commands + real success signatures
 
 All transcripts below are from the verification host (Ubuntu 24.04,
-qemu-system-x86_64/-ppc 8.2.2, KVM available, rootless podman), 2026-07-21.
-Raw spike logs live in `~/openbios-lab/` (`drive*.log`, `smoke-*.log`,
-`showcase-*.log`, `build-*.log`).
+qemu-system-x86_64/-ppc 8.2.2, KVM available, rootless podman). Raw spike logs
+live in `~/openbios-lab/` (`drive*.log`, `smoke-*.log`, `showcase-*.log`,
+`build-*.log`).
+
+**This file is a RECORD, and it is dated per entry rather than as a whole** —
+the sections below run from 2026-07-21 to 2026-08-30. Re-running an entry will
+not reproduce it byte for byte, and that is not a defect: build stamps, dictionary
+sizes and timings move. What must stay true is that the command still exists, the
+success signature is still reachable, and any **count or present-tense claim** is
+re-derived rather than copied. Audited end-to-end 2026-08-30; what that found is
+in the entries themselves, and one of them (§5) had been false since 2026-08-26.
 
 ## 1. Build all targets (container)
 
@@ -64,7 +72,7 @@ PASS: our own openbios-ppc (built on Jul 21 2026 07:09) answered 7 at the 0 > pr
 
 ```console
 $ ./smoke-openbios.sh dict-identity
-  - openbios.dict=104952 bytes, openbios-x86.dict=108060 bytes
+  - openbios.dict=104952 bytes, openbios-x86.dict=108060 bytes   # 2026-07-21; see below
   - 1/2 booting the ARCH dict → .../smoke-openbios-dict-identity.log.arch
   - 2/2 control: the BASE dict, which must NOT have them → .../smoke-openbios-dict-identity.log.base
 PASS: the x86 tracks boot openbios-x86.dict (108060 bytes, the superset): /memory and /cpus
@@ -89,12 +97,27 @@ PASS: P3: … boot-file reads back as P3-PMEM, and the no-nvdimm control saw nei
 Runtime ≈ 15–30 s each (`amd64-pmem` and the `persist*` family boot three times,
 ≈ 60–90 s). SKIP (77) when the image, qemu, or python3 is absent.
 
-**The full list is what `./smoke-openbios.sh --help` prints** — read it there rather than
-from this paragraph, which is a copy and can drift: `multiboot coreboot ppc nvram
-dict-identity persist persist-flash floppy persist-os persist-os-flash amd64 amd64-fault
-amd64-ctx amd64-pmem amd64-linux property-abi vga diagnostics client-forth`. The last five
-were added 2026-08-25/26 (Spike 3; TODO §13.2's wordset probe; §13.1a's PCI + FCode track;
-§13.1b's binding-failure reporter; §13.3(A)'s trampoline segments).
+**The two dictionary sizes above are a 2026-07-21 reading and have since moved**
+— `106064` and `109172` on 2026-08-30, because every patch that adds Forth grows
+both. The *invariant* is what the track actually asserts and what is worth
+remembering: `openbios-x86.dict` is the **superset**, larger than the arch-less
+`openbios.dict` it is built from by the size of `arch/x86/init.fs`, and only the
+superset boots with `/memory` and `/cpus` present. `dict-identity` derives both
+numbers on every run; do not compare against the integers printed here.
+
+**The full list is what `./smoke-openbios.sh --help` prints** — read it there, and
+**not from this file.** The copy that used to sit here named 19 tracks against the
+30 the driver dispatches, having missed ten additions (`coreboot-amd64
+memory-available pmem-writer flash-writer mmio-writer struct-layer struct-array
+struct-device elf-methods rmw-fields`) plus `unix`. It carried the words *"this
+is a copy and can drift"* the whole time, which turned out to be a prediction
+rather than a caveat: measured 2026-08-30, it had drifted by ten.
+
+Two checks make the list unnecessary to copy, and both are cheaper than
+maintaining one: `tools/check-track-list.sh` asserts the driver's dispatch, its
+usage list and its `--help` agree with each other, and
+`tests/test-every-track-has-a-wrapper.sh` fails if any track ships without a
+`tests/test-smoke-<track>.sh`. Ask those, not this paragraph.
 Measured 2026-08-26 on this host: **13 of 13 driven tracks passed** — `multiboot
 dict-identity nvram amd64 amd64-fault amd64-ctx amd64-pmem amd64-linux ppc floppy
 property-abi vga diagnostics`, with 0 SKIP among them. `diagnostics` is the only track
@@ -221,6 +244,10 @@ Run: `./smoke-openbios.sh struct-layer`. Both arches, one boot each:
   - x86:   …identical… ; 8-byte view → T-ERR-narrow-cell
 ```
 
+*(2026-08-30: the probe's layout now reports **0x18**, not `0x10` — a field was
+added to it when `elf-methods` split `e_abiversion` out. The offsets and every
+value above are unchanged. The total is the probe's own size, not an ELF fact.)*
+
 The two checkpoints are different questions. **(1)** a named field reads back `deadbeef` /
 `cafebabe` written by `int!` and `le-l!` — words that know nothing about the layer. **(2)** a
 typed store puts `11223344` into memory as `44 33 22 11`, and a **bare** `le-l!` through the
@@ -296,8 +323,50 @@ trap `flash-writer` met at `0xffbe0000`.
 **Coverage note:** patch 49 changes shared Forth that goes into the coreboot
 payload, so both cached ROMs went stale and their tracks correctly SKIPped as
 **UNKNOWN** by sha — the provenance guard doing its job. Rebuilding both with
-`./build-coreboot-openbios.sh` and `… amd64` closed them: **34/34 listed tests
-ran, 27/27 boot tracks, 0 skipped, 0 failed.**
+`./build-coreboot-openbios.sh` and `… amd64` closed them: 34/34 listed tests
+ran, 27/27 boot tracks, 0 skipped, 0 failed.
+
+**Re-measured 2026-08-30 (do not copy these forward):** `36/36 listed tests ran
+(matching the 36 test files on disk) — 36 passed, 0 skipped, 0 failed`, `of which
+boot tracks: 29/29`. The `34/34, 27/27` above was the reading on 2026-08-30
+*before* `elf-methods` and `rmw-fields`; it is kept because it is dated, and the
+newer line is here because a count is a cache. `run-all.sh` prints the ratio on
+every run — read it there. (`unix`, added later the same day, makes it 37/37 and
+30/30.)
+
+### The `rmw-fields` controls, run 2026-08-30
+
+`t-set`/`t-clr`/`t-tog` (mudge's `aux@ or aux!`, generalised) and the `control:`
+verbs. **Every positive row is paired with a bare `t!` that destroys the
+neighbour**, because "it set the bit" is otherwise satisfied by a word that
+clobbered everything else.
+
+| injection | result |
+|---|---|
+| `t-set` written as a bare store (drops the old value) | **FAIL** — the neighbour bit 7 is gone: `01` where `81` was wanted |
+| `t-clr` without the `invert` | **FAIL** — ANDing with the raw mask clears everything *but* the bit |
+| `t-tog` implemented with `or` | **FAIL** — two toggles no longer round-trip |
+| `enabled?` with `0=` instead of `0<>` | **FAIL** — the query is inverted while the bits are right |
+| `disable` mapped to `t-set` | **FAIL** — `81` where `80` was wanted |
+
+**2026-08-30, the BIG-endian row (added after review).** The track proved the
+byte-order half with a little-endian field only — and `field:`, the 1275-**native**
+big-endian order, was exercised at **width 1**, where byte order is a no-op. So
+`l@-be`/`l!-be` had never run under `t-set` at all. The new row is the mirror:
+bytes must come out `[ff 0 0 1]` against the LE row's `[1 0 0 ff]`.
+
+Its control is the one worth keeping, because it shows *which* assertion is
+load-bearing. With an order-blind width-4 accessor injected (`if le-l@ else le-l@
+then`, same for the store), **both value rows still pass** —
+
+```
+rb-init=ff000000   rb-set=ff000001     <- the round trip is intact
+rb-bytes=1 0 0 ff                      <- the only row that fires
+```
+
+— because a read and a write that are wrong *in the same way* agree with each
+other. A round trip proves the accessors are consistent, not correct; only an
+assertion that looks at the bytes underneath can tell.
 
 ### The negative controls, run 2026-08-23
 
@@ -432,19 +501,56 @@ point (POC-4). Needs `genisoimage` + a kernel/initrd pair (defaults:
 `~/linuxboot-lab/payload-bzImage` + `uroot.cpio`; override `KERNEL=`/
 `INITRD=`). ≈ 30–45 s under KVM.
 
-## 5. The firmware as a Unix process (no QEMU)
+## 5. The firmware as a Unix process (no QEMU) — HALTS, since 2026-08-26
+
+The same IEEE 1275 Forth engine can run as your user with no emulator at all —
+OpenBIOS's C-hosted design makes this possible; the frozen OFW rival (pure
+self-hosting Forth) has no equivalent. **On this host it no longer reaches its
+prompt**, and the entry that used to sit here was a transcript from before it
+stopped:
 
 ```console
 $ cd ~/openbios-lab/openbios
 $ printf '3 4 + .\nbye\n' | obj-amd64/openbios-unix obj-amd64/openbios-unix.dict
-0 > 3 4 + . 7  ok
-0 > bye
-Farewell!
+encode-int: value does not fit in the 4 bytes 1275 encodes an integer into
+$ echo $?
+0
 ```
 
-The same IEEE 1275 Forth engine, running as your user with no emulator at all
-— OpenBIOS's C-hosted design makes this possible; the frozen OFW rival (pure
-self-hosting Forth) has no equivalent.
+**The refusal is right, and this target cannot satisfy it.** `/chosen`'s `stdin`
+and `stdout` are ihandles (`forth/admin/iocontrol.fs:42,76`), 1275 encodes an
+integer into **four bytes** (5.3.5.1), and on the Unix target an ihandle is a raw
+**64-bit host pointer** — `pointer2cell` is a plain cast when the target cell is
+as wide as the host's (`include/kernel/stack.h:35`). Measured: all five refused
+values arrive through `int!`, the property encoder, never through a raw `l!-be`,
+so this is not a mis-scoped gate and weakening it would only restore the silent
+truncation [patch 26](patches/26-encode-int-refuses-what-four-bytes-cannot-hold.patch)
+removed. Before that patch this command "worked" by writing the bottom 32 bits of
+a pointer and reading back a different object — the LIED rung — which is exactly
+what the old transcript recorded.
+
+**The remaining defect is the last line above: it halted, and exited 0.**
+`arch/unix/unix.c:599` returns 0 whatever the Forth did. See
+[TODO §18](../../TODO.md#18-openbios-unix-an-honest-halt-that-reports-success-2026-08-30)
+for the three C-side signals that were measured and rejected, and for the
+`pointer2cell` change that would genuinely restore this section.
+
+**This is the entry that argued for the audit.** It was documented from
+2026-07-21 and driven by *nothing* — no track, no runner, no CI arm — so patch 26
+falsified it on 2026-08-26 and the file went on asserting it for four days.
+`./smoke-openbios.sh unix` now drives it on every run:
+
+```console
+$ ./smoke-openbios.sh unix
+  - openbios-unix halts during init and names why; with empty input it halts
+    identically, so it is initialisation and not the input
+  - KNOWN DEFECT (TODO §18): it halted, and still exited 0
+PASS: the firmware as a plain Unix process, driven for the first time …
+```
+
+Its two controls were watched to bite: with the refusal removed the track names
+its **absence**, and with the refusal *printed but not enforced* the LIED row
+fires — which a grep for the message alone would have passed.
 
 ## 6. Interactive & the ppc swap-in
 
