@@ -4624,17 +4624,39 @@ fails by name.
 
 Unmasked by (c) and **not fixed**. Measured, not inferred: move the arena hint
 `0x20000000` → `0x40000000` and the faulting address moves `1ffffff8` →
-`3ffffff8`, so it is a systematic read at `base-8`, not a stray pointer. The dump
-reports `dstackcnt=-1` in the same breath, and there is a `-4` (Stack Underflow)
-throw at EOF in every run including pre-patch-50 ones — **but those have not been
-shown to be the same event**, so the mechanism is UNKNOWN rather than diagnosed.
+`3ffffff8`, so it is a systematic read at `start-mem - 8`, not a stray pointer.
 
-Every other target absorbs it silently because it has ordinary RAM below the
-arena, and malloc did the same here by leaving heap underneath; a bare `mmap`
-does not, which is how it became visible at all. Patch 50 maps one page of slack
-either side to restore that assumption. **That is containment, not a fix** — the
-read is still out of bounds, and the day someone gives the arena a real guard
-page it will fault again and this is the entry to read.
+**Narrowed 2026-08-30, using the firmware's own panic dump.** It prints a Forth
+PC, and the dictionary is a file, so the word can be found offline:
+
+    panic: segmentation violation at 3ffffff8
+    dict=0x30000000 here=0x3002d690 pc=0x3000a0a0(dict+0xa0a0)
+    dstackcnt=-1 rstackcnt=0 instruction=30000298
+
+`dict+0xa0a0` lies between the string `Farewell!` (`dict+0xa088`) and `quit`'s
+header (`dict+0xa0d0`) — i.e. **inside `bye`**, which is
+
+    : bye  s" Farewell!" cr type cr cr  0 rdepth! ;
+
+and that matches the observed output order, where `Farewell!` prints and the
+panic follows.
+
+**One thing is now DISPROVEN rather than merely uncommitted.** The dump reports
+`dstackcnt=-1`, and there is a `-4` (Stack Underflow) throw at EOF in every run
+including pre-patch-50 ones, so the tempting reading is that the two are one
+event. They are not: `dstack` is a **static array in BSS**
+(`kernel/stack.c:16`), so `dstack[-1]` cannot be at `start-mem - 8`. The
+underflow and the out-of-bounds read are separate facts about the same moment.
+
+**Still UNKNOWN: what performs the read.** `forth/bootstrap/memory.fs` is the
+arena allocator and carries a `start-mem @ end-mem @ within` bounds check at
+:134, so a free-list walk reading the header before the first block is the
+obvious suspect — **untested, and named here as a suspect rather than a cause.**
+
+A `PROT_NONE` guard page under the arena was tried, to catch it in gdb before
+the firmware's own SIGSEGV handler. It does not work as a probe: the process
+**hangs** instead of faulting cleanly, so there is no backtrace yet. That is the
+next thing to try differently, not a result.
 
 ### (b), narrowed
 
