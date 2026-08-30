@@ -15,7 +15,7 @@ its rival OFW *is* Forth. Same standard, opposite architecture.
 
 > This stopped working for four days (2026-08-26 to 08-30) and nobody noticed,
 > because it was documented here and driven by no test. It is covered now:
-> `./smoke-openbios.sh unix`. The story is [TODO §18](../../TODO.md#18-openbios-unix-fixed-and-what-it-left-behind-2026-08-30)
+> `./smoke-openbios.sh unix`. The story is [TODO §18](../../TODO.md#18-openbios-unix-fixed-2026-08-30)
 > and [`MANUAL_TESTING.md`](MANUAL_TESTING.md) §5 — worth reading, because the
 > obvious fix was the wrong one.
 

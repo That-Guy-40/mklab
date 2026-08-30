@@ -4541,7 +4541,7 @@ rest.
 
 ---
 
-## 18. `openbios-unix`: FIXED, and what it left behind (2026-08-30)
+## 18. `openbios-unix`: FIXED (2026-08-30)
 
 Found by verifying [`MANUAL_TESTING.md`](examples/openbios-the-rival-that-shipped/MANUAL_TESTING.md)
 §5 rather than reading it. The documented invocation does not work:
@@ -4620,43 +4620,47 @@ Covered by `smoke-openbios.sh unix`, which asserts the **property** rather than
 the boot. Its control is the revert: put the arena back on the heap and the track
 fails by name.
 
-### (d) STILL OPEN: something reads eight bytes below the arena
+### (d) CLOSED 2026-08-30 — it was never a firmware bug; it was `free()` on an mmap'd pointer
 
-Unmasked by (c) and **not fixed**. Measured, not inferred: move the arena hint
-`0x20000000` → `0x40000000` and the faulting address moves `1ffffff8` →
-`3ffffff8`, so it is a systematic read at `start-mem - 8`, not a stray pointer.
+Filed as a pre-existing out-of-bounds read in the firmware. **It is not.** It was
+introduced by (c) itself and is entirely explained by one mistake: `main()` ended
+with `free(memory)` / `free(dict)`, and those two allocations had just become
+`mmap` regions. **glibc's `free()` reads its chunk header BELOW the pointer**, at
+`p-8` — which is the whole of it.
 
-**Narrowed 2026-08-30, using the firmware's own panic dump.** It prints a Forth
-PC, and the dictionary is a file, so the word can be found offline:
+| build | symptom | what it was |
+|---|---|---|
+| no slack, `free()` | `panic: segmentation violation at 1ffffff8` | the header read hits an unmapped page |
+| slack, `free()` | `free(): invalid pointer` | same read, now succeeds; glibc inspects the garbage it finds |
+| slack, `munmap` | clean | fixed |
+| **no slack, `munmap`** | **clean** | **the control: the guard page was never needed** |
 
-    panic: segmentation violation at 3ffffff8
-    dict=0x30000000 here=0x3002d690 pc=0x3000a0a0(dict+0xa0a0)
-    dstackcnt=-1 rstackcnt=0 instruction=30000298
+Two things I had recorded as separate bugs — the SIGSEGV and the `free(): invalid
+pointer` abort — were one bug in two costumes, one page apart. The guard slack
+has been removed; `free_below_4g()` is the fix and carries the explanation.
 
-`dict+0xa0a0` lies between the string `Farewell!` (`dict+0xa088`) and `quit`'s
-header (`dict+0xa0d0`) — i.e. **inside `bye`**, which is
+**WHAT SUSTAINED THE WRONG STORY, which is the part worth keeping.** The panic
+dump prints `pc=0x3000a0a0(dict+0xa0a0)`, and I resolved that offline to a point
+inside `bye` and built a narrative on it — *"the faulting PC is in `bye`, which
+matches the output order"*. **That field is the firmware's Forth PC GLOBAL, not
+the faulting instruction.** `bye` was merely the last Forth word to run before
+`main()` returned and called `free()`. `dstackcnt=-1` is stale for the same
+reason. A cached record read as though it described the present moment — the trap
+this file opens with, met from the inside, and the "narrowing" it produced was
+careful archaeology on a field that had nothing to do with the fault.
 
-    : bye  s" Farewell!" cr type cr cr  0 rdepth! ;
+**The measurement that broke it open** was a gdb hardware access-watchpoint on
+`memory-8` and `memory-16` in the *shipped* configuration: across a whole session
+it **never fires**, and the process exits normally. A genuine pre-existing read
+would still have been there. Watchpoints beat guard pages here because they
+perturb nothing — the earlier `PROT_NONE` attempt changed the subject and then
+hung, which is why it produced no answer.
 
-and that matches the observed output order, where `Farewell!` prints and the
-panic follows.
-
-**One thing is now DISPROVEN rather than merely uncommitted.** The dump reports
-`dstackcnt=-1`, and there is a `-4` (Stack Underflow) throw at EOF in every run
-including pre-patch-50 ones, so the tempting reading is that the two are one
-event. They are not: `dstack` is a **static array in BSS**
-(`kernel/stack.c:16`), so `dstack[-1]` cannot be at `start-mem - 8`. The
-underflow and the out-of-bounds read are separate facts about the same moment.
-
-**Still UNKNOWN: what performs the read.** `forth/bootstrap/memory.fs` is the
-arena allocator and carries a `start-mem @ end-mem @ within` bounds check at
-:134, so a free-list walk reading the header before the first block is the
-obvious suspect — **untested, and named here as a suspect rather than a cause.**
-
-A `PROT_NONE` guard page under the arena was tried, to catch it in gdb before
-the firmware's own SIGSEGV handler. It does not work as a probe: the process
-**hangs** instead of faulting cleanly, so there is no backtrace yet. That is the
-next thing to try differently, not a result.
+*(For anyone probing this target in future: `openbios-unix -s` / `--segfault`
+disables the firmware's own SIGSEGV handler — `arch/unix/unix.c:606` installs it
+only `if (!segfault)` — so a real fault reaches gdb or a core file instead of
+being printed and `exit(1)`ed. It was already shipped; I did not need to build a
+probe.)*
 
 ### (b), narrowed
 

@@ -39,17 +39,24 @@ AND IT REFUSES BY NAME IF IT CANNOT. A hint is only a hint, so the result is
 checked and a mapping that still lands high panics and exits non-zero rather
 than continuing into an abort that used to exit 0 (TODO 18(b)).
 
-THE ONE PAGE OF SLACK EITHER SIDE IS NOT PADDING, and it is a finding rather
-than a workaround. Something in initialisation reads EIGHT BYTES BELOW the
-arena. Measured, not inferred: move the hint 0x20000000 -> 0x40000000 and the
-faulting address moves 1ffffff8 -> 3ffffff8, so it is a systematic read at
-base-8. It is pre-existing -- every other target has ordinary RAM below the
-arena and absorbs it silently, and malloc did the same here by leaving heap
-underneath -- but a bare mmap does not, so it became a SIGSEGV at exit. The
-slack restores the assumption the code has always been written against; the read
-is still a bug and is filed as TODO 18(d) with that evidence. The matching
-munmap goes with it: these are mapped now, so the free()s that ended main()
-aborted with "free(): invalid pointer", measured the same way.
+THE munmap IS PART OF THE FIX, not tidiness -- and the first version of this
+patch got that wrong in a way worth recording. These two allocations are mmap
+regions now, so the free()s that ended main() handed glibc pointers it never
+allocated, and free() READS ITS CHUNK HEADER BELOW THE POINTER, at p-8. That one
+mistake wore two costumes a page apart: "panic: segmentation violation at
+1ffffff8" (arena base minus 8) while the page below was unmapped, and
+"free(): invalid pointer" once something was mapped there for glibc to inspect.
+The first draft mistook the SIGSEGV for a PRE-EXISTING firmware read and carried
+a guard page to absorb it. There is no such read: with munmap here and NO guard
+page the session runs clean, and a gdb access-watchpoint on memory-8 and -16
+never fires across a whole session. The guard page is gone.
+
+WHAT SUSTAINED THAT ERROR is the useful part. The panic dump prints
+`pc=0x3000a0a0(dict+0xa0a0)`, which resolves offline to a point inside `bye` --
+and that is the firmware's Forth PC GLOBAL, not the faulting instruction. `bye`
+was simply the last Forth word to run before main() returned and called free().
+`dstackcnt=-1` is stale for the same reason. A cached record read as if it
+described the present moment.
 
 Covered by `smoke-openbios.sh unix`, which asserts THE PROPERTY rather than the
 boot -- stdin, stdout and start-mem read back from the prompt must each fit in
@@ -58,7 +65,7 @@ track fails by name ("never printed its banner, so initialisation did not
 complete").
 
 diff --git a/arch/unix/unix.c b/arch/unix/unix.c
-index cb9757e..6cb84bf 100644
+index cb9757e..79dcce0 100644
 --- a/arch/unix/unix.c
 +++ b/arch/unix/unix.c
 @@ -17,6 +17,7 @@
@@ -69,7 +76,7 @@ index cb9757e..6cb84bf 100644
  #include <stdarg.h>
  
  #ifdef __GLIBC__
-@@ -363,13 +364,84 @@ int_handler(int signo __attribute__ ((unused)),
+@@ -363,13 +364,72 @@ int_handler(int signo __attribute__ ((unused)),
      exit(1);
  }
  
@@ -99,26 +106,8 @@ index cb9757e..6cb84bf 100644
 +
 +static void *alloc_below_4g(size_t len, uintptr_t hint, const char *what)
 +{
-+	/* ONE MAPPED PAGE OF SLACK EITHER SIDE, and it is not padding.
-+	 *
-+	 * Something in initialisation reads EIGHT BYTES BELOW the Forth arena.
-+	 * Measured: move the hint from 0x20000000 to 0x40000000 and the faulting
-+	 * address moves 1ffffff8 -> 3ffffff8, so it is a systematic read at
-+	 * base-8 and not a stray pointer. It is PRE-EXISTING and every other
-+	 * target absorbs it silently, because on them the arena has ordinary RAM
-+	 * below it; malloc did the same here by leaving heap underneath. A bare
-+	 * mmap does not, so the read becomes a SIGSEGV at exit.
-+	 *
-+	 * The slack restores the assumption the code has always been written
-+	 * against rather than pretending the read is fine: it is still a bug, it
-+	 * is filed as TODO 18(d) with the evidence above, and it is NOT what this
-+	 * change is about.
-+	 */
-+	size_t page = (size_t)sysconf(_SC_PAGESIZE);
-+	size_t span = len + 2 * page;
-+	void *base = mmap((void *)(hint - page), span, PROT_READ | PROT_WRITE,
-+	                  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-+	void *p = (base == MAP_FAILED) ? MAP_FAILED : (char *)base + page;
++	void *p = mmap((void *)hint, len, PROT_READ | PROT_WRITE,
++	               MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 +
 +	if (p == MAP_FAILED)
 +		return NULL;
@@ -128,20 +117,26 @@ index cb9757e..6cb84bf 100644
 +		printk("panic: %s landed at %p, above 4 GiB -- an ihandle there "
 +		       "cannot be encoded into the four bytes IEEE 1275 gives an "
 +		       "integer (5.3.5.1). See TODO 18.\n", what, p);
-+		munmap(base, span);
++		munmap(p, len);
 +		return NULL;
 +	}
 +	return p;
 +}
 +
-+/* The matching free. These two are mmap'd now, so the free()s that used to end
-+ * main() abort with "free(): invalid pointer" -- measured, not guessed. */
++/* The matching free, and it is load-bearing rather than tidiness.
++ *
++ * These two are mmap'd now, so the free()s that used to end main() hand glibc a
++ * pointer it never allocated -- and free() reads its chunk header BELOW the
++ * pointer, at p-8. That read is what produced "panic: segmentation violation at
++ * 1ffffff8" (arena base minus 8) while the page below was unmapped, and
++ * "free(): invalid pointer" once it was mapped and glibc got to inspect the
++ * garbage it found. One bug, two costumes. Measured: with munmap here and NO
++ * guard page, the session runs clean, and a gdb access-watchpoint on
++ * memory-8/-16 never fires across a whole session. */
 +static void free_below_4g(void *p, size_t len)
 +{
-+	size_t page = (size_t)sysconf(_SC_PAGESIZE);
-+
 +	if (p)
-+		munmap((char *)p - page, len + 2 * page);
++		munmap(p, len);
 +}
 +
  /*
@@ -155,7 +150,7 @@ index cb9757e..6cb84bf 100644
  	if (!memory) {
  		printk("panic: not enough memory on host system.\n");
  		exit_terminal();
-@@ -521,7 +593,9 @@ int main(int argc, char *argv[])
+@@ -521,7 +581,9 @@ int main(int argc, char *argv[])
  	/* Initialise console */
  	init_console(unix_console_ops);
  
@@ -166,7 +161,7 @@ index cb9757e..6cb84bf 100644
  		printk("panic: not enough memory.\n");
  		return 1;
  	}
-@@ -585,7 +659,7 @@ int main(int argc, char *argv[])
+@@ -585,7 +647,7 @@ int main(int argc, char *argv[])
  			write_dictionary(dictname);
  #endif
  
@@ -175,7 +170,7 @@ index cb9757e..6cb84bf 100644
  
  	} else {		/* input file is not a dictionary */
  		printk("not supported.\n");
-@@ -595,7 +669,7 @@ int main(int argc, char *argv[])
+@@ -595,7 +657,7 @@ int main(int argc, char *argv[])
  	if (diskemu!=-1)
  		close(diskemu);
  
