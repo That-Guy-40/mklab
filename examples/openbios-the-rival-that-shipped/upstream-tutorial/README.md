@@ -29,8 +29,27 @@ stylesheets by **absolute** path (`/css/palette.css`, `/_astro/Default.aGptptxO.
 which would fetch from the live site. Those two `href`s — and *only* those two —
 were rewritten to the local `css/` copies so the page renders offline. Nothing
 in the article body was touched. The as-served HTML hashes
-`c5632c654736106a54f66a583450c8eafff344a445ad3992b1a20000d58da4a7`; the diff is
-exactly two lines, both `<link>` tags.
+`c5632c654736106a54f66a583450c8eafff344a445ad3992b1a20000d58da4a7`. The change is
+two `<link>` tags — which sit on the **same physical line**, because the page is
+minified: of the file's 394 lines, exactly **one** differs.
+
+**And that is checkable, which is the point of recording it.** Put the two
+`href`s back and the as-served digest comes out byte-for-byte:
+
+```console
+$ python3 -c '
+import hashlib
+b = open("hacking-in-forth.html","rb").read()
+b = b.replace(b"href=\"css/palette.css\"", b"href=\"/css/palette.css\"")
+b = b.replace(b"href=\"css/Default.aGptptxO.css\"", b"href=\"/_astro/Default.aGptptxO.css\"")
+print(hashlib.sha256(b).hexdigest())'
+c5632c654736106a54f66a583450c8eafff344a445ad3992b1a20000d58da4a7
+```
+
+The `sha256` table above proves only that *these bytes are these bytes*.
+Re-deriving the upstream digest from the vendored copy proves the thing a
+provenance record is actually for: that the **edit list is complete** — nothing
+else in the file was touched, including in the article body.
 
 **Un-vendored, left as absolute links to the live site:** the site chrome (nav,
 fonts, favicons, JS) that Phrack's Astro build pulls in around the article. The

@@ -309,7 +309,8 @@ hex
 \ the aux register" -- so the verbs read as English and the read-modify-write,
 \ the mask, the byte order and the address are all hidden:
 \
-\     b8000 >virt d-at  10  control: backlight
+\     struct  1 dev-field: d-ch  1 dev-field: d-at  constant /dc
+\     b8000 >virt d-at  10  control: backlight   \ the ATTRIBUTE byte, at +1
 \     backlight enable        \ set the bit(s), preserving the rest
 \     backlight disable
 \     backlight toggle

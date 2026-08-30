@@ -737,9 +737,14 @@ toggles of a bit return it to where it started.
 name. `control:` does the same for any typed field:
 
 ```forth
-struct  1 dev-field: d-at  constant /at
+struct  1 dev-field: d-ch  1 dev-field: d-at  constant /dc
 b8000 >virt d-at  10  control: backlight   \ address + field + mask, behind a name
 ```
+
+Note `d-ch` is there so `d-at` lands at **+1** — the attribute byte Part 8 was
+setting, not the character at +0. Type this with `d-at` as the only field and
+`backlight enable` flips a bit in the *letter* instead: `A` becomes `Q`, which
+looks like the control worked and isn't the byte you meant.
 
 Now the verbs read as English, and the mask, the byte order, the address and the
 read-modify-write are all hidden:
