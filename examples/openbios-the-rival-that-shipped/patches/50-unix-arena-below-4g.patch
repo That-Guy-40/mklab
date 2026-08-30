@@ -1,0 +1,186 @@
+Subject: [PATCH 50/50] arch/unix: place the Forth arena below 4 GiB, so an ihandle fits
+Arch-tested: x86 amd64 ppc unix
+
+TODO 18. `openbios-unix` had not reached its prompt since 2026-08-26 and nothing
+noticed, because MANUAL_TESTING.md section 5 documented it and no track drove it.
+
+    $ printf '3 4 + .\nbye\n' | obj-amd64/openbios-unix obj-amd64/openbios-unix.dict
+    encode-int: value does not fit in the 4 bytes 1275 encodes an integer into
+    $ echo $?
+    0
+
+THE REFUSAL IS CORRECT AND IS NOT TOUCHED HERE. That is the whole point of this
+patch, and the trap it avoids. The gate patch 26 added looks mis-scoped -- it
+sits in `l!-be`, a general four-byte big-endian store -- so the obvious move is
+to narrow it to encode-int. Measured instead: ALL FIVE trips come through
+`int!`, the 1275 property encoder, and none through a raw l!-be. Narrowing the
+scope would have changed nothing, and weakening the gate would only have
+restored the silent truncation patch 26 removed.
+
+WHAT IS ACTUALLY WRONG is where the memory is. /chosen's `stdin` and `stdout`
+are ihandles (forth/admin/iocontrol.fs:42,76); IEEE 1275 encodes an integer into
+FOUR bytes (5.3.5.1); and at run time pointer2cell is a plain cast
+(include/kernel/stack.h:35 -- Makefile.target defines
+NATIVE_BITWIDTH_EQUALS_HOST_BITWIDTH for every target), so on this target an
+ihandle IS a host pointer. glibc placed the 4 MiB arena above 4 GiB
+(0x7a3ad9e03650 in one run) and encode-int rightly refused.
+
+EVERY OTHER TARGET IS ALREADY WHERE THIS PUTS US. The QEMU firmwares live at
+0x400000 and 0x4000000, so their pointers have always fitted in four bytes. This
+does not make 1275 able to hold a 64-bit pointer; it stops this one target from
+being the only place that asks it to. patch 48 records the same asymmetry from
+the other side: at NARROWER widths cross.h subtracts base_address, which is why
+arch/x86 never showed any of this.
+
+    0 > stdin @ u. 20004ba8  ok        \ was above 4 GiB, and refused
+    0 > start-mem @ u. 20000000  ok
+
+AND IT REFUSES BY NAME IF IT CANNOT. A hint is only a hint, so the result is
+checked and a mapping that still lands high panics and exits non-zero rather
+than continuing into an abort that used to exit 0 (TODO 18(b)).
+
+THE ONE PAGE OF SLACK EITHER SIDE IS NOT PADDING, and it is a finding rather
+than a workaround. Something in initialisation reads EIGHT BYTES BELOW the
+arena. Measured, not inferred: move the hint 0x20000000 -> 0x40000000 and the
+faulting address moves 1ffffff8 -> 3ffffff8, so it is a systematic read at
+base-8. It is pre-existing -- every other target has ordinary RAM below the
+arena and absorbs it silently, and malloc did the same here by leaving heap
+underneath -- but a bare mmap does not, so it became a SIGSEGV at exit. The
+slack restores the assumption the code has always been written against; the read
+is still a bug and is filed as TODO 18(d) with that evidence. The matching
+munmap goes with it: these are mapped now, so the free()s that ended main()
+aborted with "free(): invalid pointer", measured the same way.
+
+Covered by `smoke-openbios.sh unix`, which asserts THE PROPERTY rather than the
+boot -- stdin, stdout and start-mem read back from the prompt must each fit in
+four bytes. Its control is the revert: put the arena back on the heap and the
+track fails by name ("never printed its banner, so initialisation did not
+complete").
+
+diff --git a/arch/unix/unix.c b/arch/unix/unix.c
+index cb9757e..6cb84bf 100644
+--- a/arch/unix/unix.c
++++ b/arch/unix/unix.c
+@@ -17,6 +17,7 @@
+ #include <termios.h>
+ #include <sys/types.h>
+ #include <sys/stat.h>
++#include <sys/mman.h>
+ #include <stdarg.h>
+ 
+ #ifdef __GLIBC__
+@@ -363,13 +364,84 @@ int_handler(int signo __attribute__ ((unused)),
+     exit(1);
+ }
+ 
++/* LOCAL DIVERGENCE (mklab). TODO 18.
++ *
++ * PLACE THE FORTH ARENA AND THE DICTIONARY BELOW 4 GiB.
++ *
++ * 1275 encodes an integer into FOUR bytes (5.3.5.1), and /chosen's `stdin` and
++ * `stdout` are ihandles -- pointers into these two allocations
++ * (forth/admin/iocontrol.fs:42,76). At run time pointer2cell is a plain cast
++ * (include/kernel/stack.h:35; Makefile.target defines
++ * NATIVE_BITWIDTH_EQUALS_HOST_BITWIDTH for every target), so an ihandle IS a
++ * host pointer. glibc hands these two sizes out well above 4 GiB on a 64-bit
++ * host, so encode-int refused -- correctly -- and the firmware halted during
++ * initialisation, which is what MANUAL_TESTING.md section 5 recorded.
++ *
++ * THIS DOES NOT MAKE 1275 ABLE TO HOLD A 64-BIT POINTER, and it is not a
++ * weakening of patch 26's gate, which stays exactly as it is. It puts this
++ * target where every other target has always been: the QEMU firmwares live at
++ * 0x400000 and 0x4000000, so their pointers have always fitted in four bytes.
++ *
++ * AND IT REFUSES BY NAME RATHER THAN DRIFTING BACK. If the low mapping cannot
++ * be had, we say so and exit non-zero instead of continuing into an abort that
++ * used to exit 0 (TODO 18(b)) -- an honest failure the caller can see.
++ */
++#define OF_LOW_LIMIT   ((uintptr_t)1 << 32)
++
++static void *alloc_below_4g(size_t len, uintptr_t hint, const char *what)
++{
++	/* ONE MAPPED PAGE OF SLACK EITHER SIDE, and it is not padding.
++	 *
++	 * Something in initialisation reads EIGHT BYTES BELOW the Forth arena.
++	 * Measured: move the hint from 0x20000000 to 0x40000000 and the faulting
++	 * address moves 1ffffff8 -> 3ffffff8, so it is a systematic read at
++	 * base-8 and not a stray pointer. It is PRE-EXISTING and every other
++	 * target absorbs it silently, because on them the arena has ordinary RAM
++	 * below it; malloc did the same here by leaving heap underneath. A bare
++	 * mmap does not, so the read becomes a SIGSEGV at exit.
++	 *
++	 * The slack restores the assumption the code has always been written
++	 * against rather than pretending the read is fine: it is still a bug, it
++	 * is filed as TODO 18(d) with the evidence above, and it is NOT what this
++	 * change is about.
++	 */
++	size_t page = (size_t)sysconf(_SC_PAGESIZE);
++	size_t span = len + 2 * page;
++	void *base = mmap((void *)(hint - page), span, PROT_READ | PROT_WRITE,
++	                  MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
++	void *p = (base == MAP_FAILED) ? MAP_FAILED : (char *)base + page;
++
++	if (p == MAP_FAILED)
++		return NULL;
++
++	/* A hint is only a hint: verify, never assume. */
++	if ((uintptr_t)p + len > OF_LOW_LIMIT) {
++		printk("panic: %s landed at %p, above 4 GiB -- an ihandle there "
++		       "cannot be encoded into the four bytes IEEE 1275 gives an "
++		       "integer (5.3.5.1). See TODO 18.\n", what, p);
++		munmap(base, span);
++		return NULL;
++	}
++	return p;
++}
++
++/* The matching free. These two are mmap'd now, so the free()s that used to end
++ * main() abort with "free(): invalid pointer" -- measured, not guessed. */
++static void free_below_4g(void *p, size_t len)
++{
++	size_t page = (size_t)sysconf(_SC_PAGESIZE);
++
++	if (p)
++		munmap((char *)p - page, len + 2 * page);
++}
++
+ /*
+  * allocate memory and prepare engine for memory management.
+  */
+ 
+ static void init_memory(void)
+ {
+-	memory = malloc(MEMORY_SIZE);
++	memory = alloc_below_4g(MEMORY_SIZE, 0x20000000, "the Forth arena");
+ 	if (!memory) {
+ 		printk("panic: not enough memory on host system.\n");
+ 		exit_terminal();
+@@ -521,7 +593,9 @@ int main(int argc, char *argv[])
+ 	/* Initialise console */
+ 	init_console(unix_console_ops);
+ 
+-	if ((dict = (unsigned char *) malloc(DICTIONARY_SIZE)) == NULL) {
++	if ((dict = (unsigned char *) alloc_below_4g(DICTIONARY_SIZE,
++	                                            0x30000000,
++	                                            "the dictionary")) == NULL) {
+ 		printk("panic: not enough memory.\n");
+ 		return 1;
+ 	}
+@@ -585,7 +659,7 @@ int main(int argc, char *argv[])
+ 			write_dictionary(dictname);
+ #endif
+ 
+-		free(memory);
++		free_below_4g(memory, MEMORY_SIZE);
+ 
+ 	} else {		/* input file is not a dictionary */
+ 		printk("not supported.\n");
+@@ -595,7 +669,7 @@ int main(int argc, char *argv[])
+ 	if (diskemu!=-1)
+ 		close(diskemu);
+ 
+-	free(dict);
++	free_below_4g(dict, DICTIONARY_SIZE);
+ 	return 0;
+ }
+ 

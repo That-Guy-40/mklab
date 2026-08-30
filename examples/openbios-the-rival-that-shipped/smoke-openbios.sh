@@ -4001,70 +4001,73 @@ PYX
     pass "mudge's read-modify-write idiom (Phrack 53:9, 1998 — upstream-tutorial/), generalised to t-set/t-clr/t-tog over a TYPED field and NOT named for an LED, measured on BOTH arches. The property that makes RMW different from a store is that it PRESERVES THE OTHER BITS — which is why mudge wrote 'aux@ or aux!' and not '1 aux!' — so every positive row is paired with a bare 't!' control that destroys the neighbour: t-set/t-clr hold bit 7 at 81/80 where t! clobbers it to 01, t-tog round-trips, and the mask applies to the DECODED value in BOTH byte orders — a little-endian field keeps its high byte (bytes [1 0 0 ff]) and the 1275-native big-endian field lays the same value down exactly reversed (bytes [ff 0 0 1]), which is the row that makes 'the byte order rides along' a measurement rather than a claim: before it, field: was exercised here only at width 1, where order is a no-op, so l@-be/l!-be never ran under t-set at all. And it works on a real DEVICE register: through a dev-field over the VGA aperture at b8000 >virt, setting an fg bit leaves attr 0x11 at PHYSICAL 0xb8000 — read by QEMU's monitor, an observer outside the firmware — where a bare store leaves 0x01, the bg nibble preserved versus destroyed. The Forth read-back cannot see that difference because it uses the same rb@ path the store did"
     ;;
   unix)
-    # THE ONE TARGET WITH NO QEMU, and the one this suite had never driven.
-    # MANUAL_TESTING.md §5 has documented `openbios-unix` since 2026-07-21 and
-    # nothing ran it, so when patch 26 (TODO 13.2(b)) made encode-int refuse a
-    # value four bytes cannot hold, the fact that this target trips that refusal
-    # AT BOOTSTRAP went unnoticed for four days.
+    # THE ONE TARGET WITH NO QEMU: the firmware as an ordinary process.
     #
-    # IT IS NOT A MIS-SCOPED REFUSAL, which is what it looks like at first and is
-    # worth stating so nobody "fixes" it by weakening the gate. Measured: all
-    # five trips come through `int!` -- the 1275 property encoder -- not through
-    # a raw l!-be. What is being encoded is an ihandle, and on THIS target an
-    # ihandle is a raw 64-bit host pointer, because include/kernel/stack.h's
-    # pointer2cell is a plain cast when the target cell is as wide as the host's
-    # (patch 48 documents the same asymmetry from the other side: at NARROWER
-    # widths cross.h subtracts base_address, which is why arch/x86 never showed
-    # it). A host pointer cannot survive four bytes. The refusal is correct.
+    # MANUAL_TESTING.md section 5 has documented this since 2026-07-21 and
+    # NOTHING drove it, so when patch 26 made encode-int refuse a value four
+    # bytes cannot hold, this target began halting during initialisation and the
+    # doc went on asserting a transcript from before it stopped. Patch 50 fixed
+    # it; this track is what stops it happening again.
     #
-    # SO WHAT THIS TRACK PINS is the HONEST behaviour: the firmware halts during
-    # initialisation, naming the reason, and does not reach its prompt. Before
-    # patch 26 it "worked" by silently truncating those pointers to their low 32
-    # bits -- the LIED rung -- which is what §5's old transcript recorded.
+    # WHAT PATCH 50 DID, and what this asserts. 1275 encodes an integer into
+    # FOUR bytes (5.3.5.1); /chosen's stdin and stdout are ihandles; and at run
+    # time pointer2cell is a plain cast, so an ihandle IS a host pointer. glibc
+    # put the Forth arena above 4 GiB, so encode-int refused -- correctly.
+    # arch/unix/unix.c now maps the arena and the dictionary BELOW 4 GiB, which
+    # is where every other target has always been (the QEMU firmwares live at
+    # 0x400000 and 0x4000000). The gate itself is untouched.
+    #
+    # SO THE ASSERTION IS THE PROPERTY THAT WAS REFUSED, not "it booted": stdin
+    # and stdout must be ihandles that FIT IN FOUR BYTES. That is the value
+    # encode-int was handed, asked for directly.
     UBIN="$WORKDIR/openbios/obj-amd64/openbios-unix"
     UDICT="$WORKDIR/openbios/obj-amd64/openbios-unix.dict"
     [[ -x "$UBIN"  ]] || skip "missing $UBIN — run ./build-openbios.sh amd64 first"
     [[ -f "$UDICT" ]] || skip "missing $UDICT — run ./build-openbios.sh amd64 first"
     ULOG="$WORKDIR/smoke-openbios-unix.log"
-    printf '3 4 + .\nbye\n' | "$UBIN" "$UDICT" >"$ULOG" 2>&1
+    printf '3 4 + .\nstdin @ u.\nstdout @ u.\nstart-mem @ u.\nbye\n' \
+      | "$UBIN" "$UDICT" >"$ULOG" 2>&1
     URC=$?
     UOUT="$(tr -d '\r' < "$ULOG")"
 
-    # (1) The binary runs and the dictionary loads far enough to execute Forth --
-    #     otherwise "it printed nothing" and "it halted honestly" look the same.
     [[ -s "$ULOG" ]] \
-      || fail "unix: openbios-unix produced NO output at all with $UDICT — the binary or the dictionary is broken, which is a different failure from the one this track is about — see $ULOG"
+      || fail "unix: openbios-unix produced NO output at all with $UDICT — the binary or the dictionary is broken"
 
-    # (2) The refusal fires BY NAME. Not "it failed" -- the named reason is the
-    #     whole difference between the HALTED rung and the STRANDED one.
-    grep -qaF 'encode-int: value does not fit in the 4 bytes' <<<"$UOUT" \
-      || fail "unix: openbios-unix did not print encode-int's refusal. If it now reaches its prompt, patch 26's gate or pointer2cell changed and MANUAL_TESTING.md §5 must be re-measured; if it printed something else, that is a new failure — see $ULOG"
+    # (1) Initialisation COMPLETED. The banner is printed at the end of it, and
+    #     it is the line the refusal used to come instead of.
+    grep -qa 'Welcome to OpenBIOS' <<<"$UOUT" \
+      || fail "unix: openbios-unix never printed its banner, so initialisation did not complete — see $ULOG"
 
-    # (3) THE OUTCOME, not the message: initialisation did NOT complete, so the
-    #     interactive prompt never evaluated our input. Asserting the ABSENCE of
-    #     the answer is what makes (2) mean "refused" rather than "printed a
-    #     warning and carried on" — the same distinction elf-methods draws.
+    # (2) The prompt evaluates. THE OUTCOME, not the banner: a firmware that
+    #     printed a banner and then wedged looks identical up to here.
     grep -qaE '3 4 \+ \. 7' <<<"$UOUT" \
-      && fail "REGRESSION: unix: openbios-unix printed the refusal AND still evaluated '3 4 + .' to 7 — a refusal that does not refuse is the LIED rung, which is exactly what patch 26 exists to remove — see $ULOG"
+      || fail "unix: the prompt did not evaluate '3 4 + .' to 7 — see $ULOG"
+    grep -qa 'Farewell' <<<"$UOUT" \
+      || fail "unix: 'bye' did not reach Farewell!, so the session did not end cleanly — see $ULOG"
 
-    # (4) It is INIT-time, not input-dependent. Feeding it nothing must reach the
-    #     same refusal; if it did not, the fault would be in what we typed.
-    : | "$UBIN" "$UDICT" >"$ULOG.empty" 2>&1
-    grep -qaF 'encode-int: value does not fit in the 4 bytes' "$ULOG.empty" \
-      || fail "unix: with EMPTY input the refusal did not fire, so it is driven by what this track types rather than by initialisation — see $ULOG.empty"
+    # (3) REGRESSION GUARD, by name. If the arena drifts back above 4 GiB this
+    #     is the line that returns, and it returns INSTEAD of the banner.
+    grep -qaF 'encode-int: value does not fit in the 4 bytes' <<<"$UOUT" \
+      && fail "REGRESSION: unix: encode-int refused again — the Forth arena is back above 4 GiB, so an ihandle no longer fits the four bytes 1275 gives an integer. patch 50 (arch/unix/unix.c) is what places it low; see TODO §18 — $ULOG"
 
-    note "openbios-unix halts during init and names why; with empty input it halts identically, so it is initialisation and not the input"
-    note "the five refused values are ihandles — raw 64-bit host pointers, because pointer2cell is a plain cast at equal widths (include/kernel/stack.h:35)"
-    # THE KNOWN DEFECT, printed on every run so it cannot pass for health. The
-    # firmware halts honestly and then main() returns 0 anyway
-    # (arch/unix/unix.c:599 returns 0 unconditionally after enterforth), so the
-    # shell is told the run succeeded. Asserted as the CURRENT value rather than
-    # the desired one, so that FIXING it turns this row red on purpose and the
-    # fixer is sent here. See TODO §18.
+    # (4) THE PROPERTY ITSELF. Assert the very values encode-int is handed,
+    #     rather than inferring them from the absence of a complaint.
+    uval() { grep -aoE "$1 @ u\. [0-9a-f]+" <<<"$UOUT" | head -1 | awk '{print $NF}'; }
+    USTDIN="$(uval stdin)"; USTDOUT="$(uval stdout)"; UMEM="$(uval start-mem)"
+    [[ -n "$USTDIN" && -n "$USTDOUT" && -n "$UMEM" ]] \
+      || fail "unix: could not read stdin/stdout/start-mem back from the prompt (got '$USTDIN'/'$USTDOUT'/'$UMEM') — the probe changed or the words moved — see $ULOG"
+    for _p in "stdin:$USTDIN" "stdout:$USTDOUT" "start-mem:$UMEM"; do
+      _n="${_p%%:*}"; _v="${_p#*:}"
+      (( 16#$_v < 16#100000000 )) \
+        || fail "unix: $_n is 0x$_v, at or above 4 GiB — it cannot be encoded into the four bytes 1275 gives an integer (5.3.5.1), which is exactly the value encode-int refuses. See TODO §18 — $ULOG"
+    done
+
     [[ $URC -eq 0 ]] \
-      || pass "unix: openbios-unix halts during initialisation, names the reason, does not reach its prompt — AND now exits $URC rather than 0. TODO §18's false success is FIXED: update this row to assert the new status and strike the defect from TODO and MANUAL_TESTING.md §5"
-    note "KNOWN DEFECT (TODO §18): it halted, and still exited 0 — arch/unix/unix.c:599 returns 0 whatever the Forth did, so this honest halt reports success to the shell"
-    pass "the firmware as a plain Unix process, driven for the first time: openbios-unix halts during initialisation and NAMES why — 1275 encodes an integer into four bytes and this target's ihandles are raw 64-bit host pointers (pointer2cell is a plain cast at equal widths; patch 48 records that cross-builds escape by subtracting base_address at narrower widths). All five refusals come through int!, the property encoder, so the gate is correctly placed and weakening it would only restore the silent truncation patch 26 removed. The outcome is asserted, not the message: the prompt never evaluates '3 4 + .', and empty input halts identically, so this is initialisation rather than anything this track types. One defect remains NAMED rather than hidden — the halt still exits 0 (TODO §18), and the row above goes red the day that is fixed"
+      || fail "unix: the session ran but openbios-unix exited $URC — see $ULOG"
+
+    note "prompt reached: 3 4 + . answers 7, bye reaches Farewell!"
+    note "stdin=0x$USTDIN stdout=0x$USTDOUT start-mem=0x$UMEM — all inside four bytes, which is what encode-int is handed"
+    pass "the firmware as a plain Unix process reaches its prompt again (TODO §18, patch 50): initialisation completes, '3 4 + .' answers 7 and 'bye' reaches Farewell!. The assertion is the PROPERTY that used to fail, not the boot — /chosen's stdin and stdout are read back from the prompt and must fit in FOUR BYTES, because that is what IEEE 1275 gives an integer (5.3.5.1) and an ihandle here IS a host pointer (pointer2cell is a plain cast at run time). glibc placed the Forth arena above 4 GiB and encode-int refused, CORRECTLY; arch/unix/unix.c now maps the arena and the dictionary below it, where every other target has always been — the QEMU firmwares live at 0x400000 and 0x4000000 — and patch 26's gate is untouched, because the refusal was never the bug. The named regression row returns the day that drifts back"
     ;;
   *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields|unix]" >&2; exit 1 ;;
 esac
