@@ -218,6 +218,8 @@ TESTED_TREE_MARKERS=(
     "arch/unix/unix.c:alloc_below_4g"
     # -- TODO 18(b): the exit status reports what the Forth did (patch 51) --
     "forth/bootstrap/start.fs:of-left-cleanly"
+    # -- the three ways a plain openbios-unix session went wrong (patch 52) --
+    "kernel/forth.c:FORTH_INTSTAT_STOP));"
 )
 present=(); absent=()
 for m in "${TESTED_TREE_MARKERS[@]}"; do

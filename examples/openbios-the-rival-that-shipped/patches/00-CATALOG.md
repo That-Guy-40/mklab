@@ -119,12 +119,13 @@ Rows link to the diff. The narrative for patches 12–34 lives in the
 | [`49-device-register-words-were-empty.patch`](49-device-register-words-were-empty.patch) | `UPSTREAM-BUG` | shared | IEEE 1275 **5.3.7.2**'s six device-register words — `rb@ rw@ rl@ rb! rw! rl!` — had bodies containing **no words at all**, so a register read returned the ADDRESS and a register write stored nothing while leaking two cells. `table.fs:390-395` binds FCode tokens `0x230-0x235` to them, so the presenting symptom is a **stack shift inside an FCode driver**, not a wrong value. `feval.fs:72`'s FIXME ("uses `c@` rather than `rb@` for now") shows the gap was known and worked around at one call site |
 | [`50-unix-arena-below-4g.patch`](50-unix-arena-below-4g.patch) | `DIVERGENCE` | arch-local | **`openbios-unix` had not reached its prompt since patch 26**, and nothing noticed for four days because MANUAL_TESTING.md §5 documented it and no track drove it. 1275 encodes an integer into **four bytes** (5.3.5.1); `/chosen`'s `stdin`/`stdout` are ihandles; and at run time `pointer2cell` is a plain cast, so on this target an ihandle **is** a host pointer — glibc put the arena above 4 GiB and `encode-int` rightly refused. **Patch 26's gate is untouched**: measured, all five trips come through `int!`, so narrowing it would have changed nothing and weakening it would only restore the silent truncation. `arch/unix/unix.c` now maps the arena and the dictionary below 4 GiB — where the QEMU firmwares (0x400000, 0x4000000) have always been — and refuses by name if it cannot. Covered by `smoke-openbios.sh unix`; see TODO §18 |
 | [`51-unix-exit-status-reports-the-forth.patch`](51-unix-exit-status-reports-the-forth.patch) | `DIVERGENCE` | shared | **main() returned 0 whatever the Forth had done**, so a firmware that aborted during initialisation reported SUCCESS to the shell — the LIED rung. Three obvious signals cannot discriminate (`enterforth()`'s return, `interruptforth`'s STOP bit, `exception()`), and the reason is that `bye` and an uncaught `throw` unwind **identically** — `0 rdepth!` either way. So the flag sits on the DELIBERATE path: `bye` sets `of-left-cleanly` and `arch/unix` reads it through `feval()`. A missing flag is **UNKNOWN**, not a failure. Shared Forth, so all three arches rebuilt and driven; see TODO §18(b) |
+| [`52-unix-missing-dict-eof-spin-and-a-false-alarm.patch`](52-unix-missing-dict-eof-spin-and-a-false-alarm.patch) | `UPSTREAM-BUG` | shared | **Three defects out of one user session that just tried to get a prompt.** A **missing dictionary** was neither named nor fatal — `read_dictionary()` returns 0 on `stat()` failure and the caller ignored it, so an empty dictionary produced two baffling `fword:` lines and **exit 0**. **End of input spun a core at 100% forever** — `key()` was `while (!availchar());`, a busy-wait nothing could interrupt; it took BOTH halves (the console says `FORTH_INTSTAT_STOP`, the waiter listens), and EOF now reads as end-of-LINE rather than a `0xff` byte to echo. And **every clean exit printed `feval: … threw -4`** because `cmdline.c` reset only the return stack before its `feval`, where its own comment says "Reset stack". Covered by `smoke-openbios.sh unix` |
 
 ## What the sort says
 
 | kind | count | |
 |---|---|---|
-| `UPSTREAM-BUG` | 24 | defects any user of `openbios/openbios` would hit. The candidate set, if the decision above is ever revisited |
+| `UPSTREAM-BUG` | 25 | defects any user of `openbios/openbios` would hit. The candidate set, if the decision above is ever revisited |
 | `PORT` | 11 | `arch/amd64`, which upstream ships and has not built since 2003 |
 | `FEATURE` | 10 | capabilities upstream never claimed — three NVRAM backings, a pmem store, the encoder work, a root that can describe memory above 4 GiB, a `/memory` that says what is free, and a build that can be made reproducible on request |
 | `FIXTURE` | 2 | test surface compiled into the firmware |
@@ -135,7 +136,7 @@ And by where a future rebase will hurt:
 
 | scope | count | |
 |---|---|---|
-| shared | 29 | touches a path some *other* architecture's build also compiles — this is where a pin bump conflicts |
+| shared | 30 | touches a path some *other* architecture's build also compiles — this is where a pin bump conflicts |
 | arch-local | 22 | only `arch/`, `include/arch/`, or its own `*_config.xml` — nearly free to carry |
 
 **Only one patch is a divergence in the sense of "we want different behaviour."**

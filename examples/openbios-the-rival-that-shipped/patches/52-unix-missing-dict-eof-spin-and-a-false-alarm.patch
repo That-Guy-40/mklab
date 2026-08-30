@@ -1,0 +1,374 @@
+Subject: [PATCH 52/52] the three ways a plain `openbios-unix` session went wrong
+Arch-tested: x86 amd64 ppc unix
+
+All three came out of ONE user session that tried to get a prompt and mistyped
+the command. The typo was theirs; everything below is ours.
+
+--- 1. A MISSING DICTIONARY WAS NEITHER NAMED NOR FATAL ------------------
+
+    $ openbios-unix ./no-such.dict
+    fword: 'is-noname-cfunc' is not in the dictionary -- nothing was executed
+    fword: 'PREPOST-initializer' is not in the dictionary -- nothing was executed
+    not supported.
+    $ echo $?
+    0
+
+read_dictionary() returns 0 when stat() fails, and the CALLER IGNORED IT, so the
+engine ran on with an empty dictionary and produced two baffling `fword:` lines
+about words it had never loaded, then "not supported.", then SUCCESS. The file
+that could not be read was never mentioned. It is now, and it is a failure:
+
+    panic: cannot read the dictionary './no-such.dict' -- no such file, or
+    not readable.                                                   (exit 1)
+
+--- 2. END OF INPUT SPUN A CORE AT 100% FOREVER -------------------------
+
+kernel/forth.c's `key` was `while (!availchar());` -- a busy-wait NOTHING could
+interrupt. availchar() answering "no key yet" is indistinguishable from "there
+will never be another key", and at EOF arch/unix answered the first forever.
+Measured: state R, no wchan, 100% CPU, indefinitely. Ctrl-D at the prompt hung.
+So did any piped script not ending in `bye`.
+
+IT TOOK BOTH HALVES, and the first attempt shipped only one. The console layer
+is what knows EOF happened, so it says so (FORTH_INTSTAT_STOP -- the flag
+kernel/bootstrap.c's availchar() already sets for the dictionary path); and the
+waiter has to LISTEN, which is the one shared line. Fixing the console alone
+changed nothing at all, because key() never looked at the flag.
+
+Then EOF must not be echoed AS A BYTE: returning EOF from getchar pushed
+(char)-1 into the line editor, which printed a row of 0xff before unwinding. It
+returns '\r' now -- end of input reads as end of LINE, which is what the reader
+is waiting for and what every REPL does with Ctrl-D. And EOF counts as a
+DELIBERATE exit beside `bye` (TODO 18(b)), so the status is 0, not 1.
+
+KNOWN AND NOT HIDDEN: a Ctrl-D exit prints three or four redundant `0 >  ok`
+prompts on the way out, because each interpret cycle re-enters enterforth, whose
+entry clears interruptforth, so the flag must be re-set. It terminates and it is
+honest; making it exit on the first one needs the outer interpreter's own
+`terminate?`, which is a larger change than this.
+
+--- 3. EVERY CLEAN EXIT PRINTED A FAILURE -------------------------------
+
+    feval: 0 to terminate? -- threw -4
+
+packages/cmdline.c's comment says "Reset stack and terminate?" and it reset only
+the RETURN stack, so this feval ran at a NEGATIVE data-stack depth left by the
+unwind and interpreter.fs's `depth 0< if -4 throw` fired. The phrase is fine --
+`0 to terminate?` typed at the prompt answers ` ok`. It was the engine
+underneath that had been torn down. One line does what the comment already
+claimed.
+
+That line was printed by OUR OWN reporting patch (the Forth bindings report
+their own failures), which is the patch working: it surfaced a real throw nobody
+had seen. But a warning on every healthy run is how real warnings stop being
+believed, and the `diagnostics` track already asserts ZERO feval/fword lines on
+a clean boot for the QEMU arches. The unix target had no track at all until
+today, which is why this survived.
+
+Covered by `smoke-openbios.sh unix`, which now pins all three: a missing
+dictionary is named and non-zero; end-of-input exits 0 within a BOUNDED timeout
+(a test for a hang that itself hangs tells you nothing) and echoes no 0xff; and
+a clean session prints no feval/fword line.
+
+diff --git a/arch/unix/unix.c b/arch/unix/unix.c
+index cb9757e..2f09466 100644
+--- a/arch/unix/unix.c
++++ b/arch/unix/unix.c
+@@ -17,6 +17,7 @@
+ #include <termios.h>
+ #include <sys/types.h>
+ #include <sys/stat.h>
++#include <sys/mman.h>
+ #include <stdarg.h>
+ 
+ #ifdef __GLIBC__
+@@ -62,6 +63,7 @@ static ucell *memory;
+ static int diskemu;
+ 
+ static int segfault = 0;
++static int forth_exit_status = 0;
+ static int verbose = 0;
+ 
+ #if defined(CONFIG_PPC) || defined(CONFIG_SPARC64)
+@@ -182,6 +184,23 @@ static ucell read_dictionary(char *fil)
+  * functions used by primitives
+  */
+ 
++/* LOCAL DIVERGENCE (mklab). EOF IS AN EXIT, NOT "NOTHING YET".
++ *
++ * This returned 0 at EOF -- the same answer as "no key has been typed" -- so
++ * the Forth key loop spun on it forever. Measured: 100% CPU, state R, no wchan,
++ * indefinitely. Ctrl-D at the prompt, or a piped script that does not end in
++ * `bye`, both hung. It only became reachable when patch 50 let this target get
++ * as far as an input loop; before that it aborted during initialisation.
++ *
++ * kernel/bootstrap.c's availchar() already had the answer for the DICTIONARY
++ * path -- set FORTH_INTSTAT_STOP so the interpreter loop ends -- and the
++ * runtime console path simply had no equivalent. It does now.
++ *
++ * And EOF is DELIBERATE: Ctrl-D is how every REPL is left, so it counts as a
++ * clean exit beside `bye` (TODO 18(b)) rather than as a bootstrap that died.
++ */
++static int saw_eof = 0;
++
+ static int unix_availchar(void)
+ {
+ 	int tmp = getc(stdin);
+@@ -189,6 +208,8 @@ static int unix_availchar(void)
+ 		ungetc(tmp, stdin);
+ 		return -1;
+ 	}
++	saw_eof = 1;
++	interruptforth |= FORTH_INTSTAT_STOP;
+ 	return 0;
+ }
+ 
+@@ -200,7 +221,20 @@ static int unix_putchar(int c)
+ 
+ static int unix_getchar(void)
+ {
+-	return getc(stdin);
++	int c = getc(stdin);
++
++	/* END OF INPUT READS AS END OF LINE, not as a byte. Returning EOF here
++	 * pushed (char)-1 into the line editor, which echoed it -- Ctrl-D printed
++	 * a row of 0xff before the interpreter unwound. A carriage return is what
++	 * the reader is waiting for and what every REPL does with Ctrl-D: finish
++	 * the line, then leave. The STOP flag set beside it is what actually ends
++	 * the wait in kernel/forth.c's key(). */
++	if (c == EOF) {
++		saw_eof = 1;
++		interruptforth |= FORTH_INTSTAT_STOP;
++		return '\r';
++	}
++	return c;
+ }
+ 
+ static struct _console_ops unix_console_ops = {
+@@ -363,13 +397,72 @@ int_handler(int signo __attribute__ ((unused)),
+     exit(1);
+ }
+ 
++/* LOCAL DIVERGENCE (mklab). TODO 18.
++ *
++ * PLACE THE FORTH ARENA AND THE DICTIONARY BELOW 4 GiB.
++ *
++ * 1275 encodes an integer into FOUR bytes (5.3.5.1), and /chosen's `stdin` and
++ * `stdout` are ihandles -- pointers into these two allocations
++ * (forth/admin/iocontrol.fs:42,76). At run time pointer2cell is a plain cast
++ * (include/kernel/stack.h:35; Makefile.target defines
++ * NATIVE_BITWIDTH_EQUALS_HOST_BITWIDTH for every target), so an ihandle IS a
++ * host pointer. glibc hands these two sizes out well above 4 GiB on a 64-bit
++ * host, so encode-int refused -- correctly -- and the firmware halted during
++ * initialisation, which is what MANUAL_TESTING.md section 5 recorded.
++ *
++ * THIS DOES NOT MAKE 1275 ABLE TO HOLD A 64-BIT POINTER, and it is not a
++ * weakening of patch 26's gate, which stays exactly as it is. It puts this
++ * target where every other target has always been: the QEMU firmwares live at
++ * 0x400000 and 0x4000000, so their pointers have always fitted in four bytes.
++ *
++ * AND IT REFUSES BY NAME RATHER THAN DRIFTING BACK. If the low mapping cannot
++ * be had, we say so and exit non-zero instead of continuing into an abort that
++ * used to exit 0 (TODO 18(b)) -- an honest failure the caller can see.
++ */
++#define OF_LOW_LIMIT   ((uintptr_t)1 << 32)
++
++static void *alloc_below_4g(size_t len, uintptr_t hint, const char *what)
++{
++	void *p = mmap((void *)hint, len, PROT_READ | PROT_WRITE,
++	               MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
++
++	if (p == MAP_FAILED)
++		return NULL;
++
++	/* A hint is only a hint: verify, never assume. */
++	if ((uintptr_t)p + len > OF_LOW_LIMIT) {
++		printk("panic: %s landed at %p, above 4 GiB -- an ihandle there "
++		       "cannot be encoded into the four bytes IEEE 1275 gives an "
++		       "integer (5.3.5.1). See TODO 18.\n", what, p);
++		munmap(p, len);
++		return NULL;
++	}
++	return p;
++}
++
++/* The matching free, and it is load-bearing rather than tidiness.
++ *
++ * These two are mmap'd now, so the free()s that used to end main() hand glibc a
++ * pointer it never allocated -- and free() reads its chunk header BELOW the
++ * pointer, at p-8. That read is what produced "panic: segmentation violation at
++ * 1ffffff8" (arena base minus 8) while the page below was unmapped, and
++ * "free(): invalid pointer" once it was mapped and glibc got to inspect the
++ * garbage it found. One bug, two costumes. Measured: with munmap here and NO
++ * guard page, the session runs clean, and a gdb access-watchpoint on
++ * memory-8/-16 never fires across a whole session. */
++static void free_below_4g(void *p, size_t len)
++{
++	if (p)
++		munmap(p, len);
++}
++
+ /*
+  * allocate memory and prepare engine for memory management.
+  */
+ 
+ static void init_memory(void)
+ {
+-	memory = malloc(MEMORY_SIZE);
++	memory = alloc_below_4g(MEMORY_SIZE, 0x20000000, "the Forth arena");
+ 	if (!memory) {
+ 		printk("panic: not enough memory on host system.\n");
+ 		exit_terminal();
+@@ -521,7 +614,9 @@ int main(int argc, char *argv[])
+ 	/* Initialise console */
+ 	init_console(unix_console_ops);
+ 
+-	if ((dict = (unsigned char *) malloc(DICTIONARY_SIZE)) == NULL) {
++	if ((dict = (unsigned char *) alloc_below_4g(DICTIONARY_SIZE,
++	                                            0x30000000,
++	                                            "the dictionary")) == NULL) {
+ 		printk("panic: not enough memory.\n");
+ 		return 1;
+ 	}
+@@ -556,7 +651,17 @@ int main(int argc, char *argv[])
+         if (verbose)
+             printk("done.\n");
+ 
+-	read_dictionary(argv[optind]);
++	/* LOCAL DIVERGENCE (mklab). read_dictionary() returns 0 when stat() fails
++	 * and this call used to IGNORE it, so a missing or misspelt dictionary ran
++	 * on with an EMPTY one: two baffling `fword: ... is not in the dictionary`
++	 * lines, "not supported.", and exit 0. The file that could not be read was
++	 * never named. Say which file, and fail. */
++	if (!read_dictionary(argv[optind])) {
++		printk("panic: cannot read the dictionary '%s' -- no such file, "
++		       "or not readable.\n", argv[optind]);
++		exit_terminal();
++		exit(1);
++	}
+ 	forth_init();
+ 
+ 	PUSH_xt( bind_noname_func(arch_init) );
+@@ -580,12 +685,50 @@ int main(int argc, char *argv[])
+ 		}
+ 
+ 		enterforth((xt_t)PC);
++
++		/* LOCAL DIVERGENCE (mklab). TODO 18(b): DO NOT REPORT SUCCESS FOR A
++		 * BOOTSTRAP THAT DIED.
++		 *
++		 * main() used to `return 0` here whatever the Forth had done, so a
++		 * firmware that aborted during initialisation -- printing a refusal
++		 * and never reaching its prompt -- told the shell it had succeeded.
++		 * A false success outranks an honest failure, so it is the part
++		 * worth fixing.
++		 *
++		 * THREE OBVIOUS SIGNALS DO NOT WORK, measured, and are recorded here
++		 * so nobody re-derives them: enterforth()'s return is 0 in both cases
++		 * (an uncaught throw unwinds the return stack to the same depth `bye`
++		 * does, so rstackcnt balances); interruptforth's STOP bit is 0 in
++		 * both (it marks input EOF, not how the session ended); and
++		 * kernel/bootstrap.c's exception() serves the dictionary-BUILD path
++		 * and is never called while running a prebuilt dict.
++		 *
++		 * So the flag is set on the one path that is DELIBERATE -- `bye`, in
++		 * forth/bootstrap/start.fs -- and read here through feval(), the
++		 * shipped C-to-Forth call, rather than by reaching into the
++		 * dictionary at a guessed offset. If the word is missing we say
++		 * UNKNOWN and keep the old status: "I could not check" must never
++		 * render as a failure any more than as a pass.
++		 */
++		if (findword("of-left-cleanly")) {
++			feval_quiet("of-left-cleanly @");
++			if (POP() == 0 && !saw_eof) {
++				printk("openbios-unix: the Forth engine was left "
++				       "WITHOUT `bye` -- initialisation did not "
++				       "complete. See TODO 18(b).\n");
++				forth_exit_status = 1;
++			}
++		} else {
++			printk("openbios-unix: UNKNOWN -- `of-left-cleanly` is not "
++			       "in this dictionary, so whether the engine exited "
++			       "deliberately could not be checked (TODO 18(b)).\n");
++		}
+ #if 0
+ 		if (dictname != NULL)
+ 			write_dictionary(dictname);
+ #endif
+ 
+-		free(memory);
++		free_below_4g(memory, MEMORY_SIZE);
+ 
+ 	} else {		/* input file is not a dictionary */
+ 		printk("not supported.\n");
+@@ -595,8 +738,8 @@ int main(int argc, char *argv[])
+ 	if (diskemu!=-1)
+ 		close(diskemu);
+ 
+-	free(dict);
+-	return 0;
++	free_below_4g(dict, DICTIONARY_SIZE);
++	return forth_exit_status;
+ }
+ 
+ #undef printk
+diff --git a/kernel/forth.c b/kernel/forth.c
+index 61dd70d..888b6d5 100644
+--- a/kernel/forth.c
++++ b/kernel/forth.c
+@@ -1721,7 +1721,22 @@ static void iskey(void)
+ 
+ static void key(void)
+ {
+-	while (!availchar());
++	/* LOCAL DIVERGENCE (mklab). A BUSY-WAIT THAT NOTHING COULD INTERRUPT.
++	 *
++	 * This was `while (!availchar());` -- and availchar() answering "no key
++	 * yet" is indistinguishable from "there will never be another key". On
++	 * arch/unix at EOF (Ctrl-D, or a piped script not ending in `bye`) that
++	 * spun at 100% CPU forever: measured, state R, no wchan, indefinitely.
++	 *
++	 * The console layer is what knows the difference, and it already has a way
++	 * to say so -- kernel/bootstrap.c's availchar() sets FORTH_INTSTAT_STOP
++	 * when its input is exhausted. This loop simply never looked. Now it does,
++	 * so a console that reaches end-of-input can end the wait instead of
++	 * needing a key that is not coming.
++	 *
++	 * Unchanged where no one sets STOP, which is every QEMU target: there
++	 * availchar() returns 0 only while a key has not arrived YET. */
++	while (!availchar() && !(interruptforth & FORTH_INTSTAT_STOP));
+ #ifdef FCOMPILER
+ 	PUSH(get_inputbyte());
+ #else
+diff --git a/packages/cmdline.c b/packages/cmdline.c
+index ea6bca3..2a8b01e 100644
+--- a/packages/cmdline.c
++++ b/packages/cmdline.c
+@@ -254,7 +254,9 @@ cmdline_prompt( cmdline_info_t *ci )
+ 
+ 			emit_str( &buf[pos] );
+ 			emit(' ');
+-			PUSH( feval(buf) );
++			/* feval_quiet, because print-status on the very next
++			 * line IS the report. See libopenbios/bindings.c. */
++			PUSH( feval_quiet(buf) );
+ 			fword("print-status");
+ 
+ 			/* Leave the interpreter if terminate? value set */
+@@ -398,7 +400,16 @@ go_up:
+          * e.g. for debugging */
+ 
+ 	/* Reset stack and terminate? */
++	/* LOCAL DIVERGENCE (mklab). The comment above says "Reset stack" and only
++	 * the RETURN stack was reset, so this feval ran with a NEGATIVE data-stack
++	 * depth left by the unwind -- interpreter.fs's `depth 0< if -4 throw` fired,
++	 * and every clean exit printed
++	 *     feval: 0 to terminate? -- threw -4
++	 * The phrase is fine; `0 to terminate?` typed at the prompt answers ` ok`.
++	 * It was the engine underneath it that had been torn down. A warning on
++	 * every healthy run is how real warnings stop being believed. */
+ 	rstackcnt = dbgrstackcnt;
++	dstackcnt = 0;
+ 	feval("0 to terminate?");
+ }
+ 
