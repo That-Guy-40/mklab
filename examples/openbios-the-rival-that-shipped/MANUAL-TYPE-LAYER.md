@@ -41,7 +41,9 @@ cd examples/openbios-the-rival-that-shipped
 
 Stage a CD carrying the type layer and something to parse. The ELF you'll parse
 is **the amd64 firmware's own boot image** — a real ELF64, and one you can check
-against `readelf` on this machine:
+against `readelf` on this machine. §10a also parses an **ELF32**, which has to be
+padded first (a bare ELF32 cannot be `load`ed — §10a says why), so stage that
+here too:
 
 ```bash
 W=${OPENBIOS_WORKDIR:-$HOME/openbios-lab}
@@ -50,6 +52,11 @@ cp dsl/struct.fth                          "$W/typelayer/STRUCT.FTH"
 cp dsl/elf.fth                             "$W/typelayer/ELF.FTH"
 cp dsl/elf32.fth                           "$W/typelayer/ELF32.FTH"
 cp "$W/openbios/obj-amd64/openbios.multiboot" "$W/typelayer/SUBJ.ELF"
+python3 - "$W/openbios/obj-amd64/openbios-builtin.elf32" \
+          "$W/typelayer/EMBED32.BIN" <<'PY'
+import sys
+open(sys.argv[2], 'wb').write(b'\0' * 512 + open(sys.argv[1], 'rb').read())
+PY
 genisoimage -quiet -o "$W/typelayer.iso" -V TYPELAYER -r -J "$W/typelayer"
 ```
 
@@ -248,13 +255,25 @@ b8000 >virt >phys u.
 | round trip | `b8000` | `b8000` |
 
 On amd64 `>virt` is the identity, exactly as it must be for an arch that does
-not relocate. On x86 it is a real translation. Now redefine one word — the only
-thing that changes is where the array is based:
+not relocate. On x86 it is a real translation. Only one word needs to change —
+the array's base — but you have to **retype the two words that call it as well**:
 
 ```forth
 : cell-at ( i -- adr ) b8000 >virt swap vcell[] ;
+: putc ( ch attr i -- ) cell-at dup >r vc-attr t! r> vc-ch t! ;
+: fill-screen ( ch attr -- ) 7d0 0 do 2dup i putc loop 2drop ;
 41 1f fill-screen
 ```
+
+> **Redefining `cell-at` on its own does nothing, and says nothing.** `:`
+> resolves each called word **at compile time**, so the `putc` you already
+> defined still calls the *old* `cell-at`, and `fill-screen` still calls the old
+> `putc`. Retype only the first line and the screen stays exactly as it was —
+> no error, no warning, `41 1f fill-screen` still answers ` ok`. Measured on
+> x86: `xp /4xb 0xb8000` reads `0x30 0x07 0x20 0x07` (console text) after
+> redefining `cell-at` alone, and `0x41 0x1f 0x41 0x1f` once all three are
+> retyped. Forth redefinition is **not** retroactive — a caller keeps the
+> callee it was compiled against.
 
 **The x86 screen turns blue.** Check it from outside too — **Ctrl-A C**,
 `xp /8xb 0xb8000`, and the pattern is there:
@@ -464,7 +483,7 @@ and `elf.fth` carries GNU poke's two most useful ones (§E4):
 
 ```forth
 elf-load-base u.        \ the lowest vaddr any PT_LOAD segment loads at
-101d70 vaddr>off u.     \ which byte of the FILE becomes that address at run time
+101d70 vaddr>off u.     \ which byte of the FILE becomes that address
 ```
 
 ```
@@ -619,7 +638,7 @@ ELF Header:
   Class:                             ELF64
   Data:                              2's complement, little endian
   Version:                           1 (current)
-  Type:                              EXEC (Executable file)
+  Type:                              DYN (Shared object file)
   Machine:                           Advanced Micro Devices X86-64
   Entry point address:               0x401000
 ```
@@ -627,6 +646,12 @@ ELF Header:
 A structure authored at a firmware prompt, read back by the platform's own
 binary-format tool. That is the "poke in the environment poke cannot reach" claim
 with the loop closed at both ends.
+
+Both of the edits you made after `elf64-new` are visible here: `readelf` reports
+the entry point as `0x401000` and the type as **`DYN`**, because `3 @elf e_type
+t!` is what you typed. `elf64-new` itself writes `2` (`EXEC`) — skip that one
+line and this reads `EXEC (Executable file)` instead. Two `t!`s at a firmware
+prompt, and the host's ELF reader changes its mind about what the file is.
 
 ---
 
@@ -738,23 +763,55 @@ name. `control:` does the same for any typed field:
 
 ```forth
 struct  1 dev-field: d-ch  1 dev-field: d-at  constant /dc
-b8000 >virt d-at  10  control: backlight   \ address + field + mask, behind a name
+/dc array: dcell[]
+b8000 >virt 800 dcell[] value spare      \ cell 0x800 — see the box below
+0 spare d-at t!
+spare d-at  10  control: backlight       \ address + field + mask, behind a name
 ```
 
-Note `d-ch` is there so `d-at` lands at **+1** — the attribute byte Part 8 was
-setting, not the character at +0. Type this with `d-at` as the only field and
+Two things about that address, both of which bite if you skip them.
+
+`d-ch` is there so `d-at` lands at **+1** — the attribute byte Part 8 was
+setting, not the character at +0. Declare `d-at` as the only field and
 `backlight enable` flips a bit in the *letter* instead: `A` becomes `Q`, which
 looks like the control worked and isn't the byte you meant.
+
+> **And cell `0x800` is deliberate: it is past the end of the screen.** The
+> console owns cells `0`–`0x7cf` (80×25 = `0x7d0`) and **scrolls them on every
+> `cr`** — so after a scroll, row 0 is whatever old row 1 held. Aim a control at
+> cell 0 and the sequence below reads back **`0` every time**: `backlight
+> enable` really does set the bit, the newline scrolls it away, and `backlight
+> enabled?` then honestly reports the byte that replaced it. Nothing is broken
+> and nothing says so. Cell `0x800` is the same aperture reached the same way
+> through `rb@`/`rb!`, just outside the region the console rewrites. (This is
+> the trap Part 1 met from the other side, and why `smoke-openbios.sh
+> rmw-fields` fills the *whole* screen instead of one cell.)
 
 Now the verbs read as English, and the mask, the byte order, the address and the
 read-modify-write are all hidden:
 
 ```forth
+backlight enabled?      \ 0   — nothing set yet
 backlight enable        \ set the bit(s), preserving the rest
+backlight enabled?      \ -1  — and spare d-at t@ u. now reads 10
 backlight disable
+backlight enabled?      \ 0
 backlight toggle
-backlight enabled?      \ -1 if any masked bit is set
+backlight enabled?      \ -1
 ```
+
+**It is still a read-modify-write underneath**, which you can see by giving the
+byte some neighbours first:
+
+```forth
+81 spare d-at t!
+backlight enable
+spare d-at t@ u.        \ 91 — bit 4 set, and 0x81 untouched
+```
+
+From the monitor, **Ctrl-A C**, `xp /2xb 0xb9000` reads `0x20 0x91` — the same
+answer from outside the firmware, which is the only witness that counts for a
+device write.
 
 They are **not** called `on` / `off` — those are the firmware's own flag setters
 (`variable x  x on`), and shadowing them is the `elf isn't unique.` mistake.
@@ -767,7 +824,7 @@ the ones that say what they do.
 ```forth
 r st 80 control: guard
 r st 01 control: led
-guard enable   led enable   r st t@ .    \ 81 — both, neither clobbered the other
+guard enable   led enable   r st t@ .    \ 81 — neither clobbered the other
 ```
 
 And mudge's own words come back, now as one-liners over the abstraction rather
@@ -864,12 +921,14 @@ questions you actually ask. That is the whole shape.
 | `CONSTRAINT: not ELF64 (e_class)` on a file you believe is fine | it is an **ELF32**. This layer is ELF64-only and says so rather than misreading it — the first 24 bytes of the two formats are identical, so a layer without that check would look right and then produce nonsense |
 | `load` of an ELF32 never comes back | the firmware's **own** loader recognises ELF32 and takes over. An ELF64 is not recognised, which is why this lab's subject is loadable as data at all |
 | `t-set` seems to wipe other bits | you used a bare `t!` somewhere, or the field's width is wrong. `t-set`/`t-clr`/`t-tog` read-modify-write; a plain `t!` replaces the whole field |
+| you redefined a word and nothing changed | `:` resolves callees **at compile time**, so redefinition is not retroactive — every word already compiled still calls the old one. Retype the callers too. This is Part 2's `cell-at` → `putc` → `fill-screen` chain |
+| `enabled?` reads `0` right after `enable` | your control points into cells `0`–`0x7cf`, which the console **scrolls on every `cr`**. Nothing is broken — it is reporting the byte that replaced yours. Aim past the screen (§10c's cell `0x800`) or fill every row first |
 
 ---
 
 ## 13. Where this is checked automatically
 
-Everything above is asserted, on both arches, by three smoke tracks — with
+Everything above is asserted, on both arches, by the smoke tracks below — with
 controls, which is the part a walkthrough cannot give you:
 
 ```bash
@@ -878,7 +937,14 @@ controls, which is the part a walkthrough cannot give you:
 ./smoke-openbios.sh struct-device    # the device backend, and the x86 false positive
 ./smoke-openbios.sh elf-methods      # the constraints and the methods — four
                                      # corruptions must each be refused BY NAME
+./smoke-openbios.sh rmw-fields       # Parts 8 and 9 — every RMW row paired with
+                                     # a bare `t!` that destroys the neighbour
 ```
+
+Each has a `tests/test-smoke-<track>.sh` wrapper, so
+[`tests/run-all.sh`](tests/run-all.sh) runs all of them and
+`tests/test-every-track-has-a-wrapper.sh` fails if a track ever ships without
+one. That guard is why this list is not a hand-maintained count.
 
 Background: [`README.md`](README.md) (§"And where the type layer starts"),
 [`MANUAL_TESTING.md`](MANUAL_TESTING.md) for the measured record and the
