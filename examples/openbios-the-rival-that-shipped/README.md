@@ -138,6 +138,7 @@ proves the linuxboot **and** OFW labs' kept ROMs survive. No sudo anywhere.
 | [`showcase-rival-boots-linux.sh`](showcase-rival-boots-linux.sh) | the finale: one `boot` line at the prompt → Linux 6.3 → u-root, on `multiboot`, `coreboot` **or `amd64`** — the same line, unchanged, from 64-bit firmware |
 | [`RUNBOOK.md`](RUNBOOK.md) | guided tour: `0 >` semantics, device tree, the unix-process firmware, rival-vs-rival exercises |
 | [`tests/test-usage-is-data.sh`](tests/test-usage-is-data.sh) | CI guard: every script's `--help` prints and **runs nothing** — it found five defects the day it was first aimed here, one of which started a coreboot build |
+| [`MANUAL-TYPE-LAYER.md`](MANUAL-TYPE-LAYER.md) | **drive the type layer by hand**: draw on the VGA text buffer through a typed layout, parse a real ELF64, walk its program-header table, and author a header the *host's* `readelf` reads. Both arches — Part 2 is the one to do even if you skip the rest, because the identical VGA code silently does nothing on x86 and reads back a perfect answer anyway |
 | [`MANUAL_TESTING.md`](MANUAL_TESTING.md) | exact commands + real success signatures |
 | [`PLAN.md`](PLAN.md) · POC-[1](POC-1-BUILD-BOX.md)/[2](POC-2-OK-PROMPT.md)/[3](POC-3-COREBOOT-PAYLOAD.md)/[4](POC-4-BOOT-LINUX.md)/[5](POC-5-PPC-SWAP-IN.md) | roadmap + blow-by-blow spike write-ups |
 | [`X86-64-FEASIBILITY.md`](X86-64-FEASIBILITY.md) | could this firmware run in **long mode**? — measured, audited, **Spike 0 run**: `arch/amd64` builds zero images even with the image types enabled, and after nine mechanical drift lines the only true 64-bit C errors left are `context.c`'s eight |
@@ -268,6 +269,10 @@ map / modify / **poke-back** for a scalar, because the variable is a copy. There
 here to write back from: a field leaves ( base -- adr tid ), so `t!` and a bare `le-l!`
 through `t-adr` are equally the write. Forth is *more* immediate than poke at the scalar
 level; what it lacked was poke's composite half, which is knowing which bytes a field owns.
+
+**To drive it yourself**, [`MANUAL-TYPE-LAYER.md`](MANUAL-TYPE-LAYER.md) is a
+hands-on walkthrough at the `0 >` prompt on both arches — VGA drawing, ELF
+parsing, table walking, and authoring a header `readelf` can read.
 
 `smoke-openbios.sh struct-layer` measures both of the review's checkpoints on **both** arches
 and ends by pointing the layer at a real ELF64 — the amd64 firmware's own boot image, loaded

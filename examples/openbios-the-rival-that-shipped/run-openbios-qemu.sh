@@ -49,8 +49,12 @@ TYPE SLOWLY: the serial console has no flow control and silently drops
 characters that arrive faster than the firmware consumes them. Pasting a long
 line loses its tail with no error.
 
-Env: OPENBIOS_WORKDIR (default ~/openbios-lab), OPENBIOS_NO_PMEM=1 to drop the
-     amd64 NVDIMM, OPENBIOS_PMEM_IMG to point it elsewhere
+Env:
+  OPENBIOS_WORKDIR   where the clone and images live (default ~/openbios-lab)
+  OPENBIOS_NO_PMEM=1 drop the amd64 NVDIMM; OPENBIOS_PMEM_IMG points it elsewhere
+  OPENBIOS_CDROM     attach this ISO instead of $OPENBIOS_WORKDIR/boot.iso
+  OPENBIOS_DISPLAY   gtk or sdl opens a window, so the VGA text buffer is
+                     visible (default none). MANUAL-TYPE-LAYER.md needs it.
 USAGE
 }
 
@@ -62,8 +66,25 @@ CB="${COREBOOT_DIR:-$HOME/linuxboot-lab/coreboot}"
 ACCEL=$([[ -w /dev/kvm ]] && echo kvm || echo tcg)
 
 # Optional media: showcase ISO (vmlinuz + uroot.img) if present.
+#
+# OPENBIOS_CDROM overrides it, which is what MANUAL-TYPE-LAYER.md uses to hand
+# the firmware dsl/struct.fth and an ELF to parse. Overriding rather than
+# replacing $WORKDIR/boot.iso on purpose: the showcase ISO is what the Linux
+# boot needs, and clobbering it to run a Forth walkthrough would break the
+# other half of the lab silently.
 CDROM=()
-[[ -f "$WORKDIR/boot.iso" ]] && CDROM=(-cdrom "$WORKDIR/boot.iso")
+CDIMG="${OPENBIOS_CDROM:-$WORKDIR/boot.iso}"
+if [[ -n "${OPENBIOS_CDROM:-}" && ! -f "$CDIMG" ]]; then
+    echo "OPENBIOS_CDROM=$CDIMG does not exist" >&2; exit 1
+fi
+[[ -f "$CDIMG" ]] && CDROM=(-cdrom "$CDIMG")
+
+# -display none is right for a serial-only session and WRONG the moment you
+# want to see the VGA text buffer you just wrote to. OPENBIOS_DISPLAY=gtk (or
+# sdl) opens a window; the prompt stays on this terminal either way, because
+# -serial mon:stdio is unchanged. `ppc` ignores it -- that arm is -nographic
+# -vga none because OpenBIOS-ppc only reads the muxed stdio.
+DISPLAY_ARGS=(-display "${OPENBIOS_DISPLAY:-none}")
 
 case "$FLAVOR" in
   multiboot)
@@ -71,12 +92,12 @@ case "$FLAVOR" in
     [[ -f "$MB" ]] || { echo "no image at $MB — run ./build-openbios.sh x86" >&2; exit 1; }
     exec qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 \
       -kernel "$MB" -initrd "$WORKDIR/openbios/obj-x86/openbios-x86.dict" \
-      "${CDROM[@]}" -display none -serial mon:stdio -no-reboot ;;
+      "${CDROM[@]}" "${DISPLAY_ARGS[@]}" -serial mon:stdio -no-reboot ;;
   coreboot)
     ROM="$CB/build-openbios/coreboot.rom"
     [[ -f "$ROM" ]] || { echo "no ROM at $ROM — run ./build-coreboot-openbios.sh" >&2; exit 1; }
     exec qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -bios "$ROM" \
-      "${CDROM[@]}" -display none -serial mon:stdio -no-reboot ;;
+      "${CDROM[@]}" "${DISPLAY_ARGS[@]}" -serial mon:stdio -no-reboot ;;
   ppc)
     ELF="$WORKDIR/openbios/obj-ppc/openbios-qemu.elf"
     [[ -f "$ELF" ]] || { echo "no image at $ELF — run ./build-openbios.sh ppc" >&2; exit 1; }
@@ -110,6 +131,6 @@ case "$FLAVOR" in
     # enumerates something real.
     exec qemu-system-x86_64 -M "pc,accel=$ACCEL,nvdimm=on" -m 512,slots=2,maxmem=2G \
       -kernel "$MB" -initrd "$DICT" "${PMEM[@]}" \
-      "${CDROM[@]}" -display none -serial mon:stdio -no-reboot ;;
+      "${CDROM[@]}" "${DISPLAY_ARGS[@]}" -serial mon:stdio -no-reboot ;;
   *) echo "usage: $0 [multiboot|coreboot|ppc|amd64]" >&2; exit 1 ;;
 esac
