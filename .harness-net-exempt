@@ -16,6 +16,11 @@
 # shared tests/lib.sh, and these deliberately have none: several of them test
 # lib.sh-shaped things, and a checker that sourced the harness it is checking
 # would be supplying its own subject — the same argument check-harness-net.sh
-# makes for providing its own verdict helpers. TODO 15.3 excludes this directory
-# for the same reason.
+# makes for providing its own verdict helpers.
+#
+# IT DOES HAVE A run-all.sh (since 2026-08-30, TODO 15.8), and that is not the
+# same question. A runner buckets exit codes; the net is a shared harness the
+# tests would have to source. This exemption is about the second only, which is
+# why the loop's staleness check asks whether a lib.sh has appeared here — not
+# whether anything else has.
 tools/tests
