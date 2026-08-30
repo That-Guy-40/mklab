@@ -249,3 +249,40 @@ struct
 constant /elf64-phdr
 
 /elf64-phdr array: phdr[]
+
+\ ── the address space, which a type layer does NOT give you ────────
+\ A layout makes field access convenient. It does nothing whatsoever to make an
+\ ADDRESS correct, and on arch/x86 the naive one is wrong in the worst way: the
+\ store lands in ordinary RAM, reads back perfectly through the accessor that
+\ wrote it, and never reaches the device.
+\
+\ x86 relocates itself by REBASING THE GDT (arch/x86/segment.c), so every Forth
+\ address is segment-relative and the CPU adds virt_offset to reach physical
+\ memory. amd64 does not relocate -- long mode ignores segment bases and
+\ arch/amd64/segment.c sets virt_offset = 0 -- so there the two are the same.
+\
+\ virt_offset IS DERIVABLE AT THE PROMPT, and that is the whole trick.
+\ arch/x86/openbios.c:573 defines the load-base constant as
+\ `phys_to_virt(LOAD_BASE_PHYS)`, and phys_to_virt(P) is P - virt_offset
+\ (include/arch/x86/io.h:9). So
+\
+\     virt_offset = LOAD_BASE_PHYS - load-base
+\
+\ and no C needs to publish anything. Measured on x86 2026-08-30:
+\ load-base = e0670bd0, so virt_offset = 1fd8f430 -- and note that
+\ arch/x86/context.c:189 records 1fd8fe50 from 2026-08-26. Both are right for
+\ the tree they were measured on: relocation targets the TOP of RAM, so the
+\ value moves whenever the image size does. It is a fact to DERIVE, never one
+\ to write down -- which is exactly why this computes it every time.
+\
+\ THE ONE CACHED FACT, said out loud: LOAD_BASE_PHYS itself is read from C
+\ (arch/x86/openbios.c:32 = 400000; forth/admin/nvram.fs's amd64 arm = 4000000)
+\ and is selected here by cell width. Nothing in the device tree publishes it.
+\ Publishing virt_offset -- or implementing 1275's `map-in` -- would remove this
+\ last constant; until then the pair below is checked by `smoke-openbios.sh
+\ struct-device`, which paints through it and reads PHYSICAL memory back from
+\ outside the firmware.
+
+: load-base-phys ( -- p )  /n 8 = if 4000000 else 400000 then ;
+: >virt ( phys -- adr )    load-base-phys - load-base + ;
+: >phys ( adr -- phys )    load-base - load-base-phys + ;

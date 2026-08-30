@@ -175,6 +175,205 @@ architectures, `coff.pk`, `mbr.pk`, `gpt.pk`, `jffs2.pk`, `ustar.pk`, `pcap.pk`,
 Minor as a correction; useful as evidence. ELF is not merely "one of" the
 formats — it is not special enough to be bundled at all.
 
+**LOCATED AND READ 2026-08-30 — see §P4a and §E below.** "Distributed
+separately" turned out to mean an unreleased GNU project of its own.
+
+### P4a — FOUND, 2026-08-30: `poke-elf`, read in full
+
+`README.elf` did not say where the pickles went. They are their own GNU project:
+**`git://git.savannah.gnu.org/poke/poke-elf.git`** ([jemarch.net/poke-elf](https://jemarch.net/poke-elf)),
+**not released yet** — no tarball, only the repository. Cloned and read at HEAD
+**`ae45538`, 2024-10-15**: **5,060 lines across 16 pickles**, GPLv3, ELF32 and
+ELF64, seven machines and four OS ABIs, with **37 field constraints** and **57
+methods**.
+
+That is the honest scale of the thing this repo's `dsl/struct.fth` (118 lines of
+code, of which **44 declare ELF**) is being compared against. The gap is not
+mostly *volume of format*; it is the six abstractions below, and they are worth
+separating because they do not cost the same.
+
+---
+
+## E — What `poke-elf` does that a Forth layout does not, and what each would cost
+
+Read from the source, not the manual. Ranked by value-per-line in Forth, not by
+how impressive they look.
+
+### E1 — Constraints: fields that REFUSE to map
+
+The single biggest difference in kind. `struct.fth` **describes** a layout;
+poke-elf **validates** one, and a violated constraint makes the map fail rather
+than yielding a wrong number.
+
+```
+uint<8>[4] ei_mag == [0x7fUB, 'E', 'L', 'F'];        /* required value */
+Elf_Half e_shstrndx : e_shnum == 0 || e_shstrndx < e_shnum;
+uint<8> ei_abiversion : ei_osabi == ELF_OSABI_NONE => ei_abiversion == 0;
+```
+
+Note the third: `=>` is **implication**, a first-class operator, so a conditional
+constraint reads as one.
+
+**Transliteration is cheap and it is the top item.** A constraint is a predicate
+over a mapped base, and Forth has `abort"`:
+
+```forth
+: ?elf64 ( base -- base )
+  dup e_magic t@ 464c457f <> abort" not an ELF: bad magic"
+  dup e_class t@ 2 <>       abort" not ELF64" ;
+```
+
+**Why this matters more here than in poke**: this repo's whole ethos is that a
+plausible wrong number is worse than an honest refusal, and `struct.fth` already
+does exactly that for **widths** (`T-ERR-width=`, `T-ERR-be64`,
+`T-ERR-narrow-cell`). It refuses what it *cannot* represent and says nothing
+about what it *should not* accept. poke-elf shows the other half of the same
+idea, and it is the same idea.
+
+### E2 — Endianness decided by the DATA, not by the declaration
+
+This one inverts a design decision §G3 recorded as settled.
+
+```
+uint<8> ei_data : … && (ei_data == ELF_DATA_2LSB) ? set_endian (ENDIAN_LITTLE)
+                                                  : set_endian (ENDIAN_BIG);
+```
+
+A **field of the structure sets the byte order for the rest of it**, as a side
+effect inside its own constraint, at map time. `e_machine` does the same with
+`set_mach`, so later constraints validate against the architecture the file just
+declared.
+
+`struct.fth` fixes byte order **per field at declaration time** (`field:` vs
+`le-field:`), which G3 called "the whole of it". For ELF specifically that is
+**wrong in principle and right in practice**: a big-endian ELF64 exists, and the
+current layout would silently misread every multi-byte field in one. Nothing in
+this lab has ever parsed one, so it has never been observed — which is precisely
+the shape of defect this repo keeps writing down.
+
+**Transliteration is a real design, not a line.** It means order becomes a
+*runtime* property of the mapping rather than a compile-time property of the
+field — a `to`-able value the accessors consult. That is doable
+(`0 value t-order-override`), and it is the first thing `struct.fth` should gain
+if a foreign-endian file is ever in scope. **Recorded as a known limit rather
+than fixed**, because no subject in this lab exercises it.
+
+### E3 — Members mapped at offsets read from earlier members
+
+```
+type Elf64_File = struct {
+  Elf64_Ehdr ehdr;
+  if (ehdr.e_shnum > 0) Elf64_Shdr[ehdr.e_shnum] shdr @ ehdr.e_shoff;
+  if (ehdr.e_phnum > 0) Elf64_Phdr[ehdr.e_phnum] phdr : elf64_check_phdr (phdr)
+                                                        @ ehdr.e_phoff;
+};
+```
+
+Three things at once: a member **conditional** on an earlier field, an array
+whose **length** is an earlier field, mapped at an **offset** that is another
+earlier field, and a constraint over the whole array.
+
+**This is exactly what `smoke-openbios.sh struct-array` does by hand** —
+`load-base e_phoff-lo t@ +` for the base, `e_phnum` for the count,
+`e_phentsize` checked against `/elf64-phdr`. So the *capability* is present; what
+is missing is that poke **declares** it once and Forth **spells it out** at every
+use. A `file:`-style definer that binds those three together is maybe twenty
+lines and would be worth having the moment a second table (sections) is added.
+
+Note poke uses `e_shentsize` for nothing here: it maps `Elf64_Shdr` by its own
+declared size and lets a mismatch surface elsewhere. **The Forth track is
+stricter** — it asserts the declaration against the file's own `e_phentsize`.
+That is a place where this repo's habit is genuinely ahead.
+
+### E4 — Methods: semantics, not layout
+
+57 of them, and the interesting ones are not accessors:
+
+```
+method vaddr_to_sec         = (Elf64_Addr vaddr) int<32>: …
+method vaddr_to_file_offset = (Elf64_Addr vaddr) Elf64_Addr: …
+method get_load_base        = Elf64_Addr: …          /* min p_vaddr over PT_LOAD */
+method get_section_name     = (offset<Elf_Word,B> offset) string: …
+```
+
+`vaddr_to_file_offset` walks the section headers to answer *"which bytes in this
+file become that address at run time"*. `get_load_base` is a fold over `PT_LOAD`.
+
+**These transliterate directly, and they are the most useful thing in the whole
+pickle for this repo.** A Forth word that takes a virtual address and returns a
+file offset is ordinary Forth over the array walk that already works — and it is
+*precisely* the operation a firmware doing boot forensics needs. §G6 says the
+forensics angle is the only application the differentiator uniquely licenses;
+E4 is the shape those words should take.
+
+`get_section_name` also shows what is missing underneath: a **string table**
+reader, i.e. `string @ offset`. `struct.fth` has no string type at all. That is
+cheap (`c@` until NUL) and is the smallest concrete gap.
+
+### E5 — Discriminated unions, resolved by trying alternatives
+
+```
+union {
+  Elf64_Addr  d_ptr : elf_tag_is_ptr (d_tag);
+  Elf64_Xword d_val;
+} d_data;
+```
+
+The first alternative whose constraint holds is the one that maps. Forth's
+analogue is a word that dispatches on an earlier field — no new machinery, but
+also no declarative form. **Low priority**: it buys legibility, not capability.
+
+### E6 — A machine-parameterised config registry
+
+`elf-config.pk` (315 lines) is a runtime registry of enums and masks keyed by
+`(class, machine)`, so the *same* type validates `e_flags` differently on MIPS
+and on x86-64. `check_enum` / `check_mask` / `format_enum` are its interface.
+
+**Do not transliterate this.** It is the machinery that makes 5,060 lines cover
+seven architectures, and this lab has one. Its lesson is architectural, not
+practical: poke-elf keeps the *format* and the *architecture-specific value
+vocabulary* in separate files, which is why `elf-64.pk` is 446 lines and stays
+readable.
+
+### E7 — Unit-typed offsets, and what §G4's "skip" actually costs
+
+`Elf64_Addr = offset<uint<64>,B>` — every address and size in poke-elf carries
+its unit, and `e_ehsize`/`e_phentsize` are `offset<Elf_Half,B>` rather than bare
+integers. §G4 recommended **skipping** unit-typed offsets in Forth, and that
+still stands — but now the cost is concrete rather than abstract: expressions
+like `p.p_vaddr & ~(p.p_align - 1#B)` in `get_load_base` are unit-checked, and
+in Forth they are bare cell arithmetic that nothing verifies. The mitigation this
+repo already uses is the one to keep — assert the **outcome** against a value
+derived outside the firmware, which is what the `PT_LOAD` sum in `struct-array`
+does.
+
+### The translation table
+
+| poke-elf construct | Forth transliteration | verdict |
+|---|---|---|
+| field constraint `:` / required value `==` | a predicate word + `abort"` | **do it — top item.** Matches this repo's own refusal habit exactly |
+| method (`vaddr_to_file_offset`, `get_load_base`) | ordinary Forth over the array walk | **do it — the forensics words §G6 wants** |
+| string-table read (`string @ off`) | `c@` until NUL | **do it — smallest concrete gap** |
+| member mapped at an earlier field's offset (`@`), array length from a field | a `file:` definer binding base+count+stride | **worth it at the second table** |
+| endianness set by the data (`set_endian`) | order as a runtime value, not a declaration property | **a design; record as a limit until a big-endian subject exists** |
+| discriminated union | dispatch word on an earlier field | legibility only |
+| unit-typed offsets (`offset<…,B>`) | — | **skip, deliberately** (§G4), and grade outcomes externally instead |
+| machine-parameterised enum registry | — | **skip**: it exists to cover seven architectures; this lab has one |
+
+### What the 5,000-line difference actually buys
+
+Not the header. `dsl/struct.fth` reads the same `Elf64_Ehdr` fields in 44 lines
+of declaration, on two arches, against host ground truth. What poke-elf buys is
+**refusal** (E1), **portability across seven machines** (E6), **semantic
+operations** (E4), and **coverage of the rest of the format** — symbols,
+relocations, dynamic tags, notes, groups, compressed sections.
+
+For a preboot engine, **E1 and E4 are the ones worth having and E6 is not.**
+That is a more useful conclusion than "poke has more code", and it is the one
+this section exists to reach.
+
+---
+
 ### P5 — unit-typed offsets confirmed, so G4 stands unchanged
 
 The manual indexes them as *united values* and gives offsets their own chapter.
@@ -415,7 +614,7 @@ the track's headline row by name; reverting **all six** does not reach that row
 at all — it overflows the Forth stack, 4000 stores leaking two cells each, which
 is the write half's real failure mode and is worth knowing.
 
-### And the two arches disagree, which was not the plan
+### The address is a separate question from the type — and it has an answer
 
 On amd64 a typed array of VGA text cells mapped over `0xb8000` paints 2000 cells
 through the layer; physical `0xb8000` then reads `41 1f 41 1f …` under QEMU's
@@ -423,11 +622,10 @@ monitor and the screen shows 158,445 blue pixels against **0** for an identical
 no-paint boot.
 
 On x86 the identical code **reads back `1f41` through Forth and never reaches the
-device.** Physical `0xb8000` still holds `30 07 20 07 3e 07 20 07` — the
-console's own `0 > ` prompt in grey-on-black — and the screen shows zero blue.
-`arch/x86` relocates by rebasing the GDT, so a Forth address is not a physical
-one; the store lands in ordinary RAM and reads back perfectly through the same
-accessor that wrote it.
+device.** Physical `0xb8000` still holds the console's own text, and the screen
+shows zero blue. `arch/x86` relocates by rebasing the GDT, so a Forth address is
+not a physical one; the store lands in ordinary RAM and reads back perfectly
+through the same accessor that wrote it.
 
 **That row is asserted positively rather than skipped**, because it is the cheap
 check lying in the same run as the arch where it tells the truth. It is the trap
@@ -436,7 +634,45 @@ direction, and it is the sharpest argument in this document for the thing the
 proposal is least specific about: **a write to a device is graded by an observer
 that is not the writer.** poke on a hosted OS gets that for free from the kernel;
 here it has to be built, and the layer that makes field access convenient does
-nothing whatsoever to make the address correct.
+nothing whatsoever to make the address *correct*.
+
+**CORRECTED 2026-08-30 — and the correction matters more than the finding.** The
+first draft of this section stopped at "x86 cannot", which was an observation
+about the naive address mistaken for a limit of the arch. It is a **translation**
+problem, and the translation is derivable **at the prompt**:
+
+`arch/x86/openbios.c:573` defines the `load-base` constant as
+`phys_to_virt(LOAD_BASE_PHYS)`, and `phys_to_virt(P)` is `P - virt_offset`
+(`include/arch/x86/io.h:9`). Rearranged, `virt_offset = LOAD_BASE_PHYS -
+load-base` — so the firmware already tells you, and no C needs to publish
+anything. `struct.fth` ships it as `>virt` / `>phys`, and the identical painting
+code aimed at `b8000 >virt` reaches physical `0xb8000` on **both** arches:
+**201,285 blue pixels each**, and the two runs are indistinguishable.
+
+| | amd64 | x86 |
+|---|---|---|
+| `load-base` | `4000000` | `e0670bd0` |
+| derived `virt_offset` | `0` | `1fd8f430` |
+| `b8000 >virt` | `b8000` — the **identity** | `e0328bd0` |
+| physical `0xb8000` after painting through it | `41 1f 41 1f …` | `41 1f 41 1f …` |
+
+**amd64 is the control on the formula**: an arch that does not relocate must
+produce virt_offset `0` and an exact identity, so a translation that "worked" by
+shifting everything would fail there. Both are asserted.
+
+**The derivation must not be cached, and this section is its own example.**
+`arch/x86/context.c:189` records `virt_offset = 0x1fd8fe50` from a measurement on
+2026-08-26; this tree measures `1fd8f430`. Both were right when written —
+relocation targets the top of RAM, so the value moves whenever the image size
+does. A written-down address is a wrong address waiting to happen; `>virt`
+computes it every time.
+
+**One cached fact remains, and it is named rather than hidden**: `LOAD_BASE_PHYS`
+itself (`0x400000` on x86, `0x4000000` on amd64) is read from C and selected by
+cell width, because nothing in the device tree publishes it. Publishing
+`virt_offset`, or implementing 1275's `map-in`, would remove it. That is the
+smallest remaining gap between this layer and poke's IO-space abstraction — and
+notably it is an *addressing* gap, not a typing one.
 
 ---
 
@@ -602,13 +838,23 @@ Re-grading the first review's table, plus what this proposal adds:
    definer already shipped (§G2). What it cost instead was the *typing*: two
    accessors the firmware lacks, and seven injections to establish that the
    assertions bite.
-3. **Bit-fields as a library (G4).** Skip unit-typed offsets, deliberately and in
-   writing.
-4. **Pick ONE application and drive it end to end** before generalising. On the
+3. **Constraints, from `poke-elf` §E1 — now above bit-fields.** A predicate word
+   per layout plus `abort"`, so a layout can *refuse* a file rather than
+   describe it wrongly. `struct.fth` already refuses what it cannot represent
+   (`T-ERR-*`); this is the other half, and it is the cheapest high-value item
+   the ELF pickles suggested.
+4. **The two forensics methods, from §E4** — `vaddr_to_file_offset` and
+   `get_load_base` are ordinary Forth over the array walk that already works, and
+   they are exactly the shape §G6 says the one licensed application needs. A
+   string-table reader (`c@` until NUL) comes with them and is the smallest
+   concrete gap in the layer.
+5. **Bit-fields as a library (G4).** Skip unit-typed offsets, deliberately and in
+   writing — §E7 now says what that costs.
+6. **Pick ONE application and drive it end to end** before generalising. On the
    evidence above the strongest candidates are the forensics angle (G6, already
    half-built) and FCode authoring (most OF-native, and it would make the
    "generalises what OF already does" argument true rather than rhetorical).
-5. **Split `sstrip` out (G5)** into the image-build pipeline where it belongs.
+7. **Split `sstrip` out (G5)** into the image-build pipeline where it belongs.
 
 ---
 
@@ -632,6 +878,11 @@ Re-grading the first review's table, plus what this proposal adds:
 - ~~**G7 was not attempted.**~~ — **attempted and settled**; see G7. What was
   *not* attempted is reading a byte range without loading the whole file, and
   `seek`/`read` remain unexercised because `load` made them unnecessary.
+- **`poke-elf` was read, not run.** Same standard as §P: every §E finding is
+  from its source at `ae45538`. No pickle was loaded into a poke, so the
+  behaviour of a constraint on a real file is quoted from the code, not watched.
+  It is also **unreleased** — an unreleased HEAD is a moving subject, and §E is
+  pinned to that commit for exactly that reason.
 - **Nothing was measured about performance or size.** A type layer compiled into
   the dictionary costs image space in a firmware whose builtin dictionary is
   1 MiB, and no budget was taken.
@@ -652,5 +903,6 @@ Re-grading the first review's table, plus what this proposal adds:
 | Firmware corpus | `openbios/openbios` @ `e5ac46d`, pinned by `build-openbios.sh`, plus this repo's 48 patches |
 | First pass | [`REVIEW-preboot-forth-binary-structures.md`](REVIEW-preboot-forth-binary-structures.md) — F2 closed 2026-08-29 |
 | poke corpus | GNU poke **5.0** tarball from `ftp.gnu.org/gnu/poke/`, `sha256` `6873d59abe821c8111b88623…`, retrieved 2026-08-29 — read, **not built or run** |
+| ELF pickles | `git://git.savannah.gnu.org/poke/poke-elf.git` @ **`ae45538`** (2024-10-15), cloned 2026-08-30 — **unreleased**, no tarball exists. 5,060 lines / 16 pickles, read, **not run** |
 | Type layer | [`examples/openbios-the-rival-that-shipped/dsl/struct.fth`](examples/openbios-the-rival-that-shipped/dsl/struct.fth), measured by `smoke-openbios.sh struct-layer`, `struct-array` and `struct-device` on amd64 **and** x86 |
 | Written | 2026-08-29; §P and the G7 resolution added the same day; §G2 **built and corrected** the same day; §G2's arrays and §G8's device backend added 2026-08-30 |

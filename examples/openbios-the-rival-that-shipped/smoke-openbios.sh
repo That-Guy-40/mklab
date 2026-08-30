@@ -3121,6 +3121,10 @@ clear
 ." gd-rlstore=" db 14 + l@ u. cr
 clear
 \ A TYPED layout over the live VGA text buffer, through the device backend.
+\ The BASE is a value, so the identical painting code can be aimed at the naive
+\ address and at the translated one in the same firmware -- which is what makes
+\ the x86 comparison a measurement rather than two different programs.
+0 value vbase
 struct
   1 dev-field: vc-ch
   1 dev-field: vc-attr
@@ -3134,16 +3138,24 @@ constant /vga-word
 ." gd-cellsize=" /vga-cell . cr
 : paint ( ch attr -- )
   7d0 0 do
-    over b8000 i vcell[] vc-ch   t!
-    dup  b8000 i vcell[] vc-attr t!
+    over vbase i vcell[] vc-ch   t!
+    dup  vbase i vcell[] vc-attr t!
   loop 2drop ;
-\ ONE SHORT WORD to invoke, because a long line at a console with no flow
-\ control drops characters silently.
-: gd-paint
-  41 1f paint
-  ." gd-vw=" b8000 vw-cell t@ u. cr
-  ." gd-back=" b8000 3e8 vcell[] vc-ch t@ u. cr
-  ." GD-PAINTED" cr ;
+: report
+  ." gd-vw=" vbase vw-cell t@ u. cr
+  ." gd-back=" vbase 3e8 vcell[] vc-ch t@ u. cr ;
+\ ONE SHORT WORD each, because a long line at a console with no flow control
+\ drops characters silently.
+\ gd-paint  aims at b8000 RAW -- correct on amd64, a false positive on x86.
+\ gd-vpaint aims at b8000 >virt -- correct on BOTH, and the identity on amd64.
+: gd-paint   b8000       to vbase  41 1f paint report ." GD-PAINTED" cr ;
+: gd-vpaint  b8000 >virt to vbase  41 1f paint report ." GD-PAINTED" cr ;
+: gd-addr
+  ." gd-lb=" load-base u. cr
+  ." gd-voff=" load-base-phys load-base - u. cr
+  ." gd-vga=" b8000 >virt u. cr
+  ." gd-rt=" b8000 >virt >phys u. cr
+  ." GD-ADDR-END" cr ;
 \ An 8-byte DEVICE field must refuse: a 64-bit register is not one access on a
 \ 32-bit bus, and splitting it silently is the bug nobody sees until the device
 \ latches half of it.
@@ -3199,7 +3211,9 @@ PYX
                   --send 'load-base load-size evaluate\r' --expect "0 > "
                   --send 'load /ide@1/cdrom@0:\\gd.fth\r' --expect "0 > "
                   --send 'load-base load-size evaluate\r' --expect "GD-READY")
-      [[ "$mode" == paint ]] && args+=(--send 'gd-paint\r' --expect "GD-PAINTED")
+      args+=(--send 'gd-addr\r' --expect "GD-ADDR-END")
+      [[ "$mode" == paint  ]] && args+=(--send 'gd-paint\r'  --expect "GD-PAINTED")
+      [[ "$mode" == vpaint ]] && args+=(--send 'gd-vpaint\r' --expect "GD-PAINTED")
       args+=(--send 'gd-wide\r' --expect "0 > ")
       python3 "$REPO/tools/drive-serial-repl.py" "$sock" "$log" --timeout 240 "${args[@]}"
       local rc=$?
@@ -3258,45 +3272,83 @@ PYX
       grep -qF 'GD-WIDE-END' <<<"$DL" \
         && fail "G2/devices on $A: the 8-byte device field named the refusal and then ran to GD-WIDE-END — printing a refusal is not refusing — see $WORKDIR/gd-$A-paint.log"
 
-      # THE OBSERVERS OUTSIDE THE FIRMWARE — and this is where the two arches
-      # part company, for a reason that is the whole point of having them.
+      # THE OBSERVERS OUTSIDE THE FIRMWARE, and the address question the type
+      # layer does NOT answer.
       #
-      # `b8000 vw-cell t@` reading back 1f41 is the CHEAP CHECK, and on x86 it
-      # is a LIAR. arch/x86 relocates by rebasing the GDT, so a Forth address is
-      # not a physical one: the store lands in ordinary RAM, reads back
-      # perfectly through the same accessor, and never reaches the aperture.
-      # Measured 2026-08-29 — physical 0xb8000 on x86 holds `30 07 20 07 3e 07`,
-      # which is the console's own "0 > " prompt in grey-on-black, while the
-      # Forth read-back says 1f41. amd64 does not relocate, so there b8000 IS
-      # the aperture and physical memory holds 41 1f 41 1f.
+      # `vbase vw-cell t@` reading back 1f41 is the CHEAP CHECK, and at the RAW
+      # b8000 on x86 it is a LIAR: arch/x86 relocates by rebasing the GDT, so a
+      # Forth address is not a physical one, the store lands in ordinary RAM and
+      # reads back perfectly through the accessor that wrote it.
       #
-      # So the x86 row is not a failure and must not be a skip: it is the
-      # POSITIVE assertion that the false positive exists. It is the same trap
-      # the flash-writer track met at ffbe0000, and it is why this repo grades a
-      # write by an observer that is not the writer.
+      # BUT THAT IS A TRANSLATION PROBLEM, NOT A LIMIT, and this track asserts
+      # both halves in the same run: the raw address lies on x86, and
+      # `b8000 >virt` reaches the real aperture on BOTH arches. virt_offset is
+      # DERIVED at the prompt rather than written down — load-base is defined as
+      # phys_to_virt(LOAD_BASE_PHYS), so virt_offset = LOAD_BASE_PHYS - load-base
+      # — and the derivation is graded by physical memory read from outside.
       DPHYS="$(cat "$WORKDIR/gd-$A-paint.phys")"
       DPIX="$(_count_blue "$WORKDIR/gd-$A-paint.ppm")"
+      DLB="$(dv gd-lb)"; DVOFF="$(dv gd-voff)"; DVGA="$(dv gd-vga)"; DRT="$(dv gd-rt)"
+      DPAT="0x41 0x1f 0x41 0x1f 0x41 0x1f 0x41 0x1f"
+
+      # The translation must ROUND TRIP, on both arches, or it is arithmetic
+      # nobody checked rather than an address map.
+      [[ "$DRT" == b8000 ]] \
+        || fail "G2/devices on $A: b8000 >virt >phys is ${DRT:-absent}, not b8000 — the address translation does not round trip, so neither direction can be trusted — see $WORKDIR/gd-$A-paint.log"
+
       if [[ "$A" == amd64 ]]; then
-        [[ "$DPHYS" == "0x41 0x1f 0x41 0x1f 0x41 0x1f 0x41 0x1f" ]] \
+        # amd64 does not relocate, so >virt MUST be the identity. That is the
+        # control on the translation itself: a formula that "worked" by shifting
+        # everything would show up here as a non-zero offset on the arch whose
+        # offset is known to be zero.
+        [[ "$DVOFF" == 0 && "$DVGA" == b8000 ]] \
+          || fail "G2/devices on amd64: virt_offset came out ${DVOFF:-absent} and b8000 >virt = ${DVGA:-absent}, where amd64 does not relocate at all (arch/amd64/segment.c sets virt_offset = 0) — the translation is inventing an offset on the arch that has none — see $WORKDIR/gd-amd64-paint.log"
+        [[ "$DPHYS" == "$DPAT" ]] \
           || fail "G2/devices on amd64: physical 0xb8000 reads [$DPHYS], not the painted 41 1f pattern — the typed device stores did not reach the aperture, and the Forth read-back of $DVW cannot tell you that because it goes through the same translation the store did — see $WORKDIR/gd-amd64-paint.phys"
         [[ "$DPIX" -gt 50000 ]] \
-          || fail "G2/devices on amd64: after painting 2000 cells THROUGH THE TYPE LAYER the display holds only $DPIX blue pixels — the bytes are at the aperture but the device did not scan them out — see $WORKDIR/gd-amd64-paint.ppm"
-        _drun "$A" nopaint
-        DCPIX="$(_count_blue "$WORKDIR/gd-$A-nopaint.ppm")"
-        [[ "$DCPIX" -eq 0 ]] \
-          || fail "G2/devices on amd64: the identical boot with NO paint ALSO ended with $DCPIX blue pixels, so the colour arrives from booting rather than from the typed device stores — see $WORKDIR/gd-amd64-nopaint.ppm"
-        note "amd64: rb@/rw@/rl@ = $DRB/$DRW/$DRL, matching c@/w@/l@ and NOT the address $DADDR; rb!/rw!/rl! store a5/5678/cafebabe at depth 0; typed device array painted 2000 cells — physical 0xb8000 reads [$DPHYS] and the screen shows $DPIX blue pixels against $DCPIX with no paint; 8-byte device field refuses"
+          || fail "G2/devices on amd64: after painting 2000 cells THROUGH THE TYPE LAYER the display holds only $DPIX blue pixels — see $WORKDIR/gd-amd64-paint.ppm"
       else
+        # THE FALSE POSITIVE, asserted positively. Without this row the x86 arm
+        # would just be "skipped because it does not work", which is the shape
+        # that hides a translation bug rather than naming one.
+        (( 0x$DVOFF != 0 )) \
+          || fail "G2/devices on x86: virt_offset came out 0, so arch/x86 has stopped rebasing the GDT and the false positive below can no longer be demonstrated. That is good news and it invalidates this control — re-derive TODO 13.3(A) — see $WORKDIR/gd-x86-paint.log"
         [[ "$DVW" == 1f41 ]] \
-          || fail "G2/devices on x86: the Forth read-back is ${DVW:-absent}, so the x86 row below cannot demonstrate anything — see $WORKDIR/gd-x86-paint.log"
-        [[ "$DPHYS" != "0x41 0x1f 0x41 0x1f 0x41 0x1f 0x41 0x1f" ]] \
-          || fail "G2/devices on x86: physical 0xb8000 now DOES hold the painted pattern [$DPHYS] — arch/x86 has stopped rebasing, so a Forth address is a physical one and this row no longer demonstrates the false positive it exists for. That is good news and it invalidates the control; re-derive TODO 13.3(A) — see $WORKDIR/gd-x86-paint.phys"
+          || fail "G2/devices on x86: the Forth read-back at the RAW b8000 is ${DVW:-absent}, so the false positive this row exists to demonstrate did not occur — see $WORKDIR/gd-x86-paint.log"
+        [[ "$DPHYS" != "$DPAT" ]] \
+          || fail "G2/devices on x86: physical 0xb8000 DOES hold the pattern written to the raw address — arch/x86 has stopped rebasing, and this row no longer demonstrates the false positive it exists for — see $WORKDIR/gd-x86-paint.phys"
         [[ "$DPIX" -eq 0 ]] \
-          || fail "G2/devices on x86: the display holds $DPIX blue pixels although physical 0xb8000 does not hold the pattern — two observers disagree, so one of them is measuring something other than what it is named for — see $WORKDIR/gd-x86-paint.ppm"
-        note "x86: rb@/rw@/rl@ = $DRB/$DRW/$DRL, matching c@/w@/l@ and NOT the address $DADDR; rb!/rw!/rl! store a5/5678/cafebabe at depth 0 — but the typed device write to b8000 is a FALSE POSITIVE here: Forth reads back $DVW while physical 0xb8000 holds [$DPHYS] (the console's own prompt) and the screen shows $DPIX blue. arch/x86 rebases, so b8000 is not the aperture — the same trap flash-writer met at ffbe0000"
+          || fail "G2/devices on x86: the display holds $DPIX blue pixels although physical 0xb8000 does not hold the pattern — two observers disagree, so one is measuring something other than what it is named for — see $WORKDIR/gd-x86-paint.ppm"
+      fi
+
+      # AND THE FIX, on BOTH arches: the same painting code aimed at
+      # `b8000 >virt` must reach the real aperture. On amd64 that is the
+      # identity and must not regress; on x86 it is the whole point.
+      _drun "$A" vpaint
+      DVPHYS="$(cat "$WORKDIR/gd-$A-vpaint.phys")"
+      DVPIX="$(_count_blue "$WORKDIR/gd-$A-vpaint.ppm")"
+      [[ "$DVPHYS" == "$DPAT" ]] \
+        || fail "G2/devices on $A: painting through 'b8000 >virt' (= $DVGA) left physical 0xb8000 reading [$DVPHYS], not the 41 1f pattern — the derived virt_offset $DVOFF is wrong, and no Forth-side read can tell you so because it would use the same translation — see $WORKDIR/gd-$A-vpaint.phys"
+      [[ "$DVPIX" -gt 50000 ]] \
+        || fail "G2/devices on $A: painting through 'b8000 >virt' put only $DVPIX blue pixels on the display — the bytes reached the aperture but the device did not scan them out — see $WORKDIR/gd-$A-vpaint.ppm"
+
+      # THE NO-PAINT CONTROL. Without it, "the screen is blue" is
+      # indistinguishable from a firmware that boots blue.
+      _drun "$A" nopaint
+      DCPIX="$(_count_blue "$WORKDIR/gd-$A-nopaint.ppm")"
+      DCPHYS="$(cat "$WORKDIR/gd-$A-nopaint.phys")"
+      [[ "$DCPIX" -eq 0 ]] \
+        || fail "G2/devices on $A: the identical boot with NO paint ALSO ended with $DCPIX blue pixels, so the colour arrives from booting rather than from the typed device stores — see $WORKDIR/gd-$A-nopaint.ppm"
+      [[ "$DCPHYS" != "$DPAT" ]] \
+        || fail "G2/devices on $A: the no-paint control ALSO left the 41 1f pattern at physical 0xb8000, so those bytes arrive from booting — see $WORKDIR/gd-$A-nopaint.phys"
+
+      if [[ "$A" == amd64 ]]; then
+        note "amd64: rb@/rw@/rl@ = $DRB/$DRW/$DRL, matching c@/w@/l@ and NOT the address $DADDR; rb!/rw!/rl! store at depth 0; load-base=$DLB so virt_offset=$DVOFF and >virt is the IDENTITY (b8000 -> $DVGA); painting raw and translated both reach physical 0xb8000 and put $DPIX/$DVPIX blue pixels up against $DCPIX with no paint"
+      else
+        note "x86: rb@/rw@/rl@ = $DRB/$DRW/$DRL, matching c@/w@/l@ and NOT the address $DADDR; rb!/rw!/rl! store at depth 0; the RAW b8000 write is a FALSE POSITIVE — Forth reads back $DVW while physical 0xb8000 holds [$DPHYS] and the screen shows $DPIX blue — but load-base=$DLB gives virt_offset=$DVOFF, and painting through b8000 >virt = $DVGA reaches physical 0xb8000 and puts $DVPIX blue pixels up"
       fi
     done
-    pass "REVIEW G2's last gap — a layout over a LIVE DEVICE's registers — and the patch that asking it produced. IEEE 1275 5.3.7.2's six device-register words (rb@ rw@ rl@ rb! rw! rl!) had bodies containing NO WORDS AT ALL: a read returned the ADDRESS it was given and a write stored nothing while leaving both operands on the stack. table.fs binds FCode tokens 0x230-0x235 to exactly these, so the defect presents as a STACK SHIFT inside a driver rather than a wrong value — the same shape as patches 25 and 34. Patch 49 gives them their memory-mapped-I/O bodies and this track asserts the defect as itself: rb@ must not return its own argument, all three reads must agree with c@/w@/l@, and all three writes must store AND leave depth 0. On top of that dsl/struct.fth gains dev-field:/le-dev-field: — the type layer's SECOND BACKEND, which is what poke's IO spaces are (§P2) — built from rb@/rb! a byte at a time so byte order is explicit and a device field reads identically on both arches. A typed array of VGA text cells mapped over 0xb8000 paints 2000 cells through the layer and QEMU's screendump, an observer outside the firmware, counts the blue where an identical no-paint boot counts ZERO; the last cell of the array is checked as well as the first; the same two bytes read as one 2-byte little-endian device field agree with the two 1-byte fields that wrote them; and an 8-byte device field REFUSES by name, because a 64-bit register is not one access on a 32-bit bus. AND THE TWO ARCHES DISAGREE ON PURPOSE: on amd64 the painted bytes are at PHYSICAL 0xb8000 (read by the monitor's xp) and on the screen; on x86 the identical code reads back 1f41 through Forth while physical 0xb8000 still holds the console's own '0 > ' prompt and the screen shows zero blue — arch/x86 rebases the GDT, so a Forth address is not a physical one and the read-back is a FALSE POSITIVE. That row is asserted positively rather than skipped, because it is the cheap check lying in the same run as the arch where it tells the truth — the same trap flash-writer met at ffbe0000. NOT CLAIMED, and said out loud: no read here has side effects — this firmware exposes no port-I/O and no config-space words, so MMIO is the only device seam Forth can reach and its reads are idempotent. That remains an UNKNOWN"
+    pass "REVIEW G2's last gap — a layout over a LIVE DEVICE's registers — and the patch that asking it produced. IEEE 1275 5.3.7.2's six device-register words (rb@ rw@ rl@ rb! rw! rl!) had bodies containing NO WORDS AT ALL: a read returned the ADDRESS it was given and a write stored nothing while leaving both operands on the stack. table.fs binds FCode tokens 0x230-0x235 to exactly these, so the defect presents as a STACK SHIFT inside a driver rather than a wrong value — the same shape as patches 25 and 34. Patch 49 gives them their memory-mapped-I/O bodies and this track asserts the defect as itself: rb@ must not return its own argument, all three reads must agree with c@/w@/l@, and all three writes must store AND leave depth 0. On top of that dsl/struct.fth gains dev-field:/le-dev-field: — the type layer's SECOND BACKEND, which is what poke's IO spaces are (§P2) — built from rb@/rb! a byte at a time so byte order is explicit and a device field reads identically on both arches. A typed array of VGA text cells mapped over 0xb8000 paints 2000 cells through the layer and QEMU's screendump, an observer outside the firmware, counts the blue where an identical no-paint boot counts ZERO; the last cell of the array is checked as well as the first; the same two bytes read as one 2-byte little-endian device field agree with the two 1-byte fields that wrote them; and an 8-byte device field REFUSES by name, because a 64-bit register is not one access on a 32-bit bus. AND THE ADDRESS IS A SEPARATE QUESTION FROM THE TYPE, which this track now asserts from both sides in one run. At the RAW b8000 on x86 the typed write is a FALSE POSITIVE: Forth reads back 1f41 while physical 0xb8000 still holds the console's own '0 > ' prompt and the screen shows zero blue, because arch/x86 rebases the GDT and a Forth address is not a physical one. That is asserted positively rather than skipped — the cheap check lying, in the same run as the arch where it tells the truth. AND THEN IT IS FIXED: virt_offset is DERIVED at the prompt (load-base is defined as phys_to_virt(LOAD_BASE_PHYS), so virt_offset = LOAD_BASE_PHYS - load-base, measured 1fd8f430 on x86 and 0 on amd64), and the identical painting code aimed at 'b8000 >virt' reaches physical 0xb8000 and lights the screen on BOTH arches. The translation round-trips, and on amd64 — which does not relocate — it must come out as the exact IDENTITY, which is the control on the formula itself. NOT CLAIMED, and said out loud: no read here has side effects — this firmware exposes no port-I/O and no config-space words, so MMIO is the only device seam Forth can reach and its reads are idempotent. That remains an UNKNOWN"
     ;;
   *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|struct-layer|struct-array|struct-device]" >&2; exit 1 ;;
 esac

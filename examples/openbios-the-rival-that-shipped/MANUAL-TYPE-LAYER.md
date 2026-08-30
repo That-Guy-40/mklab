@@ -11,7 +11,8 @@ ground automatically and grade it. This is the version you type yourself.
 **Both arches, on purpose.** Part 2 is the one worth doing even if you skip the
 rest: the identical VGA code that works on `amd64` **silently does nothing** on
 x86, reads back a perfect answer anyway, and only an observer outside the
-firmware can tell you so.
+firmware can tell you so. **Then you fix it** — the translation is derivable at
+the prompt, and x86 paints exactly as amd64 does.
 
 Every output below was measured on 2026-08-30. Where the two arches differ, both
 are shown.
@@ -142,7 +143,7 @@ wrote, in memory, in that order.
 
 ---
 
-## 5. Part 2 — the same code on x86, and why nothing happens
+## 5. Part 2 — the same code on x86, why nothing happens, and how to fix it
 
 Quit (**Ctrl-A X**) and boot the 32-bit firmware instead — `multiboot` is the
 x86 flavour:
@@ -187,7 +188,61 @@ translation — so it agreed with itself perfectly and told you nothing.
 `arch/amd64` does not relocate: the firmware sits at the 1 MiB a bzImage runs
 at, so `b8000` really is the aperture.
 
-You can see the divergence directly. Ask the layer where a field lives:
+**A type layer makes field access convenient. It does nothing whatsoever to make
+an address correct.** That is the lesson, and it is why a write to a device has
+to be graded by an observer that is not the writer.
+
+### Now fix it
+
+The offset is not a mystery, and you do not need to look it up. `arch/x86`
+defines its `load-base` constant as `phys_to_virt(LOAD_BASE_PHYS)`, and
+`phys_to_virt(P)` is `P - virt_offset`. Rearrange:
+
+```
+virt_offset = LOAD_BASE_PHYS - load-base
+```
+
+`struct.fth` ships that as `>virt` / `>phys` (and `load-base-phys`, the one
+constant it has to know). Ask:
+
+```forth
+load-base u.
+load-base-phys load-base - u.
+b8000 >virt u.
+b8000 >virt >phys u.
+```
+
+| | amd64 | x86 |
+|---|---|---|
+| `load-base` | `4000000` | `e0670bd0` |
+| `virt_offset` | `0` | `1fd8f430` |
+| `b8000 >virt` | `b8000` — the **identity** | `e0328bd0` |
+| round trip | `b8000` | `b8000` |
+
+On amd64 `>virt` is the identity, exactly as it must be for an arch that does
+not relocate. On x86 it is a real translation. Now redefine one word — the only
+thing that changes is where the array is based:
+
+```forth
+: cell-at ( i -- adr ) b8000 >virt swap vcell[] ;
+41 1f fill-screen
+```
+
+**The x86 screen turns blue.** Check it from outside too — **Ctrl-A C**,
+`xp /8xb 0xb8000`, and the pattern is there:
+
+```
+0x41 0x1f 0x41 0x1f 0x41 0x1f 0x41 0x1f
+```
+
+Measured: **201,285 blue pixels on both arches**, identical.
+
+`virt_offset` is *derived every time*, never written down — it scales with the
+image, and `arch/x86/context.c:189` still records `1fd8fe50` from a measurement
+in August 2026 that this tree no longer matches. A cached address is a wrong
+address waiting to happen.
+
+You can see the same divergence in any field address:
 
 ```forth
 load /ide@1/cdrom@0:\subj.elf
@@ -197,13 +252,7 @@ load-base e_machine t-adr u.
 | arch | `e_machine`'s address |
 |---|---|
 | amd64 | `4000012` — `load-base` is `4000000`, and `e_machine` is at `+0x12` |
-| x86 | `e0670be2` — nowhere near it |
-
-**This is the single most useful thing in this document.** A type layer makes
-field access convenient; it does **nothing whatsoever** to make an address
-correct. A write to a device has to be graded by an observer that is not the
-writer — which is why the `struct-device` smoke track asserts the x86 row
-*positively*, as a false positive it expects, rather than skipping it.
+| x86 | `e0670be2` — a *virtual* address, and correct as one |
 
 *(If you are on `OPENBIOS_DISPLAY=none`, `screendump /tmp/vga.ppm` at the monitor
 gives you the same evidence as a picture.)*
@@ -417,6 +466,9 @@ with the loop closed at both ends.
 | `t!` | `( u adr tid -- )` | typed store — this **is** the write |
 | `t-adr` | `( adr tid -- adr )` | drop the type, keep the address |
 | `<stride> array:` `<name>` | `( stride -- )` | `<name>` is then `( base i -- elem )` |
+| `>virt` | `( phys -- adr )` | physical → Forth address (identity on amd64) |
+| `>phys` | `( adr -- phys )` | the inverse |
+| `load-base-phys` | `( -- p )` | `400000` on x86, `4000000` on amd64 |
 
 Widths are 1, 2, 4 (and 8 in memory space, on a 64-bit cell). Anything else is
 **refused by name** — `T-ERR-width=<n>`, `T-ERR-be64`, `T-ERR-devwidth=<n>`,
@@ -437,7 +489,7 @@ with `phdr[]`, and `elf64-entry` for the 8-byte `x-entry` view.
 | your words vanished after loading a file | `load` overwrote `load-base`. Evaluate `struct.fth` **first**, then load the subject |
 | numbers are wildly wrong | the base is **hex**. `10` is sixteen |
 | prompt shows `5 > ` and the last line said ` compiled` | you are inside an unfinished `:` definition. Finish it — `clear` here throws it away |
-| a store "works" but nothing happens | Part 2. On x86 a Forth address is not a physical one — check with `xp` from the monitor |
+| a store "works" but nothing happens | Part 2. On x86 a Forth address is not a physical one — aim at `<phys> >virt`, and check with `xp` from the monitor |
 | `invalid char 'h' in expression` | quote the path you gave `pmemsave` |
 
 ---
