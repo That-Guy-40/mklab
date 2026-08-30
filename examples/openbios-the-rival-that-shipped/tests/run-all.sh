@@ -66,6 +66,7 @@ tracks=(
     test-smoke-pmem-writer.sh
     test-smoke-ppc.sh
     test-smoke-property-abi.sh
+    test-smoke-rmw-fields.sh
     test-smoke-struct-array.sh
     test-smoke-struct-device.sh
     test-smoke-struct-layer.sh
