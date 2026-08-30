@@ -1,0 +1,321 @@
+Subject: [PATCH 53/53] arch/unix: Ctrl-D is not EOF on a raw terminal
+Arch-tested: x86 amd64 ppc unix
+
+TODO 19(d), and it is patch 52 finished rather than a new bug. 52 taught the
+firmware to stop spinning at end of input -- and did it for PIPES ONLY, so the
+case a person actually hits stayed broken. Reported from a real terminal:
+
+    0 >            <- Ctrl-D. nothing. again. nothing.
+    [1]+  Stopped  <- so the user reached for Ctrl-Z instead
+    ... 40 x "0 >   ok" ... Exception #20
+
+init_terminal() clears ICANON, so the tty NEVER converts ^D into end-of-file the
+way a cooked line would. It arrives as the literal byte 0x04 and the line editor
+silently swallowed it, which reads to a user as input that is queued and not
+flushing. It is not queued; it is discarded.
+
+A TERMINAL AND A PIPE END DIFFERENTLY, and three attempts conflated them:
+
+    set STOP in the console          worked for NOTHING -- key() never read it
+    key() honours STOP, return '\r'  worked for pipes; wholly inert on a tty
+    treat 0x04 as EOF, '\r' then     worked for pipes; HUNG on a tty, because
+      exit on the second EOF         stdio does not latch EOF there and the
+                                     next read simply blocks
+
+Stated so it stops being re-derived: CTRL-D IS ONE KEYSTROKE and means "leave
+now" -- there is no second one coming. PIPE EOF LATCHES, so there the first can
+finish a trailing line with no newline and the second leaves.
+
+WHY A GREEN SUITE COULD NOT SEE IT. Every test written for the unix track drives
+a PIPE, and every one of them passes with Ctrl-D completely inert -- which is
+exactly what shipped. `smoke-openbios.sh unix` now drives a REAL PTY
+(tests/pty-ctrl-d.py) and asserts the process exits. Watched to bite: with the
+0x04 branch removed -- the state that merged -- it reports ALIVE and fails by
+name.
+
+This lab already carries tools/drive-pty-repl.py because a socket is not a
+terminal. The same sentence applies here and it did not occur to me until a user
+hit the gap.
+
+diff --git a/arch/unix/unix.c b/arch/unix/unix.c
+index cb9757e..907716b 100644
+--- a/arch/unix/unix.c
++++ b/arch/unix/unix.c
+@@ -17,6 +17,7 @@
+ #include <termios.h>
+ #include <sys/types.h>
+ #include <sys/stat.h>
++#include <sys/mman.h>
+ #include <stdarg.h>
+ 
+ #ifdef __GLIBC__
+@@ -62,6 +63,7 @@ static ucell *memory;
+ static int diskemu;
+ 
+ static int segfault = 0;
++static int forth_exit_status = 0;
+ static int verbose = 0;
+ 
+ #if defined(CONFIG_PPC) || defined(CONFIG_SPARC64)
+@@ -182,6 +184,24 @@ static ucell read_dictionary(char *fil)
+  * functions used by primitives
+  */
+ 
++/* LOCAL DIVERGENCE (mklab). EOF IS AN EXIT, NOT "NOTHING YET".
++ *
++ * This returned 0 at EOF -- the same answer as "no key has been typed" -- so
++ * the Forth key loop spun on it forever. Measured: 100% CPU, state R, no wchan,
++ * indefinitely. Ctrl-D at the prompt, or a piped script that does not end in
++ * `bye`, both hung. It only became reachable when patch 50 let this target get
++ * as far as an input loop; before that it aborted during initialisation.
++ *
++ * kernel/bootstrap.c's availchar() already had the answer for the DICTIONARY
++ * path -- set FORTH_INTSTAT_STOP so the interpreter loop ends -- and the
++ * runtime console path simply had no equivalent. It does now.
++ *
++ * And EOF is DELIBERATE: Ctrl-D is how every REPL is left, so it counts as a
++ * clean exit beside `bye` (TODO 18(b)) rather than as a bootstrap that died.
++ */
++static int saw_eof = 0;
++static int eof_seen = 0;
++
+ static int unix_availchar(void)
+ {
+ 	int tmp = getc(stdin);
+@@ -189,6 +209,8 @@ static int unix_availchar(void)
+ 		ungetc(tmp, stdin);
+ 		return -1;
+ 	}
++	saw_eof = 1;
++	interruptforth |= FORTH_INTSTAT_STOP;
+ 	return 0;
+ }
+ 
+@@ -200,7 +222,59 @@ static int unix_putchar(int c)
+ 
+ static int unix_getchar(void)
+ {
+-	return getc(stdin);
++	int c = getc(stdin);
++
++	/* END OF INPUT READS AS END OF LINE, not as a byte. Returning EOF here
++	 * pushed (char)-1 into the line editor, which echoed it -- Ctrl-D printed
++	 * a row of 0xff before the interpreter unwound. A carriage return is what
++	 * the reader is waiting for and what every REPL does with Ctrl-D: finish
++	 * the line, then leave. The STOP flag set beside it is what actually ends
++	 * the wait in kernel/forth.c's key(). */
++	/* CTRL-D ON A TERMINAL IS NOT EOF, and that is the whole trap. This
++	 * console runs the tty in RAW mode -- init_terminal() clears ICANON --
++	 * so the kernel never turns ^D at the start of a line into end-of-file
++	 * the way a cooked line would. It arrives as the literal byte 0x04, and
++	 * the line editor silently swallowed it: pressing Ctrl-D did NOTHING,
++	 * repeatedly, which reads to a user as input that is queued and not
++	 * flushing. On a terminal EOT *is* end of input, so say so here.
++	 *
++	 * (The first version of this fix handled only EOF, which meant it worked
++	 * for pipes and redirects and never once for a person at a prompt.) */
++	/* A TERMINAL AND A PIPE END DIFFERENTLY, and conflating them is what the
++	 * first two attempts at this got wrong.
++	 *
++	 * Ctrl-D from a person is ONE keystroke and means "I am done": leave now.
++	 * There is no second one coming, and waiting for it just hangs -- which is
++	 * exactly what happened when this returned a carriage return and expected
++	 * a latched EOF to follow. A tty does not latch; the next read BLOCKS. */
++	if (c == 0x04) {
++		saw_eof = 1;
++		interruptforth |= FORTH_INTSTAT_STOP;
++		printk("\n");
++		exit_terminal();
++		exit(0);
++	}
++
++	/* A pipe DOES latch EOF, so there the first one can finish a final line
++	 * that had no trailing newline, and the second -- which arrives
++	 * immediately -- leaves. */
++	if (c == EOF) {
++		saw_eof = 1;
++		interruptforth |= FORTH_INTSTAT_STOP;
++
++		/* ONCE as end-of-line, so a final line with no trailing newline is
++		 * still interpreted -- then leave. stdio latches EOF, so without
++		 * the second branch every subsequent read returns instantly and the
++		 * interpreter prints an endless run of empty `0 >  ok` prompts
++		 * before dying on an exception. Reported from a real terminal. */
++		if (eof_seen++ == 0)
++			return '\r';
++
++		printk("\n");
++		exit_terminal();
++		exit(0);
++	}
++	return c;
+ }
+ 
+ static struct _console_ops unix_console_ops = {
+@@ -363,13 +437,72 @@ int_handler(int signo __attribute__ ((unused)),
+     exit(1);
+ }
+ 
++/* LOCAL DIVERGENCE (mklab). TODO 18.
++ *
++ * PLACE THE FORTH ARENA AND THE DICTIONARY BELOW 4 GiB.
++ *
++ * 1275 encodes an integer into FOUR bytes (5.3.5.1), and /chosen's `stdin` and
++ * `stdout` are ihandles -- pointers into these two allocations
++ * (forth/admin/iocontrol.fs:42,76). At run time pointer2cell is a plain cast
++ * (include/kernel/stack.h:35; Makefile.target defines
++ * NATIVE_BITWIDTH_EQUALS_HOST_BITWIDTH for every target), so an ihandle IS a
++ * host pointer. glibc hands these two sizes out well above 4 GiB on a 64-bit
++ * host, so encode-int refused -- correctly -- and the firmware halted during
++ * initialisation, which is what MANUAL_TESTING.md section 5 recorded.
++ *
++ * THIS DOES NOT MAKE 1275 ABLE TO HOLD A 64-BIT POINTER, and it is not a
++ * weakening of patch 26's gate, which stays exactly as it is. It puts this
++ * target where every other target has always been: the QEMU firmwares live at
++ * 0x400000 and 0x4000000, so their pointers have always fitted in four bytes.
++ *
++ * AND IT REFUSES BY NAME RATHER THAN DRIFTING BACK. If the low mapping cannot
++ * be had, we say so and exit non-zero instead of continuing into an abort that
++ * used to exit 0 (TODO 18(b)) -- an honest failure the caller can see.
++ */
++#define OF_LOW_LIMIT   ((uintptr_t)1 << 32)
++
++static void *alloc_below_4g(size_t len, uintptr_t hint, const char *what)
++{
++	void *p = mmap((void *)hint, len, PROT_READ | PROT_WRITE,
++	               MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
++
++	if (p == MAP_FAILED)
++		return NULL;
++
++	/* A hint is only a hint: verify, never assume. */
++	if ((uintptr_t)p + len > OF_LOW_LIMIT) {
++		printk("panic: %s landed at %p, above 4 GiB -- an ihandle there "
++		       "cannot be encoded into the four bytes IEEE 1275 gives an "
++		       "integer (5.3.5.1). See TODO 18.\n", what, p);
++		munmap(p, len);
++		return NULL;
++	}
++	return p;
++}
++
++/* The matching free, and it is load-bearing rather than tidiness.
++ *
++ * These two are mmap'd now, so the free()s that used to end main() hand glibc a
++ * pointer it never allocated -- and free() reads its chunk header BELOW the
++ * pointer, at p-8. That read is what produced "panic: segmentation violation at
++ * 1ffffff8" (arena base minus 8) while the page below was unmapped, and
++ * "free(): invalid pointer" once it was mapped and glibc got to inspect the
++ * garbage it found. One bug, two costumes. Measured: with munmap here and NO
++ * guard page, the session runs clean, and a gdb access-watchpoint on
++ * memory-8/-16 never fires across a whole session. */
++static void free_below_4g(void *p, size_t len)
++{
++	if (p)
++		munmap(p, len);
++}
++
+ /*
+  * allocate memory and prepare engine for memory management.
+  */
+ 
+ static void init_memory(void)
+ {
+-	memory = malloc(MEMORY_SIZE);
++	memory = alloc_below_4g(MEMORY_SIZE, 0x20000000, "the Forth arena");
+ 	if (!memory) {
+ 		printk("panic: not enough memory on host system.\n");
+ 		exit_terminal();
+@@ -521,7 +654,9 @@ int main(int argc, char *argv[])
+ 	/* Initialise console */
+ 	init_console(unix_console_ops);
+ 
+-	if ((dict = (unsigned char *) malloc(DICTIONARY_SIZE)) == NULL) {
++	if ((dict = (unsigned char *) alloc_below_4g(DICTIONARY_SIZE,
++	                                            0x30000000,
++	                                            "the dictionary")) == NULL) {
+ 		printk("panic: not enough memory.\n");
+ 		return 1;
+ 	}
+@@ -556,7 +691,17 @@ int main(int argc, char *argv[])
+         if (verbose)
+             printk("done.\n");
+ 
+-	read_dictionary(argv[optind]);
++	/* LOCAL DIVERGENCE (mklab). read_dictionary() returns 0 when stat() fails
++	 * and this call used to IGNORE it, so a missing or misspelt dictionary ran
++	 * on with an EMPTY one: two baffling `fword: ... is not in the dictionary`
++	 * lines, "not supported.", and exit 0. The file that could not be read was
++	 * never named. Say which file, and fail. */
++	if (!read_dictionary(argv[optind])) {
++		printk("panic: cannot read the dictionary '%s' -- no such file, "
++		       "or not readable.\n", argv[optind]);
++		exit_terminal();
++		exit(1);
++	}
+ 	forth_init();
+ 
+ 	PUSH_xt( bind_noname_func(arch_init) );
+@@ -580,12 +725,50 @@ int main(int argc, char *argv[])
+ 		}
+ 
+ 		enterforth((xt_t)PC);
++
++		/* LOCAL DIVERGENCE (mklab). TODO 18(b): DO NOT REPORT SUCCESS FOR A
++		 * BOOTSTRAP THAT DIED.
++		 *
++		 * main() used to `return 0` here whatever the Forth had done, so a
++		 * firmware that aborted during initialisation -- printing a refusal
++		 * and never reaching its prompt -- told the shell it had succeeded.
++		 * A false success outranks an honest failure, so it is the part
++		 * worth fixing.
++		 *
++		 * THREE OBVIOUS SIGNALS DO NOT WORK, measured, and are recorded here
++		 * so nobody re-derives them: enterforth()'s return is 0 in both cases
++		 * (an uncaught throw unwinds the return stack to the same depth `bye`
++		 * does, so rstackcnt balances); interruptforth's STOP bit is 0 in
++		 * both (it marks input EOF, not how the session ended); and
++		 * kernel/bootstrap.c's exception() serves the dictionary-BUILD path
++		 * and is never called while running a prebuilt dict.
++		 *
++		 * So the flag is set on the one path that is DELIBERATE -- `bye`, in
++		 * forth/bootstrap/start.fs -- and read here through feval(), the
++		 * shipped C-to-Forth call, rather than by reaching into the
++		 * dictionary at a guessed offset. If the word is missing we say
++		 * UNKNOWN and keep the old status: "I could not check" must never
++		 * render as a failure any more than as a pass.
++		 */
++		if (findword("of-left-cleanly")) {
++			feval_quiet("of-left-cleanly @");
++			if (POP() == 0 && !saw_eof) {
++				printk("openbios-unix: the Forth engine was left "
++				       "WITHOUT `bye` -- initialisation did not "
++				       "complete. See TODO 18(b).\n");
++				forth_exit_status = 1;
++			}
++		} else {
++			printk("openbios-unix: UNKNOWN -- `of-left-cleanly` is not "
++			       "in this dictionary, so whether the engine exited "
++			       "deliberately could not be checked (TODO 18(b)).\n");
++		}
+ #if 0
+ 		if (dictname != NULL)
+ 			write_dictionary(dictname);
+ #endif
+ 
+-		free(memory);
++		free_below_4g(memory, MEMORY_SIZE);
+ 
+ 	} else {		/* input file is not a dictionary */
+ 		printk("not supported.\n");
+@@ -595,8 +778,8 @@ int main(int argc, char *argv[])
+ 	if (diskemu!=-1)
+ 		close(diskemu);
+ 
+-	free(dict);
+-	return 0;
++	free_below_4g(dict, DICTIONARY_SIZE);
++	return forth_exit_status;
+ }
+ 
+ #undef printk

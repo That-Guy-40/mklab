@@ -220,6 +220,8 @@ TESTED_TREE_MARKERS=(
     "forth/bootstrap/start.fs:of-left-cleanly"
     # -- the three ways a plain openbios-unix session went wrong (patch 52) --
     "kernel/forth.c:FORTH_INTSTAT_STOP));"
+    # -- TODO 19(d): Ctrl-D is not EOF on a raw terminal (patch 53) --
+    "arch/unix/unix.c:if (c == 0x04) {"
 )
 present=(); absent=()
 for m in "${TESTED_TREE_MARKERS[@]}"; do

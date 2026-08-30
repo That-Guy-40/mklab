@@ -4685,3 +4685,81 @@ only `if (!segfault)` — so a real fault reaches gdb or a core file instead of
 being printed and `exit(1)`ed. It was already shipped; I did not need to build a
 probe.)*
 
+
+---
+
+## 19. `openbios-unix`: four defects from one user session (2026-08-30) — CLOSED
+
+A user ran the firmware as a plain process, mistyped the command once, and tried
+to leave with Ctrl-D. The typo was theirs; all four of these are ours, and none
+had any coverage because this target had no track at all until §18.
+
+### (a) A missing dictionary was neither named nor fatal — FIXED (patch 52)
+
+```console
+$ openbios-unix ./no-such.dict
+fword: 'is-noname-cfunc' is not in the dictionary -- nothing was executed
+fword: 'PREPOST-initializer' is not in the dictionary -- nothing was executed
+not supported.
+$ echo $?
+0
+```
+
+`read_dictionary()` returns 0 when `stat()` fails and **the caller ignored the
+return**, so the engine ran on with an empty dictionary and complained about
+words it had never loaded — then reported success. The unreadable file was never
+named. Now: `panic: cannot read the dictionary '…' -- no such file, or not
+readable.`, exit 1.
+
+### (b) End of input spun a core at 100% forever — FIXED (patch 52)
+
+`kernel/forth.c`'s `key()` was `while (!availchar());` — a busy-wait **nothing
+could interrupt**. `availchar()` answering *"no key yet"* is indistinguishable
+from *"there will never be another key"*. Measured: state `R`, no wchan, 100%
+CPU, indefinitely.
+
+**It needed both halves.** The console knows end-of-input happened, so it sets
+`FORTH_INTSTAT_STOP` (the flag `kernel/bootstrap.c` already used for the
+dictionary path) — and the waiter has to *listen*, which is the one shared line.
+Fixing the console alone changed nothing.
+
+### (c) Every clean exit printed a failure — FIXED (patch 52)
+
+`feval: 0 to terminate? -- threw -4`, on every healthy run. `packages/cmdline.c`
+resets the stacks before that `feval` and its comment says *"Reset stack"* — but
+it reset only the **return** stack, so the call ran at a negative data-stack
+depth and `interpreter.fs`'s `depth 0< if -4 throw` fired. The phrase is fine;
+typed at the prompt it answers ` ok`. One line does what the comment claimed.
+
+### (d) Ctrl-D did nothing on a real terminal — FIXED (patch 53)
+
+**And (b)'s fix was inert for the case a person actually hits.**
+`init_terminal()` clears `ICANON`, so the tty never converts `^D` into
+end-of-file — it arrives as the literal byte `0x04`, which the line editor
+silently swallowed. Pressing Ctrl-D did *nothing*, repeatedly, which reads to a
+user as input that is queued and not flushing. That is what was reported.
+
+**A terminal and a pipe end differently, and three attempts conflated them:**
+
+| attempt | worked for | broken for |
+|---|---|---|
+| set `STOP` in the console | nothing — `key()` never read the flag | everything |
+| `key()` honours `STOP`, return `'\r'` at EOF | pipes | a tty: `^D` is never EOF, so wholly inert |
+| treat `0x04` as EOF, `'\r'` then exit on the 2nd | pipes | a tty: stdio does not latch EOF there, so the next read BLOCKS |
+
+The distinction, stated so it stops being re-derived: **Ctrl-D is one keystroke
+and means "leave now"** — there is no second one coming. **Pipe EOF latches**, so
+there the first can finish a trailing line with no newline and the second leaves.
+
+### Why a green suite could not see any of it
+
+Every test written for §18 drives a **pipe**, and would pass with Ctrl-D
+completely inert — which is exactly what shipped in #360. `smoke-openbios.sh
+unix` now drives a **real pty** (`tests/pty-ctrl-d.py`) and asserts the process
+exits. Watched to bite: with the `0x04` branch removed — the state that merged —
+it reports `ALIVE` and fails by name.
+
+**The rule this cost:** *drive the client the machine actually has.* This lab
+already carries `tools/drive-pty-repl.py` for precisely this reason — a socket is
+not a terminal — and it did not occur to me to reach for it until a user hit the
+gap.
