@@ -117,6 +117,7 @@ Rows link to the diff. The narrative for patches 12–34 lives in the
 | [`47-source-date-epoch.patch`](47-source-date-epoch.patch) | `FEATURE` | shared | **TODO 17.5**: the build honours `SOURCE_DATE_EPOCH`, so a tree can be rebuilt byte-identically **on request**. The date is not deleted — the ppc track proves the running firmware is ours by comparing exactly that banner — and unset, behaviour is bit-for-bit what it was |
 | [`48-scrub-host-arena-pointers.patch`](48-scrub-host-arena-pointers.patch) | `UPSTREAM-BUG` | shared | **TODO 17.5 cause 2**: the bootstrap stored pointers into the HOST's Forth arena in ordinary dictionary cells — not relocatable, so written out raw and moving with ASLR. Dead data (re-initialised at boot), now scrubbed from both writers. x86 never showed it because `pointer2cell` subtracts `base_address` at narrower widths |
 | [`49-device-register-words-were-empty.patch`](49-device-register-words-were-empty.patch) | `UPSTREAM-BUG` | shared | IEEE 1275 **5.3.7.2**'s six device-register words — `rb@ rw@ rl@ rb! rw! rl!` — had bodies containing **no words at all**, so a register read returned the ADDRESS and a register write stored nothing while leaking two cells. `table.fs:390-395` binds FCode tokens `0x230-0x235` to them, so the presenting symptom is a **stack shift inside an FCode driver**, not a wrong value. `feval.fs:72`'s FIXME ("uses `c@` rather than `rb@` for now") shows the gap was known and worked around at one call site |
+| [`50-unix-arena-below-4g.patch`](50-unix-arena-below-4g.patch) | `DIVERGENCE` | arch-local | **`openbios-unix` had not reached its prompt since patch 26**, and nothing noticed for four days because MANUAL_TESTING.md §5 documented it and no track drove it. 1275 encodes an integer into **four bytes** (5.3.5.1); `/chosen`'s `stdin`/`stdout` are ihandles; and at run time `pointer2cell` is a plain cast, so on this target an ihandle **is** a host pointer — glibc put the arena above 4 GiB and `encode-int` rightly refused. **Patch 26's gate is untouched**: measured, all five trips come through `int!`, so narrowing it would have changed nothing and weakening it would only restore the silent truncation. `arch/unix/unix.c` now maps the arena and the dictionary below 4 GiB — where the QEMU firmwares (0x400000, 0x4000000) have always been — and refuses by name if it cannot. Covered by `smoke-openbios.sh unix`; see TODO §18 |
 
 ## What the sort says
 
@@ -126,7 +127,7 @@ Rows link to the diff. The narrative for patches 12–34 lives in the
 | `PORT` | 11 | `arch/amd64`, which upstream ships and has not built since 2003 |
 | `FEATURE` | 10 | capabilities upstream never claimed — three NVRAM backings, a pmem store, the encoder work, a root that can describe memory above 4 GiB, a `/memory` that says what is free, and a build that can be made reproducible on request |
 | `FIXTURE` | 2 | test surface compiled into the firmware |
-| `DIVERGENCE` | 1 | patch 15, and only patch 15 |
+| `DIVERGENCE` | 2 | patch 15 (the Forth loader), and patch 50 (the unix arena below 4 GiB) |
 | `RECORD` | 1 | bookkeeping |
 
 And by where a future rebase will hurt:
@@ -134,7 +135,7 @@ And by where a future rebase will hurt:
 | scope | count | |
 |---|---|---|
 | shared | 28 | touches a path some *other* architecture's build also compiles — this is where a pin bump conflicts |
-| arch-local | 21 | only `arch/`, `include/arch/`, or its own `*_config.xml` — nearly free to carry |
+| arch-local | 22 | only `arch/`, `include/arch/`, or its own `*_config.xml` — nearly free to carry |
 
 **Only one patch is a divergence in the sense of "we want different behaviour."**
 The other 48 are things upstream would arguably want and is not going to be

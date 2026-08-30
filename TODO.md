@@ -4541,7 +4541,7 @@ rest.
 
 ---
 
-## 18. `openbios-unix`: an honest halt that reports success (2026-08-30)
+## 18. `openbios-unix`: FIXED, and what it left behind (2026-08-30)
 
 Found by verifying [`MANUAL_TESTING.md`](examples/openbios-the-rival-that-shipped/MANUAL_TESTING.md)
 §5 rather than reading it. The documented invocation does not work:
@@ -4595,18 +4595,51 @@ undone on purpose; `smoke-openbios.sh unix` prints it as a **KNOWN DEFECT** on
 every run and its `[[ $URC -eq 0 ]]` row **goes red the day it is fixed**, which
 sends the fixer here.
 
-### (c) The deeper option, NOT taken
+### (c) FIXED — but not the way this section first proposed
 
-Giving the Unix target a base-relative `pointer2cell` at equal widths — the
-mechanism patch 48 documents for cross-builds — would genuinely restore §5. It
-edits `include/kernel/stack.h`, shared by every arch, and changes what an
-ihandle *is* on targets that are currently green. That deserves its own change
-with its own sweep of all 30 boot tracks, not a ride-along with a documentation
-fix.
+The fix written here was *"give the Unix target a base-relative `pointer2cell` at
+equal widths"*. **That would have been wrong**, and the reason is worth keeping:
+`Makefile.target` defines `NATIVE_BITWIDTH_EQUALS_HOST_BITWIDTH` for **every**
+target, so `include/kernel/stack.h`'s plain cast is not a Unix special case — it
+is what every arch uses at run time, and changing it would have altered what an
+ihandle *is* on three currently-green targets to fix one.
 
-**Coverage, which is why this sat for four days:** `openbios-unix` was
-documented since 2026-07-21 and driven by nothing. `smoke-openbios.sh unix` and
-`tests/test-smoke-unix.sh` close that; both of its controls were watched to bite
-(the refusal removed → the absence is named; the refusal printed but not
-enforced → the LIED row fires, which a grep on the message alone would have
-passed).
+[Patch 50](examples/openbios-the-rival-that-shipped/patches/50-unix-arena-below-4g.patch)
+does the arch-local thing instead: `arch/unix/unix.c` maps the Forth arena and
+the dictionary **below 4 GiB**, so this target's pointers fit in four bytes the
+way every other target's always have (the QEMU firmwares live at `0x400000` and
+`0x4000000`). It does not make 1275 able to hold a 64-bit pointer; it stops this
+one target being the only place that asks it to. A hint is only a hint, so the
+result is verified and a mapping that still lands high panics **by name** and
+exits non-zero.
+
+    0 > stdin @ u. 20004ba8  ok        \ was above 4 GiB, and refused
+    0 > start-mem @ u. 20000000  ok
+
+Covered by `smoke-openbios.sh unix`, which asserts the **property** rather than
+the boot. Its control is the revert: put the arena back on the heap and the track
+fails by name.
+
+### (d) STILL OPEN: something reads eight bytes below the arena
+
+Unmasked by (c) and **not fixed**. Measured, not inferred: move the arena hint
+`0x20000000` → `0x40000000` and the faulting address moves `1ffffff8` →
+`3ffffff8`, so it is a systematic read at `base-8`, not a stray pointer. The dump
+reports `dstackcnt=-1` in the same breath, and there is a `-4` (Stack Underflow)
+throw at EOF in every run including pre-patch-50 ones — **but those have not been
+shown to be the same event**, so the mechanism is UNKNOWN rather than diagnosed.
+
+Every other target absorbs it silently because it has ordinary RAM below the
+arena, and malloc did the same here by leaving heap underneath; a bare `mmap`
+does not, which is how it became visible at all. Patch 50 maps one page of slack
+either side to restore that assumption. **That is containment, not a fix** — the
+read is still out of bounds, and the day someone gives the arena a real guard
+page it will fault again and this is the entry to read.
+
+### (b), narrowed
+
+The false success is *no longer reachable on this path* — initialisation
+completes — and patch 50's own failure path exits non-zero. But
+`arch/unix/unix.c:599` still returns 0 after `enterforth()` whatever the Forth
+did, so **any other** bootstrap abort would still report success. The three
+signals measured above remain the reason that is not a one-liner.

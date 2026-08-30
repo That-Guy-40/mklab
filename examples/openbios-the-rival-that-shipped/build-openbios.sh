@@ -214,6 +214,8 @@ TESTED_TREE_MARKERS=(
     # with nothing after it. A marker that matched the name would be present on
     # an unpatched tree, which is the `s" load-base"` mistake above.
     "forth/device/other.fs:( addr -- byte )   c@ ;"
+    # -- TODO 18: the unix arena below 4 GiB, so an ihandle fits (patch 50) --
+    "arch/unix/unix.c:alloc_below_4g"
 )
 present=(); absent=()
 for m in "${TESTED_TREE_MARKERS[@]}"; do

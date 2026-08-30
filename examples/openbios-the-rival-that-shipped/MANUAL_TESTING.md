@@ -501,56 +501,72 @@ point (POC-4). Needs `genisoimage` + a kernel/initrd pair (defaults:
 `~/linuxboot-lab/payload-bzImage` + `uroot.cpio`; override `KERNEL=`/
 `INITRD=`). ≈ 30–45 s under KVM.
 
-## 5. The firmware as a Unix process (no QEMU) — HALTS, since 2026-08-26
-
-The same IEEE 1275 Forth engine can run as your user with no emulator at all —
-OpenBIOS's C-hosted design makes this possible; the frozen OFW rival (pure
-self-hosting Forth) has no equivalent. **On this host it no longer reaches its
-prompt**, and the entry that used to sit here was a transcript from before it
-stopped:
+## 5. The firmware as a Unix process (no QEMU)
 
 ```console
 $ cd ~/openbios-lab/openbios
 $ printf '3 4 + .\nbye\n' | obj-amd64/openbios-unix obj-amd64/openbios-unix.dict
-encode-int: value does not fit in the 4 bytes 1275 encodes an integer into
-$ echo $?
-0
+Welcome to OpenBIOS v1.1 built on Aug 30 2026 11:26
+  Type 'help' for detailed information
+
+0 > 3 4 + . 7  ok
+0 > bye
+Farewell!
 ```
 
-**The refusal is right, and this target cannot satisfy it.** `/chosen`'s `stdin`
-and `stdout` are ihandles (`forth/admin/iocontrol.fs:42,76`), 1275 encodes an
-integer into **four bytes** (5.3.5.1), and on the Unix target an ihandle is a raw
-**64-bit host pointer** — `pointer2cell` is a plain cast when the target cell is
-as wide as the host's (`include/kernel/stack.h:35`). Measured: all five refused
-values arrive through `int!`, the property encoder, never through a raw `l!-be`,
-so this is not a mis-scoped gate and weakening it would only restore the silent
-truncation [patch 26](patches/26-encode-int-refuses-what-four-bytes-cannot-hold.patch)
-removed. Before that patch this command "worked" by writing the bottom 32 bits of
-a pointer and reading back a different object — the LIED rung — which is exactly
-what the old transcript recorded.
+The same IEEE 1275 Forth engine, running as your user with no emulator at all —
+OpenBIOS's C-hosted design makes this possible; the frozen OFW rival (pure
+self-hosting Forth) has no equivalent.
 
-**The remaining defect is the last line above: it halted, and exited 0.**
-`arch/unix/unix.c:599` returns 0 whatever the Forth did. See
-[TODO §18](../../TODO.md#18-openbios-unix-an-honest-halt-that-reports-success-2026-08-30)
-for the three C-side signals that were measured and rejected, and for the
-`pointer2cell` change that would genuinely restore this section.
+**This entry is the reason the audit happened, and it is worth reading as a
+case rather than a command.** It was documented from 2026-07-21 and driven by
+*nothing* — no track, no runner, no CI arm. [Patch
+26](patches/26-encode-int-refuses-what-four-bytes-cannot-hold.patch) falsified it
+on 2026-08-26 and the file went on asserting it for four days, until
+[§3](#3-smokes--one-verdict-each) was verified by running it instead of reading
+it.
 
-**This is the entry that argued for the audit.** It was documented from
-2026-07-21 and driven by *nothing* — no track, no runner, no CI arm — so patch 26
-falsified it on 2026-08-26 and the file went on asserting it for four days.
-`./smoke-openbios.sh unix` now drives it on every run:
+**What was actually wrong, because the obvious answer is the wrong one.** The
+symptom was `encode-int: value does not fit in the 4 bytes 1275 encodes an
+integer into`, and patch 26's gate sits in `l!-be` — a *general* four-byte
+big-endian store — so it reads as a mis-scoped refusal that should be narrowed to
+`encode-int`. Measured instead: **all five trips come through `int!`**, the 1275
+property encoder, and none through a raw `l!-be`. Narrowing it would have changed
+nothing, and weakening it would only have restored the silent truncation patch 26
+removed. The gate was never the bug.
+
+The bug was **where the memory was**. `/chosen`'s `stdin`/`stdout` are ihandles
+(`forth/admin/iocontrol.fs:42,76`); 1275 encodes an integer into four bytes
+(5.3.5.1); and at run time `pointer2cell` is a plain cast
+(`include/kernel/stack.h:35` — `Makefile.target` defines
+`NATIVE_BITWIDTH_EQUALS_HOST_BITWIDTH` for every target), so on this one target
+an ihandle **is** a host pointer. glibc placed the 4 MiB arena above 4 GiB and
+`encode-int` correctly refused.
+[Patch 50](patches/50-unix-arena-below-4g.patch) maps the arena and the
+dictionary **below** 4 GiB — where the QEMU firmwares (`0x400000`, `0x4000000`)
+have always been — and refuses by name if it cannot:
 
 ```console
-$ ./smoke-openbios.sh unix
-  - openbios-unix halts during init and names why; with empty input it halts
-    identically, so it is initialisation and not the input
-  - KNOWN DEFECT (TODO §18): it halted, and still exited 0
-PASS: the firmware as a plain Unix process, driven for the first time …
+0 > stdin @ u. 20004ba8  ok
+0 > start-mem @ u. 20000000  ok
 ```
 
-Its two controls were watched to bite: with the refusal removed the track names
-its **absence**, and with the refusal *printed but not enforced* the LIED row
-fires — which a grep for the message alone would have passed.
+**And one page of slack either side is a finding, not padding.** Something in
+initialisation reads **eight bytes below** the arena. Measured rather than
+inferred: move the hint `0x20000000` → `0x40000000` and the faulting address
+moves `1ffffff8` → `3ffffff8`, so it is a systematic read at `base-8`. Every
+other target absorbs it silently because it has ordinary RAM below the arena, and
+malloc did the same here by leaving heap underneath; a bare `mmap` does not, so
+it surfaced as a SIGSEGV at exit. The slack restores the assumption the code has
+always been written against. **The read is still a bug** — filed as TODO §18(d)
+with that evidence, not fixed here.
+
+`./smoke-openbios.sh unix` now drives all of this on every run, and asserts the
+**property** rather than the boot: `stdin`, `stdout` and `start-mem` are read
+back from the prompt and must each fit in four bytes, which is the value
+`encode-int` is handed. Its control is the revert — put the arena back on the
+heap and the track fails by name, *"never printed its banner, so initialisation
+did not complete"*.
 
 ## 6. Interactive & the ppc swap-in
 

@@ -1,21 +1,26 @@
 # RUNBOOK — a guided tour of the rival that shipped
 
-You've run [`./build-openbios.sh`](build-openbios.sh). OpenBIOS is a C program
-that *hosts* Forth, where its rival OFW **is** Forth — same standard, opposite
-architecture — and the tell is that it can also be built as a plain Unix
-process, `obj-amd64/openbios-unix`, with no emulator and no VM.
+You've run [`./build-openbios.sh`](build-openbios.sh). Before touching QEMU,
+meet the firmware as a plain program:
 
-> **That target does not reach its prompt on a 64-bit host, and has not since
-> 2026-08-26.** It halts during initialisation and names why:
-> `encode-int: value does not fit in the 4 bytes 1275 encodes an integer into`.
-> The reason is real and the refusal is correct — `/chosen`'s `stdin`/`stdout`
-> are ihandles, 1275 encodes an integer into four bytes, and on this target an
-> ihandle is a raw 64-bit host pointer. See
-> [TODO §18](../../TODO.md#18-openbios-unix-an-honest-halt-that-reports-success-2026-08-30)
-> and [`MANUAL_TESTING.md`](MANUAL_TESTING.md) §5; `./smoke-openbios.sh unix`
-> drives it on every run so it cannot rot again. Skip to the real thing below.
+```console
+$ cd ~/openbios-lab/openbios
+$ printf '3 4 + .\nbye\n' | obj-amd64/openbios-unix obj-amd64/openbios-unix.dict
+0 > 3 4 + . 7  ok
+```
 
-So, the real thing:
+That is an IEEE 1275 Open Firmware prompt running as a **Unix process** — no
+emulator, no VM. It's the tell that OpenBIOS is a C program hosting Forth, where
+its rival OFW *is* Forth. Same standard, opposite architecture.
+
+> This stopped working for four days (2026-08-26 to 08-30) and nobody noticed,
+> because it was documented here and driven by no test. It is covered now:
+> `./smoke-openbios.sh unix`. The story is [TODO §18](../../TODO.md#18-openbios-unix-fixed-and-what-it-left-behind-2026-08-30)
+> and [`MANUAL_TESTING.md`](MANUAL_TESTING.md) §5 — worth reading, because the
+> obvious fix was the wrong one.
+
+Now the real thing:
+
 
 ```console
 $ ./run-openbios-qemu.sh          # 0 > prompt on this terminal; Ctrl-A X quits QEMU
