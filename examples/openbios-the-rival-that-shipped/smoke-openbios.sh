@@ -4062,8 +4062,19 @@ PYX
         || fail "unix: $_n is 0x$_v, at or above 4 GiB — it cannot be encoded into the four bytes 1275 gives an integer (5.3.5.1), which is exactly the value encode-int refuses. See TODO §18 — $ULOG"
     done
 
+    # TODO §18(b): the exit status is now a REPORT, not a constant. main() used to
+    # `return 0` whatever the Forth did, so a firmware that aborted during
+    # initialisation told the shell it had succeeded. `bye` sets of-left-cleanly
+    # and arch/unix reads it through feval, so this 0 means "the engine was left
+    # deliberately" rather than "main reached its last line".
     [[ $URC -eq 0 ]] \
       || fail "unix: the session ran but openbios-unix exited $URC — see $ULOG"
+    # And the honest-failure half, asserted by its ABSENCE here: a run that
+    # reached the prompt must NOT be reporting the abort diagnostic.
+    grep -qaF 'was left WITHOUT `bye`' <<<"$UOUT" \
+      && fail "REGRESSION: unix: the session reached its prompt yet openbios-unix reported that initialisation did not complete — the TODO §18(b) check is firing on a healthy run, which would make every future abort unbelievable — see $ULOG"
+    grep -qaF 'of-left-cleanly` is not in this dictionary' <<<"$UOUT" \
+      && fail "unix: openbios-unix could not check whether the engine exited deliberately — of-left-cleanly is missing from the dictionary, so TODO §18(b)'s exit status is UNKNOWN rather than 0 — see $ULOG"
 
     note "prompt reached: 3 4 + . answers 7, bye reaches Farewell!"
     note "stdin=0x$USTDIN stdout=0x$USTDOUT start-mem=0x$UMEM — all inside four bytes, which is what encode-int is handed"

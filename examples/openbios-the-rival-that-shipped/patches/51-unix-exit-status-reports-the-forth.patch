@@ -1,0 +1,239 @@
+Subject: [PATCH 51/51] arch/unix: the exit status reports what the Forth did
+Arch-tested: x86 amd64 ppc unix
+
+TODO 18(b). arch/unix/unix.c ended main() with `return 0` whatever the Forth had
+done, so a firmware that aborted during initialisation -- printing a refusal and
+never reaching its prompt -- told the shell it had SUCCEEDED. That is the LIED
+rung: an honest failure is debuggable, a false success is not.
+
+THREE OBVIOUS SIGNALS DO NOT WORK, all measured, and the reason they fail is one
+fact worth stating before anyone tries a fourth:
+
+    enterforth()'s return (rstackcnt != tmp)   0 on abort, 0 on clean exit
+    interruptforth & FORTH_INTSTAT_STOP        0 on abort, 0 on clean exit
+    kernel/bootstrap.c's exception()           never called on either
+
+start.fs's own comment names the reason: `initialize-of` "is never left unless
+something goes really wrong or the user decides to leave the engine". BOTH exits
+unwind IDENTICALLY -- `bye` ends in `0 rdepth!`, and an uncaught `throw` ends in
+`catchframe @ rdepth!` where catchframe is 0. The same store. So there is nothing
+to detect ABOUT THE ABORT, and the discriminator has to sit on the path that is
+DELIBERATE.
+
+Hence one variable, set by `bye` and by nothing else. arch/unix reads it through
+feval() -- the shipped C-to-Forth call -- rather than reaching into the dictionary
+at a guessed offset, because a hand-computed parameter-field offset is a cached
+fact about a layout that can move.
+
+    clean session ending in bye ....... exit 0, no diagnostic
+    init aborts (arena above 4 GiB) ... exit 1, and it says which:
+        "openbios-unix: the Forth engine was left WITHOUT `bye` --
+         initialisation did not complete. See TODO 18(b)."
+
+A MISSING FLAG IS UNKNOWN, NOT A FAILURE. If `of-left-cleanly` is absent from the
+dictionary the C side names that and keeps the old status: "I could not check"
+must render as neither a pass nor a fail, which is the same rule the SKIP verdict
+follows everywhere else in this lab.
+
+SHARED FORTH, DELIBERATELY. start.fs builds for every target, so all three arches
+were rebuilt and driven; every other target pays one variable and one store and
+ignores the flag. `smoke-openbios.sh unix` asserts all three states -- exit 0 on
+the healthy run, and the ABSENCE of both the abort diagnostic and the UNKNOWN
+line, so a check that fires on a healthy run fails by name rather than quietly
+making every future abort unbelievable.
+
+diff --git a/arch/unix/unix.c b/arch/unix/unix.c
+index cb9757e..f180e0b 100644
+--- a/arch/unix/unix.c
++++ b/arch/unix/unix.c
+@@ -17,6 +17,7 @@
+ #include <termios.h>
+ #include <sys/types.h>
+ #include <sys/stat.h>
++#include <sys/mman.h>
+ #include <stdarg.h>
+ 
+ #ifdef __GLIBC__
+@@ -62,6 +63,7 @@ static ucell *memory;
+ static int diskemu;
+ 
+ static int segfault = 0;
++static int forth_exit_status = 0;
+ static int verbose = 0;
+ 
+ #if defined(CONFIG_PPC) || defined(CONFIG_SPARC64)
+@@ -363,13 +365,72 @@ int_handler(int signo __attribute__ ((unused)),
+     exit(1);
+ }
+ 
++/* LOCAL DIVERGENCE (mklab). TODO 18.
++ *
++ * PLACE THE FORTH ARENA AND THE DICTIONARY BELOW 4 GiB.
++ *
++ * 1275 encodes an integer into FOUR bytes (5.3.5.1), and /chosen's `stdin` and
++ * `stdout` are ihandles -- pointers into these two allocations
++ * (forth/admin/iocontrol.fs:42,76). At run time pointer2cell is a plain cast
++ * (include/kernel/stack.h:35; Makefile.target defines
++ * NATIVE_BITWIDTH_EQUALS_HOST_BITWIDTH for every target), so an ihandle IS a
++ * host pointer. glibc hands these two sizes out well above 4 GiB on a 64-bit
++ * host, so encode-int refused -- correctly -- and the firmware halted during
++ * initialisation, which is what MANUAL_TESTING.md section 5 recorded.
++ *
++ * THIS DOES NOT MAKE 1275 ABLE TO HOLD A 64-BIT POINTER, and it is not a
++ * weakening of patch 26's gate, which stays exactly as it is. It puts this
++ * target where every other target has always been: the QEMU firmwares live at
++ * 0x400000 and 0x4000000, so their pointers have always fitted in four bytes.
++ *
++ * AND IT REFUSES BY NAME RATHER THAN DRIFTING BACK. If the low mapping cannot
++ * be had, we say so and exit non-zero instead of continuing into an abort that
++ * used to exit 0 (TODO 18(b)) -- an honest failure the caller can see.
++ */
++#define OF_LOW_LIMIT   ((uintptr_t)1 << 32)
++
++static void *alloc_below_4g(size_t len, uintptr_t hint, const char *what)
++{
++	void *p = mmap((void *)hint, len, PROT_READ | PROT_WRITE,
++	               MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
++
++	if (p == MAP_FAILED)
++		return NULL;
++
++	/* A hint is only a hint: verify, never assume. */
++	if ((uintptr_t)p + len > OF_LOW_LIMIT) {
++		printk("panic: %s landed at %p, above 4 GiB -- an ihandle there "
++		       "cannot be encoded into the four bytes IEEE 1275 gives an "
++		       "integer (5.3.5.1). See TODO 18.\n", what, p);
++		munmap(p, len);
++		return NULL;
++	}
++	return p;
++}
++
++/* The matching free, and it is load-bearing rather than tidiness.
++ *
++ * These two are mmap'd now, so the free()s that used to end main() hand glibc a
++ * pointer it never allocated -- and free() reads its chunk header BELOW the
++ * pointer, at p-8. That read is what produced "panic: segmentation violation at
++ * 1ffffff8" (arena base minus 8) while the page below was unmapped, and
++ * "free(): invalid pointer" once it was mapped and glibc got to inspect the
++ * garbage it found. One bug, two costumes. Measured: with munmap here and NO
++ * guard page, the session runs clean, and a gdb access-watchpoint on
++ * memory-8/-16 never fires across a whole session. */
++static void free_below_4g(void *p, size_t len)
++{
++	if (p)
++		munmap(p, len);
++}
++
+ /*
+  * allocate memory and prepare engine for memory management.
+  */
+ 
+ static void init_memory(void)
+ {
+-	memory = malloc(MEMORY_SIZE);
++	memory = alloc_below_4g(MEMORY_SIZE, 0x20000000, "the Forth arena");
+ 	if (!memory) {
+ 		printk("panic: not enough memory on host system.\n");
+ 		exit_terminal();
+@@ -521,7 +582,9 @@ int main(int argc, char *argv[])
+ 	/* Initialise console */
+ 	init_console(unix_console_ops);
+ 
+-	if ((dict = (unsigned char *) malloc(DICTIONARY_SIZE)) == NULL) {
++	if ((dict = (unsigned char *) alloc_below_4g(DICTIONARY_SIZE,
++	                                            0x30000000,
++	                                            "the dictionary")) == NULL) {
+ 		printk("panic: not enough memory.\n");
+ 		return 1;
+ 	}
+@@ -580,12 +643,50 @@ int main(int argc, char *argv[])
+ 		}
+ 
+ 		enterforth((xt_t)PC);
++
++		/* LOCAL DIVERGENCE (mklab). TODO 18(b): DO NOT REPORT SUCCESS FOR A
++		 * BOOTSTRAP THAT DIED.
++		 *
++		 * main() used to `return 0` here whatever the Forth had done, so a
++		 * firmware that aborted during initialisation -- printing a refusal
++		 * and never reaching its prompt -- told the shell it had succeeded.
++		 * A false success outranks an honest failure, so it is the part
++		 * worth fixing.
++		 *
++		 * THREE OBVIOUS SIGNALS DO NOT WORK, measured, and are recorded here
++		 * so nobody re-derives them: enterforth()'s return is 0 in both cases
++		 * (an uncaught throw unwinds the return stack to the same depth `bye`
++		 * does, so rstackcnt balances); interruptforth's STOP bit is 0 in
++		 * both (it marks input EOF, not how the session ended); and
++		 * kernel/bootstrap.c's exception() serves the dictionary-BUILD path
++		 * and is never called while running a prebuilt dict.
++		 *
++		 * So the flag is set on the one path that is DELIBERATE -- `bye`, in
++		 * forth/bootstrap/start.fs -- and read here through feval(), the
++		 * shipped C-to-Forth call, rather than by reaching into the
++		 * dictionary at a guessed offset. If the word is missing we say
++		 * UNKNOWN and keep the old status: "I could not check" must never
++		 * render as a failure any more than as a pass.
++		 */
++		if (findword("of-left-cleanly")) {
++			feval_quiet("of-left-cleanly @");
++			if (POP() == 0) {
++				printk("openbios-unix: the Forth engine was left "
++				       "WITHOUT `bye` -- initialisation did not "
++				       "complete. See TODO 18(b).\n");
++				forth_exit_status = 1;
++			}
++		} else {
++			printk("openbios-unix: UNKNOWN -- `of-left-cleanly` is not "
++			       "in this dictionary, so whether the engine exited "
++			       "deliberately could not be checked (TODO 18(b)).\n");
++		}
+ #if 0
+ 		if (dictname != NULL)
+ 			write_dictionary(dictname);
+ #endif
+ 
+-		free(memory);
++		free_below_4g(memory, MEMORY_SIZE);
+ 
+ 	} else {		/* input file is not a dictionary */
+ 		printk("not supported.\n");
+@@ -595,8 +696,8 @@ int main(int argc, char *argv[])
+ 	if (diskemu!=-1)
+ 		close(diskemu);
+ 
+-	free(dict);
+-	return 0;
++	free_below_4g(dict, DICTIONARY_SIZE);
++	return forth_exit_status;
+ }
+ 
+ #undef printk
+diff --git a/forth/bootstrap/start.fs b/forth/bootstrap/start.fs
+index 9aabfa2..615887c 100644
+--- a/forth/bootstrap/start.fs
++++ b/forth/bootstrap/start.fs
+@@ -18,8 +18,22 @@ include builtin.fs          \ builtin terminal.
+   parse-word $encode-file
+ ;
+ 
++\ LOCAL DIVERGENCE (mklab). TODO 18(b).
++\
++\ `initialize-of` is entered by the C core and, as the comment above says, is
++\ "never left unless something goes really wrong or the user decides to leave
++\ the engine". BOTH of those return from enterforth() the same way -- `bye`
++\ ends with `0 rdepth!`, and an UNCAUGHT throw ends with `catchframe @ rdepth!`
++\ where catchframe is 0, which is the same store. So C cannot tell a deliberate
++\ exit from a bootstrap that died, and arch/unix returned 0 either way.
++\
++\ This flag is the difference, set on the ONE path that is deliberate. It is
++\ read by arch/unix/unix.c; every other target ignores it and pays a variable.
++variable of-left-cleanly  0 of-left-cleanly !
++
+ : bye 
+   s" Farewell!" cr type cr cr 
++  1 of-left-cleanly !
+   0 rdepth! 
+   ;
+ 

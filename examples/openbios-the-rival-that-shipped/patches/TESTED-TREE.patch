@@ -3120,7 +3120,7 @@ index 5b3fcc1..d2826e2 100644
      debug("boot eax = %#lx\n", info->boot_type);
      debug("boot ebx = %#lx\n", info->boot_data);
 diff --git a/arch/unix/unix.c b/arch/unix/unix.c
-index cb9757e..79dcce0 100644
+index cb9757e..f180e0b 100644
 --- a/arch/unix/unix.c
 +++ b/arch/unix/unix.c
 @@ -17,6 +17,7 @@
@@ -3131,7 +3131,15 @@ index cb9757e..79dcce0 100644
  #include <stdarg.h>
  
  #ifdef __GLIBC__
-@@ -363,13 +364,72 @@ int_handler(int signo __attribute__ ((unused)),
+@@ -62,6 +63,7 @@ static ucell *memory;
+ static int diskemu;
+ 
+ static int segfault = 0;
++static int forth_exit_status = 0;
+ static int verbose = 0;
+ 
+ #if defined(CONFIG_PPC) || defined(CONFIG_SPARC64)
+@@ -363,13 +365,72 @@ int_handler(int signo __attribute__ ((unused)),
      exit(1);
  }
  
@@ -3205,7 +3213,7 @@ index cb9757e..79dcce0 100644
  	if (!memory) {
  		printk("panic: not enough memory on host system.\n");
  		exit_terminal();
-@@ -521,7 +581,9 @@ int main(int argc, char *argv[])
+@@ -521,7 +582,9 @@ int main(int argc, char *argv[])
  	/* Initialise console */
  	init_console(unix_console_ops);
  
@@ -3216,7 +3224,50 @@ index cb9757e..79dcce0 100644
  		printk("panic: not enough memory.\n");
  		return 1;
  	}
-@@ -585,7 +647,7 @@ int main(int argc, char *argv[])
+@@ -580,12 +643,50 @@ int main(int argc, char *argv[])
+ 		}
+ 
+ 		enterforth((xt_t)PC);
++
++		/* LOCAL DIVERGENCE (mklab). TODO 18(b): DO NOT REPORT SUCCESS FOR A
++		 * BOOTSTRAP THAT DIED.
++		 *
++		 * main() used to `return 0` here whatever the Forth had done, so a
++		 * firmware that aborted during initialisation -- printing a refusal
++		 * and never reaching its prompt -- told the shell it had succeeded.
++		 * A false success outranks an honest failure, so it is the part
++		 * worth fixing.
++		 *
++		 * THREE OBVIOUS SIGNALS DO NOT WORK, measured, and are recorded here
++		 * so nobody re-derives them: enterforth()'s return is 0 in both cases
++		 * (an uncaught throw unwinds the return stack to the same depth `bye`
++		 * does, so rstackcnt balances); interruptforth's STOP bit is 0 in
++		 * both (it marks input EOF, not how the session ended); and
++		 * kernel/bootstrap.c's exception() serves the dictionary-BUILD path
++		 * and is never called while running a prebuilt dict.
++		 *
++		 * So the flag is set on the one path that is DELIBERATE -- `bye`, in
++		 * forth/bootstrap/start.fs -- and read here through feval(), the
++		 * shipped C-to-Forth call, rather than by reaching into the
++		 * dictionary at a guessed offset. If the word is missing we say
++		 * UNKNOWN and keep the old status: "I could not check" must never
++		 * render as a failure any more than as a pass.
++		 */
++		if (findword("of-left-cleanly")) {
++			feval_quiet("of-left-cleanly @");
++			if (POP() == 0) {
++				printk("openbios-unix: the Forth engine was left "
++				       "WITHOUT `bye` -- initialisation did not "
++				       "complete. See TODO 18(b).\n");
++				forth_exit_status = 1;
++			}
++		} else {
++			printk("openbios-unix: UNKNOWN -- `of-left-cleanly` is not "
++			       "in this dictionary, so whether the engine exited "
++			       "deliberately could not be checked (TODO 18(b)).\n");
++		}
+ #if 0
+ 		if (dictname != NULL)
  			write_dictionary(dictname);
  #endif
  
@@ -3225,15 +3276,17 @@ index cb9757e..79dcce0 100644
  
  	} else {		/* input file is not a dictionary */
  		printk("not supported.\n");
-@@ -595,7 +657,7 @@ int main(int argc, char *argv[])
+@@ -595,8 +696,8 @@ int main(int argc, char *argv[])
  	if (diskemu!=-1)
  		close(diskemu);
  
 -	free(dict);
+-	return 0;
 +	free_below_4g(dict, DICTIONARY_SIZE);
- 	return 0;
++	return forth_exit_status;
  }
  
+ #undef printk
 diff --git a/arch/x86/boot.c b/arch/x86/boot.c
 index 61f6562..23c299d 100644
 --- a/arch/x86/boot.c
@@ -5109,6 +5162,33 @@ index 3fbd935..c4ce58f 100644
  [THEN]
  
  [IFDEF] CONFIG_SPARC32
+diff --git a/forth/bootstrap/start.fs b/forth/bootstrap/start.fs
+index 9aabfa2..615887c 100644
+--- a/forth/bootstrap/start.fs
++++ b/forth/bootstrap/start.fs
+@@ -18,8 +18,22 @@ include builtin.fs          \ builtin terminal.
+   parse-word $encode-file
+ ;
+ 
++\ LOCAL DIVERGENCE (mklab). TODO 18(b).
++\
++\ `initialize-of` is entered by the C core and, as the comment above says, is
++\ "never left unless something goes really wrong or the user decides to leave
++\ the engine". BOTH of those return from enterforth() the same way -- `bye`
++\ ends with `0 rdepth!`, and an UNCAUGHT throw ends with `catchframe @ rdepth!`
++\ where catchframe is 0, which is the same store. So C cannot tell a deliberate
++\ exit from a bootstrap that died, and arch/unix returned 0 either way.
++\
++\ This flag is the difference, set on the ONE path that is deliberate. It is
++\ read by arch/unix/unix.c; every other target ignores it and pays a variable.
++variable of-left-cleanly  0 of-left-cleanly !
++
+ : bye 
+   s" Farewell!" cr type cr cr 
++  1 of-left-cleanly !
+   0 rdepth! 
+   ;
+ 
 diff --git a/forth/debugging/client.fs b/forth/debugging/client.fs
 index 5ee6003..7867a98 100644
 --- a/forth/debugging/client.fs
