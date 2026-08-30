@@ -42,6 +42,9 @@ TRACK (default multiboot):
                               store is a command, not data (TODO 16)
   mmio-writer                 stores into the VGA aperture, seen by QEMU's
                               screendump — an observer outside the firmware
+  struct-layer                REVIEW G2: a TYPE layer (dsl/struct.fth) over
+                              the firmware's own struct/field, pointed at a
+                              real ELF64 header
 
 Exit: 0 PASS / 1 FAIL / 77 SKIP. Each track ends on exactly one verdict line.
 Env: OPENBIOS_WORKDIR, KERNEL, INITRD, COREBOOT_DIR
@@ -2520,5 +2523,323 @@ PYS
 
     pass "TODO 16, the third seam, at BOTH of its addresses: 1000 int! stores into the legacy VGA aperture at 0xb8000 put $MPOST blue pixels on the display where the pre-write dump and the no-write control each hold 0, with HERE unchanged at $MH0 — read by QEMU's screendump, an observer the firmware cannot fake. Stores LAND here (unlike CFI flash, where they are commands) and the observer is a DEVICE (unlike the NVDIMM, where it is a file), which is the third distinct answer. AND at a LIVE PCI BAR since TODO 0.6c/0.6d: two int! stores into the framebuffer at 0x40000000 read back through QEMU's monitor as c0 ff ee 01 c0 ff ee 01 where the pre-write read and the no-write control each hold zeros. That one needs the monitor rather than the display, because the VGA sits in 640x480 compat mode scanning the legacy aperture — a real store into the linear framebuffer is invisible on screen, and screendump cannot tell it from a store that never happened"
     ;;
-  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer]" >&2; exit 1 ;;
+  struct-layer)
+    # REVIEW-preboot-forth-as-a-poke-engine.md G2: the TYPE layer, and its two
+    # named checkpoints.
+    #
+    # WHAT G2 GOT WRONG ABOUT ITS OWN STARTING POINT, found by measuring before
+    # writing: it says `create ... does>` is "sitting unused" and the definer is
+    # the work. OpenBIOS ALREADY SHIPS the definer --
+    # forth/bootstrap/bootstrap.fs:1570 has `0 constant struct` and
+    # `: field create over , + does> @ + ;` -- and it works at the prompt
+    # untouched (measured 2026-08-29: `struct 4 field a 2 field b 1 field c
+    # constant size` gives size=7, offsets 0/4/6). So the ADDRESS half of the
+    # type layer has been in the firmware the whole time. What is missing is the
+    # TYPE: `field` carries an offset and nothing else, so every read restates
+    # the width and the byte order by hand, which is where a binary-structure
+    # parser goes wrong.
+    #
+    # THE TWO CHECKPOINTS, from the review, and they are different questions:
+    #   1. a named field of a structure mapped at a chosen address reads back
+    #      what a DIFFERENT word wrote there  -- here `int!` (the 1275 encoder,
+    #      forth/device/property.fs:353) and `le-l!` (a C binding), neither of
+    #      which knows this layer exists;
+    #   2. storing THROUGH a field changes the bytes at that address with no
+    #      explicit write-back step -- which is what makes it poke's model
+    #      rather than an accessor library. GNU poke's manual specifies a
+    #      three-step map/modify/poke-back for a scalar because `n` is a copy;
+    #      a field here yields the address of the bytes themselves, so there is
+    #      no copy to write back from (review §P1).
+    #
+    # AND THE CONTROLS, because "it read back what was written" is satisfied by
+    # a layer that ignores byte order entirely -- a value written and read by
+    # one convention round-trips under any convention:
+    #   * the ORDER control: the same four bytes read through the other order
+    #     must come back byte-REVERSED, in both directions;
+    #   * the RAW BYTES beside every store, so the claim is about memory rather
+    #     than about a round trip through one accessor pair;
+    #   * a POISON byte past the layout: ff before, ff after, so no store ran
+    #     long -- and ff first so an inherited zero can never pass for a write;
+    #   * TWO VIEWS of one ELF header (e_entry as 4+4 halves, and as one 8-byte
+    #     little-endian field at 0x18) which must agree, so the offsets are not
+    #     arithmetic nobody checked;
+    #   * THREE REFUSALS by name -- an unsupported width, big-endian 64, and an
+    #     8-byte field on a 32-bit cell -- because returning a plausible number
+    #     for a width nobody implemented is the LIED rung;
+    #   * the arch split IS a control: x86's 32-bit cell must refuse the 8-byte
+    #     field where amd64 answers it, and every other row must be identical.
+    #
+    # THE SUBJECT IS A REAL ELF64 and it is the amd64 firmware's own boot image,
+    # on BOTH arches, so one host-side ground truth covers both runs. Ground
+    # truth is computed from the bytes with struct.unpack, not read off
+    # `readelf`'s prose.
+    #
+    # THE LOADING ORDER IS LOAD-BEARING. `load` always lands at `load-base`, so
+    # loading the parser after the subject would overwrite the parser. Define
+    # first, load the subject under it, then type ONE SHORT WORD to invoke the
+    # parse -- long lines are what a serial console with no flow control drops.
+    command -v qemu-system-x86_64 >/dev/null || skip "qemu-system-x86_64 not installed"
+    command -v genisoimage >/dev/null || skip "genisoimage not installed"
+    GAMB="$WORKDIR/openbios/obj-amd64/openbios.multiboot"
+    GADI="$WORKDIR/openbios/obj-amd64/openbios-amd64.dict"
+    GXMB="$WORKDIR/openbios/obj-x86/openbios.multiboot"
+    GXDI="$WORKDIR/openbios/obj-x86/openbios-x86.dict"
+    for f in "$GAMB" "$GADI" "$GXMB" "$GXDI"; do
+      [[ -f "$f" ]] || skip "missing $f — run ./build-openbios.sh amd64 and x86 first"
+    done
+    GDSL="$HERE/dsl/struct.fth"
+    [[ -f "$GDSL" ]] || fail "the type layer is missing at $GDSL — this track stages the SHIPPED file rather than re-implementing it, so there is nothing to measure"
+    GST="$WORKDIR/g2-stage"; rm -rf "$GST"; mkdir -p "$GST"
+    cp "$GDSL" "$GST/STRUCT.FTH"          # the shipped artifact, copied not re-typed
+    cp "$GAMB" "$GST/SUBJ.ELF"
+    cat > "$GST/G2CHK.FTH" <<'FTH'
+\ G2 checkpoints. Base is HEX. struct.fth must already be evaluated.
+hex
+." G2-START" cr
+
+\ Every order/width combination the layer claims, plus one width it does NOT,
+\ so the refusal is exercised beside the successes.
+struct
+  4    field: p-be
+  4 le-field: p-le
+  2    field: p-bew
+  2 le-field: p-lew
+  1    field: p-b
+  3 le-field: p-odd            \ unsupported width, on purpose
+constant /pat
+
+40 alloc-mem value tb
+: poison  40 0 do ff tb i + c! loop ;
+poison
+." g2-tb=" tb u. cr
+." g2-patsize=" /pat . cr
+
+." g2-off-be="  tb p-be  t-adr tb - . cr
+." g2-off-le="  tb p-le  t-adr tb - . cr
+." g2-off-bew=" tb p-bew t-adr tb - . cr
+." g2-off-lew=" tb p-lew t-adr tb - . cr
+." g2-off-b="   tb p-b   t-adr tb - . cr
+
+\ CHECKPOINT 1 -- written by int! and le-l!, read by the type layer.
+deadbeef tb p-be t-adr int!
+cafebabe tb p-le t-adr le-l!
+." g2-r-be=" tb p-be t@ u. cr
+." g2-r-le=" tb p-le t@ u. cr
+
+\ THE ORDER CONTROL -- the same bytes through the other order.
+." g2-x-le-as-be=" tb p-le t-adr l@-be u. cr
+." g2-x-be-as-le=" tb p-be t-adr le-l@ u. cr
+
+\ CHECKPOINT 2 -- two immediate forms: the typed store, and a bare store
+\ through the field's own address. Neither has a write-back step.
+11223344 tb p-le t!
+." g2-w-t=" tb p-le t@ u. cr
+." g2-w-bytes=" tb p-le t-adr dup c@ u. 1+ dup c@ u. 1+ dup c@ u. 1+ c@ u. cr
+55667788 tb p-le t-adr le-l!
+." g2-w-adr=" tb p-le t@ u. cr
+
+aabbccdd tb p-be t!
+." g2-w-be=" tb p-be t@ u. cr
+." g2-w-be-bytes=" tb p-be t-adr dup c@ u. 1+ dup c@ u. 1+ dup c@ u. 1+ c@ u. cr
+
+1234 tb p-bew t!   5678 tb p-lew t!   9a tb p-b t!
+." g2-w-bew=" tb p-bew t@ u. cr
+." g2-w-bew-bytes=" tb p-bew t-adr dup c@ u. 1+ c@ u. cr
+." g2-w-lew=" tb p-lew t@ u. cr
+." g2-w-lew-bytes=" tb p-lew t-adr dup c@ u. 1+ c@ u. cr
+." g2-w-b=" tb p-b t@ u. cr
+
+." g2-iso-be=" tb p-be t@ u. cr
+." g2-iso-le=" tb p-le t@ u. cr
+." g2-poison=" tb 10 + c@ u. cr
+
+\ The parse is COMPILED IN so one short word invokes it after the subject is
+\ loaded over load-base -- a long line at a console with no flow control drops
+\ characters silently.
+: g2-elf
+  ." g2e-magic="   load-base e_magic    t@ u. cr
+  ." g2e-class="   load-base e_class    t@ u. cr
+  ." g2e-data="    load-base e_data     t@ u. cr
+  ." g2e-type="    load-base e_type     t@ u. cr
+  ." g2e-machine=" load-base e_machine  t@ u. cr
+  ." g2e-entryhi=" load-base e_entry-hi t@ u. cr
+  ." g2e-entrylo=" load-base e_entry-lo t@ u. cr
+  ." g2e-size="    load-size u. cr
+  ." G2E-END" cr ;
+
+\ Each refusal is its OWN word, so an abort cannot cut the run short.
+: g2-x64   ." g2x-entry=" load-base x-entry t@ u. cr ." G2X-END" cr ;
+: g2-odd   ." g2o=" tb p-odd t@ u. cr ." G2O-END" cr ;
+: g2-blob  ." g2b=" load-base e_pad t@ u. cr ." G2B-END" cr ;
+
+." G2-END" cr
+FTH
+    genisoimage -quiet -o "$WORKDIR/g2.iso" -V G2 -r -J "$GST"
+
+    # Ground truth from the SUBJECT'S BYTES, not from readelf's prose: a version
+    # string is not an identity and neither is a formatter's line.
+    read -r GT_MAGIC GT_CLASS GT_DATA GT_TYPE GT_MACH GT_ENTRY GT_SIZE < <(
+      python3 - "$GAMB" <<'PY'
+import sys, struct
+raw = open(sys.argv[1], 'rb').read()
+b = raw[:64]
+print("%x %x %x %x %x %x %x" % (
+    struct.unpack_from("<I", b, 0)[0], b[4], b[5],
+    struct.unpack_from('<H', b, 16)[0], struct.unpack_from('<H', b, 18)[0],
+    struct.unpack_from('<Q', b, 24)[0], len(raw)))
+PY
+    )
+    note "subject: $(basename "$GAMB") — ELF64 magic=$GT_MAGIC class=$GT_CLASS type=$GT_TYPE machine=$GT_MACH entry=$GT_ENTRY size=$GT_SIZE (host, from the bytes)"
+
+    # zero-padded hex, so a byte split of a value the firmware printed minimally
+    # is a relation to that value rather than a constant written down twice
+    g2_le_bytes() { local v; v="$(printf '%08x' $(( 0x$1 )))"; echo "${v:6:2} ${v:4:2} ${v:2:2} ${v:0:2}"; }
+    g2_be_bytes() { local v; v="$(printf '%08x' $(( 0x$1 )))"; echo "${v:0:2} ${v:2:2} ${v:4:2} ${v:6:2}"; }
+    g2_rev4()     { local v; v="$(printf '%08x' $(( 0x$1 )))"; echo "${v:6:2}${v:4:2}${v:2:2}${v:0:2}"; }
+
+    for A in amd64 x86; do
+      if [[ "$A" == amd64 ]]; then MB="$GAMB"; DI="$GADI"; else MB="$GXMB"; DI="$GXDI"; fi
+      GSOCK="$WORKDIR/g2-$A.sock"; GLOG="$WORKDIR/g2-$A.log"; rm -f "$GSOCK" "$GLOG"
+      qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$MB" -initrd "$DI" \
+        -cdrom "$WORKDIR/g2.iso" -display none -serial "unix:$GSOCK,server=on" \
+        -no-reboot >/dev/null 2>&1 &
+      GQ=$!
+      python3 "$REPO/tools/drive-serial-repl.py" "$GSOCK" "$GLOG" --timeout 240 \
+        --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\struct.fth\r' --expect "0 > " \
+        --send 'load-base load-size evaluate\r' --expect "0 > " \
+        --send 'load /ide@1/cdrom@0:\\g2chk.fth\r' --expect "0 > " \
+        --send 'load-base load-size evaluate\r' --expect "G2-END" \
+        --send 'load /ide@1/cdrom@0:\\subj.elf\r' --expect "0 > " \
+        --send 'g2-elf\r' --expect "G2E-END" \
+        --send 'g2-x64\r' --expect "0 > " \
+        --send 'g2-odd\r' --expect "0 > " \
+        --send 'g2-blob\r' --expect "0 > "
+      GRC=$?
+      kill "$GQ" 2>/dev/null   # by PID, never by pattern
+      GL="$(tr -d "\r" < "$GLOG")"
+
+      # UNANCHORED on purpose. The console echoes the command, so `g2o=...`
+      # continues the line that echoed `g2-odd`; a `^g2o` pattern reports a
+      # present field as missing. That is this repo's line-anchored-regex trap,
+      # and it has now been met five times.
+      g2v() { grep -aoE "$1=[0-9a-f]+" <<<"$GL" | head -1 | cut -d= -f2; }
+      g2b() { sed -n "s/.*$1=\([0-9a-f]\{2\}\( [0-9a-f]\{2\}\)*\).*/\1/p" <<<"$GL" | head -1; }
+      g2e() { grep -aoE "$1=[A-Za-z0-9-]+" <<<"$GL" | head -1 | cut -d= -f2; }
+
+      [[ $GRC -eq 0 ]] \
+        || fail "G2 on $A: the type-layer probe did not complete (rc=$GRC) — see $GLOG"
+
+      # The layout itself. If `field:` mis-accumulates, every address below is
+      # wrong and every value still round-trips through its own error.
+      GPS="$(g2v g2-patsize)"
+      [[ "$GPS" == 10 ]] \
+        || fail "G2 on $A: the pattern layout is 0x${GPS:-absent} bytes, not 0x10 — 4+4+2+2+1+3 — so field: is not accumulating widths and every offset below is derived from a broken sum — see $GLOG"
+      for pair in be:0 le:4 bew:8 lew:a b:c; do
+        GN="${pair%%:*}"; GW="${pair##*:}"
+        GO="$(g2v "g2-off-$GN")"
+        [[ "$GO" == "$GW" ]] \
+          || fail "G2 on $A: field p-$GN sits at offset ${GO:-absent}, not $GW — the definer's running offset is wrong, so 'it read back what was written' would be a statement about the wrong bytes — see $GLOG"
+      done
+
+      # CHECKPOINT 1 — a different word wrote it.
+      GRBE="$(g2v g2-r-be)"; GRLE="$(g2v g2-r-le)"
+      [[ "$GRBE" == deadbeef ]] \
+        || fail "G2 checkpoint 1 on $A: a big-endian field over bytes written by int! reads ${GRBE:-absent}, not deadbeef — int! is the 1275 encoder and knows nothing about this layer, which is the whole point of using it to write — see $GLOG"
+      [[ "$GRLE" == cafebabe ]] \
+        || fail "G2 checkpoint 1 on $A: a little-endian field over bytes written by le-l! reads ${GRLE:-absent}, not cafebabe — see $GLOG"
+
+      # THE ORDER CONTROL — without it checkpoint 1 passes a layer that ignores
+      # byte order, because one convention round-trips under any convention.
+      GXLB="$(g2v g2-x-le-as-be)"; GXBL="$(g2v g2-x-be-as-le)"
+      [[ "$GXLB" == "$(g2_rev4 "$GRLE")" && "$GXLB" != "$GRLE" ]] \
+        || fail "G2 order control on $A: the little-endian field's bytes read big-endian give ${GXLB:-absent}, not the reversal $(g2_rev4 "$GRLE") of $GRLE — the order bit is not selecting an accessor, so every round trip above proves only that one accessor is its own inverse — see $GLOG"
+      [[ "$GXBL" == "$(g2_rev4 "$GRBE")" && "$GXBL" != "$GRBE" ]] \
+        || fail "G2 order control on $A: the big-endian field's bytes read little-endian give ${GXBL:-absent}, not the reversal $(g2_rev4 "$GRBE") of $GRBE — see $GLOG"
+
+      # CHECKPOINT 2 — the store IS the write, and the bytes say so.
+      GWT="$(g2v g2-w-t)"; GWB="$(g2b g2-w-bytes)"
+      [[ "$GWT" == 11223344 ]] \
+        || fail "G2 checkpoint 2 on $A: after storing 11223344 through a little-endian field it reads back ${GWT:-absent} — see $GLOG"
+      [[ "$GWB" == "$(g2_le_bytes "$GWT")" ]] \
+        || fail "G2 checkpoint 2 on $A: the four bytes at the field are [$GWB], not [$(g2_le_bytes "$GWT")] — the value round-trips through the accessor pair but MEMORY does not hold it in that order, so the type is decorating a copy — see $GLOG"
+      GWA="$(g2v g2-w-adr)"
+      [[ "$GWA" == 55667788 ]] \
+        || fail "G2 §P1 on $A: a bare le-l! through the field's own address (t-adr) then reads back ${GWA:-absent}, not 55667788 — the field does not yield an address into the mapped region, so a store through it is not the write and the layer needs poke's write-back step after all — see $GLOG"
+      GWBE="$(g2v g2-w-be)"; GWBB="$(g2b g2-w-be-bytes)"
+      [[ "$GWBE" == aabbccdd && "$GWBB" == "$(g2_be_bytes "$GWBE")" ]] \
+        || fail "G2 checkpoint 2 on $A: a big-endian typed store reads back ${GWBE:-absent} with bytes [$GWBB] — expected aabbccdd as [$(g2_be_bytes aabbccdd)] — see $GLOG"
+
+      # widths 2 and 1, both orders, with their bytes
+      GBEW="$(g2v g2-w-bew)"; GBEWB="$(g2b g2-w-bew-bytes)"
+      GLEW="$(g2v g2-w-lew)"; GLEWB="$(g2b g2-w-lew-bytes)"
+      GB1="$(g2v g2-w-b)"
+      [[ "$GBEW" == 1234 && "$GBEWB" == "12 34" ]] \
+        || fail "G2 on $A: the 2-byte big-endian field reads ${GBEW:-absent} with bytes [$GBEWB], not 1234 as [12 34] — see $GLOG"
+      [[ "$GLEW" == 5678 && "$GLEWB" == "78 56" ]] \
+        || fail "G2 on $A: the 2-byte little-endian field reads ${GLEW:-absent} with bytes [$GLEWB], not 5678 as [78 56] — w@-be and le-w@ are not distinguished at width 2 — see $GLOG"
+      [[ "$GB1" == 9a ]] \
+        || fail "G2 on $A: the 1-byte field reads ${GB1:-absent}, not 9a — see $GLOG"
+
+      # ISOLATION — a store at one field must not disturb its neighbours, and
+      # nothing may run past the layout. The poison is ff so an inherited zero
+      # cannot pass for a written byte.
+      GIBE="$(g2v g2-iso-be)"; GILE="$(g2v g2-iso-le)"; GPOI="$(g2v g2-poison)"
+      [[ "$GIBE" == aabbccdd && "$GILE" == 55667788 ]] \
+        || fail "G2 isolation on $A: after writing the 2- and 1-byte fields the 4-byte fields read $GIBE/$GILE instead of aabbccdd/55667788 — a store overran its own width — see $GLOG"
+      [[ "$GPOI" == ff ]] \
+        || fail "G2 isolation on $A: the poison byte past the layout reads ${GPOI:-absent}, not ff — something wrote beyond the last field — see $GLOG"
+
+      # THE ELF, against ground truth computed from the subject's own bytes.
+      for pair in magic:$GT_MAGIC class:$GT_CLASS data:$GT_DATA type:$GT_TYPE machine:$GT_MACH size:$GT_SIZE; do
+        GN="${pair%%:*}"; GW="${pair##*:}"
+        GV="$(g2v "g2e-$GN")"
+        [[ "$GV" == "$GW" ]] \
+          || fail "G2/G7 on $A: the firmware parsed e_$GN as ${GV:-absent} where the host reads $GW from the same bytes — the layout's offsets or its byte order disagree with ELF64 — see $GLOG"
+      done
+      GEHI="$(g2v g2e-entryhi)"; GELO="$(g2v g2e-entrylo)"
+      GECOMB="$(printf '%x' $(( (0x$GEHI << 32) | 0x$GELO )))"
+      [[ "$GECOMB" == "$GT_ENTRY" ]] \
+        || fail "G2/G7 on $A: e_entry read as two 4-byte halves is $GEHI:$GELO = $GECOMB where the host reads $GT_ENTRY — see $GLOG"
+
+      # THE SECOND VIEW, and the arch split. One 8-byte little-endian field at
+      # 0x18 must AGREE with the two halves on a 64-bit cell, and must REFUSE by
+      # name on a 32-bit one. A layer that truncated instead would print a
+      # number that is right in its low half and silently wrong above it — the
+      # LIED rung, and exactly the defect TODO 13.2(b) found in l!-be.
+      # A REFUSAL IS MEASURED BY WHAT DID NOT HAPPEN, not by what was printed.
+      # Each refusing word ends on its own `G2?-END` marker, so an abort is
+      # observable as that marker's ABSENCE. Asserting only the printed name
+      # would pass a t-width-err that names the width and then returns a number
+      # anyway — the message would be right and the operation would have
+      # completed, which is the LIED rung wearing an honest label.
+      GXE="$(g2e g2x-entry)"
+      if [[ "$A" == amd64 ]]; then
+        [[ "$GXE" == "$GT_ENTRY" ]] \
+          || fail "G2 on amd64: e_entry declared as ONE 8-byte little-endian field at 0x18 reads ${GXE:-absent} where the same bytes read as two halves give $GT_ENTRY — two views of one region disagree, so the offsets are arithmetic nobody checked — see $GLOG"
+        grep -qF 'G2X-END' <<<"$GL" \
+          || fail "G2 on amd64: the 8-byte field printed a value but its word never reached G2X-END — it aborted after answering, so the answer is not one a caller could have used — see $GLOG"
+      else
+        [[ "$GXE" == "T-ERR-narrow-cell" ]] \
+          || fail "G2 on x86: an 8-byte field on a 32-bit cell returned '${GXE:-absent}' instead of refusing with T-ERR-narrow-cell — if that is a number it is wrong above bit 31 and nothing said so, which is the LIED rung — see $GLOG"
+        grep -qF 'G2X-END' <<<"$GL" \
+          && fail "G2 on x86: the 8-byte field NAMED the narrow cell and then ran to G2X-END anyway — printing a refusal is not refusing, and whatever it left on the stack is a truncated address — see $GLOG"
+      fi
+
+      # THE OTHER TWO REFUSALS, name AND non-completion.
+      GODD="$(g2e g2o)"; GBLOB="$(g2e g2b)"
+      [[ "$GODD" == "T-ERR-width" ]] \
+        || fail "G2 on $A: a 3-byte field — a width the layer does not implement — returned '${GODD:-absent}' instead of refusing by name. A plausible number for an unimplemented width is how a parser reports success while reading the wrong bytes — see $GLOG"
+      grep -qF 'G2O-END' <<<"$GL" \
+        && fail "G2 on $A: the unimplemented width printed T-ERR-width and then ran to G2O-END — the message is right and the operation completed anyway, so a caller gets a number for a width nobody implemented — see $GLOG"
+      [[ "$GBLOB" == "T-ERR-be64" ]] \
+        || fail "G2 on $A: an 8-byte BIG-endian field returned '${GBLOB:-absent}' instead of refusing by name — no x@-be exists and inventing one silently is worse than saying so — see $GLOG"
+      grep -qF 'G2B-END' <<<"$GL" \
+        && fail "G2 on $A: the 8-byte big-endian field printed T-ERR-be64 and then ran to G2B-END — see $GLOG"
+
+      note "$A: layout 0x$GPS, offsets 0/4/8/a/c; int!→BE field $GRBE, le-l!→LE field $GRLE, cross-read $GXLB/$GXBL; t! 11223344 → memory [$GWB]; t-adr le-l! → $GWA; ELF64 magic=$GT_MAGIC type=$GT_TYPE machine=$GT_MACH entry=$GECOMB size=$GT_SIZE; 8-byte view → $GXE"
+    done
+    pass "REVIEW G2: a TYPE layer over OpenBIOS Forth, both checkpoints met on BOTH arches. The definer was NOT the work — bootstrap.fs:1570 already ships 'struct'/'field' and it works untouched, which the review had wrong; what was missing is width and byte order, and dsl/struct.fth adds exactly that in ~60 lines over accessors that were already there. Checkpoint 1: a named field reads back deadbeef/cafebabe written by int! and le-l!, words that know nothing about the layer. Checkpoint 2: a typed store puts 11223344 into memory as 44 33 22 11 and a BARE le-l! through the field's own address is equally the write — no map/modify/poke-back, because a field yields the bytes rather than a copy of them (§P1). The controls are what make those mean anything: each field read through the OTHER byte order comes back exactly reversed (so 'it round-tripped' is not one accessor being its own inverse), the raw bytes are asserted beside every store, a poison byte past the layout is still ff, and THREE refusals fire by name — an unimplemented width, big-endian 64, and an 8-byte field on x86's 32-bit cell, where truncating would have been the LIED rung. Finally the layer is pointed at a real ELF64 — the amd64 firmware's own boot image, loaded off ISO9660 — and re-derives magic/class/type/machine/entry/size matching ground truth unpacked from the same bytes on the host, with e_entry read BOTH as two 4-byte halves and as one 8-byte field, agreeing"
+    ;;
+  *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|struct-layer]" >&2; exit 1 ;;
 esac
