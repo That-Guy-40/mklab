@@ -3785,6 +3785,7 @@ hex
 ." RMW-START" cr
 struct  1    field: st  constant /reg
 struct  4 le-field: w   constant /wreg
+struct  4    field: bw  constant /bwreg
 struct  1 dev-field: d-ch  1 dev-field: d-at  constant /dc
 /dc array: dcell[]
 40 alloc-mem value r
@@ -3808,6 +3809,19 @@ struct  1 dev-field: d-ch  1 dev-field: d-at  constant /dc
   1 r w t-set                  ." rl-set="  r w t@ u. cr      \ ff000001
   ." rl-bytes=" r w t-adr dup c@ u. 1+ dup c@ u. 1+ dup c@ u. 1+ c@ u. cr  \ 01 00 00 ff
   ." RMW-LE-END" cr ;
+
+\ ── AND THE OTHER ORDER, which is the DEFAULT one ──────────────────────
+\ `field:` is BIG-endian -- the 1275-native order (dsl/struct.fth:117) -- and
+\ without this word it was exercised in this track only at WIDTH 1, where byte
+\ order is a no-op. So l!-be/l@-be never ran under t-set at all: the LE row
+\ above proved "the mask applies to the decoded value" for one order and the
+\ track's claim that byte order rides along rested on the untested half. The
+\ mirror image of rmw-le, and the bytes must come out reversed from it.
+: rmw-be
+  ff000000 r bw t!             ." rb-init=" r bw t@ u. cr      \ ff000000
+  1 r bw t-set                 ." rb-set="  r bw t@ u. cr      \ ff000001
+  ." rb-bytes=" r bw t-adr dup c@ u. 1+ dup c@ u. 1+ dup c@ u. 1+ c@ u. cr  \ ff 00 00 01
+  ." RMW-BE-END" cr ;
 
 \ ── device register: the same idiom over the VGA aperture ──────────────
 \ b8000 >virt reaches the aperture on BOTH arches (identity on amd64). The
@@ -3884,13 +3898,14 @@ PYX
         --send 'load-base load-size evaluate\r' --expect "RMW-READY" \
         --send 'rmw-mem\r' --expect "RMW-MEM-END" \
         --send 'rmw-le\r' --expect "RMW-LE-END" \
+        --send 'rmw-be\r' --expect "RMW-BE-END" \
         --send 'rmw-ctl\r' --expect "RMW-CTL-END" \
         --send 'rmw-mudge\r' --expect "RMW-MUDGE-END" \
         --send 'dev-set\r' --expect "DEV-SET-END"
       RRC=$?
       RSET_PHYS="$(_rxp "$RMON")"
       # second boot for the device control, so the two runs cannot share state
-      kill "$RQ" 2>/dev/null; rm -f "$RSOCK" "$RMON"
+      kill "$RQ" 2>/dev/null; wait "$RQ" 2>/dev/null; rm -f "$RSOCK" "$RMON"
       qemu-system-x86_64 -M "pc,accel=$ACCEL" -m 512 -kernel "$MB" -initrd "$DI" \
         -cdrom "$WORKDIR/rmw.iso" -display none -serial "unix:$RSOCK,server=on" \
         -monitor "unix:$RMON,server=on,nowait" -no-reboot >/dev/null 2>&1 &
@@ -3902,13 +3917,20 @@ PYX
         --send 'load /ide@1/cdrom@0:\\rmw.fth\r' --expect "0 > " \
         --send 'load-base load-size evaluate\r' --expect "RMW-READY" \
         --send 'dev-naive\r' --expect "DEV-NAIVE-END"
+      RRC2=$?
       RNAIVE_PHYS="$(_rxp "$RMON")"
-      kill "$RQ2" 2>/dev/null   # by PID, never by pattern
+      kill "$RQ2" 2>/dev/null; wait "$RQ2" 2>/dev/null   # by PID, never by pattern
       RL="$(tr -d "\r" < "$RLOG")"
       rv() { grep -aoE "$1=[0-9a-f]+" <<<"$RL" | head -1 | cut -d= -f2; }
 
       [[ $RRC -eq 0 ]] \
         || fail "rmw-fields on $A: the probe did not complete (rc=$RRC) — see $RLOG"
+      # The CONTROL boot gets its own named check. Its outcome assertion below
+      # would catch a boot that never ran -- RNAIVE_PHYS cannot match -- but it
+      # would blame the bg nibble for it, which is an honest failure wearing
+      # someone else's clothes.
+      [[ $RRC2 -eq 0 ]] \
+        || fail "rmw-fields on $A: the CONTROL probe (dev-naive, second boot) did not complete (rc=$RRC2), so the bare-store comparison below never ran — see $WORKDIR/rmw-$A-ctl.log"
 
       # ── MEMORY: the three ops, and the control that earns them ──
       [[ "$(rv rm-init)" == 80 ]] \
@@ -3931,10 +3953,19 @@ PYX
       # ── ORDER: the mask is applied to the value, not to raw bytes ──
       [[ "$(rv rl-init)" == ff000000 && "$(rv rl-set)" == ff000001 ]] \
         || fail "rmw-fields on $A: t-set on a LITTLE-ENDIAN field gave $(rv rl-set) over $(rv rl-init) — expected ff000001 — the mask must apply to the decoded value, so the high byte survives — see $RLOG"
-      [[ "$(rv rl-bytes 2>/dev/null)" ]] || true
+      # rv() stops at the first token, so the byte LIST needs its own extraction.
       RLB="$(grep -aoE 'rl-bytes=[0-9a-f ]+' <<<"$RL" | head -1 | cut -d= -f2 | tr -s ' ' | sed 's/ *$//')"
       [[ "$RLB" == "1 0 0 ff" ]] \
         || fail "rmw-fields on $A: after t-set on the LE field the bytes are [$RLB], not [1 0 0 ff] — the value round-trips but memory does not hold it little-endian, so t-set is bypassing the field's byte order — see $RLOG"
+      # AND THE DEFAULT ORDER. `field:` is big-endian; before this row it was
+      # exercised here only at width 1, where order is a no-op, so l@-be/l!-be
+      # never ran under t-set and half of "byte order rides along" was an UNKNOWN
+      # sitting inside the track that advertises it.
+      [[ "$(rv rb-init)" == ff000000 && "$(rv rb-set)" == ff000001 ]] \
+        || fail "rmw-fields on $A: t-set on a BIG-ENDIAN field gave $(rv rb-set) over $(rv rb-init) — expected ff000001 — the mask must apply to the decoded value in the 1275-native order too, not just the little-endian one — see $RLOG"
+      RBB="$(grep -aoE 'rb-bytes=[0-9a-f ]+' <<<"$RL" | head -1 | cut -d= -f2 | tr -s ' ' | sed 's/ *$//')"
+      [[ "$RBB" == "ff 0 0 1" ]] \
+        || fail "rmw-fields on $A: after t-set on the BIG-ENDIAN field the bytes are [$RBB], not [ff 0 0 1] — they must be the exact REVERSE of the little-endian row's [1 0 0 ff]; if they match it, t-set wrote through the wrong accessor and both orders would 'pass' identically — see $RLOG"
 
       # ── NAMED CONTROLS: the verbose, backend-hidden layer ──
       # Same RMW property, reached through enable/disable/toggle/enabled? on a
@@ -3962,9 +3993,9 @@ PYX
       [[ "$RNAIVE_PHYS" == "0x41 0x01"* ]] \
         || fail "rmw-fields on $A: after a bare 't!' the attribute at physical 0xb8000 reads [$RNAIVE_PHYS], not 0x41 0x01 — if the bg nibble survived a plain store then the device control does not demonstrate what t-set is for — see $WORKDIR/rmw-$A-ctl.log"
 
-      note "$A: t-set/t-clr preserve bit 7 (81/80) where a bare t! destroys it (01); t-tog round-trips; LE field t-set keeps the high byte (bytes [1 0 0 ff]); and through a dev-field over the VGA aperture the RMW leaves attr 0x11 at physical 0xb8000 where a bare store leaves 0x01 — bg nibble preserved vs destroyed, read by the monitor"
+      note "$A: t-set/t-clr preserve bit 7 (81/80) where a bare t! destroys it (01); t-tog round-trips; BOTH byte orders keep the high byte and lay it down reversed from each other (LE bytes [1 0 0 ff], BE bytes [ff 0 0 1]); and through a dev-field over the VGA aperture the RMW leaves attr 0x11 at physical 0xb8000 where a bare store leaves 0x01 — bg nibble preserved vs destroyed, read by the monitor"
     done
-    pass "mudge's read-modify-write idiom (Phrack 53:9, 1998 — upstream-tutorial/), generalised to t-set/t-clr/t-tog over a TYPED field and NOT named for an LED, measured on BOTH arches. The property that makes RMW different from a store is that it PRESERVES THE OTHER BITS — which is why mudge wrote 'aux@ or aux!' and not '1 aux!' — so every positive row is paired with a bare 't!' control that destroys the neighbour: t-set/t-clr hold bit 7 at 81/80 where t! clobbers it to 01, t-tog round-trips, and the mask applies to the DECODED value so a little-endian field keeps its high byte (bytes [1 0 0 ff]). And it works on a real DEVICE register: through a dev-field over the VGA aperture at b8000 >virt, setting an fg bit leaves attr 0x11 at PHYSICAL 0xb8000 — read by QEMU's monitor, an observer outside the firmware — where a bare store leaves 0x01, the bg nibble preserved versus destroyed. The Forth read-back cannot see that difference because it uses the same rb@ path the store did"
+    pass "mudge's read-modify-write idiom (Phrack 53:9, 1998 — upstream-tutorial/), generalised to t-set/t-clr/t-tog over a TYPED field and NOT named for an LED, measured on BOTH arches. The property that makes RMW different from a store is that it PRESERVES THE OTHER BITS — which is why mudge wrote 'aux@ or aux!' and not '1 aux!' — so every positive row is paired with a bare 't!' control that destroys the neighbour: t-set/t-clr hold bit 7 at 81/80 where t! clobbers it to 01, t-tog round-trips, and the mask applies to the DECODED value in BOTH byte orders — a little-endian field keeps its high byte (bytes [1 0 0 ff]) and the 1275-native big-endian field lays the same value down exactly reversed (bytes [ff 0 0 1]), which is the row that makes 'the byte order rides along' a measurement rather than a claim: before it, field: was exercised here only at width 1, where order is a no-op, so l@-be/l!-be never ran under t-set at all. And it works on a real DEVICE register: through a dev-field over the VGA aperture at b8000 >virt, setting an fg bit leaves attr 0x11 at PHYSICAL 0xb8000 — read by QEMU's monitor, an observer outside the firmware — where a bare store leaves 0x01, the bg nibble preserved versus destroyed. The Forth read-back cannot see that difference because it uses the same rb@ path the store did"
     ;;
   *) echo "usage: $0 [multiboot|coreboot|coreboot-amd64|ppc|nvram|persist|persist-flash|floppy|persist-os|persist-os-flash|dict-identity|amd64|amd64-fault|amd64-ctx|amd64-pmem|amd64-linux|property-abi|memory-available|vga|diagnostics|client-forth|pmem-writer|flash-writer|mmio-writer|struct-layer|struct-array|struct-device|elf-methods|rmw-fields]" >&2; exit 1 ;;
 esac
